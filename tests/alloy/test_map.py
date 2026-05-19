@@ -113,11 +113,13 @@ def test_map_rejects_bad_input_specs() -> None:
 
 
 def test_map_structural_key_matches_for_equal_constructions() -> None:
+  # Construction-time interning collapses two structurally-identical ``al.map_`` calls to
+  # the same Expr instance, so ``a is b`` and the structural-equality contract is preserved.
   z = al.sym("z", 6)
   p = al.sym("p", 6)
   a = al.map_(scale_add, 2, [(z, 0, 3), (p, 0, 3)])
   b = al.map_(scale_add, 2, [(z, 0, 3), (p, 0, 3)])
-  assert a.id != b.id
+  assert a is b
   assert a.structurally_equal(b)
 
 

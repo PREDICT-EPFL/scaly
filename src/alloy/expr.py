@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import weakref
 from dataclasses import dataclass, field
-from itertools import count
 from collections.abc import Mapping
 from typing import Any, Iterable
 
@@ -15,14 +15,29 @@ def _asarray(value: Any) -> np.ndarray:
   return np.asarray(value, dtype=np.float64)
 
 
-_ids = count(1)
+# Construction-time hash-consing cache. Two ``Expr(...)`` constructions with the same
+# (op, args-by-identity, type, name, value-bytes, attrs, lowering) collapse to a single
+# Python object — so structural equality becomes identity, ``is`` works as a fast equality
+# check, and any pass that builds new graphs gets CSE for free.
+#
+# WeakValueDictionary lets nodes be garbage-collected when no live reference remains; the
+# cache shrinks automatically. No surprises around long-lived caches retaining graphs.
+_NODE_CACHE: weakref.WeakValueDictionary[tuple[Any, ...], "Expr"] = weakref.WeakValueDictionary()
 
 
-def _fresh_id() -> int:
-  return next(_ids)
+def _intern_key(
+  op: Ops | str, args: tuple["Expr", ...], type_: "TensorType", name: str | None, value: np.ndarray | None, attrs: dict[str, Any], lowering: Lowering
+) -> tuple[Any, ...]:
+  op_norm = op if isinstance(op, Ops) else Ops(op)
+  # Use Python ``id`` for arg refs: interning makes id-equality = structural-equality, so
+  # two args with the same id are the same subgraph. Avoids walking the args' structural_key
+  # at every construction.
+  args_key = tuple(id(a) for a in args)
+  value_key = None if value is None else (value.shape, str(value.dtype), value.tobytes())
+  return (op_norm.value, args_key, type_, name, value_key, _attrs_key(attrs), lowering)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class Expr:
   op: Ops | str
   args: tuple[Expr, ...] = ()
@@ -31,15 +46,50 @@ class Expr:
   value: np.ndarray | None = None
   attrs: dict[str, Any] = field(default_factory=dict)
   lowering: Lowering = "auto"
-  id: int = field(default_factory=_fresh_id)
   # Frozen → safe to cache. Populated lazily by structural_key on first call.
   _key_cache: tuple[Any, ...] | None = field(default=None, init=False, repr=False, compare=False)
+  _initialized: bool = field(default=False, init=False, repr=False, compare=False)
 
   __array_priority__ = 1000
 
+  @property
+  def id(self) -> int:
+    # Interned: two structurally-equal Expr's are the same Python object, so Python's
+    # ``id()`` doubles as the structural identity. Stable for the object's lifetime; the
+    # WeakValueDictionary releases the slot when GC reclaims the node, so id reuse is
+    # safe (any memo dict still holding the node also holds it alive).
+    return id(self)
+
+  def __new__(
+    cls,
+    op: Ops | str | None = None,
+    args: tuple["Expr", ...] = (),
+    type: TensorType | None = None,
+    name: str | None = None,
+    value: np.ndarray | None = None,
+    attrs: dict[str, Any] | None = None,
+    lowering: Lowering = "auto",
+  ) -> "Expr":
+    if op is None:  # callers like ``copy.copy`` / pickling instantiate w/o args
+      return object.__new__(cls)
+    type_eff = type if type is not None else TensorType()
+    attrs_eff = attrs if attrs is not None else {}
+    key = _intern_key(op, args, type_eff, name, value, attrs_eff, lowering)
+    cached = _NODE_CACHE.get(key)
+    if cached is not None:
+      return cached
+    instance = object.__new__(cls)
+    _NODE_CACHE[key] = instance
+    return instance
+
   def __post_init__(self) -> None:
+    # On cache hit, dataclass __init__ re-ran with the same args; everything it set was
+    # idempotent, so we only need to mark ``_initialized`` on the first construction.
+    if self._initialized:
+      return
     if not isinstance(self.op, Ops):
       object.__setattr__(self, "op", Ops(self.op))
+    object.__setattr__(self, "_initialized", True)
 
   @staticmethod
   def sym(name: str, shape: int | tuple[int, ...] | None = None, *, diff: bool = True, lowering: Lowering = "auto") -> Expr:

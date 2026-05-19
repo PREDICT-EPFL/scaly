@@ -291,15 +291,18 @@ def test_debug_printing_uses_stable_topological_names() -> None:
   assert text.endswith("outputs %3")
 
 
-def test_structural_equality_is_separate_from_identity() -> None:
+def test_structural_equality_collapses_to_identity() -> None:
+  # Construction-time interning: two ``Expr``s with the same structural key are the same
+  # Python object, so structural equality is the same as ``is`` equality.
   x0 = al.sym("x", 2)
   x1 = al.sym("x", 2)
   y = al.sym("y", 2)
 
-  assert x0 is not x1
-  assert x0.id != x1.id
+  assert x0 is x1
+  assert x0.id == x1.id
   assert x0.structurally_equal(x1)
   assert x0.structural_hash() == x1.structural_hash()
+  assert x0 is not y
   assert not x0.structurally_equal(y)
 
 
