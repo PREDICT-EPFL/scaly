@@ -83,6 +83,12 @@ def _jvp(expr: Expr, wrt: Expr, seed: Expr, memo: dict[int, Expr], dep_memo: dic
       ret = term if ret is None else ret + term
     memo[expr.id] = ret = zeros_like(expr) if ret is None else ret
     return ret
+  if expr.op == Ops.SOLVER_CALL:
+    # Solver outputs are treated as non-differentiable today. Implicit
+    # function theorem AD (e.g. cyipopt-style adjoint through KKT residuals)
+    # is future work; for now any JVP through a solver returns zero.
+    memo[expr.id] = ret = zeros_like(expr)
+    return ret
 
   def save(ret: Expr) -> Expr:
     memo[expr.id] = ret
@@ -623,6 +629,9 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     callee_out = callee.outputs[expr.attrs["output"]]
     replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
     return tuple(_substitute(g, replacements) for g in vjp((callee_out,), callee.inputs, (cot,)))
+  if expr.op == Ops.SOLVER_CALL:
+    # Non-differentiable: every arg cotangent is zero. See the matching JVP rule.
+    return tuple(zeros_like(arg) for arg in args)
   raise NotImplementedError(f"VJP for op {expr.op!r} is not implemented")
 
 

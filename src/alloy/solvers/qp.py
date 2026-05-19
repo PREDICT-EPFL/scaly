@@ -19,6 +19,7 @@ API symmetry but PIQP's dense path does not yet consume warm starts.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -26,8 +27,8 @@ import numpy as np
 from ..expr import Expr, as_expr
 from ..function import Function
 from ._oracle import collect_free_inputs
-from ._piqp import PIQPDenseSolver, PIQP_INF
-from .solver_function import SolverFunction, SolverStatus
+from ._piqp import PIQP_INF, PIQPDenseSolver
+from .solver_function import SolverDescriptor, SolverFunction, SolverStatus
 
 _SUPPORTED_SOLVERS = {"piqp"}
 
@@ -95,8 +96,6 @@ def qp(
   _check_shape("x_lb", xl_e, (n,))
   _check_shape("x_ub", xu_e, (n,))
 
-  # Substitute defaults for the missing two-sided bounds so the oracle is
-  # always well-defined; PIQP_INF / -PIQP_INF translates to "no bound".
   if l_e is None and m_dim:
     l_e = as_expr(np.full(m_dim, -PIQP_INF))
   if u_e is None and m_dim:
@@ -106,8 +105,6 @@ def qp(
   if xu_e is None:
     xu_e = as_expr(np.full(n, PIQP_INF))
 
-  # Build the oracle: a single Function whose outputs are the flattened QP data
-  # and whose inputs are the free symbolic parameters.
   assert xl_e is not None and xu_e is not None
   oracle_outs: list[Expr] = [P_e.vec(), c_e]
   oracle_names = ["P", "c"]
@@ -133,74 +130,79 @@ def qp(
     oracle_names,
   )
 
-  # Pre-instantiate a PIQP workspace; we'll keep it for the lifetime of the
-  # SolverFunction so that repeated calls reuse the factorization scratch.
-  piqp_settings: dict[str, float | int] = {"verbose": 0}
-  if options:
-    piqp_settings.update(options)
-  solver_state = PIQPDenseSolver(n, p_dim, m_dim, settings=piqp_settings)
-
-  input_signature: list[tuple[str, tuple[int, ...]]] = [
+  input_signature: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("x0", (n,)),
     ("lam_eq0", (p_dim,)),
     ("lam_ineq0", (m_dim,)),
-  ]
-  for pname, pe in zip(param_names, params, strict=True):
-    input_signature.append((pname, pe.shape))
-
-  outputs = [
+    *((pname, pe.shape) for pname, pe in zip(param_names, params, strict=True)),
+  )
+  output_signature: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("x", (n,)),
     ("cost", ()),
     ("lam_eq", (p_dim,)),
     ("lam_ineq", (m_dim,)),
     ("lam_box", (n,)),
-  ]
-
-  def backend(inputs: dict[str, np.ndarray]) -> tuple[dict[str, np.ndarray], SolverStatus]:
-    param_args = [inputs[p] for p in param_names]
-    data = oracle.eval_list(*param_args)
-    out_by_name = dict(zip(oracle_names, data, strict=True))
-    P_arr = out_by_name["P"].reshape(n, n)
-    c_arr = out_by_name["c"]
-    A_arr = out_by_name["A_eq"].reshape(p_dim, n) if p_dim else None
-    b_arr = out_by_name["b_eq"] if p_dim else None
-    G_arr = out_by_name["G_ineq"].reshape(m_dim, n) if m_dim else None
-    l_arr = out_by_name["l_ineq"] if m_dim else None
-    u_arr = out_by_name["u_ineq"] if m_dim else None
-    xl_arr = out_by_name["x_lb"]
-    xu_arr = out_by_name["x_ub"]
-
-    solver_state.update(
-      P=P_arr,
-      c=c_arr,
-      A_eq=A_arr,
-      b_eq=b_arr,
-      G_ineq=G_arr,
-      l_ineq=l_arr,
-      u_ineq=u_arr,
-      x_lb=xl_arr,
-      x_ub=xu_arr,
-    )
-    sol = solver_state.solve()
-    # PIQP reports lower/upper duals separately for two-sided ineq + box. We
-    # combine them into a signed lam (lam_ineq = z_u - z_l, lam_box = z_bu - z_bl)
-    # following the PIQP convention: z_l,z_u,z_bl,z_bu are nonneg multipliers.
-    lam_ineq = sol.lam_ineq_u - sol.lam_ineq_l
-    lam_box = sol.lam_box_u - sol.lam_box_l
-    result: dict[str, np.ndarray] = {
-      "x": sol.x,
-      "cost": np.asarray(sol.primal_obj, dtype=np.float64),
-      "lam_eq": sol.lam_eq,
-      "lam_ineq": lam_ineq,
-      "lam_box": lam_box,
-    }
-    return result, SolverStatus(code=sol.status, name=sol.status_name, iter=sol.iter)
-
-  sf_name = name or "qp_piqp"
-  return SolverFunction(
-    sf_name,
-    input_signature,
-    outputs,
-    backend,
-    meta={"solver": "piqp", "n": n, "p": p_dim, "m": m_dim, "oracle": oracle},
   )
+
+  resolved_options = {"verbose": 0, **(options or {})}
+  descriptor = SolverDescriptor(
+    name=name or "qp_piqp",
+    backend="piqp",
+    n=n,
+    n_eq=p_dim,
+    n_ineq=m_dim,
+    input_signature=input_signature,
+    output_signature=output_signature,
+    param_names=param_names,
+    oracle=oracle,
+    options=tuple(sorted(resolved_options.items())),
+    oracle_output_names=tuple(oracle_names),
+  )
+  return SolverFunction(descriptor)
+
+
+def _qp_backend(descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> tuple[list[np.ndarray], SolverStatus]:
+  """Pure-numeric PIQP runner. Invoked by the tape interpreter on SOLVER_CALL."""
+  n, p_dim, m_dim = descriptor.n, descriptor.n_eq, descriptor.n_ineq
+  oracle = descriptor.oracle
+  assert oracle is not None
+
+  # Parameters start at index 3 (after x0, lam_eq0, lam_ineq0).
+  param_args = list(inputs[3:])
+  data = oracle.eval_list(*param_args)
+  out_by_name = dict(zip(descriptor.oracle_output_names, data, strict=True))
+
+  P_arr = out_by_name["P"].reshape(n, n)
+  c_arr = out_by_name["c"]
+  A_arr = out_by_name["A_eq"].reshape(p_dim, n) if p_dim else None
+  b_arr = out_by_name["b_eq"] if p_dim else None
+  G_arr = out_by_name["G_ineq"].reshape(m_dim, n) if m_dim else None
+  l_arr = out_by_name["l_ineq"] if m_dim else None
+  u_arr = out_by_name["u_ineq"] if m_dim else None
+  xl_arr = out_by_name["x_lb"]
+  xu_arr = out_by_name["x_ub"]
+
+  workspace: PIQPDenseSolver | None = descriptor.runtime.get("piqp_workspace")
+  if workspace is None:
+    workspace = PIQPDenseSolver(n, p_dim, m_dim, settings=dict(descriptor.options))
+    descriptor.runtime["piqp_workspace"] = workspace
+  workspace.update(
+    P=P_arr,
+    c=c_arr,
+    A_eq=A_arr,
+    b_eq=b_arr,
+    G_ineq=G_arr,
+    l_ineq=l_arr,
+    u_ineq=u_arr,
+    x_lb=xl_arr,
+    x_ub=xu_arr,
+  )
+  sol = workspace.solve()
+  outs = [
+    sol.x,
+    np.asarray(sol.primal_obj, dtype=np.float64),
+    sol.lam_eq,
+    sol.lam_ineq_u - sol.lam_ineq_l,
+    sol.lam_box_u - sol.lam_box_l,
+  ]
+  return outs, SolverStatus(code=sol.status, name=sol.status_name, iter=sol.iter)

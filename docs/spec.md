@@ -265,6 +265,12 @@ Generated functions return named ABI status codes:
 (dense QP) and IPOPT (sparse-Jacobian, sparse-Lagrangian-Hessian NLP). The
 data exprs may be Alloy `Expr`s of free parameters; oracle derivatives come
 through `Function.factory(...)` (`grad`, `spjac`, `sphess` with a Lagrangian
-`aux={"gamma": [...]}`). The bound shared libraries live under
-`src/alloy/lib/`. Full interface, sign conventions, and current limitations
-are documented in [`solvers.md`](solvers.md).
+`aux={"gamma": [...]}`). Each solver is a real `Function` whose body is
+``Ops.SOLVER_CALL`` (one per output, all sharing a ``SolverDescriptor``
+side-table). That means ``solver.call([...])`` returns ``Expr``s, so solvers
+nest directly inside larger ``@al.function``-decorated graphs (the
+safety-filter assembly pattern). ``SOLVER_CALL`` is marked
+non-differentiable, and C codegen for it is not yet wired — parent Functions
+containing a solver node fall back to the tape interpreter. The bound shared
+libraries live under `src/alloy/lib/`. Full interface, sign conventions, and
+current limitations are documented in [`solvers.md`](solvers.md).

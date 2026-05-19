@@ -45,6 +45,7 @@ class Ops(StrEnum):
   MATMUL = "matmul"
   CALL = "call"
   MAP = "map"
+  SOLVER_CALL = "solver_call"
 
 
 COMMON_ELEMENTWISE_UNARY = {
@@ -91,6 +92,7 @@ COMMON_STRUCTURAL = {
   Ops.MATMUL,
   Ops.CALL,
   Ops.MAP,
+  Ops.SOLVER_CALL,
 }
 
 # Deliberately not in the MVP set: expm1/log1p (nice but low priority), splines/interpolants
@@ -149,4 +151,5 @@ OP_INFO: dict[Ops, OpInfo] = {
   Ops.MATMUL: OpInfo(Ops.MATMUL, 2, np.matmul),
   Ops.CALL: OpInfo(Ops.CALL, None, None),
   Ops.MAP: OpInfo(Ops.MAP, None, None),
+  Ops.SOLVER_CALL: OpInfo(Ops.SOLVER_CALL, None, None, differentiable=False),
 }

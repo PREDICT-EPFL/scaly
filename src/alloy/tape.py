@@ -87,8 +87,9 @@ class Tape:
 
   def evaluate(self, env: Mapping[str, Any]) -> list[np.ndarray]:
     values: list[np.ndarray] = []
+    solver_memo: dict[tuple[int, tuple[int, ...]], list[np.ndarray]] = {}
     for inst in self.instructions:
-      out = _eval_instruction(inst, values, env)
+      out = _eval_instruction(inst, values, env, solver_memo)
       if out.shape != inst.shape:
         raise ValueError(f"instruction {inst.index} {inst.op.value!r} produced shape {out.shape}, expected {inst.shape}")
       values.append(out)
@@ -183,6 +184,10 @@ def format_tape(tape: Tape) -> str:
       slice_size = inst.attrs["slice_size"]
       bindings = ", ".join(f"%{src}[{s}::{st}]" for src, s, st in zip(inst.inputs, inst.attrs["starts"], inst.attrs["strides"], strict=True))
       rhs = f"map[{length}x{slice_size}] {callee.name}[{inst.attrs['output']}]({bindings})"
+    elif inst.op == Ops.SOLVER_CALL:
+      descriptor = inst.attrs["solver"]
+      out_name = inst.attrs.get("output_name", str(inst.attrs["output"]))
+      rhs = f"solver[{descriptor.backend}] {descriptor.name}.{out_name}({args})"
     else:
       rhs = f"{inst.op.value}({args})"
     lowering = "" if inst.lowering == "auto" else f" [{inst.lowering}]"
@@ -224,7 +229,12 @@ def _check_input(inst: Instruction, env: Mapping[str, Any]) -> np.ndarray:
   return value
 
 
-def _eval_instruction(inst: Instruction, values: list[np.ndarray], env: Mapping[str, Any]) -> np.ndarray:
+def _eval_instruction(
+  inst: Instruction,
+  values: list[np.ndarray],
+  env: Mapping[str, Any],
+  solver_memo: dict[tuple[int, tuple[int, ...]], list[np.ndarray]] | None = None,
+) -> np.ndarray:
   if inst.op == Ops.INPUT:
     return _check_input(inst, env)
   if inst.op == Ops.CONST:
@@ -259,8 +269,32 @@ def _eval_instruction(inst: Instruction, values: list[np.ndarray], env: Mapping[
     return _asarray(callee.eval_interpreter(*args)[inst.attrs["output"]])
   if inst.op == Ops.MAP:
     return _eval_map(inst, args)
+  if inst.op == Ops.SOLVER_CALL:
+    return _eval_solver_call(inst, args, solver_memo if solver_memo is not None else {})
 
   info = OP_INFO[inst.op]
   if info.numpy is None:
     raise NotImplementedError(f"no tape evaluator for op {inst.op.value!r}")
   return _asarray(info.numpy(*args))
+
+
+def _eval_solver_call(
+  inst: Instruction,
+  args: list[np.ndarray],
+  memo: dict[tuple[int, tuple[int, ...]], list[np.ndarray]],
+) -> np.ndarray:
+  """Evaluate a SOLVER_CALL output. The actual solve is memoized per-tape so
+  that all solver outputs for one ``(descriptor, args)`` site share one solve.
+  """
+  descriptor = inst.attrs["solver"]
+  output = int(inst.attrs["output"])
+  key = (id(descriptor), tuple(int(a.ctypes.data) for a in args))
+  cached = memo.get(key)
+  if cached is None:
+    # Local import: solvers package is optional in some test contexts.
+    from .solvers.solver_function import run_solver_backend
+
+    outs, _status = run_solver_backend(descriptor, args)
+    memo[key] = outs
+    cached = outs
+  return _asarray(cached[output])

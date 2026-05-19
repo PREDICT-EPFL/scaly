@@ -185,6 +185,67 @@ A small `nlp_bounds` Function evaluates the (param-dependent) `x_lb`, `x_ub`,
 - Sparse Jacobian and Hessian patterns are COO `(rows, cols)` in the order
   produced by `al.sparse_jacobian` / `al.sparse_hessian`.
 
+## Nesting: solver as a graph node
+
+A `SolverFunction` is a real `alloy.Function` whose body is one
+`Ops.SOLVER_CALL` per solver output. Two consequences:
+
+1. You can use `solver.call([x0_expr, lam_eq0_expr, lam_ineq0_expr, *param_exprs])`
+   the same way you would call any other `Function`. The result is a tuple of
+   `Expr`s — one per solver output — usable in further symbolic computation.
+2. The outer Function's tape contains an `Ops.CALL` node whose callee is the
+   `SolverFunction`; the solver's own tape contains `Ops.SOLVER_CALL` nodes
+   whose attrs carry the `SolverDescriptor`. From the outer Function's
+   point of view, the solver behaves like any other named callee.
+
+This is the safety-filter assembly pattern from the roadmap:
+
+```python
+@al.function("safety_filter", {"x": (NX,), "u_ref": (NU,)})
+def safety_filter(x, u_ref):
+    f_x = dynamics.f.call([x])[0]
+    g_x = dynamics.g.call([x])[0]
+    h, h_grad = cbf(x)
+    P = al.const(np.eye(NU))
+    c = -u_ref
+    G_ineq = h_grad @ g_x
+    l_ineq = -(h_grad @ f_x + alpha * h)
+    u_ineq = al.const(np.full(NG, np.inf))
+    qp = al.qp(P=P, c=c, G_ineq=G_ineq, l_ineq=l_ineq, u_ineq=u_ineq)
+    out = qp.call([
+        al.const(np.zeros(NU)),   # x0
+        al.const(np.zeros(0)),    # lam_eq0
+        al.const(np.zeros(NG)),   # lam_ineq0
+        x, u_ref,                 # params (auto-detected by al.qp)
+    ])
+    return {"u": out[0]}
+```
+
+The `SOLVER_CALL` op is marked non-differentiable; `al.jacobian` /
+`al.gradient` / sparse-pattern queries through it return zero. Implicit
+function theorem AD (KKT-residual adjoints) is future work.
+
+### Status of the C codegen path
+
+`SOLVER_CALL` is not yet handled by the C renderer, so a Function containing
+a nested solver currently raises `JitUnavailable` at codegen time and the
+parent transparently falls back to the tape interpreter. The interpreter
+itself routes back through the same `ctypes` PIQP/IPOPT path used for direct
+top-level calls. Generating C that drives the vendored libs end-to-end is
+tracked separately below.
+
+## Sign and ordering conventions
+
+- `lam_ineq`, `lam_box` are signed: positive ⇒ upper bound active, negative ⇒
+  lower bound active. Both backends report nonneg `z_l`/`z_u` separately
+  internally; the conversion happens in the SolverFunction backend.
+- For NLP, `lam = [lam_h; lam_g]` is the IPOPT-side stacked multiplier vector.
+  The Lagrangian aux `gamma` is built off `["f", "g"]` in that order, so
+  `lam:g` corresponds to the same stacked vector — this is what makes
+  `sphess:gamma:x:x` produce the correct Lagrangian Hessian.
+- Sparse Jacobian and Hessian patterns are COO `(rows, cols)` in the order
+  produced by `al.sparse_jacobian` / `al.sparse_hessian`.
+
 ## Status
 
 Implemented:
@@ -196,23 +257,27 @@ Implemented:
 - Symbolic parameters in the oracle; QP data and NLP bounds can be Alloy
   `Expr`s of free `p`.
 - ctypes bindings to vendored `libpiqpc`/`libipopt`.
+- `Ops.SOLVER_CALL` IR op + `SolverFunction` subclassing `Function`, so
+  solvers compose with the rest of the IR.
 - Reference tests against CasADi+IPOPT, analytic KKT solutions, and box-only
-  optima (`tests/alloy/test_solvers.py`).
+  optima (`tests/alloy/test_solvers.py`); nesting tests in
+  `tests/alloy/test_solver_nesting.py`.
 
 Deferred (tracked in [`roadmap.md`](roadmap.md)):
 
-- C codegen of the solver wrapper itself. `SolverFunction.__call__` currently
-  runs the backend in Python; the oracle Functions go through the normal JIT
-  path. Generating C that drives PIQP/IPOPT directly is what enables the C++
-  harness use case.
+- C codegen for `SOLVER_CALL`. The renderer falls back to the interpreter
+  when a tape contains a solver node. Generating C that drives PIQP/IPOPT
+  directly is what enables the C++ harness use case.
 - A C++ harness driving the safety filter end-to-end through the universal
   ABI.
 - Sparse PIQP backend (current implementation uses the dense interface —
   enough for the input-affine CBF QP).
 - Warm-start handover for `lam_eq0`/`lam_ineq0` into PIQP and IPOPT.
-- Inlining a solver as a node inside a larger `Function` expression graph
-  (the roadmap calls these "opaque calls"); for now `SolverFunction`s are
-  terminal callables.
+- Implicit-function-theorem AD through `SOLVER_CALL` (today: zero gradients).
+- Cross-call deduplication of solver outputs in the same outer tape: today,
+  picking `out[0]` and `out[1]` from the same solver in one parent triggers
+  two `eval_interpreter` calls. Inner SOLVER_CALL outputs are deduped within
+  a single solve, but the outer CALL nodes are not.
 
 ## Limitations and gotchas
 

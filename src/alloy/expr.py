@@ -275,6 +275,10 @@ class Expr:
 
 def _attrs_key(attrs: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
   def key(v: Any) -> Any:
+    if isinstance(v, Expr):
+      return v.structural_key()
+    if hasattr(v, "structural_key") and callable(getattr(v, "structural_key")):
+      return v.structural_key()
     if hasattr(v, "name") and hasattr(v, "input_names") and hasattr(v, "output_names"):
       return ("Function", v.name, v.input_names, v.output_names)
     if isinstance(v, np.ndarray):

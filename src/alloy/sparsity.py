@@ -310,6 +310,10 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np
     return _call_mask(expr, wrt, memo)
   if expr.op == Ops.MAP:
     return _map_mask(expr, wrt, memo)
+  if expr.op == Ops.SOLVER_CALL:
+    # Solver outputs are treated as non-differentiable opaque calls. Implicit
+    # function theorem AD through them is future work.
+    return np.zeros((expr.size, wrt.size), dtype=bool)
   raise NotImplementedError(f"jacobian sparsity for op {expr.op!r} is not implemented")
 
 
