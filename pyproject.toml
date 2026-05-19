@@ -64,3 +64,6 @@ reportPrivateImportUsage = false
 
 [tool.ty.src]
 exclude = ["hatch_build.py", "third_party/**", ".venv/**", "benchmarks/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
