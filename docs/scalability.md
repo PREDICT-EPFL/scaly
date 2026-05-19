@@ -202,3 +202,58 @@ uv run python benchmarks/scalability_sweep.py \
 Cells that hit the size cap or the per-cell compile timeout end up with a `compile_status` of `skipped_size` / `timeout`. Once a backend has given up at one cell, all larger cells for that backend are short-circuited to `skipped_after_failure` (saves a lot of wall time at the long tail of the sweep). Runtime errors and parse failures are surfaced explicitly in the CSV's `runtime_status` column.
 
 Tracking N=1000 used to appear in this table; it is dropped from the default cell grid because the bench-time dense reference (single-seed JVP × 6006 columns through the unrolled fixture) is the bottleneck rather than alloy itself — supply `--tracking-horizons 1000` to add it back when you're willing to wait several minutes.
+
+## Continuous-time CBF safety filter
+
+Fixture: `tests/alloy/test_safety_filter_workload.py` builds the two variants described in [`safety_filter.md`](safety_filter.md):
+
+- **Input-affine** — per-car velocity net `f_nn(x) + g_nn(x)·u` with a shared MLP body (`7 → 256 → 128`, SiLU) and two heads (drift 128→3, control 128→6). The constraint vector is the HOCBF residual `ḧ_ij + (γ1+γ2)·ḣ_ij + γ1·γ2·h_ij + s` over all `N(N-1)/2` pairs plus 4 wall residuals per car, with the slack term `s` shared. Cost is `Σ (u_i − u_des_i)^T Q (u_i − u_des_i) + M·s²`.
+- **Fully nonlinear** — same shape but the velocity block is a single `f_nn(x, u)` MLP (`9 → 256 → 128 → 3`); the rest of the chain (pose kinematics, slack, HOCBF combination, cost) is unchanged.
+
+The driver `benchmarks/alloy_safety_filter_benchmark.py` derives, for each `(ncars, variant)` cell, five single-output Alloy `Function`s — forward `ineq`, forward `cost`, dense `jac:ineq:u`, sparse `spjac:ineq:u`, and `grad:cost:u`. The sparse Lagrangian Hessian (`sphess:gamma:u:u`) is also requested but currently fails the `Ops.MAP` reverse-mode path in `alloy.ad._local_vjp`, so it is caught and skipped per cell rather than working around the IR limitation here.
+
+Each Function is rendered to C, compared against the Python interpreter on a deterministic input vector, and timed by Google Benchmark on the universal ABI entry point.
+
+Runtime (Apple M-series, `-O3`, single-threaded; ns/call from `cpu_time`):
+
+| Cell             | ineq   | cost  | jac\_u    | spjac\_u | grad\_cost\_u |
+|------------------|-------:|------:|----------:|---------:|--------------:|
+| affine N=2       | 22 µs  | 1.5 ns | 22 µs    | 22 µs    | 1.2 ns        |
+| affine N=4       | 44 µs  | 1.9 ns | 44 µs    | 44 µs    | 1.5 ns        |
+| affine N=8       | 89 µs  | 2.7 ns | 90 µs    | 88 µs    | 2.3 ns        |
+| nonlin N=2       | 22 µs  | 1.5 ns | **288 µs** | 64 µs  | 1.3 ns        |
+| nonlin N=4       | 44 µs  | 1.9 ns | **1.19 ms** | 129 µs | 1.5 ns       |
+| nonlin N=8       | 89 µs  | 2.7 ns | **4.40 ms** | 267 µs | 2.3 ns       |
+
+Source size / codegen (bytes, lines, NNZ for sparse Jacobian; codegen ms is Python-side):
+
+| Cell             | ineq           | jac\_u           | spjac\_u (nnz)         |
+|------------------|----------------|------------------|-----------------------:|
+| affine N=2       | 16 KB / 559 L  | 27 KB / 875 L    | 12 KB / 422 L (20)     |
+| affine N=4       | 28 KB / 1024 L | 96 KB / 3034 L   | 27 KB / 1120 L (56)    |
+| affine N=8       | 69 KB / 2569 L | 493 KB / 14370 L | 133 KB / 5455 L (176)  |
+| nonlin N=2       | 15 KB / 516 L  | 27 KB / 889 L    | 16 KB / 546 L (20)     |
+| nonlin N=4       | 26 KB / 951 L  | 88 KB / 2817 L   | 32 KB / 1237 L (56)    |
+| nonlin N=8       | 66 KB / 2436 L | 452 KB / 13257 L | 136 KB / 5464 L (176)  |
+
+Reading:
+
+- **Forward `ineq` is linear in ncars** and identical between variants at the same size — both go through one per-car MLP forward, which is what dominates (~10 µs/car at this network sizing). Pair count grows as N(N-1)/2 but adds negligible work; the floor is the network.
+- **Cost and `grad:cost:u` are essentially free** (single-digit ns). The quadratic cost touches no MLP and only `O(N)` doubles.
+- **Affine `jac:ineq:u` runs in the same envelope as the forward** — expected, because the constraint is linear in u and the Jacobian rows `b_ij^i = 2·Δπ^T·(∂κ_π/∂v)·g_nn(x_i)` just reuse the per-car NN outputs. The QP path is essentially "one forward and you have A".
+- **Nonlinear `jac:ineq:u` is the obvious hotspot** — dense Jacobian seeds u (size `2·ncars`) through the MLP, which is roughly `2·ncars` forward passes; that is exactly the ~50× scaling we see at N=8 (`4.4 ms` vs `89 µs`).
+- **`spjac:ineq:u` recovers most of that loss** for the nonlinear case (`267 µs` at N=8, ~3× the forward instead of ~50×) because column coloring reduces the seed count to the number of structurally distinct columns. This is the right object for an NLP solver loop to call per IPOPT iteration.
+- The Lagrangian Hessian wrt u would be the other per-iteration object for the NLP path; it is the most natural next target once `Ops.MAP` is added to the reverse-mode AD (`alloy/ad.py::_local_vjp`).
+
+How to reproduce:
+
+```bash
+# Default sweep: ncars=2,4,8 over both variants
+uv run python benchmarks/alloy_safety_filter_benchmark.py --ncars 2 4 8 --clean
+
+# Just one variant or one size
+uv run python benchmarks/alloy_safety_filter_benchmark.py --variant affine --ncars 8
+
+# Code + source size stats only (skip compile + run)
+uv run python benchmarks/alloy_safety_filter_benchmark.py --ncars 2 4 8 --stats-only
+```
