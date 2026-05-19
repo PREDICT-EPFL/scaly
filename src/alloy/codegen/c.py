@@ -8,6 +8,12 @@ import numpy as np
 from typing import Callable
 
 from alloy.abi import c_api_signature
+from alloy.codegen.solver_c import (
+  is_solver_function,
+  render_solver_raw,
+  solver_callees,
+  solver_includes,
+)
 from alloy.function import Function
 from alloy.ops import Ops
 from alloy.tape import Instruction
@@ -156,7 +162,19 @@ def render_c_api_header(fun: Function, *, typed_buffers: bool = True) -> str:
 def render_c_source(fun: Function) -> str:
   """Render a standalone scalar C implementation of ``fun`` and its callees."""
 
-  lines = ["#include <math.h>", "#include <stddef.h>", "", *_abi_status_defines(), "", "#ifdef __cplusplus", 'extern "C" {', "#endif", ""]
+  extra_includes = solver_includes(fun)
+  lines = [
+    "#include <math.h>",
+    "#include <stddef.h>",
+    *extra_includes,
+    "",
+    *_abi_status_defines(),
+    "",
+    "#ifdef __cplusplus",
+    'extern "C" {',
+    "#endif",
+    "",
+  ]
   ordered = _function_order(fun)
   for fn in ordered[:-1]:
     lines += _render_c_raw_function(fn)
@@ -295,6 +313,8 @@ def _spill_plan(slot_size: list[int]) -> tuple[dict[int, int], int]:
 
 
 def _render_c_raw_function(fun: Function) -> list[str]:
+  if is_solver_function(fun):
+    return render_solver_raw(fun)
   tape = fun.tape()
   input_ref = {name: f"in{i}" for i, name in enumerate(fun.input_names)}
   uses = _use_map(tape)
@@ -362,6 +382,16 @@ def _function_order(fun: Function) -> list[Function]:
 def _callees(fun: Function) -> list[Function]:
   ret: list[Function] = []
   seen: set[int] = set()
+  if is_solver_function(fun):
+    # SolverFunctions render via a custom template that calls the oracle (and
+    # for NLP, the derivative Functions) — these aren't reachable through the
+    # solver's own tape (it only contains SOLVER_CALL nodes), so surface them
+    # explicitly here.
+    for callee in solver_callees(fun):
+      if id(callee) not in seen:
+        seen.add(id(callee))
+        ret.append(callee)
+    return ret
   for inst in fun.tape():
     if inst.op not in {Ops.CALL, Ops.MAP}:
       continue
@@ -377,6 +407,14 @@ def _workspace_size(fun: Function, memo: dict[int, int] | None = None) -> int:
   if id(fun) in memo:
     return memo[id(fun)]
   memo[id(fun)] = 0  # break cycles defensively
+  if is_solver_function(fun):
+    # Solver wrappers carry no scalar workspace themselves (QP data is on the
+    # stack); they just need enough to call the oracle.
+    callee_max = 0
+    for callee in solver_callees(fun):
+      callee_max = max(callee_max, _workspace_size(callee, memo))
+    memo[id(fun)] = callee_max
+    return callee_max
   tape = fun.tape()
   uses = _use_map(tape)
   skip = _skipped_instructions(tape, uses)

@@ -26,12 +26,19 @@ def _enable_jit():
   os.environ.pop("ALLOY_DISABLE_JIT", None)
 
 
-@pytest.fixture(autouse=True)
-def _force_interpreter():
-  """SOLVER_CALL has no C codegen yet — force the interpreter path for these tests."""
+@pytest.fixture
+def interpreter_only():
+  """Force the Python tape interpreter path."""
   _disable_jit()
   yield
   _enable_jit()
+
+
+@pytest.fixture
+def jit_enabled():
+  """Force the JIT path (env var unset)."""
+  _enable_jit()
+  yield
 
 
 def test_solver_call_returns_expressions() -> None:
@@ -136,7 +143,7 @@ def test_nested_nlp_in_alloy_function() -> None:
   np.testing.assert_allclose(x_proj, [0.0, 1.0], atol=1e-5)
 
 
-def test_solver_outputs_share_one_solve_per_tape_eval() -> None:
+def test_solver_outputs_share_one_solve_per_tape_eval(interpreter_only) -> None:
   """Distinct outputs of the same solve do not trigger a second solve."""
 
   mu = al.sym("mu", 2)
@@ -183,3 +190,52 @@ def test_solver_outputs_share_one_solve_per_tape_eval() -> None:
   # SOLVER_CALL nodes within a single ``qp.eval_interpreter`` are deduped (one
   # solve per inner tape), but cross-CALL deduplication is a future opt.
   assert call_count["n"] == 3
+
+
+def test_nested_qp_jit_compiles_through_piqp() -> None:
+  """JIT path: render C that links against libpiqpc and drives the solve."""
+  _enable_jit()
+
+  @al.function("safety_filter", {"x": (2,), "u_ref": (2,)})
+  def safety_filter(x, u_ref):
+    P = al.const(np.eye(2))
+    c = -u_ref
+    G = al.stack([al.stack([x[0], x[1]], axis=0)], axis=0)
+    l_ineq = al.stack([al.const(-1.0)], axis=0)
+    u_ineq = al.stack([al.const(1.0)], axis=0)
+    qp = al.qp(P=P, c=c, G_ineq=G, l_ineq=l_ineq, u_ineq=u_ineq)
+    # Keyword form is more readable and avoids the alphabetical-sort gotcha.
+    out = qp.call(
+      x0=al.const(np.zeros(2)),
+      lam_eq0=al.const(np.zeros(0)),
+      lam_ineq0=al.const(np.zeros(1)),
+      x=x,
+      u_ref=u_ref,
+    )
+    return {"u": out[0]}
+
+  u = safety_filter(np.array([1.0, 1.0]), np.array([0.5, 0.5]))
+  # Unconstrained min is u_ref=(0.5,0.5); G*u = 1 = upper bound -> on boundary.
+  np.testing.assert_allclose(u, [0.5, 0.5], atol=1e-3)
+
+  # Same call again exercises the static-workspace update path inside the
+  # compiled solver wrapper.
+  u2 = safety_filter(np.array([1.0, -1.0]), np.array([0.0, 0.0]))
+  np.testing.assert_allclose(u2, [0.0, 0.0], atol=1e-7)
+
+
+def test_nested_qp_call_keyword_form() -> None:
+  """``.call(...)`` accepts keyword arguments to bypass alphabetical sort order."""
+  u_ref = al.sym("u_ref", 2)
+  qp = al.qp(P=al.const(np.eye(2)), c=-u_ref)
+  # Even with one param the kwarg form is order-independent and self-documenting.
+  out_exprs = qp.call(
+    x0=al.const(np.zeros(2)),
+    lam_eq0=al.const(np.zeros(0)),
+    lam_ineq0=al.const(np.zeros(0)),
+    u_ref=u_ref,
+  )
+  assert len(out_exprs) == len(qp.output_names)
+  wrapped = al.Function("wrapped", [u_ref], [out_exprs[0]], ["u_ref"], ["u"])
+  result = wrapped(np.array([1.5, -0.3]))
+  np.testing.assert_allclose(result, [1.5, -0.3], atol=1e-7)

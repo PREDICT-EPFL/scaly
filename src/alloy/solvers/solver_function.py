@@ -131,6 +131,29 @@ class SolverFunction(Function):
   def __repr__(self) -> str:
     return f"SolverFunction({self.name!r}, {self.input_names}->{self.output_names})"
 
+  def call(self, args: Sequence[Any] | None = None, /, **kwargs: Any) -> tuple[Expr, ...]:  # ty: ignore[invalid-method-override]
+    """Embed this solver as a node in a larger expression graph.
+
+    Either positional (list of args in input order) or keyword, matching
+    ``__call__``'s resolution. Returns one ``Expr`` per solver output.
+    """
+    if args is not None and kwargs:
+      raise TypeError("pass positional inputs or keyword inputs, not both")
+    if kwargs:
+      missing = [n for n in self.input_names if n not in kwargs]
+      extra = [n for n in kwargs if n not in self.input_names]
+      if missing or extra:
+        parts: list[str] = []
+        if missing:
+          parts.append(f"missing keyword inputs: {missing}")
+        if extra:
+          parts.append(f"unexpected keyword inputs: {extra}")
+        raise TypeError(", ".join(parts))
+      ordered = [kwargs[n] for n in self.input_names]
+    else:
+      ordered = list(args) if args is not None else []
+    return Function.call(self, ordered)
+
   def __call__(self, *args: Any, **kwargs: Any) -> dict[str, np.ndarray]:  # ty: ignore[invalid-method-override]
     """Run the solver and return a name->array dict.
 
@@ -185,5 +208,3 @@ def coerce_solver_inputs(descriptor: SolverDescriptor, args: Sequence[Any]) -> l
   if len(args) != len(descriptor.input_signature):
     raise TypeError(f"expected {len(descriptor.input_signature)} inputs, got {len(args)}")
   return [_coerce_input(n, s, a) for (n, s), a in zip(descriptor.input_signature, args, strict=True)]
-
-

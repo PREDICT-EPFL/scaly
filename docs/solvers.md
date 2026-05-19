@@ -227,12 +227,22 @@ function theorem AD (KKT-residual adjoints) is future work.
 
 ### Status of the C codegen path
 
-`SOLVER_CALL` is not yet handled by the C renderer, so a Function containing
-a nested solver currently raises `JitUnavailable` at codegen time and the
-parent transparently falls back to the tape interpreter. The interpreter
-itself routes back through the same `ctypes` PIQP/IPOPT path used for direct
-top-level calls. Generating C that drives the vendored libs end-to-end is
-tracked separately below.
+**PIQP — supported.** A SolverFunction with `backend="piqp"` renders to a
+self-contained C function that calls the (also-rendered) oracle, transposes
+QP data to PIQP's column-major layout, lazily sets up a static
+`piqp_workspace`, and dispatches `piqp_update_dense` + `piqp_solve` on every
+call. The JIT auto-adds `-I<alloy/include>`, `-L<alloy/lib>`, `-lpiqpc`, and
+`-Wl,-rpath,<alloy/lib>` to the compile command when a SolverFunction is
+reachable from the function being compiled. This means a nested
+`safety_filter` Function compiles to one `.so` that links directly against
+the vendored `libpiqpc` and is callable from C++ through the universal ABI.
+
+**IPOPT — interpreter fallback.** The IPOPT path still uses the Python
+`ctypes` callback bridge, because IPOPT's callback ABI is non-trivial to
+emit from generated C (each `eval_*` needs to dispatch to the right
+JIT-compiled oracle). For nested IPOPT solvers the parent Function falls
+back to the tape interpreter at codegen time. The Python path is the same
+one used for direct top-level calls.
 
 ## Sign and ordering conventions
 
@@ -259,15 +269,17 @@ Implemented:
 - ctypes bindings to vendored `libpiqpc`/`libipopt`.
 - `Ops.SOLVER_CALL` IR op + `SolverFunction` subclassing `Function`, so
   solvers compose with the rest of the IR.
+- **C codegen for `SOLVER_CALL` (PIQP)**: nested QP solvers render to a single
+  `.so` that links against the vendored `libpiqpc` and runs PIQP without any
+  Python in the hot path.
 - Reference tests against CasADi+IPOPT, analytic KKT solutions, and box-only
   optima (`tests/alloy/test_solvers.py`); nesting tests in
   `tests/alloy/test_solver_nesting.py`.
 
 Deferred (tracked in [`roadmap.md`](roadmap.md)):
 
-- C codegen for `SOLVER_CALL`. The renderer falls back to the interpreter
-  when a tape contains a solver node. Generating C that drives PIQP/IPOPT
-  directly is what enables the C++ harness use case.
+- C codegen for `SOLVER_CALL` (IPOPT). The renderer falls back to the
+  interpreter when a tape contains an IPOPT solver node.
 - A C++ harness driving the safety filter end-to-end through the universal
   ABI.
 - Sparse PIQP backend (current implementation uses the dense interface —
