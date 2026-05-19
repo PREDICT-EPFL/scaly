@@ -8,6 +8,7 @@ from .expr import Expr, atan2, concat, dot, format_expr, gather, map_, maximum, 
 from .function import Function, Port
 from .ops import COMMON_OPS, OP_INFO, Ops
 from .rewrite import Pattern, PatternMatcher, cse, cse_many, rewrite, simplify
+from .solvers import SolverFunction, SolverStatus, nlp, qp
 from .sparsity import (
   SparseJacobian,
   color_groups,
@@ -38,6 +39,8 @@ __all__ = [
   "PatternMatcher",
   "Port",
   "ScalarType",
+  "SolverFunction",
+  "SolverStatus",
   "SparseJacobian",
   "SparsityType",
   "Tape",
@@ -77,7 +80,9 @@ __all__ = [
   "scan",
   "maximum",
   "minimum",
+  "nlp",
   "norm_2",
+  "qp",
   "rewrite",
   "scatter",
   "sparse_hessian",

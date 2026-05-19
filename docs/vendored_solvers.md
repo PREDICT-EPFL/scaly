@@ -34,12 +34,38 @@ Current fix: pick the versioned dylib directly, copy as `libipopt.dylib`, then r
 
 The Linux equivalent (SONAME via `patchelf --set-soname`) is not implemented yet — needed before the manylinux wheel works.
 
-## 4. Things not yet exercised
+## 4. Wheel platform tag — currently mislabeled as pure-Python
+
+**Goal:** each built wheel correctly declares its platform (and is manylinux- / delocate-compatible) so installers resolve it correctly and PyPI accepts upload.
+
+**Current state:** `uv build` produces `alloy-0.1.0-py3-none-any.whl`. The `any` tag is a lie — `src/alloy/lib/*.{dylib,so}` are platform-specific binaries built by `hatch_build.py`.
+
+**Why:** the custom build hook never tells hatchling the wheel is impure. Hatchling defaults to pure-Python when no C extension target is declared, and our hook only emits files into `src/alloy/lib/` without flipping that flag.
+
+**Fix:** two parts, both required.
+
+1. **Correct tagging at build time.** In `hatch_build.py`'s `initialize`, set:
+
+   ```python
+   build_data["pure_python"] = False
+   build_data["infer_tag"] = True
+   ```
+
+   ABI tag stays `none` because the vendored libs are loaded via `ctypes`, not linked as a CPython extension module — there's no Python ABI to bind to. Output becomes `alloy-0.1.0-py3-none-macosx_14_0_arm64.whl` / `alloy-0.1.0-py3-none-linux_x86_64.whl` per build host.
+
+2. **Repair before distribution.** A correct tag is necessary but not sufficient; PyPI rejects raw `linux_*` and the wheel may still pull in host-specific shared libs.
+   - **Linux:** run `auditwheel repair` on the wheel. It rewrites `linux_x86_64` → the lowest manylinux baseline that the binary actually satisfies (target: `manylinux_2_28_x86_64`) and bundles / patchelfs any non-allowlisted shared libs into the wheel. Depends on the Linux half of issue #1 (static libgfortran/libgcc/libstdc++) and the SONAME gap noted in issue #3 to actually pass.
+   - **macOS:** run `delocate-wheel`. Equivalent operation: copies dylib dependencies into the wheel and rewrites install names against `@loader_path`. Currently would pull in Homebrew `libgfortran.5.dylib` and `libquadmath.0.dylib` — blocks on the macOS half of issue #1.
+   - **Matrix:** arm64 / x86_64 on each OS are separate wheels; build each on its native runner (or via `cibuildwheel` in the eventual `wheels.yml`) and upload the full set.
+
+**Renaming is not a substitute.** The wheel's `*.dist-info/WHEEL` file records a `Tag:` line that installers cross-check against the filename. A wheel renamed from `py3-none-any.whl` to `py3-none-macosx_14_0_arm64.whl` still claims `any` internally and fails strict validation. Independently, PyPI refuses uploads with raw `linux_*` tags — only `manylinux_*` / `musllinux_*` are accepted, and those tags are contracts about glibc baseline and bundled deps, not free-form labels.
+
+## 5. Things not yet exercised
 
 - **CI cache key.** Keyed on `hashFiles('hatch_build.py')`. If we later split the hook into multiple files, update the key. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot.
 - **Solver bindings.** The hatch hook ships the libraries; Phase 5's actual `al.qp(...)` / `al.nlp(...)` bindings on top of them are still TODO.
 
-## 5. ThirdParty version pins (as of 2026-05-19)
+## 6. ThirdParty version pins (as of 2026-05-19)
 
 ```
 IPOPT_BRANCH    = "releases/3.14.19"
