@@ -17,6 +17,7 @@ through ``uses_piqp(...)`` / ``uses_ipopt(...)``.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from alloy.function import Function
@@ -24,6 +25,21 @@ from alloy.ops import Ops
 
 if TYPE_CHECKING:
   from alloy.solvers.solver_function import SolverDescriptor
+
+
+def _alloy_package_root() -> Path:
+  # codegen/ is alloy/codegen/; package root is alloy/.
+  return Path(__file__).resolve().parent.parent
+
+
+def solver_include_dir() -> Path:
+  """Return the directory holding the vendored solver C headers."""
+  return _alloy_package_root() / "include"
+
+
+def solver_lib_dir() -> Path:
+  """Return the directory holding the vendored solver shared libraries."""
+  return _alloy_package_root() / "lib"
 
 
 def _c_ident(name: str) -> str:
@@ -114,6 +130,35 @@ def solver_includes(fun: Function) -> list[str]:
   if uses_ipopt(fun):
     out.append('#include "coin-or/IpStdCInterface.h"')
   return out
+
+
+def solver_compile_flags(fun: Function, *, rpath: bool = True) -> list[str]:
+  """Compiler/linker flags an AOT consumer needs for ``fun``.
+
+  Returns ``[]`` when ``fun`` does not transitively reach any solver.
+  Otherwise: ``-I<alloy/include>``, ``-L<alloy/lib>``, ``-lpiqpc`` /
+  ``-lipopt`` (whichever apply), and an ``-Wl,-rpath`` pointing at the
+  vendored lib directory so the resulting binary finds the shared libs at
+  load time without ``LD_LIBRARY_PATH`` / ``DYLD_LIBRARY_PATH`` overrides.
+
+  Set ``rpath=False`` if the consumer plans to bundle the libs elsewhere and
+  will set the rpath / install_name themselves.
+  """
+  flags: list[str] = []
+  needs_piqp = uses_piqp(fun)
+  needs_ipopt = uses_ipopt(fun)
+  if not (needs_piqp or needs_ipopt):
+    return flags
+  include_dir = solver_include_dir()
+  lib_dir = solver_lib_dir()
+  flags.extend([f"-I{include_dir}", f"-L{lib_dir}"])
+  if rpath:
+    flags.append(f"-Wl,-rpath,{lib_dir}")
+  if needs_piqp:
+    flags.append("-lpiqpc")
+  if needs_ipopt:
+    flags.append("-lipopt")
+  return flags
 
 
 def solver_workspace(fun: Function) -> int:
@@ -272,14 +317,17 @@ _IPOPT_INF = 2e19
 
 
 def _ipopt_option_call(key: str, val: object) -> str:
+  # IPOPT's StdCInterface declares ``char*`` (not ``const char*``) for option
+  # keys and string values. The casts keep C++ consumers happy under
+  # ``-Wwritable-strings`` without changing C semantics.
   if isinstance(val, bool):
-    return f'AddIpoptIntOption(problem, "{key}", {1 if val else 0})'
+    return f'AddIpoptIntOption(problem, (char*)"{key}", {1 if val else 0})'
   if isinstance(val, int):
-    return f'AddIpoptIntOption(problem, "{key}", {val})'
+    return f'AddIpoptIntOption(problem, (char*)"{key}", {val})'
   if isinstance(val, float):
-    return f'AddIpoptNumOption(problem, "{key}", {val})'
+    return f'AddIpoptNumOption(problem, (char*)"{key}", {val})'
   if isinstance(val, str):
-    return f'AddIpoptStrOption(problem, "{key}", "{val}")'
+    return f'AddIpoptStrOption(problem, (char*)"{key}", (char*)"{val}")'
   raise NotImplementedError(f"IPOPT option {key}={val!r} cannot be lowered to C")
 
 

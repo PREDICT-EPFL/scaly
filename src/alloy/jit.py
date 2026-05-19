@@ -26,7 +26,7 @@ import numpy as np
 
 from .abi import C_API_SIGNATURE
 from .codegen.c import _c_ident, render_c_source
-from .codegen.solver_c import uses_ipopt, uses_piqp
+from .codegen.solver_c import solver_compile_flags
 
 if TYPE_CHECKING:
   from .function import Function
@@ -105,38 +105,6 @@ _artifact_cache: dict[str, _Artifact] = {}
 _artifact_lock = threading.Lock()
 
 
-def _alloy_package_root() -> Path:
-  return Path(__file__).resolve().parent
-
-
-def _solver_compile_flags(fun: Function) -> list[str]:
-  """Extra compiler/linker flags when ``fun`` transitively uses PIQP/IPOPT.
-
-  Adds ``-I<alloy/include>`` for the vendored solver headers, and links
-  against ``-lpiqpc``/``-lipopt`` from ``<alloy/lib>`` with an ``-rpath`` so
-  the produced ``.so`` finds them at load time without ``LD_LIBRARY_PATH``.
-  """
-  pkg = _alloy_package_root()
-  include_dir = pkg / "include"
-  lib_dir = pkg / "lib"
-  flags: list[str] = []
-  needs_piqp = uses_piqp(fun)
-  needs_ipopt = uses_ipopt(fun)
-  if not (needs_piqp or needs_ipopt):
-    return flags
-  flags.extend([f"-I{include_dir}", f"-L{lib_dir}"])
-  # Use a hard-coded absolute rpath; the vendored libs ship inside the package.
-  if sys.platform == "darwin":
-    flags.append(f"-Wl,-rpath,{lib_dir}")
-  else:
-    flags.append(f"-Wl,-rpath,{lib_dir}")
-  if needs_piqp:
-    flags.append("-lpiqpc")
-  if needs_ipopt:
-    flags.append("-lipopt")
-  return flags
-
-
 def _build_artifact(fun: Function) -> _Artifact:
   """Render, compile (if needed), and return a path to ``fun``'s cached shared object.
 
@@ -169,7 +137,7 @@ def _build_artifact(fun: Function) -> _Artifact:
     tmp_source = source_path.with_suffix(source_path.suffix + ".tmp")
     tmp_source.write_text(source)
     tmp_source.replace(source_path)
-    extra_flags = _solver_compile_flags(fun)
+    extra_flags = solver_compile_flags(fun)
     cmd = [cc, "-O2", "-fPIC", _shared_lib_flag(), *extra_flags, str(source_path), "-lm", "-o", str(lib_path)]
     try:
       subprocess.run(cmd, check=True, capture_output=True, text=True)

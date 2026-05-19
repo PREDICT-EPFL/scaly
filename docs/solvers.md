@@ -225,6 +225,63 @@ The `SOLVER_CALL` op is marked non-differentiable; `al.jacobian` /
 `al.gradient` / sparse-pattern queries through it return zero. Implicit
 function theorem AD (KKT-residual adjoints) is future work.
 
+### AOT: integrating a generated solver into a C++ application
+
+The same `render_c_module(fun)` path used by the existing benchmarks works
+for solver-containing Functions; the only extra thing the consumer needs is
+to know which solver libs to link against. ``alloy.codegen.solver_c`` exposes
+that:
+
+```python
+from alloy.codegen.c import render_c_module
+from alloy.codegen.solver_c import solver_compile_flags
+
+module = render_c_module(safety_filter, typed_buffers=False)
+(out_dir / module.header_name).write_text(module.header)
+(out_dir / module.source_name).write_text(module.source)
+flags = solver_compile_flags(safety_filter)
+# -> ['-I/.../alloy/include', '-L/.../alloy/lib',
+#     '-Wl,-rpath,/.../alloy/lib', '-lpiqpc']  (and/or '-lipopt')
+```
+
+`solver_compile_flags` returns the include/lib/rpath/library flags as a
+list, ready to splice into a `subprocess.run(...)` invocation of `cc` /
+`c++`. Pass `rpath=False` if you'll bundle the libs into your own
+install tree and set the rpath yourself.
+
+A minimal C++ driver against the universal ABI looks like:
+
+```cpp
+#include "safety_filter.h"
+#include <cstdio>
+
+int main() {
+    double x[NX] = {/* state */};
+    double u_ref[NU] = {/* reference */};
+    double u[NU];
+    const double* arg[] = {x, u_ref};
+    double* res[] = {u};
+    double w[(safety_filter_SZ_W > 0 ? safety_filter_SZ_W : 1)];
+    int rc = safety_filter(arg, res, nullptr, w, nullptr);
+    return rc;
+}
+```
+
+A full Google-Benchmark example (PIQP variant + IPOPT variant) lives at
+`benchmarks/alloy_safety_filter_benchmark.py`:
+
+```bash
+uv run python benchmarks/alloy_safety_filter_benchmark.py \
+    --variant both -- --benchmark_min_time=0.05s
+```
+
+That script generates two safety filters (a CBF-style QP and the same shape
+routed through IPOPT), writes the rendered headers/sources to
+`benchmarks/gen/alloy_safety_filter/`, links them against the vendored
+solver libs via `solver_compile_flags`, and runs Google Benchmark on the
+AOT-compiled binaries. On a recent macOS arm64 dev box the QP path lands
+around 4 µs per solve, the NLP path around 450 µs.
+
 ### Status of the C codegen path
 
 **Both backends supported.** A SolverFunction renders to a self-contained C
