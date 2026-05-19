@@ -32,6 +32,8 @@ class Expr:
   attrs: dict[str, Any] = field(default_factory=dict)
   lowering: Lowering = "auto"
   id: int = field(default_factory=_fresh_id)
+  # Frozen → safe to cache. Populated lazily by structural_key on first call.
+  _key_cache: tuple[Any, ...] | None = field(default=None, init=False, repr=False, compare=False)
 
   __array_priority__ = 1000
 
@@ -57,8 +59,11 @@ class Expr:
     return self.type.size
 
   def structural_key(self) -> tuple[Any, ...]:
+    cached = self._key_cache
+    if cached is not None:
+      return cached
     value_key = None if self.value is None else (self.value.shape, str(self.value.dtype), self.value.tobytes())
-    return (
+    key = (
       Ops(self.op).value,
       self.name,
       self.type.shape,
@@ -69,6 +74,8 @@ class Expr:
       value_key,
       tuple(arg.structural_key() for arg in self.args),
     )
+    object.__setattr__(self, "_key_cache", key)
+    return key
 
   def structural_hash(self) -> int:
     return hash(self.structural_key())
