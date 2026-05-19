@@ -39,7 +39,7 @@ from alloy.codegen.c import render_c_module
 from alloy.codegen.solver_c import solver_compile_flags
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BUILD_DIR = ROOT / "benchmarks" / "gen" / "alloy_safety_filter"
+DEFAULT_BUILD_DIR = ROOT / "benchmarks" / "gen" / "alloy_solver_aot_demo"
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:

@@ -267,20 +267,27 @@ int main() {
 }
 ```
 
-A full Google-Benchmark example (PIQP variant + IPOPT variant) lives at
-`benchmarks/alloy_safety_filter_benchmark.py`:
+A small Google-Benchmark example (PIQP variant + IPOPT variant) exercising
+this AOT path lives at `benchmarks/alloy_solver_aot_demo.py`:
 
 ```bash
-uv run python benchmarks/alloy_safety_filter_benchmark.py \
+uv run python benchmarks/alloy_solver_aot_demo.py \
     --variant both -- --benchmark_min_time=0.05s
 ```
 
-That script generates two safety filters (a CBF-style QP and the same shape
-routed through IPOPT), writes the rendered headers/sources to
-`benchmarks/gen/alloy_safety_filter/`, links them against the vendored
+That script generates two toy safety filters (a CBF-style QP and the same
+shape routed through IPOPT), writes the rendered headers/sources to
+`benchmarks/gen/alloy_solver_aot_demo/`, links them against the vendored
 solver libs via `solver_compile_flags`, and runs Google Benchmark on the
 AOT-compiled binaries. On a recent macOS arm64 dev box the QP path lands
 around 4 µs per solve, the NLP path around 450 µs.
+
+The realistic safety-filter workload (7-state bicycle + 256/128 MLP,
+HOCBF pair + wall constraints — see [`safety_filter.md`](safety_filter.md))
+lives separately at `benchmarks/alloy_safety_filter_benchmark.py` and times
+the constraint/cost forward + derivative pieces that an external QP/NLP
+solver would call. Wiring it onto a solver via this AOT path is the next
+step.
 
 ### Status of the C codegen path
 
