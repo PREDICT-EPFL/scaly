@@ -489,6 +489,12 @@ _INLINE_UNARY = {
   Ops.SQRT: "sqrt",
   Ops.ABS: "fabs",
 }
+# Expensive unaries lower to a libm call. Inlining them into a vector consumer (where the
+# consumer's elementwise rendering replays the inline once per scalar position) puts the
+# same ``sin(x)`` / ``exp(x)`` text in the C source N times. The C compiler can CSE
+# pure-libm calls under ``-O2``, but it doesn't always — and it costs source size either
+# way. Keep these in scratch slots when the broadcast factor exceeds 1.
+_EXPENSIVE_UNARY = {Ops.SIN, Ops.COS, Ops.TAN, Ops.ASIN, Ops.ACOS, Ops.ATAN, Ops.SINH, Ops.COSH, Ops.TANH, Ops.EXP, Ops.LOG, Ops.SQRT}
 _INLINE_BINARY = {Ops.ADD: "+", Ops.SUB: "-", Ops.MUL: "*", Ops.DIV: "/"}
 
 
@@ -505,6 +511,30 @@ def _inline_read(inst: Instruction, idx: str, inline: dict[int, InlineReader]) -
   return f"{_value_ref(inst)}[{'0' if inst.size == 1 else idx}]"
 
 
+def _effective_inline_size(
+  consumer: Instruction, instructions: tuple[Instruction, ...], uses: dict[int, list[Instruction]], consumer_ops: set, max_depth: int = 8
+) -> int:
+  """Estimate the largest rendered size the immediate consumer would replicate into. Walks
+  up the consumer chain past inline-eligible nodes (single-use elementwise ops) until it
+  hits a non-inlineable consumer or runs out of depth. Used to gate expensive-unary inlining
+  so a libm call doesn't get replayed at every scalar position of a size-N broadcast."""
+  size = consumer.size
+  cur = consumer
+  for _ in range(max_depth):
+    # Would ``cur`` itself be inlineable? Same predicate as ``_inline_scalar_table`` head.
+    if cur.op not in consumer_ops:
+      break
+    cur_uses = uses.get(cur.index, [])
+    if len(cur_uses) != 1:
+      break
+    cur_args = tuple(instructions[i] for i in cur.inputs)
+    if not all(a.shape == cur.shape or a.size == 1 for a in cur_args):
+      break
+    cur = cur_uses[0]
+    size = max(size, cur.size)
+  return size
+
+
 def _inline_scalar_table(tape, uses: dict[int, list[Instruction]], skip: set[int]) -> dict[int, InlineReader]:
   inline: dict[int, InlineReader] = {}
   for inst in tape.instructions:
@@ -516,6 +546,16 @@ def _inline_scalar_table(tape, uses: dict[int, list[Instruction]], skip: set[int
     args = tuple(tape.instructions[i] for i in inst.inputs)
     if not all(arg.shape == inst.shape or arg.size == 1 for arg in args):
       continue
+    # Expensive unaries (libm calls) get replayed once per scalar position whenever the
+    # surrounding rendered context has a higher broadcast size than the inst itself. The
+    # immediate consumer may be size-equal to inst (e.g. NEG of SIN where both are size 1)
+    # while its own consumer up the chain is the size-N vector that replicates everything
+    # down to the leaves. Walk through inlined consumers to find the effective rendered
+    # size, and bail out if the libm call would get duplicated.
+    if inst.op in _EXPENSIVE_UNARY:
+      rendered_size = _effective_inline_size(consumers[0], tape.instructions, uses, _INLINE_CONSUMER_OPS)
+      if rendered_size > inst.size:
+        continue
     if inst.op in _INLINE_UNARY:
       op = _INLINE_UNARY[inst.op]
       arg = args[0]
