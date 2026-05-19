@@ -712,10 +712,15 @@ def basis(shape: tuple[int, ...], index: int) -> Expr:
 
 
 def jacobian(expr: Expr, wrt: Expr) -> Expr:
-  cols = [jvp(expr, wrt, basis(wrt.shape, i)).reshape((expr.size,)) for i in range(wrt.size)]
-  if not cols:
+  if wrt.size == 0:
     return Expr.const(np.zeros((expr.size, 0), dtype=np.float64))
-  return stack(cols, axis=1)
+  # Batched forward AD: stack the wrt.size identity columns as a (wrt.size, *wrt.shape) seed and
+  # push them through jvp_many. The structural multi-seed rules share cos/sin/exp across columns
+  # and turn per-column chain-rule unrolls into small matmuls. Falls back to column-by-column jvp
+  # only if jvp_many hits an unsupported op. Output is reshaped from (wrt.size, expr.size) →
+  # (expr.size, wrt.size) so column j of the Jacobian = partial expr / partial wrt[j].
+  seed_arr = np.eye(wrt.size, dtype=np.float64).reshape((wrt.size, *wrt.shape))
+  return jvp_many(expr, wrt, Expr.const(seed_arr)).reshape((wrt.size, expr.size)).transpose((1, 0))
 
 
 def gradient(expr: Expr, wrt: Expr) -> Expr:
