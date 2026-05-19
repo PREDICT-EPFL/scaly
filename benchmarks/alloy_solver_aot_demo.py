@@ -1,21 +1,26 @@
-"""Google Benchmark harness for AOT-compiled Alloy safety filters.
+"""AOT demo: SOLVER_CALL nodes lowered to a C-callable ``.so``.
 
-Generates two flavors of a small CBF-style safety filter — a QP variant
-(driven by PIQP) and an NLP variant (driven by IPOPT) — each as a single
-``Function`` whose body contains a nested ``SOLVER_CALL``. The Function is
-rendered through the same `render_c_module(...)` path that powers the
-existing tracking / unbumpercars benchmarks; the only new wrinkle is the
-vendored PIQP / IPOPT link, which comes from
-``alloy.codegen.solver_c.solver_compile_flags(...)``.
+This is a deliberately *toy* CBF-style safety filter — single-integrator
+dynamics, two cars, three obstacles — wired around ``al.qp(...)`` /
+``al.nlp(...)``. Its purpose is to exercise the ``Ops.SOLVER_CALL`` ⇒ C
+codegen path end-to-end: the rendered source includes the vendored solver
+headers and links against ``libpiqpc`` / ``libipopt`` through
+``alloy.codegen.solver_c.solver_compile_flags``, so the resulting binary
+runs PIQP/IPOPT with no Python in the hot path.
+
+For the realistic safety-filter workload (7-state bicycle + 256/128 MLP),
+see ``benchmarks/alloy_safety_filter_benchmark.py``, which times the
+constraint/cost forward + derivative pieces that an external QP/NLP solver
+would call. Eventually that workload will plug into a solver via this AOT
+path — at which point this demo can be removed.
 
 Run via::
 
-    uv run python benchmarks/alloy_safety_filter_benchmark.py \\
+    uv run python benchmarks/alloy_solver_aot_demo.py \\
         -- --benchmark_min_time=0.05s
 
 Pass ``--variant qp`` / ``--variant nlp`` / ``--variant both`` (default) to
-pick which filter(s) to build. Per-call runtime, generated source size, and
-compile time are printed alongside the Google Benchmark output.
+pick which filter(s) to build.
 """
 
 from __future__ import annotations
