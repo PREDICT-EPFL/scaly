@@ -44,6 +44,26 @@ def _shared_lib_name(system: str, base: str) -> str:
   raise RuntimeError(f"Unsupported platform: {system}")
 
 
+def _find_fortran_compiler() -> str:
+  """Locate a Fortran 90 compiler.
+
+  Homebrew's `gcc` formula on macOS runners ships gfortran as the versioned binary
+  `gfortran-15` (or `-14`, `-13`, …) without an unversioned `gfortran` symlink. Autoconf's
+  default FC detection only probes `gfortran`/`f95`/`f90`, so we need to hand it the
+  explicit path. Linux ships an unversioned `gfortran` from `apt install gfortran`, so
+  the first candidate hits there.
+  """
+  candidates = ["gfortran", "gfortran-15", "gfortran-14", "gfortran-13", "gfortran-12", "gfortran-11"]
+  for name in candidates:
+    path = shutil.which(name)
+    if path:
+      return path
+  raise RuntimeError(
+    "No Fortran compiler found in PATH. Install gfortran via `brew install gcc` (macOS) "
+    "or `sudo apt-get install gfortran` (Linux)."
+  )
+
+
 def _static_fortran_ldflags(system: str) -> str:
   """Flags that ask gfortran to statically pull libgfortran/libgcc into the linked shared lib.
 
@@ -304,6 +324,7 @@ def _build_mumps(
   metis_install: Path,
   lapack_lflags: str,
   static_ldflags: str,
+  fc: str,
 ) -> Path:
   marker = install_dir / "lib"
   if marker.exists() and any(marker.glob("libcoinmumps*")):
@@ -318,7 +339,7 @@ def _build_mumps(
   jobs = str(os.cpu_count() or 2)
   metis_cflags = f"-I{(metis_install / 'include' / 'coin-or' / 'metis').resolve()}"
   metis_lflags = f"-L{(metis_install / 'lib').resolve()} -lcoinmetis"
-  hook.app.display_info("Configuring MUMPS...")
+  hook.app.display_info(f"Configuring MUMPS (FC={fc})...")
   configure_args = [
     "./configure",
     f"--prefix={install_dir.resolve()}",
@@ -327,6 +348,7 @@ def _build_mumps(
     f"--with-metis-cflags={metis_cflags}",
     f"--with-metis-lflags={metis_lflags}",
     f"--with-lapack-lflags={lapack_lflags}",
+    f"FC={fc}",
   ]
   if static_ldflags:
     configure_args.append(f"FCFLAGS={static_ldflags}")
@@ -345,6 +367,7 @@ def _build_ipopt(
   metis_install: Path,
   lapack_lflags: str,
   static_ldflags: str,
+  fc: str,
 ) -> Path:
   src_dir = third_party_dir / "Ipopt"
   _coinor_clone(hook, "https://github.com/coin-or/Ipopt.git", IPOPT_BRANCH, src_dir)
@@ -357,7 +380,7 @@ def _build_ipopt(
   )
   build_dir = src_dir / "build"
   build_dir.mkdir(exist_ok=True)
-  hook.app.display_info("Configuring IPOPT...")
+  hook.app.display_info(f"Configuring IPOPT (FC={fc})...")
   configure_args = [
     "../configure",
     f"--prefix={install_dir.resolve()}",
@@ -367,6 +390,7 @@ def _build_ipopt(
     f"--with-mumps-cflags={mumps_cflags}",
     f"--with-mumps-lflags={mumps_lflags}",
     f"--with-lapack-lflags={lapack_lflags}",
+    f"FC={fc}",
   ]
   if static_ldflags:
     configure_args.append(f"FCFLAGS={static_ldflags}")
@@ -400,6 +424,8 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     raise RuntimeError(f"Unsupported platform: {system}")
 
   static_ldflags = _static_fortran_ldflags(system)
+  fc = _find_fortran_compiler()
+  hook.app.display_info(f"Using Fortran compiler: {fc}")
 
   metis_install = _build_metis(hook, third_party_dir, third_party_dir / "metis_install")
   mumps_install = _build_mumps(
@@ -409,6 +435,7 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     metis_install,
     lapack_lflags,
     static_ldflags,
+    fc,
   )
   ipopt_install = _build_ipopt(
     hook,
@@ -418,6 +445,7 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     metis_install,
     lapack_lflags,
     static_ldflags,
+    fc,
   )
 
   # Copy the shared lib and headers out into src/alloy/.
