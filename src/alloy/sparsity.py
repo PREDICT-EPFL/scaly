@@ -55,7 +55,7 @@ def sparse_jacobian_colored(expr: Expr, wrt: Expr) -> SparseJacobian:
   """
 
   from .ad import jvp_many
-  from .rewrite import cse, simplify
+  from .rewrite import cse, simplify_cse_fixpoint
 
   expr = cse(expr)
   sparsity = jacobian_sparsity(expr, wrt)
@@ -71,7 +71,7 @@ def sparse_jacobian_colored(expr: Expr, wrt: Expr) -> SparseJacobian:
   rows = np.asarray(sparsity.rows, dtype=np.int64)
   cols = np.asarray(sparsity.cols, dtype=np.int64)
   color_of_nnz = np.asarray([colors[int(col)] for col in cols], dtype=np.int64)
-  return SparseJacobian(sparsity, simplify(cse(gather(compressed, rows * ncolors + color_of_nnz))))
+  return SparseJacobian(sparsity, simplify_cse_fixpoint(gather(compressed, rows * ncolors + color_of_nnz)))
 
 
 def sparse_jacobian(expr: Expr, wrt: Expr) -> SparseJacobian:
@@ -94,7 +94,7 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
   if pieces is None or not any(piece.op == Ops.MAP for piece, _ in pieces):
     return None
 
-  from .rewrite import cse, simplify
+  from .rewrite import simplify_cse_fixpoint
 
   global_rows: list[int] = []
   global_cols: list[int] = []
@@ -116,7 +116,7 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
     return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=np.float64)))
   values = global_values[0] if len(global_values) == 1 else concat(global_values, axis=0)
   _ = total_rows  # documentation: piece row offsets cover [0, total_rows)
-  return SparseJacobian(sparsity, simplify(cse(values)))
+  return SparseJacobian(sparsity, simplify_cse_fixpoint(values))
 
 
 def _split_axis0_pieces(expr: Expr) -> list[tuple[Expr, int]] | None:

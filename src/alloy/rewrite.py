@@ -69,6 +69,22 @@ def cse(expr: Expr) -> Expr:
   return cse_many([expr])[0]
 
 
+def simplify_cse_fixpoint(expr: Expr, max_rounds: int = 4) -> Expr:
+  """Run simplify ↔ cse to a fixpoint.
+
+  CSE folds structurally-identical subgraphs, which can unlock simplifications (e.g. ``x - x``
+  rewrites to zero only after both sides become the same node). simplify can in turn create
+  newly-identical subgraphs (``x + 0`` rewrites both sides to ``x``). The fixpoint alternates
+  the two passes until the graph stops shrinking.
+  """
+  for _ in range(max_rounds):
+    new = simplify(cse(expr))
+    if new is expr:
+      return expr
+    expr = new
+  return expr
+
+
 def cse_many(outputs: Iterable[Expr]) -> tuple[Expr, ...]:
   outputs = tuple(outputs)
   memo: dict[tuple[Any, ...], Expr] = {}
@@ -157,7 +173,21 @@ def _sub_identity(e: Expr) -> Expr:
     return zeros_like(e)
   if _is_zero(y) and _same_shape_as_result(x, e):
     return x
+  if _is_zero(x) and _same_shape_as_result(y, e):
+    return -y
   return e
+
+
+def _neg_of_neg(e: Expr) -> Expr:
+  return e.args[0].args[0]
+
+
+def _zero_unary(e: Expr) -> Expr:
+  return zeros_like(e)
+
+
+def _all_args_zero(e: Expr) -> bool:
+  return bool(e.args) and all(_is_zero(a) for a in e.args)
 
 
 def _mul_identity_or_zero(e: Expr) -> Expr:
@@ -255,12 +285,18 @@ def _slice_of_stack(e: Expr) -> Expr:
 SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(None, _all_args_const, _constant_fold),
   Pattern(Ops.ADD, lambda e: e.args[0] is e.args[1] or _is_zero(e.args[0]) or _is_zero(e.args[1]), _add_identity),
-  Pattern(Ops.SUB, lambda e: e.args[0] is e.args[1] or _is_zero(e.args[1]), _sub_identity),
+  Pattern(Ops.SUB, lambda e: e.args[0] is e.args[1] or _is_zero(e.args[0]) or _is_zero(e.args[1]), _sub_identity),
   Pattern(Ops.MUL, lambda e: _is_zero(e.args[0]) or _is_zero(e.args[1]) or _is_one(e.args[0]) or _is_one(e.args[1]), _mul_identity_or_zero),
   Pattern(Ops.DIV, lambda e: e.args[0] is e.args[1] or _is_one(e.args[1]), _div_identity),
+  Pattern(Ops.NEG, lambda e: e.args[0].op == Ops.NEG, _neg_of_neg),
   Pattern(Ops.RESHAPE, lambda e: e.args[0].shape == e.shape, _reshape_identity),
   Pattern(Ops.TRANSPOSE, lambda e: e.attrs["axes"] == tuple(range(len(e.attrs["axes"]))), _transpose_identity),
   Pattern(Ops.MATMUL, lambda e: _is_zero(e.args[0]) or _is_zero(e.args[1]), _matmul_zero),
+  Pattern(Ops.SUM, lambda e: _is_zero(e.args[0]), _zero_unary),
+  Pattern(Ops.GATHER, lambda e: _is_zero(e.args[0]), _zero_unary),
+  Pattern(Ops.SCATTER, lambda e: _is_zero(e.args[0]), _zero_unary),
+  Pattern(Ops.STACK, _all_args_zero, _zero_unary),
+  Pattern(Ops.CONCAT, _all_args_zero, _zero_unary),
   Pattern(Ops.SLICE, _slice_of_stack_full, _slice_of_stack),
   Pattern(Ops.SLICE, _slice_of_slice_step1, _slice_of_slice),
 )

@@ -173,14 +173,14 @@ def _call_jvp_many_const_function(
   key = (id(callee), output_index, formal_index, tuple(seed_value.shape), seed_value.tobytes())
   if key not in _CALL_JVP_MANY_CONST_CACHE:
     from .function import Function
-    from .rewrite import cse, simplify
+    from .rewrite import simplify_cse_fixpoint
 
     formal = callee.inputs[formal_index]
     out = callee.outputs[output_index]
     flat_seed = seed_value.reshape((seed_value.shape[0], -1))
     active = tuple(int(i) for i in np.nonzero(np.any(flat_seed != 0, axis=1))[0])
     seed = Expr.const(seed_value[list(active)])
-    deriv = simplify(cse(_jvp_many_unrolled(out, formal, seed)))
+    deriv = simplify_cse_fixpoint(_jvp_many_unrolled(out, formal, seed))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices)
@@ -196,12 +196,12 @@ def _call_jvp_many_function(callee: Any, output_index: int, formal_index: int, n
   key = (id(callee), output_index, formal_index, nseed)
   if key not in _CALL_JVP_MANY_CACHE:
     from .function import Function
-    from .rewrite import cse, simplify
+    from .rewrite import simplify_cse_fixpoint
 
     formal = callee.inputs[formal_index]
     seed = Expr.sym(f"fwd:{callee.input_names[formal_index]}", (nseed, *formal.shape))
     out = callee.outputs[output_index]
-    deriv = simplify(cse(_jvp_many_unrolled(out, formal, seed)))
+    deriv = simplify_cse_fixpoint(_jvp_many_unrolled(out, formal, seed))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
     takes_seed = _depends_on(deriv, seed, dep_memo)
@@ -295,7 +295,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     memo[expr.id] = ret = stack([d0[i].sum() for i in range(nseed)], axis=0)
     return ret
   if expr.op == Ops.MAP:
-    from .rewrite import cse, simplify
+    from .rewrite import simplify_cse_fixpoint
     from .sparsity import _jac_mask, column_coloring
     from .types import SparsityType
 
@@ -309,7 +309,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
 
     ret: Expr | None = None
     for formal_idx, actual_outer in enumerate(expr.args):
-      actual_tan = simplify(cse(_jvp_many_structural(actual_outer, wrt, seeds, memo, dep_memo)))
+      actual_tan = simplify_cse_fixpoint(_jvp_many_structural(actual_outer, wrt, seeds, memo, dep_memo))
       if _is_zero_const(actual_tan):
         continue
       formal = callee.inputs[formal_idx]
@@ -381,11 +381,11 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64)) if ret is None else ret
     return ret
   if expr.op == Ops.CALL:
-    from .rewrite import cse, simplify
+    from .rewrite import simplify_cse_fixpoint
 
     ret: Expr | None = None
     for formal_idx, actual in enumerate(expr.args):
-      actual_tan = simplify(cse(_jvp_many_structural(actual, wrt, seeds, memo, dep_memo)))
+      actual_tan = simplify_cse_fixpoint(_jvp_many_structural(actual, wrt, seeds, memo, dep_memo))
       if _is_zero_const(actual_tan):
         continue
       if actual_tan.op == Ops.CONST and actual_tan.value is not None:
@@ -719,8 +719,10 @@ def jacobian(expr: Expr, wrt: Expr) -> Expr:
   # and turn per-column chain-rule unrolls into small matmuls. Falls back to column-by-column jvp
   # only if jvp_many hits an unsupported op. Output is reshaped from (wrt.size, expr.size) →
   # (expr.size, wrt.size) so column j of the Jacobian = partial expr / partial wrt[j].
+  from .rewrite import simplify_cse_fixpoint
+
   seed_arr = np.eye(wrt.size, dtype=np.float64).reshape((wrt.size, *wrt.shape))
-  return jvp_many(expr, wrt, Expr.const(seed_arr)).reshape((wrt.size, expr.size)).transpose((1, 0))
+  return simplify_cse_fixpoint(jvp_many(expr, wrt, Expr.const(seed_arr)).reshape((wrt.size, expr.size)).transpose((1, 0)))
 
 
 def gradient(expr: Expr, wrt: Expr) -> Expr:
