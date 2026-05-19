@@ -224,6 +224,28 @@ def test_nested_qp_jit_compiles_through_piqp() -> None:
   np.testing.assert_allclose(u2, [0.0, 0.0], atol=1e-7)
 
 
+def test_nested_nlp_jit_compiles_through_ipopt() -> None:
+  """JIT path for an NLP: projects (target) onto the unit circle."""
+  _enable_jit()
+
+  @al.function("proj_circle", {"target": (2,)})
+  def proj(target):
+    x = al.sym("x_inner", 2)
+    f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2
+    h_eq = al.stack([x[0] ** 2 + x[1] ** 2 - 1.0], axis=0)
+    nlp = al.nlp(x=x, f=f, p=target, h_eq=h_eq)
+    out = nlp.call(
+      x0=al.const(np.array([1.0, 0.0])),
+      lam_eq0=al.const(np.zeros(1)),
+      lam_ineq0=al.const(np.zeros(0)),
+      target=target,
+    )
+    return {"x_proj": out[0]}
+
+  np.testing.assert_allclose(proj(np.array([2.0, 0.0])), [1.0, 0.0], atol=1e-5)
+  np.testing.assert_allclose(proj(np.array([0.0, 3.0])), [0.0, 1.0], atol=1e-5)
+
+
 def test_nested_qp_call_keyword_form() -> None:
   """``.call(...)`` accepts keyword arguments to bypass alphabetical sort order."""
   u_ref = al.sym("u_ref", 2)

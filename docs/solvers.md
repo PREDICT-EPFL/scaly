@@ -227,22 +227,29 @@ function theorem AD (KKT-residual adjoints) is future work.
 
 ### Status of the C codegen path
 
-**PIQP — supported.** A SolverFunction with `backend="piqp"` renders to a
-self-contained C function that calls the (also-rendered) oracle, transposes
-QP data to PIQP's column-major layout, lazily sets up a static
-`piqp_workspace`, and dispatches `piqp_update_dense` + `piqp_solve` on every
-call. The JIT auto-adds `-I<alloy/include>`, `-L<alloy/lib>`, `-lpiqpc`, and
-`-Wl,-rpath,<alloy/lib>` to the compile command when a SolverFunction is
-reachable from the function being compiled. This means a nested
-`safety_filter` Function compiles to one `.so` that links directly against
-the vendored `libpiqpc` and is callable from C++ through the universal ABI.
+**Both backends supported.** A SolverFunction renders to a self-contained C
+function that drives PIQP (dense QP) or IPOPT (NLP).
 
-**IPOPT — interpreter fallback.** The IPOPT path still uses the Python
-`ctypes` callback bridge, because IPOPT's callback ABI is non-trivial to
-emit from generated C (each `eval_*` needs to dispatch to the right
-JIT-compiled oracle). For nested IPOPT solvers the parent Function falls
-back to the tape interpreter at codegen time. The Python path is the same
-one used for direct top-level calls.
+For PIQP, the generated wrapper calls the rendered oracle to fill QP data,
+transposes `P`/`A`/`G` to PIQP's column-major layout, lazily sets up a
+static `piqp_workspace`, and dispatches `piqp_update_dense` + `piqp_solve`
+on every call.
+
+For IPOPT, the generated source emits a static context struct (parameter
+pointers), static `const int` arrays for the sparse Jacobian and
+lower-triangular Hessian patterns, and five static `eval_*` callbacks that
+bridge IPOPT into the rendered `base`/`grad`/`jac`/`hess` Functions. The
+wrapper body computes bounds via the rendered `bounds_raw`, calls
+`CreateIpoptProblem`, applies the descriptor's options, runs `IpoptSolve`,
+and writes the seven NLP outputs (`x`, `f`, `h_eq`, `g_ineq`, `lam_eq`,
+`lam_ineq`, `lam_box`). The Hessian callback gathers the lower-triangle via
+a precomputed static index table — same mask the Python backend uses.
+
+The JIT auto-adds `-I<alloy/include>`, `-L<alloy/lib>`, `-lpiqpc`/`-lipopt`,
+and `-Wl,-rpath,<alloy/lib>` to the compile command when a SolverFunction is
+reachable from the function being compiled. A nested safety-filter Function
+(QP or NLP variant) compiles to one `.so` that links directly against the
+vendored solver libs and is callable from C++ through the universal ABI.
 
 ## Sign and ordering conventions
 
@@ -269,17 +276,14 @@ Implemented:
 - ctypes bindings to vendored `libpiqpc`/`libipopt`.
 - `Ops.SOLVER_CALL` IR op + `SolverFunction` subclassing `Function`, so
   solvers compose with the rest of the IR.
-- **C codegen for `SOLVER_CALL` (PIQP)**: nested QP solvers render to a single
-  `.so` that links against the vendored `libpiqpc` and runs PIQP without any
-  Python in the hot path.
+- **C codegen for `SOLVER_CALL` (PIQP + IPOPT)**: nested QP/NLP solvers
+  render to a single `.so` that links against the vendored solver libs and
+  runs without any Python in the hot path.
 - Reference tests against CasADi+IPOPT, analytic KKT solutions, and box-only
-  optima (`tests/alloy/test_solvers.py`); nesting tests in
-  `tests/alloy/test_solver_nesting.py`.
+  optima (`tests/alloy/test_solvers.py`); nesting tests including
+  JIT-compiled QP and NLP wrappers in `tests/alloy/test_solver_nesting.py`.
 
 Deferred (tracked in [`roadmap.md`](roadmap.md)):
-
-- C codegen for `SOLVER_CALL` (IPOPT). The renderer falls back to the
-  interpreter when a tape contains an IPOPT solver node.
 - A C++ harness driving the safety filter end-to-end through the universal
   ABI.
 - Sparse PIQP backend (current implementation uses the dense interface —

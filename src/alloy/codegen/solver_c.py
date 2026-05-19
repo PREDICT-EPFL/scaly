@@ -142,6 +142,8 @@ def render_solver_raw(fun: Function) -> list[str]:
   desc = _descriptor(fun)
   if desc.backend == "piqp":
     return _render_piqp_raw(fun, desc)
+  if desc.backend == "ipopt":
+    return _render_ipopt_raw(fun, desc)
   raise NotImplementedError(f"C codegen for solver backend {desc.backend!r} not yet implemented")
 
 
@@ -257,5 +259,249 @@ def _render_piqp_raw(fun: Function, desc: SolverDescriptor) -> list[str]:
     lines.append(f"  for (int i = 0; i < {m}; ++i) out3[i] = res->z_u[i] - res->z_l[i];")
   lines.append(f"  for (int i = 0; i < {n}; ++i) out4[i] = res->z_bu[i] - res->z_bl[i];")
 
+  lines.append("}")
+  return lines
+
+
+# ---------------------------------------------------------------------------
+# IPOPT
+# ---------------------------------------------------------------------------
+
+
+_IPOPT_INF = 2e19
+
+
+def _ipopt_option_call(key: str, val: object) -> str:
+  if isinstance(val, bool):
+    return f'AddIpoptIntOption(problem, "{key}", {1 if val else 0})'
+  if isinstance(val, int):
+    return f'AddIpoptIntOption(problem, "{key}", {val})'
+  if isinstance(val, float):
+    return f'AddIpoptNumOption(problem, "{key}", {val})'
+  if isinstance(val, str):
+    return f'AddIpoptStrOption(problem, "{key}", "{val}")'
+  raise NotImplementedError(f"IPOPT option {key}={val!r} cannot be lowered to C")
+
+
+def _render_ipopt_raw(fun: Function, desc: SolverDescriptor) -> list[str]:
+  """Render the solver wrapper for an IPOPT NLP.
+
+  Strategy:
+
+  - All ``in*`` param pointers are stored in a static context struct so the
+    eval callbacks can reach them through ``UserDataPtr``.
+  - Sparse Jacobian rows/cols and the lower-triangle Hessian rows/cols are
+    emitted as static const arrays.
+  - Five ``eval_*`` static functions bridge IPOPT into the JIT-compiled
+    base / grad / jac / hess Functions. The Hessian gather respects the
+    same lower-triangle mask used by the Python backend.
+  - The wrapper body computes bounds via ``bounds_raw``, builds an
+    ``IpoptProblem`` (cached statically across calls), applies options,
+    runs ``IpoptSolve``, and writes outputs.
+  """
+  symbol = _c_ident(fun.name)
+  raw = _raw_symbol(fun)
+  n, n_h, n_g = desc.n, desc.n_eq, desc.n_ineq
+  m = n_h + n_g
+  base = desc.base
+  grad = desc.grad
+  jac = desc.jac
+  hess = desc.hess
+  bounds = desc.bounds
+  assert base is not None and grad is not None and hess is not None and bounds is not None
+  base_raw = _raw_symbol(base)
+  grad_raw = _raw_symbol(grad)
+  jac_raw = _raw_symbol(jac) if jac is not None else None
+  hess_raw = _raw_symbol(hess)
+  bounds_raw = _raw_symbol(bounds)
+  param_count = len(desc.param_names)
+  param_args = [f"ctx->p{i}" for i in range(param_count)]
+
+  jac_sp = desc.jac_sparsity
+  hess_sp = desc.hess_sparsity
+  assert hess_sp is not None
+  jac_rows = list(jac_sp.rows) if jac_sp is not None else []
+  jac_cols = list(jac_sp.cols) if jac_sp is not None else []
+  nnz_jac = len(jac_rows)
+  hess_rows_full = list(hess_sp.rows)
+  hess_cols_full = list(hess_sp.cols)
+  lower_mask = list(desc.hess_lower_mask)
+  lower_indices = [i for i, b in enumerate(lower_mask) if b]
+  nnz_hess_full = len(hess_rows_full)
+  nnz_hess = len(lower_indices)
+  hess_rows = [hess_rows_full[i] for i in lower_indices]
+  hess_cols = [hess_cols_full[i] for i in lower_indices]
+
+  lines: list[str] = []
+  lines.append(f"// IPOPT NLP wrapper for {fun.name} (n={n}, n_h={n_h}, n_g={n_g}).")
+  # Context struct holding pointers to param arrays.
+  lines.append("typedef struct {")
+  for i in range(param_count):
+    lines.append(f"  const double* p{i};")
+  lines.append(f"}} {symbol}_ctx_t;")
+  lines.append(f"static {symbol}_ctx_t {symbol}_ctx;")
+  # Sparsity patterns.
+  if nnz_jac:
+    lines.append(f"static const int {symbol}_jac_rows[{nnz_jac}] = {{ {', '.join(str(r) for r in jac_rows)} }};")
+    lines.append(f"static const int {symbol}_jac_cols[{nnz_jac}] = {{ {', '.join(str(c) for c in jac_cols)} }};")
+  if nnz_hess:
+    lines.append(f"static const int {symbol}_hess_rows[{nnz_hess}] = {{ {', '.join(str(r) for r in hess_rows)} }};")
+    lines.append(f"static const int {symbol}_hess_cols[{nnz_hess}] = {{ {', '.join(str(c) for c in hess_cols)} }};")
+    lines.append(f"static const int {symbol}_hess_lower_idx[{nnz_hess}] = {{ {', '.join(str(i) for i in lower_indices)} }};")
+
+  # eval_f
+  lines.append(f"static bool {symbol}_eval_f(ipindex N, ipnumber* x, bool new_x, ipnumber* obj_value, UserDataPtr ud) {{")
+  lines.append("  (void)N; (void)new_x;")
+  lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
+  if m:
+    lines.append(f"  double g_buf[{m}];")
+  lines.append("  double f_buf[1];")
+  lines.append(f"  {base_raw}(x, {', '.join([*param_args, 'f_buf', *(['g_buf'] if m else [])])}, NULL);")
+  lines.append("  obj_value[0] = f_buf[0];")
+  lines.append("  return true;")
+  lines.append("}")
+
+  # eval_grad_f
+  lines.append(f"static bool {symbol}_eval_grad_f(ipindex N, ipnumber* x, bool new_x, ipnumber* grad_f, UserDataPtr ud) {{")
+  lines.append("  (void)N; (void)new_x;")
+  lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
+  lines.append(f"  {grad_raw}(x, {', '.join([*param_args, 'grad_f'])}, NULL);")
+  lines.append("  return true;")
+  lines.append("}")
+
+  # eval_g
+  lines.append(f"static bool {symbol}_eval_g(ipindex N, ipnumber* x, bool new_x, ipindex M, ipnumber* g, UserDataPtr ud) {{")
+  lines.append("  (void)N; (void)M; (void)new_x;")
+  if not m:
+    lines.append("  (void)x; (void)g; (void)ud;")
+    lines.append("  return true;")
+  else:
+    lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
+    lines.append("  double f_buf[1];")
+    lines.append(f"  {base_raw}(x, {', '.join([*param_args, 'f_buf', 'g'])}, NULL);")
+    lines.append("  return true;")
+  lines.append("}")
+
+  # eval_jac_g
+  lines.append(
+    f"static bool {symbol}_eval_jac_g(ipindex N, ipnumber* x, bool new_x, ipindex M, ipindex nele_jac, "
+    "ipindex* iRow, ipindex* jCol, ipnumber* values, UserDataPtr ud) {"
+  )
+  lines.append("  (void)N; (void)M; (void)new_x; (void)nele_jac;")
+  if not nnz_jac:
+    lines.append("  (void)x; (void)iRow; (void)jCol; (void)values; (void)ud;")
+    lines.append("  return true;")
+  else:
+    lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
+    lines.append("  if (values == NULL) {")
+    lines.append(f"    for (int k = 0; k < {nnz_jac}; ++k) {{ iRow[k] = {symbol}_jac_rows[k]; jCol[k] = {symbol}_jac_cols[k]; }}")
+    lines.append("  } else {")
+    assert jac_raw is not None
+    lines.append(f"    {jac_raw}(x, {', '.join([*param_args, 'values'])}, NULL);")
+    lines.append("  }")
+    lines.append("  return true;")
+  lines.append("}")
+
+  # eval_h
+  lines.append(
+    f"static bool {symbol}_eval_h(ipindex N, ipnumber* x, bool new_x, ipnumber obj_factor, ipindex M, "
+    "ipnumber* lambda, bool new_lambda, ipindex nele_hess, ipindex* iRow, ipindex* jCol, "
+    "ipnumber* values, UserDataPtr ud) {"
+  )
+  lines.append("  (void)N; (void)M; (void)new_x; (void)new_lambda; (void)nele_hess;")
+  if not nnz_hess:
+    lines.append("  (void)x; (void)obj_factor; (void)lambda; (void)iRow; (void)jCol; (void)values; (void)ud;")
+    lines.append("  return true;")
+  else:
+    lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
+    lines.append("  if (values == NULL) {")
+    lines.append(f"    for (int k = 0; k < {nnz_hess}; ++k) {{ iRow[k] = {symbol}_hess_rows[k]; jCol[k] = {symbol}_hess_cols[k]; }}")
+    lines.append("  } else {")
+    lines.append("    double obj_buf[1]; obj_buf[0] = obj_factor;")
+    lines.append(f"    double hbuf[{nnz_hess_full}];")
+    hess_args = ["x", "obj_buf"]
+    if m:
+      hess_args.append("lambda")
+    hess_args.extend(param_args)
+    hess_args.append("hbuf")
+    lines.append(f"    {hess_raw}({', '.join(hess_args)}, NULL);")
+    lines.append(f"    for (int k = 0; k < {nnz_hess}; ++k) values[k] = hbuf[{symbol}_hess_lower_idx[k]];")
+    lines.append("  }")
+    lines.append("  return true;")
+  lines.append("}")
+
+  # Wrapper body.
+  c_inputs = [f"const double* in{i}" for i in range(len(desc.input_signature))]
+  c_outputs = [f"double* out{i}" for i in range(len(desc.output_signature))]
+  params = [*c_inputs, *c_outputs, "double* w"]
+  lines.append(f"static void {raw}({', '.join(params)}) {{")
+  lines.append("  (void)w;")
+  lines.append("  (void)in1; (void)in2;")  # initial duals unused (no warm start yet)
+  # Stash params in static context.
+  for i in range(param_count):
+    lines.append(f"  {symbol}_ctx.p{i} = in{3 + i};")
+  # Compute bounds.
+  lines.append(f"  double x_L[{n}]; double x_U[{n}];")
+  if m:
+    lines.append(f"  double l_in[{n_g}]; double u_in[{n_g}];") if n_g else None
+  bounds_outs = ["x_L", "x_U"]
+  if n_g:
+    bounds_outs.extend(["l_in", "u_in"])
+  bounds_call = ", ".join([*[f"in{3 + i}" for i in range(param_count)], *bounds_outs])
+  lines.append(f"  {bounds_raw}({bounds_call}, NULL);")
+  # Combine g_L / g_U: stack zeros for equalities, then l_in/u_in for inequalities.
+  if m:
+    lines.append(f"  double g_L[{m}]; double g_U[{m}];")
+    if n_h:
+      lines.append(f"  for (int i = 0; i < {n_h}; ++i) {{ g_L[i] = 0.0; g_U[i] = 0.0; }}")
+    if n_g:
+      lines.append(f"  for (int i = 0; i < {n_g}; ++i) {{ g_L[{n_h} + i] = l_in[i]; g_U[{n_h} + i] = u_in[i]; }}")
+  # Cache the IpoptProblem statically across calls. We only rebuild bounds via
+  # IPOPT options — but actually CreateIpoptProblem copies bounds internally,
+  # so we need to recreate when bounds change. For now, recreate every call;
+  # this matches the Python ctypes path and keeps the C code straightforward.
+  jac_n = nnz_jac
+  hess_n = nnz_hess
+  if m:
+    lines.append(
+      f"  IpoptProblem problem = CreateIpoptProblem({n}, x_L, x_U, {m}, g_L, g_U, "
+      f"{jac_n}, {hess_n}, 0, "
+      f"{symbol}_eval_f, {symbol}_eval_g, {symbol}_eval_grad_f, {symbol}_eval_jac_g, {symbol}_eval_h);"
+    )
+  else:
+    lines.append(
+      f"  IpoptProblem problem = CreateIpoptProblem({n}, x_L, x_U, 0, NULL, NULL, "
+      f"0, {hess_n}, 0, "
+      f"{symbol}_eval_f, {symbol}_eval_g, {symbol}_eval_grad_f, {symbol}_eval_jac_g, {symbol}_eval_h);"
+    )
+  # Apply options.
+  for key, val in desc.options:
+    lines.append(f"  {_ipopt_option_call(key, val)};")
+  # Allocate working buffers.
+  lines.append(f"  double xv[{n}]; for (int i = 0; i < {n}; ++i) xv[i] = in0[i];")
+  if m:
+    lines.append(f"  double g_val[{m}];")
+  lines.append("  double obj_val;")
+  lines.append(f"  double mult_g[{m if m else 1}];")
+  lines.append(f"  double mult_x_L[{n}]; double mult_x_U[{n}];")
+  lines.append(f"  for (int i = 0; i < {m if m else 1}; ++i) mult_g[i] = 0.0;")
+  lines.append(f"  for (int i = 0; i < {n}; ++i) {{ mult_x_L[i] = 0.0; mult_x_U[i] = 0.0; }}")
+  if m:
+    lines.append(f"  IpoptSolve(problem, xv, g_val, &obj_val, mult_g, mult_x_L, mult_x_U, &{symbol}_ctx);")
+  else:
+    lines.append(f"  IpoptSolve(problem, xv, NULL, &obj_val, NULL, mult_x_L, mult_x_U, &{symbol}_ctx);")
+  lines.append("  FreeIpoptProblem(problem);")
+  # Write outputs: x, f, h_eq, g_ineq, lam_eq, lam_ineq, lam_box.
+  lines.append(f"  for (int i = 0; i < {n}; ++i) out0[i] = xv[i];")
+  lines.append("  out1[0] = obj_val;")
+  if n_h:
+    lines.append(f"  for (int i = 0; i < {n_h}; ++i) out2[i] = g_val[i];")
+  if n_g:
+    lines.append(f"  for (int i = 0; i < {n_g}; ++i) out3[i] = g_val[{n_h} + i];")
+  if n_h:
+    lines.append(f"  for (int i = 0; i < {n_h}; ++i) out4[i] = mult_g[i];")
+  if n_g:
+    lines.append(f"  for (int i = 0; i < {n_g}; ++i) out5[i] = mult_g[{n_h} + i];")
+  lines.append(f"  for (int i = 0; i < {n}; ++i) out6[i] = mult_x_U[i] - mult_x_L[i];")
   lines.append("}")
   return lines
