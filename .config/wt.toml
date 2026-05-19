@@ -1,0 +1,14 @@
+[post-start]
+copy = "wt step copy-ignored"
+
+[[pre-merge]]
+typecheck = "uv run ty check"
+
+[[pre-merge]]
+format = "uv run ruff format --check"
+
+[[pre-merge]]
+lint = "uv run ruff check"
+
+[[pre-merge]]
+unit-tests = "uv run pytest -n=auto tests"

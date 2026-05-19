@@ -1,0 +1,66 @@
+# Project objective
+
+Alloy is a pure-Python symbolic IR for optimal-control problems: named `Function`s over a sparse typed expression graph, CasADi-style derivative factories (`jac:*` / `grad:*` / `hess:*` / `lam:*`), first-class call nodes, and mixed scalar/block lowering. It generates C through a scalar renderer, JIT-compiles via the universal C ABI on first call, and caches the resulting `.so`. See `README.md` and `docs/roadmap.md` for the design north star.
+
+This repository was extracted from the `anvil` monorepo in May 2026. There is no longer any runtime coupling to anvil or tinygrad — alloy depends only on NumPy at runtime (plus PIQP and IPOPT for the Phase 5 solver bindings, both vendored).
+
+# Where anvil-side context still lives
+
+The anvil monorepo is the place to look when a question outruns alloy's own docs. Especially useful:
+
+- `src/anvil/optimization/` — SQP solver architecture
+- `src/anvil/multistage.py` — multistage OCP formulation pattern
+- `examples/tracking_nmpc/`, `examples/unbumpercars/` — the two workloads that drove alloy's design
+- `docs/dev/spjacobian_scalability.md`, `docs/dev/vmap.md`, `docs/dev/jit.md`, `docs/dev/multistage.md` — design notes on scalability, vmap rewrites, JIT, multistage OCP
+
+If you need to consult those files, ask the user to point you at the right anvil checkout. Do **not** add anvil or tinygrad imports to this repository — alloy is supposed to be self-contained.
+
+# Documentation structure
+
+- `docs/roadmap.md` — phased plan, current status, exit criteria
+- `docs/spec.md` — IR semantics, op set, ABI conventions
+- `docs/safety_filter.md` — Phase 5 driving workload
+- `docs/scalability.md` — benchmark results against CasADi SX/MX
+
+# Tech stack
+
+- language: Python (`>=3.12`, dev runs on 3.14)
+- project configuration: `pyproject.toml`
+- package manager: uv
+- formatter/linter: ruff
+- type checker: ty
+- build backend: hatchling with a custom hook (`hatch_build.py`) that vendors PIQP and IPOPT as shared libraries
+
+# Cookbook
+
+- Add a dependency: `uv add <name>` (regular) or `uv add --dev <name>` (dev only).
+- Sync: `uv sync` (the first sync from a fresh checkout triggers PIQP + IPOPT builds, ~5-8 min).
+- Run a module: `uv run python <path>.py`. Always `uv run python` — never activate the venv.
+- Type check: `uv run ty check`
+- Lint: `uv run ruff check`
+- Format: `uv run ruff format`
+- Tests: `uv run pytest -n=auto tests/`
+
+# Build hook notes
+
+`hatch_build.py` builds the vendored solver stack on first sync:
+
+- PIQP (with Eigen 3.4.1 and Blasfeo) → `src/alloy/lib/libpiqpc.{dylib,so}`
+- METIS → MUMPS → IPOPT → `src/alloy/lib/libipopt.{dylib,so}` with statically linked libgfortran/libgcc/libstdc++ so the resulting library is redistributable.
+
+Each component is skipped if its install marker already exists. To force a clean rebuild, delete `src/alloy/lib/`, `src/alloy/include/`, and `third_party/`, or run the hatch `clean` hook.
+
+Linux uses a built OpenBLAS; macOS uses Apple's Accelerate framework. Windows is unsupported in v1.
+
+# Instructions
+
+- Always format with `uv run ruff format` and run `uv run ruff check` after non-trivial edits.
+- Always run unit tests after a change touching the IR, AD, or codegen paths: `uv run pytest -n=auto tests/`.
+- Code should resemble tinygrad's style — simple, dense, every line earns its place. No speculative abstractions.
+- Don't introduce `anvil` or `tinygrad` imports. If a test workload needs PyTorch checkpoints, use `torch.load` (already in the dev group).
+- Update `docs/` when changing IR-facing behavior or the codegenerated ABI.
+
+# Naming conventions
+
+- Derivative suffixes: `_grad`, `_jac`, `_hess`. Never spell out `_gradient`, `_jacobian`, `_hessian` in identifiers.
+- Multistage stage variables: `zprev`, `z`, `znext`. Never `zm`/`zp`.
