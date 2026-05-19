@@ -63,7 +63,7 @@ The Linux equivalent (SONAME via `patchelf --set-soname`) is not implemented yet
 ## 5. Things not yet exercised
 
 - **CI cache key.** Keyed on `hashFiles('hatch_build.py')`. If we later split the hook into multiple files, update the key. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot.
-- **Solver bindings.** The hatch hook ships the libraries; Phase 5's actual `al.qp(...)` / `al.nlp(...)` bindings on top of them are still TODO.
+- **Solver bindings.** `al.qp(...)` (PIQP) and `al.nlp(...)` (IPOPT) are wired through `ctypes` against the vendored libraries; see [`solvers.md`](solvers.md). What is still TODO: a C++ harness that links `-lpiqpc`/`-lipopt` directly and exercises the AOT path the static-libgfortran work is meant to unblock.
 
 ## 6. ThirdParty version pins (as of 2026-05-19)
 

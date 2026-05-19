@@ -258,3 +258,13 @@ Generated functions return named ABI status codes:
 | `ALLOY_ERR_NULL_WORK = 2` | The function needs floating workspace but `w` is null. |
 | `ALLOY_ERR_NULL_RESULT = 3` | One required `res[i]` output buffer is null. |
 | `ALLOY_ERR_NULL_INPUT = 4` | One required `arg[i]` input buffer is null. |
+
+## QP and NLP solvers
+
+`al.qp(...)` and `al.nlp(...)` build opaque `SolverFunction`s wrapping PIQP
+(dense QP) and IPOPT (sparse-Jacobian, sparse-Lagrangian-Hessian NLP). The
+data exprs may be Alloy `Expr`s of free parameters; oracle derivatives come
+through `Function.factory(...)` (`grad`, `spjac`, `sphess` with a Lagrangian
+`aux={"gamma": [...]}`). The bound shared libraries live under
+`src/alloy/lib/`. Full interface, sign conventions, and current limitations
+are documented in [`solvers.md`](solvers.md).

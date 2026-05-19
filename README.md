@@ -4,7 +4,7 @@ A symbolic IR and code-generation framework for optimal control problems. Alloy 
 
 ## Status
 
-Experimental. Phases 0-4 of the roadmap are complete (symbolic core, sparse colored AD, MAP-based loop preservation, JIT-as-default execution). Phase 5 is in progress: shipping PIQP and IPOPT as vendored shared libraries to support QP/NLP solver `Function`s. See `docs/roadmap.md`.
+Experimental. Phases 0-4 of the roadmap are complete (symbolic core, sparse colored AD, MAP-based loop preservation, JIT-as-default execution). Phase 5 is in progress: PIQP and IPOPT ship as vendored shared libraries with `al.qp(...)` / `al.nlp(...)` opaque solver `Function`s wired on top via ctypes. Still open: C codegen of the solver wrapper for the AOT/C++ path, sparse PIQP, warm-start handover, and end-to-end safety-filter assembly. See `docs/roadmap.md` and `docs/solvers.md`.
 
 ## Relationship to anvil
 
@@ -58,8 +58,10 @@ See `docs/roadmap.md` for the design north star and milestone history. Key docum
 
 - `docs/roadmap.md` — phased development plan, current status, exit criteria
 - `docs/spec.md` — IR semantics, op set, ABI conventions
+- `docs/solvers.md` — QP/NLP interfaces (`al.qp`, `al.nlp`) and PIQP/IPOPT wiring
 - `docs/safety_filter.md` — Phase 5 driving workload
 - `docs/scalability.md` — benchmark results against CasADi SX/MX
+- `docs/vendored_solvers.md` — open issues around the vendored solver build
 
 ## License
 
