@@ -62,11 +62,20 @@ def test_reshape_is_alias() -> None:
 
 
 def test_unsupported_op_raises() -> None:
-  x = al.sym("x", 3)
-  y = x.sum()  # SUM not yet lowered
-  fn = al.Function("f", [x], [y], ["x"], ["y"])
+  a = al.sym("a", (2, 3))
+  b = al.sym("b", (3, 2))
+  fn = al.Function("f", [a, b], [a @ b], ["a", "b"], ["c"])  # MATMUL not yet lowered
   with pytest.raises(LoweringError, match="not yet lowered"):
     lower_function(fn)
+
+
+def test_lower_sum_emits_reduce_loop() -> None:
+  x = al.sym("x", 4)
+  fn = al.Function("f_sum", [x], [x.sum()], ["x"], ["y"])
+  proc = lower_function(fn)
+  text = format_program(proc)
+  assert "kind=reduce" in text
+  assert "t0[0] <- (t0[0] + x[i_t0])" in text
 
 
 def test_unsupported_device_raises() -> None:

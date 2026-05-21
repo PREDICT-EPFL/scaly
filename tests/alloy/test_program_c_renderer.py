@@ -41,9 +41,16 @@ def test_can_render_binary_elementwise() -> None:
   assert can_render_program_c(fn)
 
 
-def test_cannot_render_sum_yet() -> None:
+def test_can_render_sum() -> None:
   x = al.sym("x", 4)
   fn = al.Function("f_sum", [x], [x.sum()], ["x"], ["y"])
+  assert can_render_program_c(fn)
+
+
+def test_cannot_render_matmul_yet() -> None:
+  a = al.sym("a", (3, 4))
+  b = al.sym("b", (4, 2))
+  fn = al.Function("f_mm", [a, b], [a @ b], ["a", "b"], ["c"])
   assert not can_render_program_c(fn)
 
 
@@ -99,6 +106,27 @@ def test_unsupported_function_falls_back_to_legacy_renderer() -> None:
   # Legacy renderer emits ``static inline int f_fallback_raw(...)`` for non-call functions too;
   # the new renderer emits the body inline. The marker that's unique to the legacy path:
   assert "f_fallback_raw" in src or "f_fallback_raw" not in src  # tolerate either; main check is no exception
+
+
+def test_sum_jit_matches_interpreter() -> None:
+  """SUM lowered through the Program IR path agrees with the interpreter."""
+  if not _has_compiler():
+    pytest.skip("no C compiler in PATH")
+  x = al.sym("x", 6)
+  fn = al.Function("f_sum_jit", [x], [(x.sin() + x).sum()], ["x"], ["y"])
+  x_val = np.linspace(-1.0, 1.0, 6)
+  ref = fn.eval_interpreter(x_val)[0]
+  old = os.environ.get("ALLOY_USE_PROGRAM_IR_C")
+  try:
+    os.environ["ALLOY_USE_PROGRAM_IR_C"] = "1"
+    fn.recompile()
+    out = fn(x_val)
+  finally:
+    if old is None:
+      del os.environ["ALLOY_USE_PROGRAM_IR_C"]
+    else:
+      os.environ["ALLOY_USE_PROGRAM_IR_C"] = old
+  np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
 
 
 def test_program_c_renderer_independent_of_global_flag() -> None:

@@ -115,6 +115,8 @@ class _Builder:
         self._emit_elementwise(node, SUPPORTED_BINARY[Ops(node.op)], arity=2)
       elif node.op == Ops.RESHAPE:
         self._emit_reshape(node)
+      elif node.op == Ops.SUM:
+        self._emit_sum(node)
       else:
         raise LoweringError(f"semantic op {node.op!r} is not yet lowered to Program IR (Phase 5 slice)")
 
@@ -172,6 +174,27 @@ class _Builder:
     # RESHAPE is metadata-only at this layer: the result aliases the source buffer.
     src_buf_name = self.value_buffers[node.args[0].id]
     self.value_buffers[node.id] = src_buf_name
+
+  def _emit_sum(self, node: Expr) -> None:
+    src = node.args[0]
+    src_buf = self.buffers[self.value_buffers[src.id]]
+    dtype = node.type.dtype
+    acc = self._alloc_tmp(node)
+    zero_idx = p.const_int(0)
+    # init accumulator to 0
+    self.statements.append(p.store(p.view(acc, [zero_idx]), p.const_float(0.0, dtype=dtype)))
+    # reduction loop
+    size = src.size or 1
+    name = f"i_{acc.attrs['name']}"
+    rng = p.range_(name, 0, size, kind=RangeKind.REDUCE)
+    i = p.var(name, dtype=dtypes.int64)
+    body = [
+      p.store(
+        p.view(acc, [zero_idx]),
+        p.add(p.load(p.view(acc, [zero_idx])), p.load(p.view(src_buf, [i]))),
+      )
+    ]
+    self.statements.append(p.for_(rng, body))
 
 
 def _shape_or_scalar(shape: tuple[int, ...]) -> tuple[int, ...]:
