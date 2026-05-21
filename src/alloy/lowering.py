@@ -63,24 +63,65 @@ class LoweringError(NotImplementedError):
 def lower_function(fun: Function) -> PNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node.
 
-  The returned PROGRAM contains all lowered callee PROCs in topological order
-  followed by the main PROC for ``fun`` as the last proc. The C renderer
-  emits each callee as a ``static inline`` raw function before the ABI wrapper
-  for the main proc.
+  ``host`` placement (the default): returns a PROGRAM with all lowered callee
+  PROCs in topological order followed by the main host PROC for ``fun`` as the
+  last proc.
 
-  For a function with no callees, the PROGRAM contains exactly one PROC.
-  ``main_proc(program)`` extracts the last PROC for convenience.
+  Non-host placement (``cuda:N``, ``opencl:N``, ``metal:N``): runs the
+  ``kernelize_for_device`` schedule pass on the lowered body. The returned
+  PROGRAM holds the device KERNEL alongside a thin host driver PROC that
+  ``LAUNCH``es it. Today no GPU backend renders the KERNEL — the renderer
+  raises a clear diagnostic that points at Phase 8.
+
+  ``main_proc(program)`` returns the last PROC for convenience (the host
+  driver in mixed CPU/GPU programs, the only PROC in host-only ones).
   """
-
-  if fun.device.kind != "host":
-    raise LoweringError(f"Phase 5 lowerer only emits host PROC; got device={fun.device}")
-
   callees_registry: dict[str, PNode] = {}
   root = _lower_to_proc(fun, callees_registry)
-  procs = list(callees_registry.values()) + [root]
-  prog = p.program(procs)
+  if fun.device.kind != "host":
+    root, kernel_node = _kernelize_for_device(root, fun)
+    procs = list(callees_registry.values()) + [root]
+    prog = p.program(procs, [kernel_node])
+  else:
+    procs = list(callees_registry.values()) + [root]
+    prog = p.program(procs)
   verify_program(prog)
   return prog
+
+
+def _kernelize_for_device(host_proc: PNode, fun: Function) -> tuple[PNode, PNode]:
+  """Turn a device-placed function's lowered PROC into (host_driver, kernel).
+
+  Phase 7 first slice: move the entire body of ``host_proc`` into a single
+  ``KERNEL``. The host driver PROC keeps the same param signature and replaces
+  its body with one ``LAUNCH`` of the kernel. Range kinds inside the body are
+  left as ``GLOBAL``; later passes can rebind them to ``THREAD``/``WARP``/etc.
+
+  Launch geometry is inferred from the first ``GLOBAL`` ``FOR`` in the body
+  (the natural "grid" dim). Functions with no GLOBAL FOR launch with grid=1.
+  """
+  param_count = int(host_proc.attrs["param_count"])
+  params = host_proc.args[:param_count]
+  body = list(host_proc.args[param_count:])
+  grid_size = _infer_launch_grid_size(body)
+  kernel_name = f"{fun.name}_kernel"
+  kernel_node = p.kernel(kernel_name, params, body, grid_dims=1, device=fun.device)
+  driver_body = [p.launch(kernel_name, grid=[grid_size], block_dims=[1], args=list(params))]
+  driver = p.proc(fun.name, params, driver_body, device="host")
+  return driver, kernel_node
+
+
+def _infer_launch_grid_size(body: list[PNode]) -> PNode:
+  for stmt in body:
+    if stmt.op == POps.FOR:
+      rng = stmt.args[0]
+      kind = rng.attrs.get("kind")
+      if kind == RangeKind.GLOBAL:
+        # use the upper bound (stop) as grid size if it's a CONST_INT
+        stop = rng.args[1]
+        if stop.op == POps.CONST_INT:
+          return p.const_int(int(stop.attrs["value"]))
+  return p.const_int(1)
 
 
 def main_proc(program_node: PNode) -> PNode:

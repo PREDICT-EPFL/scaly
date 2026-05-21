@@ -41,15 +41,19 @@ def can_render_program_c(fun: Function) -> bool:
 
   Today this is a cheap probe: try to lower; if it raises ``LoweringError`` we
   fall back to the legacy renderer. The lowering is fast for the small graphs
-  it accepts and the result is cached on the Function instance.
+  it accepts and the result is cached on the Function instance. Non-host
+  device placements always return False — the C renderer is host-only;
+  GPU rendering lands in Phase 8.
   """
   if fun.device.kind != "host":
     return False
   try:
-    lower_function(fun)
+    prog = lower_function(fun)
   except LoweringError:
     return False
-  return True
+  # If the lowered program contains kernels, the C renderer cannot handle it
+  # (host-only). Defer to GPU backend in Phase 8.
+  return int(prog.attrs.get("kernel_count", 0)) == 0
 
 
 def render_program_c_source(fun: Function) -> str:

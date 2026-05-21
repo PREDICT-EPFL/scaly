@@ -183,11 +183,13 @@ def test_lower_sum_emits_reduce_loop() -> None:
   assert "t0[0] <- (t0[0] + x[i_t0])" in text
 
 
-def test_unsupported_device_raises() -> None:
+def test_non_host_device_emits_kernel() -> None:
+  # Phase 7: device-placed Functions now lower to a host driver + KERNEL.
+  # Backend codegen is Phase 8; for now the JIT path raises ``only host lowering``.
   x = al.sym("x", 3)
-  fn = al.Function("f", [x], [x.sin()], ["x"], ["y"], device="cuda:0")
-  with pytest.raises(LoweringError, match="only emits host PROC"):
-    lower_function(fn)
+  fn = al.Function("f_dev", [x], [x.sin()], ["x"], ["y"], device="cuda:0")
+  prog = lower_function(fn)
+  assert int(prog.attrs["kernel_count"]) == 1
 
 
 def test_lowered_proc_uses_input_buffer_directly() -> None:
