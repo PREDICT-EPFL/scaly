@@ -13,6 +13,11 @@ from .types import SparsityType, broadcast_shape
 class SparseJacobian:
   sparsity: SparsityType
   values: Expr
+  # Optional structured descriptor recovered when the sparsity is recognized as
+  # tiled/block (e.g. MAP-based Jacobians). Phase 6 follow-up: downstream
+  # consumers can iterate ``structure`` directly instead of the materialized
+  # COO table. ``None`` when the producer did not infer structure.
+  structure: object | None = None
 
   @property
   def flat_indices(self) -> np.ndarray:
@@ -162,6 +167,7 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
   global_rows: list[int] = []
   global_cols: list[int] = []
   global_values: list[Expr] = []
+  piece_structures: list[object] = []
   for piece, row_offset in pieces:
     if piece.op == Ops.MAP:
       sj = _sparse_jacobian_map(piece, wrt)
@@ -173,13 +179,20 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
     global_rows.extend(r + row_offset for r in sj.sparsity.rows)
     global_cols.extend(sj.sparsity.cols)
     global_values.append(sj.values)
+    if sj.structure is not None:
+      piece_structures.append(sj.structure)
   total_rows = int(expr.shape[0]) if expr.shape else expr.size
   sparsity = SparsityType((expr.size, wrt.size), tuple(global_rows), tuple(global_cols))
+  # Carry the structured descriptor through when there's exactly one MAP piece
+  # whose structure covers the entire output (the common case for assembled
+  # equality constraints). Multi-piece programs need a block-diagonal join
+  # which we leave as ``None`` for now.
+  structure = piece_structures[0] if len(piece_structures) == 1 and len(pieces) == 1 else None
   if sparsity.nnz == 0:
-    return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=np.float64)))
+    return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=np.float64)), structure=structure)
   values = global_values[0] if len(global_values) == 1 else concat(global_values, axis=0)
   _ = total_rows  # documentation: piece row offsets cover [0, total_rows)
-  return SparseJacobian(sparsity, simplify_cse_fixpoint(values))
+  return SparseJacobian(sparsity, simplify_cse_fixpoint(values), structure=structure)
 
 
 def _split_axis0_pieces(expr: Expr) -> list[tuple[Expr, int]] | None:
@@ -292,12 +305,16 @@ def _sparse_jacobian_map(map_expr: Expr, wrt: Expr) -> SparseJacobian:
       piece_values = scatter(gathered, contrib_idx, (nnz,))
     pieces.append(piece_values)
 
+  # Phase 6: attach the structured descriptor when the MAP Jacobian is the
+  # canonical tiled shape (one direct formal that walks along ``wrt`` in
+  # contiguous slice_size-sized windows).
+  structure = structured_jacobian_sparsity(map_expr, wrt)
   if not pieces:
-    return SparseJacobian(global_sparsity, Expr.const(np.zeros((nnz,), dtype=np.float64)))
+    return SparseJacobian(global_sparsity, Expr.const(np.zeros((nnz,), dtype=np.float64)), structure=structure)
   values = pieces[0]
   for p in pieces[1:]:
     values = values + p
-  return SparseJacobian(global_sparsity, values)
+  return SparseJacobian(global_sparsity, values, structure=structure)
 
 
 def sparse_hessian(expr: Expr, wrt: Expr) -> SparseJacobian:

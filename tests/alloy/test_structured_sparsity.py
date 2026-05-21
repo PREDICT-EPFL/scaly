@@ -122,6 +122,20 @@ def test_structured_jacobian_sparsity_recognizes_map_tile() -> None:
   assert flat.cols == ref.cols
 
 
+def test_sparse_jacobian_carries_tiled_structure_for_map() -> None:
+  """``sparse_jacobian`` of a MAP attaches a ``TiledStructure`` to the SparseJacobian."""
+  from alloy.sparsity import sparse_jacobian
+
+  x = al.sym("x", 2)
+  stage = al.Function("stage_attach", [x], [(x * x).sum()], ["x"], ["y"])
+  z = al.sym("z", 6)
+  mapped = al.map_(stage, length=3, inputs=[(z, 0, 2)])
+  sj = sparse_jacobian(mapped, z)
+  assert sj.structure is not None
+  assert isinstance(sj.structure, TiledStructure)
+  assert sj.structure.length == 3
+
+
 def test_structured_jacobian_sparsity_falls_back_to_coo() -> None:
   """A scalar elementwise graph has no MAP — descriptor falls back to a plain COOStructure."""
   from alloy.sparsity import structured_jacobian_sparsity
