@@ -62,13 +62,25 @@ def test_reshape_is_alias() -> None:
 
 
 def test_unsupported_op_raises() -> None:
-  x = al.sym("x", 3)
-  stage = al.Function("stage", [x], [x.sin()], ["x"], ["y"])
-  batch = al.sym("batch", 9)
-  mapped = al.map_(stage, length=3, inputs=[(batch, 0, 3)])
-  fn = al.Function("f", [batch], [mapped], ["batch"], ["m"])
+  # TRANSPOSE is not yet lowered (needs rank-N views).
+  a = al.sym("a", (2, 3))
+  fn = al.Function("f_unsupp", [a], [a.T], ["a"], ["y"])
   with pytest.raises(LoweringError, match="not yet lowered"):
     lower_function(fn)
+
+
+def test_lower_map_emits_for_loop_with_call() -> None:
+  x = al.sym("x", 3)
+  stage = al.Function("stage_lower", [x], [x.sin()], ["x"], ["y"])
+  batch = al.sym("batch", 9)
+  mapped = al.map_(stage, length=3, inputs=[(batch, 0, 3)])
+  fn = al.Function("f_map_lower", [batch], [mapped], ["batch"], ["m"])
+  prog = lower_function(fn)
+  assert prog.op == POps.PROGRAM
+  assert int(prog.attrs["proc_count"]) == 2
+  text = format_program(prog)
+  assert "for it_t0 in [0, 3)" in text
+  assert "call stage_lower(" in text
 
 
 def test_lower_call_emits_callee_proc_and_call_statement() -> None:

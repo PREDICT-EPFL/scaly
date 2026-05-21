@@ -305,6 +305,38 @@ def test_slice_jit_matches_interpreter() -> None:
   np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
 
 
+def test_can_render_map() -> None:
+  x = al.sym("x", 3)
+  stage = al.Function("stage_map", [x], [x.sin()], ["x"], ["y"])
+  batch = al.sym("batch", 9)
+  mapped = al.map_(stage, length=3, inputs=[(batch, 0, 3)])
+  fn = al.Function("f_can_map", [batch], [mapped], ["batch"], ["m"])
+  assert can_render_program_c(fn)
+
+
+def test_map_jit_matches_interpreter() -> None:
+  if not _has_compiler():
+    pytest.skip("no C compiler in PATH")
+  x = al.sym("x", 2)
+  stage = al.Function("stage_map_jit", [x], [(x * x).sum()], ["x"], ["y"])
+  batch = al.sym("batch", 8)
+  mapped = al.map_(stage, length=4, inputs=[(batch, 0, 2)])
+  fn = al.Function("f_map_jit", [batch], [mapped], ["batch"], ["m"])
+  batch_val = np.linspace(-1.0, 1.0, 8)
+  ref = fn.eval_interpreter(batch_val)[0]
+  old = os.environ.get("ALLOY_USE_PROGRAM_IR_C")
+  try:
+    os.environ["ALLOY_USE_PROGRAM_IR_C"] = "1"
+    fn.recompile()
+    out = fn(batch_val)
+  finally:
+    if old is None:
+      del os.environ["ALLOY_USE_PROGRAM_IR_C"]
+    else:
+      os.environ["ALLOY_USE_PROGRAM_IR_C"] = old
+  np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
+
+
 def test_program_c_renderer_independent_of_global_flag() -> None:
   """Calling ``render_program_c_source`` directly does not require the flag."""
   x = al.sym("x", 3)

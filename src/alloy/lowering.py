@@ -167,6 +167,8 @@ class _Builder:
         self._emit_slice(node)
       elif node.op == Ops.CALL:
         self._emit_call(node)
+      elif node.op == Ops.MAP:
+        self._emit_map(node)
       else:
         raise LoweringError(f"semantic op {node.op!r} is not yet lowered to Program IR (Phase 5 slice)")
 
@@ -406,6 +408,74 @@ class _Builder:
       body = [p.store(p.view(out, [dst_idx]), p.load(p.view(src_buf, [j])))]
       self.statements.append(p.for_(rng, body))
       offset += size
+
+  def _emit_map(self, node: Expr) -> None:
+    """Lower ``Ops.MAP``: a ``length``-iteration loop calling the callee with sliced outer args.
+
+    Each iteration ``it`` reads ``outer_k[start_k + it*stride_k : ... + formal_k.size]``
+    as input ``k`` and writes the selected callee output into a contiguous slice of
+    a flat output buffer ``[it*slice_size : (it+1)*slice_size]``. The CALL receives
+    pointer-offset VIEW args so the callee_raw signature stays plain
+    ``double*``s; the renderer emits ``(buf + offset)``.
+    """
+    callee: Function = node.attrs["callee"]
+    out_idx = int(node.attrs["output"])
+    length = int(node.attrs["length"])
+    starts = tuple(int(s) for s in node.attrs["starts"])
+    strides = tuple(int(s) for s in node.attrs["strides"])
+    slice_size = int(node.attrs["slice_size"])
+    # Lower the callee once if needed.
+    if callee.name not in self.callees_registry:
+      self.callees_registry[callee.name] = _lower_to_proc(callee, self.callees_registry)
+    # The MAP produces a flat output buffer of length*slice_size for the selected output index.
+    out = self._alloc_tmp(node)
+    # All other callee outputs are unused at this MAP node, but the callee writes
+    # all of them every iteration. We allocate a scratch buffer per *other* output
+    # of size = formal_out.size (one iteration's worth, reused across iterations).
+    scratch_outs: list[PNode] = []
+    for i, callee_out in enumerate(callee.outputs):
+      if i == out_idx:
+        scratch_outs.append(out)  # placeholder; real slice computed below
+        continue
+      tmp_name = f"t{self._tmp_counter}"
+      self._tmp_counter += 1
+      sbuf = p.buffer(
+        tmp_name,
+        callee_out.type.dtype,
+        _shape_or_scalar(callee_out.type.shape),
+        address_space="private",
+      )
+      self.buffers[tmp_name] = sbuf
+      self.statements.append(sbuf)
+      scratch_outs.append(sbuf)
+    # Loop body: build pointer-offset VIEW args, then a CALL.
+    loop_name = f"it_{out.attrs['name']}"
+    rng = p.range_(loop_name, 0, length, kind=RangeKind.GLOBAL)
+    it = p.var(loop_name, dtype=dtypes.int64)
+    in_args: list[PNode] = []
+    for k, outer in enumerate(node.args):
+      outer_buf = self.buffers[self.value_buffers[outer.id]]
+      offset = p.add(p.const_int(starts[k]), p.mul(p.const_int(strides[k]), it)) if strides[k] else p.const_int(starts[k])
+      in_args.append(p.view(outer_buf, [offset]))
+    out_args: list[PNode] = []
+    for i, sbuf in enumerate(scratch_outs):
+      if i == out_idx:
+        # Write into out[it*slice_size + ...]; pass pointer to out + it*slice_size.
+        offset = p.mul(it, p.const_int(slice_size)) if slice_size != 1 else it
+        out_args.append(p.view(out, [offset]))
+      else:
+        out_args.append(sbuf)  # scratch reused every iteration
+    call_stmt = PNode(
+      POps.CALL,
+      tuple(in_args + out_args),
+      attrs={
+        "callee": callee.name,
+        "n_in": len(in_args),
+        "n_out": len(out_args),
+        "returns": (),
+      },
+    )
+    self.statements.append(p.for_(rng, [call_stmt]))
 
   def _emit_call(self, node: Expr) -> None:
     """Lower a single semantic ``CALL`` output node.

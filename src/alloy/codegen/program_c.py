@@ -161,6 +161,18 @@ def _render_raw_callee(proc: PNode) -> list[str]:
   return out
 
 
+def _emit_call_arg(node: PNode, ptr_expr: dict[str, str]) -> str:
+  """Render a CALL argument: a BUFFER (whole pointer) or a VIEW (buffer + offset)."""
+  if node.op == POps.BUFFER:
+    return ptr_expr.get(node.attrs["name"], node.attrs["name"])
+  if node.op == POps.VIEW:
+    buf = node.attrs["buffer"]
+    ptr = ptr_expr.get(buf, buf)
+    idx = _emit_scalar(node.args[0], ptr_expr) if node.args else "0"
+    return f"({ptr} + {idx})"
+  raise NotImplementedError(f"unsupported CALL arg op {node.op}")
+
+
 def _emit_statement(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:
   pad = " " * indent
   if stmt.op == POps.FOR:
@@ -192,10 +204,10 @@ def _emit_statement(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], ind
   elif stmt.op == POps.CALL:
     n_in = int(stmt.attrs["n_in"])
     n_out = int(stmt.attrs["n_out"])
-    in_bufs = stmt.args[:n_in]
-    out_bufs = stmt.args[n_in : n_in + n_out]
-    arg_ptrs = ", ".join(ptr_expr.get(b.attrs["name"], b.attrs["name"]) for b in in_bufs)
-    out_ptrs = ", ".join(ptr_expr.get(b.attrs["name"], b.attrs["name"]) for b in out_bufs)
+    in_args = stmt.args[:n_in]
+    out_args = stmt.args[n_in : n_in + n_out]
+    arg_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in in_args)
+    out_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in out_args)
     lines.append(f"{pad}{stmt.attrs['callee']}_raw({arg_ptrs}{', ' if arg_ptrs and out_ptrs else ''}{out_ptrs});")
   else:
     raise NotImplementedError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
