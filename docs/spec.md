@@ -220,6 +220,47 @@ y = sparse_model + opaque_boundary
 
 Today this is metadata preserved by the tape and shown by `Tape.debug()`. Later it should drive partitioning: scalar regions lower to explicit scalar instructions, dense regions lower to block kernels/loops, and the boundary inserts materialization/copy/project operations.
 
+## Program IR (Phase 4)
+
+`src/alloy/program.py` introduces the lower IR where explicit loops, buffers, loads/stores, calls, kernel launches, and memory spaces live. Phase 4 ships the vocabulary, the verifier, and the pretty-printer; the lowering pass that produces Program IR from semantic IR is Phase 5.
+
+A single `PNode` class (frozen, hash-consed) carries an op tag from `POps`. Statement vs declaration vs scalar-expression is encoded by op tag, matching the tinygrad UOp style and reusing the spec-table verifier infrastructure from Phase 2:
+
+```python
+from alloy import program as p
+from alloy.types import dtypes
+from alloy.program import RangeKind, verify_program, format_program, spec_program_full
+
+in_buf = p.buffer("in_", dtypes.float64, (16,))
+out_buf = p.buffer("out_", dtypes.float64, (16,))
+i = p.var("i", dtype=dtypes.int64)
+k = p.kernel(
+    "k_neg",
+    [in_buf, out_buf],
+    [
+        p.for_(
+            p.range_("i", 0, 16, kind=RangeKind.GLOBAL),
+            [p.store(p.view(out_buf, [i]), p.neg(p.load(p.view(in_buf, [i]))))],
+        ),
+    ],
+    grid_dims=1,
+    device="cuda:0",
+)
+verify_program(k)
+print(format_program(k))
+```
+
+`RangeKind` borrows tinygrad's `AxisType` vocabulary (`SERIAL`, `VECTOR`, `GLOBAL`, `THREAD`, `LOCAL`, `WARP`, `REDUCE`, `GROUP_REDUCE`, `UNROLL`). Backends use it to bind loops to launch axes, choose vectorized vs unrolled emission, or lower reductions. Buffer address spaces follow the OpenCL/CUDA naming (`global`/`local`/`private`/`constant`).
+
+Verifier specs:
+
+- `spec_program_shared` — invariants every Program IR node must satisfy (buffer attrs, view scalar args, load/store shapes, range kind enum, etc.).
+- `spec_host_program` — host PROCs may not contain device-only ops (e.g. `BARRIER`).
+- `spec_kernel_program` — KERNELs may not contain host-only ops (e.g. `LAUNCH`).
+- `spec_program_full` — both, suitable for whole-program checks.
+
+Pretty-printing is backend-neutral and decoupled from C syntax — it shows host/device boundaries, range kinds, and launch specs so schedule decisions are debuggable before any renderer runs.
+
 ## Semantic loop ops: MAP and SCAN
 
 `Ops.MAP` is the existing loop op for **independent repeated calls**: each iteration reads sliced inputs from outer tensors and produces an output, with no carry between iterations. Today this covers the tracking interstage residual loop, batched dynamics in unbumpercars, batched MLP rollouts, and similar workloads.
