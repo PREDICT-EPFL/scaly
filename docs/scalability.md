@@ -2,6 +2,31 @@
 
 Runs `benchmarks/scalability_sweep.py` over a fixed cell grid for each workload, capturing per-cell codegen / compile / runtime / source-size metrics. Each cell compiles its own Google Benchmark binary that includes Alloy + the selected backend so the binary's correctness check (scatter compact → dense, compare against the Python Alloy reference) guards every measurement.
 
+## Phase 0 baseline snapshot
+
+These numbers are the frozen baseline for the roadmap pipeline restructuring (see [`roadmap.md`](roadmap.md)). Subsequent phases (dtype model, verifiers, Program IR lowering) must keep these workloads green and within the documented tolerances; deviations require an explicit golden update.
+
+Reference measurements (Apple M-series, `-O3`, single-threaded, from `benchmarks/scalability_results.csv`):
+
+| Workload | Cell | Alloy runtime | Alloy source | Notes |
+|---|---|---:|---:|---|
+| tracking `spjac:eq:z` | N=10 | 1.05 µs | 17.9 KB / ~482 LOC | within ~10 % of CasADi SX |
+| tracking `spjac:eq:z` | N=50 | 5.24 µs | 22.1 KB / ~482 LOC | constant LOC, only `idx[]` tables grow |
+| tracking `spjac:eq:z` | N=500 | 54.5 µs | 78.0 KB / 482 LOC | 58× smaller source than CasADi SX |
+| unbumpercars `spjac:ineq:u` | C=8 | 397 µs | 91.5 KB / 1601-1889 LOC | ~2.7× faster than CasADi MX |
+| unbumpercars `spjac:ineq:u` | C=32 | 2.25 ms | 2.41 MB | 4× smaller source than MX, ~2× faster |
+| safety filter (affine) | N=8 ineq | 89 µs | 69 KB / 2569 LOC | dominated by MLP forward |
+| safety filter (affine) | N=8 spjac:ineq:u | 88 µs (176 nnz) | 133 KB / 5455 LOC | column coloring recovers most of the dense Jacobian cost |
+
+Acceptance bands for restructuring work below:
+
+- Runtime per cell may not regress by more than 15 % unless a phase explicitly updates the golden numbers.
+- Source size per cell may not regress by more than 20 %.
+- Generated-C source must remain bit-for-bit equal under `--feature-flag` toggles unless the flag explicitly enables a new lowering path (use `tests/alloy/test_source_baseline.py` to lock representative cells).
+
+The full sweep CSV in `benchmarks/scalability_results.csv` is the source of truth; the table above is for quick reference.
+
+
 Skip rules applied automatically:
 
 - per-cell compile timeout (default 180 s);

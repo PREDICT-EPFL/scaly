@@ -1,16 +1,43 @@
-# Alloy experimental IR spec
+# Alloy IR spec
 
-Alloy is a separate experimental package under `src/alloy`. The name is provisional: it fits the anvil/metal theme and the core idea of mixing SX-like scalar lowering with MX-like block lowering in one graph.
+Alloy is a small CasADi-like symbolic compiler living in pure Python under `src/alloy`. The name fits the anvil/metal theme and the core idea of mixing SX-like scalar lowering with MX-like block lowering in one graph.
 
-See [`roadmap.md`](roadmap.md) for the planned milestones.
+See [`roadmap.md`](roadmap.md) for the milestones that take Alloy from the proven prototype to a Program-IR-based compiler with GPU support.
 
 ## Goals
 
 - Provide a small CasADi-like symbolic core in pure Python.
-- Keep it separate from `anvil` until the design proves itself.
 - Treat `Function` as the unit of compilation and composition.
 - Support local lowering choices: scalar/SX-like regions and block/MX-like regions in the same graph.
 - Preserve a CasADi-style universal C ABI while allowing optional typed buffer wrappers for generated C++.
+
+## Compiler pipeline (vocabulary)
+
+Use **semantic IR** for the current `Expr` graph: it captures mathematical operations and domain structure (`matmul`, `call`, `map`, sparsity descriptors, solver boundaries). It is not a "tensor IR" — most values happen to be dense tensors today, but the layer is semantic, not tensor-shaped per se.
+
+Use **Program IR** (planned, see roadmap Phase 4+) for the lower representation that looks like code: buffers, explicit loops, indices, loads/stores, calls, kernel launches, and memory spaces.
+
+Phases vs artifacts:
+
+```
+User API (@al.function / Expr.sym / qp / nlp)
+  │  tracing / construction phase
+  ▼
+Semantic IR (Function + Expr DAG + types/sparsity)
+  │  semantic passes (AD factories, sparsity/coloring, CSE, MAP/SCAN analysis)
+  ▼
+[Lowering and placement phase: regions, device policy, layouts]
+  ▼
+[Program IR (planned): procedures, kernels, loops, buffers, loads/stores]
+  │  backend schedule phase (CPU loops or GPU kernelization/tiling)
+  ▼
+Rendered artifacts (C today; CUDA/OpenCL/Metal/headers later)
+  │  build / cache / dispatch phase
+  ▼
+Host ABI: int f(arg, res, iw, w, mem)
+```
+
+The verifier discipline (per IR level, see roadmap Phase 2) and PatternMatcher-backed specs follow the same separation: each artifact has an explicit spec table, and a verifier reports the first node that violates an invariant.
 
 ## Current public API
 
@@ -59,14 +86,14 @@ Alloy's current names map to compiler/tinygrad concepts like this:
 
 | Alloy concept | Compiler concept | tinygrad/anvil analogy |
 | --- | --- | --- |
-| `Ops` | operation opcode enum | tinygrad `Ops` |
-| `Expr` | immutable operation node / SSA-ish value | tinygrad `UOp` |
+| `Ops` | semantic opcode enum | tinygrad `Ops` |
+| `Expr` | semantic IR node (immutable, SSA-ish value) | tinygrad `UOp` |
 | `Function` | named graph boundary and compilation unit | anvil `NumericalFunction`, CasADi `Function` |
-| `Tape` / `Instruction` | topologically linearized schedule | tinygrad linearized UOps, CasADi `algorithm_` |
+| `Tape` / `Instruction` | transitional schedule/debug view | tinygrad linearized UOps, CasADi `algorithm_` |
 | `Function.factory()` | derived graph/function builder | CasADi factory strings |
-| `lowering` hint | region/codegen policy | future scalar/block partitioning metadata |
+| `lowering` hint (`auto`/`scalar`/`block`/`opaque`) | region/codegen policy seed; will fold into Program IR placement policy | future scalar/block partitioning metadata |
 
-`Ops` is a `StrEnum`, so opcodes are proper enum values while still being convenient to serialize and print as strings.
+`Ops` is a `StrEnum`, so opcodes are proper enum values while still being convenient to serialize and print as strings. The op set is intentionally semantic — `LOAD`/`STORE`/`THREAD_ID` and other Program IR concepts are deliberately kept out.
 
 ## MVP operation set
 
@@ -90,9 +117,11 @@ Explicitly deferred:
 - Splines/interpolants: important, but their semantics need a separate design for knots, lookup, extrapolation, derivative behavior, table codegen, and sparsity.
 - Matrix decompositions/exponentials and solver control flow.
 
-## Tape
+## Tape (transitional)
 
-A tape is a topologically sorted linear instruction stream of an expression graph. It is not inherently an AD tape; it is simply a schedule. This is close to tinygrad's linearized UOp graph and to CasADi SXFunction/MXFunction `algorithm_` vectors.
+`Tape` is a topologically sorted linear instruction stream of an expression graph — a debug/schedule view, not an AD tape. It is **transitional**: today it feeds the interpreter, the C renderer's lifetime/workspace planning, and debug printing. The long-term plan (see roadmap Phase 4+) is to move scheduling responsibilities into Program IR; `Tape` will then survive only as a small debug topological view, if at all.
+
+Do not treat `Tape` as the future common compiler IR. New compiler work (verifiers, pattern rewrites, lowering) should sit on `Expr` (semantic) or, once it exists, Program IR — not on `Tape`.
 
 Alloy currently exposes:
 
