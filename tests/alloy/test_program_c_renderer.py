@@ -69,13 +69,36 @@ def test_can_render_stack_and_concat() -> None:
   assert can_render_program_c(fn2)
 
 
-def test_cannot_render_call_yet() -> None:
+def test_can_render_call_with_inner_function() -> None:
   x = al.sym("x", 3)
   inner = al.Function("inner", [x], [x.sum()], ["x"], ["s"])
   z = al.sym("z", 3)
   (out,) = inner.call([z])
   fn = al.Function("f_call", [z], [out], ["z"], ["y"])
-  assert not can_render_program_c(fn)
+  assert can_render_program_c(fn)
+
+
+def test_call_jit_matches_interpreter() -> None:
+  if not _has_compiler():
+    pytest.skip("no C compiler in PATH")
+  x = al.sym("x", 4)
+  inner = al.Function("inner_call", [x], [(x * x).sum()], ["x"], ["s"])
+  z = al.sym("z", 4)
+  (out,) = inner.call([z])
+  fn = al.Function("f_outer_call", [z], [out], ["z"], ["y"])
+  z_val = np.array([1.0, 2.0, 3.0, 4.0])
+  ref = fn.eval_interpreter(z_val)[0]
+  old = os.environ.get("ALLOY_USE_PROGRAM_IR_C")
+  try:
+    os.environ["ALLOY_USE_PROGRAM_IR_C"] = "1"
+    fn.recompile()
+    out_val = fn(z_val)
+  finally:
+    if old is None:
+      del os.environ["ALLOY_USE_PROGRAM_IR_C"]
+    else:
+      os.environ["ALLOY_USE_PROGRAM_IR_C"] = old
+  np.testing.assert_allclose(out_val, ref, atol=1e-12, rtol=1e-12)
 
 
 def test_stack_jit_matches_interpreter() -> None:

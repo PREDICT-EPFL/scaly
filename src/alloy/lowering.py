@@ -61,29 +61,48 @@ class LoweringError(NotImplementedError):
 
 
 def lower_function(fun: Function) -> PNode:
-  """Lower ``fun`` into a host ``PROC`` Program IR node.
+  """Lower ``fun`` into a Program IR ``PROGRAM`` node.
 
-  Each semantic input becomes an input ``BUFFER`` param. Each semantic output
-  becomes an output ``BUFFER`` param. Internal values get workspace buffers
-  named ``t{i}`` and are written by per-element loops. The final body either
-  reuses the workspace buffer that holds an output value (via a `view` alias),
-  or copies it into the output param's buffer.
+  The returned PROGRAM contains all lowered callee PROCs in topological order
+  followed by the main PROC for ``fun`` as the last proc. The C renderer
+  emits each callee as a ``static inline`` raw function before the ABI wrapper
+  for the main proc.
+
+  For a function with no callees, the PROGRAM contains exactly one PROC.
+  ``main_proc(program)`` extracts the last PROC for convenience.
   """
 
   if fun.device.kind != "host":
     raise LoweringError(f"Phase 5 lowerer only emits host PROC; got device={fun.device}")
 
-  builder = _Builder(fun)
+  callees_registry: dict[str, PNode] = {}
+  root = _lower_to_proc(fun, callees_registry)
+  procs = list(callees_registry.values()) + [root]
+  prog = p.program(procs)
+  verify_program(prog)
+  return prog
+
+
+def main_proc(program_node: PNode) -> PNode:
+  """Return the main (last) PROC inside a lowered PROGRAM."""
+  if program_node.op != POps.PROGRAM:
+    raise TypeError(f"main_proc expects a PROGRAM, got {program_node.op}")
+  pc = int(program_node.attrs.get("proc_count", 0))
+  if pc <= 0:
+    raise ValueError("lowered program contains no procs")
+  return program_node.args[pc - 1]
+
+
+def _lower_to_proc(fun: Function, callees_registry: dict[str, PNode]) -> PNode:
+  builder = _Builder(fun, callees_registry)
   builder.emit_inputs()
   builder.emit_body()
   builder.emit_outputs()
-  proc = p.proc(fun.name, builder.params, builder.statements)
-  verify_program(proc)
-  return proc
+  return p.proc(fun.name, builder.params, builder.statements)
 
 
 class _Builder:
-  def __init__(self, fun: Function) -> None:
+  def __init__(self, fun: Function, callees_registry: dict[str, PNode]) -> None:
     self.fun = fun
     self.params: list[PNode] = []
     self.statements: list[PNode] = []
@@ -91,6 +110,9 @@ class _Builder:
     self.value_buffers: dict[int, str] = {}
     self.buffers: dict[str, PNode] = {}
     self._tmp_counter = 0
+    self.callees_registry = callees_registry
+    # Map (callee_name, tuple_of_arg_buffer_names) -> tuple of output buffer names.
+    self.call_invocations: dict[tuple[str, tuple[str, ...]], tuple[str, ...]] = {}
 
   # --- inputs ---------------------------------------------------------------
 
@@ -143,6 +165,8 @@ class _Builder:
         self._emit_concat(node)
       elif node.op == Ops.SLICE:
         self._emit_slice(node)
+      elif node.op == Ops.CALL:
+        self._emit_call(node)
       else:
         raise LoweringError(f"semantic op {node.op!r} is not yet lowered to Program IR (Phase 5 slice)")
 
@@ -383,6 +407,54 @@ class _Builder:
       self.statements.append(p.for_(rng, body))
       offset += size
 
+  def _emit_call(self, node: Expr) -> None:
+    """Lower a single semantic ``CALL`` output node.
+
+    The same ``(callee, args)`` invocation may appear under multiple CALL nodes
+    (one per output index). We deduplicate by an invocation key and emit one
+    Program-IR CALL statement that writes into ``len(callee.outputs)``
+    workspace buffers, then map each semantic node's id to the right output
+    buffer name.
+    """
+    callee: Function = node.attrs["callee"]
+    out_idx = int(node.attrs["output"])
+    arg_buf_names = tuple(self.value_buffers[a.id] for a in node.args)
+    key = (callee.name, arg_buf_names)
+    if key not in self.call_invocations:
+      # Lower the callee body once per unique callee name.
+      if callee.name not in self.callees_registry:
+        self.callees_registry[callee.name] = _lower_to_proc(callee, self.callees_registry)
+      # Allocate output workspace buffers for each callee output.
+      out_buf_names: list[str] = []
+      out_bufs: list[PNode] = []
+      for callee_out in callee.outputs:
+        tmp_name = f"t{self._tmp_counter}"
+        self._tmp_counter += 1
+        buf = p.buffer(
+          tmp_name,
+          callee_out.type.dtype,
+          _shape_or_scalar(callee_out.type.shape),
+          address_space="private",
+        )
+        self.buffers[tmp_name] = buf
+        self.statements.append(buf)
+        out_bufs.append(buf)
+        out_buf_names.append(tmp_name)
+      in_bufs = [self.buffers[n] for n in arg_buf_names]
+      call_stmt = PNode(
+        POps.CALL,
+        tuple(in_bufs + out_bufs),
+        attrs={
+          "callee": callee.name,
+          "n_in": len(in_bufs),
+          "n_out": len(out_bufs),
+          "returns": (),
+        },
+      )
+      self.statements.append(call_stmt)
+      self.call_invocations[key] = tuple(out_buf_names)
+    self.value_buffers[node.id] = self.call_invocations[key][out_idx]
+
   def _emit_slice(self, node: Expr) -> None:
     """Lower SLICE: copy a contiguous run from the source buffer.
 
@@ -443,4 +515,4 @@ def _copy_loop(src_buf: PNode, dst_buf: PNode, shape: tuple[int, ...], dtype: DT
   return p.for_(rng, [p.store(p.view(dst_buf, [i]), p.load(p.view(src_buf, [i])))])
 
 
-__all__ = ["LoweringError", "lower_function"]
+__all__ = ["LoweringError", "lower_function", "main_proc"]

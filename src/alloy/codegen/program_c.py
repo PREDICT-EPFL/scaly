@@ -19,7 +19,7 @@ import os
 
 from ..abi import c_api_signature
 from ..function import Function
-from ..lowering import LoweringError, lower_function
+from ..lowering import LoweringError, lower_function, main_proc
 from ..program import PNode, POps
 
 
@@ -53,7 +53,10 @@ def can_render_program_c(fun: Function) -> bool:
 
 
 def render_program_c_source(fun: Function) -> str:
-  proc = lower_function(fun)
+  prog = lower_function(fun)
+  proc = main_proc(prog)
+  pc = int(prog.attrs.get("proc_count", 1))
+  callees = list(prog.args[: pc - 1])
   symbol = fun.name
   param_count = int(proc.attrs["param_count"])
   buffer_params = list(proc.args[:param_count])
@@ -88,6 +91,11 @@ def render_program_c_source(fun: Function) -> str:
     'extern "C" {',
     "#endif",
     "",
+  ]
+  for callee_proc in callees:
+    lines += _render_raw_callee(callee_proc)
+    lines.append("")
+  lines += [
     f"int {symbol}_sz_arg(void) {{ return {len(fun.inputs)}; }}",
     f"int {symbol}_sz_res(void) {{ return {len(fun.outputs)}; }}",
     f"int {symbol}_sz_iw(void) {{ return 0; }}",
@@ -127,6 +135,32 @@ def render_program_c_source(fun: Function) -> str:
   return "\n".join(lines).rstrip() + "\n"
 
 
+def _render_raw_callee(proc: PNode) -> list[str]:
+  """Render a callee as ``static inline void``: takes pointers per param, no ABI wrapper."""
+  param_count = int(proc.attrs["param_count"])
+  params = list(proc.args[:param_count])
+  body = list(proc.args[param_count:])
+  ptr_expr: dict[str, str] = {p.attrs["name"]: p.attrs["name"] for p in params}
+  ts: list[PNode] = []
+  for stmt in body:
+    if stmt.op == POps.BUFFER and stmt.attrs["name"] not in ptr_expr and stmt not in ts:
+      ts.append(stmt)
+  param_decls = ", ".join(f"{p.dtype.c_type}* {p.attrs['name']}" for p in params)
+  out: list[str] = [f"static inline void {proc.attrs['name']}_raw({param_decls}) {{"]
+  for tb in ts:
+    size = 1
+    for d in tb.attrs["shape"]:
+      size *= int(d)
+    size = size or 1
+    out.append(f"  {tb.dtype.c_type} {tb.attrs['name']}[{size}];")
+  for stmt in body:
+    if stmt.op == POps.BUFFER:
+      continue
+    _emit_statement(stmt, ptr_expr, out, indent=2)
+  out.append("}")
+  return out
+
+
 def _emit_statement(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:
   pad = " " * indent
   if stmt.op == POps.FOR:
@@ -155,6 +189,14 @@ def _emit_statement(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], ind
     lines.append(f"{pad}{ptr}[{idx}] = {rhs};")
   elif stmt.op == POps.ASSIGN:
     lines.append(f"{pad}{stmt.attrs['target']} = {_emit_scalar(stmt.args[0], ptr_expr)};")
+  elif stmt.op == POps.CALL:
+    n_in = int(stmt.attrs["n_in"])
+    n_out = int(stmt.attrs["n_out"])
+    in_bufs = stmt.args[:n_in]
+    out_bufs = stmt.args[n_in : n_in + n_out]
+    arg_ptrs = ", ".join(ptr_expr.get(b.attrs["name"], b.attrs["name"]) for b in in_bufs)
+    out_ptrs = ", ".join(ptr_expr.get(b.attrs["name"], b.attrs["name"]) for b in out_bufs)
+    lines.append(f"{pad}{stmt.attrs['callee']}_raw({arg_ptrs}{', ' if arg_ptrs and out_ptrs else ''}{out_ptrs});")
   else:
     raise NotImplementedError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
 

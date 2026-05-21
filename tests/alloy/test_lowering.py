@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 import alloy as al
-from alloy.lowering import LoweringError, lower_function
+from alloy.lowering import LoweringError, lower_function, main_proc
 from alloy.program import POps, format_program, verify_program
 
 
@@ -63,12 +63,27 @@ def test_reshape_is_alias() -> None:
 
 def test_unsupported_op_raises() -> None:
   x = al.sym("x", 3)
-  inner = al.Function("inner", [x], [x.sum()], ["x"], ["s"])
-  z = al.sym("z", 3)
-  (out,) = inner.call([z])  # CALL not yet lowered
-  fn = al.Function("f", [z], [out], ["z"], ["y"])
+  stage = al.Function("stage", [x], [x.sin()], ["x"], ["y"])
+  batch = al.sym("batch", 9)
+  mapped = al.map_(stage, length=3, inputs=[(batch, 0, 3)])
+  fn = al.Function("f", [batch], [mapped], ["batch"], ["m"])
   with pytest.raises(LoweringError, match="not yet lowered"):
     lower_function(fn)
+
+
+def test_lower_call_emits_callee_proc_and_call_statement() -> None:
+  x = al.sym("x", 3)
+  inner = al.Function("inner_call_lower", [x], [(x * x).sum()], ["x"], ["s"])
+  z = al.sym("z", 3)
+  (out,) = inner.call([z])
+  fn = al.Function("f_call_lower", [z], [out], ["z"], ["y"])
+  prog = lower_function(fn)
+  assert prog.op == POps.PROGRAM
+  assert int(prog.attrs["proc_count"]) == 2  # one callee + one main
+  callee_proc = prog.args[0]
+  assert callee_proc.attrs["name"] == "inner_call_lower"
+  text = format_program(prog)
+  assert "call inner_call_lower(" in text
 
 
 def test_lower_stack_emits_per_input_global_loop() -> None:
@@ -156,7 +171,7 @@ def test_unsupported_device_raises() -> None:
 def test_lowered_proc_uses_input_buffer_directly() -> None:
   x = al.sym("x", 3)
   fn = al.Function("f", [x], [x.sin()], ["x"], ["y"])
-  proc = lower_function(fn)
+  proc = main_proc(lower_function(fn))
   buffer_nodes = [a for a in proc.args if a.op == POps.BUFFER]
   names = [b.attrs["name"] for b in buffer_nodes]
   assert "x" in names and "y" in names
