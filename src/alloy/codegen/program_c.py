@@ -182,17 +182,40 @@ def _emit_scalar(n: PNode, ptr_expr: dict[str, str]) -> str:
     return f"({_emit_scalar(n.args[0], ptr_expr)} / {_emit_scalar(n.args[1], ptr_expr)})"
   if n.op == POps.NEG:
     return f"(-{_emit_scalar(n.args[0], ptr_expr)})"
-  if n.op == POps.SIN:
-    return f"sin({_emit_scalar(n.args[0], ptr_expr)})"
-  if n.op == POps.COS:
-    return f"cos({_emit_scalar(n.args[0], ptr_expr)})"
-  if n.op == POps.EXP:
-    return f"exp({_emit_scalar(n.args[0], ptr_expr)})"
-  if n.op == POps.LOG:
-    return f"log({_emit_scalar(n.args[0], ptr_expr)})"
-  if n.op == POps.SQRT:
-    return f"sqrt({_emit_scalar(n.args[0], ptr_expr)})"
+  if n.op in _UNARY_FN_NAMES:
+    return f"{_UNARY_FN_NAMES[n.op]}({_emit_scalar(n.args[0], ptr_expr)})"
+  if n.op in _BINARY_FN_NAMES:
+    return f"{_BINARY_FN_NAMES[n.op]}({_emit_scalar(n.args[0], ptr_expr)}, {_emit_scalar(n.args[1], ptr_expr)})"
+  if n.op == POps.MOD:
+    return f"({_emit_scalar(n.args[0], ptr_expr)} % {_emit_scalar(n.args[1], ptr_expr)})"
   raise NotImplementedError(f"Program IR C renderer: scalar op {n.op} not yet handled")
+
+
+_UNARY_FN_NAMES = {
+  POps.SIN: "sin",
+  POps.COS: "cos",
+  POps.TAN: "tan",
+  POps.ASIN: "asin",
+  POps.ACOS: "acos",
+  POps.ATAN: "atan",
+  POps.SINH: "sinh",
+  POps.COSH: "cosh",
+  POps.TANH: "tanh",
+  POps.EXP: "exp",
+  POps.LOG: "log",
+  POps.SQRT: "sqrt",
+  POps.ABS: "fabs",
+  POps.FLOOR: "floor",
+  POps.CEIL: "ceil",
+}
+
+
+_BINARY_FN_NAMES = {
+  POps.POW: "pow",
+  POps.ATAN2: "atan2",
+  POps.MINIMUM: "fmin",
+  POps.MAXIMUM: "fmax",
+}
 
 
 __all__ = ["can_render_program_c", "render_program_c_source", "use_program_ir_renderer"]

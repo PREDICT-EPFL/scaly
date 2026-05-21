@@ -29,9 +29,19 @@ SUPPORTED_UNARY = {
   Ops.NEG: POps.NEG,
   Ops.SIN: POps.SIN,
   Ops.COS: POps.COS,
+  Ops.TAN: POps.TAN,
+  Ops.ASIN: POps.ASIN,
+  Ops.ACOS: POps.ACOS,
+  Ops.ATAN: POps.ATAN,
+  Ops.SINH: POps.SINH,
+  Ops.COSH: POps.COSH,
+  Ops.TANH: POps.TANH,
   Ops.EXP: POps.EXP,
   Ops.LOG: POps.LOG,
   Ops.SQRT: POps.SQRT,
+  Ops.ABS: POps.ABS,
+  Ops.FLOOR: POps.FLOOR,
+  Ops.CEIL: POps.CEIL,
 }
 
 SUPPORTED_BINARY = {
@@ -39,6 +49,10 @@ SUPPORTED_BINARY = {
   Ops.SUB: POps.SUB,
   Ops.MUL: POps.MUL,
   Ops.DIV: POps.DIV,
+  Ops.POW: POps.POW,
+  Ops.ATAN2: POps.ATAN2,
+  Ops.MINIMUM: POps.MINIMUM,
+  Ops.MAXIMUM: POps.MAXIMUM,
 }
 
 
@@ -127,6 +141,8 @@ class _Builder:
         self._emit_stack(node)
       elif node.op == Ops.CONCAT:
         self._emit_concat(node)
+      elif node.op == Ops.SLICE:
+        self._emit_slice(node)
       else:
         raise LoweringError(f"semantic op {node.op!r} is not yet lowered to Program IR (Phase 5 slice)")
 
@@ -366,6 +382,30 @@ class _Builder:
       body = [p.store(p.view(out, [dst_idx]), p.load(p.view(src_buf, [j])))]
       self.statements.append(p.for_(rng, body))
       offset += size
+
+  def _emit_slice(self, node: Expr) -> None:
+    """Lower SLICE: copy a contiguous run from the source buffer.
+
+    Today only the rank-1 single-slice case (``x[start:stop:1]``) is wired.
+    Multi-dim slices need rank-N views which the renderer does not yet model.
+    """
+    src = node.args[0]
+    src_buf = self.buffers[self.value_buffers[src.id]]
+    index = node.attrs["index"]
+    if len(src.shape) != 1 or len(index) != 1 or not isinstance(index[0], slice):
+      raise LoweringError(f"Phase 5 SLICE lowering only handles rank-1 single-slice indices; got src.shape={src.shape}, index={index}")
+    start, stop, step = index[0].indices(src.shape[0])
+    if step != 1:
+      raise LoweringError(f"Phase 5 SLICE lowering only handles step=1; got step={step}")
+    out = self._alloc_tmp(node)
+    size = max(0, stop - start)
+    if size == 0:
+      return
+    name = f"i_{out.attrs['name']}"
+    rng = p.range_(name, 0, size, kind=RangeKind.GLOBAL)
+    i = p.var(name, dtype=dtypes.int64)
+    src_idx = p.add(p.const_int(start), i) if start else i
+    self.statements.append(p.for_(rng, [p.store(p.view(out, [i]), p.load(p.view(src_buf, [src_idx])))]))
 
   def _emit_sum(self, node: Expr) -> None:
     src = node.args[0]

@@ -240,6 +240,48 @@ def test_sum_jit_matches_interpreter() -> None:
   np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
 
 
+def test_extra_elementwise_ops_jit_match_interpreter() -> None:
+  if not _has_compiler():
+    pytest.skip("no C compiler in PATH")
+  x = al.sym("x", 4)
+  # exercise tanh, abs, atan2, minimum
+  y = (x.tanh() + (-x).abs()).maximum(0.1)
+  fn = al.Function("f_extra", [x], [y], ["x"], ["y"])
+  x_val = np.array([-1.5, -0.5, 0.3, 1.2])
+  ref = fn.eval_interpreter(x_val)[0]
+  old = os.environ.get("ALLOY_USE_PROGRAM_IR_C")
+  try:
+    os.environ["ALLOY_USE_PROGRAM_IR_C"] = "1"
+    fn.recompile()
+    out = fn(x_val)
+  finally:
+    if old is None:
+      del os.environ["ALLOY_USE_PROGRAM_IR_C"]
+    else:
+      os.environ["ALLOY_USE_PROGRAM_IR_C"] = old
+  np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
+
+
+def test_slice_jit_matches_interpreter() -> None:
+  if not _has_compiler():
+    pytest.skip("no C compiler in PATH")
+  x = al.sym("x", 8)
+  fn = al.Function("f_slice", [x], [x[2:6]], ["x"], ["y"])
+  x_val = np.linspace(-1.0, 1.0, 8)
+  ref = fn.eval_interpreter(x_val)[0]
+  old = os.environ.get("ALLOY_USE_PROGRAM_IR_C")
+  try:
+    os.environ["ALLOY_USE_PROGRAM_IR_C"] = "1"
+    fn.recompile()
+    out = fn(x_val)
+  finally:
+    if old is None:
+      del os.environ["ALLOY_USE_PROGRAM_IR_C"]
+    else:
+      os.environ["ALLOY_USE_PROGRAM_IR_C"] = old
+  np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
+
+
 def test_program_c_renderer_independent_of_global_flag() -> None:
   """Calling ``render_program_c_source`` directly does not require the flag."""
   x = al.sym("x", 3)

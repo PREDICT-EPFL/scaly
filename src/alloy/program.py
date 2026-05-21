@@ -72,9 +72,23 @@ class POps(StrEnum):
   NEG = "neg"
   SIN = "sin"
   COS = "cos"
+  TAN = "tan"
+  ASIN = "asin"
+  ACOS = "acos"
+  ATAN = "atan"
+  SINH = "sinh"
+  COSH = "cosh"
+  TANH = "tanh"
   EXP = "exp"
   LOG = "log"
   SQRT = "sqrt"
+  ABS = "abs"
+  FLOOR = "floor"
+  CEIL = "ceil"
+  POW = "pow"
+  ATAN2 = "atan2"
+  MINIMUM = "minimum"
+  MAXIMUM = "maximum"
 
 
 class RangeKind(StrEnum):
@@ -113,9 +127,23 @@ SCALAR_OPS: frozenset[POps] = frozenset(
     POps.NEG,
     POps.SIN,
     POps.COS,
+    POps.TAN,
+    POps.ASIN,
+    POps.ACOS,
+    POps.ATAN,
+    POps.SINH,
+    POps.COSH,
+    POps.TANH,
     POps.EXP,
     POps.LOG,
     POps.SQRT,
+    POps.ABS,
+    POps.FLOOR,
+    POps.CEIL,
+    POps.POW,
+    POps.ATAN2,
+    POps.MINIMUM,
+    POps.MAXIMUM,
   }
 )
 
