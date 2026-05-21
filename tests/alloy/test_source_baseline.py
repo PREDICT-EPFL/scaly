@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -76,7 +77,7 @@ def _corpus_map() -> al.Function:
   return al.Function("mapped", [batch], [mapped], ["batch"], ["m"])
 
 
-CORPUS: tuple[tuple[str, callable], ...] = (
+CORPUS: tuple[tuple[str, Callable[[], al.Function]], ...] = (
   ("scalar_elementwise", _corpus_scalar_elementwise),
   ("vector_dot", _corpus_vector_dot),
   ("matmul", _corpus_matmul),

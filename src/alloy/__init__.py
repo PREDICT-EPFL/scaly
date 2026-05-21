@@ -20,16 +20,20 @@ from .sparsity import (
   sparse_jacobian_reference,
 )
 from .tape import Instruction, Tape, TapeRegion, WorkspacePlan, WorkspaceSlot, format_tape, linearize
-from .types import ScalarType, SparsityType, TensorType
+from .types import BACKEND_SUPPORT, BackendSupport, DeviceSpec, DType, ScalarType, SparsityType, TensorType, as_dtype, backend_supports, dtypes
 
 sym = Expr.sym
 const = Expr.const
 scan = map_
 
 __all__ = [
+  "BACKEND_SUPPORT",
+  "BackendSupport",
   "BufferType",
   "C_API_SIGNATURE",
   "COMMON_OPS",
+  "DType",
+  "DeviceSpec",
   "OP_INFO",
   "Expr",
   "Function",
@@ -49,8 +53,11 @@ __all__ = [
   "WorkspacePlan",
   "WorkspaceSlot",
   "adjoint",
+  "as_dtype",
   "atan2",
+  "backend_supports",
   "c_api_signature",
+  "dtypes",
   "color_groups",
   "column_coloring",
   "concat",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import reduce
 from operator import mul
 from collections.abc import Sequence
@@ -8,8 +8,142 @@ from typing import Literal
 
 import numpy as np
 
-DType = Literal["float64"]
 Lowering = Literal["auto", "scalar", "block", "opaque"]
+
+
+@dataclass(frozen=True, slots=True)
+class DType:
+  """Interned dtype descriptor.
+
+  See ``dtypes`` for the canonical instances. ``DType`` instances compare equal
+  to their string ``name`` (e.g. ``DType("float64", ...) == "float64"``) so older
+  call sites that round-trip the dtype through ``str`` keep working through the
+  Phase 1 migration.
+  """
+
+  name: str
+  bits: int
+  c_type: str
+  is_floating: bool = False
+  is_integer: bool = False
+  is_bool: bool = False
+
+  @property
+  def itemsize(self) -> int:
+    return self.bits // 8
+
+  def numpy(self) -> np.dtype:
+    return np.dtype(self.name)
+
+  def __str__(self) -> str:
+    return self.name
+
+  def __eq__(self, other: object) -> bool:  # backward compat with string dtype
+    if isinstance(other, DType):
+      return self.name == other.name
+    if isinstance(other, str):
+      return self.name == other
+    return NotImplemented
+
+  def __hash__(self) -> int:
+    return hash(self.name)
+
+
+class dtypes:
+  """Canonical interned dtype instances. Mirrors the small tinygrad-style registry."""
+
+  bool_ = DType("bool", 8, "uint8_t", is_bool=True)
+  int32 = DType("int32", 32, "int32_t", is_integer=True)
+  int64 = DType("int64", 64, "int64_t", is_integer=True)
+  float32 = DType("float32", 32, "float", is_floating=True)
+  float64 = DType("float64", 64, "double", is_floating=True)
+
+  _BY_NAME: dict[str, DType] = {}
+
+  @classmethod
+  def from_name(cls, name: str) -> DType:
+    if not cls._BY_NAME:
+      cls._BY_NAME.update({d.name: d for d in (cls.bool_, cls.int32, cls.int64, cls.float32, cls.float64)})
+    try:
+      return cls._BY_NAME[name]
+    except KeyError as e:
+      raise ValueError(f"unknown dtype {name!r}; supported: {sorted(cls._BY_NAME)}") from e
+
+  @classmethod
+  def all(cls) -> tuple[DType, ...]:
+    return (cls.bool_, cls.int32, cls.int64, cls.float32, cls.float64)
+
+
+def as_dtype(value: DType | str | None) -> DType:
+  if value is None:
+    return dtypes.float64
+  if isinstance(value, DType):
+    return value
+  if isinstance(value, str):
+    return dtypes.from_name(value)
+  raise TypeError(f"cannot interpret {value!r} as a DType")
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceSpec:
+  """Where a region/function should run.
+
+  ``kind`` is one of ``host``, ``cuda``, ``opencl``, ``metal``. ``index`` is the
+  device index for backends that have one. Backends register their
+  ``BackendSupport`` separately; ``DeviceSpec`` is only the policy value.
+  """
+
+  kind: str = "host"
+  index: int = 0
+
+  def __post_init__(self) -> None:
+    if self.kind not in {"host", "cuda", "opencl", "metal"}:
+      raise ValueError(f"unsupported device kind {self.kind!r}; expected host/cuda/opencl/metal")
+    if self.index < 0:
+      raise ValueError(f"device index must be non-negative, got {self.index}")
+
+  def __str__(self) -> str:
+    return self.kind if self.kind == "host" else f"{self.kind}:{self.index}"
+
+  @staticmethod
+  def parse(spec: "DeviceSpec | str | None") -> "DeviceSpec":
+    if spec is None:
+      return DeviceSpec()
+    if isinstance(spec, DeviceSpec):
+      return spec
+    if isinstance(spec, str):
+      if spec == "host":
+        return DeviceSpec("host", 0)
+      if ":" in spec:
+        kind, idx = spec.split(":", 1)
+        return DeviceSpec(kind, int(idx))
+      return DeviceSpec(spec, 0)
+    raise TypeError(f"cannot interpret {spec!r} as a DeviceSpec")
+
+
+@dataclass(frozen=True, slots=True)
+class BackendSupport:
+  name: str
+  dtypes: frozenset[DType] = field(default_factory=frozenset)
+
+  def supports(self, dtype: DType) -> bool:
+    return dtype in self.dtypes
+
+
+BACKEND_SUPPORT: dict[str, BackendSupport] = {
+  "host": BackendSupport("host", frozenset(dtypes.all())),
+  # placeholder capability tables for the lowering policy: backends that exist
+  # at policy time but cannot lower yet still record their dtype constraints
+  # so an early diagnostic can reject e.g. float64 on Metal.
+  "cuda": BackendSupport("cuda", frozenset({dtypes.float32, dtypes.float64, dtypes.int32, dtypes.int64, dtypes.bool_})),
+  "opencl": BackendSupport("opencl", frozenset({dtypes.float32, dtypes.float64, dtypes.int32, dtypes.int64, dtypes.bool_})),
+  "metal": BackendSupport("metal", frozenset({dtypes.float32, dtypes.int32, dtypes.int64, dtypes.bool_})),
+}
+
+
+def backend_supports(device: DeviceSpec, dtype: DType) -> bool:
+  support = BACKEND_SUPPORT.get(device.kind)
+  return support is not None and support.supports(dtype)
 
 
 def _check_shape(name: str, shape: tuple[int, ...]) -> None:
@@ -19,8 +153,12 @@ def _check_shape(name: str, shape: tuple[int, ...]) -> None:
 
 @dataclass(frozen=True, slots=True)
 class ScalarType:
-  dtype: DType = "float64"
+  dtype: DType = dtypes.float64
   diff: bool = True
+
+  def __post_init__(self) -> None:
+    if not isinstance(self.dtype, DType):
+      object.__setattr__(self, "dtype", as_dtype(self.dtype))
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,12 +256,14 @@ def _check_compressed_ptr(name: str, ptr: tuple[int, ...], n_outer: int, nnz: in
 @dataclass(frozen=True, slots=True)
 class TensorType:
   shape: tuple[int, ...] = ()
-  dtype: DType = "float64"
+  dtype: DType = dtypes.float64
   sparsity: SparsityType | None = None
   diff: bool = True
 
   def __post_init__(self) -> None:
     _check_shape("tensor", self.shape)
+    if not isinstance(self.dtype, DType):
+      object.__setattr__(self, "dtype", as_dtype(self.dtype))
     if self.sparsity is not None and self.shape != self.sparsity.shape:
       raise ValueError(f"tensor shape {self.shape} does not match sparsity shape {self.sparsity.shape}")
 
