@@ -132,6 +132,8 @@ The current benchmark suite should be treated as regression tests, not just perf
 
 ## Progress snapshot (as of this branch)
 
+> 245 tests passing, ruff/ty clean. The work below covers a complete first slice for every phase; the "Follow-ups" section at the end lists what each phase still leaves on the table.
+
 - **Phase 0** ✓ — baseline frozen. `docs/spec.md` uses the new semantic-IR / Program-IR / renderer / verifier vocabulary. `Tape` is documented as transitional. `tests/alloy/test_source_baseline.py` locks generated C for a 5-entry corpus and gates against drift via SHA-256.
 - **Phase 1** ✓ — interned `DType` registry (`dtypes.bool_/int32/int64/float32/float64`) plus `DeviceSpec` (`host` / `cuda` / `opencl` / `metal`) and a `BackendSupport` capability table. `Function.with_device(...)` is the public placement API; non-host placements raise `JitError` loudly today, and ``BACKEND_SUPPORT`` rejects e.g. `float64` on Metal at construction.
 - **Phase 2** ✓ — `src/alloy/spec.py` ships `Spec`/`VerifyRule`/`verify_expr` with `spec_semantic_shared` and `spec_semantic`. Positive and negative tests in `tests/alloy/test_verifier.py` lock the contract.
@@ -159,6 +161,17 @@ The current benchmark suite should be treated as regression tests, not just perf
 - **Phase 10** — first slice. `Ops.SUM_AXIS` (axis-aware reduction) ships with verifier rule, JVP/VJP/sparsity-mask AD support, interpreter evaluation, and Program IR lowering (nested loops: outer ``GLOBAL`` for kept dims, inner ``REDUCE`` for reduced dims). Other higher-order linalg (batched matmul, axis-aware mean/max) deferred to follow-ups.
 - **Phase 11** — not started. SolverFunction integration with Program IR + explicit differentiation policies (opaque / user-provided / implicit) remains design work; current solver wrappers stay on the legacy renderer via silent fallback.
 - **Phase 12** — partial cleanup. ``ALLOY_REQUIRE_JIT=1`` disables silent interpreter fallback so benchmarks/regression runs fail loud when JIT codegen breaks. Tape and the legacy renderer are still load-bearing for the workload tests; they retire when Program IR coverage and benchmark numbers warrant.
+
+### Follow-ups (per-phase punch list)
+
+- **Phase 5**: SOLVER_CALL lowering (depends on Phase 11), multi-dim STACK/CONCAT/SLICE, large CONST via a dedicated CONST_BUFFER op, large GATHER/SCATTER via constant index tables, lifetime/workspace packing of private buffers, wiring the structured-sparsity-aware sparse-Jacobian assembly through Program IR (so MAP-based spjac stops materializing index tables).
+- **Phase 6**: tests on the workload fixtures (tracking spjac) for the BlockDiagonal join. Public API for materialize-on-demand sparsity descriptors in solver headers.
+- **Phase 7**: rebind nested loops (REDUCE/UNROLL) to richer launch shapes; fusion/fission heuristics for adjacent kernels.
+- **Phase 8**: nvcc integration (drop into ``alloy.jit`` behind a flag), multi-axis thread binding (bind 2D row+col loops to ``(blockIdx.y, threadIdx.y) × (blockIdx.x, threadIdx.x)``), numerical equivalence vs interpreter on actual hardware. OpenCL and Metal backends.
+- **Phase 9**: full host/device copy planning (today the GPU subfunction does its own ``cudaMemcpy``; a future pass could keep memory resident across mixed CPU/GPU CALLs). Diagnostic messages explaining placement decisions.
+- **Phase 10**: axis-aware mean/min/max/prod (mechanical follow-on to SUM_AXIS), batched matmul as a first-class op with AD rules, layout-aware lowering. Triangular/linear solve as opaque-with-AD-policy ops.
+- **Phase 11**: implicit-function-theorem differentiation for SOLVER_CALL (Lagrangian KKT linear solve). User-provided sensitivity oracle wiring through ``derivative_function``. Generated C entry points for ``DerivativePolicy != OPAQUE``.
+- **Phase 12**: move tape's schedule responsibilities into Program IR (workspace planning, lifetime tracking), trim ``Expr.eval`` once the debug executor covers tests, delete the legacy tape-based C renderer when Program IR coverage clears the benchmark suite.
 
 ## Detailed migration plan
 
