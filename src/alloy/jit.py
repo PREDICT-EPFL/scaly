@@ -53,6 +53,16 @@ def jit_disabled() -> bool:
   return os.environ.get("ALLOY_DISABLE_JIT", "0") not in ("0", "", "false", "False")
 
 
+def jit_required() -> bool:
+  """Return True iff ``ALLOY_REQUIRE_JIT`` is set — silent interpreter fallback is disabled.
+
+  Benchmark/regression code that must measure compiled performance sets this
+  so that ``JitUnavailable`` propagates instead of silently routing to the
+  interpreter.
+  """
+  return os.environ.get("ALLOY_REQUIRE_JIT", "0") not in ("0", "", "false", "False")
+
+
 def _cache_root() -> Path:
   override = os.environ.get("ALLOY_CACHE_DIR")
   if override:

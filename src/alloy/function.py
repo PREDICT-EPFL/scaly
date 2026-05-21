@@ -131,7 +131,7 @@ class Function:
 
   def eval_list(self, *args: Any, **kwargs: Any) -> list[np.ndarray]:
     """Default dispatch: lazily compile and run via the universal ABI, falling back to the interpreter."""
-    from .jit import CompiledFunction, JitError, JitUnavailable, jit_disabled
+    from .jit import CompiledFunction, JitError, JitUnavailable, jit_disabled, jit_required
 
     if jit_disabled():
       return self.eval_interpreter(*args, **kwargs)
@@ -146,6 +146,8 @@ class Function:
       try:
         compiled = CompiledFunction(self)
       except JitUnavailable:
+        if jit_required():
+          raise
         return self.eval_interpreter(*args, **kwargs)
       except JitError:
         raise
