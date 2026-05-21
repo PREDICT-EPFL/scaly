@@ -220,6 +220,26 @@ y = sparse_model + opaque_boundary
 
 Today this is metadata preserved by the tape and shown by `Tape.debug()`. Later it should drive partitioning: scalar regions lower to explicit scalar instructions, dense regions lower to block kernels/loops, and the boundary inserts materialization/copy/project operations.
 
+## Semantic IR verifier (Phase 2)
+
+Each IR level should have an explicit spec table and verifier (see roadmap Phase 2). The semantic IR layer ships its spec in `src/alloy/spec.py`:
+
+```python
+import alloy as al
+
+x = al.sym("x", 3)
+y = (x.sin() + x * x).sum()
+al.verify_expr(y)                       # silent on success
+al.verify_expr(y, spec=al.spec_semantic)  # explicit spec choice
+```
+
+The verifier walks the DAG topologically and raises `VerifyError` at the first invalid node, naming the node, its op, and the failing rule. Two specs are exported today:
+
+- `spec_semantic_shared` — rules every node must satisfy (non-negative shape, `DType`-typed dtype, arity matches `OP_INFO`, sparsity shape agrees with tensor shape).
+- `spec_semantic` — `spec_semantic_shared` plus per-op rules (e.g. `RESHAPE` size, `TRANSPOSE` axes are a permutation, `MATMUL` contracting dims, `CALL` arg shapes match the callee, `MAP` outers are rank-1 with consistent `slice_size`, `CONST` value shape/dtype match the declared type).
+
+Verification is opt-in: construction-time checks in `expr.py` keep the happy path fast. `verify_expr` is the explicit defensive check passes should run after non-trivial graph rewrites or AD transforms, and the harness for negative tests in `tests/alloy/test_verifier.py`.
+
 ## Structural equality and rewrites
 
 `Expr.id` remains a construction-time identity, while `Expr.structural_key()`, `Expr.structural_hash()`, and `Expr.structurally_equal()` compare graph structure. This lets compiler passes identify equivalent subgraphs without changing user-visible node identity. `Expr.debug()` / `al.format_expr(...)` print stable topological `%0`, `%1`, ... names for small graph inspection.

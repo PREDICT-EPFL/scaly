@@ -9,6 +9,7 @@ from .function import Function, Port
 from .ops import COMMON_OPS, OP_INFO, Ops
 from .rewrite import Pattern, PatternMatcher, cse, cse_many, rewrite, simplify
 from .solvers import SolverFunction, SolverStatus, nlp, qp
+from .spec import Spec, VerifyError, VerifyRule, spec_semantic, spec_semantic_shared, verify_expr
 from .sparsity import (
   SparseJacobian,
   color_groups,
@@ -45,11 +46,14 @@ __all__ = [
   "ScalarType",
   "SolverFunction",
   "SolverStatus",
+  "Spec",
   "SparseJacobian",
   "SparsityType",
   "Tape",
   "TapeRegion",
   "TensorType",
+  "VerifyError",
+  "VerifyRule",
   "WorkspacePlan",
   "WorkspaceSlot",
   "adjoint",
@@ -98,6 +102,8 @@ __all__ = [
   "sparse_jacobian",
   "sparse_jacobian_colored",
   "sparse_jacobian_reference",
+  "spec_semantic",
+  "spec_semantic_shared",
   "sphessian",
   "spjacobian",
   "split",
@@ -105,4 +111,5 @@ __all__ = [
   "sumsqr",
   "vec",
   "sym",
+  "verify_expr",
 ]
