@@ -119,6 +119,10 @@ class _Builder:
         self._emit_sum(node)
       elif node.op == Ops.MATMUL:
         self._emit_matmul(node)
+      elif node.op == Ops.GATHER:
+        self._emit_gather(node)
+      elif node.op == Ops.SCATTER:
+        self._emit_scatter(node)
       else:
         raise LoweringError(f"semantic op {node.op!r} is not yet lowered to Program IR (Phase 5 slice)")
 
@@ -290,6 +294,40 @@ class _Builder:
     inner_for = p.for_(k_rng, inner)
     col_for = p.for_(col_rng, [init, inner_for])
     self.statements.append(p.for_(row_rng, [col_for]))
+
+  def _emit_gather(self, node: Expr) -> None:
+    src = node.args[0]
+    src_buf = self.buffers[self.value_buffers[src.id]]
+    out = self._alloc_tmp(node)
+    idx = node.attrs["indices"].reshape(-1)
+    if idx.size > 32:
+      raise LoweringError(f"GATHER of {idx.size} indices exceeds the Phase 5 unrolled threshold; constant-buffer lowering not implemented yet")
+    for i, src_idx in enumerate(idx):
+      self.statements.append(
+        p.store(
+          p.view(out, [p.const_int(i)]),
+          p.load(p.view(src_buf, [p.const_int(int(src_idx))])),
+        )
+      )
+
+  def _emit_scatter(self, node: Expr) -> None:
+    src = node.args[0]
+    src_buf = self.buffers[self.value_buffers[src.id]]
+    out = self._alloc_tmp(node)
+    idx = node.attrs["indices"].reshape(-1)
+    if idx.size > 32:
+      raise LoweringError(f"SCATTER of {idx.size} indices exceeds the Phase 5 unrolled threshold; constant-buffer lowering not implemented yet")
+    # initialize all output cells to zero
+    size = node.size or 1
+    for j in range(size):
+      self.statements.append(p.store(p.view(out, [p.const_int(j)]), p.const_float(0.0, dtype=node.type.dtype)))
+    for i, dst_idx in enumerate(idx):
+      self.statements.append(
+        p.store(
+          p.view(out, [p.const_int(int(dst_idx))]),
+          p.load(p.view(src_buf, [p.const_int(i)])),
+        )
+      )
 
   def _emit_sum(self, node: Expr) -> None:
     src = node.args[0]

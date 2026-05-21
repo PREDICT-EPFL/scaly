@@ -62,11 +62,34 @@ def test_reshape_is_alias() -> None:
 
 
 def test_unsupported_op_raises() -> None:
-  x = al.sym("x", 6)
-  y = x.gather([0, 2, 4])  # GATHER not yet lowered
+  x = al.sym("x", 4)
+  y = al.stack([x, x])  # STACK not yet lowered
   fn = al.Function("f", [x], [y], ["x"], ["y"])
   with pytest.raises(LoweringError, match="not yet lowered"):
     lower_function(fn)
+
+
+def test_lower_gather_unrolls() -> None:
+  x = al.sym("x", 6)
+  y = x.gather([0, 2, 4])
+  fn = al.Function("f_gather", [x], [y], ["x"], ["y"])
+  proc = lower_function(fn)
+  text = format_program(proc)
+  assert "t0[0] <- x[0]" in text
+  assert "t0[1] <- x[2]" in text
+  assert "t0[2] <- x[4]" in text
+
+
+def test_lower_scatter_initializes_then_writes() -> None:
+  v = al.sym("v", 2)
+  y = al.scatter(v, [1, 3], 6)
+  fn = al.Function("f_scatter", [v], [y], ["v"], ["y"])
+  proc = lower_function(fn)
+  text = format_program(proc)
+  # zero-init all six output cells then write two
+  assert text.count("<- 0") == 6
+  assert "t0[1] <- v[0]" in text
+  assert "t0[3] <- v[1]" in text
 
 
 def test_lower_matmul_matvec_emits_outer_global_inner_reduce() -> None:

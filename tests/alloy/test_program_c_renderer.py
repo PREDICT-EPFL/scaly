@@ -54,10 +54,37 @@ def test_can_render_matmul() -> None:
   assert can_render_program_c(fn)
 
 
-def test_cannot_render_gather_yet() -> None:
+def test_can_render_gather() -> None:
   x = al.sym("x", 6)
   fn = al.Function("f_gather", [x], [x.gather([0, 2])], ["x"], ["y"])
+  assert can_render_program_c(fn)
+
+
+def test_cannot_render_stack_yet() -> None:
+  x = al.sym("x", 4)
+  fn = al.Function("f_stack", [x], [al.stack([x, x])], ["x"], ["y"])
   assert not can_render_program_c(fn)
+
+
+def test_gather_jit_matches_interpreter() -> None:
+  if not _has_compiler():
+    pytest.skip("no C compiler in PATH")
+  x = al.sym("x", 6)
+  y = x.gather([0, 2, 4, 5])
+  fn = al.Function("f_gather_jit", [x], [y], ["x"], ["y"])
+  x_val = np.linspace(-1.0, 1.0, 6)
+  ref = fn.eval_interpreter(x_val)[0]
+  old = os.environ.get("ALLOY_USE_PROGRAM_IR_C")
+  try:
+    os.environ["ALLOY_USE_PROGRAM_IR_C"] = "1"
+    fn.recompile()
+    out = fn(x_val)
+  finally:
+    if old is None:
+      del os.environ["ALLOY_USE_PROGRAM_IR_C"]
+    else:
+      os.environ["ALLOY_USE_PROGRAM_IR_C"] = old
+  np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
 
 
 def test_matmul_jit_matches_interpreter() -> None:
