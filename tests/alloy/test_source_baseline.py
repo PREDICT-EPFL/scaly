@@ -95,7 +95,10 @@ def _maybe_regen() -> bool:
 
 
 @pytest.mark.parametrize("name,builder", CORPUS, ids=[name for name, _ in CORPUS])
-def test_source_baseline_matches_golden(name: str, builder) -> None:
+def test_source_baseline_matches_golden(name: str, builder, monkeypatch) -> None:
+  # The goldens are pinned to the legacy scalar C renderer. Disable the
+  # Program-IR-backed renderer for this test so the comparison is meaningful.
+  monkeypatch.delenv("ALLOY_USE_PROGRAM_IR_C", raising=False)
   fn = builder()
   src = _normalize(render_c_source(fn))
   golden = _golden_path(name)

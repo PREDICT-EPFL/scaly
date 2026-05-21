@@ -217,7 +217,14 @@ def _emit_scalar(n: PNode, ptr_expr: dict[str, str]) -> str:
   if n.op == POps.CONST_INT:
     return str(n.attrs["value"])
   if n.op == POps.CONST_FLOAT:
-    return f"{n.attrs['value']:.17g}"
+    v = n.attrs["value"]
+    import math
+
+    if math.isnan(v):
+      return "((double)NAN)"
+    if math.isinf(v):
+      return "((double)(-INFINITY))" if v < 0 else "((double)INFINITY)"
+    return f"{v:.17g}"
   if n.op == POps.VAR:
     return str(n.attrs["name"])
   if n.op == POps.LOAD:
