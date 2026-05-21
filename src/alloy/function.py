@@ -11,7 +11,7 @@ from .ops import Ops
 from .rewrite import simplify
 from .sparsity import sparse_hessian, sparse_jacobian
 from .tape import Tape, linearize
-from .types import SparsityType, TensorType
+from .types import DeviceSpec, SparsityType, TensorType, backend_supports
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,10 +34,18 @@ class Function:
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
     output_sparsities: Sequence[SparsityType | None] | None = None,
+    device: DeviceSpec | str | None = None,
   ):
     self.name = name
     self.inputs = tuple(inputs)
     self.outputs = tuple(outputs)
+    self.device: DeviceSpec = DeviceSpec.parse(device)
+    for expr in (*self.inputs, *self.outputs):
+      if not backend_supports(self.device, expr.type.dtype):
+        raise ValueError(
+          f"function {name!r} placed on {self.device} cannot lower dtype {expr.type.dtype} (input/output '{expr.name or '<?>'}'). "
+          f"Use a different device or cast to a supported dtype."
+        )
     raw_input_names = tuple(input_names) if input_names is not None else tuple(i.name for i in inputs)
     if any(n is None for n in raw_input_names):
       raise ValueError("all inputs must have names")
@@ -66,7 +74,26 @@ class Function:
     self._compiled: Any = None
 
   def __repr__(self) -> str:
-    return f"Function({self.name!r}, {self.input_names}->{self.output_names})"
+    suffix = f" device={self.device}" if self.device.kind != "host" else ""
+    return f"Function({self.name!r}, {self.input_names}->{self.output_names}{suffix})"
+
+  def with_device(self, device: DeviceSpec | str) -> "Function":
+    """Return a copy of this Function placed on ``device``.
+
+    This is a placement policy hint (see roadmap Phase 1 / Phase 9). Today
+    only ``host`` actually lowers; non-host devices are accepted and tracked
+    so debug output and verifier diagnostics can see them, but compilation
+    only succeeds for placements with a registered backend.
+    """
+    return Function(
+      self.name,
+      self.inputs,
+      self.outputs,
+      self.input_names,
+      self.output_names,
+      self.output_sparsities,
+      device=device,
+    )
 
   def input_map(self) -> dict[str, Expr]:
     return dict(zip(self.input_names, self.inputs, strict=True))
@@ -108,6 +135,11 @@ class Function:
 
     if jit_disabled():
       return self.eval_interpreter(*args, **kwargs)
+    if self.device.kind != "host":
+      raise JitError(
+        f"function {self.name!r} placed on {self.device}, but only host lowering is implemented. "
+        f"Use ALLOY_DISABLE_JIT=1 to fall back to the interpreter, or call .with_device('host') for now."
+      )
     ordered = self._resolve_inputs(args, kwargs)
     compiled: CompiledFunction | None = self._compiled
     if compiled is None:

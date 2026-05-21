@@ -141,6 +141,36 @@ static const int f_spjac_y_x_csc_col_ptr[5] = {0, 1, 2, 3, 4};
 static const int f_spjac_y_x_csc_row_ind[4] = {0, 2, 1, 1};
 ```
 
+## Dtype model and device placement (Phase 1)
+
+`DType` is a small interned descriptor with a name, bit-width, C-type spelling, and category flags. The canonical instances live in `dtypes`:
+
+```python
+al.dtypes.bool_      # uint8_t, 1 byte
+al.dtypes.int32      # int32_t, 4 bytes
+al.dtypes.int64      # int64_t, 8 bytes
+al.dtypes.float32    # float,   4 bytes
+al.dtypes.float64    # double,  8 bytes  (default)
+```
+
+For back-compat with prior `dtype="float64"` string usage, `DType.__eq__` accepts strings. Construction APIs (`Expr.sym`, `Expr.const`, `TensorType`, `BufferType`) accept either a `DType` instance or its string name and coerce in `__post_init__`.
+
+Mixed-dtype binary ops are refused without an explicit cast — there is no implicit numeric promotion (`promote_dtype` only verifies that all operands share dtype). This will become more permissive when an explicit `Expr.cast(dtype)` op lands, but the conservative default keeps current `float64` workloads identical and makes future mixed-precision code explicit at the call site.
+
+`DeviceSpec("host" | "cuda" | "opencl" | "metal", index)` is the public placement value:
+
+```python
+fn_gpu = fn.with_device("cuda:0")        # placement policy
+assert fn_gpu.device == al.DeviceSpec("cuda", 0)
+```
+
+Each backend registers a `BackendSupport` capability table (`BACKEND_SUPPORT`). For example `metal` does not currently advertise `float64`, so `Function(..., device="metal:0")` over a `float64` graph fails at construction with a clear diagnostic — not at runtime, and not as a silent host fallback. Today only `host` actually lowers through the JIT; non-host placements raise `JitError("only host lowering is implemented")` when called.
+
+Future phases will extend this:
+
+- Phase 4+ — Program IR carries placement per region so a single host `Function` can contain CPU procedures, GPU kernels, and solver calls.
+- Phase 8 — the first GPU backend (CUDA or OpenCL) makes `with_device("cuda:0")` actually lower instead of erroring.
+
 ## Mixed lowering
 
 Every expression carries a lowering hint:

@@ -8,11 +8,12 @@ from typing import Any, Iterable
 import numpy as np
 
 from .ops import OP_INFO, Ops
-from .types import Lowering, TensorType, as_shape, broadcast_shape
+from .types import DType, Lowering, TensorType, as_dtype, as_shape, broadcast_shape, dtypes
 
 
-def _asarray(value: Any) -> np.ndarray:
-  return np.asarray(value, dtype=np.float64)
+def _asarray(value: Any, *, dtype: DType | str | None = None) -> np.ndarray:
+  np_dtype = as_dtype(dtype).numpy() if dtype is not None else np.float64
+  return np.asarray(value, dtype=np_dtype)
 
 
 # Construction-time hash-consing cache. Two ``Expr(...)`` constructions with the same
@@ -92,13 +93,21 @@ class Expr:
     object.__setattr__(self, "_initialized", True)
 
   @staticmethod
-  def sym(name: str, shape: int | tuple[int, ...] | None = None, *, diff: bool = True, lowering: Lowering = "auto") -> Expr:
-    return Expr(Ops.INPUT, type=TensorType(as_shape(shape), diff=diff), name=name, lowering=lowering)
+  def sym(
+    name: str,
+    shape: int | tuple[int, ...] | None = None,
+    *,
+    dtype: DType | str = dtypes.float64,
+    diff: bool = True,
+    lowering: Lowering = "auto",
+  ) -> Expr:
+    return Expr(Ops.INPUT, type=TensorType(as_shape(shape), dtype=as_dtype(dtype), diff=diff), name=name, lowering=lowering)
 
   @staticmethod
-  def const(value: Any, *, lowering: Lowering = "auto") -> Expr:
-    arr = _asarray(value)
-    return Expr(Ops.CONST, type=TensorType(tuple(arr.shape), diff=False), value=arr, lowering=lowering)
+  def const(value: Any, *, dtype: DType | str | None = None, lowering: Lowering = "auto") -> Expr:
+    dtype_eff = as_dtype(dtype) if dtype is not None else dtypes.float64
+    arr = _asarray(value, dtype=dtype_eff)
+    return Expr(Ops.CONST, type=TensorType(tuple(arr.shape), dtype=dtype_eff, diff=False), value=arr, lowering=lowering)
 
   @property
   def shape(self) -> tuple[int, ...]:
@@ -152,7 +161,7 @@ class Expr:
     shape = as_shape(shape)
     if np.prod(shape, dtype=int) != self.size:
       raise ValueError(f"cannot reshape {self.shape} with {self.size} entries to {shape}")
-    return Expr(Ops.RESHAPE, (self,), TensorType(shape, diff=self.type.diff), attrs={"shape": shape}, lowering=self.lowering)
+    return Expr(Ops.RESHAPE, (self,), TensorType(shape, dtype=self.type.dtype, diff=self.type.diff), attrs={"shape": shape}, lowering=self.lowering)
 
   def vec(self) -> Expr:
     return self.reshape((self.size,))
@@ -162,7 +171,11 @@ class Expr:
     if sorted(axes) != list(range(len(self.shape))):
       raise ValueError(f"transpose axes {axes} are not a permutation for shape {self.shape}")
     return Expr(
-      Ops.TRANSPOSE, (self,), TensorType(tuple(self.shape[i] for i in axes), diff=self.type.diff), attrs={"axes": axes}, lowering=self.lowering
+      Ops.TRANSPOSE,
+      (self,),
+      TensorType(tuple(self.shape[i] for i in axes), dtype=self.type.dtype, diff=self.type.diff),
+      attrs={"axes": axes},
+      lowering=self.lowering,
     )
 
   @property
@@ -172,13 +185,13 @@ class Expr:
   def __getitem__(self, index: Any) -> Expr:
     index = _normalize_index(index, self.shape)
     shape = tuple(np.empty(self.shape)[index].shape)
-    return Expr(Ops.SLICE, (self,), TensorType(shape, diff=self.type.diff), attrs={"index": index}, lowering=self.lowering)
+    return Expr(Ops.SLICE, (self,), TensorType(shape, dtype=self.type.dtype, diff=self.type.diff), attrs={"index": index}, lowering=self.lowering)
 
   def gather(self, indices: Any) -> Expr:
     return gather(self, indices)
 
   def sum(self) -> Expr:
-    return Expr(Ops.SUM, (self,), TensorType((), diff=self.type.diff), lowering=self.lowering)
+    return Expr(Ops.SUM, (self,), TensorType((), dtype=self.type.dtype, diff=self.type.diff), lowering=self.lowering)
 
   def dot(self, other: Any) -> Expr:
     return dot(self, other)
@@ -372,12 +385,27 @@ def op_diff(op: Ops | str, *exprs: Expr) -> bool:
   return OP_INFO[Ops(op)].differentiable and diff_any(*exprs)
 
 
+def promote_dtype(*exprs: Expr) -> DType:
+  if not exprs:
+    return dtypes.float64
+  first = exprs[0].type.dtype
+  for e in exprs[1:]:
+    if e.type.dtype != first:
+      raise TypeError(f"mixed-dtype operation not yet supported: {first} vs {e.type.dtype}; insert an explicit cast")
+  return first
+
+
 def unary(op: Ops | str, x: Expr) -> Expr:
-  return Expr(op, (x,), TensorType(x.shape, diff=op_diff(op, x)), lowering=x.lowering)
+  return Expr(op, (x,), TensorType(x.shape, dtype=x.type.dtype, diff=op_diff(op, x)), lowering=x.lowering)
 
 
 def binary(op: Ops | str, x: Expr, y: Expr) -> Expr:
-  return Expr(op, (x, y), TensorType(broadcast_shape(x.shape, y.shape), diff=op_diff(op, x, y)), lowering=common_lowering(x, y))
+  return Expr(
+    op,
+    (x, y),
+    TensorType(broadcast_shape(x.shape, y.shape), dtype=promote_dtype(x, y), diff=op_diff(op, x, y)),
+    lowering=common_lowering(x, y),
+  )
 
 
 def atan2(y: Any, x: Any) -> Expr:
@@ -429,7 +457,7 @@ def matmul(x: Expr, y: Expr) -> Expr:
     shape = (x.shape[0], y.shape[1])
   else:
     raise NotImplementedError(f"matmul shape inference for {x.shape} @ {y.shape}")
-  return Expr(Ops.MATMUL, (x, y), TensorType(shape, diff=diff_any(x, y)), lowering=common_lowering(x, y))
+  return Expr(Ops.MATMUL, (x, y), TensorType(shape, dtype=promote_dtype(x, y), diff=diff_any(x, y)), lowering=common_lowering(x, y))
 
 
 def dot(x: Any, y: Any) -> Expr:
@@ -458,7 +486,7 @@ def _index_array(indices: Any, upper_bound: int) -> np.ndarray:
 def gather(x: Any, indices: Any) -> Expr:
   x = as_expr(x)
   idx = _index_array(indices, x.size)
-  return Expr(Ops.GATHER, (x,), TensorType(tuple(idx.shape), diff=x.type.diff), attrs={"indices": idx}, lowering=x.lowering)
+  return Expr(Ops.GATHER, (x,), TensorType(tuple(idx.shape), dtype=x.type.dtype, diff=x.type.diff), attrs={"indices": idx}, lowering=x.lowering)
 
 
 def scatter(values: Any, indices: Any, shape: int | tuple[int, ...]) -> Expr:
@@ -470,7 +498,9 @@ def scatter(values: Any, indices: Any, shape: int | tuple[int, ...]) -> Expr:
   flat = idx.reshape(-1)
   if len(set(flat.tolist())) != flat.size:
     raise ValueError("scatter indices must be unique")
-  return Expr(Ops.SCATTER, (values,), TensorType(shape, diff=values.type.diff), attrs={"indices": idx}, lowering=values.lowering)
+  return Expr(
+    Ops.SCATTER, (values,), TensorType(shape, dtype=values.type.dtype, diff=values.type.diff), attrs={"indices": idx}, lowering=values.lowering
+  )
 
 
 def split(x: Any, sections: int | Iterable[int], *, axis: int = 0) -> tuple[Expr, ...]:
@@ -509,7 +539,9 @@ def stack(xs: Iterable[Any], *, axis: int = 0) -> Expr:
   if axis < 0 or axis > len(base):
     raise ValueError(f"stack axis {axis} out of bounds for shape {base}")
   shape = base[:axis] + (len(exprs),) + base[axis:]
-  return Expr(Ops.STACK, exprs, TensorType(shape, diff=diff_any(*exprs)), attrs={"axis": axis}, lowering=common_lowering(*exprs))
+  return Expr(
+    Ops.STACK, exprs, TensorType(shape, dtype=promote_dtype(*exprs), diff=diff_any(*exprs)), attrs={"axis": axis}, lowering=common_lowering(*exprs)
+  )
 
 
 def concat(xs: Iterable[Any], *, axis: int = 0) -> Expr:
@@ -524,7 +556,9 @@ def concat(xs: Iterable[Any], *, axis: int = 0) -> Expr:
     if len(e.shape) != len(base) or any(a != b for i, (a, b) in enumerate(zip(e.shape, base, strict=True)) if i != axis):
       raise ValueError(f"cannot concat shapes {[x.shape for x in exprs]} along axis {axis}")
   shape = base[:axis] + (sum(e.shape[axis] for e in exprs),) + base[axis + 1 :]
-  return Expr(Ops.CONCAT, exprs, TensorType(shape, diff=diff_any(*exprs)), attrs={"axis": axis}, lowering=common_lowering(*exprs))
+  return Expr(
+    Ops.CONCAT, exprs, TensorType(shape, dtype=promote_dtype(*exprs), diff=diff_any(*exprs)), attrs={"axis": axis}, lowering=common_lowering(*exprs)
+  )
 
 
 def vec(x: Any) -> Expr:

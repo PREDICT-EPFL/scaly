@@ -9,7 +9,7 @@ import numpy as np
 
 from .expr import Expr, topo
 from .ops import OP_INFO, Ops
-from .types import Lowering
+from .types import DType, Lowering, dtypes
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +23,7 @@ class Instruction:
   attrs: dict[str, Any]
   value: np.ndarray | None = None
   name: str | None = None
+  dtype: DType = dtypes.float64
 
   @property
   def size(self) -> int:
@@ -159,6 +160,7 @@ def linearize(outputs: Iterable[Expr]) -> Tape:
       attrs=_instruction_attrs(e),
       value=e.value.copy() if e.value is not None else None,
       name=e.name,
+      dtype=e.type.dtype,
     )
     for i, e in enumerate(nodes)
   )
@@ -191,7 +193,7 @@ def format_tape(tape: Tape) -> str:
     else:
       rhs = f"{inst.op.value}({args})"
     lowering = "" if inst.lowering == "auto" else f" [{inst.lowering}]"
-    lines.append(f"{lhs} = {rhs} : float64{inst.shape}{lowering}")
+    lines.append(f"{lhs} = {rhs} : {inst.dtype.name}{inst.shape}{lowering}")
   lines.append("outputs " + ", ".join(f"%{i}" for i in tape.outputs))
   return "\n".join(lines)
 
