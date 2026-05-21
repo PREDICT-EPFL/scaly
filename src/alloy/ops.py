@@ -45,6 +45,12 @@ class Ops(StrEnum):
   MATMUL = "matmul"
   CALL = "call"
   MAP = "map"
+  # SCAN is reserved for dependent recurrences (carry state through iterations:
+  # f(state_{i-1}, x_i) -> state_i). It is intentionally separate from MAP, which
+  # is for independent repeated calls. The op is declared so verifiers and
+  # printers can mention it, but no constructor or codegen path exists yet:
+  # we add those when a workload demands them (see roadmap Phase 3).
+  SCAN = "scan"
   SOLVER_CALL = "solver_call"
 
 
@@ -92,6 +98,7 @@ COMMON_STRUCTURAL = {
   Ops.MATMUL,
   Ops.CALL,
   Ops.MAP,
+  Ops.SCAN,
   Ops.SOLVER_CALL,
 }
 
@@ -151,5 +158,6 @@ OP_INFO: dict[Ops, OpInfo] = {
   Ops.MATMUL: OpInfo(Ops.MATMUL, 2, np.matmul),
   Ops.CALL: OpInfo(Ops.CALL, None, None),
   Ops.MAP: OpInfo(Ops.MAP, None, None),
+  Ops.SCAN: OpInfo(Ops.SCAN, None, None),
   Ops.SOLVER_CALL: OpInfo(Ops.SOLVER_CALL, None, None, differentiable=False),
 }

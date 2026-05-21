@@ -25,6 +25,11 @@ from .types import BACKEND_SUPPORT, BackendSupport, DeviceSpec, DType, ScalarTyp
 
 sym = Expr.sym
 const = Expr.const
+# ``al.scan`` is a transitional alias for ``al.map_``. Today both build an
+# ``Ops.MAP`` node, since current workloads only need independent repeated calls.
+# A true ``Ops.SCAN`` constructor for dependent recurrences will land when a
+# workload demands carry semantics (see roadmap Phase 3). The alias is kept so
+# existing callers don't churn for what is mostly a naming choice.
 scan = map_
 
 __all__ = [

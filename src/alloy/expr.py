@@ -574,6 +574,10 @@ def map_(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
   ``outer[start + i*stride : start + i*stride + callee.inputs[k].size]`` for callee input ``k``.
   Iterations are independent: ``stride=0`` broadcasts the same slice every iteration.
 
+  ``MAP`` is intentionally *independent*: there is no carry between iterations. The future ``Ops.SCAN``
+  op (see roadmap Phase 3) is what models dependent recurrences ``f(state_{i-1}, x_i) -> state_i``.
+  Do not extend ``MAP`` with carry semantics; build ``SCAN`` instead when a workload needs it.
+
   This first cut requires all callee inputs and the selected output to be rank-1; the produced node
   has shape ``(length * callee.outputs[output].size,)`` and concatenates iteration outputs along that
   flat axis.

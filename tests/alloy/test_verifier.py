@@ -194,3 +194,13 @@ def test_binary_helper_round_trip_verifies() -> None:
 def test_spec_semantic_check_returns_none_on_valid() -> None:
   x = al.sym("x", 3)
   assert spec_semantic.check(x) is None
+
+
+def test_ops_scan_is_declared_but_has_no_constructor() -> None:
+  """Phase 3: ``Ops.SCAN`` is reserved for dependent recurrences. The enum value
+  exists so verifiers/printers can name it, but no public constructor builds it yet."""
+  assert Ops.SCAN.value == "scan"
+  assert Ops.SCAN in al.OP_INFO
+  assert al.OP_INFO[Ops.SCAN].differentiable is True
+  # there must be no public function that builds Ops.SCAN today
+  assert not hasattr(al, "scan_carry")

@@ -220,6 +220,14 @@ y = sparse_model + opaque_boundary
 
 Today this is metadata preserved by the tape and shown by `Tape.debug()`. Later it should drive partitioning: scalar regions lower to explicit scalar instructions, dense regions lower to block kernels/loops, and the boundary inserts materialization/copy/project operations.
 
+## Semantic loop ops: MAP and SCAN
+
+`Ops.MAP` is the existing loop op for **independent repeated calls**: each iteration reads sliced inputs from outer tensors and produces an output, with no carry between iterations. Today this covers the tracking interstage residual loop, batched dynamics in unbumpercars, batched MLP rollouts, and similar workloads.
+
+`Ops.SCAN` is reserved for **dependent recurrences** ``f(state_{i-1}, x_i) -> state_i`` — integrators, RNN cells, sequential filtering. It is declared in `Ops` so verifiers and printers can name it, but there is no constructor or codegen path yet: SCAN lands when a workload demands carry semantics. Do not extend MAP with recurrence semantics — keep the two ops separate.
+
+For backward compatibility, ``al.scan`` is currently an alias for ``al.map_``. The alias is transitional and will move to the real SCAN constructor when one exists; new code wanting independent loops should prefer ``al.map_`` directly.
+
 ## Semantic IR verifier (Phase 2)
 
 Each IR level should have an explicit spec table and verifier (see roadmap Phase 2). The semantic IR layer ships its spec in `src/alloy/spec.py`:
