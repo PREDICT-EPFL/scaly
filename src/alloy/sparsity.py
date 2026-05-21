@@ -183,11 +183,28 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
       piece_structures.append(sj.structure)
   total_rows = int(expr.shape[0]) if expr.shape else expr.size
   sparsity = SparsityType((expr.size, wrt.size), tuple(global_rows), tuple(global_cols))
-  # Carry the structured descriptor through when there's exactly one MAP piece
-  # whose structure covers the entire output (the common case for assembled
-  # equality constraints). Multi-piece programs need a block-diagonal join
-  # which we leave as ``None`` for now.
-  structure = piece_structures[0] if len(piece_structures) == 1 and len(pieces) == 1 else None
+  # Single MAP piece: carry its descriptor verbatim. Multiple pieces (mixed
+  # MAP + assembled non-MAP) join into a BlockDiagonalStructure when every
+  # piece has its own descriptor; otherwise we leave the structured slot empty.
+  structure: object | None
+  if len(piece_structures) == 1 and len(pieces) == 1:
+    structure = piece_structures[0]
+  elif len(piece_structures) == len(pieces) and len(pieces) > 1:
+    from .structured_sparsity import BlockDiagonalStructure
+
+    row_offsets: list[int] = []
+    col_offsets: list[int] = []
+    for piece, off in pieces:
+      row_offsets.append(off)
+      col_offsets.append(0)  # all pieces differentiate the same wrt
+    structure = BlockDiagonalStructure(
+      blocks=tuple(piece_structures),  # type: ignore[arg-type]
+      row_offsets=tuple(row_offsets),
+      col_offsets=tuple(col_offsets),
+      shape=(expr.size, wrt.size),
+    )
+  else:
+    structure = None
   if sparsity.nnz == 0:
     return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=np.float64)), structure=structure)
   values = global_values[0] if len(global_values) == 1 else concat(global_values, axis=0)
