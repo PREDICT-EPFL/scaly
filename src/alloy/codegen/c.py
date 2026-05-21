@@ -160,7 +160,18 @@ def render_c_api_header(fun: Function, *, typed_buffers: bool = True) -> str:
 
 
 def render_c_source(fun: Function) -> str:
-  """Render a standalone scalar C implementation of ``fun`` and its callees."""
+  """Render a standalone scalar C implementation of ``fun`` and its callees.
+
+  When ``ALLOY_USE_PROGRAM_IR_C=1`` and ``fun``'s semantic IR is in the Phase 5
+  lowerer's supported subset, the call is routed through the Program-IR-backed
+  renderer (``program_c.render_program_c_source``). Functions outside that
+  subset fall back to this legacy renderer transparently — the feature flag is
+  opt-in and the fallback is silent, so existing workloads keep working.
+  """
+  from .program_c import can_render_program_c, render_program_c_source, use_program_ir_renderer
+
+  if use_program_ir_renderer() and can_render_program_c(fun):
+    return render_program_c_source(fun)
 
   extra_includes = solver_includes(fun)
   lines = [

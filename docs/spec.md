@@ -261,6 +261,10 @@ Verifier specs:
 
 Pretty-printing is backend-neutral and decoupled from C syntax — it shows host/device boundaries, range kinds, and launch specs so schedule decisions are debuggable before any renderer runs.
 
+### Program-IR-backed C renderer (Phase 5, feature-flagged)
+
+`alloy.lowering.lower_function(fun)` translates a small subset of semantic IR (today: elementwise unary/binary, `RESHAPE`, small `CONST`) into a host `PROC`. Setting ``ALLOY_USE_PROGRAM_IR_C=1`` routes ``Function`` instances in this subset through the new ``alloy.codegen.program_c.render_program_c_source`` renderer; anything outside the subset falls back to the legacy scalar renderer silently. The flag is the migration lever — extending Program IR coverage (``SUM``, ``MATMUL``, ``GATHER``, ``CALL``, ``MAP``, ``SOLVER_CALL``) is the upcoming work and lets the new path own more functions over time without disturbing benchmarks.
+
 ## Semantic loop ops: MAP and SCAN
 
 `Ops.MAP` is the existing loop op for **independent repeated calls**: each iteration reads sliced inputs from outer tensors and produces an output, with no carry between iterations. Today this covers the tracking interstage residual loop, batched dynamics in unbumpercars, batched MLP rollouts, and similar workloads.

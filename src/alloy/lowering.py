@@ -124,6 +124,8 @@ class _Builder:
     buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.type.shape), address_space="private")
     self.buffers[name] = buf
     self.value_buffers[expr.id] = name
+    # Emit the buffer declaration as a statement so the renderer can size it.
+    self.statements.append(buf)
     return buf
 
   def _emit_const(self, node: Expr) -> None:
