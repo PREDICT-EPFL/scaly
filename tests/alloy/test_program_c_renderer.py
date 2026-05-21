@@ -60,10 +60,44 @@ def test_can_render_gather() -> None:
   assert can_render_program_c(fn)
 
 
-def test_cannot_render_stack_yet() -> None:
+def test_can_render_stack_and_concat() -> None:
   x = al.sym("x", 4)
-  fn = al.Function("f_stack", [x], [al.stack([x, x])], ["x"], ["y"])
+  y = al.sym("y", 4)
+  fn1 = al.Function("f_stack", [x, y], [al.stack([x, y])], ["x", "y"], ["z"])
+  fn2 = al.Function("f_concat", [x, y], [al.concat([x, y])], ["x", "y"], ["z"])
+  assert can_render_program_c(fn1)
+  assert can_render_program_c(fn2)
+
+
+def test_cannot_render_call_yet() -> None:
+  x = al.sym("x", 3)
+  inner = al.Function("inner", [x], [x.sum()], ["x"], ["s"])
+  z = al.sym("z", 3)
+  (out,) = inner.call([z])
+  fn = al.Function("f_call", [z], [out], ["z"], ["y"])
   assert not can_render_program_c(fn)
+
+
+def test_stack_jit_matches_interpreter() -> None:
+  if not _has_compiler():
+    pytest.skip("no C compiler in PATH")
+  x = al.sym("x", 3)
+  y = al.sym("y", 3)
+  fn = al.Function("f_stack_jit", [x, y], [al.stack([x, y])], ["x", "y"], ["z"])
+  x_val = np.array([1.0, 2.0, 3.0])
+  y_val = np.array([4.0, 5.0, 6.0])
+  ref = fn.eval_interpreter(x_val, y_val)[0]
+  old = os.environ.get("ALLOY_USE_PROGRAM_IR_C")
+  try:
+    os.environ["ALLOY_USE_PROGRAM_IR_C"] = "1"
+    fn.recompile()
+    out = fn(x_val, y_val)
+  finally:
+    if old is None:
+      del os.environ["ALLOY_USE_PROGRAM_IR_C"]
+    else:
+      os.environ["ALLOY_USE_PROGRAM_IR_C"] = old
+  np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
 
 
 def test_gather_jit_matches_interpreter() -> None:

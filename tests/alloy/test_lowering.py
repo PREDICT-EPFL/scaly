@@ -62,11 +62,34 @@ def test_reshape_is_alias() -> None:
 
 
 def test_unsupported_op_raises() -> None:
-  x = al.sym("x", 4)
-  y = al.stack([x, x])  # STACK not yet lowered
-  fn = al.Function("f", [x], [y], ["x"], ["y"])
+  x = al.sym("x", 3)
+  inner = al.Function("inner", [x], [x.sum()], ["x"], ["s"])
+  z = al.sym("z", 3)
+  (out,) = inner.call([z])  # CALL not yet lowered
+  fn = al.Function("f", [z], [out], ["z"], ["y"])
   with pytest.raises(LoweringError, match="not yet lowered"):
     lower_function(fn)
+
+
+def test_lower_stack_emits_per_input_global_loop() -> None:
+  x = al.sym("x", 3)
+  y = al.sym("y", 3)
+  fn = al.Function("f_stack", [x, y], [al.stack([x, y])], ["x", "y"], ["z"])
+  proc = lower_function(fn)
+  text = format_program(proc)
+  # one per-input loop, all GLOBAL
+  assert text.count("for j_t0_0") == 1
+  assert text.count("for j_t0_1") == 1
+
+
+def test_lower_concat_emits_per_input_global_loop_with_offset() -> None:
+  x = al.sym("x", 2)
+  y = al.sym("y", 3)
+  fn = al.Function("f_concat", [x, y], [al.concat([x, y])], ["x", "y"], ["z"])
+  proc = lower_function(fn)
+  text = format_program(proc)
+  assert "for j_t0_0 in [0, 2)" in text
+  assert "for j_t0_1 in [0, 3)" in text
 
 
 def test_lower_gather_unrolls() -> None:

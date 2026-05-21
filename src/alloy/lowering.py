@@ -123,6 +123,10 @@ class _Builder:
         self._emit_gather(node)
       elif node.op == Ops.SCATTER:
         self._emit_scatter(node)
+      elif node.op == Ops.STACK:
+        self._emit_stack(node)
+      elif node.op == Ops.CONCAT:
+        self._emit_concat(node)
       else:
         raise LoweringError(f"semantic op {node.op!r} is not yet lowered to Program IR (Phase 5 slice)")
 
@@ -328,6 +332,40 @@ class _Builder:
           p.load(p.view(src_buf, [p.const_int(i)])),
         )
       )
+
+  def _emit_stack(self, node: Expr) -> None:
+    """Stack along axis 0 only: out[i*base + j] = inputs[i][j]. Other axes deferred."""
+    axis = int(node.attrs.get("axis", 0))
+    if axis != 0:
+      raise LoweringError(f"Phase 5 STACK lowering only handles axis=0; got axis={axis}")
+    out = self._alloc_tmp(node)
+    base = node.args[0].size or 1
+    for i, src in enumerate(node.args):
+      src_buf = self.buffers[self.value_buffers[src.id]]
+      name = f"j_{out.attrs['name']}_{i}"
+      rng = p.range_(name, 0, base, kind=RangeKind.GLOBAL)
+      j = p.var(name, dtype=dtypes.int64)
+      dst_idx = p.add(p.mul(p.const_int(i), p.const_int(base)), j) if base > 0 else p.const_int(0)
+      body = [p.store(p.view(out, [dst_idx]), p.load(p.view(src_buf, [j])))]
+      self.statements.append(p.for_(rng, body))
+
+  def _emit_concat(self, node: Expr) -> None:
+    """Concat along axis 0 only: contiguous flat chunks in row-major flatten."""
+    axis = int(node.attrs.get("axis", 0))
+    if axis != 0:
+      raise LoweringError(f"Phase 5 CONCAT lowering only handles axis=0; got axis={axis}")
+    out = self._alloc_tmp(node)
+    offset = 0
+    for i, src in enumerate(node.args):
+      src_buf = self.buffers[self.value_buffers[src.id]]
+      size = src.size or 1
+      name = f"j_{out.attrs['name']}_{i}"
+      rng = p.range_(name, 0, size, kind=RangeKind.GLOBAL)
+      j = p.var(name, dtype=dtypes.int64)
+      dst_idx = p.add(p.const_int(offset), j) if offset else j
+      body = [p.store(p.view(out, [dst_idx]), p.load(p.view(src_buf, [j])))]
+      self.statements.append(p.for_(rng, body))
+      offset += size
 
   def _emit_sum(self, node: Expr) -> None:
     src = node.args[0]
