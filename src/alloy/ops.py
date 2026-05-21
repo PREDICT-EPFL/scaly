@@ -35,6 +35,7 @@ class Ops(StrEnum):
   MINIMUM = "minimum"
   MAXIMUM = "maximum"
   SUM = "sum"
+  SUM_AXIS = "sum_axis"
   RESHAPE = "reshape"
   TRANSPOSE = "transpose"
   SLICE = "slice"
@@ -88,6 +89,7 @@ COMMON_STRUCTURAL = {
   Ops.INPUT,
   Ops.CONST,
   Ops.SUM,
+  Ops.SUM_AXIS,
   Ops.RESHAPE,
   Ops.TRANSPOSE,
   Ops.SLICE,
@@ -148,6 +150,7 @@ OP_INFO: dict[Ops, OpInfo] = {
   Ops.MINIMUM: OpInfo(Ops.MINIMUM, 2, np.minimum, False),
   Ops.MAXIMUM: OpInfo(Ops.MAXIMUM, 2, np.maximum, False),
   Ops.SUM: OpInfo(Ops.SUM, 1, np.sum),
+  Ops.SUM_AXIS: OpInfo(Ops.SUM_AXIS, 1, None),  # numpy handled inline (axis kwarg in attrs)
   Ops.RESHAPE: OpInfo(Ops.RESHAPE, 1, np.reshape),
   Ops.TRANSPOSE: OpInfo(Ops.TRANSPOSE, 1, np.transpose),
   Ops.SLICE: OpInfo(Ops.SLICE, 1, None),

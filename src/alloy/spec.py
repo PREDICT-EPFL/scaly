@@ -205,6 +205,23 @@ def _sum_shape(expr: Expr) -> str | None:
   return None
 
 
+def _sum_axis_shape(expr: Expr) -> str | None:
+  if "axes" not in expr.attrs:
+    return "SUM_AXIS missing 'axes' attr"
+  axes = expr.attrs["axes"]
+  if not expr.args:
+    return "SUM_AXIS missing arg"
+  src = expr.args[0]
+  rank = len(src.shape)
+  for a in axes:
+    if not 0 <= a < rank:
+      return f"SUM_AXIS axis {a} out of bounds for source shape {src.shape}"
+  expected = tuple(d for i, d in enumerate(src.shape) if i not in axes)
+  if expected != expr.shape:
+    return f"SUM_AXIS output shape {expr.shape} != reduced shape {expected}"
+  return None
+
+
 def _reshape_size(expr: Expr) -> str | None:
   if not expr.args:
     return "RESHAPE missing arg"
@@ -356,6 +373,7 @@ spec_semantic = Spec(
     *_unary_rules,
     *_binary_rules,
     VerifyRule(Ops.SUM, "sum-output-scalar", _sum_shape),
+    VerifyRule(Ops.SUM_AXIS, "sum-axis-shape", _sum_axis_shape),
     VerifyRule(Ops.RESHAPE, "reshape-size", _reshape_size),
     VerifyRule(Ops.TRANSPOSE, "transpose-axes", _transpose_axes),
     VerifyRule(Ops.MATMUL, "matmul-shape", _matmul_shape),

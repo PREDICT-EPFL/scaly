@@ -264,6 +264,8 @@ def _eval_instruction(
     return _asarray(np.concatenate(args, axis=inst.attrs.get("axis", 0)))
   if inst.op == Ops.SUM:
     return _asarray(np.sum(args[0]))
+  if inst.op == Ops.SUM_AXIS:
+    return _asarray(np.sum(args[0], axis=tuple(inst.attrs["axes"])))
   if inst.op == Ops.MATMUL:
     return _asarray(args[0] @ args[1])
   if inst.op == Ops.CALL:

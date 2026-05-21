@@ -190,8 +190,35 @@ class Expr:
   def gather(self, indices: Any) -> Expr:
     return gather(self, indices)
 
-  def sum(self) -> Expr:
-    return Expr(Ops.SUM, (self,), TensorType((), dtype=self.type.dtype, diff=self.type.diff), lowering=self.lowering)
+  def sum(self, axis: int | tuple[int, ...] | None = None) -> Expr:
+    """Reduce along ``axis`` (or all axes if ``axis is None``).
+
+    With ``axis is None`` this falls back to the existing scalar ``Ops.SUM`` reduction
+    over every element. With an explicit axis (or tuple of axes) the result is an
+    ``Ops.SUM_AXIS`` node carrying ``attrs["axes"]`` as a sorted tuple.
+    """
+    if axis is None:
+      return Expr(Ops.SUM, (self,), TensorType((), dtype=self.type.dtype, diff=self.type.diff), lowering=self.lowering)
+    axes = (int(axis),) if isinstance(axis, int) else tuple(sorted(int(a) for a in axis))
+    rank = len(self.shape)
+    norm: list[int] = []
+    for a in axes:
+      if a < 0:
+        a = a + rank
+      if not 0 <= a < rank:
+        raise ValueError(f"sum axis {a} out of bounds for shape {self.shape}")
+      norm.append(a)
+    if len(set(norm)) != len(norm):
+      raise ValueError(f"sum axes {axes} must be unique")
+    norm.sort()
+    new_shape = tuple(d for i, d in enumerate(self.shape) if i not in norm)
+    return Expr(
+      Ops.SUM_AXIS,
+      (self,),
+      TensorType(new_shape, dtype=self.type.dtype, diff=self.type.diff),
+      attrs={"axes": tuple(norm)},
+      lowering=self.lowering,
+    )
 
   def dot(self, other: Any) -> Expr:
     return dot(self, other)
@@ -323,6 +350,8 @@ class Expr:
       return np.concatenate(vals, axis=self.attrs.get("axis", 0))
     if self.op == Ops.SUM:
       return np.asarray(np.sum(vals[0]), dtype=np.float64)
+    if self.op == Ops.SUM_AXIS:
+      return np.asarray(np.sum(vals[0], axis=tuple(self.attrs["axes"])), dtype=np.float64)
     if self.op == Ops.MATMUL:
       return vals[0] @ vals[1]
     if self.op == Ops.CALL:

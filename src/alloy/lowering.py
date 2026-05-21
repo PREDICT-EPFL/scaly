@@ -194,6 +194,8 @@ class _Builder:
         self._emit_reshape(node)
       elif node.op == Ops.SUM:
         self._emit_sum(node)
+      elif node.op == Ops.SUM_AXIS:
+        self._emit_sum_axis(node)
       elif node.op == Ops.MATMUL:
         self._emit_matmul(node)
       elif node.op == Ops.GATHER:
@@ -639,6 +641,75 @@ class _Builder:
     i = p.var(name, dtype=dtypes.int64)
     src_idx = p.add(p.const_int(start), i) if start else i
     self.statements.append(p.for_(rng, [p.store(p.view(out, [i]), p.load(p.view(src_buf, [src_idx])))]))
+
+  def _emit_sum_axis(self, node: Expr) -> None:
+    """Lower SUM_AXIS by emitting nested loops: outer ``GLOBAL`` per output axis,
+    inner ``REDUCE`` per axis being reduced. Accumulator lives in the output buffer.
+    """
+    src = node.args[0]
+    src_buf = self.buffers[self.value_buffers[src.id]]
+    axes = tuple(int(a) for a in node.attrs["axes"])
+    src_shape = src.shape
+    if len(src_shape) > 4:
+      raise LoweringError(f"SUM_AXIS lowering only handles ranks <= 4 today; got {src_shape}")
+    out = self._alloc_tmp(node)
+    dtype = node.type.dtype
+    # row-major strides over the source
+    src_strides = [1] * len(src_shape)
+    for i in range(len(src_shape) - 2, -1, -1):
+      src_strides[i] = src_strides[i + 1] * src_shape[i + 1]
+    # output dims correspond to non-reduced axes in order
+    out_dims = [i for i in range(len(src_shape)) if i not in axes]
+    out_strides_list = [1] * len(out_dims)
+    for i in range(len(out_dims) - 2, -1, -1):
+      out_strides_list[i] = out_strides_list[i + 1] * src_shape[out_dims[i + 1]]
+    # build loop vars
+    outer_vars: list[PNode] = []
+    outer_ranges: list[PNode] = []
+    for k, axis in enumerate(out_dims):
+      name = f"o{k}_{out.attrs['name']}"
+      outer_ranges.append(p.range_(name, 0, int(src_shape[axis]), kind=RangeKind.GLOBAL))
+      outer_vars.append(p.var(name, dtype=dtypes.int64))
+    inner_vars: list[PNode] = []
+    inner_ranges: list[PNode] = []
+    for k, axis in enumerate(axes):
+      name = f"r{k}_{out.attrs['name']}"
+      inner_ranges.append(p.range_(name, 0, int(src_shape[axis]), kind=RangeKind.REDUCE))
+      inner_vars.append(p.var(name, dtype=dtypes.int64))
+    # output flat idx
+    out_idx = _affine_sum(outer_vars, out_strides_list)
+    # source flat idx mixes outer + inner contributions in original axis order
+    src_axis_vars: dict[int, PNode] = {}
+    for axis, v in zip(out_dims, outer_vars, strict=True):
+      src_axis_vars[axis] = v
+    for axis, v in zip(axes, inner_vars, strict=True):
+      src_axis_vars[axis] = v
+    src_idx_vars = [src_axis_vars[i] for i in range(len(src_shape))]
+    src_idx = _affine_sum(src_idx_vars, src_strides)
+    # init the output cell to 0, then accumulate
+    init = p.store(p.view(out, [out_idx]), p.const_float(0.0, dtype=dtype))
+    accum = p.store(
+      p.view(out, [out_idx]),
+      p.add(p.load(p.view(out, [out_idx])), p.load(p.view(src_buf, [src_idx]))),
+    )
+    inner_stmt: PNode = accum
+    for rng in reversed(inner_ranges):
+      inner_stmt = p.for_(rng, [inner_stmt])
+    body: list[PNode] = [init, inner_stmt]
+    stmt: PNode = p.block(*body) if len(body) > 1 else body[0]
+    for rng in reversed(outer_ranges):
+      stmt = p.for_(rng, [init, inner_stmt] if rng is outer_ranges[-1] else [stmt])
+    # If there are no outer axes (full reduction), still emit init + inner.
+    if not outer_ranges:
+      self.statements.append(init)
+      self.statements.append(inner_stmt)
+    else:
+      # The loop nest above re-emits init + inner directly inside the innermost outer.
+      # Rebuild cleanly to avoid edge cases.
+      stmt = p.for_(outer_ranges[-1], [init, inner_stmt])
+      for rng in reversed(outer_ranges[:-1]):
+        stmt = p.for_(rng, [stmt])
+      self.statements.append(stmt)
 
   def _emit_sum(self, node: Expr) -> None:
     src = node.args[0]

@@ -349,6 +349,15 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np
     return _broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape) | _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape)
   if expr.op == Ops.SUM:
     return np.any(_jac_mask(expr.args[0], wrt, memo), axis=0, keepdims=True)
+  if expr.op == Ops.SUM_AXIS:
+    src_mask = _jac_mask(expr.args[0], wrt, memo)
+    src_shape = expr.args[0].shape
+    axes = expr.attrs["axes"]
+    # src_mask has shape (prod(src_shape), wrt.size). Reshape to (src_shape..., wrt.size),
+    # reduce-any over the chosen axes, then flatten the leading dims.
+    reshaped = src_mask.reshape(src_shape + (-1,))
+    reduced = np.any(reshaped, axis=axes)
+    return reduced.reshape(expr.size, -1)
   if expr.op == Ops.RESHAPE:
     return _jac_mask(expr.args[0], wrt, memo)
   if expr.op == Ops.TRANSPOSE:

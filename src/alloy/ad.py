@@ -144,6 +144,8 @@ def _jvp(expr: Expr, wrt: Expr, seed: Expr, memo: dict[int, Expr], dep_memo: dic
     raise NotImplementedError(f"JVP for nonsmooth op {expr.op!r} is not implemented")
   if expr.op == Ops.SUM:
     return save(d[0].sum())
+  if expr.op == Ops.SUM_AXIS:
+    return save(d[0].sum(axis=expr.attrs["axes"]))
   if expr.op == Ops.RESHAPE:
     return save(d[0].reshape(expr.shape))
   if expr.op == Ops.TRANSPOSE:
@@ -293,6 +295,11 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   if expr.op == Ops.SUM:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
     memo[expr.id] = ret = stack([d0[i].sum() for i in range(nseed)], axis=0)
+    return ret
+  if expr.op == Ops.SUM_AXIS:
+    d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
+    axes = expr.attrs["axes"]
+    memo[expr.id] = ret = stack([d0[i].sum(axis=axes) for i in range(nseed)], axis=0)
     return ret
   if expr.op == Ops.MAP:
     from .rewrite import simplify_cse_fixpoint
@@ -605,6 +612,12 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     raise NotImplementedError(f"VJP for nonsmooth op {expr.op!r} is not implemented")
   if expr.op == Ops.SUM:
     return (cot * _ones_like(args[0]),)
+  if expr.op == Ops.SUM_AXIS:
+    # Broadcast cot back to src shape by reshaping with size-1 reduced axes then broadcasting.
+    src_shape = args[0].shape
+    axes = expr.attrs["axes"]
+    reshape_shape = tuple(1 if i in axes else d for i, d in enumerate(src_shape))
+    return (cot.reshape(reshape_shape) * _ones_like(args[0]),)
   if expr.op == Ops.RESHAPE:
     return (cot.reshape(args[0].shape),)
   if expr.op == Ops.TRANSPOSE:
