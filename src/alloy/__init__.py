@@ -8,6 +8,7 @@ from .expr import Expr, atan2, concat, dot, format_expr, gather, map_, maximum, 
 from .function import Function, Port
 from .ops import COMMON_OPS, OP_INFO, Ops
 from .rewrite import Pattern, PatternMatcher, cse, cse_many, rewrite, simplify
+from .lowering import LoweringError, lower_function, main_proc
 from .solvers import DerivativePolicy, SolverFunction, SolverStatus, nlp, qp
 from .spec import Spec, VerifyError, VerifyRule, spec_semantic, spec_semantic_shared, verify_expr
 from .sparsity import (
@@ -44,6 +45,7 @@ __all__ = [
   "OP_INFO",
   "Expr",
   "Function",
+  "LoweringError",
   "Instruction",
   "Ops",
   "Pattern",
@@ -93,6 +95,8 @@ __all__ = [
   "vjp_many",
   "lagrangian_hessian",
   "linearize",
+  "lower_function",
+  "main_proc",
   "map_",
   "scan",
   "maximum",
