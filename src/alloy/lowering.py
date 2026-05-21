@@ -117,6 +117,8 @@ class _Builder:
         self._emit_reshape(node)
       elif node.op == Ops.SUM:
         self._emit_sum(node)
+      elif node.op == Ops.MATMUL:
+        self._emit_matmul(node)
       else:
         raise LoweringError(f"semantic op {node.op!r} is not yet lowered to Program IR (Phase 5 slice)")
 
@@ -174,6 +176,120 @@ class _Builder:
     # RESHAPE is metadata-only at this layer: the result aliases the source buffer.
     src_buf_name = self.value_buffers[node.args[0].id]
     self.value_buffers[node.id] = src_buf_name
+
+  def _emit_matmul(self, node: Expr) -> None:
+    """Lower ``a @ b`` for the four supported rank combinations.
+
+    Each case becomes a buffer (output) plus nested loops with an inner
+    REDUCE-kind range that accumulates ``a[...] * b[...]`` into the output
+    cell. The accumulator lives in the output buffer directly: we STORE 0
+    before the reduction loop and STORE acc + product inside it.
+    """
+    a, b = node.args
+    a_buf = self.buffers[self.value_buffers[a.id]]
+    b_buf = self.buffers[self.value_buffers[b.id]]
+    out = self._alloc_tmp(node)
+    dtype = node.type.dtype
+    if len(a.shape) == 1 and len(b.shape) == 1:
+      self._emit_matmul_dot(a_buf, b_buf, out, a.shape[0], dtype)
+    elif len(a.shape) == 2 and len(b.shape) == 1:
+      self._emit_matmul_matvec(a_buf, b_buf, out, a.shape[0], a.shape[1], dtype)
+    elif len(a.shape) == 1 and len(b.shape) == 2:
+      # treat 1xK @ KxN: emit as a row-vector matvec by reusing the matvec helper
+      # with K on the contraction axis.
+      self._emit_matmul_vecmat(a_buf, b_buf, out, b.shape[0], b.shape[1], dtype)
+    elif len(a.shape) == 2 and len(b.shape) == 2:
+      self._emit_matmul_matmat(a_buf, b_buf, out, a.shape[0], a.shape[1], b.shape[1], dtype)
+    else:
+      raise LoweringError(f"matmul shape combination {a.shape}@{b.shape} not lowered")
+
+  def _emit_matmul_dot(self, a_buf: PNode, b_buf: PNode, out: PNode, k: int, dtype) -> None:
+    zero_idx = p.const_int(0)
+    self.statements.append(p.store(p.view(out, [zero_idx]), p.const_float(0.0, dtype=dtype)))
+    name = f"k_{out.attrs['name']}"
+    rng = p.range_(name, 0, k, kind=RangeKind.REDUCE)
+    i = p.var(name, dtype=dtypes.int64)
+    body = [
+      p.store(
+        p.view(out, [zero_idx]),
+        p.add(
+          p.load(p.view(out, [zero_idx])),
+          p.mul(p.load(p.view(a_buf, [i])), p.load(p.view(b_buf, [i]))),
+        ),
+      )
+    ]
+    self.statements.append(p.for_(rng, body))
+
+  def _emit_matmul_matvec(self, a_buf: PNode, b_buf: PNode, out: PNode, m: int, k: int, dtype) -> None:
+    """``a[m,k] @ b[k]``: outer loop over rows, inner REDUCE over k."""
+    row_name = f"i_{out.attrs['name']}"
+    k_name = f"k_{out.attrs['name']}"
+    row_rng = p.range_(row_name, 0, m, kind=RangeKind.GLOBAL)
+    row_var = p.var(row_name, dtype=dtypes.int64)
+    k_rng = p.range_(k_name, 0, k, kind=RangeKind.REDUCE)
+    k_var = p.var(k_name, dtype=dtypes.int64)
+    # flat index = row*K + k
+    a_idx = p.add(p.mul(row_var, p.const_int(k)), k_var)
+    inner = [
+      p.store(
+        p.view(out, [row_var]),
+        p.add(
+          p.load(p.view(out, [row_var])),
+          p.mul(p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [k_var]))),
+        ),
+      )
+    ]
+    init = p.store(p.view(out, [row_var]), p.const_float(0.0, dtype=dtype))
+    self.statements.append(p.for_(row_rng, [init, p.for_(k_rng, inner)]))
+
+  def _emit_matmul_vecmat(self, a_buf: PNode, b_buf: PNode, out: PNode, k: int, n: int, dtype) -> None:
+    """``a[k] @ b[k,n]``: outer loop over columns, inner REDUCE over k."""
+    col_name = f"j_{out.attrs['name']}"
+    k_name = f"k_{out.attrs['name']}"
+    col_rng = p.range_(col_name, 0, n, kind=RangeKind.GLOBAL)
+    col_var = p.var(col_name, dtype=dtypes.int64)
+    k_rng = p.range_(k_name, 0, k, kind=RangeKind.REDUCE)
+    k_var = p.var(k_name, dtype=dtypes.int64)
+    b_idx = p.add(p.mul(k_var, p.const_int(n)), col_var)
+    inner = [
+      p.store(
+        p.view(out, [col_var]),
+        p.add(
+          p.load(p.view(out, [col_var])),
+          p.mul(p.load(p.view(a_buf, [k_var])), p.load(p.view(b_buf, [b_idx]))),
+        ),
+      )
+    ]
+    init = p.store(p.view(out, [col_var]), p.const_float(0.0, dtype=dtype))
+    self.statements.append(p.for_(col_rng, [init, p.for_(k_rng, inner)]))
+
+  def _emit_matmul_matmat(self, a_buf: PNode, b_buf: PNode, out: PNode, m: int, k: int, n: int, dtype) -> None:
+    """``a[m,k] @ b[k,n]``: triple-nested loop with REDUCE on the inner k loop."""
+    row_name = f"i_{out.attrs['name']}"
+    col_name = f"j_{out.attrs['name']}"
+    k_name = f"k_{out.attrs['name']}"
+    row_rng = p.range_(row_name, 0, m, kind=RangeKind.GLOBAL)
+    row_var = p.var(row_name, dtype=dtypes.int64)
+    col_rng = p.range_(col_name, 0, n, kind=RangeKind.GLOBAL)
+    col_var = p.var(col_name, dtype=dtypes.int64)
+    k_rng = p.range_(k_name, 0, k, kind=RangeKind.REDUCE)
+    k_var = p.var(k_name, dtype=dtypes.int64)
+    out_idx = p.add(p.mul(row_var, p.const_int(n)), col_var)
+    a_idx = p.add(p.mul(row_var, p.const_int(k)), k_var)
+    b_idx = p.add(p.mul(k_var, p.const_int(n)), col_var)
+    inner = [
+      p.store(
+        p.view(out, [out_idx]),
+        p.add(
+          p.load(p.view(out, [out_idx])),
+          p.mul(p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [b_idx]))),
+        ),
+      )
+    ]
+    init = p.store(p.view(out, [out_idx]), p.const_float(0.0, dtype=dtype))
+    inner_for = p.for_(k_rng, inner)
+    col_for = p.for_(col_rng, [init, inner_for])
+    self.statements.append(p.for_(row_rng, [col_for]))
 
   def _emit_sum(self, node: Expr) -> None:
     src = node.args[0]

@@ -62,11 +62,33 @@ def test_reshape_is_alias() -> None:
 
 
 def test_unsupported_op_raises() -> None:
-  a = al.sym("a", (2, 3))
-  b = al.sym("b", (3, 2))
-  fn = al.Function("f", [a, b], [a @ b], ["a", "b"], ["c"])  # MATMUL not yet lowered
+  x = al.sym("x", 6)
+  y = x.gather([0, 2, 4])  # GATHER not yet lowered
+  fn = al.Function("f", [x], [y], ["x"], ["y"])
   with pytest.raises(LoweringError, match="not yet lowered"):
     lower_function(fn)
+
+
+def test_lower_matmul_matvec_emits_outer_global_inner_reduce() -> None:
+  a = al.sym("a", (3, 4))
+  v = al.sym("v", 4)
+  fn = al.Function("f_matvec", [a, v], [a @ v], ["a", "v"], ["y"])
+  proc = lower_function(fn)
+  text = format_program(proc)
+  assert "kind=global" in text
+  assert "kind=reduce" in text
+  assert "(a[((i_t0 * 4) + k_t0)]" in text
+
+
+def test_lower_matmul_matmat_emits_three_loops() -> None:
+  a = al.sym("a", (2, 3))
+  b = al.sym("b", (3, 4))
+  fn = al.Function("f_matmat", [a, b], [a @ b], ["a", "b"], ["c"])
+  proc = lower_function(fn)
+  text = format_program(proc)
+  # outer global, inner global, innermost reduce, plus one output copy loop
+  assert text.count("kind=global") == 3
+  assert text.count("kind=reduce") == 1
 
 
 def test_lower_sum_emits_reduce_loop() -> None:

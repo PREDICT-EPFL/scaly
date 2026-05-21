@@ -47,11 +47,61 @@ def test_can_render_sum() -> None:
   assert can_render_program_c(fn)
 
 
-def test_cannot_render_matmul_yet() -> None:
+def test_can_render_matmul() -> None:
   a = al.sym("a", (3, 4))
   b = al.sym("b", (4, 2))
   fn = al.Function("f_mm", [a, b], [a @ b], ["a", "b"], ["c"])
+  assert can_render_program_c(fn)
+
+
+def test_cannot_render_gather_yet() -> None:
+  x = al.sym("x", 6)
+  fn = al.Function("f_gather", [x], [x.gather([0, 2])], ["x"], ["y"])
   assert not can_render_program_c(fn)
+
+
+def test_matmul_jit_matches_interpreter() -> None:
+  if not _has_compiler():
+    pytest.skip("no C compiler in PATH")
+  a = al.sym("a", (3, 4))
+  v = al.sym("v", 4)
+  fn = al.Function("f_matvec_jit", [a, v], [a @ v], ["a", "v"], ["y"])
+  a_val = np.arange(12.0).reshape(3, 4)
+  v_val = np.linspace(-1.0, 1.0, 4)
+  ref = fn.eval_interpreter(a_val, v_val)[0]
+  old = os.environ.get("ALLOY_USE_PROGRAM_IR_C")
+  try:
+    os.environ["ALLOY_USE_PROGRAM_IR_C"] = "1"
+    fn.recompile()
+    out = fn(a_val, v_val)
+  finally:
+    if old is None:
+      del os.environ["ALLOY_USE_PROGRAM_IR_C"]
+    else:
+      os.environ["ALLOY_USE_PROGRAM_IR_C"] = old
+  np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
+
+
+def test_matmul_matmat_jit_matches_interpreter() -> None:
+  if not _has_compiler():
+    pytest.skip("no C compiler in PATH")
+  a = al.sym("a", (2, 3))
+  b = al.sym("b", (3, 4))
+  fn = al.Function("f_matmat_jit", [a, b], [a @ b], ["a", "b"], ["c"])
+  a_val = np.arange(6.0).reshape(2, 3)
+  b_val = np.arange(12.0).reshape(3, 4)
+  ref = fn.eval_interpreter(a_val, b_val)[0]
+  old = os.environ.get("ALLOY_USE_PROGRAM_IR_C")
+  try:
+    os.environ["ALLOY_USE_PROGRAM_IR_C"] = "1"
+    fn.recompile()
+    out = fn(a_val, b_val)
+  finally:
+    if old is None:
+      del os.environ["ALLOY_USE_PROGRAM_IR_C"]
+    else:
+      os.environ["ALLOY_USE_PROGRAM_IR_C"] = old
+  np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
 
 
 def test_program_c_source_has_abi_and_loops() -> None:
