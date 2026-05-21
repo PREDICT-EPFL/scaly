@@ -73,12 +73,35 @@ def _render_cuda_kernel(kernel: PNode) -> list[str]:
       size *= int(d)
     size = size or 1
     out.append(f"  {tb.dtype.c_type} {tb.attrs['name']}[{size}];")
+  # Bind the first top-level GLOBAL FOR to a (blockIdx, threadIdx) tuple. Inner
+  # loops (REDUCE/SERIAL) and any subsequent FORs stay as serial — a future
+  # pass can fuse them or bind multiple axes.
+  bound = False
   for stmt in body:
     if stmt.op == POps.BUFFER:
       continue
-    _emit_stmt_cuda(stmt, ptr_expr, out, indent=2)
+    kind = stmt.args[0].attrs.get("kind") if stmt.op == POps.FOR else None
+    if not bound and kind is not None and getattr(kind, "value", None) == "global":
+      _emit_thread_bound_for(stmt, ptr_expr, out, indent=2)
+      bound = True
+    else:
+      _emit_stmt_cuda(stmt, ptr_expr, out, indent=2)
   out.append("}")
   return out
+
+
+def _emit_thread_bound_for(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:
+  """Map a top-level ``GLOBAL`` FOR loop onto ``blockIdx.x * blockDim.x + threadIdx.x``."""
+  pad = " " * indent
+  rng = stmt.args[0]
+  name = rng.attrs["name"]
+  start = _emit_scalar(rng.args[0])
+  stop = _emit_scalar(rng.args[1])
+  # Materialize the thread index at the loop variable's name.
+  lines.append(f"{pad}long long {name} = blockIdx.x * blockDim.x + threadIdx.x + {start};")
+  lines.append(f"{pad}if ({name} >= {stop}) return;")
+  for sub in stmt.args[1:]:
+    _emit_stmt_cuda(sub, ptr_expr, lines, indent)
 
 
 def _render_host_driver(symbol: str, fun: Function, driver: PNode, kernel: PNode) -> list[str]:
@@ -87,10 +110,14 @@ def _render_host_driver(symbol: str, fun: Function, driver: PNode, kernel: PNode
   param_count = int(driver.attrs["param_count"])
   body = list(driver.args[param_count:])
   launch_stmt = next(s for s in body if s.op == POps.LAUNCH)
-  grid = launch_stmt.args[: int(launch_stmt.attrs["grid_dims"])]
-  block_dims = launch_stmt.args[int(launch_stmt.attrs["grid_dims"]) : int(launch_stmt.attrs["grid_dims"]) + int(launch_stmt.attrs["block_dims"])]
-  grid_str = ", ".join(_emit_scalar(g) for g in grid)
-  block_str = ", ".join(_emit_scalar(b) for b in block_dims)
+  grid_pnode = launch_stmt.args[: int(launch_stmt.attrs["grid_dims"])][0]
+  # The schedule pass writes the trip count of the bound GLOBAL loop as
+  # ``grid``. With thread binding the true grid is ``ceil(trip / block)`` and
+  # the block size becomes a real value (256 is a sane default for 1D).
+  trip = _emit_scalar(grid_pnode)
+  block_size = 256
+  grid_str = f"({trip} + {block_size - 1}) / {block_size}"
+  block_str = str(block_size)
   lines: list[str] = [
     f'extern "C" int {symbol}(const double** arg, double** res, int* iw, double* w, void* mem) {{',
     "  (void)iw; (void)w; (void)mem;",

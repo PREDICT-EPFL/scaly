@@ -26,15 +26,16 @@ def test_render_cuda_kernel_and_driver() -> None:
   x = al.sym("x", 8)
   fn = al.Function("f_cu", [x], [x.sin()], ["x"], ["y"]).with_device("cuda:0")
   src = render_cuda_source(fn)
-  # kernel block
+  # kernel block: top-level GLOBAL FOR now binds to (blockIdx, threadIdx)
   assert "__global__ void f_cu_kernel(double* x, double* y)" in src
-  assert "for (long long i_t0 = 0; i_t0 < 8;" in src
+  assert "long long i_t0 = blockIdx.x * blockDim.x + threadIdx.x" in src
+  assert "if (i_t0 >= 8) return;" in src
   assert "= sin(x[i_t0])" in src
   # host driver block
   assert 'extern "C" int f_cu(const double** arg, double** res' in src
   assert "cudaMalloc((void**)&d_in0" in src
   assert "cudaMemcpy(d_in0, arg[0]" in src
-  assert "f_cu_kernel<<<dim3(8), dim3(1)>>>(d_in0, d_out0);" in src
+  assert "f_cu_kernel<<<dim3((8 + 255) / 256), dim3(256)>>>(d_in0, d_out0);" in src
   assert "cudaDeviceSynchronize()" in src
   assert "cudaMemcpy(res[0], d_out0" in src
   assert "cudaFree(d_in0);" in src
