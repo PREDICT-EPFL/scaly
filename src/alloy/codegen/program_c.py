@@ -96,7 +96,19 @@ def render_program_c_source(fun: Function) -> str:
     "#endif",
     "",
   ]
+  # External callees (mixed-device CALLs in the body) need forward declarations
+  # so the host C compiles without seeing the callee's TU.
+  external_callees: set[str] = set()
+  for stmt in _walk(body):
+    if stmt.op == POps.CALL and stmt.attrs.get("external"):
+      external_callees.add(stmt.attrs["callee"])
+  for name in sorted(external_callees):
+    lines.append(f"extern int {name}(const double** arg, double** res, int* iw, double* w, void* mem);")
+  if external_callees:
+    lines.append("")
   for callee_proc in callees:
+    if callee_proc.attrs["name"] in external_callees:
+      continue  # rendered as a forward declaration instead of a static-inline
     lines += _render_raw_callee(callee_proc)
     lines.append("")
   lines += [
@@ -165,6 +177,16 @@ def _render_raw_callee(proc: PNode) -> list[str]:
   return out
 
 
+def _walk(stmts):
+  """Yield every statement reachable from ``stmts``, descending into FOR/BLOCK bodies."""
+  for s in stmts:
+    yield s
+    if s.op == POps.FOR:
+      yield from _walk(s.args[1:])
+    elif s.op == POps.BLOCK:
+      yield from _walk(s.args)
+
+
 def _emit_call_arg(node: PNode, ptr_expr: dict[str, str]) -> str:
   """Render a CALL argument: a BUFFER (whole pointer) or a VIEW (buffer + offset)."""
   if node.op == POps.BUFFER:
@@ -210,9 +232,23 @@ def _emit_statement(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], ind
     n_out = int(stmt.attrs["n_out"])
     in_args = stmt.args[:n_in]
     out_args = stmt.args[n_in : n_in + n_out]
-    arg_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in in_args)
-    out_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in out_args)
-    lines.append(f"{pad}{stmt.attrs['callee']}_raw({arg_ptrs}{', ' if arg_ptrs and out_ptrs else ''}{out_ptrs});")
+    if stmt.attrs.get("external"):
+      # Mixed-device or external solver CALL — invoke through the universal
+      # ABI (extern function). Build temp ``const double*[]`` / ``double*[]``
+      # arrays from the buffer pointers and call ``callee(arg, res, NULL,
+      # NULL, NULL)``. Caller is responsible for linking the callee TU.
+      callee_name = stmt.attrs["callee"]
+      lines.append(f"{pad}{{")
+      arg_decls = ", ".join(_emit_call_arg(a, ptr_expr) for a in in_args)
+      res_decls = ", ".join(_emit_call_arg(a, ptr_expr) for a in out_args)
+      lines.append(f"{pad}  const double* _ext_arg[{max(n_in, 1)}] = {{ {arg_decls or 'NULL'} }};")
+      lines.append(f"{pad}  double* _ext_res[{max(n_out, 1)}] = {{ {res_decls or 'NULL'} }};")
+      lines.append(f"{pad}  {callee_name}(_ext_arg, _ext_res, NULL, NULL, NULL);")
+      lines.append(f"{pad}}}")
+    else:
+      arg_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in in_args)
+      out_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in out_args)
+      lines.append(f"{pad}{stmt.attrs['callee']}_raw({arg_ptrs}{', ' if arg_ptrs and out_ptrs else ''}{out_ptrs});")
   else:
     raise NotImplementedError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
 

@@ -573,20 +573,17 @@ class _Builder:
     out_idx = int(node.attrs["output"])
     arg_buf_names = tuple(self.value_buffers[a.id] for a in node.args)
     key = (callee.name, arg_buf_names)
+    is_external = callee.device.kind != self.fun.device.kind
     if key not in self.call_invocations:
-      # Mixed-device calls (host caller -> non-host callee, or vice versa) need
-      # the Phase 9 ergonomics work (insert host/device copies, build a kernel
-      # launch from the host side). The current lowerer would silently produce
-      # a wrong host PROC for a CUDA callee, so reject loudly until that lands.
-      if callee.device.kind != self.fun.device.kind:
-        raise LoweringError(
-          f"mixed-device CALL not yet supported: caller {self.fun.name!r} on {self.fun.device} "
-          f"vs callee {callee.name!r} on {callee.device}. Phase 9 will lower this to a "
-          f"host-side LAUNCH with explicit host/device copies."
-        )
       # Lower the callee body once per unique callee name.
       if callee.name not in self.callees_registry:
         self.callees_registry[callee.name] = _lower_to_proc(callee, self.callees_registry)
+      if is_external:
+        # Mixed-device CALL — callee is its own translation unit (the host
+        # driver handles cudaMalloc/launch/cudaMemcpy when the callee is on a
+        # GPU). We emit a CALL statement tagged as external so the renderer
+        # invokes it through the universal ABI instead of inlining the body.
+        pass
       # Allocate output workspace buffers for each callee output.
       out_buf_names: list[str] = []
       out_bufs: list[PNode] = []
@@ -604,15 +601,19 @@ class _Builder:
         out_bufs.append(buf)
         out_buf_names.append(tmp_name)
       in_bufs = [self.buffers[n] for n in arg_buf_names]
+      attrs: dict = {
+        "callee": callee.name,
+        "n_in": len(in_bufs),
+        "n_out": len(out_bufs),
+        "returns": (),
+      }
+      if is_external:
+        attrs["external"] = True
+        attrs["callee_device"] = str(callee.device)
       call_stmt = PNode(
         POps.CALL,
         tuple(in_bufs + out_bufs),
-        attrs={
-          "callee": callee.name,
-          "n_in": len(in_bufs),
-          "n_out": len(out_bufs),
-          "returns": (),
-        },
+        attrs=attrs,
       )
       self.statements.append(call_stmt)
       self.call_invocations[key] = tuple(out_buf_names)

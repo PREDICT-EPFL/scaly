@@ -198,7 +198,7 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
       row_offsets.append(off)
       col_offsets.append(0)  # all pieces differentiate the same wrt
     structure = BlockDiagonalStructure(
-      blocks=tuple(piece_structures),  # type: ignore[arg-type]
+      blocks=tuple(piece_structures),  # ty: ignore[invalid-argument-type]
       row_offsets=tuple(row_offsets),
       col_offsets=tuple(col_offsets),
       shape=(expr.size, wrt.size),

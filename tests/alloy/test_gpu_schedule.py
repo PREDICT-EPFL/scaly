@@ -75,19 +75,23 @@ def test_jit_call_on_device_function_raises_clear_error() -> None:
     fn(np.array([1.0, 2.0, 3.0, 4.0]))
 
 
-def test_mixed_device_call_raises_clear_diagnostic() -> None:
-  """A host caller invoking a CUDA-placed callee is not yet supported and
-  must raise a clear LoweringError pointing at Phase 9 (and not silently
-  lower the callee as if it were a host PROC)."""
-  from alloy.lowering import LoweringError
+def test_mixed_device_call_lowers_as_external_universal_abi() -> None:
+  """A host caller invoking a CUDA-placed callee now lowers to an external CALL
+  through the universal ABI (Phase 9). The callee's KERNEL TU is the user's
+  responsibility to link in; the host C just forward-declares it."""
+  from alloy.codegen.program_c import render_program_c_source
 
   x = al.sym("x", 3)
-  inner_gpu = al.Function("inner_gpu", [x], [x.sin()], ["x"], ["y"], device="cuda:0")
+  inner_gpu = al.Function("inner_gpu_call", [x], [x.sin()], ["x"], ["y"], device="cuda:0")
   z = al.sym("z", 3)
   (out,) = inner_gpu.call([z])
-  outer_host = al.Function("outer_host", [z], [out], ["z"], ["y"])
-  with pytest.raises(LoweringError, match="mixed-device CALL"):
-    lower_function(outer_host)
+  outer_host = al.Function("outer_host_mixed", [z], [out], ["z"], ["y"])
+  prog = lower_function(outer_host)
+  text = format_program(prog)
+  assert "call inner_gpu_call(" in text
+  src = render_program_c_source(outer_host)
+  assert "extern int inner_gpu_call(const double** arg, double** res, int* iw, double* w, void* mem);" in src
+  assert "inner_gpu_call(_ext_arg, _ext_res, NULL, NULL, NULL);" in src
 
 
 def test_program_ir_renderer_falls_back_for_device_function() -> None:
