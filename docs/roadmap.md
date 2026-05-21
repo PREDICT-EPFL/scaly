@@ -130,6 +130,16 @@ Every phase below must keep these workloads green unless the phase explicitly up
 
 The current benchmark suite should be treated as regression tests, not just performance demos. New Program IR and GPU work should add golden debug dumps only where they are stable enough not to create churn.
 
+## Progress snapshot (as of this branch)
+
+- **Phase 0** ✓ — baseline frozen. `docs/spec.md` uses the new semantic-IR / Program-IR / renderer / verifier vocabulary. `Tape` is documented as transitional. `tests/alloy/test_source_baseline.py` locks generated C for a 5-entry corpus and gates against drift via SHA-256.
+- **Phase 1** ✓ — interned `DType` registry (`dtypes.bool_/int32/int64/float32/float64`) plus `DeviceSpec` (`host` / `cuda` / `opencl` / `metal`) and a `BackendSupport` capability table. `Function.with_device(...)` is the public placement API; non-host placements raise `JitError` loudly today, and ``BACKEND_SUPPORT`` rejects e.g. `float64` on Metal at construction.
+- **Phase 2** ✓ — `src/alloy/spec.py` ships `Spec`/`VerifyRule`/`verify_expr` with `spec_semantic_shared` and `spec_semantic`. Positive and negative tests in `tests/alloy/test_verifier.py` lock the contract.
+- **Phase 3** ✓ (partial) — docs renamed from "tensor IR" to "semantic IR"; `Ops.SCAN` is reserved as a separate op for future dependent recurrences (no constructor yet). MAP keeps independent-call semantics; `al.scan` remains a transitional alias for `al.map_`.
+- **Phase 4** ✓ — `src/alloy/program.py` introduces the flat `PNode` Program IR with `POps`, `RangeKind`, address spaces, builder helpers (`buffer` / `view` / `load` / `store` / `for_` / `range_` / `proc` / `kernel` / `program` / `launch` / `barrier`), and the verifier specs `spec_program_shared` / `spec_host_program` / `spec_kernel_program` / `spec_program_full`. `format_program` is the backend-neutral pretty-printer.
+- **Phase 5** — in progress. `src/alloy/lowering.py::lower_function` covers elementwise unary/binary, `RESHAPE`, small `CONST`, `SUM` (REDUCE range), and `MATMUL` (vec/vec, mat/vec, vec/mat, mat/mat). `src/alloy/codegen/program_c.py` renders the lowered host PROC back to C; enable via ``ALLOY_USE_PROGRAM_IR_C=1`` for a silent opt-in (unsupported ops fall back to the legacy renderer). End-to-end JIT tests under the flag agree numerically with the interpreter. Remaining: GATHER/SCATTER, STACK/CONCAT, CALL, MAP, SOLVER_CALL.
+- **Phases 6–12** — not started.
+
 ## Detailed migration plan
 
 ### Phase 0 — Freeze and document the current baseline
