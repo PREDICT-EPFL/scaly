@@ -572,6 +572,16 @@ class _Builder:
     arg_buf_names = tuple(self.value_buffers[a.id] for a in node.args)
     key = (callee.name, arg_buf_names)
     if key not in self.call_invocations:
+      # Mixed-device calls (host caller -> non-host callee, or vice versa) need
+      # the Phase 9 ergonomics work (insert host/device copies, build a kernel
+      # launch from the host side). The current lowerer would silently produce
+      # a wrong host PROC for a CUDA callee, so reject loudly until that lands.
+      if callee.device.kind != self.fun.device.kind:
+        raise LoweringError(
+          f"mixed-device CALL not yet supported: caller {self.fun.name!r} on {self.fun.device} "
+          f"vs callee {callee.name!r} on {callee.device}. Phase 9 will lower this to a "
+          f"host-side LAUNCH with explicit host/device copies."
+        )
       # Lower the callee body once per unique callee name.
       if callee.name not in self.callees_registry:
         self.callees_registry[callee.name] = _lower_to_proc(callee, self.callees_registry)
