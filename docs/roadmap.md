@@ -137,7 +137,18 @@ The current benchmark suite should be treated as regression tests, not just perf
 - **Phase 2** ✓ — `src/alloy/spec.py` ships `Spec`/`VerifyRule`/`verify_expr` with `spec_semantic_shared` and `spec_semantic`. Positive and negative tests in `tests/alloy/test_verifier.py` lock the contract.
 - **Phase 3** ✓ (partial) — docs renamed from "tensor IR" to "semantic IR"; `Ops.SCAN` is reserved as a separate op for future dependent recurrences (no constructor yet). MAP keeps independent-call semantics; `al.scan` remains a transitional alias for `al.map_`.
 - **Phase 4** ✓ — `src/alloy/program.py` introduces the flat `PNode` Program IR with `POps`, `RangeKind`, address spaces, builder helpers (`buffer` / `view` / `load` / `store` / `for_` / `range_` / `proc` / `kernel` / `program` / `launch` / `barrier`), and the verifier specs `spec_program_shared` / `spec_host_program` / `spec_kernel_program` / `spec_program_full`. `format_program` is the backend-neutral pretty-printer.
-- **Phase 5** — in progress. `src/alloy/lowering.py::lower_function` covers elementwise unary/binary, `RESHAPE`, small `CONST`, `SUM` (REDUCE range), and `MATMUL` (vec/vec, mat/vec, vec/mat, mat/mat). `src/alloy/codegen/program_c.py` renders the lowered host PROC back to C; enable via ``ALLOY_USE_PROGRAM_IR_C=1`` for a silent opt-in (unsupported ops fall back to the legacy renderer). End-to-end JIT tests under the flag agree numerically with the interpreter. Remaining: GATHER/SCATTER, STACK/CONCAT, CALL, MAP, SOLVER_CALL.
+- **Phase 5** — in progress. `src/alloy/lowering.py::lower_function` now covers:
+  - all current elementwise unaries (NEG, SIN, COS, TAN, ASIN, ACOS, ATAN, SINH, COSH, TANH, EXP, LOG, SQRT, ABS, FLOOR, CEIL) and binaries (ADD, SUB, MUL, DIV, POW, ATAN2, MINIMUM, MAXIMUM);
+  - `RESHAPE` (alias) and rank-1 `SLICE` (copy loop);
+  - `SUM` (REDUCE range);
+  - `MATMUL` (vec/vec, mat/vec, vec/mat, mat/mat);
+  - `GATHER`/`SCATTER` (unrolled, size ≤ 32);
+  - `STACK`/`CONCAT` (axis=0);
+  - small `CONST` (inline serialization, size ≤ 16).
+
+  `src/alloy/codegen/program_c.py` renders the lowered host PROC back to C; enable via ``ALLOY_USE_PROGRAM_IR_C=1`` for a silent opt-in (unsupported ops fall back to the legacy renderer). End-to-end JIT tests under the flag agree numerically with the interpreter for elementwise + SUM + MATMUL + GATHER + STACK + SLICE workloads.
+
+  Remaining Phase 5 work: `CALL` (multi-PROC lowering), `MAP` (loop over a callee), `SOLVER_CALL`, `TRANSPOSE`, multi-dim `SLICE`/`STACK`/`CONCAT`, large `CONST` via a dedicated `CONST_BUFFER` op, large `GATHER`/`SCATTER` via constant index tables.
 - **Phases 6–12** — not started.
 
 ## Detailed migration plan
