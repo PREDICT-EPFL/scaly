@@ -169,6 +169,8 @@ class _Builder:
         self._emit_call(node)
       elif node.op == Ops.MAP:
         self._emit_map(node)
+      elif node.op == Ops.TRANSPOSE:
+        self._emit_transpose(node)
       else:
         raise LoweringError(f"semantic op {node.op!r} is not yet lowered to Program IR (Phase 5 slice)")
 
@@ -409,6 +411,44 @@ class _Builder:
       self.statements.append(p.for_(rng, body))
       offset += size
 
+  def _emit_transpose(self, node: Expr) -> None:
+    """Lower TRANSPOSE: emit nested loops that copy elements at the permuted index.
+
+    Row-major flat indexing: ``out_flat[Σ_i o_i * out_stride_i] = src_flat[Σ_i o_axes[i] * src_stride_i]``.
+    """
+    src = node.args[0]
+    src_buf = self.buffers[self.value_buffers[src.id]]
+    axes = tuple(int(a) for a in node.attrs["axes"])
+    src_shape = src.shape
+    out_shape = node.shape
+    if len(src_shape) > 4:
+      raise LoweringError(f"TRANSPOSE lowering only handles ranks <= 4 today; got {src_shape}")
+    out = self._alloc_tmp(node)
+    # row-major strides
+    src_strides = [1] * len(src_shape)
+    for i in range(len(src_shape) - 2, -1, -1):
+      src_strides[i] = src_strides[i + 1] * src_shape[i + 1]
+    out_strides = [1] * len(out_shape)
+    for i in range(len(out_shape) - 2, -1, -1):
+      out_strides[i] = out_strides[i + 1] * out_shape[i + 1]
+    # one loop per output axis
+    loop_vars: list[PNode] = []
+    ranges: list[PNode] = []
+    for i, d in enumerate(out_shape):
+      name = f"d{i}_{out.attrs['name']}"
+      ranges.append(p.range_(name, 0, int(d), kind=RangeKind.GLOBAL))
+      loop_vars.append(p.var(name, dtype=dtypes.int64))
+    # output flat index = Σ o_i * out_strides[i]
+    out_idx = _affine_sum(loop_vars, out_strides)
+    # src flat index = Σ (output-axis-i-loop-var-mapped-to-src-axis-axes[i]) * src_strides[axes[i]]
+    src_idx = _affine_sum([loop_vars[i] for i in range(len(out_shape))], [src_strides[axes[i]] for i in range(len(out_shape))])
+    body = [p.store(p.view(out, [out_idx]), p.load(p.view(src_buf, [src_idx])))]
+    # wrap in nested fors from innermost to outermost
+    stmt = body[0]
+    for rng in reversed(ranges):
+      stmt = p.for_(rng, [stmt])
+    self.statements.append(stmt)
+
   def _emit_map(self, node: Expr) -> None:
     """Lower ``Ops.MAP``: a ``length``-iteration loop calling the callee with sliced outer args.
 
@@ -569,6 +609,17 @@ class _Builder:
       )
     ]
     self.statements.append(p.for_(rng, body))
+
+
+def _affine_sum(vars_: list[PNode], coeffs: list[int]) -> PNode:
+  """Build a PNode for Σ coeffs[i] * vars_[i] using ADD/MUL/CONST_INT, omitting zero/one ops."""
+  acc: PNode | None = None
+  for v, c in zip(vars_, coeffs, strict=True):
+    if c == 0:
+      continue
+    term = v if c == 1 else p.mul(v, p.const_int(c))
+    acc = term if acc is None else p.add(acc, term)
+  return acc if acc is not None else p.const_int(0)
 
 
 def _shape_or_scalar(shape: tuple[int, ...]) -> tuple[int, ...]:

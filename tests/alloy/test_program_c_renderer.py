@@ -337,6 +337,26 @@ def test_map_jit_matches_interpreter() -> None:
   np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
 
 
+def test_transpose_jit_matches_interpreter() -> None:
+  if not _has_compiler():
+    pytest.skip("no C compiler in PATH")
+  a = al.sym("a", (3, 4))
+  fn = al.Function("f_transpose_jit", [a], [a.T], ["a"], ["y"])
+  a_val = np.arange(12.0).reshape(3, 4)
+  ref = fn.eval_interpreter(a_val)[0]
+  old = os.environ.get("ALLOY_USE_PROGRAM_IR_C")
+  try:
+    os.environ["ALLOY_USE_PROGRAM_IR_C"] = "1"
+    fn.recompile()
+    out = fn(a_val)
+  finally:
+    if old is None:
+      del os.environ["ALLOY_USE_PROGRAM_IR_C"]
+    else:
+      os.environ["ALLOY_USE_PROGRAM_IR_C"] = old
+  np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)
+
+
 def test_program_c_renderer_independent_of_global_flag() -> None:
   """Calling ``render_program_c_source`` directly does not require the flag."""
   x = al.sym("x", 3)

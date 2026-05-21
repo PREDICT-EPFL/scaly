@@ -62,11 +62,21 @@ def test_reshape_is_alias() -> None:
 
 
 def test_unsupported_op_raises() -> None:
-  # TRANSPOSE is not yet lowered (needs rank-N views).
-  a = al.sym("a", (2, 3))
-  fn = al.Function("f_unsupp", [a], [a.T], ["a"], ["y"])
-  with pytest.raises(LoweringError, match="not yet lowered"):
+  # SLICE with step != 1 is rejected by the Phase 5 lowerer.
+  x = al.sym("x", 8)
+  fn = al.Function("f_stride", [x], [x[::2]], ["x"], ["y"])
+  with pytest.raises(LoweringError, match="step=1"):
     lower_function(fn)
+
+
+def test_lower_transpose_emits_nested_loops() -> None:
+  a = al.sym("a", (2, 3))
+  fn = al.Function("f_T", [a], [a.T], ["a"], ["y"])
+  prog = lower_function(fn)
+  text = format_program(prog)
+  # two GLOBAL loops, no REDUCE
+  assert text.count("kind=global") >= 3  # 2 transpose + 1 output copy
+  assert "kind=reduce" not in text
 
 
 def test_lower_map_emits_for_loop_with_call() -> None:
