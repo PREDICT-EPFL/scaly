@@ -11,6 +11,6 @@ from __future__ import annotations
 
 from .nlp import nlp
 from .qp import qp
-from .solver_function import SolverFunction, SolverStatus
+from .solver_function import DerivativePolicy, SolverFunction, SolverStatus
 
-__all__ = ["SolverFunction", "SolverStatus", "nlp", "qp"]
+__all__ = ["DerivativePolicy", "SolverFunction", "SolverStatus", "nlp", "qp"]

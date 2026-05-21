@@ -8,7 +8,7 @@ from .expr import Expr, atan2, concat, dot, format_expr, gather, map_, maximum, 
 from .function import Function, Port
 from .ops import COMMON_OPS, OP_INFO, Ops
 from .rewrite import Pattern, PatternMatcher, cse, cse_many, rewrite, simplify
-from .solvers import SolverFunction, SolverStatus, nlp, qp
+from .solvers import DerivativePolicy, SolverFunction, SolverStatus, nlp, qp
 from .spec import Spec, VerifyError, VerifyRule, spec_semantic, spec_semantic_shared, verify_expr
 from .sparsity import (
   SparseJacobian,
@@ -39,6 +39,7 @@ __all__ = [
   "C_API_SIGNATURE",
   "COMMON_OPS",
   "DType",
+  "DerivativePolicy",
   "DeviceSpec",
   "OP_INFO",
   "Expr",

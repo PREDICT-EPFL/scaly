@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 import numpy as np
@@ -30,6 +31,20 @@ from ..expr import Expr
 from ..function import Function
 from ..ops import Ops
 from ..types import SparsityType, TensorType
+
+
+class DerivativePolicy(StrEnum):
+  """How a SOLVER_CALL participates in derivative computations.
+
+  Phase 11 framework. Today only ``OPAQUE`` is honored — calls through
+  ``SOLVER_CALL`` are non-differentiable. ``USER_PROVIDED`` lets a user
+  attach a derivative ``Function`` (sensitivity-style); ``IMPLICIT`` is
+  reserved for future implicit-function-theorem-based propagation.
+  """
+
+  OPAQUE = "opaque"
+  USER_PROVIDED = "user_provided"
+  IMPLICIT = "implicit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +93,14 @@ class SolverDescriptor:
   hess_lower_mask: tuple[bool, ...] = ()
   # Solver-specific options
   options: tuple[tuple[str, Any], ...] = ()
+  # Phase 11 derivative policy: OPAQUE (default) treats SOLVER_CALL as
+  # non-differentiable. Other values are accepted but not yet honored by AD.
+  derivative_policy: DerivativePolicy = DerivativePolicy.OPAQUE
+  # Optional user-supplied derivative Function when ``derivative_policy ==
+  # USER_PROVIDED``. Its input signature must accept the solver's primal
+  # outputs + the parameter dual variables; its output is the sensitivity
+  # of the primal solution w.r.t. the params. Not enforced today.
+  derivative_function: Function | None = None
   # Oracle output naming (QP); the order in which the oracle's outputs encode
   # the QP data buffers.
   oracle_output_names: tuple[str, ...] = ()
