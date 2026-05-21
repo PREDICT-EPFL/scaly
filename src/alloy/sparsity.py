@@ -35,6 +35,69 @@ def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityType:
   return SparsityType.from_mask(_jac_mask(expr, wrt, {}))
 
 
+def structured_jacobian_sparsity(expr: Expr, wrt: Expr):
+  """Return a ``StructuredSparsity`` descriptor for ``d vec(expr) / d vec(wrt)``.
+
+  When ``expr`` is an ``Ops.MAP`` node whose outer tensors are exactly ``wrt`` for a
+  contiguous formal (``start=k*slice``, ``stride=slice``), the result is a
+  ``TiledStructure`` over the per-stage local sparsity tile — letting downstream Program
+  IR sparse assembly iterate ``length`` tiles instead of materializing
+  ``length * tile_nnz`` constant index entries. Otherwise it falls back to a
+  ``COOStructure`` wrapping the materialized COO pattern.
+  """
+  from .structured_sparsity import COOStructure, TiledStructure
+
+  mask = _jac_mask(expr, wrt, {})
+  flat = SparsityType.from_mask(mask)
+  if expr.op != Ops.MAP:
+    return COOStructure(flat.shape, flat.rows, flat.cols)
+  callee = expr.attrs["callee"]
+  output_idx = expr.attrs["output"]
+  length = int(expr.attrs["length"])
+  slice_size = int(expr.attrs["slice_size"])
+  starts = expr.attrs["starts"]
+  strides = expr.attrs["strides"]
+  callee_out = callee.outputs[output_idx]
+  # Recognize the "Jacobian of stage i wrt stage i" tiled pattern: exactly one
+  # formal whose outer == wrt and whose (start, stride) walks along wrt in
+  # slice_size-sized contiguous windows. Others must not depend on wrt.
+  from .ad import _depends_on
+
+  dep_memo: dict[tuple[int, int], bool] = {}
+  tile_formal: int | None = None
+  for f_idx, actual in enumerate(expr.args):
+    if actual.id == wrt.id:
+      if tile_formal is None:
+        tile_formal = f_idx
+      else:
+        return COOStructure(flat.shape, flat.rows, flat.cols)  # multiple tile candidates
+    elif _depends_on(actual, wrt, dep_memo):
+      return COOStructure(flat.shape, flat.rows, flat.cols)
+  if tile_formal is None or length == 0:
+    return COOStructure(flat.shape, flat.rows, flat.cols)
+  formal = callee.inputs[tile_formal]
+  start_f = int(starts[tile_formal])
+  stride_f = int(strides[tile_formal])
+  if stride_f != formal.size or start_f % formal.size != 0:
+    return COOStructure(flat.shape, flat.rows, flat.cols)
+  # Per-stage local mask between callee_out (rows) and formal (cols).
+  local_mask = _jac_mask(callee_out, formal, {})
+  base = COOStructure((callee_out.size, formal.size), tuple(int(r) for r in np.flatnonzero(local_mask)[:0]), ())
+  rows, cols = np.nonzero(local_mask)
+  base = COOStructure(
+    (callee_out.size, formal.size),
+    tuple(int(r) for r in rows),
+    tuple(int(c) for c in cols),
+  )
+  return TiledStructure(
+    base=base,
+    length=length,
+    row_stride=slice_size,
+    col_stride=stride_f,
+    shape=flat.shape,
+  )
+
+
 def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> SparseJacobian:
   """Reference compact Jacobian path: build dense ``J`` and gather nonzeros."""
 

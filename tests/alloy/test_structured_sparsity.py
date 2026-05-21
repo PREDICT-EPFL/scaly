@@ -98,3 +98,35 @@ def test_structured_sparsity_is_part_of_public_alloy_surface() -> None:
 
   assert hasattr(ss, "TiledStructure")
   assert hasattr(ss, "materialize")
+
+
+def test_structured_jacobian_sparsity_recognizes_map_tile() -> None:
+  """MAP-based jacobians yield a ``TiledStructure`` whose tile matches the per-stage local mask."""
+  from alloy.sparsity import structured_jacobian_sparsity
+
+  x = al.sym("x", 2)
+  stage = al.Function("stage", [x], [(x * x).sum()], ["x"], ["y"])
+  z = al.sym("z", 6)
+  mapped = al.map_(stage, length=3, inputs=[(z, 0, 2)])
+  struct = structured_jacobian_sparsity(mapped, z)
+  assert isinstance(struct, TiledStructure)
+  assert struct.length == 3
+  assert struct.row_stride == 1  # stage output size
+  assert struct.col_stride == 2  # stage input size
+  # materializing must match the flat jacobian_sparsity
+  flat = materialize(struct)
+  from alloy.sparsity import jacobian_sparsity
+
+  ref = jacobian_sparsity(mapped, z)
+  assert flat.rows == ref.rows
+  assert flat.cols == ref.cols
+
+
+def test_structured_jacobian_sparsity_falls_back_to_coo() -> None:
+  """A scalar elementwise graph has no MAP — descriptor falls back to a plain COOStructure."""
+  from alloy.sparsity import structured_jacobian_sparsity
+
+  x = al.sym("x", 4)
+  y = (x * x).sum()
+  struct = structured_jacobian_sparsity(y, x)
+  assert isinstance(struct, COOStructure)
