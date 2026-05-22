@@ -51,11 +51,11 @@ def test_render_metal_kernel_shape() -> None:
   assert "device float* y [[buffer(1)]]" in src
   # thread index
   assert "uint tid [[thread_position_in_grid]]" in src
-  # top-level GLOBAL FOR bound to tid
+  # top-level GLOBAL FOR bound to tid (loop var is named after the output buffer)
   assert "(long)tid" in src
-  assert "if (i_t0 >= 8) return;" in src
+  assert "if (i_y >= 8) return;" in src
   # math function via metal:: namespace
-  assert "metal::sin(x[i_t0])" in src
+  assert "metal::sin(x[i_y])" in src
 
 
 def test_render_metal_supports_binary_elementwise_and_const() -> None:

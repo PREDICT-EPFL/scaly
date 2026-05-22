@@ -153,7 +153,13 @@ def _emit_scalar(n: PNode) -> str:
       return "NAN"
     if math.isinf(v):
       return "(-INFINITY)" if v < 0 else "INFINITY"
-    return f"{v:.9g}f"
+    # MSL rejects ``0f`` / ``1f`` (parsed as an octal/decimal int with a stray
+    # 'f') — the float literal needs a decimal point or exponent. ``g`` skips
+    # the dot for whole numbers, so force a fractional form.
+    s = f"{v:.9g}"
+    if "." not in s and "e" not in s and "E" not in s:
+      s = s + ".0"
+    return s + "f"
   if n.op == POps.VAR:
     return str(n.attrs["name"])
   if n.op == POps.LOAD:

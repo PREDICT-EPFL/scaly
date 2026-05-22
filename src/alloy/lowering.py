@@ -203,6 +203,7 @@ def main_proc(program_node: PNode) -> PNode:
 def _lower_to_proc(fun: Function, callees_registry: dict[str, PNode]) -> PNode:
   builder = _Builder(fun, callees_registry)
   builder.emit_inputs()
+  builder.register_outputs()
   builder.emit_body()
   builder.emit_outputs()
   return p.proc(fun.name, builder.params, builder.statements)
@@ -220,6 +221,12 @@ class _Builder:
     self.callees_registry = callees_registry
     # Map (callee_name, tuple_of_arg_buffer_names) -> tuple of output buffer names.
     self.call_invocations: dict[tuple[str, tuple[str, ...]], tuple[str, ...]] = {}
+    # Pre-bind each output Expr's id to its output buffer name so the body
+    # emitter writes into the output buffer directly (no workspace + copy
+    # round-trip). Only viable when the output Expr appears exactly once in
+    # the graph's reachable-from-outputs view; multiple outputs sharing the
+    # same Expr fall back to the copy-from-workspace pattern via _override_outputs.
+    self._output_alias: dict[int, str] = {}
 
   # --- inputs ---------------------------------------------------------------
 
@@ -232,17 +239,33 @@ class _Builder:
 
   # --- outputs --------------------------------------------------------------
 
-  def emit_outputs(self) -> None:
+  def register_outputs(self) -> None:
+    """Eagerly register output BUFFER params and alias each output Expr's id to
+    the output buffer name. The body emitter then writes directly into the
+    output buffer instead of allocating a workspace + copy-loop pair."""
+    seen_ids: set[int] = set()
     for name, expr in zip(self.fun.output_names, self.fun.outputs, strict=True):
       out_buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.type.shape), address_space="global")
       self.params.append(out_buf)
       self.buffers[name] = out_buf
+      # Only alias when the output Expr is unique to this output (otherwise two
+      # outputs would both want to be the same buffer). If it's INPUT or CONST,
+      # we leave it to emit_outputs to insert the copy.
+      if expr.op in (Ops.INPUT, Ops.CONST):
+        continue
+      if expr.id in seen_ids:
+        continue
+      seen_ids.add(expr.id)
+      self._output_alias[expr.id] = name
+
+  def emit_outputs(self) -> None:
+    for name, expr in zip(self.fun.output_names, self.fun.outputs, strict=True):
       src_buf_name = self.value_buffers.get(expr.id)
       if src_buf_name is None:
         raise LoweringError(f"output {name!r} expression was not lowered")
       if src_buf_name == name:
-        continue  # already written into the output param
-      self.statements.append(_copy_loop(self.buffers[src_buf_name], out_buf, expr.type.shape, expr.type.dtype))
+        continue  # already written into the output param via _output_alias
+      self.statements.append(_copy_loop(self.buffers[src_buf_name], self.buffers[name], expr.type.shape, expr.type.dtype))
 
   # --- body -----------------------------------------------------------------
 
@@ -284,6 +307,14 @@ class _Builder:
         raise LoweringError(f"semantic op {node.op!r} is not yet lowered to Program IR (Phase 5 slice)")
 
   def _alloc_tmp(self, expr: Expr) -> PNode:
+    # If this Expr is aliased to an output buffer, reuse the output buffer
+    # directly instead of allocating a private workspace. Saves one copy loop
+    # and avoids the "thread-private workspace + multi-thread copy" race in
+    # GPU schedules.
+    alias = self._output_alias.get(expr.id)
+    if alias is not None:
+      self.value_buffers[expr.id] = alias
+      return self.buffers[alias]
     name = f"t{self._tmp_counter}"
     self._tmp_counter += 1
     buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.type.shape), address_space="private")

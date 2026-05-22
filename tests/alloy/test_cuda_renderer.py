@@ -28,9 +28,10 @@ def test_render_cuda_kernel_and_driver() -> None:
   src = render_cuda_source(fn)
   # kernel block: top-level GLOBAL FOR now binds to (blockIdx, threadIdx)
   assert "__global__ void f_cu_kernel(double* x, double* y)" in src
-  assert "long long i_t0 = blockIdx.x * blockDim.x + threadIdx.x" in src
-  assert "if (i_t0 >= 8) return;" in src
-  assert "= sin(x[i_t0])" in src
+  # Output expression aliases directly to ``y``; loop var follows the buffer name.
+  assert "long long i_y = blockIdx.x * blockDim.x + threadIdx.x" in src
+  assert "if (i_y >= 8) return;" in src
+  assert "= sin(x[i_y])" in src
   # host driver block
   assert 'extern "C" int f_cu(const double** arg, double** res' in src
   assert "cudaMalloc((void**)&d_in0" in src

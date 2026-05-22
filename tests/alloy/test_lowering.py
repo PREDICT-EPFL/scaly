@@ -21,9 +21,10 @@ def test_lower_unary_elementwise() -> None:
   verify_program(proc)
   text = format_program(proc)
   assert "proc f(x:float64(4,), y:float64(4,))" in text
-  assert " for i_t0 in [0, 4) step 1 kind=global" in text
-  # output should be copied from t0 into y
-  assert "y[i_y] <- t0[i_y]" in text
+  # The output expression is aliased directly to the ``y`` output buffer —
+  # no workspace + copy loop.
+  assert " for i_y in [0, 4) step 1 kind=global" in text
+  assert "y[i_y] <- sin(x[i_y])" in text
 
 
 def test_lower_binary_elementwise() -> None:
@@ -34,7 +35,7 @@ def test_lower_binary_elementwise() -> None:
   proc = lower_function(fn)
   verify_program(proc)
   text = format_program(proc)
-  assert "(x[i_t0] * y[i_t0])" in text
+  assert "(x[i_z] * y[i_z])" in text
 
 
 def test_lower_chained_unary_binary() -> None:
@@ -44,10 +45,9 @@ def test_lower_chained_unary_binary() -> None:
   proc = lower_function(fn)
   verify_program(proc)
   text = format_program(proc)
-  # two for-loops: one for sin into t0, one for add into t1
-  assert text.count("for i_t") == 2
+  # intermediate sin lands in a private t0; final ADD lands directly in y.
   assert "sin(x[i_t0])" in text
-  assert "(t0[i_t1] + x[i_t1])" in text
+  assert "(t0[i_y] + x[i_y])" in text
 
 
 def test_reshape_is_alias() -> None:
@@ -57,7 +57,7 @@ def test_reshape_is_alias() -> None:
   proc = lower_function(fn)
   verify_program(proc)
   text = format_program(proc)
-  # only the output copy loop emits a FOR — the reshape itself does not
+  # RESHAPE aliases the source buffer; output is a copy loop from x into y.
   assert text.count("for i_") == 1
 
 
@@ -74,8 +74,8 @@ def test_lower_transpose_emits_nested_loops() -> None:
   fn = al.Function("f_T", [a], [a.T], ["a"], ["y"])
   prog = lower_function(fn)
   text = format_program(prog)
-  # two GLOBAL loops, no REDUCE
-  assert text.count("kind=global") >= 3  # 2 transpose + 1 output copy
+  # two GLOBAL loops (one per output axis), no REDUCE
+  assert text.count("kind=global") == 2
   assert "kind=reduce" not in text
 
 
@@ -89,7 +89,8 @@ def test_lower_map_emits_for_loop_with_call() -> None:
   assert prog.op == POps.PROGRAM
   assert int(prog.attrs["proc_count"]) == 2
   text = format_program(prog)
-  assert "for it_t0 in [0, 3)" in text
+  # MAP's output now aliases directly to `m`, so the loop var is named ``it_m``.
+  assert "for it_m in [0, 3)" in text
   assert "call stage_lower(" in text
 
 
@@ -114,9 +115,9 @@ def test_lower_stack_emits_per_input_global_loop() -> None:
   fn = al.Function("f_stack", [x, y], [al.stack([x, y])], ["x", "y"], ["z"])
   proc = lower_function(fn)
   text = format_program(proc)
-  # one per-input loop, all GLOBAL
-  assert text.count("for j_t0_0") == 1
-  assert text.count("for j_t0_1") == 1
+  # per-input loops now write directly into the ``z`` output buffer.
+  assert text.count("for j_z_0") == 1
+  assert text.count("for j_z_1") == 1
 
 
 def test_lower_concat_emits_per_input_global_loop_with_offset() -> None:
@@ -125,8 +126,8 @@ def test_lower_concat_emits_per_input_global_loop_with_offset() -> None:
   fn = al.Function("f_concat", [x, y], [al.concat([x, y])], ["x", "y"], ["z"])
   proc = lower_function(fn)
   text = format_program(proc)
-  assert "for j_t0_0 in [0, 2)" in text
-  assert "for j_t0_1 in [0, 3)" in text
+  assert "for j_z_0 in [0, 2)" in text
+  assert "for j_z_1 in [0, 3)" in text
 
 
 def test_lower_gather_unrolls() -> None:
@@ -135,9 +136,9 @@ def test_lower_gather_unrolls() -> None:
   fn = al.Function("f_gather", [x], [y], ["x"], ["y"])
   proc = lower_function(fn)
   text = format_program(proc)
-  assert "t0[0] <- x[0]" in text
-  assert "t0[1] <- x[2]" in text
-  assert "t0[2] <- x[4]" in text
+  assert "y[0] <- x[0]" in text
+  assert "y[1] <- x[2]" in text
+  assert "y[2] <- x[4]" in text
 
 
 def test_lower_scatter_initializes_then_writes() -> None:
@@ -146,10 +147,10 @@ def test_lower_scatter_initializes_then_writes() -> None:
   fn = al.Function("f_scatter", [v], [y], ["v"], ["y"])
   proc = lower_function(fn)
   text = format_program(proc)
-  # zero-init all six output cells then write two
+  # zero-init all six output cells then write two — directly into ``y``.
   assert text.count("<- 0") == 6
-  assert "t0[1] <- v[0]" in text
-  assert "t0[3] <- v[1]" in text
+  assert "y[1] <- v[0]" in text
+  assert "y[3] <- v[1]" in text
 
 
 def test_lower_matmul_matvec_emits_outer_global_inner_reduce() -> None:
@@ -160,7 +161,8 @@ def test_lower_matmul_matvec_emits_outer_global_inner_reduce() -> None:
   text = format_program(proc)
   assert "kind=global" in text
   assert "kind=reduce" in text
-  assert "(a[((i_t0 * 4) + k_t0)]" in text
+  # matvec output aliases to ``y``; the inner index is ``k_y``.
+  assert "(a[((i_y * 4) + k_y)]" in text
 
 
 def test_lower_matmul_matmat_emits_three_loops() -> None:
@@ -169,8 +171,9 @@ def test_lower_matmul_matmat_emits_three_loops() -> None:
   fn = al.Function("f_matmat", [a, b], [a @ b], ["a", "b"], ["c"])
   proc = lower_function(fn)
   text = format_program(proc)
-  # outer global, inner global, innermost reduce, plus one output copy loop
-  assert text.count("kind=global") == 3
+  # outer global, inner global, innermost reduce. No extra output-copy loop
+  # — the matmat result writes directly into the ``c`` output buffer.
+  assert text.count("kind=global") == 2
   assert text.count("kind=reduce") == 1
 
 
@@ -180,7 +183,7 @@ def test_lower_sum_emits_reduce_loop() -> None:
   proc = lower_function(fn)
   text = format_program(proc)
   assert "kind=reduce" in text
-  assert "t0[0] <- (t0[0] + x[i_t0])" in text
+  assert "y[0] <- (y[0] + x[i_y])" in text
 
 
 def test_non_host_device_emits_kernel() -> None:
@@ -209,7 +212,7 @@ def test_const_inlined_into_lowered_proc() -> None:
   proc = lower_function(fn)
   verify_program(proc)
   text = format_program(proc)
-  # CONST stores three scalar values into t0
+  # CONST stores three scalar values into a private workspace buffer.
   assert "t0[0] <- 1" in text
   assert "t0[1] <- 2" in text
   assert "t0[2] <- 3" in text

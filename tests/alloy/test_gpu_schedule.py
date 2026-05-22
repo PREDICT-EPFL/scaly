@@ -47,7 +47,7 @@ def test_device_placed_function_kernel_contains_loop_body() -> None:
   assert "kernel f_dev_loop_kernel" in text
   assert "proc f_dev_loop" in text
   assert "launch f_dev_loop_kernel" in text
-  assert "for i_t0 in [0, 16)" in text  # body landed inside the kernel
+  assert "for i_y in [0, 16)" in text  # body landed inside the kernel
 
 
 def test_launch_grid_size_from_first_global_for() -> None:
