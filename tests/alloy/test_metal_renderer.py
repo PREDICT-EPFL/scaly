@@ -153,6 +153,54 @@ def test_metal_function_call_dispatches_through_jit() -> None:
   not metal_available(),
   reason="Metal runtime unavailable",
 )
+def test_metal_matvec_dispatch_matches_numpy() -> None:
+  import numpy as np
+
+  A = al.sym("A", (8, 12), dtype=al.dtypes.float32)
+  v = al.sym("v", 12, dtype=al.dtypes.float32)
+  fn = al.Function("matvec_metal", [A, v], [A @ v], ["A", "v"], ["y"]).with_device("metal:0")
+  rng = np.random.RandomState(0)
+  A_val = rng.randn(8, 12).astype(np.float32)
+  v_val = rng.randn(12).astype(np.float32)
+  out = fn(A_val, v_val)
+  np.testing.assert_allclose(out, A_val @ v_val, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.skipif(
+  not metal_available(),
+  reason="Metal runtime unavailable",
+)
+def test_metal_matmat_dispatch_matches_numpy() -> None:
+  import numpy as np
+
+  A = al.sym("A", (4, 6), dtype=al.dtypes.float32)
+  B = al.sym("B", (6, 5), dtype=al.dtypes.float32)
+  fn = al.Function("matmat_metal", [A, B], [A @ B], ["A", "B"], ["C"]).with_device("metal:0")
+  rng = np.random.RandomState(1)
+  A_val = rng.randn(4, 6).astype(np.float32)
+  B_val = rng.randn(6, 5).astype(np.float32)
+  out = fn(A_val, B_val)
+  np.testing.assert_allclose(out, A_val @ B_val, atol=1e-4, rtol=1e-4)
+
+
+@pytest.mark.skipif(
+  not metal_available(),
+  reason="Metal runtime unavailable",
+)
+def test_metal_sum_axis_dispatch_matches_numpy() -> None:
+  import numpy as np
+
+  x = al.sym("x", (4, 6), dtype=al.dtypes.float32)
+  fn = al.Function("sumax_metal", [x], [x.sum(axis=1)], ["x"], ["y"]).with_device("metal:0")
+  x_val = np.linspace(-1.0, 1.0, 24, dtype=np.float32).reshape(4, 6)
+  out = fn(x_val)
+  np.testing.assert_allclose(out, x_val.sum(axis=1), atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.skipif(
+  not metal_available(),
+  reason="Metal runtime unavailable",
+)
 def test_metal_kernel_dispatch_handles_chained_elementwise() -> None:
   """Chained ops should fuse into one thread-bound loop in MSL (one element per thread)."""
   import numpy as np
