@@ -18,6 +18,7 @@ import pytest
 
 import alloy as al
 from alloy.codegen.metal import can_render_metal, render_metal_source
+from alloy.metal_runtime import compile_msl_to_metallib, metal_available
 
 
 def _xcrun_metal_available() -> bool:
@@ -90,9 +91,6 @@ def test_render_metal_rejects_float64_at_construction() -> None:
     fn.with_device("metal:0")
 
 
-from alloy.metal_runtime import compile_msl_to_metallib, metal_available
-
-
 @pytest.mark.skipif(
   not _xcrun_metal_available(),
   reason="xcrun metal toolchain not installed (run `xcodebuild -downloadComponent MetalToolchain`)",
@@ -133,6 +131,22 @@ def test_metal_kernel_dispatch_matches_numpy_elementwise() -> None:
   y_buf = np.zeros_like(x_val)
   outs = rt.run_kernel(metallib, "sin_dispatch_kernel", [x_val, y_buf], grid=64)
   np.testing.assert_allclose(outs[1], np.sin(x_val), atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.skipif(
+  not metal_available(),
+  reason="Metal runtime unavailable",
+)
+def test_metal_function_call_dispatches_through_jit() -> None:
+  """User-facing ``fn(x)`` on a Metal-placed Function routes through the Metal runtime."""
+  import numpy as np
+
+  x = al.sym("x", 32, dtype=al.dtypes.float32)
+  fn = al.Function("call_dispatch", [x], [x.sin() + x * x], ["x"], ["y"]).with_device("metal:0")
+  x_val = np.linspace(-1.5, 1.5, 32, dtype=np.float32)
+  out = fn(x_val)
+  ref = np.sin(x_val) + x_val * x_val
+  np.testing.assert_allclose(out, ref, atol=1e-6, rtol=1e-6)
 
 
 @pytest.mark.skipif(

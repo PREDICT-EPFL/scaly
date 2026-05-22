@@ -265,7 +265,53 @@ class MetalRuntime:
     return out
 
 
-__all__: list[str] = ["MetalRuntime", "compile_msl_to_metallib", "metal_available"]
+class MetalCompiledFunction:
+  """Lazily-built per-Function Metal kernel handle.
+
+  Mirrors ``alloy.jit.CompiledFunction`` for ``device='metal:N'`` Functions.
+  Caches the compiled metallib path + a shared ``MetalRuntime`` so repeated
+  calls reuse the same pipeline state implicitly via ``newComputePipelineState``
+  re-creation (cheap on hot paths today; a follow-up can memoize per-name).
+  """
+
+  _runtime: "MetalRuntime | None" = None
+
+  def __init__(self, fun) -> None:  # ``fun`` is alloy.Function; avoid an import cycle.
+    from .codegen.metal import render_metal_source
+
+    msl = render_metal_source(fun)
+    self.metallib = compile_msl_to_metallib(msl, name=fun.name)
+    self.kernel_name = f"{fun.name}_kernel"
+    self.fun = fun
+    if MetalCompiledFunction._runtime is None:
+      MetalCompiledFunction._runtime = MetalRuntime()
+    self.runtime = MetalCompiledFunction._runtime
+
+  def run(self, args: list[np.ndarray]) -> list[np.ndarray]:
+    # Build numpy arrays for each kernel parameter (inputs + outputs).
+    np_args: list[np.ndarray] = []
+    for actual, expected in zip(args, self.fun.inputs, strict=True):
+      arr = np.ascontiguousarray(actual, dtype=expected.type.dtype.numpy())
+      if arr.shape != expected.type.shape:
+        raise ValueError(f"input {expected.name!r} shape {arr.shape} != expected {expected.type.shape}")
+      np_args.append(arr)
+    out_buffers: list[np.ndarray] = []
+    for out_expr in self.fun.outputs:
+      buf = np.zeros(out_expr.type.shape or (1,), dtype=out_expr.type.dtype.numpy())
+      out_buffers.append(buf)
+    grid = max((int(np.prod(a.shape, dtype=int)) for a in np_args + out_buffers), default=1)
+    # Sensible 1D launch: trip count of the largest IO buffer.
+    raw = self.runtime.run_kernel(
+      self.metallib,
+      self.kernel_name,
+      [*np_args, *out_buffers],
+      grid=grid,
+    )
+    # Return only the output buffers.
+    return [raw[len(np_args) + i] for i in range(len(out_buffers))]
+
+
+__all__: list[str] = ["MetalCompiledFunction", "MetalRuntime", "compile_msl_to_metallib", "metal_available"]
 
 # Silence unused-imports
 _ = Any

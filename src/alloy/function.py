@@ -135,6 +135,20 @@ class Function:
 
     if jit_disabled():
       return self.eval_interpreter(*args, **kwargs)
+    if self.device.kind == "metal":
+      from .metal_runtime import MetalCompiledFunction, metal_available
+
+      if not metal_available():
+        raise JitError(
+          f"function {self.name!r} placed on {self.device} but Metal runtime is unavailable on this machine. "
+          f"Install the Xcode Metal Toolchain via `xcodebuild -downloadComponent MetalToolchain`."
+        )
+      ordered = self._resolve_inputs(args, kwargs)
+      compiled_metal = self._compiled
+      if compiled_metal is None:
+        compiled_metal = MetalCompiledFunction(self)
+        self._compiled = compiled_metal
+      return compiled_metal.run(list(ordered))
     if self.device.kind != "host":
       raise JitError(
         f"function {self.name!r} placed on {self.device}, but only host lowering is implemented. "
