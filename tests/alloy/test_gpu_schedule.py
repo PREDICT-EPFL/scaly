@@ -64,15 +64,25 @@ def test_launch_grid_size_from_first_global_for() -> None:
   assert grid_arg.attrs["value"] == 24
 
 
-def test_jit_call_on_device_function_raises_clear_error() -> None:
-  x = al.sym("x", 4)
-  fn = al.Function("f_dev_call", [x], [-x], ["x"], ["y"], device="cuda:0")
-  from alloy.jit import JitError
-
+def test_jit_call_on_cuda_function_dispatches_or_raises_unavailable() -> None:
+  """``fn(np.array(...))`` on a cuda Function routes through ``CudaCompiledFunction``
+  when nvcc + a compatible driver are present, otherwise raises ``JitError``
+  with a clear "no nvcc compatible" diagnostic. Either is correct; only the
+  silent fallback to interpreter would be a regression."""
   import numpy as np
 
-  with pytest.raises(JitError, match="only host lowering"):
-    fn(np.array([1.0, 2.0, 3.0, 4.0]))
+  from alloy.cuda_runtime import cuda_available
+  from alloy.jit import JitError
+
+  x = al.sym("x", 4)
+  fn = al.Function("f_dev_call", [x], [-x], ["x"], ["y"], device="cuda:0")
+  x_val = np.array([1.0, 2.0, 3.0, 4.0])
+  if cuda_available():
+    out = fn(x_val)
+    assert np.allclose(out, -x_val)
+  else:
+    with pytest.raises(JitError, match=r"nvcc|CUDA|Metal"):
+      fn(x_val)
 
 
 def test_mixed_device_call_lowers_as_external_universal_abi() -> None:

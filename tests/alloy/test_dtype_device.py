@@ -65,11 +65,17 @@ def test_function_with_device_repr_and_lower_diagnostic() -> None:
   gpu = fn.with_device("cuda:0")
   assert gpu.device == al.DeviceSpec("cuda", 0)
   assert "device=cuda:0" in repr(gpu)
-  # only host lowers today; cuda placement should fail loudly via the JIT path
+  # cuda dispatches end-to-end when nvcc + a compatible driver are available; on
+  # other machines the runtime raises a clear JitError naming the missing piece.
+  from alloy.cuda_runtime import cuda_available
   from alloy.jit import JitError
 
-  with pytest.raises(JitError, match="only host lowering"):
-    gpu(np.array([1.0, 2.0, 3.0]))
+  if cuda_available():
+    out = gpu(np.array([1.0, 2.0, 3.0]))
+    np.testing.assert_allclose(out, np.array([6.0]), atol=1e-12)
+  else:
+    with pytest.raises(JitError, match=r"nvcc|CUDA"):
+      gpu(np.array([1.0, 2.0, 3.0]))
 
 
 def test_backend_capability_table_rejects_unsupported_dtype() -> None:

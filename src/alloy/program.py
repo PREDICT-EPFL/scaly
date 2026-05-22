@@ -319,14 +319,37 @@ def proc(name: str, params: Sequence[PNode], body: Sequence[PNode], *, device: D
   return PNode(POps.PROC, (*params, *body), attrs={"name": name, "param_count": len(params), "device": DeviceSpec.parse(device)})
 
 
-def kernel(name: str, params: Sequence[PNode], body: Sequence[PNode], *, grid_dims: int = 1, device: DeviceSpec | str | None = None) -> PNode:
+def kernel(
+  name: str,
+  params: Sequence[PNode],
+  body: Sequence[PNode],
+  *,
+  grid_dims: int = 1,
+  device: DeviceSpec | str | None = None,
+  bind_threads: bool = True,
+) -> PNode:
+  """Build a KERNEL node.
+
+  ``bind_threads`` (default True) signals the renderer that the first top-level
+  ``GLOBAL`` FOR can be bound to ``(blockIdx, threadIdx)``. The schedule pass
+  in ``lowering._kernelize_for_device`` sets this to ``False`` for kernels whose
+  body has a top-level ``REDUCE`` that would read across thread-private
+  workspace — those run serially on a single thread until proper kernel
+  splitting lands.
+  """
   for p in params:
     if p.op != POps.BUFFER:
       raise TypeError(f"kernel params must be BUFFER nodes, got {p.op}")
   return PNode(
     POps.KERNEL,
     (*params, *body),
-    attrs={"name": name, "param_count": len(params), "grid_dims": int(grid_dims), "device": DeviceSpec.parse(device)},
+    attrs={
+      "name": name,
+      "param_count": len(params),
+      "grid_dims": int(grid_dims),
+      "device": DeviceSpec.parse(device),
+      "bind_threads": bool(bind_threads),
+    },
   )
 
 

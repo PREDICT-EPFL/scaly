@@ -149,6 +149,23 @@ class Function:
         compiled_metal = MetalCompiledFunction(self)
         self._compiled = compiled_metal
       return compiled_metal.run(list(ordered))
+    if self.device.kind == "cuda":
+      from .cuda_runtime import CudaCompiledFunction, CudaUnavailable, cuda_available
+
+      if not cuda_available():
+        raise JitError(
+          f"function {self.name!r} placed on {self.device} but no nvcc compatible with this driver is available. "
+          f"Install CUDA Toolkit or set ALLOY_NVCC to a working nvcc binary."
+        )
+      ordered = self._resolve_inputs(args, kwargs)
+      compiled_cuda = self._compiled
+      if compiled_cuda is None:
+        try:
+          compiled_cuda = CudaCompiledFunction(self)
+        except CudaUnavailable as exc:
+          raise JitError(str(exc)) from exc
+        self._compiled = compiled_cuda
+      return compiled_cuda.run(list(ordered))
     if self.device.kind != "host":
       raise JitError(
         f"function {self.name!r} placed on {self.device}, but only host lowering is implemented. "

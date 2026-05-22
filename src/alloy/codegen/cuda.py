@@ -1,17 +1,31 @@
-"""Phase 8 first slice: CUDA C source rendering for device-placed functions.
+"""CUDA C source rendering for device-placed functions.
 
-This is source generation only — no nvcc integration yet. The output uses the
-universal ABI on the host side (``int f(const double** arg, double** res, ...)``)
-and `__global__` for the kernel. Host code allocates device memory via
-``cudaMalloc``/``cudaMemcpy``, launches the kernel synchronously, and copies
-results back.
+The renderer emits a complete translation unit for each ``device='cuda:N'``
+Function:
 
-Range kinds inside the kernel are still ``GLOBAL`` today; a future pass will
-rebind them to ``threadIdx``/``blockIdx``. For now every range becomes a serial
-``for`` inside the kernel, which is correct but not yet GPU-shaped — the
-kernel still runs on a single thread of a single block. That is enough to
-ship a stable text contract that the future thread-binding pass and the
-actual CUDA backend (Phase 8 follow-up) can extend.
+- a ``__global__`` kernel for the lowered body,
+- ``__device__`` inline callees for any ``CALL`` / ``MAP`` invocations,
+- an ``extern "C"`` host driver implementing the universal Alloy ABI
+  (``int f(const double** arg, double** res, int* iw, double* w, void* mem)``)
+  that does ``cudaMalloc`` / ``cudaMemcpy`` / launch / ``cudaDeviceSynchronize``
+  / ``cudaFree`` synchronously.
+
+Thread binding: the top-level ``GLOBAL`` ``FOR`` in the kernel body is bound
+to ``blockIdx.x * blockDim.x + threadIdx.x`` (with the obvious bounds check).
+When the kernel's ``bind_threads`` attribute is False (set by the schedule
+pass in ``lowering._kernelize_for_device`` for shapes where a top-level
+``REDUCE`` would race against per-thread workspace), the renderer leaves the
+loop serial and the host driver launches with ``<<<1, 1>>>``.
+
+Dtypes: the kernel uses the input/output dtype directly (``float`` for
+``dtypes.float32``, ``double`` for ``dtypes.float64``). The universal ABI is
+locked to ``const double**`` / ``double**``, so the host driver stages
+non-double inputs/outputs through a host-side ``malloc`` + cast loop on the
+way in and out.
+
+End-to-end dispatch (``fn(np.array(...))``) goes through
+``alloy.cuda_runtime.CudaCompiledFunction``, which auto-detects a nvcc whose
+PTX the installed driver accepts.
 """
 
 from __future__ import annotations
@@ -42,24 +56,61 @@ def render_cuda_source(fun: Function) -> str:
   driver = main_proc(prog)
   pc = int(prog.attrs["proc_count"])
   kernel = prog.args[pc]  # one kernel per Phase 7 schedule pass
+  # Callees: every PROC before the main one is rendered as a ``__device__``
+  # function the kernel can call. This mirrors the Metal renderer's
+  # ``static inline void`` callee emission.
+  callees = [p for p in prog.args[:pc] if p is not driver]
   symbol = fun.name
   lines: list[str] = [
     "#include <cuda_runtime.h>",
     "#include <math.h>",
+    "#include <stdlib.h>",
     "",
     *_ABI_DEFINES,
     "",
   ]
+  for callee in callees:
+    lines += _render_cuda_callee(callee)
+    lines.append("")
   lines += _render_cuda_kernel(kernel)
   lines.append("")
   lines += _render_host_driver(symbol, fun, driver, kernel)
   return "\n".join(lines).rstrip() + "\n"
 
 
+def _render_cuda_callee(proc: PNode) -> list[str]:
+  """Emit a callee PROC as a CUDA ``__device__ void`` function.
+
+  Arguments mirror the PROC's BUFFER params (raw pointers). The body uses the
+  same statement emitter as the kernel, minus the thread-binding step (a callee
+  runs in the calling thread's context).
+  """
+  param_count = int(proc.attrs["param_count"])
+  params = list(proc.args[:param_count])
+  body = list(proc.args[param_count:])
+  decls = ", ".join(f"{pp.dtype.c_type}* {pp.attrs['name']}" for pp in params)
+  out: list[str] = [f"__device__ void {proc.attrs['name']}({decls}) {{"]
+  ptr_expr = {pp.attrs["name"]: pp.attrs["name"] for pp in params}
+  for stmt in body:
+    if stmt.op == POps.BUFFER and stmt.attrs["name"] not in ptr_expr:
+      size = 1
+      for d in stmt.attrs["shape"]:
+        size *= int(d)
+      size = size or 1
+      out.append(f"  {stmt.dtype.c_type} {stmt.attrs['name']}[{size}];")
+  for stmt in body:
+    if stmt.op == POps.BUFFER:
+      continue
+    _emit_stmt_cuda(stmt, ptr_expr, out, indent=2)
+  out.append("}")
+  return out
+
+
 def _render_cuda_kernel(kernel: PNode) -> list[str]:
   param_count = int(kernel.attrs["param_count"])
   params = list(kernel.args[:param_count])
   body = list(kernel.args[param_count:])
+  bind_threads = bool(kernel.attrs.get("bind_threads", True))
   param_decls = ", ".join(f"{pp.dtype.c_type}* {pp.attrs['name']}" for pp in params)
   out: list[str] = [f"__global__ void {kernel.attrs['name']}({param_decls}) {{"]
   ptr_expr = {pp.attrs["name"]: pp.attrs["name"] for pp in params}
@@ -73,15 +124,17 @@ def _render_cuda_kernel(kernel: PNode) -> list[str]:
       size *= int(d)
     size = size or 1
     out.append(f"  {tb.dtype.c_type} {tb.attrs['name']}[{size}];")
-  # Bind the first top-level GLOBAL FOR to a (blockIdx, threadIdx) tuple. Inner
-  # loops (REDUCE/SERIAL) and any subsequent FORs stay as serial — a future
-  # pass can fuse them or bind multiple axes.
+  # When ``bind_threads`` is True (the safe case, see ``_can_thread_bind`` in
+  # lowering.py) we bind the first top-level GLOBAL FOR to (blockIdx, threadIdx).
+  # Otherwise the kernel runs serially on a single thread (the host driver
+  # launches with grid=1, block=1) so reductions that read across thread-private
+  # workspace stay correct.
   bound = False
   for stmt in body:
     if stmt.op == POps.BUFFER:
       continue
     kind = stmt.args[0].attrs.get("kind") if stmt.op == POps.FOR else None
-    if not bound and kind is not None and getattr(kind, "value", None) == "global":
+    if bind_threads and not bound and kind is not None and getattr(kind, "value", None) == "global":
       _emit_thread_bound_for(stmt, ptr_expr, out, indent=2)
       bound = True
     else:
@@ -107,17 +160,27 @@ def _emit_thread_bound_for(stmt: PNode, ptr_expr: dict[str, str], lines: list[st
 def _render_host_driver(symbol: str, fun: Function, driver: PNode, kernel: PNode) -> list[str]:
   in_sizes = [int(_size(e.type.shape)) for e in fun.inputs]
   out_sizes = [int(_size(e.type.shape)) for e in fun.outputs]
+  in_ctypes = [e.type.dtype.c_type for e in fun.inputs]
+  out_ctypes = [e.type.dtype.c_type for e in fun.outputs]
   param_count = int(driver.attrs["param_count"])
   body = list(driver.args[param_count:])
   launch_stmt = next(s for s in body if s.op == POps.LAUNCH)
   grid_pnode = launch_stmt.args[: int(launch_stmt.attrs["grid_dims"])][0]
   # The schedule pass writes the trip count of the bound GLOBAL loop as
-  # ``grid``. With thread binding the true grid is ``ceil(trip / block)`` and
-  # the block size becomes a real value (256 is a sane default for 1D).
+  # ``grid``. When thread-binding is enabled the true grid is ``ceil(trip /
+  # block)`` and block defaults to 256. When the kernel sets ``bind_threads=False``
+  # (e.g. for kernels with a top-level REDUCE feeding from a thread-bound
+  # elementwise — see _kernelize_for_device), we launch with grid=1, block=1
+  # so the kernel runs serially on a single thread.
+  bind_threads = bool(kernel.attrs.get("bind_threads", True))
   trip = _emit_scalar(grid_pnode)
-  block_size = 256
-  grid_str = f"({trip} + {block_size - 1}) / {block_size}"
-  block_str = str(block_size)
+  if bind_threads:
+    block_size = 256
+    grid_str = f"({trip} + {block_size - 1}) / {block_size}"
+    block_str = str(block_size)
+  else:
+    grid_str = "1"
+    block_str = "1"
   lines: list[str] = [
     f'extern "C" int {symbol}(const double** arg, double** res, int* iw, double* w, void* mem) {{',
     "  (void)iw; (void)w; (void)mem;",
@@ -127,19 +190,36 @@ def _render_host_driver(symbol: str, fun: Function, driver: PNode, kernel: PNode
     lines.append(f"  if (!arg[{i}]) return ALLOY_ERR_NULL_INPUT;")
   for i in range(len(fun.outputs)):
     lines.append(f"  if (!res[{i}]) return ALLOY_ERR_NULL_RESULT;")
-  # Device-side buffers
-  for i, sz in enumerate(in_sizes):
-    lines.append(f"  double* d_in{i} = NULL;")
-    lines.append(f"  if (cudaMalloc((void**)&d_in{i}, sizeof(double) * {sz}) != cudaSuccess) return ALLOY_ERR_CUDA;")
-    lines.append(f"  if (cudaMemcpy(d_in{i}, arg[{i}], sizeof(double) * {sz}, cudaMemcpyHostToDevice) != cudaSuccess) return ALLOY_ERR_CUDA;")
-  for i, sz in enumerate(out_sizes):
-    lines.append(f"  double* d_out{i} = NULL;")
-    lines.append(f"  if (cudaMalloc((void**)&d_out{i}, sizeof(double) * {sz}) != cudaSuccess) return ALLOY_ERR_CUDA;")
+  # Device-side buffers: use the per-input dtype. When dtype != double, allocate
+  # a host-side staging buffer and cast double→dtype before the H2D copy (and
+  # dtype→double after D2H on the way out). The universal ABI is locked to
+  # const double**, so the cast happens inside the driver.
+  for i, (sz, ct) in enumerate(zip(in_sizes, in_ctypes, strict=True)):
+    lines.append(f"  {ct}* d_in{i} = NULL;")
+    lines.append(f"  if (cudaMalloc((void**)&d_in{i}, sizeof({ct}) * {sz}) != cudaSuccess) return ALLOY_ERR_CUDA;")
+    if ct == "double":
+      lines.append(f"  if (cudaMemcpy(d_in{i}, arg[{i}], sizeof({ct}) * {sz}, cudaMemcpyHostToDevice) != cudaSuccess) return ALLOY_ERR_CUDA;")
+    else:
+      lines.append(f"  {ct}* h_in{i} = ({ct}*)malloc(sizeof({ct}) * {sz});")
+      lines.append(f"  if (!h_in{i}) return ALLOY_ERR_CUDA;")
+      lines.append(f"  for (long _i = 0; _i < {sz}; _i++) h_in{i}[_i] = ({ct})arg[{i}][_i];")
+      lines.append(f"  if (cudaMemcpy(d_in{i}, h_in{i}, sizeof({ct}) * {sz}, cudaMemcpyHostToDevice) != cudaSuccess) return ALLOY_ERR_CUDA;")
+      lines.append(f"  free(h_in{i});")
+  for i, (sz, ct) in enumerate(zip(out_sizes, out_ctypes, strict=True)):
+    lines.append(f"  {ct}* d_out{i} = NULL;")
+    lines.append(f"  if (cudaMalloc((void**)&d_out{i}, sizeof({ct}) * {sz}) != cudaSuccess) return ALLOY_ERR_CUDA;")
   kernel_args = ", ".join([*(f"d_in{i}" for i in range(len(in_sizes))), *(f"d_out{i}" for i in range(len(out_sizes)))])
   lines.append(f"  {kernel.attrs['name']}<<<dim3({grid_str}), dim3({block_str})>>>({kernel_args});")
   lines.append("  if (cudaDeviceSynchronize() != cudaSuccess) return ALLOY_ERR_CUDA;")
-  for i, sz in enumerate(out_sizes):
-    lines.append(f"  if (cudaMemcpy(res[{i}], d_out{i}, sizeof(double) * {sz}, cudaMemcpyDeviceToHost) != cudaSuccess) return ALLOY_ERR_CUDA;")
+  for i, (sz, ct) in enumerate(zip(out_sizes, out_ctypes, strict=True)):
+    if ct == "double":
+      lines.append(f"  if (cudaMemcpy(res[{i}], d_out{i}, sizeof({ct}) * {sz}, cudaMemcpyDeviceToHost) != cudaSuccess) return ALLOY_ERR_CUDA;")
+    else:
+      lines.append(f"  {ct}* h_out{i} = ({ct}*)malloc(sizeof({ct}) * {sz});")
+      lines.append(f"  if (!h_out{i}) return ALLOY_ERR_CUDA;")
+      lines.append(f"  if (cudaMemcpy(h_out{i}, d_out{i}, sizeof({ct}) * {sz}, cudaMemcpyDeviceToHost) != cudaSuccess) return ALLOY_ERR_CUDA;")
+      lines.append(f"  for (long _i = 0; _i < {sz}; _i++) res[{i}][_i] = (double)h_out{i}[_i];")
+      lines.append(f"  free(h_out{i});")
   for i in range(len(in_sizes)):
     lines.append(f"  cudaFree(d_in{i});")
   for i in range(len(out_sizes)):
@@ -172,8 +252,27 @@ def _emit_stmt_cuda(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], ind
     lines.append(f"{pad}{ptr}[{idx}] = {rhs};")
   elif stmt.op == POps.ASSIGN:
     lines.append(f"{pad}{stmt.attrs['target']} = {_emit_scalar(stmt.args[0])};")
+  elif stmt.op == POps.CALL:
+    n_in = int(stmt.attrs["n_in"])
+    n_out = int(stmt.attrs["n_out"])
+    in_args = stmt.args[:n_in]
+    out_args = stmt.args[n_in : n_in + n_out]
+    parts = [_emit_call_arg_cuda(a, ptr_expr) for a in (*in_args, *out_args)]
+    lines.append(f"{pad}{stmt.attrs['callee']}({', '.join(parts)});")
   else:
     raise NotImplementedError(f"CUDA renderer: statement op {stmt.op} not handled")
+
+
+def _emit_call_arg_cuda(node: PNode, ptr_expr: dict[str, str]) -> str:
+  """Render a CALL argument: BUFFER (bare pointer) or VIEW (pointer + offset)."""
+  if node.op == POps.BUFFER:
+    return ptr_expr.get(node.attrs["name"], node.attrs["name"])
+  if node.op == POps.VIEW:
+    buf = node.attrs["buffer"]
+    ptr = ptr_expr.get(buf, buf)
+    idx = _emit_scalar(node.args[0]) if node.args else "0"
+    return f"({ptr} + {idx})"
+  raise NotImplementedError(f"CUDA CALL arg op {node.op}")
 
 
 def _emit_scalar(n: PNode) -> str:

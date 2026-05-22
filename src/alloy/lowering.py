@@ -99,18 +99,53 @@ def _kernelize_for_device(host_proc: PNode, fun: Function) -> tuple[PNode, PNode
   The host driver PROC keeps the same param signature and replaces its body
   with one ``LAUNCH`` of the kernel.
 
-  Launch geometry is inferred from the (now-fused) first ``GLOBAL`` ``FOR``
-  in the body. Functions with no GLOBAL FOR launch with grid=1.
+  Thread-binding policy: the kernel attribute ``bind_threads`` controls whether
+  the renderer binds the first top-level ``GLOBAL`` FOR to ``(blockIdx,
+  threadIdx)``. It is set False when the body would race — e.g. a top-level
+  ``REDUCE`` that reads from a thread-private workspace written by an earlier
+  ``GLOBAL`` FOR (the classic ``sum(elementwise(x))`` shape). In that case the
+  launch falls back to grid=1 / block=1 so the kernel runs serially. Splitting
+  into two kernels with a shared global scratch is the right fix long-term but
+  needs cross-kernel state plumbing; this conservative fallback keeps results
+  correct in the meantime.
   """
   param_count = int(host_proc.attrs["param_count"])
   params = host_proc.args[:param_count]
   body = _fuse_global_loops(list(host_proc.args[param_count:]))
-  grid_size = _infer_launch_grid_size(body)
+  bind_threads = _can_thread_bind(body)
+  grid_size = _infer_launch_grid_size(body) if bind_threads else p.const_int(1)
   kernel_name = f"{fun.name}_kernel"
-  kernel_node = p.kernel(kernel_name, params, body, grid_dims=1, device=fun.device)
+  kernel_node = p.kernel(kernel_name, params, body, grid_dims=1, device=fun.device, bind_threads=bind_threads)
   driver_body = [p.launch(kernel_name, grid=[grid_size], block_dims=[1], args=list(params))]
   driver = p.proc(fun.name, params, driver_body, device="host")
   return driver, kernel_node
+
+
+def _can_thread_bind(body: list[PNode]) -> bool:
+  """Return True iff thread-binding the first top-level GLOBAL FOR is safe.
+
+  Safe means: every thread that runs the kernel will compute a disjoint slice
+  of the output without reading state another thread wrote. The conservative
+  rule used here:
+
+  - The body, after fusion, has exactly one top-level FOR.
+  - That FOR's range kind is GLOBAL.
+
+  Why this is sufficient: if the single top-level FOR is GLOBAL, each thread
+  reads global inputs and writes its own loop-indexed slot — independent across
+  threads. Any nested REDUCE inside the GLOBAL FOR is per-thread and runs to
+  completion inside one thread's execution, which is the legal pattern.
+
+  Why anything else is unsafe (today): a second top-level FOR (REDUCE or
+  otherwise) typically reads a workspace produced by the first FOR. With
+  thread-binding, each thread sees only its own slot of that workspace
+  (thread-private storage), so the reduction reads uninitialized memory in the
+  other slots.
+  """
+  top_level_fors = [s for s in body if s.op == POps.FOR]
+  if len(top_level_fors) != 1:
+    return False
+  return top_level_fors[0].args[0].attrs.get("kind") == RangeKind.GLOBAL
 
 
 def _fuse_global_loops(body: list[PNode]) -> list[PNode]:

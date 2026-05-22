@@ -91,6 +91,7 @@ def _render_metal_kernel(kernel: PNode) -> list[str]:
   param_count = int(kernel.attrs["param_count"])
   params = list(kernel.args[:param_count])
   body = list(kernel.args[param_count:])
+  bind_threads = bool(kernel.attrs.get("bind_threads", True))
   # Build MSL kernel signature with [[buffer(N)]] attributes.
   param_decls: list[str] = []
   for i, pp in enumerate(params):
@@ -105,6 +106,9 @@ def _render_metal_kernel(kernel: PNode) -> list[str]:
     ") {",
   ]
   ptr_expr = {pp.attrs["name"]: pp.attrs["name"] for pp in params}
+  # When ``bind_threads`` is False, only thread 0 does anything — see CUDA
+  # renderer for the same fallback. Metal has no grid=1 launch concept built
+  # into the kernel attribute, so we gate the body on ``tid == 0`` instead.
   ts: list[PNode] = []
   for stmt in body:
     if stmt.op == POps.BUFFER and stmt.attrs["name"] not in ptr_expr and stmt not in ts:
@@ -115,12 +119,14 @@ def _render_metal_kernel(kernel: PNode) -> list[str]:
       size *= int(d)
     size = size or 1
     out.append(f"  {_msl_type(tb.dtype.c_type)} {tb.attrs['name']}[{size}];")
+  if not bind_threads:
+    out.append("  if (tid != 0) return;")
   bound = False
   for stmt in body:
     if stmt.op == POps.BUFFER:
       continue
     kind = stmt.args[0].attrs.get("kind") if stmt.op == POps.FOR else None
-    if not bound and kind is not None and getattr(kind, "value", None) == "global":
+    if bind_threads and not bound and kind is not None and getattr(kind, "value", None) == "global":
       _emit_thread_bound_for_metal(stmt, ptr_expr, out, indent=2)
       bound = True
     else:
