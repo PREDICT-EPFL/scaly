@@ -155,7 +155,13 @@ def _nsurl(objc: _Objc, path: str) -> int:
 
 
 class MetalRuntime:
-  """One-shot Metal runtime: open device, compile metallib, run a kernel."""
+  """Persistent Metal runtime: opens the system device once, caches pipeline states.
+
+  Reused across all ``MetalCompiledFunction`` calls via ``MetalCompiledFunction._runtime``.
+  Builds a long-lived command queue and a ``(metallib_path, kernel_name)`` ->
+  ``MTLComputePipelineState`` cache so per-call dispatch only pays for buffer
+  allocation, encoding, and synchronization.
+  """
 
   def __init__(self) -> None:
     if not metal_available():
@@ -165,6 +171,47 @@ class MetalRuntime:
     self.device = self.libs.metal.MTLCreateSystemDefaultDevice()
     if not self.device:  # pragma: no cover - macOS Apple Silicon always has one
       raise RuntimeError("MTLCreateSystemDefaultDevice returned NULL")
+    self._queue = self._new_command_queue()
+    self._pipeline_cache: dict[tuple[str, str], int] = {}
+    self._library_cache: dict[str, int] = {}
+
+  def _new_command_queue(self) -> int:
+    objc = self.objc
+    msg = objc._msg(ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_void_p])
+    queue = msg(self.device, objc.sel(b"newCommandQueue"))
+    if not queue:
+      raise RuntimeError("newCommandQueue returned NULL")
+    return queue
+
+  def _pipeline_for(self, metallib_path: Path, kernel_name: str) -> int:
+    cache_key = (str(metallib_path), kernel_name)
+    cached = self._pipeline_cache.get(cache_key)
+    if cached is not None:
+      return cached
+    objc = self.objc
+    msg_ptr_ptr = objc._msg(ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p])
+    msg_ptr_ptr_ptr = objc._msg(ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p])
+    library = self._library_cache.get(str(metallib_path))
+    if library is None:
+      url = _nsurl(objc, str(metallib_path))
+      library = msg_ptr_ptr_ptr(self.device, objc.sel(b"newLibraryWithURL:error:"), url, ctypes.c_void_p(0))
+      if not library:
+        raise RuntimeError(f"failed to load metallib at {metallib_path}")
+      self._library_cache[str(metallib_path)] = library
+    func_name = _nsstring(objc, kernel_name)
+    fn = msg_ptr_ptr(library, objc.sel(b"newFunctionWithName:"), func_name)
+    if not fn:
+      raise RuntimeError(f"kernel {kernel_name!r} not found in {metallib_path}")
+    pipeline = msg_ptr_ptr_ptr(
+      self.device,
+      objc.sel(b"newComputePipelineStateWithFunction:error:"),
+      fn,
+      ctypes.c_void_p(0),
+    )
+    if not pipeline:
+      raise RuntimeError("failed to create compute pipeline")
+    self._pipeline_cache[cache_key] = pipeline
+    return pipeline
 
   def run_kernel(
     self,
@@ -184,34 +231,13 @@ class MetalRuntime:
     """
     objc = self.objc
     msg_ptr_ptr = objc._msg(ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p])
-    msg_ptr_ptr_ptr = objc._msg(ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p])
     msg_void = objc._msg(None, [ctypes.c_void_p, ctypes.c_void_p])
     msg_void_void = objc._msg(None, [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p])
     msg_buf_bytes = objc._msg(ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_ulong])
     msg_set_buffer = objc._msg(None, [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong])
     msg_contents = objc._msg(ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_void_p])
 
-    # Load the metallib.
-    url = _nsurl(objc, str(metallib_path))
-    library = msg_ptr_ptr_ptr(self.device, objc.sel(b"newLibraryWithURL:error:"), url, ctypes.c_void_p(0))
-    if not library:
-      raise RuntimeError(f"failed to load metallib at {metallib_path}")
-
-    # Get the function.
-    func_name = _nsstring(objc, kernel_name)
-    fn = msg_ptr_ptr(library, objc.sel(b"newFunctionWithName:"), func_name)
-    if not fn:
-      raise RuntimeError(f"kernel {kernel_name!r} not found in {metallib_path}")
-
-    # Build the compute pipeline state.
-    pipeline = msg_ptr_ptr_ptr(
-      self.device,
-      objc.sel(b"newComputePipelineStateWithFunction:error:"),
-      fn,
-      ctypes.c_void_p(0),
-    )
-    if not pipeline:
-      raise RuntimeError("failed to create compute pipeline")
+    pipeline = self._pipeline_for(metallib_path, kernel_name)
 
     # Create MTLBuffers, host-shared storage (option = 0 = MTLResourceStorageModeShared).
     mtl_buffers: list[int] = []
@@ -228,11 +254,8 @@ class MetalRuntime:
         raise RuntimeError("MTLDevice newBufferWithBytes returned NULL")
       mtl_buffers.append(mb)
 
-    # Command queue + buffer + compute encoder.
-    queue = msg_ptr_ptr(self.device, objc.sel(b"newCommandQueue"), ctypes.c_void_p(0))
-    if not queue:
-      raise RuntimeError("newCommandQueue returned NULL")
-    cmd_buf = msg_ptr_ptr(queue, objc.sel(b"commandBuffer"), ctypes.c_void_p(0))
+    # Reuse the persistent command queue; create a fresh command buffer per dispatch.
+    cmd_buf = msg_ptr_ptr(self._queue, objc.sel(b"commandBuffer"), ctypes.c_void_p(0))
     encoder = msg_ptr_ptr(cmd_buf, objc.sel(b"computeCommandEncoder"), ctypes.c_void_p(0))
     msg_void_void(encoder, objc.sel(b"setComputePipelineState:"), pipeline)
     for i, mb in enumerate(mtl_buffers):

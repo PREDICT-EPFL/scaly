@@ -25,7 +25,7 @@ skips when it's not installed.
 from __future__ import annotations
 
 from ..function import Function
-from ..lowering import lower_function
+from ..lowering import lower_function, main_proc
 from ..program import PNode, POps
 
 
@@ -41,13 +41,50 @@ def render_metal_source(fun: Function) -> str:
   if int(prog.attrs.get("kernel_count", 0)) < 1:
     raise ValueError(f"lowered program for {fun.name!r} has no KERNEL — schedule pass failed")
   kernel = prog.args[pc]  # first kernel after the procs
+  # Callees: every PROC before the main one is rendered as an MSL inline
+  # function the kernel can call. The main driver PROC is the last proc and
+  # we don't emit it (the kernel itself replaces it on the device side).
+  main = main_proc(prog)
+  callees = [p for p in prog.args[:pc] if p is not main]
   lines: list[str] = [
     "#include <metal_stdlib>",
     "using namespace metal;",
     "",
   ]
+  for callee in callees:
+    lines += _render_metal_callee(callee)
+    lines.append("")
   lines += _render_metal_kernel(kernel)
   return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_metal_callee(proc: PNode) -> list[str]:
+  """Emit a callee PROC as an MSL ``static inline void`` function.
+
+  Arguments mirror the PROC's BUFFER params (every arg is ``device <type>*``).
+  The body is rendered with the same statement emitter as the kernel, minus
+  the thread-binding step (a callee runs entirely in the calling thread's
+  context).
+  """
+  param_count = int(proc.attrs["param_count"])
+  params = list(proc.args[:param_count])
+  body = list(proc.args[param_count:])
+  decls = ", ".join(f"device {_msl_type(pp.dtype.c_type)}* {pp.attrs['name']}" for pp in params)
+  out: list[str] = [f"static inline void {proc.attrs['name']}({decls}) {{"]
+  ptr_expr = {pp.attrs["name"]: pp.attrs["name"] for pp in params}
+  for stmt in body:
+    if stmt.op == POps.BUFFER and stmt.attrs["name"] not in ptr_expr:
+      size = 1
+      for d in stmt.attrs["shape"]:
+        size *= int(d)
+      size = size or 1
+      out.append(f"  thread {_msl_type(stmt.dtype.c_type)} {stmt.attrs['name']}[{size}];")
+  for stmt in body:
+    if stmt.op == POps.BUFFER:
+      continue
+    _emit_stmt_metal(stmt, ptr_expr, out, indent=2)
+  out.append("}")
+  return out
 
 
 def _render_metal_kernel(kernel: PNode) -> list[str]:
@@ -138,8 +175,27 @@ def _emit_stmt_metal(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], in
     lines.append(f"{pad}{ptr}[{idx}] = {rhs};")
   elif stmt.op == POps.ASSIGN:
     lines.append(f"{pad}{stmt.attrs['target']} = {_emit_scalar(stmt.args[0])};")
+  elif stmt.op == POps.CALL:
+    n_in = int(stmt.attrs["n_in"])
+    n_out = int(stmt.attrs["n_out"])
+    in_args = stmt.args[:n_in]
+    out_args = stmt.args[n_in : n_in + n_out]
+    parts = [_emit_call_arg_metal(a, ptr_expr) for a in (*in_args, *out_args)]
+    lines.append(f"{pad}{stmt.attrs['callee']}({', '.join(parts)});")
   else:
     raise NotImplementedError(f"Metal renderer: statement op {stmt.op} not handled")
+
+
+def _emit_call_arg_metal(node: PNode, ptr_expr: dict[str, str]) -> str:
+  """Render a CALL argument: BUFFER (bare pointer) or VIEW (pointer + offset)."""
+  if node.op == POps.BUFFER:
+    return ptr_expr.get(node.attrs["name"], node.attrs["name"])
+  if node.op == POps.VIEW:
+    buf = node.attrs["buffer"]
+    ptr = ptr_expr.get(buf, buf)
+    idx = _emit_scalar(node.args[0]) if node.args else "0"
+    return f"({ptr} + {idx})"
+  raise NotImplementedError(f"Metal CALL arg op {node.op}")
 
 
 def _emit_scalar(n: PNode) -> str:

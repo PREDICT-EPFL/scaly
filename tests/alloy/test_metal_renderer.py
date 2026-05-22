@@ -201,6 +201,25 @@ def test_metal_sum_axis_dispatch_matches_numpy() -> None:
   not metal_available(),
   reason="Metal runtime unavailable",
 )
+def test_metal_map_dispatch_matches_numpy() -> None:
+  """MAP-shaped workloads (per-stage callee + outer loop) run on Metal via inline callee + per-thread invocation."""
+  import numpy as np
+
+  x = al.sym("x", 4, dtype=al.dtypes.float32)
+  stage = al.Function("stage_map_metal", [x], [(x * x).sum()], ["x"], ["y"])
+  batch = al.sym("batch", 32, dtype=al.dtypes.float32)
+  mapped = al.map_(stage, length=8, inputs=[(batch, 0, 4)])
+  fn = al.Function("mapped_dispatch", [batch], [mapped], ["batch"], ["m"]).with_device("metal:0")
+  batch_val = np.linspace(-1.0, 1.0, 32, dtype=np.float32)
+  out = fn(batch_val)
+  ref = (batch_val.reshape(8, 4) ** 2).sum(axis=1)
+  np.testing.assert_allclose(out, ref, atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.skipif(
+  not metal_available(),
+  reason="Metal runtime unavailable",
+)
 def test_metal_kernel_dispatch_handles_chained_elementwise() -> None:
   """Chained ops should fuse into one thread-bound loop in MSL (one element per thread)."""
   import numpy as np
