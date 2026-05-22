@@ -15,6 +15,34 @@ The anvil monorepo is the place to look when a question outruns alloy's own docs
 
 If you need to consult those files, ask the user to point you at the right anvil checkout. Do **not** add anvil or tinygrad imports to this repository — alloy is supposed to be self-contained.
 
+# tinygrad reference (GPU work)
+
+A shallow clone of tinygrad is kept at `/tmp/tinygrad` as the reference for GPU codegen / scheduling / renderer design. Re-clone if missing: `git clone --depth=1 https://github.com/tinygrad/tinygrad.git /tmp/tinygrad`.
+
+Use it for *patterns only* — do not import or copy code wholesale. Useful entry points:
+
+- `tinygrad/renderer/cstyle.py` — `CStyleLanguage`, `CUDARenderer`, `MetalRenderer`, `OpenCLRenderer`. Look here for thread-binding (`code_for_workitem`), shared-memory prefix (`smem_prefix`), barrier syntax, and per-backend dtype maps.
+- `tinygrad/runtime/ops_cuda.py` — how to call `cuLaunchKernel` via libcuda + ctypes (no PyCUDA dep), how to detect compute capability via `cuDeviceComputeCapability`.
+- `tinygrad/codegen/gpudims.py` — `get_grouped_dims`, `add_gpudims`: how to map logical loop ranges to `(blockIdx, threadIdx)` axes with backend dimension caps. The key idea: schedule passes mark axes as GLOBAL/LOCAL/REDUCE *before* the renderer touches them.
+- `tinygrad/schedule/rangeify.py`, `tinygrad/codegen/__init__.py` — how kernel splitting works: reductions over thread-private state get split into separate kernels with a global scratch buffer in between. Relevant whenever a "thread-bound elementwise → cross-thread reduce" pattern shows up in alloy.
+
+# CUDA build setup on this workstation
+
+- Driver: 580.x supports CUDA up to 13.0. `/usr/local/cuda` symlinks to nvcc 13.2 by default, which emits PTX too new for the driver (CUDA error 222 `unsupported toolchain`).
+- Use `/usr/local/cuda-13.0/bin/nvcc` explicitly. The alloy CUDA runtime auto-detects this; if you're invoking nvcc manually, don't trust `/usr/local/cuda/bin/nvcc`.
+- Do **not** upgrade the driver to get nvcc 13.2 working — driver upgrades are heavyweight and the alloy auto-detection makes them unnecessary.
+
+# Build hook notes (skipping IPOPT during dev)
+
+If `uv sync` fails on OpenBLAS/IPOPT (it does on this workstation), create empty stubs to skip the IPOPT build:
+
+```
+mkdir -p src/alloy/include/coin-or && touch src/alloy/include/coin-or/IpStdCInterface.h
+touch src/alloy/lib/libipopt.so
+```
+
+The build hook checks for these files and skips the IPOPT stack when they exist. Tests that actually need IPOPT (`tests/alloy/test_solvers.py`, `tests/alloy/test_solver_nesting.py`) will fail at import time; skip them while developing GPU code.
+
 # Documentation structure
 
 - `docs/roadmap.md` — phased plan, current status, exit criteria

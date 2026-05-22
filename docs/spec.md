@@ -193,12 +193,14 @@ fn_gpu = fn.with_device("cuda:0")        # placement policy
 assert fn_gpu.device == al.DeviceSpec("cuda", 0)
 ```
 
-Each backend registers a `BackendSupport` capability table (`BACKEND_SUPPORT`). For example `metal` does not currently advertise `float64`, so `Function(..., device="metal:0")` over a `float64` graph fails at construction with a clear diagnostic — not at runtime, and not as a silent host fallback. Today only `host` actually lowers through the JIT; non-host placements raise `JitError("only host lowering is implemented")` when called.
+Each backend registers a `BackendSupport` capability table (`BACKEND_SUPPORT`). For example `metal` does not currently advertise `float64`, so `Function(..., device="metal:0")` over a `float64` graph fails at construction with a clear diagnostic — not at runtime, and not as a silent host fallback.
+
+`host`, `metal:N`, and `cuda:N` all lower end-to-end today. `fn(np.array(...))` routes through `alloy.metal_runtime.MetalCompiledFunction` (`xcrun metal` + libobjc + Metal/Foundation via `ctypes`) for Metal, and through `alloy.cuda_runtime.CudaCompiledFunction` (nvcc + dlopen + `ctypes` on the universal ABI) for CUDA. CUDA auto-detects a compatible nvcc by smoke-launching a tiny kernel against the installed driver, walking `/usr/local/cuda-*` newest-first; `ALLOY_NVCC` overrides. `opencl:N` parses as a placement but has no runtime yet — `JitError("only host lowering is implemented")` triggers there.
 
 Future phases will extend this:
 
 - Phase 4+ — Program IR carries placement per region so a single host `Function` can contain CPU procedures, GPU kernels, and solver calls.
-- Phase 8 — the first GPU backend (CUDA or OpenCL) makes `with_device("cuda:0")` actually lower instead of erroring.
+- Phase 8 follow-ups — kernel splitting at "thread-bound elementwise → REDUCE" boundaries (today the schedule pass falls back to grid=1/block=1 in that shape), multi-axis thread binding, OpenCL backend, libcuda-direct dispatch to skip the nvcc per-function compile.
 
 ## Mixed lowering
 
@@ -258,6 +260,8 @@ Verifier specs:
 - `spec_host_program` — host PROCs may not contain device-only ops (e.g. `BARRIER`).
 - `spec_kernel_program` — KERNELs may not contain host-only ops (e.g. `LAUNCH`).
 - `spec_program_full` — both, suitable for whole-program checks.
+
+KERNEL nodes also carry a `bind_threads` attribute (default True) that the schedule pass sets to False when binding the first GLOBAL FOR to `(blockIdx, threadIdx)` would race — e.g. a top-level REDUCE that reads from a thread-private workspace produced by an earlier GLOBAL elementwise (the `sum(elementwise(x))` shape). The renderers honor it: when False, they emit a serial kernel and the host driver launches with `<<<1, 1>>>` (CUDA) or gates on `tid == 0` (Metal). Splitting into two kernels with a global scratch is the right long-term fix; the conservative fallback keeps results correct in the meantime.
 
 Pretty-printing is backend-neutral and decoupled from C syntax — it shows host/device boundaries, range kinds, and launch specs so schedule decisions are debuggable before any renderer runs.
 
