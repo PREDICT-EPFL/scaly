@@ -92,23 +92,89 @@ def lower_function(fun: Function) -> PNode:
 def _kernelize_for_device(host_proc: PNode, fun: Function) -> tuple[PNode, PNode]:
   """Turn a device-placed function's lowered PROC into (host_driver, kernel).
 
-  Phase 7 first slice: move the entire body of ``host_proc`` into a single
-  ``KERNEL``. The host driver PROC keeps the same param signature and replaces
-  its body with one ``LAUNCH`` of the kernel. Range kinds inside the body are
-  left as ``GLOBAL``; later passes can rebind them to ``THREAD``/``WARP``/etc.
+  Phase 7 / Phase 8 schedule: move the entire body of ``host_proc`` into a single
+  ``KERNEL``, fusing consecutive ``GLOBAL``-kind ``FOR`` loops with identical
+  ranges so the generated kernel does one bind-to-thread loop with all
+  per-element work in its body (vs. each thread re-running every serial loop).
+  The host driver PROC keeps the same param signature and replaces its body
+  with one ``LAUNCH`` of the kernel.
 
-  Launch geometry is inferred from the first ``GLOBAL`` ``FOR`` in the body
-  (the natural "grid" dim). Functions with no GLOBAL FOR launch with grid=1.
+  Launch geometry is inferred from the (now-fused) first ``GLOBAL`` ``FOR``
+  in the body. Functions with no GLOBAL FOR launch with grid=1.
   """
   param_count = int(host_proc.attrs["param_count"])
   params = host_proc.args[:param_count]
-  body = list(host_proc.args[param_count:])
+  body = _fuse_global_loops(list(host_proc.args[param_count:]))
   grid_size = _infer_launch_grid_size(body)
   kernel_name = f"{fun.name}_kernel"
   kernel_node = p.kernel(kernel_name, params, body, grid_dims=1, device=fun.device)
   driver_body = [p.launch(kernel_name, grid=[grid_size], block_dims=[1], args=list(params))]
   driver = p.proc(fun.name, params, driver_body, device="host")
   return driver, kernel_node
+
+
+def _fuse_global_loops(body: list[PNode]) -> list[PNode]:
+  """Fuse consecutive ``GLOBAL``-kind FOR loops whose ranges are equal.
+
+  Two FORs whose RANGE PNodes are structurally identical (same start/stop/step
+  literal + same kind) can have their bodies concatenated under a single FOR.
+  The loop variables become identical too (the inner stores already used the
+  shared variable name because the lowerer names each loop after its output
+  buffer; fusion rewrites later loops' var refs to the canonical one).
+
+  This is conservative — it only fuses adjacent same-shape loops. Cross-loop
+  data dependencies between elementwise ops are honored because the lowerer
+  emits each op as a separate STORE with no reads from the same loop's earlier
+  stores (every load is from a previously-declared workspace buffer).
+  """
+  # Hoist all BUFFER declarations to the top, then fuse the remaining loop chain.
+  decls: list[PNode] = [s for s in body if s.op == POps.BUFFER]
+  rest: list[PNode] = [s for s in body if s.op != POps.BUFFER]
+  fused: list[PNode] = []
+  for stmt in rest:
+    if stmt.op != POps.FOR or fused == [] or fused[-1].op != POps.FOR:
+      fused.append(stmt)
+      continue
+    prev = fused[-1]
+    prev_rng = prev.args[0]
+    cur_rng = stmt.args[0]
+    if not _ranges_equal(prev_rng, cur_rng):
+      fused.append(stmt)
+      continue
+    # Rewrite the current loop's body to use the previous loop's variable name.
+    prev_var = prev_rng.attrs["name"]
+    cur_var = cur_rng.attrs["name"]
+    rewritten = [_rename_var(s, cur_var, prev_var) for s in stmt.args[1:]]
+    fused[-1] = p.for_(prev_rng, list(prev.args[1:]) + rewritten)
+  return decls + fused
+
+
+def _ranges_equal(a: PNode, b: PNode) -> bool:
+  if a.attrs.get("kind") != b.attrs.get("kind"):
+    return False
+  for ai, bi in zip(a.args, b.args, strict=True):
+    if ai.op != bi.op:
+      return False
+    if ai.op == POps.CONST_INT and ai.attrs["value"] != bi.attrs["value"]:
+      return False
+    if ai.op == POps.VAR and ai.attrs["name"] != bi.attrs["name"]:
+      return False
+  return True
+
+
+def _rename_var(node: PNode, old: str, new: str) -> PNode:
+  """Rewrite a PNode tree, renaming every ``VAR(name=old)`` to ``VAR(name=new)``."""
+  if node.op == POps.VAR and node.attrs.get("name") == old:
+    return p.var(new, dtype=node.dtype)
+  if node.op == POps.RANGE and node.attrs.get("name") == old:
+    # don't touch range declarations — they own a new scope
+    return node
+  if not node.args:
+    return node
+  new_args = tuple(_rename_var(a, old, new) for a in node.args)
+  if new_args == node.args:
+    return node
+  return PNode(node.op, new_args, attrs=dict(node.attrs), dtype=node.dtype)
 
 
 def _infer_launch_grid_size(body: list[PNode]) -> PNode:
