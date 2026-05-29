@@ -106,3 +106,32 @@ def test_sum_axis_rejects_duplicate_axes() -> None:
   x = al.sym("x", (2, 3))
   with pytest.raises(ValueError, match="unique"):
     x.sum(axis=(0, 0))
+
+
+# --------------------------------------------------------------------------- mean (sugar)
+
+
+def test_mean_axis_interpreter_matches_numpy() -> None:
+  x = al.sym("x", (3, 4))
+  fn = al.Function("f_mean_axis", [x], [x.mean(axis=1)], ["x"], ["y"])
+  x_val = np.arange(12.0).reshape(3, 4)
+  np.testing.assert_allclose(fn.eval_interpreter(x_val)[0], x_val.mean(axis=1))
+
+
+def test_mean_all_and_tuple_axes_match_numpy() -> None:
+  x = al.sym("x", (2, 3, 4))
+  x_val = np.linspace(-2.0, 5.0, 24).reshape(2, 3, 4)
+  f_all = al.Function("f_mean_all", [x], [x.mean()], ["x"], ["y"])
+  f_tup = al.Function("f_mean_tup", [x], [x.mean(axis=(0, 2))], ["x"], ["y"])
+  np.testing.assert_allclose(f_all.eval_interpreter(x_val)[0], x_val.mean())
+  np.testing.assert_allclose(f_tup.eval_interpreter(x_val)[0], x_val.mean(axis=(0, 2)))
+
+
+def test_mean_axis_jacobian_against_dense() -> None:
+  x = al.sym("x", (2, 3))
+  fn = al.Function("f_meanaxis_jac", [x], [x.mean(axis=1)], ["x"], ["y"])
+  j = al.jacobian(fn, "x", "y")
+  J = j(np.arange(6.0).reshape(2, 3))
+  # mean over rows of length 3 -> each output row contributes 1/3 across its block.
+  expected = np.array([[1, 1, 1, 0, 0, 0], [0, 0, 0, 1, 1, 1]], dtype=np.float64) / 3.0
+  np.testing.assert_allclose(J, expected)

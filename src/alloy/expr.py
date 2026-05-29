@@ -220,6 +220,17 @@ class Expr:
       lowering=self.lowering,
     )
 
+  def mean(self, axis: int | tuple[int, ...] | None = None) -> Expr:
+    """Mean along ``axis`` (or all axes if ``axis is None``).
+
+    Sugar over :meth:`sum`: ``sum(axis) * (1 / count)`` where ``count`` is the product
+    of the reduced-axis lengths. Linear, so it differentiates through the existing
+    SUM/SUM_AXIS AD rules with no new op.
+    """
+    reduced = self.sum(axis)
+    count = self.size // reduced.size  # product of the reduced-axis lengths
+    return reduced * (1.0 / count)
+
   def dot(self, other: Any) -> Expr:
     return dot(self, other)
 
