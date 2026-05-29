@@ -473,6 +473,16 @@ def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np.ndarr
         x_rows = [i * x.shape[1] + k for k in range(x.shape[1])]
         y_rows = [k * y.shape[1] + j for k in range(y.shape[0])]
         rows.append(np.any(xm[x_rows], axis=0) | np.any(ym[y_rows], axis=0))
+  elif len(x.shape) == 3 and len(y.shape) == 3:
+    # Batched: output (b,i,j) depends on x[b,i,:] and y[b,:,j]; flat row = b*M*N + i*N + j.
+    bsz, m, k = x.shape
+    n = y.shape[2]
+    for b in range(bsz):
+      for i in range(m):
+        for j in range(n):
+          x_rows = [b * m * k + i * k + t for t in range(k)]
+          y_rows = [b * k * n + t * n + j for t in range(k)]
+          rows.append(np.any(xm[x_rows], axis=0) | np.any(ym[y_rows], axis=0))
   else:  # pragma: no cover - matmul construction rejects this today
     raise NotImplementedError(f"matmul sparsity for {x.shape} @ {y.shape}")
   return np.stack(rows, axis=0)

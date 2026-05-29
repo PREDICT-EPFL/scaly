@@ -462,6 +462,10 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     memo[expr.id] = ret = _seed_axis(args[0].cosh(), nseed) * d[0]
     return ret
   if expr.op == Ops.MATMUL:
+    if len(args[0].shape) == 3 or len(args[1].shape) == 3:
+      # The stacked-seed matmul helpers below assume rank <= 2; let batched matmul
+      # fall back to the dense jvp/vjp path, which handles it via batched transpose.
+      raise _JVPManyUnsupported
     ret: Expr | None = None
     if not _is_zero_const(d[0]):
       ret = _jvp_many_matmul_left(args[0], args[1], d[0], nseed)
@@ -715,6 +719,9 @@ def _matmul_vjp(x: Expr, y: Expr, cot: Expr) -> tuple[Expr, Expr]:
     gx = stack([stack([_sum_exprs(cot[i, j] * y[k, j] for j in range(y.shape[1])) for k in range(x.shape[1])]) for i in range(x.shape[0])])
     gy = stack([stack([_sum_exprs(x[i, k] * cot[i, j] for i in range(x.shape[0])) for j in range(y.shape[1])]) for k in range(y.shape[0])])
     return gx, gy
+  if len(x.shape) == 3 and len(y.shape) == 3:
+    # Batched: grad_x = cot @ yᵀ, grad_y = xᵀ @ cot, transposing the last two dims per batch.
+    return cot @ y.transpose((0, 2, 1)), x.transpose((0, 2, 1)) @ cot
   raise NotImplementedError(f"matmul VJP for {x.shape} @ {y.shape} is not implemented")
 
 
