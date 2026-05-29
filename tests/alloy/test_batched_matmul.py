@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.codegen.program_c import can_render_program_c
 from alloy.ops import Ops
 from alloy.spec import verify_expr
 
@@ -119,3 +120,35 @@ def test_bmm_jacobian_is_batch_block_diagonal() -> None:
   # rows 0..3 are batch 0 outputs, cols 0..3 are batch 0 inputs; off-diagonal blocks zero.
   assert np.all(J[:4, 4:] == 0.0)
   assert np.all(J[4:, :4] == 0.0)
+
+
+# ------------------------------------------------------------------- Program IR lowering
+
+
+def test_bmm_can_render_through_program_ir() -> None:
+  a = al.sym("a", (3, 2, 4))
+  b = al.sym("b", (3, 4, 2))
+  fn = al.Function("f_bmm_can", [a, b], [a @ b], ["a", "b"], ["c"])
+  assert can_render_program_c(fn)
+
+
+def test_bmm_jit_matches_interpreter() -> None:
+  if not _has_compiler():
+    pytest.skip("no C compiler in PATH")
+  a = al.sym("a", (3, 2, 4))
+  b = al.sym("b", (3, 4, 2))
+  fn = al.Function("f_bmm_jit", [a, b], [a @ b], ["a", "b"], ["c"])
+  a_val = np.linspace(-1.0, 1.0, 24).reshape(3, 2, 4)
+  b_val = np.linspace(2.0, -0.5, 24).reshape(3, 4, 2)
+  ref = fn.eval_interpreter(a_val, b_val)[0]
+  old = os.environ.get("ALLOY_USE_PROGRAM_IR_C")
+  try:
+    os.environ["ALLOY_USE_PROGRAM_IR_C"] = "1"
+    fn.recompile()
+    out = fn(a_val, b_val)
+  finally:
+    if old is None:
+      del os.environ["ALLOY_USE_PROGRAM_IR_C"]
+    else:
+      os.environ["ALLOY_USE_PROGRAM_IR_C"] = old
+  np.testing.assert_allclose(out, ref, atol=1e-12, rtol=1e-12)

@@ -427,6 +427,8 @@ class _Builder:
       self._emit_matmul_vecmat(a_buf, b_buf, out, b.shape[0], b.shape[1], dtype)
     elif len(a.shape) == 2 and len(b.shape) == 2:
       self._emit_matmul_matmat(a_buf, b_buf, out, a.shape[0], a.shape[1], b.shape[1], dtype)
+    elif len(a.shape) == 3 and len(b.shape) == 3:
+      self._emit_matmul_batched(a_buf, b_buf, out, a.shape[0], a.shape[1], a.shape[2], b.shape[2], dtype)
     else:
       raise LoweringError(f"matmul shape combination {a.shape}@{b.shape} not lowered")
 
@@ -517,6 +519,40 @@ class _Builder:
     inner_for = p.for_(k_rng, inner)
     col_for = p.for_(col_rng, [init, inner_for])
     self.statements.append(p.for_(row_rng, [col_for]))
+
+  def _emit_matmul_batched(self, a_buf: PNode, b_buf: PNode, out: PNode, bsz: int, m: int, k: int, n: int, dtype) -> None:
+    """Batched ``a[B,M,K] @ b[B,K,N]``: an outer batch GLOBAL loop wrapping the matmat nest.
+
+    Per-batch base offsets index the flat row-major buffers: a[b*M*K + i*K + t],
+    b[b*K*N + t*N + j], out[b*M*N + i*N + j].
+    """
+    name = out.attrs["name"]
+    batch_rng = p.range_(f"b_{name}", 0, bsz, kind=RangeKind.GLOBAL)
+    batch_var = p.var(f"b_{name}", dtype=dtypes.int64)
+    row_rng = p.range_(f"i_{name}", 0, m, kind=RangeKind.GLOBAL)
+    row_var = p.var(f"i_{name}", dtype=dtypes.int64)
+    col_rng = p.range_(f"j_{name}", 0, n, kind=RangeKind.GLOBAL)
+    col_var = p.var(f"j_{name}", dtype=dtypes.int64)
+    k_rng = p.range_(f"k_{name}", 0, k, kind=RangeKind.REDUCE)
+    k_var = p.var(f"k_{name}", dtype=dtypes.int64)
+    a_base = p.mul(batch_var, p.const_int(m * k))
+    b_base = p.mul(batch_var, p.const_int(k * n))
+    o_base = p.mul(batch_var, p.const_int(m * n))
+    out_idx = p.add(o_base, p.add(p.mul(row_var, p.const_int(n)), col_var))
+    a_idx = p.add(a_base, p.add(p.mul(row_var, p.const_int(k)), k_var))
+    b_idx = p.add(b_base, p.add(p.mul(k_var, p.const_int(n)), col_var))
+    inner = [
+      p.store(
+        p.view(out, [out_idx]),
+        p.add(
+          p.load(p.view(out, [out_idx])),
+          p.mul(p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [b_idx]))),
+        ),
+      )
+    ]
+    init = p.store(p.view(out, [out_idx]), p.const_float(0.0, dtype=dtype))
+    col_for = p.for_(col_rng, [init, p.for_(k_rng, inner)])
+    self.statements.append(p.for_(batch_rng, [p.for_(row_rng, [col_for])]))
 
   def _emit_gather(self, node: Expr) -> None:
     src = node.args[0]
