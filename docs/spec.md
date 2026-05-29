@@ -99,7 +99,7 @@ Alloy's current names map to compiler/tinygrad concepts like this:
 
 The initial supported operation set intentionally covers common modeling and control expressions before specialized numerics:
 
-- Structural: `input`, `const`, `sum`, `reshape`, `vec`, `transpose`, `slice`/indexing, `split`, flat `gather`, `scatter`, `stack`, `concat`, `matmul`, `call`.
+- Structural: `input`, `const`, `sum`, `sum_axis`, `reshape`, `vec`, `transpose`, `slice`/indexing, `split`, flat `gather`, `scatter`, `stack`, `concat`, `matmul` (vec/mat combinations plus batched rank-3 `(B,M,K)@(B,K,N)`), `call`.
 - Arithmetic: `add`, `sub`, `mul`, `div`, `pow`, `neg`.
 - Reductions/helpers: `dot`, `sumsqr`, `norm_2` lower to existing elementwise, reshape, sum, and sqrt ops.
 - Trigonometric: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`.
