@@ -484,6 +484,11 @@ def matmul(x: Expr, y: Expr) -> Expr:
     if x.shape[1] != y.shape[0]:
       raise ValueError(f"cannot matmul shapes {x.shape} and {y.shape}")
     shape = (x.shape[0], y.shape[1])
+  elif len(x.shape) == 3 and len(y.shape) == 3:
+    # Batched matmul: (B,M,K) @ (B,K,N) -> (B,M,N), matching batch and contraction dims.
+    if x.shape[0] != y.shape[0] or x.shape[2] != y.shape[1]:
+      raise ValueError(f"cannot batch-matmul shapes {x.shape} and {y.shape}")
+    shape = (x.shape[0], x.shape[1], y.shape[2])
   else:
     raise NotImplementedError(f"matmul shape inference for {x.shape} @ {y.shape}")
   return Expr(Ops.MATMUL, (x, y), TensorType(shape, dtype=promote_dtype(x, y), diff=diff_any(x, y)), lowering=common_lowering(x, y))

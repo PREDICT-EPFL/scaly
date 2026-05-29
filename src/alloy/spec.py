@@ -266,6 +266,9 @@ def _matmul_shape(expr: Expr) -> str | None:
   elif len(x.shape) == 2 and len(y.shape) == 2:
     if x.shape[1] != y.shape[0] or expr.shape != (x.shape[0], y.shape[1]):
       return f"MATMUL mat/mat shape mismatch: {x.shape}@{y.shape} -> {expr.shape}"
+  elif len(x.shape) == 3 and len(y.shape) == 3:
+    if x.shape[0] != y.shape[0] or x.shape[2] != y.shape[1] or expr.shape != (x.shape[0], x.shape[1], y.shape[2]):
+      return f"MATMUL batched shape mismatch: {x.shape}@{y.shape} -> {expr.shape}"
   else:
     return f"MATMUL unsupported ranks {x.shape}@{y.shape}"
   return None
