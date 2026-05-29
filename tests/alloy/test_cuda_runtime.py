@@ -102,6 +102,20 @@ def test_cuda_sum_axis_dispatch() -> None:
   np.testing.assert_allclose(fn(x_val), x_val.sum(axis=1), atol=1e-12, rtol=1e-12)
 
 
+def test_cuda_batched_matmul_dispatch() -> None:
+  # The batch loop is the single top-level GLOBAL FOR, so each thread owns one
+  # batch's matmat (disjoint output region — no cross-thread reduction).
+  rng = np.random.RandomState(2)
+  a = al.sym("a", (5, 3, 4))
+  b = al.sym("b", (5, 4, 2))
+  fn = al.Function("cu_bmm", [a, b], [a @ b], ["a", "b"], ["c"]).with_device("cuda:0")
+  src = render_cuda_source(fn)
+  assert "blockIdx.x * blockDim.x + threadIdx.x" in src
+  a_val = rng.randn(5, 3, 4)
+  b_val = rng.randn(5, 4, 2)
+  np.testing.assert_allclose(fn(a_val, b_val), a_val @ b_val, atol=1e-10, rtol=1e-10)
+
+
 def test_cuda_call_inline_device_function() -> None:
   """A named callee on cuda is emitted as a ``__device__`` inline function."""
   x = al.sym("x", 4)

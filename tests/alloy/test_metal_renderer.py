@@ -58,6 +58,20 @@ def test_render_metal_kernel_shape() -> None:
   assert "metal::sin(x[i_y])" in src
 
 
+def test_render_metal_batched_matmul() -> None:
+  # Text-only: renders MSL for (B,M,K)@(B,K,N); the batch loop binds to tid.
+  a = al.sym("a", (3, 2, 4), dtype=al.dtypes.float32)
+  b = al.sym("b", (3, 4, 2), dtype=al.dtypes.float32)
+  fn = al.Function("f_metal_bmm", [a, b], [a @ b], ["a", "b"], ["c"]).with_device("metal:0")
+  assert can_render_metal(fn)
+  src = render_metal_source(fn)
+  assert "kernel void f_metal_bmm_kernel(" in src
+  assert "uint tid [[thread_position_in_grid]]" in src
+  # batch is the top-level GLOBAL FOR -> bound to tid, capped at B=3
+  assert "(long)tid" in src
+  assert "if (b_c >= 3) return;" in src
+
+
 def test_render_metal_supports_binary_elementwise_and_const() -> None:
   x = al.sym("x", 4, dtype=al.dtypes.float32)
   y = al.sym("y", 4, dtype=al.dtypes.float32)
