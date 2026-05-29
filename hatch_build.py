@@ -44,6 +44,18 @@ def _shared_lib_name(system: str, base: str) -> str:
   raise RuntimeError(f"Unsupported platform: {system}")
 
 
+def _read_soname(lib_path: Path) -> str | None:
+  """Return the SONAME embedded in an ELF shared object, or None if unset/unreadable."""
+  try:
+    out = subprocess.run(["readelf", "-d", str(lib_path)], check=True, capture_output=True, text=True).stdout
+  except (subprocess.CalledProcessError, FileNotFoundError):
+    return None
+  for line in out.splitlines():
+    if "SONAME" in line and "[" in line and "]" in line:
+      return line[line.index("[") + 1 : line.index("]")]
+  return None
+
+
 def _find_fortran_compiler() -> str:
   """Locate a Fortran 90 compiler.
 
@@ -58,10 +70,7 @@ def _find_fortran_compiler() -> str:
     path = shutil.which(name)
     if path:
       return path
-  raise RuntimeError(
-    "No Fortran compiler found in PATH. Install gfortran via `brew install gcc` (macOS) "
-    "or `sudo apt-get install gfortran` (Linux)."
-  )
+  raise RuntimeError("No Fortran compiler found in PATH. Install gfortran via `brew install gcc` (macOS) or `sudo apt-get install gfortran` (Linux).")
 
 
 def _static_fortran_ldflags(system: str) -> str:
@@ -298,9 +307,7 @@ def _build_metis(hook: "BuildHook", third_party_dir: Path, install_dir: Path) ->
   hook.app.display_info("Configuring METIS...")
   # METIS 4.0.3 has K&R-style implicit declarations that modern clang rejects by default.
   # Downgrade to warnings to keep the upstream sources buildable on Apple Clang 17+ / Clang 19+.
-  legacy_c_cflags = (
-    "-O2 -fPIC -Wno-implicit-function-declaration -Wno-implicit-int -Wno-int-conversion -Wno-error"
-  )
+  legacy_c_cflags = "-O2 -fPIC -Wno-implicit-function-declaration -Wno-implicit-int -Wno-int-conversion -Wno-error"
   _run(
     [
       "./configure",
@@ -338,7 +345,7 @@ def _build_mumps(
   install_dir.mkdir(parents=True, exist_ok=True)
   jobs = str(os.cpu_count() or 2)
   metis_cflags = f"-I{(metis_install / 'include' / 'coin-or' / 'metis').resolve()}"
-  metis_lflags = f"-L{(metis_install / 'lib').resolve()} -lcoinmetis"
+  metis_lflags = f"-L{(metis_install / 'lib').resolve()} -lcoinmetis -lm"
   hook.app.display_info(f"Configuring MUMPS (FC={fc})...")
   configure_args = [
     "./configure",
@@ -374,10 +381,7 @@ def _build_ipopt(
   install_dir.mkdir(parents=True, exist_ok=True)
   jobs = str(os.cpu_count() or 2)
   mumps_cflags = f"-I{(mumps_install / 'include' / 'coin-or' / 'mumps').resolve()}"
-  mumps_lflags = (
-    f"-L{(mumps_install / 'lib').resolve()} -lcoinmumps "
-    f"-L{(metis_install / 'lib').resolve()} -lcoinmetis"
-  )
+  mumps_lflags = f"-L{(mumps_install / 'lib').resolve()} -lcoinmumps -L{(metis_install / 'lib').resolve()} -lcoinmetis -lm"
   build_dir = src_dir / "build"
   build_dir.mkdir(exist_ok=True)
   hook.app.display_info(f"Configuring IPOPT (FC={fc})...")
@@ -419,7 +423,10 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     lapack_lflags = "-framework Accelerate"
   elif system == "Linux":
     openblas_install = _build_openblas(hook, third_party_dir, third_party_dir / "openblas_install")
-    lapack_lflags = f"-L{(openblas_install / 'lib').resolve()} -lopenblas"
+    # Static libopenblas.a leaves libm/pthread symbols unresolved (logf/sqrt/pthread_*); a shared
+    # lib would pull them transitively, but the static archive needs them spelled out or the MUMPS
+    # LAPACK link probe (a pure-C conftest) fails and IPOPT's final link comes up short too.
+    lapack_lflags = f"-L{(openblas_install / 'lib').resolve()} -lopenblas -lm -lpthread"
   else:
     raise RuntimeError(f"Unsupported platform: {system}")
 
@@ -474,7 +481,28 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     # Also rewrite the install_name embedded in PIQP's lib in case it points at build dir.
     piqp_lib = lib_dir / "libpiqpc.dylib"
     if piqp_lib.exists():
-      _run(["install_name_tool", "-id", f"@rpath/libpiqpc.dylib", str(piqp_lib)], cwd=lib_dir)
+      _run(["install_name_tool", "-id", "@rpath/libpiqpc.dylib", str(piqp_lib)], cwd=lib_dir)
+  else:
+    # IPOPT's autotools build stamps a versioned SONAME (libipopt.so.3) that collides with other
+    # packages' bundled IPOPT — notably casadi, which ships its own libipopt.so.3. Once our copy is
+    # loaded the dynamic linker shadows theirs by SONAME, and the ABI mismatch crashes the process.
+    # Rename our SONAME to something unique so the two coexist. Either way the SONAME ends up in a
+    # `-lipopt` consumer's NEEDED, so symlink it to the shipped unversioned file (we only ship one)
+    # or the runtime loader can't resolve the JIT/AOT wrapper. (PIQP needs no alias: its SONAME
+    # already matches its filename and nothing else bundles libpiqpc.)
+    patchelf = shutil.which("patchelf")
+    if patchelf:
+      soname = "libipopt_alloy.so"
+      _run([patchelf, "--set-soname", soname, str(dst_path)], cwd=lib_dir)
+    else:
+      hook.app.display_info("patchelf not found; keeping versioned SONAME (may clash with other bundled IPOPT, e.g. casadi).")
+      soname = _read_soname(dst_path)
+    if soname and soname != lib_name:
+      link_path = lib_dir / soname
+      if link_path.exists() or link_path.is_symlink():
+        link_path.unlink()
+      link_path.symlink_to(lib_name)
+      hook.app.display_info(f"Linked {soname} -> {lib_name}")
 
   ipopt_headers_dir = ipopt_install / "include" / "coin-or"
   for header in ipopt_headers_dir.glob("*.h"):
@@ -492,9 +520,7 @@ class BuildHook(BuildHookInterface):
   def initialize(self, version: str, build_data: dict) -> None:
     system = platform.system()
     if system == "Windows":
-      raise RuntimeError(
-        "Windows IPOPT build not yet supported — track in https://github.com/PREDICT-EPFL/alloy/issues/1"
-      )
+      raise RuntimeError("Windows IPOPT build not yet supported — track in https://github.com/PREDICT-EPFL/alloy/issues/1")
 
     root = Path(self.root)
     third_party_dir = root / "third_party"

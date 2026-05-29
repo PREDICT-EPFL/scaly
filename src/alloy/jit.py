@@ -143,15 +143,24 @@ def _build_artifact(fun: Function) -> _Artifact:
   lib_path = cache_dir / f"lib{symbol}{_shared_lib_ext()}"
 
   if not lib_path.exists():
-    # Write to a temp file then rename to avoid partially-written sources on concurrent builds.
-    tmp_source = source_path.with_suffix(source_path.suffix + ".tmp")
+    # Temp paths are per-process unique so concurrent builds (pytest -n=auto shares one cache)
+    # never collide on the same partially-written file; the final rename onto the cached path is
+    # atomic, so a reader only ever sees a complete source / shared object.
+    uniq = os.getpid()
+    tmp_source = source_path.with_suffix(f"{source_path.suffix}.{uniq}.tmp")
     tmp_source.write_text(source)
     tmp_source.replace(source_path)
+    tmp_lib = lib_path.with_suffix(f"{lib_path.suffix}.{uniq}.tmp")
     extra_flags = solver_compile_flags(fun)
-    cmd = [cc, "-O2", "-fPIC", _shared_lib_flag(), *extra_flags, str(source_path), "-lm", "-o", str(lib_path)]
+    # Libraries must follow the object that references them: GNU ld defaults to --as-needed,
+    # which drops a `-l` lib that appears before any undefined symbol it would satisfy. Placing
+    # extra_flags (notably -lpiqpc/-lipopt) after source_path keeps libpiqpc/libipopt in NEEDED.
+    cmd = [cc, "-O2", "-fPIC", _shared_lib_flag(), str(source_path), *extra_flags, "-lm", "-o", str(tmp_lib)]
     try:
       subprocess.run(cmd, check=True, capture_output=True, text=True)
+      os.replace(tmp_lib, lib_path)
     except subprocess.CalledProcessError as exc:
+      tmp_lib.unlink(missing_ok=True)
       raise JitError(f"failed to compile {fun.name!r}: {exc.stderr or exc.stdout}") from exc
 
   artifact = _Artifact(lib_path=lib_path, key=key)

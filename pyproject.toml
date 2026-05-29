@@ -12,7 +12,9 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+# patchelf (Linux only) gives the vendored libipopt a unique SONAME so it does not collide with
+# other packages' bundled IPOPT (e.g. casadi's libipopt.so.3) when both load in one process.
+requires = ["hatchling", "patchelf; sys_platform == 'linux'"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
