@@ -61,11 +61,6 @@ _BINARY: dict[Ops, POps] = {
   Ops.MAXIMUM: POps.MAXIMUM,
 }
 
-# Above this many elements an inline-serialized CONST is rejected; CONST_BUFFER
-# (a dedicated op for large constant tables) lands in Step 2.
-_CONST_INLINE_MAX = 16
-
-
 LowerRule = Callable[["LowerCtx", Expr], None]
 _RULES: dict[Ops, LowerRule] = {}
 
@@ -216,6 +211,31 @@ class LowerCtx:
     self.statements.append(p.for_(rng, [p.store(p.view(out, [i]), computed)]))
 
 
+def _stride(shape: tuple[int, ...], dim: int) -> int:
+  s = 1
+  for d in shape[dim + 1 :]:
+    s *= int(d)
+  return s
+
+
+def _coord_p(flat: PNode, shape: tuple[int, ...], dim: int) -> PNode:
+  """Decompose flat output index ``flat`` into the ``dim``-th coordinate of ``shape``."""
+  stride = _stride(shape, dim)
+  v = flat if stride == 1 else p.div(flat, p.const_int(stride))
+  # The leading dim needs no modulo: flat < size guarantees (flat // stride) < shape[0].
+  return v if dim == 0 else p.mod(v, p.const_int(int(shape[dim])))
+
+
+def _flat_index_p(coords: list[PNode], shape: tuple[int, ...]) -> PNode:
+  terms = [c if (st := _stride(shape, i)) == 1 else p.mul(c, p.const_int(st)) for i, c in enumerate(coords)]
+  if not terms:
+    return p.const_int(0)
+  acc = terms[0]
+  for t in terms[1:]:
+    acc = p.add(acc, t)
+  return acc
+
+
 def _copy_loop(src: PNode, dst: PNode, shape: tuple[int, ...]) -> PNode:
   vname = f"c_{dst.attrs['name']}"
   rng = p.range_(vname, 0, _size_of(shape), kind=RangeKind.GLOBAL)
@@ -248,11 +268,43 @@ def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
 def _lower_const(ctx: LowerCtx, node: Expr) -> None:
   value = node.value
   assert value is not None
-  if int(value.size) > _CONST_INLINE_MAX:
-    raise LoweringError(f"CONST of size {value.size} exceeds the inline-serialization cap; CONST_BUFFER lands in a later step")
-  buf = ctx.alloc_tmp(node)
-  for i, item in enumerate(value.reshape(-1)):
-    ctx.statements.append(p.store(p.view(buf, [p.const_int(i)]), p.const_float(float(item), dtype=node.type.dtype)))
+  # A constant of any size materializes as a read-only ``constant``-space buffer
+  # (rendered ``static const``). Output-aliasing never applies to CONST, so
+  # emit_outputs inserts a copy when a CONST is itself an output.
+  name = f"k{ctx._tmp}"
+  ctx._tmp += 1
+  buf = p.const_buffer(name, node.type.dtype, _shape_or_scalar(node.shape), [float(v) for v in value.reshape(-1)])
+  ctx.buffers[name] = buf
+  ctx.value_buffers[node.id] = name
+  ctx.statements.append(buf)
+
+
+@lowers(Ops.SLICE)
+def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
+  """General SLICE: integer indices drop a dim, slices keep one. Each output element
+  reads its source via flat-index arithmetic built from the (full-rank, normalized)
+  index spec. Covers rank-1, multi-dim, integer, and strided slices."""
+  src = node.args[0]
+  src_shape = src.shape
+  index = node.attrs["index"]
+  out = ctx.alloc_tmp(node)
+  vname = f"i_{out.attrs['name']}"
+  rng = p.range_(vname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
+  k = p.var(vname)
+  coords: list[PNode] = []
+  out_dim = 0
+  for dim, item in enumerate(index):
+    if isinstance(item, int):
+      coords.append(p.const_int(item if item >= 0 else int(src_shape[dim]) + item))
+      continue
+    start, _stop, step = item.indices(int(src_shape[dim]))
+    c = _coord_p(k, node.shape, out_dim)
+    if step != 1:
+      c = p.mul(c, p.const_int(step))
+    coords.append(c if (start == 0 and step == 1) else p.add(p.const_int(start), c))
+    out_dim += 1
+  src_idx = _flat_index_p(coords, src_shape)
+  ctx.statements.append(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
 
 
 __all__ = ["LoweringError", "LowerCtx", "lower_function", "lowers", "main_proc"]

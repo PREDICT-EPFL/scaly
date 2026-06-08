@@ -274,6 +274,26 @@ def buffer(name: str, dtype: DType, shape: tuple[int, ...], *, address_space: st
   )
 
 
+def const_buffer(name: str, dtype: DType, shape: tuple[int, ...], values: Sequence[float]) -> PNode:
+  """A read-only ``constant``-address-space BUFFER carrying its initializer ``values``.
+
+  The renderer emits it as a ``static const`` array; loads read it like any buffer.
+  Lets constants of any size lower without inline-serializing each element.
+  """
+  return PNode(
+    POps.BUFFER,
+    (),
+    attrs={
+      "name": name,
+      "shape": tuple(int(d) for d in shape),
+      "address_space": "constant",
+      "device": DeviceSpec.parse(None),
+      "values": tuple(float(v) for v in values),
+    },
+    dtype=dtype,
+  )
+
+
 def view(buf: PNode, index: Sequence[PNode]) -> PNode:
   if buf.op != POps.BUFFER:
     raise TypeError(f"view requires a BUFFER, got {buf.op}")
@@ -389,6 +409,10 @@ def mul(x: PNode, y: PNode) -> PNode:
 
 def div(x: PNode, y: PNode) -> PNode:
   return _scalar_binop(POps.DIV, x, y)
+
+
+def mod(x: PNode, y: PNode) -> PNode:
+  return _scalar_binop(POps.MOD, x, y)
 
 
 def neg(x: PNode) -> PNode:
@@ -761,6 +785,7 @@ __all__ = [
   "block",
   "buffer",
   "call",
+  "const_buffer",
   "const_float",
   "const_int",
   "div",
@@ -769,6 +794,7 @@ __all__ = [
   "kernel",
   "launch",
   "load",
+  "mod",
   "mul",
   "neg",
   "proc",

@@ -162,10 +162,16 @@ def _emit_local_buffers(body: list[PNode], lines: list[str], indent: int) -> Non
     if stmt.op != POps.BUFFER or stmt.attrs["name"] in seen:
       continue
     seen.add(stmt.attrs["name"])
+    name = stmt.attrs["name"]
     size = 1
     for d in stmt.attrs["shape"]:
       size *= int(d)
-    lines.append(f"{pad}{stmt.dtype.c_type} {stmt.attrs['name']}[{size or 1}];")
+    size = size or 1
+    if stmt.attrs.get("address_space") == "constant" and "values" in stmt.attrs:
+      values = ", ".join(_c_float(v) for v in stmt.attrs["values"])
+      lines.append(f"{pad}static const {stmt.dtype.c_type} {name}[{size}] = {{{values}}};")
+    else:
+      lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
 
 
 def _emit_statement(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:

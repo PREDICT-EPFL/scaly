@@ -93,6 +93,47 @@ def _reshape() -> al.Function:
   return f
 
 
+def _large_const() -> al.Function:
+  @al.function("pm_large_const", {"x": 24})
+  def f(x):
+    return x + al.const(np.arange(24, dtype=np.float64))  # > the old size-16 inline cap
+
+  return f
+
+
+def _slice_contiguous() -> al.Function:
+  @al.function("pm_slice_contig", {"x": 5})
+  def f(x):
+    return x[1:4].sin()  # rank-1 contiguous slice feeding an elementwise op
+
+  return f
+
+
+def _slice_scalar() -> al.Function:
+  @al.function("pm_slice_scalar", {"x": 5})
+  def f(x):
+    return x[2] * x[2]  # integer index -> scalar (drops the dim)
+
+  return f
+
+
+def _slice_strided() -> al.Function:
+  @al.function("pm_slice_strided", {"x": 6})
+  def f(x):
+    return x[::2] + x[1::2]  # strided slices, same output length
+
+  return f
+
+
+def _slice_multidim_row() -> al.Function:
+  @al.function("pm_slice_row", {"x": 12})
+  def f(x):
+    m = x.reshape((3, 4))
+    return m[1, :] * m[2, :]  # integer index on dim 0, full slice on dim 1
+
+  return f
+
+
 _CORPUS = [
   (_neg, [np.array([0.5, -1.0, 2.0, -3.0])]),
   (_trig_chain, [np.array([0.1, 0.2, -0.3, 0.4])]),
@@ -102,6 +143,11 @@ _CORPUS = [
   (_pow_same_shape, [np.array([2.0, 3.0]), np.array([3.0, 2.0])]),
   (_const_add, [np.array([10.0, 20.0, 30.0, 40.0])]),
   (_reshape, [np.array([1.0, 2.0, 3.0, 4.0])]),
+  (_large_const, [np.arange(100.0, 124.0)]),
+  (_slice_contiguous, [np.array([0.1, 0.2, 0.3, 0.4, 0.5])]),
+  (_slice_scalar, [np.array([1.0, 2.0, 3.0, 4.0, 5.0])]),
+  (_slice_strided, [np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])]),
+  (_slice_multidim_row, [np.arange(1.0, 13.0)]),
 ]
 
 

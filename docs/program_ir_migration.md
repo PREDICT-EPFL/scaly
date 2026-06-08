@@ -149,9 +149,12 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   workspace packing is deferred. Not yet covered (raise loudly): broadcasting, `SLICE`, large
   `CONST`, `SUM`, `MATMUL`, `TRANSPOSE`, `GATHER`/`SCATTER`, `STACK`/`CONCAT`, `CALL`/`MAP`.
 
-- **Step 2 — The day-one blockers.** Generalize `SLICE` (integer index, multi-dim, strided) and
-  add a `CONST_BUFFER` Program IR op for large constants. **Exit:** the *forward* tracking and
-  unbumpercars functions render through Program IR as sole path.
+- **Step 2 — The day-one blockers.** ✅ Done. Generalized `SLICE` (integer index drops a dim,
+  slices keep one; multi-dim and strided via flat-index arithmetic built as scalar PNodes) and
+  added a `constant`-address-space `const_buffer` (rendered `static const`) so constants of any
+  size lower — these were the first two probe blockers. Re-probing the forwards confirms `SLICE`
+  and `CONST` are cleared; they now block on `CALL`/`MAP`/`GATHER`, which are Step 3/4 ops — so the
+  "forwards render end-to-end" milestone lands after Step 3.
 
 - **Step 3 — Core op recipes.** Port `MATMUL`, `SUM`, `TRANSPOSE`, `CALL`, `MAP` from the
   reference branch into registry rules; delete their legacy handlers. **Exit:** forward safety
