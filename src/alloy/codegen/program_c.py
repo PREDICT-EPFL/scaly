@@ -21,11 +21,23 @@ from __future__ import annotations
 
 import math
 import os
+import re
 
 from ..abi import c_api_signature
 from ..function import Function
 from ..lowering import LoweringError, lower_function, main_proc
 from ..program import PNode, POps
+
+
+def _c_ident(name: str) -> str:
+  """Sanitize a Program-IR name into a valid C identifier.
+
+  Buffer/var/callee names may contain ``:`` (e.g. derivative names like ``fwd:eq:z``)
+  or other non-identifier characters. This must match ``alloy.codegen.c._c_ident`` so
+  the rendered entry symbol agrees with what ``jit.CompiledFunction`` looks up.
+  """
+  ident = re.sub(r"\W", "_", name)
+  return f"_{ident}" if ident[:1].isdigit() else ident
 
 
 _ABI_DEFINES = (
@@ -85,7 +97,7 @@ def render_program_c_source(fun: Function) -> str:
   proc = main_proc(prog)
   pc = int(prog.attrs.get("proc_count", 1))
   callees = list(prog.args[: pc - 1])
-  symbol = fun.name
+  symbol = _c_ident(fun.name)  # must match jit.CompiledFunction's _c_ident(fun.name)
   param_count = int(proc.attrs["param_count"])
   body = list(proc.args[param_count:])
 
@@ -144,9 +156,9 @@ def _render_raw_callee(proc: PNode) -> list[str]:
   param_count = int(proc.attrs["param_count"])
   params = list(proc.args[:param_count])
   body = list(proc.args[param_count:])
-  ptr_expr = {pp.attrs["name"]: pp.attrs["name"] for pp in params}
-  param_decls = ", ".join(f"{pp.dtype.c_type}* {pp.attrs['name']}" for pp in params)
-  out = [f"static inline void {proc.attrs['name']}_raw({param_decls}) {{"]
+  ptr_expr = {pp.attrs["name"]: _c_ident(pp.attrs["name"]) for pp in params}
+  param_decls = ", ".join(f"{pp.dtype.c_type}* {_c_ident(pp.attrs['name'])}" for pp in params)
+  out = [f"static inline void {_c_ident(proc.attrs['name'])}_raw({param_decls}) {{"]
   _emit_local_buffers(body, out, indent=2)
   for stmt in body:
     if stmt.op == POps.BUFFER:
@@ -163,7 +175,7 @@ def _emit_local_buffers(body: list[PNode], lines: list[str], indent: int) -> Non
     if stmt.op != POps.BUFFER or stmt.attrs["name"] in seen:
       continue
     seen.add(stmt.attrs["name"])
-    name = stmt.attrs["name"]
+    name = _c_ident(stmt.attrs["name"])
     size = 1
     for d in stmt.attrs["shape"]:
       size *= int(d)
@@ -180,7 +192,7 @@ def _emit_statement(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], ind
   pad = " " * indent
   if stmt.op == POps.FOR:
     rng = stmt.args[0]
-    name = rng.attrs["name"]
+    name = _c_ident(rng.attrs["name"])
     start = _emit_scalar(rng.args[0], ptr_expr)
     stop = _emit_scalar(rng.args[1], ptr_expr)
     step = _emit_scalar(rng.args[2], ptr_expr)
@@ -200,7 +212,7 @@ def _emit_statement(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], ind
     in_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in stmt.args[:n_in])
     out_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in stmt.args[n_in : n_in + n_out])
     sep = ", " if in_ptrs and out_ptrs else ""
-    lines.append(f"{pad}{stmt.attrs['callee']}_raw({in_ptrs}{sep}{out_ptrs});")
+    lines.append(f"{pad}{_c_ident(stmt.attrs['callee'])}_raw({in_ptrs}{sep}{out_ptrs});")
   else:
     raise LoweringError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
 
@@ -208,9 +220,9 @@ def _emit_statement(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], ind
 def _emit_call_arg(node: PNode, ptr_expr: dict[str, str]) -> str:
   """A CALL argument is a whole BUFFER (its pointer) or a VIEW (pointer + offset)."""
   if node.op == POps.BUFFER:
-    return ptr_expr.get(node.attrs["name"], node.attrs["name"])
+    return ptr_expr.get(node.attrs["name"], _c_ident(node.attrs["name"]))
   if node.op == POps.VIEW:
-    ptr = ptr_expr.get(node.attrs["buffer"], node.attrs["buffer"])
+    ptr = ptr_expr.get(node.attrs["buffer"], _c_ident(node.attrs["buffer"]))
     idx = _emit_scalar(node.args[0], ptr_expr) if node.args else "0"
     return ptr if idx == "0" else f"({ptr} + {idx})"
   raise LoweringError(f"unsupported CALL arg op {node.op}")
@@ -219,7 +231,7 @@ def _emit_call_arg(node: PNode, ptr_expr: dict[str, str]) -> str:
 def _emit_view(view: PNode, ptr_expr: dict[str, str]) -> str:
   if view.op != POps.VIEW:
     raise LoweringError(f"expected a VIEW, got {view.op}")
-  ptr = ptr_expr.get(view.attrs["buffer"], view.attrs["buffer"])
+  ptr = ptr_expr.get(view.attrs["buffer"], _c_ident(view.attrs["buffer"]))
   if len(view.args) > 1:
     raise LoweringError("multi-index VIEW rendering is not implemented yet (lands with SLICE/MATMUL)")
   idx = _emit_scalar(view.args[0], ptr_expr) if view.args else "0"
@@ -241,7 +253,7 @@ def _emit_scalar(n: PNode, ptr_expr: dict[str, str]) -> str:
   if op == POps.CONST_FLOAT:
     return _c_float(n.attrs["value"])
   if op == POps.VAR:
-    return str(n.attrs["name"])
+    return _c_ident(n.attrs["name"])
   if op == POps.LOAD:
     return _emit_view(n.args[0], ptr_expr)
   if op == POps.NEG:

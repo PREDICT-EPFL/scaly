@@ -255,6 +255,22 @@ def _mlp_layer() -> al.Function:
   return f
 
 
+def _concat_axis1() -> al.Function:
+  @al.function("pm_concat_ax1", {"a": (2, 3), "b": (2, 2)})
+  def f(a, b):
+    return al.concat([a, b], axis=1)  # (2,3) ++ (2,2) -> (2,5) along axis 1
+
+  return f
+
+
+def _stack_axis1() -> al.Function:
+  @al.function("pm_stack_ax1", {"x": 3, "y": 3})
+  def f(x, y):
+    return al.stack([x.sin(), y], axis=1)  # two (3,) -> (3,2) along a new axis 1
+
+  return f
+
+
 _CORPUS = [
   (_neg, [np.array([0.5, -1.0, 2.0, -3.0])]),
   (_trig_chain, [np.array([0.1, 0.2, -0.3, 0.4])]),
@@ -283,6 +299,8 @@ _CORPUS = [
   (_broadcast_scalar, [np.array([1.0, 2.0, 3.0, 4.0])]),
   (_concat, [np.array([0.1, 0.2, 0.3]), np.array([4.0, 5.0])]),
   (_mlp_layer, [np.arange(1.0, 13.0).reshape(4, 3) * 0.1, np.array([0.5, -0.5, 1.0]), np.array([0.1, 0.2, 0.3, 0.4])]),
+  (_concat_axis1, [np.arange(1.0, 7.0).reshape(2, 3), np.arange(7.0, 11.0).reshape(2, 2)]),
+  (_stack_axis1, [np.array([0.1, 0.2, 0.3]), np.array([4.0, 5.0, 6.0])]),
 ]
 
 
@@ -358,10 +376,16 @@ def _import_sibling(name):
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
-def test_forward_tracking_renders_and_matches(monkeypatch) -> None:
+@pytest.mark.parametrize("kind", ["forward", "jacobian", "sparse_jacobian"])
+def test_tracking_workload_renders_and_matches(kind, monkeypatch) -> None:
   pytest.importorskip("casadi")  # the fixture module needs CasADi at import
   tw = _import_sibling("test_tracking_workload")
-  fn = tw.tracking_eq_function(3)
+  base = tw.tracking_eq_function(3)
+  fn = {
+    "forward": base,
+    "jacobian": base.factory("trk_jac", ["z"], ["jac:eq:z"]),
+    "sparse_jacobian": al.spjacobian(base, "z", "eq"),
+  }[kind]
   render_program_c_source(fn)  # loud: must render through Program IR
   assert can_render_program_c(fn)
   inputs = [np.random.default_rng(0).standard_normal(e.size).reshape(e.shape) for e in fn.inputs]

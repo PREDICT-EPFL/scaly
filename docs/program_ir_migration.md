@@ -169,9 +169,15 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   and elementwise **broadcasting** (numpy right-aligned; size-1 and missing leading dims read index
   0 — covers bias-add and scalar consts). **Milestone reached:** the forward tracking (h=2/5) and
   unbumpercars (n=2/4/8) functions render through Program IR as the sole path and match the
-  interpreter; `test_program_migration.py` locks both forwards. Remaining for later: non-axis-0
-  `STACK`/`CONCAT` (only if a workload needs it), and the derivative/sparse-Jacobian functions
-  (Step 4b — re-probe to find the next gap, likely the spjac assembly path).
+  interpreter; `test_program_migration.py` locks both forwards.
+- **Step 4b — General-axis STACK/CONCAT + identifier sanitization (derivatives render).** ✅ Done.
+  The derivative/sparse-Jacobian functions blocked on axis-1 `CONCAT`/`STACK` (gradient-column
+  assembly) and then on a renderer bug: buffer/var/callee names carry `:` (e.g. `fwd:eq:z`) which
+  is not a valid C identifier, and the entry symbol must match `jit`'s `_c_ident(fun.name)`.
+  Generalized `STACK`/`CONCAT` to any axis (decompose / shift-or-insert / recombine via affine
+  index PNodes) and route every emitted identifier through `_c_ident`. **Full workload parity:**
+  forward + `jac` + `spjac` for both tracking (h=2/5) and unbumpercars (n=2/4/8) now render through
+  Program IR and match the interpreter; the tracking lock test covers all three kinds.
 
 - **Step 5 — Flip default + benchmark validation.** Make Program IR the default (and only) CPU
   renderer. Run `benchmarks/` and confirm **no material regression** in generated source size or

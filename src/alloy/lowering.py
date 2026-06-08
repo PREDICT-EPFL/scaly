@@ -544,36 +544,42 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
 
 @lowers(Ops.STACK)
 def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
-  """Stack along axis 0: ``out[i*base + j] = inputs[i][j]``. Other axes deferred."""
+  """Stack ``n`` rank-r inputs along a new ``axis`` into a rank-(r+1) output: each input
+  occupies index ``i`` along the new axis. Per element, decompose the input flat index into
+  its coords, insert ``i`` at ``axis``, recombine against the output shape."""
   axis = int(node.attrs.get("axis", 0))
-  if axis != 0:
-    raise LoweringError(f"STACK lowering handles axis=0 only; got axis={axis}")
+  out_shape = node.shape
   out = ctx.alloc_tmp(node)
-  base = node.args[0].size or 1
   for i, src in enumerate(node.args):
+    src_shape = src.shape
     name = f"j_{out.attrs['name']}_{i}"
-    rng = p.range_(name, 0, base, kind=RangeKind.GLOBAL)
+    rng = p.range_(name, 0, _size_of(src_shape), kind=RangeKind.GLOBAL)
     j = p.var(name)
-    dst = j if i == 0 else p.add(p.const_int(i * base), j)
+    src_coords = [_coord_p(j, src_shape, d) for d in range(len(src_shape))]
+    out_coords = src_coords[:axis] + [p.const_int(i)] + src_coords[axis:]
+    dst = _flat_index_p(out_coords, out_shape)
     ctx.statements.append(p.for_(rng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [j])))]))
 
 
 @lowers(Ops.CONCAT)
 def _lower_concat(ctx: LowerCtx, node: Expr) -> None:
-  """Concat along axis 0: contiguous chunks in the row-major flatten. Other axes deferred."""
+  """Concatenate inputs along ``axis``: each input keeps its shape but its ``axis`` coordinate is
+  shifted by the running offset. Per element, decompose / shift / recombine against the output."""
   axis = int(node.attrs.get("axis", 0))
-  if axis != 0:
-    raise LoweringError(f"CONCAT lowering handles axis=0 only; got axis={axis}")
+  out_shape = node.shape
   out = ctx.alloc_tmp(node)
   offset = 0
   for i, src in enumerate(node.args):
-    size = src.size or 1
+    src_shape = src.shape
     name = f"j_{out.attrs['name']}_{i}"
-    rng = p.range_(name, 0, size, kind=RangeKind.GLOBAL)
+    rng = p.range_(name, 0, _size_of(src_shape), kind=RangeKind.GLOBAL)
     j = p.var(name)
-    dst = j if offset == 0 else p.add(p.const_int(offset), j)
+    coords = [_coord_p(j, src_shape, d) for d in range(len(src_shape))]
+    if offset:
+      coords[axis] = p.add(p.const_int(offset), coords[axis])
+    dst = _flat_index_p(coords, out_shape)
     ctx.statements.append(p.for_(rng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [j])))]))
-    offset += size
+    offset += int(src_shape[axis])
 
 
 __all__ = ["LoweringError", "LowerCtx", "lower_function", "lowers", "main_proc"]
