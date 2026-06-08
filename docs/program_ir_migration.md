@@ -1,17 +1,24 @@
 # Program IR migration roadmap
 
-> **Status (2026-06-08):** Steps 0–4b done — **functional parity reached**: every workload
-> compute function (forward + `jac` + `spjac` for tracking and unbumpercars) lowers and renders
-> through Program IR as the sole path and is **bit-identical** to the legacy renderer. Suite green.
-> **Not yet at parity:** a head-to-head benchmark (Step 5a, below) shows the Program IR path is
-> ~22% slower on unbumpercars, emits 2–4× more source, and — critically — has **no workspace
-> spilling**, so it will **segfault at the largest benchmark sizes**. These perf/scale gaps are a
-> hard merge gate and are deferred to a follow-up session before flipping the default and merging.
+> **Status (2026-06-08):** Steps 0–5b done — **functional *and* performance parity reached**. Every
+> workload compute function (forward + `jac` + `spjac` for tracking and unbumpercars) lowers,
+> optimizes, and renders through Program IR as the sole path and is **bit-identical** to the legacy
+> renderer. The Step 5b perf/scale gaps are **closed**: a third architectural leg —
+> Program-IR → Program-IR **optimization passes** (`src/alloy/passes.py`) — now ports the legacy
+> renderer's custom optimizations as explicit, individually-testable passes. Re-measured
+> head-to-head (same box, raw C-entry, best-of-5, output bit-identical):
+>
+> | workload | before 5b | after 5b | `sz_w` (legacy → PIR) |
+> | --- | ---: | ---: | --- |
+> | tracking ms spjac N=50 | 1.05× | **1.03×** | 3154 → 2100 |
+> | unbumpercars spjac C=2 | 1.25× | **1.00×** | 0 → 0 |
+> | unbumpercars spjac C=8 | 1.22× | **0.98×** | 6664 → 6664 |
+>
 > **Goal:** make the semantic-IR → Program-IR → backend-renderer architecture the *sole* CPU
 > compilation path, at full **feature *and* performance** parity with `main`, with the legacy
 > tape-based C renderer removed — **without** introducing new ops, GPU renderers, or solver changes
-> along the way. Feature and perf parity is primordial: do not flip the default or merge until the
-> Step 5b gaps are closed.
+> along the way. With 5b closed, the remaining work is flipping the default (5c) and deleting the
+> legacy renderer (6) — no parity gates remain open.
 
 This document is the north star for the migration. It records *why* we restarted from `main`
 instead of finishing the previous attempt, *what* we harvested, *what* we deliberately deferred
@@ -122,7 +129,12 @@ These rules are *why* the migration converges. Hold them on every commit.
 2. **Registry dispatch.** Lowerer (semantic `Ops` → Program IR) and renderer (`POps` → C) each
    route through a table keyed by op, with one self-contained, individually-testable rule per op.
    This is the "easy to add on top" property — new ops and GPU backends later are new rules, not
-   edits to a monolith.
+   edits to a monolith. **Optimizations are the third leg:** Program-IR → Program-IR passes in
+   `passes.py`, registered in an ordered `PASS_PIPELINE` and run by `optimize_program` at the tail
+   of `lower_function`. Each pass is a pure `PROGRAM → PROGRAM` rewrite — a new optimization is a
+   new pass, not a special case threaded into the lowerer or renderer. (The legacy renderer baked
+   inlining/lifetime-packing into one 1200-line module; the migration splits these into discrete
+   passes so each is testable and composable, and so GPU schedule passes can slot in later.)
 3. **Green at every commit.** `uv run pytest -n=auto tests/` passes, and the benchmark correctness
    checks pass. The benchmark suite (`benchmarks/scalability_sweep.py`, tracking eq-Jac,
    unbumpercars ineq-Jac, safety filter) is a *regression guardrail*, not just a perf demo.
@@ -204,33 +216,62 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   parity (≤5%) and its LOC is constant in N. But three regressions surfaced (all expected from
   optimizations the migration deferred):
 
-- **Step 5b — Close the perf/scale gaps (REQUIRED before flipping; do in a follow-up session).**
-  1. **Workspace spilling — correctness at scale, not just perf.** Legacy lifetime-packs private
-     temporaries and spills slots ≥ 1024 doubles to `w[]` (`sz_w` 3154 / 6664 above). Program IR
-     stack-allocates *everything* (`sz_w=0`). At the top of the sweep this is fatal: unbumpercars
-     C=32 needs ~1.09M workspace doubles → ~8.7 MB of stack arrays → **segfault under the 8 MB
-     stack limit** (see `docs/scalability.md`). So Program IR cannot currently render the largest
-     cells at all. Port the legacy lifetime-analysis + slot-packing + spill-threshold logic
-     (`codegen/c.py::_compute_lifetimes` / `_pack_slots` / `_spill_plan`) into a Program IR pass
-     that coalesces `private` BUFFERs into shared slots and emits `double* tN = w + offset` +
-     a real `sz_w`. **This gates the merge regardless of the runtime gap.**
-  2. **Runtime ~22% slower on unbumpercars.** Legacy inlines elementwise ops into their consumers
-     (no intermediate buffer round-trips), fuses loops, and has a sparse-const matvec path. Program
-     IR materializes every op into its own buffer + loop. Add an elementwise **inlining / loop-fusion**
-     pass (and optionally the sparse-const matmul path) to close it. Tracking doesn't show the gap
-     because it's dominated by one MAP'd JVP callee.
-  3. **Source 2–4× larger** (no inlining/peephole/CSE). Still ~15–25× smaller than CasADi SX, so the
-     headline survives, but compile time rises; the inlining/fusion pass from (2) shrinks this too.
+- **Step 5b — Close the perf/scale gaps.** ✅ Done. Added `src/alloy/passes.py` — the optimization
+  leg (rule 2) — with an ordered `PASS_PIPELINE` run by `optimize_program` inside `lower_function`.
+  The legacy renderer's custom optimizations are ported as discrete, individually-tested passes
+  (`tests/alloy/test_passes.py`):
+  1. **Workspace spilling — `pack_workspace`.** Lifetime-packs `private` BUFFERs into shared slots
+     (greedy left-edge over statement order) and spills float64 slots ≥ 1024 doubles to the
+     caller's `w[]` (`double* sN = w + offset;`), with a real `sz_w = own_spill + max(callee sz_w)`.
+     Callee `_raw` functions now take a `double* w` tail and the caller passes `w + own_spill`.
+     Port of `codegen/c.py::_compute_lifetimes` / `_pack_slots` / `_spill_plan`. Measured `sz_w`
+     now **matches or beats** legacy (unbumpercars C=8: 6664 = 6664; tracking ms N=50: 3154 → 2100),
+     so the largest cells render with bounded stack — the segfault gate is closed.
+  2. **Runtime parity — `fuse_elementwise` + contiguous-slice aliasing.** `fuse_elementwise` inlines
+     single-use `private` elementwise/slice/gather producers (a single-`STORE` `FOR` whose store
+     index is the loop var) into their one consumer by substituting the producer's scalar RHS at the
+     load site, then drops the producer loop+buffer — collapsing chains into one loop and fusing
+     elementwise work into reductions. The recompute guard (`_max_load_executions ≤ producer_size`)
+     is what keeps a producer *out of* a matmul/contraction operand position (where each element is
+     read `m·n·k` times) — the critical correctness detail the legacy encodes by only inlining into
+     elementwise consumers. The dominant unbumpercars cost turned out to be a **contiguous slice of
+     the 35 k-element `p` input being copied every MAP call**; porting the legacy contiguous-slice /
+     reshape **pointer aliasing** (`const T* tN = src + offset;`, in the SLICE lowering rule + an
+     alias-aware `pack_workspace`) removed that copy. Result: unbumpercars **1.00–1.02×**, tracking
+     ms **1.01–1.03×** (was 1.22–1.25× / 1.03–1.05×).
+  3. **Source size.** Fusion cut the 2–4× blow-up to ~1.3–1.5× (tracking ms LOC is again *constant*
+     in N: 2483 → 649). The remaining growth at large N is the gather/scatter **index tables**
+     (`static const int64_t kN[...]`) that the legacy compacts via its tile-pattern peephole
+     (`_detect_tile` / `_gather_tile_pattern`) and gather-of-transposed-concat peephole
+     (`_gather_transposed_concat`). These are **source-size-only** (runtime is already at parity, the
+     tables are `static const`) and are left as a follow-up — see "remaining" below.
 
-  Also still to validate in this step: the **safety filter** benchmark cells (needs the MLP
-  checkpoint), and a re-run of the full `benchmarks/scalability_sweep.py` under the flag (it routes
-  through `render_c_module → render_c_source`, so `ALLOY_USE_PROGRAM_IR_C=1` drives it).
+  Also done: the ABI **header** `SZ_W` macro now agrees with the rendered source under the flag
+  (`_abi_workspace_size` routes to the Program IR `sz_w`), so `render_c_module` is sound for AOT /
+  benchmark consumers. The JIT now compiles to a process-unique temp `.so` then atomically renames,
+  closing a cold-cache parallel-build corruption window (orthogonal robustness fix).
 
-- **Step 5c — Flip default.** Once 5b closes the gaps, make Program IR the default (and only) CPU
-  renderer for non-solver host functions (solvers stay on `solver_c`/legacy — add an
-  `is_solver_function` guard rather than relying on fallback). Reconcile the two `test_map.py`
-  tests that assert legacy-renderer *source structure* (`static const int tile`/`idx`, constant
-  LOC) — the loop-shape property holds for Program IR, but the asserted text differs.
+  **Remaining (deferred, non-gating):** (a) gather index-table compaction (the two legacy gather
+  peepholes above) — purely source size at large N; (b) the sparse-const matvec path
+  (`_sparse_const`) — not needed, unbumpercars matmuls live in callees and are already at parity;
+  (c) re-running the **safety filter** sweep cells under the flag (blocked on an unrelated
+  pre-existing cold-cache JIT bug, below). None gate the merge.
+
+  **Pre-existing issue discovered (out of scope):** on a *cold* JIT cache, `test_solver_nesting`
+  fails with `undefined symbol: piqp_…` because the JIT cache key hashes only the C source, not the
+  link flags — so a `safety_filter` `.so` can get cached without `-lpiqpc`. Confirmed identical on
+  clean `HEAD` with no flag (clean HEAD fails *more*: 12 vs 7 on this branch, since the atomic-rename
+  fix helps). Flag-independent; touches the solver compile path (rule 5: no solver changes), so left
+  for a separate fix. Warm-cache runs (the normal dev/CI loop) are green: full suite **219 passed,
+  6 skipped** under the flag, and the migration self-cert (`test_program_migration.py`, 64) + pass
+  tests (`test_passes.py`, 9) are green.
+
+- **Step 5c — Flip default.** Make Program IR the default (and only) CPU renderer for non-solver host
+  functions (solvers stay on `solver_c`/legacy — add an `is_solver_function` guard rather than
+  relying on fallback). The two `test_map.py` source-structure assertions are already reconciled to
+  be renderer-agnostic (they passed under both renderers as of Step 5b). Fixing the pre-existing
+  cold-cache solver link-flag bug (above) is a prerequisite, since flipping makes every CI run
+  exercise cold-cache compilation of the solver oracles through Program IR.
 
 - **Step 6 — Delete legacy.** Remove `codegen/c.py`'s scalar renderer and the
   `program_c → legacy` fallback glue. Keep the interpreter/tape as the documented debug oracle
@@ -245,17 +286,21 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
 - Every function exercised by `tests/` and `benchmarks/` renders through Program IR as the **sole**
   CPU renderer — verified with the no-fallback strict mode in CI. ✅ (functional parity reached)
 - **Workspace spilling** lands so the largest sweep cells (tracking N=500, unbumpercars C=32)
-  render and run without overflowing the stack. ⛔ **open — Step 5b.1; gates the merge.**
+  render and run without overflowing the stack. ✅ — `pack_workspace` (Step 5b.1); `sz_w` matches
+  or beats legacy.
 - **No material runtime regression vs the legacy renderer** on the benchmark workloads (target:
-  within a few % — currently ~22% slower on unbumpercars). ⛔ **open — Step 5b.2.**
-- Source size does not regress materially (currently 2–4× larger than legacy). ⛔ **open — Step 5b.3.**
-- `codegen/c.py`'s legacy scalar renderer is deleted; no `ALLOY_USE_PROGRAM_IR_C` flag remains.
-- `solver_c.py` host-wrapper path retained; solver oracles lower through Program IR.
-- `uv run pytest -n=auto tests/`, `uv run ruff check`, `uv run ty check` all clean.
+  within a few %). ✅ — `fuse_elementwise` + contiguous-slice aliasing (Step 5b.2); unbumpercars
+  1.00–1.02×, tracking ms 1.01–1.03×.
+- Source size does not regress materially. ✅ — fusion cut the blow-up to ~1.3–1.5× (tracking ms LOC
+  constant in N); gather index-table compaction is a deferred source-size-only follow-up.
+- `codegen/c.py`'s legacy scalar renderer is deleted; no `ALLOY_USE_PROGRAM_IR_C` flag remains. ⛔ Step 6.
+- `solver_c.py` host-wrapper path retained; solver oracles lower through Program IR. ✅
+- `uv run pytest -n=auto tests/`, `uv run ruff check`, `uv run ty check` all clean. ✅ (warm cache;
+  see the pre-existing cold-cache solver link-flag bug noted under Step 5b — flag-independent).
 
-**Feature *and* performance parity is primordial.** The functional half is done and bit-identical;
-the Step 5b perf/scale gaps (workspace spilling first, then inlining/fusion) must close before the
-default flips and the branch merges.
+**Feature *and* performance parity is primordial.** Both halves are now done: the functional half is
+bit-identical and the Step 5b perf/scale gaps are closed. What remains before merge is mechanical —
+flip the default (5c) and delete the legacy renderer (6).
 
 Explicitly **out of scope** for this merge (and tracked for follow-up PRs from the reference
 branch): OpenCL, GPU renderers, a tinygrad-style general range scheduler, full einsum, new

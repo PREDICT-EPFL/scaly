@@ -30,6 +30,22 @@ class CModule:
 _WORKSPACE_SPILL_THRESHOLD = 1024  # doubles; slots this large or bigger move from the stack to w[].
 
 
+def _abi_workspace_size(fun: Function) -> int:
+  """Workspace size for the ABI header's ``SZ_W`` macro. Mirrors ``render_c_source``'s renderer
+  selection so the header agrees with the emitted source: under ``ALLOY_USE_PROGRAM_IR_C`` (host
+  functions) it reports the Program IR renderer's ``sz_w``, otherwise the legacy tape packing."""
+  from alloy.codegen.program_c import program_ir_allow_fallback, program_ir_sz_w, use_program_ir_renderer
+  from alloy.lowering import LoweringError
+
+  if use_program_ir_renderer() and fun.device.kind == "host":
+    try:
+      return program_ir_sz_w(fun)
+    except LoweringError:
+      if not program_ir_allow_fallback():
+        raise
+  return _workspace_size(fun)
+
+
 def _c_array(values: tuple[int, ...]) -> str:
   return "{" + ", ".join(str(v) for v in values) + "}"
 
@@ -112,7 +128,7 @@ def render_c_api_header(fun: Function, *, typed_buffers: bool = True) -> str:
     f"#define {symbol}_SZ_ARG {len(fun.inputs)}",
     f"#define {symbol}_SZ_RES {len(fun.outputs)}",
     f"#define {symbol}_SZ_IW 0",
-    f"#define {symbol}_SZ_W {_workspace_size(fun)}",
+    f"#define {symbol}_SZ_W {_abi_workspace_size(fun)}",
     "",
     f"// Universal CasADi-style ABI for {fun.name}.",
     "#ifdef __cplusplus",

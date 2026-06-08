@@ -26,8 +26,9 @@ from . import program as p
 from .expr import Expr, topo
 from .function import Function
 from .ops import Ops
+from .passes import optimize_program
 from .program import PNode, POps, RangeKind, verify_program
-from .types import DType, dtypes
+from .types import DeviceSpec, DType, dtypes
 
 
 class LoweringError(NotImplementedError):
@@ -93,6 +94,7 @@ def lower_function(fun: Function) -> PNode:
   callees: dict[str, PNode] = {}
   root = _lower_to_proc(fun, callees)
   prog = p.program([*callees.values(), root])
+  prog = optimize_program(prog)  # fusion + workspace packing (see passes.py)
   verify_program(prog)
   return prog
 
@@ -208,6 +210,30 @@ class LowerCtx:
       return self.buffers[alias]
     buf = self.new_private(expr.type.dtype, expr.shape)
     self.value_buffers[expr.id] = buf.attrs["name"]
+    return buf
+
+  def new_alias(self, dtype: DType, shape: tuple[int, ...], src_name: str, offset: int) -> PNode:
+    """A zero-copy private BUFFER that aliases ``src_name`` at a flat ``offset`` (rendered
+    ``const T* tN = <src> + offset;``). Carries ``alias_of`` / ``alias_offset`` so the workspace
+    pass leaves it unpacked and keeps its source live. Port of ``codegen/c.py``'s contiguous
+    SLICE / RESHAPE pointer aliasing."""
+    name = f"t{self._tmp}"
+    self._tmp += 1
+    buf = PNode(
+      POps.BUFFER,
+      (),
+      attrs={
+        "name": name,
+        "shape": _shape_or_scalar(shape),
+        "address_space": "private",
+        "device": DeviceSpec.parse(None),
+        "alias_of": src_name,
+        "alias_offset": int(offset),
+      },
+      dtype=dtype,
+    )
+    self.buffers[name] = buf
+    self.statements.append(buf)
     return buf
 
   def new_const_index(self, idx: Iterable[int]) -> PNode:
@@ -327,14 +353,55 @@ def _lower_const(ctx: LowerCtx, node: Expr) -> None:
   ctx.statements.append(buf)
 
 
+def _contiguous_slice_offset(index: tuple[object, ...], in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> int | None:
+  """If the slice selects a contiguous sub-block of ``src`` at a constant flat offset (no stride,
+  at most one partial leading slice with full trailing dims), return that offset; else None. Port
+  of ``codegen/c.py::_contiguous_slice_offset`` — the precondition for pointer aliasing."""
+  if not out_shape:
+    offset = 0
+    for dim, item in enumerate(index):
+      if not isinstance(item, int):
+        return None
+      offset += (item if item >= 0 else in_shape[dim] + item) * _stride(in_shape, dim)
+    return offset
+  first_slice = None
+  offset = 0
+  out_dim = 0
+  for dim, item in enumerate(index):
+    stride = _stride(in_shape, dim)
+    if isinstance(item, int):
+      if first_slice is not None and in_shape[dim] != 1:
+        return None
+      offset += (item if item >= 0 else in_shape[dim] + item) * stride
+      continue
+    assert isinstance(item, slice)
+    start, stop, step = item.indices(int(in_shape[dim]))
+    if step != 1:
+      return None
+    if first_slice is None:
+      first_slice = dim
+      offset += start * stride
+      out_dim += 1
+      continue
+    if start != 0 or stop != int(in_shape[dim]) or out_shape[out_dim] != int(in_shape[dim]):
+      return None
+    out_dim += 1
+  return offset
+
+
 @lowers(Ops.SLICE)
 def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
-  """General SLICE: integer indices drop a dim, slices keep one. Each output element
-  reads its source via flat-index arithmetic built from the (full-rank, normalized)
-  index spec. Covers rank-1, multi-dim, integer, and strided slices."""
+  """General SLICE: integer indices drop a dim, slices keep one. A contiguous slice (constant
+  flat offset, no stride) becomes a zero-copy pointer alias of its source; otherwise each output
+  element reads the source via flat-index arithmetic. Covers rank-1, multi-dim, integer, strided."""
   src = node.args[0]
   src_shape = src.shape
   index = node.attrs["index"]
+  # Contiguous + not an output: alias the source pointer instead of copying (legacy parity).
+  if node.id not in ctx._output_alias and (offset := _contiguous_slice_offset(index, src_shape, node.shape)) is not None:
+    alias = ctx.new_alias(node.type.dtype, node.shape, ctx.value_buffers[src.id], offset)
+    ctx.value_buffers[node.id] = alias.attrs["name"]
+    return
   out = ctx.alloc_tmp(node)
   vname = f"i_{out.attrs['name']}"
   rng = p.range_(vname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)

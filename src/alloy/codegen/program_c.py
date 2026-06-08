@@ -92,6 +92,13 @@ def can_render_program_c(fun: Function) -> bool:
   return True
 
 
+def program_ir_sz_w(fun: Function) -> int:
+  """The scalar workspace size (doubles) the Program IR renderer needs for ``fun`` — i.e. what its
+  ``<symbol>_sz_w`` would return. Used so the ABI header agrees with the rendered source under the
+  flag (the JIT reads the runtime helper directly; AOT consumers read the header macro)."""
+  return int(main_proc(lower_function(fun)).attrs.get("sz_w", 0))
+
+
 def render_program_c_source(fun: Function) -> str:
   prog = lower_function(fun)
   proc = main_proc(prog)
@@ -100,6 +107,7 @@ def render_program_c_source(fun: Function) -> str:
   symbol = _c_ident(fun.name)  # must match jit.CompiledFunction's _c_ident(fun.name)
   param_count = int(proc.attrs["param_count"])
   body = list(proc.args[param_count:])
+  sz_w = int(proc.attrs.get("sz_w", 0))  # set by the workspace-packing pass (passes.py)
 
   # Buffer name -> C pointer expression for the ABI entry (inputs are arg[i], outputs res[i]).
   ptr_expr: dict[str, str] = {}
@@ -127,22 +135,25 @@ def render_program_c_source(fun: Function) -> str:
     f"int {symbol}_sz_arg(void) {{ return {len(fun.inputs)}; }}",
     f"int {symbol}_sz_res(void) {{ return {len(fun.outputs)}; }}",
     f"int {symbol}_sz_iw(void) {{ return 0; }}",
-    f"int {symbol}_sz_w(void) {{ return 0; }}",
+    f"int {symbol}_sz_w(void) {{ return {sz_w}; }}",
     f"void* {symbol}_alloc_mem(void) {{ return NULL; }}",
     f"int {symbol}_init_mem(void* mem) {{ (void)mem; return ALLOY_SUCCESS; }}",
     f"void {symbol}_free_mem(void* mem) {{ (void)mem; }}",
     "",
     c_api_signature(symbol) + " {",
     "  (void)iw;",
-    "  (void)w;",
     "  (void)mem;",
     "  if (!arg || !res) return ALLOY_ERR_NULL_ABI;",
   ]
+  if sz_w:
+    lines.append("  if (!w) return ALLOY_ERR_NULL_WORK;")
+  else:
+    lines.append("  (void)w;")
   for i in range(len(fun.inputs)):
     lines.append(f"  if (!arg[{i}]) return ALLOY_ERR_NULL_INPUT;")
   for i in range(len(fun.outputs)):
     lines.append(f"  if (!res[{i}]) return ALLOY_ERR_NULL_RESULT;")
-  _emit_local_buffers(body, lines, indent=2)
+  _emit_local_buffers(body, lines, ptr_expr, indent=2)
   for stmt in body:
     if stmt.op == POps.BUFFER:
       continue
@@ -152,14 +163,19 @@ def render_program_c_source(fun: Function) -> str:
 
 
 def _render_raw_callee(proc: PNode) -> list[str]:
-  """A callee renders as ``static inline void <name>_raw(<dtype>* p0, ...)`` — pointer per param, no ABI wrapper."""
+  """A callee renders as ``static inline void <name>_raw(<dtype>* p0, ..., double* w)`` — a
+  pointer per param plus the workspace tail (spilled slots index into ``w``; ``call`` sites pass
+  the caller's ``w`` advanced past its own spill window). No ABI wrapper."""
   param_count = int(proc.attrs["param_count"])
   params = list(proc.args[:param_count])
   body = list(proc.args[param_count:])
+  sz_w = int(proc.attrs.get("sz_w", 0))
   ptr_expr = {pp.attrs["name"]: _c_ident(pp.attrs["name"]) for pp in params}
-  param_decls = ", ".join(f"{pp.dtype.c_type}* {_c_ident(pp.attrs['name'])}" for pp in params)
+  param_decls = ", ".join([*(f"{pp.dtype.c_type}* {_c_ident(pp.attrs['name'])}" for pp in params), "double* w"])
   out = [f"static inline void {_c_ident(proc.attrs['name'])}_raw({param_decls}) {{"]
-  _emit_local_buffers(body, out, indent=2)
+  if not sz_w:
+    out.append("  (void)w;")
+  _emit_local_buffers(body, out, ptr_expr, indent=2)
   for stmt in body:
     if stmt.op == POps.BUFFER:
       continue
@@ -168,7 +184,7 @@ def _render_raw_callee(proc: PNode) -> list[str]:
   return out
 
 
-def _emit_local_buffers(body: list[PNode], lines: list[str], indent: int) -> None:
+def _emit_local_buffers(body: list[PNode], lines: list[str], ptr_expr: dict[str, str], indent: int) -> None:
   pad = " " * indent
   seen: set[str] = set()
   for stmt in body:
@@ -184,6 +200,15 @@ def _emit_local_buffers(body: list[PNode], lines: list[str], indent: int) -> Non
       fmt = (lambda v: str(int(v))) if stmt.dtype.is_integer else _c_float
       values = ", ".join(fmt(v) for v in stmt.attrs["values"])
       lines.append(f"{pad}static const {stmt.dtype.c_type} {name}[{size}] = {{{values}}};")
+    elif "alias_of" in stmt.attrs:
+      # Zero-copy alias: a pointer into another buffer (contiguous slice / reshape).
+      src = ptr_expr.get(stmt.attrs["alias_of"], _c_ident(stmt.attrs["alias_of"]))
+      offset = int(stmt.attrs["alias_offset"])
+      rhs = src if offset == 0 else f"{src} + {offset}"
+      lines.append(f"{pad}const {stmt.dtype.c_type}* {name} = {rhs};")
+    elif "workspace_offset" in stmt.attrs:
+      # A spilled slot: a window into the caller-provided w[] instead of a stack array.
+      lines.append(f"{pad}{stmt.dtype.c_type}* {name} = w + {stmt.attrs['workspace_offset']};")
     else:
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
 
@@ -209,10 +234,15 @@ def _emit_statement(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], ind
     if stmt.attrs.get("external"):
       raise LoweringError("external (mixed-device) CALL rendering is deferred to a later migration step")
     n_in, n_out = int(stmt.attrs["n_in"]), int(stmt.attrs["n_out"])
-    in_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in stmt.args[:n_in])
-    out_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in stmt.args[n_in : n_in + n_out])
-    sep = ", " if in_ptrs and out_ptrs else ""
-    lines.append(f"{pad}{_c_ident(stmt.attrs['callee'])}_raw({in_ptrs}{sep}{out_ptrs});")
+    ptrs = [_emit_call_arg(a, ptr_expr) for a in stmt.args[: n_in + n_out]]
+    # Workspace tail: a callee needing its own w[] gets this proc's w advanced past its spill
+    # window; one needing none gets NULL. Set by the workspace pass; absent => no spill anywhere.
+    if stmt.attrs.get("callee_needs_w"):
+      offset = int(stmt.attrs.get("w_self", 0))
+      ptrs.append("w" if offset == 0 else f"w + {offset}")
+    else:
+      ptrs.append("NULL")
+    lines.append(f"{pad}{_c_ident(stmt.attrs['callee'])}_raw({', '.join(ptrs)});")
   else:
     raise LoweringError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
 
@@ -270,6 +300,7 @@ def _emit_scalar(n: PNode, ptr_expr: dict[str, str]) -> str:
 __all__ = [
   "can_render_program_c",
   "program_ir_allow_fallback",
+  "program_ir_sz_w",
   "render_program_c_source",
   "use_program_ir_renderer",
 ]

@@ -138,11 +138,16 @@ def _build_artifact(fun: Function) -> _Artifact:
     tmp_source.write_text(source)
     tmp_source.replace(source_path)
     extra_flags = solver_compile_flags(fun)
-    cmd = [cc, "-O2", "-fPIC", _shared_lib_flag(), *extra_flags, str(source_path), "-lm", "-o", str(lib_path)]
+    # Compile to a process-unique temp lib then atomically rename, so concurrent builds of the same
+    # function (e.g. pytest-xdist workers on a cold cache) never observe a half-written .so.
+    tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.tmp")
+    cmd = [cc, "-O2", "-fPIC", _shared_lib_flag(), *extra_flags, str(source_path), "-lm", "-o", str(tmp_lib)]
     try:
       subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
+      tmp_lib.unlink(missing_ok=True)
       raise JitError(f"failed to compile {fun.name!r}: {exc.stderr or exc.stdout}") from exc
+    tmp_lib.replace(lib_path)
 
   artifact = _Artifact(lib_path=lib_path, key=key)
   with _artifact_lock:
