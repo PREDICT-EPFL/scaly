@@ -356,6 +356,7 @@ def test_uncovered_case_raises_loudly_and_fallback_is_opt_in(monkeypatch) -> Non
 
   # Selected + strict (default): the LoweringError propagates, no silent fallback.
   monkeypatch.setenv("ALLOY_USE_PROGRAM_IR_C", "1")
+  monkeypatch.delenv("ALLOY_PROGRAM_IR_FALLBACK", raising=False)  # ignore any ambient opt-in
   with pytest.raises(LoweringError):
     render_c_source(fn)
 
