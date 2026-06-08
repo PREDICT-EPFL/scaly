@@ -72,9 +72,23 @@ class POps(StrEnum):
   NEG = "neg"
   SIN = "sin"
   COS = "cos"
+  TAN = "tan"
+  ASIN = "asin"
+  ACOS = "acos"
+  ATAN = "atan"
+  SINH = "sinh"
+  COSH = "cosh"
+  TANH = "tanh"
   EXP = "exp"
   LOG = "log"
   SQRT = "sqrt"
+  ABS = "abs"
+  FLOOR = "floor"
+  CEIL = "ceil"
+  POW = "pow"
+  ATAN2 = "atan2"
+  MINIMUM = "minimum"
+  MAXIMUM = "maximum"
 
 
 class RangeKind(StrEnum):
@@ -113,11 +127,49 @@ SCALAR_OPS: frozenset[POps] = frozenset(
     POps.NEG,
     POps.SIN,
     POps.COS,
+    POps.TAN,
+    POps.ASIN,
+    POps.ACOS,
+    POps.ATAN,
+    POps.SINH,
+    POps.COSH,
+    POps.TANH,
     POps.EXP,
     POps.LOG,
     POps.SQRT,
+    POps.ABS,
+    POps.FLOOR,
+    POps.CEIL,
+    POps.POW,
+    POps.ATAN2,
+    POps.MINIMUM,
+    POps.MAXIMUM,
   }
 )
+
+
+# Scalar unary/binary POps that render as a C function call (libm), keyed for the
+# pretty-printer and the C renderer. NEG/ADD/SUB/MUL/DIV/MOD render as operators.
+UNARY_FN_OPS: frozenset[POps] = frozenset(
+  {
+    POps.SIN,
+    POps.COS,
+    POps.TAN,
+    POps.ASIN,
+    POps.ACOS,
+    POps.ATAN,
+    POps.SINH,
+    POps.COSH,
+    POps.TANH,
+    POps.EXP,
+    POps.LOG,
+    POps.SQRT,
+    POps.ABS,
+    POps.FLOOR,
+    POps.CEIL,
+  }
+)
+BINARY_FN_OPS: frozenset[POps] = frozenset({POps.POW, POps.ATAN2, POps.MINIMUM, POps.MAXIMUM})
 
 
 HOST_ONLY_OPS: frozenset[POps] = frozenset({POps.LAUNCH})
@@ -677,8 +729,10 @@ def _format_scalar(n: PNode) -> str:
     return f"({_format_scalar(n.args[0])} {sym} {_format_scalar(n.args[1])})"
   if n.op == POps.NEG:
     return f"(-{_format_scalar(n.args[0])})"
-  if n.op in (POps.SIN, POps.COS, POps.EXP, POps.LOG, POps.SQRT):
+  if n.op in UNARY_FN_OPS:
     return f"{n.op.value}({_format_scalar(n.args[0])})"
+  if n.op in BINARY_FN_OPS:
+    return f"{n.op.value}({_format_scalar(n.args[0])}, {_format_scalar(n.args[1])})"
   return f"<{n.op.value}>"
 
 
@@ -690,8 +744,10 @@ def _format_scalar_or_view(n: PNode) -> str:
 
 __all__ = [
   "ADDRESS_SPACES",
+  "BINARY_FN_OPS",
   "DEVICE_ONLY_OPS",
   "HOST_ONLY_OPS",
+  "UNARY_FN_OPS",
   "PNode",
   "POps",
   "PRule",

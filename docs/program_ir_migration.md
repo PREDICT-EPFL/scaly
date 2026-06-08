@@ -137,10 +137,17 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
 - **Step 0 — Foundations.** ✅ Done. dtype/device model, verifier, Program IR vocabulary +
   verifier + printer harvested; suite green (155 passed, 6 skipped).
 
-- **Step 1 — Lowerer + renderer skeleton.** Stand up `lowering.py` and `codegen/program_c.py`
-  fresh with **registry dispatch** and a strict no-fallback mode (scaffolding). Cover the trivial
-  ops end-to-end as sole path on a tiny corpus: elementwise unary/binary, `RESHAPE`, small `CONST`,
-  scalar inputs/outputs. Add a source/numerical equivalence harness vs the interpreter oracle.
+- **Step 1 — Lowerer + renderer skeleton.** ✅ Done. `lowering.py` (registry dispatch via
+  `@lowers(...)`, keyed by semantic `Ops`) + `codegen/program_c.py` (compact per-op maps; emits the
+  full universal-ABI TU so `jit.CompiledFunction` dispatches it unchanged). Covered as sole path:
+  all elementwise unary/binary with identical operand shapes, `RESHAPE` (alias), small `CONST`.
+  Selection is opt-in via `ALLOY_USE_PROGRAM_IR_C=1` and **strict** — an uncovered op raises
+  `LoweringError` (no silent fallback) unless the explicit escape hatch `ALLOY_PROGRAM_IR_FALLBACK=1`
+  is set. `tests/alloy/test_program_migration.py` is the self-certifying harness: it renders the
+  Program IR source directly (loud on gaps), confirms `render_c_source` selects that exact source
+  under the flag, and matches the interpreter oracle. Temporaries are stack-local arrays (`sz_w=0`);
+  workspace packing is deferred. Not yet covered (raise loudly): broadcasting, `SLICE`, large
+  `CONST`, `SUM`, `MATMUL`, `TRANSPOSE`, `GATHER`/`SCATTER`, `STACK`/`CONCAT`, `CALL`/`MAP`.
 
 - **Step 2 — The day-one blockers.** Generalize `SLICE` (integer index, multi-dim, strided) and
   add a `CONST_BUFFER` Program IR op for large constants. **Exit:** the *forward* tracking and

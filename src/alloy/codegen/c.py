@@ -160,7 +160,22 @@ def render_c_api_header(fun: Function, *, typed_buffers: bool = True) -> str:
 
 
 def render_c_source(fun: Function) -> str:
-  """Render a standalone scalar C implementation of ``fun`` and its callees."""
+  """Render a standalone scalar C implementation of ``fun`` and its callees.
+
+  When ``ALLOY_USE_PROGRAM_IR_C=1`` and ``fun`` is host-placed, rendering routes
+  through the Program-IR renderer. Selection is strict — a ``LoweringError`` for an
+  uncovered op propagates (no silent fallback) unless ``ALLOY_PROGRAM_IR_FALLBACK=1``
+  is set. See docs/program_ir_migration.md.
+  """
+  from alloy.codegen.program_c import program_ir_allow_fallback, render_program_c_source, use_program_ir_renderer
+  from alloy.lowering import LoweringError
+
+  if use_program_ir_renderer() and fun.device.kind == "host":
+    try:
+      return render_program_c_source(fun)
+    except LoweringError:
+      if not program_ir_allow_fallback():
+        raise
 
   extra_includes = solver_includes(fun)
   lines = [
