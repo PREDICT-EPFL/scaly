@@ -14,11 +14,16 @@
 > | unbumpercars spjac C=2 | 1.25× | **1.00×** | 0 → 0 |
 > | unbumpercars spjac C=8 | 1.22× | **0.98×** | 6664 → 6664 |
 >
+> **Update (Step 5c done):** Program IR is now the **default** CPU renderer for host functions with
+> no solver in their call graph; solver-bearing functions stay on `solver_c`/legacy via a guard. The
+> full suite is green on a cold cache in parallel (228 passed). A pre-existing cold-cache solver
+> link-order bug surfaced and was fixed (libs now follow the source object). Remaining: delete the
+> legacy scalar renderer (Step 6) and merge (Step 7).
+>
 > **Goal:** make the semantic-IR → Program-IR → backend-renderer architecture the *sole* CPU
 > compilation path, at full **feature *and* performance** parity with `main`, with the legacy
 > tape-based C renderer removed — **without** introducing new ops, GPU renderers, or solver changes
-> along the way. With 5b closed, the remaining work is flipping the default (5c) and deleting the
-> legacy renderer (6) — no parity gates remain open.
+> along the way. No parity gates remain open.
 
 This document is the north star for the migration. It records *why* we restarted from `main`
 instead of finishing the previous attempt, *what* we harvested, *what* we deliberately deferred
@@ -266,12 +271,21 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   6 skipped** under the flag, and the migration self-cert (`test_program_migration.py`, 64) + pass
   tests (`test_passes.py`, 9) are green.
 
-- **Step 5c — Flip default.** Make Program IR the default (and only) CPU renderer for non-solver host
-  functions (solvers stay on `solver_c`/legacy — add an `is_solver_function` guard rather than
-  relying on fallback). The two `test_map.py` source-structure assertions are already reconciled to
-  be renderer-agnostic (they passed under both renderers as of Step 5b). Fixing the pre-existing
-  cold-cache solver link-flag bug (above) is a prerequisite, since flipping makes every CI run
-  exercise cold-cache compilation of the solver oracles through Program IR.
+- **Step 5c — Flip default.** ✅ Done. `use_program_ir_renderer()` now defaults to true; Program IR
+  is the CPU renderer for any host function with **no solver in its call graph**. The routing guard
+  `_renders_through_program_ir` = `host AND not _uses_solver(fun)`, where `_uses_solver` uses
+  `uses_piqp`/`uses_ipopt` (which traverse callees *and* `SOLVER_CALL` nodes — `_function_order`
+  does not, so a plain function that merely *calls* a solver is correctly kept on legacy/`solver_c`).
+  `ALLOY_USE_PROGRAM_IR_C=0` is a transitional escape hatch to force the legacy renderer (removed in
+  Step 6). The two `test_map.py` source-structure asserts were already reconciled in 5b.
+
+  **Fixed the cold-cache solver bug here (it was a link-order bug, not a flag bug).** Root cause:
+  Linux `ld` defaults to `--as-needed`, and the JIT compile command placed `-lpiqpc`/`-lipopt`
+  (from `solver_compile_flags`) *before* the source object — so the linker dropped the library (no
+  `DT_NEEDED`) and the `.so` failed to `dlopen` with `undefined symbol: piqp_…`. Reordered the
+  command to put link libraries after the source (`jit.py`). With this, the full suite is green on a
+  **cold cache, in parallel** (`228 passed, 6 skipped`), with solvers actually JIT-compiling (they
+  previously masked the bug by silently falling back to the interpreter under strict mode).
 
 - **Step 6 — Delete legacy.** Remove `codegen/c.py`'s scalar renderer and the
   `program_c → legacy` fallback glue. Keep the interpreter/tape as the documented debug oracle

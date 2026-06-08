@@ -13,6 +13,8 @@ from alloy.codegen.solver_c import (
   render_solver_raw,
   solver_callees,
   solver_includes,
+  uses_ipopt,
+  uses_piqp,
 )
 from alloy.function import Function
 from alloy.ops import Ops
@@ -30,14 +32,32 @@ class CModule:
 _WORKSPACE_SPILL_THRESHOLD = 1024  # doubles; slots this large or bigger move from the stack to w[].
 
 
+def _renders_through_program_ir(fun: Function) -> bool:
+  """Whether ``fun`` routes through the Program IR renderer: a host function with no solver
+  anywhere in its call graph. Solver-bearing functions (the wrapper *or* anything that calls one)
+  stay on the legacy/``solver_c`` path — the ``SOLVER_CALL`` op is deliberately not lowered, so
+  guarding here is cleaner and more deterministic than relying on a ``LoweringError`` fallback."""
+  from alloy.codegen.program_c import use_program_ir_renderer
+
+  return use_program_ir_renderer() and fun.device.kind == "host" and not _uses_solver(fun)
+
+
+def _uses_solver(fun: Function) -> bool:
+  """True if ``fun`` is a solver or reaches a ``SOLVER_CALL`` anywhere in its graph (so a plain
+  function that *calls* a solver also stays on the legacy/``solver_c`` path — PIR doesn't lower
+  ``SOLVER_CALL``). ``uses_piqp``/``uses_ipopt`` traverse callees and ``SOLVER_CALL`` nodes, which
+  ``_function_order`` does not."""
+  return is_solver_function(fun) or uses_piqp(fun) or uses_ipopt(fun)
+
+
 def _abi_workspace_size(fun: Function) -> int:
   """Workspace size for the ABI header's ``SZ_W`` macro. Mirrors ``render_c_source``'s renderer
-  selection so the header agrees with the emitted source: under ``ALLOY_USE_PROGRAM_IR_C`` (host
-  functions) it reports the Program IR renderer's ``sz_w``, otherwise the legacy tape packing."""
-  from alloy.codegen.program_c import program_ir_allow_fallback, program_ir_sz_w, use_program_ir_renderer
+  selection so the header agrees with the emitted source: a Program-IR-rendered function reports
+  the renderer's ``sz_w``, a legacy/solver one the legacy tape packing."""
+  from alloy.codegen.program_c import program_ir_allow_fallback, program_ir_sz_w
   from alloy.lowering import LoweringError
 
-  if use_program_ir_renderer() and fun.device.kind == "host":
+  if _renders_through_program_ir(fun):
     try:
       return program_ir_sz_w(fun)
     except LoweringError:
@@ -178,15 +198,16 @@ def render_c_api_header(fun: Function, *, typed_buffers: bool = True) -> str:
 def render_c_source(fun: Function) -> str:
   """Render a standalone scalar C implementation of ``fun`` and its callees.
 
-  When ``ALLOY_USE_PROGRAM_IR_C=1`` and ``fun`` is host-placed, rendering routes
-  through the Program-IR renderer. Selection is strict — a ``LoweringError`` for an
-  uncovered op propagates (no silent fallback) unless ``ALLOY_PROGRAM_IR_FALLBACK=1``
-  is set. See docs/program_ir_migration.md.
+  Program IR is now the **default** CPU renderer for host functions with no solver in their call
+  graph (Step 5c). Solver-bearing and non-host functions stay on this legacy/``solver_c`` path.
+  Set ``ALLOY_USE_PROGRAM_IR_C=0`` to force the legacy renderer everywhere (transitional escape
+  hatch). A ``LoweringError`` for a still-deferred op (e.g. mixed-device CALL) propagates unless
+  ``ALLOY_PROGRAM_IR_FALLBACK=1`` is set. See docs/program_ir_migration.md.
   """
-  from alloy.codegen.program_c import program_ir_allow_fallback, render_program_c_source, use_program_ir_renderer
+  from alloy.codegen.program_c import program_ir_allow_fallback, render_program_c_source
   from alloy.lowering import LoweringError
 
-  if use_program_ir_renderer() and fun.device.kind == "host":
+  if _renders_through_program_ir(fun):
     try:
       return render_program_c_source(fun)
     except LoweringError:

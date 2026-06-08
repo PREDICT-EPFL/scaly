@@ -141,7 +141,10 @@ def _build_artifact(fun: Function) -> _Artifact:
     # Compile to a process-unique temp lib then atomically rename, so concurrent builds of the same
     # function (e.g. pytest-xdist workers on a cold cache) never observe a half-written .so.
     tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.tmp")
-    cmd = [cc, "-O2", "-fPIC", _shared_lib_flag(), *extra_flags, str(source_path), "-lm", "-o", str(tmp_lib)]
+    # Link libraries (-l in extra_flags) MUST come after the source: ld defaults to --as-needed on
+    # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
+    # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
+    cmd = [cc, "-O2", "-fPIC", _shared_lib_flag(), str(source_path), *extra_flags, "-lm", "-o", str(tmp_lib)]
     try:
       subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:

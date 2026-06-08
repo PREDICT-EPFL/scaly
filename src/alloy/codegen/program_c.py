@@ -71,12 +71,16 @@ _BINARY_C = {POps.POW: "pow", POps.ATAN2: "atan2", POps.MINIMUM: "fmin", POps.MA
 
 
 def use_program_ir_renderer() -> bool:
-  return os.environ.get("ALLOY_USE_PROGRAM_IR_C") == "1"
+  """Program IR is the default CPU renderer (Step 5c). ``ALLOY_USE_PROGRAM_IR_C=0`` forces the
+  legacy renderer everywhere — a transitional escape hatch removed when the legacy renderer is
+  deleted (Step 6)."""
+  return os.environ.get("ALLOY_USE_PROGRAM_IR_C", "1") != "0"
 
 
 def program_ir_allow_fallback() -> bool:
-  """When the Program IR renderer is selected, allow silent fallback to the legacy
-  renderer on ``LoweringError``. Off by default — selection is otherwise strict."""
+  """When the Program IR renderer is selected, allow silent fallback to the legacy renderer on a
+  ``LoweringError`` (a still-deferred op such as mixed-device CALL). Off by default — selection is
+  strict, so a coverage gap is loud. Removed with the legacy renderer (Step 6)."""
   return os.environ.get("ALLOY_PROGRAM_IR_FALLBACK") == "1"
 
 
