@@ -305,24 +305,21 @@ _CORPUS = [
 
 
 @pytest.mark.parametrize("builder, inputs", _CORPUS, ids=[b.__name__ for b, _ in _CORPUS])
-def test_covered_function_renders_through_program_ir(builder, inputs, monkeypatch) -> None:
+def test_covered_function_renders_through_program_ir(builder, inputs) -> None:
   fn = builder()
   # Loud coverage gate: raises LoweringError if any op/case is not covered yet.
   src = render_program_c_source(fn)
   assert can_render_program_c(fn)
-  # Under the flag, the public renderer must select exactly this Program IR source
-  # (proves no silent fallback to the legacy renderer).
-  monkeypatch.setenv("ALLOY_USE_PROGRAM_IR_C", "1")
+  # The public renderer is Program IR (the sole CPU path), so it must select exactly this source.
   assert render_c_source(fn) == src
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 @pytest.mark.parametrize("builder, inputs", _CORPUS, ids=[b.__name__ for b, _ in _CORPUS])
-def test_program_ir_matches_interpreter(builder, inputs, monkeypatch) -> None:
+def test_program_ir_matches_interpreter(builder, inputs) -> None:
   fn = builder()
-  # Gate first so a coverage gap errors here rather than silently falling back.
+  # Gate first so a coverage gap errors here loudly (there is no fallback).
   render_program_c_source(fn)
-  monkeypatch.setenv("ALLOY_USE_PROGRAM_IR_C", "1")
   fn.recompile()
   got = fn(*inputs)
   ref = fn.eval_interpreter(*inputs)
@@ -337,9 +334,10 @@ def test_lowered_program_verifies_and_has_single_proc() -> None:
   assert main_proc(prog).op == POps.PROC
 
 
-def test_uncovered_case_raises_loudly_and_fallback_is_opt_in(monkeypatch) -> None:
+def test_uncovered_case_raises_loudly() -> None:
   # A host function calling a device-placed callee: mixed-device lowering is deferred
-  # for the whole CPU-parity migration, so this stays a coverage gap across steps.
+  # (a host->GPU call is meaningless on a CPU build). With the legacy renderer deleted there is
+  # no fallback — both the Program-IR renderer and the public entry raise loudly.
   @al.function("pm_inner_dev", {"a": 3})
   def inner(a):
     return a.sin()
@@ -353,16 +351,8 @@ def test_uncovered_case_raises_loudly_and_fallback_is_opt_in(monkeypatch) -> Non
 
   with pytest.raises(LoweringError):
     render_program_c_source(fn)
-
-  # Selected + strict (default): the LoweringError propagates, no silent fallback.
-  monkeypatch.setenv("ALLOY_USE_PROGRAM_IR_C", "1")
-  monkeypatch.delenv("ALLOY_PROGRAM_IR_FALLBACK", raising=False)  # ignore any ambient opt-in
   with pytest.raises(LoweringError):
     render_c_source(fn)
-
-  # Explicit escape hatch: fall back to the legacy renderer instead of raising.
-  monkeypatch.setenv("ALLOY_PROGRAM_IR_FALLBACK", "1")
-  assert "pm_outer_mix" in render_c_source(fn)
 
 
 def _import_sibling(name):
@@ -378,7 +368,7 @@ def _import_sibling(name):
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 @pytest.mark.parametrize("kind", ["forward", "jacobian", "sparse_jacobian"])
-def test_tracking_workload_renders_and_matches(kind, monkeypatch) -> None:
+def test_tracking_workload_renders_and_matches(kind) -> None:
   pytest.importorskip("casadi")  # the fixture module needs CasADi at import
   tw = _import_sibling("test_tracking_workload")
   base = tw.tracking_eq_function(3)
@@ -390,7 +380,6 @@ def test_tracking_workload_renders_and_matches(kind, monkeypatch) -> None:
   render_program_c_source(fn)  # loud: must render through Program IR
   assert can_render_program_c(fn)
   inputs = [np.random.default_rng(0).standard_normal(e.size).reshape(e.shape) for e in fn.inputs]
-  monkeypatch.setenv("ALLOY_USE_PROGRAM_IR_C", "1")
   fn.recompile()
   for got, ref in zip(fn.eval_list(*inputs), fn.eval_interpreter(*inputs), strict=True):
     np.testing.assert_allclose(np.asarray(got).reshape(-1), np.asarray(ref).reshape(-1), rtol=1e-9, atol=1e-10)

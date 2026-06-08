@@ -1,26 +1,23 @@
 """Render a lowered Program IR ``PROGRAM`` to standalone scalar C.
 
-This is the renderer half of the Program-IR migration (``docs/program_ir_migration.md``).
+This is the renderer half of the Program-IR architecture (``docs/program_ir_migration.md``):
 ``lowering.lower_function`` produces the Program IR; this module turns it into a
 translation unit exposing the universal ABI (``<symbol>(arg,res,iw,w,mem)`` plus
 the ``<symbol>_sz_*`` / ``*_mem`` helpers) so ``jit.CompiledFunction`` dispatches
-it unchanged.
+it unchanged. It is the sole CPU renderer for host functions with no solver in
+their call graph; ``codegen/c.py`` orchestrates the solver-bearing case, reusing
+``_render_raw_callee`` / ``_render_entry`` here and splicing in the solver_c wrappers.
 
-Selection is opt-in during migration via ``ALLOY_USE_PROGRAM_IR_C=1``. There is
-**no silent fallback**: if a function is outside the lowered subset, rendering
-raises ``LoweringError`` loudly, unless ``ALLOY_PROGRAM_IR_FALLBACK=1`` is set as
-an explicit escape hatch (used to run the whole suite under the flag and measure
-remaining coverage). The end state drops the flag and the legacy renderer.
-
-Internal temporaries are stack-local arrays (``sz_w`` is 0); lifetime/workspace
-packing is a later step. Scalar/statement emission uses compact per-op maps —
-the lowerer (``lowering.py``) is where the extensible ``Ops``-keyed registry lives.
+There is **no silent fallback**: a function outside the lowered subset raises
+``LoweringError`` loudly. Workspace lifetime/spill packing is a Program-IR pass
+(``passes.py``); the renderer just honors the ``sz_w`` / ``workspace_offset`` it sets.
+Scalar/statement emission uses compact per-op maps — the lowerer (``lowering.py``)
+holds the extensible ``Ops``-keyed registry.
 """
 
 from __future__ import annotations
 
 import math
-import os
 import re
 
 from ..abi import c_api_signature
@@ -70,20 +67,6 @@ _UNARY_C = {
 _BINARY_C = {POps.POW: "pow", POps.ATAN2: "atan2", POps.MINIMUM: "fmin", POps.MAXIMUM: "fmax"}
 
 
-def use_program_ir_renderer() -> bool:
-  """Program IR is the default CPU renderer (Step 5c). ``ALLOY_USE_PROGRAM_IR_C=0`` forces the
-  legacy renderer everywhere — a transitional escape hatch removed when the legacy renderer is
-  deleted (Step 6)."""
-  return os.environ.get("ALLOY_USE_PROGRAM_IR_C", "1") != "0"
-
-
-def program_ir_allow_fallback() -> bool:
-  """When the Program IR renderer is selected, allow silent fallback to the legacy renderer on a
-  ``LoweringError`` (a still-deferred op such as mixed-device CALL). Off by default — selection is
-  strict, so a coverage gap is loud. Removed with the legacy renderer (Step 6)."""
-  return os.environ.get("ALLOY_PROGRAM_IR_FALLBACK") == "1"
-
-
 def can_render_program_c(fun: Function) -> bool:
   """True iff ``fun`` lowers and renders through the Program IR path. Diagnostic helper
   (e.g. for coverage probes); the hot path just calls ``render_program_c_source``."""
@@ -103,11 +86,38 @@ def program_ir_sz_w(fun: Function) -> int:
   return int(main_proc(lower_function(fun)).attrs.get("sz_w", 0))
 
 
+def _includes(extra: tuple[str, ...] = ()) -> list[str]:
+  return ["#include <math.h>", "#include <stddef.h>", "#include <stdint.h>", *extra]
+
+
 def render_program_c_source(fun: Function) -> str:
+  """Render a non-solver host ``fun`` to a standalone universal-ABI translation unit."""
   prog = lower_function(fun)
   proc = main_proc(prog)
   pc = int(prog.attrs.get("proc_count", 1))
   callees = list(prog.args[: pc - 1])
+  lines: list[str] = [
+    *_includes(),
+    "",
+    *_ABI_DEFINES,
+    "",
+    "#ifdef __cplusplus",
+    'extern "C" {',
+    "#endif",
+    "",
+  ]
+  for callee in callees:
+    lines += _render_raw_callee(callee)
+    lines.append("")
+  lines += _render_entry(proc, fun)
+  lines += ["", "#ifdef __cplusplus", "}", "#endif"]
+  return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_entry(proc: PNode, fun: Function) -> list[str]:
+  """Emit the universal-ABI entry (``<symbol>_sz_*`` helpers + ``<symbol>(arg,res,iw,w,mem)``) with
+  ``fun``'s main PROC body inlined. ``codegen/c.py`` reuses this for solver-bearing functions, so
+  the top function's body lowers through Program IR exactly like any other host function."""
   symbol = _c_ident(fun.name)  # must match jit.CompiledFunction's _c_ident(fun.name)
   param_count = int(proc.attrs["param_count"])
   body = list(proc.args[param_count:])
@@ -120,22 +130,7 @@ def render_program_c_source(fun: Function) -> str:
   for i, name in enumerate(fun.output_names):
     ptr_expr[name] = f"res[{i}]"
 
-  lines: list[str] = [
-    "#include <math.h>",
-    "#include <stddef.h>",
-    "#include <stdint.h>",
-    "",
-    *_ABI_DEFINES,
-    "",
-    "#ifdef __cplusplus",
-    'extern "C" {',
-    "#endif",
-    "",
-  ]
-  for callee in callees:
-    lines += _render_raw_callee(callee)
-    lines.append("")
-  lines += [
+  lines = [
     f"int {symbol}_sz_arg(void) {{ return {len(fun.inputs)}; }}",
     f"int {symbol}_sz_res(void) {{ return {len(fun.outputs)}; }}",
     f"int {symbol}_sz_iw(void) {{ return 0; }}",
@@ -162,20 +157,28 @@ def render_program_c_source(fun: Function) -> str:
     if stmt.op == POps.BUFFER:
       continue
     _emit_statement(stmt, ptr_expr, lines, indent=2)
-  lines += ["  return ALLOY_SUCCESS;", "}", "", "#ifdef __cplusplus", "}", "#endif"]
-  return "\n".join(lines).rstrip() + "\n"
+  lines += ["  return ALLOY_SUCCESS;", "}"]
+  return lines
 
 
 def _render_raw_callee(proc: PNode) -> list[str]:
-  """A callee renders as ``static inline void <name>_raw(<dtype>* p0, ..., double* w)`` — a
+  """A callee renders as ``static inline void <name>_raw(const <dtype>* p0, ..., double* w)`` — a
   pointer per param plus the workspace tail (spilled slots index into ``w``; ``call`` sites pass
-  the caller's ``w`` advanced past its own spill window). No ABI wrapper."""
+  the caller's ``w`` advanced past its own spill window). The leading ``input_count`` params are
+  inputs and are ``const``-qualified (read-only by construction), so a solver_c wrapper can pass
+  its ``const double*`` arguments without discarding qualifiers. No ABI wrapper."""
   param_count = int(proc.attrs["param_count"])
+  input_count = int(proc.attrs.get("input_count", 0))
   params = list(proc.args[:param_count])
   body = list(proc.args[param_count:])
   sz_w = int(proc.attrs.get("sz_w", 0))
   ptr_expr = {pp.attrs["name"]: _c_ident(pp.attrs["name"]) for pp in params}
-  param_decls = ", ".join([*(f"{pp.dtype.c_type}* {_c_ident(pp.attrs['name'])}" for pp in params), "double* w"])
+  param_decls = ", ".join(
+    [
+      *(f"{'const ' if i < input_count else ''}{pp.dtype.c_type}* {_c_ident(pp.attrs['name'])}" for i, pp in enumerate(params)),
+      "double* w",
+    ]
+  )
   out = [f"static inline void {_c_ident(proc.attrs['name'])}_raw({param_decls}) {{"]
   if not sz_w:
     out.append("  (void)w;")
@@ -303,8 +306,6 @@ def _emit_scalar(n: PNode, ptr_expr: dict[str, str]) -> str:
 
 __all__ = [
   "can_render_program_c",
-  "program_ir_allow_fallback",
   "program_ir_sz_w",
   "render_program_c_source",
-  "use_program_ir_renderer",
 ]

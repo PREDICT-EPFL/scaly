@@ -17,13 +17,23 @@
 > **Update (Step 5c done):** Program IR is now the **default** CPU renderer for host functions with
 > no solver in their call graph; solver-bearing functions stay on `solver_c`/legacy via a guard. The
 > full suite is green on a cold cache in parallel (228 passed). A pre-existing cold-cache solver
-> link-order bug surfaced and was fixed (libs now follow the source object). Remaining: delete the
-> legacy scalar renderer (Step 6) and merge (Step 7).
+> link-order bug surfaced and was fixed (libs now follow the source object).
+>
+> **Update (Step 6 done):** the legacy tape-based scalar renderer in `codegen/c.py` is **deleted**.
+> Program IR is now the **sole** CPU path: solver oracles and the host functions that call solvers
+> all lower through `lowering.py`/`program_c.py`; a `SolverFunction` CALL is lowered *opaquely* (its
+> body is not lowered) and the `solver_c` wrapper template — the one sanctioned non-Program-IR path
+> (rule 6) — is the only hand-written C left. `render_c_source` is now a thin orchestrator that emits
+> the Program-IR `_raw` callees, splices in the solver wrappers, and reuses the Program-IR ABI entry.
+> The `ALLOY_USE_PROGRAM_IR_C` / `ALLOY_PROGRAM_IR_FALLBACK` flags are gone; mixed-device CALL is a
+> hard `LoweringError` (no fallback). `_raw` input params are now `const`-qualified so solver wrappers
+> pass `const double*` arguments without discarding qualifiers. Full suite green on a **cold cache, in
+> parallel** (228 passed, 6 skipped); `ruff`/`ty` clean. Remaining: **merge (Step 7)**.
 >
 > **Goal:** make the semantic-IR → Program-IR → backend-renderer architecture the *sole* CPU
 > compilation path, at full **feature *and* performance** parity with `main`, with the legacy
 > tape-based C renderer removed — **without** introducing new ops, GPU renderers, or solver changes
-> along the way. No parity gates remain open.
+> along the way. No parity gates remain open; the legacy renderer is gone.
 
 This document is the north star for the migration. It records *why* we restarted from `main`
 instead of finishing the previous attempt, *what* we harvested, *what* we deliberately deferred
@@ -287,39 +297,48 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   **cold cache, in parallel** (`228 passed, 6 skipped`), with solvers actually JIT-compiling (they
   previously masked the bug by silently falling back to the interpreter under strict mode).
 
-- **Step 6 — Delete legacy. ⛔ Open — a deliberate solver-codegen refactor, NOT a mechanical
-  cleanup.** Post-5c the legacy scalar renderer (`_render_instruction` / `_render_c_raw_function` /
-  `_elementwise_*` / `_matmul` / `_inline_scalar_table` / `_skipped_instructions` / `_detect_tile`
-  …) is **still live**: it renders solver **oracles**. `render_c_source(solver)` walks
-  `_function_order` and emits each non-solver oracle (`P`/`c`/`A`/`G`/derivative functions) via the
-  scalar renderer, while `render_solver_raw` (kept) emits the wrapper that calls them as
-  `<oracle>_raw(const double* in…, double* out…, double* w)`. So deleting the scalar renderer first
-  requires routing oracles through Program IR. Concrete plan, in order:
-  1. **Const-qualify PIR `_raw` inputs.** `program_c._render_raw_callee` emits `<dtype>* p0,…` for
-     all params; the solver wrapper passes `const double* in{i}` → discards-const error. The PROC's
-     first `param_count_inputs` params are inputs (emit_inputs before register_outputs), so mark
-     those `const`. Param order (inputs, outputs, `w`) already matches the wrapper's call.
-  2. **Solver workspace on PIR.** The wrapper sizes its `w` from `c.py::_workspace_size` (legacy tape
-     packing). Switch solver oracle workspace accounting to the oracle's Program IR `sz_w`
-     (`program_ir_sz_w`) so the `w` the wrapper passes fits — else an oracle that spills overflows.
-  3. **Render solver oracles via PIR** inside `render_c_source(solver)`: emit each oracle with
-     `_render_raw_callee` (Program IR) instead of `_render_c_raw_function` (scalar); keep the wrapper
-     on `solver_c` (the sanctioned non-Program-IR path, rule 6).
-  4. **Mixed-device CALL.** The last user of the legacy fallback. Either lower it (re-land from the
-     reference branch — but that's deferred GPU work) or make it a hard `LoweringError` (acceptable:
-     a host→GPU call is meaningless on a CPU build) and update
-     `test_uncovered_case_raises_loudly_and_fallback_is_opt_in`.
-  5. **Then delete** the scalar renderer + the `ALLOY_PROGRAM_IR_FALLBACK` / `ALLOY_USE_PROGRAM_IR_C`
-     glue. Keep `render_c_api_header`/`render_c_module`/`_c_ident`/`CModule` and the interpreter/tape
-     (rule 6). Repoint the two benchmark modules that `from alloy.codegen.c import _workspace_size`
-     at the Program IR `sz_w` (or a kept solver-only `_workspace_size`).
-  6. **Fresh source baseline** against the Program IR renderer for any golden-source tests.
+- **Step 6 — Delete legacy. ✅ Done — a deliberate solver-codegen refactor, not a mechanical
+  cleanup.** Pre-6 the legacy scalar renderer still rendered solver **oracles** *and* the host
+  functions that call solvers. Deleting it required routing all of them through Program IR while
+  keeping the `solver_c` wrapper as the one sanctioned non-Program-IR path (rule 6). What landed, in
+  order:
+  1. **Const-qualified PIR `_raw` inputs.** Each PROC carries an `input_count` attr (emit_inputs runs
+     before register_outputs, so inputs are the leading params); `program_c._render_raw_callee`
+     `const`-qualifies the first `input_count` params. A solver wrapper passing `const double* in{i}`
+     no longer discards qualifiers, and PIR→PIR calls passing input args (`arg[i]`) lost their
+     warnings too. Inputs are read-only by construction, so `const` is sound.
+  2. **Opaque solver lowering + solver workspace on PIR.** `lowering._ensure_callee` detects a
+     `SolverFunction` callee: it does **not** lower the solver's tape (`SOLVER_CALL` has no rule), but
+     it *does* lower the oracle Functions to PROCs and records the solver→oracle-name map on the
+     PROGRAM (`solver_oracles` attr). `passes.pack_workspace` reads that map to size a solver call's
+     workspace as `max(oracle sz_w)` (the wrapper passes its `w` straight through), so the caller
+     spills correctly and a CALL-to-solver gets `callee_needs_w` right. So `program_ir_sz_w(fun)` is
+     now the single source of `sz_w` for *every* host function, solver-bearing or not.
+  3. **Rendered solver oracles + callers via PIR.** `render_c_source` is now a thin orchestrator:
+     for a solver-bearing graph it lowers the whole thing once, then walks `_function_order`
+     (topological — a solver sits after its oracle PROCs and before its caller) emitting each
+     non-solver Function as a Program-IR `_render_raw_callee` and each `SolverFunction` as
+     `render_solver_raw`, then the top function's Program-IR ABI entry (`program_c._render_entry`,
+     reused). No forward references, single translation unit, solver includes spliced in.
+  4. **Mixed-device CALL** is a hard `LoweringError` (a host→GPU call is meaningless on a CPU build);
+     `test_uncovered_case_raises_loudly` asserts both `render_program_c_source` and `render_c_source`
+     raise, no fallback.
+  5. **Deleted** the scalar renderer (`_render_c_raw_function` / `_render_instruction` /
+     `_elementwise_*` / `_matmul` / `_inline_scalar_table` / `_skipped_instructions` / `_detect_tile`
+     / `_compute_lifetimes` / `_pack_slots` / `_spill_plan` / …) and the `ALLOY_PROGRAM_IR_FALLBACK` /
+     `ALLOY_USE_PROGRAM_IR_C` flag glue. `c.py` shrank from ~1240 to ~300 lines. Kept
+     `render_c_api_header` / `render_c_module` / `_c_ident` / `CModule`, `_function_order` / `_callees`,
+     and a `_workspace_size` shim (now `= program_ir_sz_w`) so the benchmark imports keep resolving.
+     The interpreter/tape and `solver_c` wrapper codegen are retained (rule 6). Three now-dead
+     `solver_c` helpers (`uses_any_solver` / `_walk_tape_callees` / `solver_workspace`) were removed.
+  6. **No golden-source rebaseline needed** — the suite's source checks are structural / numeric, and
+     all pass.
 
-  Risk: this touches the solver compile path and its workspace ABI — verify the full solver suite
-  (`test_solvers`, `test_solver_nesting`, `test_safety_filter_workload`) on a **cold** cache after
-  each sub-step. Recommended as its own focused session, not bundled with 5b/5c.
+  Verified: full suite **228 passed, 6 skipped on a cold cache, in parallel**, with PIQP/IPOPT
+  nesting tests JIT-compiling through the new path; `ruff` / `ty` clean. Source compiles warning-free
+  under `-Wall` (the lone `-Wextra` `unused-parameter` on an empty solver output predates this work).
 
-- **Step 7 — Docs + merge.** Update `docs/spec.md` and this file; merge to `main`. Gated on Step 6.
+- **Step 7 — Docs + merge.** Update `docs/spec.md` and this file; merge to `main`. Now unblocked.
 
 ---
 
@@ -335,14 +354,15 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   1.00–1.02×, tracking ms 1.01–1.03×.
 - Source size does not regress materially. ✅ — fusion cut the blow-up to ~1.3–1.5× (tracking ms LOC
   constant in N); gather index-table compaction is a deferred source-size-only follow-up.
-- `codegen/c.py`'s legacy scalar renderer is deleted; no `ALLOY_USE_PROGRAM_IR_C` flag remains. ⛔ Step 6.
+- `codegen/c.py`'s legacy scalar renderer is deleted; no `ALLOY_USE_PROGRAM_IR_C` flag remains. ✅ Step 6.
 - `solver_c.py` host-wrapper path retained; solver oracles lower through Program IR. ✅
-- `uv run pytest -n=auto tests/`, `uv run ruff check`, `uv run ty check` all clean. ✅ (warm cache;
-  see the pre-existing cold-cache solver link-flag bug noted under Step 5b — flag-independent).
+- `uv run pytest -n=auto tests/`, `uv run ruff check`, `uv run ty check` all clean. ✅ — now green on a
+  **cold cache, in parallel** (228 passed, 6 skipped); the Step 5b cold-cache solver link-flag bug was
+  fixed in 5c (link libraries follow the source object).
 
-**Feature *and* performance parity is primordial.** Both halves are now done: the functional half is
-bit-identical and the Step 5b perf/scale gaps are closed. What remains before merge is mechanical —
-flip the default (5c) and delete the legacy renderer (6).
+**Feature *and* performance parity is primordial.** Both halves are done (the functional half is
+bit-identical, the Step 5b perf/scale gaps are closed) and the legacy renderer is gone. All that
+remains is **Step 7 — merge to `main`** (and the `docs/spec.md` refresh that lands with it).
 
 Explicitly **out of scope** for this merge (and tracked for follow-up PRs from the reference
 branch): OpenCL, GPU renderers, a tinygrad-style general range scheduler, full einsum, new

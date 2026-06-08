@@ -1,17 +1,20 @@
 """C codegen for ``Ops.SOLVER_CALL`` — emits a raw function that drives the
 vendored PIQP / IPOPT C interfaces.
 
-The :class:`SolverFunction` renderer bypasses the standard tape-based scalar
-emitter: a solver Function's body is shape-specific enough that the cleanest
-implementation is a small hand-written template per backend, parameterised by
-the descriptor.
+This is the one sanctioned non-Program-IR renderer (rule 6 in
+``docs/program_ir_migration.md``): a solver Function's body is shape-specific
+enough that the cleanest implementation is a small hand-written template per
+backend, parameterised by the descriptor. The oracle Functions the template
+drives are *not* hand-written — they lower through Program IR like any other
+host Function and are rendered as ``<oracle>_raw`` by ``codegen/program_c``.
 
-Outer functions that contain a solver as a callee still go through the
-standard ``Ops.CALL`` machinery — the solver renders to a `static void
-qp_xxx_raw(...)` body, and the caller's tape just emits a `qp_xxx_raw(...)`
-invocation. The solver Function is included automatically via
-``solver_callees(...)``, and the JIT detects the PIQP/IPOPT linkage need
-through ``uses_piqp(...)`` / ``uses_ipopt(...)``.
+Outer functions that contain a solver as a callee lower through Program IR with
+the ``SolverFunction`` callee treated as opaque (``lowering.lower_function``):
+the solver renders to a ``static void qp_xxx_raw(...)`` body here, and the
+caller's lowered ``CALL`` emits a ``qp_xxx_raw(...)`` invocation.
+``codegen/c.render_c_source`` orchestrates the whole translation unit, ordering
+the solver wrapper after its (Program-IR) oracle PROCs. The JIT detects the
+PIQP/IPOPT linkage need through ``uses_piqp(...)`` / ``uses_ipopt(...)``.
 """
 
 from __future__ import annotations
@@ -76,29 +79,6 @@ def solver_callees(fun: Function) -> list[Function]:
   return out
 
 
-def _walk_tape_callees(fun: Function, seen: set[int]) -> bool:
-  """True iff ``fun`` (or any transitive callee) is or contains a SolverFunction."""
-  if id(fun) in seen:
-    return False
-  seen.add(id(fun))
-  if is_solver_function(fun):
-    return True
-  for inst in fun.tape():
-    if inst.op in {Ops.CALL, Ops.MAP}:
-      if _walk_tape_callees(inst.attrs["callee"], seen):
-        return True
-    if inst.op == Ops.SOLVER_CALL:
-      # SolverFunction-internal SOLVER_CALL nodes — the SolverFunction itself
-      # is handled at the is_solver_function check above; this branch is for
-      # safety in case a SOLVER_CALL appears outside a SolverFunction.
-      return True
-  return False
-
-
-def uses_any_solver(fun: Function) -> bool:
-  return _walk_tape_callees(fun, set())
-
-
 def uses_piqp(fun: Function) -> bool:
   return _uses_backend(fun, "piqp", set())
 
@@ -159,23 +139,6 @@ def solver_compile_flags(fun: Function, *, rpath: bool = True) -> list[str]:
   if needs_ipopt:
     flags.append("-lipopt")
   return flags
-
-
-def solver_workspace(fun: Function) -> int:
-  """Doubles required in ``w[]`` to drive this solver Function.
-
-  We stack-allocate the QP data inside the raw body, so ``w[]`` only carries
-  whatever the oracle needs. Pre-existing helpers handle CALL/MAP workspace
-  recursion; this is just the solver-specific add-on.
-  """
-  if not is_solver_function(fun):
-    return 0
-  desc = _descriptor(fun)
-  # Caller is the outer Function: it has already accounted for the oracle's
-  # own workspace via the regular CALL accounting. The solver wrapper itself
-  # adds no extra workspace today (QP data on stack).
-  _ = desc
-  return 0
 
 
 # ---------------------------------------------------------------------------

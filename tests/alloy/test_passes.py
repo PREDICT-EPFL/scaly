@@ -132,7 +132,7 @@ def test_packing_reuses_slots_and_spills() -> None:
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the numeric spill check")
-def test_spilled_function_matches_interpreter(monkeypatch) -> None:
+def test_spilled_function_matches_interpreter() -> None:
   """End-to-end: a function whose temporaries spill to w[] still computes correctly (the JIT
   allocates w from the rendered sz_w and passes it through)."""
 
@@ -142,7 +142,6 @@ def test_spilled_function_matches_interpreter(monkeypatch) -> None:
 
   assert _sz_w(f) >= WORKSPACE_SPILL_THRESHOLD  # the (40,40) matmul temp spills
   render_program_c_source(f)  # loud coverage gate
-  monkeypatch.setenv("ALLOY_USE_PROGRAM_IR_C", "1")
   f.recompile()
   rng = np.random.default_rng(0)
   a, b = rng.standard_normal((40, 40)), rng.standard_normal((40, 40))

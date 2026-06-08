@@ -1,21 +1,22 @@
 """Lower semantic IR (``Expr`` / ``Function``) into Program IR (``PNode``).
 
-This is the migration's heart (see ``docs/program_ir_migration.md``). The goal is
-for this module + ``codegen/program_c.py`` to become the *sole* path to C, with
-no silent fallback to the legacy tape renderer.
+This module + ``codegen/program_c.py`` are the **sole** CPU path to C (see
+``docs/program_ir_migration.md``); the legacy tape-based scalar renderer is gone.
+The one sanctioned non-Program-IR escape is the ``codegen/solver_c`` wrapper for a
+``SolverFunction`` — and even there the oracle Functions it drives lower through here.
 
 Dispatch is a **registry** keyed by semantic ``Ops``: each op's lowering is a
 self-contained rule registered with ``@lowers(...)``. Adding/deepening an op (or,
 later, a GPU schedule) is a local change — a new rule, not an edit to a monolith.
 
-Covered so far: elementwise unary/binary (with numpy broadcasting), ``RESHAPE``
-(alias), ``CONST`` (any size, via ``const_buffer``), general ``SLICE`` (integer /
-multi-dim / strided), ``SUM``, ``MATMUL`` (rank <= 2), ``TRANSPOSE`` (rank <= 4),
-``GATHER``/``SCATTER`` (any size, ``static const`` index table), ``STACK``/``CONCAT``
-(axis 0), ``CALL`` (multi-PROC, deduped) and ``MAP``. The forward tracking and
-unbumpercars workloads render and match the interpreter. Remaining: non-axis-0
-STACK/CONCAT, workspace packing, then GPU placement and the deferred new ops — all
-tracked in the migration roadmap.
+Covered: elementwise unary/binary (with numpy broadcasting), ``RESHAPE`` (alias),
+``CONST`` (any size, via ``const_buffer``), general ``SLICE`` (integer / multi-dim /
+strided), ``SUM``, ``MATMUL`` (rank <= 2), ``TRANSPOSE`` (rank <= 4), ``GATHER`` /
+``SCATTER`` (any size, ``static const`` index table), ``STACK`` / ``CONCAT`` (any axis),
+``CALL`` (multi-PROC, deduped) and ``MAP``; a ``SolverFunction`` ``CALL`` is opaque
+(see ``lower_function``). The tracking and unbumpercars workloads (forward + ``jac`` +
+``spjac``) render and match the interpreter. Deferred (re-land from the reference branch):
+GPU placement and the new ops tracked in the migration roadmap.
 """
 
 from __future__ import annotations
@@ -88,12 +89,25 @@ def lower_function(fun: Function) -> PNode:
   PROC in topological order followed by ``fun``'s main PROC last. Non-host
   placement raises ``LoweringError`` — GPU backends re-land from the reference
   branch after CPU parity (see ``docs/program_ir_migration.md``).
+
+  A ``SolverFunction`` callee is **opaque**: its tape (``Ops.SOLVER_CALL``) is not
+  lowered — the solver wrapper is rendered by the sanctioned ``codegen/solver_c``
+  path (rule 6) — but its oracle Functions *are* lowered to PROCs (the wrapper
+  calls them as ``<oracle>_raw``). The solver→oracle-name map is recorded on the
+  PROGRAM (``solver_oracles`` attr) so ``pack_workspace`` can size the caller's
+  ``w[]`` to fit the oracle and the CALL-to-solver gets ``callee_needs_w`` right.
   """
   if fun.device.kind != "host":
     raise LoweringError(f"non-host placement {fun.device} is not lowered yet (GPU backends are deferred to a later migration step)")
   callees: dict[str, PNode] = {}
-  root = _lower_to_proc(fun, callees)
+  solver_fns: dict[str, Function] = {}
+  root = _lower_to_proc(fun, callees, solver_fns)
   prog = p.program([*callees.values(), root])
+  if solver_fns:
+    from .codegen.solver_c import solver_callees
+
+    solver_oracles = {name: tuple(o.name for o in solver_callees(sf)) for name, sf in solver_fns.items()}
+    prog = PNode(POps.PROGRAM, prog.args, {**prog.attrs, "solver_oracles": solver_oracles}, prog.dtype)
   prog = optimize_program(prog)  # fusion + workspace packing (see passes.py)
   verify_program(prog)
   return prog
@@ -120,21 +134,25 @@ def _size_of(shape: tuple[int, ...]) -> int:
   return n or 1
 
 
-def _lower_to_proc(fun: Function, callees: dict[str, PNode]) -> PNode:
-  ctx = LowerCtx(fun, callees)
+def _lower_to_proc(fun: Function, callees: dict[str, PNode], solver_fns: dict[str, Function]) -> PNode:
+  ctx = LowerCtx(fun, callees, solver_fns)
   ctx.emit_inputs()
   ctx.register_outputs()
   ctx.emit_body()
   ctx.emit_outputs()
-  return p.proc(fun.name, ctx.params, ctx.statements)
+  proc = p.proc(fun.name, ctx.params, ctx.statements)
+  # ``input_count`` lets the renderer ``const``-qualify the first N (input) params of a ``_raw``
+  # callee; emit_inputs runs before register_outputs, so inputs are the leading params.
+  return PNode(POps.PROC, proc.args, {**proc.attrs, "input_count": len(fun.inputs)}, proc.dtype)
 
 
 class LowerCtx:
   """Per-Function lowering state: buffers, statements, and the Expr-id -> buffer map."""
 
-  def __init__(self, fun: Function, callees: dict[str, PNode]) -> None:
+  def __init__(self, fun: Function, callees: dict[str, PNode], solver_fns: dict[str, Function]) -> None:
     self.fun = fun
     self.callees = callees
+    self.solver_fns = solver_fns  # name -> SolverFunction (opaque callees; rendered by solver_c)
     self.params: list[PNode] = []
     self.statements: list[PNode] = []
     self.buffers: dict[str, PNode] = {}
@@ -520,8 +538,17 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
 def _ensure_callee(ctx: LowerCtx, callee: Function) -> None:
   if callee.device.kind != ctx.fun.device.kind:
     raise LoweringError(f"mixed-device CALL ({ctx.fun.device} -> {callee.device}) is deferred to a later migration step")
+  from .codegen.solver_c import is_solver_function, solver_callees
+
+  if is_solver_function(callee):
+    # Opaque: the solver wrapper is rendered by solver_c (rule 6), not lowered. Its tape is
+    # SOLVER_CALL (no lowering rule). We still lower the oracle Functions the wrapper drives.
+    ctx.solver_fns[callee.name] = callee
+    for oracle in solver_callees(callee):
+      _ensure_callee(ctx, oracle)
+    return
   if callee.name not in ctx.callees:
-    ctx.callees[callee.name] = _lower_to_proc(callee, ctx.callees)
+    ctx.callees[callee.name] = _lower_to_proc(callee, ctx.callees, ctx.solver_fns)
 
 
 @lowers(Ops.CALL)

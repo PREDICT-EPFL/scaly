@@ -9,21 +9,21 @@ Program IR), optimize (Program IR -> Program IR), render (Program IR -> C). New 
 (CSE, peepholes, GPU schedule passes) slot in as additional passes without touching the
 lowerer or renderer.
 
-Ported optimizations (the legacy tape renderer baked these into ``codegen/c.py``; here they
-become explicit, individually-testable Program IR passes):
+These optimizations originally lived baked into the now-deleted legacy tape renderer; the
+migration re-expressed them as explicit, individually-testable Program IR passes:
 
 - ``fuse_elementwise`` — inline single-use ``private`` elementwise / slice / gather producers
   (a single-``STORE`` ``FOR`` whose store index is the loop var) into their one consumer by
   substituting the producer's scalar RHS at the consumer's load site, then dropping the
   producer loop + buffer. This is loop fusion: chains collapse into one loop and the
-  intermediate buffer round-trips vanish. Port of ``c.py``'s ``_inline_scalar_table`` /
-  ``_skipped_instructions`` (no-materialize + inline-read tables).
+  intermediate buffer round-trips vanish (the legacy renderer's no-materialize + inline-read
+  tables, now a graph rewrite).
 
 - ``pack_workspace`` — lifetime-pack ``private`` BUFFERs into shared slots and spill slots
   ≥ ``WORKSPACE_SPILL_THRESHOLD`` doubles to the caller-provided ``w[]`` (so the function
-  declares a real ``sz_w`` instead of stack-allocating every temporary). Port of
-  ``c.py``'s ``_compute_lifetimes`` / ``_pack_slots`` / ``_spill_plan``. Without this the
-  largest benchmark cells overflow the 8 MB stack — it gates the merge.
+  declares a real ``sz_w`` instead of stack-allocating every temporary; the legacy renderer's
+  lifetime/slot/spill packing, now a graph rewrite). Without this the largest benchmark cells
+  overflow the 8 MB stack — it gates the merge.
 """
 
 from __future__ import annotations
@@ -35,13 +35,12 @@ from .program import PNode, POps
 from .types import DType, DeviceSpec
 
 # Slots this large (in elements) or bigger move off the C stack into the caller's ``w[]``.
-# Matches ``codegen/c.py::_WORKSPACE_SPILL_THRESHOLD`` so the two renderers report the same sz_w.
 WORKSPACE_SPILL_THRESHOLD = 1024
 
 # Scalar POps that lower to a libm call. Inlining one into a consumer whose iteration domain
 # is larger than the producer's (a broadcast) — or at more than one site — replays the call,
 # so the fusion pass keeps these materialized unless the read is one-to-one. Cheap arithmetic
-# is always safe to duplicate. Mirrors ``c.py::_EXPENSIVE_UNARY`` (extended to libm binaries).
+# is always safe to duplicate.
 _EXPENSIVE_OPS: frozenset[POps] = frozenset(
   {
     POps.SIN,
@@ -535,14 +534,24 @@ def pack_workspace(prog: PNode) -> PNode:
   procs, kernels = _procs(prog)
   plans = {pr.attrs["name"]: _plan_pack(pr) for pr in procs}
 
+  # A solver wrapper (rendered by solver_c, so it has no PROC here) is an opaque callee: it owns
+  # no spill of its own but passes its ``w`` straight through to its oracle Functions, so its
+  # workspace is the max over those oracle PROCs. The lowerer records solver -> oracle names on
+  # the PROGRAM; we seed those names into the sz_w recursion below.
+  solver_oracles: dict[str, tuple[str, ...]] = prog.attrs.get("solver_oracles", {})
+
   # sz_w(proc) = own spill + max callee workspace (callees share the post-own-spill window).
   sz_w: dict[str, int] = {}
 
   def total(name: str) -> int:
     if name in sz_w:
       return sz_w[name]
+    if name in solver_oracles:
+      sz_w[name] = 0  # break cycles defensively; a solver owns no spill itself
+      sz_w[name] = max((total(o) for o in solver_oracles[name] if o in plans), default=0)
+      return sz_w[name]
     sz_w[name] = plans[name].own_spill  # break cycles defensively
-    callee_max = max((total(c) for c in plans[name].callees if c in plans), default=0)
+    callee_max = max((total(c) for c in plans[name].callees if c in plans or c in solver_oracles), default=0)
     sz_w[name] = plans[name].own_spill + callee_max
     return sz_w[name]
 
