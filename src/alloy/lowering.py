@@ -8,24 +8,26 @@ Dispatch is a **registry** keyed by semantic ``Ops``: each op's lowering is a
 self-contained rule registered with ``@lowers(...)``. Adding/deepening an op (or,
 later, a GPU schedule) is a local change — a new rule, not an edit to a monolith.
 
-Covered so far: elementwise unary/binary (identical operand shapes), ``RESHAPE``
+Covered so far: elementwise unary/binary (with numpy broadcasting), ``RESHAPE``
 (alias), ``CONST`` (any size, via ``const_buffer``), general ``SLICE`` (integer /
 multi-dim / strided), ``SUM``, ``MATMUL`` (rank <= 2), ``TRANSPOSE`` (rank <= 4),
-``CALL`` (multi-PROC, deduped) and ``MAP``. Remaining: ``GATHER``/``SCATTER``,
-``STACK``/``CONCAT``, elementwise broadcasting, then GPU placement and the deferred
-new ops — all tracked in the migration roadmap.
+``GATHER``/``SCATTER`` (any size, ``static const`` index table), ``STACK``/``CONCAT``
+(axis 0), ``CALL`` (multi-PROC, deduped) and ``MAP``. The forward tracking and
+unbumpercars workloads render and match the interpreter. Remaining: non-axis-0
+STACK/CONCAT, workspace packing, then GPU placement and the deferred new ops — all
+tracked in the migration roadmap.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 from . import program as p
 from .expr import Expr, topo
 from .function import Function
 from .ops import Ops
 from .program import PNode, POps, RangeKind, verify_program
-from .types import DType
+from .types import DType, dtypes
 
 
 class LoweringError(NotImplementedError):
@@ -208,14 +210,21 @@ class LowerCtx:
     self.value_buffers[expr.id] = buf.attrs["name"]
     return buf
 
+  def new_const_index(self, idx: Iterable[int]) -> PNode:
+    """A read-only int64 index table (for GATHER/SCATTER), declared ``static const``."""
+    values = [int(v) for v in idx]
+    buf = p.const_buffer(f"k{self._tmp}", dtypes.int64, (len(values),), values)
+    self._tmp += 1
+    self.buffers[buf.attrs["name"]] = buf
+    self.statements.append(buf)
+    return buf
+
   def emit_elementwise(self, node: Expr, pop: POps, *, arity: int) -> None:
-    if any(a.shape != node.shape for a in node.args):
-      raise LoweringError(f"broadcasting is not yet lowered for {node.op!r}; operand shapes {[a.shape for a in node.args]}")
     out = self.alloc_tmp(node)
     vname = f"i_{out.attrs['name']}"
     rng = p.range_(vname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
     i = p.var(vname)
-    loads = tuple(p.load(p.view(self.buf_of(a), [i])) for a in node.args[:arity])
+    loads = tuple(p.load(p.view(self.buf_of(a), [_broadcast_index_p(i, a.shape, node.shape)])) for a in node.args[:arity])
     computed = PNode(pop, loads, dtype=node.type.dtype)
     self.statements.append(p.for_(rng, [p.store(p.view(out, [i]), computed)]))
 
@@ -261,6 +270,18 @@ def _row_major_strides(shape: tuple[int, ...]) -> list[int]:
   for i in range(len(shape) - 2, -1, -1):
     strides[i] = strides[i + 1] * int(shape[i + 1])
   return strides
+
+
+def _broadcast_index_p(flat: PNode, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> PNode:
+  """Map an output flat index to the source flat index under numpy broadcasting
+  (right-aligned; size-1 dims and missing leading dims read index 0)."""
+  if in_shape == out_shape or not out_shape:
+    return flat
+  if not in_shape:
+    return p.const_int(0)
+  offset = len(out_shape) - len(in_shape)
+  coords = [p.const_int(0) if d == 1 else _coord_p(flat, out_shape, offset + i) for i, d in enumerate(in_shape)]
+  return _flat_index_p(coords, in_shape)
 
 
 def _copy_loop(src: PNode, dst: PNode, shape: tuple[int, ...]) -> PNode:
@@ -487,6 +508,72 @@ def _lower_map(ctx: LowerCtx, node: Expr) -> None:
       out_args.append(sbuf)
   call = PNode(POps.CALL, tuple(in_args + out_args), attrs={"callee": callee.name, "n_in": len(in_args), "n_out": len(out_args), "returns": ()})
   ctx.statements.append(p.for_(rng, [call]))
+
+
+@lowers(Ops.GATHER)
+def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
+  """``out[k] = src[indices[k]]`` via a ``static const`` index table + one GLOBAL loop (any size)."""
+  src = node.args[0]
+  idx = node.attrs["indices"].reshape(-1)
+  out = ctx.alloc_tmp(node)
+  idx_buf = ctx.new_const_index(idx)
+  vname = f"i_{out.attrs['name']}"
+  rng = p.range_(vname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
+  k = p.var(vname)
+  src_idx = p.load(p.view(idx_buf, [k]))
+  ctx.statements.append(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
+
+
+@lowers(Ops.SCATTER)
+def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
+  """Zero the output, then ``out[indices[k]] = src[k]`` via a ``static const`` index table."""
+  src = node.args[0]
+  idx = node.attrs["indices"].reshape(-1)
+  out = ctx.alloc_tmp(node)
+  zname = f"z_{out.attrs['name']}"
+  zrng = p.range_(zname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
+  z = p.var(zname)
+  ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), p.const_float(0.0, dtype=node.type.dtype))]))
+  idx_buf = ctx.new_const_index(idx)
+  iname = f"i_{out.attrs['name']}"
+  irng = p.range_(iname, 0, len(idx), kind=RangeKind.GLOBAL)
+  i = p.var(iname)
+  dst = p.load(p.view(idx_buf, [i]))
+  ctx.statements.append(p.for_(irng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [i])))]))
+
+
+@lowers(Ops.STACK)
+def _lower_stack(ctx: LowerCtx, node: Expr) -> None:
+  """Stack along axis 0: ``out[i*base + j] = inputs[i][j]``. Other axes deferred."""
+  axis = int(node.attrs.get("axis", 0))
+  if axis != 0:
+    raise LoweringError(f"STACK lowering handles axis=0 only; got axis={axis}")
+  out = ctx.alloc_tmp(node)
+  base = node.args[0].size or 1
+  for i, src in enumerate(node.args):
+    name = f"j_{out.attrs['name']}_{i}"
+    rng = p.range_(name, 0, base, kind=RangeKind.GLOBAL)
+    j = p.var(name)
+    dst = j if i == 0 else p.add(p.const_int(i * base), j)
+    ctx.statements.append(p.for_(rng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [j])))]))
+
+
+@lowers(Ops.CONCAT)
+def _lower_concat(ctx: LowerCtx, node: Expr) -> None:
+  """Concat along axis 0: contiguous chunks in the row-major flatten. Other axes deferred."""
+  axis = int(node.attrs.get("axis", 0))
+  if axis != 0:
+    raise LoweringError(f"CONCAT lowering handles axis=0 only; got axis={axis}")
+  out = ctx.alloc_tmp(node)
+  offset = 0
+  for i, src in enumerate(node.args):
+    size = src.size or 1
+    name = f"j_{out.attrs['name']}_{i}"
+    rng = p.range_(name, 0, size, kind=RangeKind.GLOBAL)
+    j = p.var(name)
+    dst = j if offset == 0 else p.add(p.const_int(offset), j)
+    ctx.statements.append(p.for_(rng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [j])))]))
+    offset += size
 
 
 __all__ = ["LoweringError", "LowerCtx", "lower_function", "lowers", "main_proc"]

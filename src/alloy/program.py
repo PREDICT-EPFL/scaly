@@ -288,7 +288,7 @@ def const_buffer(name: str, dtype: DType, shape: tuple[int, ...], values: Sequen
       "shape": tuple(int(d) for d in shape),
       "address_space": "constant",
       "device": DeviceSpec.parse(None),
-      "values": tuple(float(v) for v in values),
+      "values": tuple(values),  # numeric type preserved; the renderer formats by dtype
     },
     dtype=dtype,
   )

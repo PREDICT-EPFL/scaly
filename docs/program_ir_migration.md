@@ -164,10 +164,14 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   sum/transpose/call all match the interpreter; the forwards now block only on `STACK` (tracking)
   and `GATHER` (unbumpercars) — Step 4 ops — so "forwards render end-to-end" lands with Step 4.
 
-- **Step 4 — Sparse + derivative assembly.** Large `GATHER`/`SCATTER` via constant index tables,
-  elementwise **broadcasting** (bias-add etc.), multi-axis `STACK`/`CONCAT` as needed. **Exit:**
-  the eq/ineq-Jacobian and sparse-Jacobian functions for all three workloads render through
-  Program IR.
+- **Step 4 — Sparse + assembly + broadcasting.** ✅ Done. `GATHER`/`SCATTER` (any size, via a
+  `static const` int64 index table + one loop — no source blow-up), `STACK`/`CONCAT` (axis 0),
+  and elementwise **broadcasting** (numpy right-aligned; size-1 and missing leading dims read index
+  0 — covers bias-add and scalar consts). **Milestone reached:** the forward tracking (h=2/5) and
+  unbumpercars (n=2/4/8) functions render through Program IR as the sole path and match the
+  interpreter; `test_program_migration.py` locks both forwards. Remaining for later: non-axis-0
+  `STACK`/`CONCAT` (only if a workload needs it), and the derivative/sparse-Jacobian functions
+  (Step 4b — re-probe to find the next gap, likely the spjac assembly path).
 
 - **Step 5 — Flip default + benchmark validation.** Make Program IR the default (and only) CPU
   renderer. Run `benchmarks/` and confirm **no material regression** in generated source size or

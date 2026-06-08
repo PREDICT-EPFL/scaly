@@ -207,6 +207,54 @@ def _map() -> al.Function:
   return f
 
 
+def _gather() -> al.Function:
+  @al.function("pm_gather", {"x": 6})
+  def f(x):
+    return x.gather(np.array([5, 0, 3, 3, 1]))  # repeats + reorder, via const index table
+
+  return f
+
+
+def _scatter() -> al.Function:
+  @al.function("pm_scatter", {"x": 3})
+  def f(x):
+    return al.scatter(x, np.array([4, 1, 2]), 6)  # zero-filled length-6 output
+
+  return f
+
+
+def _broadcast_matrix() -> al.Function:
+  @al.function("pm_bcast_mat", {"x": (3, 4), "b": 4})
+  def f(x, b):
+    return x + b  # (3,4) + (4,) row broadcast
+
+  return f
+
+
+def _broadcast_scalar() -> al.Function:
+  @al.function("pm_bcast_scalar", {"x": 4})
+  def f(x):
+    return x * 2.0 + 1.0  # scalar-const broadcast
+
+  return f
+
+
+def _concat() -> al.Function:
+  @al.function("pm_concat", {"x": 3, "y": 2})
+  def f(x, y):
+    return al.concat([x.sin(), y])
+
+  return f
+
+
+def _mlp_layer() -> al.Function:
+  @al.function("pm_mlp_layer", {"W": (4, 3), "x": 3, "b": 4})
+  def f(W, x, b):
+    return (W @ x + b).tanh()  # matmul + bias broadcast + activation
+
+  return f
+
+
 _CORPUS = [
   (_neg, [np.array([0.5, -1.0, 2.0, -3.0])]),
   (_trig_chain, [np.array([0.1, 0.2, -0.3, 0.4])]),
@@ -229,6 +277,12 @@ _CORPUS = [
   (_transpose, [np.arange(1.0, 7.0)]),
   (_call, [np.array([0.3, -0.5, 1.2])]),
   (_map, [np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])]),
+  (_gather, [np.arange(10.0, 16.0)]),
+  (_scatter, [np.array([10.0, 20.0, 30.0])]),
+  (_broadcast_matrix, [np.arange(1.0, 13.0).reshape(3, 4), np.array([0.1, 0.2, 0.3, 0.4])]),
+  (_broadcast_scalar, [np.array([1.0, 2.0, 3.0, 4.0])]),
+  (_concat, [np.array([0.1, 0.2, 0.3]), np.array([4.0, 5.0])]),
+  (_mlp_layer, [np.arange(1.0, 13.0).reshape(4, 3) * 0.1, np.array([0.5, -0.5, 1.0]), np.array([0.1, 0.2, 0.3, 0.4])]),
 ]
 
 
@@ -290,3 +344,38 @@ def test_uncovered_case_raises_loudly_and_fallback_is_opt_in(monkeypatch) -> Non
   # Explicit escape hatch: fall back to the legacy renderer instead of raising.
   monkeypatch.setenv("ALLOY_PROGRAM_IR_FALLBACK", "1")
   assert "pm_outer_mix" in render_c_source(fn)
+
+
+def _import_sibling(name):
+  """Import a sibling test-fixture module (e.g. test_tracking_workload)."""
+  import sys
+  from pathlib import Path
+
+  here = str(Path(__file__).parent)
+  if here not in sys.path:
+    sys.path.insert(0, here)
+  return pytest.importorskip(name)
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
+def test_forward_tracking_renders_and_matches(monkeypatch) -> None:
+  pytest.importorskip("casadi")  # the fixture module needs CasADi at import
+  tw = _import_sibling("test_tracking_workload")
+  fn = tw.tracking_eq_function(3)
+  render_program_c_source(fn)  # loud: must render through Program IR
+  assert can_render_program_c(fn)
+  inputs = [np.random.default_rng(0).standard_normal(e.size).reshape(e.shape) for e in fn.inputs]
+  monkeypatch.setenv("ALLOY_USE_PROGRAM_IR_C", "1")
+  fn.recompile()
+  for got, ref in zip(fn.eval_list(*inputs), fn.eval_interpreter(*inputs), strict=True):
+    np.testing.assert_allclose(np.asarray(got).reshape(-1), np.asarray(ref).reshape(-1), rtol=1e-9, atol=1e-10)
+
+
+def test_forward_unbumpercars_renders_through_program_ir() -> None:
+  pytest.importorskip("casadi")
+  pytest.importorskip("torch")
+  uw = _import_sibling("test_unbumpercars_workload")
+  # Construction uses symbolic MLP weights (the `p` input), so no checkpoint is needed
+  # just to confirm the forward function lowers + renders through Program IR.
+  for ncars in (2, 4):
+    assert can_render_program_c(uw.unbumpercars_ineq_function(ncars))

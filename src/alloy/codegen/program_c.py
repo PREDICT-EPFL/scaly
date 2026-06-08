@@ -99,6 +99,7 @@ def render_program_c_source(fun: Function) -> str:
   lines: list[str] = [
     "#include <math.h>",
     "#include <stddef.h>",
+    "#include <stdint.h>",
     "",
     *_ABI_DEFINES,
     "",
@@ -168,7 +169,8 @@ def _emit_local_buffers(body: list[PNode], lines: list[str], indent: int) -> Non
       size *= int(d)
     size = size or 1
     if stmt.attrs.get("address_space") == "constant" and "values" in stmt.attrs:
-      values = ", ".join(_c_float(v) for v in stmt.attrs["values"])
+      fmt = (lambda v: str(int(v))) if stmt.dtype.is_integer else _c_float
+      values = ", ".join(fmt(v) for v in stmt.attrs["values"])
       lines.append(f"{pad}static const {stmt.dtype.c_type} {name}[{size}] = {{{values}}};")
     else:
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
