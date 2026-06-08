@@ -141,6 +141,36 @@ static const int f_spjac_y_x_csc_col_ptr[5] = {0, 1, 2, 3, 4};
 static const int f_spjac_y_x_csc_row_ind[4] = {0, 2, 1, 1};
 ```
 
+## Dtype model and device placement (Phase 1)
+
+`DType` is a small interned descriptor with a name, bit-width, C-type spelling, and category flags. The canonical instances live in `dtypes`:
+
+```python
+al.dtypes.bool_      # uint8_t, 1 byte
+al.dtypes.int32      # int32_t, 4 bytes
+al.dtypes.int64      # int64_t, 8 bytes
+al.dtypes.float32    # float,   4 bytes
+al.dtypes.float64    # double,  8 bytes  (default)
+```
+
+For back-compat with prior `dtype="float64"` string usage, `DType.__eq__` accepts strings. Construction APIs (`Expr.sym`, `Expr.const`, `TensorType`, `BufferType`) accept either a `DType` instance or its string name and coerce in `__post_init__`.
+
+Mixed-dtype binary ops are refused without an explicit cast — there is no implicit numeric promotion (`promote_dtype` only verifies that all operands share dtype). This will become more permissive when an explicit `Expr.cast(dtype)` op lands, but the conservative default keeps current `float64` workloads identical and makes future mixed-precision code explicit at the call site.
+
+`DeviceSpec("host" | "cuda" | "opencl" | "metal", index)` is the public placement value:
+
+```python
+fn_gpu = fn.with_device("cuda:0")        # placement policy
+assert fn_gpu.device == al.DeviceSpec("cuda", 0)
+```
+
+Each backend registers a `BackendSupport` capability table (`BACKEND_SUPPORT`). For example `metal` does not currently advertise `float64`, so `Function(..., device="metal:0")` over a `float64` graph fails at construction with a clear diagnostic — not at runtime, and not as a silent host fallback. Today only `host` actually lowers through the JIT; non-host placements raise `JitError("only host lowering is implemented")` when called.
+
+Future phases will extend this:
+
+- Phase 4+ — Program IR carries placement per region so a single host `Function` can contain CPU procedures, GPU kernels, and solver calls.
+- Phase 8 — the first GPU backend (CUDA or OpenCL) makes `with_device("cuda:0")` actually lower instead of erroring.
+
 ## Mixed lowering
 
 Every expression carries a lowering hint:
@@ -160,6 +190,67 @@ y = sparse_model + opaque_boundary
 ```
 
 Today this is metadata preserved by the tape and shown by `Tape.debug()`. Later it should drive partitioning: scalar regions lower to explicit scalar instructions, dense regions lower to block kernels/loops, and the boundary inserts materialization/copy/project operations.
+
+## Program IR (Phase 4)
+
+`src/alloy/program.py` introduces the lower IR where explicit loops, buffers, loads/stores, calls, kernel launches, and memory spaces live. Phase 4 ships the vocabulary, the verifier, and the pretty-printer; the lowering pass that produces Program IR from semantic IR is Phase 5.
+
+A single `PNode` class (frozen, hash-consed) carries an op tag from `POps`. Statement vs declaration vs scalar-expression is encoded by op tag, matching the tinygrad UOp style and reusing the spec-table verifier infrastructure from Phase 2:
+
+```python
+from alloy import program as p
+from alloy.types import dtypes
+from alloy.program import RangeKind, verify_program, format_program, spec_program_full
+
+in_buf = p.buffer("in_", dtypes.float64, (16,))
+out_buf = p.buffer("out_", dtypes.float64, (16,))
+i = p.var("i", dtype=dtypes.int64)
+k = p.kernel(
+    "k_neg",
+    [in_buf, out_buf],
+    [
+        p.for_(
+            p.range_("i", 0, 16, kind=RangeKind.GLOBAL),
+            [p.store(p.view(out_buf, [i]), p.neg(p.load(p.view(in_buf, [i]))))],
+        ),
+    ],
+    grid_dims=1,
+    device="cuda:0",
+)
+verify_program(k)
+print(format_program(k))
+```
+
+`RangeKind` borrows tinygrad's `AxisType` vocabulary (`SERIAL`, `VECTOR`, `GLOBAL`, `THREAD`, `LOCAL`, `WARP`, `REDUCE`, `GROUP_REDUCE`, `UNROLL`). Backends use it to bind loops to launch axes, choose vectorized vs unrolled emission, or lower reductions. Buffer address spaces follow the OpenCL/CUDA naming (`global`/`local`/`private`/`constant`).
+
+Verifier specs:
+
+- `spec_program_shared` — invariants every Program IR node must satisfy (buffer attrs, view scalar args, load/store shapes, range kind enum, etc.).
+- `spec_host_program` — host PROCs may not contain device-only ops (e.g. `BARRIER`).
+- `spec_kernel_program` — KERNELs may not contain host-only ops (e.g. `LAUNCH`).
+- `spec_program_full` — both, suitable for whole-program checks.
+
+Pretty-printing is backend-neutral and decoupled from C syntax — it shows host/device boundaries, range kinds, and launch specs so schedule decisions are debuggable before any renderer runs.
+
+## Semantic IR verifier (Phase 2)
+
+Each IR level should have an explicit spec table and verifier (see roadmap Phase 2). The semantic IR layer ships its spec in `src/alloy/spec.py`:
+
+```python
+import alloy as al
+
+x = al.sym("x", 3)
+y = (x.sin() + x * x).sum()
+al.verify_expr(y)                       # silent on success
+al.verify_expr(y, spec=al.spec_semantic)  # explicit spec choice
+```
+
+The verifier walks the DAG topologically and raises `VerifyError` at the first invalid node, naming the node, its op, and the failing rule. Two specs are exported today:
+
+- `spec_semantic_shared` — rules every node must satisfy (non-negative shape, `DType`-typed dtype, arity matches `OP_INFO`, sparsity shape agrees with tensor shape).
+- `spec_semantic` — `spec_semantic_shared` plus per-op rules (e.g. `RESHAPE` size, `TRANSPOSE` axes are a permutation, `MATMUL` contracting dims, `CALL` arg shapes match the callee, `MAP` outers are rank-1 with consistent `slice_size`, `CONST` value shape/dtype match the declared type).
+
+Verification is opt-in: construction-time checks in `expr.py` keep the happy path fast. `verify_expr` is the explicit defensive check passes should run after non-trivial graph rewrites or AD transforms, and the harness for negative tests in `tests/alloy/test_verifier.py`.
 
 ## Structural equality and rewrites
 
@@ -195,7 +286,7 @@ plan = f.tape().plan_workspace()
 assert plan.size <= sum(slot.size for slot in plan.slots)
 ```
 
-The workspace plan is a deterministic lifetime-based scratch layout for non-leaf tape instructions. The scalar C renderer currently prefers local C temporaries, but the plan remains useful for future lowered regions that need caller-provided scratch buffers.
+The workspace plan is a deterministic lifetime-based scratch layout for non-leaf tape instructions. The CPU path is now Program IR (`lowering.py` → `codegen/program_c.py`; the legacy tape-based scalar renderer was removed in the Program IR migration), where the equivalent lifetime packing / spilling lives in `passes.pack_workspace`: small temporaries stay as local C arrays and large ones spill to the caller-provided `w[]`, so `f_SZ_W` is the packed spill size.
 
 ## Benchmark workload fixtures
 
@@ -205,9 +296,9 @@ A second benchmark-shaped fixture is the official-size unbumpercars inequality J
 
 Both benchmark harnesses also run a fail-fast correctness check before invoking Google Benchmark: each backend's compact Jacobian is scattered into a dense matrix using its own `(rows, cols)` sparsity, and compared to a Python alloy reference dense Jacobian written next to the generated sources. The check catches NaN-vs-finite mismatches and exits non-zero with a per-element diff. The compact-vs-compact diff that this replaces was wrong because Alloy uses COO row-major nnz order while CasADi uses CSC column-major.
 
-The C codegen lifetime-packs storage-owning instructions into shared C locals `sN[max_size]`: instructions whose lifetimes don't overlap reuse the same slot. Aliases (RESHAPE, contiguous SLICE pointer aliases), inlined scalar/vector chains, and peephole-skipped intermediates all extend the underlying owner's last-use so that a reused slot is never overwritten while a downstream consumer can still observe it. This drops the per-JVP MLP stack frame on the official-size unbumpercars workload from ~25 KB to ~14 KB while keeping each slot a distinct `double` array — preserving the no-aliasing model the compiler reasons about for register promotion.
+Workspace packing is a Program IR pass (`passes.pack_workspace`), not a tape-renderer step: it lifetime-packs the `private` BUFFERs of each PROC into shared slots (buffers whose lifetimes don't overlap reuse the same slot), then spills slots ≥ 1024 doubles to the caller's `w[]` while small ones stay as local `double` arrays. Zero-copy alias BUFFERs (RESHAPE, contiguous SLICE pointer aliases) own no storage but extend the lifetime of the buffer they point into, so a reused slot is never overwritten while a downstream consumer can still observe it. Elementwise/slice/gather chains are collapsed earlier by `passes.fuse_elementwise`, so they never reach the packer as separate buffers. The combination keeps the official-size unbumpercars per-JVP frame bounded and lets the largest sweep cells spill to a `static` `w[]` instead of overflowing the C stack.
 
-The C codegen previously had a correctness bug: `_contiguous_slice_offset` mis-detected column-style slices like `(slice(None), 1)` on a `(5, 7)` tensor as contiguous and emitted a pointer alias that read flat indices `[1, 2, 3, 4, 5]` instead of the column `[1, 8, 15, 22, 29]`. The Python tape interpreter used NumPy so unit tests passed, but compiled benchmarks could silently produce wrong derivative values. The fix now rejects int indices that appear after a slice unless the indexed dim has size 1, and there is a compile-and-verify regression test in `tests/alloy/test_core.py`.
+The contiguous-slice pointer-alias path (`lowering._contiguous_slice_offset`) once had a correctness bug in its legacy form: it mis-detected column-style slices like `(slice(None), 1)` on a `(5, 7)` tensor as contiguous and aliased flat indices `[1, 2, 3, 4, 5]` instead of the column `[1, 8, 15, 22, 29]`. The Python tape interpreter used NumPy so unit tests passed, but compiled code could silently produce wrong derivative values. The rule now rejects int indices that appear after a slice unless the indexed dim has size 1, with a compile-and-verify regression test in `tests/alloy/test_core.py`.
 
 ## Scalability sweep
 
@@ -233,7 +324,7 @@ The caller owns all ABI storage:
 - Inputs do not have default values today: every required `arg[i]` must be non-null.
 - Generated code assumes ordinary C `double`/`int` alignment for the buffers supplied by the caller.
 
-Generated headers declare `f_sz_arg`, `f_sz_res`, `f_sz_iw`, and `f_sz_w` helpers, plus compile-time `f_SZ_*` constants for generated callers. The current source renderer emits standalone scalar C for the tape subset used by the core symbolic ops and returns nonzero error codes for missing ABI pointer slots. Tape temporaries are currently emitted as C locals rather than caller workspace, so pure generated functions usually report `f_SZ_W == 0`; the workspace ABI remains for future lowered regions or solver/integrator state that actually needs caller-provided scratch. When a rendered function contains `CallOp` nodes, `render_c_source` emits internal `static inline` raw callee bodies before the exported ABI wrapper and invokes those raw bodies directly from callers. Only the root rendered function is exported through the universal ABI in that translation unit; nested callees are implementation details unless rendered as roots themselves.
+Generated headers declare `f_sz_arg`, `f_sz_res`, `f_sz_iw`, and `f_sz_w` helpers, plus compile-time `f_SZ_*` constants for generated callers. The source renderer lowers the function to Program IR and emits standalone C for it, returning nonzero error codes for missing ABI pointer slots. Small temporaries stay as C locals and large ones spill to the caller's `w[]`, so `f_SZ_W` is the packed spill size (often `0` for small functions). When a rendered function has callees, `render_c_source` emits internal `static inline` raw callee bodies before the exported ABI wrapper and invokes them directly; only the root is exported through the universal ABI in that translation unit. A `SolverFunction` callee is the one exception — it is rendered by the hand-written `codegen/solver_c` wrapper template that drives its (Program-IR-rendered) oracle Functions.
 
 When typed buffers are enabled, generated headers also include a small C++ inline wrapper such as `f_call(const f_x_in& in_x, f_y_out& out_y)`. The wrapper builds the universal `arg`/`res` pointer arrays, allocates fixed-size stack workspace from `f_SZ_W`, and calls the canonical ABI. Generated C++ headers also emit `static_assert` checks that each typed buffer struct has the expected flattened `double` size. This is intentionally sugar; the pointer ABI remains the stable interface.
 
@@ -269,8 +360,17 @@ through `Function.factory(...)` (`grad`, `spjac`, `sphess` with a Lagrangian
 ``Ops.SOLVER_CALL`` (one per output, all sharing a ``SolverDescriptor``
 side-table). That means ``solver.call([...])`` returns ``Expr``s, so solvers
 nest directly inside larger ``@al.function``-decorated graphs (the
-safety-filter assembly pattern). ``SOLVER_CALL`` is marked
-non-differentiable, and C codegen for it is not yet wired — parent Functions
-containing a solver node fall back to the tape interpreter. The bound shared
-libraries live under `src/alloy/lib/`. Full interface, sign conventions, and
-current limitations are documented in [`solvers.md`](solvers.md).
+safety-filter assembly pattern). ``SOLVER_CALL`` is marked non-differentiable.
+
+C codegen for a solver-bearing graph is wired and JIT-compiles end-to-end:
+`codegen/solver_c` renders the `SolverFunction` wrapper (the one hand-written,
+non-Program-IR template — it drives the vendored PIQP/IPOPT C interfaces),
+while every other Function in the graph — the oracle data/derivative Functions
+*and* the host Function that calls the solver — lowers through Program IR. The
+lowerer treats a `SolverFunction` callee as opaque (it does not lower the
+`SOLVER_CALL` body) but still lowers its oracle Functions to PROCs, and
+`render_c_source` orchestrates the single translation unit (oracle `_raw`
+bodies, then the solver wrapper, then the host ABI entry). `solver_compile_flags`
+adds the `-lpiqpc` / `-lipopt` link flags. The bound shared libraries live under
+`src/alloy/lib/`. Full interface, sign conventions, and current limitations are
+documented in [`solvers.md`](solvers.md).

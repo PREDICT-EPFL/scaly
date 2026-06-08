@@ -136,8 +136,11 @@ def test_map_c_source_loop_size_is_independent_of_length() -> None:
   # must be identical except for the loop bound and the function name.
   src_a = render(20)
   src_b = render(100)
-  assert "for (int it = 0; it < 20; ++it)" in src_a
-  assert "for (int it = 0; it < 100; ++it)" in src_b
+  # Renderer-agnostic: the MAP body is one loop whose bound scales with N (not unrolled) and the
+  # source LOC stays constant in N. The legacy renderer emits `for (int it = 0; it < N; ++it)`,
+  # the Program IR renderer `for (long long it_y = 0; it_y < N; ++it_y)` — both carry the `< N;` bound.
+  assert "< 20;" in src_a
+  assert "< 100;" in src_b
   assert src_a.count("\n") == src_b.count("\n")
 
 
@@ -445,9 +448,11 @@ def test_simple_banded_map_spjac_has_constant_loc() -> None:
   # spill threshold is crossed, which adds one wrapper line for the SZ_W null check.
   assert abs(loc_a - loc_b) <= 2, f"expected constant LOC, got {loc_a} -> {loc_b}"
   src_b = render_c_source(al.spjacobian(build(50), "z", "eq"))
-  # Either path keeps the inner work in for-loops, not a per-iteration unroll.
-  assert "static const int tile" in src_b or "static const int idx" in src_b
-  assert "for (int it = 0;" in src_b
+  # Renderer-agnostic: the inner work stays loop-based (the constant LOC above already rules out a
+  # per-iteration unroll), and the assembly renders as a for-loop under either renderer. The legacy
+  # renderer uses a `static const int tile`/`idx` gather table; Program IR uses a const index buffer.
+  assert "for (" in src_b
+  assert "static const int tile" in src_b or "static const int idx" in src_b or "static const int64_t" in src_b
 
 
 def test_map_accepts_input_dict_keyed_by_name() -> None:

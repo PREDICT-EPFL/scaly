@@ -9,6 +9,7 @@ from .function import Function, Port
 from .ops import COMMON_OPS, OP_INFO, Ops
 from .rewrite import Pattern, PatternMatcher, cse, cse_many, rewrite, simplify
 from .solvers import SolverFunction, SolverStatus, nlp, qp
+from .spec import Spec, VerifyError, VerifyRule, spec_semantic, spec_semantic_shared, verify_expr
 from .sparsity import (
   SparseJacobian,
   color_groups,
@@ -20,16 +21,20 @@ from .sparsity import (
   sparse_jacobian_reference,
 )
 from .tape import Instruction, Tape, TapeRegion, WorkspacePlan, WorkspaceSlot, format_tape, linearize
-from .types import ScalarType, SparsityType, TensorType
+from .types import BACKEND_SUPPORT, BackendSupport, DeviceSpec, DType, ScalarType, SparsityType, TensorType, as_dtype, backend_supports, dtypes
 
 sym = Expr.sym
 const = Expr.const
 scan = map_
 
 __all__ = [
+  "BACKEND_SUPPORT",
+  "BackendSupport",
   "BufferType",
   "C_API_SIGNATURE",
   "COMMON_OPS",
+  "DType",
+  "DeviceSpec",
   "OP_INFO",
   "Expr",
   "Function",
@@ -41,16 +46,22 @@ __all__ = [
   "ScalarType",
   "SolverFunction",
   "SolverStatus",
+  "Spec",
   "SparseJacobian",
   "SparsityType",
   "Tape",
   "TapeRegion",
   "TensorType",
+  "VerifyError",
+  "VerifyRule",
   "WorkspacePlan",
   "WorkspaceSlot",
   "adjoint",
+  "as_dtype",
   "atan2",
+  "backend_supports",
   "c_api_signature",
+  "dtypes",
   "color_groups",
   "column_coloring",
   "concat",
@@ -91,6 +102,8 @@ __all__ = [
   "sparse_jacobian",
   "sparse_jacobian_colored",
   "sparse_jacobian_reference",
+  "spec_semantic",
+  "spec_semantic_shared",
   "sphessian",
   "spjacobian",
   "split",
@@ -98,4 +111,5 @@ __all__ = [
   "sumsqr",
   "vec",
   "sym",
+  "verify_expr",
 ]
