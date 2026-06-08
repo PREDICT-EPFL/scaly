@@ -8,11 +8,12 @@ Dispatch is a **registry** keyed by semantic ``Ops``: each op's lowering is a
 self-contained rule registered with ``@lowers(...)``. Adding/deepening an op (or,
 later, a GPU schedule) is a local change — a new rule, not an edit to a monolith.
 
-Step 1 slice (this commit): elementwise unary/binary with identical operand
-shapes, ``RESHAPE`` (alias), and small ``CONST``. Subsequent steps add integer
-``SLICE``, ``CONST_BUFFER``, ``MATMUL``/``SUM``/``TRANSPOSE``, ``CALL``/``MAP``,
-``GATHER``/``SCATTER``, ``STACK``/``CONCAT``, and elementwise broadcasting. GPU
-placement and the deferred ops are tracked in the migration roadmap.
+Covered so far: elementwise unary/binary (identical operand shapes), ``RESHAPE``
+(alias), ``CONST`` (any size, via ``const_buffer``), general ``SLICE`` (integer /
+multi-dim / strided), ``SUM``, ``MATMUL`` (rank <= 2), ``TRANSPOSE`` (rank <= 4),
+``CALL`` (multi-PROC, deduped) and ``MAP``. Remaining: ``GATHER``/``SCATTER``,
+``STACK``/``CONCAT``, elementwise broadcasting, then GPU placement and the deferred
+new ops — all tracked in the migration roadmap.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from .expr import Expr, topo
 from .function import Function
 from .ops import Ops
 from .program import PNode, POps, RangeKind, verify_program
+from .types import DType
 
 
 class LoweringError(NotImplementedError):
@@ -136,6 +138,8 @@ class LowerCtx:
     self.value_buffers: dict[int, str] = {}
     # Output Expr.id -> output buffer name, so the body writes outputs in place.
     self._output_alias: dict[int, str] = {}
+    # (callee_name, arg_buffer_names) -> output buffer names, to dedup repeated CALL invocations.
+    self.call_invocations: dict[tuple[str, tuple[str, ...]], tuple[str, ...]] = {}
     self._tmp = 0
 
   # --- declarations ---------------------------------------------------------
@@ -185,18 +189,23 @@ class LowerCtx:
   def buf_of(self, expr: Expr) -> PNode:
     return self.buffers[self.value_buffers[expr.id]]
 
+  def new_private(self, dtype: DType, shape: tuple[int, ...]) -> PNode:
+    """Allocate a fresh private scratch BUFFER (declared as a local array by the renderer)."""
+    name = f"t{self._tmp}"
+    self._tmp += 1
+    buf = p.buffer(name, dtype, _shape_or_scalar(shape), address_space="private")
+    self.buffers[name] = buf
+    self.statements.append(buf)  # marks the local-array declaration for the renderer
+    return buf
+
   def alloc_tmp(self, expr: Expr) -> PNode:
     """Buffer to hold ``expr``'s value: the output buffer if aliased, else a fresh private temp."""
     alias = self._output_alias.get(expr.id)
     if alias is not None:
       self.value_buffers[expr.id] = alias
       return self.buffers[alias]
-    name = f"t{self._tmp}"
-    self._tmp += 1
-    buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.shape), address_space="private")
-    self.buffers[name] = buf
-    self.value_buffers[expr.id] = name
-    self.statements.append(buf)  # marks the local-array declaration for the renderer
+    buf = self.new_private(expr.type.dtype, expr.shape)
+    self.value_buffers[expr.id] = buf.attrs["name"]
     return buf
 
   def emit_elementwise(self, node: Expr, pop: POps, *, arity: int) -> None:
@@ -234,6 +243,24 @@ def _flat_index_p(coords: list[PNode], shape: tuple[int, ...]) -> PNode:
   for t in terms[1:]:
     acc = p.add(acc, t)
   return acc
+
+
+def _affine_sum(vars_: list[PNode], coeffs: list[int]) -> PNode:
+  """Build ``Σ coeffs[i] * vars_[i]`` as a PNode, dropping zero coeffs and unit multiplies."""
+  acc: PNode | None = None
+  for v, c in zip(vars_, coeffs, strict=True):
+    if c == 0:
+      continue
+    term = v if c == 1 else p.mul(v, p.const_int(c))
+    acc = term if acc is None else p.add(acc, term)
+  return acc if acc is not None else p.const_int(0)
+
+
+def _row_major_strides(shape: tuple[int, ...]) -> list[int]:
+  strides = [1] * len(shape)
+  for i in range(len(shape) - 2, -1, -1):
+    strides[i] = strides[i + 1] * int(shape[i + 1])
+  return strides
 
 
 def _copy_loop(src: PNode, dst: PNode, shape: tuple[int, ...]) -> PNode:
@@ -305,6 +332,161 @@ def _lower_slice(ctx: LowerCtx, node: Expr) -> None:
     out_dim += 1
   src_idx = _flat_index_p(coords, src_shape)
   ctx.statements.append(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
+
+
+@lowers(Ops.SUM)
+def _lower_sum(ctx: LowerCtx, node: Expr) -> None:
+  """Full reduction to a scalar: zero the accumulator, then a REDUCE loop adds every element."""
+  src = node.args[0]
+  acc = ctx.alloc_tmp(node)
+  z = p.const_int(0)
+  ctx.statements.append(p.store(p.view(acc, [z]), p.const_float(0.0, dtype=node.type.dtype)))
+  name = f"i_{acc.attrs['name']}"
+  rng = p.range_(name, 0, _size_of(src.shape), kind=RangeKind.REDUCE)
+  i = p.var(name)
+  ctx.statements.append(p.for_(rng, [p.store(p.view(acc, [z]), p.add(p.load(p.view(acc, [z])), p.load(p.view(ctx.buf_of(src), [i]))))]))
+
+
+@lowers(Ops.TRANSPOSE)
+def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
+  """Permuted copy: ``out[Σ o_i·out_stride_i] = src[Σ o_i·src_stride_{axes[i]}]``, one loop per output axis."""
+  src = node.args[0]
+  axes = tuple(int(a) for a in node.attrs["axes"])
+  src_shape, out_shape = src.shape, node.shape
+  if len(src_shape) > 4:
+    raise LoweringError(f"TRANSPOSE lowering handles rank <= 4; got {src_shape}")
+  out = ctx.alloc_tmp(node)
+  src_strides = _row_major_strides(src_shape)
+  out_strides = _row_major_strides(out_shape)
+  ranges, loop_vars = [], []
+  for i, d in enumerate(out_shape):
+    name = f"d{i}_{out.attrs['name']}"
+    ranges.append(p.range_(name, 0, int(d), kind=RangeKind.GLOBAL))
+    loop_vars.append(p.var(name))
+  out_idx = _affine_sum(loop_vars, out_strides)
+  src_idx = _affine_sum(loop_vars, [src_strides[axes[i]] for i in range(len(out_shape))])
+  stmt: PNode = p.store(p.view(out, [out_idx]), p.load(p.view(ctx.buf_of(src), [src_idx])))
+  for rng in reversed(ranges):
+    stmt = p.for_(rng, [stmt])
+  ctx.statements.append(stmt)
+
+
+def _mm_accumulate(ctx: LowerCtx, out: PNode, out_idx: PNode, a_load: PNode, b_load: PNode, dtype: DType, outer: list[PNode], k_rng: PNode) -> None:
+  """Common matmul shape: zero out[out_idx], then a REDUCE-k loop adds a*b, nested in ``outer`` loops."""
+  init = p.store(p.view(out, [out_idx]), p.const_float(0.0, dtype=dtype))
+  accum = p.store(p.view(out, [out_idx]), p.add(p.load(p.view(out, [out_idx])), p.mul(a_load, b_load)))
+  body = [init, p.for_(k_rng, [accum])]
+  if not outer:
+    ctx.statements.extend(body)
+    return
+  stmt = p.for_(outer[-1], body)
+  for rng in reversed(outer[:-1]):
+    stmt = p.for_(rng, [stmt])
+  ctx.statements.append(stmt)
+
+
+@lowers(Ops.MATMUL)
+def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
+  a, b = node.args
+  a_buf, b_buf, out = ctx.buf_of(a), ctx.buf_of(b), ctx.alloc_tmp(node)
+  dt = node.type.dtype
+  sa, sb = a.shape, b.shape
+  nm = out.attrs["name"]
+  if len(sa) == 1 and len(sb) == 1:  # dot
+    k = p.var(f"k_{nm}")
+    krng = p.range_(f"k_{nm}", 0, sa[0], kind=RangeKind.REDUCE)
+    _mm_accumulate(ctx, out, p.const_int(0), p.load(p.view(a_buf, [k])), p.load(p.view(b_buf, [k])), dt, [], krng)
+  elif len(sa) == 2 and len(sb) == 1:  # mat @ vec
+    m, kk = sa
+    i = p.var(f"i_{nm}")
+    irng = p.range_(f"i_{nm}", 0, m, kind=RangeKind.GLOBAL)
+    k = p.var(f"k_{nm}")
+    krng = p.range_(f"k_{nm}", 0, kk, kind=RangeKind.REDUCE)
+    a_idx = p.add(p.mul(i, p.const_int(kk)), k)
+    _mm_accumulate(ctx, out, i, p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [k])), dt, [irng], krng)
+  elif len(sa) == 1 and len(sb) == 2:  # vec @ mat
+    kk, n = sb
+    j = p.var(f"j_{nm}")
+    jrng = p.range_(f"j_{nm}", 0, n, kind=RangeKind.GLOBAL)
+    k = p.var(f"k_{nm}")
+    krng = p.range_(f"k_{nm}", 0, kk, kind=RangeKind.REDUCE)
+    b_idx = p.add(p.mul(k, p.const_int(n)), j)
+    _mm_accumulate(ctx, out, j, p.load(p.view(a_buf, [k])), p.load(p.view(b_buf, [b_idx])), dt, [jrng], krng)
+  elif len(sa) == 2 and len(sb) == 2:  # mat @ mat
+    m, kk = sa
+    n = sb[1]
+    i = p.var(f"i_{nm}")
+    irng = p.range_(f"i_{nm}", 0, m, kind=RangeKind.GLOBAL)
+    j = p.var(f"j_{nm}")
+    jrng = p.range_(f"j_{nm}", 0, n, kind=RangeKind.GLOBAL)
+    k = p.var(f"k_{nm}")
+    krng = p.range_(f"k_{nm}", 0, kk, kind=RangeKind.REDUCE)
+    out_idx = p.add(p.mul(i, p.const_int(n)), j)
+    a_idx = p.add(p.mul(i, p.const_int(kk)), k)
+    b_idx = p.add(p.mul(k, p.const_int(n)), j)
+    _mm_accumulate(ctx, out, out_idx, p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [b_idx])), dt, [irng, jrng], krng)
+  else:
+    raise LoweringError(f"matmul shapes {sa}@{sb} not lowered (batched / higher-rank deferred)")
+
+
+def _ensure_callee(ctx: LowerCtx, callee: Function) -> None:
+  if callee.device.kind != ctx.fun.device.kind:
+    raise LoweringError(f"mixed-device CALL ({ctx.fun.device} -> {callee.device}) is deferred to a later migration step")
+  if callee.name not in ctx.callees:
+    ctx.callees[callee.name] = _lower_to_proc(callee, ctx.callees)
+
+
+@lowers(Ops.CALL)
+def _lower_call(ctx: LowerCtx, node: Expr) -> None:
+  """A semantic CALL output: emit one Program-IR CALL writing all callee outputs into scratch
+  buffers (deduped per unique invocation), then map this node to the selected output buffer."""
+  callee: Function = node.attrs["callee"]
+  out_idx = int(node.attrs["output"])
+  arg_names = tuple(ctx.value_buffers[a.id] for a in node.args)
+  key = (callee.name, arg_names)
+  if key not in ctx.call_invocations:
+    _ensure_callee(ctx, callee)
+    out_bufs = [ctx.new_private(o.type.dtype, o.shape) for o in callee.outputs]
+    in_bufs = [ctx.buffers[n] for n in arg_names]
+    ctx.statements.append(
+      PNode(POps.CALL, tuple(in_bufs + out_bufs), attrs={"callee": callee.name, "n_in": len(in_bufs), "n_out": len(out_bufs), "returns": ()})
+    )
+    ctx.call_invocations[key] = tuple(b.attrs["name"] for b in out_bufs)
+  ctx.value_buffers[node.id] = ctx.call_invocations[key][out_idx]
+
+
+@lowers(Ops.MAP)
+def _lower_map(ctx: LowerCtx, node: Expr) -> None:
+  """A ``length``-iteration loop calling the callee with pointer-offset VIEW args. Iteration ``it``
+  reads ``outer_k[start_k + it·stride_k ...]`` and writes the selected output into ``out[it·slice_size ...]``."""
+  callee: Function = node.attrs["callee"]
+  out_idx = int(node.attrs["output"])
+  length = int(node.attrs["length"])
+  starts = tuple(int(s) for s in node.attrs["starts"])
+  strides = tuple(int(s) for s in node.attrs["strides"])
+  slice_size = int(node.attrs["slice_size"])
+  _ensure_callee(ctx, callee)
+  out = ctx.alloc_tmp(node)
+  # Other callee outputs are written every iteration but discarded: one reused scratch each.
+  scratch = [out if i == out_idx else ctx.new_private(o.type.dtype, o.shape) for i, o in enumerate(callee.outputs)]
+  if length == 0:
+    return
+  loop = f"it_{out.attrs['name']}"
+  rng = p.range_(loop, 0, length, kind=RangeKind.GLOBAL)
+  it = p.var(loop)
+  in_args = []
+  for k, outer in enumerate(node.args):
+    off = p.add(p.const_int(starts[k]), p.mul(p.const_int(strides[k]), it)) if strides[k] else p.const_int(starts[k])
+    in_args.append(p.view(ctx.buf_of(outer), [off]))
+  out_args = []
+  for i, sbuf in enumerate(scratch):
+    if i == out_idx:
+      off = p.mul(it, p.const_int(slice_size)) if slice_size != 1 else it
+      out_args.append(p.view(out, [off]))
+    else:
+      out_args.append(sbuf)
+  call = PNode(POps.CALL, tuple(in_args + out_args), attrs={"callee": callee.name, "n_in": len(in_args), "n_out": len(out_args), "returns": ()})
+  ctx.statements.append(p.for_(rng, [call]))
 
 
 __all__ = ["LoweringError", "LowerCtx", "lower_function", "lowers", "main_proc"]

@@ -134,6 +134,79 @@ def _slice_multidim_row() -> al.Function:
   return f
 
 
+def _dot() -> al.Function:
+  @al.function("pm_dot", {"x": 4, "y": 4})
+  def f(x, y):
+    return x @ y
+
+  return f
+
+
+def _matvec() -> al.Function:
+  @al.function("pm_matvec", {"A": (3, 4), "x": 4})
+  def f(A, x):
+    return A @ x
+
+  return f
+
+
+def _vecmat() -> al.Function:
+  @al.function("pm_vecmat", {"x": 3, "A": (3, 4)})
+  def f(x, A):
+    return x @ A
+
+  return f
+
+
+def _matmat() -> al.Function:
+  @al.function("pm_matmat", {"A": (2, 3), "B": (3, 2)})
+  def f(A, B):
+    return A @ B
+
+  return f
+
+
+def _sum() -> al.Function:
+  @al.function("pm_sum", {"x": 5})
+  def f(x):
+    return (x.sin() + x).sum()
+
+  return f
+
+
+def _transpose() -> al.Function:
+  @al.function("pm_transpose", {"x": 6})
+  def f(x):
+    return x.reshape((2, 3)).transpose()
+
+  return f
+
+
+def _call() -> al.Function:
+  @al.function("pm_call_inner", {"a": 3})
+  def inner(a):
+    return a.sin() + a
+
+  @al.function("pm_call_outer", {"x": 3})
+  def f(x):
+    (y,) = inner.call([x])
+    return y * x
+
+  return f
+
+
+def _map() -> al.Function:
+  @al.function("pm_map_cell", {"s": 2})
+  def cell(s):
+    return s.tanh() + s
+
+  @al.function("pm_map_outer", {"z": 6})
+  def f(z):
+    return al.map_(cell, 3, [(z, 0, 2)])  # 3 independent calls over z[2i:2i+2]
+
+  return f
+
+
 _CORPUS = [
   (_neg, [np.array([0.5, -1.0, 2.0, -3.0])]),
   (_trig_chain, [np.array([0.1, 0.2, -0.3, 0.4])]),
@@ -148,6 +221,14 @@ _CORPUS = [
   (_slice_scalar, [np.array([1.0, 2.0, 3.0, 4.0, 5.0])]),
   (_slice_strided, [np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])]),
   (_slice_multidim_row, [np.arange(1.0, 13.0)]),
+  (_dot, [np.array([1.0, 2.0, 3.0, 4.0]), np.array([0.5, 0.25, 2.0, -1.0])]),
+  (_matvec, [np.arange(1.0, 13.0).reshape(3, 4), np.array([1.0, 0.5, -1.0, 2.0])]),
+  (_vecmat, [np.array([1.0, 2.0, 3.0]), np.arange(1.0, 13.0).reshape(3, 4)]),
+  (_matmat, [np.arange(1.0, 7.0).reshape(2, 3), np.arange(1.0, 7.0).reshape(3, 2)]),
+  (_sum, [np.array([0.1, 0.2, 0.3, 0.4, 0.5])]),
+  (_transpose, [np.arange(1.0, 7.0)]),
+  (_call, [np.array([0.3, -0.5, 1.2])]),
+  (_map, [np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])]),
 ]
 
 
@@ -184,10 +265,19 @@ def test_lowered_program_verifies_and_has_single_proc() -> None:
   assert main_proc(prog).op == POps.PROC
 
 
-def test_uncovered_op_raises_loudly_and_fallback_is_opt_in(monkeypatch) -> None:
-  @al.function("pm_uncovered_sum", {"x": 4})
+def test_uncovered_case_raises_loudly_and_fallback_is_opt_in(monkeypatch) -> None:
+  # A host function calling a device-placed callee: mixed-device lowering is deferred
+  # for the whole CPU-parity migration, so this stays a coverage gap across steps.
+  @al.function("pm_inner_dev", {"a": 3})
+  def inner(a):
+    return a.sin()
+
+  inner_gpu = inner.with_device("cuda:0")
+
+  @al.function("pm_outer_mix", {"x": 3})
   def fn(x):
-    return x.sum()  # SUM is not in the Step 1 lowering slice
+    (y,) = inner_gpu.call([x])
+    return y + x
 
   with pytest.raises(LoweringError):
     render_program_c_source(fn)
@@ -199,5 +289,4 @@ def test_uncovered_op_raises_loudly_and_fallback_is_opt_in(monkeypatch) -> None:
 
   # Explicit escape hatch: fall back to the legacy renderer instead of raising.
   monkeypatch.setenv("ALLOY_PROGRAM_IR_FALLBACK", "1")
-  legacy = render_c_source(fn)
-  assert "pm_uncovered_sum" in legacy
+  assert "pm_outer_mix" in render_c_source(fn)

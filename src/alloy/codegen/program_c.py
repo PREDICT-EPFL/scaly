@@ -191,8 +191,27 @@ def _emit_statement(stmt: PNode, ptr_expr: dict[str, str], lines: list[str], ind
     lines.append(f"{pad}{_emit_view(stmt.args[0], ptr_expr)} = {_emit_scalar(stmt.args[1], ptr_expr)};")
   elif stmt.op == POps.ASSIGN:
     lines.append(f"{pad}{stmt.attrs['target']} = {_emit_scalar(stmt.args[0], ptr_expr)};")
+  elif stmt.op == POps.CALL:
+    if stmt.attrs.get("external"):
+      raise LoweringError("external (mixed-device) CALL rendering is deferred to a later migration step")
+    n_in, n_out = int(stmt.attrs["n_in"]), int(stmt.attrs["n_out"])
+    in_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in stmt.args[:n_in])
+    out_ptrs = ", ".join(_emit_call_arg(a, ptr_expr) for a in stmt.args[n_in : n_in + n_out])
+    sep = ", " if in_ptrs and out_ptrs else ""
+    lines.append(f"{pad}{stmt.attrs['callee']}_raw({in_ptrs}{sep}{out_ptrs});")
   else:
     raise LoweringError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
+
+
+def _emit_call_arg(node: PNode, ptr_expr: dict[str, str]) -> str:
+  """A CALL argument is a whole BUFFER (its pointer) or a VIEW (pointer + offset)."""
+  if node.op == POps.BUFFER:
+    return ptr_expr.get(node.attrs["name"], node.attrs["name"])
+  if node.op == POps.VIEW:
+    ptr = ptr_expr.get(node.attrs["buffer"], node.attrs["buffer"])
+    idx = _emit_scalar(node.args[0], ptr_expr) if node.args else "0"
+    return ptr if idx == "0" else f"({ptr} + {idx})"
+  raise LoweringError(f"unsupported CALL arg op {node.op}")
 
 
 def _emit_view(view: PNode, ptr_expr: dict[str, str]) -> str:

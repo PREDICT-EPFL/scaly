@@ -156,9 +156,13 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   and `CONST` are cleared; they now block on `CALL`/`MAP`/`GATHER`, which are Step 3/4 ops — so the
   "forwards render end-to-end" milestone lands after Step 3.
 
-- **Step 3 — Core op recipes.** Port `MATMUL`, `SUM`, `TRANSPOSE`, `CALL`, `MAP` from the
-  reference branch into registry rules; delete their legacy handlers. **Exit:** forward safety
-  filter (incl. dense MLP) renders through Program IR.
+- **Step 3 — Core op recipes.** ✅ Done. `SUM` (REDUCE loop), `MATMUL` (dot / matvec / vecmat /
+  matmat; rank-3 batched deferred), `TRANSPOSE` (rank ≤ 4, permuted-index copy), `CALL` (callee
+  lowered once per name into the shared registry, deduped per invocation, rendered `static inline
+  <name>_raw`), and `MAP` (a `length` loop calling the callee with pointer-offset VIEW args).
+  Mixed-device CALL raises loudly (deferred). Migration corpus +8. Re-probing the forwards: matmul/
+  sum/transpose/call all match the interpreter; the forwards now block only on `STACK` (tracking)
+  and `GATHER` (unbumpercars) — Step 4 ops — so "forwards render end-to-end" lands with Step 4.
 
 - **Step 4 — Sparse + derivative assembly.** Large `GATHER`/`SCATTER` via constant index tables,
   elementwise **broadcasting** (bias-add etc.), multi-axis `STACK`/`CONCAT` as needed. **Exit:**
