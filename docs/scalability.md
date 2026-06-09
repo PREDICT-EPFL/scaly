@@ -12,6 +12,29 @@ CSV with the raw cell data: `benchmarks/scalability_results.csv`.
 
 Both workloads now use Alloy's MAP-aware path (`al.map_` / `tracking_eq_function_map`, `unbumpercars_ineq_function` MAP-ified), and the codegen spills lifetime-packed slots ≥ 1024 doubles to the `w[]` workspace so very large intermediate buffers no longer overflow the C stack.
 
+## Why a C++ harness (and not the google-benchmark Python bindings)
+
+Every cell in the sweep codegens C, compiles a focused Google Benchmark binary, and calls the generated symbol from a tight C++ loop (`for (auto _ : state) fn(arg, res, ...)`). There is **zero Python in the timed region** — this is on purpose. The numbers above are a *codegen-quality* comparison: how fast is the generated C, with both backends measured identically.
+
+The obvious simplification is to drop the per-cell C++ compile and instead drive [the google-benchmark Python bindings](https://pypi.org/project/google-benchmark/) (`@gb.register` + `while state:`) over `Function.__call__` and CasADi's `caf(DM)`. We measured whether that's viable:
+
+- **The binding's own loop floor is negligible.** An empty `while state:` body benchmarks at ~14 ns/iter; a trivial Python call at ~24 ns. So the bindings do *not* add meaningful overhead on their own — whatever you call inside the loop is what you measure.
+- **Per-call dispatch is the catch, and it is not symmetric between backends.** Anchoring against the tracking C-level numbers above (mean over the loop, M-series, default args):
+
+  | N | Alloy C kernel | Alloy `cf.run()` (Python) | CasADi SX C kernel | CasADi `caf(DM)` (Python) |
+  |---:|---:|---:|---:|---:|
+  | 5 | 0.53 µs | 3.9 µs | 0.48 µs | 5.2 µs |
+  | 100 | 10.3 µs | 15.1 µs | 9.3 µs | **79.5 µs** |
+
+  Alloy's ctypes dispatch (`jit.py::CompiledFunction.run`: `np.asarray` inputs, allocate outputs + workspace, build pointer arrays, one FFI call, reshape) is a roughly **fixed ~3.3 µs floor** — its *relative* weight shrinks as the kernel grows (+47 % at N=100). CasADi's `caf(DM)` overhead instead **scales with nnz**, because it materializes a sparse `DM` return each call (≈ +70 µs at N=100). `caf(np, np)` is worse still (~120 µs at N=100) due to input conversion.
+
+**Conclusion — use the right harness per question:**
+
+- **Codegen-quality / scalability-vs-CasADi (these tables): keep the C++ harness.** A Python-level benchmark would report Alloy ~5× faster than CasADi SX at N=100 (15 vs 80 µs) when the generated code is actually within ~10 % (10.3 vs 9.3 µs). The 8× distortion is pure binding overhead, so the C++ harness is load-bearing here, not overhead-paranoia.
+- **Alloy's own end-to-end Python latency, dispatch budgeting, and per-commit regression tracking: the gbench Python bindings are a great fit** — no per-cell compile, no 180 s timeouts, no source-size caps, and they measure the *realistic* cost paid when Alloy runs inside a Python solver loop. As a bonus they surface a genuinely favorable (and true) axis the C-only tables hide: Alloy's end-to-end Python dispatch is far lighter than CasADi's (15 vs 80 µs at N=100). The ~3.3 µs `cf.run()` floor is itself worth optimizing (preallocate workspace/outputs, cache the ctypes pointer arrays).
+
+A minimal worked example lives in `tests/alloy/test_tracking_workload.py::test_tracking_eq_jac_python_gbench` (opt-in via `ALLOY_GBENCH=1`): it reproduces the `BM_AlloyTrackingEqJacN10` cell through the gbench Python bindings, checks the result against the CasADi dense reference outside the timed loop, and records the dispatch time via `record_property`.
+
 ## Tracking equality Jacobian (`spjac:eq:z`)
 
 4-state, 2-control bicycle with slip-angle β=δ/2 and `tanh` rolling-resistance term, RK4 over the horizon. Decision vector size `(N+1)·6`, output size `(N+1)·4`. Dynamics:

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import math
 import os
+import tempfile
 import time
 from typing import TYPE_CHECKING
 
@@ -220,3 +223,63 @@ def test_tracking_eq_opt_in_sparse_jacobian_sweep(horizon: int, record_property)
   assert metrics["sparsity_nnz"] == sparsity.nnz
   assert 0 < metrics["colors"] <= NZ * (horizon + 1)
   assert metrics["source_bytes"] > 0
+
+
+@pytest.mark.skipif(os.environ.get("ALLOY_GBENCH") != "1", reason="set ALLOY_GBENCH=1 to run the Google Benchmark Python-dispatch microbenchmark")
+def test_tracking_eq_jac_python_gbench(record_property) -> None:
+  """Reproduce the C++ ``BM_AlloyTrackingEqJacN`` cell with the google-benchmark Python bindings.
+
+  The scalability sweep (`benchmarks/scalability_sweep.py`) calls the generated C kernel from a
+  tight C++ loop, so it measures *codegen quality* with zero Python in the timed region. This test
+  instead times ``Function.__call__`` — the realistic end-to-end Python dispatch (ctypes FFI +
+  workspace/output allocation + the kernel). The two answer different questions; see
+  docs/scalability.md ("Python-driven benchmarking") for the gap and why the CasADi comparison must
+  stay on the C++ harness. The gbench loop itself adds ~14 ns/iter, so the number is faithfully
+  the dispatch cost.
+  """
+  gb = pytest.importorskip("google_benchmark")
+  from google_benchmark import _benchmark
+
+  horizon = 10
+  fn = tracking_eq_function_map(horizon)
+  spjf = al.spjacobian(fn, "z", "eq")
+  sparsity = spjf.output_sparsities[0]
+  assert sparsity is not None
+
+  rng = np.random.default_rng(7)
+  zv = rng.normal(scale=0.4, size=NZ * (horizon + 1))
+  pv = rng.normal(scale=0.4, size=NX * (horizon + 1))
+
+  # Correctness against the CasADi dense reference, outside the timed loop.
+  ca_dense = np.asarray(_ca_tracking_eq_jac(horizon)(zv, pv))
+  flat = np.asarray(sparsity.rows) * ca_dense.shape[1] + np.asarray(sparsity.cols)
+  np.testing.assert_allclose(spjf(zv), ca_dense.reshape(-1)[flat], rtol=1e-10, atol=1e-10)
+
+  bench_name = f"BM_AlloyTrackingEqJacN{horizon}_pydispatch"
+
+  @gb.register(name=bench_name)
+  def _bench(state: gb.State) -> None:
+    z = zv  # captured; setup before the loop is not timed
+    while state:
+      spjf(z)
+    state.items_processed = state.iterations * sparsity.nnz
+
+  try:
+    with tempfile.TemporaryDirectory() as tmp:
+      out = os.path.join(tmp, "result.json")
+      _benchmark.Initialize(
+        ["alloy", "--benchmark_min_time=0.1s", f"--benchmark_filter={bench_name}", f"--benchmark_out={out}", "--benchmark_out_format=json"]
+      )
+      _benchmark.RunSpecifiedBenchmarks()
+      with open(out) as fp:
+        result = json.load(fp)
+  finally:
+    _benchmark.ClearRegisteredBenchmarks()
+
+  entry = next(b for b in result["benchmarks"] if b["name"] == bench_name)
+  cpu_time = float(entry["cpu_time"])
+  record_property("python_dispatch_cpu_time", cpu_time)
+  record_property("time_unit", entry["time_unit"])
+  record_property("iterations", entry["iterations"])
+  record_property("nnz", sparsity.nnz)
+  assert cpu_time > 0 and math.isfinite(cpu_time)

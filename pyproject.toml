@@ -42,6 +42,7 @@ dev = [
     "ruff>=0.13.3",
     "ty>=0.0.2",
     "torch>=2.5.0",  # for the safety-filter neural-dynamics workload
+    "google-benchmark>=1.9.5",
 ]
 docs = [
     "zensical>=0.0.28",
