@@ -57,7 +57,7 @@ Linux uses a built OpenBLAS; macOS uses Apple's Accelerate framework. Windows is
 - Always format with `uv run ruff format` and run `uv run ruff check` after non-trivial edits.
 - Always run unit tests after a change touching the IR, AD, or codegen paths: `uv run pytest -n=auto tests/`.
 - Code should resemble tinygrad's style — simple, dense, every line earns its place. No speculative abstractions.
-- Don't introduce `anvil` or `tinygrad` imports. If a test workload needs PyTorch checkpoints, use `torch.load` (already in the dev group).
+- Don't introduce `anvil`, `tinygrad`, or `torch` imports. If a test workload needs PyTorch checkpoints, use `alloy.utils.load_torch_state_dict` instead of adding torch as a dependency.
 - Update `docs/` when changing IR-facing behavior or the codegenerated ABI.
 
 # Naming conventions

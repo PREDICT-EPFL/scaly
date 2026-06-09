@@ -42,9 +42,11 @@ jobs:
       # restored cache turns `uv sync` into a near-instant no-op (~30s vs ~8 min cold).
       # Keyed strictly on hatch_build.py — no restore-keys, because a stale fallback would
       # silently use libs that don't match the current recipe.
-      - name: Cache third_party + built libs
+      # Restore/save are split so the expensive native build is cached immediately after
+      # `uv sync`, even if a later lint/test step fails.
+      - name: Restore third_party + built libs
         id: cache-vendored
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             third_party
@@ -58,7 +60,17 @@ jobs:
           ls -lh src/alloy/lib 2>/dev/null || echo "src/alloy/lib not present — will cold-build"
 
       - name: uv sync (builds PIQP + IPOPT on cache miss)
-        run: uv sync
+        run: uv sync --frozen
+
+      - name: Save third_party + built libs
+        if: steps.cache-vendored.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            third_party
+            src/alloy/lib
+            src/alloy/include
+          key: ${{ steps.cache-vendored.outputs.cache-primary-key }}
 
       - name: Inspect vendored libs
         run: |

@@ -8,12 +8,11 @@ import pytest
 
 import alloy as al
 from alloy.expr import topo
+from alloy.utils import load_torch_state_dict
 
 casadi = pytest.importorskip("casadi")
-torch = pytest.importorskip("torch")
 if TYPE_CHECKING:
   import casadi
-  import torch
 
 LF = 0.54
 LR = 0.33
@@ -55,14 +54,14 @@ MODEL_PATH = Path(__file__).resolve().parents[2] / "examples" / "unbumpercars" /
 def official_weights() -> np.ndarray:
   if not MODEL_PATH.exists():
     pytest.skip(f"unbumpercars MLP checkpoint not found at {MODEL_PATH}")
-  weights = torch.load(str(MODEL_PATH), map_location="cpu", weights_only=True)
+  weights = load_torch_state_dict(MODEL_PATH)
   parts = [
-    weights["model.0.weight"].cpu().numpy().astype(np.float64).reshape(-1),
-    weights["model.0.bias"].cpu().numpy().astype(np.float64).reshape(-1),
-    weights["model.2.weight"].cpu().numpy().astype(np.float64).reshape(-1),
-    weights["model.2.bias"].cpu().numpy().astype(np.float64).reshape(-1),
-    weights["model.4.weight"].cpu().numpy().astype(np.float64).reshape(-1),
-    weights["model.4.bias"].cpu().numpy().astype(np.float64).reshape(-1),
+    weights["model.0.weight"].astype(np.float64).reshape(-1),
+    weights["model.0.bias"].astype(np.float64).reshape(-1),
+    weights["model.2.weight"].astype(np.float64).reshape(-1),
+    weights["model.2.bias"].astype(np.float64).reshape(-1),
+    weights["model.4.weight"].astype(np.float64).reshape(-1),
+    weights["model.4.bias"].astype(np.float64).reshape(-1),
   ]
   return np.concatenate(parts)
 

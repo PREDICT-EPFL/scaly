@@ -390,7 +390,6 @@ def test_tracking_workload_renders_and_matches(kind) -> None:
 
 def test_forward_unbumpercars_renders_through_program_ir() -> None:
   pytest.importorskip("casadi")
-  pytest.importorskip("torch")
   uw = _import_sibling("test_unbumpercars_workload")
   # Construction uses symbolic MLP weights (the `p` input), so no checkpoint is needed
   # just to confirm the forward function lowers + renders through Program IR.
