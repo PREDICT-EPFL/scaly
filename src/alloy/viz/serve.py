@@ -73,6 +73,18 @@ main { min-width:0; display:grid; grid-template-rows:auto auto 1fr; }
 #tabs #fit { margin-left:auto; }
 #panel { overflow:auto; background:var(--panel); position:relative; }
 pre { margin:0; padding:12px; tab-size:2; font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:pre; }
+.text-panel { min-height:100%; font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.code-toolbar { position:sticky; top:0; z-index:2; display:flex; gap:6px; align-items:center; padding:6px 8px; border-bottom:1px solid var(--line); background:#151515; }
+.code-toolbar .hint { margin-left:auto; color:var(--muted); font:12px/1.35 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif; }
+.code-lines { padding:6px 0 12px 0; tab-size:2; }
+.code-line { display:flex; min-height:16px; white-space:pre; }
+.code-line:hover { background:#202020; }
+.fold-toggle,.fold-spacer { flex:0 0 24px; width:24px; height:16px; margin:0; padding:0; border:0; background:transparent; color:#d7ba7d; font:12px/16px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; text-align:center; }
+.fold-toggle { cursor:pointer; }
+.fold-toggle:hover { color:#fff; }
+.line-no { flex:0 0 54px; padding:0 8px 0 0; color:#777; text-align:right; user-select:none; border-right:1px solid #252525; }
+.line-text { padding-left:10px; }
+.fold-summary { color:var(--muted); padding-left:8px; font-style:italic; }
 .empty { padding:24px; color:var(--muted); }
 .graph-wrap { width:100%; height:100%; min-height:720px; overflow:hidden; background:#151515; cursor:grab; }
 .graph-wrap.dragging { cursor:grabbing; }
@@ -85,6 +97,7 @@ svg.graph { width:100%; height:100%; min-height:720px; }
 
 _JS = r"""
 let recordings = [], curRecording = null, curStep = 0, curTab = 'asm', graphView = null;
+const foldState = new Map();
 const $ = (id) => document.getElementById(id);
 const tabSpec = {asm:'assembly', listing:'listing', dag:'graph', code:'code'};
 async function load() {
@@ -152,13 +165,102 @@ function renderPanel() {
   const t = recordings[curRecording], s = t && t.steps[curStep], p = $('panel');
   renderTabs(s);
   if (!s) { p.innerHTML = '<div class="empty">no recording selected</div>'; return; }
-  if (curTab === 'asm') return pre(s.assembly);
-  if (curTab === 'listing') return pre(s.listing);
-  if (curTab === 'code') return pre(s.code);
+  if (curTab === 'asm') return foldableText(s.assembly, 'asm');
+  if (curTab === 'listing') return foldableText(s.listing, 'listing');
+  if (curTab === 'code') return foldableText(s.code, 'code');
   if (curTab === 'dag') return drawGraph(s.graph);
 }
-function pre(x) { graphView = null; $('panel').innerHTML = `<pre>${esc(x)}</pre>`; }
 function esc(x) { return String(x ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function foldKey(kind) {
+  const t = recordings[curRecording], s = t?.steps?.[curStep];
+  return `${t?.id ?? curRecording}:${curStep}:${kind}:${s?.name ?? ''}`;
+}
+function regionKey(r) { return `${r.start}:${r.end}`; }
+function foldedSet(kind) {
+  const key = foldKey(kind);
+  if (!foldState.has(key)) foldState.set(key, new Set());
+  return foldState.get(key);
+}
+function foldableText(x, kind) {
+  graphView = null;
+  const text = String(x ?? ''), lines = text.split('\n'), regions = foldRegions(lines, kind), byStart = new Map();
+  regions.forEach(r => { const old = byStart.get(r.start); if (!old || r.end > old.end) byStart.set(r.start, r); });
+  const folded = foldedSet(kind), active = regions.filter(r => folded.has(regionKey(r))).sort((a,b) => a.start - b.start || b.end - a.end);
+  let html = `<div class="text-panel"><div class="code-toolbar"><button id="fold-all">fold all</button><button id="unfold-all">unfold all</button><button id="copy-text">copy</button><span class="hint">click ▾/▸ in the gutter to fold brace/indent regions</span></div><div class="code-lines">`;
+  let ai = 0, hideEnd = -1;
+  for (let i = 0; i < lines.length; i++) {
+    while (ai < active.length && active[ai].start < i) { hideEnd = Math.max(hideEnd, active[ai].end); ai++; }
+    if (i <= hideEnd) continue;
+    const r = byStart.get(i), collapsed = r && folded.has(regionKey(r));
+    const summary = collapsed ? `<span class="fold-summary">… ${r.end - r.start} folded line${r.end === r.start + 1 ? '' : 's'}</span>` : '';
+    html += `<div class="code-line" data-line="${i + 1}">`;
+    html += r ? `<button class="fold-toggle" data-fold="${regionKey(r)}" title="${collapsed ? 'unfold' : 'fold'} lines ${r.start + 1}-${r.end + 1}">${collapsed ? '▸' : '▾'}</button>` : '<span class="fold-spacer"></span>';
+    html += `<span class="line-no">${i + 1}</span><span class="line-text">${esc(lines[i])}</span>${summary}</div>`;
+  }
+  $('panel').innerHTML = html + '</div></div>';
+  document.querySelectorAll('.fold-toggle').forEach(b => b.onclick = () => {
+    const set = foldedSet(kind), k = b.dataset.fold;
+    if (set.has(k)) set.delete(k); else set.add(k);
+    foldableText(text, kind);
+  });
+  $('fold-all').onclick = () => { const set = foldedSet(kind); regions.forEach(r => set.add(regionKey(r))); foldableText(text, kind); };
+  $('unfold-all').onclick = () => { foldedSet(kind).clear(); foldableText(text, kind); };
+  $('copy-text').onclick = () => navigator.clipboard?.writeText(text);
+}
+function foldRegions(lines, kind) {
+  const regions = braceRegions(lines);
+  if (!regions.length || kind === 'listing') regions.push(...indentRegions(lines));
+  const byStart = new Map();
+  for (const r of regions) {
+    if (r.end <= r.start) continue;
+    const old = byStart.get(r.start);
+    if (!old || r.end > old.end) byStart.set(r.start, r);
+  }
+  return [...byStart.values()].sort((a,b) => a.start - b.start || b.end - a.end);
+}
+function braceRegions(lines) {
+  const regions = [], stack = [];
+  let inBlockComment = false, quote = null, escaped = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (let j = 0; j < line.length; j++) {
+      const ch = line[j], nx = line[j + 1];
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === quote) quote = null;
+        continue;
+      }
+      if (inBlockComment) { if (ch === '*' && nx === '/') { inBlockComment = false; j++; } continue; }
+      if (ch === '/' && nx === '*') { inBlockComment = true; j++; continue; }
+      if (ch === '/' && nx === '/') break;
+      if (ch === '"' || ch === "'") { quote = ch; continue; }
+      if (ch === '{') stack.push({line:i, col:j});
+      else if (ch === '}') {
+        const open = stack.pop();
+        if (open && i > open.line) regions.push({start:open.line, end:i});
+      }
+    }
+  }
+  return regions;
+}
+function indentRegions(lines) {
+  const regions = [], stack = [];
+  let prev = null;
+  const closeTo = (end) => { while (stack.length) { const r = stack.pop(); if (end > r.start) regions.push({start:r.start, end}); } };
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const indent = (lines[i].match(/^ */)?.[0].length) || 0;
+    while (stack.length && indent <= stack[stack.length - 1].indent) {
+      const r = stack.pop();
+      if (i - 1 > r.start) regions.push({start:r.start, end:i - 1});
+    }
+    if (prev && indent > prev.indent) stack.push({start:prev.line, indent:prev.indent});
+    prev = {line:i, indent};
+  }
+  closeTo(lines.length - 1);
+  return regions;
+}
 function layoutGraph(g) {
   const nodes = g.nodes || [], edges = g.edges || [];
   const depth = new Map(nodes.map(n => [n.id, 0]));
