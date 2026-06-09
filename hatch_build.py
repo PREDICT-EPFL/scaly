@@ -412,7 +412,7 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     lapack_lflags = "-framework Accelerate"
   elif system == "Linux":
     openblas_install = _build_openblas(hook, third_party_dir, third_party_dir / "openblas_install")
-    lapack_lflags = f"-L{(openblas_install / 'lib').resolve()} -lopenblas"
+    lapack_lflags = f"-L{(openblas_install / 'lib').resolve()} -lopenblas -lm -lpthread -lgfortran"
   else:
     raise RuntimeError(f"Unsupported platform: {system}")
 
