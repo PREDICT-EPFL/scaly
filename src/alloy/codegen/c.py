@@ -31,6 +31,7 @@ from alloy.codegen.solver_c import (
 from alloy.expr import topo
 from alloy.function import Function
 from alloy.ops import Ops
+from alloy.passes import ProgramObserver
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,14 +198,31 @@ def render_c_source(fun: Function) -> str:
   ``LoweringError`` (e.g. a still-deferred mixed-device CALL) propagates — there is no fallback.
   See docs/program_ir_migration.md.
   """
+  from alloy.viz._recording import begin_recording
+
+  recording = begin_recording(fun)
+  observe = None if recording is None else recording.add_program
+  try:
+    source = _render_c_source(fun, observe=observe)
+  except Exception as exc:
+    if recording is not None:
+      recording.finish(error=repr(exc))
+    raise
+  if recording is not None:
+    recording.add_code(source)
+    recording.finish()
+  return source
+
+
+def _render_c_source(fun: Function, observe: ProgramObserver | None = None) -> str:
   from alloy.codegen.program_c import render_program_c_source
 
   if not _uses_solver(fun):
-    return render_program_c_source(fun)
-  return _render_solver_bearing_source(fun)
+    return render_program_c_source(fun, observe=observe)
+  return _render_solver_bearing_source(fun, observe=observe)
 
 
-def _render_solver_bearing_source(fun: Function) -> str:
+def _render_solver_bearing_source(fun: Function, observe: ProgramObserver | None = None) -> str:
   """One translation unit for a solver-bearing graph. The non-solver Functions (oracles, the host
   caller, any intermediates) are Program-IR ``_raw`` callees; each ``SolverFunction`` is the
   ``solver_c`` wrapper driving them. ``_function_order`` is topological — a solver sits after its
@@ -213,7 +231,7 @@ def _render_solver_bearing_source(fun: Function) -> str:
   from alloy.codegen.program_c import _ABI_DEFINES, _includes, _render_entry, _render_raw_callee
   from alloy.lowering import lower_function
 
-  prog = lower_function(fun)  # solver callees opaque; oracles + host fns are PROCs (see lowering.py)
+  prog = lower_function(fun, observe=observe)  # solver callees opaque; oracles + host fns are PROCs (see lowering.py)
   pc = int(prog.attrs.get("proc_count", 1))
   procs = {pr.attrs["name"]: pr for pr in prog.args[:pc]}
   lines: list[str] = [

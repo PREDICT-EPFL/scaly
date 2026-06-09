@@ -4,6 +4,7 @@ from .ad import hessian as expr_hessian
 from .ad import jacobian as expr_jacobian
 from .ad import jvp, jvp_many, vjp, vjp_many
 from .api import adjoint, forward, function, gradient, hessian, jacobian, lagrangian_hessian, sparse_lagrangian_hessian, sphessian, spjacobian
+from .assembly import expr_graph, program_graph, render_expr_assembly, render_program_assembly
 from .expr import Expr, atan2, concat, dot, format_expr, gather, map_, maximum, minimum, norm_2, scatter, split, stack, sumsqr, vec
 from .function import Function, Port
 from .ops import COMMON_OPS, OP_INFO, Ops
@@ -64,6 +65,7 @@ __all__ = [
   "cse_many",
   "dot",
   "expr_gradient",
+  "expr_graph",
   "expr_hessian",
   "expr_jacobian",
   "format_expr",
@@ -85,7 +87,10 @@ __all__ = [
   "minimum",
   "nlp",
   "norm_2",
+  "program_graph",
   "qp",
+  "render_expr_assembly",
+  "render_program_assembly",
   "rewrite",
   "scatter",
   "sparse_hessian",

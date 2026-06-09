@@ -27,7 +27,7 @@ from . import program as p
 from .expr import Expr, topo
 from .function import Function
 from .ops import Ops
-from .passes import optimize_program
+from .passes import ProgramObserver, optimize_program
 from .program import PNode, POps, RangeKind, verify_program
 from .types import DeviceSpec, DType, dtypes
 
@@ -82,7 +82,7 @@ def lowers(*ops: Ops) -> Callable[[LowerRule], LowerRule]:
   return deco
 
 
-def lower_function(fun: Function) -> PNode:
+def lower_function(fun: Function, observe: ProgramObserver | None = None) -> PNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
 
   Host placement only for now: the returned PROGRAM holds every lowered callee
@@ -108,7 +108,9 @@ def lower_function(fun: Function) -> PNode:
 
     solver_oracles = {name: tuple(o.name for o in solver_callees(sf)) for name, sf in solver_fns.items()}
     prog = PNode(POps.PROGRAM, prog.args, {**prog.attrs, "solver_oracles": solver_oracles}, prog.dtype)
-  prog = optimize_program(prog)  # fusion + workspace packing (see passes.py)
+  if observe is not None:
+    observe("lowered", prog)
+  prog = optimize_program(prog, observe=observe)  # fusion + workspace packing (see passes.py)
   verify_program(prog)
   return prog
 

@@ -49,6 +49,9 @@ docs = [
     "mkdocstrings-python>=2.0.3",
 ]
 
+[project.scripts]
+alloy_viz = "alloy.viz.serve:main"
+
 [tool.ruff]
 indent-width = 2
 line-length = 150

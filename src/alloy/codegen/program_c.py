@@ -23,6 +23,7 @@ import re
 from ..abi import c_api_signature
 from ..function import Function
 from ..lowering import LoweringError, lower_function, main_proc
+from ..passes import ProgramObserver
 from ..program import PNode, POps
 
 
@@ -90,9 +91,9 @@ def _includes(extra: tuple[str, ...] = ()) -> list[str]:
   return ["#include <math.h>", "#include <stddef.h>", "#include <stdint.h>", *extra]
 
 
-def render_program_c_source(fun: Function) -> str:
+def render_program_c_source(fun: Function, observe: ProgramObserver | None = None) -> str:
   """Render a non-solver host ``fun`` to a standalone universal-ABI translation unit."""
-  prog = lower_function(fun)
+  prog = lower_function(fun, observe=observe)
   proc = main_proc(prog)
   pc = int(prog.attrs.get("proc_count", 1))
   callees = list(prog.args[: pc - 1])

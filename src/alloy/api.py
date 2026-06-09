@@ -10,7 +10,7 @@ from .types import TensorType, as_shape
 
 
 def function(name: str, inputs: Mapping[str, int | tuple[int, ...] | TensorType]) -> Callable[[Callable[..., Any]], Function]:
-  """Trace a Python-scoped symbolic function into an Alloy ``Function``.
+  """Build a Python-scoped symbolic function into an Alloy ``Function``.
 
   This is the anvil-style construction layer: input placeholders are fresh and scoped
   to the decorated function, while the returned object is still the same IR-level

@@ -66,6 +66,7 @@ _EXPENSIVE_OPS: frozenset[POps] = frozenset(
 # ---------------------------------------------------------------------------
 
 PassFn = Callable[[PNode], PNode]
+ProgramObserver = Callable[[str, PNode], None]
 PASS_PIPELINE: list[tuple[str, PassFn]] = []
 
 
@@ -79,10 +80,12 @@ def register_pass(name: str) -> Callable[[PassFn], PassFn]:
   return deco
 
 
-def optimize_program(prog: PNode) -> PNode:
+def optimize_program(prog: PNode, observe: ProgramObserver | None = None) -> PNode:
   """Run every registered pass over a lowered ``PROGRAM`` in order, returning the optimized one."""
-  for _name, fn in PASS_PIPELINE:
+  for name, fn in PASS_PIPELINE:
     prog = fn(prog)
+    if observe is not None:
+      observe(f"pass:{name}", prog)
   return prog
 
 
@@ -609,6 +612,7 @@ def _apply_pack(proc: PNode, plan: _PackPlan, sz_w: dict[str, int]) -> PNode:
 
 __all__ = [
   "PASS_PIPELINE",
+  "ProgramObserver",
   "WORKSPACE_SPILL_THRESHOLD",
   "fuse_elementwise",
   "optimize_program",
