@@ -58,10 +58,7 @@ def _find_fortran_compiler() -> str:
     path = shutil.which(name)
     if path:
       return path
-  raise RuntimeError(
-    "No Fortran compiler found in PATH. Install gfortran via `brew install gcc` (macOS) "
-    "or `sudo apt-get install gfortran` (Linux)."
-  )
+  raise RuntimeError("No Fortran compiler found in PATH. Install gfortran via `brew install gcc` (macOS) or `sudo apt-get install gfortran` (Linux).")
 
 
 def _static_fortran_ldflags(system: str) -> str:
@@ -268,9 +265,10 @@ def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path)
     )
   hook.app.display_info("Building OpenBLAS (this can take a few minutes)...")
   jobs = str(os.cpu_count() or 2)
-  _run(["make", f"-j{jobs}", "NO_SHARED=1", "USE_OPENMP=0", "DYNAMIC_ARCH=1"], cwd=src_dir)
+  build_flags = ["NO_SHARED=1", "USE_OPENMP=0", "DYNAMIC_ARCH=1"]
+  _run(["make", f"-j{jobs}", *build_flags], cwd=src_dir)
   install_dir.mkdir(parents=True, exist_ok=True)
-  _run(["make", f"PREFIX={install_dir.resolve()}", "install"], cwd=src_dir)
+  _run(["make", f"PREFIX={install_dir.resolve()}", *build_flags, "install"], cwd=src_dir)
   return install_dir
 
 
@@ -298,9 +296,7 @@ def _build_metis(hook: "BuildHook", third_party_dir: Path, install_dir: Path) ->
   hook.app.display_info("Configuring METIS...")
   # METIS 4.0.3 has K&R-style implicit declarations that modern clang rejects by default.
   # Downgrade to warnings to keep the upstream sources buildable on Apple Clang 17+ / Clang 19+.
-  legacy_c_cflags = (
-    "-O2 -fPIC -Wno-implicit-function-declaration -Wno-implicit-int -Wno-int-conversion -Wno-error"
-  )
+  legacy_c_cflags = "-O2 -fPIC -Wno-implicit-function-declaration -Wno-implicit-int -Wno-int-conversion -Wno-error"
   _run(
     [
       "./configure",
@@ -374,10 +370,7 @@ def _build_ipopt(
   install_dir.mkdir(parents=True, exist_ok=True)
   jobs = str(os.cpu_count() or 2)
   mumps_cflags = f"-I{(mumps_install / 'include' / 'coin-or' / 'mumps').resolve()}"
-  mumps_lflags = (
-    f"-L{(mumps_install / 'lib').resolve()} -lcoinmumps "
-    f"-L{(metis_install / 'lib').resolve()} -lcoinmetis"
-  )
+  mumps_lflags = f"-L{(mumps_install / 'lib').resolve()} -lcoinmumps -L{(metis_install / 'lib').resolve()} -lcoinmetis"
   build_dir = src_dir / "build"
   build_dir.mkdir(exist_ok=True)
   hook.app.display_info(f"Configuring IPOPT (FC={fc})...")
@@ -474,7 +467,7 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     # Also rewrite the install_name embedded in PIQP's lib in case it points at build dir.
     piqp_lib = lib_dir / "libpiqpc.dylib"
     if piqp_lib.exists():
-      _run(["install_name_tool", "-id", f"@rpath/libpiqpc.dylib", str(piqp_lib)], cwd=lib_dir)
+      _run(["install_name_tool", "-id", "@rpath/libpiqpc.dylib", str(piqp_lib)], cwd=lib_dir)
 
   ipopt_headers_dir = ipopt_install / "include" / "coin-or"
   for header in ipopt_headers_dir.glob("*.h"):
@@ -492,9 +485,7 @@ class BuildHook(BuildHookInterface):
   def initialize(self, version: str, build_data: dict) -> None:
     system = platform.system()
     if system == "Windows":
-      raise RuntimeError(
-        "Windows IPOPT build not yet supported — track in https://github.com/PREDICT-EPFL/alloy/issues/1"
-      )
+      raise RuntimeError("Windows IPOPT build not yet supported — track in https://github.com/PREDICT-EPFL/alloy/issues/1")
 
     root = Path(self.root)
     third_party_dir = root / "third_party"
