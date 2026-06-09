@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.expr import topo
 from alloy.codegen.c import render_c_source
 
 casadi = pytest.importorskip("casadi")
@@ -126,7 +127,7 @@ def tracking_eq_sparse_metrics(horizon: int, *, render_source: bool = False) -> 
   fn = tracking_eq_function(horizon)
   build_ms = (time.perf_counter() - t0) * 1000.0
 
-  base_nodes = len(fn.tape().instructions)
+  base_nodes = len(topo(fn.outputs))
   sparsity = al.jacobian_sparsity(fn.outputs[0], fn.inputs[0])
   colors = al.column_coloring(sparsity)
 
@@ -139,7 +140,7 @@ def tracking_eq_sparse_metrics(horizon: int, *, render_source: bool = False) -> 
   return {
     "horizon": horizon,
     "expr_nodes": base_nodes,
-    "sparse_tape_nodes": len(spjf.tape().instructions),
+    "sparse_expr_nodes": len(topo(spjf.outputs)),
     "sparsity_nnz": sparsity.nnz,
     "colors": max(colors) + 1 if colors else 0,
     "function_build_ms": build_ms,
@@ -194,7 +195,7 @@ def test_tracking_eq_colored_sparse_jacobian_matches_reference_path(horizon: int
   zv = rng.normal(size=NZ * (horizon + 1))
 
   assert colored.sparsity == reference.sparsity
-  assert len(colored_fn.tape().instructions) < len(reference_fn.tape().instructions)
+  assert len(topo(colored_fn.outputs)) < len(topo(reference_fn.outputs))
   colored_values, reference_values = compare(zv)
   np.testing.assert_allclose(colored_values, reference_values, rtol=1e-10, atol=1e-10)
 

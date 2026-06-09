@@ -21,7 +21,6 @@ pytestmark = pytest.mark.skipif(not _cc_available(), reason="cc is required for 
 @pytest.fixture
 def isolated_cache(tmp_path, monkeypatch):
   monkeypatch.setenv("ALLOY_CACHE_DIR", str(tmp_path))
-  monkeypatch.delenv("ALLOY_DISABLE_JIT", raising=False)
   # Drop any process-local artifacts so the cache key derivation runs fresh.
   jit._artifact_cache.clear()
   yield tmp_path
@@ -33,22 +32,14 @@ def _simple_fn() -> al.Function:
   return al.Function("smoke_jit", [x], [y], ["x"], ["y"])
 
 
-def test_call_uses_jit_and_matches_interpreter(isolated_cache) -> None:
+def test_call_uses_jit_and_matches_numpy(isolated_cache) -> None:
   fn = _simple_fn()
   xv = np.array([0.1, -0.7, 2.5])
 
   jit_out = fn(xv)
-  interp_out = fn.eval_interpreter(xv)[0]
-  np.testing.assert_allclose(jit_out, interp_out)
+  np.testing.assert_allclose(jit_out, (np.sin(xv) + xv * xv).sum())
   assert fn._compiled is not None
   assert Path(fn._compiled.lib_path).exists()
-
-
-def test_alloy_disable_jit_uses_interpreter(monkeypatch, isolated_cache) -> None:
-  monkeypatch.setenv("ALLOY_DISABLE_JIT", "1")
-  fn = _simple_fn()
-  fn(np.array([1.0, 2.0, 3.0]))
-  assert fn._compiled is None
 
 
 def test_jit_cache_key_stable_across_function_instances(isolated_cache) -> None:
@@ -69,8 +60,9 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
   fn.recompile()
   assert fn._compiled is None
   assert not cache_dir.exists()
-  out = fn(np.array([0.5, 0.0, -1.0]))
-  np.testing.assert_allclose(out, fn.eval_interpreter(np.array([0.5, 0.0, -1.0]))[0])
+  xv = np.array([0.5, 0.0, -1.0])
+  out = fn(xv)
+  np.testing.assert_allclose(out, (np.sin(xv) + xv * xv).sum())
 
 
 def test_jit_handles_multi_output_and_kwargs(isolated_cache) -> None:

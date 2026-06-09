@@ -132,7 +132,7 @@ def test_packing_reuses_slots_and_spills() -> None:
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the numeric spill check")
-def test_spilled_function_matches_interpreter() -> None:
+def test_spilled_function_matches_numpy() -> None:
   """End-to-end: a function whose temporaries spill to w[] still computes correctly (the JIT
   allocates w from the rendered sz_w and passes it through)."""
 
@@ -146,8 +146,8 @@ def test_spilled_function_matches_interpreter() -> None:
   rng = np.random.default_rng(0)
   a, b = rng.standard_normal((40, 40)), rng.standard_normal((40, 40))
   got = f(a, b)
-  ref = f.eval_interpreter(a, b)
-  np.testing.assert_allclose(np.asarray(got).reshape(-1), ref[0].reshape(-1), rtol=1e-9, atol=1e-10)
+  ref = ((a @ b) + (b @ a)).sum()
+  np.testing.assert_allclose(np.asarray(got).reshape(-1), np.asarray(ref).reshape(-1), rtol=1e-9, atol=1e-10)
 
 
 def test_optimized_program_still_verifies() -> None:

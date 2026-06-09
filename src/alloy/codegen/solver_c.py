@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from alloy.expr import topo
 from alloy.function import Function
 from alloy.ops import Ops
 
@@ -93,12 +94,12 @@ def _uses_backend(fun: Function, backend: str, seen: set[int]) -> bool:
   seen.add(id(fun))
   if is_solver_function(fun) and _descriptor(fun).backend == backend:
     return True
-  for inst in fun.tape():
-    if inst.op in {Ops.CALL, Ops.MAP}:
-      if _uses_backend(inst.attrs["callee"], backend, seen):
+  for node in topo(fun.outputs):
+    if node.op in {Ops.CALL, Ops.MAP}:
+      if _uses_backend(node.attrs["callee"], backend, seen):
         return True
-    if inst.op == Ops.SOLVER_CALL:
-      if inst.attrs["solver"].backend == backend:
+    if node.op == Ops.SOLVER_CALL:
+      if node.attrs["solver"].backend == backend:
         return True
   return False
 

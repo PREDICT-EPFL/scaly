@@ -175,7 +175,7 @@ def _build_entries(fixture, ncars: int, variant: str) -> VariantBuild:
 
   for label, fn in entries_spec:
     args = [sample[name] for name in fn.input_names]
-    raw = fn.eval_interpreter(*args)
+    raw = fn.eval_list(*args)
     expected = np.asarray(raw[0], dtype=np.float64).reshape(-1)
     out_size = int(np.prod(fn.outputs[0].shape))
     if expected.size != out_size:

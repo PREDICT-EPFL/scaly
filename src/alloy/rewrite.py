@@ -7,7 +7,7 @@ from typing import Any, Callable, Iterable
 import numpy as np
 
 from .expr import Expr, _attrs_key, stack, topo, zeros_like
-from .ops import Ops
+from .ops import OP_INFO, Ops
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +135,37 @@ def _all_args_const(e: Expr) -> bool:
 
 
 def _constant_fold(e: Expr) -> Expr:
-  return Expr.const(e.eval({}), lowering=e.lowering)
+  vals = [a.value for a in e.args]
+  if any(v is None for v in vals):
+    return e
+  args = [v for v in vals if v is not None]
+  if e.op == Ops.RESHAPE:
+    out = args[0].reshape(e.attrs["shape"])
+  elif e.op == Ops.TRANSPOSE:
+    out = np.transpose(args[0], axes=e.attrs["axes"])
+  elif e.op == Ops.SLICE:
+    out = args[0][e.attrs["index"]]
+  elif e.op == Ops.GATHER:
+    indices = e.attrs["indices"]
+    out = np.take(args[0].reshape(-1), indices).reshape(indices.shape)
+  elif e.op == Ops.SCATTER:
+    out = np.zeros(e.shape, dtype=np.float64).reshape(-1)
+    out[e.attrs["indices"].reshape(-1)] = args[0].reshape(-1)
+    out = out.reshape(e.shape)
+  elif e.op == Ops.STACK:
+    out = np.stack(args, axis=e.attrs.get("axis", 0))
+  elif e.op == Ops.CONCAT:
+    out = np.concatenate(args, axis=e.attrs.get("axis", 0))
+  elif e.op == Ops.SUM:
+    out = np.asarray(np.sum(args[0]), dtype=np.float64)
+  elif e.op == Ops.MATMUL:
+    out = args[0] @ args[1]
+  else:
+    info = OP_INFO[Ops(e.op)]
+    if info.numpy is None:
+      return e
+    out = info.numpy(*args)
+  return Expr.const(out, dtype=e.type.dtype, lowering=e.lowering)
 
 
 def _const_value(e: Expr) -> np.ndarray | None:

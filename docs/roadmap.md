@@ -46,11 +46,11 @@ A useful way to keep Alloy aligned with compiler/tinygrad/anvil terminology:
 | `TensorType` | value type metadata | shape/dtype/sparsity metadata around tinygrad buffers |
 | `Function` | graph boundary and compilation unit | anvil `NumericalFunction`, CasADi `Function` |
 | `CallOp` / `Ops.CALL` | function invocation node | CasADi call node, future external/solver/integrator calls |
-| `Tape` / `Instruction` | linearized schedule | tinygrad linearized UOps, CasADi `algorithm_` |
+| `Program IR` | lowered executable schedule | tinygrad scheduled UOps, generated CasADi/anvil code |
 | `Function.factory()` | derivative/helper function builder | CasADi factory request language |
 | `alloy.api.gradient(fn, ...)` | human convenience layer | thin wrapper over factory requests |
 | lowering hints | region/codegen policy | SX-like scalar vs MX-like block lowering choice |
-| future `PatternMatcher` | graph/tape rewrite system | tinygrad `PatternMatcher`/`UPat` |
+| `PatternMatcher` | graph rewrite system | tinygrad `PatternMatcher`/`UPat` |
 
 This map should stay visible in the design: `Expr` is not the high-level tensor API forever; it is the IR node. We can add nicer matrix/tensor facades later, but they should lower to `Expr`/`Ops` rather than hide a separate graph representation.
 
@@ -89,8 +89,8 @@ Status: started.
 Implemented:
 
 - `src/alloy` as a separate package.
-- `Expr`, `Ops`, `Function`, `Tape`, `Instruction`.
-- Basic NumPy evaluation.
+- `Expr`, `Ops`, `Function`.
+- JIT execution through generated C.
 - Basic symbolic JVP-based `jacobian`, `gradient`, `hessian`.
 - CasADi-like `Function.factory()` for `jac:*`, `grad:*`, `hess:*`, `lam:*`, and aux Lagrangian outputs.
 - Human-friendly wrappers like `gradient(fn, input_name, output_name)` built on top of factory requests.
@@ -112,10 +112,10 @@ Status: in progress.
 
 Progress:
 
-- `Function` evaluation now runs through the topologically linearized `Tape` interpreter; recursive `Expr.eval` remains as a reference/debug path.
-- `Tape.plan_workspace()` provides a deterministic lifetime-based temporary workspace layout for non-leaf instructions.
+- `Function` evaluation now runs through JIT-compiled C generated from Program IR; the old Python tape/`Expr.eval` execution path was removed to keep Python and AOT on the same backend.
+- Program IR workspace packing provides deterministic lifetime-based scratch layout/spilling for non-leaf buffers.
 - Basic construction/execution errors are explicit for function signature arity, undeclared symbolic inputs, call argument shapes, missing inputs, input shape mismatches, invalid `matmul`, invalid transpose axes, and invalid stack/concat axes/shapes.
-- Structural coverage expanded with `transpose`, `Expr.T`, `vec`, `slice`/indexing, `split`, flat `gather`, `scatter`, and `concat`; JVP rules and tape evaluation support them.
+- Structural coverage expanded with `transpose`, `Expr.T`, `vec`, `slice`/indexing, `split`, flat `gather`, `scatter`, and `concat`; JVP rules and Program IR lowering support them.
 - Reduction helpers now include shape-checked `dot`, `sumsqr`, and `norm_2`.
 - Named-function keyword evaluation now rejects missing and extra keyword inputs instead of silently ignoring extras.
 - JVP can differentiate through `CallOp` by inlining the callee derivative graph; this is the first policy for nested named-function AD.
@@ -127,8 +127,8 @@ Progress:
 - C API header generation now emits sparse output metadata (`NNZ`, `NROW`, `NCOL`, COO `rows`/`cols`, CSR, and CSC arrays) for compact derivative buffers.
 - Added structural equality/hash helpers separate from `Expr.id`, plus CSE over structurally equivalent subgraphs.
 - Added stable topological debug printing (`Expr.debug()`, `format_expr`) for inspecting small graphs without relying on construction IDs.
-- Added tape debug printing (`Tape.debug()`, `format_tape`) with explicit non-`auto` lowering annotations.
-- Added `Tape.lowering_regions()` and `TapeRegion` as a first contiguous-tape grouping of lowering metadata.
+- Added stable semantic debug printing (`Expr.debug()`, `format_expr`) for topological graph inspection.
+- Lowering metadata is preserved directly on `Expr` nodes; executable region formation belongs in Program IR/lowering passes.
 - Added a tiny graph rewrite layer (`Pattern`, `PatternMatcher`, `rewrite`, `simplify`) with constant folding and first algebraic cleanups (`x + 0`, `x * 1`, `x * 0`, identity reshape/transpose). Rewrites and CSE now walk the DAG in topological order with replacement caches instead of recursive tree traversal.
 - Added `.opaque()` and the `opaque` lowering hint to represent named call, solver, and integrator boundaries before full mixed-lowering region formation exists.
 - `TensorType.diff` now propagates through expression constructors, structural ops, call outputs, and marks nonsmooth ops like `floor`/`minimum` as non-differentiable metadata.
@@ -144,7 +144,7 @@ Progress:
 - Added the tracking NMPC equality-Jacobian fixture with an opt-in `ALLOY_TRACKING_SWEEP=1` pytest harness for horizons `N=1,2,5,10`, recording graph size, sparsity nnz, color count, colored sparse-AD construction time, and generated source size while comparing compact values against CasADi.
 - Added `benchmarks/alloy_tracking_eq_jac_benchmark.py`, a Google Benchmark C++ harness generator for Alloy vs CasADi SX/MX tracking equality Jacobians. After local-temporary codegen, slice aliasing, and constant-seed specialization, a local `N=50` run produced Alloy code at 364 KB / 13112 lines / 0 workspace and 5.1 us, CasADi SX at 466 KB / 25902 lines / 77 workspace doubles and 4.6 us, and CasADi MX at 2.0 MB / 63134 lines / 8046 workspace doubles and 8.4 us.
 - Added an official-size unbumpercars inequality-Jacobian fixture in `tests/alloy/test_unbumpercars_workload.py`, using the example model dimensions (`256 -> 128 -> 3`) and official `model_kinematic_mlp.pth` weights in the parameter vector, plus scalar C3BF/wall/slack sparse assembly, CasADi MX dense/sparse structural checks, and lowering metadata assertions. Added `benchmarks/alloy_unbumpercars_ineq_jac_benchmark.py` for Google Benchmark comparisons against CasADi SX/MX. A local official-size `N=2` stats run after zero-matmul, zero-constant cleanup, and active color-lane compression produced Alloy at 61 KB / 2289 lines / 0 workspace, CasADi SX at 12.2 MB / 447759 lines / 36274 workspace doubles, and CasADi MX at 217 KB / 6689 lines / 141500 workspace doubles; the Alloy native run was 48 us and the latest Alloy-vs-MX run was 46 us vs 237 us. SX is now correctly enormous for the dense MLP case and is best inspected with `--stats-only` unless a long compile is desired.
-- Fixed a C codegen correctness bug where `_contiguous_slice_offset` accepted column-style slices like `(slice(None), 1)` on a `(5, 7)` tensor and emitted a `v + 1` pointer alias that read flat indices `[1,2,3,4,5]` instead of the column `[1,8,15,22,29]`. The Python tape interpreter still produced the correct values via NumPy, so the bug only manifested in compiled C. Added a regression test that compiles a column slice and verifies its values.
+- Fixed a C codegen correctness bug where `_contiguous_slice_offset` accepted column-style slices like `(slice(None), 1)` on a `(5, 7)` tensor and emitted a `v + 1` pointer alias that read flat indices `[1,2,3,4,5]` instead of the column `[1,8,15,22,29]`. Added a regression test that compiles a column slice and verifies its values.
 - Simplify now iterates the rewrite loop to fixed point. Added two structural rewrites that benefit the benchmark paths: `slice(stack(args, axis=A), index)` with a full slice on `A` becomes a stack of per-arg slices, and `slice(slice(x, idx1), idx2)` with step-1 indices composes into a single slice. Together they eliminate intermediate stacked tensors that were materialized only to read individual rows/columns, and they collapse double pointer aliasing chains like `v9 = v8 + 0; v10 = v9 + 0` introduced by the JVP slicing path.
 - Added several codegen cleanups: literal `(k % N)` / `(k / N)` coord expressions fold when the loop variable is a constant, sparse-constant matvec terms drop `1.0 * x` factors (and emit `-x` for `-1.0`), and single-use scalar (size-1) elementwise ops now inline their C expression at the consumer instead of materializing a 1-element buffer.
 - Extended the gather-transposed-concat peephole to also recognize `gather(transpose(stack(args, axis=1)))` where each stack arg is rank-1, skipping the materialized stack+transpose buffer the colored sparse-Jacobian assembly used to leave behind.
@@ -214,11 +214,11 @@ Planned passes once the infrastructure exists:
 2. AD cleanup: remove zero tangents/adjoints and independent subgraphs without scalarizing whole tensors;
 3. sparsity-aware simplification: eliminate structurally zero derivative blocks before codegen;
 4. region/lowering cleanup: simplify scalar/block/opaque boundaries;
-5. tape/codegen peepholes: dead instruction elimination, slot lifetime cleanup, and scalar expression CSE.
+5. Program IR/codegen peepholes: dead instruction elimination, slot lifetime cleanup, and scalar expression CSE.
 
 ### Evaluation
 
-- Keep the tape interpreter as a deterministic reference/debug evaluator.
+- Keep Python execution on the generated-code path; use semantic/Program IR dumps for debugging.
 - Long term, make `Function.__call__` JIT by default, following anvil's model: lazily render/compile/cache native code on first call, then dispatch through the compiled ABI.
 - The interpreter should remain available for tiny graphs, diagnostics, and tests, but performance claims should be based on generated/JIT code.
 - Add workspace planning for temporaries.
@@ -228,7 +228,7 @@ Planned passes once the infrastructure exists:
 Exit criteria:
 
 - Small dynamics and objective functions can be written without falling back to anvil/tinygrad.
-- Tape interpreter and recursive evaluator agree.
+- JIT execution and generated-source checks agree with explicit NumPy/CasADi references where available.
 - Unit tests cover all MVP ops.
 
 ## Phase 2 — AD and sparsity as first-class features
@@ -334,7 +334,7 @@ The scalability sweep showed Alloy already matches CasADi SX runtime on the trac
 
 Plan, in roughly the order that minimizes blast radius:
 
-1. **`Ops.MAP` in the IR**. Hold `(callee, length, input_slice_specs, output_slice_spec)`. Each spec is `(outer_tensor, start, stride, slice_size)` and describes how the i-th iteration's argument is sliced out of an outer tensor and where the i-th output writes into the outer assembly. Shape inference yields `(length * out_slice_size, ...)` along the assembly axis. Start with a numpy-backed `Tape` evaluator so we can compare against the unrolled `concat`-of-call equivalent before touching codegen or AD. **Done**: `Ops.MAP` added with rank-1 inputs/outputs, `(start, stride)` per callee input (stride=0 broadcasts), recursive `Expr.eval` and tape evaluation paths, plus tape/expr pretty-printing. Tests in `tests/alloy/test_map.py` compare against the unrolled `concat`-of-call equivalent for fully-strided, overlapping-stride, zero-length, and broadcast cases.
+1. **`Ops.MAP` in the IR**. Hold `(callee, length, input_slice_specs, output_slice_spec)`. Each spec is `(outer_tensor, start, stride, slice_size)` and describes how the i-th iteration's argument is sliced out of an outer tensor and where the i-th output writes into the outer assembly. Shape inference yields `(length * out_slice_size, ...)` along the assembly axis. **Done**: `Ops.MAP` added with rank-1 inputs/outputs, `(start, stride)` per callee input (stride=0 broadcasts), Program IR lowering/codegen, plus semantic pretty-printing. Tests in `tests/alloy/test_map.py` compare against unrolled NumPy/generated-code references for fully-strided, overlapping-stride, zero-length, and broadcast cases.
 2. **Scoped sugar `al.scan(...)` / `al.map(...)`**. One IR node instead of N call nodes:
    ```python
    parts = al.scan(eq_interstage, length=N,
@@ -391,7 +391,7 @@ Exit criteria:
 Exit criteria:
 
 - A single `Function` can mix scalarized first-principles dynamics with dense block linear algebra.
-- The generated tape clearly shows region boundaries.
+- Semantic/Program IR dumps clearly show region boundaries.
 - Mixed lowering produces the same numerical results as all-scalar and all-block reference paths where both exist.
 
 ## Phase 4 — C ABI, codegen, JIT, and typed wrappers
@@ -403,10 +403,10 @@ Status: started.
 Progress:
 
 - C API header generation now emits `sz_arg`, `sz_res`, `sz_iw`, and `sz_w` helper declarations alongside the universal ABI.
-- Added a standalone scalar C source renderer for the current tape subset: constants, inputs, elementwise ops, reductions, structural reshape/transpose/slice/gather/scatter/stack/concat, and rank-1/rank-2 matmul.
+- Added a standalone scalar C source renderer for the current semantic op subset: constants, inputs, elementwise ops, reductions, structural reshape/transpose/slice/gather/scatter/stack/concat, and rank-1/rank-2 matmul.
 - Added a compiled `ctypes` smoke test that builds generated C with `cc`, calls the universal ABI, checks the `sz_*` helpers, and verifies numerical outputs.
 - `render_c_source(outer)` now emits nested callee raw bodies before callers and lowers `CallOp` instructions by invoking those internal raw bodies directly; only the root function is exported through the universal ABI for a rendered translation unit.
-- C codegen now emits tape temporaries as local C arrays with contiguous slice/reshape aliases instead of monotonically growing caller workspace. This fixed the tracking benchmark symptom where Alloy's reported workspace grew with horizon; pure generated functions now usually have `SZ_W == 0`, while the ABI still reserves `w` for future regions that need caller scratch.
+- C codegen now emits temporaries as local C arrays with contiguous slice/reshape aliases instead of monotonically growing caller workspace. This fixed the tracking benchmark symptom where Alloy's reported workspace grew with horizon; pure generated functions now usually have `SZ_W == 0`, while the ABI still reserves `w` for regions that need caller scratch.
 - Added a compiled nested-call ABI test covering a callee with multiple outputs.
 - Generated headers now expose compile-time ABI size macros and an inline C++ typed-buffer wrapper that calls the universal ABI internally.
 - Added a C++ compile-and-run smoke test for the typed wrapper path.
@@ -422,16 +422,16 @@ Progress:
 
 ### Next concrete milestone: JIT as default execution path
 
-**Status: done.** `Function.__call__` now lazily renders, compiles, caches, and dispatches through the universal ABI on first call; the interpreter is preserved as `Function.eval_interpreter(...)` and as the fallback when `ALLOY_DISABLE_JIT=1`, no C compiler is available, or codegen raises `NotImplementedError`.
+**Status: done.** `Function.__call__` now lazily renders, compiles, caches, and dispatches through the universal ABI on first call. There is no interpreter fallback: missing compilers and lowering/codegen gaps fail loudly.
 
 Landed:
 
 - `src/alloy/jit.py` owns the JIT pipeline: SHA-256 cache key over (`_JIT_CACHE_VERSION`, `C_API_SIGNATURE`, function name, generated C source), per-user cache directory (`$ALLOY_CACHE_DIR` overrides, otherwise `$XDG_CACHE_HOME/alloy/jit` or `~/.cache/alloy/jit`), `cc -O2 -fPIC -shared/-dynamiclib` invocation, and a `CompiledFunction` that wires `ctypes` against the universal ABI entry point and `_sz_w` helper.
 - A process-local `_artifact_cache` lets multiple `Function` instances with identical generated source share the same `.so` after the first compile; the on-disk cache survives across processes.
-- `Function._compiled` holds the per-instance handle. `Function.recompile()` drops the in-process handle and removes the cached source/library directory. `Function.eval_interpreter` (existing reference path), `Function.eval_list` (default JIT dispatcher), and `Function.__call__` are the public entry points.
-- Internal callees inside `Tape.evaluate(...)` and `Expr.eval(...)` now route through `callee.eval_interpreter(...)` so the interpreter path remains a pure reference (no implicit JIT inside the reference path).
+- `Function._compiled` holds the per-instance handle. `Function.recompile()` drops the in-process handle and removes the cached source/library directory. `Function.eval_list` and `Function.__call__` are the public execution entry points.
+- Internal `CALL`/`MAP` nodes lower through Program IR, so nested Python execution and AOT share the same code path.
 - Fixed a latent codegen bug uncovered by this work: `_skipped_instructions` was vacuously dropping output-only TRANSPOSE/ADD/SUB nodes because `all(...)` over an empty consumer list is `True`. Output instructions are now excluded from the skip set so the final copy loop always has a materialized buffer.
-- Test coverage in `tests/alloy/test_alloy_jit.py` covers: JIT matches interpreter, `ALLOY_DISABLE_JIT=1` falls back to interpreter, cache keys are stable across `Function` instances of the same graph, `recompile()` invalidates both in-memory and on-disk caches, multi-output + keyword inputs, factory `spjacobian` outputs (sparse compact buffer), nested `CALL` nodes, and shape-mismatch validation.
+- Test coverage in `tests/alloy/test_alloy_jit.py` covers: JIT matches explicit NumPy references, cache keys are stable across `Function` instances of the same graph, `recompile()` invalidates both in-memory and on-disk caches, multi-output + keyword inputs, factory `spjacobian` outputs (sparse compact buffer), nested `CALL` nodes, and shape-mismatch validation.
 
 Resolved open questions:
 
@@ -592,7 +592,7 @@ nlp = al.nlp(
 - **NLP inputs (call-time):** `x0`, `lam_eq0`, `lam_ineq0`, plus any free `p`.
 - **NLP outputs:** `x`, `f`, `h_eq`, `g_ineq`, `lam_eq`, `lam_ineq`, `lam_box`.
 
-Solvers are opaque `Function`s by default — their `.tape()` shows a single `opaque` call into the backend. Fixed-iteration unrolling stays available as an explicit advanced option but is not the default; it conflicts with backend-internal warm starting.
+Solvers are opaque `Function`s by default — their semantic graph contains `SOLVER_CALL` outputs and outer graphs call them as named opaque callees. Fixed-iteration unrolling stays available as an explicit advanced option but is not the default; it conflicts with backend-internal warm starting.
 
 ### Safety-filter assembly
 
@@ -694,7 +694,7 @@ Metrics specific to this workload:
 
 Metrics for all workloads:
 
-- expression/tape node counts before and after rewrites;
+- expression/Program IR node counts before and after rewrites;
 - AD construction time and graph size;
 - sparsity pattern, nnz, coloring count, and compact output order;
 - generated source size and compile time;
@@ -706,7 +706,7 @@ Metrics for all workloads:
 ### Unit tests
 
 - Expression construction, shape inference, evaluation.
-- Tape linearization and deterministic ordering.
+- Semantic graph topological ordering and Program IR verification.
 - AD rules per op.
 - Factory request parser and output naming.
 - ABI/header generation.

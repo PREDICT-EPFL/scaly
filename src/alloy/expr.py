@@ -295,46 +295,6 @@ class Expr:
   def __rmatmul__(self, other: Any) -> Expr:
     return matmul(as_expr(other), self)
 
-  def eval(self, env: dict[str, Any]) -> np.ndarray:
-    if self.op == Ops.INPUT:
-      if self.name not in env:
-        raise KeyError(f"missing input {self.name!r}")
-      return _asarray(env[self.name])
-    if self.op == Ops.CONST:
-      assert self.value is not None
-      return self.value
-    vals = [arg.eval(env) for arg in self.args]
-    if self.op == Ops.RESHAPE:
-      return vals[0].reshape(self.attrs["shape"])
-    if self.op == Ops.TRANSPOSE:
-      return np.transpose(vals[0], axes=self.attrs["axes"])
-    if self.op == Ops.SLICE:
-      return vals[0][self.attrs["index"]]
-    if self.op == Ops.GATHER:
-      indices = self.attrs["indices"]
-      return np.take(vals[0].reshape(-1), indices).reshape(indices.shape)
-    if self.op == Ops.SCATTER:
-      out = np.zeros(self.shape, dtype=np.float64).reshape(-1)
-      out[self.attrs["indices"].reshape(-1)] = vals[0].reshape(-1)
-      return out.reshape(self.shape)
-    if self.op == Ops.STACK:
-      return np.stack(vals, axis=self.attrs.get("axis", 0))
-    if self.op == Ops.CONCAT:
-      return np.concatenate(vals, axis=self.attrs.get("axis", 0))
-    if self.op == Ops.SUM:
-      return np.asarray(np.sum(vals[0]), dtype=np.float64)
-    if self.op == Ops.MATMUL:
-      return vals[0] @ vals[1]
-    if self.op == Ops.CALL:
-      callee = self.attrs["callee"]
-      return callee.eval_interpreter(*vals)[self.attrs["output"]]
-    if self.op == Ops.MAP:
-      return _eval_map(self, vals)
-    info = OP_INFO[Ops(self.op)]
-    if info.numpy is None:
-      raise NotImplementedError(f"no numpy evaluator for op {self.op}")
-    return _asarray(info.numpy(*vals))
-
   def inputs(self) -> dict[str, Expr]:
     ret: dict[str, Expr] = {}
     for e in topo([self]):
@@ -641,24 +601,6 @@ def map_(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
     },
     lowering=common_lowering(*outers) if outers else "auto",
   )
-
-
-def _eval_map(expr: Expr, vals: list[np.ndarray]) -> np.ndarray:
-  callee = expr.attrs["callee"]
-  output_idx = expr.attrs["output"]
-  length = expr.attrs["length"]
-  starts = expr.attrs["starts"]
-  strides = expr.attrs["strides"]
-  slice_size = expr.attrs["slice_size"]
-  out = np.empty((length * slice_size,), dtype=np.float64)
-  for it in range(length):
-    callee_args = [
-      vals[i][starts[i] + it * strides[i] : starts[i] + it * strides[i] + callee.inputs[i].size].reshape(callee.inputs[i].shape)
-      for i in range(len(callee.inputs))
-    ]
-    res = np.asarray(callee.eval_interpreter(*callee_args)[output_idx], dtype=np.float64)
-    out[it * slice_size : (it + 1) * slice_size] = res.reshape(-1)
-  return out
 
 
 def zeros_like(x: Expr) -> Expr:

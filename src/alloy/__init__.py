@@ -20,7 +20,6 @@ from .sparsity import (
   sparse_jacobian_colored,
   sparse_jacobian_reference,
 )
-from .tape import Instruction, Tape, TapeRegion, WorkspacePlan, WorkspaceSlot, format_tape, linearize
 from .types import BACKEND_SUPPORT, BackendSupport, DeviceSpec, DType, ScalarType, SparsityType, TensorType, as_dtype, backend_supports, dtypes
 
 sym = Expr.sym
@@ -38,7 +37,6 @@ __all__ = [
   "OP_INFO",
   "Expr",
   "Function",
-  "Instruction",
   "Ops",
   "Pattern",
   "PatternMatcher",
@@ -49,13 +47,9 @@ __all__ = [
   "Spec",
   "SparseJacobian",
   "SparsityType",
-  "Tape",
-  "TapeRegion",
   "TensorType",
   "VerifyError",
   "VerifyRule",
-  "WorkspacePlan",
-  "WorkspaceSlot",
   "adjoint",
   "as_dtype",
   "atan2",
@@ -73,7 +67,6 @@ __all__ = [
   "expr_hessian",
   "expr_jacobian",
   "format_expr",
-  "format_tape",
   "forward",
   "function",
   "gather",
@@ -86,7 +79,6 @@ __all__ = [
   "vjp",
   "vjp_many",
   "lagrangian_hessian",
-  "linearize",
   "map_",
   "scan",
   "maximum",

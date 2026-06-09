@@ -9,19 +9,21 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.expr import topo
 
 
-def test_elementwise_eval_and_tape_order() -> None:
+def test_elementwise_eval_and_topological_order() -> None:
   x = al.sym("x", 3)
   y = (x.sin() + x * x).sum()
   f = al.Function("f", [x], [y], ["x"], ["y"])
 
   np.testing.assert_allclose(f(np.array([1.0, 2.0, 3.0])), np.sin([1.0, 2.0, 3.0]).sum() + 14.0)
 
-  tape = f.tape()
-  assert tape.instructions[tape.outputs[0]].op == al.Ops.SUM
-  assert [i.op for i in tape].count(al.Ops.INPUT) == 1
-  assert all(dep < i.index for i in tape for dep in i.inputs)
+  nodes = topo(f.outputs)
+  loc = {e.id: i for i, e in enumerate(nodes)}
+  assert nodes[-1].op == al.Ops.SUM
+  assert [e.op for e in nodes].count(al.Ops.INPUT) == 1
+  assert all(loc[arg.id] < loc[e.id] for e in nodes for arg in e.args)
 
 
 def test_common_ops_contains_modeling_basics() -> None:
@@ -99,7 +101,21 @@ def test_structural_transpose_concat_vec_eval_and_ad() -> None:
   xv = np.array([[1.0, 2.0], [3.0, 4.0]])
 
   np.testing.assert_allclose(f(xv), np.concatenate([xv.T, xv + 1.0], axis=1).reshape(8))
-  np.testing.assert_allclose(jf(xv), al.expr_jacobian(y, x).eval({"x": xv}))
+  np.testing.assert_allclose(
+    jf(xv),
+    np.array(
+      [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+      ]
+    ),
+  )
 
 
 def test_slice_split_eval_and_ad() -> None:
@@ -208,30 +224,17 @@ def test_shape_checks_for_structural_ops() -> None:
     raise AssertionError("invalid concat should fail")
 
 
-def test_mixed_lowering_hints_survive_linearization() -> None:
+def test_mixed_lowering_hints_survive_semantic_graph() -> None:
   x = al.sym("x", 3)
   scalar_region = (x.sin() + x * x).scalar()
   block_region = (al.const(np.eye(3)) @ x).block()
   opaque_region = (x + 1.0).opaque()
   f = al.Function("mixed", [x], [scalar_region + block_region + opaque_region], ["x"], ["y"])
 
-  lowerings = [i.lowering for i in f.tape() if i.lowering != "auto"]
+  lowerings = [e.lowering for e in topo(f.outputs) if e.lowering != "auto"]
   assert "scalar" in lowerings
   assert "block" in lowerings
   assert "opaque" in lowerings
-
-  tape_text = f.tape().debug()
-  assert "[scalar]" in tape_text
-  assert "[block]" in tape_text
-  assert "[opaque]" in tape_text
-  assert al.format_tape(f.tape()) == tape_text
-
-  regions = f.tape().lowering_regions()
-  assert all(isinstance(r, al.TapeRegion) for r in regions)
-  assert all(r.instructions == tuple(range(r.start, r.end)) for r in regions)
-  assert "scalar" in [r.lowering for r in regions]
-  assert "block" in [r.lowering for r in regions]
-  assert "opaque" in [r.lowering for r in regions]
 
 
 def test_function_call_node_eval() -> None:
@@ -242,7 +245,7 @@ def test_function_call_node_eval() -> None:
   outer = al.Function("outer", [z], [inner_z + 1.0], ["z"], ["out"])
 
   np.testing.assert_allclose(outer(np.array([0.1, 0.2])), np.sin([0.1, 0.2]) + 1.0)
-  assert any(i.op == al.Ops.CALL for i in outer.tape())
+  assert any(e.op == al.Ops.CALL for e in topo(outer.outputs))
 
 
 def test_function_call_normalizes_raw_constant_args() -> None:
@@ -338,7 +341,7 @@ def test_cse_merges_equivalent_subgraphs() -> None:
 
   assert y.op == al.Ops.MUL
   assert y.args[0] is y.args[1]
-  np.testing.assert_allclose(y.eval({"x": np.array([2.0, 3.0])}), np.array([9.0, 16.0]))
+  np.testing.assert_allclose(al.Function("cse_eval", [x], [y], ["x"], ["y"])(np.array([2.0, 3.0])), np.array([9.0, 16.0]))
 
   a, b = x[0], x[1]
   z = al.cse(al.stack([a * b, b * a]))
@@ -352,31 +355,33 @@ def test_simplify_rewrites_algebraic_identities_and_folds_constants() -> None:
 
   c = al.simplify((al.const([1.0, 2.0]) + al.const([3.0, 4.0])).sum())
   assert c.op == al.Ops.CONST
-  np.testing.assert_allclose(c.eval({}), 10.0)
+  assert c.value is not None
+  np.testing.assert_allclose(c.value, 10.0)
 
   z = al.simplify(x * 0.0)
   assert z.op == al.Ops.CONST
-  np.testing.assert_allclose(z.eval({}), np.zeros(3))
+  assert z.value is not None
+  np.testing.assert_allclose(z.value, np.zeros(3))
 
   m = al.simplify(al.const(np.zeros((2, 3))) @ al.sym("v", 3))
   assert m.op == al.Ops.CONST
-  np.testing.assert_allclose(m.eval({}), np.zeros(2))
+  assert m.value is not None
+  np.testing.assert_allclose(m.value, np.zeros(2))
 
   q = al.sym("q", 2)
-  np.testing.assert_allclose(al.simplify(q - q).eval({}), np.zeros(2))
-  np.testing.assert_allclose(al.simplify(q / q).eval({}), np.ones(2))
-  np.testing.assert_allclose(al.simplify(al.cse(q + q)).eval({"q": np.array([2.0, 3.0])}), np.array([4.0, 6.0]))
+  np.testing.assert_allclose(al.Function("simp_sub", [q], [al.simplify(q - q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.zeros(2))
+  np.testing.assert_allclose(al.Function("simp_div", [q], [al.simplify(q / q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.ones(2))
+  np.testing.assert_allclose(al.Function("simp_cse", [q], [al.simplify(al.cse(q + q))], ["q"], ["y"])(np.array([2.0, 3.0])), np.array([4.0, 6.0]))
 
 
-def test_tape_interpreter_matches_recursive_eval_and_reports_input_errors() -> None:
+def test_jit_reports_input_errors() -> None:
   x = al.sym("x", 2)
   y = al.sym("y", 2)
   out = ((x + 2.0) * y).sum()
   f = al.Function("f", [x, y], [out], ["x", "y"], ["out"])
   env = {"x": np.array([1.0, 3.0]), "y": np.array([4.0, 5.0])}
 
-  np.testing.assert_allclose(f.tape().evaluate(env)[0], out.eval(env))
-  np.testing.assert_allclose(f(**env), out.eval(env))
+  np.testing.assert_allclose(f(**env), ((env["x"] + 2.0) * env["y"]).sum())
 
   try:
     _ = f(x=env["x"])
@@ -393,28 +398,11 @@ def test_tape_interpreter_matches_recursive_eval_and_reports_input_errors() -> N
     raise AssertionError("extra keyword input should fail")
 
   try:
-    f.tape().evaluate({"x": env["x"]})
-  except KeyError as e:
-    assert "missing input 'y'" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("missing input should fail")
-
-  try:
-    f.tape().evaluate({"x": env["x"].reshape(1, 2), "y": env["y"]})
+    f(x=env["x"].reshape(1, 2), y=env["y"])
   except ValueError as e:
     assert "input 'x' has shape (1, 2), expected (2,)" in str(e)
   else:  # pragma: no cover
     raise AssertionError("shape mismatch should fail")
-
-
-def test_tape_workspace_plan_reuses_dead_slots() -> None:
-  x = al.sym("x", 3)
-  y = (x.sin() + x * x).sum()
-  plan = al.Function("f", [x], [y], ["x"], ["y"]).tape().plan_workspace()
-
-  assert plan.size < sum(slot.size for slot in plan.slots)
-  assert [slot.offset for slot in plan.slots] == [0, 3, 6, 0]
-  assert all(slot.size > 0 for slot in plan.slots)
 
 
 def test_c_api_header_exposes_universal_and_typed_buffers() -> None:

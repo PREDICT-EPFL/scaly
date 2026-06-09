@@ -15,7 +15,7 @@ strided), ``SUM``, ``MATMUL`` (rank <= 2), ``TRANSPOSE`` (rank <= 4), ``GATHER``
 ``SCATTER`` (any size, ``static const`` index table), ``STACK`` / ``CONCAT`` (any axis),
 ``CALL`` (multi-PROC, deduped) and ``MAP``; a ``SolverFunction`` ``CALL`` is opaque
 (see ``lower_function``). The tracking and unbumpercars workloads (forward + ``jac`` +
-``spjac``) render and match the interpreter. Deferred (re-land from the reference branch):
+``spjac``) render and match generated-code / external numeric references. Deferred (re-land from the reference branch):
 GPU placement and the new ops tracked in the migration roadmap.
 """
 
@@ -90,7 +90,7 @@ def lower_function(fun: Function) -> PNode:
   placement raises ``LoweringError`` — GPU backends re-land from the reference
   branch after CPU parity (see ``docs/program_ir_migration.md``).
 
-  A ``SolverFunction`` callee is **opaque**: its tape (``Ops.SOLVER_CALL``) is not
+  A ``SolverFunction`` callee is **opaque**: its ``Ops.SOLVER_CALL`` body is not
   lowered — the solver wrapper is rendered by the sanctioned ``codegen/solver_c``
   path (rule 6) — but its oracle Functions *are* lowered to PROCs (the wrapper
   calls them as ``<oracle>_raw``). The solver→oracle-name map is recorded on the
@@ -541,7 +541,7 @@ def _ensure_callee(ctx: LowerCtx, callee: Function) -> None:
   from .codegen.solver_c import is_solver_function, solver_callees
 
   if is_solver_function(callee):
-    # Opaque: the solver wrapper is rendered by solver_c (rule 6), not lowered. Its tape is
+    # Opaque: the solver wrapper is rendered by solver_c (rule 6), not lowered. Its body is
     # SOLVER_CALL (no lowering rule). We still lower the oracle Functions the wrapper drives.
     ctx.solver_fns[callee.name] = callee
     for oracle in solver_callees(callee):

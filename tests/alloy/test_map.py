@@ -84,7 +84,7 @@ def test_map_broadcast_stride_zero_repeats_same_slice() -> None:
   np.testing.assert_allclose(fn(zv, pv), expected)
 
 
-def test_map_recursive_eval_path_matches_tape() -> None:
+def test_map_jit_matches_unrolled_numpy() -> None:
   N = 2
   z = al.sym("z", 6)
   p = al.sym("p", 6)
@@ -92,7 +92,8 @@ def test_map_recursive_eval_path_matches_tape() -> None:
   fn = al.Function("eval_path", [z, p], [mapped], ["z", "p"], ["y"])
   zv = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
   pv = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
-  np.testing.assert_allclose(mapped.eval({"z": zv, "p": pv}), fn(zv, pv))
+  expected = np.concatenate([2.0 * zv[i * 3 : (i + 1) * 3] + pv[i * 3 : (i + 1) * 3] for i in range(N)])
+  np.testing.assert_allclose(fn(zv, pv), expected)
 
 
 def test_map_rejects_bad_input_specs() -> None:

@@ -162,7 +162,7 @@ def qp(
 
 
 def _qp_backend(descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> tuple[list[np.ndarray], SolverStatus]:
-  """Pure-numeric PIQP runner. Invoked by the tape interpreter on SOLVER_CALL."""
+  """Pure-numeric PIQP runner used by direct ``SolverFunction`` calls."""
   n, p_dim, m_dim = descriptor.n, descriptor.n_eq, descriptor.n_ineq
   oracle = descriptor.oracle
   assert oracle is not None

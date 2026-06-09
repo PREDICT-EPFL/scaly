@@ -62,7 +62,7 @@ Alloy's current names map to compiler/tinygrad concepts like this:
 | `Ops` | operation opcode enum | tinygrad `Ops` |
 | `Expr` | immutable operation node / SSA-ish value | tinygrad `UOp` |
 | `Function` | named graph boundary and compilation unit | anvil `NumericalFunction`, CasADi `Function` |
-| `Tape` / `Instruction` | topologically linearized schedule | tinygrad linearized UOps, CasADi `algorithm_` |
+| `Program IR` | lowered executable schedule | tinygrad linearized/scheduled UOps, generated CasADi C |
 | `Function.factory()` | derived graph/function builder | CasADi factory strings |
 | `lowering` hint | region/codegen policy | future scalar/block partitioning metadata |
 
@@ -90,22 +90,9 @@ Explicitly deferred:
 - Splines/interpolants: important, but their semantics need a separate design for knots, lookup, extrapolation, derivative behavior, table codegen, and sparsity.
 - Matrix decompositions/exponentials and solver control flow.
 
-## Tape
+## Semantic graph inspection
 
-A tape is a topologically sorted linear instruction stream of an expression graph. It is not inherently an AD tape; it is simply a schedule. This is close to tinygrad's linearized UOp graph and to CasADi SXFunction/MXFunction `algorithm_` vectors.
-
-Alloy currently exposes:
-
-```python
-tape = f.tape()
-for instr in tape:
-    print(instr.op, instr.inputs, instr.lowering)
-
-print(tape.debug())
-print(tape.lowering_regions())
-```
-
-The tape debug format annotates non-`auto` lowering hints inline, making early scalar/block/opaque boundaries visible before real region partitioning exists. `Tape.lowering_regions()` returns contiguous `TapeRegion` runs over the scheduled instructions; this is only a first metadata grouping, not full graph partitioning. The tape is meant to feed interpreters, C renderers, workspace planning, and later pattern rewriting.
+`Expr.debug()` / `al.format_expr(...)` print the semantic DAG in deterministic topological order with stable `%0`, `%1`, ... names. This is the lightweight inspection surface for the mathematical graph. Executable scheduling lives in Program IR after `lowering.lower_function(...)`; there is no separate tape/interpreter runtime.
 
 ## Call-node AD
 
@@ -189,7 +176,7 @@ opaque_boundary = dense_layer.opaque()
 y = sparse_model + opaque_boundary
 ```
 
-Today this is metadata preserved by the tape and shown by `Tape.debug()`. Later it should drive partitioning: scalar regions lower to explicit scalar instructions, dense regions lower to block kernels/loops, and the boundary inserts materialization/copy/project operations.
+Today this is metadata preserved on `Expr` nodes and visible via semantic graph inspection. Later it should drive partitioning: scalar regions lower to explicit scalar instructions, dense regions lower to block kernels/loops, and the boundary inserts materialization/copy/project operations.
 
 ## Program IR (Phase 4)
 
@@ -263,34 +250,26 @@ y_cse = al.cse(y)
 y_clean = al.simplify(y_cse)
 ```
 
-The first pass supports CSE, constant folding, and simple algebraic identities such as `x + 0`, `x * 1`, `x * 0`, and identity reshape/transpose. Rewrites use an op-indexed `PatternMatcher` and topological replacement cache so DAG sharing is preserved better than a recursive tree walk. This is still intentionally much smaller than tinygrad's `UPat`/`PatternMatcher`, but it establishes the compiler path for AD cleanup, canonicalization, and later tape-level peepholes.
+The first pass supports CSE, constant folding, and simple algebraic identities such as `x + 0`, `x * 1`, `x * 0`, and identity reshape/transpose. Rewrites use an op-indexed `PatternMatcher` and topological replacement cache so DAG sharing is preserved better than a recursive tree walk. This is still intentionally much smaller than tinygrad's `UPat`/`PatternMatcher`, but it establishes the compiler path for AD cleanup and canonicalization.
 
-## Execution: JIT by default, tape interpreter as reference
+## Execution: JIT/AOT through Program IR
 
-`Function.__call__` lazily renders the function to C, compiles it through `cc`, caches the resulting shared object on disk and in-process, and dispatches through the universal ABI via `ctypes` (see `src/alloy/jit.py`). Subsequent calls reuse the cached `.so`. Multiple `Function` instances with identical generated source share the same artifact via a SHA-256 key over (`_JIT_CACHE_VERSION`, ABI signature, function name, rendered C source).
+`Function.__call__` lazily renders the function to C through Program IR, compiles it through `cc`, caches the resulting shared object on disk and in-process, and dispatches through the universal ABI via `ctypes` (see `src/alloy/jit.py`). Subsequent calls reuse the cached `.so`. Multiple `Function` instances with identical generated source share the same artifact via a SHA-256 key over (`_JIT_CACHE_VERSION`, ABI signature, function name, rendered C source).
 
-The Python tape interpreter remains the reference path. `Function.eval_interpreter(*args, **kwargs)` always evaluates through the deterministic tape, and is what internal `CALL`/`MAP` nodes use when `Tape.evaluate` or `Expr.eval` walks the graph. The interpreter is automatically used as a fallback when no C compiler is available or codegen raises `NotImplementedError`, and explicitly when ``ALLOY_DISABLE_JIT=1``.
+There is no Python interpreter fallback: Python calls, tests, and AOT generation all exercise the same semantic-IR → Program-IR → renderer path. Codegen/lowering gaps and missing compilers fail loudly.
 
 Environment variables that influence JIT behavior:
 
-- ``ALLOY_DISABLE_JIT=1`` — skip JIT entirely and always use the interpreter.
 - ``ALLOY_CACHE_DIR`` — override the on-disk cache root (default ``$XDG_CACHE_HOME/alloy/jit`` or ``~/.cache/alloy/jit``).
 - ``ALLOY_CC`` — override the C compiler binary (default ``cc`` from ``$PATH``; works on Linux/macOS/BSD where ``cc`` is the POSIX symlink to the system's default C compiler).
 
 `Function.recompile()` drops both the in-process compiled handle and the on-disk cache directory for the next call.
 
-The tape also exposes a first workspace plan:
-
-```python
-plan = f.tape().plan_workspace()
-assert plan.size <= sum(slot.size for slot in plan.slots)
-```
-
-The workspace plan is a deterministic lifetime-based scratch layout for non-leaf tape instructions. The CPU path is now Program IR (`lowering.py` → `codegen/program_c.py`; the legacy tape-based scalar renderer was removed in the Program IR migration), where the equivalent lifetime packing / spilling lives in `passes.pack_workspace`: small temporaries stay as local C arrays and large ones spill to the caller-provided `w[]`, so `f_SZ_W` is the packed spill size.
+Workspace packing is a Program IR pass (`passes.pack_workspace`): small temporaries stay as local C arrays and large ones spill to the caller-provided `w[]`, so `f_SZ_W` is the packed spill size.
 
 ## Benchmark workload fixtures
 
-The first benchmark-shaped Alloy fixture is the tracking NMPC equality constraint Jacobian in `tests/alloy/test_tracking_workload.py`. It defines scoped stage functions for initial-state pinning and RK4 interstage dynamics, composes them into a horizon-level named function through `Function.call(...)`, and checks small-horizon dense Jacobians against CasADi. It also checks that colored compact sparse-Jacobian metadata and values agree with the dense-gather reference path. An explicit opt-in sweep runs with `ALLOY_TRACKING_SWEEP=1 uv run pytest tests/alloy/test_tracking_workload.py -q -s`; it covers horizons `N=1,2,5,10`, records expression/tape node counts, sparsity nnz, coloring count, AD construction time, and generated C source size, and compares compact values against CasADi. For native timing without Python/`ctypes` overhead, `uv run python benchmarks/alloy_tracking_eq_jac_benchmark.py --horizons 1 2 5 10 -- --benchmark_min_time=0.01s` generates Alloy, CasADi SX, and CasADi MX C, compiles one Google Benchmark C++ binary per horizon, and reports runtime plus generated source sizes. The current tracking baseline preserves named stage derivative calls and batched color seeds, giving much smaller horizon growth than flat scalarization; after local temporaries, slice-aliasing, and constant-seed specialization, one `N=50` run produced Alloy at 364 KB / 13112 lines / 0 workspace / 5.1 us, CasADi SX at 466 KB / 25902 lines / 77 workspace doubles / 4.6 us, and CasADi MX at 2.0 MB / 63134 lines / 8046 workspace doubles / 8.4 us.
+The first benchmark-shaped Alloy fixture is the tracking NMPC equality constraint Jacobian in `tests/alloy/test_tracking_workload.py`. It defines scoped stage functions for initial-state pinning and RK4 interstage dynamics, composes them into a horizon-level named function through `Function.call(...)`, and checks small-horizon dense Jacobians against CasADi. It also checks that colored compact sparse-Jacobian metadata and values agree with the dense-gather reference path. An explicit opt-in sweep runs with `ALLOY_TRACKING_SWEEP=1 uv run pytest tests/alloy/test_tracking_workload.py -q -s`; it covers horizons `N=1,2,5,10`, records expression node counts, sparsity nnz, coloring count, AD construction time, and generated C source size, and compares compact values against CasADi. For native timing without Python/`ctypes` overhead, `uv run python benchmarks/alloy_tracking_eq_jac_benchmark.py --horizons 1 2 5 10 -- --benchmark_min_time=0.01s` generates Alloy, CasADi SX, and CasADi MX C, compiles one Google Benchmark C++ binary per horizon, and reports runtime plus generated source sizes. The current tracking baseline preserves named stage derivative calls and batched color seeds, giving much smaller horizon growth than flat scalarization; after local temporaries, slice-aliasing, and constant-seed specialization, one `N=50` run produced Alloy at 364 KB / 13112 lines / 0 workspace / 5.1 us, CasADi SX at 466 KB / 25902 lines / 77 workspace doubles / 4.6 us, and CasADi MX at 2.0 MB / 63134 lines / 8046 workspace doubles / 8.4 us.
 
 A second benchmark-shaped fixture is the official-size unbumpercars inequality Jacobian in `tests/alloy/test_unbumpercars_workload.py`. It uses the same MLP layer sizes as the example model (`256 -> 128 -> 3`) and loads the official `model_kinematic_mlp.pth` weights into the parameter vector, while keeping the normal unit test at `N=2`. Dense MLP matmuls are marked with `block` lowering metadata and sparse C3BF/wall/slack assembly with `scalar` metadata. Tests compare dense and colored sparse Alloy Jacobians against CasADi MX for `N=2`, including sparsity structure. `uv run python benchmarks/alloy_unbumpercars_ineq_jac_benchmark.py --stats-only --car-counts 2` prints source/workspace stats for Alloy, CasADi SX, and CasADi MX; `--backend alloy --backend casadi-mx` runs the native Google Benchmark without trying to compile the huge SX source. After stack-through-slice and slice-of-slice rewrites and scalar/vector inlining through elementwise/stack/concat consumers, a local `N=2` stats run produced Alloy at 38 KB / 1235 lines / 0 workspace, CasADi SX at 12.2 MB / 447759 lines / 36274 workspace doubles, and CasADi MX at 217 KB / 6689 lines / 141500 workspace doubles; the Alloy-vs-MX native run was ~94 us vs ~252 us. The SX source is correctly enormous for the dense MLP case and was not compiled in the quick benchmark loop.
 
@@ -298,7 +277,7 @@ Both benchmark harnesses also run a fail-fast correctness check before invoking 
 
 Workspace packing is a Program IR pass (`passes.pack_workspace`), not a tape-renderer step: it lifetime-packs the `private` BUFFERs of each PROC into shared slots (buffers whose lifetimes don't overlap reuse the same slot), then spills slots ≥ 1024 doubles to the caller's `w[]` while small ones stay as local `double` arrays. Zero-copy alias BUFFERs (RESHAPE, contiguous SLICE pointer aliases) own no storage but extend the lifetime of the buffer they point into, so a reused slot is never overwritten while a downstream consumer can still observe it. Elementwise/slice/gather chains are collapsed earlier by `passes.fuse_elementwise`, so they never reach the packer as separate buffers. The combination keeps the official-size unbumpercars per-JVP frame bounded and lets the largest sweep cells spill to a `static` `w[]` instead of overflowing the C stack.
 
-The contiguous-slice pointer-alias path (`lowering._contiguous_slice_offset`) once had a correctness bug in its legacy form: it mis-detected column-style slices like `(slice(None), 1)` on a `(5, 7)` tensor as contiguous and aliased flat indices `[1, 2, 3, 4, 5]` instead of the column `[1, 8, 15, 22, 29]`. The Python tape interpreter used NumPy so unit tests passed, but compiled code could silently produce wrong derivative values. The rule now rejects int indices that appear after a slice unless the indexed dim has size 1, with a compile-and-verify regression test in `tests/alloy/test_core.py`.
+The contiguous-slice pointer-alias path (`lowering._contiguous_slice_offset`) once had a correctness bug in its legacy form: it mis-detected column-style slices like `(slice(None), 1)` on a `(5, 7)` tensor as contiguous and aliased flat indices `[1, 2, 3, 4, 5]` instead of the column `[1, 8, 15, 22, 29]`. The rule now rejects int indices that appear after a slice unless the indexed dim has size 1, with a compile-and-verify regression test in `tests/alloy/test_core.py`.
 
 ## Scalability sweep
 

@@ -10,7 +10,6 @@ from .expr import Expr, as_expr, topo
 from .ops import Ops
 from .rewrite import simplify
 from .sparsity import sparse_hessian, sparse_jacobian
-from .tape import Tape, linearize
 from .types import DeviceSpec, SparsityType, TensorType, backend_supports
 
 
@@ -123,32 +122,16 @@ class Function:
       raise TypeError(f"expected {len(self.inputs)} inputs, got {len(args)}")
     return args
 
-  def eval_interpreter(self, *args: Any, **kwargs: Any) -> list[np.ndarray]:
-    """Evaluate ``self`` through the Python tape interpreter (reference path)."""
-    ordered = self._resolve_inputs(args, kwargs)
-    env = dict(zip(self.input_names, ordered, strict=True))
-    return self.tape().evaluate(env)
-
   def eval_list(self, *args: Any, **kwargs: Any) -> list[np.ndarray]:
-    """Default dispatch: lazily compile and run via the universal ABI, falling back to the interpreter."""
-    from .jit import CompiledFunction, JitError, JitUnavailable, jit_disabled
+    """Default dispatch: lazily compile and run through the universal ABI."""
+    from .jit import CompiledFunction, JitError
 
-    if jit_disabled():
-      return self.eval_interpreter(*args, **kwargs)
     if self.device.kind != "host":
-      raise JitError(
-        f"function {self.name!r} placed on {self.device}, but only host lowering is implemented. "
-        f"Use ALLOY_DISABLE_JIT=1 to fall back to the interpreter, or call .with_device('host') for now."
-      )
+      raise JitError(f"function {self.name!r} placed on {self.device}, but only host lowering is implemented.")
     ordered = self._resolve_inputs(args, kwargs)
     compiled: CompiledFunction | None = self._compiled
     if compiled is None:
-      try:
-        compiled = CompiledFunction(self)
-      except JitUnavailable:
-        return self.eval_interpreter(*args, **kwargs)
-      except JitError:
-        raise
+      compiled = CompiledFunction(self)
       self._compiled = compiled
     return compiled.run(list(ordered))
 
@@ -180,9 +163,6 @@ class Function:
       )
       for i, out in enumerate(self.outputs)
     )
-
-  def tape(self) -> Tape:
-    return linearize(self.outputs)
 
   def factory(self, name: str, inputs: Sequence[str], outputs: Sequence[str], aux: Mapping[str, Sequence[str]] | None = None) -> Function:
     in_expr = self.input_map()

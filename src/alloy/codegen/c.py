@@ -28,6 +28,7 @@ from alloy.codegen.solver_c import (
   uses_ipopt,
   uses_piqp,
 )
+from alloy.expr import topo
 from alloy.function import Function
 from alloy.ops import Ops
 
@@ -263,17 +264,17 @@ def _callees(fun: Function) -> list[Function]:
   seen: set[int] = set()
   if is_solver_function(fun):
     # SolverFunctions render via a custom template that calls the oracle (and for NLP, the
-    # derivative Functions) — these aren't reachable through the solver's own tape (it only
-    # contains SOLVER_CALL nodes), so surface them explicitly here.
+    # derivative Functions) — these aren't reachable through the solver's own output graph (it
+    # only contains SOLVER_CALL nodes), so surface them explicitly here.
     for callee in solver_callees(fun):
       if id(callee) not in seen:
         seen.add(id(callee))
         ret.append(callee)
     return ret
-  for inst in fun.tape():
-    if inst.op not in {Ops.CALL, Ops.MAP}:
+  for node in topo(fun.outputs):
+    if node.op not in {Ops.CALL, Ops.MAP}:
       continue
-    callee = inst.attrs["callee"]
+    callee = node.attrs["callee"]
     if id(callee) not in seen:
       seen.add(id(callee))
       ret.append(callee)

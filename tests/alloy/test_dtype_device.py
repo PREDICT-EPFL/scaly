@@ -83,10 +83,9 @@ def test_backend_capability_table_rejects_unsupported_dtype() -> None:
   al.Function("f32", [x32], [y32], ["x"], ["y"], device="metal:0")
 
 
-def test_float32_construction_evaluates_through_interpreter() -> None:
+def test_float32_construction_keeps_dtype_metadata() -> None:
   x = al.sym("x", 3, dtype=dtypes.float32)
   y = (x * x).sum()
   fn = al.Function("f32", [x], [y], ["x"], ["y"])
-  out = fn.eval_interpreter(np.array([1.0, 2.0, 3.0], dtype=np.float32))
-  assert isinstance(out[0], np.ndarray)
-  np.testing.assert_allclose(float(out[0]), 14.0, atol=1e-5)
+  assert fn.inputs[0].type.dtype == dtypes.float32
+  assert fn.outputs[0].type.dtype == dtypes.float32

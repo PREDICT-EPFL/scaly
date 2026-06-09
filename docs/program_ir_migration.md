@@ -157,11 +157,10 @@ These rules are *why* the migration converges. Hold them on every commit.
    new rules/ops; don't restructure them mid-migration.
 5. **No new ops, no GPU renderers, no solver changes** until CPU parity lands and merges. The
    migration's scope is *exactly* the op set the existing tests + benchmarks already use.
-6. **Interpreter + tape stay** as the explicit reference oracle throughout. ~50 tests, the
-   benchmark correctness checks, and `rewrite.py` constant folding depend on `eval_interpreter` /
-   `Expr.eval`. Their removal (if ever) is a *post-parity* decision, separate from deleting the
-   legacy C renderer. `solver_c.py`'s host-wrapper codegen is likewise retained as a sanctioned
-   non-Program-IR path (oracles flow through the new lowerer).
+6. **No Python execution shadow path.** Python calls and AOT both go through semantic IR → Program
+   IR → generated C. The old tape interpreter / `Expr.eval` reference path was deleted after CPU
+   parity to keep semantics concentrated in one backend. `solver_c.py`'s host-wrapper codegen is
+   still retained as the sanctioned non-Program-IR path (oracles flow through the Program IR lowerer).
 
 ---
 
@@ -180,7 +179,7 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   `LoweringError` (no silent fallback) unless the explicit escape hatch `ALLOY_PROGRAM_IR_FALLBACK=1`
   is set. `tests/alloy/test_program_migration.py` is the self-certifying harness: it renders the
   Program IR source directly (loud on gaps), confirms `render_c_source` selects that exact source
-  under the flag, and matches the interpreter oracle. Temporaries are stack-local arrays (`sz_w=0`);
+  under the flag, and matched the then-existing interpreter oracle. Temporaries are stack-local arrays (`sz_w=0`);
   workspace packing is deferred. Not yet covered (raise loudly): broadcasting, `SLICE`, large
   `CONST`, `SUM`, `MATMUL`, `TRANSPOSE`, `GATHER`/`SCATTER`, `STACK`/`CONCAT`, `CALL`/`MAP`.
 
@@ -196,7 +195,7 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   lowered once per name into the shared registry, deduped per invocation, rendered `static inline
   <name>_raw`), and `MAP` (a `length` loop calling the callee with pointer-offset VIEW args).
   Mixed-device CALL raises loudly (deferred). Migration corpus +8. Re-probing the forwards: matmul/
-  sum/transpose/call all match the interpreter; the forwards now block only on `STACK` (tracking)
+  sum/transpose/call all matched the then-existing interpreter; the forwards then blocked only on `STACK` (tracking)
   and `GATHER` (unbumpercars) — Step 4 ops — so "forwards render end-to-end" lands with Step 4.
 
 - **Step 4 — Sparse + assembly + broadcasting.** ✅ Done. `GATHER`/`SCATTER` (any size, via a
@@ -204,7 +203,7 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   and elementwise **broadcasting** (numpy right-aligned; size-1 and missing leading dims read index
   0 — covers bias-add and scalar consts). **Milestone reached:** the forward tracking (h=2/5) and
   unbumpercars (n=2/4/8) functions render through Program IR as the sole path and match the
-  interpreter; `test_program_migration.py` locks both forwards.
+  interpreter oracle; `test_program_migration.py` locked both forwards.
 - **Step 4b — General-axis STACK/CONCAT + identifier sanitization (derivatives render).** ✅ Done.
   The derivative/sparse-Jacobian functions blocked on axis-1 `CONCAT`/`STACK` (gradient-column
   assembly) and then on a renderer bug: buffer/var/callee names carry `:` (e.g. `fwd:eq:z`) which
@@ -212,7 +211,7 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   Generalized `STACK`/`CONCAT` to any axis (decompose / shift-or-insert / recombine via affine
   index PNodes) and route every emitted identifier through `_c_ident`. **Full workload parity:**
   forward + `jac` + `spjac` for both tracking (h=2/5) and unbumpercars (n=2/4/8) now render through
-  Program IR and match the interpreter; the tracking lock test covers all three kinds.
+  Program IR and matched the then-existing interpreter; the tracking lock test covered all three kinds.
 
 - **Step 5a — Benchmark validation (head-to-head).** ✅ Done — and it found real gaps. Measured
   the legacy vs Program IR renderers on the same Linux box (raw C-entry timing, pre-allocated
@@ -295,7 +294,7 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   `DT_NEEDED`) and the `.so` failed to `dlopen` with `undefined symbol: piqp_…`. Reordered the
   command to put link libraries after the source (`jit.py`). With this, the full suite is green on a
   **cold cache, in parallel** (`228 passed, 6 skipped`), with solvers actually JIT-compiling (they
-  previously masked the bug by silently falling back to the interpreter under strict mode).
+  previously masked the bug by silently falling back to the old interpreter path under strict mode).
 
 - **Step 6 — Delete legacy. ✅ Done — a deliberate solver-codegen refactor, not a mechanical
   cleanup.** Pre-6 the legacy scalar renderer still rendered solver **oracles** *and* the host
@@ -308,7 +307,7 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
      no longer discards qualifiers, and PIR→PIR calls passing input args (`arg[i]`) lost their
      warnings too. Inputs are read-only by construction, so `const` is sound.
   2. **Opaque solver lowering + solver workspace on PIR.** `lowering._ensure_callee` detects a
-     `SolverFunction` callee: it does **not** lower the solver's tape (`SOLVER_CALL` has no rule), but
+     `SolverFunction` callee: it does **not** lower the solver's `SOLVER_CALL` body (no rule), but
      it *does* lower the oracle Functions to PROCs and records the solver→oracle-name map on the
      PROGRAM (`solver_oracles` attr). `passes.pack_workspace` reads that map to size a solver call's
      workspace as `max(oracle sz_w)` (the wrapper passes its `w` straight through), so the caller
@@ -329,8 +328,8 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
      `ALLOY_USE_PROGRAM_IR_C` flag glue. `c.py` shrank from ~1240 to ~300 lines. Kept
      `render_c_api_header` / `render_c_module` / `_c_ident` / `CModule`, `_function_order` / `_callees`,
      and a `_workspace_size` shim (now `= program_ir_sz_w`) so the benchmark imports keep resolving.
-     The interpreter/tape and `solver_c` wrapper codegen are retained (rule 6). Three now-dead
-     `solver_c` helpers (`uses_any_solver` / `_walk_tape_callees` / `solver_workspace`) were removed.
+     The `solver_c` wrapper codegen is retained (rule 6). Three now-dead solver helpers
+     (`uses_any_solver` / `_walk_tape_callees` / `solver_workspace`) were removed.
   6. **No golden-source rebaseline needed** — the suite's source checks are structural / numeric, and
      all pass.
 

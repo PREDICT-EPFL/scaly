@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.expr import topo
 
 casadi = pytest.importorskip("casadi")
 torch = pytest.importorskip("torch")
@@ -392,7 +393,6 @@ def test_unbumpercars_reduced_colored_sparse_jacobian_matches_dense_and_casadi_s
 
 
 def test_unbumpercars_reduced_fixture_marks_dense_mlp_and_sparse_constraints() -> None:
-  dyn_tape = dynamics_fn.tape()
-  assert any(inst.op == al.Ops.MATMUL and inst.lowering == "block" for inst in dyn_tape)
+  assert any(node.op == al.Ops.MATMUL and node.lowering == "block" for node in topo(dynamics_fn.outputs))
   fn = unbumpercars_ineq_function(2)
   assert fn.outputs[0].lowering == "scalar"

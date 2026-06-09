@@ -193,8 +193,8 @@ A `SolverFunction` is a real `alloy.Function` whose body is one
 1. You can use `solver.call([x0_expr, lam_eq0_expr, lam_ineq0_expr, *param_exprs])`
    the same way you would call any other `Function`. The result is a tuple of
    `Expr`s — one per solver output — usable in further symbolic computation.
-2. The outer Function's tape contains an `Ops.CALL` node whose callee is the
-   `SolverFunction`; the solver's own tape contains `Ops.SOLVER_CALL` nodes
+2. The outer Function's semantic graph contains an `Ops.CALL` node whose callee is the
+   `SolverFunction`; the solver's own outputs are `Ops.SOLVER_CALL` nodes
    whose attrs carry the `SolverDescriptor`. From the outer Function's
    point of view, the solver behaves like any other named callee.
 
@@ -354,10 +354,9 @@ Deferred (tracked in [`roadmap.md`](roadmap.md)):
   enough for the input-affine CBF QP).
 - Warm-start handover for `lam_eq0`/`lam_ineq0` into PIQP and IPOPT.
 - Implicit-function-theorem AD through `SOLVER_CALL` (today: zero gradients).
-- Cross-call deduplication of solver outputs in the same outer tape: today,
-  picking `out[0]` and `out[1]` from the same solver in one parent triggers
-  two `eval_interpreter` calls. Inner SOLVER_CALL outputs are deduped within
-  a single solve, but the outer CALL nodes are not.
+- Cross-call deduplication across distinct solver invocations remains a future optimization.
+  Multiple outputs selected from the same `solver.call(...)` site lower to one Program IR
+  `CALL`, but two separate call sites with identical arguments are not globally CSE'd yet.
 
 ## Limitations and gotchas
 

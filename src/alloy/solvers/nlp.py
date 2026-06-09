@@ -249,7 +249,7 @@ def nlp(
 
 
 def _nlp_backend(descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> tuple[list[np.ndarray], SolverStatus]:
-  """Pure-numeric IPOPT runner. Invoked by the tape interpreter on SOLVER_CALL."""
+  """Pure-numeric IPOPT runner used by direct ``SolverFunction`` calls."""
   n, n_h, n_g = descriptor.n, descriptor.n_eq, descriptor.n_ineq
   m = n_h + n_g
 

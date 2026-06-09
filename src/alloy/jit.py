@@ -1,9 +1,7 @@
 """JIT pipeline: render -> compile -> cache -> dispatch through the universal ABI.
 
-`Function.__call__` routes here by default; the tape interpreter remains the reference path
-via `Function.eval_interpreter`. Environment variables:
+`Function.__call__` routes here by default. Environment variables:
 
-- ``ALLOY_DISABLE_JIT=1`` skips JIT entirely and uses the interpreter.
 - ``ALLOY_CACHE_DIR`` overrides the on-disk cache root (default: ``$XDG_CACHE_HOME/alloy/jit``
   or ``~/.cache/alloy/jit``).
 - ``ALLOY_CC`` overrides the C compiler binary (default: ``cc`` from ``$PATH``).
@@ -34,7 +32,7 @@ if TYPE_CHECKING:
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly so
 # that previously cached `.so` files are not reused by a newer Alloy version.
-_JIT_CACHE_VERSION = "1"
+_JIT_CACHE_VERSION = "2"
 
 _C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)
@@ -46,11 +44,6 @@ class JitUnavailable(RuntimeError):
 
 class JitError(RuntimeError):
   """Raised when a compiled function returns a non-zero ABI status code."""
-
-
-def jit_disabled() -> bool:
-  """Return True iff ``ALLOY_DISABLE_JIT`` is set to a truthy value."""
-  return os.environ.get("ALLOY_DISABLE_JIT", "0") not in ("0", "", "false", "False")
 
 
 def _cache_root() -> Path:
@@ -77,12 +70,13 @@ def _find_compiler() -> str | None:
   return shutil.which("cc")
 
 
-def _compute_cache_key(source: str, *, fun_name: str) -> str:
+def _compute_cache_key(source: str, *, fun_name: str, compile_flags: tuple[str, ...] = ()) -> str:
   """SHA-256 over the rendered C source plus the cache-version and ABI signature.
 
   Any change to the codegen output, the ABI surface, or `_JIT_CACHE_VERSION` invalidates
-  previously cached artifacts. Function names are included so two functions that happen
-  to share a source skeleton (different symbols) still get distinct entries.
+  previously cached artifacts. Function names and compile/link flags are included so two
+  functions that happen to share a source skeleton (different symbols or solver rpaths) still
+  get distinct entries.
   """
   h = hashlib.sha256()
   h.update(_JIT_CACHE_VERSION.encode())
@@ -92,6 +86,9 @@ def _compute_cache_key(source: str, *, fun_name: str) -> str:
   h.update(fun_name.encode())
   h.update(b"\0")
   h.update(source.encode())
+  for flag in compile_flags:
+    h.update(b"\0")
+    h.update(flag.encode())
   return h.hexdigest()
 
 
@@ -109,7 +106,8 @@ def _build_artifact(fun: Function) -> _Artifact:
   """Render, compile (if needed), and return a path to ``fun``'s cached shared object.
 
   Raises ``JitUnavailable`` if there is no usable compiler or codegen does not support
-  ``fun``; raises ``JitError`` if the compiler itself returns a non-zero status.
+  ``fun``; callers let it propagate (there is no interpreter fallback). Raises ``JitError``
+  if the compiler itself returns a non-zero status.
   """
   cc = _find_compiler()
   if cc is None:
@@ -120,7 +118,8 @@ def _build_artifact(fun: Function) -> _Artifact:
   except NotImplementedError as exc:
     raise JitUnavailable(f"codegen does not support function {fun.name!r}: {exc}") from exc
 
-  key = _compute_cache_key(source, fun_name=fun.name)
+  extra_flags = tuple(solver_compile_flags(fun))
+  key = _compute_cache_key(source, fun_name=fun.name, compile_flags=extra_flags)
   with _artifact_lock:
     cached = _artifact_cache.get(key)
   if cached is not None and cached.lib_path.exists():
@@ -137,7 +136,6 @@ def _build_artifact(fun: Function) -> _Artifact:
     tmp_source = source_path.with_suffix(source_path.suffix + ".tmp")
     tmp_source.write_text(source)
     tmp_source.replace(source_path)
-    extra_flags = solver_compile_flags(fun)
     # Compile to a process-unique temp lib then atomically rename, so concurrent builds of the same
     # function (e.g. pytest-xdist workers on a cold cache) never observe a half-written .so.
     tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.tmp")
@@ -277,7 +275,7 @@ def invalidate_cache(fun: Function) -> None:
     source = render_c_source(fun)
   except NotImplementedError:
     return
-  key = _compute_cache_key(source, fun_name=fun.name)
+  key = _compute_cache_key(source, fun_name=fun.name, compile_flags=tuple(solver_compile_flags(fun)))
   with _artifact_lock:
     _artifact_cache.pop(key, None)
   cache_dir = _cache_root() / key

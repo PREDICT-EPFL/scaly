@@ -2,43 +2,17 @@
 
 The solver-as-graph-node feature: ``solver.call([...])`` returns ``Expr``s, which
 can be combined with other ops and wrapped in another ``Function``. The outer
-function's tape contains ``Ops.CALL`` nodes whose callee is the solver; the
-solver's own tape contains ``Ops.SOLVER_CALL`` nodes whose attrs hold a
+function's semantic graph contains ``Ops.CALL`` nodes whose callee is the solver;
+the solver's own outputs are ``Ops.SOLVER_CALL`` nodes whose attrs hold a
 ``SolverDescriptor`` pointing at the oracle and the backend choice.
 """
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
-import pytest
-
 import alloy as al
+from alloy.expr import topo
 from alloy.ops import Ops
-
-
-def _disable_jit():
-  os.environ["ALLOY_DISABLE_JIT"] = "1"
-
-
-def _enable_jit():
-  os.environ.pop("ALLOY_DISABLE_JIT", None)
-
-
-@pytest.fixture
-def interpreter_only():
-  """Force the Python tape interpreter path."""
-  _disable_jit()
-  yield
-  _enable_jit()
-
-
-@pytest.fixture
-def jit_enabled():
-  """Force the JIT path (env var unset)."""
-  _enable_jit()
-  yield
 
 
 def test_solver_call_returns_expressions() -> None:
@@ -48,7 +22,7 @@ def test_solver_call_returns_expressions() -> None:
   assert len(out_exprs) == len(qp.output_names)
   # call() inherits from Function and wraps each output in an Ops.CALL node
   # whose callee is the solver function — the inner SOLVER_CALL nodes live in
-  # the callee's own tape.
+  # the callee's own semantic graph.
   for e in out_exprs:
     assert e.op == Ops.CALL
     assert e.attrs["callee"] is qp
@@ -58,13 +32,12 @@ def test_solver_call_returns_expressions() -> None:
     assert e.shape == expected
 
 
-def test_solver_descriptor_present_in_inner_tape() -> None:
+def test_solver_descriptor_present_in_inner_graph() -> None:
   mu = al.sym("mu", 2)
   qp = al.qp(P=al.const(np.eye(2)), c=-mu)
-  inner_tape = qp.tape()
-  solver_calls = [inst for inst in inner_tape if inst.op == Ops.SOLVER_CALL]
+  solver_calls = [node for node in topo(qp.outputs) if node.op == Ops.SOLVER_CALL]
   assert len(solver_calls) == len(qp.output_names)
-  descriptors = {id(inst.attrs["solver"]) for inst in solver_calls}
+  descriptors = {id(node.attrs["solver"]) for node in solver_calls}
   assert len(descriptors) == 1  # all outputs share one descriptor
   desc = solver_calls[0].attrs["solver"]
   assert desc.backend == "piqp"
@@ -143,58 +116,27 @@ def test_nested_nlp_in_alloy_function() -> None:
   np.testing.assert_allclose(x_proj, [0.0, 1.0], atol=1e-5)
 
 
-def test_solver_outputs_share_one_solve_per_tape_eval(interpreter_only) -> None:
-  """Distinct outputs of the same solve do not trigger a second solve."""
+def test_solver_outputs_share_one_program_ir_call() -> None:
+  """Distinct outputs of the same solver invocation lower to one CALL statement."""
 
   mu = al.sym("mu", 2)
   qp = al.qp(P=al.const(np.eye(2)), c=-mu)
 
-  call_count = {"n": 0}
-  original = qp.descriptor.oracle  # type: ignore[union-attr]
-  assert original is not None
+  @al.function("multi_out", {"mu": (2,)})
+  def multi_out(mu):
+    out = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])
+    return {"x": out[0], "cost": out[1], "lam_box": out[4]}
 
-  class _CountingFn:
-    name = original.name
-    inputs = original.inputs
-    outputs = original.outputs
-    input_names = original.input_names
-    output_names = original.output_names
-    output_sparsities = original.output_sparsities
+  from alloy.lowering import lower_function, main_proc
+  from alloy.program import POps
 
-    def eval_list(self, *args, **kwargs):
-      call_count["n"] += 1
-      return original.eval_list(*args, **kwargs)
-
-    def eval_interpreter(self, *args, **kwargs):
-      call_count["n"] += 1
-      return original.eval_interpreter(*args, **kwargs)
-
-  # Monkey-patch the descriptor's oracle inside this scope to count invocations.
-  # We rely on the SOLVER_CALL renderer caching one solve across all outputs in
-  # the same tape evaluation.
-  qp.descriptor.runtime["__test_original_oracle"] = original  # keep alive
-  object.__setattr__(qp.descriptor, "oracle", _CountingFn())  # type: ignore[arg-type]
-  try:
-
-    @al.function("multi_out", {"mu": (2,)})
-    def multi_out(mu):
-      out = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])
-      return {"x": out[0], "cost": out[1], "lam_box": out[4]}
-
-    _ = multi_out(np.array([1.0, -0.5]))
-  finally:
-    object.__setattr__(qp.descriptor, "oracle", original)
-
-  # The parent tape currently calls ``qp.eval_interpreter`` once per CALL
-  # output node — three CALL nodes -> three oracle evaluations. The interior
-  # SOLVER_CALL nodes within a single ``qp.eval_interpreter`` are deduped (one
-  # solve per inner tape), but cross-CALL deduplication is a future opt.
-  assert call_count["n"] == 3
+  calls = [stmt for stmt in main_proc(lower_function(multi_out)).args if stmt.op == POps.CALL]
+  assert len(calls) == 1
+  assert calls[0].attrs["callee"] == qp.name
 
 
 def test_nested_qp_jit_compiles_through_piqp() -> None:
   """JIT path: render C that links against libpiqpc and drives the solve."""
-  _enable_jit()
 
   @al.function("safety_filter", {"x": (2,), "u_ref": (2,)})
   def safety_filter(x, u_ref):
@@ -226,7 +168,6 @@ def test_nested_qp_jit_compiles_through_piqp() -> None:
 
 def test_nested_nlp_jit_compiles_through_ipopt() -> None:
   """JIT path for an NLP: projects (target) onto the unit circle."""
-  _enable_jit()
 
   @al.function("proj_circle", {"target": (2,)})
   def proj(target):
