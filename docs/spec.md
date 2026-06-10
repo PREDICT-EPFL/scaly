@@ -98,7 +98,7 @@ Executable scheduling lives in Program IR after `lowering.lower_function(...)`; 
 
 - **Artifact formats**: Python code, the **semantic dialect** (`sem.*`), the **program dialect** (`prog.*`), and generated platform-specific code (currently C for the universal ABI).
 - **Transformations**: Python construction/building creates semantic-dialect `Function`s; lowering maps the semantic dialect to the program dialect; rendering maps the program dialect to generated code; JIT/AOT compilation consumes generated code.
-- **Passes**: internal optimization/simplification steps that operate inside one artifact format. Today the visualizer records Program IR passes (`fuse_elementwise`, `pack_workspace`). Semantic simplification/CSE also happens during AD/sparse-derivative construction, but it is not yet instrumented as an observable pass pipeline once a `Function` has been marked for visualization.
+- **Passes**: internal optimization/simplification steps that operate inside one artifact format. Today the visualizer records Program IR passes (`fuse_elementwise`, `unroll_unit_loops`, `pack_workspace`). Semantic simplification/CSE also happens during AD/sparse-derivative construction, but it is not yet instrumented as an observable pass pipeline once a `Function` has been marked for visualization.
 
 ```mermaid
 flowchart TB
@@ -114,7 +114,7 @@ flowchart TB
   c -->|JIT or AOT compile| native
 
   sem -.->|future observable semantic passes\nCSE / simplification / DCE| sem
-  prog -.->|Program IR passes\nfuse_elementwise / pack_workspace| prog
+  prog -.->|Program IR passes\nfuse_elementwise / unroll_unit_loops / pack_workspace| prog
 
   classDef artifact fill:#111,stroke:#222,color:#eee,stroke-width:2px;
   linkStyle 0,1,2,3 stroke:#2ca02c,stroke-width:2px;
@@ -132,6 +132,13 @@ serve(host="127.0.0.1", port=8000)  # use host="0.0.0.0" to broadcast
 ```
 
 The recording file defaults to `$XDG_CACHE_HOME/alloy/viz/recordings.json` (or `~/.cache/alloy/viz/recordings.json`) and can be moved with `ALLOY_VIZ_DIR` or the server's `--recording-path` option. The visualizer is a tiny Python webserver with a tinygrad-style sidebar/step navigation and no runtime recording unless a function is explicitly marked with `visualize(...)`.
+
+For the tracking-NMPC pass pipeline case that motivated scalar-loop unrolling, the probe script captures the structured equality sparse-Jacobian and prints loop counts at each Program IR step:
+
+```bash
+uv run python benchmarks/viz_tracking_eq_jac_probe.py --horizon 10
+uv run alloy_viz --recording-path benchmarks/gen/alloy_tracking_eq_jac_viz/recordings.json --browser
+```
 
 ## Call-node AD
 

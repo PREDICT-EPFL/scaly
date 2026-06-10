@@ -14,8 +14,9 @@ import alloy as al
 from alloy.codegen.program_c import render_program_c_source
 from alloy.jit import _find_compiler
 from alloy.lowering import lower_function, main_proc
-from alloy.passes import WORKSPACE_SPILL_THRESHOLD
-from alloy.program import POps
+from alloy.passes import WORKSPACE_SPILL_THRESHOLD, unroll_unit_loops
+from alloy.program import POps, buffer, const_float, for_, proc as proc_, program, range_, store, var, view
+from alloy.types import dtypes
 
 _HAVE_CC = _find_compiler() is not None
 
@@ -78,6 +79,35 @@ def test_fusion_into_reduction() -> None:
   # Only the scalar accumulator survives; the elementwise buffer is gone (inlined into the reduce).
   assert all(s.attrs["shape"] == (1,) for s in compute)
   assert len(loops) == 1  # the single reduce loop
+
+
+# --- unit-loop unrolling ---------------------------------------------------------
+
+
+def test_unit_loop_unrolls_scalar_elementwise_output() -> None:
+  @al.function("scalar_add", {"x": 1, "y": 1})
+  def f(x, y):
+    return x + y
+
+  _compute, _aliases, loops = _classify(_main_body(f))
+  assert loops == []
+
+
+def test_unit_loop_pass_removes_empty_and_substitutes_only_value() -> None:
+  x = buffer("x", dtypes.float64, (1,))
+  y = buffer("y", dtypes.float64, (5,))
+  i = var("i")
+  j = var("j")
+  empty = for_(range_("j", 4, 4), [store(view(y, [j]), const_float(2.0))])
+  one = for_(range_("i", 3, 4), [store(view(y, [i]), const_float(1.0)), empty])
+  prog = program([proc_("unit", [x, y], [one])])
+
+  lowered_proc = unroll_unit_loops(prog).args[0]
+  body = list(lowered_proc.args[int(lowered_proc.attrs["param_count"]) :])
+  assert len(body) == 1
+  assert body[0].op == POps.STORE
+  assert body[0].args[0].args[0].op == POps.CONST_INT
+  assert body[0].args[0].args[0].attrs["value"] == 3
 
 
 # --- contiguous-slice aliasing --------------------------------------------------

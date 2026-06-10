@@ -48,6 +48,7 @@ def test_render_c_source_tracing_is_opt_in(tmp_path, monkeypatch):
   step_names = [s["name"] for s in captured[0]["steps"]]
   assert step_names[:2] == ["semantic", "lowered"]
   assert "pass:fuse_elementwise" in step_names
+  assert "pass:unroll_unit_loops" in step_names
   assert "pass:pack_workspace" in step_names
   assert step_names[-1] == "generated C"
   assert captured[0]["steps"][0]["graph"]["nodes"]

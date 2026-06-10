@@ -19,6 +19,10 @@ migration re-expressed them as explicit, individually-testable Program IR passes
   intermediate buffer round-trips vanish (the legacy renderer's no-materialize + inline-read
   tables, now a graph rewrite).
 
+- ``unroll_unit_loops`` — erase statically empty loops and inline single-iteration loops by
+  substituting the loop variable with its only value. This keeps canonical loop-shaped producers
+  available to ``fuse_elementwise`` first, then removes the scalar-loop noise before rendering.
+
 - ``pack_workspace`` — lifetime-pack ``private`` BUFFERs into shared slots and spill slots
   ≥ ``WORKSPACE_SPILL_THRESHOLD`` doubles to the caller-provided ``w[]`` (so the function
   declares a real ``sz_w`` instead of stack-allocating every temporary; the legacy renderer's
@@ -422,7 +426,61 @@ def _prune_dead_buffers(proc: PNode) -> PNode:
 
 
 # ---------------------------------------------------------------------------
-# Pass 2: workspace lifetime packing + spilling.
+# Pass 2: empty-loop removal + unit-loop unrolling.
+# ---------------------------------------------------------------------------
+
+
+@register_pass("unroll_unit_loops")
+def unroll_unit_loops(prog: PNode) -> PNode:
+  """Remove static zero-trip loops and inline static one-trip loops.
+
+  Lowering intentionally emits uniform loops even for scalar buffers (shape ``(1,)``). Keeping
+  that shape through ``fuse_elementwise`` preserves its producer matcher; after fusion, this pass
+  erases the leftover ``for (... < 1)`` noise by substituting the loop variable with its sole value.
+  """
+  return _map_procs(prog, _unroll_unit_loops_proc)
+
+
+def _unroll_unit_loops_proc(proc: PNode) -> PNode:
+  params, body = _proc_parts(proc)
+  new_body: list[PNode] = []
+  changed = False
+  for stmt in body:
+    repl = _unroll_unit_loop_stmt(stmt)
+    changed = changed or len(repl) != 1 or repl[0] is not stmt
+    new_body.extend(repl)
+  return _prune_dead_buffers(_rebuild_proc(proc, params, new_body)) if changed else proc
+
+
+def _unroll_unit_loop_stmt(stmt: PNode) -> list[PNode]:
+  if stmt.op != POps.FOR:
+    return [stmt]
+
+  rng, *body = stmt.args
+  new_body: list[PNode] = []
+  changed = False
+  for sub in body:
+    repl = _unroll_unit_loop_stmt(sub)
+    changed = changed or len(repl) != 1 or repl[0] is not sub
+    new_body.extend(repl)
+
+  trip_count = _trip_count(rng)
+  if trip_count == 0:
+    return []
+  if trip_count == 1:
+    vname = rng.attrs["name"]
+    only_value = rng.args[0]
+    out: list[PNode] = []
+    for sub in new_body:
+      out.extend(_unroll_unit_loop_stmt(_subst_var(sub, vname, only_value)))
+    return out
+  if changed:
+    return [PNode(POps.FOR, (rng, *new_body), {**stmt.attrs, "body_len": len(new_body)}, stmt.dtype)] if new_body else []
+  return [stmt]
+
+
+# ---------------------------------------------------------------------------
+# Pass 3: workspace lifetime packing + spilling.
 # ---------------------------------------------------------------------------
 
 
@@ -618,4 +676,5 @@ __all__ = [
   "optimize_program",
   "pack_workspace",
   "register_pass",
+  "unroll_unit_loops",
 ]

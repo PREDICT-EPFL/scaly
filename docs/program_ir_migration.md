@@ -30,6 +30,13 @@
 > pass `const double*` arguments without discarding qualifiers. Full suite green on a **cold cache, in
 > parallel** (228 passed, 6 skipped); `ruff`/`ty` clean. Remaining: **merge (Step 7)**.
 >
+> **Update (2026-06-10):** the Program IR pass pipeline now includes `unroll_unit_loops` after
+> `fuse_elementwise` and before `pack_workspace`. It removes static zero-trip loops and substitutes
+> the loop variable in static one-trip loops, keeping canonical loop-shaped producers available for
+> fusion first and then erasing scalar-loop noise before workspace packing/rendering. On the tracking
+> NMPC structured equality sparse-Jacobian C for N=10, this removed 132 `for (... < 1)` loops and
+> reduced source from 29.5 KB / 652 LOC to 17.6 KB / 388 LOC; runtime stayed within benchmark noise.
+>
 > **Goal:** make the semantic-IR → Program-IR → backend-renderer architecture the *sole* CPU
 > compilation path, at full **feature *and* performance** parity with `main`, with the legacy
 > tape-based C renderer removed — **without** introducing new ops, GPU renderers, or solver changes
@@ -254,8 +261,12 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
      alias-aware `pack_workspace`) removed that copy. Result: unbumpercars **1.00–1.02×**, tracking
      ms **1.01–1.03×** (was 1.22–1.25× / 1.03–1.05×).
   3. **Source size.** Fusion cut the 2–4× blow-up to ~1.3–1.5× (tracking ms LOC is again *constant*
-     in N: 2483 → 649). The remaining growth at large N is the gather/scatter **index tables**
-     (`static const int64_t kN[...]`) that the legacy compacts via its tile-pattern peephole
+     in N: 2483 → 649). A later `unroll_unit_loops` pass erases the leftover scalar-loop boilerplate
+     after fusion: for the tracking NMPC structured equality sparse-Jacobian, N=10 source dropped
+     29.5 KB / 652 LOC → 17.6 KB / 388 LOC and `for (... < 1)` loops dropped 132 → 0. Runtime was
+     unchanged within measurement noise, which is expected because `-O3` already optimizes most
+     fixed-trip-count loop overhead. The remaining growth at large N is the gather/scatter **index
+     tables** (`static const int64_t kN[...]`) that the legacy compacts via its tile-pattern peephole
      (`_detect_tile` / `_gather_tile_pattern`) and gather-of-transposed-concat peephole
      (`_gather_transposed_concat`). These are **source-size-only** (runtime is already at parity, the
      tables are `static const`) and are left as a follow-up — see "remaining" below.
