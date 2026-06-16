@@ -26,24 +26,26 @@ from typing import TYPE_CHECKING
 from alloy.expr import topo
 from alloy.function import Function
 from alloy.ops import Ops
+from alloy.toolchain import SolverLibraryError, solver_compile_flags as _toolchain_solver_compile_flags, solver_diagnostic, solver_paths
 
 if TYPE_CHECKING:
   from alloy.solvers.solver_function import SolverDescriptor
 
 
-def _alloy_package_root() -> Path:
-  # codegen/ is alloy/codegen/; package root is alloy/.
-  return Path(__file__).resolve().parent.parent
-
-
 def solver_include_dir() -> Path:
-  """Return the directory holding the vendored solver C headers."""
-  return _alloy_package_root() / "include"
+  """Return the first discovered solver C header directory."""
+  paths = solver_paths()
+  if not paths.include_dirs:
+    raise SolverLibraryError(solver_diagnostic())
+  return paths.include_dirs[0]
 
 
 def solver_lib_dir() -> Path:
-  """Return the directory holding the vendored solver shared libraries."""
-  return _alloy_package_root() / "lib"
+  """Return the first discovered solver shared-library directory."""
+  paths = solver_paths()
+  if not paths.lib_dirs:
+    raise SolverLibraryError(solver_diagnostic())
+  return paths.lib_dirs[0]
 
 
 def _c_ident(name: str) -> str:
@@ -130,16 +132,7 @@ def solver_compile_flags(fun: Function, *, rpath: bool = True) -> list[str]:
   needs_ipopt = uses_ipopt(fun)
   if not (needs_piqp or needs_ipopt):
     return flags
-  include_dir = solver_include_dir()
-  lib_dir = solver_lib_dir()
-  flags.extend([f"-I{include_dir}", f"-L{lib_dir}"])
-  if rpath:
-    flags.append(f"-Wl,-rpath,{lib_dir}")
-  if needs_piqp:
-    flags.append("-lpiqpc")
-  if needs_ipopt:
-    flags.append("-lipopt")
-  return flags
+  return _toolchain_solver_compile_flags(needs_piqp, needs_ipopt, rpath=rpath)
 
 
 # ---------------------------------------------------------------------------

@@ -1,28 +1,30 @@
-"""Load the vendored PIQP and IPOPT shared libraries through ``ctypes``."""
+"""Load PIQP and IPOPT shared libraries through ``ctypes``.
+
+The actual discovery logic is centralized in :mod:`alloy.toolchain`; this module
+keeps the small solver-facing API stable without importing toolchain at module
+import time (so ``python -m alloy.toolchain`` can run without a runpy warning).
+"""
 
 from __future__ import annotations
 
 import ctypes
-import sys
-from pathlib import Path
-
-_PKG_ROOT = Path(__file__).resolve().parent.parent
-_LIB_DIR = _PKG_ROOT / "lib"
+from typing import Any
 
 
-def _lib_ext() -> str:
-  return ".dylib" if sys.platform == "darwin" else ".so"
+def _toolchain() -> Any:
+  from alloy import toolchain
+
+  return toolchain
 
 
 class SolverLibraryError(RuntimeError):
-  """Raised when a vendored solver library cannot be located or loaded."""
+  """Compatibility alias; actual errors are raised by ``alloy.toolchain``."""
 
 
-def _load(stem: str) -> ctypes.CDLL:
-  path = _LIB_DIR / f"lib{stem}{_lib_ext()}"
-  if not path.exists():
-    raise SolverLibraryError(f"vendored library {path.name!r} not found under {_LIB_DIR}. Run `uv sync` to trigger the build hook.")
-  return ctypes.CDLL(str(path))
+def has_solver_library(stem: str) -> bool:
+  if stem not in {"piqpc", "ipopt"}:
+    return False
+  return _toolchain().solver_library_loadable(stem)
 
 
 _piqp_lib: ctypes.CDLL | None = None
@@ -32,12 +34,12 @@ _ipopt_lib: ctypes.CDLL | None = None
 def piqp_lib() -> ctypes.CDLL:
   global _piqp_lib
   if _piqp_lib is None:
-    _piqp_lib = _load("piqpc")
+    _piqp_lib = _toolchain().load_solver_library("piqpc")
   return _piqp_lib
 
 
 def ipopt_lib() -> ctypes.CDLL:
   global _ipopt_lib
   if _ipopt_lib is None:
-    _ipopt_lib = _load("ipopt")
+    _ipopt_lib = _toolchain().load_solver_library("ipopt")
   return _ipopt_lib

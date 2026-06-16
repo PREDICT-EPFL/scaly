@@ -519,16 +519,29 @@ def _plan_pack(proc: PNode) -> _PackPlan:
     return _resolve_alias(name, alias_src)
 
   # Lifetime of each packable buffer over statement positions: [first write, last read-or-write].
+  # ``deps[b]`` is the transitive set of packable buffers that produced the current contents of
+  # ``b``. At CALL boundaries, keep every input's producer closure live through the CALL. This
+  # prevents a CALL output from reusing a slot that contributed to one of its inputs — a pattern
+  # that is semantically valid but triggers an Apple-clang inlining miscompile on macOS 15 arm64.
   first_write: dict[str, int] = {}
   last_use: dict[str, int] = {}
+  deps: dict[str, set[str]] = {}
   for i, stmt in enumerate(body):
     if stmt.op == POps.BUFFER:
       continue
-    loads, stores, calls = _stmt_refs(stmt)
-    writes = {owner(b) for b in stores | calls_out(stmt)} & packable.keys()
-    reads = {owner(b) for b in loads | calls_in(stmt)} & packable.keys()
+    loads, stores, _calls = _stmt_refs(stmt)
+    call_inputs = {owner(b) for b in calls_in(stmt)} & packable.keys()
+    call_outputs = {owner(b) for b in calls_out(stmt)} & packable.keys()
+    writes = {owner(b) for b in stores} & packable.keys() | call_outputs
+    reads = ({owner(b) for b in loads} & packable.keys()) | call_inputs
+    for b in call_inputs:
+      for dep in deps.get(b, set()):
+        last_use[dep] = max(last_use.get(dep, i), i)
     for b in writes:
       first_write.setdefault(b, i)
+      deps[b] = set(reads)
+      for r in reads:
+        deps[b].update(deps.get(r, set()))
     for b in writes | reads:
       last_use[b] = i
     for n in _walk(stmt):

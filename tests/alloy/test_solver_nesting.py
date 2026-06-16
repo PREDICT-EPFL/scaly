@@ -10,9 +10,14 @@ the solver's own outputs are ``Ops.SOLVER_CALL`` nodes whose attrs hold a
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import alloy as al
 from alloy.expr import topo
 from alloy.ops import Ops
+from alloy.toolchain import solver_diagnostic, solver_loadable
+
+need_piqp = pytest.mark.skipif(not solver_loadable("piqp"), reason=solver_diagnostic("piqpc"))
+need_ipopt = pytest.mark.skipif(not solver_loadable("ipopt"), reason=solver_diagnostic("ipopt"))
 
 
 def test_solver_call_returns_expressions() -> None:
@@ -44,6 +49,7 @@ def test_solver_descriptor_present_in_inner_graph() -> None:
   assert desc.n == 2
 
 
+@need_piqp
 def test_nested_qp_in_alloy_function() -> None:
   """The safety-filter assembly pattern: build QP data symbolically and wrap
   the solve as a node inside a larger ``Function``."""
@@ -62,6 +68,7 @@ def test_nested_qp_in_alloy_function() -> None:
     np.testing.assert_allclose(cost, -0.5 * float(np.dot(mu_val, mu_val)), atol=1e-7)
 
 
+@need_piqp
 def test_nested_qp_postprocessed() -> None:
   """Combine solver output with downstream symbolic math."""
 
@@ -77,6 +84,7 @@ def test_nested_qp_postprocessed() -> None:
   np.testing.assert_allclose(y, float(np.dot(mu_val, mu_val)), atol=1e-7)
 
 
+@need_piqp
 def test_nested_qp_with_general_inequality() -> None:
   """Two-sided general inequality inside a nested QP."""
 
@@ -97,6 +105,7 @@ def test_nested_qp_with_general_inequality() -> None:
   np.testing.assert_allclose(u, [-0.1, -0.2], atol=1e-7)
 
 
+@need_ipopt
 def test_nested_nlp_in_alloy_function() -> None:
   """NLP solver embedded in a larger Function."""
 
@@ -135,6 +144,7 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
   assert calls[0].attrs["callee"] == qp.name
 
 
+@need_piqp
 def test_nested_qp_jit_compiles_through_piqp() -> None:
   """JIT path: render C that links against libpiqpc and drives the solve."""
 
@@ -166,6 +176,7 @@ def test_nested_qp_jit_compiles_through_piqp() -> None:
   np.testing.assert_allclose(u2, [0.0, 0.0], atol=1e-7)
 
 
+@need_ipopt
 def test_nested_nlp_jit_compiles_through_ipopt() -> None:
   """JIT path for an NLP: projects (target) onto the unit circle."""
 
@@ -187,6 +198,7 @@ def test_nested_nlp_jit_compiles_through_ipopt() -> None:
   np.testing.assert_allclose(proj(np.array([0.0, 3.0])), [0.0, 1.0], atol=1e-5)
 
 
+@need_piqp
 def test_nested_qp_call_keyword_form() -> None:
   """``.call(...)`` accepts keyword arguments to bypass alphabetical sort order."""
   u_ref = al.sym("u_ref", 2)

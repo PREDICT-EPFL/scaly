@@ -491,7 +491,7 @@ The new `alloy` repository owns all `src/alloy/`, `tests/alloy/`, `docs/alloy/`,
 
 ### Vendored solver shared libraries
 
-Both PIQP and IPOPT ship as redistributable shared libraries inside the alloy wheel (`src/alloy/lib/libpiqpc.{dylib,so}`, `src/alloy/lib/libipopt.{dylib,so}`), with C headers under `src/alloy/include/`. The same artifacts are used:
+Both PIQP and IPOPT are built as shared libraries under `src/alloy/lib/` (`libpiqpc.{dylib,so}`, `libipopt.{dylib,so}`), with C headers under `src/alloy/include/`. These artifacts are already used for local development and CI; making the final wheel fully redistributable still requires the static/runtime dependency cleanup tracked in `vendored_solvers.md`. The same artifacts are used:
 
 - by the Python runtime, loaded via `ctypes` from the JITed wrapper Functions;
 - by AOT C++ consumers that link against `-lpiqpc` / `-lipopt` from `alloy/lib/`.
@@ -499,7 +499,7 @@ Both PIQP and IPOPT ship as redistributable shared libraries inside the alloy wh
 Build strategy:
 
 - **PIQP**: reuse the existing anvil `hatch_build.py` pattern. Clone PIQP v0.6.2, Eigen 3.4.1, blasfeo; build `piqp_c` as a shared library; copy headers. Cold build ~1-2 min.
-- **IPOPT**: source build via a coinbrew-style hook. Clone coin-or/Ipopt 3.14+, `ThirdParty-Mumps`, `ThirdParty-Metis`, and either OpenBLAS (Linux) or rely on Apple Accelerate (macOS). Build MUMPS (sequential, no MPI) and IPOPT against them. **Statically link `libgfortran`, `libgcc`, and `libstdc++` into `libipopt`** (`-static-libgfortran -static-libgcc -static-libstdc++`) so the resulting `.dylib`/`.so` has no runtime dependency on the host's Fortran toolchain. This is what makes the AOT story clean — external C++ links against `libipopt` as a normal library without rpath gymnastics or libgfortran ABI surprises. Cold build ~5-8 min.
+- **IPOPT**: source build via a coinbrew-style hook. Clone coin-or/Ipopt 3.14+, `ThirdParty-Mumps`, `ThirdParty-Metis`, and either OpenBLAS (Linux) or rely on Apple Accelerate (macOS). Build MUMPS (sequential, no MPI) and IPOPT against them. The target is to **statically link `libgfortran`, `libgcc`, and `libstdc++` into `libipopt`** (`-static-libgfortran -static-libgcc -static-libstdc++`) so the resulting `.dylib`/`.so` has no runtime dependency on the host's Fortran toolchain. Current CI source builds pass but still dynamically depend on those runtime libraries; see `vendored_solvers.md`. Cold build ~5-8 min.
 - **Caching**: identical to the anvil hook — skip the rebuild if the lib + headers already exist in `src/alloy/lib/`.
 - **Platform support**: macOS (arm64 + x86_64) and Linux (manylinux_2_28) for v1. Windows is deferred: MSVC has no Fortran, MinGW/intel Fortran would require its own build path. Document the limitation; revisit if a concrete Windows user appears.
 
@@ -621,7 +621,7 @@ The same shape carries over to the NLP variant with `al.nlp(...)` and `f(x, u)` 
 Exit criteria:
 
 - Alloy repository split out, with PIQP + IPOPT building and shipping in wheels for macOS (arm64 + x86_64) and Linux (manylinux_2_28).
-- `libipopt.{dylib,so}` is statically linked against libgfortran/libgcc/libstdc++ and is linkable from a standalone C++ binary with no runtime Fortran dependency.
+- `libipopt.{dylib,so}` is either statically linked against libgfortran/libgcc/libstdc++ or repaired/vendored so a standalone C++ binary has no undeclared host Fortran-runtime dependency.
 - Both safety-filter variants build, JIT, and execute through the universal ABI.
 - PIQP and IPOPT bindings pass small NLP/QP test problems against reference solutions (CasADi+PIQP, CasADi+IPOPT).
 - A C++ harness can call the generated safety filter through the universal ABI with realistic per-step runtime, linking against the vendored `libipopt` / `libpiqpc`.

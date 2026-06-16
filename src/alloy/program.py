@@ -177,7 +177,9 @@ DEVICE_ONLY_OPS: frozenset[POps] = frozenset({POps.BARRIER})
 
 
 # Hash-cons Program IR nodes the same way ``Expr`` is hash-consed: structurally-
-# equal nodes collapse to the same Python object so identity == equality.
+# equal nodes collapse to the same Python object so identity == equality. Child refs in
+# cache keys are weakrefs, not raw ``id(...)`` integers, so CPython id reuse cannot alias
+# a new Program IR subgraph to a still-cached old node.
 _PNODE_CACHE: weakref.WeakValueDictionary[tuple[Any, ...], "PNode"] = weakref.WeakValueDictionary()
 
 
@@ -193,7 +195,7 @@ def _attrs_key(attrs: dict[str, Any]) -> tuple[Any, ...]:
   return tuple(out)
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
 class PNode:
   """A flat Program IR node.
 
@@ -217,7 +219,7 @@ class PNode:
     dtype: DType = dtypes.float64,
   ) -> "PNode":
     attrs = dict(attrs) if attrs else {}
-    key = (op.value, tuple(id(a) for a in args), _attrs_key(attrs), dtype.name)
+    key = (op.value, tuple(weakref.ref(a) for a in args), _attrs_key(attrs), dtype.name)
     cached = _PNODE_CACHE.get(key)
     if cached is not None:
       return cached

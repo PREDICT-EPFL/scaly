@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import weakref
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -9,9 +10,14 @@ from .expr import Expr, as_expr, concat, dot, gather, map_, scatter, stack, topo
 from .ops import Ops
 
 
-_CALL_JVP_CACHE: dict[tuple[int, int, int], tuple[Any, tuple[int, ...], bool]] = {}
-_CALL_JVP_MANY_CACHE: dict[tuple[int, int, int, int], tuple[Any, tuple[int, ...], bool]] = {}
-_CALL_JVP_MANY_CONST_CACHE: dict[tuple[int, int, int, tuple[int, ...], bytes], tuple[Any, tuple[int, ...], tuple[int, ...]]] = {}
+# Cache derivative helper Functions per live callee object. Do not key by ``id(callee)``:
+# CPython may reuse ids after a short-lived Function is collected, which can splice a stale
+# call-JVP helper into a different graph under xdist/CI-sized test runs.
+_CALL_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, int], tuple[Any, tuple[int, ...], bool]]] = weakref.WeakKeyDictionary()
+_CALL_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, int, int], tuple[Any, tuple[int, ...], bool]]] = weakref.WeakKeyDictionary()
+_CALL_JVP_MANY_CONST_CACHE: weakref.WeakKeyDictionary[
+  Any, dict[tuple[int, int, tuple[int, ...], bytes], tuple[Any, tuple[int, ...], tuple[int, ...]]]
+] = weakref.WeakKeyDictionary()
 
 
 class _JVPManyUnsupported(Exception):
@@ -170,8 +176,9 @@ def _jvp(expr: Expr, wrt: Expr, seed: Expr, memo: dict[int, Expr], dep_memo: dic
 def _call_jvp_many_const_function(
   callee: Any, output_index: int, formal_index: int, seed_value: np.ndarray
 ) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
-  key = (id(callee), output_index, formal_index, tuple(seed_value.shape), seed_value.tobytes())
-  if key not in _CALL_JVP_MANY_CONST_CACHE:
+  key = (output_index, formal_index, tuple(seed_value.shape), seed_value.tobytes())
+  cache = _CALL_JVP_MANY_CONST_CACHE.setdefault(callee, {})
+  if key not in cache:
     from .function import Function
     from .rewrite import simplify_cse_fixpoint
 
@@ -188,13 +195,14 @@ def _call_jvp_many_const_function(
     seed_hash = hashlib.sha1(seed_value.tobytes()).hexdigest()[:10]
     name = f"{callee.name}_fwd{seed_value.shape[0]}c{seed_hash}_{callee.output_names[output_index]}_{callee.input_names[formal_index]}"
     fn = Function(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"])
-    _CALL_JVP_MANY_CONST_CACHE[key] = (fn, arg_indices, active)
-  return _CALL_JVP_MANY_CONST_CACHE[key]
+    cache[key] = (fn, arg_indices, active)
+  return cache[key]
 
 
 def _call_jvp_many_function(callee: Any, output_index: int, formal_index: int, nseed: int) -> tuple[Any, tuple[int, ...], bool]:
-  key = (id(callee), output_index, formal_index, nseed)
-  if key not in _CALL_JVP_MANY_CACHE:
+  key = (output_index, formal_index, nseed)
+  cache = _CALL_JVP_MANY_CACHE.setdefault(callee, {})
+  if key not in cache:
     from .function import Function
     from .rewrite import simplify_cse_fixpoint
 
@@ -209,13 +217,14 @@ def _call_jvp_many_function(callee: Any, output_index: int, formal_index: int, n
     input_names = tuple(callee.input_names[i] for i in arg_indices) + ((seed.name,) if takes_seed else ())
     name = f"{callee.name}_fwd{nseed}_{callee.output_names[output_index]}_{callee.input_names[formal_index]}"
     fn = Function(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"])
-    _CALL_JVP_MANY_CACHE[key] = (fn, arg_indices, takes_seed)
-  return _CALL_JVP_MANY_CACHE[key]
+    cache[key] = (fn, arg_indices, takes_seed)
+  return cache[key]
 
 
 def _call_jvp_function(callee: Any, output_index: int, formal_index: int) -> tuple[Any, tuple[int, ...], bool]:
-  key = (id(callee), output_index, formal_index)
-  if key not in _CALL_JVP_CACHE:
+  key = (output_index, formal_index)
+  cache = _CALL_JVP_CACHE.setdefault(callee, {})
+  if key not in cache:
     from .function import Function
 
     formal = callee.inputs[formal_index]
@@ -229,8 +238,8 @@ def _call_jvp_function(callee: Any, output_index: int, formal_index: int) -> tup
     input_names = tuple(callee.input_names[i] for i in arg_indices) + ((seed.name,) if takes_seed else ())
     name = f"{callee.name}_fwd_{callee.output_names[output_index]}_{callee.input_names[formal_index]}"
     fn = Function(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"])
-    _CALL_JVP_CACHE[key] = (fn, arg_indices, takes_seed)
-  return _CALL_JVP_CACHE[key]
+    cache[key] = (fn, arg_indices, takes_seed)
+  return cache[key]
 
 
 def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:

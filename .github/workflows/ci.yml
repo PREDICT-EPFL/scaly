@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, toolchain]
   pull_request:
 
 concurrency:
@@ -10,8 +10,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: ${{ matrix.os }}
+  vendored-solvers:
+    name: vendored solvers / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -20,30 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system toolchain (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gfortran cmake build-essential
-
-      - name: Install system toolchain (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install gcc cmake
-
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install
-
-      # The hatch hook short-circuits each builder if its install marker already exists, so a
-      # restored cache turns `uv sync` into a near-instant no-op (~30s vs ~8 min cold).
-      # Keyed strictly on hatch_build.py — no restore-keys, because a stale fallback would
-      # silently use libs that don't match the current recipe.
-      # Restore/save are split so the expensive native build is cached immediately after
-      # `uv sync`, even if a later lint/test step fails.
+      # The cache key deliberately depends only on the native build recipe. GitHub Actions
+      # automatically falls back to caches from the default branch, so feature branches reuse
+      # main's validated solver build when hatch_build.py is unchanged.
       - name: Restore third_party + built libs
         id: cache-vendored
         uses: actions/cache/restore@v4
@@ -52,14 +31,38 @@ jobs:
             third_party
             src/alloy/lib
             src/alloy/include
-          key: ${{ runner.os }}-vendored-${{ hashFiles('hatch_build.py') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-vendored-${{ hashFiles('hatch_build.py') }}
 
       - name: Report cache state
         run: |
           echo "cache-hit=${{ steps.cache-vendored.outputs.cache-hit }}"
+          echo "cache-primary-key=${{ steps.cache-vendored.outputs.cache-primary-key }}"
           ls -lh src/alloy/lib 2>/dev/null || echo "src/alloy/lib not present — will cold-build"
 
+      - name: Install system toolchain (Linux)
+        if: runner.os == 'Linux' && steps.cache-vendored.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake build-essential
+
+      - name: Install system toolchain (macOS)
+        if: runner.os == 'macOS' && steps.cache-vendored.outputs.cache-hit != 'true'
+        run: |
+          brew install gcc cmake
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.cache-vendored.outputs.cache-hit != 'true'
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        if: steps.cache-vendored.outputs.cache-hit != 'true'
+        run: uv python install
+
       - name: uv sync (builds PIQP + IPOPT on cache miss)
+        if: steps.cache-vendored.outputs.cache-hit != 'true'
+        env:
+          ALLOY_BUILD_SOLVERS: required
         run: uv sync --frozen
 
       - name: Save third_party + built libs
@@ -78,6 +81,41 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then otool -L src/alloy/lib/libipopt.dylib; fi
           if [ "$RUNNER_OS" = "Linux" ]; then ldd src/alloy/lib/libipopt.so; fi
 
+      - name: Upload vendored solver artifact for this workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: vendored-solvers-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            third_party
+            src/alloy/lib
+            src/alloy/include
+          retention-days: 3
+
+  lint-type:
+    name: lint + type / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: uv sync (Python/core only)
+        env:
+          ALLOY_BUILD_SOLVERS: skip
+        run: uv sync --frozen
+
+      - name: Native toolchain report
+        run: uv run python -m alloy.toolchain
+
       - name: Ruff lint
         run: uv run ruff check .
 
@@ -87,8 +125,79 @@ jobs:
       - name: ty type-check
         run: uv run ty check .
 
-      - name: Pytest
-        run: uv run pytest -n=auto tests/
+  tests-core:
+    name: core tests / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: uv sync (Python/core only)
+        env:
+          ALLOY_BUILD_SOLVERS: skip
+        run: uv sync --frozen
+
+      - name: C compiler report
+        run: |
+          cc --version
+          if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
+
+      - name: Pytest core suite
+        run: >-
+          uv run pytest -n=auto tests/
+          --ignore=tests/alloy/test_solvers.py
+          --ignore=tests/alloy/test_solver_nesting.py
 
       - name: Benchmark smoke (tracking, alloy backend)
         run: uv run python benchmarks/scalability_sweep.py --tracking-horizons 5 --backends alloy --workloads tracking
+
+  tests-solvers:
+    name: solver tests / ${{ matrix.os }}
+    needs: [vendored-solvers]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download vendored solver artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vendored-solvers-${{ runner.os }}-${{ runner.arch }}
+          path: .
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: uv sync (uses restored vendored solvers)
+        env:
+          ALLOY_BUILD_SOLVERS: required
+        run: uv sync --frozen
+
+      - name: Native solver report
+        run: uv run python -m alloy.toolchain
+
+      - name: Inspect vendored libs
+        run: |
+          ls -lh src/alloy/lib
+          if [ "$RUNNER_OS" = "macOS" ]; then otool -L src/alloy/lib/libipopt.dylib; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then ldd src/alloy/lib/libipopt.so; fi
+
+      - name: Pytest solver suite
+        run: uv run pytest -n=auto tests/alloy/test_solvers.py tests/alloy/test_solver_nesting.py

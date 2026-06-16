@@ -50,6 +50,7 @@ docs = [
 
 [project.scripts]
 alloy_viz = "alloy.viz.serve:main"
+alloy_toolchain = "alloy.toolchain:main"
 
 [tool.ruff]
 indent-width = 2

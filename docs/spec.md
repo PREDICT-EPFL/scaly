@@ -304,10 +304,13 @@ The first pass supports CSE, constant folding, and simple algebraic identities s
 
 There is no Python interpreter fallback: Python calls, tests, and AOT generation all exercise the same semantic-IR → Program-IR → renderer path. Codegen/lowering gaps and missing compilers fail loudly.
 
-Environment variables that influence JIT behavior:
+Environment variables are registered in `alloy.toolchain.alloy_env_vars()`, and `uv run python -m alloy.toolchain` prints the active native-toolchain report. The most common controls are:
 
 - ``ALLOY_CACHE_DIR`` — override the on-disk cache root (default ``$XDG_CACHE_HOME/alloy/jit`` or ``~/.cache/alloy/jit``).
 - ``ALLOY_CC`` — override the C compiler binary (default ``cc`` from ``$PATH``; works on Linux/macOS/BSD where ``cc`` is the POSIX symlink to the system's default C compiler).
+- ``ALLOY_BUILD_SOLVERS`` — Hatch build mode for source-vendored PIQP/IPOPT (`auto`, `skip`, or `required`).
+- ``ALLOY_SOLVER_INCLUDE_DIR`` / ``ALLOY_SOLVER_LIB_DIR`` / ``ALLOY_PIQP_LIB`` / ``ALLOY_IPOPT_LIB`` — explicit overrides for solver headers/libraries, mainly for debugging packaging layouts.
+- ``ALLOY_SOLVER_SYSTEM_FALLBACK`` — experimental opt-in for system ``ctypes``/``pkg-config`` discovery when debugging non-vendored installs; the supported release path remains the source-vendored layout.
 
 `Function.recompile()` drops both the in-process compiled handle and the on-disk cache directory for the next call.
 

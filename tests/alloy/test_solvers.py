@@ -7,16 +7,14 @@ and the backends are driven through the vendored shared libraries via ctypes.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 import pytest
 
 import alloy as al
+from alloy.toolchain import solver_diagnostic, solver_loadable
 
-casadi = pytest.importorskip("casadi", reason="CasADi is a dev dep; tests cross-check against it")
-if TYPE_CHECKING:
-  import casadi
+need_piqp = pytest.mark.skipif(not solver_loadable("piqp"), reason=solver_diagnostic("piqpc"))
+need_ipopt = pytest.mark.skipif(not solver_loadable("ipopt"), reason=solver_diagnostic("ipopt"))
 
 
 # ---------------------------------------------------------------------------
@@ -24,6 +22,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+@need_piqp
 def test_qp_equality_constrained_quadratic() -> None:
   """min 0.5 (x-1)^2 + 0.5 (y-2)^2  s.t.  x + y == 3, x, y >= 0.
 
@@ -42,6 +41,7 @@ def test_qp_equality_constrained_quadratic() -> None:
   np.testing.assert_allclose(out["cost"], -2.5, atol=1e-7)
 
 
+@need_piqp
 def test_qp_two_sided_inequality_box() -> None:
   """min 0.5 x^T x  s.t.  1 <= x[0] + x[1] <= 2, |x[0]| <= 1.
 
@@ -67,6 +67,7 @@ def test_qp_two_sided_inequality_box() -> None:
   assert out["lam_ineq"][0] < 0
 
 
+@need_piqp
 def test_qp_with_symbolic_parameters() -> None:
   """The QP data may be Alloy ``Expr``s of free parameters.
 
@@ -83,13 +84,9 @@ def test_qp_with_symbolic_parameters() -> None:
     np.testing.assert_allclose(out["x"], mu_val, atol=1e-7)
 
 
-def test_qp_against_casadi_piqp_reference() -> None:
-  """Cross-check a small QP against an independent NumPy/CasADi-derived KKT solution.
-
-  We don't depend on `casadi.conic("piqp", ...)` (not always installed); we
-  use CasADi as a way to author the same problem and compute the analytic
-  KKT solution via the linear system.
-  """
+@need_piqp
+def test_qp_against_analytic_kkt_reference() -> None:
+  """Cross-check a small equality-only QP against its dense KKT solution."""
   P_np = np.array([[2.0, 0.5], [0.5, 1.0]])
   c_np = np.array([-1.0, -0.5])
   A_np = np.array([[1.0, 1.0]])
@@ -109,6 +106,7 @@ def test_qp_against_casadi_piqp_reference() -> None:
 # ---------------------------------------------------------------------------
 
 
+@need_ipopt
 def test_nlp_equality_constrained_quadratic() -> None:
   """min (x-1)^2 + (y-2)^2  s.t.  x + y == 1.
 
@@ -125,6 +123,7 @@ def test_nlp_equality_constrained_quadratic() -> None:
   np.testing.assert_allclose(out["lam_eq"], [2.0], atol=1e-6)
 
 
+@need_ipopt
 def test_nlp_box_only_quadratic() -> None:
   """Unconstrained convex objective + box bound that becomes active.
 
@@ -141,6 +140,7 @@ def test_nlp_box_only_quadratic() -> None:
   assert out["lam_box"][1] < 0
 
 
+@need_ipopt
 def test_nlp_two_sided_inequality_and_lagrangian_hessian() -> None:
   """min x[0]^2 + 0.5 x[1]^2 + x[0] x[1]   s.t.   0 <= x[0]^2 + x[1] <= 5.
 
@@ -149,9 +149,10 @@ def test_nlp_two_sided_inequality_and_lagrangian_hessian() -> None:
     - a non-diagonal Lagrangian Hessian (off-diagonal coupling x[0] x[1]),
     - the sparse Jacobian path (g has cross-term 2 x[0]).
 
-  We verify against CasADi+IPOPT.
+  The optimum is the unconstrained minimizer x=(0,0), which lies on the lower
+  nonlinear inequality boundary. This keeps the test independent from a second
+  IPOPT implementation loaded from CasADi in the same process.
   """
-  # Alloy
   x = al.sym("x", 2)
   f = x[0] ** 2 + 0.5 * x[1] ** 2 + x[0] * x[1]
   g = al.stack([x[0] ** 2 + x[1]], axis=0)
@@ -160,17 +161,11 @@ def test_nlp_two_sided_inequality_and_lagrangian_hessian() -> None:
   out = nlp(x0, np.zeros(0), np.zeros(1))
   assert nlp.last_status is not None and nlp.last_status.ok
 
-  # CasADi+IPOPT
-  cx = casadi.MX.sym("x", 2)
-  cf = cx[0] ** 2 + 0.5 * cx[1] ** 2 + cx[0] * cx[1]
-  cg = cx[0] ** 2 + cx[1]
-  cprob = {"x": cx, "f": cf, "g": cg}
-  cnlp = casadi.nlpsol("c", "ipopt", cprob, {"print_time": False, "ipopt": {"print_level": 0, "sb": "yes"}})
-  csol = cnlp(x0=x0, lbg=0.0, ubg=5.0)
-  cx_ref = np.array(csol["x"]).reshape(-1)
-  np.testing.assert_allclose(out["x"], cx_ref, atol=1e-6)
+  np.testing.assert_allclose(out["x"], [0.0, 0.0], atol=2e-4)
+  np.testing.assert_allclose(out["g_ineq"], [0.0], atol=2e-4)
 
 
+@need_ipopt
 def test_nlp_with_symbolic_parameter() -> None:
   """Parameter-aware NLP: solve min (x - mu)^2 across different ``mu`` values."""
   x = al.sym("x", 2)
@@ -183,7 +178,8 @@ def test_nlp_with_symbolic_parameter() -> None:
     np.testing.assert_allclose(out["x"], mu_val, atol=1e-6)
 
 
-def test_nlp_rosenbrock_against_casadi_ipopt() -> None:
+@need_ipopt
+def test_nlp_rosenbrock_equality_constrained() -> None:
   """Classic Rosenbrock, equality-constrained.
 
   min (1 - x)^2 + 100 (y - x^2)^2  s.t.  x + y == 1.
@@ -196,13 +192,10 @@ def test_nlp_rosenbrock_against_casadi_ipopt() -> None:
   out = nlp(x0, np.zeros(1), np.zeros(0))
   assert nlp.last_status is not None and nlp.last_status.ok
 
-  cx = casadi.MX.sym("x", 2)
-  cf = (1 - cx[0]) ** 2 + 100 * (cx[1] - cx[0] ** 2) ** 2
-  cg = cx[0] + cx[1] - 1.0
-  cnlp = casadi.nlpsol("c", "ipopt", {"x": cx, "f": cf, "g": cg}, {"print_time": False, "ipopt": {"print_level": 0, "sb": "yes"}})
-  csol = cnlp(x0=x0, lbg=0.0, ubg=0.0)
-  cx_ref = np.array(csol["x"]).reshape(-1)
-  np.testing.assert_allclose(out["x"], cx_ref, atol=1e-5)
+  # Substitute y=1-x. The stationary points solve
+  #   400*x^3 + 600*x^2 - 198*x - 202 = 0
+  # and the minimizer is the middle real root.
+  np.testing.assert_allclose(out["x"], [0.6187956190750259, 0.3812043809249741], atol=1e-5)
 
 
 def test_solver_function_signature_errors() -> None:

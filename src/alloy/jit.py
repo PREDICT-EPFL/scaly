@@ -14,7 +14,6 @@ import hashlib
 import os
 import shutil
 import subprocess
-import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +24,7 @@ import numpy as np
 from .abi import C_API_SIGNATURE
 from .codegen.c import _c_ident, render_c_source
 from .codegen.solver_c import solver_compile_flags
+from .toolchain import cache_root, find_c_compiler, shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
   from .function import Function
@@ -46,28 +46,10 @@ class JitError(RuntimeError):
   """Raised when a compiled function returns a non-zero ABI status code."""
 
 
-def _cache_root() -> Path:
-  override = os.environ.get("ALLOY_CACHE_DIR")
-  if override:
-    return Path(override).expanduser()
-  xdg = os.environ.get("XDG_CACHE_HOME")
-  base = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
-  return base / "alloy" / "jit"
-
-
-def _shared_lib_ext() -> str:
-  return ".dylib" if sys.platform == "darwin" else ".so"
-
-
-def _shared_lib_flag() -> str:
-  return "-dynamiclib" if sys.platform == "darwin" else "-shared"
-
-
 def _find_compiler() -> str | None:
-  override = os.environ.get("ALLOY_CC")
-  if override:
-    return override if shutil.which(override) else None
-  return shutil.which("cc")
+  """Compatibility wrapper for tests; use ``alloy.toolchain.find_c_compiler`` in new code."""
+  compiler = find_c_compiler()
+  return compiler.cc if compiler is not None else None
 
 
 def _compute_cache_key(source: str, *, fun_name: str, compile_flags: tuple[str, ...] = ()) -> str:
@@ -109,9 +91,10 @@ def _build_artifact(fun: Function) -> _Artifact:
   ``fun``; callers let it propagate (there is no interpreter fallback). Raises ``JitError``
   if the compiler itself returns a non-zero status.
   """
-  cc = _find_compiler()
-  if cc is None:
+  compiler = find_c_compiler()
+  if compiler is None:
     raise JitUnavailable("no C compiler found (set ALLOY_CC or install cc)")
+  cc = compiler.cc
 
   try:
     source = render_c_source(fun)
@@ -126,10 +109,10 @@ def _build_artifact(fun: Function) -> _Artifact:
     return cached
 
   symbol = _c_ident(fun.name)
-  cache_dir = _cache_root() / key
+  cache_dir = cache_root() / key
   cache_dir.mkdir(parents=True, exist_ok=True)
   source_path = cache_dir / f"{symbol}.c"
-  lib_path = cache_dir / f"lib{symbol}{_shared_lib_ext()}"
+  lib_path = cache_dir / f"lib{symbol}{shared_lib_ext()}"
 
   if not lib_path.exists():
     # Write to a temp file then rename to avoid partially-written sources on concurrent builds.
@@ -142,7 +125,7 @@ def _build_artifact(fun: Function) -> _Artifact:
     # Link libraries (-l in extra_flags) MUST come after the source: ld defaults to --as-needed on
     # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
     # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
-    cmd = [cc, "-O2", "-fPIC", _shared_lib_flag(), str(source_path), *extra_flags, "-lm", "-o", str(tmp_lib)]
+    cmd = [cc, "-O2", "-fPIC", shared_lib_flag(), str(source_path), *extra_flags, "-lm", "-o", str(tmp_lib)]
     try:
       subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
@@ -278,6 +261,6 @@ def invalidate_cache(fun: Function) -> None:
   key = _compute_cache_key(source, fun_name=fun.name, compile_flags=tuple(solver_compile_flags(fun)))
   with _artifact_lock:
     _artifact_cache.pop(key, None)
-  cache_dir = _cache_root() / key
+  cache_dir = cache_root() / key
   if cache_dir.exists():
     shutil.rmtree(cache_dir, ignore_errors=True)

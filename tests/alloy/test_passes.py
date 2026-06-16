@@ -7,6 +7,8 @@ end-to-end numeric checks under the Program IR renderer. See ``docs/program_ir_m
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 
@@ -159,6 +161,42 @@ def test_packing_reuses_slots_and_spills() -> None:
 
   assert 1600 >= WORKSPACE_SPILL_THRESHOLD
   assert _sz_w(f) == 1600
+
+
+def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
+  """Regression for the macOS Apple-clang inline-callee miscompile.
+
+  The bad packed shape was ``inner_fwd2_y_x_raw(s0, s2, s1)``: ``s2`` was computed from
+  ``s1``, then the call output reused ``s1``. That lifetime reuse is legal IR, but an older
+  Apple clang rematerialized through the clobbered slot after inlining. The packer now keeps
+  call-input producer closures live through the call, so the output lands in a distinct slot
+  while raw callees can remain inlineable.
+  """
+  x = al.sym("x", 2)
+  inner = al.Function("inner", [x], [x.sin() + x * x], ["x"], ["y"])
+  z = al.sym("z", 2)
+  (inner_z,) = inner.call([z * z])
+  outer = al.Function("outer", [z], [inner_z], ["z"], ["y"])
+  jf = outer.factory("J", ["z"], ["jac:y:z"])
+
+  source = render_program_c_source(jf)
+  assert "static __attribute__((noinline)) void inner_fwd2_y_x_raw" in source
+  match = re.search(r"inner_fwd2_y_x_raw\(([^)]*)\);", source)
+  assert match is not None
+  args = [a.strip() for a in match.group(1).split(",")]
+  assert args[:3] == ["s0", "s2", "s3"]
+
+
+def test_regular_raw_callees_stay_inline() -> None:
+  x = al.sym("x", 2)
+  inner = al.Function("inner", [x], [x.sin()], ["x"], ["y"])
+  z = al.sym("z", 2)
+  (inner_z,) = inner.call([z])
+  outer = al.Function("outer", [z], [inner_z + 1.0], ["z"], ["out"])
+
+  source = render_program_c_source(outer)
+  assert "static inline void inner_raw" in source
+  assert "noinline" not in source
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the numeric spill check")

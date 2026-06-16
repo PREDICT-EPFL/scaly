@@ -4,7 +4,7 @@ A symbolic IR and code-generation framework for optimal control problems. Alloy 
 
 ## Status
 
-Experimental. Phases 0-4 of the roadmap are complete (symbolic core, sparse colored AD, MAP-based loop preservation, JIT-as-default execution). Phase 5 is in progress: PIQP and IPOPT ship as vendored shared libraries with `al.qp(...)` / `al.nlp(...)` opaque solver `Function`s wired on top via ctypes. Still open: C codegen of the solver wrapper for the AOT/C++ path, sparse PIQP, warm-start handover, and end-to-end safety-filter assembly. See `docs/roadmap.md` and `docs/solvers.md`.
+Experimental. Phases 0-4 of the roadmap are complete (symbolic core, sparse colored AD, MAP-based loop preservation, JIT-as-default execution). Phase 5 is in progress: PIQP and IPOPT ship as vendored shared libraries with `al.qp(...)` / `al.nlp(...)` opaque solver `Function`s wired on top via ctypes and generated-C solver wrappers for nested JIT/AOT use. Still open: sparse PIQP, warm-start handover, wheel repair/static native dependency cleanup, and end-to-end safety-filter assembly. See `docs/roadmap.md` and `docs/solvers.md`.
 
 ## Relationship to anvil
 
@@ -19,7 +19,15 @@ If you encounter a design question alloy hasn't answered yet, the anvil source a
 
 ## Installation
 
-Requires Python 3.12+, a C/C++ compiler, CMake, and gfortran (for the vendored IPOPT build).
+Requires Python 3.12+. A normal editable install works with only the Python toolchain:
+
+```bash
+git clone https://github.com/PREDICT-EPFL/alloy.git
+cd alloy
+uv sync
+```
+
+The solver bindings need native vendored libraries. When the required native toolchain is available, editable `uv sync` builds PIQP, MUMPS, METIS, and IPOPT into `src/alloy/lib/`; if the toolchain is missing, the editable install skips those libraries and solver calls/tests are unavailable. To require the native build (the CI path):
 
 ```bash
 # macOS
@@ -28,13 +36,10 @@ brew install gcc cmake
 # Linux (Debian/Ubuntu)
 sudo apt-get install gfortran cmake build-essential
 
-# clone and install
-git clone https://github.com/PREDICT-EPFL/alloy.git
-cd alloy
-uv sync
+ALLOY_BUILD_SOLVERS=required uv sync
 ```
 
-The first `uv sync` triggers the hatch build hook which clones and builds PIQP, MUMPS, METIS, and IPOPT into `src/alloy/lib/`. Cold build is ~5-8 minutes; subsequent syncs use the cached artifacts. Windows is not supported in v1 (open an issue if you need it).
+Cold solver builds take ~5-8 minutes; subsequent syncs use the cached artifacts. `uv run python -m alloy.toolchain` reports the active compiler, cache directory, and vendored solver discovery state. Windows solver builds are not supported in v1 (open an issue if you need them).
 
 ## Getting started
 
@@ -50,7 +55,7 @@ grad = rosenbrock.factory("rosenbrock_grad", ["x"], ["grad:f:x"])
 print(grad([1.0, 2.0]))  # -> array of two doubles
 ```
 
-Functions are sparse-typed, derivatives are pulled through the factory (`jac:*`, `grad:*`, `hess:*`, `lam:*`), and the first call compiles the C source through a universal CasADi-style ABI. The resulting `.so` is cached under `.alloy_jit_cache/`.
+Functions are sparse-typed, derivatives are pulled through the factory (`jac:*`, `grad:*`, `hess:*`, `lam:*`), and the first call compiles the C source through a universal CasADi-style ABI. The resulting `.so`/`.dylib` is cached under `$XDG_CACHE_HOME/alloy/jit` or `~/.cache/alloy/jit` (override with `ALLOY_CACHE_DIR`).
 
 ## Architecture
 
@@ -62,6 +67,7 @@ See `docs/roadmap.md` for the design north star and milestone history. Key docum
 - `docs/safety_filter.md` — Phase 5 driving workload
 - `docs/scalability.md` — benchmark results against CasADi SX/MX
 - `docs/vendored_solvers.md` — open issues around the vendored solver build
+- `docs/native_toolchain_exploration.md` — historical notes from the conda-prefix/delocate exploration
 
 ## License
 

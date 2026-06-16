@@ -162,12 +162,23 @@ def _render_entry(proc: PNode, fun: Function) -> list[str]:
   return lines
 
 
+def _force_noinline_raw(proc_name: str) -> bool:
+  # Apple clang 17 (Xcode 16.4 / macOS 15 arm64 CI) miscompiles inlined forward-AD helper callees
+  # for CALL-node Jacobians. Keep normal user callees inline, but make generated forward helpers
+  # real call frames until the compiler issue disappears. See docs/macos_clang_call_miscompile.md.
+  return "_fwd" in proc_name
+
+
 def _render_raw_callee(proc: PNode) -> list[str]:
   """A callee renders as ``static inline void <name>_raw(const <dtype>* p0, ..., double* w)`` — a
   pointer per param plus the workspace tail (spilled slots index into ``w``; ``call`` sites pass
   the caller's ``w`` advanced past its own spill window). The leading ``input_count`` params are
   inputs and are ``const``-qualified (read-only by construction), so a solver_c wrapper can pass
-  its ``const double*`` arguments without discarding qualifiers. No ABI wrapper."""
+  its ``const double*`` arguments without discarding qualifiers. No ABI wrapper.
+
+  Normal user callees stay inline. Forward-AD helper callees are selectively noinline on purpose;
+  see ``_force_noinline_raw`` and docs/macos_clang_call_miscompile.md.
+  """
   param_count = int(proc.attrs["param_count"])
   input_count = int(proc.attrs.get("input_count", 0))
   params = list(proc.args[:param_count])
@@ -180,7 +191,9 @@ def _render_raw_callee(proc: PNode) -> list[str]:
       "double* w",
     ]
   )
-  out = [f"static inline void {_c_ident(proc.attrs['name'])}_raw({param_decls}) {{"]
+  proc_name = proc.attrs["name"]
+  qualifier = "static __attribute__((noinline))" if _force_noinline_raw(proc_name) else "static inline"
+  out = [f"{qualifier} void {_c_ident(proc_name)}_raw({param_decls}) {{"]
   if not sz_w:
     out.append("  (void)w;")
   _emit_local_buffers(body, out, ptr_expr, indent=2)

@@ -148,8 +148,8 @@ A small `nlp_bounds` Function evaluates the (param-dependent) `x_lb`, `x_ub`,
 
 `src/alloy/solvers/` contains:
 
-- `_lib.py` — locates `libpiqpc` / `libipopt` next to the package and dlopens
-  them via `ctypes.CDLL`.
+- `_lib.py` — delegates native solver discovery to `alloy.toolchain`, then
+  dlopens `libpiqpc` / `libipopt` via `ctypes.CDLL`.
 - `_piqp.py` — `ctypes.Structure` mirrors of `piqp_data_dense`, `piqp_settings`,
   `piqp_info`, `piqp_result`, `piqp_workspace`. The `PIQPDenseSolver` handle
   owns the column-major numpy buffers that PIQP reads through pointers, and

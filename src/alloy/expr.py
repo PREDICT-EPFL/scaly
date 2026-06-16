@@ -22,7 +22,8 @@ def _asarray(value: Any, *, dtype: DType | str | None = None) -> np.ndarray:
 # check, and any pass that builds new graphs gets CSE for free.
 #
 # WeakValueDictionary lets nodes be garbage-collected when no live reference remains; the
-# cache shrinks automatically. No surprises around long-lived caches retaining graphs.
+# cache shrinks automatically. Arg refs in cache keys are weakrefs, not raw ``id(...)``
+# integers, so CPython id reuse cannot alias a new subgraph to a still-cached old node.
 _NODE_CACHE: weakref.WeakValueDictionary[tuple[Any, ...], "Expr"] = weakref.WeakValueDictionary()
 
 
@@ -30,15 +31,12 @@ def _intern_key(
   op: Ops | str, args: tuple["Expr", ...], type_: "TensorType", name: str | None, value: np.ndarray | None, attrs: dict[str, Any], lowering: Lowering
 ) -> tuple[Any, ...]:
   op_norm = op if isinstance(op, Ops) else Ops(op)
-  # Use Python ``id`` for arg refs: interning makes id-equality = structural-equality, so
-  # two args with the same id are the same subgraph. Avoids walking the args' structural_key
-  # at every construction.
-  args_key = tuple(id(a) for a in args)
+  args_key = tuple(weakref.ref(a) for a in args)
   value_key = None if value is None else (value.shape, str(value.dtype), value.tobytes())
   return (op_norm.value, args_key, type_, name, value_key, _attrs_key(attrs), lowering)
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
 class Expr:
   op: Ops | str
   args: tuple[Expr, ...] = ()
@@ -310,7 +308,7 @@ def _attrs_key(attrs: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
     if hasattr(v, "structural_key") and callable(getattr(v, "structural_key")):
       return v.structural_key()
     if hasattr(v, "name") and hasattr(v, "input_names") and hasattr(v, "output_names"):
-      return ("Function", v.name, v.input_names, v.output_names)
+      return ("Function", weakref.ref(v))
     if isinstance(v, np.ndarray):
       return ("ndarray", v.shape, str(v.dtype), v.tobytes())
     if isinstance(v, dict):
