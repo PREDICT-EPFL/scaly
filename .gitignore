@@ -21,6 +21,7 @@ third_party/
 
 # Local benchmark outputs
 benchmarks/gen/
+examples/ct_dt_cbf_filter/out/
 
 # docs
 site/

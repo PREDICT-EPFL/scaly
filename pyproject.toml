@@ -42,6 +42,7 @@ dev = [
     "ruff>=0.13.3",
     "ty>=0.0.2",
     "google-benchmark>=1.9.5",
+    "matplotlib>=3.11.0",
 ]
 docs = [
     "zensical>=0.0.28",
@@ -56,7 +57,7 @@ alloy_toolchain = "alloy.toolchain:main"
 indent-width = 2
 line-length = 150
 target-version = "py312"
-include = ["src/alloy/**/*.py", "tests/**/*.py", "benchmarks/**/*.py"]
+include = ["src/alloy/**/*.py", "tests/**/*.py", "benchmarks/**/*.py", "examples/**/*.py"]
 exclude = [".venv"]
 lint.ignore = ["E731"]
 
