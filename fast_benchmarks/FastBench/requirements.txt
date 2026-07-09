@@ -1,0 +1,22 @@
+# Core (pip-installable, always required)
+numpy>=1.24
+scipy>=1.10
+casadi>=3.6
+osqp>=1.0
+piqp>=0.4
+proxsuite>=0.6      # ProxQP backend (also supplies Eigen/proxqp headers for FastSQP)
+pandas>=2.0
+matplotlib>=3.7
+tabulate>=0.9
+
+# Optional report niceties
+markdown>=3.4
+
+# FastSQP (the built-in C++ solver) additionally needs a C/C++ compiler
+# (g++/gcc).  Eigen + proxqp headers ship inside the CasADi wheel, so no extra
+# system packages are required on most platforms.
+
+# Optional solver backends (installed by setup.sh on request; see README)
+# do-mpc>=4.6
+# acados_template   -> needs a compiled acados (scripts/install_acados.sh)
+# pygrampc          -> needs GRAMPC C sources
