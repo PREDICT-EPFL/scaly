@@ -61,6 +61,21 @@ Eval_H_CB = ctypes.CFUNCTYPE(
   _NUM_P,
   _UserData,
 )
+Intermediate_CB = ctypes.CFUNCTYPE(
+  ctypes.c_bool,
+  ipindex,
+  ipindex,
+  ipnumber,
+  ipnumber,
+  ipnumber,
+  ipnumber,
+  ipnumber,
+  ipnumber,
+  ipnumber,
+  ipnumber,
+  ipindex,
+  _UserData,
+)
 
 
 _bound = False
@@ -96,6 +111,8 @@ def _ensure_bound() -> None:
   lib.AddIpoptNumOption.restype = ctypes.c_bool
   lib.AddIpoptIntOption.argtypes = [_IpoptProblem, ctypes.c_char_p, ipindex]
   lib.AddIpoptIntOption.restype = ctypes.c_bool
+  lib.SetIntermediateCallback.argtypes = [_IpoptProblem, Intermediate_CB]
+  lib.SetIntermediateCallback.restype = ctypes.c_bool
   lib.IpoptSolve.argtypes = [_IpoptProblem, _NUM_P, _NUM_P, _NUM_P, _NUM_P, _NUM_P, _NUM_P, _UserData]
   lib.IpoptSolve.restype = ctypes.c_int
   _bound = True
@@ -135,6 +152,8 @@ class NLPSolution:
   mult_g: np.ndarray
   mult_x_L: np.ndarray
   mult_x_U: np.ndarray
+  iters: int
+  eval_counts: dict[str, int]
 
 
 def _copy_ptr_in(ptr, length: int) -> np.ndarray:
@@ -191,6 +210,9 @@ def solve_ipopt(
   eval_jac_g,
   eval_h,
   options: dict[str, str | int | float] | None = None,
+  lam_g0: np.ndarray | None = None,
+  z_L0: np.ndarray | None = None,
+  z_U0: np.ndarray | None = None,
 ) -> NLPSolution:
   """Wrap CreateIpoptProblem + IpoptSolve.
 
@@ -215,7 +237,21 @@ def solve_ipopt(
   nele_jac = int(jac_rows_arr.size)
   nele_hess = int(hess_rows_arr.size)
 
+  def seed(value: np.ndarray | None, shape: tuple[int, ...], name: str) -> np.ndarray:
+    if value is None:
+      return np.zeros(shape, dtype=np.float64)
+    out = np.asarray(value, dtype=np.float64)
+    if out.shape != shape:
+      raise ValueError(f"{name} has shape {out.shape}, expected {shape}")
+    return np.ascontiguousarray(out).copy()
+
+  mult_g = seed(lam_g0, (m,), "lam_g0")
+  mult_x_L = seed(z_L0, (n,), "z_L0")
+  mult_x_U = seed(z_U0, (n,), "z_U0")
+
   error_holder: list[BaseException] = []
+  eval_counts = {name: 0 for name in ("eval_f", "eval_grad_f", "eval_g", "eval_jac_g", "eval_h")}
+  iters = 0
 
   def _wrap(fn):
     """Wrap a Python callable so that any raised exception is captured and signaled
@@ -235,12 +271,14 @@ def solve_ipopt(
 
   @_wrap
   def _eval_f(n_, x_ptr, _new_x, obj_ptr, _user_data):
+    eval_counts["eval_f"] += 1
     x = _copy_ptr_in(x_ptr, n_)
     obj_ptr[0] = float(eval_f(x))
     return True
 
   @_wrap
   def _eval_grad_f(n_, x_ptr, _new_x, grad_ptr, _user_data):
+    eval_counts["eval_grad_f"] += 1
     x = _copy_ptr_in(x_ptr, n_)
     out = np.ascontiguousarray(eval_grad_f(x), dtype=np.float64)
     if out.size != n_:
@@ -250,6 +288,7 @@ def solve_ipopt(
 
   @_wrap
   def _eval_g(n_, x_ptr, _new_x, m_, g_ptr, _user_data):
+    eval_counts["eval_g"] += 1
     if m_ == 0:
       return True
     x = _copy_ptr_in(x_ptr, n_)
@@ -264,6 +303,7 @@ def solve_ipopt(
     if nele_jac_ == 0:
       return True
     if values:
+      eval_counts["eval_jac_g"] += 1
       x = _copy_ptr_in(x_ptr, n_)
       out = np.ascontiguousarray(eval_jac_g(x), dtype=np.float64)
       if out.size != nele_jac_:
@@ -279,6 +319,7 @@ def solve_ipopt(
     if nele_hess_ == 0:
       return True
     if values:
+      eval_counts["eval_h"] += 1
       x = _copy_ptr_in(x_ptr, n_)
       lam = _copy_ptr_in(lam_ptr, m_) if m_ else np.zeros(0, dtype=np.float64)
       out = np.ascontiguousarray(eval_h(x, float(obj_factor), lam), dtype=np.float64)
@@ -295,6 +336,13 @@ def solve_ipopt(
   cb_g = Eval_G_CB(_eval_g)
   cb_jac_g = Eval_Jac_G_CB(_eval_jac_g)
   cb_h = Eval_H_CB(_eval_h)
+
+  def _intermediate(_alg_mod, iter_count, *_args):
+    nonlocal iters
+    iters = int(iter_count)
+    return True
+
+  cb_intermediate = Intermediate_CB(_intermediate)
 
   problem = lib.CreateIpoptProblem(
     ipindex(n),
@@ -315,6 +363,8 @@ def solve_ipopt(
   if not problem:
     raise RuntimeError("CreateIpoptProblem returned NULL")
   try:
+    if not lib.SetIntermediateCallback(problem, cb_intermediate):
+      raise RuntimeError("SetIntermediateCallback failed")
     for key, value in (options or {}).items():
       kb = key.encode()
       if isinstance(value, bool):
@@ -333,9 +383,6 @@ def solve_ipopt(
     x_buf = np.ascontiguousarray(x0, dtype=np.float64).copy()
     g_buf = np.zeros(m, dtype=np.float64)
     obj_buf = (ipnumber * 1)(0.0)
-    mult_g = np.zeros(m, dtype=np.float64)
-    mult_x_L = np.zeros(n, dtype=np.float64)
-    mult_x_U = np.zeros(n, dtype=np.float64)
 
     status = lib.IpoptSolve(
       problem,
@@ -350,7 +397,7 @@ def solve_ipopt(
   finally:
     lib.FreeIpoptProblem(problem)
     # Keep callbacks alive until here.
-    del cb_f, cb_grad_f, cb_g, cb_jac_g, cb_h
+    del cb_f, cb_grad_f, cb_g, cb_jac_g, cb_h, cb_intermediate
 
   if error_holder:
     raise error_holder[0]
@@ -364,6 +411,8 @@ def solve_ipopt(
     mult_g=mult_g,
     mult_x_L=mult_x_L,
     mult_x_U=mult_x_U,
+    iters=iters,
+    eval_counts=eval_counts,
   )
 
 
@@ -380,6 +429,7 @@ def _nlp_backend(descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> 
   assert base_fn is not None and grad_fn is not None and hess_fn is not None and bound_fn is not None
 
   x0 = inputs[0]
+  lam_g0 = np.concatenate([inputs[1].reshape(-1), inputs[2].reshape(-1)])
   param_args = list(inputs[3:])
 
   bounds = dict(zip(bound_fn.output_names, bound_fn.eval_list(*param_args), strict=True))
@@ -448,6 +498,7 @@ def _nlp_backend(descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> 
     eval_jac_g=eval_jac_g if m else (lambda _x: np.zeros(0)),
     eval_h=eval_h,
     options={k: v for k, v in descriptor.options},
+    lam_g0=lam_g0,
   )
 
   h_out = sol.g[:n_h] if n_h else np.zeros(0)
@@ -456,4 +507,4 @@ def _nlp_backend(descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> 
   lam_g = sol.mult_g[n_h:] if n_g else np.zeros(0)
   lam_box = sol.mult_x_U - sol.mult_x_L
   outs = [sol.x, np.asarray(sol.obj, dtype=np.float64), h_out, g_out, lam_h, lam_g, lam_box]
-  return outs, SolverStatus(code=sol.status, name=sol.status_name)
+  return outs, SolverStatus(code=sol.status, name=sol.status_name, iter=sol.iters, stats={"iters": sol.iters, **sol.eval_counts})

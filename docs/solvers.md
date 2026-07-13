@@ -81,8 +81,9 @@ positional or keyword args). Calling it runs the bound backend.
 - followed by every free parameter detected in the symbolic inputs, in
   deterministic name/id order.
 
-Initial dual values are accepted in the signature for API symmetry. Warm-start
-plumbing into PIQP and IPOPT is not implemented yet.
+Initial dual values are accepted in the signature for API symmetry. IPOPT seeds
+its equality and inequality multipliers from them; PIQP warm-start plumbing is
+not implemented yet.
 
 ### Call-time outputs
 
@@ -99,7 +100,8 @@ NLP:
 - `lam_eq`, `lam_ineq`, `lam_box` (signed; `lam_box = mult_x_U − mult_x_L`).
 
 `SolverFunction.last_status` exposes the most recent `SolverStatus(code, name,
-iter)`. `status.ok` is `True` for PIQP `solved` and IPOPT
+iter, stats)`. IPOPT stats contain iteration and value-callback counts; PIQP
+leaves stats as `None`. `status.ok` is `True` for PIQP `solved` and IPOPT
 `solve_succeeded`/`solved_to_acceptable_level`/`feasible_point_found`.
 
 ### Symbolic-parameter example
@@ -158,14 +160,17 @@ A small `nlp_bounds` Function evaluates the (param-dependent) `x_lb`, `x_ub`,
   spurious "free constraint" warnings at setup time). PIQP's signed duals
   `z_l, z_u, z_bl, z_bu` are combined into a single signed `lam_ineq` /
   `lam_box` (upper − lower) on the way out.
-- `_ipopt.py` — `CFUNCTYPE`s for the five `Eval_*_CB` callbacks plus bindings
+- `_ipopt.py` — `CFUNCTYPE`s for the five `Eval_*_CB` callbacks and the
+  intermediate callback plus bindings
   for `CreateIpoptProblem`, `IpoptSolve`, `AddIpopt{Str,Num,Int}Option`, and
   `FreeIpoptProblem`. `solve_ipopt(...)` wraps Python evaluators in the
   callback ABI: when IPOPT passes `iRow`/`jCol` with a NULL `values` it
   receives the precomputed sparse pattern; with a non-NULL `values` the Alloy
   oracle is invoked and the compact buffer is memcpy'd into IPOPT's array.
-  Exceptions raised inside callbacks are captured and re-raised after IPOPT
-  returns, so a buggy oracle does not silently swallow the diagnostic.
+  Initial multiplier buffers support warm starts, while the intermediate and
+  evaluation callbacks record iteration and invocation counts. Exceptions
+  raised inside callbacks are captured and re-raised after IPOPT returns, so a
+  buggy oracle does not silently swallow the diagnostic.
 - `_oracle.py` — `collect_free_inputs(exprs)` walks the expression graph and
   returns the unique `Ops.INPUT` exprs in deterministic name/id order.
 - `solver_function.py` — `SolverFunction` opaque wrapper. Mimics

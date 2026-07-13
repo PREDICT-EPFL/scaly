@@ -341,7 +341,7 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
   per-layer timing (callback transition, buffer copies, kernel).
 - **L3 — IPOPT low-level binding parity**: accept/return `lam_x`/`lam_g`
   warm starts and final multipliers, expose iteration count and callback
-  counts.
+  counts. **Completed (2026-07-13).**
 - **L4 — parameterized model constants**: physical constants and `dt` as
   symbolic parameters in the decorated ODE functions instead of baked-in
   values (blocks tuning sweeps).

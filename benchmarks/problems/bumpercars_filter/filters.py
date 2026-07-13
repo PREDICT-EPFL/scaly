@@ -368,6 +368,9 @@ class AlloyDTCBFSafetyFilter:
     self.n_z = self.n_u + 1
     self.stats_history: list[FilterStats] = []
     self.last_z: np.ndarray | None = None
+    self.last_mult_g: np.ndarray | None = None
+    self.last_z_L: np.ndarray | None = None
+    self.last_z_U: np.ndarray | None = None
     self._build_ms = 0.0
     self._compile_ms: dict[str, float] = {}
     t0 = time.perf_counter()
@@ -448,6 +451,8 @@ class AlloyDTCBFSafetyFilter:
       "max_iter": self.filt_cfg.ipopt_max_iter,
       "hessian_approximation": "limited-memory",
     }
+    if self.last_mult_g is not None:
+      options["warm_start_init_point"] = "yes"
     t0 = time.perf_counter()
     sol = solve_ipopt(
       n=self.n_z,
@@ -467,6 +472,9 @@ class AlloyDTCBFSafetyFilter:
       eval_jac_g=eval_jac_g,
       eval_h=eval_h,
       options=options,
+      lam_g0=self.last_mult_g,
+      z_L0=self.last_z_L,
+      z_U0=self.last_z_U,
     )
     solver_ms = (time.perf_counter() - t0) * 1000.0
     raw_success = sol.status in (0, 1, 6)
@@ -474,6 +482,9 @@ class AlloyDTCBFSafetyFilter:
     success = raw_success or feasible
     if success:
       self.last_z = sol.x.copy()
+      self.last_mult_g = sol.mult_g.copy()
+      self.last_z_L = sol.mult_x_L.copy()
+      self.last_z_U = sol.mult_x_U.copy()
       u_safe = np.clip(sol.x[: self.n_u], -1.0, 1.0).reshape(self.ncars, NCTRL)
     else:
       u_safe = desired.copy()
@@ -489,7 +500,7 @@ class AlloyDTCBFSafetyFilter:
         success,
         sol.status_name + (" (accepted feasible)" if success and not raw_success else ""),
         solver_ms,
-        None,
+        sol.iters,
         sol.obj,
         float(np.min(sol.g)) if sol.g.size else float("inf"),
         float(sol.x[-1]),
@@ -501,6 +512,7 @@ class AlloyDTCBFSafetyFilter:
           "compile_ms": dict(self._compile_ms),
           "jac_nnz": int(jac_sp.nnz),
           "eval_total_ms": totals,
+          "ipopt_eval_counts": sol.eval_counts,
           "raw_success": raw_success,
         },
       )

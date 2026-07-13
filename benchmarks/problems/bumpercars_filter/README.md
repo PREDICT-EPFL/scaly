@@ -152,7 +152,7 @@ whole solve is not yet a single generated-C solver wrapper.
 
 Instrumentation recorded per step:
 
-- IPOPT wall time and status,
+- IPOPT wall time, status, and iteration count,
 - objective, min constraint value, slack,
 - callback counts,
 - average time spent inside each JIT-compiled Alloy oracle function,
@@ -170,12 +170,12 @@ Known discrepancies:
    prototype uses IPOPT -> C callback shim -> Python/ctypes -> JIT-compiled Alloy
    function. The reported Alloy per-function time measures mostly the compiled
    kernel call, not the full callback transition and pointer/copy overhead.
-2. **Warm-starting.** CasADi currently warm-starts primal variables and IPOPT
-   multipliers (`lam_x`, `lam_g`). Alloy only warm-starts the primal decision
-   vector in this prototype.
-3. **Iteration visibility.** CasADi reports IPOPT iteration count. Alloy's
-   low-level IPOPT binding does not currently expose iteration count, so the
-   CSV has an empty iteration column for Alloy.
+2. **Warm-starting parity.** CasADi and Alloy both warm-start primal variables
+   and IPOPT multipliers (`lam_x` / `z_L` / `z_U`, and `lam_g`) after the first
+   successful solve.
+3. **Iteration visibility parity.** Both implementations report IPOPT iteration
+   counts. Alloy also records value-callback invocation counts from its
+   low-level IPOPT binding.
 4. **Hessian mode.** The default comparison uses limited-memory Hessian on both
    sides. Exact Hessian is available for CasADi via `--exact-hessian`, but not
    for the mapped Alloy oracle yet.
@@ -236,19 +236,19 @@ For a fair end-state comparison, we want either:
 - enough low-level instrumentation in the generated solver path to inspect the
   same timing breakdown.
 
-### 3. IPOPT warm-start/status parity
+### 3. IPOPT warm-start/status parity (closed)
 
-The low-level Alloy IPOPT wrapper should expose and accept the same data we use
+The low-level Alloy IPOPT wrapper now exposes and accepts the same data we use
 from CasADi:
 
 - previous `lam_x`,
 - previous `lam_g`,
 - final multipliers,
 - iteration count,
-- raw callback counts if available.
+- value-callback counts.
 
-This would remove one source of solve-time discrepancy and make closed-loop
-runtime stats much easier to interpret.
+The closed-loop Alloy filter reuses these multipliers after successful solves
+and reports iteration and callback statistics alongside CasADi's measurements.
 
 ### 4. Lower-overhead callback accounting
 

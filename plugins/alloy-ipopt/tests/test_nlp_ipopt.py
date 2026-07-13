@@ -7,8 +7,55 @@ import pytest
 
 import alloy as al
 from alloy.toolchain import solver_diagnostic, solver_loadable
+from alloy_ipopt._ipopt import solve_ipopt
 
 need_ipopt = pytest.mark.skipif(not solver_loadable("ipopt"), reason=solver_diagnostic("ipopt"))
+
+
+@need_ipopt
+def test_solve_ipopt_warm_start_and_stats() -> None:
+  def solve(x0: np.ndarray, previous=None):
+    return solve_ipopt(
+      n=2,
+      m=1,
+      x0=x0,
+      x_L=np.full(2, -5.0),
+      x_U=np.full(2, 5.0),
+      g_L=np.zeros(1),
+      g_U=np.zeros(1),
+      jac_rows=np.array([0, 0], dtype=np.int32),
+      jac_cols=np.array([0, 1], dtype=np.int32),
+      hess_rows=np.array([0, 1, 1], dtype=np.int32),
+      hess_cols=np.array([0, 0, 1], dtype=np.int32),
+      eval_f=lambda x: (1.0 - x[0]) ** 2 + 100.0 * (x[1] - x[0] ** 2) ** 2,
+      eval_grad_f=lambda x: np.array([2.0 * (x[0] - 1.0) - 400.0 * x[0] * (x[1] - x[0] ** 2), 200.0 * (x[1] - x[0] ** 2)]),
+      eval_g=lambda x: np.array([x[0] + x[1] - 1.0]),
+      eval_jac_g=lambda _x: np.ones(2),
+      eval_h=lambda x, obj_factor, _lam: obj_factor * np.array([2.0 - 400.0 * x[1] + 1200.0 * x[0] ** 2, -400.0 * x[0], 200.0]),
+      options={"print_level": 0, "sb": "yes", **({"warm_start_init_point": "yes"} if previous is not None else {})},
+      lam_g0=None if previous is None else previous.mult_g,
+      z_L0=None if previous is None else previous.mult_x_L,
+      z_U0=None if previous is None else previous.mult_x_U,
+    )
+
+  cold = solve(np.array([-1.2, 2.2]))
+  warm = solve(cold.x, cold)
+  assert cold.status in (0, 1, 6) and warm.status in (0, 1, 6)
+  assert cold.iters >= 1 and warm.iters >= 1 and warm.iters <= cold.iters
+  assert all(count > 0 for count in cold.eval_counts.values())
+  assert all(count > 0 for count in warm.eval_counts.values())
+
+
+@need_ipopt
+def test_nlp_solver_status_stats() -> None:
+  x = al.sym("x", 2)
+  nlp = al.nlp(x=x, f=(x[0] - 1) ** 2 + (x[1] - 2) ** 2, h_eq=al.stack([x[0] + x[1] - 1.0]))
+  nlp(np.array([2.0, -1.0]), np.zeros(1), np.zeros(0))
+  assert nlp.last_status is not None and nlp.last_status.ok
+  assert nlp.last_status.iter > 0
+  assert nlp.last_status.stats is not None
+  assert nlp.last_status.stats["iters"] == nlp.last_status.iter
+  assert all(nlp.last_status.stats[name] > 0 for name in ("eval_f", "eval_grad_f", "eval_g", "eval_jac_g", "eval_h"))
 
 
 @need_ipopt

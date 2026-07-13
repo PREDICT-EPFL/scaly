@@ -37,6 +37,7 @@ class SolverStatus:
   code: int
   name: str
   iter: int = 0
+  stats: dict[str, int] | None = None
 
   @property
   def ok(self) -> bool:
