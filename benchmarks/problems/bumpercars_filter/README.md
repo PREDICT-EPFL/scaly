@@ -15,10 +15,10 @@ fast iteration loop for:
 ## Model and filter being tested
 
 The vehicle model is the fully nonlinear continuous-time `CTFullModel` trained in
-`bumper_car_simulator` and stored by default at:
+`bumper_car_simulator` and vendored at:
 
 ```text
-/Users/tudoroancea/dev/bumper_car_simulator/ct_full_xlarge.pt
+benchmarks/problems/bumpercars_filter/data/ct_full_xlarge.pt
 ```
 
 No `torch` dependency is required. The checkpoint is read with
@@ -68,9 +68,9 @@ directly to an already-discrete black-box model.
 From the repository root:
 
 ```bash
-uv run examples/ct_dt_cbf_filter/run_closed_loop.py --filter casadi
-uv run examples/ct_dt_cbf_filter/run_closed_loop.py --filter alloy
-uv run examples/ct_dt_cbf_filter/run_closed_loop.py --filter both --dump-alloy-c
+uv run python -m benchmarks.problems.bumpercars_filter.run_closed_loop --filter casadi
+uv run python -m benchmarks.problems.bumpercars_filter.run_closed_loop --filter alloy
+uv run python -m benchmarks.problems.bumpercars_filter.run_closed_loop --filter both --dump-alloy-c
 ```
 
 Common options:
@@ -79,8 +79,8 @@ Common options:
 --ncars 4
 --horizon 80
 --no-walls
---weights /Users/tudoroancea/dev/bumper_car_simulator/ct_full_xlarge.pt
---out-dir examples/ct_dt_cbf_filter/out
+--weights benchmarks/problems/bumpercars_filter/data/ct_full_xlarge.pt
+--out-dir benchmarks/results/bumpercars_filter
 --show
 ```
 
@@ -95,7 +95,7 @@ performance.png    solve/evaluation timing plot
 alloy_c/           generated C kernels when --dump-alloy-c is used with Alloy
 ```
 
-`out/` is intentionally git-ignored.
+Generated outputs belong under `benchmarks/results/`.
 
 ## Implementations
 

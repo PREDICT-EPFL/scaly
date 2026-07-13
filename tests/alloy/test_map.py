@@ -393,22 +393,11 @@ def test_spjac_keeps_constant_loc_on_rk4_tracking_map() -> None:
   C source stays at constant LOC across horizons because the transposed-concat peephole now emits
   per-block loops with a static `idx[]` table when the per-block group is large."""
 
-  import sys
-  from pathlib import Path
-
-  fixture_path = Path(__file__).parent / "test_tracking_workload.py"
-  import importlib.util
-
-  spec = importlib.util.spec_from_file_location("alloy_tracking_workload_for_loc", fixture_path)
-  assert spec is not None and spec.loader is not None
-  mod = importlib.util.module_from_spec(spec)
-  sys.modules[spec.name] = mod
-  spec.loader.exec_module(mod)
-
   from alloy.codegen import render_c_source
+  from benchmarks.problems.tracking_nmpc import tracking_eq_function_map
 
   def loc(N: int) -> int:
-    fn = mod.tracking_eq_function_map(N)
+    fn = tracking_eq_function_map(N)
     spj = al.spjacobian(fn, "z", "eq")
     return render_c_source(spj).count("\n")
 

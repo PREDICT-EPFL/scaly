@@ -1,6 +1,6 @@
 # Alloy scalability sweep
 
-Runs `benchmarks/scalability_sweep.py` over a fixed cell grid for each workload, capturing per-cell codegen / compile / runtime / source-size metrics. Each cell compiles its own Google Benchmark binary that includes Alloy + the selected backend so the binary's correctness check (scatter compact → dense, compare against the Python Alloy reference) guards every measurement.
+Runs `benchmarks/run.py sweep` over a fixed cell grid for each workload, capturing per-cell codegen / compile / runtime / source-size metrics. Each cell compiles its own Google Benchmark binary that includes Alloy + the selected backend so the binary's correctness check (scatter compact → dense, compare against the Python Alloy reference) guards every measurement.
 
 Skip rules applied automatically:
 
@@ -8,7 +8,7 @@ Skip rules applied automatically:
 - max generated source size (default 50 MB) — skip without compiling;
 - after a backend hits any of the above at one size, larger sizes for that backend are skipped immediately, because both generated source size and compile cost are monotonically increasing in the iteration count.
 
-CSV with the raw cell data: `benchmarks/scalability_results.csv`.
+CSV with the raw cell data: `benchmarks/results/scalability.csv`.
 
 Both workloads now use Alloy's MAP-aware path (`al.map_` / `tracking_eq_function_map`, `unbumpercars_ineq_function` MAP-ified), and the codegen spills lifetime-packed slots ≥ 1024 doubles to the `w[]` workspace so very large intermediate buffers no longer overflow the C stack.
 
@@ -209,22 +209,22 @@ Reading:
 
 ```bash
 # Full sweep with default cells: tracking N=1,5,10,25,50,100,200,500 and unbumpercars C=2,4,8,16,32
-uv run python benchmarks/scalability_sweep.py --csv benchmarks/scalability_results.csv
+uv run python benchmarks/run.py sweep --out benchmarks/results/scalability.csv
 
 # Just tracking
-uv run python benchmarks/scalability_sweep.py --workloads tracking --csv /tmp/tracking.csv
+uv run python benchmarks/run.py sweep --workloads tracking --out /tmp/tracking.csv
 
 # Custom horizons / car counts / per-cell compile timeout
-uv run python benchmarks/scalability_sweep.py \
-    --tracking-horizons 1 10 50 200 \
-    --unbumpercars-cars 2 4 \
+uv run python benchmarks/run.py sweep \
+    --workloads tracking \
+    --sizes 1,10,50,200 \
     --compile-timeout 60 \
-    --csv /tmp/quick.csv
+    --out /tmp/quick.csv
 ```
 
 Cells that hit the size cap or the per-cell compile timeout end up with a `compile_status` of `skipped_size` / `timeout`. Once a backend has given up at one cell, all larger cells for that backend are short-circuited to `skipped_after_failure` (saves a lot of wall time at the long tail of the sweep). Runtime errors and parse failures are surfaced explicitly in the CSV's `runtime_status` column.
 
-Tracking N=1000 used to appear in this table; it is dropped from the default cell grid because the bench-time dense reference (single-seed JVP × 6006 columns through the unrolled fixture) is the bottleneck rather than alloy itself — supply `--tracking-horizons 1000` to add it back when you're willing to wait several minutes.
+Tracking N=1000 used to appear in this table; it is dropped from the default cell grid because the bench-time dense reference (single-seed JVP × 6006 columns through the unrolled fixture) is the bottleneck rather than alloy itself — supply `--workloads tracking --sizes 1000` to add it back when you're willing to wait several minutes.
 
 ## Continuous-time CBF safety filter
 

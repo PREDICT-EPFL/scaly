@@ -10,7 +10,7 @@ import numpy as np
 import alloy as al
 from alloy.codegen.c import render_c_module
 from alloy.solvers._ipopt import IPOPT_INF, solve_ipopt
-from common import ClosedLoopConfig, CTFullWeights, FilterConfig, NCTRL, NSTATE, N_PW, OFFSETS, W0_SHAPE, W1_SHAPE, W2_SHAPE
+from .common import ClosedLoopConfig, CTFullWeights, FilterConfig, NCTRL, NSTATE, N_PW, OFFSETS, W0_SHAPE, W1_SHAPE, W2_SHAPE
 
 
 @dataclass(slots=True)

@@ -25,7 +25,7 @@ WEIGHT_SHAPES = (W0_SHAPE, B0_SHAPE, W1_SHAPE, B1_SHAPE, W2_SHAPE, B2_SHAPE)
 WEIGHT_SIZES = tuple(int(np.prod(s)) for s in WEIGHT_SHAPES)
 OFFSETS = tuple(int(x) for x in np.cumsum([0, X_SCALE_SIZE, *WEIGHT_SIZES]))
 N_PW = OFFSETS[-1]
-DEFAULT_MODEL_PATH = Path("/Users/tudoroancea/dev/bumper_car_simulator/ct_full_xlarge.pt")
+DEFAULT_MODEL_PATH = Path(__file__).parent / "data" / "ct_full_xlarge.pt"
 
 
 @dataclass(slots=True)

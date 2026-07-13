@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from common import (
+from .common import (
   DEFAULT_MODEL_PATH,
   ClosedLoopConfig,
   FilterConfig,
@@ -20,7 +20,7 @@ from common import (
   sample_initial_states,
   write_json,
 )
-from filters import AlloyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter, FilterStats, OpenLoopFilter, SafetyFilter
+from .filters import AlloyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter, FilterStats, OpenLoopFilter, SafetyFilter
 
 
 def make_filter(kind: str, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights):
@@ -168,7 +168,7 @@ def parse_args() -> argparse.Namespace:
   p = argparse.ArgumentParser(description="Closed-loop centralized DTCBF safety filter using the bumper_car_simulator CTFull xlarge model.")
   p.add_argument("--filter", choices=["casadi", "alloy", "both", "open"], default="casadi")
   p.add_argument("--weights", type=Path, default=DEFAULT_MODEL_PATH)
-  p.add_argument("--out-dir", type=Path, default=Path("examples/ct_dt_cbf_filter/out"))
+  p.add_argument("--out-dir", type=Path, default=Path("benchmarks/results/bumpercars_filter"))
   p.add_argument("--ncars", type=int, default=4)
   p.add_argument("--horizon", type=int, default=80)
   p.add_argument("--dt", type=float, default=0.1)

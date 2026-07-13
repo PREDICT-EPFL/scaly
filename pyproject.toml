@@ -57,7 +57,7 @@ alloy_toolchain = "alloy.toolchain:main"
 indent-width = 2
 line-length = 150
 target-version = "py312"
-include = ["src/alloy/**/*.py", "tests/**/*.py", "benchmarks/**/*.py", "examples/**/*.py"]
+include = ["src/alloy/**/*.py", "tests/**/*.py", "benchmarks/**/*.py"]
 exclude = [".venv"]
 lint.ignore = ["E731"]
 

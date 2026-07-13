@@ -20,8 +20,7 @@ src/alloy/include/
 third_party/
 
 # Local benchmark outputs
-benchmarks/gen/
-examples/ct_dt_cbf_filter/out/
+benchmarks/results/
 
 # docs
 site/

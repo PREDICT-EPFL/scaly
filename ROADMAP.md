@@ -83,9 +83,9 @@ benchmarks/
 
 | problem | scaling axis | notes |
 |---|---|---|
-| chain of masses | number of masses | classic scalable sparse benchmark |
+| chain of masses | number of masses | classic hanging-chain NMPC (Wirsching/Bock/Diehl form); match the laopt paper's instance parameters where possible for an external reference point |
 | tracking NMPC, kinematic bicycle | horizon N | from the existing tracking fixture; **later replaced by Johannes' MPFC with dynamic bicycle** (backlog) |
-| bumpercars safety filter, CT neural dynamics + discrete-time CBF | number of cars | **based on `examples/ct_dt_cbf_filter/`** (CT neural model + RK4 + one-step DT position CBF, centralized, `al.map_` over the car axis; CasADi + alloy implementations, closed loop, and per-step instrumentation already exist there). Fold the desired control into the dynamics to simplify the closed-loop infra. The older input-affine safety-filter variants in `benchmarks/` are **removed** — the CT DTCBF filter is the one that is preserved. |
+| bumpercars safety filter, CT neural dynamics + discrete-time CBF | number of cars | **based on `examples/ct_dt_cbf_filter/`** (CT neural model + RK4 + one-step DT position CBF, centralized, `al.map_` over the car axis; CasADi + alloy implementations, closed loop, and per-step instrumentation already exist there). Fold the desired control into the **simulator's** dynamics only (not the OCP's), so the closed loop is plant + filter with no third controller entity. The older input-affine safety-filter variants in `benchmarks/` are **removed** — the CT DTCBF filter is the one that is preserved. |
 
 Future problem candidates (not now): diffusion-based stuff, GP stuff,
 hovercraft MBD/DIAL.
@@ -146,7 +146,9 @@ Two complementary benchmark types:
    canonical operating points. Use the solvers' internal timings (solver vs FE
    split where available; for laopt the alloy adapter times FE itself, since
    laopt exposes no timing — see §3.3). Dump everything needed for
-   visualization into **MCAP files** and build **Foxglove layouts**: curve
+   visualization into **MCAP files** (written with the `foxglove-sdk` Python
+   package; every message definition is a JSON schema generated from a
+   Pydantic model) and build **Foxglove layouts**: curve
    plots for key quantities plus 3D viz for chain of masses, 2D viz for racing
    and bumpercars.
 
@@ -327,9 +329,11 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
 
 - **L1 — sparse Lagrangian Hessian through `Ops.MAP`**
   (`sphess:lagrangian:z:z` over mapped neural RK4). Required for exact-Hessian
-  IPOPT/SQP columns on the bumpercars problem. Short-term fallback: per-car
-  factories + manual global assembly, or unrolled map for small N; proper fix:
-  second-order AD rules + sparse second-order lowering for `Ops.MAP`.
+  IPOPT/SQP columns on the bumpercars problem. **Decision (2026-07-13):
+  proper fix only** — second-order AD rules + sparse second-order lowering for
+  `Ops.MAP`. No unrolled-map or per-car manual-assembly fallback (that is
+  exactly the code-size blowup claim 2 argues against); Gauss-Newton columns
+  fill the gap until L1 lands.
 - **L2 — generated-C solve path for the standalone filter** (no Python/ctypes
   callbacks in the loop): either route the benchmark filters through the
   existing nested `SOLVER_CALL` single-`.so` path with enough instrumentation,
@@ -350,11 +354,18 @@ columns respectively — interleave them between B2 and B4.
 
 - **B0 — benchmark infra in-repo**: create `benchmarks/` layout; move the
   workload problem definitions out of `tests/`; dedicated runner script;
-  exclude from default pytest; wire into CI + worktrunk checks; port the
+  exclude from default pytest; wire into CI + worktrunk checks (smoke tier —
+  correctness gates + LOC/workspace invariants at minimal sizes — runs
+  pre-merge; sweeps and closed-loop runs are manual-only); port the
   regression guards (correctness + generated-LOC/workspace invariants as
-  assertions; runtime record-only). Remove the input-affine safety-filter
-  benchmarks (`alloy_safety_filter_benchmark.py` QP variant and friends) —
-  the CT DTCBF filter is the one that stays.
+  assertions; runtime record-only). `examples/ct_dt_cbf_filter/` moves
+  wholesale to `benchmarks/problems/bumpercars_filter/` and `examples/` is
+  deleted. All legacy `benchmarks/` scripts are removed once their mechanics
+  are absorbed into the new harness (`alloy_safety_filter_benchmark.py`,
+  `measure_safety_filter.py`, `alloy_solver_aot_demo.py`,
+  `viz_tracking_eq_jac_probe.py`, `alloy_tracking_eq_jac_benchmark.py`,
+  `alloy_unbumpercars_ineq_jac_benchmark.py`, `scalability_sweep.py`,
+  `scalability_results.csv`, `gen/`).
 - **B1 — workspace + existing plugins**: convert the repo to a uv workspace
   with solver plugins under `plugins/`; extract `alloy-piqp` / `alloy-ipopt`
   from `hatch_build.py` (core goes pure-Python); formalize the oracle
