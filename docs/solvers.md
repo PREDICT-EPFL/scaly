@@ -4,9 +4,9 @@ Phase 5 of [`roadmap.md`](roadmap.md). This document describes the user-facing
 `al.qp(...)` / `al.nlp(...)` builders, their internal oracle assembly, the
 ctypes plumbing to vendored PIQP and IPOPT, and the current limitations.
 
-The shared libraries themselves (`src/alloy/lib/libpiqpc.{dylib,so}`,
-`src/alloy/lib/libipopt.{dylib,so}`) and their headers are built by the hatch
-hook; see [`vendored_solvers.md`](vendored_solvers.md) for build-side issues.
+The shared libraries and headers live in the `alloy-piqp` and `alloy-ipopt`
+plugin packages and are built by their `plugins/*/hatch_build.py` hooks; see
+[`vendored_solvers.md`](vendored_solvers.md) for build-side issues.
 
 ## Problem shapes
 
@@ -343,9 +343,9 @@ Implemented:
 - **C codegen for `SOLVER_CALL` (PIQP + IPOPT)**: nested QP/NLP solvers
   render to a single `.so` that links against the vendored solver libs and
   runs without any Python in the hot path.
-- Reference tests against CasADi+IPOPT, analytic KKT solutions, and box-only
-  optima (`tests/alloy/test_solvers.py`); nesting tests including
-  JIT-compiled QP and NLP wrappers in `tests/alloy/test_solver_nesting.py`.
+- Reference tests against analytic KKT solutions and box-only optima, plus
+  JIT-compiled nesting tests, live in `plugins/alloy-{piqp,ipopt}/tests/`;
+  structural solver tests remain in `tests/alloy/`.
 
 Deferred (tracked in [`roadmap.md`](roadmap.md)):
 - A C++ harness driving the safety filter end-to-end through the universal
@@ -360,9 +360,9 @@ Deferred (tracked in [`roadmap.md`](roadmap.md)):
 
 ## Limitations and gotchas
 
-- `libpiqpc`/`libipopt` must exist under `src/alloy/lib/`. The first `uv sync`
-  triggers the build hook (~5–8 min cold). Missing libs raise
-  `SolverLibraryError` at import time of `alloy.solvers`.
+- `libpiqpc`/`libipopt` must exist in their plugin package `lib/` directories.
+  The first `uv sync` triggers the plugin build hooks (~5–8 min cold). Missing
+  libs raise `SolverLibraryError` when a solve or solver-bearing JIT needs them.
 - `±PIQP_INF` (`1e30`) and `±IPOPT_INF` (`2e19`) are treated as "no bound" by
   the respective backends. Pass `±np.inf` and the SolverFunction backend will
   substitute the right sentinel.

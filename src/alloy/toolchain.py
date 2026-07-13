@@ -4,10 +4,9 @@ Alloy's normal Python workflow is controlled by a small set of environment
 variables. Keep their names and defaults registered here so JIT compilation,
 solver ctypes loading, tests, and diagnostics agree on one source of truth.
 
-PIQP/IPOPT are built from source by ``hatch_build.py`` into the package layout
-``alloy/lib`` and ``alloy/include``. A few explicit override variables are kept
-for debugging or downstream packaging, but the supported release path is the
-vendored source build.
+PIQP/IPOPT are built from source by their plugin hatch hooks into plugin package
+``lib`` and ``include`` directories. Explicit override variables and legacy core
+package paths remain as debugging and migration fallbacks.
 """
 
 from __future__ import annotations
@@ -173,19 +172,43 @@ def _system_library(stem: SolverStem) -> str | None:
   return ctypes.util.find_library(stem)
 
 
+def _plugin_solver_paths() -> list[tuple[Path, Path]]:
+  from .solvers.registry import installed_backend_paths
+
+  return installed_backend_paths()
+
+
 def solver_paths(required: bool = False) -> SolverPaths:
   include_dirs: list[Path] = []
   lib_dirs: list[Path] = []
   source = "unconfigured"
 
+  piqp_exact = env_path("ALLOY_PIQP_LIB")
+  ipopt_exact = env_path("ALLOY_IPOPT_LIB")
+  if piqp_exact is not None:
+    lib_dirs.append(piqp_exact.parent)
+    source = "ALLOY_PIQP_LIB"
+  if ipopt_exact is not None:
+    lib_dirs.append(ipopt_exact.parent)
+    source = "ALLOY_IPOPT_LIB" if source == "unconfigured" else source
+
   explicit_include = _existing_dir(env_path("ALLOY_SOLVER_INCLUDE_DIR"))
   explicit_lib = _existing_dir(env_path("ALLOY_SOLVER_LIB_DIR"))
   if explicit_include is not None:
     include_dirs.append(explicit_include)
-    source = "ALLOY_SOLVER_INCLUDE_DIR"
+    source = "ALLOY_SOLVER_INCLUDE_DIR" if source == "unconfigured" else source
   if explicit_lib is not None:
     lib_dirs.append(explicit_lib)
     source = "ALLOY_SOLVER_LIB_DIR" if source == "unconfigured" else source
+
+  plugin_paths = _plugin_solver_paths()
+  for include_dir, lib_dir in plugin_paths:
+    if _existing_dir(include_dir) is not None:
+      include_dirs.append(include_dir)
+    if _existing_dir(lib_dir) is not None:
+      lib_dirs.append(lib_dir)
+  if source == "unconfigured" and plugin_paths:
+    source = "plugin"
 
   pkg = _package_root()
   pkg_inc = _existing_dir(pkg / "include")
@@ -196,15 +219,6 @@ def solver_paths(required: bool = False) -> SolverPaths:
     lib_dirs.append(pkg_lib)
   if source == "unconfigured" and (pkg_inc is not None or pkg_lib is not None):
     source = "vendored"
-
-  piqp_exact = env_path("ALLOY_PIQP_LIB")
-  ipopt_exact = env_path("ALLOY_IPOPT_LIB")
-  if piqp_exact is not None:
-    lib_dirs.append(piqp_exact.parent)
-    source = "ALLOY_PIQP_LIB"
-  if ipopt_exact is not None:
-    lib_dirs.append(ipopt_exact.parent)
-    source = "ALLOY_IPOPT_LIB" if source == "unconfigured" else source
 
   include_tuple = _dedup_paths(include_dirs)
   lib_tuple = _dedup_paths(lib_dirs)

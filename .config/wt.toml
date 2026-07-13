@@ -11,7 +11,7 @@ format = "uv run ruff format --check"
 lint = "uv run ruff check"
 
 [[pre-merge]]
-unit-tests = "uv run pytest -n=auto tests"
+unit-tests = "uv run pytest -n=auto tests plugins"
 
 [[pre-merge]]
 benchmarks-smoke = "uv run python benchmarks/run.py smoke"

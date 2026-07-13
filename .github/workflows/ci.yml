@@ -22,22 +22,25 @@ jobs:
 
       # The cache key deliberately depends only on the native build recipe. GitHub Actions
       # automatically falls back to caches from the default branch, so feature branches reuse
-      # main's validated solver build when hatch_build.py is unchanged.
+      # main's validated solver build when the plugin hatch hooks are unchanged.
       - name: Restore third_party + built libs
         id: cache-vendored
         uses: actions/cache/restore@v4
         with:
           path: |
-            third_party
-            src/alloy/lib
-            src/alloy/include
-          key: ${{ runner.os }}-${{ runner.arch }}-vendored-${{ hashFiles('hatch_build.py') }}
+            plugins/alloy-piqp/third_party
+            plugins/alloy-piqp/src/alloy_piqp/lib
+            plugins/alloy-piqp/src/alloy_piqp/include
+            plugins/alloy-ipopt/third_party
+            plugins/alloy-ipopt/src/alloy_ipopt/lib
+            plugins/alloy-ipopt/src/alloy_ipopt/include
+          key: ${{ runner.os }}-${{ runner.arch }}-vendored-${{ hashFiles('plugins/alloy-piqp/hatch_build.py', 'plugins/alloy-ipopt/hatch_build.py') }}
 
       - name: Report cache state
         run: |
           echo "cache-hit=${{ steps.cache-vendored.outputs.cache-hit }}"
           echo "cache-primary-key=${{ steps.cache-vendored.outputs.cache-primary-key }}"
-          ls -lh src/alloy/lib 2>/dev/null || echo "src/alloy/lib not present — will cold-build"
+          ls -lh plugins/alloy-piqp/src/alloy_piqp/lib plugins/alloy-ipopt/src/alloy_ipopt/lib 2>/dev/null || echo "plugin libs not present — will cold-build"
 
       - name: Install system toolchain (Linux)
         if: runner.os == 'Linux' && steps.cache-vendored.outputs.cache-hit != 'true'
@@ -70,25 +73,31 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            third_party
-            src/alloy/lib
-            src/alloy/include
+            plugins/alloy-piqp/third_party
+            plugins/alloy-piqp/src/alloy_piqp/lib
+            plugins/alloy-piqp/src/alloy_piqp/include
+            plugins/alloy-ipopt/third_party
+            plugins/alloy-ipopt/src/alloy_ipopt/lib
+            plugins/alloy-ipopt/src/alloy_ipopt/include
           key: ${{ steps.cache-vendored.outputs.cache-primary-key }}
 
       - name: Inspect vendored libs
         run: |
-          ls -lh src/alloy/lib
-          if [ "$RUNNER_OS" = "macOS" ]; then otool -L src/alloy/lib/libipopt.dylib; fi
-          if [ "$RUNNER_OS" = "Linux" ]; then ldd src/alloy/lib/libipopt.so; fi
+          ls -lh plugins/alloy-piqp/src/alloy_piqp/lib plugins/alloy-ipopt/src/alloy_ipopt/lib
+          if [ "$RUNNER_OS" = "macOS" ]; then otool -L plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.dylib; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then ldd plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.so; fi
 
       - name: Upload vendored solver artifact for this workflow run
         uses: actions/upload-artifact@v4
         with:
           name: vendored-solvers-${{ runner.os }}-${{ runner.arch }}
           path: |
-            third_party
-            src/alloy/lib
-            src/alloy/include
+            plugins/alloy-piqp/third_party
+            plugins/alloy-piqp/src/alloy_piqp/lib
+            plugins/alloy-piqp/src/alloy_piqp/include
+            plugins/alloy-ipopt/third_party
+            plugins/alloy-ipopt/src/alloy_ipopt/lib
+            plugins/alloy-ipopt/src/alloy_ipopt/include
           retention-days: 3
 
   lint-type:
@@ -161,10 +170,7 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
 
       - name: Pytest core suite
-        run: >-
-          uv run pytest -n=auto tests/
-          --ignore=tests/alloy/test_solvers.py
-          --ignore=tests/alloy/test_solver_nesting.py
+        run: uv run pytest -n=auto tests/
 
       - name: Benchmark smoke
         run: uv run python benchmarks/run.py smoke --skip solver_call
@@ -203,12 +209,12 @@ jobs:
 
       - name: Inspect vendored libs
         run: |
-          ls -lh src/alloy/lib
-          if [ "$RUNNER_OS" = "macOS" ]; then otool -L src/alloy/lib/libipopt.dylib; fi
-          if [ "$RUNNER_OS" = "Linux" ]; then ldd src/alloy/lib/libipopt.so; fi
+          ls -lh plugins/alloy-piqp/src/alloy_piqp/lib plugins/alloy-ipopt/src/alloy_ipopt/lib
+          if [ "$RUNNER_OS" = "macOS" ]; then otool -L plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.dylib; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then ldd plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.so; fi
 
       - name: Pytest solver suite
-        run: uv run pytest -n=auto tests/alloy/test_solvers.py tests/alloy/test_solver_nesting.py
+        run: uv run pytest -n=auto plugins/alloy-piqp/tests plugins/alloy-ipopt/tests tests/alloy/test_solvers.py tests/alloy/test_solver_nesting.py
 
       - name: Solver-call smoke
         run: uv run python benchmarks/run.py smoke --select solver_call

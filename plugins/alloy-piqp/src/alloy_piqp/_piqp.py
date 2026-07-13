@@ -7,11 +7,23 @@ Symbolic plumbing (oracle building, parameter binding) lives in ``qp.py``.
 from __future__ import annotations
 
 import ctypes
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
-from ._lib import piqp_lib
+from alloy.solvers import SolverDescriptor, SolverStatus
+from alloy.toolchain import load_solver_library
+
+_piqp_lib: ctypes.CDLL | None = None
+
+
+def piqp_lib() -> ctypes.CDLL:
+  global _piqp_lib
+  if _piqp_lib is None:
+    _piqp_lib = load_solver_library("piqpc")
+  return _piqp_lib
+
 
 piqp_float = ctypes.c_double
 piqp_int = ctypes.c_int
@@ -387,3 +399,49 @@ class PIQPDenseSolver:
       self.cleanup()
     except Exception:  # noqa: BLE001 - destructor must not raise
       pass
+
+
+def _qp_backend(descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> tuple[list[np.ndarray], SolverStatus]:
+  """Pure-numeric PIQP runner used by direct ``SolverFunction`` calls."""
+  n, p_dim, m_dim = descriptor.n, descriptor.n_eq, descriptor.n_ineq
+  oracle = descriptor.oracle
+  assert oracle is not None
+
+  param_args = list(inputs[3:])
+  data = oracle.eval_list(*param_args)
+  out_by_name = dict(zip(descriptor.oracle_output_names, data, strict=True))
+
+  P_arr = out_by_name["P"].reshape(n, n)
+  c_arr = out_by_name["c"]
+  A_arr = out_by_name["A_eq"].reshape(p_dim, n) if p_dim else None
+  b_arr = out_by_name["b_eq"] if p_dim else None
+  G_arr = out_by_name["G_ineq"].reshape(m_dim, n) if m_dim else None
+  l_arr = out_by_name["l_ineq"] if m_dim else None
+  u_arr = out_by_name["u_ineq"] if m_dim else None
+  xl_arr = out_by_name["x_lb"]
+  xu_arr = out_by_name["x_ub"]
+
+  workspace: PIQPDenseSolver | None = descriptor.runtime.get("piqp_workspace")
+  if workspace is None:
+    workspace = PIQPDenseSolver(n, p_dim, m_dim, settings=dict(descriptor.options))
+    descriptor.runtime["piqp_workspace"] = workspace
+  workspace.update(
+    P=P_arr,
+    c=c_arr,
+    A_eq=A_arr,
+    b_eq=b_arr,
+    G_ineq=G_arr,
+    l_ineq=l_arr,
+    u_ineq=u_arr,
+    x_lb=xl_arr,
+    x_ub=xu_arr,
+  )
+  sol = workspace.solve()
+  outs = [
+    sol.x,
+    np.asarray(sol.primal_obj, dtype=np.float64),
+    sol.lam_eq,
+    sol.lam_ineq_u - sol.lam_ineq_l,
+    sol.lam_box_u - sol.lam_box_l,
+  ]
+  return outs, SolverStatus(code=sol.status, name=sol.status_name, iter=sol.iter)

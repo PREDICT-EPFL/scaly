@@ -19,7 +19,6 @@ API symmetry but PIQP's dense path does not yet consume warm starts.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -27,10 +26,10 @@ import numpy as np
 from ..expr import Expr, as_expr
 from ..function import Function
 from ._oracle import collect_free_inputs
-from ._piqp import PIQP_INF, PIQPDenseSolver
-from .solver_function import SolverDescriptor, SolverFunction, SolverStatus
+from .registry import require_backend
+from .solver_function import SolverDescriptor, SolverFunction
 
-_SUPPORTED_SOLVERS = {"piqp"}
+PIQP_INF = 1e30
 
 
 def _as_expr_optional(value: Any) -> Expr | None:
@@ -61,8 +60,7 @@ def qp(
   name: str | None = None,
   options: dict[str, float | int] | None = None,
 ) -> SolverFunction:
-  if solver not in _SUPPORTED_SOLVERS:
-    raise ValueError(f"unsupported QP solver {solver!r}; supported: {sorted(_SUPPORTED_SOLVERS)}")
+  require_backend(solver, "qp")
 
   P_e = as_expr(P)
   c_e = as_expr(c)
@@ -146,8 +144,8 @@ def qp(
 
   resolved_options = {"verbose": 0, **(options or {})}
   descriptor = SolverDescriptor(
-    name=name or "qp_piqp",
-    backend="piqp",
+    name=name or f"qp_{solver}",
+    backend=solver,
     n=n,
     n_eq=p_dim,
     n_ineq=m_dim,
@@ -159,50 +157,3 @@ def qp(
     oracle_output_names=tuple(oracle_names),
   )
   return SolverFunction(descriptor)
-
-
-def _qp_backend(descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> tuple[list[np.ndarray], SolverStatus]:
-  """Pure-numeric PIQP runner used by direct ``SolverFunction`` calls."""
-  n, p_dim, m_dim = descriptor.n, descriptor.n_eq, descriptor.n_ineq
-  oracle = descriptor.oracle
-  assert oracle is not None
-
-  # Parameters start at index 3 (after x0, lam_eq0, lam_ineq0).
-  param_args = list(inputs[3:])
-  data = oracle.eval_list(*param_args)
-  out_by_name = dict(zip(descriptor.oracle_output_names, data, strict=True))
-
-  P_arr = out_by_name["P"].reshape(n, n)
-  c_arr = out_by_name["c"]
-  A_arr = out_by_name["A_eq"].reshape(p_dim, n) if p_dim else None
-  b_arr = out_by_name["b_eq"] if p_dim else None
-  G_arr = out_by_name["G_ineq"].reshape(m_dim, n) if m_dim else None
-  l_arr = out_by_name["l_ineq"] if m_dim else None
-  u_arr = out_by_name["u_ineq"] if m_dim else None
-  xl_arr = out_by_name["x_lb"]
-  xu_arr = out_by_name["x_ub"]
-
-  workspace: PIQPDenseSolver | None = descriptor.runtime.get("piqp_workspace")
-  if workspace is None:
-    workspace = PIQPDenseSolver(n, p_dim, m_dim, settings=dict(descriptor.options))
-    descriptor.runtime["piqp_workspace"] = workspace
-  workspace.update(
-    P=P_arr,
-    c=c_arr,
-    A_eq=A_arr,
-    b_eq=b_arr,
-    G_ineq=G_arr,
-    l_ineq=l_arr,
-    u_ineq=u_arr,
-    x_lb=xl_arr,
-    x_ub=xu_arr,
-  )
-  sol = workspace.solve()
-  outs = [
-    sol.x,
-    np.asarray(sol.primal_obj, dtype=np.float64),
-    sol.lam_eq,
-    sol.lam_ineq_u - sol.lam_ineq_l,
-    sol.lam_box_u - sol.lam_box_l,
-  ]
-  return outs, SolverStatus(code=sol.status, name=sol.status_name, iter=sol.iter)

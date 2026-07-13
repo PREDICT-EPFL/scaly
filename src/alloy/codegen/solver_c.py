@@ -119,7 +119,7 @@ def solver_compile_flags(fun: Function, *, rpath: bool = True) -> list[str]:
   """Compiler/linker flags an AOT consumer needs for ``fun``.
 
   Returns ``[]`` when ``fun`` does not transitively reach any solver.
-  Otherwise: ``-I<alloy/include>``, ``-L<alloy/lib>``, ``-lpiqpc`` /
+  Otherwise: plugin package ``-I`` / ``-L`` paths, ``-lpiqpc`` /
   ``-lipopt`` (whichever apply), and an ``-Wl,-rpath`` pointing at the
   vendored lib directory so the resulting binary finds the shared libs at
   load time without ``LD_LIBRARY_PATH`` / ``DYLD_LIBRARY_PATH`` overrides.

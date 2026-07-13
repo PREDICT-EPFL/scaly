@@ -27,7 +27,7 @@ cd alloy
 uv sync
 ```
 
-The solver bindings need native vendored libraries. When the required native toolchain is available, editable `uv sync` builds PIQP, MUMPS, METIS, and IPOPT into `src/alloy/lib/`; if the toolchain is missing, the editable install skips those libraries and solver calls/tests are unavailable. To require the native build (the CI path):
+The solver bindings need native vendored libraries. When the required native toolchain is available, editable `uv sync` builds PIQP and IPOPT into their `plugins/alloy-{piqp,ipopt}/src/*/lib/` package directories; if the toolchain is missing, the editable install skips those libraries and solver calls/tests are unavailable. To require the native build (the CI path):
 
 ```bash
 # macOS

@@ -146,7 +146,7 @@ which JIT-compiles each kernel to C and caches it. With `--dump-alloy-c`, the
 same kernels are rendered to inspectable C files.
 
 The IPOPT solve currently uses Alloy's low-level native IPOPT binding
-(`alloy.solvers._ipopt.solve_ipopt`) with Python/ctypes callbacks. Each callback
+(`alloy_ipopt._ipopt.solve_ipopt`) with Python/ctypes callbacks. Each callback
 calls a JIT-compiled Alloy function. So the oracle math is compiled C, but the
 whole solve is not yet a single generated-C solver wrapper.
 

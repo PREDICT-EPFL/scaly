@@ -18,6 +18,9 @@ src/alloy/include/
 
 # Third-party sources (cloned during build)
 third_party/
+plugins/*/third_party/
+plugins/*/src/*/lib/
+plugins/*/src/*/include/
 
 # Local benchmark outputs
 benchmarks/results/

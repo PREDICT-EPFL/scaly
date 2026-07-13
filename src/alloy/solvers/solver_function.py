@@ -180,16 +180,9 @@ def run_solver_backend(descriptor: SolverDescriptor, inputs: Sequence[np.ndarray
   solver calls are compiled through the generated solver wrapper. Inputs are positional in the same
   order as ``descriptor.input_signature``.
   """
-  # Local imports avoid a runtime cycle: nlp.py imports SolverFunction.
-  if descriptor.backend == "piqp":
-    from .qp import _qp_backend
+  from .registry import get_backend
 
-    return _qp_backend(descriptor, inputs)
-  if descriptor.backend == "ipopt":
-    from .nlp import _nlp_backend
-
-    return _nlp_backend(descriptor, inputs)
-  raise ValueError(f"unknown solver backend {descriptor.backend!r}")
+  return get_backend(descriptor.backend).run(descriptor, inputs)
 
 
 def _coerce_input(name: str, shape: tuple[int, ...], val: Any) -> np.ndarray:

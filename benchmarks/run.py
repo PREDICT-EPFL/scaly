@@ -17,6 +17,7 @@ import numpy as np
 import alloy as al
 from alloy.codegen.c import render_c_module
 from alloy.codegen.solver_c import solver_compile_flags
+from alloy.toolchain import solver_loadable
 from benchmarks.harness import gbench
 from benchmarks.harness.sweep import BACKENDS, DEFAULT_SIZES, RESULTS, build_kernel, run_cell, run_sweep
 from benchmarks.problems import unbumpercars
@@ -112,11 +113,10 @@ def _nlp_filter() -> al.Function:
 
 
 def _solver_call_smoke(required: bool) -> str | None:
-  lib_dir = ROOT / "src" / "alloy" / "lib"
-  if not any(lib_dir.glob("libpiqpc.*")) or not any(lib_dir.glob("libipopt.*")):
+  if not solver_loadable("piqp") or not solver_loadable("ipopt"):
     if required:
-      raise RuntimeError("vendored PIQP/IPOPT libraries are missing but solver_call was explicitly selected")
-    return "solver_call skipped: vendored PIQP/IPOPT libraries are missing"
+      raise RuntimeError("PIQP/IPOPT solver plugins are not loadable but solver_call was explicitly selected")
+    return "solver_call skipped: PIQP/IPOPT solver plugins are not loadable"
   out_dir = RESULTS / "gen" / "solver_call"
   out_dir.mkdir(parents=True, exist_ok=True)
   functions = [_qp_filter(), _nlp_filter()]

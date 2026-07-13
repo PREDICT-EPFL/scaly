@@ -29,7 +29,7 @@ If you need to consult those files, ask the user to point you at the right anvil
 - package manager: uv
 - formatter/linter: ruff
 - type checker: ty
-- build backend: hatchling with a custom hook (`hatch_build.py`) that vendors PIQP and IPOPT as shared libraries
+- build backend: hatchling; each solver plugin has a custom `plugins/*/hatch_build.py` hook
 
 # Cookbook
 
@@ -39,23 +39,23 @@ If you need to consult those files, ask the user to point you at the right anvil
 - Type check: `uv run ty check`
 - Lint: `uv run ruff check`
 - Format: `uv run ruff format`
-- Tests: `uv run pytest -n=auto tests/`
+- Tests: `uv run pytest -n=auto tests/ plugins/`
 
 # Build hook notes
 
-`hatch_build.py` builds the vendored solver stack on first sync:
+The per-plugin `plugins/*/hatch_build.py` hooks build the vendored solver stacks on first sync:
 
-- PIQP (with Eigen 3.4.1 and Blasfeo) → `src/alloy/lib/libpiqpc.{dylib,so}`
-- METIS → MUMPS → IPOPT → `src/alloy/lib/libipopt.{dylib,so}` with statically linked libgfortran/libgcc/libstdc++ so the resulting library is redistributable.
+- PIQP (with Eigen 3.4.1 and Blasfeo) → `plugins/alloy-piqp/src/alloy_piqp/lib/libpiqpc.{dylib,so}`
+- METIS → MUMPS → IPOPT → `plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.{dylib,so}` with statically linked libgfortran/libgcc/libstdc++ so the resulting library is redistributable.
 
-Each component is skipped if its install marker already exists. To force a clean rebuild, delete `src/alloy/lib/`, `src/alloy/include/`, and `third_party/`, or run the hatch `clean` hook.
+Each component is skipped if its install marker already exists. To force a clean rebuild, delete the plugin's `src/*/{lib,include}/` and `third_party/` directories, or run its hatch `clean` hook.
 
 Linux uses a built OpenBLAS; macOS uses Apple's Accelerate framework. Windows is unsupported in v1.
 
 # Instructions
 
 - Always format with `uv run ruff format` and run `uv run ruff check` after non-trivial edits.
-- Always run unit tests after a change touching the IR, AD, or codegen paths: `uv run pytest -n=auto tests/`.
+- Always run unit tests after a change touching the IR, AD, or codegen paths: `uv run pytest -n=auto tests/ plugins/`.
 - Code should resemble tinygrad's style — simple, dense, every line earns its place. No speculative abstractions.
 - Don't introduce `anvil`, `tinygrad`, or `torch` imports. If a test workload needs PyTorch checkpoints, use `alloy.utils.load_torch_state_dict` instead of adding torch as a dependency.
 - Update `docs/` when changing IR-facing behavior or the codegenerated ABI.

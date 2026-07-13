@@ -1,12 +1,12 @@
 # Vendored solver build — known issues
 
-The `hatch_build.py` hook ships PIQP and IPOPT as shared libraries inside the wheel (`src/alloy/lib/`) plus C headers (`src/alloy/include/`). These notes track open issues we should fix before the wheels.yml workflow is exercised at scale. Historical notes from the conda-prefix/delocate experiment live in [`native_toolchain_exploration.md`](native_toolchain_exploration.md).
+The `plugins/alloy-{piqp,ipopt}/hatch_build.py` hooks ship each solver's shared library and C headers inside its plugin wheel. These notes track open issues we should fix before the wheels.yml workflow is exercised at scale. Historical notes from the conda-prefix/delocate experiment live in [`native_toolchain_exploration.md`](native_toolchain_exploration.md).
 
 ## 1. Static libgfortran linking — partially achieved
 
 **Goal:** `libipopt.{dylib,so}` has no runtime dependency on libgfortran/libgcc/libstdc++, so external C++ consumers can link `-lipopt` without dragging a Fortran toolchain into their build.
 
-**Current state on macOS (arm64, Apple Clang 21):** *not* met. `otool -L src/alloy/lib/libipopt.dylib` shows dynamic dependencies on `/opt/homebrew/opt/gcc/lib/gcc/current/libgfortran.5.dylib` and `libquadmath.0.dylib`.
+**Current state on macOS (arm64, Apple Clang 21):** *not* met. `otool -L plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.dylib` shows dynamic dependencies on `/opt/homebrew/opt/gcc/lib/gcc/current/libgfortran.5.dylib` and `libquadmath.0.dylib`.
 
 **Why:** IPOPT's final libipopt link is driven by `clang++`, not `gfortran`. Apple Clang errors on `-static-libgfortran` (a gfortran driver flag), so we currently pass it through `FCFLAGS=` only. That covers Fortran-only objects but not the C++ link step that produces the dylib.
 
@@ -14,7 +14,7 @@ An earlier attempt put the static flags into `LDFLAGS=`. That broke the autoconf
 
 **Likely fix:** locate `libgfortran.a` / `libquadmath.a` from the active gfortran installation and pass them as explicit static link inputs via `-Wl,-force_load <path>` (macOS) or `-Wl,-Bstatic -lgfortran -Wl,-Bdynamic` (Linux). The path resolution can use `gfortran -print-file-name=libgfortran.a` at hook time.
 
-**Current state on Linux (GitHub `ubuntu-latest`):** source builds and solver tests pass, but the static dependency goal is also *not* met. CI `ldd src/alloy/lib/libipopt.so` still shows dynamic dependencies on `libgfortran.so.5`, `libstdc++.so.6`, and `libgcc_s.so.1`. `_static_fortran_ldflags` returns `-static-libgfortran -static-libgcc -static-libstdc++`, but the same `FCFLAGS`-only routing does not affect IPOPT's final C++ shared-library link.
+**Current state on Linux (GitHub `ubuntu-latest`):** source builds and solver tests pass, but the static dependency goal is also *not* met. CI `ldd plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.so` still shows dynamic dependencies on `libgfortran.so.5`, `libstdc++.so.6`, and `libgcc_s.so.1`. `_static_fortran_ldflags` returns `-static-libgfortran -static-libgcc -static-libstdc++`, but the same `FCFLAGS`-only routing does not affect IPOPT's final C++ shared-library link.
 
 ## 2. METIS legacy-C compatibility
 
@@ -38,7 +38,7 @@ Linux keeps a SONAME-compatible copy next to the unversioned link target (for ex
 
 **Goal:** each built wheel correctly declares its platform (and is manylinux- / delocate-compatible) so installers resolve it correctly and PyPI accepts upload, while local editable installs do not fail before Python-only development can start.
 
-**Current state:** `hatch_build.py` marks wheel builds that include vendored solver libraries as impure:
+**Current state:** both plugin `hatch_build.py` hooks mark wheel builds that include vendored solver libraries as impure:
 
 ```python
 build_data["pure_python"] = False
@@ -59,7 +59,7 @@ Editable installs use `ALLOY_BUILD_SOLVERS=auto` by default: if the native toolc
 
 ## 5. Things not yet exercised
 
-- **CI cache key.** Keyed on OS, architecture, and `hashFiles('hatch_build.py')`. If we later split the hook into multiple files, update the key. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot.
+- **CI cache key.** Keyed on OS, architecture, and both plugin `hatch_build.py` files. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot.
 - **Static OpenBLAS install.** `_build_openblas` builds with `NO_SHARED=1 USE_OPENMP=0 DYNAMIC_ARCH=1`; pass the same flags to `make install` or OpenBLAS tries to install a shared `libopenblas*.so` that was never built.
 - **Static link flags.** Linux uses static OpenBLAS and METIS. Keep OpenBLAS' dependent `-lm -lpthread -lgfortran` in the LAPACK lflags, and keep `-lm` in both the MUMPS `--with-metis-lflags` and IPOPT `--with-mumps-lflags`; otherwise configure/link checks fail on Linux.
 - **AOT solver harness.** `al.qp(...)` (PIQP) and `al.nlp(...)` (IPOPT) are wired through `ctypes` for direct Python calls and through generated C for nested JIT/AOT use; see [`solvers.md`](solvers.md). What is still TODO before distribution: a CI-level standalone C/C++ harness that links `-lpiqpc`/`-lipopt` directly outside Python and exercises the exact AOT path the static-libgfortran work is meant to unblock.

@@ -47,6 +47,7 @@ def test_solver_paths_required_needs_both_libraries(tmp_path, monkeypatch) -> No
   (lib / f"libpiqpc{toolchain.shared_lib_ext()}").write_text("")
 
   monkeypatch.setattr(toolchain, "_package_root", lambda: empty_pkg)
+  monkeypatch.setattr(toolchain, "_plugin_solver_paths", lambda: [])
   monkeypatch.setenv("ALLOY_SOLVER_SYSTEM_FALLBACK", "0")
   monkeypatch.setenv("ALLOY_SOLVER_INCLUDE_DIR", str(include))
   monkeypatch.setenv("ALLOY_SOLVER_LIB_DIR", str(lib))

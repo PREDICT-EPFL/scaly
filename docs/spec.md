@@ -400,5 +400,5 @@ lowerer treats a `SolverFunction` callee as opaque (it does not lower the
 `render_c_source` orchestrates the single translation unit (oracle `_raw`
 bodies, then the solver wrapper, then the host ABI entry). `solver_compile_flags`
 adds the `-lpiqpc` / `-lipopt` link flags. The bound shared libraries live under
-`src/alloy/lib/`. Full interface, sign conventions, and current limitations are
+the respective `plugins/alloy-{piqp,ipopt}/src/*/lib/` package directories. Full interface, sign conventions, and current limitations are
 documented in [`solvers.md`](solvers.md).

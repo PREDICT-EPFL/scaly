@@ -1,0 +1,28 @@
+[project]
+name = "alloy-ipopt"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["alloy"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.entry-points."alloy.solvers"]
+ipopt = "alloy_ipopt:BACKEND"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/alloy_ipopt"]
+artifacts = [
+  "src/alloy_ipopt/lib/*",
+  "src/alloy_ipopt/include/**/*",
+]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/", "hatch_build.py"]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
+[tool.uv.sources]
+alloy = { workspace = true }

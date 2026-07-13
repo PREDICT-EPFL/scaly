@@ -2,6 +2,13 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
+[manifest]
+members = [
+    "alloy",
+    "alloy-ipopt",
+    "alloy-piqp",
+]
+
 [[package]]
 name = "alloy"
 version = "0.1.0"
@@ -12,6 +19,8 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "alloy-ipopt" },
+    { name = "alloy-piqp" },
     { name = "casadi" },
     { name = "google-benchmark" },
     { name = "matplotlib" },
@@ -30,6 +39,8 @@ requires-dist = [{ name = "numpy", specifier = ">=2.3.3" }]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "alloy-ipopt", editable = "plugins/alloy-ipopt" },
+    { name = "alloy-piqp", editable = "plugins/alloy-piqp" },
     { name = "casadi", specifier = ">=3.7.2" },
     { name = "google-benchmark", specifier = ">=1.9.5" },
     { name = "matplotlib", specifier = ">=3.11.0" },
@@ -42,6 +53,28 @@ docs = [
     { name = "mkdocstrings-python", specifier = ">=2.0.3" },
     { name = "zensical", specifier = ">=0.0.28" },
 ]
+
+[[package]]
+name = "alloy-ipopt"
+version = "0.1.0"
+source = { editable = "plugins/alloy-ipopt" }
+dependencies = [
+    { name = "alloy" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "alloy", editable = "." }]
+
+[[package]]
+name = "alloy-piqp"
+version = "0.1.0"
+source = { editable = "plugins/alloy-piqp" }
+dependencies = [
+    { name = "alloy" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "alloy", editable = "." }]
 
 [[package]]
 name = "casadi"

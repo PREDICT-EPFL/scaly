@@ -487,20 +487,20 @@ Phase 5 starts by lifting Alloy out of the anvil repository into its own project
 - independent versioning lets Alloy release without dragging anvil's experimental state along;
 - the PIQP shared library built for anvil and the one Alloy needs are the same artifact; cleaner if each project owns its own copy.
 
-The new `alloy` repository owns all `src/alloy/`, `tests/alloy/`, `docs/alloy/`, and `benchmarks/` artifacts from this worktree, plus its own `pyproject.toml`, `hatch_build.py`, `.github/workflows/`, `worktrunk` config, and `uv`/`ruff`/`ty` settings. The anvil repository keeps its current state; cross-references stay as documentation only.
+The new `alloy` repository owns all `src/alloy/`, `tests/alloy/`, `docs/alloy/`, `benchmarks/`, and `plugins/` artifacts from this worktree, plus its own `pyproject.toml`, per-plugin hatch hooks, `.github/workflows/`, worktrunk config, and `uv`/`ruff`/`ty` settings. The anvil repository keeps its current state; cross-references stay as documentation only.
 
 ### Vendored solver shared libraries
 
-Both PIQP and IPOPT are built as shared libraries under `src/alloy/lib/` (`libpiqpc.{dylib,so}`, `libipopt.{dylib,so}`), with C headers under `src/alloy/include/`. These artifacts are already used for local development and CI; making the final wheel fully redistributable still requires the static/runtime dependency cleanup tracked in `vendored_solvers.md`. The same artifacts are used:
+PIQP and IPOPT are built as shared libraries in their respective `plugins/alloy-{piqp,ipopt}/src/*/lib/` directories, with C headers in each plugin's `include/` directory. These artifacts are already used for local development and CI; making the final wheels fully redistributable still requires the static/runtime dependency cleanup tracked in `vendored_solvers.md`. The same artifacts are used:
 
 - by the Python runtime, loaded via `ctypes` from the JITed wrapper Functions;
-- by AOT C++ consumers that link against `-lpiqpc` / `-lipopt` from `alloy/lib/`.
+- by AOT C++ consumers that link against `-lpiqpc` / `-lipopt` using the include/lib/rpath flags reported by `alloy.codegen.solver_c.solver_compile_flags()`.
 
 Build strategy:
 
-- **PIQP**: reuse the existing anvil `hatch_build.py` pattern. Clone PIQP v0.6.2, Eigen 3.4.1, blasfeo; build `piqp_c` as a shared library; copy headers. Cold build ~1-2 min.
+- **PIQP**: reuse the existing anvil hatch-hook pattern in `plugins/alloy-piqp/hatch_build.py`. Clone PIQP v0.6.2, Eigen 3.4.1, blasfeo; build `piqp_c` as a shared library; copy headers. Cold build ~1-2 min.
 - **IPOPT**: source build via a coinbrew-style hook. Clone coin-or/Ipopt 3.14+, `ThirdParty-Mumps`, `ThirdParty-Metis`, and either OpenBLAS (Linux) or rely on Apple Accelerate (macOS). Build MUMPS (sequential, no MPI) and IPOPT against them. The target is to **statically link `libgfortran`, `libgcc`, and `libstdc++` into `libipopt`** (`-static-libgfortran -static-libgcc -static-libstdc++`) so the resulting `.dylib`/`.so` has no runtime dependency on the host's Fortran toolchain. Current CI source builds pass but still dynamically depend on those runtime libraries; see `vendored_solvers.md`. Cold build ~5-8 min.
-- **Caching**: identical to the anvil hook — skip the rebuild if the lib + headers already exist in `src/alloy/lib/`.
+- **Caching**: identical to the anvil hook — skip each rebuild if its plugin lib + headers already exist.
 - **Platform support**: macOS (arm64 + x86_64) and Linux (manylinux_2_28) for v1. Windows is deferred: MSVC has no Fortran, MinGW/intel Fortran would require its own build path. Document the limitation; revisit if a concrete Windows user appears.
 
 Build requirements on the host: a C/C++ compiler, CMake, and `gfortran` (from `brew install gcc` on macOS, `apt install gfortran` on Linux). CI builds use these toolchains directly.
