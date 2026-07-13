@@ -70,6 +70,18 @@ def test_jvp_many_uses_leading_seed_axis() -> None:
   np.testing.assert_allclose(f(xv, sv), sv @ jac.T)
 
 
+def test_jvp_many_broadcast_scalar_tangent_over_vector() -> None:
+  x = al.sym("x", 3)
+  scale = x.sum()
+  seeds = al.sym("seeds", (2, 3))
+  dy = al.jvp_many(scale * x, x, seeds)
+  f = al.Function("jvp_many_broadcast_scalar", [x, seeds], [dy], ["x", "seeds"], ["dy"])
+  xv = np.array([0.3, 1.2, -0.4])
+  sv = np.array([[1.5, -0.25, 0.4], [-0.5, 2.0, 1.25]])
+
+  np.testing.assert_allclose(f(xv, sv), sv.sum(axis=1, keepdims=True) * xv + xv.sum() * sv)
+
+
 def test_vjp_many_uses_leading_seed_axis_and_multiple_outputs() -> None:
   x = al.sym("x", 2)
   y0 = x * x

@@ -15,11 +15,15 @@ from alloy.codegen.c import _workspace_size, render_c_module
 from benchmarks.harness import gbench
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.provenance import collect, write
-from benchmarks.problems import tracking_nmpc, unbumpercars
+from benchmarks.problems import chain_of_masses, tracking_nmpc, unbumpercars
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "benchmarks" / "results"
-DEFAULT_SIZES = {"tracking": [1, 5, 10, 25, 50, 100, 200, 500], "unbumpercars": [2, 4, 8, 16, 32]}
+DEFAULT_SIZES = {
+  "chain": [3, 5, 9, 17, 33, 65],
+  "tracking": [1, 5, 10, 25, 50, 100, 200, 500],
+  "unbumpercars": [2, 4, 8, 16, 32],
+}
 BACKENDS = ("alloy", "casadi_sx", "casadi_mx")
 FIELDS = [
   "workload",
@@ -122,6 +126,31 @@ def _tracking_alloy(size: int, out_dir: Path) -> dict:
   )
 
 
+def _chain_alloy(size: int, out_dir: Path) -> dict:
+  horizon = 40
+  started = time.perf_counter()
+  fn = chain_of_masses.chain_eq_function(size, horizon)
+  name = f"alloy_chain_eq_jac_M{size}"
+  spjf = fn.factory(name, ["z", "p"], ["spjac:eq:z"])
+  sparsity = spjf.output_sparsities[0]
+  assert sparsity is not None
+  build_ms = (time.perf_counter() - started) * 1000
+  module, render_ms = _render_alloy(spjf, name, out_dir)
+  return _module_info(
+    name,
+    "alloy",
+    module,
+    [("z", chain_of_masses.n_dec(size, horizon)), ("p", chain_of_masses.n_param(size))],
+    sparsity,
+    (fn.outputs[0].shape[0], fn.inputs[0].shape[0]),
+    build_ms,
+    render_ms,
+    f"BM_AlloyChainEqJacM{size}",
+    w_size=_workspace_size(spjf),
+    callable=spjf,
+  )
+
+
 def _unbumpercars_alloy(size: int, out_dir: Path) -> dict:
   started = time.perf_counter()
   fn = unbumpercars.unbumpercars_ineq_function(size)
@@ -151,9 +180,15 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
 
   kind = backend.removeprefix("casadi_")
   sym_t = ca.SX if kind == "sx" else ca.MX
-  name = f"casadi_{kind}_{'tracking_eq' if workload == 'tracking' else 'unbumpercars_ineq'}_jac_N{size}"
+  stem = {"chain": "chain_eq", "tracking": "tracking_eq", "unbumpercars": "unbumpercars_ineq"}[workload]
+  name = f"casadi_{kind}_{stem}_jac_{'M' if workload == 'chain' else 'N'}{size}"
   started = time.perf_counter()
-  if workload == "tracking":
+  if workload == "chain":
+    horizon = 40
+    fn = chain_of_masses.ca_chain_eq_jac(size, horizon, sym_t=sym_t, name=name, map_stages=True)
+    inputs = [("z", chain_of_masses.n_dec(size, horizon)), ("p", chain_of_masses.n_param(size))]
+    benchmark = f"BM_Casadi{kind.title()}ChainEqJacM{size}"
+  elif workload == "tracking":
     fn = tracking_nmpc.ca_tracking_eq_jac(size, name=name, sym_t=sym_t)
     inputs = [("z", tracking_nmpc.NZ * (size + 1)), ("p", tracking_nmpc.NX * (size + 1))]
     benchmark = f"BM_Casadi{kind.title()}TrackingEqJacN{size}"
@@ -187,6 +222,8 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
     "cols": tuple(int(x) for x in cols),
     "w_size": fn.sz_w(),
     "iw_size": fn.sz_iw(),
+    "arg_size": fn.sz_arg(),
+    "res_size": fn.sz_res(),
     "source_bytes": len(source),
     "source_lines": source.count("\n") + 1,
     "build_ms": build_ms,
@@ -198,12 +235,17 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
 
 def build_kernel(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   if backend == "alloy":
-    return (_tracking_alloy if workload == "tracking" else _unbumpercars_alloy)(size, out_dir)
+    return {"chain": _chain_alloy, "tracking": _tracking_alloy, "unbumpercars": _unbumpercars_alloy}[workload](size, out_dir)
   return _casadi(workload, size, backend, out_dir)
 
 
 def _samples(workload: str, size: int, info: dict, out_dir: Path, weights: np.ndarray | None = None):
-  if workload == "tracking":
+  if workload == "chain":
+    horizon = 40
+    zv, pv = chain_of_masses.sample_inputs(size, horizon)
+    expected = chain_of_masses.chain_eq_jac_dense_reference(size, horizon, zv, pv).reshape(-1)
+    values = {"z": zv, "p": pv}
+  elif workload == "tracking":
     rng = np.random.default_rng(7)
     zv = rng.normal(scale=0.4, size=tracking_nmpc.NZ * (size + 1))
     pv = rng.normal(scale=0.4, size=tracking_nmpc.NX * (size + 1))

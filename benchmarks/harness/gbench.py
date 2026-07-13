@@ -50,6 +50,7 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
   n_rows, n_cols, nnz = int(info["n_rows"]), int(info["n_cols"]), int(info["nnz"])
   dense_size, w_size, iw_size = n_rows * n_cols, int(info["w_size"]), int(info.get("iw_size", 0))
   inputs = [(str(k), int(v)) for k, v in info["inputs"]]
+  arg_size, res_size = int(info.get("arg_size", len(inputs))), int(info.get("res_size", 1))
   rows = ", ".join(str(x) for x in info["rows"]) or "0"
   cols = ", ".join(str(x) for x in info["cols"]) or "0"
   lines = [
@@ -96,9 +97,11 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
   if label.startswith("casadi"):
     lines.append(f"  static std::array<int, {_array_size(iw_size)}> iw{{}};")
   lines += [
-    "  const double* arg[] = {" + ", ".join(f"g_{k}.data()" for k, _ in inputs) + "};",
-    "  double* res[] = {compact.data()};",
-    f"  int rc = {name}(arg, res, " + ("iw.data(), w.data(), 0);" if label.startswith("casadi") else "nullptr, w.data(), nullptr);"),
+    f"  std::array<const double*, {_array_size(arg_size)}> arg{{}};",
+    *[f"  arg[{i}] = g_{k}.data();" for i, (k, _) in enumerate(inputs)],
+    f"  std::array<double*, {_array_size(res_size)}> res{{}};",
+    "  res[0] = compact.data();",
+    f"  int rc = {name}(arg.data(), res.data(), " + ("iw.data(), w.data(), 0);" if label.startswith("casadi") else "nullptr, w.data(), nullptr);"),
     f'  if (rc != 0) {{ std::fprintf(stderr, "{label} returned %d\\n", rc); return 1; }}',
     "  std::memset(dense.data(), 0, sizeof(dense));",
     f"  for (std::size_t i = 0; i < {nnz}; ++i) dense[check_rows[i] * {n_cols} + check_cols[i]] = compact[i];",
@@ -123,10 +126,12 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
   if label.startswith("casadi"):
     lines.append(f"  static std::array<int, {_array_size(iw_size)}> iw{{}};")
   lines += [
-    "  const double* arg[] = {" + ", ".join(f"g_{k}.data()" for k, _ in inputs) + "};",
-    "  double* res[] = {out.data()};",
+    f"  std::array<const double*, {_array_size(arg_size)}> arg{{}};",
+    *[f"  arg[{i}] = g_{k}.data();" for i, (k, _) in enumerate(inputs)],
+    f"  std::array<double*, {_array_size(res_size)}> res{{}};",
+    "  res[0] = out.data();",
     "  for (auto _ : state) {",
-    f"    int rc = {name}(arg, res, " + ("iw.data(), w.data(), 0);" if label.startswith("casadi") else "nullptr, w.data(), nullptr);"),
+    f"    int rc = {name}(arg.data(), res.data(), " + ("iw.data(), w.data(), 0);" if label.startswith("casadi") else "nullptr, w.data(), nullptr);"),
     "    benchmark::DoNotOptimize(rc);",
     "    benchmark::DoNotOptimize(out.data());",
     "  }",

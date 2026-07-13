@@ -422,11 +422,15 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   args = expr.args
   d = [_jvp_many_structural(arg, wrt, seeds, memo, dep_memo) for arg in args]
   if expr.op == Ops.MUL:
-    memo[expr.id] = ret = d[0] * _seed_axis(args[1], nseed) + _seed_axis(args[0], nseed) * d[1]
+    memo[expr.id] = ret = _broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], nseed) + _seed_axis(
+      args[0], nseed
+    ) * _broadcast_tangent(d[1], args[1], expr, nseed)
     return ret
   if expr.op == Ops.DIV:
     y = _seed_axis(args[1], nseed)
-    memo[expr.id] = ret = (d[0] * y - _seed_axis(args[0], nseed) * d[1]) / (y**2)
+    memo[expr.id] = ret = (
+      _broadcast_tangent(d[0], args[0], expr, nseed) * y - _seed_axis(args[0], nseed) * _broadcast_tangent(d[1], args[1], expr, nseed)
+    ) / (y**2)
     return ret
   if expr.op == Ops.POW:
     if args[1].op == Ops.CONST:
@@ -477,6 +481,11 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
 
 def _seed_axis(expr: Expr, nseed: int) -> Expr:
   return expr if expr.shape == () else stack([expr] * nseed, axis=0)
+
+
+def _broadcast_tangent(tangent: Expr, operand: Expr, output: Expr, nseed: int) -> Expr:
+  missing = len(output.shape) - len(operand.shape)
+  return tangent if missing == 0 else tangent.reshape((nseed, *(1,) * missing, *operand.shape))
 
 
 def _jvp_many_matmul_left(x: Expr, y: Expr, dx: Expr, nseed: int) -> Expr:

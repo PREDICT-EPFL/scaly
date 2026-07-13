@@ -20,7 +20,7 @@ from alloy.codegen.solver_c import solver_compile_flags
 from alloy.toolchain import solver_loadable
 from benchmarks.harness import gbench
 from benchmarks.harness.sweep import BACKENDS, DEFAULT_SIZES, RESULTS, build_kernel, run_cell, run_sweep
-from benchmarks.problems import unbumpercars
+from benchmarks.problems import chain_of_masses, unbumpercars
 
 
 def _csv(value: str) -> list[str]:
@@ -196,6 +196,33 @@ def _benchmark_smoke() -> None:
   # baseline 2100 doubles at h=50 (2026-07-13, scan buffers scale linearly with horizon); 3x headroom catches superlinear regressions
   assert int(large["w_size"]) <= 3 * 2100, f"workspace regressed: h=50 needs {large['w_size']} doubles (baseline 2100)"
   print(f"smoke workspace: ok ({infos[0]['w_size']} doubles at h=5, {large['w_size']} at h=50)")
+  chain_infos = []
+  for backend in ("alloy", "casadi_sx"):
+    result, info = run_cell(
+      "chain",
+      5,
+      backend,
+      RESULTS / "gen" / "chain" / f"{backend}_M5",
+      codegen_timeout=300,
+      compile_timeout=180,
+      max_source_mb=50,
+      benchmark_min_time="0.01s",
+    )
+    runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
+    print(f"smoke chain size=5 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
+    if result["runtime_status"] != "ok" or info is None:
+      raise RuntimeError(f"chain {backend} smoke failed: {result['note']}")
+    assert info["nnz"] > 0 and info["w_size"] is not None and info["nnz"] < info["n_rows"] * info["n_cols"]
+    chain_infos.append(info)
+  assert chain_of_masses.n_state(5) == 21 and chain_of_masses.NU == 3
+  out_dir = RESULTS / "gen" / "chain" / "alloy_M33"
+  out_dir.mkdir(parents=True, exist_ok=True)
+  chain_large = build_kernel("chain", 33, "alloy", out_dir)
+  assert chain_large["source_lines"] < 1.2 * chain_infos[0]["source_lines"], (
+    f"chain loop preservation regressed: M=33 has {chain_large['source_lines']} lines, M=5 has {chain_infos[0]['source_lines']}"
+  )
+  print(f"smoke chain loop preservation: ok ({chain_infos[0]['source_lines']} lines at M=5, {chain_large['source_lines']} at M=33)")
+  print(f"smoke chain workspace (record only): {chain_infos[0]['w_size']} doubles at M=5, {chain_large['w_size']} at M=33")
   weights = None
   if not unbumpercars.MODEL_PATH.exists():
     weights = unbumpercars.random_weights()
