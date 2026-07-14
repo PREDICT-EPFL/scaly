@@ -114,7 +114,10 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
   sparsity = SparsityType((expr.size, wrt.size), tuple(global_rows), tuple(global_cols))
   if sparsity.nnz == 0:
     return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=np.float64)))
-  values = global_values[0] if len(global_values) == 1 else concat(global_values, axis=0)
+  # Flatten piece values that are themselves axis-0 CONCATs so their producers write straight
+  # into the single output concat instead of materializing an intermediate nnz-sized buffer.
+  flat = [a for v in global_values for a in (v.args if v.op == Ops.CONCAT and v.attrs.get("axis", 0) == 0 else (v,))]
+  values = flat[0] if len(flat) == 1 else concat(flat, axis=0)
   _ = total_rows  # documentation: piece row offsets cover [0, total_rows)
   return SparseJacobian(sparsity, simplify_cse_fixpoint(values))
 
@@ -182,7 +185,7 @@ def _sparse_jacobian_map(map_expr: Expr, wrt: Expr) -> SparseJacobian:
   it_global = rows_arr // slice_size
   lr_global = rows_arr % slice_size
 
-  pieces: list[Expr] = []
+  pieces: list[tuple[Expr, np.ndarray]] = []  # (gathered piece values, nnz slots they cover)
   _ = _CALL_JVP_MANY_CONST_CACHE  # kept for diagnostics; ensures cache is initialised on import
   for f_idx in direct_formals:
     formal = callee.inputs[f_idx]
@@ -222,18 +225,23 @@ def _sparse_jacobian_map(map_expr: Expr, wrt: Expr) -> SparseJacobian:
     color_at = local_colors_arr[lc_arr[contrib_idx]]
     pos_at = np.asarray([active_to_pos[int(c)] for c in color_at], dtype=np.int64)
     flat_indices = it_global[contrib_idx] * (active_count * slice_size) + pos_at * slice_size + lr_global[contrib_idx]
-    gathered = gather(mapped_flat, flat_indices)
-    if contributes.all():
-      piece_values = gathered
-    else:
-      piece_values = scatter(gathered, contrib_idx, (nnz,))
-    pieces.append(piece_values)
+    pieces.append((gather(mapped_flat, flat_indices), contrib_idx))
 
   if not pieces:
     return SparseJacobian(global_sparsity, Expr.const(np.zeros((nnz,), dtype=np.float64)))
-  values = pieces[0]
-  for p in pieces[1:]:
-    values = values + p
+  perm = np.concatenate([idx for _, idx in pieces])
+  if perm.size == nnz and np.bincount(perm, minlength=nnz).max() == 1:
+    # Piece supports exactly partition the nnz (verified: every slot covered exactly once), so
+    # instead of scattering each piece into a full-nnz buffer and summing, emit the gathered
+    # values back to back and permute the pattern to match — no full-nnz temporaries at all.
+    values = pieces[0][0] if len(pieces) == 1 else concat([g for g, _ in pieces], axis=0)
+    permuted = SparsityType(global_sparsity.shape, tuple(int(r) for r in rows_arr[perm]), tuple(int(c) for c in cols_arr[perm]))
+    return SparseJacobian(permuted, values)
+  values = None
+  for gathered, contrib_idx in pieces:
+    piece_values = gathered if contrib_idx.size == nnz else scatter(gathered, contrib_idx, (nnz,))
+    values = piece_values if values is None else values + piece_values
+  assert values is not None
   return SparseJacobian(global_sparsity, values)
 
 

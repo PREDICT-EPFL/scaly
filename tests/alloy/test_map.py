@@ -380,12 +380,19 @@ def test_spjacobian_of_tracking_map_matches_unrolled_concat() -> None:
   spj_map = al.spjacobian(fn_map, "z", "eq")
   spj_unroll = al.spjacobian(fn_unroll, "z", "eq")
 
-  assert spj_map.output_sparsities[0] == spj_unroll.output_sparsities[0]
+  # The nnz orderings differ (the map path emits per-formal disjoint partitions), but the
+  # patterns must agree as coordinate sets and the densified values must match exactly.
+  sp_m, sp_u = spj_map.output_sparsities[0], spj_unroll.output_sparsities[0]
+  assert sp_m is not None and sp_u is not None
+  assert sp_m.shape == sp_u.shape and set(zip(sp_m.rows, sp_m.cols)) == set(zip(sp_u.rows, sp_u.cols))
 
   rng = np.random.default_rng(2)
   zv = rng.normal(size=NZ * (N + 1))
 
-  np.testing.assert_allclose(spj_map(zv), spj_unroll(zv), rtol=1e-10, atol=1e-10)
+  dense_m, dense_u = np.zeros(sp_m.shape), np.zeros(sp_u.shape)
+  dense_m[np.asarray(sp_m.rows), np.asarray(sp_m.cols)] = np.asarray(spj_map(zv), dtype=np.float64).reshape(-1)
+  dense_u[np.asarray(sp_u.rows), np.asarray(sp_u.cols)] = np.asarray(spj_unroll(zv), dtype=np.float64).reshape(-1)
+  np.testing.assert_allclose(dense_m, dense_u, rtol=1e-10, atol=1e-10)
 
 
 def test_spjac_keeps_constant_loc_on_rk4_tracking_map() -> None:
