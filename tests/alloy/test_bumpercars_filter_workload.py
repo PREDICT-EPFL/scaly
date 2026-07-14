@@ -1,5 +1,7 @@
 """Thin cross-check for the CT-DTCBF bumpercars filter problem in benchmarks/problems/bumpercars_filter."""
 
+import os
+
 import numpy as np
 import pytest
 
@@ -14,7 +16,8 @@ from benchmarks.problems.bumpercars_filter.common import (
   rk4_step_np,
   sample_initial_states,
 )
-from benchmarks.problems.bumpercars_filter.filters import CasadiDTCBFSafetyFilter, build_alloy_oracle
+from benchmarks.problems.bumpercars_filter.filters import AlloyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter, build_alloy_oracle
+from benchmarks.problems.bumpercars_filter.run_closed_loop import Simulator
 
 
 def test_ctdt_alloy_oracle_matches_casadi():
@@ -68,3 +71,30 @@ def test_ctdt_alloy_oracle_g_matches_numpy_at_asymmetric_physics():
     ):
       rows.append(h_next - (1.0 - loop_cfg.wall_gamma) * h_cur + slack)
   np.testing.assert_allclose(np.asarray(g_al).reshape(-1), np.array(rows), rtol=1e-9, atol=1e-9)
+
+
+@pytest.mark.skipif(os.environ.get("ALLOY_RUN_BUMPERCARS_EXACT_HESS") != "1", reason="opt-in bumpercars exact-Hessian closed-loop cross-check")
+def test_ctdt_alloy_exact_hess_matches_casadi_on_closed_loop_samples(monkeypatch):
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  loop_cfg = ClosedLoopConfig(ncars=2, horizon=5)
+  filt_cfg = FilterConfig(limited_memory_hessian=False)
+  weights = load_ct_full_weights()
+  alloy_filt = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
+  casadi_filt = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
+  assert alloy_filt.hess_fn is not None and casadi_filt.hess_fn is not None
+  sim = Simulator(sample_initial_states(loop_cfg), loop_cfg, weights)
+
+  for step in range(loop_cfg.horizon):
+    desired = sim.desired_inputs()
+    safe = alloy_filt.compute_safe_input(sim.states, desired, step)
+    assert alloy_filt.last_z is not None and alloy_filt.last_mult_g is not None
+    z, lam = alloy_filt.last_z, alloy_filt.last_mult_g
+    bar_x, u_des = sim.states.reshape(-1), desired.reshape(-1)
+    physics, dt = loop_cfg.physics.array(), np.array([loop_cfg.dt])
+    p = np.concatenate([bar_x, u_des, weights.packed, physics, dt])
+    alloy_values = np.asarray(alloy_filt.hess_fn.eval_list(z, 1.0, lam, bar_x, u_des, weights.packed, physics, dt)[0], dtype=np.float64).reshape(-1)[
+      alloy_filt.hess_lower_mask
+    ]
+    casadi_dense = np.asarray(casadi_filt.hess_fn(z, p, 1.0, lam), dtype=np.float64)
+    np.testing.assert_allclose(alloy_values, casadi_dense[alloy_filt.hess_rows, alloy_filt.hess_cols], rtol=1e-8)
+    sim.step(safe)

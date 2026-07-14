@@ -209,7 +209,7 @@ def parse_args() -> argparse.Namespace:
   p.add_argument(
     "--exact-hessian",
     action="store_true",
-    help="Use/evaluate exact Hessians in CasADi. Alloy stays limited-memory because reverse AD through MAP Hessians is not available here.",
+    help="Use exact Lagrangian Hessians in both CasADi and Alloy.",
   )
   p.add_argument("--no-casadi-expand", action="store_true", help="Disable CasADi MX-to-SX expansion before constructing the NLP solver.")
   p.add_argument("--eval-repeats", type=int, default=1)

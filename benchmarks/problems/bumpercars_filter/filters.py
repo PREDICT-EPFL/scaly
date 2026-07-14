@@ -388,6 +388,25 @@ class AlloyDTCBFSafetyFilter:
     self.jac_fn = self.base_fn.factory(self.base_fn.name + "_spjac_g_z", inputs, ["spjac:g:z"])
     self.jac_sparsity = self.jac_fn.output_sparsities[0]
     assert self.jac_sparsity is not None
+    if not self.filt_cfg.limited_memory_hessian:
+      self.hess_fn = self.base_fn.factory(
+        self.base_fn.name + "_sphess_gamma_z_z",
+        ["z", "lam:cost", "lam:g", "bar_x", "u_des", "pw", "physics", "dt"],
+        ["sphess:gamma:z:z"],
+        aux={"gamma": ["cost", "g"]},
+      )
+      hess_sp = self.hess_fn.output_sparsities[0]
+      assert hess_sp is not None
+      hess_rows_full = np.asarray(hess_sp.rows, dtype=np.int32)
+      hess_cols_full = np.asarray(hess_sp.cols, dtype=np.int32)
+      self.hess_lower_mask = hess_rows_full >= hess_cols_full
+      self.hess_rows = hess_rows_full[self.hess_lower_mask]
+      self.hess_cols = hess_cols_full[self.hess_lower_mask]
+    else:
+      self.hess_fn = None
+      self.hess_lower_mask = np.zeros(0, dtype=np.bool_)
+      self.hess_rows = np.zeros(0, dtype=np.int32)
+      self.hess_cols = np.zeros(0, dtype=np.int32)
     self._build_ms = (time.perf_counter() - t0) * 1000.0
     self._warm_compile()
 
@@ -398,14 +417,23 @@ class AlloyDTCBFSafetyFilter:
     pw = self.weights.packed
     physics = self.loop_cfg.physics.array()
     dt = np.array([self.loop_cfg.dt])
-    for label, fn in (("cost", self.cost_fn), ("g", self.g_fn), ("grad_f", self.grad_fn), ("jac_g", self.jac_fn)):
+    functions = [("cost", self.cost_fn), ("g", self.g_fn), ("grad_f", self.grad_fn), ("jac_g", self.jac_fn)]
+    if self.hess_fn is not None:
+      functions.append(("hess_lag", self.hess_fn))
+    for label, fn in functions:
       t0 = time.perf_counter()
-      fn.eval_list(z, bar_x, u_des, pw, physics, dt)
+      args = (
+        (z, 1.0, np.zeros(self.g_fn.outputs[0].size), bar_x, u_des, pw, physics, dt) if fn is self.hess_fn else (z, bar_x, u_des, pw, physics, dt)
+      )
+      fn.eval_list(*args)
       self._compile_ms[label] = (time.perf_counter() - t0) * 1000.0
 
   def dump_c(self, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    for label, fn in (("cost", self.cost_fn), ("g", self.g_fn), ("grad_f", self.grad_fn), ("jac_g", self.jac_fn)):
+    functions = [("cost", self.cost_fn), ("g", self.g_fn), ("grad_f", self.grad_fn), ("jac_g", self.jac_fn)]
+    if self.hess_fn is not None:
+      functions.append(("hess_lag", self.hess_fn))
+    for label, fn in functions:
       module = render_c_module(fn, header_name=f"{fn.name}.h", source_name=f"{fn.name}.c", typed_buffers=False)
       (out_dir / module.header_name).write_text(module.header)
       (out_dir / module.source_name).write_text(module.source)
@@ -451,17 +479,19 @@ class AlloyDTCBFSafetyFilter:
     def eval_jac_g(z: np.ndarray) -> np.ndarray:
       return self._timed("jac_g", counts, totals, self.jac_fn, z, bar_x, u_des, pw, physics, dt)
 
-    def eval_h(_z: np.ndarray, _obj_factor: float, _lam: np.ndarray) -> np.ndarray:
-      counts["hess_lag"] = counts.get("hess_lag", 0) + 1
-      return np.zeros(0, dtype=np.float64)
+    def eval_h(z: np.ndarray, obj_factor: float, lam: np.ndarray) -> np.ndarray:
+      assert self.hess_fn is not None
+      values = self._timed("hess_lag", counts, totals, self.hess_fn, z, obj_factor, lam, bar_x, u_des, pw, physics, dt)
+      return values[self.hess_lower_mask]
 
     options: dict[str, str | int | float] = {
       "print_level": 0,
       "sb": "yes",
       "tol": self.filt_cfg.ipopt_tol,
       "max_iter": self.filt_cfg.ipopt_max_iter,
-      "hessian_approximation": "limited-memory",
     }
+    if self.filt_cfg.limited_memory_hessian:
+      options["hessian_approximation"] = "limited-memory"
     if self.last_mult_g is not None:
       options["warm_start_init_point"] = "yes"
     t0 = time.perf_counter()
@@ -475,8 +505,8 @@ class AlloyDTCBFSafetyFilter:
       g_U=np.full(n_g, IPOPT_INF),
       jac_rows=jac_rows,
       jac_cols=jac_cols,
-      hess_rows=np.zeros(0, dtype=np.int32),
-      hess_cols=np.zeros(0, dtype=np.int32),
+      hess_rows=self.hess_rows,
+      hess_cols=self.hess_cols,
       eval_f=eval_f,
       eval_grad_f=eval_grad_f,
       eval_g=eval_g,
@@ -522,6 +552,7 @@ class AlloyDTCBFSafetyFilter:
           "build_ms": self._build_ms,
           "compile_ms": dict(self._compile_ms),
           "jac_nnz": int(jac_sp.nnz),
+          "hess_nnz": int(self.hess_rows.size),
           "eval_total_ms": totals,
           "ipopt_eval_counts": sol.eval_counts,
           "raw_success": raw_success,

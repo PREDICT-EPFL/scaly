@@ -108,9 +108,9 @@ CasADi `expand=True` and IPOPT's limited-memory Hessian approximation:
 ipopt.hessian_approximation = limited-memory
 ```
 
-This matches the Alloy prototype's Hessian mode. Passing `--exact-hessian`
-removes that option and additionally constructs an exact Lagrangian Hessian
-function for instrumentation.
+This matches the Alloy prototype's default Hessian mode. Passing
+`--exact-hessian` removes that option and additionally constructs an exact
+Lagrangian Hessian function for instrumentation.
 
 Instrumentation recorded per step:
 
@@ -139,7 +139,9 @@ prototype exercises the mapped neural dynamics path we care about. The filter
 then creates Alloy factories for:
 
 - `grad:cost:z`,
-- `spjac:g:z`.
+- `spjac:g:z`,
+- `sphess:gamma:z:z` with `gamma = lam:cost * cost + dot(lam:g, g)` when
+  `--exact-hessian` is selected.
 
 These functions are evaluated through Alloy's normal `Function.eval_list(...)`,
 which JIT-compiles each kernel to C and caches it. With `--dump-alloy-c`, the
@@ -158,7 +160,7 @@ Instrumentation recorded per step:
 - average time spent inside each JIT-compiled Alloy oracle function,
 - total time spent inside each oracle function over the solve,
 - Alloy build/JIT-compile timings,
-- sparse Jacobian nnz.
+- sparse Jacobian nnz and lower-triangular Hessian nnz.
 
 ## Interpreting the Alloy vs CasADi timings
 
@@ -177,8 +179,8 @@ Known discrepancies:
    counts. Alloy also records value-callback invocation counts from its
    low-level IPOPT binding.
 4. **Hessian mode.** The default comparison uses limited-memory Hessian on both
-   sides. Exact Hessian is available for CasADi via `--exact-hessian`, but not
-   for the mapped Alloy oracle yet.
+   sides. `--exact-hessian` selects an exact sparse Lagrangian Hessian for the
+   mapped Alloy oracle and an exact Hessian for CasADi.
 5. **Success handling.** Both implementations accept a finite constraint-feasible
    solution if IPOPT exits on max iterations. This is convenient for closed-loop
    experimentation, but strict benchmarking should also report the raw IPOPT
@@ -197,7 +199,7 @@ and iteration count.
 These are the main Alloy-side gaps that currently prevent a completely fair and
 production-quality comparison.
 
-### 1. Exact sparse Hessian through `Ops.MAP`
+### 1. Exact sparse Hessian through `Ops.MAP` (closed)
 
 IPOPT's exact Hessian path would require the sparse Hessian of the Lagrangian
 with respect to `z` through the mapped RK4 neural dynamics:
@@ -206,18 +208,11 @@ with respect to `z` through the mapped RK4 neural dynamics:
 sphess:lagrangian:z:z
 ```
 
-The current oracle deliberately uses `al.map_` to evaluate the per-car neural RK4
-model. Alloy's second-order / sparse Hessian AD path does not yet fully support
-reverse/second-order propagation through `Ops.MAP`.
-
-Possible paths:
-
-- short-term: unroll the map for small-N experiments and use the existing sparse
-  Hessian machinery;
-- medium-term: build per-car Jacobian/Hessian factories and manually assemble the
-  global sparse Lagrangian Hessian for this structured filter;
-- proper Alloy fix: implement AD rules and sparse second-order lowering for
-  `Ops.MAP`, preserving the compact mapped representation.
+The oracle deliberately uses `al.map_` to evaluate the per-car neural RK4 model.
+Alloy now propagates reverse and sparse second-order AD through `Ops.MAP` while
+preserving the compact mapped representation. The filter builds
+`sphess:gamma:z:z`, passes its lower-triangular sparsity to IPOPT, and evaluates
+it from IPOPT's objective factor and constraint multipliers.
 
 ### 2. Native generated-C solver path for this exact use case
 
@@ -272,8 +267,7 @@ Suggested next benchmarking pass:
 2. CasADi MX with `expand=False`, limited-memory Hessian.
 3. CasADi exact Hessian.
 4. Alloy current JIT-kernel callback path, limited-memory Hessian.
-5. Alloy with exact Hessian if/when `MAP` Hessian support or manual assembly is
-   available.
+5. Alloy JIT-kernel callback path with exact sparse Hessian.
 6. Alloy generated-C solver path, once instrumentation is good enough.
 
 For each row, record:
