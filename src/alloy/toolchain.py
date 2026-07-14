@@ -38,6 +38,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
   EnvVar("ALLOY_IPOPT_LIB", None, "Exact path to libipopt."),
   EnvVar("ALLOY_SOLVER_SYSTEM_FALLBACK", "0", "Experimental: allow ctypes/pkg-config/default-linker system solver fallback."),
   EnvVar("ALLOY_BUILD_SOLVERS", "auto", "Build-hook solver mode: auto, skip, or required/1/true."),
+  EnvVar("ALLOY_STRICT_JVP_MANY", "0", "Raise instead of using the unrolled multi-seed JVP fallback."),
   EnvVar("ALLOY_VIZ_DIR", None, "Visualization recording directory."),
   EnvVar("ALLOY_TRACKING_SWEEP", "0", "Run the opt-in tracking sparse-Jacobian sweep."),
   EnvVar("ALLOY_GBENCH", "0", "Run the opt-in Google Benchmark Python-dispatch microbenchmark."),

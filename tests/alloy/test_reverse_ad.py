@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 import alloy as al
 from alloy.ad import _jvp_many_structural, _jvp_many_unrolled, finite_difference
@@ -189,6 +190,23 @@ def test_jvp_many_transpose_stays_structural() -> None:
   seedv = np.random.default_rng(15).normal(size=(4, 12))
   actual, expected = fn(xv, seedv)
   np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_jvp_many_strict_mode_raises_on_unsupported_structural_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  x = al.sym("x", 2)
+  with pytest.raises(NotImplementedError, match="structural jvp_many does not support"):
+    al.jvp_many(x.abs(), x, al.const(np.eye(2)))
+
+
+def test_jvp_many_strict_mode_raises_on_structural_shape_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+  import alloy.ad as ad
+
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  x = al.sym("x", 2)
+  monkeypatch.setattr(ad, "_jvp_many_structural", lambda *_args: al.const(np.zeros((1, 2))))
+  with pytest.raises(NotImplementedError, match=r"structural jvp_many returned shape \(1, 2\).+expected \(2, 2\)"):
+    ad.jvp_many(x * x, x, al.const(np.eye(2)))
 
 
 def test_matmul_vjp_all_shape_cases_match_finite_differences() -> None:

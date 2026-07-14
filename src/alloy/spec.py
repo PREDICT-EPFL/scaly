@@ -275,6 +275,7 @@ def _call_attrs(expr: Expr) -> str | None:
 
 
 def _map_attrs(expr: Expr) -> str | None:
+  """Verify MAP's flat outer storage; callee formals/outputs may be rank-2, but outers are rank-1."""
   callee = expr.attrs.get("callee")
   if callee is None:
     return "MAP missing 'callee' attr"

@@ -118,6 +118,32 @@ def test_nlp_two_sided_inequality_and_lagrangian_hessian() -> None:
 
 
 @need_ipopt
+def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  piece_x = al.sym("piece_x", 2)
+  piece = al.Function("nlp_mapped_constraint_piece", [piece_x], [al.stack([piece_x[1] - piece_x[0] ** 2])], ["piece_x"], ["h"])
+  target = np.array([0.5, 0.25, -0.7, 0.49])
+
+  def build(mapped: bool):
+    x = al.sym("x", 4)
+    if mapped:
+      h_eq = al.map_(piece, 2, [(x, 0, 2)])
+    else:
+      h_eq = al.concat([piece.call([x[2 * it : 2 * (it + 1)]])[0] for it in range(2)])
+    return al.nlp(x=x, f=((x - target) ** 2).sum(), h_eq=h_eq, name=f"nlp_{'mapped' if mapped else 'unrolled'}_constraint")
+
+  mapped_nlp, unrolled_nlp = build(True), build(False)
+  x0 = np.array([0.2, 0.1, -0.3, 0.2])
+  mapped_out = mapped_nlp(x0, np.zeros(2), np.zeros(0))
+  unrolled_out = unrolled_nlp(x0, np.zeros(2), np.zeros(0))
+  assert mapped_nlp.last_status is not None and mapped_nlp.last_status.ok
+  assert unrolled_nlp.last_status is not None and unrolled_nlp.last_status.ok
+  np.testing.assert_allclose(mapped_out["x"], target, atol=2e-6)
+  np.testing.assert_allclose(mapped_out["x"], unrolled_out["x"], rtol=1e-7, atol=1e-7)
+  np.testing.assert_allclose(mapped_out["f"], unrolled_out["f"], rtol=1e-8, atol=1e-10)
+
+
+@need_ipopt
 def test_nlp_with_symbolic_parameter() -> None:
   """Parameter-aware NLP: solve min (x - mu)^2 across different ``mu`` values."""
   x = al.sym("x", 2)

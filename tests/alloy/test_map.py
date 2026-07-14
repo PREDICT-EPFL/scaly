@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import re
 import shutil
 import subprocess
 import sys
@@ -143,6 +144,42 @@ def test_map_c_source_loop_size_is_independent_of_length() -> None:
   assert "< 20;" in src_a
   assert "< 100;" in src_b
   assert src_a.count("\n") == src_b.count("\n")
+
+
+def test_mapped_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.MonkeyPatch) -> None:
+  from alloy.codegen import render_c_source
+  from alloy.expr import topo
+
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  x = al.sym("x", 2)
+  hidden = al.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
+  piece = al.Function("map_sphess_codegen_piece", [x], [al.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
+
+  def render(length: int) -> tuple[str, tuple[str, ...]]:
+    z = al.sym("z", 2 * length)
+    mapped = al.map_(piece, length, [(z, 0, 2)])
+    base = al.Function(f"map_sphess_codegen_base_{length}", [z], [(z * z).sum(), mapped], ["z"], ["f", "g"])
+    sphess = base.factory(f"map_sphess_codegen_{length}", ["z", "lam:f", "lam:g"], ["sphess:gamma:z:z"], aux={"gamma": ["f", "g"]})
+    second_order = tuple(
+      sorted(
+        {
+          node.attrs["callee"].name
+          for node in topo(sphess.outputs)
+          if node.op == al.Ops.MAP and "_adj" in node.attrs["callee"].name and "_fwd" in node.attrs["callee"].name
+        }
+      )
+    )
+    return render_c_source(sphess), second_order
+
+  rendered = [render(length) for length in (2, 8, 32)]
+  assert len({source.count("\n") for source, _ in rendered}) == 1
+  assert all(names for _, names in rendered)
+  assert len({names for _, names in rendered}) == 1
+  for source, names in rendered:
+    for name in names:
+      c_name = name.replace(":", "_")
+      assert source.count(f"{c_name}_raw(") == 2  # one definition and one call in one MAP loop
+      assert len(re.findall(rf"for \([^\n]+\) \{{\n\s+{re.escape(c_name)}_raw\(", source)) == 1
 
 
 def test_map_compiled_c_matches_unrolled_concat(tmp_path) -> None:

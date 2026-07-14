@@ -1,8 +1,41 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 import alloy as al
+from alloy.ad import finite_difference
+
+
+def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[al.Function, al.Function]:
+  x = al.sym("x", 2)
+  if shared:
+    s = al.sym("s", 1)
+    hidden = al.stack([x[0] * x[1] + s[0] * x[0], x[0] - 0.4 * x[1] + s[0] * x[1]])
+    piece = al.Function("mapped_sphess_shared_piece", [x, s], [al.stack([(hidden.tanh() ** 2).sum()])], ["x", "s"], ["g"])
+  else:
+    hidden = al.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
+    piece = al.Function("mapped_sphess_piece", [x], [al.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
+
+  z = al.sym("z", 2 * length + int(shared))
+  specs = [(z, 0, 2), *(((z, 2 * length, 0),) if shared else ())]
+  mapped = al.map_(piece, length, specs)
+  calls = []
+  for it in range(length):
+    args = [z[2 * it : 2 * (it + 1)], *((z[2 * length : 2 * length + 1],) if shared else ())]
+    calls.append(piece.call(args)[0])
+  unrolled = al.concat(calls)
+  f = (z * z).sum()
+  return (
+    al.Function(f"mapped_sphess_{length}_{int(shared)}", [z], [f, mapped], ["z"], ["f", "g"]),
+    al.Function(f"unrolled_sphess_{length}_{int(shared)}", [z], [f, unrolled], ["z"], ["f", "g"]),
+  )
+
+
+def _scatter_sparse(values: np.ndarray, sparsity: al.SparsityType) -> np.ndarray:
+  dense = np.zeros(sparsity.shape)
+  dense[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = values
+  return dense
 
 
 def test_sparsity_type_roundtrip_and_bounds() -> None:
@@ -122,6 +155,59 @@ def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
   assert shf.output_sparsities[0].rows == (0, 0, 1, 1)
   assert shf.output_sparsities[0].cols == (0, 1, 0, 1)
   np.testing.assert_allclose(shf(np.array([2.0, 3.0]), np.array(1.5), np.array([0.25, -0.5])), np.array([3.0, 0.25, 0.25, -1.0]))
+
+
+def test_sparse_lagrangian_hessian_through_map_matches_unrolled_dense_and_fd(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  mapped, unrolled = _mapped_sphess_fixture(3)
+  mapped_sphess = mapped.factory("mapped_sphess_exact", ["z", "lam:f", "lam:g"], ["sphess:gamma:z:z"], aux={"gamma": ["f", "g"]})
+  unrolled_sphess = unrolled.factory("unrolled_sphess_exact", ["z", "lam:f", "lam:g"], ["sphess:gamma:z:z"], aux={"gamma": ["f", "g"]})
+  unrolled_hess = unrolled.factory("unrolled_hess_dense", ["z", "lam:f", "lam:g"], ["hess:gamma:z:z"], aux={"gamma": ["f", "g"]})
+  unrolled_grad = unrolled.factory("unrolled_grad_for_fd", ["z", "lam:f", "lam:g"], ["grad:gamma:z"], aux={"gamma": ["f", "g"]})
+
+  mapped_sp, unrolled_sp = mapped_sphess.output_sparsities[0], unrolled_sphess.output_sparsities[0]
+  assert mapped_sp is not None and unrolled_sp is not None
+  np.testing.assert_array_equal(mapped_sp.to_mask(), unrolled_sp.to_mask())
+  np.testing.assert_array_equal(mapped_sp.to_mask(), mapped_sp.to_mask().T)
+
+  zv = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3])
+  lam_f, lam_g = np.array(0.6), np.array([0.3, -0.8, 1.1])
+  mapped_dense = _scatter_sparse(np.asarray(mapped_sphess(zv, lam_f, lam_g)), mapped_sp)
+  unrolled_dense = _scatter_sparse(np.asarray(unrolled_sphess(zv, lam_f, lam_g)), unrolled_sp)
+  np.testing.assert_allclose(mapped_dense, unrolled_dense, rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(mapped_dense, unrolled_hess(zv, lam_f, lam_g), rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(mapped_dense, finite_difference(lambda value: unrolled_grad(value, lam_f, lam_g), zv), rtol=2e-5, atol=2e-6)
+
+
+def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  mapped, _ = _mapped_sphess_fixture(3)
+  sphess = mapped.factory("mapped_sphess_weighting", ["z", "lam:f", "lam:g"], ["sphess:gamma:z:z"], aux={"gamma": ["f", "g"]})
+  sparsity = sphess.output_sparsities[0]
+  assert sparsity is not None
+  zv = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3])
+  lam_f, lam_g = np.array(0.6), np.array([0.3, -0.8, 1.1])
+  base = _scatter_sparse(np.asarray(sphess(zv, lam_f, lam_g)), sparsity)
+  changed_lam = lam_g.copy()
+  changed_lam[1] += 0.7
+  changed = _scatter_sparse(np.asarray(sphess(zv, lam_f, changed_lam)), sparsity)
+  delta = changed - base
+  np.testing.assert_allclose(delta[:2], 0.0, atol=1e-12)
+  np.testing.assert_allclose(delta[4:], 0.0, atol=1e-12)
+  assert np.any(np.abs(delta[2:4, 2:4]) > 1e-9)
+
+  shared, shared_unrolled = _mapped_sphess_fixture(3, shared=True)
+  shared_sphess = shared.factory("mapped_sphess_shared_fill", ["z", "lam:f", "lam:g"], ["sphess:gamma:z:z"], aux={"gamma": ["f", "g"]})
+  shared_unrolled_sphess = shared_unrolled.factory(
+    "unrolled_sphess_shared_fill", ["z", "lam:f", "lam:g"], ["sphess:gamma:z:z"], aux={"gamma": ["f", "g"]}
+  )
+  shared_sp, shared_unrolled_sp = shared_sphess.output_sparsities[0], shared_unrolled_sphess.output_sparsities[0]
+  assert shared_sp is not None and shared_unrolled_sp is not None
+  np.testing.assert_array_equal(shared_sp.to_mask(), shared_unrolled_sp.to_mask())
+  shared_index = 6
+  mask = shared_sp.to_mask()
+  assert np.all(mask[shared_index, :shared_index])
+  assert np.all(mask[:shared_index, shared_index])
 
 
 def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:

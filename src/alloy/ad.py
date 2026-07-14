@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import weakref
 from typing import Any, Iterable, Sequence
 
@@ -22,7 +23,8 @@ _MAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]],
 
 
 class _JVPManyUnsupported(Exception):
-  pass
+  def __init__(self, op: str):
+    self.op = op
 
 
 def _is_zero_const(expr: Expr) -> bool:
@@ -248,12 +250,23 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
     raise ValueError(f"multi-seed JVP expects seeds shape (nseed, *{wrt.shape}), got {seeds.shape}")
   if seeds.shape[0] == 0:
     return Expr.const(np.zeros((0, *expr.shape), dtype=np.float64))
+  strict = os.environ.get("ALLOY_STRICT_JVP_MANY") == "1"
   try:
     ret = _jvp_many_structural(expr, wrt, seeds, {}, {})
-  except _JVPManyUnsupported:
+  except _JVPManyUnsupported as unsupported:
+    if strict:
+      raise NotImplementedError(
+        f"structural jvp_many does not support {unsupported.op!r}; ALLOY_STRICT_JVP_MANY=1 forbids the unrolled fallback"
+      ) from None
     return _jvp_many_unrolled(expr, wrt, seeds)
-  # a structural rule returning a mis-shaped tangent would be silently wrong downstream; the unrolled path is always correct
-  return ret if ret.shape == (seeds.shape[0], *expr.shape) else _jvp_many_unrolled(expr, wrt, seeds)
+  expected = (seeds.shape[0], *expr.shape)
+  if ret.shape == expected:
+    return ret
+  if strict:
+    raise NotImplementedError(
+      f"structural jvp_many returned shape {ret.shape} for {expr.op!r}, expected {expected}; ALLOY_STRICT_JVP_MANY=1 forbids the unrolled fallback"
+    )
+  return _jvp_many_unrolled(expr, wrt, seeds)
 
 
 def _jvp_many_unrolled(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
@@ -503,7 +516,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       ret = term if ret is None else ret + term
     memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64)) if ret is None else ret
     return ret
-  raise _JVPManyUnsupported
+  raise _JVPManyUnsupported(str(expr.op))
 
 
 def _seed_axis(expr: Expr, nseed: int, output: Expr | None = None) -> Expr:
