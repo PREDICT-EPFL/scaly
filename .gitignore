@@ -21,6 +21,8 @@ third_party/
 plugins/*/third_party/
 plugins/*/src/*/lib/
 plugins/*/src/*/include/
+plugins/*/src/*/_piqp_ext*.so
+plugins/*/src/*/_piqp_ext.pyi
 
 # Local benchmark outputs
 benchmarks/results/
