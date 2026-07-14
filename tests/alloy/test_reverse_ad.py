@@ -192,6 +192,23 @@ def test_jvp_many_transpose_stays_structural() -> None:
   np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
+def test_jvp_many_rank4_transpose_falls_back_and_strict_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+  # A rank-4 primal TRANSPOSE would need a rank-5 tangent TRANSPOSE, beyond the rank-4 lowering
+  # limit; the structural rule must decline (unrolled fallback lowers fine) instead of building an
+  # un-lowerable graph that only fails later at compile time.
+  x = al.sym("x", 12)
+  expr = (x * x).reshape((2, 3, 1, 2)).transpose((3, 1, 0, 2))
+  seeds = al.sym("seeds", (2, 12))
+  fn = al.Function("rank4_transpose_jvp", [x, seeds], [al.jvp_many(expr, x, seeds).reshape((24,))], ["x", "seeds"], ["tan"])
+  rng = np.random.default_rng(7)
+  xv, sv = rng.normal(size=12), rng.normal(size=(2, 12))
+  expected = np.concatenate([(2.0 * xv * sv[i]).reshape(2, 3, 1, 2).transpose(3, 1, 0, 2).reshape(-1) for i in range(2)])
+  np.testing.assert_allclose(fn(xv, sv), expected, rtol=1e-12, atol=1e-12)
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  with pytest.raises(NotImplementedError, match="structural jvp_many does not support"):
+    al.jvp_many(expr, x, seeds)
+
+
 def test_jvp_many_strict_mode_raises_on_unsupported_structural_rule(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
   x = al.sym("x", 2)

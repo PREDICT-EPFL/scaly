@@ -208,6 +208,13 @@ def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch:
   mask = shared_sp.to_mask()
   assert np.all(mask[shared_index, :shared_index])
   assert np.all(mask[:shared_index, shared_index])
+  # Values, not just pattern: a wrong-iteration sum or wrong per-instance multiplier in the
+  # stride-0 adjoint reduction would keep the same mask, so pin the numbers with nonuniform lam:g.
+  zv_shared = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3, 0.9])
+  lam_g_shared = np.array([0.7, -1.3, 0.45])
+  shared_dense = _scatter_sparse(np.asarray(shared_sphess(zv_shared, lam_f, lam_g_shared)), shared_sp)
+  shared_unrolled_dense = _scatter_sparse(np.asarray(shared_unrolled_sphess(zv_shared, lam_f, lam_g_shared)), shared_unrolled_sp)
+  np.testing.assert_allclose(shared_dense, shared_unrolled_dense, rtol=1e-10, atol=1e-10)
 
 
 def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:

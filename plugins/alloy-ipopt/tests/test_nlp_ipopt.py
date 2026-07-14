@@ -141,6 +141,23 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
   np.testing.assert_allclose(mapped_out["x"], target, atol=2e-6)
   np.testing.assert_allclose(mapped_out["x"], unrolled_out["x"], rtol=1e-7, atol=1e-7)
   np.testing.assert_allclose(mapped_out["f"], unrolled_out["f"], rtol=1e-8, atol=1e-10)
+  # The exact-Hessian callback was actually exercised, and the handoff carries correct values:
+  # this easy feasible problem could converge identically even with a broken Hessian.
+  assert mapped_nlp.last_status.stats is not None and mapped_nlp.last_status.stats["eval_h"] > 0
+
+  def hess_dense(mapped: bool, xv: np.ndarray, lam: np.ndarray) -> np.ndarray:
+    x = al.sym("x", 4)
+    h_eq = al.map_(piece, 2, [(x, 0, 2)]) if mapped else al.concat([piece.call([x[2 * it : 2 * (it + 1)]])[0] for it in range(2)])
+    base = al.Function(f"nlp_hess_base_{int(mapped)}", [x], [((x - target) ** 2).sum(), h_eq], ["x"], ["f", "g"])
+    shf = al.sparse_lagrangian_hessian(base, "x", ["f", "g"])
+    sp = shf.output_sparsities[0]
+    assert sp is not None
+    dense = np.zeros(sp.shape)
+    dense[np.asarray(sp.rows), np.asarray(sp.cols)] = np.asarray(shf(xv, np.array(1.0), lam))
+    return dense
+
+  lam = np.array([0.8, -1.7])
+  np.testing.assert_allclose(hess_dense(True, mapped_out["x"], lam), hess_dense(False, mapped_out["x"], lam), rtol=1e-10, atol=1e-12)
 
 
 @need_ipopt

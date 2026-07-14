@@ -66,6 +66,8 @@ def _c_array(values: tuple[int, ...]) -> str:
 
 def _c_ident(name: str) -> str:
   ident = re.sub(r"\W", "_", name)
+  if ident in ("w", "arg", "res", "iw", "mem"):  # must match program_c._c_ident's reserved-name mangling
+    ident += "_"
   return f"_{ident}" if ident[:1].isdigit() else ident
 
 

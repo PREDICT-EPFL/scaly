@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import weakref
 from typing import Any, Iterable, Sequence
 
@@ -9,6 +8,7 @@ import numpy as np
 
 from .expr import Expr, as_expr, concat, dot, gather, map_, scatter, stack, topo, zeros_like
 from .ops import Ops
+from .toolchain import env_bool
 
 
 # Cache derivative helper Functions per live callee object. Do not key by ``id(callee)``:
@@ -24,6 +24,7 @@ _MAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]],
 
 class _JVPManyUnsupported(Exception):
   def __init__(self, op: str):
+    super().__init__(op)
     self.op = op
 
 
@@ -250,14 +251,14 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
     raise ValueError(f"multi-seed JVP expects seeds shape (nseed, *{wrt.shape}), got {seeds.shape}")
   if seeds.shape[0] == 0:
     return Expr.const(np.zeros((0, *expr.shape), dtype=np.float64))
-  strict = os.environ.get("ALLOY_STRICT_JVP_MANY") == "1"
+  strict = env_bool("ALLOY_STRICT_JVP_MANY", False)
   try:
     ret = _jvp_many_structural(expr, wrt, seeds, {}, {})
   except _JVPManyUnsupported as unsupported:
     if strict:
       raise NotImplementedError(
         f"structural jvp_many does not support {unsupported.op!r}; ALLOY_STRICT_JVP_MANY=1 forbids the unrolled fallback"
-      ) from None
+      ) from unsupported
     return _jvp_many_unrolled(expr, wrt, seeds)
   expected = (seeds.shape[0], *expr.shape)
   if ret.shape == expected:
@@ -293,6 +294,8 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     memo[expr.id] = ret = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo).reshape((nseed, *expr.shape))
     return ret
   if expr.op == Ops.TRANSPOSE:
+    if len(expr.shape) > 3:
+      raise _JVPManyUnsupported(str(expr.op))  # seed axis would make a rank-5 TRANSPOSE, beyond the rank-4 lowering limit
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
     memo[expr.id] = ret = d0.transpose((0, *(axis + 1 for axis in expr.attrs["axes"])))
     return ret

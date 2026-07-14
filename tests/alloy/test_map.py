@@ -155,31 +155,47 @@ def test_mapped_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytes
   hidden = al.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
   piece = al.Function("map_sphess_codegen_piece", [x], [al.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
 
-  def render(length: int) -> tuple[str, tuple[str, ...]]:
+  def render(length: int) -> tuple[str, tuple[str, ...], int, dict[str, int]]:
     z = al.sym("z", 2 * length)
     mapped = al.map_(piece, length, [(z, 0, 2)])
     base = al.Function(f"map_sphess_codegen_base_{length}", [z], [(z * z).sum(), mapped], ["z"], ["f", "g"])
     sphess = base.factory(f"map_sphess_codegen_{length}", ["z", "lam:f", "lam:g"], ["sphess:gamma:z:z"], aux={"gamma": ["f", "g"]})
-    second_order = tuple(
-      sorted(
-        {
-          node.attrs["callee"].name
-          for node in topo(sphess.outputs)
-          if node.op == al.Ops.MAP and "_adj" in node.attrs["callee"].name and "_fwd" in node.attrs["callee"].name
-        }
-      )
-    )
-    return render_c_source(sphess), second_order
+    map_nodes = [node for node in topo(sphess.outputs) if node.op == al.Ops.MAP]
+    mapped_callees = sorted({node.attrs["callee"].name for node in map_nodes})
+    second_order = tuple(name for name in mapped_callees if "_adj" in name and "_fwd" in name)
+    source = render_c_source(sphess)
+    copies = {name: source.count(f"{name.replace(':', '_')}_raw(") for name in mapped_callees}
+    return source, second_order, len(map_nodes), copies
 
   rendered = [render(length) for length in (2, 8, 32)]
-  assert len({source.count("\n") for source, _ in rendered}) == 1
-  assert all(names for _, names in rendered)
-  assert len({names for _, names in rendered}) == 1
-  for source, names in rendered:
+  assert len({source.count("\n") for source, _, _, _ in rendered}) == 1
+  assert all(names for _, names, _, _ in rendered)
+  assert len({names for _, names, _, _ in rendered}) == 1
+  # The sphess graph's MAP-node count is a property of (#formals x #local-color-groups), never of
+  # the map length; every mapped callee (primal, adjoint, second-order) renders one definition and
+  # a length-independent number of call sites.
+  assert len({map_count for _, _, map_count, _ in rendered}) == 1
+  assert len({tuple(sorted(copies.items())) for _, _, _, copies in rendered}) == 1
+  for source, names, _, copies in rendered:
+    for name, count in copies.items():
+      assert count >= 2, f"{name} rendered without a call site"
     for name in names:
       c_name = name.replace(":", "_")
-      assert source.count(f"{c_name}_raw(") == 2  # one definition and one call in one MAP loop
+      assert copies[name] == 2  # one definition and one call in one MAP loop
       assert len(re.findall(rf"for \([^\n]+\) \{{\n\s+{re.escape(c_name)}_raw\(", source)) == 1
+
+
+def test_callee_formal_named_w_avoids_workspace_collision() -> None:
+  # The rendered callee signature appends the `double* w` workspace tail; a formal named `w` used
+  # to redefine that parameter and fail to compile.
+  x, w = al.sym("x", 3), al.sym("w", 3)
+  piece = al.Function("w_name_piece", [x, w], [x * w + w.sin()], ["x", "w"], ["y"])
+  z, wv = al.sym("z", 6), al.sym("w", 3)
+  fn = al.Function("w_name_map", [z, wv], [al.map_(piece, 2, [(z, 0, 3), (wv, 0, 0)])], ["z", "w"], ["y"])
+  zval = np.arange(6.0)
+  wval = np.array([0.3, -0.2, 0.8])
+  expected = np.concatenate([zval[3 * i : 3 * i + 3] * wval + np.sin(wval) for i in range(2)])
+  np.testing.assert_allclose(fn(zval, wval), expected)
 
 
 def test_map_compiled_c_matches_unrolled_concat(tmp_path) -> None:
