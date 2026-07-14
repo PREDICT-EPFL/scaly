@@ -107,8 +107,12 @@ def stats_c_timing_defs() -> list[str]:
     "#ifndef ALLOY_SOLVER_TIMING_DEFINED",
     "#define ALLOY_SOLVER_TIMING_DEFINED",
     "static double alloy_clock_s(void) {",
+    "#ifdef __APPLE__",
+    "  return 1e-9 * (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW);",
+    "#else",
     "  struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);",
     "  return (double)ts.tv_sec + 1e-9 * (double)ts.tv_nsec;",
+    "#endif",
     "}",
     "#endif",
   ]

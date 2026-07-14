@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -75,14 +77,23 @@ def test_qp_with_symbolic_parameters() -> None:
 
 @need_piqp
 def test_generated_qp_matches_python_backend_over_parameter_sweep() -> None:
-  mu = al.sym("mu", 2)
-  P, c = al.const(np.eye(2)), -mu
-  x_lb, x_ub = np.array([-1.0, -2.0]), np.array([2.0, 3.0])
-  generated = al.qp(P=P, c=c, x_lb=x_lb, x_ub=x_ub, backend="c", name="qp_parity_c")
-  python = al.qp(P=P, c=c, x_lb=x_lb, x_ub=x_ub, backend="python", name="qp_parity_python")
+  theta = al.sym("theta", 1)
+  t = theta[0]
+  P = al.stack([al.stack([2.0 + 0.1 * t, 0.05 * t]), al.stack([0.05 * t, 1.5 - 0.1 * t])])
+  c = al.stack([-0.4 + 0.2 * t, 0.3 - 0.1 * t])
+  A_eq = al.stack([al.stack([1.0 + 0.05 * t, 1.0 - 0.05 * t])])
+  b_eq = al.stack([0.2 + 0.1 * t])
+  G_ineq = al.stack([al.stack([1.0, 0.1 * t]), al.stack([-0.1 * t, 1.0])])
+  l_ineq = al.stack([-0.8 + 0.1 * t, -0.9 - 0.1 * t])
+  u_ineq = al.stack([0.9 + 0.1 * t, 1.0 - 0.1 * t])
+  x_lb = al.stack([-1.0 + 0.05 * t, -1.1 - 0.05 * t])
+  x_ub = al.stack([1.1 + 0.05 * t, 1.2 - 0.05 * t])
+  kwargs: dict[str, Any] = dict(P=P, c=c, A_eq=A_eq, b_eq=b_eq, G_ineq=G_ineq, l_ineq=l_ineq, u_ineq=u_ineq, x_lb=x_lb, x_ub=x_ub)
+  generated = al.qp(**kwargs, backend="c", name="qp_parity_c")
+  python = al.qp(**kwargs, backend="python", name="qp_parity_python")
   x0 = np.zeros(2)
-  for mu_value in (np.array([0.2, -0.4]), np.array([1.5, 2.0]), np.array([-2.0, 4.0])):
-    args = (x0, np.zeros(0), np.zeros(0), mu_value)
+  for t_value in (-0.6, 0.1, 0.8):
+    args = (x0, np.zeros(1), np.zeros(2), np.array([t_value]))
     c_out, py_out = generated(*args), python(*args)
     for name in generated.output_names:
       np.testing.assert_allclose(c_out[name], py_out[name], rtol=1e-8, atol=1e-8)

@@ -10,6 +10,7 @@ from alloy.solvers.registry import available_backends
 from alloy.toolchain import solver_diagnostic, solver_loadable
 from alloy.expr import topo
 from alloy.ops import Ops
+from alloy.codegen import render_c_source
 
 pytestmark = pytest.mark.skipif("piqp" not in available_backends(), reason="structural tests build al.qp and need the alloy-piqp plugin installed")
 need_piqp = pytest.mark.skipif(not solver_loadable("piqp"), reason=solver_diagnostic("piqpc"))
@@ -74,3 +75,12 @@ def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   assert stats.version == al.ALLOY_SOLVER_STATS_VERSION
   assert stats.status == al.AlloySolveStatus.OK
   assert stats.n_eval_f == 1
+
+
+def test_duplicate_nested_solver_names_fail_before_c_compilation() -> None:
+  mu = al.sym("mu", 2)
+  qps = [al.qp(P=np.eye(2), c=-mu) for _ in range(2)]
+  outs = [qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu]) for qp in qps]
+  host = al.Function("duplicate_solver_host", [mu], [outs[0][0], outs[1][0]], ["mu"], ["x0", "x1"])
+  with pytest.raises(ValueError, match="duplicate solver symbol 'qp_piqp'"):
+    render_c_source(host)

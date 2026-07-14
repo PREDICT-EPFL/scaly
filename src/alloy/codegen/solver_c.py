@@ -49,7 +49,10 @@ def solver_lib_dir() -> Path:
 
 
 def _c_ident(name: str) -> str:
+  """Must match ``codegen.c._c_ident`` and ``codegen.program_c._c_ident``."""
   ident = re.sub(r"\W", "_", name)
+  if ident in ("w", "arg", "res", "iw", "mem"):
+    ident += "_"
   return f"_{ident}" if ident[:1].isdigit() else ident
 
 

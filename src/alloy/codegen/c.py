@@ -243,6 +243,7 @@ def _render_c_source(fun: Function, observe: ProgramObserver | None = None) -> s
 
   if not _uses_solver(fun):
     return render_program_c_source(fun, observe=observe)
+  solver_stats_symbols(fun)  # validate duplicate solver symbols before lowering or compilation
   return _render_solver_bearing_source(fun, observe=observe)
 
 

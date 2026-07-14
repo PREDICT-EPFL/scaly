@@ -24,7 +24,7 @@ import numpy as np
 from .abi import C_API_SIGNATURE
 from .codegen.c import _c_ident, render_c_source
 from .codegen.solver_c import solver_compile_flags, solver_stats_symbols
-from .solvers.stats import CSolverStats, SolverStats
+from .solvers.stats import ALLOY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
 from .toolchain import cache_root, find_c_compiler, shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
@@ -221,6 +221,10 @@ class CompiledFunction:
     status = self._stats_entries[symbol](ctypes.byref(raw))
     if status != 0:
       raise JitError(f"{symbol}_stats returned status {status}")
+    if raw.version == 0:
+      raise JitError(f"solver {name!r} has not run yet (stats version is 0)")
+    if raw.version != ALLOY_SOLVER_STATS_VERSION:
+      raise JitError(f"solver stats ABI mismatch for {name!r}: artifact version {raw.version}, expected {ALLOY_SOLVER_STATS_VERSION}")
     return SolverStats.from_c(raw)
 
   def run(self, args: list[np.ndarray]) -> list[np.ndarray]:

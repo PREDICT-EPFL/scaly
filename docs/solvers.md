@@ -103,6 +103,9 @@ NLP:
 iter, stats)`. IPOPT stats contain iteration and value-callback counts; PIQP
 leaves stats as `None`. `status.ok` is `True` for PIQP `solved` and IPOPT
 `solve_succeeded`/`solved_to_acceptable_level`/`feasible_point_found`.
+During the generated-path soak period, `SolverStatus.code` and `.name` use the
+Alloy enum on the generated path but solver-native values on the Python path;
+`ok` agrees across both, and the distinction disappears when the Python path is deleted.
 
 ### Symbolic-parameter example
 
