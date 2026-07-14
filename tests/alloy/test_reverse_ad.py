@@ -82,6 +82,55 @@ def test_jvp_many_broadcast_scalar_tangent_over_vector() -> None:
   np.testing.assert_allclose(f(xv, sv), sv.sum(axis=1, keepdims=True) * xv + xv.sum() * sv)
 
 
+def test_jvp_many_structural_rank_mismatch_corner_cases() -> None:
+  # every rule of the structural batched JVP must return tangents shaped (nseed, *expr.shape), also under rank-mismatched broadcasts
+  from alloy.ad import _jvp_many_structural
+
+  rng = np.random.default_rng(3)
+  x = al.sym("x", 9)
+  seeds = al.sym("seeds", (4, 9))
+  xv, sv = rng.normal(size=9), rng.normal(size=(4, 9))
+  cases = {
+    "mat_times_vec": ((x[:6].reshape((2, 3)) * x[6:9]).reshape((6,)), lambda v: (v[:6].reshape(2, 3) * v[6:9]).ravel()),
+    "vec_div_scalar_sum": (x[:3] / x.sum(), lambda v: v[:3] / v.sum()),
+    "scalar_div_vec": (x.sum() / x[:3], lambda v: v.sum() / v[:3]),
+    "scalar_sum_plus_vec": (x.sum() + x[:3] * x[:3], lambda v: v.sum() + v[:3] * v[:3]),
+    "vec_minus_scalar_sum": (x[:3] - x.sum(), lambda v: v[:3] - v.sum()),
+    "scalar_plus_const_vec": (x.sum() + al.const(np.arange(3.0)), lambda v: v.sum() + np.arange(3.0)),
+    "vec_pow_scalar_sym": ((x[:3] * x[:3] + 1.0) ** x[8], lambda v: (v[:3] * v[:3] + 1.0) ** v[8]),
+    "scalar_pow_const_vec": (x[8] ** al.const(np.array([2.0, 3.0, 4.0])), lambda v: v[8] ** np.array([2.0, 3.0, 4.0])),
+  }
+  for name, (expr, np_fn) in cases.items():
+    dy = _jvp_many_structural(expr, x, seeds, {}, {})
+    assert dy.shape == (4, *expr.shape), f"{name}: tangent shape {dy.shape}"
+    f = al.Function(f"jvp_many_{name}", [x, seeds], [dy], ["x", "seeds"], ["dy"])
+    eps = 1e-6
+    fd = np.stack([(np_fn(xv + eps * sv[i]) - np_fn(xv - eps * sv[i])) / (2 * eps) for i in range(4)])
+    np.testing.assert_allclose(f(xv, sv), fd, rtol=1e-6, atol=1e-8, err_msg=name)
+
+
+def test_jvp_many_vec_dot_vec_keeps_seed_axis() -> None:
+  # (dx * y).sum() in the 1-D matmul JVP branch also contracted the seed axis, silently summing per-seed derivatives
+  x = al.sym("x", 6)
+  expr = x[:3] @ x[3:6] + x[0] * x[1]
+  fn = al.Function("vec_dot_vec", [x], [al.stack([expr])], ["x"], ["y"])
+  jf = fn.factory("vec_dot_vec_jac", ["x"], ["jac:y:x"])
+  xv = np.random.default_rng(11).normal(size=6)
+  expected = np.concatenate([xv[3:6] + np.array([xv[1], xv[0], 0.0]), xv[:3]])[None, :]
+  np.testing.assert_allclose(jf(xv), expected, rtol=1e-12, atol=1e-12)
+
+
+def test_sparse_jacobian_colored_scalar_plus_vector() -> None:
+  z = al.sym("z", 6)
+  sj = al.sparse_jacobian_colored(z[5] + z[:5] * z[:5], z)
+  f = al.Function("spjac_scalar_plus_vec", [z], [sj.to_dense()], ["z"], ["dense"])
+  zv = np.random.default_rng(5).normal(size=6)
+  dense = np.zeros((5, 6))
+  dense[:, 5] = 1.0
+  dense[np.arange(5), np.arange(5)] += 2 * zv[:5]
+  np.testing.assert_allclose(f(zv), dense)
+
+
 def test_vjp_many_uses_leading_seed_axis_and_multiple_outputs() -> None:
   x = al.sym("x", 2)
   y0 = x * x

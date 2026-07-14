@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
+
+import numpy as np
 
 import alloy as al
 from alloy.codegen.c import render_c_source
@@ -16,30 +19,51 @@ C_M0 = 11.0
 C_R0 = 0.1
 C_R1 = 0.01
 C_R2 = 0.001
+N_PARAMS = 7
 
 
-def _continuous_dynamics(x, u):
+@dataclass(frozen=True)
+class TrackingParams:
+  wheelbase: float = WHEELBASE
+  dt: float = DT
+  mass: float = M
+  c_m0: float = C_M0
+  c_r0: float = C_R0
+  c_r1: float = C_R1
+  c_r2: float = C_R2
+
+  def array(self) -> np.ndarray:
+    return np.array([self.wheelbase, self.dt, self.mass, self.c_m0, self.c_r0, self.c_r1, self.c_r2], dtype=np.float64)
+
+
+def n_param(horizon: int) -> int:
+  return NX * (horizon + 1) + N_PARAMS
+
+
+def _continuous_dynamics(x, u, params):
+  wheelbase, _, mass, c_m0, c_r0, c_r1, c_r2 = [params[i] for i in range(N_PARAMS)]
   phi, v = x[2], x[3]
   throttle, delta = u[0], u[1]
   beta = 0.5 * delta
   vx = v * beta.cos()
-  lr = 0.5 * WHEELBASE
+  lr = 0.5 * wheelbase
   return al.stack(
     [
       v * (phi + beta).cos(),
       v * (phi + beta).sin(),
       v * beta.sin() / lr,
-      (C_M0 * throttle - (C_R0 + C_R1 * vx + C_R2 * vx * vx) * (10 * vx).tanh()) / M,
+      (c_m0 * throttle - (c_r0 + c_r1 * vx + c_r2 * vx * vx) * (10 * vx).tanh()) / mass,
     ]
   )
 
 
-def _rk4(x, u):
-  k1 = _continuous_dynamics(x, u)
-  k2 = _continuous_dynamics(x + DT / 2 * k1, u)
-  k3 = _continuous_dynamics(x + DT / 2 * k2, u)
-  k4 = _continuous_dynamics(x + DT * k3, u)
-  return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+def _rk4(x, u, params):
+  dt = params[1]
+  k1 = _continuous_dynamics(x, u, params)
+  k2 = _continuous_dynamics(x + dt / 2 * k1, u, params)
+  k3 = _continuous_dynamics(x + dt / 2 * k2, u, params)
+  k4 = _continuous_dynamics(x + dt * k3, u, params)
+  return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
 @al.function("tracking_eq_initial", {"z": NZ, "p": NX})
@@ -47,20 +71,20 @@ def eq_initial(z, p):
   return {"eq": z[:NX] - p[:NX]}
 
 
-@al.function("tracking_eq_interstage", {"z": NZ, "znext": NZ, "p": NX})
-def eq_interstage(z, znext, p):
-  return {"eq": _rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]}
+@al.function("tracking_eq_interstage", {"z": NZ, "znext": NZ, "params": N_PARAMS})
+def eq_interstage(z, znext, params):
+  return {"eq": _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]}
 
 
 def tracking_eq_function(horizon: int) -> al.Function:
   z = al.sym("z", NZ * (horizon + 1))
-  p = al.sym("p", NX * (horizon + 1), diff=False)
+  p = al.sym("p", n_param(horizon), diff=False)
+  params = p[NX * (horizon + 1) :]
   parts = [eq_initial.call([z[:NZ], p[:NX]])[0]]
   for i in range(horizon):
     zi = z[i * NZ : (i + 1) * NZ]
     znext = z[(i + 1) * NZ : (i + 2) * NZ]
-    pi = p[(i + 1) * NX : (i + 2) * NX]
-    parts.append(eq_interstage.call([zi, znext, pi])[0])
+    parts.append(eq_interstage.call([zi, znext, params])[0])
   return al.Function(f"tracking_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
 
@@ -71,9 +95,13 @@ def tracking_eq_function_map(horizon: int) -> al.Function:
   per-stage unrolled construction.
   """
   z = al.sym("z", NZ * (horizon + 1))
-  p = al.sym("p", NX * (horizon + 1), diff=False)
+  p = al.sym("p", n_param(horizon), diff=False)
   initial = eq_initial.call([z[:NZ], p[:NX]])[0]
-  mapped = al.scan(eq_interstage, length=horizon, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
+  mapped = al.scan(
+    eq_interstage,
+    length=horizon,
+    inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
+  )
   return al.Function(f"tracking_eq_map_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
 
 
@@ -82,27 +110,30 @@ def ca_tracking_eq_jac(horizon: int, name: str = "tracking_eq_jac", sym_t=None):
 
   sym_t = casadi.SX if sym_t is None else sym_t
   z = sym_t.sym("z", NZ * (horizon + 1))
-  p = sym_t.sym("p", NX * (horizon + 1))
+  p = sym_t.sym("p", n_param(horizon))
+  params = p[NX * (horizon + 1) :]
 
   def ca_cont(x, u):
+    wheelbase, _, mass, c_m0, c_r0, c_r1, c_r2 = [params[i] for i in range(N_PARAMS)]
     phi, v = x[2], x[3]
     throttle, delta = u[0], u[1]
     beta = 0.5 * delta
     vx = v * casadi.cos(beta)
-    lr = 0.5 * WHEELBASE
+    lr = 0.5 * wheelbase
     return casadi.vertcat(
       v * casadi.cos(phi + beta),
       v * casadi.sin(phi + beta),
       v * casadi.sin(beta) / lr,
-      (C_M0 * throttle - (C_R0 + C_R1 * vx + C_R2 * vx * vx) * casadi.tanh(10 * vx)) / M,
+      (c_m0 * throttle - (c_r0 + c_r1 * vx + c_r2 * vx * vx) * casadi.tanh(10 * vx)) / mass,
     )
 
   def ca_rk4(x, u):
+    dt = params[1]
     k1 = ca_cont(x, u)
-    k2 = ca_cont(x + DT / 2 * k1, u)
-    k3 = ca_cont(x + DT / 2 * k2, u)
-    k4 = ca_cont(x + DT * k3, u)
-    return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+    k2 = ca_cont(x + dt / 2 * k1, u)
+    k3 = ca_cont(x + dt / 2 * k2, u)
+    k4 = ca_cont(x + dt * k3, u)
+    return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
   parts = [z[:NX] - p[:NX]]
   for i in range(horizon):
@@ -125,7 +156,7 @@ def tracking_eq_sparse_metrics(horizon: int, *, render_source: bool = False) -> 
   t0 = time.perf_counter()
   sj = al.sparse_jacobian_colored(fn.outputs[0], fn.inputs[0])
   ad_ms = (time.perf_counter() - t0) * 1000.0
-  spjf = al.Function(f"tracking_eq_N{horizon}_spjac_colored", [fn.inputs[0]], [sj.values], ["z"], ["spjac_eq_z"], [sj.sparsity])
+  spjf = al.Function(f"tracking_eq_N{horizon}_spjac_colored", fn.inputs, [sj.values], fn.input_names, ["spjac_eq_z"], [sj.sparsity])
   source_bytes = len(render_c_source(spjf)) if render_source else 0
 
   return {

@@ -35,5 +35,6 @@ The doctrine is claims-first: broad sweeps establish scaling and canonical point
 | problem | scaling axis | reference |
 |---|---|---|
 | chain of masses | number of masses | laopt/acados chain-mass formulation; `M=5` is the canonical point |
-| tracking NMPC | horizon | CasADi SX/MX |
+| tracking NMPC | horizon | CasADi SX/MX; reference stages followed by symbolic vehicle parameters in `p` |
 | unbumpercars | number of cars | CasADi SX/MX |
+| bumpercars CT-DTCBF filter | number of cars | CasADi MX; neural weights followed by symbolic vehicle parameters and `dt` |

@@ -108,14 +108,14 @@ def _tracking_alloy(size: int, out_dir: Path) -> dict:
   fn = tracking_nmpc.tracking_eq_function_map(size)
   sj = al.sparse_jacobian(fn.outputs[0], fn.inputs[0])
   name = f"alloy_tracking_eq_jac_N{size}"
-  spjf = al.Function(name, [fn.inputs[0]], [sj.values], ["z"], ["spjac_eq_z"], [sj.sparsity])
+  spjf = al.Function(name, fn.inputs, [sj.values], fn.input_names, ["spjac_eq_z"], [sj.sparsity])
   build_ms = (time.perf_counter() - started) * 1000
   module, render_ms = _render_alloy(spjf, name, out_dir)
   return _module_info(
     name,
     "alloy",
     module,
-    [("z", tracking_nmpc.NZ * (size + 1))],
+    [("z", tracking_nmpc.NZ * (size + 1)), ("p", tracking_nmpc.n_param(size))],
     sj.sparsity,
     (fn.outputs[0].shape[0], fn.inputs[0].shape[0]),
     build_ms,
@@ -127,7 +127,7 @@ def _tracking_alloy(size: int, out_dir: Path) -> dict:
 
 
 def _chain_alloy(size: int, out_dir: Path) -> dict:
-  horizon = 40
+  horizon = chain_of_masses.HORIZON
   started = time.perf_counter()
   fn = chain_of_masses.chain_eq_function(size, horizon)
   name = f"alloy_chain_eq_jac_M{size}"
@@ -184,13 +184,13 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   name = f"casadi_{kind}_{stem}_jac_{'M' if workload == 'chain' else 'N'}{size}"
   started = time.perf_counter()
   if workload == "chain":
-    horizon = 40
+    horizon = chain_of_masses.HORIZON
     fn = chain_of_masses.ca_chain_eq_jac(size, horizon, sym_t=sym_t, name=name, map_stages=True)
     inputs = [("z", chain_of_masses.n_dec(size, horizon)), ("p", chain_of_masses.n_param(size))]
     benchmark = f"BM_Casadi{kind.title()}ChainEqJacM{size}"
   elif workload == "tracking":
     fn = tracking_nmpc.ca_tracking_eq_jac(size, name=name, sym_t=sym_t)
-    inputs = [("z", tracking_nmpc.NZ * (size + 1)), ("p", tracking_nmpc.NX * (size + 1))]
+    inputs = [("z", tracking_nmpc.NZ * (size + 1)), ("p", tracking_nmpc.n_param(size))]
     benchmark = f"BM_Casadi{kind.title()}TrackingEqJacN{size}"
   else:
     fn = unbumpercars.ca_unbumpercars_ineq_jac(size, sym_t=sym_t, name=name)
@@ -241,14 +241,14 @@ def build_kernel(workload: str, size: int, backend: str, out_dir: Path) -> dict:
 
 def _samples(workload: str, size: int, info: dict, out_dir: Path, weights: np.ndarray | None = None):
   if workload == "chain":
-    horizon = 40
+    horizon = chain_of_masses.HORIZON
     zv, pv = chain_of_masses.sample_inputs(size, horizon)
     expected = chain_of_masses.chain_eq_jac_dense_reference(size, horizon, zv, pv).reshape(-1)
     values = {"z": zv, "p": pv}
   elif workload == "tracking":
     rng = np.random.default_rng(7)
     zv = rng.normal(scale=0.4, size=tracking_nmpc.NZ * (size + 1))
-    pv = rng.normal(scale=0.4, size=tracking_nmpc.NX * (size + 1))
+    pv = np.concatenate([rng.normal(scale=0.4, size=tracking_nmpc.NX * (size + 1)), tracking_nmpc.TrackingParams().array()])
     ref = tracking_nmpc.tracking_eq_function(size).factory(f"tracking_dense_ref_N{size}", ["z", "p"], ["jac:eq:z"])
     expected = np.asarray(ref(zv, pv), dtype=np.float64).reshape(-1)
     values = {"z": zv, "p": pv}

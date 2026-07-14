@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Closed-loop plant + safety-filter runner; the plant wraps theta after each RK4 step to prevent unbounded angle drift."""
+
 from __future__ import annotations
 
 import argparse
@@ -12,15 +14,41 @@ import numpy as np
 from .common import (
   DEFAULT_MODEL_PATH,
   ClosedLoopConfig,
+  CTFullWeights,
   FilterConfig,
-  desired_inputs_to_center,
   load_ct_full_weights,
   min_pair_distance,
+  normalize_angle,
   rk4_step_np,
   sample_initial_states,
   write_json,
 )
 from .filters import AlloyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter, FilterStats, OpenLoopFilter, SafetyFilter
+
+
+class Simulator:
+  def __init__(self, initial_state: np.ndarray, cfg: ClosedLoopConfig, weights: CTFullWeights):
+    self.states = np.asarray(initial_state, dtype=np.float64).copy()
+    self.ncars = cfg.ncars
+    self.dt = cfg.dt
+    self.physics = cfg.physics
+    self.weights = weights
+    self.target_center = cfg.target_center
+    self.nominal_speed = cfg.nominal_speed
+
+  def desired_inputs(self) -> np.ndarray:
+    out = np.zeros((self.ncars, 2), dtype=np.float64)
+    center = np.array([(self.physics.x_min + self.physics.x_max) / 2.0, (self.physics.y_min + self.physics.y_max) / 2.0])
+    for i, state in enumerate(self.states):
+      out[i, 0] = self.nominal_speed
+      if self.target_center:
+        angle = np.arctan2(center[1] - state[1], center[0] - state[0])
+        out[i, 1] = np.clip(float(normalize_angle(angle - state[2])) / self.physics.max_delta, -1.0, 1.0)
+    return np.clip(out, -1.0, 1.0)
+
+  def step(self, safe_inputs: np.ndarray) -> np.ndarray:
+    self.states = np.stack([rk4_step_np(state, u, self.dt, self.weights, self.physics) for state, u in zip(self.states, safe_inputs, strict=True)])
+    return self.states.copy()
 
 
 def make_filter(kind: str, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights):
@@ -34,44 +62,42 @@ def make_filter(kind: str, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, w
 
 
 def run_one(kind: str, initial_state: np.ndarray, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights, out_dir: Path, dump_alloy_c: bool):
-  controller: SafetyFilter = make_filter(kind, loop_cfg, filt_cfg, weights)
+  safety_filter: SafetyFilter = make_filter(kind, loop_cfg, filt_cfg, weights)
+  sim = Simulator(initial_state, loop_cfg, weights)
   impl_dir = out_dir / kind
   impl_dir.mkdir(parents=True, exist_ok=True)
-  if dump_alloy_c and isinstance(controller, AlloyDTCBFSafetyFilter):
-    controller.dump_c(impl_dir / "alloy_c")
-  states = initial_state.copy()
+  if dump_alloy_c and isinstance(safety_filter, AlloyDTCBFSafetyFilter):
+    safety_filter.dump_c(impl_dir / "alloy_c")
+  states = sim.states
   state_traj = np.zeros((loop_cfg.horizon + 1, loop_cfg.ncars, states.shape[1]), dtype=np.float64)
   desired_traj = np.zeros((loop_cfg.horizon, loop_cfg.ncars, 2), dtype=np.float64)
   input_traj = np.zeros((loop_cfg.horizon, loop_cfg.ncars, 2), dtype=np.float64)
   min_dist = float("inf")
   state_traj[0] = states
   for t in range(loop_cfg.horizon):
-    desired = desired_inputs_to_center(states, loop_cfg)
-    safe = controller.compute_safe_input(states, desired, t)
+    desired = sim.desired_inputs()
+    safe = safety_filter.compute_safe_input(states, desired, t)
     desired_traj[t] = desired
     input_traj[t] = safe
-    next_states = np.zeros_like(states)
-    for i in range(loop_cfg.ncars):
-      next_states[i] = rk4_step_np(states[i], safe[i], loop_cfg.dt, weights, loop_cfg.physics)
-    states = next_states
+    states = sim.step(safe)
     state_traj[t + 1] = states
     min_dist = min(min_dist, min_pair_distance(states))
 
   np.savez_compressed(impl_dir / "rollout.npz", state=state_traj, desired=desired_traj, applied=input_traj)
-  write_stats_csv(impl_dir / "stats.csv", controller.stats_history)
+  write_stats_csv(impl_dir / "stats.csv", safety_filter.stats_history)
   write_json(
     impl_dir / "summary.json",
     {
       "kind": kind,
       "min_pair_distance": min_dist,
-      "avg_solver_ms": float(np.mean([s.solver_ms for s in controller.stats_history])),
-      "p95_solver_ms": float(np.percentile([s.solver_ms for s in controller.stats_history], 95)),
-      "avg_tracking_cost": float(np.mean([s.tracking_cost for s in controller.stats_history])),
-      "success_rate": float(np.mean([s.success for s in controller.stats_history])),
-      "last_stats": controller.stats_history[-1] if controller.stats_history else None,
+      "avg_solver_ms": float(np.mean([s.solver_ms for s in safety_filter.stats_history])),
+      "p95_solver_ms": float(np.percentile([s.solver_ms for s in safety_filter.stats_history], 95)),
+      "avg_tracking_cost": float(np.mean([s.tracking_cost for s in safety_filter.stats_history])),
+      "success_rate": float(np.mean([s.success for s in safety_filter.stats_history])),
+      "last_stats": safety_filter.stats_history[-1] if safety_filter.stats_history else None,
     },
   )
-  return controller, state_traj, desired_traj, input_traj, min_dist
+  return safety_filter, state_traj, desired_traj, input_traj, min_dist
 
 
 def write_stats_csv(path: Path, stats: list[FilterStats]) -> None:
@@ -185,6 +211,7 @@ def parse_args() -> argparse.Namespace:
     action="store_true",
     help="Use/evaluate exact Hessians in CasADi. Alloy stays limited-memory because reverse AD through MAP Hessians is not available here.",
   )
+  p.add_argument("--no-casadi-expand", action="store_true", help="Disable CasADi MX-to-SX expansion before constructing the NLP solver.")
   p.add_argument("--eval-repeats", type=int, default=1)
   p.add_argument("--dump-alloy-c", action="store_true")
   p.add_argument("--show", action="store_true")
@@ -210,6 +237,7 @@ def main() -> None:
     ipopt_tol=args.ipopt_tol,
     eval_repeats=max(1, args.eval_repeats),
     limited_memory_hessian=not args.exact_hessian,
+    casadi_expand=not args.no_casadi_expand,
   )
   args.out_dir.mkdir(parents=True, exist_ok=True)
   initial = sample_initial_states(loop_cfg)

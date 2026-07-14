@@ -8,6 +8,7 @@ import alloy as al
 
 NU = 3
 N_PARAMS = 5
+HORIZON = 40  # laopt instance: N=40 shooting intervals, tf=8.0 -> dt=0.2
 
 
 @dataclass(frozen=True)
@@ -184,15 +185,17 @@ def _step_expr(x, u, params, n_masses: int):  # type: ignore[no-untyped-def]
 
 
 def _objective(z, n_masses: int, horizon: int):  # type: ignore[no-untyped-def]
+  # laopt transcribes on normalized time: each stage cost enters as h*(q'x + 0.5*x'Px + 0.5*u'Pu) with h=1/N, the Mayer term unscaled.
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   end = 3 * (n_masses - 2)
   vel = 3 * (n_masses - 1)
+  h = 1.0 / horizon
   cost = al.const(0.0)
   for i in range(horizon):
     zi = z[i * nz : (i + 1) * nz]
-    cost = cost - 7.5 * zi[end] + 2.5 * al.sumsqr(zi[end : end + 3]) + 25.0 * al.sumsqr(zi[vel:nx]) + 0.1 * al.sumsqr(zi[nx:])
+    cost = cost + h * (-7.5 * zi[end] + 0.5 * (2.5 * al.sumsqr(zi[end : end + 3]) + 25.0 * al.sumsqr(zi[vel:nx]) + 0.1 * al.sumsqr(zi[nx:])))
   terminal = z[horizon * nz : horizon * nz + nx]
-  return cost - 7.5 * terminal[end] + 10.0 * al.sumsqr(terminal[end : end + 3])
+  return cost - 7.5 * terminal[end] + 0.5 * 10.0 * al.sumsqr(terminal[end : end + 3])
 
 
 def chain_nlp(n_masses: int, horizon: int):
@@ -276,11 +279,12 @@ def ca_chain_nlpsol(n_masses: int, horizon: int, *, expand: bool = True, jit: bo
   z, p, eq = _ca_eq(n_masses, horizon, ca.MX, map_stages=True)
   f = 0
   end, vel = 3 * (n_masses - 2), 3 * (n_masses - 1)
+  h = 1.0 / horizon
   for i in range(horizon):
     zi = z[i * nz : (i + 1) * nz]
-    f += -7.5 * zi[end] + 2.5 * ca.sumsqr(zi[end : end + 3]) + 25.0 * ca.sumsqr(zi[vel:nx]) + 0.1 * ca.sumsqr(zi[nx:])
+    f += h * (-7.5 * zi[end] + 0.5 * (2.5 * ca.sumsqr(zi[end : end + 3]) + 25.0 * ca.sumsqr(zi[vel:nx]) + 0.1 * ca.sumsqr(zi[nx:])))
   terminal = z[horizon * nz : horizon * nz + nx]
-  f += -7.5 * terminal[end] + 10.0 * ca.sumsqr(terminal[end : end + 3])
+  f += -7.5 * terminal[end] + 0.5 * 10.0 * ca.sumsqr(terminal[end : end + 3])
   return ca.nlpsol(
     f"ca_chain_M{n_masses}_N{horizon}",
     "ipopt",

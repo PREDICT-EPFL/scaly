@@ -25,6 +25,7 @@ WEIGHT_SHAPES = (W0_SHAPE, B0_SHAPE, W1_SHAPE, B1_SHAPE, W2_SHAPE, B2_SHAPE)
 WEIGHT_SIZES = tuple(int(np.prod(s)) for s in WEIGHT_SHAPES)
 OFFSETS = tuple(int(x) for x in np.cumsum([0, X_SCALE_SIZE, *WEIGHT_SIZES]))
 N_PW = OFFSETS[-1]
+N_PHYSICS = 8
 DEFAULT_MODEL_PATH = Path(__file__).parent / "data" / "ct_full_xlarge.pt"
 
 
@@ -38,6 +39,9 @@ class CarPhysics:
   x_max: float = 15.0
   y_min: float = 0.0
   y_max: float = 15.0
+
+  def array(self) -> np.ndarray:
+    return np.array([self.lf, self.lr, self.max_delta, self.steering_time_constant, self.x_min, self.x_max, self.y_min, self.y_max], dtype=np.float64)
 
 
 @dataclass(slots=True)
@@ -64,6 +68,7 @@ class FilterConfig:
   ipopt_max_iter: int = 300
   eval_repeats: int = 1
   limited_memory_hessian: bool = True
+  casadi_expand: bool = True
 
 
 @dataclass(slots=True)
@@ -208,18 +213,6 @@ def sample_initial_states(cfg: ClosedLoopConfig) -> np.ndarray:
     else:
       raise RuntimeError(f"could not place car {i}; reduce --ncars or --safety-radius")
   return states
-
-
-def desired_inputs_to_center(states: np.ndarray, cfg: ClosedLoopConfig) -> np.ndarray:
-  out = np.zeros((cfg.ncars, NCTRL), dtype=np.float64)
-  center = np.array([(cfg.physics.x_min + cfg.physics.x_max) / 2.0, (cfg.physics.y_min + cfg.physics.y_max) / 2.0])
-  for i, s in enumerate(states):
-    out[i, 0] = cfg.nominal_speed
-    if cfg.target_center:
-      angle_to_center = np.arctan2(center[1] - s[1], center[0] - s[0])
-      alpha = float(normalize_angle(angle_to_center - s[2]))
-      out[i, 1] = np.clip(alpha / cfg.physics.max_delta, -1.0, 1.0)
-  return np.clip(out, -1.0, 1.0)
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:

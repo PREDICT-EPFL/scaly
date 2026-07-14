@@ -248,9 +248,11 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
   if seeds.shape[0] == 0:
     return Expr.const(np.zeros((0, *expr.shape), dtype=np.float64))
   try:
-    return _jvp_many_structural(expr, wrt, seeds, {}, {})
+    ret = _jvp_many_structural(expr, wrt, seeds, {}, {})
   except _JVPManyUnsupported:
     return _jvp_many_unrolled(expr, wrt, seeds)
+  # a structural rule returning a mis-shaped tangent would be silently wrong downstream; the unrolled path is always correct
+  return ret if ret.shape == (seeds.shape[0], *expr.shape) else _jvp_many_unrolled(expr, wrt, seeds)
 
 
 def _jvp_many_unrolled(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
@@ -279,12 +281,22 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   if expr.op == Ops.ADD:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
     d1 = _jvp_many_structural(expr.args[1], wrt, seeds, memo, dep_memo)
-    memo[expr.id] = ret = d1 if _is_zero_const(d0) else d0 if _is_zero_const(d1) else d0 + d1
+    if _is_zero_const(d0) and expr.args[1].shape == expr.shape:
+      memo[expr.id] = ret = d1
+    elif _is_zero_const(d1) and expr.args[0].shape == expr.shape:
+      memo[expr.id] = ret = d0
+    else:
+      memo[expr.id] = ret = _broadcast_tangent(d0, expr.args[0], expr, nseed) + _broadcast_tangent(d1, expr.args[1], expr, nseed)
     return ret
   if expr.op == Ops.SUB:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
     d1 = _jvp_many_structural(expr.args[1], wrt, seeds, memo, dep_memo)
-    memo[expr.id] = ret = -d1 if _is_zero_const(d0) else d0 if _is_zero_const(d1) else d0 - d1
+    if _is_zero_const(d0) and expr.args[1].shape == expr.shape:
+      memo[expr.id] = ret = -d1
+    elif _is_zero_const(d1) and expr.args[0].shape == expr.shape:
+      memo[expr.id] = ret = d0
+    else:
+      memo[expr.id] = ret = _broadcast_tangent(d0, expr.args[0], expr, nseed) - _broadcast_tangent(d1, expr.args[1], expr, nseed)
     return ret
   if expr.op == Ops.NEG:
     memo[expr.id] = ret = -_jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
@@ -422,23 +434,25 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   args = expr.args
   d = [_jvp_many_structural(arg, wrt, seeds, memo, dep_memo) for arg in args]
   if expr.op == Ops.MUL:
-    memo[expr.id] = ret = _broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], nseed) + _seed_axis(
-      args[0], nseed
+    memo[expr.id] = ret = _broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], nseed, expr) + _seed_axis(
+      args[0], nseed, expr
     ) * _broadcast_tangent(d[1], args[1], expr, nseed)
     return ret
   if expr.op == Ops.DIV:
-    y = _seed_axis(args[1], nseed)
+    y = _seed_axis(args[1], nseed, expr)
     memo[expr.id] = ret = (
-      _broadcast_tangent(d[0], args[0], expr, nseed) * y - _seed_axis(args[0], nseed) * _broadcast_tangent(d[1], args[1], expr, nseed)
+      _broadcast_tangent(d[0], args[0], expr, nseed) * y - _seed_axis(args[0], nseed, expr) * _broadcast_tangent(d[1], args[1], expr, nseed)
     ) / (y**2)
     return ret
   if expr.op == Ops.POW:
     if args[1].op == Ops.CONST:
-      memo[expr.id] = ret = _seed_axis(args[1] * (args[0] ** (args[1] - 1)), nseed) * d[0]
+      memo[expr.id] = ret = _seed_axis(args[1] * (args[0] ** (args[1] - 1)), nseed, expr) * _broadcast_tangent(d[0], args[0], expr, nseed)
     else:
-      x = _seed_axis(args[0], nseed)
-      y = _seed_axis(args[1], nseed)
-      memo[expr.id] = ret = _seed_axis(expr, nseed) * (d[1] * x.log() + y * d[0] / x)
+      x = _seed_axis(args[0], nseed, expr)
+      y = _seed_axis(args[1], nseed, expr)
+      dx = _broadcast_tangent(d[0], args[0], expr, nseed)
+      dy = _broadcast_tangent(d[1], args[1], expr, nseed)
+      memo[expr.id] = ret = _seed_axis(expr, nseed) * (dy * x.log() + y * dx / x)
     return ret
   if expr.op == Ops.SIN:
     memo[expr.id] = ret = _seed_axis(args[0].cos(), nseed) * d[0]
@@ -479,8 +493,13 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   raise _JVPManyUnsupported
 
 
-def _seed_axis(expr: Expr, nseed: int) -> Expr:
-  return expr if expr.shape == () else stack([expr] * nseed, axis=0)
+def _seed_axis(expr: Expr, nseed: int, output: Expr | None = None) -> Expr:
+  # tangents carry a leading seed axis, so a stacked primal must also be rank-aligned against (nseed, *output.shape) when its rank is lower
+  if expr.shape == ():
+    return expr
+  missing = 0 if output is None else len(output.shape) - len(expr.shape)
+  t = stack([expr] * nseed, axis=0)
+  return t if missing == 0 else t.reshape((nseed, *(1,) * missing, *expr.shape))
 
 
 def _broadcast_tangent(tangent: Expr, operand: Expr, output: Expr, nseed: int) -> Expr:
@@ -494,7 +513,7 @@ def _jvp_many_matmul_left(x: Expr, y: Expr, dx: Expr, nseed: int) -> Expr:
   if len(x.shape) == 1 and len(y.shape) == 2:
     return dx @ y
   if len(x.shape) == 1 and len(y.shape) == 1:
-    return (dx * y).sum()
+    return dx @ y  # (nseed, n) @ (n,) -> (nseed,); a plain .sum() would also contract the seed axis
   return stack([dx[i] @ y for i in range(nseed)], axis=0)
 
 
@@ -504,7 +523,7 @@ def _jvp_many_matmul_right(x: Expr, y: Expr, dy: Expr, nseed: int) -> Expr:
   if len(x.shape) == 1 and len(y.shape) == 2:
     return stack([x @ dy[i] for i in range(nseed)], axis=0)
   if len(x.shape) == 1 and len(y.shape) == 1:
-    return (x * dy).sum()
+    return dy @ x  # (nseed, n) @ (n,) -> (nseed,); a plain .sum() would also contract the seed axis
   return stack([x @ dy[i] for i in range(nseed)], axis=0)
 
 

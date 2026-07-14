@@ -373,8 +373,8 @@ def test_tracking_workload_renders_and_matches(kind) -> None:
   base = tw.tracking_eq_function(3)
   fn = {
     "forward": base,
-    "jacobian": base.factory("trk_jac", ["z"], ["jac:eq:z"]),
-    "sparse_jacobian": al.spjacobian(base, "z", "eq"),
+    "jacobian": base.factory("trk_jac", ["z", "p"], ["jac:eq:z"]),
+    "sparse_jacobian": base.factory("trk_spjac", ["z", "p"], ["spjac:eq:z"]),
   }[kind]
   render_program_c_source(fn)  # loud: must render through Program IR
   assert can_render_program_c(fn)

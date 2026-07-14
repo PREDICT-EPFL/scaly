@@ -102,7 +102,7 @@ Generated outputs belong under `benchmarks/results/`.
 ### CasADi
 
 `CasadiDTCBFSafetyFilter` builds one MX NLP with IPOPT. By default it uses
-IPOPT's limited-memory Hessian approximation:
+CasADi `expand=True` and IPOPT's limited-memory Hessian approximation:
 
 ```text
 ipopt.hessian_approximation = limited-memory
@@ -130,8 +130,8 @@ IPOPT.
 `AlloyDTCBFSafetyFilter` builds an Alloy oracle with outputs:
 
 ```text
-cost(z, bar_x, u_des, weights)
-g(z, bar_x, u_des, weights)
+cost(z, bar_x, u_des, weights, physics, dt)
+g(z, bar_x, u_des, weights, physics, dt)
 ```
 
 The RK4 neural dynamics are evaluated with `al.map_` over the car axis, so the
@@ -183,13 +183,9 @@ Known discrepancies:
    solution if IPOPT exits on max iterations. This is convenient for closed-loop
    experimentation, but strict benchmarking should also report the raw IPOPT
    status.
-6. **Model constants.** Most physical constants match the bumper-car defaults.
-   The current Alloy decorated ODE function bakes in the default physical
-   constants. Changing physics parameters should be made symbolic/parameterized
-   before doing a broad tuning sweep.
-7. **CasADi `expand`.** The CasADi path does not currently set `expand=True`.
-   That option may improve CasADi runtime at the cost of larger build time and
-   should be part of the next benchmark matrix.
+6. **Model parameters and expansion parity.** Both paths receive the same
+   symbolic vehicle parameters and `dt`; CasADi uses `expand=True` by default
+   and exposes `--no-casadi-expand` for comparison runs.
 
 Because of (1), it is possible for Alloy's reported function-evaluation kernels
 to be faster while total solve time is not proportionally better. Total solve
@@ -263,18 +259,17 @@ It does not separate:
 A better benchmark would record these layers separately or avoid Python callbacks
 entirely.
 
-### 5. Parameterized model constants
+### 5. Parameterized model constants (closed)
 
-The Alloy ODE function should take physical constants / `dt` as parameters or be
-rebuilt explicitly when they change. `dt` is already passed into the mapped RK4
-function, but physical constants are still baked into the decorated function.
+The Alloy and CasADi ODE/RK4 paths take physical constants and `dt` symbolically.
+`CarPhysics` and `ClosedLoopConfig` defaults fill those values for normal runs.
 
 ## Next comparison matrix
 
 Suggested next benchmarking pass:
 
 1. CasADi MX baseline, limited-memory Hessian.
-2. CasADi MX with `expand=True`, limited-memory Hessian.
+2. CasADi MX with `expand=False`, limited-memory Hessian.
 3. CasADi exact Hessian.
 4. Alloy current JIT-kernel callback path, limited-memory Hessian.
 5. Alloy with exact Hessian if/when `MAP` Hessian support or manual assembly is

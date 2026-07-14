@@ -273,7 +273,7 @@ def main() -> None:
   parser = argparse.ArgumentParser(description="Alloy correctness-gated benchmark harness")
   subparsers = parser.add_subparsers(dest="command", required=True)
   sweep_parser = subparsers.add_parser("sweep", help="run the scalability cell grid")
-  sweep_parser.add_argument("--workloads", type=_csv, default=["tracking", "unbumpercars"])
+  sweep_parser.add_argument("--workloads", type=_csv, default=["tracking", "unbumpercars", "chain"])
   sweep_parser.add_argument("--sizes", type=_ints, help="comma-separated sizes (applied to each selected workload)")
   sweep_parser.add_argument("--backends", type=_csv, default=list(BACKENDS))
   sweep_parser.add_argument("--out", "--csv", type=Path, default=RESULTS / "scalability.csv")

@@ -398,7 +398,7 @@ def test_spjac_keeps_constant_loc_on_rk4_tracking_map() -> None:
 
   def loc(N: int) -> int:
     fn = tracking_eq_function_map(N)
-    spj = al.spjacobian(fn, "z", "eq")
+    spj = fn.factory(f"tracking_eq_map_N{N}_spjac_eq_z", ["z", "p"], ["spjac:eq:z"])
     return render_c_source(spj).count("\n")
 
   loc_a = loc(10)
