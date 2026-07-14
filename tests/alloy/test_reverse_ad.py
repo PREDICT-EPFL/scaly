@@ -95,6 +95,52 @@ def test_vjp_through_structural_ops_and_matmul() -> None:
   np.testing.assert_allclose(f(xv, av, sv), expected)
 
 
+def test_vjp_nested_calls_shared_symbol_matches_fd_and_jvp() -> None:
+  # The CALL VJP inlines the callee adjoint and substitutes formals with actuals. The caller here
+  # reuses the callee's formal symbol `x`, so the substitution must not rewrite occurrences of `x`
+  # inside the incoming cotangent (which the second call's adjoint injects into the first call's).
+  x = al.sym("x", 1)
+  f = al.Function("sq", [x], [x * x], ["x"], ["y"])
+  (k1,) = f.call([2 * x])
+  (k2,) = f.call([x + k1])
+  (grad_rev,) = al.vjp((k2,), (x,), (al.const(np.ones(1)),))
+  jac_fwd = al.expr_jacobian(k2, x).reshape((1,))
+  fn = al.Function("nested_sq", [x], [grad_rev, jac_fwd], ["x"], ["rev", "fwd"])
+
+  rev, fwd = fn(np.array([1.0]))
+  np.testing.assert_allclose(rev, [90.0], rtol=1e-12)  # d/dx (x + 4x^2)^2 at x=1
+  np.testing.assert_allclose(rev, fwd, rtol=1e-12)
+
+
+def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
+  # RK4 body calling an inner Function 4x with shared symbols: reverse must equal J^T lam and FD,
+  # and the exact Hessian of lam^T rk4(x) must come out symmetric.
+  from alloy.ad import hessian  # noqa: PLC0415
+
+  rng = np.random.default_rng(7)
+  x, u = al.sym("x", 2), al.sym("u", 1)
+  ode = al.Function("ode2", [x, u], [al.stack([x[0] * x[1] + u[0], x[0].tanh() - x[1] * x[1]])], ["x", "u"], ["f"])
+  dt = 0.1
+  (k1,) = ode.call([x, u])
+  (k2,) = ode.call([x + (dt / 2) * k1, u])
+  (k3,) = ode.call([x + (dt / 2) * k2, u])
+  (k4,) = ode.call([x + dt * k3, u])
+  xnext = x + (dt / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
+  lam = al.sym("lam", 2)
+  (grad_rev,) = al.vjp((xnext,), (x,), (lam,))
+  jac_t_lam = al.expr_jacobian(xnext, x).transpose((1, 0)) @ lam
+  hess = hessian(al.dot(lam, xnext), x)
+  fn = al.Function("rk4_adj", [x, u, lam], [grad_rev, jac_t_lam, hess], ["x", "u", "lam"], ["rev", "fwd", "hess"])
+  obj = al.Function("rk4_obj", [x, u, lam], [al.dot(lam, xnext)], ["x", "u", "lam"], ["obj"])
+  xv, uv, lamv = rng.normal(size=2), rng.normal(size=1), rng.normal(size=2)
+
+  rev, fwd, hv = fn(xv, uv, lamv)
+  fd = finite_difference(lambda v: obj(v, uv, lamv), xv).reshape(-1)
+  np.testing.assert_allclose(rev, fwd, rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(rev, fd, rtol=1e-6, atol=1e-8)
+  np.testing.assert_allclose(hv, hv.T, rtol=1e-12, atol=1e-12)
+
+
 def test_jvp_many_uses_leading_seed_axis() -> None:
   x = al.sym("x", 3)
   y = al.stack([x[0] * x[1], x[2].sin() + x[0]])

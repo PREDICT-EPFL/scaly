@@ -764,9 +764,17 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return _matmul_vjp(args[0], args[1], cot)
   if expr.op == Ops.CALL:
     callee = expr.attrs["callee"]
-    callee_out = callee.outputs[expr.attrs["output"]]
+    output_idx = expr.attrs["output"]
+    callee_out = callee.outputs[output_idx]
+    # Differentiate the callee body against a fresh cotangent symbol, then graft the real ``cot``
+    # in via the same substitution that maps formals to actuals. Passing ``cot`` directly into the
+    # inner vjp would make it part of the substituted graph: if the caller reuses a callee formal
+    # symbol (the usual construction pattern), occurrences of that symbol *inside the cotangent*
+    # would be rewritten to this call's actuals, corrupting the adjoint.
+    lam = Expr.sym(f"lam:{callee.output_names[output_idx]}", callee_out.shape)
     replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
-    return tuple(_substitute(g, replacements) for g in vjp((callee_out,), callee.inputs, (cot,)))
+    replacements[lam.id] = cot
+    return tuple(_substitute(g, replacements) for g in vjp((callee_out,), callee.inputs, (lam,)))
   if expr.op == Ops.SOLVER_CALL:
     # Non-differentiable: every arg cotangent is zero. See the matching JVP rule.
     return tuple(zeros_like(arg) for arg in args)
