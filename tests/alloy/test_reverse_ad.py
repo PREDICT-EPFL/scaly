@@ -3,6 +3,42 @@ from __future__ import annotations
 import numpy as np
 
 import alloy as al
+from alloy.ad import finite_difference
+
+
+def _map_vjp_piece(name: str, nargs: int = 1) -> al.Function:
+  input_names = [f"x{i}" for i in range(nargs)]
+  inputs = [al.sym(input_name, 2) for input_name in input_names]
+  out = inputs[0] * inputs[0] + inputs[0].sin()
+  for inp in inputs[1:]:
+    out = out + inputs[0] * inp + inp.sin()
+  return al.Function(name, inputs, [out], input_names, ["y"])
+
+
+def _assert_map_vjp_matches_unrolled_and_fd(
+  name: str, callee: al.Function, z: al.Expr, length: int, specs: list[tuple[al.Expr, int, int]], zv: np.ndarray
+) -> None:
+  mapped = al.map_(callee, length, specs)
+  unrolled = al.concat(
+    [
+      callee.call(
+        [outer[start + it * stride : start + it * stride + formal.size] for formal, (outer, start, stride) in zip(callee.inputs, specs, strict=True)]
+      )[0]
+      for it in range(length)
+    ]
+  )
+  lam = al.sym("lam", mapped.size)
+  mapped_obj, unrolled_obj = al.dot(lam, mapped), al.dot(lam, unrolled)
+  (mapped_grad,) = al.vjp((mapped_obj,), (z,), (al.const(1.0),))
+  (unrolled_grad,) = al.vjp((unrolled_obj,), (z,), (al.const(1.0),))
+  grad_fn = al.Function(f"{name}_grads", [z, lam], [mapped_grad, unrolled_grad], ["z", "lam"], ["mapped", "unrolled"])
+  obj_fn = al.Function(f"{name}_objective", [z, lam], [mapped_obj], ["z", "lam"], ["objective"])
+  lamv = np.random.default_rng(10).normal(size=mapped.size)
+
+  mapped_value, unrolled_value = grad_fn(zv, lamv)
+  fd = finite_difference(lambda value: obj_fn(value, lamv), zv).reshape(-1)
+  np.testing.assert_allclose(mapped_value, unrolled_value, rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(mapped_value, fd, rtol=1e-6, atol=1e-7)
 
 
 def test_vjp_scalar_output_matches_gradient() -> None:
@@ -177,6 +213,68 @@ def test_vjp_through_call_node_inlines_callee_reverse_graph() -> None:
   sv = np.array([3.0, -1.0])
 
   np.testing.assert_allclose(outer(zv, sv), sv * (np.sin(zv) + zv * np.cos(zv)))
+
+
+def test_vjp_through_map_partitioned_stride_with_offset_and_zero_fill() -> None:
+  piece = _map_vjp_piece("map_vjp_partitioned_piece")
+  z = al.sym("z", 10)
+  _assert_map_vjp_matches_unrolled_and_fd("map_vjp_partitioned", piece, z, 3, [(z, 2, 2)], np.linspace(-0.7, 0.8, 10))
+
+
+def test_vjp_through_map_broadcast_stride_accumulates() -> None:
+  piece = _map_vjp_piece("map_vjp_broadcast_piece")
+  z = al.sym("z", 5)
+  _assert_map_vjp_matches_unrolled_and_fd("map_vjp_broadcast", piece, z, 4, [(z, 1, 0)], np.linspace(-0.4, 0.6, 5))
+
+
+def test_vjp_through_map_cross_formal_overlap_accumulates() -> None:
+  piece = _map_vjp_piece("map_vjp_cross_formal_piece", nargs=2)
+  z = al.sym("z", 8)
+  _assert_map_vjp_matches_unrolled_and_fd("map_vjp_cross_formal", piece, z, 3, [(z, 0, 2), (z, 2, 2)], np.linspace(-0.5, 0.9, 8))
+
+
+def test_vjp_through_map_single_formal_overlap_uses_grouped_scatter() -> None:
+  x = al.sym("x", 3)
+  piece = al.Function("map_vjp_grouped_piece", [x], [x * x + x.sin()], ["x"], ["y"])
+  z = al.sym("z", 7)
+  _assert_map_vjp_matches_unrolled_and_fd("map_vjp_grouped", piece, z, 3, [(z, 0, 2)], np.linspace(-0.8, 0.7, 7))
+
+
+def test_vjp_through_map_outer_slice_of_wrt() -> None:
+  piece = _map_vjp_piece("map_vjp_outer_slice_piece")
+  z = al.sym("z", 10)
+  _assert_map_vjp_matches_unrolled_and_fd("map_vjp_outer_slice", piece, z, 3, [(z[1:9], 1, 2)], np.linspace(-0.6, 0.75, 10))
+
+
+def test_vjp_through_map_duplicate_outer_expr_bound_to_two_formals() -> None:
+  piece = _map_vjp_piece("map_vjp_duplicate_piece", nargs=2)
+  z = al.sym("z", 6)
+  _assert_map_vjp_matches_unrolled_and_fd("map_vjp_duplicate", piece, z, 3, [(z, 0, 2), (z, 0, 2)], np.linspace(-0.5, 0.5, 6))
+
+
+def test_vjp_through_map_broadcast_full_outer_skips_scatter() -> None:
+  piece = _map_vjp_piece("map_vjp_broadcast_full_piece")
+  z = al.sym("z", 2)
+  _assert_map_vjp_matches_unrolled_and_fd("map_vjp_broadcast_full", piece, z, 3, [(z, 0, 0)], np.array([-0.3, 0.55]))
+
+
+def test_vjp_through_map_adjoint_names_disambiguate_active_formal_sets() -> None:
+  # {a_b} and {a, b} would both suffix to "a_b" if adjoints were named by joined formal names;
+  # lowering dedupes callees by name, so the two maps would silently share one proc body.
+  a, a_b, b = al.sym("a", 2), al.sym("a_b", 2), al.sym("b", 2)
+  piece = al.Function("map_vjp_collision_piece", [a, a_b, b], [a * a_b.sin() + b * a_b + a * b], ["a", "a_b", "b"], ["y"])
+  z = al.sym("z", 8)
+  c0, c1 = al.const(np.array([0.3, -0.7, 1.1, 0.2])), al.const(np.array([0.9, 0.4, -0.5, 1.3]))
+  m1 = al.map_(piece, 2, [(c0, 0, 2), (z[0:4], 0, 2), (c1, 0, 2)])
+  m2 = al.map_(piece, 2, [(z[0:4], 0, 2), (c0, 0, 2), (z[4:8], 0, 2)])
+  obj = m1.sum() + m2.sum()
+  (grad_z,) = al.vjp((obj,), (z,), (al.const(1.0),))
+  grad_fn = al.Function("map_vjp_collision_grads", [z], [grad_z], ["z"], ["grad_z"])
+  obj_fn = al.Function("map_vjp_collision_obj", [z], [obj], ["z"], ["objective"])
+  zv = np.random.default_rng(3).normal(size=8)
+
+  fd = finite_difference(obj_fn, zv).reshape(-1)
+  np.testing.assert_allclose(grad_fn(zv), fd, rtol=1e-6, atol=1e-7)
 
 
 def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:

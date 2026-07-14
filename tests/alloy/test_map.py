@@ -320,6 +320,34 @@ def test_jacobian_of_map_matches_finite_differences() -> None:
   np.testing.assert_allclose(jac, fd, atol=1e-5)
 
 
+def test_grad_factory_over_map_matches_unrolled_and_finite_difference() -> None:
+  from alloy.ad import finite_difference
+  from alloy.expr import topo
+
+  @al.function("map_grad_piece", {"x": 2})
+  def piece(x):
+    return {"y": x * x + x.sin()}
+
+  N = 4
+  z = al.sym("z", 2 * N)
+  mapped = al.map_(piece, N, [(z, 0, 2)])
+  unrolled = al.concat([piece.call([z[2 * it : 2 * (it + 1)]])[0] for it in range(N)])
+  mapped_fn = al.Function("map_grad_factory", [z], [mapped], ["z"], ["y"])
+  unrolled_fn = al.Function("map_grad_unrolled", [z], [unrolled], ["z"], ["y"])
+  mapped_grad = mapped_fn.factory("map_grad_factory_grad", ["z", "lam:y"], ["grad:gamma:z"], aux={"gamma": ["y"]})
+  unrolled_grad = unrolled_fn.factory("map_grad_unrolled_grad", ["z", "lam:y"], ["grad:gamma:z"], aux={"gamma": ["y"]})
+  map_nodes = [node for node in topo(mapped_grad.outputs) if node.op == al.Ops.MAP]
+  assert len(map_nodes) == 1
+  assert "_adj0_0" in map_nodes[0].attrs["callee"].name
+
+  zv = np.random.default_rng(7).normal(size=2 * N)
+  lamv = np.random.default_rng(8).normal(size=2 * N)
+  np.testing.assert_allclose(mapped_grad(zv, lamv), unrolled_grad(zv, lamv), rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(
+    mapped_grad(zv, lamv), finite_difference(lambda value: np.dot(lamv, np.asarray(mapped_fn(value))), zv).reshape(-1), rtol=1e-6, atol=1e-7
+  )
+
+
 def test_spjacobian_of_tracking_map_matches_unrolled_concat() -> None:
   """End-to-end: spjacobian on a MAP-based tracking fixture matches the unrolled-concat fixture
   numerically and structurally."""

@@ -18,6 +18,7 @@ _CALL_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, int, int], 
 _CALL_JVP_MANY_CONST_CACHE: weakref.WeakKeyDictionary[
   Any, dict[tuple[int, int, tuple[int, ...], bytes], tuple[Any, tuple[int, ...], tuple[int, ...]]]
 ] = weakref.WeakKeyDictionary()
+_MAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...]]]] = weakref.WeakKeyDictionary()
 
 
 class _JVPManyUnsupported(Exception):
@@ -542,6 +543,73 @@ def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
   return memo[expr.id]
 
 
+def _map_adj_function(callee: Any, output_index: int, active_formals: tuple[int, ...]) -> tuple[Any, tuple[int, ...]]:
+  key = (output_index, active_formals)
+  cache = _MAP_ADJ_CACHE.setdefault(callee, {})
+  if key not in cache:
+    from .function import Function
+    from .rewrite import simplify_cse_fixpoint
+
+    out = callee.outputs[output_index]
+    lam_name = f"lam:{callee.output_names[output_index]}"
+    lam = Expr.sym(lam_name, out.shape)
+    grads = vjp((out,), tuple(callee.inputs[i] for i in active_formals), (lam,))
+    adj = simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads]))
+    dep_memo: dict[tuple[int, int], bool] = {}
+    arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
+    inputs = tuple(callee.inputs[i] for i in arg_indices) + (lam,)
+    input_names = tuple(callee.input_names[i] for i in arg_indices) + (lam_name,)
+    # Suffix by formal index, not name: joined names are not injective ({a_b} vs {a, b}) and
+    # lowering dedupes callees by name, so a collision would silently reuse the wrong proc body.
+    name = f"{callee.name}_adj{output_index}_" + "_".join(str(i) for i in active_formals)
+    fn = Function(name, inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"])
+    cache[key] = (fn, arg_indices)
+  return cache[key]
+
+
+def _map_vjp(map_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
+  callee = map_expr.attrs["callee"]
+  output_idx = map_expr.attrs["output"]
+  length = map_expr.attrs["length"]
+  if length == 0:
+    return []
+  starts = map_expr.attrs["starts"]
+  strides = map_expr.attrs["strides"]
+  slice_size = map_expr.attrs["slice_size"]
+  active_formals = tuple(k for k, arg in enumerate(map_expr.args) if any(_depends_on(arg, wrt, dep_memo) for wrt in wrts))
+  if not active_formals:
+    return []
+
+  adj_fn, arg_indices = _map_adj_function(callee, output_idx, active_formals)
+  primal_specs = [(map_expr.args[i], starts[i], strides[i]) for i in arg_indices]
+  mapped = map_(adj_fn, length, [*primal_specs, (cot, 0, slice_size)])
+  adj_size = sum(callee.inputs[k].size for k in active_formals)
+  ret: list[tuple[Expr, Expr]] = []
+  offset = 0
+  for k in active_formals:
+    arg, start, stride = map_expr.args[k], starts[k], strides[k]
+    formal_size = callee.inputs[k].size
+    if stride == 0:
+      indices = np.asarray([it * adj_size + offset + j for it in range(length) for j in range(formal_size)], dtype=np.int64)
+      segments = gather(mapped, indices).reshape((length, formal_size))
+      vbar = Expr.const(np.ones(length, dtype=np.float64)) @ segments
+      if start != 0 or formal_size != arg.size:
+        vbar = scatter(vbar, start + np.arange(formal_size, dtype=np.int64), arg.shape)
+    else:
+      pieces: list[Expr] = []
+      groups = -(-formal_size // stride)
+      for group in range(groups):
+        iterations = range(group, length, groups)
+        indices = np.asarray([it * adj_size + offset + j for it in iterations for j in range(formal_size)], dtype=np.int64)
+        destinations = np.asarray([start + it * stride + j for it in iterations for j in range(formal_size)], dtype=np.int64)
+        if indices.size:
+          pieces.append(scatter(gather(mapped, indices), destinations, arg.shape))
+      vbar = _sum_exprs(pieces)
+    ret.append((arg, vbar))
+    offset += formal_size
+  return ret
+
+
 def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr]) -> tuple[Expr, ...]:
   if len(outputs) != len(cotangents):
     raise ValueError(f"expected {len(outputs)} cotangents, got {len(cotangents)}")
@@ -561,6 +629,11 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
   for expr in reversed(nodes):
     cot = adjoints.get(expr.id)
     if cot is None or expr.op in {Ops.INPUT, Ops.CONST} or not needed(expr):
+      continue
+    if expr.op == Ops.MAP:
+      for arg, arg_cot in _map_vjp(expr, cot, wrts, dep_memo):
+        if arg.id in expr_ids:
+          adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
       continue
     for arg, arg_cot in zip(expr.args, _local_vjp(expr, cot), strict=True):
       if arg.id in expr_ids:
