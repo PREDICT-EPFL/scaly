@@ -49,7 +49,7 @@ def test_solve_ipopt_warm_start_and_stats() -> None:
 @need_ipopt
 def test_nlp_solver_status_stats() -> None:
   x = al.sym("x", 2)
-  nlp = al.nlp(x=x, f=(x[0] - 1) ** 2 + (x[1] - 2) ** 2, h_eq=al.stack([x[0] + x[1] - 1.0]))
+  nlp = al.nlp(x=x, f=(x[0] - 1) ** 2 + (x[1] - 2) ** 2, h_eq=al.stack([x[0] + x[1] - 1.0]), backend="python")
   nlp(np.array([2.0, -1.0]), np.zeros(1), np.zeros(0))
   assert nlp.last_status is not None and nlp.last_status.ok
   assert nlp.last_status.iter > 0
@@ -130,7 +130,13 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
       h_eq = al.map_(piece, 2, [(x, 0, 2)])
     else:
       h_eq = al.concat([piece.call([x[2 * it : 2 * (it + 1)]])[0] for it in range(2)])
-    return al.nlp(x=x, f=((x - target) ** 2).sum(), h_eq=h_eq, name=f"nlp_{'mapped' if mapped else 'unrolled'}_constraint")
+    return al.nlp(
+      x=x,
+      f=((x - target) ** 2).sum(),
+      h_eq=h_eq,
+      name=f"nlp_{'mapped' if mapped else 'unrolled'}_constraint",
+      backend="python",
+    )
 
   mapped_nlp, unrolled_nlp = build(True), build(False)
   x0 = np.array([0.2, 0.1, -0.3, 0.2])

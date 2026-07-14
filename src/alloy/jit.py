@@ -17,13 +17,14 @@ import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from .abi import C_API_SIGNATURE
 from .codegen.c import _c_ident, render_c_source
-from .codegen.solver_c import solver_compile_flags
+from .codegen.solver_c import solver_compile_flags, solver_stats_symbols
+from .solvers.stats import CSolverStats, SolverStats
 from .toolchain import cache_root, find_c_compiler, shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly so
 # that previously cached `.so` files are not reused by a newer Alloy version.
-_JIT_CACHE_VERSION = "2"
+_JIT_CACHE_VERSION = "3"
 
 _C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)
@@ -153,6 +154,7 @@ class CompiledFunction:
     "_lib",
     "_symbol",
     "_entry",
+    "_stats_entries",
     "_sz_w",
     "_input_sizes",
     "_input_shapes",
@@ -179,6 +181,15 @@ class CompiledFunction:
     ]
     entry.restype = ctypes.c_int
     self._entry = entry
+    self._stats_entries: dict[str, Any] = {}
+    for stats_symbol in solver_stats_symbols(fun):
+      try:
+        stats_entry = getattr(self._lib, f"{stats_symbol}_stats")
+      except AttributeError as exc:
+        raise JitError(f"compiled artifact is missing solver stats symbol {stats_symbol}_stats") from exc
+      stats_entry.argtypes = [ctypes.POINTER(CSolverStats)]
+      stats_entry.restype = ctypes.c_int
+      self._stats_entries[stats_symbol] = stats_entry
     sz_w_fn = getattr(self._lib, f"{symbol}_sz_w")
     sz_w_fn.restype = ctypes.c_int
     self._sz_w = int(sz_w_fn())
@@ -197,6 +208,20 @@ class CompiledFunction:
   @property
   def cache_key(self) -> str:
     return self._artifact.key
+
+  def solver_stats(self, name: str | None = None) -> SolverStats:
+    if name is None:
+      if len(self._stats_entries) != 1:
+        raise JitError(f"solver name is required when an artifact has {len(self._stats_entries)} solver stats entries")
+      name = next(iter(self._stats_entries))
+    symbol = _c_ident(name)
+    if symbol not in self._stats_entries:
+      raise JitError(f"no solver stats entry for {name!r}")
+    raw = CSolverStats()
+    status = self._stats_entries[symbol](ctypes.byref(raw))
+    if status != 0:
+      raise JitError(f"{symbol}_stats returned status {status}")
+    return SolverStats.from_c(raw)
 
   def run(self, args: list[np.ndarray]) -> list[np.ndarray]:
     """Dispatch the compiled entry point with positional NumPy inputs.

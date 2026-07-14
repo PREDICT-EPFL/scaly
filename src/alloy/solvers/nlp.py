@@ -17,7 +17,7 @@ backend (IPOPT's convention).
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -76,8 +76,13 @@ def nlp(
   solver: str = "ipopt",
   name: str | None = None,
   options: dict[str, str | int | float] | None = None,
+  # "python" until L2-2: the generated IPOPT wrapper predates L2 stats/warm-start parity and
+  # crashes on large Jacobians (chain-of-masses scale); flip to "c" once L2-2 fixes it.
+  backend: Literal["c", "python"] = "python",
 ) -> SolverFunction:
   require_backend(solver, "nlp")
+  if backend not in ("c", "python"):
+    raise ValueError(f"backend must be 'c' or 'python', got {backend!r}")
 
   x_sym = _ensure_sym("x", x)
   if len(x_sym.shape) != 1:
@@ -243,5 +248,6 @@ def nlp(
     hess_sparsity=hess_sparsity,
     hess_lower_mask=tuple(bool(v) for v in lower_mask.tolist()),
     options=tuple(sorted(resolved_options.items())),
+    python_backend=backend == "python",
   )
   return SolverFunction(descriptor)

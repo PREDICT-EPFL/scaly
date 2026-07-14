@@ -25,6 +25,7 @@ from alloy.codegen.solver_c import (
   render_solver_raw,
   solver_callees,
   solver_includes,
+  solver_stats_symbols,
   uses_ipopt,
   uses_piqp,
 )
@@ -56,8 +57,21 @@ def _workspace_size(fun: Function) -> int:
   the oracle). Identical to the value baked into the rendered source; kept for AOT / benchmark
   consumers that import it."""
   from alloy.codegen.program_c import program_ir_sz_w
+  from alloy.lowering import lower_function
+
+  if is_solver_function(fun):
+    return _solver_root_workspace(lower_function(fun), fun.name)
 
   return program_ir_sz_w(fun)
+
+
+def _solver_root_workspace(prog: object, name: str) -> int:
+  from alloy.program import PNode
+
+  assert isinstance(prog, PNode)
+  pc = int(prog.attrs.get("proc_count", 0))
+  oracle_names = set(prog.attrs.get("solver_oracles", {}).get(name, ()))
+  return max((int(pr.attrs.get("sz_w", 0)) for pr in prog.args[:pc] if pr.attrs["name"] in oracle_names), default=0)
 
 
 def _c_array(values: tuple[int, ...]) -> str:
@@ -135,10 +149,13 @@ def _typed_cpp_wrapper(fun: Function, symbol: str) -> list[str]:
 
 
 def render_c_api_header(fun: Function, *, typed_buffers: bool = True) -> str:
+  from alloy.solvers.stats import stats_c_defs
+
   symbol = _c_ident(fun.name)
   lines = [
     "#pragma once",
     "",
+    *(["#include <stdint.h>", "", *stats_c_defs(), ""] if _uses_solver(fun) else []),
     *_abi_status_defines(),
     "",
     f"#define {symbol}_SZ_ARG {len(fun.inputs)}",
@@ -160,6 +177,7 @@ def render_c_api_header(fun: Function, *, typed_buffers: bool = True) -> str:
     f"void* {symbol}_alloc_mem(void);",
     f"int {symbol}_init_mem(void* mem);",
     f"void {symbol}_free_mem(void* mem);",
+    *(f"int {solver_symbol}_stats(alloy_solver_stats* out);" for solver_symbol in solver_stats_symbols(fun)),
     "#ifdef __cplusplus",
     "}",
     "#endif",
@@ -236,26 +254,63 @@ def _render_solver_bearing_source(fun: Function, observe: ProgramObserver | None
   forward-references a ``_raw``."""
   from alloy.codegen.program_c import _ABI_DEFINES, _includes, _render_entry, _render_raw_callee
   from alloy.lowering import lower_function
+  from alloy.solvers.stats import stats_c_defs, stats_c_timing_defs
 
   prog = lower_function(fun, observe=observe)  # solver callees opaque; oracles + host fns are PROCs (see lowering.py)
   pc = int(prog.attrs.get("proc_count", 1))
   procs = {pr.attrs["name"]: pr for pr in prog.args[:pc]}
   lines: list[str] = [
-    *_includes(tuple(solver_includes(fun))),
+    *_includes(("#include <time.h>", *solver_includes(fun))),
     "",
     *_ABI_DEFINES,
+    "",
+    *stats_c_defs(),
+    "",
+    *stats_c_timing_defs(),
     "",
     "#ifdef __cplusplus",
     'extern "C" {',
     "#endif",
     "",
   ]
-  for fn in _function_order(fun)[:-1]:
+  order = _function_order(fun)
+  for fn in order if is_solver_function(fun) else order[:-1]:
     lines += render_solver_raw(fn) if is_solver_function(fn) else _render_raw_callee(procs[fn.name])
     lines.append("")
-  lines += _render_entry(procs[fun.name], fun)
+  if is_solver_function(fun):
+    lines += _render_solver_entry(fun, _solver_root_workspace(prog, fun.name))
+  else:
+    lines += _render_entry(procs[fun.name], fun)
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
   return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_solver_entry(fun: Function, sz_w: int) -> list[str]:
+  symbol = _c_ident(fun.name)
+  raw_symbol = f"{symbol}_raw"
+  args = [*(f"arg[{i}]" for i in range(len(fun.inputs))), *(f"res[{i}]" for i in range(len(fun.outputs))), "w"]
+  lines = [
+    f"int {symbol}_sz_arg(void) {{ return {len(fun.inputs)}; }}",
+    f"int {symbol}_sz_res(void) {{ return {len(fun.outputs)}; }}",
+    f"int {symbol}_sz_iw(void) {{ return 0; }}",
+    f"int {symbol}_sz_w(void) {{ return {sz_w}; }}",
+    f"void* {symbol}_alloc_mem(void) {{ return NULL; }}",
+    f"int {symbol}_init_mem(void* mem) {{ (void)mem; return ALLOY_SUCCESS; }}",
+    f"void {symbol}_free_mem(void* mem) {{ (void)mem; }}",
+    "",
+    c_api_signature(symbol) + " {",
+    "  (void)iw;",
+    "  (void)mem;",
+    "  if (!arg || !res) return ALLOY_ERR_NULL_ABI;",
+  ]
+  if sz_w:
+    lines.append("  if (!w) return ALLOY_ERR_NULL_WORK;")
+  else:
+    lines.append("  (void)w;")
+  lines += [f"  if (!arg[{i}]) return ALLOY_ERR_NULL_INPUT;" for i in range(len(fun.inputs))]
+  lines += [f"  if (!res[{i}]) return ALLOY_ERR_NULL_RESULT;" for i in range(len(fun.outputs))]
+  lines += [f"  {raw_symbol}({', '.join(args)});", "  return ALLOY_SUCCESS;", "}"]
+  return lines
 
 
 def render_c_module(fun: Function, *, header_name: str | None = None, source_name: str | None = None, typed_buffers: bool = True) -> CModule:

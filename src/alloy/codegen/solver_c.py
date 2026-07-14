@@ -135,6 +135,31 @@ def solver_compile_flags(fun: Function, *, rpath: bool = True) -> list[str]:
   return _toolchain_solver_compile_flags(needs_piqp, needs_ipopt, rpath=rpath)
 
 
+def solver_stats_symbols(fun: Function) -> tuple[str, ...]:
+  """C identifiers for every solver wrapper reachable from ``fun``."""
+  found: dict[str, Function] = {}
+  seen: set[int] = set()
+
+  def visit(fn: Function) -> None:
+    if id(fn) in seen:
+      return
+    seen.add(id(fn))
+    if is_solver_function(fn):
+      symbol = _c_ident(fn.name)
+      if symbol in found and found[symbol] is not fn:
+        raise ValueError(f"duplicate solver symbol {symbol!r} in one generated translation unit")
+      found[symbol] = fn
+      for callee in solver_callees(fn):
+        visit(callee)
+      return
+    for node in topo(fn.outputs):
+      if node.op in {Ops.CALL, Ops.MAP}:
+        visit(node.attrs["callee"])
+
+  visit(fun)
+  return tuple(found)
+
+
 # ---------------------------------------------------------------------------
 # Renderer
 # ---------------------------------------------------------------------------
@@ -143,10 +168,22 @@ def solver_compile_flags(fun: Function, *, rpath: bool = True) -> list[str]:
 def render_solver_raw(fun: Function) -> list[str]:
   desc = _descriptor(fun)
   if desc.backend == "piqp":
-    return _render_piqp_raw(fun, desc)
-  if desc.backend == "ipopt":
-    return _render_ipopt_raw(fun, desc)
-  raise NotImplementedError(f"C codegen for solver backend {desc.backend!r} not yet implemented")
+    body = _render_piqp_raw(fun, desc)
+  elif desc.backend == "ipopt":
+    body = _render_ipopt_raw(fun, desc)
+  else:
+    raise NotImplementedError(f"C codegen for solver backend {desc.backend!r} not yet implemented")
+  symbol = _c_ident(fun.name)
+  return [
+    f"static alloy_solver_stats {symbol}_stats_data;",
+    *body,
+    "",
+    f"int {symbol}_stats(alloy_solver_stats* out) {{",
+    "  if (!out) return 1;",
+    f"  *out = {symbol}_stats_data;",
+    "  return 0;",
+    "}",
+  ]
 
 
 def _render_piqp_raw(fun: Function, desc: SolverDescriptor) -> list[str]:
@@ -188,6 +225,7 @@ def _render_piqp_raw(fun: Function, desc: SolverDescriptor) -> list[str]:
   lines.append("  (void)in0;")  # x0
   lines.append("  (void)in1;")  # lam_eq0
   lines.append("  (void)in2;")  # lam_ineq0
+  lines.append("  double stats_t0 = alloy_clock_s();")
 
   # 1. Local QP data buffers (stack-allocated; row-major from the oracle).
   for buf, size in oracle_outs:
@@ -203,7 +241,9 @@ def _render_piqp_raw(fun: Function, desc: SolverDescriptor) -> list[str]:
   # output order matches oracle_outs above.
   oracle_raw = _raw_symbol(oracle)
   oracle_call = ", ".join([*oracle_param_args, *(name for name, _ in oracle_outs), "w"])
+  lines.append("  double fe_t0 = alloy_clock_s();")
   lines.append(f"  {oracle_raw}({oracle_call});")
+  lines.append("  double stats_t_fe = alloy_clock_s() - fe_t0;")
 
   # 3. Row-major -> column-major transpose for P, A, G.
   lines.append(f"  for (int j = 0; j < {n}; ++j) for (int i = 0; i < {n}; ++i) Pcol[i + j * {n}] = P_buf[i * {n} + j];")
@@ -215,6 +255,7 @@ def _render_piqp_raw(fun: Function, desc: SolverDescriptor) -> list[str]:
   # 4. Static PIQP workspace, lazily set up on first call.
   lines.append(f"  static piqp_workspace* {symbol}_ws = NULL;")
   lines.append(f"  static piqp_settings {symbol}_settings;")
+  lines.append("  double solver_t0 = alloy_clock_s();")
   lines.append(f"  if ({symbol}_ws == NULL) {{")
   lines.append(f"    piqp_set_default_settings_dense(&{symbol}_settings);")
   for key, val in desc.options:
@@ -251,6 +292,7 @@ def _render_piqp_raw(fun: Function, desc: SolverDescriptor) -> list[str]:
 
   # 5. Solve and read results.
   lines.append(f"  piqp_solve({symbol}_ws);")
+  lines.append("  double stats_t_solver = alloy_clock_s() - solver_t0;")
   lines.append(f"  piqp_result* res = {symbol}_ws->result;")
   # Outputs: x, cost, lam_eq, lam_ineq, lam_box.
   lines.append(f"  for (int i = 0; i < {n}; ++i) out0[i] = res->x[i];")
@@ -260,6 +302,32 @@ def _render_piqp_raw(fun: Function, desc: SolverDescriptor) -> list[str]:
   if m:
     lines.append(f"  for (int i = 0; i < {m}; ++i) out3[i] = res->z_u[i] - res->z_l[i];")
   lines.append(f"  for (int i = 0; i < {n}; ++i) out4[i] = res->z_bu[i] - res->z_bl[i];")
+
+  lines.append("  int32_t stats_status;")
+  lines.append("  switch (res->info.status) {")
+  lines.append("    case PIQP_SOLVED: stats_status = ALLOY_SOLVE_OK; break;")
+  lines.append("    case PIQP_MAX_ITER_REACHED: stats_status = ALLOY_SOLVE_MAX_ITER; break;")
+  lines.append("    case PIQP_PRIMAL_INFEASIBLE: stats_status = ALLOY_SOLVE_PRIMAL_INFEASIBLE; break;")
+  lines.append("    case PIQP_DUAL_INFEASIBLE: stats_status = ALLOY_SOLVE_DUAL_INFEASIBLE; break;")
+  lines.append("    case PIQP_NUMERICS: stats_status = ALLOY_SOLVE_NUMERICS; break;")
+  lines.append("    default: stats_status = ALLOY_SOLVE_ERROR; break;")
+  lines.append("  }")
+  lines.append(f"  {symbol}_stats_data.version = ALLOY_SOLVER_STATS_VERSION;")
+  lines.append(f"  {symbol}_stats_data.status = stats_status;")
+  lines.append(f"  {symbol}_stats_data.native_status = (int32_t)res->info.status;")
+  lines.append(f"  {symbol}_stats_data.iter = (int32_t)res->info.iter;")
+  lines.append(f"  {symbol}_stats_data.obj = res->info.primal_obj;")
+  lines.append(f"  {symbol}_stats_data.t_fe = stats_t_fe;")
+  lines.append(f"  {symbol}_stats_data.t_solver = stats_t_solver;")
+  lines.append(f"  {symbol}_stats_data.n_eval_f = 1;")
+  lines.append(f"  {symbol}_stats_data.n_eval_grad_f = 0;")
+  lines.append(f"  {symbol}_stats_data.n_eval_g = 0;")
+  lines.append(f"  {symbol}_stats_data.n_eval_jac_g = 0;")
+  lines.append(f"  {symbol}_stats_data.n_eval_h = 0;")
+  lines.append(f"  {symbol}_stats_data._pad0 = 0;")
+  lines.append("  double stats_t_total = alloy_clock_s() - stats_t0;")
+  lines.append(f"  {symbol}_stats_data.t_total = stats_t_total;")
+  lines.append(f"  {symbol}_stats_data.t_glue = stats_t_total - stats_t_fe - stats_t_solver;")
 
   lines.append("}")
   return lines

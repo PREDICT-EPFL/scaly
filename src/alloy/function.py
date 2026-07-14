@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 
 import numpy as np
 
@@ -11,6 +11,9 @@ from .ops import Ops
 from .rewrite import simplify
 from .sparsity import sparse_hessian, sparse_jacobian
 from .types import DeviceSpec, SparsityType, TensorType, backend_supports
+
+if TYPE_CHECKING:
+  from .solvers.stats import SolverStats
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +144,14 @@ class Function:
 
     self._compiled = None
     invalidate_cache(self)
+
+  def solver_stats(self, name: str | None = None) -> SolverStats:
+    """Return the latest stats for a solver reached by this compiled function."""
+    from .jit import JitError
+
+    if self._compiled is None:
+      raise JitError(f"function {self.name!r} has not been compiled or run")
+    return self._compiled.solver_stats(name)
 
   def __call__(self, *args: Any, **kwargs: Any) -> np.ndarray | tuple[np.ndarray, ...]:
     outs = self.eval_list(*args, **kwargs)

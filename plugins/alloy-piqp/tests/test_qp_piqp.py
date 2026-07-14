@@ -74,6 +74,22 @@ def test_qp_with_symbolic_parameters() -> None:
 
 
 @need_piqp
+def test_generated_qp_matches_python_backend_over_parameter_sweep() -> None:
+  mu = al.sym("mu", 2)
+  P, c = al.const(np.eye(2)), -mu
+  x_lb, x_ub = np.array([-1.0, -2.0]), np.array([2.0, 3.0])
+  generated = al.qp(P=P, c=c, x_lb=x_lb, x_ub=x_ub, backend="c", name="qp_parity_c")
+  python = al.qp(P=P, c=c, x_lb=x_lb, x_ub=x_ub, backend="python", name="qp_parity_python")
+  x0 = np.zeros(2)
+  for mu_value in (np.array([0.2, -0.4]), np.array([1.5, 2.0]), np.array([-2.0, 4.0])):
+    args = (x0, np.zeros(0), np.zeros(0), mu_value)
+    c_out, py_out = generated(*args), python(*args)
+    for name in generated.output_names:
+      np.testing.assert_allclose(c_out[name], py_out[name], rtol=1e-8, atol=1e-8)
+    x0 = c_out["x"]
+
+
+@need_piqp
 def test_qp_against_analytic_kkt_reference() -> None:
   """Cross-check a small equality-only QP against its dense KKT solution."""
   P_np = np.array([[2.0, 0.5], [0.5, 1.0]])

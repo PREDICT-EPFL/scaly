@@ -38,11 +38,12 @@ class SolverStatus:
   name: str
   iter: int = 0
   stats: dict[str, int] | None = None
+  _ok: bool | None = None
 
   @property
   def ok(self) -> bool:
     # PIQP solved == 1, IPOPT solved == 0 / 1 / 6.
-    return self.code in (0, 1, 6)
+    return self.code in (0, 1, 6) if self._ok is None else self._ok
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,8 @@ class SolverDescriptor:
   hess_lower_mask: tuple[bool, ...] = ()
   # Solver-specific options
   options: tuple[tuple[str, Any], ...] = ()
+  # Dispatch only; excluded from structural identity and generated problem data.
+  python_backend: bool = False
   # Oracle output naming (QP); the order in which the oracle's outputs encode
   # the QP data buffers.
   oracle_output_names: tuple[str, ...] = ()
@@ -128,6 +131,9 @@ class SolverFunction(Function):
     output_names = [n for n, _ in descriptor.output_signature]
     super().__init__(descriptor.name, input_exprs, output_exprs, input_names, output_names)
     self.last_status: SolverStatus | None = None
+    from .stats import SolverStats
+
+    self.last_stats: SolverStats | None = None
 
   def __repr__(self) -> str:
     return f"SolverFunction({self.name!r}, {self.input_names}->{self.output_names})"
@@ -163,14 +169,24 @@ class SolverFunction(Function):
     distinct outputs (primal, multipliers, status). Callers that just want
     the array list can use :meth:`eval_list` on the inherited interface.
 
-    Top-level calls go through ``run_solver_backend`` directly so
-    ``last_status`` is populated. Nested solver calls go through generated C,
-    which drops the status.
+    Generated C is the default. ``backend="python"`` retains the reference
+    backend as a debugging and parity path.
     """
     ordered = self._resolve_inputs(args, kwargs)
     coerced = coerce_solver_inputs(self.descriptor, ordered)
-    outs, status = run_solver_backend(self.descriptor, coerced)
-    self.last_status = status
+    if self.descriptor.python_backend:
+      outs, status = run_solver_backend(self.descriptor, coerced)
+      self.last_status, self.last_stats = status, None
+    else:
+      from ..jit import CompiledFunction
+
+      compiled: CompiledFunction | None = self._compiled
+      if compiled is None:
+        compiled = CompiledFunction(self)
+        self._compiled = compiled
+      outs = compiled.run(coerced)
+      self.last_stats = compiled.solver_stats(self.name)
+      self.last_status = self.last_stats.to_solver_status()
     return dict(zip(self.output_names, outs, strict=True))
 
 

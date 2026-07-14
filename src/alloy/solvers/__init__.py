@@ -12,5 +12,16 @@ from __future__ import annotations
 from .nlp import nlp
 from .qp import qp
 from .solver_function import SolverDescriptor, SolverFunction, SolverStatus
+from .stats import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, CSolverStats, SolverStats
 
-__all__ = ["SolverDescriptor", "SolverFunction", "SolverStatus", "nlp", "qp"]
+__all__ = [
+  "ALLOY_SOLVER_STATS_VERSION",
+  "AlloySolveStatus",
+  "CSolverStats",
+  "SolverDescriptor",
+  "SolverFunction",
+  "SolverStats",
+  "SolverStatus",
+  "nlp",
+  "qp",
+]

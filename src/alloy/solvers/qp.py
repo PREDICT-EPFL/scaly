@@ -19,7 +19,7 @@ API symmetry but PIQP's dense path does not yet consume warm starts.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -59,8 +59,11 @@ def qp(
   solver: str = "piqp",
   name: str | None = None,
   options: dict[str, float | int] | None = None,
+  backend: Literal["c", "python"] = "c",
 ) -> SolverFunction:
   require_backend(solver, "qp")
+  if backend not in ("c", "python"):
+    raise ValueError(f"backend must be 'c' or 'python', got {backend!r}")
 
   P_e = as_expr(P)
   c_e = as_expr(c)
@@ -154,6 +157,7 @@ def qp(
     param_names=param_names,
     oracle=oracle,
     options=tuple(sorted(resolved_options.items())),
+    python_backend=backend == "python",
     oracle_output_names=tuple(oracle_names),
   )
   return SolverFunction(descriptor)
