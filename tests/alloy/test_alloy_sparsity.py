@@ -31,14 +31,19 @@ def test_sparsity_type_roundtrip_and_bounds() -> None:
 def test_sparsity_type_csr_csc_conversions() -> None:
   sp = al.SparsityType((3, 4), (2, 0, 1, 1), (3, 2, 0, 3))
 
-  row_ptr, col_ind = sp.to_csr()
+  row_ptr, col_ind, csr_perm = sp.to_csr()
   assert row_ptr == (0, 1, 3, 4)
   assert col_ind == (2, 0, 3, 3)
+  # val_perm maps CSR slot -> COO position: sorted (row, col) order of the COO pattern above.
+  assert csr_perm == (1, 2, 3, 0)
+  assert tuple((sp.rows[i], sp.cols[i]) for i in csr_perm) == ((0, 2), (1, 0), (1, 3), (2, 3))
   np.testing.assert_array_equal(al.SparsityType.from_csr(sp.shape, row_ptr, col_ind).to_mask(), sp.to_mask())
 
-  col_ptr, row_ind = sp.to_csc()
+  col_ptr, row_ind, csc_perm = sp.to_csc()
   assert col_ptr == (0, 1, 1, 2, 4)
   assert row_ind == (1, 0, 1, 2)
+  assert csc_perm == (2, 1, 3, 0)
+  assert tuple((sp.cols[i], sp.rows[i]) for i in csc_perm) == ((0, 1), (2, 0), (3, 1), (3, 2))
   np.testing.assert_array_equal(al.SparsityType.from_csc(sp.shape, col_ptr, row_ind).to_mask(), sp.to_mask())
 
 

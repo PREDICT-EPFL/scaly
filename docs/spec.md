@@ -170,9 +170,13 @@ static const int f_spjac_y_x_rows[4] = {0, 1, 1, 2};
 static const int f_spjac_y_x_cols[4] = {0, 2, 3, 1};
 static const int f_spjac_y_x_csr_row_ptr[4] = {0, 1, 3, 4};
 static const int f_spjac_y_x_csr_col_ind[4] = {0, 2, 3, 1};
+static const int f_spjac_y_x_csr_val_perm[4] = {0, 1, 2, 3};
 static const int f_spjac_y_x_csc_col_ptr[5] = {0, 1, 2, 3, 4};
 static const int f_spjac_y_x_csc_row_ind[4] = {0, 2, 1, 1};
+static const int f_spjac_y_x_csc_val_perm[4] = {0, 3, 1, 2};
 ```
+
+The compact runtime value buffer written by the generated function is in `(rows, cols)` COO order, which is **not** necessarily sorted (the structured MAP spjac path emits piece-ordered nnz). The `_csr_val_perm` / `_csc_val_perm` tables map compressed slots back to COO positions: `values_csr[k] = values[csr_val_perm[k]]` (and likewise for CSC) pairs the value buffer with the sorted index tables. `SparsityType.to_csr()` / `to_csc()` return the same permutation as their third element.
 
 ## Dtype model and device placement (Phase 1)
 

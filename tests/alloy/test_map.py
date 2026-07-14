@@ -395,6 +395,53 @@ def test_spjacobian_of_tracking_map_matches_unrolled_concat() -> None:
   np.testing.assert_allclose(dense_m, dense_u, rtol=1e-10, atol=1e-10)
 
 
+def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
+  """The rendered header's CSR/CSC index tables are sorted, but the compact value buffer stays in
+  COO order — piece-ordered on the merged map path, i.e. NOT row-major — so the header must also
+  emit ``*_csr_val_perm`` / ``*_csc_val_perm`` tables (``values_csr[k] = values[csr_val_perm[k]]``).
+  Reconstructing the dense Jacobian through both compressed formats must match the COO scatter."""
+
+  import re
+
+  from alloy.codegen.c import render_c_module
+  from benchmarks.problems.tracking_nmpc import NZ, n_param, tracking_eq_function_map
+
+  N = 3
+  fn = tracking_eq_function_map(N)
+  spjf = fn.factory(f"trk_map_valperm_N{N}", ["z", "p"], ["spjac:eq:z"])
+  sp = spjf.output_sparsities[0]
+  assert sp is not None
+  coo = list(zip(sp.rows, sp.cols))
+  assert coo != sorted(coo), "test needs a non-row-major COO ordering to be meaningful"
+
+  module = render_c_module(spjf, header_name="t.h", source_name="t.c", typed_buffers=False)
+
+  def table(name: str) -> np.ndarray:
+    m = re.search(rf"_{name}\[\d+\] = \{{([^}}]*)\}};", module.header)
+    assert m is not None, f"header table {name} missing"
+    return np.array([int(x) for x in m.group(1).split(",")], dtype=np.int64)
+
+  rng = np.random.default_rng(3)
+  zv, pv = rng.normal(size=NZ * (N + 1)), rng.normal(size=n_param(N))
+  values = np.asarray(spjf(zv, pv), dtype=np.float64).reshape(-1)
+  dense_ref = np.zeros(sp.shape)
+  dense_ref[np.asarray(sp.rows), np.asarray(sp.cols)] = values
+
+  row_ptr, col_ind, csr_perm = table("csr_row_ptr"), table("csr_col_ind"), table("csr_val_perm")
+  dense_csr = np.zeros(sp.shape)
+  for r in range(sp.shape[0]):
+    for k in range(row_ptr[r], row_ptr[r + 1]):
+      dense_csr[r, col_ind[k]] = values[csr_perm[k]]
+  np.testing.assert_allclose(dense_csr, dense_ref, rtol=0, atol=0)
+
+  col_ptr, row_ind, csc_perm = table("csc_col_ptr"), table("csc_row_ind"), table("csc_val_perm")
+  dense_csc = np.zeros(sp.shape)
+  for c in range(sp.shape[1]):
+    for k in range(col_ptr[c], col_ptr[c + 1]):
+      dense_csc[row_ind[k], c] = values[csc_perm[k]]
+  np.testing.assert_allclose(dense_csc, dense_ref, rtol=0, atol=0)
+
+
 def test_spjac_keeps_constant_loc_on_rk4_tracking_map() -> None:
   """End-to-end: even on the realistic RK4 tracking case (no periodic coloring), the rendered spjac
   C source stays at constant LOC across horizons because the transposed-concat peephole now emits

@@ -178,14 +178,18 @@ def render_c_api_header(fun: Function, *, typed_buffers: bool = True) -> str:
       lines.append(f"#define {prefix}_NNZ {sp.nnz}")
       lines.append(f"#define {prefix}_NROW {sp.shape[0]}")
       lines.append(f"#define {prefix}_NCOL {sp.shape[1]}")
-      row_ptr, col_ind = sp.to_csr()
-      col_ptr, row_ind = sp.to_csc()
+      row_ptr, col_ind, csr_perm = sp.to_csr()
+      col_ptr, row_ind, csc_perm = sp.to_csc()
       lines.append(f"static const int {prefix}_rows[{sp.nnz}] = {_c_array(sp.rows)};")
       lines.append(f"static const int {prefix}_cols[{sp.nnz}] = {_c_array(sp.cols)};")
       lines.append(f"static const int {prefix}_csr_row_ptr[{sp.shape[0] + 1}] = {_c_array(row_ptr)};")
       lines.append(f"static const int {prefix}_csr_col_ind[{sp.nnz}] = {_c_array(col_ind)};")
+      # The compact value buffer stays in (rows, cols) COO order, which is not necessarily sorted;
+      # values_csr[k] = values[csr_val_perm[k]] (and likewise for CSC) pairs it with the indices.
+      lines.append(f"static const int {prefix}_csr_val_perm[{sp.nnz}] = {_c_array(csr_perm)};")
       lines.append(f"static const int {prefix}_csc_col_ptr[{sp.shape[1] + 1}] = {_c_array(col_ptr)};")
       lines.append(f"static const int {prefix}_csc_row_ind[{sp.nnz}] = {_c_array(row_ind)};")
+      lines.append(f"static const int {prefix}_csc_val_perm[{sp.nnz}] = {_c_array(csc_perm)};")
   return "\n".join(lines) + "\n"
 
 
