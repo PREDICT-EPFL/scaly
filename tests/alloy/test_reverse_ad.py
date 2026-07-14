@@ -3,7 +3,8 @@ from __future__ import annotations
 import numpy as np
 
 import alloy as al
-from alloy.ad import finite_difference
+from alloy.ad import _jvp_many_structural, _jvp_many_unrolled, finite_difference
+from alloy.expr import topo
 
 
 def _map_vjp_piece(name: str, nargs: int = 1) -> al.Function:
@@ -154,6 +155,70 @@ def test_jvp_many_vec_dot_vec_keeps_seed_axis() -> None:
   xv = np.random.default_rng(11).normal(size=6)
   expected = np.concatenate([xv[3:6] + np.array([xv[1], xv[0], 0.0]), xv[:3]])[None, :]
   np.testing.assert_allclose(jf(xv), expected, rtol=1e-12, atol=1e-12)
+
+
+def test_jvp_many_scatter_and_gather_stays_structural() -> None:
+  x = al.sym("x", 6)
+  seeds = al.sym("seeds", (3, 6))
+  expr = al.scatter(al.gather(x, np.array([[5, 1], [4, 0]])), np.array([[0, 4], [7, 8]]), (3, 3))
+  structural = _jvp_many_structural(expr, x, seeds, {}, {})
+  reference = _jvp_many_unrolled(expr, x, seeds)
+
+  assert structural.shape == (3, *expr.shape)
+  nodes = topo((structural,))
+  assert sum(node.op == al.Ops.GATHER for node in nodes) == 1
+  assert sum(node.op == al.Ops.SCATTER for node in nodes) == 1
+  fn = al.Function("jvp_many_scatter_gather", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
+  xv = np.random.default_rng(12).normal(size=6)
+  seedv = np.random.default_rng(13).normal(size=(3, 6))
+  actual, expected = fn(xv, seedv)
+  np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_jvp_many_transpose_stays_structural() -> None:
+  x = al.sym("x", 12)
+  seeds = al.sym("seeds", (4, 12))
+  expr = x.reshape((2, 3, 2)).transpose((2, 0, 1))
+  structural = _jvp_many_structural(expr, x, seeds, {}, {})
+  reference = _jvp_many_unrolled(expr, x, seeds)
+
+  assert structural.shape == (4, *expr.shape)
+  assert sum(node.op == al.Ops.TRANSPOSE for node in topo((structural,))) == 1
+  fn = al.Function("jvp_many_transpose", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
+  xv = np.random.default_rng(14).normal(size=12)
+  seedv = np.random.default_rng(15).normal(size=(4, 12))
+  actual, expected = fn(xv, seedv)
+  np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_matmul_vjp_all_shape_cases_match_finite_differences() -> None:
+  rng = np.random.default_rng(16)
+  for index, (x_shape, y_shape) in enumerate([((4,), (4,)), ((3, 4), (4,)), ((4,), (4, 2)), ((3, 4), (4, 2))]):
+    x, y = al.sym("x", x_shape), al.sym("y", y_shape)
+    out = x @ y
+    cot = al.sym("cot", out.shape)
+    objective = al.dot(cot, out)
+    gx, gy = al.vjp((objective,), (x, y), (al.const(1.0),))
+    grad_fn = al.Function(f"matmul_vjp_{index}", [x, y, cot], [gx, gy], ["x", "y", "cot"], ["gx", "gy"])
+    objective_fn = al.Function(f"matmul_vjp_objective_{index}", [x, y, cot], [objective], ["x", "y", "cot"], ["objective"])
+    xv, yv, cotv = rng.normal(size=x_shape), rng.normal(size=y_shape), rng.normal(size=out.shape)
+
+    actual_x, actual_y = grad_fn(xv, yv, cotv)
+    expected_x = finite_difference(lambda value: objective_fn(value, yv, cotv), xv).reshape(x_shape)
+    expected_y = finite_difference(lambda value: objective_fn(xv, value, cotv), yv).reshape(y_shape)
+    np.testing.assert_allclose(actual_x, expected_x, rtol=1e-6, atol=1e-8)
+    np.testing.assert_allclose(actual_y, expected_y, rtol=1e-6, atol=1e-8)
+
+
+def test_matrix_vector_vjp_graph_uses_tensor_ops() -> None:
+  x, y, cot = al.sym("x", (17, 19)), al.sym("y", 19), al.sym("cot", 17)
+  gx, gy = al.vjp((x @ y,), (x, y), (cot,))
+  nodes = topo((gx, gy))
+
+  assert sum(node.op == al.Ops.MATMUL for node in nodes) == 2
+  assert sum(node.op == al.Ops.TRANSPOSE for node in nodes) == 1
+  assert all(node.op != al.Ops.STACK for node in nodes)
+  assert len(nodes) <= 10
 
 
 def test_sparse_jacobian_colored_scalar_plus_vector() -> None:

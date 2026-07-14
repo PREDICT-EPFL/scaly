@@ -279,6 +279,10 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   if expr.op == Ops.RESHAPE:
     memo[expr.id] = ret = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo).reshape((nseed, *expr.shape))
     return ret
+  if expr.op == Ops.TRANSPOSE:
+    d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
+    memo[expr.id] = ret = d0.transpose((0, *(axis + 1 for axis in expr.attrs["axes"])))
+    return ret
   if expr.op == Ops.ADD:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
     d1 = _jvp_many_structural(expr.args[1], wrt, seeds, memo, dep_memo)
@@ -310,7 +314,15 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op == Ops.GATHER:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
-    memo[expr.id] = ret = stack([gather(d0[i], expr.attrs["indices"]) for i in range(nseed)], axis=0)
+    indices = expr.attrs["indices"].reshape(-1)
+    full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.args[0].size + indices[None, :]).reshape(-1)
+    memo[expr.id] = ret = gather(d0.reshape((nseed * expr.args[0].size,)), full).reshape((nseed, *expr.shape))
+    return ret
+  if expr.op == Ops.SCATTER:
+    d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
+    indices = expr.attrs["indices"].reshape(-1)
+    full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)
+    memo[expr.id] = ret = scatter(d0.reshape((nseed * expr.args[0].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
     return ret
   if expr.op == Ops.SUM:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
@@ -801,17 +813,11 @@ def _matmul_vjp(x: Expr, y: Expr, cot: Expr) -> tuple[Expr, Expr]:
   if len(x.shape) == 1 and len(y.shape) == 1:
     return cot * y, cot * x
   if len(x.shape) == 2 and len(y.shape) == 1:
-    gx = stack([stack([cot[i] * y[j] for j in range(x.shape[1])]) for i in range(x.shape[0])])
-    gy = stack([_sum_exprs(cot[i] * x[i, j] for i in range(x.shape[0])) for j in range(y.shape[0])])
-    return gx, gy
+    return cot.reshape((x.shape[0], 1)) @ y.reshape((1, x.shape[1])), x.T @ cot
   if len(x.shape) == 1 and len(y.shape) == 2:
-    gx = stack([_sum_exprs(cot[j] * y[i, j] for j in range(y.shape[1])) for i in range(x.shape[0])])
-    gy = stack([stack([x[i] * cot[j] for j in range(y.shape[1])]) for i in range(y.shape[0])])
-    return gx, gy
+    return y @ cot, x.reshape((x.shape[0], 1)) @ cot.reshape((1, y.shape[1]))
   if len(x.shape) == 2 and len(y.shape) == 2:
-    gx = stack([stack([_sum_exprs(cot[i, j] * y[k, j] for j in range(y.shape[1])) for k in range(x.shape[1])]) for i in range(x.shape[0])])
-    gy = stack([stack([_sum_exprs(x[i, k] * cot[i, j] for i in range(x.shape[0])) for j in range(y.shape[1])]) for k in range(y.shape[0])])
-    return gx, gy
+    return cot @ y.T, x.T @ cot
   raise NotImplementedError(f"matmul VJP for {x.shape} @ {y.shape} is not implemented")
 
 
