@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
-
-import numpy as np
-
-from alloy.solvers import SolverDescriptor, SolverStatus
 
 
 def include_dir() -> Path:
@@ -17,6 +12,8 @@ def lib_dir() -> Path:
 
 
 class _Backend:
+  """Plugin metadata only — solves run through alloy's generated C wrapper."""
+
   name = "piqp"
   kind = "qp"
   protocol_version = 1
@@ -26,11 +23,6 @@ class _Backend:
 
   include_dir = staticmethod(include_dir)
   lib_dir = staticmethod(lib_dir)
-
-  def run(self, descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> tuple[list[np.ndarray], SolverStatus]:
-    from ._piqp import _qp_backend
-
-    return _qp_backend(descriptor, inputs)
 
 
 BACKEND = _Backend()

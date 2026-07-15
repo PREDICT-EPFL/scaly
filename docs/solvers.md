@@ -2,7 +2,8 @@
 
 Phase 5 of [`roadmap.md`](roadmap.md). This document describes the user-facing
 `al.qp(...)` / `al.nlp(...)` builders, their internal oracle assembly, the
-ctypes plumbing to vendored PIQP and IPOPT, and the current limitations.
+generated C solve path driving vendored PIQP and IPOPT, and the current
+limitations.
 
 The shared libraries and headers live in the `alloy-piqp` and `alloy-ipopt`
 plugin packages and are built by their `plugins/*/hatch_build.py` hooks; see
@@ -78,12 +79,18 @@ positional or keyword args). Calling it runs the bound backend.
 - `x0` (size `n`): initial primal iterate.
 - `lam_eq0` (size `p`): initial equality multipliers.
 - `lam_ineq0` (size `m`): initial inequality multipliers.
+- `lam_box0` (size `n`, NLP only): initial signed box multipliers — the
+  wrapper sign-splits into IPOPT's `z_L = max(-lam_box0, 0)` /
+  `z_U = max(lam_box0, 0)`, the inverse of the `lam_box` output convention.
 - followed by every free parameter detected in the symbolic inputs, in
   deterministic name/id order.
 
-Initial dual values are accepted in the signature for API symmetry. IPOPT seeds
-its equality and inequality multipliers from them; PIQP warm-start plumbing is
-not implemented yet.
+IPOPT seeds its multipliers from the initial duals (pass
+`options={"warm_start_init_point": "yes"}` to make IPOPT use them). For QP the
+dual inputs are accepted for API symmetry only: PIQP's C interface has no
+warm-start entry point — the cross-solve reuse it does offer (persistent
+workspace, `piqp_update_*` + re-solve) is already how the generated wrapper
+drives it.
 
 ### Call-time outputs
 
@@ -99,13 +106,32 @@ NLP:
 - `h_eq`, `g_ineq` (constraint values at the optimum),
 - `lam_eq`, `lam_ineq`, `lam_box` (signed; `lam_box = mult_x_U − mult_x_L`).
 
-`SolverFunction.last_status` exposes the most recent `SolverStatus(code, name,
-iter, stats)`. IPOPT stats contain iteration and value-callback counts; PIQP
-leaves stats as `None`. `status.ok` is `True` for PIQP `solved` and IPOPT
-`solve_succeeded`/`solved_to_acceptable_level`/`feasible_point_found`.
-During the generated-path soak period, `SolverStatus.code` and `.name` use the
-Alloy enum on the generated path but solver-native values on the Python path;
-`ok` agrees across both, and the distinction disappears when the Python path is deleted.
+`SolverFunction.last_stats` carries the full `SolverStats` after each solve
+(alloy + native status, iterations, objective, the `t_fe`/`t_solver`/`t_glue`
+timing split, and the five IPOPT evaluation counters; PIQP fills
+`n_eval_f = 1` for its single oracle evaluation). `SolverFunction.last_status`
+is the derived `SolverStatus(code, name, iter, stats)` view; its `code`/`name`
+are the alloy status enum (`stats.py`), and `ok` is `True` for `OK` and
+`ACCEPTABLE` (IPOPT `Feasible_Point_Found` maps to `ACCEPTABLE`).
+
+### Sparse PIQP (`al.qp(..., sparse=True)`)
+
+`sparse=True` routes the QP through PIQP's sparse interface. The structural
+CSC patterns of `P` (upper triangle — PIQP's symmetric-P contract), `A_eq`,
+and `G_ineq` are computed at build time (an entry is structurally nonzero if
+it depends on a parameter or its constant value is nonzero) and baked into the
+generated wrapper as static tables; the oracle emits compact CSC-ordered value
+buffers, so runtime updates are values-only (`piqp_update_sparse`), with no
+dense staging or transpose. `P` is assumed symmetric: exactly `triu(P)` is
+baked, so an out-of-contract asymmetric `P` behaves as if symmetrized from its
+upper triangle (the dense interface's behavior for such input is
+solver-internal and may differ).
+
+Two build-time caveats: constructing a sparse QP JIT-compiles and evaluates a
+small pattern-probe function (so a working C toolchain is required at build
+time, not just at first solve), and QP data computed from a nested solver
+output is rejected with `NotImplementedError` — `SOLVER_CALL` outputs are
+opaque to the dependency mask, so their pattern cannot be derived soundly.
 
 ### Symbolic-parameter example
 
@@ -151,41 +177,39 @@ A small `nlp_bounds` Function evaluates the (param-dependent) `x_lb`, `x_ub`,
 
 ### Backend wiring
 
-`src/alloy/solvers/` contains:
+There is exactly **one solve path**: the generated C wrapper (root
+`ROADMAP.md` §3.4, L2). Every `SolverFunction.__call__` JIT-compiles a
+self-contained C translation unit whose wrapper calls `piqp_c` /
+`IpStdCInterface.h` directly with the generated oracle kernels and fills the
+alloy-owned stats struct — the same artifact serves nested solves and AOT
+deployment. The historical Python-interleaved backends (nanobind
+`_piqp_ext`, ctypes IPOPT callbacks) were deleted on 2026-07-15; the plugin
+packages now ship only the vendored native library, headers, and entry-point
+metadata.
 
-- `_lib.py` — delegates native solver discovery to `alloy.toolchain`, then
-  dlopens `libpiqpc` / `libipopt` via `ctypes.CDLL`.
-- `_piqp.py` — `ctypes.Structure` mirrors of `piqp_data_dense`, `piqp_settings`,
-  `piqp_info`, `piqp_result`, `piqp_workspace`. The `PIQPDenseSolver` handle
-  owns the column-major numpy buffers that PIQP reads through pointers, and
-  defers `piqp_setup_dense` until the first `update(...)` so PIQP sees the
-  real problem instead of `±PIQP_INF` placeholders (which otherwise produce
-  spurious "free constraint" warnings at setup time). PIQP's signed duals
-  `z_l, z_u, z_bl, z_bu` are combined into a single signed `lam_ineq` /
-  `lam_box` (upper − lower) on the way out.
-- `_ipopt.py` — `CFUNCTYPE`s for the five `Eval_*_CB` callbacks and the
-  intermediate callback plus bindings
-  for `CreateIpoptProblem`, `IpoptSolve`, `AddIpopt{Str,Num,Int}Option`, and
-  `FreeIpoptProblem`. `solve_ipopt(...)` wraps Python evaluators in the
-  callback ABI: when IPOPT passes `iRow`/`jCol` with a NULL `values` it
-  receives the precomputed sparse pattern; with a non-NULL `values` the Alloy
-  oracle is invoked and the compact buffer is memcpy'd into IPOPT's array.
-  Initial multiplier buffers support warm starts, while the intermediate and
-  evaluation callbacks record iteration and invocation counts. Exceptions
-  raised inside callbacks are captured and re-raised after IPOPT returns, so a
-  buggy oracle does not silently swallow the diagnostic.
-- `_oracle.py` — `collect_free_inputs(exprs)` walks the expression graph and
-  returns the unique `Ops.INPUT` exprs in deterministic name/id order.
-- `solver_function.py` — `SolverFunction` opaque wrapper. Mimics
-  `Function`'s `(input_names, output_names, __call__)` surface; the backend is
-  a Python callable rather than a JIT path.
-- `qp.py` / `nlp.py` — the user-facing builders.
+The pieces:
+
+- `src/alloy/solvers/qp.py` / `nlp.py` — the user-facing builders: oracle /
+  derivative-factory assembly and the `SolverDescriptor`.
+- `src/alloy/solvers/_oracle.py` — `collect_free_inputs(exprs)` walks the
+  expression graph and returns the unique `Ops.INPUT` exprs in deterministic
+  name/id order.
+- `src/alloy/solvers/solver_function.py` — `SolverFunction` opaque wrapper
+  (a real `Function` whose outputs are `SOLVER_CALL` nodes); `__call__`
+  dispatches through `jit.CompiledFunction` and refreshes
+  `last_stats`/`last_status`.
+- `src/alloy/solvers/registry.py` — entry-point discovery; a plugin exposes
+  metadata only (`name`, `kind`, `protocol_version`, `lib_stem`,
+  `link_flags`, `header`, `lib_dir()`, `include_dir()`).
+- `src/alloy/codegen/solver_c.py` — the per-backend C wrapper templates.
+- `plugins/alloy-piqp` / `plugins/alloy-ipopt` — vendored `libpiqpc` /
+  `libipopt` + headers, built by their `hatch_build.py` hooks.
 
 ### Sign and ordering conventions
 
 - `lam_ineq`, `lam_box` are signed: positive ⇒ upper bound active, negative ⇒
-  lower bound active. Both backends report nonneg `z_l`/`z_u` separately
-  internally; the conversion happens in the SolverFunction backend.
+  lower bound active. Both solvers report nonneg `z_l`/`z_u` separately
+  internally; the conversion happens in the generated wrapper.
 - For NLP, `lam = [lam_h; lam_g]` is the IPOPT-side stacked multiplier vector.
   The Lagrangian aux `gamma` is built off `["f", "g"]` in that order, so
   `lam:g` corresponds to the same stacked vector — this is what makes
@@ -299,23 +323,42 @@ step.
 
 ### Status of the C codegen path
 
-**Both backends supported.** A SolverFunction renders to a self-contained C
-function that drives PIQP (dense QP) or IPOPT (NLP).
+**Both solvers supported; the generated wrapper is the only solve path for
+`al.qp` and `al.nlp`.** A SolverFunction renders to a self-contained C
+function that drives PIQP (dense or sparse QP) or IPOPT (NLP) and fills the
+`alloy_solver_stats` struct on every solve.
 
 For PIQP, the generated wrapper calls the rendered oracle to fill QP data,
-transposes `P`/`A`/`G` to PIQP's column-major layout, lazily sets up a
-static `piqp_workspace`, and dispatches `piqp_update_dense` + `piqp_solve`
-on every call.
+then either transposes `P`/`A`/`G` to PIQP's column-major layout (dense) or
+hands compact CSC-ordered value buffers to static baked pattern tables
+(sparse, see above), lazily sets up a static `piqp_workspace`, and dispatches
+`piqp_update_{dense,sparse}` + `piqp_solve` on every call.
 
 For IPOPT, the generated source emits a static context struct (parameter
-pointers), static `const int` arrays for the sparse Jacobian and
-lower-triangular Hessian patterns, and five static `eval_*` callbacks that
-bridge IPOPT into the rendered `base`/`grad`/`jac`/`hess` Functions. The
-wrapper body computes bounds via the rendered `bounds_raw`, calls
-`CreateIpoptProblem`, applies the descriptor's options, runs `IpoptSolve`,
-and writes the seven NLP outputs (`x`, `f`, `h_eq`, `g_ineq`, `lam_eq`,
-`lam_ineq`, `lam_box`). The Hessian callback gathers the lower-triangle via
-a precomputed static index table — same mask the Python backend uses.
+pointers, the caller's workspace `w`, FE-time and evaluation counters),
+static `const int` arrays for the sparse Jacobian and lower-triangular
+Hessian patterns, five static `eval_*` callbacks that bridge IPOPT into the
+rendered `base`/`grad`/`jac`/`hess` kernels (each timed and counted, each
+receiving the caller's `w` — required scratch space, not optional), and an
+intermediate callback that records the iteration count. The wrapper body
+computes bounds via the rendered `bounds_raw`, clamps them to IPOPT's ±2e19
+infinity convention, calls `CreateIpoptProblem`, applies the descriptor's
+options, seeds `mult_g` from `lam_eq0`/`lam_ineq0` and `mult_x_L`/`mult_x_U`
+from the sign-split `lam_box0`, runs `IpoptSolve`, writes the seven NLP
+outputs (`x`, `f`, `h_eq`, `g_ineq`, `lam_eq`, `lam_ineq`, `lam_box`), and
+maps `ApplicationReturnStatus` onto the alloy status enum via the vendored
+header's enum constants (upstream drift breaks at compile time). The Hessian
+callback gathers the lower-triangle via a precomputed static index table.
+Problem-creation and option failures are checked: a rejected option surfaces
+as `ERROR` stats (native status `Invalid_Option` /
+`Invalid_Problem_Definition`) with defined outputs (`x = x0`, zeros
+elsewhere).
+
+Wrapper state (context struct, data buffers, PIQP workspace, latest stats)
+lives in per-symbol statics: distinct solvers are isolated even within one
+translation unit, but concurrent calls into the *same* compiled solver from
+multiple threads clobber each other — the generated wrappers are
+single-threaded, matching the non-reentrancy contract in `spec.md`.
 
 The JIT auto-adds `-I<alloy/include>`, `-L<alloy/lib>`, `-lpiqpc`/`-lipopt`,
 and `-Wl,-rpath,<alloy/lib>` to the compile command when a SolverFunction is
@@ -345,7 +388,6 @@ Implemented:
 - Two-sided general inequalities on both backends.
 - Symbolic parameters in the oracle; QP data and NLP bounds can be Alloy
   `Expr`s of free `p`.
-- ctypes bindings to vendored `libpiqpc`/`libipopt`.
 - `Ops.SOLVER_CALL` IR op + `SolverFunction` subclassing `Function`, so
   solvers compose with the rest of the IR.
 - **C codegen for `SOLVER_CALL` (PIQP + IPOPT)**: nested QP/NLP solvers

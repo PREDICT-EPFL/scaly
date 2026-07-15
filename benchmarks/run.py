@@ -104,6 +104,7 @@ def _nlp_filter() -> al.Function:
         x0=al.const(np.zeros(NU)),
         lam_eq0=al.const(np.zeros(0)),
         lam_ineq0=al.const(np.zeros(len(rows))),
+        lam_box0=al.const(np.zeros(NU)),
         x=x,
         u_ref=u_ref,
       )[0]

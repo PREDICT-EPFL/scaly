@@ -9,10 +9,6 @@ from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
 from typing import Protocol
 
-import numpy as np
-
-from .solver_function import SolverDescriptor, SolverStatus
-
 ORACLE_PROTOCOL_VERSION = 1
 ENTRY_POINT_GROUP = "alloy.solvers"
 
@@ -22,14 +18,17 @@ class SolverPluginError(RuntimeError):
 
 
 class SolverBackend(Protocol):
+  """Solver plugin metadata: which problem family it solves and where its
+  vendored native library/headers live. Solves themselves always run through
+  the generated C wrapper (``codegen/solver_c``); plugins ship no Python
+  solve path."""
+
   name: str
-  kind: str  # "qp" | "nlp" - which descriptor family run() accepts
+  kind: str  # "qp" | "nlp" - which descriptor family the plugin solves
   protocol_version: int
   lib_stem: str
   link_flags: tuple[str, ...]
   header: str
-
-  def run(self, descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> tuple[list[np.ndarray], SolverStatus]: ...
 
   def lib_dir(self) -> Path: ...
 

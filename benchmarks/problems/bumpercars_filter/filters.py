@@ -9,7 +9,6 @@ import numpy as np
 
 import alloy as al
 from alloy.codegen.c import render_c_module
-from alloy_ipopt._ipopt import IPOPT_INF, solve_ipopt
 from .common import ClosedLoopConfig, CTFullWeights, FilterConfig, NCTRL, NSTATE, N_PHYSICS, N_PW, OFFSETS, W0_SHAPE, W1_SHAPE, W2_SHAPE
 
 
@@ -305,11 +304,6 @@ def alloy_ctfull_rk4_fn(state, u, pw, physics, dt):  # type: ignore[no-untyped-d
   return {"next": (state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)).block()}
 
 
-def _single_output(fn: al.Function, output_name: str, new_name: str) -> al.Function:
-  idx = fn.output_names.index(output_name)
-  return al.Function(new_name, fn.inputs, [fn.outputs[idx]], fn.input_names, [fn.output_names[idx]], [fn.output_sparsities[idx]])
-
-
 def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al.Function:
   ncars = loop_cfg.ncars
   n_u = NCTRL * ncars
@@ -363,6 +357,12 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
 
 
 class AlloyDTCBFSafetyFilter:
+  """CT-DTCBF filter through ``al.nlp``'s generated C wrapper (single-`.so`
+  solve, no Python in the loop). Warm starts carry x0 + constraint + box
+  multipliers between steps; ``warm_start_init_point`` is baked on, so the
+  first (cold) solve just sees zero multiplier seeds, which IPOPT pushes to
+  the interior via its warm-start bound-push options."""
+
   name = "alloy_dt_pos_cbf"
 
   def __init__(self, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights):
@@ -375,76 +375,56 @@ class AlloyDTCBFSafetyFilter:
     self.stats_history: list[FilterStats] = []
     self.last_z: np.ndarray | None = None
     self.last_mult_g: np.ndarray | None = None
-    self.last_z_L: np.ndarray | None = None
-    self.last_z_U: np.ndarray | None = None
-    self._build_ms = 0.0
+    self.last_lam_box: np.ndarray | None = None
     self._compile_ms: dict[str, float] = {}
     t0 = time.perf_counter()
-    self.base_fn = build_alloy_oracle(loop_cfg, filt_cfg)
-    self.cost_fn = _single_output(self.base_fn, "cost", self.base_fn.name + "_cost")
-    self.g_fn = _single_output(self.base_fn, "g", self.base_fn.name + "_g")
-    inputs = ["z", "bar_x", "u_des", "pw", "physics", "dt"]
-    self.grad_fn = self.base_fn.factory(self.base_fn.name + "_grad_cost_z", inputs, ["grad:cost:z"])
-    self.jac_fn = self.base_fn.factory(self.base_fn.name + "_spjac_g_z", inputs, ["spjac:g:z"])
-    self.jac_sparsity = self.jac_fn.output_sparsities[0]
-    assert self.jac_sparsity is not None
-    if not self.filt_cfg.limited_memory_hessian:
-      self.hess_fn = self.base_fn.factory(
-        self.base_fn.name + "_sphess_gamma_z_z",
-        ["z", "lam:cost", "lam:g", "bar_x", "u_des", "pw", "physics", "dt"],
-        ["sphess:gamma:z:z"],
-        aux={"gamma": ["cost", "g"]},
-      )
-      hess_sp = self.hess_fn.output_sparsities[0]
-      assert hess_sp is not None
-      hess_rows_full = np.asarray(hess_sp.rows, dtype=np.int32)
-      hess_cols_full = np.asarray(hess_sp.cols, dtype=np.int32)
-      self.hess_lower_mask = hess_rows_full >= hess_cols_full
-      self.hess_rows = hess_rows_full[self.hess_lower_mask]
-      self.hess_cols = hess_cols_full[self.hess_lower_mask]
-    else:
-      self.hess_fn = None
-      self.hess_lower_mask = np.zeros(0, dtype=np.bool_)
-      self.hess_rows = np.zeros(0, dtype=np.int32)
-      self.hess_cols = np.zeros(0, dtype=np.int32)
+    base = build_alloy_oracle(loop_cfg, filt_cfg)
+    z, _bar_x, _u_des, _pw, _physics, _dt = base.inputs
+    cost, g = base.outputs
+    self.n_g = g.shape[0]
+    options: dict[str, str | int | float] = {
+      "print_level": 0,
+      "sb": "yes",
+      "tol": self.filt_cfg.ipopt_tol,
+      "max_iter": self.filt_cfg.ipopt_max_iter,
+      "warm_start_init_point": "yes",
+    }
+    if self.filt_cfg.limited_memory_hessian:
+      options["hessian_approximation"] = "limited-memory"
+    self.nlp = al.nlp(
+      x=z,
+      f=cost,
+      p=list(base.inputs[1:]),
+      g_ineq=g if self.n_g else None,
+      l_ineq=np.zeros(self.n_g) if self.n_g else None,
+      x_lb=np.concatenate([-np.ones(self.n_u), np.zeros(1)]),
+      x_ub=np.concatenate([np.ones(self.n_u), np.full(1, np.inf)]),
+      name=base.name.replace("_oracle", "_nlp"),
+      options=options,
+    )
+    self.jac_sparsity = self.nlp.descriptor.jac_sparsity
+    self.hess_fn = self.nlp.descriptor.hess
+    hess_sp = self.nlp.descriptor.hess_sparsity
+    assert self.jac_sparsity is not None and hess_sp is not None
+    self.hess_lower_mask = np.asarray(self.nlp.descriptor.hess_lower_mask, dtype=bool)
+    self.hess_rows = np.asarray(hess_sp.rows, dtype=np.int32)[self.hess_lower_mask]
+    self.hess_cols = np.asarray(hess_sp.cols, dtype=np.int32)[self.hess_lower_mask]
     self._build_ms = (time.perf_counter() - t0) * 1000.0
     self._warm_compile()
 
   def _warm_compile(self) -> None:
-    z = np.zeros(self.n_z)
-    bar_x = np.zeros(NSTATE * self.ncars)
-    u_des = np.zeros(self.n_u)
-    pw = self.weights.packed
-    physics = self.loop_cfg.physics.array()
-    dt = np.array([self.loop_cfg.dt])
-    functions = [("cost", self.cost_fn), ("g", self.g_fn), ("grad_f", self.grad_fn), ("jac_g", self.jac_fn)]
-    if self.hess_fn is not None:
-      functions.append(("hess_lag", self.hess_fn))
-    for label, fn in functions:
-      t0 = time.perf_counter()
-      args = (
-        (z, 1.0, np.zeros(self.g_fn.outputs[0].size), bar_x, u_des, pw, physics, dt) if fn is self.hess_fn else (z, bar_x, u_des, pw, physics, dt)
-      )
-      fn.eval_list(*args)
-      self._compile_ms[label] = (time.perf_counter() - t0) * 1000.0
+    from alloy.jit import CompiledFunction
+
+    t0 = time.perf_counter()
+    self.nlp._compiled = CompiledFunction(self.nlp)
+    self._compile_ms["solver"] = (time.perf_counter() - t0) * 1000.0
 
   def dump_c(self, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    functions = [("cost", self.cost_fn), ("g", self.g_fn), ("grad_f", self.grad_fn), ("jac_g", self.jac_fn)]
-    if self.hess_fn is not None:
-      functions.append(("hess_lag", self.hess_fn))
-    for label, fn in functions:
-      module = render_c_module(fn, header_name=f"{fn.name}.h", source_name=f"{fn.name}.c", typed_buffers=False)
-      (out_dir / module.header_name).write_text(module.header)
-      (out_dir / module.source_name).write_text(module.source)
-      (out_dir / f"{label}.txt").write_text(f"{module.source_name}: {module.source.count(chr(10)) + 1} lines\n")
-
-  def _timed(self, label: str, counts: dict[str, int], totals: dict[str, float], fn, *args) -> np.ndarray:
-    t0 = time.perf_counter()
-    out = np.asarray(fn.eval_list(*args)[0], dtype=np.float64).reshape(-1)
-    totals[label] = totals.get(label, 0.0) + (time.perf_counter() - t0) * 1000.0
-    counts[label] = counts.get(label, 0) + 1
-    return out
+    module = render_c_module(self.nlp, header_name=f"{self.nlp.name}.h", source_name=f"{self.nlp.name}.c", typed_buffers=False)
+    (out_dir / module.header_name).write_text(module.header)
+    (out_dir / module.source_name).write_text(module.source)
+    (out_dir / "solver.txt").write_text(f"{module.source_name}: {module.source.count(chr(10)) + 1} lines\n")
 
   def compute_safe_input(self, states: np.ndarray, desired: np.ndarray, step: int = 0) -> np.ndarray:
     states = np.asarray(states, dtype=np.float64)
@@ -459,102 +439,56 @@ class AlloyDTCBFSafetyFilter:
     else:
       z0 = self.last_z.copy()
       z0[: self.n_u] = np.clip(z0[: self.n_u], -1.0, 1.0)
-    n_g = self.g_fn.outputs[0].shape[0]
-    jac_sp = self.jac_sparsity
-    assert jac_sp is not None
-    jac_rows = np.asarray(jac_sp.rows, dtype=np.int32)
-    jac_cols = np.asarray(jac_sp.cols, dtype=np.int32)
-    counts: dict[str, int] = {}
-    totals: dict[str, float] = {}
+    lam_g0 = self.last_mult_g if self.last_mult_g is not None else np.zeros(self.n_g)
+    lam_box0 = self.last_lam_box if self.last_lam_box is not None else np.zeros(self.n_z)
 
-    def eval_f(z: np.ndarray) -> float:
-      return float(self._timed("f", counts, totals, self.cost_fn, z, bar_x, u_des, pw, physics, dt)[0])
-
-    def eval_grad_f(z: np.ndarray) -> np.ndarray:
-      return self._timed("grad_f", counts, totals, self.grad_fn, z, bar_x, u_des, pw, physics, dt)
-
-    def eval_g(z: np.ndarray) -> np.ndarray:
-      return self._timed("g", counts, totals, self.g_fn, z, bar_x, u_des, pw, physics, dt)
-
-    def eval_jac_g(z: np.ndarray) -> np.ndarray:
-      return self._timed("jac_g", counts, totals, self.jac_fn, z, bar_x, u_des, pw, physics, dt)
-
-    def eval_h(z: np.ndarray, obj_factor: float, lam: np.ndarray) -> np.ndarray:
-      assert self.hess_fn is not None
-      values = self._timed("hess_lag", counts, totals, self.hess_fn, z, obj_factor, lam, bar_x, u_des, pw, physics, dt)
-      return values[self.hess_lower_mask]
-
-    options: dict[str, str | int | float] = {
-      "print_level": 0,
-      "sb": "yes",
-      "tol": self.filt_cfg.ipopt_tol,
-      "max_iter": self.filt_cfg.ipopt_max_iter,
-    }
-    if self.filt_cfg.limited_memory_hessian:
-      options["hessian_approximation"] = "limited-memory"
-    if self.last_mult_g is not None:
-      options["warm_start_init_point"] = "yes"
-    t0 = time.perf_counter()
-    sol = solve_ipopt(
-      n=self.n_z,
-      m=n_g,
-      x0=z0,
-      x_L=np.concatenate([-np.ones(self.n_u), np.zeros(1)]),
-      x_U=np.concatenate([np.ones(self.n_u), np.full(1, IPOPT_INF)]),
-      g_L=np.zeros(n_g),
-      g_U=np.full(n_g, IPOPT_INF),
-      jac_rows=jac_rows,
-      jac_cols=jac_cols,
-      hess_rows=self.hess_rows,
-      hess_cols=self.hess_cols,
-      eval_f=eval_f,
-      eval_grad_f=eval_grad_f,
-      eval_g=eval_g,
-      eval_jac_g=eval_jac_g,
-      eval_h=eval_h,
-      options=options,
-      lam_g0=self.last_mult_g,
-      z_L0=self.last_z_L,
-      z_U0=self.last_z_U,
-    )
-    solver_ms = (time.perf_counter() - t0) * 1000.0
-    raw_success = sol.status in (0, 1, 6)
-    feasible = bool(np.all(np.isfinite(sol.x)) and (not sol.g.size or np.min(sol.g) >= -1e-6))
+    out = self.nlp(z0, np.zeros(0), lam_g0, lam_box0, bar_x, u_des, pw, physics, dt)
+    stats = self.nlp.last_stats
+    assert stats is not None
+    g_val = np.asarray(out["g_ineq"], dtype=np.float64).reshape(-1)
+    raw_success = stats.status in (al.AlloySolveStatus.OK, al.AlloySolveStatus.ACCEPTABLE)
+    feasible = bool(np.all(np.isfinite(out["x"])) and (not g_val.size or np.min(g_val) >= -1e-6))
     success = raw_success or feasible
     if success:
-      self.last_z = sol.x.copy()
-      self.last_mult_g = sol.mult_g.copy()
-      self.last_z_L = sol.mult_x_L.copy()
-      self.last_z_U = sol.mult_x_U.copy()
-      u_safe = np.clip(sol.x[: self.n_u], -1.0, 1.0).reshape(self.ncars, NCTRL)
+      self.last_z = out["x"].copy()
+      self.last_mult_g = out["lam_ineq"].copy()
+      self.last_lam_box = out["lam_box"].copy()
+      u_safe = np.clip(out["x"][: self.n_u], -1.0, 1.0).reshape(self.ncars, NCTRL)
     else:
       u_safe = desired.copy()
       u_safe[:, 0] = -1.0
       u_safe[:, 1] = 0.0
     du = u_safe.reshape(-1) - u_des
     tracking = float(du @ (np.tile(np.asarray(self.filt_cfg.R), self.ncars) * du))
-    eval_avg_ms = {k: totals[k] / max(1, counts.get(k, 1)) for k in totals}
+    eval_counts = {
+      "f": stats.n_eval_f,
+      "grad_f": stats.n_eval_grad_f,
+      "g": stats.n_eval_g,
+      "jac_g": stats.n_eval_jac_g,
+      "hess_lag": stats.n_eval_h,
+    }
+    eval_ms = {"fe_total": stats.t_fe * 1000.0, "solver": stats.t_solver * 1000.0, "glue": stats.t_glue * 1000.0}
+    assert self.jac_sparsity is not None
     self.stats_history.append(
       FilterStats(
         self.name,
         step,
         success,
-        sol.status_name + (" (accepted feasible)" if success and not raw_success else ""),
-        solver_ms,
-        sol.iters,
-        sol.obj,
-        float(np.min(sol.g)) if sol.g.size else float("inf"),
-        float(sol.x[-1]),
+        stats.status.name.lower() + (" (accepted feasible)" if success and not raw_success else ""),
+        stats.t_total * 1000.0,
+        stats.iter,
+        stats.obj,
+        float(np.min(g_val)) if g_val.size else float("inf"),
+        float(out["x"][-1]),
         tracking,
-        counts,
-        eval_avg_ms,
+        eval_counts,
+        eval_ms,
         {
           "build_ms": self._build_ms,
           "compile_ms": dict(self._compile_ms),
-          "jac_nnz": int(jac_sp.nnz),
+          "jac_nnz": int(self.jac_sparsity.nnz),
           "hess_nnz": int(self.hess_rows.size),
-          "eval_total_ms": totals,
-          "ipopt_eval_counts": sol.eval_counts,
+          "native_status": stats.native_status,
           "raw_success": raw_success,
         },
       )

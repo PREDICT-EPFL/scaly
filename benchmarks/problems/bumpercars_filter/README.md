@@ -143,22 +143,20 @@ then creates Alloy factories for:
 - `sphess:gamma:z:z` with `gamma = lam:cost * cost + dot(lam:g, g)` when
   `--exact-hessian` is selected.
 
-These functions are evaluated through Alloy's normal `Function.eval_list(...)`,
-which JIT-compiles each kernel to C and caches it. With `--dump-alloy-c`, the
-same kernels are rendered to inspectable C files.
+The whole solve is one `al.nlp(...)` SolverFunction: the derivative factories
+above are built inside `al.nlp`, and the filter runs through the generated C
+solver wrapper (single `.so` driving `IpStdCInterface.h` with generated
+kernels — no Python/ctypes callbacks in the loop). Warm starts carry the
+primal iterate plus the constraint and box multipliers between steps
+(`lam_ineq0`/`lam_box0`). With `--dump-alloy-c`, the full solver module
+(wrapper + kernels) is rendered to inspectable C files.
 
-The IPOPT solve currently uses Alloy's low-level native IPOPT binding
-(`alloy_ipopt._ipopt.solve_ipopt`) with Python/ctypes callbacks. Each callback
-calls a JIT-compiled Alloy function. So the oracle math is compiled C, but the
-whole solve is not yet a single generated-C solver wrapper.
+Instrumentation recorded per step (from the `alloy_solver_stats` struct):
 
-Instrumentation recorded per step:
-
-- IPOPT wall time, status, and iteration count,
+- total solve time with the FE / solver / glue split, status (alloy + native),
+  and iteration count,
 - objective, min constraint value, slack,
-- callback counts,
-- average time spent inside each JIT-compiled Alloy oracle function,
-- total time spent inside each oracle function over the solve,
+- per-oracle-function evaluation counts,
 - Alloy build/JIT-compile timings,
 - sparse Jacobian nnz and lower-triangular Hessian nnz.
 

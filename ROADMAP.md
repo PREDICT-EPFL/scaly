@@ -1,6 +1,6 @@
 # Alloy benchmarks, solver plugins, and paper roadmap
 
-Last updated: 2026-07-13. This document supersedes everything that lived in
+Last updated: 2026-07-14. This document supersedes everything that lived in
 `fast_benchmarks/` (FastBench prototype, `BENCHMARK_SUITE_PLAN.md`,
 `REAL_BENCHMARK_CANDIDATES.md`, `STRATEGY_NOTES.md`), now removed. It covers the
 benchmark suite, the solver-plugin packaging, and the path to the first paper.
@@ -287,6 +287,49 @@ the anvil implementation is ported or rewritten against the oracle protocol;
 how much of laopt's globalization detail to replicate before diminishing
 returns.
 
+### 3.4 Binding doctrine: generated C glue, one artifact (decided 2026-07-14)
+
+Hand-written Python solver bindings are **transitional, not the model**. The
+target is the anvil pattern throughout: every function callable from Python is
+JIT-compiled, and JIT thinly wraps AOT with a ctypes interface generated
+specifically for that function. Solver integrations therefore become
+**generated C wrappers emitted alongside the oracle code** — calling the
+solver's C API (`piqp_c`, `IpStdCInterface.h`) directly and linking the
+vendored dylibs — not per-solver Python extension modules. One artifact gets
+built, and it is the same artifact used at deployment.
+
+Consequences:
+
+- The Python-interleaved solve path (`al.qp`/`al.nlp` calling oracle and
+  solver from Python) is **removed** (initially planned as a demoted
+  reference/debug mode; dropped outright 2026-07-15 — correctness is gated by
+  analytic/KKT/CasADi references instead, and IPOPT/PIQP update rarely enough
+  that binding drift is not a live risk).
+- The nanobind `_piqp_ext` (c09d11f) and the low-level IPOPT Python-callback
+  binding were transitional and are **deleted (2026-07-15)** — the generated
+  path covers all their consumers. **No further investment in Python
+  bindings** — in particular, no Python sparse-PIQP binding: sparse support
+  lands in the generated wrapper, where the CSC pattern is known at codegen
+  time and baked in as static tables (values-only `piqp_update_sparse` at
+  runtime).
+- **Stats/error resurfacing** is the one real design task: alloy owns a small,
+  stable C stats struct (status code, iterations, objective, and the
+  FE / solver / glue timing split the paper needs) that every generated
+  wrapper fills from the solver's native info struct. The mapping lives in the
+  per-solver codegen template and is compiled against the vendored headers, so
+  upstream struct/enum drift breaks loudly at vendor bumps instead of
+  silently — the drift problem hand-written bindings have is dissolved
+  structurally. Solver-native structs never cross into Python; Python-side
+  status names/dataclasses are driven by the alloy enum.
+- Solver settings are baked into the generated wrapper as constants; the JIT
+  cache keys on them, so option-tuning sweeps recompile per point — acceptable
+  given per-cell artifact archiving (§2.4) already assumes per-cell builds.
+- `alloy-sqp` (§3.3) is already a native citizen of this model (C-ABI oracles
+  in, `piqp_c` inside, stats struct out) and needs no adaptation.
+
+This reframes L2 (§5) from a one-off filter deliverable into the universal
+solver-integration mechanism, and raises its priority accordingly.
+
 ## 4. MPFC benchmark (backlog item, scouted 2026-07-13)
 
 Johannes' MPFC is the racing formulation from the laopt paper, living in
@@ -333,12 +376,44 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
   proper fix only** — second-order AD rules + sparse second-order lowering for
   `Ops.MAP`. No unrolled-map or per-car manual-assembly fallback (that is
   exactly the code-size blowup claim 2 argues against); Gauss-Newton columns
-  fill the gap until L1 lands.
-- **L2 — generated-C solve path for the standalone filter** (no Python/ctypes
-  callbacks in the loop): either route the benchmark filters through the
-  existing nested `SOLVER_CALL` single-`.so` path with enough instrumentation,
-  or add a generated solver wrapper calling the oracle kernels directly, with
-  per-layer timing (callback transition, buffer copies, kernel).
+  fill the gap until L1 lands. **Completed (2026-07-14)**: MAP reverse AD
+  (cached concat-adjoint mapped once, three stride-class assemblies),
+  tensor-form matmul VJP + structural `jvp_many` SCATTER/GATHER/TRANSPOSE
+  rules, sphess-through-MAP end-to-end with the permanent
+  `ALLOY_STRICT_JVP_MANY` tripwire, and the bumpercars `--exact-hessian`
+  column cross-validated against CasADi's `ctdt_hess_lag` at rtol 1e-8. The
+  cross-check also flushed out a repo-lifetime CALL-VJP bug (formal
+  substitution rewrote symbols inside the incoming cotangent; fixed). Known
+  caveat documented in `docs/spec.md`: shared stride-0 `diff=True` formals
+  degrade Hessian coloring to O(length).
+- **L2 — generated-C solve path as the universal solver integration**
+  (reframed and priority raised 2026-07-14, §3.4): every solve callable from
+  Python goes through a generated C wrapper — the nested `SOLVER_CALL`
+  single-`.so` path, extended — that calls the solver's C API directly with
+  the generated oracle kernels; no Python/ctypes callbacks in the loop.
+  Scope: (a) the alloy-owned stats struct with per-layer timing (FE vs solver
+  vs glue: callback transition, buffer copies, kernel); (b) sparse PIQP via
+  `piqp_c` with the CSC pattern baked at codegen time; (c) IPOPT through
+  `IpStdCInterface.h` with callbacks pointing at generated kernels; (d) the
+  Python-interleaved path demoted to reference/debug mode, and the nanobind
+  `_piqp_ext` + `_piqp_ctypes.py` deleted after the generated path soaks.
+  The bumpercars standalone filter is the first consumer, not the scope.
+  **Status: COMPLETE (2026-07-15). (a) L2-1 (2026-07-14): stats ABI +
+  standalone dense QP through the generated wrapper. (b)+(c) L2-2:
+  `al.qp(..., sparse=True)` bakes structural CSC patterns of P/A_eq/G_ineq as
+  static tables with compact CSC-ordered oracle values and values-only
+  `piqp_update_sparse`; the IPOPT wrapper passes the caller's workspace into
+  the eval callbacks (root cause of the chain-scale crash), fills the stats
+  struct (status via vendored enum constants, iterations via the intermediate
+  callback, eval counts, FE/solver/glue split), consumes full warm starts
+  (`x0`, `lam_eq0`/`lam_ineq0`, and the signed box multiplier `lam_box0`,
+  sign-split into IPOPT's z_L/z_U), and clamps bounds to ±2e19. (d) done
+  without a soak period: the Python-interleaved path, the nanobind
+  `_piqp_ext` + `_piqp_ctypes.py`, and the ctypes IPOPT callback binding are
+  deleted; plugins ship vendored libs + headers + entry-point metadata only.
+  The bumpercars CT-DTCBF filter (first consumer) runs through `al.nlp`'s
+  generated wrapper with cross-step warm starts and stats-derived
+  instrumentation.**
 - **L3 — IPOPT low-level binding parity**: accept/return `lam_x`/`lam_g`
   warm starts and final multipliers, expose iteration count and callback
   counts. **Completed (2026-07-13).**

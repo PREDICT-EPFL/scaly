@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 dependencies = ["alloy"]
 
 [build-system]
-requires = ["hatchling", "nanobind>=2.4"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.entry-points."alloy.solvers"]

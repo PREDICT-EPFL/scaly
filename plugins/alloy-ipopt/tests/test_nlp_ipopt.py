@@ -1,4 +1,4 @@
-"""IPOPT plugin solver tests."""
+"""IPOPT plugin solver tests (generated C wrapper — the only solve path)."""
 
 from __future__ import annotations
 
@@ -7,55 +7,82 @@ import pytest
 
 import alloy as al
 from alloy.toolchain import solver_diagnostic, solver_loadable
-from alloy_ipopt._ipopt import solve_ipopt
 
 need_ipopt = pytest.mark.skipif(not solver_loadable("ipopt"), reason=solver_diagnostic("ipopt"))
 
 
 @need_ipopt
-def test_solve_ipopt_warm_start_and_stats() -> None:
-  def solve(x0: np.ndarray, previous=None):
-    return solve_ipopt(
-      n=2,
-      m=1,
-      x0=x0,
-      x_L=np.full(2, -5.0),
-      x_U=np.full(2, 5.0),
-      g_L=np.zeros(1),
-      g_U=np.zeros(1),
-      jac_rows=np.array([0, 0], dtype=np.int32),
-      jac_cols=np.array([0, 1], dtype=np.int32),
-      hess_rows=np.array([0, 1, 1], dtype=np.int32),
-      hess_cols=np.array([0, 0, 1], dtype=np.int32),
-      eval_f=lambda x: (1.0 - x[0]) ** 2 + 100.0 * (x[1] - x[0] ** 2) ** 2,
-      eval_grad_f=lambda x: np.array([2.0 * (x[0] - 1.0) - 400.0 * x[0] * (x[1] - x[0] ** 2), 200.0 * (x[1] - x[0] ** 2)]),
-      eval_g=lambda x: np.array([x[0] + x[1] - 1.0]),
-      eval_jac_g=lambda _x: np.ones(2),
-      eval_h=lambda x, obj_factor, _lam: obj_factor * np.array([2.0 - 400.0 * x[1] + 1200.0 * x[0] ** 2, -400.0 * x[0], 200.0]),
-      options={"print_level": 0, "sb": "yes", **({"warm_start_init_point": "yes"} if previous is not None else {})},
-      lam_g0=None if previous is None else previous.mult_g,
-      z_L0=None if previous is None else previous.mult_x_L,
-      z_U0=None if previous is None else previous.mult_x_U,
-    )
-
-  cold = solve(np.array([-1.2, 2.2]))
-  warm = solve(cold.x, cold)
-  assert cold.status in (0, 1, 6) and warm.status in (0, 1, 6)
-  assert cold.iters >= 1 and warm.iters >= 1 and warm.iters <= cold.iters
-  assert all(count > 0 for count in cold.eval_counts.values())
-  assert all(count > 0 for count in warm.eval_counts.values())
+def test_nlp_generated_stats_and_timing_split() -> None:
+  x = al.sym("x", 2)
+  f = (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
+  nlp = al.nlp(x=x, f=f, h_eq=al.stack([x[0] + x[1] - 1.0]), name="nlp_stats_gen")
+  out = nlp(np.array([0.5, 0.5]), np.zeros(1), np.zeros(0), np.zeros(2))
+  stats = nlp.last_stats
+  assert stats is not None
+  assert stats.version == al.ALLOY_SOLVER_STATS_VERSION
+  assert stats.status == al.AlloySolveStatus.OK
+  assert stats.iter > 0
+  assert stats.obj == pytest.approx(float(out["f"]), rel=1e-12, abs=1e-12)
+  assert stats.n_eval_f > 0 and stats.n_eval_grad_f > 0 and stats.n_eval_g > 0
+  assert stats.n_eval_jac_g > 0 and stats.n_eval_h > 0
+  assert all(value >= 0.0 for value in (stats.t_total, stats.t_fe, stats.t_solver, stats.t_glue))
+  assert stats.t_total == pytest.approx(stats.t_fe + stats.t_solver + stats.t_glue, rel=0.1, abs=1e-12)
+  assert nlp.last_status is not None and nlp.last_status.ok
+  assert nlp.last_status.iter == stats.iter
 
 
 @need_ipopt
-def test_nlp_solver_status_stats() -> None:
+def test_nlp_generated_warm_start_reduces_iterations() -> None:
+  """Seeding x0 + lam_eq0 + lam_box0 from a previous solve (with
+  warm_start_init_point) must converge in fewer iterations than cold."""
+
+  def build(name: str, warm: bool) -> al.SolverFunction:
+    x = al.sym("x", 2)
+    f = (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
+    options: dict[str, str | int | float] = {"warm_start_init_point": "yes"} if warm else {}
+    return al.nlp(x=x, f=f, h_eq=al.stack([x[0] + x[1] - 1.0]), x_lb=np.full(2, -5.0), x_ub=np.full(2, 5.0), name=name, options=options)
+
+  cold = build("nlp_ws_cold", warm=False)
+  warm = build("nlp_ws_warm", warm=True)
+  cold_out = cold(np.array([-1.2, 2.2]), np.zeros(1), np.zeros(0), np.zeros(2))
+  assert cold.last_stats is not None and cold.last_stats.status == al.AlloySolveStatus.OK
+  warm(cold_out["x"], cold_out["lam_eq"], np.zeros(0), cold_out["lam_box"])
+  assert warm.last_stats is not None and warm.last_stats.status == al.AlloySolveStatus.OK
+  assert cold.last_stats.iter >= 1
+  assert warm.last_stats.iter < cold.last_stats.iter
+
+
+@need_ipopt
+def test_nlp_generated_status_max_iter() -> None:
   x = al.sym("x", 2)
-  nlp = al.nlp(x=x, f=(x[0] - 1) ** 2 + (x[1] - 2) ** 2, h_eq=al.stack([x[0] + x[1] - 1.0]), backend="python")
-  nlp(np.array([2.0, -1.0]), np.zeros(1), np.zeros(0))
-  assert nlp.last_status is not None and nlp.last_status.ok
-  assert nlp.last_status.iter > 0
-  assert nlp.last_status.stats is not None
-  assert nlp.last_status.stats["iters"] == nlp.last_status.iter
-  assert all(nlp.last_status.stats[name] > 0 for name in ("eval_f", "eval_grad_f", "eval_g", "eval_jac_g", "eval_h"))
+  f = (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
+  nlp = al.nlp(x=x, f=f, h_eq=al.stack([x[0] + x[1] - 1.0]), name="nlp_max_iter", options={"max_iter": 1})
+  nlp(np.array([-1.2, 2.2]), np.zeros(1), np.zeros(0), np.zeros(2))
+  assert nlp.last_stats is not None
+  assert nlp.last_stats.status == al.AlloySolveStatus.MAX_ITER
+  assert nlp.last_stats.native_status == -1
+  assert nlp.last_stats.iter == 1
+  assert nlp.last_status is not None and not nlp.last_status.ok
+
+
+@need_ipopt
+def test_nlp_generated_rejected_option_reports_error_status() -> None:
+  """The generated wrapper checks every AddIpopt*Option return and surfaces
+  ALLOY_SOLVE_ERROR with Invalid_Option (-12) as the native status and
+  defined outputs."""
+  x = al.sym("x", 2)
+  nlp = al.nlp(
+    x=x, f=(x[0] - 1) ** 2 + (x[1] - 2) ** 2, h_eq=al.stack([x[0] + x[1] - 1.0]), name="nlp_bad_option", options={"definitely_not_an_ipopt_option": 3}
+  )
+  x0 = np.array([0.5, -0.5])
+  out = nlp(x0, np.zeros(1), np.zeros(0), np.zeros(2))
+  assert nlp.last_stats is not None
+  assert nlp.last_stats.status == al.AlloySolveStatus.ERROR
+  assert nlp.last_stats.native_status == -12
+  assert nlp.last_stats.iter == 0
+  np.testing.assert_allclose(out["x"], x0)
+  np.testing.assert_allclose(out["f"], 0.0)
+  assert nlp.last_status is not None and not nlp.last_status.ok
 
 
 @need_ipopt
@@ -68,7 +95,7 @@ def test_nlp_equality_constrained_quadratic() -> None:
   f = (x[0] - 1) ** 2 + (x[1] - 2) ** 2
   h_eq = al.stack([x[0] + x[1] - 1.0], axis=0)
   nlp = al.nlp(x=x, f=f, h_eq=h_eq)
-  out = nlp(np.array([0.5, 0.5]), np.zeros(1), np.zeros(0))
+  out = nlp(np.array([0.5, 0.5]), np.zeros(1), np.zeros(0), np.zeros(2))
   assert nlp.last_status is not None and nlp.last_status.ok
   np.testing.assert_allclose(out["x"], [0.0, 1.0], atol=1e-6)
   np.testing.assert_allclose(out["f"], 2.0, atol=1e-6)
@@ -85,7 +112,7 @@ def test_nlp_box_only_quadratic() -> None:
   x = al.sym("x", 2)
   f = (x[0] - 0.5) ** 2 + (x[1] + 2) ** 2
   nlp = al.nlp(x=x, f=f, x_lb=np.array([-np.inf, -1.0]))
-  out = nlp(np.array([0.0, 0.0]), np.zeros(0), np.zeros(0))
+  out = nlp(np.array([0.0, 0.0]), np.zeros(0), np.zeros(0), np.zeros(2))
   assert nlp.last_status is not None and nlp.last_status.ok
   np.testing.assert_allclose(out["x"], [0.5, -1.0], atol=1e-6)
   # lam_box = mult_x_U - mult_x_L: negative <=> lower bound active.
@@ -110,7 +137,7 @@ def test_nlp_two_sided_inequality_and_lagrangian_hessian() -> None:
   g = al.stack([x[0] ** 2 + x[1]], axis=0)
   nlp = al.nlp(x=x, f=f, g_ineq=g, l_ineq=np.array([0.0]), u_ineq=np.array([5.0]))
   x0 = np.array([1.0, -0.5])
-  out = nlp(x0, np.zeros(0), np.zeros(1))
+  out = nlp(x0, np.zeros(0), np.zeros(1), np.zeros(2))
   assert nlp.last_status is not None and nlp.last_status.ok
 
   np.testing.assert_allclose(out["x"], [0.0, 0.0], atol=2e-4)
@@ -135,13 +162,12 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
       f=((x - target) ** 2).sum(),
       h_eq=h_eq,
       name=f"nlp_{'mapped' if mapped else 'unrolled'}_constraint",
-      backend="python",
     )
 
   mapped_nlp, unrolled_nlp = build(True), build(False)
   x0 = np.array([0.2, 0.1, -0.3, 0.2])
-  mapped_out = mapped_nlp(x0, np.zeros(2), np.zeros(0))
-  unrolled_out = unrolled_nlp(x0, np.zeros(2), np.zeros(0))
+  mapped_out = mapped_nlp(x0, np.zeros(2), np.zeros(0), np.zeros(4))
+  unrolled_out = unrolled_nlp(x0, np.zeros(2), np.zeros(0), np.zeros(4))
   assert mapped_nlp.last_status is not None and mapped_nlp.last_status.ok
   assert unrolled_nlp.last_status is not None and unrolled_nlp.last_status.ok
   np.testing.assert_allclose(mapped_out["x"], target, atol=2e-6)
@@ -149,7 +175,7 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
   np.testing.assert_allclose(mapped_out["f"], unrolled_out["f"], rtol=1e-8, atol=1e-10)
   # The exact-Hessian callback was actually exercised, and the handoff carries correct values:
   # this easy feasible problem could converge identically even with a broken Hessian.
-  assert mapped_nlp.last_status.stats is not None and mapped_nlp.last_status.stats["eval_h"] > 0
+  assert mapped_nlp.last_stats is not None and mapped_nlp.last_stats.n_eval_h > 0
 
   def hess_dense(mapped: bool, xv: np.ndarray, lam: np.ndarray) -> np.ndarray:
     x = al.sym("x", 4)
@@ -174,7 +200,7 @@ def test_nlp_with_symbolic_parameter() -> None:
   f = ((x - mu) * (x - mu)).sum()
   nlp = al.nlp(x=x, f=f, p=mu)
   for mu_val in [np.zeros(2), np.array([1.5, -2.3])]:
-    out = nlp(x0=np.array([0.0, 0.0]), lam_eq0=np.zeros(0), lam_ineq0=np.zeros(0), mu=mu_val)
+    out = nlp(x0=np.array([0.0, 0.0]), lam_eq0=np.zeros(0), lam_ineq0=np.zeros(0), lam_box0=np.zeros(2), mu=mu_val)
     assert nlp.last_status is not None and nlp.last_status.ok
     np.testing.assert_allclose(out["x"], mu_val, atol=1e-6)
 
@@ -190,7 +216,7 @@ def test_nlp_rosenbrock_equality_constrained() -> None:
   h_eq = al.stack([x_sym[0] + x_sym[1] - 1.0], axis=0)
   nlp = al.nlp(x=x_sym, f=f, h_eq=h_eq)
   x0 = np.array([0.5, 0.5])
-  out = nlp(x0, np.zeros(1), np.zeros(0))
+  out = nlp(x0, np.zeros(1), np.zeros(0), np.zeros(2))
   assert nlp.last_status is not None and nlp.last_status.ok
 
   # Substitute y=1-x. The stationary points solve
@@ -209,7 +235,7 @@ def test_nested_nlp_in_alloy_function() -> None:
     f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2
     h_eq = al.stack([x[0] ** 2 + x[1] ** 2 - 1.0], axis=0)
     nlp = al.nlp(x=x, f=f, p=target, h_eq=h_eq)
-    out = nlp.call([al.const(np.array([1.0, 0.0])), al.const(np.zeros(1)), al.const(np.zeros(0)), target])
+    out = nlp.call([al.const(np.array([1.0, 0.0])), al.const(np.zeros(1)), al.const(np.zeros(0)), al.const(np.zeros(2)), target])
     return {"x_proj": out[0]}
 
   # Projection of (2, 0) onto the unit circle = (1, 0).
@@ -233,6 +259,7 @@ def test_nested_nlp_jit_compiles_through_ipopt() -> None:
       x0=al.const(np.array([1.0, 0.0])),
       lam_eq0=al.const(np.zeros(1)),
       lam_ineq0=al.const(np.zeros(0)),
+      lam_box0=al.const(np.zeros(2)),
       target=target,
     )
     return {"x_proj": out[0]}

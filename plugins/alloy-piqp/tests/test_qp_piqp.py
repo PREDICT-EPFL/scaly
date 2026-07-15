@@ -76,7 +76,9 @@ def test_qp_with_symbolic_parameters() -> None:
 
 
 @need_piqp
-def test_generated_qp_matches_python_backend_over_parameter_sweep() -> None:
+def test_generated_qp_satisfies_kkt_over_parameter_sweep() -> None:
+  """Fully parameterized QP (P/c/A/b/G/bounds all depend on t): the generated
+  solve must satisfy stationarity and primal feasibility at every point."""
   theta = al.sym("theta", 1)
   t = theta[0]
   P = al.stack([al.stack([2.0 + 0.1 * t, 0.05 * t]), al.stack([0.05 * t, 1.5 - 0.1 * t])])
@@ -89,15 +91,19 @@ def test_generated_qp_matches_python_backend_over_parameter_sweep() -> None:
   x_lb = al.stack([-1.0 + 0.05 * t, -1.1 - 0.05 * t])
   x_ub = al.stack([1.1 + 0.05 * t, 1.2 - 0.05 * t])
   kwargs: dict[str, Any] = dict(P=P, c=c, A_eq=A_eq, b_eq=b_eq, G_ineq=G_ineq, l_ineq=l_ineq, u_ineq=u_ineq, x_lb=x_lb, x_ub=x_ub)
-  generated = al.qp(**kwargs, backend="c", name="qp_parity_c")
-  python = al.qp(**kwargs, backend="python", name="qp_parity_python")
+  qp = al.qp(**kwargs, name="qp_kkt_sweep")
   x0 = np.zeros(2)
   for t_value in (-0.6, 0.1, 0.8):
-    args = (x0, np.zeros(1), np.zeros(2), np.array([t_value]))
-    c_out, py_out = generated(*args), python(*args)
-    for name in generated.output_names:
-      np.testing.assert_allclose(c_out[name], py_out[name], rtol=1e-8, atol=1e-8)
-    x0 = c_out["x"]
+    out = qp(x0, np.zeros(1), np.zeros(2), np.array([t_value]))
+    assert qp.last_status is not None and qp.last_status.ok
+    P_np = np.array([[2.0 + 0.1 * t_value, 0.05 * t_value], [0.05 * t_value, 1.5 - 0.1 * t_value]])
+    c_np = np.array([-0.4 + 0.2 * t_value, 0.3 - 0.1 * t_value])
+    A_np = np.array([[1.0 + 0.05 * t_value, 1.0 - 0.05 * t_value]])
+    G_np = np.array([[1.0, 0.1 * t_value], [-0.1 * t_value, 1.0]])
+    stationarity = P_np @ out["x"] + c_np + A_np.T @ out["lam_eq"] + G_np.T @ out["lam_ineq"] + out["lam_box"]
+    np.testing.assert_allclose(stationarity, np.zeros(2), atol=1e-6)
+    np.testing.assert_allclose(A_np @ out["x"], [0.2 + 0.1 * t_value], atol=1e-7)
+    x0 = out["x"]
 
 
 @need_piqp

@@ -6,8 +6,6 @@ import os
 import platform
 import shutil
 import subprocess
-import sys
-from importlib.util import find_spec
 from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
@@ -50,16 +48,12 @@ def _has_cxx_compiler() -> bool:
   return any(shutil.which(cmd) for cmd in ("c++", "g++", "clang++"))
 
 
-def _missing_piqp_tools(*, build_piqp: bool, build_ext: bool) -> list[str]:
+def _missing_piqp_tools(*, build_piqp: bool) -> list[str]:
   missing = [cmd for cmd in ("git", "cmake") if build_piqp and shutil.which(cmd) is None]
-  if build_ext and shutil.which("cmake") is None and "cmake" not in missing:
-    missing.append("cmake")
   if build_piqp and shutil.which("cc") is None:
     missing.append("cc")
-  if (build_piqp or build_ext) and not _has_cxx_compiler():
+  if build_piqp and not _has_cxx_compiler():
     missing.append("c++")
-  if build_ext and find_spec("nanobind") is None:
-    missing.append("nanobind")
   return missing
 
 
@@ -70,42 +64,6 @@ def _run(cmd: list[str], cwd: Path, env: dict | None = None) -> None:
 def _piqp_built(system: str, lib_dir: Path, include_dir: Path) -> bool:
   lib_path = lib_dir / _shared_lib_name(system, "piqpc")
   return lib_path.exists() and (include_dir / "piqp.h").exists() and (include_dir / "piqp_typedef.h").exists()
-
-
-def _nanobind_ext(root: Path) -> Path | None:
-  return next((path for path in (root / "src" / "alloy_piqp").glob("_piqp_ext*.so") if ".abi3." in path.name), None)
-
-
-def _nanobind_built(root: Path) -> bool:
-  ext, source, stub = _nanobind_ext(root), root / "bindings" / "piqp_ext.cpp", root / "src" / "alloy_piqp" / "_piqp_ext.pyi"
-  return ext is not None and stub.exists() and ext.stat().st_mtime >= source.stat().st_mtime and stub.stat().st_mtime >= source.stat().st_mtime
-
-
-def _build_nanobind_ext(hook: "BuildHook", root: Path, third_party_dir: Path) -> None:
-  ext = _nanobind_ext(root)
-  stub = root / "src" / "alloy_piqp" / "_piqp_ext.pyi"
-  if _nanobind_built(root):
-    hook.app.display_info(f"PIQP nanobind extension already built at {ext}")
-    return
-
-  hook.app.display_info("Building PIQP nanobind extension...")
-  build_dir = third_party_dir / "ext_build"
-  _run(
-    ["cmake", "-S", str(root / "bindings"), "-B", str(build_dir), "-DCMAKE_BUILD_TYPE=Release", f"-DPython_EXECUTABLE={sys.executable}"],
-    cwd=root,
-  )
-  _run(["cmake", "--build", str(build_dir), "--config", "Release", "-j"], cwd=root)
-  built = next((path for path in build_dir.rglob("_piqp_ext*.so") if ".abi3." in path.name), None)
-  if built is None:
-    raise RuntimeError(f"Could not find stable-ABI _piqp_ext*.abi3.so in {build_dir}")
-  dst = root / "src" / "alloy_piqp" / built.name
-  shutil.copy2(built, dst)
-  env = os.environ.copy()
-  # import the ext as a top-level module: going through the package would pull alloy_piqp/__init__.py's
-  # numpy/alloy imports into the isolated build env, which only has hatchling + nanobind
-  env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(root / "src" / "alloy_piqp"), env.get("PYTHONPATH"))))
-  _run([sys.executable, "-m", "nanobind.stubgen", "-m", "_piqp_ext", "-o", str(stub)], cwd=root, env=env)
-  hook.app.display_info(f"PIQP nanobind extension build complete at {dst}")
 
 
 def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path) -> None:
@@ -280,7 +238,7 @@ class BuildHook(BuildHookInterface):
       self.app.display_info(f"Skipping vendored solver build for editable install: {msg}")
       return
 
-    missing = _missing_piqp_tools(build_piqp=not _piqp_built(system, lib_dir, include_dir), build_ext=not _nanobind_built(root))
+    missing = _missing_piqp_tools(build_piqp=not _piqp_built(system, lib_dir, include_dir))
     if missing:
       msg = f"missing native toolchain for PIQP build: {', '.join(missing)}"
       if strict:
@@ -288,15 +246,10 @@ class BuildHook(BuildHookInterface):
       self.app.display_info(f"Skipping PIQP build for editable install ({msg}); set ALLOY_BUILD_SOLVERS=required to make this fatal.")
     else:
       _build_piqp(self, third_party_dir, lib_dir, include_dir)
-      _build_nanobind_ext(self, root, third_party_dir)
 
   def clean(self, versions: list[str]) -> None:
     root = Path(self.root)
     package_dir = root / "src" / "alloy_piqp"
-    for path in (*package_dir.glob("_piqp_ext*.so"), package_dir / "_piqp_ext.pyi"):
-      if path.exists():
-        self.app.display_info(f"Removing {path}")
-        path.unlink()
     for path in (package_dir / "lib", package_dir / "include", root / "third_party"):
       if path.exists():
         self.app.display_info(f"Removing {path}")

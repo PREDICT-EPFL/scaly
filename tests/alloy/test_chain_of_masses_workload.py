@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 import numpy as np
 import pytest
 
-import alloy as al
 from alloy.toolchain import solver_diagnostic, solver_loadable
 from benchmarks.problems.chain_of_masses import (
   NU,
@@ -71,9 +68,9 @@ def test_chain_nlp_matches_casadi_objective() -> None:
   zv[horizon * nz :] = base
 
   generated = chain_nlp(n_masses, horizon)
-  alloy_solver = al.SolverFunction(replace(generated.descriptor, python_backend=True))
-  alloy_out = alloy_solver(zv, np.zeros(nx * (horizon + 1)), np.zeros(0), pv)
-  assert alloy_solver.last_status is not None and alloy_solver.last_status.ok
+  alloy_out = generated(zv, np.zeros(nx * (horizon + 1)), np.zeros(0), np.zeros(n_dec(n_masses, horizon)), pv)
+  assert generated.last_status is not None and generated.last_status.ok
+  assert generated.last_stats is not None and generated.last_stats.iter > 0
 
   lb, ub = np.full(n_dec(n_masses, horizon), -np.inf), np.full(n_dec(n_masses, horizon), np.inf)
   for i in range(horizon):

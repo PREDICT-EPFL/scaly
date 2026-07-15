@@ -1,10 +1,10 @@
-"""QP and NLP solver bindings.
+"""QP and NLP solver builders.
 
-This package wires vendored PIQP and IPOPT shared libraries into Alloy via ctypes
-and exposes the user-facing builders :func:`qp` and :func:`nlp`. Both builders
+This package exposes the user-facing builders :func:`qp` and :func:`nlp`. Both
 return a callable :class:`SolverFunction` whose oracle is an ordinary Alloy
-``Function`` (so it goes through the existing JIT path) and whose backend is an
-opaque solver call from the outside.
+``Function`` and whose solve is a generated C wrapper driving the vendored
+PIQP / IPOPT C APIs directly (``codegen/solver_c``) — JIT-compiled like any
+other alloy function, with no Python in the solve loop.
 """
 
 from __future__ import annotations
