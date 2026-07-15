@@ -330,6 +330,49 @@ Consequences:
 This reframes L2 (§5) from a one-off filter deliverable into the universal
 solver-integration mechanism, and raises its priority accordingly.
 
+### 3.5 Plugin-owned codegen templates (decided + landed 2026-07-15)
+
+L2 landed with the per-solver C wrapper templates living in core
+(`src/alloy/codegen/solver_c.py`) — an abstraction leak: everything else about
+a solver was already plugin-local (vendored lib, headers, entry point), but
+adding a new solver still meant editing the alloy codebase. That is exactly
+CasADi's plugin model (`Conic`/`Nlpsol` plugins are written in-tree against
+internal headers), and its weakness: third parties cannot ship a solver
+integration as their own package.
+
+Decision: **the wrapper template is part of the plugin.** The
+`SolverBackend` entry-point protocol (`src/alloy/solvers/registry.py`) gains a
+`render_wrapper(fun, ctx)` codegen hook next to the packaging metadata;
+protocol version bumped to 2. The PIQP/IPOPT templates moved to
+`alloy_piqp/codegen.py` / `alloy_ipopt/codegen.py` unchanged (the generated C
+is byte-identical for single-backend units, verified by JIT-cache hits across
+the move; a unit reaching *both* backends orders includes/link flags
+alphabetically now instead of piqp-first — a one-time cache miss, accepted). Core keeps
+everything that makes the contract stable — problem normalization and oracle
+assembly, the `_raw` calling convention and Program-IR kernel rendering, the
+`alloy_solver_stats` struct + status enum + clock, JIT/cache/link-flag
+plumbing, and the framing of every wrapper (stats storage + accessor) — and
+`toolchain.py` / `codegen/solver_c.py` lost their hardcoded piqp/ipopt
+knowledge (backend discovery, includes, link flags, and the
+`ALLOY_<NAME>_LIB` override env vars are all registry-driven now).
+
+The full contract a plugin must respect is documented in
+[`docs/solver_plugins.md`](docs/solver_plugins.md): required `_raw` signature,
+oracle output orderings per descriptor family, stats-filling obligations,
+status mapping through vendored enum constants, workspace pass-through, and
+the protocol-versioning rules. A structural test suite
+(`tests/alloy/test_solver_registry.py`) pins the registry gates and the
+core/plugin codegen handoff with a fake in-test backend.
+
+Why now (and not with B4): `alloy-sqp` (§3.3) is the first new backend; had it
+been written against a core-owned template file it would have grown core the
+same way CasADi grows. Writing it as an external plugin against this protocol
+is the validation that the interface is complete — see B4.
+
+Paper relevance: this is a claim-1-adjacent architecture point — solver
+integrations are pip-installable packages (vendored lib + headers + a Python
+render hook), not in-tree plugins. Worth a paragraph in the deployment story.
+
 ## 4. MPFC benchmark (backlog item, scouted 2026-07-13)
 
 Johannes' MPFC is the racing formulation from the laopt paper, living in
@@ -420,6 +463,13 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
 - **L4 — parameterized model constants**: physical constants and `dt` as
   symbolic parameters in the decorated ODE functions instead of baked-in
   values (blocks tuning sweeps).
+- **L5 — plugin-owned solver codegen templates** (§3.5): move the per-solver
+  C wrapper templates out of core into the plugins via the `render_wrapper`
+  protocol hook, de-hardcode piqp/ipopt from `toolchain.py` /
+  `codegen/solver_c.py`, document the plugin contract
+  (`docs/solver_plugins.md`), bump the plugin protocol to v2.
+  **Status: COMPLETE (2026-07-15).** Generated C verified byte-identical
+  across the move; structural protocol tests added.
 
 Scheduling: L3 and L4 are small and land early (with B2); L1 and L2 are the
 substantial ones and gate the exact-Hessian and callback-free benchmark
@@ -458,6 +508,12 @@ columns respectively — interleave them between B2 and B4.
 - **B4 — `alloy-sqp`** (after L1/L2): the custom SQP per §3.3 over `piqp_c`;
   the one-solver-two-oracles columns (alloy oracles vs CasADi-codegen oracles)
   added to all B2 problems; FE/QP/line-search timing split in stats.
+  **Must be built as an external plugin against the L5 protocol (§3.5,
+  `docs/solver_plugins.md`)**: `BACKEND` + `render_wrapper` in
+  `plugins/alloy-sqp`, zero edits to `src/alloy/` — if a core edit turns out
+  to be needed, that is a gap in the plugin protocol to fix explicitly (with
+  a protocol-version bump if breaking), not a reason to special-case core.
+  B4 doubles as the acceptance test that L5's interface is complete.
 - **B5 — paper assembly**: full sweeps + closed-loop runs at canonical points,
   figures, GPU-claim experiment (gated on the GPU backend milestone, §1).
 

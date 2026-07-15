@@ -198,12 +198,19 @@ The pieces:
   (a real `Function` whose outputs are `SOLVER_CALL` nodes); `__call__`
   dispatches through `jit.CompiledFunction` and refreshes
   `last_stats`/`last_status`.
-- `src/alloy/solvers/registry.py` — entry-point discovery; a plugin exposes
-  metadata only (`name`, `kind`, `protocol_version`, `lib_stem`,
-  `link_flags`, `header`, `lib_dir()`, `include_dir()`).
-- `src/alloy/codegen/solver_c.py` — the per-backend C wrapper templates.
+- `src/alloy/solvers/registry.py` — entry-point discovery and the
+  `SolverBackend` plugin protocol: packaging metadata (`name`, `kind`,
+  `protocol_version`, `lib_stem`, `link_flags`, `header`, `lib_dir()`,
+  `include_dir()`) plus the `render_wrapper(fun, ctx)` codegen hook. The
+  full contract is documented in [`solver_plugins.md`](solver_plugins.md).
+- `src/alloy/codegen/solver_c.py` — the codegen orchestration: it frames each
+  plugin-rendered wrapper body with the alloy-owned stats storage/accessor
+  and exposes the backend/include/link-flag queries the JIT and AOT
+  consumers use.
 - `plugins/alloy-piqp` / `plugins/alloy-ipopt` — vendored `libpiqpc` /
-  `libipopt` + headers, built by their `hatch_build.py` hooks.
+  `libipopt` + headers (built by their `hatch_build.py` hooks) and the
+  per-solver C wrapper templates (`alloy_piqp/codegen.py`,
+  `alloy_ipopt/codegen.py`).
 
 ### Sign and ordering conventions
 

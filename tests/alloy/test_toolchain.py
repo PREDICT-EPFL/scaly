@@ -28,7 +28,7 @@ def test_solver_dir_override_discovery_and_flags(tmp_path, monkeypatch) -> None:
   assert toolchain.solver_header_include("piqp") == "piqp/piqp.h"
   assert toolchain.solver_header_include("ipopt") == "coin-or/IpStdCInterface.h"
 
-  flags = toolchain.solver_compile_flags(True, True)
+  flags = toolchain.solver_compile_flags(("piqp", "ipopt"))
   assert f"-I{include}" in flags
   assert f"-L{lib}" in flags
   assert f"-Wl,-rpath,{lib}" in flags

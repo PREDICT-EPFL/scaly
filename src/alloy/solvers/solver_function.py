@@ -7,8 +7,9 @@ A :class:`SolverFunction` is a real :class:`alloy.Function` whose outputs are
   numpy arrays, like before);
 - nested inside a larger ``Function`` graph via the inherited
   :meth:`Function.call` (the call returns an :class:`Expr` per output);
-- rendered to C by the standard code generator, which knows how to lower a
-  ``SOLVER_CALL`` to a vendored PIQP/IPOPT invocation.
+- rendered to C by the standard code generator, which lowers a
+  ``SOLVER_CALL`` to a solver-plugin-rendered wrapper over the vendored
+  solver's C API.
 
 The expression-graph side of the solver is opaque: ``SOLVER_CALL`` nodes are
 marked non-differentiable, and their attrs carry a :class:`SolverDescriptor`
@@ -48,7 +49,7 @@ class SolverStatus:
 
 @dataclass(frozen=True)
 class SolverDescriptor:
-  """Everything needed to drive PIQP or IPOPT from either Python or generated C.
+  """Everything a solver plugin's generated C wrapper needs to drive a solve.
 
   Stored as a single attr on every ``Ops.SOLVER_CALL`` node so that nodes for
   different outputs of the same solve share one identity. Frozen + identity
@@ -57,7 +58,7 @@ class SolverDescriptor:
   """
 
   name: str
-  backend: str  # "piqp" | "ipopt"
+  backend: str  # solver plugin name (an ``alloy.solvers`` entry point, e.g. "piqp", "ipopt")
   n: int
   n_eq: int
   n_ineq: int

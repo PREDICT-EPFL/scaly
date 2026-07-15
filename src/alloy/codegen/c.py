@@ -23,11 +23,10 @@ from alloy.abi import c_api_signature
 from alloy.codegen.solver_c import (
   is_solver_function,
   render_solver_raw,
+  solver_backends_used,
   solver_callees,
   solver_includes,
   solver_stats_symbols,
-  uses_ipopt,
-  uses_piqp,
 )
 from alloy.expr import topo
 from alloy.function import Function
@@ -46,9 +45,10 @@ class CModule:
 def _uses_solver(fun: Function) -> bool:
   """True if ``fun`` is a solver or reaches a ``SOLVER_CALL`` anywhere in its graph (so a plain
   function that *calls* a solver is rendered by the solver-bearing orchestrator, not the pure
-  Program-IR path — Program IR deliberately does not lower ``SOLVER_CALL``). ``uses_piqp`` /
-  ``uses_ipopt`` traverse callees and ``SOLVER_CALL`` nodes, which ``_function_order`` does not."""
-  return is_solver_function(fun) or uses_piqp(fun) or uses_ipopt(fun)
+  Program-IR path — Program IR deliberately does not lower ``SOLVER_CALL``).
+  ``solver_backends_used`` traverses callees and ``SOLVER_CALL`` nodes, which ``_function_order``
+  does not."""
+  return bool(solver_backends_used(fun))
 
 
 def _workspace_size(fun: Function) -> int:

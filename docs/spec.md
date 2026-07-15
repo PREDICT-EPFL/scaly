@@ -357,7 +357,7 @@ The caller owns all ABI storage:
 - Inputs do not have default values today: every required `arg[i]` must be non-null.
 - Generated code assumes ordinary C `double`/`int` alignment for the buffers supplied by the caller.
 
-Generated headers declare `f_sz_arg`, `f_sz_res`, `f_sz_iw`, and `f_sz_w` helpers, plus compile-time `f_SZ_*` constants for generated callers. The source renderer lowers the function to Program IR and emits standalone C for it, returning nonzero error codes for missing ABI pointer slots. Small temporaries stay as C locals and large ones spill to the caller's `w[]`, so `f_SZ_W` is the packed spill size (often `0` for small functions). When a rendered function has callees, `render_c_source` emits internal `static inline` raw callee bodies before the exported ABI wrapper and invokes them directly; only the root is exported through the universal ABI in that translation unit. A `SolverFunction` callee is the one exception — it is rendered by the hand-written `codegen/solver_c` wrapper template that drives its (Program-IR-rendered) oracle Functions.
+Generated headers declare `f_sz_arg`, `f_sz_res`, `f_sz_iw`, and `f_sz_w` helpers, plus compile-time `f_SZ_*` constants for generated callers. The source renderer lowers the function to Program IR and emits standalone C for it, returning nonzero error codes for missing ABI pointer slots. Small temporaries stay as C locals and large ones spill to the caller's `w[]`, so `f_SZ_W` is the packed spill size (often `0` for small functions). When a rendered function has callees, `render_c_source` emits internal `static inline` raw callee bodies before the exported ABI wrapper and invokes them directly; only the root is exported through the universal ABI in that translation unit. A `SolverFunction` callee is the one exception — it is rendered by the solver plugin's wrapper template (orchestrated by `codegen/solver_c`, contract in [`solver_plugins.md`](solver_plugins.md)) that drives its (Program-IR-rendered) oracle Functions.
 
 Solver-bearing modules additionally define the versioned, fixed-width `alloy_solver_stats` struct and export `int <solver_symbol>_stats(alloy_solver_stats* out)` for each solver wrapper in the translation unit. The query copies the wrapper's latest process-local stats without adding a symbolic output or changing the universal entry signature. Version 1 is an 80-byte layout: `version`, alloy `status`, native status, and iteration count; objective and total/FE/solver/glue seconds; five evaluation counters; and explicit padding. Alloy status codes are backend-neutral: `OK=0`, `ACCEPTABLE=1`, `MAX_ITER=2`, `PRIMAL_INFEASIBLE=3`, `DUAL_INFEASIBLE=4`, `NUMERICS=5`, `USER_STOP=6`, and `ERROR=7`. Generated PIQP (dense and sparse) and IPOPT wrappers instrument timing unconditionally with a monotonic clock. For PIQP, `t_fe` covers the generated QP-data oracle and `t_solver` covers PIQP setup/update/solve. For IPOPT, `t_fe` accumulates over the bounds evaluation and every timed `eval_*` callback (whose invocations also fill the five evaluation counters), and `t_solver` is the `IpoptSolve` wall time minus the FE time spent inside it. In both cases `t_glue` is the remainder, so `t_total = t_fe + t_solver + t_glue` up to floating-point rounding. Sparse-QP wrappers additionally bake the CSC patterns of `P` (upper triangle), `A_eq`, and `G_ineq` as static `piqp_int` tables; the oracle emits compact CSC-ordered value buffers, so no runtime permutation or transpose exists on that path. The struct and declarations are Python-emitted into generated sources/headers; Alloy does not install a standalone stats header yet. Wrapper state, including the latest stats and PIQP workspace, remains in translation-unit statics and is therefore non-reentrant.
 
@@ -398,14 +398,19 @@ nest directly inside larger ``@al.function``-decorated graphs (the
 safety-filter assembly pattern). ``SOLVER_CALL`` is marked non-differentiable.
 
 C codegen for a solver-bearing graph is wired and JIT-compiles end-to-end:
-`codegen/solver_c` renders the `SolverFunction` wrapper (the one hand-written,
-non-Program-IR template — it drives the vendored PIQP/IPOPT C interfaces),
-while every other Function in the graph — the oracle data/derivative Functions
-*and* the host Function that calls the solver — lowers through Program IR. The
-lowerer treats a `SolverFunction` callee as opaque (it does not lower the
-`SOLVER_CALL` body) but still lowers its oracle Functions to PROCs, and
-`render_c_source` orchestrates the single translation unit (oracle `_raw`
-bodies, then the solver wrapper, then the host ABI entry). `solver_compile_flags`
-adds the `-lpiqpc` / `-lipopt` link flags. The bound shared libraries live under
-the respective `plugins/alloy-{piqp,ipopt}/src/*/lib/` package directories. Full interface, sign conventions, and current limitations are
-documented in [`solvers.md`](solvers.md).
+`codegen/solver_c` orchestrates the `SolverFunction` wrapper (the one
+hand-written, non-Program-IR template), whose body is rendered by the solver
+plugin's `render_wrapper` hook — it drives the vendored solver's C interface
+directly; the plugin protocol is documented in
+[`solver_plugins.md`](solver_plugins.md) — while every other Function in the
+graph — the oracle data/derivative Functions *and* the host Function that
+calls the solver — lowers through Program IR. The lowerer treats a
+`SolverFunction` callee as opaque (it does not lower the `SOLVER_CALL` body)
+but still lowers its oracle Functions to PROCs, and `render_c_source`
+orchestrates the single translation unit (oracle `_raw` bodies, then the
+solver wrapper, then the host ABI entry). `solver_compile_flags` adds each
+reached plugin's link flags (`-lpiqpc` / `-lipopt` for the built-in ones).
+The bound shared libraries live under the respective
+`plugins/alloy-{piqp,ipopt}/src/*/lib/` package directories. Full interface,
+sign conventions, and current limitations are documented in
+[`solvers.md`](solvers.md).
