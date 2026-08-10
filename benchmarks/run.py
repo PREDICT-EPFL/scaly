@@ -251,10 +251,13 @@ def _problem_smoke() -> None:
   parameter layout, and the agreement of its backends — and must pass before any timing is
   recorded. They live here rather than in `tests/` because the pytest suite covers Alloy's
   core and does not depend on benchmark problems (see `AGENTS.md`)."""
-  from benchmarks.problems.race_cars.checks import run_checks
+  from benchmarks.problems.bumpercars_filter.checks import run_checks as bumpercars_checks
+  from benchmarks.problems.chain_of_masses.checks import run_checks as chain_checks
+  from benchmarks.problems.race_cars.checks import run_checks as race_cars_checks
 
-  for name, outcome in run_checks():
-    print(f"smoke race_cars/{name}: {outcome}")
+  for problem, run_checks in (("race_cars", race_cars_checks), ("chain_of_masses", chain_checks), ("bumpercars_filter", bumpercars_checks)):
+    for name, outcome in run_checks():
+      print(f"smoke {problem}/{name}: {outcome}")
 
 
 def smoke(args) -> bool:

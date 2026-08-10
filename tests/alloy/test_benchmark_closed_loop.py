@@ -6,10 +6,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from alloy.toolchain import solver_diagnostic, solver_loadable
 from benchmarks.harness.closed_loop import run_chain, run_race_cars
 
-pytestmark = pytest.mark.skipif(not solver_loadable("ipopt"), reason=solver_diagnostic("ipopt"))
+pytestmark = pytest.mark.solver("ipopt")
 
 
 @pytest.mark.parametrize("runner,problem", [(run_chain, "chain"), (run_race_cars, "race_cars")])

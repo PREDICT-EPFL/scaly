@@ -39,7 +39,8 @@ If you need to consult those files, ask the user to point you at the right anvil
 - Type check: `uv run ty check`
 - Lint: `uv run ruff check`
 - Format: `uv run ruff format`
-- Tests: `uv run pytest -n=auto tests/ plugins/`
+- Tests: `uv run pytest -n=auto` (collects `tests/` and `plugins/`)
+- Tests needing a built solver: mark with `@pytest.mark.solver("piqp"|"ipopt")`. The root `conftest.py` skips them when the library is missing, and CI splits the suite with `-m solver` / `-m "not solver"` — never hand-roll a `solver_loadable` skipif.
 
 # Build hook notes
 
@@ -55,7 +56,7 @@ Linux uses a built OpenBLAS; macOS uses Apple's Accelerate framework. Windows is
 # Instructions
 
 - Always format with `uv run ruff format` and run `uv run ruff check` after non-trivial edits.
-- Always run unit tests after a change touching the IR, AD, or codegen paths: `uv run pytest -n=auto tests/ plugins/`.
+- Always run unit tests after a change touching the IR, AD, or codegen paths: `uv run pytest -n=auto`.
 - Code should resemble tinygrad's style — simple, dense, every line earns its place. No speculative abstractions.
 - Don't introduce `anvil`, `tinygrad`, or `torch` imports. If a test workload needs PyTorch checkpoints, use `alloy.utils.load_torch_state_dict` instead of adding torch as a dependency.
 - Update `docs/` when changing IR-facing behavior or the codegenerated ABI.

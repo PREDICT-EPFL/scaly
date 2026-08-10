@@ -74,5 +74,6 @@ reportPrivateImportUsage = false
 exclude = ["hatch_build.py", "third_party/**", "plugins/*/hatch_build.py", "plugins/*/third_party/**", ".venv/**", "benchmarks/**"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "plugins"]
 norecursedirs = ["third_party", ".venv"]
+markers = ["solver(name): needs a loadable vendored solver; skipped without it, selected by CI's solver job"]

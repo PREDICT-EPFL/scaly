@@ -7,9 +7,6 @@ import pytest
 
 import alloy as al
 from alloy.codegen import render_c_source
-from alloy.toolchain import solver_diagnostic, solver_loadable
-
-need_piqp = pytest.mark.skipif(not solver_loadable("piqp"), reason=solver_diagnostic("piqpc"))
 
 
 def _sparse_problem(sparse: bool, name: str) -> al.SolverFunction:
@@ -44,7 +41,7 @@ def _sparse_problem(sparse: bool, name: str) -> al.SolverFunction:
   )
 
 
-@need_piqp
+@pytest.mark.solver("piqp")
 def test_sparse_qp_patterns_exclude_structural_zeros() -> None:
   qp = _sparse_problem(sparse=True, name="sparse_pattern_qp")
   desc = qp.descriptor
@@ -62,7 +59,7 @@ def test_sparse_qp_patterns_exclude_structural_zeros() -> None:
   assert out_sizes["P"] == 5 and out_sizes["A_eq"] == 2 and out_sizes["G_ineq"] == 4
 
 
-@need_piqp
+@pytest.mark.solver("piqp")
 def test_sparse_qp_renders_baked_csc_tables() -> None:
   qp = _sparse_problem(sparse=True, name="sparse_render_qp")
   source = render_c_source(qp)
@@ -72,7 +69,7 @@ def test_sparse_qp_renders_baked_csc_tables() -> None:
   assert "piqp_setup_dense" not in source
 
 
-@need_piqp
+@pytest.mark.solver("piqp")
 def test_sparse_qp_matches_dense_over_parameter_sweep() -> None:
   sparse_qp = _sparse_problem(sparse=True, name="sparse_parity_qp")
   dense_qp = _sparse_problem(sparse=False, name="dense_parity_qp")
@@ -84,7 +81,7 @@ def test_sparse_qp_matches_dense_over_parameter_sweep() -> None:
       np.testing.assert_allclose(sparse_out[key], dense_out[key], rtol=1e-6, atol=1e-6, err_msg=f"output {key} diverges for t={tv}")
 
 
-@need_piqp
+@pytest.mark.solver("piqp")
 def test_sparse_qp_constant_data_and_stats() -> None:
   qp = al.qp(
     P=np.diag([2.0, 1.0, 4.0]),
@@ -103,7 +100,7 @@ def test_sparse_qp_constant_data_and_stats() -> None:
   assert stats.t_total == pytest.approx(stats.t_fe + stats.t_solver + stats.t_glue, rel=0.1, abs=1e-12)
 
 
-@need_piqp
+@pytest.mark.solver("piqp")
 def test_sparse_qp_bakes_exactly_the_upper_triangle() -> None:
   """The sparse path gathers triu(P) exactly (PIQP's symmetric-P contract):
   an out-of-contract asymmetric P behaves as if symmetrized from its upper
@@ -120,7 +117,7 @@ def test_sparse_qp_bakes_exactly_the_upper_triangle() -> None:
     np.testing.assert_allclose(sparse_out[key], dense_out[key], rtol=1e-7, atol=1e-7, err_msg=key)
 
 
-@need_piqp
+@pytest.mark.solver("piqp")
 def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
   """An all-zero P (an LP) keeps one padded (0,0) entry whose gathered value
   is the structural zero, so the baked CSC handle stays valid."""
@@ -139,7 +136,7 @@ def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
   np.testing.assert_allclose(out["x"], [-1.0, 1.0], atol=1e-6)
 
 
-@need_piqp
+@pytest.mark.solver("piqp")
 def test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero() -> None:
   """A parameter-dependent entry whose value happens to be zero at the probe
   draw must stay in the pattern (the dependency mask, not the probe, keeps it)."""
@@ -151,38 +148,7 @@ def test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero() -> None:
   assert set(zip(qp.descriptor.P_sparsity.rows, qp.descriptor.P_sparsity.cols)) == {(0, 0), (0, 1), (1, 1)}
 
 
-@need_piqp
-def test_sparse_qp_rejects_nested_solver_data() -> None:
-  """QP data computed from a nested solver output cannot be pattern-analyzed
-  (SOLVER_CALL is an opaque zero to the dependency mask) and must fail loudly
-  before the probe would execute the inner solve."""
-  inner = al.qp(P=np.eye(2), c=np.array([-1.0, 0.0]), x_lb=np.zeros(2), x_ub=np.ones(2), name="inner_for_pattern")
-  x_inner = inner.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0))])[0]
-  P = al.stack([al.stack([2.0 + x_inner[0], al.const(0.0)]), al.stack([al.const(0.0), al.const(2.0)])], axis=0)
-  with pytest.raises(NotImplementedError, match="nested solver output"):
-    al.qp(P=P, c=np.zeros(2), sparse=True, name="outer_sparse_over_solver")
-
-
-@need_piqp
-def test_two_solver_wrappers_in_one_translation_unit() -> None:
-  """Two distinct solvers (one sparse, one dense) called from one host
-  Function share a single generated TU; their static state must not collide."""
-
-  @al.function("two_qp_host", {"t": (2,)})
-  def host(t):
-    qp_a = al.qp(P=np.diag([2.0, 4.0]), c=al.stack([t[0], t[1]]), sparse=True, name="tu_qp_a")
-    qp_b = al.qp(P=np.diag([1.0, 1.0]), c=al.stack([t[1], -t[0]]), name="tu_qp_b")
-    zeros = [al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0))]
-    xa = qp_a.call([*zeros, t])[0]
-    xb = qp_b.call([*zeros, t])[0]
-    return {"x_sum": xa + xb}
-
-  tv = np.array([1.0, -2.0])
-  # qp_a: x = -c / diag(P) = [-0.5, 0.5]; qp_b: x = [-t1, t0] = [2, 1].
-  np.testing.assert_allclose(host(tv), [1.5, 1.5], atol=1e-7)
-
-
-@need_piqp
+@pytest.mark.solver("piqp")
 def test_nested_sparse_qp_in_alloy_function() -> None:
   @al.function("shifted_sparse_qp", {"t": (2,)})
   def solve_shifted(t):

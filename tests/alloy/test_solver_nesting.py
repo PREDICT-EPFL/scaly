@@ -7,13 +7,11 @@ import pytest
 
 import alloy as al
 from alloy.solvers.registry import available_backends
-from alloy.toolchain import solver_diagnostic, solver_loadable
 from alloy.expr import topo
 from alloy.ops import Ops
 from alloy.codegen import render_c_source
 
 pytestmark = pytest.mark.skipif("piqp" not in available_backends(), reason="structural tests build al.qp and need the alloy-piqp plugin installed")
-need_piqp = pytest.mark.skipif(not solver_loadable("piqp"), reason=solver_diagnostic("piqpc"))
 
 
 def test_solver_call_returns_expressions() -> None:
@@ -64,7 +62,7 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
   assert calls[0].attrs["callee"] == qp.name
 
 
-@need_piqp
+@pytest.mark.solver("piqp")
 def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   mu = al.sym("mu", 2)
   qp = al.qp(P=al.const(np.eye(2)), c=-mu, name="nested_stats_qp")

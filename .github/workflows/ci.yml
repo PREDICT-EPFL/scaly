@@ -170,7 +170,7 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then xcodebuild -version; fi
 
       - name: Pytest core suite
-        run: uv run pytest -n=auto tests/
+        run: uv run pytest -n=auto -m "not solver"
 
       - name: Benchmark smoke
         run: uv run python benchmarks/run.py smoke --skip solver_call
@@ -214,7 +214,7 @@ jobs:
           if [ "$RUNNER_OS" = "Linux" ]; then ldd plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.so; fi
 
       - name: Pytest solver suite
-        run: uv run pytest -n=auto plugins/alloy-piqp/tests plugins/alloy-ipopt/tests tests/alloy/test_solvers.py tests/alloy/test_solver_nesting.py
+        run: uv run pytest -n=auto -m solver
 
       - name: Solver-call smoke
         run: uv run python benchmarks/run.py smoke --select solver_call

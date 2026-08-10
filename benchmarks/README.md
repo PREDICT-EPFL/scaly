@@ -22,8 +22,12 @@ Smoke runs three groups, all on by default:
   (`problems/*/checks.py`). For `race_cars` that is the vendored track data, the
   spline reference generator, the parameter-tail order, a pin on the physical
   constants, the episode's shapes and bounds, the recorded scene, and the
-  Alloy-vs-CasADi trajectory agreement. Gates needing IPOPT or CasADi report
-  `skipped: ...` rather than passing silently.
+  Alloy-vs-CasADi trajectory agreement; for `chain_of_masses` the dimensions and
+  RK4 plant, the equality Jacobian against CasADi and a dense reference, the NLP
+  objective against CasADi, and the episode's shapes; for `bumpercars_filter` the
+  Alloy-vs-CasADi oracle, the parameter-tail order, and the opt-in exact-Hessian
+  rollout. Gates needing IPOPT or CasADi report `skipped: ...` rather than passing
+  silently.
 - `benchmarks` — Python and compiled-C Jacobians against a dense reference,
   plus sparsity, workspace, and loop-preservation invariants.
 - `solver_call` — the QP/IPOPT solver-call ABI, when vendored solver libraries
@@ -60,7 +64,7 @@ The doctrine is claims-first: broad sweeps establish scaling and canonical point
 
 The gates here guard the *measurements*, not the compiler. Op and composition coverage lives in `tests/` as small artificial cases checked against unrolled or NumPy references; a benchmark problem must never be the only thing exercising an IR, AD, or codegen path. That separation is what lets the problem set follow the workload roadmap without silently dropping compiler coverage.
 
-The split runs both ways: a check that is about *a problem* rather than about Alloy belongs in that problem's `checks.py`, not in `tests/`, so the pytest suite never imports a benchmark problem. `race_cars` is the worked example — `problems/race_cars/checks.py` owns its formulation gates, and `tests/alloy/test_stage_transcription.py` carries a self-contained copy of the RK4 stage-transcription shape that problem surfaced, so retiring the problem cannot drop the compiler coverage.
+The split runs both ways: a check that is about *a problem* rather than about Alloy belongs in that problem's `checks.py`, not in `tests/`, so the pytest suite never imports a benchmark problem. `race_cars` is the worked example — `problems/race_cars/checks.py` owns its formulation gates, and `tests/alloy/test_stage_transcription.py` carries a self-contained copy of the RK4 stage-transcription shape that problem surfaced, so retiring the problem cannot drop the compiler coverage. `chain_of_masses` and `bumpercars_filter` follow the same shape; the IR behaviours they lean on are reproduced self-contained in `tests/alloy/test_alloy_sparsity.py` and `tests/alloy/test_factory_casadi.py`.
 
 ## Closed-loop episodes and Foxglove
 
