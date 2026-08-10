@@ -68,10 +68,14 @@ directly to an already-discrete black-box model.
 From the repository root:
 
 ```bash
-uv run python -m benchmarks.problems.bumpercars_filter.run_closed_loop --filter casadi
-uv run python -m benchmarks.problems.bumpercars_filter.run_closed_loop --filter alloy
+uv run python benchmarks/run.py closed-loop --problem bumpercars --backend alloy --smoke
+uv run python benchmarks/run.py closed-loop --problem bumpercars --backend alloy
 uv run python -m benchmarks.problems.bumpercars_filter.run_closed_loop --filter both --dump-alloy-c
 ```
+
+Both write `episode.mcap`; import this directory's hand-authored
+`foxglove-layout.json` in Foxglove Desktop to view it. The direct module remains
+useful for side-by-side Alloy/CasADi runs and advanced filter options.
 
 Common options:
 
@@ -87,15 +91,36 @@ Common options:
 Outputs are written under `<out-dir>/<filter>/`:
 
 ```text
-rollout.npz        state/input trajectories
-stats.csv          per-step solver + oracle instrumentation
-summary.json       aggregate metrics and implementation metadata
-trajectories.png   matplotlib trajectory plot
-performance.png    solve/evaluation timing plot
-alloy_c/           generated C kernels when --dump-alloy-c is used with Alloy
+rollout.npz                  state/input trajectories
+stats.csv                    per-step solver + oracle instrumentation
+summary.json                 aggregate metrics and implementation metadata
+episode.mcap                 Foxglove telemetry and planar car scene (see below)
+representative_fe_inputs.npz closed-loop oracle input for FE benchmarks
+config/provenance/metadata   reproducibility data
+trajectories.png             matplotlib trajectory plot
+performance.png              solve/evaluation timing plot
+alloy_c/                     generated C kernels when --dump-alloy-c is used with Alloy
 ```
 
 Generated outputs belong under `benchmarks/results/`.
+
+### Scene geometry
+
+The 3D scene draws what the filter actually constrains, at the scale the filter
+implies. Each car gets its own colour and shows:
+
+- a body box `lf + lr + 0.33` m long and 0.9 m wide, centred `(lf - lr) / 2` ahead
+  of the state position (the state tracks the centre of gravity, not the geometric
+  centre);
+- the keep-out circle of radius `safety_radius / 2 = 0.95` m, which is what the pair
+  barrier `‖pᵢ - pⱼ‖² ≥ safety_radius²` enforces and which circumscribes the body;
+- two arrows from the car, pointing along `theta + u[1] * max_delta` with length
+  scaled by the throttle `u[0]`: the desired input in the car's colour and the
+  applied input in black. A failed solve brakes (`u = [-1, 0]`), which shows up as a
+  black arrow flipped to point backwards.
+
+The arena is drawn twice: the walls, and the rectangle inset by `wall_margin`, which
+is the region the wall barriers keep the car centres inside.
 
 ## Implementations
 
@@ -162,40 +187,24 @@ Instrumentation recorded per step (from the `alloy_solver_stats` struct):
 
 ## Interpreting the Alloy vs CasADi timings
 
-The current comparison is useful, but not fully apples-to-apples yet.
+Both implementations use IPOPT and warm-start primal variables plus constraint
+and box multipliers. Alloy runs entirely through the generated C solver wrapper:
+IPOPT callbacks call generated kernels in the same `.so`, with no Python or
+ctypes callback in the solve loop. Its stable stats ABI separates FE, native
+solver, and wrapper/glue time and records evaluation counts. CasADi reports its
+own solver and callback counters, so the categories are close but not guaranteed
+to have identical accounting boundaries.
 
-Known discrepancies:
+The default comparison uses limited-memory Hessians on both sides;
+`--exact-hessian` selects exact Lagrangian Hessians. Both paths receive the same
+symbolic model constants and `dt`, and CasADi expansion is enabled unless
+`--no-casadi-expand` is passed. Strict comparisons should retain raw IPOPT
+status in addition to the benchmark's feasible max-iteration acceptance rule.
 
-1. **Callback path.** CasADi's callbacks are internal to CasADi/IPOPT. Alloy's
-   prototype uses IPOPT -> C callback shim -> Python/ctypes -> JIT-compiled Alloy
-   function. The reported Alloy per-function time measures mostly the compiled
-   kernel call, not the full callback transition and pointer/copy overhead.
-2. **Warm-starting parity.** CasADi and Alloy both warm-start primal variables
-   and IPOPT multipliers (`lam_x` / `z_L` / `z_U`, and `lam_g`) after the first
-   successful solve.
-3. **Iteration visibility parity.** Both implementations report IPOPT iteration
-   counts. Alloy also records value-callback invocation counts from its
-   low-level IPOPT binding.
-4. **Hessian mode.** The default comparison uses limited-memory Hessian on both
-   sides. `--exact-hessian` selects an exact sparse Lagrangian Hessian for the
-   mapped Alloy oracle and an exact Hessian for CasADi.
-5. **Success handling.** Both implementations accept a finite constraint-feasible
-   solution if IPOPT exits on max iterations. This is convenient for closed-loop
-   experimentation, but strict benchmarking should also report the raw IPOPT
-   status.
-6. **Model parameters and expansion parity.** Both paths receive the same
-   symbolic vehicle parameters and `dt`; CasADi uses `expand=True` by default
-   and exposes `--no-casadi-expand` for comparison runs.
+## Alloy features closed by this prototype
 
-Because of (1), it is possible for Alloy's reported function-evaluation kernels
-to be faster while total solve time is not proportionally better. Total solve
-time also depends on IPOPT line search behavior, callback overhead, warm starts,
-and iteration count.
-
-## Missing Alloy features exposed by this prototype
-
-These are the main Alloy-side gaps that currently prevent a completely fair and
-production-quality comparison.
+The original prototype exposed the following gaps; all are now closed on the
+Alloy path.
 
 ### 1. Exact sparse Hessian through `Ops.MAP` (closed)
 
@@ -212,18 +221,11 @@ preserving the compact mapped representation. The filter builds
 `sphess:gamma:z:z`, passes its lower-triangular sparsity to IPOPT, and evaluates
 it from IPOPT's objective factor and constraint multipliers.
 
-### 2. Native generated-C solver path for this exact use case
+### 2. Native generated-C solver path (closed)
 
-Alloy can represent solver calls, but this prototype intentionally uses the
-low-level IPOPT wrapper so we can inject and time separate oracle callbacks. That
-means it does not yet exercise a monolithic generated-C safety-filter solve.
-
-For a fair end-state comparison, we want either:
-
-- a generated C solver wrapper that calls the generated oracle kernels without
-  Python callback overhead, or
-- enough low-level instrumentation in the generated solver path to inspect the
-  same timing breakdown.
+The filter is an `al.nlp(...)` SolverFunction. Its generated C wrapper calls
+`IpStdCInterface.h` directly, routes IPOPT callbacks to generated oracle kernels,
+and fills Alloy's stable stats struct with FE/solver/glue timings.
 
 ### 3. IPOPT warm-start/status parity (closed)
 
@@ -239,18 +241,10 @@ from CasADi:
 The closed-loop Alloy filter reuses these multipliers after successful solves
 and reports iteration and callback statistics alongside CasADi's measurements.
 
-### 4. Lower-overhead callback accounting
+### 4. Callback accounting (closed)
 
-The current Alloy instrumentation times Python calls to JIT-compiled functions.
-It does not separate:
-
-- IPOPT callback transition overhead,
-- pointer-to-numpy copying,
-- JIT kernel execution,
-- numpy-to-pointer copying.
-
-A better benchmark would record these layers separately or avoid Python callbacks
-entirely.
+The generated wrapper avoids Python callbacks entirely and reports FE, native
+solver, and wrapper/glue timing through `alloy_solver_stats`.
 
 ### 5. Parameterized model constants (closed)
 
@@ -264,9 +258,8 @@ Suggested next benchmarking pass:
 1. CasADi MX baseline, limited-memory Hessian.
 2. CasADi MX with `expand=False`, limited-memory Hessian.
 3. CasADi exact Hessian.
-4. Alloy current JIT-kernel callback path, limited-memory Hessian.
-5. Alloy JIT-kernel callback path with exact sparse Hessian.
-6. Alloy generated-C solver path, once instrumentation is good enough.
+4. Alloy generated-C solver path, limited-memory Hessian.
+5. Alloy generated-C solver path with exact sparse Hessian.
 
 For each row, record:
 

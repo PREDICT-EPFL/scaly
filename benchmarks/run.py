@@ -19,8 +19,10 @@ from alloy.codegen.c import render_c_module
 from alloy.codegen.solver_c import solver_compile_flags
 from alloy.toolchain import solver_loadable
 from benchmarks.harness import gbench
+from benchmarks.harness.closed_loop import run as run_closed_loop
+from benchmarks.harness.recording import layout_path
 from benchmarks.harness.sweep import BACKENDS, DEFAULT_SIZES, RESULTS, build_kernel, run_cell, run_sweep
-from benchmarks.problems import chain_of_masses, unbumpercars
+from benchmarks.problems import chain_of_masses
 
 
 def _csv(value: str) -> list[str]:
@@ -224,26 +226,21 @@ def _benchmark_smoke() -> None:
   )
   print(f"smoke chain loop preservation: ok ({chain_infos[0]['source_lines']} lines at M=5, {chain_large['source_lines']} at M=33)")
   print(f"smoke chain workspace (record only): {chain_infos[0]['w_size']} doubles at M=5, {chain_large['w_size']} at M=33")
-  weights = None
-  if not unbumpercars.MODEL_PATH.exists():
-    weights = unbumpercars.random_weights()
-    print(f"smoke unbumpercars: checkpoint missing ({unbumpercars.MODEL_PATH}), gating with seeded random weights")
   for backend in ("alloy", "casadi_mx"):
     result, info = run_cell(
-      "unbumpercars",
+      "bumpercars",
       2,
       backend,
-      RESULTS / "gen" / "unbumpercars" / f"{backend}_N2",
+      RESULTS / "gen" / "bumpercars" / f"{backend}_C2",
       codegen_timeout=300,
       compile_timeout=180,
       max_source_mb=50,
       benchmark_min_time="0.01s",
-      weights=weights,
     )
     runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
-    print(f"smoke unbumpercars size=2 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
+    print(f"smoke bumpercars size=2 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
     if result["runtime_status"] != "ok" or info is None:
-      raise RuntimeError(f"unbumpercars {backend} smoke failed: {result['note']}")
+      raise RuntimeError(f"bumpercars {backend} smoke failed: {result['note']}")
     assert info["nnz"] > 0 and info["w_size"] is not None and info["nnz"] < info["n_rows"] * info["n_cols"]
 
 
@@ -274,7 +271,7 @@ def main() -> None:
   parser = argparse.ArgumentParser(description="Alloy correctness-gated benchmark harness")
   subparsers = parser.add_subparsers(dest="command", required=True)
   sweep_parser = subparsers.add_parser("sweep", help="run the scalability cell grid")
-  sweep_parser.add_argument("--workloads", type=_csv, default=["tracking", "unbumpercars", "chain"])
+  sweep_parser.add_argument("--workloads", type=_csv, default=["tracking", "bumpercars", "chain"])
   sweep_parser.add_argument("--sizes", type=_ints, help="comma-separated sizes (applied to each selected workload)")
   sweep_parser.add_argument("--backends", type=_csv, default=list(BACKENDS))
   sweep_parser.add_argument("--out", "--csv", type=Path, default=RESULTS / "scalability.csv")
@@ -285,13 +282,27 @@ def main() -> None:
   smoke_parser = subparsers.add_parser("smoke", help="run fast correctness and invariant gates")
   smoke_parser.add_argument("--select", action="append", choices=("benchmarks", "solver_call"))
   smoke_parser.add_argument("--skip", action="append", choices=("benchmarks", "solver_call"))
+  closed_loop_parser = subparsers.add_parser("closed-loop", help="run a model-in-the-loop episode and write Foxglove artifacts")
+  closed_loop_parser.add_argument("--problem", choices=("chain", "tracking", "bumpercars"), default="bumpercars")
+  closed_loop_parser.add_argument("--backend", choices=("alloy", "casadi", "open"), default="alloy", help="bumpercars filter backend")
+  closed_loop_parser.add_argument("--smoke", action="store_true", help="use a short toolchain-check episode instead of the canonical point")
+  closed_loop_parser.add_argument("--out-dir", type=Path, default=RESULTS / "closed_loop")
   args = parser.parse_args()
   if args.command == "sweep":
     args.workloads = _choices(args.workloads, tuple(DEFAULT_SIZES), parser, "--workloads")
     args.backends = _choices(args.backends, BACKENDS, parser, "--backends")
     success = run_sweep(args, sys.argv[1:])
-  else:
+  elif args.command == "smoke":
     success = smoke(args)
+  else:
+    if args.problem != "bumpercars" and args.backend != "alloy":
+      parser.error("--backend only applies to --problem bumpercars")
+    output = run_closed_loop(args.problem, smoke=args.smoke, backend=args.backend, out_dir=args.out_dir, cli_args=sys.argv[1:])
+    print(f"closed-loop artifacts written to {output}")
+    layout = layout_path(args.problem)
+    hint = f"import {layout}" if layout.is_file() else f"no layout checked in yet; export one from Desktop to {layout}"
+    print(f"Foxglove: {hint}, then open {output / 'episode.mcap'}")
+    success = True
   raise SystemExit(0 if success else 1)
 
 

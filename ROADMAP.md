@@ -1,6 +1,6 @@
 # Alloy benchmarks, solver plugins, and paper roadmap
 
-Last updated: 2026-07-14. This document supersedes everything that lived in
+Last updated: 2026-07-15. This document supersedes everything that lived in
 `fast_benchmarks/` (FastBench prototype, `BENCHMARK_SUITE_PLAN.md`,
 `REAL_BENCHMARK_CANDIDATES.md`, `STRATEGY_NOTES.md`), now removed. It covers the
 benchmark suite, the solver-plugin packaging, and the path to the first paper.
@@ -462,7 +462,10 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
   counts. **Completed (2026-07-13).**
 - **L4 — parameterized model constants**: physical constants and `dt` as
   symbolic parameters in the decorated ODE functions instead of baked-in
-  values (blocks tuning sweeps).
+  values (blocks tuning sweeps). **Status: COMPLETE (2026-07-13).** Chain,
+  tracking, and CT-DTCBF dynamics receive their physical constants and step
+  size through symbolic parameter vectors in both Alloy and CasADi paths
+  (`1326b75`).
 - **L5 — plugin-owned solver codegen templates** (§3.5): move the per-solver
   C wrapper templates out of core into the plugins via the `render_wrapper`
   protocol hook, de-hardcode piqp/ipopt from `toolchain.py` /
@@ -490,21 +493,42 @@ columns respectively — interleave them between B2 and B4.
   `measure_safety_filter.py`, `alloy_solver_aot_demo.py`,
   `viz_tracking_eq_jac_probe.py`, `alloy_tracking_eq_jac_benchmark.py`,
   `alloy_unbumpercars_ineq_jac_benchmark.py`, `scalability_sweep.py`,
-  `scalability_results.csv`, `gen/`).
+  `scalability_results.csv`, `gen/`). **Status: COMPLETE (2026-07-13,
+  `8b1dd3f`).** The suite lives under `benchmarks/`, smoke runs in CI, sweeps
+  remain manual, and generated artifacts carry provenance. The obsolete
+  input-affine unbumpercars workload was removed from the benchmark runner
+  during B3 cleanup; its focused Program-IR regression fixture remains for
+  compiler coverage.
 - **B1 — workspace + existing plugins**: convert the repo to a uv workspace
   with solver plugins under `plugins/`; extract `alloy-piqp` / `alloy-ipopt`
   from `hatch_build.py` (core goes pure-Python); formalize the oracle
   protocol + entry-point registry behind the existing `solver=` API.
-  Wheels: backlog.
+  Wheels: backlog. **Status: COMPLETE (2026-07-13, `2c51692`).** Core is a
+  NumPy-only package and PIQP/IPOPT are independently registered workspace
+  plugins.
 - **B2 — problems v1** (with L3/L4): chain of masses, tracking NMPC (kinematic
   bicycle, from the existing fixture), bumpercars CT-DTCBF filter promoted
   from `examples/ct_dt_cbf_filter/` (desired control folded into dynamics).
   Alloy + CasADi implementations, NumPy/CasADi reference gates, sweep axes
-  wired, `expand=True` added to the CasADi columns.
+  wired, `expand=True` added to the CasADi columns. **Status: COMPLETE
+  (2026-07-13, `3111b52` + `1326b75`).** The three selected formulations,
+  symbolic model parameters, CasADi expansion, reference checks, and
+  generated-solver bumpercars path are present.
 - **B3 — closed loop + viz**: model-in-the-loop simulator, episode/lap logic,
   MCAP dumping, Foxglove layouts (curves + 3D chain / 2D cars), canonical
   operating points chosen and documented, FE-instance harvesting for the
-  gbench benchmarks.
+  gbench benchmarks. **Status: COMPLETE (2026-07-15).** A common Pydantic →
+  JSON-schema MCAP recorder emits solver/control telemetry, `/tf`, and native
+  `SceneUpdate` geometry, with centered scene frames, trajectory trails, and
+  arena bounds. Layouts are not generated: each problem keeps one hand-authored
+  `foxglove-layout.json`, exported from Foxglove Desktop, next to its runner. The
+  canonical points are chain M=5/N=12 (20 steps; harvested state rolled into
+  the N=40 FE transcription), tracking N=30 (260 steps, one lap), and
+  bumpercars C=4 (80 steps, seed 42). Their midpoint successful oracle inputs
+  feed the canonical gbench cells; CT-DTCBF C=2/4/8 Alloy + CasADi sweep cells
+  replace the legacy input-affine unbumpercars axis. The
+  `benchmarks/run.py closed-loop` command owns smoke/canonical execution and
+  reproducibility artifacts.
 - **B4 — `alloy-sqp`** (after L1/L2): the custom SQP per §3.3 over `piqp_c`;
   the one-solver-two-oracles columns (alloy oracles vs CasADi-codegen oracles)
   added to all B2 problems; FE/QP/line-search timing split in stats.

@@ -11,6 +11,19 @@ from pathlib import Path
 
 import numpy as np
 
+from benchmarks.harness import gbench
+from benchmarks.harness.provenance import collect
+from benchmarks.harness.recording import (
+  CarShape,
+  ControlState,
+  PlanarVehicleState,
+  Recorder,
+  RunMetadata,
+  ScalarTelemetry,
+  layout_path,
+  write_result_artifacts,
+)
+
 from .common import (
   DEFAULT_MODEL_PATH,
   ClosedLoopConfig,
@@ -72,6 +85,7 @@ def run_one(kind: str, initial_state: np.ndarray, loop_cfg: ClosedLoopConfig, fi
   state_traj = np.zeros((loop_cfg.horizon + 1, loop_cfg.ncars, states.shape[1]), dtype=np.float64)
   desired_traj = np.zeros((loop_cfg.horizon, loop_cfg.ncars, 2), dtype=np.float64)
   input_traj = np.zeros((loop_cfg.horizon, loop_cfg.ncars, 2), dtype=np.float64)
+  fe_inputs = []
   min_dist = float("inf")
   state_traj[0] = states
   for t in range(loop_cfg.horizon):
@@ -79,25 +93,133 @@ def run_one(kind: str, initial_state: np.ndarray, loop_cfg: ClosedLoopConfig, fi
     safe = safety_filter.compute_safe_input(states, desired, t)
     desired_traj[t] = desired
     input_traj[t] = safe
+    stats = safety_filter.stats_history[-1]
+    fe_inputs.append(
+      {
+        "z": np.concatenate([safe.reshape(-1), np.array([stats.slack])]),
+        "bar_x": states.reshape(-1),
+        "u_des": desired.reshape(-1),
+        "pw": weights.packed,
+        "physics": loop_cfg.physics.array(),
+        "dt": np.array([loop_cfg.dt]),
+      }
+    )
     states = sim.step(safe)
     state_traj[t + 1] = states
     min_dist = min(min_dist, min_pair_distance(states))
 
   np.savez_compressed(impl_dir / "rollout.npz", state=state_traj, desired=desired_traj, applied=input_traj)
   write_stats_csv(impl_dir / "stats.csv", safety_filter.stats_history)
-  write_json(
-    impl_dir / "summary.json",
-    {
-      "kind": kind,
-      "min_pair_distance": min_dist,
-      "avg_solver_ms": float(np.mean([s.solver_ms for s in safety_filter.stats_history])),
-      "p95_solver_ms": float(np.percentile([s.solver_ms for s in safety_filter.stats_history], 95)),
-      "avg_tracking_cost": float(np.mean([s.tracking_cost for s in safety_filter.stats_history])),
-      "success_rate": float(np.mean([s.success for s in safety_filter.stats_history])),
-      "last_stats": safety_filter.stats_history[-1] if safety_filter.stats_history else None,
-    },
+  summary = {
+    "kind": kind,
+    "min_pair_distance": min_dist,
+    "avg_solver_ms": float(np.mean([s.solver_ms for s in safety_filter.stats_history])),
+    "p95_solver_ms": float(np.percentile([s.solver_ms for s in safety_filter.stats_history], 95)),
+    "avg_tracking_cost": float(np.mean([s.tracking_cost for s in safety_filter.stats_history])),
+    "success_rate": float(np.mean([s.success for s in safety_filter.stats_history])),
+    "last_stats": safety_filter.stats_history[-1] if safety_filter.stats_history else None,
+  }
+  write_json(impl_dir / "summary.json", summary)
+  _write_foxglove(kind, loop_cfg, filt_cfg, state_traj, desired_traj, input_traj, safety_filter.stats_history, impl_dir)
+  provenance = collect(Path(__file__).resolve().parents[3], gbench.compiler(), sys.argv[1:])
+  write_result_artifacts(
+    impl_dir,
+    config={"loop": asdict(loop_cfg), "filter": asdict(filt_cfg), "weights": str(weights.path)},
+    summary={key: value for key, value in summary.items() if key != "last_stats"},
+    provenance=provenance,
+    fe_inputs=fe_inputs,
+    successful_steps=[stats.step for stats in safety_filter.stats_history if stats.success],
   )
   return safety_filter, state_traj, desired_traj, input_traj, min_dist
+
+
+def _finite(value: float) -> float | None:
+  return float(value) if np.isfinite(value) else None
+
+
+def _write_foxglove(
+  kind: str,
+  loop_cfg: ClosedLoopConfig,
+  filt_cfg: FilterConfig,
+  states: np.ndarray,
+  desired: np.ndarray,
+  applied: np.ndarray,
+  stats: list[FilterStats],
+  impl_dir: Path,
+) -> None:
+  physics = loop_cfg.physics
+  center = ((physics.x_min + physics.x_max) / 2.0, (physics.y_min + physics.y_max) / 2.0, 0.0)
+  # Body: the lf + lr wheelbase plus ~0.3 m of overhang, narrow enough that the pair
+  # barrier's keep-out disc circumscribes it. The state position is the centre of
+  # gravity, which sits (lf - lr) / 2 behind the geometric centre.
+  shape = CarShape(
+    length=physics.lf + physics.lr + 0.33,
+    width=0.9,
+    height=0.5,
+    center_offset=0.5 * (physics.lf - physics.lr),
+    safety_radius=0.5 * loop_cfg.safety_radius,
+    max_steer=physics.max_delta,
+    arrow_length=loop_cfg.safety_radius,
+  )
+  with Recorder(impl_dir / "episode.mcap", allow_overwrite=True, scene_center=center, car_shape=shape) as recorder:
+    recorder.record_arena(
+      (physics.x_min, physics.x_max, physics.y_min, physics.y_max), margin=loop_cfg.wall_margin if loop_cfg.arena_avoidance else 0.0
+    )
+    recorder.record_metadata(
+      RunMetadata(
+        run_id=f"bumpercars-{kind}-{loop_cfg.seed}",
+        problem="bumpercars_filter",
+        backend=kind,
+        seed=loop_cfg.seed,
+        dt=loop_cfg.dt,
+        config={"ncars": loop_cfg.ncars, "horizon": loop_cfg.horizon, "exact_hessian": not filt_cfg.limited_memory_hessian},
+      )
+    )
+    for step, frame in enumerate(states):
+      time_s = step * loop_cfg.dt
+      controls = (
+        [
+          ControlState(
+            step=step,
+            time_s=time_s,
+            entity_id=str(i),
+            desired=desired[step, i].tolist(),
+            applied=applied[step, i].tolist(),
+          )
+          for i in range(loop_cfg.ncars)
+        ]
+        if step < len(stats)
+        else []
+      )
+      recorder.record_planar(
+        [
+          PlanarVehicleState(step=step, time_s=time_s, vehicle_id=str(i), x=float(state[0]), y=float(state[1]), yaw=float(state[2]))
+          for i, state in enumerate(frame)
+        ],
+        controls=controls,
+      )
+      if not controls:
+        continue
+      recorder.record_control(controls)
+      item = stats[step]
+      recorder.record_telemetry(
+        ScalarTelemetry(
+          step=step,
+          time_s=time_s,
+          success=item.success,
+          solver_time_ms=max(0.0, item.solver_ms),
+          fe_time_ms=max(0.0, item.eval_ms.get("fe_total", 0.0)),
+          objective=_finite(item.objective),
+          constraint_margin=_finite(item.min_g),
+          scalars={
+            "iterations": float(item.iterations or 0),
+            "glue_time_ms": max(0.0, item.eval_ms.get("glue", 0.0)),
+            "slack": item.slack,
+            "tracking_cost": item.tracking_cost,
+            "min_pair_distance": min_pair_distance(frame),
+          },
+        )
+      )
 
 
 def write_stats_csv(path: Path, stats: list[FilterStats]) -> None:
@@ -180,7 +302,8 @@ def plot_outputs(
         axs[3].plot(t, [s.eval_ms.get(key, np.nan) for s in stats], lw=1.0, label=key)
       axs[3].set_ylabel("eval [ms]")
       axs[3].set_xlabel("step")
-      axs[3].legend(ncols=4, fontsize=8)
+      if eval_keys:
+        axs[3].legend(ncols=4, fontsize=8)
       for ax in axs:
         ax.grid(True, alpha=0.25)
       fig.suptitle(f"{kind} instrumentation")
@@ -265,6 +388,7 @@ def main() -> None:
         print(f"  extra: {last.extra}")
   plot_outputs(results, loop_cfg, args.out_dir, args.show)
   print(f"[done] outputs in {args.out_dir}")
+  print(f"[foxglove] layout {layout_path('bumpercars')}, episodes in {args.out_dir}/<filter>/episode.mcap")
 
 
 if __name__ == "__main__":

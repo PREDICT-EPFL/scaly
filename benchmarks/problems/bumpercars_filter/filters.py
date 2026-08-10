@@ -52,7 +52,7 @@ class OpenLoopFilter:
 class CasadiDTCBFSafetyFilter:
   name = "casadi_dt_pos_cbf"
 
-  def __init__(self, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights):
+  def __init__(self, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights, *, _build_solver: bool = True):
     import casadi as ca
 
     self.ca = ca
@@ -68,7 +68,7 @@ class CasadiDTCBFSafetyFilter:
     self.last_lam_x: np.ndarray | None = None
     self.last_lam_g: np.ndarray | None = None
     self._build_ms = 0.0
-    self._build()
+    self._build(_build_solver)
 
   def _unpack_pw(self, pw):
     ca = self.ca
@@ -125,7 +125,7 @@ class CasadiDTCBFSafetyFilter:
     x_min, x_max, y_min, y_max = [physics[i] for i in range(4, 8)]
     return [xi[0] - (x_min + m), (x_max - m) - xi[0], xi[1] - (y_min + m), (y_max - m) - xi[1]]
 
-  def _build(self) -> None:
+  def _build(self, build_solver: bool = True) -> None:
     ca = self.ca
     t0 = time.perf_counter()
     z = ca.MX.sym("z", self.n_z)
@@ -165,6 +165,9 @@ class CasadiDTCBFSafetyFilter:
     else:
       self.hess_fn = None
 
+    if not build_solver:
+      self._build_ms = (time.perf_counter() - t0) * 1000.0
+      return
     nlp = {"x": z, "p": p, "f": cost, "g": g}
     opts: dict[str, Any] = {
       "print_time": False,
@@ -172,6 +175,7 @@ class CasadiDTCBFSafetyFilter:
       "ipopt.sb": "yes",
       "ipopt.tol": self.filt_cfg.ipopt_tol,
       "ipopt.max_iter": self.filt_cfg.ipopt_max_iter,
+      "ipopt.warm_start_init_point": "yes",
       "expand": self.filt_cfg.casadi_expand,
     }
     if self.filt_cfg.limited_memory_hessian:
@@ -253,6 +257,13 @@ class CasadiDTCBFSafetyFilter:
       )
     )
     return u_safe
+
+
+def build_casadi_jacobian(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights, name: str, sym_t):
+  controller = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
+  z = sym_t.sym("z", controller.n_z)
+  p = sym_t.sym("p", controller.n_p)
+  return controller.ca.Function(name, [z, p], [controller.jac_fn(z, p)])
 
 
 # ---------------------------------------------------------------------------

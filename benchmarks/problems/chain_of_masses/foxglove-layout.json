@@ -1,0 +1,152 @@
+{
+  "configById": {
+    "3D!2wmzhow": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 7.944286369163371,
+        "phi": 66.4918032786904,
+        "thetaOffset": 18.098360655742372,
+        "targetOffset": [
+          -1.5632304559078025,
+          0.6994515476759977,
+          -2.956535217551657e-18
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {
+        "transforms": {
+          "lineWidth": 0
+        }
+      },
+      "transforms": {},
+      "topics": {
+        "/scene": {
+          "visible": true
+        }
+      },
+      "layers": {
+        "grid": {
+          "visible": false,
+          "drawBehind": false,
+          "instanceId": "d8f3bd4a-3854-4426-b458-cb75ff2487e8",
+          "layerId": "foxglove.Grid",
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "color": "#248eff",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "synchronize": false,
+      "imageMode": {}
+    },
+    "Plot!35pxrfs": {
+      "paths": [
+        {
+          "value": "/telemetry.solver_time_ms",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "showLine": true,
+          "color": "#4e98e2",
+          "id": "d4f95974-1169-40bd-8f4e-6456d89cd9f6"
+        },
+        {
+          "value": "/telemetry.fe_time_ms",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "showLine": true,
+          "color": "#f5774d",
+          "id": "b883355f-8c64-4df4-89de-218f306b1bf9"
+        },
+        {
+          "value": "/telemetry.scalars.glue_time_ms",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "showLine": true,
+          "color": "#f7df71",
+          "id": "2d292613-5053-4c62-aa95-7b676405f6dd"
+        },
+        {
+          "value": "/telemetry.scalars.qp_or_solver_time_ms",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "showLine": true,
+          "color": "#5cd6a9",
+          "id": "d6d25b11-5e2a-44b8-a768-7743dcbfda4e"
+        }
+      ]
+    },
+    "Indicator!qpi1by": {
+      "path": "/telemetry.success",
+      "style": "background",
+      "fontSize": 36,
+      "fallbackColor": "#ff0000",
+      "fallbackLabel": "failure",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#68e24a",
+          "label": "sucess"
+        }
+      ],
+      "foxglovePanelTitle": "solver success"
+    },
+    "RawMessages!4kw8ku0": {
+      "defaultExpanded": false,
+      "topicPath": "/control"
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "first": {
+      "first": "3D!2wmzhow",
+      "second": {
+        "first": "Plot!35pxrfs",
+        "second": "Indicator!qpi1by",
+        "direction": "column"
+      },
+      "direction": "row",
+      "splitPercentage": 56.92941782586296
+    },
+    "second": "RawMessages!4kw8ku0",
+    "direction": "row",
+    "splitPercentage": 89.08568693154619
+  }
+}
