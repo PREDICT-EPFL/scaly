@@ -59,7 +59,25 @@ Linux uses a built OpenBLAS; macOS uses Apple's Accelerate framework. Windows is
 - Code should resemble tinygrad's style — simple, dense, every line earns its place. No speculative abstractions.
 - Don't introduce `anvil`, `tinygrad`, or `torch` imports. If a test workload needs PyTorch checkpoints, use `alloy.utils.load_torch_state_dict` instead of adding torch as a dependency.
 - Update `docs/` when changing IR-facing behavior or the codegenerated ABI.
-- Correctness coverage belongs in `tests/`, never in `benchmarks/`. Benchmark problems exist to measure performance and to keep the harness honest about representative sizes; they must never be the only place an IR, AD, or codegen path is exercised. When a benchmark turns out to be the sole cover for some op or composition, add a small artificial test for it (differential against an unrolled or NumPy reference) and then feel free to change or retire the benchmark. Benchmarks are allowed to churn with the workload roadmap; tests are not.
+- Keep correctness checks layered as described under **Where correctness checks live**. `tests/` must never import `benchmarks.problems`.
+
+# Where correctness checks live
+
+There are two kinds of correctness check in this repo, and each has one correct home.
+
+- **`tests/` covers alloy itself** — the IR, AD, codegen, and solver plumbing. Nothing under `tests/` may import `benchmarks.problems`. When a test needs a specific function shape that a benchmark problem surfaced, copy a minimal reproduction of that shape into the test and check it differentially against an unrolled or NumPy reference. Importing `benchmarks.harness` is allowed, but only to test the harness itself (recorder schemas, scene builders, the artifact writer): drive it through whichever problem is cheapest and assert on harness behaviour, never on a problem's numbers.
+- **`benchmarks/problems/<problem>/checks.py` covers that problem** — its input data, its formulation, the layout of its parameter vector, pins on its physical constants, and the agreement between its backends. These gate the measurement, so they run before any timing is recorded.
+
+The split exists because the two churn at different rates. Benchmark problems follow the workload roadmap and are expected to be reshaped or retired, so IR/AD/codegen coverage that rides on one disappears with it. A problem-specific check parked in `tests/` has the mirror-image problem: it gets deleted along with the problem anyway, and it does not run where it is actually needed, which is before the numbers are taken.
+
+So when coverage turns up in the wrong place:
+
+- A benchmark is the only thing exercising some op or composition → copy a small artificial reproduction into `tests/`, then the benchmark is free to churn.
+- A test asserts something about a problem rather than about alloy → move it into that problem's `checks.py`. The deciding question is whether retiring the problem would make the check meaningless; if so, it belongs to the problem.
+
+A problem's `checks.py` exposes `run_checks()`, which yields `(name, outcome)` per gate from a `CHECKS` table recording whether each gate needs IPOPT or CasADi; a missing dependency yields `"skipped: ..."` rather than passing quietly. `benchmarks/run.py smoke --select problems` runs them all. Confirm each new gate can actually fail, by perturbing the thing it checks — a gate that cannot fail is worse than no gate, because it reads as coverage. Watch for perturbations that are secretly no-ops (scaling an objective does not move its argmin).
+
+`race_cars` is the worked example. `chain_of_masses` and `bumpercars_filter` are not migrated yet: `tests/alloy/test_chain_of_masses_workload.py`, `test_chain_closed_loop.py`, and `test_bumpercars_filter_workload.py` still import their problem modules directly.
 
 # Naming conventions
 

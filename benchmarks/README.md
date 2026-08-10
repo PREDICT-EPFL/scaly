@@ -43,7 +43,7 @@ Each `(workload, size, backend)` cell retains its generated C/header, raw float6
 
 The doctrine is claims-first: broad sweeps establish scaling and canonical points support comparisons; correctness gates always run before speed is measured; every result carries enough provenance to reproduce it. See [ROADMAP.md §2](../ROADMAP.md#2-benchmark-suite) for the governing claim matrix.
 
-The gates here guard the *measurements*, not the compiler. Op and composition coverage lives in `tests/` as small artificial cases checked against unrolled or NumPy references; a benchmark problem must never be the only thing exercising an IR, AD, or codegen path. That separation is what lets the problem set follow the workload roadmap without silently dropping compiler coverage — see the note in [`AGENTS.md`](../AGENTS.md).
+The gates here guard the *measurements*, not the compiler. Op and composition coverage lives in `tests/` as small artificial cases checked against unrolled or NumPy references; a benchmark problem must never be the only thing exercising an IR, AD, or codegen path. That separation is what lets the problem set follow the workload roadmap without silently dropping compiler coverage — see [Where correctness checks live](../AGENTS.md#where-correctness-checks-live).
 
 The split runs both ways: a check that is about *a problem* rather than about Alloy belongs in that problem's `checks.py`, not in `tests/`, so the pytest suite never imports a benchmark problem. `race_cars` is the worked example — `problems/race_cars/checks.py` owns its formulation gates, and `tests/alloy/test_stage_transcription.py` carries a self-contained copy of the RK4 stage-transcription shape that problem surfaced, so retiring the problem cannot drop the compiler coverage.
 

@@ -550,6 +550,12 @@ columns respectively — interleave them between B2 and B4.
 
 - Replace the race-car tracking NMPC with the **MPFC** distillation (§4), in
   the same `benchmarks/problems/race_cars/` package.
+- **Move the chain and bumpercars correctness checks onto the problem side**,
+  as `race_cars` now does: problem-specific gates into
+  `benchmarks/problems/*/checks.py` behind `run.py smoke --select problems`, and
+  a self-contained minimal reproduction of whatever IR/AD/codegen shape they
+  were covering into `tests/`. Afterwards nothing under `tests/` imports
+  `benchmarks.problems`. See AGENTS.md "Where correctness checks live".
 - **Make the Program IR passes iterative instead of recursive.**
   `passes._transform` / `_expand_inlinables` recurse per node, ~5 Python frames
   per expression level, so an expression deeper than ~200 chained elementwise
