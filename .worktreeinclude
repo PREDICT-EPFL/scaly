@@ -1,2 +1,2 @@
-src/alloy/lib/
-src/alloy/include/
+plugins/*/src/*/lib/
+plugins/*/src/*/include/

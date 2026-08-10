@@ -30,6 +30,3 @@ benchmarks/results/
 # docs
 site/
 .wrangler
-
-# JIT cache
-.alloy_jit_cache/
