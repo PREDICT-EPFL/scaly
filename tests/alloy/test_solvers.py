@@ -9,8 +9,10 @@ import alloy as al
 from alloy.codegen import render_c_api_header, render_c_source
 from alloy.jit import CompiledFunction
 from alloy.solvers.registry import available_backends
+from alloy.toolchain import solver_diagnostic, solver_loadable
 
 pytestmark = pytest.mark.skipif("piqp" not in available_backends(), reason="structural tests build al.qp and need the alloy-piqp plugin installed")
+need_piqp = pytest.mark.skipif(not solver_loadable("piqp"), reason=solver_diagnostic("piqpc"))
 
 
 def test_solver_function_signature_errors() -> None:
@@ -33,6 +35,7 @@ def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
   assert "ALLOY_SOLVER_STATS_VERSION 1" in header
 
 
+@need_piqp
 def test_qp_settings_are_baked_into_jit_cache_key() -> None:
   def build(eps_abs: float) -> CompiledFunction:
     return CompiledFunction(al.qp(P=np.eye(2), c=np.zeros(2), name="settings_qp", options={"eps_abs": eps_abs}))
