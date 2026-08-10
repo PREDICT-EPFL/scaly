@@ -555,7 +555,7 @@ columns respectively — interleave them between B2 and B4.
   `benchmarks/problems/*/checks.py` behind `run.py smoke --select problems`, and
   a self-contained minimal reproduction of whatever IR/AD/codegen shape they
   were covering into `tests/`. Afterwards nothing under `tests/` imports
-  `benchmarks.problems`. See AGENTS.md "Where correctness checks live".
+  `benchmarks.problems`. `benchmarks/README.md` documents how the gates are wired.
 - **Make the Program IR passes iterative instead of recursive.**
   `passes._transform` / `_expand_inlinables` recurse per node, ~5 Python frames
   per expression level, so an expression deeper than ~200 chained elementwise
