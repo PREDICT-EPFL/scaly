@@ -388,10 +388,8 @@ def test_tracking_workload_renders_and_matches(kind) -> None:
     assert np.all(np.isfinite(got_arr))
 
 
-def test_forward_unbumpercars_renders_through_program_ir() -> None:
-  pytest.importorskip("casadi")
-  uw = _import_sibling("test_unbumpercars_workload")
-  # Construction uses symbolic MLP weights (the `p` input), so no checkpoint is needed
-  # just to confirm the forward function lowers + renders through Program IR.
-  for ncars in (2, 4):
-    assert can_render_program_c(uw.unbumpercars_ineq_function(ncars))
+def test_gather_fed_chained_maps_render_through_program_ir() -> None:
+  # Pairwise-barrier shape: MAP -> gather -> MAP, concatenated with a per-body MAP.
+  fn = _import_sibling("test_map")._build_pairs_fn(True)
+  assert can_render_program_c(fn)
+  assert can_render_program_c(fn.factory("pairs_program_spjac", ["u", "p"], ["spjac:h:u"]))

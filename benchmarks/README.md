@@ -4,7 +4,7 @@ This package owns Alloy's reproducible benchmark workloads and correctness-gated
 
 ## Layout
 
-- `problems/` contains importable chain-of-masses, tracking NMPC, and bumpercars CT-DTCBF formulations. The old input-affine unbumpercars module is retained only as a compiler regression fixture and is not part of the benchmark runner.
+- `problems/` contains importable chain-of-masses, tracking NMPC, and bumpercars CT-DTCBF formulations.
 - `harness/` contains Google Benchmark wrapper generation, dense-reference checks, sweep mechanics, and provenance capture.
 - `run.py` is the entry point for CI smoke gates and scalability sweeps.
 
@@ -29,6 +29,8 @@ uv run python benchmarks/run.py sweep --out benchmarks/results/my-sweep.csv
 Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log under `benchmarks/results/gen/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package/compiler versions, platform, Python, and timestamp. After canonical closed-loop runs, the chain M=5, tracking N=30, and bumpercars C=4 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
 
 The doctrine is claims-first: broad sweeps establish scaling and canonical points support comparisons; correctness gates always run before speed is measured; every result carries enough provenance to reproduce it. See [ROADMAP.md §2](../ROADMAP.md#2-benchmark-suite) for the governing claim matrix.
+
+The gates here guard the *measurements*, not the compiler. Op and composition coverage lives in `tests/` as small artificial cases checked against unrolled or NumPy references; a benchmark problem must never be the only thing exercising an IR, AD, or codegen path. That separation is what lets the problem set follow the workload roadmap without silently dropping compiler coverage — see the note in [`AGENTS.md`](../AGENTS.md).
 
 ## Closed-loop episodes and Foxglove
 

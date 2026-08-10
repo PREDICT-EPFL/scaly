@@ -592,3 +592,131 @@ def test_map_accepts_input_dict_keyed_by_name() -> None:
     al.scan(scale_add, length=N, inputs={"x": (z, 0, 3), "q": (p, 0, 3)})
   with pytest.raises(ValueError, match="missing entries for callee inputs"):
     al.scan(scale_add, length=N, inputs={"x": (z, 0, 3)})
+
+
+# --- pairwise-barrier composition: gather-fed MAP, MAP -> gather -> MAP, concat of two MAPs ------
+# Shape of a centralized one-step barrier filter: one MAP advances every body, index tables gather
+# the (i, j) pair operands out of that MAP's output, a second MAP evaluates the pairwise rows, and a
+# third MAP evaluates the per-body rows. `slack` rides along as a stride-0 broadcast argument.
+
+NB, NS, NU = 3, 3, 2
+PAIRS = [(i, j) for i in range(NB) for j in range(i + 1, NB)]
+
+
+@al.function("pairs_step", {"s": NS, "u": NU})
+def pairs_step(s, u):
+  return {"next": al.stack([s[0] + 0.1 * s[2].cos() * u[0], s[1] + 0.1 * s[2].sin() * u[1], s[2] + 0.1 * (u[0] - u[1])])}
+
+
+@al.function("pairs_barrier", {"prev_i": NS, "prev_j": NS, "si": NS, "sj": NS, "slack": 1})
+def pairs_barrier(prev_i, prev_j, si, sj, slack):
+  d, dprev = si[:2] - sj[:2], prev_i[:2] - prev_j[:2]
+  return {"h": al.stack([(al.dot(d, d).sqrt() - 0.5 * (1.0 + al.dot(dprev, dprev)).log() + slack[0]).scalar()])}
+
+
+@al.function("pairs_wall", {"s": NS, "snext": NS, "slack": 1})
+def pairs_wall(s, snext, slack):
+  return {"h": al.stack([(snext[0] - 0.5 * s[0] + slack[0]).scalar(), (1.0 - snext[1].exp() + slack[0]).scalar()])}
+
+
+def _pair_index_table(bodies: list[int]) -> np.ndarray:
+  return np.concatenate([np.arange(NS, dtype=np.int64) + k * NS for k in bodies])
+
+
+def _build_pairs_fn(mapped: bool) -> al.Function:
+  u = al.sym("u", NU * NB + 1)
+  p = al.sym("p", NS * NB, diff=False)
+  uu, slack = u[: NU * NB], u[NU * NB : NU * NB + 1]
+  if mapped:
+    nxt = al.map_(pairs_step, NB, [(p, 0, NS), (uu, 0, NU)])
+    idx_i, idx_j = _pair_index_table([i for i, _ in PAIRS]), _pair_index_table([j for _, j in PAIRS])
+    pair_rows = al.map_(
+      pairs_barrier,
+      len(PAIRS),
+      [(al.gather(p, idx_i), 0, NS), (al.gather(p, idx_j), 0, NS), (al.gather(nxt, idx_i), 0, NS), (al.gather(nxt, idx_j), 0, NS), (slack, 0, 0)],
+    )
+    body_rows = al.map_(pairs_wall, NB, [(p, 0, NS), (nxt, 0, NS), (slack, 0, 0)])
+    h = al.concat([pair_rows, body_rows])
+  else:
+    nxt = al.concat([pairs_step.call([p[NS * k : NS * (k + 1)], uu[NU * k : NU * (k + 1)]])[0] for k in range(NB)])
+    sl = lambda e, k: e[NS * k : NS * (k + 1)]  # noqa: E731
+    rows = [pairs_barrier.call([sl(p, i), sl(p, j), sl(nxt, i), sl(nxt, j), slack])[0] for i, j in PAIRS]
+    rows += [pairs_wall.call([sl(p, k), sl(nxt, k), slack])[0] for k in range(NB)]
+    h = al.concat(rows)
+  return al.Function(f"pairs_{'map' if mapped else 'unroll'}", [u, p], [h.scalar()], ["u", "p"], ["h"])
+
+
+def _pairs_sample() -> tuple[np.ndarray, np.ndarray]:
+  rng = np.random.default_rng(11)
+  uv = rng.normal(scale=0.3, size=NU * NB + 1)
+  uv[-1] = 0.05
+  return uv, rng.normal(scale=0.5, size=NS * NB) + np.tile([1.0, 2.0, 0.3], NB)
+
+
+def test_gather_fed_chained_maps_match_unrolled_calls() -> None:
+  fn_map, fn_unroll = _build_pairs_fn(True), _build_pairs_fn(False)
+  uv, pv = _pairs_sample()
+  np.testing.assert_allclose(fn_map(uv, pv), fn_unroll(uv, pv), rtol=1e-12, atol=1e-12)
+
+  jac_map = fn_map.factory("pairs_map_jac", ["u", "p"], ["jac:h:u"])(uv, pv)
+  jac_unroll = fn_unroll.factory("pairs_unroll_jac", ["u", "p"], ["jac:h:u"])(uv, pv)
+  np.testing.assert_allclose(jac_map, jac_unroll, rtol=1e-10, atol=1e-10)
+
+
+def test_gather_fed_chained_maps_spjac_and_sphess_match_dense() -> None:
+  fn = _build_pairs_fn(True)
+  uv, pv = _pairs_sample()
+  dense = fn.factory("pairs_map_jac2", ["u", "p"], ["jac:h:u"])(uv, pv)
+  assert isinstance(dense, np.ndarray)
+  spjf = fn.factory("pairs_map_spjac", ["u", "p"], ["spjac:h:u"])
+  sp = spjf.output_sparsities[0]
+  assert sp is not None
+  flat = np.asarray(sp.rows) * dense.shape[1] + np.asarray(sp.cols)
+  np.testing.assert_allclose(spjf(uv, pv), np.ravel(dense)[flat], rtol=1e-10, atol=1e-10)
+  # Coloring must not claim structural zeros that the dense Jacobian disagrees with.
+  assert not np.any(np.abs(dense[~sp.to_mask()]) > 1e-12)
+
+  # Second order through the same composition, against the unrolled reference.
+  lam = np.arange(1.0, fn.outputs[0].shape[0] + 1.0)
+  hess = {
+    name: fn_.factory(f"pairs_{name}_sphess", ["u", "p", "lam:h"], ["sphess:gamma:u:u"], aux={"gamma": ["h"]})
+    for name, fn_ in (("map", fn), ("unroll", _build_pairs_fn(False)))
+  }
+  dense_hess = {}
+  for name, hf in hess.items():
+    hsp = hf.output_sparsities[0]
+    assert hsp is not None
+    dense_hess[name] = np.zeros(hsp.shape)
+    dense_hess[name][np.asarray(hsp.rows), np.asarray(hsp.cols)] = np.asarray(hf(uv, pv, lam), dtype=np.float64).reshape(-1)
+  np.testing.assert_allclose(dense_hess["map"], dense_hess["unroll"], rtol=1e-9, atol=1e-9)
+
+
+def test_block_lowered_matmul_inside_map_callee_infers_block_and_differentiates() -> None:
+  """A dense layer inside a MAP callee — the shape of an MLP-in-the-loop dynamics model. A MATMUL
+  with two block-marked operands infers `block` itself, while the scalar assembly wrapped around
+  the MAP stays `scalar`. Marking a formal directly (`s.block()`) would clone the INPUT node, so
+  the input side is marked on the packed vector, as real fixtures do."""
+  from alloy.expr import topo
+
+  w = np.array([[0.4, -0.2, 0.7], [0.1, 0.9, -0.3]])
+  b = np.array([0.05, -0.15])
+
+  @al.function("map_block_layer", {"s": 3})
+  def layer(s):
+    phi = al.stack([s[0], s[1], s[2]]).block()
+    h = (al.const(w).block() @ phi + al.const(b)).block()
+    return {"y": al.stack([(h * h).sum().scalar()])}
+
+  assert any(node.op == al.Ops.MATMUL and node.lowering == "block" for node in topo(layer.outputs))
+
+  N = 4
+  z = al.sym("z", 3 * N)
+  fn = al.Function("map_block", [z], [al.map_(layer, N, [(z, 0, 3)]).scalar()], ["z"], ["y"])
+  assert fn.outputs[0].lowering == "scalar"
+
+  zv = np.random.default_rng(3).normal(size=3 * N)
+  expected = np.zeros((N, 3 * N))
+  for k in range(N):
+    h = w @ zv[3 * k : 3 * k + 3] + b
+    expected[k, 3 * k : 3 * k + 3] = 2.0 * h @ w
+  np.testing.assert_allclose(fn.factory("map_block_jac", ["z"], ["jac:y:z"])(zv), expected, rtol=1e-10, atol=1e-10)

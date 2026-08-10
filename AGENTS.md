@@ -59,6 +59,7 @@ Linux uses a built OpenBLAS; macOS uses Apple's Accelerate framework. Windows is
 - Code should resemble tinygrad's style — simple, dense, every line earns its place. No speculative abstractions.
 - Don't introduce `anvil`, `tinygrad`, or `torch` imports. If a test workload needs PyTorch checkpoints, use `alloy.utils.load_torch_state_dict` instead of adding torch as a dependency.
 - Update `docs/` when changing IR-facing behavior or the codegenerated ABI.
+- Correctness coverage belongs in `tests/`, never in `benchmarks/`. Benchmark problems exist to measure performance and to keep the harness honest about representative sizes; they must never be the only place an IR, AD, or codegen path is exercised. When a benchmark turns out to be the sole cover for some op or composition, add a small artificial test for it (differential against an unrolled or NumPy reference) and then feel free to change or retire the benchmark. Benchmarks are allowed to churn with the workload roadmap; tests are not.
 
 # Naming conventions
 
