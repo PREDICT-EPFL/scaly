@@ -87,15 +87,17 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then otool -L plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.dylib; fi
           if [ "$RUNNER_OS" = "Linux" ]; then ldd plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.so; fi
 
+      # Only the built libraries and their headers — `third_party` is build scratch the
+      # consumer never reads, since the hooks skip once lib+header are present. Every
+      # path here sits under `plugins/`, so that is the artifact root and `solver tests`
+      # must download with `path: plugins` to land them back where the hooks look.
       - name: Upload vendored solver artifact for this workflow run
         uses: actions/upload-artifact@v4
         with:
           name: vendored-solvers-${{ runner.os }}-${{ runner.arch }}
           path: |
-            plugins/alloy-piqp/third_party
             plugins/alloy-piqp/src/alloy_piqp/lib
             plugins/alloy-piqp/src/alloy_piqp/include
-            plugins/alloy-ipopt/third_party
             plugins/alloy-ipopt/src/alloy_ipopt/lib
             plugins/alloy-ipopt/src/alloy_ipopt/include
           retention-days: 3
@@ -190,7 +192,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: vendored-solvers-${{ runner.os }}-${{ runner.arch }}
-          path: .
+          path: plugins
 
       - uses: astral-sh/setup-uv@v6
         with:
