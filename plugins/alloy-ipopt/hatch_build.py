@@ -86,12 +86,6 @@ def _missing_ipopt_tools() -> list[str]:
   return missing
 
 
-def _static_fortran_ldflags(system: str) -> str:
-  if system == "Linux":
-    return "-static-libgfortran -static-libgcc -static-libstdc++"
-  return ""
-
-
 IPOPT_BRANCH = "releases/3.14.19"
 MUMPS_BRANCH = "releases/3.0.12"
 METIS_BRANCH = "releases/2.0.1"
@@ -160,7 +154,6 @@ def _build_mumps(
   install_dir: Path,
   metis_install: Path,
   lapack_lflags: str,
-  static_ldflags: str,
   fc: str,
 ) -> Path:
   marker = install_dir / "lib"
@@ -187,8 +180,6 @@ def _build_mumps(
     f"--with-lapack-lflags={lapack_lflags}",
     f"FC={fc}",
   ]
-  if static_ldflags:
-    configure_args.append(f"FCFLAGS={static_ldflags}")
   _run(configure_args, cwd=src_dir)
   hook.app.display_info("Building MUMPS (this can take a couple of minutes)...")
   _run(["make", f"-j{jobs}"], cwd=src_dir)
@@ -203,7 +194,7 @@ def _build_ipopt(
   mumps_install: Path,
   metis_install: Path,
   lapack_lflags: str,
-  static_ldflags: str,
+  ldflags: str,
   fc: str,
 ) -> Path:
   src_dir = third_party_dir / "Ipopt"
@@ -226,8 +217,8 @@ def _build_ipopt(
     f"--with-lapack-lflags={lapack_lflags}",
     f"FC={fc}",
   ]
-  if static_ldflags:
-    configure_args.append(f"FCFLAGS={static_ldflags}")
+  if ldflags:
+    configure_args.append(f"LDFLAGS={ldflags}")
   _run(configure_args, cwd=build_dir)
   hook.app.display_info("Building IPOPT (this can take a few minutes)...")
   _run(["make", f"-j{jobs}"], cwd=build_dir)
@@ -275,8 +266,8 @@ def _bundle_macos_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str) -> No
   IPOPT links libgfortran/libquadmath by absolute Homebrew path, so a library built on one
   machine will not load on another that lacks that exact formula — which is how the macOS
   `solver tests` job broke once it stopped rebuilding IPOPT itself. Vendoring the runtime
-  and adding an `@loader_path` rpath makes the shipped library self-contained, matching
-  what `-static-libgfortran` already gives us on Linux."""
+  and adding an `@loader_path` rpath makes the shipped library self-contained, the same job
+  `_bundle_linux_runtime` does with `$ORIGIN`."""
   # each entry pairs the copy under lib_dir with the original it came from, whose rpaths
   # are the ones that can still resolve its dependencies
   pending, bundled = [(lib_dir / lib_name, lib_dir / lib_name)], set()
@@ -313,13 +304,61 @@ def _macos_self_contained(lib_dir: Path, lib_name: str) -> bool:
   return True
 
 
+# libgcc_s and libstdc++ are part of every glibc distribution's base install, but the Fortran
+# runtime only arrives with gfortran, so it is the piece a machine without a toolchain lacks.
+_LINUX_VENDORED = ("libgfortran", "libquadmath")
+
+# `$ORIGIN` has to reach the linker through two layers that both eat a `$`: configure copies
+# LDFLAGS into the generated Makefiles verbatim, where make turns `$$` back into `$`, and the
+# recipe shell then needs the backslash or it expands `$ORIGIN` to the empty string -- which
+# leaves a bare `-Wl,-rpath` that swallows the next argument and breaks the link.
+LINUX_RPATH_LDFLAGS = r"-Wl,-rpath,\$$ORIGIN"
+
+
+def _linux_runtime_deps(path: Path) -> dict[str, str | None]:
+  """Soname -> resolved path, over `path`'s whole closure, for the runtime we vendor.
+
+  `ldd` reports the transitive closure with each object's own rpath applied, so a vendored
+  sibling shows up here as the sibling and a missing library as None."""
+  out = subprocess.run(["ldd", str(path)], check=True, capture_output=True, text=True).stdout
+  deps = {}
+  for line in out.splitlines():
+    soname, _, resolved = line.strip().partition(" => ")
+    if soname.split(" (")[0].startswith(_LINUX_VENDORED):
+      deps[soname.split(" (")[0]] = None if not resolved or "not found" in resolved else resolved.split(" (")[0]
+  return deps
+
+
+def _bundle_linux_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str) -> None:
+  """Copy the Fortran runtime next to libipopt.so, where its `$ORIGIN` rpath will find it.
+
+  Same reasoning as `_bundle_macos_runtime`: IPOPT links libgfortran dynamically, so without
+  this the shipped library only loads on machines that have gfortran installed."""
+  bundled = _linux_runtime_deps(lib_dir / lib_name)
+  for soname, src in bundled.items():
+    if src is None:
+      raise RuntimeError(f"cannot vendor {soname!r} needed by {lib_dir / lib_name}: ldd could not resolve it")
+    dst = lib_dir / soname
+    hook.app.display_info(f"Bundling {src} -> {dst}")
+    shutil.copy2(src, dst)
+    dst.chmod(0o755)
+  hook.app.display_info(f"Bundled Linux runtime: {sorted(bundled) or 'nothing to bundle'}")
+
+
+def _linux_self_contained(lib_dir: Path, lib_name: str) -> bool:
+  """Every vendored dependency in the closure resolves to a sibling under `lib_dir`."""
+  return all(resolved and Path(resolved).parent == lib_dir.resolve() for resolved in _linux_runtime_deps(lib_dir.resolve() / lib_name).values())
+
+
 def _ipopt_built(system: str, lib_dir: Path, include_dir: Path) -> bool:
   lib_name = _shared_lib_name(system, "ipopt")
   has_lib = (lib_dir / lib_name).exists()
   if system == "Linux":
     has_lib = has_lib and any(lib_dir.glob("libipopt.so.*"))
-  if system == "Darwin" and has_lib and not _macos_self_contained(lib_dir, lib_name):
-    return False  # built before the runtime was vendored: still absolute-linked, rebuild
+  # a library built before the runtime was vendored is still linked against the toolchain's
+  # copies, so it would not load off this machine: rebuild it
+  if has_lib and not (_macos_self_contained if system == "Darwin" else _linux_self_contained)(lib_dir, lib_name):
+    return False
   return has_lib and (include_dir / "coin-or" / "IpStdCInterface.h").exists()
 
 
@@ -339,7 +378,7 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
   third_party_dir.mkdir(parents=True, exist_ok=True)
   if system not in {"Darwin", "Linux"}:
     raise RuntimeError(f"Unsupported platform: {system}")
-  static_ldflags = _static_fortran_ldflags(system)
+  ldflags = "" if system == "Darwin" else LINUX_RPATH_LDFLAGS
   fc = _find_fortran_compiler()
   hook.app.display_info(f"Using Fortran compiler: {fc}")
   if system == "Darwin":
@@ -349,10 +388,8 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     lapack_lflags = f"-L{(openblas_install / 'lib').resolve()} -lopenblas -lm -lpthread -lgfortran"
 
   metis_install = _build_metis(hook, third_party_dir, third_party_dir / "metis_install")
-  mumps_install = _build_mumps(hook, third_party_dir, third_party_dir / "mumps_install", metis_install, lapack_lflags, static_ldflags, fc)
-  ipopt_install = _build_ipopt(
-    hook, third_party_dir, third_party_dir / "ipopt_install", mumps_install, metis_install, lapack_lflags, static_ldflags, fc
-  )
+  mumps_install = _build_mumps(hook, third_party_dir, third_party_dir / "mumps_install", metis_install, lapack_lflags, fc)
+  ipopt_install = _build_ipopt(hook, third_party_dir, third_party_dir / "ipopt_install", mumps_install, metis_install, lapack_lflags, ldflags, fc)
 
   lib_dir.mkdir(parents=True, exist_ok=True)
   (include_dir / "coin-or").mkdir(parents=True, exist_ok=True)
@@ -375,6 +412,10 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
   if system == "Darwin":
     _run(["install_name_tool", "-id", f"@rpath/{lib_name}", str(dst_path)], cwd=lib_dir)
     _bundle_macos_runtime(hook, lib_dir, lib_name)
+  else:
+    _bundle_linux_runtime(hook, lib_dir, lib_name)
+    if not _linux_self_contained(lib_dir, lib_name):
+      raise RuntimeError(f"{dst_path} still resolves its Fortran runtime outside {lib_dir}: {_linux_runtime_deps(dst_path)}")
 
   ipopt_headers_dir = ipopt_install / "include" / "coin-or"
   for header in ipopt_headers_dir.glob("*.h"):
