@@ -15,13 +15,13 @@ from alloy.codegen.c import _workspace_size, render_c_module
 from benchmarks.harness import gbench
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.provenance import collect, write
-from benchmarks.problems import chain_of_masses, tracking_nmpc
+from benchmarks.problems import chain_of_masses, race_cars
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "benchmarks" / "results"
 DEFAULT_SIZES = {
   "chain": [3, 5, 9, 17, 33, 65],
-  "tracking": [1, 5, 10, 25, 30, 50, 100, 200, 500],
+  "race_cars": [1, 5, 10, 25, 40, 50, 100, 200, 500],
   "bumpercars": [2, 4, 8],
 }
 BACKENDS = ("alloy", "casadi_sx", "casadi_mx")
@@ -103,11 +103,11 @@ def _render_alloy(fun: al.Function, name: str, out_dir: Path):
   return module, (time.perf_counter() - started) * 1000
 
 
-def _tracking_alloy(size: int, out_dir: Path) -> dict:
+def _race_cars_alloy(size: int, out_dir: Path) -> dict:
   started = time.perf_counter()
-  fn = tracking_nmpc.tracking_eq_function_map(size)
+  fn = race_cars.race_car_eq_function_map(size)
   sj = al.sparse_jacobian(fn.outputs[0], fn.inputs[0])
-  name = f"alloy_tracking_eq_jac_N{size}"
+  name = f"alloy_race_car_eq_jac_N{size}"
   spjf = al.Function(name, fn.inputs, [sj.values], fn.input_names, ["spjac_eq_z"], [sj.sparsity])
   build_ms = (time.perf_counter() - started) * 1000
   module, render_ms = _render_alloy(spjf, name, out_dir)
@@ -115,12 +115,12 @@ def _tracking_alloy(size: int, out_dir: Path) -> dict:
     name,
     "alloy",
     module,
-    [("z", tracking_nmpc.NZ * (size + 1)), ("p", tracking_nmpc.n_param(size))],
+    [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))],
     sj.sparsity,
     (fn.outputs[0].shape[0], fn.inputs[0].shape[0]),
     build_ms,
     render_ms,
-    f"BM_AlloyTrackingEqJacN{size}",
+    f"BM_AlloyRaceCarEqJacN{size}",
     w_size=_workspace_size(spjf),
     callable=spjf,
   )
@@ -184,8 +184,8 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
 
   kind = backend.removeprefix("casadi_")
   sym_t = ca.SX if kind == "sx" else ca.MX
-  stem = {"chain": "chain_eq", "tracking": "tracking_eq", "bumpercars": "bumpercars_g"}[workload]
-  axis = {"chain": "M", "tracking": "N", "bumpercars": "C"}[workload]
+  stem = {"chain": "chain_eq", "race_cars": "race_car_eq", "bumpercars": "bumpercars_g"}[workload]
+  axis = {"chain": "M", "race_cars": "N", "bumpercars": "C"}[workload]
   name = f"casadi_{kind}_{stem}_jac_{axis}{size}"
   started = time.perf_counter()
   if workload == "chain":
@@ -193,10 +193,10 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
     fn = chain_of_masses.ca_chain_eq_jac(size, horizon, sym_t=sym_t, name=name, map_stages=True)
     inputs = [("z", chain_of_masses.n_dec(size, horizon)), ("p", chain_of_masses.n_param(size))]
     benchmark = f"BM_Casadi{kind.title()}ChainEqJacM{size}"
-  elif workload == "tracking":
-    fn = tracking_nmpc.ca_tracking_eq_jac(size, name=name, sym_t=sym_t)
-    inputs = [("z", tracking_nmpc.NZ * (size + 1)), ("p", tracking_nmpc.n_param(size))]
-    benchmark = f"BM_Casadi{kind.title()}TrackingEqJacN{size}"
+  elif workload == "race_cars":
+    fn = race_cars.ca_race_car_eq_jac(size, name=name, sym_t=sym_t)
+    inputs = [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))]
+    benchmark = f"BM_Casadi{kind.title()}RaceCarEqJacN{size}"
   else:
     from benchmarks.problems.bumpercars_filter.common import ClosedLoopConfig, FilterConfig, load_ct_full_weights
     from benchmarks.problems.bumpercars_filter.filters import build_casadi_jacobian
@@ -243,14 +243,14 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
 
 def build_kernel(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   if backend == "alloy":
-    return {"chain": _chain_alloy, "tracking": _tracking_alloy, "bumpercars": _bumpercars_alloy}[workload](size, out_dir)
+    return {"chain": _chain_alloy, "race_cars": _race_cars_alloy, "bumpercars": _bumpercars_alloy}[workload](size, out_dir)
   return _casadi(workload, size, backend, out_dir)
 
 
 def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
   canonical = {
     ("chain", 5): RESULTS / "closed_loop" / "chain",
-    ("tracking", 30): RESULTS / "closed_loop" / "tracking",
+    ("race_cars", 40): RESULTS / "closed_loop" / "race_cars" / "alloy",
     ("bumpercars", 4): RESULTS / "closed_loop" / "bumpercars" / "alloy",
   }.get((workload, size))
   if canonical is None:
@@ -274,16 +274,16 @@ def _samples(workload: str, size: int, info: dict, out_dir: Path):
       raise ValueError(f"harvested chain input shapes do not match M={size}, N={horizon}: {zv.shape}, {pv.shape}")
     expected = chain_of_masses.chain_eq_jac_dense_reference(size, horizon, zv, pv).reshape(-1)
     values = {"z": zv, "p": pv}
-  elif workload == "tracking":
+  elif workload == "race_cars":
     if harvested is None:
       rng = np.random.default_rng(7)
-      zv = rng.normal(scale=0.4, size=tracking_nmpc.NZ * (size + 1))
-      pv = np.concatenate([rng.normal(scale=0.4, size=tracking_nmpc.NX * (size + 1)), tracking_nmpc.TrackingParams().array()])
+      zv = rng.normal(scale=0.4, size=race_cars.NZ * (size + 1))
+      pv = np.concatenate([rng.normal(scale=0.4, size=race_cars.NX * (size + 1)), race_cars.RaceCarParams().array()])
     else:
       zv, pv = harvested["z"], harvested["p"]
-    if zv.shape != (tracking_nmpc.NZ * (size + 1),) or pv.shape != (tracking_nmpc.n_param(size),):
-      raise ValueError(f"harvested tracking input shapes do not match N={size}: {zv.shape}, {pv.shape}")
-    ref = tracking_nmpc.tracking_eq_function(size).factory(f"tracking_dense_ref_N{size}", ["z", "p"], ["jac:eq:z"])
+    if zv.shape != (race_cars.NZ * (size + 1),) or pv.shape != (race_cars.n_param(size),):
+      raise ValueError(f"harvested race_cars input shapes do not match N={size}: {zv.shape}, {pv.shape}")
+    ref = race_cars.race_car_eq_function(size).factory(f"race_car_dense_ref_N{size}", ["z", "p"], ["jac:eq:z"])
     expected = np.asarray(ref(zv, pv), dtype=np.float64).reshape(-1)
     values = {"z": zv, "p": pv}
   else:

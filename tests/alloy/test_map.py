@@ -244,8 +244,8 @@ def test_map_compiled_c_matches_unrolled_concat(tmp_path) -> None:
   np.testing.assert_allclose(np.array(y_buf), 2.0 * zv + pv)
 
 
-def test_tracking_eq_primal_source_is_constant_in_horizon() -> None:
-  """Rewriting the tracking fixture with `al.scan` yields C source whose size does not grow with N."""
+def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
+  """Rewriting the race-car fixture with `al.scan` yields C source whose size does not grow with N."""
 
   from alloy.codegen import render_c_source
 
@@ -282,11 +282,11 @@ def test_tracking_eq_primal_source_is_constant_in_horizon() -> None:
     k4 = cont(x + DT * k3, u)
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @al.function("tracking_eq_initial", {"z": NZ, "p": NX})
+  @al.function("race_car_eq_initial", {"z": NZ, "p": NX})
   def eq_initial(z, p):
     return {"eq": z[:NX] - p[:NX]}
 
-  @al.function("tracking_eq_interstage", {"z": NZ, "znext": NZ, "p": NX})
+  @al.function("race_car_eq_interstage", {"z": NZ, "znext": NZ, "p": NX})
   def eq_interstage(z, znext, p):
     return {"eq": rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]}
 
@@ -295,7 +295,7 @@ def test_tracking_eq_primal_source_is_constant_in_horizon() -> None:
     p = al.sym("p", NX * (N + 1), diff=False)
     initial = eq_initial.call([z[:NZ], p[:NX]])[0]
     mapped = al.scan(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
-    return al.Function(f"tracking_eq_map_N{N}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+    return al.Function(f"race_car_eq_map_N{N}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
 
   fn_a = build(50)
   fn_b = build(100)
@@ -312,7 +312,7 @@ def test_tracking_eq_primal_source_is_constant_in_horizon() -> None:
       znext = fn.inputs[0][(i + 1) * NZ : (i + 2) * NZ]
       pi = fn.inputs[1][(i + 1) * NX : (i + 2) * NX]
       parts.append(eq_interstage.call([zi, znext, pi])[0])
-    ref = al.Function(f"tracking_eq_ref_N{N}", [fn.inputs[0], fn.inputs[1]], [al.concat(parts)], ["z", "p"], ["eq"])
+    ref = al.Function(f"race_car_eq_ref_N{N}", [fn.inputs[0], fn.inputs[1]], [al.concat(parts)], ["z", "p"], ["eq"])
     np.testing.assert_allclose(fn(zv, pv), ref(zv, pv), rtol=1e-12, atol=1e-12)
 
   src_a = render_c_source(fn_a)
@@ -401,8 +401,8 @@ def test_grad_factory_over_map_matches_unrolled_and_finite_difference() -> None:
   )
 
 
-def test_spjacobian_of_tracking_map_matches_unrolled_concat() -> None:
-  """End-to-end: spjacobian on a MAP-based tracking fixture matches the unrolled-concat fixture
+def test_spjacobian_of_race_car_map_matches_unrolled_concat() -> None:
+  """End-to-end: spjacobian on a MAP-based race-car fixture matches the unrolled-concat fixture
   numerically and structurally."""
 
   NX, NU, NZ = 4, 2, 6
@@ -431,11 +431,11 @@ def test_spjacobian_of_tracking_map_matches_unrolled_concat() -> None:
     k4 = cont(x + DT * k3, u)
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @al.function("tracking_eq_initial2", {"z": NZ, "p": NX})
+  @al.function("race_car_eq_initial2", {"z": NZ, "p": NX})
   def eq_initial(z, p):
     return {"eq": z[:NX] - p[:NX]}
 
-  @al.function("tracking_eq_interstage2", {"z": NZ, "znext": NZ, "p": NX})
+  @al.function("race_car_eq_interstage2", {"z": NZ, "znext": NZ, "p": NX})
   def eq_interstage(z, znext, p):
     return {"eq": rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]}
 
@@ -476,6 +476,58 @@ def test_spjacobian_of_tracking_map_matches_unrolled_concat() -> None:
   np.testing.assert_allclose(dense_m, dense_u, rtol=1e-10, atol=1e-10)
 
 
+RK4_NX, RK4_NU, RK4_NZ, RK4_N_PARAMS = 4, 2, 6, 7
+
+
+def _rk4_bicycle_eq_map(horizon: int) -> al.Function:
+  """Scan-based RK4 bicycle stage transcription with a symbolic parameter tail in ``p``.
+
+  Self-contained on purpose: this is the realistic shape that produces a piece-ordered
+  (non-row-major) COO sparsity and exercises the transposed-concat peephole, and the tests
+  below must keep covering it whether or not any benchmark problem still uses it.
+  """
+  n_param = RK4_NX * (horizon + 1) + RK4_N_PARAMS
+
+  def ode(x, u, params):
+    wheelbase, _, mass, c_m0, c_r0, c_r1, c_r2 = [params[i] for i in range(RK4_N_PARAMS)]
+    beta = 0.5 * u[1]
+    vx = x[3] * beta.cos()
+    return al.stack(
+      [
+        x[3] * (x[2] + beta).cos(),
+        x[3] * (x[2] + beta).sin(),
+        x[3] * beta.sin() / (0.5 * wheelbase),
+        (c_m0 * u[0] - (c_r0 + c_r1 * vx + c_r2 * vx * vx) * (10 * vx).tanh()) / mass,
+      ]
+    )
+
+  def rk4(x, u, params):
+    dt = params[1]
+    k1 = ode(x, u, params)
+    k2 = ode(x + dt / 2 * k1, u, params)
+    k3 = ode(x + dt / 2 * k2, u, params)
+    k4 = ode(x + dt * k3, u, params)
+    return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+  @al.function("rk4_bicycle_initial", {"z": RK4_NZ, "p": RK4_NX})
+  def eq_initial(z, p):
+    return {"eq": z[:RK4_NX] - p[:RK4_NX]}
+
+  @al.function("rk4_bicycle_interstage", {"z": RK4_NZ, "znext": RK4_NZ, "params": RK4_N_PARAMS})
+  def eq_interstage(z, znext, params):
+    return {"eq": rk4(z[:RK4_NX], z[RK4_NX : RK4_NX + RK4_NU], params) - znext[:RK4_NX]}
+
+  z = al.sym("z", RK4_NZ * (horizon + 1))
+  p = al.sym("p", n_param, diff=False)
+  initial = eq_initial.call([z[:RK4_NZ], p[:RK4_NX]])[0]
+  mapped = al.scan(
+    eq_interstage,
+    length=horizon,
+    inputs={"z": (z, 0, RK4_NZ), "znext": (z, RK4_NZ, RK4_NZ), "params": (p, RK4_NX * (horizon + 1), 0)},
+  )
+  return al.Function(f"rk4_bicycle_eq_map_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+
+
 def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
   """The rendered header's CSR/CSC index tables are sorted, but the compact value buffer stays in
   COO order — piece-ordered on the merged map path, i.e. NOT row-major — so the header must also
@@ -485,10 +537,9 @@ def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
   import re
 
   from alloy.codegen.c import render_c_module
-  from benchmarks.problems.tracking_nmpc import NZ, n_param, tracking_eq_function_map
 
   N = 3
-  fn = tracking_eq_function_map(N)
+  fn = _rk4_bicycle_eq_map(N)
   spjf = fn.factory(f"trk_map_valperm_N{N}", ["z", "p"], ["spjac:eq:z"])
   sp = spjf.output_sparsities[0]
   assert sp is not None
@@ -503,7 +554,7 @@ def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
     return np.array([int(x) for x in m.group(1).split(",")], dtype=np.int64)
 
   rng = np.random.default_rng(3)
-  zv, pv = rng.normal(size=NZ * (N + 1)), rng.normal(size=n_param(N))
+  zv, pv = rng.normal(size=RK4_NZ * (N + 1)), rng.normal(size=RK4_NX * (N + 1) + RK4_N_PARAMS)
   values = np.asarray(spjf(zv, pv), dtype=np.float64).reshape(-1)
   dense_ref = np.zeros(sp.shape)
   dense_ref[np.asarray(sp.rows), np.asarray(sp.cols)] = values
@@ -523,24 +574,23 @@ def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
   np.testing.assert_allclose(dense_csc, dense_ref, rtol=0, atol=0)
 
 
-def test_spjac_keeps_constant_loc_on_rk4_tracking_map() -> None:
-  """End-to-end: even on the realistic RK4 tracking case (no periodic coloring), the rendered spjac
+def test_spjac_keeps_constant_loc_on_rk4_race_car_map() -> None:
+  """End-to-end: even on the realistic RK4 race-car case (no periodic coloring), the rendered spjac
   C source stays at constant LOC across horizons because the transposed-concat peephole now emits
   per-block loops with a static `idx[]` table when the per-block group is large."""
 
   from alloy.codegen import render_c_source
-  from benchmarks.problems.tracking_nmpc import tracking_eq_function_map
 
   def loc(N: int) -> int:
-    fn = tracking_eq_function_map(N)
-    spj = fn.factory(f"tracking_eq_map_N{N}_spjac_eq_z", ["z", "p"], ["spjac:eq:z"])
+    fn = _rk4_bicycle_eq_map(N)
+    spj = fn.factory(f"rk4_bicycle_eq_map_N{N}_spjac_eq_z", ["z", "p"], ["spjac:eq:z"])
     return render_c_source(spj).count("\n")
 
   loc_a = loc(10)
   loc_b = loc(50)
   # LOC is bounded by a tiny constant — variation comes only from whether the workspace
   # spill threshold is crossed, which adds one wrapper line for the SZ_W null check.
-  assert abs(loc_a - loc_b) <= 2, f"expected constant RK4 tracking-map LOC, got {loc_a} -> {loc_b}"
+  assert abs(loc_a - loc_b) <= 2, f"expected constant RK4 race-car-map LOC, got {loc_a} -> {loc_b}"
 
 
 def test_simple_banded_map_spjac_has_constant_loc() -> None:

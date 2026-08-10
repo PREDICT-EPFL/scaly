@@ -355,7 +355,7 @@ def test_uncovered_case_raises_loudly() -> None:
 
 
 def _import_sibling(name):
-  """Import a sibling test-fixture module (e.g. test_tracking_workload)."""
+  """Import a sibling test-fixture module (e.g. test_stage_transcription)."""
   import sys
   from pathlib import Path
 
@@ -367,14 +367,14 @@ def _import_sibling(name):
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 @pytest.mark.parametrize("kind", ["forward", "jacobian", "sparse_jacobian"])
-def test_tracking_workload_renders_and_matches(kind) -> None:
+def test_stage_transcription_renders_and_matches(kind) -> None:
   pytest.importorskip("casadi")  # the fixture module needs CasADi at import
-  tw = _import_sibling("test_tracking_workload")
-  base = tw.tracking_eq_function(3)
+  tw = _import_sibling("test_stage_transcription")
+  base = tw.bicycle_eq_function(3)
   fn = {
     "forward": base,
-    "jacobian": base.factory("trk_jac", ["z", "p"], ["jac:eq:z"]),
-    "sparse_jacobian": base.factory("trk_spjac", ["z", "p"], ["spjac:eq:z"]),
+    "jacobian": base.factory("bicycle_program_jac", ["z", "p"], ["jac:eq:z"]),
+    "sparse_jacobian": base.factory("bicycle_program_spjac", ["z", "p"], ["spjac:eq:z"]),
   }[kind]
   render_program_c_source(fn)  # loud: must render through Program IR
   assert can_render_program_c(fn)

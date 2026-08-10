@@ -172,26 +172,26 @@ def _benchmark_smoke() -> None:
   infos = []
   for backend in ("alloy", "casadi_sx"):
     result, info = run_cell(
-      "tracking",
+      "race_cars",
       5,
       backend,
-      RESULTS / "gen" / "tracking" / f"{backend}_N5",
+      RESULTS / "gen" / "race_cars" / f"{backend}_N5",
       codegen_timeout=300,
       compile_timeout=180,
       max_source_mb=50,
       benchmark_min_time="0.01s",
     )
     runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
-    print(f"smoke tracking size=5 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
+    print(f"smoke race_cars size=5 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
     if result["runtime_status"] != "ok" or info is None:
-      raise RuntimeError(f"tracking {backend} smoke failed: {result['note']}")
-    assert info["nnz"] > 0, "tracking nnz must be positive"
-    assert info["w_size"] is not None, "tracking workspace must be recorded"
-    assert info["nnz"] < info["n_rows"] * info["n_cols"], "tracking Jacobian must be sparse"
+      raise RuntimeError(f"race_cars {backend} smoke failed: {result['note']}")
+    assert info["nnz"] > 0, "race_cars nnz must be positive"
+    assert info["w_size"] is not None, "race_cars workspace must be recorded"
+    assert info["nnz"] < info["n_rows"] * info["n_cols"], "race_cars Jacobian must be sparse"
     infos.append(info)
-  out_dir = RESULTS / "gen" / "tracking" / "alloy_N50"
+  out_dir = RESULTS / "gen" / "race_cars" / "alloy_N50"
   out_dir.mkdir(parents=True, exist_ok=True)
-  large = build_kernel("tracking", 50, "alloy", out_dir)
+  large = build_kernel("race_cars", 50, "alloy", out_dir)
   assert large["source_lines"] < 1.2 * infos[0]["source_lines"], (
     f"loop preservation regressed: h=50 has {large['source_lines']} lines, h=5 has {infos[0]['source_lines']}"
   )
@@ -244,9 +244,28 @@ def _benchmark_smoke() -> None:
     assert info["nnz"] > 0 and info["w_size"] is not None and info["nnz"] < info["n_rows"] * info["n_cols"]
 
 
+def _problem_smoke() -> None:
+  """Per-problem formulation gates, owned by the problems themselves.
+
+  These check properties of a benchmark problem — its data, its reference generator, its
+  parameter layout, and the agreement of its backends — and must pass before any timing is
+  recorded. They live here rather than in `tests/` because the pytest suite covers Alloy's
+  core and does not depend on benchmark problems (see `AGENTS.md`)."""
+  from benchmarks.problems.race_cars.checks import run_checks
+
+  for name, outcome in run_checks():
+    print(f"smoke race_cars/{name}: {outcome}")
+
+
 def smoke(args) -> bool:
-  selected = set(args.select or ("benchmarks", "solver_call")) - set(args.skip or ())
+  selected = set(args.select or ("benchmarks", "problems", "solver_call")) - set(args.skip or ())
   failures = []
+  if "problems" in selected:
+    try:
+      _problem_smoke()
+    except Exception as e:
+      failures.append(f"problems: {e}")
+      print(f"smoke problems: FAILED ({type(e).__name__}: {e})")
   if "benchmarks" in selected:
     try:
       _benchmark_smoke()
@@ -271,7 +290,7 @@ def main() -> None:
   parser = argparse.ArgumentParser(description="Alloy correctness-gated benchmark harness")
   subparsers = parser.add_subparsers(dest="command", required=True)
   sweep_parser = subparsers.add_parser("sweep", help="run the scalability cell grid")
-  sweep_parser.add_argument("--workloads", type=_csv, default=["tracking", "bumpercars", "chain"])
+  sweep_parser.add_argument("--workloads", type=_csv, default=["race_cars", "bumpercars", "chain"])
   sweep_parser.add_argument("--sizes", type=_ints, help="comma-separated sizes (applied to each selected workload)")
   sweep_parser.add_argument("--backends", type=_csv, default=list(BACKENDS))
   sweep_parser.add_argument("--out", "--csv", type=Path, default=RESULTS / "scalability.csv")
@@ -280,11 +299,16 @@ def main() -> None:
   sweep_parser.add_argument("--max-source-mb", type=float, default=50.0)
   sweep_parser.add_argument("--benchmark-min-time", default="0.1s")
   smoke_parser = subparsers.add_parser("smoke", help="run fast correctness and invariant gates")
-  smoke_parser.add_argument("--select", action="append", choices=("benchmarks", "solver_call"))
-  smoke_parser.add_argument("--skip", action="append", choices=("benchmarks", "solver_call"))
+  smoke_parser.add_argument("--select", action="append", choices=("benchmarks", "problems", "solver_call"))
+  smoke_parser.add_argument("--skip", action="append", choices=("benchmarks", "problems", "solver_call"))
   closed_loop_parser = subparsers.add_parser("closed-loop", help="run a model-in-the-loop episode and write Foxglove artifacts")
-  closed_loop_parser.add_argument("--problem", choices=("chain", "tracking", "bumpercars"), default="bumpercars")
-  closed_loop_parser.add_argument("--backend", choices=("alloy", "casadi", "open"), default="alloy", help="bumpercars filter backend")
+  closed_loop_parser.add_argument("--problem", choices=("chain", "race_cars", "bumpercars"), default="bumpercars")
+  closed_loop_parser.add_argument(
+    "--backend",
+    choices=("alloy", "casadi", "open"),
+    default="alloy",
+    help="oracle provider: alloy or casadi for race_cars, plus open (unfiltered) for bumpercars",
+  )
   closed_loop_parser.add_argument("--smoke", action="store_true", help="use a short toolchain-check episode instead of the canonical point")
   closed_loop_parser.add_argument("--out-dir", type=Path, default=RESULTS / "closed_loop")
   args = parser.parse_args()
@@ -295,8 +319,9 @@ def main() -> None:
   elif args.command == "smoke":
     success = smoke(args)
   else:
-    if args.problem != "bumpercars" and args.backend != "alloy":
-      parser.error("--backend only applies to --problem bumpercars")
+    allowed_backends = {"bumpercars": ("alloy", "casadi", "open"), "race_cars": ("alloy", "casadi"), "chain": ("alloy",)}[args.problem]
+    if args.backend not in allowed_backends:
+      parser.error(f"--backend {args.backend} is not available for --problem {args.problem} (choose from {', '.join(allowed_backends)})")
     output = run_closed_loop(args.problem, smoke=args.smoke, backend=args.backend, out_dir=args.out_dir, cli_args=sys.argv[1:])
     print(f"closed-loop artifacts written to {output}")
     layout = layout_path(args.problem)

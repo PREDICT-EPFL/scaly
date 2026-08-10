@@ -1,3 +1,16 @@
+"""Race-car NMPC workload: a full-size Formula Student car on an FSDS track.
+
+The kinematic bicycle model is discretised with RK4 and transcribed stage-wise
+into one equality residual per horizon. The seven physical parameters travel
+symbolically in the tail of ``p`` so the sweep can vary them without rebuilding
+the graph; the body dimensions and actuator limits are plain constants because
+nothing sweeps them.
+
+Constants come from the Formula Student car in ``minimal_tracking_nmpc``: the
+throttle ``T`` is a physical quantity in ``[-T_MAX, T_MAX]``, not a normalized
+command.
+"""
+
 from __future__ import annotations
 
 import time
@@ -12,18 +25,24 @@ from alloy.expr import topo
 NX = 4
 NU = 2
 NZ = NX + NU
-WHEELBASE = 0.3
+WHEELBASE = 1.5706
 DT = 0.05
-M = 3.47
-C_M0 = 11.0
-C_R0 = 0.1
-C_R1 = 0.01
-C_R2 = 0.001
+M = 230.0
+C_M0 = 4.950
+C_R0 = 297.030
+C_R1 = 16.665
+C_R2 = 0.6784
 N_PARAMS = 7
+T_MAX = 500.0
+DELTA_MAX = 0.5
+# body footprint: 1.5706 m wheelbase plus ~0.6 m of overhang per end, ~1.5 m across the tyres
+CAR_LENGTH = 2.8
+CAR_WIDTH = 1.5
+CAR_HEIGHT = 0.55
 
 
 @dataclass(frozen=True)
-class TrackingParams:
+class RaceCarParams:
   wheelbase: float = WHEELBASE
   dt: float = DT
   mass: float = M
@@ -66,17 +85,17 @@ def _rk4(x, u, params):
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@al.function("tracking_eq_initial", {"z": NZ, "p": NX})
+@al.function("race_car_eq_initial", {"z": NZ, "p": NX})
 def eq_initial(z, p):
   return {"eq": z[:NX] - p[:NX]}
 
 
-@al.function("tracking_eq_interstage", {"z": NZ, "znext": NZ, "params": N_PARAMS})
+@al.function("race_car_eq_interstage", {"z": NZ, "znext": NZ, "params": N_PARAMS})
 def eq_interstage(z, znext, params):
   return {"eq": _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]}
 
 
-def tracking_eq_function(horizon: int) -> al.Function:
+def race_car_eq_function(horizon: int) -> al.Function:
   z = al.sym("z", NZ * (horizon + 1))
   p = al.sym("p", n_param(horizon), diff=False)
   params = p[NX * (horizon + 1) :]
@@ -85,11 +104,11 @@ def tracking_eq_function(horizon: int) -> al.Function:
     zi = z[i * NZ : (i + 1) * NZ]
     znext = z[(i + 1) * NZ : (i + 2) * NZ]
     parts.append(eq_interstage.call([zi, znext, params])[0])
-  return al.Function(f"tracking_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
+  return al.Function(f"race_car_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
 
-def tracking_eq_function_map(horizon: int) -> al.Function:
-  """Same semantics as ``tracking_eq_function`` but using ``al.scan`` for the interstage residuals.
+def race_car_eq_function_map(horizon: int) -> al.Function:
+  """Same semantics as ``race_car_eq_function`` but using ``al.scan`` for the interstage residuals.
 
   This lets benchmarks measure the impact of loop-preserving lowering directly against the
   per-stage unrolled construction.
@@ -102,10 +121,10 @@ def tracking_eq_function_map(horizon: int) -> al.Function:
     length=horizon,
     inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
   )
-  return al.Function(f"tracking_eq_map_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+  return al.Function(f"race_car_eq_map_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
 
 
-def ca_tracking_eq_jac(horizon: int, name: str = "tracking_eq_jac", sym_t=None):
+def ca_race_car_eq_jac(horizon: int, name: str = "race_car_eq_jac", sym_t=None):
   import casadi
 
   sym_t = casadi.SX if sym_t is None else sym_t
@@ -144,9 +163,9 @@ def ca_tracking_eq_jac(horizon: int, name: str = "tracking_eq_jac", sym_t=None):
   return casadi.Function(name, [z, p], [casadi.jacobian(eq, z)])
 
 
-def tracking_eq_sparse_metrics(horizon: int, *, render_source: bool = False) -> dict[str, float | int]:
+def race_car_eq_sparse_metrics(horizon: int, *, render_source: bool = False) -> dict[str, float | int]:
   t0 = time.perf_counter()
-  fn = tracking_eq_function(horizon)
+  fn = race_car_eq_function(horizon)
   build_ms = (time.perf_counter() - t0) * 1000.0
 
   base_nodes = len(topo(fn.outputs))
@@ -156,7 +175,7 @@ def tracking_eq_sparse_metrics(horizon: int, *, render_source: bool = False) -> 
   t0 = time.perf_counter()
   sj = al.sparse_jacobian_colored(fn.outputs[0], fn.inputs[0])
   ad_ms = (time.perf_counter() - t0) * 1000.0
-  spjf = al.Function(f"tracking_eq_N{horizon}_spjac_colored", fn.inputs, [sj.values], fn.input_names, ["spjac_eq_z"], [sj.sparsity])
+  spjf = al.Function(f"race_car_eq_N{horizon}_spjac_colored", fn.inputs, [sj.values], fn.input_names, ["spjac_eq_z"], [sj.sparsity])
   source_bytes = len(render_c_source(spjf)) if render_source else 0
 
   return {

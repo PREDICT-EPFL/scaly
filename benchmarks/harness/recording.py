@@ -81,6 +81,17 @@ class ControlState(_Schema):
   desired: list[float] = Field(default_factory=list)
 
 
+class HorizonPath(_Schema):
+  """A planned or predicted path over one control horizon, in scene coordinates."""
+
+  step: int = Field(ge=0)
+  time_s: float = Field(ge=0.0)
+  path_id: str
+  x: list[float]
+  y: list[float]
+  yaw: list[float] = Field(default_factory=list)
+
+
 CAR_COLORS = (
   (0.12, 0.47, 0.87),
   (0.89, 0.24, 0.20),
@@ -100,16 +111,17 @@ class CarShape:
 
   `center_offset` is how far the body centre sits ahead of the recorded `(x, y)`, so a
   model whose position tracks the centre of gravity rather than the geometric centre
-  still draws in the right place. Control vectors are read as (normalized throttle,
-  normalized steering); `max_steer` converts the latter to radians, and `arrow_length`
-  is the arrow length at full throttle (0 disables the arrows, as does `safety_radius`
-  for the keep-out circle)."""
+  still draws in the right place. Control vectors are read as (throttle, steering);
+  `max_throttle` and `max_steer` normalize them, and `arrow_length` is the arrow length
+  at full throttle (0 disables the arrows, as does `safety_radius` for the keep-out
+  circle)."""
 
   length: float = 0.45
   width: float = 0.24
   height: float = 0.15
   center_offset: float = 0.0
   safety_radius: float = 0.0
+  max_throttle: float = 1.0
   max_steer: float = 0.0
   arrow_length: float = 0.0
 
@@ -142,7 +154,7 @@ def _circle(x: float, y: float, radius: float, color: Color, *, segments: int = 
 
 
 def _control_arrow(car: PlanarVehicleState, shape: CarShape, command: Sequence[float], color: Color, z: float) -> ArrowPrimitive:
-  throttle = float(np.clip(command[0], -1.0, 1.0))
+  throttle = float(np.clip(command[0] / shape.max_throttle, -1.0, 1.0))
   steer = float(np.clip(command[1], -1.0, 1.0)) * shape.max_steer if len(command) > 1 else 0.0
   heading = car.yaw + steer + (np.pi if throttle < 0.0 else 0.0)
   length = shape.arrow_length * (0.25 + 0.75 * abs(throttle))
@@ -250,6 +262,80 @@ def chain_scene(points: Sequence[PointState3D | Mapping[str, Any]], *, radius: f
   )
 
 
+CONE_STYLES = {
+  "blue": ((0.12, 0.35, 0.92), (0.25, 0.25, 0.32)),
+  "yellow": ((0.95, 0.85, 0.12), (0.25, 0.25, 0.32)),
+  "big_orange": ((1.0, 0.45, 0.05), (0.30, 0.30, 0.50)),
+  "small_orange": ((1.0, 0.55, 0.15), (0.22, 0.22, 0.28)),
+}
+# (colour, height above the ground) per horizon; the offsets keep the two strips from z-fighting
+HORIZON_STYLES = {"reference": ((0.15, 0.80, 0.35), 0.06), "prediction": ((0.95, 0.20, 0.70), 0.10)}
+
+
+def track_scene(center_line: np.ndarray, cones: Mapping[str, np.ndarray]) -> SceneUpdate:
+  """Static track geometry: the closed center line plus one cube per cone, by colour."""
+  timestamp = _timestamp(0.0)
+  entities = [
+    SceneEntity(
+      timestamp=timestamp,
+      frame_id="scene",
+      id="track/center_line",
+      lines=[
+        LinePrimitive(
+          type=LinePrimitiveLineType.LineLoop,
+          thickness=0.12,
+          points=[Point3(x=float(x), y=float(y), z=0.01) for x, y in np.asarray(center_line, dtype=np.float64)],
+          color=Color(r=0.85, g=0.85, b=0.85, a=0.8),
+        )
+      ],
+    )
+  ]
+  for name, positions in cones.items():
+    positions = np.asarray(positions, dtype=np.float64).reshape(-1, 2)
+    if not len(positions):
+      continue
+    rgb, size = CONE_STYLES[name]
+    entities.append(
+      SceneEntity(
+        timestamp=timestamp,
+        frame_id="scene",
+        id=f"track/cones/{name}",
+        cubes=[
+          CubePrimitive(
+            pose=Pose(position=Vector3(x=float(x), y=float(y), z=0.5 * size[2]), orientation=_yaw_quaternion(0.0)),
+            size=Vector3(x=size[0], y=size[1], z=size[2]),
+            color=_color(rgb),
+          )
+          for x, y in positions
+        ],
+      )
+    )
+  return SceneUpdate(entities=entities)
+
+
+def horizon_scene(paths: Sequence[HorizonPath | Mapping[str, Any]], *, thickness: float = 0.18) -> SceneUpdate:
+  """One line strip per planned/predicted horizon, drawn just above the track."""
+  entities = []
+  for path in (HorizonPath.model_validate(item) for item in paths):
+    rgb, z = HORIZON_STYLES.get(path.path_id, ((0.6, 0.6, 0.6), 0.04))
+    entities.append(
+      SceneEntity(
+        timestamp=_timestamp(path.time_s),
+        frame_id="scene",
+        id=f"horizon/{path.path_id}",
+        lines=[
+          LinePrimitive(
+            type=LinePrimitiveLineType.LineStrip,
+            thickness=thickness,
+            points=[Point3(x=x, y=y, z=z) for x, y in zip(path.x, path.y, strict=True)],
+            color=_color(rgb),
+          )
+        ],
+      )
+    )
+  return SceneUpdate(entities=entities)
+
+
 def arena_scene(bounds: tuple[float, float, float, float], *, margin: float = 0.0) -> SceneUpdate:
   """Arena walls, plus the inset rectangle the wall barriers actually keep the car
   centres inside when `margin` is the filter's wall margin."""
@@ -290,6 +376,7 @@ class Recorder:
     self._planar = self._channel("/planar/state", PlanarVehicleState)
     self._points = self._channel("/chain/point", PointState3D)
     self._control = self._channel("/control", ControlState)
+    self._horizon = self._channel("/horizon", HorizonPath)
     self._scene = SceneUpdateChannel("/scene", context=self._context)
     self._tf = FrameTransformsChannel("/tf", context=self._context)
     self._planar_history: dict[str, list[tuple[float, float]]] = {}
@@ -351,6 +438,17 @@ class Recorder:
   def record_arena(self, bounds: tuple[float, float, float, float], *, margin: float = 0.0) -> None:
     self._scene.log(arena_scene(bounds, margin=margin), log_time=0)
 
+  def record_track(self, center_line: np.ndarray, cones: Mapping[str, np.ndarray]) -> None:
+    self._scene.log(track_scene(center_line, cones), log_time=0)
+
+  def record_horizons(self, paths: Sequence[HorizonPath | Mapping[str, Any]]) -> list[HorizonPath]:
+    validated = [HorizonPath.model_validate(path) for path in paths]
+    for path in validated:
+      self._log(self._horizon, HorizonPath, path, _log_time(path.time_s))
+    if validated:
+      self._scene.log(horizon_scene(validated), log_time=_log_time(validated[0].time_s))
+    return validated
+
   def record_control(self, controls: Sequence[ControlState | Mapping[str, Any]]) -> list[ControlState]:
     validated = [ControlState.model_validate(control) for control in controls]
     for control in validated:
@@ -360,7 +458,7 @@ class Recorder:
   def close(self) -> None:
     if self._closed:
       return
-    for channel in (self._metadata, self._telemetry, self._planar, self._points, self._control, self._scene, self._tf):
+    for channel in (self._metadata, self._telemetry, self._planar, self._points, self._control, self._horizon, self._scene, self._tf):
       channel.close()
     self._writer.close()
     self._closed = True
@@ -372,7 +470,7 @@ class Recorder:
     self.close()
 
 
-PROBLEM_DIRS = {"chain": "chain_of_masses", "tracking": "tracking_nmpc", "bumpercars": "bumpercars_filter"}
+PROBLEM_DIRS = {"chain": "chain_of_masses", "race_cars": "race_cars", "bumpercars": "bumpercars_filter"}
 
 
 def layout_path(problem: str) -> Path:

@@ -73,7 +73,7 @@ benchmarks/
   run.py                  # entry point: smoke / sweep / closed-loop
   problems/
     chain_of_masses/
-    tracking_nmpc/        # later replaced by mpfc/
+    race_cars/            # tracking NMPC now; MPFC lands in the same package
     bumpercars_filter/
   harness/                # sim loop, gbench wrapper gen, mcap dump, metrics
   results/                # gitignored raw outputs
@@ -84,7 +84,7 @@ benchmarks/
 | problem | scaling axis | notes |
 |---|---|---|
 | chain of masses | number of masses | classic hanging-chain NMPC (Wirsching/Bock/Diehl form); match the laopt paper's instance parameters where possible for an external reference point |
-| tracking NMPC, kinematic bicycle | horizon N | from the existing tracking fixture; **later replaced by Johannes' MPFC with dynamic bicycle** (backlog) |
+| race cars: tracking NMPC, kinematic bicycle | horizon N | full-size Formula Student car on vendored FSDS tracks, with the minimum-curvature spline reference generator and lateral corridor constraint from `minimal_tracking_nmpc`; **later replaced by Johannes' MPFC with dynamic bicycle** (backlog), which lands in the same `race_cars/` package |
 | bumpercars safety filter, CT neural dynamics + discrete-time CBF | number of cars | **based on `examples/ct_dt_cbf_filter/`** (CT neural model + RK4 + one-step DT position CBF, centralized, `al.map_` over the car axis; CasADi + alloy implementations, closed loop, and per-step instrumentation already exist there). Fold the desired control into the **simulator's** dynamics only (not the OCP's), so the closed loop is plant + filter with no third controller entity. The older input-affine safety-filter variants in `benchmarks/` are **removed** — the CT DTCBF filter is the one that is preserved. |
 
 Future problem candidates (not now): diffusion-based stuff, GP stuff,
@@ -463,7 +463,7 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
 - **L4 — parameterized model constants**: physical constants and `dt` as
   symbolic parameters in the decorated ODE functions instead of baked-in
   values (blocks tuning sweeps). **Status: COMPLETE (2026-07-13).** Chain,
-  tracking, and CT-DTCBF dynamics receive their physical constants and step
+  race-car, and CT-DTCBF dynamics receive their physical constants and step
   size through symbolic parameter vectors in both Alloy and CasADi paths
   (`1326b75`).
 - **L5 — plugin-owned solver codegen templates** (§3.5): move the per-solver
@@ -506,8 +506,8 @@ columns respectively — interleave them between B2 and B4.
   Wheels: backlog. **Status: COMPLETE (2026-07-13, `2c51692`).** Core is a
   NumPy-only package and PIQP/IPOPT are independently registered workspace
   plugins.
-- **B2 — problems v1** (with L3/L4): chain of masses, tracking NMPC (kinematic
-  bicycle, from the existing fixture), bumpercars CT-DTCBF filter promoted
+- **B2 — problems v1** (with L3/L4): chain of masses, race-car tracking NMPC
+  (kinematic bicycle, from the existing fixture), bumpercars CT-DTCBF filter promoted
   from `examples/ct_dt_cbf_filter/` (desired control folded into dynamics).
   Alloy + CasADi implementations, NumPy/CasADi reference gates, sweep axes
   wired, `expand=True` added to the CasADi columns. **Status: COMPLETE
@@ -523,12 +523,17 @@ columns respectively — interleave them between B2 and B4.
   arena bounds. Layouts are not generated: each problem keeps one hand-authored
   `foxglove-layout.json`, exported from Foxglove Desktop, next to its runner. The
   canonical points are chain M=5/N=12 (20 steps; harvested state rolled into
-  the N=40 FE transcription), tracking N=30 (260 steps, one lap), and
+  the N=40 FE transcription), race cars N=40 (one lap of the 340 m FSDS
+  `fsds_competition_1`, 1367 steps at 0.05 s), and
   bumpercars C=4 (80 steps, seed 42). Their midpoint successful oracle inputs
   feed the canonical gbench cells; CT-DTCBF C=2/4/8 Alloy + CasADi sweep cells
   replace the legacy input-affine unbumpercars axis. The
   `benchmarks/run.py closed-loop` command owns smoke/canonical execution and
-  reproducibility artifacts.
+  reproducibility artifacts. The race-car problem carries both closed-loop
+  columns of §2.3's **Now** table: `--backend alloy` and `--backend casadi`
+  build a deliberately identical NLP (same `z`/`p` layout, same rows in the same
+  order, same IPOPT options, `expand=True`) and are gated against each other by
+  a cross-backend trajectory comparison, so only the oracle provider differs.
 - **B4 — `alloy-sqp`** (after L1/L2): the custom SQP per §3.3 over `piqp_c`;
   the one-solver-two-oracles columns (alloy oracles vs CasADi-codegen oracles)
   added to all B2 problems; FE/QP/line-search timing split in stats.
@@ -543,7 +548,17 @@ columns respectively — interleave them between B2 and B4.
 
 ## 6. Backlog
 
-- Replace tracking NMPC with the **MPFC** distillation (§4).
+- Replace the race-car tracking NMPC with the **MPFC** distillation (§4), in
+  the same `benchmarks/problems/race_cars/` package.
+- **Make the Program IR passes iterative instead of recursive.**
+  `passes._transform` / `_expand_inlinables` recurse per node, ~5 Python frames
+  per expression level, so an expression deeper than ~200 chained elementwise
+  ops dies with a bare `RecursionError` during lowering. Found while building
+  the race-car objective at N=40 as a left fold (`cost = cost + ...`);
+  worked around there by expressing the cost as one flat weighted-square
+  reduction. Explicit-stack rewrite of the tree walks, plus a diagnosable error
+  if a depth cap is ever kept. See `docs/spec.md` "Known limitation: pass
+  recursion depth" and the `xfail` in `tests/alloy/test_passes.py`.
 - **laopt as an external baseline** for MPFC (its implementation already
   exists in the racing repo), once laopt is published.
 - **Specialized OCP problem/solver in alloy** (structured staged-OCP tier that

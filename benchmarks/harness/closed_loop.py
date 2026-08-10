@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
 from benchmarks.harness import gbench
 from benchmarks.harness.provenance import collect
 from benchmarks.harness.recording import (
+  CarShape,
   ControlState,
+  HorizonPath,
   PlanarVehicleState,
   PointState3D,
   Recorder,
@@ -23,6 +24,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _finite(value: float) -> float | None:
   return float(value) if np.isfinite(value) else None
+
+
+def _lateral_error(state: np.ndarray, reference: np.ndarray) -> float:
+  """Signed offset from the reference point, across the reference heading."""
+  dx, dy = state[0] - reference[0], state[1] - reference[1]
+  return float(-np.sin(reference[2]) * dx + np.cos(reference[2]) * dy)
 
 
 def _provenance(cli_args: list[str]) -> dict[str, object]:
@@ -103,38 +110,52 @@ def run_chain(*, smoke: bool, out_dir: Path, cli_args: list[str]) -> Path:
   return output
 
 
-def run_tracking(*, smoke: bool, out_dir: Path, cli_args: list[str]) -> Path:
-  from benchmarks.problems.tracking_nmpc.closed_loop import EpisodeConfig, run_episode
+def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], backend: str = "alloy") -> Path:
+  from benchmarks.problems.race_cars import CAR_HEIGHT, CAR_LENGTH, CAR_WIDTH, DELTA_MAX, T_MAX
+  from benchmarks.problems.race_cars.closed_loop import EpisodeConfig, run_episode
 
   config = EpisodeConfig.smoke() if smoke else EpisodeConfig()
-  episode = run_episode(config)
-  output = out_dir / "tracking"
+  episode = run_episode(config, backend=backend)
+  steps = len(episode.controls)
+  output = out_dir / "race_cars" / backend
   output.mkdir(parents=True, exist_ok=True)
   np.savez_compressed(
     output / "rollout.npz",
     state=episode.states,
     reference=episode.references,
     control=episode.controls,
-    progress=episode.progress,
+    arc_length=episode.arc_length,
     laps=episode.laps,
+    prediction=episode.predictions,
+    reference_horizon=episode.reference_horizons,
+    center_line=episode.center_path,
   )
+  shape = CarShape(
+    length=CAR_LENGTH,
+    width=CAR_WIDTH,
+    height=CAR_HEIGHT,
+    max_throttle=T_MAX,
+    max_steer=DELTA_MAX,
+    arrow_length=1.5 * CAR_LENGTH,
+  )
+  centroid = np.mean(episode.center_path, axis=0)
   with Recorder(
-    output / "episode.mcap",
-    allow_overwrite=True,
-    scene_center=(config.path.center_x, config.path.center_y, 0.0),
+    output / "episode.mcap", allow_overwrite=True, scene_center=(float(centroid[0]), float(centroid[1]), 0.0), car_shape=shape
   ) as recorder:
     recorder.record_metadata(
       RunMetadata(
-        run_id=f"tracking-N{config.horizon}",
-        problem="tracking_nmpc",
-        backend="alloy-ipopt",
+        run_id=f"race_cars-{backend}-{config.track}-N{config.horizon}",
+        problem="race_cars",
+        backend=f"{backend}-ipopt",
         seed=0,
         dt=config.params.dt,
-        config={"horizon": config.horizon, "steps": config.steps, "radius": config.path.radius, "speed": config.path.speed},
+        config={"track": config.track, "horizon": config.horizon, "steps": steps, "v_ref": config.v_ref, "lap_length": episode.lap_length},
       )
     )
+    recorder.record_track(episode.center_path, episode.track.cones)
     for step, (state, reference) in enumerate(zip(episode.states, episode.references, strict=True)):
       time_s = step * config.params.dt
+      controls = [ControlState(step=step, time_s=time_s, entity_id="vehicle", applied=episode.controls[step].tolist())] if step < steps else []
       recorder.record_planar(
         [
           PlanarVehicleState(step=step, time_s=time_s, vehicle_id="vehicle", x=float(state[0]), y=float(state[1]), yaw=float(state[2])),
@@ -146,11 +167,25 @@ def run_tracking(*, smoke: bool, out_dir: Path, cli_args: list[str]) -> Path:
             y=float(reference[1]),
             yaw=float(reference[2]),
           ),
+        ],
+        controls=controls,
+      )
+      if step >= steps:
+        continue
+      recorder.record_control(controls)
+      recorder.record_horizons(
+        [
+          HorizonPath(
+            step=step,
+            time_s=time_s,
+            path_id=path_id,
+            x=horizon[:, 0].tolist(),
+            y=horizon[:, 1].tolist(),
+            yaw=horizon[:, 2].tolist(),
+          )
+          for path_id, horizon in (("reference", episode.reference_horizons[step]), ("prediction", episode.predictions[step]))
         ]
       )
-      if step >= len(episode.telemetry):
-        continue
-      recorder.record_control([ControlState(step=step, time_s=time_s, entity_id="vehicle", applied=episode.controls[step].tolist())])
       item = episode.telemetry[step]
       stats = item.stats
       recorder.record_telemetry(
@@ -165,19 +200,29 @@ def run_tracking(*, smoke: bool, out_dir: Path, cli_args: list[str]) -> Path:
             "iterations": float(stats.iter),
             "qp_or_solver_time_ms": stats.t_solver * 1000.0,
             "glue_time_ms": stats.t_glue * 1000.0,
-            "progress": item.progress,
+            "arc_length": item.arc_length,
             "laps": float(item.laps),
-            "position_error": float(np.linalg.norm(state[:2] - reference[:2])),
+            "speed": float(state[3]),
+            "lateral_error": _lateral_error(state, reference),
           },
         )
       )
+  lateral = np.array([_lateral_error(state, reference) for state, reference in zip(episode.states, episode.references, strict=True)])
   summary = {
-    "problem": "tracking_nmpc",
+    "problem": "race_cars",
+    "backend": backend,
+    "track": config.track,
     "horizon": config.horizon,
-    "steps": config.steps,
+    "steps": steps,
+    "lap_length_m": episode.lap_length,
+    "lap_time_s": steps * config.params.dt,
     "laps": int(episode.laps[-1]),
     "mean_solver_ms": float(np.mean([item.stats.t_total for item in episode.telemetry]) * 1000.0),
-    "rms_position_error": float(np.sqrt(np.mean(np.sum((episode.states[:, :2] - episode.references[:, :2]) ** 2, axis=1)))),
+    # the FE share is the point of the two-backend comparison, so keep it in the headline summary
+    "mean_fe_ms": float(np.mean([item.stats.t_fe for item in episode.telemetry]) * 1000.0),
+    "mean_iterations": float(np.mean([item.stats.iter for item in episode.telemetry])),
+    "rms_lateral_error": float(np.sqrt(np.mean(lateral**2))),
+    "max_abs_lateral_error": float(np.max(np.abs(lateral))),
   }
   write_result_artifacts(
     output,
@@ -204,7 +249,8 @@ def run_bumpercars(*, smoke: bool, backend: str, out_dir: Path, cli_args: list[s
 
 
 def run(problem: str, *, smoke: bool, backend: str, out_dir: Path, cli_args: list[str]) -> Path:
-  runners: dict[str, Any] = {"chain": run_chain, "tracking": run_tracking}
   if problem == "bumpercars":
     return run_bumpercars(smoke=smoke, backend=backend, out_dir=out_dir / problem, cli_args=cli_args)
-  return runners[problem](smoke=smoke, out_dir=out_dir, cli_args=cli_args)
+  if problem == "race_cars":
+    return run_race_cars(smoke=smoke, out_dir=out_dir, cli_args=cli_args, backend=backend)
+  return run_chain(smoke=smoke, out_dir=out_dir, cli_args=cli_args)
