@@ -56,6 +56,33 @@ def test_fusion_collapses_elementwise_chain() -> None:
   assert len(loops) == 1
 
 
+def _long_scalar_chain(length: int) -> al.Function:
+  """``x[0]*1 + x[1]*2 + ...`` accumulated as a left fold, so the expression is ``length`` deep."""
+  x = al.sym("x", 4)
+  acc = al.const(0.0)
+  for i in range(length):
+    acc = acc + x[i % 4] * float(i + 1)
+  return al.Function(f"fold{length}", [x], [acc.reshape((1,))], ["x"], ["y"])
+
+
+def test_fusion_survives_a_moderately_deep_scalar_fold() -> None:
+  """Guards the headroom below the recursion limit documented in `docs/spec.md`."""
+  render_program_c_source(_long_scalar_chain(150))
+
+
+@pytest.mark.xfail(raises=RecursionError, strict=True, reason="fuse_elementwise recurses per chain level; see docs/spec.md")
+def test_fusion_of_a_very_deep_scalar_fold_exhausts_the_python_stack() -> None:
+  """`_expand_inlinables` re-enters itself for every inlined producer and `_transform` recurses
+  per argument, so depth in the *expression* becomes depth on the *Python stack* — about five
+  frames per level, which exhausts the default 1000-frame limit somewhere just under 200 chained
+  scalar ops. Anything that accumulates a long left fold (a per-stage NMPC cost written as
+  `cost = cost + ...`) hits this as a RecursionError during codegen rather than a clean error.
+
+  Fixing the passes to iterate instead of recurse turns this into an XPASS.
+  """
+  render_program_c_source(_long_scalar_chain(400))
+
+
 def test_fusion_skips_matmul_operand() -> None:
   """A matmul operand must NOT be inlined: a contraction reads each operand element m*k times,
   so inlining the producer's expression there multiplies compute. Regression guard for the

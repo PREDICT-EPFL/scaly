@@ -33,8 +33,12 @@ def _c_ident(name: str) -> str:
   Buffer/var/callee names may contain ``:`` (e.g. derivative names like ``fwd:eq:z``)
   or other non-identifier characters. This must match ``alloy.codegen.c._c_ident`` so
   the rendered entry symbol agrees with what ``jit.CompiledFunction`` looks up.
+  Names colliding with the emitters' own identifiers (the ``w`` workspace tail, the
+  ``arg``/``res``/``iw``/``mem`` ABI params) are suffixed with ``_``.
   """
   ident = re.sub(r"\W", "_", name)
+  if ident in ("w", "arg", "res", "iw", "mem"):
+    ident += "_"
   return f"_{ident}" if ident[:1].isdigit() else ident
 
 

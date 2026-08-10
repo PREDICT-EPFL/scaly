@@ -355,7 +355,7 @@ def test_uncovered_case_raises_loudly() -> None:
 
 
 def _import_sibling(name):
-  """Import a sibling test-fixture module (e.g. test_tracking_workload)."""
+  """Import a sibling test-fixture module (e.g. test_stage_transcription)."""
   import sys
   from pathlib import Path
 
@@ -367,14 +367,14 @@ def _import_sibling(name):
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 @pytest.mark.parametrize("kind", ["forward", "jacobian", "sparse_jacobian"])
-def test_tracking_workload_renders_and_matches(kind) -> None:
+def test_stage_transcription_renders_and_matches(kind) -> None:
   pytest.importorskip("casadi")  # the fixture module needs CasADi at import
-  tw = _import_sibling("test_tracking_workload")
-  base = tw.tracking_eq_function(3)
+  tw = _import_sibling("test_stage_transcription")
+  base = tw.bicycle_eq_function(3)
   fn = {
     "forward": base,
-    "jacobian": base.factory("trk_jac", ["z"], ["jac:eq:z"]),
-    "sparse_jacobian": al.spjacobian(base, "z", "eq"),
+    "jacobian": base.factory("bicycle_program_jac", ["z", "p"], ["jac:eq:z"]),
+    "sparse_jacobian": base.factory("bicycle_program_spjac", ["z", "p"], ["spjac:eq:z"]),
   }[kind]
   render_program_c_source(fn)  # loud: must render through Program IR
   assert can_render_program_c(fn)
@@ -388,10 +388,8 @@ def test_tracking_workload_renders_and_matches(kind) -> None:
     assert np.all(np.isfinite(got_arr))
 
 
-def test_forward_unbumpercars_renders_through_program_ir() -> None:
-  pytest.importorskip("casadi")
-  uw = _import_sibling("test_unbumpercars_workload")
-  # Construction uses symbolic MLP weights (the `p` input), so no checkpoint is needed
-  # just to confirm the forward function lowers + renders through Program IR.
-  for ncars in (2, 4):
-    assert can_render_program_c(uw.unbumpercars_ineq_function(ncars))
+def test_gather_fed_chained_maps_render_through_program_ir() -> None:
+  # Pairwise-barrier shape: MAP -> gather -> MAP, concatenated with a per-body MAP.
+  fn = _import_sibling("test_map")._build_pairs_fn(True)
+  assert can_render_program_c(fn)
+  assert can_render_program_c(fn.factory("pairs_program_spjac", ["u", "p"], ["spjac:h:u"]))

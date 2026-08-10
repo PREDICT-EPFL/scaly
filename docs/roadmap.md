@@ -487,20 +487,20 @@ Phase 5 starts by lifting Alloy out of the anvil repository into its own project
 - independent versioning lets Alloy release without dragging anvil's experimental state along;
 - the PIQP shared library built for anvil and the one Alloy needs are the same artifact; cleaner if each project owns its own copy.
 
-The new `alloy` repository owns all `src/alloy/`, `tests/alloy/`, `docs/alloy/`, and `benchmarks/` artifacts from this worktree, plus its own `pyproject.toml`, `hatch_build.py`, `.github/workflows/`, `worktrunk` config, and `uv`/`ruff`/`ty` settings. The anvil repository keeps its current state; cross-references stay as documentation only.
+The new `alloy` repository owns all `src/alloy/`, `tests/alloy/`, `docs/alloy/`, `benchmarks/`, and `plugins/` artifacts from this worktree, plus its own `pyproject.toml`, per-plugin hatch hooks, `.github/workflows/`, worktrunk config, and `uv`/`ruff`/`ty` settings. The anvil repository keeps its current state; cross-references stay as documentation only.
 
 ### Vendored solver shared libraries
 
-Both PIQP and IPOPT are built as shared libraries under `src/alloy/lib/` (`libpiqpc.{dylib,so}`, `libipopt.{dylib,so}`), with C headers under `src/alloy/include/`. These artifacts are already used for local development and CI; making the final wheel fully redistributable still requires the static/runtime dependency cleanup tracked in `vendored_solvers.md`. The same artifacts are used:
+PIQP and IPOPT are built as shared libraries in their respective `plugins/alloy-{piqp,ipopt}/src/*/lib/` directories, with C headers in each plugin's `include/` directory. These artifacts are already used for local development and CI; making the final wheels fully redistributable still requires the static/runtime dependency cleanup tracked in `vendored_solvers.md`. The same artifacts are used:
 
 - by the Python runtime, loaded via `ctypes` from the JITed wrapper Functions;
-- by AOT C++ consumers that link against `-lpiqpc` / `-lipopt` from `alloy/lib/`.
+- by AOT C++ consumers that link against `-lpiqpc` / `-lipopt` using the include/lib/rpath flags reported by `alloy.codegen.solver_c.solver_compile_flags()`.
 
 Build strategy:
 
-- **PIQP**: reuse the existing anvil `hatch_build.py` pattern. Clone PIQP v0.6.2, Eigen 3.4.1, blasfeo; build `piqp_c` as a shared library; copy headers. Cold build ~1-2 min.
+- **PIQP**: reuse the existing anvil hatch-hook pattern in `plugins/alloy-piqp/hatch_build.py`. Clone PIQP v0.6.2, Eigen 3.4.1, blasfeo; build `piqp_c` as a shared library; copy headers. Cold build ~1-2 min.
 - **IPOPT**: source build via a coinbrew-style hook. Clone coin-or/Ipopt 3.14+, `ThirdParty-Mumps`, `ThirdParty-Metis`, and either OpenBLAS (Linux) or rely on Apple Accelerate (macOS). Build MUMPS (sequential, no MPI) and IPOPT against them. The target is to **statically link `libgfortran`, `libgcc`, and `libstdc++` into `libipopt`** (`-static-libgfortran -static-libgcc -static-libstdc++`) so the resulting `.dylib`/`.so` has no runtime dependency on the host's Fortran toolchain. Current CI source builds pass but still dynamically depend on those runtime libraries; see `vendored_solvers.md`. Cold build ~5-8 min.
-- **Caching**: identical to the anvil hook — skip the rebuild if the lib + headers already exist in `src/alloy/lib/`.
+- **Caching**: identical to the anvil hook — skip each rebuild if its plugin lib + headers already exist.
 - **Platform support**: macOS (arm64 + x86_64) and Linux (manylinux_2_28) for v1. Windows is deferred: MSVC has no Fortran, MinGW/intel Fortran would require its own build path. Document the limitation; revisit if a concrete Windows user appears.
 
 Build requirements on the host: a C/C++ compiler, CMake, and `gfortran` (from `brew install gcc` on macOS, `apt install gfortran` on Linux). CI builds use these toolchains directly.
@@ -554,7 +554,11 @@ Both schemas accept dict-form builders for ergonomics but normalize to the same 
 
 ### Backends
 
-A plugin-style registry similar to CasADi's `nlpsol` / `conic` plugins:
+A plugin-style registry similar to CasADi's `nlpsol` / `conic` plugins — but
+external: a solver plugin is a separate pip-installable package registering an
+`alloy.solvers` entry point, and since 2026-07-15 it also owns its C wrapper
+template (contract in [`solver_plugins.md`](solver_plugins.md); decision in
+root `ROADMAP.md` §3.5):
 
 - **`piqp`** (QP backend). Sparse interior-point QP. Suitable for the input-affine CBF safety filter, where the QP data is rebuilt every step but the sparsity is fixed. Bind through PIQP's C interface; Alloy supplies sparsity patterns from `SparsityType` so PIQP's sparse path is used directly without conversion overhead. PIQP's native `A_eq`/`G_ineq`/`x_lb`/`x_ub` fields map one-to-one to the alloy QP schema.
 - **`ipopt`** (NLP backend). Standard NLP backend for the fully nonlinear CBF safety filter. Bind through IPOPT's C interface (`IpStdCInterface.h`), with Alloy supplying eval callbacks via the JITed oracle functions. Sparse Jacobian/Hessian patterns come from `SparsityType`; coloring stays internal to Alloy since IPOPT consumes structured sparse triplets, not colored seeds. The eq/ineq stacking conversion happens at solver construction.
@@ -750,6 +754,6 @@ Metrics for all workloads:
 3. **M2 Scalable rewrites + sparse AD**: tinygrad-inspired graph rewrites, reverse mode, true colored sparse derivatives, no dense-Jacobian-then-gather for benchmark paths. *Done.*
 4. **M3 Loop-preserving lowering**: MAP-based per-stage callee reuse and colored sparse Jacobians constant in `N`/`C`, demonstrated on tracking NMPC `eq_constraints_jac` and MAP-ified unbumpercars `ineq_constraints_jac`. *Done.* Broader mixed scalar/block/opaque region formation is on standby until the safety-filter workload requires it.
 5. **M4 JIT as default**: `Function.__call__` lazily renders, compiles, caches, and dispatches through the universal ABI; interpreter preserved as debug fallback. *Done.*
-6. **M5 QP and NLP solvers**: `al.qp(...)` with PIQP and `al.nlp(...)` with IPOPT, driven by the CBF safety-filter workload. *Bindings + IR nesting + C codegen + AOT/C++ workflow landed*. Both builders ship, sparse Jacobian / sparse Lagrangian Hessian for IPOPT come through `Function.factory(...)`, and the new `Ops.SOLVER_CALL` op + `SolverFunction` subclassing `Function` lets a solver be embedded inside any other `@al.function` graph. **Nested QP and NLP both compile to a single `.so` that links directly against the vendored `libpiqpc` / `libipopt` — no Python in the hot path.** A new Google Benchmark harness at `benchmarks/alloy_safety_filter_benchmark.py` exercises the AOT path; ~4 µs/solve (QP) and ~450 µs/solve (NLP) on a recent macOS arm64 dev box. See [`solvers.md`](solvers.md). Still open: sparse PIQP, warm-start handover, implicit-function AD through `SOLVER_CALL`.
+6. **M5 QP and NLP solvers**: `al.qp(...)` with PIQP and `al.nlp(...)` with IPOPT, driven by the CBF safety-filter workload. *Bindings + IR nesting + C codegen + AOT/C++ workflow landed*. Both builders ship, sparse Jacobian / sparse Lagrangian Hessian for IPOPT come through `Function.factory(...)`, and the new `Ops.SOLVER_CALL` op + `SolverFunction` subclassing `Function` lets a solver be embedded inside any other `@al.function` graph. **Nested QP and NLP both compile to a single `.so` that links directly against the vendored `libpiqpc` / `libipopt` — no Python in the hot path.** A new Google Benchmark harness at `benchmarks/alloy_safety_filter_benchmark.py` exercises the AOT path; ~4 µs/solve (QP) and ~450 µs/solve (NLP) on a recent macOS arm64 dev box. See [`solvers.md`](solvers.md). Direction (2026-07-14, root `ROADMAP.md` §3.4 + L2), **landed 2026-07-15**: the generated single-`.so` path is the universal solver integration and the **only** solve path — sparse PIQP lives there (`al.qp(..., sparse=True)`, CSC patterns baked at codegen, values-only updates), IPOPT callbacks point at generated kernels (workspace pass-through fixed the chain-scale crash) with full warm starts (`x0`, `lam_eq0`/`lam_ineq0`, sign-split `lam_box0`), and the alloy-owned stats struct resurfaces status/iterations/eval counts and the FE/solver/glue timing split. The Python-interleaved backends (nanobind `_piqp_ext`, ctypes IPOPT callbacks) are **deleted**; solver plugins ship vendored libs + headers + entry-point metadata + their C wrapper template (`render_wrapper`, moved out of core 2026-07-15 — see [`solver_plugins.md`](solver_plugins.md) and root `ROADMAP.md` §3.5). Still open: PIQP warm-start handover (no C API for it upstream), implicit-function AD through `SOLVER_CALL`.
 
 GPU codegen and broader CasADi/anvil interop are deferred until a workload's CPU runtime or migration need actually justifies them.

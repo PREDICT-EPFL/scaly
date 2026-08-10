@@ -101,11 +101,19 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None) -> PNo
     raise LoweringError(f"non-host placement {fun.device} is not lowered yet (GPU backends are deferred to a later migration step)")
   callees: dict[str, PNode] = {}
   solver_fns: dict[str, Function] = {}
-  root = _lower_to_proc(fun, callees, solver_fns)
-  prog = p.program([*callees.values(), root])
-  if solver_fns:
-    from .codegen.solver_c import solver_callees
+  from .codegen.solver_c import is_solver_function, solver_callees
 
+  if is_solver_function(fun):
+    solver_fns[fun.name] = fun
+    for oracle in solver_callees(fun):
+      if oracle.name not in callees:
+        callees[oracle.name] = _lower_to_proc(oracle, callees, solver_fns)
+    prog = p.program([*callees.values()])
+    prog = PNode(POps.PROGRAM, prog.args, {**prog.attrs, "solver_root": fun.name}, prog.dtype)
+  else:
+    root = _lower_to_proc(fun, callees, solver_fns)
+    prog = p.program([*callees.values(), root])
+  if solver_fns:
     solver_oracles = {name: tuple(o.name for o in solver_callees(sf)) for name, sf in solver_fns.items()}
     prog = PNode(POps.PROGRAM, prog.args, {**prog.attrs, "solver_oracles": solver_oracles}, prog.dtype)
   if observe is not None:

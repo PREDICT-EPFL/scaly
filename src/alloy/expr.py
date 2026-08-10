@@ -532,9 +532,9 @@ def map_(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
   ``outer[start + i*stride : start + i*stride + callee.inputs[k].size]`` for callee input ``k``.
   Iterations are independent: ``stride=0`` broadcasts the same slice every iteration.
 
-  This first cut requires all callee inputs and the selected output to be rank-1; the produced node
-  has shape ``(length * callee.outputs[output].size,)`` and concatenates iteration outputs along that
-  flat axis.
+  Only the outer tensors must be rank-1. Callee formals and outputs may be rank-2 (as well as scalar
+  or rank-1); each iteration reads a flat slice of ``formal.size`` values and the produced node has
+  shape ``(length * callee.outputs[output].size,)``, with iteration outputs concatenated flat.
   """
   from .function import Function
 

@@ -25,11 +25,11 @@ from ..expr import Expr, as_expr, concat
 from ..function import Function
 from ..ops import Ops
 from ..types import SparsityType
-from ._ipopt import IPOPT_INF, solve_ipopt
 from ._oracle import collect_free_inputs
-from .solver_function import SolverDescriptor, SolverFunction, SolverStatus
+from .registry import require_backend
+from .solver_function import SolverDescriptor, SolverFunction
 
-_SUPPORTED_SOLVERS = {"ipopt"}
+IPOPT_INF = 2e19
 
 
 def _ensure_sym(name: str, value: Any) -> Expr:
@@ -77,8 +77,7 @@ def nlp(
   name: str | None = None,
   options: dict[str, str | int | float] | None = None,
 ) -> SolverFunction:
-  if solver not in _SUPPORTED_SOLVERS:
-    raise ValueError(f"unsupported NLP solver {solver!r}; supported: {sorted(_SUPPORTED_SOLVERS)}")
+  require_backend(solver, "nlp")
 
   x_sym = _ensure_sym("x", x)
   if len(x_sym.shape) != 1:
@@ -214,6 +213,7 @@ def nlp(
     ("x0", (n,)),
     ("lam_eq0", (n_h,)),
     ("lam_ineq0", (n_g,)),
+    ("lam_box0", (n,)),
     *((pname, pe.shape) for pname, pe in zip(param_names, params, strict=True)),
   )
   output_signature: tuple[tuple[str, tuple[int, ...]], ...] = (
@@ -227,8 +227,8 @@ def nlp(
   )
 
   descriptor = SolverDescriptor(
-    name=name or "nlp_ipopt",
-    backend="ipopt",
+    name=name or f"nlp_{solver}",
+    backend=solver,
     n=n,
     n_eq=n_h,
     n_ineq=n_g,
@@ -246,103 +246,3 @@ def nlp(
     options=tuple(sorted(resolved_options.items())),
   )
   return SolverFunction(descriptor)
-
-
-def _nlp_backend(descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> tuple[list[np.ndarray], SolverStatus]:
-  """Pure-numeric IPOPT runner used by direct ``SolverFunction`` calls."""
-  n, n_h, n_g = descriptor.n, descriptor.n_eq, descriptor.n_ineq
-  m = n_h + n_g
-
-  base_fn = descriptor.base
-  grad_fn = descriptor.grad
-  jac_fn = descriptor.jac
-  hess_fn = descriptor.hess
-  bound_fn = descriptor.bounds
-  assert base_fn is not None and grad_fn is not None and hess_fn is not None and bound_fn is not None
-
-  x0 = inputs[0]
-  param_args = list(inputs[3:])
-
-  bounds = dict(zip(bound_fn.output_names, bound_fn.eval_list(*param_args), strict=True))
-  x_lb = bounds["x_lb"]
-  x_ub = bounds["x_ub"]
-  if m:
-    l_in = bounds["l_ineq"] if "l_ineq" in bounds else np.full(n_g, -IPOPT_INF)
-    u_in = bounds["u_ineq"] if "u_ineq" in bounds else np.full(n_g, IPOPT_INF)
-  else:
-    l_in = np.zeros(0)
-    u_in = np.zeros(0)
-  g_L = np.concatenate([np.zeros(n_h), l_in])
-  g_U = np.concatenate([np.zeros(n_h), u_in])
-
-  jac_sp = descriptor.jac_sparsity
-  hess_sp = descriptor.hess_sparsity
-  assert hess_sp is not None
-  hess_rows_full = np.asarray(hess_sp.rows, dtype=np.int32)
-  hess_cols_full = np.asarray(hess_sp.cols, dtype=np.int32)
-  lower_mask = np.asarray(descriptor.hess_lower_mask, dtype=bool)
-  hess_rows = hess_rows_full[lower_mask]
-  hess_cols = hess_cols_full[lower_mask]
-  jac_rows = np.asarray(jac_sp.rows, dtype=np.int32) if jac_sp is not None else np.zeros(0, dtype=np.int32)
-  jac_cols = np.asarray(jac_sp.cols, dtype=np.int32) if jac_sp is not None else np.zeros(0, dtype=np.int32)
-
-  def eval_f(x_val: np.ndarray) -> float:
-    out = base_fn.eval_list(x_val, *param_args)
-    return float(out[0])
-
-  def eval_g(x_val: np.ndarray) -> np.ndarray:
-    out = base_fn.eval_list(x_val, *param_args)
-    return np.asarray(out[1], dtype=np.float64).reshape(-1)
-
-  def eval_grad_f(x_val: np.ndarray) -> np.ndarray:
-    out = grad_fn.eval_list(x_val, *param_args)
-    return np.asarray(out[0], dtype=np.float64).reshape(-1)
-
-  def eval_jac_g(x_val: np.ndarray) -> np.ndarray:
-    assert jac_fn is not None
-    out = jac_fn.eval_list(x_val, *param_args)
-    return np.asarray(out[0], dtype=np.float64).reshape(-1)
-
-  def eval_h(x_val: np.ndarray, obj_factor: float, lam_all: np.ndarray) -> np.ndarray:
-    if m:
-      out = hess_fn.eval_list(x_val, np.asarray(obj_factor, dtype=np.float64), lam_all, *param_args)
-    else:
-      out = hess_fn.eval_list(x_val, np.asarray(obj_factor, dtype=np.float64), *param_args)
-    vals = np.asarray(out[0], dtype=np.float64).reshape(-1)
-    return vals[lower_mask]
-
-  sol = solve_ipopt(
-    n=n,
-    m=m,
-    x0=np.asarray(x0, dtype=np.float64).reshape(-1),
-    x_L=x_lb,
-    x_U=x_ub,
-    g_L=g_L,
-    g_U=g_U,
-    jac_rows=jac_rows,
-    jac_cols=jac_cols,
-    hess_rows=hess_rows,
-    hess_cols=hess_cols,
-    eval_f=eval_f,
-    eval_grad_f=eval_grad_f,
-    eval_g=eval_g if m else (lambda _x: np.zeros(0)),
-    eval_jac_g=eval_jac_g if m else (lambda _x: np.zeros(0)),
-    eval_h=eval_h,
-    options={k: v for k, v in descriptor.options},
-  )
-
-  h_out = sol.g[:n_h] if n_h else np.zeros(0)
-  g_out = sol.g[n_h:] if n_g else np.zeros(0)
-  lam_h = sol.mult_g[:n_h] if n_h else np.zeros(0)
-  lam_g = sol.mult_g[n_h:] if n_g else np.zeros(0)
-  lam_box = sol.mult_x_U - sol.mult_x_L
-  outs = [
-    sol.x,
-    np.asarray(sol.obj, dtype=np.float64),
-    h_out,
-    g_out,
-    lam_h,
-    lam_g,
-    lam_box,
-  ]
-  return outs, SolverStatus(code=sol.status, name=sol.status_name)

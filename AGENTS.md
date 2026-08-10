@@ -29,7 +29,7 @@ If you need to consult those files, ask the user to point you at the right anvil
 - package manager: uv
 - formatter/linter: ruff
 - type checker: ty
-- build backend: hatchling with a custom hook (`hatch_build.py`) that vendors PIQP and IPOPT as shared libraries
+- build backend: hatchling; each solver plugin has a custom `plugins/*/hatch_build.py` hook
 
 # Cookbook
 
@@ -39,26 +39,28 @@ If you need to consult those files, ask the user to point you at the right anvil
 - Type check: `uv run ty check`
 - Lint: `uv run ruff check`
 - Format: `uv run ruff format`
-- Tests: `uv run pytest -n=auto tests/`
+- Tests: `uv run pytest -n=auto tests/ plugins/`
 
 # Build hook notes
 
-`hatch_build.py` builds the vendored solver stack on first sync:
+The per-plugin `plugins/*/hatch_build.py` hooks build the vendored solver stacks on first sync:
 
-- PIQP (with Eigen 3.4.1 and Blasfeo) → `src/alloy/lib/libpiqpc.{dylib,so}`
-- METIS → MUMPS → IPOPT → `src/alloy/lib/libipopt.{dylib,so}` with statically linked libgfortran/libgcc/libstdc++ so the resulting library is redistributable.
+- PIQP (with Eigen 3.4.1 and Blasfeo) → `plugins/alloy-piqp/src/alloy_piqp/lib/libpiqpc.{dylib,so}`
+- METIS → MUMPS → IPOPT → `plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.{dylib,so}`. On Linux the Fortran runtime is linked statically (`-static-libgfortran -static-libgcc -static-libstdc++`) so the resulting library is redistributable; on macOS those flags are not passed, and `libipopt.dylib` keeps a dynamic reference to the Homebrew gcc `libgfortran`/`libquadmath`.
 
-Each component is skipped if its install marker already exists. To force a clean rebuild, delete `src/alloy/lib/`, `src/alloy/include/`, and `third_party/`, or run the hatch `clean` hook.
+Each component is skipped if its install marker already exists. To force a clean rebuild, delete the plugin's `src/*/{lib,include}/` and `third_party/` directories, or run its hatch `clean` hook.
 
 Linux uses a built OpenBLAS; macOS uses Apple's Accelerate framework. Windows is unsupported in v1.
 
 # Instructions
 
 - Always format with `uv run ruff format` and run `uv run ruff check` after non-trivial edits.
-- Always run unit tests after a change touching the IR, AD, or codegen paths: `uv run pytest -n=auto tests/`.
+- Always run unit tests after a change touching the IR, AD, or codegen paths: `uv run pytest -n=auto tests/ plugins/`.
 - Code should resemble tinygrad's style — simple, dense, every line earns its place. No speculative abstractions.
 - Don't introduce `anvil`, `tinygrad`, or `torch` imports. If a test workload needs PyTorch checkpoints, use `alloy.utils.load_torch_state_dict` instead of adding torch as a dependency.
 - Update `docs/` when changing IR-facing behavior or the codegenerated ABI.
+- Correctness checks have two homes and each belongs in exactly one. `tests/` covers alloy itself — IR, AD, codegen, solver plumbing — and must never import `benchmarks.problems`; import `benchmarks.harness` only to test the harness itself. A benchmark problem's own input data, formulation, parameter layout, constant pins, and backend agreement belong to that problem, in `benchmarks/problems/<problem>/checks.py`, where they gate the measurement. Benchmarks churn with the workload roadmap; tests must not. When a check could sit on either side, ask whether retiring the problem would make it meaningless — if so it belongs to the problem.
+- Never let a benchmark be the only thing exercising an IR, AD, or codegen path. When it is, copy a small self-contained reproduction into `tests/` (differential against an unrolled or NumPy reference) before changing or retiring the benchmark. Prove every new benchmark gate can actually fail by perturbing what it checks; `benchmarks/README.md` documents how the gates are wired.
 
 # Naming conventions
 

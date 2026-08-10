@@ -9,7 +9,7 @@ from .expr import Expr, atan2, concat, dot, format_expr, gather, map_, maximum, 
 from .function import Function, Port
 from .ops import COMMON_OPS, OP_INFO, Ops
 from .rewrite import Pattern, PatternMatcher, cse, cse_many, rewrite, simplify
-from .solvers import SolverFunction, SolverStatus, nlp, qp
+from .solvers import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, SolverFunction, SolverStats, SolverStatus, nlp, qp
 from .spec import Spec, VerifyError, VerifyRule, spec_semantic, spec_semantic_shared, verify_expr
 from .sparsity import (
   SparseJacobian,
@@ -29,6 +29,8 @@ scan = map_
 
 __all__ = [
   "BACKEND_SUPPORT",
+  "ALLOY_SOLVER_STATS_VERSION",
+  "AlloySolveStatus",
   "BackendSupport",
   "BufferType",
   "C_API_SIGNATURE",
@@ -44,6 +46,7 @@ __all__ = [
   "Port",
   "ScalarType",
   "SolverFunction",
+  "SolverStats",
   "SolverStatus",
   "Spec",
   "SparseJacobian",

@@ -1,0 +1,425 @@
+from __future__ import annotations
+
+import contextlib
+import csv
+import os
+from pathlib import Path
+import shutil
+import signal
+import time
+
+import numpy as np
+
+import alloy as al
+from alloy.codegen.c import _workspace_size, render_c_module
+from benchmarks.harness import gbench
+from benchmarks.harness.correctness import check_dense_reference, write_samples
+from benchmarks.harness.provenance import collect, write
+from benchmarks.problems import chain_of_masses, race_cars
+
+ROOT = Path(__file__).resolve().parents[2]
+RESULTS = ROOT / "benchmarks" / "results"
+DEFAULT_SIZES = {
+  "chain": [3, 5, 9, 17, 33, 65],
+  "race_cars": [1, 5, 10, 25, 40, 50, 100, 200, 500],
+  "bumpercars": [2, 4, 8],
+}
+BACKENDS = ("alloy", "casadi_sx", "casadi_mx")
+FIELDS = [
+  "workload",
+  "size",
+  "backend",
+  "codegen_ms",
+  "source_bytes",
+  "source_lines",
+  "workspace",
+  "nnz",
+  "compile_ms",
+  "compile_status",
+  "runtime_ns",
+  "runtime_status",
+  "note",
+  "build_ms",
+  "render_ms",
+]
+
+
+class CodegenTimeout(RuntimeError):
+  pass
+
+
+@contextlib.contextmanager
+def codegen_deadline(seconds: float):
+  def handler(signum, frame):  # noqa: ARG001
+    raise CodegenTimeout(f"codegen exceeded {seconds:.0f}s")
+
+  if seconds <= 0:
+    yield
+    return
+  previous = signal.signal(signal.SIGALRM, handler)
+  signal.setitimer(signal.ITIMER_REAL, seconds)
+  try:
+    yield
+  finally:
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    signal.signal(signal.SIGALRM, previous)
+
+
+def row(**values) -> dict[str, object]:
+  out: dict[str, object] = {field: "" for field in FIELDS}
+  out.update({"size": 0, "compile_status": "", "runtime_status": "", **values})
+  return out
+
+
+def _module_info(name: str, backend: str, module, inputs, sparsity, shape, build_ms: float, render_ms: float, benchmark: str, **extra) -> dict:
+  source_path = Path(module.source_name)
+  return {
+    "name": name,
+    "backend": backend,
+    "source": source_path,
+    "header": module.header_name,
+    "inputs": inputs,
+    "nnz": sparsity.nnz,
+    "n_rows": shape[0],
+    "n_cols": shape[1],
+    "rows": tuple(int(x) for x in sparsity.rows),
+    "cols": tuple(int(x) for x in sparsity.cols),
+    "w_size": extra.pop("w_size"),
+    "iw_size": extra.pop("iw_size", 0),
+    "source_bytes": len(module.source),
+    "source_lines": module.source.count("\n") + 1,
+    "build_ms": build_ms,
+    "render_ms": render_ms,
+    "benchmark": benchmark,
+    **extra,
+  }
+
+
+def _render_alloy(fun: al.Function, name: str, out_dir: Path):
+  started = time.perf_counter()
+  module = render_c_module(fun, header_name=f"{name}.h", source_name=f"{name}.c", typed_buffers=False)
+  (out_dir / module.header_name).write_text(module.header)
+  (out_dir / module.source_name).write_text(module.source)
+  return module, (time.perf_counter() - started) * 1000
+
+
+def _race_cars_alloy(size: int, out_dir: Path) -> dict:
+  started = time.perf_counter()
+  fn = race_cars.race_car_eq_function_map(size)
+  sj = al.sparse_jacobian(fn.outputs[0], fn.inputs[0])
+  name = f"alloy_race_car_eq_jac_N{size}"
+  spjf = al.Function(name, fn.inputs, [sj.values], fn.input_names, ["spjac_eq_z"], [sj.sparsity])
+  build_ms = (time.perf_counter() - started) * 1000
+  module, render_ms = _render_alloy(spjf, name, out_dir)
+  return _module_info(
+    name,
+    "alloy",
+    module,
+    [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))],
+    sj.sparsity,
+    (fn.outputs[0].shape[0], fn.inputs[0].shape[0]),
+    build_ms,
+    render_ms,
+    f"BM_AlloyRaceCarEqJacN{size}",
+    w_size=_workspace_size(spjf),
+    callable=spjf,
+  )
+
+
+def _chain_alloy(size: int, out_dir: Path) -> dict:
+  horizon = chain_of_masses.HORIZON
+  started = time.perf_counter()
+  fn = chain_of_masses.chain_eq_function(size, horizon)
+  name = f"alloy_chain_eq_jac_M{size}"
+  spjf = fn.factory(name, ["z", "p"], ["spjac:eq:z"])
+  sparsity = spjf.output_sparsities[0]
+  assert sparsity is not None
+  build_ms = (time.perf_counter() - started) * 1000
+  module, render_ms = _render_alloy(spjf, name, out_dir)
+  return _module_info(
+    name,
+    "alloy",
+    module,
+    [("z", chain_of_masses.n_dec(size, horizon)), ("p", chain_of_masses.n_param(size))],
+    sparsity,
+    (fn.outputs[0].shape[0], fn.inputs[0].shape[0]),
+    build_ms,
+    render_ms,
+    f"BM_AlloyChainEqJacM{size}",
+    w_size=_workspace_size(spjf),
+    callable=spjf,
+  )
+
+
+def _bumpercars_alloy(size: int, out_dir: Path) -> dict:
+  from benchmarks.problems.bumpercars_filter.common import ClosedLoopConfig, FilterConfig, NCTRL, NSTATE, N_PHYSICS, N_PW
+  from benchmarks.problems.bumpercars_filter.filters import build_alloy_oracle
+
+  started = time.perf_counter()
+  cfg = ClosedLoopConfig(ncars=size)
+  oracle = build_alloy_oracle(cfg, FilterConfig())
+  name = f"alloy_bumpercars_g_jac_C{size}"
+  spjf = oracle.factory(name, ["z", "bar_x", "u_des", "pw", "physics", "dt"], ["spjac:g:z"])
+  sparsity = spjf.output_sparsities[0]
+  assert sparsity is not None
+  build_ms = (time.perf_counter() - started) * 1000
+  module, render_ms = _render_alloy(spjf, name, out_dir)
+  return _module_info(
+    name,
+    "alloy",
+    module,
+    [("z", NCTRL * size + 1), ("bar_x", NSTATE * size), ("u_des", NCTRL * size), ("pw", N_PW), ("physics", N_PHYSICS), ("dt", 1)],
+    sparsity,
+    (oracle.outputs[1].size, NCTRL * size + 1),
+    build_ms,
+    render_ms,
+    f"BM_AlloyBumpercarsGJacC{size}",
+    w_size=_workspace_size(spjf),
+    callable=spjf,
+  )
+
+
+def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
+  import casadi as ca
+
+  kind = backend.removeprefix("casadi_")
+  sym_t = ca.SX if kind == "sx" else ca.MX
+  stem = {"chain": "chain_eq", "race_cars": "race_car_eq", "bumpercars": "bumpercars_g"}[workload]
+  axis = {"chain": "M", "race_cars": "N", "bumpercars": "C"}[workload]
+  name = f"casadi_{kind}_{stem}_jac_{axis}{size}"
+  started = time.perf_counter()
+  if workload == "chain":
+    horizon = chain_of_masses.HORIZON
+    fn = chain_of_masses.ca_chain_eq_jac(size, horizon, sym_t=sym_t, name=name, map_stages=True)
+    inputs = [("z", chain_of_masses.n_dec(size, horizon)), ("p", chain_of_masses.n_param(size))]
+    benchmark = f"BM_Casadi{kind.title()}ChainEqJacM{size}"
+  elif workload == "race_cars":
+    fn = race_cars.ca_race_car_eq_jac(size, name=name, sym_t=sym_t)
+    inputs = [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))]
+    benchmark = f"BM_Casadi{kind.title()}RaceCarEqJacN{size}"
+  else:
+    from benchmarks.problems.bumpercars_filter.common import ClosedLoopConfig, FilterConfig, load_ct_full_weights
+    from benchmarks.problems.bumpercars_filter.filters import build_casadi_jacobian
+
+    fn = build_casadi_jacobian(ClosedLoopConfig(ncars=size), FilterConfig(), load_ct_full_weights(), name, sym_t)
+    inputs = [("z", fn.size1_in(0)), ("p", fn.size1_in(1))]
+    benchmark = f"BM_Casadi{kind.title()}BumpercarsGJacC{size}"
+  build_ms = (time.perf_counter() - started) * 1000
+  started = time.perf_counter()
+  cwd = Path.cwd()
+  os.chdir(out_dir)
+  try:
+    generator = ca.CodeGenerator(f"{name}.c", {"with_header": True, "casadi_int": "int"})
+    generator.add(fn)
+    generator.generate()
+  finally:
+    os.chdir(cwd)
+  render_ms = (time.perf_counter() - started) * 1000
+  source = (out_dir / f"{name}.c").read_text()
+  rows, cols = fn.sparsity_out(0).get_triplet()
+  return {
+    "name": name,
+    "backend": backend,
+    "source": Path(f"{name}.c"),
+    "header": f"{name}.h",
+    "inputs": inputs,
+    "nnz": fn.sparsity_out(0).nnz(),
+    "n_rows": fn.size_out(0)[0],
+    "n_cols": fn.size_out(0)[1],
+    "rows": tuple(int(x) for x in rows),
+    "cols": tuple(int(x) for x in cols),
+    "w_size": fn.sz_w(),
+    "iw_size": fn.sz_iw(),
+    "arg_size": fn.sz_arg(),
+    "res_size": fn.sz_res(),
+    "source_bytes": len(source),
+    "source_lines": source.count("\n") + 1,
+    "build_ms": build_ms,
+    "render_ms": render_ms,
+    "benchmark": benchmark,
+    "callable": fn,
+  }
+
+
+def build_kernel(workload: str, size: int, backend: str, out_dir: Path) -> dict:
+  if backend == "alloy":
+    return {"chain": _chain_alloy, "race_cars": _race_cars_alloy, "bumpercars": _bumpercars_alloy}[workload](size, out_dir)
+  return _casadi(workload, size, backend, out_dir)
+
+
+def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
+  canonical = {
+    ("chain", 5): RESULTS / "closed_loop" / "chain",
+    ("race_cars", 40): RESULTS / "closed_loop" / "race_cars" / "alloy",
+    ("bumpercars", 4): RESULTS / "closed_loop" / "bumpercars" / "alloy",
+  }.get((workload, size))
+  if canonical is None:
+    return None
+  path = canonical / "representative_fe_inputs.npz"
+  if not path.exists():
+    return None
+  with np.load(path) as data:
+    return {name: np.asarray(data[name], dtype=np.float64) for name in data.files}
+
+
+def _samples(workload: str, size: int, info: dict, out_dir: Path):
+  harvested = _harvested_inputs(workload, size)
+  if workload == "chain":
+    horizon = chain_of_masses.HORIZON
+    if harvested is None:
+      zv, pv = chain_of_masses.sample_inputs(size, horizon)
+    else:
+      zv, pv = harvested["z"], harvested["p"]
+    if zv.shape != (chain_of_masses.n_dec(size, horizon),) or pv.shape != (chain_of_masses.n_param(size),):
+      raise ValueError(f"harvested chain input shapes do not match M={size}, N={horizon}: {zv.shape}, {pv.shape}")
+    expected = chain_of_masses.chain_eq_jac_dense_reference(size, horizon, zv, pv).reshape(-1)
+    values = {"z": zv, "p": pv}
+  elif workload == "race_cars":
+    if harvested is None:
+      rng = np.random.default_rng(7)
+      zv = rng.normal(scale=0.4, size=race_cars.NZ * (size + 1))
+      pv = np.concatenate([rng.normal(scale=0.4, size=race_cars.NX * (size + 1)), race_cars.RaceCarParams().array()])
+    else:
+      zv, pv = harvested["z"], harvested["p"]
+    if zv.shape != (race_cars.NZ * (size + 1),) or pv.shape != (race_cars.n_param(size),):
+      raise ValueError(f"harvested race_cars input shapes do not match N={size}: {zv.shape}, {pv.shape}")
+    ref = race_cars.race_car_eq_function(size).factory(f"race_car_dense_ref_N{size}", ["z", "p"], ["jac:eq:z"])
+    expected = np.asarray(ref(zv, pv), dtype=np.float64).reshape(-1)
+    values = {"z": zv, "p": pv}
+  else:
+    from benchmarks.problems.bumpercars_filter.common import ClosedLoopConfig, FilterConfig, load_ct_full_weights, sample_initial_states
+    from benchmarks.problems.bumpercars_filter.filters import build_alloy_oracle
+
+    cfg, filt_cfg, weights = ClosedLoopConfig(ncars=size), FilterConfig(), load_ct_full_weights()
+    if harvested is None:
+      bar_x = sample_initial_states(cfg).reshape(-1)
+      u_des = np.tile([cfg.nominal_speed, 0.0], size)
+      zv = np.concatenate([u_des, np.zeros(1)])
+      pieces = {"z": zv, "bar_x": bar_x, "u_des": u_des, "pw": weights.packed, "physics": cfg.physics.array(), "dt": np.array([cfg.dt])}
+    else:
+      pieces = harvested
+      zv = pieces["z"]
+    ref = build_alloy_oracle(cfg, filt_cfg).factory(f"bumpercars_dense_ref_C{size}", ["z", "bar_x", "u_des", "pw", "physics", "dt"], ["jac:g:z"])
+    expected = np.asarray(ref(*[pieces[name] for name in ("z", "bar_x", "u_des", "pw", "physics", "dt")]), dtype=np.float64).reshape(-1)
+    values = (
+      pieces if info["backend"] == "alloy" else {"z": zv, "p": np.concatenate([pieces[name] for name in ("bar_x", "u_des", "pw", "physics", "dt")])}
+    )
+  args = [values[name] for name, _ in info["inputs"]]
+  result = info["callable"](*args)
+  compact = np.asarray(result.nonzeros() if info["backend"].startswith("casadi") else result, dtype=np.float64).reshape(-1)
+  check_dense_reference(compact, info["rows"], info["cols"], expected, (info["n_rows"], info["n_cols"]), label=info["backend"])
+  return write_samples(out_dir, {name: values[name] for name, _ in info["inputs"]}, expected)
+
+
+def run_cell(
+  workload: str,
+  size: int,
+  backend: str,
+  out_dir: Path,
+  *,
+  codegen_timeout: float,
+  compile_timeout: float,
+  max_source_mb: float,
+  benchmark_min_time: str,
+) -> tuple[dict[str, object], dict | None]:
+  if out_dir.exists():
+    shutil.rmtree(out_dir)
+  out_dir.mkdir(parents=True)
+  try:
+    with codegen_deadline(codegen_timeout):
+      info = build_kernel(workload, size, backend, out_dir)
+  except CodegenTimeout as e:
+    return row(workload=workload, size=size, backend=backend, compile_status="codegen_timeout", runtime_status="skipped", note=str(e)), None
+  except Exception as e:
+    return row(
+      workload=workload, size=size, backend=backend, compile_status="codegen_error", runtime_status="skipped", note=f"{type(e).__name__}: {e}"
+    ), None
+  codegen_ms = info["build_ms"] + info["render_ms"]
+  base = dict(
+    workload=workload,
+    size=size,
+    backend=backend,
+    codegen_ms=f"{codegen_ms:.1f}",
+    build_ms=f"{info['build_ms']:.1f}",
+    render_ms=f"{info['render_ms']:.1f}",
+    source_bytes=info["source_bytes"],
+    source_lines=info["source_lines"],
+    workspace=info["w_size"],
+    nnz=info["nnz"],
+  )
+  source_mb = info["source_bytes"] / (1024 * 1024)
+  if source_mb > max_source_mb:
+    return row(**base, compile_status="skipped_size", runtime_status="skipped", note=f"source {source_mb:.1f} MB > {max_source_mb:.1f} MB"), info
+  try:
+    input_paths, expected_path = _samples(workload, size, info, out_dir)
+  except Exception as e:
+    return row(**base, compile_status="not_run", runtime_status="correctness_fail", note=str(e)), info
+  gbench.write_cpp(info, out_dir, input_paths, expected_path)
+  compile_status, compile_ms, note = gbench.compile_kernel(info, out_dir, compile_timeout)
+  if compile_status != "ok":
+    return row(
+      **base,
+      compile_ms=f"{compile_ms:.1f}" if compile_ms is not None else f">{compile_timeout * 1000:.0f}",
+      compile_status=compile_status,
+      runtime_status="skipped",
+      note=note,
+    ), info
+  runtime_status, runtime_ns, note = gbench.run_kernel(info, out_dir, benchmark_min_time)
+  return row(
+    **base,
+    compile_ms=f"{compile_ms:.1f}",
+    compile_status="ok",
+    runtime_ns=f"{runtime_ns:.1f}" if runtime_ns is not None else "",
+    runtime_status=runtime_status,
+    note=note,
+  ), info
+
+
+def run_sweep(args, cli_args: list[str]) -> bool:
+  args.out.parent.mkdir(parents=True, exist_ok=True)
+  write(args.out, collect(ROOT, gbench.compiler(), cli_args))
+  ok = True
+  with args.out.open("w", newline="") as fp:
+    writer = csv.DictWriter(fp, fieldnames=FIELDS)
+    writer.writeheader()
+    for workload in args.workloads:
+      gave_up: dict[str, tuple[int, str]] = {}
+      sizes = args.sizes or DEFAULT_SIZES[workload]
+      for size in sorted(sizes):
+        for backend in args.backends:
+          print(f"[{workload}] size={size} backend={backend} ... ", end="", flush=True)
+          if backend in gave_up:
+            failed_size, status = gave_up[backend]
+            result = row(
+              workload=workload,
+              size=size,
+              backend=backend,
+              compile_status="skipped_after_failure",
+              runtime_status="skipped",
+              note=f"{backend} {status} at size={failed_size}; larger sizes won't fit",
+            )
+          else:
+            result, _ = run_cell(
+              workload,
+              size,
+              backend,
+              RESULTS / "gen" / workload / f"{backend}_N{size}",
+              codegen_timeout=args.codegen_timeout,
+              compile_timeout=args.compile_timeout,
+              max_source_mb=args.max_source_mb,
+              benchmark_min_time=args.benchmark_min_time,
+            )
+          writer.writerow(result)
+          fp.flush()
+          status = result["runtime_status"] or result["compile_status"]
+          print(f"{status}" + (f": {result['note']}" if result["note"] else ""))
+          if result["compile_status"] in {"timeout", "skipped_size", "compile_error", "codegen_timeout", "codegen_error"}:
+            gave_up[backend] = (size, str(result["compile_status"]))
+          # timeout/skipped_size/codegen_timeout mark the expected end of a backend's scaling range; only genuine errors fail the sweep
+          if result["runtime_status"] in {"runtime_error", "runtime_timeout", "correctness_fail", "parse_fail"} or result["compile_status"] in {
+            "compile_error",
+            "codegen_error",
+          }:
+            ok = False
+  print(f"Results written to {args.out}")
+  return ok

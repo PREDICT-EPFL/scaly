@@ -225,23 +225,27 @@ class SparsityType:
     mask[list(self.rows), list(self.cols)] = True
     return mask
 
-  def to_csr(self) -> tuple[tuple[int, ...], tuple[int, ...]]:
+  def to_csr(self) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+    """``(row_ptr, col_ind, val_perm)``: ``val_perm[k]`` is the COO position of CSR slot ``k``, so
+    ``values_csr[k] = values[val_perm[k]]`` pairs a compact COO-ordered value buffer with the CSR
+    indices (the COO nnz order is arbitrary — e.g. piece-ordered on the structured MAP spjac path)."""
     order = sorted(range(self.nnz), key=lambda i: (self.rows[i], self.cols[i]))
     row_ptr = [0] * (self.shape[0] + 1)
     for i in order:
       row_ptr[self.rows[i] + 1] += 1
     for r in range(self.shape[0]):
       row_ptr[r + 1] += row_ptr[r]
-    return tuple(row_ptr), tuple(self.cols[i] for i in order)
+    return tuple(row_ptr), tuple(self.cols[i] for i in order), tuple(order)
 
-  def to_csc(self) -> tuple[tuple[int, ...], tuple[int, ...]]:
+  def to_csc(self) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+    """``(col_ptr, row_ind, val_perm)`` — see ``to_csr``."""
     order = sorted(range(self.nnz), key=lambda i: (self.cols[i], self.rows[i]))
     col_ptr = [0] * (self.shape[1] + 1)
     for i in order:
       col_ptr[self.cols[i] + 1] += 1
     for c in range(self.shape[1]):
       col_ptr[c + 1] += col_ptr[c]
-    return tuple(col_ptr), tuple(self.rows[i] for i in order)
+    return tuple(col_ptr), tuple(self.rows[i] for i in order), tuple(order)
 
 
 def _check_compressed_ptr(name: str, ptr: tuple[int, ...], n_outer: int, nnz: int) -> None:

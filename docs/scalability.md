@@ -1,6 +1,6 @@
 # Alloy scalability sweep
 
-Runs `benchmarks/scalability_sweep.py` over a fixed cell grid for each workload, capturing per-cell codegen / compile / runtime / source-size metrics. Each cell compiles its own Google Benchmark binary that includes Alloy + the selected backend so the binary's correctness check (scatter compact → dense, compare against the Python Alloy reference) guards every measurement.
+Runs `benchmarks/run.py sweep` over a fixed cell grid for each workload, capturing per-cell codegen / compile / runtime / source-size metrics. Each cell compiles its own Google Benchmark binary that includes Alloy + the selected backend so the binary's correctness check (scatter compact → dense, compare against the Python Alloy reference) guards every measurement.
 
 Skip rules applied automatically:
 
@@ -8,9 +8,9 @@ Skip rules applied automatically:
 - max generated source size (default 50 MB) — skip without compiling;
 - after a backend hits any of the above at one size, larger sizes for that backend are skipped immediately, because both generated source size and compile cost are monotonically increasing in the iteration count.
 
-CSV with the raw cell data: `benchmarks/scalability_results.csv`.
+CSV with the raw cell data: `benchmarks/results/scalability.csv`.
 
-Both workloads now use Alloy's MAP-aware path (`al.map_` / `tracking_eq_function_map`, `unbumpercars_ineq_function` MAP-ified), and the codegen spills lifetime-packed slots ≥ 1024 doubles to the `w[]` workspace so very large intermediate buffers no longer overflow the C stack.
+Both workloads now use Alloy's MAP-aware path (`al.map_` / `race_car_eq_function_map`, `unbumpercars_ineq_function` MAP-ified), and the codegen spills lifetime-packed slots ≥ 1024 doubles to the `w[]` workspace so very large intermediate buffers no longer overflow the C stack.
 
 ## Why a C++ harness (and not the google-benchmark Python bindings)
 
@@ -19,7 +19,7 @@ Every cell in the sweep codegens C, compiles a focused Google Benchmark binary, 
 The obvious simplification is to drop the per-cell C++ compile and instead drive [the google-benchmark Python bindings](https://pypi.org/project/google-benchmark/) (`@gb.register` + `while state:`) over `Function.__call__` and CasADi's `caf(DM)`. We measured whether that's viable:
 
 - **The binding's own loop floor is negligible.** An empty `while state:` body benchmarks at ~14 ns/iter; a trivial Python call at ~24 ns. So the bindings do *not* add meaningful overhead on their own — whatever you call inside the loop is what you measure.
-- **Per-call dispatch is the catch, and it is not symmetric between backends.** Anchoring against the tracking C-level numbers above (mean over the loop, M-series, default args):
+- **Per-call dispatch is the catch, and it is not symmetric between backends.** Anchoring against the race-car C-level numbers above (mean over the loop, M-series, default args):
 
   | N | Alloy C kernel | Alloy `cf.run()` (Python) | CasADi SX C kernel | CasADi `caf(DM)` (Python) |
   |---:|---:|---:|---:|---:|
@@ -33,9 +33,9 @@ The obvious simplification is to drop the per-cell C++ compile and instead drive
 - **Codegen-quality / scalability-vs-CasADi (these tables): keep the C++ harness.** A Python-level benchmark would report Alloy ~5× faster than CasADi SX at N=100 (15 vs 80 µs) when the generated code is actually within ~10 % (10.3 vs 9.3 µs). The 8× distortion is pure binding overhead, so the C++ harness is load-bearing here, not overhead-paranoia.
 - **Alloy's own end-to-end Python latency, dispatch budgeting, and per-commit regression tracking: the gbench Python bindings are a great fit** — no per-cell compile, no 180 s timeouts, no source-size caps, and they measure the *realistic* cost paid when Alloy runs inside a Python solver loop. As a bonus they surface a genuinely favorable (and true) axis the C-only tables hide: Alloy's end-to-end Python dispatch is far lighter than CasADi's (15 vs 80 µs at N=100). The ~3.3 µs `cf.run()` floor is itself worth optimizing (preallocate workspace/outputs, cache the ctypes pointer arrays).
 
-A minimal worked example lives in `tests/alloy/test_tracking_workload.py::test_tracking_eq_jac_python_gbench` (opt-in via `ALLOY_GBENCH=1`): it reproduces the `BM_AlloyTrackingEqJacN10` cell through the gbench Python bindings, checks the result against the CasADi dense reference outside the timed loop, and records the dispatch time via `record_property`.
+A minimal worked example used to live in `tests/alloy/test_tracking_workload.py::test_tracking_eq_jac_python_gbench` (opt-in via `ALLOY_GBENCH=1`): it reproduced the equality-Jacobian cell through the gbench Python bindings, checked the result against the CasADi dense reference outside the timed loop, and recorded the dispatch time via `record_property`. It was dropped when the suite moved in-repo in `8b1dd3f`.
 
-## Tracking equality Jacobian (`spjac:eq:z`)
+## Race-car equality Jacobian (`spjac:eq:z`)
 
 4-state, 2-control bicycle with slip-angle β=δ/2 and `tanh` rolling-resistance term, RK4 over the horizon. Decision vector size `(N+1)·6`, output size `(N+1)·4`. Dynamics:
 
@@ -208,23 +208,23 @@ Reading:
 ## How to reproduce
 
 ```bash
-# Full sweep with default cells: tracking N=1,5,10,25,50,100,200,500 and unbumpercars C=2,4,8,16,32
-uv run python benchmarks/scalability_sweep.py --csv benchmarks/scalability_results.csv
+# Full sweep with default cells: race_cars N=1,5,10,25,40,50,100,200,500 and bumpercars C=2,4,8
+uv run python benchmarks/run.py sweep --out benchmarks/results/scalability.csv
 
-# Just tracking
-uv run python benchmarks/scalability_sweep.py --workloads tracking --csv /tmp/tracking.csv
+# Just the race cars
+uv run python benchmarks/run.py sweep --workloads race_cars --out /tmp/race_cars.csv
 
 # Custom horizons / car counts / per-cell compile timeout
-uv run python benchmarks/scalability_sweep.py \
-    --tracking-horizons 1 10 50 200 \
-    --unbumpercars-cars 2 4 \
+uv run python benchmarks/run.py sweep \
+    --workloads race_cars \
+    --sizes 1,10,50,200 \
     --compile-timeout 60 \
-    --csv /tmp/quick.csv
+    --out /tmp/quick.csv
 ```
 
 Cells that hit the size cap or the per-cell compile timeout end up with a `compile_status` of `skipped_size` / `timeout`. Once a backend has given up at one cell, all larger cells for that backend are short-circuited to `skipped_after_failure` (saves a lot of wall time at the long tail of the sweep). Runtime errors and parse failures are surfaced explicitly in the CSV's `runtime_status` column.
 
-Tracking N=1000 used to appear in this table; it is dropped from the default cell grid because the bench-time dense reference (single-seed JVP × 6006 columns through the unrolled fixture) is the bottleneck rather than alloy itself — supply `--tracking-horizons 1000` to add it back when you're willing to wait several minutes.
+Race-car N=1000 used to appear in this table; it is dropped from the default cell grid because the bench-time dense reference (single-seed JVP × 6006 columns through the unrolled fixture) is the bottleneck rather than alloy itself — supply `--workloads race_cars --sizes 1000` to add it back when you're willing to wait several minutes.
 
 ## Continuous-time CBF safety filter
 

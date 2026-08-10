@@ -28,7 +28,7 @@ def test_solver_dir_override_discovery_and_flags(tmp_path, monkeypatch) -> None:
   assert toolchain.solver_header_include("piqp") == "piqp/piqp.h"
   assert toolchain.solver_header_include("ipopt") == "coin-or/IpStdCInterface.h"
 
-  flags = toolchain.solver_compile_flags(True, True)
+  flags = toolchain.solver_compile_flags(("piqp", "ipopt"))
   assert f"-I{include}" in flags
   assert f"-L{lib}" in flags
   assert f"-Wl,-rpath,{lib}" in flags
@@ -47,6 +47,7 @@ def test_solver_paths_required_needs_both_libraries(tmp_path, monkeypatch) -> No
   (lib / f"libpiqpc{toolchain.shared_lib_ext()}").write_text("")
 
   monkeypatch.setattr(toolchain, "_package_root", lambda: empty_pkg)
+  monkeypatch.setattr(toolchain, "_plugin_solver_paths", lambda: [])
   monkeypatch.setenv("ALLOY_SOLVER_SYSTEM_FALLBACK", "0")
   monkeypatch.setenv("ALLOY_SOLVER_INCLUDE_DIR", str(include))
   monkeypatch.setenv("ALLOY_SOLVER_LIB_DIR", str(lib))

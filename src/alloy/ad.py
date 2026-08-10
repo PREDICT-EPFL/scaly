@@ -8,6 +8,7 @@ import numpy as np
 
 from .expr import Expr, as_expr, concat, dot, gather, map_, scatter, stack, topo, zeros_like
 from .ops import Ops
+from .toolchain import env_bool
 
 
 # Cache derivative helper Functions per live callee object. Do not key by ``id(callee)``:
@@ -18,10 +19,13 @@ _CALL_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, int, int], 
 _CALL_JVP_MANY_CONST_CACHE: weakref.WeakKeyDictionary[
   Any, dict[tuple[int, int, tuple[int, ...], bytes], tuple[Any, tuple[int, ...], tuple[int, ...]]]
 ] = weakref.WeakKeyDictionary()
+_MAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...]]]] = weakref.WeakKeyDictionary()
 
 
 class _JVPManyUnsupported(Exception):
-  pass
+  def __init__(self, op: str):
+    super().__init__(op)
+    self.op = op
 
 
 def _is_zero_const(expr: Expr) -> bool:
@@ -247,10 +251,23 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
     raise ValueError(f"multi-seed JVP expects seeds shape (nseed, *{wrt.shape}), got {seeds.shape}")
   if seeds.shape[0] == 0:
     return Expr.const(np.zeros((0, *expr.shape), dtype=np.float64))
+  strict = env_bool("ALLOY_STRICT_JVP_MANY", False)
   try:
-    return _jvp_many_structural(expr, wrt, seeds, {}, {})
-  except _JVPManyUnsupported:
+    ret = _jvp_many_structural(expr, wrt, seeds, {}, {})
+  except _JVPManyUnsupported as unsupported:
+    if strict:
+      raise NotImplementedError(
+        f"structural jvp_many does not support {unsupported.op!r}; ALLOY_STRICT_JVP_MANY=1 forbids the unrolled fallback"
+      ) from unsupported
     return _jvp_many_unrolled(expr, wrt, seeds)
+  expected = (seeds.shape[0], *expr.shape)
+  if ret.shape == expected:
+    return ret
+  if strict:
+    raise NotImplementedError(
+      f"structural jvp_many returned shape {ret.shape} for {expr.op!r}, expected {expected}; ALLOY_STRICT_JVP_MANY=1 forbids the unrolled fallback"
+    )
+  return _jvp_many_unrolled(expr, wrt, seeds)
 
 
 def _jvp_many_unrolled(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
@@ -276,15 +293,31 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   if expr.op == Ops.RESHAPE:
     memo[expr.id] = ret = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo).reshape((nseed, *expr.shape))
     return ret
+  if expr.op == Ops.TRANSPOSE:
+    if len(expr.shape) > 3:
+      raise _JVPManyUnsupported(str(expr.op))  # seed axis would make a rank-5 TRANSPOSE, beyond the rank-4 lowering limit
+    d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
+    memo[expr.id] = ret = d0.transpose((0, *(axis + 1 for axis in expr.attrs["axes"])))
+    return ret
   if expr.op == Ops.ADD:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
     d1 = _jvp_many_structural(expr.args[1], wrt, seeds, memo, dep_memo)
-    memo[expr.id] = ret = d1 if _is_zero_const(d0) else d0 if _is_zero_const(d1) else d0 + d1
+    if _is_zero_const(d0) and expr.args[1].shape == expr.shape:
+      memo[expr.id] = ret = d1
+    elif _is_zero_const(d1) and expr.args[0].shape == expr.shape:
+      memo[expr.id] = ret = d0
+    else:
+      memo[expr.id] = ret = _broadcast_tangent(d0, expr.args[0], expr, nseed) + _broadcast_tangent(d1, expr.args[1], expr, nseed)
     return ret
   if expr.op == Ops.SUB:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
     d1 = _jvp_many_structural(expr.args[1], wrt, seeds, memo, dep_memo)
-    memo[expr.id] = ret = -d1 if _is_zero_const(d0) else d0 if _is_zero_const(d1) else d0 - d1
+    if _is_zero_const(d0) and expr.args[1].shape == expr.shape:
+      memo[expr.id] = ret = -d1
+    elif _is_zero_const(d1) and expr.args[0].shape == expr.shape:
+      memo[expr.id] = ret = d0
+    else:
+      memo[expr.id] = ret = _broadcast_tangent(d0, expr.args[0], expr, nseed) - _broadcast_tangent(d1, expr.args[1], expr, nseed)
     return ret
   if expr.op == Ops.NEG:
     memo[expr.id] = ret = -_jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
@@ -297,7 +330,15 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op == Ops.GATHER:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
-    memo[expr.id] = ret = stack([gather(d0[i], expr.attrs["indices"]) for i in range(nseed)], axis=0)
+    indices = expr.attrs["indices"].reshape(-1)
+    full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.args[0].size + indices[None, :]).reshape(-1)
+    memo[expr.id] = ret = gather(d0.reshape((nseed * expr.args[0].size,)), full).reshape((nseed, *expr.shape))
+    return ret
+  if expr.op == Ops.SCATTER:
+    d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
+    indices = expr.attrs["indices"].reshape(-1)
+    full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)
+    memo[expr.id] = ret = scatter(d0.reshape((nseed * expr.args[0].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
     return ret
   if expr.op == Ops.SUM:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
@@ -422,19 +463,25 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   args = expr.args
   d = [_jvp_many_structural(arg, wrt, seeds, memo, dep_memo) for arg in args]
   if expr.op == Ops.MUL:
-    memo[expr.id] = ret = d[0] * _seed_axis(args[1], nseed) + _seed_axis(args[0], nseed) * d[1]
+    memo[expr.id] = ret = _broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], nseed, expr) + _seed_axis(
+      args[0], nseed, expr
+    ) * _broadcast_tangent(d[1], args[1], expr, nseed)
     return ret
   if expr.op == Ops.DIV:
-    y = _seed_axis(args[1], nseed)
-    memo[expr.id] = ret = (d[0] * y - _seed_axis(args[0], nseed) * d[1]) / (y**2)
+    y = _seed_axis(args[1], nseed, expr)
+    memo[expr.id] = ret = (
+      _broadcast_tangent(d[0], args[0], expr, nseed) * y - _seed_axis(args[0], nseed, expr) * _broadcast_tangent(d[1], args[1], expr, nseed)
+    ) / (y**2)
     return ret
   if expr.op == Ops.POW:
     if args[1].op == Ops.CONST:
-      memo[expr.id] = ret = _seed_axis(args[1] * (args[0] ** (args[1] - 1)), nseed) * d[0]
+      memo[expr.id] = ret = _seed_axis(args[1] * (args[0] ** (args[1] - 1)), nseed, expr) * _broadcast_tangent(d[0], args[0], expr, nseed)
     else:
-      x = _seed_axis(args[0], nseed)
-      y = _seed_axis(args[1], nseed)
-      memo[expr.id] = ret = _seed_axis(expr, nseed) * (d[1] * x.log() + y * d[0] / x)
+      x = _seed_axis(args[0], nseed, expr)
+      y = _seed_axis(args[1], nseed, expr)
+      dx = _broadcast_tangent(d[0], args[0], expr, nseed)
+      dy = _broadcast_tangent(d[1], args[1], expr, nseed)
+      memo[expr.id] = ret = _seed_axis(expr, nseed) * (dy * x.log() + y * dx / x)
     return ret
   if expr.op == Ops.SIN:
     memo[expr.id] = ret = _seed_axis(args[0].cos(), nseed) * d[0]
@@ -472,11 +519,21 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       ret = term if ret is None else ret + term
     memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64)) if ret is None else ret
     return ret
-  raise _JVPManyUnsupported
+  raise _JVPManyUnsupported(str(expr.op))
 
 
-def _seed_axis(expr: Expr, nseed: int) -> Expr:
-  return expr if expr.shape == () else stack([expr] * nseed, axis=0)
+def _seed_axis(expr: Expr, nseed: int, output: Expr | None = None) -> Expr:
+  # tangents carry a leading seed axis, so a stacked primal must also be rank-aligned against (nseed, *output.shape) when its rank is lower
+  if expr.shape == ():
+    return expr
+  missing = 0 if output is None else len(output.shape) - len(expr.shape)
+  t = stack([expr] * nseed, axis=0)
+  return t if missing == 0 else t.reshape((nseed, *(1,) * missing, *expr.shape))
+
+
+def _broadcast_tangent(tangent: Expr, operand: Expr, output: Expr, nseed: int) -> Expr:
+  missing = len(output.shape) - len(operand.shape)
+  return tangent if missing == 0 else tangent.reshape((nseed, *(1,) * missing, *operand.shape))
 
 
 def _jvp_many_matmul_left(x: Expr, y: Expr, dx: Expr, nseed: int) -> Expr:
@@ -485,7 +542,7 @@ def _jvp_many_matmul_left(x: Expr, y: Expr, dx: Expr, nseed: int) -> Expr:
   if len(x.shape) == 1 and len(y.shape) == 2:
     return dx @ y
   if len(x.shape) == 1 and len(y.shape) == 1:
-    return (dx * y).sum()
+    return dx @ y  # (nseed, n) @ (n,) -> (nseed,); a plain .sum() would also contract the seed axis
   return stack([dx[i] @ y for i in range(nseed)], axis=0)
 
 
@@ -495,7 +552,7 @@ def _jvp_many_matmul_right(x: Expr, y: Expr, dy: Expr, nseed: int) -> Expr:
   if len(x.shape) == 1 and len(y.shape) == 2:
     return stack([x @ dy[i] for i in range(nseed)], axis=0)
   if len(x.shape) == 1 and len(y.shape) == 1:
-    return (x * dy).sum()
+    return dy @ x  # (nseed, n) @ (n,) -> (nseed,); a plain .sum() would also contract the seed axis
   return stack([x @ dy[i] for i in range(nseed)], axis=0)
 
 
@@ -512,6 +569,73 @@ def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
       else Expr(node.op, args, node.type, node.name, node.value, dict(node.attrs), node.lowering)
     )
   return memo[expr.id]
+
+
+def _map_adj_function(callee: Any, output_index: int, active_formals: tuple[int, ...]) -> tuple[Any, tuple[int, ...]]:
+  key = (output_index, active_formals)
+  cache = _MAP_ADJ_CACHE.setdefault(callee, {})
+  if key not in cache:
+    from .function import Function
+    from .rewrite import simplify_cse_fixpoint
+
+    out = callee.outputs[output_index]
+    lam_name = f"lam:{callee.output_names[output_index]}"
+    lam = Expr.sym(lam_name, out.shape)
+    grads = vjp((out,), tuple(callee.inputs[i] for i in active_formals), (lam,))
+    adj = simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads]))
+    dep_memo: dict[tuple[int, int], bool] = {}
+    arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
+    inputs = tuple(callee.inputs[i] for i in arg_indices) + (lam,)
+    input_names = tuple(callee.input_names[i] for i in arg_indices) + (lam_name,)
+    # Suffix by formal index, not name: joined names are not injective ({a_b} vs {a, b}) and
+    # lowering dedupes callees by name, so a collision would silently reuse the wrong proc body.
+    name = f"{callee.name}_adj{output_index}_" + "_".join(str(i) for i in active_formals)
+    fn = Function(name, inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"])
+    cache[key] = (fn, arg_indices)
+  return cache[key]
+
+
+def _map_vjp(map_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
+  callee = map_expr.attrs["callee"]
+  output_idx = map_expr.attrs["output"]
+  length = map_expr.attrs["length"]
+  if length == 0:
+    return []
+  starts = map_expr.attrs["starts"]
+  strides = map_expr.attrs["strides"]
+  slice_size = map_expr.attrs["slice_size"]
+  active_formals = tuple(k for k, arg in enumerate(map_expr.args) if any(_depends_on(arg, wrt, dep_memo) for wrt in wrts))
+  if not active_formals:
+    return []
+
+  adj_fn, arg_indices = _map_adj_function(callee, output_idx, active_formals)
+  primal_specs = [(map_expr.args[i], starts[i], strides[i]) for i in arg_indices]
+  mapped = map_(adj_fn, length, [*primal_specs, (cot, 0, slice_size)])
+  adj_size = sum(callee.inputs[k].size for k in active_formals)
+  ret: list[tuple[Expr, Expr]] = []
+  offset = 0
+  for k in active_formals:
+    arg, start, stride = map_expr.args[k], starts[k], strides[k]
+    formal_size = callee.inputs[k].size
+    if stride == 0:
+      indices = np.asarray([it * adj_size + offset + j for it in range(length) for j in range(formal_size)], dtype=np.int64)
+      segments = gather(mapped, indices).reshape((length, formal_size))
+      vbar = Expr.const(np.ones(length, dtype=np.float64)) @ segments
+      if start != 0 or formal_size != arg.size:
+        vbar = scatter(vbar, start + np.arange(formal_size, dtype=np.int64), arg.shape)
+    else:
+      pieces: list[Expr] = []
+      groups = -(-formal_size // stride)
+      for group in range(groups):
+        iterations = range(group, length, groups)
+        indices = np.asarray([it * adj_size + offset + j for it in iterations for j in range(formal_size)], dtype=np.int64)
+        destinations = np.asarray([start + it * stride + j for it in iterations for j in range(formal_size)], dtype=np.int64)
+        if indices.size:
+          pieces.append(scatter(gather(mapped, indices), destinations, arg.shape))
+      vbar = _sum_exprs(pieces)
+    ret.append((arg, vbar))
+    offset += formal_size
+  return ret
 
 
 def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr]) -> tuple[Expr, ...]:
@@ -533,6 +657,11 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
   for expr in reversed(nodes):
     cot = adjoints.get(expr.id)
     if cot is None or expr.op in {Ops.INPUT, Ops.CONST} or not needed(expr):
+      continue
+    if expr.op == Ops.MAP:
+      for arg, arg_cot in _map_vjp(expr, cot, wrts, dep_memo):
+        if arg.id in expr_ids:
+          adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
       continue
     for arg, arg_cot in zip(expr.args, _local_vjp(expr, cot), strict=True):
       if arg.id in expr_ids:
@@ -635,9 +764,17 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return _matmul_vjp(args[0], args[1], cot)
   if expr.op == Ops.CALL:
     callee = expr.attrs["callee"]
-    callee_out = callee.outputs[expr.attrs["output"]]
+    output_idx = expr.attrs["output"]
+    callee_out = callee.outputs[output_idx]
+    # Differentiate the callee body against a fresh cotangent symbol, then graft the real ``cot``
+    # in via the same substitution that maps formals to actuals. Passing ``cot`` directly into the
+    # inner vjp would make it part of the substituted graph: if the caller reuses a callee formal
+    # symbol (the usual construction pattern), occurrences of that symbol *inside the cotangent*
+    # would be rewritten to this call's actuals, corrupting the adjoint.
+    lam = Expr.sym(f"lam:{callee.output_names[output_idx]}", callee_out.shape)
     replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
-    return tuple(_substitute(g, replacements) for g in vjp((callee_out,), callee.inputs, (cot,)))
+    replacements[lam.id] = cot
+    return tuple(_substitute(g, replacements) for g in vjp((callee_out,), callee.inputs, (lam,)))
   if expr.op == Ops.SOLVER_CALL:
     # Non-differentiable: every arg cotangent is zero. See the matching JVP rule.
     return tuple(zeros_like(arg) for arg in args)
@@ -700,17 +837,11 @@ def _matmul_vjp(x: Expr, y: Expr, cot: Expr) -> tuple[Expr, Expr]:
   if len(x.shape) == 1 and len(y.shape) == 1:
     return cot * y, cot * x
   if len(x.shape) == 2 and len(y.shape) == 1:
-    gx = stack([stack([cot[i] * y[j] for j in range(x.shape[1])]) for i in range(x.shape[0])])
-    gy = stack([_sum_exprs(cot[i] * x[i, j] for i in range(x.shape[0])) for j in range(y.shape[0])])
-    return gx, gy
+    return cot.reshape((x.shape[0], 1)) @ y.reshape((1, x.shape[1])), x.T @ cot
   if len(x.shape) == 1 and len(y.shape) == 2:
-    gx = stack([_sum_exprs(cot[j] * y[i, j] for j in range(y.shape[1])) for i in range(x.shape[0])])
-    gy = stack([stack([x[i] * cot[j] for j in range(y.shape[1])]) for i in range(y.shape[0])])
-    return gx, gy
+    return y @ cot, x.reshape((x.shape[0], 1)) @ cot.reshape((1, y.shape[1]))
   if len(x.shape) == 2 and len(y.shape) == 2:
-    gx = stack([stack([_sum_exprs(cot[i, j] * y[k, j] for j in range(y.shape[1])) for k in range(x.shape[1])]) for i in range(x.shape[0])])
-    gy = stack([stack([_sum_exprs(x[i, k] * cot[i, j] for i in range(x.shape[0])) for j in range(y.shape[1])]) for k in range(y.shape[0])])
-    return gx, gy
+    return cot @ y.T, x.T @ cot
   raise NotImplementedError(f"matmul VJP for {x.shape} @ {y.shape} is not implemented")
 
 

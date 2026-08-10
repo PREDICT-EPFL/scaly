@@ -1,0 +1,172 @@
+{
+  "configById": {
+    "3D!18i6zy7": {
+      "layers": {
+        "9478d73c-dac5-4853-82d8-5f160381fed1": {
+          "visible": false,
+          "drawBehind": false,
+          "instanceId": "9478d73c-dac5-4853-82d8-5f160381fed1",
+          "layerId": "foxglove.Grid",
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "color": "#b5d9ffff",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "order": 1
+        }
+      },
+      "cameraState": {
+        "perspective": false,
+        "distance": 21.05263157892242,
+        "phi": 60.196778673374894,
+        "thetaOffset": 0,
+        "targetOffset": [
+          -0.2137615353632148,
+          -0.31718205932590154,
+          1.3339437875476986e-17
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {
+        "transforms": {
+          "offsetReferenceFrame": "parent",
+          "lineWidth": 0
+        }
+      },
+      "transforms": {},
+      "topics": {
+        "/scene": {
+          "visible": true
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "synchronize": false,
+      "imageMode": {}
+    },
+    "Plot!392cap6": {
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/telemetry.solver_time_ms",
+          "enabled": true,
+          "color": "#4e98e2",
+          "id": "a5d38f72-0fc9-4a10-aee2-4cc63bd8fc9d",
+          "label": ""
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/telemetry.fe_time_ms",
+          "enabled": true,
+          "color": "#f5774d",
+          "id": "42c8200b-3090-4b73-9acf-665eab329a98"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/telemetry.scalars.glue_time_ms",
+          "enabled": true,
+          "color": "#f7df71",
+          "id": "d990e0a0-cfd6-435d-bf64-97b1bdbaf13b"
+        }
+      ],
+      "foxglovePanelTitle": "runtimes"
+    },
+    "Plot!3wr3613": {
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/telemetry.constraint_margin",
+          "enabled": true,
+          "color": "#4e98e2",
+          "id": "ee75bf68-c0bc-493e-82c8-2d79f614f3e2"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/telemetry.scalars.slack",
+          "enabled": true,
+          "color": "#f5774d",
+          "id": "0d0ceb34-7c97-4057-ab41-d3e6809b840a"
+        }
+      ],
+      "foxglovePanelTitle": "safety"
+    },
+    "Indicator!9t113g": {
+      "path": "/telemetry.success",
+      "style": "background",
+      "fontSize": 36,
+      "fallbackColor": "#ff0000",
+      "fallbackLabel": "failure",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#68e24a",
+          "label": "success"
+        }
+      ],
+      "foxglovePanelTitle": "solver success"
+    },
+    "RawMessages!os6rgs": {
+      "defaultExpanded": false,
+      "topicPath": "/telemetry",
+      "diffEnabled": false
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "drawerConfig": {
+    "tracks": []
+  },
+  "layout": {
+    "first": "3D!18i6zy7",
+    "second": {
+      "first": {
+        "first": {
+          "first": "Plot!392cap6",
+          "second": "Plot!3wr3613",
+          "direction": "column"
+        },
+        "second": "Indicator!9t113g",
+        "direction": "column",
+        "splitPercentage": 81.13142807234253
+      },
+      "second": "RawMessages!os6rgs",
+      "direction": "row",
+      "splitPercentage": 71.19437939110068
+    },
+    "direction": "row"
+  }
+}

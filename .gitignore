@@ -18,14 +18,15 @@ src/alloy/include/
 
 # Third-party sources (cloned during build)
 third_party/
+plugins/*/third_party/
+plugins/*/src/*/lib/
+plugins/*/src/*/include/
+plugins/*/src/*/_piqp_ext*.so
+plugins/*/src/*/_piqp_ext.pyi
 
 # Local benchmark outputs
-benchmarks/gen/
-examples/ct_dt_cbf_filter/out/
+benchmarks/results/
 
 # docs
 site/
 .wrangler
-
-# JIT cache
-.alloy_jit_cache/

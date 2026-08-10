@@ -166,8 +166,11 @@ These rules are *why* the migration converges. Hold them on every commit.
    migration's scope is *exactly* the op set the existing tests + benchmarks already use.
 6. **No Python execution shadow path.** Python calls and AOT both go through semantic IR → Program
    IR → generated C. The old tape interpreter / `Expr.eval` reference path was deleted after CPU
-   parity to keep semantics concentrated in one backend. `solver_c.py`'s host-wrapper codegen is
-   still retained as the sanctioned non-Program-IR path (oracles flow through the Program IR lowerer).
+   parity to keep semantics concentrated in one backend. The solver-wrapper codegen is still
+   retained as the sanctioned non-Program-IR path (oracles flow through the Program IR lowerer);
+   since 2026-07-15 the wrapper templates live in the solver plugins and `solver_c.py` only
+   orchestrates them (`docs/solver_plugins.md`) — the sanction extends to plugin-provided
+   templates, which must drive Program-IR-rendered oracle kernels and never hand-write oracle math.
 
 ---
 

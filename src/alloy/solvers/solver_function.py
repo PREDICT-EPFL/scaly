@@ -7,8 +7,9 @@ A :class:`SolverFunction` is a real :class:`alloy.Function` whose outputs are
   numpy arrays, like before);
 - nested inside a larger ``Function`` graph via the inherited
   :meth:`Function.call` (the call returns an :class:`Expr` per output);
-- rendered to C by the standard code generator, which knows how to lower a
-  ``SOLVER_CALL`` to a vendored PIQP/IPOPT invocation.
+- rendered to C by the standard code generator, which lowers a
+  ``SOLVER_CALL`` to a solver-plugin-rendered wrapper over the vendored
+  solver's C API.
 
 The expression-graph side of the solver is opaque: ``SOLVER_CALL`` nodes are
 marked non-differentiable, and their attrs carry a :class:`SolverDescriptor`
@@ -37,16 +38,18 @@ class SolverStatus:
   code: int
   name: str
   iter: int = 0
+  stats: dict[str, int] | None = None
+  _ok: bool | None = None
 
   @property
   def ok(self) -> bool:
-    # PIQP solved == 1, IPOPT solved == 0 / 1 / 6.
-    return self.code in (0, 1, 6)
+    # code is the alloy status enum (stats.py): OK == 0, ACCEPTABLE == 1.
+    return self.code in (0, 1) if self._ok is None else self._ok
 
 
 @dataclass(frozen=True)
 class SolverDescriptor:
-  """Everything needed to drive PIQP or IPOPT from either Python or generated C.
+  """Everything a solver plugin's generated C wrapper needs to drive a solve.
 
   Stored as a single attr on every ``Ops.SOLVER_CALL`` node so that nodes for
   different outputs of the same solve share one identity. Frozen + identity
@@ -55,7 +58,7 @@ class SolverDescriptor:
   """
 
   name: str
-  backend: str  # "piqp" | "ipopt"
+  backend: str  # solver plugin name (an ``alloy.solvers`` entry point, e.g. "piqp", "ipopt")
   n: int
   n_eq: int
   n_ineq: int
@@ -76,6 +79,13 @@ class SolverDescriptor:
   jac_sparsity: SparsityType | None = None
   hess_sparsity: SparsityType | None = None
   hess_lower_mask: tuple[bool, ...] = ()
+  # Sparse QP (PIQP sparse interface): structural CSC patterns of P (upper
+  # triangle), A_eq, G_ineq, baked into the generated wrapper as static
+  # tables; the oracle emits compact CSC-ordered value buffers. None => dense.
+  sparse: bool = False
+  P_sparsity: SparsityType | None = None
+  A_sparsity: SparsityType | None = None
+  G_sparsity: SparsityType | None = None
   # Solver-specific options
   options: tuple[tuple[str, Any], ...] = ()
   # Oracle output naming (QP); the order in which the oracle's outputs encode
@@ -127,6 +137,9 @@ class SolverFunction(Function):
     output_names = [n for n, _ in descriptor.output_signature]
     super().__init__(descriptor.name, input_exprs, output_exprs, input_names, output_names)
     self.last_status: SolverStatus | None = None
+    from .stats import SolverStats
+
+    self.last_stats: SolverStats | None = None
 
   def __repr__(self) -> str:
     return f"SolverFunction({self.name!r}, {self.input_names}->{self.output_names})"
@@ -162,34 +175,20 @@ class SolverFunction(Function):
     distinct outputs (primal, multipliers, status). Callers that just want
     the array list can use :meth:`eval_list` on the inherited interface.
 
-    Top-level calls go through ``run_solver_backend`` directly so
-    ``last_status`` is populated. Nested solver calls go through generated C,
-    which drops the status.
+    The solve runs through the generated C wrapper — the only solve path.
     """
     ordered = self._resolve_inputs(args, kwargs)
     coerced = coerce_solver_inputs(self.descriptor, ordered)
-    outs, status = run_solver_backend(self.descriptor, coerced)
-    self.last_status = status
+    from ..jit import CompiledFunction
+
+    compiled: CompiledFunction | None = self._compiled
+    if compiled is None:
+      compiled = CompiledFunction(self)
+      self._compiled = compiled
+    outs = compiled.run(coerced)
+    self.last_stats = compiled.solver_stats(self.name)
+    self.last_status = self.last_stats.to_solver_status()
     return dict(zip(self.output_names, outs, strict=True))
-
-
-def run_solver_backend(descriptor: SolverDescriptor, inputs: Sequence[np.ndarray]) -> tuple[list[np.ndarray], SolverStatus]:
-  """Single entry point that runs PIQP or IPOPT from a SOLVER_CALL.
-
-  Used by :class:`SolverFunction.__call__` for direct Python solves. Nested
-  solver calls are compiled through the generated solver wrapper. Inputs are positional in the same
-  order as ``descriptor.input_signature``.
-  """
-  # Local imports avoid a runtime cycle: nlp.py imports SolverFunction.
-  if descriptor.backend == "piqp":
-    from .qp import _qp_backend
-
-    return _qp_backend(descriptor, inputs)
-  if descriptor.backend == "ipopt":
-    from .nlp import _nlp_backend
-
-    return _nlp_backend(descriptor, inputs)
-  raise ValueError(f"unknown solver backend {descriptor.backend!r}")
 
 
 def _coerce_input(name: str, shape: tuple[int, ...], val: Any) -> np.ndarray:
