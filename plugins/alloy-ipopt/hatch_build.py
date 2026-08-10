@@ -235,11 +235,91 @@ def _build_ipopt(
   return install_dir
 
 
+def _macos_deps(path: Path) -> list[str]:
+  """Install names `path` loads that are not part of the OS.
+
+  Keeps `@rpath`/`@loader_path` entries: Homebrew's own libgfortran reaches libgcc_s that
+  way, so following only absolute names would leave the bundle one library short."""
+  out = subprocess.run(["otool", "-L", str(path)], check=True, capture_output=True, text=True).stdout
+  deps = []
+  for line in out.splitlines()[1:]:
+    name = line.strip().split(" (")[0]
+    if name.startswith(("/usr/lib/", "/System/")) or Path(name).name == path.name:
+      continue  # OS library, or the dylib's own install id, which otool -L lists first
+    deps.append(name)
+  return deps
+
+
+def _macos_rpaths(path: Path) -> list[str]:
+  out = subprocess.run(["otool", "-l", str(path)], check=True, capture_output=True, text=True).stdout
+  lines = out.splitlines()
+  return [lines[i + 2].strip().split("path ")[1].split(" (offset")[0] for i, line in enumerate(lines) if line.strip() == "cmd LC_RPATH"]
+
+
+def _resolve_macos_dep(dep: str, origin: Path) -> Path | None:
+  """Locate `dep` as `origin` itself would, expanding `@rpath` against origin's own rpaths."""
+  if dep.startswith("/"):
+    return Path(dep) if Path(dep).exists() else None
+  name = Path(dep).name
+  for rpath in _macos_rpaths(origin):
+    candidate = Path(rpath.replace("@loader_path", str(origin.parent)).replace("@executable_path", str(origin.parent))) / name
+    if candidate.exists():
+      return candidate
+  sibling = origin.parent / name
+  return sibling if sibling.exists() else None
+
+
+def _bundle_macos_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str) -> None:
+  """Copy the Homebrew gcc runtime next to libipopt and repoint everything at `@rpath`.
+
+  IPOPT links libgfortran/libquadmath by absolute Homebrew path, so a library built on one
+  machine will not load on another that lacks that exact formula — which is how the macOS
+  `solver tests` job broke once it stopped rebuilding IPOPT itself. Vendoring the runtime
+  and adding an `@loader_path` rpath makes the shipped library self-contained, matching
+  what `-static-libgfortran` already gives us on Linux."""
+  # each entry pairs the copy under lib_dir with the original it came from, whose rpaths
+  # are the ones that can still resolve its dependencies
+  pending, bundled = [(lib_dir / lib_name, lib_dir / lib_name)], set()
+  while pending:
+    current, origin = pending.pop()
+    for dep in _macos_deps(current):
+      name = Path(dep).name
+      if name not in bundled:
+        src = _resolve_macos_dep(dep, origin)
+        if src is None:
+          raise RuntimeError(f"cannot vendor {dep!r} needed by {current}: not found via its rpaths")
+        bundled.add(name)
+        dst = lib_dir / name
+        hook.app.display_info(f"Bundling {src} -> {dst}")
+        shutil.copy2(src, dst)
+        dst.chmod(0o755)
+        _run(["install_name_tool", "-id", f"@rpath/{name}", str(dst)], cwd=lib_dir)
+        pending.append((dst, src))
+      if dep != f"@rpath/{name}":
+        _run(["install_name_tool", "-change", dep, f"@rpath/{name}", str(current)], cwd=lib_dir)
+    # `@loader_path` lets a dlopen'd libipopt find its siblings without the host adding an rpath
+    subprocess.run(["install_name_tool", "-add_rpath", "@loader_path", str(current)], cwd=lib_dir, capture_output=True)
+    # rewriting load commands invalidates the signature; arm64 refuses to load an unsigned image
+    subprocess.run(["codesign", "--force", "--sign", "-", str(current)], cwd=lib_dir, capture_output=True)
+  hook.app.display_info(f"Bundled macOS runtime: {sorted(bundled) or 'nothing to bundle'}")
+
+
+def _macos_self_contained(lib_dir: Path, lib_name: str) -> bool:
+  """Every non-OS dependency in the closure resolves to a sibling under `lib_dir`."""
+  for path in [lib_dir / lib_name, *(p for p in lib_dir.glob("*.dylib") if p.name != lib_name)]:
+    for dep in _macos_deps(path):
+      if not (lib_dir / Path(dep).name).exists():
+        return False
+  return True
+
+
 def _ipopt_built(system: str, lib_dir: Path, include_dir: Path) -> bool:
   lib_name = _shared_lib_name(system, "ipopt")
   has_lib = (lib_dir / lib_name).exists()
   if system == "Linux":
     has_lib = has_lib and any(lib_dir.glob("libipopt.so.*"))
+  if system == "Darwin" and has_lib and not _macos_self_contained(lib_dir, lib_name):
+    return False  # built before the runtime was vendored: still absolute-linked, rebuild
   return has_lib and (include_dir / "coin-or" / "IpStdCInterface.h").exists()
 
 
@@ -294,6 +374,7 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
     shutil.copy2(built_lib, soname_path)
   if system == "Darwin":
     _run(["install_name_tool", "-id", f"@rpath/{lib_name}", str(dst_path)], cwd=lib_dir)
+    _bundle_macos_runtime(hook, lib_dir, lib_name)
 
   ipopt_headers_dir = ipopt_install / "include" / "coin-or"
   for header in ipopt_headers_dir.glob("*.h"):

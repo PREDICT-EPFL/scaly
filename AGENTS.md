@@ -47,7 +47,7 @@ If you need to consult those files, ask the user to point you at the right anvil
 The per-plugin `plugins/*/hatch_build.py` hooks build the vendored solver stacks on first sync:
 
 - PIQP (with Eigen 3.4.1 and Blasfeo) → `plugins/alloy-piqp/src/alloy_piqp/lib/libpiqpc.{dylib,so}`
-- METIS → MUMPS → IPOPT → `plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.{dylib,so}`. On Linux the Fortran runtime is linked statically (`-static-libgfortran -static-libgcc -static-libstdc++`) so the resulting library is redistributable; on macOS those flags are not passed, and `libipopt.dylib` keeps a dynamic reference to the Homebrew gcc `libgfortran`/`libquadmath`.
+- METIS → MUMPS → IPOPT → `plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.{dylib,so}`. On Linux the Fortran runtime is linked statically (`-static-libgfortran -static-libgcc -static-libstdc++`). macOS cannot pass those flags, so the hook instead copies the Homebrew gcc runtime (`libgfortran`, `libquadmath`, `libgcc_s`) next to `libipopt.dylib`, rewrites every load command to `@rpath/`, and adds an `@loader_path` rpath. Either way the shipped library carries no absolute reference to the build machine's toolchain, so the whole `lib/` directory is what has to travel — never just `libipopt.dylib`.
 
 Each component is skipped if its install marker already exists. To force a clean rebuild, delete the plugin's `src/*/{lib,include}/` and `third_party/` directories, or run its hatch `clean` hook.
 
