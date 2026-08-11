@@ -103,18 +103,29 @@ CAR_COLORS = (
   (0.55, 0.40, 0.85),
 )
 APPLIED_COLOR = (0.08, 0.08, 0.08)
+ACCEL_COLOR = (0.15, 0.80, 0.30)
+BRAKE_COLOR = (0.90, 0.15, 0.15)
+WHEEL_COLOR = (0.10, 0.10, 0.12)
 
 
 @dataclass(frozen=True)
 class CarShape:
-  """Body geometry and control-arrow scaling used by `planar_car_scene`.
+  """Body geometry and control depiction used by `planar_car_scene`.
 
   `center_offset` is how far the body centre sits ahead of the recorded `(x, y)`, so a
   model whose position tracks the centre of gravity rather than the geometric centre
-  still draws in the right place. Control vectors are read as (throttle, steering);
-  `max_throttle` and `max_steer` normalize them, and `arrow_length` is the arrow length
-  at full throttle (0 disables the arrows, as does `safety_radius` for the keep-out
-  circle)."""
+  still draws in the right place. `safety_radius` of 0 disables the keep-out circle.
+
+  There are two ways to draw the control, and a shape picks one by setting its length:
+
+  - `arrow_length` draws arrows out in front of the car at full throttle. The command is
+    read as (throttle, steering normalized to [-1, 1]), which `max_throttle` and
+    `max_steer` scale into physical units.
+  - `wheelbase` draws the two front wheels turned by the steering angle and shades the
+    body green under drive, red under braking. The command is read as (drive force,
+    steering angle in radians); `max_throttle` normalizes the force and `max_steer`
+    clamps the angle. This suits a car whose steering is already a physical angle, where
+    an arrow sticking out ahead of the body just reads as a heading vector."""
 
   length: float = 0.45
   width: float = 0.24
@@ -124,6 +135,7 @@ class CarShape:
   max_throttle: float = 1.0
   max_steer: float = 0.0
   arrow_length: float = 0.0
+  wheelbase: float = 0.0
 
 
 def _timestamp(time_s: float) -> Timestamp:
@@ -143,29 +155,59 @@ def _yaw_quaternion(yaw: float) -> Quaternion:
   return Quaternion(x=0.0, y=0.0, z=float(np.sin(0.5 * yaw)), w=float(np.cos(0.5 * yaw)))
 
 
-def _circle(x: float, y: float, radius: float, color: Color, *, segments: int = 48) -> LinePrimitive:
+def car_frame(vehicle_id: str) -> str:
+  """The per-vehicle coordinate frame, a child of `scene` that carries the car's pose.
+
+  Everything drawn on the car is expressed in this frame rather than in absolute track
+  coordinates, so pointing the 3D panel's display frame at it makes the camera ride
+  along with the car."""
+  return f"car/{vehicle_id}"
+
+
+def _circle(radius: float, color: Color, *, segments: int = 48) -> LinePrimitive:
   angles = np.linspace(0.0, 2.0 * np.pi, segments, endpoint=False)
   return LinePrimitive(
     type=LinePrimitiveLineType.LineLoop,
     thickness=0.06 * radius,
-    points=[Point3(x=x + radius * float(np.cos(a)), y=y + radius * float(np.sin(a)), z=0.01) for a in angles],
+    points=[Point3(x=radius * float(np.cos(a)), y=radius * float(np.sin(a)), z=0.01) for a in angles],
     color=color,
   )
 
 
-def _control_arrow(car: PlanarVehicleState, shape: CarShape, command: Sequence[float], color: Color, z: float) -> ArrowPrimitive:
+def _control_arrow(shape: CarShape, command: Sequence[float], color: Color, z: float) -> ArrowPrimitive:
   throttle = float(np.clip(command[0] / shape.max_throttle, -1.0, 1.0))
   steer = float(np.clip(command[1], -1.0, 1.0)) * shape.max_steer if len(command) > 1 else 0.0
-  heading = car.yaw + steer + (np.pi if throttle < 0.0 else 0.0)
+  heading = steer + (np.pi if throttle < 0.0 else 0.0)
   length = shape.arrow_length * (0.25 + 0.75 * abs(throttle))
   return ArrowPrimitive(
-    pose=Pose(position=Vector3(x=car.x, y=car.y, z=z), orientation=_yaw_quaternion(heading)),
+    pose=Pose(position=Vector3(x=0.0, y=0.0, z=z), orientation=_yaw_quaternion(heading)),
     shaft_length=0.75 * length,
     shaft_diameter=0.07 * shape.arrow_length,
     head_length=0.25 * length,
     head_diameter=0.18 * shape.arrow_length,
     color=color,
   )
+
+
+def _drive_color(rgb: tuple[float, float, float], throttle: float) -> Color:
+  """The car's own colour, shaded toward green under drive and red under braking."""
+  target = ACCEL_COLOR if throttle >= 0.0 else BRAKE_COLOR
+  weight = abs(throttle)
+  return _color(tuple(base * (1.0 - weight) + tip * weight for base, tip in zip(rgb, target, strict=True)), 0.55)  # type: ignore[arg-type]
+
+
+def _steered_wheels(shape: CarShape, steer: float) -> list[CubePrimitive]:
+  """The pair of front wheels, sitting on the front axle and turned by the steering angle."""
+  length, width, height = 0.20 * shape.length, 0.12 * shape.width, 0.30 * shape.height
+  axle, half_track = shape.center_offset + 0.5 * shape.wheelbase, 0.5 * (shape.width - width)
+  return [
+    CubePrimitive(
+      pose=Pose(position=Vector3(x=axle, y=offset, z=0.5 * height), orientation=_yaw_quaternion(steer)),
+      size=Vector3(x=length, y=width, z=height),
+      color=_color(WHEEL_COLOR),
+    )
+    for offset in (-half_track, half_track)
+  ]
 
 
 def planar_car_scene(
@@ -181,28 +223,30 @@ def planar_car_scene(
   for index, car in enumerate(cars):
     rgb = CAR_COLORS[index % len(CAR_COLORS)]
     timestamp = _timestamp(car.time_s)
-    cos_yaw, sin_yaw = float(np.cos(car.yaw)), float(np.sin(car.yaw))
-    lines = [_circle(car.x, car.y, shape.safety_radius, _color(rgb, 0.9))] if shape.safety_radius else []
-    arrows = []
+    lines = [_circle(shape.safety_radius, _color(rgb, 0.9))] if shape.safety_radius else []
+    arrows, wheels, body_color = [], [], _color(rgb, 0.55)
     command = commands.get(car.vehicle_id)
     if command is not None and shape.arrow_length:
       if command.desired:
-        arrows.append(_control_arrow(car, shape, command.desired, _color(rgb), shape.height + 0.05))
-      arrows.append(_control_arrow(car, shape, command.applied, _color(APPLIED_COLOR), shape.height + 0.15))
+        arrows.append(_control_arrow(shape, command.desired, _color(rgb), shape.height + 0.05))
+      arrows.append(_control_arrow(shape, command.applied, _color(APPLIED_COLOR), shape.height + 0.15))
+    if command is not None and shape.wheelbase:
+      steer = float(np.clip(command.applied[1], -shape.max_steer, shape.max_steer)) if len(command.applied) > 1 else 0.0
+      body_color = _drive_color(rgb, float(np.clip(command.applied[0] / shape.max_throttle, -1.0, 1.0)))
+      wheels = _steered_wheels(shape, steer)
     entities.append(
       SceneEntity(
         timestamp=timestamp,
-        frame_id="scene",
+        frame_id=car_frame(car.vehicle_id),
+        frame_locked=True,
         id=f"car/{car.vehicle_id}",
         cubes=[
           CubePrimitive(
-            pose=Pose(
-              position=Vector3(x=car.x + cos_yaw * shape.center_offset, y=car.y + sin_yaw * shape.center_offset, z=0.5 * shape.height),
-              orientation=_yaw_quaternion(car.yaw),
-            ),
+            pose=Pose(position=Vector3(x=shape.center_offset, y=0.0, z=0.5 * shape.height), orientation=_yaw_quaternion(0.0)),
             size=Vector3(x=shape.length, y=shape.width, z=shape.height),
-            color=_color(rgb, 0.55),
-          )
+            color=body_color,
+          ),
+          *wheels,
         ],
         lines=lines,
         arrows=arrows,
@@ -218,7 +262,7 @@ def planar_car_scene(
           lines=[
             LinePrimitive(
               type=LinePrimitiveLineType.LineStrip,
-              thickness=0.05 * shape.length,
+              thickness=0.02 * shape.length,
               points=[Point3(x=x, y=y, z=0.02) for x, y in trail],
               color=_color(rgb, 0.7),
             )
@@ -313,7 +357,7 @@ def track_scene(center_line: np.ndarray, cones: Mapping[str, np.ndarray]) -> Sce
   return SceneUpdate(entities=entities)
 
 
-def horizon_scene(paths: Sequence[HorizonPath | Mapping[str, Any]], *, thickness: float = 0.18) -> SceneUpdate:
+def horizon_scene(paths: Sequence[HorizonPath | Mapping[str, Any]], *, thickness: float = 0.06) -> SceneUpdate:
   """One line strip per planned/predicted horizon, drawn just above the track."""
   entities = []
   for path in (HorizonPath.model_validate(item) for item in paths):
@@ -377,7 +421,13 @@ class Recorder:
     self._points = self._channel("/chain/point", PointState3D)
     self._control = self._channel("/control", ControlState)
     self._horizon = self._channel("/horizon", HorizonPath)
+    # Seeking makes Foxglove hand each panel the *single* newest message per subscribed topic, so
+    # anything that must survive a jump has to be the last message on a topic of its own. The three
+    # groups below are updated independently, hence three topics: geometry logged once at time zero
+    # stays visible however far ahead you jump, without being re-sent every step.
     self._scene = SceneUpdateChannel("/scene", context=self._context)
+    self._static_scene = SceneUpdateChannel("/scene/static", context=self._context)
+    self._horizon_scene = SceneUpdateChannel("/scene/horizon", context=self._context)
     self._tf = FrameTransformsChannel("/tf", context=self._context)
     self._planar_history: dict[str, list[tuple[float, float]]] = {}
     self._tf.log(
@@ -423,8 +473,26 @@ class Recorder:
       self._log(self._planar, PlanarVehicleState, state, _log_time(state.time_s))
       self._planar_history.setdefault(state.vehicle_id, []).append((state.x, state.y))
     if validated:
+      log_time = _log_time(validated[0].time_s)
+      # The car frames go out alongside the scene they carry: the entities are frame-locked, so a
+      # pose that arrived without its transform would draw the car at the previous step's place.
+      self._tf.log(
+        FrameTransforms(
+          transforms=[
+            FrameTransform(
+              timestamp=_timestamp(state.time_s),
+              parent_frame_id="scene",
+              child_frame_id=car_frame(state.vehicle_id),
+              translation=Vector3(x=state.x, y=state.y, z=0.0),
+              rotation=_yaw_quaternion(state.yaw),
+            )
+            for state in validated
+          ]
+        ),
+        log_time=log_time,
+      )
       scene = planar_car_scene(validated, shape=self.car_shape, controls=controls, trails=self._planar_history)
-      self._scene.log(scene, log_time=_log_time(validated[0].time_s))
+      self._scene.log(scene, log_time=log_time)
     return validated
 
   def record_chain(self, points: Sequence[PointState3D | Mapping[str, Any]]) -> list[PointState3D]:
@@ -436,17 +504,17 @@ class Recorder:
     return validated
 
   def record_arena(self, bounds: tuple[float, float, float, float], *, margin: float = 0.0) -> None:
-    self._scene.log(arena_scene(bounds, margin=margin), log_time=0)
+    self._static_scene.log(arena_scene(bounds, margin=margin), log_time=0)
 
   def record_track(self, center_line: np.ndarray, cones: Mapping[str, np.ndarray]) -> None:
-    self._scene.log(track_scene(center_line, cones), log_time=0)
+    self._static_scene.log(track_scene(center_line, cones), log_time=0)
 
   def record_horizons(self, paths: Sequence[HorizonPath | Mapping[str, Any]]) -> list[HorizonPath]:
     validated = [HorizonPath.model_validate(path) for path in paths]
     for path in validated:
       self._log(self._horizon, HorizonPath, path, _log_time(path.time_s))
     if validated:
-      self._scene.log(horizon_scene(validated), log_time=_log_time(validated[0].time_s))
+      self._horizon_scene.log(horizon_scene(validated), log_time=_log_time(validated[0].time_s))
     return validated
 
   def record_control(self, controls: Sequence[ControlState | Mapping[str, Any]]) -> list[ControlState]:
@@ -458,7 +526,18 @@ class Recorder:
   def close(self) -> None:
     if self._closed:
       return
-    for channel in (self._metadata, self._telemetry, self._planar, self._points, self._control, self._horizon, self._scene, self._tf):
+    for channel in (
+      self._metadata,
+      self._telemetry,
+      self._planar,
+      self._points,
+      self._control,
+      self._horizon,
+      self._scene,
+      self._static_scene,
+      self._horizon_scene,
+      self._tf,
+    ):
       channel.close()
     self._writer.close()
     self._closed = True

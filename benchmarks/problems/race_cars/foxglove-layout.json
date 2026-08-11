@@ -3,13 +3,13 @@
     "3D!4emckpf": {
       "cameraState": {
         "perspective": false,
-        "distance": 181.5160232573273,
-        "phi": 60.00000000000255,
-        "thetaOffset": 0,
+        "distance": 35.16173831813904,
+        "phi": 30.474308300403045,
+        "thetaOffset": 89.99999999999994,
         "targetOffset": [
-          4.308684270906184,
-          4.325072800892746,
-          -7.910174954500694e-16
+          6,
+          0,
+          0
         ],
         "target": [
           0,
@@ -29,12 +29,19 @@
       "followMode": "follow-pose",
       "scene": {
         "transforms": {
-          "lineWidth": 0
+          "lineWidth": 0,
+          "visible": false
         }
       },
       "transforms": {},
       "topics": {
         "/scene": {
+          "visible": true
+        },
+        "/scene/horizon": {
+          "visible": true
+        },
+        "/scene/static": {
           "visible": true
         }
       },
@@ -70,7 +77,8 @@
         "poseEstimateThetaDeviation": 0.26179939
       },
       "synchronize": false,
-      "imageMode": {}
+      "imageMode": {},
+      "followTf": "car/vehicle"
     },
     "Plot!2bed184": {
       "paths": [
@@ -109,10 +117,6 @@
       ],
       "foxglovePanelTitle": "runtimes"
     },
-    "RawMessages!1o1uc4h": {
-      "defaultExpanded": false,
-      "topicPath": "/telemetry"
-    },
     "Indicator!2xrh30f": {
       "path": "/telemetry.success",
       "style": "background",
@@ -128,6 +132,10 @@
         }
       ],
       "foxglovePanelTitle": "solver success"
+    },
+    "RawMessages!1o1uc4h": {
+      "defaultExpanded": false,
+      "topicPath": "/telemetry"
     }
   },
   "globalVariables": {},
@@ -141,7 +149,8 @@
       "second": {
         "first": "Plot!2bed184",
         "second": "Indicator!2xrh30f",
-        "direction": "column"
+        "direction": "column",
+        "splitPercentage": 68.74858073752283
       },
       "direction": "row"
     },

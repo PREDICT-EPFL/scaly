@@ -94,12 +94,25 @@ column the FE sweep harvests from.
 
 Each run prints the exact artifact directory. It contains `episode.mcap`,
 `rollout.npz`, configuration/summary/provenance JSON, and
-`representative_fe_inputs.npz`. The MCAP includes `/tf` (`world → scene`),
-`/scene`, control, state, horizon, and solver telemetry channels. Planar scenes are
-centered through the transform and retain trajectory trails; the bumpercars scene
-also contains a persistent arena boundary, and the race-cars scene contains the
-track (center line plus one cube per cone, coloured as on a real track) drawn once
-at time zero, with the reference and predicted horizons redrawn every step.
+`representative_fe_inputs.npz`. The MCAP includes `/tf`, three scene channels, and
+control, state, horizon, and solver telemetry channels. `/tf` carries a static
+`world → scene` transform plus one `scene → car/<vehicle>` transform per step, and
+every primitive drawn on a car is expressed in that car frame rather than in track
+coordinates, so setting the 3D panel's display frame to `car/vehicle` makes the
+camera ride along. Planar scenes are centered through the transform and retain
+trajectory trails, which stay in the `scene` frame; the
+bumpercars scene also contains a persistent arena boundary, and the race-cars scene
+contains the track (center line plus one cube per cone, coloured as on a real
+track), with the reference and predicted horizons redrawn every step.
+
+The scene is split across `/scene` (vehicles and trails), `/scene/horizon`, and
+`/scene/static` (track and arena) because of how Foxglove seeks: jumping in the
+timeline hands each panel only the newest message on each subscribed topic. Geometry
+that has to survive a jump therefore has to be the last message on a topic nothing
+else writes to. With that split, the track and arena are logged once at time zero
+and stay visible however far ahead you scrub — a single 22 kB message per episode
+rather than one per step. All three topics are enabled in the checked-in layouts; a
+new scene topic is invisible in the 3D panel until its layout turns it on.
 
 Layouts are **not** generated. Each problem keeps one hand-authored layout,
 exported from Foxglove Desktop, next to its runner:
@@ -127,7 +140,7 @@ Canonical operating points are deterministic and intentionally modest:
 | problem | canonical point | scene |
 |---|---|---|
 | chain of masses | `M=5`, controller `N=12`, 20 plant steps at 0.2 s | 3D chain |
-| race cars | controller `N=40`, one lap of `fsds_competition_1` (340 m, 1367 plant steps at 0.05 s), alloy and casadi backends | track, cones, planar vehicle + reference, reference and predicted horizons |
+| race cars | controller `N=40`, one lap of `fsds_competition_1` (340 m, 1367 plant steps at 0.05 s), alloy and casadi backends | track, cones, planar vehicle, reference and predicted horizons |
 | bumpercars CT-DTCBF | 4 cars, 80 plant steps at 0.1 s, seed 42 | planar cars |
 
 The midpoint successful closed-loop oracle input is harvested for future

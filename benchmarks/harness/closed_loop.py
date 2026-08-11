@@ -111,7 +111,7 @@ def run_chain(*, smoke: bool, out_dir: Path, cli_args: list[str]) -> Path:
 
 
 def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], backend: str = "alloy") -> Path:
-  from benchmarks.problems.race_cars import CAR_HEIGHT, CAR_LENGTH, CAR_WIDTH, DELTA_MAX, T_MAX
+  from benchmarks.problems.race_cars import CAR_HEIGHT, CAR_LENGTH, CAR_WIDTH, DELTA_MAX, T_MAX, WHEELBASE
   from benchmarks.problems.race_cars.closed_loop import EpisodeConfig, run_episode
 
   config = EpisodeConfig.smoke() if smoke else EpisodeConfig()
@@ -136,7 +136,7 @@ def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], backend: s
     height=CAR_HEIGHT,
     max_throttle=T_MAX,
     max_steer=DELTA_MAX,
-    arrow_length=1.5 * CAR_LENGTH,
+    wheelbase=WHEELBASE,
   )
   centroid = np.mean(episode.center_path, axis=0)
   with Recorder(
@@ -156,18 +156,10 @@ def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], backend: s
     for step, (state, reference) in enumerate(zip(episode.states, episode.references, strict=True)):
       time_s = step * config.params.dt
       controls = [ControlState(step=step, time_s=time_s, entity_id="vehicle", applied=episode.controls[step].tolist())] if step < steps else []
+      # Only the plant gets a body: the reference pose is already the head of the reference horizon,
+      # and drawing it as a second car reads as a second vehicle on the track.
       recorder.record_planar(
-        [
-          PlanarVehicleState(step=step, time_s=time_s, vehicle_id="vehicle", x=float(state[0]), y=float(state[1]), yaw=float(state[2])),
-          PlanarVehicleState(
-            step=step,
-            time_s=time_s,
-            vehicle_id="reference",
-            x=float(reference[0]),
-            y=float(reference[1]),
-            yaw=float(reference[2]),
-          ),
-        ],
+        [PlanarVehicleState(step=step, time_s=time_s, vehicle_id="vehicle", x=float(state[0]), y=float(state[1]), yaw=float(state[2]))],
         controls=controls,
       )
       if step >= steps:
