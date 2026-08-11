@@ -12,9 +12,12 @@ from benchmarks.harness.recording import (
   ACCEL_COLOR,
   BRAKE_COLOR,
   CAR_COLORS,
+  CHAIN_COLORS,
+  CHAIN_REFERENCE_COLORS,
   CONE_STYLES,
   HORIZON_STYLES,
   CarShape,
+  ChainPlan,
   ControlState,
   HorizonPath,
   PlanarVehicleState,
@@ -24,6 +27,9 @@ from benchmarks.harness.recording import (
   ScalarTelemetry,
   arena_scene,
   car_frame,
+  chain_plan_scene,
+  chain_reference_scene,
+  chain_scene,
   horizon_scene,
   planar_car_scene,
   layout_path,
@@ -33,7 +39,7 @@ from benchmarks.harness.recording import (
 
 
 def test_recording_schemas_are_strict_json_schemas() -> None:
-  for model in (RunMetadata, ScalarTelemetry, PlanarVehicleState, PointState3D, ControlState, HorizonPath):
+  for model in (RunMetadata, ScalarTelemetry, PlanarVehicleState, PointState3D, ControlState, HorizonPath, ChainPlan):
     schema = model.model_json_schema()
     assert schema["type"] == "object"
     assert schema["additionalProperties"] is False
@@ -45,7 +51,15 @@ def test_recording_schemas_are_strict_json_schemas() -> None:
 def test_recorder_writes_custom_and_scene_channels(tmp_path: Path) -> None:
   path = tmp_path / "episode.mcap"
   with Recorder(path) as recorder:
-    custom_channels = (recorder._metadata, recorder._telemetry, recorder._planar, recorder._points, recorder._control, recorder._horizon)
+    custom_channels = (
+      recorder._metadata,
+      recorder._telemetry,
+      recorder._planar,
+      recorder._points,
+      recorder._control,
+      recorder._horizon,
+      recorder._plan,
+    )
     schemas = {}
     for channel in custom_channels:
       schema = channel.schema()
@@ -57,15 +71,18 @@ def test_recorder_writes_custom_and_scene_channels(tmp_path: Path) -> None:
     recorder.record_telemetry(ScalarTelemetry(step=0, time_s=0.0, success=True, solver_time_ms=1.2, objective=3.0))
     recorder.record_arena((0.0, 4.0, 0.0, 3.0))
     recorder.record_planar([PlanarVehicleState(step=0, time_s=0.0, vehicle_id="ego", x=1.0, y=2.0, yaw=0.2)])
+    recorder.record_chain_references({"end-mass reference": (0.75, 0.0, 0.0)})
     recorder.record_chain(
       [
         PointState3D(step=0, time_s=0.0, point_id="0", x=0.0, y=0.0, z=0.0),
         PointState3D(step=0, time_s=0.0, point_id="1", x=1.0, y=0.0, z=0.5),
-      ]
+      ],
+      control=ControlState(step=0, time_s=0.0, entity_id="tip", applied=[0.1, 0.2, -0.3]),
     )
     recorder.record_control([ControlState(step=0, time_s=0.0, entity_id="ego", desired=[1.0, 0.0], applied=[0.8, 0.1])])
     recorder.record_track(np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]), {"blue": np.array([[0.0, 1.0]]), "small_orange": np.zeros((0, 2))})
     recorder.record_horizons([HorizonPath(step=0, time_s=0.0, path_id="prediction", x=[0.0, 1.0], y=[0.0, 0.5])])
+    recorder.record_chain_plan(ChainPlan(step=0, time_s=0.0, n_masses=2, nodes=[[0.0, 0.0, 0.0, 1.0, 0.0, 0.5], [0.0, 0.0, 0.0, 1.1, 0.0, 0.4]]))
 
   data = path.read_bytes()
   assert len(data) > 8
@@ -75,6 +92,7 @@ def test_recorder_writes_custom_and_scene_channels(tmp_path: Path) -> None:
     "/telemetry",
     "/planar/state",
     "/chain/point",
+    "/chain/plan",
     "/control",
     "/horizon",
     "/scene",
@@ -82,7 +100,15 @@ def test_recorder_writes_custom_and_scene_channels(tmp_path: Path) -> None:
     "/scene/horizon",
     "/tf",
   }
-  assert {"RunMetadata", "ScalarTelemetry", "PlanarVehicleState", "PointState3D", "ControlState", "HorizonPath"} == schemas.keys()
+  assert {
+    "RunMetadata",
+    "ScalarTelemetry",
+    "PlanarVehicleState",
+    "PointState3D",
+    "ControlState",
+    "HorizonPath",
+    "ChainPlan",
+  } == schemas.keys()
   assert all(schema["type"] == "object" for schema in schemas.values())
 
 
@@ -113,6 +139,33 @@ def test_static_geometry_gets_its_own_scene_topic_and_is_logged_once(tmp_path: P
   assert static.log_times == [0, 0]
   assert dynamic.log_times == [0, 100_000_000, 200_000_000]
   assert horizon.log_times == dynamic.log_times
+
+
+def test_chain_reference_survives_seeking_while_the_chain_and_plan_update_per_step(tmp_path: Path) -> None:
+  """Same seeking rule as the track: the end-mass reference is sent once, so it has to be on the
+  static topic or a jump ahead would replace it with a per-step chain update and lose it."""
+
+  class SpyChannel:
+    def __init__(self) -> None:
+      self.log_times: list[int] = []
+
+    def log(self, _scene, *, log_time: int) -> None:
+      self.log_times.append(log_time)
+
+    def close(self) -> None:
+      pass
+
+  with Recorder(tmp_path / "episode.mcap") as recorder:
+    static, dynamic, horizon = SpyChannel(), SpyChannel(), SpyChannel()
+    recorder._static_scene, recorder._scene, recorder._horizon_scene = static, dynamic, horizon  # ty: ignore[invalid-assignment]
+    recorder.record_chain_references({"end-mass reference": (0.75, 0.0, 0.0)})
+    for step in range(3):
+      recorder.record_chain(_chain((0.0, 0.0, 0.0), (float(step), 0.0, 0.0)))
+      recorder.record_chain_plan(ChainPlan(step=step, time_s=0.2 * step, n_masses=2, nodes=[[0.0, 0.0, 0.0, 1.0, 0.0, 0.0]]))
+
+  assert static.log_times == [0]
+  assert dynamic.log_times == [400_000_000] * 3  # `_chain` stamps one time; what matters is the topic
+  assert horizon.log_times == [0, 200_000_000, 400_000_000]
 
 
 def test_car_bodies_ride_their_own_frame_while_trails_stay_in_the_scene() -> None:
@@ -250,6 +303,83 @@ def test_planar_scene_normalizes_a_physical_throttle() -> None:
   )
   # full physical throttle reads as full scale rather than saturating at the raw clip of 1.0
   assert f"shaft_length: {0.75 * shape.arrow_length}" in scene
+
+
+def _chain(*positions: tuple[float, float, float]) -> list[PointState3D]:
+  return [PointState3D(step=2, time_s=0.4, point_id=str(i), x=x, y=y, z=z) for i, (x, y, z) in enumerate(positions)]
+
+
+def test_chain_scene_marks_the_anchor_and_end_mass_and_draws_the_control_vector() -> None:
+  radius, scale = 0.1, 2.0
+  scene = repr(
+    chain_scene(
+      _chain((0.0, 0.0, 0.0), (1.0, 0.0, -0.2), (2.0, 0.0, -0.3)),
+      radius=radius,
+      control=ControlState(step=2, time_s=0.4, entity_id="tip", applied=[0.0, 1.0, 0.0]),
+      control_scale=scale,
+      trail=[(3.0, 0.0, 0.0), (2.5, 0.0, -0.1)],
+    )
+  )
+  # anchor, spring-driven mass and end mass each in their own colour, the end mass drawn larger
+  for role in ("anchor", "mass", "end", "link"):
+    assert f"r: {CHAIN_COLORS[role][0]}" in scene, role
+  assert scene.count("SpherePrimitive") == 3
+  assert f"x: {2 * radius}, y: {2 * radius}, z: {2 * radius}" in scene
+  assert f"x: {2 * radius * 1.4}, y: {2 * radius * 1.4}, z: {2 * radius * 1.4}" in scene
+  # one arrow, starting on the end mass, `control_scale` metres long per unit command
+  assert scene.count("ArrowPrimitive") == 1
+  assert "position: Some(Vector3 { x: 2.0, y: 0.0, z: -0.3 })" in scene
+  assert f"shaft_length: {0.75 * scale}" in scene and f"head_length: {0.25 * scale}" in scene
+  # the end-mass trail is a second entity, so it survives the chain entity being replaced
+  assert scene.count('id: "chain/trail"') == 1 and scene.count("LinePrimitive") == 2
+
+
+def test_chain_scene_points_the_control_arrow_along_the_command() -> None:
+  for command in ([1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.4, -0.5, 0.8]):
+    scene = repr(
+      chain_scene(
+        _chain((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        control=ControlState(step=2, time_s=0.4, entity_id="tip", applied=command),
+      )
+    )
+    # the arrow's own axis is +x, so its pose must rotate +x onto the command direction
+    x, y, z, w = (float(value) for value in re.findall(r"Quaternion \{ x: (\S+), y: (\S+), z: (\S+), w: (\S+) \}", scene)[0])
+    rotated = np.array([1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (x * z - y * w)])
+    np.testing.assert_allclose(rotated, np.array(command) / np.linalg.norm(command), atol=1e-12)
+
+
+def test_chain_scene_omits_the_arrow_and_trail_when_there_is_nothing_to_draw() -> None:
+  points = _chain((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+  assert "ArrowPrimitive" not in repr(chain_scene(points))
+  assert "ArrowPrimitive" not in repr(chain_scene(points, control=ControlState(step=2, time_s=0.4, entity_id="tip", applied=[0.0, 0.0, 0.0])))
+  assert 'id: "chain/trail"' not in repr(chain_scene(points, trail=[(0.0, 0.0, 0.0)]))
+  assert "entities=[]" in repr(chain_scene([])) and "entities=[]" in repr(chain_reference_scene({}))
+
+
+def test_chain_reference_scene_labels_one_marker_per_target() -> None:
+  radius = 0.1
+  scene = repr(chain_reference_scene({"end-mass reference": (0.75, 0.0, 0.0), "second": (2.0, 0.0, 0.0)}, radius=radius))
+  assert scene.count("SpherePrimitive") == 2 and scene.count("TextPrimitive") == 2
+  assert 'id: "chain/reference/end-mass reference"' in scene and 'id: "chain/reference/second"' in scene
+  # each marker is translucent, keeps its own colour in hand-over order, and is labelled with its position
+  for index, name in enumerate(("end-mass reference", "second")):
+    rgb = CHAIN_REFERENCE_COLORS[index]
+    assert f"r: {rgb[0]}, g: {rgb[1]}, b: {rgb[2]}, a: 0.4" in scene, name
+  assert 'text: "end-mass reference (x=0.75)"' in scene and 'text: "second (x=2.00)"' in scene
+  assert f"x: 0.75, y: 0.0, z: {3 * radius}" in scene
+
+
+def test_chain_plan_scene_draws_every_predicted_shape_and_the_end_mass_path() -> None:
+  thickness = 0.05
+  nodes = [[0.0, 0.0, 0.0, 1.0, 0.0, -0.1, 2.0, 0.0, -0.2], [0.0, 0.0, 0.0, 0.9, 0.0, -0.2, 1.8, 0.0, -0.4]]
+  scene = repr(chain_plan_scene(ChainPlan(step=4, time_s=0.8, n_masses=3, nodes=nodes), thickness=thickness))
+  # one faint strip per horizon node, plus one brighter strip through the nodes' end masses
+  assert scene.count("LinePrimitive") == len(nodes) + 1
+  assert scene.count('id: "chain/plan"') == 1
+  assert f"thickness: {thickness}" in scene and f"thickness: {2.0 * thickness}" in scene
+  assert "a: 0.25" in scene and "a: 0.9" in scene
+  assert "x: 2.0, y: 0.0, z: -0.2 }, Point3 { x: 1.8, y: 0.0, z: -0.4 }" in scene
+  assert "entities=[]" in repr(chain_plan_scene(ChainPlan(step=0, time_s=0.0, n_masses=3, nodes=[])))
 
 
 def test_track_scene_draws_the_center_loop_and_one_cube_per_cone() -> None:

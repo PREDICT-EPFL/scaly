@@ -3,13 +3,13 @@
     "3D!2wmzhow": {
       "cameraState": {
         "perspective": true,
-        "distance": 7.944286369163371,
-        "phi": 66.4918032786904,
-        "thetaOffset": 18.098360655742372,
+        "distance": 13.166,
+        "phi": 89.99999999999996,
+        "thetaOffset": -9.785779660460053,
         "targetOffset": [
-          -1.5632304559078025,
-          0.6994515476759977,
-          -2.956535217551657e-18
+          0,
+          0.5,
+          0
         ],
         "target": [
           0,
@@ -29,12 +29,19 @@
       "followMode": "follow-pose",
       "scene": {
         "transforms": {
-          "lineWidth": 0
+          "lineWidth": 0,
+          "visible": false
         }
       },
       "transforms": {},
       "topics": {
         "/scene": {
+          "visible": true
+        },
+        "/scene/horizon": {
+          "visible": true
+        },
+        "/scene/static": {
           "visible": true
         }
       },
@@ -147,6 +154,6 @@
     },
     "second": "RawMessages!4kw8ku0",
     "direction": "row",
-    "splitPercentage": 89.08568693154619
+    "splitPercentage": 80.23466275140177
   }
 }

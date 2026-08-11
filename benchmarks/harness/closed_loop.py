@@ -9,6 +9,7 @@ from benchmarks.harness import gbench
 from benchmarks.harness.provenance import collect
 from benchmarks.harness.recording import (
   CarShape,
+  ChainPlan,
   ControlState,
   HorizonPath,
   PlanarVehicleState,
@@ -37,14 +38,14 @@ def _provenance(cli_args: list[str]) -> dict[str, object]:
 
 
 def run_chain(*, smoke: bool, out_dir: Path, cli_args: list[str]) -> Path:
-  from benchmarks.problems.chain_of_masses import HORIZON, NU, n_dec, n_state
+  from benchmarks.problems.chain_of_masses import END_REF, HORIZON, NU, n_dec, n_state
   from benchmarks.problems.chain_of_masses.closed_loop import ClosedLoopConfig, plant_step, run_episode
 
   config = ClosedLoopConfig.smoke() if smoke else ClosedLoopConfig.canonical()
   episode = run_episode(config)
   output = out_dir / "chain"
   output.mkdir(parents=True, exist_ok=True)
-  np.savez_compressed(output / "rollout.npz", state=episode.states, control=episode.controls, points=episode.points)
+  np.savez_compressed(output / "rollout.npz", state=episode.states, control=episode.controls, points=episode.points, plan=episode.plans)
   chain_center = tuple(np.mean(episode.points[0], axis=0).tolist())
   with Recorder(output / "episode.mcap", allow_overwrite=True, scene_center=chain_center) as recorder:
     recorder.record_metadata(
@@ -57,17 +58,30 @@ def run_chain(*, smoke: bool, out_dir: Path, cli_args: list[str]) -> Path:
         config={"n_masses": config.n_masses, "horizon": config.horizon, "steps": config.steps},
       )
     )
+    recorder.record_chain_references({"end-mass reference": END_REF})
     for step, points in enumerate(episode.points):
       time_s = step * config.params.dt
+      applied = (
+        ControlState(step=step, time_s=time_s, entity_id="tip", applied=episode.controls[step].tolist()) if step < len(episode.telemetry) else None
+      )
       recorder.record_chain(
         [
           PointState3D(step=step, time_s=time_s, point_id=str(i), x=float(point[0]), y=float(point[1]), z=float(point[2]))
           for i, point in enumerate(points)
-        ]
+        ],
+        control=applied,
       )
-      if step >= len(episode.telemetry):
+      if applied is None:
         continue
-      recorder.record_control([ControlState(step=step, time_s=time_s, entity_id="tip", applied=episode.controls[step].tolist())])
+      recorder.record_control([applied])
+      recorder.record_chain_plan(
+        ChainPlan(
+          step=step,
+          time_s=time_s,
+          n_masses=config.n_masses,
+          nodes=[node.reshape(-1).tolist() for node in episode.plans[step]],
+        )
+      )
       stats = episode.telemetry[step]
       recorder.record_telemetry(
         ScalarTelemetry(

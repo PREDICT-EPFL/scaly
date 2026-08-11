@@ -1,10 +1,12 @@
 """Receding-horizon chain-of-masses benchmark runner.
 
 The canonical B3 point is five masses, a 12-interval controller horizon, and
-20 closed-loop steps (four simulated seconds with the default ``dt=0.2``).
+90 closed-loop steps (eighteen simulated seconds with the default ``dt=0.2``) —
+long enough for the chain to settle onto ``END_REF``, with the end mass within
+0.06 of it, moving under 3 mm per step, and ``|u|`` under 0.02 by the end.
 ``ClosedLoopConfig.smoke()`` reduces this to two intervals and two steps for a
-short toolchain check.  The plant deliberately uses the independent NumPy
-RK4 implementation while the controller uses Alloy's generated IPOPT path.
+short toolchain check.  The plant deliberately uses the independent NumPy RK4
+implementation while the controller uses Alloy's generated IPOPT path.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from benchmarks.problems.chain_of_masses import (
 class ClosedLoopConfig:
   n_masses: int = 5
   horizon: int = 12
-  steps: int = 20
+  steps: int = 90
   params: ChainParams = ChainParams()
 
   def __post_init__(self) -> None:
@@ -44,7 +46,7 @@ class ClosedLoopConfig:
 
   @classmethod
   def canonical(cls, *, params: ChainParams = ChainParams()) -> ClosedLoopConfig:
-    return cls(n_masses=5, horizon=12, steps=20, params=params)
+    return cls(n_masses=5, horizon=12, steps=90, params=params)
 
   @classmethod
   def smoke(cls, *, params: ChainParams = ChainParams()) -> ClosedLoopConfig:
@@ -58,6 +60,9 @@ class ClosedLoopEpisode:
   controls: np.ndarray
   telemetry: tuple[SolverStats, ...]
   points: np.ndarray
+  #: ``(steps, horizon + 1, n_masses, 3)`` — the open-loop plan behind every applied control,
+  #: i.e. the chain the controller predicted at each node of the horizon it solved.
+  plans: np.ndarray
   oracle_z: np.ndarray
   oracle_p: np.ndarray
   oracle_inputs: tuple[dict[str, np.ndarray], ...]
@@ -140,6 +145,7 @@ def run_episode(config: ClosedLoopConfig | None = None, *, smoke: bool = False) 
   states = np.empty((config.steps + 1, nx), dtype=np.float64)
   controls = np.empty((config.steps, NU), dtype=np.float64)
   points = np.empty((config.steps + 1, config.n_masses, 3), dtype=np.float64)
+  plans = np.empty((config.steps, config.horizon + 1, config.n_masses, 3), dtype=np.float64)
   states[0], points[0] = state, extract_positions(state, config.n_masses)
   telemetry: list[SolverStats] = []
   oracle_inputs: list[dict[str, np.ndarray]] = []
@@ -158,6 +164,8 @@ def run_episode(config: ClosedLoopConfig | None = None, *, smoke: bool = False) 
       raise RuntimeError(f"Alloy/IPOPT returned a non-finite trajectory at step {step}")
     oracle_inputs.append({"z": solution.copy(), "p": p.copy()})
     telemetry.append(stats)
+    for stage in range(config.horizon + 1):
+      plans[step, stage] = extract_positions(solution[stage * nz : stage * nz + nx], config.n_masses)
 
     control = np.clip(solution[nx:nz], -1.0, 1.0)
     state = plant_step(state, control, config.params)
@@ -174,6 +182,7 @@ def run_episode(config: ClosedLoopConfig | None = None, *, smoke: bool = False) 
     controls,
     tuple(telemetry),
     points,
+    plans,
     representative["z"],
     representative["p"],
     tuple(oracle_inputs),

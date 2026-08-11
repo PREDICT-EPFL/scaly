@@ -24,7 +24,8 @@ Smoke runs three groups, all on by default:
   constants, the episode's shapes and bounds, the recorded scene, and the
   Alloy-vs-CasADi trajectory agreement; for `chain_of_masses` the dimensions and
   RK4 plant, the equality Jacobian against CasADi and a dense reference, the NLP
-  objective against CasADi, and the episode's shapes; for `bumpercars_filter` the
+  objective against CasADi, the single end-mass reference behind both cost terms,
+  the episode's shapes, and the recorded scene; for `bumpercars_filter` the
   Alloy-vs-CasADi oracle, the parameter-tail order, and the opt-in exact-Hessian
   rollout. Gates needing IPOPT or CasADi report `skipped: ...` rather than passing
   silently.
@@ -114,6 +115,15 @@ and stay visible however far ahead you scrub — a single 22 kB message per epis
 rather than one per step. All three topics are enabled in the checked-in layouts; a
 new scene topic is invisible in the 3D panel until its layout turns it on.
 
+In the chain scene the fixed wall anchor and the actuated end mass are picked out by
+colour, the applied control is an arrow on the end mass (the control *is* that mass's
+velocity), and the end mass keeps a trail. Its open-loop plan goes on
+`/scene/horizon` as one faint strip per horizon node plus the path the plan takes the
+end mass along, and its end-mass reference is a labelled marker on `/scene/static`,
+logged once for the same seeking reason as the track. What that reference is, and how
+it departs from laopt, is documented in
+[`problems/chain_of_masses/README.md`](problems/chain_of_masses/README.md).
+
 Layouts are **not** generated. Each problem keeps one hand-authored layout,
 exported from Foxglove Desktop, next to its runner:
 
@@ -139,7 +149,7 @@ Canonical operating points are deterministic and intentionally modest:
 
 | problem | canonical point | scene |
 |---|---|---|
-| chain of masses | `M=5`, controller `N=12`, 20 plant steps at 0.2 s | 3D chain |
+| chain of masses | `M=5`, controller `N=12`, 90 plant steps at 0.2 s (long enough to settle) | 3D chain, end-mass control arrow and trail, open-loop plan, end-mass reference marker |
 | race cars | controller `N=40`, one lap of `fsds_competition_1` (340 m, 1367 plant steps at 0.05 s), alloy and casadi backends | track, cones, planar vehicle, reference and predicted horizons |
 | bumpercars CT-DTCBF | 4 cars, 80 plant steps at 0.1 s, seed 42 | planar cars |
 

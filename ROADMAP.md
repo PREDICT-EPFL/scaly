@@ -519,10 +519,11 @@ columns respectively — interleave them between B2 and B4.
   operating points chosen and documented, FE-instance harvesting for the
   gbench benchmarks. **Status: COMPLETE (2026-07-15).** A common Pydantic →
   JSON-schema MCAP recorder emits solver/control telemetry, `/tf`, and native
-  `SceneUpdate` geometry, with centered scene frames, trajectory trails, and
-  arena bounds. Layouts are not generated: each problem keeps one hand-authored
+  `SceneUpdate` geometry, with centered scene frames, trajectory trails, arena
+  bounds, applied-control arrows, and open-loop plans drawn against the closed-loop
+  trajectory. Layouts are not generated: each problem keeps one hand-authored
   `foxglove-layout.json`, exported from Foxglove Desktop, next to its runner. The
-  canonical points are chain M=5/N=12 (20 steps; harvested state rolled into
+  canonical points are chain M=5/N=12 (90 steps; harvested state rolled into
   the N=40 FE transcription), race cars N=40 (one lap of the 340 m FSDS
   `fsds_competition_1`, 1367 steps at 0.05 s), and
   bumpercars C=4 (80 steps, seed 42). Their midpoint successful oracle inputs

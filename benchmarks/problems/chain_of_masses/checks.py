@@ -20,6 +20,7 @@ import numpy as np
 
 from alloy.toolchain import solver_loadable
 from benchmarks.problems.chain_of_masses import (
+  END_REF,
   NU,
   ChainParams,
   ca_chain_eq_jac,
@@ -27,6 +28,7 @@ from benchmarks.problems.chain_of_masses import (
   chain_eq_function,
   chain_eq_jac_dense_reference,
   chain_nlp,
+  chain_objective_fn,
   chain_step_fn,
   initial_state,
   n_dec,
@@ -97,6 +99,32 @@ def check_nlp_objective_matches_casadi() -> None:
   np.testing.assert_allclose(float(alloy_out["f"]), float(ca_out["f"]), rtol=1e-6)
 
 
+def check_one_reference_for_every_end_mass_term() -> None:
+  """Stage and terminal costs track the same end-mass reference, and only that reference.
+
+  This is the deliberate deviation from laopt, whose expanded stage and terminal terms imply two
+  different targets (`x = 3.0` and `x = 0.75`), so it is worth pinning: put every end mass on
+  ``END_REF`` at rest with zero control, and the objective's gradient must vanish in every
+  end-mass block — a stage weight that disagreed with the terminal one would show up here.
+  """
+  n_masses, horizon = 5, 4
+  nz = n_state(n_masses) + NU
+  end = 3 * (n_masses - 2)
+  grad = chain_objective_fn(n_masses, horizon).factory(f"chain_obj_grad_M{n_masses}_N{horizon}", ["z"], ["grad:f:z"])
+
+  z = np.zeros(n_dec(n_masses, horizon))
+  for stage in range(horizon + 1):
+    z[stage * nz + end : stage * nz + end + 3] = END_REF
+  actual = np.asarray(grad(z)).reshape(-1)
+
+  np.testing.assert_allclose(actual, np.zeros_like(actual), rtol=0.0, atol=1e-12)
+  # and the reference really is the only stationary point: moving one end mass off it costs
+  for offset in (np.array([0.1, 0.0, 0.0]), np.array([0.0, -0.2, 0.0]), np.array([0.0, 0.0, 0.3])):
+    moved = z.copy()
+    moved[end : end + 3] += offset
+    assert np.any(np.abs(np.asarray(grad(moved)).reshape(-1)) > 1e-9), offset
+
+
 def check_extract_positions() -> None:
   """Rendered positions carry the fixed anchor and reject a mis-shaped state."""
   state = initial_state(5)
@@ -134,6 +162,7 @@ def check_episode_artifacts() -> None:
   assert episode.states.shape == (2, 9), episode.states.shape
   assert episode.controls.shape == (1, 3), episode.controls.shape
   assert episode.points.shape == (2, 3, 3), episode.points.shape
+  assert episode.plans.shape == (1, 2, 3, 3), episode.plans.shape
   assert episode.oracle_z.shape == (n_dec(3, 1),)
   assert episode.oracle_p.shape == (n_param(3),)
   assert len(episode.telemetry) == 1
@@ -142,6 +171,59 @@ def check_episode_artifacts() -> None:
   assert np.all(np.isfinite(episode.states))
   assert np.all(np.isfinite(episode.controls))
   assert np.all(np.isfinite(episode.points))
+  # the plan's first node is the measured state the solve was handed
+  np.testing.assert_allclose(episode.plans[0, 0], episode.points[0], rtol=0.0, atol=1e-9)
+
+
+def check_recorded_scene() -> None:
+  """The runner feeds the 3D scene builders: this problem's end-mass reference once, and on every
+  state that has one, the applied control plus the open-loop plan behind it.
+
+  The builders are generic geometry covered by ``tests/alloy/test_benchmark_recording.py``;
+  what belongs here is that the chain runner calls them with the chain's own data.
+  """
+  import tempfile
+  from pathlib import Path
+
+  from benchmarks.harness import recording
+  from benchmarks.harness.closed_loop import run_chain
+
+  record_chain, record_references = recording.Recorder.record_chain, recording.Recorder.record_chain_references
+  record_plan = recording.Recorder.record_chain_plan
+  controls: list[list[float] | None] = []
+  references: list[dict[str, tuple[float, ...]]] = []
+  plans: list[tuple[int, int]] = []
+
+  def spy_chain(self, points, *, control=None, _seen=controls):  # type: ignore[no-untyped-def]
+    _seen.append(None if control is None else list(control.applied))
+    return record_chain(self, points, control=control)
+
+  def spy_references(self, refs, _seen=references):  # type: ignore[no-untyped-def]
+    _seen.append({name: tuple(position) for name, position in refs.items()})
+    return record_references(self, refs)
+
+  def spy_plan(self, plan, _seen=plans):  # type: ignore[no-untyped-def]
+    logged = record_plan(self, plan)
+    _seen.append((len(logged.nodes), logged.n_masses))
+    return logged
+
+  recording.Recorder.record_chain, recording.Recorder.record_chain_references = spy_chain, spy_references
+  recording.Recorder.record_chain_plan = spy_plan
+  try:
+    with tempfile.TemporaryDirectory() as directory:
+      output = run_chain(smoke=True, out_dir=Path(directory), cli_args=[])
+      assert (output / "episode.mcap").stat().st_size > 0, "empty MCAP"
+  finally:
+    recording.Recorder.record_chain, recording.Recorder.record_chain_references = record_chain, record_references
+    recording.Recorder.record_chain_plan = record_plan
+
+  assert references == [{"end-mass reference": END_REF}], references
+  config = ClosedLoopConfig.smoke()
+  assert len(controls) == config.steps + 1, len(controls)
+  assert controls[-1] is None, "the final state has no control to draw"
+  assert all(control is not None and len(control) == NU for control in controls[:-1]), controls
+  # one open-loop plan per applied control, each covering every node of the horizon it solved
+  assert plans == [(config.horizon + 1, config.n_masses)] * config.steps, plans
 
 
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
@@ -149,9 +231,11 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "dims_and_rk4": (check_dims_and_rk4, False, False),
   "eq_jacobian": (check_eq_jacobian_matches_casadi_and_dense_reference, False, True),
   "nlp_objective": (check_nlp_objective_matches_casadi, True, True),
+  "one_reference": (check_one_reference_for_every_end_mass_term, False, False),
   "extract_positions": (check_extract_positions, False, False),
   "plant_step": (check_plant_step_is_parameterized_rk4, False, False),
   "episode_artifacts": (check_episode_artifacts, True, False),
+  "recorded_scene": (check_recorded_scene, True, False),
 }
 
 

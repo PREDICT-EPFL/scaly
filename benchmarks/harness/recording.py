@@ -25,6 +25,7 @@ from foxglove.messages import (
   SceneEntity,
   SceneUpdate,
   SpherePrimitive,
+  TextPrimitive,
   Timestamp,
   Vector3,
 )
@@ -92,6 +93,19 @@ class HorizonPath(_Schema):
   yaw: list[float] = Field(default_factory=list)
 
 
+class ChainPlan(_Schema):
+  """One open-loop plan for a chain: the predicted shape at every node of the control horizon.
+
+  `nodes` holds one entry per horizon node, each the flattened `x, y, z` of every mass from the
+  anchor outwards, so a plan of `H + 1` nodes over `M` masses is `H + 1` lists of `3 * M` floats.
+  """
+
+  step: int = Field(ge=0)
+  time_s: float = Field(ge=0.0)
+  n_masses: int = Field(ge=2)
+  nodes: list[list[float]]
+
+
 CAR_COLORS = (
   (0.12, 0.47, 0.87),
   (0.89, 0.24, 0.20),
@@ -106,6 +120,19 @@ APPLIED_COLOR = (0.08, 0.08, 0.08)
 ACCEL_COLOR = (0.15, 0.80, 0.30)
 BRAKE_COLOR = (0.90, 0.15, 0.15)
 WHEEL_COLOR = (0.10, 0.10, 0.12)
+# Chain scene: one colour per role, so the fixed wall anchor and the actuated end mass that
+# carries the control arrow are told apart from the masses that only obey the springs.
+CHAIN_COLORS = {
+  "link": (0.20, 0.72, 0.95),
+  "mass": (1.00, 0.48, 0.10),
+  "anchor": (0.55, 0.58, 0.62),
+  "end": (0.96, 0.26, 0.21),
+  "control": (0.18, 0.80, 0.44),
+  "trail": (0.60, 0.62, 0.70),
+  "plan": (0.95, 0.20, 0.70),
+}
+# Marker colours for the labelled reference points, taken in the order they are handed over.
+CHAIN_REFERENCE_COLORS = ((0.95, 0.80, 0.20), (0.62, 0.45, 0.92), (0.20, 0.80, 0.85))
 
 
 @dataclass(frozen=True)
@@ -162,6 +189,18 @@ def car_frame(vehicle_id: str) -> str:
   coordinates, so pointing the 3D panel's display frame at it makes the camera ride
   along with the car."""
   return f"car/{vehicle_id}"
+
+
+def _direction_quaternion(vector: np.ndarray) -> Quaternion:
+  """Rotation taking +X onto `vector`, since an arrow points along its pose's +X axis."""
+  direction = vector / np.linalg.norm(vector)
+  axis = np.array([0.0, -direction[2], direction[1]])  # x_hat x direction
+  norm = float(np.linalg.norm(axis))
+  if norm < 1e-12:  # (anti)parallel to +X, where the cross product carries no axis
+    return Quaternion(x=0.0, y=0.0, z=0.0, w=1.0) if direction[0] > 0.0 else Quaternion(x=0.0, y=0.0, z=1.0, w=0.0)
+  half = 0.5 * float(np.arccos(np.clip(direction[0], -1.0, 1.0)))
+  axis = axis * (float(np.sin(half)) / norm)
+  return Quaternion(x=float(axis[0]), y=float(axis[1]), z=float(axis[2]), w=float(np.cos(half)))
 
 
 def _circle(radius: float, color: Color, *, segments: int = 48) -> LinePrimitive:
@@ -272,38 +311,160 @@ def planar_car_scene(
   return SceneUpdate(entities=entities)
 
 
-def chain_scene(points: Sequence[PointState3D | Mapping[str, Any]], *, radius: float = 0.08) -> SceneUpdate:
+def _vector_arrow(origin: Sequence[float], vector: Sequence[float], color: Color, *, scale: float, shaft_diameter: float) -> ArrowPrimitive | None:
+  """Arrow `scale * |vector|` long, from `origin` along `vector`; `None` when there is nothing to draw."""
+  values = np.asarray(vector, dtype=np.float64)
+  length = scale * float(np.linalg.norm(values))
+  if length < 1e-9:
+    return None
+  return ArrowPrimitive(
+    pose=Pose(
+      position=Vector3(x=float(origin[0]), y=float(origin[1]), z=float(origin[2])),
+      orientation=_direction_quaternion(values),
+    ),
+    shaft_length=0.75 * length,
+    shaft_diameter=shaft_diameter,
+    head_length=0.25 * length,
+    head_diameter=2.0 * shaft_diameter,
+    color=color,
+  )
+
+
+def chain_scene(
+  points: Sequence[PointState3D | Mapping[str, Any]],
+  *,
+  radius: float = 0.08,
+  control: ControlState | Mapping[str, Any] | None = None,
+  control_scale: float = 0.6,
+  trail: Sequence[tuple[float, float, float]] = (),
+) -> SceneUpdate:
+  """The chain as a strip through its masses, the first drawn as the fixed wall anchor and the
+  last, larger, as the actuated end mass. The end mass's control *is* its velocity, so `control`
+  is drawn as an arrow there, `control_scale` metres long per unit command. `trail` is the path
+  the end mass has taken so far."""
   states = [PointState3D.model_validate(point) for point in points]
   if not states:
     return SceneUpdate(entities=[])
-  xyz = [Point3(x=point.x, y=point.y, z=point.z) for point in states]
   timestamp = _timestamp(states[0].time_s)
-  spheres = [
-    SpherePrimitive(
-      pose=Pose(position=Vector3(x=point.x, y=point.y, z=point.z), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
-      size=Vector3(x=2 * radius, y=2 * radius, z=2 * radius),
-      color=Color(r=1.0, g=0.48, b=0.1, a=1.0),
+  spheres = []
+  for index, point in enumerate(states):
+    role = "anchor" if index == 0 else ("end" if index == len(states) - 1 else "mass")
+    size = 2 * radius * (1.4 if role == "end" else 1.0)
+    spheres.append(
+      SpherePrimitive(
+        pose=Pose(position=Vector3(x=point.x, y=point.y, z=point.z), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
+        size=Vector3(x=size, y=size, z=size),
+        color=_color(CHAIN_COLORS[role]),
+      )
     )
-    for point in states
+  arrows = []
+  if control is not None:
+    end = states[-1]
+    arrow = _vector_arrow(
+      (end.x, end.y, end.z),
+      ControlState.model_validate(control).applied,
+      _color(CHAIN_COLORS["control"]),
+      scale=control_scale,
+      shaft_diameter=0.5 * radius,
+    )
+    if arrow is not None:
+      arrows.append(arrow)
+  entities = [
+    SceneEntity(
+      timestamp=timestamp,
+      frame_id="scene",
+      id="chain",
+      lines=[
+        LinePrimitive(
+          type=LinePrimitiveLineType.LineStrip,
+          thickness=radius * 0.4,
+          points=[Point3(x=point.x, y=point.y, z=point.z) for point in states],
+          color=_color(CHAIN_COLORS["link"]),
+        )
+      ],
+      spheres=spheres,
+      arrows=arrows,
+    )
   ]
-  return SceneUpdate(
-    entities=[
+  if len(trail) > 1:
+    entities.append(
       SceneEntity(
         timestamp=timestamp,
         frame_id="scene",
-        id="chain",
+        id="chain/trail",
         lines=[
           LinePrimitive(
             type=LinePrimitiveLineType.LineStrip,
-            thickness=radius * 0.4,
-            points=xyz,
-            color=Color(r=0.2, g=0.72, b=0.95, a=1.0),
+            thickness=radius * 0.25,
+            points=[Point3(x=x, y=y, z=z) for x, y, z in trail],
+            color=_color(CHAIN_COLORS["trail"], 0.7),
           )
         ],
-        spheres=spheres,
       )
-    ]
+    )
+  return SceneUpdate(entities=entities)
+
+
+def chain_plan_scene(plan: ChainPlan | Mapping[str, Any], *, thickness: float = 0.02) -> SceneUpdate:
+  """The open-loop plan behind the applied control: the predicted chain at every node of the
+  horizon as a faint strip, plus the path the plan takes the end mass along."""
+  validated = ChainPlan.model_validate(plan)
+  nodes = [np.asarray(node, dtype=np.float64).reshape(validated.n_masses, 3) for node in validated.nodes]
+  if not nodes:
+    return SceneUpdate(entities=[])
+  rgb = CHAIN_COLORS["plan"]
+  shapes = [
+    LinePrimitive(
+      type=LinePrimitiveLineType.LineStrip,
+      thickness=thickness,
+      points=[Point3(x=float(x), y=float(y), z=float(z)) for x, y, z in node],
+      color=_color(rgb, 0.25),
+    )
+    for node in nodes
+  ]
+  shapes.append(
+    LinePrimitive(
+      type=LinePrimitiveLineType.LineStrip,
+      thickness=2.0 * thickness,
+      points=[Point3(x=float(node[-1][0]), y=float(node[-1][1]), z=float(node[-1][2])) for node in nodes],
+      color=_color(rgb, 0.9),
+    )
   )
+  return SceneUpdate(entities=[SceneEntity(timestamp=_timestamp(validated.time_s), frame_id="scene", id="chain/plan", lines=shapes)])
+
+
+def chain_reference_scene(references: Mapping[str, Sequence[float]], *, radius: float = 0.08) -> SceneUpdate:
+  """The end-mass positions the cost pulls towards, one labelled translucent marker each; the
+  label carries the name it was handed over under and the position itself."""
+  entities = []
+  for index, (name, position) in enumerate(references.items()):
+    x, y, z = (float(value) for value in position)
+    rgb = CHAIN_REFERENCE_COLORS[index % len(CHAIN_REFERENCE_COLORS)]
+    entities.append(
+      SceneEntity(
+        timestamp=_timestamp(0.0),
+        frame_id="scene",
+        id=f"chain/reference/{name}",
+        spheres=[
+          SpherePrimitive(
+            pose=Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
+            size=Vector3(x=3 * radius, y=3 * radius, z=3 * radius),
+            color=_color(rgb, 0.4),
+          )
+        ],
+        texts=[
+          TextPrimitive(
+            pose=Pose(position=Vector3(x=x, y=y, z=z + 3 * radius), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
+            billboard=True,
+            font_size=12.0,
+            scale_invariant=True,
+            color=_color(rgb),
+            text=f"{name} (x={x:.2f})",
+          )
+        ],
+      )
+    )
+  return SceneUpdate(entities=entities)
 
 
 CONE_STYLES = {
@@ -421,6 +582,7 @@ class Recorder:
     self._points = self._channel("/chain/point", PointState3D)
     self._control = self._channel("/control", ControlState)
     self._horizon = self._channel("/horizon", HorizonPath)
+    self._plan = self._channel("/chain/plan", ChainPlan)
     # Seeking makes Foxglove hand each panel the *single* newest message per subscribed topic, so
     # anything that must survive a jump has to be the last message on a topic of its own. The three
     # groups below are updated independently, hence three topics: geometry logged once at time zero
@@ -430,6 +592,7 @@ class Recorder:
     self._horizon_scene = SceneUpdateChannel("/scene/horizon", context=self._context)
     self._tf = FrameTransformsChannel("/tf", context=self._context)
     self._planar_history: dict[str, list[tuple[float, float]]] = {}
+    self._chain_history: list[tuple[float, float, float]] = []
     self._tf.log(
       FrameTransforms(
         transforms=[
@@ -495,13 +658,27 @@ class Recorder:
       self._scene.log(scene, log_time=log_time)
     return validated
 
-  def record_chain(self, points: Sequence[PointState3D | Mapping[str, Any]]) -> list[PointState3D]:
+  def record_chain(
+    self, points: Sequence[PointState3D | Mapping[str, Any]], *, control: ControlState | Mapping[str, Any] | None = None
+  ) -> list[PointState3D]:
     validated = [PointState3D.model_validate(point) for point in points]
     for point in validated:
       self._log(self._points, PointState3D, point, _log_time(point.time_s))
     if validated:
-      self._scene.log(chain_scene(validated), log_time=_log_time(validated[0].time_s))
+      end = validated[-1]
+      self._chain_history.append((end.x, end.y, end.z))
+      self._scene.log(chain_scene(validated, control=control, trail=self._chain_history), log_time=_log_time(validated[0].time_s))
     return validated
+
+  def record_chain_plan(self, plan: ChainPlan | Mapping[str, Any]) -> ChainPlan:
+    validated = ChainPlan.model_validate(plan)
+    self._log(self._plan, ChainPlan, validated, _log_time(validated.time_s))
+    # The plan is this problem's horizon, so it rides the horizon topic the race-car horizons use.
+    self._horizon_scene.log(chain_plan_scene(validated), log_time=_log_time(validated.time_s))
+    return validated
+
+  def record_chain_references(self, references: Mapping[str, Sequence[float]]) -> None:
+    self._static_scene.log(chain_reference_scene(references), log_time=0)
 
   def record_arena(self, bounds: tuple[float, float, float, float], *, margin: float = 0.0) -> None:
     self._static_scene.log(arena_scene(bounds, margin=margin), log_time=0)
@@ -533,6 +710,7 @@ class Recorder:
       self._points,
       self._control,
       self._horizon,
+      self._plan,
       self._scene,
       self._static_scene,
       self._horizon_scene,
