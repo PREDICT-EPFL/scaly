@@ -62,6 +62,7 @@ Functions are sparse-typed, derivatives are pulled through the factory (`jac:*`,
 See `docs/roadmap.md` for the design north star and milestone history. Key documents:
 
 - `docs/roadmap.md` — phased development plan, current status, exit criteria
+- `docs/naming.md` — project-name lineage, criteria, and the leading alternative
 - `docs/spec.md` — IR semantics, op set, ABI conventions
 - `docs/solvers.md` — QP/NLP interfaces (`al.qp`, `al.nlp`) and PIQP/IPOPT wiring
 - `docs/safety_filter.md` — Phase 5 driving workload
