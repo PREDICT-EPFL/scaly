@@ -210,7 +210,7 @@ def check_recorded_scene_and_artifacts() -> None:
   from benchmarks.harness import recording
   from benchmarks.harness.closed_loop import run_race_cars
 
-  record_track, record_horizons = recording.Recorder.record_track, recording.Recorder.record_horizons
+  record_track, record_horizons = recording.RaceCarRecorder.record_track, recording.RaceCarRecorder.record_horizons
   for backend in ("alloy", "casadi"):
     tracks: list[tuple[tuple[int, ...], dict[str, int]]] = []
     horizons: list[list[str]] = []
@@ -224,7 +224,7 @@ def check_recorded_scene_and_artifacts() -> None:
       _seen.append([path.path_id for path in logged])
       return logged
 
-    recording.Recorder.record_track, recording.Recorder.record_horizons = spy_track, spy_horizons
+    recording.RaceCarRecorder.record_track, recording.RaceCarRecorder.record_horizons = spy_track, spy_horizons
     try:
       with tempfile.TemporaryDirectory() as directory:
         output = run_race_cars(smoke=True, out_dir=Path(directory), cli_args=[], backend=backend)
@@ -239,7 +239,7 @@ def check_recorded_scene_and_artifacts() -> None:
           assert set(inputs.files) == {"p", "z"}
           assert all(np.all(np.isfinite(inputs[name])) for name in inputs.files)
     finally:
-      recording.Recorder.record_track, recording.Recorder.record_horizons = record_track, record_horizons
+      recording.RaceCarRecorder.record_track, recording.RaceCarRecorder.record_horizons = record_track, record_horizons
     assert len(tracks) == 1, f"{backend}: track logged {len(tracks)} times, expected once"
     shape, cone_counts = tracks[0]
     assert shape == center_line.shape

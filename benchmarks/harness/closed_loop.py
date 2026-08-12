@@ -5,22 +5,21 @@ from pathlib import Path
 
 import numpy as np
 
-from benchmarks.harness import gbench
+from benchmarks.harness import ROOT, gbench
 from benchmarks.harness.provenance import collect
 from benchmarks.harness.recording import (
   CarShape,
   ChainPlan,
+  ChainRecorder,
   ControlState,
   HorizonPath,
   PlanarVehicleState,
   PointState3D,
-  Recorder,
+  RaceCarRecorder,
   RunMetadata,
   ScalarTelemetry,
   write_result_artifacts,
 )
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def _finite(value: float) -> float | None:
@@ -38,20 +37,20 @@ def _provenance(cli_args: list[str]) -> dict[str, object]:
 
 
 def run_chain(*, smoke: bool, out_dir: Path, cli_args: list[str]) -> Path:
-  from benchmarks.problems.chain_of_masses import END_REF, HORIZON, NU, n_dec, n_state
-  from benchmarks.problems.chain_of_masses.closed_loop import ClosedLoopConfig, plant_step, run_episode
+  from benchmarks.problems.chain import END_REF, HORIZON, NU, n_dec, n_state
+  from benchmarks.problems.chain.closed_loop import ClosedLoopConfig, plant_step, run_episode
 
   config = ClosedLoopConfig.smoke() if smoke else ClosedLoopConfig.canonical()
   episode = run_episode(config)
-  output = out_dir / "chain"
+  output = out_dir / "chain" / "alloy"
   output.mkdir(parents=True, exist_ok=True)
   np.savez_compressed(output / "rollout.npz", state=episode.states, control=episode.controls, points=episode.points, plan=episode.plans)
   chain_center = tuple(np.mean(episode.points[0], axis=0).tolist())
-  with Recorder(output / "episode.mcap", allow_overwrite=True, scene_center=chain_center) as recorder:
+  with ChainRecorder(output / "episode.mcap", allow_overwrite=True, scene_center=chain_center) as recorder:
     recorder.record_metadata(
       RunMetadata(
         run_id=f"chain-M{config.n_masses}-N{config.horizon}",
-        problem="chain_of_masses",
+        problem="chain",
         backend="alloy-ipopt",
         seed=0,
         dt=config.params.dt,
@@ -106,7 +105,7 @@ def run_chain(*, smoke: bool, out_dir: Path, cli_args: list[str]) -> Path:
     state = plant_step(state, control, config.params)
   benchmark_z[HORIZON * nz :] = state
   summary = {
-    "problem": "chain_of_masses",
+    "problem": "chain",
     "n_masses": config.n_masses,
     "horizon": config.horizon,
     "steps": config.steps,
@@ -153,7 +152,7 @@ def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], backend: s
     wheelbase=WHEELBASE,
   )
   centroid = np.mean(episode.center_path, axis=0)
-  with Recorder(
+  with RaceCarRecorder(
     output / "episode.mcap", allow_overwrite=True, scene_center=(float(centroid[0]), float(centroid[1]), 0.0), car_shape=shape
   ) as recorder:
     recorder.record_metadata(
@@ -241,13 +240,14 @@ def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], backend: s
   return output
 
 
-def run_bumpercars(*, smoke: bool, backend: str, out_dir: Path, cli_args: list[str]) -> Path:
-  from benchmarks.problems.bumpercars_filter.common import ClosedLoopConfig, FilterConfig, load_ct_full_weights, sample_initial_states
-  from benchmarks.problems.bumpercars_filter.run_closed_loop import plot_outputs, run_one
+def run_unbumpercars(*, smoke: bool, backend: str, out_dir: Path, cli_args: list[str]) -> Path:
+  from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, load_dt_mlp_weights, sample_initial_states
+  from benchmarks.problems.unbumpercars.run_closed_loop import plot_outputs, run_one
 
-  loop = ClosedLoopConfig(ncars=2, horizon=2) if smoke else ClosedLoopConfig()
+  loop = ClosedLoopConfig(ncars=2, steps=2) if smoke else ClosedLoopConfig()
   filt = FilterConfig(ipopt_max_iter=40) if smoke else FilterConfig()
-  weights = load_ct_full_weights()
+  # filt.model defaults to "dt", so the filter reads the discrete MLP's weights
+  weights = load_dt_mlp_weights()
   initial = sample_initial_states(loop)
   result = run_one(backend, initial, loop, filt, weights, out_dir, False)
   plot_outputs({backend: result}, loop, out_dir, False)
@@ -255,8 +255,8 @@ def run_bumpercars(*, smoke: bool, backend: str, out_dir: Path, cli_args: list[s
 
 
 def run(problem: str, *, smoke: bool, backend: str, out_dir: Path, cli_args: list[str]) -> Path:
-  if problem == "bumpercars":
-    return run_bumpercars(smoke=smoke, backend=backend, out_dir=out_dir / problem, cli_args=cli_args)
+  if problem == "unbumpercars":
+    return run_unbumpercars(smoke=smoke, backend=backend, out_dir=out_dir / problem, cli_args=cli_args)
   if problem == "race_cars":
     return run_race_cars(smoke=smoke, out_dir=out_dir, cli_args=cli_args, backend=backend)
   return run_chain(smoke=smoke, out_dir=out_dir, cli_args=cli_args)

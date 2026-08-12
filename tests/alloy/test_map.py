@@ -660,8 +660,14 @@ def pairs_step(s, u):
 
 @al.function("pairs_barrier", {"prev_i": NS, "prev_j": NS, "si": NS, "sj": NS, "slack": 1})
 def pairs_barrier(prev_i, prev_j, si, sj, slack):
+  # The trailing p-norm term mirrors the smooth-max a velocity-margin barrier uses; it is what
+  # brings integer POW, a *non-integer* POW (the shape of such a barrier's braking envelope,
+  # `c * d^q`) and a nested sqrt into the second-order path through the MAP. As in the real
+  # barrier, the non-integer power's base is bounded away from zero, where its slope diverges.
   d, dprev = si[:2] - sj[:2], prev_i[:2] - prev_j[:2]
-  return {"h": al.stack([(al.dot(d, d).sqrt() - 0.5 * (1.0 + al.dot(dprev, dprev)).log() + slack[0]).scalar()])}
+  envelope = 1.1 * (1.0 + al.dot(dprev, dprev)) ** 0.84
+  soft_max = (al.dot(d, d) ** 2 + envelope**4).sqrt().sqrt()
+  return {"h": al.stack([(al.dot(d, d).sqrt() - 0.5 * (1.0 + al.dot(dprev, dprev)).log() + soft_max + slack[0]).scalar()])}
 
 
 @al.function("pairs_wall", {"s": NS, "snext": NS, "slack": 1})

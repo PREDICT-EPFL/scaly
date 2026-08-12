@@ -26,13 +26,13 @@
       },
       "cameraState": {
         "perspective": false,
-        "distance": 21.05263157892242,
-        "phi": 60.196778673374894,
+        "distance": 21.052631578914063,
+        "phi": 60.1967786733749,
         "thetaOffset": 0,
         "targetOffset": [
-          -0.2137615353632148,
-          -0.31718205932590154,
-          1.3339437875476986e-17
+          0,
+          0,
+          1.3339437875476975e-17
         ],
         "target": [
           0,
@@ -53,12 +53,20 @@
       "scene": {
         "transforms": {
           "offsetReferenceFrame": "parent",
-          "lineWidth": 0
+          "lineWidth": 0,
+          "visible": false
         }
       },
-      "transforms": {},
+      "transforms": {
+        "frame:car/0": {
+          "visible": false
+        }
+      },
       "topics": {
         "/scene": {
+          "visible": true
+        },
+        "/scene/static": {
           "visible": true
         }
       },
@@ -72,7 +80,8 @@
         "poseEstimateThetaDeviation": 0.26179939
       },
       "synchronize": false,
-      "imageMode": {}
+      "imageMode": {},
+      "followTf": "world"
     },
     "Plot!392cap6": {
       "paths": [
@@ -112,10 +121,17 @@
         },
         {
           "timestampMethod": "receiveTime",
-          "value": "/telemetry.scalars.slack",
+          "value": "/telemetry.scalars.slack_l1",
           "enabled": true,
           "color": "#f5774d",
-          "id": "0d0ceb34-7c97-4057-ab41-d3e6809b840a"
+          "id": "7ba97511-a05f-4432-9e6a-e8c46cea3862"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/telemetry.scalars.slack_max",
+          "enabled": true,
+          "color": "#f7df71",
+          "id": "e10759e3-6ab0-47ec-9f69-1c1d9635a5b0"
         }
       ],
       "foxglovePanelTitle": "safety"
@@ -135,6 +151,10 @@
         }
       ],
       "foxglovePanelTitle": "solver success"
+    },
+    "RawMessages!2m765nk": {
+      "defaultExpanded": false,
+      "topicPath": "/run/metadata"
     },
     "RawMessages!os6rgs": {
       "defaultExpanded": false,
@@ -163,7 +183,12 @@
         "direction": "column",
         "splitPercentage": 81.13142807234253
       },
-      "second": "RawMessages!os6rgs",
+      "second": {
+        "first": "RawMessages!2m765nk",
+        "second": "RawMessages!os6rgs",
+        "direction": "column",
+        "splitPercentage": 50.06831240291216
+      },
       "direction": "row",
       "splitPercentage": 71.19437939110068
     },

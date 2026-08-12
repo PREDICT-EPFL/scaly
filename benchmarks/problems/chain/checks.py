@@ -19,7 +19,7 @@ from collections.abc import Callable, Iterator
 import numpy as np
 
 from alloy.toolchain import solver_loadable
-from benchmarks.problems.chain_of_masses import (
+from benchmarks.problems.chain import (
   END_REF,
   NU,
   ChainParams,
@@ -37,7 +37,7 @@ from benchmarks.problems.chain_of_masses import (
   rk4_step_np,
   sample_inputs,
 )
-from benchmarks.problems.chain_of_masses.closed_loop import ClosedLoopConfig, extract_positions, plant_step, run_episode
+from benchmarks.problems.chain.closed_loop import ClosedLoopConfig, extract_positions, plant_step, run_episode
 
 
 def check_dims_and_rk4() -> None:
@@ -188,8 +188,8 @@ def check_recorded_scene() -> None:
   from benchmarks.harness import recording
   from benchmarks.harness.closed_loop import run_chain
 
-  record_chain, record_references = recording.Recorder.record_chain, recording.Recorder.record_chain_references
-  record_plan = recording.Recorder.record_chain_plan
+  record_chain, record_references = recording.ChainRecorder.record_chain, recording.ChainRecorder.record_chain_references
+  record_plan = recording.ChainRecorder.record_chain_plan
   controls: list[list[float] | None] = []
   references: list[dict[str, tuple[float, ...]]] = []
   plans: list[tuple[int, int]] = []
@@ -207,15 +207,15 @@ def check_recorded_scene() -> None:
     _seen.append((len(logged.nodes), logged.n_masses))
     return logged
 
-  recording.Recorder.record_chain, recording.Recorder.record_chain_references = spy_chain, spy_references
-  recording.Recorder.record_chain_plan = spy_plan
+  recording.ChainRecorder.record_chain, recording.ChainRecorder.record_chain_references = spy_chain, spy_references
+  recording.ChainRecorder.record_chain_plan = spy_plan
   try:
     with tempfile.TemporaryDirectory() as directory:
       output = run_chain(smoke=True, out_dir=Path(directory), cli_args=[])
       assert (output / "episode.mcap").stat().st_size > 0, "empty MCAP"
   finally:
-    recording.Recorder.record_chain, recording.Recorder.record_chain_references = record_chain, record_references
-    recording.Recorder.record_chain_plan = record_plan
+    recording.ChainRecorder.record_chain, recording.ChainRecorder.record_chain_references = record_chain, record_references
+    recording.ChainRecorder.record_chain_plan = record_plan
 
   assert references == [{"end-mass reference": END_REF}], references
   config = ClosedLoopConfig.smoke()

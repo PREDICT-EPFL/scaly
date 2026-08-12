@@ -1,6 +1,16 @@
 # Continuous-time CBF safety filter with neural dynamics
 
-Problem statement for the Alloy driving application (see [`roadmap.md`](roadmap.md), Workload C). This is a continuous-time variant of the discrete-time `unbumpercars` filter described in [`examples/unbumpercars/README.md`](../../examples/unbumpercars/README.md), with two structural changes:
+> **Status (2026-08-11): this is the original design study, not the implemented
+> filter.** The benchmark under `benchmarks/problems/unbumpercars/` moved to a
+> *discrete-time* formulation built on the order-1 hyperbolic CBF: one-step neural
+> prediction instead of Lie derivatives, a relative-degree-1 pair barrier instead of
+> the HOCBF expansion below, and one slack per constraint row penalized in L1
+> instead of a single shared slack. See that problem's README for the formulation
+> that is actually built and gated, and `ROADMAP.md` §2.5 for why it changed. What
+> stays valid here: the vehicle model and the survey of the
+> quantities Alloy has to evaluate.
+
+Problem statement for the Alloy driving application (see [`roadmap.md`](roadmap.md), Workload C). This is a continuous-time variant of the earlier discrete-time `unbumpercars` filter, with two structural changes:
 
 1. **Continuous-time dynamics and barriers.** The model is an ODE $\dot x = F(x, u)$; CBF constraints are imposed via Lie derivatives, not one-step prediction.
 2. **Position-based barrier (relative degree 2).** The original filter used the velocity-augmented C3BF (relative degree 1) to sidestep the controllability issue of position-only barriers. The new filter uses the natural position barrier $h(x) = \|p_i - p_j\|^2 - (R + d_{\text{margin}})^2$ together with a higher-order CBF (HOCBF) construction. The HOCBF expansion is what brings Jacobians of the dynamics into the constraint.

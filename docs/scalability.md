@@ -8,7 +8,7 @@ Skip rules applied automatically:
 - max generated source size (default 50 MB) — skip without compiling;
 - after a backend hits any of the above at one size, larger sizes for that backend are skipped immediately, because both generated source size and compile cost are monotonically increasing in the iteration count.
 
-CSV with the raw cell data: `benchmarks/results/scalability.csv`.
+CSV with the raw cell data: `benchmarks/results/sweep/scalability.csv`. Each cell's generated code, samples, binary, and logs live beside it under `benchmarks/results/sweep/<workload>/<backend>_<axis><size>/`.
 
 Both workloads now use Alloy's MAP-aware path (`al.map_` / `race_car_eq_function_map`, `unbumpercars_ineq_function` MAP-ified), and the codegen spills lifetime-packed slots ≥ 1024 doubles to the `w[]` workspace so very large intermediate buffers no longer overflow the C stack.
 
@@ -92,14 +92,134 @@ Reading:
 - Alloy source at N=500 is 78 KB, **58× smaller than CasADi SX** (4.5 MB). LOC at N=500 is 482 — the same as at N=10.
 - The per-cell codegen time at N=500 is 248 ms for Alloy vs 481 ms for CasADi SX (and >10 min for older variants of the Alloy path). That's the Python-AD-construction win from routing the JVP through one per-formal small graph instead of through the global unrolled tape.
 
-## Unbumpercars inequality Jacobian (`spjac:ineq:u`)
+## Discrete-time HCBF safety filter (`unbumpercars`)
+
+The Phase 5 driving workload: a centralized one-step CBF filter over `C` cars, with
+`C(C-1)/2` hyperbolic pair rows plus four order-1 velocity wall rows per car, one L1 slack
+per row, and a neural vehicle model inside the constraint. The formulation and its provenance live in
+[`benchmarks/problems/unbumpercars/README.md`](../benchmarks/problems/unbumpercars/README.md);
+this section is only the numbers.
+
+> **Measurement date:** the tables below were recorded before the 2026-08-12 migration from
+> position wall rows to order-1 velocity wall rows. They remain the latest backend-scaling
+> measurements, but absolute oracle and solve times describe the older wall graph and need to
+> be regenerated before being quoted for the current formulation.
+
+**Two model choices matter for cost.** The default, `--filter-model dt`, predicts with the
+natively discrete MLP; `--filter-model ct` predicts with an RK4 map of a
+continuous-time network (`6 → 64 → 64 → 3`, SiLU, 4,803 weights, four evaluations per step for
+the RK4 stages). The discrete MLP is `6 → 256 → 128 → 3`, smoothed ReLU, 35,075 weights, and
+**one** evaluation per step because it is already a one-step map — 7.3x the weights but only
+1.86x the multiply-accumulates.
+
+Two different things are measured below, and they do not say the same thing: one isolated
+kernel, and the whole oracle inside a real IPOPT loop.
+
+### Isolated constraint Jacobian (`jac:g:z`)
+
+Sweep cells, Apple M-series, `-O3`, single-threaded. These cells pin the continuous-time model
+(`FilterConfig(model="ct")`) rather than following the default, so they stay comparable with the
+numbers recorded before the default changed:
+
+| C | backend | runtime | source | lines | compile |
+|---:|---|---:|---:|---:|---:|
+| 2 | alloy | 61.0 µs | 59 KB | 849 | 0.6 s |
+| 2 | casadi_sx | 64.3 µs | 5.4 MB | 236,847 | 144 s |
+| 2 | casadi_mx | 65.1 µs | 185 KB | 5,619 | 2.8 s |
+| 4 | alloy | 128.8 µs | 81 KB | 1,407 | 0.7 s |
+| 4 | casadi_sx | — | 11.8 MB | 470,243 | **>180 s, timeout** |
+| 4 | casadi_mx | 131.4 µs | 460 KB | 14,487 | 6.4 s |
+| 8 | alloy | 263.4 µs | 170 KB | 3,459 | 2.6 s |
+| 8 | casadi_mx | 263.3 µs | 1.4 MB | 45,312 | 18.4 s |
+
+On this kernel **Alloy and CasADi MX tie on runtime** at every size, to within 1.5%. The win is
+in the artefacts around it: 3–8x smaller C, 4–7x faster to compile, and zero workspace against
+MX's 55k–179k doubles. CasADi SX is not viable here at all — 5.4 MB and 144 s to compile at
+`C=2`, and past the 180 s budget by `C=4`, so the sweep short-circuits the larger cells.
+
+### Per-solve, inside IPOPT
+
+The kernel above is not what a solve actually calls: the solve wants `f`, `g`, `grad_f`, a
+*sparse* `jac_g` and an exact sparse Lagrangian Hessian, several times per iteration. Mean per
+solve over a 60-step episode, plant matched to the filter's model, exact Hessians:
+
+| filter model | C | Alloy | CasADi | Alloy speedup | IPOPT iters (both) |
+|---|---:|---:|---:|---:|---:|
+| ct | 2 | 3.13 ms | 8.65 ms | 2.8x | 5.5 |
+| ct | 4 | 8.09 ms | 25.31 ms | 3.1x | 7.8 |
+| ct | 8 | 21.69 ms | 84.26 ms | 3.9x | 10.6 |
+| dt | 2 | 3.78 ms | 17.13 ms | 4.5x | 5.9 |
+| dt | 4 | 10.63 ms | 63.91 ms | 6.0x | 9.2 |
+| dt | 8 | **32.02 ms** | **289.10 ms** | **9.0x** | 14.0 |
+
+Iteration counts are identical between the two backends in every cell, so IPOPT walks the same
+path and only the oracle provider differs.
+
+Reading:
+
+- **Alloy's advantage grows along both axes** — with car count (2.8x → 3.9x for `ct`, 4.5x → 9.0x
+  for `dt`) and with network size (3.9x → 9.0x at `C=8`). The bigger the constraint graph, the
+  more the oracle provider matters.
+- **Function evaluation is where the solve lives**: 30.0 of Alloy's 32.0 ms and 279.5 of CasADi's
+  289.1 ms at the largest cell. So the gap is essentially all oracle, not solver.
+- **The gap is not in the dense Jacobian**, which ties above. It is in the exact Lagrangian
+  Hessian and the call path: Alloy's generated C wrapper calls the kernels directly, where CasADi
+  re-enters its own machinery per call. Measured per-call at `C=8` on the `ct` model, CasADi's
+  `hess_lag` alone is 3.7 ms against 0.2–0.8 ms for its other oracle outputs.
+- **The heavier network costs Alloy 1.5x and CasADi 3.4x** per solve at `C=8` (21.7 → 32.0 ms
+  against 84.3 → 289.1 ms), for 7.3x the weights.
+- **Superlinear in `C` for both**, as expected — the pair rows grow as `C(C-1)/2` and the
+  iteration count grows too: Alloy ≈2.6x (`ct`) and ≈2.8x (`dt`) per doubling of `C`, CasADi
+  ≈3.1x and ≈3.9x.
+- **Build cost** is the one place Alloy pays: 5.0 s against CasADi's 2.2 s at `C=8` on `ct`, and
+  3.8 s against 4.3 s on `dt`. It is a once-per-configuration cost, and the `.so` is cached.
+
+One caveat on the `dt`-versus-`ct` rows: each is measured against *its own* plant, so they are
+two coherent configurations rather than a controlled A/B. Against the faithful (discrete) plant,
+which is the default, the `dt` filter is both safer and *faster* than the `ct` one — 31.7 ms
+against 37.8 ms — because the mismatched filter needs 19.3 iterations to the matched filter's
+14.1. The problem README has that comparison.
+
+### How to reproduce
+
+```bash
+# Isolated kernel cells (the first table)
+uv run python benchmarks/run.py sweep --workloads unbumpercars --out /tmp/sweep.csv
+
+# Per-solve (the second table), one cell per invocation
+uv run python -m benchmarks.problems.unbumpercars.run_closed_loop \
+  --filter both --filter-model dt --ncars 8 --steps 60
+```
+
+The unified runner and direct module both write under
+`benchmarks/results/closed-loop/unbumpercars/<backend>/`, so side-by-side runs and
+single-backend episodes share one canonical location.
+
+## Unbumpercars inequality Jacobian (`spjac:ineq:u`) — historical
+
+> **The workload measured here no longer exists.** Its implementation and
+> `tests/alloy/test_unbumpercars_workload.py` were removed in `1b03820`
+> (2026-08-10): the fixture was the only thing exercising gather-fed and chained MAPs,
+> and its two numeric tests had been silently skipping because the
+> `model_kinematic_mlp.pth` checkpoint is not in the repo — so it read as coverage
+> without being any. The pattern moved to
+> `tests/alloy/test_map.py::test_gather_fed_chained_maps_spjac_and_sphess_match_dense`,
+> which runs unconditionally on small artificial cases.
+>
+> The current workload reuses the canonical `unbumpercars` ID at
+> `benchmarks/problems/unbumpercars/`. It keeps `al.map_` for
+> the per-car neural dynamics but builds its `C(C-1)/2` pair rows with an unrolled Python
+> loop, so the constant-LOC property below does **not** hold for it: its `spjac:g:z`
+> kernel goes 845 → 1403 → 3455 lines for `C = 2 → 4 → 8`. Porting it back onto the
+> gather-fed shape is a backlog item (`ROADMAP.md` §6); the numbers below are what that
+> port is expected to recover, and are kept for that reason.
 
 Official-size MLP (`256 → 128 → 3` with the example `model_kinematic_mlp.pth` weights), RK4 pose update per car, pairwise C3BF + per-car wall residuals, slack column. Decision vector size `2C + 1`, constraint count `C(C-1)/2 + 4C` (quadratic in `C`).
 
-`unbumpercars_ineq_function` is now built as three `Ops.MAP` nodes:
+`unbumpercars_ineq_function` was built as three `Ops.MAP` nodes:
 
 1. `dynamics_fn` mapped over `C` packed states / `C` packed inputs (with `pw` broadcast).
-2. `pair_c3bf_fn` mapped over `C(C-1)/2` `(i,j)` pairs, with two constant-table `al.gather`s producing the pair state vectors.
+2. `pair_c3bf_fn` mapped over `C(C-1)/2` `(i,j)` pairs, fed by `al.gather` from two constant index tables — one per side of the pair, each built as `concatenate([arange(NSTATE) + k * NSTATE for k in bodies])` over the strict upper triangle, so a gather produces exactly the contiguous `NSTATE` block per iteration that a MAP wants. The same two tables gather both the parameter states and the first MAP's output, which is what makes it a MAP → gather → MAP chain.
 3. `wall_residuals_fn` mapped over `C` cars.
 
 CasADi SX is dropped past C=2 because at C=2 it already takes >180 s to compile a 12 MB source file; the sweep records that and short-circuits larger C for SX.
@@ -208,8 +328,8 @@ Reading:
 ## How to reproduce
 
 ```bash
-# Full sweep with default cells: race_cars N=1,5,10,25,40,50,100,200,500 and bumpercars C=2,4,8
-uv run python benchmarks/run.py sweep --out benchmarks/results/scalability.csv
+# Full sweep with default cells: race_cars N=1,5,10,25,40,50,100,200,500 and unbumpercars C=2,4,8
+uv run python benchmarks/run.py sweep --out benchmarks/results/sweep/scalability.csv
 
 # Just the race cars
 uv run python benchmarks/run.py sweep --workloads race_cars --out /tmp/race_cars.csv
@@ -226,7 +346,19 @@ Cells that hit the size cap or the per-cell compile timeout end up with a `compi
 
 Race-car N=1000 used to appear in this table; it is dropped from the default cell grid because the bench-time dense reference (single-seed JVP × 6006 columns through the unrolled fixture) is the bottleneck rather than alloy itself — supply `--workloads race_cars --sizes 1000` to add it back when you're willing to wait several minutes.
 
-## Continuous-time CBF safety filter
+## Continuous-time CBF safety filter — historical
+
+> **The fixture measured here no longer exists.** Both
+> `tests/alloy/test_safety_filter_workload.py` and
+> `benchmarks/alloy_safety_filter_benchmark.py` are gone, so nothing below can be
+> regenerated. It is kept because the input-affine-versus-fully-nonlinear reading still
+> explains why the live workload is shaped the way it is: the dense `jac:ineq:u` blow-up on
+> the nonlinear variant (4.4 ms at N=8 against an 89 µs forward) is exactly why
+> `unbumpercars` calls `spjac`/`sphess` rather than dense factories. The successor is
+> [Discrete-time HCBF safety filter](#discrete-time-hcbf-safety-filter-unbumpercars)
+> above, whose per-solve numbers supersede these per-kernel ones. Note also that the
+> Lagrangian-Hessian limitation this section records as blocking has since been closed —
+> `sphess` through `Ops.MAP` works and is what the live workload uses.
 
 Fixture: `tests/alloy/test_safety_filter_workload.py` builds the two variants described in [`safety_filter.md`](safety_filter.md):
 

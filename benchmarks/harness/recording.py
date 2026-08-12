@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from io import BytesIO
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 import numpy as np
@@ -141,7 +141,11 @@ class CarShape:
 
   `center_offset` is how far the body centre sits ahead of the recorded `(x, y)`, so a
   model whose position tracks the centre of gravity rather than the geometric centre
-  still draws in the right place. `safety_radius` of 0 disables the keep-out circle.
+  still draws in the right place.
+
+  `safety_radius` is the body disc — half the centre distance at which two cars touch.
+  `keep_out_radius` is the larger disc a filter actually enforces, drawn fainter so the
+  margin between the two is visible; either is disabled by setting it to 0.
 
   There are two ways to draw the control, and a shape picks one by setting its length:
 
@@ -159,6 +163,7 @@ class CarShape:
   height: float = 0.15
   center_offset: float = 0.0
   safety_radius: float = 0.0
+  keep_out_radius: float = 0.0
   max_throttle: float = 1.0
   max_steer: float = 0.0
   arrow_length: float = 0.0
@@ -263,6 +268,8 @@ def planar_car_scene(
     rgb = CAR_COLORS[index % len(CAR_COLORS)]
     timestamp = _timestamp(car.time_s)
     lines = [_circle(shape.safety_radius, _color(rgb, 0.9))] if shape.safety_radius else []
+    if shape.keep_out_radius:
+      lines.append(_circle(shape.keep_out_radius, _color(rgb, 0.35)))
     arrows, wheels, body_color = [], [], _color(rgb, 0.55)
     command = commands.get(car.vehicle_id)
     if command is not None and shape.arrow_length:
@@ -563,36 +570,38 @@ def arena_scene(bounds: tuple[float, float, float, float], *, margin: float = 0.
 
 
 class Recorder:
+  """What every episode records whatever the problem: the MCAP writer, the run metadata, the
+  solver telemetry, the applied control, and the two scene topics all three problems draw on.
+
+  A problem records the rest through its own subclass — `ChainRecorder`, `RaceCarRecorder`,
+  `UnbumpercarsRecorder` — which opens its extra channels in `_open_channels`. Channels register
+  themselves as they are opened, so `close()` needs no per-subclass list, and an episode's MCAP
+  offers Foxglove only the topics its problem actually writes."""
+
   def __init__(
     self,
     path: Path | str,
     *,
     allow_overwrite: bool = False,
     scene_center: tuple[float, float, float] = (0.0, 0.0, 0.0),
-    car_shape: CarShape = CarShape(),
   ):
-    self.car_shape = car_shape
     self.path = Path(path)
     self.path.parent.mkdir(parents=True, exist_ok=True)
     self._context = Context()
     self._writer = open_mcap(self.path, allow_overwrite=allow_overwrite, context=self._context)
+    self._channels: list[Any] = []
     self._metadata = self._channel("/run/metadata", RunMetadata)
     self._telemetry = self._channel("/telemetry", ScalarTelemetry)
-    self._planar = self._channel("/planar/state", PlanarVehicleState)
-    self._points = self._channel("/chain/point", PointState3D)
     self._control = self._channel("/control", ControlState)
-    self._horizon = self._channel("/horizon", HorizonPath)
-    self._plan = self._channel("/chain/plan", ChainPlan)
     # Seeking makes Foxglove hand each panel the *single* newest message per subscribed topic, so
-    # anything that must survive a jump has to be the last message on a topic of its own. The three
-    # groups below are updated independently, hence three topics: geometry logged once at time zero
-    # stays visible however far ahead you jump, without being re-sent every step.
-    self._scene = SceneUpdateChannel("/scene", context=self._context)
-    self._static_scene = SceneUpdateChannel("/scene/static", context=self._context)
-    self._horizon_scene = SceneUpdateChannel("/scene/horizon", context=self._context)
+    # anything that must survive a jump has to be the last message on a topic of its own. Geometry
+    # logged once at time zero therefore gets `/scene/static` to itself, and stays visible however
+    # far ahead you jump without being re-sent every step.
+    self._scene = self._scene_channel("/scene")
+    self._static_scene = self._scene_channel("/scene/static")
     self._tf = FrameTransformsChannel("/tf", context=self._context)
-    self._planar_history: dict[str, list[tuple[float, float]]] = {}
-    self._chain_history: list[tuple[float, float, float]] = []
+    self._channels.append(self._tf)
+    self._open_channels()
     self._tf.log(
       FrameTransforms(
         transforms=[
@@ -609,8 +618,18 @@ class Recorder:
     )
     self._closed = False
 
+  def _open_channels(self) -> None:
+    """Open the channels only this problem writes. Subclasses override; the base opens none."""
+
   def _channel(self, topic: str, model: type[BaseModel]) -> Channel:
-    return Channel(topic, schema=model.model_json_schema(), message_encoding="json", context=self._context)
+    channel = Channel(topic, schema=model.model_json_schema(), message_encoding="json", context=self._context)
+    self._channels.append(channel)
+    return channel
+
+  def _scene_channel(self, topic: str) -> SceneUpdateChannel:
+    channel = SceneUpdateChannel(topic, context=self._context)
+    self._channels.append(channel)
+    return channel
 
   @staticmethod
   def _log(channel: Channel, model: type[BaseModel], payload: BaseModel | Mapping[str, Any], log_time: int) -> BaseModel:
@@ -624,6 +643,46 @@ class Recorder:
   def record_telemetry(self, telemetry: ScalarTelemetry | Mapping[str, Any]) -> ScalarTelemetry:
     validated = ScalarTelemetry.model_validate(telemetry)
     return self._log(self._telemetry, ScalarTelemetry, validated, _log_time(validated.time_s))  # type: ignore[return-value]
+
+  def record_control(self, controls: Sequence[ControlState | Mapping[str, Any]]) -> list[ControlState]:
+    validated = [ControlState.model_validate(control) for control in controls]
+    for control in validated:
+      self._log(self._control, ControlState, control, _log_time(control.time_s))
+    return validated
+
+  def close(self) -> None:
+    if self._closed:
+      return
+    for channel in self._channels:
+      channel.close()
+    self._writer.close()
+    self._closed = True
+
+  def __enter__(self) -> Self:
+    return self
+
+  def __exit__(self, _exc_type, _exc_value, _traceback) -> None:
+    self.close()
+
+
+class PlanarRecorder(Recorder):
+  """Shared by the two planar-vehicle problems: one `/planar/state` row per car per step, the
+  per-car transform its frame-locked scene entities hang off, and the trail each car leaves."""
+
+  def __init__(
+    self,
+    path: Path | str,
+    *,
+    allow_overwrite: bool = False,
+    scene_center: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    car_shape: CarShape = CarShape(),
+  ):
+    super().__init__(path, allow_overwrite=allow_overwrite, scene_center=scene_center)
+    self.car_shape = car_shape
+
+  def _open_channels(self) -> None:
+    self._planar = self._channel("/planar/state", PlanarVehicleState)
+    self._planar_history: dict[str, list[tuple[float, float]]] = {}
 
   def record_planar(
     self,
@@ -658,6 +717,45 @@ class Recorder:
       self._scene.log(scene, log_time=log_time)
     return validated
 
+
+class RaceCarRecorder(PlanarRecorder):
+  """Race cars: the static track, plus the reference and predicted horizons redrawn every step."""
+
+  def _open_channels(self) -> None:
+    super()._open_channels()
+    self._horizon = self._channel("/horizon", HorizonPath)
+    self._horizon_scene = self._scene_channel("/scene/horizon")
+
+  def record_track(self, center_line: np.ndarray, cones: Mapping[str, np.ndarray]) -> None:
+    self._static_scene.log(track_scene(center_line, cones), log_time=0)
+
+  def record_horizons(self, paths: Sequence[HorizonPath | Mapping[str, Any]]) -> list[HorizonPath]:
+    validated = [HorizonPath.model_validate(path) for path in paths]
+    for path in validated:
+      self._log(self._horizon, HorizonPath, path, _log_time(path.time_s))
+    if validated:
+      self._horizon_scene.log(horizon_scene(validated), log_time=_log_time(validated[0].time_s))
+    return validated
+
+
+class UnbumpercarsRecorder(PlanarRecorder):
+  """Unbumpercars: a persistent arena boundary on top of the shared planar channels. The filter
+  only ever commits the next input, so there is no horizon to draw and no topic to carry one."""
+
+  def record_arena(self, bounds: tuple[float, float, float, float], *, margin: float = 0.0) -> None:
+    self._static_scene.log(arena_scene(bounds, margin=margin), log_time=0)
+
+
+class ChainRecorder(Recorder):
+  """Chain of masses: the mass positions and the end mass's trail, the open-loop plan on the
+  horizon topic, and the end-mass reference markers pinned to the static one."""
+
+  def _open_channels(self) -> None:
+    self._points = self._channel("/chain/point", PointState3D)
+    self._plan = self._channel("/chain/plan", ChainPlan)
+    self._horizon_scene = self._scene_channel("/scene/horizon")
+    self._chain_history: list[tuple[float, float, float]] = []
+
   def record_chain(
     self, points: Sequence[PointState3D | Mapping[str, Any]], *, control: ControlState | Mapping[str, Any] | None = None
   ) -> list[PointState3D]:
@@ -680,54 +778,8 @@ class Recorder:
   def record_chain_references(self, references: Mapping[str, Sequence[float]]) -> None:
     self._static_scene.log(chain_reference_scene(references), log_time=0)
 
-  def record_arena(self, bounds: tuple[float, float, float, float], *, margin: float = 0.0) -> None:
-    self._static_scene.log(arena_scene(bounds, margin=margin), log_time=0)
 
-  def record_track(self, center_line: np.ndarray, cones: Mapping[str, np.ndarray]) -> None:
-    self._static_scene.log(track_scene(center_line, cones), log_time=0)
-
-  def record_horizons(self, paths: Sequence[HorizonPath | Mapping[str, Any]]) -> list[HorizonPath]:
-    validated = [HorizonPath.model_validate(path) for path in paths]
-    for path in validated:
-      self._log(self._horizon, HorizonPath, path, _log_time(path.time_s))
-    if validated:
-      self._horizon_scene.log(horizon_scene(validated), log_time=_log_time(validated[0].time_s))
-    return validated
-
-  def record_control(self, controls: Sequence[ControlState | Mapping[str, Any]]) -> list[ControlState]:
-    validated = [ControlState.model_validate(control) for control in controls]
-    for control in validated:
-      self._log(self._control, ControlState, control, _log_time(control.time_s))
-    return validated
-
-  def close(self) -> None:
-    if self._closed:
-      return
-    for channel in (
-      self._metadata,
-      self._telemetry,
-      self._planar,
-      self._points,
-      self._control,
-      self._horizon,
-      self._plan,
-      self._scene,
-      self._static_scene,
-      self._horizon_scene,
-      self._tf,
-    ):
-      channel.close()
-    self._writer.close()
-    self._closed = True
-
-  def __enter__(self) -> Recorder:
-    return self
-
-  def __exit__(self, _exc_type, _exc_value, _traceback) -> None:
-    self.close()
-
-
-PROBLEM_DIRS = {"chain": "chain_of_masses", "race_cars": "race_cars", "bumpercars": "bumpercars_filter"}
+PROBLEM_DIRS = {problem: problem for problem in ("chain", "race_cars", "unbumpercars")}
 
 
 def layout_path(problem: str) -> Path:

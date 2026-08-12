@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from alloy import SolverStats
-from benchmarks.problems.chain_of_masses import (
+from benchmarks.problems.chain import (
   NU,
   ChainParams,
   chain_nlp,

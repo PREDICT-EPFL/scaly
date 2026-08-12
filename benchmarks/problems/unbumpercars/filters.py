@@ -9,7 +9,31 @@ import numpy as np
 
 import alloy as al
 from alloy.codegen.c import render_c_module
-from .common import ClosedLoopConfig, CTFullWeights, FilterConfig, NCTRL, NSTATE, N_PHYSICS, N_PW, OFFSETS, W0_SHAPE, W1_SHAPE, W2_SHAPE
+from .common import (
+  ClosedLoopConfig,
+  CTFullWeights,
+  DT_OFFSETS,
+  DT_RELU_EPS,
+  DT_W0_SHAPE,
+  DT_W1_SHAPE,
+  DT_W2_SHAPE,
+  DTMLPWeights,
+  FilterConfig,
+  NCTRL,
+  NSTATE,
+  N_PHYSICS,
+  N_PW,
+  N_PW_DT,
+  OFFSETS,
+  W0_SHAPE,
+  W1_SHAPE,
+  W2_SHAPE,
+)
+
+
+def filter_n_pw(filt_cfg: FilterConfig) -> int:
+  """Size of the weight tail the filter's own model reads out of `p`."""
+  return N_PW_DT if filt_cfg.model == "dt" else N_PW
 
 
 @dataclass(slots=True)
@@ -22,7 +46,7 @@ class FilterStats:
   iterations: int | None
   objective: float
   min_g: float
-  slack: float
+  slack_l1: float
   tracking_cost: float
   eval_counts: dict[str, int] = field(default_factory=dict)
   eval_ms: dict[str, float] = field(default_factory=dict)
@@ -50,9 +74,9 @@ class OpenLoopFilter:
 
 
 class CasadiDTCBFSafetyFilter:
-  name = "casadi_dt_pos_cbf"
+  name = "casadi_dt_hcbf"
 
-  def __init__(self, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights, *, _build_solver: bool = True):
+  def __init__(self, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights | DTMLPWeights, *, _build_solver: bool = True):
     import casadi as ca
 
     self.ca = ca
@@ -61,8 +85,10 @@ class CasadiDTCBFSafetyFilter:
     self.weights = weights
     self.ncars = loop_cfg.ncars
     self.n_u = NCTRL * self.ncars
-    self.n_z = self.n_u + 1
-    self.n_p = NSTATE * self.ncars + self.n_u + N_PW + N_PHYSICS + 1
+    self.n_s = loop_cfg.n_slack
+    self.n_z = self.n_u + self.n_s
+    self.n_pw = filter_n_pw(filt_cfg)
+    self.n_p = NSTATE * self.ncars + self.n_u + self.n_pw + N_PHYSICS + 1
     self.stats_history: list[FilterStats] = []
     self.last_z: np.ndarray | None = None
     self.last_lam_x: np.ndarray | None = None
@@ -91,15 +117,20 @@ class CasadiDTCBFSafetyFilter:
     ca = self.ca
     return x / (1.0 + ca.exp(-x))
 
-  def _ode(self, x, u, pw, physics):
+  def _world_vel(self, x, physics):
     ca = self.ca
-    lf, lr, max_delta, steering_time_constant = [physics[i] for i in range(4)]
-    theta, vf, beta_f, beta_r, delta = x[2], x[3], x[4], x[5], x[6]
+    lf, lr = physics[0], physics[1]
+    theta, vf, beta_f, beta_r = x[2], x[3], x[4], x[5]
     omega = vf * ca.sin(beta_f - beta_r) / ((lf + lr) * ca.cos(beta_r))
     vx_b = vf * ca.cos(beta_f)
     vy_b = vf * ca.sin(beta_f) - lf * omega
-    x_dot = vx_b * ca.cos(theta) - vy_b * ca.sin(theta)
-    y_dot = vx_b * ca.sin(theta) + vy_b * ca.cos(theta)
+    return vx_b * ca.cos(theta) - vy_b * ca.sin(theta), vx_b * ca.sin(theta) + vy_b * ca.cos(theta), omega
+
+  def _ode(self, x, u, pw, physics):
+    ca = self.ca
+    max_delta, steering_time_constant = physics[2], physics[3]
+    delta = x[6]
+    x_dot, y_dot, omega = self._world_vel(x, physics)
     delta_dot = (u[1] * max_delta - delta) / (steering_time_constant * 3.0)
     x_scale, w0, b0, w1, b1, w2, b2 = self._unpack_pw(pw)
     phi = ca.vertcat(x[3:7] / x_scale, u)
@@ -115,15 +146,86 @@ class CasadiDTCBFSafetyFilter:
     k4 = self._ode(x + dt * k3, u, pw, physics)
     return x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
-  def _pair_h(self, xi, xj):
+  def _unpack_pw_dt(self, pw):
     ca = self.ca
-    d = xi[0:2] - xj[0:2]
-    return ca.dot(d, d) - self.loop_cfg.safety_radius**2
 
-  def _wall_h(self, xi, physics) -> list[Any]:
+    def mat(i: int, shape: tuple[int, int]):
+      return ca.reshape(pw[DT_OFFSETS[i] : DT_OFFSETS[i + 1]], shape[1], shape[0]).T
+
+    return (
+      pw[DT_OFFSETS[0] : DT_OFFSETS[1]],
+      mat(1, DT_W0_SHAPE),
+      pw[DT_OFFSETS[2] : DT_OFFSETS[3]],
+      mat(3, DT_W1_SHAPE),
+      pw[DT_OFFSETS[4] : DT_OFFSETS[5]],
+      mat(5, DT_W2_SHAPE),
+      pw[DT_OFFSETS[6] : DT_OFFSETS[7]],
+    )
+
+  def _pose_rk4(self, x, physics, dt):
+    """RK4 on the pose rows with the velocity block held over the step; theta is left unwrapped."""
+    ca = self.ca
+
+    def pose_dot(s):
+      x_dot, y_dot, omega = self._world_vel(s, physics)
+      return ca.vertcat(x_dot, y_dot, omega, 0.0, 0.0, 0.0, 0.0)
+
+    k1 = pose_dot(x)
+    k2 = pose_dot(x + 0.5 * dt * k1)
+    k3 = pose_dot(x + 0.5 * dt * k2)
+    k4 = pose_dot(x + dt * k3)
+    return (x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4))[0:3]
+
+  def _dt_step(self, x, u, pw, physics, dt):
+    """The discrete MLP's one-step map; see ``common.dt_mlp_step_smooth_np``."""
+    ca = self.ca
+    max_delta, steering_time_constant = physics[2], physics[3]
+    delta = x[6]
+    x_scale, w0, b0, w1, b1, w2, b2 = self._unpack_pw_dt(pw)
+    phi = ca.vertcat(ca.vertcat(x[3], x[4] - delta, x[5], delta) / x_scale, u[1], u[0])
+    smooth_relu = lambda t: 0.5 * (t + ca.sqrt(t * t + DT_RELU_EPS**2))  # noqa: E731
+    h = smooth_relu(w0 @ phi + b0)
+    h = smooth_relu(w1 @ h + b1)
+    learned = w2 @ h + b2
+    delta_next = delta + dt * (u[1] * max_delta - delta) / steering_time_constant
+    return ca.vertcat(self._pose_rk4(x, physics, dt), learned[0], learned[1] + delta_next, learned[2], delta_next)
+
+  def _step(self, x, u, pw, physics, dt):
+    return self._dt_step(x, u, pw, physics, dt) if self.filt_cfg.model == "dt" else self._rk4(x, u, pw, physics, dt)
+
+  def _pair_b(self, xi, xj, physics):
+    """Order-1 hyperbolic pair barrier; see ``common.HCBFConfig``."""
+    ca = self.ca
+    hcbf, R = self.loop_cfg.hcbf, self.loop_cfg.safety_radius
+    p = xj[0:2] - xi[0:2]
+    vxi, vyi, _ = self._world_vel(xi, physics)
+    vxj, vyj, _ = self._world_vel(xj, physics)
+    v = ca.vertcat(vxj - vxi, vyj - vyi)
+    r = ca.sqrt(ca.dot(p, p))
+    v_x = (p[0] * v[0] + p[1] * v[1]) / r
+    v_y = (p[0] * v[1] - p[1] * v[0]) / r
+    d_eps = ca.sqrt((r - R) ** 2 + hcbf.eps**2)
+    s = (r - R) / d_eps
+    # a_env is the braking envelope V(d) = envelope_c d^envelope_q: the largest closing speed
+    # the pair can still stop away within the clearance it has. The shipped constants are one
+    # conservative fit covering both vehicle models — see common.HCBFConfig.
+    a_env = hcbf.envelope_c * d_eps**hcbf.envelope_q
+    q = ca.sqrt(d_eps * (r + R)) / R * v_y
+    return v_x + s * ca.sqrt(ca.sqrt(a_env**4 + q**4))
+
+  def _wall_b(self, xi, physics) -> list[Any]:
+    ca = self.ca
     m = self.loop_cfg.wall_margin
     x_min, x_max, y_min, y_max = [physics[i] for i in range(4, 8)]
-    return [xi[0] - (x_min + m), (x_max - m) - xi[0], xi[1] - (y_min + m), (y_max - m) - xi[1]]
+    vx, vy, _ = self._world_vel(xi, physics)
+    clearances = [xi[0] - (x_min + m), (x_max - m) - xi[0], xi[1] - (y_min + m), (y_max - m) - xi[1]]
+    out = []
+    for clearance, v_closing in zip(clearances, (-vx, vx, -vy, vy), strict=True):
+      d_eps = ca.sqrt(clearance * clearance + self.loop_cfg.wall_eps**2)
+      s = clearance / d_eps
+      v_max = self.loop_cfg.hcbf.single_envelope_c * d_eps**self.loop_cfg.hcbf.envelope_q
+      out.append(s * v_max - v_closing)
+    return out
 
   def _build(self, build_solver: bool = True) -> None:
     ca = self.ca
@@ -133,26 +235,28 @@ class CasadiDTCBFSafetyFilter:
     bar_x = p[: NSTATE * self.ncars]
     u_des = p[NSTATE * self.ncars : NSTATE * self.ncars + self.n_u]
     offset = NSTATE * self.ncars + self.n_u
-    pw = p[offset : offset + N_PW]
-    physics = p[offset + N_PW : offset + N_PW + N_PHYSICS]
+    pw = p[offset : offset + self.n_pw]
+    physics = p[offset + self.n_pw : offset + self.n_pw + N_PHYSICS]
     dt = p[-1]
     u = z[: self.n_u]
-    slack = z[self.n_u]
+    slack = z[self.n_u :]
     states = [bar_x[NSTATE * i : NSTATE * (i + 1)] for i in range(self.ncars)]
-    states_next = [self._rk4(states[i], u[NCTRL * i : NCTRL * (i + 1)], pw, physics, dt) for i in range(self.ncars)]
+    states_next = [self._step(states[i], u[NCTRL * i : NCTRL * (i + 1)], pw, physics, dt) for i in range(self.ncars)]
 
     rows = []
     for i in range(self.ncars):
       for j in range(i + 1, self.ncars):
-        rows.append(self._pair_h(states_next[i], states_next[j]) - (1.0 - self.loop_cfg.pair_gamma) * self._pair_h(states[i], states[j]) + slack)
+        b_next = self._pair_b(states_next[i], states_next[j], physics)
+        rows.append(b_next - (1.0 - self.loop_cfg.pair_gamma) * self._pair_b(states[i], states[j], physics))
     if self.loop_cfg.arena_avoidance:
       for i in range(self.ncars):
-        for h_next, h_cur in zip(self._wall_h(states_next[i], physics), self._wall_h(states[i], physics), strict=True):
-          rows.append(h_next - (1.0 - self.loop_cfg.wall_gamma) * h_cur + slack)
-    g = ca.vertcat(*rows) if rows else ca.MX.zeros(0)
+        for b_next, b_cur in zip(self._wall_b(states_next[i], physics), self._wall_b(states[i], physics), strict=True):
+          rows.append(b_next - (1.0 - self.loop_cfg.wall_gamma) * b_cur)
+    assert len(rows) == self.n_s
+    g = ca.vertcat(*rows) + slack if rows else ca.MX.zeros(0)
     weights = np.tile(np.asarray(self.filt_cfg.R, dtype=np.float64), self.ncars)
     du = u - u_des
-    cost = ca.dot(du, ca.DM(weights) * du) + self.filt_cfg.slack_weight * slack * slack
+    cost = ca.dot(du, ca.DM(weights) * du) + self.filt_cfg.slack_weight * ca.sum1(slack)
 
     self.cost_fn = ca.Function("ctdt_cost", [z, p], [cost])
     self.g_fn = ca.Function("ctdt_g", [z, p], [g])
@@ -198,12 +302,12 @@ class CasadiDTCBFSafetyFilter:
     desired = np.clip(np.asarray(desired, dtype=np.float64), -1.0, 1.0)
     p = self._pack_p(states, desired)
     if self.last_z is None:
-      z0 = np.concatenate([desired.reshape(-1), np.zeros(1)])
+      z0 = np.concatenate([desired.reshape(-1), np.zeros(self.n_s)])
     else:
       z0 = self.last_z.copy()
       z0[: self.n_u] = np.clip(z0[: self.n_u], -1.0, 1.0)
-    lbx = np.concatenate([-np.ones(self.n_u), np.zeros(1)])
-    ubx = np.concatenate([np.ones(self.n_u), np.full(1, ca.inf)])
+    lbx = np.concatenate([-np.ones(self.n_u), np.zeros(self.n_s)])
+    ubx = np.concatenate([np.ones(self.n_u), np.full(self.n_s, ca.inf)])
     n_g = int(self.g_fn.size1_out(0))
     args: dict[str, Any] = {"x0": z0, "p": p, "lbx": lbx, "ubx": ubx, "lbg": np.zeros(n_g), "ubg": np.full(n_g, ca.inf)}
     if self.last_lam_x is not None and self.last_lam_g is not None:
@@ -228,11 +332,15 @@ class CasadiDTCBFSafetyFilter:
       u_safe[:, 0] = -1.0
       u_safe[:, 1] = 0.0
 
+    # Per-function costs are single re-evaluations at the solution; fe_total is CasADi's own
+    # accounting of the time actually spent in the oracle callbacks during the solve, which
+    # is what Alloy's stats.t_fe measures. The two are not each other's sums.
     eval_ms = {
       "f": self._time_eval(self.cost_fn, z_sol, p),
       "g": self._time_eval(self.g_fn, z_sol, p),
       "grad_f": self._time_eval(self.grad_fn, z_sol, p),
       "jac_g": self._time_eval(self.jac_fn, z_sol, p),
+      "fe_total": 1000.0 * sum(float(v) for k, v in stats.items() if k.startswith("t_wall_nlp_")),
     }
     if self.hess_fn is not None:
       lam_g = np.asarray(sol["lam_g"], dtype=np.float64).reshape(-1)
@@ -249,11 +357,11 @@ class CasadiDTCBFSafetyFilter:
         int(stats["iter_count"]) if "iter_count" in stats else None,
         float(sol["f"]),
         float(np.min(g_sol)) if g_sol.size else float("inf"),
-        float(z_sol[-1]),
+        float(np.sum(z_sol[self.n_u :])),
         tracking,
         {k: int(stats[k]) for k in stats if k.startswith("n_call_") and isinstance(stats[k], int)},
         eval_ms,
-        {"build_ms": self._build_ms, "raw_success": raw_success},
+        {"build_ms": self._build_ms, "raw_success": raw_success, "max_slack": float(np.max(z_sol[self.n_u :], initial=0.0))},
       )
     )
     return u_safe
@@ -287,15 +395,20 @@ def _unpack_pw_expr(pw: al.Expr) -> tuple[al.Expr, al.Expr, al.Expr, al.Expr, al
   return x_scale, w0, b0, w1, b1, w2, b2
 
 
-@al.function("ctdt_ctfull_ode", {"state": NSTATE, "u": NCTRL, "pw": N_PW, "physics": N_PHYSICS})
-def alloy_ctfull_ode_fn(state, u, pw, physics):  # type: ignore[no-untyped-def]
-  lf, lr, max_delta, steering_time_constant = [physics[i] for i in range(4)]
-  theta, vf, beta_f, beta_r, delta = state[2], state[3], state[4], state[5], state[6]
+def _world_vel_expr(state: al.Expr, physics: al.Expr) -> tuple[al.Expr, al.Expr, al.Expr]:
+  lf, lr = physics[0], physics[1]
+  theta, vf, beta_f, beta_r = state[2], state[3], state[4], state[5]
   omega = vf * (beta_f - beta_r).sin() / ((lf + lr) * beta_r.cos())
   vx_b = vf * beta_f.cos()
   vy_b = vf * beta_f.sin() - lf * omega
-  x_dot = vx_b * theta.cos() - vy_b * theta.sin()
-  y_dot = vx_b * theta.sin() + vy_b * theta.cos()
+  return vx_b * theta.cos() - vy_b * theta.sin(), vx_b * theta.sin() + vy_b * theta.cos(), omega
+
+
+@al.function("ctdt_ctfull_ode", {"state": NSTATE, "u": NCTRL, "pw": N_PW, "physics": N_PHYSICS})
+def alloy_ctfull_ode_fn(state, u, pw, physics):  # type: ignore[no-untyped-def]
+  max_delta, steering_time_constant = physics[2], physics[3]
+  delta = state[6]
+  x_dot, y_dot, omega = _world_vel_expr(state, physics)
   delta_dot = (u[1] * max_delta - delta) / (steering_time_constant * 3.0)
   x_scale, w0, b0, w1, b1, w2, b2 = _unpack_pw_expr(pw)
   phi = al.concat([state[3:7] / x_scale, u]).block()
@@ -315,49 +428,113 @@ def alloy_ctfull_rk4_fn(state, u, pw, physics, dt):  # type: ignore[no-untyped-d
   return {"next": (state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)).block()}
 
 
+def _smooth_relu_expr(x: al.Expr) -> al.Expr:
+  return 0.5 * (x + (x * x + DT_RELU_EPS**2).sqrt())
+
+
+def _unpack_pw_dt_expr(pw: al.Expr) -> tuple[al.Expr, ...]:
+  return (
+    pw[DT_OFFSETS[0] : DT_OFFSETS[1]].block(),
+    pw[DT_OFFSETS[1] : DT_OFFSETS[2]].reshape(DT_W0_SHAPE).block(),
+    pw[DT_OFFSETS[2] : DT_OFFSETS[3]].block(),
+    pw[DT_OFFSETS[3] : DT_OFFSETS[4]].reshape(DT_W1_SHAPE).block(),
+    pw[DT_OFFSETS[4] : DT_OFFSETS[5]].block(),
+    pw[DT_OFFSETS[5] : DT_OFFSETS[6]].reshape(DT_W2_SHAPE).block(),
+    pw[DT_OFFSETS[6] : DT_OFFSETS[7]].block(),
+  )
+
+
+@al.function("ctdt_pose_dot", {"state": NSTATE, "physics": N_PHYSICS})
+def alloy_pose_dot_fn(state, physics):  # type: ignore[no-untyped-def]
+  x_dot, y_dot, omega = _world_vel_expr(state, physics)
+  zero = 0.0 * state[3]
+  return {"posedot": al.stack([x_dot, y_dot, omega, zero, zero, zero, zero])}
+
+
+@al.function("ctdt_dt_mlp_step", {"state": NSTATE, "u": NCTRL, "pw": N_PW_DT, "physics": N_PHYSICS, "dt": 1})
+def alloy_dt_mlp_step_fn(state, u, pw, physics, dt):  # type: ignore[no-untyped-def]
+  """The discrete MLP's one-step map; see ``common.dt_mlp_step_smooth_np``."""
+  h_dt = dt[0]
+  max_delta, steering_time_constant = physics[2], physics[3]
+  delta = state[6]
+  k1 = alloy_pose_dot_fn.call([state, physics])[0]
+  k2 = alloy_pose_dot_fn.call([state + 0.5 * h_dt * k1, physics])[0]
+  k3 = alloy_pose_dot_fn.call([state + 0.5 * h_dt * k2, physics])[0]
+  k4 = alloy_pose_dot_fn.call([state + h_dt * k3, physics])[0]
+  pose = state + (h_dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+  x_scale, w0, b0, w1, b1, w2, b2 = _unpack_pw_dt_expr(pw)
+  phi = al.concat([al.stack([state[3], state[4] - delta, state[5], delta]) / x_scale, al.stack([u[1], u[0]])]).block()
+  h = _smooth_relu_expr((w0 @ phi + b0).block()).block()
+  h = _smooth_relu_expr((w1 @ h + b1).block()).block()
+  learned = (w2 @ h + b2).block()
+  delta_next = delta + h_dt * (u[1] * max_delta - delta) / steering_time_constant
+  return {"next": al.stack([pose[0], pose[1], pose[2], learned[0], learned[1] + delta_next, learned[2], delta_next])}
+
+
 def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al.Function:
   ncars = loop_cfg.ncars
   n_u = NCTRL * ncars
-  z = al.sym("z", n_u + 1)
+  n_s = loop_cfg.n_slack
+  z = al.sym("z", n_u + n_s)
   bar_x = al.sym("bar_x", NSTATE * ncars, diff=False)
   u_des = al.sym("u_des", n_u, diff=False)
-  pw = al.sym("pw", N_PW, diff=False)
+  pw = al.sym("pw", filter_n_pw(filt_cfg), diff=False)
   physics = al.sym("physics", N_PHYSICS, diff=False)
   dt = al.sym("dt", 1, diff=False)
   u = z[:n_u]
-  slack = z[n_u : n_u + 1]
-  states_next = al.map_(alloy_ctfull_rk4_fn, ncars, [(bar_x, 0, NSTATE), (u, 0, NCTRL), (pw, 0, 0), (physics, 0, 0), (dt, 0, 0)])
+  slack = z[n_u:]
+  step_fn = alloy_dt_mlp_step_fn if filt_cfg.model == "dt" else alloy_ctfull_rk4_fn
+  states_next = al.map_(step_fn, ncars, [(bar_x, 0, NSTATE), (u, 0, NCTRL), (pw, 0, 0), (physics, 0, 0), (dt, 0, 0)])
+  hcbf, R = loop_cfg.hcbf, loop_cfg.safety_radius
 
-  def pair_h(pack: al.Expr, i: int, j: int) -> al.Expr:
+  def pair_b(pack: al.Expr, i: int, j: int) -> al.Expr:
+    """Order-1 hyperbolic pair barrier; see ``common.HCBFConfig``."""
     xi = pack[NSTATE * i : NSTATE * (i + 1)]
     xj = pack[NSTATE * j : NSTATE * (j + 1)]
-    d = xi[0:2] - xj[0:2]
-    return (al.dot(d, d) - loop_cfg.safety_radius**2).scalar()
+    px, py = xj[0] - xi[0], xj[1] - xi[1]
+    vxi, vyi, _ = _world_vel_expr(xi, physics)
+    vxj, vyj, _ = _world_vel_expr(xj, physics)
+    vx, vy = vxj - vxi, vyj - vyi
+    r = (px * px + py * py).sqrt()
+    v_x = (px * vx + py * vy) / r
+    v_y = (px * vy - py * vx) / r
+    d_eps = ((r - R) * (r - R) + hcbf.eps**2).sqrt()
+    s = (r - R) / d_eps
+    # a_env is the braking envelope V(d) = envelope_c d^envelope_q: the largest closing speed
+    # the pair can still stop away within the clearance it has. The shipped constants are one
+    # conservative fit covering both vehicle models — see common.HCBFConfig.
+    a_env = hcbf.envelope_c * d_eps**hcbf.envelope_q
+    q = (d_eps * (r + R)).sqrt() / R * v_y
+    return (v_x + s * (a_env**4 + q**4).sqrt().sqrt()).scalar()
 
   m = loop_cfg.wall_margin
   x_min, x_max, y_min, y_max = [physics[i] for i in range(4, 8)]
 
-  def wall_h(pack: al.Expr, i: int) -> list[al.Expr]:
+  def wall_b(pack: al.Expr, i: int) -> list[al.Expr]:
     xi = pack[NSTATE * i : NSTATE * (i + 1)]
-    return [
-      (xi[0] - (x_min + m)).scalar(),
-      ((x_max - m) - xi[0]).scalar(),
-      (xi[1] - (y_min + m)).scalar(),
-      ((y_max - m) - xi[1]).scalar(),
-    ]
+    vx, vy, _ = _world_vel_expr(xi, physics)
+    clearances = [xi[0] - (x_min + m), (x_max - m) - xi[0], xi[1] - (y_min + m), (y_max - m) - xi[1]]
+    out = []
+    for clearance, v_closing in zip(clearances, (-vx, vx, -vy, vy), strict=True):
+      d_eps = (clearance * clearance + loop_cfg.wall_eps**2).sqrt()
+      s = clearance / d_eps
+      v_max = hcbf.single_envelope_c * d_eps**hcbf.envelope_q
+      out.append((s * v_max - v_closing).scalar())
+    return out
 
   rows: list[al.Expr] = []
   for i in range(ncars):
     for j in range(i + 1, ncars):
-      rows.append((pair_h(states_next, i, j) - (1.0 - loop_cfg.pair_gamma) * pair_h(bar_x, i, j) + slack[0]).scalar())
+      rows.append((pair_b(states_next, i, j) - (1.0 - loop_cfg.pair_gamma) * pair_b(bar_x, i, j)).scalar())
   if loop_cfg.arena_avoidance:
     for i in range(ncars):
-      for hn, hc in zip(wall_h(states_next, i), wall_h(bar_x, i), strict=True):
-        rows.append((hn - (1.0 - loop_cfg.wall_gamma) * hc + slack[0]).scalar())
-  g = al.stack(rows).scalar() if rows else al.const(np.zeros((0,)))
+      for bn, bc in zip(wall_b(states_next, i), wall_b(bar_x, i), strict=True):
+        rows.append((bn - (1.0 - loop_cfg.wall_gamma) * bc).scalar())
+  assert len(rows) == n_s
+  g = (al.stack(rows) + slack).scalar() if rows else al.const(np.zeros((0,)))
   diff = u - u_des
   weights = al.const(np.tile(np.asarray(filt_cfg.R, dtype=np.float64), ncars))
-  cost = (al.dot(diff, weights * diff) + filt_cfg.slack_weight * slack[0] * slack[0]).scalar()
+  cost = (al.dot(diff, weights * diff) + filt_cfg.slack_weight * slack.sum()).scalar()
   return al.Function(
     f"ctdt_alloy_oracle_N{ncars}_{'walls' if loop_cfg.arena_avoidance else 'pairs'}",
     [z, bar_x, u_des, pw, physics, dt],
@@ -374,15 +551,16 @@ class AlloyDTCBFSafetyFilter:
   first (cold) solve just sees zero multiplier seeds, which IPOPT pushes to
   the interior via its warm-start bound-push options."""
 
-  name = "alloy_dt_pos_cbf"
+  name = "alloy_dt_hcbf"
 
-  def __init__(self, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights):
+  def __init__(self, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights | DTMLPWeights):
     self.loop_cfg = loop_cfg
     self.filt_cfg = filt_cfg
     self.weights = weights
     self.ncars = loop_cfg.ncars
     self.n_u = NCTRL * self.ncars
-    self.n_z = self.n_u + 1
+    self.n_s = loop_cfg.n_slack
+    self.n_z = self.n_u + self.n_s
     self.stats_history: list[FilterStats] = []
     self.last_z: np.ndarray | None = None
     self.last_mult_g: np.ndarray | None = None
@@ -408,8 +586,8 @@ class AlloyDTCBFSafetyFilter:
       p=list(base.inputs[1:]),
       g_ineq=g if self.n_g else None,
       l_ineq=np.zeros(self.n_g) if self.n_g else None,
-      x_lb=np.concatenate([-np.ones(self.n_u), np.zeros(1)]),
-      x_ub=np.concatenate([np.ones(self.n_u), np.full(1, np.inf)]),
+      x_lb=np.concatenate([-np.ones(self.n_u), np.zeros(self.n_s)]),
+      x_ub=np.concatenate([np.ones(self.n_u), np.full(self.n_s, np.inf)]),
       name=base.name.replace("_oracle", "_nlp"),
       options=options,
     )
@@ -446,7 +624,7 @@ class AlloyDTCBFSafetyFilter:
     physics = self.loop_cfg.physics.array()
     dt = np.array([self.loop_cfg.dt])
     if self.last_z is None:
-      z0 = np.concatenate([u_des, np.zeros(1)])
+      z0 = np.concatenate([u_des, np.zeros(self.n_s)])
     else:
       z0 = self.last_z.copy()
       z0[: self.n_u] = np.clip(z0[: self.n_u], -1.0, 1.0)
@@ -490,11 +668,12 @@ class AlloyDTCBFSafetyFilter:
         stats.iter,
         stats.obj,
         float(np.min(g_val)) if g_val.size else float("inf"),
-        float(out["x"][-1]),
+        float(np.sum(out["x"][self.n_u :])),
         tracking,
         eval_counts,
         eval_ms,
         {
+          "max_slack": float(np.max(out["x"][self.n_u :], initial=0.0)),
           "build_ms": self._build_ms,
           "compile_ms": dict(self._compile_ms),
           "jac_nnz": int(self.jac_sparsity.nnz),

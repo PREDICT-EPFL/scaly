@@ -12,19 +12,18 @@ import numpy as np
 
 import alloy as al
 from alloy.codegen.c import _workspace_size, render_c_module
-from benchmarks.harness import gbench
+from benchmarks.harness import ROOT, RESULTS, gbench
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.provenance import collect, write
-from benchmarks.problems import chain_of_masses, race_cars
+from benchmarks.problems import chain, race_cars
 
-ROOT = Path(__file__).resolve().parents[2]
-RESULTS = ROOT / "benchmarks" / "results"
 DEFAULT_SIZES = {
   "chain": [3, 5, 9, 17, 33, 65],
   "race_cars": [1, 5, 10, 25, 40, 50, 100, 200, 500],
-  "bumpercars": [2, 4, 8],
+  "unbumpercars": [2, 4, 8],
 }
 BACKENDS = ("alloy", "casadi_sx", "casadi_mx")
+CELL_AXES = {"chain": "M", "race_cars": "N", "unbumpercars": "C"}
 FIELDS = [
   "workload",
   "size",
@@ -127,9 +126,9 @@ def _race_cars_alloy(size: int, out_dir: Path) -> dict:
 
 
 def _chain_alloy(size: int, out_dir: Path) -> dict:
-  horizon = chain_of_masses.HORIZON
+  horizon = chain.HORIZON
   started = time.perf_counter()
-  fn = chain_of_masses.chain_eq_function(size, horizon)
+  fn = chain.chain_eq_function(size, horizon)
   name = f"alloy_chain_eq_jac_M{size}"
   spjf = fn.factory(name, ["z", "p"], ["spjac:eq:z"])
   sparsity = spjf.output_sparsities[0]
@@ -140,7 +139,7 @@ def _chain_alloy(size: int, out_dir: Path) -> dict:
     name,
     "alloy",
     module,
-    [("z", chain_of_masses.n_dec(size, horizon)), ("p", chain_of_masses.n_param(size))],
+    [("z", chain.n_dec(size, horizon)), ("p", chain.n_param(size))],
     sparsity,
     (fn.outputs[0].shape[0], fn.inputs[0].shape[0]),
     build_ms,
@@ -151,14 +150,14 @@ def _chain_alloy(size: int, out_dir: Path) -> dict:
   )
 
 
-def _bumpercars_alloy(size: int, out_dir: Path) -> dict:
-  from benchmarks.problems.bumpercars_filter.common import ClosedLoopConfig, FilterConfig, NCTRL, NSTATE, N_PHYSICS, N_PW
-  from benchmarks.problems.bumpercars_filter.filters import build_alloy_oracle
+def _unbumpercars_alloy(size: int, out_dir: Path) -> dict:
+  from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, NCTRL, NSTATE, N_PHYSICS, N_PW
+  from benchmarks.problems.unbumpercars.filters import build_alloy_oracle
 
   started = time.perf_counter()
   cfg = ClosedLoopConfig(ncars=size)
-  oracle = build_alloy_oracle(cfg, FilterConfig())
-  name = f"alloy_bumpercars_g_jac_C{size}"
+  oracle = build_alloy_oracle(cfg, FilterConfig(model="ct"))
+  name = f"alloy_unbumpercars_g_jac_C{size}"
   spjf = oracle.factory(name, ["z", "bar_x", "u_des", "pw", "physics", "dt"], ["spjac:g:z"])
   sparsity = spjf.output_sparsities[0]
   assert sparsity is not None
@@ -168,12 +167,12 @@ def _bumpercars_alloy(size: int, out_dir: Path) -> dict:
     name,
     "alloy",
     module,
-    [("z", NCTRL * size + 1), ("bar_x", NSTATE * size), ("u_des", NCTRL * size), ("pw", N_PW), ("physics", N_PHYSICS), ("dt", 1)],
+    [("z", NCTRL * size + cfg.n_slack), ("bar_x", NSTATE * size), ("u_des", NCTRL * size), ("pw", N_PW), ("physics", N_PHYSICS), ("dt", 1)],
     sparsity,
-    (oracle.outputs[1].size, NCTRL * size + 1),
+    (oracle.outputs[1].size, NCTRL * size + cfg.n_slack),
     build_ms,
     render_ms,
-    f"BM_AlloyBumpercarsGJacC{size}",
+    f"BM_AlloyUnbumpercarsGJacC{size}",
     w_size=_workspace_size(spjf),
     callable=spjf,
   )
@@ -184,26 +183,26 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
 
   kind = backend.removeprefix("casadi_")
   sym_t = ca.SX if kind == "sx" else ca.MX
-  stem = {"chain": "chain_eq", "race_cars": "race_car_eq", "bumpercars": "bumpercars_g"}[workload]
-  axis = {"chain": "M", "race_cars": "N", "bumpercars": "C"}[workload]
+  stem = {"chain": "chain_eq", "race_cars": "race_car_eq", "unbumpercars": "unbumpercars_g"}[workload]
+  axis = {"chain": "M", "race_cars": "N", "unbumpercars": "C"}[workload]
   name = f"casadi_{kind}_{stem}_jac_{axis}{size}"
   started = time.perf_counter()
   if workload == "chain":
-    horizon = chain_of_masses.HORIZON
-    fn = chain_of_masses.ca_chain_eq_jac(size, horizon, sym_t=sym_t, name=name, map_stages=True)
-    inputs = [("z", chain_of_masses.n_dec(size, horizon)), ("p", chain_of_masses.n_param(size))]
+    horizon = chain.HORIZON
+    fn = chain.ca_chain_eq_jac(size, horizon, sym_t=sym_t, name=name, map_stages=True)
+    inputs = [("z", chain.n_dec(size, horizon)), ("p", chain.n_param(size))]
     benchmark = f"BM_Casadi{kind.title()}ChainEqJacM{size}"
   elif workload == "race_cars":
     fn = race_cars.ca_race_car_eq_jac(size, name=name, sym_t=sym_t)
     inputs = [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))]
     benchmark = f"BM_Casadi{kind.title()}RaceCarEqJacN{size}"
   else:
-    from benchmarks.problems.bumpercars_filter.common import ClosedLoopConfig, FilterConfig, load_ct_full_weights
-    from benchmarks.problems.bumpercars_filter.filters import build_casadi_jacobian
+    from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, load_ct_full_weights
+    from benchmarks.problems.unbumpercars.filters import build_casadi_jacobian
 
-    fn = build_casadi_jacobian(ClosedLoopConfig(ncars=size), FilterConfig(), load_ct_full_weights(), name, sym_t)
+    fn = build_casadi_jacobian(ClosedLoopConfig(ncars=size), FilterConfig(model="ct"), load_ct_full_weights(), name, sym_t)
     inputs = [("z", fn.size1_in(0)), ("p", fn.size1_in(1))]
-    benchmark = f"BM_Casadi{kind.title()}BumpercarsGJacC{size}"
+    benchmark = f"BM_Casadi{kind.title()}UnbumpercarsGJacC{size}"
   build_ms = (time.perf_counter() - started) * 1000
   started = time.perf_counter()
   cwd = Path.cwd()
@@ -243,15 +242,15 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
 
 def build_kernel(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   if backend == "alloy":
-    return {"chain": _chain_alloy, "race_cars": _race_cars_alloy, "bumpercars": _bumpercars_alloy}[workload](size, out_dir)
+    return {"chain": _chain_alloy, "race_cars": _race_cars_alloy, "unbumpercars": _unbumpercars_alloy}[workload](size, out_dir)
   return _casadi(workload, size, backend, out_dir)
 
 
 def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
   canonical = {
-    ("chain", 5): RESULTS / "closed_loop" / "chain",
-    ("race_cars", 40): RESULTS / "closed_loop" / "race_cars" / "alloy",
-    ("bumpercars", 4): RESULTS / "closed_loop" / "bumpercars" / "alloy",
+    ("chain", 5): RESULTS / "closed-loop" / "chain" / "alloy",
+    ("race_cars", 40): RESULTS / "closed-loop" / "race_cars" / "alloy",
+    ("unbumpercars", 8): RESULTS / "closed-loop" / "unbumpercars" / "alloy",
   }.get((workload, size))
   if canonical is None:
     return None
@@ -265,14 +264,14 @@ def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
 def _samples(workload: str, size: int, info: dict, out_dir: Path):
   harvested = _harvested_inputs(workload, size)
   if workload == "chain":
-    horizon = chain_of_masses.HORIZON
+    horizon = chain.HORIZON
     if harvested is None:
-      zv, pv = chain_of_masses.sample_inputs(size, horizon)
+      zv, pv = chain.sample_inputs(size, horizon)
     else:
       zv, pv = harvested["z"], harvested["p"]
-    if zv.shape != (chain_of_masses.n_dec(size, horizon),) or pv.shape != (chain_of_masses.n_param(size),):
+    if zv.shape != (chain.n_dec(size, horizon),) or pv.shape != (chain.n_param(size),):
       raise ValueError(f"harvested chain input shapes do not match M={size}, N={horizon}: {zv.shape}, {pv.shape}")
-    expected = chain_of_masses.chain_eq_jac_dense_reference(size, horizon, zv, pv).reshape(-1)
+    expected = chain.chain_eq_jac_dense_reference(size, horizon, zv, pv).reshape(-1)
     values = {"z": zv, "p": pv}
   elif workload == "race_cars":
     if harvested is None:
@@ -287,19 +286,21 @@ def _samples(workload: str, size: int, info: dict, out_dir: Path):
     expected = np.asarray(ref(zv, pv), dtype=np.float64).reshape(-1)
     values = {"z": zv, "p": pv}
   else:
-    from benchmarks.problems.bumpercars_filter.common import ClosedLoopConfig, FilterConfig, load_ct_full_weights, sample_initial_states
-    from benchmarks.problems.bumpercars_filter.filters import build_alloy_oracle
+    from benchmarks.problems.unbumpercars.common import NCTRL, ClosedLoopConfig, FilterConfig, load_ct_full_weights, sample_initial_states
+    from benchmarks.problems.unbumpercars.filters import build_alloy_oracle
 
-    cfg, filt_cfg, weights = ClosedLoopConfig(ncars=size), FilterConfig(), load_ct_full_weights()
+    cfg, filt_cfg, weights = ClosedLoopConfig(ncars=size), FilterConfig(model="ct"), load_ct_full_weights()
     if harvested is None:
       bar_x = sample_initial_states(cfg).reshape(-1)
       u_des = np.tile([cfg.nominal_speed, 0.0], size)
-      zv = np.concatenate([u_des, np.zeros(1)])
+      zv = np.concatenate([u_des, np.zeros(cfg.n_slack)])
       pieces = {"z": zv, "bar_x": bar_x, "u_des": u_des, "pw": weights.packed, "physics": cfg.physics.array(), "dt": np.array([cfg.dt])}
     else:
       pieces = harvested
       zv = pieces["z"]
-    ref = build_alloy_oracle(cfg, filt_cfg).factory(f"bumpercars_dense_ref_C{size}", ["z", "bar_x", "u_des", "pw", "physics", "dt"], ["jac:g:z"])
+    if zv.shape != (NCTRL * size + cfg.n_slack,):
+      raise ValueError(f"harvested unbumpercars input shapes do not match C={size}: {zv.shape}")
+    ref = build_alloy_oracle(cfg, filt_cfg).factory(f"unbumpercars_dense_ref_C{size}", ["z", "bar_x", "u_des", "pw", "physics", "dt"], ["jac:g:z"])
     expected = np.asarray(ref(*[pieces[name] for name in ("z", "bar_x", "u_des", "pw", "physics", "dt")]), dtype=np.float64).reshape(-1)
     values = (
       pieces if info["backend"] == "alloy" else {"z": zv, "p": np.concatenate([pieces[name] for name in ("bar_x", "u_des", "pw", "physics", "dt")])}
@@ -403,7 +404,7 @@ def run_sweep(args, cli_args: list[str]) -> bool:
               workload,
               size,
               backend,
-              RESULTS / "gen" / workload / f"{backend}_N{size}",
+              args.out.parent / workload / f"{backend}_{CELL_AXES[workload]}{size}",
               codegen_timeout=args.codegen_timeout,
               compile_timeout=args.compile_timeout,
               max_source_mb=args.max_source_mb,

@@ -2,17 +2,16 @@
   "configById": {
     "3D!4emckpf": {
       "cameraState": {
+        "distance": 31.733468832121446,
         "perspective": false,
-        "distance": 35.16173831813904,
         "phi": 30.474308300403045,
-        "thetaOffset": 89.99999999999994,
-        "targetOffset": [
-          6,
+        "target": [
+          0,
           0,
           0
         ],
-        "target": [
-          0,
+        "targetOffset": [
+          6,
           0,
           0
         ],
@@ -22,6 +21,7 @@
           0,
           1
         ],
+        "thetaOffset": 90,
         "fovy": 45,
         "near": 0.5,
         "far": 5000
@@ -117,6 +117,10 @@
       ],
       "foxglovePanelTitle": "runtimes"
     },
+    "RawMessages!1o1uc4h": {
+      "defaultExpanded": false,
+      "topicPath": "/telemetry"
+    },
     "Indicator!2xrh30f": {
       "path": "/telemetry.success",
       "style": "background",
@@ -132,10 +136,6 @@
         }
       ],
       "foxglovePanelTitle": "solver success"
-    },
-    "RawMessages!1o1uc4h": {
-      "defaultExpanded": false,
-      "topicPath": "/telemetry"
     }
   },
   "globalVariables": {},
@@ -149,8 +149,7 @@
       "second": {
         "first": "Plot!2bed184",
         "second": "Indicator!2xrh30f",
-        "direction": "column",
-        "splitPercentage": 68.74858073752283
+        "direction": "column"
       },
       "direction": "row"
     },

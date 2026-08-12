@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from pydantic import ValidationError
 
+from benchmarks.harness import CLOSED_LOOP_RESULTS, RESULTS, SMOKE_RESULTS, SWEEP_RESULTS
+from benchmarks.harness import sweep
 from benchmarks.harness.recording import (
   ACCEL_COLOR,
   BRAKE_COLOR,
@@ -16,12 +19,15 @@ from benchmarks.harness.recording import (
   CHAIN_REFERENCE_COLORS,
   CONE_STYLES,
   HORIZON_STYLES,
+  UnbumpercarsRecorder,
   CarShape,
   ChainPlan,
+  ChainRecorder,
   ControlState,
   HorizonPath,
   PlanarVehicleState,
   PointState3D,
+  RaceCarRecorder,
   Recorder,
   RunMetadata,
   ScalarTelemetry,
@@ -48,58 +54,65 @@ def test_recording_schemas_are_strict_json_schemas() -> None:
     ScalarTelemetry(step=-1, time_s=0.0, success=True, solver_time_ms=1.0)
 
 
-def test_recorder_writes_custom_and_scene_channels(tmp_path: Path) -> None:
-  path = tmp_path / "episode.mcap"
-  with Recorder(path) as recorder:
-    custom_channels = (
-      recorder._metadata,
-      recorder._telemetry,
-      recorder._planar,
-      recorder._points,
-      recorder._control,
-      recorder._horizon,
-      recorder._plan,
-    )
-    schemas = {}
-    for channel in custom_channels:
+SHARED_TOPICS = {"/run/metadata", "/telemetry", "/control", "/scene", "/scene/static", "/tf"}
+PROBLEM_TOPICS = {
+  ChainRecorder: SHARED_TOPICS | {"/chain/point", "/chain/plan", "/scene/horizon"},
+  RaceCarRecorder: SHARED_TOPICS | {"/planar/state", "/horizon", "/scene/horizon"},
+  UnbumpercarsRecorder: SHARED_TOPICS | {"/planar/state"},
+}
+
+
+def test_each_recorder_offers_only_the_topics_its_problem_writes(tmp_path: Path) -> None:
+  """An episode's topic list is what a layout is built against, so a recorder must not declare a
+  channel it never writes: unbumpercars has no horizon to draw, and neither car problem has a chain."""
+  for recorder_type, expected in PROBLEM_TOPICS.items():
+    with recorder_type(tmp_path / f"{recorder_type.__name__}.mcap") as recorder:
+      assert {channel.topic() for channel in recorder._channels} == expected, recorder_type.__name__
+
+
+def test_recorders_write_valid_mcaps_with_strict_schemas(tmp_path: Path) -> None:
+  schemas = {}
+
+  def harvest(recorder: Recorder) -> None:
+    """Collect the problem's own message schemas; the scene and transform topics are Foxglove's
+    own protobuf schemas rather than ones this module defines."""
+    for channel in recorder._channels:
       schema = channel.schema()
-      assert schema is not None
-      schemas[schema.name] = json.loads(schema.data)
-    scene_channels = (recorder._scene, recorder._static_scene, recorder._horizon_scene)
-    topics = {channel.topic() for channel in (*custom_channels, *scene_channels, recorder._tf)}
-    recorder.record_metadata(RunMetadata(run_id="smoke", problem="cars", backend="alloy", seed=42, dt=0.1))
-    recorder.record_telemetry(ScalarTelemetry(step=0, time_s=0.0, success=True, solver_time_ms=1.2, objective=3.0))
-    recorder.record_arena((0.0, 4.0, 0.0, 3.0))
-    recorder.record_planar([PlanarVehicleState(step=0, time_s=0.0, vehicle_id="ego", x=1.0, y=2.0, yaw=0.2)])
-    recorder.record_chain_references({"end-mass reference": (0.75, 0.0, 0.0)})
-    recorder.record_chain(
+      if schema is not None and schema.encoding == "jsonschema":
+        schemas[schema.name] = json.loads(schema.data)
+
+  paths = [tmp_path / f"{name}.mcap" for name in ("chain", "race_cars", "unbumpercars")]
+  with ChainRecorder(paths[0]) as chain:
+    harvest(chain)
+    chain.record_metadata(RunMetadata(run_id="smoke", problem="chain", backend="alloy", seed=42, dt=0.1))
+    chain.record_telemetry(ScalarTelemetry(step=0, time_s=0.0, success=True, solver_time_ms=1.2, objective=3.0))
+    chain.record_chain_references({"end-mass reference": (0.75, 0.0, 0.0)})
+    chain.record_chain(
       [
         PointState3D(step=0, time_s=0.0, point_id="0", x=0.0, y=0.0, z=0.0),
         PointState3D(step=0, time_s=0.0, point_id="1", x=1.0, y=0.0, z=0.5),
       ],
       control=ControlState(step=0, time_s=0.0, entity_id="tip", applied=[0.1, 0.2, -0.3]),
     )
-    recorder.record_control([ControlState(step=0, time_s=0.0, entity_id="ego", desired=[1.0, 0.0], applied=[0.8, 0.1])])
-    recorder.record_track(np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]), {"blue": np.array([[0.0, 1.0]]), "small_orange": np.zeros((0, 2))})
-    recorder.record_horizons([HorizonPath(step=0, time_s=0.0, path_id="prediction", x=[0.0, 1.0], y=[0.0, 0.5])])
-    recorder.record_chain_plan(ChainPlan(step=0, time_s=0.0, n_masses=2, nodes=[[0.0, 0.0, 0.0, 1.0, 0.0, 0.5], [0.0, 0.0, 0.0, 1.1, 0.0, 0.4]]))
+    chain.record_control([ControlState(step=0, time_s=0.0, entity_id="tip", applied=[0.1, 0.2, -0.3])])
+    chain.record_chain_plan(ChainPlan(step=0, time_s=0.0, n_masses=2, nodes=[[0.0, 0.0, 0.0, 1.0, 0.0, 0.5], [0.0, 0.0, 0.0, 1.1, 0.0, 0.4]]))
 
-  data = path.read_bytes()
-  assert len(data) > 8
-  assert data.startswith(b"\x89MCAP0\r\n") and data.endswith(b"\x89MCAP0\r\n")
-  assert topics == {
-    "/run/metadata",
-    "/telemetry",
-    "/planar/state",
-    "/chain/point",
-    "/chain/plan",
-    "/control",
-    "/horizon",
-    "/scene",
-    "/scene/static",
-    "/scene/horizon",
-    "/tf",
-  }
+  with RaceCarRecorder(paths[1]) as cars:
+    harvest(cars)
+    cars.record_track(np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]), {"blue": np.array([[0.0, 1.0]]), "small_orange": np.zeros((0, 2))})
+    cars.record_planar([PlanarVehicleState(step=0, time_s=0.0, vehicle_id="ego", x=1.0, y=2.0, yaw=0.2)])
+    cars.record_control([ControlState(step=0, time_s=0.0, entity_id="ego", desired=[1.0, 0.0], applied=[0.8, 0.1])])
+    cars.record_horizons([HorizonPath(step=0, time_s=0.0, path_id="prediction", x=[0.0, 1.0], y=[0.0, 0.5])])
+
+  with UnbumpercarsRecorder(paths[2]) as unbumpercars:
+    harvest(unbumpercars)
+    unbumpercars.record_arena((0.0, 4.0, 0.0, 3.0))
+    unbumpercars.record_planar([PlanarVehicleState(step=0, time_s=0.0, vehicle_id="0", x=1.0, y=2.0, yaw=0.2)])
+
+  for path in paths:
+    data = path.read_bytes()
+    assert len(data) > 8, path.name
+    assert data.startswith(b"\x89MCAP0\r\n") and data.endswith(b"\x89MCAP0\r\n"), path.name
   assert {
     "RunMetadata",
     "ScalarTelemetry",
@@ -109,7 +122,7 @@ def test_recorder_writes_custom_and_scene_channels(tmp_path: Path) -> None:
     "HorizonPath",
     "ChainPlan",
   } == schemas.keys()
-  assert all(schema["type"] == "object" for schema in schemas.values())
+  assert all(schema["type"] == "object" and schema["additionalProperties"] is False for schema in schemas.values())
 
 
 def test_static_geometry_gets_its_own_scene_topic_and_is_logged_once(tmp_path: Path) -> None:
@@ -126,19 +139,28 @@ def test_static_geometry_gets_its_own_scene_topic_and_is_logged_once(tmp_path: P
     def close(self) -> None:
       pass
 
-  with Recorder(tmp_path / "episode.mcap") as recorder:
+  with RaceCarRecorder(tmp_path / "race_cars.mcap") as recorder:
     static, dynamic, horizon = SpyChannel(), SpyChannel(), SpyChannel()
     recorder._static_scene, recorder._scene, recorder._horizon_scene = static, dynamic, horizon  # ty: ignore[invalid-assignment]
-    recorder.record_arena((0.0, 4.0, 0.0, 3.0))
     recorder.record_track(np.array([[0.0, 0.0], [1.0, 0.0]]), {"blue": np.array([[0.0, 1.0]])})
     for step in range(3):
       recorder.record_planar([PlanarVehicleState(step=step, time_s=0.1 * step, vehicle_id="ego", x=float(step), y=0.0, yaw=0.0)])
       recorder.record_horizons([HorizonPath(step=step, time_s=0.1 * step, path_id="prediction", x=[0.0, 1.0], y=[0.0, 0.5])])
 
-  # the two static entities are sent once each, at time zero, and never re-sent per step
-  assert static.log_times == [0, 0]
+  # the track is sent once, at time zero, and never re-sent per step
+  assert static.log_times == [0]
   assert dynamic.log_times == [0, 100_000_000, 200_000_000]
   assert horizon.log_times == dynamic.log_times
+
+  with UnbumpercarsRecorder(tmp_path / "unbumpercars.mcap") as recorder:
+    arena, cars = SpyChannel(), SpyChannel()
+    recorder._static_scene, recorder._scene = arena, cars  # ty: ignore[invalid-assignment]
+    recorder.record_arena((0.0, 4.0, 0.0, 3.0))
+    for step in range(3):
+      recorder.record_planar([PlanarVehicleState(step=step, time_s=0.1 * step, vehicle_id="0", x=float(step), y=0.0, yaw=0.0)])
+
+  assert arena.log_times == [0]
+  assert cars.log_times == [0, 100_000_000, 200_000_000]
 
 
 def test_chain_reference_survives_seeking_while_the_chain_and_plan_update_per_step(tmp_path: Path) -> None:
@@ -155,7 +177,7 @@ def test_chain_reference_survives_seeking_while_the_chain_and_plan_update_per_st
     def close(self) -> None:
       pass
 
-  with Recorder(tmp_path / "episode.mcap") as recorder:
+  with ChainRecorder(tmp_path / "episode.mcap") as recorder:
     static, dynamic, horizon = SpyChannel(), SpyChannel(), SpyChannel()
     recorder._static_scene, recorder._scene, recorder._horizon_scene = static, dynamic, horizon  # ty: ignore[invalid-assignment]
     recorder.record_chain_references({"end-mass reference": (0.75, 0.0, 0.0)})
@@ -198,7 +220,7 @@ def test_recorder_publishes_a_car_transform_with_every_planar_scene(tmp_path: Pa
     def close(self) -> None:
       pass
 
-  with Recorder(tmp_path / "episode.mcap") as recorder:
+  with RaceCarRecorder(tmp_path / "episode.mcap") as recorder:
     tf, scene = SpyChannel(), SpyChannel()
     recorder._tf, recorder._scene = tf, scene  # ty: ignore[invalid-assignment]
     recorder.record_planar(
@@ -424,13 +446,44 @@ def test_arena_scene_adds_the_wall_margin_inset() -> None:
 
 
 def test_layouts_live_next_to_their_problem_and_parse_when_present() -> None:
-  paths = {problem: layout_path(problem) for problem in ("chain", "race_cars", "bumpercars")}
-  assert paths["bumpercars"] == Path(__file__).resolve().parents[2] / "benchmarks/problems/bumpercars_filter/foxglove-layout.json"
+  paths = {problem: layout_path(problem) for problem in ("chain", "race_cars", "unbumpercars")}
+  assert paths["unbumpercars"] == Path(__file__).resolve().parents[2] / "benchmarks/problems/unbumpercars/foxglove-layout.json"
   for problem, path in paths.items():
     assert path.parent.is_dir(), problem
     if path.is_file():
       layout = json.loads(path.read_text())
       assert isinstance(layout, dict) and layout, problem
+
+
+def test_benchmark_artifact_roots_are_command_scoped() -> None:
+  assert CLOSED_LOOP_RESULTS == RESULTS / "closed-loop"
+  assert SWEEP_RESULTS == RESULTS / "sweep"
+  assert SMOKE_RESULTS == RESULTS / "smoke"
+
+
+def test_sweep_cells_live_next_to_the_selected_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  cells = []
+
+  def run_cell(workload, size, backend, out_dir, **kwargs):
+    cells.append((workload, size, backend, out_dir, kwargs))
+    return sweep.row(workload=workload, size=size, backend=backend, compile_status="ok", runtime_status="ok"), None
+
+  monkeypatch.setattr(sweep, "run_cell", run_cell)
+  monkeypatch.setattr(sweep, "collect", lambda *args: {})
+  monkeypatch.setattr(sweep, "write", lambda *args: None)
+  args = SimpleNamespace(
+    out=tmp_path / "custom" / "measurements.csv",
+    workloads=["chain"],
+    sizes=[3],
+    backends=["alloy"],
+    codegen_timeout=1.0,
+    compile_timeout=1.0,
+    max_source_mb=1.0,
+    benchmark_min_time="0.01s",
+  )
+
+  assert sweep.run_sweep(args, [])
+  assert cells[0][3] == args.out.parent / "chain" / "alloy_M3"
 
 
 def test_result_harvest_selects_midpoint_success_deterministically(tmp_path: Path) -> None:

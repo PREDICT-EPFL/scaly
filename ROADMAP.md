@@ -1,6 +1,6 @@
 # Alloy benchmarks, solver plugins, and paper roadmap
 
-Last updated: 2026-07-15. This document supersedes everything that lived in
+Last updated: 2026-08-11. This document supersedes everything that lived in
 `fast_benchmarks/` (FastBench prototype, `BENCHMARK_SUITE_PLAN.md`,
 `REAL_BENCHMARK_CANDIDATES.md`, `STRATEGY_NOTES.md`), now removed. It covers the
 benchmark suite, the solver-plugin packaging, and the path to the first paper.
@@ -12,7 +12,7 @@ The library-internal phased plan (IR, AD, codegen, solvers) remains
 The first paper is deliberately modest. Alloy is presented as an experimental
 tool for our own research that others are encouraged to try and give feedback
 on — not a silver bullet, not a CasADi replacement. Legitimacy is built
-gradually through internal use (bumpercars safety filter, hovercraft MBD/DIAL,
+gradually through internal use (unbumpercars safety filter, hovercraft MBD/DIAL,
 racing MPFC) rather than claimed upfront.
 
 Main claims:
@@ -34,7 +34,7 @@ Note: claim 3 depends on an initial GPU backend that is currently deferred in
 paper scope makes it a workload requirement now — a minimal GPU lowering
 milestone must be planned in the library roadmap before the paper freeze
 (candidate driving workload: batched neural dynamics evaluation in the
-bumpercars filter). Open until scoped.
+unbumpercars filter). Open until scoped.
 
 Benchmarks are simple and focused on the claims: they demo that alloy is
 useful, on the problem types we actually work on. The most complex applications
@@ -72,9 +72,9 @@ benchmarks/
   README.md
   run.py                  # entry point: smoke / sweep / closed-loop
   problems/
-    chain_of_masses/
+    chain/
     race_cars/            # tracking NMPC now; MPFC lands in the same package
-    bumpercars_filter/
+    unbumpercars/
   harness/                # sim loop, gbench wrapper gen, mcap dump, metrics
   results/                # gitignored raw outputs
 ```
@@ -85,7 +85,7 @@ benchmarks/
 |---|---|---|
 | chain of masses | number of masses | classic hanging-chain NMPC (Wirsching/Bock/Diehl form); match the laopt paper's instance parameters where possible for an external reference point |
 | race cars: tracking NMPC, kinematic bicycle | horizon N | full-size Formula Student car on vendored FSDS tracks, with the minimum-curvature spline reference generator and lateral corridor constraint from `minimal_tracking_nmpc`; **later replaced by Johannes' MPFC with dynamic bicycle** (backlog), which lands in the same `race_cars/` package |
-| bumpercars safety filter, CT neural dynamics + discrete-time CBF | number of cars | **based on `examples/ct_dt_cbf_filter/`** (CT neural model + RK4 + one-step DT position CBF, centralized, `al.map_` over the car axis; CasADi + alloy implementations, closed loop, and per-step instrumentation already exist there). Fold the desired control into the **simulator's** dynamics only (not the OCP's), so the closed loop is plant + filter with no third controller entity. The older input-affine safety-filter variants in `benchmarks/` are **removed** — the CT DTCBF filter is the one that is preserved. |
+| unbumpercars safety filter, neural DT dynamics + order-1 HCBF | number of cars | **based on `examples/ct_dt_cbf_filter/`** (neural model, RK4 one-step map, centralized, `al.map_` over the car axis; CasADi + alloy implementations, closed loop, and per-step instrumentation already exist there). Fold the desired control into the **simulator's** dynamics only (not the OCP's), so the closed loop is plant + filter with no third controller entity. The older input-affine safety-filter variants in `benchmarks/` are **removed**. The pair barrier is the colleague's hyperbolic CBF (§2.5); the walls use the colleague's order-1 velocity barrier (§2.7). |
 
 Future problem candidates (not now): diffusion-based stuff, GP stuff,
 hovercraft MBD/DIAL.
@@ -150,12 +150,182 @@ Two complementary benchmark types:
    package; every message definition is a JSON schema generated from a
    Pydantic model) and build **Foxglove layouts**: curve
    plots for key quantities plus 3D viz for chain of masses, 2D viz for racing
-   and bumpercars.
+   and unbumpercars.
 
 Closed-loop simulator: **non-real-time model-in-the-loop only** (plant = same
 or perturbed model integrated with a fixed-step integrator; no real-time
 constraints, no hardware). Embedded targets (Raspberry Pi / Jetson) are
 explicitly out of scope for now (backlog).
+
+### 2.5 Unbumpercars: HCBF migration (2026-08-11)
+
+A standing rule for this problem, worth restating before the details: the benchmark is a
+*representative reproduction* of the `bumper_car_simulator` filter, not that filter's
+development center. Controller research happens upstream; here a formulation only has to be
+faithful enough to be representative and stable enough (no collisions, no solver failures at
+the canonical point) that Alloy-vs-CasADi measurements on it mean something. Formulation
+choices below are tie-broken by benchmark stability, not filter quality.
+
+The unbumpercars filter moved off the one-step *position* DTCBF onto the order-1
+hyperbolic CBF our colleague uses in `~/dev/bumper_car_simulator`
+(`control/algorithms.py::gradient_HCBF`), with per-row L1 slacks. The formulation
+is documented in the problem's README; what matters at roadmap level:
+
+- **The relative-degree workaround is gone.** The position barrier needed the
+  continuous-time model plus RK4 to have any authority within one step. The HCBF
+  constrains closing speed, so the discrete one-step map is enough — at the time of
+  this migration the plant and the filter's prediction were literally the same map, and
+  the barrier no longer cares how the next state is produced. §2.6 has since moved the
+  plant onto the natively discrete MLP, and the barrier indeed did not have to change.
+- **Results at C=4, 80 steps, seed 42** (the operating point before the canonical one
+  grew, so position-DTCBF and HCBF are directly comparable): minimum pair
+  distance 1.552 m → 2.280 m (the enforced safety radius, exactly), 40 → 0 steps
+  inside the 1.9 m collision radius, average tracking cost 14.7 → 1.68, average
+  IPOPT time 18.7 → 7.5 ms. Zero solver failures across C ∈ {4, 8} × 5 seeds, with
+  the largest slack seen anywhere at 0.18.
+- **The canonical point moved to C=8, 200 steps** (20 s) with **exact Lagrangian
+  Hessians as the default on both backends** — the sparse-Hessian-through-`Ops.MAP`
+  path is what this problem exists to exercise, and `--limited-memory-hessian` is now
+  the opt-out. That is where the Alloy/CasADi gap is worth quoting:
+
+  | Hessian | alloy | casadi | ratio | iters |
+  |---|---|---|---|---|
+  | exact (default) | 19.27 ms (p95 25.87) | 72.60 ms (p95 97.21) | 3.8x | 9.5 |
+  | limited-memory | 17.60 ms (p95 22.08) | 56.07 ms (p95 69.94) | 3.2x | 19.2 |
+
+  Iteration counts match to 0.1 across backends, so IPOPT walks the same path and the
+  gap is oracle cost. Alloy's stats split the exact column into 17.72 ms FE, 1.33 ms
+  native solver, 0.21 ms glue; CasADi's `hess_lag` alone costs 3.711 ms per call.
+  Exact Hessians halve the iterations and nearly remove IPOPT's own time, at the cost
+  of one `sphess` per iteration — a wash in wall clock for Alloy, clearly worse for
+  CasADi. Both reach 0 collisions and a 2.274 m minimum distance, and with exact
+  Hessians the two backends stay together over the whole 20 s episode (tracking cost
+  4.254 both); under limited-memory they drift slightly (3.99 vs 3.91), the closed
+  loop amplifying last-bit iterate differences.
+- **Two radii are now tracked**: `collision_radius = 1.9` (body discs touch, the
+  only thing collisions are counted against) and `safety_radius = 2.28` (what the
+  filter enforces) — the reference implementation's `safety_factor = 1.2`.
+- **No Alloy gap was exposed.** Everything the barrier needs (`sqrt`, integer
+  `pow`, the nested smooth-max, exact sparse Lagrangian Hessians through `Ops.MAP`)
+  worked unchanged, and the exact-Hessian column still matches CasADi at rtol 1e-8.
+  The one thing worth doing is a benchmark-side improvement, listed in §6: the
+  O(C²) pair rows are still an unrolled Python loop.
+
+The reference implementation's own discrete-time mode refuses HCBF because its
+braking envelope is a tabulated NumPy inversion of the full-brake speed map. We
+replaced it with a fitted power-law envelope `c d^q` — since §2.6, one conservative
+fit covering both vehicle models — which is smooth and branch-free, so the symbolic
+path that blocked them is simply not blocked for us. That is a small but real "Alloy/CasADi made this
+easy" data point for the paper: the colleague hand-writes every barrier gradient,
+and the migration needed none of them.
+
+### 2.6 Unbumpercars: the natively-discrete model (plant, and now the filter too)
+
+**Resolved.** The filter can predict with the discrete MLP as well (`--filter-model dt`), and
+doing so fixes every symptom the mismatch caused. Over seeds `{42, 1, 2, 3, 7}` x 200 steps at
+`C=8`: **zero colliding steps against 9 in 2 of 5 episodes**, worst minimum distance 2.266 m
+against 1.775 m, mean tracking cost **4.07 against 32.29**, and mean IPOPT iterations 14.1
+against 19.3. It is also *faster* — 31.7 ms per solve against 37.8 — despite a network with 7.3x
+the weights, because a one-step map is evaluated once where RK4 evaluates its smaller network four
+times, and the better-conditioned problem needs a third fewer iterations.
+
+Three side effects worth carrying forward. The closed loop **stops being chaotic** (perturbation
+amplification 1.015x per step against 1.329x), so single episodes are decision-grade again — the
+sensitivity was a symptom of the mismatch, not of the plant. The **envelope stops being
+load-bearing**: the honest DT fit and the incumbent CT one become indistinguishable, where against
+the mismatched filter that choice was worth 24 colliding steps — so the shipped constants are now
+a single conservative fit `(1.00994, 0.8355)`, the tightest power law that never over-predicts
+either model's exact pair stopping envelope on `d ∈ [0.1, 3] m` (the CT-fitted `sqrt` it replaces
+over-promised the discrete model's braking by up to 0.4 m/s), collision- and failure-free for both
+matched pairings at the canonical point. And **Alloy's margin widens from
+3.8x to 9.0x** (32.4 ms against CasADi's 292.1 ms), since the bigger network is where the oracle
+provider starts to dominate.
+
+Two deliberate approximations, both gated: the ReLUs are smoothed with the smooth-|x| form already
+used for `|d|` (`eps = 0.01`, worst 3 mm/s on the velocity block — a quarter of softplus at
+`beta = 50`, at one `sqrt` instead of an `exp` and a `log`), and the `vf` deadzone is dropped as a
+jump discontinuity that never fires. Neither cost IPOPT anything; iterations went down.
+
+**This is now the default** on both closed-loop entry points, so the canonical configuration is
+discrete plant plus discrete filter. The gates and the scalability sweep cells that were written
+against the continuous-time model ask for it explicitly (`FilterConfig(model="ct")`) rather than
+riding the default, so they keep measuring what they were validated against;
+`oracle_matches_casadi` covers both models and `dt_filter_model_matches_numpy` covers the new
+prediction path. Per-solve numbers for both models are in
+[`docs/scalability.md`](docs/scalability.md#discrete-time-hcbf-safety-filter-unbumpercars).
+
+#### The road there (plant first, filter second)
+
+The **plant** now runs the colleague's natively discrete `MLPModel` — what their own HCBF
+runs on — vendored from `~/dev/unbumpercars/model_kinematic_mlp.pth` (absent from the
+public `bumper_car_simulator`) as `data/dt_kinematic_mlp.pt`. At that stage the **filter**
+still predicted with the RK4 map of the continuous-time `ct_full_xlarge.pt`, because the model
+swap was not a drop-in there: the discrete model brakes with the opposite speed dependence (per-step loss
+growing 40x with speed where ours is near flat), so the fitted `sqrt(2 a_brake d)` envelope
+the barrier uses goes from a 3%-accurate description to 21% mean / 171% max, and no single
+constant is both safe and useful.
+
+Running the faithful plant against the unchanged filter is what puts a number on that gap.
+Over seeds `{42, 1, 2, 3, 7}` x 200 steps at `C=8`, the filter never fails, but **the DT plant
+breaches the collision radius in 2 of 5 episodes** (9 of 1000 steps, worst minimum distance
+1.775 m against the CT plant's 2.274 m and 0 of 1000), the largest slack grows 6x to 2.08, and
+IPOPT iterations double. The filter is promising braking this plant cannot deliver at close
+range, exactly as the envelope fit predicts.
+
+Single episodes cannot see this: the DT closed loop is chaotic, so a 1e-12 nudge to one car's
+initial speed moves the collision count between 0 and 6 and the tracking cost by 10%. Every
+claim on this plant has to be aggregated over seeds, and the earlier single-episode "zero
+collisions" here was one lucky draw.
+
+**The envelope refit was tried first, and it does not work.** The form change is shipped —
+`HCBFConfig` now carries `V(d) = envelope_c d^envelope_q`, and a power law is the form that can
+describe either model: `q = 0.486` reproduces today's square root for the CT model (1.0% mean
+error against the pair envelope `V_pair(d) = 2 V_single(d/2)`), `q = 0.827` describes the DT
+model to 4.1% where the square root is 24% off and a line 13%. But refitting the *constants* to
+the DT plant made the closed loop **less** safe: 33 colliding steps in 4 of 5 episodes against
+the incumbent's 9 in 2 of 5.
+
+The cause is a conflation, not a bad fit. The barrier is `b = v_x + s V(d_eps)` with `s` the
+smooth sign of `d`, so outside the safety radius the envelope caps closing speed (a braking
+claim) while inside it demands separation at that same rate (a recovery gain). This plant is
+inside the radius 809 of 1000 steps, so an honest braking model makes recovery limp: demanded
+separation falls 0.423 -> 0.164 m/s and penetration doubles. Scaling is no escape — it just
+trades that failure for the over-promise one — and no setting tested makes this plant safe. The
+clean fix is separate constants for the two regimes, blended by `(1 ± s)/2` so it stays smooth
+and branch-free; that is a formulation change and is not done. A better envelope cannot rescue
+a filter that predicts with the wrong model, which is the argument for the swap below.
+
+Moving the filter's model over as well then needs softplus for the network's ReLUs (sharp:
+`beta = 50`, since `beta = 10` costs 0.165 m/s of prediction error) but *not* its deadzone,
+which never fires. Its faster steering actuator (`tau = 0.155 s`) is already adopted on the
+plant side, so the swap removes that mismatch. Oracle cost is ~1.86x the multiply-accumulates,
+not 7.3x the weight count: the DT network is evaluated once where the CT path evaluates its
+smaller one four times for RK4.
+
+Full measurements, the checkpoint's featurization (**note its two controls are in the
+opposite order to ours**, confirmed by its author), and what each remaining step would
+involve are recorded in the problem's own README, section "The discrete-time MLP plant".
+
+### 2.7 Unbumpercars: order-1 wall barrier (2026-08-12)
+
+The four position-only wall DTCBF rows were ineffective under the default discrete model:
+its pose integrator holds current velocity over the step, making the next position exactly
+independent of both controls. The wall-row control Jacobian was therefore identically zero;
+the optimizer left the desired input unchanged and could only pay slack as cars escaped.
+
+The wall rows now use `gradient_walls_velocity`'s order-1 form: single-car braking-envelope
+speed minus outward wall-closing speed, under the same one-step DTCBF decrease condition as
+the pair barrier. The pair power law is converted through
+`V_pair(d) = 2 V_single(d / 2)`. The benchmark retains its four axis-aligned, 1 m-inset walls
+and does not add the reference implementation's four corner cuts.
+
+The straight-driving reproduction at one car, 200 steps, seed 42 changed from 9.627 m beyond
+the inset and 100 outside steps to a worst sampled crossing of 0.00088 m, with no slack or
+solver failure. DT/DT, CT/CT, and both mismatched one-car combinations stayed within 0.0031 m
+of the inset. At `C=8`, 200 steps, DT/DT seeds `{42, 1, 2}`, the worst inset crossing was
+0.0036 m, with zero collisions and zero solver failures. Since the barrier is inset by 1 m,
+every car remained roughly a metre inside the physical arena. A benchmark gate now pins both
+nonzero braking authority and this closed-loop straight-driving case.
 
 ## 3. Solver plugin system
 
@@ -415,7 +585,7 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
 
 - **L1 — sparse Lagrangian Hessian through `Ops.MAP`**
   (`sphess:lagrangian:z:z` over mapped neural RK4). Required for exact-Hessian
-  IPOPT/SQP columns on the bumpercars problem. **Decision (2026-07-13):
+  IPOPT/SQP columns on the unbumpercars problem. **Decision (2026-07-13):
   proper fix only** — second-order AD rules + sparse second-order lowering for
   `Ops.MAP`. No unrolled-map or per-car manual-assembly fallback (that is
   exactly the code-size blowup claim 2 argues against); Gauss-Newton columns
@@ -423,7 +593,7 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
   (cached concat-adjoint mapped once, three stride-class assemblies),
   tensor-form matmul VJP + structural `jvp_many` SCATTER/GATHER/TRANSPOSE
   rules, sphess-through-MAP end-to-end with the permanent
-  `ALLOY_STRICT_JVP_MANY` tripwire, and the bumpercars `--exact-hessian`
+  `ALLOY_STRICT_JVP_MANY` tripwire, and the unbumpercars `--exact-hessian`
   column cross-validated against CasADi's `ctdt_hess_lag` at rtol 1e-8. The
   cross-check also flushed out a repo-lifetime CALL-VJP bug (formal
   substitution rewrote symbols inside the incoming cotangent; fixed). Known
@@ -440,7 +610,7 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
   `IpStdCInterface.h` with callbacks pointing at generated kernels; (d) the
   Python-interleaved path demoted to reference/debug mode, and the nanobind
   `_piqp_ext` + `_piqp_ctypes.py` deleted after the generated path soaks.
-  The bumpercars standalone filter is the first consumer, not the scope.
+  The unbumpercars standalone filter is the first consumer, not the scope.
   **Status: COMPLETE (2026-07-15). (a) L2-1 (2026-07-14): stats ABI +
   standalone dense QP through the generated wrapper. (b)+(c) L2-2:
   `al.qp(..., sparse=True)` bakes structural CSC patterns of P/A_eq/G_ineq as
@@ -454,7 +624,7 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
   without a soak period: the Python-interleaved path, the nanobind
   `_piqp_ext` + `_piqp_ctypes.py`, and the ctypes IPOPT callback binding are
   deleted; plugins ship vendored libs + headers + entry-point metadata only.
-  The bumpercars CT-DTCBF filter (first consumer) runs through `al.nlp`'s
+  The unbumpercars CT-DTCBF filter (first consumer) runs through `al.nlp`'s
   generated wrapper with cross-step warm starts and stats-derived
   instrumentation.**
 - **L3 — IPOPT low-level binding parity**: accept/return `lam_x`/`lam_g`
@@ -487,7 +657,7 @@ columns respectively — interleave them between B2 and B4.
   pre-merge; sweeps and closed-loop runs are manual-only); port the
   regression guards (correctness + generated-LOC/workspace invariants as
   assertions; runtime record-only). `examples/ct_dt_cbf_filter/` moves
-  wholesale to `benchmarks/problems/bumpercars_filter/` and `examples/` is
+  wholesale to `benchmarks/problems/unbumpercars/` and `examples/` is
   deleted. All legacy `benchmarks/` scripts are removed once their mechanics
   are absorbed into the new harness (`alloy_safety_filter_benchmark.py`,
   `measure_safety_filter.py`, `alloy_solver_aot_demo.py`,
@@ -507,13 +677,13 @@ columns respectively — interleave them between B2 and B4.
   NumPy-only package and PIQP/IPOPT are independently registered workspace
   plugins.
 - **B2 — problems v1** (with L3/L4): chain of masses, race-car tracking NMPC
-  (kinematic bicycle, from the existing fixture), bumpercars CT-DTCBF filter promoted
+  (kinematic bicycle, from the existing fixture), unbumpercars CT-DTCBF filter promoted
   from `examples/ct_dt_cbf_filter/` (desired control folded into dynamics).
   Alloy + CasADi implementations, NumPy/CasADi reference gates, sweep axes
   wired, `expand=True` added to the CasADi columns. **Status: COMPLETE
   (2026-07-13, `3111b52` + `1326b75`).** The three selected formulations,
   symbolic model parameters, CasADi expansion, reference checks, and
-  generated-solver bumpercars path are present.
+  generated-solver unbumpercars path are present.
 - **B3 — closed loop + viz**: model-in-the-loop simulator, episode/lap logic,
   MCAP dumping, Foxglove layouts (curves + 3D chain / 2D cars), canonical
   operating points chosen and documented, FE-instance harvesting for the
@@ -526,7 +696,7 @@ columns respectively — interleave them between B2 and B4.
   canonical points are chain M=5/N=12 (90 steps; harvested state rolled into
   the N=40 FE transcription), race cars N=40 (one lap of the 340 m FSDS
   `fsds_competition_1`, 1367 steps at 0.05 s), and
-  bumpercars C=4 (80 steps, seed 42). Their midpoint successful oracle inputs
+  unbumpercars C=8 (200 steps, seed 42). Their midpoint successful oracle inputs
   feed the canonical gbench cells; CT-DTCBF C=2/4/8 Alloy + CasADi sweep cells
   replace the legacy input-affine unbumpercars axis. The
   `benchmarks/run.py closed-loop` command owns smoke/canonical execution and
@@ -551,7 +721,7 @@ columns respectively — interleave them between B2 and B4.
 
 - Replace the race-car tracking NMPC with the **MPFC** distillation (§4), in
   the same `benchmarks/problems/race_cars/` package.
-- **Move the chain and bumpercars correctness checks onto the problem side**,
+- **Move the chain and unbumpercars correctness checks onto the problem side**,
   as `race_cars` now does: problem-specific gates into
   `benchmarks/problems/*/checks.py` behind `run.py smoke --select problems`, and
   a self-contained minimal reproduction of whatever IR/AD/codegen shape they
@@ -566,6 +736,21 @@ columns respectively — interleave them between B2 and B4.
   reduction. Explicit-stack rewrite of the tree walks, plus a diagnosable error
   if a depth cap is ever kept. See `docs/spec.md` "Known limitation: pass
   recursion depth" and the `xfail` in `tests/alloy/test_passes.py`.
+- **Map the unbumpercars pair rows instead of unrolling them.** The `C(C-1)/2` pair
+  barriers are built by a Python loop, so the generated source grows quadratically
+  in the car count while the mapped neural RK4 stays constant: the `spjac:g:z`
+  kernel goes 845 → 1403 → 3455 lines for C = 2 → 4 → 8. This is the one place in the
+  suite where *we* write the code-size blowup that paper claim 2 argues against, and
+  the unbumpercars sweep axis is the car count, so it directly weakens the figure it
+  feeds. **This is a port, not a design**: the predecessor workload did exactly this —
+  `git show 1b03820^:benchmarks/problems/unbumpercars/__init__.py` (lines 195-224) maps
+  `pair_c3bf_fn` over the strict upper triangle, with two constant `al.gather` tables
+  built as `concatenate([arange(NSTATE) + k * NSTATE for k in bodies])` feeding both the
+  parameter states and the first MAP's output. It went away with that workload in
+  `1b03820`, whose numeric gates had been silently skipping for want of a checkpoint;
+  the pattern itself survives as
+  `tests/alloy/test_map.py::test_gather_fed_chained_maps_spjac_and_sphess_match_dense`,
+  which runs unconditionally.
 - **laopt as an external baseline** for MPFC (its implementation already
   exists in the racing repo), once laopt is published.
 - **Specialized OCP problem/solver in alloy** (structured staged-OCP tier that
