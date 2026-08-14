@@ -108,6 +108,8 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   lines.append("  double* w;")
   lines.append("  double t_fe;")
   lines.append("  int32_t n_eval_f, n_eval_grad_f, n_eval_g, n_eval_jac_g, n_eval_h, iter;")
+  lines.append("  double inf_pr, step_inf, alpha;")
+  lines.append("  int32_t backtracks;")
   lines.append(f"}} {symbol}_ctx_t;")
   lines.append(f"static {symbol}_ctx_t {symbol}_ctx;")
   # Static evaluation buffers shared by the callbacks (file-scope so callbacks
@@ -218,15 +220,25 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     lines.append("  return true;")
   lines.append("}")
 
-  # Intermediate callback: iteration counting (L3 parity).
+  # Intermediate callback: iteration counting (L3 parity) plus the v3
+  # diagnostics IPOPT hands over for free — primal infeasibility, step inf
+  # norm, last primal step size, and line-search trial counts (trials minus
+  # the accepted one, matching the SQP backtrack semantics).
   lines.append(
     f"static bool {symbol}_intermediate(ipindex alg_mod, ipindex iter_count, ipnumber obj_value, "
     "ipnumber inf_pr, ipnumber inf_du, ipnumber mu, ipnumber d_norm, ipnumber regularization_size, "
     "ipnumber alpha_du, ipnumber alpha_pr, ipindex ls_trials, UserDataPtr ud) {"
   )
-  lines.append("  (void)alg_mod; (void)obj_value; (void)inf_pr; (void)inf_du; (void)mu; (void)d_norm;")
-  lines.append("  (void)regularization_size; (void)alpha_du; (void)alpha_pr; (void)ls_trials;")
-  lines.append(f"  (({symbol}_ctx_t*)ud)->iter = (int32_t)iter_count;")
+  lines.append("  (void)obj_value; (void)inf_du; (void)mu;")
+  lines.append("  (void)regularization_size; (void)alpha_du;")
+  lines.append(f"  {symbol}_ctx_t* ctx = ({symbol}_ctx_t*)ud;")
+  lines.append("  ctx->iter = (int32_t)iter_count;")
+  lines.append("  // alg_mod 1 is the restoration phase, whose inf_pr/d_norm/alpha_pr describe the restoration subproblem.")
+  lines.append("  if (alg_mod == 0) {")
+  lines.append("    ctx->inf_pr = inf_pr;")
+  lines.append("    if (iter_count > 0) { ctx->step_inf = d_norm; ctx->alpha = alpha_pr; }")
+  lines.append("    if (ls_trials > 1) ctx->backtracks += (int32_t)ls_trials - 1;")
+  lines.append("  }")
   lines.append("  return true;")
   lines.append("}")
 
@@ -244,6 +256,7 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   lines.append(f"  {symbol}_ctx.t_fe = 0.0;")
   lines.append(f"  {symbol}_ctx.n_eval_f = 0; {symbol}_ctx.n_eval_grad_f = 0; {symbol}_ctx.n_eval_g = 0;")
   lines.append(f"  {symbol}_ctx.n_eval_jac_g = 0; {symbol}_ctx.n_eval_h = 0; {symbol}_ctx.iter = 0;")
+  lines.append(f"  {symbol}_ctx.inf_pr = 0.0; {symbol}_ctx.step_inf = 0.0; {symbol}_ctx.alpha = 0.0; {symbol}_ctx.backtracks = 0;")
   # Compute bounds (counted as FE time), then clamp to IPOPT's ±2e19
   # infinity convention. Deliberate choice: `!(x > lim)` also maps NaN bounds
   # to the infinity limit (invalid either way).
@@ -309,8 +322,12 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   lines.append(f"    {ctx.stats_symbol}.obj = 0.0;")
   lines.append(f"    {ctx.stats_symbol}.t_fe = {symbol}_ctx.t_fe;")
   lines.append(f"    {ctx.stats_symbol}.t_solver = 0.0;")
+  lines.append(f"    {ctx.stats_symbol}.t_qp = 0.0;")
+  lines.append(f"    {ctx.stats_symbol}.t_globalization = 0.0;")
   lines.append(f"    {ctx.stats_symbol}.n_eval_f = 0; {ctx.stats_symbol}.n_eval_grad_f = 0; {ctx.stats_symbol}.n_eval_g = 0;")
   lines.append(f"    {ctx.stats_symbol}.n_eval_jac_g = 0; {ctx.stats_symbol}.n_eval_h = 0; {ctx.stats_symbol}._pad0 = 0;")
+  lines.append(f"    {ctx.stats_symbol}.primal_viol = 0.0; {ctx.stats_symbol}.step_inf = 0.0; {ctx.stats_symbol}.alpha = 0.0;")
+  lines.append(f"    {ctx.stats_symbol}.merit_penalty = 0.0; {ctx.stats_symbol}.backtracks = 0; {ctx.stats_symbol}.qp_iter = 0;")
   lines.append("    double fail_t_total = alloy_clock_s() - stats_t0;")
   lines.append(f"    {ctx.stats_symbol}.t_total = fail_t_total;")
   lines.append(f"    {ctx.stats_symbol}.t_glue = fail_t_total - {symbol}_ctx.t_fe;")
@@ -386,12 +403,22 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   lines.append(f"  double stats_t_solver = t_ipopt - ({symbol}_ctx.t_fe - fe_before_solve);")
   lines.append("  if (stats_t_solver < 0.0) stats_t_solver = 0.0;")
   lines.append(f"  {ctx.stats_symbol}.t_solver = stats_t_solver;")
+  lines.append(f"  {ctx.stats_symbol}.t_qp = 0.0;")
+  lines.append(f"  {ctx.stats_symbol}.t_globalization = 0.0;")
   lines.append(f"  {ctx.stats_symbol}.n_eval_f = {symbol}_ctx.n_eval_f;")
   lines.append(f"  {ctx.stats_symbol}.n_eval_grad_f = {symbol}_ctx.n_eval_grad_f;")
   lines.append(f"  {ctx.stats_symbol}.n_eval_g = {symbol}_ctx.n_eval_g;")
   lines.append(f"  {ctx.stats_symbol}.n_eval_jac_g = {symbol}_ctx.n_eval_jac_g;")
   lines.append(f"  {ctx.stats_symbol}.n_eval_h = {symbol}_ctx.n_eval_h;")
   lines.append(f"  {ctx.stats_symbol}._pad0 = 0;")
+  # v3 diagnostics from the intermediate callback; merit penalty and QP
+  # iterations have no IPOPT equivalent (filter line search, interior point).
+  lines.append(f"  {ctx.stats_symbol}.primal_viol = {symbol}_ctx.inf_pr;")
+  lines.append(f"  {ctx.stats_symbol}.step_inf = {symbol}_ctx.step_inf;")
+  lines.append(f"  {ctx.stats_symbol}.alpha = {symbol}_ctx.alpha;")
+  lines.append(f"  {ctx.stats_symbol}.merit_penalty = 0.0;")
+  lines.append(f"  {ctx.stats_symbol}.backtracks = {symbol}_ctx.backtracks;")
+  lines.append(f"  {ctx.stats_symbol}.qp_iter = 0;")
   lines.append("  double stats_t_total = alloy_clock_s() - stats_t0;")
   lines.append(f"  {ctx.stats_symbol}.t_total = stats_t_total;")
   lines.append(f"  {ctx.stats_symbol}.t_glue = stats_t_total - {ctx.stats_symbol}.t_fe - stats_t_solver;")

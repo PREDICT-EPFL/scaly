@@ -97,7 +97,7 @@ def test_sparse_qp_constant_data_and_stats() -> None:
   stats = qp.last_stats
   assert stats is not None and stats.status == al.AlloySolveStatus.OK
   assert stats.obj == pytest.approx(float(out["cost"]), rel=1e-12, abs=1e-12)
-  assert stats.t_total == pytest.approx(stats.t_fe + stats.t_solver + stats.t_glue, rel=0.1, abs=1e-12)
+  assert stats.t_total == pytest.approx(stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rel=0.1, abs=1e-12)
 
 
 @pytest.mark.solver("piqp")

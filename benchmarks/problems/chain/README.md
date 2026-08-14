@@ -14,7 +14,12 @@ the problem stays the same.
 ```bash
 uv run python benchmarks/run.py closed-loop --problem chain          # canonical episode
 uv run python benchmarks/run.py closed-loop --problem chain --smoke  # short toolchain check
+uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle casadi
 ```
+
+The SQP columns share one solver and differ only in whether Alloy or CasADi
+generates the C-ABI objective and derivative oracles.
 
 ## Model
 

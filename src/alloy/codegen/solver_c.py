@@ -32,7 +32,7 @@ from alloy.ops import Ops
 from alloy.toolchain import solver_compile_flags as _toolchain_solver_compile_flags
 
 if TYPE_CHECKING:
-  from alloy.solvers.solver_function import SolverDescriptor
+  from alloy.solvers.solver_function import ExternalOracle, SolverDescriptor
 
 
 def _c_ident(name: str) -> str:
@@ -62,8 +62,10 @@ class SolverWrapperCtx:
   raw_symbol: str
   stats_symbol: str
 
-  def raw_symbol_of(self, fun: Function) -> str:
-    return _raw_symbol(fun)
+  def raw_symbol_of(self, fun: Function | ExternalOracle) -> str:
+    from alloy.solvers.solver_function import ExternalOracle
+
+    return fun.raw_symbol if isinstance(fun, ExternalOracle) else _raw_symbol(fun)
 
 
 def is_solver_function(fun: Function) -> bool:
@@ -87,7 +89,7 @@ def solver_callees(fun: Function) -> list[Function]:
   desc = _descriptor(fun)
   out: list[Function] = []
   for cand in (desc.oracle, desc.base, desc.grad, desc.jac, desc.hess, desc.bounds):
-    if cand is not None and cand not in out:
+    if isinstance(cand, Function) and cand not in out:
       out.append(cand)
   return out
 
@@ -171,17 +173,36 @@ def solver_stats_symbols(fun: Function) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
-def render_solver_raw(fun: Function) -> list[str]:
+def external_oracles(fun: Function) -> tuple[ExternalOracle, ...]:
+  """External descriptor oracles in call order, deduplicated by identity."""
+  from alloy.solvers.solver_function import ExternalOracle
+
+  if not is_solver_function(fun):
+    return ()
+  desc = _descriptor(fun)
+  out: list[ExternalOracle] = []
+  for oracle in (desc.base, desc.grad, desc.jac, desc.hess, desc.bounds):
+    if isinstance(oracle, ExternalOracle) and oracle not in out:
+      out.append(oracle)
+  return tuple(out)
+
+
+def render_solver_raw(fun: Function, *, include_external_sources: bool = True) -> list[str]:
   """Frame a plugin-rendered wrapper body with the alloy-owned stats storage
   and the exported ``<symbol>_stats`` accessor. The body itself comes from the
   backend's ``render_wrapper`` hook."""
   from alloy.solvers.registry import get_backend
 
   desc = _descriptor(fun)
+  external_sources: list[str] = []
+  for oracle in external_oracles(fun):
+    if include_external_sources and oracle.source and oracle.source not in external_sources:
+      external_sources.append(oracle.source)
   symbol = _c_ident(fun.name)
   ctx = SolverWrapperCtx(symbol=symbol, raw_symbol=_raw_symbol(fun), stats_symbol=f"{symbol}_stats_data")
   body = get_backend(desc.backend).render_wrapper(fun, ctx)
   return [
+    *(line for source in external_sources for line in (*source.splitlines(), "")),
     f"static alloy_solver_stats {ctx.stats_symbol};",
     *body,
     "",

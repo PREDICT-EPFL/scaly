@@ -11,13 +11,14 @@ from __future__ import annotations
 
 from .nlp import nlp
 from .qp import qp
-from .solver_function import SolverDescriptor, SolverFunction, SolverStatus
+from .solver_function import ExternalOracle, SolverDescriptor, SolverFunction, SolverStatus
 from .stats import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, CSolverStats, SolverStats
 
 __all__ = [
   "ALLOY_SOLVER_STATS_VERSION",
   "AlloySolveStatus",
   "CSolverStats",
+  "ExternalOracle",
   "SolverDescriptor",
   "SolverFunction",
   "SolverStats",

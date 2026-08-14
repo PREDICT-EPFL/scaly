@@ -29,10 +29,16 @@ Smoke runs three groups, all on by default:
   Alloy-vs-CasADi oracle, the parameter-tail order, the pair barrier's relative
   degree, the discrete-MLP plant's three pieces and its reversed control order,
   both symbolic discrete-MLP prediction paths against a NumPy reference, per-step
-  Alloy-vs-CasADi solution agreement on a binding state, and the opt-in
-  exact-Hessian rollout. Gates needing IPOPT or CasADi report `skipped: ...`
+  Alloy-vs-CasADi solution agreement on a binding state, and the default
+  exact-Hessian rollout. All three problems also gate the SQP column against the
+  IPOPT column (`sqp_matches_ipopt`): the same smoke episode through both solvers,
+  compared per step in applied control, planned trajectory, objective, and
+  constraint violation, with tolerances chosen from measured healthy-step
+  differences (documented next to each gate). On divergence the failure names the
+  first diverging step with both solvers' status and violation — the input the
+  SQP robustness work consumes. Gates needing IPOPT or CasADi report `skipped: ...`
   rather than passing silently.
-- `benchmarks` — Python and compiled-C Jacobians against a dense reference,
+- `benchmarks` — Python and compiled-C derivative kernels against a dense reference,
   plus sparsity, workspace, and loop-preservation invariants.
 - `solver_call` — the QP/IPOPT solver-call ABI, when vendored solver libraries
   are present.
@@ -68,10 +74,11 @@ All benchmark artifacts follow the same command-first layout:
 
 ```text
 benchmarks/results/
-  closed-loop/<problem>/<backend>/  # episodes, plots, and harvested inputs
+  closed-loop/<problem>/<solver>+<oracle>/  # episodes, plots, and harvested inputs
   sweep/<problem>/<cell>/           # generated code, binaries, samples, and logs
   sweep/scalability.csv             # default sweep table and provenance sidecar
   smoke/<problem>/<cell>/           # smoke-generated code, binaries, samples, and logs
+  smoke/closed-loop/<problem>/<solver>+<oracle>/  # short episodes, isolated from canonical artifacts
   smoke/solver_call/                 # generated solver-call smoke artifacts
 ```
 
@@ -93,19 +100,57 @@ Canonical runs omit `--smoke`:
 
 ```bash
 uv run python benchmarks/run.py closed-loop --problem chain
-uv run python benchmarks/run.py closed-loop --problem race_cars --backend alloy
-uv run python benchmarks/run.py closed-loop --problem race_cars --backend casadi
-uv run python benchmarks/run.py closed-loop --problem unbumpercars --backend alloy
+uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle casadi
+uv run python benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi
+uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle casadi
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle casadi
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver none
 ```
 
-`race_cars` and `unbumpercars` accept `--backend`, and write to
-`benchmarks/results/closed-loop/<problem>/<backend>/` so the columns can coexist. For `race_cars` the two
-backends solve a deliberately identical problem — same decision-variable and
+The closed-loop interface selects the optimizer with `--solver` and the generated
+function provider with `--oracle`. Unsupported pairs are rejected per problem;
+for example, chain does not currently provide an IPOPT/CasADi runner. Canonical
+runs write to `benchmarks/results/closed-loop/<problem>/<solver>+<oracle>/`, while
+`--smoke` writes under `benchmarks/results/smoke/closed-loop/`, so a CI smoke
+cannot replace a harvested canonical input. The two SQP columns run the same
+`alloy-sqp` implementation and PIQP
+subsolver with identical settings; only the generated C-ABI oracle provider
+changes. For `race_cars`, the IPOPT/Alloy and IPOPT/CasADi columns solve a
+deliberately identical problem — same decision-variable and
 parameter layout, same cost and constraint rows in the same order, same IPOPT
 with the same options — so the only difference is who differentiates and
-evaluates the oracles. The `race_cars/backends_agree` smoke gate holds them to
-that with a cross-backend trajectory comparison, and `--backend alloy` is the
-column the FE sweep harvests from.
+evaluates the oracles. The `race_cars/oracles_agree` smoke gate holds them to
+that with a cross-provider trajectory comparison, and the default
+`ipopt+alloy` run is the column the FE sweep harvests from. The open-loop
+unbumpercars controller is represented by `--solver none` and writes under
+`none/` because it has no oracle.
+
+All SQP columns use exact Lagrangian Hessians by default, assembled into PIQP's
+sparse interface from the oracle sparsity patterns and convexified by a modified
+sparse LDL^T over the same pattern, after constraint-normal `A.T @ A` damping
+where the problem has equalities. No column selects `alloy-sqp`'s `qp="dense"`
+option: sparse is faster at every canonical point (race N=40 2.0 ms against
+20.5, chain 5.2 against 15.2, unbumpercars 16.7 against 19.9), with identical
+trajectories.
+
+The canonical unbumpercars SQP column uses the default filter first, at the
+solver's default tolerances, and gives rare active-barrier solves up to 1000
+iterations. If the filter strictly rejects all trials, the controller retries
+the same warm start through l1/watchdog-five;
+both oracle providers use the identical two-solver policy. This completes all
+200 canonical solves without braking fallback or collisions.
+
+The canonical N=40 race episode starts both SQP oracle columns from the same
+problem-owned nominal primal in `problems/race_cars/data/nominal_N40.npz.b64`.
+It is the deterministic IPOPT solution of the canonical initial NLP and is used
+only as the first NMPC guess; every online call, including that first call, is
+solved and timed by `alloy-sqp`, and subsequent calls use the shifted SQP
+primal/dual warm start. The independent SQP-versus-IPOPT smoke gate does not use
+this N=40 nominal.
 
 Each run prints the exact artifact directory. It contains `episode.mcap`,
 `rollout.npz`, configuration/summary/provenance JSON, and
@@ -119,6 +164,14 @@ trajectory trails, which stay in the `scene` frame; the
 unbumpercars scene also contains a persistent arena boundary, and the race-cars scene
 contains the track (center line plus one cube per cone, coloured as on a real
 track), with the reference and predicted horizons redrawn every step.
+
+Race-car recording happens inside the plant loop. Every completed step is
+flushed to the open MCAP before the next solve; if a later solve raises, the
+recorder's context still closes a valid file. The runner then writes a partial
+`rollout.npz` and a summary containing the failing step plus Alloy and native
+statuses before re-raising the failure. The complete failing warm start is also
+written to `failing_solver_inputs.npz` for one-call replay. Successful episodes
+keep the same artifact shapes and channels as before.
 
 The scene is split across `/scene` (vehicles and trails), `/scene/horizon`, and
 `/scene/static` (track and arena) because of how Foxglove seeks: jumping in the
@@ -177,8 +230,8 @@ Canonical operating points are deterministic and intentionally modest:
 | problem | canonical point | scene |
 |---|---|---|
 | chain of masses | `M=5`, controller `N=12`, 90 plant steps at 0.2 s (long enough to settle) | 3D chain, end-mass control arrow and trail, open-loop plan, end-mass reference marker |
-| race cars | controller `N=40`, one lap of `fsds_competition_1` (340 m, 1367 plant steps at 0.05 s), alloy and casadi backends | track, cones, planar vehicle, reference and predicted horizons |
-| unbumpercars HCBF | 8 cars, 200 plant steps at 0.1 s, seed 42, alloy and casadi backends | planar cars with body and keep-out rings |
+| race cars | controller `N=40`, one lap of `fsds_competition_1` (340 m at 0.05 s), IPOPT and SQP with two oracle providers | track, cones, planar vehicle, reference and predicted horizons |
+| unbumpercars HCBF | 8 cars, 200 plant steps at 0.1 s, seed 42, IPOPT and SQP with two oracle providers | planar cars with body and keep-out rings |
 
 The midpoint successful closed-loop oracle input is harvested for future
 Google Benchmark cells. Closed-loop runs are manual-only; CI keeps using the
@@ -200,24 +253,27 @@ tracks, vendored as CSV from the `minimal_tracking_nmpc` reference implementatio
 (`cone_type,X,Y,Z,std_*,right,left`). Each is a closed circuit 340–460 m long with
 a corridor about 1.7 m wide per side.
 
-### Race-car backends
+### Race-car solvers and oracles
 
 `problems/race_cars/closed_loop.py` owns the plant, the planner, warm starts and
-lap logic; `build_solver(config, backend)` swaps only the controller.
+lap logic; `build_solver(config, solver, oracle)` selects the optimizer and
+generated function provider independently.
 `problems/race_cars/casadi_nlp.py` is the CasADi mirror of the same NLP, wrapped
 to present the same call signature and the same `SolverStats` as an Alloy
 `SolverFunction`, with `expand=True` and per-oracle timings read out of
 `nlpsol.stats()`. One canonical lap on this machine (Apple clock, IPOPT 3.14,
 identical iteration counts and an identical trajectory to 1e-12):
 
-| backend | mean total | mean FE | mean iters | RMS lateral error |
+| oracle | mean total | mean FE | mean iters | RMS lateral error |
 |---|---|---|---|---|
 | alloy | 2.73 ms | 0.62 ms | 10.4 | 0.04403 m |
 | casadi | 6.57 ms | 1.51 ms | 10.4 | 0.04403 m |
 
 Treat these as an indicative single-machine reading, not a published claim: the
-sweep harness is where the steelmanned per-cell numbers belong, and the
-one-solver-two-oracles columns land properly with `alloy-sqp` in B4.
+sweep harness is where the steelmanned per-cell numbers belong. The
+`sqp+alloy` and `sqp+casadi` columns provide the controlled
+one-solver, two-oracle comparison; their telemetry separates FE, QP, and
+globalization time.
 
 `problems/race_cars/reference.py` fits a minimum-curvature closed cubic spline to
 the center line, samples it uniformly in arc length, and reads a constant-speed

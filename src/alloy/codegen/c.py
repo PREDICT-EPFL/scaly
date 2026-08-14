@@ -71,7 +71,12 @@ def _solver_root_workspace(prog: object, name: str) -> int:
   assert isinstance(prog, PNode)
   pc = int(prog.attrs.get("proc_count", 0))
   oracle_names = set(prog.attrs.get("solver_oracles", {}).get(name, ()))
-  return max((int(pr.attrs.get("sz_w", 0)) for pr in prog.args[:pc] if pr.attrs["name"] in oracle_names), default=0)
+  return max(
+    (
+      int(prog.attrs.get("solver_external_workspace", {}).get(name, 0)),
+      *(int(pr.attrs.get("sz_w", 0)) for pr in prog.args[:pc] if pr.attrs["name"] in oracle_names),
+    )
+  )
 
 
 def _c_array(values: tuple[int, ...]) -> str:
@@ -275,8 +280,21 @@ def _render_solver_bearing_source(fun: Function, observe: ProgramObserver | None
     "",
   ]
   order = _function_order(fun)
+  from alloy.codegen.solver_c import external_oracles
+
+  external_sources: list[str] = []
+  raw_definitions: dict[str, str] = {}
+  for fn in order:
+    for oracle in external_oracles(fn):
+      previous = raw_definitions.setdefault(oracle.raw_symbol, oracle.source)
+      if previous != oracle.source:
+        raise ValueError(f"external oracle symbol {oracle.raw_symbol!r} has conflicting source definitions")
+      if oracle.source and oracle.source not in external_sources:
+        external_sources.append(oracle.source)
+  for source in external_sources:
+    lines += [*source.splitlines(), ""]
   for fn in order if is_solver_function(fun) else order[:-1]:
-    lines += render_solver_raw(fn) if is_solver_function(fn) else _render_raw_callee(procs[fn.name])
+    lines += render_solver_raw(fn, include_external_sources=False) if is_solver_function(fn) else _render_raw_callee(procs[fn.name])
     lines.append("")
   if is_solver_function(fun):
     lines += _render_solver_entry(fun, _solver_root_workspace(prog, fun.name))

@@ -2,7 +2,7 @@
 
 `CasadiRaceCarSolver` presents the same call signature, output keys, and statistics
 as the `al.SolverFunction` built by `closed_loop._race_car_nlp`, so one episode loop
-drives either backend. The decision-variable layout, parameter layout, cost terms,
+drives either oracle provider. The decision-variable layout, parameter layout, cost terms,
 equality rows, inequality rows, bounds, and IPOPT options are identical by
 construction — the only difference is which tool differentiates and evaluates the
 oracles. That is the controlled comparison ROADMAP.md §2.3 asks for.
@@ -127,6 +127,33 @@ def build_casadi_race_car_nlp(config, sym_t=None) -> dict[str, Any]:
   }
 
 
+def build_casadi_race_car_sqp(config, *, sqp_options: dict[str, str | int | float] | None = None):
+  import casadi as ca
+
+  from alloy_sqp.casadi import build_casadi_external_sqp
+
+  pieces = build_casadi_race_car_nlp(config)
+  z, p, cost = pieces["z"], pieces["p"], pieces["f"]
+  constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
+  lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", int(constraints.shape[0]))
+  stem = f"ca_race_sqp_N{config.horizon}"
+  return build_casadi_external_sqp(
+    name=stem,
+    base=ca.Function(f"{stem}_base", [z, p], [cost, constraints]),
+    grad=ca.Function(f"{stem}_grad", [z, p], [ca.gradient(cost, z)]),
+    jac=ca.Function(f"{stem}_jac", [z, p], [ca.jacobian(constraints, z)]),
+    hess=ca.Function(f"{stem}_hess", [z, lam_f, lam_g, p], [ca.hessian(lam_f * cost + ca.dot(lam_g, constraints), z)[0]]),
+    n_eq=pieces["n_eq"],
+    n_ineq=pieces["n_ineq"],
+    x_lb=pieces["x_lb"],
+    x_ub=pieces["x_ub"],
+    l_ineq=np.full(pieces["n_ineq"], -config.track_half_width),
+    u_ineq=np.full(pieces["n_ineq"], config.track_half_width),
+    # Identical SQP settings to closed_loop._race_car_nlp.
+    options={"tol": config.ipopt_tol, "max_iter": config.sqp_max_iter, **(sqp_options or {})},
+  )
+
+
 class CasadiRaceCarSolver:
   """`al.SolverFunction`-shaped wrapper around `ca.nlpsol("ipopt", ...)`."""
 
@@ -142,6 +169,11 @@ class CasadiRaceCarSolver:
       "lbg": np.concatenate([np.zeros(self.n_eq), np.full(self.n_ineq, -config.track_half_width)]),
       "ubg": np.concatenate([np.zeros(self.n_eq), np.full(self.n_ineq, config.track_half_width)]),
     }
+    self.base = ca.Function(
+      f"race_car_closed_loop_casadi_base_N{config.horizon}",
+      [pieces["z"], pieces["p"]],
+      [pieces["f"], pieces["h_eq"], pieces["g_ineq"]],
+    )
     self.solver = ca.nlpsol(
       f"race_car_closed_loop_casadi_N{config.horizon}",
       "ipopt",
@@ -181,6 +213,8 @@ class CasadiRaceCarSolver:
       t_total=t_total,
       t_fe=t_fe,
       t_solver=max(t_total - t_fe, 0.0),
+      t_qp=0.0,
+      t_globalization=0.0,
       t_glue=0.0,
       n_eval_f=int(raw.get("n_call_nlp_f", 0)),
       n_eval_grad_f=int(raw.get("n_call_nlp_grad_f", 0)),
@@ -189,9 +223,14 @@ class CasadiRaceCarSolver:
       n_eval_h=int(raw.get("n_call_nlp_hess_l", 0)),
     )
     self.last_status = self.last_stats.to_solver_status()
+    x = np.asarray(solution["x"], dtype=np.float64).reshape(-1)
+    f, h_eq, g_ineq = self.base(x, p)
     lam_g = np.asarray(solution["lam_g"], dtype=np.float64).reshape(-1)
     return {
-      "x": np.asarray(solution["x"], dtype=np.float64).reshape(-1),
+      "x": x,
+      "f": np.asarray(f, dtype=np.float64).reshape(()),
+      "h_eq": np.asarray(h_eq, dtype=np.float64).reshape(-1),
+      "g_ineq": np.asarray(g_ineq, dtype=np.float64).reshape(-1),
       "lam_eq": lam_g[: self.n_eq],
       "lam_ineq": lam_g[self.n_eq :],
       "lam_box": np.asarray(solution["lam_x"], dtype=np.float64).reshape(-1),

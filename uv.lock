@@ -7,6 +7,7 @@ members = [
     "alloy",
     "alloy-ipopt",
     "alloy-piqp",
+    "alloy-sqp",
 ]
 
 [[package]]
@@ -21,6 +22,7 @@ dependencies = [
 dev = [
     { name = "alloy-ipopt" },
     { name = "alloy-piqp" },
+    { name = "alloy-sqp" },
     { name = "casadi" },
     { name = "foxglove-sdk" },
     { name = "google-benchmark" },
@@ -43,6 +45,7 @@ requires-dist = [{ name = "numpy", specifier = ">=2.3.3" }]
 dev = [
     { name = "alloy-ipopt", editable = "plugins/alloy-ipopt" },
     { name = "alloy-piqp", editable = "plugins/alloy-piqp" },
+    { name = "alloy-sqp", editable = "plugins/alloy-sqp" },
     { name = "casadi", specifier = ">=3.7.2" },
     { name = "foxglove-sdk", specifier = ">=0.25.3" },
     { name = "google-benchmark", specifier = ">=1.9.5" },
@@ -79,6 +82,21 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "alloy", editable = "." }]
+
+[[package]]
+name = "alloy-sqp"
+version = "0.1.0"
+source = { editable = "plugins/alloy-sqp" }
+dependencies = [
+    { name = "alloy" },
+    { name = "alloy-piqp" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alloy", editable = "." },
+    { name = "alloy-piqp", editable = "plugins/alloy-piqp" },
+]
 
 [[package]]
 name = "annotated-types"

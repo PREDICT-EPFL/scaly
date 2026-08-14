@@ -1,6 +1,6 @@
 # Alloy benchmarks, solver plugins, and paper roadmap
 
-Last updated: 2026-08-11. This document supersedes everything that lived in
+Last updated: 2026-08-14. This document supersedes everything that lived in
 `fast_benchmarks/` (FastBench prototype, `BENCHMARK_SUITE_PLAN.md`,
 `REAL_BENCHMARK_CANDIDATES.md`, `STRATEGY_NOTES.md`), now removed. It covers the
 benchmark suite, the solver-plugin packaging, and the path to the first paper.
@@ -125,6 +125,12 @@ claims live. CasADi's builtin `sqpmethod` is at most a secondary reference
 column: it differs in globalization details (line search, regularization,
 no laopt-style constraint relaxation), so a cross-solver comparison against it
 would conflate algorithm and oracle differences.
+
+**Deferred to backlog (2026-08-14):** B4's planned opt-in `sqpmethod` timing
+column is not required for B4 or the first paper. It is record-only, does not
+strengthen the controlled one-solver/two-oracles comparison, and would introduce
+a separate solver-tuning exercise. Reconsider it only if paper review exposes a
+specific need for a built-in CasADi SQP reference.
 
 **Later**: laopt as an *external baseline* where its problem implementations
 already exist (MPFC in the racing repo), once it is published;
@@ -374,7 +380,7 @@ to outside users, and nothing in the benchmark or paper path needs them.
 
 ### 3.2 laopt: investigation findings (2026-07-13) — adapter path dropped
 
-**Decision: no laopt adapter for now.** Instead we build our own C++ SQP
+**Decision: no laopt adapter for now.** Instead we build our own generated-C SQP
 (`alloy-sqp`, §3.3), using laopt's textbook-but-comprehensive SQP as the
 algorithmic reference — the same approach previously taken in anvil. The
 findings below motivated the decision and are kept for the record; laopt
@@ -421,23 +427,26 @@ h_lb≤h(ξ)≤h_ub`. Verified against the code (`~/dev/laopt`):
 Paper reference points (mini race car, N=25, tf=0.9 s): laopt SQP/PIQP 8.8 ms
 vs IPOPT 15.6 ms, FATROP 9.9 ms, acados 10.0 ms; laopt RTI 1.5 ms.
 
-### 3.3 `alloy-sqp`: a custom C++ SQP plugin
+### 3.3 `alloy-sqp`: a custom generated-C SQP plugin
 
 Rather than adapting laopt (private, pre-publication, no external-oracle path,
-compile-time dims), we write our own C++ SQP shipped as the `alloy-sqp`
-plugin, following the same textbook-but-comprehensive algorithm set as laopt
-(Gauss-Newton default / exact Hessian option, L1-merit or filter line search,
-constraint relaxation, Gershgorin regularization) — the approach already
-prototyped in anvil's SQP solver.
+compile-time dims), `alloy-sqp` ships a Python render hook that emits the SQP
+wrapper into the same C translation unit as its oracles. Its accepted algorithm
+uses exact Lagrangian Hessians by default (objective Hessian as an explicit
+alternative), a filter line search by default (l1/watchdog as an explicit
+alternative), KKT termination, and modified sparse LDL^T convexification after
+constraint-normal damping. It does not implement Gauss-Newton residuals,
+elastic constraints, or second-order correction.
 
 Design points:
 
-- **Oracle interface = the CasADi C ABI convention**
-  (`int f(const double** arg, double** res, int* iw, double* w, void* mem)`)
-  with CSC sparsity metadata. Alloy emits this natively; CasADi's codegen
-  emits the same ABI. One solver binary therefore runs with either oracle
-  provider — the controlled-comparison design of §2.3, and the reason this
-  solver is a measurement instrument first, product feature second.
+- **Oracle interface = Alloy's flat-buffer raw C convention**, with one pointer
+  per input/output, a trailing workspace pointer, and explicit COO sparsity
+  metadata. Alloy emits this natively; a small generated adapter exposes CasADi
+  codegen functions through the same convention. One solver implementation
+  therefore runs with either oracle provider — the controlled-comparison design
+  of §2.3, and the reason this solver is a measurement instrument first,
+  product feature second.
 - **QP subsolver: PIQP through its C interface** (`piqp_c`) — i.e. it links
   the same shared library `alloy-piqp` vendors, so the dylib is genuinely
   reused (unlike laopt, which inlines PIQP's C++ templates). Runtime dims,
@@ -451,11 +460,6 @@ Design points:
   it is a solver *for* alloy (plugin infrastructure and measurement
   instrument), not a solver written *in* alloy's IR, and it is not a headline
   contribution. Report it as such.
-
-Open questions: warm-start strategy across SQP solves in closed loop; whether
-the anvil implementation is ported or rewritten against the oracle protocol;
-how much of laopt's globalization detail to replicate before diminishing
-returns.
 
 ### 3.4 Binding doctrine: generated C glue, one artifact (decided 2026-07-14)
 
@@ -697,14 +701,23 @@ columns respectively — interleave them between B2 and B4.
   the N=40 FE transcription), race cars N=40 (one lap of the 340 m FSDS
   `fsds_competition_1`, 1367 steps at 0.05 s), and
   unbumpercars C=8 (200 steps, seed 42). Their midpoint successful oracle inputs
-  feed the canonical gbench cells; CT-DTCBF C=2/4/8 Alloy + CasADi sweep cells
-  replace the legacy input-affine unbumpercars axis. The
+  feed the canonical gbench cells; discrete-time exact-Lagrangian-Hessian
+  C=2/4/8 Alloy + CasADi sweep cells replace the legacy input-affine
+  unbumpercars axis. The
   `benchmarks/run.py closed-loop` command owns smoke/canonical execution and
   reproducibility artifacts. The race-car problem carries both closed-loop
-  columns of §2.3's **Now** table: `--backend alloy` and `--backend casadi`
+  columns of §2.3's **Now** table: `--solver ipopt --oracle alloy` and
+  `--solver ipopt --oracle casadi`
   build a deliberately identical NLP (same `z`/`p` layout, same rows in the same
   order, same IPOPT options, `expand=True`) and are gated against each other by
-  a cross-backend trajectory comparison, so only the oracle provider differs.
+  a cross-provider trajectory comparison, so only the oracle provider differs.
+  **B3 closeout (2026-08-12):** the canonical unbumpercars FE handoff now
+  consumes the discrete C=8 artifact and times the exact Lagrangian Hessian,
+  including all primal, multiplier, model-weight, physics, and time-step
+  inputs. Both Alloy and CasADi MX are checked against a dense reference before
+  timing. Exact-Hessian gates are unconditional, and the solver CI job reruns
+  every problem gate plus each public closed-loop smoke command with skipped
+  solver checks treated as failures.
 - **B4 — `alloy-sqp`** (after L1/L2): the custom SQP per §3.3 over `piqp_c`;
   the one-solver-two-oracles columns (alloy oracles vs CasADi-codegen oracles)
   added to all B2 problems; FE/QP/line-search timing split in stats.
@@ -714,6 +727,29 @@ columns respectively — interleave them between B2 and B4.
   to be needed, that is a gap in the plugin protocol to fix explicitly (with
   a protocol-version bump if breaking), not a reason to special-case core.
   B4 doubles as the acceptance test that L5's interface is complete.
+  **Status: COMPLETE (2026-08-14).**
+  **B4 closeout (2026-08-14):** `alloy-sqp` is an external plugin against
+  solver-plugin protocol v4 with zero core edits; the one-solver-two-oracles
+  columns run on all three problems and stats v3 carries the
+  FE/QP/globalization timing split. Robustness follows LAOPT: filter line
+  search (l1/watchdog as the explicit alternative), KKT termination, and —
+  the final race blocker — continuation on non-solved QP statuses with
+  LAOPT's QP defaults (`qp_tol` 1e-6, `qp_max_iter` 50) instead of failing
+  closed on PIQP max-iter. Canonical acceptance: race 1367/1367 steps with
+  both oracle providers (max 5 SQP iterations per step after sparse assembly),
+  unbumpercars 200/200
+  with zero collisions, chain 90/90, and every problem gate including the
+  SQP-versus-IPOPT comparisons passes.
+  **Sparse QP assembly (2026-08-14):** the wrapper now builds the subproblem
+  through PIQP's sparse interface from the descriptor sparsity, with CSC index
+  tables baked at codegen time, sparse constraint-normal `A.T @ A` damping, and
+  a modified sparse LDL^T replacing the dense Cholesky probe. At the canonical
+  points that takes race cars from 20.5 to 2.0 ms per step, chain from 15.2 to
+  5.2, and unbumpercars from 19.9 to 16.7, with identical trajectories — so the
+  one-solver-two-oracles columns now run *faster* than the IPOPT columns
+  (race 1.96 against 2.73 ms, unbumpercars 16.7 against 29.8) instead of an
+  order of magnitude slower. The dense interface survives as an explicit
+  `qp="dense"` option covered by plugin unit tests; no benchmark selects it.
 - **B5 — paper assembly**: full sweeps + closed-loop runs at canonical points,
   figures, GPU-claim experiment (gated on the GPU backend milestone, §1).
 
@@ -753,6 +789,10 @@ columns respectively — interleave them between B2 and B4.
   which runs unconditionally.
 - **laopt as an external baseline** for MPFC (its implementation already
   exists in the racing repo), once laopt is published.
+- **CasADi `sqpmethod` as a secondary reference column** (deferred from B4
+  Phase 11). Add it only if paper review identifies a concrete need for a
+  built-in CasADi SQP baseline; keep it opt-in and record-only because its
+  globalization, regularization, and QP path differ from `alloy-sqp`.
 - **Specialized OCP problem/solver in alloy** (structured staged-OCP tier that
   lowers to general-form problems for solvers that don't exploit structure).
 - **fatrop** plugin (consumer of the structured tier) + casadi-fatrop baseline.

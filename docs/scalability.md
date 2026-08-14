@@ -115,9 +115,19 @@ the RK4 stages). The discrete MLP is `6 → 256 → 128 → 3`, smoothed ReLU, 3
 Two different things are measured below, and they do not say the same thing: one isolated
 kernel, and the whole oracle inside a real IPOPT loop.
 
-### Isolated constraint Jacobian (`jac:g:z`)
+### Isolated exact Lagrangian Hessian (`sphess:gamma:z:z`) — current
 
-Sweep cells, Apple M-series, `-O3`, single-threaded. These cells pin the continuous-time model
+The current C=2/4/8 sweep uses the canonical discrete-time model and evaluates
+the compact structurally sparse exact Lagrangian Hessian. Each cell checks
+the reconstructed dense matrix against a CasADi MX reference before timing.
+At C=8 it consumes the complete canonical closed-loop handoff: primal,
+objective factor, constraint multipliers, state, desired input, model weights,
+physics, and time step. Regenerate this table before making performance claims;
+the measurements below predate this kernel.
+
+### Isolated constraint Jacobian (`jac:g:z`) — historical
+
+Historical sweep cells, Apple M-series, `-O3`, single-threaded. These cells pin the continuous-time model
 (`FilterConfig(model="ct")`) rather than following the default, so they stay comparable with the
 numbers recorded before the default changed:
 
@@ -183,17 +193,19 @@ against 37.8 ms — because the mismatched filter needs 19.3 iterations to the m
 ### How to reproduce
 
 ```bash
-# Isolated kernel cells (the first table)
+# Current isolated exact-Hessian cells
 uv run python benchmarks/run.py sweep --workloads unbumpercars --out /tmp/sweep.csv
 
 # Per-solve (the second table), one cell per invocation
 uv run python -m benchmarks.problems.unbumpercars.run_closed_loop \
-  --filter both --filter-model dt --ncars 8 --steps 60
+  --solver ipopt --oracle both --filter-model dt --ncars 8 --steps 60
 ```
 
-The unified runner and direct module both write under
-`benchmarks/results/closed-loop/unbumpercars/<backend>/`, so side-by-side runs and
-single-backend episodes share one canonical location.
+Canonical unified-runner episodes write under
+`benchmarks/results/closed-loop/unbumpercars/<solver>+<oracle>/`; unified `--smoke`
+episodes use `benchmarks/results/smoke/closed-loop/unbumpercars/<solver>+<oracle>/` so
+they cannot replace the canonical handoff. The direct problem module writes to
+the canonical location unless given another output directory.
 
 ## Unbumpercars inequality Jacobian (`spjac:ineq:u`) — historical
 

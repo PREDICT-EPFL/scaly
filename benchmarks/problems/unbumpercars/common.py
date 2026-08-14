@@ -149,8 +149,9 @@ class FilterConfig:
   # (smoothed; see dt_mlp_step_smooth_np), "ct" the RK4 map of the continuous-time model. "dt" is
   # the canonical configuration -- it matches the plant, and the mismatch is what caused the
   # collisions and the chaotic sensitivity the problem README documents. The weights handed to the
-  # filter have to match the choice, so `run_one`'s caller loads accordingly. The gates and the
-  # scalability sweep that were written against the continuous-time model ask for it explicitly.
+  # filter have to match the choice, so `run_one`'s caller loads accordingly. Historical gates and
+  # measurements that were written against the continuous-time model ask for it explicitly; the
+  # current scalability sweep uses this discrete model and its exact Lagrangian Hessian.
   model: str = "dt"
   R: tuple[float, float] = (10.0, 1.0)
   # L1 weight on the per-row slacks. Exactness needs it above the largest constraint
@@ -159,7 +160,7 @@ class FilterConfig:
   ipopt_tol: float = 1e-6
   ipopt_max_iter: int = 300
   eval_repeats: int = 1
-  # Exact Lagrangian Hessians on both backends by default: Alloy's sphess-through-MAP path
+  # Exact Lagrangian Hessians from both oracle providers by default: Alloy's sphess-through-MAP path
   # is what this problem exists to exercise, and it is gated against CasADi's.
   limited_memory_hessian: bool = False
   casadi_expand: bool = True

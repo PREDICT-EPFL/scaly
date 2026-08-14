@@ -39,7 +39,8 @@ class _Schema(BaseModel):
 class RunMetadata(_Schema):
   run_id: str
   problem: str
-  backend: str
+  solver: str
+  oracle: str | None
   seed: int
   dt: float = Field(gt=0.0)
   config: dict[str, Any] = Field(default_factory=dict)

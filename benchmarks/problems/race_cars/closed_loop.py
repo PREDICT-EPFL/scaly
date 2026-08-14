@@ -12,15 +12,19 @@ directions can be weighted independently, a steady-state throttle feedforward in
 the control cost, and a corridor constraint keeping the car's front corners
 within the track.
 
-``backend="casadi"`` swaps in :mod:`.casadi_nlp`, which builds the identical
-problem through CasADi and solves it with the same IPOPT and the same options.
-Everything else — plant, planner, warm starts, lap logic — is shared, so the two
-columns differ only in who supplies the oracles.
+The solver and oracle provider are selected independently. CasADi or Alloy can
+supply the generated oracles while IPOPT or Alloy's SQP implementation drives
+the solve. Everything else — plant, planner, warm starts, and lap logic — is
+shared.
 """
 
 from __future__ import annotations
 
+import base64
+from collections.abc import Callable
 from dataclasses import dataclass
+import io
+from pathlib import Path
 
 import numpy as np
 
@@ -66,10 +70,13 @@ class EpisodeConfig:
   track_half_width: float = 1.5
   ipopt_tol: float = 1e-6
   ipopt_max_iter: int = 80
+  # warm-started SQP steps converge in <= 5 iterations on the canonical lap (mean 2.74);
+  # a small budget keeps a divergence from burning 80 iterations before it is reported
+  sqp_max_iter: int = 8
 
   @classmethod
   def smoke(cls) -> EpisodeConfig:
-    return cls(horizon=3, max_steps=2, ipopt_tol=1e-5, ipopt_max_iter=40)
+    return cls(horizon=3, max_steps=2, ipopt_tol=1e-5, ipopt_max_iter=80)
 
 
 @dataclass(frozen=True)
@@ -77,10 +84,22 @@ class StepTelemetry:
   stats: SolverStats
   arc_length: float
   laps: int
+  # constraint violations of the accepted solution, for the SQP-versus-IPOPT divergence report
+  eq_violation: float
+  ineq_violation: float
+  bound_violation: float
 
   @property
   def solver_time(self) -> float:
     return self.stats.t_solver
+
+  @property
+  def qp_time(self) -> float:
+    return self.stats.t_qp
+
+  @property
+  def globalization_time(self) -> float:
+    return self.stats.t_globalization
 
   @property
   def function_evaluation_time(self) -> float:
@@ -89,6 +108,19 @@ class StepTelemetry:
   @property
   def glue_time(self) -> float:
     return self.stats.t_glue
+
+
+@dataclass(frozen=True)
+class StepRecord:
+  step: int
+  state: np.ndarray
+  reference: np.ndarray
+  control: np.ndarray | None
+  prediction: np.ndarray | None
+  reference_horizon: np.ndarray
+  oracle_input: dict[str, np.ndarray] | None
+  stats: SolverStats | None
+  telemetry: StepTelemetry | None
 
 
 @dataclass(frozen=True)
@@ -142,7 +174,7 @@ def rk4_step_np(x: np.ndarray, u: np.ndarray, params: RaceCarParams = RaceCarPar
   return x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
 
-def _race_car_nlp(config: EpisodeConfig) -> al.SolverFunction:
+def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: dict[str, str | int | float] | None = None) -> al.SolverFunction:
   n = config.horizon
   z = al.sym("z", NZ * (n + 1))
   p = al.sym("p", n_param(n), diff=False)
@@ -197,15 +229,19 @@ def _race_car_nlp(config: EpisodeConfig) -> al.SolverFunction:
     u_ineq=np.full(len(corridor), config.track_half_width),
     x_lb=lb,
     x_ub=ub,
-    solver="ipopt",
-    name=f"race_car_closed_loop_N{n}",
-    options={
-      "print_level": 0,
-      "sb": "yes",
-      "tol": config.ipopt_tol,
-      "max_iter": config.ipopt_max_iter,
-      "warm_start_init_point": "yes",
-    },
+    solver=solver,
+    name=f"race_car_closed_loop_N{n}_{solver}",
+    options=(
+      {"tol": config.ipopt_tol, "max_iter": config.sqp_max_iter, **(sqp_options or {})}
+      if solver == "sqp"
+      else {
+        "print_level": 0,
+        "sb": "yes",
+        "tol": config.ipopt_tol,
+        "max_iter": config.ipopt_max_iter,
+        "warm_start_init_point": "yes",
+      }
+    ),
   )
 
 
@@ -218,30 +254,77 @@ def _reference_guess(reference: np.ndarray, config: EpisodeConfig) -> np.ndarray
   return stages.reshape(-1)
 
 
+def _feasible_guess(state: np.ndarray, reference: np.ndarray, config: EpisodeConfig) -> np.ndarray:
+  stages = np.empty((config.horizon + 1, NZ), dtype=np.float64)
+  predicted = state.copy()
+  for stage in range(config.horizon + 1):
+    heading_error = (reference[stage, 2] - predicted[2] + np.pi) % (2.0 * np.pi) - np.pi
+    dx, dy = predicted[0] - reference[stage, 0], predicted[1] - reference[stage, 1]
+    lateral_error = -np.sin(reference[stage, 2]) * dx + np.cos(reference[stage, 2]) * dy
+    control = np.array([T_MAX, np.clip(heading_error - 0.5 * lateral_error, -DELTA_MAX, DELTA_MAX)])
+    stages[stage, :NX], stages[stage, NX:] = predicted, control
+    if stage < config.horizon:
+      predicted = rk4_step_np(predicted, control, config.params)
+  return stages.reshape(-1)
+
+
 def _shift_blocks(values: np.ndarray, width: int) -> np.ndarray:
   blocks = np.asarray(values, dtype=np.float64).reshape(-1, width)
   return np.concatenate([blocks[1:], blocks[-1:]]).reshape(-1)
 
 
-def build_solver(config: EpisodeConfig, backend: str = "alloy"):
-  """The controller for `backend`; both present the same call signature and statistics."""
-  if backend == "alloy":
+def _canonical_nominal(config: EpisodeConfig) -> np.ndarray | None:
+  comparable = EpisodeConfig(max_steps=config.max_steps, ipopt_tol=config.ipopt_tol, ipopt_max_iter=config.ipopt_max_iter)
+  if config != comparable:
+    return None
+  encoded = (Path(__file__).parent / "data" / "nominal_N40.npz.b64").read_text()
+  with np.load(io.BytesIO(base64.b64decode(encoded))) as stored:
+    nominal = np.asarray(stored["z"], dtype=np.float64)
+  expected = (NZ * (config.horizon + 1),)
+  if nominal.shape != expected or not np.all(np.isfinite(nominal)):
+    raise ValueError(f"canonical race nominal has shape {nominal.shape}, expected finite {expected}")
+  return nominal
+
+
+def build_solver(
+  config: EpisodeConfig,
+  solver: str = "ipopt",
+  oracle: str = "alloy",
+  *,
+  sqp_options: dict[str, str | int | float] | None = None,
+):
+  """Build the selected solver with either provider's generated oracles."""
+  if (solver, oracle) == ("ipopt", "alloy"):
     return _race_car_nlp(config)
-  if backend == "casadi":
+  if (solver, oracle) == ("ipopt", "casadi"):
     from benchmarks.problems.race_cars.casadi_nlp import CasadiRaceCarSolver
 
     return CasadiRaceCarSolver(config)
-  raise ValueError(f"unknown backend {backend!r}; expected 'alloy' or 'casadi'")
+  if (solver, oracle) == ("sqp", "alloy"):
+    return _race_car_nlp(config, solver="sqp", sqp_options=sqp_options)
+  if (solver, oracle) == ("sqp", "casadi"):
+    from benchmarks.problems.race_cars.casadi_nlp import build_casadi_race_car_sqp
+
+    return build_casadi_race_car_sqp(config, sqp_options=sqp_options)
+  raise ValueError(f"unsupported race-car solver/oracle pair {solver!r}/{oracle!r}")
 
 
-def run_episode(config: EpisodeConfig | None = None, *, smoke: bool = False, backend: str = "alloy") -> EpisodeResult:
+def run_episode(
+  config: EpisodeConfig | None = None,
+  *,
+  smoke: bool = False,
+  solver: str = "ipopt",
+  oracle: str = "alloy",
+  sqp_options: dict[str, str | int | float] | None = None,
+  record_step: Callable[[StepRecord], None] | None = None,
+) -> EpisodeResult:
   """Drive one lap of the configured track and return harvestable data."""
   config = EpisodeConfig.smoke() if config is None and smoke else (config or EpisodeConfig())
   if config.horizon < 1 or config.max_steps < 1:
     raise ValueError("horizon and max_steps must be positive")
   track = load_track(config.track)
   planner = MotionPlanner(track.center_line, horizon=config.horizon, dt=config.params.dt, v_ref=config.v_ref)
-  solver = build_solver(config, backend)
+  controller = build_solver(config, solver, oracle, sqp_options=sqp_options)
 
   start = planner.center_path[0]
   start_heading = float(planner.phi_ref[0])
@@ -260,7 +343,14 @@ def run_episode(config: EpisodeConfig | None = None, *, smoke: bool = False, bac
   telemetry: list[StepTelemetry] = []
   oracle_inputs: list[dict[str, np.ndarray]] = []
 
-  z0 = _reference_guess(reference, config)
+  initial_reference = reference.copy()
+  initial_reference[0] = state
+  nominal = _canonical_nominal(config) if solver == "sqp" else None
+  z0 = (
+    nominal.copy()
+    if nominal is not None
+    else (_feasible_guess(state, initial_reference, config) if solver == "sqp" else _reference_guess(reference, config))
+  )
   lam_eq0 = np.zeros(NX * (config.horizon + 1))
   lam_ineq0 = np.zeros(2 * config.horizon)
   lam_box0 = np.zeros(z0.size)
@@ -271,17 +361,78 @@ def run_episode(config: EpisodeConfig | None = None, *, smoke: bool = False, bac
     stage_reference = reference.copy()
     stage_reference[0] = state  # p[:NX] doubles as the initial-value constraint
     p = np.concatenate([stage_reference.reshape(-1), config.params.array()])
-    oracle_inputs.append({"z": z0.copy(), "p": p.copy()})
-    out = solver(z0, lam_eq0, lam_ineq0, lam_box0, p)
-    stats = solver.last_stats
-    if stats is None or solver.last_status is None or not solver.last_status.ok or not np.all(np.isfinite(out["x"])):
+    out = controller(z0, lam_eq0, lam_ineq0, lam_box0, p)
+    stats = controller.last_stats
+    if stats is None or controller.last_status is None or not controller.last_status.ok or not np.all(np.isfinite(out["x"])):
       status = "missing" if stats is None else stats.status.name
-      raise RuntimeError(f"race-car NMPC solve failed at step {step} on the {backend} backend: {status}")
+      residual = ""
+      if "h_eq" in out and "g_ineq" in out:
+        eq = float(np.max(np.abs(out["h_eq"]), initial=0.0))
+        ineq = float(np.max(np.maximum(0.0, np.abs(out["g_ineq"]) - config.track_half_width), initial=0.0))
+        residual = f", eq={eq:.3g}, ineq={ineq:.3g}"
+      if record_step is not None:
+        record_step(
+          StepRecord(
+            step,
+            state.copy(),
+            reference[0].copy(),
+            None,
+            None,
+            reference.copy(),
+            {
+              "z": z0.copy(),
+              "lam_eq": lam_eq0.copy(),
+              "lam_ineq": lam_ineq0.copy(),
+              "lam_box": lam_box0.copy(),
+              "p": p.copy(),
+            },
+            stats,
+            None,
+          )
+        )
+      native = "missing" if stats is None else str(stats.native_status)
+      raise RuntimeError(f"race-car NMPC solve failed at step {step} with {solver}/{oracle}: {status} (native {native}){residual}")
+    oracle_inputs.append({"z": z0.copy(), "p": p.copy()})
     solution = np.asarray(out["x"], dtype=np.float64).reshape(config.horizon + 1, NZ)
+    eq_violation = float(np.max(np.abs(out["h_eq"]), initial=0.0))
+    ineq_violation = float(np.max(np.maximum(0.0, np.abs(out["g_ineq"]) - config.track_half_width), initial=0.0))
+    bound_violation = max(
+      float(np.max(np.maximum(0.0, -solution[:, 3]), initial=0.0)),
+      float(np.max(np.maximum(0.0, solution[:, 3] - config.max_speed), initial=0.0)),
+      float(np.max(np.maximum(0.0, np.abs(solution[:, NX]) - T_MAX), initial=0.0)),
+      float(np.max(np.maximum(0.0, np.abs(solution[:, NX + 1]) - DELTA_MAX), initial=0.0)),
+    )
+    if max(eq_violation, ineq_violation, bound_violation) > max(config.ipopt_tol, 1e-5):
+      failed = StepTelemetry(stats, s - s_start, laps[-1], eq_violation, ineq_violation, bound_violation)
+      if record_step is not None:
+        record_step(
+          StepRecord(
+            step,
+            state.copy(),
+            reference[0].copy(),
+            None,
+            solution[:, :NX].copy(),
+            reference.copy(),
+            {
+              "z": z0.copy(),
+              "lam_eq": lam_eq0.copy(),
+              "lam_ineq": lam_ineq0.copy(),
+              "lam_box": lam_box0.copy(),
+              "p": p.copy(),
+            },
+            stats,
+            failed,
+          )
+        )
+      raise RuntimeError(
+        f"race-car NMPC returned infeasible {solver}/{oracle} solution at step {step}: "
+        f"eq={eq_violation:.3g}, ineq={ineq_violation:.3g}, bound={bound_violation:.3g}"
+      )
     control = np.clip(solution[0, NX:], control_lb, control_ub)
 
-    reference_poses.append(reference[0])
-    reference_horizons.append(reference)
+    applied_state, applied_reference, applied_horizon = state.copy(), reference[0].copy(), reference.copy()
+    reference_poses.append(applied_reference)
+    reference_horizons.append(applied_horizon)
     predictions.append(solution[:, :NX].copy())
     controls.append(control)
 
@@ -291,7 +442,22 @@ def run_episode(config: EpisodeConfig | None = None, *, smoke: bool = False, bac
     states.append(state)
     arc_lengths.append(s)
     laps.append(lap)
-    telemetry.append(StepTelemetry(stats, s - s_start, lap))
+    step_telemetry = StepTelemetry(stats, s - s_start, lap, eq_violation, ineq_violation, bound_violation)
+    telemetry.append(step_telemetry)
+    if record_step is not None:
+      record_step(
+        StepRecord(
+          step,
+          applied_state,
+          applied_reference,
+          control.copy(),
+          solution[:, :NX].copy(),
+          applied_horizon,
+          oracle_inputs[-1],
+          stats,
+          step_telemetry,
+        )
+      )
 
     shifted = np.concatenate([solution[1:], solution[-1:]]).copy()
     shifted[0, :NX] = state
@@ -307,6 +473,8 @@ def run_episode(config: EpisodeConfig | None = None, *, smoke: bool = False, bac
       break
 
   reference_poses.append(reference[0])
+  if record_step is not None:
+    record_step(StepRecord(len(controls), state.copy(), reference[0].copy(), None, None, reference.copy(), None, None, None))
   representative = oracle_inputs[len(oracle_inputs) // 2]
   return EpisodeResult(
     states=np.asarray(states),

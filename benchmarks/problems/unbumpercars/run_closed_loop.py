@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from benchmarks.harness import CLOSED_LOOP_RESULTS, gbench
+from benchmarks.harness import CLOSED_LOOP_RESULTS, gbench, solver_oracle_name
 from benchmarks.harness.provenance import collect
 from benchmarks.harness.recording import (
   CarShape,
@@ -84,20 +84,34 @@ class Simulator:
     return self.states.copy()
 
 
-def make_filter(kind: str, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights):
-  if kind == "casadi":
+def make_filter(solver: str, oracle: str | None, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights):
+  if (solver, oracle) == ("ipopt", "casadi"):
     return CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
-  if kind == "alloy":
+  if (solver, oracle) == ("ipopt", "alloy"):
     return AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
-  if kind == "open":
+  if (solver, oracle) == ("sqp", "alloy"):
+    return AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp")
+  if (solver, oracle) == ("sqp", "casadi"):
+    return AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp", oracle_provider="casadi")
+  if (solver, oracle) == ("none", None):
     return OpenLoopFilter()
-  raise ValueError(f"unknown filter kind {kind!r}")
+  raise ValueError(f"unsupported unbumpercars solver/oracle pair {solver!r}/{oracle!r}")
 
 
-def run_one(kind: str, initial_state: np.ndarray, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights, out_dir: Path, dump_alloy_c: bool):
-  safety_filter: SafetyFilter = make_filter(kind, loop_cfg, filt_cfg, weights)
+def run_one(
+  solver: str,
+  oracle: str | None,
+  initial_state: np.ndarray,
+  loop_cfg: ClosedLoopConfig,
+  filt_cfg: FilterConfig,
+  weights,
+  out_dir: Path,
+  dump_alloy_c: bool,
+):
+  name = solver_oracle_name(solver, oracle)
+  safety_filter: SafetyFilter = make_filter(solver, oracle, loop_cfg, filt_cfg, weights)
   sim = Simulator(initial_state, loop_cfg)
-  impl_dir = out_dir / kind
+  impl_dir = out_dir / name
   impl_dir.mkdir(parents=True, exist_ok=True)
   if dump_alloy_c and isinstance(safety_filter, AlloyDTCBFSafetyFilter):
     safety_filter.dump_c(impl_dir / "alloy_c")
@@ -115,9 +129,14 @@ def run_one(kind: str, initial_state: np.ndarray, loop_cfg: ClosedLoopConfig, fi
     desired_traj[t] = desired
     input_traj[t] = safe
     z = getattr(safety_filter, "last_z", None)
+    lam_g = getattr(safety_filter, "last_mult_g", None)
+    if lam_g is None:
+      lam_g = getattr(safety_filter, "last_lam_g", None)
     fe_inputs.append(
       {
         "z": np.asarray(z, dtype=np.float64) if z is not None else np.concatenate([safe.reshape(-1), np.zeros(loop_cfg.n_slack)]),
+        "lam_f": np.array(1.0),
+        "lam_g": np.asarray(lam_g, dtype=np.float64) if lam_g is not None else np.zeros(loop_cfg.n_slack),
         "bar_x": states.reshape(-1),
         "u_des": desired.reshape(-1),
         "pw": weights.packed,
@@ -134,7 +153,8 @@ def run_one(kind: str, initial_state: np.ndarray, loop_cfg: ClosedLoopConfig, fi
   np.savez_compressed(impl_dir / "rollout.npz", state=state_traj, desired=desired_traj, applied=input_traj)
   write_stats_csv(impl_dir / "stats.csv", safety_filter.stats_history)
   summary = {
-    "kind": kind,
+    "solver": solver,
+    "oracle": oracle,
     "min_pair_distance": min_dist,
     "collision_steps": collisions,
     "max_consecutive_failures": max_consecutive_failures(safety_filter.stats_history),
@@ -145,7 +165,7 @@ def run_one(kind: str, initial_state: np.ndarray, loop_cfg: ClosedLoopConfig, fi
     "last_stats": safety_filter.stats_history[-1] if safety_filter.stats_history else None,
   }
   write_json(impl_dir / "summary.json", summary)
-  _write_foxglove(kind, loop_cfg, filt_cfg, state_traj, desired_traj, input_traj, safety_filter.stats_history, impl_dir)
+  _write_foxglove(solver, oracle, loop_cfg, filt_cfg, state_traj, desired_traj, input_traj, safety_filter.stats_history, impl_dir)
   provenance = collect(Path(__file__).resolve().parents[3], gbench.compiler(), sys.argv[1:])
   write_result_artifacts(
     impl_dir,
@@ -171,7 +191,8 @@ def _finite(value: float) -> float | None:
 
 
 def _write_foxglove(
-  kind: str,
+  solver: str,
+  oracle: str | None,
   loop_cfg: ClosedLoopConfig,
   filt_cfg: FilterConfig,
   states: np.ndarray,
@@ -180,6 +201,7 @@ def _write_foxglove(
   stats: list[FilterStats],
   impl_dir: Path,
 ) -> None:
+  name = solver_oracle_name(solver, oracle)
   physics = loop_cfg.physics
   center = ((physics.x_min + physics.x_max) / 2.0, (physics.y_min + physics.y_max) / 2.0, 0.0)
   # Body: the lf + lr wheelbase plus ~0.3 m of overhang, narrow enough that the pair
@@ -201,9 +223,10 @@ def _write_foxglove(
     )
     recorder.record_metadata(
       RunMetadata(
-        run_id=f"unbumpercars-{kind}-{loop_cfg.seed}",
+        run_id=f"unbumpercars-{name}-{loop_cfg.seed}",
         problem="unbumpercars",
-        backend=kind,
+        solver=solver,
+        oracle=oracle,
         seed=loop_cfg.seed,
         dt=loop_cfg.dt,
         config={"ncars": loop_cfg.ncars, "steps": loop_cfg.steps, "exact_hessian": not filt_cfg.limited_memory_hessian},
@@ -247,6 +270,8 @@ def _write_foxglove(
           constraint_margin=_finite(item.min_g),
           scalars={
             "iterations": float(item.iterations or 0),
+            "qp_time_ms": max(0.0, item.eval_ms.get("qp", 0.0)),
+            "globalization_time_ms": max(0.0, item.eval_ms.get("globalization", 0.0)),
             "glue_time_ms": max(0.0, item.eval_ms.get("glue", 0.0)),
             "slack_l1": item.slack_l1,
             "slack_max": float(item.extra.get("max_slack", 0.0)),
@@ -350,7 +375,8 @@ def parse_args() -> argparse.Namespace:
   p = argparse.ArgumentParser(
     description="Closed-loop centralized DTCBF safety filter: the natively discrete MLP as both the plant and the filter's model by default."
   )
-  p.add_argument("--filter", choices=["casadi", "alloy", "both", "open"], default="casadi")
+  p.add_argument("--solver", choices=["ipopt", "sqp", "none"], default="ipopt")
+  p.add_argument("--oracle", choices=["alloy", "casadi", "both"], help="oracle provider; defaults to casadi")
   p.add_argument(
     "--plant",
     choices=list(PLANT_MODELS),
@@ -363,7 +389,7 @@ def parse_args() -> argparse.Namespace:
     default="dt",
     help="Model the filter predicts one step ahead with. dt uses the discrete MLP, smoothed; see common.dt_mlp_step_smooth_np.",
   )
-  p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR, help="closed-loop artifact root; the problem and backend are appended")
+  p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR, help="closed-loop artifact root; the problem and solver/oracle label are appended")
   p.add_argument("--ncars", type=int, default=8)
   p.add_argument("--steps", type=int, default=200)
   p.add_argument("--dt", type=float, default=0.1)
@@ -379,7 +405,7 @@ def parse_args() -> argparse.Namespace:
   p.add_argument(
     "--limited-memory-hessian",
     action="store_true",
-    help="Use IPOPT's limited-memory Hessian approximation on both backends instead of exact Lagrangian Hessians.",
+    help="Use IPOPT's limited-memory Hessian approximation with either oracle provider instead of exact Lagrangian Hessians.",
   )
   p.add_argument("--no-casadi-expand", action="store_true", help="Disable CasADi MX-to-SX expansion before constructing the NLP solver.")
   p.add_argument("--eval-repeats", type=int, default=1)
@@ -390,6 +416,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
   args = parse_args()
+  if args.solver == "none" and args.oracle is not None:
+    raise SystemExit("--solver none does not accept --oracle")
+  if args.solver != "ipopt" and args.limited_memory_hessian:
+    raise SystemExit("--limited-memory-hessian applies only to --solver ipopt")
+  oracles = [None] if args.solver == "none" else (["alloy", "casadi"] if args.oracle == "both" else [args.oracle or "casadi"])
   out_dir = result_dir(args.out_dir)
   weights = load_dt_mlp_weights() if args.filter_model == "dt" else load_ct_full_weights()
   loop_cfg = ClosedLoopConfig(
@@ -419,15 +450,15 @@ def main() -> None:
     out_dir / "config.json",
     {"loop": asdict(loop_cfg), "filter": asdict(filt_cfg), "weights": str(weights.path), "initial_state": initial},
   )
-  kinds = ["casadi", "alloy"] if args.filter == "both" else [args.filter]
   results = {}
-  for kind in kinds:
+  for oracle in oracles:
+    name = solver_oracle_name(args.solver, oracle)
     print(
-      f"[run] {kind}  ncars={loop_cfg.ncars} steps={loop_cfg.steps} walls={loop_cfg.arena_avoidance}"
+      f"[run] {name}  ncars={loop_cfg.ncars} steps={loop_cfg.steps} walls={loop_cfg.arena_avoidance}"
       f" plant={loop_cfg.plant} filter_model={filt_cfg.model}"
     )
-    result = run_one(kind, initial, loop_cfg, filt_cfg, weights, out_dir, args.dump_alloy_c)
-    results[kind] = result
+    result = run_one(args.solver, oracle, initial, loop_cfg, filt_cfg, weights, out_dir, args.dump_alloy_c)
+    results[name] = result
     controller, min_dist, collisions = result[0], result[4], result[5]
     stats = controller.stats_history
     avg_solve = float(np.mean([s.solver_ms for s in stats])) if stats else float("nan")

@@ -613,6 +613,7 @@ def pack_workspace(prog: PNode) -> PNode:
   # workspace is the max over those oracle PROCs. The lowerer records solver -> oracle names on
   # the PROGRAM; we seed those names into the sz_w recursion below.
   solver_oracles: dict[str, tuple[str, ...]] = prog.attrs.get("solver_oracles", {})
+  solver_external_workspace: dict[str, int] = prog.attrs.get("solver_external_workspace", {})
 
   # sz_w(proc) = own spill + max callee workspace (callees share the post-own-spill window).
   sz_w: dict[str, int] = {}
@@ -622,7 +623,7 @@ def pack_workspace(prog: PNode) -> PNode:
       return sz_w[name]
     if name in solver_oracles:
       sz_w[name] = 0  # break cycles defensively; a solver owns no spill itself
-      sz_w[name] = max((total(o) for o in solver_oracles[name] if o in plans), default=0)
+      sz_w[name] = max((solver_external_workspace.get(name, 0), *(total(o) for o in solver_oracles[name] if o in plans)))
       return sz_w[name]
     sz_w[name] = plans[name].own_spill  # break cycles defensively
     callee_max = max((total(c) for c in plans[name].callees if c in plans or c in solver_oracles), default=0)

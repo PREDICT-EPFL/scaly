@@ -10,9 +10,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
   from .solver_function import SolverStatus
 
-ALLOY_SOLVER_STATS_VERSION = 1
+ALLOY_SOLVER_STATS_VERSION = 3
 
-# This order is the ABI: four int32, five doubles, then six int32 (80 bytes).
+# This order is the ABI: four int32, seven doubles, six int32, then the v3
+# diagnostics tail — four doubles (8-aligned at offset 96) and two int32
+# (136 bytes total). New fields only ever append; never reorder existing ones.
 STATS_FIELDS = (
   ("version", "int32_t"),
   ("status", "int32_t"),
@@ -22,6 +24,8 @@ STATS_FIELDS = (
   ("t_total", "double"),
   ("t_fe", "double"),
   ("t_solver", "double"),
+  ("t_qp", "double"),
+  ("t_globalization", "double"),
   ("t_glue", "double"),
   ("n_eval_f", "int32_t"),
   ("n_eval_grad_f", "int32_t"),
@@ -29,6 +33,13 @@ STATS_FIELDS = (
   ("n_eval_jac_g", "int32_t"),
   ("n_eval_h", "int32_t"),
   ("_pad0", "int32_t"),
+  # v3 diagnostics: zero when the backend has no such concept.
+  ("primal_viol", "double"),  # constraint violation (inf norm) at the returned x
+  ("step_inf", "double"),  # inf norm of the last computed step
+  ("alpha", "double"),  # last accepted line-search step length; 0.0 if no step was accepted
+  ("merit_penalty", "double"),  # final merit penalty parameter
+  ("backtracks", "int32_t"),  # total rejected line-search trial points across the solve
+  ("qp_iter", "int32_t"),  # QP iteration count (accumulated across SQP iterations)
 )
 
 
@@ -60,6 +71,8 @@ class SolverStats:
   t_total: float
   t_fe: float
   t_solver: float
+  t_qp: float
+  t_globalization: float
   t_glue: float
   n_eval_f: int
   n_eval_grad_f: int
@@ -67,6 +80,12 @@ class SolverStats:
   n_eval_jac_g: int
   n_eval_h: int
   _pad0: int = 0
+  primal_viol: float = 0.0
+  step_inf: float = 0.0
+  alpha: float = 0.0
+  merit_penalty: float = 0.0
+  backtracks: int = 0
+  qp_iter: int = 0
 
   @classmethod
   def from_c(cls, value: CSolverStats) -> SolverStats:
@@ -86,7 +105,7 @@ class SolverStats:
 
 
 assert tuple(f.name for f in fields(SolverStats)) == tuple(name for name, _ in STATS_FIELDS)
-assert ctypes.sizeof(CSolverStats) == 80
+assert ctypes.sizeof(CSolverStats) == 136
 
 
 def stats_c_defs() -> list[str]:

@@ -1,31 +1,23 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
+
+from alloy_piqp import include_dir, lib_dir
+
+from .external import external_nlp
 
 if TYPE_CHECKING:
   from alloy.codegen.solver_c import SolverWrapperCtx
   from alloy.function import Function
 
 
-def include_dir() -> Path:
-  return Path(__file__).resolve().parent / "include"
-
-
-def lib_dir() -> Path:
-  return Path(__file__).resolve().parent / "lib"
-
-
 class _Backend:
-  """IPOPT solver plugin: vendored lib/header metadata + the C wrapper
-  template (``codegen.py``). Solves run through alloy's generated C wrapper."""
-
-  name = "ipopt"
+  name = "sqp"
   kind = "nlp"
   protocol_version = 4
-  lib_stem = "ipopt"
-  link_flags = ("-lipopt",)
-  header = "coin-or/IpStdCInterface.h"
+  lib_stem = "piqpc"
+  link_flags = ("-lpiqpc",)
+  header = "piqp/piqp.h"
 
   include_dir = staticmethod(include_dir)
   lib_dir = staticmethod(lib_dir)
@@ -37,3 +29,5 @@ class _Backend:
 
 
 BACKEND = _Backend()
+
+__all__ = ["BACKEND", "external_nlp"]

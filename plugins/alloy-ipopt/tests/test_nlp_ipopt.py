@@ -22,8 +22,15 @@ def test_nlp_generated_stats_and_timing_split() -> None:
   assert stats.obj == pytest.approx(float(out["f"]), rel=1e-12, abs=1e-12)
   assert stats.n_eval_f > 0 and stats.n_eval_grad_f > 0 and stats.n_eval_g > 0
   assert stats.n_eval_jac_g > 0 and stats.n_eval_h > 0
-  assert all(value >= 0.0 for value in (stats.t_total, stats.t_fe, stats.t_solver, stats.t_glue))
-  assert stats.t_total == pytest.approx(stats.t_fe + stats.t_solver + stats.t_glue, rel=0.1, abs=1e-12)
+  assert all(value >= 0.0 for value in (stats.t_total, stats.t_fe, stats.t_solver, stats.t_qp, stats.t_globalization, stats.t_glue))
+  assert stats.t_qp == 0.0 and stats.t_globalization == 0.0
+  assert stats.t_total == pytest.approx(stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rel=0.1, abs=1e-12)
+  # v3 diagnostics from the intermediate callback; merit penalty and QP
+  # iteration count have no IPOPT equivalent and stay zero.
+  assert 0.0 <= stats.primal_viol <= 1e-6
+  assert stats.step_inf >= 0.0 and 0.0 < stats.alpha <= 1.0
+  assert stats.backtracks >= 0
+  assert stats.merit_penalty == 0.0 and stats.qp_iter == 0
   assert nlp.last_status is not None and nlp.last_status.ok
   assert nlp.last_status.iter == stats.iter
 

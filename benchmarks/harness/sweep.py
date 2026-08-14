@@ -151,30 +151,44 @@ def _chain_alloy(size: int, out_dir: Path) -> dict:
 
 
 def _unbumpercars_alloy(size: int, out_dir: Path) -> dict:
-  from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, NCTRL, NSTATE, N_PHYSICS, N_PW
+  from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, NCTRL, NSTATE, N_PHYSICS, N_PW_DT
   from benchmarks.problems.unbumpercars.filters import build_alloy_oracle
 
   started = time.perf_counter()
   cfg = ClosedLoopConfig(ncars=size)
-  oracle = build_alloy_oracle(cfg, FilterConfig(model="ct"))
-  name = f"alloy_unbumpercars_g_jac_C{size}"
-  spjf = oracle.factory(name, ["z", "bar_x", "u_des", "pw", "physics", "dt"], ["spjac:g:z"])
-  sparsity = spjf.output_sparsities[0]
+  oracle = build_alloy_oracle(cfg, FilterConfig(model="dt"))
+  name = f"alloy_unbumpercars_lag_hess_C{size}"
+  sphf = oracle.factory(
+    name,
+    ["z", "lam:cost", "lam:g", "bar_x", "u_des", "pw", "physics", "dt"],
+    ["sphess:gamma:z:z"],
+    aux={"gamma": ["cost", "g"]},
+  )
+  sparsity = sphf.output_sparsities[0]
   assert sparsity is not None
   build_ms = (time.perf_counter() - started) * 1000
-  module, render_ms = _render_alloy(spjf, name, out_dir)
+  module, render_ms = _render_alloy(sphf, name, out_dir)
   return _module_info(
     name,
     "alloy",
     module,
-    [("z", NCTRL * size + cfg.n_slack), ("bar_x", NSTATE * size), ("u_des", NCTRL * size), ("pw", N_PW), ("physics", N_PHYSICS), ("dt", 1)],
+    [
+      ("z", NCTRL * size + cfg.n_slack),
+      ("lam_f", 1),
+      ("lam_g", cfg.n_slack),
+      ("bar_x", NSTATE * size),
+      ("u_des", NCTRL * size),
+      ("pw", N_PW_DT),
+      ("physics", N_PHYSICS),
+      ("dt", 1),
+    ],
     sparsity,
-    (oracle.outputs[1].size, NCTRL * size + cfg.n_slack),
+    (NCTRL * size + cfg.n_slack, NCTRL * size + cfg.n_slack),
     build_ms,
     render_ms,
-    f"BM_AlloyUnbumpercarsGJacC{size}",
-    w_size=_workspace_size(spjf),
-    callable=spjf,
+    f"BM_AlloyUnbumpercarsLagHessC{size}",
+    w_size=_workspace_size(sphf),
+    callable=sphf,
   )
 
 
@@ -183,9 +197,10 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
 
   kind = backend.removeprefix("casadi_")
   sym_t = ca.SX if kind == "sx" else ca.MX
-  stem = {"chain": "chain_eq", "race_cars": "race_car_eq", "unbumpercars": "unbumpercars_g"}[workload]
+  stem = {"chain": "chain_eq", "race_cars": "race_car_eq", "unbumpercars": "unbumpercars_lag"}[workload]
   axis = {"chain": "M", "race_cars": "N", "unbumpercars": "C"}[workload]
-  name = f"casadi_{kind}_{stem}_jac_{axis}{size}"
+  kernel = "hess" if workload == "unbumpercars" else "jac"
+  name = f"casadi_{kind}_{stem}_{kernel}_{axis}{size}"
   started = time.perf_counter()
   if workload == "chain":
     horizon = chain.HORIZON
@@ -197,12 +212,12 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
     inputs = [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))]
     benchmark = f"BM_Casadi{kind.title()}RaceCarEqJacN{size}"
   else:
-    from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, load_ct_full_weights
-    from benchmarks.problems.unbumpercars.filters import build_casadi_jacobian
+    from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, load_dt_mlp_weights
+    from benchmarks.problems.unbumpercars.filters import build_casadi_hessian
 
-    fn = build_casadi_jacobian(ClosedLoopConfig(ncars=size), FilterConfig(model="ct"), load_ct_full_weights(), name, sym_t)
-    inputs = [("z", fn.size1_in(0)), ("p", fn.size1_in(1))]
-    benchmark = f"BM_Casadi{kind.title()}UnbumpercarsGJacC{size}"
+    fn = build_casadi_hessian(ClosedLoopConfig(ncars=size), FilterConfig(model="dt"), load_dt_mlp_weights(), name, sym_t)
+    inputs = [("z", fn.size1_in(0)), ("lam_f", fn.size1_in(1)), ("lam_g", fn.size1_in(2)), ("p", fn.size1_in(3))]
+    benchmark = f"BM_Casadi{kind.title()}UnbumpercarsLagHessC{size}"
   build_ms = (time.perf_counter() - started) * 1000
   started = time.perf_counter()
   cwd = Path.cwd()
@@ -248,9 +263,9 @@ def build_kernel(workload: str, size: int, backend: str, out_dir: Path) -> dict:
 
 def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
   canonical = {
-    ("chain", 5): RESULTS / "closed-loop" / "chain" / "alloy",
-    ("race_cars", 40): RESULTS / "closed-loop" / "race_cars" / "alloy",
-    ("unbumpercars", 8): RESULTS / "closed-loop" / "unbumpercars" / "alloy",
+    ("chain", 5): RESULTS / "closed-loop" / "chain" / "ipopt+alloy",
+    ("race_cars", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+alloy",
+    ("unbumpercars", 8): RESULTS / "closed-loop" / "unbumpercars" / "ipopt+alloy",
   }.get((workload, size))
   if canonical is None:
     return None
@@ -261,8 +276,72 @@ def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
     return {name: np.asarray(data[name], dtype=np.float64) for name in data.files}
 
 
-def _samples(workload: str, size: int, info: dict, out_dir: Path):
-  harvested = _harvested_inputs(workload, size)
+def _unbumpercars_hessian_inputs(size: int, harvested: dict[str, np.ndarray] | None) -> tuple[dict[str, np.ndarray], np.ndarray]:
+  import casadi as ca
+
+  from benchmarks.problems.unbumpercars.common import (
+    NCTRL,
+    NSTATE,
+    N_PHYSICS,
+    N_PW_DT,
+    ClosedLoopConfig,
+    FilterConfig,
+    load_dt_mlp_weights,
+    sample_initial_states,
+  )
+  from benchmarks.problems.unbumpercars.filters import build_casadi_hessian
+
+  cfg, filt_cfg, weights = ClosedLoopConfig(ncars=size), FilterConfig(model="dt"), load_dt_mlp_weights()
+  if harvested is None:
+    bar_x = sample_initial_states(cfg).reshape(-1)
+    u_des = np.tile([cfg.nominal_speed, 0.0], size)
+    pieces = {
+      "z": np.concatenate([u_des, np.zeros(cfg.n_slack)]),
+      "lam_f": np.array(1.0),
+      "lam_g": np.linspace(0.1, 1.0, cfg.n_slack),
+      "bar_x": bar_x,
+      "u_des": u_des,
+      "pw": weights.packed,
+      "physics": cfg.physics.array(),
+      "dt": np.array([cfg.dt]),
+    }
+  else:
+    pieces = harvested
+  expected_shapes = {
+    "z": (NCTRL * size + cfg.n_slack,),
+    "lam_f": (),
+    "lam_g": (cfg.n_slack,),
+    "bar_x": (NSTATE * size,),
+    "u_des": (NCTRL * size,),
+    "pw": (N_PW_DT,),
+    "physics": (N_PHYSICS,),
+    "dt": (1,),
+  }
+  missing = sorted(set(expected_shapes) - set(pieces))
+  extra = sorted(set(pieces) - set(expected_shapes))
+  if missing or extra:
+    raise ValueError(f"harvested unbumpercars fields do not match C={size}: missing={missing}, extra={extra}")
+  for name, shape in expected_shapes.items():
+    if pieces[name].shape != shape:
+      raise ValueError(f"harvested unbumpercars field {name!r} does not match C={size}: {pieces[name].shape}, expected {shape}")
+    if not np.all(np.isfinite(pieces[name])):
+      raise ValueError(f"harvested unbumpercars field {name!r} contains non-finite values")
+  p = np.concatenate([pieces[name] for name in ("bar_x", "u_des", "pw", "physics", "dt")])
+  ref = build_casadi_hessian(cfg, filt_cfg, weights, f"unbumpercars_hess_dense_ref_C{size}", ca.MX)
+  expected = np.asarray(ref(pieces["z"], pieces["lam_f"], pieces["lam_g"], p), dtype=np.float64).reshape(-1)
+  return pieces, expected
+
+
+def _samples(
+  workload: str,
+  size: int,
+  info: dict,
+  out_dir: Path,
+  harvested: dict[str, np.ndarray] | None = None,
+  *,
+  load_harvested: bool = True,
+):
+  harvested = _harvested_inputs(workload, size) if harvested is None and load_harvested else harvested
   if workload == "chain":
     horizon = chain.HORIZON
     if harvested is None:
@@ -286,24 +365,16 @@ def _samples(workload: str, size: int, info: dict, out_dir: Path):
     expected = np.asarray(ref(zv, pv), dtype=np.float64).reshape(-1)
     values = {"z": zv, "p": pv}
   else:
-    from benchmarks.problems.unbumpercars.common import NCTRL, ClosedLoopConfig, FilterConfig, load_ct_full_weights, sample_initial_states
-    from benchmarks.problems.unbumpercars.filters import build_alloy_oracle
-
-    cfg, filt_cfg, weights = ClosedLoopConfig(ncars=size), FilterConfig(model="ct"), load_ct_full_weights()
-    if harvested is None:
-      bar_x = sample_initial_states(cfg).reshape(-1)
-      u_des = np.tile([cfg.nominal_speed, 0.0], size)
-      zv = np.concatenate([u_des, np.zeros(cfg.n_slack)])
-      pieces = {"z": zv, "bar_x": bar_x, "u_des": u_des, "pw": weights.packed, "physics": cfg.physics.array(), "dt": np.array([cfg.dt])}
-    else:
-      pieces = harvested
-      zv = pieces["z"]
-    if zv.shape != (NCTRL * size + cfg.n_slack,):
-      raise ValueError(f"harvested unbumpercars input shapes do not match C={size}: {zv.shape}")
-    ref = build_alloy_oracle(cfg, filt_cfg).factory(f"unbumpercars_dense_ref_C{size}", ["z", "bar_x", "u_des", "pw", "physics", "dt"], ["jac:g:z"])
-    expected = np.asarray(ref(*[pieces[name] for name in ("z", "bar_x", "u_des", "pw", "physics", "dt")]), dtype=np.float64).reshape(-1)
+    pieces, expected = _unbumpercars_hessian_inputs(size, harvested)
     values = (
-      pieces if info["backend"] == "alloy" else {"z": zv, "p": np.concatenate([pieces[name] for name in ("bar_x", "u_des", "pw", "physics", "dt")])}
+      pieces
+      if info["backend"] == "alloy"
+      else {
+        "z": pieces["z"],
+        "lam_f": pieces["lam_f"],
+        "lam_g": pieces["lam_g"],
+        "p": np.concatenate([pieces[name] for name in ("bar_x", "u_des", "pw", "physics", "dt")]),
+      }
     )
   args = [values[name] for name, _ in info["inputs"]]
   result = info["callable"](*args)
@@ -322,6 +393,7 @@ def run_cell(
   compile_timeout: float,
   max_source_mb: float,
   benchmark_min_time: str,
+  load_harvested: bool = True,
 ) -> tuple[dict[str, object], dict | None]:
   if out_dir.exists():
     shutil.rmtree(out_dir)
@@ -352,7 +424,7 @@ def run_cell(
   if source_mb > max_source_mb:
     return row(**base, compile_status="skipped_size", runtime_status="skipped", note=f"source {source_mb:.1f} MB > {max_source_mb:.1f} MB"), info
   try:
-    input_paths, expected_path = _samples(workload, size, info, out_dir)
+    input_paths, expected_path = _samples(workload, size, info, out_dir, load_harvested=load_harvested)
   except Exception as e:
     return row(**base, compile_status="not_run", runtime_status="correctness_fail", note=str(e)), info
   gbench.write_cpp(info, out_dir, input_paths, expected_path)

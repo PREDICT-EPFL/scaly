@@ -219,7 +219,7 @@ def chain_objective_fn(n_masses: int, horizon: int) -> al.Function:
   return al.Function(f"chain_obj_M{n_masses}_N{horizon}", [z], [_objective(z, n_masses, horizon)], ["z"], ["f"])
 
 
-def chain_nlp(n_masses: int, horizon: int):
+def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt"):
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   z = al.sym("z", n_dec(n_masses, horizon))
   p = al.sym("p", n_param(n_masses), diff=False)
@@ -233,7 +233,17 @@ def chain_nlp(n_masses: int, horizon: int):
   for i in range(horizon):
     lb[i * nz + nx : (i + 1) * nz] = -1.0
     ub[i * nz + nx : (i + 1) * nz] = 1.0
-  return al.nlp(x=z, f=_objective(z, n_masses, horizon), p=p, h_eq=eq, x_lb=lb, x_ub=ub, solver="ipopt", name=f"chain_M{n_masses}_N{horizon}")
+  return al.nlp(
+    x=z,
+    f=_objective(z, n_masses, horizon),
+    p=p,
+    h_eq=eq,
+    x_lb=lb,
+    x_ub=ub,
+    solver=solver,
+    name=f"chain_M{n_masses}_N{horizon}_{solver}",
+    options={"max_iter": 80, "tol": 1e-6} if solver == "sqp" else None,
+  )
 
 
 def _ca_dynamics(n_masses: int, sym_t):
@@ -312,6 +322,47 @@ def ca_chain_nlpsol(n_masses: int, horizon: int, *, expand: bool = True, jit: bo
     "ipopt",
     {"x": z, "p": p, "f": f, "g": eq},
     {"expand": expand, "jit": jit, "ipopt.print_level": 0, "print_time": False, "ipopt.sb": "yes"},
+  )
+
+
+def ca_chain_sqp(n_masses: int, horizon: int):
+  import casadi as ca
+
+  from alloy_sqp.casadi import build_casadi_external_sqp
+
+  nx, nz = n_state(n_masses), n_state(n_masses) + NU
+  z, p, eq = _ca_eq(n_masses, horizon, ca.MX, map_stages=True)
+  end, vel, h = 3 * (n_masses - 2), 3 * (n_masses - 1), 1.0 / horizon
+  ref = ca.DM(np.asarray(END_REF).reshape(3, 1))
+  cost = 0
+  for i in range(horizon):
+    zi = z[i * nz : (i + 1) * nz]
+    cost += h * 0.5 * (Q_END * ca.sumsqr(zi[end : end + 3] - ref) + Q_VEL * ca.sumsqr(zi[vel:nx]) + R_U * ca.sumsqr(zi[nx:]))
+  terminal = z[horizon * nz : horizon * nz + nx]
+  cost += 0.5 * Q_END_TERMINAL * ca.sumsqr(terminal[end : end + 3] - ref)
+  lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", int(eq.shape[0]))
+  stem = f"ca_chain_sqp_M{n_masses}_N{horizon}"
+  base = ca.Function(f"{stem}_base", [z, p], [cost, eq])
+  grad = ca.Function(f"{stem}_grad", [z, p], [ca.gradient(cost, z)])
+  jac = ca.Function(f"{stem}_jac", [z, p], [ca.jacobian(eq, z)])
+  hess = ca.Function(f"{stem}_hess", [z, lam_f, lam_g, p], [ca.hessian(lam_f * cost + ca.dot(lam_g, eq), z)[0]])
+  lb, ub = np.full(z.shape[0], -np.inf), np.full(z.shape[0], np.inf)
+  for i in range(horizon):
+    lb[i * nz + nx : (i + 1) * nz] = -1.0
+    ub[i * nz + nx : (i + 1) * nz] = 1.0
+  return build_casadi_external_sqp(
+    name=stem,
+    base=base,
+    grad=grad,
+    jac=jac,
+    hess=hess,
+    n_eq=int(eq.shape[0]),
+    n_ineq=0,
+    x_lb=lb,
+    x_ub=ub,
+    l_ineq=np.zeros(0),
+    u_ineq=np.zeros(0),
+    options={"max_iter": 80, "tol": 1e-6},
   )
 
 

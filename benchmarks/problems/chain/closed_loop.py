@@ -6,7 +6,7 @@ long enough for the chain to settle onto ``END_REF``, with the end mass within
 0.06 of it, moving under 3 mm per step, and ``|u|`` under 0.02 by the end.
 ``ClosedLoopConfig.smoke()`` reduces this to two intervals and two steps for a
 short toolchain check.  The plant deliberately uses the independent NumPy RK4
-implementation while the controller uses Alloy's generated IPOPT path.
+implementation while the controller uses the selected generated solver path.
 """
 
 from __future__ import annotations
@@ -124,8 +124,14 @@ def _shift_primal(solution: np.ndarray, measured: np.ndarray, config: ClosedLoop
   return shifted
 
 
-def run_episode(config: ClosedLoopConfig | None = None, *, smoke: bool = False) -> ClosedLoopEpisode:
-  """Run one deterministic model-in-the-loop episode through Alloy/IPOPT.
+def run_episode(
+  config: ClosedLoopConfig | None = None,
+  *,
+  smoke: bool = False,
+  solver: str = "ipopt",
+  oracle: str = "alloy",
+) -> ClosedLoopEpisode:
+  """Run one deterministic model-in-the-loop episode.
 
   ``config`` selects all physical and sizing parameters.  Passing ``smoke``
   without a config selects the very short smoke point; explicit configuration
@@ -135,7 +141,16 @@ def run_episode(config: ClosedLoopConfig | None = None, *, smoke: bool = False) 
   """
   config = config if config is not None else (ClosedLoopConfig.smoke() if smoke else ClosedLoopConfig.canonical())
   nx, nz = n_state(config.n_masses), n_state(config.n_masses) + NU
-  solver = chain_nlp(config.n_masses, config.horizon)
+  if (solver, oracle) == ("ipopt", "alloy"):
+    controller = chain_nlp(config.n_masses, config.horizon)
+  elif (solver, oracle) == ("sqp", "alloy"):
+    controller = chain_nlp(config.n_masses, config.horizon, solver="sqp")
+  elif (solver, oracle) == ("sqp", "casadi"):
+    from benchmarks.problems.chain import ca_chain_sqp
+
+    controller = ca_chain_sqp(config.n_masses, config.horizon)
+  else:
+    raise ValueError(f"unsupported chain solver/oracle pair {solver!r}/{oracle!r}")
   state = initial_state(config.n_masses)
   guess = _rollout_guess(state, config)
   lam_eq0 = np.zeros(nx * (config.horizon + 1))
@@ -152,16 +167,16 @@ def run_episode(config: ClosedLoopConfig | None = None, *, smoke: bool = False) 
 
   for step in range(config.steps):
     p = np.concatenate([state, config.params.array()])
-    out = solver(guess, lam_eq0, lam_ineq0, lam_box0, p)
-    stats = solver.last_stats
-    status = solver.last_status
+    out = controller(guess, lam_eq0, lam_ineq0, lam_box0, p)
+    stats = controller.last_stats
+    status = controller.last_status
     if stats is None or status is None:
-      raise RuntimeError("Alloy/IPOPT did not return solve status and statistics")
+      raise RuntimeError(f"{solver}/{oracle} did not return solve status and statistics")
     if not status.ok:
-      raise RuntimeError(f"chain NMPC solve failed at step {step}: {stats.status.name}")
+      raise RuntimeError(f"chain NMPC solve failed at step {step} with {solver}/{oracle}: {stats.status.name}")
     solution = np.asarray(out["x"], dtype=np.float64).reshape(-1)
     if not np.all(np.isfinite(solution)):
-      raise RuntimeError(f"Alloy/IPOPT returned a non-finite trajectory at step {step}")
+      raise RuntimeError(f"{solver}/{oracle} returned a non-finite trajectory at step {step}")
     oracle_inputs.append({"z": solution.copy(), "p": p.copy()})
     telemetry.append(stats)
     for stage in range(config.horizon + 1):

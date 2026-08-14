@@ -115,7 +115,21 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None) -> PNo
     prog = p.program([*callees.values(), root])
   if solver_fns:
     solver_oracles = {name: tuple(o.name for o in solver_callees(sf)) for name, sf in solver_fns.items()}
-    prog = PNode(POps.PROGRAM, prog.args, {**prog.attrs, "solver_oracles": solver_oracles}, prog.dtype)
+    from .solvers.solver_function import ExternalOracle
+
+    solver_external_workspace = {}
+    for name, sf in solver_fns.items():
+      desc = getattr(sf, "descriptor")
+      solver_external_workspace[name] = max(
+        (oracle.workspace_size for oracle in (desc.base, desc.grad, desc.jac, desc.hess, desc.bounds) if isinstance(oracle, ExternalOracle)),
+        default=0,
+      )
+    prog = PNode(
+      POps.PROGRAM,
+      prog.args,
+      {**prog.attrs, "solver_oracles": solver_oracles, "solver_external_workspace": solver_external_workspace},
+      prog.dtype,
+    )
   if observe is not None:
     observe("lowered", prog)
   prog = optimize_program(prog, observe=observe)  # fusion + workspace packing (see passes.py)

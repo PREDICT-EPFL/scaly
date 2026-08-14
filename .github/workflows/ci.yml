@@ -228,3 +228,23 @@ jobs:
 
       - name: Solver-call smoke
         run: uv run python benchmarks/run.py smoke --select solver_call
+
+      - name: Solver-backed problem gates
+        env:
+          ALLOY_REQUIRE_SOLVERS: "1"
+        run: uv run python benchmarks/run.py smoke --select problems
+
+      - name: Public closed-loop smoke commands
+        run: |
+          uv run python benchmarks/run.py closed-loop --problem chain --solver ipopt --oracle alloy --smoke
+          uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle alloy --smoke
+          uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle casadi --smoke
+          uv run python benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle alloy --smoke
+          uv run python benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --smoke
+          uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle alloy --smoke
+          uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle casadi --smoke
+          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle alloy --smoke
+          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle casadi --smoke
+          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle alloy --smoke
+          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle casadi --smoke
+          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver none --smoke

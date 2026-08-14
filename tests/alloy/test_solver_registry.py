@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+import alloy as al
 from alloy.codegen import solver_c
 from alloy.solvers import registry
 from alloy.solvers.registry import SOLVER_PLUGIN_PROTOCOL_VERSION, SolverPluginError
-from alloy.solvers.solver_function import SolverDescriptor, SolverFunction
+from alloy.solvers.solver_function import ExternalOracle, SolverDescriptor, SolverFunction
 
 
 class _FakeEntryPoint:
@@ -145,6 +147,126 @@ def test_render_solver_raw_dispatches_to_plugin_and_frames_stats(monkeypatch: py
   assert "int fake_qp_stats(alloy_solver_stats* out) {" in lines
   # The plugin body was told about the same stats symbol core declared.
   assert "  fake_qp_stats_data.version = ALLOY_SOLVER_STATS_VERSION;" in lines
+
+
+def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+  oracle = ExternalOracle(
+    name="foreign_base",
+    raw_symbol="foreign_base_raw",
+    source="static void foreign_base_raw(const double* x, double* y, double* w) { y[0] = x[0]; (void)w; }",
+    input_signature=(("x", (1,)),),
+    output_signature=(("f", ()),),
+  )
+  desc = SolverDescriptor(
+    name="external_qp",
+    backend="fake",
+    n=1,
+    n_eq=0,
+    n_ineq=0,
+    input_signature=(("x0", (1,)), ("lam_eq0", (0,)), ("lam_ineq0", (0,))),
+    output_signature=(("x", (1,)),),
+    param_names=(),
+    base=oracle,
+  )
+
+  class _ExternalBackend(_FakeBackend):
+    def render_wrapper(self, fun, ctx):  # noqa: ANN001, ANN201
+      assert ctx.raw_symbol_of(fun.descriptor.base) == "foreign_base_raw"
+      return super().render_wrapper(fun, ctx)
+
+  monkeypatch.setattr(registry, "get_backend", lambda name: _ExternalBackend())
+  source = "\n".join(solver_c.render_solver_raw(SolverFunction(desc)))
+  assert oracle.source in source
+  assert source.index(oracle.source) < source.index("static alloy_solver_stats external_qp_stats_data;")
+
+
+def test_external_oracle_workspace_is_part_of_solver_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+  oracle = ExternalOracle(
+    name="foreign_base",
+    raw_symbol="foreign_base_raw",
+    source="static void foreign_base_raw(const double* x, double* y, double* w) { w[6] = x[0]; y[0] = w[6]; }",
+    input_signature=(("x", (1,)),),
+    output_signature=(("f", ()),),
+    workspace_size=7,
+  )
+  desc = SolverDescriptor(
+    name="external_workspace",
+    backend="fake",
+    n=1,
+    n_eq=0,
+    n_ineq=0,
+    input_signature=(("x0", (1,)), ("lam_eq0", (0,)), ("lam_ineq0", (0,))),
+    output_signature=(("x", (1,)),),
+    param_names=(),
+    base=oracle,
+  )
+  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
+  from alloy.codegen.c import render_c_module
+
+  header = render_c_module(SolverFunction(desc)).header
+  assert "#define external_workspace_SZ_W 7" in header
+
+
+def _external_solver(name: str, oracle: ExternalOracle) -> SolverFunction:
+  return SolverFunction(
+    SolverDescriptor(
+      name=name,
+      backend="fake",
+      n=1,
+      n_eq=0,
+      n_ineq=0,
+      input_signature=(("x0", (1,)), ("lam_eq0", (0,)), ("lam_ineq0", (0,))),
+      output_signature=(("x", (1,)),),
+      param_names=(),
+      base=oracle,
+    )
+  )
+
+
+def test_external_oracle_source_is_deduplicated_across_solver_wrappers(monkeypatch: pytest.MonkeyPatch) -> None:
+  source = "static void shared_raw(const double* x, double* y, double* w) { y[0] = x[0]; (void)w; }"
+  oracle = ExternalOracle("shared", "shared_raw", source, (("x", (1,)),), (("f", ()),))
+  left, right = _external_solver("left_solver", oracle), _external_solver("right_solver", oracle)
+  args = [al.const(np.zeros(1)), al.const(np.zeros(0)), al.const(np.zeros(0))]
+  host = al.Function("two_external_solvers", [], [left.call(args)[0] + right.call(args)[0]], [], ["x"])
+  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
+
+  from alloy.codegen.c import render_c_module
+
+  assert render_c_module(host).source.count(source) == 1
+
+
+def test_conflicting_external_oracle_symbol_definitions_are_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+  first = ExternalOracle("first", "shared_raw", "static void shared_raw(void) {}", (), ())
+  second = ExternalOracle("second", "shared_raw", "static void shared_raw(int x) { (void)x; }", (), ())
+  left, right = _external_solver("left_conflict", first), _external_solver("right_conflict", second)
+  args = [al.const(np.zeros(1)), al.const(np.zeros(0)), al.const(np.zeros(0))]
+  host = al.Function("conflicting_external_solvers", [], [left.call(args)[0] + right.call(args)[0]], [], ["x"])
+  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
+
+  from alloy.codegen.c import render_c_module
+
+  with pytest.raises(ValueError, match="conflicting source definitions"):
+    render_c_module(host)
+
+
+def test_stats_abi_v3_layout_is_additive() -> None:
+  """The v3 diagnostics tail appends after the v2 fields — never reorders them —
+  and keeps the struct 8-aligned (four doubles at offset 96, two int32)."""
+  import ctypes
+
+  from alloy.solvers.stats import ALLOY_SOLVER_STATS_VERSION, STATS_FIELDS, CSolverStats
+
+  assert ALLOY_SOLVER_STATS_VERSION == 3
+  names = [name for name, _ in STATS_FIELDS]
+  assert names[:17] == [
+    "version", "status", "native_status", "iter",
+    "obj", "t_total", "t_fe", "t_solver", "t_qp", "t_globalization", "t_glue",
+    "n_eval_f", "n_eval_grad_f", "n_eval_g", "n_eval_jac_g", "n_eval_h", "_pad0",
+  ]  # fmt: skip
+  assert names[17:] == ["primal_viol", "step_inf", "alpha", "merit_penalty", "backtracks", "qp_iter"]
+  assert CSolverStats.primal_viol.offset == 96
+  assert ctypes.sizeof(CSolverStats) == 136
 
 
 def test_solver_backends_used_and_includes(monkeypatch: pytest.MonkeyPatch) -> None:

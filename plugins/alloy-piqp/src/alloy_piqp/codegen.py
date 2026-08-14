@@ -114,12 +114,12 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
       lines += _csc_tables("G", desc.G_sparsity)
       lines.append(f"  static piqp_csc G_csc = {{ {m}, {n}, {nnz_G}, G_p, G_i, G_buf }};")
   else:
-    # 3. Row-major -> column-major transpose for P, A, G.
+    # 3. PIQP's C wrapper consumes contiguous row-major dense matrices.
     lines.append(f"  for (int j = 0; j < {n}; ++j) for (int i = 0; i < {n}; ++i) Pcol[i + j * {n}] = P_buf[i * {n} + j];")
     if p:
-      lines.append(f"  for (int j = 0; j < {n}; ++j) for (int i = 0; i < {p}; ++i) Acol[i + j * {p}] = A_buf[i * {n} + j];")
+      lines.append(f"  for (int i = 0; i < {p * n}; ++i) Acol[i] = A_buf[i];")
     if m:
-      lines.append(f"  for (int j = 0; j < {n}; ++j) for (int i = 0; i < {m}; ++i) Gcol[i + j * {m}] = G_buf[i * {n} + j];")
+      lines.append(f"  for (int i = 0; i < {m * n}; ++i) Gcol[i] = G_buf[i];")
 
   # 4. Static PIQP workspace, lazily set up on first call.
   interface = "sparse" if sparse else "dense"
@@ -196,13 +196,23 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   lines.append(f"  {ctx.stats_symbol}.iter = (int32_t)res->info.iter;")
   lines.append(f"  {ctx.stats_symbol}.obj = res->info.primal_obj;")
   lines.append(f"  {ctx.stats_symbol}.t_fe = stats_t_fe;")
-  lines.append(f"  {ctx.stats_symbol}.t_solver = stats_t_solver;")
+  lines.append(f"  {ctx.stats_symbol}.t_solver = 0.0;")
+  lines.append(f"  {ctx.stats_symbol}.t_qp = stats_t_solver;")
+  lines.append(f"  {ctx.stats_symbol}.t_globalization = 0.0;")
   lines.append(f"  {ctx.stats_symbol}.n_eval_f = 1;")
   lines.append(f"  {ctx.stats_symbol}.n_eval_grad_f = 0;")
   lines.append(f"  {ctx.stats_symbol}.n_eval_g = 0;")
   lines.append(f"  {ctx.stats_symbol}.n_eval_jac_g = 0;")
   lines.append(f"  {ctx.stats_symbol}.n_eval_h = 0;")
   lines.append(f"  {ctx.stats_symbol}._pad0 = 0;")
+  # v3 diagnostics: PIQP has a native primal residual and iteration count;
+  # line-search/merit fields do not apply to a direct QP solve.
+  lines.append(f"  {ctx.stats_symbol}.primal_viol = res->info.primal_res;")
+  lines.append(f"  {ctx.stats_symbol}.step_inf = 0.0;")
+  lines.append(f"  {ctx.stats_symbol}.alpha = 0.0;")
+  lines.append(f"  {ctx.stats_symbol}.merit_penalty = 0.0;")
+  lines.append(f"  {ctx.stats_symbol}.backtracks = 0;")
+  lines.append(f"  {ctx.stats_symbol}.qp_iter = (int32_t)res->info.iter;")
   lines.append("  double stats_t_total = alloy_clock_s() - stats_t0;")
   lines.append(f"  {ctx.stats_symbol}.t_total = stats_t_total;")
   lines.append(f"  {ctx.stats_symbol}.t_glue = stats_t_total - stats_t_fe - stats_t_solver;")

@@ -31,6 +31,15 @@ from .common import (
 )
 
 
+# Shared alloy-sqp settings for this problem. The dual KKT tolerance is the
+# solver default: the modified sparse LDL^T convexification removed the 8e-3
+# stationarity floor the earlier dense Cholesky-probe regularization put under
+# active-barrier steps, and the looser tolerance was what made SQP and IPOPT
+# disagree by 3.5e-3 in applied control on the shared-state gate.
+SQP_DUAL_TOL = 1e-4
+SQP_MAX_ITER = 1000
+
+
 def filter_n_pw(filt_cfg: FilterConfig) -> int:
   """Size of the weight tail the filter's own model reads out of `p`."""
   return N_PW_DT if filt_cfg.model == "dt" else N_PW
@@ -321,7 +330,7 @@ class CasadiDTCBFSafetyFilter:
     z_sol = np.asarray(sol["x"], dtype=np.float64).reshape(-1)
     g_sol = np.asarray(sol["g"], dtype=np.float64).reshape(-1)
     feasible = bool(np.all(np.isfinite(z_sol)) and (not g_sol.size or np.min(g_sol) >= -1e-6))
-    success = raw_success or feasible
+    success = raw_success and feasible
     if success:
       self.last_z = z_sol
       self.last_lam_x = np.asarray(sol["lam_x"], dtype=np.float64).reshape(-1)
@@ -352,7 +361,7 @@ class CasadiDTCBFSafetyFilter:
         self.name,
         step,
         success,
-        str(stats.get("return_status", "unknown")) + (" (accepted feasible)" if success and not raw_success else ""),
+        str(stats.get("return_status", "unknown")),
         solver_ms,
         int(stats["iter_count"]) if "iter_count" in stats else None,
         float(sol["f"]),
@@ -367,11 +376,53 @@ class CasadiDTCBFSafetyFilter:
     return u_safe
 
 
-def build_casadi_jacobian(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights, name: str, sym_t):
+def build_casadi_jacobian(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights | DTMLPWeights, name: str, sym_t):
   controller = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
   z = sym_t.sym("z", controller.n_z)
   p = sym_t.sym("p", controller.n_p)
   return controller.ca.Function(name, [z, p], [controller.jac_fn(z, p)])
+
+
+def build_casadi_hessian(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights | DTMLPWeights, name: str, sym_t):
+  controller = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
+  assert controller.hess_fn is not None
+  z = sym_t.sym("z", controller.n_z)
+  p = sym_t.sym("p", controller.n_p)
+  lam_f = sym_t.sym("lam_f")
+  lam_g = sym_t.sym("lam_g", controller.n_s)
+  return controller.ca.Function(name, [z, lam_f, lam_g, p], [controller.hess_fn(z, p, lam_f, lam_g)])
+
+
+def build_casadi_sqp(
+  loop_cfg: ClosedLoopConfig,
+  filt_cfg: FilterConfig,
+  weights: CTFullWeights | DTMLPWeights,
+  *,
+  sqp_options: dict[str, str | int | float] | None = None,
+):
+  import casadi as ca
+
+  from alloy_sqp.casadi import build_casadi_external_sqp
+
+  controller = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
+  assert controller.hess_fn is not None
+  z, p = ca.MX.sym("z", controller.n_z), ca.MX.sym("p", controller.n_p)
+  lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", controller.n_s)
+  stem = f"ca_unbumpercars_sqp_C{loop_cfg.ncars}"
+  return build_casadi_external_sqp(
+    name=stem,
+    base=ca.Function(f"{stem}_base", [z, p], [controller.cost_fn(z, p), controller.g_fn(z, p)]),
+    grad=ca.Function(f"{stem}_grad", [z, p], [controller.grad_fn(z, p)]),
+    jac=ca.Function(f"{stem}_jac", [z, p], [controller.jac_fn(z, p)]),
+    hess=ca.Function(f"{stem}_hess", [z, lam_f, lam_g, p], [controller.hess_fn(z, p, lam_f, lam_g)]),
+    n_eq=0,
+    n_ineq=controller.n_s,
+    x_lb=np.concatenate([-np.ones(controller.n_u), np.zeros(controller.n_s)]),
+    x_ub=np.concatenate([np.ones(controller.n_u), np.full(controller.n_s, np.inf)]),
+    l_ineq=np.zeros(controller.n_s),
+    u_ineq=np.full(controller.n_s, np.inf),
+    options={"max_iter": SQP_MAX_ITER, "tol": filt_cfg.ipopt_tol, "dual_tol": SQP_DUAL_TOL, **(sqp_options or {})},
+  )
 
 
 # ---------------------------------------------------------------------------
@@ -545,18 +596,30 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
 
 
 class AlloyDTCBFSafetyFilter:
-  """CT-DTCBF filter through ``al.nlp``'s generated C wrapper (single-`.so`
-  solve, no Python in the loop). Warm starts carry x0 + constraint + box
-  multipliers between steps; ``warm_start_init_point`` is baked on, so the
-  first (cold) solve just sees zero multiplier seeds, which IPOPT pushes to
-  the interior via its warm-start bound-push options."""
+  """DTCBF filter through a generated ``al.nlp`` solver wrapper.
+
+  IPOPT or SQP can consume Alloy-generated oracles; SQP can also consume
+  CasADi-generated C oracles through the same wrapper contract. Warm starts
+  carry the primal plus signed constraint and box multipliers between steps.
+  """
 
   name = "alloy_dt_hcbf"
 
-  def __init__(self, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights | DTMLPWeights):
+  def __init__(
+    self,
+    loop_cfg: ClosedLoopConfig,
+    filt_cfg: FilterConfig,
+    weights: CTFullWeights | DTMLPWeights,
+    *,
+    solver: str = "ipopt",
+    oracle_provider: str = "alloy",
+  ):
+    if solver != "ipopt" and filt_cfg.limited_memory_hessian:
+      raise ValueError("limited-memory Hessians apply only to IPOPT")
     self.loop_cfg = loop_cfg
     self.filt_cfg = filt_cfg
     self.weights = weights
+    self.name = "alloy_dt_hcbf" if (solver, oracle_provider) == ("ipopt", "alloy") else f"{solver}_{oracle_provider}_dt_hcbf"
     self.ncars = loop_cfg.ncars
     self.n_u = NCTRL * self.ncars
     self.n_s = loop_cfg.n_slack
@@ -565,6 +628,8 @@ class AlloyDTCBFSafetyFilter:
     self.last_z: np.ndarray | None = None
     self.last_mult_g: np.ndarray | None = None
     self.last_lam_box: np.ndarray | None = None
+    self.fallback_nlp: al.SolverFunction | None = None
+    self._packed_params = oracle_provider == "casadi"
     self._compile_ms: dict[str, float] = {}
     t0 = time.perf_counter()
     base = build_alloy_oracle(loop_cfg, filt_cfg)
@@ -580,17 +645,52 @@ class AlloyDTCBFSafetyFilter:
     }
     if self.filt_cfg.limited_memory_hessian:
       options["hessian_approximation"] = "limited-memory"
-    self.nlp = al.nlp(
-      x=z,
-      f=cost,
-      p=list(base.inputs[1:]),
-      g_ineq=g if self.n_g else None,
-      l_ineq=np.zeros(self.n_g) if self.n_g else None,
-      x_lb=np.concatenate([-np.ones(self.n_u), np.zeros(self.n_s)]),
-      x_ub=np.concatenate([np.ones(self.n_u), np.full(self.n_s, np.inf)]),
-      name=base.name.replace("_oracle", "_nlp"),
-      options=options,
-    )
+    if oracle_provider == "alloy":
+      if solver == "sqp":
+        options = {
+          "max_iter": SQP_MAX_ITER,
+          "tol": self.filt_cfg.ipopt_tol,
+          "dual_tol": SQP_DUAL_TOL,
+        }
+      self.nlp = al.nlp(
+        x=z,
+        f=cost,
+        p=list(base.inputs[1:]),
+        g_ineq=g if self.n_g else None,
+        l_ineq=np.zeros(self.n_g) if self.n_g else None,
+        x_lb=np.concatenate([-np.ones(self.n_u), np.zeros(self.n_s)]),
+        x_ub=np.concatenate([np.ones(self.n_u), np.full(self.n_s, np.inf)]),
+        solver=solver,
+        name=base.name.replace("_oracle", f"_{solver}_nlp"),
+        options=options,
+      )
+    elif oracle_provider == "casadi" and solver == "sqp":
+      self.nlp = build_casadi_sqp(loop_cfg, filt_cfg, weights)
+    else:
+      raise ValueError(f"unsupported solver/oracle provider {solver!r}/{oracle_provider!r}")
+    if solver == "sqp":
+      fallback_options = {
+        "max_iter": SQP_MAX_ITER,
+        "tol": self.filt_cfg.ipopt_tol,
+        "dual_tol": SQP_DUAL_TOL,
+        "globalization": "l1",
+        "watchdog": 5,
+      }
+      if oracle_provider == "alloy":
+        self.fallback_nlp = al.nlp(
+          x=z,
+          f=cost,
+          p=list(base.inputs[1:]),
+          g_ineq=g if self.n_g else None,
+          l_ineq=np.zeros(self.n_g) if self.n_g else None,
+          x_lb=np.concatenate([-np.ones(self.n_u), np.zeros(self.n_s)]),
+          x_ub=np.concatenate([np.ones(self.n_u), np.full(self.n_s, np.inf)]),
+          solver="sqp",
+          name=base.name.replace("_oracle", "_sqp_l1_nlp"),
+          options=fallback_options,
+        )
+      else:
+        self.fallback_nlp = build_casadi_sqp(loop_cfg, filt_cfg, weights, sqp_options={"globalization": "l1", "watchdog": 5})
     self.jac_sparsity = self.nlp.descriptor.jac_sparsity
     self.hess_fn = self.nlp.descriptor.hess
     hess_sp = self.nlp.descriptor.hess_sparsity
@@ -607,6 +707,10 @@ class AlloyDTCBFSafetyFilter:
     t0 = time.perf_counter()
     self.nlp._compiled = CompiledFunction(self.nlp)
     self._compile_ms["solver"] = (time.perf_counter() - t0) * 1000.0
+    if self.fallback_nlp is not None:
+      t0 = time.perf_counter()
+      self.fallback_nlp._compiled = CompiledFunction(self.fallback_nlp)
+      self._compile_ms["fallback_solver"] = (time.perf_counter() - t0) * 1000.0
 
   def dump_c(self, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -631,13 +735,22 @@ class AlloyDTCBFSafetyFilter:
     lam_g0 = self.last_mult_g if self.last_mult_g is not None else np.zeros(self.n_g)
     lam_box0 = self.last_lam_box if self.last_lam_box is not None else np.zeros(self.n_z)
 
-    out = self.nlp(z0, np.zeros(0), lam_g0, lam_box0, bar_x, u_des, pw, physics, dt)
-    stats = self.nlp.last_stats
+    params = (np.concatenate([bar_x, u_des, pw, physics, dt]),) if self._packed_params else (bar_x, u_des, pw, physics, dt)
+    active_nlp = self.nlp
+    out = active_nlp(z0, np.zeros(0), lam_g0, lam_box0, *params)
+    stats = active_nlp.last_stats
     assert stats is not None
+    attempt_stats = [stats]
+    if stats.status not in (al.AlloySolveStatus.OK, al.AlloySolveStatus.ACCEPTABLE) and self.fallback_nlp is not None:
+      active_nlp = self.fallback_nlp
+      out = active_nlp(z0, np.zeros(0), lam_g0, lam_box0, *params)
+      stats = active_nlp.last_stats
+      assert stats is not None
+      attempt_stats.append(stats)
     g_val = np.asarray(out["g_ineq"], dtype=np.float64).reshape(-1)
     raw_success = stats.status in (al.AlloySolveStatus.OK, al.AlloySolveStatus.ACCEPTABLE)
     feasible = bool(np.all(np.isfinite(out["x"])) and (not g_val.size or np.min(g_val) >= -1e-6))
-    success = raw_success or feasible
+    success = raw_success and feasible
     if success:
       self.last_z = out["x"].copy()
       self.last_mult_g = out["lam_ineq"].copy()
@@ -650,22 +763,28 @@ class AlloyDTCBFSafetyFilter:
     du = u_safe.reshape(-1) - u_des
     tracking = float(du @ (np.tile(np.asarray(self.filt_cfg.R), self.ncars) * du))
     eval_counts = {
-      "f": stats.n_eval_f,
-      "grad_f": stats.n_eval_grad_f,
-      "g": stats.n_eval_g,
-      "jac_g": stats.n_eval_jac_g,
-      "hess_lag": stats.n_eval_h,
+      "f": sum(item.n_eval_f for item in attempt_stats),
+      "grad_f": sum(item.n_eval_grad_f for item in attempt_stats),
+      "g": sum(item.n_eval_g for item in attempt_stats),
+      "jac_g": sum(item.n_eval_jac_g for item in attempt_stats),
+      "hess_lag": sum(item.n_eval_h for item in attempt_stats),
     }
-    eval_ms = {"fe_total": stats.t_fe * 1000.0, "solver": stats.t_solver * 1000.0, "glue": stats.t_glue * 1000.0}
+    eval_ms = {
+      "fe_total": sum(item.t_fe for item in attempt_stats) * 1000.0,
+      "solver": sum(item.t_solver for item in attempt_stats) * 1000.0,
+      "qp": sum(item.t_qp for item in attempt_stats) * 1000.0,
+      "globalization": sum(item.t_globalization for item in attempt_stats) * 1000.0,
+      "glue": sum(item.t_glue for item in attempt_stats) * 1000.0,
+    }
     assert self.jac_sparsity is not None
     self.stats_history.append(
       FilterStats(
         self.name,
         step,
         success,
-        stats.status.name.lower() + (" (accepted feasible)" if success and not raw_success else ""),
-        stats.t_total * 1000.0,
-        stats.iter,
+        stats.status.name.lower(),
+        sum(item.t_total for item in attempt_stats) * 1000.0,
+        sum(item.iter for item in attempt_stats),
         stats.obj,
         float(np.min(g_val)) if g_val.size else float("inf"),
         float(np.sum(out["x"][self.n_u :])),
@@ -680,6 +799,7 @@ class AlloyDTCBFSafetyFilter:
           "hess_nnz": int(self.hess_rows.size),
           "native_status": stats.native_status,
           "raw_success": raw_success,
+          "retried_with_l1": len(attempt_stats) > 1,
         },
       )
     )

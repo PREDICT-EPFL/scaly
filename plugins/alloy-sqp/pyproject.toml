@@ -1,0 +1,19 @@
+[project]
+name = "alloy-sqp"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["alloy", "alloy-piqp"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.entry-points."alloy.solvers"]
+sqp = "alloy_sqp:BACKEND"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/alloy_sqp"]
+
+[tool.uv.sources]
+alloy = { workspace = true }
+alloy-piqp = { workspace = true }

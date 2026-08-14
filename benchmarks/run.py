@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: E402 -- direct execution must add the repository root before package imports
 
 import argparse
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -18,7 +19,7 @@ import alloy as al
 from alloy.codegen.c import render_c_module
 from alloy.codegen.solver_c import solver_compile_flags
 from alloy.toolchain import solver_loadable
-from benchmarks.harness import CLOSED_LOOP_RESULTS, SMOKE_RESULTS, SWEEP_RESULTS, gbench
+from benchmarks.harness import SMOKE_RESULTS, SWEEP_RESULTS, closed_loop_results_root, gbench, solver_oracle_name
 from benchmarks.harness.closed_loop import run as run_closed_loop
 from benchmarks.harness.recording import layout_path
 from benchmarks.harness.sweep import BACKENDS, DEFAULT_SIZES, build_kernel, run_cell, run_sweep
@@ -45,6 +46,11 @@ def _choices(values: list[str], allowed: tuple[str, ...], parser: argparse.Argum
 
 NX, NU, N_OBSTACLES = 4, 4, 3
 SAFETY_MARGIN, ALPHA = 0.5, 1.0
+CLOSED_LOOP_PAIRS: dict[str, tuple[tuple[str, str | None], ...]] = {
+  "chain": (("ipopt", "alloy"), ("sqp", "alloy"), ("sqp", "casadi")),
+  "race_cars": (("ipopt", "alloy"), ("ipopt", "casadi"), ("sqp", "alloy"), ("sqp", "casadi")),
+  "unbumpercars": (("ipopt", "alloy"), ("ipopt", "casadi"), ("sqp", "alloy"), ("sqp", "casadi"), ("none", None)),
+}
 
 
 def _qp_filter() -> al.Function:
@@ -180,6 +186,7 @@ def _benchmark_smoke() -> None:
       compile_timeout=180,
       max_source_mb=50,
       benchmark_min_time="0.01s",
+      load_harvested=False,
     )
     runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
     print(f"smoke race_cars size=5 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
@@ -210,6 +217,7 @@ def _benchmark_smoke() -> None:
       compile_timeout=180,
       max_source_mb=50,
       benchmark_min_time="0.01s",
+      load_harvested=False,
     )
     runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
     print(f"smoke chain size=5 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
@@ -236,6 +244,7 @@ def _benchmark_smoke() -> None:
       compile_timeout=180,
       max_source_mb=50,
       benchmark_min_time="0.01s",
+      load_harvested=False,
     )
     runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
     print(f"smoke unbumpercars size=2 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
@@ -248,7 +257,7 @@ def _problem_smoke() -> None:
   """Per-problem formulation gates, owned by the problems themselves.
 
   These check properties of a benchmark problem — its data, its reference generator, its
-  parameter layout, and the agreement of its backends — and must pass before any timing is
+  parameter layout, and the agreement of its oracle providers — and must pass before any timing is
   recorded. They live here rather than in `tests/` because the pytest suite covers Alloy's
   core and does not depend on benchmark problems (see `AGENTS.md`)."""
   from benchmarks.problems.unbumpercars.checks import run_checks as unbumpercars_checks
@@ -258,6 +267,8 @@ def _problem_smoke() -> None:
   for problem, run_checks in (("race_cars", race_cars_checks), ("chain", chain_checks), ("unbumpercars", unbumpercars_checks)):
     for name, outcome in run_checks():
       print(f"smoke {problem}/{name}: {outcome}")
+      if os.environ.get("ALLOY_REQUIRE_SOLVERS") == "1" and outcome.startswith("skipped:"):
+        raise RuntimeError(f"{problem}/{name} unexpectedly {outcome}")
 
 
 def smoke(args) -> bool:
@@ -306,14 +317,10 @@ def main() -> None:
   smoke_parser.add_argument("--skip", action="append", choices=("benchmarks", "problems", "solver_call"))
   closed_loop_parser = subparsers.add_parser("closed-loop", help="run a model-in-the-loop episode and write Foxglove artifacts")
   closed_loop_parser.add_argument("--problem", choices=("chain", "race_cars", "unbumpercars"), default="unbumpercars")
-  closed_loop_parser.add_argument(
-    "--backend",
-    choices=("alloy", "casadi", "open"),
-    default="alloy",
-    help="oracle provider: alloy or casadi for race_cars, plus open (unfiltered) for unbumpercars",
-  )
+  closed_loop_parser.add_argument("--solver", choices=("ipopt", "sqp", "none"), default="ipopt")
+  closed_loop_parser.add_argument("--oracle", choices=("alloy", "casadi"), help="oracle provider; defaults to alloy")
   closed_loop_parser.add_argument("--smoke", action="store_true", help="use a short toolchain-check episode instead of the canonical point")
-  closed_loop_parser.add_argument("--out-dir", type=Path, default=CLOSED_LOOP_RESULTS)
+  closed_loop_parser.add_argument("--out-dir", type=Path)
   args = parser.parse_args()
   if args.command == "sweep":
     args.workloads = _choices(args.workloads, tuple(DEFAULT_SIZES), parser, "--workloads")
@@ -322,10 +329,22 @@ def main() -> None:
   elif args.command == "smoke":
     success = smoke(args)
   else:
-    allowed_backends = {"unbumpercars": ("alloy", "casadi", "open"), "race_cars": ("alloy", "casadi"), "chain": ("alloy",)}[args.problem]
-    if args.backend not in allowed_backends:
-      parser.error(f"--backend {args.backend} is not available for --problem {args.problem} (choose from {', '.join(allowed_backends)})")
-    output = run_closed_loop(args.problem, smoke=args.smoke, backend=args.backend, out_dir=args.out_dir, cli_args=sys.argv[1:])
+    if args.solver == "none" and args.oracle is not None:
+      parser.error("--solver none does not accept --oracle")
+    oracle = None if args.solver == "none" else (args.oracle or "alloy")
+    pair = (args.solver, oracle)
+    allowed_pairs = CLOSED_LOOP_PAIRS[args.problem]
+    if pair not in allowed_pairs:
+      choices = ", ".join(solver_oracle_name(*allowed) for allowed in allowed_pairs)
+      parser.error(f"{solver_oracle_name(*pair)} is not available for --problem {args.problem} (choose from {choices})")
+    output = run_closed_loop(
+      args.problem,
+      smoke=args.smoke,
+      solver=args.solver,
+      oracle=oracle,
+      out_dir=closed_loop_results_root(smoke=args.smoke, out_dir=args.out_dir),
+      cli_args=sys.argv[1:],
+    )
     print(f"closed-loop artifacts written to {output}")
     layout = layout_path(args.problem)
     hint = f"import {layout}" if layout.is_file() else f"no layout checked in yet; export one from Desktop to {layout}"

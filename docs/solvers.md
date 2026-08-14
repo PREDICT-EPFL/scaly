@@ -52,16 +52,67 @@ qp = al.qp(
     solver="piqp",
 )
 
-# NLP — IPOPT backend
+# NLP — IPOPT or SQP backend
 nlp = al.nlp(
     x=x_sym, p=p_sym,
     f=f_expr,
     h_eq=h_eq_expr,
     g_ineq=g_ineq_expr, l_ineq=l_ineq_expr, u_ineq=u_ineq_expr,
     x_lb=lb_expr,       x_ub=ub_expr,
-    solver="ipopt",
+    solver="sqp",       # or "ipopt"
 )
 ```
+
+`alloy-sqp` uses a bounded objective/violation filter by default. Its solver
+options are `globalization="filter"|"l1"`, `watchdog=<non-negative int>` (only
+with `l1`), primal `tol` (default `1e-6`), `dual_tol` for stationarity and
+complementarity (default `1e-4`), `max_iter`, `hessian="exact"|"objective"`,
+`regularization`, `line_search_beta` (default `0.7`), `merit` (the l1 penalty
+offset, default `10`), `qp="sparse"|"dense"` (default `"sparse"`), `qp_tol`
+(default `1e-6`), `qp_max_iter` (default `50`), and the debug-only `trace` flag.
+Invalid combinations are rejected when the wrapper is generated.
+
+Both globalization paths include equality, inequality, and variable-bound
+violations. Accepted primal and signed dual iterates use the same step length.
+Success requires primal feasibility plus KKT stationarity and conventional
+signed-multiplier complementarity; a merely feasible `MAX_ITER` result is not
+upgraded to success. Following LAOPT, a QP that stops at its iteration limit or
+returns an infeasibility certificate does not abort the solve: the SQP continues
+with PIQP's best iterate and the globalization plus the KKT test decide whether
+the step is accepted. Only PIQP's numerics/unsolved/invalid-settings statuses
+fail the solve. The l1 path uses an Armijo test and can take bounded
+non-monotone watchdog steps before restoring its last complete primal/dual/QP
+checkpoint for a normal line search.
+
+The QP subproblem is assembled through PIQP's sparse interface. The Jacobian
+and Hessian patterns are fixed across SQP iterations, so the wrapper bakes the
+CSC index tables of `P` (the Hessian's upper triangle, unioned with the full
+diagonal and with the constraint-normal term's pattern), `A` and `G` as static
+arrays at codegen time and refills only the value arrays per iteration, through
+a permutation table mapping each oracle value buffer's own order onto CSC
+order. `qp="dense"` assembles the same QP for PIQP's dense interface instead;
+it is slower at every benchmark size measured, so it exists as a differential
+check on the sparse assembly rather than as a configuration to reach for.
+
+Equality-constrained QPs regularize the Hessian first in the constraint-normal
+space, `H + rho * A.T @ A + regularization * I`, accumulated pair by pair over
+each equality row's own Jacobian entries. The added quadratic is constant over
+the linearized equality manifold, so it does not damp the feasible SQP
+direction. `rho` escalates by decades until the model is positive definite; if
+an equality-constrained exact Lagrangian Hessian still has negative reduced
+curvature, the SQP model falls back to the objective Hessian, which leaves
+exact Hessians as the default without letting a large diagonal shift create a
+false stationarity floor. Inequality-only models retain their exact
+active-constraint curvature.
+
+Positive definiteness is both tested and repaired by one modified LDL^T pass
+over the assembled `P`, using an elimination tree and factor column counts
+computed at codegen time. Whenever a pivot is not at least `regularization` it
+is raised to its own magnitude; since only diagonal entries are touched,
+`L*D*L^T` equals the assembled `P` plus that diagonal, so the repair is an
+exact diagonal shift and it is zero whenever the model is already positive
+definite. The pass costs `O(nnz(L))`, which is what makes escalating `rho`
+cheap enough to do inside every SQP iteration.
 
 Every symbolic input may be:
 
@@ -107,12 +158,47 @@ NLP:
 - `lam_eq`, `lam_ineq`, `lam_box` (signed; `lam_box = mult_x_U − mult_x_L`).
 
 `SolverFunction.last_stats` carries the full `SolverStats` after each solve
-(alloy + native status, iterations, objective, the `t_fe`/`t_solver`/`t_glue`
-timing split, and the five IPOPT evaluation counters; PIQP fills
+(alloy + native status, iterations, objective, the `t_fe`/`t_solver`/`t_qp`/
+`t_globalization`/`t_glue` timing split, and the five oracle evaluation
+counters; PIQP fills
 `n_eval_f = 1` for its single oracle evaluation). `SolverFunction.last_status`
 is the derived `SolverStatus(code, name, iter, stats)` view; its `code`/`name`
 are the alloy status enum (`stats.py`), and `ok` is `True` for `OK` and
 `ACCEPTABLE` (IPOPT `Feasible_Point_Found` maps to `ACCEPTABLE`).
+
+Stats version 3 added six per-solve diagnostics (zero when the backend has no
+such concept):
+
+| field | meaning | SQP | PIQP | IPOPT |
+|---|---|---|---|---|
+| `primal_viol` | constraint violation (inf norm) at the returned `x` | recomputed at the returned iterate (equalities, inequalities, box) | native `info.primal_res` | `inf_pr` at the last iteration |
+| `step_inf` | inf norm of the last computed step | last QP step | 0 | `d_norm` |
+| `alpha` | last **accepted** line-search step length (`0.0` if no step was ever accepted, e.g. converged at `x0` or failed before globalization) | filter or l1 result | 0 | `alpha_pr` |
+| `merit_penalty` | final merit penalty parameter | adaptive l1 penalty; `0.0` for filter globalization | 0 | 0 (filter line search) |
+| `backtracks` | total rejected line-search trial points across the solve | counted directly | 0 | `ls_trials − 1` summed over iterations |
+| `qp_iter` | QP iteration count accumulated across SQP iterations | summed PIQP `info.iter` | native `info.iter` (equals `iter`) | 0 |
+
+IPOPT's callback-sourced fields (`primal_viol`, `step_inf`, `alpha`,
+`backtracks`) record only regular-mode iterations: the restoration phase's
+values describe the restoration subproblem, not the user's problem, and are
+skipped.
+
+### SQP per-iteration trace (`options={"trace": True}`)
+
+`alloy-sqp` accepts a debug-only `trace` option, off by default. When enabled,
+the generated wrapper prints per-SQP-iteration lines to **stderr**, prefixed
+`[alloy-sqp <name>]`: a KKT line at the initial point and after each accepted
+step, one line after each QP solve (QP status, QP iterations, primal violation,
+step inf norm), and one after each globalization attempt (strategy, trial
+objective, alpha, accepted flag, backtracks, and l1 penalty), plus a line when
+the QP itself fails. The trace is deliberately not part of the stats ABI: it
+is variable-length per solve, and a caller-provided buffer would need a new
+ABI entry point and Python-side plumbing that nothing consumes yet — the
+closed-loop harness records one `SolverStats` per step and its per-step
+scalars already come from the stats struct, so stderr (line-buffered, greppable
+by the step logs) is the cheaper sink until a consumer needs more. Since the
+option is baked into the generated C, flipping it recompiles the solver (JIT
+cache keyed on source).
 
 ### Sparse PIQP (`al.qp(..., sparse=True)`)
 
@@ -207,10 +293,13 @@ The pieces:
   plugin-rendered wrapper body with the alloy-owned stats storage/accessor
   and exposes the backend/include/link-flag queries the JIT and AOT
   consumers use.
-- `plugins/alloy-piqp` / `plugins/alloy-ipopt` — vendored `libpiqpc` /
-  `libipopt` + headers (built by their `hatch_build.py` hooks) and the
+- `plugins/alloy-piqp` / `plugins/alloy-ipopt` / `plugins/alloy-sqp` —
+  vendored `libpiqpc` / `libipopt` + headers (SQP reuses PIQP's C library)
+  and the
   per-solver C wrapper templates (`alloy_piqp/codegen.py`,
-  `alloy_ipopt/codegen.py`).
+  `alloy_ipopt/codegen.py`, `alloy_sqp/codegen.py`). The SQP plugin supports
+  exact Lagrangian and objective-Hessian modes and accepts native Alloy or
+  externally generated C-ABI oracles.
 
 ### Sign and ordering conventions
 

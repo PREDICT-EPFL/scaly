@@ -172,7 +172,7 @@ the plant, so the mismatch penalty is simply gone rather than traded away.
 **The chaos goes with it.** The sensitivity documented below is a symptom of the mismatch, not a
 property of the plant: with the matched model a 1e-9 perturbation amplifies 1.015x per step
 instead of 1.329x and is still 3.4e-9 after 80 steps. Episodes are reproducible again, and the
-two backends agree on the whole rollout — identical tracking cost to four digits.
+the two oracle providers agree on the whole rollout — identical tracking cost to four digits.
 
 **And the envelope stops being load-bearing.** With the matched model, the honest DT-fitted
 envelope `(1.0118, 0.84)` and the CT one `(1.456, 0.5)` are indistinguishable
@@ -234,7 +234,7 @@ and the actuator's time constant.
 
 ### What the mismatch costs
 
-`C=8`, 200 steps, Alloy backend, exact Hessians, same filter throughout — only the plant
+`C=8`, 200 steps, IPOPT with Alloy oracles, exact Hessians, same filter throughout — only the plant
 differs. **Aggregated over seeds `{42, 1, 2, 3, 7}`, because single episodes on the DT plant
 are not decision-grade** — see the noise floor two sections down:
 
@@ -257,19 +257,19 @@ also slower on average (mean speed 0.863 versus 1.323 m/s) because its low-speed
 12.5% lower top speed leave it further from the desired input, which is most of the
 tracking-cost gap.
 
-### Why the two backends' trajectories differ
+### Why the two oracle providers' trajectories differ
 
 *This section describes `--filter-model ct`. Under `--filter-model dt` the loop is not sensitive
 and none of it applies.*
 
 With the mismatched filter, the Alloy and CasADi rollouts visibly separate — different paths,
-different per-step slacks. **This is not a backend disagreement.** Three measurements pin it down:
+different per-step slacks. **This is not an oracle disagreement.** Three measurements pin it down:
 
-1. **Per step, on the same state, the two backends agree to 7e-14** in the commanded input,
+1. **Per step, on the same state, the two providers agree to 7e-14** in the commanded input,
    with identical IPOPT iteration counts, over 60 steps at `C=8` (largest disagreement across
-   all steps: 7.3e-14). They are solving the same NLP to the same point. `backends_solve_alike`
+   all steps: 7.3e-14). They are solving the same NLP to the same point. `oracles_solve_alike`
    gates this.
-2. **The same backend against itself diverges identically.** Perturb one car's initial speed by
+2. **The same provider against itself diverges identically.** Perturb one car's initial speed by
    1e-9 and run Alloy twice: with the DT plant the gap grows to 5.8e-4 by step 39 and 5.8 by
    step 79, a geometric mean amplification of **1.33x per step**. With the CT plant the same
    perturbation ends at 3.2e-8 — amplification 1.045x per step, i.e. flat.
@@ -302,14 +302,14 @@ initial speed of one car nudged by the amount shown, 200 steps:
 
 A perturbation twelve orders of magnitude below anything physical moves the collision count
 between 0 and 6 and the tracking cost by 10%. So on this plant a single episode cannot support
-a claim about either, and **comparing two configurations or two backends by one rollout each is
+a claim about either, and **comparing two configurations or two oracle providers by one rollout each is
 measuring the noise**. Aggregate over seeds instead; the tables above and below do. (An earlier
-version of this section compared the backends' single-episode aggregates and found them "under
-1% apart" — that was one lucky pair of draws, not a property of the backends.) With
-`--plant ct` the question does not arise: the two backends' rollouts are bit-identical and the
+version of this section compared the providers' single-episode aggregates and found them "under
+1% apart" — that was one lucky pair of draws, not a property of the providers.) With
+`--plant ct` the question does not arise: the two providers' rollouts are bit-identical and the
 per-seed spread is 6 mm.
 
-Two consequences: compare backends **per step on a shared state**, not by rollout, and take any
+Two consequences: compare oracle providers **per step on a shared state**, not by rollout, and take any
 head-to-head *timing* claim on `--plant ct`, where both walk the same path by construction.
 
 ### Why the envelope does not describe it
@@ -522,12 +522,16 @@ model here too, for both the plant and the filter's prediction (`ROADMAP.md` §2
 From the repository root:
 
 ```bash
-uv run python benchmarks/run.py closed-loop --problem unbumpercars --backend alloy --smoke
-uv run python benchmarks/run.py closed-loop --problem unbumpercars --backend alloy
-uv run python -m benchmarks.problems.unbumpercars.run_closed_loop --filter both --dump-alloy-c
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --smoke
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle casadi
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle casadi
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver none
+uv run python -m benchmarks.problems.unbumpercars.run_closed_loop --solver ipopt --oracle both --dump-alloy-c
 ```
 
-Both write under `benchmarks/results/closed-loop/unbumpercars/<backend>/`; import this directory's hand-authored
+Runs write under `benchmarks/results/closed-loop/unbumpercars/<solver>+<oracle>/`
+(`none/` for open loop); import this directory's hand-authored
 `foxglove-layout.json` in Foxglove Desktop to view it. The direct module remains
 useful for side-by-side Alloy/CasADi runs and advanced filter options.
 
@@ -543,7 +547,7 @@ Common options:
 --show
 ```
 
-Outputs are written under `<out-dir>/<filter>/`:
+Outputs are written under `<out-dir>/<solver>+<oracle>/`:
 
 ```text
 rollout.npz                  state/input trajectories
@@ -600,7 +604,7 @@ corresponds to this, which is why the scene draws only the two discs.
 
 `CasadiDTCBFSafetyFilter` builds one MX NLP with IPOPT, with `expand=True` and an exact
 Lagrangian Hessian (plus a separate `ca.Function` for the same Hessian, for
-instrumentation). `--limited-memory-hessian` swaps both backends to
+instrumentation). `--limited-memory-hessian` swaps both IPOPT oracle providers to
 `ipopt.hessian_approximation = limited-memory` instead.
 
 Instrumentation recorded per step:
@@ -635,23 +639,27 @@ then creates Alloy factories for:
   `--limited-memory-hessian` is passed.
 
 The whole solve is one `al.nlp(...)` SolverFunction: the derivative factories
-above are built inside `al.nlp`, and the filter runs through the generated C
-solver wrapper (single `.so` driving `IpStdCInterface.h` with generated
-kernels — no Python/ctypes callbacks in the loop). Warm starts carry the
-primal iterate plus the constraint and box multipliers between steps
+above are built inside `al.nlp`, and the filter runs through a generated C
+solver wrapper with no Python callbacks in the loop. With `--solver ipopt`, the
+wrapper drives `IpStdCInterface.h`; with `--solver sqp`, `alloy-sqp` assembles
+sparse PIQP subproblems and can use either Alloy- or CasADi-generated oracles.
+The SQP controller tries its default filter globalization first and retries a
+strict failure from the same warm start through l1/watchdog-five; reported time
+and evaluation counts include both attempts. Warm starts carry the primal
+iterate plus the constraint and box multipliers between steps
 (`lam_ineq0`/`lam_box0`). With `--dump-alloy-c`, the full solver module
 (wrapper + kernels) is rendered to inspectable C files.
 
 Instrumentation recorded per step (from the `alloy_solver_stats` struct):
 
-- total solve time with the FE / solver / glue split, status (alloy + native),
-  and iteration count,
+- total solve time with the FE / solver / QP / globalization / glue split,
+  status (alloy + native), and iteration count,
 - objective, min constraint value, the L1 slack total (largest single slack under `max_slack`),
 - per-oracle-function evaluation counts,
 - Alloy build/JIT-compile timings,
 - sparse Jacobian nnz and lower-triangular Hessian nnz.
 
-## Interpreting the Alloy vs CasADi timings
+## Interpreting the IPOPT Alloy-vs-CasADi timings
 
 Both implementations use IPOPT and warm-start primal variables plus constraint
 and box multipliers. Alloy runs entirely through the generated C solver wrapper:
@@ -665,7 +673,8 @@ The default comparison uses exact Lagrangian Hessians on both sides;
 `--limited-memory-hessian` selects IPOPT's approximation instead. Both paths receive the same
 symbolic model constants and `dt`, and CasADi expansion is enabled unless
 `--no-casadi-expand` is passed. Strict comparisons should retain raw IPOPT
-status in addition to the benchmark's feasible max-iteration acceptance rule.
+status in addition to the benchmark's strict solver-success and feasibility
+rule.
 
 ## HCBF migration results (2026-08-11)
 
@@ -673,7 +682,7 @@ status in addition to the benchmark's feasible max-iteration acceptance rule.
 > They describe the same pair HCBF and model, but the older, cheaper position wall graph;
 > regenerate the scalability sweep before quoting them for the current formulation.
 
-Position DTCBF → HCBF at `C=4`, 80 steps, seed 42, Alloy backend — the operating point
+Position DTCBF → HCBF at `C=4`, 80 steps, seed 42, IPOPT with Alloy oracles — the operating point
 before the canonical one grew, so the two columns are directly comparable:
 
 | | position DTCBF | HCBF |
@@ -698,7 +707,7 @@ iteration counts in every cell.
 
 What follows is the original per-solve breakdown at the canonical point (`C=8`, 200 steps) in
 both Hessian modes, kept for the Hessian-mode comparison the scalability doc does not repeat.
-**Measured with the CT plant** (`--plant ct`) and the CT filter model, where both backends walk a
+**Measured with the CT plant** (`--plant ct`) and the CT filter model, where both oracle providers walk a
 bit-identical state sequence:
 
 | | | total | p95 | IPOPT iters | FE | native solver | glue |
@@ -716,7 +725,7 @@ The `—` cells are what the table was written with; CasADi's FE share is now me
 than estimated. `nlpsol` accumulates per-callback wall time in `stats()` under
 `t_wall_nlp_*`, and the filter reports their sum as `eval_ms["fe_total"]`, the same quantity
 Alloy's `stats.t_fe` carries — so `stats.csv` and the Foxglove `fe_time_ms` channel are now
-populated for both backends. On a spot check (`C=4`, 30 steps, exact Hessian, DT plant) FE is
+populated for both oracle providers. On a spot check (`C=4`, 30 steps, exact Hessian, DT plant) FE is
 **90% of CasADi's solve wall time**. The per-function columns beside it are still single
 re-evaluations at the solution, so they do not sum to `fe_total`; at `C=8` exact they were
 `f` 0.199, `g` 0.448, `grad_f` 0.185, `jac_g` 0.813 and `hess_lag` **3.711** ms — the Hessian
@@ -728,7 +737,7 @@ iteration (FE 11.08 → 17.72 ms). Net wall clock is a wash for Alloy and clearl
 CasADi. They are the default anyway, because the sparse-Hessian-through-`Ops.MAP` path is
 what this problem exists to exercise.
 
-With exact Hessians the two backends stay bit-for-bit together over the whole episode
+With exact Hessians the two oracle providers stay bit-for-bit together over the whole episode
 (average tracking cost 4.254 both, minimum distance 2.274 m both). Under limited-memory
 they drift slightly apart by the end (3.99 vs 3.91) — the closed loop amplifies last-bit
 differences in the iterate over 20 s. Neither has a collision or a solver failure.

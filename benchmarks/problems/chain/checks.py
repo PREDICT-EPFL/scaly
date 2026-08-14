@@ -85,6 +85,8 @@ def check_nlp_objective_matches_casadi() -> None:
   zv[horizon * nz :] = base
 
   generated = chain_nlp(n_masses, horizon)
+  assert generated.descriptor.hess is not None
+  assert dict(generated.descriptor.options).get("hessian_approximation") != "limited-memory"
   alloy_out = generated(zv, np.zeros(nx * (horizon + 1)), np.zeros(0), np.zeros(n_dec(n_masses, horizon)), pv)
   assert generated.last_status is not None and generated.last_status.ok
   assert generated.last_stats is not None and generated.last_stats.iter > 0
@@ -175,6 +177,50 @@ def check_episode_artifacts() -> None:
   np.testing.assert_allclose(episode.plans[0, 0], episode.points[0], rtol=0.0, atol=1e-9)
 
 
+def check_sqp_oracles_agree() -> None:
+  """The same SQP produces the same smoke episode from Alloy and CasADi C oracles."""
+  config = ClosedLoopConfig.smoke()
+  alloy_run = run_episode(config, solver="sqp", oracle="alloy")
+  casadi_run = run_episode(config, solver="sqp", oracle="casadi")
+  np.testing.assert_allclose(alloy_run.controls, casadi_run.controls, rtol=1e-8, atol=1e-8)
+  np.testing.assert_allclose(alloy_run.states, casadi_run.states, rtol=1e-9, atol=5e-10)
+  for run in (alloy_run, casadi_run):
+    for stats in run.telemetry:
+      assert stats.status.value <= 1 and stats.t_qp > 0.0
+      np.testing.assert_allclose(stats.t_total, stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rtol=1e-10)
+
+
+def check_sqp_matches_ipopt() -> None:
+  """SQP and IPOPT drive the same smoke episode to the same per-step solutions.
+
+  Different algorithms are allowed small differences, not major ones. Measured healthy-step
+  differences at these settings (exact Lagrangian Hessian, tol 1e-6): control <= 3e-6,
+  plan <= 3e-6, objective <= 2.6e-7 on obj ~223, both eq violations <= 6e-13; the control and
+  plan tolerances sit ~100x above, the objective and violation ones far higher. On divergence
+  the message carries the first diverging step with both solvers' status and constraint
+  violation — the signal Phase 9 robustness work consumes.
+  """
+  config = ClosedLoopConfig.smoke()
+  ipopt_run = run_episode(config, solver="ipopt", oracle="alloy")
+  sqp_run = run_episode(config, solver="sqp", oracle="alloy")
+  assert len(ipopt_run.controls) == len(sqp_run.controls) == config.steps
+  eq_fn = chain_eq_function(config.n_masses, config.horizon)
+  for k in range(config.steps):
+    stats_i, stats_s = ipopt_run.telemetry[k], sqp_run.telemetry[k]
+    assert stats_i.status.value <= 1, f"step {k}: ipopt reported {stats_i.status.name}"
+    assert stats_s.status.value <= 1, f"step {k}: sqp reported {stats_s.status.name}"
+    assert stats_s.iter == 0 or stats_s.alpha > 0.0, f"step {k}: sqp accepted no step (iter={stats_s.iter})"
+    du = float(np.max(np.abs(ipopt_run.controls[k] - sqp_run.controls[k])))
+    dplan = float(np.max(np.abs(ipopt_run.plans[k] - sqp_run.plans[k])))
+    obj_i, obj_s = ipopt_run.telemetry[k].obj, sqp_run.telemetry[k].obj
+    viol_i, viol_s = (float(np.max(np.abs(np.asarray(eq_fn(run.oracle_inputs[k]["z"], run.oracle_inputs[k]["p"]))))) for run in (ipopt_run, sqp_run))
+    assert du <= 3e-4 and dplan <= 3e-4 and abs(obj_i - obj_s) <= 1e-6 * (1.0 + abs(obj_i)) and max(viol_i, viol_s) <= 1e-6, (
+      f"SQP first diverges from IPOPT at step {k}: |du|={du:.3e} |dplan|={dplan:.3e} |dobj|={abs(obj_i - obj_s):.3e}; "
+      f"ipopt: status={ipopt_run.telemetry[k].status.name} obj={obj_i:.6e} eq_violation={viol_i:.3e}; "
+      f"sqp: status={sqp_run.telemetry[k].status.name} obj={obj_s:.6e} eq_violation={viol_s:.3e}"
+    )
+
+
 def check_recorded_scene() -> None:
   """The runner feeds the 3D scene builders: this problem's end-mass reference once, and on every
   state that has one, the applied control plus the open-loop plan behind it.
@@ -235,6 +281,8 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "extract_positions": (check_extract_positions, False, False),
   "plant_step": (check_plant_step_is_parameterized_rk4, False, False),
   "episode_artifacts": (check_episode_artifacts, True, False),
+  "sqp_matches_ipopt": (check_sqp_matches_ipopt, True, False),
+  "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
   "recorded_scene": (check_recorded_scene, True, False),
 }
 

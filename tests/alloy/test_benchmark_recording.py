@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from benchmarks.harness import CLOSED_LOOP_RESULTS, RESULTS, SMOKE_RESULTS, SWEEP_RESULTS
+from benchmarks.harness import CLOSED_LOOP_RESULTS, RESULTS, SMOKE_RESULTS, SWEEP_RESULTS, closed_loop_results_root
 from benchmarks.harness import sweep
 from benchmarks.harness.recording import (
   ACCEL_COLOR,
@@ -84,7 +84,7 @@ def test_recorders_write_valid_mcaps_with_strict_schemas(tmp_path: Path) -> None
   paths = [tmp_path / f"{name}.mcap" for name in ("chain", "race_cars", "unbumpercars")]
   with ChainRecorder(paths[0]) as chain:
     harvest(chain)
-    chain.record_metadata(RunMetadata(run_id="smoke", problem="chain", backend="alloy", seed=42, dt=0.1))
+    chain.record_metadata(RunMetadata(run_id="smoke", problem="chain", solver="ipopt", oracle="alloy", seed=42, dt=0.1))
     chain.record_telemetry(ScalarTelemetry(step=0, time_s=0.0, success=True, solver_time_ms=1.2, objective=3.0))
     chain.record_chain_references({"end-mass reference": (0.75, 0.0, 0.0)})
     chain.record_chain(
@@ -459,6 +459,10 @@ def test_benchmark_artifact_roots_are_command_scoped() -> None:
   assert CLOSED_LOOP_RESULTS == RESULTS / "closed-loop"
   assert SWEEP_RESULTS == RESULTS / "sweep"
   assert SMOKE_RESULTS == RESULTS / "smoke"
+  assert closed_loop_results_root(smoke=False) == CLOSED_LOOP_RESULTS
+  assert closed_loop_results_root(smoke=True) == SMOKE_RESULTS / "closed-loop"
+  custom = RESULTS / "custom"
+  assert closed_loop_results_root(smoke=True, out_dir=custom) == custom
 
 
 def test_sweep_cells_live_next_to_the_selected_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

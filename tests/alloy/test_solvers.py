@@ -40,7 +40,7 @@ def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
   header = render_c_api_header(qp)
   assert "int standalone_qp(const double** arg, double** res, int* iw, double* w, void* mem)" in source
   assert "int standalone_qp_stats(alloy_solver_stats* out);" in header
-  assert "ALLOY_SOLVER_STATS_VERSION 1" in header
+  assert "ALLOY_SOLVER_STATS_VERSION 3" in header
 
 
 @pytest.mark.solver("piqp")
@@ -69,7 +69,7 @@ def test_solver_stats_reject_uninitialized_and_mismatched_versions() -> None:
     return 0
 
   compiled._stats_entries["stats_version_qp"] = mismatched_stats
-  with pytest.raises(JitError, match="ABI mismatch.*artifact version 2, expected 1"):
+  with pytest.raises(JitError, match="ABI mismatch.*artifact version 4, expected 3"):
     compiled.solver_stats()
 
 

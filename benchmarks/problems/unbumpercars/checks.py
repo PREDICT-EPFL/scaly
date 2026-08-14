@@ -14,7 +14,6 @@ reproductions in ``tests/alloy/test_alloy_sparsity.py`` and
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable, Iterator
 
 import numpy as np
@@ -38,8 +37,6 @@ from benchmarks.problems.unbumpercars.common import (
   wall_b_np,
   wall_h_np,
 )
-
-EXACT_HESS_ENV = "ALLOY_RUN_UNBUMPERCARS_EXACT_HESS"
 
 
 def check_default_output_dir() -> None:
@@ -265,18 +262,18 @@ def check_dt_filter_model_matches_numpy() -> None:
       assert want[3] < DT_VF_DEADZONE, "the deadzone fired in the plant, so the filter's vf must be the small value it clamped"
 
 
-def check_backends_solve_alike_per_step() -> None:
-  """Both backends return the same safe input when handed the same state.
+def check_oracles_solve_alike_per_step() -> None:
+  """Both IPOPT oracle providers return the same safe input when handed the same state.
 
   This is the agreement that survives the DT plant's chaotic closed loop, where the two
-  backends' *trajectories* separate from rounding alone (see the README, "Why the two
-  backends' trajectories differ"). Comparing rollouts cannot distinguish that amplification
+  providers' *trajectories* separate from rounding alone (see the README, "Why the two
+  providers' trajectories differ"). Comparing rollouts cannot distinguish that amplification
   from a real solver-plumbing divergence; comparing per-step solutions on a shared state can.
   Both filters see the same state at every step, so warm starts stay in lockstep too.
 
   The cars start on a collision course on purpose. From `sample_initial_states` they are far
   enough apart that every row is slack, the filter returns the desired input untouched, and
-  the comparison holds no matter what either backend computes.
+  the comparison holds no matter what either provider computes.
   """
   from benchmarks.problems.unbumpercars.filters import AlloyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter
   from benchmarks.problems.unbumpercars.run_closed_loop import Simulator
@@ -317,36 +314,147 @@ def check_backends_solve_alike_per_step() -> None:
 
 
 def check_exact_hess_matches_casadi_on_closed_loop_samples() -> None:
-  """Opt-in: the exact Lagrangian Hessian tracks CasADi along a real closed-loop rollout."""
+  """The default exact Lagrangian Hessian tracks CasADi along a real closed-loop rollout."""
   from benchmarks.problems.unbumpercars.filters import AlloyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter
   from benchmarks.problems.unbumpercars.run_closed_loop import Simulator
 
-  os.environ["ALLOY_STRICT_JVP_MANY"] = "1"
-  try:
-    loop_cfg = ClosedLoopConfig(ncars=2, steps=5)
-    filt_cfg = FilterConfig(model="ct", limited_memory_hessian=False)
-    weights = load_ct_full_weights()
-    alloy_filt = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
-    casadi_filt = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
-    assert alloy_filt.hess_fn is not None and casadi_filt.hess_fn is not None
-    sim = Simulator(sample_initial_states(loop_cfg), loop_cfg)
+  loop_cfg = ClosedLoopConfig(ncars=2, steps=5)
+  filt_cfg = FilterConfig(model="ct")
+  assert not filt_cfg.limited_memory_hessian
+  weights = load_ct_full_weights()
+  alloy_filt = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
+  casadi_filt = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
+  assert alloy_filt.hess_fn is not None and casadi_filt.hess_fn is not None
+  sim = Simulator(sample_initial_states(loop_cfg), loop_cfg)
 
-    for step in range(loop_cfg.steps):
-      desired = sim.desired_inputs()
-      safe = alloy_filt.compute_safe_input(sim.states, desired, step)
-      assert alloy_filt.last_z is not None and alloy_filt.last_mult_g is not None
-      z, lam = alloy_filt.last_z, alloy_filt.last_mult_g
-      bar_x, u_des = sim.states.reshape(-1), desired.reshape(-1)
-      physics, dt = loop_cfg.physics.array(), np.array([loop_cfg.dt])
-      p = np.concatenate([bar_x, u_des, weights.packed, physics, dt])
-      alloy_values = np.asarray(alloy_filt.hess_fn.eval_list(z, 1.0, lam, bar_x, u_des, weights.packed, physics, dt)[0], dtype=np.float64).reshape(
-        -1
-      )[alloy_filt.hess_lower_mask]
-      casadi_dense = np.asarray(casadi_filt.hess_fn(z, p, 1.0, lam), dtype=np.float64)
-      np.testing.assert_allclose(alloy_values, casadi_dense[alloy_filt.hess_rows, alloy_filt.hess_cols], rtol=1e-8)
-      sim.step(safe)
-  finally:
-    os.environ.pop("ALLOY_STRICT_JVP_MANY", None)
+  for step in range(loop_cfg.steps):
+    desired = sim.desired_inputs()
+    safe = alloy_filt.compute_safe_input(sim.states, desired, step)
+    assert alloy_filt.last_z is not None and alloy_filt.last_mult_g is not None
+    z, lam = alloy_filt.last_z, alloy_filt.last_mult_g
+    bar_x, u_des = sim.states.reshape(-1), desired.reshape(-1)
+    physics, dt = loop_cfg.physics.array(), np.array([loop_cfg.dt])
+    p = np.concatenate([bar_x, u_des, weights.packed, physics, dt])
+    alloy_values = np.asarray(alloy_filt.hess_fn.eval_list(z, 1.0, lam, bar_x, u_des, weights.packed, physics, dt)[0], dtype=np.float64).reshape(-1)[
+      alloy_filt.hess_lower_mask
+    ]
+    casadi_dense = np.asarray(casadi_filt.hess_fn(z, p, 1.0, lam), dtype=np.float64)
+    np.testing.assert_allclose(alloy_values, casadi_dense[alloy_filt.hess_rows, alloy_filt.hess_cols], rtol=1e-8)
+    sim.step(safe)
+
+
+def check_canonical_hessian_handoff() -> None:
+  """A canonical C=8 artifact drives both exact-Hessian codegen providers."""
+  import tempfile
+  from pathlib import Path
+
+  from benchmarks.harness.sweep import _samples, build_kernel
+
+  cfg = ClosedLoopConfig()
+  weights = load_dt_mlp_weights()
+  state = sample_initial_states(cfg).reshape(-1)
+  desired = np.tile([cfg.nominal_speed, 0.0], cfg.ncars)
+  arrays = {
+    "z": np.concatenate([desired, np.zeros(cfg.n_slack)]),
+    "lam_f": np.array(1.0),
+    "lam_g": np.linspace(0.1, 1.0, cfg.n_slack),
+    "bar_x": state,
+    "u_des": desired,
+    "pw": weights.packed,
+    "physics": cfg.physics.array(),
+    "dt": np.array([cfg.dt]),
+  }
+  with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    artifact = root / "representative_fe_inputs.npz"
+    np.savez_compressed(artifact, **arrays)
+    with np.load(artifact) as loaded:
+      harvested = {name: np.asarray(loaded[name], dtype=np.float64) for name in loaded.files}
+    for backend in ("alloy", "casadi_mx"):
+      output = root / backend
+      output.mkdir()
+      info = build_kernel("unbumpercars", cfg.ncars, backend, output)
+      _samples("unbumpercars", cfg.ncars, info, output, harvested)
+
+
+def check_sqp_matches_ipopt_per_step() -> None:
+  """SQP and IPOPT return the same safe input when handed the same state.
+
+  Per-step on shared states for the same reason as ``oracles_solve_alike``: the DT plant's
+  chaotic closed loop amplifies rounding, so rollout comparison cannot separate that from a
+  solver divergence. The converging pair is deliberately *asymmetric* (lateral offsets and
+  different speeds): the head-on symmetric start has two mirror-image optima and the two
+  solvers legitimately pick different ones, which says nothing about solver health.
+  Measured healthy-step differences at the shipped settings (exact Hessian, filter first,
+  default dual_tol 1e-4) are control/z <= 1.69e-5 and objective <= 9.59e-5 on obj ~1; the
+  1e-4/5e-4 envelopes keep the gate close to those declared workload settings. On
+  divergence the message carries the first diverging step with both solvers' status and
+  constraint violation — the signal the Phase 9 robustness work consumes.
+  """
+  from benchmarks.problems.unbumpercars.filters import AlloyDTCBFSafetyFilter
+  from benchmarks.problems.unbumpercars.run_closed_loop import Simulator
+
+  loop_cfg = ClosedLoopConfig(ncars=2, steps=4, target_center=False)
+  filt_cfg = FilterConfig(ipopt_max_iter=40)
+  weights = load_dt_mlp_weights()
+  ipopt_filter = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
+  sqp_filter = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp")
+  initial = np.zeros((2, NSTATE), dtype=np.float64)
+  initial[:, :2] = [[6.3, 7.35], [8.7, 7.7]]
+  initial[:, 2] = [0.0, np.pi]
+  initial[:, 3] = [0.75, 0.85]
+  sim = Simulator(initial, loop_cfg)
+  acted = False
+  for step in range(loop_cfg.steps):
+    desired = sim.desired_inputs()
+    u_ipopt = ipopt_filter.compute_safe_input(sim.states, desired, step)
+    u_sqp = sqp_filter.compute_safe_input(sim.states, desired, step)
+    stats_i, stats_s = ipopt_filter.stats_history[-1], sqp_filter.stats_history[-1]
+    du = float(np.max(np.abs(u_ipopt - u_sqp)))
+    dz = float(np.max(np.abs(np.asarray(ipopt_filter.last_z) - np.asarray(sqp_filter.last_z))))
+    dobj = abs(stats_i.objective - stats_s.objective)
+    viol_i, viol_s = max(0.0, -stats_i.min_g), max(0.0, -stats_s.min_g)
+    assert stats_i.success and stats_s.success and du <= 1e-4 and dz <= 1e-4 and dobj <= 5e-4 and max(viol_i, viol_s) <= 1e-6, (
+      f"SQP first diverges from IPOPT at step {step}: |du|={du:.3e} |dz|={dz:.3e} |dobj|={dobj:.3e}; "
+      f"ipopt: status={stats_i.status} success={stats_i.success} obj={stats_i.objective:.6e} violation={viol_i:.3e}; "
+      f"sqp: status={stats_s.status} success={stats_s.success} obj={stats_s.objective:.6e} violation={viol_s:.3e}"
+    )
+    acted |= bool(np.max(np.abs(u_ipopt - desired)) > 0.1)
+    sim.step(u_ipopt)
+  assert acted, "the SQP-versus-IPOPT gate never exercised a binding constraint"
+
+
+def check_sqp_oracles_agree() -> None:
+  """The SQP's Alloy and CasADi C oracles return the same controls and timing split."""
+  from benchmarks.problems.unbumpercars.filters import AlloyDTCBFSafetyFilter
+  from benchmarks.problems.unbumpercars.run_closed_loop import Simulator
+
+  loop_cfg = ClosedLoopConfig(ncars=2, steps=2, target_center=False)
+  filt_cfg = FilterConfig(ipopt_max_iter=40)
+  assert not filt_cfg.limited_memory_hessian
+  weights = load_dt_mlp_weights()
+  alloy_filter = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp")
+  casadi_filter = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp", oracle_provider="casadi")
+  initial = np.zeros((2, NSTATE), dtype=np.float64)
+  initial[:, :2] = [[6.3, 7.5], [8.7, 7.5]]
+  initial[:, 2] = [0.0, np.pi]
+  initial[:, 3] = 0.8
+  sim = Simulator(initial, loop_cfg)
+  acted = False
+  for step in range(loop_cfg.steps):
+    desired = sim.desired_inputs()
+    alloy_u = alloy_filter.compute_safe_input(sim.states, desired, step)
+    casadi_u = casadi_filter.compute_safe_input(sim.states, desired, step)
+    np.testing.assert_allclose(alloy_u, casadi_u, rtol=1e-9, atol=1e-9)
+    acted |= bool(np.max(np.abs(alloy_u - desired)) > 1e-3)
+    for controller in (alloy_filter, casadi_filter):
+      stats = controller.nlp.last_stats
+      report = controller.stats_history[-1]
+      assert stats is not None and stats.status.name == "OK" and report.success and report.min_g >= -1e-6
+      assert stats.t_qp > 0.0 and stats.n_eval_h > 0
+      np.testing.assert_allclose(stats.t_total, stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rtol=1e-10)
+    sim.step(alloy_u)
+  assert acted, "the SQP oracle-provider gate never exercised a binding constraint"
 
 
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
@@ -359,8 +467,11 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "dt_plant_pieces": (check_dt_plant_pieces, False, False),
   "dt_plant_control_order": (check_dt_plant_control_order, False, False),
   "dt_filter_model_matches_numpy": (check_dt_filter_model_matches_numpy, False, True),
-  "backends_solve_alike": (check_backends_solve_alike_per_step, True, True),
+  "oracles_solve_alike": (check_oracles_solve_alike_per_step, True, True),
   "exact_hess": (check_exact_hess_matches_casadi_on_closed_loop_samples, True, True),
+  "canonical_hessian_handoff": (check_canonical_hessian_handoff, False, True),
+  "sqp_matches_ipopt": (check_sqp_matches_ipopt_per_step, True, False),
+  "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
 }
 
 
@@ -376,9 +487,7 @@ def run_checks() -> Iterator[tuple[str, str]]:
   except ImportError:
     have_casadi = False
   for name, (check, needs_ipopt, needs_casadi) in CHECKS.items():
-    if name == "exact_hess" and os.environ.get(EXACT_HESS_ENV) != "1":
-      yield name, f"skipped: opt-in, set {EXACT_HESS_ENV}=1"
-    elif needs_ipopt and not have_ipopt:
+    if needs_ipopt and not have_ipopt:
       yield name, "skipped: IPOPT plugin not loadable"
     elif needs_casadi and not have_casadi:
       yield name, "skipped: casadi not installed"

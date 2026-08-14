@@ -15,7 +15,9 @@ this problem can be retired or reshaped without dropping compiler coverage.
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Callable, Iterator
+import io
 from pathlib import Path
 
 import numpy as np
@@ -34,6 +36,8 @@ from benchmarks.problems.race_cars import (
 )
 from benchmarks.problems.race_cars.closed_loop import (
   EpisodeConfig,
+  _race_car_nlp,
+  build_solver,
   continuous_dynamics_np,
   rk4_step_np,
   run_episode,
@@ -175,6 +179,33 @@ def check_casadi_mirror_dimensions() -> None:
   np.testing.assert_array_equal(pieces["x_ub"][3::NZ], np.full(config.horizon + 1, config.max_speed))
 
 
+def check_exact_hessian_default() -> None:
+  """The canonical solver asks every provider for exact Lagrangian Hessians."""
+  solver = _race_car_nlp(EpisodeConfig.smoke())
+  assert solver.descriptor.hess is not None
+  assert dict(solver.descriptor.options).get("hessian_approximation") != "limited-memory"
+  sqp = _race_car_nlp(EpisodeConfig.smoke(), solver="sqp")
+  assert dict(sqp.descriptor.options).get("hessian", "exact") == "exact"
+
+
+def check_harvested_sqp_globalizations() -> None:
+  """Both oracle providers solve the harvested hard-QP race failure."""
+  encoded = (Path(__file__).parent / "data" / "step_198.npz.b64").read_text()
+  with np.load(io.BytesIO(base64.b64decode(encoded))) as stored:
+    inputs = {name: stored[name] for name in ("z0", "lam_eq0", "lam_ineq0", "lam_box0", "p")}
+  for oracle in ("alloy", "casadi"):
+    for name, options, expected_iter in (
+      ("filter", {}, 3),
+      ("l1-watchdog-five", {"globalization": "l1", "watchdog": 5, "hessian": "objective"}, 4),
+    ):
+      solver = build_solver(EpisodeConfig(), "sqp", oracle, sqp_options=options)
+      out = solver(inputs["z0"], inputs["lam_eq0"], inputs["lam_ineq0"], inputs["lam_box0"], inputs["p"])
+      stats = solver.last_stats
+      assert stats is not None and stats.status.value == 0, f"sqp/{oracle}/{name}: {stats}"
+      assert stats.iter == expected_iter and stats.primal_viol < 1e-7 and stats.alpha == 1.0, f"sqp/{oracle}/{name}: {stats}"
+      np.testing.assert_allclose(out["f"], 6.6328204, rtol=1e-7)
+
+
 def check_episode_artifacts() -> None:
   """A short episode returns consistently shaped, finite, in-bounds, monotone-progress data."""
   config = EpisodeConfig.smoke()
@@ -199,7 +230,7 @@ def check_episode_artifacts() -> None:
 
 
 def check_recorded_scene_and_artifacts() -> None:
-  """Both backends write the full artifact set, and the runner really feeds the scene builders.
+  """Both IPOPT oracle providers write the full artifact set and feed the scene builders.
 
   The scene builders themselves are covered by ``tests/alloy/test_benchmark_recording.py`` (they
   are generic geometry helpers with no problem coupling); what needs checking here is that this
@@ -211,7 +242,7 @@ def check_recorded_scene_and_artifacts() -> None:
   from benchmarks.harness.closed_loop import run_race_cars
 
   record_track, record_horizons = recording.RaceCarRecorder.record_track, recording.RaceCarRecorder.record_horizons
-  for backend in ("alloy", "casadi"):
+  for oracle in ("alloy", "casadi"):
     tracks: list[tuple[tuple[int, ...], dict[str, int]]] = []
     horizons: list[list[str]] = []
 
@@ -227,10 +258,10 @@ def check_recorded_scene_and_artifacts() -> None:
     recording.RaceCarRecorder.record_track, recording.RaceCarRecorder.record_horizons = spy_track, spy_horizons
     try:
       with tempfile.TemporaryDirectory() as directory:
-        output = run_race_cars(smoke=True, out_dir=Path(directory), cli_args=[], backend=backend)
+        output = run_race_cars(smoke=True, out_dir=Path(directory), cli_args=[], solver="ipopt", oracle=oracle)
         for name in ("episode.mcap", "rollout.npz", "config.json", "summary.json", "provenance.json", "metadata.json"):
-          assert (output / name).is_file(), f"{backend}: {name} missing"
-        assert (output / "episode.mcap").stat().st_size > 0, f"{backend}: empty MCAP"
+          assert (output / name).is_file(), f"{oracle}: {name} missing"
+        assert (output / "episode.mcap").stat().st_size > 0, f"{oracle}: empty MCAP"
         with np.load(output / "rollout.npz") as rollout:
           steps = rollout["control"].shape[0]
           assert rollout["prediction"].shape == rollout["reference_horizon"].shape
@@ -240,23 +271,23 @@ def check_recorded_scene_and_artifacts() -> None:
           assert all(np.all(np.isfinite(inputs[name])) for name in inputs.files)
     finally:
       recording.RaceCarRecorder.record_track, recording.RaceCarRecorder.record_horizons = record_track, record_horizons
-    assert len(tracks) == 1, f"{backend}: track logged {len(tracks)} times, expected once"
+    assert len(tracks) == 1, f"{oracle}: track logged {len(tracks)} times, expected once"
     shape, cone_counts = tracks[0]
     assert shape == center_line.shape
     assert cone_counts["blue"] > 10 and cone_counts["yellow"] > 10 and cone_counts["big_orange"] > 0
-    assert horizons == [["reference", "prediction"]] * steps, f"{backend}: horizons {horizons}"
+    assert horizons == [["reference", "prediction"]] * steps, f"{oracle}: horizons {horizons}"
 
 
-def check_backends_agree() -> None:
+def check_oracles_agree() -> None:
   """The core gate for the two-oracle comparison.
 
-  Both backends build the same NLP and hand it to the same IPOPT, so a closed-loop episode must
+  Both oracle providers build the same NLP and hand it to the same IPOPT, so a closed-loop episode must
   come out identical to solver tolerance. Divergence means one of the two symbolic builders has
   drifted from the other, and any timing comparison between them would be meaningless.
   """
   config = EpisodeConfig(horizon=8, max_steps=6)
-  alloy_run = run_episode(config, backend="alloy")
-  casadi_run = run_episode(config, backend="casadi")
+  alloy_run = run_episode(config, solver="ipopt", oracle="alloy")
+  casadi_run = run_episode(config, solver="ipopt", oracle="casadi")
   np.testing.assert_allclose(alloy_run.controls, casadi_run.controls, rtol=1e-6, atol=1e-6)
   np.testing.assert_allclose(alloy_run.states, casadi_run.states, rtol=1e-8, atol=1e-8)
   np.testing.assert_allclose(alloy_run.predictions, casadi_run.predictions, rtol=1e-6, atol=1e-6)
@@ -266,7 +297,52 @@ def check_backends_agree() -> None:
   for run in (alloy_run, casadi_run):
     for item in run.telemetry:
       assert item.stats.status.value <= 1, f"solve reported {item.stats.status.name}"
-      assert item.stats.t_fe > 0.0 and item.stats.n_eval_jac_g > 0, "backend reported no oracle work"
+      assert item.stats.t_fe > 0.0 and item.stats.n_eval_jac_g > 0, "provider reported no oracle work"
+
+
+def check_sqp_matches_ipopt() -> None:
+  """SQP and IPOPT drive the same episode to per-step solutions that differ only mildly.
+
+  The N=3 smoke point checks the independent solver trajectories without conflating the
+  canonical column's fixed N=40 nominal seed. Measured healthy-step differences are control
+  <= 7.5e-7, plan <= 5.5e-8, objective <= 9.4e-5 absolute, and violation <= 1.7e-10; the
+  tolerances retain the wider envelope established for nonlinear solver agreement. On
+  divergence the message carries the first diverging step with both solvers' status and
+  constraint violation. The alpha guard rejects a solver handing back the warm start with no
+  accepted step.
+  """
+  config = EpisodeConfig.smoke()
+  ipopt_run = run_episode(config, solver="ipopt", oracle="alloy")
+  sqp_run = run_episode(config, solver="sqp", oracle="alloy")
+  assert len(ipopt_run.controls) == len(sqp_run.controls)
+  for k in range(len(ipopt_run.controls)):
+    tel_i, tel_s = ipopt_run.telemetry[k], sqp_run.telemetry[k]
+    assert tel_i.stats.status.value <= 1, f"step {k}: ipopt reported {tel_i.stats.status.name}"
+    assert tel_s.stats.status.value <= 1, f"step {k}: sqp reported {tel_s.stats.status.name}"
+    assert tel_s.stats.iter == 0 or tel_s.stats.alpha > 0.0, f"step {k}: sqp accepted no step (iter={tel_s.stats.iter})"
+    du = float(np.max(np.abs(ipopt_run.controls[k] - sqp_run.controls[k])))
+    dplan = float(np.max(np.abs(ipopt_run.predictions[k] - sqp_run.predictions[k])))
+    dobj = abs(tel_i.stats.obj - tel_s.stats.obj)
+    viol_i = max(tel_i.eq_violation, tel_i.ineq_violation, tel_i.bound_violation)
+    viol_s = max(tel_s.eq_violation, tel_s.ineq_violation, tel_s.bound_violation)
+    assert du <= 5e-3 and dplan <= 5e-3 and dobj <= 5e-4 * (1.0 + abs(tel_i.stats.obj)) and max(viol_i, viol_s) <= 2e-5, (
+      f"SQP first diverges from IPOPT at step {k}: |du|={du:.3e} |dplan|={dplan:.3e} |dobj|={dobj:.3e}; "
+      f"ipopt: status={tel_i.stats.status.name} obj={tel_i.stats.obj:.6e} violation={viol_i:.3e}; "
+      f"sqp: status={tel_s.stats.status.name} obj={tel_s.stats.obj:.6e} violation={viol_s:.3e}"
+    )
+
+
+def check_sqp_oracles_agree() -> None:
+  """One SQP configuration follows the same smoke trajectory with either C oracle provider."""
+  alloy_run = run_episode(smoke=True, solver="sqp", oracle="alloy")
+  casadi_run = run_episode(smoke=True, solver="sqp", oracle="casadi")
+  np.testing.assert_allclose(alloy_run.controls, casadi_run.controls, rtol=1e-8, atol=1e-8)
+  np.testing.assert_allclose(alloy_run.states, casadi_run.states, rtol=1e-10, atol=1e-10)
+  for run in (alloy_run, casadi_run):
+    for item in run.telemetry:
+      stats = item.stats
+      assert stats.status.value <= 1 and stats.t_qp > 0.0 and stats.n_eval_h > 0
+      np.testing.assert_allclose(stats.t_total, stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rtol=1e-10)
 
 
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
@@ -278,9 +354,13 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "parameter_layout": (check_transcription_parameter_layout, False, False),
   "default_constants": (check_default_constants, False, False),
   "casadi_mirror": (check_casadi_mirror_dimensions, False, True),
+  "exact_hessian_default": (check_exact_hessian_default, False, False),
   "episode_artifacts": (check_episode_artifacts, True, False),
   "recorded_scene": (check_recorded_scene_and_artifacts, True, True),
-  "backends_agree": (check_backends_agree, True, True),
+  "oracles_agree": (check_oracles_agree, True, True),
+  "sqp_matches_ipopt": (check_sqp_matches_ipopt, True, False),
+  "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
+  "harvested_sqp_globalizations": (check_harvested_sqp_globalizations, True, True),
 }
 
 

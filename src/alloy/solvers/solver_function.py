@@ -47,6 +47,28 @@ class SolverStatus:
     return self.code in (0, 1) if self._ok is None else self._ok
 
 
+@dataclass(frozen=True, slots=True)
+class ExternalOracle:
+  """A C-ABI oracle supplied by a plugin consumer instead of an Alloy graph.
+
+  ``source`` must define ``raw_symbol`` with the same flat-buffer convention
+  as generated Alloy kernels: one ``const double*`` per input, one ``double*``
+  per output, and a trailing ``double*`` workspace argument. ``workspace_size``
+  declares the number of doubles available through that final argument.
+  """
+
+  name: str
+  raw_symbol: str
+  source: str
+  input_signature: tuple[tuple[str, tuple[int, ...]], ...]
+  output_signature: tuple[tuple[str, tuple[int, ...]], ...]
+  workspace_size: int = 0
+
+  def __post_init__(self) -> None:
+    if self.workspace_size < 0:
+      raise ValueError(f"external oracle workspace_size must be nonnegative, got {self.workspace_size}")
+
+
 @dataclass(frozen=True)
 class SolverDescriptor:
   """Everything a solver plugin's generated C wrapper needs to drive a solve.
@@ -70,11 +92,11 @@ class SolverDescriptor:
   param_names: tuple[str, ...]
   # Functions
   oracle: Function | None = None  # QP only
-  base: Function | None = None  # NLP only
-  grad: Function | None = None
-  jac: Function | None = None
-  hess: Function | None = None
-  bounds: Function | None = None
+  base: Function | ExternalOracle | None = None  # NLP only
+  grad: Function | ExternalOracle | None = None
+  jac: Function | ExternalOracle | None = None
+  hess: Function | ExternalOracle | None = None
+  bounds: Function | ExternalOracle | None = None
   # Sparsity (NLP)
   jac_sparsity: SparsityType | None = None
   hess_sparsity: SparsityType | None = None

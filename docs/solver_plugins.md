@@ -74,8 +74,9 @@ sparsity patterns, and user options. `ctx` is the codegen kit
   fill** on every call. Core declares it and exports the
   `<symbol>_stats(...)` accessor; the plugin only writes the fields.
 - `ctx.raw_symbol_of(fn)` — the C symbol of an oracle/derivative `Function`
-  from the descriptor (they are rendered into the same translation unit by
-  Program IR, before the wrapper).
+  or `ExternalOracle` from the descriptor. Alloy Functions are rendered into
+  the same translation unit by Program IR; an external oracle contributes its
+  declared source and raw symbol directly before the wrapper.
 
 The returned lines are C source, emitted verbatim into the translation unit
 between the oracle kernels and the universal-ABI entry point.
@@ -103,10 +104,20 @@ with inputs and outputs in the Function's declared order.
 early-error returns): `version = ALLOY_SOLVER_STATS_VERSION`, `status` (one
 of the `ALLOY_SOLVE_*` macros — the backend-neutral enum in
 `src/alloy/solvers/stats.py`), `native_status` (the solver's own code, cast
-to `int32_t`), `iter`, `obj`, the `t_total`/`t_fe`/`t_solver`/`t_glue` timing
-split, the five `n_eval_*` counters, and `_pad0 = 0`. Time with
-`alloy_clock_s()` (emitted by core into every solver-bearing unit); maintain
-`t_total ≈ t_fe + t_solver + t_glue`. Map native statuses through the
+to `int32_t`), `iter`, `obj`, the `t_total`/`t_fe`/`t_solver`/`t_qp`/
+`t_globalization`/`t_glue` timing split, the five `n_eval_*` counters,
+`_pad0 = 0`, and the stats-v3 diagnostics tail — `primal_viol` (constraint
+violation at the returned `x`, inf norm), `step_inf` (inf norm of the last
+computed step), `alpha` (last accepted line-search step length; `0.0` if no
+step was accepted), `merit_penalty` (final merit penalty parameter, or zero
+for a globalization such as a filter that has no merit penalty),
+`backtracks` (total rejected line-search trial points), and `qp_iter` (QP
+iteration count accumulated across outer iterations). Diagnostics the backend
+has no concept of are filled with zero. Time with `alloy_clock_s()` (emitted
+by core into every solver-bearing unit); maintain `t_total ≈ t_fe + t_solver
++ t_qp + t_globalization + t_glue`. A direct QP backend reports its solve in `t_qp`;
+an NLP backend that cannot expose its internal split reports it in
+`t_solver`. Map native statuses through the
 vendored header's enum **constants**, not integer literals, so upstream
 renames/renumbers break at compile time instead of silently — this is how
 the drift problem of hand-written bindings is dissolved structurally
@@ -153,6 +164,13 @@ and static metadata.
   inputs `(x, obj_factor, [lam,] *params)`, symmetric COO pattern in
   `desc.hess_sparsity` with `desc.hess_lower_mask` marking the lower
   triangle); `desc.bounds` `(*params) → (x_lb, x_ub[, l_ineq, u_ineq])`.
+- Any normalized NLP oracle may instead be an `ExternalOracle` with the same
+  input/output signature. Its `source` defines `raw_symbol` using the same
+  flat-buffer `_raw` convention. `workspace_size` declares the number of
+  `double` slots the raw function needs; core includes it in root and nested
+  workspace packing. Shared external source is emitted once per translation
+  unit. `alloy-sqp` uses this provider-neutral path for CasADi-codegenerated C
+  oracles.
 - "no bound" is `±inf` from the bounds oracle; clamp to the solver's
   convention (IPOPT: `±2e19`).
 
@@ -165,7 +183,11 @@ whole surface above: descriptor semantics and oracle output orderings, the
 ABI itself; a stats change bumps both). Any breaking change to any of these
 bumps the protocol version, and `get_backend` refuses plugins declaring a
 different version. History: v1 = packaging metadata only (hand-written
-templates in core); v2 = plugin-owned codegen via `render_wrapper`.
+templates in core); v2 = plugin-owned codegen via `render_wrapper`; v3 =
+external NLP oracles and the stats-v2 QP/globalization timing fields; v4 =
+the stats-v3 per-solve diagnostics tail (`primal_viol`, `step_inf`, `alpha`,
+`merit_penalty`, `backtracks`, `qp_iter` — appended after `_pad0`, struct
+grows from 96 to 136 bytes).
 
 ## What core owns (and plugins must not duplicate)
 
