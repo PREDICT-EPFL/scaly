@@ -282,6 +282,15 @@ def solver_loadable(name: str) -> bool:
     return False
   load_name = solver_paths().loads[name]
   assert load_name is not None
+  if sys.platform == "linux":
+    return (
+      subprocess.run(
+        [sys.executable, "-c", "import ctypes, sys; ctypes.CDLL(sys.argv[1])", load_name],
+        check=False,
+        capture_output=True,
+      ).returncode
+      == 0
+    )
   try:
     ctypes.CDLL(load_name)
     return True

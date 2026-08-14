@@ -14,6 +14,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,40 @@ _JIT_CACHE_VERSION = "3"
 
 _C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)
+_LM_ID_NEWLM = -1
+_RTLD_DI_LMID = 1
+_SOLVER_NAMESPACE: int | None = None
+_SOLVER_NAMESPACE_ANCHOR: ctypes.CDLL | None = None
+_SOLVER_NAMESPACE_LOCK = threading.Lock()
+
+
+def _load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
+  """Keep Linux solver dependencies out of the host process linker namespace."""
+  global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR
+  if not isolated or sys.platform != "linux":
+    return ctypes.CDLL(str(path))
+  libc = ctypes.CDLL(None)
+  dlmopen = libc.dlmopen
+  dlmopen.argtypes = [ctypes.c_long, ctypes.c_char_p, ctypes.c_int]
+  dlmopen.restype = ctypes.c_void_p
+  with _SOLVER_NAMESPACE_LOCK:
+    handle = dlmopen(_LM_ID_NEWLM if _SOLVER_NAMESPACE is None else _SOLVER_NAMESPACE, os.fsencode(path), os.RTLD_NOW | os.RTLD_LOCAL)
+    if not handle:
+      raise OSError(f"dlmopen failed for {path}")
+    # Python 3.14 reopens a path even when CDLL receives a handle, so bind it directly.
+    lib = ctypes.CDLL(None)
+    lib._handle = handle
+    lib._name = str(path)
+    if _SOLVER_NAMESPACE is None:
+      dlinfo = libc.dlinfo
+      dlinfo.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+      dlinfo.restype = ctypes.c_int
+      namespace = ctypes.c_long()
+      if dlinfo(handle, _RTLD_DI_LMID, ctypes.byref(namespace)) != 0:
+        raise OSError(f"dlinfo failed for {path}")
+      _SOLVER_NAMESPACE = namespace.value
+      _SOLVER_NAMESPACE_ANCHOR = lib
+  return lib
 
 
 class JitUnavailable(RuntimeError):
@@ -168,7 +203,7 @@ class CompiledFunction:
   def __init__(self, fun: Function):
     self._fun = fun
     self._artifact = _build_artifact(fun)
-    self._lib = ctypes.CDLL(str(self._artifact.lib_path))
+    self._lib = _load_library(self._artifact.lib_path, isolated=bool(solver_compile_flags(fun)))
     symbol = _c_ident(fun.name)
     self._symbol = symbol
     entry = getattr(self._lib, symbol)

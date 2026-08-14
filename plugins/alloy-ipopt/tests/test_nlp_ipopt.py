@@ -36,6 +36,21 @@ def test_nlp_generated_stats_and_timing_split() -> None:
 
 
 @pytest.mark.solver("ipopt")
+def test_vendored_ipopt_can_coexist_with_casadi_ipopt() -> None:
+  x = al.sym("x", 1)
+  solver = al.nlp(x=x, f=(x[0] - 1.0) ** 2, solver="ipopt", name="ipopt_namespace")
+  out = solver(np.zeros(1), np.zeros(0), np.zeros(0), np.zeros(1))
+  assert out["x"][0] == pytest.approx(1.0)
+
+  import casadi as ca
+
+  cx = ca.MX.sym("x")
+  casadi_solver = ca.nlpsol("casadi_namespace", "ipopt", {"x": cx, "f": (cx - 2.0) ** 2}, {"ipopt.print_level": 0, "print_time": False})
+  casadi_out = casadi_solver(x0=0.0)
+  assert float(casadi_out["x"]) == pytest.approx(2.0)
+
+
+@pytest.mark.solver("ipopt")
 def test_nlp_generated_warm_start_reduces_iterations() -> None:
   """Seeding x0 + lam_eq0 + lam_box0 from a previous solve (with
   warm_start_init_point) must converge in fewer iterations than cold."""
