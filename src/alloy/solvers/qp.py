@@ -1,6 +1,6 @@
 """``al.qp(...)`` — build an opaque solver Function wrapping PIQP.
 
-The QP shape (per ``docs/roadmap.md``) is::
+The QP shape (see ``docs/guide/solvers.md``) is::
 
     min   0.5 xᵀ P x + cᵀ x
     s.t.  A_eq x = b_eq
@@ -27,9 +27,9 @@ from typing import Any
 
 import numpy as np
 
-from ..expr import Expr, as_expr
+from ..ir.expr import Expr, as_expr
 from ..function import Function
-from ..types import SparsityType
+from ..ir.types import SparsityType
 from ._oracle import collect_free_inputs
 from .registry import require_backend
 from .solver_function import SolverDescriptor, SolverFunction
@@ -66,7 +66,7 @@ def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *,
   so their entries would be classified solely by the probed value — silently
   wrong whenever the inner solve is zero at the probe but nonzero at runtime.
   """
-  from ..sparsity import _jac_mask
+  from ..ad.sparsity import _jac_mask
 
   nrow, ncol = mat.shape
   vec = mat.vec()
@@ -91,16 +91,16 @@ def _gathered(mat: Expr, sp: SparsityType) -> Expr:
 
 def _reaches_solver_call(exprs: Sequence[Expr]) -> bool:
   """True if any expr reaches a ``SOLVER_CALL``, recursing through CALL/MAP callees."""
-  from ..expr import topo
-  from ..ops import Ops
+  from ..ir.expr import topo
+  from ..ir.expr import ExprOp
 
   seen: set[int] = set()
 
   def visit(targets: Sequence[Expr]) -> bool:
     for node in topo(list(targets)):
-      if node.op == Ops.SOLVER_CALL:
+      if node.op == ExprOp.SOLVER_CALL:
         return True
-      if node.op in {Ops.CALL, Ops.MAP}:
+      if node.op in {ExprOp.CALL, ExprOp.MAP}:
         callee = node.attrs["callee"]
         if id(callee) not in seen:
           seen.add(id(callee))
@@ -127,6 +127,24 @@ def qp(
   options: dict[str, float | int] | None = None,
   sparse: bool = False,
 ) -> SolverFunction:
+  """Build a quadratic-program solver as a callable ``Function``.
+
+  Solves ``min 0.5 x' P x + c' x`` subject to ``A_eq x = b_eq``,
+  ``l_ineq <= G_ineq x <= u_ineq`` and ``x_lb <= x <= x_ub``.
+
+  Every argument may be an alloy ``Expr`` over free parameters — which is what makes the solver
+  reusable across states — a NumPy array or scalar, or ``None`` for the optional blocks. The
+  returned ``SolverFunction`` takes ``x0``, ``lam_eq0``, ``lam_ineq0`` and then every free
+  parameter found, and returns ``x``, ``cost``, ``lam_eq``, ``lam_ineq`` and ``lam_box``.
+
+  Because it is a real ``Function``, ``solver.call([...])`` nests it inside a larger graph and the
+  whole thing compiles to one shared library. See ``docs/guide/solvers.md``.
+
+  Args:
+    solver: the backend plugin to use; ``piqp`` today.
+    options: backend settings, passed through to ``piqp_settings`` field names.
+    sparse: route through PIQP's sparse interface, baking the CSC patterns at build time.
+  """
   require_backend(solver, "qp")
 
   P_e = as_expr(P)

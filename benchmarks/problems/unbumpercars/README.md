@@ -2,7 +2,7 @@
 
 This directory is a *representative reproduction* of the centralized safety filter in
 `~/dev/bumper_car_simulator`, kept only so Alloy has a realistic workload to be fast on: a
-neural model inside pairwise constraints, exact sparse Lagrangian Hessians through `Ops.MAP`,
+neural model inside pairwise constraints, exact sparse Lagrangian Hessians through `ExprOp.MAP`,
 and a CasADi implementation of the same NLP to compare against.
 
 **It is not the development center for the safety filter itself.** Controller research —
@@ -81,6 +81,39 @@ shipped `(c_pair, q)` is a single conservative fit covering both vendored models
 the tightest power law that never over-predicts either one's exact discrete pair
 stopping envelope. See `common.HCBFConfig`, and the envelope sections below for the
 per-model fits it summarizes.
+
+#### The continuous-time HOCBF that was designed instead, and dropped
+
+Before the order-1 HCBF, the plan for fixing the position barrier's relative degree went the
+other way: keep the position barrier and raise the *order* of the constraint rather than lower
+the *degree* of the barrier. That design is recorded here because it is the obvious thing to
+propose again, and it was measured against and rejected.
+
+It replaced the discrete one-step prediction with a continuous-time model `xdot = F(x, u)` and
+imposed safety through a higher-order CBF. With `psi_0 = h_ij` and `psi_1 = h_ij_dot + gamma_1
+psi_0`, the condition `psi_1_dot + gamma_2 psi_1 >= 0` expands to
+
+```text
+h_ij_ddot(x, u_i, u_j) + (gamma_1 + gamma_2) h_ij_dot(x) + gamma_1 gamma_2 h_ij(x) >= 0
+```
+
+which brings `d kappa_pi / d x`, the Jacobian of the pose kinematics, into every constraint row.
+Two model variants followed from it. With an input-affine velocity block `vdot = f_nn(x) +
+g_nn(x) u` — two network heads on a shared body — every row is affine in `u` and the filter is a
+**QP** for PIQP, with the only network-times-Jacobian product being `2 dpi' (d kappa_pi / d v)
+g_nn(x_i)`. With a single fully-nonlinear block `vdot = f_nn(x, u)`, the row stays nonlinear in
+`u` and the filter is an **NLP**, with the state-dependent coefficients frozen per call so each
+IPOPT iteration costs one network evaluation per car rather than one per pair.
+
+Three things ended it. The relative-degree-2 expansion needs the pose-kinematics Jacobian in
+every row, so the constraint graph is strictly larger than the order-1 barrier's for the same
+safety; the continuous-time model has to be discretized with RK4 anyway to sit in a
+sampled-data loop, so the Lie-derivative machinery buys nothing the one-step map does not
+already give; and the order-1 HCBF turned out to *outperform* it on the thing that matters —
+2.28 m minimum distance against 1.55 m, at a lower tracking cost. The input-affine QP variant
+is the one piece with residual value: it is the natural workload if this benchmark ever needs
+to exercise `al.qp` on a network-bearing problem, and it would need a two-head checkpoint that
+does not exist.
 
 ### Wall constraints, slacks, and the NLP
 
@@ -469,7 +502,7 @@ from either model's own rollout, about half the CT model's own step change, and 
 agreement at `vf = 1.0–1.5` under `u_m = +1`. Top speed differs by 12.5% (1.797 vs 2.053
 m/s). So moving the *filter* onto it is a scoped formulation change, not a rewrite — but it
 *is* a formulation change, not a checkpoint swap, and it has to be re-measured against the
-same collision/failure gates. `ROADMAP.md` §2.6 carries the roadmap-level version.
+same collision/failure gates. `BENCHMARKS.md` §2.6 carries the roadmap-level version.
 
 ### Reproducing the numbers
 
@@ -515,7 +548,7 @@ this problem: 15x15 m arena and 8 cars here versus upstream's `[-3.5, 3.5] x [-4
 and 3 cars; `collision_radius` 1.9 versus 2.0. The `safety_factor` of 1.2 is upstream's.
 
 Upstream's HCBF sweep runs on `MLPModel`, a natively discrete network. That is the default
-model here too, for both the plant and the filter's prediction (`ROADMAP.md` §2.6).
+model here too, for both the plant and the filter's prediction (`BENCHMARKS.md` §2.6).
 
 ## Running
 
@@ -699,7 +732,7 @@ minimum pair distance 2.279–2.280 m in every episode, largest slack anywhere 0
 ### Alloy vs CasADi
 
 Same NLP, same IPOPT, same options — only the oracle provider differs.
-[`docs/scalability.md`](../../../docs/scalability.md#discrete-time-hcbf-safety-filter-unbumpercars)
+[`docs/results/scalability.md`](../../../docs/results/scalability.md#discrete-time-hcbf-safety-filter-unbumpercars)
 carries the current numbers across `C ∈ {2, 4, 8}` and both filter models, and is the place to
 update: **the short version is 2.8–3.9x on the continuous-time model and 4.5–9.0x on the
 discrete MLP**, the advantage growing with both car count and network size, with identical IPOPT
@@ -734,7 +767,7 @@ alone is most of the difference.
 Exact Hessians halve the iteration count (19.2 → 9.5) and nearly eliminate IPOPT's own
 time (6.32 → 1.33 ms for Alloy), at the cost of evaluating `sphess:gamma:z:z` every
 iteration (FE 11.08 → 17.72 ms). Net wall clock is a wash for Alloy and clearly worse for
-CasADi. They are the default anyway, because the sparse-Hessian-through-`Ops.MAP` path is
+CasADi. They are the default anyway, because the sparse-Hessian-through-`ExprOp.MAP` path is
 what this problem exists to exercise.
 
 With exact Hessians the two oracle providers stay bit-for-bit together over the whole episode
@@ -747,7 +780,7 @@ differences in the iterate over 20 s. Neither has a collision or a solver failur
 The original prototype exposed the following gaps; all are now closed on the
 Alloy path.
 
-### 1. Exact sparse Hessian through `Ops.MAP` (closed)
+### 1. Exact sparse Hessian through `ExprOp.MAP` (closed)
 
 IPOPT's exact Hessian path would require the sparse Hessian of the Lagrangian
 with respect to `z` through the mapped RK4 neural dynamics:
@@ -757,7 +790,7 @@ sphess:lagrangian:z:z
 ```
 
 The oracle deliberately uses `al.map_` to evaluate the per-car neural RK4 model.
-Alloy now propagates reverse and sparse second-order AD through `Ops.MAP` while
+Alloy now propagates reverse and sparse second-order AD through `ExprOp.MAP` while
 preserving the compact mapped representation. The filter builds
 `sphess:gamma:z:z`, passes its lower-triangular sparsity to IPOPT, and evaluates
 it from IPOPT's objective factor and constraint multipliers.

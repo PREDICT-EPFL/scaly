@@ -11,7 +11,7 @@ import time
 import numpy as np
 
 import alloy as al
-from alloy.codegen.c import _workspace_size, render_c_module
+from alloy.codegen.aot import render_c_module
 from benchmarks.harness import ROOT, RESULTS, gbench
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.provenance import collect, write
@@ -120,7 +120,7 @@ def _race_cars_alloy(size: int, out_dir: Path) -> dict:
     build_ms,
     render_ms,
     f"BM_AlloyRaceCarEqJacN{size}",
-    w_size=_workspace_size(spjf),
+    w_size=module.workspace_size,
     callable=spjf,
   )
 
@@ -130,7 +130,7 @@ def _chain_alloy(size: int, out_dir: Path) -> dict:
   started = time.perf_counter()
   fn = chain.chain_eq_function(size, horizon)
   name = f"alloy_chain_eq_jac_M{size}"
-  spjf = fn.factory(name, ["z", "p"], ["spjac:eq:z"])
+  spjf = fn.factory(name, ["z", "p"], [al.spjac("eq", "z")])
   sparsity = spjf.output_sparsities[0]
   assert sparsity is not None
   build_ms = (time.perf_counter() - started) * 1000
@@ -145,7 +145,7 @@ def _chain_alloy(size: int, out_dir: Path) -> dict:
     build_ms,
     render_ms,
     f"BM_AlloyChainEqJacM{size}",
-    w_size=_workspace_size(spjf),
+    w_size=module.workspace_size,
     callable=spjf,
   )
 
@@ -161,7 +161,7 @@ def _unbumpercars_alloy(size: int, out_dir: Path) -> dict:
   sphf = oracle.factory(
     name,
     ["z", "lam:cost", "lam:g", "bar_x", "u_des", "pw", "physics", "dt"],
-    ["sphess:gamma:z:z"],
+    [al.sphess("gamma", "z")],
     aux={"gamma": ["cost", "g"]},
   )
   sparsity = sphf.output_sparsities[0]
@@ -187,7 +187,7 @@ def _unbumpercars_alloy(size: int, out_dir: Path) -> dict:
     build_ms,
     render_ms,
     f"BM_AlloyUnbumpercarsLagHessC{size}",
-    w_size=_workspace_size(sphf),
+    w_size=module.workspace_size,
     callable=sphf,
   )
 
@@ -361,7 +361,7 @@ def _samples(
       zv, pv = harvested["z"], harvested["p"]
     if zv.shape != (race_cars.NZ * (size + 1),) or pv.shape != (race_cars.n_param(size),):
       raise ValueError(f"harvested race_cars input shapes do not match N={size}: {zv.shape}, {pv.shape}")
-    ref = race_cars.race_car_eq_function(size).factory(f"race_car_dense_ref_N{size}", ["z", "p"], ["jac:eq:z"])
+    ref = race_cars.race_car_eq_function(size).factory(f"race_car_dense_ref_N{size}", ["z", "p"], [al.jac("eq", "z")])
     expected = np.asarray(ref(zv, pv), dtype=np.float64).reshape(-1)
     values = {"z": zv, "p": pv}
   else:

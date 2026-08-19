@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import alloy as al
-from alloy.codegen.c import render_c_source
+from alloy.codegen.aot import render_c_source
 
 
 def _problem(*, hessian: str = "exact", max_iter: int = 30, trace: bool = False, **options) -> al.SolverFunction:

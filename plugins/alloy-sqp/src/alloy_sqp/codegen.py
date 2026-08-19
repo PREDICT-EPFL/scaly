@@ -14,7 +14,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-  from alloy.codegen.solver_c import SolverWrapperCtx
+  from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
   from alloy.solvers.solver_function import SolverDescriptor
 

@@ -1,8 +1,8 @@
 # Project objective
 
-Alloy is a pure-Python symbolic IR for optimal-control problems: named `Function`s over a sparse typed expression graph, CasADi-style derivative factories (`jac:*` / `grad:*` / `hess:*` / `lam:*`), first-class call nodes, and mixed scalar/block lowering. It generates C through a scalar renderer, JIT-compiles via the universal C ABI on first call, and caches the resulting `.so`. See `README.md` and `docs/roadmap.md` for the design north star.
+Alloy is a pure-Python symbolic compiler for optimal-control problems: named `Function`s over a sparse typed expression graph, typed derivative requests (`al.jac(...)` / `al.grad(...)` / `al.sphess(...)`), first-class call nodes, preserved mapped structure, and mixed scalar/block lowering. It generates C through a scalar renderer, compiles via the universal C ABI on first call, and caches the resulting shared library. See `README.md` for the pitch and `docs/how_it_works/architecture.md` for how it is put together.
 
-This repository was extracted from the `anvil` monorepo in May 2026. There is no longer any runtime coupling to anvil or tinygrad — alloy depends only on NumPy at runtime (plus PIQP and IPOPT for the Phase 5 solver bindings, both vendored).
+This repository was extracted from the `anvil` monorepo in May 2026. There is no longer any runtime coupling to anvil or tinygrad — alloy depends only on NumPy at runtime (plus PIQP and IPOPT for the Phase 5 solver bindings, both vendored). As anvil will remain a stale private project, avoid mentioning it in public surfaces such as documentation or code.
 
 # Where anvil-side context still lives
 
@@ -17,10 +17,19 @@ If you need to consult those files, ask the user to point you at the right anvil
 
 # Documentation structure
 
-- `docs/roadmap.md` — phased plan, current status, exit criteria
-- `docs/spec.md` — IR semantics, op set, ABI conventions
-- `docs/safety_filter.md` — Phase 5 driving workload
-- `docs/scalability.md` — benchmark results against CasADi SX/MX
+`docs/` is published as the documentation site (Zensical, `zensical.toml`). It has five sections:
+
+- `docs/guide/` — User Guide: installation, getting started, functions, derivatives, sparsity, solvers, codegen, visualization
+- `docs/how_it_works/` — architecture, both IR dialects, lowering, differentiation, the C ABI, solver internals, and how alloy compares to CasADi/tinygrad/MLIR/JAX
+- `docs/results/` — benchmark numbers against CasADi SX/MX, kept current
+- `docs/dev/` — Developer Guide: contributing, conventions, solver plugins, versioning, fuzzing
+- `docs/api/` — API reference, generated from docstrings by mkdocstrings
+
+`internal/` is **not** published: `internal/roadmap.md` is the library roadmap and `internal/notes/` holds frozen design and migration notes. `BENCHMARKS.md` at the root is the benchmark and paper roadmap.
+
+Zensical publishes everything under `docs/` and has no exclusion mechanism, which is why unpublished material lives outside that tree rather than behind a config key.
+
+Build the site with `uv run --only-group docs zensical build`, or `serve` for a live preview.
 
 # Tech stack
 
@@ -62,7 +71,9 @@ Linux uses a built OpenBLAS; macOS uses Apple's Accelerate framework. Windows is
 - Always run unit tests after a change touching the IR, AD, or codegen paths: `uv run pytest -n=auto`.
 - Code should resemble tinygrad's style — simple, dense, every line earns its place. No speculative abstractions.
 - Don't introduce `anvil`, `tinygrad`, or `torch` imports. If a test workload needs PyTorch checkpoints, use `alloy.utils.load_torch_state_dict` instead of adding torch as a dependency.
-- Update `docs/` when changing IR-facing behavior or the codegenerated ABI.
+- Update `docs/` when changing IR-facing behavior or the generated ABI. A new public name needs a docstring — the API reference is generated from them, and `tests/test_import_boundaries.py` pins the public surface.
+- Every module carries a one-line docstring saying what it owns, and every module has a layer in `tests/test_layering.py`. Imports go down, never up; the two sanctioned exceptions are written down in `docs/how_it_works/architecture.md`.
+- Prefer the plainest accurate words in prose, comments and docs. "The number stops the check from ever failing" beats "the gate is vacuous". Spell out an acronym on first use unless it is standard outside the field.
 - Correctness checks have two homes and each belongs in exactly one. `tests/` covers alloy itself — IR, AD, codegen, solver plumbing — and must never import `benchmarks.problems`; import `benchmarks.harness` only to test the harness itself. A benchmark problem's own input data, formulation, parameter layout, constant pins, and backend agreement belong to that problem, in `benchmarks/problems/<problem>/checks.py`, where they gate the measurement. Benchmarks churn with the workload roadmap; tests must not. When a check could sit on either side, ask whether retiring the problem would make it meaningless — if so it belongs to the problem.
 - Never write down a commit hash made on the current branch — not in code, comments, docs, tests, or commit messages. Branches land through `wt merge`, which squashes them into a single new commit on the default branch, so every hash created while working stops existing the moment the work merges and the reference is left pointing at nothing. Only hashes already on the default branch are safe to cite. To point at work done on the branch, describe it instead: name the file, function, or change.
 - Never let a benchmark be the only thing exercising an IR, AD, or codegen path. When it is, copy a small self-contained reproduction into `tests/` (differential against an unrolled or NumPy reference) before changing or retiring the benchmark. Prove every new benchmark gate can actually fail by perturbing what it checks; `benchmarks/README.md` documents how the gates are wired.

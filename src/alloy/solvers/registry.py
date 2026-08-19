@@ -1,6 +1,6 @@
 """Solver plugin discovery and protocol validation.
 
-The plugin contract (see ``docs/solver_plugins.md``) has two halves:
+The plugin contract (see ``docs/dev/solver_plugins.md``) has two halves:
 
 - **packaging metadata** — where the vendored native library and C headers
   live, and how to link them (``lib_stem``, ``link_flags``, ``header``,
@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-  from alloy.codegen.solver_c import SolverWrapperCtx
+  from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
 
 SOLVER_PLUGIN_PROTOCOL_VERSION = 4
@@ -54,7 +54,7 @@ class SolverBackend(Protocol):
   def include_dir(self) -> Path: ...
 
   def render_wrapper(self, fun: Function, ctx: SolverWrapperCtx) -> list[str]:
-    """Emit the C wrapper for one ``SolverFunction`` (see docs/solver_plugins.md).
+    """Emit the C wrapper for one ``SolverFunction`` (see docs/dev/solver_plugins.md).
 
     Must define ``static void <ctx.raw_symbol>(...)`` with the descriptor's
     ``in*``/``out*`` signature plus a trailing ``double* w``, drive the solver's

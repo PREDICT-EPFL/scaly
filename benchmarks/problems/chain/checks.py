@@ -8,7 +8,7 @@ closed-loop episode's shapes. They run before any timing is recorded, via
 They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite
 covers Alloy's core and must not depend on a benchmark problem. The IR/AD/codegen
 behaviours these touch have self-contained reproductions in
-``tests/alloy/test_stage_transcription.py`` and ``tests/alloy/test_alloy_sparsity.py``,
+``tests/integration/test_stage_transcription.py`` and ``tests/ad/test_sparsity.py``,
 so this problem can be retired without dropping compiler coverage.
 """
 
@@ -18,7 +18,8 @@ from collections.abc import Callable, Iterator
 
 import numpy as np
 
-from alloy.toolchain import solver_loadable
+import alloy as al
+from alloy.solvers.paths import solver_loadable
 from benchmarks.problems.chain import (
   END_REF,
   NU,
@@ -56,8 +57,8 @@ def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
   """Dense and sparse equality Jacobians agree with CasADi and with the dense reference."""
   for n_masses, horizon in ((3, 2), (5, 3)):
     fn = chain_eq_function(n_masses, horizon)
-    dense = fn.factory(f"chain_dense_M{n_masses}_N{horizon}", ["z", "p"], ["jac:eq:z"])
-    sparse = fn.factory(f"chain_sparse_M{n_masses}_N{horizon}", ["z", "p"], ["spjac:eq:z"])
+    dense = fn.factory(f"chain_dense_M{n_masses}_N{horizon}", ["z", "p"], [al.jac("eq", "z")])
+    sparse = fn.factory(f"chain_sparse_M{n_masses}_N{horizon}", ["z", "p"], [al.spjac("eq", "z")])
     ca_dense = ca_chain_eq_jac(n_masses, horizon)
     zv, pv = sample_inputs(n_masses, horizon, seed=11)
 
@@ -112,7 +113,7 @@ def check_one_reference_for_every_end_mass_term() -> None:
   n_masses, horizon = 5, 4
   nz = n_state(n_masses) + NU
   end = 3 * (n_masses - 2)
-  grad = chain_objective_fn(n_masses, horizon).factory(f"chain_obj_grad_M{n_masses}_N{horizon}", ["z"], ["grad:f:z"])
+  grad = chain_objective_fn(n_masses, horizon).factory(f"chain_obj_grad_M{n_masses}_N{horizon}", ["z"], [al.grad("f", "z")])
 
   z = np.zeros(n_dec(n_masses, horizon))
   for stage in range(horizon + 1):
@@ -225,7 +226,7 @@ def check_recorded_scene() -> None:
   """The runner feeds the 3D scene builders: this problem's end-mass reference once, and on every
   state that has one, the applied control plus the open-loop plan behind it.
 
-  The builders are generic geometry covered by ``tests/alloy/test_benchmark_recording.py``;
+  The builders are generic geometry covered by ``tests/viz/test_recording.py``;
   what belongs here is that the chain runner calls them with the chain's own data.
   """
   import tempfile

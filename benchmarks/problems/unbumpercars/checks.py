@@ -8,8 +8,8 @@ degree, and the exact-Hessian path over closed-loop samples. They run before any
 They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite
 covers Alloy's core and must not depend on a benchmark problem. The sparse Lagrangian
 Hessian and CasADi-differential behaviours these lean on have self-contained
-reproductions in ``tests/alloy/test_alloy_sparsity.py`` and
-``tests/alloy/test_factory_casadi.py``.
+reproductions in ``tests/ad/test_sparsity.py`` and
+``tests/function/test_factory.py``.
 """
 
 from __future__ import annotations
@@ -477,7 +477,7 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
 
 def run_checks() -> Iterator[tuple[str, str]]:
   """Yield ``(name, outcome)`` for each gate; ``outcome`` is "ok", "skipped: ..." or raises."""
-  from alloy.toolchain import solver_loadable
+  from alloy.solvers.paths import solver_loadable
 
   have_ipopt = solver_loadable("ipopt")
   try:

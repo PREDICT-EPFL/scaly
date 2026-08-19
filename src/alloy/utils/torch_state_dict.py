@@ -1,3 +1,5 @@
+"""Read a PyTorch ``.pt`` checkpoint into NumPy arrays, so a workload can use one without torch."""
+
 from __future__ import annotations
 
 import pickle

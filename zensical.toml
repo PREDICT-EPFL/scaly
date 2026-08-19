@@ -1,0 +1,117 @@
+[project]
+site_name = "alloy"
+site_description = "A symbolic compiler for optimal control: write models in Python, ship them as C"
+repo_url = "https://github.com/PREDICT-EPFL/alloy"
+repo_name = "PREDICT-EPFL/alloy"
+extra_javascript = [
+    "docs/javascripts/mathjax.js",
+    "https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js",
+]
+# Zensical publishes everything under docs/, with no exclusion mechanism. The repository's own
+# record — the roadmap and the frozen design notes — therefore lives in internal/ at the root,
+# outside this tree, rather than relying on a config key to keep it off the site.
+nav = [
+    { "Home" = "index.md" },
+    { "User Guide" = [
+        { "Installation" = "guide/installation.md" },
+        { "Getting Started" = "guide/getting_started.md" },
+        { "Building Functions" = "guide/functions.md" },
+        { "Derivatives" = "guide/derivatives.md" },
+        { "Sparsity" = "guide/sparsity.md" },
+        { "Solvers" = "guide/solvers.md" },
+        { "Solver Backends" = "guide/solver_backends.md" },
+        { "Code generation" = "guide/codegen.md" },
+        { "Visualization" = "guide/visualization.md" },
+        { "Environment Variables" = "guide/env_vars.md" },
+    ] },
+    { "How It Works" = [
+        { "Architecture" = "how_it_works/architecture.md" },
+        { "The Expression Dialect" = "how_it_works/expr_ir.md" },
+        { "The Program Dialect" = "how_it_works/program_ir.md" },
+        { "Lowering and Optimization" = "how_it_works/lowering.md" },
+        { "Differentiation" = "how_it_works/autodiff.md" },
+        { "The C ABI" = "how_it_works/c_abi.md" },
+        { "Solvers" = "how_it_works/solvers.md" },
+        { "Next to its Neighbours" = "how_it_works/comparison.md" },
+    ] },
+    { "Benchmark Results" = [
+        { "Overview" = "results/index.md" },
+        { "Scalability Sweep" = "results/scalability.md" },
+    ] },
+    { "Developer Guide" = [
+        { "Contributing" = "dev/contributing.md" },
+        { "Conventions" = "dev/conventions.md" },
+        { "Solver Plugins" = "dev/solver_plugins.md" },
+        { "Versioning" = "dev/versioning.md" },
+        { "Fuzzing" = "dev/fuzzing.md" },
+    ] },
+    { "API Reference" = [
+        { "Overview" = "api/index.md" },
+        { "Core" = "api/core.md" },
+        { "Building Functions" = "api/functions.md" },
+        { "Differentiation" = "api/ad.md" },
+        { "Code Generation" = "api/codegen.md" },
+        { "Solvers" = "api/solvers.md" },
+        { "Visualization" = "api/viz.md" },
+    ] },
+]
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "blue grey"
+accent = "amber"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "amber"
+accent = "deep orange"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.theme]
+features = [
+    "content.code.copy",
+    "content.code.annotate",
+    "navigation.sections",
+    "navigation.tabs",
+    "navigation.top",
+    "navigation.instant",
+    "search.highlight",
+    "search.suggest",
+    "toc.follow",
+]
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "google"
+show_source = true
+show_root_heading = true
+show_root_full_path = false
+show_signature_annotations = true
+separate_signature = true
+members_order = "source"
+filters = ["!^_"]
+
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.md_in_html]
+[project.markdown_extensions.pymdownx.details]
+[project.markdown_extensions.pymdownx.superfences]
+custom_fences = [
+    { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.arithmatex]
+generic = true
+[project.markdown_extensions.tables]
+[project.markdown_extensions.toc]
+permalink = true

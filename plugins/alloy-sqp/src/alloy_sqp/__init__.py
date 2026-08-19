@@ -7,7 +7,7 @@ from alloy_piqp import include_dir, lib_dir
 from .external import external_nlp
 
 if TYPE_CHECKING:
-  from alloy.codegen.solver_c import SolverWrapperCtx
+  from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
 
 

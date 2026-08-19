@@ -19,8 +19,8 @@ from dataclasses import dataclass
 import numpy as np
 
 import alloy as al
-from alloy.codegen.c import render_c_source
-from alloy.expr import topo
+from alloy.codegen.aot import render_c_source
+from alloy.ir.expr import topo
 
 NX = 4
 NU = 2

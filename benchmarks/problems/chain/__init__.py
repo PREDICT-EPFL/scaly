@@ -158,7 +158,7 @@ def chain_eq_jac_dense_reference(n_masses: int, horizon: int, z: np.ndarray, p: 
   z, p = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64)
   if z.shape != (n_dec(n_masses, horizon),) or p.shape != (n_param(n_masses),):
     raise ValueError(f"invalid z/p shapes {z.shape} / {p.shape}")
-  stage = _eq_stage_fn(n_masses).factory(f"chain_stage_dense_ref_M{n_masses}", ["z", "xnext", "params"], ["jac:eq:z", "jac:eq:xnext"])
+  stage = _eq_stage_fn(n_masses).factory(f"chain_stage_dense_ref_M{n_masses}", ["z", "xnext", "params"], [al.jac("eq", "z"), al.jac("eq", "xnext")])
   dense = np.zeros((nx * (horizon + 1), z.size), dtype=np.float64)
   dense[:nx, :nx] = np.eye(nx)
   for i in range(horizon):

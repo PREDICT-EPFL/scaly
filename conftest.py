@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from alloy.toolchain import solver_diagnostic, solver_loadable  # noqa: E402 -- needs the path above
+from alloy.solvers.paths import solver_diagnostic, solver_loadable  # noqa: E402 -- needs the path above
 
 
 def pytest_collection_modifyitems(items) -> None:

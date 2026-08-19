@@ -1,6 +1,6 @@
 """``al.nlp(...)`` — build an opaque solver Function wrapping IPOPT.
 
-NLP shape (per ``docs/roadmap.md``)::
+NLP shape (see ``docs/guide/solvers.md``)::
 
     min   f(x, p)
     s.t.  h_eq(x, p) = 0
@@ -21,10 +21,10 @@ from typing import Any
 
 import numpy as np
 
-from ..expr import Expr, as_expr, concat
+from ..ir.expr import Expr, ExprOp, as_expr, concat
 from ..function import Function
-from ..ops import Ops
-from ..types import SparsityType
+from ..function.api import gradient, sparse_lagrangian_hessian, spjacobian
+from ..ir.types import SparsityType
 from ._oracle import collect_free_inputs
 from .registry import require_backend
 from .solver_function import SolverDescriptor, SolverFunction
@@ -33,7 +33,7 @@ IPOPT_INF = 2e19
 
 
 def _ensure_sym(name: str, value: Any) -> Expr:
-  if not isinstance(value, Expr) or value.op != Ops.INPUT:
+  if not isinstance(value, Expr) or value.op != ExprOp.INPUT:
     raise TypeError(f"NLP input {name!r} must be a symbolic Expr.sym, got {type(value).__name__}")
   if value.name is None:
     raise ValueError(f"NLP input {name!r} must have a non-empty name")
@@ -77,6 +77,24 @@ def nlp(
   name: str | None = None,
   options: dict[str, str | int | float] | None = None,
 ) -> SolverFunction:
+  """Build a nonlinear-program solver as a callable ``Function``.
+
+  Solves ``min f(x, p)`` subject to ``h_eq(x, p) = 0``, ``l_ineq <= g_ineq(x, p) <= u_ineq`` and
+  ``x_lb <= x <= x_ub``.
+
+  The oracles it needs — objective gradient, sparse constraint Jacobian, sparse Lagrangian
+  Hessian — are built through ``Function.factory``, the same machinery available to any user. The
+  returned ``SolverFunction`` takes ``x0``, ``lam_eq0``, ``lam_ineq0``, ``lam_box0`` and then
+  every free parameter, and returns ``x``, ``f``, the constraint values, and the multipliers.
+
+  See ``docs/guide/solvers.md``.
+
+  Args:
+    x: the decision variable, a rank-1 symbol.
+    p: optional parameter symbols; free parameters in the expressions are found automatically.
+    solver: the backend plugin — ``ipopt``, or ``sqp`` for the generated-C SQP solver.
+    options: backend settings, validated when the wrapper is generated.
+  """
   require_backend(solver, "nlp")
 
   x_sym = _ensure_sym("x", x)
@@ -165,39 +183,20 @@ def nlp(
     bound_names,
   )
 
-  grad_fn = base_fn.factory(
-    (name or "nlp") + "_grad",
-    list(base_input_names),
-    ["grad:f:" + x_name],
-  )
+  grad_fn = gradient(base_fn, x_name, "f", name=(name or "nlp") + "_grad", extra_inputs=param_names)
 
   jac_fn: Function | None
   if g_all is not None:
-    jac_fn = base_fn.factory(
-      (name or "nlp") + "_jac",
-      list(base_input_names),
-      ["spjac:g:" + x_name],
-    )
+    jac_fn = spjacobian(base_fn, x_name, "g", name=(name or "nlp") + "_jac", extra_inputs=param_names)
     jac_sparsity = jac_fn.output_sparsities[0]
     assert jac_sparsity is not None
   else:
     jac_fn = None
     jac_sparsity = SparsityType.empty((0, n))
 
-  if g_all is not None:
-    hess_fn = base_fn.factory(
-      (name or "nlp") + "_hess",
-      [x_name, "lam:f", "lam:g", *param_names],
-      ["sphess:gamma:" + x_name + ":" + x_name],
-      aux={"gamma": ["f", "g"]},
-    )
-  else:
-    hess_fn = base_fn.factory(
-      (name or "nlp") + "_hess",
-      [x_name, "lam:f", *param_names],
-      ["sphess:gamma:" + x_name + ":" + x_name],
-      aux={"gamma": ["f"]},
-    )
+  hess_fn = sparse_lagrangian_hessian(
+    base_fn, x_name, ["f", "g"] if g_all is not None else ["f"], name=(name or "nlp") + "_hess", extra_inputs=param_names
+  )
   hess_sparsity = hess_fn.output_sparsities[0]
   assert hess_sparsity is not None
 

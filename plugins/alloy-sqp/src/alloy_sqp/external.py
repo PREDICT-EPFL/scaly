@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from alloy.solvers.solver_function import ExternalOracle, SolverDescriptor, SolverFunction
-from alloy.types import SparsityType
+from alloy.ir.types import SparsityType
 
 
 def external_nlp(

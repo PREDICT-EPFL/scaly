@@ -1,0 +1,220 @@
+"""Import-layer discipline for ``src/alloy``.
+
+Every module has a layer (``docs/how_it_works/architecture.md``): a module may import modules in its own layer
+or below, never above. Two dicts hold the exceptions. ``SEAM`` is the one sanctioned upward edge —
+calling a ``Function`` JIT-compiles it. ``TOLERATED`` is the escape hatch for a violation being
+carried deliberately through a refactor in progress, and is empty; an entry there is a decision to
+make in the open, not a deferred import to leave lying around, and it is meant to go back to empty
+before the refactor lands. The remaining graph must also be acyclic:
+an import cycle that nobody recorded is what let the layout drift in the first place.
+
+Two limits worth knowing, because they bound what a green run means. The acyclicity check runs on
+the graph *minus* the recorded edges, so it says "the only cycles left are ones a recorded
+violation creates" — such a cycle disappears when its `TOLERATED` entry is fixed, which is why it
+is not also recorded separately. And this is a discipline over what the source says, not what the
+interpreter does: imports are read with ``ast`` (function-local ones included — deferring an
+import inside a function is the usual way a cycle gets hidden), while ``if TYPE_CHECKING:`` blocks, the implicit parent-package import,
+and dynamic loading (``EntryPoint.load`` in ``solvers/registry.py``) are not counted.
+"""
+
+from __future__ import annotations
+
+import ast
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+SRC = Path(__file__).resolve().parents[1] / "src" / "alloy"
+
+# Layer per module. Keys are today's module paths; the numbers are the target layout's, so a key
+# is renamed when its file moves but its layer only changes if the design changes.
+LAYERS: dict[str, int] = {
+  "alloy.utils": 0,
+  "alloy.utils.env": 0,
+  "alloy.utils.torch_state_dict": 0,
+  "alloy.ir": 1,
+  "alloy.ir.types": 1,
+  "alloy.ir.expr": 1,
+  "alloy.ir.match": 1,
+  "alloy.ir.program": 1,
+  "alloy.ir.program_spec": 1,
+  "alloy.ir.expr_spec": 1,
+  "alloy.ir.spec": 1,
+  "alloy.ir.text": 1,
+  "alloy.passes": 1,
+  "alloy.passes.expr": 2,
+  "alloy.ad.sparsity": 2,
+  "alloy.solvers.stats": 2,
+  "alloy.function": 3,
+  "alloy.function.model": 3,
+  "alloy.ad": 4,
+  "alloy.ad.derivatives": 4,
+  "alloy.ad.forward": 4,
+  "alloy.ad.reverse": 4,
+  "alloy.ad.sparse": 4,
+  # Layer 4, not the plan's 5: ``map_`` needs a ``Function``, and ``ad`` needs ``map_``.
+  "alloy.function.sugar": 4,
+  "alloy.function.api": 5,
+  "alloy.function.factory": 5,
+  "alloy.solvers": 5,
+  "alloy.solvers._oracle": 5,
+  "alloy.solvers.graph": 5,
+  "alloy.solvers.nlp": 5,
+  "alloy.solvers.paths": 5,
+  "alloy.solvers.qp": 5,
+  "alloy.solvers.registry": 5,
+  "alloy.solvers.solver_function": 5,
+  "alloy.passes.program": 6,
+  "alloy.passes.lowering": 6,
+  "alloy.codegen.abi": 7,
+  "alloy.codegen.jit": 7,
+  "alloy.codegen.toolchain": 7,
+  "alloy.codegen": 7,
+  "alloy.codegen.__main__": 7,
+  "alloy.codegen.aot": 7,
+  "alloy.codegen.c": 7,
+  "alloy.codegen.solver": 7,
+  "alloy.viz": 8,
+  "alloy.viz.graph": 8,
+  "alloy.viz.recording": 8,
+  "alloy.viz.serve": 8,
+  "alloy": 9,  # the curated public re-exports sit above everything they re-export
+}
+
+# The one upward import the architecture sanctions (docs/how_it_works/architecture.md, "Layers").
+SEAM: dict[tuple[str, str], str] = {
+  ("alloy.function.model", "alloy.codegen.jit"): "calling a Function JIT-compiles it",
+}
+
+# Violations the restructure has not reached yet. Shrinks every phase; empty when it is done.
+TOLERATED: dict[tuple[str, str], str] = {}
+
+
+def _modules() -> dict[str, Path]:
+  out: dict[str, Path] = {}
+  for path in sorted(SRC.rglob("*.py")):
+    rel = path.relative_to(SRC.parent).with_suffix("")
+    parts = rel.parts[:-1] if rel.name == "__init__" else rel.parts
+    out[".".join(parts)] = path
+  return out
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+  return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING")
+
+
+def _import_statements(node: ast.AST) -> list[ast.Import | ast.ImportFrom]:
+  found: list[ast.Import | ast.ImportFrom] = []
+  for child in ast.iter_child_nodes(node):
+    if isinstance(child, ast.If) and _is_type_checking(child.test):
+      for alt in child.orelse:
+        found += _import_statements(alt)
+      continue
+    if isinstance(child, ast.Import | ast.ImportFrom):
+      found.append(child)
+    found += _import_statements(child)
+  return found
+
+
+def _base_package(module: str, path: Path, level: int) -> str:
+  parts = module.split(".") if path.name == "__init__.py" else module.split(".")[:-1]
+  return ".".join(parts[: len(parts) - (level - 1)])
+
+
+def _edges() -> dict[tuple[str, str], list[int]]:
+  modules = _modules()
+  edges: dict[tuple[str, str], list[int]] = {}
+  for name, path in modules.items():
+    for stmt in _import_statements(ast.parse(path.read_text())):
+      if isinstance(stmt, ast.Import):
+        targets = [alias.name for alias in stmt.names]
+      else:
+        base = stmt.module if stmt.level == 0 else ".".join(filter(None, (_base_package(name, path, stmt.level), stmt.module)))
+        # Charge the most specific module the statement names: ``from .solvers import stats``
+        # is an edge to ``stats``, not to the package, which nobody is charged for.
+        targets = [sub if (sub := f"{base}.{alias.name}") in modules else base for alias in stmt.names]
+      for target in targets:
+        if target in modules and target != name:
+          edges.setdefault((name, target), []).append(stmt.lineno)
+  return edges
+
+
+def _cycle(edges: set[tuple[str, str]]) -> list[str] | None:
+  graph: dict[str, list[str]] = {}
+  for src, dst in sorted(edges):
+    graph.setdefault(src, []).append(dst)
+  done: set[str] = set()
+  for start in sorted(graph):
+    stack = [start]
+    on_stack = {start}
+    while stack:
+      node = stack[-1]
+      if node in done:
+        stack.pop()
+        on_stack.discard(node)
+        continue
+      pending = [n for n in graph.get(node, ()) if n not in done]
+      if not pending:
+        done.add(node)
+        stack.pop()
+        on_stack.discard(node)
+        continue
+      nxt = pending[0]
+      if nxt in on_stack:
+        return [*stack[stack.index(nxt) :], nxt]
+      stack.append(nxt)
+      on_stack.add(nxt)
+  return None
+
+
+@pytest.mark.parametrize("module", sorted(LAYERS))
+def test_module_imports_standalone(module: str) -> None:
+  """The runtime counterpart of the table above, and the half it cannot see: a module that is
+  imported first must not deadlock on a half-initialized one. Package ``__init__`` execution is
+  what makes this different from the static check — moving a file can break it."""
+  proc = subprocess.run([sys.executable, "-c", f"import {module}"], check=False, capture_output=True, text=True)
+  assert proc.returncode == 0, f"importing {module} first fails:\n{proc.stderr}"
+
+
+def test_layer_table_covers_every_module() -> None:
+  missing = sorted(set(_modules()) - set(LAYERS))
+  extra = sorted(set(LAYERS) - set(_modules()))
+  assert not missing, f"new modules need a layer in LAYERS: {missing}"
+  assert not extra, f"LAYERS names modules that no longer exist: {extra}"
+
+
+def test_no_upward_imports() -> None:
+  recorded = set(SEAM) | set(TOLERATED)
+  bad = [
+    f"{src} -> {dst} (layer {LAYERS[src]} -> {LAYERS[dst]}, line {lines[0]})"
+    for (src, dst), lines in _edges().items()
+    if (src, dst) not in recorded and LAYERS[dst] > LAYERS[src]
+  ]
+  assert not bad, "imports from a higher layer:\n  " + "\n  ".join(sorted(bad))
+
+
+def test_no_import_cycles() -> None:
+  edges = {edge for edge in _edges() if edge not in SEAM and edge not in TOLERATED}
+  cycle = _cycle(edges)
+  assert cycle is None, "import cycle outside the recorded exceptions: " + " -> ".join(cycle or ())
+
+
+def test_recorded_exceptions_still_exist() -> None:
+  edges = set(_edges())
+  stale = sorted(f"{src} -> {dst}" for src, dst in (*SEAM, *TOLERATED) if (src, dst) not in edges)
+  assert not stale, "these edges are gone; drop them from SEAM/TOLERATED:\n  " + "\n  ".join(stale)
+
+
+def test_tolerated_violations_are_still_violations() -> None:
+  """An entry that stopped being an upward edge would go on suppressing the cycle check for free."""
+  legal = sorted(f"{src} -> {dst}" for src, dst in TOLERATED if LAYERS[dst] <= LAYERS[src])
+  assert not legal, "these edges no longer break the layering; drop them from TOLERATED:\n  " + "\n  ".join(legal)
+
+
+def test_each_seam_is_a_single_import() -> None:
+  """The plan sanctions *one* named seam per pair, not a habit of reaching upward."""
+  edges = _edges()
+  scattered = sorted(f"{src} -> {dst} at lines {edges[src, dst]}" for src, dst in SEAM if len(edges[src, dst]) > 1)
+  assert not scattered, "a sanctioned seam is one import statement:\n  " + "\n  ".join(scattered)

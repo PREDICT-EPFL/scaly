@@ -5,10 +5,6 @@ from __future__ import annotations
 import ctypes
 import enum
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-  from .solver_function import SolverStatus
 
 ALLOY_SOLVER_STATS_VERSION = 3
 
@@ -44,6 +40,12 @@ STATS_FIELDS = (
 
 
 class AlloySolveStatus(enum.IntEnum):
+  """Backend-neutral solve outcome, as reported in the generated statistics struct.
+
+  Each backend maps its own native status onto these, so calling code does not have to know
+  which solver ran. ``OK`` and ``ACCEPTABLE`` are the successful ones.
+  """
+
   OK = 0
   ACCEPTABLE = 1
   MAX_ITER = 2
@@ -52,6 +54,20 @@ class AlloySolveStatus(enum.IntEnum):
   NUMERICS = 5
   USER_STOP = 6
   ERROR = 7
+
+
+@dataclass(frozen=True, slots=True)
+class SolverStatus:
+  code: int
+  name: str
+  iter: int = 0
+  stats: dict[str, int] | None = None
+  _ok: bool | None = None
+
+  @property
+  def ok(self) -> bool:
+    # code is the alloy status enum: OK == 0, ACCEPTABLE == 1.
+    return self.code in (0, 1) if self._ok is None else self._ok
 
 
 _CTYPE = {"int32_t": ctypes.c_int32, "double": ctypes.c_double}
@@ -92,8 +108,6 @@ class SolverStats:
     return cls(**{name: AlloySolveStatus(raw) if name == "status" else raw for name, _ in STATS_FIELDS if (raw := getattr(value, name)) is not None})
 
   def to_solver_status(self) -> SolverStatus:
-    from .solver_function import SolverStatus
-
     counts = {name: getattr(self, name) for name, _ in STATS_FIELDS if name.startswith("n_eval_")}
     return SolverStatus(
       code=int(self.status),

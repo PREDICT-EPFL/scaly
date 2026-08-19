@@ -8,7 +8,7 @@ from typing import Any, Protocol
 import numpy as np
 
 import alloy as al
-from alloy.codegen.c import render_c_module
+from alloy.codegen.aot import render_c_module
 from .common import (
   ClosedLoopConfig,
   CTFullWeights,
@@ -702,7 +702,7 @@ class AlloyDTCBFSafetyFilter:
     self._warm_compile()
 
   def _warm_compile(self) -> None:
-    from alloy.jit import CompiledFunction
+    from alloy.codegen.jit import CompiledFunction
 
     t0 = time.perf_counter()
     self.nlp._compiled = CompiledFunction(self.nlp)

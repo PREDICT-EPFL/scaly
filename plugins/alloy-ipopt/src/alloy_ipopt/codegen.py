@@ -1,10 +1,10 @@
 """IPOPT C wrapper template — the plugin half of alloy's solver codegen contract.
 
-Called by ``alloy.codegen.solver_c.render_solver_raw`` through the backend's
+Called by ``alloy.codegen.solver.render_solver_raw`` through the backend's
 ``render_wrapper`` hook. Emits the IPOPT eval callbacks bridging into the
 generated base/grad/jac/hess kernels plus a ``static void <ctx.raw_symbol>(...)``
 that builds the ``IpoptProblem``, runs ``IpoptSolve``, and fills
-``ctx.stats_symbol``. Contract: ``docs/solver_plugins.md``.
+``ctx.stats_symbol``. Contract: ``docs/dev/solver_plugins.md``.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-  from alloy.codegen.solver_c import SolverWrapperCtx
+  from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
   from alloy.solvers.solver_function import SolverDescriptor
 

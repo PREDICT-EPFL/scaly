@@ -1,3 +1,5 @@
+"""The recording browser: a dependency-free HTTP server over the JSON ``viz/recording.py`` writes."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ._recording import load_recordings, recording_path
+from .recording import load_recordings, recording_path
 
 _HTML = r"""<!doctype html>
 <html>

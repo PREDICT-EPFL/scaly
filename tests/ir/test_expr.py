@@ -1,0 +1,170 @@
+from __future__ import annotations
+
+import numpy as np
+
+import alloy as al
+from alloy.ir.expr import topo
+
+
+def test_elementwise_eval_and_topological_order() -> None:
+  x = al.sym("x", 3)
+  y = (x.sin() + x * x).sum()
+  f = al.Function("f", [x], [y], ["x"], ["y"])
+
+  np.testing.assert_allclose(f(np.array([1.0, 2.0, 3.0])), np.sin([1.0, 2.0, 3.0]).sum() + 14.0)
+
+  nodes = topo(f.outputs)
+  loc = {e.id: i for i, e in enumerate(nodes)}
+  assert nodes[-1].op == al.ExprOp.SUM
+  assert [e.op for e in nodes].count(al.ExprOp.INPUT) == 1
+  assert all(loc[arg.id] < loc[e.id] for e in nodes for arg in e.args)
+
+
+def test_common_ops_contains_modeling_basics() -> None:
+  for op in [
+    al.ExprOp.SIN,
+    al.ExprOp.COS,
+    al.ExprOp.TAN,
+    al.ExprOp.ATAN2,
+    al.ExprOp.SINH,
+    al.ExprOp.COSH,
+    al.ExprOp.TANH,
+    al.ExprOp.EXP,
+    al.ExprOp.LOG,
+    al.ExprOp.SQRT,
+    al.ExprOp.TRANSPOSE,
+    al.ExprOp.SLICE,
+    al.ExprOp.GATHER,
+    al.ExprOp.SCATTER,
+    al.ExprOp.CONCAT,
+    al.ExprOp.MATMUL,
+    al.ExprOp.CALL,
+  ]:
+    assert op in al.COMMON_OPS
+  assert al.ExprOp.SIN.value == "sin"
+
+
+def test_binary_nonlinear_method_helpers_eval() -> None:
+  x = al.sym("x", 3)
+  y = al.sym("y", 3)
+  atan = x.atan2(y)
+  mn = x.minimum(y)
+  mx = x.maximum(y)
+  f = al.Function("binary_helpers", [x, y], [atan, mn, mx], ["x", "y"], ["atan", "min", "max"])
+  xv = np.array([0.5, -1.0, 2.0])
+  yv = np.array([1.5, 2.0, -0.25])
+
+  atan_v, mn_v, mx_v = f(xv, yv)
+  np.testing.assert_allclose(atan_v, np.arctan2(xv, yv))
+  np.testing.assert_allclose(mn_v, np.minimum(xv, yv))
+  np.testing.assert_allclose(mx_v, np.maximum(xv, yv))
+  assert atan.type.diff
+  assert not mn.type.diff
+  assert not mx.type.diff
+
+
+def test_dot_sumsqr_and_norm_2() -> None:
+  x = al.sym("x", (2, 2))
+  f = al.Function("f", [x], [al.dot(x, x.T), x.sumsqr(), al.norm_2(x)], ["x"], ["dot", "sumsqr", "norm"])
+  xv = np.array([[1.0, 2.0], [3.0, 4.0]])
+
+  dot_val, sumsqr_val, norm_val = f(xv)
+  np.testing.assert_allclose(dot_val, np.dot(xv.reshape(-1), xv.T.reshape(-1)))
+  np.testing.assert_allclose(sumsqr_val, np.sum(xv * xv))
+  np.testing.assert_allclose(norm_val, np.linalg.norm(xv.reshape(-1)))
+
+  try:
+    _ = al.dot(al.sym("a", 2), al.sym("b", 3))
+  except ValueError as e:
+    assert "dot size mismatch" in str(e)
+  else:  # pragma: no cover
+    raise AssertionError("dot size mismatch should fail")
+
+
+def test_shape_checks_for_structural_ops() -> None:
+  x = al.sym("x", (2, 3))
+  y = al.sym("y", (4, 2))
+
+  try:
+    _ = x @ y
+  except ValueError as e:
+    assert "cannot matmul shapes (2, 3) and (4, 2)" in str(e)
+  else:  # pragma: no cover
+    raise AssertionError("invalid matmul should fail")
+
+  try:
+    _ = x.transpose((0, 0))
+  except ValueError as e:
+    assert "not a permutation" in str(e)
+  else:  # pragma: no cover
+    raise AssertionError("invalid transpose should fail")
+
+  try:
+    _ = al.concat([x, al.sym("z", (2, 4))], axis=0)
+  except ValueError as e:
+    assert "cannot concat shapes" in str(e)
+  else:  # pragma: no cover
+    raise AssertionError("invalid concat should fail")
+
+
+def test_debug_printing_uses_stable_topological_names() -> None:
+  x = al.sym("x", 2)
+  text = ((x + 1.0) * x).debug()
+
+  assert "%0 = input x : float64(2,)" in text
+  assert "add(%0, %1)" in text
+  assert text.endswith("outputs %3")
+
+
+def test_structural_equality_collapses_to_identity() -> None:
+  # Construction-time interning: two ``Expr``s with the same structural key are the same
+  # Python object, so structural equality is the same as ``is`` equality.
+  x0 = al.sym("x", 2)
+  x1 = al.sym("x", 2)
+  y = al.sym("y", 2)
+
+  assert x0 is x1
+  assert x0.id == x1.id
+  assert x0.structurally_equal(x1)
+  assert x0.structural_hash() == x1.structural_hash()
+  assert x0 is not y
+  assert not x0.structurally_equal(y)
+
+
+def test_differentiability_metadata_propagates_through_exprs() -> None:
+  x = al.sym("x", 3)
+  p = al.sym("p", 3, diff=False)
+  c = al.const([1.0, 2.0, 3.0])
+
+  assert x.type.diff
+  assert not p.type.diff
+  assert not c.type.diff
+  assert (x + c).type.diff
+  assert not (p + c).type.diff
+  assert x.reshape((3, 1)).T.type.diff
+  assert x.gather([2, 0]).type.diff
+  assert al.scatter(p.gather([1, 2]), [0, 2], 3).type.diff is False
+  assert al.stack([p, c]).type.diff is False
+  assert al.concat([x[:1], p[:1]]).type.diff
+  assert not x.floor().type.diff
+  assert not al.minimum(x, p).type.diff
+
+  u = al.sym("u", 3)
+  inner = al.Function("inner", [u], [u * u], ["u"], ["y"])
+  (diff_call,) = inner.call([x])
+  (const_call,) = inner.call([c])
+  assert diff_call.type.diff
+  assert not const_call.type.diff
+
+
+def test_mixed_lowering_hints_survive_expr_graph() -> None:
+  x = al.sym("x", 3)
+  scalar_region = (x.sin() + x * x).scalar()
+  block_region = (al.const(np.eye(3)) @ x).block()
+  opaque_region = (x + 1.0).opaque()
+  f = al.Function("mixed", [x], [scalar_region + block_region + opaque_region], ["x"], ["y"])
+
+  lowerings = [e.lowering for e in topo(f.outputs) if e.lowering != "auto"]
+  assert "scalar" in lowerings
+  assert "block" in lowerings
+  assert "opaque" in lowerings

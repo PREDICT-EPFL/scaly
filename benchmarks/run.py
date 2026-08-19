@@ -16,9 +16,9 @@ if str(ROOT) not in sys.path:
 import numpy as np
 
 import alloy as al
-from alloy.codegen.c import render_c_module
-from alloy.codegen.solver_c import solver_compile_flags
-from alloy.toolchain import solver_loadable
+from alloy.codegen.aot import render_c_module
+from alloy.solvers.graph import solver_compile_flags
+from alloy.solvers.paths import solver_loadable
 from benchmarks.harness import SMOKE_RESULTS, SWEEP_RESULTS, closed_loop_results_root, gbench, solver_oracle_name
 from benchmarks.harness.closed_loop import run as run_closed_loop
 from benchmarks.harness.recording import layout_path

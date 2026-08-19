@@ -1,7 +1,7 @@
 """Opaque solver wrapper around an Alloy ``Function``.
 
 A :class:`SolverFunction` is a real :class:`alloy.Function` whose outputs are
-``Ops.SOLVER_CALL`` expression nodes. That means it can be:
+``ExprOp.SOLVER_CALL`` expression nodes. That means it can be:
 
 - called directly from Python (``solver_function(...)`` returns a dict of
   numpy arrays, like before);
@@ -27,24 +27,10 @@ from typing import Any
 
 import numpy as np
 
-from ..expr import Expr
+from ..ir.expr import Expr, ExprOp
 from ..function import Function
-from ..ops import Ops
-from ..types import SparsityType, TensorType
-
-
-@dataclass(frozen=True, slots=True)
-class SolverStatus:
-  code: int
-  name: str
-  iter: int = 0
-  stats: dict[str, int] | None = None
-  _ok: bool | None = None
-
-  @property
-  def ok(self) -> bool:
-    # code is the alloy status enum (stats.py): OK == 0, ACCEPTABLE == 1.
-    return self.code in (0, 1) if self._ok is None else self._ok
+from ..ir.types import SparsityType, TensorType
+from .stats import SolverStats, SolverStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +59,7 @@ class ExternalOracle:
 class SolverDescriptor:
   """Everything a solver plugin's generated C wrapper needs to drive a solve.
 
-  Stored as a single attr on every ``Ops.SOLVER_CALL`` node so that nodes for
+  Stored as a single attr on every ``ExprOp.SOLVER_CALL`` node so that nodes for
   different outputs of the same solve share one identity. Frozen + identity
   hash (via ``id``) so it can live inside ``Expr.attrs`` without surprising
   structural equality.
@@ -134,7 +120,7 @@ class SolverDescriptor:
 
 
 class SolverFunction(Function):
-  """Function whose body is one ``Ops.SOLVER_CALL`` per output.
+  """Function whose body is one ``ExprOp.SOLVER_CALL`` per output.
 
   Built by :func:`alloy.qp` and :func:`alloy.nlp`; not constructed directly.
   Inherits all of ``Function``'s call-time behavior (JIT-as-default,
@@ -149,7 +135,7 @@ class SolverFunction(Function):
     args = tuple(input_exprs)
     output_exprs = [
       Expr(
-        Ops.SOLVER_CALL,
+        ExprOp.SOLVER_CALL,
         args,
         TensorType(shape, diff=False),
         attrs={"solver": descriptor, "output": i, "output_name": name},
@@ -159,8 +145,6 @@ class SolverFunction(Function):
     output_names = [n for n, _ in descriptor.output_signature]
     super().__init__(descriptor.name, input_exprs, output_exprs, input_names, output_names)
     self.last_status: SolverStatus | None = None
-    from .stats import SolverStats
-
     self.last_stats: SolverStats | None = None
 
   def __repr__(self) -> str:
@@ -201,12 +185,7 @@ class SolverFunction(Function):
     """
     ordered = self._resolve_inputs(args, kwargs)
     coerced = coerce_solver_inputs(self.descriptor, ordered)
-    from ..jit import CompiledFunction
-
-    compiled: CompiledFunction | None = self._compiled
-    if compiled is None:
-      compiled = CompiledFunction(self)
-      self._compiled = compiled
+    compiled = self._compile()
     outs = compiled.run(coerced)
     self.last_stats = compiled.solver_stats(self.name)
     self.last_status = self.last_stats.to_solver_status()

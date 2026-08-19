@@ -1,25 +1,72 @@
 # alloy
 
-A symbolic IR and code-generation framework for optimal control problems. Alloy expresses dynamics, costs, and constraints as named `Function`s over a sparse typed expression graph, builds CasADi-style derivative factories, lowers regions to scalar C or block kernels, and JITs the result through a universal C ABI compatible with AOT C++ consumers.
+**Write optimal-control models in Python. Ship them as C.**
+
+Alloy is a symbolic compiler for optimal control. You describe dynamics, costs and constraints as
+named functions over a typed expression graph; alloy differentiates them, exploits their sparsity,
+and generates standalone C that runs with no Python anywhere near it.
+
+```python
+import alloy as al
+
+@al.function("rosenbrock", {"x": 2})
+def rosenbrock(x):
+    return {"f": ((1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2).scalar()}
+
+rosenbrock([1.0, 2.0])                      # 100.0
+
+grad = al.gradient(rosenbrock, "x", "f")
+grad([1.0, 2.0])                            # array([-400.,  200.])
+```
+
+The first call compiled that function to C, built a shared library and cached it. There is no
+interpreter behind alloy — what you test from Python is the artifact you deploy.
+
+```bash
+uv run python -m alloy.codegen mymodule:rosenbrock -o generated/
+```
+
+## What it does
+
+- **Derivatives that stay small.** Gradients, Jacobians, Hessians and Lagrangian Hessians, dense or
+  sparse, as efficient and small as possible.
+- **Sparsity as a first-class property.** Structural patterns are derived symbolically, colored,
+  and turned into code that computes only the nonzeros — with the pattern carried into the
+  generated header.
+- **Structure that survives codegen.** codegenerating the same function evaluated in a loop preserves the loop through
+  differentiation and code generation, so a hundred-stage horizon produces roughly the code of a
+  one-stage horizon.
+- **Solvers as graph nodes.** `al.qp(...)` and `al.nlp(...)` return real functions, so a solver
+  can be nested inside a larger model and the whole thing compiles into one artifact that links
+  against PIQP or IPOPT directly.
+- **One C ABI.** A single CasADi-style signature per generated function, plus optional typed C++
+  wrappers over it.
+- **A compiler you can read.** Pure Python, NumPy as the only required runtime dependency, two
+  small intermediate representations, and a well-documented architecture.
+
+In our benchmarks, alloy matches CasADi SX on runtime while generating a fraction of the
+source — 78 KB against 4.5 MB at a 500-stage horizon — and runs a solver-in-the-loop safety filter
+2.8–9.0× faster, depending on the model, with identical IPOPT iteration counts. See
+[the results](docs/results/index.md).
 
 ## Status
 
-Experimental. Phases 0-4 of the roadmap are complete (symbolic core, sparse colored AD, MAP-based loop preservation, JIT-as-default execution). Phase 5 is in progress: PIQP and IPOPT ship as vendored shared libraries with `al.qp(...)` / `al.nlp(...)` opaque solver `Function`s wired on top via ctypes and generated-C solver wrappers for nested JIT/AOT use. Still open: sparse PIQP, warm-start handover, wheel repair/static native dependency cleanup, and end-to-end safety-filter assembly. See `docs/roadmap.md` and `docs/solvers.md`.
+Pre-1.0 and under active development. The API still moves; breaks are deliberate and documented,
+but they happen — see [Versioning](docs/dev/versioning.md).
 
-## Relationship to anvil
+Working today: the full expression set on the host, forward and reverse differentiation, colored
+sparse Jacobians and exact sparse Lagrangian Hessians through preserved `map` structure, and PIQP,
+IPOPT and a generated-C SQP solver drivable from inside a compiled graph.
 
-Alloy spun out of [anvil](https://github.com/PREDICT-EPFL/anvil) (a tinygrad-based AOT code-generation framework for optimal-control problems) in May 2026. The two projects share design lineage but no runtime code: alloy is pure-Python with NumPy as its only required dependency. While developing alloy, the anvil repository remains a useful reference for:
-
-- the SQP solver architecture (`src/anvil/optimization/`);
-- the multistage OCP formulation pattern (`src/anvil/multistage.py`);
-- the tracking-NMPC and unbumpercars example workloads;
-- tinygrad UOp internals and graph-rewriting techniques.
-
-If you encounter a design question alloy hasn't answered yet, the anvil source and its `docs/dev/` notes are often a good starting point — particularly `docs/dev/spjacobian_scalability.md`, `docs/dev/vmap.md`, `docs/dev/jit.md`, and `docs/dev/multistage.md`.
+Open: region formation from the scalar and block lowering hints, iterative rather than recursive
+passes, warm-start handover into PIQP, differentiating through a solve, and a GPU backend.
 
 ## Installation
 
-Requires Python 3.12+. A normal editable install works with only the Python toolchain:
+> [!NOTE]
+> Replace this with wheel installation instructions when available.
+
+Requirements:  Python 3.12 or newer, and a C compiler.
 
 ```bash
 git clone https://github.com/PREDICT-EPFL/alloy.git
@@ -27,48 +74,40 @@ cd alloy
 uv sync
 ```
 
-The solver bindings need native vendored libraries. When the required native toolchain is available, editable `uv sync` builds PIQP and IPOPT into their `plugins/alloy-{piqp,ipopt}/src/*/lib/` package directories; if the toolchain is missing, the editable install skips those libraries and solver calls/tests are unavailable. To require the native build (the CI path):
+The solver interfaces additionally need the vendored PIQP and IPOPT builds, which want a Fortran
+compiler and CMake:
 
 ```bash
 # macOS
 brew install gcc cmake
-
-# Linux (Debian/Ubuntu)
+# Debian / Ubuntu
 sudo apt-get install gfortran cmake build-essential
 
-ALLOY_BUILD_SOLVERS=required uv sync
+ALLOY_BUILD_SOLVERS=required uv sync     # 5-8 minutes cold
 ```
 
-Cold solver builds take ~5-8 minutes; subsequent syncs use the cached artifacts. `uv run python -m alloy.toolchain` reports the active compiler, cache directory, and vendored solver discovery state. Windows solver builds are not supported in v1 (open an issue if you need them).
+`uv run python -m alloy.codegen.toolchain` reports the active compiler, the cache directory and
+solver discovery. Windows is not supported in version 1. Full details in
+[Installation](docs/guide/installation.md).
 
-## Getting started
+## Documentation
 
-```python
-import alloy as al
+The [documentation](docs/index.md) is organized for two readers at once.
 
-@al.function("rosenbrock", {"x": 2})
-def rosenbrock(x):
-  return {"f": ((1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2).scalar()}
+| | |
+| --- | --- |
+| [User Guide](docs/guide/getting_started.md) | building functions, derivatives, sparsity, solvers, generating C |
+| [How It Works](docs/how_it_works/architecture.md) | the architecture, the two IRs, lowering, the ABI |
+| [Benchmark Results](docs/results/index.md) | measured against CasADi SX and MX, kept current |
+| [Developer Guide](docs/dev/contributing.md) | contributing, conventions, solver plugins, versioning |
+| [API Reference](docs/api/index.md) | the public surface, generated from source |
 
-# Build a gradient through the factory and JIT-call it.
-grad = rosenbrock.factory("rosenbrock_grad", ["x"], ["grad:f:x"])
-print(grad([1.0, 2.0]))  # -> array of two doubles
-```
+If you already know CasADi, JAX, tinygrad or MLIR, start with
+[Alloy next to its neighbours](docs/how_it_works/comparison.md): what alloy took from each, and
+where it deliberately differs.
 
-Functions are sparse-typed, derivatives are pulled through the factory (`jac:*`, `grad:*`, `hess:*`, `lam:*`), and the first call compiles the C source through a universal CasADi-style ABI. The resulting `.so`/`.dylib` is cached under `$XDG_CACHE_HOME/alloy/jit` or `~/.cache/alloy/jit` (override with `ALLOY_CACHE_DIR`).
-
-## Architecture
-
-See `docs/roadmap.md` for the design north star and milestone history. Key documents:
-
-- `docs/roadmap.md` — phased development plan, current status, exit criteria
-- `docs/naming.md` — project-name lineage, criteria, and the leading alternative
-- `docs/spec.md` — IR semantics, op set, ABI conventions
-- `docs/solvers.md` — QP/NLP interfaces (`al.qp`, `al.nlp`) and PIQP/IPOPT wiring
-- `docs/safety_filter.md` — Phase 5 driving workload
-- `docs/scalability.md` — benchmark results against CasADi SX/MX
-- `docs/vendored_solvers.md` — open issues around the vendored solver build
-- `docs/native_toolchain_exploration.md` — historical notes from the conda-prefix/delocate exploration
+`internal/` holds the library roadmap and frozen design notes — kept in the repository for the
+record, deliberately not published. `BENCHMARKS.md` is the benchmark and paper roadmap.
 
 ## License
 

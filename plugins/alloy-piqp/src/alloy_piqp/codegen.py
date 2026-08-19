@@ -1,9 +1,9 @@
 """PIQP C wrapper template — the plugin half of alloy's solver codegen contract.
 
-Called by ``alloy.codegen.solver_c.render_solver_raw`` through the backend's
+Called by ``alloy.codegen.solver.render_solver_raw`` through the backend's
 ``render_wrapper`` hook. Emits a ``static void <ctx.raw_symbol>(...)`` that
 calls the generated QP-data oracle, drives ``piqp_c`` (dense or sparse
-interface), and fills ``ctx.stats_symbol``. Contract: ``docs/solver_plugins.md``.
+interface), and fills ``ctx.stats_symbol``. Contract: ``docs/dev/solver_plugins.md``.
 """
 
 from __future__ import annotations
@@ -11,10 +11,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-  from alloy.codegen.solver_c import SolverWrapperCtx
+  from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
   from alloy.solvers.solver_function import SolverDescriptor
-  from alloy.types import SparsityType
+  from alloy.ir.types import SparsityType
 
 
 def _csc_tables(name: str, sp: SparsityType | None) -> list[str]:

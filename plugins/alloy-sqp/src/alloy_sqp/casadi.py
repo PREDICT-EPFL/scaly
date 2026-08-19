@@ -6,7 +6,7 @@ import tempfile
 
 import numpy as np
 
-from alloy.types import SparsityType
+from alloy.ir.types import SparsityType
 from .external import external_nlp
 
 

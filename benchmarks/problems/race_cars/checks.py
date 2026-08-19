@@ -9,7 +9,7 @@ same NLP. They run before any timing is recorded, via
 They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite
 covers Alloy's core and must not depend on a benchmark problem. Where one of these
 checks also pins an IR/AD/codegen behaviour, a minimal self-contained reproduction
-of that behaviour lives in ``tests/alloy/test_stage_transcription.py`` instead, so
+of that behaviour lives in ``tests/integration/test_stage_transcription.py`` instead, so
 this problem can be retired or reshaped without dropping compiler coverage.
 """
 
@@ -22,7 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
-from alloy.toolchain import solver_loadable
+import alloy as al
+from alloy.solvers.paths import solver_loadable
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
   CAR_WIDTH,
@@ -148,7 +149,7 @@ def check_transcription_parameter_layout() -> None:
 def check_default_constants() -> None:
   """Regression pin on the full-size Formula Student defaults; any constant edit changes these."""
   horizon = 1
-  fn = race_car_eq_function(horizon).factory("race_car_default_params_jac", ["z", "p"], ["jac:eq:z"])
+  fn = race_car_eq_function(horizon).factory("race_car_default_params_jac", ["z", "p"], [al.jac("eq", "z")])
   rng = np.random.default_rng(0)
   zv = rng.normal(size=NZ * (horizon + 1))
   pv = np.zeros(n_param(horizon))
@@ -232,7 +233,7 @@ def check_episode_artifacts() -> None:
 def check_recorded_scene_and_artifacts() -> None:
   """Both IPOPT oracle providers write the full artifact set and feed the scene builders.
 
-  The scene builders themselves are covered by ``tests/alloy/test_benchmark_recording.py`` (they
+  The scene builders themselves are covered by ``tests/viz/test_recording.py`` (they
   are generic geometry helpers with no problem coupling); what needs checking here is that this
   problem's runner calls them, once for the track and once per step for the two horizons.
   """
