@@ -18,13 +18,21 @@ from benchmarks.harness.recording import (
   CHAIN_COLORS,
   CHAIN_REFERENCE_COLORS,
   CONE_STYLES,
+  FURUTA_COLORS,
+  PROBLEM_DIRS,
   HORIZON_STYLES,
   UnbumpercarsRecorder,
+  ARM_FRAME,
+  PENDULUM_FRAME,
   CarShape,
   ChainPlan,
   ChainRecorder,
   ControlState,
+  FurutaPlan,
+  FurutaShape,
+  FurutaState,
   HorizonPath,
+  NpmpcRecorder,
   PlanarVehicleState,
   PointState3D,
   RaceCarRecorder,
@@ -36,6 +44,10 @@ from benchmarks.harness.recording import (
   chain_plan_scene,
   chain_reference_scene,
   chain_scene,
+  furuta_plan_scene,
+  furuta_scene,
+  furuta_static_scene,
+  furuta_tip,
   horizon_scene,
   planar_car_scene,
   layout_path,
@@ -45,7 +57,7 @@ from benchmarks.harness.recording import (
 
 
 def test_recording_schemas_are_strict_json_schemas() -> None:
-  for model in (RunMetadata, ScalarTelemetry, PlanarVehicleState, PointState3D, ControlState, HorizonPath, ChainPlan):
+  for model in (RunMetadata, ScalarTelemetry, PlanarVehicleState, PointState3D, ControlState, HorizonPath, ChainPlan, FurutaState, FurutaPlan):
     schema = model.model_json_schema()
     assert schema["type"] == "object"
     assert schema["additionalProperties"] is False
@@ -59,6 +71,7 @@ PROBLEM_TOPICS = {
   ChainRecorder: SHARED_TOPICS | {"/chain/point", "/chain/plan", "/scene/horizon"},
   RaceCarRecorder: SHARED_TOPICS | {"/planar/state", "/horizon", "/scene/horizon"},
   UnbumpercarsRecorder: SHARED_TOPICS | {"/planar/state"},
+  NpmpcRecorder: SHARED_TOPICS | {"/furuta/state", "/furuta/plan", "/scene/horizon"},
 }
 
 
@@ -81,7 +94,7 @@ def test_recorders_write_valid_mcaps_with_strict_schemas(tmp_path: Path) -> None
       if schema is not None and schema.encoding == "jsonschema":
         schemas[schema.name] = json.loads(schema.data)
 
-  paths = [tmp_path / f"{name}.mcap" for name in ("chain", "race_cars", "unbumpercars")]
+  paths = [tmp_path / f"{name}.mcap" for name in ("chain", "race_cars", "unbumpercars", "npmpc")]
   with ChainRecorder(paths[0]) as chain:
     harvest(chain)
     chain.record_metadata(RunMetadata(run_id="smoke", problem="chain", solver="ipopt", oracle="alloy", seed=42, dt=0.1))
@@ -109,6 +122,12 @@ def test_recorders_write_valid_mcaps_with_strict_schemas(tmp_path: Path) -> None
     unbumpercars.record_arena((0.0, 4.0, 0.0, 3.0))
     unbumpercars.record_planar([PlanarVehicleState(step=0, time_s=0.0, vehicle_id="0", x=1.0, y=2.0, yaw=0.2)])
 
+  with NpmpcRecorder(paths[3], shape=FurutaShape(arm_limit=2.0)) as npmpc:
+    harvest(npmpc)
+    npmpc.record_furuta_static()
+    npmpc.record_furuta(FurutaState(step=0, time_s=0.0, theta=np.pi, phi=0.0, torque=0.02))
+    npmpc.record_furuta_plan(FurutaPlan(step=0, time_s=0.0, theta=[np.pi, 3.0], phi=[0.0, -0.1]))
+
   for path in paths:
     data = path.read_bytes()
     assert len(data) > 8, path.name
@@ -121,6 +140,8 @@ def test_recorders_write_valid_mcaps_with_strict_schemas(tmp_path: Path) -> None
     "ControlState",
     "HorizonPath",
     "ChainPlan",
+    "FurutaState",
+    "FurutaPlan",
   } == schemas.keys()
   assert all(schema["type"] == "object" and schema["additionalProperties"] is False for schema in schemas.values())
 
@@ -404,6 +425,132 @@ def test_chain_plan_scene_draws_every_predicted_shape_and_the_end_mass_path() ->
   assert "entities=[]" in repr(chain_plan_scene(ChainPlan(step=0, time_s=0.0, n_masses=3, nodes=[])))
 
 
+def test_furuta_tip_agrees_with_the_transform_chain() -> None:
+  """The trail and the predicted horizon are drawn in the scene frame while the bodies are drawn in
+  their own, so `furuta_tip` has to land exactly where `scene -> arm -> pendulum` puts the rod's end.
+  If the two ever disagree the plan floats away from the pendulum it belongs to."""
+  shape = FurutaShape()
+
+  def through_transforms(theta: float, phi: float) -> np.ndarray:
+    about_x = np.array([[1.0, 0.0, 0.0], [0.0, np.cos(theta), -np.sin(theta)], [0.0, np.sin(theta), np.cos(theta)]])
+    about_z = np.array([[np.cos(phi), -np.sin(phi), 0.0], [np.sin(phi), np.cos(phi), 0.0], [0.0, 0.0, 1.0]])
+    in_arm = np.array([shape.arm_length, 0.0, 0.0]) + about_x @ np.array([0.0, 0.0, shape.pendulum_length])
+    return about_z @ in_arm + np.array([0.0, 0.0, shape.base_height + shape.shaft_height])
+
+  for theta, phi in ((0.0, 0.0), (np.pi, 0.0), (0.5 * np.pi, 0.0), (np.pi, 0.7), (2.3, -1.1)):
+    np.testing.assert_allclose(furuta_tip(theta, phi, shape), through_transforms(theta, phi), rtol=0.0, atol=1e-12)
+  # upright is above the arm tip and hanging is below it, which is the convention the cost assumes
+  assert furuta_tip(0.0, 0.0, shape)[2] > furuta_tip(np.pi, 0.0, shape)[2]
+
+
+def test_furuta_scene_puts_each_body_in_its_own_frame_and_the_trail_in_the_scene() -> None:
+  """The linkage moves by transform, so the rods are logged once per step in body coordinates; only
+  the tip history is absolute. The torque arrow rides the arm frame because it pushes tangentially."""
+  shape = FurutaShape()
+  trail = [(0.0, 0.0, 0.0), (0.01, 0.0, 0.0), (0.02, 0.0, 0.0)]
+  scene = repr(furuta_scene(FurutaState(step=1, time_s=0.02, theta=2.0, phi=-0.3, torque=0.03), shape=shape, trail=trail))
+  frames = re.findall(r'frame_id: "([^"]+)", id: "([^"]+)"', scene)
+  assert frames == [
+    (ARM_FRAME, "furuta/arm"),
+    (PENDULUM_FRAME, "furuta/pendulum"),
+    (ARM_FRAME, "furuta/torque"),
+    ("scene", "furuta/trail"),
+  ], frames
+  # each rod is drawn along its own frame's axis, centred half a length out from the joint
+  assert f"size: Some(Vector3 {{ x: {shape.arm_length}, y: {shape.rod_diameter}, z: {shape.rod_diameter} }})" in scene
+  assert f"position: Some(Vector3 {{ x: {0.5 * shape.arm_length}, y: 0.0, z: 0.0 }})" in scene
+  assert f"size: Some(Vector3 {{ x: {shape.rod_diameter}, y: {shape.rod_diameter}, z: {shape.pendulum_length} }})" in scene
+  assert f"position: Some(Vector3 {{ x: 0.0, y: 0.0, z: {0.5 * shape.pendulum_length} }})" in scene
+  # the tip marker sits at the far end of the pendulum, and the trail carries every logged point
+  assert f"position: Some(Vector3 {{ x: 0.0, y: 0.0, z: {shape.pendulum_length} }})" in scene
+  assert scene.count("Point3 {") == len(trail)
+  # no torque, no arrow; and one history point is not yet a trail
+  quiet = repr(furuta_scene(FurutaState(step=0, time_s=0.0, theta=np.pi, phi=0.0, torque=0.0), shape=shape, trail=trail[:1]))
+  assert "ArrowPrimitive" not in quiet and 'id: "furuta/trail"' not in quiet
+
+
+def test_furuta_scene_arrow_points_the_way_the_torque_pushes() -> None:
+  """The torque acts on the arm about the vertical, so in the arm frame it pushes tangentially: the
+  arrow must lie along +y for a positive torque and -y for a negative one, scaled by its magnitude."""
+  shape = FurutaShape(torque_scale=2.0)
+  for torque, expected in ((0.04, np.array([0.0, 1.0, 0.0])), (-0.04, np.array([0.0, -1.0, 0.0]))):
+    scene = repr(furuta_scene(FurutaState(step=0, time_s=0.0, theta=np.pi, phi=0.0, torque=torque), shape=shape))
+    quaternion = re.findall(r"orientation: Some\(Quaternion \{ x: (\S+), y: (\S+), z: (\S+), w: (\S+) \}\)", scene)[-1]
+    x, y, z, w = (float(value) for value in quaternion)
+    rotated = np.array([1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (x * z - y * w)])
+    np.testing.assert_allclose(rotated, expected, atol=1e-12)
+    assert f"shaft_length: {0.75 * shape.torque_scale * abs(torque)}" in scene
+  # the arrow starts at the arm tip, where the pendulum hangs
+  assert f"position: Some(Vector3 {{ x: {shape.arm_length}, y: 0.0, z: 0.0 }})" in repr(
+    furuta_scene(FurutaState(step=0, time_s=0.0, theta=np.pi, phi=0.0, torque=0.04), shape=shape)
+  )
+
+
+def test_furuta_static_scene_draws_the_rig_and_only_shows_the_arm_bound_when_there_is_one() -> None:
+  """The arm-angle bound is the constraint the single slack softens, so it belongs in the picture --
+  but only when the caller passes one, since the shape defaults to having none."""
+  shape = FurutaShape(arm_limit=2.0)
+  bounded = repr(furuta_static_scene(shape))
+  assert re.findall(r'frame_id: "[^"]+", id: "([^"]+)"', bounded) == ["furuta/base", "furuta/limits"]
+  # base and shaft, then one radial line per bound, at plus and minus the limit
+  assert bounded.count("CubePrimitive") == 2 and bounded.count("LinePrimitive") == 2
+  assert f"r: {FURUTA_COLORS['limit'][0]}, g: {FURUTA_COLORS['limit'][1]}, b: {FURUTA_COLORS['limit'][2]}" in bounded
+  reach = 1.25 * shape.arm_length
+  for sign in (-1.0, 1.0):
+    x, y = reach * float(np.cos(sign * shape.arm_limit)), reach * float(np.sin(sign * shape.arm_limit))
+    assert f"Point3 {{ x: {x}, y: {y}" in bounded, sign
+  assert re.findall(r'frame_id: "[^"]+", id: "([^"]+)"', repr(furuta_static_scene(FurutaShape()))) == ["furuta/base"]
+
+
+def test_furuta_plan_scene_draws_the_planned_tip_path_with_a_marker_per_node() -> None:
+  shape = FurutaShape()
+  plan = FurutaPlan(step=3, time_s=0.06, theta=[3.1, 2.8, 2.4], phi=[0.0, -0.1, -0.2])
+  scene = repr(furuta_plan_scene(plan, shape=shape))
+  assert 'frame_id: "scene", id: "furuta/plan"' in scene
+  assert scene.count("SpherePrimitive") == 3 and scene.count("LinePrimitive") == 1
+  x, y, z = furuta_tip(2.4, -0.2, shape)
+  assert f"Point3 {{ x: {x}, y: {y}, z: {z} }}" in scene
+  assert "entities=[]" in repr(furuta_plan_scene(FurutaPlan(step=0, time_s=0.0, theta=[], phi=[]), shape=shape))
+
+
+def test_npmpc_recorder_publishes_both_link_transforms_with_every_pose(tmp_path: Path) -> None:
+  """The rods are frame-locked, so a pose logged without its two transforms would draw the linkage
+  at the previous step's angles -- the same failure the per-car transform test guards against."""
+
+  class SpyChannel:
+    def __init__(self) -> None:
+      self.messages: list[tuple[int, object]] = []
+
+    def log(self, message, *, log_time: int) -> None:
+      self.messages.append((log_time, message))
+
+    def close(self) -> None:
+      pass
+
+  shape = FurutaShape()
+  with NpmpcRecorder(tmp_path / "npmpc.mcap", shape=shape) as recorder:
+    tf, scene = SpyChannel(), SpyChannel()
+    recorder._tf, recorder._scene = tf, scene  # ty: ignore[invalid-assignment]
+    recorder.record_furuta(FurutaState(step=0, time_s=0.0, theta=np.pi, phi=0.0, torque=0.0))
+    recorder.record_furuta(FurutaState(step=1, time_s=0.02, theta=3.0, phi=0.1, torque=0.01))
+
+  assert len(tf.messages) == 2 and [time for time, _ in tf.messages] == [time for time, _ in scene.messages]
+  transforms = repr(tf.messages[1][1])
+  assert transforms.count("FrameTransform {") == 2
+  height = shape.base_height + shape.shaft_height
+  assert (
+    f'parent_frame_id: "scene", child_frame_id: "{ARM_FRAME}", '
+    f"translation: Some(Vector3 {{ x: 0.0, y: 0.0, z: {height} }}), "
+    f"rotation: Some(Quaternion {{ x: 0.0, y: 0.0, z: {float(np.sin(0.05))}, w: {float(np.cos(0.05))} }})"
+  ) in transforms
+  # theta turns the pendulum about the arm's own longitudinal axis, so this rotation is about +x
+  assert (
+    f'parent_frame_id: "{ARM_FRAME}", child_frame_id: "{PENDULUM_FRAME}", '
+    f"translation: Some(Vector3 {{ x: {shape.arm_length}, y: 0.0, z: 0.0 }}), "
+    f"rotation: Some(Quaternion {{ x: {float(np.sin(1.5))}, y: 0.0, z: 0.0, w: {float(np.cos(1.5))} }})"
+  ) in transforms
+
+
 def test_track_scene_draws_the_center_loop_and_one_cube_per_cone() -> None:
   center_line = np.array([[0.0, 0.0], [10.0, 0.0], [10.0, 8.0], [0.0, 8.0]])
   cones = {"blue": np.array([[1.0, 2.0], [2.0, 3.0]]), "big_orange": np.array([[0.0, 0.0]]), "small_orange": np.zeros((0, 2))}
@@ -446,7 +593,7 @@ def test_arena_scene_adds_the_wall_margin_inset() -> None:
 
 
 def test_layouts_live_next_to_their_problem_and_parse_when_present() -> None:
-  paths = {problem: layout_path(problem) for problem in ("chain", "race_cars", "unbumpercars")}
+  paths = {problem: layout_path(problem) for problem in PROBLEM_DIRS}
   assert paths["unbumpercars"] == Path(__file__).resolve().parents[2] / "benchmarks/problems/unbumpercars/foxglove-layout.json"
   for problem, path in paths.items():
     assert path.parent.is_dir(), problem

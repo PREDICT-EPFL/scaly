@@ -107,6 +107,29 @@ class ChainPlan(_Schema):
   nodes: list[list[float]]
 
 
+class FurutaState(_Schema):
+  """One pose of a Furuta pendulum: the pendulum angle from upright, the arm angle, and the torque.
+
+  `theta` is zero upright and `pi` hanging, `phi` rotates the arm about the vertical, and `torque`
+  acts on the arm -- the same three numbers the controller's state and input are written in.
+  """
+
+  step: int = Field(ge=0)
+  time_s: float = Field(ge=0.0)
+  theta: float
+  phi: float
+  torque: float
+
+
+class FurutaPlan(_Schema):
+  """One solved horizon for a Furuta pendulum: the two angles at every node of the prediction."""
+
+  step: int = Field(ge=0)
+  time_s: float = Field(ge=0.0)
+  theta: list[float]
+  phi: list[float]
+
+
 CAR_COLORS = (
   (0.12, 0.47, 0.87),
   (0.89, 0.24, 0.20),
@@ -134,6 +157,19 @@ CHAIN_COLORS = {
 }
 # Marker colours for the labelled reference points, taken in the order they are handed over.
 CHAIN_REFERENCE_COLORS = ((0.95, 0.80, 0.20), (0.62, 0.45, 0.92), (0.20, 0.80, 0.85))
+# Furuta scene: the arm and the pendulum are the two moving bodies, so they get distinct colours,
+# and the arm-angle bound the slack softens is drawn in its own so an active bound is visible.
+FURUTA_COLORS = {
+  "base": (0.35, 0.38, 0.42),
+  "shaft": (0.55, 0.58, 0.62),
+  "arm": (0.20, 0.72, 0.95),
+  "pendulum": (1.00, 0.48, 0.10),
+  "tip": (0.96, 0.26, 0.21),
+  "torque": (0.18, 0.80, 0.44),
+  "trail": (0.60, 0.62, 0.70),
+  "plan": (0.95, 0.20, 0.70),
+  "limit": (0.90, 0.30, 0.30),
+}
 
 
 @dataclass(frozen=True)
@@ -570,6 +606,200 @@ def arena_scene(bounds: tuple[float, float, float, float], *, margin: float = 0.
   return SceneUpdate(entities=[SceneEntity(timestamp=_timestamp(0.0), frame_id="scene", id="arena/bounds", lines=lines)])
 
 
+ARM_FRAME = "furuta/arm"
+PENDULUM_FRAME = "furuta/pendulum"
+
+
+@dataclass(frozen=True)
+class FurutaShape:
+  """The pendulum's drawn geometry, in metres, plus how the torque arrow is scaled.
+
+  `arm_length` and `pendulum_length` are the physical lengths the dynamics use, so the picture is to
+  scale; the rest is depiction. `torque_scale` is metres of arrow per unit torque, so a caller that
+  wants a torque on its bound to draw a full-length arrow picks the scale from that bound.
+  """
+
+  arm_length: float = 0.0895
+  pendulum_length: float = 0.1378
+  base_radius: float = 0.05
+  base_height: float = 0.04
+  shaft_height: float = 0.06
+  rod_diameter: float = 0.008
+  tip_radius: float = 0.010
+  torque_scale: float = 1.2
+  arm_limit: float = 0.0
+
+
+def furuta_tip(theta: float, phi: float, shape: FurutaShape) -> tuple[float, float, float]:
+  """Where the pendulum's free end sits in scene coordinates.
+
+  The arm turns by `phi` about the vertical and the pendulum by `theta` about the arm's own axis,
+  so the tip is the arm tip plus the rod rotated out of vertical. Used for the trail and for the
+  predicted horizon, both of which are drawn in the scene frame rather than a body frame.
+  """
+  height = shape.base_height + shape.shaft_height
+  radial = shape.arm_length
+  # in the arm frame the rod points along +z at theta = 0 and -z hanging, tilting into -y as it falls
+  along, across = shape.pendulum_length * np.cos(theta), -shape.pendulum_length * np.sin(theta)
+  cos_phi, sin_phi = np.cos(phi), np.sin(phi)
+  return (
+    float(radial * cos_phi - across * sin_phi),
+    float(radial * sin_phi + across * cos_phi),
+    float(height + along),
+  )
+
+
+def _rod(length: float, axis: str, color: Color, diameter: float) -> CubePrimitive:
+  half = 0.5 * length
+  position = Vector3(x=half, y=0.0, z=0.0) if axis == "x" else Vector3(x=0.0, y=0.0, z=half)
+  size = Vector3(x=length, y=diameter, z=diameter) if axis == "x" else Vector3(x=diameter, y=diameter, z=length)
+  return CubePrimitive(pose=Pose(position=position, orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)), size=size, color=color)
+
+
+def furuta_static_scene(shape: FurutaShape) -> SceneUpdate:
+  """The parts that never move: the base, the vertical shaft, and the arm-angle bound.
+
+  The bound is the constraint the single slack softens, so drawing it makes an active bound visible
+  in the picture rather than only in the telemetry. `arm_limit` of zero leaves it out.
+  """
+  base = CubePrimitive(
+    pose=Pose(position=Vector3(x=0.0, y=0.0, z=0.5 * shape.base_height), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
+    size=Vector3(x=2.0 * shape.base_radius, y=2.0 * shape.base_radius, z=shape.base_height),
+    color=_color(FURUTA_COLORS["base"]),
+  )
+  shaft = CubePrimitive(
+    pose=Pose(
+      position=Vector3(x=0.0, y=0.0, z=shape.base_height + 0.5 * shape.shaft_height),
+      orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+    ),
+    size=Vector3(x=2.5 * shape.rod_diameter, y=2.5 * shape.rod_diameter, z=shape.shaft_height),
+    color=_color(FURUTA_COLORS["shaft"]),
+  )
+  entities = [SceneEntity(timestamp=_timestamp(0.0), frame_id="scene", id="furuta/base", cubes=[base, shaft])]
+  if shape.arm_limit:
+    height = shape.base_height + shape.shaft_height
+    reach = 1.25 * shape.arm_length
+    entities.append(
+      SceneEntity(
+        timestamp=_timestamp(0.0),
+        frame_id="scene",
+        id="furuta/limits",
+        lines=[
+          LinePrimitive(
+            type=LinePrimitiveLineType.LineStrip,
+            thickness=0.5 * shape.rod_diameter,
+            points=[
+              Point3(x=0.0, y=0.0, z=height),
+              Point3(x=reach * float(np.cos(sign * shape.arm_limit)), y=reach * float(np.sin(sign * shape.arm_limit)), z=height),
+            ],
+            color=_color(FURUTA_COLORS["limit"], 0.8),
+          )
+          for sign in (-1.0, 1.0)
+        ],
+      )
+    )
+  return SceneUpdate(entities=entities)
+
+
+def furuta_scene(
+  state: FurutaState | Mapping[str, Any],
+  *,
+  shape: FurutaShape = FurutaShape(),
+  trail: Sequence[tuple[float, float, float]] = (),
+) -> SceneUpdate:
+  """The two moving bodies plus the applied torque, each drawn in the frame that carries its pose.
+
+  The arm and the pendulum are frame-locked to `ARM_FRAME` and `PENDULUM_FRAME`, so the geometry is
+  logged once per step in body coordinates and the transforms do the moving. The torque arrow rides
+  the arm frame too, pointing along the arm's tangential direction, because that is the direction
+  the torque actually pushes. The tip trail is in the scene frame, since it is a history rather
+  than part of a body.
+  """
+  validated = FurutaState.model_validate(state)
+  timestamp = _timestamp(validated.time_s)
+  entities = [
+    SceneEntity(
+      timestamp=timestamp,
+      frame_id=ARM_FRAME,
+      id="furuta/arm",
+      cubes=[_rod(shape.arm_length, "x", _color(FURUTA_COLORS["arm"]), shape.rod_diameter)],
+    ),
+    SceneEntity(
+      timestamp=timestamp,
+      frame_id=PENDULUM_FRAME,
+      id="furuta/pendulum",
+      cubes=[_rod(shape.pendulum_length, "z", _color(FURUTA_COLORS["pendulum"]), shape.rod_diameter)],
+      spheres=[
+        SpherePrimitive(
+          pose=Pose(position=Vector3(x=0.0, y=0.0, z=shape.pendulum_length), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
+          size=Vector3(x=2.0 * shape.tip_radius, y=2.0 * shape.tip_radius, z=2.0 * shape.tip_radius),
+          color=_color(FURUTA_COLORS["tip"]),
+        )
+      ],
+    ),
+  ]
+  arrow = _vector_arrow(
+    (shape.arm_length, 0.0, 0.0),
+    (0.0, validated.torque, 0.0),
+    _color(FURUTA_COLORS["torque"]),
+    scale=shape.torque_scale,
+    shaft_diameter=shape.rod_diameter,
+  )
+  if arrow is not None:
+    entities.append(SceneEntity(timestamp=timestamp, frame_id=ARM_FRAME, id="furuta/torque", arrows=[arrow]))
+  if len(trail) > 1:
+    entities.append(
+      SceneEntity(
+        timestamp=timestamp,
+        frame_id="scene",
+        id="furuta/trail",
+        lines=[
+          LinePrimitive(
+            type=LinePrimitiveLineType.LineStrip,
+            thickness=0.4 * shape.rod_diameter,
+            points=[Point3(x=x, y=y, z=z) for x, y, z in trail],
+            color=_color(FURUTA_COLORS["trail"], 0.7),
+          )
+        ],
+      )
+    )
+  return SceneUpdate(entities=entities)
+
+
+def furuta_plan_scene(plan: FurutaPlan | Mapping[str, Any], *, shape: FurutaShape = FurutaShape()) -> SceneUpdate:
+  """The predicted horizon as the path the pendulum tip is planned to take, with a node marker each."""
+  validated = FurutaPlan.model_validate(plan)
+  points = [furuta_tip(theta, phi, shape) for theta, phi in zip(validated.theta, validated.phi, strict=True)]
+  if not points:
+    return SceneUpdate(entities=[])
+  rgb = FURUTA_COLORS["plan"]
+  return SceneUpdate(
+    entities=[
+      SceneEntity(
+        timestamp=_timestamp(validated.time_s),
+        frame_id="scene",
+        id="furuta/plan",
+        lines=[
+          LinePrimitive(
+            type=LinePrimitiveLineType.LineStrip,
+            thickness=0.5 * shape.rod_diameter,
+            points=[Point3(x=x, y=y, z=z) for x, y, z in points],
+            color=_color(rgb, 0.9),
+          )
+        ],
+        spheres=[
+          SpherePrimitive(
+            pose=Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
+            size=Vector3(x=shape.tip_radius, y=shape.tip_radius, z=shape.tip_radius),
+            color=_color(rgb, 0.35),
+          )
+          for x, y, z in points
+        ],
+      )
+    ]
+  )
+
+
 class Recorder:
   """What every episode records whatever the problem: the MCAP writer, the run metadata, the
   solver telemetry, the applied control, and the two scene topics all three problems draw on.
@@ -780,7 +1010,76 @@ class ChainRecorder(Recorder):
     self._static_scene.log(chain_reference_scene(references), log_time=0)
 
 
-PROBLEM_DIRS = {problem: problem for problem in ("chain", "race_cars", "unbumpercars")}
+class NpmpcRecorder(Recorder):
+  """Neural-process MPC: a 3D Furuta pendulum, its tip trail, and the predicted horizon.
+
+  This is a rotating linkage rather than a planar vehicle, so it subclasses `Recorder` directly:
+  the pose is two angles rather than a position and a yaw, and the geometry hangs off a
+  `scene -> arm -> pendulum` transform chain instead of one per-vehicle frame.
+  """
+
+  def __init__(
+    self,
+    path: Path | str,
+    *,
+    allow_overwrite: bool = False,
+    scene_center: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    shape: FurutaShape = FurutaShape(),
+  ):
+    self.shape = shape
+    super().__init__(path, allow_overwrite=allow_overwrite, scene_center=scene_center)
+
+  def _open_channels(self) -> None:
+    self._furuta = self._channel("/furuta/state", FurutaState)
+    self._plan = self._channel("/furuta/plan", FurutaPlan)
+    self._horizon_scene = self._scene_channel("/scene/horizon")
+    self._tip_history: list[tuple[float, float, float]] = []
+
+  def record_furuta_static(self) -> None:
+    self._static_scene.log(furuta_static_scene(self.shape), log_time=0)
+
+  def record_furuta(self, state: FurutaState | Mapping[str, Any]) -> FurutaState:
+    validated = FurutaState.model_validate(state)
+    log_time = _log_time(validated.time_s)
+    self._log(self._furuta, FurutaState, validated, log_time)
+    self._tip_history.append(furuta_tip(validated.theta, validated.phi, self.shape))
+    # The arm and pendulum entities are frame-locked, so their transforms go out with the scene
+    # they carry; a pose arriving without them would draw the linkage at the previous step's angles.
+    height = self.shape.base_height + self.shape.shaft_height
+    half_theta = 0.5 * validated.theta
+    self._tf.log(
+      FrameTransforms(
+        transforms=[
+          FrameTransform(
+            timestamp=_timestamp(validated.time_s),
+            parent_frame_id="scene",
+            child_frame_id=ARM_FRAME,
+            translation=Vector3(x=0.0, y=0.0, z=height),
+            rotation=_yaw_quaternion(validated.phi),
+          ),
+          FrameTransform(
+            timestamp=_timestamp(validated.time_s),
+            parent_frame_id=ARM_FRAME,
+            child_frame_id=PENDULUM_FRAME,
+            translation=Vector3(x=self.shape.arm_length, y=0.0, z=0.0),
+            # theta turns the pendulum about the arm's own axis, so this is a rotation about +x
+            rotation=Quaternion(x=float(np.sin(half_theta)), y=0.0, z=0.0, w=float(np.cos(half_theta))),
+          ),
+        ]
+      ),
+      log_time=log_time,
+    )
+    self._scene.log(furuta_scene(validated, shape=self.shape, trail=self._tip_history), log_time=log_time)
+    return validated
+
+  def record_furuta_plan(self, plan: FurutaPlan | Mapping[str, Any]) -> FurutaPlan:
+    validated = FurutaPlan.model_validate(plan)
+    self._log(self._plan, FurutaPlan, validated, _log_time(validated.time_s))
+    self._horizon_scene.log(furuta_plan_scene(validated, shape=self.shape), log_time=_log_time(validated.time_s))
+    return validated
+
+
+PROBLEM_DIRS = {problem: problem for problem in ("chain", "race_cars", "unbumpercars", "npmpc")}
 
 
 def layout_path(problem: str) -> Path:

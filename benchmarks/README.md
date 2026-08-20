@@ -4,7 +4,7 @@ This package owns Alloy's reproducible benchmark workloads and correctness-gated
 
 ## Layout
 
-- `problems/` contains importable chain-of-masses, race-car NMPC, and unbumpercars HCBF filter formulations.
+- `problems/` contains importable chain-of-masses, race-car NMPC, unbumpercars HCBF filter, and neural-process-MPC formulations.
 - `harness/` contains Google Benchmark wrapper generation, dense-reference checks, sweep mechanics, and provenance capture.
 - `run.py` is the entry point for CI smoke gates and scalability sweeps.
 
@@ -42,7 +42,13 @@ Smoke runs three groups, all on by default:
   degree, the discrete-MLP plant's three pieces and its reversed control order,
   both symbolic discrete-MLP prediction paths against a NumPy reference, per-step
   Alloy-vs-CasADi solution agreement on a binding state, and the default
-  exact-Hessian rollout. All three problems also gate the SQP column against the
+  exact-Hessian rollout; for `npmpc` the vendored checkpoint and reference episode,
+  every weight and bound read out of the reference implementation's own config file, the
+  parameter-tail order, the terminal Riccati weight, the transcribed constraint rows, the
+  closed-loop swing-up, the recorded scene, and a per-step cross-implementation comparison
+  against their released episode — [`problems/npmpc/README.md`](problems/npmpc/README.md)
+  records what that gate does and does not establish, and which perturbations it survives.
+  All four problems also gate the SQP column against the
   IPOPT column (`sqp_matches_ipopt`): the same smoke episode through both solvers,
   compared per step in applied control, planned trajectory, objective, and
   constraint violation, with tolerances chosen from measured healthy-step
@@ -51,7 +57,13 @@ Smoke runs three groups, all on by default:
   SQP robustness work consumes. Gates needing IPOPT or CasADi report `skipped: ...`
   rather than passing silently.
 - `benchmarks` — Python and compiled-C derivative kernels against a dense reference,
-  plus sparsity, workspace, and loop-preservation invariants.
+  plus sparsity, workspace, and loop-preservation invariants. For `npmpc` the
+  loop-preservation gate runs on two axes: the generated source must not grow with the
+  horizon (the decoder is scanned, not unrolled per stage) and must not grow with the
+  decoder width either, since the weights are read out of the parameter tail rather than
+  baked in as literals. Its dense reference comes from an unrolled twin of the same
+  formulation (`npmpc_eq_function_unrolled`), so the scanned kernel is checked against an
+  independent construction rather than against itself.
 - `solver_call` — the QP/IPOPT solver-call ABI, when vendored solver libraries
   are present.
 
@@ -65,6 +77,14 @@ and yields `(name, outcome)`, where `outcome` is `"ok"` or `"skipped: ..."` when
 required dependency is missing — a gate never reports success without having run.
 Checks raise (bare `assert` or `numpy.testing`) instead of returning a bool, so the
 failure message carries the offending values.
+
+Build a per-cell dense reference from the *stage* function, not by differentiating
+an unrolled twin of the whole formulation. The neural-process-MPC reference was
+written the second way first: at N = 100 it consumed 900 MB and never finished,
+where scattering per-stage blocks takes 2.2 ms at N = 100 against 25 s at N = 25
+and agrees with the unrolled version to 0.0 wherever that is affordable. It is
+also *more* independent of the kernel under test, not less, because it never
+builds the scanned graph at all.
 
 Confirm a new gate can actually fail, by perturbing the thing it checks and
 watching it fire. A gate that cannot fail is worse than no gate, because it reads
@@ -80,7 +100,7 @@ uv run python benchmarks/run.py sweep --workloads race_cars --sizes 1,5,10,50 --
 uv run python benchmarks/run.py sweep --out benchmarks/results/sweep/my-sweep.csv
 ```
 
-Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package/compiler versions, platform, Python, and timestamp. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=40, and unbumpercars C=8 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
+Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package/compiler versions, platform, Python, and timestamp. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=40, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
 
 All benchmark artifacts follow the same command-first layout:
 
@@ -93,6 +113,13 @@ benchmarks/results/
   smoke/closed-loop/<problem>/<solver>+<oracle>/  # short episodes, isolated from canonical artifacts
   smoke/solver_call/                 # generated solver-call smoke artifacts
 ```
+
+**Only harness numbers count.** Timing a backend from Python measures Python. A
+pre-sweep probe on the neural-process-MPC kernel called both backends through their
+Python bindings and reported roughly 4x against CasADi SX and 2x against MX; under
+the Google Benchmark harness the SX figure held and almost all of the MX margin
+turned out to be call overhead, leaving a tie. Treat a Python-level reading as a
+smoke test for whether a cell builds, never as a result.
 
 The doctrine is claims-first: broad sweeps establish scaling and canonical points support comparisons; correctness gates always run before speed is measured; every result carries enough provenance to reproduce it. See [BENCHMARKS.md §2](../BENCHMARKS.md#2-benchmark-suite) for the governing claim matrix.
 
@@ -121,6 +148,10 @@ uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipop
 uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle alloy
 uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle casadi
 uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver none
+uv run python benchmarks/run.py closed-loop --problem npmpc --solver ipopt --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem npmpc --solver ipopt --oracle casadi
+uv run python benchmarks/run.py closed-loop --problem npmpc --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem npmpc --solver sqp --oracle casadi
 ```
 
 The closed-loop interface selects the optimizer with `--solver` and the generated
@@ -204,6 +235,14 @@ the planar-vehicle machinery through `PlanarRecorder`). Channels register as the
 are opened, so an episode offers Foxglove only the topics its problem actually
 writes rather than a padded list with the other two problems' topics sitting empty.
 
+The neural-process MPC scene is the suite's only rotating linkage, so `NpmpcRecorder`
+subclasses `Recorder` directly rather than going through `PlanarRecorder`: the pose is
+two angles rather than a position and a yaw, and the arm and pendulum rods hang off a
+`scene → arm → pendulum` transform chain and are logged in body coordinates. The base,
+the shaft and the arm-angle bound the single slack softens go on `/scene/static`; the tip
+trail and the predicted tip path are in the `scene` frame, so `furuta_tip` and the
+transform chain have to agree, which `tests/viz/test_recording.py` pins.
+
 In the chain-of-masses scene the fixed wall anchor and the actuated end mass are picked out by
 colour, the applied control is an arrow on the end mass (the control *is* that mass's
 velocity), and the end mass keeps a trail. Its open-loop plan goes on
@@ -244,6 +283,7 @@ Canonical operating points are deterministic and intentionally modest:
 | chain of masses | `M=5`, controller `N=12`, 90 plant steps at 0.2 s (long enough to settle) | 3D chain, end-mass control arrow and trail, open-loop plan, end-mass reference marker |
 | race cars | controller `N=40`, one lap of `fsds_competition_1` (340 m at 0.05 s), IPOPT and SQP with two oracle providers | track, cones, planar vehicle, reference and predicted horizons |
 | unbumpercars HCBF | 8 cars, 200 plant steps at 0.1 s, seed 42, IPOPT and SQP with two oracle providers | planar cars with body and keep-out rings |
+| neural process MPC | controller `N=12`, 100 plant steps at 0.02 s from hanging, IPOPT and SQP with two oracle providers | 3D Furuta pendulum on a `scene → arm → pendulum` transform chain, tip trail, predicted tip path, arm-angle bound |
 
 The midpoint successful closed-loop oracle input is harvested for future
 Google Benchmark cells. Closed-loop runs are manual-only; CI keeps using the
@@ -256,6 +296,7 @@ faster correctness and code-size smoke gates.
 | chain of masses | number of masses | laopt/acados chain-mass formulation; `M=5` is the canonical point |
 | race cars | horizon | CasADi SX/MX; reference stages followed by symbolic vehicle parameters in `p` |
 | unbumpercars HCBF filter | number of cars | CasADi MX; neural weights followed by symbolic vehicle parameters and `dt` |
+| neural process MPC | horizon (`npmpc`, `npmpc_hess`) and decoder width (`npmpc_decoder`, `npmpc_decoder_hess`) | the Furuta-pendulum controller of *Neural Process Model Predictive Control*; a conditional-neural-process decoder evaluated at every horizon node, weights and latent code in the parameter tail. Formulation, vendored data, departures from the reference implementation, closed-loop numbers and the decoder-width study are in [`problems/npmpc/README.md`](problems/npmpc/README.md) |
 
 ### Race-car track data
 
@@ -286,6 +327,41 @@ sweep harness is where the steelmanned per-cell numbers belong. The
 `sqp+alloy` and `sqp+casadi` columns provide the controlled
 one-solver, two-oracle comparison; their telemetry separates FE, QP, and
 globalization time.
+
+### Neural-process-MPC solvers and oracles
+
+`problems/npmpc/closed_loop.py` owns the plant, the warm starts and the episode;
+`problems/npmpc/casadi_nlp.py` is the CasADi mirror, built from the same
+`ca_npmpc_pieces` the sweep kernels use and reading its bounds from the same two
+functions as the Alloy formulation, so the mirror cannot drift from it. One
+canonical episode — 100 steps at `dt = 0.02`, horizon 12, the trained 32×32
+decoder — on this machine:
+
+| column | mean solve | mean FE | FE share | mean iterations |
+|---|---|---|---|---|
+| `ipopt+alloy` | 3.85 ms | 1.53 ms | 40% | 10.07 |
+| `ipopt+casadi` | 17.34 ms | 12.93 ms | 75% | 10.07 |
+| `sqp+alloy` | **1.29 ms** | 0.66 ms | 51% | 4.67 |
+| `sqp+casadi` | 1.57 ms | 0.92 ms | 58% | 4.67 |
+
+**The `ipopt+casadi` column is not a fair baseline and no runtime claim rests on
+it.** `ca.nlpsol` interprets unless told to JIT, so as configured it compares a
+virtual machine against generated C — the same gap `race_cars` and `unbumpercars`
+have, left uniform with them until the harmonization in
+[BENCHMARKS.md §6](../BENCHMARKS.md#6-backlog) fixes all three together. All four
+combinations of `expand` and `jit` were measured first (the table is in
+`problems/npmpc/casadi_nlp.py`): compiled, unexpanded MX runs 5.37 ms per solve
+with 1.46 ms of function evaluation, so **against a compiled CasADi the oracle
+comparison is a wash**, exactly as the kernel sweeps predict.
+
+What this problem should be cited for is code size and build time — about a second
+for Alloy's whole oracle set against 24 s for compiled CasADi MX and sixteen
+minutes for compiled CasADi SX — the decoder-width axis, and the two SQP columns,
+which are both code-generated compiled C and therefore fair: 1.29 against 1.57 ms
+per solve, 0.66 against 0.92 ms of function evaluation. All four columns settle the
+pendulum at step 10 with identical iteration counts inside each solver and
+trajectories agreeing to 2.4e-13 in state (IPOPT pair) and 5.1e-9 (SQP pair).
+`problems/npmpc/README.md` carries the decoder-width study.
 
 `problems/race_cars/reference.py` fits a minimum-curvature closed cubic spline to
 the center line, samples it uniformly in arc length, and reads a constant-speed

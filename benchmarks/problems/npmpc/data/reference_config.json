@@ -1,0 +1,95 @@
+{
+    "method": "neural",
+    "system": "furuta",
+    "target": "sim",
+    "integrator": "midpoint",
+    "solver": "ipopt",
+    "p": [
+        [
+            0.1377502795417797,
+            0.00880773464519363,
+            0.08949330135206067,
+            0.027303962257072
+        ]
+    ],
+    "z": null,
+    "experiment": "furuta_experiment.json",
+    "hard_bound": {
+        "x": [
+            [
+                -Infinity,
+                Infinity
+            ],
+            [
+                -2.0,
+                2.0
+            ],
+            [
+                -Infinity,
+                Infinity
+            ],
+            [
+                -Infinity,
+                Infinity
+            ]
+        ],
+        "u": [
+            [
+                -0.05,
+                0.05
+            ]
+        ]
+    },
+    "slack_bound": {
+        "x": [
+            [
+                Infinity
+            ],
+            [
+                5.0
+            ],
+            [
+                Infinity
+            ],
+            [
+                Infinity
+            ]
+        ]
+    },
+    "cost": {
+        "x": [
+            2.5,
+            1.5,
+            0.005,
+            0.01
+        ],
+        "x_diff": [
+            0.0,
+            0.0,
+            0.05,
+            0.125
+        ],
+        "x_end": [
+            1.0,
+            10.0,
+            0.1,
+            0.1
+        ],
+        "u": [
+            1.0
+        ]
+    },
+    "dt": 0.02,
+    "horizon_steps": 12,
+    "experiment_options": {
+        "x0": [
+            3.141592,
+            0.0,
+            0.0,
+            0.0
+        ],
+        "sim_steps": 50
+    },
+    "save": false,
+    "save_path": "experiment_np_m3"
+}

@@ -87,6 +87,7 @@ benchmarks/
 | chain of masses | number of masses | classic hanging-chain NMPC (Wirsching/Bock/Diehl form); match the laopt paper's instance parameters where possible for an external reference point |
 | race cars: tracking NMPC, kinematic bicycle | horizon N | full-size Formula Student car on vendored FSDS tracks, with the minimum-curvature spline reference generator and lateral corridor constraint from `minimal_tracking_nmpc`; **later replaced by Johannes' MPFC with dynamic bicycle** (backlog), which lands in the same `race_cars/` package |
 | unbumpercars safety filter, neural DT dynamics + order-1 HCBF | number of cars | **based on `examples/ct_dt_cbf_filter/`** (neural model, RK4 one-step map, centralized, `al.map_` over the car axis; CasADi + alloy implementations, closed loop, and per-step instrumentation already exist there). Fold the desired control into the **simulator's** dynamics only (not the OCP's), so the closed loop is plant + filter with no third controller entity. The older input-affine safety-filter variants in `benchmarks/` are **removed**. The pair barrier is the colleague's hyperbolic CBF (§2.5); the walls use the colleague's order-1 velocity barrier (§2.7). |
+| neural process MPC, Furuta pendulum swing-up | horizon N (`npmpc`) **and** decoder width W (`npmpc_decoder`) | the controller of *Neural Process Model Predictive Control* (Waibel, Mello Rella, Jones, EJC 2026), reference implementation `PREDICT-EPFL/neural_process_mpc`. A conditional-neural-process decoder evaluated at **every node of a prediction horizon** — the suite's only dense-NN-inside-a-horizon cell, and the one problem whose own paper states a real-time limit alloy may lift. Four workload names share one problem package because the harness allows one axis each (§2.8). |
 
 Future problem candidates (not now): diffusion-based stuff, GP stuff,
 hovercraft MBD/DIAL.
@@ -333,6 +334,98 @@ of the inset. At `C=8`, 200 steps, DT/DT seeds `{42, 1, 2}`, the worst inset cro
 0.0036 m, with zero collisions and zero solver failures. Since the barrier is inset by 1 m,
 every car remained roughly a metre inside the physical arena. A benchmark gate now pins both
 nonzero braking authority and this closed-loop straight-driving case.
+
+### 2.8 Neural process MPC: a dense network at every horizon node (2026-08-20)
+
+The fourth problem, and the one that carries both halves of claim 2 on a single workload. A
+conditional-neural-process decoder (`9 → 32 → 32 → 2`, sigmoid, weights and latent code in the
+parameter tail) is the one-step dynamics model inside a 12-step Furuta-pendulum swing-up MPC with 65
+decision variables. Formulation, vendored data, deliberate departures from the reference
+implementation, and every gate's provenance are in `benchmarks/problems/npmpc/README.md`; the sweep
+tables are in `docs/results/scalability.md`. What belongs here is why it earns its place and what it
+established.
+
+**Why it earns its place.** The other three problems cover analytic dynamics over a horizon
+(`race_cars`), neural dynamics without a horizon (`unbumpercars`) and a large sparse structured NLP
+(`chain`). This is the missing combination, and it is the shape most deployed learning-based MPC
+actually has. It is also the first problem where the reference implementation's own paper states a
+limit alloy may lift: the authors report a 20 ms sampling time, 10–20 ms solves, and that they shrank
+the decoder "as small as possible while providing the necessary performance" (§5.3). With 65 decision
+variables there is almost no linear algebra for the solver to do, so function evaluation is most of
+the solve — 40–58% measured for the three compiled-C columns, against `race_cars`' 23%
+(`benchmarks/README.md`'s race-car table: 2.73 ms total against 0.62 ms FE).
+
+**The code-size result is categorical.** Alloy's generated source is 417 lines for the sparse
+equality Jacobian at *every* point on *both* axes — N = 6…200 and W = 16…256 — and 1041 for the exact
+Lagrangian Hessian at every point but one (1043 at W = 16, where the narrower matmul renders two
+lines differently), because the stage body is scanned and the weights are read out of the parameter
+tail rather than baked in as literals. CasADi SX reaches 1.31 million lines at N = 100 (a
+factor of 3142) and stops being compilable; CasADi MX runs out too on the Hessian, needing 227 s at
+N = 50 and exceeding a 900 s budget at N = 100. Alloy compiles the N = 200 Hessian in 0.94 s.
+
+**The runtime result has to be stated on the width axis.** Against SX on the horizon axis alloy is
+1.55–4.46× faster wherever SX compiles, and 1.96–2.12× on the Hessian; the one cell where SX is ahead
+is the narrowest decoder, W = 16, at 0.90. Against MX the horizon axis is a tie (0.82–1.11, no trend)
+and the width axis is not: alloy grows ~4× per doubling, which is the quadratic cost a matmul-dominated kernel should have,
+while MX grows 891× over a 16× width increase and crosses from 1.2× faster at the shipped width to
+2.6× slower at W = 256. An earlier draft's claim that alloy buys a doubling of decoder width *at the
+kernel level* did not survive counting both kernels — it was a Jacobian-only artifact, and it is
+withdrawn.
+
+**The closed-loop result is where the real-time claim actually lives.** Four columns on the canonical
+100-step episode, identical iteration counts within each solver and trajectories agreeing to 2.4e-13
+in state (IPOPT pair) and 5.1e-9 (SQP pair):
+
+| column | mean solve | mean FE | FE share | mean iterations |
+|---|---|---|---|---|
+| `ipopt+alloy` | 3.85 ms | 1.53 ms | 40% | 10.07 |
+| `ipopt+casadi` | 17.34 ms | 12.93 ms | 75% | 10.07 |
+| `sqp+alloy` | **1.29 ms** | 0.66 ms | 51% | 4.67 |
+| `sqp+casadi` | 1.57 ms | 0.92 ms | 58% | 4.67 |
+
+**The `ipopt+casadi` column violates §2.3's own definition of the CasADi baseline, knowingly.**
+`ca.nlpsol` interprets unless told to JIT, so as configured that column measures a virtual machine
+against generated C. It ships that way only because `race_cars` and `unbumpercars` do the same and a
+suite where one problem JITs and two do not is worse than one where none do — no two problems'
+CasADi columns would mean the same thing. The fix is one pass over all three problems, in §6.
+
+All four combinations were measured first so that pass has a starting point
+(`benchmarks/problems/npmpc/casadi_nlp.py` keeps the table): expanded/interpreted 17.35 ms,
+expanded/compiled 7.75 ms after a **966 s** build, unexpanded/interpreted 9.50 ms,
+unexpanded/compiled **5.37 ms** after 23.9 s. Two conclusions worth carrying into the harmonization.
+Expanding to scalar SX is a trap — it triples the interpreter's work, and compiled it costs a
+sixteen-minute build to land slower than compiled MX. And **against a compiled CasADi function
+evaluation is a wash**: 1.46 ms against Alloy's 1.53. That is what the kernel sweeps already said
+(MX at 0.83–0.90× of Alloy at this width), which makes the interpreted column's 8.5× gap a
+configuration artifact and not a result. A closed loop disagreeing with its own sweep by an order of
+magnitude was a bug report, not a caveat, and it was written up as a caveat first.
+
+So the durable claims from this problem are the ones that do not depend on that column:
+
+- **Code size and build time.** Constant generated source on both axes against SX's 1.31 M lines and
+  its failure to compile; in the closed loop, ~1 s to build Alloy's oracle set against 24 s for
+  compiled CasADi MX and 966 s for compiled CasADi SX.
+- **The decoder-width axis**, where Alloy crosses from 1.2× behind MX at W = 32 to 2.6× ahead at 256.
+- **The two SQP columns**, which are both code-generated compiled C and therefore already fair:
+  1.29 against 1.57 ms per solve and 0.66 against 0.92 ms of function evaluation, a 1.4× oracle
+  margin. This is the number to quote for oracle performance on this problem.
+- **The function-evaluation share**, 40–58% for the compiled columns against `race_cars`' 23%.
+
+**One caveat on the sweep numbers.** Both CasADi symbolic modes are covered as separate backends and
+both compile at `-O3`, but the §2.2 steelmanning pass — per-problem option tuning with an archived
+tuning log — has not been done for this problem, so the SX and MX ratios above are provisional in the
+same way every other problem's are.
+
+**A candidate L-track item this surfaced, not yet confirmed.** Alloy is not scalar-expanding these
+matmuls; the generated C contains real loop nests. The small fixed handicap against MX at narrow
+widths (0.80–0.90 over W = 16–64 and N = 6–25; at N = 50 and 100 on the Jacobian axis it is gone, at
+1.11 and 1.00) is ours, and the likeliest cause is the AD mode: `sparse_jacobian` colours columns
+only, and the per-stage block here is wider than it is tall, which is the regime where a row-coloured
+or reverse sweep needs fewer passes — the opposite of `unbumpercars`, where the Jacobian is taken with
+respect to two controls per car and forward is right. Confirming it means adding a row-coloured or
+reverse sparse-Jacobian path and re-measuring, or instrumenting sweep counts. The prize is bounded and
+knowable: roughly 0.85 → 1.1 at the shipped width, and no change to the width-axis result alloy
+already wins.
 
 ## 3. Solver plugin system
 
@@ -751,6 +844,20 @@ columns respectively — interleave them between B2 and B4.
   (race 1.96 against 2.73 ms, unbumpercars 16.7 against 29.8) instead of an
   order of magnitude slower. The dense interface survives as an explicit
   `qp="dense"` option covered by plugin unit tests; no benchmark selects it.
+- **B6 — neural process MPC** (§2.8): the fourth problem, a dense conditional-neural-process
+  decoder evaluated at every node of a 12-step Furuta-pendulum horizon. Two sweep axes (horizon and
+  decoder width, each in Jacobian and Hessian form), the full `al.nlp` with the reference
+  implementation's cost and bounds, the analytic plant, all four solver/oracle columns, a 3D scene,
+  and a per-step cross-implementation gate against the authors' released episode.
+  **Status: COMPLETE (2026-08-20).** Generated source is constant on both axes (417 lines for the
+  Jacobian, 1041 for the Hessian bar one 1043 cell) where CasADi SX reaches 1.31 M lines and stops
+  compiling; the canonical episode swings the pendulum up in 0.2 s and `sqp+alloy` closes the loop in
+  1.29 ms mean against the compiled CasADi SQP column's 1.57 ms. Function evaluation against a
+  *compiled* CasADi is a wash, so the durable wins are code size, build time and the decoder-width
+  axis; the `ipopt+casadi` column is knowingly uncompiled pending the §6 harmonization and carries no
+  claim. Sixteen problem gates, each shown to fail under perturbation. Outstanding: the hand-exported
+  Foxglove layout, and a trained wide-decoder checkpoint that would turn the width study's
+  extrapolation into a closed-loop column.
 - **B5 — paper assembly**: full sweeps + closed-loop runs at canonical points,
   figures, GPU-claim experiment (gated on the GPU backend milestone, §1).
 
@@ -758,6 +865,63 @@ columns respectively — interleave them between B2 and B4.
 
 - Replace the race-car tracking NMPC with the **MPFC** distillation (§4), in
   the same `benchmarks/problems/race_cars/` package.
+- **Harmonize the CasADi baseline's compilation across every problem (2026-08-20).** §2.3 defines
+  the CasADi column as JIT-enabled and no timed `ipopt+casadi` column honours it: `ca.nlpsol`
+  evaluates through CasADi's virtual machine unless told to compile, so those columns measure an
+  interpreter against generated C. This is the single largest fairness defect in the suite and it
+  reaches published numbers.
+
+  Measured evidence, per problem:
+
+  | problem | column | CasADi FE as shipped | CasADi FE with `jit -O3` | alloy FE | effect |
+  |---|---|---|---|---|---|
+  | `npmpc` | `ipopt+casadi` | 12.93 ms | 1.46 ms | 1.53 ms | an 8.5× gap becomes a wash |
+  | `race_cars` | `ipopt+casadi` | 1.64 ms | 0.50 ms | 1.24 ms | **the sign reverses**; CasADi ends ahead |
+  | `unbumpercars` | `ipopt+casadi` | not yet measured | — | — | same code shape (`filters.py`, `ca.nlpsol` with `expand`, no `jit`); this is the column behind the "4.5–9.0× faster" claim on `docs/results/index.md` and in `README.md` |
+  | `chain` | — | not affected | — | — | its timed CasADi columns are SQP, already code-generated and compiled |
+
+  `npmpc` keeps the uncompiled column deliberately so all three stay uniform until this is done —
+  one problem JITting and two not is worse, because then no two CasADi columns mean the same thing —
+  and its docs say so and rest no runtime claim on it. The work:
+
+  1. Add `jit` to `race_cars/casadi_nlp.py` and `unbumpercars/filters.py` as `npmpc` now has it, and
+     measure `unbumpercars` before deciding anything about its published multiples.
+  2. Decide `expand`. On `npmpc` all four combinations were measured and expanding to scalar SX is a
+     trap: it triples the interpreter's work, and compiled it costs a sixteen-minute build to land
+     *slower* than compiled MX. `race_cars` and `unbumpercars` both default to `expand=True`, so this
+     needs re-measuring per problem rather than assuming.
+  3. Settle the optimization level. Alloy's own JIT compiles at `-O2` (`src/alloy/codegen/jit.py`)
+     while the sweep harness uses `-O3` for both backends. Handing CasADi `-O3` against Alloy's `-O2`
+     steelmans the baseline, which is the right direction, but with the margins this thin the choice
+     has to be deliberate and written down rather than inherited.
+  4. Re-measure and rewrite every affected number: three problem READMEs, `benchmarks/README.md`,
+     `docs/results/index.md` (both the per-problem sections and the "short version" summary), the
+     repo `README.md`, and `docs/index.md`.
+  5. Keep the generated files out of the tree. CasADi's JIT writes `jit_tmp*.c` and
+     `tmp_casadi_compiler_shell*.o` into the working directory and does not always clean them up, so
+     either point it somewhere under `benchmarks/results/` or add the patterns to `.gitignore`.
+  6. Add a gate, per problem, that the timed CasADi column is actually compiled — the same shape as
+     `npmpc`'s `exact_hessian`, which checks the property on the object the runner returns rather
+     than on a rebuilt lookalike.
+
+  The likely outcome is worth stating up front so the rewrite is not a surprise: on these problems
+  Alloy's oracle-evaluation advantage over a *compiled* CasADi is small or absent, and the durable
+  claims are code size, compile time, build time in the loop, and the scaling axes. The sweeps have
+  been saying this all along — they compile both backends at `-O3` and put CasADi MX at 0.83–0.90× of
+  Alloy at the shipped decoder width — so the closed-loop numbers were the outliers, not the sweeps.
+
+- **Ask the authors of §2.8 for a trained wide decoder** at the paper's own §4.2 size
+  (`Sigmoid[64, 128, 128, 64]`). The decoder-width study currently ends in an extrapolation from two
+  measured quantities because an untrained decoder cannot produce a meaningful closed loop; a trained
+  wide checkpoint would turn "13 to 17 ms at W = 128, depending on the anchoring" into a measured
+  closed-loop column, which is the form the real-time claim wants. Also worth telling them that their released episode's reported
+  closed-loop cost metric cannot be reproduced from the trajectory it ships with.
+- **Confirm or drop the reverse/row-coloured sparse-Jacobian hypothesis** from §2.8. The per-stage
+  block there is wider than it is tall, `sparse_jacobian` colours columns only, and the fixed
+  0.80–0.90 handicap against CasADi MX at narrow decoders and short horizons is consistent with running more forward sweeps
+  than a row-coloured or reverse pass would need. Either instrument sweep counts or add the path and
+  re-measure; the prize is bounded (roughly 0.85 → 1.1 at the shipped width) and it does not change
+  the width-axis result alloy already wins.
 - **Move the chain and unbumpercars correctness checks onto the problem side**,
   as `race_cars` now does: problem-specific gates into
   `benchmarks/problems/*/checks.py` behind `run.py smoke --select problems`, and
@@ -773,6 +937,11 @@ columns respectively — interleave them between B2 and B4.
   reduction. Explicit-stack rewrite of the tree walks, plus a diagnosable error
   if a depth cap is ever kept. See `docs/how_it_works/lowering.md` "A limitation worth knowing: pass
   recursion depth" and the `xfail` in `tests/passes/test_program.py`.
+  **Second witness (2026-08-20, §2.8):** the neural-process-MPC objective hit the same wall from the
+  other direction. A *flat* reduction over per-stage slices — the documented race-car workaround —
+  also unrolls, growing the Lagrangian Hessian's source 2508 → 4108 → 5708 lines for N = 25 → 50 → 75
+  and dying at N = 100. Scanning the objective the way the dynamics are scanned fixes it and is better
+  formulation practice regardless, but the limit is not reached by deep left folds alone.
 - **Map the unbumpercars pair rows instead of unrolling them.** The `C(C-1)/2` pair
   barriers are built by a Python loop, so the generated source grows quadratically
   in the car count while the mapped neural RK4 stays constant: the `spjac:g:z`

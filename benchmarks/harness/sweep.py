@@ -15,15 +15,20 @@ from alloy.codegen.aot import render_c_module
 from benchmarks.harness import ROOT, RESULTS, gbench
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.provenance import collect, write
-from benchmarks.problems import chain, race_cars
+from benchmarks.problems import chain, npmpc, race_cars
 
 DEFAULT_SIZES = {
   "chain": [3, 5, 9, 17, 33, 65],
   "race_cars": [1, 5, 10, 25, 40, 50, 100, 200, 500],
   "unbumpercars": [2, 4, 8],
+  "npmpc": [6, 12, 25, 50, 100, 200],
+  "npmpc_decoder": [16, 32, 64, 128, 256],
+  "npmpc_hess": [6, 12, 25, 50, 100, 200],
+  "npmpc_decoder_hess": [16, 32, 64, 128, 256],
 }
 BACKENDS = ("alloy", "casadi_sx", "casadi_mx")
-CELL_AXES = {"chain": "M", "race_cars": "N", "unbumpercars": "C"}
+CELL_AXES = {"chain": "M", "race_cars": "N", "unbumpercars": "C", "npmpc": "N", "npmpc_decoder": "W", "npmpc_hess": "N", "npmpc_decoder_hess": "W"}
+NPMPC_WORKLOADS = ("npmpc", "npmpc_decoder", "npmpc_hess", "npmpc_decoder_hess")
 FIELDS = [
   "workload",
   "size",
@@ -192,14 +197,64 @@ def _unbumpercars_alloy(size: int, out_dir: Path) -> dict:
   )
 
 
+def _npmpc_cell(workload: str, size: int) -> tuple[int, npmpc.Decoder, np.ndarray, np.ndarray | None]:
+  """Resolve a cell on any npmpc axis into (horizon, decoder, weights, terminal weight).
+
+  The horizon axes carry the trained decoder the paper deployed, with the Riccati terminal weight
+  its linearization gives. The width axes are untrained at every width, including 32, so the axis
+  stays homogeneous -- kernel timing and code size depend on the graph's shape, not on the numbers
+  in it (see `npmpc.random_decoder_weights`). An untrained model has no reason to be stabilizable
+  upright, so those cells take the plain terminal weight instead of solving the Riccati equation;
+  the terminal matrix is a constant either way, so this cannot move a timing.
+  """
+  if workload in ("npmpc", "npmpc_hess"):
+    decoder = npmpc.Decoder()
+    weights = npmpc.load_decoder_weights(decoder)
+    return size, decoder, weights, npmpc.terminal_P(decoder, npmpc.pack_params(decoder, weights))
+  decoder = npmpc.Decoder((size, size))
+  return npmpc.HORIZON, decoder, npmpc.random_decoder_weights(decoder), None
+
+
+def _npmpc_alloy(workload: str, size: int, out_dir: Path) -> dict:
+  horizon, decoder, _, terminal = _npmpc_cell(workload, size)
+  axis = CELL_AXES[workload]
+  n_z = npmpc.n_dec(horizon)
+  started = time.perf_counter()
+  if workload.endswith("_hess"):
+    fn = npmpc.npmpc_lag_function(horizon, decoder, terminal)
+    name = f"alloy_npmpc_lag_hess_{axis}{size}"
+    built = fn.factory(name, ["z", "lam:cost", "lam:eq", "p"], [al.sphess("gamma", "z")], aux={"gamma": ["cost", "eq"]})
+    inputs = [("z", n_z), ("lam_f", 1), ("lam_g", npmpc.NX * horizon), ("p", decoder.n_pw)]
+    shape, benchmark = (n_z, n_z), f"BM_AlloyNpmpcLagHess{axis}{size}"
+  else:
+    fn = npmpc.npmpc_eq_function(horizon, decoder)
+    name = f"alloy_npmpc_eq_jac_{axis}{size}"
+    built = fn.factory(name, ["z", "p"], [al.spjac("eq", "z")])
+    inputs = [("z", n_z), ("p", decoder.n_pw)]
+    shape, benchmark = (npmpc.NX * horizon, n_z), f"BM_AlloyNpmpcEqJac{axis}{size}"
+  sparsity = built.output_sparsities[0]
+  assert sparsity is not None
+  build_ms = (time.perf_counter() - started) * 1000
+  module, render_ms = _render_alloy(built, name, out_dir)
+  return _module_info(name, "alloy", module, inputs, sparsity, shape, build_ms, render_ms, benchmark, w_size=module.workspace_size, callable=built)
+
+
 def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   import casadi as ca
 
   kind = backend.removeprefix("casadi_")
   sym_t = ca.SX if kind == "sx" else ca.MX
-  stem = {"chain": "chain_eq", "race_cars": "race_car_eq", "unbumpercars": "unbumpercars_lag"}[workload]
-  axis = {"chain": "M", "race_cars": "N", "unbumpercars": "C"}[workload]
-  kernel = "hess" if workload == "unbumpercars" else "jac"
+  stem = {
+    "chain": "chain_eq",
+    "race_cars": "race_car_eq",
+    "unbumpercars": "unbumpercars_lag",
+    "npmpc": "npmpc_eq",
+    "npmpc_decoder": "npmpc_eq",
+    "npmpc_hess": "npmpc_lag",
+    "npmpc_decoder_hess": "npmpc_lag",
+  }[workload]
+  axis = CELL_AXES[workload]
+  kernel = "hess" if workload == "unbumpercars" or workload.endswith("_hess") else "jac"
   name = f"casadi_{kind}_{stem}_{kernel}_{axis}{size}"
   started = time.perf_counter()
   if workload == "chain":
@@ -211,6 +266,16 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
     fn = race_cars.ca_race_car_eq_jac(size, name=name, sym_t=sym_t)
     inputs = [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))]
     benchmark = f"BM_Casadi{kind.title()}RaceCarEqJacN{size}"
+  elif workload in NPMPC_WORKLOADS:
+    horizon, decoder, _, terminal = _npmpc_cell(workload, size)
+    if workload.endswith("_hess"):
+      fn = npmpc.ca_npmpc_lag_hess(horizon, decoder, name=name, sym_t=sym_t, P=terminal)
+      inputs = [("z", npmpc.n_dec(horizon)), ("lam_f", 1), ("lam_g", npmpc.NX * horizon), ("p", decoder.n_pw)]
+      benchmark = f"BM_Casadi{kind.title()}NpmpcLagHess{axis}{size}"
+    else:
+      fn = npmpc.ca_npmpc_eq_jac(horizon, decoder, name=name, sym_t=sym_t)
+      inputs = [("z", npmpc.n_dec(horizon)), ("p", decoder.n_pw)]
+      benchmark = f"BM_Casadi{kind.title()}NpmpcEqJac{axis}{size}"
   else:
     from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, load_dt_mlp_weights
     from benchmarks.problems.unbumpercars.filters import build_casadi_hessian
@@ -257,6 +322,8 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
 
 def build_kernel(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   if backend == "alloy":
+    if workload in NPMPC_WORKLOADS:
+      return _npmpc_alloy(workload, size, out_dir)
     return {"chain": _chain_alloy, "race_cars": _race_cars_alloy, "unbumpercars": _unbumpercars_alloy}[workload](size, out_dir)
   return _casadi(workload, size, backend, out_dir)
 
@@ -266,6 +333,8 @@ def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
     ("chain", 5): RESULTS / "closed-loop" / "chain" / "ipopt+alloy",
     ("race_cars", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+alloy",
     ("unbumpercars", 8): RESULTS / "closed-loop" / "unbumpercars" / "ipopt+alloy",
+    ("npmpc", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+alloy",
+    ("npmpc_hess", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+alloy",
   }.get((workload, size))
   if canonical is None:
     return None
@@ -364,6 +433,25 @@ def _samples(
     ref = race_cars.race_car_eq_function(size).factory(f"race_car_dense_ref_N{size}", ["z", "p"], [al.jac("eq", "z")])
     expected = np.asarray(ref(zv, pv), dtype=np.float64).reshape(-1)
     values = {"z": zv, "p": pv}
+  elif workload in NPMPC_WORKLOADS:
+    import casadi as ca
+
+    horizon, decoder, weights, terminal = _npmpc_cell(workload, size)
+    if harvested is None:
+      zv, pv = npmpc.sample_inputs(horizon, decoder, weights)
+    else:
+      zv, pv = harvested["z"], harvested["p"]
+    if zv.shape != (npmpc.n_dec(horizon),) or pv.shape != (decoder.n_pw,):
+      raise ValueError(f"harvested npmpc input shapes do not match {CELL_AXES[workload]}={size}: {zv.shape}, {pv.shape}")
+    if workload.endswith("_hess"):
+      # Multipliers of mixed sign, so the Hessian is not dominated by the objective block alone.
+      lam_g = np.linspace(-0.75, 0.75, npmpc.NX * horizon)
+      ref = npmpc.ca_npmpc_lag_hess(horizon, decoder, f"npmpc_lag_hess_dense_ref_{CELL_AXES[workload]}{size}", ca.MX, terminal)
+      expected = np.asarray(ca.densify(ref(zv, 1.0, lam_g, pv)), dtype=np.float64).reshape(-1)
+      values = {"z": zv, "lam_f": np.array(1.0), "lam_g": lam_g, "p": pv}
+    else:
+      expected = npmpc.npmpc_eq_jac_dense_reference(horizon, zv, pv, decoder)
+      values = {"z": zv, "p": pv}
   else:
     pieces, expected = _unbumpercars_hessian_inputs(size, harvested)
     values = (

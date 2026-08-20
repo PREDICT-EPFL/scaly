@@ -39,6 +39,7 @@ dev = [
     "matplotlib>=3.11.0",
     "foxglove-sdk>=0.25.3",
     "pydantic>=2.13.4",
+    "scipy>=1.14",
 ]
 docs = [
     "zensical>=0.0.28",

@@ -99,6 +99,93 @@ Reading:
 - Alloy source at N=500 is 78 KB, **58× smaller than CasADi SX** (4.5 MB). LOC at N=500 is 482 — the same as at N=10.
 - The per-cell codegen time at N=500 is 248 ms for Alloy vs 481 ms for CasADi SX (and >10 min for older variants of the Alloy path). That's the Python-AD-construction win from routing the JVP through one per-formal small graph instead of through the global unrolled tape.
 
+## Neural-process MPC on the Furuta pendulum (`npmpc`)
+
+A conditional-neural-process decoder — `9 → 32 → 32 → 2`, sigmoid, weights and latent code read out
+of the parameter tail — evaluated at **every node of a prediction horizon**. This is the one workload
+in the suite where a dense matmul sits inside the scanned stage body, so it is the one that separates
+loop-preserving lowering from scalar expansion most sharply. Formulation, vendored data and
+closed-loop numbers live with the problem, in `benchmarks/problems/npmpc/README.md`; this section is
+the sweep.
+
+Both axes are gated per cell against a dense reference before any timing is recorded, and both
+backends compile at `-O3` with the same compiler.
+
+### Equality Jacobian (`spjac:eq:z`), horizon axis
+
+| N | alloy lines | SX lines | MX lines | alloy ns | SX ns | MX ns | SX/alloy | MX/alloy |
+|---|---|---|---|---|---|---|---|---|
+| 6 | **417** | 80 111 | 2 471 | 17 087 | 26 552 | 15 299 | 1.55 | 0.90 |
+| 12 | **417** | 158 646 | 4 294 | 34 291 | 66 382 | 28 610 | 1.94 | 0.83 |
+| 25 | **417** | 328 807 | 8 243 | 71 850 | 213 096 | 64 810 | 2.97 | 0.90 |
+| 50 | **417** | 656 038 | 15 837 | 143 016 | 637 475 | 158 745 | 4.46 | 1.11 |
+| 100 | **417** | 1 310 500 | 31 024 | 287 899 | *compile > 900 s* | 288 986 | — | 1.00 |
+| 200 | **417** | *skipped* | 61 400 | 553 644 | — | *compile > 900 s* | — | — |
+
+### Exact Lagrangian Hessian (`sphess:gamma:z`), horizon axis
+
+| N | alloy lines | SX lines | MX lines | alloy ns | SX ns | MX ns | alloy compile | MX compile |
+|---|---|---|---|---|---|---|---|---|
+| 6 | **1041** | 293 452 | 4 924 | 31 969 | 62 620 | 26 512 | 0.8 s | 5 s |
+| 12 | **1041** | 584 683 | 8 834 | 64 358 | 136 167 | 52 956 | 0.8 s | 13 s |
+| 25 | **1041** | 1 215 891 | 17 355 | 134 614 | 273 704 | 116 385 | 0.8 s | 47 s |
+| 50 | **1041** | *53 MB > cap* | 33 688 | 273 575 | — | 237 982 | 0.8 s | **227 s** |
+| 100 | **1041** | *skipped* | 66 358 | 542 518 | — | *compile > 900 s* | 0.9 s | — |
+| 200 | **1041** | *skipped* | — | 1 067 826 | — | — | 0.9 s | — |
+
+### Decoder-width axis at N = 12
+
+Untrained weights at every width, including 32, so the axis stays homogeneous: kernel timing and
+generated code size depend on the graph's shape rather than on the numbers in it. These are code-size
+and timing cells only, never accuracy cells.
+
+Equality Jacobian:
+
+| W | alloy lines | SX lines | MX lines | alloy ns | SX ns | MX ns | MX/alloy |
+|---|---|---|---|---|---|---|---|
+| 16 | **417** | 45 496 | 4 156 | 10 054 | 9 078 | 8 457 | 0.84 |
+| 32 | **417** | 158 646 | 4 294 | 33 201 | 52 663 | 27 023 | 0.81 |
+| 64 | **417** | 590 768 | 4 762 | 145 176 | *compile > 900 s* | 126 174 | 0.87 |
+| 128 | **417** | *skipped* | 6 466 | 597 719 | — | 815 594 | **1.36** |
+| 256 | **417** | *skipped* | 12 946 | 2 890 248 | — | 7 539 505 | **2.61** |
+
+Exact Lagrangian Hessian:
+
+| W | alloy lines | SX lines | MX lines | alloy ns | SX ns | MX ns | MX/alloy |
+|---|---|---|---|---|---|---|---|
+| 16 | **1043** | 160 550 | 8 696 | 20 981 | 30 382 | 16 736 | 0.80 |
+| 32 | **1041** | 584 612 | 8 834 | 65 064 | 131 291 | 52 576 | 0.81 |
+| 64 | **1041** | *55 MB > cap* | 9 302 | 271 564 | — | 240 323 | 0.88 |
+| 128 | **1041** | *skipped* | 11 006 | 1 284 817 | — | 1 382 204 | **1.08** |
+| 256 | **1041** | *skipped* | 17 486 | 7 186 310 | — | 12 468 110 | **1.73** |
+
+Reading, in descending order of confidence:
+
+- **The code-size and compile-time result is unambiguous and large.** Alloy's source is 417 lines for
+  the Jacobian at *every* point on *both* axes, and 1041 for the Hessian at every point but W = 16
+  (1043 there), because the weights are read
+  out of the parameter tail rather than baked in as literals and the stage body is scanned rather than
+  unrolled. SX reaches 1.31 million lines at N = 100 — a factor of 3142 — and stops being compilable
+  at all: clang exceeds a 15-minute budget there, and MX joins it at N = 200 for the Jacobian and
+  N = 100 for the Hessian, where it already needs 227 s at N = 50. Alloy compiles the N = 200 Hessian
+  in 0.94 s.
+- **Against SX the runtime advantage is real**, and on the Jacobian it grows with the horizon: 1.55×
+  at N = 6 to 4.46× at N = 50, after which SX drops out. On the Hessian it is flat instead, 1.96–2.12×
+  over N = 6…25. The one cell where SX is ahead is the narrowest decoder, W = 16, at 0.90.
+- **Against MX the horizon axis is a tie** — 0.82–1.11 with no trend — and the *width* axis is where
+  alloy pulls ahead. Alloy's runtime grows 3.3×, 4.4×, 4.1×, 4.8× per doubling, which is the quadratic
+  cost a matmul-dominated kernel should have. MX grows 891× over a 16× width increase against a ~256×
+  quadratic expectation, so it crosses from 1.2× faster than alloy at the shipped width to 2.6×
+  *slower* at W = 256. MX's source barely grows, because it keeps the matmuls as operations, so the
+  blowup is in what its Jacobian does at runtime rather than in code size.
+
+Alloy is *not* scalar-expanding these matmuls: the generated C contains real loop nests. The small
+fixed handicap at narrow decoders and short horizons (0.80–0.90 across W = 16–64 and N = 6–25; by
+N = 50 and N = 100 on the Jacobian axis it is gone, at 1.11 and 1.00) is ours, and the likeliest
+cause is the AD mode — `sparse_jacobian` colours columns only, and the per-stage block here is wider
+than it is tall, which is the regime where a row-coloured or reverse sweep needs fewer passes. That
+is a hypothesis with supporting structure, not a measured cause.
+
 ## Discrete-time HCBF safety filter (`unbumpercars`)
 
 The Phase 5 driving workload: a centralized one-step CBF filter over `C` cars, with
@@ -346,7 +433,8 @@ Reading:
 ## How to reproduce
 
 ```bash
-# Full sweep with default cells: race_cars N=1,5,10,25,40,50,100,200,500 and unbumpercars C=2,4,8
+# Full sweep with default cells: race_cars N=1,5,10,25,40,50,100,200,500, unbumpercars C=2,4,8,
+# npmpc N=6..200 and npmpc_decoder W=16..256, each in both Jacobian and Hessian form
 uv run python benchmarks/run.py sweep --out benchmarks/results/sweep/scalability.csv
 
 # Just the race cars

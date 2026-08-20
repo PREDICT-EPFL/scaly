@@ -13,7 +13,11 @@ from benchmarks.harness.recording import (
   ChainPlan,
   ChainRecorder,
   ControlState,
+  FurutaPlan,
+  FurutaShape,
+  FurutaState,
   HorizonPath,
+  NpmpcRecorder,
   PlanarVehicleState,
   PointState3D,
   RaceCarRecorder,
@@ -335,6 +339,116 @@ def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: st
   return output
 
 
+def run_npmpc(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = "ipopt", oracle: str = "alloy") -> Path:
+  from benchmarks.problems.npmpc import NX, PHI_LIMIT, PLANT_SUBSTEPS, TORQUE_LIMIT
+  from benchmarks.problems.npmpc.closed_loop import EpisodeConfig, run_episode, settling_step, upright_error
+
+  config = EpisodeConfig.smoke() if smoke else EpisodeConfig()
+  episode = run_episode(config, solver=solver, oracle=oracle)
+  name = solver_oracle_name(solver, oracle)
+  output = out_dir / "npmpc" / name
+  output.mkdir(parents=True, exist_ok=True)
+  np.savez_compressed(
+    output / "rollout.npz",
+    state=episode.states,
+    control=episode.controls,
+    prediction=episode.predictions,
+    plan=episode.plans,
+    slack=episode.slacks,
+    terminal_weight=episode.terminal_weight,
+  )
+  shape = FurutaShape(
+    arm_length=config.plant.l_r,
+    pendulum_length=config.plant.l_p,
+    # a torque on its bound draws an arrow half the arm's length
+    torque_scale=0.5 * config.plant.l_r / TORQUE_LIMIT,
+    arm_limit=PHI_LIMIT,
+  )
+  with NpmpcRecorder(output / "episode.mcap", allow_overwrite=True, shape=shape) as recorder:
+    recorder.record_metadata(
+      RunMetadata(
+        run_id=f"npmpc-{name}-N{config.horizon}",
+        problem="npmpc",
+        solver=solver,
+        oracle=oracle,
+        seed=0,
+        dt=config.dt,
+        config={"horizon": config.horizon, "steps": config.steps, "decoder": list(config.decoder.hidden), "substeps": config.substeps},
+      )
+    )
+    recorder.record_furuta_static()
+    for step, state in enumerate(episode.states):
+      time_s = step * config.dt
+      torque = float(episode.controls[step, 0]) if step < config.steps else 0.0
+      recorder.record_furuta(FurutaState(step=step, time_s=time_s, theta=float(state[0]), phi=float(state[1]), torque=torque))
+      if step >= config.steps:
+        continue
+      control = ControlState(step=step, time_s=time_s, entity_id="arm", applied=[torque])
+      recorder.record_control([control])
+      recorder.record_furuta_plan(
+        FurutaPlan(
+          step=step,
+          time_s=time_s,
+          theta=episode.predictions[step, :, 0].tolist(),
+          phi=episode.predictions[step, :, 1].tolist(),
+        )
+      )
+      stats = episode.telemetry[step]
+      recorder.record_telemetry(
+        ScalarTelemetry(
+          step=step,
+          time_s=time_s,
+          success=stats.status.value <= 1,
+          solver_time_ms=stats.t_total * 1000.0,
+          fe_time_ms=stats.t_fe * 1000.0,
+          objective=_finite(stats.obj),
+          # the arm angle's distance from the bound the single slack softens, so an active bound shows
+          constraint_margin=float(PHI_LIMIT - abs(state[1])),
+          scalars={
+            "iterations": float(stats.iter),
+            "upright_error_deg": float(np.rad2deg(upright_error(state))),
+            "arm_angle": float(state[1]),
+            "pendulum_rate": float(state[2]),
+            "arm_rate": float(state[3]),
+            "slack": float(episode.slacks[step]),
+            "qp_or_solver_time_ms": (stats.t_solver + stats.t_qp) * 1000.0,
+            "globalization_time_ms": stats.t_globalization * 1000.0,
+            "glue_time_ms": stats.t_glue * 1000.0,
+          },
+        )
+      )
+  settled = settling_step(episode.states)
+  summary = {
+    "problem": "npmpc",
+    "solver": solver,
+    "oracle": oracle,
+    "horizon": config.horizon,
+    "steps": config.steps,
+    "decoder": "x".join(str(width) for width in config.decoder.hidden),
+    "plant_substeps": PLANT_SUBSTEPS,
+    "settling_step": settled,
+    "settling_time_s": None if settled is None else settled * config.dt,
+    "final_upright_error_deg": float(np.rad2deg(upright_error(episode.states[-1]))),
+    "mean_solver_ms": float(np.mean([stats.t_total for stats in episode.telemetry]) * 1000.0),
+    # the reason this problem is in the suite: with 65 variables the FE share dominates the solve
+    "mean_fe_ms": float(np.mean([stats.t_fe for stats in episode.telemetry]) * 1000.0),
+    "mean_iterations": float(np.mean([stats.iter for stats in episode.telemetry])),
+    "max_abs_control": float(np.max(np.abs(episode.controls))),
+    "max_slack": float(np.max(episode.slacks)),
+  }
+  write_result_artifacts(
+    output,
+    config=asdict(config),
+    summary=summary,
+    provenance=_provenance(cli_args),
+    # The sweep's npmpc kernels take only the decoder tail as `p`, so drop the leading pinned state
+    # the solver's own parameter vector carries in front of it.
+    fe_inputs=[{"z": item["z"], "p": item["p"][NX:]} for item in episode.oracle_inputs],
+    successful_steps=range(len(episode.oracle_inputs)),
+  )
+  return output
+
+
 def run_unbumpercars(*, smoke: bool, solver: str, oracle: str | None, out_dir: Path, cli_args: list[str]) -> Path:
   from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, load_dt_mlp_weights, sample_initial_states
   from benchmarks.problems.unbumpercars.run_closed_loop import plot_outputs, run_one
@@ -357,4 +471,6 @@ def run(problem: str, *, smoke: bool, solver: str, oracle: str | None, out_dir: 
     raise ValueError(f"{problem} requires an oracle")
   if problem == "race_cars":
     return run_race_cars(smoke=smoke, out_dir=out_dir, cli_args=cli_args, solver=solver, oracle=oracle)
+  if problem == "npmpc":
+    return run_npmpc(smoke=smoke, out_dir=out_dir, cli_args=cli_args, solver=solver, oracle=oracle)
   return run_chain(smoke=smoke, out_dir=out_dir, cli_args=cli_args, solver=solver, oracle=oracle)
