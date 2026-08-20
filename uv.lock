@@ -25,7 +25,6 @@ dev = [
     { name = "alloy-sqp" },
     { name = "casadi" },
     { name = "foxglove-sdk" },
-    { name = "google-benchmark" },
     { name = "matplotlib" },
     { name = "pydantic" },
     { name = "pytest" },
@@ -48,7 +47,6 @@ dev = [
     { name = "alloy-sqp", editable = "plugins/alloy-sqp" },
     { name = "casadi", specifier = ">=3.7.2" },
     { name = "foxglove-sdk", specifier = ">=0.25.3" },
-    { name = "google-benchmark", specifier = ">=1.9.5" },
     { name = "matplotlib", specifier = ">=3.11.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pytest", specifier = ">=8.4.2" },
@@ -320,19 +318,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d9/29/d40217cbe2f6b1359e00c6c307bb3fc876ba74068cbab3dde77f03ca0dc4/ghp-import-2.1.0.tar.gz", hash = "sha256:9c535c4c61193c2df8871222567d7fd7e5014d835f97dc7b7439069e2413d343", size = 10943, upload-time = "2022-05-02T15:47:16.11Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/ec/67fbef5d497f86283db54c22eec6f6140243aae73265799baaaa19cd17fb/ghp_import-2.1.0-py3-none-any.whl", hash = "sha256:8337dd7b50877f163d4c0289bc1f1c7f127550241988d568c1db512c4324a619", size = 11034, upload-time = "2022-05-02T15:47:14.552Z" },
-]
-
-[[package]]
-name = "google-benchmark"
-version = "1.9.5"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5a/8c/82632a5540fb79c67c8ed144ba9c19639de3e50e4ec19ca635f8e1f7d7ca/google_benchmark-1.9.5.tar.gz", hash = "sha256:923952ea22e516ca0217311f3c7e5f24ce6916394319e6a595cb813b3aa61d37", size = 15476, upload-time = "2026-02-02T13:27:02.855Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4c/79/f69f30a233b066ee56e13424cdb82271f224cab45c2b966a7aab2afdd27d/google_benchmark-1.9.5-cp312-abi3-macosx_10_14_x86_64.whl", hash = "sha256:d28862c2c06e74457ecc407e45f25744de8fd1534504b56a26c1cde77363840b", size = 168936, upload-time = "2026-02-02T13:26:57.058Z" },
-    { url = "https://files.pythonhosted.org/packages/4f/0e/7dc1d350a9b2269af65bdeab1eae23da2b56cbbfb42b1441a620de7abf34/google_benchmark-1.9.5-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:9d746a55ac17cbed4eaba4febe8e759634bbe13a67e42fa5608d928854590bfd", size = 160018, upload-time = "2026-02-02T13:26:58.096Z" },
-    { url = "https://files.pythonhosted.org/packages/6e/29/373117eb27c60ff3a01770aacb79db8d84c97ab4e1f741cb5841df3b9d14/google_benchmark-1.9.5-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:33f7d8bb54ed401938af58150e12b6813d36199e58a2384ab4a17eeac1b57455", size = 191625, upload-time = "2026-02-02T13:26:59.199Z" },
-    { url = "https://files.pythonhosted.org/packages/d4/64/2985a833a4679aeef07f0c357b321db838fa5a94abad2b4278a13e1b4000/google_benchmark-1.9.5-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0e0efb61240a01da61aaab0c943df96bb769ddbde501c72338d0b5f29751aa89", size = 210950, upload-time = "2026-02-02T13:27:00.225Z" },
-    { url = "https://files.pythonhosted.org/packages/7d/d0/b6a49af3fd9e272cbf16e550ef962100ede41b6ace04ac988565e9262bf9/google_benchmark-1.9.5-cp312-abi3-win_amd64.whl", hash = "sha256:daf706babbb8a16e503712b22c8b48acab7ee22da6dde7914cd1153ecadd9d9b", size = 188817, upload-time = "2026-02-02T13:27:01.798Z" },
 ]
 
 [[package]]

@@ -36,7 +36,6 @@ dev = [
     "pytest-xdist>=3.8.0",
     "ruff>=0.13.3",
     "ty>=0.0.2",
-    "google-benchmark>=1.9.5",
     "matplotlib>=3.11.0",
     "foxglove-sdk>=0.25.3",
     "pydantic>=2.13.4",

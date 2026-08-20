@@ -190,14 +190,6 @@ jobs:
           ALLOY_BUILD_SOLVERS: skip
         run: uv sync --frozen
 
-      - name: Install Google Benchmark (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libbenchmark-dev
-
-      - name: Install Google Benchmark (macOS)
-        if: runner.os == 'macOS'
-        run: brew install google-benchmark pkgconf
-
       - name: C compiler report
         run: |
           cc --version

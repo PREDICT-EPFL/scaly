@@ -8,6 +8,18 @@ This package owns Alloy's reproducible benchmark workloads and correctness-gated
 - `harness/` contains Google Benchmark wrapper generation, dense-reference checks, sweep mechanics, and provenance capture.
 - `run.py` is the entry point for CI smoke gates and scalability sweeps.
 
+## Prerequisites
+
+A C++ compiler, `git`, and `cmake`. Google Benchmark does not have to be installed:
+the harness clones the pinned tag in `harness/gbench.py` and builds it into
+`benchmarks/third_party/gbench/<tag>` (gitignored) the first time a cell is compiled,
+then links that static library by absolute path. The build takes a few seconds and is
+skipped once the header and library are in place. It stays inside the checkout, so
+parallel worktrees never read a prefix another one is still installing, and the
+alloy JIT cache under `~/.cache/alloy` keeps holding only what alloy itself compiles.
+Delete the directory to force a rebuild, and read `build.log` inside it if the build
+fails.
+
 ## Smoke gates
 
 ```bash

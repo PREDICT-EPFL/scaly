@@ -9,20 +9,67 @@ import signal
 import subprocess
 import time
 
+from benchmarks.harness import ROOT
+
 
 def compiler() -> str:
   return os.environ.get("CXX") or shutil.which("clang++") or shutil.which("c++") or "c++"
 
 
-def pkg_config(package: str, flag: str) -> list[str]:
+GBENCH_TAG = "v1.9.5"
+GBENCH_REPO = "https://github.com/google/benchmark.git"
+
+
+def _cmake_run(cmd: list[str], log: Path) -> None:
   try:
-    proc = subprocess.run(["pkg-config", flag, package], check=True, text=True, capture_output=True)
+    proc = subprocess.run(cmd, check=False, text=True, capture_output=True)
   except FileNotFoundError as e:
-    raise RuntimeError("pkg-config is required to locate Google Benchmark") from e
-  except subprocess.CalledProcessError as e:
-    detail = (e.stderr or e.stdout).strip()
-    raise RuntimeError(f"pkg-config could not find {package!r}: {detail}") from e
-  return shlex.split(proc.stdout)
+    raise RuntimeError(f"{cmd[0]} is required to build Google Benchmark {GBENCH_TAG}") from e
+  with log.open("a") as fp:
+    fp.write(f"$ {shlex.join(cmd)}\n{proc.stdout}{proc.stderr}")
+  if proc.returncode:
+    raise RuntimeError(f"{shlex.join(cmd[:2])} failed ({proc.returncode}), see {log}: {(proc.stderr or proc.stdout)[-400:].strip()}")
+
+
+def _build_gbench(prefix: Path, header: Path, lib: Path) -> None:
+  src, build = prefix / "src", prefix / "build"
+  prefix.mkdir(parents=True, exist_ok=True)
+  log = prefix / "build.log"
+  log.write_text("")
+  print(f"building Google Benchmark {GBENCH_TAG} in {prefix} (one-time)", flush=True)
+  if not (src / "CMakeLists.txt").exists():
+    shutil.rmtree(src, ignore_errors=True)  # a half-finished clone would otherwise poison every later run
+    _cmake_run(["git", "clone", "--depth=1", "--branch", GBENCH_TAG, GBENCH_REPO, str(src)], log)
+  _cmake_run(
+    [
+      "cmake",
+      "-S",
+      str(src),
+      "-B",
+      str(build),
+      "-DCMAKE_BUILD_TYPE=Release",
+      f"-DCMAKE_INSTALL_PREFIX={prefix}",
+      "-DCMAKE_INSTALL_LIBDIR=lib",  # GNUInstallDirs would pick lib64 on some distributions
+      "-DBUILD_SHARED_LIBS=OFF",
+      "-DBENCHMARK_ENABLE_TESTING=OFF",
+      "-DBENCHMARK_ENABLE_WERROR=OFF",
+    ],
+    log,
+  )
+  _cmake_run(["cmake", "--build", str(build), "--parallel"], log)
+  _cmake_run(["cmake", "--install", str(build)], log)
+  shutil.rmtree(build, ignore_errors=True)
+  if not (header.exists() and lib.exists()):
+    raise RuntimeError(f"Google Benchmark build left no {header.name}/{lib.name} under {prefix}, see {log}")
+
+
+def gbench_flags() -> tuple[list[str], list[str]]:
+  """Compile and link flags for the pinned Google Benchmark, building it inside this checkout on first use."""
+  prefix = ROOT / "benchmarks" / "third_party" / "gbench" / GBENCH_TAG
+  header, lib = prefix / "include" / "benchmark" / "benchmark.h", prefix / "lib" / "libbenchmark.a"
+  if not (header.exists() and lib.exists()):
+    _build_gbench(prefix, header, lib)
+  return ["-I", str(prefix / "include"), "-pthread"], [str(lib)]
 
 
 def parse_runtime_ns(stdout: str, prefix: str) -> float | None:
@@ -155,20 +202,8 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
 
 def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, float | None, str]:
   exe = out_dir / "benchmark"
-  cmd = [
-    compiler(),
-    "-O3",
-    "-std=c++17",
-    "-I",
-    str(out_dir),
-    "benchmark.cpp",
-    str(info["source"]),
-    "-o",
-    str(exe),
-    *pkg_config("benchmark", "--cflags"),
-    *pkg_config("benchmark", "--libs"),
-    "-lm",
-  ]
+  cflags, libs = gbench_flags()
+  cmd = [compiler(), "-O3", "-std=c++17", "-I", str(out_dir), *cflags, "benchmark.cpp", str(info["source"]), "-o", str(exe), *libs, "-lm"]
   started = time.perf_counter()
   try:
     proc = subprocess.Popen(cmd, cwd=out_dir, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
