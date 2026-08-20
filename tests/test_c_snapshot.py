@@ -64,7 +64,7 @@ def _wide() -> al.Function:
     a = al.maximum(h, 0.0) - al.minimum(h, 0.0) * 0.5
     b = al.atan2(a, y) + (a**3.0) / (1.0 + y.abs())
     trig = a.sin() * b.cos() + a.tan() + (a * 0.1).asin() + (b * 0.1).acos() + b.atan()
-    hyp = a.sinh() + b.cosh() + b.tanh()
+    hyp = a.sinh() + b.cosh() + b.tanh() + a.erf()
     c = (a.exp() + b.sqrt().log()) * (trig + hyp) + (a.floor() + b.ceil())
     z = al.const(WEIGHTS).T @ (c / (1.0 + y * y))
     return {"z": z, "tail": al.scatter(z[:4], np.array([3, 1, 2, 0]), (4,))}

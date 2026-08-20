@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 import alloy as al
@@ -42,3 +44,13 @@ def test_simplify_rewrites_algebraic_identities_and_folds_constants() -> None:
   np.testing.assert_allclose(al.Function("simp_sub", [q], [al.simplify(q - q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.zeros(2))
   np.testing.assert_allclose(al.Function("simp_div", [q], [al.simplify(q / q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.ones(2))
   np.testing.assert_allclose(al.Function("simp_cse", [q], [al.simplify(al.cse(q + q))], ["q"], ["y"])(np.array([2.0, 3.0])), np.array([4.0, 6.0]))
+
+
+def test_simplify_constant_folds_erf() -> None:
+  values = np.array([-2.0, 0.0, 0.5, 4.5])
+  folded = al.simplify(al.const(values).erf())
+
+  assert folded.op == al.ExprOp.CONST
+  assert folded.value is not None
+  assert folded.value.dtype == np.float64
+  np.testing.assert_allclose(folded.value, [math.erf(float(x)) for x in values], rtol=1e-15, atol=1e-15)

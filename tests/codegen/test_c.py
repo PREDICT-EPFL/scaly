@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import math
 import shutil
 import subprocess
 import sys
@@ -9,6 +10,14 @@ import numpy as np
 import pytest
 
 import alloy as al
+
+
+def test_compiled_erf_matches_math_erf() -> None:
+  x = al.sym("x", 9)
+  f = al.Function("compiled_erf", [x], [x.erf()], ["x"], ["y"])
+  values = np.array([-6.0, -4.5, -2.0, -0.25, 0.0, 0.25, 2.0, 4.5, 6.0])
+
+  np.testing.assert_allclose(f(values), [math.erf(float(value)) for value in values], rtol=1e-14, atol=1e-15)
 
 
 def test_c_api_header_exposes_universal_and_typed_buffers() -> None:

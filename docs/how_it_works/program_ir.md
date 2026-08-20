@@ -78,7 +78,7 @@ Forty-three operations in two families.
 ### Scalars — the expression sublanguage inside a statement
 
 `const_int`, `const_float`, `var`, `load`, then `add`, `sub`, `mul`, `div`, `mod`, `neg`, the
-transcendentals `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `exp`, `log`,
+transcendentals `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `erf`, `exp`, `log`,
 `sqrt`, `abs`, `floor`, `ceil`, and the binary `pow`, `atan2`, `minimum`, `maximum`.
 
 These are the leaves of a `store`: everything a generated C statement can say on its right-hand

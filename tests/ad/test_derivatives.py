@@ -154,6 +154,35 @@ def test_jvp_many_uses_leading_seed_axis() -> None:
   np.testing.assert_allclose(f(xv, sv), sv @ jac.T)
 
 
+def test_erf_forward_reverse_jacobian_and_sparse_hessian(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  x = al.sym("x", 3)
+  seed = al.sym("seed", 3)
+  y = x.erf()
+  jvp = al.jvp(y, x, seed)
+  (vjp,) = al.vjp((y,), (x,), (seed,))
+  ad = al.Function("erf_seed_ad", [x, seed], [jvp, vjp], ["x", "seed"], ["jvp", "vjp"])
+  weights = np.array([0.5, -1.25, 2.0])
+  base = al.Function("erf_derivatives", [x], [y, (al.const(weights) * y).sum()], ["x"], ["y", "cost"])
+  derivatives = base.factory("erf_jac_sphess", ["x"], [al.jac("y", "x"), al.sphess("cost", "x")])
+
+  xv = np.array([-1.2, 0.25, 2.1])
+  seedv = np.array([0.3, -0.7, 1.4])
+  first = 2 / np.sqrt(np.pi) * np.exp(-(xv**2))
+  jvp_value, vjp_value = ad(xv, seedv)
+  jac_value, sphess_value = derivatives(xv)
+
+  np.testing.assert_allclose(jvp_value, seedv * first, rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(vjp_value, seedv * first, rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(jac_value, np.diag(first), rtol=1e-12, atol=1e-12)
+  sparsity = derivatives.output_sparsities[1]
+  assert sparsity is not None
+  assert sparsity.rows == (0, 1, 2)
+  assert sparsity.cols == (0, 1, 2)
+  second = weights * (-4 * xv / np.sqrt(np.pi)) * np.exp(-(xv**2))
+  np.testing.assert_allclose(sphess_value, second, rtol=1e-12, atol=1e-12)
+
+
 def test_jvp_many_broadcast_scalar_tangent_over_vector() -> None:
   x = al.sym("x", 3)
   scale = x.sum()

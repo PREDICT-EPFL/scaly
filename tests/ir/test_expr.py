@@ -29,6 +29,7 @@ def test_common_ops_contains_modeling_basics() -> None:
     al.ExprOp.SINH,
     al.ExprOp.COSH,
     al.ExprOp.TANH,
+    al.ExprOp.ERF,
     al.ExprOp.EXP,
     al.ExprOp.LOG,
     al.ExprOp.SQRT,
@@ -42,6 +43,7 @@ def test_common_ops_contains_modeling_basics() -> None:
   ]:
     assert op in al.COMMON_OPS
   assert al.ExprOp.SIN.value == "sin"
+  assert al.ExprOp.ERF.value == "erf"
 
 
 def test_binary_nonlinear_method_helpers_eval() -> None:

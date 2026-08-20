@@ -94,7 +94,7 @@ call instead of being expanded.
 
 ## Operations
 
-Thirty-eight operations, grouped by what they do. `arity` is the operand count; a dash means
+Thirty-nine operations, grouped by what they do. `arity` is the operand count; a dash means
 variadic. `diff` is whether AD can pass through the op at all.
 
 ### Arithmetic and elementwise
@@ -108,6 +108,7 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `asin` `acos` `atan` | 1 | yes | no multi-seed forward rule yet |
 | `atan2` | 2 | yes | no multi-seed forward rule yet |
 | `sinh` `cosh` `tanh` | 1 | yes | |
+| `erf` | 1 | yes | |
 | `exp` `log` `sqrt` | 1 | yes | |
 | `abs` | 1 | yes | no multi-seed forward rule yet |
 | `floor` `ceil` | 1 | **no** | result is marked non-differentiable |

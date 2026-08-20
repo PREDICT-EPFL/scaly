@@ -56,6 +56,7 @@ _EXPENSIVE_OPS: frozenset[ProgramOp] = frozenset(
     ProgramOp.SINH,
     ProgramOp.COSH,
     ProgramOp.TANH,
+    ProgramOp.ERF,
     ProgramOp.EXP,
     ProgramOp.LOG,
     ProgramOp.SQRT,

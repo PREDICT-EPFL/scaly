@@ -48,6 +48,7 @@ _UNARY: dict[ExprOp, ProgramOp] = {
   ExprOp.SINH: ProgramOp.SINH,
   ExprOp.COSH: ProgramOp.COSH,
   ExprOp.TANH: ProgramOp.TANH,
+  ExprOp.ERF: ProgramOp.ERF,
   ExprOp.EXP: ProgramOp.EXP,
   ExprOp.LOG: ProgramOp.LOG,
   ExprOp.SQRT: ProgramOp.SQRT,

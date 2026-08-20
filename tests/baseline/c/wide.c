@@ -39,8 +39,8 @@ int wide(const double** arg, double** res, int* iw, double* w, void* mem) {
   static const double k13[1] = {1};
   static const double k26[1] = {0.10000000000000001};
   double s3[40];
-  const double* t49 = res[0];
-  static const int64_t k50[4] = {3, 1, 2, 0};
+  const double* t51 = res[0];
+  static const int64_t k52[4] = {3, 1, 2, 0};
   for (long long d0_t1 = 0; d0_t1 < 40; ++d0_t1) {
     for (long long d1_t1 = 0; d1_t1 < 40; ++d1_t1) {
       s0[((d0_t1 * 40) + d1_t1)] = k0[(d0_t1 + (d1_t1 * 40))];
@@ -58,8 +58,8 @@ int wide(const double** arg, double** res, int* iw, double* w, void* mem) {
   for (long long i_t17 = 0; i_t17 < 40; ++i_t17) {
     s1[i_t17] = (atan2(s2[i_t17], arg[1][i_t17]) + (pow(s2[i_t17], k11[0]) / (k13[0] + fabs(arg[1][i_t17]))));
   }
-  for (long long i_t48 = 0; i_t48 < 40; ++i_t48) {
-    s3[i_t48] = ((((exp(s2[i_t48]) + log(sqrt(s1[i_t48]))) * ((((((sin(s2[i_t48]) * cos(s1[i_t48])) + tan(s2[i_t48])) + asin((s2[i_t48] * k26[0]))) + acos((s1[i_t48] * k26[0]))) + atan(s1[i_t48])) + ((sinh(s2[i_t48]) + cosh(s1[i_t48])) + tanh(s1[i_t48])))) + (floor(s2[i_t48]) + ceil(s1[i_t48]))) / (k13[0] + (arg[1][i_t48] * arg[1][i_t48])));
+  for (long long i_t50 = 0; i_t50 < 40; ++i_t50) {
+    s3[i_t50] = ((((exp(s2[i_t50]) + log(sqrt(s1[i_t50]))) * ((((((sin(s2[i_t50]) * cos(s1[i_t50])) + tan(s2[i_t50])) + asin((s2[i_t50] * k26[0]))) + acos((s1[i_t50] * k26[0]))) + atan(s1[i_t50])) + (((sinh(s2[i_t50]) + cosh(s1[i_t50])) + tanh(s1[i_t50])) + erf(s2[i_t50])))) + (floor(s2[i_t50]) + ceil(s1[i_t50]))) / (k13[0] + (arg[1][i_t50] * arg[1][i_t50])));
   }
   for (long long i_z = 0; i_z < 40; ++i_z) {
     res[0][i_z] = 0;
@@ -71,7 +71,7 @@ int wide(const double** arg, double** res, int* iw, double* w, void* mem) {
     res[1][z_tail] = 0;
   }
   for (long long i_tail = 0; i_tail < 4; ++i_tail) {
-    res[1][k50[i_tail]] = t49[i_tail];
+    res[1][k52[i_tail]] = t51[i_tail];
   }
   return ALLOY_SUCCESS;
 }

@@ -148,6 +148,8 @@ def _jvp(expr: Expr, wrt: Expr, seed: Expr, memo: dict[int, Expr], dep_memo: dic
     return save(args[0].sinh() * d[0])
   if expr.op == ExprOp.TANH:
     return save(d[0] * (1 - expr * expr))
+  if expr.op == ExprOp.ERF:
+    return save((2 / np.sqrt(np.pi)) * (-(args[0] ** 2)).exp() * d[0])
   if expr.op == ExprOp.EXP:
     return save(expr * d[0])
   if expr.op == ExprOp.LOG:
@@ -502,6 +504,9 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op == ExprOp.TANH:
     memo[expr.id] = ret = d[0] * (1 - _seed_axis(expr * expr, nseed))
+    return ret
+  if expr.op == ExprOp.ERF:
+    memo[expr.id] = ret = _seed_axis((2 / np.sqrt(np.pi)) * (-(args[0] ** 2)).exp(), nseed) * d[0]
     return ret
   if expr.op == ExprOp.COSH:
     memo[expr.id] = ret = _seed_axis(args[0].sinh(), nseed) * d[0]

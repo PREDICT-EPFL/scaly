@@ -8,6 +8,7 @@ stays here because ``Expr.debug`` calls it, and moving it would make ``ir/expr.p
 
 from __future__ import annotations
 
+import math
 import weakref
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -37,6 +38,7 @@ class ExprOp(StrEnum):
   SINH = "sinh"
   COSH = "cosh"
   TANH = "tanh"
+  ERF = "erf"
   EXP = "exp"
   LOG = "log"
   SQRT = "sqrt"
@@ -76,6 +78,7 @@ COMMON_ELEMENTWISE_UNARY = {
   ExprOp.SINH,
   ExprOp.COSH,
   ExprOp.TANH,
+  ExprOp.ERF,
   ExprOp.EXP,
   ExprOp.LOG,
   ExprOp.SQRT,
@@ -143,6 +146,8 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.SINH: OpInfo(ExprOp.SINH, 1, np.sinh),
   ExprOp.COSH: OpInfo(ExprOp.COSH, 1, np.cosh),
   ExprOp.TANH: OpInfo(ExprOp.TANH, 1, np.tanh),
+  # NumPy has no erf; frompyfunc keeps constant folding vectorized without adding SciPy.
+  ExprOp.ERF: OpInfo(ExprOp.ERF, 1, lambda x: np.asarray(np.frompyfunc(math.erf, 1, 1)(x), dtype=np.float64)),
   ExprOp.EXP: OpInfo(ExprOp.EXP, 1, np.exp),
   ExprOp.LOG: OpInfo(ExprOp.LOG, 1, np.log),
   ExprOp.SQRT: OpInfo(ExprOp.SQRT, 1, np.sqrt),
@@ -412,6 +417,9 @@ class Expr:
 
   def tanh(self) -> Expr:
     return unary(ExprOp.TANH, self)
+
+  def erf(self) -> Expr:
+    return unary(ExprOp.ERF, self)
 
   def exp(self) -> Expr:
     return unary(ExprOp.EXP, self)

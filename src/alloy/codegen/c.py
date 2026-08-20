@@ -38,6 +38,7 @@ _UNARY_C = {
   ProgramOp.SINH: "sinh",
   ProgramOp.COSH: "cosh",
   ProgramOp.TANH: "tanh",
+  ProgramOp.ERF: "erf",
   ProgramOp.EXP: "exp",
   ProgramOp.LOG: "log",
   ProgramOp.SQRT: "sqrt",

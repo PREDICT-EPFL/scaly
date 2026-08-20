@@ -199,6 +199,8 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return (cot * args[0].sinh(),)
   if expr.op == ExprOp.TANH:
     return (cot * (1 - expr * expr),)
+  if expr.op == ExprOp.ERF:
+    return (cot * (2 / np.sqrt(np.pi)) * (-(args[0] ** 2)).exp(),)
   if expr.op == ExprOp.EXP:
     return (cot * expr,)
   if expr.op == ExprOp.LOG:
