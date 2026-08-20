@@ -314,3 +314,43 @@ def test_jacobian_sparsity_for_matmul_and_call_chain_rule() -> None:
       ]
     ),
   )
+
+
+def test_dependency_composition_keeps_exactly_256_shared_paths() -> None:
+  u = al.sym("u", 256)
+  inner = al.Function("shared_256_inner", [u], [u.sum()], ["u"], ["y"])
+  x = al.sym("x", 1)
+  (y,) = inner.call([x + np.zeros(256)])
+
+  np.testing.assert_array_equal(al.jacobian_sparsity(y, x).to_mask(), np.ones((1, 1), dtype=bool))
+  colored = al.sparse_jacobian_colored(y, x)
+  reference = al.sparse_jacobian_reference(y, x)
+  f = al.Function("shared_256_jac", [x], [colored.values, reference.values], ["x"], ["colored", "reference"])
+  colored_values, reference_values = f(np.array([2.0]))
+  np.testing.assert_allclose(colored_values, np.array([256.0]))
+  np.testing.assert_allclose(colored_values, reference_values)
+
+
+def test_column_coloring_detects_exactly_256_shared_rows() -> None:
+  sparsity = al.SparsityType.from_mask(np.ones((256, 2), dtype=bool))
+
+  assert al.column_coloring(sparsity) == (0, 1)
+
+
+def test_mapped_sparsity_storage_grows_with_nonzeros_not_global_mask() -> None:
+  from alloy.ad.sparsity import _jac_mask
+
+  def mapped_mask(length: int):
+    u = al.sym(f"u_{length}", 2)
+    piece = al.Function(f"storage_piece_{length}", [u], [al.stack([u.sum()])], ["u"], ["y"])
+    z = al.sym(f"z_{length}", 2 * length)
+    return _jac_mask(al.map_(piece, length, [(z, 0, 2)]), z, {})
+
+  small = mapped_mask(32)
+  large = mapped_mask(128)
+  small_bytes = small.data.nbytes + small.indices.nbytes + small.indptr.nbytes
+  large_bytes = large.data.nbytes + large.indices.nbytes + large.indptr.nbytes
+
+  assert small.shape == (32, 64) and small.nnz == 64
+  assert large.shape == (128, 256) and large.nnz == 256
+  assert large_bytes < 5 * small_bytes

@@ -48,9 +48,10 @@ hint — `scalar`, `block`, `opaque` or `auto` — so the choice is local to a s
 than global to a type. The honest caveat is that today the hints are recorded but only `opaque`
 changes what the lowerer does; region formation on the others is open work.
 
-*Pure Python.* CasADi is a C++ library with Python bindings. Alloy is Python with NumPy as its only
-required runtime dependency, and the entire compiler — both dialects, AD, lowering, the passes, the
-renderer — is about ten thousand lines, editable without a build step. The
+*Pure Python.* CasADi is a C++ library with Python bindings. Alloy is Python with NumPy for
+array values and SciPy as an internal structural-sparsity dependency. The entire compiler — both dialects, automatic differentiation (AD),
+lowering,
+the passes and the renderer — is about ten thousand lines, editable without a build step. The
 cost is real and is paid at compile time: building a large graph in Python is slower than building
 it in C++. It is not paid at run time, because the output is C either way.
 

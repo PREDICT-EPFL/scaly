@@ -72,7 +72,7 @@ def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *,
   vec = mat.vec()
   keep = np.asarray(probe, dtype=np.float64).reshape(-1) != 0.0
   for param in params:
-    keep |= _jac_mask(vec, param, {}).any(axis=1)
+    keep |= np.asarray(_jac_mask(vec, param, {}).sum(axis=1)).reshape(-1) != 0
   rows, cols = np.divmod(np.flatnonzero(keep), ncol)
   if triu:
     upper = rows <= cols

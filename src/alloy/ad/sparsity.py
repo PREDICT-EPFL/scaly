@@ -8,6 +8,7 @@ one-way is what lets AD ask this module for a pattern.
 from __future__ import annotations
 
 import numpy as np
+from scipy import sparse
 
 from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp
 from ..ir.types import SparsityType, broadcast_shape
@@ -27,8 +28,7 @@ def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityType:
   numerical values. It is conservative for nonsmooth elementwise ops and block ops, but exact
   for the structural/arithmetic subset currently implemented here.
   """
-
-  return SparsityType.from_mask(_jac_mask(expr, wrt, {}))
+  return _mask_sparsity(_jac_mask(expr, wrt, {}))
 
 
 def column_coloring(sparsity: SparsityType) -> tuple[int, ...]:
@@ -37,12 +37,11 @@ def column_coloring(sparsity: SparsityType) -> tuple[int, ...]:
   Columns of one color can be recovered from a single forward pass, so the number of colors is
   the number of passes a compact Jacobian costs.
   """
-  mask = sparsity.to_mask()
-  ncols = sparsity.shape[1]
-  conflicts = (mask.T.astype(np.int8) @ mask.astype(np.int8)) != 0
+  row_ptr, col_ind, _ = sparsity.to_csr()
+  col_ptr, row_ind, _ = sparsity.to_csc()
   colors: list[int] = []
-  for col in range(ncols):
-    used = {colors[other] for other in range(col) if conflicts[col, other]}
+  for col in range(sparsity.shape[1]):
+    used = {colors[other] for row in row_ind[col_ptr[col] : col_ptr[col + 1]] for other in col_ind[row_ptr[row] : row_ptr[row + 1]] if other < col}
     color = 0
     while color in used:
       color += 1
@@ -57,7 +56,29 @@ def color_groups(colors: tuple[int, ...]) -> tuple[tuple[int, ...], ...]:
   return tuple(tuple(i for i, c in enumerate(colors) if c == color) for color in range(max(colors) + 1))
 
 
-def _jac_mask(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np.ndarray:
+def _empty(shape: tuple[int, int]) -> sparse.csr_array:
+  return sparse.csr_array(shape, dtype=bool)
+
+
+def _mask_sparsity(mask: sparse.csr_array) -> SparsityType:
+  mask.sort_indices()
+  coo = mask.tocoo()
+  return SparsityType(mask.shape, tuple(int(x) for x in coo.row), tuple(int(x) for x in coo.col))
+
+
+def _or(x: sparse.csr_array, y: sparse.csr_array) -> sparse.csr_array:
+  return sparse.csr_array(x + y, dtype=bool)
+
+
+def _compose(outer: sparse.csr_array, inner: sparse.csr_array) -> sparse.csr_array:
+  return sparse.csr_array(outer @ inner, dtype=bool)
+
+
+def _incidence(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> sparse.csr_array:
+  return sparse.csr_array((np.ones(rows.size, dtype=bool), (rows, cols)), shape=shape)
+
+
+def _jac_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   if expr.id in memo:
     return memo[expr.id]
   mask = _jac_mask_uncached(expr, wrt, memo)
@@ -65,18 +86,20 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np.ndarray:
   return mask
 
 
-def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np.ndarray:
+def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   if expr.op == ExprOp.INPUT:
-    return np.eye(wrt.size, dtype=bool) if expr.id == wrt.id else np.zeros((expr.size, wrt.size), dtype=bool)
+    return sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else _empty((expr.size, wrt.size))
   if expr.op == ExprOp.CONST:
-    return np.zeros((expr.size, wrt.size), dtype=bool)
+    return _empty((expr.size, wrt.size))
   if expr.op in COMMON_ELEMENTWISE_UNARY:
     return _jac_mask(expr.args[0], wrt, memo)
   if expr.op in COMMON_ELEMENTWISE_BINARY:
     x, y = expr.args
-    return _broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape) | _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape)
+    return _or(_broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape), _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape))
   if expr.op == ExprOp.SUM:
-    return np.any(_jac_mask(expr.args[0], wrt, memo), axis=0, keepdims=True)
+    child = _jac_mask(expr.args[0], wrt, memo)
+    incidence = _incidence((1, child.shape[0]), np.zeros(child.shape[0], dtype=np.int64), np.arange(child.shape[0]))
+    return _compose(incidence, child)
   if expr.op == ExprOp.RESHAPE:
     return _jac_mask(expr.args[0], wrt, memo)
   if expr.op == ExprOp.TRANSPOSE:
@@ -88,9 +111,9 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np
   if expr.op == ExprOp.GATHER:
     return _jac_mask(expr.args[0], wrt, memo)[expr.attrs["indices"].reshape(-1)]
   if expr.op == ExprOp.SCATTER:
-    ret = np.zeros((expr.size, wrt.size), dtype=bool)
-    ret[expr.attrs["indices"].reshape(-1)] = _jac_mask(expr.args[0], wrt, memo)
-    return ret
+    child = _jac_mask(expr.args[0], wrt, memo)
+    indices = expr.attrs["indices"].reshape(-1)
+    return _compose(_incidence((expr.size, child.shape[0]), indices, np.arange(child.shape[0])), child)
   if expr.op == ExprOp.STACK:
     return _stack_mask(expr, wrt, memo)
   if expr.op == ExprOp.CONCAT:
@@ -102,98 +125,95 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np
   if expr.op == ExprOp.MAP:
     return _map_mask(expr, wrt, memo)
   if expr.op == ExprOp.SOLVER_CALL:
-    # Solver outputs are treated as non-differentiable opaque calls. Implicit
-    # function theorem AD through them is future work.
-    return np.zeros((expr.size, wrt.size), dtype=bool)
+    return _empty((expr.size, wrt.size))
   raise NotImplementedError(f"jacobian sparsity for op {expr.op!r} is not implemented")
 
 
-def _broadcast_mask(mask: np.ndarray, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> np.ndarray:
+def _broadcast_mask(mask: sparse.csr_array, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> sparse.csr_array:
   if in_shape == out_shape:
     return mask
-  if not in_shape:
-    return np.repeat(mask, int(np.prod(out_shape, dtype=int)), axis=0)
   _ = broadcast_shape(in_shape, out_shape)
+  if not in_shape:
+    return mask[np.zeros(int(np.prod(out_shape, dtype=int)), dtype=np.int64)]
   source = np.arange(int(np.prod(in_shape, dtype=int))).reshape(in_shape)
-  source = np.broadcast_to(source, out_shape).reshape(-1)
-  return mask[source]
+  return mask[np.broadcast_to(source, out_shape).reshape(-1)]
 
 
-def _stack_mask(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np.ndarray:
+def _combine_children(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array], child_index: np.ndarray, elem_index: np.ndarray) -> sparse.csr_array:
+  offsets = np.cumsum([0, *(arg.size for arg in expr.args[:-1])])
+  children = sparse.vstack([_jac_mask(arg, wrt, memo) for arg in expr.args], format="csr")
+  return children[offsets[child_index] + elem_index]
+
+
+def _stack_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   base = expr.args[0].shape
   axis = expr.attrs.get("axis", 0)
-  child_index = np.stack([np.full(base, i, dtype=np.int64) for i in range(len(expr.args))], axis=axis).reshape(-1)
-  elem_index = np.stack([np.arange(expr.args[i].size, dtype=np.int64).reshape(base) for i in range(len(expr.args))], axis=axis).reshape(-1)
-  child_masks = [_jac_mask(arg, wrt, memo) for arg in expr.args]
-  return np.stack([child_masks[int(child)][int(elem)] for child, elem in zip(child_index, elem_index, strict=True)], axis=0)
+  child = np.stack([np.full(base, i, dtype=np.int64) for i in range(len(expr.args))], axis=axis).reshape(-1)
+  elem = np.stack([np.arange(arg.size, dtype=np.int64).reshape(base) for arg in expr.args], axis=axis).reshape(-1)
+  return _combine_children(expr, wrt, memo, child, elem)
 
 
-def _concat_mask(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np.ndarray:
+def _concat_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   axis = expr.attrs.get("axis", 0)
-  child_index = np.concatenate([np.full(arg.shape, i, dtype=np.int64) for i, arg in enumerate(expr.args)], axis=axis).reshape(-1)
-  elem_index = np.concatenate([np.arange(arg.size, dtype=np.int64).reshape(arg.shape) for arg in expr.args], axis=axis).reshape(-1)
-  child_masks = [_jac_mask(arg, wrt, memo) for arg in expr.args]
-  return np.stack([child_masks[int(child)][int(elem)] for child, elem in zip(child_index, elem_index, strict=True)], axis=0)
+  child = np.concatenate([np.full(arg.shape, i, dtype=np.int64) for i, arg in enumerate(expr.args)], axis=axis).reshape(-1)
+  elem = np.concatenate([np.arange(arg.size, dtype=np.int64).reshape(arg.shape) for arg in expr.args], axis=axis).reshape(-1)
+  return _combine_children(expr, wrt, memo, child, elem)
 
 
-def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np.ndarray:
+def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   x, y = expr.args
   xm, ym = _jac_mask(x, wrt, memo), _jac_mask(y, wrt, memo)
-  rows: list[np.ndarray] = []
+  x_rows: list[int] = []
+  y_rows: list[int] = []
+  out_rows: list[int] = []
   if len(x.shape) == 1 and len(y.shape) == 1:
-    rows.append(np.any(xm, axis=0) | np.any(ym, axis=0))
+    entries = ((0, k, k) for k in range(x.shape[0]))
   elif len(x.shape) == 2 and len(y.shape) == 1:
-    for i in range(x.shape[0]):
-      x_rows = [i * x.shape[1] + k for k in range(x.shape[1])]
-      y_rows = list(range(y.shape[0]))
-      rows.append(np.any(xm[x_rows], axis=0) | np.any(ym[y_rows], axis=0))
+    entries = ((i, i * x.shape[1] + k, k) for i in range(x.shape[0]) for k in range(x.shape[1]))
   elif len(x.shape) == 1 and len(y.shape) == 2:
-    for j in range(y.shape[1]):
-      x_rows = list(range(x.shape[0]))
-      y_rows = [k * y.shape[1] + j for k in range(y.shape[0])]
-      rows.append(np.any(xm[x_rows], axis=0) | np.any(ym[y_rows], axis=0))
+    entries = ((j, k, k * y.shape[1] + j) for j in range(y.shape[1]) for k in range(x.shape[0]))
   elif len(x.shape) == 2 and len(y.shape) == 2:
-    for i in range(x.shape[0]):
-      for j in range(y.shape[1]):
-        x_rows = [i * x.shape[1] + k for k in range(x.shape[1])]
-        y_rows = [k * y.shape[1] + j for k in range(y.shape[0])]
-        rows.append(np.any(xm[x_rows], axis=0) | np.any(ym[y_rows], axis=0))
-  else:  # pragma: no cover - matmul construction rejects this today
+    entries = (
+      (i * y.shape[1] + j, i * x.shape[1] + k, k * y.shape[1] + j) for i in range(x.shape[0]) for j in range(y.shape[1]) for k in range(x.shape[1])
+    )
+  else:  # pragma: no cover
     raise NotImplementedError(f"matmul sparsity for {x.shape} @ {y.shape}")
-  return np.stack(rows, axis=0)
+  for out, xr, yr in entries:
+    out_rows.append(out)
+    x_rows.append(xr)
+    y_rows.append(yr)
+  out = np.asarray(out_rows, dtype=np.int64)
+  return _or(
+    _compose(_incidence((expr.size, x.size), out, np.asarray(x_rows, dtype=np.int64)), xm),
+    _compose(_incidence((expr.size, y.size), out, np.asarray(y_rows, dtype=np.int64)), ym),
+  )
 
 
-def _call_mask(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np.ndarray:
+def _call_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   callee = expr.attrs["callee"]
   callee_out = callee.outputs[expr.attrs["output"]]
-  ret = np.zeros((expr.size, wrt.size), dtype=bool)
+  ret = _empty((expr.size, wrt.size))
   for formal, actual in zip(callee.inputs, expr.args, strict=True):
-    callee_dep = _jac_mask(callee_out, formal, {})
-    actual_dep = _jac_mask(actual, wrt, memo)
-    ret |= (callee_dep.astype(np.int8) @ actual_dep.astype(np.int8)) != 0
+    ret = _or(ret, _compose(_jac_mask(callee_out, formal, {}), _jac_mask(actual, wrt, memo)))
   return ret
 
 
-def _map_mask(expr: Expr, wrt: Expr, memo: dict[int, np.ndarray]) -> np.ndarray:
+def _map_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   callee = expr.attrs["callee"]
   callee_out = callee.outputs[expr.attrs["output"]]
   length = expr.attrs["length"]
   starts = expr.attrs["starts"]
   strides = expr.attrs["strides"]
-  slice_size = expr.attrs["slice_size"]
-  ret = np.zeros((expr.size, wrt.size), dtype=bool)
-  # The per-iteration callee dependency tile is the same for every it — only the actual-input
-  # mask rows change, since each iteration slices a different range of the outer dependency mask.
+  ret = _empty((expr.size, wrt.size))
+  if not length:
+    return ret
   for formal_idx, actual_outer in enumerate(expr.args):
     formal = callee.inputs[formal_idx]
-    callee_dep = _jac_mask(callee_out, formal, {})  # (slice_size, formal.size)
-    outer_dep = _jac_mask(actual_outer, wrt, memo)  # (outer_size, wrt.size)
-    start = starts[formal_idx]
-    stride = strides[formal_idx]
-    formal_size = formal.size
-    callee_dep_i8 = callee_dep.astype(np.int8)
-    for it in range(length):
-      row0 = start + it * stride
-      contribution = (callee_dep_i8 @ outer_dep[row0 : row0 + formal_size].astype(np.int8)) != 0
-      ret[it * slice_size : (it + 1) * slice_size] |= contribution
+    callee_dep = _jac_mask(callee_out, formal, {})
+    outer_dep = _jac_mask(actual_outer, wrt, memo)
+    start, stride = starts[formal_idx], strides[formal_idx]
+    window_cols = np.repeat(start + np.arange(length) * stride, formal.size) + np.tile(np.arange(formal.size), length)
+    windows = _incidence((length * formal.size, actual_outer.size), np.arange(length * formal.size), window_cols)
+    tiled = sparse.kron(sparse.eye_array(length, dtype=bool), callee_dep, format="csr")
+    ret = _or(ret, _compose(tiled, _compose(windows, outer_dep)))
   return ret

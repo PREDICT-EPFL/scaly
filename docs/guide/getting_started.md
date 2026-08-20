@@ -407,7 +407,7 @@ Three differences are worth knowing up front:
 - **There is no SX-or-MX choice.** Alloy has one `Expr` type, and one lowering that mixes unrolled
   scalar code with loops over blocks, instead of two graph types you pick between for a whole
   codebase up front.
-- **It is pure Python**, with NumPy as the only required runtime dependency. Reading and editing the
+- **It is pure Python**, with NumPy and an internal SciPy sparse-analysis dependency. Reading and editing the
   compiler needs no build step; the cost is paid when building large graphs, not when running them.
 
 [Alloy next to its neighbours](../how_it_works/comparison.md) goes into more detail on this comparison with CasADi and other libraries that have shaped alloy's development.

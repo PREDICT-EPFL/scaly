@@ -41,8 +41,8 @@ uv run python -m alloy.codegen mymodule:rosenbrock -o generated/
   against PIQP or IPOPT directly.
 - **One C ABI.** A single CasADi-style signature per generated function, plus optional typed C++
   wrappers over it.
-- **A compiler you can read.** Pure Python, NumPy as the only required runtime dependency, two
-  small intermediate representations, and a well-documented architecture.
+- **A compiler you can read.** Pure Python, with NumPy for values and SciPy only for structural
+  sparsity analysis, two small intermediate representations, and a well-documented architecture.
 
 In our benchmarks, alloy matches CasADi SX on runtime while generating a fraction of the
 source — 78 KB against 4.5 MB at a 500-stage horizon — and runs a solver-in-the-loop safety filter

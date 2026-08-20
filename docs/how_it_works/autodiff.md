@@ -67,10 +67,11 @@ Symmetric or star coloring would restore the constant behaviour and is not imple
 Structural analysis and value construction are separated on purpose.
 
 `ad/sparsity.py` answers "where can a nonzero be?" from graph shape alone — value-independent,
-symbolic, and free of any AD import, which is what lets it sit below the frontend. It covers the
-structural and arithmetic operations exactly, `matmul` conservatively, and `call` by boolean chain
-rule through the callee. `column_coloring` and `color_groups` expose the graph-coloring vocabulary
-on top of it.
+symbolic, and free of any AD import, which is what lets it sit below the frontend. It propagates
+compressed sparse row Boolean arrays internally, covers the structural and arithmetic operations
+exactly, handles `matmul` conservatively, and applies a sparse Boolean chain rule through `call`.
+SciPy stays behind this module; public patterns remain `SparsityType` coordinate lists.
+`column_coloring` and `color_groups` expose the graph-coloring vocabulary on top of it.
 
 `ad/sparse.py` is the half that needs AD. `sparse_jacobian(y, x)` returns a `SparseJacobian`: the
 pattern, plus a compact `values` expression holding exactly the nonzero entries.

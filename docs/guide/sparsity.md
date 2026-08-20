@@ -23,7 +23,9 @@ from the shape of the graph alone, with no numbers involved. That is what makes 
 structural zero is one no input can make nonzero, not one that happened to be zero this time.
 
 It covers the structural and arithmetic operations exactly, `matmul` conservatively, and a `call`
-by chain rule through the callee.
+by chain rule through the callee. Structural propagation uses compressed sparse row Boolean arrays
+internally, so horizon-shaped analysis stores dependencies rather than a dense output-by-input mask.
+This is an implementation detail: public patterns remain `SparsityType` coordinate lists.
 
 `SparsityType` holds the pattern as coordinates plus a shape, and converts:
 

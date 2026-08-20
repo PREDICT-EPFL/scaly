@@ -15,10 +15,9 @@ import numpy as np
 from ..function import Function
 from ..function.sugar import map_
 from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack, zeros_like
-from ..ir.types import SparsityType
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.env import env_bool
-from .sparsity import _depends_on, _jac_mask, column_coloring
+from .sparsity import _depends_on, _jac_mask, _mask_sparsity, column_coloring
 
 
 # Cache derivative helper Functions per live callee object. Do not key by ``id(callee)``:
@@ -377,7 +376,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       # each local color `c_local`, gathering the unique nonzero column of `actual_tan` for each
       # output row and multiplying with the per-iter compressed-JVP slice.
       local_mask = _jac_mask(callee_out, formal, {})
-      local_colors = column_coloring(SparsityType.from_mask(local_mask)) if local_mask.any() else ()
+      local_colors = column_coloring(_mask_sparsity(local_mask)) if local_mask.nnz else ()
       use_local = bool(local_colors) and (max(local_colors) + 1) < nseed
       if use_local:
         c_f = max(local_colors) + 1

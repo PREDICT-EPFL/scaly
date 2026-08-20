@@ -16,7 +16,7 @@ from ..ir.expr import Expr, ExprOp, concat, gather, scatter
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .forward import _call_jvp_many_const_function, jvp_many
-from .sparsity import _depends_on, _jac_mask, column_coloring, jacobian_sparsity
+from .sparsity import _depends_on, _jac_mask, _mask_sparsity, column_coloring, jacobian_sparsity
 from ..ir.types import SparsityType
 
 
@@ -186,9 +186,9 @@ def _sparse_jacobian_map(map_expr: Expr, wrt: Expr) -> SparseJacobian:
   for f_idx in direct_formals:
     formal = callee.inputs[f_idx]
     local_mask = _jac_mask(callee_out, formal, {})
-    if not local_mask.any():
+    if not local_mask.nnz:
       continue
-    local_sparsity = SparsityType.from_mask(local_mask)
+    local_sparsity = _mask_sparsity(local_mask)
     local_colors = column_coloring(local_sparsity)
     if not local_colors:
       continue
@@ -212,7 +212,7 @@ def _sparse_jacobian_map(map_expr: Expr, wrt: Expr) -> SparseJacobian:
     contributes = np.zeros(nnz, dtype=bool)
     if in_window.any():
       valid = np.flatnonzero(in_window)
-      contributes[valid] = local_mask[lr_global[valid], lc_arr[valid]]
+      contributes[valid] = np.asarray(local_mask[lr_global[valid], lc_arr[valid]]).reshape(-1)
     if not contributes.any():
       continue
     contrib_idx = np.flatnonzero(contributes)
