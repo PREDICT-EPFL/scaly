@@ -37,6 +37,7 @@ nav = [
     { "Benchmark Results" = [
         { "Overview" = "results/index.md" },
         { "Scalability Sweep" = "results/scalability.md" },
+        { "Are the comparisons fair?" = "results/fairness.md" },
     ] },
     { "Developer Guide" = [
         { "Contributing" = "dev/contributing.md" },

@@ -215,8 +215,36 @@ the compact structurally sparse exact Lagrangian Hessian. Each cell checks
 the reconstructed dense matrix against a CasADi MX reference before timing.
 At C=8 it consumes the complete canonical closed-loop handoff: primal,
 objective factor, constraint multipliers, state, desired input, model weights,
-physics, and time step. Regenerate this table before making performance claims;
-the measurements below predate this kernel.
+physics, and time step.
+
+Measured 2026-08-20 on the current formulation (AMD Ryzen 9 7940HS, clang 20 at `-O3`,
+single-threaded, both backends through the same Google Benchmark harness). CasADi SX is not run: it
+was already past a 180 s compile budget at C=4 on the easier Jacobian kernel.
+
+| C | backend | runtime | source | lines | workspace | compile |
+|---:|---|---:|---:|---:|---:|---:|
+| 2 | alloy | **654 µs** | 83.9 KB | 2 294 | 34 304 | 1.0 s |
+| 2 | casadi_mx | 760 µs | 288.0 KB | 8 937 | 214 251 | 1.4 s |
+| 4 | alloy | **1 315 µs** | 164.6 KB | 4 015 | 34 304 | 1.8 s |
+| 4 | casadi_mx | 2 333 µs | 619.3 KB | 19 851 | 356 642 | 4.3 s |
+| 8 | alloy | **2 681 µs** | 471.8 KB | 10 559 | 36 736 | 7.8 s |
+| 8 | casadi_mx | 8 135 µs | 2 005.6 KB | 62 466 | 641 811 | 33.6 s |
+
+**This is the suite's cleanest compiled-against-compiled oracle win, and it grows with the car
+count**: 1.16× at C=2, 1.77× at C=4, **3.03× at C=8**, against 3.4–4.3× less source, 4–17× less
+workspace and 1.4–4.3× less compile time. Alloy's workspace is essentially flat (34 304 → 36 736
+doubles over a 4× car count) because the per-car neural dynamics stay a loop; CasADi MX's triples.
+
+Alloy's advantage growing in C while its own workspace does not is the mapped Hessian doing what it
+is for. Note that alloy's source still grows here, because the `C(C-1)/2` pair rows are built by a
+Python loop rather than mapped — the one place in the suite where *we* write the code-size growth
+that the code-size claim argues against (`BENCHMARKS.md` §6).
+
+This kernel is also the right anchor for reading the problem's closed-loop numbers. At C=8 the closed
+loop is 93% function evaluation, and CasADi's interpreted MX oracle set costs 126 ms per solve
+against alloy's 50 ms — so the ~2.6× there and the 3.03× here are the same effect, and compiling
+CasADi's oracles would close only part of it. The [fairness audit](fairness.md#unbumpercars-c8-40-steps-exact-lagrangian-hessian) has the
+per-configuration closed-loop table.
 
 ### Isolated constraint Jacobian (`jac:g:z`) — historical
 

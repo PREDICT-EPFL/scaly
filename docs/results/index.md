@@ -5,11 +5,22 @@ repository rather than copied from a paper, so when alloy improves or a new prob
 the page that changes first.
 
 Everything here is measured against **CasADi**, in both its SX (scalar) and MX (block) forms, on
-the same problem with the same solver, and every measurement is gated by a correctness check: each
-backend's compact derivative is scattered into a dense matrix using its own sparsity pattern and
-compared entry by entry against an independent reference — an alloy-computed Jacobian for the
-race-car sweep, a CasADi-computed Lagrangian Hessian for the safety filter. A cell that does not
-agree produces no timing.
+the same problem, and every measurement is gated by a correctness check: each backend's compact
+derivative is scattered into a dense matrix using its own sparsity pattern and compared entry by
+entry against an independent reference — an alloy-computed Jacobian for the race-car sweep, a
+CasADi-computed Lagrangian Hessian for the safety filter. A cell that does not agree produces no
+timing.
+
+!!! warning "The solver-in-the-loop numbers on this page are not yet a fair comparison"
+
+    An audit in August 2026 found that the `ipopt+alloy` and `ipopt+casadi` columns differ in two
+    things besides the oracle provider: they link **different builds of IPOPT** (worth 2.7× to 17× in
+    solver-internal time on its own) and the CasADi column evaluates its oracles through CasADi's
+    **virtual machine** rather than compiled C. On the one problem where a fully controlled
+    comparison has been built, alloy's oracle advantage is **1.13×**, not the 4.5× the shipped column
+    reports. Every closed-loop IPOPT multiple below is therefore an upper bound on the oracle effect
+    and is marked as such. The kernel sweeps, the code-size figures and the two `alloy-sqp` columns
+    are unaffected. [Read the audit](fairness.md).
 
 ## The short version
 
@@ -23,6 +34,11 @@ Jacobian is one loop calling one function.
 **Against CasADi MX, alloy is about twice as fast** wherever MX still compiles at all. MX exceeds a
 180-second compile budget at 200 stages.
 
+**On the hanging chain, alloy loses on runtime and wins everything else.** 1.5–2.4× slower than
+CasADi's fastest configuration, from 583 lines against 26 822 and a 0.87-second compile against 25
+seconds — or against never, since CasADi's scalar expansion does not compile at this size in ten
+minutes.
+
 **On a dense network evaluated at every node of a horizon, the code-size result is categorical.**
 Alloy's generated source for the neural-process-MPC Jacobian is 417 lines at every horizon from 6 to
 200 *and* every decoder width from 16 to 256; CasADi SX reaches 1.31 million lines and stops
@@ -31,11 +47,13 @@ closed loop, with both sides code-generated and compiled, the same swing-up epis
 per step against 1.57 ms — a modest win, and a much smaller one than the code-size figures suggest,
 because on oracle evaluation alone alloy and a compiled CasADi are close.
 
-**On a solver-in-the-loop workload, the gap is larger.** Driving the same nonlinear program
-through IPOPT with the same options, and changing only which library provides the oracles, alloy
-runs 2.8–3.9× faster on the continuous-time model and 4.5–9.0× faster on the discrete one. The
-advantage grows with both the vehicle count and the network size, and IPOPT's iteration counts are
-identical in every cell — so the difference is oracle evaluation, not a different solve.
+**On a solver-in-the-loop workload the reported gap is larger, and most of it is not the oracles.**
+Driving the same nonlinear program through IPOPT and changing which library provides the oracles,
+alloy runs 4.5× faster on the safety filter's discrete model. But the two columns also run two
+different IPOPT builds and the CasADi one runs interpreted, and the audit puts the share attributable
+to the oracles at a fraction of that. Where the comparison *is* controlled — the two `alloy-sqp`
+columns, both code-generated compiled C differing only in who generated it — the margin is
+**1.2–1.4×**. That is the number to quote for oracle performance.
 
 ## Race-car equality Jacobian
 
@@ -56,6 +74,30 @@ code — because the stage structure is expressed with `map_` and survives lower
 Construction time follows: 248 ms to build the 500-stage case against SX's 481 ms.
 
 Full tables, workspace figures and the reasoning are in [the scalability sweep](scalability.md).
+
+## Hanging chain of masses — where alloy loses
+
+The classic chain NMPC: `M` point masses on springs under gravity, RK4 over a 40-step horizon, with
+the equality Jacobian as the kernel. This is the suite's largest sparse structured problem, and it is
+the one where loop-preserving lowering costs the most. Both backends compiled at `-O3` and timed in a
+C++ loop; one variant at a time on an idle machine.
+
+| M | backend | runtime | lines | source | compile |
+|---:|---|---:|---:|---:|---:|
+| 5 | alloy | 587 µs | **583** | **124 KB** | **0.87 s** |
+| 5 | CasADi MX unrolled | **244 µs** | 26 822 | 1.2 MB | 25.4 s |
+| 5 | CasADi SX unrolled | — | 215 190 | 4.5 MB | **> 600 s** |
+| 17 | alloy | 3.78 ms | **625** | **690 KB** | **1.75 s** |
+| 17 | CasADi SX + `map` | **2.52 ms** | 494 159 | 20.0 MB | 38.4 s |
+| 17 | every other CasADi encoding | — | 318 036 – 1 784 091 | 14.7–36.9 MB | **> 600 s** |
+
+So it is a trade, not a win: **alloy generates three orders of magnitude less code and compiles it in
+a second, and evaluates it 1.5–2.4× slower.** The gap narrows as the problem grows, which is the
+expected shape — the per-iteration callee dispatch amortizes — but at these sizes it is real, and
+CasADi's scalar expansion stops being compilable well before alloy's output stops being small.
+
+These numbers had never been published; the sweep ran and the results went nowhere. Details and the
+full variant matrix are in [the fairness audit](fairness.md#the-chain-sweep-a-suspected-handicap-that-was-not-one-and-a-result-that-is-not-published).
 
 ## A neural network at every node of a horizon
 
@@ -79,29 +121,42 @@ over a 16× width increase, crossing from 1.2× faster than alloy at the shipped
 at 256. Against SX on the horizon axis, alloy is 1.55–4.46× faster wherever SX still compiles; the
 one cell where SX is ahead is the narrowest decoder, at 0.90.
 
-**In closed loop the whole-solve number is the interesting one.** The same 100-step swing-up episode,
-same plant, same warm starts, changing only the solver and the oracle provider:
+**In closed loop this is the one problem where a fully controlled comparison has been built.** The
+same 100-step swing-up episode, same plant, same warm starts. Both IPOPT columns are generated C
+behind a single `ctypes` call, compiled by the same compiler at the same level, linked against the
+same `libipopt.so`, and timed by `clock_gettime` inside C. Trajectories agree to 8.8e-13 in state.
 
-| column | mean solve | mean FE | FE share |
-|---|---|---|---|
-| IPOPT, alloy oracles | 3.85 ms | 1.53 ms | 40% |
-| IPOPT, CasADi oracles | 17.34 ms | 12.93 ms | 75% |
-| alloy-sqp, alloy oracles | **1.29 ms** | 0.66 ms | 51% |
-| alloy-sqp, CasADi oracles | 1.57 ms | 0.92 ms | 58% |
+| column | mean solve | mean FE |
+|---|---:|---:|
+| IPOPT, alloy oracles | **3.48 ms** | 1.36 ms |
+| IPOPT, CasADi oracles (code-generated) | 3.93 ms | — |
+| alloy-sqp, alloy oracles | **1.29 ms** | 0.66 ms |
+| alloy-sqp, CasADi oracles | 1.57 ms | 0.92 ms |
 
-**Read the IPOPT/CasADi row as a statement about a configuration, not about CasADi.** `nlpsol`
-evaluates through CasADi's own virtual machine unless told to compile, and that row does not compile.
-Measured against a compiled CasADi instead, the same solve takes 5.37 ms with 1.46 ms of function
-evaluation — so **the oracle comparison is a wash**, which is exactly what the kernel sweeps above
-predict, putting CasADi MX at 0.83–0.90× of alloy at this decoder width. The uncompiled row is
-retained only because the other closed-loop problems on this page are configured the same way, and
-making them consistent is a single pending piece of work rather than three inconsistent ones.
+So the oracle-provider margin is **1.13×** on IPOPT and **1.22×** on the SQP, with function
+evaluation itself a wash — two independent fair comparisons landing in the same place. All four
+columns bring the pendulum upright at the same step with identical iteration counts inside each
+solver.
 
-The comparison that *is* fair here is the two alloy-sqp columns: both are code-generated, compiled C
-differing only in who generated it, and there alloy is ahead by 1.4× on function evaluation (0.66
-against 0.92 ms) and 1.2× on the whole solve. Alongside that, all four columns bring the pendulum
-upright at the same step with identical iteration counts inside each solver and trajectories agreeing
-to 2.4e-13 in state.
+**What the shipped `ipopt+casadi` column reports instead is 17.0 ms, and that is a configuration, not
+a result.** Three things account for the difference, and only the first is CasADi's to own:
+
+| configuration | mean solve | mean FE | build |
+|---|---:|---:|---:|
+| interpreted SX — what the suite ships | 17.01 ms | 12.87 ms | 0.5 s |
+| interpreted MX | 7.79 ms | 3.85 ms | 0.02 s |
+| compiled MX (`jit`, `-O3`) | 5.23 ms | 1.47 ms | 24 s |
+| compiled SX (`jit`, `-O3`) | 7.25 ms | 3.15 ms | **1017 s** |
+| code-generated MX, CasADi's IPOPT | 5.15 ms | — | 23 s |
+| code-generated MX, alloy's IPOPT | **3.93 ms** | — | 13 s |
+
+Expanding to scalar SX is a trap here: it triples the interpreter's work, and compiled it costs a
+seventeen-minute build to land *slower* than compiled MX. The last two rows are the same artifact
+differing only in which `libipopt.so.3` the loader resolves — 1.31× for the solver build alone. The
+full decomposition is in [the fairness audit](fairness.md).
+
+The durable results on this problem are therefore code size, build time and the decoder-width axis,
+plus a real but modest 1.1–1.2× on oracle-driven solve time.
 
 The other durable gap is **build cost**: about a second for alloy's whole oracle set, 24 s for
 compiled CasADi MX, and sixteen minutes for CasADi's scalar expansion — the code-size result
@@ -122,19 +177,33 @@ Per-cell numbers are in [the scalability sweep](scalability.md#neural-process-mp
 
 ## Safety filter with a solver in the loop
 
-Vehicles with pairwise control-barrier constraints over a small neural dynamics model, solved with
-IPOPT at every step of a closed loop. Both columns solve the identical problem with the identical
-solver; only the library providing the oracles differs.
+Vehicles with pairwise control-barrier constraints over a `6 → 256 → 128 → 3` neural dynamics model,
+solved with IPOPT at every step of a closed loop. The two columns solve the same problem, but they do
+*not* run the same solver or the same kind of oracle — see the caveat below the table.
 
-| Filter model | Speed-up, alloy over CasADi |
-|---|---|
-| continuous-time | 2.8–3.9× |
-| discrete MLP (the default) | 4.5–9.0× |
+**This is the suite's strongest oracle result, and it is the one that survived the audit intact** —
+it was simply being quoted about twice too high. At C=8, comparing alloy against CasADi's *best*
+configuration rather than the one the suite ships:
 
-Across two to eight vehicles, with the advantage growing in both the vehicle count and the network
-size. IPOPT's iteration count is identical in every cell, which is the useful control: the solver
-walks the same path either way, so what is being measured is the cost of evaluating the oracles and
-getting into and out of them.
+| column | mean solve | mean FE |
+|---|---:|---:|
+| alloy | **58.9 ms** | 52.3 ms |
+| CasADi, best configuration (MX, code-generated, `-O3`) | 146.2 ms | 136.0 ms |
+| CasADi, as the suite ships it (SX, interpreted) | 300.6 ms | 283.7 ms |
+
+So **2.48×**, not the 4.5–9.0× previously published. The isolated exact Lagrangian Hessian says the
+same thing from a different direction — both sides compiled at `-O3`, timed in a C++ loop with no
+Python anywhere, alloy is 1.16× / 1.77× / **3.03×** ahead at C = 2 / 4 / 8. Two independent
+measurements at the same magnitude, and the advantage grows with the vehicle count, which is the
+mapped Hessian doing what it exists for.
+
+Two things this problem taught the rest of the suite. `expand=True`, the shipped default, costs
+CasADi 1.87× here, and the right setting is per problem rather than a suite-wide default. Compiling
+CasADi's oracles is worth only 1.08× on this workload, against 2.6–55× on the other two, because an
+MX graph over matmuls is already dispatching into compiled block kernels.
+
+The older continuous-time model's 2.8–3.9× has not been re-measured under the same treatment and
+should be read as an upper bound. Details in [the fairness audit](fairness.md#unbumpercars-c8-40-steps-exact-lagrangian-hessian).
 
 What the problem exists to exercise is the exact sparse Lagrangian Hessian, computed through
 preserved `map` structure — the construction most of alloy's sparse machinery is built to make
@@ -164,6 +233,9 @@ uv run python benchmarks/run.py closed-loop --problem npmpc --solver sqp --oracl
 uv run python -m benchmarks.problems.unbumpercars.run_closed_loop --solver ipopt --oracle both
 ```
 
+The fairness audit's own scripts live under `benchmarks/results/fairness/` and are described on
+[that page](fairness.md#reproducing-this-page).
+
 Each sweep cell compiles its own Google Benchmark binary containing alloy and the chosen backend.
 Cells that exceed the per-cell compile timeout (180 s by default) or the generated source cap
 (50 MB) are skipped, and once a backend fails at one size, larger sizes for that backend are
@@ -182,7 +254,12 @@ A few caveats worth stating rather than burying.
   unstructured problem would not show the same picture.
 - **CasADi SX is genuinely fast, and pulls ahead as problems grow.** It trails alloy at the
   smallest horizons and leads by around 19% at 500 stages. The argument for alloy on these problems
-  is source size, construction time and compile time, not raw evaluation speed.
+  is source size, construction time and compile time, not raw evaluation speed. On the race-car
+  closed loop the same thing shows up on the oracle side: once CasADi is compiled, its function
+  evaluation is **3.1× faster** than alloy's (0.40 against 1.22 ms per solve at N=40).
+- **The closed-loop IPOPT multiples are not oracle measurements.** They are contaminated by a
+  different IPOPT build and by CasADi running interpreted. [The fairness audit](fairness.md) has the
+  decomposition and the per-problem configuration tables.
 - **Numbers come from one machine.** Absolute timings vary with hardware; the ratios are the
   durable part.
 - **Historical results are labelled.** [The scalability page](scalability.md) keeps measurements

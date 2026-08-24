@@ -53,9 +53,12 @@ uv run python -m alloy.codegen mymodule:rosenbrock -o generated/
   sparsity analysis, two small intermediate representations, and a well-documented architecture.
 
 In our benchmarks, alloy matches CasADi SX on runtime while generating a fraction of the
-source — 78 KB against 4.5 MB at a 500-stage horizon — and runs a solver-in-the-loop safety filter
-2.8–9.0× faster, depending on the model, with identical IPOPT iteration counts. See
-[the results](results/index.md).
+source — 78 KB against 4.5 MB at a 500-stage horizon, and 417 lines regardless of horizon for a
+neural-network-per-node model where CasADi reaches 1.31 million and stops compiling. On
+solver-in-the-loop workloads, where oracle evaluation is the thing being compared, alloy is ahead by
+1.1–1.4× against a CasADi that is code-generated and compiled the same way. See
+[the results](results/index.md) and, for what those comparisons do and do not hold constant,
+[the fairness audit](results/fairness.md).
 
 ## Where to start
 
