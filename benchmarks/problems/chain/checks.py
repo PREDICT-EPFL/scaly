@@ -58,7 +58,8 @@ def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
   for n_masses, horizon in ((3, 2), (5, 3)):
     fn = chain_eq_function(n_masses, horizon)
     dense = fn.factory(f"chain_dense_M{n_masses}_N{horizon}", ["z", "p"], [al.jac("eq", "z")])
-    sparse = fn.factory(f"chain_sparse_M{n_masses}_N{horizon}", ["z", "p"], [al.spjac("eq", "z")])
+    sparse = chain_nlp(n_masses, horizon).descriptor.jac
+    assert isinstance(sparse, al.Function)
     ca_dense = ca_chain_eq_jac(n_masses, horizon)
     zv, pv = sample_inputs(n_masses, horizon, seed=11)
 

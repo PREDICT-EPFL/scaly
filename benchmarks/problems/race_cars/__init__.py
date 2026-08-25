@@ -55,6 +55,33 @@ class RaceCarParams:
     return np.array([self.wheelbase, self.dt, self.mass, self.c_m0, self.c_r0, self.c_r1, self.c_r2], dtype=np.float64)
 
 
+def continuous_dynamics_np(x: np.ndarray, u: np.ndarray, params: RaceCarParams = RaceCarParams()) -> np.ndarray:
+  x, u = np.asarray(x), np.asarray(u)
+  if x.shape != (NX,) or u.shape != (NU,):
+    raise ValueError(f"expected x/u shapes {(NX,)} / {(NU,)}, got {x.shape} / {u.shape}")
+  beta = 0.5 * u[1]
+  vx = x[3] * np.cos(beta)
+  resistance = (params.c_r0 + params.c_r1 * vx + params.c_r2 * vx * vx) * np.tanh(10.0 * vx)
+  return np.array(
+    [
+      x[3] * np.cos(x[2] + beta),
+      x[3] * np.sin(x[2] + beta),
+      x[3] * np.sin(beta) / (0.5 * params.wheelbase),
+      (params.c_m0 * u[0] - resistance) / params.mass,
+    ]
+  )
+
+
+def rk4_step_np(x: np.ndarray, u: np.ndarray, params: RaceCarParams = RaceCarParams()) -> np.ndarray:
+  """Advance the NumPy plant by the physical parameter's fixed sample time."""
+  x, u, h = np.asarray(x), np.asarray(u), params.dt
+  k1 = continuous_dynamics_np(x, u, params)
+  k2 = continuous_dynamics_np(x + 0.5 * h * k1, u, params)
+  k3 = continuous_dynamics_np(x + 0.5 * h * k2, u, params)
+  k4 = continuous_dynamics_np(x + h * k3, u, params)
+  return x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+
 def n_param(horizon: int) -> int:
   return NX * (horizon + 1) + N_PARAMS
 
@@ -107,60 +134,47 @@ def race_car_eq_function(horizon: int) -> al.Function:
   return al.Function(f"race_car_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
 
-def race_car_eq_function_map(horizon: int) -> al.Function:
-  """Same semantics as ``race_car_eq_function`` but using ``al.scan`` for the interstage residuals.
-
-  This lets benchmarks measure the impact of loop-preserving lowering directly against the
-  per-stage unrolled construction.
-  """
-  z = al.sym("z", NZ * (horizon + 1))
-  p = al.sym("p", n_param(horizon), diff=False)
+def _race_car_eq_map_expr(z: al.Expr, p: al.Expr, horizon: int) -> al.Expr:
   initial = eq_initial.call([z[:NZ], p[:NX]])[0]
   mapped = al.scan(
     eq_interstage,
     length=horizon,
     inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
   )
-  return al.Function(f"race_car_eq_map_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+  return al.concat([initial, mapped])
 
 
-def ca_race_car_eq_jac(horizon: int, name: str = "race_car_eq_jac", sym_t=None):
-  import casadi
+def race_car_constraint_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray) -> np.ndarray:
+  """Dense NumPy reference for the equality and corridor Jacobian handed to the solver."""
+  z, p = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64)
+  if z.shape != (NZ * (horizon + 1),) or p.shape != (n_param(horizon),):
+    raise ValueError(f"invalid z/p shapes {z.shape} / {p.shape}")
+  params = RaceCarParams(*p[-N_PARAMS:])
 
-  sym_t = casadi.SX if sym_t is None else sym_t
-  z = sym_t.sym("z", NZ * (horizon + 1))
-  p = sym_t.sym("p", n_param(horizon))
-  params = p[NX * (horizon + 1) :]
+  def step(stage: np.ndarray) -> np.ndarray:
+    return rk4_step_np(stage[:NX], stage[NX:], params)
 
-  def ca_cont(x, u):
-    wheelbase, _, mass, c_m0, c_r0, c_r1, c_r2 = [params[i] for i in range(N_PARAMS)]
-    phi, v = x[2], x[3]
-    throttle, delta = u[0], u[1]
-    beta = 0.5 * delta
-    vx = v * casadi.cos(beta)
-    lr = 0.5 * wheelbase
-    return casadi.vertcat(
-      v * casadi.cos(phi + beta),
-      v * casadi.sin(phi + beta),
-      v * casadi.sin(beta) / lr,
-      (c_m0 * throttle - (c_r0 + c_r1 * vx + c_r2 * vx * vx) * casadi.tanh(10 * vx)) / mass,
-    )
+  dense = np.zeros((NX * (horizon + 1) + 2 * horizon, z.size), dtype=np.float64)
+  dense[:NX, :NX] = np.eye(NX)
+  complex_step = 1e-30
+  for stage in range(horizon):
+    row, col = NX * (stage + 1), NZ * stage
+    value = z[col : col + NZ]
+    for j in range(NZ):
+      perturbed = value.astype(np.complex128)
+      perturbed[j] += complex_step * 1j
+      dense[row : row + NX, col + j] = np.imag(step(perturbed)) / complex_step
+    dense[row : row + NX, col + NZ : col + NZ + NX] = -np.eye(NX)
 
-  def ca_rk4(x, u):
-    dt = params[1]
-    k1 = ca_cont(x, u)
-    k2 = ca_cont(x + dt / 2 * k1, u)
-    k3 = ca_cont(x + dt / 2 * k2, u)
-    k4 = ca_cont(x + dt * k3, u)
-    return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
-
-  parts = [z[:NX] - p[:NX]]
-  for i in range(horizon):
-    zi = z[i * NZ : (i + 1) * NZ]
-    znext = z[(i + 1) * NZ : (i + 2) * NZ]
-    parts.append(ca_rk4(zi[:NX], zi[NX : NX + NU]) - znext[:NX])
-  eq = casadi.vertcat(*parts)
-  return casadi.Function(name, [z, p], [casadi.jacobian(eq, z)])
+  for stage in range(horizon):
+    row, col = NX * (horizon + 1) + 2 * stage, NZ * (stage + 1)
+    ref = p[NX * (stage + 1) : NX * (stage + 2)]
+    sin_ref, cos_ref = np.sin(ref[2]), np.cos(ref[2])
+    d_phi = z[col + 2] - ref[2]
+    dense[row : row + 2, col] = -sin_ref
+    dense[row : row + 2, col + 1] = cos_ref
+    dense[row : row + 2, col + 2] = 0.5 * CAR_LENGTH * np.cos(d_phi) + np.array([-0.5, 0.5]) * CAR_WIDTH * np.sin(d_phi)
+  return dense
 
 
 def race_car_eq_sparse_metrics(horizon: int, *, render_source: bool = False) -> dict[str, float | int]:

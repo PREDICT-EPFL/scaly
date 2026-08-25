@@ -34,13 +34,13 @@ from benchmarks.problems.race_cars import (
   CAR_LENGTH,
   CAR_WIDTH,
   DELTA_MAX,
-  NU,
   NX,
   NZ,
   T_MAX,
   RaceCarParams,
+  _race_car_eq_map_expr,
   n_param,
-  race_car_eq_function,
+  rk4_step_np,
 )
 from benchmarks.problems.race_cars.reference import MotionPlanner
 from benchmarks.problems.race_cars.tracks import Track, load_track
@@ -146,32 +146,15 @@ def steady_throttle(v: float, params: RaceCarParams = RaceCarParams()) -> float:
   return float(np.tanh(10.0 * v) * (params.c_r0 + params.c_r1 * v + params.c_r2 * v * v) / params.c_m0)
 
 
-def continuous_dynamics_np(x: np.ndarray, u: np.ndarray, params: RaceCarParams = RaceCarParams()) -> np.ndarray:
-  x, u = np.asarray(x, dtype=np.float64), np.asarray(u, dtype=np.float64)
-  if x.shape != (NX,) or u.shape != (NU,):
-    raise ValueError(f"expected x/u shapes {(NX,)} / {(NU,)}, got {x.shape} / {u.shape}")
-  beta = 0.5 * u[1]
-  vx = x[3] * np.cos(beta)
-  resistance = (params.c_r0 + params.c_r1 * vx + params.c_r2 * vx * vx) * np.tanh(10.0 * vx)
-  return np.array(
-    [
-      x[3] * np.cos(x[2] + beta),
-      x[3] * np.sin(x[2] + beta),
-      x[3] * np.sin(beta) / (0.5 * params.wheelbase),
-      (params.c_m0 * u[0] - resistance) / params.mass,
-    ],
-    dtype=np.float64,
-  )
-
-
-def rk4_step_np(x: np.ndarray, u: np.ndarray, params: RaceCarParams = RaceCarParams()) -> np.ndarray:
-  """Advance the NumPy plant by the physical parameter's fixed sample time."""
-  x, u, h = np.asarray(x, dtype=np.float64), np.asarray(u, dtype=np.float64), params.dt
-  k1 = continuous_dynamics_np(x, u, params)
-  k2 = continuous_dynamics_np(x + 0.5 * h * k1, u, params)
-  k3 = continuous_dynamics_np(x + 0.5 * h * k2, u, params)
-  k4 = continuous_dynamics_np(x + h * k3, u, params)
-  return x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+@al.function("race_car_corridor_stage", {"z": NZ, "ref": NX})
+def _corridor_stage(z, ref):  # type: ignore[no-untyped-def]
+  cos_ref, sin_ref = ref[2].cos(), ref[2].sin()
+  dx, dy = z[0] - ref[0], z[1] - ref[1]
+  e_lat = -sin_ref * dx + cos_ref * dy
+  d_phi = z[2] - ref[2]
+  reach = e_lat + 0.5 * CAR_LENGTH * d_phi.sin()
+  half_width = 0.5 * CAR_WIDTH * d_phi.cos()
+  return {"corridor": al.stack([reach + half_width, reach - half_width])}
 
 
 def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: dict[str, str | int | float] | None = None) -> al.SolverFunction:
@@ -180,14 +163,12 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
   p = al.sym("p", n_param(n), diff=False)
   params = p[NX * (n + 1) :]
   c_m0, c_r0, c_r1, c_r2 = params[3], params[4], params[5], params[6]
-  half_length, half_width = 0.5 * CAR_LENGTH, 0.5 * CAR_WIDTH
 
   # every cost term is a weighted square, so the cost is one flat dot(weights, residuals**2).
   # accumulating it as `cost = cost + ...` instead builds a 250-deep expression chain and the
   # recursive fusion pass overflows Python's stack at this horizon.
   weights: list[float] = []
   residuals = []
-  corridor = []
   for i in range(n + 1):
     zi, ref = z[i * NZ : (i + 1) * NZ], p[i * NX : (i + 1) * NX]
     v_ref = ref[3]
@@ -208,12 +189,14 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
     else:
       weights.extend([config.q_lon, config.q_lat, config.q_phi, config.q_v])
     residuals.extend([e_lon, e_lat, d_phi, d_v])
-    # lateral reach of the two front corners; the rear pair only differs by the sign of the sin term
-    reach = e_lat + half_length * d_phi.sin()
-    corridor.extend([reach + half_width * d_phi.cos(), reach - half_width * d_phi.cos()])
+  corridor = al.scan(
+    _corridor_stage,
+    length=n,
+    inputs={"z": (z, NZ, NZ), "ref": (p, NX, NX)},
+  )
   cost = al.dot(al.const(np.array(weights)), al.stack(residuals) ** 2)
 
-  eq = race_car_eq_function(n).call([z, p])[0]
+  eq = _race_car_eq_map_expr(z, p, n)
   lb, ub = np.full(z.size, -np.inf), np.full(z.size, np.inf)
   for i in range(n + 1):
     lb[i * NZ + 3], ub[i * NZ + 3] = 0.0, config.max_speed
@@ -224,9 +207,9 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
     p=p,
     f=cost,
     h_eq=eq,
-    g_ineq=al.stack(corridor),
-    l_ineq=np.full(len(corridor), -config.track_half_width),
-    u_ineq=np.full(len(corridor), config.track_half_width),
+    g_ineq=corridor,
+    l_ineq=np.full(2 * n, -config.track_half_width),
+    u_ineq=np.full(2 * n, config.track_half_width),
     x_lb=lb,
     x_ub=ub,
     solver=solver,

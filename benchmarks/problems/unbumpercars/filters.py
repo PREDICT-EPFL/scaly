@@ -602,6 +602,33 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
   )
 
 
+def build_alloy_nlp(
+  loop_cfg: ClosedLoopConfig,
+  filt_cfg: FilterConfig,
+  *,
+  solver: str = "ipopt",
+  options: dict[str, str | int | float] | None = None,
+  oracle: al.Function | None = None,
+) -> al.SolverFunction:
+  """Build the nonlinear program used by the Alloy safety-filter column."""
+  base = build_alloy_oracle(loop_cfg, filt_cfg) if oracle is None else oracle
+  z, *_ = base.inputs
+  cost, g = base.outputs
+  n_u, n_s, n_g = NCTRL * loop_cfg.ncars, loop_cfg.n_slack, g.shape[0]
+  return al.nlp(
+    x=z,
+    f=cost,
+    p=list(base.inputs[1:]),
+    g_ineq=g if n_g else None,
+    l_ineq=np.zeros(n_g) if n_g else None,
+    x_lb=np.concatenate([-np.ones(n_u), np.zeros(n_s)]),
+    x_ub=np.concatenate([np.ones(n_u), np.full(n_s, np.inf)]),
+    solver=solver,
+    name=base.name.replace("_oracle", f"_{solver}_nlp"),
+    options=options,
+  )
+
+
 class AlloyDTCBFSafetyFilter:
   """DTCBF filter through a generated ``al.nlp`` solver wrapper.
 
@@ -640,8 +667,7 @@ class AlloyDTCBFSafetyFilter:
     self._compile_ms: dict[str, float] = {}
     t0 = time.perf_counter()
     base = build_alloy_oracle(loop_cfg, filt_cfg)
-    z, _bar_x, _u_des, _pw, _physics, _dt = base.inputs
-    cost, g = base.outputs
+    g = base.outputs[1]
     self.n_g = g.shape[0]
     options: dict[str, str | int | float] = {
       "print_level": 0,
@@ -659,18 +685,7 @@ class AlloyDTCBFSafetyFilter:
           "tol": self.filt_cfg.ipopt_tol,
           "dual_tol": SQP_DUAL_TOL,
         }
-      self.nlp = al.nlp(
-        x=z,
-        f=cost,
-        p=list(base.inputs[1:]),
-        g_ineq=g if self.n_g else None,
-        l_ineq=np.zeros(self.n_g) if self.n_g else None,
-        x_lb=np.concatenate([-np.ones(self.n_u), np.zeros(self.n_s)]),
-        x_ub=np.concatenate([np.ones(self.n_u), np.full(self.n_s, np.inf)]),
-        solver=solver,
-        name=base.name.replace("_oracle", f"_{solver}_nlp"),
-        options=options,
-      )
+      self.nlp = build_alloy_nlp(loop_cfg, filt_cfg, solver=solver, options=options, oracle=base)
     elif oracle_provider == "casadi" and solver == "sqp":
       self.nlp = build_casadi_sqp(loop_cfg, filt_cfg, weights)
     else:
@@ -684,18 +699,7 @@ class AlloyDTCBFSafetyFilter:
         "watchdog": 5,
       }
       if oracle_provider == "alloy":
-        self.fallback_nlp = al.nlp(
-          x=z,
-          f=cost,
-          p=list(base.inputs[1:]),
-          g_ineq=g if self.n_g else None,
-          l_ineq=np.zeros(self.n_g) if self.n_g else None,
-          x_lb=np.concatenate([-np.ones(self.n_u), np.zeros(self.n_s)]),
-          x_ub=np.concatenate([np.ones(self.n_u), np.full(self.n_s, np.inf)]),
-          solver="sqp",
-          name=base.name.replace("_oracle", "_sqp_l1_nlp"),
-          options=fallback_options,
-        )
+        self.fallback_nlp = build_alloy_nlp(loop_cfg, filt_cfg, solver="sqp", options=fallback_options, oracle=base)
       else:
         self.fallback_nlp = build_casadi_sqp(loop_cfg, filt_cfg, weights, sqp_options={"globalization": "l1", "watchdog": 5})
     self.jac_sparsity = self.nlp.descriptor.jac_sparsity

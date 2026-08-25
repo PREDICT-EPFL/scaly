@@ -300,18 +300,6 @@ def npmpc_eq_function(horizon: int, decoder: Decoder = Decoder(), dt: float = DT
   return al.Function(f"npmpc_eq_N{horizon}", [z, p], [eq], ["z", "p"], ["eq"])
 
 
-def npmpc_eq_function_unrolled(horizon: int, decoder: Decoder = Decoder(), dt: float = DT) -> al.Function:
-  """Same equalities built stage by stage, so the scanned form can be differentially tested against it."""
-  z = al.sym("z", n_dec(horizon))
-  p = al.sym("p", decoder.n_pw, diff=False)
-  stage = stage_function(decoder, dt)
-  parts = [
-    stage.call([z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)], z[NX * (horizon + 1) + NU * i : NX * (horizon + 1) + NU * (i + 1)], p])[0]
-    for i in range(horizon)
-  ]
-  return al.Function(f"npmpc_eq_unrolled_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
-
-
 def sample_inputs(horizon: int, decoder: Decoder = Decoder(), weights: np.ndarray | None = None, seed: int = 11) -> tuple[np.ndarray, np.ndarray]:
   """A synthetic decision vector and parameter tail for kernel cells, spread over a swing-up's range of angles and speeds."""
   rng = np.random.default_rng(seed)
@@ -359,6 +347,23 @@ def npmpc_eq_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray, dec
     dense[rows, NX * i : NX * (i + 1)] = d_x
     dense[rows, NX * (i + 1) : NX * (i + 2)] = d_xnext
     dense[rows, offset + NU * i : offset + NU * (i + 1)] = d_u
+  return dense.reshape(-1)
+
+
+def npmpc_constraint_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray, decoder: Decoder = Decoder(), dt: float = DT) -> np.ndarray:
+  """Dense reference for every equality and inequality row in the solver descriptor."""
+  z, p = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64)
+  if z.shape != (n_dec(horizon),) or p.shape != (n_param(decoder),):
+    raise ValueError(f"invalid z/p shapes {z.shape} / {p.shape}")
+  n_eq, n_ineq = constraint_counts(horizon)
+  dense = np.zeros((n_eq + n_ineq, z.size), dtype=np.float64)
+  dense[:n_eq] = npmpc_eq_jac_dense_reference(horizon, z, p[NX:], decoder, dt).reshape(n_eq, -1)
+  dense[n_eq : n_eq + NX, :NX] = np.eye(NX)
+  slack_col = z.size - 1
+  for stage in range(horizon + 1):
+    phi_col = NX * stage + 1
+    dense[n_eq + NX + stage, [phi_col, slack_col]] = 1.0
+    dense[n_eq + NX + horizon + 1 + stage, [phi_col, slack_col]] = [1.0, -1.0]
   return dense.reshape(-1)
 
 
@@ -554,7 +559,7 @@ def ca_npmpc_pieces(
 ) -> dict:
   """The CasADi mirror's symbolic pieces, in Alloy's own row and column order.
 
-  One builder behind all four CasADi consumers -- the sweep's equality-Jacobian and Lagrangian-
+  One builder behind all four CasADi consumers -- the sweep's constraint-Jacobian and Lagrangian-
   Hessian kernels and the closed loop's IPOPT and SQP columns -- so the mirror cannot drift from
   itself. `z`, `xstart` and `pw` mean exactly what they mean on the Alloy side, every constraint row
   and decision column sits in the same place, and the bounds come from the same two functions. That
@@ -617,12 +622,27 @@ def ca_npmpc_pieces(
   }
 
 
-def ca_npmpc_eq_jac(horizon: int, decoder: Decoder = Decoder(), name: str = "npmpc_eq_jac", sym_t=None, dt: float = DT):
-  """The CasADi mirror of the equality-Jacobian kernel: the same stage residuals in the same order."""
+def _ca_npmpc_joint_parameter_pieces(
+  horizon: int,
+  decoder: Decoder = Decoder(),
+  sym_t=None,
+  *,
+  P: np.ndarray | None = None,
+  weights: CostWeights = CostWeights(),
+  dt: float = DT,
+) -> dict:
+  """Fold the CasADi graph's two parameter symbols into the solver's single vector."""
   import casadi as ca
 
-  pieces = ca_npmpc_pieces(horizon, decoder, sym_t, dt=dt, cost=False)
-  return ca.Function(name, [pieces["z"], pieces["pw"]], [ca.jacobian(pieces["h_eq"], pieces["z"])])
+  sym_t = ca.MX if sym_t is None else sym_t
+  pieces = ca_npmpc_pieces(horizon, decoder, sym_t, P=P, weights=weights, dt=dt)
+  p = sym_t.sym("p", n_param(decoder))
+  f, h_eq, g_ineq = ca.substitute(
+    [pieces["f"], pieces["h_eq"], pieces["g_ineq"]],
+    [pieces["xstart"], pieces["pw"]],
+    [p[:NX], p[NX:]],
+  )
+  return {**pieces, "p": p, "f": f, "h_eq": h_eq, "g_ineq": g_ineq}
 
 
 def ca_npmpc_lag_hess(
@@ -634,11 +654,12 @@ def ca_npmpc_lag_hess(
   weights: CostWeights = CostWeights(),
   dt: float = DT,
 ):
-  """The CasADi mirror of the exact Lagrangian Hessian: same cost, same rows, same parameter tail."""
+  """The CasADi reference for the exact solver-descriptor Lagrangian Hessian."""
   import casadi as ca
 
   sym_t = ca.SX if sym_t is None else sym_t
-  pieces = ca_npmpc_pieces(horizon, decoder, sym_t, P=P, weights=weights, dt=dt)
-  lam_f, lam_g = sym_t.sym("lam_f"), sym_t.sym("lam_g", pieces["n_eq"])
-  lag = lam_f * pieces["f"] + ca.dot(lam_g, pieces["h_eq"])
-  return ca.Function(name, [pieces["z"], lam_f, lam_g, pieces["pw"]], [ca.hessian(lag, pieces["z"])[0]])
+  pieces = _ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, P=P, weights=weights, dt=dt)
+  constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
+  lam_f, lam_g = sym_t.sym("lam_f"), sym_t.sym("lam_g", pieces["n_eq"] + pieces["n_ineq"])
+  lag = lam_f * pieces["f"] + ca.dot(lam_g, constraints)
+  return ca.Function(name, [pieces["z"], lam_f, lam_g, pieces["p"]], [ca.hessian(lag, pieces["z"])[0]])

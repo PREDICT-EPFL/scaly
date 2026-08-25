@@ -28,11 +28,11 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
       label honest *and breaks the smoke tier*, because unrolled `SX` does not compile at those
       sizes. The comment at that line says so. Rationale: paper.md §5.2, fairness.md "Does CasADi
       have loop-preserving codegen?".
-- [ ] **A2. Take every swept kernel from the solver descriptor.** `descriptor.hess` rather than a
+- [x] **A2. Take every swept kernel from the solver descriptor.** `descriptor.hess` rather than a
       hand-written `factory(..., al.sphess(...))` request, so the timed function *is* what the
       optimizer calls. Checked on npmpc N=12: the Hessian already agrees at nnz 269, the Jacobian
       does not (48 of 78 constraint rows). Rationale: fairness.md, and the check is in this file.
-- [ ] **A3. Stop building the race-car correctness reference as a dense Alloy Jacobian.** `_samples`
+- [x] **A3. Stop building the race-car correctness reference as a dense Alloy Jacobian.** `_samples`
       requests `al.jac("eq", "z")`, which at N=100 is a dense 404x606 Jacobian rendered as scalar C
       that gcc does not finish in twenty minutes. **This blocks the race-car half of Fig 2** and it
       is why the same-machine timer anchor is still missing. Compute the reference in NumPy, CasADi,

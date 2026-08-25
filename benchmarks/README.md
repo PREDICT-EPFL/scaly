@@ -57,13 +57,13 @@ Smoke runs three groups, all on by default:
   SQP robustness work consumes. Gates needing IPOPT or CasADi report `skipped: ...`
   rather than passing silently.
 - `benchmarks` — Python and compiled-C derivative kernels against a dense reference,
-  plus sparsity, workspace, and loop-preservation invariants. For `npmpc` the
+  plus sparsity, workspace, and loop-preservation invariants. Every Alloy cell evaluates the exact
+  sparse Jacobian or Hessian and sparsity supplied by its solver descriptor. For `npmpc` the
   loop-preservation gate runs on two axes: the generated source must not grow with the
   horizon (the decoder is scanned, not unrolled per stage) and must not grow with the
   decoder width either, since the weights are read out of the parameter tail rather than
-  baked in as literals. Its dense reference comes from an unrolled twin of the same
-  formulation (`npmpc_eq_function_unrolled`), so the scanned kernel is checked against an
-  independent construction rather than against itself.
+  baked in as literals. Independent dense NumPy references cover every equality and inequality row
+  in the race-car and `npmpc` solver descriptors.
 - `solver_call` — the QP/IPOPT solver-call ABI, when vendored solver libraries
   are present.
 

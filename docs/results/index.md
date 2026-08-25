@@ -1,15 +1,22 @@
 # Benchmark results
 
-These are the current measured numbers. They are regenerated from the benchmark suite in this
+These are the latest published measured numbers. They are regenerated from the benchmark suite in this
 repository rather than copied from a paper, so when alloy improves or a new problem lands, this is
 the page that changes first.
 
 Everything here is measured against **CasADi**, in both its SX (scalar) and MX (block) forms, on
 the same problem, and every measurement is gated by a correctness check: each backend's compact
 derivative is scattered into a dense matrix using its own sparsity pattern and compared entry by
-entry against an independent reference — an alloy-computed Jacobian for the race-car sweep, a
+entry against an independent reference — a NumPy-computed Jacobian for the race-car sweep, a
 CasADi-computed Lagrangian Hessian for the safety filter. A cell that does not agree produces no
 timing.
+
+!!! warning "The Jacobian tables await a same-machine refresh"
+
+    The sweep now benchmarks the full constraint Jacobian taken from each optimizer's solver
+    descriptor. The published race-car and neural-process MPC Jacobian tables below predate that
+    correction and measured equality rows only. They remain labeled as historical rather than being
+    relabeled with numbers from a different kernel.
 
 !!! warning "The solver-in-the-loop numbers on this page are not yet a fair comparison"
 
@@ -24,8 +31,8 @@ timing.
 
 ## The short version
 
-**Alloy is close to CasADi SX on speed, at a fraction of the generated source.** On the race-car
-equality Jacobian, alloy is slightly ahead at the smallest horizons and falls behind as they grow —
+**Alloy was close to CasADi SX on speed, at a fraction of the generated source.** On the historical
+race-car equality Jacobian, alloy was slightly ahead at the smallest horizons and fell behind as they grew —
 level at one stage, about 15% slower at 200 and 19% at 500. Meanwhile the generated source at a
 50-stage horizon is 22 KB against SX's 455 KB, and at 500 stages 78 KB against 4.5 MB. Alloy's line
 count is *flat*: 482 lines at ten stages and 482 at five hundred, because the whole interstage
@@ -55,10 +62,11 @@ to the oracles at a fraction of that. Where the comparison *is* controlled — t
 columns, both code-generated compiled C differing only in who generated it — the margin is
 **1.2–1.4×**. That is the number to quote for oracle performance.
 
-## Race-car equality Jacobian
+## Race-car equality Jacobian — historical
 
 A 4-state, 2-control bicycle model with a `tanh` rolling-resistance term, integrated with RK4 over
-a horizon, differentiated as a compact sparse Jacobian.
+a horizon, differentiated as a compact sparse Jacobian. The current sweep adds the corridor rows
+from the solver descriptor; this table is the last equality-only run.
 
 | Stages | Alloy µs | CasADi SX µs | CasADi MX µs | Alloy KB | SX KB | MX KB |
 |---:|---:|---:|---:|---:|---:|---:|

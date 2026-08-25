@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 
 from alloy.solvers.stats import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, SolverStats, SolverStatus
-from benchmarks.problems.npmpc import DT, NX, CostWeights, Decoder, ca_npmpc_pieces, n_param
+from benchmarks.problems.npmpc import _ca_npmpc_joint_parameter_pieces
 
 # IPOPT's own termination strings, mapped onto Alloy's solver-agnostic status enum
 STATUS_MAP = {
@@ -74,35 +74,9 @@ DEFAULT_EXPAND = True
 DEFAULT_JIT = False
 
 
-def joint_parameter_pieces(
-  horizon: int,
-  decoder: Decoder = Decoder(),
-  *,
-  P: np.ndarray | None = None,
-  weights: CostWeights = CostWeights(),
-  dt: float = DT,
-) -> dict[str, Any]:
-  """`ca_npmpc_pieces` with the two parameter symbols folded into the single `p` the solvers take.
-
-  The kernels in the sweep read only the decoder tail, so `ca_npmpc_pieces` keeps `xstart` and `pw`
-  apart; the solver interfaces want one parameter vector in `n_param` order. Substituting is what
-  keeps those two facts from becoming two transcriptions of the same problem.
-  """
-  import casadi as ca
-
-  pieces = ca_npmpc_pieces(horizon, decoder, ca.MX, P=P, weights=weights, dt=dt)
-  p = ca.MX.sym("p", n_param(decoder))
-  f, h_eq, g_ineq = ca.substitute(
-    [pieces["f"], pieces["h_eq"], pieces["g_ineq"]],
-    [pieces["xstart"], pieces["pw"]],
-    [p[:NX], p[NX:]],
-  )
-  return {**pieces, "p": p, "f": f, "h_eq": h_eq, "g_ineq": g_ineq}
-
-
 def build_casadi_npmpc(config, *, solver: str = "ipopt", P: np.ndarray, jit: bool = DEFAULT_JIT):
   """The CasADi-oracle column for the requested optimizer."""
-  pieces = joint_parameter_pieces(config.horizon, config.decoder, P=P, weights=config.weights, dt=config.dt)
+  pieces = _ca_npmpc_joint_parameter_pieces(config.horizon, config.decoder, P=P, weights=config.weights, dt=config.dt)
   if solver == "ipopt":
     return CasadiNpmpcSolver(config, pieces, jit=jit)
   if solver == "sqp":

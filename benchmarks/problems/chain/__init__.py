@@ -133,13 +133,16 @@ def _eq_stage_fn(n_masses: int) -> al.Function:
   return al.Function(f"chain_eq_stage_M{n_masses}", [z, xnext, params], [step - xnext], ["z", "xnext", "params"], ["eq"])
 
 
-def chain_eq_function(n_masses: int, horizon: int) -> al.Function:
+def _chain_eq_expr(z: al.Expr, p: al.Expr, n_masses: int, horizon: int) -> al.Expr:
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
+  mapped = al.scan(_eq_stage_fn(n_masses), length=horizon, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
+  return al.concat([z[:nx] - p[:nx], mapped])
+
+
+def chain_eq_function(n_masses: int, horizon: int) -> al.Function:
   z = al.sym("z", n_dec(n_masses, horizon))
   p = al.sym("p", n_param(n_masses), diff=False)
-  stage = _eq_stage_fn(n_masses)
-  mapped = al.scan(stage, length=horizon, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
-  return al.Function(f"chain_eq_map_M{n_masses}_N{horizon}", [z, p], [al.concat([z[:nx] - p[:nx], mapped])], ["z", "p"], ["eq"])
+  return al.Function(f"chain_eq_map_M{n_masses}_N{horizon}", [z, p], [_chain_eq_expr(z, p, n_masses, horizon)], ["z", "p"], ["eq"])
 
 
 def chain_eq_function_unrolled(n_masses: int, horizon: int) -> al.Function:
@@ -169,35 +172,6 @@ def chain_eq_jac_dense_reference(n_masses: int, horizon: int, z: np.ndarray, p: 
   return dense
 
 
-def _ode_expr(x, u, params, n_masses: int):  # type: ignore[no-untyped-def]
-  mass, spring_d, rest_len, gravity = [params[i] for i in range(4)]
-  positions = [x[3 * i : 3 * (i + 1)] for i in range(n_masses - 1)]
-  velocities = [x[3 * (n_masses - 1 + i) : 3 * (n_masses + i)] for i in range(n_masses - 2)]
-
-  def link(dist):  # type: ignore[no-untyped-def]
-    norm = (dist[0] * dist[0] + dist[1] * dist[1] + dist[2] * dist[2]).sqrt()
-    scale = (spring_d / mass) * (1.0 - rest_len / norm)
-    return al.stack([scale * dist[i] for i in range(3)])
-
-  accel = []
-  for i in range(n_masses - 2):
-    left = al.const(np.zeros(3)) if i == 0 else positions[i - 1]
-    accel.append(link(positions[i + 1] - positions[i]) - link(positions[i] - left) + al.stack([0.0, 0.0, gravity]))
-  return al.concat([*velocities, u, *accel])
-
-
-def _step_expr(x, u, params, n_masses: int):  # type: ignore[no-untyped-def]
-  def scale(value, vector):  # type: ignore[no-untyped-def]
-    return al.stack([value * vector[i] for i in range(vector.size)])
-
-  h = params[4]
-  k1 = _ode_expr(x, u, params, n_masses)
-  k2 = _ode_expr(x + scale(0.5 * h, k1), u, params, n_masses)
-  k3 = _ode_expr(x + scale(0.5 * h, k2), u, params, n_masses)
-  k4 = _ode_expr(x + scale(h, k3), u, params, n_masses)
-  return x + scale(h / 6.0, k1 + k2 + k2 + k3 + k3 + k4)
-
-
 def _objective(z, n_masses: int, horizon: int):  # type: ignore[no-untyped-def]
   # laopt transcribes on normalized time: each stage cost enters as h*(0.5*|x-xref|^2_P + 0.5*u'Pu) with h=1/N, the Mayer term unscaled.
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
@@ -223,11 +197,7 @@ def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt"):
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   z = al.sym("z", n_dec(n_masses, horizon))
   p = al.sym("p", n_param(n_masses), diff=False)
-  parts = [z[:nx] - p[:nx]]
-  for i in range(horizon):
-    zi = z[i * nz : (i + 1) * nz]
-    parts.append(_step_expr(zi[:nx], zi[nx:], p[nx:], n_masses) - z[(i + 1) * nz : (i + 1) * nz + nx])
-  eq = al.concat(parts)
+  eq = _chain_eq_expr(z, p, n_masses, horizon)
   lb = np.full(z.size, -np.inf)
   ub = np.full(z.size, np.inf)
   for i in range(horizon):
@@ -295,7 +265,24 @@ def _ca_eq(n_masses: int, horizon: int, sym_t, *, map_stages: bool = False):
   return z, p, ca.vertcat(*parts)
 
 
+def _ca_nlp_pieces(n_masses: int, horizon: int, sym_t, *, map_stages: bool = False):
+  import casadi as ca
+
+  z, p, eq = _ca_eq(n_masses, horizon, sym_t, map_stages=map_stages)
+  nx, nz = n_state(n_masses), n_state(n_masses) + NU
+  end, vel, h = 3 * (n_masses - 2), 3 * (n_masses - 1), 1.0 / horizon
+  ref = ca.DM(np.asarray(END_REF).reshape(3, 1))
+  cost = 0
+  for i in range(horizon):
+    zi = z[i * nz : (i + 1) * nz]
+    cost += h * 0.5 * (Q_END * ca.sumsqr(zi[end : end + 3] - ref) + Q_VEL * ca.sumsqr(zi[vel:nx]) + R_U * ca.sumsqr(zi[nx:]))
+  terminal = z[horizon * nz : horizon * nz + nx]
+  cost += 0.5 * Q_END_TERMINAL * ca.sumsqr(terminal[end : end + 3] - ref)
+  return z, p, cost, eq
+
+
 def ca_chain_eq_jac(n_masses: int, horizon: int, sym_t=None, name: str | None = None, *, map_stages: bool = False):
+  """Independent CasADi equality-Jacobian oracle used by the chain problem gates."""
   import casadi as ca
 
   sym_t = ca.SX if sym_t is None else sym_t
@@ -306,17 +293,7 @@ def ca_chain_eq_jac(n_masses: int, horizon: int, sym_t=None, name: str | None = 
 def ca_chain_nlpsol(n_masses: int, horizon: int, *, expand: bool = True, jit: bool = False):
   import casadi as ca
 
-  nx, nz = n_state(n_masses), n_state(n_masses) + NU
-  z, p, eq = _ca_eq(n_masses, horizon, ca.MX, map_stages=True)
-  f = 0
-  end, vel = 3 * (n_masses - 2), 3 * (n_masses - 1)
-  h = 1.0 / horizon
-  ref = ca.DM(np.asarray(END_REF).reshape(3, 1))
-  for i in range(horizon):
-    zi = z[i * nz : (i + 1) * nz]
-    f += h * 0.5 * (Q_END * ca.sumsqr(zi[end : end + 3] - ref) + Q_VEL * ca.sumsqr(zi[vel:nx]) + R_U * ca.sumsqr(zi[nx:]))
-  terminal = z[horizon * nz : horizon * nz + nx]
-  f += 0.5 * Q_END_TERMINAL * ca.sumsqr(terminal[end : end + 3] - ref)
+  z, p, f, eq = _ca_nlp_pieces(n_masses, horizon, ca.MX, map_stages=True)
   return ca.nlpsol(
     f"ca_chain_M{n_masses}_N{horizon}",
     "ipopt",
@@ -331,15 +308,7 @@ def ca_chain_sqp(n_masses: int, horizon: int):
   from alloy_sqp.casadi import build_casadi_external_sqp
 
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
-  z, p, eq = _ca_eq(n_masses, horizon, ca.MX, map_stages=True)
-  end, vel, h = 3 * (n_masses - 2), 3 * (n_masses - 1), 1.0 / horizon
-  ref = ca.DM(np.asarray(END_REF).reshape(3, 1))
-  cost = 0
-  for i in range(horizon):
-    zi = z[i * nz : (i + 1) * nz]
-    cost += h * 0.5 * (Q_END * ca.sumsqr(zi[end : end + 3] - ref) + Q_VEL * ca.sumsqr(zi[vel:nx]) + R_U * ca.sumsqr(zi[nx:]))
-  terminal = z[horizon * nz : horizon * nz + nx]
-  cost += 0.5 * Q_END_TERMINAL * ca.sumsqr(terminal[end : end + 3] - ref)
+  z, p, cost, eq = _ca_nlp_pieces(n_masses, horizon, ca.MX, map_stages=True)
   lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", int(eq.shape[0]))
   stem = f"ca_chain_sqp_M{n_masses}_N{horizon}"
   base = ca.Function(f"{stem}_base", [z, p], [cost, eq])

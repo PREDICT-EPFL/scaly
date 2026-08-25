@@ -42,7 +42,7 @@ The obvious simplification is to drop the per-cell C++ compile and instead drive
 
 A minimal worked example used to live in `test_tracking_workload.py::test_tracking_eq_jac_python_gbench` (opt-in via `ALLOY_GBENCH=1`): it reproduced the equality-Jacobian cell through the Google Benchmark Python bindings, checked the result against the CasADi dense reference outside the timed loop, and recorded the dispatch time via `record_property`. It was dropped when the suite moved in-repo in `8b1dd3f`.
 
-## Race-car equality Jacobian (`spjac:eq:z`)
+## Race-car equality Jacobian (`spjac:eq:z`) — historical
 
 4-state, 2-control bicycle with slip-angle β=δ/2 and `tanh` rolling-resistance term, RK4 over the horizon. Decision vector size `(N+1)·6`, output size `(N+1)·4`. Dynamics:
 
@@ -54,7 +54,11 @@ vx = v * cos(beta)
  (C_M0*throttle - (C_R0 + C_R1*vx + C_R2*vx*vx) * tanh(10*vx)) / M]
 ```
 
-The Alloy fixture wraps the interstage residual in a stage `Function` and assembles the equality vector via `al.scan(eq_interstage, length=N, ...)`. `al.sparse_jacobian` then routes through the structured per-formal local coloring path, baking colored seeds as constants into a JVP callee wrapped in a single `ExprOp.MAP` — the generated C is essentially a fixed body inside `for (int it = 0; it < N; ++it)`.
+The Alloy fixture wrapped the interstage residual in a stage `Function` and assembled the equality
+vector via `al.scan(eq_interstage, length=N, ...)`. The current
+`RaceCarConstraintJac` cell instead takes the full equality-plus-corridor Jacobian from the solver
+descriptor. The table in this section predates that correction and remains an equality-only result
+until the reference machine reruns the sweep.
 
 Runtime (µs, mean from Google Benchmark `cpu_time`):
 
@@ -111,7 +115,7 @@ the sweep.
 Both axes are gated per cell against a dense reference before any timing is recorded, and both
 backends compile at `-O3` with the same compiler.
 
-### Equality Jacobian (`spjac:eq:z`), horizon axis
+### Equality Jacobian (`spjac:eq:z`), horizon axis — historical
 
 | N | alloy lines | SX lines | MX lines | alloy ns | SX ns | MX ns | SX/alloy | MX/alloy |
 |---|---|---|---|---|---|---|---|---|
@@ -139,7 +143,7 @@ Untrained weights at every width, including 32, so the axis stays homogeneous: k
 generated code size depend on the graph's shape rather than on the numbers in it. These are code-size
 and timing cells only, never accuracy cells.
 
-Equality Jacobian:
+Equality Jacobian — historical:
 
 | W | alloy lines | SX lines | MX lines | alloy ns | SX ns | MX ns | MX/alloy |
 |---|---|---|---|---|---|---|---|

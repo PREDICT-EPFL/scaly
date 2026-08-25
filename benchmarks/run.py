@@ -258,8 +258,8 @@ def _benchmark_smoke() -> None:
 def _npmpc_smoke() -> None:
   """The neural-process MPC kernels: a dense decoder at every horizon node.
 
-  Four gates. The equality Jacobian must compile and beat a dense reference; its generated source
-  must not grow with the horizon, since the decoder is scanned rather than unrolled per stage; it
+  Four gates. The solver constraint Jacobian must compile and beat a dense reference; its generated
+  source must not grow with the horizon, since the decoder is scanned rather than unrolled per stage; it
   must not grow with the decoder width either, since the weights are read out of the parameter tail
   rather than baked in as literals; and the exact Lagrangian Hessian must be horizon-invariant too,
   which additionally pins the objective to its scanned form.

@@ -32,15 +32,16 @@ from benchmarks.problems.race_cars import (
   NZ,
   T_MAX,
   RaceCarParams,
+  continuous_dynamics_np,
   n_param,
+  race_car_constraint_jac_dense_reference,
   race_car_eq_function,
+  rk4_step_np,
 )
 from benchmarks.problems.race_cars.closed_loop import (
   EpisodeConfig,
   _race_car_nlp,
   build_solver,
-  continuous_dynamics_np,
-  rk4_step_np,
   run_episode,
   steady_throttle,
 )
@@ -149,7 +150,9 @@ def check_transcription_parameter_layout() -> None:
 def check_default_constants() -> None:
   """Regression pin on the full-size Formula Student defaults; any constant edit changes these."""
   horizon = 1
-  fn = race_car_eq_function(horizon).factory("race_car_default_params_jac", ["z", "p"], [al.jac("eq", "z")])
+  solver = _race_car_nlp(EpisodeConfig(horizon=horizon))
+  fn, sparsity = solver.descriptor.jac, solver.descriptor.jac_sparsity
+  assert isinstance(fn, al.Function) and sparsity is not None
   rng = np.random.default_rng(0)
   zv = rng.normal(size=NZ * (horizon + 1))
   pv = np.zeros(n_param(horizon))
@@ -164,7 +167,11 @@ def check_default_constants() -> None:
       [0.0, 0.0, 0.0, 0.6984639883035602, 0.0008885917405503103, 0.0021584335486474196, 0.0, 0.0, 0.0, -1.0],
     ]
   )
-  np.testing.assert_allclose(fn(zv, pv), expected, rtol=1e-12, atol=1e-12)
+  actual = np.zeros(sparsity.shape)
+  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(fn(zv, pv)).reshape(-1)
+  reference = race_car_constraint_jac_dense_reference(horizon, zv, pv)
+  np.testing.assert_allclose(actual, reference, rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(actual[: expected.shape[0]], expected, rtol=1e-12, atol=1e-12)
 
 
 def check_casadi_mirror_dimensions() -> None:

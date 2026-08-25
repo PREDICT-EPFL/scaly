@@ -340,7 +340,7 @@ def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: st
 
 
 def run_npmpc(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = "ipopt", oracle: str = "alloy") -> Path:
-  from benchmarks.problems.npmpc import NX, PHI_LIMIT, PLANT_SUBSTEPS, TORQUE_LIMIT
+  from benchmarks.problems.npmpc import PHI_LIMIT, PLANT_SUBSTEPS, TORQUE_LIMIT
   from benchmarks.problems.npmpc.closed_loop import EpisodeConfig, run_episode, settling_step, upright_error
 
   config = EpisodeConfig.smoke() if smoke else EpisodeConfig()
@@ -441,9 +441,7 @@ def run_npmpc(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = 
     config=asdict(config),
     summary=summary,
     provenance=_provenance(cli_args),
-    # The sweep's npmpc kernels take only the decoder tail as `p`, so drop the leading pinned state
-    # the solver's own parameter vector carries in front of it.
-    fe_inputs=[{"z": item["z"], "p": item["p"][NX:]} for item in episode.oracle_inputs],
+    fe_inputs=[{"z": item["z"], "p": item["p"]} for item in episode.oracle_inputs],
     successful_steps=range(len(episode.oracle_inputs)),
   )
   return output
