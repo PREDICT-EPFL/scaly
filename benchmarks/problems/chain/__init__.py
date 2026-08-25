@@ -216,13 +216,10 @@ def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt"):
   )
 
 
-def _ca_dynamics(n_masses: int, sym_t):
+def _ca_rhs(n_masses: int, x, u, params):
   import casadi as ca
 
-  nx = n_state(n_masses)
-  x, u = sym_t.sym("x", nx), sym_t.sym("u", NU)
-  params = sym_t.sym("params", N_PARAMS)
-  mass, spring_d, rest_len, gravity, dt = [params[i] for i in range(N_PARAMS)]
+  mass, spring_d, rest_len, gravity, _ = [params[i] for i in range(N_PARAMS)]
   positions = [x[3 * i : 3 * (i + 1)] for i in range(n_masses - 1)]
   velocities = [x[3 * (n_masses - 1 + i) : 3 * (n_masses + i)] for i in range(n_masses - 2)]
 
@@ -233,25 +230,41 @@ def _ca_dynamics(n_masses: int, sym_t):
   for i in range(n_masses - 2):
     left = ca.DM.zeros(3) if i == 0 else positions[i - 1]
     accel.append(link(positions[i + 1] - positions[i]) - link(positions[i] - left) + ca.vertcat(0.0, 0.0, gravity))
-  ode = ca.Function(f"ca_chain_ode_M{n_masses}_{sym_t.__name__}", [x, u, params], [ca.vertcat(*velocities, u, *accel)])
-
-  def rhs(state):
-    return ode(state, u, params)
-
-  k1 = rhs(x)
-  k2 = rhs(x + 0.5 * dt * k1)
-  k3 = rhs(x + 0.5 * dt * k2)
-  k4 = rhs(x + dt * k3)
-  return ca.Function(f"ca_chain_step_M{n_masses}_{sym_t.__name__}", [x, u, params], [x + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)])
+  return ca.vertcat(*velocities, u, *accel)
 
 
-def _ca_eq(n_masses: int, horizon: int, sym_t, *, map_stages: bool = False):
+def _ca_step(n_masses: int, x, u, params):
+  dt = params[-1]
+  k1 = _ca_rhs(n_masses, x, u, params)
+  k2 = _ca_rhs(n_masses, x + 0.5 * dt * k1, u, params)
+  k3 = _ca_rhs(n_masses, x + 0.5 * dt * k2, u, params)
+  k4 = _ca_rhs(n_masses, x + dt * k3, u, params)
+  return x + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+
+
+def _ca_dynamics(n_masses: int, sym_t):
+  import casadi as ca
+
+  x = sym_t.sym("x", n_state(n_masses))
+  u = sym_t.sym("u", NU)
+  params = sym_t.sym("params", N_PARAMS)
+  dt = params[-1]
+  ode = ca.Function(f"ca_chain_ode_M{n_masses}_{sym_t.__name__}", [x, u, params], [_ca_rhs(n_masses, x, u, params)])
+  k1 = ode(x, u, params)
+  k2 = ode(x + 0.5 * dt * k1, u, params)
+  k3 = ode(x + 0.5 * dt * k2, u, params)
+  k4 = ode(x + dt * k3, u, params)
+  xnext = x + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+  return ca.Function(f"ca_chain_step_M{n_masses}_{sym_t.__name__}", [x, u, params], [xnext])
+
+
+def _ca_eq(n_masses: int, horizon: int, sym_t, *, map_stages: bool = False, call_stages: bool = True):
   import casadi as ca
 
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   z = (ca.MX if map_stages else sym_t).sym("z", n_dec(n_masses, horizon))
   p = (ca.MX if map_stages else sym_t).sym("p", n_param(n_masses))
-  step = _ca_dynamics(n_masses, sym_t)
+  step = _ca_dynamics(n_masses, sym_t) if map_stages or call_stages else None
   parts = [z[:nx] - p[:nx]]
   if map_stages:
     stages = ca.reshape(z[: horizon * nz], nz, horizon)
@@ -261,14 +274,15 @@ def _ca_eq(n_masses: int, horizon: int, sym_t, *, map_stages: bool = False):
   else:
     for i in range(horizon):
       zi = z[i * nz : (i + 1) * nz]
-      parts.append(step(zi[:nx], zi[nx:], p[nx:]) - z[(i + 1) * nz : (i + 1) * nz + nx])
+      xnext = step(zi[:nx], zi[nx:], p[nx:]) if step is not None else _ca_step(n_masses, zi[:nx], zi[nx:], p[nx:])
+      parts.append(xnext - z[(i + 1) * nz : (i + 1) * nz + nx])
   return z, p, ca.vertcat(*parts)
 
 
-def _ca_nlp_pieces(n_masses: int, horizon: int, sym_t, *, map_stages: bool = False):
+def _ca_nlp_pieces(n_masses: int, horizon: int, sym_t, *, map_stages: bool = False, call_stages: bool = True):
   import casadi as ca
 
-  z, p, eq = _ca_eq(n_masses, horizon, sym_t, map_stages=map_stages)
+  z, p, eq = _ca_eq(n_masses, horizon, sym_t, map_stages=map_stages, call_stages=call_stages)
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   end, vel, h = 3 * (n_masses - 2), 3 * (n_masses - 1), 1.0 / horizon
   ref = ca.DM(np.asarray(END_REF).reshape(3, 1))

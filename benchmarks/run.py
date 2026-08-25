@@ -177,7 +177,7 @@ def _solver_call_smoke(required: bool) -> str | None:
 
 def _benchmark_smoke() -> None:
   infos = []
-  for backend in ("alloy", "casadi_sx"):
+  for backend in ("alloy", "casadi_sx", "casadi_call_mx", "casadi_map_sx"):
     result, info = run_cell(
       "race_cars",
       5,
@@ -208,12 +208,12 @@ def _benchmark_smoke() -> None:
   assert int(large["w_size"]) <= 3 * 2100, f"workspace regressed: h=50 needs {large['w_size']} doubles (baseline 2100)"
   print(f"smoke workspace: ok ({infos[0]['w_size']} doubles at h=5, {large['w_size']} at h=50)")
   chain_infos = []
-  for backend in ("alloy", "casadi_sx"):
+  for backend, size in (("alloy", 5), ("casadi_map_sx", 5), ("casadi_sx", 3)):
     result, info = run_cell(
       "chain",
-      5,
+      size,
       backend,
-      SMOKE_RESULTS / "chain" / f"{backend}_M5",
+      SMOKE_RESULTS / "chain" / f"{backend}_M{size}",
       codegen_timeout=300,
       compile_timeout=180,
       max_source_mb=50,
@@ -221,9 +221,9 @@ def _benchmark_smoke() -> None:
       load_harvested=False,
     )
     runtime = f", runtime_ns={result['runtime_ns']}" if result["runtime_ns"] else ""
-    print(f"smoke chain size=5 backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
+    print(f"smoke chain size={size} backend={backend}: {result['runtime_status']}{runtime}" + (f" ({result['note']})" if result["note"] else ""))
     if result["runtime_status"] != "ok" or info is None:
-      raise RuntimeError(f"chain {backend} smoke failed: {result['note']}")
+      raise RuntimeError(f"chain {backend} M={size} smoke failed: {result['note']}")
     assert info["nnz"] > 0 and info["w_size"] is not None and info["nnz"] < info["n_rows"] * info["n_cols"]
     chain_infos.append(info)
   assert chain.n_state(5) == 21 and chain.NU == 3
@@ -378,7 +378,7 @@ def main() -> None:
     "--workloads", type=_csv, default=["race_cars", "unbumpercars", "chain", "npmpc", "npmpc_decoder", "npmpc_hess", "npmpc_decoder_hess"]
   )
   sweep_parser.add_argument("--sizes", type=_ints, help="comma-separated sizes (applied to each selected workload)")
-  sweep_parser.add_argument("--backends", type=_csv, default=list(BACKENDS))
+  sweep_parser.add_argument("--backends", type=_csv, help="comma-separated backends; defaults to every encoding defined for each workload")
   sweep_parser.add_argument("--out", "--csv", type=Path, default=SWEEP_RESULTS / "scalability.csv")
   sweep_parser.add_argument("--compile-timeout", type=float, default=180.0)
   sweep_parser.add_argument("--codegen-timeout", type=float, default=300.0)
@@ -396,7 +396,8 @@ def main() -> None:
   args = parser.parse_args()
   if args.command == "sweep":
     args.workloads = _choices(args.workloads, tuple(DEFAULT_SIZES), parser, "--workloads")
-    args.backends = _choices(args.backends, BACKENDS, parser, "--backends")
+    if args.backends is not None:
+      args.backends = _choices(args.backends, BACKENDS, parser, "--backends")
     success = run_sweep(args, sys.argv[1:])
   elif args.command == "smoke":
     success = smoke(args)

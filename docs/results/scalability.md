@@ -480,7 +480,10 @@ uv run python benchmarks/run.py sweep \
     --out /tmp/quick.csv
 ```
 
-Cells that hit the size cap or the per-cell compile timeout end up with a `compile_status` of `skipped_size` / `timeout`. Once a backend has given up at one cell, all larger cells for that backend are short-circuited to `skipped_after_failure` (saves a lot of wall time at the long tail of the sweep). Runtime errors and parse failures are surfaced explicitly in the CSV's `runtime_status` column.
+Cells that hit the size cap or the per-cell compile timeout get `skipped_size` or `timeout` in
+`compile_status`. A backend that does not apply to a workload gets `not_applicable`. After a backend
+times out or exceeds the size cap, larger cells get `skipped_after_failure`. Runtime errors and parse
+failures appear in `runtime_status`.
 
 Race-car N=1000 used to appear in this table; it is dropped from the default cell grid because the bench-time dense reference (single-seed JVP × 6006 columns through the unrolled fixture) is the bottleneck rather than alloy itself — supply `--workloads race_cars --sizes 1000` to add it back when you're willing to wait several minutes.
 

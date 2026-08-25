@@ -556,6 +556,7 @@ def ca_npmpc_pieces(
   weights: CostWeights = CostWeights(),
   dt: float = DT,
   cost: bool = True,
+  dynamics: bool = True,
 ) -> dict:
   """The CasADi mirror's symbolic pieces, in Alloy's own row and column order.
 
@@ -565,6 +566,8 @@ def ca_npmpc_pieces(
   and decision column sits in the same place, and the bounds come from the same two functions. That
   identity is what makes the two-oracle comparison controlled: the only difference left is which
   tool differentiates and evaluates.
+
+  Set ``dynamics=False`` only when the caller replaces ``h_eq`` with an equivalent encoding.
   """
   import casadi as ca
 
@@ -572,21 +575,23 @@ def ca_npmpc_pieces(
   z = sym_t.sym("z", n_dec(horizon))
   xstart = sym_t.sym("xstart", NX)
   pw = sym_t.sym("pw", decoder.n_pw)
-  xw, xb = pw[decoder.slice("x_scale_w")], pw[decoder.slice("x_scale_b")]
-  yw, yb = pw[decoder.slice("y_inv_w")], pw[decoder.slice("y_inv_b")]
-  latent, bias = pw[decoder.slice("latent")], pw[decoder.slice("bias")]
-  # CasADi reshapes in column-major order, so build the transpose and flip it.
-  mats = [ca.reshape(pw[decoder.slice(f"w{i}")], shape[1], shape[0]).T for i, shape in enumerate(decoder.weight_shapes)]
+  if dynamics:
+    xw, xb = pw[decoder.slice("x_scale_w")], pw[decoder.slice("x_scale_b")]
+    yw, yb = pw[decoder.slice("y_inv_w")], pw[decoder.slice("y_inv_b")]
+    latent, bias = pw[decoder.slice("latent")], pw[decoder.slice("bias")]
+    # CasADi reshapes in column-major order, so build the transpose and flip it.
+    mats = [ca.reshape(pw[decoder.slice(f"w{i}")], shape[1], shape[0]).T for i, shape in enumerate(decoder.weight_shapes)]
   offset = NX * (horizon + 1)
   rows, cost_terms = [], []
   for i in range(horizon):
     x, xnext = z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)]
     u = z[offset + NU * i : offset + NU * (i + 1)]
-    h = ca.vertcat(ca.vertcat(ca.sin(x[0]), ca.cos(x[0]), x[2], x[3], u[0]) * xw + xb, latent)
-    for mat in mats[:-1]:
-      h = 1.0 / (1.0 + ca.exp(-(mat @ h)))
-    y = (mats[-1] @ h + bias) * yw + yb
-    rows.append(x + ca.vertcat(dt * (x[2:4] + y / 2.0), y) - xnext)
+    if dynamics:
+      h = ca.vertcat(ca.vertcat(ca.sin(x[0]), ca.cos(x[0]), x[2], x[3], u[0]) * xw + xb, latent)
+      for mat in mats[:-1]:
+        h = 1.0 / (1.0 + ca.exp(-(mat @ h)))
+      y = (mats[-1] @ h + bias) * yw + yb
+      rows.append(x + ca.vertcat(dt * (x[2:4] + y / 2.0), y) - xnext)
     if cost:
       dx = xnext - x
       cost_terms.append(
@@ -629,13 +634,14 @@ def _ca_npmpc_joint_parameter_pieces(
   *,
   P: np.ndarray | None = None,
   weights: CostWeights = CostWeights(),
+  dynamics: bool = True,
   dt: float = DT,
 ) -> dict:
   """Fold the CasADi graph's two parameter symbols into the solver's single vector."""
   import casadi as ca
 
   sym_t = ca.MX if sym_t is None else sym_t
-  pieces = ca_npmpc_pieces(horizon, decoder, sym_t, P=P, weights=weights, dt=dt)
+  pieces = ca_npmpc_pieces(horizon, decoder, sym_t, P=P, weights=weights, dt=dt, dynamics=dynamics)
   p = sym_t.sym("p", n_param(decoder))
   f, h_eq, g_ineq = ca.substitute(
     [pieces["f"], pieces["h_eq"], pieces["g_ineq"]],

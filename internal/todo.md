@@ -20,14 +20,12 @@ groups below have to happen roughly in sequence, and items inside a group are in
 The audit's measurements came from scratch scripts under `benchmarks/results/fairness/`. Everything
 the paper quotes has to come from the benchmark harness instead, so the runs are reproducible.
 
-- [ ] **A1. Add `casadi_call_mx` and `casadi_map_sx` as sweep backends, and make the chain labels
+- [x] **A1. Add `casadi_call_mx` and `casadi_map_sx` as sweep backends, and make the chain labels
       literal in the same change.** `casadi_call_mx` is an `MX` elemental `Function` called once per
       repetition; `casadi_map_sx` is an `SX` elemental `Function` through
-      `Function.map(..., "serial")` in an `MX` outer graph. These are one change: `harness/sweep.py`
-      passes `map_stages=True` for chain unconditionally, and setting it to `False` alone makes the
-      label honest *and breaks the smoke tier*, because unrolled `SX` does not compile at those
-      sizes. The comment at that line says so. Rationale: paper.md §5.2, fairness.md "Does CasADi
-      have loop-preserving codegen?".
+      `Function.map(..., "serial")` in an `MX` outer graph. The smoke tier runs mapped SX at M=5
+      and literal SX at M=3 because unrolled SX does not compile at M=5. Rationale: paper.md §5.2
+      and fairness.md "Does CasADi have loop-preserving codegen?".
 - [x] **A2. Take every swept kernel from the solver descriptor.** `descriptor.hess` rather than a
       hand-written `factory(..., al.sphess(...))` request, so the timed function *is* what the
       optimizer calls. Checked on npmpc N=12: the Hessian already agrees at nnz 269, the Jacobian

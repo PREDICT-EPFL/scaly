@@ -64,7 +64,7 @@ Rules the numbers on this page follow, and that a headline run must follow more 
 | `ipopt+casadi` runs CasADi's **virtual machine**, not compiled C | favours alloy | 1.2× to 8.6× in function evaluation | measured, unfixed |
 | `expand=True` is the default on two problems, unmeasured | varies | correct for `race_cars` (MX is 5× worse), wrong for `npmpc` | measured |
 | CasADi's total is timed in **Python**, alloy's in **C** | favours alloy | 0.2–0.4 ms/step, and booked as *solver* time | measured, one-line fix |
-| The chain sweep's `casadi_sx` column is **not** an SX column | mislabelled, not unfair | forcing `map` is what makes CasADi compilable here at all | measured, label to fix |
+| The chain sweep's `casadi_sx` column was **not** an SX column | mislabelled, not unfair | forcing `map` is what makes CasADi compilable here at all | measured, fixed |
 | Alloy **loses** the chain equality Jacobian on runtime | favours CasADi | 2.4× at M=5, 1.5× at M=17 — and unpublished | measured |
 | CasADi mirrors do not call `ca.cse` | favours alloy | negligible on `race_cars` (1.81 → 1.68 ms FE) | measured, minor |
 | Alloy's JIT compiles at `-O2`, the sweep at `-O3` | favours CasADi | ≤6% on function evaluation | measured, minor |
@@ -319,10 +319,10 @@ tested".
 
 ## The chain sweep: a suspected handicap that was not one, and a result that is not published
 
-The chain sweep passes `map_stages=True` for its CasADi cells unconditionally, and because `_ca_eq`
-forces `z`/`p` to `ca.MX` when it does, **the column labelled `casadi_sx` is not an SX column** — both
-CasADi chain cells are MX outer graphs differing only in the inner stage's symbolic type. That
-labelling is wrong and should be fixed.
+At the time of this audit, the chain sweep passed `map_stages=True` for both CasADi cells. Because
+`_ca_eq` forces `z` and `p` to `ca.MX` in that mode, neither label described its outer graph. The
+harness now records the unrolled scalar and matrix graphs as `casadi_sx` and `casadi_mx`. It records
+the called and serially mapped elemental functions as `casadi_call_mx` and `casadi_map_sx`.
 
 The obvious next inference — that forcing `map` is therefore a handicap — is wrong, and it is worth
 recording why, because a Python-level probe says it is a 9× handicap and a compiled one says the
@@ -332,34 +332,38 @@ at `-O3`, one variant at a time on an otherwise idle machine. Chain M=5, N=40:
 | variant | lines | source | workspace | compile | runtime |
 |---|---:|---:|---:|---:|---:|
 | **alloy** | **583** | **124 KB** | 20 160 | **0.87 s** | 587 µs |
-| CasADi SX + `map` — *shipped* | 68 776 | 2.6 MB | 230 015 | 3.96 s | 251 µs |
+| CasADi SX + `map`, *audit configuration* | 68 776 | 2.6 MB | 230 015 | 3.96 s | 251 µs |
 | CasADi SX unrolled | 215 190 | 4.5 MB | 198 | **> 600 s** | — |
 | CasADi SX unrolled, no `cse` | 309 030 | 6.4 MB | 237 | **> 600 s** | — |
-| CasADi MX + `map` — *shipped* | 48 496 | 2.5 MB | 235 738 | 16.3 s | 383 µs |
-| CasADi MX unrolled | 26 822 | 1.2 MB | 68 646 | 25.4 s | **244 µs** |
+| CasADi MX + `map`, *audit configuration* | 48 496 | 2.5 MB | 235 738 | 16.3 s | 383 µs |
+| CasADi MX called per stage | 26 822 | 1.2 MB | 68 646 | 25.4 s | **244 µs** |
 
 And at M=17, where only one CasADi variant still compiles at all:
 
 | variant | lines | source | workspace | compile | runtime |
 |---|---:|---:|---:|---:|---:|
 | **alloy** | **625** | **690 KB** | 115 320 | **1.75 s** | 3.78 ms |
-| CasADi SX + `map` — *shipped* | 494 159 | 20.0 MB | 1 423 642 | 38.4 s | **2.52 ms** |
+| CasADi SX + `map`, *audit configuration* | 494 159 | 20.0 MB | 1 423 642 | 38.4 s | **2.52 ms** |
 | CasADi SX unrolled | 1 118 065 | 23.8 MB | 493 | **> 600 s** | — |
 | CasADi SX unrolled, no `cse` | 1 784 091 | 36.9 MB | 847 | **> 600 s** | — |
-| CasADi MX + `map` | 318 036 | 17.6 MB | 1 462 701 | **> 600 s** | — |
-| CasADi MX unrolled | 370 974 | 14.7 MB | 480 919 | **> 600 s** | — |
+| CasADi MX + `map`, *audit configuration* | 318 036 | 17.6 MB | 1 462 701 | **> 600 s** | — |
+| CasADi MX called per stage | 370 974 | 14.7 MB | 480 919 | **> 600 s** | — |
 
 Three corrections fall out of this table.
 
-**`map` is not the chain's handicap.** For SX it is what makes CasADi *compilable at all* here:
-unrolled SX is 215 190 lines and clang does not finish it in ten minutes, so the shipped
-configuration is a steelman rather than a handicap. At M=17 it is the *only* CasADi variant that
-compiles inside ten minutes — every other encoding, mapped or not, SX or MX, times out. For MX it is a mild handicap — 383 against 244 µs,
-and, as on `npmpc`, mapping makes the source *larger* (48 496 against 26 822 lines). The
-Python-level estimate that put the handicap at 9× was measuring `ca.Function.__call__` on a graph with
-a 230 000-double workspace, which is exactly the dispatch distortion
-[the sweep methodology note](scalability.md#why-a-c-harness-and-not-the-google-benchmark-python-bindings)
-warns about. It does not survive compilation.
+**`map` is not the chain's handicap.** For SX, the map makes CasADi compilable here. Unrolled SX is
+215 190 lines, and clang does not finish it in ten minutes. At M=17, the mapped SX variant is the
+only CasADi encoding measured in the audit that compiles inside ten minutes. Every other measured
+encoding times out. The literal `casadi_sx` sweep now records the M=3 cell. It hits the default
+compile timeout at M=5 and skips larger sizes.
+
+For MX, the audit compared mapping with per-stage function calls. Mapping is a mild handicap at
+383 µs against 244 µs. It also makes the source larger at 48 496 lines against 26 822 lines. The
+audit did not measure the literal inline `casadi_mx` form that the harness now provides. A Python
+probe reported a 9× handicap. It measured `ca.Function.__call__` on a graph with a 230 000-double
+workspace. The
+[sweep methodology](scalability.md#why-a-c-harness-and-not-the-google-benchmark-python-bindings)
+explains this dispatch cost. It does not survive compilation.
 
 **Alloy loses this kernel on runtime, by 2.4× at M=5 and 1.5× at M=17.** That has never been
 published, and it should be: the chain is the suite's largest sparse structured problem and it is the

@@ -64,8 +64,12 @@ def _rk4(ca, x, u, params):
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-def build_casadi_race_car_nlp(config, sym_t=None) -> dict[str, Any]:
-  """Return the symbolic pieces of the OCP, in Alloy's row and column order."""
+def build_casadi_race_car_nlp(config, sym_t=None, *, dynamics: bool = True) -> dict[str, Any]:
+  """Return the symbolic pieces of the OCP, in Alloy's row and column order.
+
+  Set ``dynamics=False`` only when the caller replaces ``h_eq`` with an equivalent encoding.
+  """
+
   import casadi
 
   sym_t = casadi.MX if sym_t is None else sym_t
@@ -104,7 +108,7 @@ def build_casadi_race_car_nlp(config, sym_t=None) -> dict[str, Any]:
   cost = ca.dot(ca.DM(np.array(weights)), stacked * stacked)
 
   eq = [z[:NX] - p[:NX]]
-  for i in range(n):
+  for i in range(n) if dynamics else ():
     zi = z[i * NZ : (i + 1) * NZ]
     eq.append(_rk4(ca, zi[:NX], zi[NX : NX + NU], params) - z[(i + 1) * NZ : (i + 1) * NZ + NX])
 

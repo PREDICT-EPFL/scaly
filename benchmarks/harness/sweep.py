@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import os
+from dataclasses import replace
 from pathlib import Path
 import shutil
 import signal
@@ -26,7 +27,9 @@ DEFAULT_SIZES = {
   "npmpc_hess": [6, 12, 25, 50, 100, 200],
   "npmpc_decoder_hess": [16, 32, 64, 128, 256],
 }
-BACKENDS = ("alloy", "casadi_sx", "casadi_mx")
+BACKENDS = ("alloy", "casadi_sx", "casadi_mx", "casadi_call_mx", "casadi_map_sx")
+UNBUMPERCARS_BACKENDS = ("alloy", "casadi_sx", "casadi_mx")
+DEFAULT_BACKENDS = {workload: UNBUMPERCARS_BACKENDS if workload == "unbumpercars" else BACKENDS for workload in DEFAULT_SIZES}
 CELL_AXES = {"chain": "M", "race_cars": "N", "unbumpercars": "C", "npmpc": "N", "npmpc_decoder": "W", "npmpc_hess": "N", "npmpc_decoder_hess": "W"}
 NPMPC_WORKLOADS = ("npmpc", "npmpc_decoder", "npmpc_hess", "npmpc_decoder_hess")
 FIELDS = [
@@ -131,6 +134,46 @@ def _casadi_descriptor_kernel(ca, name: str, z, p, cost, constraints, kind: str,
     options,
   )
   return hess if kind == "hess" else jac
+
+
+def _repeat_element(ca, element, count: int, args: tuple, *, mapped: bool):
+  if mapped:
+    return element.map(count, "serial")(*args)
+  return ca.horzcat(*(element(*(arg[:, i] for arg in args)) for i in range(count)))
+
+
+def _race_cars_repeated_pieces(config, stage_sym, *, mapped: bool):
+  from benchmarks.problems.race_cars.casadi_nlp import build_casadi_race_car_nlp
+
+  import casadi as ca
+
+  pieces = build_casadi_race_car_nlp(config, ca.MX, dynamics=False)
+  one = build_casadi_race_car_nlp(replace(config, horizon=1), stage_sym)
+  stage = ca.Function("race_car_stage", [one["z"], one["p"]], [one["h_eq"][race_cars.NX :]])
+  z, p = pieces["z"], pieces["p"]
+  stages = ca.reshape(z, race_cars.NZ, config.horizon + 1)
+  refs = ca.reshape(p[: race_cars.NX * (config.horizon + 1)], race_cars.NX, config.horizon + 1)
+  params = p[race_cars.NX * (config.horizon + 1) :]
+  stage_z = ca.vertcat(stages[:, : config.horizon], stages[:, 1:])
+  stage_p = ca.vertcat(refs[:, : config.horizon], refs[:, 1:], ca.repmat(params, 1, config.horizon))
+  rows = _repeat_element(ca, stage, config.horizon, (stage_z, stage_p), mapped=mapped)
+  h_eq = ca.vertcat(z[: race_cars.NX] - p[: race_cars.NX], ca.reshape(rows, race_cars.NX * config.horizon, 1))
+  return {**pieces, "h_eq": h_eq}
+
+
+def _npmpc_repeated_pieces(horizon: int, decoder, terminal, stage_sym, *, mapped: bool):
+  import casadi as ca
+
+  pieces = npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, ca.MX, P=terminal, dynamics=False)
+  one = npmpc.ca_npmpc_pieces(1, decoder, stage_sym, cost=False)
+  stage = ca.Function("npmpc_stage", [one["z"], one["pw"]], [one["h_eq"]])
+  z, p = pieces["z"], pieces["p"]
+  offset = npmpc.NX * (horizon + 1)
+  states = ca.reshape(z[:offset], npmpc.NX, horizon + 1)
+  controls = ca.reshape(z[offset : offset + npmpc.NU * horizon], npmpc.NU, horizon)
+  stage_z = ca.vertcat(states[:, :horizon], states[:, 1:], controls, ca.repmat(z[-1], 1, horizon))
+  rows = _repeat_element(ca, stage, horizon, (stage_z, ca.repmat(p[npmpc.NX :], 1, horizon)), mapped=mapped)
+  return {**pieces, "h_eq": ca.reshape(rows, npmpc.NX * horizon, 1)}
 
 
 def _race_cars_alloy(size: int, out_dir: Path) -> dict:
@@ -257,7 +300,10 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   import casadi as ca
 
   kind = backend.removeprefix("casadi_")
-  sym_t = ca.SX if kind == "sx" else ca.MX
+  repeated = kind in {"call_mx", "map_sx"}
+  mapped = kind == "map_sx"
+  sym_t = ca.SX if kind in {"sx", "map_sx"} else ca.MX
+  label = {"sx": "Sx", "mx": "Mx", "call_mx": "CallMx", "map_sx": "MapSx"}[kind]
   stem = {
     "chain": "chain_eq",
     "race_cars": "race_car_constraints",
@@ -273,46 +319,47 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   started = time.perf_counter()
   if workload == "chain":
     horizon = chain.HORIZON
-    # KNOWN MISLABEL. `map_stages` forces the outer graph to MX (`chain._ca_eq`), so both chain
-    # CasADi cells are MX graphs differing only in the inner stage's symbolic type: `casadi_sx` here
-    # means "SX stage retained through an MX map", not "SX". Setting it to False to make the labels
-    # literal is a one-word change that breaks the smoke tier, because unrolled SX does not compile
-    # at these sizes (215 190 lines at M=5, past a 600 s budget) -- so the honest label and the
-    # `casadi_map_sx` backend have to land together, as §8 item 2 of `internal/paper.md` requires.
-    # Do not "fix" this line on its own. Measurements in `docs/results/fairness.md`.
-    z, p, cost, constraints = chain._ca_nlp_pieces(size, horizon, sym_t, map_stages=True)
+    z, p, cost, constraints = chain._ca_nlp_pieces(size, horizon, sym_t, map_stages=mapped, call_stages=repeated)
     fn = _casadi_descriptor_kernel(ca, name, z, p, cost, constraints, "jac", cse=True)
     inputs = [("z", chain.n_dec(size, horizon)), ("p", chain.n_param(size))]
-    benchmark = f"BM_Casadi{kind.title()}ChainEqJacM{size}"
+    benchmark = f"BM_Casadi{label}ChainEqJacM{size}"
   elif workload == "race_cars":
     from benchmarks.problems.race_cars.casadi_nlp import build_casadi_race_car_nlp
     from benchmarks.problems.race_cars.closed_loop import EpisodeConfig
 
-    pieces = build_casadi_race_car_nlp(EpisodeConfig(horizon=size), sym_t)
+    config = EpisodeConfig(horizon=size)
+    pieces = _race_cars_repeated_pieces(config, sym_t, mapped=mapped) if repeated else build_casadi_race_car_nlp(config, sym_t)
     constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
     fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, "jac")
     inputs = [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))]
-    benchmark = f"BM_Casadi{kind.title()}RaceCarConstraintJacN{size}"
+    benchmark = f"BM_Casadi{label}RaceCarConstraintJacN{size}"
   elif workload in NPMPC_WORKLOADS:
     horizon, decoder, _, terminal = _npmpc_cell(workload, size)
     terminal = np.diag(npmpc.CostWeights().x_end) if terminal is None else terminal
-    pieces = npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, P=terminal)
+    pieces = (
+      _npmpc_repeated_pieces(horizon, decoder, terminal, sym_t, mapped=mapped)
+      if repeated
+      else npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, P=terminal)
+    )
     constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
     if workload.endswith("_hess"):
       fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, "hess")
       inputs = [("z", npmpc.n_dec(horizon)), ("lam_f", 1), ("lam_g", sum(npmpc.constraint_counts(horizon))), ("p", npmpc.n_param(decoder))]
-      benchmark = f"BM_Casadi{kind.title()}NpmpcLagHess{axis}{size}"
+      benchmark = f"BM_Casadi{label}NpmpcLagHess{axis}{size}"
     else:
       fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, "jac")
       inputs = [("z", npmpc.n_dec(horizon)), ("p", npmpc.n_param(decoder))]
-      benchmark = f"BM_Casadi{kind.title()}NpmpcConstraintJac{axis}{size}"
+      benchmark = f"BM_Casadi{label}NpmpcConstraintJac{axis}{size}"
   else:
+    if repeated:
+      raise ValueError(f"{backend} is not defined for {workload}")
+
     from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, load_dt_mlp_weights
     from benchmarks.problems.unbumpercars.filters import build_casadi_hessian
 
     fn = build_casadi_hessian(ClosedLoopConfig(ncars=size), FilterConfig(model="dt"), load_dt_mlp_weights(), name, sym_t)
     inputs = [("z", fn.size1_in(0)), ("lam_f", fn.size1_in(1)), ("lam_g", fn.size1_in(2)), ("p", fn.size1_in(3))]
-    benchmark = f"BM_Casadi{kind.title()}UnbumpercarsLagHessC{size}"
+    benchmark = f"BM_Casadi{label}UnbumpercarsLagHessC{size}"
   build_ms = (time.perf_counter() - started) * 1000
   started = time.perf_counter()
   cwd = Path.cwd()
@@ -577,9 +624,18 @@ def run_sweep(args, cli_args: list[str]) -> bool:
       gave_up: dict[str, tuple[int, str]] = {}
       sizes = args.sizes or DEFAULT_SIZES[workload]
       for size in sorted(sizes):
-        for backend in args.backends:
+        for backend in args.backends or DEFAULT_BACKENDS[workload]:
           print(f"[{workload}] size={size} backend={backend} ... ", end="", flush=True)
-          if backend in gave_up:
+          if backend not in DEFAULT_BACKENDS[workload]:
+            result = row(
+              workload=workload,
+              size=size,
+              backend=backend,
+              compile_status="not_applicable",
+              runtime_status="skipped",
+              note=f"{backend} has no repeated element for {workload}",
+            )
+          elif backend in gave_up:
             failed_size, status = gave_up[backend]
             result = row(
               workload=workload,

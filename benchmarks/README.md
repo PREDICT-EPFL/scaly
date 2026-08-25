@@ -95,12 +95,20 @@ trajectory-agreement gate, while biasing one control term will.
 ## Sweeps
 
 ```bash
-uv run python benchmarks/run.py sweep
-uv run python benchmarks/run.py sweep --workloads race_cars --sizes 1,5,10,50 --backends alloy,casadi_sx
-uv run python benchmarks/run.py sweep --out benchmarks/results/sweep/my-sweep.csv
+uv run benchmarks/run.py sweep
+uv run benchmarks/run.py sweep --workloads race_cars --sizes 1,5,10,50 --backends alloy,casadi_sx,casadi_mx,casadi_call_mx,casadi_map_sx
+uv run benchmarks/run.py sweep --out benchmarks/results/sweep/my-sweep.csv
 ```
 
 Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package/compiler versions, platform, Python, and timestamp. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=40, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
+
+The stage-based workloads default to Alloy and four CasADi encodings of the repeated dynamics
+stage: unrolled `SX`, unrolled `MX`, repeated calls to an elemental `MX` `Function`, and a serial map
+of an elemental `SX` `Function` in an `MX` outer graph. The objective and inequality expressions
+remain in the problem's canonical outer graph. The chain's literal `casadi_sx` column compiles only
+at M=3 under the default timeout. Unbumpercars defaults to Alloy, `SX`, and `MX` because its pairwise
+formulation has no single repeated stage. If an explicit backend does not apply to a workload, the
+sweep records `not_applicable` and continues.
 
 All benchmark artifacts follow the same command-first layout:
 
