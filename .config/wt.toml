@@ -18,3 +18,10 @@ benchmarks-smoke = "uv run benchmarks/run.py smoke"
 
 [[pre-merge]]
 docs-build = "uv run zensical build"
+
+# `internal/paper.md` must never enter main's history: deleting it later would leave it in every
+# clone, and excising it would mean rewriting every commit from its first appearance onward. It
+# stays tracked on feature branches while it is being worked on, and moves out to the private notes
+# repository before the merge that would make it permanent. This check is the reminder.
+[[pre-merge]]
+paper-note-not-tracked = "! git ls-files --error-unmatch internal/paper.md >/dev/null 2>&1 || { echo 'internal/paper.md is tracked; move it to the private notes repo before merging (see internal/todo.md D0)'; exit 1; }"

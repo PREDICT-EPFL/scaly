@@ -14,7 +14,7 @@ departure below is wrong, that is worth knowing.-->
 
 | | Taken | Changed |
 | --- | --- | --- |
-| **CasADi** | `Function` as the unit of everything; the universal C ABI; derivative factories; sparsity as metadata | typed derivative requests instead of strings; one graph instead of SX *or* MX; pure Python |
+| **CasADi** | `Function` as the unit of everything; the universal C ABI; derivative factories; sparsity as metadata | typed derivative requests instead of strings; repetition preserved by an explicit construct rather than implied by the symbolic type; pure Python |
 | **tinygrad** | one hash-consed node class per dialect; op-indexed pattern rewriting; loops that carry their intent; the sizing discipline | an ahead-of-time compiler, not a runtime; explicit verifiers; a second dialect that is a real language |
 | **MLIR** | the dialect discipline; stable, diffable assembly text; progressive lowering | two dialects, not twenty; a printer with no parser; no C++, no TableGen |
 | **JAX** | `jvp`/`vjp` as primitives; derivatives as ordinary graphs; batching structure preserved rather than unrolled | explicit construction instead of tracing; `map` survives into generated code; sparsity is first-class |
@@ -42,11 +42,40 @@ structure in the type system — the output and input names are still checked wh
 resolved, because only the function knows them. This is a deliberate break, not a compatibility
 gap.
 
-*One graph, with a per-node hint.* CasADi makes you choose SX or MX up front, and mixing them is
-awkward enough that most codebases pick one. Alloy has a single `Expr` type carrying a lowering
-hint — `scalar`, `block`, `opaque` or `auto` — so the choice is local to a subexpression rather
-than global to a type. The honest caveat is that today the hints are recorded but only `opaque`
-changes what the lowerer does; region formation on the others is open work.
+*Repetition survives differentiation, and deciding that it should is a local choice.* This is the
+departure that matters, so it is worth stating precisely.
+
+In CasADi, whether a repeated region reaches generated code as a loop is a consequence of which
+symbolic type the graph was built with, and that choice is not local to the repeated region — it
+propagates. `SX` flattens a `Function.map` at construction, so the mapped and unrolled forms emit
+identical C. `MX` keeps the loop and pays per-node cost. The encoding that does best is a mixture, an
+`SX` elemental function inside an `MX` outer graph, and **which mixture wins changes with the
+problem.** Alloy writes repetition with [`al.map_` and `al.scan`](../guide/functions.md), and it
+survives colored sparse differentiation to second order and lowering, emitted as a real `for` loop
+around one function body.
+
+The measurement, on a horizon with a small dense network at every node: alloy's sparse equality
+Jacobian is 417 lines at every horizon from 6 to 200, and its exact Lagrangian Hessian 1041. Every
+CasADi encoding of the same problem grows with the horizon, and the best and worst of them differ by
+about an order of magnitude in generated code, so finding the good one is per-problem work.
+
+**This is not a claim that CasADi cannot express a loop.** It can, and on the race-car horizon the
+retained-map encoding is both the most compact CasADi form and faster to compile than alloy — 0.3 s
+against about a second at a 500-stage horizon. The claim is narrower: in alloy the decision is one
+construct whose meaning does not depend on the rest of the graph, and it is preserved through the
+second-order sparse derivative rather than only through the primal. What alloy gives up in exchange
+is real and is measured on the same page: on a scalar-dominated kernel, CasADi's scalar expansion
+evaluates the race-car oracle about three times faster than alloy's generated C.
+
+[Are the comparisons fair?](../results/fairness.md) is the accounting behind all of those numbers,
+including what the suite got wrong about them for a while.
+
+*A per-node lowering hint, mostly unfinished.* Alloy's single `Expr` type carries a lowering hint —
+`scalar`, `block`, `opaque` or `auto` — with the intent that scalar and block treatment become a
+per-subexpression choice rather than a per-type one. **Today this is aspiration, not a feature.** The
+hints are recorded, only `opaque` changes what the lowerer does, and region formation on the others is
+open work. It is listed here because the design intends it, not because it is something to compare
+against CasADi yet.
 
 *Pure Python.* CasADi is a C++ library with Python bindings. Alloy is Python with NumPy for
 array values and SciPy as an internal structural-sparsity dependency. The entire compiler — both dialects, automatic differentiation (AD),

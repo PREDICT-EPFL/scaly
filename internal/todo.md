@@ -95,6 +95,44 @@ group completes.
 
 ## D. API and release, before the paper freezes
 
+- [ ] **D0. Move `internal/paper.md` out of this repository before merging to main.** Blocking, and
+      enforced: `.config/wt.toml` has a `pre-merge` check that fails while the file is tracked.
+
+      Why it is urgent rather than tidy: the note contains the "sell only if the reruns establish
+      it" list, the "do not sell" list and the objections rehearsal, which are the three things a
+      reviewer should least find in our own words. Deleting it at release time does nothing, because
+      the content stays in every clone's history, and excising it afterwards means
+      `git filter-repo --path internal/paper.md --invert-paths`, which rewrites every SHA from its
+      first appearance onward and breaks any archive link or tag that references an old one.
+
+      **The window is open now and closing it is cheap.** The file has never been on main. It exists
+      only in unpushed commits on this branch, and `wt merge` squashes, so moving it out before the
+      merge means main never sees it and no history is rewritten.
+
+      The design, agreed 2026-08-25:
+
+      - `~/dev/alloy-notes/` as its own git repo, with its own private remote for backup, holding
+        `paper.md` and any later private notes. Keeping it under git matters: the note is a dated
+        decision log and a plain untracked file would lose its history.
+      - `notes -> /home/ted/dev/alloy-notes` as a gitignored symlink in every worktree, with an
+        **absolute** target so the link keeps pointing at the one source of truth even if a tool
+        copies rather than links it. `/notes/` goes in `.gitignore`.
+      - A `[post-start]` step in `.config/wt.toml` that recreates the symlink, so the behaviour does
+        not depend on what `wt step copy-ignored` does with symlinks.
+      - A line in `AGENTS.md`: what `notes/` is, that nothing public may depend on it, and never
+        `git add -f` under it.
+
+      Properties this buys. One source of truth across every worktree and branch, which is correct
+      for a planning document since the plan is not per-branch. The worst possible accident commits a
+      path string, never content. And the public rationale stays public, because
+      `docs/results/fairness.md` carries the methodology and contains no strategy.
+
+      Rejected: a submodule leaks its existence and URL in a committed `.gitmodules` and is unpleasant
+      with worktrees; an orphan branch leaves the objects in the same store, so a full clone still
+      exposes them; `git-crypt` or `age` puts ciphertext in public history permanently, a poor risk
+      profile for a document whose value is candour; an external tool loses grep-ability and
+      proximity to the code, which is the whole reason the note works.
+
 - [ ] **D1. Land the derivative API redesign and the `MAP` to `VMAP` rename.** Paper examples freeze
       only after both. Rationale: paper.md §10.
 - [ ] **D2. Add an immutable publication mode**: clean release candidate, every raw run retained, and
@@ -103,6 +141,26 @@ group completes.
       fixture compared against the unrolled form with a forward/reverse duality check, and a
       finite-difference check of the Lagrangian gradient in the pairwise-map sparse-Hessian test.
 - [ ] **D4. Freeze measurements on `0.1.0rc1`, publish `alloy-v0.1.0`** and a durable archive.
+
+## D'. Documentation rework
+
+Separate from D because it is not release-blocking, but it is the same category of debt the fairness
+audit found in the results pages: prose that outran what the code does.
+
+- [ ] **D'1. Rework `docs/how_it_works/comparison.md`.** A scoped fix landed on 2026-08-25: the
+      CasADi section's "one graph with a per-node hint" paragraph presented an inert mechanism as a
+      departure, and it now states the repetition claim that is actually true and measured, with the
+      lowering hints demoted to an explicit "aspiration, not a feature". The rest of the page still
+      predates a lot. Check every "Taken / Changed" row against what the code does today, and check
+      the tinygrad, MLIR and JAX sections the same way.
+- [ ] **D'2. Audit the whole of `docs/` for claims that outran the implementation**, the way the
+      results pages were audited. The pattern to look for is a stated departure or capability whose
+      supporting mechanism is recorded but not wired up, and a number with no machine attached. Two
+      known instances beyond D'1: `docs/guide/` on the lowering hints, and any surviving timing that
+      predates the reference-machine rule in `AGENTS.md`.
+- [ ] **D'3. Reconcile the problem READMEs with the audit.** `benchmarks/problems/*/README.md` still
+      describe the CasADi columns as "same NLP, same IPOPT, same options, only the oracle provider
+      differs", which the audit disproved on two counts.
 
 ## E. Optional, cut first if the schedule slips
 
