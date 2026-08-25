@@ -8,6 +8,8 @@ The single actionable list. Rationale lives elsewhere and is linked, never resta
   what the comparisons hold constant, the measurement protocol, the reference machine.
 - **How the suite got here** — [`internal/notes/benchmark-buildout.md`](notes/benchmark-buildout.md):
   the completed B-track and L-track, formulation history, retired workloads.
+- **What shape a refactoring should take** — [`internal/notes/refactorings.md`](notes/refactorings.md):
+  one `#` section per refactoring, kept until that refactoring lands.
 - **Library-internal phases** — [`internal/roadmap.md`](roadmap.md).
 
 Last reorganized 2026-08-25, after the fairness audit. Ordered by dependency, not by size: the
@@ -95,6 +97,10 @@ group completes.
 
 ## D. API and release, before the paper freezes
 
+Every refactoring in `internal/notes/refactorings.md` lands before submission, D1 to D4 below, one
+item per `#` section. The design is that note's; only the lifecycle is here. Paper examples freeze
+after D1 and D2, which is what fixes the spellings they use.
+
 - [ ] **D0. Move `internal/paper.md` out of this repository before merging to main.** Blocking, and
       enforced: `.config/wt.toml` has a `pre-merge` check that fails while the file is tracked.
 
@@ -133,14 +139,34 @@ group completes.
       profile for a document whose value is candour; an external tool loses grep-ability and
       proximity to the code, which is the whole reason the note works.
 
-- [ ] **D1. Land the derivative API redesign and the `MAP` to `VMAP` rename.** Paper examples freeze
-      only after both. Rationale: paper.md §10.
-- [ ] **D2. Add an immutable publication mode**: clean release candidate, every raw run retained, and
+- [ ] **D1. Land the derivative API redesign.** One name per concept, specs moved under
+      `al.factory` and capitalized, `Function.factory` demoted. Roughly 120 mostly-mechanical call
+      sites plus the docs prose. Design: refactorings.md "Derivative API"; the decision to sequence
+      it before the paper examples is paper.md §10.
+- [ ] **D2. Land the `MAP` to `VMAP` rename.** Operation, builder, exports and internal dispatch in
+      one change, so no tree carries both spellings; then tests and benchmarks, including the pinned
+      pytest node-ID baseline; then the public docs. `al.scan` disappears. Design: refactorings.md
+      "MAP becomes VMAP".
+- [ ] **D3. Decide the solver-problem construction API, then land what survives the decision.**
+      **Blocked on Ted, not on code.** The note is a draft that settles nothing: two sessions reached
+      similar but non-identical shapes and the standing objection is whether any of it is worth its
+      size. The parameter-ordering hazard and the differentiation paid for twice are concrete; the
+      rest is ergonomics over a surface that is already small. Sequencing is free against D1, but
+      doing it first shrinks D1, because deleting `al.nlp` removes the only consumer inside `src/`
+      of the `(wrt, of)` argument order. It assumes D2's spellings. Design: refactorings.md "DRAFT:
+      solver problem construction".
+- [ ] **D4. One matcher: op-indexed tables and one walk-rebuild.** Conditional by design — it lands
+      only if the result is smaller than the 78 + 71 lines of `ir/match.py` and `ir/spec.py`, and
+      closing the section unlanded is a permitted outcome that still has to be written down. After
+      D2, so the byte-for-byte C corpus regenerates once rather than twice. Repointing
+      `passes/program.py`'s three `_transform` call sites is where the memo lands, which also closes
+      the recursive-Program-IR-passes item in F. Design: refactorings.md "One matcher".
+- [ ] **D5. Add an immutable publication mode**: clean release candidate, every raw run retained, and
       an archive of source, lockfile, inputs, generated code, logs, statistics and manifest.
-- [ ] **D3. Validation additions**: one public `fwd` and `adj` test on the same nontrivial `VMAP`
+- [ ] **D6. Validation additions**: one public `fwd` and `adj` test on the same nontrivial `VMAP`
       fixture compared against the unrolled form with a forward/reverse duality check, and a
       finite-difference check of the Lagrangian gradient in the pairwise-map sparse-Hessian test.
-- [ ] **D4. Freeze measurements on `0.1.0rc1`, publish `alloy-v0.1.0`** and a durable archive.
+- [ ] **D7. Freeze measurements on `0.1.0rc1`, publish `alloy-v0.1.0`** and a durable archive.
 
 ## D'. Documentation rework
 
@@ -182,7 +208,8 @@ Kept because the reasoning is still good, not because anything depends on them.
   with running more forward sweeps than a row-coloured or reverse pass would need. Prize is bounded
   and knowable, roughly 0.85 -> 1.1 at the shipped decoder width, and it does not change the
   width-axis result Alloy already wins.
-- **Make the Program IR passes iterative instead of recursive.** `passes._transform` and
+- **Make the Program IR passes iterative instead of recursive**, unless D4 gets there first.
+  `passes._transform` and
   `_expand_inlinables` recurse per node, so an expression deeper than ~200 chained elementwise ops
   dies with a bare `RecursionError` during lowering. Two witnesses: the race-car objective as a left
   fold, and the neural-process-MPC objective as a *flat* reduction over per-stage slices, which also
