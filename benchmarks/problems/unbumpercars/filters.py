@@ -9,6 +9,7 @@ import numpy as np
 
 import alloy as al
 from alloy.codegen.aot import render_c_module
+from benchmarks.harness.casadi_ipopt import CompiledCasadiIpopt
 from .common import (
   ClosedLoopConfig,
   CTFullWeights,
@@ -281,23 +282,19 @@ class CasadiDTCBFSafetyFilter:
     if not build_solver:
       self._build_ms = (time.perf_counter() - t0) * 1000.0
       return
-    nlp = {"x": z, "p": p, "f": cost, "g": g}
+    nlp = ca.Function(f"ctdt_casadi_nlp_C{self.ncars}", [z, p], [cost, g])
     opts: dict[str, Any] = {
       "print_time": False,
-      # `record_time` adds `t_wall_total`, measured inside CasADi's own C++ entry point, which is the
-      # number comparable with Alloy's `t_total`. A Python timer around the call would also include
-      # the numpy->DM marshalling of the 35 079-double parameter vector: about 16 ms per step here.
-      "record_time": True,
       "ipopt.print_level": 0,
       "ipopt.sb": "yes",
       "ipopt.tol": self.filt_cfg.ipopt_tol,
       "ipopt.max_iter": self.filt_cfg.ipopt_max_iter,
       "ipopt.warm_start_init_point": "yes",
-      "expand": self.filt_cfg.casadi_expand,
+      "expand": False,
     }
     if self.filt_cfg.limited_memory_hessian:
       opts["ipopt.hessian_approximation"] = "limited-memory"
-    self.solver = ca.nlpsol("ctdt_casadi_solver", "ipopt", nlp, opts)
+    self.solver = CompiledCasadiIpopt(f"ctdt_casadi_solver_C{self.ncars}", nlp, opts)
     self._build_ms = (time.perf_counter() - t0) * 1000.0
 
   def _pack_p(self, states: np.ndarray, desired: np.ndarray) -> np.ndarray:
@@ -322,44 +319,35 @@ class CasadiDTCBFSafetyFilter:
     lbx = np.concatenate([-np.ones(self.n_u), np.zeros(self.n_s)])
     ubx = np.concatenate([np.ones(self.n_u), np.full(self.n_s, ca.inf)])
     n_g = int(self.g_fn.size1_out(0))
-    args: dict[str, Any] = {"x0": z0, "p": p, "lbx": lbx, "ubx": ubx, "lbg": np.zeros(n_g), "ubg": np.full(n_g, ca.inf)}
-    if self.last_lam_x is not None and self.last_lam_g is not None:
-      args["lam_x0"] = self.last_lam_x
-      args["lam_g0"] = self.last_lam_g
-    t0 = time.perf_counter()
-    sol = self.solver(**args)
-    python_ms = (time.perf_counter() - t0) * 1000.0
-    stats = self.solver.stats()
-    solver_ms = float(stats["t_wall_total"]) * 1000.0
-    raw_success = bool(stats.get("success", False))
-    z_sol = np.asarray(sol["x"], dtype=np.float64).reshape(-1)
-    g_sol = np.asarray(sol["g"], dtype=np.float64).reshape(-1)
+    lam_x0 = np.zeros(self.n_z) if self.last_lam_x is None else self.last_lam_x
+    lam_g0 = np.zeros(n_g) if self.last_lam_g is None else self.last_lam_g
+    sol = self.solver(z0, p, lbx, ubx, np.zeros(n_g), np.full(n_g, ca.inf), lam_x0, lam_g0)
+    stats = self.solver.last_stats
+    assert stats is not None
+    solver_ms = stats.t_total * 1000.0
+    raw_success = stats.status in (al.AlloySolveStatus.OK, al.AlloySolveStatus.ACCEPTABLE)
+    z_sol, f_sol, g_sol, lam_x, lam_g, _ = sol
     feasible = bool(np.all(np.isfinite(z_sol)) and (not g_sol.size or np.min(g_sol) >= -1e-6))
     success = raw_success and feasible
     if success:
       self.last_z = z_sol
-      self.last_lam_x = np.asarray(sol["lam_x"], dtype=np.float64).reshape(-1)
-      self.last_lam_g = np.asarray(sol["lam_g"], dtype=np.float64).reshape(-1)
+      self.last_lam_x = lam_x
+      self.last_lam_g = lam_g
       u_safe = np.clip(z_sol[: self.n_u], -1.0, 1.0).reshape(self.ncars, NCTRL)
     else:
       u_safe = desired.copy()
       u_safe[:, 0] = -1.0
       u_safe[:, 1] = 0.0
 
-    # Per-function costs are single re-evaluations at the solution; fe_total is CasADi's own
-    # accounting of the time actually spent in the oracle callbacks during the solve, which
-    # is what Alloy's stats.t_fe measures. The two are not each other's sums.
     eval_ms = {
       "f": self._time_eval(self.cost_fn, z_sol, p),
       "g": self._time_eval(self.g_fn, z_sol, p),
       "grad_f": self._time_eval(self.grad_fn, z_sol, p),
       "jac_g": self._time_eval(self.jac_fn, z_sol, p),
-      "fe_total": 1000.0 * sum(float(v) for k, v in stats.items() if k.startswith("t_wall_nlp_")),
-      # the Python/DM boundary, outside `solver_ms` because CasADi's timer starts after it
-      "glue": max(python_ms - solver_ms, 0.0),
+      "fe_total": stats.t_fe * 1000.0,
+      "glue": stats.t_glue * 1000.0,
     }
     if self.hess_fn is not None:
-      lam_g = np.asarray(sol["lam_g"], dtype=np.float64).reshape(-1)
       eval_ms["hess_lag"] = self._time_eval(self.hess_fn, z_sol, p, 1.0, lam_g)
     du = u_safe.reshape(-1) - desired.reshape(-1)
     tracking = float(du @ (np.tile(np.asarray(self.filt_cfg.R), self.ncars) * du))
@@ -368,16 +356,27 @@ class CasadiDTCBFSafetyFilter:
         self.name,
         step,
         success,
-        str(stats.get("return_status", "unknown")),
+        stats.status.name.lower(),
         solver_ms,
-        int(stats["iter_count"]) if "iter_count" in stats else None,
-        float(sol["f"]),
+        stats.iter,
+        float(f_sol[0]),
         float(np.min(g_sol)) if g_sol.size else float("inf"),
         float(np.sum(z_sol[self.n_u :])),
         tracking,
-        {k: int(stats[k]) for k in stats if k.startswith("n_call_") and isinstance(stats[k], int)},
+        {
+          "f": stats.n_eval_f,
+          "g": stats.n_eval_g,
+          "grad_f": stats.n_eval_grad_f,
+          "jac_g": stats.n_eval_jac_g,
+          "hess_lag": stats.n_eval_h,
+        },
         eval_ms,
-        {"build_ms": self._build_ms, "raw_success": raw_success, "max_slack": float(np.max(z_sol[self.n_u :], initial=0.0))},
+        {
+          "build_ms": self._build_ms,
+          "raw_success": raw_success,
+          "native_status": stats.native_status,
+          "max_slack": float(np.max(z_sol[self.n_u :], initial=0.0)),
+        },
       )
     )
     return u_safe

@@ -171,29 +171,10 @@ for system 3 and establishes that this re-implementation of their decoder is fai
 
 ## Results
 
-One machine, one session, alloy and CasADi through the same IPOPT and the same `alloy-sqp`/PIQP.
-Canonical episode: 100 steps at `dt = 0.02`, horizon 12, the trained 32×32 decoder.
-
-| column | mean solve | mean FE | FE share | mean iterations | settles | final offset |
-|---|---|---|---|---|---|---|
-| `ipopt+alloy` | 3.85 ms | 1.53 ms | 40% | 10.07 | step 10 | 0.010° |
-| `ipopt+casadi` | 17.34 ms | 12.93 ms | 75% | 10.07 | step 10 | 0.010° |
-| `sqp+alloy` | **1.29 ms** | 0.66 ms | 51% | 4.67 | step 10 | 0.010° |
-| `sqp+casadi` | 1.57 ms | 0.92 ms | 58% | 4.67 | step 10 | 0.010° |
-
-These are the numbers in the `summary.json` each column writes under
-`benchmarks/results/closed-loop/npmpc/`, so they can be checked rather than taken on trust.
-Run-to-run scatter on this machine is a few percent.
-
-**The `ipopt+casadi` column is not a fair baseline, and no runtime claim here rests on it.**
-`ca.nlpsol` evaluates through CasADi's own virtual machine unless told to JIT, so as configured that
-column compares an interpreter against generated C. `internal/paper.md` §5 defines the CasADi
-column as JIT-enabled and this does not honour it — as `race_cars` and `unbumpercars` also do not.
-It is left uniform with them deliberately: a suite where one problem JITs and two do not is worse
-than one where none do, because then no two problems' CasADi columns mean the same thing. The
-harmonization is tracked in `internal/todo.md`.
-
-All four combinations were measured first, so that work has numbers to start from:
+The current harness code-generates the CasADi `nlpsol` with `expand=False` and compiles it
+against the same IPOPT library as the Alloy column. The next canonical run will populate the
+current result table. The earlier configuration audit measured all four interpreter and JIT
+combinations before selecting the generated MX path:
 
 | expand | jit | build | total | FE | FE share |
 |---|---|---|---|---|---|
@@ -202,12 +183,12 @@ All four combinations were measured first, so that work has numbers to start fro
 | False | no | 0.1 s | 9.50 ms | 4.84 ms | 51% |
 | False | yes | 23.9 s | **5.37 ms** | **1.46 ms** | 27% |
 
-Two things that table settles. Expanding to scalar SX is a trap: it triples the interpreter's work,
+The table settles two choices. Expanding to scalar SX triples the interpreter's work,
 and once compiled it hands the C compiler some 750 000 lines for a sixteen-minute build only to land
-slower than compiled MX. And **against a compiled CasADi, function evaluation is a wash** — 1.46 ms
+slower than compiled MX. Against a compiled CasADi, function evaluation is a wash: 1.46 ms
 against Alloy's 1.53 — which is exactly what the kernel sweeps predicted, since they put CasADi MX at
-0.83–0.90× of Alloy at this decoder width. The 8.5× gap in the table above is an artifact of the
-baseline's configuration, not a result.
+0.83–0.90× of Alloy at this decoder width. The old interpreted column's 8.5× gap was a
+configuration artifact.
 
 What survives that, and what this problem should be cited for:
 

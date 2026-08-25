@@ -104,7 +104,7 @@ The unsuffixed workload on each axis measures the exact sparse Lagrangian Hessia
 descriptor. Add `_jac` to `chain`, `race_cars`, `npmpc`, or `npmpc_decoder` to run the constraint
 Jacobian row retained for the long paper. The default sweep runs only the Hessian workloads.
 
-Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package/compiler versions, platform, Python, and timestamp. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=40, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
+Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package and compiler versions, platform, Python, and timestamp. It also records the resolved IPOPT library and its MUMPS, METIS, and OpenBLAS build. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=40, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
 
 The stage-based workloads default to Alloy and four CasADi encodings of the repeated dynamics
 stage: unrolled `SX`, unrolled `MX`, repeated calls to an elemental `MX` `Function`, and a serial map
@@ -323,19 +323,11 @@ a corridor about 1.7 m wide per side.
 `problems/race_cars/closed_loop.py` owns the plant, the planner, warm starts and
 lap logic; `build_solver(config, solver, oracle)` selects the optimizer and
 generated function provider independently.
-`problems/race_cars/casadi_nlp.py` is the CasADi mirror of the same NLP, wrapped
-to present the same call signature and the same `SolverStats` as an Alloy
-`SolverFunction`, with `expand=True` and per-oracle timings read out of
-`nlpsol.stats()`. One canonical lap on this machine (Apple clock, IPOPT 3.14,
-identical iteration counts and an identical trajectory to 1e-12):
-
-| oracle | mean total | mean FE | mean iters | RMS lateral error |
-|---|---|---|---|---|
-| alloy | 2.73 ms | 0.62 ms | 10.4 | 0.04403 m |
-| casadi | 6.57 ms | 1.51 ms | 10.4 | 0.04403 m |
-
-Treat these as an indicative single-machine reading, not a published claim: the
-sweep harness is where the steelmanned per-cell numbers belong. The
+`problems/race_cars/casadi_nlp.py` is the CasADi mirror of the same NLP. The
+harness code-generates the complete `nlpsol` with `expand=True` in a fresh
+process, compiles it against Alloy's IPOPT, and calls it through the same C-level
+boundary used for timing. Generated-code instrumentation fills the same
+`SolverStats` fields as the Alloy column. The
 `sqp+alloy` and `sqp+casadi` columns provide the controlled
 one-solver, two-oracle comparison; their telemetry separates FE, QP, and
 globalization time.
@@ -345,35 +337,10 @@ globalization time.
 `problems/npmpc/closed_loop.py` owns the plant, the warm starts and the episode;
 `problems/npmpc/casadi_nlp.py` is the CasADi mirror, built from the same
 `ca_npmpc_pieces` the sweep kernels use and reading its bounds from the same two
-functions as the Alloy formulation, so the mirror cannot drift from it. One
-canonical episode — 100 steps at `dt = 0.02`, horizon 12, the trained 32×32
-decoder — on this machine:
-
-| column | mean solve | mean FE | FE share | mean iterations |
-|---|---|---|---|---|
-| `ipopt+alloy` | 3.85 ms | 1.53 ms | 40% | 10.07 |
-| `ipopt+casadi` | 17.34 ms | 12.93 ms | 75% | 10.07 |
-| `sqp+alloy` | **1.29 ms** | 0.66 ms | 51% | 4.67 |
-| `sqp+casadi` | 1.57 ms | 0.92 ms | 58% | 4.67 |
-
-**The `ipopt+casadi` column is not a fair baseline and no runtime claim rests on
-it.** `ca.nlpsol` interprets unless told to JIT, so as configured it compares a
-virtual machine against generated C — the same gap `race_cars` and `unbumpercars`
-have, left uniform with them until the harmonization in
-[internal/todo.md](../internal/todo.md) tracks the fix for all three. All four
-combinations of `expand` and `jit` were measured first (the table is in
-`problems/npmpc/casadi_nlp.py`): compiled, unexpanded MX runs 5.37 ms per solve
-with 1.46 ms of function evaluation, so **against a compiled CasADi the oracle
-comparison is a wash**, exactly as the kernel sweeps predict.
-
-What this problem should be cited for is code size and build time — about a second
-for Alloy's whole oracle set against 24 s for compiled CasADi MX and sixteen
-minutes for compiled CasADi SX — the decoder-width axis, and the two SQP columns,
-which are both code-generated compiled C and therefore fair: 1.29 against 1.57 ms
-per solve, 0.66 against 0.92 ms of function evaluation. All four columns settle the
-pendulum at step 10 with identical iteration counts inside each solver and
-trajectories agreeing to 2.4e-13 in state (IPOPT pair) and 5.1e-9 (SQP pair).
-`problems/npmpc/README.md` carries the decoder-width study.
+functions as the Alloy formulation. The harness code-generates the complete
+`nlpsol` with `expand=False` and links it to the same IPOPT library as the
+Alloy column. The next canonical run replaces the interpreted-column timings and
+old build-cost figures. `problems/npmpc/README.md` carries the decoder-width study.
 
 `problems/race_cars/reference.py` fits a minimum-curvature closed cubic spline to
 the center line, samples it uniformly in arc length, and reads a constant-speed

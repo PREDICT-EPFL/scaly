@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import re
@@ -86,10 +87,11 @@ def _missing_ipopt_tools() -> list[str]:
   return missing
 
 
-IPOPT_BRANCH = "releases/3.14.19"
-MUMPS_BRANCH = "releases/3.0.12"
-METIS_BRANCH = "releases/2.0.1"
-OPENBLAS_BRANCH = "v0.3.28"
+_BUILD_CONFIG = json.loads((Path(__file__).parent / "src" / "alloy_ipopt" / "build_config.json").read_text())
+IPOPT_BRANCH = _BUILD_CONFIG["ipopt"]["branch"]
+MUMPS_BRANCH = _BUILD_CONFIG["mumps"]["coinor_branch"]
+METIS_BRANCH = _BUILD_CONFIG["metis"]["coinor_branch"]
+OPENBLAS_BRANCH = _BUILD_CONFIG["blas"]["linux"]["branch"]
 
 
 def _run(cmd: list[str], cwd: Path, env: dict | None = None) -> None:

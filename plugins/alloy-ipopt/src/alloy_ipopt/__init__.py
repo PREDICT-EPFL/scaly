@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import platform
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
   from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
+
+_RAW_BUILD_CONFIG = json.loads((Path(__file__).resolve().parent / "build_config.json").read_text())
+BUILD_CONFIG = {name: config for name, config in _RAW_BUILD_CONFIG.items() if name != "blas"}
+BUILD_CONFIG["blas"] = _RAW_BUILD_CONFIG["blas"]["darwin" if platform.system() == "Darwin" else "linux"]
 
 
 def include_dir() -> Path:
@@ -26,6 +32,7 @@ class _Backend:
   lib_stem = "ipopt"
   link_flags = ("-lipopt",)
   header = "coin-or/IpStdCInterface.h"
+  build_config = BUILD_CONFIG
 
   include_dir = staticmethod(include_dir)
   lib_dir = staticmethod(lib_dir)

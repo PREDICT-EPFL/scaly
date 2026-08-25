@@ -38,11 +38,11 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
 - [x] **A4. Make the exact sparse Lagrangian Hessian the published kernel on every axis**, keeping
       the Jacobian as a long-paper row. Consequence: claim gate 2 has to be re-derived on the
       Hessian. Rationale: paper.md §4 (contribution 2).
-- [ ] **A5. Compile the CasADi oracles and choose `expand` per problem.** Keep `True` on race_cars,
+- [x] **A5. Compile the CasADi oracles and choose `expand` per problem.** Keep `True` on race_cars,
       switch to `False` on npmpc and unbumpercars. Add a gate per problem that the timed CasADi
       column is actually compiled, shaped like npmpc's `exact_hessian` check. Rationale:
       fairness.md "`expand` and `jit`, per problem".
-- [ ] **A6. Route both IPOPT columns through one `libipopt.so`** and record which in the provenance,
+- [x] **A6. Route both IPOPT columns through one `libipopt.so`** and record which in the provenance,
       along with the MUMPS, METIS and BLAS configuration. Needs the code-generated CasADi column,
       since the reverse pin is impossible. Rationale: paper.md §5.4.
 - [ ] **A7. Emit the dispatch properties into the sweep CSV**: trip count, per-iteration workspace

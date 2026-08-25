@@ -407,7 +407,6 @@ def parse_args() -> argparse.Namespace:
     action="store_true",
     help="Use IPOPT's limited-memory Hessian approximation with either oracle provider instead of exact Lagrangian Hessians.",
   )
-  p.add_argument("--no-casadi-expand", action="store_true", help="Disable CasADi MX-to-SX expansion before constructing the NLP solver.")
   p.add_argument("--eval-repeats", type=int, default=1)
   p.add_argument("--dump-alloy-c", action="store_true")
   p.add_argument("--show", action="store_true")
@@ -442,7 +441,6 @@ def main() -> None:
     ipopt_tol=args.ipopt_tol,
     eval_repeats=max(1, args.eval_repeats),
     limited_memory_hessian=args.limited_memory_hessian,
-    casadi_expand=not args.no_casadi_expand,
   )
   out_dir.mkdir(parents=True, exist_ok=True)
   initial = sample_initial_states(loop_cfg)

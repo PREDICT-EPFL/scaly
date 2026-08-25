@@ -45,8 +45,12 @@ Rules the numbers on this page follow, and that a headline run must follow more 
   Several early figures in this audit had to be thrown away because three compilers were competing
   for the cores.
 - **Kernel figures come from the Google Benchmark harness**, which calls the generated C symbol with
-  preallocated buffers and no Python in the loop. Closed-loop totals come from each side's own
-  C-level timer, `alloy_clock_s()` for alloy and `t_wall_total` for CasADi. Never both on one axis.
+  preallocated buffers and no Python in the loop. Both closed-loop IPOPT columns now use
+  `clock_gettime` around a generated C entry point.
+- **Do not compute unused parameter sensitivities.** The generated CasADi `nlpsol` normally produces
+  `lam_p` after the solve. The harness passes a null output and skips that reverse sweep because
+  neither timed column requests parameter sensitivities; the generated function remains otherwise
+  unchanged.
 - **Correctness gates before timing.** Every cell checks its compact derivative against an
   independent dense reference and produces no timing if it disagrees.
 - **Report CasADi's best encoding**, not the one our mirror happens to build. §"Does CasADi have
@@ -60,10 +64,10 @@ Rules the numbers on this page follow, and that a headline run must follow more 
 
 | defect | direction | effect where measured | status |
 |---|---|---|---|
-| The two IPOPT columns link **different IPOPT builds** | favours alloy | **2.7× to 17×** in solver-internal time, at identical iteration counts | measured, unfixed |
-| `ipopt+casadi` runs CasADi's **virtual machine**, not compiled C | favours alloy | 1.2× to 8.6× in function evaluation | measured, unfixed |
-| `expand=True` is the default on two problems, unmeasured | varies | correct for `race_cars` (MX is 5× worse), wrong for `npmpc` | measured |
-| CasADi's total is timed in **Python**, alloy's in **C** | favours alloy | 0.2–0.4 ms/step, and booked as *solver* time | measured, one-line fix |
+| The two IPOPT columns linked **different IPOPT builds** | favoured alloy | **2.7× to 17×** in solver-internal time, at identical iteration counts | measured, fixed |
+| `ipopt+casadi` ran CasADi's **virtual machine**, not compiled C | favoured alloy | 1.2× to 8.6× in function evaluation | measured, fixed |
+| `expand=True` was the default on two problems | varied | correct for `race_cars` (MX is 5× worse), wrong for `npmpc` and `unbumpercars` | measured, fixed |
+| CasADi's total was timed in **Python**, alloy's in **C** | favoured alloy | 0.2–0.4 ms/step, and booked as *solver* time | measured, fixed |
 | The chain sweep's `casadi_sx` column was **not** an SX column | mislabelled, not unfair | forcing `map` is what makes CasADi compilable here at all | measured, fixed |
 | Alloy **loses** the chain equality Jacobian on runtime | favours CasADi | 2.4× at M=5, 1.5× at M=17 — and unpublished | measured |
 | CasADi mirrors do not call `ca.cse` | favours alloy | negligible on `race_cars` (1.81 → 1.68 ms FE) | measured, minor |
@@ -273,11 +277,9 @@ Measured on the `npmpc` episode, per step:
 So alloy's Python boundary costs 60–90 µs per solve — 2.5% of an IPOPT step and 5% of an SQP step.
 That is the answer to "are we measuring overhead": for alloy, no.
 
-For the CasADi IPOPT column the honest fix is one option. `ca.nlpsol` exposes `t_wall_total`, a
-C++-level total, whenever `record_time: True` is passed; it is suppressed today only because the
-suite passes `print_time: False` and those used to be the same switch. `t_wall_total` is not a
-substitute for the code-generated column, though — it still contains CasADi's C++ `nlpsol` layer.
-Only the `ctypes`-called generated C puts both columns behind the same kind of boundary.
+The CasADi IPOPT column now uses the stronger fix measured in the audit. The harness code-generates
+the complete `nlpsol`, calls it through `ctypes`, and measures `clock_gettime` inside the C
+entry point. Both columns now have the same kind of boundary.
 
 ## Does CasADi have loop-preserving codegen? Partly
 

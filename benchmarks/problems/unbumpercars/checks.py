@@ -377,6 +377,23 @@ def check_canonical_hessian_handoff() -> None:
       _samples("unbumpercars", cfg.ncars, info, output, harvested)
 
 
+def check_casadi_ipopt_is_compiled() -> None:
+  """The timed CasADi column is generated C linked to Alloy's IPOPT."""
+  from pathlib import Path
+
+  from alloy.solvers.paths import solver_paths
+  from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter
+
+  loop_cfg = ClosedLoopConfig(ncars=2, steps=1)
+  controller = CasadiDTCBFSafetyFilter(loop_cfg, FilterConfig(ipopt_max_iter=40), load_dt_mlp_weights())
+  expected = solver_paths(required=True).loads["ipopt"]
+  assert controller.solver.compiled and not controller.solver.expand and expected is not None
+  assert controller.solver.resolved_ipopt_library.read_bytes() == Path(expected).read_bytes()
+  states = sample_initial_states(loop_cfg)
+  controller.compute_safe_input(states, np.zeros((loop_cfg.ncars, 2)))
+  assert controller.stats_history[-1].eval_counts["hess_lag"] > 0
+
+
 def check_sqp_matches_ipopt_per_step() -> None:
   """SQP and IPOPT return the same safe input when handed the same state.
 
@@ -470,6 +487,7 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "oracles_solve_alike": (check_oracles_solve_alike_per_step, True, True),
   "exact_hess": (check_exact_hess_matches_casadi_on_closed_loop_samples, True, True),
   "canonical_hessian_handoff": (check_canonical_hessian_handoff, False, True),
+  "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, True, True),
   "sqp_matches_ipopt": (check_sqp_matches_ipopt_per_step, True, False),
   "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
 }

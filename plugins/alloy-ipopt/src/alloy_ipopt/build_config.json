@@ -1,0 +1,29 @@
+{
+  "ipopt": {
+    "branch": "releases/3.14.19",
+    "linkage": "shared",
+    "version": "3.14.19"
+  },
+  "mumps": {
+    "coinor_branch": "releases/3.0.12",
+    "linkage": "static"
+  },
+  "metis": {
+    "coinor_branch": "releases/2.0.1",
+    "linkage": "static"
+  },
+  "blas": {
+    "darwin": {
+      "implementation": "Accelerate",
+      "linkage": "framework"
+    },
+    "linux": {
+      "branch": "v0.3.28",
+      "dynamic_arch": true,
+      "implementation": "OpenBLAS",
+      "linkage": "static",
+      "openmp": false,
+      "version": "0.3.28"
+    }
+  }
+}

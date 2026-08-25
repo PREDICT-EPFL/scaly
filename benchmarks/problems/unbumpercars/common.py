@@ -163,7 +163,6 @@ class FilterConfig:
   # Exact Lagrangian Hessians from both oracle providers by default: Alloy's sphess-through-MAP path
   # is what this problem exists to exercise, and it is gated against CasADi's.
   limited_memory_hessian: bool = False
-  casadi_expand: bool = True
 
 
 @dataclass(slots=True)

@@ -21,7 +21,7 @@ from dataclasses import replace
 import numpy as np
 
 import alloy as al
-from alloy.solvers.paths import solver_loadable
+from alloy.solvers.paths import solver_loadable, solver_paths
 from benchmarks.problems.npmpc import (
   DT,
   HORIZON,
@@ -332,6 +332,29 @@ def check_nlp_uses_an_exact_hessian() -> None:
   assert stats.n_eval_h > 0, "IPOPT never evaluated the Lagrangian Hessian, so this column is quasi-Newton"
 
 
+def check_casadi_ipopt_is_compiled() -> None:
+  """The timed CasADi column is generated C linked to Alloy's IPOPT."""
+  from pathlib import Path
+
+  config = replace(EpisodeConfig.smoke(), steps=1)
+  pw = pack_params(config.decoder, load_decoder_weights(config.decoder))
+  controller = build_solver(config, "ipopt", "casadi", P=terminal_P(config.decoder, pw, config.weights, config.dt))
+  expected = solver_paths(required=True).loads["ipopt"]
+  assert controller.compiled and not controller.expand and expected is not None
+  assert controller.resolved_ipopt_library.read_bytes() == Path(expected).read_bytes()
+  n_eq, n_ineq = constraint_counts(config.horizon)
+  start = np.array(config.x_start)
+  controller(
+    initial_guess(start, config),
+    np.zeros(n_eq),
+    np.zeros(n_ineq),
+    np.zeros(n_dec(config.horizon)),
+    np.concatenate([start, pw]),
+  )
+  stats = controller.last_stats
+  assert stats is not None and stats.n_eval_h > 0
+
+
 def check_episode_artifacts() -> None:
   """A short episode produces the declared shapes, stays finite, and respects the transcription's bounds."""
   config = EpisodeConfig.smoke()
@@ -492,9 +515,8 @@ def check_oracles_agree() -> None:
   difference is who differentiates and evaluates. Measured: identical iteration counts at every step
   and trajectories agreeing to 8.8e-13 in state over the full episode.
 
-  This gate pays the CasADi column's ~24 s JIT build, deliberately. The column is only a baseline if
-  it is compiled (see `casadi_nlp.JIT_OPTIONS`), and a gate that skipped the build would be checking
-  a configuration nothing times.
+  This gate pays the CasADi column's generated-C build. The column is only a baseline if it is
+  compiled, and a gate that skipped the build would check a configuration that no timing uses.
   """
   config = _comparison_config()
   alloy = run_episode(config, solver="ipopt", oracle="alloy")
@@ -509,8 +531,8 @@ def check_sqp_oracles_agree() -> None:
   """The same SQP produces the same episode from Alloy and CasADi generated-C oracles.
 
   Both columns run `alloy-sqp` with its PIQP subsolver at identical settings, and both feed it
-  code-generated, compiled C. Both IPOPT columns are compiled too, since the CasADi one JITs, so all
-  four columns are compiled-code comparisons; what differs between the two *pairs* is the mix of
+  code-generated, compiled C. Both IPOPT columns are compiled too, so all four columns are
+  compiled-code comparisons; what differs between the two *pairs* is the mix of
   oracle calls each optimizer makes, which is why their function-evaluation ratios differ.
   """
   config = _comparison_config()
@@ -644,6 +666,7 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "constraint_rows": (check_constraint_rows_and_bounds, False, False),
   "initial_guess": (check_initial_guess_reaches_upright, False, False),
   "exact_hessian": (check_nlp_uses_an_exact_hessian, False, False),
+  "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, True, True),
   "episode_artifacts": (check_episode_artifacts, True, False),
   "episode_swings_up": (check_episode_swings_up, True, False),
   "reference_episode": (check_matches_reference_episode, True, False),

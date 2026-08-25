@@ -636,9 +636,10 @@ corresponds to this, which is why the scene draws only the two discs.
 
 ### CasADi
 
-`CasadiDTCBFSafetyFilter` builds one MX NLP with IPOPT, with `expand=True` and an exact
-Lagrangian Hessian (plus a separate `ca.Function` for the same Hessian, for
-instrumentation). `--limited-memory-hessian` swaps both IPOPT oracle providers to
+`CasadiDTCBFSafetyFilter` builds one MX NLP with `expand=False` and an exact
+Lagrangian Hessian. A fresh process code-generates the complete `nlpsol`, then the
+timing process loads it against Alloy's IPOPT. Separate `ca.Function` objects provide
+the per-oracle probes. `--limited-memory-hessian` swaps both IPOPT oracle providers to
 `ipopt.hessian_approximation = limited-memory` instead.
 
 Instrumentation recorded per step:
@@ -648,7 +649,7 @@ Instrumentation recorded per step:
 - objective, min constraint value, the L1 slack total (largest single slack under `max_slack`),
 - explicit `ca.Function` timings for `f`, `g`, `grad_f`, `jac_g`, and optionally
   `hess_lag`,
-- CasADi's reported `n_call_*` counters.
+- generated-code oracle-call counters.
 
 Important caveat: the explicit instrumentation functions are close to, but not
 necessarily identical to, the exact internal oracle functions CasADi wires into
@@ -695,7 +696,7 @@ Instrumentation recorded per step (from the `alloy_solver_stats` struct):
 
 ## Interpreting the IPOPT Alloy-vs-CasADi timings
 
-Both implementations use IPOPT and warm-start primal variables plus constraint
+Both implementations use the same IPOPT library and warm-start primal variables plus constraint
 and box multipliers. Alloy runs entirely through the generated C solver wrapper:
 IPOPT callbacks call generated kernels in the same `.so`, with no Python or
 ctypes callback in the solve loop. Its stable stats ABI separates FE, native
@@ -705,8 +706,8 @@ to have identical accounting boundaries.
 
 The default comparison uses exact Lagrangian Hessians on both sides;
 `--limited-memory-hessian` selects IPOPT's approximation instead. Both paths receive the same
-symbolic model constants and `dt`, and CasADi expansion is enabled unless
-`--no-casadi-expand` is passed. Strict comparisons should retain raw IPOPT
+symbolic model constants and `dt`. The CasADi path retains MX with `expand=False`.
+Strict comparisons should retain raw IPOPT
 status in addition to the benchmark's strict solver-success and feasibility
 rule.
 

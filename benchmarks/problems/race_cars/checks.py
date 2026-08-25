@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 import alloy as al
-from alloy.solvers.paths import solver_loadable
+from alloy.solvers.paths import solver_loadable, solver_paths
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
   CAR_WIDTH,
@@ -40,6 +40,7 @@ from benchmarks.problems.race_cars import (
 )
 from benchmarks.problems.race_cars.closed_loop import (
   EpisodeConfig,
+  _reference_guess,
   _race_car_nlp,
   build_solver,
   run_episode,
@@ -194,6 +195,34 @@ def check_exact_hessian_default() -> None:
   assert dict(solver.descriptor.options).get("hessian_approximation") != "limited-memory"
   sqp = _race_car_nlp(EpisodeConfig.smoke(), solver="sqp")
   assert dict(sqp.descriptor.options).get("hessian", "exact") == "exact"
+
+
+def check_casadi_ipopt_is_compiled() -> None:
+  """The timed CasADi column is generated C linked to Alloy's IPOPT."""
+  config = EpisodeConfig.smoke()
+  controller = build_solver(config, "ipopt", "casadi")
+  expected = solver_paths(required=True).loads["ipopt"]
+  assert controller.compiled and controller.expand and expected is not None
+  assert controller.resolved_ipopt_library.read_bytes() == Path(expected).read_bytes()
+  planner = MotionPlanner(load_track(config.track).center_line, horizon=config.horizon, dt=config.params.dt, v_ref=config.v_ref)
+  start = planner.center_path[0]
+  heading = float(planner.phi_ref[0])
+  state = np.array(
+    [start[0] - config.initial_lateral_offset * np.sin(heading), start[1] + config.initial_lateral_offset * np.cos(heading), heading, 0.0]
+  )
+  _, reference = planner.plan(float(state[0]), float(state[1]), float(state[2]), 0.0)
+  stage_reference = reference.copy()
+  stage_reference[0] = state
+  z0 = _reference_guess(reference, config)
+  controller(
+    z0,
+    np.zeros(NX * (config.horizon + 1)),
+    np.zeros(2 * config.horizon),
+    np.zeros(z0.size),
+    np.concatenate([stage_reference.reshape(-1), config.params.array()]),
+  )
+  stats = controller.last_stats
+  assert stats is not None and stats.n_eval_h > 0
 
 
 def check_harvested_sqp_globalizations() -> None:
@@ -363,6 +392,7 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "default_constants": (check_default_constants, False, False),
   "casadi_mirror": (check_casadi_mirror_dimensions, False, True),
   "exact_hessian_default": (check_exact_hessian_default, False, False),
+  "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, True, True),
   "episode_artifacts": (check_episode_artifacts, True, False),
   "recorded_scene": (check_recorded_scene_and_artifacts, True, True),
   "oracles_agree": (check_oracles_agree, True, True),
