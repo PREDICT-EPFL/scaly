@@ -259,6 +259,13 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   started = time.perf_counter()
   if workload == "chain":
     horizon = chain.HORIZON
+    # KNOWN MISLABEL. `map_stages` forces the outer graph to MX (`chain._ca_eq`), so both chain
+    # CasADi cells are MX graphs differing only in the inner stage's symbolic type: `casadi_sx` here
+    # means "SX stage retained through an MX map", not "SX". Setting it to False to make the labels
+    # literal is a one-word change that breaks the smoke tier, because unrolled SX does not compile
+    # at these sizes (215 190 lines at M=5, past a 600 s budget) -- so the honest label and the
+    # `casadi_map_sx` backend have to land together, as §8 item 2 of `internal/paper.md` requires.
+    # Do not "fix" this line on its own. Measurements in `docs/results/fairness.md`.
     fn = chain.ca_chain_eq_jac(size, horizon, sym_t=sym_t, name=name, map_stages=True)
     inputs = [("z", chain.n_dec(size, horizon)), ("p", chain.n_param(size))]
     benchmark = f"BM_Casadi{kind.title()}ChainEqJacM{size}"

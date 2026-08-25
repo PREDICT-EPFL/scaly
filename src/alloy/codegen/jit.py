@@ -6,6 +6,8 @@ rendering decisions of its own.
 - ``ALLOY_CACHE_DIR`` overrides the on-disk cache root (default: ``$XDG_CACHE_HOME/alloy/jit``
   or ``~/.cache/alloy/jit``).
 - ``ALLOY_CC`` overrides the C compiler binary (default: ``cc`` from ``$PATH``).
+- ``ALLOY_CC_OPT`` overrides the optimization flag (default: ``-O2``). Benchmark harnesses that
+  compile a baseline at ``-O3`` should set it, so both sides of a comparison get the same level.
 """
 
 from __future__ import annotations
@@ -90,6 +92,11 @@ def _find_compiler() -> str | None:
   return compiler.cc if compiler is not None else None
 
 
+def opt_flag() -> str:
+  """Optimization flag for JIT compilation. ``-O2`` unless ``ALLOY_CC_OPT`` says otherwise."""
+  return os.environ.get("ALLOY_CC_OPT") or "-O2"
+
+
 def _compute_cache_key(source: str, *, fun_name: str, compile_flags: tuple[str, ...] = ()) -> str:
   """SHA-256 over the rendered C source plus the cache-version and ABI signature.
 
@@ -143,7 +150,10 @@ def _build_artifact(fun: Function) -> _Artifact:
   extra_flags = module.link_flags
   # The cache compiles ``body`` — the translation unit without the header include a written-out
   # ``.c`` carries — so the key is a hash of exactly the text handed to the compiler.
-  key = _compute_cache_key(module.body, fun_name=fun.name, compile_flags=extra_flags)
+  # The optimization level is part of the key: two levels produce different machine code from
+  # the same source, so they must not share a cache entry.
+  opt = opt_flag()
+  key = _compute_cache_key(module.body, fun_name=fun.name, compile_flags=(opt, *extra_flags))
   with _artifact_lock:
     cached = _artifact_cache.get(key)
   if cached is not None and cached.lib_path.exists():
@@ -166,7 +176,7 @@ def _build_artifact(fun: Function) -> _Artifact:
     # Link libraries (-l in extra_flags) MUST come after the source: ld defaults to --as-needed on
     # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
     # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
-    cmd = [cc, "-O2", "-fPIC", shared_lib_flag(), str(source_path), *extra_flags, "-lm", "-o", str(tmp_lib)]
+    cmd = [cc, opt, "-fPIC", shared_lib_flag(), str(source_path), *extra_flags, "-lm", "-o", str(tmp_lib)]
     try:
       subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
@@ -327,7 +337,7 @@ def invalidate_cache(fun: Function) -> None:
     module = render_c_module(fun)
   except NotImplementedError:
     return
-  key = _compute_cache_key(module.body, fun_name=fun.name, compile_flags=module.link_flags)
+  key = _compute_cache_key(module.body, fun_name=fun.name, compile_flags=(opt_flag(), *module.link_flags))
   with _artifact_lock:
     _artifact_cache.pop(key, None)
   cache_dir = cache_root() / key

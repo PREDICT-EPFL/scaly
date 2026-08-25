@@ -28,6 +28,10 @@ plugins/*/src/*/_piqp_ext.pyi
 # Local benchmark outputs
 benchmarks/results/
 
+# CasADi's JIT writes these into the working directory and does not always clean up
+jit_tmp*.c
+tmp_casadi_compiler_shell*
+
 # docs
 site/
 .wrangler

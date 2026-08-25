@@ -284,6 +284,10 @@ class CasadiDTCBFSafetyFilter:
     nlp = {"x": z, "p": p, "f": cost, "g": g}
     opts: dict[str, Any] = {
       "print_time": False,
+      # `record_time` adds `t_wall_total`, measured inside CasADi's own C++ entry point, which is the
+      # number comparable with Alloy's `t_total`. A Python timer around the call would also include
+      # the numpy->DM marshalling of the 35 079-double parameter vector: about 16 ms per step here.
+      "record_time": True,
       "ipopt.print_level": 0,
       "ipopt.sb": "yes",
       "ipopt.tol": self.filt_cfg.ipopt_tol,
@@ -324,8 +328,9 @@ class CasadiDTCBFSafetyFilter:
       args["lam_g0"] = self.last_lam_g
     t0 = time.perf_counter()
     sol = self.solver(**args)
-    solver_ms = (time.perf_counter() - t0) * 1000.0
+    python_ms = (time.perf_counter() - t0) * 1000.0
     stats = self.solver.stats()
+    solver_ms = float(stats["t_wall_total"]) * 1000.0
     raw_success = bool(stats.get("success", False))
     z_sol = np.asarray(sol["x"], dtype=np.float64).reshape(-1)
     g_sol = np.asarray(sol["g"], dtype=np.float64).reshape(-1)
@@ -350,6 +355,8 @@ class CasadiDTCBFSafetyFilter:
       "grad_f": self._time_eval(self.grad_fn, z_sol, p),
       "jac_g": self._time_eval(self.jac_fn, z_sol, p),
       "fe_total": 1000.0 * sum(float(v) for k, v in stats.items() if k.startswith("t_wall_nlp_")),
+      # the Python/DM boundary, outside `solver_ms` because CasADi's timer starts after it
+      "glue": max(python_ms - solver_ms, 0.0),
     }
     if self.hess_fn is not None:
       lam_g = np.asarray(sol["lam_g"], dtype=np.float64).reshape(-1)

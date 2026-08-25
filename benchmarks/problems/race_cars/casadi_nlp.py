@@ -179,6 +179,7 @@ class CasadiRaceCarSolver:
       {"x": pieces["z"], "p": pieces["p"], "f": pieces["f"], "g": ca.vertcat(pieces["h_eq"], pieces["g_ineq"])},
       {
         "print_time": False,
+        "record_time": True,
         "expand": expand,
         "ipopt.print_level": 0,
         "ipopt.sb": "yes",
@@ -200,8 +201,15 @@ class CasadiRaceCarSolver:
       lam_x0=lam_box0,
       **self._bounds,
     )
-    t_total = time.perf_counter() - started
+    python_wall = time.perf_counter() - started
     raw = self.solver.stats()
+    # CasADi records `t_wall_total` -- a total measured inside its own C++ entry point -- whenever
+    # `record_time` is set, and that works alongside `print_time: False`. It is the number comparable
+    # with Alloy's `t_total`, which `alloy_clock_s()` takes inside the generated C. A Python
+    # `perf_counter` around the call instead includes the numpy->DM marshalling of every argument, and
+    # booking that as solver time is what `docs/results/fairness.md` found. `t_glue` carries it here,
+    # and for this column alone it sits *outside* `t_total`, because CasADi's timer starts after it.
+    t_total = float(raw["t_wall_total"])
     t_fe = sum(float(raw.get(name, 0.0)) for name in FE_TIMERS)
     self.last_stats = SolverStats(
       version=ALLOY_SOLVER_STATS_VERSION,
@@ -214,7 +222,7 @@ class CasadiRaceCarSolver:
       t_solver=max(t_total - t_fe, 0.0),
       t_qp=0.0,
       t_globalization=0.0,
-      t_glue=0.0,
+      t_glue=max(python_wall - t_total, 0.0),
       n_eval_f=int(raw.get("n_call_nlp_f", 0)),
       n_eval_grad_f=int(raw.get("n_call_nlp_grad_f", 0)),
       n_eval_g=int(raw.get("n_call_nlp_g", 0)),

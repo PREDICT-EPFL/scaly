@@ -28,6 +28,7 @@ class EnvVar:
 ENV_VARS: tuple[EnvVar, ...] = (
   EnvVar("ALLOY_CACHE_DIR", None, "Override the JIT cache root."),
   EnvVar("ALLOY_CC", None, "Override the C compiler used by the JIT."),
+  EnvVar("ALLOY_CC_OPT", "-O2", "Optimization flag the JIT passes to the C compiler."),
   EnvVar("ALLOY_SOLVER_INCLUDE_DIR", None, "Override the vendored solver C header directory."),
   EnvVar("ALLOY_SOLVER_LIB_DIR", None, "Override the vendored solver shared-library directory."),
   EnvVar("ALLOY_<NAME>_LIB", None, "Exact path to an installed solver plugin's shared library (e.g. ALLOY_PIQP_LIB, ALLOY_IPOPT_LIB)."),
