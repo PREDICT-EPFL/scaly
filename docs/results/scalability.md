@@ -7,7 +7,10 @@ if you want the summary rather than the tables.
 the measurements were real and the reasoning is still useful, not because the numbers describe
 alloy today. Everything else is current.
 
-Runs `benchmarks/run.py sweep` over a fixed cell grid for each workload, capturing per-cell codegen / compile / runtime / source-size metrics. Each cell compiles its own Google Benchmark binary that includes Alloy + the selected backend so the binary's correctness check (scatter compact → dense, compare against the Python Alloy reference) guards every measurement.
+Runs `benchmarks/run.py sweep` over a fixed cell grid for each workload, capturing per-cell codegen / compile / runtime / source-size metrics. Each cell compiles its own Google Benchmark binary that includes Alloy + the selected backend. The binary scatters the compact result into a dense matrix and compares it with an independent reference before it records a timing.
+
+The unsuffixed workloads measure the exact sparse Lagrangian Hessian from the solver descriptor.
+The `_jac` workloads retain the constraint Jacobian rows for the long paper and do not run by default.
 
 Skip rules applied automatically:
 
@@ -465,15 +468,14 @@ Reading:
 ## How to reproduce
 
 ```bash
-# Full sweep with default cells: race_cars N=1,5,10,25,40,50,100,200,500, unbumpercars C=2,4,8,
-# npmpc N=6..200 and npmpc_decoder W=16..256, each in both Jacobian and Hessian form
-uv run python benchmarks/run.py sweep --out benchmarks/results/sweep/scalability.csv
+# Full exact-Hessian sweep with default cells
+uv run benchmarks/run.py sweep --out benchmarks/results/sweep/scalability.csv
 
-# Just the race cars
-uv run python benchmarks/run.py sweep --workloads race_cars --out /tmp/race_cars.csv
+# Long-paper race-car Jacobian row
+uv run benchmarks/run.py sweep --workloads race_cars_jac --out /tmp/race_cars-jac.csv
 
 # Custom horizons / car counts / per-cell compile timeout
-uv run python benchmarks/run.py sweep \
+uv run benchmarks/run.py sweep \
     --workloads race_cars \
     --sizes 1,10,50,200 \
     --compile-timeout 60 \

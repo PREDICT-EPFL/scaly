@@ -176,7 +176,6 @@ def _solver_call_smoke(required: bool) -> str | None:
 
 
 def _benchmark_smoke() -> None:
-  infos = []
   for backend in ("alloy", "casadi_sx", "casadi_call_mx", "casadi_map_sx"):
     result, info = run_cell(
       "race_cars",
@@ -195,19 +194,17 @@ def _benchmark_smoke() -> None:
       raise RuntimeError(f"race_cars {backend} smoke failed: {result['note']}")
     assert info["nnz"] > 0, "race_cars nnz must be positive"
     assert info["w_size"] is not None, "race_cars workspace must be recorded"
-    assert info["nnz"] < info["n_rows"] * info["n_cols"], "race_cars Jacobian must be sparse"
-    infos.append(info)
-  out_dir = SMOKE_RESULTS / "race_cars" / "alloy_N50"
-  out_dir.mkdir(parents=True, exist_ok=True)
-  large = build_kernel("race_cars", 50, "alloy", out_dir)
-  assert large["source_lines"] < 1.2 * infos[0]["source_lines"], (
-    f"loop preservation regressed: h=50 has {large['source_lines']} lines, h=5 has {infos[0]['source_lines']}"
+    assert info["nnz"] < info["n_rows"] * info["n_cols"], "race_cars Hessian must be sparse"
+  race_jac = []
+  for size in (5, 50):
+    out_dir = SMOKE_RESULTS / "race_cars" / f"alloy_jac_N{size}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    race_jac.append(build_kernel("race_cars_jac", size, "alloy", out_dir))
+  assert race_jac[1]["source_lines"] < 1.2 * race_jac[0]["source_lines"], (
+    f"race_cars Jacobian loop preservation regressed: N=50 has {race_jac[1]['source_lines']} lines, N=5 has {race_jac[0]['source_lines']}"
   )
-  print(f"smoke loop preservation: ok ({infos[0]['source_lines']} lines at h=5, {large['source_lines']} at h=50)")
-  # baseline 2100 doubles at h=50 (2026-07-13, scan buffers scale linearly with horizon); 3x headroom catches superlinear regressions
-  assert int(large["w_size"]) <= 3 * 2100, f"workspace regressed: h=50 needs {large['w_size']} doubles (baseline 2100)"
-  print(f"smoke workspace: ok ({infos[0]['w_size']} doubles at h=5, {large['w_size']} at h=50)")
-  chain_infos = []
+  assert int(race_jac[1]["w_size"]) <= 3 * 2100, f"race_cars Jacobian workspace regressed: N=50 needs {race_jac[1]['w_size']} doubles"
+  print(f"smoke race_cars Jacobian loop preservation: ok ({race_jac[0]['source_lines']} lines at N=5, {race_jac[1]['source_lines']} at N=50)")
   for backend, size in (("alloy", 5), ("casadi_map_sx", 5), ("casadi_sx", 3)):
     result, info = run_cell(
       "chain",
@@ -225,16 +222,17 @@ def _benchmark_smoke() -> None:
     if result["runtime_status"] != "ok" or info is None:
       raise RuntimeError(f"chain {backend} M={size} smoke failed: {result['note']}")
     assert info["nnz"] > 0 and info["w_size"] is not None and info["nnz"] < info["n_rows"] * info["n_cols"]
-    chain_infos.append(info)
   assert chain.n_state(5) == 21 and chain.NU == 3
-  out_dir = SMOKE_RESULTS / "chain" / "alloy_M33"
-  out_dir.mkdir(parents=True, exist_ok=True)
-  chain_large = build_kernel("chain", 33, "alloy", out_dir)
-  assert chain_large["source_lines"] < 1.2 * chain_infos[0]["source_lines"], (
-    f"chain loop preservation regressed: M=33 has {chain_large['source_lines']} lines, M=5 has {chain_infos[0]['source_lines']}"
+  chain_jac = []
+  for size in (5, 33):
+    out_dir = SMOKE_RESULTS / "chain" / f"alloy_jac_M{size}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    chain_jac.append(build_kernel("chain_jac", size, "alloy", out_dir))
+  assert chain_jac[1]["source_lines"] < 1.2 * chain_jac[0]["source_lines"], (
+    f"chain Jacobian loop preservation regressed: M=33 has {chain_jac[1]['source_lines']} lines, M=5 has {chain_jac[0]['source_lines']}"
   )
-  print(f"smoke chain loop preservation: ok ({chain_infos[0]['source_lines']} lines at M=5, {chain_large['source_lines']} at M=33)")
-  print(f"smoke chain workspace (record only): {chain_infos[0]['w_size']} doubles at M=5, {chain_large['w_size']} at M=33")
+  print(f"smoke chain Jacobian loop preservation: ok ({chain_jac[0]['source_lines']} lines at M=5, {chain_jac[1]['source_lines']} at M=33)")
+  print(f"smoke chain Jacobian workspace (record only): {chain_jac[0]['w_size']} doubles at M=5, {chain_jac[1]['w_size']} at M=33")
   for backend in ("alloy", "casadi_mx"):
     result, info = run_cell(
       "unbumpercars",
@@ -258,16 +256,15 @@ def _benchmark_smoke() -> None:
 def _npmpc_smoke() -> None:
   """The neural-process MPC kernels: a dense decoder at every horizon node.
 
-  Four gates. The solver constraint Jacobian must compile and beat a dense reference; its generated
-  source must not grow with the horizon, since the decoder is scanned rather than unrolled per stage; it
-  must not grow with the decoder width either, since the weights are read out of the parameter tail
-  rather than baked in as literals; and the exact Lagrangian Hessian must be horizon-invariant too,
-  which additionally pins the objective to its scanned form.
+  Five gates. The long-paper constraint Jacobian must compile and beat a dense reference. Its generated
+  source must not grow with the horizon or decoder width. The published exact Lagrangian Hessian must
+  also stay invariant on both axes, which pins both the decoder and the objective to their scanned
+  forms.
   """
   infos = []
   for backend in ("alloy", "casadi_sx"):
     result, info = run_cell(
-      "npmpc",
+      "npmpc_jac",
       6,
       backend,
       SMOKE_RESULTS / "npmpc" / f"{backend}_N6",
@@ -286,7 +283,7 @@ def _npmpc_smoke() -> None:
   assert npmpc.n_dec(npmpc.HORIZON) == 65 and npmpc.Decoder().n_pw == 1396
   out_dir = SMOKE_RESULTS / "npmpc" / "alloy_N100"
   out_dir.mkdir(parents=True, exist_ok=True)
-  large = build_kernel("npmpc", 100, "alloy", out_dir)
+  large = build_kernel("npmpc_jac", 100, "alloy", out_dir)
   assert large["source_lines"] < 1.2 * infos[0]["source_lines"], (
     f"npmpc loop preservation regressed: N=100 has {large['source_lines']} lines, N=6 has {infos[0]['source_lines']}"
   )
@@ -296,7 +293,7 @@ def _npmpc_smoke() -> None:
   print(f"smoke npmpc workspace: ok ({infos[0]['w_size']} doubles at N=6, {large['w_size']} at N=100)")
   wide_dir = out_dir.parent / "alloy_W128"
   wide_dir.mkdir(parents=True, exist_ok=True)
-  wide = build_kernel("npmpc_decoder", 128, "alloy", wide_dir)
+  wide = build_kernel("npmpc_decoder_jac", 128, "alloy", wide_dir)
   assert wide["source_lines"] < 1.2 * infos[0]["source_lines"], (
     f"npmpc decoder width leaked into source size: W=128 has {wide['source_lines']} lines, W=32 has {infos[0]['source_lines']}"
   )
@@ -309,12 +306,20 @@ def _npmpc_smoke() -> None:
   hess = []
   for out, size in zip(hess_dirs, (6, 100), strict=True):
     out.mkdir(parents=True, exist_ok=True)
-    hess.append(build_kernel("npmpc_hess", size, "alloy", out))
+    hess.append(build_kernel("npmpc", size, "alloy", out))
   assert hess[1]["source_lines"] < 1.2 * hess[0]["source_lines"], (
     f"npmpc Hessian loop preservation regressed: N=100 has {hess[1]['source_lines']} lines, N=6 has {hess[0]['source_lines']}"
   )
   assert hess[0]["nnz"] < hess[1]["nnz"], "the Hessian pattern must grow with the horizon even though its source does not"
   print(f"smoke npmpc lagrangian hessian: ok ({hess[0]['source_lines']} lines at N=6, {hess[1]['source_lines']} at N=100)")
+
+  hess_wide_dir = SMOKE_RESULTS / "npmpc" / "alloy_hess_W128"
+  hess_wide_dir.mkdir(parents=True, exist_ok=True)
+  hess_wide = build_kernel("npmpc_decoder", 128, "alloy", hess_wide_dir)
+  assert hess_wide["source_lines"] < 1.2 * hess[0]["source_lines"], (
+    f"npmpc Hessian decoder width leaked into source size: W=128 has {hess_wide['source_lines']} lines, W=32 has {hess[0]['source_lines']}"
+  )
+  print(f"smoke npmpc Hessian decoder width: ok ({hess_wide['source_lines']} lines at W=128)")
 
 
 def _problem_smoke() -> None:
@@ -374,9 +379,7 @@ def main() -> None:
   parser = argparse.ArgumentParser(description="Alloy correctness-gated benchmark harness")
   subparsers = parser.add_subparsers(dest="command", required=True)
   sweep_parser = subparsers.add_parser("sweep", help="run the scalability cell grid")
-  sweep_parser.add_argument(
-    "--workloads", type=_csv, default=["race_cars", "unbumpercars", "chain", "npmpc", "npmpc_decoder", "npmpc_hess", "npmpc_decoder_hess"]
-  )
+  sweep_parser.add_argument("--workloads", type=_csv, default=["race_cars", "unbumpercars", "chain", "npmpc", "npmpc_decoder"])
   sweep_parser.add_argument("--sizes", type=_ints, help="comma-separated sizes (applied to each selected workload)")
   sweep_parser.add_argument("--backends", type=_csv, help="comma-separated backends; defaults to every encoding defined for each workload")
   sweep_parser.add_argument("--out", "--csv", type=Path, default=SWEEP_RESULTS / "scalability.csv")

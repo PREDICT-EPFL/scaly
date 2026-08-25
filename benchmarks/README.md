@@ -100,6 +100,10 @@ uv run benchmarks/run.py sweep --workloads race_cars --sizes 1,5,10,50 --backend
 uv run benchmarks/run.py sweep --out benchmarks/results/sweep/my-sweep.csv
 ```
 
+The unsuffixed workload on each axis measures the exact sparse Lagrangian Hessian from the solver
+descriptor. Add `_jac` to `chain`, `race_cars`, `npmpc`, or `npmpc_decoder` to run the constraint
+Jacobian row retained for the long paper. The default sweep runs only the Hessian workloads.
+
 Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package/compiler versions, platform, Python, and timestamp. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=40, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
 
 The stage-based workloads default to Alloy and four CasADi encodings of the repeated dynamics
@@ -304,7 +308,7 @@ faster correctness and code-size smoke gates.
 | chain of masses | number of masses | laopt/acados chain-mass formulation; `M=5` is the canonical point |
 | race cars | horizon | CasADi SX/MX; reference stages followed by symbolic vehicle parameters in `p` |
 | unbumpercars HCBF filter | number of cars | CasADi MX; neural weights followed by symbolic vehicle parameters and `dt` |
-| neural process MPC | horizon (`npmpc`, `npmpc_hess`) and decoder width (`npmpc_decoder`, `npmpc_decoder_hess`) | the Furuta-pendulum controller of *Neural Process Model Predictive Control*; a conditional-neural-process decoder evaluated at every horizon node, weights and latent code in the parameter tail. Formulation, vendored data, departures from the reference implementation, closed-loop numbers and the decoder-width study are in [`problems/npmpc/README.md`](problems/npmpc/README.md) |
+| neural process MPC | horizon (`npmpc`) and decoder width (`npmpc_decoder`); append `_jac` for the long-paper Jacobian rows | the Furuta-pendulum controller of *Neural Process Model Predictive Control*; a conditional-neural-process decoder evaluated at every horizon node, weights and latent code in the parameter tail. Formulation, vendored data, departures from the reference implementation, closed-loop numbers and the decoder-width study are in [`problems/npmpc/README.md`](problems/npmpc/README.md) |
 
 ### Race-car track data
 

@@ -20,18 +20,36 @@ from benchmarks.problems import chain, npmpc, race_cars
 
 DEFAULT_SIZES = {
   "chain": [3, 5, 9, 17, 33, 65],
+  "chain_jac": [3, 5, 9, 17, 33, 65],
   "race_cars": [1, 5, 10, 25, 40, 50, 100, 200, 500],
+  "race_cars_jac": [1, 5, 10, 25, 40, 50, 100, 200, 500],
   "unbumpercars": [2, 4, 8],
   "npmpc": [6, 12, 25, 50, 100, 200],
+  "npmpc_jac": [6, 12, 25, 50, 100, 200],
   "npmpc_decoder": [16, 32, 64, 128, 256],
-  "npmpc_hess": [6, 12, 25, 50, 100, 200],
-  "npmpc_decoder_hess": [16, 32, 64, 128, 256],
+  "npmpc_decoder_jac": [16, 32, 64, 128, 256],
 }
 BACKENDS = ("alloy", "casadi_sx", "casadi_mx", "casadi_call_mx", "casadi_map_sx")
 UNBUMPERCARS_BACKENDS = ("alloy", "casadi_sx", "casadi_mx")
 DEFAULT_BACKENDS = {workload: UNBUMPERCARS_BACKENDS if workload == "unbumpercars" else BACKENDS for workload in DEFAULT_SIZES}
-CELL_AXES = {"chain": "M", "race_cars": "N", "unbumpercars": "C", "npmpc": "N", "npmpc_decoder": "W", "npmpc_hess": "N", "npmpc_decoder_hess": "W"}
-NPMPC_WORKLOADS = ("npmpc", "npmpc_decoder", "npmpc_hess", "npmpc_decoder_hess")
+CELL_AXES = {
+  "chain": "M",
+  "chain_jac": "M",
+  "race_cars": "N",
+  "race_cars_jac": "N",
+  "unbumpercars": "C",
+  "npmpc": "N",
+  "npmpc_jac": "N",
+  "npmpc_decoder": "W",
+  "npmpc_decoder_jac": "W",
+}
+NPMPC_WORKLOADS = ("npmpc", "npmpc_jac", "npmpc_decoder", "npmpc_decoder_jac")
+
+
+def _kernel_kind(workload: str) -> str:
+  return "jac" if workload.endswith("_jac") else "hess"
+
+
 FIELDS = [
   "workload",
   "size",
@@ -136,6 +154,13 @@ def _casadi_descriptor_kernel(ca, name: str, z, p, cost, constraints, kind: str,
   return hess if kind == "hess" else jac
 
 
+def _lag_hess_reference(ca, name: str, z, p, cost, constraints, zv, pv):
+  lam_g = np.linspace(-0.75, 0.75, int(constraints.shape[0]))
+  ref = _casadi_descriptor_kernel(ca, name, z, p, cost, constraints, "hess")
+  expected = np.asarray(ca.densify(ref(zv, 1.0, lam_g, pv)), dtype=np.float64).reshape(-1)
+  return lam_g, expected
+
+
 def _repeat_element(ca, element, count: int, args: tuple, *, mapped: bool):
   if mapped:
     return element.map(count, "serial")(*args)
@@ -176,33 +201,48 @@ def _npmpc_repeated_pieces(horizon: int, decoder, terminal, stage_sym, *, mapped
   return {**pieces, "h_eq": ca.reshape(rows, npmpc.NX * horizon, 1)}
 
 
-def _race_cars_alloy(size: int, out_dir: Path) -> dict:
+def _race_cars_alloy(workload: str, size: int, out_dir: Path) -> dict:
   from benchmarks.problems.race_cars.closed_loop import EpisodeConfig, _race_car_nlp
 
+  kind = _kernel_kind(workload)
   started = time.perf_counter()
-  kernel, sparsity = _descriptor_kernel(_race_car_nlp(EpisodeConfig(horizon=size)), "jac")
+  kernel, sparsity = _descriptor_kernel(_race_car_nlp(EpisodeConfig(horizon=size)), kind)
   name = kernel.name
   build_ms = (time.perf_counter() - started) * 1000
   module, render_ms = _render_alloy(kernel, name, out_dir)
+  n_constraints = race_cars.NX * (size + 1) + 2 * size
+  inputs = (
+    [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))]
+    if kind == "jac"
+    else [("z", race_cars.NZ * (size + 1)), ("lam_f", 1), ("lam_g", n_constraints), ("p", race_cars.n_param(size))]
+  )
+  benchmark = f"BM_AlloyRaceCar{'ConstraintJac' if kind == 'jac' else 'LagHess'}N{size}"
   return _module_info(
     name,
     "alloy",
     module,
-    [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))],
+    inputs,
     sparsity,
     sparsity.shape,
     build_ms,
     render_ms,
-    f"BM_AlloyRaceCarConstraintJacN{size}",
+    benchmark,
     w_size=module.workspace_size,
     callable=kernel,
   )
 
 
-def _chain_alloy(size: int, out_dir: Path) -> dict:
+def _chain_alloy(workload: str, size: int, out_dir: Path) -> dict:
   horizon = chain.HORIZON
+  kind = _kernel_kind(workload)
+  inputs = (
+    [("z", chain.n_dec(size, horizon)), ("p", chain.n_param(size))]
+    if kind == "jac"
+    else [("z", chain.n_dec(size, horizon)), ("lam_f", 1), ("lam_g", chain.n_state(size) * (horizon + 1)), ("p", chain.n_param(size))]
+  )
+  benchmark = f"BM_AlloyChain{'EqJac' if kind == 'jac' else 'LagHess'}M{size}"
   started = time.perf_counter()
-  kernel, sparsity = _descriptor_kernel(chain.chain_nlp(size, horizon), "jac")
+  kernel, sparsity = _descriptor_kernel(chain.chain_nlp(size, horizon), kind)
   name = kernel.name
   build_ms = (time.perf_counter() - started) * 1000
   module, render_ms = _render_alloy(kernel, name, out_dir)
@@ -210,12 +250,12 @@ def _chain_alloy(size: int, out_dir: Path) -> dict:
     name,
     "alloy",
     module,
-    [("z", chain.n_dec(size, horizon)), ("p", chain.n_param(size))],
+    inputs,
     sparsity,
     sparsity.shape,
     build_ms,
     render_ms,
-    f"BM_AlloyChainEqJacM{size}",
+    benchmark,
     w_size=module.workspace_size,
     callable=kernel,
   )
@@ -266,7 +306,7 @@ def _npmpc_cell(workload: str, size: int) -> tuple[int, npmpc.Decoder, np.ndarra
   upright, so those cells take the plain terminal weight instead of solving the Riccati equation;
   the terminal matrix is a constant either way, so this cannot move a timing.
   """
-  if workload in ("npmpc", "npmpc_hess"):
+  if workload in ("npmpc", "npmpc_jac"):
     decoder = npmpc.Decoder()
     weights = npmpc.load_decoder_weights(decoder)
     return size, decoder, weights, npmpc.terminal_P(decoder, npmpc.pack_params(decoder, weights))
@@ -280,10 +320,10 @@ def _npmpc_alloy(workload: str, size: int, out_dir: Path) -> dict:
   n_z = npmpc.n_dec(horizon)
   started = time.perf_counter()
   terminal = np.diag(npmpc.CostWeights().x_end) if terminal is None else terminal
-  kind = "hess" if workload.endswith("_hess") else "jac"
+  kind = _kernel_kind(workload)
   built, sparsity = _descriptor_kernel(npmpc.npmpc_nlp(terminal, horizon, decoder), kind)
   name = built.name
-  if workload.endswith("_hess"):
+  if kind == "hess":
     inputs = [("z", n_z), ("lam_f", 1), ("lam_g", sum(npmpc.constraint_counts(horizon))), ("p", npmpc.n_param(decoder))]
     benchmark = f"BM_AlloyNpmpcLagHess{axis}{size}"
   else:
@@ -305,34 +345,44 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   sym_t = ca.SX if kind in {"sx", "map_sx"} else ca.MX
   label = {"sx": "Sx", "mx": "Mx", "call_mx": "CallMx", "map_sx": "MapSx"}[kind]
   stem = {
-    "chain": "chain_eq",
-    "race_cars": "race_car_constraints",
+    "chain": "chain_lag",
+    "chain_jac": "chain_eq",
+    "race_cars": "race_car_lag",
+    "race_cars_jac": "race_car_constraints",
     "unbumpercars": "unbumpercars_lag",
-    "npmpc": "npmpc_constraints",
-    "npmpc_decoder": "npmpc_constraints",
-    "npmpc_hess": "npmpc_lag",
-    "npmpc_decoder_hess": "npmpc_lag",
+    "npmpc": "npmpc_lag",
+    "npmpc_jac": "npmpc_constraints",
+    "npmpc_decoder": "npmpc_lag",
+    "npmpc_decoder_jac": "npmpc_constraints",
   }[workload]
   axis = CELL_AXES[workload]
-  kernel = "hess" if workload == "unbumpercars" or workload.endswith("_hess") else "jac"
+  kernel = _kernel_kind(workload)
   name = f"casadi_{kind}_{stem}_{kernel}_{axis}{size}"
   started = time.perf_counter()
-  if workload == "chain":
+  if workload in ("chain", "chain_jac"):
     horizon = chain.HORIZON
     z, p, cost, constraints = chain._ca_nlp_pieces(size, horizon, sym_t, map_stages=mapped, call_stages=repeated)
-    fn = _casadi_descriptor_kernel(ca, name, z, p, cost, constraints, "jac", cse=True)
-    inputs = [("z", chain.n_dec(size, horizon)), ("p", chain.n_param(size))]
-    benchmark = f"BM_Casadi{label}ChainEqJacM{size}"
-  elif workload == "race_cars":
+    fn = _casadi_descriptor_kernel(ca, name, z, p, cost, constraints, kernel, cse=True)
+    inputs = (
+      [("z", chain.n_dec(size, horizon)), ("p", chain.n_param(size))]
+      if kernel == "jac"
+      else [("z", chain.n_dec(size, horizon)), ("lam_f", 1), ("lam_g", chain.n_state(size) * (horizon + 1)), ("p", chain.n_param(size))]
+    )
+    benchmark = f"BM_Casadi{label}Chain{'EqJac' if kernel == 'jac' else 'LagHess'}M{size}"
+  elif workload in ("race_cars", "race_cars_jac"):
     from benchmarks.problems.race_cars.casadi_nlp import build_casadi_race_car_nlp
     from benchmarks.problems.race_cars.closed_loop import EpisodeConfig
 
     config = EpisodeConfig(horizon=size)
     pieces = _race_cars_repeated_pieces(config, sym_t, mapped=mapped) if repeated else build_casadi_race_car_nlp(config, sym_t)
     constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
-    fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, "jac")
-    inputs = [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))]
-    benchmark = f"BM_Casadi{label}RaceCarConstraintJacN{size}"
+    fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, kernel)
+    inputs = (
+      [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))]
+      if kernel == "jac"
+      else [("z", race_cars.NZ * (size + 1)), ("lam_f", 1), ("lam_g", int(constraints.shape[0])), ("p", race_cars.n_param(size))]
+    )
+    benchmark = f"BM_Casadi{label}RaceCar{'ConstraintJac' if kernel == 'jac' else 'LagHess'}N{size}"
   elif workload in NPMPC_WORKLOADS:
     horizon, decoder, _, terminal = _npmpc_cell(workload, size)
     terminal = np.diag(npmpc.CostWeights().x_end) if terminal is None else terminal
@@ -342,7 +392,7 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
       else npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, P=terminal)
     )
     constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
-    if workload.endswith("_hess"):
+    if kernel == "hess":
       fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, "hess")
       inputs = [("z", npmpc.n_dec(horizon)), ("lam_f", 1), ("lam_g", sum(npmpc.constraint_counts(horizon))), ("p", npmpc.n_param(decoder))]
       benchmark = f"BM_Casadi{label}NpmpcLagHess{axis}{size}"
@@ -401,17 +451,23 @@ def build_kernel(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   if backend == "alloy":
     if workload in NPMPC_WORKLOADS:
       return _npmpc_alloy(workload, size, out_dir)
-    return {"chain": _chain_alloy, "race_cars": _race_cars_alloy, "unbumpercars": _unbumpercars_alloy}[workload](size, out_dir)
+    if workload in ("chain", "chain_jac"):
+      return _chain_alloy(workload, size, out_dir)
+    if workload in ("race_cars", "race_cars_jac"):
+      return _race_cars_alloy(workload, size, out_dir)
+    return _unbumpercars_alloy(size, out_dir)
   return _casadi(workload, size, backend, out_dir)
 
 
 def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
   canonical = {
     ("chain", 5): RESULTS / "closed-loop" / "chain" / "ipopt+alloy",
+    ("chain_jac", 5): RESULTS / "closed-loop" / "chain" / "ipopt+alloy",
     ("race_cars", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+alloy",
+    ("race_cars_jac", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+alloy",
     ("unbumpercars", 8): RESULTS / "closed-loop" / "unbumpercars" / "ipopt+alloy",
     ("npmpc", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+alloy",
-    ("npmpc_hess", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+alloy",
+    ("npmpc_jac", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+alloy",
   }.get((workload, size))
   if canonical is None:
     return None
@@ -488,7 +544,8 @@ def _samples(
   load_harvested: bool = True,
 ):
   harvested = _harvested_inputs(workload, size) if harvested is None and load_harvested else harvested
-  if workload == "chain":
+  kind = _kernel_kind(workload)
+  if workload in ("chain", "chain_jac"):
     horizon = chain.HORIZON
     if harvested is None:
       zv, pv = chain.sample_inputs(size, horizon)
@@ -496,9 +553,16 @@ def _samples(
       zv, pv = harvested["z"], harvested["p"]
     if zv.shape != (chain.n_dec(size, horizon),) or pv.shape != (chain.n_param(size),):
       raise ValueError(f"harvested chain input shapes do not match M={size}, N={horizon}: {zv.shape}, {pv.shape}")
-    expected = chain.chain_eq_jac_dense_reference(size, horizon, zv, pv).reshape(-1)
-    values = {"z": zv, "p": pv}
-  elif workload == "race_cars":
+    if kind == "jac":
+      expected = chain.chain_eq_jac_dense_reference(size, horizon, zv, pv).reshape(-1)
+      values = {"z": zv, "p": pv}
+    else:
+      import casadi as ca
+
+      z, p, cost, constraints = chain._ca_nlp_pieces(size, horizon, ca.MX)
+      lam_g, expected = _lag_hess_reference(ca, f"chain_lag_hess_dense_ref_M{size}", z, p, cost, constraints, zv, pv)
+      values = {"z": zv, "lam_f": np.array(1.0), "lam_g": lam_g, "p": pv}
+  elif workload in ("race_cars", "race_cars_jac"):
     if harvested is None:
       rng = np.random.default_rng(7)
       zv = rng.normal(scale=0.4, size=race_cars.NZ * (size + 1))
@@ -507,8 +571,19 @@ def _samples(
       zv, pv = harvested["z"], harvested["p"]
     if zv.shape != (race_cars.NZ * (size + 1),) or pv.shape != (race_cars.n_param(size),):
       raise ValueError(f"harvested race_cars input shapes do not match N={size}: {zv.shape}, {pv.shape}")
-    expected = race_cars.race_car_constraint_jac_dense_reference(size, zv, pv).reshape(-1)
-    values = {"z": zv, "p": pv}
+    if kind == "jac":
+      expected = race_cars.race_car_constraint_jac_dense_reference(size, zv, pv).reshape(-1)
+      values = {"z": zv, "p": pv}
+    else:
+      import casadi as ca
+
+      from benchmarks.problems.race_cars.casadi_nlp import build_casadi_race_car_nlp
+      from benchmarks.problems.race_cars.closed_loop import EpisodeConfig
+
+      pieces = build_casadi_race_car_nlp(EpisodeConfig(horizon=size), ca.MX)
+      constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
+      lam_g, expected = _lag_hess_reference(ca, f"race_car_lag_hess_dense_ref_N{size}", pieces["z"], pieces["p"], pieces["f"], constraints, zv, pv)
+      values = {"z": zv, "lam_f": np.array(1.0), "lam_g": lam_g, "p": pv}
   elif workload in NPMPC_WORKLOADS:
     import casadi as ca
 
@@ -520,7 +595,7 @@ def _samples(
       zv, pv = harvested["z"], harvested["p"]
     if zv.shape != (npmpc.n_dec(horizon),) or pv.shape != (npmpc.n_param(decoder),):
       raise ValueError(f"harvested npmpc input shapes do not match {CELL_AXES[workload]}={size}: {zv.shape}, {pv.shape}")
-    if workload.endswith("_hess"):
+    if kind == "hess":
       # Multipliers of mixed sign, so the Hessian is not dominated by the objective block alone.
       lam_g = np.linspace(-0.75, 0.75, sum(npmpc.constraint_counts(horizon)))
       ref = npmpc.ca_npmpc_lag_hess(horizon, decoder, f"npmpc_lag_hess_dense_ref_{CELL_AXES[workload]}{size}", ca.MX, terminal)

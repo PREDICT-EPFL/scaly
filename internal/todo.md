@@ -35,7 +35,7 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
       that gcc does not finish in twenty minutes. **This blocks the race-car half of Fig 2** and it
       is why the same-machine timer anchor is still missing. Compute the reference in NumPy, CasADi,
       or by finite differences.
-- [ ] **A4. Make the exact sparse Lagrangian Hessian the published kernel on every axis**, keeping
+- [x] **A4. Make the exact sparse Lagrangian Hessian the published kernel on every axis**, keeping
       the Jacobian as a long-paper row. Consequence: claim gate 2 has to be re-derived on the
       Hessian. Rationale: paper.md §4 (contribution 2).
 - [ ] **A5. Compile the CasADi oracles and choose `expand` per problem.** Keep `True` on race_cars,
