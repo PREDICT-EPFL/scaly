@@ -1,46 +1,24 @@
-# Alloy benchmarks, solver plugins, and paper roadmap
+# How the benchmark suite got built
 
-Last updated: 2026-08-14. This document supersedes everything that lived in
-`fast_benchmarks/` (FastBench prototype, `BENCHMARK_SUITE_PLAN.md`,
-`REAL_BENCHMARK_CANDIDATES.md`, `STRATEGY_NOTES.md`), now removed. It covers the
-benchmark suite, the solver-plugin packaging, and the path to the first paper.
-The library-internal phased plan (IR, AD, codegen, solvers) is
-[`internal/roadmap.md`](internal/roadmap.md); this file is about everything around it. This file
-was called `ROADMAP.md` until the two names started colliding.
+**Frozen record, not a plan.** This was `BENCHMARKS.md` at the repository root until 2026-08-25,
+when the three live concerns it had accumulated were split out:
 
-## 1. Paper thesis
+- the paper's thesis, scope and baselines moved to [`internal/paper.md`](../paper.md);
+- the backlog and every open task moved to [`internal/todo.md`](../todo.md);
+- the fairness rationale and measurement protocol live in
+  [`docs/results/fairness.md`](../../docs/results/fairness.md).
 
-The first paper is deliberately modest. Alloy is presented as an experimental
-tool for our own research that others are encouraged to try and give feedback
-on — not a silver bullet, not a CasADi replacement. Legitimacy is built
-gradually through internal use (unbumpercars safety filter, hovercraft MBD/DIAL,
-racing MPFC) rather than claimed upfront.
+What remains here is history worth keeping: why each problem was admitted, how the formulations
+arrived at their current shape, the solver-plugin architecture and its decided doctrine, and the
+completed L-track and B-track. Section numbering is unchanged so that older citations of the form
+"§3.4" still resolve. **Nothing here is a task.** Where a section describes a defect, the live item is
+in `internal/todo.md`; where it quotes a number, that number predates the fairness audit and the
+reference-machine protocol, and `docs/results/fairness.md` supersedes it.
 
-Main claims:
-
-1. **Alloy is an alternative way of building a codegen tool, focused on
-   deployment** (JIT-as-default through the universal C ABI, single-`.so`
-   embedded solvers, no Python in the hot path).
-2. **Alloy fixes concrete CasADi issues in code-size scalability and
-   performance** (constant-source loop-preserving codegen; mixed dense-NN +
-   sparse-scalar workloads).
-3. **Alloy's architecture allows initial GPU support** — enough to write new
-   things easily, with no pretense of matching torch efficiency.
-
-Explicit non-claims: we do not present the ambition of writing solvers *in*
-alloy, and we do not claim GPU code competitive with torch.
-
-Note: claim 3 depends on an initial GPU backend that is currently deferred in
-`internal/roadmap.md` ("GPU codegen deferred until a workload justifies it"). The
-paper scope makes it a workload requirement now — a minimal GPU lowering
-milestone must be planned in the library roadmap before the paper freeze
-(candidate driving workload: batched neural dynamics evaluation in the
-unbumpercars filter). Open until scoped.
-
-Benchmarks are simple and focused on the claims: they demo that alloy is
-useful, on the problem types we actually work on. The most complex applications
-are *not* distilled into benchmarks — alloy gets integrated into their own
-repos directly, and that integration is the real validation.
+It in turn superseded everything that lived in `fast_benchmarks/` (the FastBench prototype,
+`BENCHMARK_SUITE_PLAN.md`, `REAL_BENCHMARK_CANDIDATES.md`, `STRATEGY_NOTES.md`), and was called
+`ROADMAP.md` before that, until the name collided with
+[`internal/roadmap.md`](../roadmap.md).
 
 ## 2. Benchmark suite
 
@@ -260,7 +238,7 @@ against the continuous-time model ask for it explicitly (`FilterConfig(model="ct
 riding the default, so they keep measuring what they were validated against;
 `oracle_matches_casadi` covers both models and `dt_filter_model_matches_numpy` covers the new
 prediction path. Per-solve numbers for both models are in
-[`docs/results/scalability.md`](docs/results/scalability.md#discrete-time-hcbf-safety-filter-unbumpercars).
+[`docs/results/scalability.md`](../../docs/results/scalability.md#discrete-time-hcbf-safety-filter-unbumpercars).
 
 #### The road there (plant first, filter second)
 
@@ -625,7 +603,7 @@ knowledge (backend discovery, includes, link flags, and the
 `ALLOY_<NAME>_LIB` override env vars are all registry-driven now).
 
 The full contract a plugin must respect is documented in
-[`docs/dev/solver_plugins.md`](docs/dev/solver_plugins.md): required `_raw` signature,
+[`docs/dev/solver_plugins.md`](../../docs/dev/solver_plugins.md): required `_raw` signature,
 oracle output orderings per descriptor family, stats-filling obligations,
 status mapping through vendored enum constants, workspace pass-through, and
 the protocol-versioning rules. A structural test suite
@@ -860,217 +838,3 @@ columns respectively — interleave them between B2 and B4.
   extrapolation into a closed-loop column.
 - **B5 — paper assembly**: full sweeps + closed-loop runs at canonical points,
   figures, GPU-claim experiment (gated on the GPU backend milestone, §1).
-
-## 6. Backlog
-
-- Replace the race-car tracking NMPC with the **MPFC** distillation (§4), in
-  the same `benchmarks/problems/race_cars/` package.
-- **Put the two IPOPT columns on the same IPOPT (2026-08-20).** This displaced the compilation
-  defect below as the largest fairness problem in the suite. Alloy dlopens a locally built IPOPT
-  3.14.19 with MUMPS/METIS/OpenBLAS static; CasADi calls the 3.14.11 in its wheel with
-  `libcoinmumps`/`libcoinmetis`/`libcasadi-tp-openblas` dynamic. Swapping only the build under the
-  *same* alloy oracles (`LD_LIBRARY_PATH` beats the wrapper's `RUNPATH`), at identical iteration and
-  oracle-call counts, changes solver-internal time by 2.75× on `npmpc`, 3.6× on `race_cars`, 2.6× on
-  `unbumpercars` and **17×** on `chain`. No published `ipopt+alloy`-vs-`ipopt+casadi` multiple
-  isolates the oracle provider. The reverse swap is impossible: CasADi's plugin links IPOPT's C++
-  interface against the pre-C++11 `std::string` ABI.
-
-  The fix is the same artifact that fixes the compilation defect. **`ca.CodeGenerator().add(nlpsol)`
-  works for the IPOPT plugin** — it emits self-contained C calling `IpStdCInterface.h`, creating and
-  freeing the problem object per solve exactly as alloy's wrapper does. Compiled with alloy's flags,
-  linked against alloy's `libipopt.so` and called through one ctypes call, it is the controlled
-  column: same IPOPT, same compiler, same C-side timer, same interface. Two traps, both of which
-  produce plausible wrong numbers silently: the generated code uses the `res` array as scratch, so
-  output pointers must be re-set every call (`casadi_copy` skips a NULL destination without
-  complaining, so every call after the first returns the first one's answer with a success status);
-  and the artifact must be timed in a process that has never constructed a CasADi `nlpsol`, or the
-  wheel's already-loaded `libipopt.so.3` satisfies its `DT_NEEDED` regardless of `RUNPATH`.
-
-  Built and measured on `npmpc` (100-step canonical episode, both columns generated C behind one
-  ctypes call, gcc `-O2`, trajectories agreeing to 8.8e-13):
-
-  | oracle | IPOPT 3.14.19 (alloy's) | IPOPT 3.14.11 (wheel) |
-  |---|---:|---:|
-  | alloy generated C | **3.48 ms** | 7.04 ms |
-  | CasADi generated C | **3.93 ms** | 5.83 ms |
-
-  **The oracle-provider margin is 1.13×**, against the 4.5× the shipped column reports, and it agrees
-  with the already-fair `alloy-sqp` pair's 1.22×. Full audit and per-problem configuration tables:
-  `docs/results/fairness.md`.
-
-- **Harmonize the CasADi baseline's compilation across every problem (2026-08-20).** §2.3 defines
-  the CasADi column as JIT-enabled and no timed `ipopt+casadi` column honours it: `ca.nlpsol`
-  evaluates through CasADi's virtual machine unless told to compile, so those columns measure an
-  interpreter against generated C.
-
-  Measured evidence, per problem:
-
-  | problem | column | CasADi FE as shipped | CasADi FE with `jit -O3` | alloy FE | effect |
-  |---|---|---|---|---|---|
-  | `npmpc` | `ipopt+casadi` | 12.87 ms | 1.47 ms | 1.49 ms | an 8.6× gap becomes a wash |
-  | `race_cars` | `ipopt+casadi` | 1.81 ms | **0.40 ms** | 1.22 ms | **the sign reverses**; CasADi ends 3.1× ahead |
-  | `unbumpercars` | `ipopt+casadi` | 219.0 ms | in progress | 49.3 ms | this is the column behind the "4.5–9.0× faster" claim on `docs/results/index.md` and in `README.md`; at C=8 the problem is 93% function evaluation, so the interpreter is almost the whole reported gap |
-  | `chain` | — | not affected | — | — | its timed CasADi columns are SQP, already code-generated and compiled |
-
-  Re-measured 2026-08-20 with `record_time` on both sides; all three problems now carry a full
-  configuration sweep in `docs/results/fairness.md`. Settled there:
-
-  - **`expand` is per problem and the current defaults are wrong on two of three.** Keep `True` on
-    `race_cars` (interpreted MX is 5× worse: 44.5 against 9.2 ms). Switch to `False` on `npmpc`
-    (17.0 → 7.8 ms interpreted) and on `unbumpercars` (300.6 → 160.8 ms). The pattern is that MX's
-    per-node overhead only loses on stages too cheap to amortize it; both problems with a matmul in
-    the stage want MX.
-  - **What `jit` is worth also splits by problem**, comparing like symbolic mode with like. On
-    function evaluation: 4.1× for `npmpc` SX, 2.6× for `npmpc` MX, 4.6× for `race_cars` SX, 55× for
-    `race_cars` MX (an interpreted MX graph over four-state scalar stages is pathological), and only
-    **1.08×** for `unbumpercars` MX (146.6 → 136.0 ms for a 57 s build), because an MX graph over
-    matmuls is already dispatching into compiled block kernels.
-  - **The corrected `unbumpercars` multiple is 2.48×**, alloy against the best CasADi configuration
-    (`jit`-MX) rather than against the shipped one — not 4.5–9.0×. It is corroborated by the
-    regenerated isolated-Hessian sweep, which puts alloy 1.16×/1.77×/**3.03×** ahead at C=2/4/8 with
-    both sides compiled at `-O3` and timed in gbench. This remains the suite's strongest oracle
-    result; it was being quoted about twice too high.
-  - **On `race_cars` the sign of the oracle comparison reverses**: compiled CasADi SX evaluates in
-    0.40 ms against alloy's 1.22. Alloy's 1.7× total advantage there is the IPOPT build.
-  - `ca.cse` is worth 7% of `race_cars`' function evaluation and nothing on its total.
-
-  One methodological trap, recorded because it produced a plausible wrong number: a configuration
-  probe must intercept the real `ca.nlpsol` call rather than reconstruct its `nlp` argument by
-  composing `ca.Function`s. A nested-call MX graph makes CasADi's derived Hessian codegen explode
-  (65 MB against 3.7 MB) and reports interpreted MX at 1578 ms instead of 161.
-
-  `npmpc` keeps the uncompiled column deliberately so all three stay uniform until this is done —
-  one problem JITting and two not is worse, because then no two CasADi columns mean the same thing —
-  and its docs say so and rest no runtime claim on it. The work:
-
-  1. Add `jit` to `race_cars/casadi_nlp.py` and `unbumpercars/filters.py` as `npmpc` now has it, and
-     measure `unbumpercars` before deciding anything about its published multiples.
-  2. Decide `expand`. On `npmpc` all four combinations were measured and expanding to scalar SX is a
-     trap: it triples the interpreter's work, and compiled it costs a sixteen-minute build to land
-     *slower* than compiled MX. `race_cars` and `unbumpercars` both default to `expand=True`, so this
-     needs re-measuring per problem rather than assuming.
-  3. Settle the optimization level. Alloy's own JIT compiles at `-O2` (`src/alloy/codegen/jit.py`)
-     while the sweep harness uses `-O3` for both backends. Handing CasADi `-O3` against Alloy's `-O2`
-     steelmans the baseline, which is the right direction, but with the margins this thin the choice
-     has to be deliberate and written down rather than inherited.
-  4. Re-measure and rewrite every affected number: three problem READMEs, `benchmarks/README.md`,
-     `docs/results/index.md` (both the per-problem sections and the "short version" summary), the
-     repo `README.md`, and `docs/index.md`.
-  5. Keep the generated files out of the tree. CasADi's JIT writes `jit_tmp*.c` and
-     `tmp_casadi_compiler_shell*.o` into the working directory and does not always clean them up, so
-     either point it somewhere under `benchmarks/results/` or add the patterns to `.gitignore`.
-  6. Add a gate, per problem, that the timed CasADi column is actually compiled — the same shape as
-     `npmpc`'s `exact_hessian`, which checks the property on the object the runner returns rather
-     than on a rebuilt lookalike.
-
-  The likely outcome is worth stating up front so the rewrite is not a surprise: on these problems
-  Alloy's oracle-evaluation advantage over a *compiled* CasADi is small or absent, and the durable
-  claims are code size, compile time, build time in the loop, and the scaling axes. The sweeps have
-  been saying this all along — they compile both backends at `-O3` and put CasADi MX at 0.83–0.90× of
-  Alloy at the shipped decoder width — so the closed-loop numbers were the outliers, not the sweeps.
-
-- **Publish the chain sweep, and fix its `casadi_sx` label (2026-08-20).** Two separate things.
-
-  The label is wrong: `_ca_eq` forces `z`/`p` to `ca.MX` when `map_stages=True`, which the sweep
-  always passes, so both CasADi chain cells are MX outer graphs differing only in the inner stage's
-  symbolic type. Neither is an SX column.
-
-  But forcing `map` is **not** a handicap, and a Python-level probe that says it is a 9× one is
-  measuring `ca.Function.__call__` on a 230 000-double workspace — the dispatch distortion the sweep
-  methodology note already warns about. Measured through the gbench harness at `-O3`, one variant at
-  a time (chain M=5, N=40): unrolled SX is 215 190 lines and clang does not finish it in 600 s, so
-  `map` is what makes CasADi compilable here at all. Full table in `docs/results/fairness.md`.
-
-  The result that matters is the one nobody has published: **alloy loses this kernel on runtime**,
-  587 µs against CasADi's best 244 µs at M=5 (2.4×) and 3.78 against 2.52 ms at M=17 (1.5×), while
-  generating 583 lines against 26 822–309 030 and compiling in 0.87 s against 4–25 s or never. That
-  is a real trade and it belongs on `docs/results/`; the chain sweep currently runs and its numbers go
-  nowhere, which is worse than publishing a mixed result.
-
-  `Function.map` does not preserve structure for free either. On `npmpc`, mapping the
-  stage residual makes the generated sparse Jacobian an order of magnitude *larger* than unrolling
-  (18 598 against 2 470 lines at N=6, 142 500 against 15 836 at N=50) and 7× slower at the same
-  nonzero count; on chain MX it is 48 496 against 26 822 lines and 383 against 244 µs; on the
-  cheap-scalar race-car stage it helps MX. The right setting is per problem and must be measured.
-
-  Consequence for paper claim 2: the code-size claim survives against every CasADi encoding tested —
-  SX unrolled, SX mapped, MX unrolled, MX mapped all grow with the horizon while alloy's does not —
-  but it should be stated as "of the encodings tested" until `map`'s `"inline"`/`"unroll"` modes and
-  `mapaccum`/`fold` have been tried. And it should be stated as a *trade* on the problems where alloy
-  gives up runtime for it, which is chain and, on function evaluation, `race_cars`.
-
-- **Use CasADi's own C-level total for the CasADi columns.** `ca.nlpsol` exposes `t_wall_total`
-  whenever `record_time: True` is passed, which works alongside `print_time: False`; today the
-  columns time `time.perf_counter()` around the SWIG call and book the difference as `t_solver`, so
-  CasADi's numpy→`DM` marshalling reads as IPOPT time. Worth 0.2–0.4 ms/step on `npmpc` and
-  `race_cars`, and **16 ms/step on `unbumpercars`**, where `p` is 35 079 doubles. Alloy's own Python
-  boundary is 60–90 µs/step, i.e. 2.5% of an IPOPT step — measured, and not a problem.
-
-- **Make alloy's JIT optimization level configurable.** `src/alloy/codegen/jit.py` hardcodes `-O2`
-  while the sweep harness uses `-O3` for both backends and CasADi's JIT would get `-O3`. Measured
-  effect on `npmpc` function evaluation is ≤6% across gcc/clang × `-O2`/`-O3`, so this is small, but
-  there is currently no way to override it and the level should be a deliberate choice.
-
-- **Ask the authors of §2.8 for a trained wide decoder** at the paper's own §4.2 size
-  (`Sigmoid[64, 128, 128, 64]`). The decoder-width study currently ends in an extrapolation from two
-  measured quantities because an untrained decoder cannot produce a meaningful closed loop; a trained
-  wide checkpoint would turn "13 to 17 ms at W = 128, depending on the anchoring" into a measured
-  closed-loop column, which is the form the real-time claim wants. Also worth telling them that their released episode's reported
-  closed-loop cost metric cannot be reproduced from the trajectory it ships with.
-- **Confirm or drop the reverse/row-coloured sparse-Jacobian hypothesis** from §2.8. The per-stage
-  block there is wider than it is tall, `sparse_jacobian` colours columns only, and the fixed
-  0.80–0.90 handicap against CasADi MX at narrow decoders and short horizons is consistent with running more forward sweeps
-  than a row-coloured or reverse pass would need. Either instrument sweep counts or add the path and
-  re-measure; the prize is bounded (roughly 0.85 → 1.1 at the shipped width) and it does not change
-  the width-axis result alloy already wins.
-- **Move the chain and unbumpercars correctness checks onto the problem side**,
-  as `race_cars` now does: problem-specific gates into
-  `benchmarks/problems/*/checks.py` behind `run.py smoke --select problems`, and
-  a self-contained minimal reproduction of whatever IR/AD/codegen shape they
-  were covering into `tests/`. Afterwards nothing under `tests/` imports
-  `benchmarks.problems`. `benchmarks/README.md` documents how the gates are wired.
-- **Make the Program IR passes iterative instead of recursive.**
-  `passes._transform` / `_expand_inlinables` recurse per node, ~5 Python frames
-  per expression level, so an expression deeper than ~200 chained elementwise
-  ops dies with a bare `RecursionError` during lowering. Found while building
-  the race-car objective at N=40 as a left fold (`cost = cost + ...`);
-  worked around there by expressing the cost as one flat weighted-square
-  reduction. Explicit-stack rewrite of the tree walks, plus a diagnosable error
-  if a depth cap is ever kept. See `docs/how_it_works/lowering.md` "A limitation worth knowing: pass
-  recursion depth" and the `xfail` in `tests/passes/test_program.py`.
-  **Second witness (2026-08-20, §2.8):** the neural-process-MPC objective hit the same wall from the
-  other direction. A *flat* reduction over per-stage slices — the documented race-car workaround —
-  also unrolls, growing the Lagrangian Hessian's source 2508 → 4108 → 5708 lines for N = 25 → 50 → 75
-  and dying at N = 100. Scanning the objective the way the dynamics are scanned fixes it and is better
-  formulation practice regardless, but the limit is not reached by deep left folds alone.
-- **Map the unbumpercars pair rows instead of unrolling them.** The `C(C-1)/2` pair
-  barriers are built by a Python loop, so the generated source grows quadratically
-  in the car count while the mapped neural RK4 stays constant: the `spjac:g:z`
-  kernel goes 845 → 1403 → 3455 lines for C = 2 → 4 → 8. This is the one place in the
-  suite where *we* write the code-size blowup that paper claim 2 argues against, and
-  the unbumpercars sweep axis is the car count, so it directly weakens the figure it
-  feeds. **This is a port, not a design**: the predecessor workload did exactly this —
-  `git show 1b03820^:benchmarks/problems/unbumpercars/__init__.py` (lines 195-224) maps
-  `pair_c3bf_fn` over the strict upper triangle, with two constant `al.gather` tables
-  built as `concatenate([arange(NSTATE) + k * NSTATE for k in bodies])` feeding both the
-  parameter states and the first MAP's output. It went away with that workload in
-  `1b03820`, whose numeric gates had been silently skipping for want of a checkpoint;
-  the pattern itself survives as
-  `tests/integration/test_map.py::test_gather_fed_chained_maps_spjac_and_sphess_match_dense`,
-  which runs unconditionally.
-- **laopt as an external baseline** for MPFC (its implementation already
-  exists in the racing repo), once laopt is published.
-- **CasADi `sqpmethod` as a secondary reference column** (deferred from B4
-  Phase 11). Add it only if paper review identifies a concrete need for a
-  built-in CasADi SQP baseline; keep it opt-in and record-only because its
-  globalization, regularization, and QP path differ from `alloy-sqp`.
-- **Specialized OCP problem/solver in alloy** (structured staged-OCP tier that
-  lowers to general-form problems for solvers that don't exploit structure).
-- **fatrop** plugin (consumer of the structured tier) + casadi-fatrop baseline.
-- osqp / proxqp / acados plugins as claims or users demand them.
-- **Wheel building** for workspace packages (cibuildwheel, per-package native
-  builds, release engineering).
-- Embedded hardware benchmarks (Raspberry Pi / Jetson).
-- Diffusion- and GP-based problems; hovercraft MBD/DIAL workload.
-- GPU backend milestone definition in `internal/roadmap.md` (prerequisite for
-  paper claim 3).

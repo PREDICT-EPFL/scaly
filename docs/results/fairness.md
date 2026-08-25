@@ -9,9 +9,52 @@ The answer cuts both ways. Some columns were handing CasADi a configuration nobo
 Others were handing alloy one. And the largest single effect on the headline closed-loop numbers was
 neither library's fault. The two columns were linking two different builds of IPOPT.
 
-All numbers here were measured on one machine (AMD Ryzen 9 7940HS, Linux, gcc 13.3 / clang 20,
-CasADi 3.7.2), serially, with the compile jobs kept out of the timed runs. Ratios are the durable
-part.
+Everything here was measured on the reference machine described below, serially, with compile jobs
+kept out of the timed runs.
+
+## The reference machine
+
+Every published timing comes from this machine. Numbers from anywhere else are not comparable and
+must not share a table with these: absolute times differ by roughly 2x against an Apple M-series, and
+the race-car cell that reads 10.27 us in an older table measures 19.47 us here.
+
+| | |
+|---|---|
+| System | Minisforum F7BSC (`Micro Computer (HK) Tech Limited`), desktop chassis, no battery |
+| CPU | AMD Ryzen 9 7940HS, 8 cores / 16 threads, SMT on, 0.40-5.26 GHz, 16 MiB L3 |
+| Memory | 30 GB |
+| OS | Ubuntu 24.04.4 LTS, kernel 7.0.0-28-generic, glibc 2.39 |
+| Compilers | gcc 13.3.0 (alloy's JIT), clang 20.1.8 (the Google Benchmark harness) |
+| Stack | Python 3.14.3, CasADi 3.7.2, NumPy 2.4.6, SciPy 1.18.0 |
+| Frequency | `amd-pstate-epp` driver, `powersave` governor, boost enabled |
+
+**That last row is the one to fix before any headline run.** With `powersave` and boost on, the clock
+moves between 0.40 and 5.26 GHz according to load and package temperature, and it shows: one
+unbumpercars figure moved from 52.7 to 58.9 ms between two runs of the same episode minutes apart,
+about 12%, which is larger than several of the effects on this page. Only `performance` and
+`powersave` are available with this driver, so the headline protocol should pin `performance`, and
+disabling boost is worth testing for dispersion even at a lower absolute clock. Neither is set here,
+so **every number on this page is pilot data**: the ratios are informative, the absolute values and
+anything under about 15% are not yet.
+
+## The measurement protocol
+
+Rules the numbers on this page follow, and that a headline run must follow more strictly.
+
+- **One thing at a time.** No compile job, sweep or second benchmark running during a timed run.
+  Several early figures in this audit had to be thrown away because three compilers were competing
+  for the cores.
+- **Kernel figures come from the Google Benchmark harness**, which calls the generated C symbol with
+  preallocated buffers and no Python in the loop. Closed-loop totals come from each side's own
+  C-level timer, `alloy_clock_s()` for alloy and `t_wall_total` for CasADi. Never both on one axis.
+- **Correctness gates before timing.** Every cell checks its compact derivative against an
+  independent dense reference and produces no timing if it disagrees.
+- **Report CasADi's best encoding**, not the one our mirror happens to build. §"Does CasADi have
+  loop-preserving codegen?" is why: the encodings of the same math span an order of magnitude, and
+  the winner changes between problems.
+- Still to adopt for headline runs: repeated fresh processes, varied backend order, reported
+  dispersion rather than a single mean, and generated-C compilation separated from wrapper
+  compilation and linking.
 
 ## The short version
 
@@ -359,7 +402,10 @@ publishable one; the current situation, where the sweep runs and the numbers go 
 
 ## What a fair closed-loop comparison needs
 
-The minimum is two columns that differ in one thing:
+The rules this page argues for, collected. They are the admissibility test a number has to pass
+before it appears anywhere else on this site.
+
+The oracle comparison is two columns that differ in one thing:
 
 | oracle provider | solver |
 |---|---|
@@ -372,18 +418,23 @@ protocols are worth reporting separately: a warm steady state where the solver o
 and a full lifecycle including construction and teardown, since alloy's deployed path pays the latter
 on every step.
 
-Alongside that, three numbers that are not the oracle comparison and should not be presented as one:
-the Python-level cost of a step (what an application actually pays), the build cost of the oracle set,
-and the generated source size. Those are where alloy's margins are large and unambiguous.
+**Report CasADi's best encoding for that problem, and name the cells CasADi wins.** No comparison may
+be made against a formulation chosen on CasADi's behalf. The encodings of the same math span an order
+of magnitude and the winner changes between problems, so the best one has to be found per problem
+rather than nominated once.
 
-## Housekeeping found on the way
+**Do not mix machines.** Every number on this site comes from the machine described above. Absolute
+times differ by roughly 2x against an Apple M-series, so a mixed table invents a result.
 
-CasADi's JIT writes `jit_tmp*.c` and `tmp_casadi_compiler_shell*.{o,so}` into the working directory
-and does not always clean them up, so enabling it in the suite needs either an output directory
-under `benchmarks/results/` or `.gitignore` patterns.
+Alongside the oracle comparison, three numbers that are *not* it and must not be presented as if they
+were: the Python-level cost of a step, which is what an application actually pays; the build cost of
+the oracle set; and the generated source size, split into executable code and static data. Those are
+where alloy's margins are largest and least contested, which is exactly why they need their own row
+rather than being folded into a speed-up.
 
 ## Reproducing this page
 
-The measurement scripts live under `benchmarks/results/fairness/`, which is not published and not
-part of the suite. They stay there until the fixes land in the problems themselves; at that point
-this page becomes a record of what changed and why.
+The scripts behind these measurements live under `benchmarks/results/fairness/`, which is scratch
+space rather than part of the suite. That is a defect, not a design: a number the paper quotes has to
+come out of the benchmark harness so it is reproducible by someone who is not us. Moving them is
+tracked internally, and this page becomes the record of what changed and why once they land.

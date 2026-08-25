@@ -14,9 +14,19 @@ Read before changing anything:
 - [Contributing](docs/dev/contributing.md) — the checks, where tests live, known flakes
 
 Everything under `docs/` is published to the documentation site, all of it, because Zensical has no
-exclusion mechanism. Anything unpublished lives in `internal/`: `internal/roadmap.md` is the library
-roadmap, `internal/notes/` holds frozen design notes, and `BENCHMARKS.md` at the root is the
-benchmark and paper roadmap.
+exclusion mechanism. Anything unpublished lives in `internal/`:
+
+- `internal/roadmap.md` is the library roadmap.
+- `internal/paper.md` owns the first paper's thesis, scope, narrative, outline, claim gates and
+  objections. It contains no task lists.
+- `internal/todo.md` is the single actionable list. Each item links its rationale to
+  `internal/paper.md` or `docs/results/fairness.md` instead of restating it.
+- `internal/notes/` holds frozen design and migration notes, including the completed benchmark and
+  solver-plugin build-out.
+
+The published `docs/results/fairness.md` owns what comparisons hold constant, the measurement
+protocol, the reference machine and the evidence behind each rule. Put rationale in `paper.md` or
+`fairness.md`, and put the corresponding one-line task in `todo.md`. Do not repeat the same prose.
 
 ## Commands
 

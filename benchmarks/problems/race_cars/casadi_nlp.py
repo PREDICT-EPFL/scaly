@@ -5,7 +5,7 @@ as the `al.SolverFunction` built by `closed_loop._race_car_nlp`, so one episode 
 drives either oracle provider. The decision-variable layout, parameter layout, cost terms,
 equality rows, inequality rows, bounds, and IPOPT options are identical by
 construction — the only difference is which tool differentiates and evaluates the
-oracles. That is the controlled comparison BENCHMARKS.md §2.3 asks for.
+oracles. That is the controlled comparison `internal/paper.md` §5 asks for.
 
 The reference implementation in ``minimal_tracking_nmpc/nmpc.py`` builds the same OCP
 through `ca.Opti` with per-stage variables, which it needs for FATROP's structure

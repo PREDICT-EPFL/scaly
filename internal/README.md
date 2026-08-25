@@ -5,7 +5,8 @@ Zensical builds everything under `docs/`, so anything that should stay unpublish
 instead.
 
 - [`roadmap.md`](roadmap.md) — the library roadmap: phases, status, exit criteria. The
-  benchmark and paper roadmap is `BENCHMARKS.md` at the repository root.
+  paper's scope and narrative are in `paper.md`, the actionable list in `todo.md`, and the
+  benchmark suite's build-out history in `notes/benchmark-buildout.md`.
 - [`notes/`](notes/) — mostly frozen records: design studies, migration plans and investigation
   write-ups that explain how the current design was arrived at. They are dated and superseded by
   definition; read them for the reasoning, not for how anything works today. The exception is

@@ -5,10 +5,10 @@ writing a new solver plugin — everything solver-specific lives in the plugin
 package; nothing needs to be added to the alloy codebase. That is the design
 point: CasADi's `Conic`/`Nlpsol` plugins must be written inside the CasADi
 tree against its internal C++ headers, whereas an alloy solver plugin is an
-ordinary pip-installable Python package. (Decision record: `BENCHMARKS.md`
+ordinary pip-installable Python package. (Decision record: `internal/notes/benchmark-buildout.md`
 §3.5.)
 
-The binding doctrine behind the interface is `BENCHMARKS.md` §3.4: there is
+The binding doctrine behind the interface is `internal/notes/benchmark-buildout.md` §3.4: there is
 exactly one solve path — a generated C wrapper, emitted alongside the oracle
 kernels into a single translation unit, calling the solver's C API directly.
 Plugins therefore ship **no Python solve code**; they ship a vendored native
@@ -121,14 +121,14 @@ an NLP backend that cannot expose its internal split reports it in
 vendored header's enum **constants**, not integer literals, so upstream
 renames/renumbers break at compile time instead of silently — this is how
 the drift problem of hand-written bindings is dissolved structurally
-(`BENCHMARKS.md` §3.4).
+(`internal/notes/benchmark-buildout.md` §3.4).
 
 **Options.** `desc.options` is the user's `options={...}` dict as a tuple of
 pairs. Lower each option into the generated C (settings-struct assignments,
 `AddIpopt*Option` calls, ...) and raise `NotImplementedError` for values that
 cannot be lowered. Options are baked as constants; the JIT cache key covers
 them through the source hash, so option sweeps recompile per point (accepted,
-see `BENCHMARKS.md` §3.4).
+see `internal/notes/benchmark-buildout.md` §3.4).
 
 ## Descriptor families
 

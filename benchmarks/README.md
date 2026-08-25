@@ -121,7 +121,7 @@ the Google Benchmark harness the SX figure held and almost all of the MX margin
 turned out to be call overhead, leaving a tie. Treat a Python-level reading as a
 smoke test for whether a cell builds, never as a result.
 
-The doctrine is claims-first: broad sweeps establish scaling and canonical points support comparisons; correctness gates always run before speed is measured; every result carries enough provenance to reproduce it. See [BENCHMARKS.md §2](../BENCHMARKS.md#2-benchmark-suite) for the governing claim matrix.
+The doctrine is claims-first: broad sweeps establish scaling and canonical points support comparisons; correctness gates always run before speed is measured; every result carries enough provenance to reproduce it. See [internal/paper.md](../internal/paper.md) for the governing claim matrix.
 
 The gates here guard the *measurements*, not the compiler. Op and composition coverage lives in `tests/` as small artificial cases checked against unrolled or NumPy references; a benchmark problem must never be the only thing exercising an IR, AD, or codegen path. That separation is what lets the problem set follow the workload roadmap without silently dropping compiler coverage.
 
@@ -348,7 +348,7 @@ decoder — on this machine:
 it.** `ca.nlpsol` interprets unless told to JIT, so as configured it compares a
 virtual machine against generated C — the same gap `race_cars` and `unbumpercars`
 have, left uniform with them until the harmonization in
-[BENCHMARKS.md §6](../BENCHMARKS.md#6-backlog) fixes all three together. All four
+[internal/todo.md](../internal/todo.md) tracks the fix for all three. All four
 combinations of `expand` and `jit` were measured first (the table is in
 `problems/npmpc/casadi_nlp.py`): compiled, unexpanded MX runs 5.37 ms per solve
 with 1.46 ms of function evaluation, so **against a compiled CasADi the oracle

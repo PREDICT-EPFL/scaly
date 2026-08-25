@@ -5,7 +5,7 @@
 decision-variable layout, the parameter layout, the cost, the equality and inequality rows, the
 bounds and the IPOPT options are identical by construction -- both sides read them out of
 `ca_npmpc_pieces`, `npmpc_ineq_bounds` and `npmpc_bounds` -- so the only difference is which tool
-differentiates and evaluates the oracles. That is the controlled comparison `BENCHMARKS.md` asks
+differentiates and evaluates the oracles. That is the controlled comparison `internal/paper.md` asks
 for, and it matters more here than on any other problem in the suite: with 65 decision variables
 there is almost no linear algebra for IPOPT to do, so function evaluation is most of the solve.
 
@@ -43,7 +43,7 @@ FE_TIMERS = ("t_wall_nlp_f", "t_wall_nlp_g", "t_wall_nlp_grad_f", "t_wall_nlp_ja
 
 # CasADi evaluates through its own virtual machine unless told to compile, so this column as it
 # currently stands measures an interpreter against generated C. That is a **known unfairness**, not
-# a considered choice: `BENCHMARKS.md` section 2.3 defines the CasADi column as JIT-enabled, and
+# a considered choice: `internal/paper.md` §5 defines the CasADi column as compiled, and
 # `race_cars` and `unbumpercars` have the same gap. It is left in place here only so the whole suite
 # shares one treatment until the harmonization pass in section 6 of that file fixes all of them
 # together -- a suite where one problem JITs and two do not is worse than one where none do, because

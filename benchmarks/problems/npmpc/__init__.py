@@ -413,7 +413,7 @@ def stage_cost_function(weights: CostWeights = CostWeights()) -> al.Function:
   Scanned over the horizon by `npmpc_cost_expr`, so the objective's generated source stays constant
   in the horizon exactly as the dynamics' does. Building it as a Python loop instead unrolls it,
   which grows the source linearly and, past roughly 75 stages, exceeds the Program IR passes'
-  recursion depth during lowering (the limitation recorded in `BENCHMARKS.md`).
+  recursion depth during lowering (the limitation recorded in `internal/todo.md`).
   """
 
   @al.function("npmpc_stage_cost", {"x": NX, "xnext": NX, "u": NU})

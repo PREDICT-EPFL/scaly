@@ -264,7 +264,7 @@ This is a clean rename, not a compatibility layer. Alloy is still at `0.1.0`: do
 
 - Rename benchmark prose, comments, helper names, and generated function labels where they describe Alloy's operation. CasADi's own `.map` calls and generic Python mapping terminology are not part of the rename.
 
-- Update `BENCHMARKS.md` and benchmark READMEs from `MAP`/`map_` to `VMAP`/`vmap`.
+- Update `internal/` notes and benchmark READMEs from `MAP`/`map_` to `VMAP`/`vmap`.
 
 - Do not edit any `foxglove-layout.json` file.
 

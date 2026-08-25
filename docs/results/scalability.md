@@ -238,7 +238,7 @@ doubles over a 4× car count) because the per-car neural dynamics stay a loop; C
 Alloy's advantage growing in C while its own workspace does not is the mapped Hessian doing what it
 is for. Note that alloy's source still grows here, because the `C(C-1)/2` pair rows are built by a
 Python loop rather than mapped — the one place in the suite where *we* write the code-size growth
-that the code-size claim argues against (`BENCHMARKS.md` §6).
+that the code-size claim argues against (tracked internally).
 
 This kernel is also the right anchor for reading the problem's closed-loop numbers. At C=8 the closed
 loop is 93% function evaluation, and CasADi's interpreted MX oracle set costs 126 ms per solve
@@ -344,7 +344,7 @@ the canonical location unless given another output directory.
 > the per-car neural dynamics but builds its `C(C-1)/2` pair rows with an unrolled Python
 > loop, so the constant-LOC property below does **not** hold for it: its `spjac:g:z`
 > kernel goes 845 → 1403 → 3455 lines for `C = 2 → 4 → 8`. Porting it back onto the
-> gather-fed shape is a backlog item (`BENCHMARKS.md` §6); the numbers below are what that
+> gather-fed shape is tracked internally; the numbers below are what that
 > port is expected to recover, and are kept for that reason.
 
 Official-size MLP (`256 → 128 → 3` with the example `model_kinematic_mlp.pth` weights), RK4 pose update per car, pairwise C3BF + per-car wall residuals, slack column. Decision vector size `2C + 1`, constraint count `C(C-1)/2 + 4C` (quadratic in `C`).

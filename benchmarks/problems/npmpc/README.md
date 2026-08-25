@@ -187,11 +187,11 @@ Run-to-run scatter on this machine is a few percent.
 
 **The `ipopt+casadi` column is not a fair baseline, and no runtime claim here rests on it.**
 `ca.nlpsol` evaluates through CasADi's own virtual machine unless told to JIT, so as configured that
-column compares an interpreter against generated C. `BENCHMARKS.md` section 2.3 defines the CasADi
+column compares an interpreter against generated C. `internal/paper.md` §5 defines the CasADi
 column as JIT-enabled and this does not honour it — as `race_cars` and `unbumpercars` also do not.
 It is left uniform with them deliberately: a suite where one problem JITs and two do not is worse
 than one where none do, because then no two problems' CasADi columns mean the same thing. The
-harmonization is tracked in `BENCHMARKS.md` section 6.
+harmonization is tracked in `internal/todo.md`.
 
 All four combinations were measured first, so that work has numbers to start from:
 

@@ -502,7 +502,7 @@ from either model's own rollout, about half the CT model's own step change, and 
 agreement at `vf = 1.0–1.5` under `u_m = +1`. Top speed differs by 12.5% (1.797 vs 2.053
 m/s). So moving the *filter* onto it is a scoped formulation change, not a rewrite — but it
 *is* a formulation change, not a checkpoint swap, and it has to be re-measured against the
-same collision/failure gates. `BENCHMARKS.md` §2.6 carries the roadmap-level version.
+same collision/failure gates. `internal/notes/benchmark-buildout.md` §2.6 carries the history.
 
 ### Reproducing the numbers
 
@@ -548,7 +548,8 @@ this problem: 15x15 m arena and 8 cars here versus upstream's `[-3.5, 3.5] x [-4
 and 3 cars; `collision_radius` 1.9 versus 2.0. The `safety_factor` of 1.2 is upstream's.
 
 Upstream's HCBF sweep runs on `MLPModel`, a natively discrete network. That is the default
-model here too, for both the plant and the filter's prediction (`BENCHMARKS.md` §2.6).
+model here too, for both the plant and the filter's prediction
+(`internal/notes/benchmark-buildout.md` §2.6).
 
 ## Running
 
