@@ -5,6 +5,7 @@ import csv
 import os
 from dataclasses import replace
 from pathlib import Path
+import re
 import shutil
 import signal
 import time
@@ -13,6 +14,8 @@ import numpy as np
 
 import alloy as al
 from alloy.codegen.aot import render_c_module
+from alloy.ir.expr import ExprOp, topo
+from alloy.ir.program import ProgramNode, ProgramOp
 from benchmarks.harness import ROOT, RESULTS, gbench
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.provenance import collect, write
@@ -56,8 +59,18 @@ FIELDS = [
   "backend",
   "codegen_ms",
   "source_bytes",
+  "artifact_bytes",
+  "executable_bytes",
+  "static_metadata_bytes",
   "source_lines",
   "workspace",
+  "integer_workspace",
+  "argument_pointers",
+  "result_pointers",
+  "dispatch_trip_count",
+  "dispatch_workspace",
+  "dispatch_arithmetic",
+  "coloring_width",
   "nnz",
   "compile_ms",
   "compile_status",
@@ -67,6 +80,38 @@ FIELDS = [
   "build_ms",
   "render_ms",
 ]
+
+_STATIC_CONST = re.compile(rb"(?ms)^[ \t]*static const\b.*?;\n")
+_ARITHMETIC_OPS = frozenset(
+  {
+    ProgramOp.ADD,
+    ProgramOp.SUB,
+    ProgramOp.MUL,
+    ProgramOp.DIV,
+    ProgramOp.MOD,
+    ProgramOp.NEG,
+    ProgramOp.SIN,
+    ProgramOp.COS,
+    ProgramOp.TAN,
+    ProgramOp.ASIN,
+    ProgramOp.ACOS,
+    ProgramOp.ATAN,
+    ProgramOp.SINH,
+    ProgramOp.COSH,
+    ProgramOp.TANH,
+    ProgramOp.ERF,
+    ProgramOp.EXP,
+    ProgramOp.LOG,
+    ProgramOp.SQRT,
+    ProgramOp.ABS,
+    ProgramOp.FLOOR,
+    ProgramOp.CEIL,
+    ProgramOp.POW,
+    ProgramOp.ATAN2,
+    ProgramOp.MINIMUM,
+    ProgramOp.MAXIMUM,
+  }
+)
 
 
 class CodegenTimeout(RuntimeError):
@@ -96,8 +141,113 @@ def row(**values) -> dict[str, object]:
   return out
 
 
+def _artifact_sizes(source: str, header: str) -> tuple[int, int, int]:
+  """Return total artifact, executable source, and static metadata bytes.
+
+  The executable part is the translation unit with ``static const`` declarations removed. The
+  metadata part is those declarations plus the public header, which contains Alloy's sparse tables.
+  """
+  source_bytes, header_bytes = source.encode(), header.encode()
+  static_source = sum(len(match.group()) for match in _STATIC_CONST.finditer(source_bytes))
+  return len(source_bytes) + len(header_bytes), len(source_bytes) - static_source, static_source + len(header_bytes)
+
+
+def _static_trip_count(rng: ProgramNode) -> int | None:
+  start, stop, step = rng.args
+  if any(node.op != ProgramOp.CONST_INT for node in (start, stop, step)) or int(step.attrs["value"]) <= 0:
+    return None
+  span = int(stop.attrs["value"]) - int(start.attrs["value"])
+  return max(0, -(-span // int(step.attrs["value"])))
+
+
+def _dispatch_metrics(fun: al.Function, prog: ProgramNode) -> tuple[int | str, int | str, int | str]:
+  """Return the retained MAP trip count, callee workspace, and arithmetic per iteration."""
+  maps = [node for node in topo(fun.outputs) if node.op == ExprOp.MAP]
+  trip_counts = {int(node.attrs["length"]) for node in maps}
+  if not maps or len(trip_counts) != 1:
+    return "", "", ""
+  mapped_callees = {str(node.attrs["callee"].name) for node in maps}
+  proc_count = int(prog.attrs.get("proc_count", 0))
+  procs = {proc.attrs["name"]: proc for proc in prog.args[:proc_count]}
+  arithmetic_cache: dict[str, int] = {}
+  workspace_cache: dict[str, int] = {}
+
+  def arithmetic(node: ProgramNode) -> int:
+    if node.op == ProgramOp.FOR:
+      count = _static_trip_count(node.args[0])
+      if count is None:
+        raise LookupError("dynamic loop has no static arithmetic count")
+      return count * sum(arithmetic(child) for child in node.args[1:])
+    if node.op == ProgramOp.CALL:
+      callee = str(node.attrs["callee"])
+      if callee not in procs:
+        raise LookupError(f"callee {callee!r} has no Program IR procedure")
+      return proc_arithmetic(callee)
+    return (1 if node.op in _ARITHMETIC_OPS and node.dtype.is_floating else 0) + sum(arithmetic(child) for child in node.args)
+
+  def proc_arithmetic(name: str) -> int:
+    if name not in arithmetic_cache:
+      proc = procs[name]
+      param_count = int(proc.attrs["param_count"])
+      arithmetic_cache[name] = 0
+      arithmetic_cache[name] = sum(arithmetic(stmt) for stmt in proc.args[param_count:])
+    return arithmetic_cache[name]
+
+  def calls(node: ProgramNode) -> set[str]:
+    found = {str(node.attrs["callee"])} if node.op == ProgramOp.CALL else set()
+    for child in node.args:
+      found.update(calls(child))
+    return found
+
+  def proc_workspace(name: str) -> int:
+    if name not in workspace_cache:
+      proc = procs[name]
+      param_count = int(proc.attrs["param_count"])
+      body = proc.args[param_count:]
+      own = 0
+      callees: set[str] = set()
+      for stmt in body:
+        callees.update(calls(stmt))
+        if stmt.op != ProgramOp.BUFFER or stmt.attrs.get("address_space") != "private" or "alias_of" in stmt.attrs:
+          continue
+        if stmt.dtype.is_floating:
+          size = 1
+          for dim in stmt.attrs["shape"]:
+            size *= int(dim)
+          own += size or 1
+      if callees - procs.keys():
+        raise LookupError("callee has no Program IR procedure")
+      workspace_cache[name] = own
+      workspace_cache[name] = own + max((proc_workspace(callee) for callee in callees), default=0)
+    return workspace_cache[name]
+
+  trip_count = trip_counts.pop()
+  dispatches: list[ProgramNode] = []
+  root = procs[fun.name]
+  for stmt in root.args[int(root.attrs["param_count"]) :]:
+    call = None
+    if stmt.op == ProgramOp.FOR and len(stmt.args) == 2 and stmt.args[1].op == ProgramOp.CALL:
+      if _static_trip_count(stmt.args[0]) == trip_count:
+        call = stmt.args[1]
+    elif trip_count == 1 and stmt.op == ProgramOp.CALL:
+      call = stmt
+    if call is not None and str(call.attrs["callee"]) in mapped_callees:
+      dispatches.append(call)
+  if not dispatches:
+    return "", "", ""
+  try:
+    workspace = max(proc_workspace(str(call.attrs["callee"])) for call in dispatches)
+    work = sum(proc_arithmetic(str(call.attrs["callee"])) for call in dispatches)
+  except LookupError:
+    return "", "", ""
+  return trip_count, workspace, work
+
+
 def _module_info(name: str, backend: str, module, inputs, sparsity, shape, build_ms: float, render_ms: float, benchmark: str, **extra) -> dict:
   source_path = Path(module.source_name)
+  artifact_bytes, executable_bytes, static_metadata_bytes = _artifact_sizes(module.source, module.header)
+  dispatch_trip_count, dispatch_workspace, dispatch_arithmetic = _dispatch_metrics(extra["callable"], module.program)
+  colors = al.column_coloring(sparsity)
   return {
     "name": name,
     "backend": backend,
@@ -111,8 +261,17 @@ def _module_info(name: str, backend: str, module, inputs, sparsity, shape, build
     "cols": tuple(int(x) for x in sparsity.cols),
     "w_size": extra.pop("w_size"),
     "iw_size": extra.pop("iw_size", 0),
-    "source_bytes": len(module.source),
+    "source_bytes": len(module.source.encode()),
+    "artifact_bytes": artifact_bytes,
+    "executable_bytes": executable_bytes,
+    "static_metadata_bytes": static_metadata_bytes,
     "source_lines": module.source.count("\n") + 1,
+    "arg_size": len(module.fun.inputs),
+    "res_size": len(module.fun.outputs),
+    "dispatch_trip_count": dispatch_trip_count,
+    "dispatch_workspace": dispatch_workspace,
+    "dispatch_arithmetic": dispatch_arithmetic,
+    "coloring_width": max(colors) + 1 if colors else 0,
     "build_ms": build_ms,
     "render_ms": render_ms,
     "benchmark": benchmark,
@@ -422,7 +581,10 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
     os.chdir(cwd)
   render_ms = (time.perf_counter() - started) * 1000
   source = (out_dir / f"{name}.c").read_text()
+  header = (out_dir / f"{name}.h").read_text()
+  artifact_bytes, executable_bytes, static_metadata_bytes = _artifact_sizes(source, header)
   rows, cols = fn.sparsity_out(0).get_triplet()
+  colors = al.column_coloring(al.SparsityType((fn.size_out(0)[0], fn.size_out(0)[1]), tuple(int(x) for x in rows), tuple(int(x) for x in cols)))
   return {
     "name": name,
     "backend": backend,
@@ -438,7 +600,14 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
     "iw_size": fn.sz_iw(),
     "arg_size": fn.sz_arg(),
     "res_size": fn.sz_res(),
-    "source_bytes": len(source),
+    "source_bytes": len(source.encode()),
+    "artifact_bytes": artifact_bytes,
+    "executable_bytes": executable_bytes,
+    "static_metadata_bytes": static_metadata_bytes,
+    "dispatch_trip_count": "",
+    "dispatch_workspace": "",
+    "dispatch_arithmetic": "",
+    "coloring_width": max(colors) + 1 if colors else 0,
     "source_lines": source.count("\n") + 1,
     "build_ms": build_ms,
     "render_ms": render_ms,
@@ -656,8 +825,18 @@ def run_cell(
     build_ms=f"{info['build_ms']:.1f}",
     render_ms=f"{info['render_ms']:.1f}",
     source_bytes=info["source_bytes"],
+    artifact_bytes=info["artifact_bytes"],
+    executable_bytes=info["executable_bytes"],
+    static_metadata_bytes=info["static_metadata_bytes"],
     source_lines=info["source_lines"],
     workspace=info["w_size"],
+    integer_workspace=info["iw_size"],
+    argument_pointers=info["arg_size"],
+    result_pointers=info["res_size"],
+    dispatch_trip_count=info["dispatch_trip_count"],
+    dispatch_workspace=info["dispatch_workspace"],
+    dispatch_arithmetic=info["dispatch_arithmetic"],
+    coloring_width=info["coloring_width"],
     nnz=info["nnz"],
   )
   source_mb = info["source_bytes"] / (1024 * 1024)

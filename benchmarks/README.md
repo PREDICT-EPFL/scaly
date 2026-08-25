@@ -114,6 +114,22 @@ at M=3 under the default timeout. Unbumpercars defaults to Alloy, `SX`, and `MX`
 formulation has no single repeated stage. If an explicit backend does not apply to a workload, the
 sweep records `not_applicable` and continues.
 
+The CSV separates generated artifact bytes into `executable_bytes` and `static_metadata_bytes`.
+The executable count is the C translation unit without `static const` declarations. The metadata
+count includes those declarations and the generated header. It therefore includes sparse index
+tables, automatic-differentiation seed tables, and numeric constants that the generator emits as
+arrays. A generator that writes a constant inline counts it as executable source. Their sum is
+`artifact_bytes`; `source_bytes` remains the complete C translation unit for compatibility with
+earlier runs.
+
+The CSV records floating-point and integer ABI workspace and the required lengths of the argument
+and result pointer arrays. It also records the derivative's coloring width. Alloy rows whose maps
+share one trip count report that count, the maximum floating-point scratch across the mapped
+callees, and the sum of their floating-point Program IR operations per iteration. Scratch includes
+both stack slots and `w[]` slots. The dispatch fields are empty for kernels without a map and for
+kernels whose maps have different trip counts. CasADi does not expose the derivative function inside
+its generated map as a stable inspection boundary, so its dispatch fields are empty.
+
 All benchmark artifacts follow the same command-first layout:
 
 ```text

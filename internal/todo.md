@@ -45,9 +45,9 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
 - [x] **A6. Route both IPOPT columns through one `libipopt.so`** and record which in the provenance,
       along with the MUMPS, METIS and BLAS configuration. Needs the code-generated CasADi column,
       since the reverse pin is impossible. Rationale: paper.md §5.4.
-- [ ] **A7. Emit the dispatch properties into the sweep CSV**: trip count, per-iteration workspace
+- [x] **A7. Emit the dispatch properties into the sweep CSV**: trip count, per-iteration workspace
       and arithmetic work, coloring width. Table 2 cannot be built without them.
-- [ ] **A8. Split executable generated code from static metadata in the reported artifact size**, and
+- [x] **A8. Split executable generated code from static metadata in the reported artifact size**, and
       record integer workspace and argument/result pointer counts. `casadi_map_sx` has fewer lines
       than `casadi_call_mx` at race_cars N=500 but more bytes, so "smaller" is ambiguous without the
       split, and total C bytes cannot support the fixed-executable-body claim.

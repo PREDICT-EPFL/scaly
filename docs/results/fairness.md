@@ -434,8 +434,15 @@ times differ by roughly 2x against an Apple M-series, so a mixed table invents a
 
 Alongside the oracle comparison, three numbers that are *not* it and must not be presented as if they
 were: the Python-level cost of a step, which is what an application actually pays; the build cost of
-the oracle set; and the generated source size, split into executable code and static data. Those are
-where alloy's margins are largest and least contested, which is exactly why they need their own row
+the oracle set; and the generated artifact size, split into executable source and static metadata.
+The executable count removes `static const` declarations from the C translation unit. Static
+metadata contains those declarations and the generated header, so the two counts sum to the full C
+and header artifact. The classification follows generated C syntax: index, seed, and numeric
+constant arrays are metadata, while an inline numeric literal remains executable source. Alloy and
+CasADi do not emit constants in the same form. Their sparse headers differ too: Alloy includes
+coordinate, row-compressed, and column-compressed views for consumers, while CasADi emits one
+column-compressed pattern. The metadata count is therefore the shipped source artifact, not a
+normalized measure of sparsity information. Report both counts. These costs need their own rows
 rather than being folded into a speed-up.
 
 ## Reproducing this page

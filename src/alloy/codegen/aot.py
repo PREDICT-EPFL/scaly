@@ -39,8 +39,9 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class CModule:
   """One rendered function: the ``.h`` and ``.c`` to write, plus what a consumer needs to compile
-  and call them. ``body`` is the translation unit, ``workspace_size`` the ``w[]`` the entry needs
-  (the header's ``SZ_W``) and ``backends`` the solver plugins it calls into.
+  and call them. ``body`` is the translation unit. ``program`` is the optimized Program IR that
+  produced it. ``workspace_size`` is the entry's ``w[]`` length, and ``backends`` lists the solver
+  plugins that the function calls.
 
   ``header``, ``source`` and ``link_flags`` are rendered on first access. The JIT compiles ``body``
   and asks for none of them; for a big sparse function the header alone is larger than the source.
@@ -50,6 +51,7 @@ class CModule:
   header_name: str
   source_name: str
   body: str
+  program: ProgramNode
   workspace_size: int
   backends: tuple[str, ...]
   typed_buffers: bool
@@ -354,6 +356,7 @@ def render_c_module(fun: Function, *, header_name: str | None = None, source_nam
     header_name=f"{symbol}.h" if header_name is None else header_name,
     source_name=f"{symbol}.c" if source_name is None else source_name,
     body=body,
+    program=ctx.prog,
     workspace_size=ctx.workspace_size,
     backends=ctx.backends,
     typed_buffers=typed_buffers,
