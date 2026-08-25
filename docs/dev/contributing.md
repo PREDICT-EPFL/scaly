@@ -8,8 +8,9 @@ cd alloy
 uv sync
 ```
 
-Use `uv run` for everything — `uv run python`, `uv run pytest`. Do not activate the virtual
-environment by hand.
+Use `uv run` for everything — `uv run pytest`, `uv run benchmarks/run.py`. `uv run` takes a script
+path directly, so the `python` in `uv run python script.py` is redundant. Do not activate the
+virtual environment by hand.
 
 The vendored solvers (PIQP, IPOPT) build on the first sync and take 5 to 8 minutes cold. Without a
 native toolchain the sync skips them and the solver tests skip with them; everything else works.

@@ -2,19 +2,24 @@
 
 The `plugins/alloy-{piqp,ipopt}/hatch_build.py` hooks ship each solver's shared library and C headers inside its plugin wheel. These notes track open issues we should fix before the wheels.yml workflow is exercised at scale. Historical notes from the conda-prefix/delocate experiment live in [`native_toolchain_exploration.md`](native_toolchain_exploration.md).
 
-## 1. Static libgfortran linking — partially achieved
+## 1. Runtime bundling replaced static linking — done, and enforced
 
-**Goal:** `libipopt.{dylib,so}` has no runtime dependency on libgfortran/libgcc/libstdc++, so external C++ consumers can link `-lipopt` without dragging a Fortran toolchain into their build.
+**Original goal:** `libipopt.{dylib,so}` with no runtime dependency on libgfortran/libgcc/libstdc++, so an external C++ consumer could link `-lipopt` without dragging a Fortran toolchain into its build.
 
-**Current state on macOS (arm64, Apple Clang 21):** *not* met. `otool -L plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.dylib` shows dynamic dependencies on `/opt/homebrew/opt/gcc/lib/gcc/current/libgfortran.5.dylib` and `libquadmath.0.dylib`.
+**Why it was abandoned:** IPOPT's final `libipopt` link is driven by `clang++`/`g++`, not `gfortran`, and it reads `LDFLAGS`, not `FCFLAGS`. Apple Clang errors on `-static-libgfortran`, so an early version routed the static flags through `FCFLAGS=`; that covered the Fortran objects and never touched the C++ link that produces the shared library, so it achieved nothing. It also did active harm: COIN-OR's configure sets its default with `: ${FCFLAGS:="-O2 $ADD_FCFLAGS"}`, so passing `FCFLAGS=` on the command line silently dropped `-O2` from the MUMPS and IPOPT Fortran. (`ADD_FCFLAGS` is the variable for adding to those defaults.) Putting the flags in `LDFLAGS=` instead broke autoconf's C-compiler conftest — Apple Clang refuses to even probe with the unknown flag — so the build never started.
 
-**Why:** IPOPT's final libipopt link is driven by `clang++`, not `gfortran`. Apple Clang errors on `-static-libgfortran` (a gfortran driver flag), so we currently pass it through `FCFLAGS=` only. That covers Fortran-only objects but not the C++ link step that produces the dylib.
+**What replaced it:** the hook vendors the Fortran runtime next to `libipopt` and makes the library find it relocatably. `_static_fortran_ldflags` is gone.
 
-An earlier attempt put the static flags into `LDFLAGS=`. That broke the autoconf `configure` C-compiler conftest (Apple Clang refuses to even probe with the unknown flag), so the build never started. Hence the `FCFLAGS=` compromise in `_static_fortran_ldflags`.
+- **macOS:** `_bundle_macos_runtime` walks the `otool -L` closure, copies every non-OS dependency into `lib/`, rewrites each load command to `@rpath/`, adds an `@loader_path` rpath, and re-signs — arm64 refuses to load an image whose load commands changed after signing.
+- **Linux:** `_bundle_linux_runtime` does the same job with `$ORIGIN`. IPOPT links with `LDFLAGS=-Wl,-rpath,\$$ORIGIN` and the hook copies `libgfortran` (plus `libquadmath` when the closure needs it) next to `libipopt.so`, so `ldd` resolves them to the siblings. `libgcc_s` and `libstdc++` deliberately stay on the system: they are in every glibc distribution's base install, and bundling `libstdc++` risks pinning an old one onto other C++ libraries in the same process.
 
-**Likely fix:** locate `libgfortran.a` / `libquadmath.a` from the active gfortran installation and pass them as explicit static link inputs via `-Wl,-force_load <path>` (macOS) or `-Wl,-Bstatic -lgfortran -Wl,-Bdynamic` (Linux). The path resolution can use `gfortran -print-file-name=libgfortran.a` at hook time.
+The `$ORIGIN` escaping in `LINUX_RPATH_LDFLAGS` is load-bearing and explained in a comment beside it. Both layers eat a `$`: configure copies `LDFLAGS` into the Makefiles verbatim where make turns `$$` back into `$`, and the recipe shell needs the backslash or it expands `$ORIGIN` to nothing — leaving a bare `-Wl,-rpath` that swallows the next argument and fails the link with `cannot find libipopt.so.3`.
 
-**Current state on Linux (GitHub `ubuntu-latest`):** source builds and solver tests pass, but the static dependency goal is also *not* met. CI `ldd plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.so` still shows dynamic dependencies on `libgfortran.so.5`, `libstdc++.so.6`, and `libgcc_s.so.1`. `_static_fortran_ldflags` returns `-static-libgfortran -static-libgcc -static-libstdc++`, but the same `FCFLAGS`-only routing does not affect IPOPT's final C++ shared-library link.
+The packaging consequence: **the whole `lib/` directory is what has to travel**, never just `libipopt.dylib`.
+
+This is checked rather than assumed. `_macos_self_contained` / `_linux_self_contained` assert that every vendored dependency in the closure resolves to a sibling under `lib/`. `_ipopt_built` treats a library that fails the check as unbuilt and rebuilds it, so a stale library from before the bundling pass cannot survive a sync; the Linux path additionally raises if the bundle comes out incomplete.
+
+**What the original goal would still have bought:** a consumer linking `-lipopt` from C++ outside Python needs `lib/` on its rpath, where a fully static library would have needed nothing. That is a weaker guarantee, but it no longer blocks distribution.
 
 ## 2. METIS legacy-C compatibility
 
@@ -30,7 +35,7 @@ If a future MUMPS pin requires METIS 5.x (Apache-2 licensed, modern C), we'll ne
 
 IPOPT's install dir contains `libipopt.3.dylib` (real file) and `libipopt.dylib` (symlink). `shutil.copy2` of the symlink resolves through it but preserves the original install_name (`/abs/path/to/.../libipopt.3.dylib`), which makes the lib non-relocatable.
 
-Current fix: pick the versioned dylib directly, copy as `libipopt.dylib`, then run `install_name_tool -id @rpath/libipopt.dylib`. Same `-id` rewrite is applied to PIQP for consistency. Relevant code: `_build_ipopt_stack` near the end.
+Current fix: pick the versioned dylib directly, copy as `libipopt.dylib`, then run `install_name_tool -id @rpath/libipopt.dylib`. Same `-id` rewrite is applied to PIQP for consistency. Relevant code: `_build_ipopt_stack` near the end, which then hands off to `_bundle_macos_runtime` for the rest of the closure (issue #1).
 
 Linux keeps a SONAME-compatible copy next to the unversioned link target (for example `libipopt.so.3` next to `libipopt.so`) so JIT-built solver callers with `DT_NEEDED=libipopt.so.3` can resolve through their rpath. A future wheel repair pass may still prefer setting/changing SONAMEs explicitly with `patchelf`.
 
@@ -51,8 +56,8 @@ Editable installs use `ALLOY_BUILD_SOLVERS=auto` by default: if the native toolc
 
 **Still required before distribution:** a correct tag is necessary but not sufficient; PyPI rejects raw `linux_*` and the wheel may still pull in host-specific shared libs.
 
-- **Linux:** run `auditwheel repair` on the wheel. It rewrites `linux_x86_64` → the lowest manylinux baseline that the binary actually satisfies (target: `manylinux_2_28_x86_64`) and bundles / patchelfs any non-allowlisted shared libs into the wheel. This still blocks on either fixing the Linux half of issue #1 (static libgfortran/libgcc/libstdc++) or deliberately letting auditwheel vendor those runtime libraries.
-- **macOS:** run `delocate-wheel`. Equivalent operation: copies dylib dependencies into the wheel and rewrites install names against `@loader_path`. Currently would pull in Homebrew `libgfortran.5.dylib` and `libquadmath.0.dylib` — blocks on the macOS half of issue #1.
+- **Linux:** run `auditwheel repair` on the wheel. It rewrites `linux_x86_64` → the lowest manylinux baseline that the binary actually satisfies (target: `manylinux_2_28_x86_64`) and bundles / patchelfs any non-allowlisted shared libs. The Fortran runtime it would otherwise vendor is already a sibling under `lib/` with an `$ORIGIN` rpath (issue #1), so what remains to be established is whether auditwheel leaves that arrangement alone rather than relocating it into `.libs/` and re-patching the rpath. Untested.
+- **macOS:** `delocate-wheel` does the same job the build hook already does — copy dylib dependencies in, rewrite install names against `@loader_path`. Since `_bundle_macos_runtime` has already vendored and re-signed the closure (issue #1), delocate should find nothing left to move; confirm that, and that it does not break the ad-hoc signatures, before adding it to the wheel pipeline.
 - **Matrix:** arm64 / x86_64 on each OS are separate wheels; build each on its native runner (or via `cibuildwheel` in the eventual `wheels.yml`) and upload the full set.
 
 **Renaming is not a substitute.** The wheel's `*.dist-info/WHEEL` file records a `Tag:` line that installers cross-check against the filename. A wheel renamed from `py3-none-any.whl` to `py3-none-macosx_14_0_arm64.whl` still claims `any` internally and fails strict validation. Independently, PyPI refuses uploads with raw `linux_*` tags — only `manylinux_*` / `musllinux_*` are accepted, and those tags are contracts about glibc baseline and bundled deps, not free-form labels.
