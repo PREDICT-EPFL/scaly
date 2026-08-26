@@ -168,7 +168,7 @@ def pack_params(decoder: Decoder, weights: np.ndarray, latent: np.ndarray = LATE
 
 def decoder_mu_np(decoder: Decoder, pw: np.ndarray, x: np.ndarray, u: np.ndarray) -> np.ndarray:
   """The mean decoder in NumPy: the velocity change it predicts for one state and control."""
-  feat = np.array([np.sin(x[0]), np.cos(x[0]), x[2], x[3], np.reshape(u, -1)[0]], dtype=np.float64)
+  feat = np.array([np.sin(x[0]), np.cos(x[0]), x[2], x[3], np.reshape(u, -1)[0]])
   h = np.concatenate([feat * pw[decoder.slice("x_scale_w")] + pw[decoder.slice("x_scale_b")], pw[decoder.slice("latent")]])
   for i, shape in enumerate(decoder.weight_shapes[:-1]):
     h = 1.0 / (1.0 + np.exp(-(pw[decoder.slice(f"w{i}")].reshape(shape) @ h)))
@@ -489,6 +489,55 @@ def npmpc_bounds(horizon: int) -> tuple[np.ndarray, np.ndarray]:
   return lower, upper
 
 
+def npmpc_lag_hess_dense_reference(
+  horizon: int,
+  z: np.ndarray,
+  p: np.ndarray,
+  lam_f: float,
+  lam_g: np.ndarray,
+  P: np.ndarray,
+  decoder: Decoder = Decoder(),
+  weights: CostWeights = CostWeights(),
+  dt: float = DT,
+) -> np.ndarray:
+  """Dense NumPy Hessian of ``lam_f * f + dot(lam_g, [h_eq; g_ineq])`` for ``npmpc_nlp``.
+
+  Stage ``i`` touches ``x_i``, ``x_{i+1}`` and ``u_i``: the stage cost through the inter-stage
+  difference, the learned step through ``x_i`` and ``u_i``. The inequality rows are linear. The
+  terminal term and the slack penalty are added on their own blocks. Each block is one exact
+  hyper-dual evaluation per column.
+  """
+  from benchmarks.harness.hyperdual import lagrangian_hessian_np
+
+  z, p, lam_g = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64), np.asarray(lam_g, dtype=np.float64)
+  if z.shape != (n_dec(horizon),) or p.shape != (n_param(decoder),) or lam_g.shape != (sum(constraint_counts(horizon)),):
+    raise ValueError(f"invalid z/p/lam_g shapes {z.shape} / {p.shape} / {lam_g.shape}")
+  pw, offset = p[NX:], NX * (horizon + 1)
+  terminal_weight = np.asarray(P, dtype=np.float64)
+  dense = np.zeros((z.size, z.size), dtype=np.float64)
+
+  def stage(v):
+    x, xnext, u = v[:NX], v[NX : 2 * NX], v[2 * NX :]
+    dx = xnext - x
+    cost = weights.x[0] * 2.0 * (1.0 - np.cos(x[0])) + weights.u * u[0] * u[0]
+    cost = cost + sum(weights.x[k] * x[k] * x[k] for k in (1, 2, 3))
+    cost = cost + sum(weight * dx[k] * dx[k] for k, weight in enumerate(weights.x_diff) if weight)
+    y = decoder_mu_np(decoder, pw, x, u)
+    return [cost, *(x + np.concatenate([dt * (x[2:4] + y / 2.0), y]) - xnext)]
+
+  def terminal(xn):
+    e_end = [2.0 * np.sin(xn[0] / 2.0), xn[1], xn[2], xn[3]]
+    return [sum(e_end[a] * float(terminal_weight[a, b]) * e_end[b] for a in range(NX) for b in range(NX))]
+
+  for i in range(horizon):
+    index = np.r_[NX * i : NX * (i + 2), offset + NU * i : offset + NU * (i + 1)]
+    dense[np.ix_(index, index)] += lagrangian_hessian_np(stage, z[index], np.concatenate([[lam_f], lam_g[NX * i : NX * (i + 1)]]))
+  block = slice(NX * horizon, offset)
+  dense[block, block] += lagrangian_hessian_np(terminal, z[block], np.array([lam_f]))
+  dense[-1, -1] += lam_f * weights.slack
+  return dense
+
+
 def npmpc_nlp(
   P: np.ndarray,
   horizon: int = HORIZON,
@@ -649,23 +698,3 @@ def _ca_npmpc_joint_parameter_pieces(
     [p[:NX], p[NX:]],
   )
   return {**pieces, "p": p, "f": f, "h_eq": h_eq, "g_ineq": g_ineq}
-
-
-def ca_npmpc_lag_hess(
-  horizon: int,
-  decoder: Decoder = Decoder(),
-  name: str = "npmpc_lag_hess",
-  sym_t=None,
-  P: np.ndarray | None = None,
-  weights: CostWeights = CostWeights(),
-  dt: float = DT,
-):
-  """The CasADi reference for the exact solver-descriptor Lagrangian Hessian."""
-  import casadi as ca
-
-  sym_t = ca.SX if sym_t is None else sym_t
-  pieces = _ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, P=P, weights=weights, dt=dt)
-  constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
-  lam_f, lam_g = sym_t.sym("lam_f"), sym_t.sym("lam_g", pieces["n_eq"] + pieces["n_ineq"])
-  lag = lam_f * pieces["f"] + ca.dot(lam_g, constraints)
-  return ca.Function(name, [pieces["z"], lam_f, lam_g, pieces["p"]], [ca.hessian(lag, pieces["z"])[0]])

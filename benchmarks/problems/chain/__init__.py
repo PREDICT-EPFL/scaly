@@ -172,6 +172,66 @@ def chain_eq_jac_dense_reference(n_masses: int, horizon: int, z: np.ndarray, p: 
   return dense
 
 
+def _rhs_np(n_masses: int, x, u, params: np.ndarray):
+  mass, spring_d, rest_len, gravity = (float(value) for value in params[:4])
+  positions = [x[3 * i : 3 * (i + 1)] for i in range(n_masses - 1)]
+  velocities = [x[3 * (n_masses - 1 + i) : 3 * (n_masses + i)] for i in range(n_masses - 2)]
+
+  def link(dist):
+    return (spring_d / mass) * (1.0 - rest_len / np.sqrt((dist * dist).sum())) * dist
+
+  accel = []
+  for i in range(n_masses - 2):
+    left = np.zeros(3) if i == 0 else positions[i - 1]
+    accel.append(link(positions[i + 1] - positions[i]) - link(positions[i] - left) + np.array([0.0, 0.0, gravity]))
+  return np.concatenate([*velocities, u, *accel])
+
+
+def _step_np(n_masses: int, x, u, params: np.ndarray):
+  dt = float(params[-1])
+  k1 = _rhs_np(n_masses, x, u, params)
+  k2 = _rhs_np(n_masses, x + 0.5 * dt * k1, u, params)
+  k3 = _rhs_np(n_masses, x + 0.5 * dt * k2, u, params)
+  k4 = _rhs_np(n_masses, x + dt * k3, u, params)
+  return x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+
+def chain_lag_hess_dense_reference(n_masses: int, horizon: int, z: np.ndarray, p: np.ndarray, lam_f: float, lam_g: np.ndarray) -> np.ndarray:
+  """Dense NumPy Hessian of ``lam_f * f + dot(lam_g, eq)`` for ``chain_nlp``.
+
+  The stage cost and the RK4 step depend on one stage's ``z`` block only and the coupling to the
+  next state is linear, so the Hessian is block diagonal; each block is one exact hyper-dual
+  evaluation per column.
+  """
+  from benchmarks.harness.hyperdual import lagrangian_hessian_np
+
+  nx, nz = n_state(n_masses), n_state(n_masses) + NU
+  z, p, lam_g = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64), np.asarray(lam_g, dtype=np.float64)
+  if z.shape != (n_dec(n_masses, horizon),) or p.shape != (n_param(n_masses),) or lam_g.shape != (nx * (horizon + 1),):
+    raise ValueError(f"invalid z/p/lam_g shapes {z.shape} / {p.shape} / {lam_g.shape}")
+  end, vel, h = 3 * (n_masses - 2), 3 * (n_masses - 1), 1.0 / horizon
+  ref = np.asarray(END_REF)
+  params = p[nx:]
+  dense = np.zeros((z.size, z.size), dtype=np.float64)
+
+  def sumsqr(values):
+    return (values * values).sum()
+
+  def stage(zi):
+    cost = h * 0.5 * (Q_END * sumsqr(zi[end : end + 3] - ref) + Q_VEL * sumsqr(zi[vel:nx]) + R_U * sumsqr(zi[nx:]))
+    return [cost, *_step_np(n_masses, zi[:nx], zi[nx:], params)]
+
+  def terminal(xn):
+    return [0.5 * Q_END_TERMINAL * sumsqr(xn[end : end + 3] - ref)]
+
+  for i in range(horizon):
+    block = slice(nz * i, nz * (i + 1))
+    dense[block, block] = lagrangian_hessian_np(stage, z[block], np.concatenate([[lam_f], lam_g[nx * (i + 1) : nx * (i + 2)]]))
+  block = slice(nz * horizon, nz * horizon + nx)
+  dense[block, block] = lagrangian_hessian_np(terminal, z[block], np.array([lam_f]))
+  return dense
+
+
 def _objective(z, n_masses: int, horizon: int):  # type: ignore[no-untyped-def]
   # laopt transcribes on normalized time: each stage cost enters as h*(0.5*|x-xref|^2_P + 0.5*u'Pu) with h=1/N, the Mayer term unscaled.
   nx, nz = n_state(n_masses), n_state(n_masses) + NU

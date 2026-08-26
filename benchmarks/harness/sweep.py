@@ -298,7 +298,12 @@ def _descriptor_kernel(solver: al.SolverFunction, kind: str):
 
 
 def _casadi_descriptor_kernel(ca, name: str, z, p, cost, constraints, kind: str, *, cse: bool = False):
-  """Build the full CasADi oracle set and return the selected descriptor-equivalent kernel."""
+  """Build the full CasADi oracle set and return the selected descriptor-equivalent kernel.
+
+  The unselected functions are built and dropped on purpose: ``build_ms`` then covers the whole
+  oracle set, as the Alloy column's ``build_ms`` covers the whole ``al.nlp`` construction. The
+  Hessian is the full symmetric matrix on both sides; ``internal/todo.md`` A11 owns the triangle.
+  """
   options = {"cse": True} if cse else {}
   ca.Function(f"{name}_base", [z, p], [cost, constraints], options)
   ca.Function(f"{name}_grad", [z, p], [ca.gradient(cost, z)], options)
@@ -313,11 +318,9 @@ def _casadi_descriptor_kernel(ca, name: str, z, p, cost, constraints, kind: str,
   return hess if kind == "hess" else jac
 
 
-def _lag_hess_reference(ca, name: str, z, p, cost, constraints, zv, pv):
-  lam_g = np.linspace(-0.75, 0.75, int(constraints.shape[0]))
-  ref = _casadi_descriptor_kernel(ca, name, z, p, cost, constraints, "hess")
-  expected = np.asarray(ca.densify(ref(zv, 1.0, lam_g, pv)), dtype=np.float64).reshape(-1)
-  return lam_g, expected
+def _mixed_sign_multipliers(count: int) -> np.ndarray:
+  """Multipliers of mixed sign, so the Hessian is not dominated by the objective block alone."""
+  return np.linspace(-0.75, 0.75, count)
 
 
 def _repeat_element(ca, element, count: int, args: tuple, *, mapped: bool):
@@ -726,10 +729,8 @@ def _samples(
       expected = chain.chain_eq_jac_dense_reference(size, horizon, zv, pv).reshape(-1)
       values = {"z": zv, "p": pv}
     else:
-      import casadi as ca
-
-      z, p, cost, constraints = chain._ca_nlp_pieces(size, horizon, ca.MX)
-      lam_g, expected = _lag_hess_reference(ca, f"chain_lag_hess_dense_ref_M{size}", z, p, cost, constraints, zv, pv)
+      lam_g = _mixed_sign_multipliers(chain.n_state(size) * (horizon + 1))
+      expected = chain.chain_lag_hess_dense_reference(size, horizon, zv, pv, 1.0, lam_g).reshape(-1)
       values = {"z": zv, "lam_f": np.array(1.0), "lam_g": lam_g, "p": pv}
   elif workload in ("race_cars", "race_cars_jac"):
     if harvested is None:
@@ -744,18 +745,12 @@ def _samples(
       expected = race_cars.race_car_constraint_jac_dense_reference(size, zv, pv).reshape(-1)
       values = {"z": zv, "p": pv}
     else:
-      import casadi as ca
+      from benchmarks.problems.race_cars.closed_loop import EpisodeConfig, race_car_lag_hess_dense_reference
 
-      from benchmarks.problems.race_cars.casadi_nlp import build_casadi_race_car_nlp
-      from benchmarks.problems.race_cars.closed_loop import EpisodeConfig
-
-      pieces = build_casadi_race_car_nlp(EpisodeConfig(horizon=size), ca.MX)
-      constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
-      lam_g, expected = _lag_hess_reference(ca, f"race_car_lag_hess_dense_ref_N{size}", pieces["z"], pieces["p"], pieces["f"], constraints, zv, pv)
+      lam_g = _mixed_sign_multipliers(race_cars.NX * (size + 1) + 2 * size)
+      expected = race_car_lag_hess_dense_reference(EpisodeConfig(horizon=size), zv, pv, 1.0, lam_g).reshape(-1)
       values = {"z": zv, "lam_f": np.array(1.0), "lam_g": lam_g, "p": pv}
   elif workload in NPMPC_WORKLOADS:
-    import casadi as ca
-
     horizon, decoder, weights, terminal = _npmpc_cell(workload, size)
     if harvested is None:
       zv, pw = npmpc.sample_inputs(horizon, decoder, weights)
@@ -765,10 +760,9 @@ def _samples(
     if zv.shape != (npmpc.n_dec(horizon),) or pv.shape != (npmpc.n_param(decoder),):
       raise ValueError(f"harvested npmpc input shapes do not match {CELL_AXES[workload]}={size}: {zv.shape}, {pv.shape}")
     if kind == "hess":
-      # Multipliers of mixed sign, so the Hessian is not dominated by the objective block alone.
-      lam_g = np.linspace(-0.75, 0.75, sum(npmpc.constraint_counts(horizon)))
-      ref = npmpc.ca_npmpc_lag_hess(horizon, decoder, f"npmpc_lag_hess_dense_ref_{CELL_AXES[workload]}{size}", ca.MX, terminal)
-      expected = np.asarray(ca.densify(ref(zv, 1.0, lam_g, pv)), dtype=np.float64).reshape(-1)
+      terminal = np.diag(npmpc.CostWeights().x_end) if terminal is None else terminal
+      lam_g = _mixed_sign_multipliers(sum(npmpc.constraint_counts(horizon)))
+      expected = npmpc.npmpc_lag_hess_dense_reference(horizon, zv, pv, 1.0, lam_g, terminal, decoder).reshape(-1)
       values = {"z": zv, "lam_f": np.array(1.0), "lam_g": lam_g, "p": pv}
     else:
       expected = npmpc.npmpc_constraint_jac_dense_reference(horizon, zv, pv, decoder)

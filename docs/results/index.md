@@ -7,9 +7,10 @@ the page that changes first.
 Everything here is measured against **CasADi**, in both its SX (scalar) and MX (block) forms, on
 the same problem, and every measurement is gated by a correctness check: each backend's compact
 derivative is scattered into a dense matrix using its own sparsity pattern and compared entry by
-entry against an independent reference — a NumPy-computed Jacobian for the race-car sweep, a
-CasADi-computed Lagrangian Hessian for the safety filter. A cell that does not agree produces no
-timing.
+entry against a reference built by a different construction — NumPy for the race-car Jacobian and
+for the chain, race-car and neural-process MPC Lagrangian Hessians, Alloy's dense per-stage Jacobian
+of an unrolled twin for the chain and neural-process MPC Jacobians, and a CasADi Lagrangian Hessian
+for the safety filter. A cell that does not agree produces no timing.
 
 !!! warning "The Jacobian tables await a same-machine refresh"
 

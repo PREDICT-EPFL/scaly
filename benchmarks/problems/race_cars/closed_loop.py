@@ -34,6 +34,7 @@ from benchmarks.problems.race_cars import (
   CAR_LENGTH,
   CAR_WIDTH,
   DELTA_MAX,
+  N_PARAMS,
   NX,
   NZ,
   T_MAX,
@@ -155,6 +156,57 @@ def _corridor_stage(z, ref):  # type: ignore[no-untyped-def]
   reach = e_lat + 0.5 * CAR_LENGTH * d_phi.sin()
   half_width = 0.5 * CAR_WIDTH * d_phi.cos()
   return {"corridor": al.stack([reach + half_width, reach - half_width])}
+
+
+def race_car_lag_hess_dense_reference(config: EpisodeConfig, z: np.ndarray, p: np.ndarray, lam_f: float, lam_g: np.ndarray) -> np.ndarray:
+  """Dense NumPy Hessian of ``lam_f * f + dot(lam_g, [h_eq; g_ineq])`` for ``_race_car_nlp``.
+
+  Every nonlinear term touches one stage's ``z`` block only: the stage cost, the RK4 step into the
+  next stage, and the corridor rows. The couplings to the next state are linear, so the Hessian is
+  block diagonal and each block comes from one exact hyper-dual evaluation per column.
+  """
+  from benchmarks.harness.hyperdual import lagrangian_hessian_np
+
+  n = config.horizon
+  z, p, lam_g = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64), np.asarray(lam_g, dtype=np.float64)
+  if z.shape != (NZ * (n + 1),) or p.shape != (n_param(n),) or lam_g.shape != (NX * (n + 1) + 2 * n,):
+    raise ValueError(f"invalid z/p/lam_g shapes {z.shape} / {p.shape} / {lam_g.shape}")
+  params = RaceCarParams(*p[-N_PARAMS:])
+  n_eq = NX * (n + 1)
+  dense = np.zeros((z.size, z.size), dtype=np.float64)
+  for i in range(n + 1):
+    ref = p[NX * i : NX * (i + 1)]
+    throttle_ref = steady_throttle(float(ref[3]), params)
+    cos_ref, sin_ref = float(np.cos(ref[2])), float(np.sin(ref[2]))
+    stage_weights = [config.r_throttle, config.r_steering]
+    if 0 < i < n:
+      stage_weights += [config.q_lon, config.q_lat, config.q_phi, config.q_v]
+    elif i == n:
+      stage_weights += [config.q_lon_f, config.q_lat_f, config.q_phi_f, config.q_v_f]
+
+    def stage(zi, i=i, ref=ref, throttle_ref=throttle_ref, cos_ref=cos_ref, sin_ref=sin_ref, stage_weights=stage_weights):
+      residuals = [zi[NX] - throttle_ref, zi[NX + 1]]
+      outputs = []
+      if i > 0:
+        dx, dy = zi[0] - ref[0], zi[1] - ref[1]
+        e_lat = -sin_ref * dx + cos_ref * dy
+        d_phi = zi[2] - ref[2]
+        residuals += [cos_ref * dx + sin_ref * dy, e_lat, d_phi, zi[3] - ref[3]]
+        reach = e_lat + 0.5 * CAR_LENGTH * np.sin(d_phi)
+        half_width = 0.5 * CAR_WIDTH * np.cos(d_phi)
+        outputs += [reach + half_width, reach - half_width]
+      cost = sum(weight * residual * residual for weight, residual in zip(stage_weights, residuals, strict=True))
+      step = list(rk4_step_np(zi[:NX], zi[NX:], params)) if i < n else []
+      return [cost, *step, *outputs]
+
+    multipliers = [lam_f]
+    if i < n:
+      multipliers += list(lam_g[NX * (i + 1) : NX * (i + 2)])
+    if i > 0:
+      multipliers += list(lam_g[n_eq + 2 * (i - 1) : n_eq + 2 * i])
+    block = slice(NZ * i, NZ * (i + 1))
+    dense[block, block] = lagrangian_hessian_np(stage, z[block], np.array(multipliers))
+  return dense
 
 
 def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: dict[str, str | int | float] | None = None) -> al.SolverFunction:

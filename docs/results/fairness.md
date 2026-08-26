@@ -51,8 +51,20 @@ Rules the numbers on this page follow, and that a headline run must follow more 
   `lam_p` after the solve. The harness passes a null output and skips that reverse sweep because
   neither timed column requests parameter sensitivities; the generated function remains otherwise
   unchanged.
-- **Correctness gates before timing.** Every cell checks its compact derivative against an
-  independent dense reference and produces no timing if it disagrees.
+- **Correctness gates before timing.** Every cell checks its compact derivative against a dense
+  reference built by a different construction, and produces no timing if it disagrees. The race-car
+  Jacobian and the chain, race-car and neural-process MPC Lagrangian Hessians have NumPy references:
+  complex-step first derivatives and exact hyper-dual second derivatives, assembled stage by stage.
+  The chain and neural-process MPC Jacobian references are Alloy's dense per-stage Jacobians of an
+  unrolled twin, so they test the mapped construction against an unrolled one rather than against
+  another tool. The unbumpercars Hessian reference is a CasADi `MX` Hessian of the same
+  formulation, which means that cell's CasADi column is checked against its own tool.
+- **`ca.cse` is applied to the chain CasADi cells and nowhere else.** On the chain it is what keeps
+  the unrolled encodings buildable at all: without it unrolled `SX` is 309 030 lines at M=5 against
+  215 190 with it (§"The chain sweep"). On `race_cars` it was worth 7% of function evaluation and
+  nothing on the total (§"`expand` and `jit`"), and it has not been measured on `npmpc` or
+  `unbumpercars`, whose CasADi cells do not call it. This is a per-problem choice made once, not a
+  rule; `internal/todo.md` carries the item to revisit it.
 - **Report CasADi's best encoding**, not the one our mirror happens to build. §"Does CasADi have
   loop-preserving codegen?" is why: the encodings of the same math span an order of magnitude, and
   the winner changes between problems.
