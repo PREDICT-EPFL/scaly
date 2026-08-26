@@ -15,6 +15,9 @@ The single actionable list. Rationale lives elsewhere and is linked, never resta
 Last reorganized 2026-08-25, after the fairness audit. Ordered by dependency, not by size: the
 groups below have to happen roughly in sequence, and items inside a group are independent.
 
+Agreed order for the coming sessions (2026-08-26): D2, then D1, then D1.5, then A11, each landed on
+its own so a failure can be attributed.
+
 ## A. Harness work, before any headline run
 
 The audit's measurements came from scratch scripts under `benchmarks/results/fairness/`. Everything
@@ -29,7 +32,9 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
 - [x] **A2. Take every swept kernel from the solver descriptor.** `descriptor.hess` rather than a
       hand-written `factory(..., al.sphess(...))` request, so the timed function *is* what the
       optimizer calls. Checked on npmpc N=12: the Hessian already agrees at nnz 269, the Jacobian
-      does not (48 of 78 constraint rows). Rationale: fairness.md, and the check is in this file.
+      does not (48 of 78 constraint rows). Rationale: fairness.md. Landed for the Alloy side; the
+      CasADi kernel is still built from `ca.hessian`, not taken from the `nlpsol`, and both sides time
+      the full symmetric Hessian while each solver receives one triangle. A11 finishes the item.
 - [x] **A3. Stop building the race-car correctness reference as a dense Alloy Jacobian.** `_samples`
       requests `al.jac("eq", "z")`, which at N=100 is a dense 404x606 Jacobian rendered as scalar C
       that gcc does not finish in twenty minutes. **This blocks the race-car half of Fig 2** and it
@@ -51,6 +56,14 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
       record integer workspace and argument/result pointer counts. `casadi_map_sx` has fewer lines
       than `casadi_call_mx` at race_cars N=500 but more bytes, so "smaller" is ambiguous without the
       split, and total C bytes cannot support the fixed-executable-body claim.
+- [ ] **A11. One Hessian triangle per solver, and the CasADi kernel from the `nlpsol`.** Give
+      `sphess` a `triangle` option, let the solver descriptor carry the layout its backend wants
+      (IPOPT lower, PIQP upper) instead of `hess_lower_mask`, and take the sweep's CasADi kernels
+      from `nlpsol.get_function("nlp_hess_l" | "nlp_jac_g")` with `expand` following the encoding.
+      Touches the NLP plugin contract, so it lands before C1 and after D2, D1 and D1.5. Design:
+      refactorings.md "Hessian layout".
+      Rationale: A2's sentence is only true once the timed kernel and the oracle have the same
+      entries; fairness.md "The measurement protocol".
 - [ ] **A9. Derive the mode table from the runs.** Time-to-first-solve and per-step cost, two modes
       for Alloy and three for CasADi. No separate script: the build cost and steady-state mean are
       already recorded. Rationale: paper.md §6, Table 2.
@@ -139,8 +152,15 @@ after D1 and D2, which is what fixes the spellings they use.
 
 - [ ] **D1. Land the derivative API redesign.** One name per concept, specs moved under
       `al.factory` and capitalized, `Function.factory` demoted. Roughly 120 mostly-mechanical call
-      sites plus the docs prose. Design: refactorings.md "Derivative API"; the decision to sequence
-      it before the paper examples is paper.md §10.
+      sites plus the docs prose. Also deletes `wrt2` from `hess` and `sphess`: no caller anywhere,
+      and a mixed partial is `spjac` of a `grad` output. Design: refactorings.md "Derivative API";
+      the decision to sequence it before the paper examples is paper.md §10.
+- [ ] **D1.5. Star colouring for sparse Hessians**, the symmetric colouring CasADi's `hess` uses and
+      Alloy lacks. Constant colour count on the shared-variable arrow Hessian that one-sided
+      colouring makes grow with the map length. The `SUM` rule of `jvp_many` becomes structural in
+      its own small change first. Gate: the colour count must not grow with the map length on the
+      `shared_fill` fixture, and `coloring_width` in the sweep CSV on every Hessian workload.
+      Design: refactorings.md "Star colouring".
 - [ ] **D2. Land the `MAP` to `VMAP` rename.** Operation, builder, exports and internal dispatch in
       one change, so no tree carries both spellings; then tests and benchmarks, including the pinned
       pytest node-ID baseline; then the public docs. `al.scan` disappears. Design: refactorings.md
@@ -198,6 +218,9 @@ audit found in the results pages: prose that outran what the code does.
 
 Kept because the reasoning is still good, not because anything depends on them.
 
+- **Decide `ca.cse` per problem.** The chain CasADi cells call it and the others do not; measured
+  at 7% of function evaluation on race_cars and unmeasured on npmpc and unbumpercars. Rationale:
+  fairness.md "The measurement protocol".
 - **Separate the IPOPT gap into version against build configuration.** Rebuild 3.14.11 with our
   hook's flags, or 3.14.19 against the wheel's OpenBLAS. "We ship a better-tuned linear algebra
   stack" is defensible; "our IPOPT is newer" is not. Rationale: paper.md §5.4.

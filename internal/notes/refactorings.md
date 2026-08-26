@@ -52,8 +52,13 @@ Each dispatches on its first argument and returns the same kind of thing it was 
 an `Expr` out; a `Function` in, a `Function` out. That is what finally makes the "unit of
 differentiation" claim true at the level it is written about.
 
-`al.hessian` and `al.sparse_hessian` also gain `wrt2` for cross Hessians. The `Hess` and `SpHess`
-specs have carried it all along and the current wrappers silently drop it.
+`wrt2` is deleted from `Hess` and `SpHess` rather than exposed (decided 2026-08-26). No caller in
+`src/`, `tests/`, `benchmarks/`, `docs/` or `plugins/` has ever passed it; CasADi and JAX have no
+such request; a mixed partial is `SpJac` of a `Grad` output, which is literally what the branch
+computes. Deleting it makes "a sparse Hessian is symmetric" an invariant instead of a condition,
+which the Hessian-layout and star-colouring sections below rely on. The output names keep the
+doubled `wrt` (`sphess_gamma_x_x`), so no generated C symbol moves; `docs/guide/derivatives.md`
+drops the `[, wrt2]` from its two Hessian rows, since the docs did advertise it.
 
 The dispatcher lives in `function/api.py`, which is layer 5, and calls down into `ad`, which is
 layer 4 — the merged name cannot live any lower, because it has to mention `Function`. The Expr
@@ -598,3 +603,235 @@ regenerated once instead of twice.
 - **Doing this during the restructure.** It was phase 9 for a reason: every other phase was either
   a seam change with the layout fixed or a move with no logic change, and this one is neither. It
   stayed out so that a C-snapshot diff during the restructure could only ever mean a mistake.
+
+# Hessian layout: one triangle per solver, and the CasADi kernel from the `nlpsol`
+
+Decided 2026-08-26, refined the same day after a review of the AD layer. Not started. Tracked as
+`internal/todo.md` A11. Depends on the `wrt2` deletion in "Derivative API"; independent of, and
+measured together with, "Star colouring".
+
+## The problem
+
+`sphess` is `sparse_jacobian(gradient(y, x), x)`: a full symmetric pattern, every off-diagonal
+pair computed as two entries, coloured as an ordinary Jacobian with no use of symmetry. On the
+race-car N=5 Lagrangian Hessian that is 104 entries where one triangle holds 69. Each solver then
+discards half of them:
+
+- `al.nlp` stores the full `hess_sparsity` plus `hess_lower_mask`. The IPOPT wrapper evaluates every
+  entry into `h_scratch` and copies the lower ones into IPOPT's `values` on each call
+  (`plugins/alloy-ipopt/src/alloy_ipopt/codegen.py`, `hess_lower_idx`).
+- `alloy-sqp` builds PIQP's upper-triangular `P` by mapping each `(min(r, c), max(r, c))` to the first
+  Hessian slot it meets, so it accepts any layout but pays for both.
+- `external_nlp` derives a lower mask from the pattern it is given, but only the IPOPT plugin reads
+  the mask and `external_nlp` is `backend="sqp"`, so nothing is wrong today. It is two sources of
+  truth for one fact: the pattern already says which entries the kernel produces.
+- The sweep times the descriptor's full symmetric kernel on the Alloy side and a `ca.hessian` on the
+  CasADi side. Neither is what its optimizer calls, so todo A2's sentence is not yet true.
+
+CasADi's conventions, checked against the installed 3.7.2 on 2026-08-26: the IPOPT plugin builds
+`triu:hess:gamma:x:x` and hands the upper triangle to IPOPT unchanged, since IPOPT's symmetric
+triplet matrix does not care which triangle it receives; `sqpmethod` and `conic` require the full
+symmetric matrix; `ca.hessian` and `Function.factory` without a prefix return the full matrix, and
+`tril:` / `triu:` are usable from Python. `nlpsol.get_function("nlp_hess_l")` takes
+`(x, p, lam_f, lam_g)` and `nlp_jac_g` returns `(g, jac_g_x)`; both code-generate standalone.
+
+## What we are changing
+
+### 1. `triangle` is a mode of `sphess`, implemented as a filter on the result
+
+`sphess(of, wrt, triangle="full")` with `"lower"` and `"upper"` as the alternatives, and the same
+keyword on `al.sparse_hessian` and `al.sparse_lagrangian_hessian`. With `wrt2` gone every sparse
+Hessian is symmetric, so the option needs no precondition. The output is the triangle's entries in
+the pattern's order and the attached sparsity is the triangle. The dense `hess` spec is unchanged:
+a dense Hessian costs `n` forward sweeps whichever entries are kept, so a triangle would save a
+gather and nothing else, and no consumer wants one.
+
+The implementation is a filter on `SparseJacobian`: keep the slots with `row >= col` (or `<=`) and
+`gather` the values. It applies after either construction path in `ad/sparse.py`, touches no IR,
+and keeps the same seeds as today; what it removes is half the output and the wrapper's per-call
+copy. Reducing the seeds is the star-colouring section's job and is measured on its own.
+
+One thing a naive filter would get wrong: the values are already a `gather` from the compressed
+products, the simplifier's only `GATHER` rule removes gathers of zero (`passes/expr.py`), and
+lowering allocates a buffer and a loop per gather. A second `gather` on top would keep the full-nnz
+intermediate inside the kernel and merely move IPOPT's copy. So either add the generic rewrite
+`gather(gather(x, a), b) -> gather(x, a[b])` to the simplifier, or filter the recovery table before
+the first gather is built. The gate is the rendered C: no buffer of the full nnz length remains.
+
+Files: `ad/sparse.py` (the filter), `function/factory.py`, `function/api.py`, `tests/ad/` and
+`tests/integration/test_map.py` (differential: triangle values equal the masked full values, on the
+mapped Hessian fixture too), `docs/guide/derivatives.md`.
+
+### 2. The backend chooses the triangle; the descriptor keeps only the pattern
+
+`SolverDescriptor.hess_lower_mask` is deleted without a replacement field: `hess_sparsity` already
+states exactly which entries the kernel produces, and a second field saying the same thing would be
+a second source of truth to keep consistent. Instead the NLP backend declares
+`_Backend.hess_triangle` (`ipopt` lower, `sqp` upper because PIQP's `P` is upper), `al.nlp` builds
+the descriptor Hessian with that `triangle`, and each plugin validates the coordinates it is handed:
+
+- `alloy-ipopt` drops `h_scratch` and `hess_lower_idx`, writes the kernel output straight into
+  `values`, and rejects a pattern that is not one triangle at wrapper-generation time. Either
+  triangle is acceptable to IPOPT.
+- `alloy-sqp` keeps its `(min, max)` mapping, which already accepts any layout; the comment
+  assuming a full pattern goes.
+- `external_nlp` needs no new argument: the pattern it is given is the layout.
+- `src/alloy/solvers/qp.py` already has `triu=True` for PIQP's `P`; unchanged.
+
+A new backend property and a changed oracle convention bump `SOLVER_PLUGIN_PROTOCOL_VERSION`, per
+the rule in `solvers/registry.py`.
+
+Consumers outside `src/`: `benchmarks/problems/unbumpercars/filters.py` and `checks.py` read
+`hess_lower_mask` for their instrumentation and should read the descriptor pattern instead;
+`docs/how_it_works/solvers.md`, `docs/guide/solver_backends.md` and `docs/dev/solver_plugins.md`
+describe the filtering and the mask.
+
+### 3. The sweep takes the CasADi kernel from the `nlpsol`
+
+`_casadi_descriptor_kernel` is replaced by `ca.nlpsol(name, "ipopt", nlp, options)` followed by
+`get_function("nlp_hess_l")` or `get_function("nlp_jac_g")`, so the CasADi column times the oracle
+CasADi's IPOPT calls: the upper triangle, star-coloured, with CasADi's own oracle construction.
+Consequences the harness has to absorb:
+
+- Input order follows the function's `name_in()`: `(x, p, lam_f, lam_g)` rather than the
+  `(z, lam_f, lam_g, p)` the hand-built kernel used. `nlp_jac_g` has two outputs; the harness times
+  the function and checks output 1.
+- `expand` follows the encoding, not the problem: `casadi_sx` is an `SX` graph already; `casadi_mx`,
+  `casadi_call_mx` and `casadi_map_sx` need `expand=False`, otherwise the `MX` outer graph is
+  flattened and the encoding label is wrong again. Whether `cse` can reach the `nlpsol` oracles is
+  to be checked; if not, the chain column's `cse` note in fairness.md changes.
+- The sweep assumes output 0 in more places than the helper: `sparsity_out(0)`, `size_out(0)`,
+  `nonzeros()` in `sweep.py`, and `res[0]` in the generated Google Benchmark driver in `gbench.py`.
+  All become output-index aware, and the timed request has to match what CasADi's IPOPT callback
+  actually asks for (whether `g` is requested alongside `jac_g_x`), or the "exact oracle" times a
+  different request. The unbumpercars branch calls `build_casadi_hessian` directly and bypasses the
+  helper; it is routed the same way.
+- The correctness gate compares the kernel's triangle against the same triangle of the dense
+  NumPy reference, coordinate by coordinate. `check_dense_reference` gains the layout; the references
+  stay full. The CSV records each column's layout, since lower against upper is "the oracle each
+  backend calls", not a coordinate-identical comparison.
+- `coloring_width` is today recomputed with `column_coloring` on the output pattern. On a triangle
+  that number is neither Alloy's colour count nor CasADi's. It becomes the count the construction
+  actually used, carried on `SparseJacobian`, and is blank for CasADi, which does not expose it.
+- Alloy's side needs no change once item 2 lands: `descriptor.hess` is the lower triangle.
+
+Both columns then hold one triangle each, lower for Alloy and upper for CasADi. Same entry count,
+same work for the solver, different triangle. That is the comparison fairness.md asks for.
+
+## Sequencing
+
+Agreed order for the coming sessions (2026-08-26): the `MAP` to `VMAP` rename first because it is
+mechanical and touches the same tests; then "Derivative API"; then "Star colouring", as its own
+landing so a failure in a large API migration and a failure in a new algorithm cannot be confused;
+then this section, so the first triangle measurement already sits on a star-coloured baseline.
+Within this section: item 1 alone with the whole suite, since it touches AD; item 2 with the
+plugins, docs and the unbumpercars consumers in one change; item 3 last. It lands before the pilot
+(todo C1), because it changes the timed kernel.
+
+## Considered and rejected
+
+- **A `TRIU` / `TRIL` operation in the IR, with a rewrite for `TRIU ∘ hess`.** A sparse Hessian is
+  not a matrix in the IR: it is a pattern plus a rank-1 `values` expression, and the rank-1 values
+  have no rows and columns for an operation to act on. On the dense Hessian the operation is well
+  defined but saves no arithmetic. The rewrite the idea needs on the sparse form is exactly the
+  two-line filter above, and nothing else in the graph is symmetric, so the operation would only
+  ever compose with one producer while costing the six files a new operation touches.
+- **Filtering in the wrapper, as today, and only fixing the sweep's CasADi side.** Leaves the
+  external-oracle mask bug in place and keeps Alloy computing entries it throws away.
+- **A dense `hess` triangle.** No consumer, no saving.
+- **Making IPOPT take the upper triangle to match CasADi.** IPOPT accepts either; lower is the
+  documented convention and what the current wrapper does. The point is one triangle per solver,
+  not one triangle everywhere.
+
+# Star colouring for sparse Hessians
+
+Decided 2026-08-26. Not started. Tracked as `internal/todo.md` D1.5. Depends on the `wrt2`
+deletion in "Derivative API".
+
+## The problem
+
+`ad/sparsity.py` has one colouring, `column_coloring`: greedy and one-sided, two columns may share a
+colour only if they share no row. It is applied to the Hessian's symmetric pattern as if it were an
+ordinary Jacobian, so nothing about the Hessian being symmetric reduces the seed count. CasADi's
+`hess` uses `Sparsity::star_coloring` for the same job, and a sparse-AD tool without symmetric
+colouring is missing a primitive its reference point has.
+
+Where it bites is a mapped Lagrangian with a shared differentiable variable — the case the autodiff
+page already names. For
+
+```
+L(z, θ) = Σ_i λ_i f(z_i, θ)        θ bound to every iteration with stride 0, differentiable
+x = (z_1, …, z_N, θ)
+```
+
+the Hessian is an arrow matrix,
+
+```
+⎡ B_1   0   …   0    C_1 ⎤      B_i = λ_i ∂²f/∂z_i²
+⎢  0   B_2  …   0    C_2 ⎥      C_i = λ_i ∂²f/∂z_i∂θ, nonzero for every i
+⎢  ⋮    ⋮   ⋱   ⋮     ⋮  ⎥      D   = Σ_i λ_i ∂²f/∂θ²
+⎣ C_1ᵀ C_2ᵀ … C_Nᵀ   D  ⎦
+```
+
+and the last block row is nonzero in every stage's columns. One-sided colouring must therefore
+give `z_i` and `z_j` different colours for every `i ≠ j`, the colour count becomes
+`N·nz + |θ|`, and the `sphess` body, which is proportional to the colour count per iteration, grows
+with the map length. With `θ` non-differentiable, which is every current benchmark, the `C_i`
+vanish and the pattern is block diagonal; that is why the suite does not show the problem. The
+problems with global optimisation variables that are planned next do.
+
+Star colouring uses the symmetry: `C_i` is column `θ` of `H`, so the `|θ|` seeds for `θ` deliver
+every `C_i` at once, and the `z_i` columns only need to be distinguishable on the rows inside `B_i`.
+The colour count returns to `≈ nz + |θ|`, constant in `N`.
+
+## What we are changing
+
+- `star_coloring(sparsity)` in `ad/sparsity.py`, next to `column_coloring`. A star colouring is a
+  proper colouring of the adjacency graph (adjacent vertices differ) in which every path on three
+  edges uses at least three colours, so no path is two-coloured. It is *not* a distance-2 colouring:
+  distance-2 would give every leaf of the arrow graph a different colour, because they all share
+  the neighbour `θ`, and reproduce exactly the growth this section removes. Greedy, in the order
+  the columns come. The function requires a square pattern, and `sparse_hessian` symmetrises the
+  structural pattern before colouring: the maths guarantees a symmetric Hessian, the conservative
+  structural analysis does not guarantee an exactly symmetric mask.
+- Decompression stays a constant-index `gather`. For an off-diagonal `(i, j)`: if `j` is the only
+  neighbour of `i` with its colour, read `compressed[i, colour(j)]`; otherwise read
+  `compressed[j, colour(i)]`. Both cannot be ambiguous, because the two competing neighbours would
+  form a two-coloured path on three edges. Diagonal entries are direct because the colouring is
+  proper. The table is built once at construction; no substitution or triangular solve.
+- Integration is more than swapping the colouring call. `sparse_hessian` today delegates to
+  `sparse_jacobian`, which may take the mapped, locally one-sided path and never sees a global
+  colouring. It gets its own compressed path over the full symmetric pattern, factored so the
+  compressed-JVP machinery accepts a colouring and a recovery table; `sparse_jacobian_colored`
+  becomes the one-sided instance of the same thing. The structured `MAP` rule inside
+  `_jvp_many_structural` colours the callee's *Jacobian* tile, which is not symmetric, and stays as
+  it is.
+- Separately, and first: the `SUM` rule of `_jvp_many_structural` is `stack([d0[i].sum() …])`, an
+  unrolled rule in structural clothing, and every objective is a sum. `Expr.sum()` reduces every
+  axis, so the structural form is a reshape to `(nseed, -1)` followed by a matrix-vector product
+  with ones; an axis-aware `SUM` would be a much larger change and is not needed.
+
+Tests: `tests/ad/test_sparsity.py` already carries a `shared_fill` fixture with a stride-0
+differentiable formal; add the differential (star values equal one-sided values equal the dense
+Hessian) and assert the colour count does not grow with the map length. That assertion is the one
+that matters: a wrong colouring definition still produces correct values, so a value test alone
+would pass while the scaling goal fails. The gate on the benchmark side is the `coloring_width`
+column the sweep records, once it reports the count the construction used, on every Hessian
+workload, before and after, with no runtime regression.
+
+## Sequencing
+
+After "Derivative API" and as its own landing, before "Hessian layout", so the sweep's first
+triangle measurement already includes it. The `SUM` rule is a separate small change before it.
+
+## Considered and rejected
+
+- **Distance-2 colouring.** Simpler to state and to implement, and correct, but it is exactly the
+  one-sided constraint in disguise on the arrow graph: every leaf is at distance two from every
+  other through `θ`.
+- **Acyclic colouring with substitution.** Fewer colours still, but decompression becomes a
+  triangular solve over the compressed values rather than a gather, which changes the `values`
+  expression shape and the generated C. Not worth it until a pattern shows star colouring is not
+  enough.
+- **Folding it into the triangle change.** The triangle is a filter on the result and star colouring
+  is how the result is computed; landing them together would hide which one moved the numbers.
