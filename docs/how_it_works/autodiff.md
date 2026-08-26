@@ -25,6 +25,12 @@ Batching the Jacobian is what keeps it from being a loop of independent sweeps. 
 rules share the expensive parts across columns — one `cos` serves every column of a `sin`'s
 derivative — and turn per-column chain-rule unrolling into small matrix products.
 
+`SUM` has a structural multi-seed rule as well. It reshapes the seed-batched tangent to
+`(nseed, input.size)` and multiplies each row by an all-ones vector. The reduction stays in one
+graph instead of becoming one Python-unrolled reduction per seed, so generated source does not grow
+with the seed count. The generated loop still performs one extra multiply for each summed element
+and seed. `dispatch_arithmetic` counts those multiplies, so Alloy pays for them in the reported work.
+
 Not every operation has a multi-seed rule yet: `abs`, `asin`, `acos`, `atan`, `atan2`, `minimum`,
 `maximum`, `floor`, `ceil`, and any `transpose` whose result is rank 4 or higher (the seed axis
 would push it past the rank-4 lowering limit) fall back to evaluating seeds one at a time. The fallback is silent by default because it is correct, just slower. Set
@@ -47,20 +53,21 @@ the derivative of a stage function has a narrower signature than the stage itsel
 the callee's adjoint graph, with memoized subgraphs and a topologically cached substitution so that
 repeated call structure does not re-walk the same graph once per occurrence.
 
-**For `map`, reverse mode caches one adjoint function** for the active formals and maps it once
+**For `VMAP`, reverse mode caches one adjoint function** for the active formals and wraps it once
 over the primal slices together with the per-iteration cotangent. Constant-index gathers then split
 its concatenated adjoints back apart: a broadcast formal reduces across iterations, disjoint
 windows take one scatter, and overlapping windows take a fixed number of scatters — one per
 distinct overlap offset — whose sum accumulates the repeated destinations. Cotangents from formals bound to the same outer
 expression are accumulated by the enclosing reverse pass.
 
-The result is that `jac`, `grad`, `hess` and `sphess` all work on graphs containing `map` without
-the derivative code growing with the map length.
+The result is that `jac`, `grad`, `hess` and `sphess` all work on graphs containing `VMAP` without
+the derivative code growing with the VMAP length.
 
-One case where that guarantee does not hold: a shared stride-0 formal marked differentiable gives
-the Hessian a dense row and column. One-sided column coloring then degenerates to one color per
-iteration and the generated `sphess` source grows with the map length. The values stay exact.
-Symmetric or star coloring would restore the constant behaviour and is not implemented.
+One case where one-sided coloring would lose that guarantee is a shared stride-0 formal marked
+differentiable: it gives the Hessian a dense row and column, so coloring the global pattern as a
+Jacobian needs one color per iteration. `sparse_hessian` instead symmetrizes its structural pattern
+and uses one global star-colored JVP batch, keeping the color count constant with the VMAP length.
+The structured VMAP Jacobian path remains one-sided and uses `column_coloring` on each local tile.
 
 ## Sparse derivatives
 
@@ -71,16 +78,18 @@ symbolic, and free of any AD import, which is what lets it sit below the fronten
 compressed sparse row Boolean arrays internally, covers the structural and arithmetic operations
 exactly, handles `matmul` conservatively, and applies a sparse Boolean chain rule through `call`.
 SciPy stays behind this module; public patterns remain `SparsityType` coordinate lists.
-`column_coloring` and `color_groups` expose the graph-coloring vocabulary on top of it.
+`column_coloring`, `star_coloring`, and `color_groups` expose the graph-coloring vocabulary on top
+of it. Star coloring is for square symmetric patterns: it is proper and forbids a two-coloured path
+of three edges, which makes each Hessian entry recoverable from one compressed product.
 
 `ad/sparse.py` is the half that needs AD. `sparse_jacobian(y, x)` returns a `SparseJacobian`: the
 pattern, plus a compact `values` expression holding exactly the nonzero entries.
 
-It tries a structured decomposition first. When `y` is a `map` node — or an axis-0 `concat` of
-`map` nodes — whose outer tensors are exactly `x`, each piece is handled locally: compute the
+It tries a structured decomposition first. When `y` is a `VMAP` node — or an axis-0 `concat` of
+`VMAP` nodes — whose outer tensors are exactly `x`, each piece is handled locally: compute the
 sparsity tile on the *callee*, color that small tile, materialize a constant local seed matrix,
 push it through a multi-seed forward pass specialized on those constant seeds (so constant-seed
-dead code elimination and CSE apply), wrap the result back in a `map` over the original slicing,
+dead code elimination and CSE apply), wrap the result back in a `VMAP` over the original slicing,
 and assemble the global nonzero buffer.
 
 When the per-formal contributions partition the nonzeros exactly — verified entry by entry, and the
@@ -93,8 +102,13 @@ This is why the compact ordering is piece-ordered rather than row-major, and why
 the authority on coordinates rather than an afterthought. See
 [the ABI](c_abi.md#sparse-outputs) for what that means on the C side.
 
-Anything that is not a `map` piece goes through `sparse_jacobian_colored`: compute the global
+Anything that is not a `VMAP` piece goes through `sparse_jacobian_colored`: compute the global
 pattern, greedily color structurally independent columns, build one compressed seed per color,
 evaluate the forward passes, simplify and CSE each compressed column, and gather each nonzero from
 its `(row, color[col])` slot. `sparse_jacobian_reference` computes the dense Jacobian and gathers
 from it — slow, obviously correct, and the differential reference small tests are written against.
+
+`sparse_hessian` takes a different global path. It differentiates the gradient, symmetrizes its
+structural pattern, star-colors that graph once, and uses a constant recovery table to gather every
+entry from the compressed products. It bypasses the top-level `_sparse_jacobian_vmap` construction
+shortcut, while global JVP rules retain one-sided coloring on each local VMAP tile.

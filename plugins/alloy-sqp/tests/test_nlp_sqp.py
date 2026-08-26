@@ -7,6 +7,7 @@ import pytest
 
 import alloy as al
 from alloy.codegen.aot import render_c_source
+from alloy.ir.types import SparsityType
 
 
 def _problem(*, hessian: str = "exact", max_iter: int = 30, trace: bool = False, **options) -> al.SolverFunction:
@@ -164,6 +165,67 @@ def _coupled_problem(name: str, *, solver: str = "sqp", **options) -> al.SolverF
     name=name,
     options={"tol": 1e-9, "qp_tol": 1e-10, **options} if solver == "sqp" else {"tol": 1e-10},
   )
+
+
+def test_sqp_descriptor_hessian_is_the_backend_selected_upper_triangle() -> None:
+  solver = _coupled_problem("sqp_upper_descriptor")
+  sparsity = solver.descriptor.hess_sparsity
+  assert sparsity is not None
+  assert all(row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
+  assert isinstance(solver.descriptor.hess, al.Function)
+  assert solver.descriptor.hess.output_sparsities[0] == sparsity
+
+
+def test_external_nlp_uses_the_supplied_pattern_as_the_hessian_layout() -> None:
+  from alloy_sqp.external import external_nlp
+
+  hess_sparsity = SparsityType((2, 2), (0, 0, 1), (0, 1, 1))
+  solver = external_nlp(
+    name="external_layout",
+    n=2,
+    n_eq=0,
+    n_ineq=0,
+    params=(),
+    source="",
+    raw_symbols={"base": "base", "grad": "grad", "hess": "hess", "bounds": "bounds"},
+    jac_sparsity=SparsityType.empty((0, 2)),
+    hess_sparsity=hess_sparsity,
+  )
+  assert solver.descriptor.hess_sparsity == hess_sparsity
+  assert not hasattr(solver.descriptor, "hess_lower_mask")
+
+
+def _external_sqp_hessian_pattern(name: str, rows: tuple[int, ...], cols: tuple[int, ...]) -> al.SolverFunction:
+  from alloy_sqp.external import external_nlp
+
+  return external_nlp(
+    name=name,
+    n=3,
+    n_eq=0,
+    n_ineq=0,
+    params=(),
+    source="",
+    raw_symbols={"base": f"{name}_base", "grad": f"{name}_grad", "hess": f"{name}_hess", "bounds": f"{name}_bounds"},
+    jac_sparsity=SparsityType.empty((0, 3)),
+    hess_sparsity=SparsityType((3, 3), rows, cols),
+  )
+
+
+@pytest.mark.parametrize(
+  ("rows", "cols", "expected_src"),
+  [
+    ((2, 2, 0, 1, 1), (0, 1, 0, 0, 1), [2, 3, 4, 0, 1, -1]),
+    ((2, 1, 2, 0, 1, 0, 2, 0, 1), (1, 2, 0, 2, 0, 1, 2, 0, 1), [7, 4, 8, 2, 0, 6]),
+  ],
+  ids=["lower-scrambled", "full-symmetric-scrambled"],
+)
+def test_sqp_maps_lower_and_full_hessian_patterns_to_first_canonical_sources(
+  rows: tuple[int, ...], cols: tuple[int, ...], expected_src: list[int]
+) -> None:
+  solver = _external_sqp_hessian_pattern("sqp_hessian_layout", rows, cols)
+  source = render_c_source(solver)
+  assert _c_table(source, "P_src") == expected_src
+  assert "P_x[k] = src >= 0 ? hess_buf[src] : 0.0;" in source
 
 
 def test_sqp_bakes_csc_patterns_from_the_descriptor_sparsity() -> None:

@@ -4,29 +4,30 @@
 
 ::: alloy.function.api.function
 
-## Derivative specs
+## Derivative requests
 
-The typed requests passed to `Function.factory`.
+Typed requests passed to `Function.factory`.
 
-::: alloy.function.factory.jac
+::: alloy.function.factory.DerivSpec
 
-::: alloy.function.factory.grad
+::: alloy.function.factory.Jac
 
-::: alloy.function.factory.hess
+::: alloy.function.factory.Grad
 
-::: alloy.function.factory.spjac
+::: alloy.function.factory.Hess
 
-::: alloy.function.factory.sphess
+::: alloy.function.factory.SpJac
 
-::: alloy.function.factory.fwd
+::: alloy.function.factory.SpHess
 
-::: alloy.function.factory.adj
+::: alloy.function.factory.Fwd
 
-::: alloy.function.model.DerivSpec
+::: alloy.function.factory.Adj
 
 ## Named wrappers
 
-Convenience over `Function.factory` for the common single-derivative requests.
+The common derivative functions accept either an Expr and an Expr input, or a Function, an output
+name, and an input name.
 
 ::: alloy.function.api.jacobian
 
@@ -34,13 +35,13 @@ Convenience over `Function.factory` for the common single-derivative requests.
 
 ::: alloy.function.api.hessian
 
+::: alloy.function.api.sparse_jacobian
+
+::: alloy.function.api.sparse_hessian
+
 ::: alloy.function.api.forward
 
 ::: alloy.function.api.adjoint
-
-::: alloy.function.api.spjacobian
-
-::: alloy.function.api.sphessian
 
 ::: alloy.function.api.lagrangian_hessian
 

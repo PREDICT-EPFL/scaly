@@ -8,13 +8,13 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 
 from ..function import Function
-from ..function.sugar import map_
+from ..function.sugar import vmap
 from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, stack, topo, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from .sparsity import _depends_on
 
 
-_MAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...]]]] = weakref.WeakKeyDictionary()
+_VMAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...]]]] = weakref.WeakKeyDictionary()
 
 
 def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
@@ -32,9 +32,9 @@ def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
   return memo[expr.id]
 
 
-def _map_adj_function(callee: Any, output_index: int, active_formals: tuple[int, ...]) -> tuple[Any, tuple[int, ...]]:
+def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int, ...]) -> tuple[Any, tuple[int, ...]]:
   key = (output_index, active_formals)
-  cache = _MAP_ADJ_CACHE.setdefault(callee, {})
+  cache = _VMAP_ADJ_CACHE.setdefault(callee, {})
   if key not in cache:
     out = callee.outputs[output_index]
     lam_name = f"lam:{callee.output_names[output_index]}"
@@ -53,27 +53,27 @@ def _map_adj_function(callee: Any, output_index: int, active_formals: tuple[int,
   return cache[key]
 
 
-def _map_vjp(map_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
-  callee = map_expr.attrs["callee"]
-  output_idx = map_expr.attrs["output"]
-  length = map_expr.attrs["length"]
+def _vmap_vjp(vmap_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
+  callee = vmap_expr.attrs["callee"]
+  output_idx = vmap_expr.attrs["output"]
+  length = vmap_expr.attrs["length"]
   if length == 0:
     return []
-  starts = map_expr.attrs["starts"]
-  strides = map_expr.attrs["strides"]
-  slice_size = map_expr.attrs["slice_size"]
-  active_formals = tuple(k for k, arg in enumerate(map_expr.args) if any(_depends_on(arg, wrt, dep_memo) for wrt in wrts))
+  starts = vmap_expr.attrs["starts"]
+  strides = vmap_expr.attrs["strides"]
+  slice_size = vmap_expr.attrs["slice_size"]
+  active_formals = tuple(k for k, arg in enumerate(vmap_expr.args) if any(_depends_on(arg, wrt, dep_memo) for wrt in wrts))
   if not active_formals:
     return []
 
-  adj_fn, arg_indices = _map_adj_function(callee, output_idx, active_formals)
-  primal_specs = [(map_expr.args[i], starts[i], strides[i]) for i in arg_indices]
-  mapped = map_(adj_fn, length, [*primal_specs, (cot, 0, slice_size)])
+  adj_fn, arg_indices = _vmap_adj_function(callee, output_idx, active_formals)
+  primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
+  mapped = vmap(adj_fn, length, [*primal_specs, (cot, 0, slice_size)])
   adj_size = sum(callee.inputs[k].size for k in active_formals)
   ret: list[tuple[Expr, Expr]] = []
   offset = 0
   for k in active_formals:
-    arg, start, stride = map_expr.args[k], starts[k], strides[k]
+    arg, start, stride = vmap_expr.args[k], starts[k], strides[k]
     formal_size = callee.inputs[k].size
     if stride == 0:
       indices = np.asarray([it * adj_size + offset + j for it in range(length) for j in range(formal_size)], dtype=np.int64)
@@ -121,8 +121,8 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
     cot = adjoints.get(expr.id)
     if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST} or not needed(expr):
       continue
-    if expr.op == ExprOp.MAP:
-      for arg, arg_cot in _map_vjp(expr, cot, wrts, dep_memo):
+    if expr.op == ExprOp.VMAP:
+      for arg, arg_cot in _vmap_vjp(expr, cot, wrts, dep_memo):
         if arg.id in expr_ids:
           adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
       continue

@@ -1,26 +1,26 @@
-"""The ergonomic frontend: the ``@function`` decorator and the named derivative wrappers.
-
-These are the canonical convenience layer over ``Function.factory`` and the typed specs in
-``factory.py`` — ``al.jacobian(fn, "x", "y")`` rather than a hand-assembled request.
-"""
+"""The ergonomic frontend: function construction and named derivative wrappers."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, overload
 
+from ..ad.derivatives import gradient as _gradient_expr
+from ..ad.derivatives import hessian as _hessian_expr
+from ..ad.derivatives import jacobian as _jacobian_expr
+from ..ad.sparse import SparseJacobian, Triangle, sparse_hessian as _expr_sparse_hessian
+from ..ad.sparse import sparse_jacobian as _expr_sparse_jacobian
 from ..ir.expr import Expr, ExprOp, as_expr
-from .factory import adj, fwd, grad, hess, jac, sphess, spjac
-from .model import Function
 from ..ir.types import TensorType, as_shape
+from .factory import Adj, Fwd, Grad, Hess, Jac, SpHess, SpJac
+from .model import Function
 
 
 def function(name: str, inputs: Mapping[str, int | tuple[int, ...] | TensorType]) -> Callable[[Callable[..., Any]], Function]:
-  """Build a Python-scoped symbolic function into an Alloy ``Function``.
+  """Build a Python-scoped symbolic function into an Alloy Function.
 
-  It creates fresh input placeholders scoped to the decorated function,
-  and returns the same IR-level ``Function`` used by explicit ``Expr.sym``
-  construction.
+  It creates input placeholders scoped to the decorated function and returns the same
+  IR-level Function used by explicit Expr.sym construction.
   """
 
   def decorate(fn: Callable[..., Any]) -> Function:
@@ -48,85 +48,246 @@ def _normalize_outputs(ret: Any) -> tuple[tuple[Expr, ...], tuple[str, ...]]:
   return outs, tuple(f"out{i}" for i in range(len(outs)))
 
 
-def jacobian(fn: Function, input_name: str, output_name: str, *, name: str | None = None, extra_inputs: Sequence[str] = ()) -> Function:
-  """Create a one-output function computing ``d output_name / d input_name``.
+def _expr_wrt(
+  operation: str,
+  args: tuple[Expr | str, ...],
+  wrt: Expr | str | None,
+  of: str | None,
+  name: str | None,
+  extra_inputs: Sequence[str],
+) -> Expr:
+  if name is not None or extra_inputs:
+    raise TypeError(f"{operation} Expr form does not accept name or extra_inputs")
+  if of is not None or len(args) > 1 or (args and wrt is not None):
+    raise TypeError(f"the Expr form is {operation}(expr, wrt)")
+  candidate = wrt if wrt is not None else (args[0] if args else None)
+  if not isinstance(candidate, Expr):
+    raise TypeError(f"the Expr form is {operation}(expr, wrt)")
+  return candidate
 
-  ``extra_inputs`` are passed through to the derived function unchanged, after the differentiated
-  input — what a caller needs when the source function also takes parameters.
+
+def _function_names(operation: str, args: tuple[Expr | str, ...], wrt: Expr | str | None, of: str | None) -> tuple[str, str]:
+  if len(args) == 2 and wrt is None and of is None:
+    function_of, function_wrt = args
+  elif len(args) == 1 and wrt is not None and of is None:
+    function_of, function_wrt = args[0], wrt
+  elif not args:
+    function_of, function_wrt = of, wrt
+  else:
+    raise TypeError(f"the Function form is {operation}(fn, of, wrt)")
+  if not isinstance(function_of, str) or not isinstance(function_wrt, str):
+    raise TypeError(f"the Function form is {operation}(fn, of, wrt)")
+  return function_of, function_wrt
+
+
+@overload
+def jacobian(source: Expr, wrt: Expr) -> Expr: ...
+
+
+@overload
+def jacobian(source: Function, of: str, wrt: str, *, name: str | None = None, extra_inputs: Sequence[str] = ()) -> Function: ...
+
+
+def jacobian(
+  source: Expr | Function,
+  *args: Expr | str,
+  wrt: Expr | str | None = None,
+  of: str | None = None,
+  name: str | None = None,
+  extra_inputs: Sequence[str] = (),
+) -> Expr | Function:
+  """Build a dense Jacobian for an Expr or a named Function output."""
+  if isinstance(source, Expr):
+    return _jacobian_expr(source, _expr_wrt("jacobian", args, wrt, of, name, extra_inputs))
+  if not isinstance(source, Function):
+    raise TypeError("jacobian source must be an Expr or Function")
+  function_of, function_wrt = _function_names("jacobian", args, wrt, of)
+  return source.factory(name or f"{source.name}_jac_{function_of}_{function_wrt}", [function_wrt, *extra_inputs], [Jac(function_of, function_wrt)])
+
+
+@overload
+def gradient(source: Expr, wrt: Expr) -> Expr: ...
+
+
+@overload
+def gradient(source: Function, of: str, wrt: str, *, name: str | None = None, extra_inputs: Sequence[str] = ()) -> Function: ...
+
+
+def gradient(
+  source: Expr | Function,
+  *args: Expr | str,
+  wrt: Expr | str | None = None,
+  of: str | None = None,
+  name: str | None = None,
+  extra_inputs: Sequence[str] = (),
+) -> Expr | Function:
+  """Build a gradient for an Expr or a named Function output."""
+  if isinstance(source, Expr):
+    return _gradient_expr(source, _expr_wrt("gradient", args, wrt, of, name, extra_inputs))
+  if not isinstance(source, Function):
+    raise TypeError("gradient source must be an Expr or Function")
+  function_of, function_wrt = _function_names("gradient", args, wrt, of)
+  return source.factory(name or f"{source.name}_grad_{function_of}_{function_wrt}", [function_wrt, *extra_inputs], [Grad(function_of, function_wrt)])
+
+
+@overload
+def hessian(source: Expr, wrt: Expr) -> Expr: ...
+
+
+@overload
+def hessian(source: Function, of: str, wrt: str, *, name: str | None = None, extra_inputs: Sequence[str] = ()) -> Function: ...
+
+
+def hessian(
+  source: Expr | Function,
+  *args: Expr | str,
+  wrt: Expr | str | None = None,
+  of: str | None = None,
+  name: str | None = None,
+  extra_inputs: Sequence[str] = (),
+) -> Expr | Function:
+  """Build a Hessian for an Expr or a named Function output."""
+  if isinstance(source, Expr):
+    return _hessian_expr(source, _expr_wrt("hessian", args, wrt, of, name, extra_inputs))
+  if not isinstance(source, Function):
+    raise TypeError("hessian source must be an Expr or Function")
+  function_of, function_wrt = _function_names("hessian", args, wrt, of)
+  return source.factory(
+    name or f"{source.name}_hess_{function_of}_{function_wrt}_{function_wrt}", [function_wrt, *extra_inputs], [Hess(function_of, function_wrt)]
+  )
+
+
+@overload
+def sparse_jacobian(source: Expr, wrt: Expr) -> SparseJacobian: ...
+
+
+@overload
+def sparse_jacobian(source: Function, of: str, wrt: str, *, name: str | None = None, extra_inputs: Sequence[str] = ()) -> Function: ...
+
+
+def sparse_jacobian(
+  source: Expr | Function,
+  *args: Expr | str,
+  wrt: Expr | str | None = None,
+  of: str | None = None,
+  name: str | None = None,
+  extra_inputs: Sequence[str] = (),
+) -> SparseJacobian | Function:
+  """Build compact nonzero Jacobian values for an Expr or a named Function output."""
+  if isinstance(source, Expr):
+    return _expr_sparse_jacobian(source, _expr_wrt("sparse_jacobian", args, wrt, of, name, extra_inputs))
+  if not isinstance(source, Function):
+    raise TypeError("sparse_jacobian source must be an Expr or Function")
+  function_of, function_wrt = _function_names("sparse_jacobian", args, wrt, of)
+  return source.factory(
+    name or f"{source.name}_spjac_{function_of}_{function_wrt}", [function_wrt, *extra_inputs], [SpJac(function_of, function_wrt)]
+  )
+
+
+@overload
+def sparse_hessian(source: Expr, wrt: Expr, *, triangle: Triangle = "full") -> SparseJacobian: ...
+
+
+@overload
+def sparse_hessian(
+  source: Function,
+  of: str,
+  wrt: str,
+  *,
+  name: str | None = None,
+  extra_inputs: Sequence[str] = (),
+  triangle: Triangle = "full",
+) -> Function: ...
+
+
+def sparse_hessian(
+  source: Expr | Function,
+  *args: Expr | str,
+  wrt: Expr | str | None = None,
+  of: str | None = None,
+  name: str | None = None,
+  extra_inputs: Sequence[str] = (),
+  triangle: Triangle = "full",
+) -> SparseJacobian | Function:
+  """Build compact nonzero Hessian values for an Expr or a named Function output.
+
+  ``triangle`` selects the symmetric pattern returned by the sparse Hessian: ``"full"`` keeps
+  every entry, while ``"lower"`` and ``"upper"`` keep one triangle in the full pattern's order.
   """
-
-  return fn.factory(name or f"{fn.name}_jac_{output_name}_{input_name}", [input_name, *extra_inputs], [jac(output_name, input_name)])
-
-
-def gradient(fn: Function, input_name: str, output_name: str, *, name: str | None = None, extra_inputs: Sequence[str] = ()) -> Function:
-  """Create a one-output function computing the gradient of a scalar output."""
-
-  return fn.factory(name or f"{fn.name}_grad_{output_name}_{input_name}", [input_name, *extra_inputs], [grad(output_name, input_name)])
-
-
-def hessian(fn: Function, input_name: str, output_name: str, *, name: str | None = None, extra_inputs: Sequence[str] = ()) -> Function:
-  """Create a one-output function computing the Hessian of a scalar output."""
-
-  return fn.factory(name or f"{fn.name}_hess_{output_name}_{input_name}_{input_name}", [input_name, *extra_inputs], [hess(output_name, input_name)])
-
-
-def forward(fn: Function, input_name: str, output_name: str, *, name: str | None = None, extra_inputs: Sequence[str] = ()) -> Function:
-  """Create a seeded forward-mode function computing ``J(output, input) @ fwd``."""
-
-  return fn.factory(
-    name or f"{fn.name}_fwd_{output_name}_{input_name}", [input_name, f"fwd:{input_name}", *extra_inputs], [fwd(output_name, input_name)]
+  if isinstance(source, Expr):
+    return _expr_sparse_hessian(source, _expr_wrt("sparse_hessian", args, wrt, of, name, extra_inputs), triangle=triangle)
+  if not isinstance(source, Function):
+    raise TypeError("sparse_hessian source must be an Expr or Function")
+  function_of, function_wrt = _function_names("sparse_hessian", args, wrt, of)
+  return source.factory(
+    name or f"{source.name}_sphess_{function_of}_{function_wrt}_{function_wrt}",
+    [function_wrt, *extra_inputs],
+    [SpHess(function_of, function_wrt, triangle=triangle)],
   )
 
 
-def adjoint(fn: Function, input_name: str, output_name: str, *, name: str | None = None, extra_inputs: Sequence[str] = ()) -> Function:
-  """Create a seeded reverse-mode function computing ``J(output, input).T @ lam``."""
-
-  return fn.factory(
-    name or f"{fn.name}_adj_{output_name}_{input_name}", [input_name, f"lam:{output_name}", *extra_inputs], [adj(output_name, input_name)]
-  )
-
-
-def spjacobian(fn: Function, input_name: str, output_name: str, *, name: str | None = None, extra_inputs: Sequence[str] = ()) -> Function:
-  """Create a one-output function computing compact nonzero Jacobian values."""
-
-  return fn.factory(name or f"{fn.name}_spjac_{output_name}_{input_name}", [input_name, *extra_inputs], [spjac(output_name, input_name)])
+def forward(
+  fn: Function,
+  of: str,
+  wrt: str,
+  *,
+  name: str | None = None,
+  extra_inputs: Sequence[str] = (),
+) -> Function:
+  """Create a seeded forward-mode Function computing J(of, wrt) @ fwd:wrt."""
+  return fn.factory(name or f"{fn.name}_fwd_{of}_{wrt}", [wrt, f"fwd:{wrt}", *extra_inputs], [Fwd(of, wrt)])
 
 
-def sphessian(fn: Function, input_name: str, output_name: str, *, name: str | None = None, extra_inputs: Sequence[str] = ()) -> Function:
-  """Create a one-output function computing compact nonzero Hessian values."""
-
-  return fn.factory(
-    name or f"{fn.name}_sphess_{output_name}_{input_name}_{input_name}", [input_name, *extra_inputs], [sphess(output_name, input_name)]
-  )
+def adjoint(
+  fn: Function,
+  of: str,
+  wrt: str,
+  *,
+  name: str | None = None,
+  extra_inputs: Sequence[str] = (),
+) -> Function:
+  """Create a seeded reverse-mode Function computing J(of, wrt).T @ lam:of."""
+  return fn.factory(name or f"{fn.name}_adj_{of}_{wrt}", [wrt, f"lam:{of}", *extra_inputs], [Adj(of, wrt)])
 
 
 def lagrangian_hessian(
-  fn: Function, input_name: str, output_names: Sequence[str], *, name: str | None = None, aux_name: str = "gamma", extra_inputs: Sequence[str] = ()
+  fn: Function,
+  of: Sequence[str],
+  wrt: str,
+  *,
+  name: str | None = None,
+  aux_name: str = "gamma",
+  extra_inputs: Sequence[str] = (),
 ) -> Function:
-  """Create a Hessian of ``sum(dot(lam:out, out) for out in output_names)``.
-
-  The generated function inputs are ``input_name``, one ``lam:<output>`` input for every output in
-  ``output_names``, then ``extra_inputs``.
-  """
-
-  inputs = [input_name, *(f"lam:{out}" for out in output_names), *extra_inputs]
+  """Create a dense Hessian of a weighted combination of named outputs."""
+  inputs = [wrt, *(f"lam:{out}" for out in of), *extra_inputs]
   return fn.factory(
-    name or f"{fn.name}_hess_{aux_name}_{input_name}_{input_name}",
+    name or f"{fn.name}_hess_{aux_name}_{wrt}_{wrt}",
     inputs,
-    [hess(aux_name, input_name)],
-    aux={aux_name: output_names},
+    [Hess(aux_name, wrt)],
+    aux={aux_name: of},
   )
 
 
 def sparse_lagrangian_hessian(
-  fn: Function, input_name: str, output_names: Sequence[str], *, name: str | None = None, aux_name: str = "gamma", extra_inputs: Sequence[str] = ()
+  fn: Function,
+  of: Sequence[str],
+  wrt: str,
+  *,
+  name: str | None = None,
+  aux_name: str = "gamma",
+  extra_inputs: Sequence[str] = (),
+  triangle: Triangle = "full",
 ) -> Function:
-  """Create compact nonzero values for a Hessian of a Lagrangian-style auxiliary output."""
+  """Create compact nonzero values for a Hessian of a weighted combination of outputs.
 
-  inputs = [input_name, *(f"lam:{out}" for out in output_names), *extra_inputs]
+  ``triangle`` selects the symmetric pattern returned by the sparse Hessian: ``"full"`` keeps
+  every entry, while ``"lower"`` and ``"upper"`` keep one triangle in the full pattern's order.
+  """
+  inputs = [wrt, *(f"lam:{out}" for out in of), *extra_inputs]
   return fn.factory(
-    name or f"{fn.name}_sphess_{aux_name}_{input_name}_{input_name}",
+    name or f"{fn.name}_sphess_{aux_name}_{wrt}_{wrt}",
     inputs,
-    [sphess(aux_name, input_name)],
-    aux={aux_name: output_names},
+    [SpHess(aux_name, wrt, triangle=triangle)],
+    aux={aux_name: of},
   )

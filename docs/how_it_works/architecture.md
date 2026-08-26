@@ -49,15 +49,15 @@ import alloy as al
 def rosenbrock(x):
   return {"f": ((1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2).scalar()}
 
-grad = rosenbrock.factory("rosenbrock_grad", ["x"], [al.grad("f", "x")])
+grad = rosenbrock.factory("rosenbrock_grad", ["x"], [al.factory.Grad("f", "x")])
 grad([1.0, 2.0])
 ```
 
 | # | What happens | Where |
 | --- | --- | --- |
 | 1 | The decorator makes fresh input symbols, runs the body, and wraps the returned exprs in a `Function`. | `function/api.py`, `function/model.py` |
-| 2 | `al.grad("f", "x")` is a typed request object, not a string. `Function.factory` resolves the named input and output and calls the spec's `build`. | `function/model.py` (`factory`), `function/factory.py` (the specs) |
-| 3 | `al.grad`'s `build` is one reverse sweep over the expression DAG. Other kinds dispatch elsewhere — `jac` batches forward mode over the identity, `spjac` colors a structural pattern first. | `ad/derivatives.py`, `ad/reverse.py` |
+| 2 | `al.factory.Grad("f", "x")` is a typed request object, not a string. `Function.factory` resolves the named input and output and calls the spec's `build`. | `function/model.py` (`factory`), `function/factory.py` (the specs) |
+| 3 | `al.factory.Grad`'s `build` is one reverse sweep over the expression DAG. Other kinds dispatch elsewhere — `al.factory.Jac` batches forward mode over the identity, and `al.factory.SpJac` colors a structural pattern first. | `ad/derivatives.py`, `ad/reverse.py` |
 | 4 | The result is another `Function`, in the same dialect as the first. Nothing has been compiled yet. | `function/model.py` |
 | 5 | Calling it runs `__call__` → `eval_list` → `_compile`, which reaches the backend through `_jit()` — the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](#the-two-sanctioned-exceptions) to the layering. | `function/model.py` |
 | 6 | `CompiledFunction` asks `_build_artifact` for a shared library, which calls `render_c_module`. That lowers the function **once** into a render context every artifact reads from. | `codegen/jit.py`, `codegen/aot.py` |
@@ -99,10 +99,10 @@ src/alloy/
     program.py           PASS_PIPELINE and its passes              (ProgramNode -> ProgramNode)
 
   function/              the frontend
-    model.py             Function, Port, call composition, graph validation, the DerivSpec base
+    model.py             Function, call composition, graph validation
     factory.py           the typed derivative specs and the AD each dispatches to
     api.py               the @function decorator and the convenience derivative wrappers
-    sugar.py             expression builders that need a Function — today just map_
+    sugar.py             expression builders that need a Function — today just vmap
 
   ad/                    derivative construction, all of it inside the expression dialect
     forward.py           jvp, jvp_many
@@ -154,7 +154,7 @@ rule is what keeps the packages above from turning back into the tangle they wer
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
 | 2 | `passes/expr`, `ad/sparsity`, `solvers/stats` | Above layer 1 but below the frontend: expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR at all). Nothing here knows what a `Function` is. |
 | 3 | `function/model` | `Function` itself — a named graph boundary over layer 1. |
-| 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`map_`). |
+| 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
 | 6 | `passes/{lowering,program}` | Consume a whole `Function` — including its solver callees — and produce the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
@@ -240,21 +240,26 @@ negative tests are written against. `lower_function` verifies its output before 
 ### Building — `function/`
 
 `function/model.py` owns `Function`: names, shapes, sparsity metadata, the undeclared-input check,
-first-class `call` composition, and `factory`. `function/api.py` is the ergonomic layer — the
-`@al.function` decorator and the wrappers (`al.jacobian`, `al.gradient`, `al.sphessian`, …) that
+first-class `call` composition, and `factory`. It also owns the dependency-light `DerivSpec` base at
+layer 3.
+`function/api.py` is the ergonomic layer — the
+`@al.function` decorator and the overloaded wrappers (`al.jacobian`, `al.gradient`, `al.sparse_hessian`, …) that
 most user code actually calls.
 
 `Function.factory(name, inputs, outputs)` is the derivative request API. Outputs are **typed spec
-objects** — `al.jac("eq", "z")`, `al.grad("f", "x")`, `al.sphess(...)` — one frozen dataclass per
-kind in `function/factory.py`, each with its own `build`. There is no string grammar to parse.
+objects** — `al.factory.Jac("eq", "z")`, `al.factory.Grad("f", "x")`, and `al.factory.SpHess(...)` —
+one frozen dataclass per kind in `function/factory.py`, each with its own `build`. There is no
+string grammar to parse.
 Input names remain strings, including the `lam:<output>` and `fwd:<input>` conventions `factory`
 creates for you; [Derivatives](../guide/derivatives.md) lists the kinds and what each returns. A spec also owns its
-derived output's name — `{kind}_{of}_{wrt}`, and `{kind}_{of}_{wrt}_{wrt2}` for the two Hessian
-kinds — which is what the generated C symbols are keyed on, so a rename there moves symbols.
+derived output's name — `{kind}_{of}_{wrt}`, and `{kind}_{of}_{wrt}_{wrt}` for the two Hessian
+kinds — which is what the generated C symbols are keyed on, so a rename there moves symbols. Hess
+and SpHess always use the same input twice, so the doubled `{wrt}` is retained in those names.
 
-The split between `model.py` and `factory.py` is the layering: the request shape (`DerivSpec`) has
-to be reachable from `Function` at layer 3, while the concrete kinds import `ad` and so live at
-layer 5. `factory` stays a method; the spec-to-AD dispatch is what moved up.
+The split keeps the dependency direction clear: `function/factory.py` owns the concrete derivative
+request classes and publicly re-exports the base through `al.factory`. The concrete requests import
+`ad`, so they stay at layer 5. `factory` stays a method; the request-to-AD dispatch is the part users
+can also reach through `al.factory`.
 
 ### Differentiating — `ad/`
 
@@ -267,10 +272,10 @@ graph shape alone. `ad/sparse.py` is the half that needs AD, building compact no
 expressions over a colored pattern. Keeping the two apart is what lets `sparsity` sit at layer 2
 and be reused from below.
 
-Call and `MAP` nodes are differentiated without expanding the callee, but not the same way in both
+Call and `VMAP` nodes are differentiated without expanding the callee, but not the same way in both
 modes. Forward mode builds a cached derivative `Function` per (callee, output, formal) and emits a
 new call to it. Reverse mode inlines the callee's adjoint graph for an ordinary call, and caches one
-mapped adjoint `Function` for a `MAP`. Either way, repeated named structure — an RK4 stage inside a
+mapped adjoint `Function` for a `VMAP`. Either way, repeated named structure — an RK4 stage inside a
 horizon constraint — does not re-walk the same graph once per stage.
 
 ### Lowering — `passes/lowering.py`

@@ -134,7 +134,7 @@ variadic. `diff` is whether AD can pass through the op at all.
 | Op | Arity | Diff | Notes |
 | --- | --- | --- | --- |
 | `call` | – | yes | a named `Function` applied to arguments |
-| `map` | – | yes | one callee applied across slices of its arguments |
+| `VMAP` | – | yes | one callee applied across slices of its arguments |
 | `solver_call` | – | **no** | an opaque solve; see [Solvers](solvers.md) |
 
 `dot`, `sumsqr` and `norm_2` are not operations — they are builders that expand into the ops above.
@@ -178,7 +178,7 @@ node, naming the node, its op and the rule it failed. Two specs are exported:
   matching `OP_INFO`, sparsity shape agreeing with tensor shape.
 - `spec_expr` — the above plus per-op rules: `reshape` preserves size, `transpose` axes are a
   permutation, `matmul` contracting dimensions agree, `call` argument shapes match the callee,
-  `map` outer tensors are rank 1 with a consistent slice size, `const` value shape and dtype match
+  `VMAP` outer tensors are rank 1 with a consistent slice size, `const` value shape and dtype match
   the declared type.
 
 Run it after a non-trivial rewrite or an AD transform, and write negative tests against it. It is

@@ -95,7 +95,6 @@ def external_nlp(
       bounds=bounds,
       jac_sparsity=jac_sparsity,
       hess_sparsity=hess_sparsity,
-      hess_lower_mask=tuple(r >= c for r, c in zip(hess_sparsity.rows, hess_sparsity.cols, strict=True)),
       options=tuple(sorted(resolved_options.items())),
     )
   )

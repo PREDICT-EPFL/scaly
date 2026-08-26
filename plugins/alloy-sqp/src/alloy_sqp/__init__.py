@@ -14,7 +14,8 @@ if TYPE_CHECKING:
 class _Backend:
   name = "sqp"
   kind = "nlp"
-  protocol_version = 4
+  hess_triangle = "upper"
+  protocol_version = 5
   lib_stem = "piqpc"
   link_flags = ("-lpiqpc",)
   header = "piqp/piqp.h"

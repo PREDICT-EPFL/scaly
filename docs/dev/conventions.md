@@ -18,7 +18,7 @@ two characters and costs a reader a guess about whether `m` means minus or measu
 vocabulary; "semantic IR" and the old `P`-prefixed spellings are gone and are not coming back.
 
 **Derived output names are load-bearing.** A derivative output is named `{kind}_{of}_{wrt}`, or
-`{kind}_{of}_{wrt}_{wrt2}` for the two Hessian kinds. These become generated C symbols and the
+`{kind}_{of}_{wrt}_{wrt}` for the two Hessian kinds. These become generated C symbols and the
 prefixes of the sparsity tables in the header, so renaming one moves symbols in everyone's build.
 
 ## Code style

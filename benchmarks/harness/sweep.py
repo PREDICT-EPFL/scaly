@@ -57,6 +57,7 @@ FIELDS = [
   "workload",
   "size",
   "backend",
+  "layout",
   "codegen_ms",
   "source_bytes",
   "artifact_bytes",
@@ -161,12 +162,12 @@ def _static_trip_count(rng: ProgramNode) -> int | None:
 
 
 def _dispatch_metrics(fun: al.Function, prog: ProgramNode) -> tuple[int | str, int | str, int | str]:
-  """Return the retained MAP trip count, callee workspace, and arithmetic per iteration."""
-  maps = [node for node in topo(fun.outputs) if node.op == ExprOp.MAP]
-  trip_counts = {int(node.attrs["length"]) for node in maps}
-  if not maps or len(trip_counts) != 1:
+  """Return the retained VMAP trip count, callee workspace, and arithmetic per iteration."""
+  vmaps = [node for node in topo(fun.outputs) if node.op == ExprOp.VMAP]
+  trip_counts = {int(node.attrs["length"]) for node in vmaps}
+  if not vmaps or len(trip_counts) != 1:
     return "", "", ""
-  mapped_callees = {str(node.attrs["callee"].name) for node in maps}
+  mapped_callees = {str(node.attrs["callee"].name) for node in vmaps}
   proc_count = int(prog.attrs.get("proc_count", 0))
   procs = {proc.attrs["name"]: proc for proc in prog.args[:proc_count]}
   arithmetic_cache: dict[str, int] = {}
@@ -243,14 +244,27 @@ def _dispatch_metrics(fun: al.Function, prog: ProgramNode) -> tuple[int | str, i
   return trip_count, workspace, work
 
 
-def _module_info(name: str, backend: str, module, inputs, sparsity, shape, build_ms: float, render_ms: float, benchmark: str, **extra) -> dict:
+def _module_info(
+  name: str,
+  backend: str,
+  module,
+  inputs,
+  sparsity,
+  shape,
+  build_ms: float,
+  render_ms: float,
+  benchmark: str,
+  coloring_width: int | None = None,
+  layout: str = "full",
+  **extra,
+) -> dict:
   source_path = Path(module.source_name)
   artifact_bytes, executable_bytes, static_metadata_bytes = _artifact_sizes(module.source, module.header)
   dispatch_trip_count, dispatch_workspace, dispatch_arithmetic = _dispatch_metrics(extra["callable"], module.program)
-  colors = al.column_coloring(sparsity)
   return {
     "name": name,
     "backend": backend,
+    "layout": layout,
     "source": source_path,
     "header": module.header_name,
     "inputs": inputs,
@@ -271,7 +285,7 @@ def _module_info(name: str, backend: str, module, inputs, sparsity, shape, build
     "dispatch_trip_count": dispatch_trip_count,
     "dispatch_workspace": dispatch_workspace,
     "dispatch_arithmetic": dispatch_arithmetic,
-    "coloring_width": max(colors) + 1 if colors else 0,
+    "coloring_width": coloring_width,
     "build_ms": build_ms,
     "render_ms": render_ms,
     "benchmark": benchmark,
@@ -294,28 +308,61 @@ def _descriptor_kernel(solver: al.SolverFunction, kind: str):
   if not isinstance(function, al.Function) or sparsity is None:
     raise TypeError(f"{descriptor.name} has no Alloy {kind} kernel")
   assert function.output_sparsities[0] == sparsity
-  return function, sparsity
+  return function, sparsity, function.output_coloring_widths[0]
 
 
-def _casadi_descriptor_kernel(ca, name: str, z, p, cost, constraints, kind: str, *, cse: bool = False):
-  """Build the full CasADi oracle set and return the selected descriptor-equivalent kernel.
+_CASADI_ORACLE_NAMES = {"hess": "nlp_hess_l", "jac": "nlp_jac_g"}
+_CASADI_OUTPUT_INDEX = {"hess": 0, "jac": 1}
+# The generated IPOPT callback requests only jac_g_x. CasADi's nlp_jac_g function exposes g as
+# output 0 for the separate eval_g callback, then passes NULL for that slot in eval_jac_g.
+_CASADI_REQUESTED_OUTPUTS = {"hess": (0,), "jac": (1,)}
 
-  The unselected functions are built and dropped on purpose: ``build_ms`` then covers the whole
-  oracle set, as the Alloy column's ``build_ms`` covers the whole ``al.nlp`` construction. The
-  Hessian is the full symmetric matrix on both sides; ``internal/todo.md`` A11 owns the triangle.
+
+def _casadi_descriptor_kernel(ca, name: str, z, p, cost, constraints, kind: str, *, expand: bool, cse: bool = False):
+  """Build the CasADi IPOPT oracle and return the function used by its IPOPT callback.
+
+  ``nlpsol`` owns the complete oracle set, so construction cost covers the same base, gradient,
+  Jacobian, and Hessian construction that the optimizer sees. CasADi does not accept ``cse`` as an
+  ``nlpsol`` option; applying ``ca.cse`` to the NLP expressions first is the reachable equivalent.
+  ``nlp_jac_g`` deliberately remains a two-output function: IPOPT requests output 1 and leaves
+  output 0 null, which the benchmark records explicitly.
   """
-  options = {"cse": True} if cse else {}
-  ca.Function(f"{name}_base", [z, p], [cost, constraints], options)
-  ca.Function(f"{name}_grad", [z, p], [ca.gradient(cost, z)], options)
-  jac = ca.Function(name if kind == "jac" else f"{name}_descriptor_jac", [z, p], [ca.jacobian(constraints, z)], options)
-  lam_f, lam_g = type(z).sym("lam_f"), type(z).sym("lam_g", int(constraints.shape[0]))
-  hess = ca.Function(
-    name if kind == "hess" else f"{name}_descriptor_hess",
-    [z, lam_f, lam_g, p],
-    [ca.hessian(lam_f * cost + ca.dot(lam_g, constraints), z)[0]],
-    options,
-  )
-  return hess if kind == "hess" else jac
+  if kind not in _CASADI_ORACLE_NAMES:
+    raise ValueError(f"unsupported CasADi oracle kind {kind!r}")
+  if cse:
+    cost, constraints = ca.cse([cost, constraints])
+  options = {"expand": expand, "ipopt.print_level": 0, "ipopt.sb": "yes", "print_time": False}
+  solver = ca.nlpsol(name, "ipopt", {"x": z, "p": p, "f": cost, "g": constraints}, options)
+  return solver.get_function(_CASADI_ORACLE_NAMES[kind])
+
+
+def _casadi_output_metadata(fn, kind: str) -> dict[str, object]:
+  """Return output-indexed sparsity and pointer metadata for a CasADi oracle function."""
+  output_index = _CASADI_OUTPUT_INDEX[kind]
+  requested_outputs = _CASADI_REQUESTED_OUTPUTS[kind]
+  if output_index >= fn.n_out() or any(index >= fn.n_out() for index in requested_outputs):
+    raise RuntimeError(f"CasADi {fn.name()!r} has {fn.n_out()} outputs, expected {requested_outputs}")
+  output_sparsities = tuple(fn.sparsity_out(index) for index in range(fn.n_out()))
+  selected = output_sparsities[output_index]
+  rows, cols = selected.get_triplet()
+  layout = "upper" if kind == "hess" else "full"
+  if layout == "upper" and any(row > col for row, col in zip(rows, cols, strict=True)):
+    raise RuntimeError(f"CasADi {fn.name()!r} Hessian output is not upper triangular")
+  output_nnz = tuple(int(sp.nnz()) for sp in output_sparsities)
+  return {
+    "output_index": output_index,
+    "requested_output_indices": requested_outputs,
+    "output_names": tuple(fn.name_out(index) for index in range(fn.n_out())),
+    "layout": layout,
+    "output_nnz": output_nnz,
+    "rows": tuple(int(value) for value in rows),
+    "cols": tuple(int(value) for value in cols),
+    "nnz": int(selected.nnz()),
+    "n_rows": int(fn.size_out(output_index)[0]),
+    "n_cols": int(fn.size_out(output_index)[1]),
+    "arg_size": int(fn.sz_arg()),
+    "res_size": int(fn.sz_res()),
+  }
 
 
 def _mixed_sign_multipliers(count: int) -> np.ndarray:
@@ -368,7 +415,7 @@ def _race_cars_alloy(workload: str, size: int, out_dir: Path) -> dict:
 
   kind = _kernel_kind(workload)
   started = time.perf_counter()
-  kernel, sparsity = _descriptor_kernel(_race_car_nlp(EpisodeConfig(horizon=size)), kind)
+  kernel, sparsity, coloring_width = _descriptor_kernel(_race_car_nlp(EpisodeConfig(horizon=size)), kind)
   name = kernel.name
   build_ms = (time.perf_counter() - started) * 1000
   module, render_ms = _render_alloy(kernel, name, out_dir)
@@ -389,6 +436,8 @@ def _race_cars_alloy(workload: str, size: int, out_dir: Path) -> dict:
     build_ms,
     render_ms,
     benchmark,
+    coloring_width=coloring_width,
+    layout="lower" if _kernel_kind(workload) == "hess" else "full",
     w_size=module.workspace_size,
     callable=kernel,
   )
@@ -404,7 +453,7 @@ def _chain_alloy(workload: str, size: int, out_dir: Path) -> dict:
   )
   benchmark = f"BM_AlloyChain{'EqJac' if kind == 'jac' else 'LagHess'}M{size}"
   started = time.perf_counter()
-  kernel, sparsity = _descriptor_kernel(chain.chain_nlp(size, horizon), kind)
+  kernel, sparsity, coloring_width = _descriptor_kernel(chain.chain_nlp(size, horizon), kind)
   name = kernel.name
   build_ms = (time.perf_counter() - started) * 1000
   module, render_ms = _render_alloy(kernel, name, out_dir)
@@ -418,6 +467,8 @@ def _chain_alloy(workload: str, size: int, out_dir: Path) -> dict:
     build_ms,
     render_ms,
     benchmark,
+    coloring_width=coloring_width,
+    layout="lower" if _kernel_kind(workload) == "hess" else "full",
     w_size=module.workspace_size,
     callable=kernel,
   )
@@ -430,7 +481,7 @@ def _unbumpercars_alloy(size: int, out_dir: Path) -> dict:
   started = time.perf_counter()
   cfg = ClosedLoopConfig(ncars=size)
   solver = build_alloy_nlp(cfg, FilterConfig(model="dt"))
-  kernel, sparsity = _descriptor_kernel(solver, "hess")
+  kernel, sparsity, coloring_width = _descriptor_kernel(solver, "hess")
   name = kernel.name
   build_ms = (time.perf_counter() - started) * 1000
   module, render_ms = _render_alloy(kernel, name, out_dir)
@@ -453,6 +504,8 @@ def _unbumpercars_alloy(size: int, out_dir: Path) -> dict:
     build_ms,
     render_ms,
     f"BM_AlloyUnbumpercarsLagHessC{size}",
+    coloring_width=coloring_width,
+    layout="lower",
     w_size=module.workspace_size,
     callable=kernel,
   )
@@ -483,7 +536,7 @@ def _npmpc_alloy(workload: str, size: int, out_dir: Path) -> dict:
   started = time.perf_counter()
   terminal = np.diag(npmpc.CostWeights().x_end) if terminal is None else terminal
   kind = _kernel_kind(workload)
-  built, sparsity = _descriptor_kernel(npmpc.npmpc_nlp(terminal, horizon, decoder), kind)
+  built, sparsity, coloring_width = _descriptor_kernel(npmpc.npmpc_nlp(terminal, horizon, decoder), kind)
   name = built.name
   if kind == "hess":
     inputs = [("z", n_z), ("lam_f", 1), ("lam_g", sum(npmpc.constraint_counts(horizon))), ("p", npmpc.n_param(decoder))]
@@ -494,7 +547,19 @@ def _npmpc_alloy(workload: str, size: int, out_dir: Path) -> dict:
   build_ms = (time.perf_counter() - started) * 1000
   module, render_ms = _render_alloy(built, name, out_dir)
   return _module_info(
-    name, "alloy", module, inputs, sparsity, sparsity.shape, build_ms, render_ms, benchmark, w_size=module.workspace_size, callable=built
+    name,
+    "alloy",
+    module,
+    inputs,
+    sparsity,
+    sparsity.shape,
+    build_ms,
+    render_ms,
+    benchmark,
+    coloring_width=coloring_width,
+    layout="lower" if _kernel_kind(workload) == "hess" else "full",
+    w_size=module.workspace_size,
+    callable=built,
   )
 
 
@@ -502,6 +567,8 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   import casadi as ca
 
   kind = backend.removeprefix("casadi_")
+  if kind not in {"sx", "mx", "call_mx", "map_sx"}:
+    raise ValueError(f"unsupported CasADi backend {backend!r}")
   repeated = kind in {"call_mx", "map_sx"}
   mapped = kind == "map_sx"
   sym_t = ca.SX if kind in {"sx", "map_sx"} else ca.MX
@@ -520,16 +587,15 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   axis = CELL_AXES[workload]
   kernel = _kernel_kind(workload)
   name = f"casadi_{kind}_{stem}_{kernel}_{axis}{size}"
+  # SX is already the scalar encoding. Expanding an MX outer graph would silently turn the
+  # call/map encodings into a different benchmark, so only the literal SX cell asks for expand.
+  expand = kind == "sx"
+  cse = workload in ("chain", "chain_jac")
   started = time.perf_counter()
   if workload in ("chain", "chain_jac"):
     horizon = chain.HORIZON
     z, p, cost, constraints = chain._ca_nlp_pieces(size, horizon, sym_t, map_stages=mapped, call_stages=repeated)
-    fn = _casadi_descriptor_kernel(ca, name, z, p, cost, constraints, kernel, cse=True)
-    inputs = (
-      [("z", chain.n_dec(size, horizon)), ("p", chain.n_param(size))]
-      if kernel == "jac"
-      else [("z", chain.n_dec(size, horizon)), ("lam_f", 1), ("lam_g", chain.n_state(size) * (horizon + 1)), ("p", chain.n_param(size))]
-    )
+    fn = _casadi_descriptor_kernel(ca, name, z, p, cost, constraints, kernel, expand=expand, cse=cse)
     benchmark = f"BM_Casadi{label}Chain{'EqJac' if kernel == 'jac' else 'LagHess'}M{size}"
   elif workload in ("race_cars", "race_cars_jac"):
     from benchmarks.problems.race_cars.casadi_nlp import build_casadi_race_car_nlp
@@ -538,12 +604,7 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
     config = EpisodeConfig(horizon=size)
     pieces = _race_cars_repeated_pieces(config, sym_t, mapped=mapped) if repeated else build_casadi_race_car_nlp(config, sym_t)
     constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
-    fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, kernel)
-    inputs = (
-      [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))]
-      if kernel == "jac"
-      else [("z", race_cars.NZ * (size + 1)), ("lam_f", 1), ("lam_g", int(constraints.shape[0])), ("p", race_cars.n_param(size))]
-    )
+    fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, kernel, expand=expand)
     benchmark = f"BM_Casadi{label}RaceCar{'ConstraintJac' if kernel == 'jac' else 'LagHess'}N{size}"
   elif workload in NPMPC_WORKLOADS:
     horizon, decoder, _, terminal = _npmpc_cell(workload, size)
@@ -554,25 +615,31 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
       else npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, P=terminal)
     )
     constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
-    if kernel == "hess":
-      fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, "hess")
-      inputs = [("z", npmpc.n_dec(horizon)), ("lam_f", 1), ("lam_g", sum(npmpc.constraint_counts(horizon))), ("p", npmpc.n_param(decoder))]
-      benchmark = f"BM_Casadi{label}NpmpcLagHess{axis}{size}"
-    else:
-      fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, "jac")
-      inputs = [("z", npmpc.n_dec(horizon)), ("p", npmpc.n_param(decoder))]
-      benchmark = f"BM_Casadi{label}NpmpcConstraintJac{axis}{size}"
+    fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, kernel, expand=expand)
+    benchmark = f"BM_Casadi{label}NpmpcLagHess{axis}{size}" if kernel == "hess" else f"BM_Casadi{label}NpmpcConstraintJac{axis}{size}"
   else:
     if repeated:
       raise ValueError(f"{backend} is not defined for {workload}")
 
     from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, load_dt_mlp_weights
-    from benchmarks.problems.unbumpercars.filters import build_casadi_hessian
+    from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter
 
-    fn = build_casadi_hessian(ClosedLoopConfig(ncars=size), FilterConfig(model="dt"), load_dt_mlp_weights(), name, sym_t)
-    inputs = [("z", fn.size1_in(0)), ("lam_f", fn.size1_in(1)), ("lam_g", fn.size1_in(2)), ("p", fn.size1_in(3))]
+    controller = CasadiDTCBFSafetyFilter(
+      ClosedLoopConfig(ncars=size), FilterConfig(model="dt"), load_dt_mlp_weights(), _build_solver=False, _sym_t=sym_t
+    )
+    fn = _casadi_descriptor_kernel(
+      ca,
+      name,
+      controller.z_expr,
+      controller.p_expr,
+      controller.cost_expr,
+      controller.g_expr,
+      kernel,
+      expand=expand,
+    )
     benchmark = f"BM_Casadi{label}UnbumpercarsLagHessC{size}"
   build_ms = (time.perf_counter() - started) * 1000
+
   started = time.perf_counter()
   cwd = Path.cwd()
   os.chdir(out_dir)
@@ -586,36 +653,32 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   source = (out_dir / f"{name}.c").read_text()
   header = (out_dir / f"{name}.h").read_text()
   artifact_bytes, executable_bytes, static_metadata_bytes = _artifact_sizes(source, header)
-  rows, cols = fn.sparsity_out(0).get_triplet()
-  colors = al.column_coloring(al.SparsityType((fn.size_out(0)[0], fn.size_out(0)[1]), tuple(int(x) for x in rows), tuple(int(x) for x in cols)))
+  details = _casadi_output_metadata(fn, kernel)
   return {
     "name": name,
+    "symbol": fn.name(),
     "backend": backend,
     "source": Path(f"{name}.c"),
     "header": f"{name}.h",
-    "inputs": inputs,
-    "nnz": fn.sparsity_out(0).nnz(),
-    "n_rows": fn.size_out(0)[0],
-    "n_cols": fn.size_out(0)[1],
-    "rows": tuple(int(x) for x in rows),
-    "cols": tuple(int(x) for x in cols),
+    "inputs": [(fn.name_in(index), int(fn.numel_in(index))) for index in range(fn.n_in())],
     "w_size": fn.sz_w(),
     "iw_size": fn.sz_iw(),
-    "arg_size": fn.sz_arg(),
-    "res_size": fn.sz_res(),
     "source_bytes": len(source.encode()),
     "artifact_bytes": artifact_bytes,
     "executable_bytes": executable_bytes,
     "static_metadata_bytes": static_metadata_bytes,
+    "source_lines": source.count("\n") + 1,
     "dispatch_trip_count": "",
     "dispatch_workspace": "",
     "dispatch_arithmetic": "",
-    "coloring_width": max(colors) + 1 if colors else 0,
-    "source_lines": source.count("\n") + 1,
+    "coloring_width": None,
+    "expand": expand,
+    "cse": cse,
     "build_ms": build_ms,
     "render_ms": render_ms,
     "benchmark": benchmark,
     "callable": fn,
+    **details,
   }
 
 
@@ -651,8 +714,6 @@ def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
 
 
 def _unbumpercars_hessian_inputs(size: int, harvested: dict[str, np.ndarray] | None) -> tuple[dict[str, np.ndarray], np.ndarray]:
-  import casadi as ca
-
   from benchmarks.problems.unbumpercars.common import (
     NCTRL,
     NSTATE,
@@ -663,7 +724,7 @@ def _unbumpercars_hessian_inputs(size: int, harvested: dict[str, np.ndarray] | N
     load_dt_mlp_weights,
     sample_initial_states,
   )
-  from benchmarks.problems.unbumpercars.filters import build_casadi_hessian
+  from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter
 
   cfg, filt_cfg, weights = ClosedLoopConfig(ncars=size), FilterConfig(model="dt"), load_dt_mlp_weights()
   if harvested is None:
@@ -701,8 +762,9 @@ def _unbumpercars_hessian_inputs(size: int, harvested: dict[str, np.ndarray] | N
     if not np.all(np.isfinite(pieces[name])):
       raise ValueError(f"harvested unbumpercars field {name!r} contains non-finite values")
   p = np.concatenate([pieces[name] for name in ("bar_x", "u_des", "pw", "physics", "dt")])
-  ref = build_casadi_hessian(cfg, filt_cfg, weights, f"unbumpercars_hess_dense_ref_C{size}", ca.MX)
-  expected = np.asarray(ref(pieces["z"], pieces["lam_f"], pieces["lam_g"], p), dtype=np.float64).reshape(-1)
+  reference = CasadiDTCBFSafetyFilter(cfg, filt_cfg, weights, _build_solver=False)
+  assert reference.hess_fn is not None
+  expected = np.asarray(reference.hess_fn(pieces["z"], p, pieces["lam_f"], pieces["lam_g"]), dtype=np.float64).reshape(-1)
   return pieces, expected
 
 
@@ -779,11 +841,35 @@ def _samples(
         "p": np.concatenate([pieces[name] for name in ("bar_x", "u_des", "pw", "physics", "dt")]),
       }
     )
-  args = [values[name] for name, _ in info["inputs"]]
+
+  def sample_value(name: str) -> np.ndarray:
+    if name in values:
+      return values[name]
+    if name == "x" and "z" in values:
+      return values["z"]
+    raise KeyError(f"no sample value for {name!r}; available values are {sorted(values)}")
+
+  # CasADi's nlpsol oracle names are the ABI: x, p, lam_f, lam_g. Alloy keeps its own named
+  # parameter inputs, so the x/z alias is resolved only at this boundary.
+  sample_values = {name: sample_value(name) for name, _ in info["inputs"]}
+  args = list(sample_values.values())
   result = info["callable"](*args)
-  compact = np.asarray(result.nonzeros() if info["backend"].startswith("casadi") else result, dtype=np.float64).reshape(-1)
-  check_dense_reference(compact, info["rows"], info["cols"], expected, (info["n_rows"], info["n_cols"]), label=info["backend"])
-  return write_samples(out_dir, {name: values[name] for name, _ in info["inputs"]}, expected)
+  if info["backend"].startswith("casadi"):
+    outputs = result if isinstance(result, (tuple, list)) else (result,)
+    selected = outputs[int(info["output_index"])]
+    compact = np.asarray(selected.nonzeros(), dtype=np.float64).reshape(-1)
+  else:
+    compact = np.asarray(result, dtype=np.float64).reshape(-1)
+  check_dense_reference(
+    compact,
+    info["rows"],
+    info["cols"],
+    expected,
+    (info["n_rows"], info["n_cols"]),
+    label=info["backend"],
+    layout=str(info.get("layout", "full")),
+  )
+  return write_samples(out_dir, sample_values, expected)
 
 
 def run_cell(
@@ -815,6 +901,7 @@ def run_cell(
     workload=workload,
     size=size,
     backend=backend,
+    layout=info["layout"],
     codegen_ms=f"{codegen_ms:.1f}",
     build_ms=f"{info['build_ms']:.1f}",
     render_ms=f"{info['render_ms']:.1f}",

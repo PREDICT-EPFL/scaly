@@ -36,7 +36,7 @@ The entry-point name is the string users pass as `al.qp(..., solver=...)` /
 
 ## The backend protocol
 
-`BACKEND` must satisfy `alloy.solvers.registry.SolverBackend`:
+`BACKEND` must satisfy `alloy.solvers.registry.SolverBackend`. This protocol defines the common backend metadata and codegen hook:
 
 | member | meaning |
 |---|---|
@@ -48,6 +48,8 @@ The entry-point name is the string users pass as `al.qp(..., solver=...)` /
 | `header` | C header path relative to `include_dir()`, e.g. `"mysolver/api.h"`; core emits `#include "<header>"` in solver-bearing translation units |
 | `lib_dir()` / `include_dir()` | vendored library / header directories; they join the JIT's `-L`/`-I`/rpath search path |
 | `render_wrapper(fun, ctx)` | the C wrapper template (below) |
+
+NLP backends also satisfy `alloy.solvers.registry.NlpSolverBackend`. They must declare `hess_triangle` as `"lower"` or `"upper"`; `require_backend(..., "nlp")` validates it at runtime. QP backends do not declare this member.
 
 Discovery, protocol-version validation, and kind checking live in
 `src/alloy/solvers/registry.py`. Library and header discovery
@@ -161,9 +163,13 @@ and static metadata.
   `g_all = [h_eq; g_ineq]` stacked; `desc.grad` (dense objective gradient);
   `desc.jac` (compact sparse Jacobian of `g_all`, COO pattern in
   `desc.jac_sparsity`); `desc.hess` (compact sparse Lagrangian Hessian,
-  inputs `(x, obj_factor, [lam,] *params)`, symmetric COO pattern in
-  `desc.hess_sparsity` with `desc.hess_lower_mask` marking the lower
-  triangle); `desc.bounds` `(*params) → (x_lb, x_ub[, l_ineq, u_ineq])`.
+  inputs `(x, obj_factor, [lam,] *params)`, COO pattern for the handed layout in
+  `desc.hess_sparsity`); `desc.bounds` `(*params) → (x_lb, x_ub[, l_ineq, u_ineq])`.
+  For `al.nlp`, core asks the selected backend for its layout through
+  `hess_triangle` (`alloy-ipopt`: lower; `alloy-sqp`: upper), and the pattern is
+  already that triangle in the Hessian oracle's compact-output order. For
+  `alloy_sqp.external_nlp`, the caller supplies the pattern and its order is
+  preserved verbatim; it may be one triangle or a full symmetric pattern.
 - Any normalized NLP oracle may instead be an `ExternalOracle` with the same
   input/output signature. Its `source` defines `raw_symbol` using the same
   flat-buffer `_raw` convention. `workspace_size` declares the number of
@@ -187,7 +193,9 @@ templates in core); v2 = plugin-owned codegen via `render_wrapper`; v3 =
 external NLP oracles and the stats-v2 QP/globalization timing fields; v4 =
 the stats-v3 per-solve diagnostics tail (`primal_viol`, `step_inf`, `alpha`,
 `merit_penalty`, `backtracks`, `qp_iter` — appended after `_pad0`, struct
-grows from 96 to 136 bytes).
+grows from 96 to 136 bytes); v5 = backend-selected NLP Hessian triangles and
+the compact oracle output convention that the descriptor pattern is the
+handed layout.
 
 ## What core owns (and plugins must not duplicate)
 

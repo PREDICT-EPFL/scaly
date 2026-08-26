@@ -96,7 +96,7 @@ def _expr_callees(fun: Function) -> list[Function]:
       return
     seen.add(id(fn))
     for node in topo(fn.outputs):
-      if node.op in {ExprOp.CALL, ExprOp.MAP}:
+      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
         callee = node.attrs.get("callee")
         if callee is not None:
           visit(callee)
@@ -139,7 +139,7 @@ def _render_expr_region(outputs: Iterable[Expr], *, name: str | None = None) -> 
       attrs = {**attrs, "name": e.name, "lowering": e.lowering}
     elif op == ExprOp.CONST:
       attrs = {**attrs, "value": e.value, "lowering": e.lowering}
-    elif op in {ExprOp.CALL, ExprOp.MAP}:
+    elif op in {ExprOp.CALL, ExprOp.VMAP}:
       callee = attrs.get("callee")
       attrs = {**attrs, "callee": getattr(callee, "name", callee)}
     text_args = f"({args})" if args else ""

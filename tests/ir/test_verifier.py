@@ -39,11 +39,11 @@ def test_matmul_named_call_verifies() -> None:
   verify_expr(out)
 
 
-def test_map_graph_verifies() -> None:
+def test_vmap_graph_verifies() -> None:
   stage_in = al.sym("u", 2)
   stage = al.Function("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
   batch = al.sym("batch", 8)
-  mapped = al.map_(stage, length=4, inputs=[(batch, 0, 2)])
+  mapped = al.vmap(stage, length=4, inputs=[(batch, 0, 2)])
   verify_expr(mapped)
 
 
@@ -51,7 +51,7 @@ def test_jacobian_factory_output_verifies() -> None:
   x = al.sym("x", 3)
   y = (x.sin() + x * x).sum()
   fn = al.Function("f", [x], [y], ["x"], ["y"])
-  jac = al.jacobian(fn, "x", "y")
+  jac = al.jacobian(fn, "y", "x")
   verify_expr(jac.outputs)
 
 
@@ -131,12 +131,12 @@ def test_call_arg_shape_mismatch_caught() -> None:
     verify_expr(bad)
 
 
-def test_map_rank1_outer_required() -> None:
+def test_vmap_rank1_outer_required() -> None:
   stage_in = al.sym("u", 2)
   stage = al.Function("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
   bad_outer = al.sym("batch", (4, 2))  # not rank-1
   bad = Expr(
-    ExprOp.MAP,
+    ExprOp.VMAP,
     (bad_outer,),
     TensorType((4,), dtype=dtypes.float64, diff=True),
     attrs={
@@ -148,7 +148,7 @@ def test_map_rank1_outer_required() -> None:
       "slice_size": 1,
     },
   )
-  with pytest.raises(VerifyError, match="map-attrs"):
+  with pytest.raises(VerifyError, match="vmap-attrs"):
     verify_expr(bad)
 
 
@@ -178,7 +178,7 @@ def test_verifier_smoke_on_workload_graphs() -> None:
   res = A @ z + z[:4]
   fn = al.Function("f", [z], [res.sum()], ["z"], ["y"])
   verify_expr(fn.outputs)
-  jac = al.jacobian(fn, "z", "y")
+  jac = al.jacobian(fn, "y", "z")
   verify_expr(jac.outputs)
 
 

@@ -81,7 +81,7 @@ def test_jit_handles_sparse_jacobian_factory_output(isolated_cache) -> None:
   x = al.sym("x", 4)
   y = al.stack([x[0], x[2:4].sum(), x[1] * x[3]])
   f = al.Function("f_sj", [x], [y], ["x"], ["y"])
-  spjf = al.spjacobian(f, "x", "y", name="f_sj_jac")
+  spjf = al.sparse_jacobian(f, "y", "x", name="f_sj_jac")
   xv = np.array([2.0, 3.0, 5.0, 7.0])
   values = spjf(xv)
   np.testing.assert_allclose(values, np.array([1.0, 1.0, 1.0, xv[3], xv[1]]))

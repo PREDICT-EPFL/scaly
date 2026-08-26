@@ -4,8 +4,8 @@ The public surface, grouped by what it is for and generated from the source, so 
 code.
 
 A few names in the `alloy` namespace are aliases or constants that carry no documentation of their
-own and so do not appear below: `al.sym` and `al.const` are `Expr.sym` and `Expr.const`, `al.scan`
-is `al.map_`, and `al.C_API_SIGNATURE` is the ABI signature string. `alloy.__all__` is the
+own and so do not appear below: `al.sym` and `al.const` are `Expr.sym` and `Expr.const`, and
+`al.C_API_SIGNATURE` is the ABI signature string. `alloy.__all__` is the
 authoritative list of what is public.
 
 For prose explanations rather than signatures, start with the [User Guide](../guide/getting_started.md).

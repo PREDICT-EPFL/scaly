@@ -42,7 +42,7 @@ def solver_callees(fun: Function) -> list[Function]:
 
 def solver_backends_used(fun: Function) -> tuple[str, ...]:
   """Sorted names of every solver backend reachable from ``fun`` (through
-  CALL/MAP callees, SOLVER_CALL nodes, and solver oracle Functions)."""
+  CALL/VMAP callees, SOLVER_CALL nodes, and solver oracle Functions)."""
   found: set[str] = set()
   seen: set[int] = set()
 
@@ -56,7 +56,7 @@ def solver_backends_used(fun: Function) -> tuple[str, ...]:
         visit(callee)
       return
     for node in topo(fn.outputs):
-      if node.op in {ExprOp.CALL, ExprOp.MAP}:
+      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
         visit(node.attrs["callee"])
       elif node.op == ExprOp.SOLVER_CALL:
         found.add(node.attrs["solver"].backend)

@@ -142,6 +142,9 @@ jobs:
       - name: ty type-check
         run: uv run ty check .
 
+      - name: Pytest node-ID baseline
+        run: uv run pytest --collect-only -q
+
   docs:
     name: docs
     runs-on: ubuntu-latest

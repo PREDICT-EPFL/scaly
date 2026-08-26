@@ -10,8 +10,7 @@ NLP shape (see ``docs/guide/solvers.md``)::
 The IPOPT backend stacks ``[h_eq; g_ineq]`` into IPOPT's ``g(x)`` with bounds
 ``[0; l_ineq] ≤ g ≤ [0; u_ineq]``. Derivatives come from Alloy's factory:
 sparse Jacobians for the constraints, sparse Lagrangian Hessian via the
-``gamma`` aux. The Hessian is filtered to its lower triangle inside the
-backend (IPOPT's convention).
+``gamma`` aux. The backend selects which Hessian triangle it consumes.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, concat
 from ..function import Function
-from ..function.api import gradient, sparse_lagrangian_hessian, spjacobian
+from ..function.api import gradient, sparse_jacobian, sparse_lagrangian_hessian
 from ..ir.types import SparsityType
 from ._oracle import collect_free_inputs
 from .registry import require_backend
@@ -95,7 +94,7 @@ def nlp(
     solver: the backend plugin — ``ipopt``, or ``sqp`` for the generated-C SQP solver.
     options: backend settings, validated when the wrapper is generated.
   """
-  require_backend(solver, "nlp")
+  backend = require_backend(solver, "nlp")
 
   x_sym = _ensure_sym("x", x)
   if len(x_sym.shape) != 1:
@@ -183,11 +182,11 @@ def nlp(
     bound_names,
   )
 
-  grad_fn = gradient(base_fn, x_name, "f", name=(name or "nlp") + "_grad", extra_inputs=param_names)
+  grad_fn = gradient(base_fn, "f", x_name, name=(name or "nlp") + "_grad", extra_inputs=param_names)
 
   jac_fn: Function | None
   if g_all is not None:
-    jac_fn = spjacobian(base_fn, x_name, "g", name=(name or "nlp") + "_jac", extra_inputs=param_names)
+    jac_fn = sparse_jacobian(base_fn, "g", x_name, name=(name or "nlp") + "_jac", extra_inputs=param_names)
     jac_sparsity = jac_fn.output_sparsities[0]
     assert jac_sparsity is not None
   else:
@@ -195,14 +194,15 @@ def nlp(
     jac_sparsity = SparsityType.empty((0, n))
 
   hess_fn = sparse_lagrangian_hessian(
-    base_fn, x_name, ["f", "g"] if g_all is not None else ["f"], name=(name or "nlp") + "_hess", extra_inputs=param_names
+    base_fn,
+    ["f", "g"] if g_all is not None else ["f"],
+    x_name,
+    name=(name or "nlp") + "_hess",
+    extra_inputs=param_names,
+    triangle=backend.hess_triangle,
   )
   hess_sparsity = hess_fn.output_sparsities[0]
   assert hess_sparsity is not None
-
-  hess_rows_full = np.asarray(hess_sparsity.rows, dtype=np.int32)
-  hess_cols_full = np.asarray(hess_sparsity.cols, dtype=np.int32)
-  lower_mask = hess_rows_full >= hess_cols_full
 
   resolved_options: dict[str, str | int | float] = {"print_level": 0, "sb": "yes"}
   if options:
@@ -241,7 +241,6 @@ def nlp(
     bounds=bound_fn,
     jac_sparsity=jac_sparsity,
     hess_sparsity=hess_sparsity,
-    hess_lower_mask=tuple(bool(v) for v in lower_mask.tolist()),
     options=tuple(sorted(resolved_options.items())),
   )
   return SolverFunction(descriptor)

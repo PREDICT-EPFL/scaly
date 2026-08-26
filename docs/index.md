@@ -19,7 +19,7 @@ def rosenbrock(x):
 
 rosenbrock([1.0, 2.0])                      # 100.0
 
-grad = al.gradient(rosenbrock, "x", "f")
+grad = al.gradient(rosenbrock, "f", "x")
 grad([1.0, 2.0])                            # array([-400.,  200.])
 ```
 
@@ -107,7 +107,7 @@ map.
 
 Alloy generates C for the full expression set on the host, differentiates it forward and in
 reverse, produces colored sparse Jacobians and exact sparse Lagrangian Hessians through preserved
-`map` structure, and drives PIQP, IPOPT and its own generated-C SQP solver from inside a compiled
+`VMAP` structure, and drives PIQP, IPOPT and its own generated-C SQP solver from inside a compiled
 graph.
 
 Open work, roughly in order: region formation from the scalar and block lowering hints, iterative

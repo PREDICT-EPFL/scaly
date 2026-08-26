@@ -8,8 +8,8 @@ is recorded, via ``benchmarks/run.py smoke``.
 
 They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite covers Alloy's
 core and must not depend on a benchmark problem. The IR behaviour this problem leans on — a dense
-matmul body scanned over a horizon, differentiated to second order — has a self-contained
-reproduction in ``tests/integration/test_scan_mlp.py``, so retiring this problem cannot drop the
+matmul body used through VMAP over a horizon, differentiated to second order — has a self-contained
+reproduction in ``tests/integration/test_vmap_mlp.py``, so retiring this problem cannot drop the
 compiler coverage.
 """
 
@@ -246,7 +246,7 @@ def check_plant_matches_reference_oracle() -> None:
 def check_terminal_riccati_weight() -> None:
   """The terminal weight solves the Riccati equation for the linearization it claims to come from.
 
-  `linearize` reads `A` and `B` off `al.jac` on the stage residual rather than from an autograd
+  `linearize` reads `A` and `B` off `al.factory.Jac` on the stage residual rather than from an autograd
   pass, so the finite-difference comparison is what keeps that shortcut honest, and the residual is
   what stops a pinned `P` from drifting away from the model it was solved for.
   """

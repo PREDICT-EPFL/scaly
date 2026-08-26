@@ -47,10 +47,11 @@ Rules the numbers on this page follow, and that a headline run must follow more 
 - **Kernel figures come from the Google Benchmark harness**, which calls the generated C symbol with
   preallocated buffers and no Python in the loop. Both closed-loop IPOPT columns now use
   `clock_gettime` around a generated C entry point.
-- **Do not compute unused parameter sensitivities.** The generated CasADi `nlpsol` normally produces
-  `lam_p` after the solve. The harness passes a null output and skips that reverse sweep because
-  neither timed column requests parameter sensitivities; the generated function remains otherwise
-  unchanged.
+- **Request only the oracle result that is timed.** CasADi's generated `nlp_jac_g` exposes `g` as
+  output 0 and `jac_g_x` as output 1; the harness supplies only result pointer 1. The Hessian
+  supplies its selected output, and every result-pointer array is reset before each call because
+  generated `res` slots are also used as scratch by nested calls. No parameter-sensitivity result
+  is requested by either timed kernel.
 - **Correctness gates before timing.** Every cell checks its compact derivative against a dense
   reference built by a different construction, and produces no timing if it disagrees. The race-car
   Jacobian and the chain, race-car and neural-process MPC Lagrangian Hessians have NumPy references:
@@ -59,12 +60,14 @@ Rules the numbers on this page follow, and that a headline run must follow more 
   unrolled twin, so they test the mapped construction against an unrolled one rather than against
   another tool. The unbumpercars Hessian reference is a CasADi `MX` Hessian of the same
   formulation, which means that cell's CasADi column is checked against its own tool.
-- **`ca.cse` is applied to the chain CasADi cells and nowhere else.** On the chain it is what keeps
-  the unrolled encodings buildable at all: without it unrolled `SX` is 309 030 lines at M=5 against
-  215 190 with it (§"The chain sweep"). On `race_cars` it was worth 7% of function evaluation and
-  nothing on the total (§"`expand` and `jit`"), and it has not been measured on `npmpc` or
-  `unbumpercars`, whose CasADi cells do not call it. This is a per-problem choice made once, not a
-  rule; `internal/todo.md` carries the item to revisit it.
+- **`ca.cse` is applied to the chain NLP expressions before `nlpsol`, and nowhere else.** On the
+  chain it is what keeps the unrolled encodings buildable at all: without it unrolled `SX` is
+  309 030 lines at M=5 against 215 190 with it (§"The chain sweep"). A focused build confirms that
+  the preprocessing reaches the extracted `nlpsol` oracle; the current sweep records that oracle's
+  generated artifact, while the line counts in the historical chain table below describe the older
+  hand-built mirror. On `race_cars` it was worth 7% of function evaluation and nothing on the total
+  (§"`expand` and `jit`"); it remains disabled for `npmpc` and `unbumpercars`. This is a measured
+  per-problem choice, not a suite-wide rule.
 - **Report CasADi's best encoding**, not the one our mirror happens to build. §"Does CasADi have
   loop-preserving codegen?" is why: the encodings of the same math span an order of magnitude, and
   the winner changes between problems.
@@ -78,11 +81,11 @@ Rules the numbers on this page follow, and that a headline run must follow more 
 |---|---|---|---|
 | The two IPOPT columns linked **different IPOPT builds** | favoured alloy | **2.7× to 17×** in solver-internal time, at identical iteration counts | measured, fixed |
 | `ipopt+casadi` ran CasADi's **virtual machine**, not compiled C | favoured alloy | 1.2× to 8.6× in function evaluation | measured, fixed |
-| `expand=True` was the default on two problems | varied | correct for `race_cars` (MX is 5× worse), wrong for `npmpc` and `unbumpercars` | measured, fixed |
+| CasADi `expand` ignored the encoding | varied | literal SX needs `True`; MX, called MX and mapped SX need `False` | measured, fixed |
 | CasADi's total was timed in **Python**, alloy's in **C** | favoured alloy | 0.2–0.4 ms/step, and booked as *solver* time | measured, fixed |
 | The chain sweep's `casadi_sx` column was **not** an SX column | mislabelled, not unfair | forcing `map` is what makes CasADi compilable here at all | measured, fixed |
 | Alloy **loses** the chain equality Jacobian on runtime | favours CasADi | 2.4× at M=5, 1.5× at M=17 — and unpublished | measured |
-| CasADi mirrors do not call `ca.cse` | favours alloy | negligible on `race_cars` (1.81 → 1.68 ms FE) | measured, minor |
+| CasADi `ca.cse` policy was implicit | favours alloy | negligible on `race_cars` (1.81 → 1.68 ms FE) | measured, fixed: chain pre-`nlpsol` only |
 | Alloy's JIT compiles at `-O2`, the sweep at `-O3` | favours CasADi | ≤6% on function evaluation | measured, minor |
 | Alloy recreates the IPOPT problem object every solve, inside its own timer | favours CasADi | not isolated | known |
 | Alloy's `t_fe` includes a bounds kernel CasADi has no analogue for | favours CasADi | small | known |
@@ -184,6 +187,10 @@ What the table says:
 ## `expand` and `jit`, per problem
 
 Neither had been swept per problem. Both matter, and they do not point the same way.
+
+The tables in this historical configuration study are retained for their closed-loop evidence. The
+kernel sweep now keeps its encoding labels literal: `expand=True` for `casadi_sx`, and `False` for
+`casadi_mx`, `casadi_call_mx` and `casadi_map_sx`.
 
 ### `npmpc`, canonical episode, 100 steps
 
@@ -295,7 +302,7 @@ entry point. Both columns now have the same kind of boundary.
 
 ## Does CasADi have loop-preserving codegen? Partly
 
-The code-size claim is the strongest one alloy makes, and it compares alloy's scanned output against
+The code-size claim is the strongest one alloy makes, and it compares alloy's VMAP output against
 CasADi mirrors that unroll the horizon with a Python `for` loop. CasADi does have `Function.map`, which is meant to preserve exactly that structure, so the claim is
 only worth making against it.
 
@@ -337,6 +344,11 @@ At the time of this audit, the chain sweep passed `map_stages=True` for both Cas
 `_ca_eq` forces `z` and `p` to `ca.MX` in that mode, neither label described its outer graph. The
 harness now records the unrolled scalar and matrix graphs as `casadi_sx` and `casadi_mx`. It records
 the called and serially mapped elemental functions as `casadi_call_mx` and `casadi_map_sx`.
+
+The source-size rows below are the historical hand-built mirror. The current sweep builds the full
+`nlpsol` first, applies the chain `ca.cse` preprocessing to its `(f, g)` expressions, and extracts
+`nlp_hess_l` or `nlp_jac_g`, so its artifact and pointer metadata describe the oracle the optimizer
+actually calls.
 
 The obvious next inference — that forcing `map` is therefore a handicap — is wrong, and it is worth
 recording why, because a Python-level probe says it is a 9× handicap and a compiled one says the
@@ -447,6 +459,9 @@ times differ by roughly 2x against an Apple M-series, so a mixed table invents a
 Alongside the oracle comparison, three numbers that are *not* it and must not be presented as if they
 were: the Python-level cost of a step, which is what an application actually pays; the build cost of
 the oracle set; and the generated artifact size, split into executable source and static metadata.
+The sweep's `coloring_width` is also implementation-specific: Alloy reports the compressed tangent
+directions it executes, while CasADi leaves the field blank. Do not use it as a cross-backend
+comparison.
 The executable count removes `static const` declarations from the C translation unit. Static
 metadata contains those declarations and the generated header, so the two counts sum to the full C
 and header artifact. The classification follows generated C syntax: index, seed, and numeric

@@ -54,7 +54,7 @@ def test_c_api_header_exposes_universal_and_typed_buffers() -> None:
 def test_c_api_header_exposes_sparse_output_metadata() -> None:
   x = al.sym("x", 3)
   y = al.stack([x[0], x[2]])
-  f = al.spjacobian(al.Function("f", [x], [y], ["x"], ["y"]), "x", "y", name="f_spjac")
+  f = al.sparse_jacobian(al.Function("f", [x], [y], ["x"], ["y"]), "y", "x", name="f_spjac")
   from alloy.codegen import render_c_api_header
 
   header = render_c_api_header(f)
@@ -215,7 +215,7 @@ def test_c_module_executes_sparse_jacobian_factory_output(tmp_path) -> None:
   x = al.sym("x", 4)
   y = al.stack([x[0], x[2:4].sum(), x[1] * x[3]])
   f = al.Function("f", [x], [y], ["x"], ["y"])
-  spjf = al.spjacobian(f, "x", "y", name="f_spjac")
+  spjf = al.sparse_jacobian(f, "y", "x", name="f_spjac")
   from alloy.codegen import render_c_module
 
   module = render_c_module(spjf)
@@ -294,7 +294,7 @@ def test_c_api_header_typed_cpp_wrapper_handles_factory_names(tmp_path) -> None:
 
   x = al.sym("x", 2)
   nlp = al.Function("nlp", [x], [x[0] * x[0], x * x], ["x"], ["f", "g"])
-  hess = al.lagrangian_hessian(nlp, "x", ["f", "g"], name="h")
+  hess = al.lagrangian_hessian(nlp, ["f", "g"], "x", name="h")
   from alloy.codegen import render_c_module
 
   module = render_c_module(hess)

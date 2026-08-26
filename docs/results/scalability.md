@@ -20,7 +20,12 @@ Skip rules applied automatically:
 
 CSV with the raw cell data: `benchmarks/results/sweep/scalability.csv`. Each cell's generated code, samples, binary, and logs live beside it under `benchmarks/results/sweep/<workload>/<backend>_<axis><size>/`.
 
-Both workloads route through Alloy's MAP-aware path where the structure allows it — fully for the race car, per car but not per pair for unbumpercars, whose pair rows are still built by a Python loop (see that section for what this costs) — and the codegen spills lifetime-packed slots ≥ 1024 doubles to the `w[]` workspace so very large intermediate buffers no longer overflow the C stack.
+`coloring_width` is an Alloy-owned construction metric, not a cross-backend comparison. It counts
+the compressed tangent directions that Alloy executes. Structured Jacobian rows add the independently
+executed per-formal or local batches, while Hessian rows use the global star-color count. CasADi
+leaves the field blank because its generated code exposes no internal derivative count.
+
+Both workloads route through Alloy's VMAP-aware path where the structure allows it — fully for the race car, per car but not per pair for unbumpercars, whose pair rows are still built by a Python loop (see that section for what this costs) — and the codegen spills lifetime-packed slots ≥ 1024 doubles to the `w[]` workspace so very large intermediate buffers no longer overflow the C stack.
 
 ## Why a C++ harness (and not the Google Benchmark Python bindings)
 
@@ -58,7 +63,7 @@ vx = v * cos(beta)
 ```
 
 The Alloy fixture wrapped the interstage residual in a stage `Function` and assembled the equality
-vector via `al.scan(eq_interstage, length=N, ...)`. The current
+vector via `al.vmap(eq_interstage, length=N, ...)`. The current
 `RaceCarConstraintJac` cell instead takes the full equality-plus-corridor Jacobian from the solver
 descriptor. The table in this section predates that correction and remains an equality-only result
 until the reference machine reruns the sweep.
@@ -110,7 +115,7 @@ Reading:
 
 A conditional-neural-process decoder — `9 → 32 → 32 → 2`, sigmoid, weights and latent code read out
 of the parameter tail — evaluated at **every node of a prediction horizon**. This is the one workload
-in the suite where a dense matmul sits inside the scanned stage body, so it is the one that separates
+in the suite where a dense matmul sits inside the VMAP stage body, so it is the one that separates
 loop-preserving lowering from scalar expansion most sharply. Formulation, vendored data and
 closed-loop numbers live with the problem, in `benchmarks/problems/npmpc/README.md`; this section is
 the sweep.
@@ -171,7 +176,7 @@ Reading, in descending order of confidence:
 - **The code-size and compile-time result is unambiguous and large.** Alloy's source is 417 lines for
   the Jacobian at *every* point on *both* axes, and 1041 for the Hessian at every point but W = 16
   (1043 there), because the weights are read
-  out of the parameter tail rather than baked in as literals and the stage body is scanned rather than
+  out of the parameter tail rather than baked in as literals and the stage body uses VMAP rather than
   unrolled. SX reaches 1.31 million lines at N = 100 — a factor of 3142 — and stops being compilable
   at all: clang exceeds a 15-minute budget there, and MX joins it at N = 200 for the Jacobian and
   N = 100 for the Hessian, where it already needs 227 s at N = 50. Alloy compiles the N = 200 Hessian
@@ -189,7 +194,7 @@ Reading, in descending order of confidence:
 Alloy is *not* scalar-expanding these matmuls: the generated C contains real loop nests. The small
 fixed handicap at narrow decoders and short horizons (0.80–0.90 across W = 16–64 and N = 6–25; by
 N = 50 and N = 100 on the Jacobian axis it is gone, at 1.11 and 1.00) is ours, and the likeliest
-cause is the AD mode — `sparse_jacobian` colours columns only, and the per-stage block here is wider
+cause is the AD mode — Alloy's `sparse_jacobian` colours columns only, and the per-stage block here is wider
 than it is tall, which is the regime where a row-coloured or reverse sweep needs fewer passes. That
 is a hypothesis with supporting structure, not a measured cause.
 
@@ -242,9 +247,9 @@ count**: 1.16× at C=2, 1.77× at C=4, **3.03× at C=8**, against 3.4–4.3× le
 workspace and 1.4–4.3× less compile time. Alloy's workspace is essentially flat (34 304 → 36 736
 doubles over a 4× car count) because the per-car neural dynamics stay a loop; CasADi MX's triples.
 
-Alloy's advantage growing in C while its own workspace does not is the mapped Hessian doing what it
+Alloy's advantage growing in C while its own workspace does not is the VMAP Hessian doing what it
 is for. Note that alloy's source still grows here, because the `C(C-1)/2` pair rows are built by a
-Python loop rather than mapped — the one place in the suite where *we* write the code-size growth
+Python loop rather than `al.vmap` — the one place in the suite where *we* write the code-size growth
 that the code-size claim argues against (tracked internally).
 
 This kernel is also the right anchor for reading the problem's closed-loop numbers. At C=8 the closed
@@ -339,15 +344,15 @@ the canonical location unless given another output directory.
 
 > **The workload measured here no longer exists.** Its implementation and
 > the retired `test_unbumpercars_workload.py` were removed in `1b03820`
-> (2026-08-10): the fixture was the only thing exercising gather-fed and chained MAPs,
+> (2026-08-10): the fixture was the only thing exercising gather-fed and chained VMAPs,
 > and its two numeric tests had been silently skipping because the
 > `model_kinematic_mlp.pth` checkpoint is not in the repo — so it read as coverage
 > without being any. The pattern moved to
-> `tests/ad/test_map.py::test_gather_fed_chained_maps_spjac_and_sphess_match_dense`,
+> `tests/integration/test_vmap.py::test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense`,
 > which runs unconditionally on small artificial cases.
 >
 > The current workload reuses the canonical `unbumpercars` ID at
-> `benchmarks/problems/unbumpercars/`. It keeps `al.map_` for
+> `benchmarks/problems/unbumpercars/`. It keeps `al.vmap` for
 > the per-car neural dynamics but builds its `C(C-1)/2` pair rows with an unrolled Python
 > loop, so the constant-LOC property below does **not** hold for it: its `spjac:g:z`
 > kernel goes 845 → 1403 → 3455 lines for `C = 2 → 4 → 8`. Porting it back onto the
@@ -356,10 +361,10 @@ the canonical location unless given another output directory.
 
 Official-size MLP (`256 → 128 → 3` with the example `model_kinematic_mlp.pth` weights), RK4 pose update per car, pairwise C3BF + per-car wall residuals, slack column. Decision vector size `2C + 1`, constraint count `C(C-1)/2 + 4C` (quadratic in `C`).
 
-`unbumpercars_ineq_function` was built as three `ExprOp.MAP` nodes:
+`unbumpercars_ineq_function` was built as three `ExprOp.VMAP` nodes:
 
 1. `dynamics_fn` mapped over `C` packed states / `C` packed inputs (with `pw` broadcast).
-2. `pair_c3bf_fn` mapped over `C(C-1)/2` `(i,j)` pairs, fed by `al.gather` from two constant index tables — one per side of the pair, each built as `concatenate([arange(NSTATE) + k * NSTATE for k in bodies])` over the strict upper triangle, so a gather produces exactly the contiguous `NSTATE` block per iteration that a MAP wants. The same two tables gather both the parameter states and the first MAP's output, which is what makes it a MAP → gather → MAP chain.
+2. `pair_c3bf_fn` mapped over `C(C-1)/2` `(i,j)` pairs, fed by `al.gather` from two constant index tables — one per side of the pair, each built as `concatenate([arange(NSTATE) + k * NSTATE for k in bodies])` over the strict upper triangle, so a gather produces exactly the contiguous `NSTATE` block per iteration that a VMAP wants. The same two tables gather both the parameter states and the first VMAP's output, which is what makes it a VMAP → gather → VMAP chain.
 3. `wall_residuals_fn` mapped over `C` cars.
 
 CasADi SX is dropped past C=2 because at C=2 it already takes >180 s to compile a 12 MB source file; the sweep records that and short-circuits larger C for SX.
@@ -395,7 +400,7 @@ Workspace (doubles):
 
 Reading:
 
-- Alloy beats CasADi MX by a consistent **~2.5-2.7×** through C=16, narrowing to **1.88×** at C=32 — see the jump discussion below. The colored sparse Jacobian shares the per-car dynamics callee across colors and applies it inside a `for` loop, while MX clones the per-iteration graph through every JVP step (workspace and source both scale linearly in `C`).
+- Alloy beats CasADi MX by a consistent **~2.5-2.7×** through C=16, narrowing to **1.88×** at C=32 — see the jump discussion below. Alloy's colored sparse Jacobian shares the per-car dynamics callee across colors and applies it inside a `for` loop, while MX clones the per-iteration graph through every JVP step (workspace and source both scale linearly in `C`).
 - **Both Alloy and MX now compile at C=32**: Alloy at 1.6 s codegen + 1.1 s compile (source 2.4 MB); MX at 1.5 s codegen + 100 s compile (source 9.9 MB). The old unrolled Alloy path needed 18.5 MB of source at C=32 and timed out at compile.
 - The 1.09 M-double Alloy workspace at C=32 lives in `w[]`; the wrapper allocates it `static` so the inner benchmark loop never goes through `malloc`. Without the spill threshold this would be ~8.7 MB of stack arrays and segfault under the 8 MB subprocess default `ulimit -s`.
 
@@ -446,7 +451,7 @@ For unbumpercars vs. `experiment3` of the worktree:
 | 16 | 875.1 µs | 3978 µs | 2207 µs | 1179 µs |
 | 32 | 2254.4 µs | 12273 µs | 4237 µs | 2329 µs |
 
-Alloy beats the worktree's `anvil_ineq_jac` (which uses the same conceptual colored-sparse approach) by ~3.3-5.4× across the C=2..32 range, mostly thanks to the MAP-ification (loop-shaped per-car dynamics + pair C3BF), the sparse-constant matvec, scalar/vector inlining, the gather peephole, and the workspace spill that lets C=32 compile at all. CasADi MX's apparent disadvantage vs. its own worktree numbers is partly the heavier MLP fixture (official `256→128→3` weights vs. the worktree's simpler reduced MLP).
+Alloy beats the worktree's `anvil_ineq_jac` (which uses the same conceptual colored-sparse approach) by ~3.3-5.4× across the C=2..32 range, mostly thanks to the VMAP structure (loop-shaped per-car dynamics + pair C3BF), the sparse-constant matvec, scalar/vector inlining, the gather peephole, and the workspace spill that lets C=32 compile at all. CasADi MX's apparent disadvantage vs. its own worktree numbers is partly the heavier MLP fixture (official `256→128→3` weights vs. the worktree's simpler reduced MLP).
 
 ## Comparison with CasADi `Function.map(N, "serial")` (tracking)
 
@@ -501,7 +506,7 @@ Race-car N=1000 used to appear in this table; it is dropped from the default cel
 > [Discrete-time HCBF safety filter](#discrete-time-hcbf-safety-filter-unbumpercars)
 > above, whose per-solve numbers supersede these per-kernel ones. Note also that the
 > Lagrangian-Hessian limitation this section records as blocking has since been closed —
-> `sphess` through `ExprOp.MAP` works and is what the live workload uses.
+> `sphess` through `ExprOp.VMAP` works and is what the live workload uses.
 
 Fixture: the retired `test_safety_filter_workload.py` built the two variants of the retired
 continuous-time HOCBF design study (both the fixture and that design are gone; see
@@ -510,7 +515,7 @@ continuous-time HOCBF design study (both the fixture and that design are gone; s
 - **Input-affine** — per-car velocity net `f_nn(x) + g_nn(x)·u` with a shared MLP body (`7 → 256 → 128`, SiLU) and two heads (drift 128→3, control 128→6). The constraint vector is the HOCBF residual `ḧ_ij + (γ1+γ2)·ḣ_ij + γ1·γ2·h_ij + s` over all `N(N-1)/2` pairs plus 4 wall residuals per car, with the slack term `s` shared. Cost is `Σ (u_i − u_des_i)^T Q (u_i − u_des_i) + M·s²`.
 - **Fully nonlinear** — same shape but the velocity block is a single `f_nn(x, u)` MLP (`9 → 256 → 128 → 3`); the rest of the chain (pose kinematics, slack, HOCBF combination, cost) is unchanged.
 
-The driver `benchmarks/alloy_safety_filter_benchmark.py` derives, for each `(ncars, variant)` cell, five single-output Alloy `Function`s — forward `ineq`, forward `cost`, dense `jac:ineq:u`, sparse `spjac:ineq:u`, and `grad:cost:u`. The sparse Lagrangian Hessian (`sphess:gamma:u:u`) is also requested but currently fails the `ExprOp.MAP` reverse-mode path in `alloy.ad.reverse._local_vjp`, so it is caught and skipped per cell rather than working around the IR limitation here.
+The driver `benchmarks/alloy_safety_filter_benchmark.py` derives, for each `(ncars, variant)` cell, five single-output Alloy `Function`s — forward `ineq`, forward `cost`, dense `jac:ineq:u`, sparse `spjac:ineq:u`, and `grad:cost:u`. The sparse Lagrangian Hessian (`sphess:gamma:u:u`) is also requested but currently fails the `ExprOp.VMAP` reverse-mode path in `alloy.ad.reverse._local_vjp`, so it is caught and skipped per cell rather than working around the IR limitation here.
 
 Each Function is rendered to C, compared against the Python interpreter on a deterministic input vector, and timed by Google Benchmark on the universal ABI entry point.
 
@@ -542,8 +547,8 @@ Reading:
 - **Cost and `grad:cost:u` are essentially free** (single-digit ns). The quadratic cost touches no MLP and only `O(N)` doubles.
 - **Affine `jac:ineq:u` runs in the same envelope as the forward** — expected, because the constraint is linear in u and the Jacobian rows `b_ij^i = 2·Δπ^T·(∂κ_π/∂v)·g_nn(x_i)` just reuse the per-car NN outputs. The QP path is essentially "one forward and you have A".
 - **Nonlinear `jac:ineq:u` is the obvious hotspot** — dense Jacobian seeds u (size `2·ncars`) through the MLP, which is roughly `2·ncars` forward passes; that is exactly the ~50× scaling we see at N=8 (`4.4 ms` vs `89 µs`).
-- **`spjac:ineq:u` recovers most of that loss** for the nonlinear case (`267 µs` at N=8, ~3× the forward instead of ~50×) because column coloring reduces the seed count to the number of structurally distinct columns. This is the right object for an NLP solver loop to call per IPOPT iteration.
-- The Lagrangian Hessian wrt u would be the other per-iteration object for the NLP path; it is the most natural next target once `ExprOp.MAP` is added to the reverse-mode AD (`alloy/ad/reverse.py::_local_vjp`).
+- **`spjac:ineq:u` recovers most of that loss** for the nonlinear case (`267 µs` at N=8, ~3× the forward instead of ~50×) because Alloy's column coloring reduces the seed count to the number of structurally distinct columns. This is the right object for an NLP solver loop to call per IPOPT iteration.
+- The Lagrangian Hessian wrt u would be the other per-iteration object for the NLP path; it is the most natural next target once `ExprOp.VMAP` is added to the reverse-mode AD (`alloy/ad/reverse.py::_local_vjp`).
 
 How these were reproduced, at the time. **None of these commands work now** —
 `alloy_safety_filter_benchmark.py` was removed along with the formulation it measured, and is

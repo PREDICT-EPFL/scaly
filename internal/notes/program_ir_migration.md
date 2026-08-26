@@ -115,7 +115,7 @@ extend by adding rules/ops, don't refactor.
 ### 2b. Reference-only — port the *recipes*, rewrite the *dispatch*
 
 The old `passes/lowering.py` (930 lines) and `codegen/c.py` (322 lines) contain **correct per-op
-lowering recipes** for the ops they cover (elementwise, MAP, CALL, matmul, SUM, transpose,
+lowering recipes** for the ops they cover (elementwise, VMAP, CALL, matmul, SUM, transpose,
 axis-0 stack/concat). But the dispatch is a hand-rolled `if/elif node.op == …` chain, and the
 depth gaps (integer-index SLICE, large CONST) are hard-coded limits in helpers. **Copy the recipe
 math; do not copy the dispatch structure** — we want an `ExprOp`-keyed registry (one self-contained
@@ -123,7 +123,7 @@ rule per op) so adding/deepening an op is local. Reference commits for the recip
 
 `88b6daf` elementwise · `c042508` program-C renderer · `4768858` SUM · `83736a0` MATMUL ·
 `31c4311` GATHER/SCATTER · `653df0a` STACK/CONCAT · `9f965ad` SLICE (rank-1) + elementwise parity ·
-`e40f962` CALL · `b925eb4` MAP · `4ab8e90` TRANSPOSE · `0243dae` inf/nan CONST.
+`e40f962` CALL · `b925eb4` VMAP · `4ab8e90` TRANSPOSE · `0243dae` inf/nan CONST.
 
 ### 2c. Deferred — re-introduce as separate PRs *after* CPU parity merges
 
@@ -194,19 +194,19 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   Program IR source directly (loud on gaps), confirms `render_c_source` selects that exact source
   under the flag, and matched the then-existing interpreter oracle. Temporaries are stack-local arrays (`sz_w=0`);
   workspace packing is deferred. Not yet covered (raise loudly): broadcasting, `SLICE`, large
-  `CONST`, `SUM`, `MATMUL`, `TRANSPOSE`, `GATHER`/`SCATTER`, `STACK`/`CONCAT`, `CALL`/`MAP`.
+  `CONST`, `SUM`, `MATMUL`, `TRANSPOSE`, `GATHER`/`SCATTER`, `STACK`/`CONCAT`, `CALL`/`VMAP`.
 
 - **Step 2 — The day-one blockers.** ✅ Done. Generalized `SLICE` (integer index drops a dim,
   slices keep one; multi-dim and strided via flat-index arithmetic built as scalar PNodes) and
   added a `constant`-address-space `const_buffer` (rendered `static const`) so constants of any
   size lower — these were the first two probe blockers. Re-probing the forwards confirms `SLICE`
-  and `CONST` are cleared; they now block on `CALL`/`MAP`/`GATHER`, which are Step 3/4 ops — so the
+  and `CONST` are cleared; they now block on `CALL`/`VMAP`/`GATHER`, which are Step 3/4 ops — so the
   "forwards render end-to-end" milestone lands after Step 3.
 
 - **Step 3 — Core op recipes.** ✅ Done. `SUM` (REDUCE loop), `MATMUL` (dot / matvec / vecmat /
   matmat; rank-3 batched deferred), `TRANSPOSE` (rank ≤ 4, permuted-index copy), `CALL` (callee
   lowered once per name into the shared registry, deduped per invocation, rendered `static inline
-  <name>_raw`), and `MAP` (a `length` loop calling the callee with pointer-offset VIEW args).
+  <name>_raw`), and `VMAP` (a `length` loop calling the callee with pointer-offset VIEW args).
   Mixed-device CALL raises loudly (deferred). Migration corpus +8. Re-probing the forwards: matmul/
   sum/transpose/call all matched the then-existing interpreter; the forwards then blocked only on `STACK` (tracking)
   and `GATHER` (unbumpercars) — Step 4 ops — so "forwards render end-to-end" lands with Step 4.
@@ -262,7 +262,7 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
      is what keeps a producer *out of* a matmul/contraction operand position (where each element is
      read `m·n·k` times) — the critical correctness detail the legacy encodes by only inlining into
      elementwise consumers. The dominant unbumpercars cost turned out to be a **contiguous slice of
-     the 35 k-element `p` input being copied every MAP call**; porting the legacy contiguous-slice /
+     the 35 k-element `p` input being copied every VMAP call**; porting the legacy contiguous-slice /
      reshape **pointer aliasing** (`const T* tN = src + offset;`, in the SLICE lowering rule + an
      alias-aware `pack_workspace`) removed that copy. Result: unbumpercars **1.00–1.02×**, tracking
      ms **1.01–1.03×** (was 1.22–1.25× / 1.03–1.05×).
@@ -303,7 +303,7 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   `uses_piqp`/`uses_ipopt` (which traverse callees *and* `SOLVER_CALL` nodes — `_function_order`
   does not, so a plain function that merely *calls* a solver is correctly kept on legacy/`codegen/solver`).
   `ALLOY_USE_PROGRAM_IR_C=0` is a transitional escape hatch to force the legacy renderer (removed in
-  Step 6). The two `test_map.py` source-structure asserts were already reconciled in 5b.
+  Step 6). The two `test_vmap.py` source-structure asserts were already reconciled in 5b.
 
   **Fixed the cold-cache solver bug here (it was a link-order bug, not a flag bug).** Root cause:
   Linux `ld` defaults to `--as-needed`, and the JIT compile command placed `-lpiqpc`/`-lipopt`

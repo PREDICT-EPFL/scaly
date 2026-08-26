@@ -83,7 +83,7 @@ def solver_stats_symbols(fun: Function) -> tuple[str, ...]:
         visit(callee)
       return
     for node in topo(fn.outputs):
-      if node.op in {ExprOp.CALL, ExprOp.MAP}:
+      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
         visit(node.attrs["callee"])
 
   visit(fun)

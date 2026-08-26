@@ -45,7 +45,7 @@ x_next = x + [ dt * (x[2:4] + Δx_vel / 2),  Δx_vel ]
 
 ### The optimal control problem
 
-Decision variables are blocked rather than interleaved, so both scan windows stride cleanly and
+Decision variables are blocked rather than interleaved, so both VMAP windows stride cleanly and
 there is no dead trailing control:
 
 ```text
@@ -68,12 +68,12 @@ band of inequalities rather than an equality, as theirs is.
 
 `P` solves the discrete algebraic Riccati equation for the learned dynamics linearized at the upright
 equilibrium with `Q_f = diag(1, 10, 0.1, 0.1)` and `R_f = 1`. Their code takes `A`, `B` from
-`torch.autograd`; `linearize` takes them from `al.jac` on the Alloy stage function instead, which
+`torch.autograd`; `linearize` takes them from `al.factory.Jac` on the Alloy stage function instead, which
 removes the torch dependency and exercises Alloy's own differentiation in the problem's setup. The
 Riccati residual is gated regardless, so a pinned `P` cannot drift from the linearization it claims
 to come from.
 
-Both the dynamics and the per-stage cost are `al.scan`s. Scanning the cost is not cosmetic: written
+Both the dynamics and the per-stage cost use `al.vmap`. Using VMAP for the cost is not cosmetic: written
 as a Python loop over stages it unrolls, which grows the Lagrangian Hessian's generated source
 linearly in the horizon and, past roughly 75 stages, exceeds the Program IR passes' recursion depth
 during lowering.
@@ -356,9 +356,9 @@ on, so `/scene/horizon` in particular shows nothing until it is enabled.
 
 ## Compiler coverage
 
-The IR shape this problem leans on — a dense-matmul stage body with a broadcast weight tail, scanned
-over a horizon and differentiated to second order — has a self-contained reproduction in
-`tests/integration/test_scan_mlp.py`: a small MLP scanned over a few stages, with `spjac` and
+The IR shape this problem leans on — a dense-matmul stage body with a broadcast weight tail, used
+through VMAP over a horizon and differentiated to second order — has a self-contained reproduction in
+`tests/integration/test_vmap_mlp.py`: a small MLP used through VMAP over a few stages, with `spjac` and
 `sphess` checked against an unrolled twin, a NumPy-scattered dense reference, and finite differences
 of the Lagrangian's gradient. It runs unconditionally, so retiring this benchmark cannot silently
 drop the coverage.

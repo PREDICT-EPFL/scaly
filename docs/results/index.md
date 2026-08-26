@@ -79,7 +79,7 @@ from the solver descriptor; this table is the last equality-only run.
 | 500 | 54.46 | 45.76 | skipped | 78.0 | 4528.9 | — |
 
 The size column is the point. Alloy's growth is entirely in constant index tables — data, not
-code — because the stage structure is expressed with `map_` and survives lowering as a real loop.
+code — because the stage structure is expressed with `vmap` and survives lowering as a real loop.
 Construction time follows: 248 ms to build the 500-stage case against SX's 481 ms.
 
 Full tables, workspace figures and the reasoning are in [the scalability sweep](scalability.md).
@@ -215,7 +215,7 @@ The older continuous-time model's 2.8–3.9× has not been re-measured under the
 should be read as an upper bound. Details in [the fairness audit](fairness.md#unbumpercars-c8-40-steps-exact-lagrangian-hessian).
 
 What the problem exists to exercise is the exact sparse Lagrangian Hessian, computed through
-preserved `map` structure — the construction most of alloy's sparse machinery is built to make
+preserved `VMAP` structure — the construction most of alloy's sparse machinery is built to make
 cheap. It is the default here, and it roughly halves IPOPT's iteration count against a
 limited-memory approximation.
 

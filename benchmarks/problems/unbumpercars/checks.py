@@ -15,7 +15,9 @@ reproductions in ``tests/ad/test_sparsity.py`` and
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from typing import cast
 
+import alloy as al
 import numpy as np
 
 from benchmarks.problems.unbumpercars.common import (
@@ -25,7 +27,10 @@ from benchmarks.problems.unbumpercars.common import (
   DTMLPWeights,
   FilterConfig,
   HCBFConfig,
+  NCTRL,
   NSTATE,
+  N_PHYSICS,
+  N_PW_DT,
   dt_mlp_step_np,
   dt_mlp_step_smooth_np,
   load_ct_full_weights,
@@ -57,8 +62,7 @@ def check_oracle_matches_casadi() -> None:
     filt_cfg = FilterConfig(model=model)
     weights = load_dt_mlp_weights() if model == "dt" else load_ct_full_weights()
     oracle = build_alloy_oracle(loop_cfg, filt_cfg)
-    ca_filt = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
-
+    ca_filt = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
     rng = np.random.default_rng(3)
     bar_x = sample_initial_states(loop_cfg).reshape(-1)
     u_des = rng.uniform(-0.5, 0.5, 2 * loop_cfg.ncars)
@@ -335,9 +339,8 @@ def check_exact_hess_matches_casadi_on_closed_loop_samples() -> None:
     bar_x, u_des = sim.states.reshape(-1), desired.reshape(-1)
     physics, dt = loop_cfg.physics.array(), np.array([loop_cfg.dt])
     p = np.concatenate([bar_x, u_des, weights.packed, physics, dt])
-    alloy_values = np.asarray(alloy_filt.hess_fn.eval_list(z, 1.0, lam, bar_x, u_des, weights.packed, physics, dt)[0], dtype=np.float64).reshape(-1)[
-      alloy_filt.hess_lower_mask
-    ]
+    hess_fn = cast(al.Function, alloy_filt.hess_fn)
+    alloy_values = np.asarray(hess_fn.eval_list(z, 1.0, lam, bar_x, u_des, weights.packed, physics, dt)[0], dtype=np.float64).reshape(-1)
     casadi_dense = np.asarray(casadi_filt.hess_fn(z, p, 1.0, lam), dtype=np.float64)
     np.testing.assert_allclose(alloy_values, casadi_dense[alloy_filt.hess_rows, alloy_filt.hess_cols], rtol=1e-8)
     sim.step(safe)
@@ -354,7 +357,7 @@ def check_canonical_hessian_handoff() -> None:
   weights = load_dt_mlp_weights()
   state = sample_initial_states(cfg).reshape(-1)
   desired = np.tile([cfg.nominal_speed, 0.0], cfg.ncars)
-  arrays = {
+  arrays: dict[str, np.ndarray] = {
     "z": np.concatenate([desired, np.zeros(cfg.n_slack)]),
     "lam_f": np.array(1.0),
     "lam_g": np.linspace(0.1, 1.0, cfg.n_slack),
@@ -367,13 +370,35 @@ def check_canonical_hessian_handoff() -> None:
   with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     artifact = root / "representative_fe_inputs.npz"
-    np.savez_compressed(artifact, **arrays)
+    np.savez_compressed(
+      artifact,
+      z=arrays["z"],
+      lam_f=arrays["lam_f"],
+      lam_g=arrays["lam_g"],
+      bar_x=arrays["bar_x"],
+      u_des=arrays["u_des"],
+      pw=arrays["pw"],
+      physics=arrays["physics"],
+      dt=arrays["dt"],
+    )
     with np.load(artifact) as loaded:
       harvested = {name: np.asarray(loaded[name], dtype=np.float64) for name in loaded.files}
-    for backend in ("alloy", "casadi_mx"):
+    for backend in ("alloy", "casadi_sx", "casadi_mx"):
       output = root / backend
       output.mkdir()
       info = build_kernel("unbumpercars", cfg.ncars, backend, output)
+      if backend == "alloy":
+        assert info["layout"] == "lower"
+      else:
+        assert info["symbol"] == "nlp_hess_l"
+        assert info["inputs"] == [
+          ("x", NCTRL * cfg.ncars + cfg.n_slack),
+          ("p", NSTATE * cfg.ncars + NCTRL * cfg.ncars + N_PW_DT + N_PHYSICS + 1),
+          ("lam_f", 1),
+          ("lam_g", cfg.n_slack),
+        ]
+        assert info["output_index"] == 0 and info["requested_output_indices"] == (0,)
+        assert info["layout"] == "upper"
       _samples("unbumpercars", cfg.ncars, info, output, harvested)
 
 

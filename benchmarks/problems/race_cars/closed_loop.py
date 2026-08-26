@@ -39,7 +39,7 @@ from benchmarks.problems.race_cars import (
   NZ,
   T_MAX,
   RaceCarParams,
-  _race_car_eq_map_expr,
+  _race_car_eq_vmap_expr,
   n_param,
   rk4_step_np,
 )
@@ -241,14 +241,14 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
     else:
       weights.extend([config.q_lon, config.q_lat, config.q_phi, config.q_v])
     residuals.extend([e_lon, e_lat, d_phi, d_v])
-  corridor = al.scan(
+  corridor = al.vmap(
     _corridor_stage,
     length=n,
     inputs={"z": (z, NZ, NZ), "ref": (p, NX, NX)},
   )
   cost = al.dot(al.const(np.array(weights)), al.stack(residuals) ** 2)
 
-  eq = _race_car_eq_map_expr(z, p, n)
+  eq = _race_car_eq_vmap_expr(z, p, n)
   lb, ub = np.full(z.size, -np.inf), np.full(z.size, np.inf)
   for i in range(n + 1):
     lb[i * NZ + 3], ub[i * NZ + 3] = 0.0, config.max_speed

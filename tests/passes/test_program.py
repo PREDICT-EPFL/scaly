@@ -204,7 +204,7 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
   z = al.sym("z", 2)
   (inner_z,) = inner.call([z * z])
   outer = al.Function("outer", [z], [inner_z], ["z"], ["y"])
-  jf = outer.factory("J", ["z"], [al.jac("y", "z")])
+  jf = outer.factory("J", ["z"], [al.factory.Jac("y", "z")])
 
   source = render_program_c_source(jf)
   assert "static __attribute__((noinline)) void inner_fwd2_y_x_raw" in source

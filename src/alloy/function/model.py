@@ -1,9 +1,4 @@
-"""``Function``: a named expression-dialect graph, and the unit of composition and compilation.
-
-Also holds ``Port``, the ``DerivSpec`` request base (its concrete kinds are ``function/factory.py``,
-where the AD they dispatch to is reachable), and ``_jit`` — the one sanctioned upward seam, since
-calling a ``Function`` compiles it. See ``docs/how_it_works/architecture.md``.
-"""
+"""Function and the dependency-light DerivSpec base for named expression-dialect graphs."""
 
 from __future__ import annotations
 
@@ -32,13 +27,7 @@ def _jit():
 
 @dataclass(frozen=True, slots=True)
 class DerivSpec:
-  """One typed output request for ``Function.factory``.
-
-  ``of`` names an output of the source function (or an ``aux`` output), ``wrt`` one of its inputs.
-  The concrete kinds — ``jac``, ``grad``, ``hess``, ``spjac``, ``sphess``, ``fwd``, ``adj`` — are in
-  ``function/factory.py``, where the AD they dispatch to is reachable; ``factory`` only needs the
-  request shape, so the base sits next to it.
-  """
+  """Base class for typed requests passed to Function.factory."""
 
   kind: ClassVar[str]
   of: str
@@ -48,7 +37,7 @@ class DerivSpec:
   def output_name(self) -> str:
     return f"{self.kind}_{self.of}_{self.wrt}"
 
-  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityType | None]:
+  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityType | None, int | None]:
     raise NotImplementedError
 
   def _in(self, inputs: Mapping[str, Expr], name: str) -> Expr:
@@ -60,17 +49,6 @@ class DerivSpec:
     if name not in outputs:
       raise ValueError(f"unknown factory output {name!r} in output {self}")
     return outputs[name]
-
-
-@dataclass(frozen=True, slots=True)
-class Port:
-  name: str
-  expr: Expr
-  sparsity: SparsityType | None = None
-
-  @property
-  def shape(self) -> tuple[int, ...]:
-    return self.expr.shape
 
 
 class Function:
@@ -98,6 +76,7 @@ class Function:
     output_names: Sequence[str] | None = None,
     output_sparsities: Sequence[SparsityType | None] | None = None,
     device: DeviceSpec | str | None = None,
+    output_coloring_widths: Sequence[int | None] | None = None,
   ):
     self.name = name
     self.inputs = tuple(inputs)
@@ -117,12 +96,15 @@ class Function:
       tuple(output_names) if output_names is not None else tuple(o.name or f"out{i}" for i, o in enumerate(outputs))
     )
     self.output_sparsities = tuple(output_sparsities) if output_sparsities is not None else (None,) * len(self.outputs)
+    self.output_coloring_widths = tuple(output_coloring_widths) if output_coloring_widths is not None else (None,) * len(self.outputs)
     if len(self.input_names) != len(self.inputs):
       raise ValueError(f"expected {len(self.inputs)} input names, got {len(self.input_names)}")
     if len(self.output_names) != len(self.outputs):
       raise ValueError(f"expected {len(self.outputs)} output names, got {len(self.output_names)}")
     if len(self.output_sparsities) != len(self.outputs):
       raise ValueError(f"expected {len(self.outputs)} output sparsities, got {len(self.output_sparsities)}")
+    if len(self.output_coloring_widths) != len(self.outputs):
+      raise ValueError(f"expected {len(self.outputs)} output coloring widths, got {len(self.output_coloring_widths)}")
     for name, out, sparsity in zip(self.output_names, self.outputs, self.output_sparsities, strict=True):
       if sparsity is not None and out.size != sparsity.nnz:
         raise ValueError(f"sparse output metadata for {name!r} has {sparsity.nnz} nonzeros, but output shape {out.shape} has {out.size} entries")
@@ -156,6 +138,7 @@ class Function:
       self.output_names,
       self.output_sparsities,
       device=device,
+      output_coloring_widths=self.output_coloring_widths,
     )
 
   def input_map(self) -> dict[str, Expr]:
@@ -266,15 +249,18 @@ class Function:
     ret_outputs: list[Expr] = []
     ret_output_names: list[str] = []
     ret_sparsities: list[SparsityType | None] = []
+    ret_coloring_widths: list[int | None] = []
     for spec in outputs:
       if isinstance(spec, str):
         if spec not in all_outputs:
           raise ValueError(f"unknown factory output {spec!r}")
         output, sparsity, output_name = all_outputs[spec], None, spec
+        coloring_width = None
       else:
-        output, sparsity = spec.build(all_inputs, all_outputs)
+        output, sparsity, coloring_width = spec.build(all_inputs, all_outputs)
         output_name = spec.output_name
       ret_outputs.append(output)
       ret_output_names.append(output_name)
       ret_sparsities.append(sparsity)
-    return Function(name, ret_inputs, ret_outputs, inputs, ret_output_names, ret_sparsities)
+      ret_coloring_widths.append(coloring_width)
+    return Function(name, ret_inputs, ret_outputs, inputs, ret_output_names, ret_sparsities, output_coloring_widths=ret_coloring_widths)

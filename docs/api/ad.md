@@ -31,6 +31,8 @@ These operate on `Expr` graphs directly. For derivatives of a named `Function`, 
 
 ::: alloy.ad.sparsity.column_coloring
 
+::: alloy.ad.sparsity.star_coloring
+
 ::: alloy.ad.sparsity.color_groups
 
 ## Sparse derivatives

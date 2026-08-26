@@ -285,14 +285,14 @@ def stage_function(decoder: Decoder = Decoder(), dt: float = DT) -> al.Function:
 
 @functools.cache
 def npmpc_eq_function(horizon: int, decoder: Decoder = Decoder(), dt: float = DT) -> al.Function:
-  """The `horizon` dynamics equalities, as one `al.scan` over the stage function.
+  """The `horizon` dynamics equalities, as one `al.vmap` over the stage function.
 
   States are blocked ahead of controls in `z`, so both windows into it stride cleanly and there is
   no dead trailing control the way an interleaved layout would leave.
   """
   z = al.sym("z", n_dec(horizon))
   p = al.sym("p", decoder.n_pw, diff=False)
-  eq = al.scan(
+  eq = al.vmap(
     stage_function(decoder, dt),
     length=horizon,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (horizon + 1), NU), "pw": (p, 0, 0)},
@@ -324,7 +324,7 @@ def _stage_jac_function(decoder: Decoder, dt: float) -> al.Function:
   return stage.factory(
     f"npmpc_stage_jac_h{'x'.join(str(h) for h in decoder.hidden)}",
     ["x", "xnext", "u", "pw"],
-    [al.jac("eq", "x"), al.jac("eq", "u"), al.jac("eq", "xnext")],
+    [al.factory.Jac("eq", "x"), al.factory.Jac("eq", "u"), al.factory.Jac("eq", "xnext")],
   )
 
 
@@ -334,7 +334,7 @@ def npmpc_eq_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray, dec
   Each stage's residual touches only its own state, control, and successor state, so the matrix is
   block-banded and the reference costs one small dense Jacobian per stage rather than one enormous
   one over the whole horizon. Differentiating the *stage* function and scattering the blocks is also
-  the independence the check needs: it never builds the scanned graph the sparse kernel comes from.
+  the independence the check needs: it never builds the VMAP graph the sparse kernel comes from.
   """
   jac = _stage_jac_function(decoder, dt)
   offset = NX * (horizon + 1)
@@ -388,7 +388,7 @@ def linearize(decoder: Decoder, pw: np.ndarray, dt: float = DT) -> tuple[np.ndar
   """`A`, `B` of the learned one-step map at the upright equilibrium.
 
   The stage residual is `x + f(x, u) - xnext`, so its derivatives with respect to `x` and `u` at
-  the equilibrium *are* `A` and `B`. Taking them from `al.jac` keeps the reference implementation's
+  the equilibrium *are* `A` and `B`. Taking them from `al.factory.Jac` keeps the reference implementation's
   torch dependency out and exercises Alloy's differentiation in the problem's own setup.
   """
   jac = _stage_jac_function(decoder, dt)
@@ -440,11 +440,11 @@ def stage_cost_function(weights: CostWeights = CostWeights()) -> al.Function:
 def npmpc_cost_expr(z: al.Expr, horizon: int, P: np.ndarray, weights: CostWeights = CostWeights()) -> al.Expr:
   """Total objective: stage, inter-stage, LQR terminal, and slack penalty (paper eq. 15).
 
-  The per-stage part is scanned; only the terminal and slack terms, which exist once, sit outside
+  The per-stage part uses VMAP; only the terminal and slack terms, which exist once, sit outside
   the loop.
   """
   offset = NX * (horizon + 1)
-  stages = al.scan(
+  stages = al.vmap(
     stage_cost_function(weights),
     length=horizon,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, offset, NU)},
@@ -473,7 +473,7 @@ def npmpc_constraint_exprs(z: al.Expr, xstart: al.Expr, horizon: int) -> tuple[a
   """The inequality rows and their bounds: the initial-state band, then the softened arm-angle limits.
 
   Both arm-angle families are one strided gather plus the scalar slack, so the rendered source does
-  not grow with the horizon any more than the scanned dynamics do.
+  not grow with the horizon any more than the VMAP dynamics do.
   """
   slack = z[NX * (horizon + 1) + NU * horizon]
   phi = z[1 : NX * (horizon + 1) : NX]
@@ -548,7 +548,7 @@ def npmpc_nlp(
   solver: str = "ipopt",
   options: dict[str, str | int | float] | None = None,
 ) -> al.SolverFunction:
-  """The neural-process MPC as one `al.nlp`: scanned dynamics, scanned cost, one arm-angle slack.
+  """The neural-process MPC as one `al.nlp`: VMAP dynamics, VMAP cost, one arm-angle slack.
 
   `P` is the terminal weight from `terminal_P`. `p` carries the state the first horizon node is
   pinned to and then the decoder tail, in the order `n_param` describes -- the state first, as
@@ -557,7 +557,7 @@ def npmpc_nlp(
   """
   z = al.sym("z", n_dec(horizon))
   p = al.sym("p", n_param(decoder), diff=False)
-  eq = al.scan(
+  eq = al.vmap(
     stage_function(decoder, dt),
     length=horizon,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (horizon + 1), NU), "pw": (p, NX, 0)},
@@ -586,7 +586,7 @@ def npmpc_lag_function(
   """Objective and dynamics equalities together, the pair an exact Lagrangian Hessian needs."""
   z = al.sym("z", n_dec(horizon))
   p = al.sym("p", decoder.n_pw, diff=False)
-  eq = al.scan(
+  eq = al.vmap(
     stage_function(decoder, dt),
     length=horizon,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (horizon + 1), NU), "pw": (p, 0, 0)},

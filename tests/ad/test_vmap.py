@@ -10,33 +10,33 @@ def scale_add(x, p):
   return {"y": 2.0 * x + p}
 
 
-def test_jvp_many_of_map_matches_unrolled_jvp() -> None:
+def test_jvp_many_of_vmap_matches_unrolled_jvp() -> None:
   N = 4
   z = al.sym("z", 3 * N)
   p = al.sym("p", 3 * N)
 
-  mapped = al.map_(scale_add, N, [(z, 0, 3), (p, 0, 3)])
+  mapped = al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
   unrolled = al.concat([scale_add.call([z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3]])[0] for i in range(N)])
 
   seeds = al.const(np.eye(3 * N))
-  jvp_map = al.jvp_many(mapped, z, seeds)
+  jvp_vmap = al.jvp_many(mapped, z, seeds)
   jvp_ref = al.jvp_many(unrolled, z, seeds)
 
-  fn_map = al.Function("jvp_map", [z, p], [jvp_map], ["z", "p"], ["dy"])
+  fn_vmap = al.Function("jvp_vmap", [z, p], [jvp_vmap], ["z", "p"], ["dy"])
   fn_ref = al.Function("jvp_ref", [z, p], [jvp_ref], ["z", "p"], ["dy"])
 
   rng = np.random.default_rng(0)
   zv = rng.normal(size=3 * N)
   pv = rng.normal(size=3 * N)
 
-  np.testing.assert_allclose(fn_map(zv, pv), fn_ref(zv, pv), rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(fn_vmap(zv, pv), fn_ref(zv, pv), rtol=1e-10, atol=1e-10)
 
 
-def test_jacobian_of_map_matches_finite_differences() -> None:
+def test_jacobian_of_vmap_matches_finite_differences() -> None:
   N = 5
   z = al.sym("z", 3 * N)
   p = al.sym("p", 3 * N)
-  mapped = al.map_(scale_add, N, [(z, 0, 3), (p, 0, 3)])
+  mapped = al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
   fn = al.Function("mapped", [z, p], [mapped], ["z", "p"], ["y"])
 
   seeds = al.const(np.eye(3 * N))
@@ -61,25 +61,25 @@ def test_jacobian_of_map_matches_finite_differences() -> None:
   np.testing.assert_allclose(jac, fd, atol=1e-5)
 
 
-def test_grad_factory_over_map_matches_unrolled_and_finite_difference() -> None:
+def test_grad_factory_over_vmap_matches_unrolled_and_finite_difference() -> None:
   from alloy.ad import finite_difference
   from alloy.ir.expr import topo
 
-  @al.function("map_grad_piece", {"x": 2})
+  @al.function("vmap_grad_piece", {"x": 2})
   def piece(x):
     return {"y": x * x + x.sin()}
 
   N = 4
   z = al.sym("z", 2 * N)
-  mapped = al.map_(piece, N, [(z, 0, 2)])
+  mapped = al.vmap(piece, N, [(z, 0, 2)])
   unrolled = al.concat([piece.call([z[2 * it : 2 * (it + 1)]])[0] for it in range(N)])
-  mapped_fn = al.Function("map_grad_factory", [z], [mapped], ["z"], ["y"])
-  unrolled_fn = al.Function("map_grad_unrolled", [z], [unrolled], ["z"], ["y"])
-  mapped_grad = mapped_fn.factory("map_grad_factory_grad", ["z", "lam:y"], [al.grad("gamma", "z")], aux={"gamma": ["y"]})
-  unrolled_grad = unrolled_fn.factory("map_grad_unrolled_grad", ["z", "lam:y"], [al.grad("gamma", "z")], aux={"gamma": ["y"]})
-  map_nodes = [node for node in topo(mapped_grad.outputs) if node.op == al.ExprOp.MAP]
-  assert len(map_nodes) == 1
-  assert "_adj0_0" in map_nodes[0].attrs["callee"].name
+  mapped_fn = al.Function("vmap_grad_factory", [z], [mapped], ["z"], ["y"])
+  unrolled_fn = al.Function("vmap_grad_unrolled", [z], [unrolled], ["z"], ["y"])
+  mapped_grad = mapped_fn.factory("vmap_grad_factory_grad", ["z", "lam:y"], [al.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
+  unrolled_grad = unrolled_fn.factory("vmap_grad_unrolled_grad", ["z", "lam:y"], [al.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
+  vmap_nodes = [node for node in topo(mapped_grad.outputs) if node.op == al.ExprOp.VMAP]
+  assert len(vmap_nodes) == 1
+  assert "_adj0_0" in vmap_nodes[0].attrs["callee"].name
 
   zv = np.random.default_rng(7).normal(size=2 * N)
   lamv = np.random.default_rng(8).normal(size=2 * N)

@@ -2,7 +2,7 @@
 
 This directory is a *representative reproduction* of the centralized safety filter in
 `~/dev/bumper_car_simulator`, kept only so Alloy has a realistic workload to be fast on: a
-neural model inside pairwise constraints, exact sparse Lagrangian Hessians through `ExprOp.MAP`,
+neural model inside pairwise constraints, exact sparse Lagrangian Hessians through `ExprOp.VMAP`,
 and a CasADi implementation of the same NLP to compare against.
 
 **It is not the development center for the safety filter itself.** Controller research —
@@ -664,7 +664,7 @@ cost(z, bar_x, u_des, weights, physics, dt)
 g(z, bar_x, u_des, weights, physics, dt)
 ```
 
-The RK4 neural dynamics are evaluated with `al.map_` over the car axis, so the
+The RK4 neural dynamics are evaluated with `al.vmap` over the car axis, so the
 prototype exercises the mapped neural dynamics path we care about. The filter
 then creates Alloy factories for:
 
@@ -769,7 +769,7 @@ alone is most of the difference.
 Exact Hessians halve the iteration count (19.2 → 9.5) and nearly eliminate IPOPT's own
 time (6.32 → 1.33 ms for Alloy), at the cost of evaluating `sphess:gamma:z:z` every
 iteration (FE 11.08 → 17.72 ms). Net wall clock is a wash for Alloy and clearly worse for
-CasADi. They are the default anyway, because the sparse-Hessian-through-`ExprOp.MAP` path is
+CasADi. They are the default anyway, because the sparse-Hessian-through-`ExprOp.VMAP` path is
 what this problem exists to exercise.
 
 With exact Hessians the two oracle providers stay bit-for-bit together over the whole episode
@@ -782,7 +782,7 @@ differences in the iterate over 20 s. Neither has a collision or a solver failur
 The original prototype exposed the following gaps; all are now closed on the
 Alloy path.
 
-### 1. Exact sparse Hessian through `ExprOp.MAP` (closed)
+### 1. Exact sparse Hessian through `ExprOp.VMAP` (closed)
 
 IPOPT's exact Hessian path would require the sparse Hessian of the Lagrangian
 with respect to `z` through the mapped RK4 neural dynamics:
@@ -791,8 +791,8 @@ with respect to `z` through the mapped RK4 neural dynamics:
 sphess:lagrangian:z:z
 ```
 
-The oracle deliberately uses `al.map_` to evaluate the per-car neural RK4 model.
-Alloy now propagates reverse and sparse second-order AD through `ExprOp.MAP` while
+The oracle deliberately uses `al.vmap` to evaluate the per-car neural RK4 model.
+Alloy now propagates reverse and sparse second-order AD through `ExprOp.VMAP` while
 preserving the compact mapped representation. The filter builds
 `sphess:gamma:z:z`, passes its lower-triangular sparsity to IPOPT, and evaluates
 it from IPOPT's objective factor and constraint multipliers.

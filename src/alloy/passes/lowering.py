@@ -13,7 +13,7 @@ Covered: elementwise unary/binary (with numpy broadcasting), ``RESHAPE`` (alias)
 ``CONST`` (any size, via ``const_buffer``), general ``SLICE`` (integer / multi-dim /
 strided), ``SUM``, ``MATMUL`` (rank <= 2), ``TRANSPOSE`` (rank <= 4), ``GATHER`` /
 ``SCATTER`` (any size, ``static const`` index table), ``STACK`` / ``CONCAT`` (any axis),
-``CALL`` (multi-PROC, deduped) and ``MAP``; a ``SolverFunction`` ``CALL`` is opaque
+``CALL`` (multi-PROC, deduped) and ``VMAP``; a ``SolverFunction`` ``CALL`` is opaque
 (see ``lower_function``). The tracking and unbumpercars workloads (forward + ``jac`` +
 ``spjac``) render and match generated-code / external numeric references. Deferred (re-land from the reference branch):
 GPU placement and the new ops tracked in the migration roadmap.
@@ -606,8 +606,8 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
   ctx.value_buffers[node.id] = ctx.call_invocations[key][out_idx]
 
 
-@lowers(ExprOp.MAP)
-def _lower_map(ctx: LowerCtx, node: Expr) -> None:
+@lowers(ExprOp.VMAP)
+def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   """A ``length``-iteration loop calling the callee with pointer-offset VIEW args. Iteration ``it``
   reads ``outer_k[start_k + it·stride_k ...]`` and writes the selected output into ``out[it·slice_size ...]``."""
   callee: Function = node.attrs["callee"]

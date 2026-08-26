@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+from typing import Sequence, get_type_hints
 
 import alloy as al
 import alloy.codegen as codegen
 from alloy.codegen import aot
-from alloy.function.model import Function, Port
+from alloy.function.factory import Adj, DerivSpec, Fwd, Grad, Hess, Jac, SpHess, SpJac
+from alloy.function.model import Function
 from alloy.ir.expr import Expr, ExprOp
 from alloy.ir.expr_spec import spec_expr
 from alloy.ir.program import ProgramNode, ProgramOp
@@ -18,14 +20,35 @@ def test_public_exports_are_canonical() -> None:
   assert al.Expr is Expr
   assert al.ExprOp is ExprOp
   assert al.Function is Function
-  assert al.Port is Port
+  factory_hints = get_type_hints(Function.factory)
+  assert factory_hints["outputs"] == Sequence[str | DerivSpec]
+  assert factory_hints["return"] is Function
+  assert not hasattr(al, "Port")
+  assert al.factory.DerivSpec is DerivSpec
+  assert al.factory.Jac is Jac
+  assert al.factory.Grad is Grad
+  assert al.factory.Hess is Hess
+  assert al.factory.SpJac is SpJac
+  assert al.factory.SpHess is SpHess
+  assert al.factory.Fwd is Fwd
+  assert al.factory.Adj is Adj
+  assert al.factory.__all__ == ["Jac", "Grad", "Hess", "SpJac", "SpHess", "Fwd", "Adj", "DerivSpec"]
   assert al.Rule is Rule
   assert al.Spec is Spec
   assert al.VerifyError is VerifyError
   assert program.ProgramNode is ProgramNode
   assert program.ProgramOp is ProgramOp
   assert codegen.render_c_source is aot.render_c_source
+  assert callable(al.vmap)
+  assert not hasattr(al, "map_")
+  assert not hasattr(al, "scan")
+  assert all(
+    not hasattr(al, name)
+    for name in ("DerivSpec", "expr_jacobian", "expr_gradient", "expr_hessian", "jac", "grad", "hess", "spjac", "sphess", "spjacobian", "sphessian")
+  )
   assert {"ExprOp", "Rule", "Spec", "VerifyError"} <= set(al.__all__)
+  assert "vmap" in al.__all__
+  assert {"map_", "scan"}.isdisjoint(al.__all__)
   assert {"Ops", "VerifyRule", "spec_semantic", "spec_semantic_shared"}.isdisjoint(al.__all__)
 
 

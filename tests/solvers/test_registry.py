@@ -133,6 +133,31 @@ def test_kind_mismatch_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     registry.require_backend("fake", "nlp")
 
 
+@pytest.mark.parametrize("triangle", ["lower", "upper"])
+def test_nlp_descriptor_uses_backend_hessian_triangle(monkeypatch: pytest.MonkeyPatch, triangle: str) -> None:
+  class _FakeNlpBackend(_FakeBackend):
+    kind = "nlp"
+    hess_triangle = triangle
+
+  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeNlpBackend())
+  x = al.sym(f"layout_x_{triangle}", 2)
+  nlp = al.nlp(x=x, f=x[0] * x[1], solver="fake", name=f"layout_{triangle}")
+  sparsity = nlp.descriptor.hess_sparsity
+  assert sparsity is not None
+  assert all(row >= col if triangle == "lower" else row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
+  assert not hasattr(nlp.descriptor, "hess_lower_mask")
+
+
+def test_nlp_backend_must_declare_a_hessian_triangle(monkeypatch: pytest.MonkeyPatch) -> None:
+  class _MissingTriangle(_FakeBackend):
+    kind = "nlp"
+    hess_triangle = None
+
+  monkeypatch.setattr(registry, "get_backend", lambda name: _MissingTriangle())
+  with pytest.raises(SolverPluginError, match="must declare hess_triangle"):
+    registry.require_backend("fake", "nlp")
+
+
 def test_missing_backend_error_lists_installed(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr(registry, "available_backends", lambda: {})
   with pytest.raises(SolverPluginError, match="no solver plugin 'nope'"):

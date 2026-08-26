@@ -60,7 +60,7 @@ Smoke runs three groups, all on by default:
   plus sparsity, workspace, and loop-preservation invariants. Every Alloy cell evaluates the exact
   sparse Jacobian or Hessian and sparsity supplied by its solver descriptor. For `npmpc` the
   loop-preservation gate runs on two axes: the generated source must not grow with the
-  horizon (the decoder is scanned, not unrolled per stage) and must not grow with the
+  horizon (the decoder uses VMAP, not per-stage unrolling) and must not grow with the
   decoder width either, since the weights are read out of the parameter tail rather than
   baked in as literals. Independent dense NumPy references cover every equality and inequality row
   in the race-car and `npmpc` solver descriptors.
@@ -84,7 +84,7 @@ written the second way first: at N = 100 it consumed 900 MB and never finished,
 where scattering per-stage blocks takes 2.2 ms at N = 100 against 25 s at N = 25
 and agrees with the unrolled version to 0.0 wherever that is affordable. It is
 also *more* independent of the kernel under test, not less, because it never
-builds the scanned graph at all.
+builds the VMAP graph at all.
 
 Confirm a new gate can actually fail, by perturbing the thing it checks and
 watching it fire. A gate that cannot fail is worse than no gate, because it reads
@@ -123,12 +123,16 @@ arrays. A generator that writes a constant inline counts it as executable source
 earlier runs.
 
 The CSV records floating-point and integer ABI workspace and the required lengths of the argument
-and result pointer arrays. It also records the derivative's coloring width. Alloy rows whose maps
-share one trip count report that count, the maximum floating-point scratch across the mapped
-callees, and the sum of their floating-point Program IR operations per iteration. Scratch includes
-both stack slots and `w[]` slots. The dispatch fields are empty for kernels without a map and for
-kernels whose maps have different trip counts. CasADi does not expose the derivative function inside
-its generated map as a stable inspection boundary, so its dispatch fields are empty.
+and result pointer arrays. `coloring_width` is specific to each backend and must not be compared across
+backends. For Alloy, it is the number of compressed tangent directions the generated
+derivative actually executes. A structured Jacobian sums the independently executed directions from
+each formal or local batch; a sparse Hessian reports the global star-color count. CasADi leaves the
+field blank because its generated code does not expose its internal derivative count. Alloy rows
+whose maps share one trip count report that count, the maximum floating-point scratch across the
+mapped callees, and the sum of their floating-point Program IR operations per iteration. Scratch
+includes both stack slots and `w[]` slots. The dispatch fields are empty for kernels without a map
+and for kernels whose maps have different trip counts. CasADi does not expose the derivative
+function inside its generated map as a stable inspection boundary, so its dispatch fields are empty.
 
 All benchmark artifacts follow the same command-first layout:
 

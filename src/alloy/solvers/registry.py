@@ -23,13 +23,13 @@ from collections.abc import Sequence
 from functools import cache
 from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 
 if TYPE_CHECKING:
   from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
 
-SOLVER_PLUGIN_PROTOCOL_VERSION = 4
+SOLVER_PLUGIN_PROTOCOL_VERSION = 5
 ENTRY_POINT_GROUP = "alloy.solvers"
 
 
@@ -64,6 +64,12 @@ class SolverBackend(Protocol):
     ...
 
 
+class NlpSolverBackend(SolverBackend, Protocol):
+  """Solver backend protocol for NLP plugins, including Hessian layout."""
+
+  hess_triangle: Literal["lower", "upper"]
+
+
 def available_backends() -> dict[str, EntryPoint]:
   return {ep.name: ep for ep in entry_points(group=ENTRY_POINT_GROUP)}
 
@@ -95,10 +101,22 @@ def get_backend(name: str) -> SolverBackend:
   return backend
 
 
+@overload
+def require_backend(name: str, kind: Literal["nlp"]) -> NlpSolverBackend: ...
+
+
+@overload
+def require_backend(name: str, kind: Literal["qp"]) -> SolverBackend: ...
+
+
 def require_backend(name: str, kind: str) -> SolverBackend:
   backend = get_backend(name)
   if backend.kind != kind:
     raise SolverPluginError(f"solver plugin {name!r} solves {backend.kind} problems, not {kind}")
+  if kind == "nlp":
+    if getattr(backend, "hess_triangle", None) not in {"lower", "upper"}:
+      raise SolverPluginError(f"solver plugin {name!r} must declare hess_triangle as 'lower' or 'upper'")
+    return cast(NlpSolverBackend, backend)
   return backend
 
 

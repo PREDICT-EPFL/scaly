@@ -14,10 +14,10 @@ departure below is wrong, that is worth knowing.-->
 
 | | Taken | Changed |
 | --- | --- | --- |
-| **CasADi** | `Function` as the unit of everything; the universal C ABI; derivative factories; sparsity as metadata | typed derivative requests instead of strings; repetition preserved by an explicit construct rather than implied by the symbolic type; pure Python |
+| **CasADi** | `Function` as the unit of composition, differentiation and compilation; the universal C ABI; sparsity as metadata | typed derivative requests instead of strings; repetition preserved by an explicit construct rather than implied by the symbolic type; pure Python |
 | **tinygrad** | one hash-consed node class per dialect; op-indexed pattern rewriting; loops that carry their intent; the sizing discipline | an ahead-of-time compiler, not a runtime; explicit verifiers; a second dialect that is a real language |
 | **MLIR** | the dialect discipline; stable, diffable assembly text; progressive lowering | two dialects, not twenty; a printer with no parser; no C++, no TableGen |
-| **JAX** | `jvp`/`vjp` as primitives; derivatives as ordinary graphs; batching structure preserved rather than unrolled | explicit construction instead of tracing; `map` survives into generated code; sparsity is first-class |
+| **JAX** | `jvp`/`vjp` as primitives; derivatives as ordinary graphs; batching structure preserved rather than unrolled | explicit construction instead of tracing; `vmap` survives into generated code; sparsity is first-class |
 
 ## CasADi
 
@@ -32,11 +32,14 @@ convention means generated functions can call each other, a generated solver can
 oracles, and an existing C++ consumer does not need to learn anything new. Sparsity as structural
 metadata carried alongside a value, with CSR and CSC views on it, is also CasADi's model.
 
+`Function.factory` remains a shorthand for building several named derivatives. It is not the unit
+of composition, and it is not the graph-merging mechanism.
+
 **Where alloy departs.**
 
 *Derivative requests are typed objects, not strings.* CasADi asks for a derivative with a factory
-string — `"jac:eq:z"`. Alloy asks with `al.jac("eq", "z")`. The string grammar is expressive and
-compact, and it cannot be completed by an editor, and it needs a parser that becomes a small
+string — `"jac:eq:z"`. Alloy asks with `al.factory.Jac("eq", "z")`. The string grammar is expressive and
+compact, but it cannot be completed by an editor and it needs a parser that becomes a small
 language of its own. The typed form gives up nothing, deletes the parser, and puts the request's
 structure in the type system — the output and input names are still checked when the request is
 resolved, because only the function knows them. This is a deliberate break, not a compatibility
@@ -50,7 +53,7 @@ symbolic type the graph was built with, and that choice is not local to the repe
 propagates. `SX` flattens a `Function.map` at construction, so the mapped and unrolled forms emit
 identical C. `MX` keeps the loop and pays per-node cost. The encoding that does best is a mixture, an
 `SX` elemental function inside an `MX` outer graph, and **which mixture wins changes with the
-problem.** Alloy writes repetition with [`al.map_` and `al.scan`](../guide/functions.md), and it
+problem.** Alloy writes repetition with [`al.vmap`](../guide/functions.md), and it
 survives colored sparse differentiation to second order and lowering, emitted as a real `for` loop
 around one function body.
 
@@ -122,9 +125,9 @@ tripping is not a goal, which frees the format to be optimized for a human readi
 **What alloy keeps.** The AD model. `jvp` and `vjp` are the primitives, whole derivatives are
 composed from them, and every transformation maps a graph to a graph — no tape, no recording, no
 runtime. A derivative is the same kind of object as the thing it came from and gets the same
-treatment downstream, which is what makes `hessian` simply be `jacobian` of `gradient`. The
-thinking behind `map` is `vmap`'s: one callee applied across slices of its arguments, expressed
-once.
+treatment downstream, which is what makes `hessian` simply be `jacobian` of `gradient`. Alloy
+inherits JAX's term `vmap` for independent vectorized mapping, but gives it a different
+abstraction boundary.
 
 **Where alloy departs.**
 
@@ -141,11 +144,13 @@ different function — and no first-call penalty on a warm cache, even in a fres
 same compiler the ahead-of-time path runs, invoked on demand; that is why what you test from Python
 is what you ship as C. See [Code generation](../guide/codegen.md).
 
-*`map` survives into the output.* A `vmap` is a batching rule that rewrites a computation into a
-wider one. Alloy's `map` is preserved through lowering into a real loop in the generated C, and
-through AD into a mapped derivative, so a hundred-stage horizon produces code of roughly constant
-size rather than a hundred unrolled stages. Keeping that structure intact is most of why the
-generated sources are small; see [the numbers](../results/scalability.md).
+*`vmap` is explicit and survives into the output.* JAX's `vmap` is a function-level
+transformation driven by batching rules: it returns a batched function. Alloy's `vmap` builds an
+expression-level `VMAP` node around an already named `Function`, taking explicit outer expressions
+and slice rules. That node remains present through AD and lowering and becomes a real loop in the
+generated C, so a hundred-stage horizon produces code of roughly constant size rather than a
+hundred unrolled stages. `al.vmap` is therefore not a drop-in version of `jax.vmap`; it preserves
+the repeated expression structure at a different boundary. See [the numbers](../results/scalability.md).
 
 *Sparsity is first-class.* JAX has no real equivalent, and does not need one — dense batched
 arithmetic on accelerators is the workload it was built for. Optimal control is the opposite: a
@@ -158,7 +163,7 @@ alloy is *for*.
 Three things are not borrowed from anywhere above.
 
 **Colored sparse derivatives through preserved structure.** Computing a sparse Jacobian by coloring
-a pattern is standard. Doing it on the *callee* of a `map` — coloring a small local tile, pushing
+a pattern is standard. Doing it on the *callee* of a `VMAP` — coloring a small local tile, pushing
 constant seeds through one derivative function, and mapping the result — is what keeps generated
 derivative code from growing with the horizon.
 

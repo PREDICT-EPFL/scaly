@@ -86,7 +86,9 @@ class OpenLoopFilter:
 class CasadiDTCBFSafetyFilter:
   name = "casadi_dt_hcbf"
 
-  def __init__(self, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights | DTMLPWeights, *, _build_solver: bool = True):
+  def __init__(
+    self, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights | DTMLPWeights, *, _build_solver: bool = True, _sym_t=None
+  ):
     import casadi as ca
 
     self.ca = ca
@@ -104,6 +106,7 @@ class CasadiDTCBFSafetyFilter:
     self.last_lam_x: np.ndarray | None = None
     self.last_lam_g: np.ndarray | None = None
     self._build_ms = 0.0
+    self._sym_t = ca.MX if _sym_t is None else _sym_t
     self._build(_build_solver)
 
   def _unpack_pw(self, pw):
@@ -240,8 +243,8 @@ class CasadiDTCBFSafetyFilter:
   def _build(self, build_solver: bool = True) -> None:
     ca = self.ca
     t0 = time.perf_counter()
-    z = ca.MX.sym("z", self.n_z)
-    p = ca.MX.sym("p", self.n_p)
+    z = self._sym_t.sym("z", self.n_z)
+    p = self._sym_t.sym("p", self.n_p)
     bar_x = p[: NSTATE * self.ncars]
     u_des = p[NSTATE * self.ncars : NSTATE * self.ncars + self.n_u]
     offset = NSTATE * self.ncars + self.n_u
@@ -263,18 +266,22 @@ class CasadiDTCBFSafetyFilter:
         for b_next, b_cur in zip(self._wall_b(states_next[i], physics), self._wall_b(states[i], physics), strict=True):
           rows.append(b_next - (1.0 - self.loop_cfg.wall_gamma) * b_cur)
     assert len(rows) == self.n_s
-    g = ca.vertcat(*rows) + slack if rows else ca.MX.zeros(0)
+    g = ca.vertcat(*rows) + slack if rows else self._sym_t.zeros(0)
     weights = np.tile(np.asarray(self.filt_cfg.R, dtype=np.float64), self.ncars)
     du = u - u_des
     cost = ca.dot(du, ca.DM(weights) * du) + self.filt_cfg.slack_weight * ca.sum1(slack)
 
     self.cost_fn = ca.Function("ctdt_cost", [z, p], [cost])
+    self.z_expr = z
+    self.p_expr = p
+    self.cost_expr = cost
+    self.g_expr = g
     self.g_fn = ca.Function("ctdt_g", [z, p], [g])
     self.grad_fn = ca.Function("ctdt_grad", [z, p], [ca.gradient(cost, z)])
     self.jac_fn = ca.Function("ctdt_jac", [z, p], [ca.jacobian(g, z)])
     if not self.filt_cfg.limited_memory_hessian:
-      lam = ca.MX.sym("lam", int(g.size1()))
-      sigma = ca.MX.sym("sigma")
+      lam = self._sym_t.sym("lam", int(g.size1()))
+      sigma = self._sym_t.sym("sigma")
       self.hess_fn = ca.Function("ctdt_hess_lag", [z, p, sigma, lam], [ca.hessian(sigma * cost + ca.dot(lam, g), z)[0]])
     else:
       self.hess_fn = None
@@ -382,23 +389,6 @@ class CasadiDTCBFSafetyFilter:
     return u_safe
 
 
-def build_casadi_jacobian(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights | DTMLPWeights, name: str, sym_t):
-  controller = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
-  z = sym_t.sym("z", controller.n_z)
-  p = sym_t.sym("p", controller.n_p)
-  return controller.ca.Function(name, [z, p], [controller.jac_fn(z, p)])
-
-
-def build_casadi_hessian(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights | DTMLPWeights, name: str, sym_t):
-  controller = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
-  assert controller.hess_fn is not None
-  z = sym_t.sym("z", controller.n_z)
-  p = sym_t.sym("p", controller.n_p)
-  lam_f = sym_t.sym("lam_f")
-  lam_g = sym_t.sym("lam_g", controller.n_s)
-  return controller.ca.Function(name, [z, lam_f, lam_g, p], [controller.hess_fn(z, p, lam_f, lam_g)])
-
-
 def build_casadi_sqp(
   loop_cfg: ClosedLoopConfig,
   filt_cfg: FilterConfig,
@@ -433,7 +423,7 @@ def build_casadi_sqp(
 
 # ---------------------------------------------------------------------------
 # Alloy oracle. The neural ODE/RK4 step is a per-car Function, and the full
-# safety-filter oracle uses al.map_(...) to evaluate it across the car axis.
+# safety-filter oracle uses al.vmap(...) to evaluate it across the car axis.
 # ---------------------------------------------------------------------------
 
 
@@ -541,7 +531,7 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
   u = z[:n_u]
   slack = z[n_u:]
   step_fn = alloy_dt_mlp_step_fn if filt_cfg.model == "dt" else alloy_ctfull_rk4_fn
-  states_next = al.map_(step_fn, ncars, [(bar_x, 0, NSTATE), (u, 0, NCTRL), (pw, 0, 0), (physics, 0, 0), (dt, 0, 0)])
+  states_next = al.vmap(step_fn, ncars, [(bar_x, 0, NSTATE), (u, 0, NCTRL), (pw, 0, 0), (physics, 0, 0), (dt, 0, 0)])
   hcbf, R = loop_cfg.hcbf, loop_cfg.safety_radius
 
   def pair_b(pack: al.Expr, i: int, j: int) -> al.Expr:
@@ -705,9 +695,8 @@ class AlloyDTCBFSafetyFilter:
     self.hess_fn = self.nlp.descriptor.hess
     hess_sp = self.nlp.descriptor.hess_sparsity
     assert self.jac_sparsity is not None and hess_sp is not None
-    self.hess_lower_mask = np.asarray(self.nlp.descriptor.hess_lower_mask, dtype=bool)
-    self.hess_rows = np.asarray(hess_sp.rows, dtype=np.int32)[self.hess_lower_mask]
-    self.hess_cols = np.asarray(hess_sp.cols, dtype=np.int32)[self.hess_lower_mask]
+    self.hess_rows = np.asarray(hess_sp.rows, dtype=np.int32)
+    self.hess_cols = np.asarray(hess_sp.cols, dtype=np.int32)
     self._build_ms = (time.perf_counter() - t0) * 1000.0
     self._warm_compile()
 

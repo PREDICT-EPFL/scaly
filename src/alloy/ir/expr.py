@@ -1,6 +1,6 @@
 """Expression dialect vocabulary: ``ExprOp``, ``OP_INFO``, ``Expr``, interning, builders, topo.
 
-The verify rules are ``ir/expr_spec.py`` and the one builder that needs a ``Function`` — ``map_``
+The verify rules are ``ir/expr_spec.py`` and the one builder that needs a ``Function`` — ``vmap``
 — is ``function/sugar.py``. The printers are ``ir/text.py``, with one exception: ``format_expr``
 stays here because ``Expr.debug`` calls it, and moving it would make ``ir/expr.py`` import
 ``ir/text.py``, which imports ``ir/expr.py``.
@@ -63,7 +63,7 @@ class ExprOp(StrEnum):
   CONCAT = "concat"
   MATMUL = "matmul"
   CALL = "call"
-  MAP = "map"
+  VMAP = "vmap"
   SOLVER_CALL = "solver_call"
 
 
@@ -111,7 +111,7 @@ COMMON_STRUCTURAL = {
   ExprOp.CONCAT,
   ExprOp.MATMUL,
   ExprOp.CALL,
-  ExprOp.MAP,
+  ExprOp.VMAP,
   ExprOp.SOLVER_CALL,
 }
 
@@ -172,7 +172,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.CONCAT: OpInfo(ExprOp.CONCAT, None, np.concatenate),
   ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, np.matmul),
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, None),
-  ExprOp.MAP: OpInfo(ExprOp.MAP, None, None),
+  ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, None),
   ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, None, differentiable=False),
 }
 
@@ -764,12 +764,12 @@ def format_expr(outputs: Expr | Iterable[Expr]) -> str:
     elif e.op == ExprOp.CALL:
       callee = e.attrs["callee"]
       rhs = f"call {callee.name}[{e.attrs['output']}]({', '.join(f'%{loc[a.id]}' for a in e.args)})"
-    elif e.op == ExprOp.MAP:
+    elif e.op == ExprOp.VMAP:
       callee = e.attrs["callee"]
       length = e.attrs["length"]
       slice_size = e.attrs["slice_size"]
       bindings = ", ".join(f"%{loc[a.id]}[{s}::{st}]" for a, s, st in zip(e.args, e.attrs["starts"], e.attrs["strides"], strict=True))
-      rhs = f"map[{length}x{slice_size}] {callee.name}[{e.attrs['output']}]({bindings})"
+      rhs = f"vmap[{length}x{slice_size}] {callee.name}[{e.attrs['output']}]({bindings})"
     else:
       rhs = f"{ExprOp(e.op).value}({', '.join(f'%{loc[a.id]}' for a in e.args)})"
     lines.append(f"{lhs} = {rhs} : {e.type.dtype}{e.shape}")

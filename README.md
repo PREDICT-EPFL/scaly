@@ -15,7 +15,7 @@ def rosenbrock(x):
 
 rosenbrock([1.0, 2.0])                      # 100.0
 
-grad = al.gradient(rosenbrock, "x", "f")
+grad = al.gradient(rosenbrock, "f", "x")
 grad([1.0, 2.0])                            # array([-400.,  200.])
 ```
 
@@ -58,7 +58,7 @@ Pre-1.0 and under active development. The API still moves; breaks are deliberate
 but they happen — see [Versioning](docs/dev/versioning.md).
 
 Working today: the full expression set on the host, forward and reverse differentiation, colored
-sparse Jacobians and exact sparse Lagrangian Hessians through preserved `map` structure, and PIQP,
+sparse Jacobians and exact sparse Lagrangian Hessians through preserved `VMAP` structure, and PIQP,
 IPOPT and a generated-C SQP solver drivable from inside a compiled graph.
 
 Open: region formation from the scalar and block lowering hints, iterative rather than recursive

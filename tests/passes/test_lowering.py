@@ -195,14 +195,14 @@ def _call() -> al.Function:
   return f
 
 
-def _map() -> al.Function:
-  @al.function("pm_map_cell", {"s": 2})
+def _vmap() -> al.Function:
+  @al.function("pm_vmap_cell", {"s": 2})
   def cell(s):
     return s.tanh() + s
 
-  @al.function("pm_map_outer", {"z": 6})
+  @al.function("pm_vmap_outer", {"z": 6})
   def f(z):
-    return al.map_(cell, 3, [(z, 0, 2)])  # 3 independent calls over z[2i:2i+2]
+    return al.vmap(cell, 3, [(z, 0, 2)])  # 3 independent calls over z[2i:2i+2]
 
   return f
 
@@ -292,7 +292,7 @@ _CORPUS = [
   (_sum, [np.array([0.1, 0.2, 0.3, 0.4, 0.5])]),
   (_transpose, [np.arange(1.0, 7.0)]),
   (_call, [np.array([0.3, -0.5, 1.2])]),
-  (_map, [np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])]),
+  (_vmap, [np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])]),
   (_gather, [np.arange(10.0, 16.0)]),
   (_scatter, [np.array([10.0, 20.0, 30.0])]),
   (_broadcast_matrix, [np.arange(1.0, 13.0).reshape(3, 4), np.array([0.1, 0.2, 0.3, 0.4])]),
@@ -360,7 +360,7 @@ def _import_sibling(name):
   import sys
   from pathlib import Path
 
-  here = str(Path(__file__).parent)
+  here = str(Path(__file__).parents[1] / "integration")
   if here not in sys.path:
     sys.path.insert(0, here)
   return pytest.importorskip(name)
@@ -374,8 +374,8 @@ def test_stage_transcription_renders_and_matches(kind) -> None:
   base = tw.bicycle_eq_function(3)
   fn = {
     "forward": base,
-    "jacobian": base.factory("bicycle_program_jac", ["z", "p"], [al.jac("eq", "z")]),
-    "sparse_jacobian": base.factory("bicycle_program_spjac", ["z", "p"], [al.spjac("eq", "z")]),
+    "jacobian": base.factory("bicycle_program_jac", ["z", "p"], [al.factory.Jac("eq", "z")]),
+    "sparse_jacobian": base.factory("bicycle_program_spjac", ["z", "p"], [al.factory.SpJac("eq", "z")]),
   }[kind]
   render_program_c_source(fn)  # loud: must render through Program IR
   assert can_render_program_c(fn)
@@ -389,8 +389,8 @@ def test_stage_transcription_renders_and_matches(kind) -> None:
     assert np.all(np.isfinite(got_arr))
 
 
-def test_gather_fed_chained_maps_render_through_program_ir() -> None:
-  # Pairwise-barrier shape: MAP -> gather -> MAP, concatenated with a per-body MAP.
-  fn = _import_sibling("test_map")._build_pairs_fn(True)
+def test_gather_fed_chained_vmaps_render_through_program_ir() -> None:
+  # Pairwise-barrier shape: VMAP -> gather -> VMAP, concatenated with a per-body VMAP.
+  fn = _import_sibling("test_vmap")._build_pairs_fn(True)
   assert can_render_program_c(fn)
-  assert can_render_program_c(fn.factory("pairs_program_spjac", ["u", "p"], [al.spjac("h", "u")]))
+  assert can_render_program_c(fn.factory("pairs_program_spjac", ["u", "p"], [al.factory.SpJac("h", "u")]))

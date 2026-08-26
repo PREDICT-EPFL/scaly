@@ -64,7 +64,7 @@ benchmarks/
 |---|---|---|
 | chain of masses | number of masses | classic hanging-chain NMPC (Wirsching/Bock/Diehl form); match the laopt paper's instance parameters where possible for an external reference point |
 | race cars: tracking NMPC, kinematic bicycle | horizon N | full-size Formula Student car on vendored FSDS tracks, with the minimum-curvature spline reference generator and lateral corridor constraint from `minimal_tracking_nmpc`; **later replaced by Johannes' MPFC with dynamic bicycle** (backlog), which lands in the same `race_cars/` package |
-| unbumpercars safety filter, neural DT dynamics + order-1 HCBF | number of cars | **based on `examples/ct_dt_cbf_filter/`** (neural model, RK4 one-step map, centralized, `al.map_` over the car axis; CasADi + alloy implementations, closed loop, and per-step instrumentation already exist there). Fold the desired control into the **simulator's** dynamics only (not the OCP's), so the closed loop is plant + filter with no third controller entity. The older input-affine safety-filter variants in `benchmarks/` are **removed**. The pair barrier is the colleague's hyperbolic CBF (§2.5); the walls use the colleague's order-1 velocity barrier (§2.7). |
+| unbumpercars safety filter, neural DT dynamics + order-1 HCBF | number of cars | **based on `examples/ct_dt_cbf_filter/`** (neural model, RK4 one-step map, centralized, `al.vmap` over the car axis; CasADi + alloy implementations, closed loop, and per-step instrumentation already exist there). Fold the desired control into the **simulator's** dynamics only (not the OCP's), so the closed loop is plant + filter with no third controller entity. The older input-affine safety-filter variants in `benchmarks/` are **removed**. The pair barrier is the colleague's hyperbolic CBF (§2.5); the walls use the colleague's order-1 velocity barrier (§2.7). |
 | neural process MPC, Furuta pendulum swing-up | horizon N (`npmpc`) **and** decoder width W (`npmpc_decoder`) | the controller of *Neural Process Model Predictive Control* (Waibel, Mello Rella, Jones, EJC 2026), reference implementation `PREDICT-EPFL/neural_process_mpc`. A conditional-neural-process decoder evaluated at **every node of a prediction horizon** — the suite's only dense-NN-inside-a-horizon cell, and the one problem whose own paper states a real-time limit alloy may lift. Four workload names share one problem package because the harness allows one axis each (§2.8). |
 
 Future problem candidates (not now): diffusion-based stuff, GP stuff,
@@ -170,7 +170,7 @@ is documented in the problem's README; what matters at roadmap level:
   IPOPT time 18.7 → 7.5 ms. Zero solver failures across C ∈ {4, 8} × 5 seeds, with
   the largest slack seen anywhere at 0.18.
 - **The canonical point moved to C=8, 200 steps** (20 s) with **exact Lagrangian
-  Hessians as the default on both backends** — the sparse-Hessian-through-`ExprOp.MAP`
+  Hessians as the default on both backends** — the sparse-Hessian-through-`ExprOp.VMAP`
   path is what this problem exists to exercise, and `--limited-memory-hessian` is now
   the opt-out. That is where the Alloy/CasADi gap is worth quoting:
 
@@ -192,7 +192,7 @@ is documented in the problem's README; what matters at roadmap level:
   only thing collisions are counted against) and `safety_radius = 2.28` (what the
   filter enforces) — the reference implementation's `safety_factor = 1.2`.
 - **No Alloy gap was exposed.** Everything the barrier needs (`sqrt`, integer
-  `pow`, the nested smooth-max, exact sparse Lagrangian Hessians through `ExprOp.MAP`)
+  `pow`, the nested smooth-max, exact sparse Lagrangian Hessians through `ExprOp.VMAP`)
   worked unchanged, and the exact-Hessian column still matches CasADi at rtol 1e-8.
   The one thing worth doing is a benchmark-side improvement, listed in §6: the
   O(C²) pair rows are still an unrolled Python loop.
@@ -336,7 +336,7 @@ the solve — 40–58% measured for the three compiled-C columns, against `race_
 **The code-size result is categorical.** Alloy's generated source is 417 lines for the sparse
 equality Jacobian at *every* point on *both* axes — N = 6…200 and W = 16…256 — and 1041 for the exact
 Lagrangian Hessian at every point but one (1043 at W = 16, where the narrower matmul renders two
-lines differently), because the stage body is scanned and the weights are read out of the parameter
+lines differently), because the stage body uses VMAP and the weights are read out of the parameter
 tail rather than baked in as literals. CasADi SX reaches 1.31 million lines at N = 100 (a
 factor of 3142) and stops being compilable; CasADi MX runs out too on the Hessian, needing 227 s at
 N = 50 and exceeding a 900 s budget at N = 100. Alloy compiles the N = 200 Hessian in 0.94 s.
@@ -417,7 +417,7 @@ so users install only what they need while alloy stays batteries-included:
   normalize to today (`x, p → f, h_eq, g_ineq` + factory-built `spjac`/
   `sphess`, PIQP-style explicit constraint categories). Registry via
   `importlib.metadata` entry points behind the existing `solver="..."` API.
-- A **structured staged-OCP tier** (per-stage dims, MAP-based stage functions;
+- A **structured staged-OCP tier** (per-stage dims, VMAP-based stage functions;
   canonical form that *lowers* to the general tier) is deferred to the backlog
   together with the specialized OCP problem/solver — none of ipopt/laopt needs
   it.
@@ -659,16 +659,16 @@ that the benchmarks expose as prerequisites.
 Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
 ("Missing Alloy features exposed by this prototype"):
 
-- **L1 — sparse Lagrangian Hessian through `ExprOp.MAP`**
+- **L1 — sparse Lagrangian Hessian through `ExprOp.VMAP`**
   (`sphess:lagrangian:z:z` over mapped neural RK4). Required for exact-Hessian
   IPOPT/SQP columns on the unbumpercars problem. **Decision (2026-07-13):
   proper fix only** — second-order AD rules + sparse second-order lowering for
-  `ExprOp.MAP`. No unrolled-map or per-car manual-assembly fallback (that is
+  `ExprOp.VMAP`. No unrolled-VMAP or per-car manual-assembly fallback (that is
   exactly the code-size blowup claim 2 argues against); Gauss-Newton columns
-  fill the gap until L1 lands. **Completed (2026-07-14)**: MAP reverse AD
+  fill the gap until L1 lands. **Completed (2026-07-14)**: VMAP reverse AD
   (cached concat-adjoint mapped once, three stride-class assemblies),
   tensor-form matmul VJP + structural `jvp_many` SCATTER/GATHER/TRANSPOSE
-  rules, sphess-through-MAP end-to-end with the permanent
+  rules, sphess-through-VMAP end-to-end with the permanent
   `ALLOY_STRICT_JVP_MANY` tripwire, and the unbumpercars `--exact-hessian`
   column cross-validated against CasADi's `ctdt_hess_lag` at rtol 1e-8. The
   cross-check also flushed out a repo-lifetime CALL-VJP bug (formal

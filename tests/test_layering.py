@@ -54,7 +54,7 @@ LAYERS: dict[str, int] = {
   "alloy.ad.forward": 4,
   "alloy.ad.reverse": 4,
   "alloy.ad.sparse": 4,
-  # Layer 4, not the plan's 5: ``map_`` needs a ``Function``, and ``ad`` needs ``map_``.
+  # Layer 4, not the plan's 5: ``vmap`` needs a ``Function``, and ``ad`` needs ``vmap``.
   "alloy.function.sugar": 4,
   "alloy.function.api": 5,
   "alloy.function.factory": 5,

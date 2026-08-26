@@ -57,7 +57,7 @@ def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
   """Dense and sparse equality Jacobians agree with CasADi and with the dense reference."""
   for n_masses, horizon in ((3, 2), (5, 3)):
     fn = chain_eq_function(n_masses, horizon)
-    dense = fn.factory(f"chain_dense_M{n_masses}_N{horizon}", ["z", "p"], [al.jac("eq", "z")])
+    dense = fn.factory(f"chain_dense_M{n_masses}_N{horizon}", ["z", "p"], [al.factory.Jac("eq", "z")])
     sparse = chain_nlp(n_masses, horizon).descriptor.jac
     assert isinstance(sparse, al.Function)
     ca_dense = ca_chain_eq_jac(n_masses, horizon)
@@ -114,7 +114,7 @@ def check_one_reference_for_every_end_mass_term() -> None:
   n_masses, horizon = 5, 4
   nz = n_state(n_masses) + NU
   end = 3 * (n_masses - 2)
-  grad = chain_objective_fn(n_masses, horizon).factory(f"chain_obj_grad_M{n_masses}_N{horizon}", ["z"], [al.grad("f", "z")])
+  grad = chain_objective_fn(n_masses, horizon).factory(f"chain_obj_grad_M{n_masses}_N{horizon}", ["z"], [al.factory.Grad("f", "z")])
 
   z = np.zeros(n_dec(n_masses, horizon))
   for stage in range(horizon + 1):

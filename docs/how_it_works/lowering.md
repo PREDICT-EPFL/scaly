@@ -28,7 +28,7 @@ What is covered today: elementwise unary and binary with NumPy broadcasting; `re
 `const` of any size through a constant buffer; general `slice` including integer, multi-dimensional
 and strided forms; `sum`; `matmul` up to rank 2; `transpose` up to rank 4; `gather` and `scatter`
 of any size through a `static const` index table; `stack` and `concat` on any axis; `call` across
-multiple procedures; and `map`. A `SolverFunction` callee is deliberately not lowered — it stays
+multiple procedures; and `VMAP`. A `SolverFunction` callee is deliberately not lowered — it stays
 opaque and its wrapper is rendered separately, while the oracle functions it drives lower normally.
 
 Not covered: device placement other than the host, and the operations listed as deferred in

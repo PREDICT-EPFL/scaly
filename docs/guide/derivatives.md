@@ -1,153 +1,158 @@
 # Derivatives
 
-Every derivative in alloy is another `Function`. It is built from the original graph, it compiles
-the same way, it can be composed into a bigger graph, and it can be written out as C. There is no
-tape and no separate derivative runtime.
+Dense derivatives in Alloy are another `Function` when you start with a `Function`, and another `Expr`
+when you start with an expression. Sparse expression derivatives return a `SparseJacobian` containing
+values and sparsity; sparse `Function` derivatives remain `Function`s. All forms use the same graph,
+and `Function` results compile through the same path.
 
-## The quick way
+## Use the derivative names
 
-```python
-al.gradient(fn, "x", "f")     # d f / d x, for a scalar output f
-al.jacobian(fn, "x", "y")     # dense Jacobian, shape (y.size, x.size)
-al.hessian(fn, "x", "f")      # second derivatives of a scalar output
-al.spjacobian(fn, "x", "y")   # compact nonzero Jacobian values, with the pattern
-al.sphessian(fn, "x", "f")    # compact nonzero Hessian values, with the pattern
-al.forward(fn, "x", "y")      # seeded forward mode: J @ seed
-al.adjoint(fn, "x", "y")      # seeded reverse mode: J' @ cotangent
+The derivative names are overloaded by the type of their first argument.
+
+```
+al.gradient(expr, x)                  # Expr gradient
+al.jacobian(expr, x)                  # Expr dense Jacobian
+al.hessian(expr, x)                   # Expr Hessian
+al.sparse_jacobian(expr, x)           # Expr compact Jacobian and pattern
+al.sparse_hessian(expr, x)            # Expr compact Hessian and pattern
+
+al.gradient(fn, "f", "x")             # Function gradient of f with respect to x
+al.jacobian(fn, "y", "x")             # Function dense Jacobian of y with respect to x
+al.hessian(fn, "f", "x")              # Function Hessian of f with respect to x
+al.sparse_jacobian(fn, "y", "x")      # Function compact Jacobian and pattern
+al.sparse_hessian(fn, "f", "x")       # Function compact Hessian and pattern
+al.forward(fn, "y", "x")              # J(y, x) @ fwd:x
+al.adjoint(fn, "y", "x")              # J(y, x).T @ lam:y
 ```
 
-Each returns a one-output `Function`. Pass `name=` to choose its name, and `extra_inputs=` to carry
-additional inputs through to the result — useful when the derivative has to be called with the same
-parameters as the original.
+Function forms take `(of, wrt)`. Pass `name=` to choose the derived function name. Pass
+`extra_inputs=` to carry parameters through to the result.
 
-The two seeded ones take an **extra input** for the seed: `fwd:x` for `al.forward`, `lam:y` for
-`al.adjoint`. Check `input_names` before calling them.
+Sparse Hessians accept `triangle="full"` (the default), `triangle="lower"`, or
+`triangle="upper"`. The selected triangle keeps the full pattern's order.
 
-## The factory
+The seeded forms add one input:
 
-The wrappers above are convenience over one mechanism. When you want several derivatives out of one
-function, ask for them together:
+- `fwd:<input>` is the forward seed for `al.forward`.
+- `lam:<output>` is the cotangent for `al.adjoint`.
+
+Check input_names before calling a seeded derivative.
+
+## Build several outputs together
+
+`Function.factory` is a shorthand for asking for several named outputs from one function. It is useful
+when one artifact needs a value and several derivatives. The graph itself does the merge: expressions
+are interned, and lowering walks all outputs in one topological pass.
+
+For example:
+
+```python
+(x, p), (f, g) = fn.inputs, fn.outputs
+sj = al.sparse_jacobian(g, x)
+merged = al.Function("all", [x, p], [f, al.gradient(f, x), sj.values],
+                     ["x", "p"], ["f", "grad_f_x", "spjac_g_x"],
+                     [None, None, sj.sparsity])
+```
+
+Often the first line is unnecessary. `al.sym("x", 3)` returns the interned placeholder that the
+function already uses.
+
+Use the factory when naming several derivatives is shorter than building this merged expression
+directly:
 
 ```python
 combined = fn.factory(
-    "fn_all",              # name of the new Function
-    ["x", "p"],            # its inputs, by name
-    ["f", al.grad("f", "x"), al.spjac("g", "x")],
+    "fn_all",
+    ["x", "p"],
+    ["f", al.factory.Grad("f", "x"), al.factory.SpJac("g", "x")],
 )
-combined.output_names      # ('f', 'grad_f_x', 'spjac_g_x')
+combined.output_names  # ('f', 'grad_f_x', 'spjac_g_x')
 ```
 
-This is worth doing rather than building three separate functions. The value and its derivatives
-share subexpressions, and asking for them in one function means those are computed once, in one
-compiled artifact, instead of three times in three.
+A factory output is either a string naming an existing output or a typed request from al.factory.
+The factory is a convenience for this request list. It is not a separate graph merging mechanism.
 
-An output request is either a **string**, naming an existing output to pass through, or a **spec
-object** describing a derivative to build.
+## The request types
 
-## The spec kinds
+Each request is a frozen dataclass. The `of` field names an output, and the `wrt` field names an input. `SpHess` also accepts a `triangle` layout.
 
-| Spec | Produces | Derived output name |
+| Request | Produces | Derived output name |
 | --- | --- | --- |
-| `al.jac(of, wrt)` | dense Jacobian | `jac_<of>_<wrt>` |
-| `al.grad(of, wrt)` | gradient of a scalar output | `grad_<of>_<wrt>` |
-| `al.hess(of, wrt[, wrt2])` | Hessian, or the mixed partial when `wrt2` differs | `hess_<of>_<wrt>_<wrt2>` |
-| `al.spjac(of, wrt)` | compact nonzero Jacobian values, plus the pattern | `spjac_<of>_<wrt>` |
-| `al.sphess(of, wrt[, wrt2])` | compact nonzero Hessian values, plus the pattern | `sphess_<of>_<wrt>_<wrt2>` |
-| `al.fwd(of, wrt)` | `J(of, wrt) @ fwd:<wrt>` | `fwd_<of>_<wrt>` |
-| `al.adj(of, wrt)` | `J(of, wrt)' @ lam:<of>` | `adj_<of>_<wrt>` |
+| `al.factory.Jac(of, wrt)` | dense Jacobian | `jac_<of>_<wrt>` |
+| `al.factory.Grad(of, wrt)` | gradient of a scalar output | `grad_<of>_<wrt>` |
+| `al.factory.Hess(of, wrt)` | Hessian of a scalar output | `hess_<of>_<wrt>_<wrt>` |
+| `al.factory.SpJac(of, wrt)` | compact nonzero Jacobian values and the pattern | `spjac_<of>_<wrt>` |
+| `al.factory.SpHess(of, wrt, triangle="full")` | compact nonzero Hessian values and the selected pattern | `sphess_<of>_<wrt>_<wrt>` |
+| `al.factory.Fwd(of, wrt)` | `J(of, wrt) @ fwd:<wrt>` | `fwd_<of>_<wrt>` |
+| `al.factory.Adj(of, wrt)` | `J(of, wrt).T @ lam:<of>` | `adj_<of>_<wrt>` |
 
-These are typed objects, not strings: an editor can complete them, and there is no grammar to
-learn or mis-spell. A spec constructs freely — the names are checked when `factory` resolves them
-against the function, which raises `ValueError` naming the offending request. If you know CasADi's
-`"jac:eq:z"` factory strings, this is the same idea with the parser removed — see
-[the comparison](../how_it_works/comparison.md#casadi).
+Hess and SpHess always differentiate with respect to the same input twice. A mixed partial is a
+Jacobian of a gradient output. The doubled input name in the derived output stays in place because
+it is part of the generated C symbol and the sparsity-table prefix. `SpHess` returns the selected
+triangle in the full symmetric pattern's order; `Hess` remains dense.
 
-The derived names matter: they become the generated C symbols and the header's sparsity table
-prefixes, so renaming an output moves symbols.
+The base type is `al.factory.DerivSpec`. You usually work with one of the concrete request types
+instead.
 
 ## Seeds and duals
 
-The seeded modes need an extra input, and the factory creates it for you under a fixed naming
-convention:
-
-- `fwd:<input>` — a forward seed, the same shape as that input.
-- `lam:<output>` — a dual (cotangent), the same shape as that output.
-
-Ask for them by name in the inputs list:
+The factory creates the symbolic seed and dual expressions. Include their names in the factory input
+list:
 
 ```python
-adj = fn.factory("fn_adj", ["x", "p", "lam:g"], [al.adj("g", "x")])
-adj.input_names    # ('x', 'p', 'lam:g')
+adj = fn.factory("fn_adj", ["x", "p", "lam:g"], [al.factory.Adj("g", "x")])
+adj.input_names  # ('x', 'p', 'lam:g')
 ```
-
-Input names stay strings on purpose — they name things that already exist, or follow one of these
-two conventions, so there is nothing for a type to catch.
 
 ## Lagrangians
 
-A Lagrangian is a weighted combination of outputs, which the factory builds through `aux`:
+A Lagrangian is a weighted combination of outputs. The convenience wrappers take the output names
+first and the differentiated input second:
 
 ```python
-lag = fn.factory(
-    "fn_lag",
-    ["x", "lam:f", "lam:g"],
-    [al.sphess("gamma", "x")],
-    aux={"gamma": ["f", "g"]},
-)
+al.lagrangian_hessian(fn, ["f", "g"], "x")
+al.sparse_lagrangian_hessian(fn, ["f", "g"], "x", triangle="lower")
+# inputs: ('x', 'lam:f', 'lam:g')
+# output: ('sphess_gamma_x_x',)
 ```
 
-`aux` declares a new output — here `gamma` — as `sum(lam:<name> * <name>)` over the listed outputs,
-in that order. Then differentiate it like any other output. The order is load-bearing: it fixes
-which dual multiplies which constraint block, which is what makes the resulting Hessian correct.
+Use `triangle="upper"` when the consumer expects the upper triangle. The output name and
+`coloring_width` do not depend on the selected layout.
 
-The wrappers cover the usual case:
+The wrappers build an auxiliary output named `gamma`:
 
 ```python
-al.lagrangian_hessian(fn, "x", ["f", "g"])          # dense
-al.sparse_lagrangian_hessian(fn, "x", ["f", "g"])   # compact, with the pattern
-# inputs: ('x', 'lam:f', 'lam:g')   output: ('sphess_gamma_x_x',)
+sum(lam:<name> * <name> for name in of)
 ```
 
-This is exactly what `al.nlp(...)` builds for IPOPT — there is no privileged internal path.
+The output order fixes which dual multiplies each constraint block. al.nlp uses the same path.
 
-## Working on expressions directly
+## Work directly on expressions
 
-Below the named-function layer, the primitives operate on `Expr` graphs:
+Use the expression forms when you are building a graph that does not need named-function metadata:
 
 ```python
 seed = al.sym("seed", y.shape)
-(vjp_x,) = al.vjp((y,), (x,), (seed,))       # reverse mode
-tangent = al.jvp(y, x, seed)                 # forward mode
+(vjp_x,) = al.vjp((y,), (x,), (seed,))
+tangent = al.jvp(y, x, seed)
 
 seeds = al.sym("seeds", (4, *x.shape))
-batched = al.jvp_many(y, x, seeds)           # shape (4, *y.shape)
+batched = al.jvp_many(y, x, seeds)
 
-al.expr_jacobian(y, x)
-al.expr_gradient(y, x)
-al.expr_hessian(y, x)
+al.jacobian(y, x)
+al.gradient(y, x)
+al.hessian(y, x)
 ```
 
-Use these when you are building something the factory does not cover. For anything the factory does
-cover, prefer the factory — it names the result, attaches sparsity metadata, and gives you one
-compiled artifact.
+Sparse expression derivatives return a `SparseJacobian` with `.values` and `.sparsity`.
 
-## What it costs
+## Cost and structure
 
-`gradient` is one reverse sweep, so a scalar objective costs about one function evaluation
-regardless of how many inputs it has.
+`gradient` uses one reverse sweep. `jacobian` pushes all identity columns through batched forward
+mode. `hessian` computes a gradient and then its Jacobian.
 
-`jacobian` is forward mode, batched: all `x.size` identity columns go through in a single pass, with
-the expensive shared parts computed once. For a wide input this is much better than a loop of
-sweeps, and still worse than exploiting sparsity — which is the next page.
+Some operations have no multi-seed forward rule yet. Alloy falls back to one seed at a time for
+those graphs. Set ALLOY_STRICT_JVP_MANY=1 to raise instead.
 
-`hessian` is `jacobian` of `gradient`: reverse, then batched forward.
-
-Some operations have no multi-seed forward rule yet — `abs`, `asin`, `acos`, `atan`, `atan2`,
-`minimum`, `maximum`, `floor`, `ceil`, and `transpose` producing rank 4 or higher — and any graph
-containing one falls back to evaluating seeds one at a time. The fallback is correct and quiet. Set
-`ALLOY_STRICT_JVP_MANY=1` to make it raise instead, which is what you want when you are
-investigating why a Jacobian is slower than you expected.
-
-Derivatives through `call` and `map_` preserve the structure rather than expanding it — see
-[how differentiation works](../how_it_works/autodiff.md). Derivatives through a
-`solver_call` are zero; implicit differentiation of a solve is future work.
+Derivatives through call and vmap preserve those structures rather than expanding them. See
+[how differentiation works](../how_it_works/autodiff.md).

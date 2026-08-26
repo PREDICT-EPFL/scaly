@@ -9,7 +9,7 @@ def test_structural_transpose_concat_vec_eval_and_ad() -> None:
   x = al.sym("x", (2, 2))
   y = al.concat([x.T, x + 1.0], axis=1).vec()
   f = al.Function("f", [x], [y], ["x"], ["y"])
-  jf = al.jacobian(f, "x", "y")
+  jf = al.jacobian(f, "y", "x")
   xv = np.array([[1.0, 2.0], [3.0, 4.0]])
 
   np.testing.assert_allclose(f(xv), np.concatenate([xv.T, xv + 1.0], axis=1).reshape(8))
@@ -35,7 +35,7 @@ def test_slice_split_eval_and_ad() -> None:
   left, right = al.split(x, [2, 2])
   y = al.stack([x[0], x[2:4].sum(), al.concat([left, right])[3]])
   f = al.Function("f", [x], [y], ["x"], ["y"])
-  jf = al.jacobian(f, "x", "y")
+  jf = al.jacobian(f, "y", "x")
   xv = np.array([1.0, 2.0, 3.0, 4.0])
 
   np.testing.assert_allclose(f(xv), np.array([1.0, 7.0, 4.0]))
@@ -60,7 +60,7 @@ def test_gather_scatter_eval_and_ad() -> None:
   x = al.sym("x", 5)
   y = al.scatter(x.gather([3, 1, 4]), [0, 2, 3], 5)
   f = al.Function("f", [x], [y], ["x"], ["y"])
-  jf = al.jacobian(f, "x", "y")
+  jf = al.jacobian(f, "y", "x")
   xv = np.array([10.0, 11.0, 12.0, 13.0, 14.0])
 
   np.testing.assert_allclose(f(xv), np.array([13.0, 0.0, 11.0, 14.0, 0.0]))

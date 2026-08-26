@@ -27,6 +27,28 @@ uv run ty check           # types
 
 Run all four before you consider a change done. `pytest` collects both `tests/` and `plugins/`.
 
+The full-collection node-ID baseline is checked by the root `conftest.py`. After adding, removing, or
+renaming a test, regenerate it safely from the complete collection:
+
+```bash
+(
+  set -e
+  raw=$(mktemp)
+  fresh=$(mktemp)
+  trap 'rm -f "$raw" "$fresh"' EXIT
+  uv run pytest --collect-only -q >"$raw" 2>&1 || true
+  grep -E '^(tests|plugins)/[^:]+\.py::' "$raw" | LC_ALL=C sort >"$fresh"
+  test -s "$fresh"
+  mv "$fresh" tests/baseline/pytest_nodeids.txt
+)
+generation_status=$?
+[ "$generation_status" -eq 0 ] && uv run pytest --collect-only -q
+```
+
+The first collection can exit nonzero because the existing baseline is stale or missing. The `grep` keeps only
+pytest node IDs, including parameter IDs with spaces, and `sort` makes the file deterministic. The final
+collection must pass.
+
 A test needing a built solver is marked, not skipped by hand:
 
 ```python
@@ -58,8 +80,8 @@ Two tests are structural rather than functional, and both are meant to be perman
   paths stay retired.
 
 Some compiler paths are exercised only by workload-shaped fixtures — the RK4 stage-transcription
-Jacobian in `tests/integration/test_stage_transcription.py` and the chained-`map` fixtures in
-`tests/ad/test_map.py` are the main ones. They build both a mapped and a fully unrolled version of
+Jacobian in `tests/integration/test_stage_transcription.py` and the chained-VMAP fixtures in
+`tests/integration/test_vmap.py` are the main ones. They build both a mapped and a fully unrolled version of
 the same graph and hold the values, Jacobians and Hessians against each other, so a coloring bug
 cannot hide behind a false structural zero. Keep them working.
 

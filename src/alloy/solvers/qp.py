@@ -90,7 +90,7 @@ def _gathered(mat: Expr, sp: SparsityType) -> Expr:
 
 
 def _reaches_solver_call(exprs: Sequence[Expr]) -> bool:
-  """True if any expr reaches a ``SOLVER_CALL``, recursing through CALL/MAP callees."""
+  """True if any expr reaches a ``SOLVER_CALL``, recursing through CALL/VMAP callees."""
   from ..ir.expr import topo
   from ..ir.expr import ExprOp
 
@@ -100,7 +100,7 @@ def _reaches_solver_call(exprs: Sequence[Expr]) -> bool:
     for node in topo(list(targets)):
       if node.op == ExprOp.SOLVER_CALL:
         return True
-      if node.op in {ExprOp.CALL, ExprOp.MAP}:
+      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
         callee = node.attrs["callee"]
         if id(callee) not in seen:
           seen.add(id(callee))

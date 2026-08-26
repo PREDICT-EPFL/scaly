@@ -23,19 +23,23 @@ machinery any user has:
 | Function | Built as | Provides |
 | --- | --- | --- |
 | `nlp_base` | written directly | `(x, *params) -> (f, g_all)`, where `g_all = concat([h_eq, g_ineq])` |
-| `nlp_grad` | `al.gradient(nlp_base, x, "f")` | dense objective gradient |
-| `nlp_jac` | `al.spjacobian(nlp_base, x, "g")` | compact sparse constraint Jacobian, pattern attached |
-| `nlp_hess` | `al.sparse_lagrangian_hessian(nlp_base, x, ["f", "g"])` | compact sparse Lagrangian Hessian |
+| `nlp_grad` | `al.gradient(nlp_base, "f", "x")` | dense objective gradient |
+| `nlp_jac` | `al.sparse_jacobian(nlp_base, "g", "x")` | compact sparse constraint Jacobian, pattern attached |
+| `nlp_hess` | `al.sparse_lagrangian_hessian(nlp_base, ["f", "g"], "x", triangle=backend.hess_triangle)` | compact sparse Lagrangian Hessian |
 
-For the Hessian, `lam:f` is IPOPT's `obj_factor` and `lam:g` is its stacked multiplier vector at
-call time. IPOPT wants only the lower triangle, so the symmetric pattern the factory returns is
-filtered to `i >= j` when the solver is built, and the matching values are gathered per call.
+For the Hessian, `lam:f` is the solver's objective factor and `lam:g` is its stacked multiplier
+vector at call time. The backend chooses one triangle when the descriptor is built: IPOPT uses the
+lower triangle and writes those oracle values directly into IPOPT's value buffer; alloy-sqp maps
+the handed coordinates into PIQP's upper-triangular CSC value order in `P_x`, whose structure comes
+from `P_p` and `P_i`, and adds its regularization terms there. The descriptor's `hess_sparsity` is
+the exact compact output pattern handed to the backend, so IPOPT needs no full-pattern buffer or
+per-call gather.
 
 A fifth small function, `nlp_bounds`, evaluates the parameter-dependent `x_lb`, `x_ub`, `l_ineq` and
 `u_ineq` once per solve.
 
 The consequence worth noticing: **the sparse Lagrangian Hessian an NLP needs is the same
-`sphess` any user can ask for.** There is no privileged internal path. Improving that construction
+`al.factory.SpHess` request any user can ask for.** There is no privileged internal path. Improving that construction
 improves both.
 
 ## One solve path
@@ -72,7 +76,7 @@ and dispatches `piqp_update_{dense,sparse}` followed by `piqp_solve` on every ca
 
 **For IPOPT**, the generated source emits rather more: a static context struct holding parameter
 pointers, the caller's workspace and the timing and evaluation counters; `static const int` arrays
-for the sparse Jacobian and lower-triangular Hessian patterns; five `eval_*` callbacks bridging
+for the sparse Jacobian and handed Hessian-triangle patterns; five `eval_*` callbacks bridging
 IPOPT into the rendered kernels, each timed, each counted, and each receiving the caller's `w` —
 which is required scratch space, not an optional extra; and an intermediate callback recording the
 iteration count.

@@ -217,27 +217,27 @@ def _call_attrs(expr: Expr) -> str | None:
   return None
 
 
-def _map_attrs(expr: Expr) -> str | None:
-  """Verify MAP's flat outer storage; callee formals/outputs may be rank-2, but outers are rank-1."""
+def _vmap_attrs(expr: Expr) -> str | None:
+  """Verify VMAP's flat outer storage; callee formals/outputs may be rank-2, but outers are rank-1."""
   callee = expr.attrs.get("callee")
   if callee is None:
-    return "MAP missing 'callee' attr"
+    return "VMAP missing 'callee' attr"
   for k in ("length", "starts", "strides", "slice_size", "output"):
     if k not in expr.attrs:
-      return f"MAP missing {k!r} attr"
+      return f"VMAP missing {k!r} attr"
   length = int(expr.attrs["length"])
   if length < 0:
-    return f"MAP length must be non-negative, got {length}"
+    return f"VMAP length must be non-negative, got {length}"
   starts = expr.attrs["starts"]
   strides = expr.attrs["strides"]
   if len(starts) != len(callee.inputs) or len(strides) != len(callee.inputs):
-    return f"MAP starts/strides length mismatch vs callee {callee.name!r} inputs"
+    return f"VMAP starts/strides length mismatch vs callee {callee.name!r} inputs"
   for outer in expr.args:
     if len(outer.shape) != 1:
-      return f"MAP outer arg must be rank-1, got {outer.shape}"
+      return f"VMAP outer arg must be rank-1, got {outer.shape}"
   expected_size = length * int(expr.attrs["slice_size"])
   if expr.shape != (expected_size,):
-    return f"MAP output shape {expr.shape} != ({expected_size},)"
+    return f"VMAP output shape {expr.shape} != ({expected_size},)"
   return None
 
 
@@ -304,7 +304,7 @@ spec_expr = Spec(
     Rule(ExprOp.TRANSPOSE, "transpose-axes", _transpose_axes),
     Rule(ExprOp.MATMUL, "matmul-shape", _matmul_shape),
     Rule(ExprOp.CALL, "call-attrs", _call_attrs),
-    Rule(ExprOp.MAP, "map-attrs", _map_attrs),
+    Rule(ExprOp.VMAP, "vmap-attrs", _vmap_attrs),
     Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
     Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
     Rule(ExprOp.STACK, "stack-shapes", _stack_shapes),

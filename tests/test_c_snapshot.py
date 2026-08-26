@@ -2,7 +2,7 @@
 
 A refactor of the IR, the passes or the renderer must leave the generated C identical, so this
 pins it byte for byte. Each corpus entry covers one lowering path — a forward function, a dense
-Jacobian, a compact sparse Jacobian, a MAP workload, a wide function that spills to the workspace
+Jacobian, a compact sparse Jacobian, a VMAP workload, a wide function that spills to the workspace
 and uses most of the math surface, and a solver-bearing graph — and every run re-renders and diffs
 against the recorded source and header. A diff means something semantic moved with the code. Byte
 equality also keeps the JIT cache key stable: it hashes the source, and the header pins the ABI
@@ -44,10 +44,10 @@ def _dynamics() -> al.Function:
 
 
 def _shooting() -> al.Function:
-  """Multiple shooting defect over ``N_STAGES`` MAP iterations."""
+  """Multiple shooting defect over ``N_STAGES`` VMAP iterations."""
   z = al.sym("z", 4 * (N_STAGES + 1))
   u = al.sym("u", 2 * N_STAGES)
-  defect = al.map_(_dynamics(), N_STAGES, [(z, 0, 4), (u, 0, 2)]) - z[4:]
+  defect = al.vmap(_dynamics(), N_STAGES, [(z, 0, 4), (u, 0, 2)]) - z[4:]
   return al.Function("shooting", [z, u], [defect], ["z", "u"], ["eq"])
 
 
@@ -82,9 +82,9 @@ def _qp_host() -> al.Function:
 
 CORPUS = {
   "forward": _dynamics,
-  "jac": lambda: al.jacobian(_dynamics(), "z", "znext"),
-  "map": _shooting,
-  "spjac": lambda: al.spjacobian(_shooting(), "z", "eq"),
+  "jac": lambda: al.jacobian(_dynamics(), "znext", "z"),
+  "vmap": _shooting,
+  "spjac": lambda: al.sparse_jacobian(_shooting(), "eq", "z"),
   "wide": _wide,
 }
 SOLVER_CORPUS = {"solver": _qp_host}

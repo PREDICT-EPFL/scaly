@@ -160,7 +160,7 @@ class FilterConfig:
   ipopt_tol: float = 1e-6
   ipopt_max_iter: int = 300
   eval_repeats: int = 1
-  # Exact Lagrangian Hessians from both oracle providers by default: Alloy's sphess-through-MAP path
+  # Exact Lagrangian Hessians from both oracle providers by default: Alloy's sphess-through-VMAP path
   # is what this problem exists to exercise, and it is gated against CasADi's.
   limited_memory_hessian: bool = False
 

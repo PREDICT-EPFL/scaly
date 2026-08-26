@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pytest
 
 import alloy as al
 from alloy.ad import finite_difference
+from alloy.ad.sparse import Triangle
 
 
 def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[al.Function, al.Function]:
@@ -19,7 +22,7 @@ def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[al.Fun
 
   z = al.sym("z", 2 * length + int(shared))
   specs = [(z, 0, 2), *(((z, 2 * length, 0),) if shared else ())]
-  mapped = al.map_(piece, length, specs)
+  mapped = al.vmap(piece, length, specs)
   calls = []
   for it in range(length):
     args = [z[2 * it : 2 * (it + 1)], *((z[2 * length : 2 * length + 1],) if shared else ())]
@@ -128,18 +131,58 @@ def test_jacobian_sparsity_tracks_concat_axis_layout() -> None:
   np.testing.assert_array_equal(sp.to_mask(), np.eye(4, dtype=bool))
 
 
-def test_sphessian_factory_returns_compact_values_with_sparsity_metadata() -> None:
+def test_sparse_hessian_factory_returns_compact_values_with_sparsity_metadata() -> None:
   x = al.sym("x", 3)
   y = x[0] * x[0] + x[1] * x[2]
   f = al.Function("f", [x], [y], ["x"], ["y"])
-  shf = al.sphessian(f, "x", "y")
+  shf = al.sparse_hessian(f, "y", "x")
   xv = np.array([2.0, 3.0, 4.0])
 
   assert shf.output_names == ("sphess_y_x_x",)
+  assert shf.output_coloring_widths == (2,)
   assert shf.output_sparsities[0] is not None
   assert shf.output_sparsities[0].rows == (0, 1, 2)
   assert shf.output_sparsities[0].cols == (0, 2, 1)
   np.testing.assert_allclose(shf(xv), np.array([2.0, 1.0, 1.0]))
+
+
+@pytest.mark.parametrize("triangle", ("lower", "upper"))
+def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None:
+  x = al.sym("triangle_x", 4)
+  y = (x[0] * x[1]).sin() + (x[2] * x[3]).sin()
+  full_expr = al.sparse_hessian(y, x)
+  triangle_expr = al.sparse_hessian(y, x, triangle=triangle)
+  full_sp, triangle_sp = full_expr.sparsity, triangle_expr.sparsity
+  keep = np.asarray(full_sp.rows) >= np.asarray(full_sp.cols) if triangle == "lower" else np.asarray(full_sp.rows) <= np.asarray(full_sp.cols)
+
+  assert triangle_sp.rows == tuple(np.asarray(full_sp.rows)[keep])
+  assert triangle_sp.cols == tuple(np.asarray(full_sp.cols)[keep])
+  assert triangle_expr.coloring_width == full_expr.coloring_width
+  value_fn = al.Function(
+    f"triangle_expr_{triangle}",
+    [x],
+    [full_expr.values, triangle_expr.values],
+    ["triangle_x"],
+    ["full", "triangle"],
+  )
+  full_values, triangle_values = value_fn(np.array([0.2, 0.7, -0.3, 1.1]))
+  np.testing.assert_allclose(triangle_values, full_values[keep], rtol=1e-10, atol=1e-10)
+
+  fn = al.Function("triangle_fn", [x], [y], ["triangle_x"], ["y"])
+  full_fn = al.sparse_hessian(fn, "y", "triangle_x", name=f"triangle_fn_full_{triangle}")
+  triangle_fn = al.sparse_hessian(fn, "y", "triangle_x", name=f"triangle_fn_{triangle}", triangle=triangle)
+  assert full_fn.output_names == triangle_fn.output_names == ("sphess_y_triangle_x_triangle_x",)
+  assert full_fn.output_coloring_widths == triangle_fn.output_coloring_widths
+  full_fn_sp, triangle_fn_sp = full_fn.output_sparsities[0], triangle_fn.output_sparsities[0]
+  assert full_fn_sp is not None and triangle_fn_sp is not None
+  assert triangle_fn_sp.rows == tuple(np.asarray(full_fn_sp.rows)[keep])
+  assert triangle_fn_sp.cols == tuple(np.asarray(full_fn_sp.cols)[keep])
+  np.testing.assert_allclose(
+    triangle_fn(np.array([0.2, 0.7, -0.3, 1.1])),
+    np.asarray(full_fn(np.array([0.2, 0.7, -0.3, 1.1])))[keep],
+    rtol=1e-10,
+    atol=1e-10,
+  )
 
 
 def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
@@ -147,23 +190,24 @@ def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
   f_expr = x[0] * x[0]
   g_expr = al.stack([x[0] * x[1], x[1] * x[1]])
   nlp = al.Function("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
-  shf = al.sparse_lagrangian_hessian(nlp, "x", ["f", "g"])
+  shf = al.sparse_lagrangian_hessian(nlp, ["f", "g"], "x")
 
   assert shf.input_names == ("x", "lam:f", "lam:g")
   assert shf.output_names == ("sphess_gamma_x_x",)
+  assert shf.output_coloring_widths == (2,)
   assert shf.output_sparsities[0] is not None
   assert shf.output_sparsities[0].rows == (0, 0, 1, 1)
   assert shf.output_sparsities[0].cols == (0, 1, 0, 1)
   np.testing.assert_allclose(shf(np.array([2.0, 3.0]), np.array(1.5), np.array([0.25, -0.5])), np.array([3.0, 0.25, 0.25, -1.0]))
 
 
-def test_sparse_lagrangian_hessian_through_map_matches_unrolled_dense_and_fd(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
   mapped, unrolled = _mapped_sphess_fixture(3)
-  mapped_sphess = mapped.factory("mapped_sphess_exact", ["z", "lam:f", "lam:g"], [al.sphess("gamma", "z")], aux={"gamma": ["f", "g"]})
-  unrolled_sphess = unrolled.factory("unrolled_sphess_exact", ["z", "lam:f", "lam:g"], [al.sphess("gamma", "z")], aux={"gamma": ["f", "g"]})
-  unrolled_hess = unrolled.factory("unrolled_hess_dense", ["z", "lam:f", "lam:g"], [al.hess("gamma", "z")], aux={"gamma": ["f", "g"]})
-  unrolled_grad = unrolled.factory("unrolled_grad_for_fd", ["z", "lam:f", "lam:g"], [al.grad("gamma", "z")], aux={"gamma": ["f", "g"]})
+  mapped_sphess = mapped.factory("mapped_sphess_exact", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
+  unrolled_sphess = unrolled.factory("unrolled_sphess_exact", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
+  unrolled_hess = unrolled.factory("unrolled_hess_dense", ["z", "lam:f", "lam:g"], [al.factory.Hess("gamma", "z")], aux={"gamma": ["f", "g"]})
+  unrolled_grad = unrolled.factory("unrolled_grad_for_fd", ["z", "lam:f", "lam:g"], [al.factory.Grad("gamma", "z")], aux={"gamma": ["f", "g"]})
 
   mapped_sp, unrolled_sp = mapped_sphess.output_sparsities[0], unrolled_sphess.output_sparsities[0]
   assert mapped_sp is not None and unrolled_sp is not None
@@ -182,7 +226,7 @@ def test_sparse_lagrangian_hessian_through_map_matches_unrolled_dense_and_fd(mon
 def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
   mapped, _ = _mapped_sphess_fixture(3)
-  sphess = mapped.factory("mapped_sphess_weighting", ["z", "lam:f", "lam:g"], [al.sphess("gamma", "z")], aux={"gamma": ["f", "g"]})
+  sphess = mapped.factory("mapped_sphess_weighting", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
   sparsity = sphess.output_sparsities[0]
   assert sparsity is not None
   zv = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3])
@@ -197,9 +241,9 @@ def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch:
   assert np.any(np.abs(delta[2:4, 2:4]) > 1e-9)
 
   shared, shared_unrolled = _mapped_sphess_fixture(3, shared=True)
-  shared_sphess = shared.factory("mapped_sphess_shared_fill", ["z", "lam:f", "lam:g"], [al.sphess("gamma", "z")], aux={"gamma": ["f", "g"]})
+  shared_sphess = shared.factory("mapped_sphess_shared_fill", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
   shared_unrolled_sphess = shared_unrolled.factory(
-    "unrolled_sphess_shared_fill", ["z", "lam:f", "lam:g"], [al.sphess("gamma", "z")], aux={"gamma": ["f", "g"]}
+    "unrolled_sphess_shared_fill", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]}
   )
   shared_sp, shared_unrolled_sp = shared_sphess.output_sparsities[0], shared_unrolled_sphess.output_sparsities[0]
   assert shared_sp is not None and shared_unrolled_sp is not None
@@ -217,14 +261,72 @@ def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch:
   np.testing.assert_allclose(shared_dense, shared_unrolled_dense, rtol=1e-10, atol=1e-10)
 
 
+@pytest.mark.parametrize("triangle", ("lower", "upper"))
+def test_sparse_lagrangian_hessian_triangle_matches_masked_full_on_shared_vmap(monkeypatch: pytest.MonkeyPatch, triangle: Triangle) -> None:
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  mapped, unrolled = _mapped_sphess_fixture(3, shared=True)
+  full = mapped.factory(
+    "shared_triangle_full",
+    ["z", "lam:f", "lam:g"],
+    [al.factory.SpHess("gamma", "z")],
+    aux={"gamma": ["f", "g"]},
+  )
+  triangle_fn = mapped.factory(
+    f"shared_triangle_{triangle}",
+    ["z", "lam:f", "lam:g"],
+    [al.factory.SpHess("gamma", "z", triangle=triangle)],
+    aux={"gamma": ["f", "g"]},
+  )
+  unrolled_triangle = unrolled.factory(
+    f"unrolled_triangle_{triangle}",
+    ["z", "lam:f", "lam:g"],
+    [al.factory.SpHess("gamma", "z", triangle=triangle)],
+    aux={"gamma": ["f", "g"]},
+  )
+  full_sp, triangle_sp = full.output_sparsities[0], triangle_fn.output_sparsities[0]
+  assert full_sp is not None and triangle_sp is not None
+  rows, cols = np.asarray(full_sp.rows), np.asarray(full_sp.cols)
+  keep = rows >= cols if triangle == "lower" else rows <= cols
+  assert triangle_sp.rows == tuple(rows[keep])
+  assert triangle_sp.cols == tuple(cols[keep])
+  assert triangle_fn.output_coloring_widths == full.output_coloring_widths
+
+  unrolled_sp = unrolled_triangle.output_sparsities[0]
+  assert unrolled_sp is not None
+  assert unrolled_sp.rows == triangle_sp.rows
+  assert unrolled_sp.cols == triangle_sp.cols
+
+  zv = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3, 0.9])
+  lam_f = np.array(0.6)
+  lam_g = np.array([0.7, -1.3, 0.45])
+  full_values = np.asarray(full(zv, lam_f, lam_g))
+  triangle_values = np.asarray(triangle_fn(zv, lam_f, lam_g))
+  unrolled_values = np.asarray(unrolled_triangle(zv, lam_f, lam_g))
+  np.testing.assert_allclose(triangle_values, full_values[keep], rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(triangle_values, unrolled_values, rtol=1e-10, atol=1e-10)
+
+
+@pytest.mark.parametrize("triangle", ("diagonal", None, 1))
+def test_sparse_hessian_rejects_invalid_triangle(triangle: object) -> None:
+  x = al.sym("invalid_triangle_x", 2)
+  y = x[0] * x[1]
+  invalid_triangle = cast(Triangle, triangle)
+  with pytest.raises(ValueError, match="triangle must be one of"):
+    al.sparse_hessian(y, x, triangle=invalid_triangle)
+  fn = al.Function("invalid_triangle", [x], [y], ["invalid_triangle_x"], ["y"])
+  with pytest.raises(ValueError, match="triangle must be one of"):
+    al.sparse_hessian(fn, "y", "invalid_triangle_x", triangle=invalid_triangle)
+
+
 def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:
   x = al.sym("x", 4)
   y = al.stack([x[0], x[2:4].sum(), x[1]])
   f = al.Function("f", [x], [y], ["x"], ["y"])
-  spjf = al.spjacobian(f, "x", "y")
+  spjf = al.sparse_jacobian(f, "y", "x")
   xv = np.array([1.0, 2.0, 3.0, 4.0])
 
   assert spjf.output_names == ("spjac_y_x",)
+  assert spjf.output_coloring_widths == (2,)
   assert spjf.output_sparsities[0] is not None
   assert spjf.output_sparsities[0].rows == (0, 1, 1, 2)
   assert spjf.output_sparsities[0].cols == (0, 2, 3, 1)
@@ -240,6 +342,23 @@ def test_function_rejects_sparse_output_metadata_size_mismatch() -> None:
     assert "output shape (2,) has 2 entries" in str(e)
   else:  # pragma: no cover
     raise AssertionError("sparse output metadata size mismatch should fail")
+
+
+def test_sparse_jacobian_preserves_constructed_local_coloring_width() -> None:
+  a = al.sym("a", 1)
+  b = al.sym("b", 1)
+  piece = al.Function("two_formal_piece", [a, b], [al.stack([a, b])], ["a", "b"], ["y"])
+  z = al.sym("z", 5)
+  mapped_expr = al.vmap(piece, 4, [(z, 0, 1), (z, 1, 1)])
+  mapped = al.Function("two_formal_mapped", [z], [mapped_expr], ["z"], ["y"])
+  sj = al.sparse_jacobian(mapped_expr, z)
+
+  np.testing.assert_array_equal(sj.sparsity.to_mask(), al.jacobian_sparsity(mapped_expr, z).to_mask())
+  assert sj.coloring_width == 2
+  assert max(al.column_coloring(sj.sparsity), default=-1) + 1 == 1
+
+  built = mapped.factory("two_formal_spjac", ["z"], [al.factory.SpJac("y", "z")])
+  assert built.output_coloring_widths == (2,)
 
 
 def test_colored_sparse_jacobian_matches_dense_gather_reference() -> None:
@@ -344,7 +463,7 @@ def test_mapped_sparsity_storage_grows_with_nonzeros_not_global_mask() -> None:
     u = al.sym(f"u_{length}", 2)
     piece = al.Function(f"storage_piece_{length}", [u], [al.stack([u.sum()])], ["u"], ["y"])
     z = al.sym(f"z_{length}", 2 * length)
-    return _jac_mask(al.map_(piece, length, [(z, 0, 2)]), z, {})
+    return _jac_mask(al.vmap(piece, length, [(z, 0, 2)]), z, {})
 
   small = mapped_mask(32)
   large = mapped_mask(128)
@@ -354,3 +473,120 @@ def test_mapped_sparsity_storage_grows_with_nonzeros_not_global_mask() -> None:
   assert small.shape == (32, 64) and small.nnz == 64
   assert large.shape == (128, 256) and large.nnz == 256
   assert large_bytes < 5 * small_bytes
+
+
+def test_star_coloring_is_not_distance_two_coloring() -> None:
+  sparsity = al.SparsityType.from_mask(
+    np.array(
+      [
+        [True, False, True],
+        [False, True, True],
+        [True, True, True],
+      ]
+    )
+  )
+
+  colors = al.star_coloring(sparsity)
+
+  assert colors[0] == colors[1]
+  assert colors[0] != colors[2]
+
+
+def test_star_coloring_rejects_bicolored_four_vertex_path() -> None:
+  path = al.SparsityType.from_mask(
+    np.array(
+      [
+        [True, True, False, False],
+        [True, True, True, False],
+        [False, True, True, True],
+        [False, False, True, True],
+      ]
+    )
+  )
+
+  colors = al.star_coloring(path)
+
+  assert colors == (0, 1, 0, 2)
+  assert colors != (0, 1, 0, 1)
+  # The only simple three-edge path is 0--1--2--3. A star coloring cannot use
+  # just two alternating colors on that path.
+  assert not (colors[0] == colors[2] and colors[1] == colors[3] and colors[0] != colors[1])
+
+
+def test_star_coloring_rejects_non_square_and_symmetrizes_asymmetric_graphs() -> None:
+  with pytest.raises(ValueError, match="square"):
+    al.star_coloring(al.SparsityType.from_mask(np.ones((2, 3), dtype=bool)))
+
+  from alloy.ad.sparsity import _symmetrize_sparsity
+
+  asymmetric = al.SparsityType.from_mask(
+    np.array(
+      [
+        [True, True, False],
+        [False, True, True],
+        [False, False, True],
+      ]
+    )
+  )
+  symmetric = _symmetrize_sparsity(asymmetric)
+  np.testing.assert_array_equal(
+    symmetric.to_mask(),
+    np.array(
+      [
+        [True, True, False],
+        [True, True, True],
+        [False, True, True],
+      ]
+    ),
+  )
+  colors = al.star_coloring(asymmetric)
+  assert colors[0] == colors[2] != colors[1]
+
+
+def test_star_recovery_rejects_ambiguous_orientation() -> None:
+  from alloy.ad.sparse import _star_recovery_indices
+
+  sparsity = al.SparsityType.from_mask(np.ones((3, 3), dtype=bool))
+  with pytest.raises(ValueError, match="cannot recover Hessian entry"):
+    _star_recovery_indices(sparsity, (0, 0, 0))
+
+
+def test_shared_fill_star_hessian_matches_one_sided_and_dense(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  star_widths: list[int] = []
+  one_sided_widths: list[int] = []
+
+  for length in (1, 2, 4):
+    mapped, _ = _mapped_sphess_fixture(length, shared=True)
+    z = mapped.inputs[0]
+    lam_f = al.sym(f"shared_fill_lam_f_{length}")
+    lam_g = al.sym(f"shared_fill_lam_g_{length}", length)
+    lagrangian = mapped.outputs[0] * lam_f + (mapped.outputs[1] * lam_g).sum()
+    gradient = al.gradient(lagrangian, z).reshape((z.size,))
+    one_sided = al.sparse_jacobian_colored(gradient, z)
+    star = al.sparse_hessian(lagrangian, z)
+    dense = al.hessian(lagrangian, z)
+
+    assert one_sided.sparsity == star.sparsity
+    assert star.coloring_width is not None
+    assert one_sided.coloring_width is not None
+    star_widths.append(star.coloring_width)
+    one_sided_widths.append(one_sided.coloring_width)
+    fn = al.Function(
+      f"shared_fill_differential_{length}",
+      [z, lam_f, lam_g],
+      [star.values, one_sided.values, star.to_dense(), one_sided.to_dense(), dense],
+      ["z", "lam_f", "lam_g"],
+      ["star_values", "one_sided_values", "star", "one_sided", "dense"],
+    )
+    zv = np.random.default_rng(length).normal(size=z.size)
+    lam_fv = np.array(0.6)
+    lam_gv = np.random.default_rng(length + 10).normal(size=length)
+    star_values, one_sided_values, star_dense, one_sided_dense, dense_value = fn(zv, lam_fv, lam_gv)
+    np.testing.assert_allclose(star_values, one_sided_values, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(star_dense, one_sided_dense, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(star_dense, dense_value, rtol=1e-10, atol=1e-10)
+
+  assert len(set(star_widths)) == 1
+  assert star_widths[0] == 3
+  assert one_sided_widths[-1] > one_sided_widths[0]

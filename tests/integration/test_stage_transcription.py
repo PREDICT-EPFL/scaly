@@ -80,17 +80,17 @@ def bicycle_eq_function(horizon: int) -> al.Function:
   return al.Function(f"bicycle_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
 
-def bicycle_eq_function_map(horizon: int) -> al.Function:
-  """Same semantics through `al.scan`, so the loop survives into the rendered C."""
+def bicycle_eq_function_vmap(horizon: int) -> al.Function:
+  """Same semantics through `al.vmap`, so the loop survives into the rendered C."""
   z = al.sym("z", NZ * (horizon + 1))
   p = al.sym("p", n_param(horizon), diff=False)
   initial = stage_initial.call([z[:NZ], p[:NX]])[0]
-  mapped = al.scan(
+  mapped = al.vmap(
     stage_interstage,
     length=horizon,
     inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
   )
-  return al.Function(f"bicycle_eq_map_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+  return al.Function(f"bicycle_eq_vmap_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
 
 
 def ca_bicycle_eq_jac(horizon: int, name: str = "ca_bicycle_eq_jac", sym_t=None):
@@ -172,7 +172,7 @@ def test_forward_residual_matches_numpy_at_asymmetric_parameters() -> None:
 @pytest.mark.parametrize("horizon", [1, 2])
 def test_dense_jacobian_matches_casadi(horizon: int) -> None:
   fn = bicycle_eq_function(horizon)
-  jf = fn.factory(f"bicycle_eq_jac_N{horizon}", ["z", "p"], [al.jac("eq", "z")])
+  jf = fn.factory(f"bicycle_eq_jac_N{horizon}", ["z", "p"], [al.factory.Jac("eq", "z")])
   zv, pv = _sample(horizon, 0)
   np.testing.assert_allclose(jf(zv, pv), np.array(ca_bicycle_eq_jac(horizon)(zv, pv)), rtol=1e-10, atol=1e-10)
 
@@ -180,8 +180,8 @@ def test_dense_jacobian_matches_casadi(horizon: int) -> None:
 @pytest.mark.parametrize("horizon", [1, 2])
 def test_sparse_jacobian_metadata_matches_dense(horizon: int) -> None:
   fn = bicycle_eq_function(horizon)
-  spjf = fn.factory(f"bicycle_eq_spjac_N{horizon}", ["z", "p"], [al.spjac("eq", "z")])
-  jf = fn.factory(f"bicycle_eq_jac_dense_N{horizon}", ["z", "p"], [al.jac("eq", "z")])
+  spjf = fn.factory(f"bicycle_eq_spjac_N{horizon}", ["z", "p"], [al.factory.SpJac("eq", "z")])
+  jf = fn.factory(f"bicycle_eq_jac_dense_N{horizon}", ["z", "p"], [al.factory.Jac("eq", "z")])
   zv, pv = _sample(horizon, 1)
   sparsity = spjf.output_sparsities[0]
   assert sparsity is not None
@@ -208,11 +208,11 @@ def test_colored_sparse_jacobian_matches_the_reference_path(horizon: int) -> Non
 
 
 @pytest.mark.parametrize("horizon", [2, 3])
-def test_map_transcription_matches_the_unrolled_one(horizon: int) -> None:
-  """`al.scan` and the unrolled `Function.call` chain must agree on residual and Jacobian."""
-  mapped, unrolled = bicycle_eq_function_map(horizon), bicycle_eq_function(horizon)
+def test_vmap_transcription_matches_the_unrolled_one(horizon: int) -> None:
+  """`al.vmap` and the unrolled `Function.call` chain must agree on residual and Jacobian."""
+  mapped, unrolled = bicycle_eq_function_vmap(horizon), bicycle_eq_function(horizon)
   zv, pv = _sample(horizon, 5)
   np.testing.assert_allclose(np.asarray(mapped(zv, pv)).reshape(-1), np.asarray(unrolled(zv, pv)).reshape(-1), rtol=1e-12, atol=1e-12)
-  mapped_jac = mapped.factory(f"bicycle_map_jac_N{horizon}", ["z", "p"], [al.jac("eq", "z")])
-  unrolled_jac = unrolled.factory(f"bicycle_unrolled_jac_N{horizon}", ["z", "p"], [al.jac("eq", "z")])
+  mapped_jac = mapped.factory(f"bicycle_vmap_jac_N{horizon}", ["z", "p"], [al.factory.Jac("eq", "z")])
+  unrolled_jac = unrolled.factory(f"bicycle_unrolled_jac_N{horizon}", ["z", "p"], [al.factory.Jac("eq", "z")])
   np.testing.assert_allclose(mapped_jac(zv, pv), unrolled_jac(zv, pv), rtol=1e-10, atol=1e-10)

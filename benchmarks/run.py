@@ -258,7 +258,7 @@ def _npmpc_smoke() -> None:
 
   Five gates. The long-paper constraint Jacobian must compile and beat a dense reference. Its generated
   source must not grow with the horizon or decoder width. The published exact Lagrangian Hessian must
-  also stay invariant on both axes, which pins both the decoder and the objective to their scanned
+  also stay invariant on both axes, which pins both the decoder and the objective to VMAP-based
   forms.
   """
   infos = []
@@ -288,7 +288,7 @@ def _npmpc_smoke() -> None:
     f"npmpc loop preservation regressed: N=100 has {large['source_lines']} lines, N=6 has {infos[0]['source_lines']}"
   )
   print(f"smoke npmpc loop preservation: ok ({infos[0]['source_lines']} lines at N=6, {large['source_lines']} at N=100)")
-  # baseline 1600 doubles at N=100 (scan buffers scale linearly with the horizon); 3x headroom catches superlinear regressions
+  # baseline 1600 doubles at N=100 (VMAP buffers scale linearly with the horizon); 3x headroom catches superlinear regressions
   assert int(large["w_size"]) <= 3 * 1600, f"npmpc workspace regressed: N=100 needs {large['w_size']} doubles (baseline 1600)"
   print(f"smoke npmpc workspace: ok ({infos[0]['w_size']} doubles at N=6, {large['w_size']} at N=100)")
   wide_dir = out_dir.parent / "alloy_W128"

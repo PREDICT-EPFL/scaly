@@ -122,8 +122,8 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     return _matmul_mask(expr, wrt, memo)
   if expr.op == ExprOp.CALL:
     return _call_mask(expr, wrt, memo)
-  if expr.op == ExprOp.MAP:
-    return _map_mask(expr, wrt, memo)
+  if expr.op == ExprOp.VMAP:
+    return _vmap_mask(expr, wrt, memo)
   if expr.op == ExprOp.SOLVER_CALL:
     return _empty((expr.size, wrt.size))
   raise NotImplementedError(f"jacobian sparsity for op {expr.op!r} is not implemented")
@@ -198,7 +198,7 @@ def _call_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
   return ret
 
 
-def _map_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
+def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   callee = expr.attrs["callee"]
   callee_out = callee.outputs[expr.attrs["output"]]
   length = expr.attrs["length"]
@@ -217,3 +217,72 @@ def _map_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spars
     tiled = sparse.kron(sparse.eye_array(length, dtype=bool), callee_dep, format="csr")
     ret = _or(ret, _compose(tiled, _compose(windows, outer_dep)))
   return ret
+
+
+def star_coloring(sparsity: SparsityType) -> tuple[int, ...]:
+  """Greedily star-color a square sparsity pattern in column order.
+
+  The pattern is treated as an undirected graph. A valid coloring is proper, and no simple path
+  of three edges has only two colors. This is the coloring needed to recover a symmetric Hessian
+  from compressed forward products; it is deliberately not distance-2 coloring.
+  """
+  rows, cols = sparsity.shape
+  if rows != cols:
+    raise ValueError(f"star coloring requires a square sparsity pattern, got {sparsity.shape}")
+
+  neighbors = [set() for _ in range(rows)]
+  for row, col in zip(sparsity.rows, sparsity.cols, strict=True):
+    if row != col:
+      neighbors[row].add(col)
+      neighbors[col].add(row)
+
+  colors = [-1] * rows
+  for vertex in range(rows):
+    color = 0
+    while _star_color_conflicts(vertex, color, colors, neighbors):
+      color += 1
+    colors[vertex] = color
+  return tuple(colors)
+
+
+def _star_color_conflicts(vertex: int, color: int, colors: list[int], neighbors: list[set[int]]) -> bool:
+  """Return whether adding ``vertex`` with ``color`` creates a two-colored three-edge path."""
+  if any(colors[neighbor] == color for neighbor in neighbors[vertex] if colors[neighbor] >= 0):
+    return True
+
+  # The new vertex is an endpoint: vertex-u-w-x has colors c,d,c,d. Excluding u from the final
+  # neighbor check keeps this a simple path rather than the backtracking walk vertex-u-w-u.
+  for first in neighbors[vertex]:
+    first_color = colors[first]
+    if first_color < 0 or first_color == color:
+      continue
+    for middle in neighbors[first]:
+      if colors[middle] != color:
+        continue
+      if any(last != first and last != vertex and colors[last] == first_color for last in neighbors[middle]):
+        return True
+
+  # The new vertex is internal: first-vertex-middle-last has colors d,c,d,c. Two distinct
+  # neighbors of the vertex must share d, and the second one must have a c-colored neighbor.
+  by_color: dict[int, list[int]] = {}
+  for neighbor in neighbors[vertex]:
+    neighbor_color = colors[neighbor]
+    if neighbor_color >= 0:
+      by_color.setdefault(neighbor_color, []).append(neighbor)
+  for same_color_neighbors in by_color.values():
+    if len(same_color_neighbors) < 2:
+      continue
+    for middle in same_color_neighbors:
+      if any(last not in same_color_neighbors and last != vertex and colors[last] == color for last in neighbors[middle]):
+        return True
+  return False
+
+
+def _symmetrize_sparsity(sparsity: SparsityType) -> SparsityType:
+  """Return the undirected union of a square structural pattern and its transpose."""
+  if sparsity.shape[0] != sparsity.shape[1]:
+    raise ValueError(f"symmetric sparsity requires a square pattern, got {sparsity.shape}")
+  rows = np.asarray(sparsity.rows, dtype=np.int64)
+  cols = np.asarray(sparsity.cols, dtype=np.int64)
+  mask = sparse.csr_array((np.ones(rows.size, dtype=bool), (rows, cols)), shape=sparsity.shape)
+  return _mask_sparsity(mask.maximum(mask.T))

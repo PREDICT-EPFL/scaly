@@ -23,6 +23,14 @@ _IPOPT_INF = 2e19
 _IPOPT_OPTION_TOKEN = re.compile(r"[A-Za-z0-9_./+-]+\Z")
 
 
+def _validate_hessian_triangle(rows: list[int], cols: list[int]) -> None:
+  """Reject a Hessian pattern that mixes entries from both triangles."""
+  has_lower = any(row > col for row, col in zip(rows, cols, strict=True))
+  has_upper = any(row < col for row, col in zip(rows, cols, strict=True))
+  if has_lower and has_upper:
+    raise ValueError("IPOPT Hessian sparsity must contain exactly one triangle")
+
+
 def _ipopt_option_call(key: str, val: object) -> str:
   # IPOPT's StdCInterface declares ``char*`` (not ``const char*``) for option
   # keys and string values. The casts keep C++ consumers happy under
@@ -53,7 +61,7 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     callbacks can reach them through ``UserDataPtr``. Passing ``w`` through is
     load-bearing: the oracle ``_raw`` kernels require their packed scratch
     workspace and crash on NULL at any nontrivial problem size.
-  - Sparse Jacobian rows/cols and the lower-triangle Hessian rows/cols are
+  - Sparse Jacobian rows/cols and the handed Hessian-triangle rows/cols are
     emitted as static const arrays.
   - Five ``eval_*`` static functions bridge IPOPT into the generated
     base / grad / jac / hess kernels, timing each call (the FE side of the
@@ -90,14 +98,10 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   jac_rows = list(jac_sp.rows) if jac_sp is not None else []
   jac_cols = list(jac_sp.cols) if jac_sp is not None else []
   nnz_jac = len(jac_rows)
-  hess_rows_full = list(hess_sp.rows)
-  hess_cols_full = list(hess_sp.cols)
-  lower_mask = list(desc.hess_lower_mask)
-  lower_indices = [i for i, b in enumerate(lower_mask) if b]
-  nnz_hess_full = len(hess_rows_full)
-  nnz_hess = len(lower_indices)
-  hess_rows = [hess_rows_full[i] for i in lower_indices]
-  hess_cols = [hess_cols_full[i] for i in lower_indices]
+  hess_rows = list(hess_sp.rows)
+  hess_cols = list(hess_sp.cols)
+  _validate_hessian_triangle(hess_rows, hess_cols)
+  nnz_hess = len(hess_rows)
 
   lines: list[str] = []
   lines.append(f"// IPOPT NLP wrapper for {fun.name} (n={n}, n_h={n_h}, n_g={n_g}).")
@@ -116,8 +120,6 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   # see them; static so large problems cannot overflow the stack).
   if m:
     lines.append(f"static double {symbol}_g_scratch[{m}];")
-  if nnz_hess:
-    lines.append(f"static double {symbol}_h_scratch[{nnz_hess_full}];")
   # Sparsity patterns.
   if nnz_jac:
     lines.append(f"static const int {symbol}_jac_rows[{nnz_jac}] = {{ {', '.join(str(r) for r in jac_rows)} }};")
@@ -125,7 +127,6 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   if nnz_hess:
     lines.append(f"static const int {symbol}_hess_rows[{nnz_hess}] = {{ {', '.join(str(r) for r in hess_rows)} }};")
     lines.append(f"static const int {symbol}_hess_cols[{nnz_hess}] = {{ {', '.join(str(c) for c in hess_cols)} }};")
-    lines.append(f"static const int {symbol}_hess_lower_idx[{nnz_hess}] = {{ {', '.join(str(i) for i in lower_indices)} }};")
 
   # eval_f
   lines.append(f"static bool {symbol}_eval_f(ipindex N, ipnumber* x, bool new_x, ipnumber* obj_value, UserDataPtr ud) {{")
@@ -211,9 +212,8 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     if m:
       hess_args.append("lambda")
     hess_args.extend(param_args)
-    hess_args.append(f"{symbol}_h_scratch")
+    hess_args.append("values")
     lines.append(f"    {hess_raw}({', '.join(hess_args)}, ctx->w);")
-    lines.append(f"    for (int k = 0; k < {nnz_hess}; ++k) values[k] = {symbol}_h_scratch[{symbol}_hess_lower_idx[k]];")
     lines.append("    ctx->t_fe += alloy_clock_s() - fe_t0;")
     lines.append("    ctx->n_eval_h += 1;")
     lines.append("  }")

@@ -10,7 +10,7 @@ named Function + sparse typed graph + derivative factory + call nodes + mixed sc
 
 ## Current experiment pivot
 
-The IR-level proof of concept is in place. Tracking NMPC and unbumpercars showed that one Alloy graph — named `Function`s, MAP-based loop preservation, colored sparse AD, and the scalar C renderer — can match CasADi SX runtime within ~10% and emit 20-58× less C source than SX (see [`scalability.md`](scalability.md) and the Phase 1/3 progress below). The next pivot is from "prove the IR on Jacobian benchmarks" to "build a real control workload on Alloy."
+The IR-level proof of concept is in place. Tracking NMPC and unbumpercars showed that one Alloy graph — named `Function`s, VMAP-based loop preservation, colored sparse AD, and the scalar C renderer — can match CasADi SX runtime within ~10% and emit 20-58× less C source than SX (see [`scalability.md`](scalability.md) and the Phase 1/3 progress below). The next pivot is from "prove the IR on Jacobian benchmarks" to "build a real control workload on Alloy."
 
 ### Driving application: CBF safety filter with neural dynamics
 
@@ -92,8 +92,8 @@ Implemented:
 - `Expr`, `ExprOp`, `Function`.
 - JIT execution through generated C.
 - Basic symbolic JVP-based `jacobian`, `gradient`, `hessian`.
-- CasADi-like `Function.factory()` for `jac:*`, `grad:*`, `hess:*`, `lam:*`, and aux Lagrangian outputs.
-- Human-friendly wrappers like `gradient(fn, input_name, output_name)` built on top of factory requests.
+- CasADi-like `Function.factory()` for typed `Jac`, `Grad`, and `Hess` requests, `lam:*` inputs, and aux Lagrangian outputs.
+- Human-friendly wrappers like `gradient(fn, of, wrt)` built on top of factory requests.
 - First-class `call` expressions.
 - Lowering hints: `auto`, `scalar`, `block`, `opaque`.
 - Universal C ABI spelling and optional typed buffer header generation.
@@ -122,8 +122,8 @@ Progress:
 - Added explicit `ScalarType` and `SparsityType` vocabulary, plus symbolic `jacobian_sparsity(expr, wrt)` for the current structural/arithmetic subset, including call-node chain rule.
 - Added compact `SparseJacobian` metadata/values wrapper, CSR/CSC conversion helpers on `SparsityType`, and greedy column coloring helpers for future sparse derivative evaluation.
 - Added a first colored sparse-Jacobian value path: `sparse_jacobian_colored` uses `jacobian_sparsity`, `column_coloring`, compressed seed vectors, batched color JVPs through structural/nonlinear elementwise subsets and call structure, and simplification/CSE cleanup; `sparse_jacobian_reference` keeps the old dense-Jacobian-then-gather implementation for correctness checks. The default `spjac` factory path now uses the colored implementation. The tracking path preserves named stage derivative calls and color batches, but still lacks a true horizon loop IR.
-- Added factory-level `spjac:out:in` and human `spjacobian(fn, input, output)` wrapper; sparse outputs carry `Function.output_sparsities` metadata.
-- Added `sphess:out:in:in`, `sphessian`, and sparse Lagrangian-Hessian convenience wrapper over auxiliary factory outputs.
+- Added factory-level `SpJac(of, wrt)` and human `sparse_jacobian(fn, of, wrt)` wrapper; sparse outputs carry `Function.output_sparsities` metadata.
+- Added `SpHess(of, wrt)` and `sparse_hessian`, plus the sparse Lagrangian-Hessian convenience wrapper over auxiliary factory outputs.
 - C API header generation now emits sparse output metadata (`NNZ`, `NROW`, `NCOL`, COO `rows`/`cols`, CSR, and CSC arrays) for compact derivative buffers.
 - Added structural equality/hash helpers separate from `Expr.id`, plus CSE over structurally equivalent subgraphs.
 - Added stable topological debug printing (`Expr.debug()`, `format_expr`) for inspecting small graphs without relying on construction IDs.
@@ -241,8 +241,8 @@ Progress:
 
 - Added initial graph-level reverse-mode `vjp(outputs, wrts, cotangents)` over `Expr` graphs, including adjoint accumulation for multiple outputs, broadcast unprojection, structural ops, matmul, and call-node inlining.
 - Routed scalar `gradient(expr, wrt)` through reverse mode instead of constructing it as a full JVP-unrolled Jacobian.
-- Added factory-level `fwd:out:in` requests and a human `forward(fn, input, output)` wrapper for seeded `J(out, in) @ fwd:in` products.
-- Added factory-level `adj:out:in` requests and a human `adjoint(fn, input, output)` wrapper for seeded `J(out, in).T @ lam:out` reverse products.
+- Added factory-level `Fwd` requests and a human `forward(fn, of, wrt)` wrapper for seeded `J(of, wrt) @ fwd:wrt` products.
+- Added factory-level `Adj` requests and a human `adjoint(fn, of, wrt)` wrapper for seeded `J(of, wrt).T @ lam:of` reverse products.
 - Added lower-level multi-seed `jvp_many` and `vjp_many` APIs using a leading seed axis.
 - Added Alloy reverse-mode tests for scalar outputs, vector-seeded VJPs, broadcasted multi-output accumulation, structural/matmul paths, nested `CallOp` reverse AD, factory/API forward/adjoint directional derivatives, multi-seed AD, and clear errors for omitted directional seeds.
 - Factory construction now reports unknown requested inputs, derivative-spec inputs/outputs, and aux outputs as explicit `ValueError`s instead of leaking raw mapping errors.
@@ -255,10 +255,11 @@ Progress:
 - Treat multi-seed AD as a batched/looped derivative operation, not as Python cloning of one graph per seed. The current `jvp_many` / `vjp_many` leading-axis helpers are useful semantics, but their implementation must become loop-preserving before they are used for benchmark-sized sparse derivatives.
 - Support nested `CallOp` AD through a policy: inline small callees, but call cached derivative functions for large or repeated callees. Repeated OCP stages and per-car dynamics should not be cloned blindly.
 - Handle nonsmooth ops intentionally: reject, pick a convention, or mark nondifferentiable.
+- A gradient and a Hessian of the same output currently share almost nothing. On the small `sumsqr(x * x * x)` example, their graphs share 3 nodes (15 for the gradient and 29 for the Hessian), and their generated code has 10 plus 41 assignments. Asking for both in one Function therefore costs the exact sum of asking separately. The cause is the AD pipeline: `gradient` returns a raw reverse-mode result, while `hessian` differentiates a simplified batched-forward form of that result. Sharing this work is independent of the derivative API and should be addressed as a separate AD change.
 
 ### Sparse AD
 
-Sparse AD is the core of the next checkpoint. Do not keep `spjacobian` as dense-Jacobian-then-gather except as a reference path for tiny tests.
+Sparse AD is the core of the next checkpoint. Do not keep `sparse_jacobian` as dense-Jacobian-then-gather except as a reference path for tiny tests.
 
 - Add symbolic sparsity propagation.
 - Add Jacobian sparsity estimation independent of numerical values.
@@ -268,7 +269,7 @@ Sparse AD is the core of the next checkpoint. Do not keep `spjacobian` as dense-
 - Add compact vs full sparse derivative representations.
 - Add symmetric/upper-triangular Hessian conventions needed by sparse SQP.
 - Expand CSC/CSR sparsity metadata beyond the initial `SparsityType` conversion utilities and generated C header arrays where useful.
-- Learn directly from anvil's `spjacobian` experience: unrolled CONST basis construction is a scalability trap; vmap/per-block approaches are the useful patterns.
+- Learn directly from the earlier sparse-Jacobian experience: unrolled CONST basis construction is a scalability trap; vmap/per-block approaches are the useful patterns.
 
 ### Factory language
 
@@ -276,19 +277,19 @@ Expand and harden CasADi-like factory requests:
 
 - Expand `fwd:*` beyond the initial single-output `fwd:out:in` JVP request.
 - Expand `adj:*` beyond the initial single-output `adj:out:in` VJP request.
-- `jac:out:in`.
-- `grad:out:in`.
-- `hess:out:in1:in2`.
+- `Jac(of, wrt)`.
+- `Grad(of, wrt)`.
+- `Hess(of, wrt)`.
 - `lam:out`.
 - auxiliary outputs like `gamma`.
 - possibly named aliases and grouped outputs.
 
 Human-facing convenience APIs should stay as wrappers over this language, not a second derivative implementation:
 
-- `gradient(fn, input_name, output_name)` -> `fn.factory(..., [f"grad:{output_name}:{input_name}"])`
-- `jacobian(fn, input_name, output_name)` -> `jac:*`
-- `hessian(fn, input_name, output_name)` -> `hess:*`
-- `lagrangian_hessian(fn, input_name, output_names)` -> `lam:*` inputs plus an aux output
+- `gradient(fn, of, wrt)` -> `fn.factory(..., [Grad(of, wrt)])`
+- `jacobian(fn, of, wrt)` -> `fn.factory(..., [Jac(of, wrt)])`
+- `hessian(fn, of, wrt)` -> `fn.factory(..., [Hess(of, wrt)])`
+- `lagrangian_hessian(fn, of, wrt)` -> `lam:*` inputs plus an aux output
 
 Exit criteria:
 
@@ -300,7 +301,7 @@ Exit criteria:
 
 Goal: make the central hypothesis real: one graph can contain scalar and block regions. Scalarization should happen here, not inside AD. AD should produce mathematical derivative graphs/linear maps with shape, sparsity, and seed metadata; lowering decides which pieces become scalar SX-like code, block loops, compact sparse assembly, or opaque calls.
 
-**Status: loop-preserving lowering done; broader mixed lowering on standby.** The loop-preserving milestone below is complete on both benchmark workloads (constant-source primal and `spjac:*` on tracking, MAP-ified unbumpercars). The rest of this phase — explicit `scalar`/`block`/`opaque` region formation, boundary pack/unpack/project ops, real block-loop codegen, and automatic lowering heuristics — is deferred until the safety-filter workload demonstrates a concrete need. Today `block` is metadata. **Corrected 2026-08-20 by the neural-process-MPC workload (`internal/notes/benchmark-buildout.md` §2.8):** matmuls are *not* rendered as scalar C — the generated source for a scanned MLP stage body contains real loop nests (`for i < 32 { for k < 9 { ... } }`), and it is constant in the decoder width because the weights are read out of the parameter tail. What that workload shows is that alloy scales cleanly in the network width and CasADi MX does not: alloy is 1.2x slower than MX at width 32 and 2.6x faster at width 256, so the crossing is in alloy's favour, and the small fixed handicap it carries is confined to narrow decoders and short horizons. The trigger this phase was waiting for has therefore fired, but for the opposite reason to the one it anticipated: the candidate fix is not real block lowering, it is the sparse-Jacobian sweep strategy — column colouring only, on per-stage blocks that are wider than they are tall. That item is in `internal/todo.md` as an unconfirmed hypothesis with a bounded prize; block lowering stays on standby until something demands it.
+**Status: loop-preserving lowering done; broader mixed lowering on standby.** The loop-preserving milestone below is complete on both benchmark workloads (constant-source primal and `spjac:*` on tracking, VMAP-based unbumpercars). The rest of this phase — explicit `scalar`/`block`/`opaque` region formation, boundary pack/unpack/project ops, real block-loop codegen, and automatic lowering heuristics — is deferred until the safety-filter workload demonstrates a concrete need. Today `block` is metadata. **Corrected 2026-08-20 by the neural-process-MPC workload (`internal/notes/benchmark-buildout.md` §2.8):** matmuls are *not* rendered as scalar C — the generated source for a VMAP MLP stage body contains real loop nests (`for i < 32 { for k < 9 { ... } }`), and it is constant in the decoder width because the weights are read out of the parameter tail. What that workload shows is that alloy scales cleanly in the network width and CasADi MX does not: alloy is 1.2x slower than MX at width 32 and 2.6x faster at width 256, so the crossing is in alloy's favour, and the small fixed handicap it carries is confined to narrow decoders and short horizons. The trigger this phase was waiting for has therefore fired, but for the opposite reason to the one it anticipated: the candidate fix is not real block lowering, it is the sparse-Jacobian sweep strategy — column colouring only, on per-stage blocks that are wider than they are tall. That item is in `internal/todo.md` as an unconfirmed hypothesis with a bounded prize; block lowering stays on standby until something demands it.
 
 Benchmark target for this phase:
 
@@ -334,25 +335,25 @@ The scalability sweep showed Alloy already matches CasADi SX runtime on the trac
 
 Plan, in roughly the order that minimizes blast radius:
 
-1. **`ExprOp.MAP` in the IR**. Hold `(callee, length, input_slice_specs, output_slice_spec)`. Each spec is `(outer_tensor, start, stride, slice_size)` and describes how the i-th iteration's argument is sliced out of an outer tensor and where the i-th output writes into the outer assembly. Shape inference yields `(length * out_slice_size, ...)` along the assembly axis. **Done**: `ExprOp.MAP` added with rank-1 inputs/outputs, `(start, stride)` per callee input (stride=0 broadcasts), Program IR lowering/codegen, plus expression pretty-printing. Tests in `tests/alloy/test_map.py` compare against unrolled NumPy/generated-code references for fully-strided, overlapping-stride, zero-length, and broadcast cases.
-2. **Scoped sugar `al.scan(...)` / `al.map(...)`**. One IR node instead of N call nodes:
+1. **`ExprOp.VMAP` in the IR**. Hold `(callee, length, input_slice_specs, output_slice_spec)`. Each spec is `(outer_tensor, start, stride, slice_size)` and describes how the i-th iteration's argument is sliced out of an outer tensor and where the i-th output writes into the outer assembly. Shape inference yields `(length * out_slice_size, ...)` along the assembly axis. **Done**: `ExprOp.VMAP` added with rank-1 inputs/outputs, `(start, stride)` per callee input (stride=0 broadcasts), Program IR lowering/codegen, plus expression pretty-printing. Tests in `tests/ir/test_vmap.py` compare against unrolled NumPy/generated-code references for fully-strided, overlapping-stride, zero-length, and broadcast cases.
+2. **Scoped sugar `al.vmap(...)`**. One IR node instead of N call nodes:
    ```python
-   parts = al.scan(eq_interstage, length=N,
+   parts = al.vmap(eq_interstage, length=N,
                    inputs={"z":     (z, 0,  NZ),
                            "znext": (z, NZ, NZ),
                            "p":     (p, NX, NX)})
    ```
-   **Done**: `al.map_` is exported from `alloy` and accepts either a sequence of `(outer, start, stride)` tuples ordered to match `callee.inputs`, or a `Mapping[str, ...]` keyed by callee input name; `al.scan` is an alias. The dict form errors loudly on unknown or missing callee input names. `slice_size` is taken from the callee input shape, so callers do not have to spell it out.
-3. **Scalar codegen for `ExprOp.MAP`**. One new branch in `_render_instruction`: emit `for (int it = 0; it < N; ++it) { callee_raw(arg_bases + it*stride, ..., out_base + it*out_stride); }`. Lifetime treats the map output buffer as a single slot of size `length * out_slice_size`. Validate: rewrite the tracking fixture with `al.scan` and confirm the **primal** source is constant in `N` while the benchmark correctness check still passes. **Done**: the renderer emits the loop, declares scratch for any non-selected callee outputs once before the loop, and `_callees` now also walks `ExprOp.MAP` so the nested callee's raw body is emitted alongside the caller. On the tracking primal fixture the rendered C source is 76 lines from `N=10` through `N=500` (the unrolled-`concat`-of-call equivalent grows from 193 to 6073 lines), and the compiled output matches the unrolled reference.
-4. **JVP rule for `ExprOp.MAP`**. `jvp_many(map(f, ...), wrt, seeds) = map(jvp_many_of_f, ...)`. The per-iteration JVP callee already exists in the `_call_jvp_many_function` / `_call_jvp_many_const_function` caches. After this step `spjac:eq:z` stays constant-source: the colored JVP graph collapses N calls into one map node whose body is the cached per-stage JVP function. **Done**: `_jvp_many_structural` has a MAP branch. Each per-input tangent is transposed and flattened so the per-iteration seed slice (`(formal.size, nseed)` row-major = `formal.size * nseed` contiguous doubles) is a leading-axis slice. A new `_call_jvp_many_flat_function` caches a thin wrapper around the existing leading-seed JVP callee that reshapes/transposes the flat seed at entry and the leading-seed output at exit; the wrapper itself contains a CALL to the inner JVP callee so codegen sees the loop body as a fixed function. The MAP-of-JVP output is then transposed back to the leading-seed convention. Also fixes a pre-existing CSE crash where children of `ADD`/`MUL` were sorted by raw tuple `<` which fails on heterogeneous attrs (e.g. SLICE index `(int, slice)` vs `(slice,)`); the sort key is now `hash`.
-5. **Sparsity propagation through `ExprOp.MAP`**. `_jac_mask(map(f, ...), wrt)` produces a tile pattern repeated `length` times along the assembly axis. `jacobian_sparsity` should build the tile + length in `O(1)` time even though the materialized `SparsityType.rows / cols` arrays remain `O(N)` (they are still data, not source code). **Done**: `_map_mask` reuses the per-formal callee dependency tile across iterations and only slices a different range of the outer-tensor dependency mask each iteration. End-to-end `spjacobian` over a MAP-based tracking fixture matches the unrolled-concat equivalent numerically and has identical sparsity metadata; the new test fixture in `tests/alloy/test_map.py` exercises this with the full RK4 dynamics.
+   **Done**: `al.vmap` is exported from `alloy` and accepts either a sequence of `(outer, start, stride)` tuples ordered to match `callee.inputs`, or a `Mapping[str, ...]` keyed by callee input name. The dict form errors loudly on unknown or missing callee input names. `slice_size` is taken from the callee input shape, so callers do not have to spell it out.
+3. **Scalar codegen for `ExprOp.VMAP`**. One new branch in `_render_instruction`: emit `for (int it = 0; it < N; ++it) { callee_raw(arg_bases + it*stride, ..., out_base + it*out_stride); }`. Lifetime treats the VMAP output buffer as a single slot of size `length * out_slice_size`. Validate: rewrite the tracking fixture with `al.vmap` and confirm the **primal** source is constant in `N` while the benchmark correctness check still passes. **Done**: the renderer emits the loop, declares scratch for any non-selected callee outputs once before the loop, and `_callees` now also walks `ExprOp.VMAP` so the nested callee's raw body is emitted alongside the caller. On the tracking primal fixture the rendered C source is 76 lines from `N=10` through `N=500` (the unrolled-`concat`-of-call equivalent grows from 193 to 6073 lines), and the compiled output matches the unrolled reference.
+4. **JVP rule for `ExprOp.VMAP`**. `jvp_many(vmap(f, ...), wrt, seeds) = vmap(jvp_many_of_f, ...)`. The per-iteration JVP callee already exists in the `_call_jvp_many_function` / `_call_jvp_many_const_function` caches. After this step `spjac:eq:z` stays constant-source: the colored JVP graph collapses N calls into one VMAP node whose body is the cached per-stage JVP function. **Done**: `_jvp_many_structural` has a VMAP branch. Each per-input tangent is transposed and flattened so the per-iteration seed slice (`(formal.size, nseed)` row-major = `formal.size * nseed` contiguous doubles) is a leading-axis slice. A new `_call_jvp_many_flat_function` caches a thin wrapper around the existing leading-seed JVP callee that reshapes/transposes the flat seed at entry and the leading-seed output at exit; the wrapper itself contains a CALL to the inner JVP callee so codegen sees the loop body as a fixed function. The VMAP-of-JVP output is then transposed back to the leading-seed convention. Also fixes a pre-existing CSE crash where children of `ADD`/`MUL` were sorted by raw tuple `<` which fails on heterogeneous attrs (e.g. SLICE index `(int, slice)` vs `(slice,)`); the sort key is now `hash`.
+5. **Sparsity propagation through `ExprOp.VMAP`**. `_jac_mask(vmap(f, ...), wrt)` produces a tile pattern repeated `length` times along the assembly axis. `jacobian_sparsity` should build the tile + length in `O(1)` time even though the materialized `SparsityType.rows / cols` arrays remain `O(N)` (they are still data, not source code). **Done**: `_vmap_mask` reuses the per-formal callee dependency tile across iterations and only slices a different range of the outer-tensor dependency mask each iteration. End-to-end `sparse_jacobian` over a VMAP-based tracking fixture matches the unrolled-concat equivalent numerically and has identical sparsity metadata; the new test fixture in `tests/integration/test_vmap.py` exercises this with the full RK4 dynamics.
 6. **Tile-strided gather lowering**. When the compact-value gather indices form a tile pattern (`base[i*nnz_per_stage..(i+1)*nnz_per_stage]` for `i in [0, length)`), emit a `for` loop instead of an O(N) unrolled index table. This is the last unrolled site that keeps the rendered C source from being `O(1)`. **Done**: two complementary paths land constant LOC. `_detect_tile` finds `(prefix, tile_size, length, stride, base)` patterns in the flat gather indices and emits a nested `for` loop reading from the gather source. The transposed-concat peephole now groups output entries by their CONCAT input block and, for groups above 32 entries, emits a single static `idx[]` table + a `for` loop whose body is built via `_read_element` — so the inline-through-ADD/SUB chains still apply when the block is itself a skipped sum of materialized tensors. With this, the realistic RK4 tracking spjac source stays at 724 LOC across `N=5` through `N=500` (the unrolled-call variant grows from 2579 to 32647 LOC). The byte count still grows linearly because the `idx[]` table is O(nnz) bytes of data, but that no longer feeds the C parser as code.
 
-Replacing the JVP wrapper with a tile-strided gather is the matching fix on the IR side: the MAP-JVP rule now builds a per-iteration leading-seed seed buffer via `gather(actual_tan, tile_indices)` and calls the existing `_call_jvp_many_function` body directly, so each MAP iteration is just a function call with no transpose pre/post. The MAP constructor also accepts rank-N callee inputs/outputs as long as the outer tensor stays rank-1.
+Replacing the JVP wrapper with a tile-strided gather is the matching fix on the IR side: the VMAP-JVP rule now builds a per-iteration leading-seed seed buffer via `gather(actual_tan, tile_indices)` and calls the existing `_call_jvp_many_function` body directly, so each VMAP iteration is just a function call with no transpose pre/post. The VMAP constructor also accepts rank-N callee inputs/outputs as long as the outer tensor stays rank-1.
 
-7. **Structured sparse Jacobian for MAP (per-formal local coloring + const-seed JVP)**. **Done**: the runtime gap is closed. `al.sparse_jacobian` now tries `_sparse_jacobian_structured` first: it splits the top-level expression along axis 0 (handling `ExprOp.CONCAT` as a piecewise decomposition), and for each piece that is itself an `ExprOp.MAP` whose outer tensors are exactly `wrt`, it dispatches to `_sparse_jacobian_map`. Per formal input of the callee, that routine (a) computes the local Jacobian sparsity tile of shape `(slice_size, formal.size)`, (b) greedily colors **just that tile**, (c) builds a constant local-color seed matrix, (d) routes it through the existing `_call_jvp_many_const_function` cache (which simplifies/CSEs the JVP graph with the seed embedded as a constant — so per-color DCE eliminates the entire dead tangent subgraph), (e) wraps that DCE'd per-formal JVP in `ExprOp.MAP` over the original slicing pattern, and (f) assembles the global compact nnz buffer via a constant-table `gather + scatter`. Multiple formals overlapping at the same `(row, col)` are summed. The fallback path (any formal whose outer tensor depends on `wrt` through computation rather than identity) is the old global-colored route, so nothing regresses. The result for tracking NMPC `spjac:eq:z`:
+7. **Structured sparse Jacobian for VMAP (per-formal local coloring + const-seed JVP)**. **Done**: the runtime gap is closed. `al.sparse_jacobian` now tries `_sparse_jacobian_structured` first: it splits the top-level expression along axis 0 (handling `ExprOp.CONCAT` as a piecewise decomposition), and for each piece that is itself an `ExprOp.VMAP` whose outer tensors are exactly `wrt`, it dispatches to `_sparse_jacobian_vmap`. Per formal input of the callee, that routine (a) computes the local Jacobian sparsity tile of shape `(slice_size, formal.size)`, (b) greedily colors **just that tile**, (c) builds a constant local-color seed matrix, (d) routes it through the existing `_call_jvp_many_const_function` cache (which simplifies/CSEs the JVP graph with the seed embedded as a constant — so per-color DCE eliminates the entire dead tangent subgraph), (e) wraps that DCE'd per-formal JVP in `ExprOp.VMAP` over the original slicing pattern, and (f) assembles the global compact nnz buffer via a constant-table `gather + scatter`. Multiple formals overlapping at the same `(row, col)` are summed. The fallback path (any formal whose outer tensor depends on `wrt` through computation rather than identity) is the old global-colored route, so nothing regresses. The result for tracking NMPC `spjac:eq:z`:
 
-| N   | unrolled          | map (old, global)     | **map_structured (new)** | CasADi SX           | CasADi MX        |
+| N   | unrolled          | vmap (old, global)     | **vmap_structured (new)** | CasADi SX           | CasADi MX        |
 | --- | ----------------- | --------------------- | ------------------------ | ------------------- | ---------------- |
 | 10  | 878 ns / 125 KB   | 1309 ns / 31 KB       | **960 ns / 18 KB**       | 830 ns / 97 KB      | 1380 ns / 384 KB |
 | 50  | 4448 ns / 184 KB  | 6559 ns / 47 KB       | **4623 ns / 23 KB**      | 4193 ns / 466 KB    | 7860 ns / 2.0 MB |
@@ -360,9 +361,9 @@ Replacing the JVP wrapper with a tile-strided gather is the matching fix on the 
 | 200 | 19084 ns / 416 KB | 29374 ns / 112 KB     | **20068 ns / 42 KB**     | 18411 ns / 1.85 MB  | 39185 ns / 8.7 MB|
 | 500 | 51881 ns / 889 KB | 72958 ns / 243 KB     | **54112 ns / 80 KB**     | 44718 ns / 4.64 MB  | (skipped)        |
 
-The previous ~48% map-vs-unrolled gap drops to ~3-5%; runtime is now within ~9-21% of CasADi SX (closer for medium N, slightly behind at the extremes) while emitting 20-58× less C source. The rendered C source stays at **481 LOC from N=2 through N=500** (the byte count grows only because of the gather/scatter index tables, which are data, not code). Codegen time at N=500 drops from 14.2 s (unrolled) and 13.5 s (old MAP path) to **252 ms** — the new path's AD construction is independent of `N`.
+The previous ~48% vmap-vs-unrolled gap drops to ~3-5%; runtime is now within ~9-21% of CasADi SX (closer for medium N, slightly behind at the extremes) while emitting 20-58× less C source. The rendered C source stays at **481 LOC from N=2 through N=500** (the byte count grows only because of the gather/scatter index tables, which are data, not code). Codegen time at N=500 drops from 14.2 s (unrolled) and 13.5 s (old VMAP path) to **252 ms** — the new path's AD construction is independent of `N`.
 
-Comparison against CasADi's own `Function.map(N, "serial")` primitive on the same workload: CasADi SX with `.map` produces source byte-for-byte identical to fully unrolling (95 bytes of difference at N=200 in a 1.85 MB file) — SX collapses the loop at codegen time. CasADi MX with `.map` keeps a loop shape but its workspace grows linearly (`sz_w` = 80 506 doubles at N=200) and runtime is ~2× slower than SX/unrolled. Alloy's structured MAP path is the only configuration in the comparison that gives both constant source and runtime within ~10% of CasADi SX, with `SZ_W == 0`.
+Comparison against CasADi's own `Function.map(N, "serial")` primitive on the same workload: CasADi SX with `.map` produces source byte-for-byte identical to fully unrolling (95 bytes of difference at N=200 in a 1.85 MB file) — SX collapses the loop at codegen time. CasADi MX with `.map` keeps a loop shape but its workspace grows linearly (`sz_w` = 80 506 doubles at N=200) and runtime is ~2× slower than SX/unrolled. Alloy's structured VMAP path is the only configuration in the comparison that gives both constant source and runtime within ~10% of CasADi SX, with `SZ_W == 0`.
 
 Anvil's per-stage `multistage` approach reaches 1.5 µs at N=50 on a simpler 4-state bicycle; the slip-angle + tanh-drag fixture here is about 3× heavier per stage, so the absolute speedup is workload-bound. The mechanism is now matched: per-stage coloring with const-seed JVP bodies, plus a constant-index assembly into the global compact buffer — without introducing a `multistage` primitive.
 
@@ -376,7 +377,7 @@ Risks to watch:
 
 Exit criteria:
 
-- A tracking fixture rewritten with `al.scan` produces C source whose size is `O(1)` in `N` for both the primal and `spjac:eq:z` paths, with runtime within ~10% of the current unrolled form across the existing horizon sweep.
+- A tracking fixture rewritten with `al.vmap` produces C source whose size is `O(1)` in `N` for both the primal and `spjac:eq:z` paths, with runtime within ~10% of the current unrolled form across the existing horizon sweep.
 - The benchmark correctness check still passes on every cell in the sweep.
 
 ### Policy
@@ -415,7 +416,7 @@ Progress:
 - Added `render_c_module`, which returns a paired generated header/source module with explicit output filenames and the source including the generated header.
 - Updated the C++ wrapper smoke test to compile the generated C source separately and link it into a C++ caller.
 - Generated ABI headers/source now include stateless `alloc_mem`, `init_mem`, and `free_mem` hooks; the compiled ABI test verifies the exported hook symbols.
-- Added a compiled C-module smoke test for `spjacobian(...)` factory output, verifying compact sparse derivative values through the universal ABI.
+- Added a compiled C-module smoke test for `sparse_jacobian(...)` factory output, verifying compact sparse derivative values through the universal ABI.
 - Added a C++ typed-wrapper smoke test for `lagrangian_hessian(...)` factory output, including sanitized `lam:*` input names.
 - The ABI spec now states caller ownership, row-major buffer layout, workspace/null-pointer rules, lack of default inputs, and alignment assumptions.
 - Generated C++ typed wrappers now include `static_assert` checks that typed buffer structs have the expected flattened `double` size.
@@ -429,9 +430,9 @@ Landed:
 - `src/alloy/codegen/jit.py` owns the JIT pipeline: SHA-256 cache key over (`_JIT_CACHE_VERSION`, `C_API_SIGNATURE`, function name, generated C source), per-user cache directory (`$ALLOY_CACHE_DIR` overrides, otherwise `$XDG_CACHE_HOME/alloy/jit` or `~/.cache/alloy/jit`), `cc -O2 -fPIC -shared/-dynamiclib` invocation, and a `CompiledFunction` that wires `ctypes` against the universal ABI entry point and `_sz_w` helper.
 - A process-local `_artifact_cache` lets multiple `Function` instances with identical generated source share the same `.so` after the first compile; the on-disk cache survives across processes.
 - `Function._compiled` holds the per-instance handle. `Function.recompile()` drops the in-process handle and removes the cached source/library directory. `Function.eval_list` and `Function.__call__` are the public execution entry points.
-- Internal `CALL`/`MAP` nodes lower through Program IR, so nested Python execution and AOT share the same code path.
+- Internal `CALL`/`VMAP` nodes lower through Program IR, so nested Python execution and AOT share the same code path.
 - Fixed a latent codegen bug uncovered by this work: `_skipped_instructions` was vacuously dropping output-only TRANSPOSE/ADD/SUB nodes because `all(...)` over an empty consumer list is `True`. Output instructions are now excluded from the skip set so the final copy loop always has a materialized buffer.
-- Test coverage in `tests/alloy/test_alloy_jit.py` covers: JIT matches explicit NumPy references, cache keys are stable across `Function` instances of the same graph, `recompile()` invalidates both in-memory and on-disk caches, multi-output + keyword inputs, factory `spjacobian` outputs (sparse compact buffer), nested `CALL` nodes, and shape-mismatch validation.
+- Test coverage in `tests/alloy/test_alloy_jit.py` covers: JIT matches explicit NumPy references, cache keys are stable across `Function` instances of the same graph, `recompile()` invalidates both in-memory and on-disk caches, multi-output + keyword inputs, factory `sparse_jacobian` outputs (sparse compact buffer), nested `CALL` nodes, and shape-mismatch validation.
 
 Resolved open questions:
 
@@ -684,7 +685,7 @@ What to build in Alloy:
 
 What to learn:
 
-- whether the existing IR (named functions + MAP + sparse AD + scalar C codegen) is enough to express both filter variants without ad-hoc IR additions;
+- whether the existing IR (named functions + VMAP + sparse AD + scalar C codegen) is enough to express both filter variants without ad-hoc IR additions;
 - where solver-call boundaries should sit (opaque call vs. inlined unroll) and how warm-start state propagates through `mem`;
 - whether the QP specialization (extract `H`, `q`, `A` symbolically from an `x`-affine objective/constraint) needs new IR support or fits inside existing factory passes;
 - whether IPOPT's Jacobian/Hessian evaluator callback shape requires changes to the sparse derivative ABI.
@@ -752,7 +753,7 @@ Metrics for all workloads:
 1. **M0 Seed**: symbolic expressions, functions, tapes, simple AD, CasADi equivalence smoke tests. *Done.*
 2. **M1 Core modeling + scoped construction**: robust op coverage, shape/type errors, low-level explicit graph API, and an anvil-style scoped function/decorator API. *Done.*
 3. **M2 Scalable rewrites + sparse AD**: tinygrad-inspired graph rewrites, reverse mode, true colored sparse derivatives, no dense-Jacobian-then-gather for benchmark paths. *Done.*
-4. **M3 Loop-preserving lowering**: MAP-based per-stage callee reuse and colored sparse Jacobians constant in `N`/`C`, demonstrated on tracking NMPC `eq_constraints_jac` and MAP-ified unbumpercars `ineq_constraints_jac`. *Done.* Broader mixed scalar/block/opaque region formation is on standby until the safety-filter workload requires it.
+4. **M3 Loop-preserving lowering**: VMAP-based per-stage callee reuse and colored sparse Jacobians constant in `N`/`C`, demonstrated on tracking NMPC `eq_constraints_jac` and VMAP-based unbumpercars `ineq_constraints_jac`. *Done.* Broader mixed scalar/block/opaque region formation is on standby until the safety-filter workload requires it.
 5. **M4 JIT as default**: `Function.__call__` lazily renders, compiles, caches, and dispatches through the universal ABI; interpreter preserved as debug fallback. *Done.*
 6. **M5 QP and NLP solvers**: `al.qp(...)` with PIQP and `al.nlp(...)` with IPOPT, driven by the CBF safety-filter workload. *Bindings + IR nesting + C codegen + AOT/C++ workflow landed*. Both builders ship, sparse Jacobian / sparse Lagrangian Hessian for IPOPT come through `Function.factory(...)`, and the new `ExprOp.SOLVER_CALL` op + `SolverFunction` subclassing `Function` lets a solver be embedded inside any other `@al.function` graph. **Nested QP and NLP both compile to a single `.so` that links directly against the vendored `libpiqpc` / `libipopt` — no Python in the hot path.** An AOT Google Benchmark harness measured ~4 µs/solve (QP) and ~450 µs/solve (NLP) on a recent macOS arm64 dev box; that script has since been absorbed into `benchmarks/run.py`. See [`docs/guide/solvers.md`](../docs/guide/solvers.md). Direction (2026-07-14, `internal/notes/benchmark-buildout.md` §3.4 + L2), **landed 2026-07-15**: the generated single-`.so` path is the universal solver integration and the **only** solve path — sparse PIQP lives there (`al.qp(..., sparse=True)`, CSC patterns baked at codegen, values-only updates), IPOPT callbacks point at generated kernels (workspace pass-through fixed the chain-scale crash) with full warm starts (`x0`, `lam_eq0`/`lam_ineq0`, sign-split `lam_box0`), and the alloy-owned stats struct resurfaces status/iterations/eval counts and the FE/solver/glue timing split. The Python-interleaved backends (nanobind `_piqp_ext`, ctypes IPOPT callbacks) are **deleted**; solver plugins ship vendored libs + headers + entry-point metadata + their C wrapper template (`render_wrapper`, moved out of core 2026-07-15 — see [`docs/dev/solver_plugins.md`](../docs/dev/solver_plugins.md) and `notes/benchmark-buildout.md` §3.5). Still open: PIQP warm-start handover (no C API for it upstream), implicit-function AD through `SOLVER_CALL`.
 

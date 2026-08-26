@@ -97,9 +97,9 @@ and `horizon` calls it ten times, so source size stays flat as the horizon grows
 preserve the same structure — forward mode builds one derivative of `stage` and calls it ten times
 rather than emitting ten copies.
 
-## Regular repetition: `map_`
+## Regular repetition: `vmap`
 
-When every iteration is the same callee applied to a different slice, say so. `al.map_` keeps the
+When every iteration is the same callee applied to a different slice, say so. `al.vmap` keeps the
 repetition as a single node, which survives lowering into a real loop and differentiation into a
 mapped derivative:
 
@@ -109,7 +109,7 @@ def body(a):
     return {"o": a.sum().reshape((1,))}
 
 xs = al.sym("xs", (15,))
-mapped = al.map_(body, 5, [(xs, 0, 3)])     # 5 iterations, reading xs[0:3], xs[3:6], ...
+mapped = al.vmap(body, 5, [(xs, 0, 3)])     # 5 iterations, reading xs[0:3], xs[3:6], ...
 mapped.shape                                 # (5,)
 ```
 
@@ -122,12 +122,13 @@ A `stride` of `0` broadcasts — every iteration reads the same slice, which is 
 rides along. You can also pass a mapping from callee input name to spec, which is easier to read
 when there are several.
 
-`map_` is what makes a multistage problem scale. A hundred-stage constraint is one node, its sparse
+`vmap` is what makes a multistage problem scale. A hundred-stage constraint is one node, its sparse
 Jacobian is computed by coloring the *callee's* small pattern once, and the generated code stays
 roughly constant in size. See [Sparsity](sparsity.md) and
 [the numbers](../results/scalability.md).
 
-`al.scan` is an alias for the same builder.
+There is no loop-carried state: every iteration is independent. A stride of zero broadcasts the
+same slice to every iteration.
 
 ## Lowering hints
 

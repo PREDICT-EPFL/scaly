@@ -6,6 +6,84 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.codegen.solver import SolverWrapperCtx
+from alloy.ir.types import SparsityType
+from alloy.solvers.solver_function import ExternalOracle, SolverDescriptor, SolverFunction
+
+
+def _wrapper_fixture(rows: tuple[int, ...], cols: tuple[int, ...]) -> SolverFunction:
+  """Build a descriptor small enough to inspect the IPOPT wrapper without compiling it."""
+  base = ExternalOracle("base", "foreign_base_raw", "", (("x", (2,)),), (("f", ()),))
+  grad = ExternalOracle("grad", "foreign_grad_raw", "", (("x", (2,)),), (("grad_f", (2,)),))
+  hess = ExternalOracle(
+    "hess",
+    "foreign_hess_raw",
+    "",
+    (("x", (2,)), ("obj_factor", ())),
+    (("hess_lag", (len(rows),)),),
+  )
+  bounds = ExternalOracle("bounds", "foreign_bounds_raw", "", (), (("x_lb", (2,)), ("x_ub", (2,))))
+  descriptor = SolverDescriptor(
+    name="ipopt_wrapper_fixture",
+    backend="ipopt",
+    n=2,
+    n_eq=0,
+    n_ineq=0,
+    input_signature=(("x0", (2,)), ("lam_eq0", (0,)), ("lam_ineq0", (0,)), ("lam_box0", (2,))),
+    output_signature=(("x", (2,)), ("f", ()), ("h_eq", (0,)), ("g_ineq", (0,)), ("lam_eq", (0,)), ("lam_ineq", (0,)), ("lam_box", (2,))),
+    param_names=(),
+    base=base,
+    grad=grad,
+    hess=hess,
+    bounds=bounds,
+    jac_sparsity=SparsityType.empty((0, 2)),
+    hess_sparsity=SparsityType((2, 2), rows, cols),
+  )
+  return SolverFunction(descriptor)
+
+
+def test_ipopt_wrapper_rejects_a_mixed_hessian_triangle() -> None:
+  from alloy_ipopt.codegen import render_wrapper
+
+  solver = _wrapper_fixture((0, 1), (1, 0))
+  with pytest.raises(ValueError, match="exactly one triangle"):
+    render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats"))
+
+
+def test_ipopt_wrapper_writes_the_selected_hessian_directly() -> None:
+  from alloy_ipopt.codegen import render_wrapper
+
+  solver = _wrapper_fixture((0, 0, 1), (0, 1, 1))
+  source = "\n".join(render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats")))
+  assert "h_scratch" not in source
+  assert "hess_lower_idx" not in source
+  assert "foreign_hess_raw(x, obj_buf, values, ctx->w);" in source
+  assert "ipopt_fixture_hess_rows[3] = { 0, 0, 1 }" in source
+  assert "ipopt_fixture_hess_cols[3] = { 0, 1, 1 }" in source
+
+
+@pytest.mark.parametrize(
+  ("rows", "cols"),
+  [
+    ((1, 0), (0, 0)),
+    ((0, 1), (0, 1)),
+    ((), ()),
+  ],
+  ids=["lower", "diagonal", "empty"],
+)
+def test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns(rows: tuple[int, ...], cols: tuple[int, ...]) -> None:
+  from alloy_ipopt.codegen import render_wrapper
+
+  solver = _wrapper_fixture(rows, cols)
+  source = "\n".join(render_wrapper(solver, SolverWrapperCtx("ipopt_fixture", "ipopt_fixture_raw", "ipopt_fixture_stats")))
+  if rows:
+    assert "ipopt_fixture_hess_rows" in source
+    assert "ipopt_fixture_hess_cols" in source
+    assert "foreign_hess_raw(x, obj_buf, values, ctx->w);" in source
+  else:
+    assert "ipopt_fixture_hess_rows" not in source
+    assert "ipopt_fixture_hess_cols" not in source
+    assert "foreign_hess_raw" not in source
 
 
 @pytest.mark.solver("ipopt")
@@ -173,7 +251,7 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
   def build(mapped: bool):
     x = al.sym("x", 4)
     if mapped:
-      h_eq = al.map_(piece, 2, [(x, 0, 2)])
+      h_eq = al.vmap(piece, 2, [(x, 0, 2)])
     else:
       h_eq = al.concat([piece.call([x[2 * it : 2 * (it + 1)]])[0] for it in range(2)])
     return al.nlp(
@@ -198,9 +276,9 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
 
   def hess_dense(mapped: bool, xv: np.ndarray, lam: np.ndarray) -> np.ndarray:
     x = al.sym("x", 4)
-    h_eq = al.map_(piece, 2, [(x, 0, 2)]) if mapped else al.concat([piece.call([x[2 * it : 2 * (it + 1)]])[0] for it in range(2)])
+    h_eq = al.vmap(piece, 2, [(x, 0, 2)]) if mapped else al.concat([piece.call([x[2 * it : 2 * (it + 1)]])[0] for it in range(2)])
     base = al.Function(f"nlp_hess_base_{int(mapped)}", [x], [((x - target) ** 2).sum(), h_eq], ["x"], ["f", "g"])
-    shf = al.sparse_lagrangian_hessian(base, "x", ["f", "g"])
+    shf = al.sparse_lagrangian_hessian(base, ["f", "g"], "x")
     sp = shf.output_sparsities[0]
     assert sp is not None
     dense = np.zeros(sp.shape)

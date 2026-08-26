@@ -14,7 +14,6 @@ The expression graph and the types on it.
 
 ::: alloy.function.model.Function
 
-::: alloy.function.model.Port
 
 ## Types
 
@@ -62,7 +61,7 @@ The expression graph and the types on it.
 
 ::: alloy.ir.expr.maximum
 
-::: alloy.function.sugar.map_
+::: alloy.function.sugar.vmap
 
 ## Verification and rewriting
 

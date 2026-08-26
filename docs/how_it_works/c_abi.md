@@ -119,7 +119,7 @@ static const int f_spjac_y_x_csc_val_perm[4] = {0, 3, 1, 2};
 ```
 
 **The value buffer the function writes is in `(rows, cols)` order, and that order is not
-necessarily sorted.** The structured path through `map` emits nonzeros piece by piece, so the
+necessarily sorted.** The structured path through `VMAP` emits nonzeros piece by piece, so the
 coordinate list — not row-major order — is the authority on what value belongs where.
 
 The `_val_perm` tables are how you pair the values with a sorted index structure:

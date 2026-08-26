@@ -134,9 +134,9 @@ def race_car_eq_function(horizon: int) -> al.Function:
   return al.Function(f"race_car_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
 
-def _race_car_eq_map_expr(z: al.Expr, p: al.Expr, horizon: int) -> al.Expr:
+def _race_car_eq_vmap_expr(z: al.Expr, p: al.Expr, horizon: int) -> al.Expr:
   initial = eq_initial.call([z[:NZ], p[:NX]])[0]
-  mapped = al.scan(
+  mapped = al.vmap(
     eq_interstage,
     length=horizon,
     inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},

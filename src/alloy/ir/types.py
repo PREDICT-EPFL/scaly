@@ -239,7 +239,7 @@ class SparsityType:
   def to_csr(self) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
     """``(row_ptr, col_ind, val_perm)``: ``val_perm[k]`` is the COO position of CSR slot ``k``, so
     ``values_csr[k] = values[val_perm[k]]`` pairs a compact COO-ordered value buffer with the CSR
-    indices (the COO nnz order is arbitrary — e.g. piece-ordered on the structured MAP spjac path)."""
+    indices (the COO nnz order is arbitrary — e.g. piece-ordered on the structured VMAP spjac path)."""
     order = sorted(range(self.nnz), key=lambda i: (self.rows[i], self.cols[i]))
     row_ptr = [0] * (self.shape[0] + 1)
     for i in order:

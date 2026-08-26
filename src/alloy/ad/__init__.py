@@ -6,7 +6,7 @@ from .derivatives import basis, finite_difference, gradient, hessian, jacobian
 from .forward import _jvp_many_structural, _jvp_many_unrolled, jvp, jvp_many
 from .reverse import vjp, vjp_many
 from .sparse import SparseJacobian, sparse_hessian, sparse_jacobian, sparse_jacobian_colored, sparse_jacobian_reference
-from .sparsity import color_groups, column_coloring, jacobian_sparsity
+from .sparsity import color_groups, column_coloring, jacobian_sparsity, star_coloring
 
 __all__ = [
   "_jvp_many_structural",
@@ -15,6 +15,7 @@ __all__ = [
   "basis",
   "color_groups",
   "column_coloring",
+  "star_coloring",
   "finite_difference",
   "gradient",
   "hessian",

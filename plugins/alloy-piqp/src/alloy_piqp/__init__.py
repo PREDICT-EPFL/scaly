@@ -22,7 +22,7 @@ class _Backend:
 
   name = "piqp"
   kind = "qp"
-  protocol_version = 4
+  protocol_version = 5
   lib_stem = "piqpc"
   link_flags = ("-lpiqpc",)
   header = "piqp/piqp.h"

@@ -17,20 +17,20 @@ def scale_add(x, p):
   return {"y": 2.0 * x + p}
 
 
-def test_map_c_source_loop_size_is_independent_of_length() -> None:
+def test_vmap_c_source_loop_size_is_independent_of_length() -> None:
   from alloy.codegen import render_c_source
 
   def render(N: int) -> str:
     z = al.sym("z", 3 * N)
     p = al.sym("p", 3 * N)
-    fn = al.Function(f"scale_map_{N}", [z, p], [al.map_(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
+    fn = al.Function(f"scale_vmap_{N}", [z, p], [al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
     return render_c_source(fn)
 
   # Past the 32-element threshold where the trailing copy loop also folds, the rendered source
   # must be identical except for the loop bound and the function name.
   src_a = render(20)
   src_b = render(100)
-  # Renderer-agnostic: the MAP body is one loop whose bound scales with N (not unrolled) and the
+  # Renderer-agnostic: the VMAP body is one loop whose bound scales with N (not unrolled) and the
   # source LOC stays constant in N. The legacy renderer emits `for (int it = 0; it < N; ++it)`,
   # the Program IR renderer `for (long long it_y = 0; it_y < N; ++it_y)` — both carry the `< N;` bound.
   assert "< 20;" in src_a
@@ -38,43 +38,91 @@ def test_map_c_source_loop_size_is_independent_of_length() -> None:
   assert src_a.count("\n") == src_b.count("\n")
 
 
-def test_mapped_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.MonkeyPatch) -> None:
   from alloy.codegen import render_c_source
   from alloy.ir.expr import topo
 
   monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
   x = al.sym("x", 2)
   hidden = al.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
-  piece = al.Function("map_sphess_codegen_piece", [x], [al.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
+  piece = al.Function("vmap_sphess_codegen_piece", [x], [al.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
 
   def render(length: int) -> tuple[str, tuple[str, ...], int, dict[str, int]]:
     z = al.sym("z", 2 * length)
-    mapped = al.map_(piece, length, [(z, 0, 2)])
-    base = al.Function(f"map_sphess_codegen_base_{length}", [z], [(z * z).sum(), mapped], ["z"], ["f", "g"])
-    sphess = base.factory(f"map_sphess_codegen_{length}", ["z", "lam:f", "lam:g"], [al.sphess("gamma", "z")], aux={"gamma": ["f", "g"]})
-    map_nodes = [node for node in topo(sphess.outputs) if node.op == al.ExprOp.MAP]
-    mapped_callees = sorted({node.attrs["callee"].name for node in map_nodes})
+    mapped = al.vmap(piece, length, [(z, 0, 2)])
+    base = al.Function(f"vmap_sphess_codegen_base_{length}", [z], [(z * z).sum(), mapped], ["z"], ["f", "g"])
+    sphess = base.factory(f"vmap_sphess_codegen_{length}", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
+    vmap_nodes = [node for node in topo(sphess.outputs) if node.op == al.ExprOp.VMAP]
+    mapped_callees = sorted({node.attrs["callee"].name for node in vmap_nodes})
     second_order = tuple(name for name in mapped_callees if "_adj" in name and "_fwd" in name)
     source = render_c_source(sphess)
     copies = {name: source.count(f"{name.replace(':', '_')}_raw(") for name in mapped_callees}
-    return source, second_order, len(map_nodes), copies
+    return source, second_order, len(vmap_nodes), copies
 
   rendered = [render(length) for length in (2, 8, 32)]
   assert len({source.count("\n") for source, _, _, _ in rendered}) == 1
   assert all(names for _, names, _, _ in rendered)
   assert len({names for _, names, _, _ in rendered}) == 1
-  # The sphess graph's MAP-node count is a property of (#formals x #local-color-groups), never of
-  # the map length; every mapped callee (primal, adjoint, second-order) renders one definition and
+  # The sphess graph's VMAP-node count is a property of (#formals x #local-color-groups), never of
+  # the vmap length; every mapped callee (primal, adjoint, second-order) renders one definition and
   # a length-independent number of call sites.
-  assert len({map_count for _, _, map_count, _ in rendered}) == 1
+  assert len({vmap_count for _, _, vmap_count, _ in rendered}) == 1
   assert len({tuple(sorted(copies.items())) for _, _, _, copies in rendered}) == 1
   for source, names, _, copies in rendered:
     for name, count in copies.items():
       assert count >= 2, f"{name} rendered without a call site"
     for name in names:
       c_name = name.replace(":", "_")
-      assert copies[name] == 2  # one definition and one call in one MAP loop
+      assert copies[name] == 2  # one definition and one call in one VMAP loop
       assert len(re.findall(rf"for \([^\n]+\) \{{\n\s+{re.escape(c_name)}_raw\(", source)) == 1
+
+
+def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
+  from alloy.codegen import render_c_source
+  from alloy.ir.expr import topo
+
+  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  piece_x = al.sym("triangle_shared_piece_x", 2)
+  shared = al.sym("triangle_shared_piece_shared", 1)
+  hidden = al.stack([piece_x[0] * piece_x[1] + shared[0] * piece_x[0], piece_x[0] - 0.4 * piece_x[1] + shared[0] * piece_x[1]])
+  piece = al.Function(
+    "triangle_shared_piece",
+    [piece_x, shared],
+    [al.stack([(hidden.tanh() ** 2).sum()])],
+    ["x", "shared"],
+    ["g"],
+  )
+  length = 3
+  z = al.sym("triangle_shared_vmap_z", 2 * length + 1)
+  mapped = al.vmap(piece, length, [(z, 0, 2), (z, 2 * length, 0)])
+  f = (z * z).sum()
+  base = al.Function("triangle_shared_vmap_base", [z], [f, mapped], ["z"], ["f", "g"])
+  full = base.factory(
+    "triangle_shared_vmap_full",
+    ["z", "lam:f", "lam:g"],
+    [al.factory.SpHess("gamma", "z")],
+    aux={"gamma": ["f", "g"]},
+  )
+  lower = base.factory(
+    "triangle_shared_vmap_lower",
+    ["z", "lam:f", "lam:g"],
+    [al.factory.SpHess("gamma", "z", triangle="lower")],
+    aux={"gamma": ["f", "g"]},
+  )
+  full_sp, lower_sp = full.output_sparsities[0], lower.output_sparsities[0]
+  assert full_sp is not None and lower_sp is not None
+  assert lower_sp.nnz < full_sp.nnz
+  shared_index = 2 * length
+  assert any(row == shared_index and col < shared_index for row, col in zip(full_sp.rows, full_sp.cols, strict=True))
+  assert any(node.op == al.ExprOp.VMAP for node in topo(lower.outputs))
+
+  source = render_c_source(lower)
+  declaration_lengths = {
+    int(line.split("[", 1)[1].split("]", 1)[0])
+    for line in source.splitlines()
+    if "[" in line and any(name in line.split("[", 1)[0].split() for name in ("double", "int64_t"))
+  }
+  assert full_sp.nnz not in declaration_lengths
 
 
 def test_callee_formal_named_w_avoids_workspace_collision() -> None:
@@ -83,14 +131,14 @@ def test_callee_formal_named_w_avoids_workspace_collision() -> None:
   x, w = al.sym("x", 3), al.sym("w", 3)
   piece = al.Function("w_name_piece", [x, w], [x * w + w.sin()], ["x", "w"], ["y"])
   z, wv = al.sym("z", 6), al.sym("w", 3)
-  fn = al.Function("w_name_map", [z, wv], [al.map_(piece, 2, [(z, 0, 3), (wv, 0, 0)])], ["z", "w"], ["y"])
+  fn = al.Function("w_name_vmap", [z, wv], [al.vmap(piece, 2, [(z, 0, 3), (wv, 0, 0)])], ["z", "w"], ["y"])
   zval = np.arange(6.0)
   wval = np.array([0.3, -0.2, 0.8])
   expected = np.concatenate([zval[3 * i : 3 * i + 3] * wval + np.sin(wval) for i in range(2)])
   np.testing.assert_allclose(fn(zval, wval), expected)
 
 
-def test_map_compiled_c_matches_unrolled_concat(tmp_path) -> None:
+def test_vmap_compiled_c_matches_unrolled_concat(tmp_path) -> None:
   cc = shutil.which("cc")
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
@@ -100,26 +148,26 @@ def test_map_compiled_c_matches_unrolled_concat(tmp_path) -> None:
   N = 5
   z = al.sym("z", 3 * N)
   p = al.sym("p", 3 * N)
-  fn = al.Function("scale_map_compiled", [z, p], [al.map_(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
+  fn = al.Function("scale_vmap_compiled", [z, p], [al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
   module = render_c_module(fn)
   (tmp_path / module.header_name).write_text(module.header)
   source = tmp_path / module.source_name
   source.write_text(module.source)
-  lib_path = tmp_path / ("libmap.dylib" if sys.platform == "darwin" else "libmap.so")
+  lib_path = tmp_path / ("libvmap.dylib" if sys.platform == "darwin" else "libvmap.so")
   cmd = [cc, "-fPIC", str(source), "-lm", "-o", str(lib_path)]
   cmd.insert(1, "-dynamiclib" if sys.platform == "darwin" else "-shared")
   subprocess.run(cmd, check=True)
 
   lib = ctypes.CDLL(str(lib_path))
   c_double_p = ctypes.POINTER(ctypes.c_double)
-  lib.scale_map_compiled.argtypes = [
+  lib.scale_vmap_compiled.argtypes = [
     ctypes.POINTER(c_double_p),
     ctypes.POINTER(c_double_p),
     ctypes.POINTER(ctypes.c_int),
     c_double_p,
     ctypes.c_void_p,
   ]
-  lib.scale_map_compiled.restype = ctypes.c_int
+  lib.scale_vmap_compiled.restype = ctypes.c_int
 
   rng = np.random.default_rng(0)
   zv = rng.normal(size=3 * N)
@@ -128,19 +176,19 @@ def test_map_compiled_c_matches_unrolled_concat(tmp_path) -> None:
   z_buf = (ctypes.c_double * (3 * N))(*zv)
   p_buf = (ctypes.c_double * (3 * N))(*pv)
   y_buf = (ctypes.c_double * (3 * N))()
-  w_buf = (ctypes.c_double * max(lib.scale_map_compiled_sz_w(), 1))()
+  w_buf = (ctypes.c_double * max(lib.scale_vmap_compiled_sz_w(), 1))()
   args = (c_double_p * 2)(ctypes.cast(z_buf, c_double_p), ctypes.cast(p_buf, c_double_p))
   res = (c_double_p * 1)(ctypes.cast(y_buf, c_double_p))
 
-  assert lib.scale_map_compiled(args, res, None, w_buf, None) == 0
+  assert lib.scale_vmap_compiled(args, res, None, w_buf, None) == 0
   np.testing.assert_allclose(np.array(y_buf), 2.0 * zv + pv)
 
 
 RK4_NX, RK4_NU, RK4_NZ, RK4_N_PARAMS = 4, 2, 6, 7
 
 
-def _rk4_bicycle_eq_map(horizon: int) -> al.Function:
-  """Scan-based RK4 bicycle stage transcription with a symbolic parameter tail in ``p``.
+def _rk4_bicycle_eq_vmap(horizon: int) -> al.Function:
+  """VMAP-based RK4 bicycle stage transcription with a symbolic parameter tail in ``p``.
 
   Self-contained on purpose: this is the realistic shape that produces a piece-ordered
   (non-row-major) COO sparsity and exercises the transposed-concat peephole, and the tests
@@ -180,17 +228,17 @@ def _rk4_bicycle_eq_map(horizon: int) -> al.Function:
   z = al.sym("z", RK4_NZ * (horizon + 1))
   p = al.sym("p", n_param, diff=False)
   initial = eq_initial.call([z[:RK4_NZ], p[:RK4_NX]])[0]
-  mapped = al.scan(
+  mapped = al.vmap(
     eq_interstage,
     length=horizon,
     inputs={"z": (z, 0, RK4_NZ), "znext": (z, RK4_NZ, RK4_NZ), "params": (p, RK4_NX * (horizon + 1), 0)},
   )
-  return al.Function(f"rk4_bicycle_eq_map_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+  return al.Function(f"rk4_bicycle_eq_vmap_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
 
 
 def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
   """The rendered header's CSR/CSC index tables are sorted, but the compact value buffer stays in
-  COO order — piece-ordered on the merged map path, i.e. NOT row-major — so the header must also
+  COO order — piece-ordered on the merged vmap path, i.e. NOT row-major — so the header must also
   emit ``*_csr_val_perm`` / ``*_csc_val_perm`` tables (``values_csr[k] = values[csr_val_perm[k]]``).
   Reconstructing the dense Jacobian through both compressed formats must match the COO scatter."""
 
@@ -199,8 +247,8 @@ def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
   from alloy.codegen.aot import render_c_module
 
   N = 3
-  fn = _rk4_bicycle_eq_map(N)
-  spjf = fn.factory(f"trk_map_valperm_N{N}", ["z", "p"], [al.spjac("eq", "z")])
+  fn = _rk4_bicycle_eq_vmap(N)
+  spjf = fn.factory(f"trk_vmap_valperm_N{N}", ["z", "p"], [al.factory.SpJac("eq", "z")])
   sp = spjf.output_sparsities[0]
   assert sp is not None
   coo = list(zip(sp.rows, sp.cols))
@@ -234,7 +282,7 @@ def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
   np.testing.assert_allclose(dense_csc, dense_ref, rtol=0, atol=0)
 
 
-def test_spjac_keeps_constant_loc_on_rk4_race_car_map() -> None:
+def test_spjac_keeps_constant_loc_on_rk4_race_car_vmap() -> None:
   """End-to-end: even on the realistic RK4 race-car case (no periodic coloring), the rendered spjac
   C source stays at constant LOC across horizons because the transposed-concat peephole now emits
   per-block loops with a static `idx[]` table when the per-block group is large."""
@@ -242,20 +290,20 @@ def test_spjac_keeps_constant_loc_on_rk4_race_car_map() -> None:
   from alloy.codegen import render_c_source
 
   def loc(N: int) -> int:
-    fn = _rk4_bicycle_eq_map(N)
-    spj = fn.factory(f"rk4_bicycle_eq_map_N{N}_spjac_eq_z", ["z", "p"], [al.spjac("eq", "z")])
+    fn = _rk4_bicycle_eq_vmap(N)
+    spj = fn.factory(f"rk4_bicycle_eq_vmap_N{N}_spjac_eq_z", ["z", "p"], [al.factory.SpJac("eq", "z")])
     return render_c_source(spj).count("\n")
 
   loc_a = loc(10)
   loc_b = loc(50)
   # LOC is bounded by a tiny constant — variation comes only from whether the workspace
   # spill threshold is crossed, which adds one wrapper line for the SZ_W null check.
-  assert abs(loc_a - loc_b) <= 2, f"expected constant RK4 race-car-map LOC, got {loc_a} -> {loc_b}"
+  assert abs(loc_a - loc_b) <= 2, f"expected constant RK4 race-car-vmap LOC, got {loc_a} -> {loc_b}"
 
 
-def test_simple_banded_map_spjac_has_constant_loc() -> None:
-  """Simple banded MAP spjac C source stays at constant LOC across N. With the structured
-  MAP-aware sparse Jacobian, the loop comes from per-formal const-seed JVPs wrapped in MAP,
+def test_simple_banded_vmap_spjac_has_constant_loc() -> None:
+  """Simple banded VMAP spjac C source stays at constant LOC across N. With the structured
+  VMAP-aware sparse Jacobian, the loop comes from per-formal const-seed JVPs wrapped in VMAP,
   plus a constant scatter index table; without it, the tile-strided gather peephole would
   fire instead. Either way the LOC must not grow with N."""
 
@@ -274,15 +322,15 @@ def test_simple_banded_map_spjac_has_constant_loc() -> None:
   def build(N: int) -> al.Function:
     z = al.sym("z", NZ * (N + 1))
     initial = eq_initial.call([z[:NZ]])[0]
-    mapped = al.scan(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ)})
+    mapped = al.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ)})
     return al.Function(f"banded_N{N}", [z], [al.concat([initial, mapped])], ["z"], ["eq"])
 
-  loc_a = render_c_source(al.spjacobian(build(10), "z", "eq")).count("\n")
-  loc_b = render_c_source(al.spjacobian(build(50), "z", "eq")).count("\n")
+  loc_a = render_c_source(al.sparse_jacobian(build(10), "eq", "z")).count("\n")
+  loc_b = render_c_source(al.sparse_jacobian(build(50), "eq", "z")).count("\n")
   # LOC is bounded by a tiny constant — variation comes only from whether the workspace
   # spill threshold is crossed, which adds one wrapper line for the SZ_W null check.
   assert abs(loc_a - loc_b) <= 2, f"expected constant LOC, got {loc_a} -> {loc_b}"
-  src_b = render_c_source(al.spjacobian(build(50), "z", "eq"))
+  src_b = render_c_source(al.sparse_jacobian(build(50), "eq", "z"))
   # Renderer-agnostic: the inner work stays loop-based (the constant LOC above already rules out a
   # per-iteration unroll), and the assembly renders as a for-loop under either renderer. The legacy
   # renderer uses a `static const int tile`/`idx` gather table; Program IR uses a const index buffer.
@@ -290,11 +338,11 @@ def test_simple_banded_map_spjac_has_constant_loc() -> None:
   assert "static const int tile" in src_b or "static const int idx" in src_b or "static const int64_t" in src_b
 
 
-def test_map_jit_matches_unrolled_numpy() -> None:
+def test_vmap_jit_matches_unrolled_numpy() -> None:
   N = 2
   z = al.sym("z", 6)
   p = al.sym("p", 6)
-  mapped = al.map_(scale_add, N, [(z, 0, 3), (p, 0, 3)])
+  mapped = al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
   fn = al.Function("eval_path", [z, p], [mapped], ["z", "p"], ["y"])
   zv = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
   pv = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])

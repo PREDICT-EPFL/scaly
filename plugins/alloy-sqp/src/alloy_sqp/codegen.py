@@ -140,11 +140,11 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     raise ValueError(f"alloy-sqp trace must be a bool, got {trace!r}")
   trace_prefix = f"[alloy-sqp {re.sub(r'\W', '_', fun.name)}]"
 
-  # QP patterns, fixed across SQP iterations: P is the upper triangle of the
-  # Lagrangian Hessian unioned with the full diagonal (regularization writes
-  # every diagonal entry) and, when there are equalities, with the pattern of
-  # the constraint-normal term A.T @ A. A and G are the equality and inequality
-  # row blocks of the constraint Jacobian.
+  # QP patterns, fixed across SQP iterations: P is the canonical upper-triangle
+  # view of the handed Lagrangian Hessian pattern, unioned with the full
+  # diagonal (regularization writes every diagonal entry) and, when there are
+  # equalities, with the pattern of the constraint-normal term A.T @ A. A and
+  # G are the equality and inequality row blocks of the constraint Jacobian.
   upper: dict[tuple[int, int], int] = {}
   for k, (r, c) in enumerate(zip(hrows, hcols, strict=True)):
     upper.setdefault((min(r, c), max(r, c)), k)

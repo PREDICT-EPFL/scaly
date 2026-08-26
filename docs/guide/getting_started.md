@@ -175,7 +175,7 @@ it in [Keeping the loop a loop](#keeping-the-loop-a-loop) once there is a solve 
 An optimizer needs the gradient of that cost. Ask for it:
 
 ```python
-grad = al.gradient(rollout, "us", "J", extra_inputs=["z0"])
+grad = al.gradient(rollout, "J", "us", extra_inputs=["z0"])
 grad.input_names                                  # ('us', 'z0')
 grad(np.zeros(N), np.array([1.0, 0.0]))[:4]       # array([7.22, 6.66, 6.12, 5.6 ])
 ```
@@ -189,11 +189,11 @@ takes the same data the original did.
 The named wrappers cover the common requests:
 
 ```python
-al.gradient(fn, "x", "f")     # gradient for a scalar f
-al.jacobian(fn, "x", "y")     # dense Jacobian
-al.hessian(fn, "x", "f")      # second derivatives
-al.spjacobian(fn, "x", "y")   # only the nonzeros, plus the pattern
-al.sphessian(fn, "x", "f")    # likewise for the Hessian
+al.gradient(fn, "f", "x")     # gradient for a scalar f
+al.jacobian(fn, "y", "x")     # dense Jacobian
+al.hessian(fn, "f", "x")      # second derivatives
+al.sparse_jacobian(fn, "y", "x")   # only the nonzeros, plus the pattern
+al.sparse_hessian(fn, "f", "x")    # likewise for the Hessian
 ```
 
 Each is convenience over one mechanism — a **request** passed to `Function.factory` — and going to
@@ -203,17 +203,17 @@ the factory directly is what you want when one artifact should produce several r
 oracle = rollout.factory(
     "rollout_all",
     ["z0", "us"],
-    ["J", al.grad("J", "us"), al.spjac("zN", "us")],
+    ["J", al.factory.Grad("J", "us"), al.factory.SpJac("zN", "us")],
 )
 oracle.output_names     # ('J', 'grad_J_us', 'spjac_zN_us')
 ```
 
 One function, three outputs, one shared library, and the subexpressions shared between the cost and
-its derivatives computed once instead of three times. `al.grad("J", "us")` is a typed object rather
+its derivatives computed once instead of three times. `al.factory.Grad("J", "us")` is a typed object rather
 than a string, so there is no grammar to mis-spell; a name that does not exist is caught by
 `factory`, naming the request, long before anything is evaluated.
 
-`al.spjac` asks for the *sparse* Jacobian: alloy works out symbolically where the nonzeros can be,
+`al.sparse_jacobian` asks for the *sparse* Jacobian: alloy works out symbolically where the nonzeros can be,
 colors the pattern, and generates code that computes only those — and the pattern travels with the
 result and into the generated header. A constraint Jacobian over a horizon is mostly zeros with
 structure, which is where most of the win in a real problem comes from.
@@ -279,7 +279,7 @@ See [this section](solvers.md#nesting-a-solver-in-a-graph) for more details.
 
 ## Keeping the loop a loop
 
-Back to the loop. `al.map_` is the way to say "the same callee, applied to a different input
+Back to the loop. `al.vmap` is the way to say "the same callee, applied to a different input
 each time" — one node instead of twenty calls, which stays a real loop through lowering *and*
 through differentiation. But it can only do that if every iteration is independent, and in the
 rollout above iteration `k` needs the state that iteration `k-1` produced.
@@ -295,7 +295,7 @@ def defect(z, u, znext):
 ```
 
 Now the whole horizon is one node. Lay the decision variable out as all the states followed by all
-the controls, and give `map_` a slice rule per callee input:
+the controls, and give `vmap` a slice rule per callee input:
 
 ```python
 NW = 2 * (N + 1) + N
@@ -303,7 +303,7 @@ w = al.sym("w", NW)                  # [z_0 ... z_N, u_0 ... u_{N-1}]
 z_init = al.sym("z_init", 2)
 zs, us = w[: 2 * (N + 1)], w[2 * (N + 1) :]
 
-defects = al.map_(defect, N, {"z": (zs, 0, 2), "znext": (zs, 2, 2), "u": (us, 0, 1)})
+defects = al.vmap(defect, N, {"z": (zs, 0, 2), "znext": (zs, 2, 2), "u": (us, 0, 1)})
 defects.shape                        # (40,) — two defect equations per stage
 ```
 
@@ -344,7 +344,7 @@ The same optimum, in the same eight iterations — it is the same problem, writt
 repetition is visible to the compiler instead of being spent in Python. What changed is how it
 scales:
 
-| Horizon | unrolled `rollout` | `map_` defects |
+| Horizon | unrolled `rollout` | `vmap` defects |
 | --- | --- | --- |
 | 20 | 7.9 KB | 2.1 KB |
 | 40 | 14.2 KB | 2.1 KB |
@@ -357,7 +357,7 @@ coloring `defect`'s own small pattern once rather than the whole banded matrix �
 the derivative cheap as well as the source small.
 
 This is the single most important habit for long horizons. [Building
-functions](functions.md#regular-repetition-map_) has the full `map_` rules, [Sparsity](sparsity.md)
+functions](functions.md#regular-repetition-vmap) has the full `vmap` rules, [Sparsity](sparsity.md)
 the coloring, and [the scalability sweep](../results/scalability.md) the measurements against CasADi.
 
 ## Shipping it
@@ -402,7 +402,7 @@ generated function are all CasADi's ideas, kept because they are the right ones.
 
 Three differences are worth knowing up front:
 
-- **Derivative requests are typed objects, not strings.** `al.grad("J", "us")` instead of
+- **Derivative requests are typed objects, not strings.** `al.factory.Grad("J", "us")` instead of
   `"grad:J:us"`. Same expressiveness, less grammar.
 - **There is no SX-or-MX choice.** Alloy has one `Expr` type, and one lowering that mixes unrolled
   scalar code with loops over blocks, instead of two graph types you pick between for a whole
@@ -444,7 +444,7 @@ See [Visualization](visualization.md).
 
 ## Where to go next
 
-- [Building functions](functions.md) — shapes, composition, `map_`, lowering hints
+- [Building functions](functions.md) — shapes, composition, `vmap`, lowering hints
 - [Derivatives](derivatives.md) — the factory, the spec kinds, seeded modes
 - [Sparsity](sparsity.md) — patterns, coloring, compact values
 - [Solvers](solvers.md) — `al.qp` and `al.nlp`, and nesting a solve in a graph

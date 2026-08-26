@@ -74,9 +74,10 @@ rebuilding.
 The COIN-OR interior-point NLP solver, and the default for `al.nlp(...)`.
 
 Alloy feeds it a compact sparse constraint Jacobian and a compact sparse Lagrangian Hessian, both
-built through `Function.factory` — the same `spjac` and `sphess` requests any user can make. IPOPT
-wants only the lower triangle of the Hessian, so the symmetric pattern is filtered when the solver
-is built and the matching values gathered per call.
+built through `Function.factory` from the same `al.factory.SpJac` and `al.factory.SpHess` requests
+any user can make. IPOPT consumes the lower triangle. `al.nlp` asks for that triangle when it builds
+the descriptor, so the descriptor pattern and oracle values already match and the generated wrapper
+writes them directly into IPOPT's value buffer.
 
 **Exact Hessians are the default**, and worth keeping. On the safety-filter benchmark they roughly
 halve IPOPT's iteration count against a limited-memory approximation — see
@@ -129,12 +130,15 @@ worth knowing if you are comparing status codes against another solver that is m
 an infeasibility certificate, the SQP continues from its best iterate and lets globalization and
 the KKT test decide. Only PIQP's numerical, unsolved and invalid-settings statuses stop it.
 
-**Hessian handling** is where most of the care went. Equality-constrained problems regularize in
-the constraint-normal space so the added curvature does not damp the feasible direction, escalating
-until the model is positive definite; if an exact Lagrangian Hessian still has negative reduced
-curvature, the model falls back to the objective Hessian and stops escalating in the
-constraint-normal space rather than driving that term up until the problem disappears. The ordinary
-regularization diagonal and the repairing factorization still apply to the fallback model. See [how solvers work](../how_it_works/solvers.md#what-the-generated-wrapper-contains).
+**Hessian handling** is where most of the care went. The descriptor hands alloy-sqp PIQP's upper
+triangle; the wrapper maps each `(row, column)` to its canonical `(min(row, column), max(row, column))`
+slot, so foreign oracles may supply either one triangle or a full symmetric pattern.
+Equality-constrained problems regularize in the constraint-normal space so the added curvature does not damp
+the feasible direction, escalating until the model is positive definite; if an exact Lagrangian
+Hessian still has negative reduced curvature, the model falls back to the objective Hessian and
+stops escalating in the constraint-normal space rather than driving that term up until the problem
+disappears. The ordinary regularization diagonal and the repairing factorization still apply to the
+fallback model. See [how solvers work](../how_it_works/solvers.md#what-the-generated-wrapper-contains).
 
 **Debugging.** `options={"trace": True}` prints to stderr as it goes: the KKT state at the start
 and after each accepted step, one line per subproblem solve, and one line per iteration summarizing

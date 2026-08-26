@@ -1,5 +1,5 @@
-"""The frontend: ``Function`` and the construction and derivative-request APIs over it."""
+"""The frontend: Function."""
 
-from .model import DerivSpec, Function, Port
+from .model import Function
 
-__all__ = ["DerivSpec", "Function", "Port"]
+__all__ = ["Function"]

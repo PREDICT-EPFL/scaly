@@ -86,7 +86,6 @@ class SolverDescriptor:
   # Sparsity (NLP)
   jac_sparsity: SparsityType | None = None
   hess_sparsity: SparsityType | None = None
-  hess_lower_mask: tuple[bool, ...] = ()
   # Sparse QP (PIQP sparse interface): structural CSC patterns of P (upper
   # triangle), A_eq, G_ineq, baked into the generated wrapper as static
   # tables; the oracle emits compact CSC-ordered value buffers. None => dense.

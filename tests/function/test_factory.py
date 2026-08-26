@@ -16,7 +16,7 @@ def test_gradient_matches_casadi_sx() -> None:
   x = al.sym("x", 3)
   y = (x.sin() + x * x).sum()
   f = al.Function("f", [x], [y], ["x"], ["y"])
-  g = f.factory("g", ["x"], [al.grad("y", "x")])
+  g = f.factory("g", ["x"], [al.factory.Grad("y", "x")])
 
   xv = np.array([0.2, 0.7, 1.1])
   np.testing.assert_allclose(g(xv), np.cos(xv) + 2 * xv)
@@ -31,7 +31,7 @@ def test_jacobian_matches_casadi_sx() -> None:
   x = al.sym("x", 2)
   y = al.stack([x.sin(), x * x], axis=0).reshape((4,))
   f = al.Function("f", [x], [y], ["x"], ["y"])
-  jf = f.factory("J", ["x"], [al.jac("y", "x")])
+  jf = f.factory("J", ["x"], [al.factory.Jac("y", "x")])
 
   xv = np.array([0.3, 1.2])
   cx = casadi.SX.sym("x", 2)
@@ -44,7 +44,7 @@ def test_forward_matches_casadi_sx() -> None:
   x = al.sym("x", 3)
   y = al.stack([x[0] * x[1], x[2].sin() + x[0]])
   f = al.Function("f", [x], [y], ["x"], ["y"])
-  ff = f.factory("fwd", ["x", "fwd:x"], [al.fwd("y", "x")])
+  ff = f.factory("fwd", ["x", "fwd:x"], [al.factory.Fwd("y", "x")])
 
   xv = np.array([0.3, 1.2, 0.7])
   seed = np.array([1.5, -0.25, 0.4])
@@ -60,7 +60,7 @@ def test_adjoint_matches_casadi_sx() -> None:
   x = al.sym("x", 3)
   y = al.stack([x[0] * x[1], x[2].sin() + x[0]])
   f = al.Function("f", [x], [y], ["x"], ["y"])
-  af = f.factory("adj", ["x", "lam:y"], [al.adj("y", "x")])
+  af = f.factory("adj", ["x", "lam:y"], [al.factory.Adj("y", "x")])
 
   xv = np.array([0.3, 1.2, 0.7])
   lam = np.array([1.5, -0.25])
@@ -78,7 +78,7 @@ def test_jacobian_through_call_node_matches_casadi_mx() -> None:
   z = al.sym("z", 2)
   (inner_z,) = inner.call([z * z])
   outer = al.Function("outer", [z], [inner_z], ["z"], ["y"])
-  jf = outer.factory("J", ["z"], [al.jac("y", "z")])
+  jf = outer.factory("J", ["z"], [al.factory.Jac("y", "z")])
 
   zv = np.array([0.4, 1.2])
   cz = casadi.MX.sym("z", 2)
@@ -95,7 +95,7 @@ def test_hessian_of_lagrangian_style_aux_matches_casadi_sx() -> None:
   f_expr = (x.sin()).sum()
   g_expr = x * x
   nlp = al.Function("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
-  hfun = nlp.factory("h", ["x", "lam:f", "lam:g"], [al.hess("gamma", "x")], aux={"gamma": ["f", "g"]})
+  hfun = nlp.factory("h", ["x", "lam:f", "lam:g"], [al.factory.Hess("gamma", "x")], aux={"gamma": ["f", "g"]})
 
   xv = np.array([0.4, 0.9])
   lam_f = np.array(1.3)

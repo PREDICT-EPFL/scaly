@@ -428,7 +428,7 @@ def _callees(fun: Function) -> list[Function]:
         ret.append(callee)
     return ret
   for node in topo(fun.outputs):
-    if node.op not in {ExprOp.CALL, ExprOp.MAP}:
+    if node.op not in {ExprOp.CALL, ExprOp.VMAP}:
       continue
     callee = node.attrs["callee"]
     if id(callee) not in seen:

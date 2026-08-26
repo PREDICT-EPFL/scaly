@@ -30,13 +30,13 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
       and literal SX at M=3 because unrolled SX does not compile at M=5. Rationale: paper.md §5.2
       and fairness.md "Does CasADi have loop-preserving codegen?".
 - [x] **A2. Take every swept kernel from the solver descriptor.** `descriptor.hess` rather than a
-      hand-written `factory(..., al.sphess(...))` request, so the timed function *is* what the
+      hand-written `factory(..., al.factory.SpHess(...))` request, so the timed function *is* what the
       optimizer calls. Checked on npmpc N=12: the Hessian already agrees at nnz 269, the Jacobian
       does not (48 of 78 constraint rows). Rationale: fairness.md. Landed for the Alloy side; the
-      CasADi kernel is still built from `ca.hessian`, not taken from the `nlpsol`, and both sides time
-      the full symmetric Hessian while each solver receives one triangle. A11 finishes the item.
+      CasADi kernel now comes from `nlpsol`, and both timed sides use one solver-selected Hessian
+      triangle. Rationale: fairness.md; the A11 triangle contract closes the remaining gap.
 - [x] **A3. Stop building the race-car correctness reference as a dense Alloy Jacobian.** `_samples`
-      requests `al.jac("eq", "z")`, which at N=100 is a dense 404x606 Jacobian rendered as scalar C
+      requests `al.factory.Jac("eq", "z")`, which at N=100 is a dense 404x606 Jacobian rendered as scalar C
       that gcc does not finish in twenty minutes. **This blocks the race-car half of Fig 2** and it
       is why the same-machine timer anchor is still missing. Compute the reference in NumPy, CasADi,
       or by finite differences.
@@ -56,12 +56,11 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
       record integer workspace and argument/result pointer counts. `casadi_map_sx` has fewer lines
       than `casadi_call_mx` at race_cars N=500 but more bytes, so "smaller" is ambiguous without the
       split, and total C bytes cannot support the fixed-executable-body claim.
-- [ ] **A11. One Hessian triangle per solver, and the CasADi kernel from the `nlpsol`.** Give
+- [x] **A11. One Hessian triangle per solver, and the CasADi kernel from the `nlpsol`.** Give
       `sphess` a `triangle` option, let the solver descriptor carry the layout its backend wants
       (IPOPT lower, PIQP upper) instead of `hess_lower_mask`, and take the sweep's CasADi kernels
       from `nlpsol.get_function("nlp_hess_l" | "nlp_jac_g")` with `expand` following the encoding.
-      Touches the NLP plugin contract, so it lands before C1 and after D2, D1 and D1.5. Design:
-      refactorings.md "Hessian layout".
+      Touches the NLP plugin contract, so it lands before C1 and after D2, D1 and D1.5.
       Rationale: A2's sentence is only true once the timed kernel and the oracle have the same
       entries; fairness.md "The measurement protocol".
 - [ ] **A9. Derive the mode table from the runs.** Time-to-first-solve and per-step cost, two modes
@@ -84,7 +83,7 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
       `pair_c3bf_fn` over the strict upper triangle, with two constant `al.gather` tables built as
       `concatenate([arange(NSTATE) + k * NSTATE for k in bodies])` feeding both the parameter states
       and the first map's output. The pattern survives as
-      `tests/integration/test_map.py::test_gather_fed_chained_maps_spjac_and_sphess_match_dense`.
+      `tests/integration/test_vmap.py::test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense`.
       Retain the exact-Hessian correctness gates through the port.
 - [ ] **B2. Move the chain and unbumpercars correctness checks onto the problem side**, as
       `race_cars` does: problem gates into `benchmarks/problems/*/checks.py` behind
@@ -108,9 +107,10 @@ group completes.
 
 ## D. API and release, before the paper freezes
 
-Every refactoring in `internal/notes/refactorings.md` lands before submission, D1 to D4 below, one
-item per `#` section. The design is that note's; only the lifecycle is here. Paper examples freeze
-after D1 and D2, which is what fixes the spellings they use.
+Every refactoring in `internal/notes/refactorings.md` lands before submission, D1 to D4 below. Each
+undecided refactoring has one `#` section in that file; completed sections are removed when they
+land. The design is that note's; only the lifecycle is here. Paper examples freeze after D1 and D2,
+which is what fixes the spellings they use.
 
 - [ ] **D0. Move `internal/paper.md` out of this repository before merging to main.** Blocking, and
       enforced: `.config/wt.toml` has a `pre-merge` check that fails while the file is tracked.
@@ -150,28 +150,28 @@ after D1 and D2, which is what fixes the spellings they use.
       profile for a document whose value is candour; an external tool loses grep-ability and
       proximity to the code, which is the whole reason the note works.
 
-- [ ] **D1. Land the derivative API redesign.** One name per concept, specs moved under
-      `al.factory` and capitalized, `Function.factory` demoted. Roughly 120 mostly-mechanical call
-      sites plus the docs prose. Also deletes `wrt2` from `hess` and `sphess`: no caller anywhere,
-      and a mixed partial is `spjac` of a `grad` output. Design: refactorings.md "Derivative API";
-      the decision to sequence it before the paper examples is paper.md §10.
-- [ ] **D1.5. Star colouring for sparse Hessians**, the symmetric colouring CasADi's `hess` uses and
+- [x] **D1. Land the derivative API redesign.** One name per concept, specs moved under
+      `al.factory` and capitalized, `Function.factory` demoted. The five derivative names are
+      overloaded across expression and Function inputs, Function-level requests use `(of, wrt)`,
+      and the Hessian specs retain doubled `wrt` output names without a second request input.
+      Completed 2026-08-26.
+- [x] **D1.5. Star colouring for sparse Hessians**, the symmetric colouring CasADi's `hess` uses and
       Alloy lacks. Constant colour count on the shared-variable arrow Hessian that one-sided
       colouring makes grow with the map length. The `SUM` rule of `jvp_many` becomes structural in
       its own small change first. Gate: the colour count must not grow with the map length on the
       `shared_fill` fixture, and `coloring_width` in the sweep CSV on every Hessian workload.
-      Design: refactorings.md "Star colouring".
-- [ ] **D2. Land the `MAP` to `VMAP` rename.** Operation, builder, exports and internal dispatch in
-      one change, so no tree carries both spellings; then tests and benchmarks, including the pinned
-      pytest node-ID baseline; then the public docs. `al.scan` disappears. Design: refactorings.md
-      "MAP becomes VMAP".
+      Completed 2026-08-26.
+- [x] **D2. Land the `MAP` to `VMAP` rename.** Operation, builder, exports and internal dispatch in
+      one change, so no tree carries both spellings; tests and benchmarks, including the pinned
+      pytest node-ID baseline; and the public docs are all on `VMAP`/`vmap`. `al.scan` and
+      `al.map_` are gone. Completed 2026-08-26.
 - [ ] **D3. Decide the solver-problem construction API, then land what survives the decision.**
       **Blocked on Ted, not on code.** The note is a draft that settles nothing: two sessions reached
       similar but non-identical shapes and the standing objection is whether any of it is worth its
       size. The parameter-ordering hazard and the differentiation paid for twice are concrete; the
-      rest is ergonomics over a surface that is already small. Sequencing is free against D1, but
-      doing it first shrinks D1, because deleting `al.nlp` removes the only consumer inside `src/`
-      of the `(wrt, of)` argument order. It assumes D2's spellings. Design: refactorings.md "DRAFT:
+      rest is ergonomics over a surface that is already small. Sequencing is independent of D1.
+      D1 already moved the only consumer inside `src/` to the `(of, wrt)` argument order, so D3 does
+      not depend on that migration. It assumes D2's spellings. Design: refactorings.md "DRAFT:
       solver problem construction".
 - [ ] **D4. One matcher: op-indexed tables and one walk-rebuild.** Conditional by design — it lands
       only if the result is smaller than the 78 + 71 lines of `ir/match.py` and `ir/spec.py`, and

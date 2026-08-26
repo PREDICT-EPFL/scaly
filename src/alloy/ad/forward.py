@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from ..function import Function
-from ..function.sugar import map_
+from ..function.sugar import vmap
 from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.env import env_bool
@@ -78,7 +78,7 @@ def _jvp(expr: Expr, wrt: Expr, seed: Expr, memo: dict[int, Expr], dep_memo: dic
       ret = term if ret is None else ret + term
     memo[expr.id] = ret = zeros_like(expr) if ret is None else ret
     return ret
-  if expr.op == ExprOp.MAP:
+  if expr.op == ExprOp.VMAP:
     callee = expr.attrs["callee"]
     output_idx = expr.attrs["output"]
     length = expr.attrs["length"]
@@ -94,7 +94,7 @@ def _jvp(expr: Expr, wrt: Expr, seed: Expr, memo: dict[int, Expr], dep_memo: dic
         continue
       primal_specs = [(expr.args[i], starts[i], strides[i]) for i in arg_indices]
       seed_spec = (actual_tan, starts[formal_idx], strides[formal_idx])
-      term = map_(jvp_fn, length, [*primal_specs, seed_spec])
+      term = vmap(jvp_fn, length, [*primal_specs, seed_spec])
       ret = term if ret is None else ret + term
     memo[expr.id] = ret = zeros_like(expr) if ret is None else ret
     return ret
@@ -348,9 +348,10 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op == ExprOp.SUM:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
-    memo[expr.id] = ret = stack([d0[i].sum() for i in range(nseed)], axis=0)
+    ones = Expr.const(np.ones(expr.args[0].size), dtype=d0.type.dtype)
+    memo[expr.id] = ret = d0.reshape((nseed, expr.args[0].size)) @ ones
     return ret
-  if expr.op == ExprOp.MAP:
+  if expr.op == ExprOp.VMAP:
     callee = expr.attrs["callee"]
     output_idx = expr.attrs["output"]
     length = expr.attrs["length"]
@@ -402,7 +403,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
                 unique_j[c, k] = int(j)
                 break
         primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
-        mapped_flat = map_(inner_fn, length, primal_specs)
+        mapped_flat = vmap(inner_fn, length, primal_specs)
         mapped_3d = mapped_flat.reshape((length, active_count, slice_size))
         c_arr = np.arange(nseed, dtype=np.int64).reshape(nseed, 1, 1)
         it_arr = np.arange(length, dtype=np.int64).reshape(1, length, 1)
@@ -427,7 +428,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       seed_buffer = gather(actual_tan, tile_indices)
       primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
       seed_spec = (seed_buffer, 0, nseed * formal_size)
-      mapped_flat = map_(inner_fn, length, [*primal_specs, seed_spec])
+      mapped_flat = vmap(inner_fn, length, [*primal_specs, seed_spec])
       term = mapped_flat.reshape((length, nseed, slice_size)).transpose((1, 0, 2)).reshape((nseed, length * slice_size))
       ret = term if ret is None else ret + term
     memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64)) if ret is None else ret

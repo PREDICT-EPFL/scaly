@@ -1,8 +1,8 @@
-"""A dense-matmul stage body scanned over a horizon, differentiated to first and second order.
+"""A dense-matmul stage body used through VMAP over a horizon, differentiated to first and second order.
 
 This is the shape the neural-process MPC benchmark leans on and no other test covered: a small
 multilayer perceptron whose weights arrive broadcast from a non-differentiable parameter tail,
-scanned over the stages of a prediction horizon, with `spjac` and `sphess` taken through the scan.
+used through VMAP over the stages of a prediction horizon, with `spjac` and `sphess` taken through the VMAP.
 It lives here rather than in that benchmark's own checks so retiring the benchmark cannot drop the
 coverage, and it is self-contained: the references are NumPy and an unrolled twin of the same
 formulation, so nothing here depends on a trained checkpoint or on a solver plugin.
@@ -42,7 +42,7 @@ def step_np(pw: np.ndarray, x: np.ndarray, u: np.ndarray) -> np.ndarray:
 def stage_function() -> al.Function:
   scale, w0, w1, bias = _slices()
 
-  @al.function("scan_mlp_stage", {"x": NX, "xnext": NX, "u": NU, "pw": N_PW})
+  @al.function("vmap_mlp_stage", {"x": NX, "xnext": NX, "u": NU, "pw": N_PW})
   def stage(x, xnext, u, pw):  # type: ignore[no-untyped-def]
     h = al.concat([x, u]) * pw[scale]
     h = 1.0 / (1.0 + (-(pw[w0].reshape(SHAPES[0]) @ h)).exp())
@@ -57,7 +57,7 @@ def n_dec(stages: int) -> int:
 
 
 def _cost_stage() -> al.Function:
-  @al.function("scan_mlp_stage_cost", {"x": NX, "xnext": NX, "u": NU})
+  @al.function("vmap_mlp_stage_cost", {"x": NX, "xnext": NX, "u": NU})
   def cost(x, xnext, u):  # type: ignore[no-untyped-def]
     difference = xnext - x
     return {"cost": (al.sumsqr(x) + 2.0 * u[0] * u[0] + 0.5 * al.sumsqr(difference)).scalar()}
@@ -65,25 +65,25 @@ def _cost_stage() -> al.Function:
   return cost
 
 
-def scanned(stages: int) -> al.Function:
-  """Objective and equalities together, both scanned, which is what a Lagrangian Hessian needs."""
+def vmapped(stages: int) -> al.Function:
+  """Objective and equalities together, both using VMAP, which is what a Lagrangian Hessian needs."""
   z = al.sym("z", n_dec(stages))
   p = al.sym("p", N_PW, diff=False)
-  eq = al.scan(
+  eq = al.vmap(
     stage_function(),
     length=stages,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU), "pw": (p, 0, 0)},
   )
-  cost = al.scan(
+  cost = al.vmap(
     _cost_stage(),
     length=stages,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU)},
   )
-  return al.Function(f"scan_mlp_N{stages}", [z, p], [cost.sum().scalar(), eq], ["z", "p"], ["cost", "eq"])
+  return al.Function(f"vmap_mlp_N{stages}", [z, p], [cost.sum().scalar(), eq], ["z", "p"], ["cost", "eq"])
 
 
 def unrolled(stages: int) -> al.Function:
-  """The same formulation stage by stage, so the scanned one can be differentially tested against it."""
+  """The same formulation stage by stage, so the VMAP version can be tested against it."""
   z = al.sym("z", n_dec(stages))
   p = al.sym("p", N_PW, diff=False)
   stage, cost_stage = stage_function(), _cost_stage()
@@ -97,7 +97,7 @@ def unrolled(stages: int) -> al.Function:
   cost = terms[0]
   for term in terms[1:]:
     cost = cost + term
-  return al.Function(f"scan_mlp_unrolled_N{stages}", [z, p], [cost.scalar(), al.concat(rows)], ["z", "p"], ["cost", "eq"])
+  return al.Function(f"vmap_mlp_unrolled_N{stages}", [z, p], [cost.scalar(), al.concat(rows)], ["z", "p"], ["cost", "eq"])
 
 
 def sample(stages: int, seed: int = 3) -> tuple[np.ndarray, np.ndarray]:
@@ -116,9 +116,11 @@ def dense_jac_reference(stages: int, z: np.ndarray, pw: np.ndarray) -> np.ndarra
 
   Each stage's residual touches only its own state, its control and its successor state, so the
   reference costs one small dense Jacobian per stage rather than one over the whole horizon — and,
-  being built from the stage function alone, it never touches the scanned graph under test.
+  being built from the stage function alone, it never touches the VMAP graph under test.
   """
-  jac = stage_function().factory("scan_mlp_stage_jac", ["x", "xnext", "u", "pw"], [al.jac("eq", "x"), al.jac("eq", "u"), al.jac("eq", "xnext")])
+  jac = stage_function().factory(
+    "vmap_mlp_stage_jac", ["x", "xnext", "u", "pw"], [al.factory.Jac("eq", "x"), al.factory.Jac("eq", "u"), al.factory.Jac("eq", "xnext")]
+  )
   offset = NX * (stages + 1)
   dense = np.zeros((NX * stages, n_dec(stages)))
   for i in range(stages):
@@ -139,7 +141,7 @@ def _scatter(sparse: al.Function, z: np.ndarray, pw: np.ndarray, *extra: np.ndar
   return dense
 
 
-def test_scanned_stage_matches_the_numpy_model() -> None:
+def test_vmapped_stage_matches_the_numpy_model() -> None:
   """The stage body's forward value is the NumPy one, with the weights read out of the tail."""
   z, pw = sample(4)
   stage = stage_function()
@@ -150,22 +152,22 @@ def test_scanned_stage_matches_the_numpy_model() -> None:
     np.testing.assert_allclose(residual, step_np(pw, x, u) - xnext, rtol=0.0, atol=1e-13)
 
 
-def test_scanned_and_unrolled_agree_in_value_jacobian_and_hessian() -> None:
-  """Scanning the horizon changes how the graph is built, not what it means.
+def test_vmapped_and_unrolled_agree_in_value_jacobian_and_hessian() -> None:
+  """Using VMAP for the horizon changes how the graph is built, not what it means.
 
-  The unrolled twin is the independent construction: same stage function, same cost, no scan node
+  The unrolled twin is the independent construction: same stage function, same cost, no VMAP node
   anywhere. Value, sparse Jacobian and sparse Lagrangian Hessian all have to land on it exactly,
   and the Jacobian additionally has to land on a NumPy-scattered dense reference.
   """
   for stages in (1, 2, 5):
     z, pw = sample(stages)
     lam = np.linspace(-0.7, 0.9, NX * stages)
-    scan_fn, flat_fn = scanned(stages), unrolled(stages)
+    vmap_fn, flat_fn = vmapped(stages), unrolled(stages)
 
-    np.testing.assert_allclose(np.asarray(scan_fn(z, pw)[0]), np.asarray(flat_fn(z, pw)[0]), rtol=0.0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(scan_fn(z, pw)[1]), np.asarray(flat_fn(z, pw)[1]), rtol=0.0, atol=1e-13)
+    np.testing.assert_allclose(np.asarray(vmap_fn(z, pw)[0]), np.asarray(flat_fn(z, pw)[0]), rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(vmap_fn(z, pw)[1]), np.asarray(flat_fn(z, pw)[1]), rtol=0.0, atol=1e-13)
 
-    jacobians = [fn.factory(f"{fn.name}_spjac", ["z", "p"], [al.spjac("eq", "z")]) for fn in (scan_fn, flat_fn)]
+    jacobians = [fn.factory(f"{fn.name}_spjac", ["z", "p"], [al.factory.SpJac("eq", "z")]) for fn in (vmap_fn, flat_fn)]
     dense = [_scatter(fn, z, pw) for fn in jacobians]
     np.testing.assert_allclose(dense[0], dense[1], rtol=0.0, atol=1e-13)
     np.testing.assert_allclose(dense[0], dense_jac_reference(stages, z, pw), rtol=0.0, atol=1e-13)
@@ -173,26 +175,26 @@ def test_scanned_and_unrolled_agree_in_value_jacobian_and_hessian() -> None:
     assert pattern is not None and pattern.nnz < dense[0].size
 
     hessians = [
-      fn.factory(f"{fn.name}_sphess", ["z", "lam:cost", "lam:eq", "p"], [al.sphess("gamma", "z")], aux={"gamma": ["cost", "eq"]})
-      for fn in (scan_fn, flat_fn)
+      fn.factory(f"{fn.name}_sphess", ["z", "lam:cost", "lam:eq", "p"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["cost", "eq"]})
+      for fn in (vmap_fn, flat_fn)
     ]
     hess = [_scatter(fn, z, pw, np.array(1.0), lam) for fn in hessians]
     np.testing.assert_allclose(hess[0], hess[1], rtol=0.0, atol=1e-12)
     np.testing.assert_allclose(hess[0], hess[0].T, rtol=0.0, atol=1e-12)
 
 
-def test_lagrangian_hessian_through_the_scan_matches_finite_differences() -> None:
-  """Second order through a scanned matmul body, checked without a second symbolic path.
+def test_lagrangian_hessian_through_the_vmap_matches_finite_differences() -> None:
+  """Second order through a VMAP matmul body, checked without a second symbolic path.
 
   Differencing the Lagrangian's gradient is independent of how the Hessian is assembled, so this is
-  what catches an error the scanned-versus-unrolled comparison would make on both sides at once.
+  what catches an error the VMAP-versus-unrolled comparison would make on both sides at once.
   """
   stages = 4
   z, pw = sample(stages)
   lam = np.linspace(-0.7, 0.9, NX * stages)
-  fn = scanned(stages)
-  gradient = fn.factory("scan_mlp_lag_grad", ["z", "lam:cost", "lam:eq", "p"], [al.grad("gamma", "z")], aux={"gamma": ["cost", "eq"]})
-  hessian = fn.factory("scan_mlp_lag_sphess", ["z", "lam:cost", "lam:eq", "p"], [al.sphess("gamma", "z")], aux={"gamma": ["cost", "eq"]})
+  fn = vmapped(stages)
+  gradient = fn.factory("vmap_mlp_lag_grad", ["z", "lam:cost", "lam:eq", "p"], [al.factory.Grad("gamma", "z")], aux={"gamma": ["cost", "eq"]})
+  hessian = fn.factory("vmap_mlp_lag_sphess", ["z", "lam:cost", "lam:eq", "p"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["cost", "eq"]})
   exact = _scatter(hessian, z, pw, np.array(1.0), lam)
 
   step = 1e-6
@@ -206,25 +208,25 @@ def test_lagrangian_hessian_through_the_scan_matches_finite_differences() -> Non
   np.testing.assert_allclose(exact, approx, rtol=2e-5, atol=2e-6)
 
 
-def test_scanned_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows() -> None:
+def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows() -> None:
   """Both kernels stay one loop nest however many stages there are, and the twin shows it matters.
 
-  The Hessian is the one that pins the *cost* to its scanned form: written as a Python reduction over
+  The Hessian is the one that pins the *cost* to its VMAP form: written as a Python reduction over
   per-stage slices it unrolls, which grows the source linearly and, deep enough, exceeds the pass
   recursion limit during lowering.
   """
   sizes = (2, 8, 32)
-  for kernel, request in (("spjac", al.spjac("eq", "z")), ("sphess", al.sphess("gamma", "z"))):
+  for kernel, request in (("spjac", al.factory.SpJac("eq", "z")), ("sphess", al.factory.SpHess("gamma", "z"))):
     lines = []
     for stages in sizes:
       names = ["z", "p"] if kernel == "spjac" else ["z", "lam:cost", "lam:eq", "p"]
       aux = None if kernel == "spjac" else {"gamma": ["cost", "eq"]}
-      built = scanned(stages).factory(f"scan_mlp_{kernel}_N{stages}", names, [request], aux=aux)
+      built = vmapped(stages).factory(f"vmap_mlp_{kernel}_N{stages}", names, [request], aux=aux)
       lines.append(len(render_c_source(built).splitlines()))
     assert max(lines) < 1.2 * min(lines), f"{kernel} source grew with the horizon: {dict(zip(sizes, lines, strict=True))}"
 
   unrolled_lines = []
   for stages in sizes:
-    built = unrolled(stages).factory(f"scan_mlp_unrolled_spjac_N{stages}", ["z", "p"], [al.spjac("eq", "z")])
+    built = unrolled(stages).factory(f"vmap_mlp_unrolled_spjac_N{stages}", ["z", "p"], [al.factory.SpJac("eq", "z")])
     unrolled_lines.append(len(render_c_source(built).splitlines()))
   assert unrolled_lines[-1] > 3 * unrolled_lines[0], f"the unrolled twin should grow: {unrolled_lines}"

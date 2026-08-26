@@ -76,7 +76,7 @@ def chain_ode_fn(n_masses: int) -> al.Function:
   n_intermediate = n_masses - 2
   positions = al.concat([al.const(np.zeros(3)), x[: 3 * (n_masses - 1)]])
   velocities = x[3 * (n_masses - 1) :]
-  accel = al.scan(
+  accel = al.vmap(
     chain_mass_accel_fn,
     length=n_intermediate,
     inputs={
@@ -135,14 +135,14 @@ def _eq_stage_fn(n_masses: int) -> al.Function:
 
 def _chain_eq_expr(z: al.Expr, p: al.Expr, n_masses: int, horizon: int) -> al.Expr:
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
-  mapped = al.scan(_eq_stage_fn(n_masses), length=horizon, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
+  mapped = al.vmap(_eq_stage_fn(n_masses), length=horizon, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
   return al.concat([z[:nx] - p[:nx], mapped])
 
 
 def chain_eq_function(n_masses: int, horizon: int) -> al.Function:
   z = al.sym("z", n_dec(n_masses, horizon))
   p = al.sym("p", n_param(n_masses), diff=False)
-  return al.Function(f"chain_eq_map_M{n_masses}_N{horizon}", [z, p], [_chain_eq_expr(z, p, n_masses, horizon)], ["z", "p"], ["eq"])
+  return al.Function(f"chain_eq_vmap_M{n_masses}_N{horizon}", [z, p], [_chain_eq_expr(z, p, n_masses, horizon)], ["z", "p"], ["eq"])
 
 
 def chain_eq_function_unrolled(n_masses: int, horizon: int) -> al.Function:
@@ -161,7 +161,9 @@ def chain_eq_jac_dense_reference(n_masses: int, horizon: int, z: np.ndarray, p: 
   z, p = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64)
   if z.shape != (n_dec(n_masses, horizon),) or p.shape != (n_param(n_masses),):
     raise ValueError(f"invalid z/p shapes {z.shape} / {p.shape}")
-  stage = _eq_stage_fn(n_masses).factory(f"chain_stage_dense_ref_M{n_masses}", ["z", "xnext", "params"], [al.jac("eq", "z"), al.jac("eq", "xnext")])
+  stage = _eq_stage_fn(n_masses).factory(
+    f"chain_stage_dense_ref_M{n_masses}", ["z", "xnext", "params"], [al.factory.Jac("eq", "z"), al.factory.Jac("eq", "xnext")]
+  )
   dense = np.zeros((nx * (horizon + 1), z.size), dtype=np.float64)
   dense[:nx, :nx] = np.eye(nx)
   for i in range(horizon):
