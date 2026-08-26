@@ -1,7 +1,7 @@
 # Project naming
 
 No rename has been decided or scheduled. This note records why `alloy` worked,
-why we are reconsidering it, and which alternative currently feels strongest.
+why we are reconsidering it, and which alternatives remain under consideration.
 
 ## Lineage
 
@@ -23,7 +23,7 @@ project's upbringing without making it sound like a subordinate compiler
 component, and it left room for the experiment to become an independent system.
 It was concise, physical, poetic, and legible at several depths: useful on first
 contact, more meaningful once the architecture and history were known. That
-“if you know, you know” quality is worth preserving.
+"if you know, you know" quality is worth preserving.
 
 ## Why reconsider it
 
@@ -62,27 +62,96 @@ Earlier metal-themed candidates included `forge`, `crucible`, `foundry`,
 lineage, but most name a tool, process, or ordinary material rather than giving
 the system an identity of its own.
 
-## Leading candidate: Orichal
+## Current shortlist
 
-**Orichal**, pronounced roughly *OR-ih-kal*, is the strongest candidate found
-so far.
+Review of Orichal changed the direction of the search. Its spelling is hard to
+recover from speech, and a French speaker may pronounce it in an unintended
+way. The phonetic spelling `Orikal` would reduce those problems but weaken the
+link to orichalcum.
+
+The search then moved closer to the project's home cultures in Romania and
+French-speaking Switzerland, with a preference for Vaud. **Maiastra** and
+**Toupin** are the two main contenders. Neither name has been accepted.
+
+### Maiastra
+
+**Maiastra** is the ASCII form of the Romanian **Măiastra**, pronounced roughly
+*muh-YAHS-truh*.
+
+```python
+import maiastra as ma
+```
+
+The name comes from **Pasărea Măiastră**, the miraculous and benevolent bird
+of Romanian folklore. The bird has golden plumage and a restorative song. It is
+also the subject of Constantin Brâncuși's *Maiastra* sculptures, which reduce
+the legendary bird to an abstract form. The [Peggy Guggenheim
+Collection](https://www.guggenheim-venice.it/en/art/works/maiastra/) and the
+[National Gallery of Art](https://www.nga.gov/artworks/60332-maiastra) describe
+both parts of this history.
+
+This gives the name a Romanian identity without tying the project to one
+technical mechanism. The connection to abstraction also suits a symbolic
+system, but it does not need to become part of the public explanation.
+
+The diacritic creates a split between the Romanian name and the package name.
+The project could use **Măiastra** in prose and `maiastra` for the distribution
+and import, or use **Maiastra** everywhere. People unfamiliar with Romanian may
+also guess the pronunciation incorrectly. Existing cultural uses make the word
+less empty in search results, but no notable developer tool appeared under the
+name. The `maiastra` PyPI slug was unclaimed when checked on August 26, 2026.
+
+### Toupin
+
+**Toupin**, pronounced roughly *too-PAN* with a nasal final vowel, is a Swiss
+Romand word for a large bell worn by cattle on alpine pastures.
+
+```python
+import toupin as tp
+```
+
+The regional meaning has been recorded since 1852. It remains in use across
+French-speaking Switzerland and in Vaud. The [Base de données lexicographiques
+panfrancophone](https://www.bdlp.org/fiche/19544) records the history, and a
+[maker in Cuarnens](https://www.articuir.com/%C3%A0-propos) uses the word for its
+handmade bells.
+
+Toupin is short, physical, and rooted near EPFL. The cast-metal object preserves
+the metal lineage, while its distinct sound gives it an identity beyond the
+material. The name does not restrict the project to its current implementation
+or application.
+
+The meaning will be invisible to most people outside French-speaking
+Switzerland. Toupin is also a surname, and English speakers may pronounce the
+last syllable as *pin*. These are modest costs because the spelling is short and
+the software namespace is otherwise quiet. The `toupin` PyPI slug was unclaimed
+when checked on August 26, 2026.
+
+Maiastra has the richer folklore and art connection. Toupin is shorter, closer
+to Vaud, and more directly connected to the metal lineage. That is the current
+unresolved choice.
+
+## Earlier candidate: Orichal
+
+**Orichal**, pronounced roughly *OR-ih-kal*, was the first replacement explored
+in detail.
 
 ```python
 import orichal as oc
 ```
 
 The name evokes **orichalcum**, the legendary metal associated with Atlantis.
-It retains the material metaphor but moves from a common category—an alloy—to a
-singular substance with its own identity. It can represent a symbolic language,
-compiler, numerical runtime, optimization system, or something broader without
-needing to change meaning as the project grows.
+It retains the material metaphor but moves from a common category, an alloy, to
+a singular substance with its own identity. It can represent a symbolic
+language, compiler, numerical runtime, optimization system, or something
+broader without needing to change meaning as the project grows.
 
 It also gives the lineage a satisfying progression:
 
 ```text
-Anvil   — the tool
-Alloy   — the compositional idea
-Orichal — the singular material
+Anvil:   the tool
+Alloy:   the compositional idea
+Orichal: the singular material
 ```
 
 `oc` is a clean import alias and can quietly nod toward optimal control without
@@ -120,24 +189,9 @@ None of these should become an advertised expansion or restrict what Orichal
 can become. The oracle association is a play on words, not a claim that the
 library is specifically an oracle abstraction.
 
-### Presentation and visual identity
-
-Orichal does not need a slogan that explains its name. Public descriptions can
-state plainly what the library does. Most users may notice the oracle echo; a
-smaller number may eventually learn about orichalcum and the Anvil-to-Alloy
-lineage, perhaps by asking directly. That asymmetry is desirable: the name's
-meaning should reward curiosity rather than arrive with a mandatory footnote.
-
-The existing Alloy logo drafts under [`assets/logo/`](../assets/logo/) already
-use copper-like colors. That palette can carry naturally into an Orichal identity
-and distinguish it visually from Oracle Corporation without making the logo
-literal metallurgy, Atlantis, or fantasy imagery. No logo adaptation is part of
-the current naming exploration.
-
 The remaining uncertainties are mostly matters of taste. The mythical
-association could still read as fantasy or crypto if a future visual identity
-leans too heavily into it, and the unfamiliar spelling may require an
-introduction. Its obscurity is also part of its appeal.
+association could still read as fantasy or crypto, and the unfamiliar spelling
+may require an introduction. Its obscurity is also part of its appeal.
 
 ### PyPI name
 
@@ -145,13 +199,13 @@ The `orichal` distribution name was still unclaimed on August 12, 2026. PyPI
 does not provide a separate name-reservation mechanism, and an empty or
 nonfunctional placeholder can be treated as name squatting under PEP 541. The
 preferred way to secure the name is therefore a small but genuine pre-alpha
-release containing a useful core of the project, not a “coming soon” stub.
+release containing a useful core of the project, not a "coming soon" stub.
 
 Defining that minimum releasable core is deferred to a separate design session.
 Nothing has been uploaded to PyPI as part of this exploration.
 
-For now, the project remains **Alloy**. **Orichal is recorded as the best
-candidate, not an accepted rename.**
+For now, the project remains **Alloy**. **Maiastra and Toupin are the main
+contenders, not accepted renames.**
 
 ## References and provenance
 
