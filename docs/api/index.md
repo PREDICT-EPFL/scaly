@@ -16,7 +16,7 @@ For prose explanations rather than signatures, start with the [User Guide](../gu
 | [Building functions](functions.md) | the `@function` decorator, derivative specs, and the named derivative wrappers |
 | [Differentiation](ad.md) | forward and reverse mode, whole derivatives, sparsity and coloring |
 | [Code generation](codegen.md) | rendering C, the ABI surface, the toolchain |
-| [Solvers](solvers.md) | `qp`, `nlp`, `SolverFunction` and solve statistics |
+| [Solvers](solvers.md) | typed problems, solver selection, quadratic proof, and solve statistics |
 | [Visualization](viz.md) | recording a compile and serving it |
 
 Anything not on these pages is internal, and may move without notice.

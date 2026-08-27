@@ -1,247 +1,214 @@
 # Solvers
 
-`al.qp(...)` and `al.nlp(...)` build a solver you can call like any other function — and, more
-usefully, embed inside a larger alloy graph. The whole thing compiles to one shared library that
-links against the vendored solver, with no Python between the solve and the numbers.
+A solver starts from a backend-free `Problem`. Declare variables, parameters, objective, and
+constraints once, then choose PIQP, IPOPT, or alloy-sqp with `al.solver`. The result is an ordinary
+typed `Function`, so it can run numerically or appear as a call node in a larger graph.
+[Solver backends](solver_backends.md) compares the implementations. [How solvers
+work](../how_it_works/solvers.md) describes their generated wrappers.
 
-Three backends ship: **PIQP** for quadratic programs, **IPOPT** and **alloy-sqp** for nonlinear
-ones. This page is how to drive any of them; [Solver backends](solver_backends.md) is what each one
-is and which to pick.
+## Declare a problem
 
-## Problem shapes
-
-Both shapes name their constraint categories explicitly, rather than folding everything into
-CasADi's two-sided `lba <= Ax <= uba`.
-
-**QP**
-
-```text
-min   0.5 x' P x + c' x
-s.t.  A_eq x = b_eq
-      l_ineq <= G_ineq x <= u_ineq     (two-sided general inequalities)
-      x_lb   <= x <= x_ub              (box)
-```
-
-**NLP**
-
-```text
-min   f(x, p)
-s.t.  h_eq(x, p) = 0
-      l_ineq <= g_ineq(x, p) <= u_ineq  (two-sided general inequalities)
-      x_lb   <= x <= x_ub               (box)
-```
-
-Inequalities stay two-sided because PIQP supports them natively. The IPOPT path stacks
-`[h_eq; g_ineq]` into one `g(x)` with bounds `[0; l_ineq] <= g <= [0; u_ineq]`, and that conversion
-happens once when the solver is built, not on every call.
-
-## Building a solver
+Use `al.L(name, shape)` for one tensor and `al.G(...)` to group tensors. The declared tree
+determines the symbolic structure seen by the body and the NumPy structure used at calls.
 
 ```python
 import alloy as al
 import numpy as np
 
-qp = al.qp(
-    P=P_expr,           c=c_expr,
-    A_eq=A_eq_expr,     b_eq=b_eq_expr,
-    G_ineq=G_ineq_expr, l_ineq=l_ineq_expr, u_ineq=u_ineq_expr,
-    x_lb=lb_expr,       x_ub=ub_expr,
-    solver="piqp",
+@al.problem(
+    vars=al.G(al.L("u", 2), al.L("slack", 1)),
+    params=al.G(al.L("target", 2), al.L("bias", 1)),
 )
-
-nlp = al.nlp(
-    x=x_sym, p=p_sym,
-    f=f_expr,
-    h_eq=h_eq_expr,
-    g_ineq=g_ineq_expr, l_ineq=l_ineq_expr, u_ineq=u_ineq_expr,
-    x_lb=lb_expr,       x_ub=ub_expr,
-    solver="ipopt",     # or "sqp"
-)
+def tracking_problem(
+    variables: tuple[al.Expr, al.Expr],
+    params: tuple[al.Expr, al.Expr],
+) -> al.ProblemSpec[tuple[al.Expr, al.Expr]]:
+    u, slack = variables
+    target, bias = params
+    return al.ProblemSpec(
+        minimize=al.sumsqr(u - target) + 10.0 * al.sumsqr(slack - bias),
+        eq=(u[0:1] - u[1:2],),
+        ineq=(al.bounded(u + slack, lo=0.0, name="safe"),),
+        lb=(al.const(-np.ones(2)), al.const(np.zeros(1))),
+        ub=(al.const(np.ones(2)), al.const(np.full(1, np.inf))),
+    )
 ```
 
-Every symbolic input may be:
+`ProblemSpec` has five parts:
 
-- an alloy `Expr` over free parameters — the interesting case, and what makes the solver
-  reusable across states;
-- a NumPy array or Python scalar, which becomes a constant;
-- or `None`, for the optional pieces (`A_eq`/`b_eq`, `G_ineq`/`l_ineq`/`u_ineq`, `x_lb`/`x_ub`).
+| Field | Meaning |
+| --- | --- |
+| `minimize` | scalar objective |
+| `eq` | tuple of scalar or vector expressions constrained to zero |
+| `ineq` | tuple of `al.bounded(expr, lo=..., hi=..., name=...)` groups |
+| `lb` | optional lower bounds with the variables' structure |
+| `ub` | optional upper bounds with the variables' structure |
 
-Both builders return a `SolverFunction`: a real `Function` with the usual call surface
-(`input_names`, `output_names`, positional or keyword `__call__`).
+At least one of `lo` and `hi` is required for a bounded group. A scalar bound broadcasts over its
+group. Names are metadata and need not match local Python variable names.
+Pass a parameter tree when the public interface is fixed. If `params` is omitted, Alloy collects
+named expressions closed over by the body and builds the parameter tree from them.
 
-## Calling it
+## Select one solver
 
-**Inputs**, in order:
-
-| Name | Size | Meaning |
-| --- | --- | --- |
-| `x0` | `n` | initial primal iterate |
-| `lam_eq0` | `p` | initial equality multipliers |
-| `lam_ineq0` | `m` | initial inequality multipliers |
-| `lam_box0` | `n` | initial signed box multipliers (NLP only) |
-| *parameters* | — | every free parameter found in the symbolic inputs, in deterministic name order |
-
-A QP takes the first three; an NLP takes all four. **What a backend does with them differs** —
-alloy-sqp uses every one unconditionally, IPOPT always starts from `x0` but wants an option before
-it will use the multipliers, and PIQP ignores the duals entirely.
-[Solver backends](solver_backends.md#choosing-one) has the comparison.
-
-One convention worth knowing here: `lam_box0` is signed, and the wrapper splits it into the
-non-negative pair a solver actually wants — `z_L = max(-lam_box0, 0)` and
-`z_U = max(lam_box0, 0)` — which is the inverse of how `lam_box` comes back out.
-
-**Outputs.** QP returns `x`, `cost`, `lam_eq`, `lam_ineq`, `lam_box`. NLP returns `x`, `f`, the
-constraint values `h_eq` and `g_ineq` at the optimum, and `lam_eq`, `lam_ineq`, `lam_box`.
+The backend is positional. The artifact name and backend options belong to the solver construction:
 
 ```python
-mu = al.sym("mu", 2)
-qp = al.qp(P=np.eye(2), c=-mu)
-
-for mu_val in [np.array([0.0, 0.0]), np.array([1.5, -0.3])]:
-    out = qp(x0=np.zeros(2), lam_eq0=np.zeros(0), lam_ineq0=np.zeros(0), mu=mu_val)
-    # out["x"] approaches mu_val each time
+solve = al.solver(
+    tracking_problem,
+    "sqp",
+    name="tracking_sqp",
+    options={"max_iter": 30},
+)
 ```
 
-## Sign and ordering conventions
+PIQP accepts only problems that Alloy can prove are quadratic programs. The cost must have a
+variable-independent Hessian, every constraint must have a variable-independent Jacobian, and
+bounds must not depend on the variables. Failure raises `al.NotQuadratic` when the solver is built.
+IPOPT and alloy-sqp accept nonlinear problems.
+A problem caches its common objective, gradient, constraint Jacobian, and bounds oracles. Solvers
+that need different Hessian triangles share the common oracles and cache one Hessian per triangle.
 
-- `lam_ineq` and `lam_box` are **signed**: positive means the upper bound is active, negative means
-  the lower bound is. Both solvers track non-negative `z_l` and `z_u` separately inside; the
-  generated wrapper does the conversion.
-- For an NLP, `lam = [lam_h; lam_g]` is the stacked multiplier vector IPOPT works with. The
-  Lagrangian is built over `["f", "g"]` in that order, so `lam:g` refers to the same stacked
-  vector — which is what makes the sparse Lagrangian Hessian come out right.
-- Sparse Jacobian and Hessian patterns are COO `(rows, cols)` in the order `al.sparse_jacobian` and
-  `al.sparse_hessian` produce. That order is not necessarily sorted; see
-  [the ABI](../how_it_works/c_abi.md#sparse-outputs).
+## Solver input and output structure
 
-## Solve statistics
+Every solver has the same five input groups and four output groups:
 
-`SolverFunction.last_stats` holds a full `SolverStats` after each solve: the alloy and native
-status, iteration count, objective, the `t_fe` / `t_solver` / `t_qp` / `t_globalization` / `t_glue`
-timing split, and five oracle evaluation counters.
+```text
+inputs  = (vars_init, lam_box0, lam_eq0, lam_ineq0, params)
+outputs = (vars,      lam_box,  lam_eq,  lam_ineq)
+```
 
-`SolverFunction.last_status` is the derived view — `SolverStatus(code, name, iter, stats)` — whose
-`ok` is true for `OK` and `ACCEPTABLE`. IPOPT's `Feasible_Point_Found` maps to `ACCEPTABLE`.
+The variable and box-multiplier groups have the declared variable tree. The parameter group has the
+declared parameter tree. Equality and inequality multipliers are flat arrays whose lengths are
+`problem.n_eq` and `problem.n_ineq`. An absent category is still present as an array of length
+zero.
 
-Six per-solve diagnostics are reported when the backend has the concept and zero when it does not:
+```python
+result = solve.numerical_call(
+    (
+        (np.zeros(2), np.zeros(1)),
+        (np.zeros(2), np.zeros(1)),
+        np.zeros(1),
+        np.zeros(2),
+        (np.array([0.25, -0.75]), np.array([0.1])),
+    )
+)
+(variables, lam_box, lam_eq, lam_ineq) = result
+u, slack = variables
+```
 
-| Field | Meaning | SQP | PIQP | IPOPT |
-|---|---|---|---|---|
-| `primal_viol` | constraint violation (infinity norm) at the returned `x` | recomputed at the returned iterate | `info.primal_res` | `inf_pr` at the last iteration |
-| `step_inf` | infinity norm of the last computed step | last QP step | 0 | `d_norm` |
-| `alpha` | last **accepted** line-search step length; `0.0` if none was ever accepted | filter or l1 result | 0 | `alpha_pr` |
-| `merit_penalty` | final merit penalty parameter | adaptive l1 penalty; `0.0` under filter globalization | 0 | 0 |
-| `backtracks` | rejected line-search trial points across the solve | counted directly | 0 | `ls_trials - 1`, summed |
-| `qp_iter` | QP iterations accumulated across SQP iterations | summed PIQP `info.iter` | `info.iter` | 0 |
+`lam_ineq` and `lam_box` are signed. A positive value means the upper bound is active; a negative
+value means the lower bound is active. IPOPT and alloy-sqp consume warm starts. PIQP currently
+ignores them because its C interface has no warm-start entry point.
+`solve.input_names` and `solve.output_names` show the flattened C signature. Grouping affects
+Python and static types, but not leaf order in the generated ABI.
 
-IPOPT's callback-sourced fields record regular-mode iterations only. Restoration-phase values
-describe the restoration subproblem rather than your problem, so they are skipped.
+## Matrix-data quadratic programs
 
-## Sparse QP
+`al.qp_problem(n, n_eq, n_ineq)` is the typed matrix form:
 
-`al.qp(...)` assembles the problem for PIQP's dense interface by default. `sparse=True` derives the
-structural patterns instead and bakes them in, so each solve refills values only — worth trying
-when your data really is sparse, with two caveats attached. Both are in
-[Solver backends](solver_backends.md#piqp).
+```text
+minimize  0.5 x' P x + c' x
+subject to A x = b
+           g_lb <= G x <= g_ub
+```
+
+Its parameter structure is `((P, c), (A, b), (G, g_lb, g_ub))`. Use zero-sized arrays for absent
+constraint blocks:
+
+```python
+problem = al.qp_problem(2, 0, 0)
+solve_qp = al.solver(problem, "piqp")
+
+data = (
+    (np.eye(2), np.array([-1.0, -2.0])),
+    (np.zeros((0, 2)), np.zeros(0)),
+    (np.zeros((0, 2)), np.zeros(0), np.zeros(0)),
+)
+x, lam_box, lam_eq, lam_ineq = solve_qp.numerical_call(
+    (np.zeros(2), np.zeros(2), np.zeros(0), np.zeros(0), data)
+)
+```
+
+This helper goes through the same quadratic proof and extraction as any other `Problem`. Bounds on
+`x` are not part of `QPData`; declare a problem directly when you need them.
+For `0.5 * x @ P @ x`, the extracted Hessian is `0.5 * (P + P.T)`. Provide a symmetric matrix when
+that distinction matters.
+
+## Sparse PIQP data
+
+PIQP uses dense problem data by default. Pass `options={"sparse": True}` to derive the structural
+patterns of the extracted `P`, `A`, and `G` and bake compressed sparse column tables into generated
+C:
+
+```python
+solve_sparse = al.solver(problem, "piqp", options={"sparse": True})
+```
+
+The sparse path rejects QP matrices computed from another solver output because solver calls are
+opaque to structural dependency analysis. The dense path has no such restriction.
+Omitted bounds use PIQP's native `1e30` sentinel. IPOPT uses `2e19` internally. Omit an unbounded
+side instead of passing an explicit infinity when you want the backend's convention.
 
 ## Nesting a solver in a graph
 
-This is the part that is hard to do with a solver library and easy here. A `SolverFunction` is a
-real `Function` whose body is one `solver_call` per output, so `solver.call([...])` returns
-ordinary `Expr`s that flow into further computation:
+Use `symbolic_call` with the same declared structure to embed a solve:
 
 ```python
-@al.function("safety_filter", {"x": (NX,), "u_ref": (NU,)})
-def safety_filter(x, u_ref):
-    f_x = dynamics.f.call([x])[0]
-    g_x = dynamics.g.call([x])[0]
-    h, h_grad = cbf(x)
-
-    qp = al.qp(
-        P=al.const(np.eye(NU)),
-        c=-u_ref,
-        G_ineq=h_grad @ g_x,
-        l_ineq=-(h_grad @ f_x + alpha * h),
-        u_ineq=al.const(np.full(NG, np.inf)),
+@al.function(
+    al.G(al.L("target", 2), al.L("bias", 1)),
+    al.L("u", ...),
+)
+def filtered_control(params: tuple[al.Expr, al.Expr]) -> al.Expr:
+    target, bias = params
+    nested = al.solver(tracking_problem, "sqp", name="nested_tracking")
+    result = nested.symbolic_call(
+        (
+            (al.const(np.zeros(2)), al.const(np.zeros(1))),
+            (al.const(np.zeros(2)), al.const(np.zeros(1))),
+            al.const(np.zeros(1)),
+            al.const(np.zeros(2)),
+            (target, bias),
+        )
     )
-    out = qp.call([
-        al.const(np.zeros(NU)),   # x0
-        al.const(np.zeros(0)),    # lam_eq0
-        al.const(np.zeros(NG)),   # lam_ineq0
-        u_ref, x,                 # the free parameters, in sorted-name order
-    ])
-    return {"u": out[0]}
+    return result[0][0]
 ```
 
-Mind the parameter order. `al.qp` finds the free parameters in its symbolic arguments and orders
-them **by name**, so `u_ref` comes before `x` no matter which order you wrote them in. Read the
-order off `qp.input_names` rather than guessing — when two parameters happen to have the same
-shape, getting this wrong produces a wrong answer instead of an error.
+The call lowers to one generated solver wrapper in the same shared library as the host function and
+its oracles. `SOLVER_CALL` is currently non-differentiable, so derivatives through a solve are
+zero.
 
-`safety_filter` is now an ordinary function. Call it from Python and it compiles to one shared
-library containing the oracles, the solver wrapper and the host entry — nothing interpreted in the
-loop.
+## Statistics
 
-`solver_call` is marked non-differentiable, so derivatives through a solver are zero. Implicit
-function theorem differentiation is future work.
-
-## Shipping one in C++
-
-Rendering a solver-bearing function is the same call as any other; the only extra thing a consumer
-needs is the link flags:
+After a numerical call, read the latest statistics from the compiled function:
 
 ```python
-from alloy.codegen import render_c_module
-from alloy.solvers.graph import solver_compile_flags
-
-module = render_c_module(safety_filter, typed_buffers=False)
-(out_dir / module.header_name).write_text(module.header)
-(out_dir / module.source_name).write_text(module.source)
-
-flags = solver_compile_flags(safety_filter)
-# ['-I/.../alloy/include', '-L/.../alloy/lib', '-Wl,-rpath,/.../alloy/lib', '-lpiqpc']
+stats = solve.solver_stats()
+status = stats.to_solver_status()
+if status is not None and not status.ok:
+    raise RuntimeError(status)
 ```
 
-Pass `rpath=False` if you will bundle the libraries into your own install tree and set the run path
-yourself. Then the driver is plain C++ against the [universal ABI](../how_it_works/c_abi.md):
+A host function can reach more than one solver. Pass the solver artifact name to
+`host.solver_stats(name)` to select one. Statistics include statuses, iteration count, objective,
+oracle evaluation counts, timing splits, primal violation, last step norm, accepted step length,
+backtracks, and accumulated QP iterations.
 
-```cpp
-#include "safety_filter.h"
+## Shipping one in C
 
-int main() {
-    double x[NX] = {/* state */};
-    double u_ref[NU] = {/* reference */};
-    double u[NU];
-    const double* arg[] = {x, u_ref};
-    double* res[] = {u};
-    double w[(safety_filter_SZ_W > 0 ? safety_filter_SZ_W : 1)];
-    return safety_filter(arg, res, nullptr, w, nullptr);
-}
-```
+A solver-bearing function renders through the same C API as any other function. Its module also
+carries the include, library, runtime-path, and link flags for every reached plugin. See [Code
+generation](codegen.md) and [the C ABI](../how_it_works/c_abi.md).
 
-## Limitations
+## Limits
 
-- **The vendored libraries have to be built.** `libpiqpc` and `libipopt` live in their plugin
-  packages' `lib/` directories, built by the first `uv sync` (5–8 minutes cold). A missing library
-  raises `SolverLibraryError` when a solve or a solver-bearing compile needs it.
-- **Generated wrappers are single-threaded.** Wrapper state — the context struct, data buffers,
-  the PIQP workspace, the latest statistics — lives in per-symbol statics. Distinct solvers are
-  isolated from each other even in one translation unit, but two threads calling the *same*
-  compiled solver will clobber each other.
-- **Infinities differ by backend.** Each solver has its own "no bound" sentinel: `±1e30` for PIQP,
-  `±2e19` for IPOPT. Omit a bound entirely and the QP builder fills in PIQP's sentinel for you. If
-  you pass `±np.inf` explicitly it reaches the generated C as `INFINITY`; the IPOPT wrapper clamps
-  that to its own convention, while PIQP takes it as given. Omitting a bound is the reliable way to
-  say "unbounded".
-- **Options are the backend's own, and are not all validated early.** `options={...}` reaches the
-  solver under its own names; how a bad one fails, and what each backend defaults to, is
-  per-backend.
-- **No derivatives through a solve.** See above.
+- The vendored PIQP and IPOPT libraries build on the first sync and can take 5 to 8 minutes from a
+  cold checkout.
 
-Per-backend limits — which backends honour a warm start, how each handles a bad option, what
-alloy-sqp will and will not call a success — are on
-[Solver backends](solver_backends.md#choosing-one).
+- PIQP does not consume warm starts.
 
-For which backend to pick and what each vendors, see [Solver backends](solver_backends.md). For
-what the builders assemble underneath, [how solvers work](../how_it_works/solvers.md). For writing a
-new backend, [Solver plugins](../dev/solver_plugins.md).
+- Generated wrappers use per-symbol static storage and are not reentrant.
+
+- Backend options are compiled into the wrapper.
+
+- Differentiation through a solve is not implemented.

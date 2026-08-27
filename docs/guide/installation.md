@@ -39,7 +39,7 @@ first thing to run when something will not compile.
 
 ## The solvers
 
-`al.qp(...)` and `al.nlp(...)` need PIQP and IPOPT, which alloy vendors and builds from source. The
+`al.solver(problem, "piqp")` and `al.solver(problem, "ipopt")` need the PIQP and IPOPT plugins, which alloy vendors and builds from source. The
 build needs a Fortran compiler and CMake:
 
 ```bash

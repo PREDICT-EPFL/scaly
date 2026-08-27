@@ -167,7 +167,7 @@ a pattern is standard. Doing it on the *callee* of a `VMAP` — coloring a small
 constant seeds through one derivative function, and mapping the result — is what keeps generated
 derivative code from growing with the horizon.
 
-**Solvers as graph nodes.** `al.qp(...)` and `al.nlp(...)` return real `Function`s whose body is a
+**Solvers as graph nodes.** `al.problem(...)` and `al.solver(...)` produce real `Function`s whose body is a
 `solver_call`, so a solve nests inside a larger graph like any other operation, and the whole
 thing — oracles, wrapper, host function — compiles into a single shared library with no Python in
 the loop. See [Solvers](solvers.md).

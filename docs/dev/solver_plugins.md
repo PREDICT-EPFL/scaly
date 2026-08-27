@@ -31,8 +31,7 @@ A plugin is a Python package that:
 mysolver = "alloy_mysolver:BACKEND"
 ```
 
-The entry-point name is the string users pass as `al.qp(..., solver=...)` /
-`al.nlp(..., solver=...)`.
+The entry-point name is the backend string users pass as the second argument to `al.solver(problem, backend)`.
 
 ## The backend protocol
 
@@ -63,8 +62,8 @@ per-plugin exact-path override env var `ALLOY_MYSOLVER_LIB`.
 def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]: ...
 ```
 
-`fun` is the `SolverFunction` being rendered; `fun.descriptor` (a
-`SolverDescriptor`, `src/alloy/solvers/solver_function.py`) carries the
+`fun` is the plain typed `Function` being rendered; `fun.descriptor` (a
+`SolverDescriptor`, `src/alloy/solvers/model.py`) carries the
 problem dimensions, input/output signatures, oracle/derivative `Function`s,
 sparsity patterns, and user options. `ctx` is the codegen kit
 (`alloy.codegen.solver.SolverWrapperCtx`):
@@ -134,51 +133,34 @@ see `internal/notes/benchmark-buildout.md` §3.4).
 
 ## Descriptor families
 
-Core normalizes problems; plugins consume the normalized form. The plugin
-does not parse user input and never sees `Expr`s — only `Function`s to call
-and static metadata.
+Core normalizes every `Problem` into one `SolverDescriptor`. Plugins consume flat buffers and static metadata; they do not inspect `Expr` nodes or reconstruct the user's trees.
 
-**QP** (`kind == "qp"`, built by `al.qp`):
+Every typed solver uses the same flattened leaf order:
 
-- shape: `min ½xᵀPx + cᵀx  s.t.  A_eq x = b_eq,  l ≤ G_ineq x ≤ u,  x_lb ≤ x ≤ x_ub`.
-- wrapper inputs: `x0`, `lam_eq0`, `lam_ineq0`, then `desc.param_names` in
-  order. Outputs: `x`, `cost`, `lam_eq`†, `lam_ineq`†, `lam_box` (†present
-  only when the constraint block exists; signed convention: positive ⇒ upper
-  bound active).
-- one oracle `Function` (`desc.oracle`): params in, flattened QP data out, in
-  the order `P, c, [A_eq, b_eq], [G_ineq, l_ineq, u_ineq], x_lb, x_ub`
-  (optional blocks present only when nonempty; row-major dense, or compact
-  CSC-ordered values when `desc.sparse` with the patterns in
-  `desc.P_sparsity` (upper triangle) / `A_sparsity` / `G_sparsity`).
-- "no bound" is encoded as `±1e30` (`qp.PIQP_INF`, the QP family's infinity
-  sentinel); clamp or translate to the solver's own convention.
+```text
+inputs  = [variable leaves], [box-multiplier leaves], lam_eq, lam_ineq, [parameter leaves]
+outputs = [variable leaves], [box-multiplier leaves], lam_eq, lam_ineq
+```
 
-**NLP** (`kind == "nlp"`, built by `al.nlp`):
+`desc.n_var_blocks` is the number of variable leaves. It determines all four fixed-group offsets. `desc.param_names` names the leaves after `2 * n_var_blocks + 2` fixed inputs. The wrapper must scatter its flat native solution and box multipliers back into the declared variable blocks. Equality and inequality arrays are always present, including when their sizes are zero.
 
-- shape: `min f(x,p)  s.t.  h_eq(x,p) = 0,  l ≤ g_ineq(x,p) ≤ u,  x_lb ≤ x ≤ x_ub`.
-- wrapper inputs: `x0`, `lam_eq0`, `lam_ineq0`, `lam_box0`, then params.
-  Outputs: `x`, `f`, `h_eq`, `g_ineq`, `lam_eq`, `lam_ineq`, `lam_box`
-  (signed multipliers; `lam_box = z_U − z_L`).
-- oracle `Function`s: `desc.base` `(x, *params) → (f, g_all)` with
-  `g_all = [h_eq; g_ineq]` stacked; `desc.grad` (dense objective gradient);
-  `desc.jac` (compact sparse Jacobian of `g_all`, COO pattern in
-  `desc.jac_sparsity`); `desc.hess` (compact sparse Lagrangian Hessian,
-  inputs `(x, obj_factor, [lam,] *params)`, COO pattern for the handed layout in
-  `desc.hess_sparsity`); `desc.bounds` `(*params) → (x_lb, x_ub[, l_ineq, u_ineq])`.
-  For `al.nlp`, core asks the selected backend for its layout through
-  `hess_triangle` (`alloy-ipopt`: lower; `alloy-sqp`: upper), and the pattern is
-  already that triangle in the Hessian oracle's compact-output order. For
-  `alloy_sqp.external_nlp`, the caller supplies the pattern and its order is
-  preserved verbatim; it may be one triangle or a full symmetric pattern.
-- Any normalized NLP oracle may instead be an `ExternalOracle` with the same
-  input/output signature. Its `source` defines `raw_symbol` using the same
-  flat-buffer `_raw` convention. `workspace_size` declares the number of
-  `double` slots the raw function needs; core includes it in root and nested
-  workspace packing. Shared external source is emitted once per translation
-  unit. `alloy-sqp` uses this provider-neutral path for CasADi-codegenerated C
-  oracles.
-- "no bound" is `±inf` from the bounds oracle; clamp to the solver's
-  convention (IPOPT: `±2e19`).
+**QP** (`kind == "qp"`, selected by `al.solver(problem, "piqp")`):
+
+- The problem shape is `min 0.5 x' P x + c' x` subject to `A x = b`, `l <= G x <= u`, and box bounds.
+- `desc.oracle` takes parameter leaves and emits `P, c, [A_eq, b_eq], [G_ineq, l_ineq, u_ineq], x_lb, x_ub`. Empty constraint blocks are omitted from the oracle but remain size-zero multiplier groups in the solver signature.
+- Dense matrices are row-major. When `desc.sparse` is true, the oracle emits compact compressed sparse column values in the baked `P_sparsity`, `A_sparsity`, and `G_sparsity` order. `P_sparsity` contains the upper triangle.
+- An omitted bound uses the QP family's `1e30` sentinel.
+
+**NLP** (`kind == "nlp"`, selected by `al.solver(problem, "ipopt")` or `"sqp"`):
+
+- The problem shape is `min f(x,p)` subject to `h_eq(x,p) = 0`, two-sided inequalities, and box bounds.
+- Core concatenates the variable leaves into one internal `x` for the oracles. `desc.base` maps `(x, *params)` to `f` and, when constraints exist, stacked `g = [h_eq; g_ineq]`.
+- `desc.grad` has the same inputs and returns the dense objective gradient. `desc.jac` returns the compact sparse Jacobian of `g` in `desc.jac_sparsity` order.
+- `desc.hess` takes `(x, *params, lam:f[, lam:g])` and returns the compact Lagrangian Hessian in `desc.hess_sparsity` order.
+- `desc.bounds` takes only parameter leaves and returns `x_lb, x_ub[, l_ineq, u_ineq]`.
+- Core asks the backend for `hess_triangle` and hands the wrapper an oracle and pattern already cut to that layout. IPOPT selects lower; alloy-sqp selects upper.
+- Any NLP oracle may instead be an `ExternalOracle` with the same signature. Its source defines `raw_symbol` using the flat-buffer convention, and `workspace_size` contributes to root and nested workspace packing.
+- An omitted NLP bound uses `2e19`.
 
 ## Versioning
 
@@ -195,11 +177,12 @@ the stats-v3 per-solve diagnostics tail (`primal_viol`, `step_inf`, `alpha`,
 `merit_penalty`, `backtracks`, `qp_iter` — appended after `_pad0`, struct
 grows from 96 to 136 bytes); v5 = backend-selected NLP Hessian triangles and
 the compact oracle output convention that the descriptor pattern is the
-handed layout.
+handed layout; v6 = typed `Problem`/`Function` solver signatures, variable-block metadata,
+and the fixed warm-start and result order.
 
 ## What core owns (and plugins must not duplicate)
 
-- Problem normalization and oracle assembly (`al.qp` / `al.nlp`), including
+- Problem normalization and oracle assembly (`al.problem` / `al.solver`), including
   derivative factories and sparsity detection.
 - The universal C ABI entry point, workspace packing, and the `_raw` kernel
   rendering (Program IR).
@@ -207,7 +190,7 @@ handed layout.
   `alloy_clock_s` — plugins fill/use them, never redefine them.
 - JIT compilation, caching (source + flags keyed), and library/header
   discovery.
-- The Python-side `SolverFunction` call surface, `last_stats`/`last_status`.
+- The typed `Function` call surface and `Function.solver_stats()`.
 
 ## Checklist for a new plugin
 

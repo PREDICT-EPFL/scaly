@@ -128,9 +128,9 @@ caught at the boundary that produced it rather than as strange C much later.
 import alloy as al
 from alloy.passes.lowering import lower_function
 
-@al.function("f", {"x": 3})
-def f(x):
-    return {"y": (x.sin() + x * x).sum()}
+@al.function(al.L("x", 3), al.L("y", ...))
+def f(x: al.Expr) -> al.Expr:
+    return (x.sin() + x * x).sum()
 
 print(al.render_program_assembly(lower_function(f)))
 ```

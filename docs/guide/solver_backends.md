@@ -1,7 +1,7 @@
 # Solver backends
 
 Three backends ship with alloy. Each is a separate distribution under `plugins/`, discovered by
-entry point, so installing one is what makes its name available to `al.qp` or `al.nlp`. This page
+entry point, so installing one is what makes its name available to `al.solver(problem, backend)`. This page
 is what each one is, when to reach for it, and what it costs you to ship.
 
 How to *use* a solver — problem shapes, calling conventions, nesting one in a graph — is
@@ -13,9 +13,9 @@ How to *use* a solver — problem shapes, calling conventions, nesting one in a 
 | | **PIQP** | **IPOPT** | **alloy-sqp** |
 | --- | --- | --- | --- |
 | Solves | quadratic programs | nonlinear programs | nonlinear programs |
-| Reached through | `al.qp(solver="piqp")` | `al.nlp(solver="ipopt")` | `al.nlp(solver="sqp")` |
+| Reached through | `al.solver(problem, "piqp")` | `al.solver(problem, "ipopt")` | `al.solver(problem, "sqp")` |
 | Method | proximal interior point | primal-dual interior point, filter line search | sequential quadratic programming, PIQP subproblems |
-| Sparse data | `sparse=True` for the problem data | sparse Jacobian and Hessian, always | sparse oracles always; sparse subproblems by default, `qp="dense"` to switch |
+| Sparse data | `options={"sparse": True}` for the problem data | sparse Jacobian and Hessian, always | sparse oracles always; sparse subproblems by default, `qp="dense"` to switch |
 | Exact Lagrangian Hessian | n/a (the Hessian is your `P`) | yes, default | yes, default; `hessian="objective"` to approximate |
 | Warm start | no — upstream has no C API for it | primal always; multipliers only if you ask | primal and dual, always |
 | Foreign oracles | no | no | yes, see [below](#driving-the-sqp-with-foreign-oracles) |
@@ -28,7 +28,7 @@ barrier-function filter qualifies: this repository's own safety-filter benchmark
 inside its constraints, so it is an NLP.)
 
 **Reach for IPOPT** when the problem is nonlinear and you want a solver with two decades of use
-behind it and its own extensive documentation. It is the default for `al.nlp`.
+behind it and its own extensive documentation. Select it with `al.solver(problem, "ipopt")`.
 
 **Reach for alloy-sqp** when you want the solve itself in generated C with no external solver
 binary beyond PIQP, when you want to read and modify the solver, or when your oracles come from
@@ -36,10 +36,10 @@ somewhere other than alloy. It is the newest of the three and the least battle-t
 
 ## PIQP
 
-A proximal interior-point QP solver. Reached with `al.qp(...)`, which uses it by default.
+A proximal interior-point QP solver. Select it with `al.solver(problem, "piqp")`.
 
-**Dense by default, sparse on request.** `al.qp(...)` assembles the problem for PIQP's dense
-interface unless you pass `sparse=True`, which instead derives the structural patterns of `P`,
+**Dense by default, sparse on request.** `al.solver(problem, "piqp")` assembles the problem for PIQP's dense
+interface unless you pass `options={"sparse": True}`, which instead derives the structural patterns of `P`,
 `A_eq` and `G_ineq` once and bakes them into the wrapper as static CSC tables, so each solve
 refills values only. Which is faster depends on how sparse your data actually is; there is no
 measurement in this repository comparing the two, so try both if it matters.
@@ -55,27 +55,26 @@ Two things only the sparse path does, and they are the reasons to think before s
   such restriction at all, which is why the
   [nesting example](solvers.md#nesting-a-solver-in-a-graph) works.
 
-**Symmetry.** With `sparse=True`, exactly the upper triangle of `P` is baked — PIQP's symmetric
-contract — so an asymmetric `P` behaves as if symmetrized from that triangle. The dense path hands
-PIQP the full matrix and what it does with an asymmetric one is internal to the solver. Either way,
-pass a symmetric `P`.
+**Symmetry.** Alloy extracts the objective Hessian before either PIQP path. For `0.5 * x @ P @ x`,
+both paths therefore use `0.5 * (P + P.T)`. The sparse path bakes exactly its upper triangle. Pass a
+symmetric `P` when that distinction matters.
 
 **Options** pass straight through to `piqp_settings` field names, unvalidated in Python. An unknown
 name is spliced into the generated wrapper and surfaces as a `JitError` from the C compiler saying
 `piqp_settings` has no such member.
 
-**No warm start.** PIQP's C interface exposes no warm-start entry point, so `al.qp` accepts the
-dual inputs for symmetry with `al.nlp` and ignores them. Repeated solves are still cheaper than the
+**No warm start.** PIQP's C interface exposes no warm-start entry point, so the fixed typed solver signature includes
+warm-start inputs, which PIQP ignores. Repeated solves are still cheaper than the
 first: the wrapper keeps a persistent workspace and re-solves after a value update rather than
 rebuilding.
 
 ## IPOPT
 
-The COIN-OR interior-point NLP solver, and the default for `al.nlp(...)`.
+The COIN-OR interior-point NLP solver. Select it with `al.solver(problem, "ipopt")`.
 
 Alloy feeds it a compact sparse constraint Jacobian and a compact sparse Lagrangian Hessian, both
 built through `Function.factory` from the same `al.factory.SpJac` and `al.factory.SpHess` requests
-any user can make. IPOPT consumes the lower triangle. `al.nlp` asks for that triangle when it builds
+any user can make. IPOPT consumes the lower triangle. `al.solver` asks for that triangle when it builds
 the descriptor, so the descriptor pattern and oracle values already match and the generated wrapper
 writes them directly into IPOPT's value buffer.
 
@@ -168,8 +167,8 @@ Because the option is baked into the generated C, turning it on recompiles the s
 
 `alloy_sqp.external_nlp` builds the same solver interface around oracles alloy did not generate.
 You supply C source defining the oracle symbols — `base`, `grad`, `hess` and `bounds`, plus `jac`
-once there are constraints, with the same signatures `al.nlp` would have produced — along with the
-sparsity patterns, and get back an ordinary `SolverFunction`:
+once there are constraints, with the same signatures typed problem construction produces — along with the
+sparsity patterns, and get back an ordinary typed `Function`:
 
 ```python
 from alloy_sqp import external_nlp

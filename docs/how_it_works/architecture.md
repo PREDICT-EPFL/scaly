@@ -43,14 +43,16 @@ flowchart LR
 
 ```python
 import alloy as al
+import numpy as np
 
 
-@al.function("rosenbrock", {"x": 2})
-def rosenbrock(x):
-  return {"f": ((1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2).scalar()}
+@al.function(al.L("x", 2), al.L("f", ...))
+def rosenbrock(x: al.Expr) -> al.Expr:
+  return ((1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2).scalar()
 
-grad = rosenbrock.factory("rosenbrock_grad", ["x"], [al.factory.Grad("f", "x")])
-grad([1.0, 2.0])
+
+grad = al.gradient(rosenbrock, "f", "x")
+grad.numerical_call(np.array([1.0, 2.0]))
 ```
 
 | # | What happens | Where |
@@ -61,7 +63,7 @@ grad([1.0, 2.0])
 | 4 | The result is another `Function`, in the same dialect as the first. Nothing has been compiled yet. | `function/model.py` |
 | 5 | Calling it runs `__call__` → `eval_list` → `_compile`, which reaches the backend through `_jit()` — the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](#the-two-sanctioned-exceptions) to the layering. | `function/model.py` |
 | 6 | `CompiledFunction` asks `_build_artifact` for a shared library, which calls `render_c_module`. That lowers the function **once** into a render context every artifact reads from. | `codegen/jit.py`, `codegen/aot.py` |
-| 7 | `lower_function` walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a `SolverFunction` callee stays opaque. | `passes/lowering.py` |
+| 7 | `lower_function` walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a Function carrying a solver descriptor stays opaque. | `passes/lowering.py` |
 | 8 | `optimize_program` runs the registered pipeline: `fuse_elementwise`, `unroll_unit_loops`, `pack_workspace`. | `passes/program.py` |
 | 9 | `verify_program` checks the result before anything renders it. | `ir/program_spec.py` |
 | 10 | `render_program_c` emits the translation unit: the callee bodies, then the one entry point exported through the **universal ABI** — the single pointer-array C signature every generated function shares. | `codegen/c.py` |
@@ -115,18 +117,20 @@ src/alloy/
     abi.py               the universal C ABI: signature, status codes, mangling, typed buffers
     c.py                 ProgramNode -> standalone scalar C; no lowering policy of its own
     __main__.py          `python -m alloy.codegen`, the AOT command line
-    solver.py            the SolverFunction wrapper framing around a plugin-rendered body
+    solver.py            solver-wrapper framing around a plugin-rendered body
     aot.py               one lowering -> CModule, the file-writing driver, the CLI
     jit.py               CModule -> compile, cache, dlopen, ctypes dispatch
     toolchain.py         C compiler discovery, cache root, the diagnostics report
 
   solvers/
-    solver_function.py   SolverFunction and SolverDescriptor
+    model.py             SolverDescriptor and its opaque plain Function
+    problem.py           typed backend-free Problem declarations
+    solver.py            backend selection
     graph.py             the solver queries over a Function graph
     registry.py          plugin discovery and protocol validation
     paths.py             vendored solver library and header discovery
     stats.py             the versioned solver-statistics ABI and SolverStatus
-    qp.py nlp.py         al.qp(...) / al.nlp(...)
+    qp.py nlp.py         quadratic proof/extraction and NLP oracle construction
     _oracle.py           shared oracle-assembly helpers
 
   viz/
@@ -340,9 +344,9 @@ that was armed elsewhere.
 
 ### Solvers — `solvers/`, `plugins/`
 
-`al.qp(...)` and `al.nlp(...)` return a `SolverFunction`: a real `Function` whose body is
-`ExprOp.SOLVER_CALL` nodes sharing a `SolverDescriptor`. Because it is an ordinary `Function`,
-`solver.call([...])` returns `Expr`s and a solver nests directly inside a larger graph.
+`al.problem(...)` declares a typed backend-free problem. `al.solver(...)` returns a plain `Function` whose body is
+`ExprOp.SOLVER_CALL` nodes sharing a `SolverDescriptor`. Its typed `symbolic_call(...)` returns the declared
+expression tree, so a solver nests directly inside a larger graph.
 `SOLVER_CALL` is non-differentiable.
 
 The solver wrapper is the one sanctioned non-program-dialect render path. `codegen/solver.py`
@@ -419,7 +423,7 @@ stay gone.
 - [Lowering and optimization](lowering.md) — the rule registry, the passes, the known limits
 - [Differentiation](autodiff.md) — how AD crosses calls and mapped structure
 - [The C ABI](c_abi.md) — the calling convention, status codes and sparse output tables
-- [Solvers](solvers.md) — what `al.qp` and `al.nlp` assemble underneath
+- [Solvers](solvers.md) — what typed problem and solver construction assemble underneath
 - [Solver plugins](../dev/solver_plugins.md) — the plugin protocol and the `render_wrapper` contract
 - [Conventions](../dev/conventions.md) — naming rules and the test/benchmark boundary
 - [Versioning](../dev/versioning.md) — the pre-1.0 compatibility policy

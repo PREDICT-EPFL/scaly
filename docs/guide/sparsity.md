@@ -113,7 +113,7 @@ The same machinery gives compact Hessians, including Lagrangian ones:
 
 ```python
 al.sparse_hessian(fn, "f", "x")
-al.sparse_lagrangian_hessian(fn, ["f", "g"], "x")
+al.sparse_lagrangian_hessian(fn, "x")
 ```
 
 The Hessian path symmetrizes its structural pattern and uses one global star coloring. This keeps
@@ -127,8 +127,11 @@ VMAP Jacobian path intentionally remains one-sided and colors each local tile wi
 A `TensorType` can carry a pattern, which the decorator accepts:
 
 ```python
-@al.function("f", {"J": al.TensorType((3, 4), al.dtypes.float64, sparsity=sp)})
-def f(J):
+@al.function(
+    al.L("J", al.TensorType((3, 4), al.dtypes.float64, sparsity=sp)),
+    al.L("out", ...),
+)
+def f(J: al.Expr) -> al.Expr:
     ...
 ```
 

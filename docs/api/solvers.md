@@ -16,6 +16,10 @@
 
 ::: alloy.solvers.solver.solver
 
+::: alloy.solvers.qp.qp_problem
+
+::: alloy.solvers.qp.NotQuadratic
+
 ## Plugin descriptors
 
 ::: alloy.solvers.model.SolverDescriptor

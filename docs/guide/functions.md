@@ -1,176 +1,138 @@
 # Building functions
 
-A `Function` is a named graph: named inputs, named outputs, and the expression graph between them.
-It is the unit of composition, of differentiation and of compilation, and almost everything in
-alloy is either building one or transforming one.
+A `Function` is a named expression graph with declared input and output trees. The same trees
+describe symbolic calls with `Expr` leaves and numerical calls with NumPy-array leaves. They also
+give ty enough information to reject a call with the wrong structure.
 
-## Two ways to build
+## Declare a function
 
-The decorator is the usual one. Declare the input shapes, write the body, return a dictionary:
+Build trees from two constructors:
+
+- `al.L(name, shape)` declares one tensor.
+
+- `al.G(*trees)` groups two to eight trees and may be nested.
+
+An integer shape means a rank-1 tensor, `()` is a scalar, and a tuple is used as written. Pass a
+`TensorType` when you need an explicit dtype or differentiability flag.
 
 ```python
 import alloy as al
+import numpy as np
 
-@al.function("f", {"x": 3, "A": (2, 3)})
-def f(x, A):
-    return {"y": (A @ x).sum()}
+@al.function(
+    al.G(al.L("x", 3), al.L("A", (2, 3))),
+    al.G(al.L("sum", ...), al.L("projection", 2)),
+)
+def features(inputs: tuple[al.Expr, al.Expr]) -> tuple[al.Expr, al.Expr]:
+    x, A = inputs
+    return x.sum(), A @ x
 ```
 
-Your parameters arrive as `Expr` inputs of the declared shapes. An `int` means a rank-1 shape, a
-tuple is used as given, and a `TensorType` lets you set a dtype or attach sparsity.
+The decorator traces the body once with symbolic inputs. The body takes one value with the declared
+input structure and returns one value with the declared output structure.
+Use `...` when an output shape should be inferred. A written output shape is checked immediately.
+The decorator also rejects the wrong output count or structure.
+Names are external metadata. They need not match the body's local variable names. They identify
+derivative inputs and outputs, generated C buffers, sparse tables, and assembly text, so each name
+must be unique within its tree.
 
-Building explicitly does the same thing with the pieces visible:
+## Symbolic and numerical calls
+
+Use the typed call that matches the leaf kind:
 
 ```python
-x = al.sym("x", 3)
-y = (x.sin() + x * x).sum()
-f = al.Function("f", [x], [y], ["x"], ["y"])
+symbolic = features.symbolic_call((al.sym("x0", 3), al.sym("A0", (2, 3))))
+numeric = features.numerical_call((np.ones(3), np.eye(2, 3)))
+
+symbolic_sum, symbolic_projection = symbolic
+numeric_sum, numeric_projection = numeric
 ```
 
-`al.sym` creates a named input. `al.const` wraps a NumPy array as a constant. Both return `Expr`
-nodes, and every operation on an `Expr` builds another node rather than computing anything.
+`symbolic_call` creates first-class `CALL` nodes in a larger expression graph. `numerical_call`
+compiles on first use, caches the shared library, and reconstructs the declared output tree.
+Structure is checked statically by ty and again at runtime. Shapes are checked at runtime because
+shapes are values in Python's type system.
+The lower-level compatibility calls remain available:
 
-Returning a tuple or a single expression instead of a dictionary works too; outputs are then named
-`out0`, `out1`, and so on. Naming them is usually worth it — the names become the generated C
-symbols and the handles you use in derivative requests.
+- `fn.call([...])` accepts flat symbolic arguments and returns a flat tuple.
 
-## Calling one
+- `fn(...)` accepts flat numerical arguments and returns one array or a flat tuple.
+
+- `fn.eval_list(...)` always returns a flat list.
+
+Use the tree calls in typed code.
+
+## Grouping and the C signature
+
+Grouping exists for Python readability and typing. The generated signature uses the leaves in tree
+order. These declarations therefore have the same flat input signature:
 
 ```python
-f(x_value)                    # positional, in declared input order
-f(x=x_value, A=a_value)       # or by name — not both at once
+nested = al.G(
+    al.G(al.L("state", 4), al.L("control", 2)),
+    al.G(al.L("weights", 10), al.L("dt", ())),
+)
+flat = al.G(
+    al.L("state", 4),
+    al.L("control", 2),
+    al.L("weights", 10),
+    al.L("dt", ()),
+)
 ```
 
-What comes back depends on how many outputs there are: **one output returns the array itself,
-several return a tuple** in declared order. `f.output_names` is the order. If you would rather have
-the list either way, `f.eval_list(...)` always returns one.
+Choose the grouping that matches the domain object passed by the caller.
 
-A `SolverFunction` from `al.qp` or `al.nlp` is the exception — it returns a dict keyed by output
-name, because a solve has half a dozen outputs and positional indexing into them is a bug waiting
-to happen. See [Solvers](solvers.md).
+## Compose functions
 
-## Shapes
-
-Shapes are static tuples of non-negative integers, and `()` is a scalar. There are no symbolic
-dimensions: a function for a horizon of 10 and a function for a horizon of 40 are two functions.
-
-Arithmetic broadcasts the NumPy way. Mixed dtypes do not promote — combining `float32` and
-`float64` raises rather than silently widening.
-
-Everyday operations, all of which return new `Expr` nodes:
+`symbolic_call` preserves the callee as a call in the graph:
 
 ```python
-x[2]            x[1:4]         x[:, 0]        # indexing and slicing
-x.reshape((2, 3))              x.transpose((1, 0))
-A @ x                          x.sum()        # a full reduction to a scalar
-x.sin()   x.exp()   x.sqrt()   abs(x)
-al.stack([a, b])               al.concat([a, b])
-al.dot(a, b)     al.sumsqr(x)     al.norm_2(x)
-al.gather(x, idx)              al.scatter(x, idx, shape)
-al.split(x, 3)                 al.vec(x)      # flatten to rank 1
+@al.function(al.L("x", 3), al.L("square", ...))
+def square(x: al.Expr) -> al.Expr:
+    return x * x
+
+@al.function(al.L("x", 3), al.L("energy", ...))
+def energy(x: al.Expr) -> al.Expr:
+    return square.symbolic_call(x).sum()
 ```
 
-The full operation set is in [the expression dialect](../how_it_works/expr_ir.md#operations).
-
-## Calling one function from another
-
-`Function.call` puts a first-class call node in the graph:
-
-```python
-@al.function("stage", {"z": 4, "u": 2})
-def stage(z, u):
-    return {"znext": z + 0.1 * al.concat([z[2:], u])}
-
-@al.function("horizon", {"z0": 4, "us": (10, 2)})
-def horizon(z0, us):
-    z = z0
-    for k in range(10):
-        z = stage.call([z, us[k]])[0]
-    return {"zN": z}
-```
-
-`call` returns a tuple with one `Expr` per callee output, so take the one you want. Arguments are
-checked against the callee's formals by shape, and constants are converted for you.
-
-This matters more than it looks. The call is *not* inlined: `stage` appears once in the generated C
-and `horizon` calls it ten times, so source size stays flat as the horizon grows. Derivatives
-preserve the same structure — forward mode builds one derivative of `stage` and calls it ten times
-rather than emitting ten copies.
+The generated C contains one `square` procedure and a call from `energy`. Differentiation preserves
+that boundary instead of copying the callee graph into every call site.
 
 ## Regular repetition: `vmap`
 
-When every iteration is the same callee applied to a different slice, say so. `al.vmap` keeps the
-repetition as a single node, which survives lowering into a real loop and differentiation into a
-mapped derivative:
+Use `al.vmap` when every iteration applies the same function to a different slice. The mapping
+stays one node through differentiation and lowers to a C loop.
 
 ```python
-@al.function("body", {"a": 3})
-def body(a):
-    return {"o": a.sum().reshape((1,))}
+@al.function(al.L("x", 3), al.L("sum", ...))
+def reduce3(x: al.Expr) -> al.Expr:
+    return x.sum().reshape((1,))
 
-xs = al.sym("xs", (15,))
-mapped = al.vmap(body, 5, [(xs, 0, 3)])     # 5 iterations, reading xs[0:3], xs[3:6], ...
-mapped.shape                                 # (5,)
+xs = al.sym("xs", 15)
+mapped = al.vmap(reduce3, 5, [(xs, 0, 3)])
 ```
 
-The arguments are the callee, the number of iterations, and one `(outer, start, stride)` per callee
-input. Iteration `i` reads `outer[start + i*stride : start + i*stride + formal.size]`. Outer tensors
-must be rank 1; the callee's own formals and outputs may be rank 2. Outputs are concatenated flat,
-so the node's shape is `(length * output.size,)`.
+Each input specification is `(outer, start, stride)`. Iteration `i` reads a slice beginning at
+`start + i * stride`. A zero stride broadcasts one slice across every iteration. See
+[Sparsity](sparsity.md) for how mapped structure reduces derivative construction and generated
+source size.
 
-A `stride` of `0` broadcasts — every iteration reads the same slice, which is how a shared parameter
-rides along. You can also pass a mapping from callee input name to spec, which is easier to read
-when there are several.
-
-`vmap` is what makes a multistage problem scale. A hundred-stage constraint is one node, its sparse
-Jacobian is computed by coloring the *callee's* small pattern once, and the generated code stays
-roughly constant in size. See [Sparsity](sparsity.md) and
-[the numbers](../results/scalability.md).
-
-There is no loop-carried state: every iteration is independent. A stride of zero broadcasts the
-same slice to every iteration.
-
-## Lowering hints
-
-Every expression carries a preference for how it should eventually be computed:
+## Inspect and verify
 
 ```python
-sparse_part = (x.sin() + x * x).scalar()   # prefer unrolled scalar code
-dense_part = (A @ x).block()               # prefer loops
-boundary = dense_part.opaque()             # keep this a named boundary
+al.verify_expr(symbolic_projection)
+print(al.format_expr(symbolic_projection))
+print(al.render_expr_assembly(features))
 ```
 
-Today these are recorded, printed and inspectable, and the lowerer runs everything through its
-default policy — with one exception: `opaque` genuinely stops the lowerer looking inside, which is
-how a solver stays a call. Region formation on `scalar` and `block` is open work, so treat them as
-documentation of intent for now.
+Construction checks declarations and shapes. `al.verify_expr` checks the complete expression graph
+and raises `VerifyError` at the first invalid node.
 
-## Checking a graph
+## Lowering hints and placement
 
-Construction checks the cheap things. For everything else there is an explicit verifier:
-
-```python
-al.verify_expr(y)     # silent on success, VerifyError at the first bad node
-```
-
-Run it after a non-trivial rewrite, and write negative tests against it.
-
-To look at what you built:
-
-```python
-y.debug()                            # topological dump with %0, %1, ... names
-al.format_expr(y)                    # the same, as a string
-al.render_expr_assembly(f)           # stable assembly text, good for diffs and tests
-```
-
-## Placement
-
-A function can be placed on a device:
-
-```python
-fn_gpu = fn.with_device("cuda:0")
-```
-
-Placement is checked against the backend's capabilities when the function is constructed, so
-putting a `float64` graph on a backend without `float64` fails immediately, naming the input. Today
-only `host` actually lowers; other placements are tracked and printed, and raise when called.
+`scalar()`, `block()`, and `opaque()` record lowering preferences on expressions. `opaque()` is
+also a real boundary that prevents the lowerer from looking inside. The other hints currently
+document intent while the default lowering policy remains in control.
+`fn.with_device("cuda:0")` records device placement and validates dtypes against the backend
+capability table. Only host lowering is implemented today.

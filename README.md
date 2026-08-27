@@ -8,15 +8,16 @@ and generates standalone C that runs with no Python anywhere near it.
 
 ```python
 import alloy as al
+import numpy as np
 
-@al.function("rosenbrock", {"x": 2})
-def rosenbrock(x):
-    return {"f": ((1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2).scalar()}
+@al.function(al.L("x", 2), al.L("f", ...))
+def rosenbrock(x: al.Expr) -> al.Expr:
+    return ((1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2).scalar()
 
-rosenbrock([1.0, 2.0])                      # 100.0
+rosenbrock.numerical_call(np.array([1.0, 2.0]))  # 100.0
 
 grad = al.gradient(rosenbrock, "f", "x")
-grad([1.0, 2.0])                            # array([-400.,  200.])
+grad.numerical_call(np.array([1.0, 2.0]))        # array([-400.,  200.])
 ```
 
 The first call compiled that function to C, built a shared library and cached it. There is no
@@ -36,7 +37,7 @@ uv run python -m alloy.codegen mymodule:rosenbrock -o generated/
 - **Structure that survives codegen.** codegenerating the same function evaluated in a loop preserves the loop through
   differentiation and code generation, so a hundred-stage horizon produces roughly the code of a
   one-stage horizon.
-- **Solvers as graph nodes.** `al.qp(...)` and `al.nlp(...)` return real functions, so a solver
+- **Solvers as graph nodes.** `al.problem(...)` declares a backend-free problem and `al.solver(...)` returns a real function, so a solver
   can be nested inside a larger model and the whole thing compiles into one artifact that links
   against PIQP or IPOPT directly.
 - **One C ABI.** A single CasADi-style signature per generated function, plus optional typed C++

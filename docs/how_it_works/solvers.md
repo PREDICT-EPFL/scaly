@@ -1,136 +1,126 @@
 # How solvers work
 
-A solver in alloy is not a library call wrapped in Python. It is a `Function` whose body happens to
-be a `solver_call`, whose data comes from ordinary alloy functions, and whose solve is a piece of
-generated C that drives a vendored solver directly. This page is what happens between
-`al.nlp(...)` and a number coming back.
+A solver in Alloy is a plain typed `Function` whose outputs are opaque `SOLVER_CALL` nodes sharing
+one `SolverDescriptor`. Its data comes from ordinary generated functions, and a plugin-owned C
+wrapper drives the native solver. Python is not part of a solve.
+The usage side is [Solvers](../guide/solvers.md). The plugin contract is [Solver
+plugins](../dev/solver_plugins.md).
 
-The usage side is [Solvers](../guide/solvers.md); writing a backend is
-[Solver plugins](../dev/solver_plugins.md).
+## From a Problem to oracles
 
-## Everything except the solve is an ordinary function
+`@al.problem` traces a `ProblemSpec` over declared variable and parameter trees. The resulting
+`Problem` is independent of a backend. `al.solver(problem, backend)` selects an entry point and
+builds the descriptor family required by its `kind`.
+Multi-block variables are concatenated into one internal decision vector for differentiation and
+native solver calls. Substitution maps each declared variable symbol to its slice of that vector.
+The solver function maps native results back to the declared variable tree.
+### Nonlinear-program oracles
 
-The builders assemble the data the backend needs as normal alloy `Function`s. They lower, optimize,
-render and compile exactly like anything else — only the final solve is opaque.
-
-**A QP needs one function.** Its inputs are the free parameters discovered in the symbolic
-arguments; its outputs are the flattened QP data: `P`, `c`, `A_eq`, `b_eq`, `G_ineq`, `l_ineq`,
-`u_ineq`, `x_lb`, `x_ub`. It is evaluated once per solve and the arrays are handed to PIQP.
-
-**An NLP needs four**, and three of them come from `Function.factory` — the same derivative
-machinery any user has:
-
-| Function | Built as | Provides |
+IPOPT and alloy-sqp consume the same normalized nonlinear-program oracles:
+| Oracle | Inputs | Outputs |
 | --- | --- | --- |
-| `nlp_base` | written directly | `(x, *params) -> (f, g_all)`, where `g_all = concat([h_eq, g_ineq])` |
-| `nlp_grad` | `al.gradient(nlp_base, "f", "x")` | dense objective gradient |
-| `nlp_jac` | `al.sparse_jacobian(nlp_base, "g", "x")` | compact sparse constraint Jacobian, pattern attached |
-| `nlp_hess` | `al.sparse_lagrangian_hessian(nlp_base, ["f", "g"], "x", triangle=backend.hess_triangle)` | compact sparse Lagrangian Hessian |
+| `base` | `(x, params)` | objective `f` and stacked constraints `g` |
+| `grad` | `(x, params)` | dense objective gradient |
+| `jac` | `(x, params)` | compact sparse Jacobian of `g` |
+| `hess` | `(x, params, lam:f[, lam:g])` | compact sparse Lagrangian Hessian |
+| `bounds` | `params` | variable and inequality bounds |
 
-For the Hessian, `lam:f` is the solver's objective factor and `lam:g` is its stacked multiplier
-vector at call time. The backend chooses one triangle when the descriptor is built: IPOPT uses the
-lower triangle and writes those oracle values directly into IPOPT's value buffer; alloy-sqp maps
-the handed coordinates into PIQP's upper-triangular CSC value order in `P_x`, whose structure comes
-from `P_p` and `P_i`, and adds its regularization terms there. The descriptor's `hess_sparsity` is
-the exact compact output pattern handed to the backend, so IPOPT needs no full-pattern buffer or
-per-call gather.
+Equalities come first in `g`, followed by bounded inequalities. The backend chooses the Hessian
+triangle: IPOPT asks for lower and alloy-sqp asks for upper.
+A `Problem` caches `base`, `grad`, `jac`, the full Hessian construction, and `bounds`. It also
+caches one compact Hessian function per requested triangle. Building two solver artifacts from one
+problem therefore shares all compatible machinery without giving the artifacts the same C symbols.
+### Quadratic-program proof and extraction
 
-A fifth small function, `nlp_bounds`, evaluates the parameter-dependent `x_lb`, `x_ub`, `l_ineq` and
-`u_ineq` once per solve.
+A QP backend first proves the specialization structurally:
+- the objective Hessian does not depend on the variables;- each constraint Jacobian does not depend on the variables;- variable and constraint bounds do not depend on the variables.
+The proof uses `_jac_mask` over the real derivative expressions. It does not evaluate at sample
+values. A rejected problem raises `NotQuadratic` during solver construction.
+After the proof, core substitutes `x = 0` to extract:
 
-The consequence worth noticing: **the sparse Lagrangian Hessian an NLP needs is the same
-`al.factory.SpHess` request any user can ask for.** There is no privileged internal path. Improving that construction
-improves both.
+```text
+P = hessian(f, x)
+c = gradient(f, x) at x = 0
+A = jacobian(h_eq, x)
+b = -h_eq at x = 0
+G = jacobian(g_ineq, x)
+bounds = declared bounds shifted by g_ineq at x = 0
+```
+
+One oracle maps the problem parameters to those QP buffers. `qp_problem` is only a typed
+matrix-data declaration; it goes through this same proof and extraction.
+With `options={"sparse": True}`, core derives fixed compressed sparse column patterns for `P`, `A`,
+and `G`. The oracle then emits only compact values in those orders.
+
+## One fixed solver signature
+
+Every backend receives the same flattened five-group call:
+
+```text
+inputs  = variables, box multipliers, equality multipliers, inequality multipliers, parameters
+outputs = variables, box multipliers, equality multipliers, inequality multipliers
+```
+
+The descriptor records `n_var_blocks` so a plugin can find the fixed groups and scatter its native
+flat solution into variable leaves. Empty multiplier categories remain zero-sized arrays. The
+objective and detailed status are reported through `SolverStats` rather than extra function
+outputs.
+`descriptor_function` creates one `ExprOp.SOLVER_CALL` node per output leaf. All nodes share the
+descriptor identity, so lowering emits one wrapper call and distributes its outputs.
 
 ## One solve path
 
-There is exactly one: the generated C wrapper. Every `SolverFunction` call compiles a
-self-contained translation unit whose wrapper calls `piqp_c` or `IpStdCInterface.h` directly against
-the generated oracle kernels, and fills the alloy-owned statistics struct. The same artifact serves
-a Python call, a nested solve inside a bigger graph, and an ahead-of-time deployment.
-
-The Python-interleaved backends that used to exist — a nanobind PIQP extension, ctypes IPOPT
-callbacks — were deleted. The plugin packages now ship only the vendored native library, its
-headers, entry-point metadata, and a wrapper template.
+There is exactly one solve path: generated C. The same artifact serves:
+- `Function.numerical_call` through the just-in-time cache;- a `symbolic_call` nested in a larger graph;- ahead-of-time C deployment.
+A plugin package ships a native library, headers, entry-point metadata, and `render_wrapper`. It
+ships no Python numerical solver.
 
 ## The pieces
 
 | Module | Owns |
 | --- | --- |
-| `solvers/qp.py`, `solvers/nlp.py` | the builders: oracle and derivative assembly, and the `SolverDescriptor` |
-| `solvers/_oracle.py` | `collect_free_inputs` — walks the graph and returns the unique input nodes in deterministic order |
-| `solvers/solver_function.py` | `SolverFunction`: a real `Function` whose outputs are `solver_call` nodes; dispatches through the JIT and refreshes `last_stats` |
-| `solvers/registry.py` | entry-point discovery and the `SolverBackend` protocol |
-| `solvers/graph.py` | the queries over a graph — which functions are solvers, what a descriptor drives, which backends are reachable, what flags they need |
-| `solvers/paths.py` | vendored library and header discovery behind those flags |
-| `solvers/stats.py` | the versioned statistics layout and the status enum |
-| `codegen/solver.py` | frames each plugin-rendered wrapper body with alloy-owned statistics storage and accessor |
-| `plugins/alloy-{piqp,ipopt,sqp}` | the vendored libraries and the per-backend C wrapper templates |
+| `solvers/problem.py` | `ProblemSpec`, `Problem`, bounds, and tracing |
+| `solvers/nlp.py` | shared nonlinear-program oracle construction |
+| `solvers/qp.py` | quadratic proof, extraction, sparse patterns, and `qp_problem` |
+| `solvers/solver.py` | backend selection |
+| `solvers/model.py` | `SolverDescriptor` and its plain `Function` |
+| `solvers/registry.py` | entry-point discovery and protocol validation |
+| `solvers/graph.py` | solver reachability and link-flag queries |
+| `solvers/paths.py` | vendored library and header discovery |
+| `solvers/stats.py` | the versioned statistics layout and statuses |
+| `codegen/solver.py` | Alloy-owned wrapper framing and statistics accessors |
+| `plugins/alloy-{piqp,ipopt,sqp}` | backend metadata and C wrapper templates |
 
 ## What the generated wrapper contains
 
-**For PIQP**, the wrapper calls the rendered oracle to fill the QP data, then either transposes
-`P`, `A` and `G` into PIQP's column-major layout (the dense path) or hands compact CSC-ordered
-values to statically baked pattern tables (the sparse path). It lazily sets up a static workspace
-and dispatches `piqp_update_{dense,sparse}` followed by `piqp_solve` on every call.
-
-**For IPOPT**, the generated source emits rather more: a static context struct holding parameter
-pointers, the caller's workspace and the timing and evaluation counters; `static const int` arrays
-for the sparse Jacobian and handed Hessian-triangle patterns; five `eval_*` callbacks bridging
-IPOPT into the rendered kernels, each timed, each counted, and each receiving the caller's `w` —
-which is required scratch space, not an optional extra; and an intermediate callback recording the
-iteration count.
-
-The wrapper body computes bounds through the rendered bounds function, clamps them to IPOPT's
-±2e19 infinity convention, creates the problem, applies the descriptor's options, seeds `mult_g`
-from the initial equality and inequality multipliers and `mult_x_L`/`mult_x_U` from the sign-split
-box multipliers, solves, writes the seven outputs, and maps `ApplicationReturnStatus` onto the alloy
-status enum using the vendored header's own enum constants — so an upstream change breaks at compile
-time rather than silently remapping a status.
-
-Failures are handled rather than propagated as garbage: a rejected option surfaces as `ERROR`
-statistics with a native status of `Invalid_Option` or `Invalid_Problem_Definition`, and defined
-outputs (`x = x0`, zeros elsewhere).
-
-**The SQP plugin** assembles its subproblem through PIQP's sparse interface by default
-(`qp="dense"` switches to the dense one, which is slower at every benchmark point measured here).
-Because the Jacobian and Hessian patterns are fixed across iterations, it bakes the CSC index tables
-at codegen time and refills only values, through a permutation mapping each oracle's own buffer
-order onto CSC order.
-
-Its Hessian handling is worth recording. Equality-constrained problems regularize in the
-constraint-normal space, `H + rho A' A + regularization I`, accumulated row by row; the added
-quadratic is constant over the linearized equality manifold, so it does not damp the feasible
-direction. `rho` escalates by decades until the model is positive definite, and if an exact
-Lagrangian Hessian still has negative reduced curvature the model falls back to the objective
-Hessian and stops escalating `rho` — which keeps exact Hessians as the default without letting that
-term grow until it manufactures a false stationarity floor. The fallback model is still
-regularized and still goes through the repairing factorization below. Inequality-only models keep their exact active-constraint
-curvature.
-
-Positive definiteness is tested and repaired in one modified LDL' pass over the assembled `P`,
-using an elimination tree and factor column counts computed at codegen time. A pivot below the
-regularization floor is raised to its own magnitude; since only the diagonal is touched, the
-factorization equals the assembled `P` plus that diagonal shift, and the shift is exactly zero when
-the model was already positive definite. The pass costs `O(nnz(L))`, which is what makes escalating
-`rho` cheap enough to do inside every iteration.
+The PIQP wrapper calls the QP oracle once per solve. Its dense path transposes row-major matrices
+into PIQP's column-major buffers. Its sparse path uses baked compressed sparse column tables and
+updates values only. PIQP keeps one static workspace and calls `piqp_update_dense` or
+`piqp_update_sparse` before `piqp_solve`.
+The IPOPT wrapper emits a static context, Jacobian and Hessian index tables, and callbacks into the
+rendered oracles. Each callback receives the caller's packed workspace, updates timing and
+evaluation counters, and writes directly in the descriptor's sparse order. The wrapper maps the
+typed warm start to IPOPT's primal, constraint-dual, and sign-split box-dual buffers.
+The alloy-sqp wrapper assembles each subproblem for PIQP. It bakes permutations from oracle
+sparsity order to compressed sparse column order and refills values at each iteration. Its modified
+LDL factorization regularizes the quadratic model while preserving the fixed structural pattern.
+Every wrapper fills the Alloy statistics structure on success and failure. Native status values are
+mapped through constants from the vendored headers, so an upstream enum change fails at compile
+time instead of silently changing meaning.
 
 ## Compiling and linking
 
-When a `SolverFunction` is reachable from the function being compiled, the JIT adds the include,
-library, run-path and link flags for every plugin reached. A nested safety filter — QP or NLP —
-therefore compiles to a single shared library that links directly against the vendored solver and
-is callable from C++ through the universal ABI.
-
-Wrapper state lives in per-symbol statics, which is what makes distinct solvers independent inside
-one translation unit and what makes any single solver non-reentrant. See
-[the ABI](c_abi.md#solver-bearing-modules).
+When a solver function is reachable, ahead-of-time rendering and the JIT add the headers,
+libraries, runtime paths, and link flags for every reached backend. Oracles, wrapper, and host
+function occupy one translation unit.
+Wrapper state is stored in per-symbol statics. Distinct solver artifacts in one translation unit
+are independent, but one compiled solver is not reentrant. See [the C
+ABI](c_abi.md#solver-bearing-modules).
 
 ## Open work
 
-- Warm-start handover into PIQP — upstream has no C API for it.
-- Differentiating through `solver_call` via the implicit function theorem. Today derivatives
-  through a solve are zero.
-- Deduplicating identical solver call sites. Several outputs taken from one `solver.call(...)`
-  already lower to a single program-dialect call, but two separate call sites with identical
-  arguments are not merged.
+- Warm-start handover into PIQP; its C API does not expose one.
+
+- Differentiation through `SOLVER_CALL` by the implicit function theorem.
+
+- Deduplicating separate solver call sites with identical arguments.
