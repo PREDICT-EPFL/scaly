@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 import alloy as al
-from alloy.ir.expr import topo
+from alloy.ir.expr import substitute, topo
 
 
 def test_elementwise_eval_and_topological_order() -> None:
@@ -170,3 +171,40 @@ def test_mixed_lowering_hints_survive_expr_graph() -> None:
   assert "scalar" in lowerings
   assert "block" in lowerings
   assert "opaque" in lowerings
+
+
+def test_substitute_rebuilds_changed_ancestors_and_preserves_sharing() -> None:
+  x = al.sym("sub_x", 3)
+  z = al.sym("sub_z", 3)
+  expr = (x * x + x).scalar()
+
+  actual = substitute(expr, {x: z})
+  expected = (z * z + z).scalar()
+
+  assert actual is expected
+  assert actual.lowering == expr.lowering
+  assert substitute(expr, {}) is expr
+
+
+def test_substitute_rejects_incompatible_shape_or_dtype() -> None:
+  x = al.sym("sub_bad_x", 2)
+  with pytest.raises(ValueError, match="cannot substitute"):
+    substitute(x + 1.0, {x: al.sym("sub_bad_z", 3)})
+
+
+def test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees() -> None:
+  formal = al.sym("sub_formal", 2)
+  callee = al.Function("sub_callee", [formal], [formal * formal], ["u"], ["y"])
+  x = al.sym("sub_actual_x", 2)
+  z = al.sym("sub_actual_z", 2)
+  called = callee.call([x])[0]
+  rewritten_call = substitute(called, {x: z})
+  assert rewritten_call is callee.call([z])[0]
+  assert rewritten_call.attrs["callee"] is callee
+
+  xs = al.sym("sub_vmap_x", 4)
+  zs = al.sym("sub_vmap_z", 4)
+  mapped = al.vmap(callee, 2, [(xs, 0, 2)])
+  rewritten_vmap = substitute(mapped, {xs: zs})
+  assert rewritten_vmap is al.vmap(callee, 2, [(zs, 0, 2)])
+  assert rewritten_vmap.attrs["callee"] is callee

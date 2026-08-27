@@ -256,6 +256,9 @@ tests/ir/test_expr.py::test_elementwise_eval_and_topological_order
 tests/ir/test_expr.py::test_mixed_lowering_hints_survive_expr_graph
 tests/ir/test_expr.py::test_shape_checks_for_structural_ops
 tests/ir/test_expr.py::test_structural_equality_collapses_to_identity
+tests/ir/test_expr.py::test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees
+tests/ir/test_expr.py::test_substitute_rebuilds_changed_ancestors_and_preserves_sharing
+tests/ir/test_expr.py::test_substitute_rejects_incompatible_shape_or_dtype
 tests/ir/test_program.py::test_buffer_address_space_validated
 tests/ir/test_program.py::test_buffer_dtype_and_device_recorded
 tests/ir/test_program.py::test_elementwise_kernel_verifies_and_prints

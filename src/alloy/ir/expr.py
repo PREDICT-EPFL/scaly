@@ -12,7 +12,7 @@ import math
 import weakref
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
 
@@ -775,6 +775,27 @@ def format_expr(outputs: Expr | Iterable[Expr]) -> str:
     lines.append(f"{lhs} = {rhs} : {e.type.dtype}{e.shape}")
   lines.append("outputs " + ", ".join(f"%{loc[e.id]}" for e in outs))
   return "\n".join(lines)
+
+
+def substitute(expr: Expr, replacements: Mapping[Expr, Expr]) -> Expr:
+  """Replace expressions simultaneously and rebuild only their changed ancestors."""
+  for source, replacement in replacements.items():
+    if source.shape != replacement.shape or source.type.dtype != replacement.type.dtype:
+      raise ValueError(
+        f"cannot substitute {source.name or source.op} {source.type.dtype}{source.shape} with "
+        f"{replacement.name or replacement.op} {replacement.type.dtype}{replacement.shape}"
+      )
+  rebuilt = {source.id: replacement for source, replacement in replacements.items()}
+  for node in topo((expr,)):
+    if node.id in rebuilt:
+      continue
+    args = tuple(rebuilt[arg.id] for arg in node.args)
+    rebuilt[node.id] = (
+      node
+      if all(before is after for before, after in zip(node.args, args, strict=True))
+      else Expr(node.op, args, node.type, node.name, node.value, dict(node.attrs), node.lowering)
+    )
+  return rebuilt[expr.id]
 
 
 def topo(outputs: Iterable[Expr]) -> list[Expr]:
