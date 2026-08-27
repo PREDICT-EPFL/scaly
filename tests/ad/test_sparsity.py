@@ -152,21 +152,25 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
   y = (x[0] * x[1]).sin() + (x[2] * x[3]).sin()
   full_expr = al.sparse_hessian(y, x)
   triangle_expr = al.sparse_hessian(y, x, triangle=triangle)
+  selected_expr = full_expr.triangle(triangle)
   full_sp, triangle_sp = full_expr.sparsity, triangle_expr.sparsity
   keep = np.asarray(full_sp.rows) >= np.asarray(full_sp.cols) if triangle == "lower" else np.asarray(full_sp.rows) <= np.asarray(full_sp.cols)
 
   assert triangle_sp.rows == tuple(np.asarray(full_sp.rows)[keep])
   assert triangle_sp.cols == tuple(np.asarray(full_sp.cols)[keep])
-  assert triangle_expr.coloring_width == full_expr.coloring_width
+  assert triangle_expr.coloring_width == selected_expr.coloring_width == full_expr.coloring_width
+  assert selected_expr._compressed is full_expr._compressed
+  np.testing.assert_array_equal(selected_expr._recovery, triangle_expr._recovery)
   value_fn = al.Function(
     f"triangle_expr_{triangle}",
     [x],
-    [full_expr.values, triangle_expr.values],
+    [full_expr.values, triangle_expr.values, selected_expr.values],
     ["triangle_x"],
-    ["full", "triangle"],
+    ["full", "triangle", "selected"],
   )
-  full_values, triangle_values = value_fn(np.array([0.2, 0.7, -0.3, 1.1]))
+  full_values, triangle_values, selected_values = value_fn(np.array([0.2, 0.7, -0.3, 1.1]))
   np.testing.assert_allclose(triangle_values, full_values[keep], rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(selected_values, triangle_values, rtol=1e-10, atol=1e-10)
 
   fn = al.Function("triangle_fn", [x], [y], ["triangle_x"], ["y"])
   full_fn = al.sparse_hessian(fn, "y", "triangle_x", name=f"triangle_fn_full_{triangle}")

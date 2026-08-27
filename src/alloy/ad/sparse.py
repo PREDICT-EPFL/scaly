@@ -7,7 +7,7 @@ the structured VMAP decomposition that keeps a multistage Jacobian from material
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
@@ -37,6 +37,8 @@ class SparseJacobian:
   sparsity: SparsityType
   values: Expr
   coloring_width: int | None = None
+  _compressed: Expr | None = field(default=None, compare=False, repr=False)
+  _recovery: np.ndarray | None = field(default=None, compare=False, repr=False)
 
   @property
   def flat_indices(self) -> np.ndarray:
@@ -44,6 +46,26 @@ class SparseJacobian:
 
   def to_dense(self) -> Expr:
     return scatter(self.values, self.flat_indices, self.sparsity.shape)
+
+  def triangle(self, triangle: Triangle) -> SparseJacobian:
+    """Select one triangle from a symmetric sparse matrix without rebuilding its JVP batch."""
+    triangle = _validate_triangle(triangle)
+    if triangle == "full":
+      return self
+    if self.sparsity.shape[0] != self.sparsity.shape[1]:
+      raise ValueError(f"triangle selection requires a square sparsity pattern, got {self.sparsity.shape}")
+    rows = np.asarray(self.sparsity.rows, dtype=np.int64)
+    cols = np.asarray(self.sparsity.cols, dtype=np.int64)
+    keep = rows >= cols if triangle == "lower" else rows <= cols
+    sparsity = SparsityType(
+      self.sparsity.shape,
+      tuple(int(row) for row in rows[keep]),
+      tuple(int(col) for col in cols[keep]),
+    )
+    source = self._compressed if self._compressed is not None else self.values
+    recovery = self._recovery[keep] if self._recovery is not None else np.flatnonzero(keep)
+    values = simplify_cse_fixpoint(gather(source, recovery))
+    return SparseJacobian(sparsity, values, self.coloring_width, source, recovery)
 
 
 def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> SparseJacobian:
@@ -85,7 +107,9 @@ def _sparse_jacobian_colored(
   else:
     flat = recovery_indices
   values = simplify_cse_fixpoint(gather(compressed, flat))
-  return SparseJacobian(sparsity, values, ncolors)
+  return SparseJacobian(
+    sparsity, values, ncolors, compressed if recovery_indices is not None else None, flat if recovery_indices is not None else None
+  )
 
 
 def _star_recovery_indices(sparsity: SparsityType, colors: tuple[int, ...]) -> np.ndarray:
@@ -306,14 +330,4 @@ def sparse_hessian(expr: Expr, wrt: Expr, *, triangle: Triangle = "full") -> Spa
   sparsity = _symmetrize_sparsity(jacobian_sparsity(gradient_expr, wrt))
   colors = star_coloring(sparsity)
   recovery = _star_recovery_indices(sparsity, colors)
-  if triangle != "full":
-    rows = np.asarray(sparsity.rows, dtype=np.int64)
-    cols = np.asarray(sparsity.cols, dtype=np.int64)
-    keep = rows >= cols if triangle == "lower" else rows <= cols
-    sparsity = SparsityType(
-      sparsity.shape,
-      tuple(int(row) for row in rows[keep]),
-      tuple(int(col) for col in cols[keep]),
-    )
-    recovery = recovery[keep]
-  return _sparse_jacobian_colored(gradient_expr, wrt, sparsity, colors, recovery)
+  return _sparse_jacobian_colored(gradient_expr, wrt, sparsity, colors, recovery).triangle(triangle)
