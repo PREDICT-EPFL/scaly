@@ -165,14 +165,15 @@ which is what fixes the spellings they use.
       one change, so no tree carries both spellings; tests and benchmarks, including the pinned
       pytest node-ID baseline; and the public docs are all on `VMAP`/`vmap`. `al.scan` and
       `al.map_` are gone. Completed 2026-08-26.
-- [ ] **D3. Decide the solver-problem construction API, then land what survives the decision.**
-      **Blocked on Ted, not on code.** The note is a draft that settles nothing: two sessions reached
-      similar but non-identical shapes and the standing objection is whether any of it is worth its
-      size. The parameter-ordering hazard and the differentiation paid for twice are concrete; the
-      rest is ergonomics over a surface that is already small. Sequencing is independent of D1.
-      D1 already moved the only consumer inside `src/` to the `(of, wrt)` argument order, so D3 does
-      not depend on that migration. It assumes D2's spellings. Design: refactorings.md "DRAFT:
-      solver problem construction".
+- [ ] **D3. Land the solver-problem construction API.** Decided 2026-08-27: inputs and outputs
+      are declared pytrees (`al.L` leaves, `al.G` groups) carrying both the symbolic and numeric
+      structure, `Function` generic in its two trees, derivatives keeping the source's inputs, one
+      `ProblemSpec` of expressions, one `al.solver` returning a plain `Function` whose QP backends
+      are gated by a structural quadratic proof, `qp_problem(n, n_eq, n_ineq)` as the typed data
+      form, and a `tests/typing/` harness under `ty check --error-on-warning`. Deletes `al.nlp`,
+      `al.qp` and `SolverFunction`. D2, D1, D1.5 and A11 have landed; the `ty>=0.0.75` bump it
+      needs is done. Design:
+      refactorings.md "Solver problem construction".
 - [ ] **D4. One matcher: op-indexed tables and one walk-rebuild.** Conditional by design — it lands
       only if the result is smaller than the 78 + 71 lines of `ir/match.py` and `ir/spec.py`, and
       closing the section unlanded is a permitted outcome that still has to be written down. After

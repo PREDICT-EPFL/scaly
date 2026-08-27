@@ -8,7 +8,7 @@ the structured VMAP decomposition that keeps a multistage Jacobian from material
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 import numpy as np
 
@@ -29,7 +29,7 @@ def _validate_triangle(triangle: object) -> Triangle:
   """Validate and type-narrow a sparse-Hessian layout selection."""
   if not isinstance(triangle, str) or triangle not in _TRIANGLES:
     raise ValueError(f"triangle must be one of {_TRIANGLES}, got {triangle!r}")
-  return cast(Triangle, triangle)
+  return triangle
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,191 +1,294 @@
 > Planned work, not a frozen record. One `#` section per refactoring; add new ones alongside
 > rather than editing settled ones, and remove a section once it has landed.
 
-# DRAFT: solver problem construction, decoupled from the solver
+# Solver problem construction: typed arity, one `Problem`, one `solver`
 
-**Draft, 2026-08-19. Not decided, and not to be implemented.** Two sessions explored this
-separately and reached similar but not identical shapes; Ted is not convinced by either. What
-follows records the findings so the next round starts from them; it settles nothing. Everything
-under "Still open" is genuinely open, and several things under "The shape both sessions reached"
-have only one session behind them.
+Decided 2026-08-26, superseding the 2026-08-19 draft that two sessions left unsettled. Not started.
+Tracked as `internal/todo.md` D3. D2, D1, D1.5 and A11 have landed; this is next. The prototype that
+settled the design is `arity.py` at the repository root. It is an **interface sketch, not a
+reference implementation**: `Buffer` is `np.ndarray`, `Expr.degree` stands in for `_jac_mask`, and
+every body (`Function`, the derivative wrappers, `solver`) is a stand-in for machinery that already
+exists in `src/alloy` and must be kept, with its interface swapped. Its docstring lists, per name,
+what is real and what is stubbed; read that before touching `src/`. Its two test sections are the
+acceptance tests of the design and move to `tests/typing/` and `tests/` when it lands; the file goes
+then.
 
 ## The problem
 
-`@al.function` exists because CasADi makes you instantiate symbolic variables, wire them into a
-graph by hand, and then wrap the result — leaving stale symbols in Python scope whose names collide
-with the numbers you want afterwards. `al.nlp(...)` and `al.qp(...)` still make you do exactly
-that. Four distinct costs, in rough order of how much they hurt:
+Unchanged from the draft, in order of how much it hurts:
 
-**Parameter order is discovered, not declared.** `collect_free_inputs` sorts by `(name, id)`, so the
-call signature depends on alphabetical accident. `docs/guide/solvers.md` has to warn that "when two
-parameters happen to have the same shape, getting this wrong produces a wrong answer instead of an
-error", and `Function.call` takes a positional `Sequence`, so a nested solver cannot dodge it.
+- **Parameter order is discovered, not declared.** `collect_free_inputs` sorts by `(name, id)`, so
+  the call signature of `al.nlp`/`al.qp` depends on alphabetical accident, and `docs/guide/solvers.md`
+  has to warn that two same-shaped parameters swapped give a wrong answer instead of an error.
+- **No problem/solver split.** The safety filter in `benchmarks/problems/unbumpercars/filters.py`
+  and the backend sweeps in `benchmarks/run.py` differentiate the same expressions once per backend.
+- **Multi-block variables are index arithmetic.** `[u; s]` is concatenated by hand and the result
+  sliced by hand (`out["x"][:n_u]`), with nothing checking the two agree.
+- **Nothing is typed.** `Function.__call__` returns "an array or a tuple", the number and shapes of
+  inputs are checked at run time only, and a nested `solver.call([...])` takes a positional list.
 
-**No problem/solver split, so backend-independent work is redone.** Nothing in `nlp()` branches on
-`solver` while building the gradient, sparse Jacobian and sparse Lagrangian Hessian; only the
-descriptor's backend and options differ. The safety filter in `benchmarks/problems/unbumpercars/filters.py`
-builds a main SQP solver and an l1-globalization fallback from identical expressions and pays for
-the same differentiation twice, as do the backend sweeps in `benchmarks/run.py`.
+## What we are changing
 
-**The problem object already exists, unnamed.** That same filter builds an oracle `Function` with
-outputs `("cost", "g")` and then takes it apart again — `z, _bar_x, ... = base.inputs`,
-`cost, g = base.outputs` — to hand the pieces back to `al.nlp`.
-
-**Symbols leak into scope.** `z`, `bar_x`, `physics`, `dt` sit in the enclosing scope, and
-`physics`/`dt` are names you also want for numbers. Note that `@al.function` does not actually fix
-this in the way its docstring claims: `Expr.__new__` interns unconditionally, so `al.sym("x", 3)` is
-one process-global object and the decorator hides symbols from your namespace rather than scoping
-them. Two declarations agreeing on name, shape and `diff` silently denote the same parameter.
-
-Minor, but in the same area: `diff=False` is the user's job on every parameter symbol today, and
-the decorator cannot express it without spelling a full `TensorType` — which is why decorated
-`chain_link_accel` marks `mass`/`spring_d`/`rest_len` differentiable while the hand-built
-`chain_ode_fn` marks the same quantities `diff=False`.
-
-## The shape both sessions reached
-
-A backend-free problem description, authored from expressions, and a free function that turns it
-into a solver.
+### 1. Inputs and outputs are declared pytrees, built from two names
 
 ```python
-@al.problem(vars={"z": al.var(NZ * (n + 1), lb=lb, ub=ub)}, params={"p": n_param(n)})
-def race_car(z, p) -> al.Problem:
-    ...                                    # body unchanged from today
-    return al.Problem(minimize=cost, eq=eq, ineq=al.bounded(corridor, -w, w))
-
-solver = al.solver(race_car, "ipopt", name=..., options={...})
+class Tree[Symbolic, Numerical]: ...     # names, shapes in C order; symbols(); relabel()
+class L(Tree[Expr, Buffer]): ...         # L("x", 3), L("P", (n, n)), L("f", ...) for a traced shape
+def G(a, b, ...) -> Tree[tuple[SA, SB, ...], tuple[NA, NB, ...]]   # width 2..8, overloads; nest beyond
 ```
 
-- **`al.Problem` is one frozen dataclass**, both what a traced body returns and the hand-built
-  representation. The tracer creates the symbols, calls the body, and fills in `vars`, `params` and
-  `name` with `dataclasses.replace`. The hand-built path constructs the same type directly, so
-  unlike today the sugar is a pure desugaring with no behaviour of its own.
-- **Roles are dataclass fields, not dict keys** — `minimize`, `eq`, `ineq` — because dict keys are
-  not statically checkable. Same reason `al.var(shape, lb=, ub=)` and `al.bounded(expr, lo, hi)`
-  are types rather than parallel keyword arguments.
-- **Declaration order is parameter order.** Inference stays for `params=None`: `benchmarks/run.py`
-  builds a QP inside an `@al.function` body over the enclosing function's symbols, and that case
-  has no declaration to read. When `params` is declared, a reachable undeclared input should be a
-  build error rather than a silently appended argument.
-- **`diff` follows from the role.** Variables are differentiable, parameters are not; the flag
-  stops being the user's job.
-- **`eq` and `ineq` accept a list of groups**, concatenated by alloy — this removes the manual
-  `al.concat(parts)` in the chain and race-car problems and lets groups with different bounds
-  coexist without padding a flat lower/upper pair.
-- **Multi-block variables cost nothing.** The tracer declares one internal decision symbol and
-  hands the body slices of it, which is what the benchmark bodies already write by hand. With
-  `vars={"u": ..., "s": ...}` the filter's hand-concatenated `[u; s]` and hand-sliced
-  `out["x"][:n_u]` become named, and `x0`/`x_lb` assembly stays plain NumPy on the Python side.
-- **Derived functions cache on the problem**, so a second backend over the same problem is
-  descriptor assembly only.
-- **No stage structure in the API.** Multistage stays a body-level concern through `al.vmap` and
-  `Function.call`, as `chain_eq_function` does now.
+The two type parameters are the symbolic and the numeric spelling of the same structure. `L` is
+one named tensor (the real one also takes a `TensorType` for dtype and `diff`); `G` groups trees
+side by side at any width up to eight and any depth. Grouping is a choice for readability, never a
+requirement: `G(G(state, u), G(pw, physics, dt))` and `G(state, u, pw, physics, dt)` are the same
+C signature. Both are exported at top level, `al.L` and `al.G`: two short names is a smaller
+vocabulary than a family of classes.
 
-## Authoring: expressions, not stage functions
+`G`'s width overloads are the one ladder in the design, in one place, seven stub lines. It is the
+same ladder `tuple[A, B, C]` is built from inside the type system, which we cannot borrow: deriving
+the `Buffer` structure from the `Expr` structure needs a type-level map, and Python has none
+(PEP 646 left `Map` out). That is also why a bare `("u", 2)` literal cannot be the declaration,
+however much lighter it reads: its type is `tuple[str, int]` whatever classes exist, subclassing
+`tuple` does not change a literal's type, and typing it into `Expr`/`Buffer` would need one overload
+per structure. The `L` wrapper is the smallest thing that carries the map.
 
-Settled between both sessions, against anvil's `eq_initial_fn` / `eq_interstage_fn` /
-`cost_stage_fn` slot vocabulary.
+This is one corner of a trilemma, chosen 2026-08-27 after the other two were drafted and rejected.
+Of {no class ladder, flat positional inputs, distinct symbolic/numeric leaf types} only two are
+available at once:
 
-Cost and constraints have to be able to share one graph. In the race-car problem the corridor
-constraint reuses `e_lat` and `d_phi` computed a few lines earlier for the cost residuals; if
-`minimize` and `ineq` were separate `Function`s, alloy would have to inline them (losing the
-boundary) or keep them apart (losing the sharing). This is why `nlp()` already stitches everything
-into one base function with outputs `("f", "g")`.
+- A generated ladder `Arity1..Arity8` keeps flat inputs and distinct leaves. Rejected: a class per
+  width plus one overload per rung for every seeded derivative.
+- `TypeVarTuple` (`Function[Out, *Ins]`) keeps flat inputs with no ladder, and ty handles the
+  concatenation `Function[Expr, *Ins, Expr]` correctly. Rejected: both calls must take the same
+  `*Ins`, so numeric calls are typed as `Expr` or not at all. Typed numeric calls are the
+  connection to the rest of a user's code and are not negotiable.
+- Pytrees keep distinct leaves with no class ladder. Chosen; `G`'s overloads are the residue.
 
-Authoring from expressions does not mean everything is inlined, because call nodes are first class:
-a `Function` participates by being `.call`ed from the body, and derivatives and sparsity go through
-`CALL` fine. So the user picks the compile boundary independently of the problem statement, which
-is strictly more than `Function`-valued fields would allow.
+### 2. `Function` is generic in its two trees
 
-Anvil needed stage functions because its multistage assembler had to know the block structure to
-build block-sparse Jacobians. Alloy gets that from `vmap`, and `internal/roadmap.md` is explicit
-that the multistage result was matched without introducing a multistage primitive. Baking stages
-into `Problem` would undo that.
+```python
+@al.function(G(L("x", 3), L("y", 3)), L("prod", ...))
+def multiply(inputs: tuple[Expr, Expr]) -> Expr:
+  return inputs[0] * inputs[1]
 
-The one real case for a `Function`-valued input is an externally supplied oracle (precompiled
-CasADi C). That already exists as `ExternalOracle` on `SolverDescriptor`, and it is a
-solver-construction concern rather than a problem-statement one.
+multiply.symbolic_call((a, b))            # tuple[Expr, Expr] -> Expr, checked by ty
+multiply.numerical_call((a_buf, b_buf))   # tuple[Buffer, Buffer] -> Buffer
+```
 
-## Naming
+`Function[SymIn, NumIn, SymOut, NumOut]`. An output leaf's shape may be `...`, inferred by
+tracing; a written one is checked against the trace, and the stored output tree carries the traced
+shapes so derived trees (multipliers) have them. `symbolic_call` is today's `Function.call`;
+`numerical_call` is today's `__call__`. A wrong structure, a wrong count, or a numeric value passed
+to the symbolic side is a type error at the call site, and checked in `tests/typing/` (see item 9).
+Per-output metadata that AD produces, `output_sparsities` and `output_coloring_widths`, stays on
+`Function`; the trees declare names and shapes only.
 
-Ted rejected a `al.nlp` (solver builder) / `al.NLP` (problem type) pair. The diagnosis worth
-keeping: the fault is not the casing — alloy already ships `al.function` / `al.Function` and nobody
-trips over it — but that the two names would return *different types*. The workable rule is that a
-case pair is fine when the lowercase name is sugar that builds the CapWords thing, and confusing
-otherwise. Under that rule `al.problem` / `al.Problem` is fine.
+### 3. One `ProblemSpec`, everything an `Expr`
 
-`al.solver(problem, "ipopt")` is the leading candidate for the builder and is **not agreed**. The
-argument for: `al.function` builds a `Function`, `al.problem` builds a `Problem`, `al.solver`
-builds a `SolverFunction` — three lowercase factories each named after its product, and the
-`solver=` keyword collision disappears once the backend is positional. The argument against: it
-sits close to `SolverFunction` without matching it exactly. `al.build` was considered and says
-nothing about what it builds.
+```python
+@dataclass(frozen=True)
+class ProblemSpec:
+  minimize: Expr
+  eq: tuple[Expr, ...] = ()
+  ineq: tuple[Bounded, ...] = ()        # al.bounded(expr, lo, hi, name=...)
+  lb: SymbolicVars | None = None        # same pytree structure as vars
+  ub: SymbolicVars | None = None
 
-The backend-agnostic problem type also means one builder covers both shapes, because the plugin
-registry already distinguishes QP from NLP backends. That makes today's
-`al.nlp(x=..., f=..., h_eq=...)` deletable: a hand-built `Problem` expresses everything it did.
+@al.problem(vars=G(L("u", NU), L("s", NS)), params=G(L("x", NX), L("u_ref", NU)))
+def filter(vars: tuple[Expr, Expr], params: tuple[Expr, Expr]) -> ProblemSpec:
+  u, s = vars
+  x, u_ref = params
+  return ProblemSpec(minimize=..., ineq=(al.bounded(barriers(x, u) + s, lo=0.0, name="cbf"),), lb=(None, 0.0))
+```
 
-Two hard constraints from Ted: the builder is a free function, not a `Problem` method
-(`problem.solver("ipopt")` is rejected), and the declaration keyword is `vars=`, not `decisions=`.
-`vars` shadows the builtin only inside `problem()`'s own body, and flake8-builtins is not enabled.
+`al.problem` traces the body once with the declared symbols and returns
+`Problem[SymVars, NumVars, SymParams, NumParams]`, which holds the spec and both trees. Roles are
+dataclass fields, so they are statically checkable; `eq` and `ineq` are tuples of groups
+concatenated by alloy, which removes the manual `al.concat(parts)` in the chain and race-car
+problems; `diff` follows from the role. Constraint groups take an optional `name=` for
+"which block is violated" diagnostics. `params=None` keeps inference for a problem built inside an
+`@al.function` body over the enclosing symbols, the case `benchmarks/run.py` has; with `params`
+declared, a reachable undeclared input is a build error.
 
-## Still open
+The body is written against `u` and `s`, but the Lagrangian Hessian wants one `wrt`. `al.solver`
+builds one internal `x` of the total size and substitutes `u -> x[:n_u]`, `s -> x[n_u:]`. There is
+no substitution utility in `src/alloy` today (`Function.call` is a `CALL` node, not inlining); it is
+a hash-consed rebuild over `topo`, and the one new IR piece in this work. Item 5 uses it too.
 
-1. **The builder name.** See above.
-2. **What `al.qp(P=..., c=...)` returns.** One session would leave it returning a `SolverFunction`
-   as it does today, which leaves two doors to the same product, one of them skipping `Problem`.
-   The other proposed it return a `Problem` instead, writing `0.5 x'Px + c'x` and the affine
-   constraints over an internal decision symbol and stashing the matrices it was handed in one
-   optional field for backends that want them — so `al.solver(prob, "piqp")` is the only door, and
-   the extraction work below can fill the same field later. Unresolved, and the data form is what
-   every current call site uses.
-3. **Named constraint groups**, for "which block is violated" diagnostics. A dict reintroduces the
-   string keys the dataclass exists to avoid; a `name=` field on `al.bounded(...)` gets the same
-   benefit without them.
-4. **Multi-block warm starts.** Per-block call-time names (`u0`, `s0`) can collide with parameter
-   names; letting the existing `x0` accept a mapping avoids inventing names at all.
-5. **Keyword invocation of traced bodies.** Calling the body with keyword arguments (`fn(**syms)`)
-   turns a mismatch between the declared names and the body's parameters into a `TypeError` naming
-   the parameter. `@al.function` has the same gap today, since `function/api.py` calls positionally,
-   and the same fix applies to both.
-6. **Whether any of this is worth its size**, which is Ted's standing objection and the reason this
-   section is a draft. The parameter-ordering hazard and the duplicated differentiation are
-   concrete; the rest is ergonomics, and the current surface is small.
+### 4. One `solver`, returning a plain `Function`
+
+```python
+filt = al.solver(filter, "sqp", name="filter", options={...})
+(u, s), lam = filt.numerical_call(((u0, s0), lam_box0, lam_eq0, lam_ineq0, (x_val, u_ref_val)))
+```
+
+A solver is `Function[tuple[SV, SV, Expr, Expr, SP], ...]`: inputs are the tree
+`(vars_init, lam_box0, lam_eq0, lam_ineq0, params)`, outputs `(vars, lam_box, lam_eq, lam_ineq)`.
+Once nesting is the norm there is nothing for a separate `SolverFunction` type to add; the
+descriptor stays as the attr on the `SOLVER_CALL` nodes, as today. Box multipliers have the vars
+tree's structure (`relabel("lam:")`); `lam_eq0`/`lam_ineq0` are leaves that are always present with
+size 0 when the category is absent, which `nlp.py` and `qp.py` already do, so the signature never
+depends on the problem. `eq`/`ineq` are discovered from the body, so their multipliers are leaves
+of unknown length; that is accepted rather than declared.
+
+The backend is positional and `name` belongs to the builder call: the main and fallback solvers in
+the filter come from one problem and need two artifact names. `al.nlp` and `al.qp` are deleted; a
+`ProblemSpec` expresses everything they did.
+
+**The cache boundary is the symmetric `SparseJacobian`, not the `Function`.** After A11 the
+descriptor Hessian differs per backend (IPOPT lower, SQP upper), so "nothing branches on the
+solver" stops being true at the descriptor. Everything expensive is still backend-free: the
+dependency mask, the colouring, the compressed JVPs and the recovery table are symmetric. `Problem`
+caches the gradient, Jacobian and the full symmetric Lagrangian Hessian at the expression level;
+`al.solver` applies the backend's triangle and wraps the `Function`s. Consequence for `sparse_hessian` as landed: the triangle must stay an operation on a `SparseJacobian` after
+construction, with the gather indices fixed at construction time, never resolved inside the kernel.
+Filtering the recovery table (so `SparseJacobian` keeps the compressed products and the table) does
+that unconditionally; the `gather(gather(x, a), b)` rewrite does it only if it is guaranteed to
+fire. Take the recovery-table option and keep the "no full-nnz buffer in the C" gate.
+
+### 5. QP backends are gated by a structural proof, not a type
+
+`al.solver(problem, "piqp")` looks up `backend.kind`. For `"qp"` it proves the spec quadratic before
+building the descriptor: `_jac_mask(hess_values, x)` (`ad/sparsity.py`) with every row empty proves
+the Hessian is structurally independent of `x`, hence `f` quadratic in `x` for all `p`; the same
+mask on `jac(h, x)` and `jac(g, x)` proves the constraints affine. Then
+
+```
+P = hess(f, x)         c = grad(f, x)|_{x=0}
+A = jac(h, x)          b = -h|_{x=0}
+G = jac(g, x)          bounds shifted by g|_{x=0}
+```
+
+with `|_{x=0}` through the substitution utility of item 3, and the sparse PIQP path unchanged:
+`_qp_matrix_sparsity` already takes arbitrary expressions and probes them. The proof is
+conservative: `x*x/x` is quadratic and is rejected, and the error names the oracle that failed. For
+`f = 0.5 x'Px` with parametric `P`, AD yields `0.5 (P + Pᵀ)`: `n²` adds per call and a free
+symmetrisation, which PIQP's `triu` wants anyway; for constant `P` it folds at build time. NLP
+backends never run the extraction; a quadratic spec handed to IPOPT is solved as written.
+
+This closes the draft's open question 2 (what `al.qp` returns): nothing, because it does not exist.
+QP-ness is a property proven of the spec. It also answers the "updatable QP" use case: a data block
+that should change per call is a parameter, forwarded into `piqp_update` by an identity oracle
+(dense: the column-major transpose the wrapper already does; sparse: a constant-index gather). A
+data block that is genuinely constant is a constant. No second API.
+
+### 6. `qp_problem(n, n_eq, n_ineq)`: the typed data form
+
+```python
+def qp_problem(n, n_eq, n_ineq) -> Problem[Expr, Buffer, QPData[Expr], QPData[Buffer]]:  # QPData[T] = tuple[tuple[T, T], tuple[T, T], tuple[T, T, T]]
+  @problem(vars=L("x", n), params=G(G(L("P", (n, n)), L("c", n)), G(L("A", (n_eq, n)), L("b", n_eq)), G(L("G", (n_ineq, n)), L("g_lb", n_ineq), L("g_ub", n_ineq))))
+  def qp(x, params):
+    (P, c), (A, b), (G, g_lb, g_ub) = params
+    return ProblemSpec(minimize=0.5 * x @ P @ x + c @ x, eq=(A @ x - b,), ineq=(al.bounded(G @ x, g_lb, g_ub),))
+  return qp
+```
+
+A function, not a decorator, because the body is fully determined by the sizes. The data tree is
+fixed, grouped as objective, equalities, inequalities: an absent block is a `(0, n)` leaf, the same
+size-0 convention as the multipliers, so every QP has one checked signature. Box bounds go through
+`ProblemSpec.lb`/`ub` like any other problem. It goes through item 5's extraction like any other spec,
+which makes it the natural first differential test: `qp_problem` through `"piqp"` against today's
+`al.qp(P=..., c=...)` on the same data. Lives in `solvers/` next to `solver`.
+
+### 7. Names are metadata, one per leaf
+
+Names survive in the places where they earn their place and nowhere as an addressing mechanism. The
+generated header (`codegen/aot.py`) spells the typed buffer structs, the C++ wrapper parameters and
+the sparse metadata tables after them (`filter_u_out`, `spjac_g_x`), and that is the AOT consumer's
+surface; the text asm and viz print `%zprev: f64[3]` rather than `%in0`. The derivative wrappers
+take them as `of`/`wrt`, and every `{kind}_{of}_{wrt}` output name is built from them. The
+generated C body never uses them (`arg[i]`/`res[i]`).
+
+Every `L` carries its name, so a tree is fully named by construction; duplicate names within one
+tree are a runtime error, and there are no default names. An output leaf's shape may be `...`,
+meaning inferred by tracing; a written shape is checked. Derived trees are made by `relabel`
+(`lam:`, `fwd:`), so the header spells `lam:u` for the multiplier of `u`. The declared name and the
+name the body binds are independent: `G(L("u", ...), L("s", ...))` may be received as
+`def body(vars, params): u, s = vars`; the body's names are local, the declared ones are external,
+and keeping them equal is a habit for the reader that nothing enforces. Document this in the guide
+and the `L` docstring.
+
+Unknown `of`/`wrt` is a `ValueError` naming the declared choices, raised when the derivative is
+built, never at evaluation time; `arity.py` tests it. Static names are possible, a `LiteralString`
+bound keeps `Function[..., Literal["x", "p"], Literal["f"]]` and `fn.gradient("f", "z")` then fails
+at check time, but only through methods on `Function`, since a free function solves the name
+variable from both arguments and widens to `str`. Not adopted; it would reopen D1's free-function
+form and reject runtime-built names such as `nlp.py`'s.
+
+### 8. Derivatives keep the source's inputs, so they are typed
+
+Leaning, not settled (2026-08-26). Drafted in `arity.py`.
+
+`gradient(fn, of, wrt)` returns `Function[SI, NI, Expr, Buffer]`: the same input tree as `fn`,
+one output leaf; `jacobian`, `hessian`, `sparse_jacobian`, `sparse_hessian` likewise. Seeded modes
+pair the source's inputs with the new group and stay generic, with no overloads:
+`forward` is `Function[tuple[SI, Expr], tuple[NI, Buffer], Expr, Buffer]`, and `lagrangian_hessian`
+is `Function[tuple[SI, SO], tuple[NI, NO], Expr, Buffer]`, whose multipliers have the source's
+*output* tree type, one multiplier per output (`fn.outputs.relabel("lam:")`), so multipliers in the
+wrong structure are a type error. `of` and `wrt` stay strings and are checked at build time.
+
+What this replaces is `extra_inputs`, landed in D1: it selects a subset of the source's inputs at
+runtime, which is exactly what makes a derived function's arity unknowable. Its only consumer in
+`src/` is `nlp.py`, which uses it to say "all of them" (`(x, *params)`), so keeping every input is
+what the solver path already does. A derived function then carries inputs it does not read, which
+in C is an unused pointer argument. `fn.factory([...])` over a runtime list stays dynamic; it is
+the "several derivatives at once" shorthand and its typed equivalent is calling the wrappers
+separately. This is the change that lets the typed layer be used inside AD, `vmap` and the solver
+builders rather than only at the user surface, which is the point of the typing work.
+
+### 9. Typing tests
+
+`tests/typing/` holds files of `if TYPE_CHECKING:` blocks with `assert_type(...)` for the positive
+cases and `# ty: ignore[<code>]` on the expected errors. It runs as
+`uv run ty check --error-on-warning tests/typing`: ty reports an unused `ty: ignore` as
+`unused-ignore-comment`, so an expected error that stops being one fails the check. That is the
+"prove the gate can fail" rule applied to types. `arity.py` is the shape of the first file.
+
+Requires `ty>=0.0.75` (done 2026-08-26, tree clean under it): the pinned 0.0.37 inferred `Unknown`
+for a class-scoped `type` alias used as an annotation and the design did not check under it.
+
+## Sequencing
+
+1. `ty` bump. Independent; done.
+2. Reorder `sparse_hessian` so the triangle is applied after the JVP batch: as landed, it filters
+   `sparsity` and `recovery` before `_sparse_jacobian_colored`, so the triangle is baked into
+   construction and a cached symmetric Hessian cannot be re-cut per backend. Build `compressed`
+   once and gather with `recovery[keep]`; same values, same constant indices, JVPs shared. Tiny, and
+   a prerequisite for the `Problem` cache in item 4.
+3. `substitute` in `ir/`, with tests. Independent except for the `MAP`/`VMAP` spelling; do after D2.
+4. `Tree`, `L`, `G` with its width overloads, generic `Function`, typed derivative wrappers replacing
+   `extra_inputs` (item 8), `tests/typing/` harness. Touches `function/`; after D1.
+5. `ProblemSpec`, `Problem`, `al.problem`, `al.solver` for NLP backends, deleting `al.nlp` and
+   `SolverFunction`; move the
+   three benchmark problems and the filter. After A11, since it owns the descriptor Hessian fields.
+6. Quadratic proof and extraction, `qp_problem`, deleting `al.qp`; differential against the old
+   builder before it goes.
+7. Docs: `docs/guide/solvers.md` rewritten around `problem`/`solver`; `docs/guide/functions.md` for
+   the arity form of `@al.function`.
 
 ## Considered and rejected
 
-- **Operator-overloaded constraints** (`h == 0`, `l <= g <= u`, in the manner of CVXPY or JuMP).
-  `Expr` has no comparison operators today, so `<=` is free, but `__eq__` is not: overloading it
-  breaks the identity and hashing that `topo`, `cse` and the `seen`-set walks depend on. Half a
-  domain-specific language is worse than none.
-- **A returned dict of roles** (`{"minimize": ..., "eq": ...}`). No static checking of the keys.
-- **An imperative model builder** (`m.minimize(...)`, `m.subject_to(...)`). More state, no more
-  expressiveness than a returned dataclass.
-- **A second, parametric `bounds` field on `Problem`.** Two places to write a bound, and the second
-  was string-keyed. Parameter-dependent bounds — supported today, used by no call site — stay
-  expressible by passing an `Expr` as `lb`/`ub` on the hand-built path.
-- **`name` owned by `Problem`.** The main and fallback solvers in the filter come from one problem
-  and need two artifact names, so the name belongs to the builder call. `Problem.name` survives
-  only as a default taken from the body's `__name__`.
-- **Removing the expression-level path.** Two ways to build a solver is the point, provided the
-  sugar desugars exactly.
-- **A `Function`-accepting shortcut on `@al.problem`.** The two-line body
-  `cost, g = oracle.call([...]); return al.Problem(minimize=cost, ineq=al.bounded(g, lo=0.0))`
-  covers the filter's hand-built oracle and keeps one path.
-- **A variable-layout or stage-bounds system**, to replace index arithmetic like
-  `lb[i * nz + nx : (i + 1) * nz] = -1.0`. Most of it is `np.tile(...).reshape(n + 1, NZ)` followed
-  by patching columns, which needs no API. Worth deciding separately if it still hurts afterwards.
-
-## Interactions
-
-- **Derivative API rework**, now landed. It names `src/alloy/solvers/nlp.py` as the only consumer inside
-  `src/` of the old `(wrt, of)` argument order; that caller now uses `(of, wrt)`.
-- This draft assumes the landed `VMAP`/`vmap` spelling; anything written here refers to `al.vmap`.
-- `internal/roadmap.md` sketches extracting `P = hess:f:x:x`, `c = grad:f:x` at `x=0` and
-  `A_eq = jac:h:x` so one problem can target either PIQP or IPOPT. It is the reason the type is
-  called `Problem` rather than `NLP`, it needs structural validation that the objective is
-  quadratic and the constraints affine (`_jac_mask` can prove the Hessian does not depend on `x`),
-  and both sessions would defer it.
+- **Two problem types, `Problem` and a data-form `QP`, with conversions.** Proposed in this round
+  and dropped for item 5: two representations of one thing, with the presence of one deciding which
+  backends work. A proof over one type is the same information, checkable.
+- **`al.qp(P=...)` returning a `Problem` with the matrices stashed in an optional field.** Same
+  objection.
+- **A helper that wraps constants as parameters so every QP block is updatable.** Changes the call
+  signature for blocks that are genuinely constant; passing a symbol already makes a block a
+  parameter. No new concept needed.
+- **`al.var("u", n, lb=, ub=)` symbols with attached bounds, declared where used, and a plain
+  dataclass with `vars=[u, s]`.** Proposed to fix declaration locality without a decorator. The
+  arity form gets locality from the decorator line plus the checked annotation, and binds the type
+  variables, which the symbol list cannot. Bounds live on `ProblemSpec` instead.
+- **An imperative `ca.Opti`-style builder (`m.subject_to(...)`).** Still rejected: accumulating
+  state buys nothing over a tuple, loses static role checking, and the one thing it is for
+  (declaring variables inline) the arity form gives through the annotation.
+- **Operator-overloaded constraints**, **a returned dict of roles**, **stage structure in the
+  API**, **`Function`-valued fields**, **a variable-layout system**: rejected in the draft for
+  reasons that still hold. Cost and constraints share one graph, so they are expressions, and call
+  nodes let the user pick the compile boundary independently.
+- **Typing the `eq`/`ineq` multipliers by declaring constraint arity in the decorator.** Constraints
+  are discovered from the body; declaring them twice to type two outputs is not worth it.
 
 # One matcher: op-indexed tables and one walk-rebuild
 
