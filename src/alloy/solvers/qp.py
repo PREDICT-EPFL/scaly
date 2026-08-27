@@ -1,73 +1,37 @@
-"""Private legacy QP builder retained for the Step 6 differential.
-
-The QP shape (see ``docs/guide/solvers.md``) is::
-
-    min   0.5 xᵀ P x + cᵀ x
-    s.t.  A_eq x = b_eq
-          l_ineq ≤ G_ineq x ≤ u_ineq
-          x_lb  ≤ x ≤ x_ub
-
-Each symbolic input may be an Alloy ``Expr`` over a set of free parameters ``p``,
-or a plain numpy/python value (which becomes a constant). At call time the
-parameter values are passed through to evaluate the QP data, and the QP is
-solved through PIQP's dense interface — or its sparse interface with
-``sparse=True``, where the structural CSC patterns of ``P`` (upper triangle),
-``A_eq``, and ``G_ineq`` are computed here at build time and baked into the
-generated wrapper (generated C backend only).
-
-QP inputs are (in order): ``x0``, ``lam_eq0``, ``lam_ineq0`` plus every free
-parameter in deterministic name/id order. Initial dual values are accepted for
-API symmetry but PIQP does not yet consume warm starts.
-"""
+"""Prove and extract typed quadratic problems for QP solver plugins."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
-from ..ir.expr import Expr, as_expr
+from ..ad.derivatives import jacobian
+from ..ad.sparse import SparseJacobian, sparse_hessian, sparse_jacobian
+from ..ad.sparsity import _jac_mask
 from ..function import Function
-from ..ir.types import SparsityType
-from ._oracle import collect_free_inputs
-from .registry import require_backend
+from ..function.tree import G, L, Tree
+from ..ir.expr import Expr, ExprOp, concat, substitute, topo
+from ..ir.types import SparsityType, TensorType
+from ..passes.expr import simplify_cse_fixpoint
 from .model import SolverDescriptor, descriptor_function
+from .nlp import _lowered
+from .problem import Problem, ProblemSpec, bounded, problem
+from .registry import SolverBackend
 
 PIQP_INF = 1e30
 
 
-def _as_expr_optional(value: Any) -> Expr | None:
-  if value is None:
-    return None
-  return as_expr(value)
+type QPData[T] = tuple[tuple[T, T], tuple[T, T], tuple[T, T, T]]
 
 
-def _check_shape(name: str, expr: Expr | None, expected: tuple[int, ...]) -> None:
-  if expr is None:
-    return
-  if expr.shape != expected:
-    raise ValueError(f"QP input {name!r} has shape {expr.shape}, expected {expected}")
+class NotQuadratic(ValueError):
+  """A problem rejected because a QP oracle depends nonlinearly on its variables."""
 
 
 def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *, triu: bool = False) -> SparsityType:
-  """Structural pattern of a matrix-valued Expr, in CSC order.
-
-  An entry is structurally nonzero if it depends on any parameter (dependency
-  mask — kept regardless of its probed value) or if its constant value is
-  nonzero (``probe`` is the matrix evaluated at an arbitrary parameter draw,
-  which is exact for constant entries). ``triu`` keeps only the upper
-  triangle (PIQP's convention for P). A structurally zero matrix keeps a
-  single ``(0, 0)`` entry so the generated CSC handle stays valid — the
-  gathered value is the structural zero itself.
-
-  Matrices computed from a nested ``SOLVER_CALL`` are rejected in this legacy builder
-  before the probe runs: ``_jac_mask`` treats solver outputs as opaque zeros,
-  so their entries would be classified solely by the probed value — silently
-  wrong whenever the inner solve is zero at the probe but nonzero at runtime.
-  """
-  from ..ad.sparsity import _jac_mask
-
+  """Return the structural matrix pattern in compressed sparse column order."""
   nrow, ncol = mat.shape
   vec = mat.vec()
   keep = np.asarray(probe, dtype=np.float64).reshape(-1) != 0.0
@@ -79,25 +43,22 @@ def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *,
     rows, cols = rows[upper], cols[upper]
   if rows.size == 0:
     rows, cols = np.array([0]), np.array([0])
-  order = np.lexsort((rows, cols))  # CSC order (by column, then row): the compact value buffer needs no runtime permutation
-  return SparsityType((nrow, ncol), tuple(int(r) for r in rows[order]), tuple(int(c) for c in cols[order]))
+  order = np.lexsort((rows, cols))
+  return SparsityType((nrow, ncol), tuple(int(row) for row in rows[order]), tuple(int(col) for col in cols[order]))
 
 
-def _gathered(mat: Expr, sp: SparsityType) -> Expr:
-  """Compact CSC-ordered value vector of ``mat`` (row-major flat gather)."""
-  flat = np.asarray(sp.rows, dtype=np.int64) * mat.shape[1] + np.asarray(sp.cols, dtype=np.int64)
+def _gathered(mat: Expr, sparsity: SparsityType) -> Expr:
+  """Return compact matrix values in the pattern's compressed sparse column order."""
+  flat = np.asarray(sparsity.rows, dtype=np.int64) * mat.shape[1] + np.asarray(sparsity.cols, dtype=np.int64)
   return mat.vec().gather(flat)
 
 
 def _reaches_solver_call(exprs: Sequence[Expr]) -> bool:
-  """True if any expr reaches a ``SOLVER_CALL``, recursing through CALL/VMAP callees."""
-  from ..ir.expr import topo
-  from ..ir.expr import ExprOp
-
+  """Return whether an expression reaches a solver, including through Function calls."""
   seen: set[int] = set()
 
   def visit(targets: Sequence[Expr]) -> bool:
-    for node in topo(list(targets)):
+    for node in topo(targets):
       if node.op == ExprOp.SOLVER_CALL:
         return True
       if node.op in {ExprOp.CALL, ExprOp.VMAP}:
@@ -111,173 +72,227 @@ def _reaches_solver_call(exprs: Sequence[Expr]) -> bool:
   return visit(exprs)
 
 
-def _legacy_qp(
+def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> None:
+  for side, bound in (("lb", problem.spec.lb), ("ub", problem.spec.ub)):
+    if bound is None:
+      continue
+    for name, expr in zip(problem.vars.names, problem.vars.flatten_symbolic(bound, f"{problem.name} {side}"), strict=True):
+      if any(_jac_mask(expr, variable, {}).nnz for variable in problem._var_symbols):
+        raise NotQuadratic(f"{problem.name}: {side} for {name!r} depends on the variables")
+  for index, group in enumerate(problem.spec.ineq):
+    label = group.name or str(index)
+    for side, bound in (("lower bound", group.lo), ("upper bound", group.hi)):
+      if bound is not None and any(_jac_mask(bound, variable, {}).nnz for variable in problem._var_symbols):
+        raise NotQuadratic(f"{problem.name}: ineq {label} {side} depends on the variables")
+
+
+def _prove_quadratic(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> None:
+  """Prove that the cost is quadratic and every constraint is affine in the variables."""
+  x = cast(Expr, cached["x"])
+  hessian = sparse_hessian(simplify_cse_fixpoint(cast(Expr, cached["f"])), x)
+  cached["qp_hessian"] = hessian
+  if _jac_mask(hessian.values, x, {}).nnz:
+    raise NotQuadratic(f"{problem.name}: cost is not quadratic in the variables")
+
+  def prove_affine(expr: Expr, label: str) -> None:
+    derivative = simplify_cse_fixpoint(jacobian(expr, x))
+    if _jac_mask(derivative, x, {}).nnz:
+      raise NotQuadratic(f"{problem.name}: {label} is not affine in the variables")
+
+  for index, expr in enumerate(cast(tuple[Expr, ...], cached["equalities"])):
+    prove_affine(expr, f"eq[{index}]")
+  for index, (group, expr) in enumerate(zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)):
+    prove_affine(expr, f"ineq {group.name or index}")
+
+
+def _bound(expr: Expr | None, shape: tuple[int, ...], fill: float) -> Expr:
+  if expr is None:
+    return Expr.const(np.full(shape, fill))
+  if expr.shape == shape:
+    return expr
+  if expr.shape == ():
+    return Expr.const(np.zeros(shape)) + expr
+  raise TypeError(f"bound has shape {expr.shape}, expected scalar or {shape}")
+
+
+def _concat_vectors(exprs: tuple[Expr, ...]) -> Expr:
+  if not exprs:
+    return Expr.const(np.zeros(0))
+  vectors = tuple(expr.vec() for expr in exprs)
+  return vectors[0] if len(vectors) == 1 else concat(vectors)
+
+
+def _qp_data(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> tuple[Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr, Expr]:
+  x = cast(Expr, cached["x"])
+  n = x.size
+  zero = Expr.const(np.zeros(x.shape))
+  replacements = {x: zero}
+
+  hessian = cast(SparseJacobian, cached["qp_hessian"])
+  gradient = cast(Function, cached["grad"])
+  P = simplify_cse_fixpoint(substitute(hessian.to_dense(), replacements))
+  c = simplify_cse_fixpoint(substitute(gradient.outputs[0], replacements))
+
+  h = cast(Expr | None, cached["h"])
+  if h is None:
+    A = Expr.const(np.zeros((0, n)))
+    b = Expr.const(np.zeros(0))
+  else:
+    A = simplify_cse_fixpoint(substitute(sparse_jacobian(h, x).to_dense(), replacements))
+    b = simplify_cse_fixpoint(-substitute(h, replacements))
+
+  g = cast(Expr | None, cached["g_ineq"])
+  if g is None:
+    G_mat = Expr.const(np.zeros((0, n)))
+    g_lb = Expr.const(np.zeros(0))
+    g_ub = Expr.const(np.zeros(0))
+  else:
+    G_mat = simplify_cse_fixpoint(substitute(sparse_jacobian(g, x).to_dense(), replacements))
+    g_lb = Expr.const(np.zeros(g.shape))
+    g_ub = Expr.const(np.zeros(g.shape))
+
+  variable_bounds: list[Expr] = []
+  for side, declared, fill in (("lb", problem.spec.lb, -PIQP_INF), ("ub", problem.spec.ub, PIQP_INF)):
+    if declared is None:
+      variable_bounds.append(Expr.const(np.full(n, fill)))
+    else:
+      leaves = problem.vars.flatten_symbolic(declared, f"{problem.name} {side}")
+      variable_bounds.append(
+        _concat_vectors(tuple(_bound(expr, variable.shape, fill) for expr, variable in zip(leaves, problem._var_symbols, strict=True)))
+      )
+  x_lb, x_ub = variable_bounds
+  if g is not None:
+    lower = _concat_vectors(
+      tuple(
+        _bound(group.lo, expr.shape, -PIQP_INF) for group, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
+      )
+    )
+    upper = _concat_vectors(
+      tuple(
+        _bound(group.hi, expr.shape, PIQP_INF) for group, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
+      )
+    )
+    offset = simplify_cse_fixpoint(substitute(g, replacements))
+    g_lb = simplify_cse_fixpoint(lower - offset)
+    g_ub = simplify_cse_fixpoint(upper - offset)
+  return P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub
+
+
+def build_qp[SV, NV, SP, NP](
+  problem: Problem[SV, NV, SP, NP],
+  backend: SolverBackend,
   *,
-  P: Any,
-  c: Any,
-  A_eq: Any = None,
-  b_eq: Any = None,
-  G_ineq: Any = None,
-  l_ineq: Any = None,
-  u_ineq: Any = None,
-  x_lb: Any = None,
-  x_ub: Any = None,
-  solver: str = "piqp",
-  name: str | None = None,
-  options: dict[str, float | int] | None = None,
-  sparse: bool = False,
-) -> Function:
-  """Build a quadratic-program solver as a callable ``Function``.
+  name: str,
+  options: dict[str, Any] | None,
+) -> Function[
+  tuple[SV, SV, Expr, Expr, SP],
+  tuple[NV, NV, np.ndarray, np.ndarray, NP],
+  tuple[SV, SV, Expr, Expr],
+  tuple[NV, NV, np.ndarray, np.ndarray],
+]:
+  """Build a typed QP solver after proving and extracting the problem's matrix data."""
+  _prove_variable_independent_bounds(problem)
+  cached = _lowered(problem)
+  _prove_quadratic(problem, cached)
+  P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub = _qp_data(problem, cached)
+  n, n_eq, n_ineq = P.shape[0], A.shape[0], G_mat.shape[0]
 
-  Solves ``min 0.5 x' P x + c' x`` subject to ``A_eq x = b_eq``,
-  ``l_ineq <= G_ineq x <= u_ineq`` and ``x_lb <= x <= x_ub``.
-
-  Every argument may be an alloy ``Expr`` over free parameters — which is what makes the solver
-  reusable across states — a NumPy array or scalar, or ``None`` for the optional blocks. The
-  returned ``Function`` takes ``x0``, ``lam_eq0``, ``lam_ineq0`` and then every free
-  parameter found, and returns ``x``, ``cost``, ``lam_eq``, ``lam_ineq`` and ``lam_box``.
-
-  Because it is a ``Function``, ``solver.call([...])`` nests it inside a larger graph and the
-  whole thing compiles to one shared library. See ``docs/guide/solvers.md``.
-
-  Args:
-    solver: the backend plugin to use; ``piqp`` today.
-    options: backend settings, passed through to ``piqp_settings`` field names.
-    sparse: route through PIQP's sparse interface, baking the CSC patterns at build time.
-  """
-  require_backend(solver, "qp")
-
-  P_e = as_expr(P)
-  c_e = as_expr(c)
-  if len(P_e.shape) != 2 or P_e.shape[0] != P_e.shape[1]:
-    raise ValueError(f"P must be square 2D, got shape {P_e.shape}")
-  n = P_e.shape[0]
-  if c_e.shape != (n,):
-    raise ValueError(f"c must have shape ({n},), got {c_e.shape}")
-
-  A_e = _as_expr_optional(A_eq)
-  b_e = _as_expr_optional(b_eq)
-  G_e = _as_expr_optional(G_ineq)
-  l_e = _as_expr_optional(l_ineq)
-  u_e = _as_expr_optional(u_ineq)
-  xl_e = _as_expr_optional(x_lb)
-  xu_e = _as_expr_optional(x_ub)
-
-  if (A_e is None) != (b_e is None):
-    raise ValueError("A_eq and b_eq must be provided together")
-  if (G_e is None) and (l_e is not None or u_e is not None):
-    raise ValueError("G_ineq is required when l_ineq/u_ineq are provided")
-
-  p_dim = 0 if A_e is None else A_e.shape[0]
-  m_dim = 0 if G_e is None else G_e.shape[0]
-
-  _check_shape("A_eq", A_e, (p_dim, n))
-  _check_shape("b_eq", b_e, (p_dim,))
-  _check_shape("G_ineq", G_e, (m_dim, n))
-  _check_shape("l_ineq", l_e, (m_dim,))
-  _check_shape("u_ineq", u_e, (m_dim,))
-  _check_shape("x_lb", xl_e, (n,))
-  _check_shape("x_ub", xu_e, (n,))
-
-  if l_e is None and m_dim:
-    l_e = as_expr(np.full(m_dim, -PIQP_INF))
-  if u_e is None and m_dim:
-    u_e = as_expr(np.full(m_dim, PIQP_INF))
-  if xl_e is None:
-    xl_e = as_expr(np.full(n, -PIQP_INF))
-  if xu_e is None:
-    xu_e = as_expr(np.full(n, PIQP_INF))
-
-  assert xl_e is not None and xu_e is not None
-  dense_targets: list[Expr] = [P_e.vec(), c_e]
-  if p_dim:
-    assert A_e is not None and b_e is not None
-    dense_targets.extend([A_e.vec(), b_e])
-  if m_dim:
-    assert G_e is not None and l_e is not None and u_e is not None
-    dense_targets.extend([G_e.vec(), l_e, u_e])
-  dense_targets.extend([xl_e, xu_e])
-  # Params are collected from the dense expressions so the call signature does
-  # not depend on the sparse pattern.
-  params = collect_free_inputs(dense_targets)
-  param_names: tuple[str, ...] = tuple(p.name or f"p{i}" for i, p in enumerate(params))
+  resolved_options = dict(options or {})
+  sparse_option = resolved_options.pop("sparse", False)
+  if not isinstance(sparse_option, bool):
+    raise TypeError("PIQP option 'sparse' must be a bool")
+  sparse = sparse_option
+  params = problem._param_symbols
 
   P_sp = A_sp = G_sp = None
   if sparse:
-    # Structural patterns, baked at codegen time. Constant entries are probed
-    # exactly at one arbitrary parameter draw; parameter-dependent entries are
-    # kept by the dependency mask regardless of the draw, so the pattern is
-    # deterministic.
-    mats: list[Expr] = [P_e, *([A_e] if p_dim else []), *([G_e] if m_dim else [])]  # ty: ignore[invalid-assignment]
-    if _reaches_solver_call(mats):
+    matrices = (P, A, G_mat)
+    if _reaches_solver_call(matrices):
       raise NotImplementedError(
         "sparse=True cannot derive the structural pattern of QP data computed from a nested solver output; use the dense interface"
       )
-    probe_fn = Function._from_exprs(
-      (name or "qp") + "_pattern_probe", list(params), [mat.vec() for mat in mats], list(param_names), [f"m{i}" for i in range(len(mats))]
+    probe = Function._from_exprs(
+      f"{name}_pattern_probe",
+      params,
+      tuple(matrix.vec() for matrix in matrices),
+      problem.params.names,
+      ("P", "A", "G"),
     )
     rng = np.random.default_rng(0)
-    probes = probe_fn.eval_list(*[rng.standard_normal(p.shape) for p in params])
-    P_sp = _qp_matrix_sparsity(P_e, params, probes[0], triu=True)
-    if p_dim:
-      assert A_e is not None
-      A_sp = _qp_matrix_sparsity(A_e, params, probes[1])
-    if m_dim:
-      assert G_e is not None
-      G_sp = _qp_matrix_sparsity(G_e, params, probes[-1])
+    values = probe.eval_list(*(rng.standard_normal(param.shape) for param in params))
+    P_sp = _qp_matrix_sparsity(P, params, values[0], triu=True)
+    if n_eq:
+      A_sp = _qp_matrix_sparsity(A, params, values[1])
+    if n_ineq:
+      G_sp = _qp_matrix_sparsity(G_mat, params, values[2])
 
-  oracle_outs: list[Expr] = [_gathered(P_e, P_sp) if P_sp is not None else P_e.vec(), c_e]
+  oracle_outputs: list[Expr] = [_gathered(P, P_sp) if P_sp is not None else P.vec(), c]
   oracle_names = ["P", "c"]
-  if p_dim:
-    assert A_e is not None and b_e is not None
-    oracle_outs.extend([_gathered(A_e, A_sp) if A_sp is not None else A_e.vec(), b_e])
-    oracle_names.extend(["A_eq", "b_eq"])
-  if m_dim:
-    assert G_e is not None and l_e is not None and u_e is not None
-    oracle_outs.extend([_gathered(G_e, G_sp) if G_sp is not None else G_e.vec(), l_e, u_e])
-    oracle_names.extend(["G_ineq", "l_ineq", "u_ineq"])
-  oracle_outs.extend([xl_e, xu_e])
-  oracle_names.extend(["x_lb", "x_ub"])
+  if n_eq:
+    oracle_outputs.extend((_gathered(A, A_sp) if A_sp is not None else A.vec(), b))
+    oracle_names.extend(("A_eq", "b_eq"))
+  if n_ineq:
+    oracle_outputs.extend((_gathered(G_mat, G_sp) if G_sp is not None else G_mat.vec(), g_lb, g_ub))
+    oracle_names.extend(("G_ineq", "l_ineq", "u_ineq"))
+  oracle_outputs.extend((x_lb, x_ub))
+  oracle_names.extend(("x_lb", "x_ub"))
+  oracle = Function._from_exprs(f"{name}_oracle", params, oracle_outputs, problem.params.names, tuple(f"qp:{output}" for output in oracle_names))
 
-  oracle_name = (name or "qp") + "_oracle"
-  oracle = Function._from_exprs(
-    oracle_name,
-    list(params),
-    oracle_outs,
-    list(param_names),
-    oracle_names,
+  solver_vars = problem.vars.with_types(
+    tuple(TensorType(expr.shape, expr.type.dtype, expr.type.sparsity, diff=False) for expr in problem._var_symbols)
   )
-
-  input_signature: tuple[tuple[str, tuple[int, ...]], ...] = (
-    ("x0", (n,)),
-    ("lam_eq0", (p_dim,)),
-    ("lam_ineq0", (m_dim,)),
-    *((pname, pe.shape) for pname, pe in zip(param_names, params, strict=True)),
+  input_tree = G(
+    solver_vars,
+    solver_vars.relabel("lam:"),
+    L("lam_eq", TensorType((n_eq,), diff=False)),
+    L("lam_ineq", TensorType((n_ineq,), diff=False)),
+    problem.params,
   )
-  output_signature: tuple[tuple[str, tuple[int, ...]], ...] = (
-    ("x", (n,)),
-    ("cost", ()),
-    ("lam_eq", (p_dim,)),
-    ("lam_ineq", (m_dim,)),
-    ("lam_box", (n,)),
+  output_tree: Tree[Any, Any] = G(
+    solver_vars,
+    solver_vars.relabel("lam:"),
+    L("lam_eq", TensorType((n_eq,), diff=False)),
+    L("lam_ineq", TensorType((n_ineq,), diff=False)),
   )
-
-  resolved_options = {"verbose": 0, **(options or {})}
   descriptor = SolverDescriptor(
-    name=name or f"qp_{solver}",
-    backend=solver,
+    name=name,
+    backend=backend.name,
     n=n,
-    n_eq=p_dim,
-    n_ineq=m_dim,
-    input_signature=input_signature,
-    output_signature=output_signature,
-    param_names=param_names,
+    n_eq=n_eq,
+    n_ineq=n_ineq,
+    input_signature=tuple(zip(input_tree.names, input_tree.shapes, strict=True)),
+    output_signature=tuple(zip(output_tree.names, output_tree.shapes, strict=True)),
+    param_names=problem.params.names,
+    n_var_blocks=problem.vars.size,
     oracle=oracle,
-    options=tuple(sorted(resolved_options.items())),
+    options=tuple(sorted({"verbose": 0, **resolved_options}.items())),
     oracle_output_names=tuple(oracle_names),
     sparse=sparse,
     P_sparsity=P_sp,
     A_sparsity=A_sp,
     G_sparsity=G_sp,
   )
-  return descriptor_function(descriptor)
+  return cast(Any, descriptor_function(descriptor, input_tree, output_tree))
+
+
+def qp_problem(n: int, n_eq: int, n_ineq: int) -> Problem[Expr, np.ndarray, QPData[Expr], QPData[np.ndarray]]:
+  """Return the typed matrix-data form of a quadratic problem."""
+
+  @problem(
+    vars=L("x", n),
+    params=G(
+      G(L("P", (n, n)), L("c", n)),
+      G(L("A", (n_eq, n)), L("b", n_eq)),
+      G(L("G", (n_ineq, n)), L("g_lb", n_ineq), L("g_ub", n_ineq)),
+    ),
+    name="qp",
+  )
+  def qp(x: Expr, params: QPData[Expr]) -> ProblemSpec[Expr]:
+    (P, c), (A, b), (G_mat, g_lb, g_ub) = params
+    return ProblemSpec(
+      minimize=0.5 * (x @ P @ x) + c @ x,
+      eq=(A @ x - b,),
+      ineq=(bounded(G_mat @ x, g_lb, g_ub, name="g"),),
+    )
+
+  return qp

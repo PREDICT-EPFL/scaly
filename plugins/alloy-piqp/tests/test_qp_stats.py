@@ -5,12 +5,12 @@ import numpy as np
 import pytest
 
 import alloy as al
-from alloy.solvers.qp import _legacy_qp
+from tests.solvers.problem_helpers import build_qp, solve_qp
 
 
 def _problem(*, max_iter: int | None = None) -> al.Function:
   options: dict[str, float | int] = {} if max_iter is None else {"max_iter": max_iter}
-  return _legacy_qp(
+  return build_qp(
     P=np.array([[4.0, 1.0], [1.0, 2.0]]),
     c=np.array([-1.0, -1.0]),
     G_ineq=np.array([[1.0, 2.0], [-1.0, 2.0]]),
@@ -26,8 +26,8 @@ def _problem(*, max_iter: int | None = None) -> al.Function:
 @pytest.mark.solver("piqp")
 def test_qp_stats_success_and_timing_split() -> None:
   qp = _problem()
-  out = qp(np.zeros(2), np.zeros(0), np.zeros(2))
-  stats = qp.last_stats
+  out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(2))
+  stats = qp.solver_stats()
   assert stats is not None
   assert stats.version == al.ALLOY_SOLVER_STATS_VERSION
   assert stats.status == al.AlloySolveStatus.OK
@@ -47,17 +47,17 @@ def test_qp_stats_success_and_timing_split() -> None:
 @pytest.mark.solver("piqp")
 def test_qp_stats_maps_max_iter_status() -> None:
   qp = _problem(max_iter=1)
-  qp(np.zeros(2), np.zeros(0), np.zeros(2))
-  assert qp.last_stats is not None
-  assert qp.last_stats.status == al.AlloySolveStatus.MAX_ITER
-  assert qp.last_stats.native_status == -1
-  assert qp.last_stats.iter == 1
-  assert qp.last_status is not None and not qp.last_status.ok
+  solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(2))
+  assert qp.solver_stats() is not None
+  assert qp.solver_stats().status == al.AlloySolveStatus.MAX_ITER
+  assert qp.solver_stats().native_status == -1
+  assert qp.solver_stats().iter == 1
+  assert qp.solver_stats().to_solver_status() is not None and not qp.solver_stats().to_solver_status().ok
 
 
 @pytest.mark.solver("piqp")
 def test_qp_reserved_name_compiles_solves_and_exposes_stats() -> None:
-  qp = _legacy_qp(P=np.eye(2), c=np.array([-0.25, 0.5]), name="w")
-  out = qp(np.zeros(2), np.zeros(0), np.zeros(0))
+  qp = build_qp(P=np.eye(2), c=np.array([-0.25, 0.5]), name="w")
+  out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))
   np.testing.assert_allclose(out["x"], [0.25, -0.5], atol=1e-8)
   assert qp.solver_stats("w").status == al.AlloySolveStatus.OK

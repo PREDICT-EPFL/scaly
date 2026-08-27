@@ -62,6 +62,7 @@ def _fake_solver_function(backend: str = "fake") -> al.Function:
     input_signature=(("x0", (1,)), ("lam_eq0", (0,)), ("lam_ineq0", (0,))),
     output_signature=(("x", (1,)),),
     param_names=(),
+    n_var_blocks=0,
   )
   return descriptor_function(desc)
 
@@ -200,6 +201,7 @@ def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch
     input_signature=(("x0", (1,)), ("lam_eq0", (0,)), ("lam_ineq0", (0,))),
     output_signature=(("x", (1,)),),
     param_names=(),
+    n_var_blocks=0,
     base=oracle,
   )
 
@@ -232,6 +234,7 @@ def test_external_oracle_workspace_is_part_of_solver_workspace(monkeypatch: pyte
     input_signature=(("x0", (1,)), ("lam_eq0", (0,)), ("lam_ineq0", (0,))),
     output_signature=(("x", (1,)),),
     param_names=(),
+    n_var_blocks=0,
     base=oracle,
   )
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
@@ -252,6 +255,7 @@ def _external_solver(name: str, oracle: ExternalOracle) -> al.Function:
       input_signature=(("x0", (1,)), ("lam_eq0", (0,)), ("lam_ineq0", (0,))),
       output_signature=(("x", (1,)),),
       param_names=(),
+      n_var_blocks=0,
       base=oracle,
     )
   )

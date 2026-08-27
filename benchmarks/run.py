@@ -16,7 +16,6 @@ if str(ROOT) not in sys.path:
 import numpy as np
 
 import alloy as al
-from alloy.solvers.qp import _legacy_qp
 from alloy.ir.expr import substitute
 from alloy.codegen.aot import render_c_module
 from alloy.solvers.graph import solver_compile_flags
@@ -70,20 +69,17 @@ def _qp_filter() -> al.Function:
         grad = 2.0 * diff
         rows.append(al.stack([grad[d] if k == car else al.const(0.0) for k in range(2) for d in range(2)], axis=0))
         bias.append(ALPHA * (al.dot(diff, diff) - al.const(SAFETY_MARGIN**2)))
-    qp = _legacy_qp(
-      P=al.const(np.eye(NU)),
-      c=-u_ref,
-      G_ineq=al.stack(rows, axis=0),
-      l_ineq=-al.stack(bias, axis=0),
-      u_ineq=al.const(np.full(len(bias), 1e30)),
-    )
-    return qp.call(
-      x0=al.const(np.zeros(NU)),
-      lam_eq0=al.const(np.zeros(0)),
-      lam_ineq0=al.const(np.zeros(len(bias))),
-      x=x,
-      u_ref=u_ref,
-    )[0]
+
+    @al.problem(vars=al.L("u", NU), name="smoke_safety_filter_qp_problem")
+    def problem(u):
+      return al.ProblemSpec(
+        minimize=0.5 * al.dot(u, u) - al.dot(u_ref, u),
+        ineq=(al.bounded(al.stack(rows, axis=0) @ u, lo=-al.stack(bias, axis=0), name="obstacles"),),
+      )
+
+    solve = al.solver(problem, "piqp", name="smoke_safety_filter_qp")
+    params = problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names))
+    return solve.symbolic_call((al.const(np.zeros(NU)), al.const(np.zeros(NU)), al.const(np.zeros(0)), al.const(np.zeros(len(bias))), params))[0]
 
   return safety_filter_qp
 

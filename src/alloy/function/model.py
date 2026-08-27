@@ -69,8 +69,6 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
   """
 
   descriptor: Any
-  last_stats: SolverStats | None
-  last_status: Any
 
   def __init__(
     self,
@@ -286,11 +284,6 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
 
   def __call__(self, *args: Any, **kwargs: Any) -> Any:
     outs = self.eval_list(*args, **kwargs)
-    descriptor = getattr(self, "descriptor", None)
-    if descriptor is not None and descriptor.n_var_blocks == 0:
-      self.last_stats = self.solver_stats()
-      self.last_status = self.last_stats.to_solver_status()
-      return dict(zip(self.output_names, outs, strict=True))
     return outs[0] if len(outs) == 1 else tuple(outs)
 
   def call(self, args: Sequence[Any] | None = None, /, **kwargs: Any) -> tuple[Expr, ...]:

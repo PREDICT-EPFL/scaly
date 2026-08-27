@@ -55,8 +55,8 @@ class SolverDescriptor:
   output_signature: tuple[tuple[str, tuple[int, ...]], ...]
   # param names (ordered parameter leaves after the fixed warm-start groups)
   param_names: tuple[str, ...]
-  # Number of variable leaves at each end of the typed solver signature. Zero marks the legacy QP descriptor until Step 6.
-  n_var_blocks: int = 0
+  # Number of variable leaves at each end of the typed solver signature.
+  n_var_blocks: int
   # Functions
   oracle: Function | None = None  # QP only
   base: Function | ExternalOracle | None = None  # NLP only
@@ -126,7 +126,4 @@ def descriptor_function(
     tuple(name for name, _ in descriptor.output_signature),
   )._with_trees(inputs, outputs)
   function.descriptor = descriptor
-  if descriptor.n_var_blocks == 0:
-    function.last_stats = None
-    function.last_status = None
   return function

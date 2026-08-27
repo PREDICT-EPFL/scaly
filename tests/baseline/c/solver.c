@@ -64,31 +64,36 @@ static double alloy_clock_s(void) {
 extern "C" {
 #endif
 
-static inline void corpus_qp_oracle_raw(const double* mu, double* P, double* c, double* x_lb, double* x_ub, double* w) {
+static inline void corpus_qp_oracle_raw(const double* mu, double* qp_P, double* qp_c, double* qp_x_lb, double* qp_x_ub, double* w) {
   (void)w;
   static const double k0[4] = {1, 0, 0, 1};
-  static const double k1[2] = {-1e+30, -1e+30};
-  static const double k2[2] = {1e+30, 1e+30};
-  for (long long i_c = 0; i_c < 2; ++i_c) {
-    c[i_c] = (-mu[i_c]);
+  static const int64_t k2[2] = {0, 1};
+  static const double k3[2] = {-1e+30, -1e+30};
+  static const double k4[2] = {1e+30, 1e+30};
+  for (long long z_qp_c = 0; z_qp_c < 2; ++z_qp_c) {
+    qp_c[z_qp_c] = 0;
   }
-  for (long long c_P = 0; c_P < 4; ++c_P) {
-    P[c_P] = k0[c_P];
+  for (long long i_qp_c = 0; i_qp_c < 2; ++i_qp_c) {
+    qp_c[k2[i_qp_c]] = (-mu[i_qp_c]);
   }
-  for (long long c_x_lb = 0; c_x_lb < 2; ++c_x_lb) {
-    x_lb[c_x_lb] = k1[c_x_lb];
+  for (long long c_qp_P = 0; c_qp_P < 4; ++c_qp_P) {
+    qp_P[c_qp_P] = k0[c_qp_P];
   }
-  for (long long c_x_ub = 0; c_x_ub < 2; ++c_x_ub) {
-    x_ub[c_x_ub] = k2[c_x_ub];
+  for (long long c_qp_x_lb = 0; c_qp_x_lb < 2; ++c_qp_x_lb) {
+    qp_x_lb[c_qp_x_lb] = k3[c_qp_x_lb];
+  }
+  for (long long c_qp_x_ub = 0; c_qp_x_ub < 2; ++c_qp_x_ub) {
+    qp_x_ub[c_qp_x_ub] = k4[c_qp_x_ub];
   }
 }
 
 static alloy_solver_stats corpus_qp_stats_data;
 // PIQP dense solver wrapper for corpus_qp (n=2, p=0, m=0).
-static void corpus_qp_raw(const double* in0, const double* in1, const double* in2, const double* in3, double* out0, double* out1, double* out2, double* out3, double* out4, double* w) {
+static void corpus_qp_raw(const double* in0, const double* in1, const double* in2, const double* in3, const double* in4, double* out0, double* out1, double* out2, double* out3, double* w) {
   (void)in0;
   (void)in1;
   (void)in2;
+  (void)in3;
   double stats_t0 = alloy_clock_s();
   static double P_buf[4];
   static double c_buf[2];
@@ -96,7 +101,7 @@ static void corpus_qp_raw(const double* in0, const double* in1, const double* in
   static double xub_buf[2];
   static double Pcol[4];
   double fe_t0 = alloy_clock_s();
-  corpus_qp_oracle_raw(in3, P_buf, c_buf, xlb_buf, xub_buf, w);
+  corpus_qp_oracle_raw(in4, P_buf, c_buf, xlb_buf, xub_buf, w);
   double stats_t_fe = alloy_clock_s() - fe_t0;
   for (int j = 0; j < 2; ++j) for (int i = 0; i < 2; ++i) Pcol[i + j * 2] = P_buf[i * 2 + j];
   static piqp_workspace* corpus_qp_ws = NULL;
@@ -125,9 +130,8 @@ static void corpus_qp_raw(const double* in0, const double* in1, const double* in
   piqp_solve(corpus_qp_ws);
   double stats_t_solver = alloy_clock_s() - solver_t0;
   piqp_result* res = corpus_qp_ws->result;
-  for (int i = 0; i < 2; ++i) out0[i] = res->x[i];
-  out1[0] = res->info.primal_obj;
-  for (int i = 0; i < 2; ++i) out4[i] = res->z_bu[i] - res->z_bl[i];
+  for (int i = 0; i < 2; ++i) out0[i] = res->x[0 + i];
+  for (int i = 0; i < 2; ++i) out1[i] = res->z_bu[0 + i] - res->z_bl[0 + i];
   int32_t stats_status;
   switch (res->info.status) {
     case PIQP_SOLVED: stats_status = ALLOY_SOLVE_OK; break;
@@ -187,11 +191,10 @@ int qp_host(const double** arg, double** res, int* iw, double* w, void* mem) {
   static const double k0[2] = {0, 0};
   static const double k1[1] = {};
   double s0[2];
-  double s1[1];
+  double s1[2];
   double s2[1];
   double s3[1];
-  double s4[2];
-  corpus_qp_raw(k0, k1, k1, arg[0], s0, s1, s2, s3, s4, NULL);
+  corpus_qp_raw(k0, k0, k1, k1, arg[0], s0, s1, s2, s3, NULL);
   res[0][0] = 0;
   for (long long i_cost = 0; i_cost < 2; ++i_cost) {
     res[0][0] = (res[0][0] + (s0[i_cost] * s0[i_cost]));

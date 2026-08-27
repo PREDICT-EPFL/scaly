@@ -81,6 +81,69 @@ def build_nlp(
   return al.solver(problem_body, solver, name=name, options=options)
 
 
+def build_qp(
+  *,
+  P: Any,
+  c: Any,
+  A_eq: Any = None,
+  b_eq: Any = None,
+  G_ineq: Any = None,
+  l_ineq: Any = None,
+  u_ineq: Any = None,
+  x_lb: Any = None,
+  x_ub: Any = None,
+  solver: str = "piqp",
+  name: str | None = None,
+  options: dict[str, Any] | None = None,
+  sparse: bool = False,
+) -> al.Function:
+  """Express an old matrix-form QP test fixture through ProblemSpec."""
+  P_expr, c_expr = as_expr(P), as_expr(c)
+  if len(P_expr.shape) != 2 or P_expr.shape[0] != P_expr.shape[1]:
+    raise ValueError(f"P must be square 2D, got shape {P_expr.shape}")
+  n = P_expr.shape[0]
+  if c_expr.shape != (n,):
+    raise ValueError(f"c must have shape ({n},), got {c_expr.shape}")
+  variable = al.L("decision", n)
+
+  @al.problem(vars=variable, name=name)
+  def problem_body(x: Expr) -> al.ProblemSpec[Expr]:
+    equalities = () if A_eq is None else (as_expr(A_eq) @ x - as_expr(b_eq),)
+    inequalities = ()
+    if G_ineq is not None:
+      inequalities = (al.bounded(as_expr(G_ineq) @ x, l_ineq, u_ineq),)
+    return al.ProblemSpec(
+      minimize=0.5 * (x @ P_expr @ x) + c_expr @ x,
+      eq=equalities,
+      ineq=inequalities,
+      lb=None if x_lb is None else as_expr(x_lb),
+      ub=None if x_ub is None else as_expr(x_ub),
+    )
+
+  return al.solver(problem_body, solver, name=name, options={"sparse": sparse, **(options or {})})
+
+
+def solve_qp(
+  solver: al.Function,
+  x0: np.ndarray,
+  lam_eq0: np.ndarray,
+  lam_ineq0: np.ndarray,
+  *params: np.ndarray,
+  **named_params: np.ndarray,
+) -> dict[str, np.ndarray]:
+  """Run a typed one-block QP and expose the retired matrix-builder result names."""
+  descriptor = cast(SolverDescriptor, solver.descriptor)
+  if params and named_params:
+    raise TypeError("pass positional or named QP parameters, not both")
+  values = params or tuple(named_params[name] for name in descriptor.param_names)
+  outputs = solver.eval_list(x0, np.zeros_like(x0), lam_eq0, lam_ineq0, *values)
+  result = dict(zip(solver.output_names, outputs, strict=True))
+  result["x"] = outputs[0]
+  result["lam_box"] = outputs[1]
+  result["cost"] = np.asarray(solver.solver_stats().obj)
+  return result
+
+
 def solve_nlp(
   solver: al.Function,
   x0: np.ndarray,

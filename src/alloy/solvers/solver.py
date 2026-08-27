@@ -9,6 +9,7 @@ import numpy as np
 from ..function import Function
 from ..ir.expr import Expr
 from .nlp import build_nlp
+from .qp import build_qp
 from .problem import Problem
 from .registry import get_backend, require_backend
 
@@ -32,4 +33,6 @@ def solver[SV, NV, SP, NP](
   if selected.kind == "nlp":
     nlp_backend = require_backend(backend, "nlp")
     return build_nlp(problem, nlp_backend, name=solver_name, options=options)
-  raise NotImplementedError("QP extraction lands in Step 6")
+  if selected.kind == "qp":
+    return build_qp(problem, require_backend(backend, "qp"), name=solver_name, options=options)
+  raise ValueError(f"solver plugin {backend!r} has unknown kind {selected.kind!r}")

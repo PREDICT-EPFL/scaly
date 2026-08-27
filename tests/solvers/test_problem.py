@@ -71,6 +71,19 @@ def test_problem_carries_spec_trees_and_declared_names() -> None:
   assert tuple(group.name for group in filter_problem.spec.ineq) == ("cbf", "u_box")
 
 
+def test_qp_problem_is_a_typed_problem() -> None:
+  qp = al.qp_problem(3, 1, 2)
+  assert qp.vars.names == ("x",)
+  assert qp.params.names == ("P", "c", "A", "b", "G", "g_lb", "g_ub")
+  assert qp.n_eq == 1
+  assert qp.n_ineq == 2
+
+  empty = al.qp_problem(3, 0, 0)
+  assert empty.params.shapes[2:4] == ((0, 3), (0,))
+  assert empty.n_eq == 0
+  assert empty.n_ineq == 0
+
+
 def test_problem_validates_body_and_declared_inputs_at_construction() -> None:
   with pytest.raises(TypeError, match="cost must be scalar"):
     al.problem(vars=al.L("x", 2), params=al.L("p", ()))(lambda x, p: al.ProblemSpec(minimize=x))
@@ -163,6 +176,41 @@ def test_ipopt_numerical_call_preserves_multiple_variable_blocks() -> None:
 def test_solver_rejects_an_unknown_backend() -> None:
   with pytest.raises(SolverPluginError, match="no solver plugin"):
     al.solver(quadratic, "missing")
+
+
+def test_qp_backend_proves_quadratic_cost_and_affine_constraints() -> None:
+  assert al.solver(filter_problem, "piqp").name == "filter_problem_piqp"
+  qp = al.qp_problem(3, 1, 2)
+  assert al.solver(qp, "piqp").input_names[-7:] == qp.params.names
+
+  @al.problem(vars=al.L("x", 2), params=al.L("p", ()))
+  def quartic_cost(x: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    return al.ProblemSpec(minimize=(x * x * x * x).sum() + p)
+
+  with pytest.raises(al.NotQuadratic, match="cost is not quadratic"):
+    al.solver(quartic_cost, "piqp")
+
+  @al.problem(vars=al.L("x", 2), params=al.L("p", ()))
+  def cubic_equality(x: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    return al.ProblemSpec(minimize=(x * x).sum() + p, eq=(x * x * x,))
+
+  with pytest.raises(al.NotQuadratic, match=r"eq\[0\] is not affine"):
+    al.solver(cubic_equality, "piqp")
+
+  @al.problem(vars=al.L("x", 2), params=al.L("p", ()))
+  def wavy_inequality(x: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    return al.ProblemSpec(minimize=(x * x).sum() + p, ineq=(al.bounded(x.sin(), hi=1.0, name="w"),))
+
+  with pytest.raises(al.NotQuadratic, match="ineq w is not affine"):
+    al.solver(wavy_inequality, "piqp")
+
+
+def test_nlp_backend_accepts_a_nonlinear_problem() -> None:
+  @al.problem(vars=al.L("x", 2), params=al.L("p", ()))
+  def nonlinear(x: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    return al.ProblemSpec(minimize=((1.0 - x[0]) ** 2 + p * (x[1] - x[0] ** 2) ** 2), ineq=(al.bounded(x[0].sin(), hi=0.5),))
+
+  assert al.solver(nonlinear, "ipopt").input_shapes == ((2,), (2,), (0,), (1,), ())
 
 
 def test_bounded_requires_at_least_one_bound() -> None:

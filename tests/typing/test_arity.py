@@ -67,6 +67,8 @@ def filter_problem(variables: tuple[al.Expr, al.Expr], params: tuple[al.Expr, al
 
 quadratic_ipopt = al.solver(quadratic, "ipopt")
 filter_sqp = al.solver(filter_problem, "sqp")
+qp3 = al.qp_problem(3, 1, 2)
+qp3_piqp = al.solver(qp3, "piqp")
 
 grad_f_x = al.gradient(cost, "f", "x")
 hess_f_x = al.hessian(cost, "f", "x")
@@ -135,6 +137,7 @@ if TYPE_CHECKING:
       tuple[np.ndarray, np.ndarray],
     ],
   )
+  assert_type(qp3, al.Problem[al.Expr, np.ndarray, al.QPData[al.Expr], al.QPData[np.ndarray]])
   al.problem(vars=al.G(al.L("u", 2), al.L("s", 1)), params=al.L("p", ()))(lambda variables, p: al.ProblemSpec(minimize=variables.sum()))  # ty: ignore[unresolved-attribute]
   al.problem(vars=al.L("x", 2), params=al.L("p", ()))(lambda x, p: al.ProblemSpec(minimize=x.sum(), lb=(x, x)))  # ty: ignore[invalid-argument-type]
 
@@ -167,6 +170,22 @@ if TYPE_CHECKING:
       )
     ),
     tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray],
+  )
+  assert_type(
+    qp3_piqp.numerical_call(
+      (
+        np.zeros(3),
+        np.zeros(3),
+        np.zeros(1),
+        np.zeros(2),
+        (
+          (np.zeros((3, 3)), np.zeros(3)),
+          (np.zeros((1, 3)), np.zeros(1)),
+          (np.zeros((2, 3)), np.zeros(2), np.zeros(2)),
+        ),
+      )
+    ),
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
   )
   quadratic_ipopt.numerical_call((np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0)))  # ty: ignore[invalid-argument-type]
   filter_sqp.numerical_call(((np.zeros(2),), (np.zeros(2), np.zeros(1)), np.zeros(1), np.zeros(3), (np.zeros(4), np.zeros(2))))  # ty: ignore[invalid-argument-type]

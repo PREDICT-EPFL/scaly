@@ -8,6 +8,8 @@ interface), and fills ``ctx.stats_symbol``. Contract: ``docs/dev/solver_plugins.
 
 from __future__ import annotations
 
+import math
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -45,10 +47,14 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   nnz_A = desc.A_sparsity.nnz if sparse and desc.A_sparsity is not None else 0
   nnz_G = desc.G_sparsity.nnz if sparse and desc.G_sparsity is not None else 0
 
-  # Map solver input order to C parameter names: in0..in{n-1}.
-  # Inputs: x0, lam_eq0, lam_ineq0, then params in order.
   param_count = len(desc.param_names)
-  oracle_param_args = [f"in{3 + i}" for i in range(param_count)]
+  nv = desc.n_var_blocks
+  if nv < 1:
+    raise ValueError("typed QP descriptors need at least one variable block")
+  var_sizes = [math.prod(shape) for _, shape in desc.input_signature[:nv]]
+  var_offsets = [sum(var_sizes[:i]) for i in range(nv)]
+  eq_output, ineq_output, param_start = 2 * nv, 2 * nv + 1, 2 * nv + 2
+  oracle_param_args = [f"in{param_start + i}" for i in range(param_count)]
 
   # Oracle output ordering (set by qp.py): P, c, [A_eq, b_eq], [G_ineq, l_ineq, u_ineq], x_lb, x_ub.
   # Sparse wrappers get compact CSC-ordered value buffers for P/A/G.
@@ -76,10 +82,9 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   else:
     lines.append(f"// PIQP dense solver wrapper for {fun.name} (n={n}, p={p}, m={m}).")
   lines.append(f"static void {raw}({', '.join(params)}) {{")
-  # Suppress unused warnings (warm-start inputs are not consumed yet).
-  lines.append("  (void)in0;")  # x0
-  lines.append("  (void)in1;")  # lam_eq0
-  lines.append("  (void)in2;")  # lam_ineq0
+  # PIQP does not consume warm starts yet.
+  for input_index in range(param_start):
+    lines.append(f"  (void)in{input_index};")
   lines.append("  double stats_t0 = alloy_clock_s();")
 
   # 1. Local QP data buffers (static: row-major P/A/G are O(n^2) in the dense
@@ -172,14 +177,13 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   lines.append(f"  piqp_solve({symbol}_ws);")
   lines.append("  double stats_t_solver = alloy_clock_s() - solver_t0;")
   lines.append(f"  piqp_result* res = {symbol}_ws->result;")
-  # Outputs: x, cost, lam_eq, lam_ineq, lam_box.
-  lines.append(f"  for (int i = 0; i < {n}; ++i) out0[i] = res->x[i];")
-  lines.append("  out1[0] = res->info.primal_obj;")
+  for block, (size, offset) in enumerate(zip(var_sizes, var_offsets, strict=True)):
+    lines.append(f"  for (int i = 0; i < {size}; ++i) out{block}[i] = res->x[{offset} + i];")
+    lines.append(f"  for (int i = 0; i < {size}; ++i) out{nv + block}[i] = res->z_bu[{offset} + i] - res->z_bl[{offset} + i];")
   if p:
-    lines.append(f"  for (int i = 0; i < {p}; ++i) out2[i] = res->y[i];")
+    lines.append(f"  for (int i = 0; i < {p}; ++i) out{eq_output}[i] = res->y[i];")
   if m:
-    lines.append(f"  for (int i = 0; i < {m}; ++i) out3[i] = res->z_u[i] - res->z_l[i];")
-  lines.append(f"  for (int i = 0; i < {n}; ++i) out4[i] = res->z_bu[i] - res->z_bl[i];")
+    lines.append(f"  for (int i = 0; i < {m}; ++i) out{ineq_output}[i] = res->z_u[i] - res->z_l[i];")
 
   lines.append("  int32_t stats_status;")
   lines.append("  switch (res->info.status) {")

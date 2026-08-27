@@ -143,6 +143,11 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
   cached = {
     "x": x,
     "var_sizes": var_sizes,
+    "f": f,
+    "h": h,
+    "g_ineq": g_ineq,
+    "equalities": equalities,
+    "inequalities": inequalities,
     "base": base,
     "grad": grad,
     "jac": jac,
