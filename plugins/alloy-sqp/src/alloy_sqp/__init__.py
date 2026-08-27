@@ -15,7 +15,7 @@ class _Backend:
   name = "sqp"
   kind = "nlp"
   hess_triangle = "upper"
-  protocol_version = 5
+  protocol_version = 6
   lib_stem = "piqpc"
   link_flags = ("-lpiqpc",)
   header = "piqp/piqp.h"

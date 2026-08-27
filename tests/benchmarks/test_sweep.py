@@ -102,7 +102,7 @@ def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
   primal = al.Function._from_exprs("sweep_width_fixture", [x], [y], ["x"], ["y"])
   hessian = al.sparse_hessian(primal, "y", "x")
   descriptor = SimpleNamespace(name="sweep_width_fixture", hess=hessian, hess_sparsity=hessian.output_sparsities[0])
-  solver = cast(al.SolverFunction, SimpleNamespace(descriptor=descriptor))
+  solver = cast(al.Function, SimpleNamespace(descriptor=descriptor))
 
   _, sparsity, coloring_width = _descriptor_kernel(solver, "hess")
 

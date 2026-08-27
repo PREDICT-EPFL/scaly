@@ -5,7 +5,7 @@ file-writing driver here and ``codegen/jit.py`` consume.
 artifacts read off that lowering, so the header's ``SZ_W``, the source's ``_sz_w`` and a consumer's
 workspace allocation cannot disagree. A function with no solver in its call graph renders entirely
 through ``codegen/c``. A **solver-bearing** graph is orchestrated here: every non-solver Function
-(oracle, host caller, intermediate) is a Program-IR ``_raw`` and each ``SolverFunction`` is the
+(oracle, host caller, intermediate) is a Program-IR ``_raw`` and each ``solver Function`` is the
 ``codegen/solver`` wrapper template that drives its (Program-IR) oracles — the one sanctioned
 non-Program-IR path (see ``docs/how_it_works/solvers.md``).
 """
@@ -238,7 +238,7 @@ def _render_source(ctx: _RenderCtx) -> str:
 
 def _render_solver_bearing_source(ctx: _RenderCtx) -> str:
   """One translation unit for a solver-bearing graph. The non-solver Functions (oracles, the host
-  caller, any intermediates) are Program-IR ``_raw`` callees; each ``SolverFunction`` is the
+  caller, any intermediates) are Program-IR ``_raw`` callees; each ``solver Function`` is the
   ``solver`` wrapper driving them. ``_function_order`` is topological — a solver sits after its
   oracle PROCs and before the function that calls it — so emitting definitions in that order never
   forward-references a ``_raw``."""
@@ -419,7 +419,7 @@ def _callees(fun: Function) -> list[Function]:
   ret: list[Function] = []
   seen: set[int] = set()
   if is_solver_function(fun):
-    # SolverFunctions render via a custom template that calls the oracle (and for NLP, the
+    # solver Functions render via a custom template that calls the oracle (and for NLP, the
     # derivative Functions) — these aren't reachable through the solver's own output graph (it
     # only contains SOLVER_CALL nodes), so surface them explicitly here.
     for callee in solver_callees(fun):

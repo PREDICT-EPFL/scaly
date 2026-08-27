@@ -40,7 +40,18 @@ from .ir.expr import (
 from .function import Function, G, L, factory
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
-from .solvers import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, SolverFunction, SolverStats, SolverStatus, nlp, qp
+from .solvers import (
+  ALLOY_SOLVER_STATS_VERSION,
+  AlloySolveStatus,
+  Bounded,
+  Problem,
+  ProblemSpec,
+  SolverStats,
+  SolverStatus,
+  bounded,
+  problem,
+  solver,
+)
 from .ir.expr_spec import spec_expr, spec_expr_shared, verify_expr
 from .ir.spec import Rule, Spec, VerifyError
 from .ad.sparse import SparseJacobian, sparse_jacobian_colored, sparse_jacobian_reference
@@ -67,6 +78,7 @@ __all__ = [
   "ALLOY_SOLVER_STATS_VERSION",
   "AlloySolveStatus",
   "BackendSupport",
+  "Bounded",
   "BufferType",
   "C_API_SIGNATURE",
   "COMMON_OPS",
@@ -81,7 +93,8 @@ __all__ = [
   "Pattern",
   "PatternMatcher",
   "ScalarType",
-  "SolverFunction",
+  "Problem",
+  "ProblemSpec",
   "SolverStats",
   "SolverStatus",
   "Spec",
@@ -94,6 +107,7 @@ __all__ = [
   "as_dtype",
   "atan2",
   "backend_supports",
+  "bounded",
   "c_api_signature",
   "dtypes",
   "color_groups",
@@ -122,10 +136,10 @@ __all__ = [
   "vmap",
   "maximum",
   "minimum",
-  "nlp",
+  "problem",
   "norm_2",
   "program_graph",
-  "qp",
+  "solver",
   "render_expr_assembly",
   "render_program_assembly",
   "rewrite",

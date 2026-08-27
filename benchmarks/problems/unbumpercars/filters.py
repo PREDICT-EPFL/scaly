@@ -410,7 +410,7 @@ def build_casadi_sqp(
     base=ca.Function(f"{stem}_base", [z, p], [controller.cost_fn(z, p), controller.g_fn(z, p)]),
     grad=ca.Function(f"{stem}_grad", [z, p], [controller.grad_fn(z, p)]),
     jac=ca.Function(f"{stem}_jac", [z, p], [controller.jac_fn(z, p)]),
-    hess=ca.Function(f"{stem}_hess", [z, lam_f, lam_g, p], [controller.hess_fn(z, p, lam_f, lam_g)]),
+    hess=ca.Function(f"{stem}_hess", [z, p, lam_f, lam_g], [controller.hess_fn(z, p, lam_f, lam_g)]),
     n_eq=0,
     n_ineq=controller.n_s,
     x_lb=np.concatenate([-np.ones(controller.n_u), np.zeros(controller.n_s)]),
@@ -610,28 +610,41 @@ def build_alloy_nlp(
   solver: str = "ipopt",
   options: dict[str, str | int | float] | None = None,
   oracle: al.Function | None = None,
-) -> al.SolverFunction:
+) -> al.Function:
   """Build the nonlinear program used by the Alloy safety-filter column."""
   base = build_alloy_oracle(loop_cfg, filt_cfg) if oracle is None else oracle
-  z, *_ = base.inputs
-  cost, g = base.outputs
+  z, bar_x, u_des, pw, physics, dt = base.inputs
+  _, g = base.outputs
   n_u, n_s, n_g = NCTRL * loop_cfg.ncars, loop_cfg.n_slack, g.shape[0]
-  return al.nlp(
-    x=z,
-    f=cost,
-    p=list(base.inputs[1:]),
-    g_ineq=g if n_g else None,
-    l_ineq=np.zeros(n_g) if n_g else None,
-    x_lb=np.concatenate([-np.ones(n_u), np.zeros(n_s)]),
-    x_ub=np.concatenate([np.ones(n_u), np.full(n_s, np.inf)]),
-    solver=solver,
-    name=base.name.replace("_oracle", f"_{solver}_nlp"),
-    options=options,
+  vars_tree = al.G(al.L("u", (n_u,)), al.L("s", (n_s,)))
+  params_tree = al.G(
+    al.L("bar_x", bar_x.type),
+    al.L("u_des", u_des.type),
+    al.L("pw", pw.type),
+    al.L("physics", physics.type),
+    al.L("dt", dt.type),
   )
+  problem_name = base.name.replace("_oracle", "_problem")
+
+  @al.problem(vars=vars_tree, params=params_tree, name=problem_name)
+  def problem(variables, params):
+    u, s = variables
+    cost, constraints = base.symbolic_call((al.concat([u, s]), *params))
+    inequalities = (al.bounded(constraints, lo=al.const(np.zeros(n_g)), name="barrier"),) if n_g else ()
+    return al.ProblemSpec(
+      minimize=cost,
+      ineq=inequalities,
+      lb=(al.const(-np.ones(n_u)), al.const(np.zeros(n_s))),
+      ub=(al.const(np.ones(n_u)), al.const(np.full(n_s, np.inf))),
+    )
+
+  result = al.solver(problem, solver, name=base.name.replace("_oracle", f"_{solver}_nlp"), options=options)
+  setattr(result, "_benchmark_base", base)
+  return result
 
 
 class AlloyDTCBFSafetyFilter:
-  """DTCBF filter through a generated ``al.nlp`` solver wrapper.
+  """DTCBF filter through a generated typed solver Function.
 
   IPOPT or SQP can consume Alloy-generated oracles; SQP can also consume
   CasADi-generated C oracles through the same wrapper contract. Warm starts
@@ -663,7 +676,7 @@ class AlloyDTCBFSafetyFilter:
     self.last_z: np.ndarray | None = None
     self.last_mult_g: np.ndarray | None = None
     self.last_lam_box: np.ndarray | None = None
-    self.fallback_nlp: al.SolverFunction | None = None
+    self.fallback_nlp: al.Function | None = None
     self._packed_params = oracle_provider == "casadi"
     self._compile_ms: dict[str, float] = {}
     t0 = time.perf_counter()
@@ -747,16 +760,40 @@ class AlloyDTCBFSafetyFilter:
     lam_box0 = self.last_lam_box if self.last_lam_box is not None else np.zeros(self.n_z)
 
     params = (np.concatenate([bar_x, u_des, pw, physics, dt]),) if self._packed_params else (bar_x, u_des, pw, physics, dt)
+
+    def solve(active_nlp: al.Function):
+      descriptor = active_nlp.descriptor
+      if descriptor.n_var_blocks == 2:
+        variables0 = (z0[: self.n_u], z0[self.n_u :])
+        box0 = (lam_box0[: self.n_u], lam_box0[self.n_u :])
+      else:
+        variables0, box0 = z0, lam_box0
+      param_values = params[0] if self._packed_params else params
+      variables, box, lam_eq, lam_ineq = active_nlp.numerical_call((variables0, box0, np.zeros(0), lam_g0, param_values))
+      if descriptor.n_var_blocks == 2:
+        z_sol = np.concatenate(variables)
+        box_sol = np.concatenate(box)
+      else:
+        z_sol, box_sol = variables, box
+      evaluator = getattr(active_nlp, "_benchmark_base")
+      if isinstance(evaluator, al.Function):
+        _, constraints = evaluator.numerical_call((z_sol, *params))
+      else:
+        _, constraints = evaluator(z_sol, *params)
+      return {
+        "x": np.asarray(z_sol),
+        "g_ineq": np.asarray(constraints).reshape(-1),
+        "lam_eq": lam_eq,
+        "lam_ineq": lam_ineq,
+        "lam_box": np.asarray(box_sol),
+      }, active_nlp.solver_stats()
+
     active_nlp = self.nlp
-    out = active_nlp(z0, np.zeros(0), lam_g0, lam_box0, *params)
-    stats = active_nlp.last_stats
-    assert stats is not None
+    out, stats = solve(active_nlp)
     attempt_stats = [stats]
     if stats.status not in (al.AlloySolveStatus.OK, al.AlloySolveStatus.ACCEPTABLE) and self.fallback_nlp is not None:
       active_nlp = self.fallback_nlp
-      out = active_nlp(z0, np.zeros(0), lam_g0, lam_box0, *params)
-      stats = active_nlp.last_stats
-      assert stats is not None
+      out, stats = solve(active_nlp)
       attempt_stats.append(stats)
     g_val = np.asarray(out["g_ineq"], dtype=np.float64).reshape(-1)
     raw_success = stats.status in (al.AlloySolveStatus.OK, al.AlloySolveStatus.ACCEPTABLE)

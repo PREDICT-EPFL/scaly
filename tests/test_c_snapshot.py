@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.solvers.qp import _legacy_qp
 from alloy.codegen import render_c_api_header, render_c_source
 from alloy.solvers.registry import available_backends
 
@@ -77,7 +78,7 @@ def _wide() -> al.Function:
 def _qp_host() -> al.Function:
   """A host function whose graph reaches a solver through a nested call."""
   mu = al.sym("mu", 2)
-  qp = al.qp(P=al.const(np.eye(2)), c=-mu, name="corpus_qp")
+  qp = _legacy_qp(P=al.const(np.eye(2)), c=-mu, name="corpus_qp")
   x = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])[0]
   return al.Function._from_exprs("qp_host", [mu], [al.sumsqr(x)], ["mu"], ["cost"])
 

@@ -9,13 +9,14 @@ that builds the ``IpoptProblem``, runs ``IpoptSolve``, and fills
 
 from __future__ import annotations
 
+import math
 import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
   from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
-  from alloy.solvers.solver_function import SolverDescriptor
+  from alloy.solvers.model import SolverDescriptor
 
 _IPOPT_INF = 2e19
 
@@ -73,7 +74,7 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     outputs, and fills the alloy stats struct (status mapped via the vendored
     ``ApplicationReturnStatus`` enum so upstream drift breaks at compile time).
   """
-  desc: SolverDescriptor = fun.descriptor  # ty: ignore[unresolved-attribute]
+  desc: SolverDescriptor = fun.descriptor
   symbol = ctx.symbol
   raw = ctx.raw_symbol
   n, n_h, n_g = desc.n, desc.n_eq, desc.n_ineq
@@ -90,6 +91,13 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   hess_raw = ctx.raw_symbol_of(hess)
   bounds_raw = ctx.raw_symbol_of(bounds)
   param_count = len(desc.param_names)
+  nv = desc.n_var_blocks
+  if nv < 1:
+    raise ValueError("typed NLP descriptors need at least one variable block")
+  var_sizes = [math.prod(shape) for _, shape in desc.input_signature[:nv]]
+  var_offsets = [sum(var_sizes[:i]) for i in range(nv)]
+  eq_input, ineq_input, param_start = 2 * nv, 2 * nv + 1, 2 * nv + 2
+  eq_output, ineq_output = 2 * nv, 2 * nv + 1
   param_args = [f"ctx->p{i}" for i in range(param_count)]
 
   jac_sp = desc.jac_sparsity
@@ -208,10 +216,9 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     lines.append("  } else {")
     lines.append("    double fe_t0 = alloy_clock_s();")
     lines.append("    double obj_buf[1]; obj_buf[0] = obj_factor;")
-    hess_args = ["x", "obj_buf"]
+    hess_args = ["x", *param_args, "obj_buf"]
     if m:
       hess_args.append("lambda")
-    hess_args.extend(param_args)
     hess_args.append("values")
     lines.append(f"    {hess_raw}({', '.join(hess_args)}, ctx->w);")
     lines.append("    ctx->t_fe += alloy_clock_s() - fe_t0;")
@@ -249,9 +256,8 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   lines.append(f"static void {raw}({', '.join(params)}) {{")
   lines.append("  double stats_t0 = alloy_clock_s();")
   # Stash params + workspace in the static context, reset per-solve stats.
-  # NLP inputs: x0, lam_eq0, lam_ineq0, lam_box0, then params from in4.
   for i in range(param_count):
-    lines.append(f"  {symbol}_ctx.p{i} = in{4 + i};")
+    lines.append(f"  {symbol}_ctx.p{i} = in{param_start + i};")
   lines.append(f"  {symbol}_ctx.w = w;")
   lines.append(f"  {symbol}_ctx.t_fe = 0.0;")
   lines.append(f"  {symbol}_ctx.n_eval_f = 0; {symbol}_ctx.n_eval_grad_f = 0; {symbol}_ctx.n_eval_g = 0;")
@@ -266,7 +272,7 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   bounds_outs = ["x_L", "x_U"]
   if n_g:
     bounds_outs.extend(["l_in", "u_in"])
-  bounds_call = ", ".join([*[f"in{4 + i}" for i in range(param_count)], *bounds_outs])
+  bounds_call = ", ".join([*[f"in{param_start + i}" for i in range(param_count)], *bounds_outs])
   lines.append("  double bounds_t0 = alloy_clock_s();")
   lines.append(f"  {bounds_raw}({bounds_call}, w);")
   lines.append(f"  {symbol}_ctx.t_fe += alloy_clock_s() - bounds_t0;")
@@ -308,13 +314,12 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     lines.append(f"  setup_ok = setup_ok && {_ipopt_option_call(key, val)};")
   lines.append(f"  setup_ok = setup_ok && SetIntermediateCallback(problem, {symbol}_intermediate);")
   lines.append("  if (!setup_ok) {")
-  lines.append(f"    for (int i = 0; i < {n}; ++i) out0[i] = in0[i];")
-  lines.append("    out1[0] = 0.0;")
+  for block, size in enumerate(var_sizes):
+    lines.append(f"    for (int i = 0; i < {size}; ++i) {chr(123)} out{block}[i] = in{block}[i]; out{nv + block}[i] = 0.0; {chr(125)}")
   if n_h:
-    lines.append(f"    for (int i = 0; i < {n_h}; ++i) {{ out2[i] = 0.0; out4[i] = 0.0; }}")
+    lines.append(f"    for (int i = 0; i < {n_h}; ++i) out{eq_output}[i] = 0.0;")
   if n_g:
-    lines.append(f"    for (int i = 0; i < {n_g}; ++i) {{ out3[i] = 0.0; out5[i] = 0.0; }}")
-  lines.append(f"    for (int i = 0; i < {n}; ++i) out6[i] = 0.0;")
+    lines.append(f"    for (int i = 0; i < {n_g}; ++i) out{ineq_output}[i] = 0.0;")
   lines.append(f"    {ctx.stats_symbol}.version = ALLOY_SOLVER_STATS_VERSION;")
   lines.append(f"    {ctx.stats_symbol}.status = ALLOY_SOLVE_ERROR;")
   lines.append(f"    {ctx.stats_symbol}.native_status = (int32_t)(problem ? Invalid_Option : Invalid_Problem_Definition);")
@@ -337,21 +342,22 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   # Working buffers: primal seeded from x0, constraint multipliers from
   # lam_eq0/lam_ineq0, box multipliers sign-split from the signed lam_box0
   # (lam_box = z_U - z_L, so z_L = max(-lam_box0, 0), z_U = max(lam_box0, 0)).
-  lines.append(f"  static double xv[{n}]; for (int i = 0; i < {n}; ++i) xv[i] = in0[i];")
+  lines.append(f"  static double xv[{n}];")
+  for block, (size, offset) in enumerate(zip(var_sizes, var_offsets, strict=True)):
+    lines.append(f"  for (int i = 0; i < {size}; ++i) xv[{offset} + i] = in{block}[i];")
   if m:
     lines.append(f"  static double g_val[{m}];")
   lines.append("  double obj_val = 0.0;")
   lines.append(f"  static double mult_g[{m if m else 1}];")
   lines.append(f"  static double mult_x_L[{n}]; static double mult_x_U[{n}];")
   if n_h:
-    lines.append(f"  for (int i = 0; i < {n_h}; ++i) mult_g[i] = in1[i];")
-  else:
-    lines.append("  (void)in1;")
+    lines.append(f"  for (int i = 0; i < {n_h}; ++i) mult_g[i] = in{eq_input}[i];")
   if n_g:
-    lines.append(f"  for (int i = 0; i < {n_g}; ++i) mult_g[{n_h} + i] = in2[i];")
-  else:
-    lines.append("  (void)in2;")
-  lines.append(f"  for (int i = 0; i < {n}; ++i) {{ mult_x_L[i] = in3[i] < 0.0 ? -in3[i] : 0.0; mult_x_U[i] = in3[i] > 0.0 ? in3[i] : 0.0; }}")
+    lines.append(f"  for (int i = 0; i < {n_g}; ++i) mult_g[{n_h} + i] = in{ineq_input}[i];")
+  for block, (size, offset) in enumerate(zip(var_sizes, var_offsets, strict=True)):
+    lines.append(
+      f"  for (int i = 0; i < {size}; ++i) {chr(123)} double lam = in{nv + block}[i]; mult_x_L[{offset} + i] = lam < 0.0 ? -lam : 0.0; mult_x_U[{offset} + i] = lam > 0.0 ? lam : 0.0; {chr(125)}"
+    )
   lines.append("  double fe_before_solve = " + f"{symbol}_ctx.t_fe;")
   lines.append("  double solver_t0 = alloy_clock_s();")
   if m:
@@ -360,18 +366,15 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     lines.append(f"  enum ApplicationReturnStatus ip_status = IpoptSolve(problem, xv, NULL, &obj_val, NULL, mult_x_L, mult_x_U, &{symbol}_ctx);")
   lines.append("  double t_ipopt = alloy_clock_s() - solver_t0;")
   lines.append("  FreeIpoptProblem(problem);")
-  # Write outputs: x, f, h_eq, g_ineq, lam_eq, lam_ineq, lam_box.
-  lines.append(f"  for (int i = 0; i < {n}; ++i) out0[i] = xv[i];")
-  lines.append("  out1[0] = obj_val;")
+  # Write variables and multipliers in the declared tree order.
+  for block, (size, offset) in enumerate(zip(var_sizes, var_offsets, strict=True)):
+    lines.append(
+      f"  for (int i = 0; i < {size}; ++i) {chr(123)} out{block}[i] = xv[{offset} + i]; out{nv + block}[i] = mult_x_U[{offset} + i] - mult_x_L[{offset} + i]; {chr(125)}"
+    )
   if n_h:
-    lines.append(f"  for (int i = 0; i < {n_h}; ++i) out2[i] = g_val[i];")
+    lines.append(f"  for (int i = 0; i < {n_h}; ++i) out{eq_output}[i] = mult_g[i];")
   if n_g:
-    lines.append(f"  for (int i = 0; i < {n_g}; ++i) out3[i] = g_val[{n_h} + i];")
-  if n_h:
-    lines.append(f"  for (int i = 0; i < {n_h}; ++i) out4[i] = mult_g[i];")
-  if n_g:
-    lines.append(f"  for (int i = 0; i < {n_g}; ++i) out5[i] = mult_g[{n_h} + i];")
-  lines.append(f"  for (int i = 0; i < {n}; ++i) out6[i] = mult_x_U[i] - mult_x_L[i];")
+    lines.append(f"  for (int i = 0; i < {n_g}; ++i) out{ineq_output}[i] = mult_g[{n_h} + i];")
 
   # Stats. Status mapped through the vendored ApplicationReturnStatus enum
   # constants so upstream renames/renumbers break at compile time.

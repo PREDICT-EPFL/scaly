@@ -20,6 +20,7 @@ import numpy as np
 
 import alloy as al
 from alloy.solvers.paths import solver_loadable
+from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.chain import (
   END_REF,
   NU,
@@ -89,9 +90,9 @@ def check_nlp_objective_matches_casadi() -> None:
   generated = chain_nlp(n_masses, horizon)
   assert generated.descriptor.hess is not None
   assert dict(generated.descriptor.options).get("hessian_approximation") != "limited-memory"
-  alloy_out = generated(zv, np.zeros(nx * (horizon + 1)), np.zeros(0), np.zeros(n_dec(n_masses, horizon)), pv)
-  assert generated.last_status is not None and generated.last_status.ok
-  assert generated.last_stats is not None and generated.last_stats.iter > 0
+  alloy_out = solve_problem(generated, zv, np.zeros(nx * (horizon + 1)), np.zeros(0), np.zeros(n_dec(n_masses, horizon)), pv)
+  stats = problem_stats(generated)
+  assert stats is not None and stats.to_solver_status().ok and stats.iter > 0
 
   lb, ub = np.full(n_dec(n_masses, horizon), -np.inf), np.full(n_dec(n_masses, horizon), np.inf)
   for i in range(horizon):

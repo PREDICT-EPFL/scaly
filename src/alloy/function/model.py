@@ -68,6 +68,10 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
   already have the expressions.
   """
 
+  descriptor: Any
+  last_stats: SolverStats | None
+  last_status: Any
+
   def __init__(
     self,
     name: str,
@@ -280,12 +284,20 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       raise jit.JitError(f"function {self.name!r} has not been compiled or run")
     return self._compiled.solver_stats(name)
 
-  def __call__(self, *args: Any, **kwargs: Any) -> np.ndarray | tuple[np.ndarray, ...]:
+  def __call__(self, *args: Any, **kwargs: Any) -> Any:
     outs = self.eval_list(*args, **kwargs)
+    descriptor = getattr(self, "descriptor", None)
+    if descriptor is not None and descriptor.n_var_blocks == 0:
+      self.last_stats = self.solver_stats()
+      self.last_status = self.last_stats.to_solver_status()
+      return dict(zip(self.output_names, outs, strict=True))
     return outs[0] if len(outs) == 1 else tuple(outs)
 
-  def call(self, args: Sequence[Any]) -> tuple[Expr, ...]:
-    actuals = tuple(as_expr(arg) for arg in args)
+  def call(self, args: Sequence[Any] | None = None, /, **kwargs: Any) -> tuple[Expr, ...]:
+    if args is not None and kwargs:
+      raise TypeError("pass positional inputs or keyword inputs, not both")
+    ordered = self._resolve_inputs(tuple(args or ()), kwargs)
+    actuals = tuple(as_expr(arg) for arg in ordered)
     if len(actuals) != len(self.inputs):
       raise ValueError(f"expected {len(self.inputs)} call arguments")
     for name, expected, actual in zip(self.input_names, self.inputs, actuals, strict=True):

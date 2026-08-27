@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING
 from ..ir.expr import ExprOp, topo
 from ..function import Function
 from .paths import backend_compile_flags
-from .solver_function import ExternalOracle
+from .model import ExternalOracle
 
 if TYPE_CHECKING:
-  from .solver_function import SolverDescriptor
+  from .model import SolverDescriptor
 
 
 def is_solver_function(fun: Function) -> bool:
@@ -25,7 +25,7 @@ def is_solver_function(fun: Function) -> bool:
 
 
 def solver_descriptor(fun: Function) -> SolverDescriptor:
-  return fun.descriptor  # ty: ignore[unresolved-attribute]
+  return fun.descriptor
 
 
 def solver_callees(fun: Function) -> list[Function]:

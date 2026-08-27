@@ -6,6 +6,7 @@ fake in-test backend — no C toolchain or vendored solver library involved.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +17,7 @@ from alloy.codegen import solver
 from alloy.solvers import graph as solver_graph
 from alloy.solvers import registry
 from alloy.solvers.registry import SOLVER_PLUGIN_PROTOCOL_VERSION, SolverPluginError
-from alloy.solvers.solver_function import ExternalOracle, SolverDescriptor, SolverFunction
+from alloy.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
 
 
 class _FakeEntryPoint:
@@ -51,7 +52,7 @@ class _FakeBackend:
     ]
 
 
-def _fake_solver_function(backend: str = "fake") -> SolverFunction:
+def _fake_solver_function(backend: str = "fake") -> al.Function:
   desc = SolverDescriptor(
     name="fake_qp",
     backend=backend,
@@ -62,7 +63,7 @@ def _fake_solver_function(backend: str = "fake") -> SolverFunction:
     output_signature=(("x", (1,)),),
     param_names=(),
   )
-  return SolverFunction(desc)
+  return descriptor_function(desc)
 
 
 def test_protocol_version_mismatch_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,9 +140,15 @@ def test_nlp_descriptor_uses_backend_hessian_triangle(monkeypatch: pytest.Monkey
     kind = "nlp"
     hess_triangle = triangle
 
-  monkeypatch.setattr(registry, "get_backend", lambda name: _FakeNlpBackend())
-  x = al.sym(f"layout_x_{triangle}", 2)
-  nlp = al.nlp(x=x, f=x[0] * x[1], solver="fake", name=f"layout_{triangle}")
+  fake_backend = lambda name: _FakeNlpBackend()  # noqa: E731
+  monkeypatch.setattr(registry, "get_backend", fake_backend)
+  monkeypatch.setattr(sys.modules["alloy.solvers.solver"], "get_backend", fake_backend)
+
+  @al.problem(vars=al.L(f"layout_x_{triangle}", 2), name=f"layout_{triangle}")
+  def problem(x):
+    return al.ProblemSpec(minimize=x[0] * x[1])
+
+  nlp = al.solver(problem, "fake", name=f"layout_{triangle}")
   sparsity = nlp.descriptor.hess_sparsity
   assert sparsity is not None
   assert all(row >= col if triangle == "lower" else row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
@@ -202,7 +209,7 @@ def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch
       return super().render_wrapper(fun, ctx)
 
   monkeypatch.setattr(registry, "get_backend", lambda name: _ExternalBackend())
-  source = "\n".join(solver.render_solver_raw(SolverFunction(desc)))
+  source = "\n".join(solver.render_solver_raw(descriptor_function(desc)))
   assert oracle.source in source
   assert source.index(oracle.source) < source.index("static alloy_solver_stats external_qp_stats_data;")
 
@@ -230,12 +237,12 @@ def test_external_oracle_workspace_is_part_of_solver_workspace(monkeypatch: pyte
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
   from alloy.codegen.aot import render_c_module
 
-  header = render_c_module(SolverFunction(desc)).header
+  header = render_c_module(descriptor_function(desc)).header
   assert "#define external_workspace_SZ_W 7" in header
 
 
-def _external_solver(name: str, oracle: ExternalOracle) -> SolverFunction:
-  return SolverFunction(
+def _external_solver(name: str, oracle: ExternalOracle) -> al.Function:
+  return descriptor_function(
     SolverDescriptor(
       name=name,
       backend="fake",

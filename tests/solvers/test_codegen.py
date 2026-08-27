@@ -15,27 +15,30 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.solvers.qp import _legacy_qp
 from alloy.codegen import render_c_api_header, render_c_source
 from alloy.codegen.jit import CompiledFunction, JitError
 from alloy.solvers.registry import available_backends
 from alloy.solvers.stats import CSolverStats
 
-pytestmark = pytest.mark.skipif("piqp" not in available_backends(), reason="structural tests build al.qp and need the alloy-piqp plugin installed")
+pytestmark = pytest.mark.skipif(
+  "piqp" not in available_backends(), reason="structural tests build the private QP differential fixture and need the alloy-piqp plugin installed"
+)
 
 
 def test_solver_function_signature_errors() -> None:
   """Mis-shaped or missing inputs raise ``TypeError`` / ``ValueError``."""
   P = np.eye(2)
   c = np.zeros(2)
-  qp = al.qp(P=P, c=c)
+  qp = _legacy_qp(P=P, c=c)
   with pytest.raises(TypeError, match="missing keyword inputs"):
     qp(x0=np.zeros(2))
-  with pytest.raises(ValueError, match="cannot reshape"):
+  with pytest.raises(ValueError, match=r"has shape \(3,\), expected \(2,\)"):
     qp(x0=np.zeros(3), lam_eq0=np.zeros(0), lam_ineq0=np.zeros(0))
 
 
 def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
-  qp = al.qp(P=np.eye(2), c=np.zeros(2), name="standalone_qp")
+  qp = _legacy_qp(P=np.eye(2), c=np.zeros(2), name="standalone_qp")
   source = render_c_source(qp)
   header = render_c_api_header(qp)
   assert "int standalone_qp(const double** arg, double** res, int* iw, double* w, void* mem)" in source
@@ -46,7 +49,7 @@ def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
 @pytest.mark.solver("piqp")
 def test_qp_settings_are_baked_into_jit_cache_key() -> None:
   def build(eps_abs: float) -> CompiledFunction:
-    return CompiledFunction(al.qp(P=np.eye(2), c=np.zeros(2), name="settings_qp", options={"eps_abs": eps_abs}))
+    return CompiledFunction(_legacy_qp(P=np.eye(2), c=np.zeros(2), name="settings_qp", options={"eps_abs": eps_abs}))
 
   first = build(1e-8)
   same = build(1e-8)
@@ -59,7 +62,7 @@ def test_qp_settings_are_baked_into_jit_cache_key() -> None:
 @pytest.mark.solver("piqp")
 def test_solver_stats_reject_uninitialized_and_mismatched_versions() -> None:
   """The `alloy_solver_stats` handshake is Alloy's contract with every backend."""
-  qp = al.qp(P=np.eye(2), c=np.zeros(2), name="stats_version_qp")
+  qp = _legacy_qp(P=np.eye(2), c=np.zeros(2), name="stats_version_qp")
   compiled = CompiledFunction(qp)
   with pytest.raises(JitError, match="has not run yet"):
     compiled.solver_stats()
@@ -77,11 +80,11 @@ def test_sparse_qp_rejects_nested_solver_data() -> None:
   """QP data computed from a nested solver output cannot be pattern-analyzed
   (SOLVER_CALL is an opaque zero to the dependency mask) and must fail loudly
   before the probe would execute the inner solve."""
-  inner = al.qp(P=np.eye(2), c=np.array([-1.0, 0.0]), x_lb=np.zeros(2), x_ub=np.ones(2), name="inner_for_pattern")
+  inner = _legacy_qp(P=np.eye(2), c=np.array([-1.0, 0.0]), x_lb=np.zeros(2), x_ub=np.ones(2), name="inner_for_pattern")
   x_inner = inner.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0))])[0]
   P = al.stack([al.stack([2.0 + x_inner[0], al.const(0.0)]), al.stack([al.const(0.0), al.const(2.0)])], axis=0)
   with pytest.raises(NotImplementedError, match="nested solver output"):
-    al.qp(P=P, c=np.zeros(2), sparse=True, name="outer_sparse_over_solver")
+    _legacy_qp(P=P, c=np.zeros(2), sparse=True, name="outer_sparse_over_solver")
 
 
 @pytest.mark.solver("piqp")
@@ -91,8 +94,8 @@ def test_two_solver_wrappers_in_one_translation_unit() -> None:
 
   @al.function(al.L("t", (2,)), al.L("x_sum", ...), name="two_qp_host")
   def host(t):
-    qp_a = al.qp(P=np.diag([2.0, 4.0]), c=al.stack([t[0], t[1]]), sparse=True, name="tu_qp_a")
-    qp_b = al.qp(P=np.diag([1.0, 1.0]), c=al.stack([t[1], -t[0]]), name="tu_qp_b")
+    qp_a = _legacy_qp(P=np.diag([2.0, 4.0]), c=al.stack([t[0], t[1]]), sparse=True, name="tu_qp_a")
+    qp_b = _legacy_qp(P=np.diag([1.0, 1.0]), c=al.stack([t[1], -t[0]]), name="tu_qp_b")
     zeros = [al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0))]
     xa = qp_a.call([*zeros, t])[0]
     xb = qp_b.call([*zeros, t])[0]

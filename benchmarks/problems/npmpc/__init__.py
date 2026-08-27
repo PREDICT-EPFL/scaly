@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 import alloy as al
+from alloy.ir.expr import substitute
 from alloy.utils import load_torch_state_dict
 
 # State (theta, phi, theta_dot, phi_dot) with theta = 0 upright, input (torque,), decoder output (d theta_dot, d phi_dot).
@@ -549,8 +550,8 @@ def npmpc_nlp(
   dt: float = DT,
   solver: str = "ipopt",
   options: dict[str, str | int | float] | None = None,
-) -> al.SolverFunction:
-  """The neural-process MPC as one `al.nlp`: VMAP dynamics, VMAP cost, one arm-angle slack.
+) -> al.Function:
+  """The neural-process MPC as one typed `al.Problem`: VMAP dynamics, VMAP cost, one arm-angle slack.
 
   `P` is the terminal weight from `terminal_P`. `p` carries the state the first horizon node is
   pinned to and then the decoder tail, in the order `n_param` describes -- the state first, as
@@ -566,20 +567,28 @@ def npmpc_nlp(
   )
   rows, l_ineq, u_ineq = npmpc_constraint_exprs(z, p[:NX], horizon)
   lower, upper = npmpc_bounds(horizon)
-  return al.nlp(
-    x=z,
-    p=p,
-    f=npmpc_cost_expr(z, horizon, P, weights),
-    h_eq=eq,
-    g_ineq=rows,
-    l_ineq=l_ineq,
-    u_ineq=u_ineq,
-    x_lb=lower,
-    x_ub=upper,
-    solver=solver,
-    name=f"npmpc_N{horizon}_{solver}",
-    options=options,
-  )
+  problem_name = f"npmpc_N{horizon}"
+  cost = npmpc_cost_expr(z, horizon, P, weights)
+
+  @al.problem(vars=al.L("z", z.type), params=al.L("p", p.type), name=problem_name)
+  def problem(new_z, new_p):
+    replacements = {z: new_z, p: new_p}
+    return al.ProblemSpec(
+      minimize=substitute(cost, replacements),
+      eq=(substitute(eq, replacements),),
+      ineq=(
+        al.bounded(
+          substitute(rows, replacements),
+          lo=al.const(l_ineq),
+          hi=al.const(u_ineq),
+          name="soft_bounds",
+        ),
+      ),
+      lb=al.const(lower),
+      ub=al.const(upper),
+    )
+
+  return al.solver(problem, solver, name=f"{problem_name}_{solver}", options=options)
 
 
 def npmpc_lag_function(

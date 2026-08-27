@@ -16,6 +16,8 @@ if str(ROOT) not in sys.path:
 import numpy as np
 
 import alloy as al
+from alloy.solvers.qp import _legacy_qp
+from alloy.ir.expr import substitute
 from alloy.codegen.aot import render_c_module
 from alloy.solvers.graph import solver_compile_flags
 from alloy.solvers.paths import solver_loadable
@@ -68,7 +70,7 @@ def _qp_filter() -> al.Function:
         grad = 2.0 * diff
         rows.append(al.stack([grad[d] if k == car else al.const(0.0) for k in range(2) for d in range(2)], axis=0))
         bias.append(ALPHA * (al.dot(diff, diff) - al.const(SAFETY_MARGIN**2)))
-    qp = al.qp(
+    qp = _legacy_qp(
       P=al.const(np.eye(NU)),
       c=-u_ref,
       G_ineq=al.stack(rows, axis=0),
@@ -100,21 +102,30 @@ def _nlp_filter() -> al.Function:
         diff = cars[car] - al.const(obstacle)
         grad = 2.0 * diff
         rows.append(grad[0] * u[2 * car] + grad[1] * u[2 * car + 1] + ALPHA * (al.dot(diff, diff) - al.const(SAFETY_MARGIN**2)))
-    nlp = al.nlp(
-      x=u,
-      f=0.5 * al.dot(u - u_ref, u - u_ref),
-      p=(x, u_ref),
-      g_ineq=al.stack(rows, axis=0),
-      l_ineq=al.const(np.zeros(len(rows))),
-      u_ineq=al.const(np.full(len(rows), 1e30)),
-    )
-    return nlp.call(
-      x0=al.const(np.zeros(NU)),
-      lam_eq0=al.const(np.zeros(0)),
-      lam_ineq0=al.const(np.zeros(len(rows))),
-      lam_box0=al.const(np.zeros(NU)),
-      x=x,
-      u_ref=u_ref,
+
+    @al.problem(vars=al.L("u", (NU,)), name="smoke_safety_filter_problem")
+    def problem(variable):
+      return al.ProblemSpec(
+        minimize=0.5 * al.dot(variable - u_ref, variable - u_ref),
+        ineq=(
+          al.bounded(
+            al.stack([substitute(row, {u: variable}) for row in rows], axis=0),
+            lo=al.const(np.zeros(len(rows))),
+            hi=al.const(np.full(len(rows), 1e30)),
+            name="obstacles",
+          ),
+        ),
+      )
+
+    nlp = al.solver(problem, "ipopt", name="smoke_safety_filter_nlp")
+    return nlp.symbolic_call(
+      (
+        al.const(np.zeros(NU)),
+        al.const(np.zeros(NU)),
+        al.const(np.zeros(0)),
+        al.const(np.zeros(len(rows))),
+        problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names)),
+      )
     )[0]
 
   return safety_filter_nlp

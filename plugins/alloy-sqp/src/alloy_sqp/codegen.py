@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
   from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
-  from alloy.solvers.solver_function import SolverDescriptor
+  from alloy.solvers.model import SolverDescriptor
 
 
 def _option_map(options: tuple[tuple[str, Any], ...]) -> dict[str, Any]:
@@ -103,12 +103,19 @@ def _ldl_symbolic(n: int, col_ptr: list[int], rows: list[int]) -> tuple[list[int
 
 
 def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
-  desc: SolverDescriptor = fun.descriptor  # ty: ignore[unresolved-attribute]
+  desc: SolverDescriptor = fun.descriptor
   base, grad, jac, hess, bounds = desc.base, desc.grad, desc.jac, desc.hess, desc.bounds
   assert base is not None and grad is not None and hess is not None and bounds is not None
   assert jac is not None or not (desc.n_eq + desc.n_ineq)
   assert desc.jac_sparsity is not None and desc.hess_sparsity is not None
   n, nh, ng, m = desc.n, desc.n_eq, desc.n_ineq, desc.n_eq + desc.n_ineq
+  nv = desc.n_var_blocks
+  if nv < 1:
+    raise ValueError("typed NLP descriptors need at least one variable block")
+  var_sizes = [math.prod(shape) for _, shape in desc.input_signature[:nv]]
+  var_offsets = [sum(var_sizes[:i]) for i in range(nv)]
+  eq_input, ineq_input, param_start = 2 * nv, 2 * nv + 1, 2 * nv + 2
+  eq_output, ineq_output = 2 * nv, 2 * nv + 1
   jrows, jcols = desc.jac_sparsity.rows, desc.jac_sparsity.cols
   hrows, hcols = desc.hess_sparsity.rows, desc.hess_sparsity.cols
   opts = _option_map(desc.options)
@@ -169,10 +176,10 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   normal_a = [ka for _, _, ka, _ in normal_terms]
   normal_b = [kb for _, _, _, kb in normal_terms]
 
-  param_args = [f"in{4 + i}" for i in range(len(desc.param_names))]
+  param_args = [f"in{param_start + i}" for i in range(len(desc.param_names))]
   base_args = lambda x, f, g: ", ".join([x, *param_args, f, *((g,) if m else ()), "w"])  # noqa: E731
   one_out_args = lambda x, out: ", ".join([x, *param_args, out, "w"])  # noqa: E731
-  hess_args = lambda x, lf, lg, out: ", ".join([x, lf, *((lg,) if m else ()), *param_args, out, "w"])  # noqa: E731
+  hess_args = lambda x, lf, lg, out: ", ".join([x, *param_args, lf, *((lg,) if m else ()), out, "w"])  # noqa: E731
   bounds_args = ", ".join([*param_args, "xlb", "xub", *(("gl", "gu") if ng else ()), "w"])
   signature = [
     *(f"const double* in{i}" for i in range(len(desc.input_signature))),
@@ -265,12 +272,19 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     f"  {bounds_raw}({bounds_args});",
     "  stats_t_fe += alloy_clock_s() - bounds_fe0;",
     "  int inputs_ok = 1;",
-    f"  for (int i = 0; i < {n}; ++i) inputs_ok = inputs_ok && !isnan(xlb[i]) && !isnan(xub[i]) && xlb[i] <= xub[i] && isfinite(in0[i]) && isfinite(in3[i]);",
-    f"  for (int i = 0; i < {nh}; ++i) inputs_ok = inputs_ok && isfinite(in1[i]);",
-    f"  for (int i = 0; i < {ng}; ++i) inputs_ok = inputs_ok && !isnan(gl[i]) && !isnan(gu[i]) && gl[i] <= gu[i] && isfinite(in2[i]);",
-    f"  for (int i = 0; i < {n}; ++i) {{ x[i] = fmax(xlb[i], fmin(xub[i], in0[i])); lam_box[i] = in3[i]; }}",
-    f"  for (int i = 0; i < {nh}; ++i) lam_g[i] = in1[i];",
-    f"  for (int i = 0; i < {ng}; ++i) lam_g[{nh} + i] = in2[i];",
+    f"  for (int i = 0; i < {n}; ++i) inputs_ok = inputs_ok && !isnan(xlb[i]) && !isnan(xub[i]) && xlb[i] <= xub[i];",
+    *(
+      f"  for (int i = 0; i < {size}; ++i) inputs_ok = inputs_ok && isfinite(in{block}[i]) && isfinite(in{nv + block}[i]);"
+      for block, size in enumerate(var_sizes)
+    ),
+    f"  for (int i = 0; i < {nh}; ++i) inputs_ok = inputs_ok && isfinite(in{eq_input}[i]);",
+    f"  for (int i = 0; i < {ng}; ++i) inputs_ok = inputs_ok && !isnan(gl[i]) && !isnan(gu[i]) && gl[i] <= gu[i] && isfinite(in{ineq_input}[i]);",
+    *(
+      f"  for (int i = 0; i < {size}; ++i) {{ x[{offset} + i] = fmax(xlb[{offset} + i], fmin(xub[{offset} + i], in{block}[i])); lam_box[{offset} + i] = in{nv + block}[i]; }}"
+      for block, (size, offset) in enumerate(zip(var_sizes, var_offsets, strict=True))
+    ),
+    f"  for (int i = 0; i < {nh}; ++i) lam_g[i] = in{eq_input}[i];",
+    f"  for (int i = 0; i < {ng}; ++i) lam_g[{nh} + i] = in{ineq_input}[i];",
     f"  for (int i = 0; i < {m}; ++i) {{ g[i] = 0.0; zero_lam[i] = 0.0; }}",
     "  int n_eval_f = 0, n_eval_grad_f = 0, n_eval_g = 0, n_eval_jac_g = 0, n_eval_h = 0;",
     "  double f = 0.0, trial_f = 0.0, primal = 0.0, complementarity = 0.0, stationarity = 0.0;",
@@ -582,14 +596,15 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
     f"    for (int i = 0; i < {n}; ++i) {{ x[i] += alpha * step[i]; lam_box[i] += alpha * (qp_lam_box[i] - lam_box[i]); }}",
     f"    for (int i = 0; i < {m}; ++i) lam_g[i] += alpha * (qp_lam_g[i] - lam_g[i]);",
     "  }",
-    f"  for (int i = 0; i < {n}; ++i) out0[i] = x[i];",
-    "  out1[0] = f;",
+    *(
+      f"  for (int i = 0; i < {size}; ++i) {{ out{block}[i] = x[{offset} + i]; out{nv + block}[i] = lam_box[{offset} + i]; }}"
+      for block, (size, offset) in enumerate(zip(var_sizes, var_offsets, strict=True))
+    ),
   ]
   if nh:
-    lines += [f"  for (int i = 0; i < {nh}; ++i) {{ out2[i] = g[i]; out4[i] = lam_g[i]; }}"]
+    lines += [f"  for (int i = 0; i < {nh}; ++i) out{eq_output}[i] = lam_g[i];"]
   if ng:
-    lines += [f"  for (int i = 0; i < {ng}; ++i) {{ out3[i] = g[{nh} + i]; out5[i] = lam_g[{nh} + i]; }}"]
-  lines += [f"  for (int i = 0; i < {n}; ++i) out6[i] = lam_box[i];"]
+    lines += [f"  for (int i = 0; i < {ng}; ++i) out{ineq_output}[i] = lam_g[{nh} + i];"]
   lines += [
     f"  {ctx.stats_symbol}.version = ALLOY_SOLVER_STATS_VERSION;",
     f"  {ctx.stats_symbol}.status = status; {ctx.stats_symbol}.native_status = native_status; {ctx.stats_symbol}.iter = iterations;",

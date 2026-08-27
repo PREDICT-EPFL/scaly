@@ -12,7 +12,7 @@ Program IR like any other host Function and are rendered as ``<oracle>_raw``
 by ``codegen/c``. See ``docs/dev/solver_plugins.md`` for the contract.
 
 Outer functions that contain a solver as a callee lower through Program IR with
-the ``SolverFunction`` callee treated as opaque (``passes.lowering.lower_function``):
+the ``solver Function`` callee treated as opaque (``passes.lowering.lower_function``):
 the solver renders to a ``static void qp_xxx_raw(...)`` body here, and the
 caller's lowered ``CALL`` emits a ``qp_xxx_raw(...)`` invocation.
 ``codegen.aot.render_c_source`` orchestrates the whole translation unit, ordering
@@ -31,7 +31,7 @@ from alloy.function import Function
 from alloy.solvers.graph import external_oracles, is_solver_function, solver_backends_used, solver_callees, solver_descriptor
 
 if TYPE_CHECKING:
-  from alloy.solvers.solver_function import ExternalOracle
+  from alloy.solvers.model import ExternalOracle
 
 
 def _raw_symbol(fun: Function) -> str:
@@ -54,7 +54,7 @@ class SolverWrapperCtx:
   stats_symbol: str
 
   def raw_symbol_of(self, fun: Function | ExternalOracle) -> str:
-    from alloy.solvers.solver_function import ExternalOracle
+    from alloy.solvers.model import ExternalOracle
 
     return fun.raw_symbol if isinstance(fun, ExternalOracle) else _raw_symbol(fun)
 

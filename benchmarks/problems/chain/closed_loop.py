@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from alloy import SolverStats
+from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.chain import (
   NU,
   ChainParams,
@@ -167,9 +168,9 @@ def run_episode(
 
   for step in range(config.steps):
     p = np.concatenate([state, config.params.array()])
-    out = controller(guess, lam_eq0, lam_ineq0, lam_box0, p)
-    stats = controller.last_stats
-    status = controller.last_status
+    out = solve_problem(controller, guess, lam_eq0, lam_ineq0, lam_box0, p)
+    stats = problem_stats(controller)
+    status = None if stats is None else stats.to_solver_status()
     if stats is None or status is None:
       raise RuntimeError(f"{solver}/{oracle} did not return solve status and statistics")
     if not status.ok:

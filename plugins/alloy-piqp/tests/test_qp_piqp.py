@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.solvers.qp import _legacy_qp
 
 
 @pytest.mark.solver("piqp")
@@ -20,7 +21,7 @@ def test_qp_equality_constrained_quadratic() -> None:
   c = np.array([-1.0, -2.0])
   A = np.array([[1.0, 1.0]])
   b = np.array([3.0])
-  qp = al.qp(P=P, c=c, A_eq=A, b_eq=b, x_lb=np.zeros(2))
+  qp = _legacy_qp(P=P, c=c, A_eq=A, b_eq=b, x_lb=np.zeros(2))
   out = qp(x0=np.zeros(2), lam_eq0=np.zeros(1), lam_ineq0=np.zeros(0))
   assert qp.last_status is not None and qp.last_status.ok
   np.testing.assert_allclose(out["x"], [1.0, 2.0], atol=1e-7)
@@ -39,7 +40,7 @@ def test_qp_two_sided_inequality_box() -> None:
   P = np.eye(2)
   c = np.zeros(2)
   G = np.array([[1.0, 1.0]])
-  qp = al.qp(
+  qp = _legacy_qp(
     P=P,
     c=c,
     G_ineq=G,
@@ -65,7 +66,7 @@ def test_qp_with_symbolic_parameters() -> None:
   mu = al.sym("mu", 2)
   P = al.const(np.eye(2))
   c = -mu  # -mu shifts the quadratic minimum to mu
-  qp = al.qp(P=P, c=c)
+  qp = _legacy_qp(P=P, c=c)
   for mu_val in [np.array([0.0, 0.0]), np.array([1.5, -0.3]), np.array([-2.0, 4.0])]:
     out = qp(x0=np.zeros(2), lam_eq0=np.zeros(0), lam_ineq0=np.zeros(0), mu=mu_val)
     assert qp.last_status is not None and qp.last_status.ok
@@ -88,7 +89,7 @@ def test_generated_qp_satisfies_kkt_over_parameter_sweep() -> None:
   x_lb = al.stack([-1.0 + 0.05 * t, -1.1 - 0.05 * t])
   x_ub = al.stack([1.1 + 0.05 * t, 1.2 - 0.05 * t])
   kwargs: dict[str, Any] = dict(P=P, c=c, A_eq=A_eq, b_eq=b_eq, G_ineq=G_ineq, l_ineq=l_ineq, u_ineq=u_ineq, x_lb=x_lb, x_ub=x_ub)
-  qp = al.qp(**kwargs, name="qp_kkt_sweep")
+  qp = _legacy_qp(**kwargs, name="qp_kkt_sweep")
   x0 = np.zeros(2)
   for t_value in (-0.6, 0.1, 0.8):
     out = qp(x0, np.zeros(1), np.zeros(2), np.array([t_value]))
@@ -115,7 +116,7 @@ def test_qp_against_analytic_kkt_reference() -> None:
   rhs = np.concatenate([-c_np, b_np])
   sol = np.linalg.solve(K, rhs)
   x_ref = sol[:2]
-  qp = al.qp(P=P_np, c=c_np, A_eq=A_np, b_eq=b_np)
+  qp = _legacy_qp(P=P_np, c=c_np, A_eq=A_np, b_eq=b_np)
   out = qp(np.zeros(2), np.zeros(1), np.zeros(0))
   np.testing.assert_allclose(out["x"], x_ref, atol=1e-8)
 
@@ -133,7 +134,7 @@ def test_nested_qp_in_alloy_function() -> None:
   @al.function(al.L("mu", (2,)), al.G(al.L("x", ...), al.L("cost", ...)), name="track_qp")
   def track_qp(mu):
     # min 0.5 |x - mu|^2  -> solution is mu itself
-    qp = al.qp(P=al.const(np.eye(2)), c=-mu)
+    qp = _legacy_qp(P=al.const(np.eye(2)), c=-mu)
     out = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])
     return (out[0], out[1])
 
@@ -150,7 +151,7 @@ def test_nested_qp_postprocessed() -> None:
 
   @al.function(al.L("mu", (2,)), al.L("y", ...), name="squared_norm_via_qp")
   def sq_norm(mu):
-    qp = al.qp(P=al.const(np.eye(2)), c=-mu)
+    qp = _legacy_qp(P=al.const(np.eye(2)), c=-mu)
     out = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])
     x_star = out[0]
     return al.dot(x_star, x_star)
@@ -169,7 +170,7 @@ def test_nested_qp_with_general_inequality() -> None:
     G = al.const(np.array([[1.0, 1.0]]))
     l_ineq = al.const(np.array([-0.5]))
     u_ineq = al.const(np.array([0.5]))
-    qp = al.qp(P=al.const(np.eye(2)), c=-u_ref, G_ineq=G, l_ineq=l_ineq, u_ineq=u_ineq)
+    qp = _legacy_qp(P=al.const(np.eye(2)), c=-u_ref, G_ineq=G, l_ineq=l_ineq, u_ineq=u_ineq)
     out = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(1)), u_ref])
     return out[0]
 
@@ -193,7 +194,7 @@ def test_nested_qp_jit_compiles_through_piqp() -> None:
     G = al.stack([al.stack([x[0], x[1]], axis=0)], axis=0)
     l_ineq = al.stack([al.const(-1.0)], axis=0)
     u_ineq = al.stack([al.const(1.0)], axis=0)
-    qp = al.qp(P=P, c=c, G_ineq=G, l_ineq=l_ineq, u_ineq=u_ineq)
+    qp = _legacy_qp(P=P, c=c, G_ineq=G, l_ineq=l_ineq, u_ineq=u_ineq)
     # Keyword form is more readable and avoids the alphabetical-sort gotcha.
     out = qp.call(
       x0=al.const(np.zeros(2)),
@@ -218,7 +219,7 @@ def test_nested_qp_jit_compiles_through_piqp() -> None:
 def test_nested_qp_call_keyword_form() -> None:
   """``.call(...)`` accepts keyword arguments to bypass alphabetical sort order."""
   u_ref = al.sym("u_ref", 2)
-  qp = al.qp(P=al.const(np.eye(2)), c=-u_ref)
+  qp = _legacy_qp(P=al.const(np.eye(2)), c=-u_ref)
   # Even with one param the kwarg form is order-independent and self-documenting.
   out_exprs = qp.call(
     x0=al.const(np.zeros(2)),

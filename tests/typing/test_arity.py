@@ -1,4 +1,4 @@
-"""Static acceptance tests for typed function trees and derivatives."""
+"""Static acceptance tests for typed functions, derivatives, problems, and solvers."""
 
 from __future__ import annotations
 
@@ -46,6 +46,27 @@ def step_flat(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.
   state, _u, _pw, _physics, _dt = inputs
   return state
 
+
+@al.problem(vars=al.L("x", 3), params=al.L("scale", ()))
+def quadratic(x: al.Expr, scale: al.Expr) -> al.ProblemSpec[al.Expr]:
+  return al.ProblemSpec(minimize=(x * x).sum() * scale, lb=al.const(np.full(3, -1.0)), ub=al.const(np.ones(3)))
+
+
+@al.problem(vars=al.G(al.L("u", 2), al.L("s", 1)), params=al.G(al.L("x", 4), al.L("u_ref", 2)))
+def filter_problem(variables: tuple[al.Expr, al.Expr], params: tuple[al.Expr, al.Expr]) -> al.ProblemSpec[tuple[al.Expr, al.Expr]]:
+  u, s = variables
+  x, u_ref = params
+  barrier = x[:2] @ u + x[2:].sum()
+  return al.ProblemSpec(
+    minimize=0.5 * ((u - u_ref) * (u - u_ref)).sum() + 10.0 * s.sum(),
+    eq=(u[0:1] - u[1:2],),
+    ineq=(al.bounded(barrier + s, lo=0.0, name="cbf"), al.bounded(u, lo=-1.0, hi=1.0, name="u_box")),
+    lb=(al.const(-np.ones(2)), al.const(np.zeros(1))),
+  )
+
+
+quadratic_ipopt = al.solver(quadratic, "ipopt")
+filter_sqp = al.solver(filter_problem, "sqp")
 
 grad_f_x = al.gradient(cost, "f", "x")
 hess_f_x = al.hessian(cost, "f", "x")
@@ -103,6 +124,53 @@ if TYPE_CHECKING:
   )
   assert_type(fwd_f_x.numerical_call(((np.zeros(3), np.zeros(())), np.zeros(3))), np.ndarray)
   assert_type(hess_l.numerical_call((np.zeros(3), (np.zeros(3), np.zeros(3)))), np.ndarray)
+
+  assert_type(quadratic, al.Problem[al.Expr, np.ndarray, al.Expr, np.ndarray])
+  assert_type(
+    filter_problem,
+    al.Problem[
+      tuple[al.Expr, al.Expr],
+      tuple[np.ndarray, np.ndarray],
+      tuple[al.Expr, al.Expr],
+      tuple[np.ndarray, np.ndarray],
+    ],
+  )
+  al.problem(vars=al.G(al.L("u", 2), al.L("s", 1)), params=al.L("p", ()))(lambda variables, p: al.ProblemSpec(minimize=variables.sum()))  # ty: ignore[unresolved-attribute]
+  al.problem(vars=al.L("x", 2), params=al.L("p", ()))(lambda x, p: al.ProblemSpec(minimize=x.sum(), lb=(x, x)))  # ty: ignore[invalid-argument-type]
+
+  assert_type(
+    quadratic_ipopt,
+    al.Function[
+      tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr],
+      tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+      tuple[al.Expr, al.Expr, al.Expr, al.Expr],
+      tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    ],
+  )
+  assert_type(
+    filter_sqp,
+    al.Function[
+      tuple[tuple[al.Expr, al.Expr], tuple[al.Expr, al.Expr], al.Expr, al.Expr, tuple[al.Expr, al.Expr]],
+      tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray]],
+      tuple[tuple[al.Expr, al.Expr], tuple[al.Expr, al.Expr], al.Expr, al.Expr],
+      tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray],
+    ],
+  )
+  assert_type(
+    filter_sqp.numerical_call(
+      (
+        (np.zeros(2), np.zeros(1)),
+        (np.zeros(2), np.zeros(1)),
+        np.zeros(1),
+        np.zeros(3),
+        (np.zeros(4), np.zeros(2)),
+      )
+    ),
+    tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray],
+  )
+  quadratic_ipopt.numerical_call((np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0)))  # ty: ignore[invalid-argument-type]
+  filter_sqp.numerical_call(((np.zeros(2),), (np.zeros(2), np.zeros(1)), np.zeros(1), np.zeros(3), (np.zeros(4), np.zeros(2))))  # ty: ignore[invalid-argument-type]
+
   grad_f_x.numerical_call(np.zeros(3))  # ty: ignore[invalid-argument-type]
   fwd_f_x.numerical_call((np.zeros(3), np.zeros(()), np.zeros(3)))  # ty: ignore[invalid-argument-type]
   hess_l.numerical_call((np.zeros(3), np.zeros(6)))  # ty: ignore[invalid-argument-type]

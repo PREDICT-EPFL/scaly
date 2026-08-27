@@ -62,7 +62,7 @@ def build_casadi_external_sqp(
     shape(jac, inputs=((n, 1), (np_, 1)), outputs=((total_constraints, n),))
   elif jac is not None:
     shape(jac, inputs=((n, 1), (np_, 1)), outputs=((0, n),))
-  hess_inputs = ((n, 1), (1, 1), *(((total_constraints, 1),) if total_constraints else ()), (np_, 1))
+  hess_inputs = ((n, 1), (np_, 1), (1, 1), *((((total_constraints, 1),)) if total_constraints else ()))
   shape(hess, inputs=hess_inputs, outputs=((n, n),))
   x_lb, x_ub = np.asarray(x_lb, dtype=np.float64), np.asarray(x_ub, dtype=np.float64)
   l_ineq, u_ineq = np.asarray(l_ineq, dtype=np.float64), np.asarray(u_ineq, dtype=np.float64)
@@ -98,7 +98,7 @@ def build_casadi_external_sqp(
   source = generated + "\n\n" + "\n\n".join(_adapter(fn, raw_symbols[key]) for key, fn in functions.items())
   jac_rows, jac_cols = jac.sparsity_out(0).get_triplet() if jac is not None else ([], [])
   hess_rows, hess_cols = hess.sparsity_out(0).get_triplet()
-  return external_nlp(
+  solver = external_nlp(
     name=name,
     n=n,
     n_eq=n_eq,
@@ -110,3 +110,5 @@ def build_casadi_external_sqp(
     hess_sparsity=SparsityType((n, n), tuple(int(v) for v in hess_rows), tuple(int(v) for v in hess_cols)),
     options=options,
   )
+  setattr(solver, "_benchmark_base", base)
+  return solver

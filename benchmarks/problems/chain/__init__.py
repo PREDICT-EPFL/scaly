@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 import alloy as al
+from alloy.ir.expr import substitute
 
 NU = 3
 N_PARAMS = 5
@@ -268,15 +269,22 @@ def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt"):
   for i in range(horizon):
     lb[i * nz + nx : (i + 1) * nz] = -1.0
     ub[i * nz + nx : (i + 1) * nz] = 1.0
-  return al.nlp(
-    x=z,
-    f=_objective(z, n_masses, horizon),
-    p=p,
-    h_eq=eq,
-    x_lb=lb,
-    x_ub=ub,
-    solver=solver,
-    name=f"chain_M{n_masses}_N{horizon}_{solver}",
+  problem_name = f"chain_M{n_masses}_N{horizon}"
+
+  @al.problem(vars=al.L("z", z.type), params=al.L("p", p.type), name=problem_name)
+  def problem(new_z, new_p):
+    replacements = {z: new_z, p: new_p}
+    return al.ProblemSpec(
+      minimize=substitute(_objective(z, n_masses, horizon), replacements),
+      eq=(substitute(eq, replacements),),
+      lb=al.const(lb),
+      ub=al.const(ub),
+    )
+
+  return al.solver(
+    problem,
+    solver,
+    name=f"{problem_name}_{solver}",
     options={"max_iter": 80, "tol": 1e-6} if solver == "sqp" else None,
   )
 
@@ -393,7 +401,7 @@ def ca_chain_sqp(n_masses: int, horizon: int):
   base = ca.Function(f"{stem}_base", [z, p], [cost, eq])
   grad = ca.Function(f"{stem}_grad", [z, p], [ca.gradient(cost, z)])
   jac = ca.Function(f"{stem}_jac", [z, p], [ca.jacobian(eq, z)])
-  hess = ca.Function(f"{stem}_hess", [z, lam_f, lam_g, p], [ca.hessian(lam_f * cost + ca.dot(lam_g, eq), z)[0]])
+  hess = ca.Function(f"{stem}_hess", [z, p, lam_f, lam_g], [ca.hessian(lam_f * cost + ca.dot(lam_g, eq), z)[0]])
   lb, ub = np.full(z.shape[0], -np.inf), np.full(z.shape[0], np.inf)
   for i in range(horizon):
     lb[i * nz + nx : (i + 1) * nz] = -1.0

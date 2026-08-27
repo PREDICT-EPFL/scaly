@@ -29,7 +29,9 @@ from pathlib import Path
 import numpy as np
 
 import alloy as al
+from alloy.ir.expr import substitute
 from alloy.solvers import SolverStats
+from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
   CAR_WIDTH,
@@ -210,7 +212,7 @@ def race_car_lag_hess_dense_reference(config: EpisodeConfig, z: np.ndarray, p: n
   return dense
 
 
-def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: dict[str, str | int | float] | None = None) -> al.SolverFunction:
+def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: dict[str, str | int | float] | None = None) -> al.Function:
   n = config.horizon
   z = al.sym("z", NZ * (n + 1))
   p = al.sym("p", n_param(n), diff=False)
@@ -255,18 +257,30 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
     lb[i * NZ + 3], ub[i * NZ + 3] = 0.0, config.max_speed
     lb[i * NZ + NX : (i + 1) * NZ] = [-T_MAX, -DELTA_MAX]
     ub[i * NZ + NX : (i + 1) * NZ] = [T_MAX, DELTA_MAX]
-  return al.nlp(
-    x=z,
-    p=p,
-    f=cost,
-    h_eq=eq,
-    g_ineq=corridor,
-    l_ineq=np.full(2 * n, -config.track_half_width),
-    u_ineq=np.full(2 * n, config.track_half_width),
-    x_lb=lb,
-    x_ub=ub,
-    solver=solver,
-    name=f"race_car_closed_loop_N{n}_{solver}",
+  problem_name = f"race_car_closed_loop_N{n}"
+
+  @al.problem(vars=al.L("z", z.type), params=al.L("p", p.type), name=problem_name)
+  def problem(new_z, new_p):
+    replacements = {z: new_z, p: new_p}
+    return al.ProblemSpec(
+      minimize=substitute(cost, replacements),
+      eq=(substitute(eq, replacements),),
+      ineq=(
+        al.bounded(
+          substitute(corridor, replacements),
+          lo=al.const(np.full(2 * n, -config.track_half_width)),
+          hi=al.const(np.full(2 * n, config.track_half_width)),
+          name="corridor",
+        ),
+      ),
+      lb=al.const(lb),
+      ub=al.const(ub),
+    )
+
+  return al.solver(
+    problem,
+    solver,
+    name=f"{problem_name}_{solver}",
     options=(
       {"tol": config.ipopt_tol, "max_iter": config.sqp_max_iter, **(sqp_options or {})}
       if solver == "sqp"
@@ -397,9 +411,10 @@ def run_episode(
     stage_reference = reference.copy()
     stage_reference[0] = state  # p[:NX] doubles as the initial-value constraint
     p = np.concatenate([stage_reference.reshape(-1), config.params.array()])
-    out = controller(z0, lam_eq0, lam_ineq0, lam_box0, p)
-    stats = controller.last_stats
-    if stats is None or controller.last_status is None or not controller.last_status.ok or not np.all(np.isfinite(out["x"])):
+    out = solve_problem(controller, z0, lam_eq0, lam_ineq0, lam_box0, p)
+    stats = problem_stats(controller)
+    status = None if stats is None else stats.to_solver_status()
+    if stats is None or status is None or not status.ok or not np.all(np.isfinite(out["x"])):
       status = "missing" if stats is None else stats.status.name
       residual = ""
       if "h_eq" in out and "g_ineq" in out:

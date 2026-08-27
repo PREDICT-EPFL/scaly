@@ -363,7 +363,7 @@ class CompiledCasadiIpopt:
 
 
 class CasadiIpoptSolver:
-  """`al.SolverFunction`-shaped adapter for a compiled CasADi IPOPT NLP."""
+  """`al.Function`-shaped adapter for a compiled CasADi IPOPT NLP."""
 
   compiled = True
 

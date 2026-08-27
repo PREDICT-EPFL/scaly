@@ -14,6 +14,7 @@ from alloy.ir.expr_spec import spec_expr
 from alloy.ir.program import ProgramNode, ProgramOp
 from alloy.ir.program_spec import spec_program_full
 from alloy.ir.spec import Rule, Spec, VerifyError
+from alloy.solvers.problem import Bounded, Problem, ProblemSpec
 
 
 def test_public_exports_are_canonical() -> None:
@@ -23,6 +24,14 @@ def test_public_exports_are_canonical() -> None:
   assert al.Function is Function
   assert al.L is L
   assert al.G is G
+  assert al.Bounded is Bounded
+  assert al.Problem is Problem
+  assert al.ProblemSpec is ProblemSpec
+  assert callable(al.bounded) and callable(al.problem) and callable(al.solver)
+  assert {"Bounded", "Problem", "ProblemSpec", "bounded", "problem", "solver"} <= set(al.__all__)
+  assert not hasattr(al, "nlp")
+  assert not hasattr(al, "qp")
+  assert not hasattr(al, "SolverFunction")
   assert not hasattr(al, "Tree")
   assert not hasattr(al, "Buffer")
   assert {"L", "G"} <= set(al.__all__)

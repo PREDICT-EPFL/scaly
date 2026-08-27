@@ -1,18 +1,26 @@
 # Solvers
 
-## Builders
+## Problem construction
 
-::: alloy.solvers.qp.qp
+::: alloy.solvers.problem.Bounded
 
-::: alloy.solvers.nlp.nlp
+::: alloy.solvers.problem.bounded
 
-## The solver function
+::: alloy.solvers.problem.ProblemSpec
 
-::: alloy.solvers.solver_function.SolverFunction
+::: alloy.solvers.problem.Problem
 
-::: alloy.solvers.solver_function.SolverDescriptor
+::: alloy.solvers.problem.problem
 
-::: alloy.solvers.solver_function.ExternalOracle
+## Solver selection
+
+::: alloy.solvers.solver.solver
+
+## Plugin descriptors
+
+::: alloy.solvers.model.SolverDescriptor
+
+::: alloy.solvers.model.ExternalOracle
 
 ## Statistics
 

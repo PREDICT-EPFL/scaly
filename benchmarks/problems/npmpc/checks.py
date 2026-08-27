@@ -22,6 +22,7 @@ import numpy as np
 
 import alloy as al
 from alloy.solvers.paths import solver_loadable, solver_paths
+from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
   DT,
   HORIZON,
@@ -310,7 +311,7 @@ def check_constraint_rows_and_bounds() -> None:
 def check_nlp_uses_an_exact_hessian() -> None:
   """The IPOPT column really *evaluates* the generated exact Lagrangian Hessian.
 
-  `al.nlp` attaches a Hessian oracle unconditionally, so `descriptor.hess is not None` is true of
+  The typed solver builder attaches a Hessian oracle unconditionally, so `descriptor.hess is not None` is true of
   every NLP and on its own proves nothing. What separates an exact-Hessian column from a
   quasi-Newton one is whether IPOPT calls the oracle: `n_eval_h` counts once per iteration here and
   drops to exactly zero the moment `hessian_approximation` is set to `limited-memory`. The
@@ -326,8 +327,15 @@ def check_nlp_uses_an_exact_hessian() -> None:
 
   n_eq, n_ineq = constraint_counts(config.horizon)
   start = np.array(config.x_start)
-  controller(initial_guess(start, config), np.zeros(n_eq), np.zeros(n_ineq), np.zeros(n_dec(config.horizon)), np.concatenate([start, pw]))
-  stats = controller.last_stats
+  solve_problem(
+    controller,
+    initial_guess(start, config),
+    np.zeros(n_eq),
+    np.zeros(n_ineq),
+    np.zeros(n_dec(config.horizon)),
+    np.concatenate([start, pw]),
+  )
+  stats = problem_stats(controller)
   assert stats is not None and stats.iter > 0, "the probe solve did not iterate"
   assert stats.n_eval_h > 0, "IPOPT never evaluated the Lagrangian Hessian, so this column is quasi-Newton"
 
@@ -344,14 +352,15 @@ def check_casadi_ipopt_is_compiled() -> None:
   assert controller.resolved_ipopt_library.read_bytes() == Path(expected).read_bytes()
   n_eq, n_ineq = constraint_counts(config.horizon)
   start = np.array(config.x_start)
-  controller(
+  solve_problem(
+    controller,
     initial_guess(start, config),
     np.zeros(n_eq),
     np.zeros(n_ineq),
     np.zeros(n_dec(config.horizon)),
     np.concatenate([start, pw]),
   )
-  stats = controller.last_stats
+  stats = problem_stats(controller)
   assert stats is not None and stats.n_eval_h > 0
 
 
@@ -468,8 +477,9 @@ def check_matches_reference_episode() -> None:
       states.append(step_np(decoder, pw, states[-1], shifted[stage]))
     guess = np.concatenate([np.asarray(states).reshape(-1), shifted.reshape(-1), np.zeros(1)])
 
-    out = controller(guess, *zeros, np.concatenate([xstart, pw]))
-    status, stats = controller.last_status, controller.last_stats
+    out = solve_problem(controller, guess, *zeros, np.concatenate([xstart, pw]))
+    stats = problem_stats(controller)
+    status = None if stats is None else stats.to_solver_status()
     assert status is not None and stats is not None and status.ok, f"step {step}: {None if stats is None else stats.status.name}"
     ours = np.asarray(out["x"], dtype=np.float64).reshape(-1)
     gap = float(out["f"]) - float(np.asarray(lag(theirs, pw)[0]))

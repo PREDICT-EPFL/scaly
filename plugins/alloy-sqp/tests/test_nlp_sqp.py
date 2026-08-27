@@ -8,13 +8,14 @@ import pytest
 import alloy as al
 from alloy.codegen.aot import render_c_source
 from alloy.ir.types import SparsityType
+from tests.solvers.problem_helpers import build_nlp, solve_nlp
 
 
-def _problem(*, hessian: str = "exact", max_iter: int = 30, trace: bool = False, **options) -> al.SolverFunction:
+def _problem(*, hessian: str = "exact", max_iter: int = 30, trace: bool = False, **options) -> al.Function:
   x = al.sym("x", 2)
   target = al.sym("target", 2, diff=False)
   suffix = "".join(f"_{key}_{value}" for key, value in sorted(options.items()))
-  return al.nlp(
+  return build_nlp(
     x=x,
     p=target,
     f=0.5 * al.dot(x - target, x - target),
@@ -47,8 +48,8 @@ def test_sqp_generated_wrapper_reuses_one_qp_workspace(interface: str) -> None:
 @pytest.mark.parametrize("hessian", ["exact", "objective"])
 def test_sqp_hessian_modes_solve_constrained_quadratic(hessian: str) -> None:
   solver = _problem(hessian=hessian)
-  out = solver(np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
-  assert solver.last_status is not None and solver.last_status.ok
+  out = solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
+  assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.25, 0.75], atol=2e-6)
   np.testing.assert_allclose(out["h_eq"], 0.0, atol=1e-7)
   assert out["g_ineq"][0] == pytest.approx(-0.5, abs=2e-6)
@@ -57,8 +58,8 @@ def test_sqp_hessian_modes_solve_constrained_quadratic(hessian: str) -> None:
 @pytest.mark.solver("sqp")
 def test_sqp_stats_split_is_additive() -> None:
   solver = _problem()
-  solver(np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
-  stats = solver.last_stats
+  solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
+  stats = solver.solver_stats()
   assert stats is not None and stats.status == al.AlloySolveStatus.OK
   assert stats.t_fe >= 0.0 and stats.t_qp > 0.0 and stats.t_globalization >= 0.0
   assert stats.t_solver == 0.0
@@ -69,8 +70,8 @@ def test_sqp_stats_split_is_additive() -> None:
 @pytest.mark.solver("sqp")
 def test_sqp_diagnostics_stats_fields() -> None:
   solver = _problem()
-  solver(np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
-  stats = solver.last_stats
+  solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
+  stats = solver.solver_stats()
   assert stats is not None and stats.status == al.AlloySolveStatus.OK
   assert stats.version == al.ALLOY_SOLVER_STATS_VERSION
   assert stats.qp_iter > 0 and stats.backtracks >= 0
@@ -87,8 +88,8 @@ def test_sqp_rejects_nonfinite_warm_starts_before_the_kkt_check() -> None:
   for slot in range(4):
     args = [value.copy() for value in valid]
     args[slot].reshape(-1)[0] = np.nan
-    solver(*args)
-    assert solver.last_stats is not None and solver.last_stats.status == al.AlloySolveStatus.NUMERICS
+    solve_nlp(solver, *args)
+    assert solver.solver_stats() is not None and solver.solver_stats().status == al.AlloySolveStatus.NUMERICS
 
 
 def test_sqp_trace_is_off_by_default() -> None:
@@ -100,7 +101,7 @@ def test_sqp_trace_prefix_sanitizes_hostile_names() -> None:
   # the prefix lands inside C format strings: %, quotes, and escapes in the name must not survive
   x = al.sym("x", 2)
   target = al.sym("target", 2, diff=False)
-  fun = al.nlp(
+  fun = build_nlp(
     x=x,
     p=target,
     f=0.5 * al.dot(x - target, x - target),
@@ -119,7 +120,7 @@ def test_sqp_trace_prefix_sanitizes_hostile_names() -> None:
 @pytest.mark.solver("sqp")
 def test_sqp_trace_prints_per_iteration_lines_to_stderr(capfd: pytest.CaptureFixture[str]) -> None:
   solver = _problem(trace=True)
-  solver(np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
+  solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
   err = capfd.readouterr().err
   assert "[alloy-sqp test_sqp_exact_30_trace] iter=1 qp_status=" in err
   assert "globalization=filter" in err and "alpha=" in err and "penalty=" in err and "backtracks=" in err
@@ -147,12 +148,12 @@ def _c_table(source: str, name: str) -> list[int]:
   return [int(value) for value in match.group(1).split(",")]
 
 
-def _coupled_problem(name: str, *, solver: str = "sqp", **options) -> al.SolverFunction:
+def _coupled_problem(name: str, *, solver: str = "sqp", **options) -> al.Function:
   """Scrambled Jacobian/Hessian patterns: the objective couples (0,3) and (1,2),
   the constraints touch non-adjacent variables, so a wrong COO-to-CSC
   permutation lands values in the wrong rows instead of cancelling out."""
   x = al.sym("x", 4)
-  return al.nlp(
+  return build_nlp(
     x=x,
     f=0.5 * ((x[0] - 1.0) ** 2 + 2.0 * (x[1] - 2.0) ** 2 + 3.0 * (x[2] + 1.0) ** 2 + 4.0 * (x[3] - 0.5) ** 2) + 0.3 * x[0] * x[3] + 0.2 * x[1] * x[2],
     h_eq=al.stack([x[0] + 2.0 * x[2] - 1.0, x[1] - x[3]]),
@@ -195,7 +196,7 @@ def test_external_nlp_uses_the_supplied_pattern_as_the_hessian_layout() -> None:
   assert not hasattr(solver.descriptor, "hess_lower_mask")
 
 
-def _external_sqp_hessian_pattern(name: str, rows: tuple[int, ...], cols: tuple[int, ...]) -> al.SolverFunction:
+def _external_sqp_hessian_pattern(name: str, rows: tuple[int, ...], cols: tuple[int, ...]) -> al.Function:
   from alloy_sqp.external import external_nlp
 
   return external_nlp(
@@ -270,12 +271,12 @@ def test_sqp_sparse_assembly_reaches_the_same_solution_as_ipopt() -> None:
   cannot catch it — an independent solver on the same NLP can."""
   start = np.array([0.5, 1.0, -0.5, 0.25])
   sqp = _coupled_problem("sqp_vs_ipopt_sparse")
-  sqp_out = sqp(start, np.zeros(2), np.zeros(2), np.zeros(4))
-  assert sqp.last_status is not None and sqp.last_status.ok
+  sqp_out = solve_nlp(sqp, start, np.zeros(2), np.zeros(2), np.zeros(4))
+  assert sqp.solver_stats().to_solver_status() is not None and sqp.solver_stats().to_solver_status().ok
 
   ipopt = _coupled_problem("sqp_vs_ipopt_ipopt", solver="ipopt")
-  ipopt_out = ipopt(start, np.zeros(2), np.zeros(2), np.zeros(4))
-  assert ipopt.last_status is not None and ipopt.last_status.ok
+  ipopt_out = solve_nlp(ipopt, start, np.zeros(2), np.zeros(2), np.zeros(4))
+  assert ipopt.solver_stats().to_solver_status() is not None and ipopt.solver_stats().to_solver_status().ok
   np.testing.assert_allclose(sqp_out["x"], ipopt_out["x"], rtol=1e-6, atol=1e-7)
   assert sqp_out["f"] == pytest.approx(float(ipopt_out["f"]), abs=1e-8)
   np.testing.assert_allclose(sqp_out["h_eq"], 0.0, atol=1e-9)
@@ -290,9 +291,9 @@ def test_sqp_sparse_and_dense_qp_interfaces_agree() -> None:
   results = {}
   for interface in ("sparse", "dense"):
     solver = _coupled_problem(f"sqp_interface_{interface}") if interface == "sparse" else _coupled_problem("sqp_interface_dense", qp="dense")
-    out = solver(start, np.zeros(2), np.zeros(2), np.zeros(4))
-    assert solver.last_status is not None and solver.last_status.ok
-    results[interface] = (out, solver.last_stats)
+    out = solve_nlp(solver, start, np.zeros(2), np.zeros(2), np.zeros(4))
+    assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
+    results[interface] = (out, solver.solver_stats())
   sparse_out, sparse_stats = results["sparse"]
   dense_out, dense_stats = results["dense"]
   for key in ("x", "f", "h_eq", "g_ineq", "lam_eq", "lam_ineq", "lam_box"):
@@ -342,7 +343,7 @@ def test_sqp_solves_an_indefinite_coupled_hessian() -> None:
   # H = [[1, 2], [2, 1]] has eigenvalues -1 and 3, so PIQP cannot take it
   # unregularized; the modified factorization shifts it positive definite
   x = al.sym("x", 2)
-  solver = al.nlp(
+  solver = build_nlp(
     x=x,
     f=0.5 * x[0] ** 2 + 0.5 * x[1] ** 2 + 2.0 * x[0] * x[1],
     x_lb=np.full(2, -1.0),
@@ -351,8 +352,8 @@ def test_sqp_solves_an_indefinite_coupled_hessian() -> None:
     name="sqp_indefinite_coupled",
     options={"tol": 1e-8, "max_iter": 40},
   )
-  out = solver(np.array([0.3, -0.2]), np.zeros(0), np.zeros(0), np.zeros(2))
-  assert solver.last_status is not None and solver.last_status.ok
+  out = solve_nlp(solver, np.array([0.3, -0.2]), np.zeros(0), np.zeros(0), np.zeros(2))
+  assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
   assert out["f"] == pytest.approx(-1.0, abs=1e-7)
   np.testing.assert_allclose(np.abs(out["x"]), 1.0, atol=1e-7)
   assert out["x"][0] * out["x"][1] < 0.0
@@ -362,15 +363,15 @@ def test_sqp_solves_an_indefinite_coupled_hessian() -> None:
 @pytest.mark.parametrize("globalization", ["filter", "l1"])
 def test_sqp_globalizations_backtrack_before_accepting(globalization: str) -> None:
   x = al.sym("x", 1)
-  solver = al.nlp(
+  solver = build_nlp(
     x=x,
     f=0.25 * x[0] ** 4 - 0.5 * x[0] ** 2,
     solver="sqp",
     name=f"sqp_{globalization}_backtrack",
     options={"globalization": globalization, "regularization": 0.3, "tol": 1e-8, "max_iter": 30},
   )
-  out = solver(np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
-  stats = solver.last_stats
+  out = solve_nlp(solver, np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
+  stats = solver.solver_stats()
   assert stats is not None and stats.status == al.AlloySolveStatus.OK
   assert stats.backtracks > 0 and 0.0 < stats.alpha <= 1.0
   np.testing.assert_allclose(np.abs(out["x"]), 1.0, atol=2e-5)
@@ -381,15 +382,15 @@ def test_sqp_globalizations_backtrack_before_accepting(globalization: str) -> No
 @pytest.mark.solver("sqp")
 def test_sqp_fails_when_filter_has_no_acceptable_trial() -> None:
   x = al.sym("x", 1)
-  solver = al.nlp(
+  solver = build_nlp(
     x=x,
     f=0.25 * x[0] ** 4 - 0.5 * x[0] ** 2,
     solver="sqp",
     name="sqp_filter_rejects_every_trial",
     options={"line_search_beta": 1e-5, "regularization": 0.03, "max_iter": 2},
   )
-  solver(np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
-  stats = solver.last_stats
+  solve_nlp(solver, np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
+  stats = solver.solver_stats()
   assert stats is not None and stats.status == al.AlloySolveStatus.NUMERICS
   assert stats.alpha == 0.0 and stats.backtracks == 1
 
@@ -397,15 +398,15 @@ def test_sqp_fails_when_filter_has_no_acceptable_trial() -> None:
 @pytest.mark.solver("sqp")
 def test_sqp_watchdog_falls_back_to_checkpoint_line_search() -> None:
   x = al.sym("x", 1)
-  solver = al.nlp(
+  solver = build_nlp(
     x=x,
     f=0.25 * x[0] ** 4 - 0.5 * x[0] ** 2,
     solver="sqp",
     name="sqp_watchdog_fallback",
     options={"globalization": "l1", "watchdog": 1, "regularization": 0.3, "tol": 1e-8, "max_iter": 30},
   )
-  out = solver(np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
-  stats = solver.last_stats
+  out = solve_nlp(solver, np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
+  stats = solver.solver_stats()
   assert stats is not None and stats.status == al.AlloySolveStatus.OK
   assert stats.backtracks > 0 and 0.0 < stats.alpha <= 1.0
   np.testing.assert_allclose(np.abs(out["x"]), 1.0, atol=2e-5)
@@ -414,11 +415,11 @@ def test_sqp_watchdog_falls_back_to_checkpoint_line_search() -> None:
 @pytest.mark.solver("sqp")
 def test_sqp_kkt_terminates_at_initial_bound_optima_with_signed_multipliers() -> None:
   x = al.sym("x", 1)
-  upper = al.nlp(x=x, f=-x[0], x_lb=np.array([0.0]), x_ub=np.array([1.0]), solver="sqp", name="sqp_upper_kkt")
-  lower = al.nlp(x=x, f=x[0], x_lb=np.array([0.0]), x_ub=np.array([1.0]), solver="sqp", name="sqp_lower_kkt")
+  upper = build_nlp(x=x, f=-x[0], x_lb=np.array([0.0]), x_ub=np.array([1.0]), solver="sqp", name="sqp_upper_kkt")
+  lower = build_nlp(x=x, f=x[0], x_lb=np.array([0.0]), x_ub=np.array([1.0]), solver="sqp", name="sqp_lower_kkt")
   for solver, x0, lam in ((upper, 1.0, 1.0), (lower, 0.0, -1.0)):
-    solver(np.array([x0]), np.zeros(0), np.zeros(0), np.array([lam]))
-    stats = solver.last_stats
+    solve_nlp(solver, np.array([x0]), np.zeros(0), np.zeros(0), np.array([lam]))
+    stats = solver.solver_stats()
     assert stats is not None and stats.status == al.AlloySolveStatus.OK
     assert stats.iter == 0 and stats.qp_iter == 0 and stats.alpha == 0.0
 
@@ -426,7 +427,7 @@ def test_sqp_kkt_terminates_at_initial_bound_optima_with_signed_multipliers() ->
 @pytest.mark.solver("sqp")
 def test_sqp_bound_complementarity_uses_the_slack_selected_by_multiplier_sign() -> None:
   x = al.sym("x", 1)
-  solver = al.nlp(
+  solver = build_nlp(
     x=x,
     f=x[0],
     x_lb=np.array([0.0]),
@@ -435,15 +436,15 @@ def test_sqp_bound_complementarity_uses_the_slack_selected_by_multiplier_sign() 
     name="sqp_wrong_bound_sign",
     options={"max_iter": 1},
   )
-  solver(np.array([1.0]), np.zeros(0), np.zeros(0), np.array([-1.0]))
-  stats = solver.last_stats
+  solve_nlp(solver, np.array([1.0]), np.zeros(0), np.zeros(0), np.array([-1.0]))
+  stats = solver.solver_stats()
   assert stats is not None and stats.iter == 1
 
 
 @pytest.mark.solver("sqp")
 def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> None:
   x = al.sym("x", 1)
-  solver = al.nlp(
+  solver = build_nlp(
     x=x,
     f=-x[0],
     g_ineq=al.stack([x[0]]),
@@ -452,8 +453,8 @@ def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> No
     solver="sqp",
     name="sqp_upper_ineq_kkt",
   )
-  solver(np.array([1.0]), np.zeros(0), np.array([1.0]), np.zeros(1))
-  stats = solver.last_stats
+  solve_nlp(solver, np.array([1.0]), np.zeros(0), np.array([1.0]), np.zeros(1))
+  stats = solver.solver_stats()
   assert stats is not None and stats.status == al.AlloySolveStatus.OK and stats.iter == 0
 
 
@@ -461,13 +462,7 @@ def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> No
 def test_sqp_nested_in_host_function() -> None:
   solver = _problem()
   target = al.sym("target", 2, diff=False)
-  x = solver.call(
-    x0=al.const(np.zeros(2)),
-    lam_eq0=al.const(np.zeros(1)),
-    lam_ineq0=al.const(np.zeros(1)),
-    lam_box0=al.const(np.zeros(2)),
-    target=target,
-  )[0]
+  x = solver.symbolic_call((al.const(np.zeros(2)), al.const(np.zeros(2)), al.const(np.zeros(1)), al.const(np.zeros(1)), target))[0]
   host = al.Function._from_exprs("nested_sqp_host", [target], [al.dot(x, x)], ["target"], ["norm"])
   np.testing.assert_allclose(host(np.array([0.2, 0.8])), 0.625, atol=3e-6)
 
@@ -477,8 +472,8 @@ def test_sqp_continues_with_best_iterate_after_qp_max_iter() -> None:
   # the iteration cap makes PIQP stop just short of its tolerance with a polished
   # iterate; like laopt, the SQP must use it and still converge
   solver = _problem(qp_max_iter=4)
-  out = solver(np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
-  stats = solver.last_stats
+  out = solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
+  stats = solver.solver_stats()
   assert stats is not None and stats.status == al.AlloySolveStatus.OK
   assert stats.native_status == -1  # PIQP_MAX_ITER_REACHED on the last QP
   np.testing.assert_allclose(out["x"], [0.25, 0.75], atol=2e-6)
@@ -487,7 +482,7 @@ def test_sqp_continues_with_best_iterate_after_qp_max_iter() -> None:
 @pytest.mark.solver("sqp")
 def test_sqp_max_iter_status() -> None:
   x = al.sym("x", 1)
-  solver = al.nlp(
+  solver = build_nlp(
     x=x,
     f=(x[0] - 2.0) ** 4,
     h_eq=al.stack([x[0] * x[0] - 1.0]),
@@ -495,14 +490,14 @@ def test_sqp_max_iter_status() -> None:
     name="sqp_max_iter",
     options={"max_iter": 1, "tol": 1e-12},
   )
-  solver(np.array([0.5]), np.zeros(1), np.zeros(0), np.zeros(1))
-  assert solver.last_stats is not None and solver.last_stats.status == al.AlloySolveStatus.MAX_ITER
+  solve_nlp(solver, np.array([0.5]), np.zeros(1), np.zeros(0), np.zeros(1))
+  assert solver.solver_stats() is not None and solver.solver_stats().status == al.AlloySolveStatus.MAX_ITER
 
 
 @pytest.mark.solver("sqp")
 def test_sqp_enforces_coupled_constraints_and_reports_box_multiplier() -> None:
   x = al.sym("x", 2)
-  solver = al.nlp(
+  solver = build_nlp(
     x=x,
     f=0.5 * al.dot(x - al.const(np.array([2.0, 0.0])), x - al.const(np.array([2.0, 0.0]))),
     h_eq=al.stack([x[0] + x[1] - 1.0]),
@@ -515,16 +510,18 @@ def test_sqp_enforces_coupled_constraints_and_reports_box_multiplier() -> None:
     name="sqp_coupled_constraints",
     options={"tol": 1e-8},
   )
-  out = solver(np.array([2.0, -1.0]), np.zeros(1), np.zeros(1), np.zeros(2))
-  assert solver.last_status is not None and solver.last_status.ok
+  out = solve_nlp(solver, np.array([2.0, -1.0]), np.zeros(1), np.zeros(1), np.zeros(2))
+  assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.5, 0.5], atol=2e-7)
   np.testing.assert_allclose(out["h_eq"], 0.0, atol=1e-8)
   assert out["g_ineq"][0] <= 1e-8
 
   y = al.sym("y", 1)
-  bound = al.nlp(x=y, f=0.5 * (y[0] - 2.0) ** 2, x_lb=np.array([0.0]), x_ub=np.array([1.0]), solver="sqp", name="sqp_bound", options={"qp_tol": 1e-8})
-  bound_out = bound(np.array([2.0]), np.zeros(0), np.zeros(0), np.zeros(1))
-  assert bound.last_status is not None and bound.last_status.ok
+  bound = build_nlp(
+    x=y, f=0.5 * (y[0] - 2.0) ** 2, x_lb=np.array([0.0]), x_ub=np.array([1.0]), solver="sqp", name="sqp_bound", options={"qp_tol": 1e-8}
+  )
+  bound_out = solve_nlp(bound, np.array([2.0]), np.zeros(0), np.zeros(0), np.zeros(1))
+  assert bound.solver_stats().to_solver_status() is not None and bound.solver_stats().to_solver_status().ok
   np.testing.assert_allclose(bound_out["x"], [1.0], atol=1e-8)
   assert bound_out["lam_box"][0] > 0.0
 
@@ -532,9 +529,9 @@ def test_sqp_enforces_coupled_constraints_and_reports_box_multiplier() -> None:
 @pytest.mark.solver("sqp")
 def test_sqp_does_not_accept_unconverged_unconstrained_iterate() -> None:
   x = al.sym("x", 1)
-  solver = al.nlp(x=x, f=(x[0] - 2.0) ** 4, solver="sqp", name="sqp_unconverged", options={"max_iter": 1, "tol": 1e-12})
-  solver(np.array([0.0]), np.zeros(0), np.zeros(0), np.zeros(1))
-  assert solver.last_stats is not None and solver.last_stats.status == al.AlloySolveStatus.MAX_ITER
+  solver = build_nlp(x=x, f=(x[0] - 2.0) ** 4, solver="sqp", name="sqp_unconverged", options={"max_iter": 1, "tol": 1e-12})
+  solve_nlp(solver, np.array([0.0]), np.zeros(0), np.zeros(0), np.zeros(1))
+  assert solver.solver_stats() is not None and solver.solver_stats().status == al.AlloySolveStatus.MAX_ITER
 
 
 @pytest.mark.parametrize(
@@ -552,9 +549,9 @@ def test_sqp_does_not_accept_unconverged_unconstrained_iterate() -> None:
 )
 def test_sqp_rejects_invalid_options(options: dict[str, str | int | float | bool], match: str) -> None:
   x = al.sym("x", 1)
-  solver = al.nlp(x=x, f=x[0] ** 2, solver="sqp", name=f"sqp_invalid_{match}", options=options)
+  solver = build_nlp(x=x, f=x[0] ** 2, solver="sqp", name=f"sqp_invalid_{match}", options=options)
   with pytest.raises(ValueError, match=match):
-    solver(np.zeros(1), np.zeros(0), np.zeros(0), np.zeros(1))
+    solve_nlp(solver, np.zeros(1), np.zeros(0), np.zeros(0), np.zeros(1))
 
 
 @pytest.mark.solver("sqp")
@@ -570,7 +567,7 @@ def test_same_sqp_wrapper_accepts_casadi_codegen_oracles() -> None:
   base = ca.Function("external_fixture_base", [x, p], [f, g])
   grad = ca.Function("external_fixture_grad", [x, p], [ca.gradient(f, x)])
   jac = ca.Function("external_fixture_jac", [x, p], [ca.jacobian(g, x)])
-  hess = ca.Function("external_fixture_hess", [x, lam_f, lam_g, p], [ca.hessian(lam_f * f + ca.dot(lam_g, g), x)[0]])
+  hess = ca.Function("external_fixture_hess", [x, p, lam_f, lam_g], [ca.hessian(lam_f * f + ca.dot(lam_g, g), x)[0]])
   solver = build_casadi_external_sqp(
     name="external_fixture_sqp",
     base=base,
@@ -584,8 +581,8 @@ def test_same_sqp_wrapper_accepts_casadi_codegen_oracles() -> None:
     l_ineq=np.zeros(0),
     u_ineq=np.zeros(0),
   )
-  out = solver(np.zeros(2), np.zeros(1), np.zeros(0), np.zeros(2), np.array([0.2, 0.8]))
-  assert solver.last_status is not None and solver.last_status.ok
+  out = solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(0), np.zeros(2), np.array([0.2, 0.8]))
+  assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.2, 0.8], atol=2e-6)
 
 
@@ -600,7 +597,7 @@ def test_casadi_external_sqp_validates_oracle_and_bound_shapes() -> None:
   base = ca.Function("shape_base", [x, p], [f])
   grad = ca.Function("shape_grad", [x, p], [ca.gradient(f, x)])
   bad_grad = ca.Function("shape_bad_grad", [x, p], [f])
-  hess = ca.Function("shape_hess", [x, lam_f, p], [ca.hessian(lam_f * f, x)[0]])
+  hess = ca.Function("shape_hess", [x, p, lam_f], [ca.hessian(lam_f * f, x)[0]])
   with pytest.raises(ValueError, match="shape_bad_grad"):
     build_casadi_external_sqp(
       name="shape_external_sqp",
@@ -645,7 +642,7 @@ def test_casadi_external_sqp_supports_unconstrained_problem_without_jacobian() -
     base=ca.Function("free_base", [x, p], [f]),
     grad=ca.Function("free_grad", [x, p], [ca.gradient(f, x)]),
     jac=None,
-    hess=ca.Function("free_hess", [x, lam_f, p], [ca.hessian(lam_f * f, x)[0]]),
+    hess=ca.Function("free_hess", [x, p, lam_f], [ca.hessian(lam_f * f, x)[0]]),
     n_eq=0,
     n_ineq=0,
     x_lb=np.array([-np.inf]),
@@ -654,6 +651,6 @@ def test_casadi_external_sqp_supports_unconstrained_problem_without_jacobian() -
     u_ineq=np.zeros(0),
     options={"qp_tol": 1e-8},
   )
-  out = solver(np.zeros(1), np.zeros(0), np.zeros(0), np.zeros(1), np.array([0.75]))
-  assert solver.last_status is not None and solver.last_status.ok
+  out = solve_nlp(solver, np.zeros(1), np.zeros(0), np.zeros(0), np.zeros(1), np.array([0.75]))
+  assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.75], atol=1e-6)

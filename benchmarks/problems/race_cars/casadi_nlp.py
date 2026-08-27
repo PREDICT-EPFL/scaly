@@ -1,7 +1,7 @@
 """CasADi mirror of the race-car NMPC, as a drop-in stand-in for the Alloy solver.
 
 `CasadiRaceCarSolver` presents the same call signature, output keys, and statistics
-as the `al.SolverFunction` built by `closed_loop._race_car_nlp`, so one episode loop
+as the `al.Function` built by `closed_loop._race_car_nlp`, so one episode loop
 drives either oracle provider. The decision-variable layout, parameter layout, cost terms,
 equality rows, inequality rows, bounds, and IPOPT options are identical by
 construction — the only difference is which tool differentiates and evaluates the
@@ -127,7 +127,7 @@ def build_casadi_race_car_sqp(config, *, sqp_options: dict[str, str | int | floa
     base=ca.Function(f"{stem}_base", [z, p], [cost, constraints]),
     grad=ca.Function(f"{stem}_grad", [z, p], [ca.gradient(cost, z)]),
     jac=ca.Function(f"{stem}_jac", [z, p], [ca.jacobian(constraints, z)]),
-    hess=ca.Function(f"{stem}_hess", [z, lam_f, lam_g, p], [ca.hessian(lam_f * cost + ca.dot(lam_g, constraints), z)[0]]),
+    hess=ca.Function(f"{stem}_hess", [z, p, lam_f, lam_g], [ca.hessian(lam_f * cost + ca.dot(lam_g, constraints), z)[0]]),
     n_eq=pieces["n_eq"],
     n_ineq=pieces["n_ineq"],
     x_lb=pieces["x_lb"],

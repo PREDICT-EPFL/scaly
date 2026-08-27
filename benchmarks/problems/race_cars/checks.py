@@ -24,6 +24,7 @@ import numpy as np
 
 import alloy as al
 from alloy.solvers.paths import solver_loadable, solver_paths
+from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
   CAR_WIDTH,
@@ -214,14 +215,15 @@ def check_casadi_ipopt_is_compiled() -> None:
   stage_reference = reference.copy()
   stage_reference[0] = state
   z0 = _reference_guess(reference, config)
-  controller(
+  solve_problem(
+    controller,
     z0,
     np.zeros(NX * (config.horizon + 1)),
     np.zeros(2 * config.horizon),
     np.zeros(z0.size),
     np.concatenate([stage_reference.reshape(-1), config.params.array()]),
   )
-  stats = controller.last_stats
+  stats = problem_stats(controller)
   assert stats is not None and stats.n_eval_h > 0
 
 
@@ -236,8 +238,8 @@ def check_harvested_sqp_globalizations() -> None:
       ("l1-watchdog-five", {"globalization": "l1", "watchdog": 5, "hessian": "objective"}, 4),
     ):
       solver = build_solver(EpisodeConfig(), "sqp", oracle, sqp_options=options)
-      out = solver(inputs["z0"], inputs["lam_eq0"], inputs["lam_ineq0"], inputs["lam_box0"], inputs["p"])
-      stats = solver.last_stats
+      out = solve_problem(solver, inputs["z0"], inputs["lam_eq0"], inputs["lam_ineq0"], inputs["lam_box0"], inputs["p"])
+      stats = problem_stats(solver)
       assert stats is not None and stats.status.value == 0, f"sqp/{oracle}/{name}: {stats}"
       assert stats.iter == expected_iter and stats.primal_viol < 1e-7 and stats.alpha == 1.0, f"sqp/{oracle}/{name}: {stats}"
       np.testing.assert_allclose(out["f"], 6.6328204, rtol=1e-7)

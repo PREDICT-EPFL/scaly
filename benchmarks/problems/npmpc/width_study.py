@@ -25,6 +25,7 @@ import sys
 
 import numpy as np
 
+from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
   CostWeights,
   Decoder,
@@ -99,8 +100,9 @@ def measure(width: int, solver: str = "sqp", *, steps: int = DEFAULT_STEPS, seed
   offset = 4 * (config.horizon + 1)
   totals, evaluations, iterations, note = [], [], [], ""
   for step in range(steps + 1):
-    out = controller(guess, *zeros, np.concatenate([state, pw]))
-    stats, status = controller.last_stats, controller.last_status
+    out = solve_problem(controller, guess, *zeros, np.concatenate([state, pw]))
+    stats = problem_stats(controller)
+    status = None if stats is None else stats.to_solver_status()
     if stats is None or status is None or not status.ok:
       note = f"stopped at step {step}: {'missing stats' if stats is None else stats.status.name}"
       break

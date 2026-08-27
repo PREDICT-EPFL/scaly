@@ -3,7 +3,7 @@
 This module + ``codegen/c.py`` are the **sole** CPU path to C (see
 ``docs/how_it_works/lowering.md``); the legacy tape-based scalar renderer is gone.
 The one sanctioned non-Program-IR escape is the ``codegen/solver`` wrapper for a
-``SolverFunction`` — and even there the oracle Functions it drives lower through here.
+``solver Function`` — and even there the oracle Functions it drives lower through here.
 
 Dispatch is a **registry** keyed by expression ``ExprOp``: each op's lowering is a
 self-contained rule registered with ``@lowers(...)``. Adding/deepening an op (or,
@@ -13,7 +13,7 @@ Covered: elementwise unary/binary (with numpy broadcasting), ``RESHAPE`` (alias)
 ``CONST`` (any size, via ``const_buffer``), general ``SLICE`` (integer / multi-dim /
 strided), ``SUM``, ``MATMUL`` (rank <= 2), ``TRANSPOSE`` (rank <= 4), ``GATHER`` /
 ``SCATTER`` (any size, ``static const`` index table), ``STACK`` / ``CONCAT`` (any axis),
-``CALL`` (multi-PROC, deduped) and ``VMAP``; a ``SolverFunction`` ``CALL`` is opaque
+``CALL`` (multi-PROC, deduped) and ``VMAP``; a ``solver Function`` ``CALL`` is opaque
 (see ``lower_function``). The tracking and unbumpercars workloads (forward + ``jac`` +
 ``spjac``) render and match generated-code / external numeric references. Deferred (re-land from the reference branch):
 GPU placement and the new ops tracked in the migration roadmap.
@@ -91,7 +91,7 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None) -> Pro
   placement raises ``LoweringError`` — GPU backends re-land from the reference
   branch after CPU parity (see ``internal/notes/program_ir_migration.md``).
 
-  A ``SolverFunction`` callee is **opaque**: its ``ExprOp.SOLVER_CALL`` body is not
+  A ``solver Function`` callee is **opaque**: its ``ExprOp.SOLVER_CALL`` body is not
   lowered — the solver wrapper is rendered by the sanctioned ``codegen/solver``
   path (rule 6) — but its oracle Functions *are* lowered to PROCs (the wrapper
   calls them as ``<oracle>_raw``). The solver→oracle-name map is recorded on the
@@ -116,7 +116,7 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None) -> Pro
     prog = p.program([*callees.values(), root])
   if solver_fns:
     solver_oracles = {name: tuple(o.name for o in solver_callees(sf)) for name, sf in solver_fns.items()}
-    from ..solvers.solver_function import ExternalOracle
+    from ..solvers.model import ExternalOracle
 
     solver_external_workspace = {}
     for name, sf in solver_fns.items():
@@ -177,7 +177,7 @@ class LowerCtx:
   def __init__(self, fun: Function, callees: dict[str, ProgramNode], solver_fns: dict[str, Function]) -> None:
     self.fun = fun
     self.callees = callees
-    self.solver_fns = solver_fns  # name -> SolverFunction (opaque callees; rendered by codegen/solver)
+    self.solver_fns = solver_fns  # name -> solver Function (opaque callees; rendered by codegen/solver)
     self.params: list[ProgramNode] = []
     self.statements: list[ProgramNode] = []
     self.buffers: dict[str, ProgramNode] = {}

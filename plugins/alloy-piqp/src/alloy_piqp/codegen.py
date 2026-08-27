@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
   from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
-  from alloy.solvers.solver_function import SolverDescriptor
+  from alloy.solvers.model import SolverDescriptor
   from alloy.ir.types import SparsityType
 
 
@@ -31,7 +31,7 @@ def _csc_tables(name: str, sp: SparsityType | None) -> list[str]:
 
 
 def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
-  desc: SolverDescriptor = fun.descriptor  # ty: ignore[unresolved-attribute]
+  desc: SolverDescriptor = fun.descriptor
   symbol = ctx.symbol
   raw = ctx.raw_symbol
   n, p, m = desc.n, desc.n_eq, desc.n_ineq

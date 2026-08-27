@@ -490,7 +490,7 @@ def check_sqp_oracles_agree() -> None:
     np.testing.assert_allclose(alloy_u, casadi_u, rtol=1e-9, atol=1e-9)
     acted |= bool(np.max(np.abs(alloy_u - desired)) > 1e-3)
     for controller in (alloy_filter, casadi_filter):
-      stats = controller.nlp.last_stats
+      stats = controller.nlp.solver_stats()
       report = controller.stats_history[-1]
       assert stats is not None and stats.status.name == "OK" and report.success and report.min_g >= -1e-6
       assert stats.t_qp > 0.0 and stats.n_eval_h > 0

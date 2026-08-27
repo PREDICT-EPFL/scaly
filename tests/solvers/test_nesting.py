@@ -6,16 +6,19 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.solvers.qp import _legacy_qp
 from alloy.solvers.registry import available_backends
 from alloy.ir.expr import ExprOp, topo
 from alloy.codegen import render_c_source
 
-pytestmark = pytest.mark.skipif("piqp" not in available_backends(), reason="structural tests build al.qp and need the alloy-piqp plugin installed")
+pytestmark = pytest.mark.skipif(
+  "piqp" not in available_backends(), reason="structural tests build the private QP differential fixture and need the alloy-piqp plugin installed"
+)
 
 
 def test_solver_call_returns_expressions() -> None:
   mu = al.sym("mu", 2)
-  qp = al.qp(P=al.const(np.eye(2)), c=-mu)
+  qp = _legacy_qp(P=al.const(np.eye(2)), c=-mu)
   out_exprs = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])
   assert len(out_exprs) == len(qp.output_names)
   # call() inherits from Function and wraps each output in an ExprOp.CALL node
@@ -32,7 +35,7 @@ def test_solver_call_returns_expressions() -> None:
 
 def test_solver_descriptor_present_in_inner_graph() -> None:
   mu = al.sym("mu", 2)
-  qp = al.qp(P=al.const(np.eye(2)), c=-mu)
+  qp = _legacy_qp(P=al.const(np.eye(2)), c=-mu)
   solver_calls = [node for node in topo(qp.outputs) if node.op == ExprOp.SOLVER_CALL]
   assert len(solver_calls) == len(qp.output_names)
   descriptors = {id(node.attrs["solver"]) for node in solver_calls}
@@ -46,7 +49,7 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
   """Distinct outputs of the same solver invocation lower to one CALL statement."""
 
   mu = al.sym("mu", 2)
-  qp = al.qp(P=al.const(np.eye(2)), c=-mu)
+  qp = _legacy_qp(P=al.const(np.eye(2)), c=-mu)
 
   @al.function(al.L("mu", (2,)), al.G(al.L("x", ...), al.L("cost", ...), al.L("lam_box", ...)), name="multi_out")
   def multi_out(mu):
@@ -64,7 +67,7 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
 @pytest.mark.solver("piqp")
 def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   mu = al.sym("mu", 2)
-  qp = al.qp(P=al.const(np.eye(2)), c=-mu, name="nested_stats_qp")
+  qp = _legacy_qp(P=al.const(np.eye(2)), c=-mu, name="nested_stats_qp")
   out = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])
   host = al.Function._from_exprs("nested_stats_host", [mu], [out[0]], ["mu"], ["x"])
   np.testing.assert_allclose(host(np.array([0.5, -0.25])), [0.5, -0.25], atol=1e-8)
@@ -76,7 +79,7 @@ def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
 
 def test_duplicate_nested_solver_names_fail_before_c_compilation() -> None:
   mu = al.sym("mu", 2)
-  qps = [al.qp(P=np.eye(2), c=-mu) for _ in range(2)]
+  qps = [_legacy_qp(P=np.eye(2), c=-mu) for _ in range(2)]
   outs = [qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu]) for qp in qps]
   host = al.Function._from_exprs("duplicate_solver_host", [mu], [outs[0][0], outs[1][0]], ["mu"], ["x0", "x1"])
   with pytest.raises(ValueError, match="duplicate solver symbol 'qp_piqp'"):

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
   from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
 
-SOLVER_PLUGIN_PROTOCOL_VERSION = 5
+SOLVER_PLUGIN_PROTOCOL_VERSION = 6
 ENTRY_POINT_GROUP = "alloy.solvers"
 
 
@@ -54,7 +54,7 @@ class SolverBackend(Protocol):
   def include_dir(self) -> Path: ...
 
   def render_wrapper(self, fun: Function, ctx: SolverWrapperCtx) -> list[str]:
-    """Emit the C wrapper for one ``SolverFunction`` (see docs/dev/solver_plugins.md).
+    """Emit the C wrapper for one solver ``Function`` (see docs/dev/solver_plugins.md).
 
     Must define ``static void <ctx.raw_symbol>(...)`` with the descriptor's
     ``in*``/``out*`` signature plus a trailing ``double* w``, drive the solver's

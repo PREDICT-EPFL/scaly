@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from alloy.solvers import SolverStats
+from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
   DT,
   HORIZON,
@@ -172,8 +173,9 @@ def run_episode(
 
   for step in range(config.steps):
     p = np.concatenate([state, pw])
-    out = controller(guess, np.zeros(n_eq), np.zeros(n_ineq), np.zeros(nz), p)
-    stats, status = controller.last_stats, controller.last_status
+    out = solve_problem(controller, guess, np.zeros(n_eq), np.zeros(n_ineq), np.zeros(nz), p)
+    stats = problem_stats(controller)
+    status = None if stats is None else stats.to_solver_status()
     if stats is None or status is None:
       raise RuntimeError(f"{solver}/{oracle} did not return solve status and statistics")
     solution = np.asarray(out["x"], dtype=np.float64).reshape(-1)

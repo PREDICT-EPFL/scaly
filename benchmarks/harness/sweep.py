@@ -301,7 +301,7 @@ def _render_alloy(fun: al.Function, name: str, out_dir: Path):
   return module, (time.perf_counter() - started) * 1000
 
 
-def _descriptor_kernel(solver: al.SolverFunction, kind: str):
+def _descriptor_kernel(solver: al.Function, kind: str):
   descriptor = solver.descriptor
   function = getattr(descriptor, kind)
   sparsity = getattr(descriptor, f"{kind}_sparsity")

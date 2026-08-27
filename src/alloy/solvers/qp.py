@@ -1,4 +1,4 @@
-"""``al.qp(...)`` — build an opaque solver Function wrapping PIQP.
+"""Private legacy QP builder retained for the Step 6 differential.
 
 The QP shape (see ``docs/guide/solvers.md``) is::
 
@@ -32,7 +32,7 @@ from ..function import Function
 from ..ir.types import SparsityType
 from ._oracle import collect_free_inputs
 from .registry import require_backend
-from .solver_function import SolverDescriptor, SolverFunction
+from .model import SolverDescriptor, descriptor_function
 
 PIQP_INF = 1e30
 
@@ -61,7 +61,7 @@ def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *,
   single ``(0, 0)`` entry so the generated CSC handle stays valid — the
   gathered value is the structural zero itself.
 
-  Matrices computed from a nested ``SOLVER_CALL`` are rejected in ``qp()``
+  Matrices computed from a nested ``SOLVER_CALL`` are rejected in this legacy builder
   before the probe runs: ``_jac_mask`` treats solver outputs as opaque zeros,
   so their entries would be classified solely by the probed value — silently
   wrong whenever the inner solve is zero at the probe but nonzero at runtime.
@@ -111,7 +111,7 @@ def _reaches_solver_call(exprs: Sequence[Expr]) -> bool:
   return visit(exprs)
 
 
-def qp(
+def _legacy_qp(
   *,
   P: Any,
   c: Any,
@@ -126,7 +126,7 @@ def qp(
   name: str | None = None,
   options: dict[str, float | int] | None = None,
   sparse: bool = False,
-) -> SolverFunction:
+) -> Function:
   """Build a quadratic-program solver as a callable ``Function``.
 
   Solves ``min 0.5 x' P x + c' x`` subject to ``A_eq x = b_eq``,
@@ -134,10 +134,10 @@ def qp(
 
   Every argument may be an alloy ``Expr`` over free parameters — which is what makes the solver
   reusable across states — a NumPy array or scalar, or ``None`` for the optional blocks. The
-  returned ``SolverFunction`` takes ``x0``, ``lam_eq0``, ``lam_ineq0`` and then every free
+  returned ``Function`` takes ``x0``, ``lam_eq0``, ``lam_ineq0`` and then every free
   parameter found, and returns ``x``, ``cost``, ``lam_eq``, ``lam_ineq`` and ``lam_box``.
 
-  Because it is a real ``Function``, ``solver.call([...])`` nests it inside a larger graph and the
+  Because it is a ``Function``, ``solver.call([...])`` nests it inside a larger graph and the
   whole thing compiles to one shared library. See ``docs/guide/solvers.md``.
 
   Args:
@@ -280,4 +280,4 @@ def qp(
     A_sparsity=A_sp,
     G_sparsity=G_sp,
   )
-  return SolverFunction(descriptor)
+  return descriptor_function(descriptor)

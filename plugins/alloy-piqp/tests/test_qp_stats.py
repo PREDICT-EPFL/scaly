@@ -5,11 +5,12 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.solvers.qp import _legacy_qp
 
 
-def _problem(*, max_iter: int | None = None) -> al.SolverFunction:
+def _problem(*, max_iter: int | None = None) -> al.Function:
   options: dict[str, float | int] = {} if max_iter is None else {"max_iter": max_iter}
-  return al.qp(
+  return _legacy_qp(
     P=np.array([[4.0, 1.0], [1.0, 2.0]]),
     c=np.array([-1.0, -1.0]),
     G_ineq=np.array([[1.0, 2.0], [-1.0, 2.0]]),
@@ -56,7 +57,7 @@ def test_qp_stats_maps_max_iter_status() -> None:
 
 @pytest.mark.solver("piqp")
 def test_qp_reserved_name_compiles_solves_and_exposes_stats() -> None:
-  qp = al.qp(P=np.eye(2), c=np.array([-0.25, 0.5]), name="w")
+  qp = _legacy_qp(P=np.eye(2), c=np.array([-0.25, 0.5]), name="w")
   out = qp(np.zeros(2), np.zeros(0), np.zeros(0))
   np.testing.assert_allclose(out["x"], [0.25, -0.5], atol=1e-8)
   assert qp.solver_stats("w").status == al.AlloySolveStatus.OK

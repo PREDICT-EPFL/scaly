@@ -6,10 +6,11 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.solvers.qp import _legacy_qp
 from alloy.codegen import render_c_source
 
 
-def _sparse_problem(sparse: bool, name: str) -> al.SolverFunction:
+def _sparse_problem(sparse: bool, name: str) -> al.Function:
   """Parameterized QP with structural zeros in P, A_eq, and G_ineq."""
   t = al.sym("t", 2)
   zero = al.const(0.0)
@@ -26,7 +27,7 @@ def _sparse_problem(sparse: bool, name: str) -> al.SolverFunction:
   A_eq = al.stack([al.stack([1.0, 1.0, zero, zero])], axis=0)
   b_eq = al.stack([1.0 + t[0]])
   G_ineq = al.stack([al.stack([zero, 1.0, zero, -1.0]), al.stack([t[0], zero, 1.0, zero])], axis=0)
-  return al.qp(
+  return _legacy_qp(
     P=P,
     c=c,
     A_eq=A_eq,
@@ -83,7 +84,7 @@ def test_sparse_qp_matches_dense_over_parameter_sweep() -> None:
 
 @pytest.mark.solver("piqp")
 def test_sparse_qp_constant_data_and_stats() -> None:
-  qp = al.qp(
+  qp = _legacy_qp(
     P=np.diag([2.0, 1.0, 4.0]),
     c=np.array([-1.0, 0.5, 0.0]),
     x_lb=np.full(3, -1.0),
@@ -106,10 +107,10 @@ def test_sparse_qp_bakes_exactly_the_upper_triangle() -> None:
   an out-of-contract asymmetric P behaves as if symmetrized from its upper
   triangle. Compare against a dense solve of that symmetrized matrix."""
   kwargs: dict = {"c": np.array([-1.0, -1.0]), "x_lb": np.full(2, -3.0), "x_ub": np.full(2, 3.0)}
-  sparse_qp = al.qp(P=np.array([[4.0, 1.0], [7.0, 2.0]]), sparse=True, name="asym_sparse", **kwargs)
+  sparse_qp = _legacy_qp(P=np.array([[4.0, 1.0], [7.0, 2.0]]), sparse=True, name="asym_sparse", **kwargs)
   assert sparse_qp.descriptor.P_sparsity is not None
   assert set(zip(sparse_qp.descriptor.P_sparsity.rows, sparse_qp.descriptor.P_sparsity.cols)) == {(0, 0), (0, 1), (1, 1)}
-  dense_qp = al.qp(P=np.array([[4.0, 1.0], [1.0, 2.0]]), sparse=False, name="sym_dense", **kwargs)
+  dense_qp = _legacy_qp(P=np.array([[4.0, 1.0], [1.0, 2.0]]), sparse=False, name="sym_dense", **kwargs)
   sparse_out = sparse_qp(np.zeros(2), np.zeros(0), np.zeros(0))
   dense_out = dense_qp(np.zeros(2), np.zeros(0), np.zeros(0))
   np.testing.assert_allclose(sparse_out["x"], [1.0 / 7.0, 3.0 / 7.0], atol=1e-7)
@@ -121,7 +122,7 @@ def test_sparse_qp_bakes_exactly_the_upper_triangle() -> None:
 def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
   """An all-zero P (an LP) keeps one padded (0,0) entry whose gathered value
   is the structural zero, so the baked CSC handle stays valid."""
-  qp = al.qp(
+  qp = _legacy_qp(
     P=np.zeros((2, 2)),
     c=np.array([1.0, -1.0]),
     x_lb=np.array([-1.0, -1.0]),
@@ -143,7 +144,7 @@ def test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero() -> None:
   t = al.sym("t", 1)
   zero = al.const(0.0)
   P = al.stack([al.stack([al.const(2.0), t[0] - t[0]]), al.stack([zero, al.const(2.0)])], axis=0)
-  qp = al.qp(P=P, c=al.stack([t[0], -1.0]), sparse=True, name="probe_zero_qp")
+  qp = _legacy_qp(P=P, c=al.stack([t[0], -1.0]), sparse=True, name="probe_zero_qp")
   assert qp.descriptor.P_sparsity is not None
   assert set(zip(qp.descriptor.P_sparsity.rows, qp.descriptor.P_sparsity.cols)) == {(0, 0), (0, 1), (1, 1)}
 
@@ -152,7 +153,7 @@ def test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero() -> None:
 def test_nested_sparse_qp_in_alloy_function() -> None:
   @al.function(al.L("t", (2,)), al.L("x", ...), name="shifted_sparse_qp")
   def solve_shifted(t):
-    qp = al.qp(
+    qp = _legacy_qp(
       P=np.diag([2.0, 4.0]),
       c=al.stack([t[0], t[1]]),
       x_lb=np.full(2, -10.0),
