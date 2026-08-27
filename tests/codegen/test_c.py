@@ -14,7 +14,7 @@ import alloy as al
 
 def test_compiled_erf_matches_math_erf() -> None:
   x = al.sym("x", 9)
-  f = al.Function("compiled_erf", [x], [x.erf()], ["x"], ["y"])
+  f = al.Function._from_exprs("compiled_erf", [x], [x.erf()], ["x"], ["y"])
   values = np.array([-6.0, -4.5, -2.0, -0.25, 0.0, 0.25, 2.0, 4.5, 6.0])
 
   np.testing.assert_allclose(f(values), [math.erf(float(value)) for value in values], rtol=1e-14, atol=1e-15)
@@ -22,7 +22,7 @@ def test_compiled_erf_matches_math_erf() -> None:
 
 def test_c_api_header_exposes_universal_and_typed_buffers() -> None:
   x = al.sym("x", 2)
-  f = al.Function("f", [x], [x + 1], ["x"], ["y"])
+  f = al.Function._from_exprs("f", [x], [x + 1], ["x"], ["y"])
   from alloy.codegen import render_c_api_header
 
   header = render_c_api_header(f)
@@ -54,7 +54,7 @@ def test_c_api_header_exposes_universal_and_typed_buffers() -> None:
 def test_c_api_header_exposes_sparse_output_metadata() -> None:
   x = al.sym("x", 3)
   y = al.stack([x[0], x[2]])
-  f = al.sparse_jacobian(al.Function("f", [x], [y], ["x"], ["y"]), "y", "x", name="f_spjac")
+  f = al.sparse_jacobian(al.Function._from_exprs("f", [x], [y], ["x"], ["y"]), "y", "x", name="f_spjac")
   from alloy.codegen import render_c_api_header
 
   header = render_c_api_header(f)
@@ -78,7 +78,7 @@ def test_c_source_executes_scalar_subset_through_universal_abi(tmp_path) -> None
   x = al.sym("x", 2)
   a = al.const(np.array([[2.0, -1.0], [0.5, 3.0]]))
   y = al.concat([(a @ x).sin(), x.gather([1, 0])])
-  f = al.Function("f", [x], [y, y.sum()], ["x"], ["y", "s"])
+  f = al.Function._from_exprs("f", [x], [y, y.sum()], ["x"], ["y", "s"])
   from alloy.codegen import render_c_source
 
   src = tmp_path / "f.c"
@@ -135,7 +135,7 @@ def test_c_source_column_slice_is_not_contiguous(tmp_path) -> None:
 
   x = al.sym("x", (5, 7))
   y = al.sym("y", (5, 1, 7))
-  f = al.Function("g", [x, y], [x[:, 1], x[2, :], y[:, 0, :]], ["x", "y"], ["col1", "row2", "row2d"])
+  f = al.Function._from_exprs("g", [x, y], [x[:, 1], x[2, :], y[:, 0, :]], ["x", "y"], ["col1", "row2", "row2d"])
   from alloy.codegen import render_c_source
 
   src = tmp_path / "g.c"
@@ -171,10 +171,10 @@ def test_c_source_lowers_call_nodes_through_internal_raw_function(tmp_path) -> N
     pytest.skip("cc is required for generated C smoke test")
 
   x = al.sym("x", 2)
-  inner = al.Function("inner", [x], [x * x, x.sum()], ["x"], ["sq", "sum"])
+  inner = al.Function._from_exprs("inner", [x], [x * x, x.sum()], ["x"], ["sq", "sum"])
   z = al.sym("z", 2)
   inner_sq, inner_sum = inner.call([z + 1.0])
-  outer = al.Function("outer", [z], [inner_sq + inner_sum], ["z"], ["y"])
+  outer = al.Function._from_exprs("outer", [z], [inner_sq + inner_sum], ["z"], ["y"])
   from alloy.codegen import render_c_source
 
   src = tmp_path / "outer.c"
@@ -214,7 +214,7 @@ def test_c_module_executes_sparse_jacobian_factory_output(tmp_path) -> None:
 
   x = al.sym("x", 4)
   y = al.stack([x[0], x[2:4].sum(), x[1] * x[3]])
-  f = al.Function("f", [x], [y], ["x"], ["y"])
+  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
   spjf = al.sparse_jacobian(f, "y", "x", name="f_spjac")
   from alloy.codegen import render_c_module
 
@@ -251,7 +251,7 @@ def test_c_api_header_typed_cpp_wrapper_compiles_and_runs(tmp_path) -> None:
     pytest.skip("cc and c++ are required for generated C++ wrapper smoke test")
 
   x = al.sym("x", 2)
-  f = al.Function("f", [x], [x.sin() + 2.0], ["x"], ["y"])
+  f = al.Function._from_exprs("f", [x], [x.sin() + 2.0], ["x"], ["y"])
   from alloy.codegen import render_c_module
 
   module = render_c_module(f)
@@ -293,8 +293,8 @@ def test_c_api_header_typed_cpp_wrapper_handles_factory_names(tmp_path) -> None:
     pytest.skip("cc and c++ are required for generated C++ wrapper smoke test")
 
   x = al.sym("x", 2)
-  nlp = al.Function("nlp", [x], [x[0] * x[0], x * x], ["x"], ["f", "g"])
-  hess = al.lagrangian_hessian(nlp, ["f", "g"], "x", name="h")
+  nlp = al.Function._from_exprs("nlp", [x], [x[0] * x[0], x * x], ["x"], ["f", "g"])
+  hess = al.lagrangian_hessian(nlp, "x", name="h")
   from alloy.codegen import render_c_module
 
   module = render_c_module(hess)

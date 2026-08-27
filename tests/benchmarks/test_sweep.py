@@ -38,9 +38,9 @@ def test_artifact_sizes_split_static_data_from_executable_source() -> None:
 
 def test_dispatch_metrics_count_retained_vmap_work_per_iteration() -> None:
   x = al.sym("x", 2)
-  stage = al.Function("metric_stage", [x], [2.0 * x + x.sin()], ["x"], ["y"])
+  stage = al.Function._from_exprs("metric_stage", [x], [2.0 * x + x.sin()], ["x"], ["y"])
   z = al.sym("z", 8)
-  mapped = al.Function("metric_vmap", [z], [al.vmap(stage, 4, [(z, 0, 2)])], ["z"], ["y"])
+  mapped = al.Function._from_exprs("metric_vmap", [z], [al.vmap(stage, 4, [(z, 0, 2)])], ["z"], ["y"])
 
   assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (4, 0, 6)
 
@@ -49,11 +49,11 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
   x = al.sym("x", 2)
   matrix = al.Expr.const(np.arange(8.0).reshape(4, 2))
   hidden = matrix @ x
-  inner = al.Function("metric_workspace_inner", [x], [(hidden * hidden).sum().reshape((1,))], ["x"], ["y"])
+  inner = al.Function._from_exprs("metric_workspace_inner", [x], [(hidden * hidden).sum().reshape((1,))], ["x"], ["y"])
   y = al.sym("y", 2)
-  outer = al.Function("metric_workspace_outer", [y], [inner.call([y])[0] + 1], ["y"], ["z"])
+  outer = al.Function._from_exprs("metric_workspace_outer", [y], [inner.call([y])[0] + 1], ["y"], ["z"])
   z = al.sym("z", 8)
-  mapped = al.Function("metric_workspace_vmap", [z], [al.vmap(outer, 4, [(z, 0, 2)])], ["z"], ["y"])
+  mapped = al.Function._from_exprs("metric_workspace_vmap", [z], [al.vmap(outer, 4, [(z, 0, 2)])], ["z"], ["y"])
 
   # Five slots in the inner callee and its caller's one call-output slot coexist. The 25 operations
   # are floating point only: integer multiply/add nodes used in generated subscripts do not count.
@@ -62,22 +62,22 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
 
 def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
   x = al.sym("x", 1024)
-  inner = al.Function("metric_spill_inner", [x], [x * x], ["x"], ["y"])
+  inner = al.Function._from_exprs("metric_spill_inner", [x], [x * x], ["x"], ["y"])
   y = al.sym("y", 1024)
   called = inner.call([y])[0]
-  outer = al.Function("metric_spill_outer", [y], [called + 1], ["y"], ["z"])
+  outer = al.Function._from_exprs("metric_spill_outer", [y], [called + 1], ["y"], ["z"])
   z = al.sym("z", 2048)
-  mapped = al.Function("metric_spill_vmap", [z], [al.vmap(outer, 2, [(z, 0, 1024)])], ["z"], ["y"])
+  mapped = al.Function._from_exprs("metric_spill_vmap", [z], [al.vmap(outer, 2, [(z, 0, 1024)])], ["z"], ["y"])
 
   assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (2, 1024, 2048)
 
 
 def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
   x = al.sym("x", 1)
-  stage = al.Function("metric_scalar_stage", [x], [x * x], ["x"], ["y"])
+  stage = al.Function._from_exprs("metric_scalar_stage", [x], [x * x], ["x"], ["y"])
   z = al.sym("z", 5)
-  unit = al.Function("metric_unit_vmap", [z], [al.vmap(stage, 1, [(z, 0, 1)])], ["z"], ["y"])
-  mixed = al.Function(
+  unit = al.Function._from_exprs("metric_unit_vmap", [z], [al.vmap(stage, 1, [(z, 0, 1)])], ["z"], ["y"])
+  mixed = al.Function._from_exprs(
     "metric_mixed_vmap",
     [z],
     [al.concat([al.vmap(stage, 2, [(z, 0, 1)]), al.vmap(stage, 3, [(z, 2, 1)])])],
@@ -99,7 +99,7 @@ def test_sweep_csv_has_dispatch_and_artifact_fields() -> None:
 def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
   x = al.sym("x", 3)
   y = x[0] * x[0] + x[1] * x[2]
-  primal = al.Function("sweep_width_fixture", [x], [y], ["x"], ["y"])
+  primal = al.Function._from_exprs("sweep_width_fixture", [x], [y], ["x"], ["y"])
   hessian = al.sparse_hessian(primal, "y", "x")
   descriptor = SimpleNamespace(name="sweep_width_fixture", hess=hessian, hess_sparsity=hessian.output_sparsities[0])
   solver = cast(al.SolverFunction, SimpleNamespace(descriptor=descriptor))
@@ -114,10 +114,10 @@ def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
 def test_module_info_records_constructed_local_coloring_width() -> None:
   a = al.sym("a", 1)
   b = al.sym("b", 1)
-  piece = al.Function("module_info_piece", [a, b], [al.stack([a, b])], ["a", "b"], ["y"])
+  piece = al.Function._from_exprs("module_info_piece", [a, b], [al.stack([a, b])], ["a", "b"], ["y"])
   z = al.sym("z", 5)
   mapped_expr = al.vmap(piece, 4, [(z, 0, 1), (z, 1, 1)])
-  mapped = al.Function("module_info_mapped", [z], [mapped_expr], ["z"], ["y"])
+  mapped = al.Function._from_exprs("module_info_mapped", [z], [mapped_expr], ["z"], ["y"])
   built = mapped.factory("module_info_spjac", ["z"], [al.factory.SpJac("y", "z")])
   sparsity = built.output_sparsities[0]
   coloring_width = built.output_coloring_widths[0]
@@ -446,7 +446,7 @@ def test_compiled_driver_runs_a_rendered_alloy_kernel_with_sanitized_inputs(tmp_
   x = al.sym("x", 1)
   lam_f = al.sym("lam:f", 1)
   lam_g = al.sym("lam:g", 1)
-  kernel = al.Function("rendered_driver_kernel", [x, lam_f, lam_g], [x + lam_f + 2.0 * lam_g], ["x", "lam:f", "lam:g"], ["y"])
+  kernel = al.Function._from_exprs("rendered_driver_kernel", [x, lam_f, lam_g], [x + lam_f + 2.0 * lam_g], ["x", "lam:f", "lam:g"], ["y"])
   module = render_c_module(kernel, header_name="rendered_driver_kernel.h", source_name="rendered_driver_kernel.c", typed_buffers=False)
   info = {
     "name": "wrong_construction_label",

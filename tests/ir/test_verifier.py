@@ -32,7 +32,7 @@ def test_simple_scalar_graph_verifies() -> None:
 def test_matmul_named_call_verifies() -> None:
   a = al.sym("a", (3, 4))
   b = al.sym("b", (4, 2))
-  fn = al.Function("mm", [a, b], [a @ b], ["a", "b"], ["c"])
+  fn = al.Function._from_exprs("mm", [a, b], [a @ b], ["a", "b"], ["c"])
   c = al.sym("c", (3, 4))
   d = al.sym("d", (4, 2))
   (out,) = fn.call([c, d])
@@ -41,7 +41,7 @@ def test_matmul_named_call_verifies() -> None:
 
 def test_vmap_graph_verifies() -> None:
   stage_in = al.sym("u", 2)
-  stage = al.Function("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
+  stage = al.Function._from_exprs("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
   batch = al.sym("batch", 8)
   mapped = al.vmap(stage, length=4, inputs=[(batch, 0, 2)])
   verify_expr(mapped)
@@ -50,7 +50,7 @@ def test_vmap_graph_verifies() -> None:
 def test_jacobian_factory_output_verifies() -> None:
   x = al.sym("x", 3)
   y = (x.sin() + x * x).sum()
-  fn = al.Function("f", [x], [y], ["x"], ["y"])
+  fn = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
   jac = al.jacobian(fn, "y", "x")
   verify_expr(jac.outputs)
 
@@ -119,7 +119,7 @@ def test_matmul_contracting_dim_mismatch_caught() -> None:
 
 def test_call_arg_shape_mismatch_caught() -> None:
   x = al.sym("x", 3)
-  fn = al.Function("f", [x], [x.sum()], ["x"], ["y"])
+  fn = al.Function._from_exprs("f", [x], [x.sum()], ["x"], ["y"])
   bad_arg = al.sym("z", 5)
   bad = Expr(
     ExprOp.CALL,
@@ -133,7 +133,7 @@ def test_call_arg_shape_mismatch_caught() -> None:
 
 def test_vmap_rank1_outer_required() -> None:
   stage_in = al.sym("u", 2)
-  stage = al.Function("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
+  stage = al.Function._from_exprs("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
   bad_outer = al.sym("batch", (4, 2))  # not rank-1
   bad = Expr(
     ExprOp.VMAP,
@@ -176,7 +176,7 @@ def test_verifier_smoke_on_workload_graphs() -> None:
   z = al.sym("z", 6)
   A = al.const(np.eye(4, 6))
   res = A @ z + z[:4]
-  fn = al.Function("f", [z], [res.sum()], ["z"], ["y"])
+  fn = al.Function._from_exprs("f", [z], [res.sum()], ["z"], ["y"])
   verify_expr(fn.outputs)
   jac = al.jacobian(fn, "y", "z")
   verify_expr(jac.outputs)

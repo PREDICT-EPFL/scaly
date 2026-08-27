@@ -147,15 +147,16 @@ def steady_throttle(v: float, params: RaceCarParams = RaceCarParams()) -> float:
   return float(np.tanh(10.0 * v) * (params.c_r0 + params.c_r1 * v + params.c_r2 * v * v) / params.c_m0)
 
 
-@al.function("race_car_corridor_stage", {"z": NZ, "ref": NX})
-def _corridor_stage(z, ref):  # type: ignore[no-untyped-def]
+@al.function(al.G(al.L("z", NZ), al.L("ref", NX)), al.L("corridor", ...), name="race_car_corridor_stage")
+def _corridor_stage(inputs):  # type: ignore[no-untyped-def]
+  z, ref = inputs
   cos_ref, sin_ref = ref[2].cos(), ref[2].sin()
   dx, dy = z[0] - ref[0], z[1] - ref[1]
   e_lat = -sin_ref * dx + cos_ref * dy
   d_phi = z[2] - ref[2]
   reach = e_lat + 0.5 * CAR_LENGTH * d_phi.sin()
   half_width = 0.5 * CAR_WIDTH * d_phi.cos()
-  return {"corridor": al.stack([reach + half_width, reach - half_width])}
+  return al.stack([reach + half_width, reach - half_width])
 
 
 def race_car_lag_hess_dense_reference(config: EpisodeConfig, z: np.ndarray, p: np.ndarray, lam_f: float, lam_g: np.ndarray) -> np.ndarray:

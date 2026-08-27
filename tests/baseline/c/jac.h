@@ -16,7 +16,7 @@
 #define ALLOY_ERR_NULL_INPUT 4
 #endif
 
-#define dynamics_jac_znext_z_SZ_ARG 1
+#define dynamics_jac_znext_z_SZ_ARG 2
 #define dynamics_jac_znext_z_SZ_RES 1
 #define dynamics_jac_znext_z_SZ_IW 0
 #define dynamics_jac_znext_z_SZ_W 0
@@ -39,13 +39,15 @@ void dynamics_jac_znext_z_free_mem(void* mem);
 
 // Optional typed buffer wrappers for statically known shapes.
 typedef struct { double data[4]; } dynamics_jac_znext_z_z_in;
+typedef struct { double data[2]; } dynamics_jac_znext_z_u_in;
 typedef struct { double data[16]; } dynamics_jac_znext_z_jac_znext_z_out;
 #ifdef __cplusplus
 static_assert(sizeof(dynamics_jac_znext_z_z_in) == sizeof(double) * 4, "dynamics_jac_znext_z_z_in size mismatch");
+static_assert(sizeof(dynamics_jac_znext_z_u_in) == sizeof(double) * 2, "dynamics_jac_znext_z_u_in size mismatch");
 static_assert(sizeof(dynamics_jac_znext_z_jac_znext_z_out) == sizeof(double) * 16, "dynamics_jac_znext_z_jac_znext_z_out size mismatch");
-static inline int dynamics_jac_znext_z_call(const dynamics_jac_znext_z_z_in& in_z, dynamics_jac_znext_z_jac_znext_z_out& out_jac_znext_z) {
+static inline int dynamics_jac_znext_z_call(const dynamics_jac_znext_z_z_in& in_z, const dynamics_jac_znext_z_u_in& in_u, dynamics_jac_znext_z_jac_znext_z_out& out_jac_znext_z) {
   double w[dynamics_jac_znext_z_SZ_W > 0 ? dynamics_jac_znext_z_SZ_W : 1];
-  const double* arg[dynamics_jac_znext_z_SZ_ARG > 0 ? dynamics_jac_znext_z_SZ_ARG : 1] = {in_z.data};
+  const double* arg[dynamics_jac_znext_z_SZ_ARG > 0 ? dynamics_jac_znext_z_SZ_ARG : 1] = {in_z.data, in_u.data};
   double* res[dynamics_jac_znext_z_SZ_RES > 0 ? dynamics_jac_znext_z_SZ_RES : 1] = {out_jac_znext_z.data};
   return dynamics_jac_znext_z(arg, res, nullptr, dynamics_jac_znext_z_SZ_W ? w : nullptr, nullptr);
 }

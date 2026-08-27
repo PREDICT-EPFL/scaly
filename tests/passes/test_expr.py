@@ -13,7 +13,7 @@ def test_cse_merges_equivalent_subgraphs() -> None:
 
   assert y.op == al.ExprOp.MUL
   assert y.args[0] is y.args[1]
-  np.testing.assert_allclose(al.Function("cse_eval", [x], [y], ["x"], ["y"])(np.array([2.0, 3.0])), np.array([9.0, 16.0]))
+  np.testing.assert_allclose(al.Function._from_exprs("cse_eval", [x], [y], ["x"], ["y"])(np.array([2.0, 3.0])), np.array([9.0, 16.0]))
 
   a, b = x[0], x[1]
   z = al.cse(al.stack([a * b, b * a]))
@@ -41,9 +41,11 @@ def test_simplify_rewrites_algebraic_identities_and_folds_constants() -> None:
   np.testing.assert_allclose(m.value, np.zeros(2))
 
   q = al.sym("q", 2)
-  np.testing.assert_allclose(al.Function("simp_sub", [q], [al.simplify(q - q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.zeros(2))
-  np.testing.assert_allclose(al.Function("simp_div", [q], [al.simplify(q / q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.ones(2))
-  np.testing.assert_allclose(al.Function("simp_cse", [q], [al.simplify(al.cse(q + q))], ["q"], ["y"])(np.array([2.0, 3.0])), np.array([4.0, 6.0]))
+  np.testing.assert_allclose(al.Function._from_exprs("simp_sub", [q], [al.simplify(q - q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.zeros(2))
+  np.testing.assert_allclose(al.Function._from_exprs("simp_div", [q], [al.simplify(q / q)], ["q"], ["y"])(np.array([2.0, 3.0])), np.ones(2))
+  np.testing.assert_allclose(
+    al.Function._from_exprs("simp_cse", [q], [al.simplify(al.cse(q + q))], ["q"], ["y"])(np.array([2.0, 3.0])), np.array([4.0, 6.0])
+  )
 
 
 def test_simplify_constant_folds_erf() -> None:

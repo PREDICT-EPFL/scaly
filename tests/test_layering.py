@@ -49,6 +49,7 @@ LAYERS: dict[str, int] = {
   "alloy.solvers.stats": 2,
   "alloy.function": 3,
   "alloy.function.model": 3,
+  "alloy.function.tree": 3,
   "alloy.ad": 4,
   "alloy.ad.derivatives": 4,
   "alloy.ad.forward": 4,

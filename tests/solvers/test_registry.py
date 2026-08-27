@@ -255,7 +255,7 @@ def test_external_oracle_source_is_deduplicated_across_solver_wrappers(monkeypat
   oracle = ExternalOracle("shared", "shared_raw", source, (("x", (1,)),), (("f", ()),))
   left, right = _external_solver("left_solver", oracle), _external_solver("right_solver", oracle)
   args = [al.const(np.zeros(1)), al.const(np.zeros(0)), al.const(np.zeros(0))]
-  host = al.Function("two_external_solvers", [], [left.call(args)[0] + right.call(args)[0]], [], ["x"])
+  host = al.Function._from_exprs("two_external_solvers", [], [left.call(args)[0] + right.call(args)[0]], [], ["x"])
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
 
   from alloy.codegen.aot import render_c_module
@@ -268,7 +268,7 @@ def test_conflicting_external_oracle_symbol_definitions_are_rejected(monkeypatch
   second = ExternalOracle("second", "shared_raw", "static void shared_raw(int x) { (void)x; }", (), ())
   left, right = _external_solver("left_conflict", first), _external_solver("right_conflict", second)
   args = [al.const(np.zeros(1)), al.const(np.zeros(0)), al.const(np.zeros(0))]
-  host = al.Function("conflicting_external_solvers", [], [left.call(args)[0] + right.call(args)[0]], [], ["x"])
+  host = al.Function._from_exprs("conflicting_external_solvers", [], [left.call(args)[0] + right.call(args)[0]], [], ["x"])
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
 
   from alloy.codegen.aot import render_c_module

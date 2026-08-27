@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-int dynamics_jac_znext_z_sz_arg(void) { return 1; }
+int dynamics_jac_znext_z_sz_arg(void) { return 2; }
 int dynamics_jac_znext_z_sz_res(void) { return 1; }
 int dynamics_jac_znext_z_sz_iw(void) { return 0; }
 int dynamics_jac_znext_z_sz_w(void) { return 0; }
@@ -26,6 +26,7 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, v
   if (!arg || !res) return ALLOY_ERR_NULL_ABI;
   (void)w;
   if (!arg[0]) return ALLOY_ERR_NULL_INPUT;
+  if (!arg[1]) return ALLOY_ERR_NULL_INPUT;
   if (!res[0]) return ALLOY_ERR_NULL_RESULT;
   static const double k0[8] = {1, 0, 0, 1, 0.050000000000000003, 0, 0, 0.050000000000000003};
   static const double k1[8] = {0, 0, 0, 0, 1, 0, 0, 1};

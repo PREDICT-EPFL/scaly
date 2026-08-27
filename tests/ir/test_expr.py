@@ -10,7 +10,7 @@ from alloy.ir.expr import substitute, topo
 def test_elementwise_eval_and_topological_order() -> None:
   x = al.sym("x", 3)
   y = (x.sin() + x * x).sum()
-  f = al.Function("f", [x], [y], ["x"], ["y"])
+  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
   np.testing.assert_allclose(f(np.array([1.0, 2.0, 3.0])), np.sin([1.0, 2.0, 3.0]).sum() + 14.0)
 
@@ -53,7 +53,7 @@ def test_binary_nonlinear_method_helpers_eval() -> None:
   atan = x.atan2(y)
   mn = x.minimum(y)
   mx = x.maximum(y)
-  f = al.Function("binary_helpers", [x, y], [atan, mn, mx], ["x", "y"], ["atan", "min", "max"])
+  f = al.Function._from_exprs("binary_helpers", [x, y], [atan, mn, mx], ["x", "y"], ["atan", "min", "max"])
   xv = np.array([0.5, -1.0, 2.0])
   yv = np.array([1.5, 2.0, -0.25])
 
@@ -68,7 +68,7 @@ def test_binary_nonlinear_method_helpers_eval() -> None:
 
 def test_dot_sumsqr_and_norm_2() -> None:
   x = al.sym("x", (2, 2))
-  f = al.Function("f", [x], [al.dot(x, x.T), x.sumsqr(), al.norm_2(x)], ["x"], ["dot", "sumsqr", "norm"])
+  f = al.Function._from_exprs("f", [x], [al.dot(x, x.T), x.sumsqr(), al.norm_2(x)], ["x"], ["dot", "sumsqr", "norm"])
   xv = np.array([[1.0, 2.0], [3.0, 4.0]])
 
   dot_val, sumsqr_val, norm_val = f(xv)
@@ -153,7 +153,7 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
   assert not al.minimum(x, p).type.diff
 
   u = al.sym("u", 3)
-  inner = al.Function("inner", [u], [u * u], ["u"], ["y"])
+  inner = al.Function._from_exprs("inner", [u], [u * u], ["u"], ["y"])
   (diff_call,) = inner.call([x])
   (const_call,) = inner.call([c])
   assert diff_call.type.diff
@@ -165,7 +165,7 @@ def test_mixed_lowering_hints_survive_expr_graph() -> None:
   scalar_region = (x.sin() + x * x).scalar()
   block_region = (al.const(np.eye(3)) @ x).block()
   opaque_region = (x + 1.0).opaque()
-  f = al.Function("mixed", [x], [scalar_region + block_region + opaque_region], ["x"], ["y"])
+  f = al.Function._from_exprs("mixed", [x], [scalar_region + block_region + opaque_region], ["x"], ["y"])
 
   lowerings = [e.lowering for e in topo(f.outputs) if e.lowering != "auto"]
   assert "scalar" in lowerings
@@ -194,7 +194,7 @@ def test_substitute_rejects_incompatible_shape_or_dtype() -> None:
 
 def test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees() -> None:
   formal = al.sym("sub_formal", 2)
-  callee = al.Function("sub_callee", [formal], [formal * formal], ["u"], ["y"])
+  callee = al.Function._from_exprs("sub_callee", [formal], [formal * formal], ["u"], ["y"])
   x = al.sym("sub_actual_x", 2)
   z = al.sym("sub_actual_z", 2)
   called = callee.call([x])[0]

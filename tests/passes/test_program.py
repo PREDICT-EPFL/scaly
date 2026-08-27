@@ -47,8 +47,9 @@ def _sz_w(fn: al.Function) -> int:
 def test_fusion_collapses_elementwise_chain() -> None:
   """A same-shape elementwise chain fuses into a single loop with no intermediate buffers."""
 
-  @al.function("chain", {"x": 8, "y": 8})
-  def f(x, y):
+  @al.function(al.G(al.L("x", 8), al.L("y", 8)), al.L("out0", ...), name="chain")
+  def f(inputs):
+    x, y = inputs
     return ((x.sin() + y) * y - x).tanh()
 
   compute, aliases, loops = _classify(_main_body(f))
@@ -62,7 +63,7 @@ def _long_scalar_chain(length: int) -> al.Function:
   acc = al.const(0.0)
   for i in range(length):
     acc = acc + x[i % 4] * float(i + 1)
-  return al.Function(f"fold{length}", [x], [acc.reshape((1,))], ["x"], ["y"])
+  return al.Function._from_exprs(f"fold{length}", [x], [acc.reshape((1,))], ["x"], ["y"])
 
 
 def test_fusion_survives_a_moderately_deep_scalar_fold() -> None:
@@ -88,8 +89,9 @@ def test_fusion_skips_matmul_operand() -> None:
   so inlining the producer's expression there multiplies compute. Regression guard for the
   blow-up that an unguarded fusion introduces."""
 
-  @al.function("mm_operand", {"A": (4, 4), "x": 4})
-  def f(A, x):
+  @al.function(al.G(al.L("A", (4, 4)), al.L("x", 4)), al.L("out0", ...), name="mm_operand")
+  def f(inputs):
+    A, x = inputs
     return A @ x.sin()  # sin(x) is the matvec operand — must stay materialized
 
   compute, _aliases, _loops = _classify(_main_body(f))
@@ -100,7 +102,7 @@ def test_fusion_skips_matmul_operand() -> None:
 def test_fusion_into_reduction() -> None:
   """An elementwise producer feeding a SUM fuses into the reduce loop (each element read once)."""
 
-  @al.function("sumf", {"x": 8})
+  @al.function(al.L("x", 8), al.L("out0", ...), name="sumf")
   def f(x):
     return (x.sin() + x).sum()
 
@@ -114,8 +116,9 @@ def test_fusion_into_reduction() -> None:
 
 
 def test_unit_loop_unrolls_scalar_elementwise_output() -> None:
-  @al.function("scalar_add", {"x": 1, "y": 1})
-  def f(x, y):
+  @al.function(al.G(al.L("x", 1), al.L("y", 1)), al.L("out0", ...), name="scalar_add")
+  def f(inputs):
+    x, y = inputs
     return x + y
 
   _compute, _aliases, loops = _classify(_main_body(f))
@@ -145,7 +148,7 @@ def test_unit_loop_pass_removes_empty_and_substitutes_only_value() -> None:
 def test_contiguous_slice_aliases_source() -> None:
   """A contiguous slice becomes a zero-copy pointer alias (no copy loop), unlike a strided one."""
 
-  @al.function("slc", {"x": 8})
+  @al.function(al.L("x", 8), al.L("out0", ...), name="slc")
   def f(x):
     s = x[2:6]
     return (s * s).sin()  # use s twice so it stays materialized (not inlined) -> visible alias
@@ -157,7 +160,7 @@ def test_contiguous_slice_aliases_source() -> None:
 
 
 def test_strided_slice_is_not_aliased() -> None:
-  @al.function("strided", {"x": 8})
+  @al.function(al.L("x", 8), al.L("out0", ...), name="strided")
   def f(x):
     return x[::2] + x[1::2]  # strided -> no contiguous offset -> no alias
 
@@ -169,8 +172,9 @@ def test_strided_slice_is_not_aliased() -> None:
 
 
 def test_no_spill_when_temps_small() -> None:
-  @al.function("small", {"x": 8, "y": 8})
-  def f(x, y):
+  @al.function(al.G(al.L("x", 8), al.L("y", 8)), al.L("out0", ...), name="small")
+  def f(inputs):
+    x, y = inputs
     return (x.sin() + y).tanh()
 
   assert _sz_w(f) == 0  # everything stays on the stack
@@ -180,8 +184,9 @@ def test_packing_reuses_slots_and_spills() -> None:
   """Two disjoint-lifetime 1600-element matmul temps share ONE spilled slot, so sz_w is 1600
   (not 3200) — proving both lifetime slot-reuse and the >= 1024 spill-to-w[] threshold."""
 
-  @al.function("spill", {"A": (40, 40), "B": (40, 40)})
-  def f(A, B):
+  @al.function(al.G(al.L("A", (40, 40)), al.L("B", (40, 40))), al.L("out0", ...), name="spill")
+  def f(inputs):
+    A, B = inputs
     c = (A @ B).sum()  # C (1600) lives only until this reduce
     d = (B @ A).sum()  # D (1600) is born after C is dead -> reuses C's slot
     return c + d
@@ -200,10 +205,10 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
   while raw callees can remain inlineable.
   """
   x = al.sym("x", 2)
-  inner = al.Function("inner", [x], [x.sin() + x * x], ["x"], ["y"])
+  inner = al.Function._from_exprs("inner", [x], [x.sin() + x * x], ["x"], ["y"])
   z = al.sym("z", 2)
   (inner_z,) = inner.call([z * z])
-  outer = al.Function("outer", [z], [inner_z], ["z"], ["y"])
+  outer = al.Function._from_exprs("outer", [z], [inner_z], ["z"], ["y"])
   jf = outer.factory("J", ["z"], [al.factory.Jac("y", "z")])
 
   source = render_program_c_source(jf)
@@ -216,10 +221,10 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
 
 def test_regular_raw_callees_stay_inline() -> None:
   x = al.sym("x", 2)
-  inner = al.Function("inner", [x], [x.sin()], ["x"], ["y"])
+  inner = al.Function._from_exprs("inner", [x], [x.sin()], ["x"], ["y"])
   z = al.sym("z", 2)
   (inner_z,) = inner.call([z])
-  outer = al.Function("outer", [z], [inner_z + 1.0], ["z"], ["out"])
+  outer = al.Function._from_exprs("outer", [z], [inner_z + 1.0], ["z"], ["out"])
 
   source = render_program_c_source(outer)
   assert "static inline void inner_raw" in source
@@ -231,8 +236,9 @@ def test_spilled_function_matches_numpy() -> None:
   """End-to-end: a function whose temporaries spill to w[] still computes correctly (the JIT
   allocates w from the rendered sz_w and passes it through)."""
 
-  @al.function("spill_num", {"A": (40, 40), "B": (40, 40)})
-  def f(A, B):
+  @al.function(al.G(al.L("A", (40, 40)), al.L("B", (40, 40))), al.L("out0", ...), name="spill_num")
+  def f(inputs):
+    A, B = inputs
     return ((A @ B) + (B @ A)).sum()
 
   assert _sz_w(f) >= WORKSPACE_SPILL_THRESHOLD  # the (40,40) matmul temp spills
@@ -248,7 +254,7 @@ def test_spilled_function_matches_numpy() -> None:
 def test_optimized_program_still_verifies() -> None:
   """The pass pipeline output must pass the Program IR verifier (lower_function asserts this)."""
 
-  @al.function("verif", {"x": 6})
+  @al.function(al.L("x", 6), al.L("out0", ...), name="verif")
   def f(x):
     m = x.reshape((2, 3))
     return (m @ x[:3]).sin() + x[3:5]  # (2,3)@(3,) -> (2,), + x[3:5] (2,)

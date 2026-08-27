@@ -42,12 +42,13 @@ def step_np(pw: np.ndarray, x: np.ndarray, u: np.ndarray) -> np.ndarray:
 def stage_function() -> al.Function:
   scale, w0, w1, bias = _slices()
 
-  @al.function("vmap_mlp_stage", {"x": NX, "xnext": NX, "u": NU, "pw": N_PW})
-  def stage(x, xnext, u, pw):  # type: ignore[no-untyped-def]
+  @al.function(al.G(al.L("x", NX), al.L("xnext", NX), al.L("u", NU), al.L("pw", N_PW)), al.L("eq", ...), name="vmap_mlp_stage")
+  def stage(inputs):  # type: ignore[no-untyped-def]
+    x, xnext, u, pw = inputs
     h = al.concat([x, u]) * pw[scale]
     h = 1.0 / (1.0 + (-(pw[w0].reshape(SHAPES[0]) @ h)).exp())
     y = pw[w1].reshape(SHAPES[1]) @ h + pw[bias]
-    return {"eq": x + al.concat([DT * (x[NY:] + y / 2.0), y]) - xnext}
+    return x + al.concat([DT * (x[NY:] + y / 2.0), y]) - xnext
 
   return stage
 
@@ -57,10 +58,11 @@ def n_dec(stages: int) -> int:
 
 
 def _cost_stage() -> al.Function:
-  @al.function("vmap_mlp_stage_cost", {"x": NX, "xnext": NX, "u": NU})
-  def cost(x, xnext, u):  # type: ignore[no-untyped-def]
+  @al.function(al.G(al.L("x", NX), al.L("xnext", NX), al.L("u", NU)), al.L("cost", ...), name="vmap_mlp_stage_cost")
+  def cost(inputs):  # type: ignore[no-untyped-def]
+    x, xnext, u = inputs
     difference = xnext - x
-    return {"cost": (al.sumsqr(x) + 2.0 * u[0] * u[0] + 0.5 * al.sumsqr(difference)).scalar()}
+    return (al.sumsqr(x) + 2.0 * u[0] * u[0] + 0.5 * al.sumsqr(difference)).scalar()
 
   return cost
 
@@ -79,7 +81,7 @@ def vmapped(stages: int) -> al.Function:
     length=stages,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU)},
   )
-  return al.Function(f"vmap_mlp_N{stages}", [z, p], [cost.sum().scalar(), eq], ["z", "p"], ["cost", "eq"])
+  return al.Function._from_exprs(f"vmap_mlp_N{stages}", [z, p], [cost.sum().scalar(), eq], ["z", "p"], ["cost", "eq"])
 
 
 def unrolled(stages: int) -> al.Function:
@@ -97,7 +99,7 @@ def unrolled(stages: int) -> al.Function:
   cost = terms[0]
   for term in terms[1:]:
     cost = cost + term
-  return al.Function(f"vmap_mlp_unrolled_N{stages}", [z, p], [cost.scalar(), al.concat(rows)], ["z", "p"], ["cost", "eq"])
+  return al.Function._from_exprs(f"vmap_mlp_unrolled_N{stages}", [z, p], [cost.scalar(), al.concat(rows)], ["z", "p"], ["cost", "eq"])
 
 
 def sample(stages: int, seed: int = 3) -> tuple[np.ndarray, np.ndarray]:

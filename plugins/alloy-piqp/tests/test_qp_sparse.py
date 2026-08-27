@@ -150,7 +150,7 @@ def test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero() -> None:
 
 @pytest.mark.solver("piqp")
 def test_nested_sparse_qp_in_alloy_function() -> None:
-  @al.function("shifted_sparse_qp", {"t": (2,)})
+  @al.function(al.L("t", (2,)), al.L("x", ...), name="shifted_sparse_qp")
   def solve_shifted(t):
     qp = al.qp(
       P=np.diag([2.0, 4.0]),
@@ -161,7 +161,7 @@ def test_nested_sparse_qp_in_alloy_function() -> None:
       name="nested_sparse_qp",
     )
     out = qp.call(x0=al.const(np.zeros(2)), lam_eq0=al.const(np.zeros(0)), lam_ineq0=al.const(np.zeros(0)), t=t)
-    return {"x": out[0]}
+    return out[0]
 
   tv = np.array([1.0, -2.0])
   np.testing.assert_allclose(solve_shifted(tv), [-0.5, 0.5], atol=1e-7)

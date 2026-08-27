@@ -1,0 +1,247 @@
+"""Typed declarations for symbolic and numerical function pytrees."""
+
+from __future__ import annotations
+
+from types import EllipsisType
+from typing import Any, cast, overload
+
+import numpy as np
+
+from ..ir.expr import Expr, ExprOp
+from ..ir.types import TensorType, as_shape
+
+
+type ShapeDecl = int | tuple[int, ...] | EllipsisType | TensorType
+type LeafDecl = TensorType | EllipsisType
+
+
+class Tree[Symbolic, Numerical]:
+  """A pytree declaration whose leaves are ``Expr`` symbolically and NumPy arrays numerically."""
+
+  names: tuple[str, ...]
+  decls: tuple[LeafDecl, ...]
+
+  @property
+  def shapes(self) -> tuple[tuple[int, ...], ...]:
+    """The leaf shapes in C-signature order."""
+    if any(decl is Ellipsis for decl in self.decls):
+      raise TypeError(f"tree {self.names} has inferred shapes; resolve them by tracing first")
+    return tuple(cast(TensorType, decl).shape for decl in self.decls)
+
+  @property
+  def types(self) -> tuple[TensorType, ...]:
+    """The leaf tensor types in C-signature order."""
+    if any(decl is Ellipsis for decl in self.decls):
+      raise TypeError(f"tree {self.names} has inferred shapes; resolve them by tracing first")
+    return cast(tuple[TensorType, ...], self.decls)
+
+  @property
+  def size(self) -> int:
+    """The number of leaves."""
+    return len(self.names)
+
+  def symbols(self, *, diff: bool | None = None) -> Symbolic:
+    """Create named input expressions with this tree's structure."""
+    raise NotImplementedError
+
+  def relabel(self, prefix: str) -> Tree[Symbolic, Numerical]:
+    """Return the same structure with ``prefix`` added to every leaf name."""
+    raise NotImplementedError
+
+  def with_types(self, types: tuple[TensorType, ...]) -> Tree[Symbolic, Numerical]:
+    """Return the same structure with resolved leaf types."""
+    raise NotImplementedError
+
+  def resolved(self, traced: tuple[TensorType, ...]) -> tuple[TensorType, ...]:
+    """Check traced output types against this declaration and resolve inferred shapes."""
+    if len(traced) != self.size:
+      raise TypeError(f"declared {self.size} outputs {self.names}, body returned {len(traced)}")
+    for name, decl, actual in zip(self.names, self.decls, traced, strict=True):
+      if decl is not Ellipsis and (decl.shape != actual.shape or decl.dtype != actual.dtype):
+        raise TypeError(f"{name!r} declared with type {decl}, traced type {actual}")
+    return traced
+
+  def index(self, name: str) -> int:
+    """Return the flat index for ``name``, or raise with the declared choices."""
+    if name not in self.names:
+      raise ValueError(f"unknown name {name!r}; declared {self.names}")
+    return self.names.index(name)
+
+  def flatten_symbolic(self, value: Symbolic, what: str) -> tuple[Expr, ...]:
+    """Validate and flatten a symbolic value."""
+    raise NotImplementedError
+
+  def flatten_numerical(self, value: Numerical, what: str) -> tuple[np.ndarray, ...]:
+    """Validate and flatten a numerical value."""
+    raise NotImplementedError
+
+  def unflatten(self, values: tuple[Any, ...]) -> Any:
+    """Rebuild this tree's structure from flat values."""
+    raise NotImplementedError
+
+  def _check_unique(self) -> None:
+    if len(set(self.names)) != len(self.names):
+      raise ValueError(f"duplicate names in {self.names}")
+
+
+class L(Tree[Expr, np.ndarray]):
+  """Declare one named tensor.
+
+  The declared name is external metadata and need not match the local name used by a decorated
+  function body. Pass a ``TensorType`` to set dtype or differentiability explicitly.
+  """
+
+  def __init__(self, name: str, shape: ShapeDecl, /) -> None:
+    if not isinstance(name, str) or not name:
+      raise ValueError("L needs a non-empty name")
+    self.names = (name,)
+    if shape is Ellipsis:
+      self.decls = (Ellipsis,)
+    elif isinstance(shape, TensorType):
+      self.decls = (shape,)
+    else:
+      self.decls = (TensorType(as_shape(shape)),)
+
+  def symbols(self, *, diff: bool | None = None) -> Expr:
+    type_ = self.types[0]
+    if diff is not None:
+      type_ = TensorType(type_.shape, type_.dtype, type_.sparsity, diff)
+    return Expr(ExprOp.INPUT, type=type_, name=self.names[0])
+
+  def relabel(self, prefix: str) -> L:
+    return L(prefix + self.names[0], self.decls[0])
+
+  def with_types(self, types: tuple[TensorType, ...]) -> L:
+    if len(types) != 1:
+      raise ValueError(f"L expects one resolved type, got {len(types)}")
+    return L(self.names[0], types[0])
+
+  def flatten_symbolic(self, value: Expr, what: str) -> tuple[Expr, ...]:
+    if not isinstance(value, Expr):
+      raise ValueError(f"{what}: expected an Expr for {self.names[0]!r}, got {type(value).__name__}")
+    decl = self.decls[0]
+    if decl is not Ellipsis and value.shape != decl.shape:
+      raise ValueError(f"{what}: expected shape {decl.shape} for {self.names[0]!r}, got {value.shape}")
+    return (value,)
+
+  def flatten_numerical(self, value: np.ndarray, what: str) -> tuple[np.ndarray, ...]:
+    if isinstance(value, Expr):
+      raise ValueError(f"{what}: expected a numerical value for {self.names[0]!r}, got Expr")
+    array = np.asarray(value, dtype=self.types[0].dtype.numpy())
+    if array.shape != self.shapes[0]:
+      raise ValueError(f"{what}: expected shape {self.shapes[0]} for {self.names[0]!r}, got {array.shape}")
+    return (np.require(array, requirements="C"),)
+
+  def unflatten(self, values: tuple[Any, ...]) -> Any:
+    if len(values) != 1:
+      raise ValueError(f"L expects one flat value, got {len(values)}")
+    return values[0]
+
+
+class _G(Tree[Any, Any]):
+  def __init__(self, parts: tuple[Tree[Any, Any], ...], *, public: bool = True) -> None:
+    if public and not 2 <= len(parts) <= 8:
+      raise TypeError(f"G takes 2 to 8 trees, got {len(parts)}; nest for more")
+    self.parts = parts
+    self.names = tuple(name for part in parts for name in part.names)
+    self.decls = tuple(decl for part in parts for decl in part.decls)
+    self._check_unique()
+
+  def symbols(self, *, diff: bool | None = None) -> tuple[Any, ...]:
+    return tuple(part.symbols(diff=diff) for part in self.parts)
+
+  def relabel(self, prefix: str) -> _G:
+    return _G(tuple(part.relabel(prefix) for part in self.parts), public=False)
+
+  def with_types(self, types: tuple[TensorType, ...]) -> _G:
+    out: list[Tree[Any, Any]] = []
+    offset = 0
+    for part in self.parts:
+      out.append(part.with_types(types[offset : offset + part.size]))
+      offset += part.size
+    return _G(tuple(out), public=False)
+
+  def flatten_symbolic(self, value: Any, what: str) -> tuple[Expr, ...]:
+    if not isinstance(value, tuple) or len(value) != len(self.parts):
+      raise ValueError(f"{what}: value does not have the declared structure of {self.names}")
+    return tuple(expr for part, item in zip(self.parts, value, strict=True) for expr in part.flatten_symbolic(item, what))
+
+  def flatten_numerical(self, value: Any, what: str) -> tuple[np.ndarray, ...]:
+    if not isinstance(value, tuple) or len(value) != len(self.parts):
+      raise ValueError(f"{what}: value does not have the declared structure of {self.names}")
+    return tuple(array for part, item in zip(self.parts, value, strict=True) for array in part.flatten_numerical(item, what))
+
+  def unflatten(self, values: tuple[Any, ...]) -> tuple[Any, ...]:
+    out: list[Any] = []
+    offset = 0
+    for part in self.parts:
+      out.append(part.unflatten(values[offset : offset + part.size]))
+      offset += part.size
+    return tuple(out)
+
+
+@overload
+def G[SA, NA, SB, NB](a: Tree[SA, NA], b: Tree[SB, NB], /) -> Tree[tuple[SA, SB], tuple[NA, NB]]: ...
+
+
+@overload
+def G[SA, NA, SB, NB, SC, NC](a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], /) -> Tree[tuple[SA, SB, SC], tuple[NA, NB, NC]]: ...
+
+
+@overload
+def G[SA, NA, SB, NB, SC, NC, SD, ND](
+  a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], /
+) -> Tree[tuple[SA, SB, SC, SD], tuple[NA, NB, NC, ND]]: ...
+
+
+@overload
+def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE](
+  a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], /
+) -> Tree[tuple[SA, SB, SC, SD, SE], tuple[NA, NB, NC, ND, NE]]: ...
+
+
+@overload
+def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF](
+  a: Tree[SA, NA], b: Tree[SB, NB], c: Tree[SC, NC], d: Tree[SD, ND], e: Tree[SE, NE], f: Tree[SF, NF], /
+) -> Tree[tuple[SA, SB, SC, SD, SE, SF], tuple[NA, NB, NC, ND, NE, NF]]: ...
+
+
+@overload
+def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG](
+  a: Tree[SA, NA],
+  b: Tree[SB, NB],
+  c: Tree[SC, NC],
+  d: Tree[SD, ND],
+  e: Tree[SE, NE],
+  f: Tree[SF, NF],
+  g: Tree[SG, NG],
+  /,
+) -> Tree[tuple[SA, SB, SC, SD, SE, SF, SG], tuple[NA, NB, NC, ND, NE, NF, NG]]: ...
+
+
+@overload
+def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH](
+  a: Tree[SA, NA],
+  b: Tree[SB, NB],
+  c: Tree[SC, NC],
+  d: Tree[SD, ND],
+  e: Tree[SE, NE],
+  f: Tree[SF, NF],
+  g: Tree[SG, NG],
+  h: Tree[SH, NH],
+  /,
+) -> Tree[tuple[SA, SB, SC, SD, SE, SF, SG, SH], tuple[NA, NB, NC, ND, NE, NF, NG, NH]]: ...
+
+
+def G(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
+  """Group two to eight trees side by side; nest groups for greater widths."""
+  return _G(parts)
+
+
+def flat_tree(names: tuple[str, ...], types: tuple[TensorType, ...]) -> Tree[Any, Any]:
+  """Build the private flat tree used by dynamic ``Function.factory`` results."""
+  if len(names) != len(types):
+    raise ValueError(f"expected {len(types)} names, got {len(names)}")
+  if len(names) == 1:
+    return L(names[0], types[0])
+  return _G(tuple(L(name, type_) for name, type_ in zip(names, types, strict=True)), public=False)

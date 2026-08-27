@@ -202,7 +202,7 @@ def _call_jvp_many_const_function(
     input_names = tuple(callee.input_names[i] for i in arg_indices)
     seed_hash = hashlib.sha1(seed_value.tobytes()).hexdigest()[:10]
     name = f"{callee.name}_fwd{seed_value.shape[0]}c{seed_hash}_{callee.output_names[output_index]}_{callee.input_names[formal_index]}"
-    fn = Function(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"])
+    fn = Function._from_exprs(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"])
     cache[key] = (fn, arg_indices, active)
   return cache[key]
 
@@ -221,7 +221,7 @@ def _call_jvp_many_function(callee: Any, output_index: int, formal_index: int, n
     inputs = tuple(callee.inputs[i] for i in arg_indices) + ((seed,) if takes_seed else ())
     input_names = tuple(callee.input_names[i] for i in arg_indices) + ((seed.name,) if takes_seed else ())
     name = f"{callee.name}_fwd{nseed}_{callee.output_names[output_index]}_{callee.input_names[formal_index]}"
-    fn = Function(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"])
+    fn = Function._from_exprs(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"])
     cache[key] = (fn, arg_indices, takes_seed)
   return cache[key]
 
@@ -240,7 +240,7 @@ def _call_jvp_function(callee: Any, output_index: int, formal_index: int) -> tup
     inputs = tuple(callee.inputs[i] for i in arg_indices) + ((seed,) if takes_seed else ())
     input_names = tuple(callee.input_names[i] for i in arg_indices) + ((seed.name,) if takes_seed else ())
     name = f"{callee.name}_fwd_{callee.output_names[output_index]}_{callee.input_names[formal_index]}"
-    fn = Function(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"])
+    fn = Function._from_exprs(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"])
     cache[key] = (fn, arg_indices, takes_seed)
   return cache[key]
 

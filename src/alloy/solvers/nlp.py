@@ -22,7 +22,8 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, concat
 from ..function import Function
-from ..function.api import gradient, sparse_jacobian, sparse_lagrangian_hessian
+from ..function.api import gradient, sparse_jacobian
+from ..function.factory import SpHess
 from ..ir.types import SparsityType
 from ._oracle import collect_free_inputs
 from .registry import require_backend
@@ -167,14 +168,14 @@ def nlp(
     base_output_names = ("f",)
 
   base_name = (name or "nlp") + "_base"
-  base_fn = Function(base_name, base_inputs, base_outputs, list(base_input_names), list(base_output_names))
+  base_fn = Function._from_exprs(base_name, base_inputs, base_outputs, list(base_input_names), list(base_output_names))
 
   bound_outs: list[Expr] = [xl_e, xu_e]
   bound_names = ["x_lb", "x_ub"]
   if g_all is not None and l_e is not None and u_e is not None:
     bound_outs.extend([l_e, u_e])
     bound_names.extend(["l_ineq", "u_ineq"])
-  bound_fn = Function(
+  bound_fn = Function._from_exprs(
     (name or "nlp") + "_bounds",
     list(params),
     bound_outs,
@@ -182,24 +183,23 @@ def nlp(
     bound_names,
   )
 
-  grad_fn = gradient(base_fn, "f", x_name, name=(name or "nlp") + "_grad", extra_inputs=param_names)
+  grad_fn = gradient(base_fn, "f", x_name, name=(name or "nlp") + "_grad")
 
   jac_fn: Function | None
   if g_all is not None:
-    jac_fn = sparse_jacobian(base_fn, "g", x_name, name=(name or "nlp") + "_jac", extra_inputs=param_names)
+    jac_fn = sparse_jacobian(base_fn, "g", x_name, name=(name or "nlp") + "_jac")
     jac_sparsity = jac_fn.output_sparsities[0]
     assert jac_sparsity is not None
   else:
     jac_fn = None
     jac_sparsity = SparsityType.empty((0, n))
 
-  hess_fn = sparse_lagrangian_hessian(
-    base_fn,
-    ["f", "g"] if g_all is not None else ["f"],
-    x_name,
-    name=(name or "nlp") + "_hess",
-    extra_inputs=param_names,
-    triangle=backend.hess_triangle,
+  hess_outputs = list(base_output_names)
+  hess_fn = base_fn.factory(
+    (name or "nlp") + "_hess",
+    [x_name, *(f"lam:{out}" for out in hess_outputs), *param_names],
+    [SpHess("gamma", x_name, triangle=backend.hess_triangle)],
+    aux={"gamma": hess_outputs},
   )
   hess_sparsity = hess_fn.output_sparsities[0]
   assert hess_sparsity is not None

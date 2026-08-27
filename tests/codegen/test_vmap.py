@@ -12,9 +12,10 @@ import pytest
 import alloy as al
 
 
-@al.function("scale_add", {"x": 3, "p": 3})
-def scale_add(x, p):
-  return {"y": 2.0 * x + p}
+@al.function(al.G(al.L("x", 3), al.L("p", 3)), al.L("y", ...), name="scale_add")
+def scale_add(inputs):
+  x, p = inputs
+  return 2.0 * x + p
 
 
 def test_vmap_c_source_loop_size_is_independent_of_length() -> None:
@@ -23,7 +24,7 @@ def test_vmap_c_source_loop_size_is_independent_of_length() -> None:
   def render(N: int) -> str:
     z = al.sym("z", 3 * N)
     p = al.sym("p", 3 * N)
-    fn = al.Function(f"scale_vmap_{N}", [z, p], [al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
+    fn = al.Function._from_exprs(f"scale_vmap_{N}", [z, p], [al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
     return render_c_source(fn)
 
   # Past the 32-element threshold where the trailing copy loop also folds, the rendered source
@@ -45,12 +46,12 @@ def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.
   monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
   x = al.sym("x", 2)
   hidden = al.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
-  piece = al.Function("vmap_sphess_codegen_piece", [x], [al.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
+  piece = al.Function._from_exprs("vmap_sphess_codegen_piece", [x], [al.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
 
   def render(length: int) -> tuple[str, tuple[str, ...], int, dict[str, int]]:
     z = al.sym("z", 2 * length)
     mapped = al.vmap(piece, length, [(z, 0, 2)])
-    base = al.Function(f"vmap_sphess_codegen_base_{length}", [z], [(z * z).sum(), mapped], ["z"], ["f", "g"])
+    base = al.Function._from_exprs(f"vmap_sphess_codegen_base_{length}", [z], [(z * z).sum(), mapped], ["z"], ["f", "g"])
     sphess = base.factory(f"vmap_sphess_codegen_{length}", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
     vmap_nodes = [node for node in topo(sphess.outputs) if node.op == al.ExprOp.VMAP]
     mapped_callees = sorted({node.attrs["callee"].name for node in vmap_nodes})
@@ -85,7 +86,7 @@ def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: py
   piece_x = al.sym("triangle_shared_piece_x", 2)
   shared = al.sym("triangle_shared_piece_shared", 1)
   hidden = al.stack([piece_x[0] * piece_x[1] + shared[0] * piece_x[0], piece_x[0] - 0.4 * piece_x[1] + shared[0] * piece_x[1]])
-  piece = al.Function(
+  piece = al.Function._from_exprs(
     "triangle_shared_piece",
     [piece_x, shared],
     [al.stack([(hidden.tanh() ** 2).sum()])],
@@ -96,7 +97,7 @@ def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: py
   z = al.sym("triangle_shared_vmap_z", 2 * length + 1)
   mapped = al.vmap(piece, length, [(z, 0, 2), (z, 2 * length, 0)])
   f = (z * z).sum()
-  base = al.Function("triangle_shared_vmap_base", [z], [f, mapped], ["z"], ["f", "g"])
+  base = al.Function._from_exprs("triangle_shared_vmap_base", [z], [f, mapped], ["z"], ["f", "g"])
   full = base.factory(
     "triangle_shared_vmap_full",
     ["z", "lam:f", "lam:g"],
@@ -129,9 +130,9 @@ def test_callee_formal_named_w_avoids_workspace_collision() -> None:
   # The rendered callee signature appends the `double* w` workspace tail; a formal named `w` used
   # to redefine that parameter and fail to compile.
   x, w = al.sym("x", 3), al.sym("w", 3)
-  piece = al.Function("w_name_piece", [x, w], [x * w + w.sin()], ["x", "w"], ["y"])
+  piece = al.Function._from_exprs("w_name_piece", [x, w], [x * w + w.sin()], ["x", "w"], ["y"])
   z, wv = al.sym("z", 6), al.sym("w", 3)
-  fn = al.Function("w_name_vmap", [z, wv], [al.vmap(piece, 2, [(z, 0, 3), (wv, 0, 0)])], ["z", "w"], ["y"])
+  fn = al.Function._from_exprs("w_name_vmap", [z, wv], [al.vmap(piece, 2, [(z, 0, 3), (wv, 0, 0)])], ["z", "w"], ["y"])
   zval = np.arange(6.0)
   wval = np.array([0.3, -0.2, 0.8])
   expected = np.concatenate([zval[3 * i : 3 * i + 3] * wval + np.sin(wval) for i in range(2)])
@@ -148,7 +149,7 @@ def test_vmap_compiled_c_matches_unrolled_concat(tmp_path) -> None:
   N = 5
   z = al.sym("z", 3 * N)
   p = al.sym("p", 3 * N)
-  fn = al.Function("scale_vmap_compiled", [z, p], [al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
+  fn = al.Function._from_exprs("scale_vmap_compiled", [z, p], [al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
   module = render_c_module(fn)
   (tmp_path / module.header_name).write_text(module.header)
   source = tmp_path / module.source_name
@@ -217,13 +218,15 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> al.Function:
     k4 = ode(x + dt * k3, u, params)
     return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @al.function("rk4_bicycle_initial", {"z": RK4_NZ, "p": RK4_NX})
-  def eq_initial(z, p):
-    return {"eq": z[:RK4_NX] - p[:RK4_NX]}
+  @al.function(al.G(al.L("z", RK4_NZ), al.L("p", RK4_NX)), al.L("eq", ...), name="rk4_bicycle_initial")
+  def eq_initial(inputs):
+    z, p = inputs
+    return z[:RK4_NX] - p[:RK4_NX]
 
-  @al.function("rk4_bicycle_interstage", {"z": RK4_NZ, "znext": RK4_NZ, "params": RK4_N_PARAMS})
-  def eq_interstage(z, znext, params):
-    return {"eq": rk4(z[:RK4_NX], z[RK4_NX : RK4_NX + RK4_NU], params) - znext[:RK4_NX]}
+  @al.function(al.G(al.L("z", RK4_NZ), al.L("znext", RK4_NZ), al.L("params", RK4_N_PARAMS)), al.L("eq", ...), name="rk4_bicycle_interstage")
+  def eq_interstage(inputs):
+    z, znext, params = inputs
+    return rk4(z[:RK4_NX], z[RK4_NX : RK4_NX + RK4_NU], params) - znext[:RK4_NX]
 
   z = al.sym("z", RK4_NZ * (horizon + 1))
   p = al.sym("p", n_param, diff=False)
@@ -233,7 +236,7 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> al.Function:
     length=horizon,
     inputs={"z": (z, 0, RK4_NZ), "znext": (z, RK4_NZ, RK4_NZ), "params": (p, RK4_NX * (horizon + 1), 0)},
   )
-  return al.Function(f"rk4_bicycle_eq_vmap_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+  return al.Function._from_exprs(f"rk4_bicycle_eq_vmap_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
 
 
 def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
@@ -311,19 +314,20 @@ def test_simple_banded_vmap_spjac_has_constant_loc() -> None:
 
   NX, NZ = 4, 6
 
-  @al.function("eq_initial_t", {"z": NZ})
+  @al.function(al.L("z", NZ), al.L("eq", ...), name="eq_initial_t")
   def eq_initial(z):
-    return {"eq": z[:NX] * 2.0}
+    return z[:NX] * 2.0
 
-  @al.function("eq_interstage_t", {"z": NZ, "znext": NZ})
-  def eq_interstage(z, znext):
-    return {"eq": z[:NX] * 1.5 - znext[:NX]}
+  @al.function(al.G(al.L("z", NZ), al.L("znext", NZ)), al.L("eq", ...), name="eq_interstage_t")
+  def eq_interstage(inputs):
+    z, znext = inputs
+    return z[:NX] * 1.5 - znext[:NX]
 
   def build(N: int) -> al.Function:
     z = al.sym("z", NZ * (N + 1))
     initial = eq_initial.call([z[:NZ]])[0]
     mapped = al.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ)})
-    return al.Function(f"banded_N{N}", [z], [al.concat([initial, mapped])], ["z"], ["eq"])
+    return al.Function._from_exprs(f"banded_N{N}", [z], [al.concat([initial, mapped])], ["z"], ["eq"])
 
   loc_a = render_c_source(al.sparse_jacobian(build(10), "eq", "z")).count("\n")
   loc_b = render_c_source(al.sparse_jacobian(build(50), "eq", "z")).count("\n")
@@ -343,7 +347,7 @@ def test_vmap_jit_matches_unrolled_numpy() -> None:
   z = al.sym("z", 6)
   p = al.sym("p", 6)
   mapped = al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-  fn = al.Function("eval_path", [z, p], [mapped], ["z", "p"], ["y"])
+  fn = al.Function._from_exprs("eval_path", [z, p], [mapped], ["z", "p"], ["y"])
   zv = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
   pv = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
   expected = np.concatenate([2.0 * zv[i * 3 : (i + 1) * 3] + pv[i * 3 : (i + 1) * 3] for i in range(N)])

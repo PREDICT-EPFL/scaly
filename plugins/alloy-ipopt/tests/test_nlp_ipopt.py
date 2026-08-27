@@ -245,7 +245,7 @@ def test_nlp_two_sided_inequality_and_lagrangian_hessian() -> None:
 def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
   piece_x = al.sym("piece_x", 2)
-  piece = al.Function("nlp_mapped_constraint_piece", [piece_x], [al.stack([piece_x[1] - piece_x[0] ** 2])], ["piece_x"], ["h"])
+  piece = al.Function._from_exprs("nlp_mapped_constraint_piece", [piece_x], [al.stack([piece_x[1] - piece_x[0] ** 2])], ["piece_x"], ["h"])
   target = np.array([0.5, 0.25, -0.7, 0.49])
 
   def build(mapped: bool):
@@ -277,8 +277,8 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
   def hess_dense(mapped: bool, xv: np.ndarray, lam: np.ndarray) -> np.ndarray:
     x = al.sym("x", 4)
     h_eq = al.vmap(piece, 2, [(x, 0, 2)]) if mapped else al.concat([piece.call([x[2 * it : 2 * (it + 1)]])[0] for it in range(2)])
-    base = al.Function(f"nlp_hess_base_{int(mapped)}", [x], [((x - target) ** 2).sum(), h_eq], ["x"], ["f", "g"])
-    shf = al.sparse_lagrangian_hessian(base, ["f", "g"], "x")
+    base = al.Function._from_exprs(f"nlp_hess_base_{int(mapped)}", [x], [((x - target) ** 2).sum(), h_eq], ["x"], ["f", "g"])
+    shf = al.sparse_lagrangian_hessian(base, "x")
     sp = shf.output_sparsities[0]
     assert sp is not None
     dense = np.zeros(sp.shape)
@@ -326,14 +326,14 @@ def test_nlp_rosenbrock_equality_constrained() -> None:
 def test_nested_nlp_in_alloy_function() -> None:
   """NLP solver embedded in a larger Function."""
 
-  @al.function("min_dist_to_unit_circle", {"target": (2,)})
+  @al.function(al.L("target", (2,)), al.L("x_proj", ...), name="min_dist_to_unit_circle")
   def proj(target):
     x = al.sym("x_inner", 2)
     f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2
     h_eq = al.stack([x[0] ** 2 + x[1] ** 2 - 1.0], axis=0)
     nlp = al.nlp(x=x, f=f, p=target, h_eq=h_eq)
     out = nlp.call([al.const(np.array([1.0, 0.0])), al.const(np.zeros(1)), al.const(np.zeros(0)), al.const(np.zeros(2)), target])
-    return {"x_proj": out[0]}
+    return out[0]
 
   # Projection of (2, 0) onto the unit circle = (1, 0).
   x_proj = proj(np.array([2.0, 0.0]))
@@ -346,7 +346,7 @@ def test_nested_nlp_in_alloy_function() -> None:
 def test_nested_nlp_jit_compiles_through_ipopt() -> None:
   """JIT path for an NLP: projects (target) onto the unit circle."""
 
-  @al.function("proj_circle", {"target": (2,)})
+  @al.function(al.L("target", (2,)), al.L("x_proj", ...), name="proj_circle")
   def proj(target):
     x = al.sym("x_inner", 2)
     f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2
@@ -359,7 +359,7 @@ def test_nested_nlp_jit_compiles_through_ipopt() -> None:
       lam_box0=al.const(np.zeros(2)),
       target=target,
     )
-    return {"x_proj": out[0]}
+    return out[0]
 
   np.testing.assert_allclose(proj(np.array([2.0, 0.0])), [1.0, 0.0], atol=1e-5)
   np.testing.assert_allclose(proj(np.array([0.0, 3.0])), [0.0, 1.0], atol=1e-5)

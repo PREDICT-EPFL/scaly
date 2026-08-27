@@ -48,7 +48,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     # Suffix by formal index, not name: joined names are not injective ({a_b} vs {a, b}) and
     # lowering dedupes callees by name, so a collision would silently reuse the wrong proc body.
     name = f"{callee.name}_adj{output_index}_" + "_".join(str(i) for i in active_formals)
-    fn = Function(name, inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"])
+    fn = Function._from_exprs(name, inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"])
     cache[key] = (fn, arg_indices)
   return cache[key]
 

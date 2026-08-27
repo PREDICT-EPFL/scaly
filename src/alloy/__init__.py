@@ -37,7 +37,7 @@ from .ir.expr import (
   sumsqr,
   vec,
 )
-from .function import Function, factory
+from .function import Function, G, L, factory
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
 from .solvers import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, SolverFunction, SolverStats, SolverStatus, nlp, qp
@@ -75,6 +75,8 @@ __all__ = [
   "OP_INFO",
   "Expr",
   "Function",
+  "G",
+  "L",
   "ExprOp",
   "Pattern",
   "PatternMatcher",

@@ -268,8 +268,9 @@ def stage_function(decoder: Decoder = Decoder(), dt: float = DT) -> al.Function:
   shapes = decoder.weight_shapes
   name = "npmpc_stage_h" + "x".join(str(h) for h in decoder.hidden)
 
-  @al.function(name, {"x": NX, "xnext": NX, "u": NU, "pw": decoder.n_pw})
-  def stage(x, xnext, u, pw):
+  @al.function(al.G(al.L("x", NX), al.L("xnext", NX), al.L("u", NU), al.L("pw", decoder.n_pw)), al.L("eq", ...), name=name)
+  def stage(inputs):
+    x, xnext, u, pw = inputs
     feat = al.stack([x[0].sin(), x[0].cos(), x[2], x[3], u[0]]) * pw[decoder.slice("x_scale_w")] + pw[decoder.slice("x_scale_b")]
     h = al.concat([feat, pw[decoder.slice("latent")]])
     for i, shape in enumerate(shapes[:-1]):
@@ -278,7 +279,7 @@ def stage_function(decoder: Decoder = Decoder(), dt: float = DT) -> al.Function:
     y = (pw[decoder.slice(f"w{last}")].reshape(shapes[last]) @ h + pw[decoder.slice("bias")]) * pw[decoder.slice("y_inv_w")] + pw[
       decoder.slice("y_inv_b")
     ]
-    return {"eq": x + al.concat([dt * (x[2:4] + y / 2.0), y]) - xnext}
+    return x + al.concat([dt * (x[2:4] + y / 2.0), y]) - xnext
 
   return stage
 
@@ -297,7 +298,7 @@ def npmpc_eq_function(horizon: int, decoder: Decoder = Decoder(), dt: float = DT
     length=horizon,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (horizon + 1), NU), "pw": (p, 0, 0)},
   )
-  return al.Function(f"npmpc_eq_N{horizon}", [z, p], [eq], ["z", "p"], ["eq"])
+  return al.Function._from_exprs(f"npmpc_eq_N{horizon}", [z, p], [eq], ["z", "p"], ["eq"])
 
 
 def sample_inputs(horizon: int, decoder: Decoder = Decoder(), weights: np.ndarray | None = None, seed: int = 11) -> tuple[np.ndarray, np.ndarray]:
@@ -421,8 +422,9 @@ def stage_cost_function(weights: CostWeights = CostWeights()) -> al.Function:
   recursion depth during lowering (the limitation recorded in `internal/todo.md`).
   """
 
-  @al.function("npmpc_stage_cost", {"x": NX, "xnext": NX, "u": NU})
-  def stage_cost(x, xnext, u):
+  @al.function(al.G(al.L("x", NX), al.L("xnext", NX), al.L("u", NU)), al.L("cost", ...), name="npmpc_stage_cost")
+  def stage_cost(inputs):
+    x, xnext, u = inputs
     dx = xnext - x
     # The pendulum angle uses the 2*pi-periodic half-angle lift, so every upright pose costs the
     # same: (2 sin(theta/2))^2 = 2 (1 - cos theta).
@@ -432,7 +434,7 @@ def stage_cost_function(weights: CostWeights = CostWeights()) -> al.Function:
     for k, weight in enumerate(weights.x_diff):
       if weight:
         total = total + weight * dx[k] * dx[k]
-    return {"cost": total.scalar()}
+    return total.scalar()
 
   return stage_cost
 
@@ -593,7 +595,7 @@ def npmpc_lag_function(
   )
   terminal = np.diag(weights.x_end) if P is None else P
   cost = npmpc_cost_expr(z, horizon, terminal, weights)
-  return al.Function(f"npmpc_lag_N{horizon}", [z, p], [cost, eq], ["z", "p"], ["cost", "eq"])
+  return al.Function._from_exprs(f"npmpc_lag_N{horizon}", [z, p], [cost, eq], ["z", "p"], ["cost", "eq"])
 
 
 def ca_npmpc_pieces(

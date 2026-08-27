@@ -112,14 +112,16 @@ def _rk4(x, u, params):
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@al.function("race_car_eq_initial", {"z": NZ, "p": NX})
-def eq_initial(z, p):
-  return {"eq": z[:NX] - p[:NX]}
+@al.function(al.G(al.L("z", NZ), al.L("p", NX)), al.L("eq", ...), name="race_car_eq_initial")
+def eq_initial(inputs):
+  z, p = inputs
+  return z[:NX] - p[:NX]
 
 
-@al.function("race_car_eq_interstage", {"z": NZ, "znext": NZ, "params": N_PARAMS})
-def eq_interstage(z, znext, params):
-  return {"eq": _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]}
+@al.function(al.G(al.L("z", NZ), al.L("znext", NZ), al.L("params", N_PARAMS)), al.L("eq", ...), name="race_car_eq_interstage")
+def eq_interstage(inputs):
+  z, znext, params = inputs
+  return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
 
 
 def race_car_eq_function(horizon: int) -> al.Function:
@@ -131,7 +133,7 @@ def race_car_eq_function(horizon: int) -> al.Function:
     zi = z[i * NZ : (i + 1) * NZ]
     znext = z[(i + 1) * NZ : (i + 2) * NZ]
     parts.append(eq_interstage.call([zi, znext, params])[0])
-  return al.Function(f"race_car_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
+  return al.Function._from_exprs(f"race_car_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
 
 def _race_car_eq_vmap_expr(z: al.Expr, p: al.Expr, horizon: int) -> al.Expr:
@@ -189,7 +191,7 @@ def race_car_eq_sparse_metrics(horizon: int, *, render_source: bool = False) -> 
   t0 = time.perf_counter()
   sj = al.sparse_jacobian_colored(fn.outputs[0], fn.inputs[0])
   ad_ms = (time.perf_counter() - t0) * 1000.0
-  spjf = al.Function(f"race_car_eq_N{horizon}_spjac_colored", fn.inputs, [sj.values], fn.input_names, ["spjac_eq_z"], [sj.sparsity])
+  spjf = al.Function._from_exprs(f"race_car_eq_N{horizon}_spjac_colored", fn.inputs, [sj.values], fn.input_names, ["spjac_eq_z"], [sj.sparsity])
   source_bytes = len(render_c_source(spjf)) if render_source else 0
 
   return {

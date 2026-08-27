@@ -5,9 +5,10 @@ import numpy as np
 import alloy as al
 
 
-@al.function("scale_add", {"x": 3, "p": 3})
-def scale_add(x, p):
-  return {"y": 2.0 * x + p}
+@al.function(al.G(al.L("x", 3), al.L("p", 3)), al.L("y", ...), name="scale_add")
+def scale_add(inputs):
+  x, p = inputs
+  return 2.0 * x + p
 
 
 def test_jvp_many_of_vmap_matches_unrolled_jvp() -> None:
@@ -22,8 +23,8 @@ def test_jvp_many_of_vmap_matches_unrolled_jvp() -> None:
   jvp_vmap = al.jvp_many(mapped, z, seeds)
   jvp_ref = al.jvp_many(unrolled, z, seeds)
 
-  fn_vmap = al.Function("jvp_vmap", [z, p], [jvp_vmap], ["z", "p"], ["dy"])
-  fn_ref = al.Function("jvp_ref", [z, p], [jvp_ref], ["z", "p"], ["dy"])
+  fn_vmap = al.Function._from_exprs("jvp_vmap", [z, p], [jvp_vmap], ["z", "p"], ["dy"])
+  fn_ref = al.Function._from_exprs("jvp_ref", [z, p], [jvp_ref], ["z", "p"], ["dy"])
 
   rng = np.random.default_rng(0)
   zv = rng.normal(size=3 * N)
@@ -37,11 +38,11 @@ def test_jacobian_of_vmap_matches_finite_differences() -> None:
   z = al.sym("z", 3 * N)
   p = al.sym("p", 3 * N)
   mapped = al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-  fn = al.Function("mapped", [z, p], [mapped], ["z", "p"], ["y"])
+  fn = al.Function._from_exprs("mapped", [z, p], [mapped], ["z", "p"], ["y"])
 
   seeds = al.const(np.eye(3 * N))
   jacobian = al.jvp_many(mapped, z, seeds).T  # (3N, 3N)
-  jac_fn = al.Function("jac", [z, p], [jacobian], ["z", "p"], ["jac"])
+  jac_fn = al.Function._from_exprs("jac", [z, p], [jacobian], ["z", "p"], ["jac"])
 
   rng = np.random.default_rng(1)
   zv = rng.normal(size=3 * N)
@@ -65,16 +66,16 @@ def test_grad_factory_over_vmap_matches_unrolled_and_finite_difference() -> None
   from alloy.ad import finite_difference
   from alloy.ir.expr import topo
 
-  @al.function("vmap_grad_piece", {"x": 2})
+  @al.function(al.L("x", 2), al.L("y", ...), name="vmap_grad_piece")
   def piece(x):
-    return {"y": x * x + x.sin()}
+    return x * x + x.sin()
 
   N = 4
   z = al.sym("z", 2 * N)
   mapped = al.vmap(piece, N, [(z, 0, 2)])
   unrolled = al.concat([piece.call([z[2 * it : 2 * (it + 1)]])[0] for it in range(N)])
-  mapped_fn = al.Function("vmap_grad_factory", [z], [mapped], ["z"], ["y"])
-  unrolled_fn = al.Function("vmap_grad_unrolled", [z], [unrolled], ["z"], ["y"])
+  mapped_fn = al.Function._from_exprs("vmap_grad_factory", [z], [mapped], ["z"], ["y"])
+  unrolled_fn = al.Function._from_exprs("vmap_grad_unrolled", [z], [unrolled], ["z"], ["y"])
   mapped_grad = mapped_fn.factory("vmap_grad_factory_grad", ["z", "lam:y"], [al.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
   unrolled_grad = unrolled_fn.factory("vmap_grad_unrolled_grad", ["z", "lam:y"], [al.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
   vmap_nodes = [node for node in topo(mapped_grad.outputs) if node.op == al.ExprOp.VMAP]

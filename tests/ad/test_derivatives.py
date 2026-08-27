@@ -14,7 +14,7 @@ def _vmap_vjp_piece(name: str, nargs: int = 1) -> al.Function:
   out = inputs[0] * inputs[0] + inputs[0].sin()
   for inp in inputs[1:]:
     out = out + inputs[0] * inp + inp.sin()
-  return al.Function(name, inputs, [out], input_names, ["y"])
+  return al.Function._from_exprs(name, inputs, [out], input_names, ["y"])
 
 
 def _assert_vmap_vjp_matches_unrolled_and_fd(
@@ -33,8 +33,8 @@ def _assert_vmap_vjp_matches_unrolled_and_fd(
   mapped_obj, unrolled_obj = al.dot(lam, mapped), al.dot(lam, unrolled)
   (mapped_grad,) = al.vjp((mapped_obj,), (z,), (al.const(1.0),))
   (unrolled_grad,) = al.vjp((unrolled_obj,), (z,), (al.const(1.0),))
-  grad_fn = al.Function(f"{name}_grads", [z, lam], [mapped_grad, unrolled_grad], ["z", "lam"], ["mapped", "unrolled"])
-  obj_fn = al.Function(f"{name}_objective", [z, lam], [mapped_obj], ["z", "lam"], ["objective"])
+  grad_fn = al.Function._from_exprs(f"{name}_grads", [z, lam], [mapped_grad, unrolled_grad], ["z", "lam"], ["mapped", "unrolled"])
+  obj_fn = al.Function._from_exprs(f"{name}_objective", [z, lam], [mapped_obj], ["z", "lam"], ["objective"])
   lamv = np.random.default_rng(10).normal(size=mapped.size)
 
   mapped_value, unrolled_value = grad_fn(zv, lamv)
@@ -47,7 +47,7 @@ def test_vjp_scalar_output_matches_gradient() -> None:
   x = al.sym("x", 3)
   y = (x.sin() + x * x).sum()
   (grad_x,) = al.vjp((y,), (x,), (al.const(1.0),))
-  f = al.Function("vjp", [x], [grad_x], ["x"], ["grad_x"])
+  f = al.Function._from_exprs("vjp", [x], [grad_x], ["x"], ["grad_x"])
   xv = np.array([0.1, 0.4, 0.9])
 
   np.testing.assert_allclose(f(xv), np.cos(xv) + 2 * xv)
@@ -58,7 +58,7 @@ def test_vjp_vector_output_uses_cotangent_seed() -> None:
   y = al.stack([x[0] * x[1], x[0].sin()])
   seed = al.sym("seed", 2)
   (grad_x,) = al.vjp((y,), (x,), (seed,))
-  f = al.Function("vjp", [x, seed], [grad_x], ["x", "seed"], ["grad_x"])
+  f = al.Function._from_exprs("vjp", [x, seed], [grad_x], ["x", "seed"], ["grad_x"])
   xv = np.array([0.3, 2.0])
   sv = np.array([1.5, -0.25])
 
@@ -71,7 +71,7 @@ def test_vjp_broadcast_and_multi_output_accumulates_adjoint() -> None:
   y0 = (x + b).sum()
   y1 = (x * b).sum()
   (grad_x, grad_b) = al.vjp((y0, y1), (x, b), (al.const(2.0), al.const(-0.5)))
-  f = al.Function("vjp", [x, b], [grad_x, grad_b], ["x", "b"], ["grad_x", "grad_b"])
+  f = al.Function._from_exprs("vjp", [x, b], [grad_x, grad_b], ["x", "b"], ["grad_x", "grad_b"])
   xv = np.arange(6.0).reshape(2, 3)
   bv = np.array([0.5, 1.5, 2.5])
 
@@ -86,7 +86,7 @@ def test_vjp_through_structural_ops_and_matmul() -> None:
   y = al.concat([x.T, a @ x], axis=1)
   seed = al.sym("seed", (2, 4))
   (grad_x,) = al.vjp((y,), (x,), (seed,))
-  f = al.Function("vjp", [x, a, seed], [grad_x], ["x", "a", "seed"], ["grad_x"])
+  f = al.Function._from_exprs("vjp", [x, a, seed], [grad_x], ["x", "a", "seed"], ["grad_x"])
   xv = np.array([[1.0, 2.0], [3.0, 4.0]])
   av = np.array([[2.0, -1.0], [0.5, 3.0]])
   sv = np.arange(8.0).reshape(2, 4)
@@ -100,12 +100,12 @@ def test_vjp_nested_calls_shared_symbol_matches_fd_and_jvp() -> None:
   # reuses the callee's formal symbol `x`, so the substitution must not rewrite occurrences of `x`
   # inside the incoming cotangent (which the second call's adjoint injects into the first call's).
   x = al.sym("x", 1)
-  f = al.Function("sq", [x], [x * x], ["x"], ["y"])
+  f = al.Function._from_exprs("sq", [x], [x * x], ["x"], ["y"])
   (k1,) = f.call([2 * x])
   (k2,) = f.call([x + k1])
   (grad_rev,) = al.vjp((k2,), (x,), (al.const(np.ones(1)),))
   jac_fwd = al.jacobian(k2, x).reshape((1,))
-  fn = al.Function("nested_sq", [x], [grad_rev, jac_fwd], ["x"], ["rev", "fwd"])
+  fn = al.Function._from_exprs("nested_sq", [x], [grad_rev, jac_fwd], ["x"], ["rev", "fwd"])
 
   rev, fwd = fn(np.array([1.0]))
   np.testing.assert_allclose(rev, [90.0], rtol=1e-12)  # d/dx (x + 4x^2)^2 at x=1
@@ -119,7 +119,7 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
 
   rng = np.random.default_rng(7)
   x, u = al.sym("x", 2), al.sym("u", 1)
-  ode = al.Function("ode2", [x, u], [al.stack([x[0] * x[1] + u[0], x[0].tanh() - x[1] * x[1]])], ["x", "u"], ["f"])
+  ode = al.Function._from_exprs("ode2", [x, u], [al.stack([x[0] * x[1] + u[0], x[0].tanh() - x[1] * x[1]])], ["x", "u"], ["f"])
   dt = 0.1
   (k1,) = ode.call([x, u])
   (k2,) = ode.call([x + (dt / 2) * k1, u])
@@ -130,8 +130,8 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
   (grad_rev,) = al.vjp((xnext,), (x,), (lam,))
   jac_t_lam = al.jacobian(xnext, x).transpose((1, 0)) @ lam
   hess = hessian(al.dot(lam, xnext), x)
-  fn = al.Function("rk4_adj", [x, u, lam], [grad_rev, jac_t_lam, hess], ["x", "u", "lam"], ["rev", "fwd", "hess"])
-  obj = al.Function("rk4_obj", [x, u, lam], [al.dot(lam, xnext)], ["x", "u", "lam"], ["obj"])
+  fn = al.Function._from_exprs("rk4_adj", [x, u, lam], [grad_rev, jac_t_lam, hess], ["x", "u", "lam"], ["rev", "fwd", "hess"])
+  obj = al.Function._from_exprs("rk4_obj", [x, u, lam], [al.dot(lam, xnext)], ["x", "u", "lam"], ["obj"])
   xv, uv, lamv = rng.normal(size=2), rng.normal(size=1), rng.normal(size=2)
 
   rev, fwd, hv = fn(xv, uv, lamv)
@@ -146,7 +146,7 @@ def test_jvp_many_uses_leading_seed_axis() -> None:
   y = al.stack([x[0] * x[1], x[2].sin() + x[0]])
   seeds = al.sym("seeds", (2, 3))
   dy = al.jvp_many(y, x, seeds)
-  f = al.Function("jvp_many", [x, seeds], [dy], ["x", "seeds"], ["dy"])
+  f = al.Function._from_exprs("jvp_many", [x, seeds], [dy], ["x", "seeds"], ["dy"])
   xv = np.array([0.3, 1.2, 0.7])
   sv = np.array([[1.5, -0.25, 0.4], [-0.5, 2.0, 1.25]])
   jac = np.array([[xv[1], xv[0], 0.0], [1.0, 0.0, np.cos(xv[2])]])
@@ -161,9 +161,9 @@ def test_erf_forward_reverse_jacobian_and_sparse_hessian(monkeypatch: pytest.Mon
   y = x.erf()
   jvp = al.jvp(y, x, seed)
   (vjp,) = al.vjp((y,), (x,), (seed,))
-  ad = al.Function("erf_seed_ad", [x, seed], [jvp, vjp], ["x", "seed"], ["jvp", "vjp"])
+  ad = al.Function._from_exprs("erf_seed_ad", [x, seed], [jvp, vjp], ["x", "seed"], ["jvp", "vjp"])
   weights = np.array([0.5, -1.25, 2.0])
-  base = al.Function("erf_derivatives", [x], [y, (al.const(weights) * y).sum()], ["x"], ["y", "cost"])
+  base = al.Function._from_exprs("erf_derivatives", [x], [y, (al.const(weights) * y).sum()], ["x"], ["y", "cost"])
   derivatives = base.factory("erf_jac_sphess", ["x"], [al.factory.Jac("y", "x"), al.factory.SpHess("cost", "x")])
 
   xv = np.array([-1.2, 0.25, 2.1])
@@ -188,7 +188,7 @@ def test_jvp_many_broadcast_scalar_tangent_over_vector() -> None:
   scale = x.sum()
   seeds = al.sym("seeds", (2, 3))
   dy = al.jvp_many(scale * x, x, seeds)
-  f = al.Function("jvp_many_broadcast_scalar", [x, seeds], [dy], ["x", "seeds"], ["dy"])
+  f = al.Function._from_exprs("jvp_many_broadcast_scalar", [x, seeds], [dy], ["x", "seeds"], ["dy"])
   xv = np.array([0.3, 1.2, -0.4])
   sv = np.array([[1.5, -0.25, 0.4], [-0.5, 2.0, 1.25]])
 
@@ -210,7 +210,7 @@ def test_jvp_many_sum_batches_seeds_without_unrolling() -> None:
   assert sum(node.op == al.ExprOp.RESHAPE for node in nodes) == 1
   assert not any(node.op == al.ExprOp.STACK for node in nodes)
 
-  fn = al.Function("jvp_many_sum", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
+  fn = al.Function._from_exprs("jvp_many_sum", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
   xv = np.random.default_rng(16).normal(size=(2, 3))
   seedv = np.random.default_rng(17).normal(size=(4, 2, 3))
   actual, expected = fn(xv, seedv)
@@ -258,7 +258,7 @@ def test_jvp_many_structural_rank_mismatch_corner_cases() -> None:
   for name, (expr, np_fn) in cases.items():
     dy = _jvp_many_structural(expr, x, seeds, {}, {})
     assert dy.shape == (4, *expr.shape), f"{name}: tangent shape {dy.shape}"
-    f = al.Function(f"jvp_many_{name}", [x, seeds], [dy], ["x", "seeds"], ["dy"])
+    f = al.Function._from_exprs(f"jvp_many_{name}", [x, seeds], [dy], ["x", "seeds"], ["dy"])
     eps = 1e-6
     fd = np.stack([(np_fn(xv + eps * sv[i]) - np_fn(xv - eps * sv[i])) / (2 * eps) for i in range(4)])
     np.testing.assert_allclose(f(xv, sv), fd, rtol=1e-6, atol=1e-8, err_msg=name)
@@ -268,7 +268,7 @@ def test_jvp_many_vec_dot_vec_keeps_seed_axis() -> None:
   # (dx * y).sum() in the 1-D matmul JVP branch also contracted the seed axis, silently summing per-seed derivatives
   x = al.sym("x", 6)
   expr = x[:3] @ x[3:6] + x[0] * x[1]
-  fn = al.Function("vec_dot_vec", [x], [al.stack([expr])], ["x"], ["y"])
+  fn = al.Function._from_exprs("vec_dot_vec", [x], [al.stack([expr])], ["x"], ["y"])
   jf = fn.factory("vec_dot_vec_jac", ["x"], [al.factory.Jac("y", "x")])
   xv = np.random.default_rng(11).normal(size=6)
   expected = np.concatenate([xv[3:6] + np.array([xv[1], xv[0], 0.0]), xv[:3]])[None, :]
@@ -286,7 +286,7 @@ def test_jvp_many_scatter_and_gather_stays_structural() -> None:
   nodes = topo((structural,))
   assert sum(node.op == al.ExprOp.GATHER for node in nodes) == 1
   assert sum(node.op == al.ExprOp.SCATTER for node in nodes) == 1
-  fn = al.Function("jvp_many_scatter_gather", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
+  fn = al.Function._from_exprs("jvp_many_scatter_gather", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
   xv = np.random.default_rng(12).normal(size=6)
   seedv = np.random.default_rng(13).normal(size=(3, 6))
   actual, expected = fn(xv, seedv)
@@ -302,7 +302,7 @@ def test_jvp_many_transpose_stays_structural() -> None:
 
   assert structural.shape == (4, *expr.shape)
   assert sum(node.op == al.ExprOp.TRANSPOSE for node in topo((structural,))) == 1
-  fn = al.Function("jvp_many_transpose", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
+  fn = al.Function._from_exprs("jvp_many_transpose", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
   xv = np.random.default_rng(14).normal(size=12)
   seedv = np.random.default_rng(15).normal(size=(4, 12))
   actual, expected = fn(xv, seedv)
@@ -316,7 +316,7 @@ def test_jvp_many_rank4_transpose_falls_back_and_strict_raises(monkeypatch: pyte
   x = al.sym("x", 12)
   expr = (x * x).reshape((2, 3, 1, 2)).transpose((3, 1, 0, 2))
   seeds = al.sym("seeds", (2, 12))
-  fn = al.Function("rank4_transpose_jvp", [x, seeds], [al.jvp_many(expr, x, seeds).reshape((24,))], ["x", "seeds"], ["tan"])
+  fn = al.Function._from_exprs("rank4_transpose_jvp", [x, seeds], [al.jvp_many(expr, x, seeds).reshape((24,))], ["x", "seeds"], ["tan"])
   rng = np.random.default_rng(7)
   xv, sv = rng.normal(size=12), rng.normal(size=(2, 12))
   expected = np.concatenate([(2.0 * xv * sv[i]).reshape(2, 3, 1, 2).transpose(3, 1, 0, 2).reshape(-1) for i in range(2)])
@@ -351,8 +351,8 @@ def test_matmul_vjp_all_shape_cases_match_finite_differences() -> None:
     cot = al.sym("cot", out.shape)
     objective = al.dot(cot, out)
     gx, gy = al.vjp((objective,), (x, y), (al.const(1.0),))
-    grad_fn = al.Function(f"matmul_vjp_{index}", [x, y, cot], [gx, gy], ["x", "y", "cot"], ["gx", "gy"])
-    objective_fn = al.Function(f"matmul_vjp_objective_{index}", [x, y, cot], [objective], ["x", "y", "cot"], ["objective"])
+    grad_fn = al.Function._from_exprs(f"matmul_vjp_{index}", [x, y, cot], [gx, gy], ["x", "y", "cot"], ["gx", "gy"])
+    objective_fn = al.Function._from_exprs(f"matmul_vjp_objective_{index}", [x, y, cot], [objective], ["x", "y", "cot"], ["objective"])
     xv, yv, cotv = rng.normal(size=x_shape), rng.normal(size=y_shape), rng.normal(size=out.shape)
 
     actual_x, actual_y = grad_fn(xv, yv, cotv)
@@ -376,7 +376,7 @@ def test_matrix_vector_vjp_graph_uses_tensor_ops() -> None:
 def test_sparse_jacobian_colored_scalar_plus_vector() -> None:
   z = al.sym("z", 6)
   sj = al.sparse_jacobian_colored(z[5] + z[:5] * z[:5], z)
-  f = al.Function("spjac_scalar_plus_vec", [z], [sj.to_dense()], ["z"], ["dense"])
+  f = al.Function._from_exprs("spjac_scalar_plus_vec", [z], [sj.to_dense()], ["z"], ["dense"])
   zv = np.random.default_rng(5).normal(size=6)
   dense = np.zeros((5, 6))
   dense[:, 5] = 1.0
@@ -391,7 +391,7 @@ def test_vjp_many_uses_leading_seed_axis_and_multiple_outputs() -> None:
   c0 = al.sym("c0", (2, 2))
   c1 = al.sym("c1", 2)
   (grad_x,) = al.vjp_many((y0, y1), (x,), (c0, c1))
-  f = al.Function("vjp_many", [x, c0, c1], [grad_x], ["x", "c0", "c1"], ["grad_x"])
+  f = al.Function._from_exprs("vjp_many", [x, c0, c1], [grad_x], ["x", "c0", "c1"], ["grad_x"])
   xv = np.array([0.3, 1.2])
   c0v = np.array([[1.5, -0.25], [-0.5, 2.0]])
   c1v = np.array([0.75, -1.25])
@@ -420,12 +420,12 @@ def test_multi_seed_shape_errors() -> None:
 
 def test_vjp_through_call_node_inlines_callee_reverse_graph() -> None:
   x = al.sym("x", 2)
-  inner = al.Function("inner", [x], [x.sin() * x], ["x"], ["y"])
+  inner = al.Function._from_exprs("inner", [x], [x.sin() * x], ["x"], ["y"])
   z = al.sym("z", 2)
   (inner_z,) = inner.call([z])
   seed = al.sym("seed", 2)
   (grad_z,) = al.vjp((inner_z,), (z,), (seed,))
-  outer = al.Function("outer", [z, seed], [grad_z], ["z", "seed"], ["grad_z"])
+  outer = al.Function._from_exprs("outer", [z, seed], [grad_z], ["z", "seed"], ["grad_z"])
   zv = np.array([0.2, 0.7])
   sv = np.array([3.0, -1.0])
 
@@ -452,7 +452,7 @@ def test_vjp_through_vmap_cross_formal_overlap_accumulates() -> None:
 
 def test_vjp_through_vmap_single_formal_overlap_uses_grouped_scatter() -> None:
   x = al.sym("x", 3)
-  piece = al.Function("vmap_vjp_grouped_piece", [x], [x * x + x.sin()], ["x"], ["y"])
+  piece = al.Function._from_exprs("vmap_vjp_grouped_piece", [x], [x * x + x.sin()], ["x"], ["y"])
   z = al.sym("z", 7)
   _assert_vmap_vjp_matches_unrolled_and_fd("vmap_vjp_grouped", piece, z, 3, [(z, 0, 2)], np.linspace(-0.8, 0.7, 7))
 
@@ -479,15 +479,15 @@ def test_vjp_through_vmap_adjoint_names_disambiguate_active_formal_sets() -> Non
   # {a_b} and {a, b} would both suffix to "a_b" if adjoints were named by joined formal names;
   # lowering dedupes callees by name, so the two maps would silently share one proc body.
   a, a_b, b = al.sym("a", 2), al.sym("a_b", 2), al.sym("b", 2)
-  piece = al.Function("vmap_vjp_collision_piece", [a, a_b, b], [a * a_b.sin() + b * a_b + a * b], ["a", "a_b", "b"], ["y"])
+  piece = al.Function._from_exprs("vmap_vjp_collision_piece", [a, a_b, b], [a * a_b.sin() + b * a_b + a * b], ["a", "a_b", "b"], ["y"])
   z = al.sym("z", 8)
   c0, c1 = al.const(np.array([0.3, -0.7, 1.1, 0.2])), al.const(np.array([0.9, 0.4, -0.5, 1.3]))
   m1 = al.vmap(piece, 2, [(c0, 0, 2), (z[0:4], 0, 2), (c1, 0, 2)])
   m2 = al.vmap(piece, 2, [(z[0:4], 0, 2), (c0, 0, 2), (z[4:8], 0, 2)])
   obj = m1.sum() + m2.sum()
   (grad_z,) = al.vjp((obj,), (z,), (al.const(1.0),))
-  grad_fn = al.Function("vmap_vjp_collision_grads", [z], [grad_z], ["z"], ["grad_z"])
-  obj_fn = al.Function("vmap_vjp_collision_obj", [z], [obj], ["z"], ["objective"])
+  grad_fn = al.Function._from_exprs("vmap_vjp_collision_grads", [z], [grad_z], ["z"], ["grad_z"])
+  obj_fn = al.Function._from_exprs("vmap_vjp_collision_obj", [z], [obj], ["z"], ["objective"])
   zv = np.random.default_rng(3).normal(size=8)
 
   fd = finite_difference(obj_fn, zv).reshape(-1)
@@ -501,7 +501,7 @@ def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:
   y = (x * x + p.floor()).sum()
   dy = al.jvp(y, x, seed)
   grad = al.gradient(y, x)
-  f = al.Function("smooth_wrt_x", [x, p, seed], [dy, grad], ["x", "p", "seed"], ["dy", "grad"])
+  f = al.Function._from_exprs("smooth_wrt_x", [x, p, seed], [dy, grad], ["x", "p", "seed"], ["dy", "grad"])
   xv = np.array([0.3, 1.2])
   pv = np.array([1.1, 2.9])
   sv = np.array([1.5, -0.25])

@@ -9,7 +9,7 @@ def test_jit_reports_input_errors() -> None:
   x = al.sym("x", 2)
   y = al.sym("y", 2)
   out = ((x + 2.0) * y).sum()
-  f = al.Function("f", [x, y], [out], ["x", "y"], ["out"])
+  f = al.Function._from_exprs("f", [x, y], [out], ["x", "y"], ["out"])
   env = {"x": np.array([1.0, 3.0]), "y": np.array([4.0, 5.0])}
 
   np.testing.assert_allclose(f(**env), ((env["x"] + 2.0) * env["y"]).sum())

@@ -6,9 +6,10 @@ import pytest
 import alloy as al
 
 
-@al.function("scale_add", {"x": 3, "p": 3})
-def scale_add(x, p):
-  return {"y": 2.0 * x + p}
+@al.function(al.G(al.L("x", 3), al.L("p", 3)), al.L("y", ...), name="scale_add")
+def scale_add(inputs):
+  x, p = inputs
+  return 2.0 * x + p
 
 
 def test_vmap_eval_matches_unrolled_concat_of_call() -> None:
@@ -19,8 +20,8 @@ def test_vmap_eval_matches_unrolled_concat_of_call() -> None:
   mapped = al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
   unrolled = al.concat([scale_add.call([z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3]])[0] for i in range(N)])
 
-  fn_vmap = al.Function("scaled_vmap", [z, p], [mapped], ["z", "p"], ["y"])
-  fn_concat = al.Function("scaled_concat", [z, p], [unrolled], ["z", "p"], ["y"])
+  fn_vmap = al.Function._from_exprs("scaled_vmap", [z, p], [mapped], ["z", "p"], ["y"])
+  fn_concat = al.Function._from_exprs("scaled_concat", [z, p], [unrolled], ["z", "p"], ["y"])
 
   rng = np.random.default_rng(0)
   zv = rng.normal(size=3 * N)
@@ -34,9 +35,10 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
   NX = 4
   N = 3
 
-  @al.function("step", {"z": NZ, "znext": NZ, "p": NX})
-  def step(z, znext, p):
-    return {"eq": (z[:NX] - znext[:NX]) + p}
+  @al.function(al.G(al.L("z", NZ), al.L("znext", NZ), al.L("p", NX)), al.L("eq", ...), name="step")
+  def step(inputs):
+    z, znext, p = inputs
+    return (z[:NX] - znext[:NX]) + p
 
   z = al.sym("z", NZ * (N + 1))
   p = al.sym("p", NX * (N + 1))
@@ -47,8 +49,8 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
     parts.append(step.call([z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX]])[0])
   unrolled = al.concat(parts)
 
-  fn_vmap = al.Function("step_vmap", [z, p], [mapped], ["z", "p"], ["eq"])
-  fn_concat = al.Function("step_concat", [z, p], [unrolled], ["z", "p"], ["eq"])
+  fn_vmap = al.Function._from_exprs("step_vmap", [z, p], [mapped], ["z", "p"], ["eq"])
+  fn_concat = al.Function._from_exprs("step_concat", [z, p], [unrolled], ["z", "p"], ["eq"])
 
   rng = np.random.default_rng(1)
   zv = rng.normal(size=NZ * (N + 1))
@@ -61,7 +63,7 @@ def test_vmap_zero_length_returns_empty() -> None:
   z = al.sym("z", 3)
   p = al.sym("p", 3)
   empty = al.vmap(scale_add, 0, [(z, 0, 0), (p, 0, 0)])
-  fn = al.Function("empty_vmap", [z, p], [empty], ["z", "p"], ["y"])
+  fn = al.Function._from_exprs("empty_vmap", [z, p], [empty], ["z", "p"], ["y"])
   out = fn(np.zeros(3), np.zeros(3))
   assert isinstance(out, np.ndarray)
   assert out.shape == (0,)
@@ -72,7 +74,7 @@ def test_vmap_broadcast_stride_zero_repeats_same_slice() -> None:
   z = al.sym("z", 3)
   p = al.sym("p", 3)
   mapped = al.vmap(scale_add, N, [(z, 0, 0), (p, 0, 0)])
-  fn = al.Function("broadcast_vmap", [z, p], [mapped], ["z", "p"], ["y"])
+  fn = al.Function._from_exprs("broadcast_vmap", [z, p], [mapped], ["z", "p"], ["y"])
   zv = np.array([1.0, 2.0, 3.0])
   pv = np.array([0.5, -1.0, 0.25])
   expected = np.tile(2.0 * zv + pv, N)

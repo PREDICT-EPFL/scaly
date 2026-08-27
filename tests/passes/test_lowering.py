@@ -29,7 +29,7 @@ _HAVE_CC = _find_compiler() is not None
 
 
 def _neg() -> al.Function:
-  @al.function("pm_neg", {"x": 4})
+  @al.function(al.L("x", 4), al.L("out0", ...), name="pm_neg")
   def f(x):
     return -x
 
@@ -37,7 +37,7 @@ def _neg() -> al.Function:
 
 
 def _trig_chain() -> al.Function:
-  @al.function("pm_trig", {"x": 4})
+  @al.function(al.L("x", 4), al.L("out0", ...), name="pm_trig")
   def f(x):
     return x.sin().cos() + x.tan()
 
@@ -45,39 +45,43 @@ def _trig_chain() -> al.Function:
 
 
 def _exp_log() -> al.Function:
-  @al.function("pm_exp_log", {"x": 3, "y": 3})
-  def f(x, y):
+  @al.function(al.G(al.L("x", 3), al.L("y", 3)), al.L("out0", ...), name="pm_exp_log")
+  def f(inputs):
+    x, y = inputs
     return x.exp() + y.log()
 
   return f
 
 
 def _arith() -> al.Function:
-  @al.function("pm_arith", {"x": 3, "y": 3})
-  def f(x, y):
+  @al.function(al.G(al.L("x", 3), al.L("y", 3)), al.L("out0", ...), name="pm_arith")
+  def f(inputs):
+    x, y = inputs
     return x * y - x / y
 
   return f
 
 
 def _tanh_sqrt() -> al.Function:
-  @al.function("pm_tanh_sqrt", {"x": 3, "y": 3})
-  def f(x, y):
+  @al.function(al.G(al.L("x", 3), al.L("y", 3)), al.L("out0", ...), name="pm_tanh_sqrt")
+  def f(inputs):
+    x, y = inputs
     return x.tanh() * y.sqrt() + x.abs()
 
   return f
 
 
 def _pow_same_shape() -> al.Function:
-  @al.function("pm_pow", {"x": 2, "y": 2})
-  def f(x, y):
+  @al.function(al.G(al.L("x", 2), al.L("y", 2)), al.L("out0", ...), name="pm_pow")
+  def f(inputs):
+    x, y = inputs
     return x**y
 
   return f
 
 
 def _const_add() -> al.Function:
-  @al.function("pm_const", {"x": 4})
+  @al.function(al.L("x", 4), al.L("out0", ...), name="pm_const")
   def f(x):
     return x + al.const(np.array([1.0, 2.0, 3.0, 4.0]))
 
@@ -85,7 +89,7 @@ def _const_add() -> al.Function:
 
 
 def _reshape() -> al.Function:
-  @al.function("pm_reshape", {"x": 4})
+  @al.function(al.L("x", 4), al.L("out0", ...), name="pm_reshape")
   def f(x):
     r = x.reshape((2, 2))
     return r * r
@@ -94,7 +98,7 @@ def _reshape() -> al.Function:
 
 
 def _large_const() -> al.Function:
-  @al.function("pm_large_const", {"x": 24})
+  @al.function(al.L("x", 24), al.L("out0", ...), name="pm_large_const")
   def f(x):
     return x + al.const(np.arange(24, dtype=np.float64))  # > the old size-16 inline cap
 
@@ -102,7 +106,7 @@ def _large_const() -> al.Function:
 
 
 def _slice_contiguous() -> al.Function:
-  @al.function("pm_slice_contig", {"x": 5})
+  @al.function(al.L("x", 5), al.L("out0", ...), name="pm_slice_contig")
   def f(x):
     return x[1:4].sin()  # rank-1 contiguous slice feeding an elementwise op
 
@@ -110,7 +114,7 @@ def _slice_contiguous() -> al.Function:
 
 
 def _slice_scalar() -> al.Function:
-  @al.function("pm_slice_scalar", {"x": 5})
+  @al.function(al.L("x", 5), al.L("out0", ...), name="pm_slice_scalar")
   def f(x):
     return x[2] * x[2]  # integer index -> scalar (drops the dim)
 
@@ -118,7 +122,7 @@ def _slice_scalar() -> al.Function:
 
 
 def _slice_strided() -> al.Function:
-  @al.function("pm_slice_strided", {"x": 6})
+  @al.function(al.L("x", 6), al.L("out0", ...), name="pm_slice_strided")
   def f(x):
     return x[::2] + x[1::2]  # strided slices, same output length
 
@@ -126,7 +130,7 @@ def _slice_strided() -> al.Function:
 
 
 def _slice_multidim_row() -> al.Function:
-  @al.function("pm_slice_row", {"x": 12})
+  @al.function(al.L("x", 12), al.L("out0", ...), name="pm_slice_row")
   def f(x):
     m = x.reshape((3, 4))
     return m[1, :] * m[2, :]  # integer index on dim 0, full slice on dim 1
@@ -135,39 +139,43 @@ def _slice_multidim_row() -> al.Function:
 
 
 def _dot() -> al.Function:
-  @al.function("pm_dot", {"x": 4, "y": 4})
-  def f(x, y):
+  @al.function(al.G(al.L("x", 4), al.L("y", 4)), al.L("out0", ...), name="pm_dot")
+  def f(inputs):
+    x, y = inputs
     return x @ y
 
   return f
 
 
 def _matvec() -> al.Function:
-  @al.function("pm_matvec", {"A": (3, 4), "x": 4})
-  def f(A, x):
+  @al.function(al.G(al.L("A", (3, 4)), al.L("x", 4)), al.L("out0", ...), name="pm_matvec")
+  def f(inputs):
+    A, x = inputs
     return A @ x
 
   return f
 
 
 def _vecmat() -> al.Function:
-  @al.function("pm_vecmat", {"x": 3, "A": (3, 4)})
-  def f(x, A):
+  @al.function(al.G(al.L("x", 3), al.L("A", (3, 4))), al.L("out0", ...), name="pm_vecmat")
+  def f(inputs):
+    x, A = inputs
     return x @ A
 
   return f
 
 
 def _matmat() -> al.Function:
-  @al.function("pm_matmat", {"A": (2, 3), "B": (3, 2)})
-  def f(A, B):
+  @al.function(al.G(al.L("A", (2, 3)), al.L("B", (3, 2))), al.L("out0", ...), name="pm_matmat")
+  def f(inputs):
+    A, B = inputs
     return A @ B
 
   return f
 
 
 def _sum() -> al.Function:
-  @al.function("pm_sum", {"x": 5})
+  @al.function(al.L("x", 5), al.L("out0", ...), name="pm_sum")
   def f(x):
     return (x.sin() + x).sum()
 
@@ -175,7 +183,7 @@ def _sum() -> al.Function:
 
 
 def _transpose() -> al.Function:
-  @al.function("pm_transpose", {"x": 6})
+  @al.function(al.L("x", 6), al.L("out0", ...), name="pm_transpose")
   def f(x):
     return x.reshape((2, 3)).transpose()
 
@@ -183,11 +191,11 @@ def _transpose() -> al.Function:
 
 
 def _call() -> al.Function:
-  @al.function("pm_call_inner", {"a": 3})
+  @al.function(al.L("a", 3), al.L("out0", ...), name="pm_call_inner")
   def inner(a):
     return a.sin() + a
 
-  @al.function("pm_call_outer", {"x": 3})
+  @al.function(al.L("x", 3), al.L("out0", ...), name="pm_call_outer")
   def f(x):
     (y,) = inner.call([x])
     return y * x
@@ -196,11 +204,11 @@ def _call() -> al.Function:
 
 
 def _vmap() -> al.Function:
-  @al.function("pm_vmap_cell", {"s": 2})
+  @al.function(al.L("s", 2), al.L("out0", ...), name="pm_vmap_cell")
   def cell(s):
     return s.tanh() + s
 
-  @al.function("pm_vmap_outer", {"z": 6})
+  @al.function(al.L("z", 6), al.L("out0", ...), name="pm_vmap_outer")
   def f(z):
     return al.vmap(cell, 3, [(z, 0, 2)])  # 3 independent calls over z[2i:2i+2]
 
@@ -208,7 +216,7 @@ def _vmap() -> al.Function:
 
 
 def _gather() -> al.Function:
-  @al.function("pm_gather", {"x": 6})
+  @al.function(al.L("x", 6), al.L("out0", ...), name="pm_gather")
   def f(x):
     return x.gather(np.array([5, 0, 3, 3, 1]))  # repeats + reorder, via const index table
 
@@ -216,7 +224,7 @@ def _gather() -> al.Function:
 
 
 def _scatter() -> al.Function:
-  @al.function("pm_scatter", {"x": 3})
+  @al.function(al.L("x", 3), al.L("out0", ...), name="pm_scatter")
   def f(x):
     return al.scatter(x, np.array([4, 1, 2]), 6)  # zero-filled length-6 output
 
@@ -224,15 +232,16 @@ def _scatter() -> al.Function:
 
 
 def _broadcast_matrix() -> al.Function:
-  @al.function("pm_bcast_mat", {"x": (3, 4), "b": 4})
-  def f(x, b):
+  @al.function(al.G(al.L("x", (3, 4)), al.L("b", 4)), al.L("out0", ...), name="pm_bcast_mat")
+  def f(inputs):
+    x, b = inputs
     return x + b  # (3,4) + (4,) row broadcast
 
   return f
 
 
 def _broadcast_scalar() -> al.Function:
-  @al.function("pm_bcast_scalar", {"x": 4})
+  @al.function(al.L("x", 4), al.L("out0", ...), name="pm_bcast_scalar")
   def f(x):
     return x * 2.0 + 1.0  # scalar-const broadcast
 
@@ -240,32 +249,36 @@ def _broadcast_scalar() -> al.Function:
 
 
 def _concat() -> al.Function:
-  @al.function("pm_concat", {"x": 3, "y": 2})
-  def f(x, y):
+  @al.function(al.G(al.L("x", 3), al.L("y", 2)), al.L("out0", ...), name="pm_concat")
+  def f(inputs):
+    x, y = inputs
     return al.concat([x.sin(), y])
 
   return f
 
 
 def _mlp_layer() -> al.Function:
-  @al.function("pm_mlp_layer", {"W": (4, 3), "x": 3, "b": 4})
-  def f(W, x, b):
+  @al.function(al.G(al.L("W", (4, 3)), al.L("x", 3), al.L("b", 4)), al.L("out0", ...), name="pm_mlp_layer")
+  def f(inputs):
+    W, x, b = inputs
     return (W @ x + b).tanh()  # matmul + bias broadcast + activation
 
   return f
 
 
 def _concat_axis1() -> al.Function:
-  @al.function("pm_concat_ax1", {"a": (2, 3), "b": (2, 2)})
-  def f(a, b):
+  @al.function(al.G(al.L("a", (2, 3)), al.L("b", (2, 2))), al.L("out0", ...), name="pm_concat_ax1")
+  def f(inputs):
+    a, b = inputs
     return al.concat([a, b], axis=1)  # (2,3) ++ (2,2) -> (2,5) along axis 1
 
   return f
 
 
 def _stack_axis1() -> al.Function:
-  @al.function("pm_stack_ax1", {"x": 3, "y": 3})
-  def f(x, y):
+  @al.function(al.G(al.L("x", 3), al.L("y", 3)), al.L("out0", ...), name="pm_stack_ax1")
+  def f(inputs):
+    x, y = inputs
     return al.stack([x.sin(), y], axis=1)  # two (3,) -> (3,2) along a new axis 1
 
   return f
@@ -338,13 +351,13 @@ def test_uncovered_case_raises_loudly() -> None:
   # A host function calling a device-placed callee: mixed-device lowering is deferred
   # (a host->GPU call is meaningless on a CPU build). With the legacy renderer deleted there is
   # no fallback — both the Program-IR renderer and the public entry raise loudly.
-  @al.function("pm_inner_dev", {"a": 3})
+  @al.function(al.L("a", 3), al.L("out0", ...), name="pm_inner_dev")
   def inner(a):
     return a.sin()
 
   inner_gpu = inner.with_device("cuda:0")
 
-  @al.function("pm_outer_mix", {"x": 3})
+  @al.function(al.L("x", 3), al.L("out0", ...), name="pm_outer_mix")
   def fn(x):
     (y,) = inner_gpu.call([x])
     return y + x

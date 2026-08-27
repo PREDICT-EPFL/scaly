@@ -468,7 +468,7 @@ def test_sqp_nested_in_host_function() -> None:
     lam_box0=al.const(np.zeros(2)),
     target=target,
   )[0]
-  host = al.Function("nested_sqp_host", [target], [al.dot(x, x)], ["target"], ["norm"])
+  host = al.Function._from_exprs("nested_sqp_host", [target], [al.dot(x, x)], ["target"], ["norm"])
   np.testing.assert_allclose(host(np.array([0.2, 0.8])), 0.625, atol=3e-6)
 
 

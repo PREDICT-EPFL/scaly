@@ -5,9 +5,10 @@ import numpy as np
 import alloy as al
 
 
-@al.function("scale_add", {"x": 3, "p": 3})
-def scale_add(x, p):
-  return {"y": 2.0 * x + p}
+@al.function(al.G(al.L("x", 3), al.L("p", 3)), al.L("y", ...), name="scale_add")
+def scale_add(inputs):
+  x, p = inputs
+  return 2.0 * x + p
 
 
 def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
@@ -48,20 +49,22 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     k4 = cont(x + DT * k3, u)
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @al.function("race_car_eq_initial", {"z": NZ, "p": NX})
-  def eq_initial(z, p):
-    return {"eq": z[:NX] - p[:NX]}
+  @al.function(al.G(al.L("z", NZ), al.L("p", NX)), al.L("eq", ...), name="race_car_eq_initial")
+  def eq_initial(inputs):
+    z, p = inputs
+    return z[:NX] - p[:NX]
 
-  @al.function("race_car_eq_interstage", {"z": NZ, "znext": NZ, "p": NX})
-  def eq_interstage(z, znext, p):
-    return {"eq": rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]}
+  @al.function(al.G(al.L("z", NZ), al.L("znext", NZ), al.L("p", NX)), al.L("eq", ...), name="race_car_eq_interstage")
+  def eq_interstage(inputs):
+    z, znext, p = inputs
+    return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
   def build(N: int) -> al.Function:
     z = al.sym("z", NZ * (N + 1))
     p = al.sym("p", NX * (N + 1), diff=False)
     initial = eq_initial.call([z[:NZ], p[:NX]])[0]
     mapped = al.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
-    return al.Function(f"race_car_eq_vmap_N{N}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+    return al.Function._from_exprs(f"race_car_eq_vmap_N{N}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
 
   fn_a = build(50)
   fn_b = build(100)
@@ -78,7 +81,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
       znext = fn.inputs[0][(i + 1) * NZ : (i + 2) * NZ]
       pi = fn.inputs[1][(i + 1) * NX : (i + 2) * NX]
       parts.append(eq_interstage.call([zi, znext, pi])[0])
-    ref = al.Function(f"race_car_eq_ref_N{N}", [fn.inputs[0], fn.inputs[1]], [al.concat(parts)], ["z", "p"], ["eq"])
+    ref = al.Function._from_exprs(f"race_car_eq_ref_N{N}", [fn.inputs[0], fn.inputs[1]], [al.concat(parts)], ["z", "p"], ["eq"])
     np.testing.assert_allclose(fn(zv, pv), ref(zv, pv), rtol=1e-12, atol=1e-12)
 
   src_a = render_c_source(fn_a)
@@ -118,20 +121,22 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     k4 = cont(x + DT * k3, u)
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @al.function("race_car_eq_initial2", {"z": NZ, "p": NX})
-  def eq_initial(z, p):
-    return {"eq": z[:NX] - p[:NX]}
+  @al.function(al.G(al.L("z", NZ), al.L("p", NX)), al.L("eq", ...), name="race_car_eq_initial2")
+  def eq_initial(inputs):
+    z, p = inputs
+    return z[:NX] - p[:NX]
 
-  @al.function("race_car_eq_interstage2", {"z": NZ, "znext": NZ, "p": NX})
-  def eq_interstage(z, znext, p):
-    return {"eq": rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]}
+  @al.function(al.G(al.L("z", NZ), al.L("znext", NZ), al.L("p", NX)), al.L("eq", ...), name="race_car_eq_interstage2")
+  def eq_interstage(inputs):
+    z, znext, p = inputs
+    return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
   def build_vmap(N: int) -> al.Function:
     z = al.sym("z", NZ * (N + 1))
     p = al.sym("p", NX * (N + 1), diff=False)
     initial = eq_initial.call([z[:NZ], p[:NX]])[0]
     mapped = al.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
-    return al.Function(f"tr_vmap_N{N}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+    return al.Function._from_exprs(f"tr_vmap_N{N}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
 
   def build_unroll(N: int) -> al.Function:
     z = al.sym("z", NZ * (N + 1))
@@ -139,7 +144,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     parts = [eq_initial.call([z[:NZ], p[:NX]])[0]]
     for i in range(N):
       parts.append(eq_interstage.call([z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX]])[0])
-    return al.Function(f"tr_unroll_N{N}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
+    return al.Function._from_exprs(f"tr_unroll_N{N}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
   N = 4
   fn_vmap = build_vmap(N)
@@ -156,10 +161,11 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
 
   rng = np.random.default_rng(2)
   zv = rng.normal(size=NZ * (N + 1))
+  pv = rng.normal(size=NX * (N + 1))
 
   dense_m, dense_u = np.zeros(sp_m.shape), np.zeros(sp_u.shape)
-  dense_m[np.asarray(sp_m.rows), np.asarray(sp_m.cols)] = np.asarray(spj_vmap(zv), dtype=np.float64).reshape(-1)
-  dense_u[np.asarray(sp_u.rows), np.asarray(sp_u.cols)] = np.asarray(spj_unroll(zv), dtype=np.float64).reshape(-1)
+  dense_m[np.asarray(sp_m.rows), np.asarray(sp_m.cols)] = np.asarray(spj_vmap(zv, pv), dtype=np.float64).reshape(-1)
+  dense_u[np.asarray(sp_u.rows), np.asarray(sp_u.cols)] = np.asarray(spj_unroll(zv, pv), dtype=np.float64).reshape(-1)
   np.testing.assert_allclose(dense_m, dense_u, rtol=1e-10, atol=1e-10)
 
 
@@ -172,26 +178,29 @@ NB, NS, NU = 3, 3, 2
 PAIRS = [(i, j) for i in range(NB) for j in range(i + 1, NB)]
 
 
-@al.function("pairs_step", {"s": NS, "u": NU})
-def pairs_step(s, u):
-  return {"next": al.stack([s[0] + 0.1 * s[2].cos() * u[0], s[1] + 0.1 * s[2].sin() * u[1], s[2] + 0.1 * (u[0] - u[1])])}
+@al.function(al.G(al.L("s", NS), al.L("u", NU)), al.L("next", ...), name="pairs_step")
+def pairs_step(inputs):
+  s, u = inputs
+  return al.stack([s[0] + 0.1 * s[2].cos() * u[0], s[1] + 0.1 * s[2].sin() * u[1], s[2] + 0.1 * (u[0] - u[1])])
 
 
-@al.function("pairs_barrier", {"prev_i": NS, "prev_j": NS, "si": NS, "sj": NS, "slack": 1})
-def pairs_barrier(prev_i, prev_j, si, sj, slack):
+@al.function(al.G(al.L("prev_i", NS), al.L("prev_j", NS), al.L("si", NS), al.L("sj", NS), al.L("slack", 1)), al.L("h", ...), name="pairs_barrier")
+def pairs_barrier(inputs):
   # The trailing p-norm term mirrors the smooth-max a velocity-margin barrier uses; it is what
   # brings integer POW, a *non-integer* POW (the shape of such a barrier's braking envelope,
   # `c * d^q`) and a nested sqrt into the second-order path through the VMAP. As in the real
   # barrier, the non-integer power's base is bounded away from zero, where its slope diverges.
+  prev_i, prev_j, si, sj, slack = inputs
   d, dprev = si[:2] - sj[:2], prev_i[:2] - prev_j[:2]
   envelope = 1.1 * (1.0 + al.dot(dprev, dprev)) ** 0.84
   soft_max = (al.dot(d, d) ** 2 + envelope**4).sqrt().sqrt()
-  return {"h": al.stack([(al.dot(d, d).sqrt() - 0.5 * (1.0 + al.dot(dprev, dprev)).log() + soft_max + slack[0]).scalar()])}
+  return al.stack([(al.dot(d, d).sqrt() - 0.5 * (1.0 + al.dot(dprev, dprev)).log() + soft_max + slack[0]).scalar()])
 
 
-@al.function("pairs_wall", {"s": NS, "snext": NS, "slack": 1})
-def pairs_wall(s, snext, slack):
-  return {"h": al.stack([(snext[0] - 0.5 * s[0] + slack[0]).scalar(), (1.0 - snext[1].exp() + slack[0]).scalar()])}
+@al.function(al.G(al.L("s", NS), al.L("snext", NS), al.L("slack", 1)), al.L("h", ...), name="pairs_wall")
+def pairs_wall(inputs):
+  s, snext, slack = inputs
+  return al.stack([(snext[0] - 0.5 * s[0] + slack[0]).scalar(), (1.0 - snext[1].exp() + slack[0]).scalar()])
 
 
 def _pair_index_table(bodies: list[int]) -> np.ndarray:
@@ -218,7 +227,7 @@ def _build_pairs_fn(mapped: bool) -> al.Function:
     rows = [pairs_barrier.call([sl(p, i), sl(p, j), sl(nxt, i), sl(nxt, j), slack])[0] for i, j in PAIRS]
     rows += [pairs_wall.call([sl(p, k), sl(nxt, k), slack])[0] for k in range(NB)]
     h = al.concat(rows)
-  return al.Function(f"pairs_{'vmap' if mapped else 'unroll'}", [u, p], [h.scalar()], ["u", "p"], ["h"])
+  return al.Function._from_exprs(f"pairs_{'vmap' if mapped else 'unroll'}", [u, p], [h.scalar()], ["u", "p"], ["h"])
 
 
 def _pairs_sample() -> tuple[np.ndarray, np.ndarray]:
@@ -276,17 +285,17 @@ def test_block_lowered_matmul_inside_vmap_callee_infers_block_and_differentiates
   w = np.array([[0.4, -0.2, 0.7], [0.1, 0.9, -0.3]])
   b = np.array([0.05, -0.15])
 
-  @al.function("vmap_block_layer", {"s": 3})
+  @al.function(al.L("s", 3), al.L("y", ...), name="vmap_block_layer")
   def layer(s):
     phi = al.stack([s[0], s[1], s[2]]).block()
     h = (al.const(w).block() @ phi + al.const(b)).block()
-    return {"y": al.stack([(h * h).sum().scalar()])}
+    return al.stack([(h * h).sum().scalar()])
 
   assert any(node.op == al.ExprOp.MATMUL and node.lowering == "block" for node in topo(layer.outputs))
 
   N = 4
   z = al.sym("z", 3 * N)
-  fn = al.Function("vmap_block", [z], [al.vmap(layer, N, [(z, 0, 3)]).scalar()], ["z"], ["y"])
+  fn = al.Function._from_exprs("vmap_block", [z], [al.vmap(layer, N, [(z, 0, 3)]).scalar()], ["z"], ["y"])
   assert fn.outputs[0].lowering == "scalar"
 
   zv = np.random.default_rng(3).normal(size=3 * N)

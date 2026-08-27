@@ -29,7 +29,7 @@ def isolated_cache(tmp_path, monkeypatch):
 def _simple_fn() -> al.Function:
   x = al.sym("x", 3)
   y = (x.sin() + x * x).sum()
-  return al.Function("smoke_jit", [x], [y], ["x"], ["y"])
+  return al.Function._from_exprs("smoke_jit", [x], [y], ["x"], ["y"])
 
 
 def test_call_uses_jit_and_matches_numpy(isolated_cache) -> None:
@@ -68,7 +68,7 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
 def test_jit_handles_multi_output_and_kwargs(isolated_cache) -> None:
   x = al.sym("x", 2)
   y = al.sym("y", 2)
-  fn = al.Function("kw_jit", [x, y], [x + y, x * y, (x - y).sum()], ["x", "y"], ["sum", "prod", "diff"])
+  fn = al.Function._from_exprs("kw_jit", [x, y], [x + y, x * y, (x - y).sum()], ["x", "y"], ["sum", "prod", "diff"])
   xv = np.array([1.0, 2.0])
   yv = np.array([3.0, -1.0])
   s, p, d = fn(x=xv, y=yv)
@@ -80,7 +80,7 @@ def test_jit_handles_multi_output_and_kwargs(isolated_cache) -> None:
 def test_jit_handles_sparse_jacobian_factory_output(isolated_cache) -> None:
   x = al.sym("x", 4)
   y = al.stack([x[0], x[2:4].sum(), x[1] * x[3]])
-  f = al.Function("f_sj", [x], [y], ["x"], ["y"])
+  f = al.Function._from_exprs("f_sj", [x], [y], ["x"], ["y"])
   spjf = al.sparse_jacobian(f, "y", "x", name="f_sj_jac")
   xv = np.array([2.0, 3.0, 5.0, 7.0])
   values = spjf(xv)
@@ -89,10 +89,10 @@ def test_jit_handles_sparse_jacobian_factory_output(isolated_cache) -> None:
 
 def test_jit_handles_nested_call_nodes(isolated_cache) -> None:
   x = al.sym("x", 3)
-  inner = al.Function("inner_jit", [x], [x * x], ["x"], ["sq"])
+  inner = al.Function._from_exprs("inner_jit", [x], [x * x], ["x"], ["sq"])
   z = al.sym("z", 3)
   (inner_sq,) = inner.call([z + 1.0])
-  outer = al.Function("outer_jit", [z], [inner_sq.sum()], ["z"], ["s"])
+  outer = al.Function._from_exprs("outer_jit", [z], [inner_sq.sum()], ["z"], ["s"])
   zv = np.array([0.25, -0.75, 2.0])
   np.testing.assert_allclose(outer(zv), ((zv + 1.0) ** 2).sum())
 

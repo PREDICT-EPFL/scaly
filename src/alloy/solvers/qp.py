@@ -213,7 +213,7 @@ def qp(
       raise NotImplementedError(
         "sparse=True cannot derive the structural pattern of QP data computed from a nested solver output; use the dense interface"
       )
-    probe_fn = Function(
+    probe_fn = Function._from_exprs(
       (name or "qp") + "_pattern_probe", list(params), [mat.vec() for mat in mats], list(param_names), [f"m{i}" for i in range(len(mats))]
     )
     rng = np.random.default_rng(0)
@@ -240,7 +240,7 @@ def qp(
   oracle_names.extend(["x_lb", "x_ub"])
 
   oracle_name = (name or "qp") + "_oracle"
-  oracle = Function(
+  oracle = Function._from_exprs(
     oracle_name,
     list(params),
     oracle_outs,

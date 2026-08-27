@@ -65,7 +65,7 @@ static __attribute__((noinline)) void dynamics_fwd3c8e1b6ee2b3_znext_z_raw(const
   }
 }
 
-int shooting_spjac_eq_z_sz_arg(void) { return 1; }
+int shooting_spjac_eq_z_sz_arg(void) { return 2; }
 int shooting_spjac_eq_z_sz_res(void) { return 1; }
 int shooting_spjac_eq_z_sz_iw(void) { return 0; }
 int shooting_spjac_eq_z_sz_w(void) { return 0; }
@@ -79,6 +79,7 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, vo
   if (!arg || !res) return ALLOY_ERR_NULL_ABI;
   (void)w;
   if (!arg[0]) return ALLOY_ERR_NULL_INPUT;
+  if (!arg[1]) return ALLOY_ERR_NULL_INPUT;
   if (!res[0]) return ALLOY_ERR_NULL_RESULT;
   static const double k0[48] = {1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   double s0[48];

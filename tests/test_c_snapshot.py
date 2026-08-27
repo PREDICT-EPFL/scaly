@@ -34,11 +34,12 @@ WEIGHTS = (np.arange(40 * 40, dtype=np.float64).reshape(40, 40) % 7 - 3.0) / 11.
 def _dynamics() -> al.Function:
   """Elementwise math, slicing, a reduction and a concat."""
 
-  @al.function("dynamics", {"z": 4, "u": 2})
-  def dynamics(z, u):
+  @al.function(al.G(al.L("z", 4), al.L("u", 2)), al.L("znext", ...), name="dynamics")
+  def dynamics(inputs):
+    z, u = inputs
     pos, vel = z[:2], z[2:]
     drag = 0.1 * al.sumsqr(vel)
-    return {"znext": al.concat([pos + 0.05 * vel, vel + 0.05 * (u - drag * vel)])}
+    return al.concat([pos + 0.05 * vel, vel + 0.05 * (u - drag * vel)])
 
   return dynamics
 
@@ -48,7 +49,7 @@ def _shooting() -> al.Function:
   z = al.sym("z", 4 * (N_STAGES + 1))
   u = al.sym("u", 2 * N_STAGES)
   defect = al.vmap(_dynamics(), N_STAGES, [(z, 0, 4), (u, 0, 2)]) - z[4:]
-  return al.Function("shooting", [z, u], [defect], ["z", "u"], ["eq"])
+  return al.Function._from_exprs("shooting", [z, u], [defect], ["z", "u"], ["eq"])
 
 
 def _wide() -> al.Function:
@@ -58,8 +59,9 @@ def _wide() -> al.Function:
   workspace packing and spill rendering are inside the gate too.
   """
 
-  @al.function("wide", {"x": 40, "y": 40})
-  def wide(x, y):
+  @al.function(al.G(al.L("x", 40), al.L("y", 40)), al.G(al.L("z", ...), al.L("tail", ...)), name="wide")
+  def wide(inputs):
+    x, y = inputs
     h = al.const(WEIGHTS) @ x
     a = al.maximum(h, 0.0) - al.minimum(h, 0.0) * 0.5
     b = al.atan2(a, y) + (a**3.0) / (1.0 + y.abs())
@@ -67,7 +69,7 @@ def _wide() -> al.Function:
     hyp = a.sinh() + b.cosh() + b.tanh() + a.erf()
     c = (a.exp() + b.sqrt().log()) * (trig + hyp) + (a.floor() + b.ceil())
     z = al.const(WEIGHTS).T @ (c / (1.0 + y * y))
-    return {"z": z, "tail": al.scatter(z[:4], np.array([3, 1, 2, 0]), (4,))}
+    return (z, al.scatter(z[:4], np.array([3, 1, 2, 0]), (4,)))
 
   return wide
 
@@ -77,7 +79,7 @@ def _qp_host() -> al.Function:
   mu = al.sym("mu", 2)
   qp = al.qp(P=al.const(np.eye(2)), c=-mu, name="corpus_qp")
   x = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])[0]
-  return al.Function("qp_host", [mu], [al.sumsqr(x)], ["mu"], ["cost"])
+  return al.Function._from_exprs("qp_host", [mu], [al.sumsqr(x)], ["mu"], ["cost"])
 
 
 CORPUS = {

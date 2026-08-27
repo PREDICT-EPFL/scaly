@@ -29,6 +29,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp
 from ..function import Function
+from ..function.tree import flat_tree
 from ..ir.types import SparsityType, TensorType
 from .stats import SolverStats, SolverStatus
 
@@ -142,7 +143,13 @@ class SolverFunction(Function):
       for i, (name, shape) in enumerate(descriptor.output_signature)
     ]
     output_names = [n for n, _ in descriptor.output_signature]
-    super().__init__(descriptor.name, input_exprs, output_exprs, input_names, output_names)
+    self._init_graph(
+      descriptor.name,
+      input_exprs,
+      output_exprs,
+      flat_tree(tuple(input_names), tuple(expr.type for expr in input_exprs)),
+      flat_tree(tuple(output_names), tuple(expr.type for expr in output_exprs)),
+    )
     self.last_status: SolverStatus | None = None
     self.last_stats: SolverStats | None = None
 

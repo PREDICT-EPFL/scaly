@@ -53,19 +53,22 @@ def n_param(n_masses: int) -> int:
   return n_state(n_masses) + N_PARAMS
 
 
-@al.function("chain_link_accel", {"dist": 3, "mass": 1, "spring_d": 1, "rest_len": 1})
-def chain_link_accel_fn(dist, mass, spring_d, rest_len):  # type: ignore[no-untyped-def]
-  return {"accel": (spring_d[0] / mass[0]) * (1.0 - rest_len[0] / al.norm_2(dist)) * dist}
+@al.function(al.G(al.L("dist", 3), al.L("mass", 1), al.L("spring_d", 1), al.L("rest_len", 1)), al.L("accel", ...), name="chain_link_accel")
+def chain_link_accel_fn(inputs):  # type: ignore[no-untyped-def]
+  dist, mass, spring_d, rest_len = inputs
+  return (spring_d[0] / mass[0]) * (1.0 - rest_len[0] / al.norm_2(dist)) * dist
 
 
 @al.function(
-  "chain_mass_accel",
-  {"left": 3, "pos": 3, "right": 3, "mass": 1, "spring_d": 1, "rest_len": 1, "gravity": 1},
+  al.G(al.L("left", 3), al.L("pos", 3), al.L("right", 3), al.L("mass", 1), al.L("spring_d", 1), al.L("rest_len", 1), al.L("gravity", 1)),
+  al.L("accel", ...),
+  name="chain_mass_accel",
 )
-def chain_mass_accel_fn(left, pos, right, mass, spring_d, rest_len, gravity):  # type: ignore[no-untyped-def]
+def chain_mass_accel_fn(inputs):  # type: ignore[no-untyped-def]
+  left, pos, right, mass, spring_d, rest_len, gravity = inputs
   left_accel = chain_link_accel_fn.call([pos - left, mass, spring_d, rest_len])[0]
   right_accel = chain_link_accel_fn.call([right - pos, mass, spring_d, rest_len])[0]
-  return {"accel": right_accel - left_accel + al.stack([0.0, 0.0, gravity[0]])}
+  return right_accel - left_accel + al.stack([0.0, 0.0, gravity[0]])
 
 
 def chain_ode_fn(n_masses: int) -> al.Function:
@@ -90,7 +93,7 @@ def chain_ode_fn(n_masses: int) -> al.Function:
     },
   )
   xdot = al.concat([velocities, u, accel])
-  return al.Function(
+  return al.Function._from_exprs(
     f"chain_ode_M{n_masses}",
     [x, u, mass, spring_d, rest_len, gravity, dt],
     [xdot],
@@ -115,7 +118,7 @@ def chain_step_fn(n_masses: int) -> al.Function:
   k3 = rhs(x + 0.5 * h * k2)
   k4 = rhs(x + h * k3)
   step = x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-  return al.Function(
+  return al.Function._from_exprs(
     f"chain_step_M{n_masses}",
     [x, u, mass, spring_d, rest_len, gravity, dt],
     [step],
@@ -130,7 +133,7 @@ def _eq_stage_fn(n_masses: int) -> al.Function:
   xnext = al.sym("xnext", nx)
   params = al.sym("params", N_PARAMS, diff=False)
   step = chain_step_fn(n_masses).call([z[:nx], z[nx:], *[params[i : i + 1] for i in range(N_PARAMS)]])[0]
-  return al.Function(f"chain_eq_stage_M{n_masses}", [z, xnext, params], [step - xnext], ["z", "xnext", "params"], ["eq"])
+  return al.Function._from_exprs(f"chain_eq_stage_M{n_masses}", [z, xnext, params], [step - xnext], ["z", "xnext", "params"], ["eq"])
 
 
 def _chain_eq_expr(z: al.Expr, p: al.Expr, n_masses: int, horizon: int) -> al.Expr:
@@ -142,7 +145,7 @@ def _chain_eq_expr(z: al.Expr, p: al.Expr, n_masses: int, horizon: int) -> al.Ex
 def chain_eq_function(n_masses: int, horizon: int) -> al.Function:
   z = al.sym("z", n_dec(n_masses, horizon))
   p = al.sym("p", n_param(n_masses), diff=False)
-  return al.Function(f"chain_eq_vmap_M{n_masses}_N{horizon}", [z, p], [_chain_eq_expr(z, p, n_masses, horizon)], ["z", "p"], ["eq"])
+  return al.Function._from_exprs(f"chain_eq_vmap_M{n_masses}_N{horizon}", [z, p], [_chain_eq_expr(z, p, n_masses, horizon)], ["z", "p"], ["eq"])
 
 
 def chain_eq_function_unrolled(n_masses: int, horizon: int) -> al.Function:
@@ -153,7 +156,7 @@ def chain_eq_function_unrolled(n_masses: int, horizon: int) -> al.Function:
   parts = [z[:nx] - p[:nx]]
   for i in range(horizon):
     parts.append(stage.call([z[i * nz : (i + 1) * nz], z[(i + 1) * nz : (i + 1) * nz + nx], p[nx:]])[0])
-  return al.Function(f"chain_eq_M{n_masses}_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
+  return al.Function._from_exprs(f"chain_eq_M{n_masses}_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
 
 def chain_eq_jac_dense_reference(n_masses: int, horizon: int, z: np.ndarray, p: np.ndarray) -> np.ndarray:
@@ -252,7 +255,7 @@ def _objective(z, n_masses: int, horizon: int):  # type: ignore[no-untyped-def]
 def chain_objective_fn(n_masses: int, horizon: int) -> al.Function:
   """The transcribed objective on its own, so its stationary points can be checked directly."""
   z = al.sym("z", n_dec(n_masses, horizon))
-  return al.Function(f"chain_obj_M{n_masses}_N{horizon}", [z], [_objective(z, n_masses, horizon)], ["z"], ["f"])
+  return al.Function._from_exprs(f"chain_obj_M{n_masses}_N{horizon}", [z], [_objective(z, n_masses, horizon)], ["z"], ["f"])
 
 
 def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt"):

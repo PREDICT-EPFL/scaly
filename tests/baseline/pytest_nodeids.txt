@@ -229,6 +229,11 @@ tests/function/test_factory.py::test_jacobian_through_call_node_matches_casadi_m
 tests/function/test_model.py::test_function_call_node_eval
 tests/function/test_model.py::test_function_call_normalizes_raw_constant_args
 tests/function/test_model.py::test_function_signature_and_call_shape_errors
+tests/function/test_tree.py::test_derivatives_preserve_source_trees
+tests/function/test_tree.py::test_function_call_validation_uses_declared_tree
+tests/function/test_tree.py::test_function_declarations_own_names_shapes_and_structure
+tests/function/test_tree.py::test_leaf_shapes_and_group_widths
+tests/function/test_tree.py::test_tree_names_are_unique_and_symbols_follow_structure
 tests/integration/test_stage_transcription.py::test_colored_sparse_jacobian_matches_the_reference_path[1]
 tests/integration/test_stage_transcription.py::test_colored_sparse_jacobian_matches_the_reference_path[2]
 tests/integration/test_stage_transcription.py::test_dense_jacobian_matches_casadi[1]
@@ -445,6 +450,7 @@ tests/test_layering.py::test_module_imports_standalone[alloy.function.api]
 tests/test_layering.py::test_module_imports_standalone[alloy.function.factory]
 tests/test_layering.py::test_module_imports_standalone[alloy.function.model]
 tests/test_layering.py::test_module_imports_standalone[alloy.function.sugar]
+tests/test_layering.py::test_module_imports_standalone[alloy.function.tree]
 tests/test_layering.py::test_module_imports_standalone[alloy.function]
 tests/test_layering.py::test_module_imports_standalone[alloy.ir.expr]
 tests/test_layering.py::test_module_imports_standalone[alloy.ir.expr_spec]

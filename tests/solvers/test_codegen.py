@@ -89,14 +89,14 @@ def test_two_solver_wrappers_in_one_translation_unit() -> None:
   """Two distinct solvers (one sparse, one dense) called from one host
   Function share a single generated TU; their static state must not collide."""
 
-  @al.function("two_qp_host", {"t": (2,)})
+  @al.function(al.L("t", (2,)), al.L("x_sum", ...), name="two_qp_host")
   def host(t):
     qp_a = al.qp(P=np.diag([2.0, 4.0]), c=al.stack([t[0], t[1]]), sparse=True, name="tu_qp_a")
     qp_b = al.qp(P=np.diag([1.0, 1.0]), c=al.stack([t[1], -t[0]]), name="tu_qp_b")
     zeros = [al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0))]
     xa = qp_a.call([*zeros, t])[0]
     xb = qp_b.call([*zeros, t])[0]
-    return {"x_sum": xa + xb}
+    return xa + xb
 
   tv = np.array([1.0, -2.0])
   # qp_a: x = -c / diag(P) = [-0.5, 0.5]; qp_b: x = [-t1, t0] = [2, 1].

@@ -279,7 +279,7 @@ def check_constraint_rows_and_bounds() -> None:
   horizon = 3
   z_sym, xstart_sym = al.sym("z", n_dec(horizon)), al.sym("xstart", NX, diff=False)
   rows, lower, upper = npmpc_constraint_exprs(z_sym, xstart_sym, horizon)
-  fn = al.Function("npmpc_ineq_check", [z_sym, xstart_sym], [rows], ["z", "xstart"], ["g"])
+  fn = al.Function._from_exprs("npmpc_ineq_check", [z_sym, xstart_sym], [rows], ["z", "xstart"], ["g"])
 
   rng = np.random.default_rng(9)
   z = rng.normal(size=n_dec(horizon))

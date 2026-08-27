@@ -57,8 +57,9 @@ CLOSED_LOOP_PAIRS: dict[str, tuple[tuple[str, str | None], ...]] = {
 def _qp_filter() -> al.Function:
   obstacles = np.array([[1.0, 1.0], [-1.0, 1.5], [0.0, -2.0]], dtype=np.float64)
 
-  @al.function("smoke_safety_filter_qp", {"x": (NX,), "u_ref": (NU,)})
-  def safety_filter_qp(x, u_ref):
+  @al.function(al.G(al.L("x", (NX,)), al.L("u_ref", (NU,))), al.L("u", ...), name="smoke_safety_filter_qp")
+  def safety_filter_qp(inputs):
+    x, u_ref = inputs
     cars = al.stack([al.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
     rows, bias = [], []
     for car in range(2):
@@ -74,15 +75,13 @@ def _qp_filter() -> al.Function:
       l_ineq=-al.stack(bias, axis=0),
       u_ineq=al.const(np.full(len(bias), 1e30)),
     )
-    return {
-      "u": qp.call(
-        x0=al.const(np.zeros(NU)),
-        lam_eq0=al.const(np.zeros(0)),
-        lam_ineq0=al.const(np.zeros(len(bias))),
-        x=x,
-        u_ref=u_ref,
-      )[0]
-    }
+    return qp.call(
+      x0=al.const(np.zeros(NU)),
+      lam_eq0=al.const(np.zeros(0)),
+      lam_ineq0=al.const(np.zeros(len(bias))),
+      x=x,
+      u_ref=u_ref,
+    )[0]
 
   return safety_filter_qp
 
@@ -90,8 +89,9 @@ def _qp_filter() -> al.Function:
 def _nlp_filter() -> al.Function:
   obstacles = np.array([[1.0, 1.0], [-1.0, 1.5], [0.0, -2.0]], dtype=np.float64)
 
-  @al.function("smoke_safety_filter_nlp", {"x": (NX,), "u_ref": (NU,)})
-  def safety_filter_nlp(x, u_ref):
+  @al.function(al.G(al.L("x", (NX,)), al.L("u_ref", (NU,))), al.L("u", ...), name="smoke_safety_filter_nlp")
+  def safety_filter_nlp(inputs):
+    x, u_ref = inputs
     u = al.sym("u", NU)
     cars = al.stack([al.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
     rows = []
@@ -108,16 +108,14 @@ def _nlp_filter() -> al.Function:
       l_ineq=al.const(np.zeros(len(rows))),
       u_ineq=al.const(np.full(len(rows), 1e30)),
     )
-    return {
-      "u": nlp.call(
-        x0=al.const(np.zeros(NU)),
-        lam_eq0=al.const(np.zeros(0)),
-        lam_ineq0=al.const(np.zeros(len(rows))),
-        lam_box0=al.const(np.zeros(NU)),
-        x=x,
-        u_ref=u_ref,
-      )[0]
-    }
+    return nlp.call(
+      x0=al.const(np.zeros(NU)),
+      lam_eq0=al.const(np.zeros(0)),
+      lam_ineq0=al.const(np.zeros(len(rows))),
+      lam_box0=al.const(np.zeros(NU)),
+      x=x,
+      u_ref=u_ref,
+    )[0]
 
   return safety_filter_nlp
 

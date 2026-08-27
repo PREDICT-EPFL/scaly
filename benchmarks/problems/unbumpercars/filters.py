@@ -451,8 +451,9 @@ def _world_vel_expr(state: al.Expr, physics: al.Expr) -> tuple[al.Expr, al.Expr,
   return vx_b * theta.cos() - vy_b * theta.sin(), vx_b * theta.sin() + vy_b * theta.cos(), omega
 
 
-@al.function("ctdt_ctfull_ode", {"state": NSTATE, "u": NCTRL, "pw": N_PW, "physics": N_PHYSICS})
-def alloy_ctfull_ode_fn(state, u, pw, physics):  # type: ignore[no-untyped-def]
+@al.function(al.G(al.L("state", NSTATE), al.L("u", NCTRL), al.L("pw", N_PW), al.L("physics", N_PHYSICS)), al.L("xdot", ...), name="ctdt_ctfull_ode")
+def alloy_ctfull_ode_fn(inputs):  # type: ignore[no-untyped-def]
+  state, u, pw, physics = inputs
   max_delta, steering_time_constant = physics[2], physics[3]
   delta = state[6]
   x_dot, y_dot, omega = _world_vel_expr(state, physics)
@@ -462,17 +463,22 @@ def alloy_ctfull_ode_fn(state, u, pw, physics):  # type: ignore[no-untyped-def]
   h = _silu_expr((w0 @ phi + b0).block()).block()
   h = _silu_expr((w1 @ h + b1).block()).block()
   learned = (w2 @ h + b2).block()
-  return {"xdot": al.stack([x_dot, y_dot, omega, learned[0], learned[1], learned[2], delta_dot])}
+  return al.stack([x_dot, y_dot, omega, learned[0], learned[1], learned[2], delta_dot])
 
 
-@al.function("ctdt_ctfull_rk4", {"state": NSTATE, "u": NCTRL, "pw": N_PW, "physics": N_PHYSICS, "dt": 1})
-def alloy_ctfull_rk4_fn(state, u, pw, physics, dt):  # type: ignore[no-untyped-def]
+@al.function(
+  al.G(al.L("state", NSTATE), al.L("u", NCTRL), al.L("pw", N_PW), al.L("physics", N_PHYSICS), al.L("dt", 1)),
+  al.L("next", ...),
+  name="ctdt_ctfull_rk4",
+)
+def alloy_ctfull_rk4_fn(inputs):  # type: ignore[no-untyped-def]
+  state, u, pw, physics, dt = inputs
   h = dt[0]
   k1 = alloy_ctfull_ode_fn.call([state, u, pw, physics])[0]
   k2 = alloy_ctfull_ode_fn.call([state + 0.5 * h * k1, u, pw, physics])[0]
   k3 = alloy_ctfull_ode_fn.call([state + 0.5 * h * k2, u, pw, physics])[0]
   k4 = alloy_ctfull_ode_fn.call([state + h * k3, u, pw, physics])[0]
-  return {"next": (state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)).block()}
+  return (state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)).block()
 
 
 def _smooth_relu_expr(x: al.Expr) -> al.Expr:
@@ -491,15 +497,21 @@ def _unpack_pw_dt_expr(pw: al.Expr) -> tuple[al.Expr, ...]:
   )
 
 
-@al.function("ctdt_pose_dot", {"state": NSTATE, "physics": N_PHYSICS})
-def alloy_pose_dot_fn(state, physics):  # type: ignore[no-untyped-def]
+@al.function(al.G(al.L("state", NSTATE), al.L("physics", N_PHYSICS)), al.L("posedot", ...), name="ctdt_pose_dot")
+def alloy_pose_dot_fn(inputs):  # type: ignore[no-untyped-def]
+  state, physics = inputs
   x_dot, y_dot, omega = _world_vel_expr(state, physics)
   zero = 0.0 * state[3]
-  return {"posedot": al.stack([x_dot, y_dot, omega, zero, zero, zero, zero])}
+  return al.stack([x_dot, y_dot, omega, zero, zero, zero, zero])
 
 
-@al.function("ctdt_dt_mlp_step", {"state": NSTATE, "u": NCTRL, "pw": N_PW_DT, "physics": N_PHYSICS, "dt": 1})
-def alloy_dt_mlp_step_fn(state, u, pw, physics, dt):  # type: ignore[no-untyped-def]
+@al.function(
+  al.G(al.L("state", NSTATE), al.L("u", NCTRL), al.L("pw", N_PW_DT), al.L("physics", N_PHYSICS), al.L("dt", 1)),
+  al.L("next", ...),
+  name="ctdt_dt_mlp_step",
+)
+def alloy_dt_mlp_step_fn(inputs):  # type: ignore[no-untyped-def]
+  state, u, pw, physics, dt = inputs
   """The discrete MLP's one-step map; see ``common.dt_mlp_step_smooth_np``."""
   h_dt = dt[0]
   max_delta, steering_time_constant = physics[2], physics[3]
@@ -515,7 +527,7 @@ def alloy_dt_mlp_step_fn(state, u, pw, physics, dt):  # type: ignore[no-untyped-
   h = _smooth_relu_expr((w1 @ h + b1).block()).block()
   learned = (w2 @ h + b2).block()
   delta_next = delta + h_dt * (u[1] * max_delta - delta) / steering_time_constant
-  return {"next": al.stack([pose[0], pose[1], pose[2], learned[0], learned[1] + delta_next, learned[2], delta_next])}
+  return al.stack([pose[0], pose[1], pose[2], learned[0], learned[1] + delta_next, learned[2], delta_next])
 
 
 def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al.Function:
@@ -582,7 +594,7 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
   diff = u - u_des
   weights = al.const(np.tile(np.asarray(filt_cfg.R, dtype=np.float64), ncars))
   cost = (al.dot(diff, weights * diff) + filt_cfg.slack_weight * slack.sum()).scalar()
-  return al.Function(
+  return al.Function._from_exprs(
     f"ctdt_alloy_oracle_N{ncars}_{'walls' if loop_cfg.arena_avoidance else 'pairs'}",
     [z, bar_x, u_des, pw, physics, dt],
     [cost, g],

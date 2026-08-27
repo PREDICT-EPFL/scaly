@@ -48,10 +48,10 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
   mu = al.sym("mu", 2)
   qp = al.qp(P=al.const(np.eye(2)), c=-mu)
 
-  @al.function("multi_out", {"mu": (2,)})
+  @al.function(al.L("mu", (2,)), al.G(al.L("x", ...), al.L("cost", ...), al.L("lam_box", ...)), name="multi_out")
   def multi_out(mu):
     out = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])
-    return {"x": out[0], "cost": out[1], "lam_box": out[4]}
+    return (out[0], out[1], out[4])
 
   from alloy.passes.lowering import lower_function, main_proc
   from alloy.ir.program import ProgramOp
@@ -66,7 +66,7 @@ def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   mu = al.sym("mu", 2)
   qp = al.qp(P=al.const(np.eye(2)), c=-mu, name="nested_stats_qp")
   out = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])
-  host = al.Function("nested_stats_host", [mu], [out[0]], ["mu"], ["x"])
+  host = al.Function._from_exprs("nested_stats_host", [mu], [out[0]], ["mu"], ["x"])
   np.testing.assert_allclose(host(np.array([0.5, -0.25])), [0.5, -0.25], atol=1e-8)
   stats = host.solver_stats("nested_stats_qp")
   assert stats.version == al.ALLOY_SOLVER_STATS_VERSION
@@ -78,6 +78,6 @@ def test_duplicate_nested_solver_names_fail_before_c_compilation() -> None:
   mu = al.sym("mu", 2)
   qps = [al.qp(P=np.eye(2), c=-mu) for _ in range(2)]
   outs = [qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu]) for qp in qps]
-  host = al.Function("duplicate_solver_host", [mu], [outs[0][0], outs[1][0]], ["mu"], ["x0", "x1"])
+  host = al.Function._from_exprs("duplicate_solver_host", [mu], [outs[0][0], outs[1][0]], ["mu"], ["x0", "x1"])
   with pytest.raises(ValueError, match="duplicate solver symbol 'qp_piqp'"):
     render_c_source(host)

@@ -12,9 +12,10 @@ from alloy.ad.sparse import SparseJacobian
 
 
 def test_scoped_function_decorator_builds_fresh_named_function() -> None:
-  @al.function("scoped", {"x": 3, "p": al.TensorType((3,), diff=False)})
-  def scoped(x, p):
-    return {"y": (x + p).sin()}
+  @al.function(al.G(al.L("x", 3), al.L("p", al.TensorType((3,), diff=False))), al.L("y", ...), name="scoped")
+  def scoped(inputs):
+    x, p = inputs
+    return (x + p).sin()
 
   assert isinstance(scoped, al.Function)
   assert scoped.name == "scoped"
@@ -29,7 +30,7 @@ def test_scoped_function_decorator_builds_fresh_named_function() -> None:
 
 
 def test_scoped_function_decorator_outputs_default_names() -> None:
-  @al.function("pair", {"x": 2})
+  @al.function(al.L("x", 2), al.G(al.L("out0", ...), al.L("out1", ...)), name="pair")
   def pair(x):
     return x, x.sum()
 
@@ -42,7 +43,7 @@ def test_scoped_function_decorator_outputs_default_names() -> None:
 def test_derivative_names_dispatch_for_expression_and_function_inputs() -> None:
   x = al.sym("x", 2)
   y = (x * x).sum()
-  fn = al.Function("f", [x], [y], ["x"], ["y"])
+  fn = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
   builders = (al.jacobian, al.gradient, al.hessian, al.sparse_jacobian, al.sparse_hessian)
   for build in builders:
@@ -89,7 +90,7 @@ def test_factory_specs_are_frozen_and_hessian_names_are_doubled() -> None:
 def test_gradient_convenience_api_matches_factory() -> None:
   x = al.sym("x", 3)
   y = (x.sin() + x * x).sum()
-  f = al.Function("f", [x], [y], ["x"], ["y"])
+  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
   g_api = al.gradient(f, "y", "x")
   g_factory = f.factory("g", ["x"], [al.factory.Grad("y", "x")])
@@ -103,7 +104,7 @@ def test_gradient_convenience_api_matches_factory() -> None:
 def test_forward_convenience_api_matches_factory() -> None:
   x = al.sym("x", 2)
   y = al.stack([x[0] * x[1], x[0].sin()])
-  f = al.Function("f", [x], [y], ["x"], ["y"])
+  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
   fwd_api = al.forward(f, "y", "x")
   fwd_factory = f.factory("fwd", ["x", "fwd:x"], [al.factory.Fwd("y", "x")])
@@ -118,7 +119,7 @@ def test_forward_convenience_api_matches_factory() -> None:
 def test_adjoint_convenience_api_matches_factory() -> None:
   x = al.sym("x", 2)
   y = al.stack([x[0] * x[1], x[0].sin()])
-  f = al.Function("f", [x], [y], ["x"], ["y"])
+  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
   adj_api = al.adjoint(f, "y", "x")
   adj_factory = f.factory("adj", ["x", "lam:y"], [al.factory.Adj("y", "x")])
@@ -133,7 +134,7 @@ def test_adjoint_convenience_api_matches_factory() -> None:
 def test_seeded_factory_outputs_require_seed_inputs() -> None:
   x = al.sym("x", 2)
   y = x * x
-  f = al.Function("f", [x], [y], ["x"], ["y"])
+  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
   for spec, missing in [(al.factory.Fwd("y", "x"), "fwd:x"), (al.factory.Adj("y", "x"), "lam:y")]:
     try:
@@ -147,7 +148,7 @@ def test_seeded_factory_outputs_require_seed_inputs() -> None:
 def test_factory_unknown_names_report_value_errors() -> None:
   x = al.sym("x", 2)
   y = x * x
-  f = al.Function("f", [x], [y], ["x"], ["y"])
+  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
   cases = [
     (lambda: f.factory("bad", ["missing"], ["y"]), "unknown factory inputs: ['missing']"),
@@ -170,9 +171,9 @@ def test_lagrangian_hessian_convenience_api() -> None:
   x = al.sym("x", 2)
   f_expr = x.sin().sum()
   g_expr = x * x
-  nlp = al.Function("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
+  nlp = al.Function._from_exprs("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
 
-  h_api = al.lagrangian_hessian(nlp, ["f", "g"], "x")
+  h_api = al.lagrangian_hessian(nlp, "x")
   h_factory = nlp.factory("h", ["x", "lam:f", "lam:g"], [al.factory.Hess("gamma", "x")], aux={"gamma": ["f", "g"]})
 
   xv = np.array([0.2, 0.5])

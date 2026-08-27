@@ -59,7 +59,7 @@ def test_devicespec_parse_and_str() -> None:
 def test_function_with_device_repr_and_lower_diagnostic() -> None:
   x = al.sym("x", 3)
   y = x.sum()
-  fn = al.Function("f", [x], [y], ["x"], ["y"])
+  fn = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
   assert fn.device.kind == "host"
   assert "device=" not in repr(fn)
   gpu = fn.with_device("cuda:0")
@@ -76,17 +76,17 @@ def test_backend_capability_table_rejects_unsupported_dtype() -> None:
   x = al.sym("x", 3, dtype=dtypes.float64)
   y = x.sum()
   with pytest.raises(ValueError, match="cannot lower dtype float64"):
-    al.Function("f", [x], [y], ["x"], ["y"], device="metal:0")  # Metal has no float64
+    al.Function._from_exprs("f", [x], [y], ["x"], ["y"], device="metal:0")  # Metal has no float64
   # but float32 on metal is fine
   x32 = al.sym("x", 3, dtype=dtypes.float32)
   y32 = x32.sum()
-  al.Function("f32", [x32], [y32], ["x"], ["y"], device="metal:0")
+  al.Function._from_exprs("f32", [x32], [y32], ["x"], ["y"], device="metal:0")
 
 
 def test_float32_construction_keeps_dtype_metadata() -> None:
   x = al.sym("x", 3, dtype=dtypes.float32)
   y = (x * x).sum()
-  fn = al.Function("f32", [x], [y], ["x"], ["y"])
+  fn = al.Function._from_exprs("f32", [x], [y], ["x"], ["y"])
   assert fn.inputs[0].type.dtype == dtypes.float32
   assert fn.outputs[0].type.dtype == dtypes.float32
 

@@ -8,6 +8,7 @@ import alloy.codegen as codegen
 from alloy.codegen import aot
 from alloy.function.factory import Adj, DerivSpec, Fwd, Grad, Hess, Jac, SpHess, SpJac
 from alloy.function.model import Function
+from alloy.function.tree import G, L, Tree
 from alloy.ir.expr import Expr, ExprOp
 from alloy.ir.expr_spec import spec_expr
 from alloy.ir.program import ProgramNode, ProgramOp
@@ -20,6 +21,13 @@ def test_public_exports_are_canonical() -> None:
   assert al.Expr is Expr
   assert al.ExprOp is ExprOp
   assert al.Function is Function
+  assert al.L is L
+  assert al.G is G
+  assert not hasattr(al, "Tree")
+  assert not hasattr(al, "Buffer")
+  assert {"L", "G"} <= set(al.__all__)
+  function_module = __import__("alloy.function", fromlist=["Tree"])
+  assert function_module.Tree is Tree
   factory_hints = get_type_hints(Function.factory)
   assert factory_hints["outputs"] == Sequence[str | DerivSpec]
   assert factory_hints["return"] is Function

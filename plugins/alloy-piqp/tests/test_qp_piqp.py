@@ -130,12 +130,12 @@ def test_nested_qp_in_alloy_function() -> None:
   """The safety-filter assembly pattern: build QP data symbolically and wrap
   the solve as a node inside a larger ``Function``."""
 
-  @al.function("track_qp", {"mu": (2,)})
+  @al.function(al.L("mu", (2,)), al.G(al.L("x", ...), al.L("cost", ...)), name="track_qp")
   def track_qp(mu):
     # min 0.5 |x - mu|^2  -> solution is mu itself
     qp = al.qp(P=al.const(np.eye(2)), c=-mu)
     out = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])
-    return {"x": out[0], "cost": out[1]}
+    return (out[0], out[1])
 
   for mu_val in [np.array([0.5, -1.2]), np.zeros(2), np.array([3.0, 2.0])]:
     x, cost = track_qp(mu_val)
@@ -148,12 +148,12 @@ def test_nested_qp_in_alloy_function() -> None:
 def test_nested_qp_postprocessed() -> None:
   """Combine solver output with downstream symbolic math."""
 
-  @al.function("squared_norm_via_qp", {"mu": (2,)})
+  @al.function(al.L("mu", (2,)), al.L("y", ...), name="squared_norm_via_qp")
   def sq_norm(mu):
     qp = al.qp(P=al.const(np.eye(2)), c=-mu)
     out = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu])
     x_star = out[0]
-    return {"y": al.dot(x_star, x_star)}
+    return al.dot(x_star, x_star)
 
   mu_val = np.array([1.5, -0.3])
   y = sq_norm(mu_val)
@@ -164,14 +164,14 @@ def test_nested_qp_postprocessed() -> None:
 def test_nested_qp_with_general_inequality() -> None:
   """Two-sided general inequality inside a nested QP."""
 
-  @al.function("constrained_filter", {"u_ref": (2,)})
+  @al.function(al.L("u_ref", (2,)), al.L("u", ...), name="constrained_filter")
   def filter_fn(u_ref):
     G = al.const(np.array([[1.0, 1.0]]))
     l_ineq = al.const(np.array([-0.5]))
     u_ineq = al.const(np.array([0.5]))
     qp = al.qp(P=al.const(np.eye(2)), c=-u_ref, G_ineq=G, l_ineq=l_ineq, u_ineq=u_ineq)
     out = qp.call([al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(1)), u_ref])
-    return {"u": out[0]}
+    return out[0]
 
   # u_ref = (1, 1) is infeasible -> the QP projects onto the band.
   u = filter_fn(np.array([1.0, 1.0]))
@@ -185,8 +185,9 @@ def test_nested_qp_with_general_inequality() -> None:
 def test_nested_qp_jit_compiles_through_piqp() -> None:
   """JIT path: render C that links against libpiqpc and drives the solve."""
 
-  @al.function("safety_filter", {"x": (2,), "u_ref": (2,)})
-  def safety_filter(x, u_ref):
+  @al.function(al.G(al.L("x", (2,)), al.L("u_ref", (2,))), al.L("u", ...), name="safety_filter")
+  def safety_filter(inputs):
+    x, u_ref = inputs
     P = al.const(np.eye(2))
     c = -u_ref
     G = al.stack([al.stack([x[0], x[1]], axis=0)], axis=0)
@@ -201,7 +202,7 @@ def test_nested_qp_jit_compiles_through_piqp() -> None:
       x=x,
       u_ref=u_ref,
     )
-    return {"u": out[0]}
+    return out[0]
 
   u = safety_filter(np.array([1.0, 1.0]), np.array([0.5, 0.5]))
   # Unconstrained min is u_ref=(0.5,0.5); G*u = 1 = upper bound -> on boundary.
@@ -226,6 +227,6 @@ def test_nested_qp_call_keyword_form() -> None:
     u_ref=u_ref,
   )
   assert len(out_exprs) == len(qp.output_names)
-  wrapped = al.Function("wrapped", [u_ref], [out_exprs[0]], ["u_ref"], ["u"])
+  wrapped = al.Function._from_exprs("wrapped", [u_ref], [out_exprs[0]], ["u_ref"], ["u"])
   result = wrapped(np.array([1.5, -0.3]))
   np.testing.assert_allclose(result, [1.5, -0.3], atol=1e-7)

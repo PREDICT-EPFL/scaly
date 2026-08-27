@@ -59,14 +59,16 @@ def _rk4(x, u, params):
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@al.function("bicycle_stage_initial", {"z": NZ, "p": NX})
-def stage_initial(z, p):
-  return {"eq": z[:NX] - p[:NX]}
+@al.function(al.G(al.L("z", NZ), al.L("p", NX)), al.L("eq", ...), name="bicycle_stage_initial")
+def stage_initial(inputs):
+  z, p = inputs
+  return z[:NX] - p[:NX]
 
 
-@al.function("bicycle_stage_interstage", {"z": NZ, "znext": NZ, "params": N_PARAMS})
-def stage_interstage(z, znext, params):
-  return {"eq": _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]}
+@al.function(al.G(al.L("z", NZ), al.L("znext", NZ), al.L("params", N_PARAMS)), al.L("eq", ...), name="bicycle_stage_interstage")
+def stage_interstage(inputs):
+  z, znext, params = inputs
+  return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
 
 
 def bicycle_eq_function(horizon: int) -> al.Function:
@@ -77,7 +79,7 @@ def bicycle_eq_function(horizon: int) -> al.Function:
   parts = [stage_initial.call([z[:NZ], p[:NX]])[0]]
   for i in range(horizon):
     parts.append(stage_interstage.call([z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], params])[0])
-  return al.Function(f"bicycle_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
+  return al.Function._from_exprs(f"bicycle_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
 
 def bicycle_eq_function_vmap(horizon: int) -> al.Function:
@@ -90,7 +92,7 @@ def bicycle_eq_function_vmap(horizon: int) -> al.Function:
     length=horizon,
     inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
   )
-  return al.Function(f"bicycle_eq_vmap_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+  return al.Function._from_exprs(f"bicycle_eq_vmap_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
 
 
 def ca_bicycle_eq_jac(horizon: int, name: str = "ca_bicycle_eq_jac", sym_t=None):
@@ -197,9 +199,9 @@ def test_colored_sparse_jacobian_matches_the_reference_path(horizon: int) -> Non
   fn = bicycle_eq_function(horizon)
   colored = al.sparse_jacobian_colored(fn.outputs[0], fn.inputs[0])
   reference = al.sparse_jacobian_reference(fn.outputs[0], fn.inputs[0])
-  colored_fn = al.Function("bicycle_spjac_colored", fn.inputs, [colored.values], fn.input_names, ["colored"])
-  reference_fn = al.Function("bicycle_spjac_reference", fn.inputs, [reference.values], fn.input_names, ["reference"])
-  compare = al.Function("bicycle_spjac_compare", fn.inputs, [colored.values, reference.values], fn.input_names, ["colored", "reference"])
+  colored_fn = al.Function._from_exprs("bicycle_spjac_colored", fn.inputs, [colored.values], fn.input_names, ["colored"])
+  reference_fn = al.Function._from_exprs("bicycle_spjac_reference", fn.inputs, [reference.values], fn.input_names, ["reference"])
+  compare = al.Function._from_exprs("bicycle_spjac_compare", fn.inputs, [colored.values, reference.values], fn.input_names, ["colored", "reference"])
   zv, pv = _sample(horizon, 2)
   assert colored.sparsity == reference.sparsity
   assert len(topo(colored_fn.outputs)) < len(topo(reference_fn.outputs))

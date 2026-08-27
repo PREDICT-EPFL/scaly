@@ -15,10 +15,10 @@ def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[al.Fun
   if shared:
     s = al.sym("s", 1)
     hidden = al.stack([x[0] * x[1] + s[0] * x[0], x[0] - 0.4 * x[1] + s[0] * x[1]])
-    piece = al.Function("mapped_sphess_shared_piece", [x, s], [al.stack([(hidden.tanh() ** 2).sum()])], ["x", "s"], ["g"])
+    piece = al.Function._from_exprs("mapped_sphess_shared_piece", [x, s], [al.stack([(hidden.tanh() ** 2).sum()])], ["x", "s"], ["g"])
   else:
     hidden = al.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
-    piece = al.Function("mapped_sphess_piece", [x], [al.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
+    piece = al.Function._from_exprs("mapped_sphess_piece", [x], [al.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
 
   z = al.sym("z", 2 * length + int(shared))
   specs = [(z, 0, 2), *(((z, 2 * length, 0),) if shared else ())]
@@ -30,8 +30,8 @@ def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[al.Fun
   unrolled = al.concat(calls)
   f = (z * z).sum()
   return (
-    al.Function(f"mapped_sphess_{length}_{int(shared)}", [z], [f, mapped], ["z"], ["f", "g"]),
-    al.Function(f"unrolled_sphess_{length}_{int(shared)}", [z], [f, unrolled], ["z"], ["f", "g"]),
+    al.Function._from_exprs(f"mapped_sphess_{length}_{int(shared)}", [z], [f, mapped], ["z"], ["f", "g"]),
+    al.Function._from_exprs(f"unrolled_sphess_{length}_{int(shared)}", [z], [f, unrolled], ["z"], ["f", "g"]),
   )
 
 
@@ -134,7 +134,7 @@ def test_jacobian_sparsity_tracks_concat_axis_layout() -> None:
 def test_sparse_hessian_factory_returns_compact_values_with_sparsity_metadata() -> None:
   x = al.sym("x", 3)
   y = x[0] * x[0] + x[1] * x[2]
-  f = al.Function("f", [x], [y], ["x"], ["y"])
+  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
   shf = al.sparse_hessian(f, "y", "x")
   xv = np.array([2.0, 3.0, 4.0])
 
@@ -161,7 +161,7 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
   assert triangle_expr.coloring_width == selected_expr.coloring_width == full_expr.coloring_width
   assert selected_expr._compressed is full_expr._compressed
   np.testing.assert_array_equal(selected_expr._recovery, triangle_expr._recovery)
-  value_fn = al.Function(
+  value_fn = al.Function._from_exprs(
     f"triangle_expr_{triangle}",
     [x],
     [full_expr.values, triangle_expr.values, selected_expr.values],
@@ -172,7 +172,7 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
   np.testing.assert_allclose(triangle_values, full_values[keep], rtol=1e-10, atol=1e-10)
   np.testing.assert_allclose(selected_values, triangle_values, rtol=1e-10, atol=1e-10)
 
-  fn = al.Function("triangle_fn", [x], [y], ["triangle_x"], ["y"])
+  fn = al.Function._from_exprs("triangle_fn", [x], [y], ["triangle_x"], ["y"])
   full_fn = al.sparse_hessian(fn, "y", "triangle_x", name=f"triangle_fn_full_{triangle}")
   triangle_fn = al.sparse_hessian(fn, "y", "triangle_x", name=f"triangle_fn_{triangle}", triangle=triangle)
   assert full_fn.output_names == triangle_fn.output_names == ("sphess_y_triangle_x_triangle_x",)
@@ -193,8 +193,8 @@ def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
   x = al.sym("x", 2)
   f_expr = x[0] * x[0]
   g_expr = al.stack([x[0] * x[1], x[1] * x[1]])
-  nlp = al.Function("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
-  shf = al.sparse_lagrangian_hessian(nlp, ["f", "g"], "x")
+  nlp = al.Function._from_exprs("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
+  shf = al.sparse_lagrangian_hessian(nlp, "x")
 
   assert shf.input_names == ("x", "lam:f", "lam:g")
   assert shf.output_names == ("sphess_gamma_x_x",)
@@ -317,7 +317,7 @@ def test_sparse_hessian_rejects_invalid_triangle(triangle: object) -> None:
   invalid_triangle = cast(Triangle, triangle)
   with pytest.raises(ValueError, match="triangle must be one of"):
     al.sparse_hessian(y, x, triangle=invalid_triangle)
-  fn = al.Function("invalid_triangle", [x], [y], ["invalid_triangle_x"], ["y"])
+  fn = al.Function._from_exprs("invalid_triangle", [x], [y], ["invalid_triangle_x"], ["y"])
   with pytest.raises(ValueError, match="triangle must be one of"):
     al.sparse_hessian(fn, "y", "invalid_triangle_x", triangle=invalid_triangle)
 
@@ -325,7 +325,7 @@ def test_sparse_hessian_rejects_invalid_triangle(triangle: object) -> None:
 def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:
   x = al.sym("x", 4)
   y = al.stack([x[0], x[2:4].sum(), x[1]])
-  f = al.Function("f", [x], [y], ["x"], ["y"])
+  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
   spjf = al.sparse_jacobian(f, "y", "x")
   xv = np.array([1.0, 2.0, 3.0, 4.0])
 
@@ -340,7 +340,7 @@ def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:
 def test_function_rejects_sparse_output_metadata_size_mismatch() -> None:
   x = al.sym("x", 2)
   try:
-    _ = al.Function("bad", [x], [x], ["x"], ["sp"], output_sparsities=[al.SparsityType.dense((2, 2))])
+    _ = al.Function._from_exprs("bad", [x], [x], ["x"], ["sp"], output_sparsities=[al.SparsityType.dense((2, 2))])
   except ValueError as e:
     assert "sparse output metadata for 'sp' has 4 nonzeros" in str(e)
     assert "output shape (2,) has 2 entries" in str(e)
@@ -351,10 +351,10 @@ def test_function_rejects_sparse_output_metadata_size_mismatch() -> None:
 def test_sparse_jacobian_preserves_constructed_local_coloring_width() -> None:
   a = al.sym("a", 1)
   b = al.sym("b", 1)
-  piece = al.Function("two_formal_piece", [a, b], [al.stack([a, b])], ["a", "b"], ["y"])
+  piece = al.Function._from_exprs("two_formal_piece", [a, b], [al.stack([a, b])], ["a", "b"], ["y"])
   z = al.sym("z", 5)
   mapped_expr = al.vmap(piece, 4, [(z, 0, 1), (z, 1, 1)])
-  mapped = al.Function("two_formal_mapped", [z], [mapped_expr], ["z"], ["y"])
+  mapped = al.Function._from_exprs("two_formal_mapped", [z], [mapped_expr], ["z"], ["y"])
   sj = al.sparse_jacobian(mapped_expr, z)
 
   np.testing.assert_array_equal(sj.sparsity.to_mask(), al.jacobian_sparsity(mapped_expr, z).to_mask())
@@ -370,7 +370,7 @@ def test_colored_sparse_jacobian_matches_dense_gather_reference() -> None:
   y = al.stack([x[0] * x[2], x[2:4].sum(), x[1].sin()])
   colored = al.sparse_jacobian_colored(y, x)
   reference = al.sparse_jacobian_reference(y, x)
-  f = al.Function("sj_compare", [x], [colored.values, reference.values], ["x"], ["colored", "reference"])
+  f = al.Function._from_exprs("sj_compare", [x], [colored.values, reference.values], ["x"], ["colored", "reference"])
   xv = np.array([1.0, 2.0, 3.0, 4.0])
 
   assert colored.sparsity == reference.sparsity
@@ -382,7 +382,7 @@ def test_sparse_jacobian_values_round_trip_to_dense() -> None:
   x = al.sym("x", 4)
   y = al.stack([x[0], x[2:4].sum(), x[1]])
   sj = al.sparse_jacobian(y, x)
-  f = al.Function("sj", [x], [sj.values, sj.to_dense()], ["x"], ["values", "dense"])
+  f = al.Function._from_exprs("sj", [x], [sj.values, sj.to_dense()], ["x"], ["values", "dense"])
   xv = np.array([1.0, 2.0, 3.0, 4.0])
 
   assert sj.sparsity.rows == (0, 1, 1, 2)
@@ -424,7 +424,7 @@ def test_jacobian_sparsity_for_matmul_and_call_chain_rule() -> None:
   np.testing.assert_array_equal(al.jacobian_sparsity(y, x).to_mask(), np.ones((2, 3), dtype=bool))
 
   u = al.sym("u", 2)
-  inner = al.Function("inner", [u], [al.stack([u[0], u[0] + u[1]])], ["u"], ["y"])
+  inner = al.Function._from_exprs("inner", [u], [al.stack([u[0], u[0] + u[1]])], ["u"], ["y"])
   z = al.sym("z", 3)
   (inner_z,) = inner.call([al.gather(z, [2, 0])])
 
@@ -441,14 +441,14 @@ def test_jacobian_sparsity_for_matmul_and_call_chain_rule() -> None:
 
 def test_dependency_composition_keeps_exactly_256_shared_paths() -> None:
   u = al.sym("u", 256)
-  inner = al.Function("shared_256_inner", [u], [u.sum()], ["u"], ["y"])
+  inner = al.Function._from_exprs("shared_256_inner", [u], [u.sum()], ["u"], ["y"])
   x = al.sym("x", 1)
   (y,) = inner.call([x + np.zeros(256)])
 
   np.testing.assert_array_equal(al.jacobian_sparsity(y, x).to_mask(), np.ones((1, 1), dtype=bool))
   colored = al.sparse_jacobian_colored(y, x)
   reference = al.sparse_jacobian_reference(y, x)
-  f = al.Function("shared_256_jac", [x], [colored.values, reference.values], ["x"], ["colored", "reference"])
+  f = al.Function._from_exprs("shared_256_jac", [x], [colored.values, reference.values], ["x"], ["colored", "reference"])
   colored_values, reference_values = f(np.array([2.0]))
   np.testing.assert_allclose(colored_values, np.array([256.0]))
   np.testing.assert_allclose(colored_values, reference_values)
@@ -465,7 +465,7 @@ def test_mapped_sparsity_storage_grows_with_nonzeros_not_global_mask() -> None:
 
   def mapped_mask(length: int):
     u = al.sym(f"u_{length}", 2)
-    piece = al.Function(f"storage_piece_{length}", [u], [al.stack([u.sum()])], ["u"], ["y"])
+    piece = al.Function._from_exprs(f"storage_piece_{length}", [u], [al.stack([u.sum()])], ["u"], ["y"])
     z = al.sym(f"z_{length}", 2 * length)
     return _jac_mask(al.vmap(piece, length, [(z, 0, 2)]), z, {})
 
@@ -576,7 +576,7 @@ def test_shared_fill_star_hessian_matches_one_sided_and_dense(monkeypatch: pytes
     assert one_sided.coloring_width is not None
     star_widths.append(star.coloring_width)
     one_sided_widths.append(one_sided.coloring_width)
-    fn = al.Function(
+    fn = al.Function._from_exprs(
       f"shared_fill_differential_{length}",
       [z, lam_f, lam_g],
       [star.values, one_sided.values, star.to_dense(), one_sided.to_dense(), dense],

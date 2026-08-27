@@ -9,7 +9,7 @@ from alloy.viz import clear_recordings, recordings, unvisualize_function, visual
 def _fun() -> Function:
   x = sym("x", (2,))
   y = x * x + 1.0
-  return Function("square_plus_one", [x], [y], output_names=["y"])
+  return Function._from_exprs("square_plus_one", [x], [y], output_names=["y"])
 
 
 def test_expr_and_program_assembly():

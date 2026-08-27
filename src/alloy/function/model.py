@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Mapping, Sequence, cast
 
 import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, linear_combination, topo
 from ..ir.types import DeviceSpec, SparsityType, TensorType, backend_supports
+from .tree import Tree, flat_tree
 
 if TYPE_CHECKING:
   from ..solvers.stats import SolverStats
@@ -51,7 +52,7 @@ class DerivSpec:
     return outputs[name]
 
 
-class Function:
+class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
   """A named expression graph: named inputs, named outputs, and the computation between them.
 
   ``Function`` is the unit of three things at once. **Composition** — ``fn.call(args)`` puts a
@@ -70,6 +71,26 @@ class Function:
   def __init__(
     self,
     name: str,
+    fn: Callable[[SymbolicInputs], SymbolicOutputs],
+    inputs: Tree[SymbolicInputs, NumericalInputs],
+    outputs: Tree[SymbolicOutputs, NumericalOutputs],
+    *,
+    device: DeviceSpec | str | None = None,
+  ) -> None:
+    symbolic_inputs = inputs.symbols()
+    input_exprs = inputs.flatten_symbolic(symbolic_inputs, f"{name} inputs")
+    symbolic_outputs = fn(symbolic_inputs)
+    try:
+      output_exprs = outputs.flatten_symbolic(symbolic_outputs, f"{name} outputs")
+    except ValueError as exc:
+      raise TypeError(str(exc)) from exc
+    output_types = outputs.resolved(tuple(expr.type for expr in output_exprs))
+    self._init_graph(name, input_exprs, output_exprs, inputs, outputs.with_types(output_types), device=device)
+
+  @classmethod
+  def _from_exprs(
+    cls,
+    name: str,
     inputs: Sequence[Expr],
     outputs: Sequence[Expr],
     input_names: Sequence[str] | None = None,
@@ -77,10 +98,47 @@ class Function:
     output_sparsities: Sequence[SparsityType | None] | None = None,
     device: DeviceSpec | str | None = None,
     output_coloring_widths: Sequence[int | None] | None = None,
-  ):
+  ) -> Function[Any, Any, Any, Any]:
+    inputs = tuple(inputs)
+    outputs = tuple(outputs)
+    raw_input_names = tuple(input_names) if input_names is not None else tuple(expr.name for expr in inputs)
+    if any(name is None for name in raw_input_names):
+      raise ValueError("all inputs must have names")
+    resolved_input_names = cast(tuple[str, ...], raw_input_names)
+    resolved_output_names = tuple(output_names) if output_names is not None else tuple(expr.name or f"out{i}" for i, expr in enumerate(outputs))
+    if len(resolved_input_names) != len(inputs):
+      raise ValueError(f"expected {len(inputs)} input names, got {len(resolved_input_names)}")
+    if len(resolved_output_names) != len(outputs):
+      raise ValueError(f"expected {len(outputs)} output names, got {len(resolved_output_names)}")
+    instance = cls.__new__(cls)
+    instance._init_graph(
+      name,
+      inputs,
+      outputs,
+      flat_tree(resolved_input_names, tuple(expr.type for expr in inputs)),
+      flat_tree(resolved_output_names, tuple(expr.type for expr in outputs)),
+      output_sparsities,
+      device,
+      output_coloring_widths,
+    )
+    return instance
+
+  def _init_graph(
+    self,
+    name: str,
+    inputs: Sequence[Expr],
+    outputs: Sequence[Expr],
+    input_tree: Tree[Any, Any],
+    output_tree: Tree[Any, Any],
+    output_sparsities: Sequence[SparsityType | None] | None = None,
+    device: DeviceSpec | str | None = None,
+    output_coloring_widths: Sequence[int | None] | None = None,
+  ) -> None:
     self.name = name
     self.inputs = tuple(inputs)
     self.outputs = tuple(outputs)
+    self.input_tree = input_tree
+    self.output_tree = output_tree
     self.device: DeviceSpec = DeviceSpec.parse(device)
     for expr in (*self.inputs, *self.outputs):
       if not backend_supports(self.device, expr.type.dtype):
@@ -88,13 +146,8 @@ class Function:
           f"function {name!r} placed on {self.device} cannot lower dtype {expr.type.dtype} (input/output '{expr.name or '<?>'}'). "
           f"Use a different device or cast to a supported dtype."
         )
-    raw_input_names = tuple(input_names) if input_names is not None else tuple(i.name for i in inputs)
-    if any(n is None for n in raw_input_names):
-      raise ValueError("all inputs must have names")
-    self.input_names: tuple[str, ...] = cast("tuple[str, ...]", raw_input_names)
-    self.output_names: tuple[str, ...] = (
-      tuple(output_names) if output_names is not None else tuple(o.name or f"out{i}" for i, o in enumerate(outputs))
-    )
+    self.input_names = input_tree.names
+    self.output_names = output_tree.names
     self.output_sparsities = tuple(output_sparsities) if output_sparsities is not None else (None,) * len(self.outputs)
     self.output_coloring_widths = tuple(output_coloring_widths) if output_coloring_widths is not None else (None,) * len(self.outputs)
     if len(self.input_names) != len(self.inputs):
@@ -130,16 +183,27 @@ class Function:
     so debug output and verifier diagnostics can see them, but compilation
     only succeeds for placements with a registered backend.
     """
-    return Function(
+    instance = type(self).__new__(type(self))
+    instance._init_graph(
       self.name,
       self.inputs,
       self.outputs,
-      self.input_names,
-      self.output_names,
+      self.input_tree,
+      self.output_tree,
       self.output_sparsities,
-      device=device,
-      output_coloring_widths=self.output_coloring_widths,
+      device,
+      self.output_coloring_widths,
     )
+    return instance
+
+  def _with_trees(self, input_tree: Tree[Any, Any], output_tree: Tree[Any, Any]) -> Function[Any, Any, Any, Any]:
+    if input_tree.names != self.input_names or input_tree.types != tuple(expr.type for expr in self.inputs):
+      raise ValueError("replacement input tree does not match the Function graph")
+    if output_tree.names != self.output_names or output_tree.types != tuple(expr.type for expr in self.outputs):
+      raise ValueError("replacement output tree does not match the Function graph")
+    self.input_tree = input_tree
+    self.output_tree = output_tree
+    return self
 
   def input_map(self) -> dict[str, Expr]:
     return dict(zip(self.input_names, self.inputs, strict=True))
@@ -149,6 +213,26 @@ class Function:
 
   def output_sparsity_map(self) -> dict[str, SparsityType | None]:
     return dict(zip(self.output_names, self.output_sparsities, strict=True))
+
+  @property
+  def input_shapes(self) -> tuple[tuple[int, ...], ...]:
+    """The input leaf shapes in C-signature order."""
+    return tuple(expr.shape for expr in self.inputs)
+
+  @property
+  def output_shapes(self) -> tuple[tuple[int, ...], ...]:
+    """The output leaf shapes in C-signature order."""
+    return tuple(expr.shape for expr in self.outputs)
+
+  def symbolic_call(self, inputs: SymbolicInputs, /) -> SymbolicOutputs:
+    """Embed a call node using the declared symbolic input and output structures."""
+    actuals = self.input_tree.flatten_symbolic(inputs, f"{self.name}.symbolic_call")
+    return cast(SymbolicOutputs, self.output_tree.unflatten(self.call(actuals)))
+
+  def numerical_call(self, inputs: NumericalInputs, /) -> NumericalOutputs:
+    """Compile and evaluate using the declared numerical input and output structures."""
+    actuals = self.input_tree.flatten_numerical(inputs, f"{self.name}.numerical_call")
+    return cast(NumericalOutputs, self.output_tree.unflatten(tuple(self.eval_list(*actuals))))
 
   def _resolve_inputs(self, args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> tuple[Any, ...]:
     if args and kwargs:
@@ -263,4 +347,4 @@ class Function:
       ret_output_names.append(output_name)
       ret_sparsities.append(sparsity)
       ret_coloring_widths.append(coloring_width)
-    return Function(name, ret_inputs, ret_outputs, inputs, ret_output_names, ret_sparsities, output_coloring_widths=ret_coloring_widths)
+    return Function._from_exprs(name, ret_inputs, ret_outputs, inputs, ret_output_names, ret_sparsities, output_coloring_widths=ret_coloring_widths)
