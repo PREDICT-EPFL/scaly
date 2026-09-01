@@ -475,10 +475,10 @@ def alloy_ctfull_ode_fn(inputs):  # type: ignore[no-untyped-def]
 def alloy_ctfull_rk4_fn(inputs):  # type: ignore[no-untyped-def]
   state, u, pw, physics, dt = inputs
   h = dt[0]
-  k1 = alloy_ctfull_ode_fn.call([state, u, pw, physics])[0]
-  k2 = alloy_ctfull_ode_fn.call([state + 0.5 * h * k1, u, pw, physics])[0]
-  k3 = alloy_ctfull_ode_fn.call([state + 0.5 * h * k2, u, pw, physics])[0]
-  k4 = alloy_ctfull_ode_fn.call([state + h * k3, u, pw, physics])[0]
+  k1 = alloy_ctfull_ode_fn((state, u, pw, physics))
+  k2 = alloy_ctfull_ode_fn((state + 0.5 * h * k1, u, pw, physics))
+  k3 = alloy_ctfull_ode_fn((state + 0.5 * h * k2, u, pw, physics))
+  k4 = alloy_ctfull_ode_fn((state + h * k3, u, pw, physics))
   return (state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)).block()
 
 
@@ -517,10 +517,10 @@ def alloy_dt_mlp_step_fn(inputs):  # type: ignore[no-untyped-def]
   h_dt = dt[0]
   max_delta, steering_time_constant = physics[2], physics[3]
   delta = state[6]
-  k1 = alloy_pose_dot_fn.call([state, physics])[0]
-  k2 = alloy_pose_dot_fn.call([state + 0.5 * h_dt * k1, physics])[0]
-  k3 = alloy_pose_dot_fn.call([state + 0.5 * h_dt * k2, physics])[0]
-  k4 = alloy_pose_dot_fn.call([state + h_dt * k3, physics])[0]
+  k1 = alloy_pose_dot_fn((state, physics))
+  k2 = alloy_pose_dot_fn((state + 0.5 * h_dt * k1, physics))
+  k3 = alloy_pose_dot_fn((state + 0.5 * h_dt * k2, physics))
+  k4 = alloy_pose_dot_fn((state + h_dt * k3, physics))
   pose = state + (h_dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
   x_scale, w0, b0, w1, b1, w2, b2 = _unpack_pw_dt_expr(pw)
   phi = al.concat([al.stack([state[3], state[4] - delta, state[5], delta]) / x_scale, al.stack([u[1], u[0]])]).block()

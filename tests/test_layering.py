@@ -221,3 +221,21 @@ def test_each_seam_is_a_single_import() -> None:
   edges = _edges()
   scattered = sorted(f"{src} -> {dst} at lines {edges[src, dst]}" for src, dst in SEAM if len(edges[src, dst]) > 1)
   assert not scattered, "a sanctioned seam is one import statement:\n  " + "\n  ".join(scattered)
+
+
+# The flat leaf seams under ``symbolic_call``/``numerical_call``. ``function/model.py`` defines and
+# uses them; differentiation is the one sanctioned consumer, because it synthesizes callees from
+# flat expression lists and calls them with that same list.
+FLAT_SEAM_USERS = {"alloy.function.model", "alloy.ad.forward"}
+
+
+def test_flat_call_seams_stay_inside_their_sanctioned_modules() -> None:
+  """Everything else addresses a Function by its declared tree, which is what users write."""
+  leaked = sorted(
+    f"{name}:{i}"
+    for name, path in _modules().items()
+    if name not in FLAT_SEAM_USERS
+    for i, line in enumerate(path.read_text().splitlines(), 1)
+    if "_flat_symbolic_call" in line or "_flat_numerical_call" in line
+  )
+  assert not leaked, "the flat call seam leaked outside function/model.py and ad/forward.py:\n  " + "\n  ".join(leaked)

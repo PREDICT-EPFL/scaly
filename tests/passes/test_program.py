@@ -207,7 +207,7 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
   x = al.sym("x", 2)
   inner = al.Function._from_exprs("inner", [x], [x.sin() + x * x], ["x"], ["y"])
   z = al.sym("z", 2)
-  (inner_z,) = inner.call([z * z])
+  inner_z = inner(z * z)
   outer = al.Function._from_exprs("outer", [z], [inner_z], ["z"], ["y"])
   jf = outer.factory("J", ["z"], [al.factory.Jac("y", "z")])
 
@@ -223,7 +223,7 @@ def test_regular_raw_callees_stay_inline() -> None:
   x = al.sym("x", 2)
   inner = al.Function._from_exprs("inner", [x], [x.sin()], ["x"], ["y"])
   z = al.sym("z", 2)
-  (inner_z,) = inner.call([z])
+  inner_z = inner(z)
   outer = al.Function._from_exprs("outer", [z], [inner_z + 1.0], ["z"], ["out"])
 
   source = render_program_c_source(outer)
@@ -246,7 +246,7 @@ def test_spilled_function_matches_numpy() -> None:
   f.recompile()
   rng = np.random.default_rng(0)
   a, b = rng.standard_normal((40, 40)), rng.standard_normal((40, 40))
-  got = f(a, b)
+  got = f((a, b))
   ref = ((a @ b) + (b @ a)).sum()
   np.testing.assert_allclose(np.asarray(got).reshape(-1), np.asarray(ref).reshape(-1), rtol=1e-9, atol=1e-10)
 

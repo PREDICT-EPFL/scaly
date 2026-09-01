@@ -57,7 +57,7 @@ def test_binary_nonlinear_method_helpers_eval() -> None:
   xv = np.array([0.5, -1.0, 2.0])
   yv = np.array([1.5, 2.0, -0.25])
 
-  atan_v, mn_v, mx_v = f(xv, yv)
+  atan_v, mn_v, mx_v = f((xv, yv))
   np.testing.assert_allclose(atan_v, np.arctan2(xv, yv))
   np.testing.assert_allclose(mn_v, np.minimum(xv, yv))
   np.testing.assert_allclose(mx_v, np.maximum(xv, yv))
@@ -154,8 +154,8 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
 
   u = al.sym("u", 3)
   inner = al.Function._from_exprs("inner", [u], [u * u], ["u"], ["y"])
-  (diff_call,) = inner.call([x])
-  (const_call,) = inner.call([c])
+  diff_call = inner(x)
+  const_call = inner(c)
   assert diff_call.type.diff
   assert not const_call.type.diff
 
@@ -197,9 +197,9 @@ def test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees() ->
   callee = al.Function._from_exprs("sub_callee", [formal], [formal * formal], ["u"], ["y"])
   x = al.sym("sub_actual_x", 2)
   z = al.sym("sub_actual_z", 2)
-  called = callee.call([x])[0]
+  called = callee(x)
   rewritten_call = substitute(called, {x: z})
-  assert rewritten_call is callee.call([z])[0]
+  assert rewritten_call is callee(z)
   assert rewritten_call.attrs["callee"] is callee
 
   xs = al.sym("sub_vmap_x", 4)

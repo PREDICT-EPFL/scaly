@@ -114,6 +114,19 @@ if TYPE_CHECKING:
   assert_type(multiply.symbolic_call(duplicate.symbolic_call(al.sym("x", 3))), al.Expr)
   multiply.symbolic_call(square.symbolic_call(al.sym("x", 3)))  # ty: ignore[invalid-argument-type]
 
+  # __call__ dispatches on the leaf kind and is typed as precisely as the two named methods.
+  assert_type(duplicate(al.sym("x", 3)), tuple[al.Expr, al.Expr])
+  assert_type(duplicate(np.zeros(3)), tuple[np.ndarray, np.ndarray])
+  assert_type(multiply((al.sym("x", 3), al.sym("y", 3))), al.Expr)
+  assert_type(multiply((np.zeros(3), np.zeros(3))), np.ndarray)
+  assert_type(step(((np.zeros(4), np.zeros(2)), (np.zeros(10), np.zeros(3), np.zeros(())))), np.ndarray)
+  assert_type(multiply(duplicate(al.sym("x", 3))), al.Expr)
+  assert_type(hess_l((np.zeros(3), (np.zeros(3), np.zeros(3)))), np.ndarray)
+  multiply((np.zeros(3),))  # ty: ignore[no-matching-overload]
+  multiply((al.sym("x", 3), np.zeros(3)))  # ty: ignore[no-matching-overload]
+  step((np.zeros(4), np.zeros(2), np.zeros(10), np.zeros(3), np.zeros(())))  # ty: ignore[no-matching-overload]
+  multiply(square(al.sym("x", 3)))  # ty: ignore[no-matching-overload]
+
   assert_type(grad_f_x, al.Function[tuple[al.Expr, al.Expr], tuple[np.ndarray, np.ndarray], al.Expr, np.ndarray])
   assert_type(hess_f_x, al.Function[tuple[al.Expr, al.Expr], tuple[np.ndarray, np.ndarray], al.Expr, np.ndarray])
   assert_type(jac_square_x, al.Function[al.Expr, np.ndarray, al.Expr, np.ndarray])

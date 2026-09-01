@@ -65,13 +65,13 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
   np.testing.assert_allclose(out, (np.sin(xv) + xv * xv).sum())
 
 
-def test_jit_handles_multi_output_and_kwargs(isolated_cache) -> None:
+def test_jit_handles_multi_output(isolated_cache) -> None:
   x = al.sym("x", 2)
   y = al.sym("y", 2)
   fn = al.Function._from_exprs("kw_jit", [x, y], [x + y, x * y, (x - y).sum()], ["x", "y"], ["sum", "prod", "diff"])
   xv = np.array([1.0, 2.0])
   yv = np.array([3.0, -1.0])
-  s, p, d = fn(x=xv, y=yv)
+  s, p, d = fn((xv, yv))
   np.testing.assert_allclose(s, xv + yv)
   np.testing.assert_allclose(p, xv * yv)
   np.testing.assert_allclose(d, (xv - yv).sum())
@@ -91,7 +91,7 @@ def test_jit_handles_nested_call_nodes(isolated_cache) -> None:
   x = al.sym("x", 3)
   inner = al.Function._from_exprs("inner_jit", [x], [x * x], ["x"], ["sq"])
   z = al.sym("z", 3)
-  (inner_sq,) = inner.call([z + 1.0])
+  inner_sq = inner(z + 1.0)
   outer = al.Function._from_exprs("outer_jit", [z], [inner_sq.sum()], ["z"], ["s"])
   zv = np.array([0.25, -0.75, 2.0])
   np.testing.assert_allclose(outer(zv), ((zv + 1.0) ** 2).sum())

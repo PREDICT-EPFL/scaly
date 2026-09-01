@@ -197,7 +197,7 @@ def _call() -> al.Function:
 
   @al.function(al.L("x", 3), al.L("out0", ...), name="pm_call_outer")
   def f(x):
-    (y,) = inner.call([x])
+    y = inner(x)
     return y * x
 
   return f
@@ -334,7 +334,7 @@ def test_program_ir_jit_executes(builder, inputs) -> None:
   # Gate first so a coverage gap errors here loudly (there is no fallback).
   render_program_c_source(fn)
   fn.recompile()
-  got = np.asarray(fn(*inputs)).reshape(-1)
+  got = np.asarray(fn(fn.input_tree.unflatten(tuple(inputs)))).reshape(-1)
   assert got.size == fn.outputs[0].size
   assert np.all(np.isfinite(got))
 
@@ -359,7 +359,7 @@ def test_uncovered_case_raises_loudly() -> None:
 
   @al.function(al.L("x", 3), al.L("out0", ...), name="pm_outer_mix")
   def fn(x):
-    (y,) = inner_gpu.call([x])
+    y = inner_gpu(x)
     return y + x
 
   with pytest.raises(LoweringError):
@@ -394,12 +394,10 @@ def test_stage_transcription_renders_and_matches(kind) -> None:
   assert can_render_program_c(fn)
   inputs = [np.random.default_rng(0).standard_normal(e.size).reshape(e.shape) for e in fn.inputs]
   fn.recompile()
-  outs = fn.eval_list(*inputs)
-  assert len(outs) == len(fn.outputs)
-  for got, out_expr in zip(outs, fn.outputs, strict=True):
-    got_arr = np.asarray(got).reshape(-1)
-    assert got_arr.size == out_expr.size
-    assert np.all(np.isfinite(got_arr))
+  assert len(fn.outputs) == 1
+  got = np.asarray(fn(fn.input_tree.unflatten(tuple(inputs)))).reshape(-1)
+  assert got.size == fn.outputs[0].size
+  assert np.all(np.isfinite(got))
 
 
 def test_gather_fed_chained_vmaps_render_through_program_ir() -> None:

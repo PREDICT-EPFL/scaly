@@ -45,6 +45,12 @@ def test_public_exports_are_canonical() -> None:
   assert {"L", "G"} <= set(al.__all__)
   function_module = __import__("alloy.function", fromlist=["Tree"])
   assert function_module.Tree is Tree
+  # The call surface is the two named tree methods plus the dispatching __call__; the flat leaf
+  # seams under them are private and must not reappear as public names.
+  assert not hasattr(Function, "call")
+  assert not hasattr(Function, "eval_list")
+  assert all(callable(getattr(Function, name)) for name in ("__call__", "symbolic_call", "numerical_call"))
+  assert all(callable(getattr(Function, name)) for name in ("_flat_symbolic_call", "_flat_numerical_call"))
   factory_hints = get_type_hints(Function.factory)
   assert factory_hints["outputs"] == Sequence[str | DerivSpec]
   assert factory_hints["return"] is Function

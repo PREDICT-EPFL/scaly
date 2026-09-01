@@ -80,7 +80,7 @@ def test_box_bound_leaves_broadcast_and_keep_ieee_infinity_in_core_oracle() -> N
   solve = al.solver(filter_problem, "sqp", name="filter_bound_oracle")
   bounds = solve.descriptor.bounds
   assert isinstance(bounds, al.Function)
-  x_lb, x_ub, l_ineq, u_ineq = bounds.eval_list(np.zeros(4), np.zeros(2))
+  x_lb, x_ub, l_ineq, u_ineq = bounds((np.zeros(4), np.zeros(2)))
   np.testing.assert_array_equal(x_lb, [-np.inf, -np.inf, 0.0])
   np.testing.assert_array_equal(x_ub, [np.inf, np.inf, np.inf])
   np.testing.assert_array_equal(l_ineq, [0.0, -1.0, -1.0])
@@ -176,7 +176,7 @@ def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
   weight = np.array(1.3)
   lam_f = np.array(1.7)
   lam_g = np.array([-0.6, 0.8])
-  values = hess.eval_list(x, weight, lam_f, lam_g)[0]
+  values = hess(((x, weight), (lam_f, lam_g)))
   actual = np.zeros((3, 3))
   actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = values
   actual += np.triu(actual, 1).T

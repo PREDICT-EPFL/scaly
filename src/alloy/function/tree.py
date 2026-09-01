@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import EllipsisType
-from typing import Any, cast, overload
+from typing import Any, TypeIs, cast, overload
 
 import numpy as np
 
@@ -15,8 +15,19 @@ type ShapeDecl = int | tuple[int, ...] | EllipsisType | TensorType
 type LeafDecl = TensorType | EllipsisType
 
 
+def _leaves(value: Any) -> list[Any]:
+  """Every non-tuple atom of ``value``, without consulting a declared structure."""
+  if isinstance(value, tuple):
+    return [leaf for item in value for leaf in _leaves(item)]
+  return [value]
+
+
 class Tree[Symbolic, Numerical]:
-  """A pytree declaration whose leaves are ``Expr`` symbolically and NumPy arrays numerically."""
+  """A pytree declaration whose leaves are ``Expr`` symbolically and NumPy arrays numerically.
+
+  A tree *is* its structure: only ``G`` introduces a tuple, so a one-leaf tree is the bare leaf
+  and never a one-element tuple. See ``L`` for what that means at a call site.
+  """
 
   names: tuple[str, ...]
   decls: tuple[LeafDecl, ...]
@@ -67,6 +78,25 @@ class Tree[Symbolic, Numerical]:
       raise ValueError(f"unknown name {name!r}; declared {self.names}")
     return self.names.index(name)
 
+  def is_symbolic(self, value: Symbolic | Numerical, /) -> TypeIs[Symbolic]:
+    """Whether ``value`` has at least one leaf and every leaf is an ``Expr``.
+
+    This is the leaf-kind half of ``Function.__call__``'s dispatch; it deliberately ignores
+    structure so that a wrongly-shaped tree is reported by ``flatten_symbolic`` against the
+    declared names instead of being rejected here as a kind mismatch.
+    """
+    leaves = _leaves(value)
+    return bool(leaves) and all(isinstance(leaf, Expr) for leaf in leaves)
+
+  def is_numerical(self, value: Symbolic | Numerical, /) -> TypeIs[Numerical]:
+    """Whether no leaf of ``value`` is an ``Expr``.
+
+    The numerical side is the fallback: array-likes are coerced by ``flatten_numerical``, so a
+    leaf only has to *not* be symbolic. Values with no leaves land here and are reported as a
+    structure error rather than as a mixed call.
+    """
+    return not any(isinstance(leaf, Expr) for leaf in _leaves(value))
+
   def flatten_symbolic(self, value: Symbolic, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
     """Validate and flatten a symbolic value."""
     raise NotImplementedError
@@ -89,6 +119,11 @@ class L(Tree[Expr, np.ndarray]):
 
   The declared name is external metadata and need not match the local name used by a decorated
   function body. Pass a ``TensorType`` to set dtype or differentiability explicitly.
+
+  **A single leaf is passed and returned unpacked.** An ``L`` input tree takes the tensor itself,
+  not ``(tensor,)``, and an ``L`` output tree returns the tensor itself, not a one-element tuple.
+  Do not destructure a single-leaf result: ``(y,) = fn(x)`` does not raise, it iterates the
+  returned tensor along its first axis exactly as NumPy would.
   """
 
   def __init__(self, name: str, shape: ShapeDecl, /) -> None:

@@ -18,7 +18,7 @@ def test_vmap_eval_matches_unrolled_concat_of_call() -> None:
   p = al.sym("p", 3 * N)
 
   mapped = al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-  unrolled = al.concat([scale_add.call([z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3]])[0] for i in range(N)])
+  unrolled = al.concat([scale_add((z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3])) for i in range(N)])
 
   fn_vmap = al.Function._from_exprs("scaled_vmap", [z, p], [mapped], ["z", "p"], ["y"])
   fn_concat = al.Function._from_exprs("scaled_concat", [z, p], [unrolled], ["z", "p"], ["y"])
@@ -27,7 +27,7 @@ def test_vmap_eval_matches_unrolled_concat_of_call() -> None:
   zv = rng.normal(size=3 * N)
   pv = rng.normal(size=3 * N)
 
-  np.testing.assert_allclose(fn_vmap(zv, pv), fn_concat(zv, pv))
+  np.testing.assert_allclose(fn_vmap((zv, pv)), fn_concat((zv, pv)))
 
 
 def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
@@ -46,7 +46,7 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
   mapped = al.vmap(step, N, [(z, 0, NZ), (z, NZ, NZ), (p, NX, NX)])
   parts = []
   for i in range(N):
-    parts.append(step.call([z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX]])[0])
+    parts.append(step((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX])))
   unrolled = al.concat(parts)
 
   fn_vmap = al.Function._from_exprs("step_vmap", [z, p], [mapped], ["z", "p"], ["eq"])
@@ -56,7 +56,7 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
   zv = rng.normal(size=NZ * (N + 1))
   pv = rng.normal(size=NX * (N + 1))
 
-  np.testing.assert_allclose(fn_vmap(zv, pv), fn_concat(zv, pv))
+  np.testing.assert_allclose(fn_vmap((zv, pv)), fn_concat((zv, pv)))
 
 
 def test_vmap_zero_length_returns_empty() -> None:
@@ -64,7 +64,7 @@ def test_vmap_zero_length_returns_empty() -> None:
   p = al.sym("p", 3)
   empty = al.vmap(scale_add, 0, [(z, 0, 0), (p, 0, 0)])
   fn = al.Function._from_exprs("empty_vmap", [z, p], [empty], ["z", "p"], ["y"])
-  out = fn(np.zeros(3), np.zeros(3))
+  out = fn((np.zeros(3), np.zeros(3)))
   assert isinstance(out, np.ndarray)
   assert out.shape == (0,)
 
@@ -78,7 +78,7 @@ def test_vmap_broadcast_stride_zero_repeats_same_slice() -> None:
   zv = np.array([1.0, 2.0, 3.0])
   pv = np.array([0.5, -1.0, 0.25])
   expected = np.tile(2.0 * zv + pv, N)
-  np.testing.assert_allclose(fn(zv, pv), expected)
+  np.testing.assert_allclose(fn((zv, pv)), expected)
 
 
 def test_vmap_rejects_bad_input_specs() -> None:

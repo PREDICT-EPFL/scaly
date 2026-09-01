@@ -44,18 +44,20 @@ def step(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
 `al.L` declares one tensor. `al.G` groups trees. The body takes one value with the input structure
 and returns one value with the output structure. `...` asks Alloy to infer the output shape during
 tracing.
-Run it numerically:
+Run it numerically by calling it with its input tree:
 
 ```python
-z1 = step.numerical_call(
-    (np.array([1.0, 2.0]), np.array([0.5]))
-)
+z1 = step((np.array([1.0, 2.0]), np.array([0.5])))
 # array([1.2, 2.05])
 ```
 
+The input tree is an `al.G` of two leaves, so the call takes a 2-tuple. The output tree is a single
+`al.L`, so the result is that array itself and not a one-element tuple — see
+[a single leaf is unpacked](functions.md#a-single-leaf-is-unpacked).
+
 The first call lowers the graph, renders C, compiles a shared library, and stores it in the
 just-in-time cache. Later calls reuse the artifact.
-Compose it symbolically:
+Compose it symbolically by calling it with `Expr` leaves instead:
 
 ```python
 N = 20
@@ -70,14 +72,15 @@ def rollout(inputs: tuple[al.Expr, al.Expr]) -> tuple[al.Expr, al.Expr]:
     for k in range(N):
         u = us[k : k + 1]
         cost = cost + al.sumsqr(z) + 0.1 * al.sumsqr(u)
-        z = step.symbolic_call((z, u))
+        z = step((z, u))
     return z, cost + 10.0 * al.sumsqr(z)
 ```
 
-`symbolic_call` adds a first-class `CALL` node. The generated C contains one `step` procedure and
-calls it from `rollout`.
-See [Building functions](functions.md) for nested trees, inferred outputs, lower-level flat calls,
-and `vmap`.
+One call spelling covers both: `step(...)` dispatches on the leaves it is given, to `numerical_call`
+for arrays and to `symbolic_call` for expressions. The symbolic reading adds a first-class `CALL`
+node, so the generated C contains one `step` procedure and calls it from `rollout`.
+See [Building functions](functions.md) for nested trees, inferred outputs, the two named call
+methods, and `vmap`.
 
 ## Differentiate the function
 
@@ -86,9 +89,7 @@ Named derivative wrappers return typed functions:
 ```python
 grad = al.gradient(rollout, "cost", "us")
 
-gradient_value = grad.numerical_call(
-    (np.array([1.0, 0.0]), np.zeros(N))
-)
+gradient_value = grad((np.array([1.0, 0.0]), np.zeros(N)))
 ```
 
 The derivative keeps `rollout`'s complete input tree, `(z0, us)`. There is no separate parameter
@@ -118,7 +119,7 @@ A `Problem` separates the mathematical model from the solver backend:
     params=al.L("z0", 2),
 )
 def shooting_problem(us: al.Expr, z0: al.Expr) -> al.ProblemSpec[al.Expr]:
-    zN, cost = rollout.symbolic_call((z0, us))
+    zN, cost = rollout((z0, us))
     return al.ProblemSpec(
         minimize=cost,
         eq=(zN,),
@@ -154,7 +155,7 @@ outputs = (vars,      lam_box,  lam_eq,  lam_ineq)
 For this problem, the variable and parameter trees each have one leaf:
 
 ```python
-us_opt, lam_box, lam_eq, lam_ineq = solve.numerical_call(
+us_opt, lam_box, lam_eq, lam_ineq = solve(
     (
         np.zeros(N),
         np.zeros(N),
@@ -171,7 +172,7 @@ print(stats.obj, stats.iter, stats.to_solver_status())
 Multiplier categories remain in the signature when absent, using length-zero arrays. Box and
 inequality multipliers are signed: positive means the upper side is active and negative means the
 lower side is active.
-A solver is a plain `Function`. Use `symbolic_call` to put it inside another graph; the host,
+A solver is a plain `Function`. Call it with `Expr` leaves to put it inside another graph; the host,
 oracles, and native wrapper then compile into one shared library.
 See [Solvers](solvers.md) for multi-block variables, bounded groups, `qp_problem`, sparse PIQP
 data, nesting, and statistics. See [Solver backends](solver_backends.md) for backend-specific
@@ -189,7 +190,7 @@ represents the repetition as one node and lowers it to a C loop:
 )
 def defect(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
     z, u, znext = inputs
-    return step.symbolic_call((z, u)) - znext
+    return step((z, u)) - znext
 
 decision = al.sym("decision", 2 * (N + 1) + N)
 states = decision[: 2 * (N + 1)]

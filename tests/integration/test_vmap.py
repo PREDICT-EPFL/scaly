@@ -62,7 +62,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
   def build(N: int) -> al.Function:
     z = al.sym("z", NZ * (N + 1))
     p = al.sym("p", NX * (N + 1), diff=False)
-    initial = eq_initial.call([z[:NZ], p[:NX]])[0]
+    initial = eq_initial((z[:NZ], p[:NX]))
     mapped = al.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
     return al.Function._from_exprs(f"race_car_eq_vmap_N{N}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
 
@@ -75,14 +75,14 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     zv = rng.normal(size=NZ * (N + 1))
     pv = rng.normal(size=NX * (N + 1))
     # Sanity: the primal numerically matches the unrolled concat-of-call equivalent.
-    parts = [eq_initial.call([fn.inputs[0][:NZ], fn.inputs[1][:NX]])[0]]
+    parts = [eq_initial((fn.inputs[0][:NZ], fn.inputs[1][:NX]))]
     for i in range(N):
       zi = fn.inputs[0][i * NZ : (i + 1) * NZ]
       znext = fn.inputs[0][(i + 1) * NZ : (i + 2) * NZ]
       pi = fn.inputs[1][(i + 1) * NX : (i + 2) * NX]
-      parts.append(eq_interstage.call([zi, znext, pi])[0])
+      parts.append(eq_interstage((zi, znext, pi)))
     ref = al.Function._from_exprs(f"race_car_eq_ref_N{N}", [fn.inputs[0], fn.inputs[1]], [al.concat(parts)], ["z", "p"], ["eq"])
-    np.testing.assert_allclose(fn(zv, pv), ref(zv, pv), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(fn((zv, pv)), ref((zv, pv)), rtol=1e-12, atol=1e-12)
 
   src_a = render_c_source(fn_a)
   src_b = render_c_source(fn_b)
@@ -134,16 +134,16 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
   def build_vmap(N: int) -> al.Function:
     z = al.sym("z", NZ * (N + 1))
     p = al.sym("p", NX * (N + 1), diff=False)
-    initial = eq_initial.call([z[:NZ], p[:NX]])[0]
+    initial = eq_initial((z[:NZ], p[:NX]))
     mapped = al.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
     return al.Function._from_exprs(f"tr_vmap_N{N}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
 
   def build_unroll(N: int) -> al.Function:
     z = al.sym("z", NZ * (N + 1))
     p = al.sym("p", NX * (N + 1), diff=False)
-    parts = [eq_initial.call([z[:NZ], p[:NX]])[0]]
+    parts = [eq_initial((z[:NZ], p[:NX]))]
     for i in range(N):
-      parts.append(eq_interstage.call([z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX]])[0])
+      parts.append(eq_interstage((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX])))
     return al.Function._from_exprs(f"tr_unroll_N{N}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
   N = 4
@@ -164,8 +164,8 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
   pv = rng.normal(size=NX * (N + 1))
 
   dense_m, dense_u = np.zeros(sp_m.shape), np.zeros(sp_u.shape)
-  dense_m[np.asarray(sp_m.rows), np.asarray(sp_m.cols)] = np.asarray(spj_vmap(zv, pv), dtype=np.float64).reshape(-1)
-  dense_u[np.asarray(sp_u.rows), np.asarray(sp_u.cols)] = np.asarray(spj_unroll(zv, pv), dtype=np.float64).reshape(-1)
+  dense_m[np.asarray(sp_m.rows), np.asarray(sp_m.cols)] = np.asarray(spj_vmap((zv, pv)), dtype=np.float64).reshape(-1)
+  dense_u[np.asarray(sp_u.rows), np.asarray(sp_u.cols)] = np.asarray(spj_unroll((zv, pv)), dtype=np.float64).reshape(-1)
   np.testing.assert_allclose(dense_m, dense_u, rtol=1e-10, atol=1e-10)
 
 
@@ -222,10 +222,10 @@ def _build_pairs_fn(mapped: bool) -> al.Function:
     body_rows = al.vmap(pairs_wall, NB, [(p, 0, NS), (nxt, 0, NS), (slack, 0, 0)])
     h = al.concat([pair_rows, body_rows])
   else:
-    nxt = al.concat([pairs_step.call([p[NS * k : NS * (k + 1)], uu[NU * k : NU * (k + 1)]])[0] for k in range(NB)])
+    nxt = al.concat([pairs_step((p[NS * k : NS * (k + 1)], uu[NU * k : NU * (k + 1)])) for k in range(NB)])
     sl = lambda e, k: e[NS * k : NS * (k + 1)]  # noqa: E731
-    rows = [pairs_barrier.call([sl(p, i), sl(p, j), sl(nxt, i), sl(nxt, j), slack])[0] for i, j in PAIRS]
-    rows += [pairs_wall.call([sl(p, k), sl(nxt, k), slack])[0] for k in range(NB)]
+    rows = [pairs_barrier((sl(p, i), sl(p, j), sl(nxt, i), sl(nxt, j), slack)) for i, j in PAIRS]
+    rows += [pairs_wall((sl(p, k), sl(nxt, k), slack)) for k in range(NB)]
     h = al.concat(rows)
   return al.Function._from_exprs(f"pairs_{'vmap' if mapped else 'unroll'}", [u, p], [h.scalar()], ["u", "p"], ["h"])
 
@@ -240,23 +240,23 @@ def _pairs_sample() -> tuple[np.ndarray, np.ndarray]:
 def test_gather_fed_chained_vmaps_match_unrolled_calls() -> None:
   fn_vmap, fn_unroll = _build_pairs_fn(True), _build_pairs_fn(False)
   uv, pv = _pairs_sample()
-  np.testing.assert_allclose(fn_vmap(uv, pv), fn_unroll(uv, pv), rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(fn_vmap((uv, pv)), fn_unroll((uv, pv)), rtol=1e-12, atol=1e-12)
 
-  jac_vmap = fn_vmap.factory("pairs_vmap_jac", ["u", "p"], [al.factory.Jac("h", "u")])(uv, pv)
-  jac_unroll = fn_unroll.factory("pairs_unroll_jac", ["u", "p"], [al.factory.Jac("h", "u")])(uv, pv)
+  jac_vmap = fn_vmap.factory("pairs_vmap_jac", ["u", "p"], [al.factory.Jac("h", "u")])((uv, pv))
+  jac_unroll = fn_unroll.factory("pairs_unroll_jac", ["u", "p"], [al.factory.Jac("h", "u")])((uv, pv))
   np.testing.assert_allclose(jac_vmap, jac_unroll, rtol=1e-10, atol=1e-10)
 
 
 def test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense() -> None:
   fn = _build_pairs_fn(True)
   uv, pv = _pairs_sample()
-  dense = fn.factory("pairs_vmap_jac2", ["u", "p"], [al.factory.Jac("h", "u")])(uv, pv)
+  dense = fn.factory("pairs_vmap_jac2", ["u", "p"], [al.factory.Jac("h", "u")])((uv, pv))
   assert isinstance(dense, np.ndarray)
   spjf = fn.factory("pairs_vmap_spjac", ["u", "p"], [al.factory.SpJac("h", "u")])
   sp = spjf.output_sparsities[0]
   assert sp is not None
   flat = np.asarray(sp.rows) * dense.shape[1] + np.asarray(sp.cols)
-  np.testing.assert_allclose(spjf(uv, pv), np.ravel(dense)[flat], rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(spjf((uv, pv)), np.ravel(dense)[flat], rtol=1e-10, atol=1e-10)
   # Coloring must not claim structural zeros that the dense Jacobian disagrees with.
   assert not np.any(np.abs(dense[~sp.to_mask()]) > 1e-12)
 
@@ -271,7 +271,7 @@ def test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense() -> None:
     hsp = hf.output_sparsities[0]
     assert hsp is not None
     dense_hess[name] = np.zeros(hsp.shape)
-    dense_hess[name][np.asarray(hsp.rows), np.asarray(hsp.cols)] = np.asarray(hf(uv, pv, lam), dtype=np.float64).reshape(-1)
+    dense_hess[name][np.asarray(hsp.rows), np.asarray(hsp.cols)] = np.asarray(hf((uv, pv, lam)), dtype=np.float64).reshape(-1)
   np.testing.assert_allclose(dense_hess["vmap"], dense_hess["unroll"], rtol=1e-9, atol=1e-9)
 
 

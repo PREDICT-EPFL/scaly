@@ -26,7 +26,7 @@ def test_scoped_function_decorator_builds_fresh_named_function() -> None:
 
   xv = np.array([0.1, 0.2, 0.3])
   pv = np.array([1.0, 2.0, 3.0])
-  np.testing.assert_allclose(scoped(xv, pv), np.sin(xv + pv))
+  np.testing.assert_allclose(scoped((xv, pv)), np.sin(xv + pv))
 
 
 def test_scoped_function_decorator_outputs_default_names() -> None:
@@ -113,7 +113,7 @@ def test_forward_convenience_api_matches_factory() -> None:
 
   assert fwd_api.input_names == ("x", "fwd:x")
   assert fwd_api.output_names == ("fwd_y_x",)
-  np.testing.assert_allclose(fwd_api(xv, seed), fwd_factory(xv, seed))
+  np.testing.assert_allclose(fwd_api((xv, seed)), fwd_factory((xv, seed)))
 
 
 def test_adjoint_convenience_api_matches_factory() -> None:
@@ -128,7 +128,7 @@ def test_adjoint_convenience_api_matches_factory() -> None:
 
   assert adj_api.input_names == ("x", "lam:y")
   assert adj_api.output_names == ("adj_y_x",)
-  np.testing.assert_allclose(adj_api(xv, lam), adj_factory(xv, lam))
+  np.testing.assert_allclose(adj_api((xv, lam)), adj_factory((xv, lam)))
 
 
 def test_seeded_factory_outputs_require_seed_inputs() -> None:
@@ -179,4 +179,4 @@ def test_lagrangian_hessian_convenience_api() -> None:
   xv = np.array([0.2, 0.5])
   lam_f = np.array(1.2)
   lam_g = np.array([0.3, -0.7])
-  np.testing.assert_allclose(h_api(xv, lam_f, lam_g), h_factory(xv, lam_f, lam_g))
+  np.testing.assert_allclose(h_api((xv, (lam_f, lam_g))), h_factory((xv, lam_f, lam_g)))

@@ -23,9 +23,14 @@ def _assert_vmap_vjp_matches_unrolled_and_fd(
   mapped = al.vmap(callee, length, specs)
   unrolled = al.concat(
     [
-      callee.call(
-        [outer[start + it * stride : start + it * stride + formal.size] for formal, (outer, start, stride) in zip(callee.inputs, specs, strict=True)]
-      )[0]
+      callee(
+        callee.input_tree.unflatten(
+          tuple(
+            outer[start + it * stride : start + it * stride + formal.size]
+            for formal, (outer, start, stride) in zip(callee.inputs, specs, strict=True)
+          )
+        )
+      )
       for it in range(length)
     ]
   )
@@ -37,8 +42,8 @@ def _assert_vmap_vjp_matches_unrolled_and_fd(
   obj_fn = al.Function._from_exprs(f"{name}_objective", [z, lam], [mapped_obj], ["z", "lam"], ["objective"])
   lamv = np.random.default_rng(10).normal(size=mapped.size)
 
-  mapped_value, unrolled_value = grad_fn(zv, lamv)
-  fd = finite_difference(lambda value: obj_fn(value, lamv), zv).reshape(-1)
+  mapped_value, unrolled_value = grad_fn((zv, lamv))
+  fd = finite_difference(lambda value: obj_fn((value, lamv)), zv).reshape(-1)
   np.testing.assert_allclose(mapped_value, unrolled_value, rtol=1e-10, atol=1e-10)
   np.testing.assert_allclose(mapped_value, fd, rtol=1e-6, atol=1e-7)
 
@@ -62,7 +67,7 @@ def test_vjp_vector_output_uses_cotangent_seed() -> None:
   xv = np.array([0.3, 2.0])
   sv = np.array([1.5, -0.25])
 
-  np.testing.assert_allclose(f(xv, sv), np.array([sv[0] * xv[1] + sv[1] * np.cos(xv[0]), sv[0] * xv[0]]))
+  np.testing.assert_allclose(f((xv, sv)), np.array([sv[0] * xv[1] + sv[1] * np.cos(xv[0]), sv[0] * xv[0]]))
 
 
 def test_vjp_broadcast_and_multi_output_accumulates_adjoint() -> None:
@@ -75,7 +80,7 @@ def test_vjp_broadcast_and_multi_output_accumulates_adjoint() -> None:
   xv = np.arange(6.0).reshape(2, 3)
   bv = np.array([0.5, 1.5, 2.5])
 
-  gx, gb = f(xv, bv)
+  gx, gb = f((xv, bv))
   np.testing.assert_allclose(gx, np.broadcast_to(2.0 - 0.5 * bv, xv.shape))
   np.testing.assert_allclose(gb, np.full(3, 4.0) - 0.5 * xv.sum(axis=0))
 
@@ -92,7 +97,7 @@ def test_vjp_through_structural_ops_and_matmul() -> None:
   sv = np.arange(8.0).reshape(2, 4)
 
   expected = sv[:, :2].T + av.T @ sv[:, 2:]
-  np.testing.assert_allclose(f(xv, av, sv), expected)
+  np.testing.assert_allclose(f((xv, av, sv)), expected)
 
 
 def test_vjp_nested_calls_shared_symbol_matches_fd_and_jvp() -> None:
@@ -101,8 +106,8 @@ def test_vjp_nested_calls_shared_symbol_matches_fd_and_jvp() -> None:
   # inside the incoming cotangent (which the second call's adjoint injects into the first call's).
   x = al.sym("x", 1)
   f = al.Function._from_exprs("sq", [x], [x * x], ["x"], ["y"])
-  (k1,) = f.call([2 * x])
-  (k2,) = f.call([x + k1])
+  k1 = f(2 * x)
+  k2 = f(x + k1)
   (grad_rev,) = al.vjp((k2,), (x,), (al.const(np.ones(1)),))
   jac_fwd = al.jacobian(k2, x).reshape((1,))
   fn = al.Function._from_exprs("nested_sq", [x], [grad_rev, jac_fwd], ["x"], ["rev", "fwd"])
@@ -121,10 +126,10 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
   x, u = al.sym("x", 2), al.sym("u", 1)
   ode = al.Function._from_exprs("ode2", [x, u], [al.stack([x[0] * x[1] + u[0], x[0].tanh() - x[1] * x[1]])], ["x", "u"], ["f"])
   dt = 0.1
-  (k1,) = ode.call([x, u])
-  (k2,) = ode.call([x + (dt / 2) * k1, u])
-  (k3,) = ode.call([x + (dt / 2) * k2, u])
-  (k4,) = ode.call([x + dt * k3, u])
+  k1 = ode((x, u))
+  k2 = ode((x + (dt / 2) * k1, u))
+  k3 = ode((x + (dt / 2) * k2, u))
+  k4 = ode((x + dt * k3, u))
   xnext = x + (dt / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
   lam = al.sym("lam", 2)
   (grad_rev,) = al.vjp((xnext,), (x,), (lam,))
@@ -134,8 +139,8 @@ def test_vjp_nested_call_rk4_matches_jvp_transpose_and_fd() -> None:
   obj = al.Function._from_exprs("rk4_obj", [x, u, lam], [al.dot(lam, xnext)], ["x", "u", "lam"], ["obj"])
   xv, uv, lamv = rng.normal(size=2), rng.normal(size=1), rng.normal(size=2)
 
-  rev, fwd, hv = fn(xv, uv, lamv)
-  fd = finite_difference(lambda v: obj(v, uv, lamv), xv).reshape(-1)
+  rev, fwd, hv = fn((xv, uv, lamv))
+  fd = finite_difference(lambda v: obj((v, uv, lamv)), xv).reshape(-1)
   np.testing.assert_allclose(rev, fwd, rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(rev, fd, rtol=1e-6, atol=1e-8)
   np.testing.assert_allclose(hv, hv.T, rtol=1e-12, atol=1e-12)
@@ -151,7 +156,7 @@ def test_jvp_many_uses_leading_seed_axis() -> None:
   sv = np.array([[1.5, -0.25, 0.4], [-0.5, 2.0, 1.25]])
   jac = np.array([[xv[1], xv[0], 0.0], [1.0, 0.0, np.cos(xv[2])]])
 
-  np.testing.assert_allclose(f(xv, sv), sv @ jac.T)
+  np.testing.assert_allclose(f((xv, sv)), sv @ jac.T)
 
 
 def test_erf_forward_reverse_jacobian_and_sparse_hessian(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -169,7 +174,7 @@ def test_erf_forward_reverse_jacobian_and_sparse_hessian(monkeypatch: pytest.Mon
   xv = np.array([-1.2, 0.25, 2.1])
   seedv = np.array([0.3, -0.7, 1.4])
   first = 2 / np.sqrt(np.pi) * np.exp(-(xv**2))
-  jvp_value, vjp_value = ad(xv, seedv)
+  jvp_value, vjp_value = ad((xv, seedv))
   jac_value, sphess_value = derivatives(xv)
 
   np.testing.assert_allclose(jvp_value, seedv * first, rtol=1e-12, atol=1e-12)
@@ -192,7 +197,7 @@ def test_jvp_many_broadcast_scalar_tangent_over_vector() -> None:
   xv = np.array([0.3, 1.2, -0.4])
   sv = np.array([[1.5, -0.25, 0.4], [-0.5, 2.0, 1.25]])
 
-  np.testing.assert_allclose(f(xv, sv), sv.sum(axis=1, keepdims=True) * xv + xv.sum() * sv)
+  np.testing.assert_allclose(f((xv, sv)), sv.sum(axis=1, keepdims=True) * xv + xv.sum() * sv)
 
 
 def test_jvp_many_sum_batches_seeds_without_unrolling() -> None:
@@ -213,7 +218,7 @@ def test_jvp_many_sum_batches_seeds_without_unrolling() -> None:
   fn = al.Function._from_exprs("jvp_many_sum", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
   xv = np.random.default_rng(16).normal(size=(2, 3))
   seedv = np.random.default_rng(17).normal(size=(4, 2, 3))
-  actual, expected = fn(xv, seedv)
+  actual, expected = fn((xv, seedv))
   np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
@@ -261,7 +266,7 @@ def test_jvp_many_structural_rank_mismatch_corner_cases() -> None:
     f = al.Function._from_exprs(f"jvp_many_{name}", [x, seeds], [dy], ["x", "seeds"], ["dy"])
     eps = 1e-6
     fd = np.stack([(np_fn(xv + eps * sv[i]) - np_fn(xv - eps * sv[i])) / (2 * eps) for i in range(4)])
-    np.testing.assert_allclose(f(xv, sv), fd, rtol=1e-6, atol=1e-8, err_msg=name)
+    np.testing.assert_allclose(f((xv, sv)), fd, rtol=1e-6, atol=1e-8, err_msg=name)
 
 
 def test_jvp_many_vec_dot_vec_keeps_seed_axis() -> None:
@@ -289,7 +294,7 @@ def test_jvp_many_scatter_and_gather_stays_structural() -> None:
   fn = al.Function._from_exprs("jvp_many_scatter_gather", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
   xv = np.random.default_rng(12).normal(size=6)
   seedv = np.random.default_rng(13).normal(size=(3, 6))
-  actual, expected = fn(xv, seedv)
+  actual, expected = fn((xv, seedv))
   np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
@@ -305,7 +310,7 @@ def test_jvp_many_transpose_stays_structural() -> None:
   fn = al.Function._from_exprs("jvp_many_transpose", [x, seeds], [structural, reference], ["x", "seeds"], ["structural", "reference"])
   xv = np.random.default_rng(14).normal(size=12)
   seedv = np.random.default_rng(15).normal(size=(4, 12))
-  actual, expected = fn(xv, seedv)
+  actual, expected = fn((xv, seedv))
   np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
@@ -320,7 +325,7 @@ def test_jvp_many_rank4_transpose_falls_back_and_strict_raises(monkeypatch: pyte
   rng = np.random.default_rng(7)
   xv, sv = rng.normal(size=12), rng.normal(size=(2, 12))
   expected = np.concatenate([(2.0 * xv * sv[i]).reshape(2, 3, 1, 2).transpose(3, 1, 0, 2).reshape(-1) for i in range(2)])
-  np.testing.assert_allclose(fn(xv, sv), expected, rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(fn((xv, sv)), expected, rtol=1e-12, atol=1e-12)
   monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
   with pytest.raises(NotImplementedError, match="structural jvp_many does not support"):
     al.jvp_many(expr, x, seeds)
@@ -355,9 +360,9 @@ def test_matmul_vjp_all_shape_cases_match_finite_differences() -> None:
     objective_fn = al.Function._from_exprs(f"matmul_vjp_objective_{index}", [x, y, cot], [objective], ["x", "y", "cot"], ["objective"])
     xv, yv, cotv = rng.normal(size=x_shape), rng.normal(size=y_shape), rng.normal(size=out.shape)
 
-    actual_x, actual_y = grad_fn(xv, yv, cotv)
-    expected_x = finite_difference(lambda value: objective_fn(value, yv, cotv), xv).reshape(x_shape)
-    expected_y = finite_difference(lambda value: objective_fn(xv, value, cotv), yv).reshape(y_shape)
+    actual_x, actual_y = grad_fn((xv, yv, cotv))
+    expected_x = finite_difference(lambda value: objective_fn((value, yv, cotv)), xv).reshape(x_shape)
+    expected_y = finite_difference(lambda value: objective_fn((xv, value, cotv)), yv).reshape(y_shape)
     np.testing.assert_allclose(actual_x, expected_x, rtol=1e-6, atol=1e-8)
     np.testing.assert_allclose(actual_y, expected_y, rtol=1e-6, atol=1e-8)
 
@@ -396,7 +401,7 @@ def test_vjp_many_uses_leading_seed_axis_and_multiple_outputs() -> None:
   c0v = np.array([[1.5, -0.25], [-0.5, 2.0]])
   c1v = np.array([0.75, -1.25])
 
-  np.testing.assert_allclose(f(xv, c0v, c1v), c0v * (2 * xv) + c1v[:, None])
+  np.testing.assert_allclose(f((xv, c0v, c1v)), c0v * (2 * xv) + c1v[:, None])
 
 
 def test_multi_seed_shape_errors() -> None:
@@ -422,14 +427,14 @@ def test_vjp_through_call_node_inlines_callee_reverse_graph() -> None:
   x = al.sym("x", 2)
   inner = al.Function._from_exprs("inner", [x], [x.sin() * x], ["x"], ["y"])
   z = al.sym("z", 2)
-  (inner_z,) = inner.call([z])
+  inner_z = inner(z)
   seed = al.sym("seed", 2)
   (grad_z,) = al.vjp((inner_z,), (z,), (seed,))
   outer = al.Function._from_exprs("outer", [z, seed], [grad_z], ["z", "seed"], ["grad_z"])
   zv = np.array([0.2, 0.7])
   sv = np.array([3.0, -1.0])
 
-  np.testing.assert_allclose(outer(zv, sv), sv * (np.sin(zv) + zv * np.cos(zv)))
+  np.testing.assert_allclose(outer((zv, sv)), sv * (np.sin(zv) + zv * np.cos(zv)))
 
 
 def test_vjp_through_vmap_partitioned_stride_with_offset_and_zero_fill() -> None:
@@ -506,7 +511,7 @@ def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:
   pv = np.array([1.1, 2.9])
   sv = np.array([1.5, -0.25])
 
-  dyv, gradv = f(xv, pv, sv)
+  dyv, gradv = f((xv, pv, sv))
   np.testing.assert_allclose(dyv, np.dot(2 * xv, sv))
   np.testing.assert_allclose(gradv, 2 * xv)
 

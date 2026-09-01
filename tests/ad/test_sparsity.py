@@ -26,7 +26,7 @@ def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[al.Fun
   calls = []
   for it in range(length):
     args = [z[2 * it : 2 * (it + 1)], *((z[2 * length : 2 * length + 1],) if shared else ())]
-    calls.append(piece.call(args)[0])
+    calls.append(piece(piece.input_tree.unflatten(tuple(args))))
   unrolled = al.concat(calls)
   f = (z * z).sum()
   return (
@@ -202,7 +202,7 @@ def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
   assert shf.output_sparsities[0] is not None
   assert shf.output_sparsities[0].rows == (0, 0, 1, 1)
   assert shf.output_sparsities[0].cols == (0, 1, 0, 1)
-  np.testing.assert_allclose(shf(np.array([2.0, 3.0]), np.array(1.5), np.array([0.25, -0.5])), np.array([3.0, 0.25, 0.25, -1.0]))
+  np.testing.assert_allclose(shf((np.array([2.0, 3.0]), (np.array(1.5), np.array([0.25, -0.5])))), np.array([3.0, 0.25, 0.25, -1.0]))
 
 
 def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -220,11 +220,11 @@ def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd(mo
 
   zv = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3])
   lam_f, lam_g = np.array(0.6), np.array([0.3, -0.8, 1.1])
-  mapped_dense = _scatter_sparse(np.asarray(mapped_sphess(zv, lam_f, lam_g)), mapped_sp)
-  unrolled_dense = _scatter_sparse(np.asarray(unrolled_sphess(zv, lam_f, lam_g)), unrolled_sp)
+  mapped_dense = _scatter_sparse(np.asarray(mapped_sphess((zv, lam_f, lam_g))), mapped_sp)
+  unrolled_dense = _scatter_sparse(np.asarray(unrolled_sphess((zv, lam_f, lam_g))), unrolled_sp)
   np.testing.assert_allclose(mapped_dense, unrolled_dense, rtol=1e-10, atol=1e-10)
-  np.testing.assert_allclose(mapped_dense, unrolled_hess(zv, lam_f, lam_g), rtol=1e-10, atol=1e-10)
-  np.testing.assert_allclose(mapped_dense, finite_difference(lambda value: unrolled_grad(value, lam_f, lam_g), zv), rtol=2e-5, atol=2e-6)
+  np.testing.assert_allclose(mapped_dense, unrolled_hess((zv, lam_f, lam_g)), rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(mapped_dense, finite_difference(lambda value: unrolled_grad((value, lam_f, lam_g)), zv), rtol=2e-5, atol=2e-6)
 
 
 def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -235,10 +235,10 @@ def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch:
   assert sparsity is not None
   zv = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3])
   lam_f, lam_g = np.array(0.6), np.array([0.3, -0.8, 1.1])
-  base = _scatter_sparse(np.asarray(sphess(zv, lam_f, lam_g)), sparsity)
+  base = _scatter_sparse(np.asarray(sphess((zv, lam_f, lam_g))), sparsity)
   changed_lam = lam_g.copy()
   changed_lam[1] += 0.7
-  changed = _scatter_sparse(np.asarray(sphess(zv, lam_f, changed_lam)), sparsity)
+  changed = _scatter_sparse(np.asarray(sphess((zv, lam_f, changed_lam))), sparsity)
   delta = changed - base
   np.testing.assert_allclose(delta[:2], 0.0, atol=1e-12)
   np.testing.assert_allclose(delta[4:], 0.0, atol=1e-12)
@@ -260,8 +260,8 @@ def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch:
   # stride-0 adjoint reduction would keep the same mask, so pin the numbers with nonuniform lam:g.
   zv_shared = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3, 0.9])
   lam_g_shared = np.array([0.7, -1.3, 0.45])
-  shared_dense = _scatter_sparse(np.asarray(shared_sphess(zv_shared, lam_f, lam_g_shared)), shared_sp)
-  shared_unrolled_dense = _scatter_sparse(np.asarray(shared_unrolled_sphess(zv_shared, lam_f, lam_g_shared)), shared_unrolled_sp)
+  shared_dense = _scatter_sparse(np.asarray(shared_sphess((zv_shared, lam_f, lam_g_shared))), shared_sp)
+  shared_unrolled_dense = _scatter_sparse(np.asarray(shared_unrolled_sphess((zv_shared, lam_f, lam_g_shared))), shared_unrolled_sp)
   np.testing.assert_allclose(shared_dense, shared_unrolled_dense, rtol=1e-10, atol=1e-10)
 
 
@@ -303,9 +303,9 @@ def test_sparse_lagrangian_hessian_triangle_matches_masked_full_on_shared_vmap(m
   zv = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3, 0.9])
   lam_f = np.array(0.6)
   lam_g = np.array([0.7, -1.3, 0.45])
-  full_values = np.asarray(full(zv, lam_f, lam_g))
-  triangle_values = np.asarray(triangle_fn(zv, lam_f, lam_g))
-  unrolled_values = np.asarray(unrolled_triangle(zv, lam_f, lam_g))
+  full_values = np.asarray(full((zv, lam_f, lam_g)))
+  triangle_values = np.asarray(triangle_fn((zv, lam_f, lam_g)))
+  unrolled_values = np.asarray(unrolled_triangle((zv, lam_f, lam_g)))
   np.testing.assert_allclose(triangle_values, full_values[keep], rtol=1e-10, atol=1e-10)
   np.testing.assert_allclose(triangle_values, unrolled_values, rtol=1e-10, atol=1e-10)
 
@@ -426,7 +426,7 @@ def test_jacobian_sparsity_for_matmul_and_call_chain_rule() -> None:
   u = al.sym("u", 2)
   inner = al.Function._from_exprs("inner", [u], [al.stack([u[0], u[0] + u[1]])], ["u"], ["y"])
   z = al.sym("z", 3)
-  (inner_z,) = inner.call([al.gather(z, [2, 0])])
+  inner_z = inner(al.gather(z, [2, 0]))
 
   np.testing.assert_array_equal(
     al.jacobian_sparsity(inner_z, z).to_mask(),
@@ -443,7 +443,7 @@ def test_dependency_composition_keeps_exactly_256_shared_paths() -> None:
   u = al.sym("u", 256)
   inner = al.Function._from_exprs("shared_256_inner", [u], [u.sum()], ["u"], ["y"])
   x = al.sym("x", 1)
-  (y,) = inner.call([x + np.zeros(256)])
+  y = inner(x + np.zeros(256))
 
   np.testing.assert_array_equal(al.jacobian_sparsity(y, x).to_mask(), np.ones((1, 1), dtype=bool))
   colored = al.sparse_jacobian_colored(y, x)
@@ -586,7 +586,7 @@ def test_shared_fill_star_hessian_matches_one_sided_and_dense(monkeypatch: pytes
     zv = np.random.default_rng(length).normal(size=z.size)
     lam_fv = np.array(0.6)
     lam_gv = np.random.default_rng(length + 10).normal(size=length)
-    star_values, one_sided_values, star_dense, one_sided_dense, dense_value = fn(zv, lam_fv, lam_gv)
+    star_values, one_sided_values, star_dense, one_sided_dense, dense_value = fn((zv, lam_fv, lam_gv))
     np.testing.assert_allclose(star_values, one_sided_values, rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(star_dense, one_sided_dense, rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(star_dense, dense_value, rtol=1e-10, atol=1e-10)

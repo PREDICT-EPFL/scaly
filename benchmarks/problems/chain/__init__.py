@@ -67,8 +67,8 @@ def chain_link_accel_fn(inputs):  # type: ignore[no-untyped-def]
 )
 def chain_mass_accel_fn(inputs):  # type: ignore[no-untyped-def]
   left, pos, right, mass, spring_d, rest_len, gravity = inputs
-  left_accel = chain_link_accel_fn.call([pos - left, mass, spring_d, rest_len])[0]
-  right_accel = chain_link_accel_fn.call([right - pos, mass, spring_d, rest_len])[0]
+  left_accel = chain_link_accel_fn((pos - left, mass, spring_d, rest_len))
+  right_accel = chain_link_accel_fn((right - pos, mass, spring_d, rest_len))
   return right_accel - left_accel + al.stack([0.0, 0.0, gravity[0]])
 
 
@@ -111,7 +111,7 @@ def chain_step_fn(n_masses: int) -> al.Function:
   ode = chain_ode_fn(n_masses)
 
   def rhs(state):  # type: ignore[no-untyped-def]
-    return ode.call([state, u, mass, spring_d, rest_len, gravity, dt])[0]
+    return ode((state, u, mass, spring_d, rest_len, gravity, dt))
 
   h = dt[0]
   k1 = rhs(x)
@@ -133,7 +133,7 @@ def _eq_stage_fn(n_masses: int) -> al.Function:
   z = al.sym("z", nz)
   xnext = al.sym("xnext", nx)
   params = al.sym("params", N_PARAMS, diff=False)
-  step = chain_step_fn(n_masses).call([z[:nx], z[nx:], *[params[i : i + 1] for i in range(N_PARAMS)]])[0]
+  step = chain_step_fn(n_masses)((z[:nx], z[nx:], *[params[i : i + 1] for i in range(N_PARAMS)]))
   return al.Function._from_exprs(f"chain_eq_stage_M{n_masses}", [z, xnext, params], [step - xnext], ["z", "xnext", "params"], ["eq"])
 
 
@@ -156,7 +156,7 @@ def chain_eq_function_unrolled(n_masses: int, horizon: int) -> al.Function:
   stage = _eq_stage_fn(n_masses)
   parts = [z[:nx] - p[:nx]]
   for i in range(horizon):
-    parts.append(stage.call([z[i * nz : (i + 1) * nz], z[(i + 1) * nz : (i + 1) * nz + nx], p[nx:]])[0])
+    parts.append(stage((z[i * nz : (i + 1) * nz], z[(i + 1) * nz : (i + 1) * nz + nx], p[nx:])))
   return al.Function._from_exprs(f"chain_eq_M{n_masses}_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
 
@@ -172,7 +172,7 @@ def chain_eq_jac_dense_reference(n_masses: int, horizon: int, z: np.ndarray, p: 
   dense[:nx, :nx] = np.eye(nx)
   for i in range(horizon):
     row, col = nx * (i + 1), nz * i
-    jac_z, jac_xnext = stage(z[col : col + nz], z[col + nz : col + nz + nx], p[nx:])
+    jac_z, jac_xnext = stage((z[col : col + nz], z[col + nz : col + nz + nx], p[nx:]))
     dense[row : row + nx, col : col + nz] = jac_z
     dense[row : row + nx, col + nz : col + nz + nx] = jac_xnext
   return dense

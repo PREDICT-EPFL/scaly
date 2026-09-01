@@ -234,4 +234,4 @@ def horizon_eq_violation(result: EpisodeResult, step: int) -> float:
 
   eq = npmpc_eq_function(result.config.horizon, result.config.decoder, result.config.dt)
   item = result.oracle_inputs[step]
-  return float(np.max(np.abs(np.asarray(eq(item["z"], item["p"][NX:])))))
+  return float(np.max(np.abs(np.asarray(eq((item["z"], item["p"][NX:]))))))

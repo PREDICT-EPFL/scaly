@@ -50,7 +50,7 @@ def check_dims_and_rk4() -> None:
   for n_masses in (3, 5):
     x = initial_state(n_masses) + rng.normal(scale=0.02, size=n_state(n_masses))
     u = rng.normal(scale=0.1, size=NU)
-    actual = chain_step_fn(n_masses)(x, u, *[np.array([value]) for value in params.array()])
+    actual = chain_step_fn(n_masses)((x, u, *[np.array([value]) for value in params.array()]))
     np.testing.assert_allclose(actual, rk4_step_np(x, u, params), rtol=1e-10, atol=1e-10)
 
 
@@ -64,13 +64,13 @@ def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
     ca_dense = ca_chain_eq_jac(n_masses, horizon)
     zv, pv = sample_inputs(n_masses, horizon, seed=11)
 
-    actual = np.asarray(dense(zv, pv))
+    actual = np.asarray(dense((zv, pv)))
     np.testing.assert_allclose(actual, np.asarray(ca_dense(zv, pv)), rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(chain_eq_jac_dense_reference(n_masses, horizon, zv, pv), actual, rtol=1e-10, atol=1e-10)
 
     sparsity = sparse.output_sparsities[0]
     assert sparsity is not None
-    compact = np.asarray(sparse(zv, pv)).reshape(-1)
+    compact = np.asarray(sparse((zv, pv))).reshape(-1)
     flat = np.asarray(sparsity.rows) * actual.shape[1] + np.asarray(sparsity.cols)
     np.testing.assert_allclose(compact, actual.ravel()[flat], rtol=1e-10, atol=1e-10)
     assert sparsity.nnz < actual.size, (sparsity.nnz, actual.size)
@@ -216,7 +216,9 @@ def check_sqp_matches_ipopt() -> None:
     du = float(np.max(np.abs(ipopt_run.controls[k] - sqp_run.controls[k])))
     dplan = float(np.max(np.abs(ipopt_run.plans[k] - sqp_run.plans[k])))
     obj_i, obj_s = ipopt_run.telemetry[k].obj, sqp_run.telemetry[k].obj
-    viol_i, viol_s = (float(np.max(np.abs(np.asarray(eq_fn(run.oracle_inputs[k]["z"], run.oracle_inputs[k]["p"]))))) for run in (ipopt_run, sqp_run))
+    viol_i, viol_s = (
+      float(np.max(np.abs(np.asarray(eq_fn((run.oracle_inputs[k]["z"], run.oracle_inputs[k]["p"])))))) for run in (ipopt_run, sqp_run)
+    )
     assert du <= 3e-4 and dplan <= 3e-4 and abs(obj_i - obj_s) <= 1e-6 * (1.0 + abs(obj_i)) and max(viol_i, viol_s) <= 1e-6, (
       f"SQP first diverges from IPOPT at step {k}: |du|={du:.3e} |dplan|={dplan:.3e} |dobj|={abs(obj_i - obj_s):.3e}; "
       f"ipopt: status={ipopt_run.telemetry[k].status.name} obj={obj_i:.6e} eq_violation={viol_i:.3e}; "

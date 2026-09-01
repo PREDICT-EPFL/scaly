@@ -52,7 +52,7 @@ def rosenbrock(x: al.Expr) -> al.Expr:
 
 
 grad = al.gradient(rosenbrock, "f", "x")
-grad.numerical_call(np.array([1.0, 2.0]))
+grad(np.array([1.0, 2.0]))
 ```
 
 | # | What happens | Where |
@@ -61,7 +61,7 @@ grad.numerical_call(np.array([1.0, 2.0]))
 | 2 | `al.factory.Grad("f", "x")` is a typed request object, not a string. `Function.factory` resolves the named input and output and calls the spec's `build`. | `function/model.py` (`factory`), `function/factory.py` (the specs) |
 | 3 | `al.factory.Grad`'s `build` is one reverse sweep over the expression DAG. Other kinds dispatch elsewhere — `al.factory.Jac` batches forward mode over the identity, and `al.factory.SpJac` colors a structural pattern first. | `ad/derivatives.py`, `ad/reverse.py` |
 | 4 | The result is another `Function`, in the same dialect as the first. Nothing has been compiled yet. | `function/model.py` |
-| 5 | Calling it runs `__call__` → `eval_list` → `_compile`, which reaches the backend through `_jit()` — the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](#the-two-sanctioned-exceptions) to the layering. | `function/model.py` |
+| 5 | Calling it with array leaves runs `__call__` → `numerical_call` → `_flat_numerical_call` → `_compile`, which reaches the backend through `_jit()` — the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](#the-two-sanctioned-exceptions) to the layering. | `function/model.py` |
 | 6 | `CompiledFunction` asks `_build_artifact` for a shared library, which calls `render_c_module`. That lowers the function **once** into a render context every artifact reads from. | `codegen/jit.py`, `codegen/aot.py` |
 | 7 | `lower_function` walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a Function carrying a solver descriptor stays opaque. | `passes/lowering.py` |
 | 8 | `optimize_program` runs the registered pipeline: `fuse_elementwise`, `unroll_unit_loops`, `pack_workspace`. | `passes/program.py` |
@@ -193,7 +193,7 @@ the point of it.
 
 **1. Calling a `Function` compiles it.** `function/model.py` (layer 3) reaches `codegen/jit`
 (layer 7) through a single deferred import in `_jit()`. Every backend use in the frontend —
-`eval_list`, `recompile`, `solver_stats` — goes through that one function. This is the only entry
+`_flat_numerical_call`, `recompile`, `solver_stats` — goes through that one function. This is the only entry
 in `SEAM`, and `test_layering.py` asserts it stays *one* import statement, so the seam cannot
 quietly become a habit.
 
@@ -244,7 +244,7 @@ negative tests are written against. `lower_function` verifies its output before 
 ### Building — `function/`
 
 `function/model.py` owns `Function`: names, shapes, sparsity metadata, the undeclared-input check,
-first-class `call` composition, and `factory`. It also owns the dependency-light `DerivSpec` base at
+first-class call composition, and `factory`. It also owns the dependency-light `DerivSpec` base at
 layer 3.
 `function/api.py` is the ergonomic layer — the
 `@al.function` decorator and the overloaded wrappers (`al.jacobian`, `al.gradient`, `al.sparse_hessian`, …) that
@@ -345,7 +345,7 @@ that was armed elsewhere.
 ### Solvers — `solvers/`, `plugins/`
 
 `al.problem(...)` declares a typed backend-free problem. `al.solver(...)` returns a plain `Function` whose body is
-`ExprOp.SOLVER_CALL` nodes sharing a `SolverDescriptor`. Its typed `symbolic_call(...)` returns the declared
+`ExprOp.SOLVER_CALL` nodes sharing a `SolverDescriptor`. Calling it with `Expr` leaves returns the declared
 expression tree, so a solver nests directly inside a larger graph.
 `SOLVER_CALL` is non-differentiable.
 

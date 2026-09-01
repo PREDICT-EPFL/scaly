@@ -97,8 +97,8 @@ def test_two_solver_wrappers_in_one_translation_unit() -> None:
     qp_a = build_qp(P=np.diag([2.0, 4.0]), c=al.stack([t[0], t[1]]), sparse=True, name="tu_qp_a")
     qp_b = build_qp(P=np.diag([1.0, 1.0]), c=al.stack([t[1], -t[0]]), name="tu_qp_b")
     zeros = [al.const(np.zeros(2)), al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0))]
-    xa = qp_a.call([*zeros, t])[0]
-    xb = qp_b.call([*zeros, t])[0]
+    xa, *_ = qp_a((*zeros, t))
+    xb, *_ = qp_b((*zeros, t))
     return xa + xb
 
   tv = np.array([1.0, -2.0])

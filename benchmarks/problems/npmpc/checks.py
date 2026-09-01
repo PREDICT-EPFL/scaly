@@ -171,7 +171,7 @@ def check_parameter_tail_order() -> None:
   np.testing.assert_allclose(decoder_mu_np(decoder, pw, x, u), expected, rtol=0.0, atol=1e-13)
 
   xnext = np.array([0.1, 0.2, 0.3, 0.4])
-  residual = np.asarray(stage_function(decoder)(x, xnext, u, pw)).reshape(-1)
+  residual = np.asarray(stage_function(decoder)((x, xnext, u, pw))).reshape(-1)
   np.testing.assert_allclose(residual, x + np.concatenate([DT * (x[2:4] + expected / 2.0), expected]) - xnext, rtol=0.0, atol=1e-12)
 
 
@@ -200,7 +200,7 @@ def check_decoder_matches_reference_rollout() -> None:
     x = np.array([rng.uniform(-np.pi, np.pi), rng.uniform(-2.0, 2.0), rng.normal(scale=4.0), rng.normal(scale=4.0)])
     u_sample = rng.uniform(-TORQUE_LIMIT, TORQUE_LIMIT, NU)
     xnext = step_np(decoder, pw, x, u_sample)
-    np.testing.assert_allclose(np.asarray(stage_fn(x, xnext, u_sample, pw)).reshape(-1), np.zeros(NX), rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(stage_fn((x, xnext, u_sample, pw))).reshape(-1), np.zeros(NX), rtol=0.0, atol=1e-12)
 
 
 def check_plant_matches_reference_oracle() -> None:
@@ -288,7 +288,7 @@ def check_constraint_rows_and_bounds() -> None:
   states = z[: NX * (horizon + 1)].reshape(horizon + 1, NX)
   slack = z[-1]
   expected = np.concatenate([states[0] - xstart, states[:, 1] + slack, states[:, 1] - slack])
-  np.testing.assert_allclose(np.asarray(fn(z, xstart)).reshape(-1), expected, rtol=0.0, atol=1e-14)
+  np.testing.assert_allclose(np.asarray(fn((z, xstart))).reshape(-1), expected, rtol=0.0, atol=1e-14)
 
   assert rows.size == NX + 2 * (horizon + 1)
   np.testing.assert_array_equal(lower[:NX], -X0_BAND)
@@ -464,7 +464,7 @@ def check_matches_reference_episode() -> None:
 
   for step in range(1, int(episode["steps"])):
     theirs = np.concatenate([episode["x"][step].reshape(-1), episode["u"][step].reshape(-1), np.zeros(1)])
-    feasibility = float(np.max(np.abs(np.asarray(eq(theirs, pw)))))
+    feasibility = float(np.max(np.abs(np.asarray(eq((theirs, pw))))))
     assert feasibility <= REFERENCE_FEASIBILITY_TOL, f"their step {step} violates our dynamics by {feasibility:.3e}"
 
     # their warm start, rebuilt: the previous solution's controls shifted, the measurement advanced
@@ -482,7 +482,7 @@ def check_matches_reference_episode() -> None:
     status = None if stats is None else stats.to_solver_status()
     assert status is not None and stats is not None and status.ok, f"step {step}: {None if stats is None else stats.status.name}"
     ours = np.asarray(out["x"], dtype=np.float64).reshape(-1)
-    gap = float(out["f"]) - float(np.asarray(lag(theirs, pw)[0]))
+    gap = float(out["f"]) - float(np.asarray(lag((theirs, pw))[0]))
     assert gap <= 1e-6 * (1.0 + abs(float(out["f"]))), f"step {step}: our objective is {gap:.3e} worse than theirs"
     if step < REFERENCE_SETTLING_STEP:
       continue

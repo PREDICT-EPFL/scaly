@@ -75,7 +75,7 @@ descriptor identity, so lowering emits one wrapper call and distributes its outp
 ## One solve path
 
 There is exactly one solve path: generated C. The same artifact serves:
-- `Function.numerical_call` through the just-in-time cache;- a `symbolic_call` nested in a larger graph;- ahead-of-time C deployment.
+- a numerical call through the just-in-time cache;- a symbolic call nested in a larger graph;- ahead-of-time C deployment.
 A plugin package ships a native library, headers, entry-point metadata, and `render_wrapper`. It
 ships no Python numerical solver.
 

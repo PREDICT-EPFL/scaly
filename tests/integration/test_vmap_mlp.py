@@ -94,8 +94,8 @@ def unrolled(stages: int) -> al.Function:
   for i in range(stages):
     x, xnext = z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)]
     u = z[offset + NU * i : offset + NU * (i + 1)]
-    rows.append(stage.call([x, xnext, u, p])[0])
-    terms.append(cost_stage.call([x, xnext, u])[0])
+    rows.append(stage((x, xnext, u, p)))
+    terms.append(cost_stage((x, xnext, u)))
   cost = terms[0]
   for term in terms[1:]:
     cost = cost + term
@@ -126,7 +126,7 @@ def dense_jac_reference(stages: int, z: np.ndarray, pw: np.ndarray) -> np.ndarra
   offset = NX * (stages + 1)
   dense = np.zeros((NX * stages, n_dec(stages)))
   for i in range(stages):
-    blocks = jac(z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)], z[offset + NU * i : offset + NU * (i + 1)], pw)
+    blocks = jac((z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)], z[offset + NU * i : offset + NU * (i + 1)], pw))
     d_x, d_u, d_xnext = (np.asarray(block).reshape(NX, -1) for block in blocks)
     rows = slice(NX * i, NX * (i + 1))
     dense[rows, NX * i : NX * (i + 1)] = d_x
@@ -139,7 +139,7 @@ def _scatter(sparse: al.Function, z: np.ndarray, pw: np.ndarray, *extra: np.ndar
   sparsity = sparse.output_sparsities[0]
   assert sparsity is not None
   dense = np.zeros(sparsity.shape)
-  dense[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(sparse(z, *extra, pw)).reshape(-1)
+  dense[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(sparse((z, *extra, pw))).reshape(-1)
   return dense
 
 
@@ -150,7 +150,7 @@ def test_vmapped_stage_matches_the_numpy_model() -> None:
   for i in range(4):
     x, xnext = z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)]
     u = z[NX * 5 + NU * i : NX * 5 + NU * (i + 1)]
-    residual = np.asarray(stage(x, xnext, u, pw)).reshape(-1)
+    residual = np.asarray(stage((x, xnext, u, pw))).reshape(-1)
     np.testing.assert_allclose(residual, step_np(pw, x, u) - xnext, rtol=0.0, atol=1e-13)
 
 
@@ -166,8 +166,8 @@ def test_vmapped_and_unrolled_agree_in_value_jacobian_and_hessian() -> None:
     lam = np.linspace(-0.7, 0.9, NX * stages)
     vmap_fn, flat_fn = vmapped(stages), unrolled(stages)
 
-    np.testing.assert_allclose(np.asarray(vmap_fn(z, pw)[0]), np.asarray(flat_fn(z, pw)[0]), rtol=0.0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(vmap_fn(z, pw)[1]), np.asarray(flat_fn(z, pw)[1]), rtol=0.0, atol=1e-13)
+    np.testing.assert_allclose(np.asarray(vmap_fn((z, pw))[0]), np.asarray(flat_fn((z, pw))[0]), rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(vmap_fn((z, pw))[1]), np.asarray(flat_fn((z, pw))[1]), rtol=0.0, atol=1e-13)
 
     jacobians = [fn.factory(f"{fn.name}_spjac", ["z", "p"], [al.factory.SpJac("eq", "z")]) for fn in (vmap_fn, flat_fn)]
     dense = [_scatter(fn, z, pw) for fn in jacobians]
@@ -204,8 +204,8 @@ def test_lagrangian_hessian_through_the_vmap_matches_finite_differences() -> Non
   for column in range(z.size):
     shift = np.zeros_like(z)
     shift[column] = step
-    forward = np.asarray(gradient(z + shift, np.array(1.0), lam, pw)).reshape(-1)
-    backward = np.asarray(gradient(z - shift, np.array(1.0), lam, pw)).reshape(-1)
+    forward = np.asarray(gradient((z + shift, np.array(1.0), lam, pw))).reshape(-1)
+    backward = np.asarray(gradient((z - shift, np.array(1.0), lam, pw))).reshape(-1)
     approx[:, column] = (forward - backward) / (2.0 * step)
   np.testing.assert_allclose(exact, approx, rtol=2e-5, atol=2e-6)
 

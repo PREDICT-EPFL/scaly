@@ -18,10 +18,10 @@ import numpy as np
 def rosenbrock(x: al.Expr) -> al.Expr:
     return ((1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2).scalar()
 
-rosenbrock.numerical_call(np.array([1.0, 2.0]))  # 100.0
+rosenbrock(np.array([1.0, 2.0]))          # 100.0
 
 grad = al.gradient(rosenbrock, "f", "x")
-grad.numerical_call(np.array([1.0, 2.0]))        # array([-400.,  200.])
+grad(np.array([1.0, 2.0]))                # array([-400.,  200.])
 ```
 
 The first call compiled that function to C, built a shared library and cached it — the just-in-time

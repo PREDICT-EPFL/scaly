@@ -30,7 +30,7 @@ Unseeded derivatives preserve the source's input tree. If `fn` takes `(x, p)`, t
 
 ```python
 grad = al.gradient(fn, "f", "x")
-value = grad.numerical_call((x_value, p_value))
+value = grad((x_value, p_value))
 ```
 
 There is no `extra_inputs` option. Parameters and other source inputs remain available because
@@ -52,10 +52,10 @@ For example:
 
 ```python
 fwd = al.forward(fn, "y", "x")
-dy = fwd.numerical_call(((x_value, p_value), x_tangent))
+dy = fwd(((x_value, p_value), x_tangent))
 
 adj = al.adjoint(fn, "y", "x")
-dx = adj.numerical_call(((x_value, p_value), y_cotangent))
+dx = adj(((x_value, p_value), y_cotangent))
 ```
 
 The seed shape is the shape of the named input or output.
@@ -73,9 +73,7 @@ sparse_lag_hess = al.sparse_lagrangian_hessian(
     triangle="lower",
 )
 
-dense = lag_hess.numerical_call(
-    ((x_value, p_value), (lam_f, lam_g))
-)
+dense = lag_hess(((x_value, p_value), (lam_f, lam_g)))
 ```
 
 The wrappers build an auxiliary scalar named `gamma` from the declared output order. Pass

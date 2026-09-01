@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Mapping, Sequence, cast, overload
 
 import numpy as np
 
@@ -55,11 +55,17 @@ class DerivSpec:
 class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
   """A named expression graph: named inputs, named outputs, and the computation between them.
 
-  ``Function`` is the unit of three things at once. **Composition** — ``fn.call(args)`` puts a
-  first-class call node in a larger graph, and the callee survives into the generated C as a real
-  C function rather than being inlined. **Differentiation** — ``fn.factory(...)`` derives a new
-  ``Function`` carrying the requested derivatives. **Compilation** — calling one lowers it,
-  renders C, compiles and caches a shared library, and dispatches through the universal ABI.
+  ``Function`` is the unit of three things at once. **Composition** — ``fn(inputs)`` with ``Expr``
+  leaves puts a first-class call node in a larger graph, and the callee survives into the generated
+  C as a real C function rather than being inlined. **Differentiation** — ``fn.factory(...)``
+  derives a new ``Function`` carrying the requested derivatives. **Compilation** — ``fn(inputs)``
+  with array leaves lowers it, renders C, compiles and caches a shared library, and dispatches
+  through the universal ABI.
+
+  ``__call__`` takes the whole declared input tree as one argument and dispatches on its leaves to
+  ``symbolic_call`` or ``numerical_call``; call those directly when the distinction is the point.
+  A one-leaf tree is the bare value on both sides — see ``alloy.L`` — so a single-output result
+  must not be destructured.
 
   Names are load-bearing: input and output names are how derivatives are requested and what the
   generated C symbols are built from.
@@ -68,6 +74,8 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
   """
 
   descriptor: Any
+  input_tree: Tree[SymbolicInputs, NumericalInputs]
+  output_tree: Tree[SymbolicOutputs, NumericalOutputs]
 
   def __init__(
     self,
@@ -225,34 +233,41 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     """The output leaf shapes in C-signature order."""
     return tuple(expr.shape for expr in self.outputs)
 
+  # The numerical overload comes first on purpose: a Function built from bare expressions has
+  # ``Any`` trees, both overloads then match, and the first one wins. Evaluation is the reading
+  # that untyped code wants, and a typed symbolic call still resolves exactly because ``Expr`` is
+  # not assignable to the numerical leaf type.
+  @overload
+  def __call__(self, inputs: NumericalInputs, /) -> NumericalOutputs: ...
+
+  @overload
+  def __call__(self, inputs: SymbolicInputs, /) -> SymbolicOutputs: ...
+
+  def __call__(self, inputs: SymbolicInputs | NumericalInputs, /) -> SymbolicOutputs | NumericalOutputs:
+    """Call with the declared input tree, dispatching on its leaves.
+
+    ``Expr`` leaves take the symbolic path and build a call node; anything else takes the
+    numerical path and runs the compiled artifact. A tree mixing the two is an error: wrap the
+    numerical leaves in ``alloy.const`` to make a symbolic call explicit.
+    """
+    if self.input_tree.is_symbolic(inputs):
+      return self.symbolic_call(inputs)
+    if self.input_tree.is_numerical(inputs):
+      return self.numerical_call(inputs)
+    raise TypeError(
+      f"{self.name}: inputs mix Expr and numerical leaves; pass all-Expr leaves for a symbolic call "
+      f"or all-numerical leaves for an evaluation, wrapping constants in alloy.const if needed"
+    )
+
   def symbolic_call(self, inputs: SymbolicInputs, /) -> SymbolicOutputs:
     """Embed a call node using the declared symbolic input and output structures."""
     actuals = self.input_tree.flatten_symbolic(inputs, f"{self.name}.symbolic_call")
-    return cast(SymbolicOutputs, self.output_tree.unflatten(self.call(actuals)))
+    return cast(SymbolicOutputs, self.output_tree.unflatten(self._flat_symbolic_call(actuals)))
 
   def numerical_call(self, inputs: NumericalInputs, /) -> NumericalOutputs:
     """Compile and evaluate using the declared numerical input and output structures."""
     actuals = self.input_tree.flatten_numerical(inputs, f"{self.name}.numerical_call")
-    return cast(NumericalOutputs, self.output_tree.unflatten(tuple(self.eval_list(*actuals))))
-
-  def _resolve_inputs(self, args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> tuple[Any, ...]:
-    if args and kwargs:
-      raise TypeError("pass positional inputs or keyword inputs, not both")
-    if kwargs:
-      expected = set(self.input_names)
-      missing = [n for n in self.input_names if n not in kwargs]
-      extra = [n for n in kwargs if n not in expected]
-      if missing or extra:
-        parts = []
-        if missing:
-          parts.append(f"missing keyword inputs: {missing}")
-        if extra:
-          parts.append(f"unexpected keyword inputs: {extra}")
-        raise TypeError(", ".join(parts))
-      return tuple(kwargs[name] for name in self.input_names)
-    if len(args) != len(self.inputs):
-      raise TypeError(f"expected {len(self.inputs)} inputs, got {len(args)}")
-    return args
+    return cast(NumericalOutputs, self.output_tree.unflatten(self._flat_numerical_call(*actuals)))
 
   def _compile(self) -> Any:
     """Lazily JIT-compile this function and cache the handle."""
@@ -260,13 +275,16 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       self._compiled = _jit().CompiledFunction(self)
     return self._compiled
 
-  def eval_list(self, *args: Any, **kwargs: Any) -> list[np.ndarray]:
-    """Default dispatch: lazily compile and run through the universal ABI."""
+  def _flat_numerical_call(self, *args: Any) -> tuple[np.ndarray, ...]:
+    """Evaluate from flat leaves: lazily compile and run through the universal ABI.
+
+    The leaf-level seam under ``numerical_call``. Nothing outside ``function/`` should reach for
+    it; a caller holding flat leaves has ``input_tree.unflatten`` to build the declared tree.
+    """
     jit = _jit()
     if self.device.kind != "host":
       raise jit.JitError(f"function {self.name!r} placed on {self.device}, but only host lowering is implemented.")
-    ordered = self._resolve_inputs(args, kwargs)
-    return self._compile().run(list(ordered))
+    return tuple(self._compile().run(list(args)))
 
   def recompile(self) -> None:
     """Drop the cached compiled handle and remove the on-disk cache entry for this function."""
@@ -281,17 +299,16 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       raise jit.JitError(f"function {self.name!r} has not been compiled or run")
     return self._compiled.solver_stats(name)
 
-  def __call__(self, *args: Any, **kwargs: Any) -> Any:
-    outs = self.eval_list(*args, **kwargs)
-    return outs[0] if len(outs) == 1 else tuple(outs)
+  def _flat_symbolic_call(self, args: Sequence[Any], /) -> tuple[Expr, ...]:
+    """Build a call node from flat leaves. Raw values are coerced with ``as_expr``.
 
-  def call(self, args: Sequence[Any] | None = None, /, **kwargs: Any) -> tuple[Expr, ...]:
-    if args is not None and kwargs:
-      raise TypeError("pass positional inputs or keyword inputs, not both")
-    ordered = self._resolve_inputs(tuple(args or ()), kwargs)
-    actuals = tuple(as_expr(arg) for arg in ordered)
+    The leaf-level seam under ``symbolic_call``. Differentiation is the one consumer outside
+    ``function/``: it synthesizes callees from flat expression lists and calls them with the
+    same list, including the zero-input case that ``__call__`` cannot route symbolically.
+    """
+    actuals = tuple(as_expr(arg) for arg in args)
     if len(actuals) != len(self.inputs):
-      raise ValueError(f"expected {len(self.inputs)} call arguments")
+      raise ValueError(f"expected {len(self.inputs)} call arguments, got {len(actuals)}")
     for name, expected, actual in zip(self.input_names, self.inputs, actuals, strict=True):
       if expected.shape != actual.shape:
         raise ValueError(f"call argument {name!r} has shape {actual.shape}, expected {expected.shape}")

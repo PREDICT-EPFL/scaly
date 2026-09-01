@@ -71,7 +71,7 @@ def check_oracle_matches_casadi() -> None:
     physics, dt = loop_cfg.physics.array(), np.array([loop_cfg.dt])
     p = np.concatenate([bar_x, u_des, weights.packed, physics, dt])
 
-    cost_al, g_al = oracle(z, bar_x, u_des, weights.packed, physics, dt)
+    cost_al, g_al = oracle((z, bar_x, u_des, weights.packed, physics, dt))
     np.testing.assert_allclose(np.asarray(cost_al).reshape(-1), np.asarray(ca_filt.cost_fn(z, p)).reshape(-1), rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(np.asarray(g_al).reshape(-1), np.asarray(ca_filt.g_fn(z, p)).reshape(-1), rtol=1e-9, atol=1e-9)
     assert np.asarray(g_al).size == loop_cfg.n_slack == loop_cfg.n_pairs + 4 * loop_cfg.ncars
@@ -91,7 +91,7 @@ def check_parameter_tail_order() -> None:
   u = rng.uniform(-0.8, 0.8, (2, 2))
   slack = rng.uniform(0.01, 0.05, loop_cfg.n_slack)
   z = np.concatenate([u.reshape(-1), slack])
-  _, g_al = oracle(z, states.reshape(-1), np.zeros(4), weights.packed, physics.array(), np.array([loop_cfg.dt]))
+  _, g_al = oracle((z, states.reshape(-1), np.zeros(4), weights.packed, physics.array(), np.array([loop_cfg.dt])))
 
   # rk4_step_np's theta wrap is a no-op here: the barriers read theta only through
   # sin/cos, and the wall rows through pose and world velocity.
@@ -251,7 +251,7 @@ def check_dt_filter_model_matches_numpy() -> None:
     u = rng.uniform(-1.0, 1.0, 2)
     want = dt_mlp_step_smooth_np(state, u, loop_cfg.dt, weights, physics)
     got_ca = np.asarray(ca_step(state, u, pw, ph, loop_cfg.dt), dtype=np.float64).reshape(-1)
-    got_al = np.asarray(alloy_dt_mlp_step_fn(state, u, pw, ph, np.array([loop_cfg.dt])), dtype=np.float64).reshape(-1)
+    got_al = np.asarray(alloy_dt_mlp_step_fn((state, u, pw, ph, np.array([loop_cfg.dt]))), dtype=np.float64).reshape(-1)
     np.testing.assert_allclose(got_ca, want, rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(got_al, want, rtol=1e-10, atol=1e-10)
     # The smoothing is an approximation of the plant, not a rewrite of it. Its pose rows are the
@@ -340,7 +340,8 @@ def check_exact_hess_matches_casadi_on_closed_loop_samples() -> None:
     physics, dt = loop_cfg.physics.array(), np.array([loop_cfg.dt])
     p = np.concatenate([bar_x, u_des, weights.packed, physics, dt])
     hess_fn = cast(al.Function, alloy_filt.hess_fn)
-    alloy_values = np.asarray(hess_fn.eval_list(z, bar_x, u_des, weights.packed, physics, dt, 1.0, lam)[0], dtype=np.float64).reshape(-1)
+    hess_inputs = ((z, (bar_x, u_des, weights.packed, physics, dt)), (np.array(1.0), lam))
+    alloy_values = np.asarray(hess_fn(hess_inputs), dtype=np.float64).reshape(-1)
     casadi_dense = np.asarray(casadi_filt.hess_fn(z, p, 1.0, lam), dtype=np.float64)
     np.testing.assert_allclose(alloy_values, casadi_dense[alloy_filt.hess_rows, alloy_filt.hess_cols], rtol=1e-8)
     sim.step(safe)

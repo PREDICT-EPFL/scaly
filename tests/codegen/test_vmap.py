@@ -136,7 +136,7 @@ def test_callee_formal_named_w_avoids_workspace_collision() -> None:
   zval = np.arange(6.0)
   wval = np.array([0.3, -0.2, 0.8])
   expected = np.concatenate([zval[3 * i : 3 * i + 3] * wval + np.sin(wval) for i in range(2)])
-  np.testing.assert_allclose(fn(zval, wval), expected)
+  np.testing.assert_allclose(fn((zval, wval)), expected)
 
 
 def test_vmap_compiled_c_matches_unrolled_concat(tmp_path) -> None:
@@ -230,7 +230,7 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> al.Function:
 
   z = al.sym("z", RK4_NZ * (horizon + 1))
   p = al.sym("p", n_param, diff=False)
-  initial = eq_initial.call([z[:RK4_NZ], p[:RK4_NX]])[0]
+  initial = eq_initial((z[:RK4_NZ], p[:RK4_NX]))
   mapped = al.vmap(
     eq_interstage,
     length=horizon,
@@ -266,7 +266,7 @@ def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
 
   rng = np.random.default_rng(3)
   zv, pv = rng.normal(size=RK4_NZ * (N + 1)), rng.normal(size=RK4_NX * (N + 1) + RK4_N_PARAMS)
-  values = np.asarray(spjf(zv, pv), dtype=np.float64).reshape(-1)
+  values = np.asarray(spjf((zv, pv)), dtype=np.float64).reshape(-1)
   dense_ref = np.zeros(sp.shape)
   dense_ref[np.asarray(sp.rows), np.asarray(sp.cols)] = values
 
@@ -325,7 +325,7 @@ def test_simple_banded_vmap_spjac_has_constant_loc() -> None:
 
   def build(N: int) -> al.Function:
     z = al.sym("z", NZ * (N + 1))
-    initial = eq_initial.call([z[:NZ]])[0]
+    initial = eq_initial(z[:NZ])
     mapped = al.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ)})
     return al.Function._from_exprs(f"banded_N{N}", [z], [al.concat([initial, mapped])], ["z"], ["eq"])
 
@@ -351,4 +351,4 @@ def test_vmap_jit_matches_unrolled_numpy() -> None:
   zv = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
   pv = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
   expected = np.concatenate([2.0 * zv[i * 3 : (i + 1) * 3] + pv[i * 3 : (i + 1) * 3] for i in range(N)])
-  np.testing.assert_allclose(fn(zv, pv), expected)
+  np.testing.assert_allclose(fn((zv, pv)), expected)

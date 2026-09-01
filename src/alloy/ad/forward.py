@@ -74,7 +74,13 @@ def _jvp(expr: Expr, wrt: Expr, seed: Expr, memo: dict[int, Expr], dep_memo: dic
       call_args = [expr.args[i] for i in arg_indices]
       if takes_seed:
         call_args.append(actual_tan)
-      term = jvp_fn.call(call_args)[0]
+      # The flat seam rather than ``jvp_fn(...)``, for two reasons. Correctness first: every builder
+      # here keeps only the inputs the derivative depends on, so a constant derivative leaves none,
+      # and ``__call__`` cannot route an empty tree symbolically — no ``Expr`` leaf means it reads as
+      # an evaluation. Second, we built ``jvp_fn`` from this very list, so going out through
+      # ``unflatten`` and straight back in through ``flatten_symbolic`` would rebuild and revalidate
+      # the same leaves once per call node on a hot recursive walk.
+      term = jvp_fn._flat_symbolic_call(call_args)[0]
       ret = term if ret is None else ret + term
     memo[expr.id] = ret = zeros_like(expr) if ret is None else ret
     return ret
@@ -441,7 +447,9 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
         continue
       if actual_tan.op == ExprOp.CONST and actual_tan.value is not None:
         jvp_fn, arg_indices, active = _call_jvp_many_const_function(expr.attrs["callee"], expr.attrs["output"], formal_idx, actual_tan.value)
-        active_term = jvp_fn.call([expr.args[i] for i in arg_indices])[0]
+        # Flat seam for the reasons given in ``_jvp``; the empty-input case is this one in practice,
+        # because a constant seed makes the derivative depend on nothing.
+        active_term = jvp_fn._flat_symbolic_call([expr.args[i] for i in arg_indices])[0]
         if len(active) == nseed:
           term = active_term
         else:
@@ -456,7 +464,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
         call_args = [expr.args[i] for i in arg_indices]
         if takes_seed:
           call_args.append(actual_tan)
-        term = jvp_fn.call(call_args)[0]
+        term = jvp_fn._flat_symbolic_call(call_args)[0]
       ret = term if ret is None else ret + term
     memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64)) if ret is None else ret
     return ret

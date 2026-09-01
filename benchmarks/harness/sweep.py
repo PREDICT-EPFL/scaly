@@ -838,7 +838,9 @@ def _samples(
   # parameter inputs, so the x/z alias is resolved only at this boundary.
   sample_values = {name: sample_value(name) for name, _ in info["inputs"]}
   args = list(sample_values.values())
-  result = info["callable"](*args)
+  kernel = info["callable"]
+  # CasADi takes flat positional leaves; an alloy Function takes its declared tree, so rebuild it.
+  result = kernel(*args) if info["backend"].startswith("casadi") else kernel(kernel.input_tree.unflatten(tuple(args)))
   if info["backend"].startswith("casadi"):
     outputs = result if isinstance(result, (tuple, list)) else (result,)
     selected = outputs[int(info["output_index"])]

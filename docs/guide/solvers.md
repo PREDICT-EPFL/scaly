@@ -87,7 +87,7 @@ declared parameter tree. Equality and inequality multipliers are flat arrays who
 zero.
 
 ```python
-result = solve.numerical_call(
+result = solve(
     (
         (np.zeros(2), np.zeros(1)),
         (np.zeros(2), np.zeros(1)),
@@ -128,7 +128,7 @@ data = (
     (np.zeros((0, 2)), np.zeros(0)),
     (np.zeros((0, 2)), np.zeros(0), np.zeros(0)),
 )
-x, lam_box, lam_eq, lam_ineq = solve_qp.numerical_call(
+x, lam_box, lam_eq, lam_ineq = solve_qp(
     (np.zeros(2), np.zeros(2), np.zeros(0), np.zeros(0), data)
 )
 ```
@@ -155,7 +155,7 @@ adapters translate those values to the backend’s native convention before solv
 
 ## Nesting a solver in a graph
 
-Use `symbolic_call` with the same declared structure to embed a solve:
+Call the solver with `Expr` leaves, in the same declared structure, to embed a solve:
 
 ```python
 @al.function(
@@ -165,7 +165,7 @@ Use `symbolic_call` with the same declared structure to embed a solve:
 def filtered_control(params: tuple[al.Expr, al.Expr]) -> al.Expr:
     target, bias = params
     nested = al.solver(tracking_problem, "sqp", name="nested_tracking")
-    result = nested.symbolic_call(
+    result = nested(
         (
             (al.const(np.zeros(2)), al.const(np.zeros(1))),
             (al.const(np.zeros(2)), al.const(np.zeros(1))),

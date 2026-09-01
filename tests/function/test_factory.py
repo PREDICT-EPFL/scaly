@@ -53,7 +53,7 @@ def test_forward_matches_casadi_sx() -> None:
   cy = casadi.vertcat(cx[0] * cx[1], casadi.sin(cx[2]) + cx[0])
   cff = casadi.Function("fwd", [cx, cseed], [casadi.mtimes(casadi.jacobian(cy, cx), cseed)])
 
-  np.testing.assert_allclose(ff(xv, seed), np.array(cff(xv, seed)).reshape(2), rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(ff((xv, seed)), np.array(cff(xv, seed)).reshape(2), rtol=1e-12, atol=1e-12)
 
 
 def test_adjoint_matches_casadi_sx() -> None:
@@ -69,14 +69,14 @@ def test_adjoint_matches_casadi_sx() -> None:
   cy = casadi.vertcat(cx[0] * cx[1], casadi.sin(cx[2]) + cx[0])
   caf = casadi.Function("adj", [cx, clam], [casadi.mtimes(casadi.jacobian(cy, cx).T, clam)])
 
-  np.testing.assert_allclose(af(xv, lam), np.array(caf(xv, lam)).reshape(3), rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(af((xv, lam)), np.array(caf(xv, lam)).reshape(3), rtol=1e-12, atol=1e-12)
 
 
 def test_jacobian_through_call_node_matches_casadi_mx() -> None:
   x = al.sym("x", 2)
   inner = al.Function._from_exprs("inner", [x], [x.sin() + x * x], ["x"], ["y"])
   z = al.sym("z", 2)
-  (inner_z,) = inner.call([z * z])
+  inner_z = inner(z * z)
   outer = al.Function._from_exprs("outer", [z], [inner_z], ["z"], ["y"])
   jf = outer.factory("J", ["z"], [al.factory.Jac("y", "z")])
 
@@ -108,4 +108,4 @@ def test_hessian_of_lagrangian_style_aux_matches_casadi_sx() -> None:
   cgamma = clf * casadi.sum1(casadi.sin(cx)) + casadi.dot(clg, cg)
   ch = casadi.Function("h", [cx, clf, clg], [casadi.hessian(cgamma, cx)[0]])
 
-  np.testing.assert_allclose(hfun(xv, lam_f, lam_g), np.array(ch(xv, lam_f, lam_g)), rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(hfun((xv, lam_f, lam_g)), np.array(ch(xv, lam_f, lam_g)), rtol=1e-12, atol=1e-12)

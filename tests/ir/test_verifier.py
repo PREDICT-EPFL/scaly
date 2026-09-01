@@ -35,7 +35,7 @@ def test_matmul_named_call_verifies() -> None:
   fn = al.Function._from_exprs("mm", [a, b], [a @ b], ["a", "b"], ["c"])
   c = al.sym("c", (3, 4))
   d = al.sym("d", (4, 2))
-  (out,) = fn.call([c, d])
+  out = fn((c, d))
   verify_expr(out)
 
 

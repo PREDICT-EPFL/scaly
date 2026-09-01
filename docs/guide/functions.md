@@ -38,29 +38,58 @@ must be unique within its tree.
 
 ## Symbolic and numerical calls
 
-Use the typed call that matches the leaf kind:
+Call a `Function` with its declared input tree. The leaves decide what the call means:
 
 ```python
-symbolic = features.symbolic_call((al.sym("x0", 3), al.sym("A0", (2, 3))))
-numeric = features.numerical_call((np.ones(3), np.eye(2, 3)))
+symbolic = features((al.sym("x0", 3), al.sym("A0", (2, 3))))
+numeric = features((np.ones(3), np.eye(2, 3)))
 
 symbolic_sum, symbolic_projection = symbolic
 numeric_sum, numeric_projection = numeric
 ```
 
-`symbolic_call` creates first-class `CALL` nodes in a larger expression graph. `numerical_call`
-compiles on first use, caches the shared library, and reconstructs the declared output tree.
+`Expr` leaves create first-class `CALL` nodes in a larger expression graph. Numerical leaves
+compile on first use, cache the shared library, and reconstruct the declared output tree.
+
+`__call__` is a dispatcher over two methods you can also call directly, and should when the
+distinction is the point you are making:
+
+- `fn.symbolic_call(tree)` always builds a call node.
+
+- `fn.numerical_call(tree)` always evaluates.
+
+A tree that mixes `Expr` and numerical leaves is an error rather than a guess. Wrap the constants
+in `al.const` to make the symbolic reading explicit.
+
 Structure is checked statically by ty and again at runtime. Shapes are checked at runtime because
 shapes are values in Python's type system.
-The lower-level compatibility calls remain available:
 
-- `fn.call([...])` accepts flat symbolic arguments and returns a flat tuple.
+## A single leaf is unpacked
 
-- `fn(...)` accepts flat numerical arguments and returns one array or a flat tuple.
+Only `al.G` introduces a tuple. A tree of one `al.L` *is* that leaf, so a one-leaf input takes the
+tensor itself and a one-leaf output returns the tensor itself:
 
-- `fn.eval_list(...)` always returns a flat list.
+```python
+@al.function(al.L("x", 3), al.L("scaled", ...))
+def scale(x: al.Expr) -> al.Expr:
+    return 2.0 * x
 
-Use the tree calls in typed code.
+scale(np.ones(3))                      # L in, L out -> one array in, one array out
+features((np.ones(3), np.eye(2, 3)))   # G in, G out -> a 2-tuple in, a 2-tuple out
+```
+
+This matters most on the way out. Do not destructure a single-output result:
+
+```python
+scaled = scale(np.ones(3))     # correct
+(scaled,) = scale(np.ones(3))  # wrong
+```
+
+The second line is wrong in a way worth knowing about, because it is not always loud. It iterates
+the returned array along its first axis, exactly as NumPy or PyTorch would, so it raises for a
+length-3 output but *succeeds* whenever the leading axis has length one — binding a scalar slice
+instead of the whole tensor. Symbolic calls behave the same way, with an `Expr` in place of the
+array.
 
 ## Grouping and the C signature
 
@@ -84,7 +113,7 @@ Choose the grouping that matches the domain object passed by the caller.
 
 ## Compose functions
 
-`symbolic_call` preserves the callee as a call in the graph:
+Calling a function with `Expr` leaves preserves the callee as a call in the graph:
 
 ```python
 @al.function(al.L("x", 3), al.L("square", ...))
@@ -93,7 +122,7 @@ def square(x: al.Expr) -> al.Expr:
 
 @al.function(al.L("x", 3), al.L("energy", ...))
 def energy(x: al.Expr) -> al.Expr:
-    return square.symbolic_call(x).sum()
+    return square(x).sum()
 ```
 
 The generated C contains one `square` procedure and a call from `energy`. Differentiation preserves

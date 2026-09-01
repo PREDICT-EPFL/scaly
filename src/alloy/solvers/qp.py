@@ -220,7 +220,8 @@ def build_qp[SV, NV, SP, NP](
       ("P", "A", "G"),
     )
     rng = np.random.default_rng(0)
-    values = probe.eval_list(*(rng.standard_normal(param.shape) for param in params))
+    sample = probe.input_tree.unflatten(tuple(rng.standard_normal(param.shape) for param in params))
+    values = probe(sample)
     P_sp = _qp_matrix_sparsity(P, params, values[0], triu=True)
     if n_eq:
       A_sp = _qp_matrix_sparsity(A, params, values[1])

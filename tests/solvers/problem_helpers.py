@@ -136,7 +136,7 @@ def solve_qp(
   if params and named_params:
     raise TypeError("pass positional or named QP parameters, not both")
   values = params or tuple(named_params[name] for name in descriptor.param_names)
-  outputs = solver.eval_list(x0, np.zeros_like(x0), lam_eq0, lam_ineq0, *values)
+  outputs = solver(solver.input_tree.unflatten((x0, np.zeros_like(x0), lam_eq0, lam_ineq0, *values)))
   result = dict(zip(solver.output_names, outputs, strict=True))
   result["x"] = outputs[0]
   result["lam_box"] = outputs[1]

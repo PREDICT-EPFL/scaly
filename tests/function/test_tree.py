@@ -168,3 +168,36 @@ def test_derivatives_preserve_source_trees() -> None:
     al.forward(cost, "f", "z")
   with pytest.raises(ValueError, match="unknown name 'y'"):
     al.lagrangian_hessian(duplicate, "y")
+
+
+def test_call_dispatches_on_leaf_kind() -> None:
+  """``__call__`` routes to ``symbolic_call`` or ``numerical_call`` by the leaves it is given."""
+  xv, yv = np.arange(3.0), np.ones(3)
+
+  np.testing.assert_allclose(multiply((xv, yv)), multiply.numerical_call((xv, yv)))
+  assert multiply((al.sym("a", 3), al.sym("b", 3))).op == al.ExprOp.CALL
+
+  # Only G introduces a tuple: a one-leaf tree is the bare value on both sides.
+  assert not isinstance(multiply((xv, yv)), tuple)
+  first, second = duplicate(xv)
+  np.testing.assert_allclose(first, xv)
+  np.testing.assert_allclose(second, xv)
+
+  with pytest.raises(TypeError, match="mix Expr and numerical leaves"):
+    multiply(cast(Any, (al.sym("a", 3), yv)))
+
+  # A constant leaf has to be lifted for the symbolic reading; the dispatch never guesses.
+  assert multiply((al.const(xv), al.sym("b", 3))).op == al.ExprOp.CALL
+
+
+def test_call_dispatch_predicates_ignore_structure() -> None:
+  """A wrongly-shaped tree is reported against the declared names, not as a kind mismatch."""
+  tree = al.G(al.L("x", 3), al.L("y", 3))
+  assert tree.is_symbolic((al.sym("a", 3), al.sym("b", 3)))
+  assert not tree.is_numerical((al.sym("a", 3), al.sym("b", 3)))
+  assert tree.is_numerical((np.zeros(3), np.zeros(3)))
+  assert not tree.is_symbolic((np.zeros(3), np.zeros(3)))
+  # Neither predicate consults the structure, so the flattener owns that message.
+  assert tree.is_symbolic(cast(Any, (al.sym("a", 3),)))
+  with pytest.raises(ValueError, match="does not have the declared structure"):
+    multiply(cast(Any, (np.zeros(3),)))

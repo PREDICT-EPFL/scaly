@@ -195,43 +195,26 @@ def test_nested_qp_jit_compiles_through_piqp() -> None:
     l_ineq = al.stack([al.const(-1.0)], axis=0)
     u_ineq = al.stack([al.const(1.0)], axis=0)
     qp = build_qp(P=P, c=c, G_ineq=G, l_ineq=l_ineq, u_ineq=u_ineq)
-    out = qp.call(
-      **{
-        "decision": al.const(np.zeros(2)),
-        "lam:decision": al.const(np.zeros(2)),
-        "lam_eq": al.const(np.zeros(0)),
-        "lam_ineq": al.const(np.zeros(1)),
-        "x": x,
-        "u_ref": u_ref,
-      }
-    )
-    return out[0]
+    u, *_ = qp((al.const(np.zeros(2)), al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(1)), (u_ref, x)))
+    return u
 
-  u = safety_filter(np.array([1.0, 1.0]), np.array([0.5, 0.5]))
+  u = safety_filter((np.array([1.0, 1.0]), np.array([0.5, 0.5])))
   # Unconstrained min is u_ref=(0.5,0.5); G*u = 1 = upper bound -> on boundary.
   np.testing.assert_allclose(u, [0.5, 0.5], atol=1e-3)
 
   # Same call again exercises the static-workspace update path inside the
   # compiled solver wrapper.
-  u2 = safety_filter(np.array([1.0, -1.0]), np.array([0.0, 0.0]))
+  u2 = safety_filter((np.array([1.0, -1.0]), np.array([0.0, 0.0])))
   np.testing.assert_allclose(u2, [0.0, 0.0], atol=1e-7)
 
 
 @pytest.mark.solver("piqp")
-def test_nested_qp_call_keyword_form() -> None:
-  """``.call(...)`` accepts keyword arguments to bypass alphabetical sort order."""
+def test_nested_qp_call_uses_the_declared_tree() -> None:
+  """A nested solve takes the solver's declared input tree; leaf order comes from the declaration."""
   u_ref = al.sym("u_ref", 2)
   qp = build_qp(P=al.const(np.eye(2)), c=-u_ref)
-  # Even with one param the kwarg form is order-independent and self-documenting.
-  out_exprs = qp.call(
-    **{
-      "decision": al.const(np.zeros(2)),
-      "lam:decision": al.const(np.zeros(2)),
-      "lam_eq": al.const(np.zeros(0)),
-      "lam_ineq": al.const(np.zeros(0)),
-      "u_ref": u_ref,
-    }
-  )
+  assert qp.input_names == ("decision", "lam:decision", "lam_eq", "lam_ineq", "u_ref")
+  out_exprs = qp((al.const(np.zeros(2)), al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), u_ref))
   assert len(out_exprs) == len(qp.output_names)
   wrapped = al.Function._from_exprs("wrapped", [u_ref], [out_exprs[0]], ["u_ref"], ["u"])
   result = wrapped(np.array([1.5, -0.3]))

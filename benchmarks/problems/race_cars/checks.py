@@ -145,7 +145,7 @@ def check_transcription_parameter_layout() -> None:
   for i in range(horizon):
     zi, znext = zv[i * NZ : (i + 1) * NZ], zv[(i + 1) * NZ : (i + 2) * NZ]
     parts.append(rk4_step_np(zi[:NX], zi[NX:NZ], params) - znext[:NX])
-  got = np.asarray(race_car_eq_function(horizon)(zv, pv)).reshape(-1)
+  got = np.asarray(race_car_eq_function(horizon)((zv, pv))).reshape(-1)
   np.testing.assert_allclose(got, np.concatenate(parts), rtol=1e-12, atol=1e-12)
 
 
@@ -170,7 +170,7 @@ def check_default_constants() -> None:
     ]
   )
   actual = np.zeros(sparsity.shape)
-  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(fn(zv, pv)).reshape(-1)
+  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(fn((zv, pv))).reshape(-1)
   reference = race_car_constraint_jac_dense_reference(horizon, zv, pv)
   np.testing.assert_allclose(actual, reference, rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(actual[: expected.shape[0]], expected, rtol=1e-12, atol=1e-12)

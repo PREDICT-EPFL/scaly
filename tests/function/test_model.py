@@ -10,7 +10,7 @@ def test_function_call_node_eval() -> None:
   x = al.sym("x", 2)
   inner = al.Function._from_exprs("inner", [x], [x.sin()], ["x"], ["y"])
   z = al.sym("z", 2)
-  (inner_z,) = inner.call([z])
+  inner_z = inner(z)
   outer = al.Function._from_exprs("outer", [z], [inner_z + 1.0], ["z"], ["out"])
 
   np.testing.assert_allclose(outer(np.array([0.1, 0.2])), np.sin([0.1, 0.2]) + 1.0)
@@ -20,10 +20,10 @@ def test_function_call_node_eval() -> None:
 def test_function_call_normalizes_raw_constant_args() -> None:
   x = al.sym("x", 2)
   inner = al.Function._from_exprs("inner", [x], [x + 1.0], ["x"], ["y"])
-  (inner_const,) = inner.call([[1.0, 2.0]])
+  inner_const = inner(al.const([1.0, 2.0]))
   outer = al.Function._from_exprs("outer", [], [inner_const], [], ["out"])
 
-  np.testing.assert_allclose(outer(), np.array([2.0, 3.0]))
+  np.testing.assert_allclose(outer(()), np.array([2.0, 3.0]))
   assert not inner_const.type.diff
 
 
@@ -47,8 +47,8 @@ def test_function_signature_and_call_shape_errors() -> None:
 
   f = al.Function._from_exprs("f", [x], [x], ["x"], ["y"])
   try:
-    _ = f.call([al.sym("z", 3)])
+    _ = f(al.sym("z", 3))
   except ValueError as e:
-    assert "call argument 'x' has shape (3,), expected (2,)" in str(e)
+    assert "expected shape (2,) for 'x', got (3,)" in str(e)
   else:  # pragma: no cover
     raise AssertionError("call shape mismatch should fail")

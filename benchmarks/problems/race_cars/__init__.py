@@ -128,16 +128,16 @@ def race_car_eq_function(horizon: int) -> al.Function:
   z = al.sym("z", NZ * (horizon + 1))
   p = al.sym("p", n_param(horizon), diff=False)
   params = p[NX * (horizon + 1) :]
-  parts = [eq_initial.call([z[:NZ], p[:NX]])[0]]
+  parts = [eq_initial((z[:NZ], p[:NX]))]
   for i in range(horizon):
     zi = z[i * NZ : (i + 1) * NZ]
     znext = z[(i + 1) * NZ : (i + 2) * NZ]
-    parts.append(eq_interstage.call([zi, znext, params])[0])
+    parts.append(eq_interstage((zi, znext, params)))
   return al.Function._from_exprs(f"race_car_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
 
 
 def _race_car_eq_vmap_expr(z: al.Expr, p: al.Expr, horizon: int) -> al.Expr:
-  initial = eq_initial.call([z[:NZ], p[:NX]])[0]
+  initial = eq_initial((z[:NZ], p[:NX]))
   mapped = al.vmap(
     eq_interstage,
     length=horizon,

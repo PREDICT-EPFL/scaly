@@ -254,7 +254,7 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
     if mapped:
       h_eq = al.vmap(piece, 2, [(x, 0, 2)])
     else:
-      h_eq = al.concat([piece.call([x[2 * it : 2 * (it + 1)]])[0] for it in range(2)])
+      h_eq = al.concat([piece(x[2 * it : 2 * (it + 1)]) for it in range(2)])
     return build_nlp(
       x=x,
       f=((x - target) ** 2).sum(),
@@ -277,13 +277,13 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
 
   def hess_dense(mapped: bool, xv: np.ndarray, lam: np.ndarray) -> np.ndarray:
     x = al.sym("x", 4)
-    h_eq = al.vmap(piece, 2, [(x, 0, 2)]) if mapped else al.concat([piece.call([x[2 * it : 2 * (it + 1)]])[0] for it in range(2)])
+    h_eq = al.vmap(piece, 2, [(x, 0, 2)]) if mapped else al.concat([piece(x[2 * it : 2 * (it + 1)]) for it in range(2)])
     base = al.Function._from_exprs(f"nlp_hess_base_{int(mapped)}", [x], [((x - target) ** 2).sum(), h_eq], ["x"], ["f", "g"])
     shf = al.sparse_lagrangian_hessian(base, "x")
     sp = shf.output_sparsities[0]
     assert sp is not None
     dense = np.zeros(sp.shape)
-    dense[np.asarray(sp.rows), np.asarray(sp.cols)] = np.asarray(shf(xv, np.array(1.0), lam))
+    dense[np.asarray(sp.rows), np.asarray(sp.cols)] = np.asarray(shf((xv, (np.array(1.0), lam))))
     return dense
 
   lam = np.array([0.8, -1.7])

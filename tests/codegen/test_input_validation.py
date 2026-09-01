@@ -10,27 +10,20 @@ def test_jit_reports_input_errors() -> None:
   y = al.sym("y", 2)
   out = ((x + 2.0) * y).sum()
   f = al.Function._from_exprs("f", [x, y], [out], ["x", "y"], ["out"])
-  env = {"x": np.array([1.0, 3.0]), "y": np.array([4.0, 5.0])}
+  xv, yv = np.array([1.0, 3.0]), np.array([4.0, 5.0])
 
-  np.testing.assert_allclose(f(**env), ((env["x"] + 2.0) * env["y"]).sum())
-
-  try:
-    _ = f(x=env["x"])
-  except TypeError as e:
-    assert "missing keyword inputs: ['y']" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("missing keyword input should fail")
+  np.testing.assert_allclose(f((xv, yv)), ((xv + 2.0) * yv).sum())
 
   try:
-    _ = f(x=env["x"], y=env["y"], z=env["x"])
-  except TypeError as e:
-    assert "unexpected keyword inputs: ['z']" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("extra keyword input should fail")
-
-  try:
-    f(x=env["x"].reshape(1, 2), y=env["y"])
+    _ = f((xv,))
   except ValueError as e:
-    assert "input 'x' has shape (1, 2), expected (2,)" in str(e)
+    assert "does not have the declared structure of ('x', 'y')" in str(e)
+  else:  # pragma: no cover
+    raise AssertionError("a tree with the wrong leaf count should fail")
+
+  try:
+    f((xv.reshape(1, 2), yv))
+  except ValueError as e:
+    assert "expected shape (2,) for 'x', got (1, 2)" in str(e)
   else:  # pragma: no cover
     raise AssertionError("shape mismatch should fail")

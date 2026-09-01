@@ -344,7 +344,7 @@ def npmpc_eq_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray, dec
   for i in range(horizon):
     x, xnext = z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)]
     u = z[offset + NU * i : offset + NU * (i + 1)]
-    d_x, d_u, d_xnext = (np.asarray(block, dtype=np.float64).reshape(NX, -1) for block in jac(x, xnext, u, p))
+    d_x, d_u, d_xnext = (np.asarray(block, dtype=np.float64).reshape(NX, -1) for block in jac((x, xnext, u, p)))
     rows = slice(NX * i, NX * (i + 1))
     dense[rows, NX * i : NX * (i + 1)] = d_x
     dense[rows, NX * (i + 1) : NX * (i + 2)] = d_xnext
@@ -394,7 +394,7 @@ def linearize(decoder: Decoder, pw: np.ndarray, dt: float = DT) -> tuple[np.ndar
   torch dependency out and exercises Alloy's differentiation in the problem's own setup.
   """
   jac = _stage_jac_function(decoder, dt)
-  d_x, d_u, _ = (np.asarray(block, dtype=np.float64).reshape(NX, -1) for block in jac(np.zeros(NX), np.zeros(NX), np.zeros(NU), pw))
+  d_x, d_u, _ = (np.asarray(block, dtype=np.float64).reshape(NX, -1) for block in jac((np.zeros(NX), np.zeros(NX), np.zeros(NU), pw)))
   return d_x, d_u
 
 
@@ -424,7 +424,7 @@ def stage_cost_function(weights: CostWeights = CostWeights()) -> al.Function:
   """
 
   @al.function(al.G(al.L("x", NX), al.L("xnext", NX), al.L("u", NU)), al.L("cost", ...), name="npmpc_stage_cost")
-  def stage_cost(inputs):
+  def stage_cost(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
     x, xnext, u = inputs
     dx = xnext - x
     # The pendulum angle uses the 2*pi-periodic half-angle lift, so every upright pose costs the

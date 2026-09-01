@@ -173,7 +173,7 @@ def test_c_source_lowers_call_nodes_through_internal_raw_function(tmp_path) -> N
   x = al.sym("x", 2)
   inner = al.Function._from_exprs("inner", [x], [x * x, x.sum()], ["x"], ["sq", "sum"])
   z = al.sym("z", 2)
-  inner_sq, inner_sum = inner.call([z + 1.0])
+  inner_sq, inner_sum = inner(z + 1.0)
   outer = al.Function._from_exprs("outer", [z], [inner_sq + inner_sum], ["z"], ["y"])
   from alloy.codegen import render_c_source
 
