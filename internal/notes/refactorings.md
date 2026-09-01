@@ -383,3 +383,67 @@ regenerated once instead of twice.
 - **Doing this during the restructure.** It was phase 9 for a reason: every other phase was either
   a seam change with the layout fixed or a move with no logic change, and this one is neither. It
   stayed out so that a C-snapshot diff during the restructure could only ever mean a mistake.
+
+# Open problems
+
+Noticed and reproduced, not scoped. Neither entry has a decision, a design or an
+`internal/todo.md` item; both are here so the next session does not rediscover them. An entry
+leaves this section for a `#` section of its own once someone decides what to do about it.
+
+## Zero-input `Function`s, and the flat call seam that survives because of them
+
+Found while landing the typed call surface, by trying to ban zero-input `Function`s and watching
+the suite break. Two independent producers, both legitimate:
+
+- **Differentiation.** `_call_jvp_function`, `_call_jvp_many_function` and
+  `_call_jvp_many_const_function` in `ad/forward.py` each keep only the callee inputs the
+  derivative actually depends on. A constant derivative depends on none, so the synthesized callee
+  has no inputs at all — `duplicate_fw_second_x`, `scale_add_fw_y_x`,
+  `bicycle_stage_interstage_fw_eq_znext` among others.
+- **Solvers.** The oracle and bounds functions of any problem declared without parameters:
+  `standalone_qp_oracle`, `settings_qp_bounds`.
+
+Both lower to real C procedures taking no arguments, so neither is a mistake to delete.
+
+What we are living with. `Function.__call__` dispatches on leaf kind, and an empty tree has no
+`Expr` leaf, so it cannot be routed symbolically — it reads as an evaluation. That is the reason
+`ad/forward.py` is the one module outside `function/` permitted to use `_flat_symbolic_call`,
+pinned by `test_flat_call_seams_stay_inside_their_sanctioned_modules` in `tests/test_layering.py`.
+
+What a fix looks like, and why it did not ride along with the API change. A `CALL` to a
+no-argument procedure returning a constant is pure overhead; inlining the constant at the call site
+would remove the AD producer, let the ban stand, and shrink the generated source. But it changes
+what AD emits, so it regenerates the byte-for-byte C corpus (`tests/test_c_snapshot.py`,
+`tests/baseline/c/`) — an AD and codegen change wearing an API cleanup's clothes. The solver side
+needs its own answer either way: a parameterless oracle has nothing to take, so either a zero-input
+signature stays legal or the descriptor stops building one.
+
+## `vmap` and the AD entry points erase the callee's declared trees
+
+`Function` is meant to be the unit of composition, and after the typed call surface it nearly is:
+`fn(tree)` is typed on both the symbolic and the numeric side, and the derivative wrappers keep the
+source's input tree, so `al.gradient(fn, "f", "x")` is a `Function[SI, NI, Expr, np.ndarray]`.
+Three holes remain, all on the paths that matter most for composing:
+
+- **`al.vmap` is untyped end to end.** `vmap(callee: Any, length: int, inputs: Any, output: int = 0)
+  -> Expr` in `function/sugar.py`. The callee's declared trees are never read, the result is a bare
+  flat `Expr` rather than the callee's output tree repeated, and an output is selected by integer
+  index — the addressing-by-position that the declared trees removed everywhere else.
+- **`al.jvp`, `al.jvp_many`, `al.vjp` and `al.vjp_many` are expression-level.** They take
+  `Sequence[Expr]` and return `tuple[Expr, ...]`: typed, but tree-blind, with no Function-level
+  spelling that preserves structure.
+- **The callees AD synthesizes are `Any`-typed.** Every builder in `ad/forward.py` and
+  `ad/reverse.py` goes through `Function._from_exprs`, whose trees come from `flat_tree`, so each
+  result is a `Function[Any, Any, Any, Any]`. This already leaks into the call surface: both
+  `__call__` overloads match `Any`, which is why their order in `function/model.py` is load-bearing
+  and had to be commented.
+
+Cost of leaving it: any composition passing through a map or a derivative drops out of the typed
+world, and the developer experience degrades exactly where the library stakes its claim, on
+preserved mapped structure. The D3 sketch anticipated the first of these — `arity.py`'s docstring
+lists "`vmap` typed by its callee's trees" as left for the implementation.
+
+Whatever lands needs both kinds of test the tree work uses, because they catch different things:
+runtime structure tests beside `tests/function/test_tree.py`, and static ones in
+`tests/typing/test_arity.py`, which runs under `ty check --error-on-warning` where every
+`ty: ignore` marks an expected error and an unused one fails the check.
