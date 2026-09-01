@@ -51,6 +51,9 @@ docs = [
 alloy_viz = "alloy.viz.serve:main"
 alloy_toolchain = "alloy.codegen.toolchain:main"
 
+[tool.uv]
+default-groups = ["dev", "docs"]
+
 [tool.uv.workspace]
 members = ["plugins/*"]
 
