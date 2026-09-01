@@ -263,7 +263,7 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   lines.append(f"  {symbol}_ctx.n_eval_f = 0; {symbol}_ctx.n_eval_grad_f = 0; {symbol}_ctx.n_eval_g = 0;")
   lines.append(f"  {symbol}_ctx.n_eval_jac_g = 0; {symbol}_ctx.n_eval_h = 0; {symbol}_ctx.iter = 0;")
   lines.append(f"  {symbol}_ctx.inf_pr = 0.0; {symbol}_ctx.step_inf = 0.0; {symbol}_ctx.alpha = 0.0; {symbol}_ctx.backtracks = 0;")
-  # Compute bounds (counted as FE time), then clamp to IPOPT's ±2e19
+  # Compute bounds (counted as FE time), then translate core's IEEE infinities to IPOPT's ±2e19
   # infinity convention. Deliberate choice: `!(x > lim)` also maps NaN bounds
   # to the infinity limit (invalid either way).
   lines.append(f"  static double x_L[{n}]; static double x_U[{n}];")

@@ -106,6 +106,14 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
   oracle_call = ", ".join([*oracle_param_args, *(name for name, _ in oracle_outs), "w"])
   lines.append("  double fe_t0 = alloy_clock_s();")
   lines.append(f"  {oracle_raw}({oracle_call});")
+  # Core oracles use IEEE infinities for open sides; PIQP uses its finite sentinel.
+  if m:
+    lines.append(
+      f"  for (int i = 0; i < {m}; ++i) {{ if (isinf(lineq_buf[i]) && lineq_buf[i] < 0.0) lineq_buf[i] = -PIQP_INF; if (isinf(uineq_buf[i]) && uineq_buf[i] > 0.0) uineq_buf[i] = PIQP_INF; }}"
+    )
+  lines.append(
+    f"  for (int i = 0; i < {n}; ++i) {{ if (isinf(xlb_buf[i]) && xlb_buf[i] < 0.0) xlb_buf[i] = -PIQP_INF; if (isinf(xub_buf[i]) && xub_buf[i] > 0.0) xub_buf[i] = PIQP_INF; }}"
+  )
   lines.append("  double stats_t_fe = alloy_clock_s() - fe_t0;")
 
   if sparse:

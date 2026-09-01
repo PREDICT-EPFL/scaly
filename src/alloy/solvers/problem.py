@@ -6,10 +6,19 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, cast, overload
 
+import numpy as np
+
 from ..function.tree import Tree, flat_tree
 from ..ir.expr import Expr, as_expr, substitute
 from ..ir.types import TensorType
 from ._oracle import collect_free_inputs
+
+
+NO_LB: Expr = Expr.const(float("-inf"))
+"""A scalar expression that leaves one variable block unbounded below."""
+
+NO_UB: Expr = Expr.const(float("inf"))
+"""A scalar expression that leaves one variable block unbounded above."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +40,11 @@ def bounded(expr: Expr, lo: Any = None, hi: Any = None, *, name: str | None = No
 
 @dataclass(frozen=True, slots=True)
 class ProblemSpec[SymbolicVars]:
-  """The objective, constraint groups, and box bounds returned by a problem body."""
+  """The objective, constraint groups, and box bounds returned by a problem body.
+
+  ``lb`` and ``ub`` have the variables’ tree structure. Scalar expression leaves broadcast over
+  their variable blocks. Use ``NO_LB`` or ``NO_UB`` for an open side of one leaf.
+  """
 
   minimize: Expr
   eq: tuple[Expr, ...] = ()
@@ -82,14 +95,27 @@ def _normalize_spec[SV](spec: ProblemSpec[SV], vars: Tree[SV, Any]) -> ProblemSp
     if len(group.expr.shape) > 1:
       raise TypeError(f"inequality constraints must be scalar or rank-1, got shape {group.expr.shape}")
 
+  bounds: list[SV | None] = []
   for side, value in (("lb", spec.lb), ("ub", spec.ub)):
-    if value is not None:
-      try:
-        vars.flatten_symbolic(value, f"problem {side}")
-      except ValueError as exc:
-        raise TypeError(str(exc)) from exc
+    if value is None:
+      bounds.append(None)
+      continue
+    try:
+      leaves = vars.flatten_symbolic(value, f"problem {side}", allow_scalar=True)
+    except ValueError as exc:
+      raise TypeError(str(exc)) from exc
+    bounds.append(
+      cast(
+        SV,
+        vars.unflatten(
+          tuple(
+            expr if expr.shape == type_.shape else Expr.const(np.zeros(type_.shape)) + expr for expr, type_ in zip(leaves, vars.types, strict=True)
+          )
+        ),
+      )
+    )
 
-  return ProblemSpec(minimize, eq, ineq, spec.lb, spec.ub)
+  return ProblemSpec(minimize, eq, ineq, bounds[0], bounds[1])
 
 
 def _spec_exprs[SV](spec: ProblemSpec[SV], vars: Tree[SV, Any]) -> tuple[Expr, ...]:

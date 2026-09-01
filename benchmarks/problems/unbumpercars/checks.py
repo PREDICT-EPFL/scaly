@@ -340,7 +340,7 @@ def check_exact_hess_matches_casadi_on_closed_loop_samples() -> None:
     physics, dt = loop_cfg.physics.array(), np.array([loop_cfg.dt])
     p = np.concatenate([bar_x, u_des, weights.packed, physics, dt])
     hess_fn = cast(al.Function, alloy_filt.hess_fn)
-    alloy_values = np.asarray(hess_fn.eval_list(z, 1.0, lam, bar_x, u_des, weights.packed, physics, dt)[0], dtype=np.float64).reshape(-1)
+    alloy_values = np.asarray(hess_fn.eval_list(z, bar_x, u_des, weights.packed, physics, dt, 1.0, lam)[0], dtype=np.float64).reshape(-1)
     casadi_dense = np.asarray(casadi_filt.hess_fn(z, p, 1.0, lam), dtype=np.float64)
     np.testing.assert_allclose(alloy_values, casadi_dense[alloy_filt.hess_rows, alloy_filt.hess_cols], rtol=1e-8)
     sim.step(safe)

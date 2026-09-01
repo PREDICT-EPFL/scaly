@@ -13,6 +13,7 @@ import time
 import numpy as np
 
 import alloy as al
+from alloy.codegen.abi import c_ident
 from alloy.codegen.aot import render_c_module
 from alloy.ir.expr import ExprOp, topo
 from alloy.ir.program import ProgramNode, ProgramOp
@@ -51,6 +52,10 @@ NPMPC_WORKLOADS = ("npmpc", "npmpc_jac", "npmpc_decoder", "npmpc_decoder_jac")
 
 def _kernel_kind(workload: str) -> str:
   return "jac" if workload.endswith("_jac") else "hess"
+
+
+def _alloy_inputs(kernel: al.Function) -> list[tuple[str, int]]:
+  return [(c_ident(name), expr.size) for name, expr in zip(kernel.input_names, kernel.inputs, strict=True)]
 
 
 FIELDS = [
@@ -419,12 +424,7 @@ def _race_cars_alloy(workload: str, size: int, out_dir: Path) -> dict:
   name = kernel.name
   build_ms = (time.perf_counter() - started) * 1000
   module, render_ms = _render_alloy(kernel, name, out_dir)
-  n_constraints = race_cars.NX * (size + 1) + 2 * size
-  inputs = (
-    [("z", race_cars.NZ * (size + 1)), ("p", race_cars.n_param(size))]
-    if kind == "jac"
-    else [("z", race_cars.NZ * (size + 1)), ("lam_f", 1), ("lam_g", n_constraints), ("p", race_cars.n_param(size))]
-  )
+  inputs = _alloy_inputs(kernel)
   benchmark = f"BM_AlloyRaceCar{'ConstraintJac' if kind == 'jac' else 'LagHess'}N{size}"
   return _module_info(
     name,
@@ -446,14 +446,10 @@ def _race_cars_alloy(workload: str, size: int, out_dir: Path) -> dict:
 def _chain_alloy(workload: str, size: int, out_dir: Path) -> dict:
   horizon = chain.HORIZON
   kind = _kernel_kind(workload)
-  inputs = (
-    [("z", chain.n_dec(size, horizon)), ("p", chain.n_param(size))]
-    if kind == "jac"
-    else [("z", chain.n_dec(size, horizon)), ("lam_f", 1), ("lam_g", chain.n_state(size) * (horizon + 1)), ("p", chain.n_param(size))]
-  )
   benchmark = f"BM_AlloyChain{'EqJac' if kind == 'jac' else 'LagHess'}M{size}"
   started = time.perf_counter()
   kernel, sparsity, coloring_width = _descriptor_kernel(chain.chain_nlp(size, horizon), kind)
+  inputs = _alloy_inputs(kernel)
   name = kernel.name
   build_ms = (time.perf_counter() - started) * 1000
   module, render_ms = _render_alloy(kernel, name, out_dir)
@@ -475,7 +471,7 @@ def _chain_alloy(workload: str, size: int, out_dir: Path) -> dict:
 
 
 def _unbumpercars_alloy(size: int, out_dir: Path) -> dict:
-  from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, NCTRL, NSTATE, N_PHYSICS, N_PW_DT
+  from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig
   from benchmarks.problems.unbumpercars.filters import build_alloy_nlp
 
   started = time.perf_counter()
@@ -489,16 +485,7 @@ def _unbumpercars_alloy(size: int, out_dir: Path) -> dict:
     name,
     "alloy",
     module,
-    [
-      ("z", NCTRL * size + cfg.n_slack),
-      ("lam_f", 1),
-      ("lam_g", cfg.n_slack),
-      ("bar_x", NSTATE * size),
-      ("u_des", NCTRL * size),
-      ("pw", N_PW_DT),
-      ("physics", N_PHYSICS),
-      ("dt", 1),
-    ],
+    _alloy_inputs(kernel),
     sparsity,
     sparsity.shape,
     build_ms,
@@ -532,18 +519,16 @@ def _npmpc_cell(workload: str, size: int) -> tuple[int, npmpc.Decoder, np.ndarra
 def _npmpc_alloy(workload: str, size: int, out_dir: Path) -> dict:
   horizon, decoder, _, terminal = _npmpc_cell(workload, size)
   axis = CELL_AXES[workload]
-  n_z = npmpc.n_dec(horizon)
   started = time.perf_counter()
   terminal = np.diag(npmpc.CostWeights().x_end) if terminal is None else terminal
   kind = _kernel_kind(workload)
   built, sparsity, coloring_width = _descriptor_kernel(npmpc.npmpc_nlp(terminal, horizon, decoder), kind)
   name = built.name
   if kind == "hess":
-    inputs = [("z", n_z), ("lam_f", 1), ("lam_g", sum(npmpc.constraint_counts(horizon))), ("p", npmpc.n_param(decoder))]
     benchmark = f"BM_AlloyNpmpcLagHess{axis}{size}"
   else:
-    inputs = [("z", n_z), ("p", npmpc.n_param(decoder))]
     benchmark = f"BM_AlloyNpmpcConstraintJac{axis}{size}"
+  inputs = _alloy_inputs(built)
   build_ms = (time.perf_counter() - started) * 1000
   module, render_ms = _render_alloy(built, name, out_dir)
   return _module_info(
@@ -845,7 +830,7 @@ def _samples(
   def sample_value(name: str) -> np.ndarray:
     if name in values:
       return values[name]
-    if name == "x" and "z" in values:
+    if name in {"x", info["inputs"][0][0]} and "z" in values:
       return values["z"]
     raise KeyError(f"no sample value for {name!r}; available values are {sorted(values)}")
 

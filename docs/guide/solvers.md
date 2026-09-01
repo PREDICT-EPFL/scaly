@@ -29,8 +29,8 @@ def tracking_problem(
         minimize=al.sumsqr(u - target) + 10.0 * al.sumsqr(slack - bias),
         eq=(u[0:1] - u[1:2],),
         ineq=(al.bounded(u + slack, lo=0.0, name="safe"),),
-        lb=(al.const(-np.ones(2)), al.const(np.zeros(1))),
-        ub=(al.const(np.ones(2)), al.const(np.full(1, np.inf))),
+        lb=(al.NO_LB, al.const(0.0)),
+        ub=(al.NO_UB, al.NO_UB),
     )
 ```
 
@@ -45,7 +45,10 @@ def tracking_problem(
 | `ub` | optional upper bounds with the variables' structure |
 
 At least one of `lo` and `hi` is required for a bounded group. A scalar bound broadcasts over its
-group. Names are metadata and need not match local Python variable names.
+group or variable leaf. `lb` and `ub` must have the variables’ tree structure. Use `al.NO_LB` or
+`al.NO_UB` when one leaf has no bound on that side; use `None` when the entire lower or upper side
+is absent. These constants are scalar `Expr` values, so the tree remains statically typed. Names are
+metadata and need not match local Python variable names.
 Pass a parameter tree when the public interface is fixed. If `params` is omitted, Alloy collects
 named expressions closed over by the body and builds the parameter tree from them.
 
@@ -147,8 +150,8 @@ solve_sparse = al.solver(problem, "piqp", options={"sparse": True})
 
 The sparse path rejects QP matrices computed from another solver output because solver calls are
 opaque to structural dependency analysis. The dense path has no such restriction.
-Omitted bounds use PIQP's native `1e30` sentinel. IPOPT uses `2e19` internally. Omit an unbounded
-side instead of passing an explicit infinity when you want the backend's convention.
+Problem oracles represent an absent bound with IEEE negative or positive infinity. Built-in solver
+adapters translate those values to the backend’s native convention before solving.
 
 ## Nesting a solver in a graph
 

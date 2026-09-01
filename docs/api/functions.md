@@ -1,5 +1,13 @@
 # Building functions
 
+## Declared trees
+
+::: alloy.function.tree.Tree
+
+::: alloy.function.tree.L
+
+::: alloy.function.tree.G
+
 ## The decorator
 
 ::: alloy.function.api.function

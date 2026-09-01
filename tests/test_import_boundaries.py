@@ -14,7 +14,7 @@ from alloy.ir.expr_spec import spec_expr
 from alloy.ir.program import ProgramNode, ProgramOp
 from alloy.ir.program_spec import spec_program_full
 from alloy.ir.spec import Rule, Spec, VerifyError
-from alloy.solvers.problem import Bounded, Problem, ProblemSpec
+from alloy.solvers.problem import NO_LB, NO_UB, Bounded, Problem, ProblemSpec
 from alloy.solvers.qp import NotQuadratic, QPData, qp_problem
 
 
@@ -29,10 +29,14 @@ def test_public_exports_are_canonical() -> None:
   assert al.Problem is Problem
   assert al.ProblemSpec is ProblemSpec
   assert al.NotQuadratic is NotQuadratic
+  assert al.NO_LB is NO_LB
+  assert al.NO_UB is NO_UB
   assert al.QPData is QPData
   assert al.qp_problem is qp_problem
   assert callable(al.bounded) and callable(al.problem) and callable(al.solver)
-  assert {"Bounded", "NotQuadratic", "Problem", "ProblemSpec", "QPData", "bounded", "problem", "qp_problem", "solver"} <= set(al.__all__)
+  assert {"Bounded", "NO_LB", "NO_UB", "NotQuadratic", "Problem", "ProblemSpec", "QPData", "bounded", "problem", "qp_problem", "solver"} <= set(
+    al.__all__
+  )
   assert not hasattr(al, "nlp")
   assert not hasattr(al, "qp")
   assert not hasattr(al, "SolverFunction")

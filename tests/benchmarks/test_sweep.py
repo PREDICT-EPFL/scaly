@@ -111,6 +111,20 @@ def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
   assert coloring_width == 2
 
 
+@pytest.mark.solver("ipopt")
+def test_unbumpercars_typed_problem_keeps_hessian_in_place() -> None:
+  from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig
+  from benchmarks.problems.unbumpercars.filters import build_alloy_nlp
+
+  hessian = build_alloy_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).descriptor.hess
+  module = render_c_module(hessian, typed_buffers=False)
+
+  # Baselines are about 86 KB and 34k doubles. Headroom catches a CALL boundary materializing
+  # batched-JVP seed tables without pinning harmless local code-generation changes.
+  assert len(module.body.encode()) < 200_000
+  assert module.workspace_size < 100_000
+
+
 def test_module_info_records_constructed_local_coloring_width() -> None:
   a = al.sym("a", 1)
   b = al.sym("b", 1)

@@ -16,8 +16,8 @@ from alloy.solvers.registry import SolverPluginError
 def quadratic(x: al.Expr, scale: al.Expr) -> al.ProblemSpec[al.Expr]:
   return al.ProblemSpec(
     minimize=(x * x).sum() * scale,
-    lb=al.const(np.full(3, -1.0)),
-    ub=al.const(np.full(3, 1.0)),
+    lb=al.const(-1.0),
+    ub=al.const(1.0),
   )
 
 
@@ -36,7 +36,8 @@ def filter_problem(
       al.bounded(barrier + s, lo=0.0, name="cbf"),
       al.bounded(u, lo=-1.0, hi=1.0, name="u_box"),
     ),
-    lb=(al.const(np.full(2, -1.0)), al.const(np.zeros(1))),
+    lb=(al.NO_LB, al.const(0.0)),
+    ub=(al.NO_UB, al.NO_UB),
   )
 
 
@@ -64,11 +65,26 @@ def test_problem_carries_spec_trees_and_declared_names() -> None:
   assert quadratic.name == "quadratic"
   assert quadratic.vars.names == ("x",)
   assert quadratic.params.names == ("scale",)
+  assert quadratic.spec.minimize.shape == ()
   assert filter_problem.vars.names == ("u", "s")
   assert filter_problem.params.names == ("x", "u_ref")
   assert filter_problem.n_eq == 1
   assert filter_problem.n_ineq == 3
   assert tuple(group.name for group in filter_problem.spec.ineq) == ("cbf", "u_box")
+
+
+def test_box_bound_leaves_broadcast_and_keep_ieee_infinity_in_core_oracle() -> None:
+  assert isinstance(quadratic.spec.lb, al.Expr) and quadratic.spec.lb.shape == (3,)
+  assert isinstance(quadratic.spec.ub, al.Expr) and quadratic.spec.ub.shape == (3,)
+
+  solve = al.solver(filter_problem, "sqp", name="filter_bound_oracle")
+  bounds = solve.descriptor.bounds
+  assert isinstance(bounds, al.Function)
+  x_lb, x_ub, l_ineq, u_ineq = bounds.eval_list(np.zeros(4), np.zeros(2))
+  np.testing.assert_array_equal(x_lb, [-np.inf, -np.inf, 0.0])
+  np.testing.assert_array_equal(x_ub, [np.inf, np.inf, np.inf])
+  np.testing.assert_array_equal(l_ineq, [0.0, -1.0, -1.0])
+  np.testing.assert_array_equal(u_ineq, [np.inf, 1.0, 1.0])
 
 
 def test_qp_problem_is_a_typed_problem() -> None:
@@ -128,11 +144,59 @@ def test_nlp_solver_is_plain_typed_function_and_reuses_problem_oracles() -> None
   assert ipopt.descriptor.hess is not sqp.descriptor.hess
   assert sqp.descriptor.hess is another_sqp.descriptor.hess
   assert sqp.descriptor.hess.output_names == ("sphess_gamma_u_s_u_s",)
+  assert sqp.descriptor.hess.input_names == ("u_s", "x", "u_ref", "lam:f", "lam:g")
   assert al.Function.__doc__ is not None
   assert ipopt.descriptor.hess_sparsity is not None
   assert sqp.descriptor.hess_sparsity is not None
   assert all(row >= col for row, col in zip(ipopt.descriptor.hess_sparsity.rows, ipopt.descriptor.hess_sparsity.cols, strict=True))
   assert all(row <= col for row, col in zip(sqp.descriptor.hess_sparsity.rows, sqp.descriptor.hess_sparsity.cols, strict=True))
+
+
+@al.function(al.L("stage", 2), al.L("row", ...), name="single_block_stage")
+def single_block_stage(stage: al.Expr) -> al.Expr:
+  return stage
+
+
+def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
+  @al.problem(vars=al.G(al.L("u", 2), al.L("s", 1)), params=al.L("weight", ()), name="descriptor_hessian")
+  def nonlinear_hessian(variables: tuple[al.Expr, al.Expr], weight: al.Expr) -> al.ProblemSpec[tuple[al.Expr, al.Expr]]:
+    u, s = variables
+    objective = 0.5 * weight * u[0] ** 2 + u[0] * u[1] * s[0]
+    equality = u[0] * s[0] + u[1] ** 2
+    inequality = u[0] ** 2 + s[0] ** 2
+    return al.ProblemSpec(minimize=objective, eq=(equality,), ineq=(al.bounded(inequality, hi=3.0),))
+
+  solve = al.solver(nonlinear_hessian, "sqp", name="descriptor_hessian_sqp")
+  hess = solve.descriptor.hess
+  assert isinstance(hess, al.Function)
+  sparsity = hess.output_sparsities[0]
+  assert sparsity is not None
+
+  x = np.array([0.4, -0.7, 0.2])
+  weight = np.array(1.3)
+  lam_f = np.array(1.7)
+  lam_g = np.array([-0.6, 0.8])
+  values = hess.eval_list(x, weight, lam_f, lam_g)[0]
+  actual = np.zeros((3, 3))
+  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = values
+  actual += np.triu(actual, 1).T
+
+  hess_f = np.array([[weight, x[2], x[1]], [x[2], 0.0, x[0]], [x[1], x[0], 0.0]])
+  hess_eq = np.array([[0.0, 0.0, 1.0], [0.0, 2.0, 0.0], [1.0, 0.0, 0.0]])
+  hess_ineq = np.diag([2.0, 0.0, 2.0])
+  expected = lam_f * hess_f + lam_g[0] * hess_eq + lam_g[1] * hess_ineq
+  np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-13)
+
+
+def test_single_block_problem_preserves_vmap_decision_input() -> None:
+  @al.problem(vars=al.L("z", 6), params=al.L("p", ()), name="single_block_vmap")
+  def mapped_problem(z: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    rows = al.vmap(single_block_stage, 3, {"stage": (z, 0, 2)})
+    return al.ProblemSpec(minimize=(z * z).sum() + p, eq=(rows,))
+
+  solve = al.solver(mapped_problem, "sqp", name="single_block_vmap_sqp")
+  mapped = next(node for node in topo(solve.descriptor.base.outputs) if node.op == al.ExprOp.VMAP)
+  assert mapped.args[0] is solve.descriptor.base.inputs[0]
 
 
 def test_two_solvers_from_one_problem_render_one_translation_unit() -> None:
@@ -173,13 +237,34 @@ def test_ipopt_numerical_call_preserves_multiple_variable_blocks() -> None:
   assert result[1][1].shape == (1,)
 
 
+@pytest.mark.solver("piqp")
+def test_piqp_numerical_call_preserves_multiple_variable_blocks() -> None:
+  solve = al.solver(two_block_quadratic, "piqp", name="two_block_piqp")
+  result = solve.numerical_call(_two_block_inputs())
+  np.testing.assert_allclose(result[0][0], [0.25, -0.75], atol=2e-6)
+  np.testing.assert_allclose(result[0][1], [0.4], atol=2e-6)
+  assert result[1][0].shape == (2,)
+  assert result[1][1].shape == (1,)
+
+
 def test_solver_rejects_an_unknown_backend() -> None:
   with pytest.raises(SolverPluginError, match="no solver plugin"):
     al.solver(quadratic, "missing")
 
 
+def test_solver_name_and_backend_are_selected_at_construction() -> None:
+  assert al.solver(quadratic, "ipopt").name == "quadratic_ipopt"
+  assert al.solver(quadratic, "piqp", name="quadratic_fast").name == "quadratic_fast"
+
+
 def test_qp_backend_proves_quadratic_cost_and_affine_constraints() -> None:
   assert al.solver(filter_problem, "piqp").name == "filter_problem_piqp"
+
+  @al.problem(vars=al.L("x", 2), params=al.L("center", 2))
+  def power_cost(x: al.Expr, center: al.Expr) -> al.ProblemSpec[al.Expr]:
+    return al.ProblemSpec(minimize=((x - center) ** 2).sum())
+
+  assert al.solver(power_cost, "piqp").name == "power_cost_piqp"
   qp = al.qp_problem(3, 1, 2)
   assert al.solver(qp, "piqp").input_names[-7:] == qp.params.names
 
@@ -204,6 +289,52 @@ def test_qp_backend_proves_quadratic_cost_and_affine_constraints() -> None:
   with pytest.raises(al.NotQuadratic, match="ineq w is not affine"):
     al.solver(wavy_inequality, "piqp")
 
+  @al.problem(vars=al.L("x", 2), params=al.L("p", ()))
+  def variable_box_bound(x: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    return al.ProblemSpec(minimize=(x * x).sum() + p, lb=x)
+
+  with pytest.raises(al.NotQuadratic, match="lb for 'x' depends on the variables"):
+    al.solver(variable_box_bound, "piqp")
+
+  @al.problem(vars=al.L("x", 2), params=al.L("p", ()))
+  def variable_box_upper_bound(x: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    return al.ProblemSpec(minimize=(x * x).sum() + p, ub=x)
+
+  with pytest.raises(al.NotQuadratic, match="ub for 'x' depends on the variables"):
+    al.solver(variable_box_upper_bound, "piqp")
+
+  @al.problem(vars=al.L("x", 2), params=al.L("p", ()))
+  def variable_group_bound(x: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    return al.ProblemSpec(minimize=(x * x).sum() + p, ineq=(al.bounded(x, lo=x, name="moving"),))
+
+  with pytest.raises(al.NotQuadratic, match="ineq moving lower bound depends on the variables"):
+    al.solver(variable_group_bound, "piqp")
+
+  @al.problem(vars=al.L("x", 2), params=al.L("p", ()))
+  def variable_group_upper_bound(x: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    return al.ProblemSpec(minimize=(x * x).sum() + p, ineq=(al.bounded(x, hi=x, name="moving"),))
+
+  with pytest.raises(al.NotQuadratic, match="ineq moving upper bound depends on the variables"):
+    al.solver(variable_group_upper_bound, "piqp")
+
+  inner = al.solver(quadratic, "sqp", name="nested_qp_gate_inner")
+
+  @al.problem(vars=al.L("outer", 3), params=al.L("p", ()))
+  def nested_solver_cost(outer: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    nested = inner.symbolic_call(
+      (
+        al.const(np.zeros(3)),
+        al.const(np.zeros(3)),
+        al.const(np.zeros(0)),
+        al.const(np.zeros(0)),
+        outer[0],
+      )
+    )[0]
+    return al.ProblemSpec(minimize=((outer - nested) * (outer - nested)).sum() + p)
+
+  with pytest.raises(al.NotQuadratic, match="cannot prove QP structure through a nested solver"):
+    al.solver(nested_solver_cost, "piqp")
+
 
 def test_nlp_backend_accepts_a_nonlinear_problem() -> None:
   @al.problem(vars=al.L("x", 2), params=al.L("p", ()))
@@ -211,6 +342,39 @@ def test_nlp_backend_accepts_a_nonlinear_problem() -> None:
     return al.ProblemSpec(minimize=((1.0 - x[0]) ** 2 + p * (x[1] - x[0] ** 2) ** 2), ineq=(al.bounded(x[0].sin(), hi=0.5),))
 
   assert al.solver(nonlinear, "ipopt").input_shapes == ((2,), (2,), (0,), (1,), ())
+
+  qp = al.qp_problem(3, 1, 2)
+  assert al.solver(qp, "ipopt").input_names == al.solver(qp, "piqp").input_names
+
+
+def _zero_group_inputs(n_eq: int, n_ineq: int) -> tuple[Any, ...]:
+  return (
+    np.zeros(2),
+    np.zeros(2),
+    np.zeros(n_eq),
+    np.zeros(n_ineq),
+    (
+      (np.eye(2), np.zeros(2)),
+      (np.zeros((n_eq, 2)), np.zeros(n_eq)),
+      (np.zeros((n_ineq, 2)), -np.ones(n_ineq), np.ones(n_ineq)),
+    ),
+  )
+
+
+@pytest.mark.solver("ipopt")
+@pytest.mark.parametrize(("n_eq", "n_ineq"), ((0, 0), (1, 0), (0, 1)))
+def test_ipopt_compiles_present_zero_length_constraint_groups(n_eq: int, n_ineq: int) -> None:
+  solve = al.solver(al.qp_problem(2, n_eq, n_ineq), "ipopt", name=f"empty_ipopt_{n_eq}_{n_ineq}")
+  result = solve.numerical_call(_zero_group_inputs(n_eq, n_ineq))
+  np.testing.assert_allclose(result[0], np.zeros(2), atol=1e-7)
+
+
+@pytest.mark.solver("sqp")
+@pytest.mark.parametrize(("n_eq", "n_ineq"), ((0, 0), (1, 0), (0, 1)))
+def test_sqp_compiles_present_zero_length_constraint_groups(n_eq: int, n_ineq: int) -> None:
+  solve = al.solver(al.qp_problem(2, n_eq, n_ineq), "sqp", name=f"empty_sqp_{n_eq}_{n_ineq}")
+  result = solve.numerical_call(_zero_group_inputs(n_eq, n_ineq))
+  np.testing.assert_allclose(result[0], np.zeros(2), atol=1e-7)
 
 
 def test_bounded_requires_at_least_one_bound() -> None:
@@ -221,6 +385,7 @@ def test_bounded_requires_at_least_one_bound() -> None:
 def test_single_block_solver_signature_is_not_nested() -> None:
   solve = al.solver(quadratic, "sqp", name="quadratic_sqp")
   assert solve.input_names == ("x", "lam:x", "lam_eq", "lam_ineq", "scale")
+  assert solve.input_shapes == ((3,), (3,), (0,), (0,), ())
   assert solve.output_names == ("x", "lam:x", "lam_eq", "lam_ineq")
 
 

@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import alloy as al
+from alloy.codegen import render_c_api_header
 from alloy.function import Tree
 
 
@@ -110,6 +111,8 @@ def test_function_declarations_own_names_shapes_and_structure() -> None:
   np.testing.assert_array_equal(stepped, np.arange(4.0))
   assert square.output_shapes == ((3,),)
 
+  assert render_c_api_header(step) == render_c_api_header(step_flat).replace("step_flat", "step")
+
 
 def test_function_call_validation_uses_declared_tree() -> None:
   with pytest.raises(ValueError, match="expected shape"):
@@ -148,6 +151,11 @@ def test_derivatives_preserve_source_trees() -> None:
   assert hess_l.input_names == ("x", "lam:first", "lam:second")
   assert hess_l.output_shapes == ((3, 3),)
 
+  np.testing.assert_allclose(
+    fwd.numerical_call(((np.arange(3.0), np.array(2.0)), np.ones(3))),
+    12.0,
+  )
+
   with pytest.raises(ValueError, match=r"declared \('x', 'p'\)"):
     al.gradient(cost, "f", "z")
   with pytest.raises(ValueError, match=r"declared \('f',\)"):
@@ -156,3 +164,7 @@ def test_derivatives_preserve_source_trees() -> None:
     al.gradient(duplicate, "first", "x")
   with pytest.raises(ValueError, match="scalar"):
     al.hessian(duplicate, "first", "x")
+  with pytest.raises(ValueError, match="unknown name 'z'"):
+    al.forward(cost, "f", "z")
+  with pytest.raises(ValueError, match="unknown name 'y'"):
+    al.lagrangian_hessian(duplicate, "y")

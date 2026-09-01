@@ -98,8 +98,13 @@ class ProblemSpec:
 def filter(vars: tuple[Expr, Expr], params: tuple[Expr, Expr]) -> ProblemSpec:
   u, s = vars
   x, u_ref = params
-  return ProblemSpec(minimize=..., ineq=(al.bounded(barriers(x, u) + s, lo=0.0, name="cbf"),), lb=(None, 0.0))
+  return ProblemSpec(minimize=..., ineq=(al.bounded(barriers(x, u) + s, lo=0.0, name="cbf"),), lb=(NO_LB, const(0.0)))
 ```
+
+`NO_LB` and `NO_UB` are scalar `Expr` constants containing IEEE negative and positive infinity.
+They leave one variable leaf open while preserving the exact symbolic variable tree; scalar bound
+expressions broadcast over their leaf. Solver plugins translate the infinities to their native bound
+convention.
 
 `al.problem` traces the body once with the declared symbols and returns
 `Problem[SymVars, NumVars, SymParams, NumParams]`, which holds the spec and both trees. Roles are

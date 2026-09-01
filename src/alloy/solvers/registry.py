@@ -29,7 +29,7 @@ if TYPE_CHECKING:
   from alloy.codegen.solver import SolverWrapperCtx
   from alloy.function import Function
 
-SOLVER_PLUGIN_PROTOCOL_VERSION = 6
+SOLVER_PLUGIN_PROTOCOL_VERSION = 7
 ENTRY_POINT_GROUP = "alloy.solvers"
 
 

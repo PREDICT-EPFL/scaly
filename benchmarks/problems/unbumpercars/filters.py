@@ -9,6 +9,7 @@ import numpy as np
 
 import alloy as al
 from alloy.codegen.aot import render_c_module
+from alloy.ir.expr import substitute
 from benchmarks.harness.casadi_ipopt import CompiledCasadiIpopt
 from .common import (
   ClosedLoopConfig,
@@ -629,7 +630,8 @@ def build_alloy_nlp(
   @al.problem(vars=vars_tree, params=params_tree, name=problem_name)
   def problem(variables, params):
     u, s = variables
-    cost, constraints = base.symbolic_call((al.concat([u, s]), *params))
+    replacements = dict(zip(base.inputs, (al.concat([u, s]), *params), strict=True))
+    cost, constraints = (substitute(output, replacements) for output in base.outputs)
     inequalities = (al.bounded(constraints, lo=al.const(np.zeros(n_g)), name="barrier"),) if n_g else ()
     return al.ProblemSpec(
       minimize=cost,

@@ -20,9 +20,6 @@ from .nlp import _lowered
 from .problem import Problem, ProblemSpec, bounded, problem
 from .registry import SolverBackend
 
-PIQP_INF = 1e30
-
-
 type QPData[T] = tuple[tuple[T, T], tuple[T, T], tuple[T, T, T]]
 
 
@@ -77,18 +74,26 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
     if bound is None:
       continue
     for name, expr in zip(problem.vars.names, problem.vars.flatten_symbolic(bound, f"{problem.name} {side}"), strict=True):
+      if _reaches_solver_call((expr,)):
+        raise NotQuadratic(f"{problem.name}: cannot prove {side} for {name!r} independent through a nested solver")
       if any(_jac_mask(expr, variable, {}).nnz for variable in problem._var_symbols):
         raise NotQuadratic(f"{problem.name}: {side} for {name!r} depends on the variables")
   for index, group in enumerate(problem.spec.ineq):
     label = group.name or str(index)
     for side, bound in (("lower bound", group.lo), ("upper bound", group.hi)):
-      if bound is not None and any(_jac_mask(bound, variable, {}).nnz for variable in problem._var_symbols):
-        raise NotQuadratic(f"{problem.name}: ineq {label} {side} depends on the variables")
+      if bound is not None:
+        if _reaches_solver_call((bound,)):
+          raise NotQuadratic(f"{problem.name}: cannot prove ineq {label} {side} independent through a nested solver")
+        if any(_jac_mask(bound, variable, {}).nnz for variable in problem._var_symbols):
+          raise NotQuadratic(f"{problem.name}: ineq {label} {side} depends on the variables")
 
 
 def _prove_quadratic(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> None:
   """Prove that the cost is quadratic and every constraint is affine in the variables."""
   x = cast(Expr, cached["x"])
+  proof_targets = (cast(Expr, cached["f"]), *cast(tuple[Expr, ...], cached["equalities"]), *cast(tuple[Expr, ...], cached["inequalities"]))
+  if _reaches_solver_call(proof_targets):
+    raise NotQuadratic(f"{problem.name}: cannot prove QP structure through a nested solver")
   hessian = sparse_hessian(simplify_cse_fixpoint(cast(Expr, cached["f"])), x)
   cached["qp_hessian"] = hessian
   if _jac_mask(hessian.values, x, {}).nnz:
@@ -152,7 +157,7 @@ def _qp_data(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> tu
     g_ub = Expr.const(np.zeros(g.shape))
 
   variable_bounds: list[Expr] = []
-  for side, declared, fill in (("lb", problem.spec.lb, -PIQP_INF), ("ub", problem.spec.ub, PIQP_INF)):
+  for side, declared, fill in (("lb", problem.spec.lb, -np.inf), ("ub", problem.spec.ub, np.inf)):
     if declared is None:
       variable_bounds.append(Expr.const(np.full(n, fill)))
     else:
@@ -164,12 +169,12 @@ def _qp_data(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> tu
   if g is not None:
     lower = _concat_vectors(
       tuple(
-        _bound(group.lo, expr.shape, -PIQP_INF) for group, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
+        _bound(group.lo, expr.shape, -np.inf) for group, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
       )
     )
     upper = _concat_vectors(
       tuple(
-        _bound(group.hi, expr.shape, PIQP_INF) for group, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
+        _bound(group.hi, expr.shape, np.inf) for group, expr in zip(problem.spec.ineq, cast(tuple[Expr, ...], cached["inequalities"]), strict=True)
       )
     )
     offset = simplify_cse_fixpoint(substitute(g, replacements))
@@ -207,10 +212,6 @@ def build_qp[SV, NV, SP, NP](
   P_sp = A_sp = G_sp = None
   if sparse:
     matrices = (P, A, G_mat)
-    if _reaches_solver_call(matrices):
-      raise NotImplementedError(
-        "sparse=True cannot derive the structural pattern of QP data computed from a nested solver output; use the dense interface"
-      )
     probe = Function._from_exprs(
       f"{name}_pattern_probe",
       params,

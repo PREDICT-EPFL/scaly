@@ -144,12 +144,21 @@ outputs = [variable leaves], [box-multiplier leaves], lam_eq, lam_ineq
 
 `desc.n_var_blocks` is the number of variable leaves. It determines all four fixed-group offsets. `desc.param_names` names the leaves after `2 * n_var_blocks + 2` fixed inputs. The wrapper must scatter its flat native solution and box multipliers back into the declared variable blocks. Equality and inequality arrays are always present, including when their sizes are zero.
 
+**Bound convention.** Core oracles use IEEE negative infinity for an absent lower bound and IEEE
+positive infinity for an absent upper bound. This rule applies to variable and inequality bounds in
+both descriptor families. A plugin must translate those values after evaluating the oracle and
+before calling a solver that uses a finite sentinel. For example, the built-in PIQP adapter maps
+them to `-1e30` and `1e30`, while the IPOPT adapter maps them to `-2e19` and `2e19`. Apply the same
+translation on initial setup and every update path. Do not make a wrapper depend on the identity of
+`al.NO_LB` or `al.NO_UB`; substitution and code generation preserve their values, not Python object
+identity.
+
 **QP** (`kind == "qp"`, selected by `al.solver(problem, "piqp")`):
 
 - The problem shape is `min 0.5 x' P x + c' x` subject to `A x = b`, `l <= G x <= u`, and box bounds.
 - `desc.oracle` takes parameter leaves and emits `P, c, [A_eq, b_eq], [G_ineq, l_ineq, u_ineq], x_lb, x_ub`. Empty constraint blocks are omitted from the oracle but remain size-zero multiplier groups in the solver signature.
 - Dense matrices are row-major. When `desc.sparse` is true, the oracle emits compact compressed sparse column values in the baked `P_sparsity`, `A_sparsity`, and `G_sparsity` order. `P_sparsity` contains the upper triangle.
-- An omitted bound uses the QP family's `1e30` sentinel.
+- The oracle emits IEEE infinities for absent bounds; the wrapper converts them to the QP solver’s native convention.
 
 **NLP** (`kind == "nlp"`, selected by `al.solver(problem, "ipopt")` or `"sqp"`):
 
@@ -160,7 +169,7 @@ outputs = [variable leaves], [box-multiplier leaves], lam_eq, lam_ineq
 - `desc.bounds` takes only parameter leaves and returns `x_lb, x_ub[, l_ineq, u_ineq]`.
 - Core asks the backend for `hess_triangle` and hands the wrapper an oracle and pattern already cut to that layout. IPOPT selects lower; alloy-sqp selects upper.
 - Any NLP oracle may instead be an `ExternalOracle` with the same signature. Its source defines `raw_symbol` using the flat-buffer convention, and `workspace_size` contributes to root and nested workspace packing.
-- An omitted NLP bound uses `2e19`.
+- The bounds oracle emits IEEE infinities for absent bounds; the wrapper converts them to the NLP solver’s native convention.
 
 ## Versioning
 
@@ -178,7 +187,8 @@ the stats-v3 per-solve diagnostics tail (`primal_viol`, `step_inf`, `alpha`,
 grows from 96 to 136 bytes); v5 = backend-selected NLP Hessian triangles and
 the compact oracle output convention that the descriptor pattern is the
 handed layout; v6 = typed `Problem`/`Function` solver signatures, variable-block metadata,
-and the fixed warm-start and result order.
+and the fixed warm-start and result order. v7 = IEEE-infinity semantics for absent bounds in
+core QP and NLP oracles; plugins normalize them to native solver sentinels.
 
 ## What core owns (and plugins must not duplicate)
 
@@ -200,7 +210,8 @@ and the fixed warm-start and result order.
    via the `alloy.solvers` entry point.
 3. The wrapper template: drive the solver's C API from the oracle kernels,
    map statuses via enum constants, fill the stats struct, keep all state in
-   `ctx.symbol`-prefixed statics.
+   `ctx.symbol`-prefixed statics. Normalize IEEE infinite bounds before every
+   native setup or update call.
 4. Tests under `plugins/alloy-<name>/tests/`: correctness against analytic /
    reference solutions, a nested-solve JIT test, and a stats sanity check
    (see the piqp/ipopt test suites for the pattern).

@@ -64,8 +64,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
   Names are load-bearing: input and output names are how derivatives are requested and what the
   generated C symbols are built from.
 
-  Use ``@alloy.function(...)`` to build one from a Python body; construct it directly when you
-  already have the expressions.
+  Use ``@alloy.function(...)`` to build one from a Python body.
   """
 
   descriptor: Any

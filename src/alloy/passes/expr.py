@@ -17,7 +17,7 @@ from ..ir.match import Pattern, _replace_args, rewrite
 def simplify(expr: Expr) -> Expr:
   """Apply algebraic identities and constant folding until the graph stops changing.
 
-  Covers ``x + 0``, ``x * 1``, ``x * 0``, identity reshape and transpose, slice of slice, slice
+  Covers ``x + 0``, ``x * 1``, ``x * 0``, ``x ** 0``, ``x ** 1``, identity reshape and transpose, slice of slice, slice
   of stack, and folding of all-constant subgraphs.
   """
   for _ in range(8):
@@ -200,6 +200,15 @@ def _div_identity(e: Expr) -> Expr:
   return e
 
 
+def _pow_identity(e: Expr) -> Expr:
+  base, exponent = e.args
+  if _is_zero(exponent):
+    return Expr.const(np.ones(e.shape, dtype=np.float64), lowering=e.lowering)
+  if _is_one(exponent) and _same_shape_as_result(base, e):
+    return base
+  return e
+
+
 def _reshape_identity(e: Expr) -> Expr:
   return e.args[0] if e.args[0].shape == e.shape else e
 
@@ -278,6 +287,7 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(ExprOp.SUB, lambda e: e.args[0] is e.args[1] or _is_zero(e.args[0]) or _is_zero(e.args[1]), _sub_identity),
   Pattern(ExprOp.MUL, lambda e: _is_zero(e.args[0]) or _is_zero(e.args[1]) or _is_one(e.args[0]) or _is_one(e.args[1]), _mul_identity_or_zero),
   Pattern(ExprOp.DIV, lambda e: e.args[0] is e.args[1] or _is_one(e.args[1]), _div_identity),
+  Pattern(ExprOp.POW, lambda e: _is_zero(e.args[1]) or _is_one(e.args[1]), _pow_identity),
   Pattern(ExprOp.NEG, lambda e: e.args[0].op == ExprOp.NEG, _neg_of_neg),
   Pattern(ExprOp.RESHAPE, lambda e: e.args[0].shape == e.shape, _reshape_identity),
   Pattern(ExprOp.TRANSPOSE, lambda e: e.attrs["axes"] == tuple(range(len(e.attrs["axes"]))), _transpose_identity),

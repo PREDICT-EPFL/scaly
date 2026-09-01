@@ -49,7 +49,7 @@ def step_flat(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.
 
 @al.problem(vars=al.L("x", 3), params=al.L("scale", ()))
 def quadratic(x: al.Expr, scale: al.Expr) -> al.ProblemSpec[al.Expr]:
-  return al.ProblemSpec(minimize=(x * x).sum() * scale, lb=al.const(np.full(3, -1.0)), ub=al.const(np.ones(3)))
+  return al.ProblemSpec(minimize=(x * x).sum() * scale, lb=al.const(-1.0), ub=al.const(1.0))
 
 
 @al.problem(vars=al.G(al.L("u", 2), al.L("s", 1)), params=al.G(al.L("x", 4), al.L("u_ref", 2)))
@@ -61,7 +61,8 @@ def filter_problem(variables: tuple[al.Expr, al.Expr], params: tuple[al.Expr, al
     minimize=0.5 * ((u - u_ref) * (u - u_ref)).sum() + 10.0 * s.sum(),
     eq=(u[0:1] - u[1:2],),
     ineq=(al.bounded(barrier + s, lo=0.0, name="cbf"), al.bounded(u, lo=-1.0, hi=1.0, name="u_box")),
-    lb=(al.const(-np.ones(2)), al.const(np.zeros(1))),
+    lb=(al.NO_LB, al.const(0.0)),
+    ub=(al.NO_UB, al.NO_UB),
   )
 
 
@@ -79,6 +80,8 @@ hess_l = al.lagrangian_hessian(duplicate, "x")
 
 
 if TYPE_CHECKING:
+  assert_type(al.NO_LB, al.Expr)
+  assert_type(al.NO_UB, al.Expr)
   al.L("x", "3")  # ty: ignore[invalid-argument-type]
   al.G(al.L("x", 3))  # ty: ignore[no-matching-overload]
   al.G(al.L("x", 3), al.L("y", 3), ("z", 3))  # ty: ignore[invalid-argument-type]
@@ -172,6 +175,18 @@ if TYPE_CHECKING:
     tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray],
   )
   assert_type(
+    filter_sqp.symbolic_call(
+      (
+        (al.sym("u0", 2), al.sym("s0", 1)),
+        (al.sym("lam_u0", 2), al.sym("lam_s0", 1)),
+        al.sym("lam_eq0", 1),
+        al.sym("lam_ineq0", 3),
+        (al.sym("x0", 4), al.sym("u_ref0", 2)),
+      )
+    ),
+    tuple[tuple[al.Expr, al.Expr], tuple[al.Expr, al.Expr], al.Expr, al.Expr],
+  )
+  assert_type(
     qp3_piqp.numerical_call(
       (
         np.zeros(3),
@@ -189,6 +204,7 @@ if TYPE_CHECKING:
   )
   quadratic_ipopt.numerical_call((np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0)))  # ty: ignore[invalid-argument-type]
   filter_sqp.numerical_call(((np.zeros(2),), (np.zeros(2), np.zeros(1)), np.zeros(1), np.zeros(3), (np.zeros(4), np.zeros(2))))  # ty: ignore[invalid-argument-type]
+  filter_sqp.numerical_call(((al.sym("u", 2), al.sym("s", 1)), (np.zeros(2), np.zeros(1)), np.zeros(1), np.zeros(3), (np.zeros(4), np.zeros(2))))  # ty: ignore[invalid-argument-type]
 
   grad_f_x.numerical_call(np.zeros(3))  # ty: ignore[invalid-argument-type]
   fwd_f_x.numerical_call((np.zeros(3), np.zeros(()), np.zeros(3)))  # ty: ignore[invalid-argument-type]

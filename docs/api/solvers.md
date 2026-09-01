@@ -6,6 +6,10 @@
 
 ::: alloy.solvers.problem.bounded
 
+::: alloy.solvers.problem.NO_LB
+
+::: alloy.solvers.problem.NO_UB
+
 ::: alloy.solvers.problem.ProblemSpec
 
 ::: alloy.solvers.problem.Problem

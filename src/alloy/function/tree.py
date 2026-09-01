@@ -67,7 +67,7 @@ class Tree[Symbolic, Numerical]:
       raise ValueError(f"unknown name {name!r}; declared {self.names}")
     return self.names.index(name)
 
-  def flatten_symbolic(self, value: Symbolic, what: str) -> tuple[Expr, ...]:
+  def flatten_symbolic(self, value: Symbolic, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
     """Validate and flatten a symbolic value."""
     raise NotImplementedError
 
@@ -116,11 +116,11 @@ class L(Tree[Expr, np.ndarray]):
       raise ValueError(f"L expects one resolved type, got {len(types)}")
     return L(self.names[0], types[0])
 
-  def flatten_symbolic(self, value: Expr, what: str) -> tuple[Expr, ...]:
+  def flatten_symbolic(self, value: Expr, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
     if not isinstance(value, Expr):
       raise ValueError(f"{what}: expected an Expr for {self.names[0]!r}, got {type(value).__name__}")
     decl = self.decls[0]
-    if decl is not Ellipsis and value.shape != decl.shape:
+    if decl is not Ellipsis and value.shape != decl.shape and not (allow_scalar and value.shape == ()):
       raise ValueError(f"{what}: expected shape {decl.shape} for {self.names[0]!r}, got {value.shape}")
     return (value,)
 
@@ -161,10 +161,10 @@ class _G(Tree[Any, Any]):
       offset += part.size
     return _G(tuple(out), public=False)
 
-  def flatten_symbolic(self, value: Any, what: str) -> tuple[Expr, ...]:
+  def flatten_symbolic(self, value: Any, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
     if not isinstance(value, tuple) or len(value) != len(self.parts):
       raise ValueError(f"{what}: value does not have the declared structure of {self.names}")
-    return tuple(expr for part, item in zip(self.parts, value, strict=True) for expr in part.flatten_symbolic(item, what))
+    return tuple(expr for part, item in zip(self.parts, value, strict=True) for expr in part.flatten_symbolic(item, what, allow_scalar=allow_scalar))
 
   def flatten_numerical(self, value: Any, what: str) -> tuple[np.ndarray, ...]:
     if not isinstance(value, tuple) or len(value) != len(self.parts):

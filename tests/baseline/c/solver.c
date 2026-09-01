@@ -67,23 +67,19 @@ extern "C" {
 static inline void corpus_qp_oracle_raw(const double* mu, double* qp_P, double* qp_c, double* qp_x_lb, double* qp_x_ub, double* w) {
   (void)w;
   static const double k0[4] = {1, 0, 0, 1};
-  static const int64_t k2[2] = {0, 1};
-  static const double k3[2] = {-1e+30, -1e+30};
-  static const double k4[2] = {1e+30, 1e+30};
-  for (long long z_qp_c = 0; z_qp_c < 2; ++z_qp_c) {
-    qp_c[z_qp_c] = 0;
-  }
+  static const double k1[2] = {((double)(-INFINITY)), ((double)(-INFINITY))};
+  static const double k2[2] = {((double)INFINITY), ((double)INFINITY)};
   for (long long i_qp_c = 0; i_qp_c < 2; ++i_qp_c) {
-    qp_c[k2[i_qp_c]] = (-mu[i_qp_c]);
+    qp_c[i_qp_c] = (-mu[i_qp_c]);
   }
   for (long long c_qp_P = 0; c_qp_P < 4; ++c_qp_P) {
     qp_P[c_qp_P] = k0[c_qp_P];
   }
   for (long long c_qp_x_lb = 0; c_qp_x_lb < 2; ++c_qp_x_lb) {
-    qp_x_lb[c_qp_x_lb] = k3[c_qp_x_lb];
+    qp_x_lb[c_qp_x_lb] = k1[c_qp_x_lb];
   }
   for (long long c_qp_x_ub = 0; c_qp_x_ub < 2; ++c_qp_x_ub) {
-    qp_x_ub[c_qp_x_ub] = k4[c_qp_x_ub];
+    qp_x_ub[c_qp_x_ub] = k2[c_qp_x_ub];
   }
 }
 
@@ -102,6 +98,7 @@ static void corpus_qp_raw(const double* in0, const double* in1, const double* in
   static double Pcol[4];
   double fe_t0 = alloy_clock_s();
   corpus_qp_oracle_raw(in4, P_buf, c_buf, xlb_buf, xub_buf, w);
+  for (int i = 0; i < 2; ++i) { if (isinf(xlb_buf[i]) && xlb_buf[i] < 0.0) xlb_buf[i] = -PIQP_INF; if (isinf(xub_buf[i]) && xub_buf[i] > 0.0) xub_buf[i] = PIQP_INF; }
   double stats_t_fe = alloy_clock_s() - fe_t0;
   for (int j = 0; j < 2; ++j) for (int i = 0; i < 2; ++i) Pcol[i + j * 2] = P_buf[i * 2 + j];
   static piqp_workspace* corpus_qp_ws = NULL;

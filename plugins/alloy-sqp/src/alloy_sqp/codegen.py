@@ -436,6 +436,7 @@ def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]:
         f"    for (int i = 0; i < {ng * n}; ++i) Gcol[i] = 0.0;",
         f"    for (int k = 0; k < {len(g_rows)}; ++k) Gcol[G_i[k] * {n} + jac_cols[G_src[k]]] = jac_buf[G_src[k]];",
       ]
+    # Core bounds use IEEE infinities; the PIQP subproblem uses PIQP_INF.
     lines += [
       f"    for (int i = 0; i < {ng}; ++i) {{ hl[i] = gl[i] <= -1e19 ? -PIQP_INF : gl[i] - g[{nh} + i]; hu[i] = gu[i] >= 1e19 ? PIQP_INF : gu[i] - g[{nh} + i]; }}"
     ]

@@ -47,6 +47,12 @@ def test_simplify_rewrites_algebraic_identities_and_folds_constants() -> None:
     al.Function._from_exprs("simp_cse", [q], [al.simplify(al.cse(q + q))], ["q"], ["y"])(np.array([2.0, 3.0])), np.array([4.0, 6.0])
   )
 
+  assert al.simplify(q**1.0) is q
+  power_zero = al.simplify(q**0.0)
+  assert power_zero.op == al.ExprOp.CONST
+  assert power_zero.value is not None
+  np.testing.assert_allclose(power_zero.value, np.ones(2))
+
 
 def test_simplify_constant_folds_erf() -> None:
   values = np.array([-2.0, 0.0, 0.5, 4.5])

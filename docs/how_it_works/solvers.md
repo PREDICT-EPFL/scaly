@@ -25,8 +25,12 @@ IPOPT and alloy-sqp consume the same normalized nonlinear-program oracles:
 | `hess` | `(x, params, lam:f[, lam:g])` | compact sparse Lagrangian Hessian |
 | `bounds` | `params` | variable and inequality bounds |
 
-Equalities come first in `g`, followed by bounded inequalities. The backend chooses the Hessian
-triangle: IPOPT asks for lower and alloy-sqp asks for upper.
+Equalities come first in `g`, followed by bounded inequalities.
+
+Box-bound leaves have the variables’ tree structure. Scalar leaves broadcast, and IEEE negative or
+positive infinity represents an absent lower or upper bound until the solver adapter normalizes it.
+
+The backend chooses the Hessian triangle: IPOPT asks for lower and alloy-sqp asks for upper.
 A `Problem` caches `base`, `grad`, `jac`, the full Hessian construction, and `bounds`. It also
 caches one compact Hessian function per requested triangle. Building two solver artifacts from one
 problem therefore shares all compatible machinery without giving the artifacts the same C symbols.

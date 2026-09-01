@@ -29,7 +29,7 @@ class _Backend:
   name = "ipopt"
   kind = "nlp"
   hess_triangle = "lower"
-  protocol_version = 6
+  protocol_version = 7
   lib_stem = "ipopt"
   link_flags = ("-lipopt",)
   header = "coin-or/IpStdCInterface.h"

@@ -78,12 +78,12 @@ def test_solver_stats_reject_uninitialized_and_mismatched_versions() -> None:
 
 def test_sparse_qp_rejects_nested_solver_data() -> None:
   """QP data computed from a nested solver output cannot be pattern-analyzed
-  (SOLVER_CALL is an opaque zero to the dependency mask) and must fail loudly
-  before the probe would execute the inner solve."""
+  so the structural QP proof must reject it before the sparse-pattern probe
+  would execute the inner solve."""
   inner = build_qp(P=np.eye(2), c=np.array([-1.0, 0.0]), x_lb=np.zeros(2), x_ub=np.ones(2), name="inner_for_pattern")
   x_inner = inner.symbolic_call((al.const(np.zeros(2)), al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), ()))[0]
   P = al.stack([al.stack([2.0 + x_inner[0], al.const(0.0)]), al.stack([al.const(0.0), al.const(2.0)])], axis=0)
-  with pytest.raises(NotImplementedError, match="nested solver output"):
+  with pytest.raises(al.NotQuadratic, match="cannot prove QP structure through a nested solver"):
     build_qp(P=P, c=np.zeros(2), sparse=True, name="outer_sparse_over_solver")
 
 

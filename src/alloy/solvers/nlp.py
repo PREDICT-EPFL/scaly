@@ -16,13 +16,11 @@ from .model import SolverDescriptor, descriptor_function
 from .problem import Problem
 from .registry import NlpSolverBackend
 
-_NLP_INF = 2e19
-
 
 def _concat_vec(exprs: tuple[Expr, ...]) -> Expr | None:
   if not exprs:
     return None
-  vectors = tuple(expr.vec() for expr in exprs)
+  vectors = tuple(expr if len(expr.shape) == 1 else expr.vec() for expr in exprs)
   return vectors[0] if len(vectors) == 1 else concat(vectors)
 
 
@@ -51,44 +49,44 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
   replacements: dict[Expr, Expr] = {}
   offset = 0
   for original, size in zip(problem._var_symbols, var_sizes, strict=True):
-    block = x[offset : offset + size]
+    block = x if offset == 0 and size == n else x[offset : offset + size]
     replacements[original] = block if original.shape == (size,) else block.reshape(original.shape)
     offset += size
 
   f = substitute(problem.spec.minimize, replacements)
   equalities = tuple(substitute(expr, replacements) for expr in problem.spec.eq)
   inequalities = tuple(substitute(group.expr, replacements) for group in problem.spec.ineq)
-  h = _concat_vec(equalities)
-  g_ineq = _concat_vec(inequalities)
+  h = _concat_vec(tuple(expr for expr in equalities if expr.size))
+  g_ineq = _concat_vec(tuple(expr for expr in inequalities if expr.size))
   constraints = tuple(expr for expr in (h, g_ineq) if expr is not None)
   g = _concat_vec(constraints)
 
   lower_ineq: list[Expr] = []
   upper_ineq: list[Expr] = []
   for group, expr in zip(problem.spec.ineq, inequalities, strict=True):
-    lower_ineq.append(_bound(None if group.lo is None else substitute(group.lo, replacements), expr.shape, -_NLP_INF).vec())
-    upper_ineq.append(_bound(None if group.hi is None else substitute(group.hi, replacements), expr.shape, _NLP_INF).vec())
+    if not expr.size:
+      continue
+    lower_ineq.append(_bound(None if group.lo is None else substitute(group.lo, replacements), expr.shape, -np.inf).vec())
+    upper_ineq.append(_bound(None if group.hi is None else substitute(group.hi, replacements), expr.shape, np.inf).vec())
   l_ineq = _concat_vec(tuple(lower_ineq))
   u_ineq = _concat_vec(tuple(upper_ineq))
 
   if problem.spec.lb is None:
-    x_lb = Expr.const(np.full(n, -_NLP_INF))
+    x_lb = Expr.const(np.full(n, -np.inf))
   else:
     leaves = problem.vars.flatten_symbolic(problem.spec.lb, f"{problem.name} lb")
     x_lb = _concat_vec(
       tuple(
-        _bound(substitute(expr, replacements), original.shape, -_NLP_INF).vec() for expr, original in zip(leaves, problem._var_symbols, strict=True)
+        _bound(substitute(expr, replacements), original.shape, -np.inf).vec() for expr, original in zip(leaves, problem._var_symbols, strict=True)
       )
     )
     assert x_lb is not None
   if problem.spec.ub is None:
-    x_ub = Expr.const(np.full(n, _NLP_INF))
+    x_ub = Expr.const(np.full(n, np.inf))
   else:
     leaves = problem.vars.flatten_symbolic(problem.spec.ub, f"{problem.name} ub")
     x_ub = _concat_vec(
-      tuple(
-        _bound(substitute(expr, replacements), original.shape, _NLP_INF).vec() for expr, original in zip(leaves, problem._var_symbols, strict=True)
-      )
+      tuple(_bound(substitute(expr, replacements), original.shape, np.inf).vec() for expr, original in zip(leaves, problem._var_symbols, strict=True))
     )
     assert x_ub is not None
 
