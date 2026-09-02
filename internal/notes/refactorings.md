@@ -5,13 +5,13 @@
 
 Decided 2026-08-26, superseding the 2026-08-19 draft that two sessions left unsettled. Not started.
 Tracked as `internal/todo.md` D3. D2, D1, D1.5 and A11 have landed; this is next. The prototype that
-settled the design is `arity.py` at the repository root. It is an **interface sketch, not a
-reference implementation**: `Buffer` is `np.ndarray`, `Expr.degree` stands in for `_jac_mask`, and
-every body (`Function`, the derivative wrappers, `solver`) is a stand-in for machinery that already
-exists in `src/alloy` and must be kept, with its interface swapped. Its docstring lists, per name,
-what is real and what is stubbed; read that before touching `src/`. Its two test sections are the
-acceptance tests of the design and move to `tests/typing/` and `tests/` when it lands; the file goes
-then.
+settled the design is the `typing_playground/` package (originally a single `arity.py` at the
+repository root). It is an **interface sketch, not a reference implementation**: `Buffer` is
+`np.ndarray`, `Expr.degree` stands in for `_jac_mask`, and every body (`Function`, the derivative
+wrappers, `solver`) is a stand-in for machinery that already exists in `src/alloy` and must be kept,
+with its interface swapped. Its `README.md` lists, per name, what is real and what is stubbed; read
+that before touching `src/`. Its tests are the acceptance tests of the design; they are copied to
+`tests/typing/` and `tests/` when a piece lands, and the package stays as the design record.
 
 ## The problem
 
@@ -214,7 +214,7 @@ and keeping them equal is a habit for the reader that nothing enforces. Document
 and the `L` docstring.
 
 Unknown `of`/`wrt` is a `ValueError` naming the declared choices, raised when the derivative is
-built, never at evaluation time; `arity.py` tests it. Static names are possible, a `LiteralString`
+built, never at evaluation time; `typing_playground/tests/test_function.py` tests it. Static names are possible, a `LiteralString`
 bound keeps `Function[..., Literal["x", "p"], Literal["f"]]` and `fn.gradient("f", "z")` then fails
 at check time, but only through methods on `Function`, since a free function solves the name
 variable from both arguments and widens to `str`. Not adopted; it would reopen D1's free-function
@@ -222,7 +222,7 @@ form and reject runtime-built names such as `nlp.py`'s.
 
 ### 8. Derivatives keep the source's inputs, so they are typed
 
-Leaning, not settled (2026-08-26). Drafted in `arity.py`.
+Leaning, not settled (2026-08-26). Drafted in `typing_playground/function.py`.
 
 `gradient(fn, of, wrt)` returns `Function[SI, NI, Expr, Buffer]`: the same input tree as `fn`,
 one output leaf; `jacobian`, `hessian`, `sparse_jacobian`, `sparse_hessian` likewise. Seeded modes
@@ -247,7 +247,7 @@ builders rather than only at the user surface, which is the point of the typing 
 cases and `# ty: ignore[<code>]` on the expected errors. It runs as
 `uv run ty check --error-on-warning tests/typing`: ty reports an unused `ty: ignore` as
 `unused-ignore-comment`, so an expected error that stops being one fails the check. That is the
-"prove the gate can fail" rule applied to types. `arity.py` is the shape of the first file.
+"prove the gate can fail" rule applied to types. `typing_playground/tests/test_typing.py` is the shape of the first file.
 
 Requires `ty>=0.0.75` (done 2026-08-26, tree clean under it): the pinned 0.0.37 inferred `Unknown`
 for a class-scoped `type` alias used as an annotation and the design did not check under it.
@@ -440,8 +440,8 @@ Three holes remain, all on the paths that matter most for composing:
 
 Cost of leaving it: any composition passing through a map or a derivative drops out of the typed
 world, and the developer experience degrades exactly where the library stakes its claim, on
-preserved mapped structure. The D3 sketch anticipated the first of these — `arity.py`'s docstring
-lists "`vmap` typed by its callee's trees" as left for the implementation.
+preserved mapped structure. The D3 sketch anticipated the first of these — `typing_playground/README.md` lists
+"`vmap` typed by its callee's trees" as an open item and `typing_playground/function.py` holds a candidate.
 
 Whatever lands needs both kinds of test the tree work uses, because they catch different things:
 runtime structure tests beside `tests/function/test_tree.py`, and static ones in

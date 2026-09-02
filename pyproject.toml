@@ -66,7 +66,7 @@ alloy-sqp = { workspace = true }
 indent-width = 2
 line-length = 150
 target-version = "py312"
-include = ["src/alloy/**/*.py", "tests/**/*.py", "benchmarks/**/*.py", "plugins/**/*.py"]
+include = ["src/alloy/**/*.py", "tests/**/*.py", "benchmarks/**/*.py", "plugins/**/*.py", "typing_playground/**/*.py"]
 exclude = [".venv"]
 lint.ignore = ["E731"]
 
@@ -80,6 +80,6 @@ reportPrivateImportUsage = false
 exclude = ["hatch_build.py", "third_party/**", "plugins/*/hatch_build.py", "plugins/*/third_party/**", ".venv/**", "benchmarks/**"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "plugins"]
+testpaths = ["tests", "plugins", "typing_playground"]
 norecursedirs = ["third_party", ".venv"]
 markers = ["solver(name): needs a loadable vendored solver; skipped without it, selected by CI's solver job"]
