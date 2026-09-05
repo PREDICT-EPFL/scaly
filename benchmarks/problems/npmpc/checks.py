@@ -675,7 +675,7 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "terminal_riccati": (check_terminal_riccati_weight, False, False),
   "constraint_rows": (check_constraint_rows_and_bounds, False, False),
   "initial_guess": (check_initial_guess_reaches_upright, False, False),
-  "exact_hessian": (check_nlp_uses_an_exact_hessian, False, False),
+  "exact_hessian": (check_nlp_uses_an_exact_hessian, True, False),
   "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, True, True),
   "episode_artifacts": (check_episode_artifacts, True, False),
   "episode_swings_up": (check_episode_swings_up, True, False),

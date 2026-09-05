@@ -352,6 +352,7 @@ tests/passes/test_lowering.py::test_covered_function_renders_through_program_ir[
 tests/passes/test_lowering.py::test_covered_function_renders_through_program_ir[_trig_chain]
 tests/passes/test_lowering.py::test_covered_function_renders_through_program_ir[_vecmat]
 tests/passes/test_lowering.py::test_covered_function_renders_through_program_ir[_vmap]
+tests/passes/test_lowering.py::test_empty_reduction_and_output_leave_adjacent_memory_untouched
 tests/passes/test_lowering.py::test_gather_fed_chained_vmaps_render_through_program_ir
 tests/passes/test_lowering.py::test_lowered_program_verifies_and_has_single_proc
 tests/passes/test_lowering.py::test_program_ir_jit_executes[_arith]

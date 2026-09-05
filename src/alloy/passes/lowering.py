@@ -156,7 +156,7 @@ def _size_of(shape: tuple[int, ...]) -> int:
   n = 1
   for d in shape:
     n *= int(d)
-  return n or 1
+  return n
 
 
 def _lower_to_proc(fun: Function, callees: dict[str, ProgramNode], solver_fns: dict[str, Function]) -> ProgramNode:

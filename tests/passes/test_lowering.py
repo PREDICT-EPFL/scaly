@@ -405,3 +405,26 @@ def test_gather_fed_chained_vmaps_render_through_program_ir() -> None:
   fn = _import_sibling("test_vmap")._build_pairs_fn(True)
   assert can_render_program_c(fn)
   assert can_render_program_c(fn.factory("pairs_program_spjac", ["u", "p"], [al.factory.SpJac("h", "u")]))
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
+def test_empty_reduction_and_output_leave_adjacent_memory_untouched() -> None:
+  import ctypes
+
+  from alloy.codegen.jit import get_compiled
+
+  @al.function(al.L("x", 3), al.G(al.L("cost", ...), al.L("empty", ...)))
+  def fn(x):
+    return x[:2].sum() + 1000.0 * x[2:2].sum(), al.const(np.zeros(0))
+
+  compiled = get_compiled(fn)
+  values = np.array([2.0, 3.0, 17.0])
+  cost = np.array([-1.0])
+  untouched = np.array([23.0])
+  pointer = ctypes.POINTER(ctypes.c_double)
+  args = (pointer * 1)(values.ctypes.data_as(pointer))
+  outputs = (pointer * 2)(cost.ctypes.data_as(pointer), untouched.ctypes.data_as(pointer))
+  work = (ctypes.c_double * compiled._sz_w)()
+  assert compiled._entry(args, outputs, None, work, None) == 0
+  np.testing.assert_array_equal(cost, [values[:2].sum() + 1000.0 * values[2:2].sum()])
+  np.testing.assert_array_equal(untouched, [23.0])
