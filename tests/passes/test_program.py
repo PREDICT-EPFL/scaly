@@ -261,3 +261,81 @@ def test_optimized_program_still_verifies() -> None:
 
   prog = lower_function(f)  # raises VerifyError on any malformed node
   assert prog.op == ProgramOp.PROGRAM
+
+
+@pytest.mark.parametrize("count", [2, 8])
+def test_slice_gradient_combines_pads(count: int) -> None:
+  x = al.sym("x", 4 * count)
+  cost = sum(((x[2 * i : 2 * i + 3] ** 2).sum() for i in range(count)), start=al.const(0.0))
+  f = al.Function._from_exprs("slice_cost", [x], [cost], ["x"], ["cost"])
+  grad = f.factory("slice_grad", ["x"], [al.factory.Grad("cost", "x")])
+  stages = {}
+  lower_function(grad, observe=lambda name, prog: stages.__setitem__(name, prog))
+  combined = main_proc(stages["pass:combine_scatter_sums"])
+  buffers, _, _ = _classify(list(combined.args[int(combined.attrs["param_count"]) :]))
+  assert not [b for b in buffers if b.attrs["shape"] == (4 * count,)]
+  compute, _, loops = _classify(_main_body(grad))
+  assert not [b for b in compute if b.attrs["shape"] == (4 * count,)]
+  output_loops = [loop for loop in loops if loop.args[1].op == ProgramOp.STORE and loop.args[1].args[0].attrs["buffer"] == "grad_cost_x"]
+  assert len(output_loops) == count + 1
+  assert sum(loop.args[1].args[1].op == ProgramOp.CONST_FLOAT for loop in loops if len(loop.args) == 2 and loop.args[1].op == ProgramOp.STORE) == 1
+  data = np.linspace(-1.0, 2.0, 4 * count)
+  expected = np.zeros_like(data)
+  for i in range(count):
+    expected[2 * i : 2 * i + 3] += 2 * data[2 * i : 2 * i + 3]
+  np.testing.assert_allclose(grad(data), expected)
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_scatter_sum_preserves_overlaps_and_shared_outputs(shared: bool) -> None:
+  from alloy.ir.expr import scatter
+
+  x = al.sym("x", 3)
+  a = scatter(x, [1, 3, 5], 8)
+  b = scatter(2 * x, [3, 5, 7], 8)
+  c = scatter(-x, [0, 3, 7], 8)
+  outputs = [a + (b + c), a] if shared else [a + (b + c)]
+  f = al.Function._from_exprs("scatter_sum", [x], outputs, ["x"], ["sum", "a"] if shared else ["sum"])
+  data = np.array([-1.5, 2.0, 0.25])
+  expected = np.zeros(8)
+  expected[[1, 3, 5]] += data
+  expected[[3, 5, 7]] += 2 * data
+  expected[[0, 3, 7]] -= data
+  result = f(data)
+  np.testing.assert_allclose(result[0] if shared else result, expected)
+  if shared:
+    original = np.zeros(8)
+    original[[1, 3, 5]] = data
+    np.testing.assert_array_equal(result[1], original)
+
+
+@pytest.mark.parametrize("alias", [False, True])
+def test_scatter_sum_does_not_move_source_reads_past_writes(alias: bool) -> None:
+  from alloy.ir.expr import scatter
+  from alloy.ir.program import ProgramNode, const_int
+  from alloy.passes.program import combine_scatter_sums
+
+  x = al.sym("x", 4)
+  a = scatter(x[:2] if alias else x, [0, 2] if alias else [0, 2, 4, 6], 8)
+  b = scatter(x[2:] if alias else 2 * x, [1, 3] if alias else [1, 3, 5, 7], 8)
+  f = al.Function._from_exprs("mutated_scatter", [x], [a + b], ["x"], ["sum"])
+  stages = {}
+  lower_function(f, observe=lambda name, prog: stages.__setitem__(name, prog))
+  lowered = stages["lowered"]
+  original = main_proc(lowered)
+  params = list(original.args[: int(original.attrs["param_count"])])
+  body = list(original.args[len(params) :])
+  body.insert(-1, store(view(params[0], [const_int(0)]), const_float(42.0)))
+  mutated = ProgramNode(ProgramOp.PROC, (*params, *body), original.attrs, original.dtype)
+  prog = program([mutated])
+  assert combine_scatter_sums(prog) is prog
+
+
+@pytest.mark.parametrize("left_associated", [False, True])
+def test_scatter_sum_preserves_addition_grouping(left_associated: bool) -> None:
+  from alloy.ir.expr import scatter
+
+  x = al.sym("x", 3)
+  a, b, c = (scatter(x[i : i + 1], [1], 4) for i in range(3))
+  f = al.Function._from_exprs("grouped_scatter", [x], [(a + b) + c if left_associated else a + (b + c)], ["x"], ["sum"])
+  np.testing.assert_array_equal(f(np.array([1e16, -1e16, 1.0])), [0, 1 if left_associated else 0, 0, 0])

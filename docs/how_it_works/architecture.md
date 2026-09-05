@@ -64,7 +64,7 @@ grad(np.array([1.0, 2.0]))
 | 5 | Calling it with array leaves runs `__call__` → `numerical_call` → `_flat_numerical_call` → `_compile`, which reaches the backend through `_jit()` — the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](#the-two-sanctioned-exceptions) to import layering. | `function/model.py` |
 | 6 | `CompiledFunction` asks `_build_artifact` for a shared library, which calls `render_c_module`. That lowers the function **once** into a render context every artifact reads from. | `codegen/jit.py`, `codegen/aot.py` |
 | 7 | `lower_function` walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a Function carrying a solver descriptor stays opaque. | `passes/lowering.py` |
-| 8 | `optimize_program` runs the registered pipeline: `fuse_elementwise`, `unroll_unit_loops`, `pack_workspace`. | `passes/program.py` |
+| 8 | `optimize_program` runs the registered pipeline: `combine_scatter_sums`, `fuse_elementwise`, `unroll_unit_loops`, `pack_workspace`. | `passes/program.py` |
 | 9 | `verify_program` checks the result before anything renders it. | `ir/program_spec.py` |
 | 10 | `render_program_c` emits the translation unit: the callee bodies, then the one entry point exported through the **universal ABI** — the single pointer-array C signature every generated function shares. | `codegen/c.py` |
 | 11 | Header, source, workspace size and solver link flags are packaged as a `CModule`. | `codegen/aot.py` |
@@ -297,8 +297,10 @@ loudly, which is the property that keeps generated C and Python agreeing.
 ### Optimizing — `passes/program.py`
 
 `PASS_PIPELINE` is an ordered list built by `@register_pass`; `optimize_program` runs it at the
-tail of lowering. Three passes today:
+tail of lowering. Four passes today:
 
+- `combine_scatter_sums` replaces sums of single-use zero-filled scatters with one zero-fill
+  and one scatter-add per term.
 - `fuse_elementwise` inlines a single-use elementwise/slice/gather producer into its one consumer,
   collapsing chains into one loop and deleting the intermediate buffer round-trip.
 - `unroll_unit_loops` erases statically empty loops and inlines single-iteration ones, after

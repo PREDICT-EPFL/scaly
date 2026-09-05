@@ -47,7 +47,13 @@ def my_pass(prog: ProgramNode) -> ProgramNode:
     ...
 ```
 
-Three passes run today, in this order.
+Four passes run today, in this order.
+
+**`combine_scatter_sums`** replaces a left-associated sum of single-use zero-filled scatters with one zero-fill
+and one scatter-add per term. Slice adjoints produce these scatters. Combining them removes
+the full-length temporary buffer for each slice, including when slices overlap. Shared buffers
+and aliases keep their storage. The pass leaves a sum unchanged if moving a scatter would
+read a source after it changes.
 
 **`fuse_elementwise`** inlines a single-use producer into its one consumer. A producer here is a
 loop with a single store whose index is the loop variable — the shape every elementwise, slice and
