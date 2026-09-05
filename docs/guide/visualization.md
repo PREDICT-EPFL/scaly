@@ -72,5 +72,5 @@ asserted on in tests; the graph JSON is for building your own tooling.
 
 The visualizer registers itself into an observer hook that the code generator owns, so nothing in
 the compiler imports the visualizer or knows it exists. That is one of the two deliberate exceptions
-in alloy's layering, and it is why recording can be genuinely zero-cost when you have not asked for
+in Alloy's import-layer rules, and it is why recording can be genuinely zero-cost when you have not asked for
 it — see [the architecture](../how_it_works/architecture.md#the-two-sanctioned-exceptions).

@@ -165,7 +165,7 @@ derivative code from growing with the horizon.
 thing — oracles, wrapper, host function — compiles into a single shared library with no Python in
 the loop. See [Solvers](solvers.md).
 
-**A layering the tests enforce.** Which packages may import which is a table in a test rather than
+**The tests enforce import layers.** Which packages may import which is a table in a test rather than
 a convention in a document, and the two sanctioned exceptions to it are named and checked. It is
 not a compiler technique; it is the thing that keeps the compiler legible as it grows. See
-[the architecture](architecture.md#layers).
+[the import-layer rules](architecture.md#import-layers).

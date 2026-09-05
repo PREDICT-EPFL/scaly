@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 def _jit():
   """The one sanctioned frontend->backend seam: calling a ``Function`` JIT-compiles it.
 
-  Deferred so the frontend does not import the backend at module scope (see the layering table
+  Deferred so the frontend does not import the backend at module scope (see the import-layer table
   in ``docs/how_it_works/architecture.md``); every other use of the backend from here goes through it.
   """
   from ..codegen import jit

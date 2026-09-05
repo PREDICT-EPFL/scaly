@@ -4,8 +4,8 @@ Alloy turns symbolic models written in Python into compiled C. This document is 
 that happens: what the pieces are, which way they point, and where a change belongs.
 
 Read **The short version** and **Following one call** to get oriented — together they are the
-whole system at low resolution. **Package map** and **Layers** are the reference you come back
-to. Everything after that is detail, one stage at a time. Nothing here specifies the semantics of either
+whole system at low resolution. **Package map** and **Import layers** are the reference you come
+back to. Everything after that is detail, one stage at a time. Nothing here specifies the semantics of either
 dialect or the C ABI; those have their own pages, linked as they come up.
 
 ## The short version
@@ -61,7 +61,7 @@ grad(np.array([1.0, 2.0]))
 | 2 | `al.factory.Grad("f", "x")` is a typed request object, not a string. `Function.factory` resolves the named input and output and calls the spec's `build`. | `function/model.py` (`factory`), `function/factory.py` (the specs) |
 | 3 | `al.factory.Grad`'s `build` is one reverse sweep over the expression DAG. Other kinds dispatch elsewhere — `al.factory.Jac` batches forward mode over the identity, and `al.factory.SpJac` colors a structural pattern first. | `ad/derivatives.py`, `ad/reverse.py` |
 | 4 | The result is another `Function`, in the same dialect as the first. Nothing has been compiled yet. | `function/model.py` |
-| 5 | Calling it with array leaves runs `__call__` → `numerical_call` → `_flat_numerical_call` → `_compile`, which reaches the backend through `_jit()` — the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](#the-two-sanctioned-exceptions) to the layering. | `function/model.py` |
+| 5 | Calling it with array leaves runs `__call__` → `numerical_call` → `_flat_numerical_call` → `_compile`, which reaches the backend through `_jit()` — the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](#the-two-sanctioned-exceptions) to import layering. | `function/model.py` |
 | 6 | `CompiledFunction` asks `_build_artifact` for a shared library, which calls `render_c_module`. That lowers the function **once** into a render context every artifact reads from. | `codegen/jit.py`, `codegen/aot.py` |
 | 7 | `lower_function` walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a Function carrying a solver descriptor stays opaque. | `passes/lowering.py` |
 | 8 | `optimize_program` runs the registered pipeline: `fuse_elementwise`, `unroll_unit_loops`, `pack_workspace`. | `passes/program.py` |
@@ -147,17 +147,17 @@ Solver backends are not in this tree. Each is a separate distribution under `plu
 (`alloy-piqp`, `alloy-ipopt`, `alloy-sqp`) discovered through an entry point; see
 [Solver plugins](../dev/solver_plugins.md). `tests/` mirrors this layout directory for directory.
 
-## Layers
+## Import layers
 
-Every module has a layer. **A module may import its own layer or below, never above.** That single
-rule is what keeps the packages above from turning back into the tangle they were cut out of.
+Every module has an import layer. A module may import modules in its own import layer or a lower
+import layer, never a higher one. That rule keeps the package dependencies from becoming tangled.
 
-| Layer | Modules | Why here |
+| Import layer | Modules | Why here |
 | --- | --- | --- |
 | 0 | `utils/*` | Leaves. Environment and file parsing, no alloy concepts at all. |
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
-| 2 | `passes/expr`, `ad/sparsity`, `solvers/stats` | Above layer 1 but below the frontend: expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR at all). Nothing here knows what a `Function` is. |
-| 3 | `function/model` | `Function` itself — a named graph boundary over layer 1. |
+| 2 | `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR at all). Nothing here knows what a `Function` is. |
+| 3 | `function/model` | `Function` itself — a named graph boundary over import layer 1. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
 | 6 | `passes/{lowering,program}` | Consume a whole `Function` — including its solver callees — and produce the program dialect. |
@@ -166,14 +166,14 @@ rule is what keeps the packages above from turning back into the tangle they wer
 | 9 | `alloy/__init__` | The curated public surface sits above everything it re-exports. |
 
 `passes/` deliberately straddles the frontend: its expression rewrites are below `Function`
-(layer 2) and its lowering is above it (layer 6). Enforcement is per module, not per package, so
+(import layer 2) and its lowering is above it (import layer 6). Enforcement is per module, not per package, so
 this is legal and stated rather than special-cased. Package `__init__` files carry their own entry,
-set by what they re-export: `alloy.function` re-exports layer-3 names and is layer 3, while
-`alloy.passes` re-exports nothing and sits at 1, below both of its modules.
+set by what they re-export: `alloy.function` re-exports names from import layer 3 and is import layer 3,
+while `alloy.passes` re-exports nothing and sits at import layer 1, below both of its modules.
 
-`tests/test_layering.py` holds this table and reads imports with `ast`, function-local ones
-included — the deferred import inside a function is exactly how the old cycles stayed alive. It
-also checks that the graph is acyclic outside the recorded exceptions; that `LAYERS` names exactly
+`tests/test_import_layering.py` holds this import-layer table and reads imports with `ast`, function-local
+ones included — the deferred import inside a function is exactly how the old cycles stayed alive. It
+also checks that the graph is acyclic outside the recorded exceptions; that `IMPORT_LAYERS` names exactly
 the modules that exist, so a new file cannot slip in unplaced; that every recorded exception is
 still a real edge and still a real violation, so the exception lists cannot rot into free passes;
 and that each module imports cleanly *first* in a fresh interpreter. That last one is the half a
@@ -187,19 +187,19 @@ and written down below.
 
 ### The two sanctioned exceptions
 
-Two places where what the code wants to do and what the layering allows disagree. The first
+Two places where what the code wants to do and what import layering allows disagree. The first
 resolves as a real upward import, recorded. The second resolves as no import at all — which is
 the point of it.
 
-**1. Calling a `Function` compiles it.** `function/model.py` (layer 3) reaches `codegen/jit`
-(layer 7) through a single deferred import in `_jit()`. Every backend use in the frontend —
+**1. Calling a `Function` compiles it.** `function/model.py` (import layer 3) reaches `codegen/jit`
+(import layer 7) through a single deferred import in `_jit()`. Every backend use in the frontend —
 `_flat_numerical_call`, `recompile`, `solver_stats` — goes through that one function. This is the only entry
-in `SEAM`, and `test_layering.py` asserts it stays *one* import statement, so the seam cannot
+in `SEAM`, and `test_import_layering.py` asserts it stays *one* import statement, so the seam cannot
 quietly become a habit.
 
 **2. `viz` observes; `codegen` does not know it exists.** The compiler is the one with something
 to say and the visualizer is the one that wants to hear it, so the naive wiring would be a
-`codegen -> viz` import — downhill in the call graph, uphill in the layering. Instead
+`codegen -> viz` import — downhill in the call graph, uphill in the import-layer order. Instead
 `codegen/aot.py` owns a `RenderObserver` protocol and `register_render_observer`, and
 `viz/recording.py` registers itself at import time. The only import is `viz -> codegen`, which is
 downward and legal, so nothing needs recording in `SEAM` at all. Importing `alloy.viz` is what
@@ -212,9 +212,9 @@ observer for users who never asked.
 
 `ir/text.py` renders a `Function` — it reads `.name`, `.inputs`, `.outputs`, `.input_names` and
 `.output_names` — through a `TYPE_CHECKING`-only import. The static edge is gone; the structural
-dependency is not. Layer 1 is therefore not free of the frontend contract, and changing that
+dependency is not. Import layer 1 is therefore not free of the frontend contract, and changing that
 surface means changing `ir/text.py` with it. `tests/viz/test_assembly.py` would fail if the
-rendering broke, but nothing enforces the *direction*: only this paragraph records that layer 1
+rendering broke, but nothing enforces the *direction*: only this paragraph records that import layer 1
 knows what a `Function` looks like.
 
 ## The two dialects
@@ -245,7 +245,7 @@ negative tests are written against. `lower_function` verifies its output before 
 
 `function/model.py` owns `Function`: names, shapes, sparsity metadata, the undeclared-input check,
 first-class call composition, and `factory`. It also owns the dependency-light `DerivSpec` base at
-layer 3.
+import layer 3.
 `function/api.py` is the ergonomic layer — the
 `@al.function` decorator and the overloaded wrappers (`al.jacobian`, `al.gradient`, `al.sparse_hessian`, …) that
 most user code actually calls.
@@ -262,7 +262,7 @@ and SpHess always use the same input twice, so the doubled `{wrt}` is retained i
 
 The split keeps the dependency direction clear: `function/factory.py` owns the concrete derivative
 request classes and publicly re-exports the base through `al.factory`. The concrete requests import
-`ad`, so they stay at layer 5. `factory` stays a method; the request-to-AD dispatch is the part users
+`ad`, so they stay at import layer 5. `factory` stays a method; the request-to-AD dispatch is the part users
 can also reach through `al.factory`.
 
 ### Differentiating — `ad/`
@@ -273,7 +273,7 @@ produces expression-dialect graphs — AD is a graph-to-graph transformation, no
 
 `ad/sparsity.py` is deliberately AD-free: structural patterns and greedy coloring, computed from
 graph shape alone. `ad/sparse.py` is the half that needs AD, building compact nonzero-value
-expressions over a colored pattern. Keeping the two apart is what lets `sparsity` sit at layer 2
+expressions over a colored pattern. Keeping the two apart is what lets `sparsity` sit at import layer 2
 and be reused from below.
 
 Call and `VMAP` nodes are differentiated without expanding the callee, but not the same way in both
@@ -383,11 +383,11 @@ assembly text stays in `ir/text.py`, where the compiler owns it.
 | A derivative kind | a frozen `DerivSpec` subclass in `function/factory.py`, plus a wrapper in `function/api.py` |
 | A solver backend | a distribution under `plugins/`, an entry point, and a `render_wrapper` hook — see [Solver plugins](../dev/solver_plugins.md) |
 | A public name | the re-export and `__all__` entry in `alloy/__init__.py` |
-| A module | an entry in `LAYERS` in `tests/test_layering.py`, a one-line ownership docstring, and a test file in the mirrored place under `tests/` |
+| A module | an entry in `IMPORT_LAYERS` in `tests/test_import_layering.py`, a one-line ownership docstring, and a test file in the mirrored place under `tests/` |
 
 ## The rules that keep it this way
 
-1. **Imports go down.** The layer table above, enforced by `tests/test_layering.py`. A new upward
+1. **Imports go down.** The import-layer table above, enforced by `tests/test_import_layering.py`. A new upward
    edge is a design decision, not a deferred import: a permanent one goes in `SEAM` with the
    reason, and one being carried across a migration goes in `TOLERATED` — currently empty, and the
    point of it is that emptying it again is somebody's job.
@@ -411,7 +411,7 @@ assembly text stays in `ir/text.py`, where the compiler owns it.
 8. **Pre-1.0, breaks are deliberate and unshimmed.** When a name moves it moves; see
    [Versioning](../dev/versioning.md).
 
-Two tests carry most of this. `tests/test_layering.py` holds the layer table and the exceptions;
+Two tests carry most of this. `tests/test_import_layering.py` holds the import-layer table and the exceptions;
 `tests/test_import_boundaries.py` pins the public surface — that `al.Expr is ir.expr.Expr`, that
 both dialects verify through the same `Spec` type, and that retired module paths and vocabulary
 stay gone.

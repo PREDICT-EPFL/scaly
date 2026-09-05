@@ -1,7 +1,7 @@
 """Import-layer discipline for ``src/alloy``.
 
-Every module has a layer (``docs/how_it_works/architecture.md``): a module may import modules in its own layer
-or below, never above. Two dicts hold the exceptions. ``SEAM`` is the one sanctioned upward edge —
+Every module has an import layer (``docs/how_it_works/architecture.md``): a module may import modules in its own import layer
+or a lower import layer, never a higher one. Two dicts hold the exceptions. ``SEAM`` is the one sanctioned upward edge —
 calling a ``Function`` JIT-compiles it. ``TOLERATED`` is the escape hatch for a violation being
 carried deliberately through a refactor in progress, and is empty; an entry there is a decision to
 make in the open, not a deferred import to leave lying around, and it is meant to go back to empty
@@ -28,9 +28,9 @@ import pytest
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "alloy"
 
-# Layer per module. Keys are today's module paths; the numbers are the target layout's, so a key
-# is renamed when its file moves but its layer only changes if the design changes.
-LAYERS: dict[str, int] = {
+# Import layer per module. Keys are today's module paths; the numbers are the target layout's, so a key
+# is renamed when its file moves but its import layer only changes if the design changes.
+IMPORT_LAYERS: dict[str, int] = {
   "alloy.utils": 0,
   "alloy.utils.env": 0,
   "alloy.utils.torch_state_dict": 0,
@@ -55,7 +55,7 @@ LAYERS: dict[str, int] = {
   "alloy.ad.forward": 4,
   "alloy.ad.reverse": 4,
   "alloy.ad.sparse": 4,
-  # Layer 4, not the plan's 5: ``vmap`` needs a ``Function``, and ``ad`` needs ``vmap``.
+  # Import layer 4, not the plan's 5: ``vmap`` needs a ``Function``, and ``ad`` needs ``vmap``.
   "alloy.function.sugar": 4,
   "alloy.function.api": 5,
   "alloy.function.factory": 5,
@@ -86,7 +86,7 @@ LAYERS: dict[str, int] = {
   "alloy": 9,  # the curated public re-exports sit above everything they re-export
 }
 
-# The one upward import the architecture sanctions (docs/how_it_works/architecture.md, "Layers").
+# The one upward import the architecture sanctions (docs/how_it_works/architecture.md, "Import layers").
 SEAM: dict[tuple[str, str], str] = {
   ("alloy.function.model", "alloy.codegen.jit"): "calling a Function JIT-compiles it",
 }
@@ -172,7 +172,7 @@ def _cycle(edges: set[tuple[str, str]]) -> list[str] | None:
   return None
 
 
-@pytest.mark.parametrize("module", sorted(LAYERS))
+@pytest.mark.parametrize("module", sorted(IMPORT_LAYERS))
 def test_module_imports_standalone(module: str) -> None:
   """The runtime counterpart of the table above, and the half it cannot see: a module that is
   imported first must not deadlock on a half-initialized one. Package ``__init__`` execution is
@@ -181,21 +181,21 @@ def test_module_imports_standalone(module: str) -> None:
   assert proc.returncode == 0, f"importing {module} first fails:\n{proc.stderr}"
 
 
-def test_layer_table_covers_every_module() -> None:
-  missing = sorted(set(_modules()) - set(LAYERS))
-  extra = sorted(set(LAYERS) - set(_modules()))
-  assert not missing, f"new modules need a layer in LAYERS: {missing}"
-  assert not extra, f"LAYERS names modules that no longer exist: {extra}"
+def test_import_layer_table_covers_every_module() -> None:
+  missing = sorted(set(_modules()) - set(IMPORT_LAYERS))
+  extra = sorted(set(IMPORT_LAYERS) - set(_modules()))
+  assert not missing, f"new modules need an import layer in IMPORT_LAYERS: {missing}"
+  assert not extra, f"IMPORT_LAYERS names modules that no longer exist: {extra}"
 
 
 def test_no_upward_imports() -> None:
   recorded = set(SEAM) | set(TOLERATED)
   bad = [
-    f"{src} -> {dst} (layer {LAYERS[src]} -> {LAYERS[dst]}, line {lines[0]})"
+    f"{src} -> {dst} (import layer {IMPORT_LAYERS[src]} -> {IMPORT_LAYERS[dst]}, line {lines[0]})"
     for (src, dst), lines in _edges().items()
-    if (src, dst) not in recorded and LAYERS[dst] > LAYERS[src]
+    if (src, dst) not in recorded and IMPORT_LAYERS[dst] > IMPORT_LAYERS[src]
   ]
-  assert not bad, "imports from a higher layer:\n  " + "\n  ".join(sorted(bad))
+  assert not bad, "imports from a higher import layer:\n  " + "\n  ".join(sorted(bad))
 
 
 def test_no_import_cycles() -> None:
@@ -212,8 +212,8 @@ def test_recorded_exceptions_still_exist() -> None:
 
 def test_tolerated_violations_are_still_violations() -> None:
   """An entry that stopped being an upward edge would go on suppressing the cycle check for free."""
-  legal = sorted(f"{src} -> {dst}" for src, dst in TOLERATED if LAYERS[dst] <= LAYERS[src])
-  assert not legal, "these edges no longer break the layering; drop them from TOLERATED:\n  " + "\n  ".join(legal)
+  legal = sorted(f"{src} -> {dst}" for src, dst in TOLERATED if IMPORT_LAYERS[dst] <= IMPORT_LAYERS[src])
+  assert not legal, "these edges no longer break the import-layer rule; drop them from TOLERATED:\n  " + "\n  ".join(legal)
 
 
 def test_each_seam_is_a_single_import() -> None:

@@ -75,8 +75,8 @@ for the benchmark *harness* — the benchmark *problems* keep their own gates. S
 
 Two tests are structural rather than functional, and both are meant to be permanent:
 
-- `tests/test_layering.py` holds the import layer table, the two sanctioned exceptions and the
-  acyclicity check. A new module needs an entry in `LAYERS`.
+- `tests/test_import_layering.py` holds the import-layer table, the two sanctioned exceptions and the
+  acyclicity check. A new module needs an entry in `IMPORT_LAYERS`.
 - `tests/test_import_boundaries.py` pins the public surface — that `al.Expr` really is
   `alloy.ir.expr.Expr`, that both dialects verify through the same types, and that retired module
   paths stay retired.

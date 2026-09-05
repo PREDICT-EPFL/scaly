@@ -145,7 +145,7 @@ Both lower to real C procedures taking no arguments, so neither is a mistake to 
 What we are living with. `Function.__call__` dispatches on leaf kind, and an empty tree has no
 `Expr` leaf, so it cannot be routed symbolically — it reads as an evaluation. That is the reason
 `ad/forward.py` is the one module outside `function/` permitted to use `_flat_symbolic_call`,
-pinned by `test_flat_call_seams_stay_inside_their_sanctioned_modules` in `tests/test_layering.py`.
+pinned by `test_flat_call_seams_stay_inside_their_sanctioned_modules` in `tests/test_import_layering.py`.
 
 What a fix looks like, and why it did not ride along with the API change. A `CALL` to a
 no-argument procedure returning a constant is pure overhead; inlining the constant at the call site

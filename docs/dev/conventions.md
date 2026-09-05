@@ -37,9 +37,9 @@ Alloy is meant to read like tinygrad: small, dense, every line earning its place
 
 ## Where a module belongs
 
-Every module has a layer, and a module may import its own layer or below and never above. The table
-and its two sanctioned exceptions are in [the architecture](../how_it_works/architecture.md#layers),
-and `tests/test_layering.py` enforces them.
+Every module has an import layer. A module may import its own import layer or a lower import layer,
+never a higher one. The table and its two sanctioned exceptions are in [the architecture](../how_it_works/architecture.md#import-layers),
+and `tests/test_import_layering.py` enforces them.
 
 Every module also carries a one-line docstring saying what it owns. Directory names do not keep a
 package coherent; that sentence does, because it is what makes an incoherent addition obvious.

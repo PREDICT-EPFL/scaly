@@ -7,7 +7,7 @@ call, and caches the resulting shared library.
 
 Read before changing anything:
 
-- [Architecture](docs/how_it_works/architecture.md) — the layer table, and *Where to add things*
+- [Architecture](docs/how_it_works/architecture.md) — the import-layer table, and *Where to add things*
   lists every file each kind of change touches (a new scalar operation touches six)
 - [Conventions](docs/dev/conventions.md) — naming, code style, which side of the
   tests-versus-benchmarks line a check belongs on
@@ -80,8 +80,8 @@ Identifier spellings, several of which reach the generated C:
 - **Anvil is gone.** Alloy was extracted from the `anvil` monorepo in May 2026 and shares no runtime
   code with it. Never name it in public surfaces — the README, `docs/`, or code. If a question
   genuinely needs anvil's SQP or multistage design notes, ask the user for a checkout.
-- **A new module needs a `LAYERS` entry in `tests/test_layering.py`** and a one-line docstring
-  saying what it owns. Imports go down layers, never up. A new public name needs a docstring too:
+- **A new module needs an `IMPORT_LAYERS` entry in `tests/test_import_layering.py`** and a one-line docstring
+  saying what it owns. Imports go down import layers, never up. A new public name needs a docstring too:
   the API reference is generated from them and `tests/test_import_boundaries.py` pins the surface.
 - **Never let a benchmark be the only thing exercising an IR, AD or codegen path.** Copy a small
   self-contained reproduction into `tests/`, differential against an unrolled or NumPy reference,

@@ -75,7 +75,7 @@ def render_expr_assembly(obj: Function | Expr | Iterable[Expr], *, name: str | N
   callee body before the requested function. This mirrors what C rendering eventually needs.
   """
   # The Function case is duck-typed on the surface ``_render_function_module`` actually uses:
-  # ``ir`` is below ``function`` in the layering, so it cannot import ``Function`` at runtime.
+  # ``ir`` is below ``function`` in the import-layer order, so it cannot import ``Function`` at runtime.
   # It is tested first so an object that is both a Function and iterable still renders as an
   # ``expr.module`` rather than a bare region.
   if all(hasattr(obj, attr) for attr in ("outputs", "name", "input_names", "output_names")):
