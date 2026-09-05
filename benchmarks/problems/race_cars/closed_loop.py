@@ -161,6 +161,17 @@ def _corridor_stage(inputs):  # type: ignore[no-untyped-def]
   return al.stack([reach + half_width, reach - half_width])
 
 
+@al.function(al.G(al.L("z", NZ), al.L("ref", NX), al.L("params", N_PARAMS)), al.L("residuals", ...), name="race_car_cost_stage")
+def _cost_stage(inputs):
+  z, ref, params = inputs
+  c_m0, c_r0, c_r1, c_r2 = params[3], params[4], params[5], params[6]
+  v_ref = ref[3]
+  throttle_ref = (10.0 * v_ref).tanh() * (c_r0 + c_r1 * v_ref + c_r2 * v_ref * v_ref) / c_m0
+  cos_ref, sin_ref = ref[2].cos(), ref[2].sin()
+  dx, dy = z[0] - ref[0], z[1] - ref[1]
+  return al.stack([z[NX] - throttle_ref, z[NX + 1], cos_ref * dx + sin_ref * dy, -sin_ref * dx + cos_ref * dy, z[2] - ref[2], z[3] - v_ref])
+
+
 def race_car_lag_hess_dense_reference(config: EpisodeConfig, z: np.ndarray, p: np.ndarray, lam_f: float, lam_g: np.ndarray) -> np.ndarray:
   """Dense NumPy Hessian of ``lam_f * f + dot(lam_g, [h_eq; g_ineq])`` for ``_race_car_nlp``.
 
@@ -216,40 +227,20 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
   n = config.horizon
   z = al.sym("z", NZ * (n + 1))
   p = al.sym("p", n_param(n), diff=False)
-  params = p[NX * (n + 1) :]
-  c_m0, c_r0, c_r1, c_r2 = params[3], params[4], params[5], params[6]
-
-  # every cost term is a weighted square, so the cost is one flat dot(weights, residuals**2).
-  # accumulating it as `cost = cost + ...` instead builds a 250-deep expression chain and the
-  # recursive fusion pass overflows Python's stack at this horizon.
-  weights: list[float] = []
-  residuals = []
-  for i in range(n + 1):
-    zi, ref = z[i * NZ : (i + 1) * NZ], p[i * NX : (i + 1) * NX]
-    v_ref = ref[3]
-    # parameter-only feedforward, so it contributes no derivative work
-    throttle_ref = (10.0 * v_ref).tanh() * (c_r0 + c_r1 * v_ref + c_r2 * v_ref * v_ref) / c_m0
-    weights.extend([config.r_throttle, config.r_steering])
-    residuals.extend([zi[NX] - throttle_ref, zi[NX + 1]])
-    if i == 0:
-      # x_0 is pinned to the measurement by the initial-value equality, so its state cost is constant
-      continue
-    cos_ref, sin_ref = ref[2].cos(), ref[2].sin()
-    dx, dy = zi[0] - ref[0], zi[1] - ref[1]
-    e_lon = cos_ref * dx + sin_ref * dy
-    e_lat = -sin_ref * dx + cos_ref * dy
-    d_phi, d_v = zi[2] - ref[2], zi[3] - v_ref
-    if i == n:
-      weights.extend([config.q_lon_f, config.q_lat_f, config.q_phi_f, config.q_v_f])
-    else:
-      weights.extend([config.q_lon, config.q_lat, config.q_phi, config.q_v])
-    residuals.extend([e_lon, e_lat, d_phi, d_v])
+  weights = np.tile([config.r_throttle, config.r_steering, config.q_lon, config.q_lat, config.q_phi, config.q_v], (n + 1, 1))
+  weights[-1, 2:] = [config.q_lon_f, config.q_lat_f, config.q_phi_f, config.q_v_f]
+  weights[0, 2:] = 0.0
+  residuals = al.vmap(
+    _cost_stage,
+    length=n + 1,
+    inputs={"z": (z, 0, NZ), "ref": (p, 0, NX), "params": (p, NX * (n + 1), 0)},
+  )
   corridor = al.vmap(
     _corridor_stage,
     length=n,
     inputs={"z": (z, NZ, NZ), "ref": (p, NX, NX)},
   )
-  cost = al.dot(al.const(np.array(weights)), al.stack(residuals) ** 2)
+  cost = al.dot(al.const(weights.reshape(-1)), residuals**2)
 
   eq = _race_car_eq_vmap_expr(z, p, n)
   lb, ub = np.full(z.size, -np.inf), np.full(z.size, np.inf)

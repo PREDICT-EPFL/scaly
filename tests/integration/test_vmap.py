@@ -296,3 +296,25 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
     h = w @ zv[3 * k : 3 * k + 3] + b
     expected[k, 3 * k : 3 * k + 3] = 2.0 * h @ w
   np.testing.assert_allclose(fn.factory("vmap_dense_jac", ["z"], [al.factory.Jac("y", "z")])(zv), expected, rtol=1e-10, atol=1e-10)
+
+
+def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
+  @al.function(al.G(al.L("x", 2), al.L("ref", 2), al.L("scale", 1)), al.L("r", ...))
+  def residual(inputs):
+    x, ref, scale = inputs
+    return al.stack([x[0] - ref[0], ref[1].cos() * x[1] - scale[0].tanh()])
+
+  n = 4
+  x, p = al.sym("x", 2 * n), al.sym("p", 2 * n + 1, diff=False)
+  weights = al.const(np.array([0.0, 0.3, 1.2, 0.3, 1.2, 0.3, 5.0, 0.3]))
+  mapped = al.vmap(residual, n, [(x, 0, 2), (p, 0, 2), (p, 2 * n, 0)])
+  unrolled = al.concat([residual((x[2 * i : 2 * i + 2], p[2 * i : 2 * i + 2], p[-1:])) for i in range(n)])
+  rng = np.random.default_rng(21)
+  inputs = rng.normal(size=x.size), rng.normal(size=p.size)
+  values = []
+  for name, r in (("mapped", mapped), ("unrolled", unrolled)):
+    fn = al.Function._from_exprs(name, [x, p], [al.dot(weights, r**2)], ["x", "p"], ["f"])
+    derivatives = fn.factory(name + "_derivatives", ["x", "p"], ["f", al.factory.Grad("f", "x"), al.factory.SpHess("f", "x")])
+    values.append(derivatives(inputs))
+  for actual, expected in zip(values[0], values[1], strict=True):
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)

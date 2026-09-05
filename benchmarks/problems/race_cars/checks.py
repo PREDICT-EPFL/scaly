@@ -189,6 +189,34 @@ def check_casadi_mirror_dimensions() -> None:
   np.testing.assert_array_equal(pieces["x_ub"][3::NZ], np.full(config.horizon + 1, config.max_speed))
 
 
+def check_mapped_cost_matches_casadi() -> None:
+  """Initial, running and terminal costs and their derivatives match the unrolled mirror."""
+  import casadi as ca
+
+  from benchmarks.problems.race_cars.casadi_nlp import build_casadi_race_car_nlp
+
+  rng = np.random.default_rng(19)
+  for horizon in (1, 4):
+    config = EpisodeConfig(horizon=horizon)
+    descriptor = _race_car_nlp(config).descriptor
+    pieces = build_casadi_race_car_nlp(config)
+    z, p, cost = pieces["z"], pieces["p"], pieces["f"]
+    reference = ca.Function("cost_reference", [z, p], [cost, ca.gradient(cost, z), ca.hessian(cost, z)[0]])
+    zv = rng.normal(size=NZ * (horizon + 1))
+    pv = np.concatenate([rng.normal(size=NX * (horizon + 1)), config.params.array()])
+    expected = reference(zv, pv)
+    np.testing.assert_allclose(descriptor.base((zv, pv))[0], np.asarray(expected[0]).reshape(-1), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(descriptor.grad((zv, pv)), np.asarray(expected[1]).reshape(-1), rtol=1e-12, atol=1e-12)
+    sparsity = descriptor.hess_sparsity
+    assert descriptor.hess is not None and sparsity is not None
+    actual = np.zeros(sparsity.shape)
+    actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = np.asarray(
+      descriptor.hess(((zv, pv), (np.array(1.0), np.zeros(NX * (horizon + 1) + 2 * horizon))))
+    ).reshape(-1)
+    actual += np.tril(actual, -1).T
+    np.testing.assert_allclose(actual, np.asarray(expected[2]), rtol=1e-12, atol=1e-12)
+
+
 def check_exact_hessian_default() -> None:
   """The canonical solver asks every provider for exact Lagrangian Hessians."""
   solver = _race_car_nlp(EpisodeConfig.smoke())
@@ -393,6 +421,7 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "parameter_layout": (check_transcription_parameter_layout, False, False),
   "default_constants": (check_default_constants, False, False),
   "casadi_mirror": (check_casadi_mirror_dimensions, False, True),
+  "mapped_cost": (check_mapped_cost_matches_casadi, False, True),
   "exact_hessian_default": (check_exact_hessian_default, False, False),
   "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, True, True),
   "episode_artifacts": (check_episode_artifacts, True, False),
