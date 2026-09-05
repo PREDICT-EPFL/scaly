@@ -619,11 +619,30 @@ def test_sweep_cells_live_next_to_the_selected_csv(tmp_path: Path, monkeypatch: 
     cells.append((workload, size, backend, out_dir, kwargs))
     return sweep.row(workload=workload, size=size, backend=backend, compile_status="ok", runtime_status="ok"), None
 
+  class Pool:
+    def __init__(self, **kwargs):
+      pass
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      pass
+
+    def submit(self, function, *args):
+      return SimpleNamespace(result=lambda: function(*args))
+
+  monkeypatch.chdir(tmp_path)
+  monkeypatch.setattr(sweep, "ProcessPoolExecutor", Pool)
   monkeypatch.setattr(sweep, "run_cell", run_cell)
   monkeypatch.setattr(sweep, "collect", lambda *args: {})
   monkeypatch.setattr(sweep, "write", lambda *args: None)
   args = SimpleNamespace(
-    out=tmp_path / "custom" / "measurements.csv",
+    repetitions=3,
+    headline=False,
+    order_seed=0,
+    casadi_transform=True,
+    out=Path("custom") / "measurements.csv",
     workloads=["chain"],
     sizes=[3],
     backends=["alloy"],
@@ -634,7 +653,9 @@ def test_sweep_cells_live_next_to_the_selected_csv(tmp_path: Path, monkeypatch: 
   )
 
   assert sweep.run_sweep(args, [])
-  assert cells[0][3] == args.out.parent / "chain" / "alloy_M3"
+  assert len(cells) == 3
+  assert [cell[3] for cell in cells] == [args.out.parent / f"repeat_{i}" / "chain" / "alloy_M3" for i in range(1, 4)]
+  assert args.out.with_suffix(".summary.csv").is_file()
 
 
 def test_result_harvest_selects_midpoint_success_deterministically(tmp_path: Path) -> None:

@@ -16,7 +16,8 @@ Last reorganized 2026-08-25, after the fairness audit. Ordered by dependency, no
 groups below have to happen roughly in sequence, and items inside a group are independent.
 
 D2, D1, D1.5, and A11 are complete. D3 completes the solver API work on 2026-09-05. Continue API
-iteration on dev through D3.1 to D3.3 below; A9, A10 and B2 still precede the pilot run.
+iteration on dev through D3.1 to D3.3 below. Tracks A and B are complete as of 2026-09-05;
+C1 is the next benchmark task.
 
 ## A. Harness work, before any headline run
 
@@ -63,15 +64,19 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
       Touches the NLP plugin contract, so it lands before C1 and after D2, D1 and D1.5.
       Rationale: A2's sentence is only true once the timed kernel and the oracle have the same
       entries; fairness.md "The measurement protocol".
-- [ ] **A9. Derive the mode table from the runs.** Time-to-first-solve and per-step cost, two modes
+- [x] **A9. Derive the mode table from the runs.** Time-to-first-solve and per-step cost, two modes
       for Alloy and three for CasADi. No separate script: the build cost and steady-state mean are
-      already recorded. Rationale: paper.md §6, Table 2.
+      already recorded. Completed 2026-09-05: `closed-loop` records construction and solve wall times;
+      `run.py modes` derives the five rows and dispersion from saved episodes. Rationale: paper.md
+      §6, Table 2.
 - [x] **A12. Take every CasADi kernel after `transform({})`.** Make `--casadi-transform` the sweep
       default and apply the same flow to the compiled closed-loop `nlpsol` oracles, so both CasADi
       columns are CasADi's best configuration. Rationale: fairness.md "CasADi 3.8".
-- [ ] **A10. Keep the machine honest.** Pin the `performance` governor for headline runs and test
+- [x] **A10. Keep the machine honest.** Pin the `performance` governor for headline runs and test
       whether disabling boost reduces dispersion. Add repeated fresh processes, varied backend order,
-      and reported dispersion. Rationale: fairness.md "The reference machine".
+      and reported dispersion. Completed 2026-09-05 with fresh-process sweeps and episodes, varied
+      order, separate compilation phases, recorded machine controls, and Linux headline checks.
+      Boost comparison and selected settings: fairness.md "The reference machine".
 
 ## B. Formulation work that gates a claim
 
@@ -98,11 +103,12 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
       buffers; this is what B3 works around and what any user loop over slices will hit. A
       program-dialect rewrite in `passes/program.py`, with a `tests/` reproduction that pins the
       buffer count. Rationale: fairness.md "CasADi 3.8".
-- [ ] **B2. Move the chain and unbumpercars correctness checks onto the problem side**, as
+- [x] **B2. Move the chain and unbumpercars correctness checks onto the problem side**, as
       `race_cars` does: problem gates into `benchmarks/problems/*/checks.py` behind
       `run.py smoke --select problems`, and a self-contained minimal reproduction of whatever
-      IR/AD/codegen shape they covered into `tests/`. Afterwards nothing under `tests/` imports
-      `benchmarks.problems`.
+      IR/AD/codegen shape they covered into `tests/`. Completed 2026-09-05: the remaining problem
+      gates moved, independent compiler fixtures remain, and an import-boundary test enforces that
+      nothing under `tests/` imports `benchmarks.problems`.
 
 ## C. The pilot run, then ratification
 

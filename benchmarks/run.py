@@ -3,7 +3,11 @@ from __future__ import annotations
 # ruff: noqa: E402 -- direct execution must add the repository root before package imports
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
+import importlib
+import multiprocessing
 import os
+import random
 from pathlib import Path
 import shlex
 import subprocess
@@ -23,6 +27,7 @@ from alloy.solvers.paths import solver_loadable
 from benchmarks.harness import SMOKE_RESULTS, SWEEP_RESULTS, closed_loop_results_root, gbench, solver_oracle_name
 from benchmarks.harness.closed_loop import run as run_closed_loop
 from benchmarks.harness.recording import layout_path
+from benchmarks.harness.provenance import collect, write, require_headline_settings
 from benchmarks.harness.sweep import BACKENDS, DEFAULT_SIZES, build_kernel, run_cell, run_sweep
 from benchmarks.problems import chain, npmpc
 
@@ -327,28 +332,19 @@ def _npmpc_smoke() -> None:
   print(f"smoke npmpc Hessian decoder width: ok ({hess_wide['source_lines']} lines at W=128)")
 
 
+def _problem_checks(problem: str) -> None:
+  checks = importlib.import_module(f"benchmarks.problems.{problem}.checks")
+  for name, outcome in checks.run_checks():
+    print(f"smoke {problem}/{name}: {outcome}", flush=True)
+    if os.environ.get("ALLOY_REQUIRE_SOLVERS") == "1" and outcome.startswith("skipped:"):
+      raise RuntimeError(f"{problem}/{name} unexpectedly {outcome}")
+
+
 def _problem_smoke() -> None:
-  """Per-problem formulation gates, owned by the problems themselves.
-
-  These check properties of a benchmark problem — its data, its reference generator, its
-  parameter layout, and the agreement of its oracle providers — and must pass before any timing is
-  recorded. They live here rather than in `tests/` because the pytest suite covers Alloy's
-  core and does not depend on benchmark problems (see `AGENTS.md`)."""
-  from benchmarks.problems.unbumpercars.checks import run_checks as unbumpercars_checks
-  from benchmarks.problems.chain.checks import run_checks as chain_checks
-  from benchmarks.problems.npmpc.checks import run_checks as npmpc_checks
-  from benchmarks.problems.race_cars.checks import run_checks as race_cars_checks
-
-  for problem, run_checks in (
-    ("race_cars", race_cars_checks),
-    ("chain", chain_checks),
-    ("unbumpercars", unbumpercars_checks),
-    ("npmpc", npmpc_checks),
-  ):
-    for name, outcome in run_checks():
-      print(f"smoke {problem}/{name}: {outcome}")
-      if os.environ.get("ALLOY_REQUIRE_SOLVERS") == "1" and outcome.startswith("skipped:"):
-        raise RuntimeError(f"{problem}/{name} unexpectedly {outcome}")
+  """Run each problem's formulation gates in a separate process."""
+  for problem in ("race_cars", "chain", "unbumpercars", "npmpc"):
+    with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as pool:
+      pool.submit(_problem_checks, problem).result()
 
 
 def smoke(args) -> bool:
@@ -392,44 +388,121 @@ def main() -> None:
   sweep_parser.add_argument("--codegen-timeout", type=float, default=300.0)
   sweep_parser.add_argument("--max-source-mb", type=float, default=50.0)
   sweep_parser.add_argument("--benchmark-min-time", default="0.1s")
+  sweep_parser.add_argument("--repetitions", type=int, default=3, help="fresh processes per cell (default: 3)")
+  sweep_parser.add_argument("--order-seed", type=int, default=0, help="seed for reproducible backend order variation")
+  sweep_parser.add_argument("--headline", action="store_true", help="require performance governor and explicit boost setting")
+  sweep_parser.add_argument("--boost", choices=("on", "off"), help="required CPU boost state for a headline run")
   sweep_parser.add_argument(
     "--casadi-transform",
     action=argparse.BooleanOptionalAction,
     default=True,
     help="run CasADi 3.8's default Function.transform() simplification flow on every CasADi kernel (default: enabled)",
   )
+  modes_parser = subparsers.add_parser("modes", help="derive the deployment table from recorded episode mode files")
+  modes_parser.add_argument("inputs", type=Path, nargs="+", help="modes.csv files or episode result directories")
+  modes_parser.add_argument("--out", type=Path, default=SWEEP_RESULTS.parent / "modes.csv")
   smoke_parser = subparsers.add_parser("smoke", help="run fast correctness and invariant gates")
   smoke_parser.add_argument("--select", action="append", choices=("benchmarks", "problems", "solver_call"))
   smoke_parser.add_argument("--skip", action="append", choices=("benchmarks", "problems", "solver_call"))
   closed_loop_parser = subparsers.add_parser("closed-loop", help="run a model-in-the-loop episode and write Foxglove artifacts")
   closed_loop_parser.add_argument("--problem", choices=("chain", "race_cars", "unbumpercars", "npmpc"), default="unbumpercars")
   closed_loop_parser.add_argument("--solver", choices=("ipopt", "sqp", "none"), default="ipopt")
-  closed_loop_parser.add_argument("--oracle", choices=("alloy", "casadi"), help="oracle provider; defaults to alloy")
+  closed_loop_parser.add_argument("--oracle", choices=("alloy", "casadi", "both"), help="oracle provider; defaults to alloy")
   closed_loop_parser.add_argument("--smoke", action="store_true", help="use a short toolchain-check episode instead of the canonical point")
   closed_loop_parser.add_argument("--out-dir", type=Path)
+  closed_loop_parser.add_argument("--casadi-interpreted", action="store_true", help="measure CasADi virtual-machine mode with its wheel IPOPT")
+  closed_loop_parser.add_argument("--repetitions", type=int, default=1, help="independent cold-cache episode processes")
+  closed_loop_parser.add_argument("--order-seed", type=int, default=0, help="initial order for --oracle both, rotated between repetitions")
+  closed_loop_parser.add_argument("--headline", action="store_true", help="require performance governor and explicit boost setting")
+  closed_loop_parser.add_argument("--boost", choices=("on", "off"), help="required CPU boost state")
   args = parser.parse_args()
   if args.command == "sweep":
+    if args.repetitions < 1 or (args.headline and args.repetitions < 3):
+      parser.error("--repetitions must be positive, and at least 3 for --headline")
+    if args.headline and args.boost is None:
+      parser.error("--headline requires --boost on or off")
     args.workloads = _choices(args.workloads, tuple(DEFAULT_SIZES), parser, "--workloads")
     if args.backends is not None:
       args.backends = _choices(args.backends, BACKENDS, parser, "--backends")
     success = run_sweep(args, sys.argv[1:])
+  elif args.command == "modes":
+    from benchmarks.harness.timing import summarize_modes
+
+    rows = summarize_modes(args.inputs, args.out)
+    print(f"{len(rows)} deployment mode rows written to {args.out}")
+    success = bool(rows)
   elif args.command == "smoke":
     success = smoke(args)
   else:
+    if args.repetitions < 1 or (args.headline and args.repetitions < 3):
+      parser.error("--repetitions must be positive, and at least 3 for --headline")
+    if args.headline and args.boost is None:
+      parser.error("--headline requires --boost on or off")
+    if args.casadi_interpreted and (args.solver, args.oracle) != ("ipopt", "casadi"):
+      parser.error("--casadi-interpreted requires --solver ipopt --oracle casadi")
     if args.solver == "none" and args.oracle is not None:
       parser.error("--solver none does not accept --oracle")
     oracle = None if args.solver == "none" else (args.oracle or "alloy")
-    pair = (args.solver, oracle)
     allowed_pairs = CLOSED_LOOP_PAIRS[args.problem]
-    if pair not in allowed_pairs:
+    oracles = ["alloy", "casadi"] if oracle == "both" else [oracle]
+    if any((args.solver, provider) not in allowed_pairs for provider in oracles):
       choices = ", ".join(solver_oracle_name(*allowed) for allowed in allowed_pairs)
-      parser.error(f"{solver_oracle_name(*pair)} is not available for --problem {args.problem} (choose from {choices})")
+      parser.error(f"{args.solver}+{oracle} is not available for --problem {args.problem} (choose from {choices})")
+    output_root = closed_loop_results_root(smoke=args.smoke, out_dir=args.out_dir).resolve()
+    if args.casadi_interpreted and args.repetitions == 1:
+      output_root /= "interpreted"
+    if args.repetitions > 1 or oracle == "both":
+      from benchmarks.harness.timing import summarize_modes
+
+      random.Random(args.order_seed).shuffle(oracles)
+      run_order = []
+      for repetition in range(1, args.repetitions + 1):
+        if args.headline:
+          require_headline_settings(args.boost == "on")
+        repeat_root = output_root / f"repeat_{repetition}"
+        repeat_root.mkdir(parents=True, exist_ok=True)
+        offset = (repetition - 1) % len(oracles)
+        for provider in oracles[offset:] + oracles[:offset]:
+          if args.headline:
+            require_headline_settings(args.boost == "on")
+          run_order.append({"repetition": repetition, "oracle": provider})
+          command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "closed-loop",
+            "--problem",
+            args.problem,
+            "--solver",
+            args.solver,
+            "--out-dir",
+            str(repeat_root),
+          ]
+          if provider is not None:
+            command += ["--oracle", provider]
+          if args.smoke:
+            command += ["--smoke"]
+          if args.casadi_interpreted:
+            command += ["--casadi-interpreted"]
+          cache = repeat_root / "cache" / ("casadi_interpreted" if args.casadi_interpreted else (provider or "none"))
+          if cache.exists():
+            parser.error(f"fresh-process run requires an unused output directory: {repeat_root}")
+          cache.mkdir(parents=True)
+          subprocess.run(
+            command, check=True, env={**os.environ, "ALLOY_CACHE_DIR": str(cache), "ALLOY_CASADI_IPOPT_CACHE": str(cache / "casadi-ipopt")}
+          )
+          if args.headline:
+            require_headline_settings(args.boost == "on")
+      summarize_modes(sorted(output_root.glob("repeat_*/**/modes.csv")), output_root / "modes.summary.csv")
+      write(output_root / "modes.summary.csv", {**collect(ROOT, gbench.compiler(), sys.argv[1:]), "run_order": run_order})
+      print(f"Repeated episode artifacts written to {output_root}")
+      return
     output = run_closed_loop(
       args.problem,
       smoke=args.smoke,
       solver=args.solver,
       oracle=oracle,
-      out_dir=closed_loop_results_root(smoke=args.smoke, out_dir=args.out_dir),
+      out_dir=output_root,
+      casadi_interpreted=args.casadi_interpreted,
       cli_args=sys.argv[1:],
     )
     print(f"closed-loop artifacts written to {output}")

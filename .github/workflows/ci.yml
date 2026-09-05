@@ -243,3 +243,10 @@ jobs:
           uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle alloy --smoke
           uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle casadi --smoke
           uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver none --smoke
+
+      - name: Repeated benchmark commands
+        run: |
+          uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends alloy,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
+          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle both --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+          uv run benchmarks/run.py modes benchmarks/results/smoke/repeated/episodes --out benchmarks/results/smoke/repeated/modes.csv

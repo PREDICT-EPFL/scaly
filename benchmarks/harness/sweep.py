@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import contextlib
 import csv
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing
+import random
+import statistics
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -19,7 +23,7 @@ from alloy.ir.expr import ExprOp, topo
 from alloy.ir.program import ProgramNode, ProgramOp
 from benchmarks.harness import ROOT, RESULTS, gbench
 from benchmarks.harness.correctness import check_dense_reference, write_samples
-from benchmarks.harness.provenance import collect, write
+from benchmarks.harness.provenance import collect, write, require_headline_settings
 from benchmarks.problems import chain, npmpc, race_cars
 
 DEFAULT_SIZES = {
@@ -67,6 +71,9 @@ def _alloy_inputs(kernel: al.Function) -> list[tuple[str, int]]:
 
 
 FIELDS = [
+  "process_id",
+  "repetition",
+  "backend_order",
   "workload",
   "size",
   "backend",
@@ -87,6 +94,9 @@ FIELDS = [
   "coloring_width",
   "nnz",
   "compile_ms",
+  "kernel_compile_ms",
+  "wrapper_compile_ms",
+  "link_ms",
   "compile_status",
   "runtime_ns",
   "runtime_status",
@@ -952,67 +962,129 @@ def run_cell(
     **base,
     compile_ms=f"{compile_ms:.1f}",
     compile_status="ok",
+    **{key: f"{value:.1f}" for key, value in info["compile_timings"].items()},
     runtime_ns=f"{runtime_ns:.1f}" if runtime_ns is not None else "",
     runtime_status=runtime_status,
     note=note,
   ), info
 
 
+def _fresh_cell(workload, size, backend, out_dir, options):
+  result = run_cell(workload, size, backend, out_dir, **options)[0]
+  result["process_id"] = os.getpid()
+  return result
+
+
+def summarize_runs(rows: list[dict], out: Path) -> None:
+  """Report dispersion across fresh processes while retaining every raw row."""
+  groups = {}
+  for result in rows:
+    groups.setdefault((result["workload"], result["size"], result["backend"]), []).append(result)
+  metrics = ("runtime_ns", "build_ms", "render_ms", "kernel_compile_ms", "wrapper_compile_ms", "link_ms")
+  fields = [
+    "workload",
+    "size",
+    "backend",
+    "attempts",
+    "successful",
+    *[f"{metric}_{stat}" for metric in metrics for stat in ("mean", "median", "stdev", "cv", "min", "max")],
+  ]
+  with out.open("w", newline="") as fp:
+    writer = csv.DictWriter(fp, fieldnames=fields)
+    writer.writeheader()
+    for (workload, size, backend), attempts in groups.items():
+      successful = [result for result in attempts if result["runtime_status"] == "ok"]
+      summary = dict(workload=workload, size=size, backend=backend, attempts=len(attempts), successful=len(successful))
+      for metric in metrics:
+        values = [float(result[metric]) for result in successful if result.get(metric, "") != ""]
+        if not values:
+          continue
+        mean = statistics.mean(values)
+        stdev = statistics.stdev(values) if len(values) > 1 else None
+        for stat, value in dict(
+          mean=mean,
+          median=statistics.median(values),
+          stdev=stdev,
+          cv=stdev / mean if stdev is not None and mean else None,
+          min=min(values),
+          max=max(values),
+        ).items():
+          summary[f"{metric}_{stat}"] = "" if value is None else value
+      writer.writerow(summary)
+
+
 def run_sweep(args, cli_args: list[str]) -> bool:
+  args.out = args.out.resolve()
+  repetitions = args.repetitions
+  if args.headline:
+    require_headline_settings(args.boost == "on")
   args.out.parent.mkdir(parents=True, exist_ok=True)
   write(args.out, collect(ROOT, gbench.compiler(), cli_args))
-  ok = True
+  options = dict(
+    codegen_timeout=args.codegen_timeout,
+    compile_timeout=args.compile_timeout,
+    max_source_mb=args.max_source_mb,
+    benchmark_min_time=args.benchmark_min_time,
+    casadi_transform=args.casadi_transform,
+  )
+  ok, rows = True, []
+  rng = random.Random(args.order_seed)
+  orders = {}
+  for workload in args.workloads:
+    orders[workload] = list(args.backends or DEFAULT_BACKENDS[workload])
+    rng.shuffle(orders[workload])
   with args.out.open("w", newline="") as fp:
     writer = csv.DictWriter(fp, fieldnames=FIELDS)
     writer.writeheader()
-    for workload in args.workloads:
-      gave_up: dict[str, tuple[int, str]] = {}
-      sizes = args.sizes or DEFAULT_SIZES[workload]
-      for size in sorted(sizes):
-        for backend in args.backends or DEFAULT_BACKENDS[workload]:
-          print(f"[{workload}] size={size} backend={backend} ... ", end="", flush=True)
-          if backend not in DEFAULT_BACKENDS[workload]:
-            result = row(
-              workload=workload,
-              size=size,
-              backend=backend,
-              compile_status="not_applicable",
-              runtime_status="skipped",
-              note=f"{backend} has no repeated element for {workload}",
-            )
-          elif backend in gave_up:
-            failed_size, status = gave_up[backend]
-            result = row(
-              workload=workload,
-              size=size,
-              backend=backend,
-              compile_status="skipped_after_failure",
-              runtime_status="skipped",
-              note=f"{backend} {status} at size={failed_size}; larger sizes won't fit",
-            )
-          else:
-            result, _ = run_cell(
-              workload,
-              size,
-              backend,
-              args.out.parent / workload / f"{backend}_{CELL_AXES[workload]}{size}",
-              codegen_timeout=args.codegen_timeout,
-              compile_timeout=args.compile_timeout,
-              max_source_mb=args.max_source_mb,
-              benchmark_min_time=args.benchmark_min_time,
-              casadi_transform=getattr(args, "casadi_transform", True),
-            )
-          writer.writerow(result)
-          fp.flush()
-          status = result["runtime_status"] or result["compile_status"]
-          print(f"{status}" + (f": {result['note']}" if result["note"] else ""))
-          if result["compile_status"] in {"timeout", "skipped_size", "compile_error", "codegen_timeout", "codegen_error"}:
-            gave_up[backend] = (size, str(result["compile_status"]))
-          # timeout/skipped_size/codegen_timeout mark the expected end of a backend's scaling range; only genuine errors fail the sweep
-          if result["runtime_status"] in {"runtime_error", "runtime_timeout", "correctness_fail", "parse_fail"} or result["compile_status"] in {
-            "compile_error",
-            "codegen_error",
-          }:
-            ok = False
+    for repetition in range(repetitions):
+      for workload in args.workloads:
+        gave_up: dict[str, tuple[int, str]] = {}
+        initial = orders[workload]
+        offset = repetition % len(initial)
+        backends = initial[offset:] + initial[:offset]
+        for size in sorted(args.sizes or DEFAULT_SIZES[workload]):
+          for order, backend in enumerate(backends):
+            if args.headline:
+              require_headline_settings(args.boost == "on")
+            print(f"[repeat {repetition + 1}/{repetitions} {workload}] size={size} backend={backend} ... ", end="", flush=True)
+            if backend not in DEFAULT_BACKENDS[workload]:
+              result = row(
+                workload=workload,
+                size=size,
+                backend=backend,
+                compile_status="not_applicable",
+                runtime_status="skipped",
+                note=f"{backend} has no repeated element for {workload}",
+              )
+            elif backend in gave_up:
+              failed_size, status = gave_up[backend]
+              result = row(
+                workload=workload,
+                size=size,
+                backend=backend,
+                compile_status="skipped_after_failure",
+                runtime_status="skipped",
+                note=f"{backend} {status} at size={failed_size}; larger sizes won't fit",
+              )
+            else:
+              out_dir = args.out.parent / f"repeat_{repetition + 1}" / workload / f"{backend}_{CELL_AXES[workload]}{size}"
+              with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as pool:
+                result = pool.submit(_fresh_cell, workload, size, backend, out_dir, options).result()
+            if args.headline:
+              require_headline_settings(args.boost == "on")
+            result.update(repetition=repetition + 1, backend_order=order + 1)
+            writer.writerow(result)
+            fp.flush()
+            rows.append(result)
+            status = result["runtime_status"] or result["compile_status"]
+            print(f"{status}" + (f": {result['note']}" if result["note"] else ""))
+            if result["compile_status"] in {"timeout", "skipped_size", "compile_error", "codegen_timeout", "codegen_error"}:
+              gave_up[backend] = (size, str(result["compile_status"]))
+            if result["runtime_status"] in {"runtime_error", "runtime_timeout", "correctness_fail", "parse_fail"} or result["compile_status"] in {
+              "compile_error",
+              "codegen_error",
+            }:
+              ok = False
+  summarize_runs(rows, args.out.with_suffix(".summary.csv"))
   print(f"Results written to {args.out}")
   return ok

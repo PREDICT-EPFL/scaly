@@ -26,16 +26,31 @@ the race-car cell that reads 10.27 us in an older table measures 19.47 us here.
 | OS | Ubuntu 24.04.4 LTS, kernel 7.0.0-28-generic, glibc 2.39 |
 | Compilers | gcc 13.3.0 (alloy's JIT), clang 20.1.8 (the Google Benchmark harness) |
 | Stack | Python 3.14.3, CasADi 3.8.0 (3.7.2 for every measurement above the CasADi 3.8 section; the upgrade alone moved nothing), NumPy 2.4.6, SciPy 1.18.0 |
-| Frequency | `amd-pstate-epp` driver, `powersave` governor, boost enabled |
+| Frequency during the audit | `amd-pstate-epp` driver, `powersave` governor, boost enabled |
 
 **That last row is the one to fix before any headline run.** With `powersave` and boost on, the clock
 moves between 0.40 and 5.26 GHz according to load and package temperature, and it shows: one
 unbumpercars figure moved from 52.7 to 58.9 ms between two runs of the same episode minutes apart,
 about 12%, which is larger than several of the effects on this page. Only `performance` and
 `powersave` are available with this driver, so the headline protocol should pin `performance`, and
-disabling boost is worth testing for dispersion even at a lower absolute clock. Neither is set here,
-so **every number on this page is pilot data**: the ratios are informative, the absolute values and
+disabling boost is worth testing for dispersion even at a lower absolute clock. Neither was set during that audit,
+so **its numbers are pilot data**: the ratios are informative, the absolute values and
 anything under about 15% are not yet.
+
+The harness protocol check on 2026-09-05 used `performance`, five fresh processes per backend,
+and alternating backend order on the race-car Hessian at N=40. Google Benchmark ran for at least
+0.5 seconds per cell. Raw rows and provenance are local, gitignored artifacts under
+`benchmarks/results/protocol/boost_on/race.csv` and `benchmarks/results/protocol/boost_off/race.csv`.
+
+| Backend | Boost-on mean, µs | Boost-off mean, µs | Boost-on coefficient of variation | Boost-off coefficient of variation |
+|---|---:|---:|---:|---:|
+| Alloy | 20.486 | 26.661 | 0.714% | 0.822% |
+| CasADi mapped SX | 46.049 | 59.535 | 0.664% | 0.278% |
+
+Boost remains disabled. It reduced the average coefficient of variation across these two columns,
+though Alloy's dispersion increased slightly and both kernels became slower. Five samples on one
+workload do not establish a general variance advantage. This check selects a machine configuration,
+not a paper result. The pilot must use the same recorded configuration for every column.
 
 ## The measurement protocol
 
@@ -71,9 +86,18 @@ Rules the numbers on this page follow, and that a headline run must follow more 
 - **Report CasADi's best encoding**, not the one our mirror happens to build. §"Does CasADi have
   loop-preserving codegen?" is why: the encodings of the same math span an order of magnitude, and
   the winner changes between problems.
-- Still to adopt for headline runs: repeated fresh processes, varied backend order, reported
-  dispersion rather than a single mean, and generated-C compilation separated from wrapper
-  compilation and linking.
+- The sweep now defaults to three fresh processes per cell and varies backend order with a recorded
+  seed. Raw rows retain every attempt, and `.summary.csv` reports dispersion across successful runs.
+  Generated-code compilation, wrapper compilation, and linking have separate columns.
+  `--headline --boost on|off` requires at least three repetitions and checks the performance governor
+  and chosen boost state before and after each cell. Provenance records frequency policies and CPU
+  affinity. These controls do not retroactively validate the historical measurements on this page.
+- Closed-loop `--repetitions` uses separate processes and empty compilation caches. `modes.csv`
+  derives startup and per-step wall costs from recorded construction and solve calls. `jit` includes
+  construction, including standalone result-check oracles, while `prebuilt` excludes construction
+  and loading. Steady cost excludes the first
+  solve. `--casadi-interpreted` supplies the third CasADi mode using the wheel's IPOPT and identifies
+  that provider explicitly, so that row cannot support a controlled oracle-cost comparison.
 
 ## The short version
 

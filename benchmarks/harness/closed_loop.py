@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import csv
 import json
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import numpy as np
 
 from benchmarks.harness import ROOT, gbench, solver_oracle_name
 from benchmarks.harness.provenance import collect
+from benchmarks.harness.timing import mode_rows
 from benchmarks.harness.recording import (
   CarShape,
   ChainPlan,
@@ -124,6 +126,7 @@ def run_chain(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = 
     "horizon": config.horizon,
     "steps": config.steps,
     "mean_solver_ms": float(np.mean([stats.t_total for stats in episode.telemetry]) * 1000.0),
+    **episode.timing,
     "max_control": float(np.max(np.abs(episode.controls))),
   }
   write_result_artifacts(
@@ -318,6 +321,7 @@ def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: st
     "track": config.track,
     "horizon": config.horizon,
     "steps": steps,
+    **episode.timing,
     "lap_length_m": episode.lap_length,
     "lap_time_s": steps * config.params.dt,
     "laps": int(episode.laps[-1]),
@@ -425,6 +429,7 @@ def run_npmpc(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = 
     "horizon": config.horizon,
     "steps": config.steps,
     "decoder": "x".join(str(width) for width in config.decoder.hidden),
+    **episode.timing,
     "plant_substeps": PLANT_SUBSTEPS,
     "settling_step": settled,
     "settling_time_s": None if settled is None else settled * config.dt,
@@ -462,7 +467,36 @@ def run_unbumpercars(*, smoke: bool, solver: str, oracle: str | None, out_dir: P
   return out_dir / name
 
 
-def run(problem: str, *, smoke: bool, solver: str, oracle: str | None, out_dir: Path, cli_args: list[str]) -> Path:
+def run(problem: str, *, smoke: bool, solver: str, oracle: str | None, out_dir: Path, cli_args: list[str], casadi_interpreted: bool = False) -> Path:
+  from benchmarks.harness.casadi_ipopt import INTERPRETED
+
+  if casadi_interpreted and (solver, oracle) != ("ipopt", "casadi"):
+    raise ValueError("interpreted mode requires ipopt+casadi")
+  token = INTERPRETED.set(casadi_interpreted)
+  try:
+    output = _run(problem, smoke=smoke, solver=solver, oracle=oracle, out_dir=out_dir, cli_args=cli_args)
+  except Exception:
+    output = out_dir / problem / solver_oracle_name(solver, oracle)
+    output.mkdir(parents=True, exist_ok=True)
+    _write_modes(output, {"problem": problem, "solver": solver, "oracle": oracle}, interpreted=casadi_interpreted)
+    raise
+  finally:
+    INTERPRETED.reset(token)
+  summary = json.loads((output / "summary.json").read_text())
+  if solver != "none":
+    _write_modes(output, summary, interpreted=casadi_interpreted)
+  return output
+
+
+def _write_modes(output: Path, summary: dict, *, interpreted: bool) -> None:
+  rows = mode_rows(summary, interpreted=interpreted)
+  with (output / "modes.csv").open("w", newline="") as stream:
+    writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+    writer.writeheader()
+    writer.writerows(rows)
+
+
+def _run(problem: str, *, smoke: bool, solver: str, oracle: str | None, out_dir: Path, cli_args: list[str]) -> Path:
   if problem == "unbumpercars":
     return run_unbumpercars(smoke=smoke, solver=solver, oracle=oracle, out_dir=out_dir / problem, cli_args=cli_args)
   if oracle is None:

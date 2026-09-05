@@ -339,44 +339,39 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
 
 
 def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, float | None, str]:
-  exe = out_dir / "benchmark"
   cflags, libs = gbench_flags()
-  cmd = [
-    compiler(),
-    "-O3",
-    "-std=c++17",
-    "-I",
-    str(out_dir),
-    *cflags,
-    "benchmark.cpp",
-    str(info["source"]),
-    "-o",
-    str(exe),
-    *libs,
-    *info.get("extra_libs", ()),
-    "-lm",
-  ]
+  common = [compiler(), "-O3", "-std=c++17", "-I", str(out_dir), *cflags]
+  commands = {
+    "kernel_compile_ms": [*common, "-c", str(info["source"]), "-o", "kernel.o"],
+    "wrapper_compile_ms": [*common, "-c", "benchmark.cpp", "-o", "wrapper.o"],
+    "link_ms": [compiler(), *cflags, "kernel.o", "wrapper.o", "-o", str(out_dir / "benchmark"), *libs, *info.get("extra_libs", ()), "-lm"],
+  }
   started = time.perf_counter()
-  try:
-    proc = subprocess.Popen(cmd, cwd=out_dir, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-  except OSError as e:
-    (out_dir / "compile.log").write_text(f"$ {shlex.join(cmd)}\n{e}\n")
-    return "compile_error", None, str(e)
-  try:
-    stdout, stderr = proc.communicate(timeout=timeout)
-  except subprocess.TimeoutExpired:
-    try:
-      os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except ProcessLookupError:
-      pass
-    stdout, stderr = proc.communicate()
-    (out_dir / "compile.log").write_text(f"$ {shlex.join(cmd)}\n{stdout}{stderr}")
-    return "timeout", None, f"compile > {timeout:.0f}s"
-  elapsed = (time.perf_counter() - started) * 1000
-  (out_dir / "compile.log").write_text(f"$ {shlex.join(cmd)}\n{stdout}{stderr}")
-  if proc.returncode:
-    return "compile_error", elapsed, (stderr or stdout)[-400:].strip().replace("\n", " ")
-  return "ok", elapsed, ""
+  timings = info["compile_timings"] = {}
+  with (out_dir / "compile.log").open("w") as log:
+    for phase, cmd in commands.items():
+      log.write(f"$ {shlex.join(cmd)}\n")
+      phase_started = time.perf_counter()
+      try:
+        proc = subprocess.Popen(cmd, cwd=out_dir, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+      except OSError as e:
+        log.write(f"{e}\n")
+        return "compile_error", None, str(e)
+      try:
+        stdout, stderr = proc.communicate(timeout=max(0.001, timeout - (phase_started - started)))
+      except subprocess.TimeoutExpired:
+        try:
+          os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+          pass
+        stdout, stderr = proc.communicate()
+        log.write(stdout + stderr)
+        return "timeout", None, f"compile > {timeout:.0f}s ({phase})"
+      timings[phase] = (time.perf_counter() - phase_started) * 1000
+      log.write(stdout + stderr)
+      if proc.returncode:
+        return "compile_error", (time.perf_counter() - started) * 1000, (stderr or stdout)[-400:].strip().replace("\n", " ")
+  return "ok", (time.perf_counter() - started) * 1000, ""
 
 
 def _text(value) -> str:

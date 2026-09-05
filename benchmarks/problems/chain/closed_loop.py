@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from benchmarks.harness.timing import SolveTiming
+
 from alloy import SolverStats
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.chain import (
@@ -67,6 +69,7 @@ class ClosedLoopEpisode:
   oracle_z: np.ndarray
   oracle_p: np.ndarray
   oracle_inputs: tuple[dict[str, np.ndarray], ...]
+  timing: dict[str, object]
 
 
 def extract_positions(state: np.ndarray, n_masses: int) -> np.ndarray:
@@ -142,6 +145,7 @@ def run_episode(
   """
   config = config if config is not None else (ClosedLoopConfig.smoke() if smoke else ClosedLoopConfig.canonical())
   nx, nz = n_state(config.n_masses), n_state(config.n_masses) + NU
+  timing = SolveTiming()
   if (solver, oracle) == ("ipopt", "alloy"):
     controller = chain_nlp(config.n_masses, config.horizon)
   elif (solver, oracle) == ("sqp", "alloy"):
@@ -152,6 +156,7 @@ def run_episode(
     controller = ca_chain_sqp(config.n_masses, config.horizon)
   else:
     raise ValueError(f"unsupported chain solver/oracle pair {solver!r}/{oracle!r}")
+  timing.prepared(controller)
   state = initial_state(config.n_masses)
   guess = _rollout_guess(state, config)
   lam_eq0 = np.zeros(nx * (config.horizon + 1))
@@ -168,7 +173,9 @@ def run_episode(
 
   for step in range(config.steps):
     p = np.concatenate([state, config.params.array()])
+    timing.start_step()
     out = solve_problem(controller, guess, lam_eq0, lam_ineq0, lam_box0, p)
+    timing.end_step()
     stats = problem_stats(controller)
     status = None if stats is None else stats.to_solver_status()
     if stats is None or status is None:
@@ -202,4 +209,5 @@ def run_episode(
     representative["z"],
     representative["p"],
     tuple(oracle_inputs),
+    timing.summary(),
   )

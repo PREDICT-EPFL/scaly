@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
 import json
+import os
 import platform
 from pathlib import Path
 import subprocess
@@ -19,6 +20,34 @@ def _runtime_library(link_library: Path) -> Path:
   digest = hashlib.sha256(link_library.read_bytes()).digest()
   matches = [path for path in link_library.parent.glob(f"{link_library.name}.*") if hashlib.sha256(path.read_bytes()).digest() == digest]
   return min(matches, key=lambda path: len(path.name)) if matches else link_library
+
+
+def cpu_settings(root: Path = Path("/sys/devices/system/cpu")) -> dict[str, object]:
+  """Read frequency policy and boost settings for reproducible timings."""
+  policies = {}
+  for policy in sorted((root / "cpufreq").glob("policy*")):
+    policies[policy.name] = {
+      name: (policy / name).read_text().strip()
+      for name in ("scaling_driver", "scaling_governor", "energy_performance_preference", "scaling_min_freq", "scaling_max_freq")
+      if (policy / name).exists()
+    }
+  boost = root / "cpufreq/boost"
+  no_turbo = root / "intel_pstate/no_turbo"
+  enabled = bool(int(boost.read_text())) if boost.exists() else (not bool(int(no_turbo.read_text())) if no_turbo.exists() else None)
+  return {"policies": policies, "boost_enabled": enabled, "affinity": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None}
+
+
+def require_headline_settings(expected_boost: bool) -> dict[str, object]:
+  """Reject headline timings without the requested frequency policy."""
+  settings = cpu_settings()
+  policies = settings["policies"]
+  if not policies:
+    raise RuntimeError("--headline requires Linux cpufreq controls; on macOS or unsupported hosts, run without --headline")
+  if any(policy.get("scaling_governor") != "performance" for policy in policies.values()):
+    raise RuntimeError("headline runs require the performance governor on every CPU policy")
+  if settings["boost_enabled"] != expected_boost:
+    raise RuntimeError(f"headline runs require boost {'enabled' if expected_boost else 'disabled'}")
+  return settings
 
 
 def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]:
@@ -57,6 +86,8 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
     "native_solvers": native_solvers,
     "compiler": compiler_version,
     "platform": platform.platform(),
+    "cpu_settings": cpu_settings(),
+    "compilation_caches": {name: os.environ.get(name) for name in ("ALLOY_CACHE_DIR", "ALLOY_CASADI_IPOPT_CACHE")},
     "python_version": platform.python_version(),
     "timestamp": datetime.now(timezone.utc).isoformat(),
     "cli_args": cli_args,

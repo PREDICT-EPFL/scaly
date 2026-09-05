@@ -29,6 +29,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from benchmarks.harness.timing import SolveTiming
+
 from alloy.solvers import SolverStats
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
@@ -104,6 +106,7 @@ class EpisodeResult:
   telemetry: tuple[SolverStats, ...]
   oracle_inputs: tuple[dict[str, np.ndarray], ...]
   terminal_weight: np.ndarray = field(repr=False)
+  timing: dict[str, object]
 
 
 def build_solver(config: EpisodeConfig, solver: str = "ipopt", oracle: str = "alloy", *, P: np.ndarray):
@@ -157,7 +160,9 @@ def run_episode(
   config = config if config is not None else (EpisodeConfig.smoke() if smoke else EpisodeConfig())
   pw = pack_params(config.decoder, load_decoder_weights(config.decoder) if weights is None else weights)
   P = terminal_P(config.decoder, pw, config.weights, config.dt)
+  timing = SolveTiming()
   controller = build_solver(config, solver, oracle, P=P)
+  timing.prepared(controller)
   (n_eq, n_ineq), nz = constraint_counts(config.horizon), n_dec(config.horizon)
 
   state = np.array(config.x_start, dtype=np.float64)
@@ -173,7 +178,9 @@ def run_episode(
 
   for step in range(config.steps):
     p = np.concatenate([state, pw])
+    timing.start_step()
     out = solve_problem(controller, guess, np.zeros(n_eq), np.zeros(n_ineq), np.zeros(nz), p)
+    timing.end_step()
     stats = problem_stats(controller)
     status = None if stats is None else stats.to_solver_status()
     if stats is None or status is None:
@@ -204,6 +211,7 @@ def run_episode(
     plans=plans,
     slacks=slacks,
     telemetry=tuple(telemetry),
+    timing=timing.summary(),
     oracle_inputs=tuple(oracle_inputs),
     terminal_weight=P,
   )

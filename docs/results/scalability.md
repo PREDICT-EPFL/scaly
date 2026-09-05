@@ -18,7 +18,7 @@ Skip rules applied automatically:
 - max generated source size (default 50 MB) — skip without compiling;
 - after a backend hits any of the above at one size, larger sizes for that backend are skipped immediately, because both generated source size and compile cost are monotonically increasing in the iteration count.
 
-CSV with the raw cell data: `benchmarks/results/sweep/scalability.csv`. Each cell's generated code, samples, binary, and logs live beside it under `benchmarks/results/sweep/<workload>/<backend>_<axis><size>/`.
+CSV with the raw cell data: `benchmarks/results/sweep/scalability.csv`. Each cell's generated code, samples, binary, and logs live beside it under `benchmarks/results/sweep/repeat_<n>/<workload>/<backend>_<axis><size>/`.
 
 `coloring_width` is an Alloy-owned construction metric, not a cross-backend comparison. It counts
 the compressed tangent directions that Alloy executes. Structured Jacobian rows add the independently

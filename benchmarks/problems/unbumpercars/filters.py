@@ -10,7 +10,7 @@ import numpy as np
 import alloy as al
 from alloy.codegen.aot import render_c_module
 from alloy.ir.expr import substitute
-from benchmarks.harness.casadi_ipopt import CompiledCasadiIpopt
+from benchmarks.harness.casadi_ipopt import make_casadi_ipopt
 from .common import (
   ClosedLoopConfig,
   CTFullWeights,
@@ -67,12 +67,14 @@ class FilterStats:
 class SafetyFilter(Protocol):
   name: str
   stats_history: list[FilterStats]
+  last_solve_wall_ms: float
 
   def compute_safe_input(self, states: np.ndarray, desired: np.ndarray, step: int = 0) -> np.ndarray: ...
 
 
 class OpenLoopFilter:
   name = "open_loop"
+  last_solve_wall_ms = 0.0
 
   def __init__(self) -> None:
     self.stats_history: list[FilterStats] = []
@@ -340,7 +342,7 @@ class CasadiDTCBFSafetyFilter:
     }
     if self.filt_cfg.limited_memory_hessian:
       opts["ipopt.hessian_approximation"] = "limited-memory"
-    self.solver = CompiledCasadiIpopt(f"ctdt_casadi_solver_C{self.ncars}", nlp, opts)
+    self.solver = make_casadi_ipopt(f"ctdt_casadi_solver_C{self.ncars}", nlp, opts)
     self._build_ms = (time.perf_counter() - t0) * 1000.0
 
   def _pack_p(self, states: np.ndarray, desired: np.ndarray) -> np.ndarray:
@@ -367,7 +369,9 @@ class CasadiDTCBFSafetyFilter:
     n_g = int(self.g_fn.size1_out(0))
     lam_x0 = np.zeros(self.n_z) if self.last_lam_x is None else self.last_lam_x
     lam_g0 = np.zeros(n_g) if self.last_lam_g is None else self.last_lam_g
+    started = time.perf_counter()
     sol = self.solver(z0, p, lbx, ubx, np.zeros(n_g), np.full(n_g, ca.inf), lam_x0, lam_g0)
+    self.last_solve_wall_ms = (time.perf_counter() - started) * 1000.0
     stats = self.solver.last_stats
     assert stats is not None
     solver_ms = stats.t_total * 1000.0
@@ -786,14 +790,14 @@ class AlloyDTCBFSafetyFilter:
     self._warm_compile()
 
   def _warm_compile(self) -> None:
-    from alloy.codegen.jit import CompiledFunction
+    from benchmarks.harness.timing import prepare_solver
 
     t0 = time.perf_counter()
-    self.nlp._compiled = CompiledFunction(self.nlp)
+    prepare_solver(self.nlp)
     self._compile_ms["solver"] = (time.perf_counter() - t0) * 1000.0
     if self.fallback_nlp is not None:
       t0 = time.perf_counter()
-      self.fallback_nlp._compiled = CompiledFunction(self.fallback_nlp)
+      prepare_solver(self.fallback_nlp)
       self._compile_ms["fallback_solver"] = (time.perf_counter() - t0) * 1000.0
 
   def dump_c(self, out_dir: Path) -> None:
@@ -821,6 +825,8 @@ class AlloyDTCBFSafetyFilter:
 
     params = (np.concatenate([bar_x, u_des, pw, physics, dt]),) if self._packed_params else (bar_x, u_des, pw, physics, dt)
 
+    self.last_solve_wall_ms = 0.0
+
     def solve(active_nlp: al.Function):
       descriptor = active_nlp.descriptor
       if descriptor.n_var_blocks == 2:
@@ -829,7 +835,9 @@ class AlloyDTCBFSafetyFilter:
       else:
         variables0, box0 = z0, lam_box0
       param_values = params[0] if self._packed_params else params
+      started = time.perf_counter()
       variables, box, lam_eq, lam_ineq = active_nlp.numerical_call((variables0, box0, np.zeros(0), lam_g0, param_values))
+      self.last_solve_wall_ms += (time.perf_counter() - started) * 1000.0
       if descriptor.n_var_blocks == 2:
         z_sol = np.concatenate(variables)
         box_sol = np.concatenate(box)

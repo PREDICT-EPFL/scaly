@@ -105,7 +105,28 @@ generating code. `--casadi-transform` is enabled by default; use `--no-casadi-tr
 descriptor. Add `_jac` to `chain`, `race_cars`, `npmpc`, or `npmpc_decoder` to run the constraint
 Jacobian row retained for the long paper. The default sweep runs only the Hessian workloads.
 
-Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package and compiler versions, platform, Python, and timestamp. It also records the resolved IPOPT library and its MUMPS, METIS, and OpenBLAS build. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=40, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
+The sweep defaults to three repetitions. Each cell starts in a fresh Python process, with backend
+order varied using `--order-seed`. `--repetitions 1` is useful for a toolchain check. The raw CSV
+records repetition and backend order. A sibling `.summary.csv` reports mean, median, sample
+standard deviation, coefficient of variation, minimum, and maximum across successful processes.
+Failed attempts remain in the raw CSV and the summary counts. A single sample has no dispersion
+estimate. `kernel_compile_ms`, `wrapper_compile_ms`, and `link_ms` separate generated code from the
+measurement wrapper. `compile_ms` retains their total elapsed time.
+
+The regular commands work on Linux and macOS. On hosts without Linux CPU frequency controls,
+provenance records empty policies and an unknown boost state. CPU affinity is unknown when the
+operating system does not expose it. Fresh processes, varied order, and dispersion reporting remain
+available. The reference-machine `--headline` frequency check is Linux-specific and rejects
+unsupported hosts explicitly. It does not try to change macOS power settings.
+
+For headline runs on Linux, set every CPU policy to `performance` and choose the boost state first. Then use
+`--headline --boost on` or `--headline --boost off`. The runner checks those settings before and
+after each cell and requires at least three repetitions. Provenance records the frequency policies,
+boost state, and CPU affinity. Run boost-on and boost-off comparisons into separate output
+directories with the same grid and seed. Keep compilation and other benchmark jobs out of timed
+runs. The runner validates machine settings but does not change them.
+
+Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/repeat_<n>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/repeat_<n>/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package and compiler versions, platform, Python, and timestamp. It also records the resolved IPOPT library and its MUMPS, METIS, and OpenBLAS build. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=40, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
 
 The stage-based workloads default to Alloy and four CasADi encodings of the repeated dynamics
 stage: unrolled `SX`, unrolled `MX`, repeated calls to an elemental `MX` `Function`, and a serial map
@@ -186,6 +207,31 @@ uv run python benchmarks/run.py closed-loop --problem npmpc --solver ipopt --ora
 uv run python benchmarks/run.py closed-loop --problem npmpc --solver sqp --oracle alloy
 uv run python benchmarks/run.py closed-loop --problem npmpc --solver sqp --oracle casadi
 ```
+
+Each solver episode also writes `modes.csv`. The `jit` row adds observed construction time to the
+first solve. The `prebuilt` row reports the first solve with construction and loading excluded.
+Both use the mean wall time of subsequent solve calls for per-step cost. These wall timings include
+Python dispatch and are separate from the native solver statistics. Construction includes the
+standalone oracles used to check solver results, so the `jit` startup cost includes that benchmark
+validation setup.
+
+To combine recorded runs into the five-row deployment table, run
+`uv run benchmarks/run.py modes <compiled-results> <interpreted-results> --out <table.csv>`.
+Use runs with the same workload configuration and machine settings. The command reads the saved
+mode files and does not rerun any benchmark.
+
+For CasADi's third mode, add `--casadi-interpreted` to an `ipopt+casadi` run. Its artifacts live under
+an `interpreted/` directory, and its mode row names the CasADi wheel's IPOPT provider. That row is a
+deployment comparison and does not isolate oracle cost against the compiled columns' shared IPOPT.
+
+`closed-loop --repetitions 3` runs sequential fresh processes with separate empty compilation caches
+under `repeat_<n>/cache/<oracle>/`. Reusing one of those output directories fails. The parent writes
+`modes.summary.csv` with startup and per-step dispersion. A single episode uses the configured cache,
+so its `jit` row may measure a cache load. Add `--headline --boost on` or `--headline --boost off` to
+check frequency settings around every repeated episode. `--oracle both` compares the compiled
+providers, rotating their order between repetitions from an initial `--order-seed` shuffle. The
+summary provenance retains the actual run order. Problem smoke runs each problem in its own
+process, so large symbolic graphs from earlier problems do not remain resident.
 
 The closed-loop interface selects the optimizer with `--solver` and the generated
 function provider with `--oracle`. Unsupported pairs are rejected per problem;

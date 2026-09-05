@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+from contextvars import ContextVar
 import hashlib
 import importlib.metadata
 import json
@@ -23,6 +24,8 @@ from alloy.codegen.toolchain import cache_root, find_c_compiler
 from alloy.solvers.paths import backend_compile_flags, solver_paths
 from alloy.solvers.stats import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, SolverStats, SolverStatus, stats_c_timing_defs
 from alloy.utils.env import shared_lib_ext, shared_lib_flag
+
+INTERPRETED: ContextVar[bool] = ContextVar("casadi_interpreted", default=False)
 
 _CACHE = Path(os.environ.get("ALLOY_CASADI_IPOPT_CACHE", cache_root() / "casadi-ipopt"))
 _CACHE_VERSION = 4
@@ -370,6 +373,76 @@ class CompiledCasadiIpopt:
     return [out[:size].copy() for out, size in zip(self._outs, self._out_sizes, strict=True)]
 
 
+class InterpretedCasadiIpopt:
+  """CasADi's Python nlpsol path, reported separately from the controlled C comparison."""
+
+  compiled = False
+
+  def __init__(self, name, nlp, options):
+    import casadi as ca
+
+    started = time.perf_counter()
+    x, p = ca.MX.sym("x", nlp.sparsity_in(0)), ca.MX.sym("p", nlp.sparsity_in(1))
+    f, g = nlp.call([x, p], True, False)
+    self.solver = _transformed_nlpsol(name, {"x": x, "p": p, "f": f, "g": g}, {**options, "record_time": True})
+    self.build_ms = (time.perf_counter() - started) * 1000.0
+    self.ipopt_library = str(Path(ca.__file__).parent / f"libipopt{shared_lib_ext()}")
+    self.configured_ipopt_library = self.resolved_ipopt_library = self.ipopt_library
+    self.last_stats = None
+    self.last_status = None
+
+  def __call__(self, *values):
+    started = time.perf_counter()
+    outputs = self.solver(*values)
+    total = time.perf_counter() - started
+    raw = self.solver.stats()
+    native = str(raw["return_status"])
+    status, native_code = {
+      "Solve_Succeeded": (AlloySolveStatus.OK, 0),
+      "Solved_To_Acceptable_Level": (AlloySolveStatus.ACCEPTABLE, 1),
+      "Feasible_Point_Found": (AlloySolveStatus.ACCEPTABLE, 6),
+      "Maximum_Iterations_Exceeded": (AlloySolveStatus.MAX_ITER, -1),
+      "Maximum_CpuTime_Exceeded": (AlloySolveStatus.MAX_ITER, -4),
+      "Maximum_WallTime_Exceeded": (AlloySolveStatus.MAX_ITER, -5),
+      "Infeasible_Problem_Detected": (AlloySolveStatus.PRIMAL_INFEASIBLE, 2),
+      "Diverging_Iterates": (AlloySolveStatus.NUMERICS, 4),
+      "Search_Direction_Becomes_Too_Small": (AlloySolveStatus.NUMERICS, 3),
+      "Restoration_Failed": (AlloySolveStatus.NUMERICS, -2),
+      "Error_In_Step_Computation": (AlloySolveStatus.NUMERICS, -3),
+      "Invalid_Number_Detected": (AlloySolveStatus.NUMERICS, -13),
+      "User_Requested_Stop": (AlloySolveStatus.USER_STOP, 5),
+      "Not_Enough_Degrees_Of_Freedom": (AlloySolveStatus.ERROR, -10),
+      "Invalid_Problem_Definition": (AlloySolveStatus.ERROR, -11),
+      "Invalid_Option": (AlloySolveStatus.ERROR, -12),
+      "Unrecoverable_Exception": (AlloySolveStatus.ERROR, -100),
+      "NonIpopt_Exception_Thrown": (AlloySolveStatus.ERROR, -101),
+      "Insufficient_Memory": (AlloySolveStatus.ERROR, -102),
+      "Internal_Error": (AlloySolveStatus.ERROR, -199),
+    }.get(native, (AlloySolveStatus.ERROR, -199))
+    fe = sum(float(raw.get(f"t_wall_nlp_{name}", 0.0)) for name in _ORACLE_NAMES)
+    self.last_stats = SolverStats(
+      version=ALLOY_SOLVER_STATS_VERSION,
+      status=status,
+      native_status=native_code,
+      iter=int(raw["iter_count"]),
+      obj=float(outputs[1]),
+      t_total=total,
+      t_fe=fe,
+      t_solver=max(total - fe, 0.0),
+      t_qp=0.0,
+      t_globalization=0.0,
+      t_glue=0.0,
+      **{f"n_eval_{'h' if name == 'hess_l' else name}": int(raw.get(f"n_call_nlp_{name}", 0)) for name in _ORACLE_NAMES},
+    )
+    self.last_status = self.last_stats.to_solver_status()
+    return [np.asarray(value, dtype=np.float64).reshape(-1) for value in outputs]
+
+
+def make_casadi_ipopt(name, nlp, options):
+  """Build the CasADi mode selected by the closed-loop runner."""
+  return (InterpretedCasadiIpopt if INTERPRETED.get() else CompiledCasadiIpopt)(name, nlp, options)
+
+
 class CasadiIpoptSolver:
   """`al.Function`-shaped adapter for a compiled CasADi IPOPT NLP."""
 
@@ -403,7 +476,7 @@ class CasadiIpoptSolver:
       np.concatenate([np.zeros(self.n_eq), np.asarray(l_ineq, dtype=np.float64)]),
       np.concatenate([np.zeros(self.n_eq), np.asarray(u_ineq, dtype=np.float64)]),
     )
-    self._compiled = CompiledCasadiIpopt(
+    self._compiled = make_casadi_ipopt(
       name,
       nlp,
       {
@@ -415,6 +488,7 @@ class CasadiIpoptSolver:
         **options,
       },
     )
+    self.compiled = self._compiled.compiled
     self.build_ms = self._compiled.build_ms
     self.ipopt_library = self._compiled.ipopt_library
     self.configured_ipopt_library = self._compiled.configured_ipopt_library

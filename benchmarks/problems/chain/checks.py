@@ -277,8 +277,27 @@ def check_recorded_scene() -> None:
   assert plans == [(config.horizon + 1, config.n_masses)] * config.steps, plans
 
 
+def check_casadi_sweep_transforms_by_default() -> None:
+  """The default sweep transforms the chain kernel without changing its values."""
+  import tempfile
+  from pathlib import Path
+
+  from benchmarks.harness.sweep import build_kernel
+
+  with tempfile.TemporaryDirectory() as directory:
+    tmp_path = Path(directory)
+    original = build_kernel("chain", 3, "casadi_sx", tmp_path, casadi_transform=False)["callable"]
+    transformed = build_kernel("chain", 3, "casadi_sx", tmp_path)["callable"]
+    assert transformed.serialize() == original.transform({}).serialize()
+    assert transformed.n_instructions() < original.n_instructions()
+    values = [np.full(original.size_in(i), 0.4 + i) for i in range(original.n_in())]
+    for expected, actual in zip(original.call(values), transformed.call(values), strict=True):
+      np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+
+
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
 CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
+  "casadi_sweep_transform": (check_casadi_sweep_transforms_by_default, True, True),
   "dims_and_rk4": (check_dims_and_rk4, False, False),
   "eq_jacobian": (check_eq_jacobian_matches_casadi_and_dense_reference, False, True),
   "nlp_objective": (check_nlp_objective_matches_casadi, True, True),

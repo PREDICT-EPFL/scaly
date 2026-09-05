@@ -111,20 +111,6 @@ def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
   assert coloring_width == 2
 
 
-@pytest.mark.solver("ipopt")
-def test_unbumpercars_typed_problem_keeps_hessian_in_place() -> None:
-  from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig
-  from benchmarks.problems.unbumpercars.filters import build_alloy_nlp
-
-  hessian = build_alloy_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).descriptor.hess
-  module = render_c_module(hessian, typed_buffers=False)
-
-  # Baselines are about 86 KB and 34k doubles. Headroom catches a CALL boundary materializing
-  # batched-JVP seed tables without pinning harmless local code-generation changes.
-  assert len(module.body.encode()) < 200_000
-  assert module.workspace_size < 100_000
-
-
 def test_module_info_records_constructed_local_coloring_width() -> None:
   a = al.sym("a", 1)
   b = al.sym("b", 1)
@@ -534,16 +520,3 @@ int sparse_lower_fixture(const double**, double** res, const int*, double*, void
   }
   status, _, note = _run_compiled_driver(tmp_path, info, source, header, {}, np.array([1.0, 2.0, 2.0, 3.0]))
   assert status == "correctness_fail", note
-
-
-@pytest.mark.solver("ipopt")
-def test_casadi_sweep_transforms_by_default(tmp_path: Path) -> None:
-  from benchmarks.harness.sweep import build_kernel
-
-  original = build_kernel("chain", 3, "casadi_sx", tmp_path, casadi_transform=False)["callable"]
-  transformed = build_kernel("chain", 3, "casadi_sx", tmp_path)["callable"]
-  assert transformed.serialize() == original.transform({}).serialize()
-  assert transformed.n_instructions() < original.n_instructions()
-  values = [np.full(original.size_in(i), 0.4 + i) for i in range(original.n_in())]
-  for expected, actual in zip(original.call(values), transformed.call(values), strict=True):
-    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)

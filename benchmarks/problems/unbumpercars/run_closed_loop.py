@@ -109,7 +109,11 @@ def run_one(
   dump_alloy_c: bool,
 ):
   name = solver_oracle_name(solver, oracle)
+  from benchmarks.harness.timing import SolveTiming
+
+  timing = SolveTiming()
   safety_filter: SafetyFilter = make_filter(solver, oracle, loop_cfg, filt_cfg, weights)
+  timing.prepared()
   sim = Simulator(initial_state, loop_cfg)
   impl_dir = out_dir / name
   impl_dir.mkdir(parents=True, exist_ok=True)
@@ -126,6 +130,8 @@ def run_one(
   for t in range(loop_cfg.steps):
     desired = sim.desired_inputs()
     safe = safety_filter.compute_safe_input(states, desired, t)
+    if solver != "none":
+      timing.solve_ms.append(safety_filter.last_solve_wall_ms)
     desired_traj[t] = desired
     input_traj[t] = safe
     z = getattr(safety_filter, "last_z", None)
@@ -153,6 +159,8 @@ def run_one(
   np.savez_compressed(impl_dir / "rollout.npz", state=state_traj, desired=desired_traj, applied=input_traj)
   write_stats_csv(impl_dir / "stats.csv", safety_filter.stats_history)
   summary = {
+    **timing.summary(),
+    "problem": "unbumpercars",
     "solver": solver,
     "oracle": oracle,
     "min_pair_distance": min_dist,

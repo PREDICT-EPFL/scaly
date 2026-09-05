@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
+from pathlib import Path
 from typing import Sequence, get_type_hints
 
 import alloy as al
@@ -119,3 +121,19 @@ def test_obsolete_module_paths_and_vocabulary_are_absent() -> None:
   program = __import__("alloy.ir.program", fromlist=["ProgramNode"])
   assert not hasattr(program, "PNode")
   assert not hasattr(program, "POps")
+
+
+def test_tests_do_not_import_benchmark_problems() -> None:
+  violations = []
+  root = Path(__file__).resolve().parent
+  for path in root.rglob("*.py"):
+    for node in ast.walk(ast.parse(path.read_text())):
+      if isinstance(node, ast.Import):
+        names = [alias.name for alias in node.names]
+      elif isinstance(node, ast.ImportFrom):
+        names = [node.module or "", *(f"{node.module}.{alias.name}" for alias in node.names)]
+      else:
+        continue
+      if any(name == "benchmarks.problems" or name.startswith("benchmarks.problems.") for name in names):
+        violations.append(f"{path.relative_to(root)}:{node.lineno}")
+  assert not violations, "Benchmark problem imports belong in problem checks: " + ", ".join(violations)

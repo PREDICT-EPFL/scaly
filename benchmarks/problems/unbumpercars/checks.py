@@ -433,6 +433,10 @@ def check_canonical_hessian_handoff() -> None:
 def check_casadi_ipopt_is_compiled() -> None:
   """The timed CasADi column is generated C linked to Alloy's IPOPT."""
   from pathlib import Path
+  from types import SimpleNamespace
+  from unittest.mock import patch
+
+  from benchmarks.problems.unbumpercars import filters
 
   from alloy.solvers.paths import solver_paths
   from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter
@@ -443,7 +447,25 @@ def check_casadi_ipopt_is_compiled() -> None:
   assert controller.solver.compiled and not controller.solver.expand and expected is not None
   assert controller.solver.resolved_ipopt_library.read_bytes() == Path(expected).read_bytes()
   states = sample_initial_states(loop_cfg)
-  controller.compute_safe_input(states, np.zeros((loop_cfg.ncars, 2)))
+  clock = [0.0]
+  native_call = type(controller.solver).__call__
+
+  def timed_solve(instance, *args):
+    clock[0] += 0.002
+    return native_call(instance, *args)
+
+  def diagnostic(*args):
+    clock[0] += 1.0
+    return 1000.0
+
+  with (
+    patch.object(filters, "time", SimpleNamespace(perf_counter=lambda: clock[0])),
+    patch.object(type(controller.solver), "__call__", timed_solve),
+    patch.object(controller, "_time_eval", diagnostic),
+  ):
+    controller.compute_safe_input(states, np.zeros((loop_cfg.ncars, 2)))
+  assert abs(controller.last_solve_wall_ms - 2.0) < 1e-12
+  assert clock[0] > 5.0
   assert controller.stats_history[-1].eval_counts["hess_lag"] > 0
 
 
@@ -527,8 +549,25 @@ def check_sqp_oracles_agree() -> None:
   assert acted, "the SQP oracle-provider gate never exercised a binding constraint"
 
 
+def check_typed_problem_keeps_hessian_in_place() -> None:
+  """The typed problem preserves bounded Hessian source and workspace sizes."""
+  from alloy.codegen import render_c_module
+
+  from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig
+  from benchmarks.problems.unbumpercars.filters import build_alloy_nlp
+
+  hessian = build_alloy_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).descriptor.hess
+  module = render_c_module(hessian, typed_buffers=False)
+
+  # Baselines are about 86 KB and 34k doubles. Headroom catches a CALL boundary materializing
+  # batched-JVP seed tables without pinning harmless local code-generation changes.
+  assert len(module.body.encode()) < 200_000
+  assert module.workspace_size < 100_000
+
+
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
 CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
+  "typed_hessian_in_place": (check_typed_problem_keeps_hessian_in_place, False, False),
   "default_output_dir": (check_default_output_dir, False, False),
   "oracle_matches_casadi": (check_oracle_matches_casadi, False, True),
   "pair_jac_codegen_growth": (check_pair_jac_codegen_growth, False, False),

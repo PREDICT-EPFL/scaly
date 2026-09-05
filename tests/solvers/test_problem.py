@@ -154,7 +154,7 @@ def test_nlp_solver_is_plain_typed_function_and_reuses_problem_oracles() -> None
 
 @al.function(al.L("stage", 2), al.L("row", ...), name="single_block_stage")
 def single_block_stage(stage: al.Expr) -> al.Expr:
-  return stage
+  return stage.sin()
 
 
 def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
@@ -197,6 +197,16 @@ def test_single_block_problem_preserves_vmap_decision_input() -> None:
   solve = al.solver(mapped_problem, "sqp", name="single_block_vmap_sqp")
   mapped = next(node for node in topo(solve.descriptor.base.outputs) if node.op == al.ExprOp.VMAP)
   assert mapped.args[0] is solve.descriptor.base.inputs[0]
+
+  hess = solve.descriptor.hess
+  assert hess is not None
+  sparsity = hess.output_sparsities[0]
+  assert sparsity is not None
+  z, p = np.linspace(-0.7, 0.9, 6), np.array(0.3)
+  lam_f, lam_g = np.array(1.7), np.linspace(-1.1, 0.8, 6)
+  actual = np.zeros(sparsity.shape)
+  actual[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = hess(((z, p), (lam_f, lam_g)))
+  np.testing.assert_allclose(actual, np.diag(2.0 * lam_f - lam_g * np.sin(z)), rtol=1e-13, atol=1e-13)
 
 
 def test_two_solvers_from_one_problem_render_one_translation_unit() -> None:

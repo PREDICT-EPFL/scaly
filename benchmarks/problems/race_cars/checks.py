@@ -412,8 +412,65 @@ def check_sqp_oracles_agree() -> None:
       np.testing.assert_allclose(stats.t_total, stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rtol=1e-10)
 
 
+def check_failure_closes_incremental_mcap_and_writes_partial_artifacts() -> None:
+  """A failed episode closes the MCAP and retains the completed steps."""
+  import json
+  import tempfile
+  from unittest.mock import patch
+
+  from benchmarks.harness.closed_loop import run_race_cars
+  from alloy.solvers import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, SolverStats
+  from benchmarks.problems.race_cars import NX, NU
+  from benchmarks.problems.race_cars import closed_loop
+  from benchmarks.problems.race_cars.closed_loop import StepRecord, StepTelemetry
+
+  def stats(status: AlloySolveStatus, native: int) -> SolverStats:
+    return SolverStats(ALLOY_SOLVER_STATS_VERSION, status, native, 2, 1.0, 0.01, 0.002, 0.0, 0.006, 0.001, 0.001, 2, 2, 2, 2, 2)
+
+  def fail(config, *, solver, oracle, record_step, **_kwargs):
+    reference = np.zeros((config.horizon + 1, NX))
+    prediction = reference.copy()
+    good_stats = stats(AlloySolveStatus.OK, 1)
+    telemetry = StepTelemetry(good_stats, 0.1, 0, 0.0, 0.0, 0.0)
+    record_step(
+      StepRecord(
+        0,
+        np.zeros(NX),
+        np.zeros(NX),
+        np.zeros(NU),
+        prediction,
+        reference,
+        {"z": np.zeros(1), "p": np.zeros(1)},
+        good_stats,
+        telemetry,
+      )
+    )
+    failed_stats = stats(AlloySolveStatus.MAX_ITER, -1)
+    record_step(StepRecord(1, np.ones(NX), np.ones(NX), None, None, reference, {"z": np.ones(1), "p": np.ones(1)}, failed_stats, None))
+    raise RuntimeError(f"synthetic {solver}+{oracle} failure")
+
+  with tempfile.TemporaryDirectory() as directory, patch.object(closed_loop, "run_episode", fail):
+    tmp_path = Path(directory)
+    try:
+      run_race_cars(smoke=True, out_dir=tmp_path, cli_args=["closed-loop", "--problem", "race_cars", "--smoke"])
+    except RuntimeError as error:
+      assert "synthetic ipopt+alloy failure" in str(error), str(error)
+    else:
+      raise AssertionError("the failed episode did not raise")
+
+    output = tmp_path / "race_cars" / "ipopt+alloy"
+    data = (output / "episode.mcap").read_bytes()
+    assert data.startswith(b"\x89MCAP0\r\n") and data.endswith(b"\x89MCAP0\r\n")
+    with np.load(output / "rollout.npz") as rollout:
+      assert rollout["state"].shape == (2, NX)
+      assert rollout["control"].shape == (1, NU)
+    summary = json.loads((output / "summary.json").read_text())
+    assert summary["failed_step"] == 1 and summary["status"] == "MAX_ITER" and summary["native_status"] == -1
+
+
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
 CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
+  "failure_artifacts": (check_failure_closes_incremental_mcap_and_writes_partial_artifacts, False, False),
   "track_data": (check_track_data, False, False),
   "spline_fit": (check_spline_fit_is_periodic, False, False),
   "planner": (check_planner, False, False),

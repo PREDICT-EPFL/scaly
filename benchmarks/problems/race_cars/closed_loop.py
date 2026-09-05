@@ -28,6 +28,8 @@ from pathlib import Path
 
 import numpy as np
 
+from benchmarks.harness.timing import SolveTiming
+
 import alloy as al
 from alloy.ir.expr import substitute
 from alloy.solvers import SolverStats
@@ -142,6 +144,8 @@ class EpisodeResult:
   track: Track
   center_path: np.ndarray
   lap_length: float
+
+  timing: dict[str, object]
 
 
 def steady_throttle(v: float, params: RaceCarParams = RaceCarParams()) -> float:
@@ -365,7 +369,9 @@ def run_episode(
     raise ValueError("horizon and max_steps must be positive")
   track = load_track(config.track)
   planner = MotionPlanner(track.center_line, horizon=config.horizon, dt=config.params.dt, v_ref=config.v_ref)
+  timing = SolveTiming()
   controller = build_solver(config, solver, oracle, sqp_options=sqp_options)
+  timing.prepared(controller)
 
   start = planner.center_path[0]
   start_heading = float(planner.phi_ref[0])
@@ -402,7 +408,9 @@ def run_episode(
     stage_reference = reference.copy()
     stage_reference[0] = state  # p[:NX] doubles as the initial-value constraint
     p = np.concatenate([stage_reference.reshape(-1), config.params.array()])
+    timing.start_step()
     out = solve_problem(controller, z0, lam_eq0, lam_ineq0, lam_box0, p)
+    timing.end_step()
     stats = problem_stats(controller)
     status = None if stats is None else stats.to_solver_status()
     if stats is None or status is None or not status.ok or not np.all(np.isfinite(out["x"])):
@@ -525,6 +533,7 @@ def run_episode(
     arc_length=np.asarray(arc_lengths) - s_start,
     laps=np.asarray(laps, dtype=np.int64),
     telemetry=tuple(telemetry),
+    timing=timing.summary(),
     predictions=np.asarray(predictions),
     reference_horizons=np.asarray(reference_horizons),
     oracle_z=representative["z"],
