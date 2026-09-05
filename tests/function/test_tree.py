@@ -170,6 +170,36 @@ def test_derivatives_preserve_source_trees() -> None:
     al.lagrangian_hessian(duplicate, "y")
 
 
+def test_seeded_derivatives_accept_nondifferentiable_leaves() -> None:
+  @al.function(al.L("x", al.TensorType((2,), diff=False)), al.L("y", ...))
+  def frozen_square(x: al.Expr) -> al.Expr:
+    return x * x
+
+  fwd = al.forward(frozen_square, "y", "x")
+  adj = al.adjoint(frozen_square, "y", "x")
+  x = np.array([2.0, 3.0])
+
+  assert fwd.input_tree.types[-1].diff
+  assert adj.input_tree.types[-1].diff
+  np.testing.assert_array_equal(fwd((x, np.ones(2))), 2.0 * x)
+  np.testing.assert_array_equal(adj((x, np.ones(2))), 2.0 * x)
+
+
+def test_lagrangian_hessians_accept_constant_output_leaves() -> None:
+  @al.function(al.L("x", 2), al.G(al.L("cost", ...), al.L("constant", ...)))
+  def objective(x: al.Expr) -> tuple[al.Expr, al.Expr]:
+    return (x * x).sum(), al.const(1.0)
+
+  dense = al.lagrangian_hessian(objective, "x")
+  sparse = al.sparse_lagrangian_hessian(objective, "x")
+  inputs = (np.array([2.0, 3.0]), (np.array(1.5), np.array(7.0)))
+
+  assert dense.input_tree.types[-1].diff
+  assert sparse.input_tree.types[-1].diff
+  np.testing.assert_array_equal(dense(inputs), 3.0 * np.eye(2))
+  np.testing.assert_array_equal(sparse(inputs), np.array([3.0, 3.0]))
+
+
 def test_call_dispatches_on_leaf_kind() -> None:
   """``__call__`` routes to ``symbolic_call`` or ``numerical_call`` by the leaves it is given."""
   xv, yv = np.arange(3.0), np.ones(3)

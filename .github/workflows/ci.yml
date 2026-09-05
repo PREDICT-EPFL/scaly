@@ -140,7 +140,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: ty type-check
-        run: uv run ty check .
+        run: uv run ty check --error-on-warning .
 
       - name: Pytest node-ID baseline
         run: uv run pytest --collect-only -q

@@ -2,7 +2,7 @@
 copy = "wt step copy-ignored"
 
 [[pre-merge]]
-typecheck = "uv run ty check"
+typecheck = "uv run ty check --error-on-warning"
 
 [[pre-merge]]
 format = "uv run ruff format --check"
@@ -11,7 +11,7 @@ format = "uv run ruff format --check"
 lint = "uv run ruff check"
 
 [[pre-merge]]
-unit-tests = "uv run pytest -n=auto tests plugins"
+unit-tests = "uv run pytest -n=auto"
 
 [[pre-merge]]
 benchmarks-smoke = "uv run benchmarks/run.py smoke"

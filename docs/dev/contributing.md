@@ -22,10 +22,12 @@ See [Installation](../guide/installation.md).
 uv run pytest -n=auto     # the suite, in parallel
 uv run ruff check         # lint
 uv run ruff format        # format
-uv run ty check           # types
+uv run ty check --error-on-warning  # types, including expected-error assertions
 ```
 
-Run all four before you consider a change done. `pytest` collects both `tests/` and `plugins/`.
+Run all four before you consider a change done. `pytest` collects `tests/`, `plugins/`, and
+`typing_playground/`. Strict type checking covers the assertions in `tests/typing/` and the
+playground: an expected error that disappears leaves an unused ignore, which must fail the check.
 
 The full-collection node-ID baseline is checked by the root `conftest.py`. After adding, removing, or
 renaming a test, regenerate it safely from the complete collection:
@@ -37,7 +39,7 @@ renaming a test, regenerate it safely from the complete collection:
   fresh=$(mktemp)
   trap 'rm -f "$raw" "$fresh"' EXIT
   uv run pytest --collect-only -q >"$raw" 2>&1 || true
-  grep -E '^(tests|plugins)/[^:]+\.py::' "$raw" | LC_ALL=C sort >"$fresh"
+  grep -E '^(tests|plugins|typing_playground)/[^:]+\.py::' "$raw" | LC_ALL=C sort >"$fresh"
   test -s "$fresh"
   mv "$fresh" tests/baseline/pytest_nodeids.txt
 )

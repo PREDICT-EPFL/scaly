@@ -70,6 +70,11 @@ def _typed_result[SI, NI](result: Function[Any, Any, Any, Any], input_tree: Tree
   return cast(Function[SI, NI, Expr, np.ndarray], result._with_trees(input_tree, output_tree))
 
 
+def _factory_input_tree[SI, NI](result: Function[Any, Any, Any, Any], tree: Tree[SI, NI]) -> Tree[SI, NI]:
+  input_map = result.input_map()
+  return tree.with_types(tuple(input_map[name].type for name in tree.names))
+
+
 def _unseeded[SI, NI](
   source: Function[SI, NI, Any, Any], name: str, of: str, wrt: str, spec: Jac | Grad | Hess | SpJac | SpHess
 ) -> Function[SI, NI, Expr, np.ndarray]:
@@ -236,7 +241,7 @@ def forward[SI, NI, SO, NO](
   _checked_names(fn, of, wrt)
   seed = L(f"fwd:{wrt}", fn.inputs[fn.input_tree.index(wrt)].type)
   result = fn.factory(name or f"{fn.name}_fwd_{of}_{wrt}", [*fn.input_names, f"fwd:{wrt}"], [Fwd(of, wrt)])
-  return _typed_result(result, G(fn.input_tree, seed))
+  return _typed_result(result, G(fn.input_tree, _factory_input_tree(result, seed)))
 
 
 def adjoint[SI, NI, SO, NO](
@@ -250,7 +255,7 @@ def adjoint[SI, NI, SO, NO](
   _checked_names(fn, of, wrt)
   seed = L(f"lam:{of}", fn.outputs[fn.output_tree.index(of)].type)
   result = fn.factory(name or f"{fn.name}_adj_{of}_{wrt}", [*fn.input_names, f"lam:{of}"], [Adj(of, wrt)])
-  return _typed_result(result, G(fn.input_tree, seed))
+  return _typed_result(result, G(fn.input_tree, _factory_input_tree(result, seed)))
 
 
 def lagrangian_hessian[SI, NI, SO, NO](
@@ -270,7 +275,8 @@ def lagrangian_hessian[SI, NI, SO, NO](
     [Hess(aux_name, wrt)],
     aux={aux_name: output_names},
   )
-  return _typed_result(result, G(fn.input_tree, fn.output_tree.relabel("lam:")))
+  seed_tree = _factory_input_tree(result, fn.output_tree.relabel("lam:"))
+  return _typed_result(result, G(fn.input_tree, seed_tree))
 
 
 def sparse_lagrangian_hessian[SI, NI, SO, NO](
@@ -291,4 +297,5 @@ def sparse_lagrangian_hessian[SI, NI, SO, NO](
     [SpHess(aux_name, wrt, triangle=triangle)],
     aux={aux_name: output_names},
   )
-  return _typed_result(result, G(fn.input_tree, fn.output_tree.relabel("lam:")))
+  seed_tree = _factory_input_tree(result, fn.output_tree.relabel("lam:"))
+  return _typed_result(result, G(fn.input_tree, seed_tree))

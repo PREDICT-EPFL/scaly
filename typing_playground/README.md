@@ -16,7 +16,7 @@ uv run ty check --error-on-warning typing_playground         # static: every `ty
 The static tests live in `tests/test_typing.py` as an `if TYPE_CHECKING:` block of `assert_type`
 calls for the positive cases and `# ty: ignore[<code>]` on the expected errors. With
 `--error-on-warning`, an unused ignore fails the check, so an error that stops being one is caught.
-That is the "prove the gate can fail" rule applied to types. CI's plain `ty check .` also covers the
+That is the "prove the gate can fail" rule applied to types. CI also runs strict type checking over the
 package; ruff and pytest reach it through `pyproject.toml`.
 
 ## Layout
@@ -183,6 +183,11 @@ swapped:
 
 ## Open items
 
+The Function and solver API over declared trees is implemented in `src/alloy`. Templates and the typed
+`vmap` candidate remain sketches. Follow-up work is tracked as D3.1 to D3.3 in
+[`internal/todo.md`](../internal/todo.md), with production constraints in
+[`internal/notes/refactorings.md`](../internal/notes/refactorings.md).
+
 - **Names for `L` and `G`.** They carry no meaning to a reader who did not design them; `leaf` and
   `group` are the honest pytree words. Verbosity is a separate complaint and is not fixed by
   renaming: fold the outer group into `function(*inputs, outputs=...)` by moving the width ladder
@@ -190,6 +195,9 @@ swapped:
   function.
 - **Mangling flattens structure.** Two nestings with the same flat shapes would collide in C symbol
   names; the real scheme must encode the nesting.
+- **Tensor metadata is absent from specialization.** Define how dtype and differentiability bind
+  when a shape is inferred. Cache keys and C names must distinguish metadata that changes the
+  concrete graph, and lifted seed trees must match the generated Function inputs.
 - **The bare mode traces twice**, once to learn the output structure and once in `Function`. Trace
   once.
 - **Error vocabulary.** Instantiation-time shape mismatches surface as `TypeError` from `resolved`;

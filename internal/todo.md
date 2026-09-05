@@ -15,8 +15,8 @@ The single actionable list. Rationale lives elsewhere and is linked, never resta
 Last reorganized 2026-08-25, after the fairness audit. Ordered by dependency, not by size: the
 groups below have to happen roughly in sequence, and items inside a group are independent.
 
-Agreed order for the coming sessions (2026-08-26): D2, then D1, then D1.5, then A11, each landed on
-its own so a failure can be attributed.
+D2, D1, D1.5, and A11 are complete. D3 completes the solver API work on 2026-09-05. Continue API
+iteration on dev through D3.1 to D3.3 below; A12 and the B items still precede the pilot run.
 
 ## A. Harness work, before any headline run
 
@@ -120,10 +120,9 @@ group completes.
 
 ## D. API and release, before the paper freezes
 
-Every refactoring in `internal/notes/refactorings.md` lands before submission, D1 to D4 below. Each
-undecided refactoring has one `#` section in that file; completed sections are removed when they
-land. The design is that note's; only the lifecycle is here. Paper examples freeze after D1 and D2,
-which is what fixes the spellings they use.
+D1 to D4 are the refactorings required before submission. The remaining designs live in
+`internal/notes/refactorings.md`; completed sections are removed when they land. D3.1 to D3.3 are
+follow-ups on dev, not prerequisites for merging D3. Paper examples freeze after D1 and D2.
 
 - [ ] **D0. Move `internal/paper.md` out of this repository before merging to main.** Blocking, and
       enforced: `.config/wt.toml` has a `pre-merge` check that fails while the file is tracked.
@@ -135,9 +134,10 @@ which is what fixes the spellings they use.
       `git filter-repo --path internal/paper.md --invert-paths`, which rewrites every SHA from its
       first appearance onward and breaks any archive link or tag that references an old one.
 
-      **The window is open now and closing it is cheap.** The file has never been on main. It exists
-      only in unpushed commits on this branch, and `wt merge` squashes, so moving it out before the
-      merge means main never sees it and no history is rewritten.
+      The file has never been on main, but it is tracked in dev's history. Fast-forwarding this
+      API branch to dev preserves that history. Before merging dev into main, move the note out
+      and squash the public changes, or remove the private path from the history being published.
+      Deleting the file alone does not make a fast-forward to main safe.
 
       The design, agreed 2026-08-25:
 
@@ -178,15 +178,23 @@ which is what fixes the spellings they use.
       one change, so no tree carries both spellings; tests and benchmarks, including the pinned
       pytest node-ID baseline; and the public docs are all on `VMAP`/`vmap`. `al.scan` and
       `al.map_` are gone. Completed 2026-08-26.
-- [ ] **D3. Land the solver-problem construction API.** Decided 2026-08-27: inputs and outputs
+- [x] **D3. Land the solver-problem construction API.** Completed 2026-09-05: inputs and outputs
       are declared pytrees (`al.L` leaves, `al.G` groups) carrying both the symbolic and numeric
       structure, `Function` generic in its two trees, derivatives keeping the source's inputs, one
       `ProblemSpec` of expressions, one `al.solver` returning a plain `Function` whose QP backends
       are gated by a structural quadratic proof, `qp_problem(n, n_eq, n_ineq)` as the typed data
       form, and a `tests/typing/` harness under `ty check --error-on-warning`. Deletes `al.nlp`,
-      `al.qp` and `SolverFunction`. D2, D1, D1.5 and A11 have landed; the `ty>=0.0.75` bump it
-      needs is done. Design:
-      refactorings.md "Solver problem construction".
+      `al.qp` and `SolverFunction`. The design record remains in `typing_playground/`; the public
+      behavior is documented in `docs/guide/functions.md` and `docs/guide/solvers.md`.
+- [ ] **D3.1. Implement `FunctionTemplate` over concrete Functions**, including specialization,
+      deterministic C names, one trace per instance, and lifted derivatives. Design:
+      refactorings.md "Function templates" and `typing_playground/README.md`.
+- [ ] **D3.2. Preserve declared trees through `vmap` and Function-level differentiation.** Settle
+      the mapped input convention and retain runtime and static acceptance tests. Rationale:
+      refactorings.md "`vmap` and the AD entry points erase the callee's declared trees".
+- [ ] **D3.3. Decide the zero-input Function contract and reduce the private flat call path.**
+      Preserve legitimate parameterless solver oracles. Rationale: refactorings.md
+      "Zero-input `Function`s, and the flat call seam that survives because of them".
 - [ ] **D4. One matcher: op-indexed tables and one walk-rebuild.** Conditional by design — it lands
       only if the result is smaller than the 78 + 71 lines of `ir/match.py` and `ir/spec.py`, and
       closing the section unlanded is a permitted outcome that still has to be written down. After
@@ -231,6 +239,10 @@ audit found in the results pages: prose that outran what the code does.
 ## F. Backlog, not scheduled
 
 Kept because the reasoning is still good, not because anything depends on them.
+
+- **Make the compiled CasADi IPOPT cache survive worktree removal.** Include the library search
+  paths in the cache identity or make cached artifacts independent of them. Rationale:
+  refactorings.md "Compiled CasADi artifacts across worktrees".
 
 - **Separate the IPOPT gap into version against build configuration.** Rebuild 3.14.11 with our
   hook's flags, or 3.14.19 against the wheel's OpenBLAS. "We ship a better-tuned linear algebra
