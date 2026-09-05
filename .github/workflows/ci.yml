@@ -145,32 +145,6 @@ jobs:
       - name: Pytest node-ID baseline
         run: uv run pytest --collect-only -q
 
-  docs:
-    name: docs
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Install docs dependencies
-        run: uv sync --only-group docs
-
-      # The build emits a warning per broken internal link and per page missing from the nav.
-      # Those are the failures worth catching, so the run is failed on any warning rather than
-      # left green with a wall of them.
-      - name: Build the documentation site
-        run: |
-          set -o pipefail
-          uv run --only-group docs zensical build 2>&1 | tee build.log
-          if grep -qE "^(Warning|Error):" build.log; then
-            echo "::error::the docs build reported warnings or errors (broken links, missing pages)"
-            grep -E "^(Warning|Error):" build.log | sort | uniq -c
-            exit 1
-          fi
-
   tests-core:
     name: core tests / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

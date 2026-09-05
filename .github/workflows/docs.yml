@@ -1,0 +1,49 @@
+name: Docs
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install docs dependencies
+        run: uv sync --frozen --only-group docs
+
+      # The build emits a warning per broken internal link and per page missing from the nav.
+      # Those are the failures worth catching, so the run is failed on any warning rather than
+      # left green with a wall of them.
+      - name: Build the documentation site
+        run: |
+          set -o pipefail
+          uv run --frozen --only-group docs zensical build 2>&1 | tee build.log
+          if grep -qE "^(Warning|Error):" build.log; then
+            echo "::error::the docs build reported warnings or errors (broken links, missing pages)"
+            grep -E "^(Warning|Error):" build.log | sort | uniq -c
+            exit 1
+          fi
+
+      - name: Deploy to Cloudflare Pages
+        if: github.event_name != 'pull_request' && vars.CLOUDFLARE_PAGES_PROJECT != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site --project-name="alloy-docs" --branch="${{ github.ref_name }}"
