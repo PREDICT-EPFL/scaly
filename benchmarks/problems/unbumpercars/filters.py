@@ -585,10 +585,8 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
   states_next = al.vmap(step_fn, ncars, [(bar_x, 0, NSTATE), (u, 0, NCTRL), (pw, 0, 0), (physics, 0, 0), (dt, 0, 0)])
   hcbf, R = loop_cfg.hcbf, loop_cfg.safety_radius
 
-  def pair_b(pack: al.Expr, i: int, j: int) -> al.Expr:
+  def pair_b(xi: al.Expr, xj: al.Expr, physics: al.Expr) -> al.Expr:
     """Order-1 hyperbolic pair barrier; see ``common.HCBFConfig``."""
-    xi = pack[NSTATE * i : NSTATE * (i + 1)]
-    xj = pack[NSTATE * j : NSTATE * (j + 1)]
     px, py = xj[0] - xi[0], xj[1] - xi[1]
     vxi, vyi, _ = _world_vel_expr(xi, physics)
     vxj, vyj, _ = _world_vel_expr(xj, physics)
@@ -620,16 +618,38 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
       out.append((s * v_max - v_closing))
     return out
 
+  @al.function(
+    al.G(al.L("xi", NSTATE), al.L("xj", NSTATE), al.L("xi_next", NSTATE), al.L("xj_next", NSTATE), al.L("physics", N_PHYSICS)),
+    al.L("g", 1),
+    name="pair_hcbf",
+  )
+  def pair_hcbf(inputs):
+    xi, xj, xi_next, xj_next, physics = inputs
+    return al.stack([pair_b(xi_next, xj_next, physics) - (1.0 - loop_cfg.pair_gamma) * pair_b(xi, xj, physics)])
+
   rows: list[al.Expr] = []
-  for i in range(ncars):
-    for j in range(i + 1, ncars):
-      rows.append((pair_b(states_next, i, j) - (1.0 - loop_cfg.pair_gamma) * pair_b(bar_x, i, j)))
+  if loop_cfg.n_pairs:
+    pairs = np.triu_indices(ncars, k=1)
+    idx_i, idx_j = [np.concatenate([np.arange(NSTATE) + k * NSTATE for k in bodies]) for bodies in pairs]
+    rows.append(
+      al.vmap(
+        pair_hcbf,
+        loop_cfg.n_pairs,
+        [
+          (al.gather(bar_x, idx_i), 0, NSTATE),
+          (al.gather(bar_x, idx_j), 0, NSTATE),
+          (al.gather(states_next, idx_i), 0, NSTATE),
+          (al.gather(states_next, idx_j), 0, NSTATE),
+          (physics, 0, 0),
+        ],
+      )
+    )
   if loop_cfg.arena_avoidance:
     for i in range(ncars):
       for bn, bc in zip(wall_b(states_next, i), wall_b(bar_x, i), strict=True):
-        rows.append((bn - (1.0 - loop_cfg.wall_gamma) * bc))
-  assert len(rows) == n_s
-  g = (al.stack(rows) + slack) if rows else al.const(np.zeros((0,)))
+        rows.append(al.stack([bn - (1.0 - loop_cfg.wall_gamma) * bc]))
+  g = (al.concat(rows) + slack) if rows else al.const(np.zeros((0,)))
+  assert g.shape == (n_s,)
   diff = u - u_des
   weights = al.const(np.tile(np.asarray(filt_cfg.R, dtype=np.float64), ncars))
   cost = al.dot(diff, weights * diff) + filt_cfg.slack_weight * slack.sum()

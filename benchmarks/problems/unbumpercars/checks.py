@@ -15,6 +15,7 @@ reproductions in ``tests/ad/test_sparsity.py`` and
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from itertools import product
 from typing import cast
 
 import alloy as al
@@ -57,8 +58,8 @@ def check_oracle_matches_casadi() -> None:
   """Alloy and CasADi build the same cost and constraint rows for the same filter, either model."""
   from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter, build_alloy_oracle
 
-  for model in ("ct", "dt"):
-    loop_cfg = ClosedLoopConfig(ncars=2)
+  for model, ncars, arena in product(("ct", "dt"), (1, 4), (False, True)):
+    loop_cfg = ClosedLoopConfig(ncars=ncars, arena_avoidance=arena)
     filt_cfg = FilterConfig(model=model)
     weights = load_dt_mlp_weights() if model == "dt" else load_ct_full_weights()
     oracle = build_alloy_oracle(loop_cfg, filt_cfg)
@@ -74,7 +75,33 @@ def check_oracle_matches_casadi() -> None:
     cost_al, g_al = oracle((z, bar_x, u_des, weights.packed, physics, dt))
     np.testing.assert_allclose(np.asarray(cost_al).reshape(-1), np.asarray(ca_filt.cost_fn(z, p)).reshape(-1), rtol=1e-9, atol=1e-9)
     np.testing.assert_allclose(np.asarray(g_al).reshape(-1), np.asarray(ca_filt.g_fn(z, p)).reshape(-1), rtol=1e-9, atol=1e-9)
-    assert np.asarray(g_al).size == loop_cfg.n_slack == loop_cfg.n_pairs + 4 * loop_cfg.ncars
+    assert np.asarray(g_al).size == loop_cfg.n_slack
+    if loop_cfg.n_pairs:
+      args = (z, bar_x, u_des, weights.packed, physics, dt)
+      for spec, reference in (
+        (al.factory.SpJac("g", "z"), np.asarray(ca_filt.jac_fn(z, p))),
+        (al.factory.SpHess("gamma", "z"), np.asarray(ca_filt.hess_fn(z, p, 0.0, np.arange(1.0, loop_cfg.n_slack + 1)))),
+      ):
+        is_hess = isinstance(spec, al.factory.SpHess)
+        derivative = oracle.factory("pair_derivative", [*oracle.input_names, *(["lam:g"] if is_hess else [])], [spec], aux={"gamma": ["g"]})
+        sparsity = derivative.output_sparsities[0]
+        assert sparsity is not None
+        values = derivative((*args, np.arange(1.0, loop_cfg.n_slack + 1)) if is_hess else args)
+        np.testing.assert_allclose(values, reference[sparsity.rows, sparsity.cols], rtol=1e-8, atol=1e-9)
+        np.testing.assert_allclose(reference[~sparsity.to_mask()], 0.0, atol=1e-12)
+
+
+def check_pair_jac_codegen_growth() -> None:
+  """Mapped pair arithmetic keeps Jacobian source-line growth below the unrolled formulation."""
+  from alloy.codegen.aot import render_c_source
+  from benchmarks.problems.unbumpercars.filters import build_alloy_oracle
+
+  lines = []
+  for ncars in (2, 4, 8):
+    oracle = build_alloy_oracle(ClosedLoopConfig(ncars=ncars), FilterConfig())
+    jac = oracle.factory("pair_jac", list(oracle.input_names), [al.factory.SpJac("g", "z")])
+    lines.append(len(render_c_source(jac).splitlines()))
+  assert lines[-1] < 2 * lines[0], f"pair Jacobian source lines grew too fast for C=2,4,8: {lines}"
 
 
 def check_parameter_tail_order() -> None:
@@ -504,6 +531,7 @@ def check_sqp_oracles_agree() -> None:
 CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "default_output_dir": (check_default_output_dir, False, False),
   "oracle_matches_casadi": (check_oracle_matches_casadi, False, True),
+  "pair_jac_codegen_growth": (check_pair_jac_codegen_growth, False, False),
   "parameter_tail_order": (check_parameter_tail_order, False, False),
   "pair_barrier_is_order_one": (check_pair_barrier_is_order_one, False, False),
   "velocity_wall_barrier_has_control_authority": (check_velocity_wall_barrier_has_control_authority, True, True),
