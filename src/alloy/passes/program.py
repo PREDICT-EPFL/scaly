@@ -9,8 +9,7 @@ Program IR), optimize (Program IR -> Program IR), render (Program IR -> C). New 
 (CSE, peepholes, GPU schedule passes) slot in as additional passes without touching the
 lowerer or renderer.
 
-These optimizations originally lived baked into the now-deleted legacy tape renderer; the
-migration re-expressed them as explicit, individually-testable Program IR passes:
+The pipeline runs these Program IR passes:
 
 - ``combine_scatter_sums`` accumulates sums of single-use zero-filled scatters into one
   destination, avoiding full-length pad buffers in slice adjoints.

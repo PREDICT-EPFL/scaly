@@ -460,16 +460,16 @@ a wide product is denser than the sum of per-repetition Hessians:
 The one thing batching buys is reach: at npmpc N=50 the batched graph still compiles inside the
 timeout where unrolled `casadi_mx` does not. The backends stay in the sweep as the recorded negative.
 
-**Alloy gains nothing from CSE, and its race-car gap is quadratic work from the unrolled cost.** The
-expression DAG is hash-consed at construction, so alloy's race-car Hessian already evaluates 14
-transcendentals per stage, CasADi's count after CSE. Alloy's runtime is nevertheless superlinear in
-the horizon (0.51, 0.56, 0.80, 1.51 µs per stage at N = 10, 25, 50, 100) where CasADi is linear, and
-the sweep's workspace column says why: 0 doubles up to N=10, then 2400, 73 296 and 266 496. The cost
-in `_race_car_nlp` is a Python loop over stages; every `z[i*NZ:(i+1)*NZ]` slice has a pad as its
-adjoint, and the coloured forward sweep over N pads materialises N full-length seed buffers, each
-zero-filled then written in 24 places. The equality and corridor rows are vmapped and do not do this.
+**The unrolled race-car cost caused quadratic work during the audit.** The expression DAG is
+hash-consed at construction, so alloy's race-car Hessian already evaluated 14 transcendentals per
+stage, CasADi's count after CSE. Alloy's runtime was nevertheless superlinear in the horizon
+(0.51, 0.56, 0.80, 1.51 µs per stage at N = 10, 25, 50, 100) where CasADi was linear. The sweep's
+workspace column showed 0 doubles up to N=10, then 2400, 73 296 and 266 496. At the time, the cost
+in `_race_car_nlp` was a Python loop over stages. Every `z[i*NZ:(i+1)*NZ]` slice had a pad as its
+adjoint, and the coloured forward sweep over N pads materialised N full-length seed buffers, each
+zero-filled then written in 24 places. The equality and corridor rows were already vmapped.
 Rewriting the cost as one `vmap` over a six-residual stage function, with the per-stage weights in a
-constant vector, computes the same Hessian to 0.0 on every shared entry and gives:
+constant vector, computed the same Hessian to 0.0 on every shared entry and gave:
 
 | N | alloy, unrolled cost | alloy, vmapped cost | CasADi SX + `transform` |
 |---:|---:|---:|---:|
@@ -479,10 +479,9 @@ constant vector, computes the same Hessian to 0.0 on every shared entry and give
 
 Linear, constant source, and 1.5× behind CSE'd SX at every horizon instead of 4.5× at N=100. The
 remaining factor is the small-stage handicap already described for narrow decoders: 1492 loops of
-trip count 4 and four seed colours on a kernel this cheap. Two consequences are tracked in
-`internal/todo.md`: the race-car cost becomes a `vmap` in the benchmark, and alloy's lowering learns to
-turn a sum of N pads into one zero-fill and N scatter-adds, since users will keep writing Python loops
-over slices.
+trip count 4 and four seed colours on a kernel this cheap. The benchmark now maps the race-car
+cost. Alloy's program passes also combine left-associated sums of single-use pads into one
+zero-fill and one scatter-add per term, preserving addition order for overlapping entries.
 
 **ONNX import is a modelling convenience, not a performance change.** Symbolic import produces the
 same `MX` graph one writes by hand and lands in the kernels above.

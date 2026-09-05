@@ -100,8 +100,8 @@ uv run benchmarks/run.py sweep --workloads race_cars --sizes 1,5,10,50 --backend
 uv run benchmarks/run.py sweep --out benchmarks/results/sweep/my-sweep.csv
 ```
 
-`--casadi-transform` runs CasADi 3.8's `Function.transform()` simplification flow on every CasADi
-kernel before it is generated. The unsuffixed workload on each axis measures the exact sparse Lagrangian Hessian from the solver
+Sweeps run CasADi 3.8's `Function.transform()` simplification flow on every CasADi kernel before
+generating code. `--casadi-transform` is enabled by default; use `--no-casadi-transform` to disable it. The unsuffixed workload on each axis measures the exact sparse Lagrangian Hessian from the solver
 descriptor. Add `_jac` to `chain`, `race_cars`, `npmpc`, or `npmpc_decoder` to run the constraint
 Jacobian row retained for the long paper. The default sweep runs only the Hessian workloads.
 

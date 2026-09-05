@@ -16,7 +16,7 @@ Last reorganized 2026-08-25, after the fairness audit. Ordered by dependency, no
 groups below have to happen roughly in sequence, and items inside a group are independent.
 
 D2, D1, D1.5, and A11 are complete. D3 completes the solver API work on 2026-09-05. Continue API
-iteration on dev through D3.1 to D3.3 below; A12 and the B items still precede the pilot run.
+iteration on dev through D3.1 to D3.3 below; A9, A10 and B2 still precede the pilot run.
 
 ## A. Harness work, before any headline run
 
@@ -66,7 +66,7 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
 - [ ] **A9. Derive the mode table from the runs.** Time-to-first-solve and per-step cost, two modes
       for Alloy and three for CasADi. No separate script: the build cost and steady-state mean are
       already recorded. Rationale: paper.md §6, Table 2.
-- [ ] **A12. Take every CasADi kernel after `transform({})`.** Make `--casadi-transform` the sweep
+- [x] **A12. Take every CasADi kernel after `transform({})`.** Make `--casadi-transform` the sweep
       default and apply the same flow to the compiled closed-loop `nlpsol` oracles, so both CasADi
       columns are CasADi's best configuration. Rationale: fairness.md "CasADi 3.8".
 - [ ] **A10. Keep the machine honest.** Pin the `performance` governor for headline runs and test
@@ -75,7 +75,7 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
 
 ## B. Formulation work that gates a claim
 
-- [ ] **B1. Map the unbumpercars pair rows instead of unrolling them.** Highest risk-adjusted item in
+- [x] **B1. Map the unbumpercars pair rows instead of unrolling them.** Highest risk-adjusted item in
       this file and a **submission gate**: the `C(C-1)/2` pair barriers are built by a Python loop, so
       Alloy's own generated source grows quadratically on exactly the axis of the figure it feeds
       (`spjac:g:z` goes 845 -> 1403 -> 3455 lines for C = 2 -> 4 -> 8). This is the one place where
@@ -88,12 +88,12 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
       and the first map's output. The pattern survives as
       `tests/integration/test_vmap.py::test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense`.
       Retain the exact-Hessian correctness gates through the port.
-- [ ] **B3. Vmap the race-car cost.** `_race_car_nlp` builds the cost as a Python loop over stage
+- [x] **B3. Vmap the race-car cost.** `_race_car_nlp` builds the cost as a Python loop over stage
       slices, which makes the Hessian's workspace and runtime quadratic in the horizon; one `vmap`
       over a six-residual stage function with per-stage weights in a constant vector is exact and
       3× faster at N=100. Delete the left-fold workaround comment with it, and re-run the race-car
       smoke gates. Rationale: fairness.md "CasADi 3.8".
-- [ ] **B4. Lower a sum of pads as one zero-fill and N scatter-adds** (alloy core). The adjoint of a
+- [x] **B4. Lower a sum of pads as one zero-fill and N scatter-adds** (alloy core). The adjoint of a
       slice is a pad, and N pads accumulated into one long vector currently zero-fill N full-length
       buffers; this is what B3 works around and what any user loop over slices will hit. A
       program-dialect rewrite in `passes/program.py`, with a `tests/` reproduction that pins the

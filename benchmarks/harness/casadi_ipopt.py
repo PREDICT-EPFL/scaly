@@ -176,7 +176,7 @@ def _transformed_nlpsol(name: str, problem: dict, options: dict):
   import casadi as ca
 
   solver = ca.nlpsol(name, "ipopt", problem, options)
-  cache = {name: solver.get_function(name).transform({}) for name in solver.get_function()}
+  cache = {oracle_name: solver.get_function(oracle_name).transform({}) for oracle_name in solver.get_function()}
   return ca.nlpsol(name, "ipopt", problem, {**options, "cache": {**options.get("cache", {}), **cache}})
 
 
