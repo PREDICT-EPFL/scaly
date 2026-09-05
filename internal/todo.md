@@ -66,6 +66,9 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
 - [ ] **A9. Derive the mode table from the runs.** Time-to-first-solve and per-step cost, two modes
       for Alloy and three for CasADi. No separate script: the build cost and steady-state mean are
       already recorded. Rationale: paper.md §6, Table 2.
+- [ ] **A12. Take every CasADi kernel after `transform({})`.** Make `--casadi-transform` the sweep
+      default and apply the same flow to the compiled closed-loop `nlpsol` oracles, so both CasADi
+      columns are CasADi's best configuration. Rationale: fairness.md "CasADi 3.8".
 - [ ] **A10. Keep the machine honest.** Pin the `performance` governor for headline runs and test
       whether disabling boost reduces dispersion. Add repeated fresh processes, varied backend order,
       and reported dispersion. Rationale: fairness.md "The reference machine".
@@ -85,6 +88,16 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
       and the first map's output. The pattern survives as
       `tests/integration/test_vmap.py::test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense`.
       Retain the exact-Hessian correctness gates through the port.
+- [ ] **B3. Vmap the race-car cost.** `_race_car_nlp` builds the cost as a Python loop over stage
+      slices, which makes the Hessian's workspace and runtime quadratic in the horizon; one `vmap`
+      over a six-residual stage function with per-stage weights in a constant vector is exact and
+      3× faster at N=100. Delete the left-fold workaround comment with it, and re-run the race-car
+      smoke gates. Rationale: fairness.md "CasADi 3.8".
+- [ ] **B4. Lower a sum of pads as one zero-fill and N scatter-adds** (alloy core). The adjoint of a
+      slice is a pad, and N pads accumulated into one long vector currently zero-fill N full-length
+      buffers; this is what B3 works around and what any user loop over slices will hit. A
+      program-dialect rewrite in `passes/program.py`, with a `tests/` reproduction that pins the
+      buffer count. Rationale: fairness.md "CasADi 3.8".
 - [ ] **B2. Move the chain and unbumpercars correctness checks onto the problem side**, as
       `race_cars` does: problem gates into `benchmarks/problems/*/checks.py` behind
       `run.py smoke --select problems`, and a self-contained minimal reproduction of whatever
@@ -219,9 +232,6 @@ audit found in the results pages: prose that outran what the code does.
 
 Kept because the reasoning is still good, not because anything depends on them.
 
-- **Decide `ca.cse` per problem.** The chain CasADi cells call it and the others do not; measured
-  at 7% of function evaluation on race_cars and unmeasured on npmpc and unbumpercars. Rationale:
-  fairness.md "The measurement protocol".
 - **Separate the IPOPT gap into version against build configuration.** Rebuild 3.14.11 with our
   hook's flags, or 3.14.19 against the wheel's OpenBLAS. "We ship a better-tuned linear algebra
   stack" is defensible; "our IPOPT is newer" is not. Rationale: paper.md §5.4.

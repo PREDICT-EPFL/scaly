@@ -88,7 +88,15 @@ class CasadiDTCBFSafetyFilter:
   name = "casadi_dt_hcbf"
 
   def __init__(
-    self, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights: CTFullWeights | DTMLPWeights, *, _build_solver: bool = True, _sym_t=None
+    self,
+    loop_cfg: ClosedLoopConfig,
+    filt_cfg: FilterConfig,
+    weights: CTFullWeights | DTMLPWeights,
+    *,
+    _build_solver: bool = True,
+    _sym_t=None,
+    _mlp: str = "percar",
+    _mtimes: str | None = None,
   ):
     import casadi as ca
 
@@ -108,7 +116,14 @@ class CasadiDTCBFSafetyFilter:
     self.last_lam_g: np.ndarray | None = None
     self._build_ms = 0.0
     self._sym_t = ca.MX if _sym_t is None else _sym_t
+    # _mlp="batched" evaluates every car's MLP layer as one matrix-matrix product; _mtimes picks
+    # CasADi 3.8's kernel ("reference", "classic" BLAS or "blasfeo") for the dense products.
+    self._mlp = _mlp
+    self._mtimes = _mtimes
     self._build(_build_solver)
+
+  def _mm(self, a, b):
+    return self.ca.mtimes(a, b) if self._mtimes is None else self.ca.mtimes(a, b, self._mtimes)
 
   def _unpack_pw(self, pw):
     ca = self.ca
@@ -198,11 +213,29 @@ class CasadiDTCBFSafetyFilter:
     x_scale, w0, b0, w1, b1, w2, b2 = self._unpack_pw_dt(pw)
     phi = ca.vertcat(ca.vertcat(x[3], x[4] - delta, x[5], delta) / x_scale, u[1], u[0])
     smooth_relu = lambda t: 0.5 * (t + ca.sqrt(t * t + DT_RELU_EPS**2))  # noqa: E731
-    h = smooth_relu(w0 @ phi + b0)
-    h = smooth_relu(w1 @ h + b1)
-    learned = w2 @ h + b2
+    h = smooth_relu(self._mm(w0, phi) + b0)
+    h = smooth_relu(self._mm(w1, h) + b1)
+    learned = self._mm(w2, h) + b2
     delta_next = delta + dt * (u[1] * max_delta - delta) / steering_time_constant
     return ca.vertcat(self._pose_rk4(x, physics, dt), learned[0], learned[1] + delta_next, learned[2], delta_next)
+
+  def _dt_step_batched(self, states, us, pw, physics, dt) -> list[Any]:
+    """``_dt_step`` for every car at once: the MLP layers become ``W @ [phi_1 ... phi_C]``."""
+    ca = self.ca
+    max_delta, steering_time_constant = physics[2], physics[3]
+    x_scale, w0, b0, w1, b1, w2, b2 = self._unpack_pw_dt(pw)
+    n = len(states)
+    phis = [ca.vertcat(ca.vertcat(x[3], x[4] - x[6], x[5], x[6]) / x_scale, u[1], u[0]) for x, u in zip(states, us, strict=True)]
+    smooth_relu = lambda t: 0.5 * (t + ca.sqrt(t * t + DT_RELU_EPS**2))  # noqa: E731
+    h = smooth_relu(self._mm(w0, ca.horzcat(*phis)) + ca.repmat(b0, 1, n))
+    h = smooth_relu(self._mm(w1, h) + ca.repmat(b1, 1, n))
+    learned = self._mm(w2, h) + ca.repmat(b2, 1, n)
+    out = []
+    for i, (x, u) in enumerate(zip(states, us, strict=True)):
+      delta = x[6]
+      delta_next = delta + dt * (u[1] * max_delta - delta) / steering_time_constant
+      out.append(ca.vertcat(self._pose_rk4(x, physics, dt), learned[0, i], learned[1, i] + delta_next, learned[2, i], delta_next))
+    return out
 
   def _step(self, x, u, pw, physics, dt):
     return self._dt_step(x, u, pw, physics, dt) if self.filt_cfg.model == "dt" else self._rk4(x, u, pw, physics, dt)
@@ -255,7 +288,12 @@ class CasadiDTCBFSafetyFilter:
     u = z[: self.n_u]
     slack = z[self.n_u :]
     states = [bar_x[NSTATE * i : NSTATE * (i + 1)] for i in range(self.ncars)]
-    states_next = [self._step(states[i], u[NCTRL * i : NCTRL * (i + 1)], pw, physics, dt) for i in range(self.ncars)]
+    us = [u[NCTRL * i : NCTRL * (i + 1)] for i in range(self.ncars)]
+    if self._mlp == "batched":
+      assert self.filt_cfg.model == "dt", "the batched MLP is only written for the discrete model"
+      states_next = self._dt_step_batched(states, us, pw, physics, dt)
+    else:
+      states_next = [self._step(states[i], us[i], pw, physics, dt) for i in range(self.ncars)]
 
     rows = []
     for i in range(self.ncars):

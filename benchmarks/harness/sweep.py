@@ -33,9 +33,18 @@ DEFAULT_SIZES = {
   "npmpc_decoder": [16, 32, 64, 128, 256],
   "npmpc_decoder_jac": [16, 32, 64, 128, 256],
 }
-BACKENDS = ("alloy", "casadi_sx", "casadi_mx", "casadi_call_mx", "casadi_map_sx")
-UNBUMPERCARS_BACKENDS = ("alloy", "casadi_sx", "casadi_mx")
-DEFAULT_BACKENDS = {workload: UNBUMPERCARS_BACKENDS if workload == "unbumpercars" else BACKENDS for workload in DEFAULT_SIZES}
+STAGE_BACKENDS = ("alloy", "casadi_sx", "casadi_mx", "casadi_call_mx", "casadi_map_sx")
+# The gemm encodings batch every repetition's dense network layer into one matrix-matrix product,
+# so they exist only for the two problems with a network in the stage.
+GEMM_BACKENDS = ("casadi_mx_gemm", "casadi_mx_gemm_classic", "casadi_mx_gemm_blasfeo")
+BACKENDS = (*STAGE_BACKENDS, *GEMM_BACKENDS)
+NPMPC_WORKLOADS = ("npmpc", "npmpc_jac", "npmpc_decoder", "npmpc_decoder_jac")
+DEFAULT_BACKENDS = {
+  workload: ("alloy", "casadi_sx", "casadi_mx", *GEMM_BACKENDS)
+  if workload == "unbumpercars"
+  else (BACKENDS if workload in NPMPC_WORKLOADS else STAGE_BACKENDS)
+  for workload in DEFAULT_SIZES
+}
 CELL_AXES = {
   "chain": "M",
   "chain_jac": "M",
@@ -47,7 +56,6 @@ CELL_AXES = {
   "npmpc_decoder": "W",
   "npmpc_decoder_jac": "W",
 }
-NPMPC_WORKLOADS = ("npmpc", "npmpc_jac", "npmpc_decoder", "npmpc_decoder_jac")
 
 
 def _kernel_kind(workload: str) -> str:
@@ -548,16 +556,22 @@ def _npmpc_alloy(workload: str, size: int, out_dir: Path) -> dict:
   )
 
 
-def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
+def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform: bool = False) -> dict:
   import casadi as ca
 
   kind = backend.removeprefix("casadi_")
-  if kind not in {"sx", "mx", "call_mx", "map_sx"}:
+  if backend not in BACKENDS or kind == "alloy":
     raise ValueError(f"unsupported CasADi backend {backend!r}")
   repeated = kind in {"call_mx", "map_sx"}
   mapped = kind == "map_sx"
+  gemm = backend in GEMM_BACKENDS
+  mtimes = (kind.removeprefix("mx_gemm").removeprefix("_") or None) if gemm else None
   sym_t = ca.SX if kind in {"sx", "map_sx"} else ca.MX
-  label = {"sx": "Sx", "mx": "Mx", "call_mx": "CallMx", "map_sx": "MapSx"}[kind]
+  label = {"sx": "Sx", "mx": "Mx", "call_mx": "CallMx", "map_sx": "MapSx"}.get(kind, "MxGemm" + (mtimes or "").capitalize())
+  extra_libs: list[str] = []
+  if mtimes in ("classic", "blasfeo"):
+    casadi_dir = Path(ca.__file__).parent
+    extra_libs = [str(casadi_dir / ("libcasadi-tp-openblas.so.0" if mtimes == "classic" else "libblasfeo.so.0")), f"-Wl,-rpath,{casadi_dir}"]
   stem = {
     "chain": "chain_lag",
     "chain_jac": "chain_eq",
@@ -577,6 +591,8 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
   expand = kind == "sx"
   cse = workload in ("chain", "chain_jac")
   started = time.perf_counter()
+  if gemm and workload not in ("unbumpercars", *NPMPC_WORKLOADS):
+    raise ValueError(f"{backend} is not defined for {workload}")
   if workload in ("chain", "chain_jac"):
     horizon = chain.HORIZON
     z, p, cost, constraints = chain._ca_nlp_pieces(size, horizon, sym_t, map_stages=mapped, call_stages=repeated)
@@ -597,20 +613,23 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
     pieces = (
       _npmpc_repeated_pieces(horizon, decoder, terminal, sym_t, mapped=mapped)
       if repeated
-      else npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, P=terminal)
+      else npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, P=terminal, batched=gemm, mtimes=mtimes)
     )
     constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
     fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, kernel, expand=expand)
     benchmark = f"BM_Casadi{label}NpmpcLagHess{axis}{size}" if kernel == "hess" else f"BM_Casadi{label}NpmpcConstraintJac{axis}{size}"
   else:
-    if repeated:
-      raise ValueError(f"{backend} is not defined for {workload}")
-
     from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig, load_dt_mlp_weights
     from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter
 
     controller = CasadiDTCBFSafetyFilter(
-      ClosedLoopConfig(ncars=size), FilterConfig(model="dt"), load_dt_mlp_weights(), _build_solver=False, _sym_t=sym_t
+      ClosedLoopConfig(ncars=size),
+      FilterConfig(model="dt"),
+      load_dt_mlp_weights(),
+      _build_solver=False,
+      _sym_t=sym_t,
+      _mlp="batched" if gemm else "percar",
+      _mtimes=mtimes,
     )
     fn = _casadi_descriptor_kernel(
       ca,
@@ -623,6 +642,8 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
       expand=expand,
     )
     benchmark = f"BM_Casadi{label}UnbumpercarsLagHessC{size}"
+  if transform:
+    fn = fn.transform({})
   build_ms = (time.perf_counter() - started) * 1000
 
   started = time.perf_counter()
@@ -663,11 +684,12 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path) -> dict:
     "render_ms": render_ms,
     "benchmark": benchmark,
     "callable": fn,
+    "extra_libs": extra_libs,
     **details,
   }
 
 
-def build_kernel(workload: str, size: int, backend: str, out_dir: Path) -> dict:
+def build_kernel(workload: str, size: int, backend: str, out_dir: Path, *, casadi_transform: bool = False) -> dict:
   if backend == "alloy":
     if workload in NPMPC_WORKLOADS:
       return _npmpc_alloy(workload, size, out_dir)
@@ -676,7 +698,7 @@ def build_kernel(workload: str, size: int, backend: str, out_dir: Path) -> dict:
     if workload in ("race_cars", "race_cars_jac"):
       return _race_cars_alloy(workload, size, out_dir)
     return _unbumpercars_alloy(size, out_dir)
-  return _casadi(workload, size, backend, out_dir)
+  return _casadi(workload, size, backend, out_dir, transform=casadi_transform)
 
 
 def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
@@ -870,13 +892,14 @@ def run_cell(
   max_source_mb: float,
   benchmark_min_time: str,
   load_harvested: bool = True,
+  casadi_transform: bool = False,
 ) -> tuple[dict[str, object], dict | None]:
   if out_dir.exists():
     shutil.rmtree(out_dir)
   out_dir.mkdir(parents=True)
   try:
     with codegen_deadline(codegen_timeout):
-      info = build_kernel(workload, size, backend, out_dir)
+      info = build_kernel(workload, size, backend, out_dir, casadi_transform=casadi_transform)
   except CodegenTimeout as e:
     return row(workload=workload, size=size, backend=backend, compile_status="codegen_timeout", runtime_status="skipped", note=str(e)), None
   except Exception as e:
@@ -977,6 +1000,7 @@ def run_sweep(args, cli_args: list[str]) -> bool:
               compile_timeout=args.compile_timeout,
               max_source_mb=args.max_source_mb,
               benchmark_min_time=args.benchmark_min_time,
+              casadi_transform=getattr(args, "casadi_transform", False),
             )
           writer.writerow(result)
           fp.flush()

@@ -25,7 +25,7 @@ the race-car cell that reads 10.27 us in an older table measures 19.47 us here.
 | Memory | 30 GB |
 | OS | Ubuntu 24.04.4 LTS, kernel 7.0.0-28-generic, glibc 2.39 |
 | Compilers | gcc 13.3.0 (alloy's JIT), clang 20.1.8 (the Google Benchmark harness) |
-| Stack | Python 3.14.3, CasADi 3.7.2, NumPy 2.4.6, SciPy 1.18.0 |
+| Stack | Python 3.14.3, CasADi 3.8.0 (3.7.2 for every measurement above the CasADi 3.8 section; the upgrade alone moved nothing), NumPy 2.4.6, SciPy 1.18.0 |
 | Frequency | `amd-pstate-epp` driver, `powersave` governor, boost enabled |
 
 **That last row is the one to fix before any headline run.** With `powersave` and boost on, the clock
@@ -405,6 +405,89 @@ suite that already calls it.
 So the chain's honest summary is a trade, not a win: **alloy generates three orders of magnitude less
 code and compiles it in a second, and evaluates it 1.5–2.4× slower.** That is a coherent story and a
 publishable one; the current situation, where the sweep runs and the numbers go nowhere, is worse.
+
+## CasADi 3.8: `transform`, dense kernels, and the race-car horizon
+
+CasADi 3.8.0 (September 2026) shipped three things that could have changed this page: a
+`Function.transform()` pipeline of graph simplifications, specialised dense and dense-sparse
+matrix-product kernels with a per-product BLAS selector (`mtimes(A, B, "reference" | "classic" |
+"blasfeo")`), and ONNX import. Measured on 2026-09-05 with the same protocol as the rest of this
+page (exact sparse Lagrangian Hessian, Google Benchmark, `-O3`, every cell through the dense-reference
+gate). Raw CSVs live under `benchmarks/results/ca38/`.
+
+**Upgrading alone changes nothing.** The unbumpercars `casadi_mx` Hessian moved from 8038 to 7958 µs
+at C=8 and the compiled closed loop from 134.3 to 135.7 ms, both inside noise. 3.7 already inlined
+dense-dense products in generated C; 3.8 routes them through a shared helper and adds a dense-sparse
+kernel.
+
+**`transform` is `cse`, and it halves CasADi's scalar kernels.** Isolating the passes on the race-car
+SX Hessian at N=25: `cse` alone takes 15.0 µs to 8.2 µs, and `combine_terms`, `const_folding`,
+`ref_count` and `empty_inputs` each change nothing. `cse` removes 11% of the instructions but 80% of
+the `sin` and `cos` calls (825 to 175 and 850 to 175), because each reverse-over-forward sweep
+re-derives the RK4 stage's trigonometry as fresh SX nodes and only CSE merges them. Per problem,
+alloy against the best CasADi encoding before and after `transform({})`:
+
+| problem, size | alloy | best CasADi | best CasADi + `transform` | passes' effect |
+|---|---:|---:|---:|---:|
+| race_cars N=25 | 14.1 µs | `sx` 15.0 | `sx` 8.9 | 1.7× |
+| race_cars N=50 | 40.0 µs | `sx` 29.8 | `sx` 16.4 | 1.8× |
+| race_cars N=100 | 151.0 µs | `sx` 62.9 | `sx` 33.6 | 1.9× |
+| npmpc N=12 | 63.6 µs | `mx` 43.0 | `mx` 39.3 | 1.09× |
+| npmpc_decoder W=64 | 269.6 µs | `mx` 238.1 | `mx` 231.3 | 1.03× |
+| unbumpercars C=8 | 2628 µs | `mx` 7958 | `mx` 7631 | 1.04× |
+
+Generated source shrinks 15 to 30% everywhere. The rule that follows is the one this page already
+states: the CasADi column is CasADi's best configuration, so every CasADi kernel is taken after
+`transform({})`. This closes the open question of `ca.cse` per problem, in favour of always.
+
+**The dense kernels and the BLAS selector cannot reach the timed oracles.** The mode is an attribute
+of the `MX` multiplication node, read at evaluation and code generation. `ad_forward` and `ad_reverse`
+in `multiplication.cpp` build their sensitivities with plain `mac(...)`, so every product created by
+differentiation runs on the reference kernel: the C=4 unbumpercars Hessian with `"blasfeo"` contains
+4 `dgemm` calls and about 450 reference products. `SX` has no matrix node at all, and `expand=True`
+removes every mode. Batching each repetition's network layer into one matrix-matrix product
+(`casadi_mx_gemm*` backends, on unbumpercars and npmpc) is a loss at every size because the Hessian of
+a wide product is denser than the sum of per-repetition Hessians:
+
+| cell | `casadi_mx` per stage | batched, reference | batched, BLASFEO |
+|---|---:|---:|---:|
+| unbumpercars C=8 | 7958 µs | 10020 | 10019 |
+| npmpc N=25 | 93.1 µs | 162.3 | 166.0 |
+| npmpc_decoder W=256 | 12453 µs | 20267 | 20284 |
+
+The one thing batching buys is reach: at npmpc N=50 the batched graph still compiles inside the
+timeout where unrolled `casadi_mx` does not. The backends stay in the sweep as the recorded negative.
+
+**Alloy gains nothing from CSE, and its race-car gap is quadratic work from the unrolled cost.** The
+expression DAG is hash-consed at construction, so alloy's race-car Hessian already evaluates 14
+transcendentals per stage, CasADi's count after CSE. Alloy's runtime is nevertheless superlinear in
+the horizon (0.51, 0.56, 0.80, 1.51 µs per stage at N = 10, 25, 50, 100) where CasADi is linear, and
+the sweep's workspace column says why: 0 doubles up to N=10, then 2400, 73 296 and 266 496. The cost
+in `_race_car_nlp` is a Python loop over stages; every `z[i*NZ:(i+1)*NZ]` slice has a pad as its
+adjoint, and the coloured forward sweep over N pads materialises N full-length seed buffers, each
+zero-filled then written in 24 places. The equality and corridor rows are vmapped and do not do this.
+Rewriting the cost as one `vmap` over a six-residual stage function, with the per-stage weights in a
+constant vector, computes the same Hessian to 0.0 on every shared entry and gives:
+
+| N | alloy, unrolled cost | alloy, vmapped cost | CasADi SX + `transform` |
+|---:|---:|---:|---:|
+| 25 | 14.3 µs, 3216 lines | 12.5 µs, 1285 lines | 8.9 µs |
+| 50 | 40.2 µs, 5216 lines | 25.7 µs, 1285 lines | 16.4 µs |
+| 100 | 148.6 µs, 9216 lines | 50.4 µs, 1285 lines | 33.6 µs |
+
+Linear, constant source, and 1.5× behind CSE'd SX at every horizon instead of 4.5× at N=100. The
+remaining factor is the small-stage handicap already described for narrow decoders: 1492 loops of
+trip count 4 and four seed colours on a kernel this cheap. Two consequences are tracked in
+`internal/todo.md`: the race-car cost becomes a `vmap` in the benchmark, and alloy's lowering learns to
+turn a sum of N pads into one zero-fill and N scatter-adds, since users will keep writing Python loops
+over slices.
+
+**ONNX import is a modelling convenience, not a performance change.** Symbolic import produces the
+same `MX` graph one writes by hand and lands in the kernels above.
+
+Reproduce with `uv run benchmarks/run.py sweep --workloads race_cars,npmpc,npmpc_decoder,unbumpercars`
+with and without `--casadi-transform`; the gemm backends are `casadi_mx_gemm`, `casadi_mx_gemm_classic`
+and `casadi_mx_gemm_blasfeo`.
 
 ## Where the suite handicaps alloy
 

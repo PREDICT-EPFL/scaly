@@ -341,7 +341,21 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
 def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, float | None, str]:
   exe = out_dir / "benchmark"
   cflags, libs = gbench_flags()
-  cmd = [compiler(), "-O3", "-std=c++17", "-I", str(out_dir), *cflags, "benchmark.cpp", str(info["source"]), "-o", str(exe), *libs, "-lm"]
+  cmd = [
+    compiler(),
+    "-O3",
+    "-std=c++17",
+    "-I",
+    str(out_dir),
+    *cflags,
+    "benchmark.cpp",
+    str(info["source"]),
+    "-o",
+    str(exe),
+    *libs,
+    *info.get("extra_libs", ()),
+    "-lm",
+  ]
   started = time.perf_counter()
   try:
     proc = subprocess.Popen(cmd, cwd=out_dir, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
