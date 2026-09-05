@@ -48,7 +48,7 @@ import numpy as np
 
 @al.function(al.L("x", 2), al.L("f", ...))
 def rosenbrock(x: al.Expr) -> al.Expr:
-  return ((1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2).scalar()
+  return (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
 
 
 grad = al.gradient(rosenbrock, "f", "x")

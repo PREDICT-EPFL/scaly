@@ -62,7 +62,7 @@ def _cost_stage() -> al.Function:
   def cost(inputs):  # type: ignore[no-untyped-def]
     x, xnext, u = inputs
     difference = xnext - x
-    return (al.sumsqr(x) + 2.0 * u[0] * u[0] + 0.5 * al.sumsqr(difference)).scalar()
+    return al.sumsqr(x) + 2.0 * u[0] * u[0] + 0.5 * al.sumsqr(difference)
 
   return cost
 
@@ -81,7 +81,7 @@ def vmapped(stages: int) -> al.Function:
     length=stages,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU)},
   )
-  return al.Function._from_exprs(f"vmap_mlp_N{stages}", [z, p], [cost.sum().scalar(), eq], ["z", "p"], ["cost", "eq"])
+  return al.Function._from_exprs(f"vmap_mlp_N{stages}", [z, p], [cost.sum(), eq], ["z", "p"], ["cost", "eq"])
 
 
 def unrolled(stages: int) -> al.Function:
@@ -99,7 +99,7 @@ def unrolled(stages: int) -> al.Function:
   cost = terms[0]
   for term in terms[1:]:
     cost = cost + term
-  return al.Function._from_exprs(f"vmap_mlp_unrolled_N{stages}", [z, p], [cost.scalar(), al.concat(rows)], ["z", "p"], ["cost", "eq"])
+  return al.Function._from_exprs(f"vmap_mlp_unrolled_N{stages}", [z, p], [cost, al.concat(rows)], ["z", "p"], ["cost", "eq"])
 
 
 def sample(stages: int, seed: int = 3) -> tuple[np.ndarray, np.ndarray]:

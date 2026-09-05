@@ -435,7 +435,7 @@ def stage_cost_function(weights: CostWeights = CostWeights()) -> al.Function:
     for k, weight in enumerate(weights.x_diff):
       if weight:
         total = total + weight * dx[k] * dx[k]
-    return total.scalar()
+    return total
 
   return stage_cost
 
@@ -456,7 +456,7 @@ def npmpc_cost_expr(z: al.Expr, horizon: int, P: np.ndarray, weights: CostWeight
   e_end = al.stack([2.0 * (xN[0] / 2.0).sin(), xN[1], xN[2], xN[3]])
   terminal = al.dot(e_end, al.const(np.asarray(P, dtype=np.float64)) @ e_end)
   slack = z[offset + NU * horizon]
-  return (stages.sum() + terminal + weights.slack * 0.5 * (slack * slack + slack)).scalar()
+  return stages.sum() + terminal + weights.slack * 0.5 * (slack * slack + slack)
 
 
 def npmpc_ineq_bounds(horizon: int) -> tuple[np.ndarray, np.ndarray]:

@@ -73,13 +73,6 @@ evaluates the race-car oracle about three times faster than alloy's generated C.
 [Are the comparisons fair?](../results/fairness.md) is the accounting behind all of those numbers,
 including what the suite got wrong about them for a while.
 
-*A per-node lowering hint, mostly unfinished.* Alloy's single `Expr` type carries a lowering hint —
-`scalar`, `block`, `opaque` or `auto` — with the intent that scalar and block treatment become a
-per-subexpression choice rather than a per-type one. **Today this is aspiration, not a feature.** The
-hints are recorded, only `opaque` changes what the lowerer does, and region formation on the others is
-open work. It is listed here because the design intends it, not because it is something to compare
-against CasADi yet.
-
 *Pure Python.* CasADi is a C++ library with Python bindings. Alloy is Python with NumPy for
 array values and SciPy as an internal structural-sparsity dependency. The entire compiler — both dialects, automatic differentiation (AD),
 lowering,

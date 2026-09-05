@@ -216,14 +216,14 @@ audit found in the results pages: prose that outran what the code does.
 - [ ] **D'1. Rework `docs/how_it_works/comparison.md`.** A scoped fix landed on 2026-08-25: the
       CasADi section's "one graph with a per-node hint" paragraph presented an inert mechanism as a
       departure, and it now states the repetition claim that is actually true and measured, with the
-      lowering hints demoted to an explicit "aspiration, not a feature". The rest of the page still
+      lowering-hint discussion subsequently removed from the published docs. The rest of the page still
       predates a lot. Check every "Taken / Changed" row against what the code does today, and check
       the tinygrad, MLIR and JAX sections the same way.
 - [ ] **D'2. Audit the whole of `docs/` for claims that outran the implementation**, the way the
       results pages were audited. The pattern to look for is a stated departure or capability whose
-      supporting mechanism is recorded but not wired up, and a number with no machine attached. Two
-      known instances beyond D'1: `docs/guide/` on the lowering hints, and any surviving timing that
-      predates the reference-machine rule in `AGENTS.md`.
+      supporting mechanism is recorded but not wired up, and a number with no machine attached.
+      The lowering-hint claims have been removed. Check any surviving timing that predates the
+      reference-machine rule in `AGENTS.md`.
 - [ ] **D'3. Reconcile the problem READMEs with the audit.** `benchmarks/problems/*/README.md` still
       describe the CasADi columns as "same NLP, same IPOPT, same options, only the oracle provider
       differs", which the audit disproved on two counts.

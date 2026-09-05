@@ -8,6 +8,21 @@ The guiding idea is:
 named Function + sparse typed graph + derivative factory + call nodes + mixed scalar/block lowering
 ```
 
+## Lowering-hint prototype
+
+`Expr.lowering`, `with_lowering()`, `.scalar()`, `.block()`, and `.opaque()` remain an internal
+prototype. The lowering pipeline ignores all four hint values, including `opaque`. Solver opacity
+comes from `ExprOp.SOLVER_CALL` and solver descriptors.
+
+Hints participate in expression interning and structural keys, and graph rewrites and automatic
+differentiation preserve them. The focused graph and substitution tests in `tests/ir/test_expr.py`
+cover that metadata behavior. Ordinary models and published documentation do not use the hints.
+
+The prototype can change or be removed without compatibility guarantees. Keeping it does not commit
+Alloy to this interface or to implementing it. Future region-formation work must decide whether
+per-expression hints are useful before adopting them. This status supersedes the historical hint
+plans below.
+
 ## Current experiment pivot
 
 The IR-level proof of concept is in place. Tracking NMPC and unbumpercars showed that one Alloy graph — named `Function`s, VMAP-based loop preservation, colored sparse AD, and the scalar C renderer — can match CasADi SX runtime within ~10% and emit 20-58× less C source than SX (see [`scalability.md`](scalability.md) and the Phase 1/3 progress below). The next pivot is from "prove the IR on Jacobian benchmarks" to "build a real control workload on Alloy."
@@ -49,7 +64,7 @@ A useful way to keep Alloy aligned with compiler/tinygrad/anvil terminology:
 | `Program IR` | lowered executable schedule | tinygrad scheduled UOps, generated CasADi/anvil code |
 | `Function.factory()` | derivative/helper function builder | CasADi factory request language |
 | `alloy.function.api.gradient(fn, ...)` | human convenience layer | thin wrapper over factory requests |
-| lowering hints | region/codegen policy | SX-like scalar vs MX-like block lowering choice |
+| lowering hints | unused prototype metadata | intended scalar vs block preference, ignored by lowering |
 | `PatternMatcher` | graph rewrite system | tinygrad `PatternMatcher`/`UPat` |
 
 This map should stay visible in the design: `Expr` is not the high-level tensor API forever; it is the IR node. We can add nicer matrix/tensor facades later, but they should lower to `Expr`/`ExprOp` rather than hide a separate graph representation.
@@ -95,7 +110,7 @@ Implemented:
 - CasADi-like `Function.factory()` for typed `Jac`, `Grad`, and `Hess` requests, `lam:*` inputs, and aux Lagrangian outputs.
 - Human-friendly wrappers like `gradient(fn, of, wrt)` built on top of factory requests.
 - First-class `call` expressions.
-- Lowering hints: `auto`, `scalar`, `block`, `opaque`.
+- Prototype lowering metadata: `auto`, `scalar`, `block`, `opaque`. See [current status](#lowering-hint-prototype).
 - Universal C ABI spelling and optional typed buffer header generation.
 - CasADi equivalence tests for simple gradients, Jacobians, and Hessian-of-Lagrangian cases.
 
@@ -382,7 +397,8 @@ Exit criteria:
 
 ### Policy
 
-- Start with manual hints: `.scalar()`, `.block()`, `.opaque()`.
+- Reassess whether manual per-expression hints are useful before choosing a region-formation interface.
+  See [prototype status](#lowering-hint-prototype).
 - Add heuristics later:
   - sparse scalar expressions -> scalar lowering;
   - dense matmul/reductions -> block lowering;

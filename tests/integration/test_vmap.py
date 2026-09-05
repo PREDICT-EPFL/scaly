@@ -194,13 +194,13 @@ def pairs_barrier(inputs):
   d, dprev = si[:2] - sj[:2], prev_i[:2] - prev_j[:2]
   envelope = 1.1 * (1.0 + al.dot(dprev, dprev)) ** 0.84
   soft_max = (al.dot(d, d) ** 2 + envelope**4).sqrt().sqrt()
-  return al.stack([(al.dot(d, d).sqrt() - 0.5 * (1.0 + al.dot(dprev, dprev)).log() + soft_max + slack[0]).scalar()])
+  return al.stack([(al.dot(d, d).sqrt() - 0.5 * (1.0 + al.dot(dprev, dprev)).log() + soft_max + slack[0])])
 
 
 @al.function(al.G(al.L("s", NS), al.L("snext", NS), al.L("slack", 1)), al.L("h", ...), name="pairs_wall")
 def pairs_wall(inputs):
   s, snext, slack = inputs
-  return al.stack([(snext[0] - 0.5 * s[0] + slack[0]).scalar(), (1.0 - snext[1].exp() + slack[0]).scalar()])
+  return al.stack([(snext[0] - 0.5 * s[0] + slack[0]), (1.0 - snext[1].exp() + slack[0])])
 
 
 def _pair_index_table(bodies: list[int]) -> np.ndarray:
@@ -227,7 +227,7 @@ def _build_pairs_fn(mapped: bool) -> al.Function:
     rows = [pairs_barrier((sl(p, i), sl(p, j), sl(nxt, i), sl(nxt, j), slack)) for i, j in PAIRS]
     rows += [pairs_wall((sl(p, k), sl(nxt, k), slack)) for k in range(NB)]
     h = al.concat(rows)
-  return al.Function._from_exprs(f"pairs_{'vmap' if mapped else 'unroll'}", [u, p], [h.scalar()], ["u", "p"], ["h"])
+  return al.Function._from_exprs(f"pairs_{'vmap' if mapped else 'unroll'}", [u, p], [h], ["u", "p"], ["h"])
 
 
 def _pairs_sample() -> tuple[np.ndarray, np.ndarray]:
@@ -275,32 +275,24 @@ def test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense() -> None:
   np.testing.assert_allclose(dense_hess["vmap"], dense_hess["unroll"], rtol=1e-9, atol=1e-9)
 
 
-def test_block_lowered_matmul_inside_vmap_callee_infers_block_and_differentiates() -> None:
-  """A dense layer inside a VMAP callee — the shape of an MLP-in-the-loop dynamics model. A MATMUL
-  with two block-marked operands infers `block` itself, while the scalar assembly wrapped around
-  the VMAP stays `scalar`. Marking a formal directly (`s.block()`) would clone the INPUT node, so
-  the input side is marked on the packed vector, as real fixtures do."""
-  from alloy.ir.expr import topo
-
+def test_matmul_inside_vmap_callee_differentiates() -> None:
+  """Differentiate a dense layer inside a mapped callee against a NumPy reference."""
   w = np.array([[0.4, -0.2, 0.7], [0.1, 0.9, -0.3]])
   b = np.array([0.05, -0.15])
 
-  @al.function(al.L("s", 3), al.L("y", ...), name="vmap_block_layer")
+  @al.function(al.L("s", 3), al.L("y", ...), name="vmap_dense_layer")
   def layer(s):
-    phi = al.stack([s[0], s[1], s[2]]).block()
-    h = (al.const(w).block() @ phi + al.const(b)).block()
-    return al.stack([(h * h).sum().scalar()])
-
-  assert any(node.op == al.ExprOp.MATMUL and node.lowering == "block" for node in topo(layer.outputs))
+    phi = al.stack([s[0], s[1], s[2]])
+    h = al.const(w) @ phi + al.const(b)
+    return al.stack([(h * h).sum()])
 
   N = 4
   z = al.sym("z", 3 * N)
-  fn = al.Function._from_exprs("vmap_block", [z], [al.vmap(layer, N, [(z, 0, 3)]).scalar()], ["z"], ["y"])
-  assert fn.outputs[0].lowering == "scalar"
+  fn = al.Function._from_exprs("vmap_dense", [z], [al.vmap(layer, N, [(z, 0, 3)])], ["z"], ["y"])
 
   zv = np.random.default_rng(3).normal(size=3 * N)
   expected = np.zeros((N, 3 * N))
   for k in range(N):
     h = w @ zv[3 * k : 3 * k + 3] + b
     expected[k, 3 * k : 3 * k + 3] = 2.0 * h @ w
-  np.testing.assert_allclose(fn.factory("vmap_block_jac", ["z"], [al.factory.Jac("y", "z")])(zv), expected, rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(fn.factory("vmap_dense_jac", ["z"], [al.factory.Jac("y", "z")])(zv), expected, rtol=1e-10, atol=1e-10)

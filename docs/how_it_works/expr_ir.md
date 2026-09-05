@@ -79,19 +79,6 @@ clear it. AD reads this flag to decide where a derivative is zero by constructio
 **`SparsityType`** attaches a structural pattern to a rank-2 value — see
 [Sparsity](../guide/sparsity.md). When present, its shape must match the tensor shape exactly.
 
-**The lowering hint** is a per-node preference for how the value should eventually be computed:
-`auto` (let the lowerer choose), `scalar` (SX-like unrolled instructions), `block` (MX-like loops),
-or `opaque` (keep this a named boundary and do not look inside).
-
-```python
-sparse_model = (x.sin() + x * x).scalar()
-dense_layer = (A @ x).block()
-```
-
-Today these are metadata: they are preserved, printed and inspectable, but the lowerer does not
-yet partition on them. The one that already has teeth is `opaque`, which is how a solver stays a
-call instead of being expanded.
-
 ## Operations
 
 Thirty-nine operations, grouped by what they do. `arity` is the operand count; a dash means

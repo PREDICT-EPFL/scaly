@@ -158,10 +158,7 @@ print(al.render_expr_assembly(features))
 Construction checks declarations and shapes. `al.verify_expr` checks the complete expression graph
 and raises `VerifyError` at the first invalid node.
 
-## Lowering hints and placement
+## Device placement
 
-`scalar()`, `block()`, and `opaque()` record lowering preferences on expressions. `opaque()` is
-also a real boundary that prevents the lowerer from looking inside. The other hints currently
-document intent while the default lowering policy remains in control.
 `fn.with_device("cuda:0")` records device placement and validates dtypes against the backend
 capability table. Only host lowering is implemented today.

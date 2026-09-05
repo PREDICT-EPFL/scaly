@@ -471,13 +471,13 @@ def _silu_expr(x: al.Expr) -> al.Expr:
 
 
 def _unpack_pw_expr(pw: al.Expr) -> tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]:
-  x_scale = pw[OFFSETS[0] : OFFSETS[1]].block()
-  w0 = pw[OFFSETS[1] : OFFSETS[2]].reshape(W0_SHAPE).block()
-  b0 = pw[OFFSETS[2] : OFFSETS[3]].block()
-  w1 = pw[OFFSETS[3] : OFFSETS[4]].reshape(W1_SHAPE).block()
-  b1 = pw[OFFSETS[4] : OFFSETS[5]].block()
-  w2 = pw[OFFSETS[5] : OFFSETS[6]].reshape(W2_SHAPE).block()
-  b2 = pw[OFFSETS[6] : OFFSETS[7]].block()
+  x_scale = pw[OFFSETS[0] : OFFSETS[1]]
+  w0 = pw[OFFSETS[1] : OFFSETS[2]].reshape(W0_SHAPE)
+  b0 = pw[OFFSETS[2] : OFFSETS[3]]
+  w1 = pw[OFFSETS[3] : OFFSETS[4]].reshape(W1_SHAPE)
+  b1 = pw[OFFSETS[4] : OFFSETS[5]]
+  w2 = pw[OFFSETS[5] : OFFSETS[6]].reshape(W2_SHAPE)
+  b2 = pw[OFFSETS[6] : OFFSETS[7]]
   return x_scale, w0, b0, w1, b1, w2, b2
 
 
@@ -498,10 +498,10 @@ def alloy_ctfull_ode_fn(inputs):  # type: ignore[no-untyped-def]
   x_dot, y_dot, omega = _world_vel_expr(state, physics)
   delta_dot = (u[1] * max_delta - delta) / (steering_time_constant * 3.0)
   x_scale, w0, b0, w1, b1, w2, b2 = _unpack_pw_expr(pw)
-  phi = al.concat([state[3:7] / x_scale, u]).block()
-  h = _silu_expr((w0 @ phi + b0).block()).block()
-  h = _silu_expr((w1 @ h + b1).block()).block()
-  learned = (w2 @ h + b2).block()
+  phi = al.concat([state[3:7] / x_scale, u])
+  h = _silu_expr((w0 @ phi + b0))
+  h = _silu_expr((w1 @ h + b1))
+  learned = w2 @ h + b2
   return al.stack([x_dot, y_dot, omega, learned[0], learned[1], learned[2], delta_dot])
 
 
@@ -517,7 +517,7 @@ def alloy_ctfull_rk4_fn(inputs):  # type: ignore[no-untyped-def]
   k2 = alloy_ctfull_ode_fn((state + 0.5 * h * k1, u, pw, physics))
   k3 = alloy_ctfull_ode_fn((state + 0.5 * h * k2, u, pw, physics))
   k4 = alloy_ctfull_ode_fn((state + h * k3, u, pw, physics))
-  return (state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)).block()
+  return state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
 
 def _smooth_relu_expr(x: al.Expr) -> al.Expr:
@@ -526,13 +526,13 @@ def _smooth_relu_expr(x: al.Expr) -> al.Expr:
 
 def _unpack_pw_dt_expr(pw: al.Expr) -> tuple[al.Expr, ...]:
   return (
-    pw[DT_OFFSETS[0] : DT_OFFSETS[1]].block(),
-    pw[DT_OFFSETS[1] : DT_OFFSETS[2]].reshape(DT_W0_SHAPE).block(),
-    pw[DT_OFFSETS[2] : DT_OFFSETS[3]].block(),
-    pw[DT_OFFSETS[3] : DT_OFFSETS[4]].reshape(DT_W1_SHAPE).block(),
-    pw[DT_OFFSETS[4] : DT_OFFSETS[5]].block(),
-    pw[DT_OFFSETS[5] : DT_OFFSETS[6]].reshape(DT_W2_SHAPE).block(),
-    pw[DT_OFFSETS[6] : DT_OFFSETS[7]].block(),
+    pw[DT_OFFSETS[0] : DT_OFFSETS[1]],
+    pw[DT_OFFSETS[1] : DT_OFFSETS[2]].reshape(DT_W0_SHAPE),
+    pw[DT_OFFSETS[2] : DT_OFFSETS[3]],
+    pw[DT_OFFSETS[3] : DT_OFFSETS[4]].reshape(DT_W1_SHAPE),
+    pw[DT_OFFSETS[4] : DT_OFFSETS[5]],
+    pw[DT_OFFSETS[5] : DT_OFFSETS[6]].reshape(DT_W2_SHAPE),
+    pw[DT_OFFSETS[6] : DT_OFFSETS[7]],
   )
 
 
@@ -561,10 +561,10 @@ def alloy_dt_mlp_step_fn(inputs):  # type: ignore[no-untyped-def]
   k4 = alloy_pose_dot_fn((state + h_dt * k3, physics))
   pose = state + (h_dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
   x_scale, w0, b0, w1, b1, w2, b2 = _unpack_pw_dt_expr(pw)
-  phi = al.concat([al.stack([state[3], state[4] - delta, state[5], delta]) / x_scale, al.stack([u[1], u[0]])]).block()
-  h = _smooth_relu_expr((w0 @ phi + b0).block()).block()
-  h = _smooth_relu_expr((w1 @ h + b1).block()).block()
-  learned = (w2 @ h + b2).block()
+  phi = al.concat([al.stack([state[3], state[4] - delta, state[5], delta]) / x_scale, al.stack([u[1], u[0]])])
+  h = _smooth_relu_expr((w0 @ phi + b0))
+  h = _smooth_relu_expr((w1 @ h + b1))
+  learned = w2 @ h + b2
   delta_next = delta + h_dt * (u[1] * max_delta - delta) / steering_time_constant
   return al.stack([pose[0], pose[1], pose[2], learned[0], learned[1] + delta_next, learned[2], delta_next])
 
@@ -603,7 +603,7 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
     # conservative fit covering both vehicle models — see common.HCBFConfig.
     a_env = hcbf.envelope_c * d_eps**hcbf.envelope_q
     q = (d_eps * (r + R)).sqrt() / R * v_y
-    return (v_x + s * (a_env**4 + q**4).sqrt().sqrt()).scalar()
+    return v_x + s * (a_env**4 + q**4).sqrt().sqrt()
 
   m = loop_cfg.wall_margin
   x_min, x_max, y_min, y_max = [physics[i] for i in range(4, 8)]
@@ -617,22 +617,22 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
       d_eps = (clearance * clearance + loop_cfg.wall_eps**2).sqrt()
       s = clearance / d_eps
       v_max = hcbf.single_envelope_c * d_eps**hcbf.envelope_q
-      out.append((s * v_max - v_closing).scalar())
+      out.append((s * v_max - v_closing))
     return out
 
   rows: list[al.Expr] = []
   for i in range(ncars):
     for j in range(i + 1, ncars):
-      rows.append((pair_b(states_next, i, j) - (1.0 - loop_cfg.pair_gamma) * pair_b(bar_x, i, j)).scalar())
+      rows.append((pair_b(states_next, i, j) - (1.0 - loop_cfg.pair_gamma) * pair_b(bar_x, i, j)))
   if loop_cfg.arena_avoidance:
     for i in range(ncars):
       for bn, bc in zip(wall_b(states_next, i), wall_b(bar_x, i), strict=True):
-        rows.append((bn - (1.0 - loop_cfg.wall_gamma) * bc).scalar())
+        rows.append((bn - (1.0 - loop_cfg.wall_gamma) * bc))
   assert len(rows) == n_s
-  g = (al.stack(rows) + slack).scalar() if rows else al.const(np.zeros((0,)))
+  g = (al.stack(rows) + slack) if rows else al.const(np.zeros((0,)))
   diff = u - u_des
   weights = al.const(np.tile(np.asarray(filt_cfg.R, dtype=np.float64), ncars))
-  cost = (al.dot(diff, weights * diff) + filt_cfg.slack_weight * slack.sum()).scalar()
+  cost = al.dot(diff, weights * diff) + filt_cfg.slack_weight * slack.sum()
   return al.Function._from_exprs(
     f"ctdt_alloy_oracle_N{ncars}_{'walls' if loop_cfg.arena_avoidance else 'pairs'}",
     [z, bar_x, u_des, pw, physics, dt],

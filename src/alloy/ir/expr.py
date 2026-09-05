@@ -279,7 +279,6 @@ class Expr:
       dtype: the element type; ``float64`` unless you say otherwise.
       diff: whether derivatives with respect to this input are meaningful. Setting it to
         ``False`` tells AD the input is a constant parameter, so terms through it vanish.
-      lowering: a hint for how this value should eventually be computed.
     """
     return Expr(ExprOp.INPUT, type=TensorType(as_shape(shape), dtype=as_dtype(dtype), diff=diff), name=name, lowering=lowering)
 

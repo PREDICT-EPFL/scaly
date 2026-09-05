@@ -5,6 +5,23 @@ The expression graph and the types on it.
 ## Expressions
 
 ::: alloy.ir.expr.Expr
+    options:
+      show_source: false
+      filters:
+        - "!^_"
+        - "!^(lowering|with_lowering|scalar|block|opaque|sym|const)$"
+
+::: alloy.ir.expr.Expr.sym
+    options:
+      show_source: false
+      show_signature: false
+      heading: "sym(name, shape=None, *, dtype=dtypes.float64, diff=True)"
+
+::: alloy.ir.expr.Expr.const
+    options:
+      show_source: false
+      show_signature: false
+      heading: "const(value, *, dtype=None)"
 
 ::: alloy.ir.expr.ExprOp
 
@@ -44,16 +61,24 @@ The expression graph and the types on it.
 ::: alloy.ir.expr.norm_2
 
 ::: alloy.ir.expr.stack
+    options:
+      show_source: false
 
 ::: alloy.ir.expr.concat
+    options:
+      show_source: false
 
 ::: alloy.ir.expr.split
 
 ::: alloy.ir.expr.vec
 
 ::: alloy.ir.expr.gather
+    options:
+      show_source: false
 
 ::: alloy.ir.expr.scatter
+    options:
+      show_source: false
 
 ::: alloy.ir.expr.atan2
 
@@ -62,6 +87,8 @@ The expression graph and the types on it.
 ::: alloy.ir.expr.maximum
 
 ::: alloy.function.sugar.vmap
+    options:
+      show_source: false
 
 ## Verification and rewriting
 

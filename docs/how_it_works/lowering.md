@@ -28,21 +28,12 @@ What is covered today: elementwise unary and binary with NumPy broadcasting; `re
 `const` of any size through a constant buffer; general `slice` including integer, multi-dimensional
 and strided forms; `sum`; `matmul` up to rank 2; `transpose` up to rank 4; `gather` and `scatter`
 of any size through a `static const` index table; `stack` and `concat` on any axis; `call` across
-multiple procedures; and `VMAP`. A Function carrying a solver descriptor is deliberately not lowered — it stays
-opaque and its wrapper is rendered separately, while the oracle functions it drives lower normally.
+multiple procedures; and `VMAP`. Solver calls use `ExprOp.SOLVER_CALL` and a callee carrying a solver descriptor.
+The solver callee stays opaque and its wrapper is rendered separately, while its oracle functions
+lower normally.
 
 Not covered: device placement other than the host, and the operations listed as deferred in
 [the expression dialect](expr_ir.md#operations). Both raise `LoweringError`.
-
-## Mixed scalar and block lowering
-
-Every expression carries a lowering hint — `auto`, `scalar`, `block` or `opaque`. The intent is the
-one alloy was designed around: SX-like scalar regions and MX-like block regions coexisting in one
-graph, with materialization inserted at the boundary.
-
-Today `auto` is what actually runs. The hints are recorded, printed and inspectable, and `opaque`
-already has meaning at a solver boundary, but the lowerer does not yet partition a graph on them.
-Making them drive region formation is the open work; see the roadmap.
 
 ## The optimization pipeline
 

@@ -16,7 +16,7 @@ import numpy as np
 
 @al.function(al.L("x", 2), al.L("f", ...))
 def rosenbrock(x: al.Expr) -> al.Expr:
-    return ((1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2).scalar()
+    return (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
 
 rosenbrock(np.array([1.0, 2.0]))          # 100.0
 
@@ -111,7 +111,6 @@ reverse, produces colored sparse Jacobians and exact sparse Lagrangian Hessians 
 `VMAP` structure, and drives PIQP, IPOPT and its own generated-C SQP solver from inside a compiled
 graph.
 
-Open work, roughly in order: region formation from the scalar and block lowering hints, iterative
-rather than recursive passes, warm-start handover into PIQP, differentiating through a solve, and a
-GPU backend. See [Benchmark results](results/index.md) for where it currently stands against
+Open work: iterative rather than recursive passes, warm-start handover into PIQP, differentiating
+through a solve, and a GPU backend. See [Benchmark results](results/index.md) for where it currently stands against
 CasADi.
