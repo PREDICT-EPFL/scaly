@@ -534,3 +534,16 @@ int sparse_lower_fixture(const double**, double** res, const int*, double*, void
   }
   status, _, note = _run_compiled_driver(tmp_path, info, source, header, {}, np.array([1.0, 2.0, 2.0, 3.0]))
   assert status == "correctness_fail", note
+
+
+@pytest.mark.solver("ipopt")
+def test_casadi_sweep_transforms_by_default(tmp_path: Path) -> None:
+  from benchmarks.harness.sweep import build_kernel
+
+  original = build_kernel("chain", 3, "casadi_sx", tmp_path, casadi_transform=False)["callable"]
+  transformed = build_kernel("chain", 3, "casadi_sx", tmp_path)["callable"]
+  assert transformed.serialize() == original.transform({}).serialize()
+  assert transformed.n_instructions() < original.n_instructions()
+  values = [np.full(original.size_in(i), 0.4 + i) for i in range(original.n_in())]
+  for expected, actual in zip(original.call(values), transformed.call(values), strict=True):
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)

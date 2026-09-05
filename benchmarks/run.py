@@ -393,7 +393,10 @@ def main() -> None:
   sweep_parser.add_argument("--max-source-mb", type=float, default=50.0)
   sweep_parser.add_argument("--benchmark-min-time", default="0.1s")
   sweep_parser.add_argument(
-    "--casadi-transform", action="store_true", help="run CasADi 3.8's default Function.transform() simplification flow on every CasADi kernel"
+    "--casadi-transform",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="run CasADi 3.8's default Function.transform() simplification flow on every CasADi kernel (default: enabled)",
   )
   smoke_parser = subparsers.add_parser("smoke", help="run fast correctness and invariant gates")
   smoke_parser.add_argument("--select", action="append", choices=("benchmarks", "problems", "solver_call"))

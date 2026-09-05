@@ -25,7 +25,7 @@ from alloy.solvers.stats import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, So
 from alloy.utils.env import shared_lib_ext, shared_lib_flag
 
 _CACHE = Path(os.environ.get("ALLOY_CASADI_IPOPT_CACHE", cache_root() / "casadi-ipopt"))
-_CACHE_VERSION = 3
+_CACHE_VERSION = 4
 _ORACLE_NAMES = ("f", "g", "grad_f", "jac_g", "hess_l")
 _DP = ctypes.POINTER(ctypes.c_double)
 
@@ -172,6 +172,14 @@ def _instrument(source: str, name: str, *, exact_hessian: bool) -> str:
   return source + shim
 
 
+def _transformed_nlpsol(name: str, problem: dict, options: dict):
+  import casadi as ca
+
+  solver = ca.nlpsol(name, "ipopt", problem, options)
+  cache = {name: solver.get_function(name).transform({}) for name in solver.get_function()}
+  return ca.nlpsol(name, "ipopt", problem, {**options, "cache": {**options.get("cache", {}), **cache}})
+
+
 def _build(spec_path: Path) -> None:
   import casadi as ca
 
@@ -180,7 +188,7 @@ def _build(spec_path: Path) -> None:
   x = ca.MX.sym("x", nlp.sparsity_in(0))
   p = ca.MX.sym("p", nlp.sparsity_in(1))
   f, g = nlp.call([x, p], True, False)
-  solver = ca.nlpsol(spec["name"], "ipopt", {"x": x, "p": p, "f": f, "g": g}, spec["options"])
+  solver = _transformed_nlpsol(spec["name"], {"x": x, "p": p, "f": f, "g": g}, spec["options"])
   generator = ca.CodeGenerator(f"{spec['name']}.c", {"with_header": True, "casadi_int": "long long int"})
   generator.add(solver)
   exact_hessian = spec["options"].get("ipopt.hessian_approximation") != "limited-memory"

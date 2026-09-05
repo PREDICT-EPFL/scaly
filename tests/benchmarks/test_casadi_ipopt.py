@@ -8,7 +8,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
-from benchmarks.harness.casadi_ipopt import CompiledCasadiIpopt
+from benchmarks.harness.casadi_ipopt import CompiledCasadiIpopt, _transformed_nlpsol
 from benchmarks.harness.provenance import collect
 from alloy_ipopt import BUILD_CONFIG
 
@@ -101,3 +101,25 @@ empty = np.empty(0)
 compiled(np.zeros(1), np.ones(1), np.full(1, -10.0), np.full(1, 10.0), empty, empty, np.zeros(1), empty)
 """
   subprocess.run([sys.executable, "-c", script, order], check=True, text=True, capture_output=True)
+
+
+@pytest.mark.parametrize("expand", [False, True])
+@pytest.mark.parametrize("limited_memory", [False, True])
+def test_compiled_oracles_use_transformed_values_and_derivatives(expand: bool, limited_memory: bool) -> None:
+  x, p = ca.MX.sym("x", 2), ca.MX.sym("p")
+  a, b = ca.sin(x[0] + p), ca.sin(x[0] + p)
+  problem = {"x": x, "p": p, "f": (a + b + x[1]) ** 2, "g": ca.vertcat(a * b, x[1] ** 2)}
+  options = {"print_time": False, "ipopt.print_level": 0, "expand": expand}
+  if limited_memory:
+    options["ipopt.hessian_approximation"] = "limited-memory"
+  original = ca.nlpsol("original", "ipopt", problem, options)
+  transformed = _transformed_nlpsol("transformed", problem, options)
+  names = original.get_function()
+  assert ("nlp_hess_l" in names) != limited_memory
+  for name in names:
+    before, after = original.get_function(name), transformed.get_function(name)
+    assert after.serialize() == before.transform({}).serialize()
+    values = [np.full(before.size_in(i), 0.4 + i) for i in range(before.n_in())]
+    for expected, actual in zip(before.call(values), after.call(values), strict=True):
+      np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+  assert transformed.get_function("nlp_f").n_instructions() < original.get_function("nlp_f").n_instructions()

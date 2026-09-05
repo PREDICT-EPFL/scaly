@@ -556,7 +556,7 @@ def _npmpc_alloy(workload: str, size: int, out_dir: Path) -> dict:
   )
 
 
-def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform: bool = False) -> dict:
+def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform: bool = True) -> dict:
   import casadi as ca
 
   kind = backend.removeprefix("casadi_")
@@ -689,7 +689,7 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform:
   }
 
 
-def build_kernel(workload: str, size: int, backend: str, out_dir: Path, *, casadi_transform: bool = False) -> dict:
+def build_kernel(workload: str, size: int, backend: str, out_dir: Path, *, casadi_transform: bool = True) -> dict:
   if backend == "alloy":
     if workload in NPMPC_WORKLOADS:
       return _npmpc_alloy(workload, size, out_dir)
@@ -892,7 +892,7 @@ def run_cell(
   max_source_mb: float,
   benchmark_min_time: str,
   load_harvested: bool = True,
-  casadi_transform: bool = False,
+  casadi_transform: bool = True,
 ) -> tuple[dict[str, object], dict | None]:
   if out_dir.exists():
     shutil.rmtree(out_dir)
@@ -1000,7 +1000,7 @@ def run_sweep(args, cli_args: list[str]) -> bool:
               compile_timeout=args.compile_timeout,
               max_source_mb=args.max_source_mb,
               benchmark_min_time=args.benchmark_min_time,
-              casadi_transform=getattr(args, "casadi_transform", False),
+              casadi_transform=getattr(args, "casadi_transform", True),
             )
           writer.writerow(result)
           fp.flush()

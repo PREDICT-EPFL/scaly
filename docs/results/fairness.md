@@ -438,7 +438,9 @@ alloy against the best CasADi encoding before and after `transform({})`:
 
 Generated source shrinks 15 to 30% everywhere. The rule that follows is the one this page already
 states: the CasADi column is CasADi's best configuration, so every CasADi kernel is taken after
-`transform({})`. This closes the open question of `ca.cse` per problem, in favour of always.
+`transform({})`. Sweeps enable this by default. Compiled CasADi IPOPT solvers use transformed
+versions of every generated oracle, including values and derivatives. This closes the open question
+of `ca.cse` per problem, in favour of always.
 
 **The dense kernels and the BLAS selector cannot reach the timed oracles.** The mode is an attribute
 of the `MX` multiplication node, read at evaluation and code generation. `ad_forward` and `ad_reverse`
@@ -486,7 +488,7 @@ over slices.
 same `MX` graph one writes by hand and lands in the kernels above.
 
 Reproduce with `uv run benchmarks/run.py sweep --workloads race_cars,npmpc,npmpc_decoder,unbumpercars`
-with and without `--casadi-transform`; the gemm backends are `casadi_mx_gemm`, `casadi_mx_gemm_classic`
+with `--casadi-transform` and `--no-casadi-transform`; the gemm backends are `casadi_mx_gemm`, `casadi_mx_gemm_classic`
 and `casadi_mx_gemm_blasfeo`.
 
 ## Where the suite handicaps alloy
