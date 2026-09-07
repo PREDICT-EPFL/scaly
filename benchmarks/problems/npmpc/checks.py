@@ -53,9 +53,11 @@ from benchmarks.problems.npmpc import (
   npmpc_eq_function,
   npmpc_lag_function,
   npmpc_nlp,
+  pack_nlp_params,
   pack_params,
   plant_step,
   riccati_residual,
+  sample_inputs,
   stage_function,
   step_np,
   terminal_P,
@@ -101,6 +103,7 @@ def check_dims_and_checkpoint() -> None:
   assert n_dec(HORIZON) == 65, n_dec(HORIZON)
   decoder = Decoder()
   assert decoder.hidden == (32, 32) and decoder.n_pw == 1396, (decoder.hidden, decoder.n_pw)
+  assert n_param(decoder) == 1427, n_param(decoder)
   assert decoder.weight_shapes == ((32, 9), (32, 32), (2, 32)), decoder.weight_shapes
   # `load_decoder_weights` raises if the packed size is wrong, so only finiteness is left to check
   assert np.all(np.isfinite(load_decoder_weights(decoder)))
@@ -171,7 +174,7 @@ def check_parameter_tail_order() -> None:
   np.testing.assert_allclose(decoder_mu_np(decoder, pw, x, u), expected, rtol=0.0, atol=1e-13)
 
   xnext = np.array([0.1, 0.2, 0.3, 0.4])
-  residual = np.asarray(stage_function(decoder)((x, xnext, u, pw))).reshape(-1)
+  residual = np.asarray(stage_function(decoder)((x, xnext, u, pw, np.array(DT)))).reshape(-1)
   np.testing.assert_allclose(residual, x + np.concatenate([DT * (x[2:4] + expected / 2.0), expected]) - xnext, rtol=0.0, atol=1e-12)
 
 
@@ -200,7 +203,7 @@ def check_decoder_matches_reference_rollout() -> None:
     x = np.array([rng.uniform(-np.pi, np.pi), rng.uniform(-2.0, 2.0), rng.normal(scale=4.0), rng.normal(scale=4.0)])
     u_sample = rng.uniform(-TORQUE_LIMIT, TORQUE_LIMIT, NU)
     xnext = step_np(decoder, pw, x, u_sample)
-    np.testing.assert_allclose(np.asarray(stage_fn((x, xnext, u_sample, pw))).reshape(-1), np.zeros(NX), rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(stage_fn((x, xnext, u_sample, pw, np.array(DT)))).reshape(-1), np.zeros(NX), rtol=0.0, atol=1e-12)
 
 
 def check_plant_matches_reference_oracle() -> None:
@@ -308,6 +311,52 @@ def check_constraint_rows_and_bounds() -> None:
   assert (box_lower[-1], box_upper[-1]) == (0.0, SLACK_LIMIT)
 
 
+def _runtime_parameter_cases() -> tuple[Decoder, np.ndarray, tuple[np.ndarray, ...]]:
+  decoder = Decoder()
+  z, pw = sample_inputs(2, decoder)
+  P = np.diag(CostWeights().x_end)
+  base = pack_nlp_params(decoder, z[:NX], pw, P)
+  changed_dt = pack_nlp_params(decoder, z[:NX], pw, P, dt=1.5 * DT)
+  changed_cost = pack_nlp_params(decoder, z[:NX], pw, P, weights=replace(CostWeights(), u=10.0 * CostWeights().u))
+  changed_P = pack_nlp_params(decoder, z[:NX], pw, 2.0 * P)
+  return decoder, z, (base, changed_dt, changed_cost, changed_P)
+
+
+def check_runtime_tuning_parameters() -> None:
+  """One compiled Function accepts new numerical tuning data without reconstruction."""
+  decoder, z, parameters = _runtime_parameter_cases()
+  base = parameters[0]
+  np.testing.assert_array_equal(base[:NX], z[:NX])
+  assert base[NX + decoder.n_pw] == DT
+  np.testing.assert_array_equal(base[NX + decoder.n_pw + 1 : NX + decoder.n_pw + 11], [*CostWeights().x, *CostWeights().x_diff, 1.0, 1000.0])
+  np.testing.assert_array_equal(base[-NX * NX :].reshape(NX, NX), np.diag(CostWeights().x_end))
+  lag = npmpc_lag_function(2, decoder)
+  (base_cost, base_eq), (dt_cost, dt_eq), (weight_cost, weight_eq), (P_cost, P_eq) = (lag((z, p)) for p in parameters)
+  assert not np.allclose(dt_eq, base_eq)
+  np.testing.assert_allclose(dt_cost, base_cost, rtol=0.0, atol=1e-12)
+  np.testing.assert_allclose(weight_eq, base_eq, rtol=0.0, atol=1e-12)
+  np.testing.assert_allclose(P_eq, base_eq, rtol=0.0, atol=1e-12)
+  assert not np.allclose(weight_cost, base_cost, rtol=0.0, atol=1e-8)
+  assert not np.allclose(P_cost, base_cost, rtol=0.0, atol=1e-8)
+
+
+def check_casadi_runtime_parameters_match() -> None:
+  """CasADi reads the same runtime tuning fields as Alloy for every changed field."""
+  import casadi as ca
+
+  from benchmarks.problems.npmpc import _ca_npmpc_joint_parameter_pieces
+
+  decoder, z, parameters = _runtime_parameter_cases()
+  alloy = npmpc_lag_function(2, decoder)
+  pieces = _ca_npmpc_joint_parameter_pieces(2, decoder, ca.MX)
+  casadi = ca.Function("npmpc_runtime_parameters", [pieces["z"], pieces["p"]], [pieces["f"], pieces["h_eq"]])
+  for p in parameters:
+    alloy_cost, alloy_eq = alloy((z, p))
+    casadi_cost, casadi_eq = casadi(z, p)
+    np.testing.assert_allclose(np.asarray(casadi_cost), np.asarray(alloy_cost), rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(casadi_eq).reshape(-1), np.asarray(alloy_eq).reshape(-1), rtol=0.0, atol=1e-12)
+
+
 def check_nlp_uses_an_exact_hessian() -> None:
   """The IPOPT column really *evaluates* the generated exact Lagrangian Hessian.
 
@@ -320,7 +369,8 @@ def check_nlp_uses_an_exact_hessian() -> None:
   """
   config = replace(EpisodeConfig(), horizon=4, steps=1)
   pw = pack_params(config.decoder, load_decoder_weights(config.decoder))
-  controller = build_solver(config, "ipopt", "alloy", P=terminal_P(config.decoder, pw, config.weights, config.dt))
+  P = terminal_P(config.decoder, pw, config.weights, config.dt)
+  controller = build_solver(config, "ipopt", "alloy")
   assert controller.descriptor.hess is not None
   requested = dict(controller.descriptor.options).get("hessian_approximation")
   assert requested is None, f"the IPOPT column asks for hessian_approximation={requested!r}"
@@ -333,7 +383,7 @@ def check_nlp_uses_an_exact_hessian() -> None:
     np.zeros(n_eq),
     np.zeros(n_ineq),
     np.zeros(n_dec(config.horizon)),
-    np.concatenate([start, pw]),
+    pack_nlp_params(config.decoder, start, pw, P, weights=config.weights, dt=config.dt),
   )
   stats = problem_stats(controller)
   assert stats is not None and stats.iter > 0, "the probe solve did not iterate"
@@ -346,7 +396,8 @@ def check_casadi_ipopt_is_compiled() -> None:
 
   config = replace(EpisodeConfig.smoke(), steps=1)
   pw = pack_params(config.decoder, load_decoder_weights(config.decoder))
-  controller = build_solver(config, "ipopt", "casadi", P=terminal_P(config.decoder, pw, config.weights, config.dt))
+  P = terminal_P(config.decoder, pw, config.weights, config.dt)
+  controller = build_solver(config, "ipopt", "casadi")
   expected = solver_paths(required=True).loads["ipopt"]
   assert controller.compiled and not controller.expand and expected is not None
   assert controller.resolved_ipopt_library.read_bytes() == Path(expected).read_bytes()
@@ -358,7 +409,7 @@ def check_casadi_ipopt_is_compiled() -> None:
     np.zeros(n_eq),
     np.zeros(n_ineq),
     np.zeros(n_dec(config.horizon)),
-    np.concatenate([start, pw]),
+    pack_nlp_params(config.decoder, start, pw, P, weights=config.weights, dt=config.dt),
   )
   stats = problem_stats(controller)
   assert stats is not None and stats.n_eval_h > 0
@@ -451,38 +502,36 @@ def check_matches_reference_episode() -> None:
   offset = NX * (horizon + 1)
 
   eq = npmpc_eq_function(horizon, decoder)
-  lag = npmpc_lag_function(horizon, decoder, P)
+  lag = npmpc_lag_function(horizon, decoder)
   controller = npmpc_nlp(
-    P,
     horizon,
     decoder,
     options={"print_level": 0, "sb": "yes", "tol": 1e-6, "max_iter": 50, "warm_start_init_point": "yes"},
   )
   n_eq, n_ineq = constraint_counts(horizon)
   zeros = (np.zeros(n_eq), np.zeros(n_ineq), np.zeros(n_dec(horizon)))
-  assert n_param(decoder) == NX + decoder.n_pw
-
   for step in range(1, int(episode["steps"])):
     theirs = np.concatenate([episode["x"][step].reshape(-1), episode["u"][step].reshape(-1), np.zeros(1)])
-    feasibility = float(np.max(np.abs(np.asarray(eq((theirs, pw))))))
+    xstart = step_np(decoder, pw, episode["x0"][step], episode["u0"][step])
+    p = pack_nlp_params(decoder, xstart, pw, P)
+    feasibility = float(np.max(np.abs(np.asarray(eq((theirs, p))))))
     assert feasibility <= REFERENCE_FEASIBILITY_TOL, f"their step {step} violates our dynamics by {feasibility:.3e}"
 
     # their warm start, rebuilt: the previous solution's controls shifted, the measurement advanced
     # one step through the learned model, and the shifted controls rolled out from there
     previous = episode["u"][step - 1]
     shifted = np.concatenate([previous[1:], previous[-1:]])
-    xstart = step_np(decoder, pw, episode["x0"][step], episode["u0"][step])
     states = [xstart]
     for stage in range(horizon):
       states.append(step_np(decoder, pw, states[-1], shifted[stage]))
     guess = np.concatenate([np.asarray(states).reshape(-1), shifted.reshape(-1), np.zeros(1)])
 
-    out = solve_problem(controller, guess, *zeros, np.concatenate([xstart, pw]))
+    out = solve_problem(controller, guess, *zeros, p)
     stats = problem_stats(controller)
     status = None if stats is None else stats.to_solver_status()
     assert status is not None and stats is not None and status.ok, f"step {step}: {None if stats is None else stats.status.name}"
     ours = np.asarray(out["x"], dtype=np.float64).reshape(-1)
-    gap = float(out["f"]) - float(np.asarray(lag((theirs, pw))[0]))
+    gap = float(out["f"]) - float(np.asarray(lag((theirs, p))[0]))
     assert gap <= 1e-6 * (1.0 + abs(float(out["f"]))), f"step {step}: our objective is {gap:.3e} worse than theirs"
     if step < REFERENCE_SETTLING_STEP:
       continue
@@ -674,6 +723,8 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "plant_rollout": (check_plant_matches_reference_oracle, False, False),
   "terminal_riccati": (check_terminal_riccati_weight, False, False),
   "constraint_rows": (check_constraint_rows_and_bounds, False, False),
+  "runtime_tuning_parameters": (check_runtime_tuning_parameters, False, False),
+  "casadi_runtime_parameters": (check_casadi_runtime_parameters_match, False, True),
   "initial_guess": (check_initial_guess_reaches_upright, False, False),
   "exact_hessian": (check_nlp_uses_an_exact_hessian, True, False),
   "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, True, True),

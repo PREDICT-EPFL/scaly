@@ -133,6 +133,10 @@ measurement under this protocol was run, so the table alone does not isolate the
 
 ### Neural-process model predictive control Hessian
 
+These neural-process measurements predate the 1427-entry runtime-parameter interface and describe
+the earlier 1400-entry implementation. Rerun this workload before citing its timings or source-size
+figures as measurements of the current code.
+
 Reproduce with:
 
 ```bash

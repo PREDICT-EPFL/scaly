@@ -68,7 +68,7 @@ band of inequalities rather than an equality, as theirs is.
 
 `P` solves the discrete algebraic Riccati equation for the learned dynamics linearized at the upright
 equilibrium with `Q_f = diag(1, 10, 0.1, 0.1)` and `R_f = 1`. Their code takes `A`, `B` from
-`torch.autograd`; `linearize` takes them from `al.factory.Jac` on the Alloy stage function instead, which
+`torch.autograd`; `linearize` takes them from one typed Alloy derivative function instead, which
 removes the torch dependency and exercises Alloy's own differentiation in the problem's setup. The
 Riccati residual is gated regardless, so a pinned `P` cannot drift from the linearization it claims
 to come from.
@@ -80,18 +80,30 @@ during lowering.
 
 ### The parameter vector
 
-`p = [xstart (4) | pw (1396)]`, the pinned initial state first as in `race_cars` and `chain`. The
-decoder tail is, in order:
+At the shipped decoder width, both generated backends accept the same 1427-entry runtime vector:
+
+```text
+p = [xstart (4) | pw (1396) | dt (1) | cost (10) | P (16)]
+```
+
+The cost block contains the four state weights, four inter-stage weights, the input weight, and the
+slack weight. `P` is row-major. The decoder tail is, in order:
 
 ```text
 x_scale_w 5 | x_scale_b 5 | y_inv_w 2 | y_inv_b 2 | W0 288 | W1 1024 | W2 64 | b2 2 | z 4
 ```
 
-Both backends read the weights from `p`. Baking them in as constants would let the compiler fold
-them and would be faster, but it would make the comparison unfair unless CasADi did the same — a
-fairness decision, not an oversight. The latent code travelling in the tail rather than as a baked
-constant is what lets one compiled artifact serve all three of the paper's pendulums, and keeps the
-door open for the event-triggered online adaptation their conclusion points at.
+Both backends read all numerical tuning data from `p`. Generated C can therefore change the model,
+sample time, cost, and terminal weight without recompilation. The horizon and decoder architecture
+still specialize the generated function because they determine loop bounds and buffer shapes. This
+benchmark assumes that the packed decoder-vector length identifies its architecture. Arbitrary MLP
+layouts can share a total parameter count, so a general `FunctionTemplate` must use the individual
+layer shapes instead.
+
+The shipped inter-stage weights start with two zeros. Keeping those weights runtime-configurable
+means the generated Hessian retains the corresponding structural entries instead of folding them
+away: 12 entries at N = 6 and 200 at N = 100 are zero for the default configuration. Both backends
+receive the same runtime data and retain the same structure.
 
 ### The plant
 
@@ -170,6 +182,10 @@ for system 3 and establishes that this re-implementation of their decoder is fai
   the latent code.
 
 ## Results
+
+The measurements below predate the 1427-entry runtime-parameter interface and must be rerun before
+they are cited as measurements of the current implementation. In particular, the generated source
+line counts and recorded closed-loop parameter vectors describe the earlier 1400-entry interface.
 
 The current harness code-generates the CasADi `nlpsol` with `expand=False` and compiles it
 against the same IPOPT library as the Alloy column. The next canonical run will populate the
@@ -266,6 +282,8 @@ being any.
 | `plant_rollout` | the analytic plant against their analytic rollout, plus substep convergence and both equilibria |
 | `terminal_riccati` | `A`, `B` against finite differences, and `P` against the Riccati equation |
 | `constraint_rows` | the inequality rows and box bounds against a hand-written evaluation |
+| `runtime_tuning_parameters` | one compiled Alloy function responds to runtime changes in `dt`, cost weights and `P` |
+| `casadi_runtime_parameters` | CasADi reads the same runtime fields and matches Alloy after each change |
 | `initial_guess` | the cold start rotates *forward* to upright, which picks the swing-up direction |
 | `exact_hessian` | the IPOPT column really consumes the generated exact Lagrangian Hessian |
 | `episode_artifacts` | shapes, finiteness, the first node inside the band, the plan's first control applied |

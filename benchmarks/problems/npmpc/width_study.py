@@ -32,6 +32,7 @@ from benchmarks.problems.npmpc import (
   constraint_counts,
   n_dec,
   npmpc_nlp,
+  pack_nlp_params,
   pack_params,
   plant_step,
   random_decoder_weights,
@@ -79,12 +80,10 @@ def measure(width: int, solver: str = "sqp", *, steps: int = DEFAULT_STEPS, seed
   decoder = Decoder((width, width))
   config = replace(EpisodeConfig(), decoder=decoder)
   pw = pack_params(decoder, random_decoder_weights(decoder, seed))
+  P = np.diag(CostWeights().x_end)
   controller = npmpc_nlp(
-    np.diag(CostWeights().x_end),
     config.horizon,
     decoder,
-    weights=config.weights,
-    dt=config.dt,
     solver=solver,
     options=(
       {"tol": config.sqp_tol, "max_iter": config.sqp_max_iter}
@@ -100,7 +99,7 @@ def measure(width: int, solver: str = "sqp", *, steps: int = DEFAULT_STEPS, seed
   offset = 4 * (config.horizon + 1)
   totals, evaluations, iterations, note = [], [], [], ""
   for step in range(steps + 1):
-    out = solve_problem(controller, guess, *zeros, np.concatenate([state, pw]))
+    out = solve_problem(controller, guess, *zeros, pack_nlp_params(decoder, state, pw, P, weights=config.weights, dt=config.dt))
     stats = problem_stats(controller)
     status = None if stats is None else stats.to_solver_status()
     if stats is None or status is None or not status.ok:

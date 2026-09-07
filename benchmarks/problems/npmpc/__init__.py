@@ -2,21 +2,61 @@
 
 from __future__ import annotations
 
+import builtins
 import functools
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, assert_type
 
 import numpy as np
 
 import alloy as al
-from alloy.ir.expr import substitute
 from alloy.utils import load_torch_state_dict
+
+type StageFunction = al.Function[
+  tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr],
+  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+  al.Expr,
+  np.ndarray,
+]
+type StageJacFunction = al.Function[
+  tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr],
+  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+  tuple[al.Expr, al.Expr, al.Expr],
+  tuple[np.ndarray, np.ndarray, np.ndarray],
+]
+type StageCostFunction = al.Function[
+  tuple[al.Expr, al.Expr, al.Expr, al.Expr],
+  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+  al.Expr,
+  np.ndarray,
+]
+type NpmpcFunction = al.Function[
+  tuple[al.Expr, al.Expr],
+  tuple[np.ndarray, np.ndarray],
+  al.Expr,
+  np.ndarray,
+]
+type NpmpcLagFunction = al.Function[
+  tuple[al.Expr, al.Expr],
+  tuple[np.ndarray, np.ndarray],
+  tuple[al.Expr, al.Expr],
+  tuple[np.ndarray, np.ndarray],
+]
+type NpmpcSolver = al.Function[
+  tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr],
+  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+  tuple[al.Expr, al.Expr, al.Expr, al.Expr],
+  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+]
 
 # State (theta, phi, theta_dot, phi_dot) with theta = 0 upright, input (torque,), decoder output (d theta_dot, d phi_dot).
 NX, NU, NY = 4, 1, 2
 # Decoder features are (sin theta, cos theta, theta_dot, phi_dot, torque), then the latent code is appended.
 NFEAT, NLATENT = 5, 4
+N_COST_WEIGHTS = 10  # x (4), x_diff (4), u, slack
+N_RUNTIME_CONFIG = 1 + N_COST_WEIGHTS + NX * NX  # dt, cost weights, terminal P
 HORIZON = 12
 DT = 0.02
 DEFAULT_HIDDEN = (32, 32)
@@ -92,7 +132,7 @@ class Decoder:
   def n_pw(self) -> int:
     return self.offsets[-1]
 
-  def slice(self, name: str) -> slice:
+  def slice(self, name: str) -> builtins.slice:
     names = [n for n, _ in self.blocks]
     i = names.index(name)
     return slice(self.offsets[i], self.offsets[i + 1])
@@ -104,8 +144,18 @@ def n_dec(horizon: int) -> int:
 
 
 def n_param(decoder: Decoder = Decoder()) -> int:
-  """Parameter length for the transcribed NLP: the state the first node is pinned to, then the decoder tail."""
-  return NX + decoder.n_pw
+  """Parameter length: initial state, decoder tail, time step, cost weights, then terminal weight."""
+  return NX + decoder.n_pw + N_RUNTIME_CONFIG
+
+
+def _param_slices(decoder: Decoder) -> tuple[slice, slice, slice, slice]:
+  pw_stop = NX + decoder.n_pw
+  return (
+    slice(NX, pw_stop),
+    slice(pw_stop, pw_stop + 1),
+    slice(pw_stop + 1, pw_stop + 1 + N_COST_WEIGHTS),
+    slice(pw_stop + 1 + N_COST_WEIGHTS, pw_stop + N_RUNTIME_CONFIG),
+  )
 
 
 def constraint_counts(horizon: int) -> tuple[int, int]:
@@ -263,15 +313,22 @@ def load_reference_episode(path: str | Path = DEFAULT_EPISODE_PATH) -> dict[str,
     return {key: np.asarray(stored[key]) for key in stored.files}
 
 
+# The decoder architecture changes the packed parameter-vector shape, so this remains a builder
+# until FunctionTemplate can own its shape-specialized instances. For this benchmark, the vector
+# length identifies the architecture even though that is not true for arbitrary layer layouts.
 @functools.cache
-def stage_function(decoder: Decoder = Decoder(), dt: float = DT) -> al.Function:
+def stage_function(decoder: Decoder = Decoder()) -> StageFunction:
   """The dynamics residual of one horizon stage: `x + f(x, u) - xnext`, with the weights read out of the parameter tail."""
   shapes = decoder.weight_shapes
   name = "npmpc_stage_h" + "x".join(str(h) for h in decoder.hidden)
 
-  @al.function(al.G(al.L("x", NX), al.L("xnext", NX), al.L("u", NU), al.L("pw", decoder.n_pw)), al.L("eq", ...), name=name)
-  def stage(inputs):
-    x, xnext, u, pw = inputs
+  @al.function(
+    al.G(al.L("x", NX), al.L("xnext", NX), al.L("u", NU), al.L("pw", decoder.n_pw), al.L("dt", ())),
+    al.L("eq", ...),
+    name=name,
+  )
+  def stage(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
+    x, xnext, u, pw, dt = inputs
     feat = al.stack([x[0].sin(), x[0].cos(), x[2], x[3], u[0]]) * pw[decoder.slice("x_scale_w")] + pw[decoder.slice("x_scale_b")]
     h = al.concat([feat, pw[decoder.slice("latent")]])
     for i, shape in enumerate(shapes[:-1]):
@@ -286,20 +343,30 @@ def stage_function(decoder: Decoder = Decoder(), dt: float = DT) -> al.Function:
 
 
 @functools.cache
-def npmpc_eq_function(horizon: int, decoder: Decoder = Decoder(), dt: float = DT) -> al.Function:
+def npmpc_eq_function(horizon: int, decoder: Decoder = Decoder()) -> NpmpcFunction:
   """The `horizon` dynamics equalities, as one `al.vmap` over the stage function.
 
   States are blocked ahead of controls in `z`, so both windows into it stride cleanly and there is
   no dead trailing control the way an interleaved layout would leave.
   """
-  z = al.sym("z", n_dec(horizon))
-  p = al.sym("p", decoder.n_pw, diff=False)
-  eq = al.vmap(
-    stage_function(decoder, dt),
-    length=horizon,
-    inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (horizon + 1), NU), "pw": (p, 0, 0)},
-  )
-  return al.Function._from_exprs(f"npmpc_eq_N{horizon}", [z, p], [eq], ["z", "p"], ["eq"])
+  pw_slice, dt_slice, _, _ = _param_slices(decoder)
+
+  @al.function(al.G(al.L("z", n_dec(horizon)), al.L("p", n_param(decoder))), al.L("eq", ...), name=f"npmpc_eq_N{horizon}")
+  def equality(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+    z, p = inputs
+    return al.vmap(
+      stage_function(decoder),
+      length=horizon,
+      inputs={
+        "x": (z, 0, NX),
+        "xnext": (z, NX, NX),
+        "u": (z, NX * (horizon + 1), NU),
+        "pw": (p[pw_slice], 0, 0),
+        "dt": (p[dt_slice], 0, 0),
+      },
+    )
+
+  return equality
 
 
 def sample_inputs(horizon: int, decoder: Decoder = Decoder(), weights: np.ndarray | None = None, seed: int = 11) -> tuple[np.ndarray, np.ndarray]:
@@ -321,16 +388,16 @@ def sample_inputs(horizon: int, decoder: Decoder = Decoder(), weights: np.ndarra
 
 
 @functools.cache
-def _stage_jac_function(decoder: Decoder, dt: float) -> al.Function:
-  stage = stage_function(decoder, dt)
+def _stage_jac_function(decoder: Decoder) -> StageJacFunction:
+  stage = stage_function(decoder)
   return stage.factory(
     f"npmpc_stage_jac_h{'x'.join(str(h) for h in decoder.hidden)}",
-    ["x", "xnext", "u", "pw"],
+    list(stage.input_names),
     [al.factory.Jac("eq", "x"), al.factory.Jac("eq", "u"), al.factory.Jac("eq", "xnext")],
   )
 
 
-def npmpc_eq_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray, decoder: Decoder = Decoder(), dt: float = DT) -> np.ndarray:
+def npmpc_eq_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray, decoder: Decoder = Decoder()) -> np.ndarray:
   """Dense Jacobian of the equalities, assembled from per-stage dense blocks.
 
   Each stage's residual touches only its own state, control, and successor state, so the matrix is
@@ -338,13 +405,15 @@ def npmpc_eq_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray, dec
   one over the whole horizon. Differentiating the *stage* function and scattering the blocks is also
   the independence the check needs: it never builds the VMAP graph the sparse kernel comes from.
   """
-  jac = _stage_jac_function(decoder, dt)
+  _, pw, dt, _, _ = _unpack_nlp_params(decoder, p)
+  jac = _stage_jac_function(decoder)
   offset = NX * (horizon + 1)
   dense = np.zeros((NX * horizon, n_dec(horizon)), dtype=np.float64)
   for i in range(horizon):
     x, xnext = z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)]
     u = z[offset + NU * i : offset + NU * (i + 1)]
-    d_x, d_u, d_xnext = (np.asarray(block, dtype=np.float64).reshape(NX, -1) for block in jac((x, xnext, u, p)))
+    args = (x, xnext, u, pw, np.array(dt))
+    d_x, d_u, d_xnext = (np.asarray(block, dtype=np.float64).reshape(NX, -1) for block in jac(args))
     rows = slice(NX * i, NX * (i + 1))
     dense[rows, NX * i : NX * (i + 1)] = d_x
     dense[rows, NX * (i + 1) : NX * (i + 2)] = d_xnext
@@ -352,14 +421,14 @@ def npmpc_eq_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray, dec
   return dense.reshape(-1)
 
 
-def npmpc_constraint_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray, decoder: Decoder = Decoder(), dt: float = DT) -> np.ndarray:
+def npmpc_constraint_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray, decoder: Decoder = Decoder()) -> np.ndarray:
   """Dense reference for every equality and inequality row in the solver descriptor."""
   z, p = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64)
   if z.shape != (n_dec(horizon),) or p.shape != (n_param(decoder),):
     raise ValueError(f"invalid z/p shapes {z.shape} / {p.shape}")
   n_eq, n_ineq = constraint_counts(horizon)
   dense = np.zeros((n_eq + n_ineq, z.size), dtype=np.float64)
-  dense[:n_eq] = npmpc_eq_jac_dense_reference(horizon, z, p[NX:], decoder, dt).reshape(n_eq, -1)
+  dense[:n_eq] = npmpc_eq_jac_dense_reference(horizon, z, p, decoder).reshape(n_eq, -1)
   dense[n_eq : n_eq + NX, :NX] = np.eye(NX)
   slack_col = z.size - 1
   for stage in range(horizon + 1):
@@ -386,6 +455,37 @@ class CostWeights:
   slack: float = 1000.0
 
 
+def pack_cost_weights(weights: CostWeights = CostWeights()) -> np.ndarray:
+  """Pack the stage, input, and slack cost coefficients in their runtime ABI order."""
+  return np.asarray((*weights.x, *weights.x_diff, weights.u, weights.slack), dtype=np.float64)
+
+
+def pack_nlp_params(
+  decoder: Decoder,
+  xstart: np.ndarray,
+  pw: np.ndarray,
+  P: np.ndarray,
+  *,
+  weights: CostWeights = CostWeights(),
+  dt: float = DT,
+) -> np.ndarray:
+  """Pack every runtime NLP parameter in the order shared by Alloy and CasADi."""
+  xstart = np.asarray(xstart, dtype=np.float64).reshape(-1)
+  pw = np.asarray(pw, dtype=np.float64).reshape(-1)
+  P = np.asarray(P, dtype=np.float64)
+  if xstart.shape != (NX,) or pw.shape != (decoder.n_pw,) or P.shape != (NX, NX):
+    raise ValueError(f"invalid xstart/pw/P shapes {xstart.shape} / {pw.shape} / {P.shape}")
+  return np.concatenate([xstart, pw, np.array([dt]), pack_cost_weights(weights), P.reshape(-1)])
+
+
+def _unpack_nlp_params(decoder: Decoder, p: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, np.ndarray, np.ndarray]:
+  p = np.asarray(p, dtype=np.float64).reshape(-1)
+  if p.shape != (n_param(decoder),):
+    raise ValueError(f"invalid parameter shape {p.shape}, expected {(n_param(decoder),)}")
+  pw_slice, dt_slice, cost_slice, P_slice = _param_slices(decoder)
+  return p[:NX], p[pw_slice], float(p[dt_slice][0]), p[cost_slice], p[P_slice].reshape(NX, NX)
+
+
 def linearize(decoder: Decoder, pw: np.ndarray, dt: float = DT) -> tuple[np.ndarray, np.ndarray]:
   """`A`, `B` of the learned one-step map at the upright equilibrium.
 
@@ -393,8 +493,9 @@ def linearize(decoder: Decoder, pw: np.ndarray, dt: float = DT) -> tuple[np.ndar
   the equilibrium *are* `A` and `B`. Taking them from `al.factory.Jac` keeps the reference implementation's
   torch dependency out and exercises Alloy's differentiation in the problem's own setup.
   """
-  jac = _stage_jac_function(decoder, dt)
-  d_x, d_u, _ = (np.asarray(block, dtype=np.float64).reshape(NX, -1) for block in jac((np.zeros(NX), np.zeros(NX), np.zeros(NU), pw)))
+  jac = _stage_jac_function(decoder)
+  args = (np.zeros(NX), np.zeros(NX), np.zeros(NU), pw, np.array(dt))
+  d_x, d_u, _ = (np.asarray(block, dtype=np.float64).reshape(NX, -1) for block in jac(args))
   return d_x, d_u
 
 
@@ -413,34 +514,32 @@ def riccati_residual(P: np.ndarray, A: np.ndarray, B: np.ndarray, weights: CostW
   return float(np.abs(P - rhs).max())
 
 
-@functools.cache
-def stage_cost_function(weights: CostWeights = CostWeights()) -> al.Function:
-  """One horizon stage of the objective: state, input, and inter-stage terms for stage `i`.
+@al.function(
+  al.G(al.L("x", NX), al.L("xnext", NX), al.L("u", NU), al.L("cost_weights", N_COST_WEIGHTS)),
+  al.L("cost", ...),
+  name="npmpc_stage_cost",
+)
+def stage_cost_function(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
+  """One horizon stage of the objective with runtime cost coefficients.
 
   Scanned over the horizon by `npmpc_cost_expr`, so the objective's generated source stays constant
   in the horizon exactly as the dynamics' does. Building it as a Python loop instead unrolls it,
   which grows the source linearly and, past roughly 75 stages, exceeds the Program IR passes'
   recursion depth during lowering (the limitation recorded in `internal/todo.md`).
   """
-
-  @al.function(al.G(al.L("x", NX), al.L("xnext", NX), al.L("u", NU)), al.L("cost", ...), name="npmpc_stage_cost")
-  def stage_cost(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
-    x, xnext, u = inputs
-    dx = xnext - x
-    # The pendulum angle uses the 2*pi-periodic half-angle lift, so every upright pose costs the
-    # same: (2 sin(theta/2))^2 = 2 (1 - cos theta).
-    total = weights.x[0] * 2.0 * (1.0 - x[0].cos()) + weights.u * u[0] * u[0]
-    for k in (1, 2, 3):
-      total = total + weights.x[k] * x[k] * x[k]
-    for k, weight in enumerate(weights.x_diff):
-      if weight:
-        total = total + weight * dx[k] * dx[k]
-    return total
-
-  return stage_cost
+  x, xnext, u, weights = inputs
+  dx = xnext - x
+  # The pendulum angle uses the 2*pi-periodic half-angle lift, so every upright pose costs the
+  # same: (2 sin(theta/2))^2 = 2 (1 - cos theta).
+  total = weights[0] * 2.0 * (1.0 - x[0].cos()) + weights[8] * u[0] * u[0]
+  for k in (1, 2, 3):
+    total = total + weights[k] * x[k] * x[k]
+  for k in range(NX):
+    total = total + weights[NX + k] * dx[k] * dx[k]
+  return total
 
 
-def npmpc_cost_expr(z: al.Expr, horizon: int, P: np.ndarray, weights: CostWeights = CostWeights()) -> al.Expr:
+def npmpc_cost_expr(z: al.Expr, horizon: int, P: al.Expr, weights: al.Expr) -> al.Expr:
   """Total objective: stage, inter-stage, LQR terminal, and slack penalty (paper eq. 15).
 
   The per-stage part uses VMAP; only the terminal and slack terms, which exist once, sit outside
@@ -448,15 +547,15 @@ def npmpc_cost_expr(z: al.Expr, horizon: int, P: np.ndarray, weights: CostWeight
   """
   offset = NX * (horizon + 1)
   stages = al.vmap(
-    stage_cost_function(weights),
+    stage_cost_function,
     length=horizon,
-    inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, offset, NU)},
+    inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, offset, NU), "cost_weights": (weights, 0, 0)},
   )
   xN = z[NX * horizon : NX * (horizon + 1)]
   e_end = al.stack([2.0 * (xN[0] / 2.0).sin(), xN[1], xN[2], xN[3]])
-  terminal = al.dot(e_end, al.const(np.asarray(P, dtype=np.float64)) @ e_end)
+  terminal = al.dot(e_end, P.reshape((NX, NX)) @ e_end)
   slack = z[offset + NU * horizon]
-  return stages.sum() + terminal + weights.slack * 0.5 * (slack * slack + slack)
+  return stages.sum() + terminal + weights[9] * 0.5 * (slack * slack + slack)
 
 
 def npmpc_ineq_bounds(horizon: int) -> tuple[np.ndarray, np.ndarray]:
@@ -498,10 +597,7 @@ def npmpc_lag_hess_dense_reference(
   p: np.ndarray,
   lam_f: float,
   lam_g: np.ndarray,
-  P: np.ndarray,
   decoder: Decoder = Decoder(),
-  weights: CostWeights = CostWeights(),
-  dt: float = DT,
 ) -> np.ndarray:
   """Dense NumPy Hessian of ``lam_f * f + dot(lam_g, [h_eq; g_ineq])`` for ``npmpc_nlp``.
 
@@ -515,16 +611,16 @@ def npmpc_lag_hess_dense_reference(
   z, p, lam_g = np.asarray(z, dtype=np.float64), np.asarray(p, dtype=np.float64), np.asarray(lam_g, dtype=np.float64)
   if z.shape != (n_dec(horizon),) or p.shape != (n_param(decoder),) or lam_g.shape != (sum(constraint_counts(horizon)),):
     raise ValueError(f"invalid z/p/lam_g shapes {z.shape} / {p.shape} / {lam_g.shape}")
-  pw, offset = p[NX:], NX * (horizon + 1)
-  terminal_weight = np.asarray(P, dtype=np.float64)
+  _, pw, dt, weights, terminal_weight = _unpack_nlp_params(decoder, p)
+  offset = NX * (horizon + 1)
   dense = np.zeros((z.size, z.size), dtype=np.float64)
 
   def stage(v):
     x, xnext, u = v[:NX], v[NX : 2 * NX], v[2 * NX :]
     dx = xnext - x
-    cost = weights.x[0] * 2.0 * (1.0 - np.cos(x[0])) + weights.u * u[0] * u[0]
-    cost = cost + sum(weights.x[k] * x[k] * x[k] for k in (1, 2, 3))
-    cost = cost + sum(weight * dx[k] * dx[k] for k, weight in enumerate(weights.x_diff) if weight)
+    cost = weights[0] * 2.0 * (1.0 - np.cos(x[0])) + weights[8] * u[0] * u[0]
+    cost = cost + sum(weights[k] * x[k] * x[k] for k in (1, 2, 3))
+    cost = cost + sum(weights[NX + k] * dx[k] * dx[k] for k in range(NX))
     y = decoder_mu_np(decoder, pw, x, u)
     return [cost, *(x + np.concatenate([dt * (x[2:4] + y / 2.0), y]) - xnext)]
 
@@ -537,48 +633,47 @@ def npmpc_lag_hess_dense_reference(
     dense[np.ix_(index, index)] += lagrangian_hessian_np(stage, z[index], np.concatenate([[lam_f], lam_g[NX * i : NX * (i + 1)]]))
   block = slice(NX * horizon, offset)
   dense[block, block] += lagrangian_hessian_np(terminal, z[block], np.array([lam_f]))
-  dense[-1, -1] += lam_f * weights.slack
+  dense[-1, -1] += lam_f * weights[9]
   return dense
 
 
 def npmpc_nlp(
-  P: np.ndarray,
   horizon: int = HORIZON,
   decoder: Decoder = Decoder(),
   *,
-  weights: CostWeights = CostWeights(),
-  dt: float = DT,
   solver: str = "ipopt",
   options: dict[str, str | int | float] | None = None,
-) -> al.Function:
+) -> NpmpcSolver:
   """The neural-process MPC as one typed `al.Problem`: VMAP dynamics, VMAP cost, one arm-angle slack.
 
-  `P` is the terminal weight from `terminal_P`. `p` carries the state the first horizon node is
-  pinned to and then the decoder tail, in the order `n_param` describes -- the state first, as
-  `race_cars` and `chain` also do it. The weights and the latent code travelling as parameters is
-  what lets one compiled artifact serve every pendulum in the paper's family.
+  `p` carries the initial state, decoder tail, time step, cost coefficients, and terminal weight in
+  the order `pack_nlp_params` defines. All numerical configuration remains available to generated-C
+  callers. Only the horizon and decoder architecture specialize the compiled function.
   """
-  z = al.sym("z", n_dec(horizon))
-  p = al.sym("p", n_param(decoder), diff=False)
-  eq = al.vmap(
-    stage_function(decoder, dt),
-    length=horizon,
-    inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (horizon + 1), NU), "pw": (p, NX, 0)},
-  )
-  rows, l_ineq, u_ineq = npmpc_constraint_exprs(z, p[:NX], horizon)
   lower, upper = npmpc_bounds(horizon)
   problem_name = f"npmpc_N{horizon}"
-  cost = npmpc_cost_expr(z, horizon, P, weights)
+  pw_slice, dt_slice, cost_slice, P_slice = _param_slices(decoder)
 
-  @al.problem(vars=al.L("z", z.type), params=al.L("p", p.type), name=problem_name)
-  def problem(new_z, new_p):
-    replacements = {z: new_z, p: new_p}
+  @al.problem(vars=al.L("z", n_dec(horizon)), params=al.L("p", n_param(decoder)), name=problem_name)
+  def problem(z: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    eq = al.vmap(
+      stage_function(decoder),
+      length=horizon,
+      inputs={
+        "x": (z, 0, NX),
+        "xnext": (z, NX, NX),
+        "u": (z, NX * (horizon + 1), NU),
+        "pw": (p[pw_slice], 0, 0),
+        "dt": (p[dt_slice], 0, 0),
+      },
+    )
+    rows, l_ineq, u_ineq = npmpc_constraint_exprs(z, p[:NX], horizon)
     return al.ProblemSpec(
-      minimize=substitute(cost, replacements),
-      eq=(substitute(eq, replacements),),
+      minimize=npmpc_cost_expr(z, horizon, p[P_slice], p[cost_slice]),
+      eq=(eq,),
       ineq=(
         al.bounded(
-          substitute(rows, replacements),
+          rows,
           lo=al.const(l_ineq),
           hi=al.const(u_ineq),
           name="soft_bounds",
@@ -591,20 +686,32 @@ def npmpc_nlp(
   return al.solver(problem, solver, name=f"{problem_name}_{solver}", options=options)
 
 
-def npmpc_lag_function(
-  horizon: int, decoder: Decoder = Decoder(), P: np.ndarray | None = None, weights: CostWeights = CostWeights(), dt: float = DT
-) -> al.Function:
+@functools.cache
+def npmpc_lag_function(horizon: int, decoder: Decoder = Decoder()) -> NpmpcLagFunction:
   """Objective and dynamics equalities together, the pair an exact Lagrangian Hessian needs."""
-  z = al.sym("z", n_dec(horizon))
-  p = al.sym("p", decoder.n_pw, diff=False)
-  eq = al.vmap(
-    stage_function(decoder, dt),
-    length=horizon,
-    inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (horizon + 1), NU), "pw": (p, 0, 0)},
+  pw_slice, dt_slice, cost_slice, P_slice = _param_slices(decoder)
+
+  @al.function(
+    al.G(al.L("z", n_dec(horizon)), al.L("p", n_param(decoder))),
+    al.G(al.L("cost", ...), al.L("eq", ...)),
+    name=f"npmpc_lag_N{horizon}",
   )
-  terminal = np.diag(weights.x_end) if P is None else P
-  cost = npmpc_cost_expr(z, horizon, terminal, weights)
-  return al.Function._from_exprs(f"npmpc_lag_N{horizon}", [z, p], [cost, eq], ["z", "p"], ["cost", "eq"])
+  def lagrangian_inputs(inputs: tuple[al.Expr, al.Expr]) -> tuple[al.Expr, al.Expr]:
+    z, p = inputs
+    eq = al.vmap(
+      stage_function(decoder),
+      length=horizon,
+      inputs={
+        "x": (z, 0, NX),
+        "xnext": (z, NX, NX),
+        "u": (z, NX * (horizon + 1), NU),
+        "pw": (p[pw_slice], 0, 0),
+        "dt": (p[dt_slice], 0, 0),
+      },
+    )
+    return npmpc_cost_expr(z, horizon, p[P_slice], p[cost_slice]), eq
+
+  return lagrangian_inputs
 
 
 def ca_npmpc_pieces(
@@ -612,9 +719,6 @@ def ca_npmpc_pieces(
   decoder: Decoder = Decoder(),
   sym_t=None,
   *,
-  P: np.ndarray | None = None,
-  weights: CostWeights = CostWeights(),
-  dt: float = DT,
   cost: bool = True,
   dynamics: bool = True,
   batched: bool = False,
@@ -624,10 +728,10 @@ def ca_npmpc_pieces(
 
   One builder behind all four CasADi consumers -- the sweep's constraint-Jacobian and Lagrangian-
   Hessian kernels and the closed loop's IPOPT and SQP columns -- so the mirror cannot drift from
-  itself. `z`, `xstart` and `pw` mean exactly what they mean on the Alloy side, every constraint row
-  and decision column sits in the same place, and the bounds come from the same two functions. That
-  identity is what makes the two-oracle comparison controlled: the only difference left is which
-  tool differentiates and evaluates.
+  itself. Its runtime symbols match Alloy's parameter vector, so neither provider specializes
+  numerical tuning data into generated code. Every constraint row and decision column sits in the
+  same place. That identity makes the comparison controlled: only the tool that differentiates and
+  evaluates the oracles changes.
 
   Set ``dynamics=False`` only when the caller replaces ``h_eq`` with an equivalent encoding.
   ``batched`` decodes every stage's features as one matrix-matrix product per layer, and ``mtimes``
@@ -640,6 +744,9 @@ def ca_npmpc_pieces(
   z = sym_t.sym("z", n_dec(horizon))
   xstart = sym_t.sym("xstart", NX)
   pw = sym_t.sym("pw", decoder.n_pw)
+  dt = sym_t.sym("dt")
+  cost_weights = sym_t.sym("cost_weights", N_COST_WEIGHTS)
+  terminal_weight = sym_t.sym("P", NX, NX)
   if dynamics:
     xw, xb = pw[decoder.slice("x_scale_w")], pw[decoder.slice("x_scale_b")]
     yw, yb = pw[decoder.slice("y_inv_w")], pw[decoder.slice("y_inv_b")]
@@ -670,18 +777,17 @@ def ca_npmpc_pieces(
     if cost:
       dx = xnext - x
       cost_terms.append(
-        weights.x[0] * 2.0 * (1.0 - ca.cos(x[0]))
-        + sum(weights.x[k] * x[k] ** 2 for k in (1, 2, 3))
-        + weights.u * u[0] ** 2
-        + sum(weight * dx[k] ** 2 for k, weight in enumerate(weights.x_diff) if weight)
+        cost_weights[0] * 2.0 * (1.0 - ca.cos(x[0]))
+        + sum(cost_weights[k] * x[k] ** 2 for k in (1, 2, 3))
+        + cost_weights[8] * u[0] ** 2
+        + sum(cost_weights[NX + k] * dx[k] ** 2 for k in range(NX))
       )
   slack = z[offset + NU * horizon]
   objective = None
   if cost:
     xN = z[NX * horizon : offset]
     e_end = ca.vertcat(2.0 * ca.sin(xN[0] / 2.0), xN[1], xN[2], xN[3])
-    terminal = np.diag(weights.x_end) if P is None else np.asarray(P, dtype=np.float64)
-    objective = sum(cost_terms) + e_end.T @ ca.DM(terminal) @ e_end + weights.slack * 0.5 * (slack**2 + slack)
+    objective = sum(cost_terms) + e_end.T @ terminal_weight @ e_end + cost_weights[9] * 0.5 * (slack**2 + slack)
   phi = ca.vertcat(*[z[NX * i + 1] for i in range(horizon + 1)])
   l_ineq, u_ineq = npmpc_ineq_bounds(horizon)
   x_lb, x_ub = npmpc_bounds(horizon)
@@ -690,6 +796,9 @@ def ca_npmpc_pieces(
     "z": z,
     "xstart": xstart,
     "pw": pw,
+    "dt": dt,
+    "cost_weights": cost_weights,
+    "P": terminal_weight,
     "f": objective,
     "h_eq": ca.vertcat(*rows),
     "g_ineq": ca.vertcat(z[:NX] - xstart, phi + slack, phi - slack),
@@ -707,10 +816,7 @@ def _ca_npmpc_joint_parameter_pieces(
   decoder: Decoder = Decoder(),
   sym_t=None,
   *,
-  P: np.ndarray | None = None,
-  weights: CostWeights = CostWeights(),
   dynamics: bool = True,
-  dt: float = DT,
   batched: bool = False,
   mtimes: str | None = None,
 ) -> dict:
@@ -718,11 +824,20 @@ def _ca_npmpc_joint_parameter_pieces(
   import casadi as ca
 
   sym_t = ca.MX if sym_t is None else sym_t
-  pieces = ca_npmpc_pieces(horizon, decoder, sym_t, P=P, weights=weights, dt=dt, dynamics=dynamics, batched=batched, mtimes=mtimes)
+  pieces = ca_npmpc_pieces(horizon, decoder, sym_t, dynamics=dynamics, batched=batched, mtimes=mtimes)
   p = sym_t.sym("p", n_param(decoder))
+  pw_slice, dt_slice, cost_slice, P_slice = _param_slices(decoder)
   f, h_eq, g_ineq = ca.substitute(
     [pieces["f"], pieces["h_eq"], pieces["g_ineq"]],
-    [pieces["xstart"], pieces["pw"]],
-    [p[:NX], p[NX:]],
+    [pieces["xstart"], pieces["pw"], pieces["dt"], pieces["cost_weights"], pieces["P"]],
+    [p[:NX], p[pw_slice], p[dt_slice], p[cost_slice], ca.reshape(p[P_slice], NX, NX).T],
   )
   return {**pieces, "p": p, "f": f, "h_eq": h_eq, "g_ineq": g_ineq}
+
+
+if TYPE_CHECKING:
+  assert_type(stage_function(), StageFunction)
+  assert_type(stage_cost_function, StageCostFunction)
+  assert_type(npmpc_eq_function(HORIZON), NpmpcFunction)
+  assert_type(npmpc_lag_function(HORIZON), NpmpcLagFunction)
+  assert_type(npmpc_nlp(), NpmpcSolver)

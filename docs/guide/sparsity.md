@@ -27,6 +27,13 @@ by chain rule through the callee. Structural propagation uses compressed sparse 
 internally, so horizon-shaped analysis stores dependencies rather than a dense output-by-input mask.
 This is an implementation detail: public patterns remain `SparsityType` coordinate lists.
 
+This sparsity is used to construct and evaluate compact Jacobians and Hessians. It is not yet a
+general sparse tensor algebra: ordinary expression operations such as `matmul` and `dot` still
+lower as dense arithmetic even when an operand carries a pattern. A conservative local `matmul`
+pattern can add possible nonzeros, but preserving each stage as a `vmap` callee keeps the assembled
+optimal-control derivative block sparse. Solver wrappers consume those compact derivative patterns
+without densifying them.
+
 `SparsityType` holds the pattern as coordinates plus a shape, and converts:
 
 ```python

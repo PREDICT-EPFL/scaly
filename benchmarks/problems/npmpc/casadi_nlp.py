@@ -18,17 +18,15 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-
 from benchmarks.harness.casadi_ipopt import CasadiIpoptSolver
 from benchmarks.problems.npmpc import _ca_npmpc_joint_parameter_pieces
 
 DEFAULT_EXPAND = False
 
 
-def build_casadi_npmpc(config, *, solver: str = "ipopt", P: np.ndarray):
+def build_casadi_npmpc(config, *, solver: str = "ipopt"):
   """The CasADi-oracle column for the requested optimizer."""
-  pieces = _ca_npmpc_joint_parameter_pieces(config.horizon, config.decoder, P=P, weights=config.weights, dt=config.dt)
+  pieces = _ca_npmpc_joint_parameter_pieces(config.horizon, config.decoder)
   if solver == "ipopt":
     return CasadiNpmpcSolver(config, pieces)
   if solver == "sqp":

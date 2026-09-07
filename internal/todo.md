@@ -16,7 +16,7 @@ Last reorganized 2026-08-25, after the fairness audit. Ordered by dependency, no
 groups below have to happen roughly in sequence, and items inside a group are independent.
 
 D2, D1, D1.5, and A11 are complete. D3 completes the solver API work on 2026-09-05. Continue API
-iteration on dev through D3.1 to D3.3 below. Tracks A and B are complete as of 2026-09-05;
+iteration on dev through D3.1 to D3.4 below. Tracks A and B are complete as of 2026-09-05;
 C1–C4 measurements are complete as of 2026-09-06 and leave the paper claim unratified (paper.md
 §8). Track C' is the compiler and formulation work those measurements demand; it is the current
 focus. Track W is the wrap-up and comes last.
@@ -209,7 +209,7 @@ was read and what was rejected in `internal/notes/refactorings.md` before the im
 ## D. API and release, before the paper freezes
 
 D1 to D4 are the refactorings required before submission. The remaining designs live in
-`internal/notes/refactorings.md`; completed sections are removed when they land. D3.1 to D3.3 are
+`internal/notes/refactorings.md`; completed sections are removed when they land. D3.1 to D3.4 are
 follow-ups on dev, not prerequisites for merging D3. Paper examples freeze after D1 and D2. The
 release and archive steps that used to sit here are in track W.
 
@@ -245,6 +245,12 @@ release and archive steps that used to sit here are in track W.
 - [ ] **D3.3. Decide the zero-input Function contract and reduce the private flat call path.**
       Preserve legitimate parameterless solver oracles. Rationale: refactorings.md
       "Zero-input `Function`s, and the flat call seam that survives because of them".
+- [ ] **D3.4. Finish the npmpc `FunctionTemplate` example after D3.1.** The public typed decorators,
+      exact `Function` annotations, and shared Alloy/CasADi runtime parameters landed first. Replace
+      the remaining decoder-architecture builders with `FunctionTemplate`. This benchmark may use
+      the packed parameter length as its specialization key because it does not add more MLP
+      layouts; a general template must distinguish individual layer shapes because equal parameter
+      counts do not prove equal architectures.
 - [ ] **D4. One matcher: op-indexed tables and one walk-rebuild.** Conditional by design — it lands
       only if the result is smaller than the 78 + 71 lines of `ir/match.py` and `ir/spec.py`, and
       closing the section unlanded is a permitted outcome that still has to be written down. After

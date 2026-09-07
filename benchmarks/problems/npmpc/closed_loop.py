@@ -48,6 +48,7 @@ from benchmarks.problems.npmpc import (
   n_dec,
   npmpc_nlp,
   pack_params,
+  pack_nlp_params,
   plant_step,
   step_np,
   terminal_P,
@@ -109,7 +110,7 @@ class EpisodeResult:
   timing: dict[str, object]
 
 
-def build_solver(config: EpisodeConfig, solver: str = "ipopt", oracle: str = "alloy", *, P: np.ndarray):
+def build_solver(config: EpisodeConfig, solver: str = "ipopt", oracle: str = "alloy"):
   """Build the selected solver with either provider's generated oracles."""
   if oracle == "alloy":
     options = (
@@ -117,11 +118,11 @@ def build_solver(config: EpisodeConfig, solver: str = "ipopt", oracle: str = "al
       if solver == "sqp"
       else {"print_level": 0, "sb": "yes", "tol": config.ipopt_tol, "max_iter": config.ipopt_max_iter, "warm_start_init_point": "yes"}
     )
-    return npmpc_nlp(P, config.horizon, config.decoder, weights=config.weights, dt=config.dt, solver=solver, options=options)
+    return npmpc_nlp(config.horizon, config.decoder, solver=solver, options=options)
   if oracle == "casadi":
     from benchmarks.problems.npmpc.casadi_nlp import build_casadi_npmpc
 
-    return build_casadi_npmpc(config, solver=solver, P=P)
+    return build_casadi_npmpc(config, solver=solver)
   raise ValueError(f"unsupported npmpc solver/oracle pair {solver!r}/{oracle!r}")
 
 
@@ -161,7 +162,7 @@ def run_episode(
   pw = pack_params(config.decoder, load_decoder_weights(config.decoder) if weights is None else weights)
   P = terminal_P(config.decoder, pw, config.weights, config.dt)
   timing = SolveTiming()
-  controller = build_solver(config, solver, oracle, P=P)
+  controller = build_solver(config, solver, oracle)
   timing.prepared(controller)
   (n_eq, n_ineq), nz = constraint_counts(config.horizon), n_dec(config.horizon)
 
@@ -177,7 +178,7 @@ def run_episode(
   oracle_inputs: list[dict[str, np.ndarray]] = []
 
   for step in range(config.steps):
-    p = np.concatenate([state, pw])
+    p = pack_nlp_params(config.decoder, state, pw, P, weights=config.weights, dt=config.dt)
     timing.start_step()
     out = solve_problem(controller, guess, np.zeros(n_eq), np.zeros(n_ineq), np.zeros(nz), p)
     timing.end_step()
@@ -240,6 +241,6 @@ def horizon_eq_violation(result: EpisodeResult, step: int) -> float:
   """Largest dynamics residual of the solution accepted at `step`, for divergence reports."""
   from benchmarks.problems.npmpc import npmpc_eq_function
 
-  eq = npmpc_eq_function(result.config.horizon, result.config.decoder, result.config.dt)
+  eq = npmpc_eq_function(result.config.horizon, result.config.decoder)
   item = result.oracle_inputs[step]
-  return float(np.max(np.abs(np.asarray(eq((item["z"], item["p"][NX:]))))))
+  return float(np.max(np.abs(np.asarray(eq((item["z"], item["p"]))))))

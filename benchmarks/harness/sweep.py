@@ -418,18 +418,20 @@ def _race_cars_repeated_pieces(config, stage_sym, *, mapped: bool):
   return {**pieces, "h_eq": h_eq}
 
 
-def _npmpc_repeated_pieces(horizon: int, decoder, terminal, stage_sym, *, mapped: bool):
+def _npmpc_repeated_pieces(horizon: int, decoder, stage_sym, *, mapped: bool):
   import casadi as ca
 
-  pieces = npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, ca.MX, P=terminal, dynamics=False)
+  pieces = npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, ca.MX, dynamics=False)
   one = npmpc.ca_npmpc_pieces(1, decoder, stage_sym, cost=False)
-  stage = ca.Function("npmpc_stage", [one["z"], one["pw"]], [one["h_eq"]])
+  stage = ca.Function("npmpc_stage", [one["z"], one["pw"], one["dt"]], [one["h_eq"]])
   z, p = pieces["z"], pieces["p"]
   offset = npmpc.NX * (horizon + 1)
   states = ca.reshape(z[:offset], npmpc.NX, horizon + 1)
   controls = ca.reshape(z[offset : offset + npmpc.NU * horizon], npmpc.NU, horizon)
   stage_z = ca.vertcat(states[:, :horizon], states[:, 1:], controls, ca.repmat(z[-1], 1, horizon))
-  rows = _repeat_element(ca, stage, horizon, (stage_z, ca.repmat(p[npmpc.NX :], 1, horizon)), mapped=mapped)
+  pw = p[npmpc.NX : npmpc.NX + decoder.n_pw]
+  dt = p[npmpc.NX + decoder.n_pw]
+  rows = _repeat_element(ca, stage, horizon, (stage_z, ca.repmat(pw, 1, horizon), ca.repmat(dt, 1, horizon)), mapped=mapped)
   return {**pieces, "h_eq": ca.reshape(rows, npmpc.NX * horizon, 1)}
 
 
@@ -535,12 +537,11 @@ def _npmpc_cell(workload: str, size: int) -> tuple[int, npmpc.Decoder, np.ndarra
 
 
 def _npmpc_alloy(workload: str, size: int, out_dir: Path) -> dict:
-  horizon, decoder, _, terminal = _npmpc_cell(workload, size)
+  horizon, decoder, _, _ = _npmpc_cell(workload, size)
   axis = CELL_AXES[workload]
   started = time.perf_counter()
-  terminal = np.diag(npmpc.CostWeights().x_end) if terminal is None else terminal
   kind = _kernel_kind(workload)
-  built, sparsity, coloring_width = _descriptor_kernel(npmpc.npmpc_nlp(terminal, horizon, decoder), kind)
+  built, sparsity, coloring_width = _descriptor_kernel(npmpc.npmpc_nlp(horizon, decoder), kind)
   name = built.name
   if kind == "hess":
     benchmark = f"BM_AlloyNpmpcLagHess{axis}{size}"
@@ -618,12 +619,11 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform:
     fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, kernel, expand=expand)
     benchmark = f"BM_Casadi{label}RaceCar{'ConstraintJac' if kernel == 'jac' else 'LagHess'}N{size}"
   elif workload in NPMPC_WORKLOADS:
-    horizon, decoder, _, terminal = _npmpc_cell(workload, size)
-    terminal = np.diag(npmpc.CostWeights().x_end) if terminal is None else terminal
+    horizon, decoder, _, _ = _npmpc_cell(workload, size)
     pieces = (
-      _npmpc_repeated_pieces(horizon, decoder, terminal, sym_t, mapped=mapped)
+      _npmpc_repeated_pieces(horizon, decoder, sym_t, mapped=mapped)
       if repeated
-      else npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, P=terminal, batched=gemm, mtimes=mtimes)
+      else npmpc._ca_npmpc_joint_parameter_pieces(horizon, decoder, sym_t, batched=gemm, mtimes=mtimes)
     )
     constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
     fn = _casadi_descriptor_kernel(ca, name, pieces["z"], pieces["p"], pieces["f"], constraints, kernel, expand=expand)
@@ -833,15 +833,15 @@ def _samples(
     horizon, decoder, weights, terminal = _npmpc_cell(workload, size)
     if harvested is None:
       zv, pw = npmpc.sample_inputs(horizon, decoder, weights)
-      pv = np.concatenate([zv[: npmpc.NX], pw])
+      terminal = np.diag(npmpc.CostWeights().x_end) if terminal is None else terminal
+      pv = npmpc.pack_nlp_params(decoder, zv[: npmpc.NX], pw, terminal)
     else:
       zv, pv = harvested["z"], harvested["p"]
     if zv.shape != (npmpc.n_dec(horizon),) or pv.shape != (npmpc.n_param(decoder),):
       raise ValueError(f"harvested npmpc input shapes do not match {CELL_AXES[workload]}={size}: {zv.shape}, {pv.shape}")
     if kind == "hess":
-      terminal = np.diag(npmpc.CostWeights().x_end) if terminal is None else terminal
       lam_g = _mixed_sign_multipliers(sum(npmpc.constraint_counts(horizon)))
-      expected = npmpc.npmpc_lag_hess_dense_reference(horizon, zv, pv, 1.0, lam_g, terminal, decoder).reshape(-1)
+      expected = npmpc.npmpc_lag_hess_dense_reference(horizon, zv, pv, 1.0, lam_g, decoder).reshape(-1)
       values = {"z": zv, "lam_f": np.array(1.0), "lam_g": lam_g, "p": pv}
     else:
       expected = npmpc.npmpc_constraint_jac_dense_reference(horizon, zv, pv, decoder)
