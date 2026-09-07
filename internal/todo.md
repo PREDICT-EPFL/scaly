@@ -404,6 +404,14 @@ Kept because the reasoning is still good, not because anything depends on them.
   `tests/passes/test_program.py`.
 - **Replace the race-car tracking NMPC with the MPFC distillation**, in the same `race_cars` package,
   and **laopt as an external baseline** for it once laopt is published.
+- **A QP-subproblem contract so alloy-sqp can use other QP plugins.** Today `alloy-sqp` imports
+  only `include_dir`/`lib_dir` from `alloy_piqp` and its C template calls `piqp_setup/update/solve`
+  and reads `qp->result` directly, so a future OSQP, ProxQP or HPIPM plugin would be a standalone
+  solver but not an SQP backend. The contract is narrower than `render_wrapper`: set up a QP with
+  fixed sparsity, refill values, solve, read the step and multipliers in one sign convention, report
+  status and iteration count, clean up. The hard part is form reconciliation (two-sided rows and box
+  bounds versus OSQP's single `l <= Ax <= u`, and stage-structured solvers) the way CasADi's `conic`
+  layer does it. Documented as a limitation in `docs/guide/solver_backends.md`.
 - **CasADi `sqpmethod` as a secondary reference column.** Opt-in and record-only; its globalization,
   regularization and QP path differ from `alloy-sqp`. Add only if review asks for it.
 - **Specialized OCP problem/solver tier** in alloy (structured staged OCP lowering to general form),

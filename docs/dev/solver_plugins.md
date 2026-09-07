@@ -159,6 +159,7 @@ identity.
 - `desc.oracle` takes parameter leaves and emits `P, c, [A_eq, b_eq], [G_ineq, l_ineq, u_ineq], x_lb, x_ub`. Empty constraint blocks are omitted from the oracle but remain size-zero multiplier groups in the solver signature.
 - Dense matrices are row-major. When `desc.sparse` is true, the oracle emits compact compressed sparse column values in the baked `P_sparsity`, `A_sparsity`, and `G_sparsity` order. `P_sparsity` contains the upper triangle.
 - The oracle emits IEEE infinities for absent bounds; the wrapper converts them to the QP solver’s native convention.
+- A QP plugin is a standalone solver only. alloy-sqp does not consume this contract for its subproblems; its wrapper is written against PIQP's C API and links `alloy-piqp`'s library. See the [user guide](../guide/solver_backends.md#alloy-sqp).
 
 **NLP** (`kind == "nlp"`, selected by `al.solver(problem, "ipopt")` or `"sqp"`):
 

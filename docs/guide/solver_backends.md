@@ -105,6 +105,14 @@ It exists for three reasons: the whole solve is readable and modifiable C rather
 blob; it accepts oracles that alloy did not generate; and it is a control on the other two — a
 second NLP implementation to disagree with.
 
+**The QP backend is PIQP, and only PIQP.** If you know CasADi's `sqpmethod`, where any registered
+QP solver plugs in as the subproblem solver, do not expect the same here. alloy-sqp does not go
+through the QP plugin contract that `al.solver(problem, "piqp")` uses; its generated C calls PIQP's
+C API directly and borrows the vendored library from `alloy-piqp`. A future QP plugin such as OSQP
+or HPIPM would be selectable as a standalone solver but would not be usable as the SQP subproblem
+solver. Making that possible needs a second, narrower contract for in-C QP subproblems, plus the
+problem-form reconciliation CasADi's `conic` layer does, and it is tracked as backlog work.
+
 **Warm starting is unconditional.** All four initial iterates are used on every solve: `x0` is
 clamped into the variable bounds and taken as the starting point, and the equality, inequality and
 box multipliers seed the corresponding duals directly. There is no option to turn this on, so
