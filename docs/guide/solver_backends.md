@@ -215,7 +215,7 @@ carries its own dependencies rather than expecting them installed. This matters 
 | Plugin | Builds | Also pulls in |
 | --- | --- | --- |
 | `alloy-piqp` | PIQP v0.6.2 | Eigen 3.4.1, Blasfeo (**unpinned** — see below) |
-| `alloy-ipopt` | IPOPT 3.14.19 | MUMPS (ThirdParty 3.0.12), METIS (ThirdParty 2.0.1), and on Linux OpenBLAS v0.3.28 — macOS uses Apple's Accelerate framework |
+| `alloy-ipopt` | IPOPT 3.14.19 | MUMPS (ThirdParty 3.0.12), METIS 5.2.1 with GKlib, and on Linux OpenBLAS v0.3.28 — macOS uses Apple's Accelerate framework |
 | `alloy-sqp` | nothing of its own | links PIQP's library, so it needs `alloy-piqp` built |
 
 Everything is pinned to a tag except **Blasfeo**, which is cloned from its default branch. Two

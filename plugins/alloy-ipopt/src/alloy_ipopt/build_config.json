@@ -9,7 +9,9 @@
     "linkage": "static"
   },
   "metis": {
-    "coinor_branch": "releases/2.0.1",
+    "tag": "v5.2.1",
+    "version": "5.2.1",
+    "gklib_commit": "3b7d61b9f885063c89901f3901fb4426f9cfb58f",
     "linkage": "static"
   },
   "blas": {

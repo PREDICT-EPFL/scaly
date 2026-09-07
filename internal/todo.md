@@ -54,7 +54,7 @@ only the theme and nothing else has to stay stable.
 Ordering constraints across sections, the only sequencing that matters:
 
 - C-8 to C-10 and BP-23 come before BH-20, which re-decides every claim gate in paper.md §8.
-- S-15 and L-28 to L-31 come before any wheel or tag is public, even on test PyPI.
+- L-28 to L-31 come before any wheel or tag is public, even on test PyPI.
 - R-37 comes before any merge of dev into main.
 
 ## API
@@ -173,15 +173,6 @@ adopt a framework; write down what was read and what was rejected in
 
 ### Now
 
-- [ ] **S-15. Replace METIS 4 with METIS 5 (Apache-2.0).** The pinned COIN-OR `ThirdParty-Metis`
-      branch fetches 4.0.3 via `get.Metis`, whose license forbids redistribution; CasADi ships it
-      anyway and we will not. `ThirdParty-Mumps` accepts METIS 5, so build METIS 5.x directly with
-      CMake in `plugins/alloy-ipopt/hatch_build.py`, point MUMPS at it, update `build_config.json`,
-      and rewrite the METIS section of `internal/notes/vendored_solvers.md`, whose legacy-C warning
-      flags become unnecessary. Fallback if METIS 5 misbehaves: MUMPS with its built-in PORD
-      ordering and no METIS at all, at a cost on large sparse problems. Blocks L-28 to L-31 from
-      mattering; must land before any wheel reaches even test PyPI.
-
 ### Deferred
 
 - **S-16. Separate the IPOPT gap into version against build configuration.** Rebuild 3.14.11 with
@@ -253,9 +244,8 @@ licenses, which we do not copy. Surveyed 2026-09-07. What we ship and what it as
 | | MUMPS | CeCILL-C | notice |
 | | OpenBLAS (static, Linux) | BSD-3 | notice |
 | | libgfortran, libquadmath | GPL-3 + GCC runtime exception | notice; the exception covers this use |
-| | **METIS 4.0.3** | UMN research license | **"may not be sold or redistributed without prior approval." Not shippable.** |
-
-The METIS 4 row is closed by S-15.
+| | METIS 5.2.1 | Apache-2.0 | notice |
+| | GKlib | Apache-2.0, plus two glibc-derived headers under LGPL-2.1-or-later and one BSD-3-Clause file, per its `LICENSES.md` | notice for each |
 
 ### Now
 

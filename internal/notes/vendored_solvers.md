@@ -21,15 +21,16 @@ This is checked rather than assumed. `_macos_self_contained` / `_linux_self_cont
 
 **What the original goal would still have bought:** a consumer linking `-lipopt` from C++ outside Python needs `lib/` on its rpath, where a fully static library would have needed nothing. That is a weaker guarantee, but it no longer blocks distribution.
 
-## 2. METIS legacy-C compatibility
+## 2. METIS 5 and GKlib
 
-`ThirdParty-Metis` is pinned to `releases/2.0.1`. Despite the 2.x version number it still bundles upstream METIS 4.0.3 — a GPL-licensed K&R-era release whose `__GKfree` / implicit declarations modern Clang rejects by default. `_build_metis` patches around this by passing:
+METIS comes from `KarypisLab/METIS` at tag `v5.2.1` (Apache-2.0), not from COIN-OR's `ThirdParty-Metis`, whose `get.Metis` fetches METIS 4.0.3 under a license that forbids redistribution. METIS 5 no longer bundles GKlib, so `_build_metis` builds `KarypisLab/GKlib` first, pinned to a commit because that repository has no release tags, and installs both into `metis_install`. Consequences for the rest of the stack:
 
-```
-CFLAGS=-O2 -fPIC -Wno-implicit-function-declaration -Wno-implicit-int -Wno-int-conversion -Wno-error
-```
+- MUMPS and IPOPT link `-lmetis -lGKlib -lm`; `ThirdParty-Mumps` reads `METIS_VER_MAJOR` from `metis.h` and switches its Fortran to the METIS 5 `METIS_NodeND` entry point on its own.
+- MUMPS insists on `idx_t` being a plain `int`, so the hook writes `IDXTYPEWIDTH 32` into the generated `build/xinclude/metis.h`, exactly what upstream's `make config` would do.
+- METIS' `conf/gkbuild.cmake` hardcodes `-march=native` under GCC. The hook strips it after cloning; otherwise the Linux wheel would be tied to the build host while OpenBLAS goes to the trouble of `DYNAMIC_ARCH=1`.
+- GKlib's `LICENSES.md` lists two glibc-derived headers under LGPL-2.1-or-later and one BSD-3-Clause file next to the Apache-2.0 default. The notices for L-30 have to carry those too.
 
-If a future MUMPS pin requires METIS 5.x (Apache-2 licensed, modern C), we'll need to switch to a different ThirdParty branch or build METIS 5 directly. The current pin works on macOS and should work on the manylinux_2_28 image.
+The METIS 4 legacy-C warning flags are gone with it; METIS 5 is modern C.
 
 ## 3. `install_name` rewriting on macOS
 
@@ -66,7 +67,7 @@ Editable installs use `ALLOY_BUILD_SOLVERS=auto` by default: if the native toolc
 
 - **CI cache key.** Keyed on OS, architecture, and both plugin `hatch_build.py` files. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot.
 - **Static OpenBLAS install.** `_build_openblas` builds with `NO_SHARED=1 USE_OPENMP=0 DYNAMIC_ARCH=1`; pass the same flags to `make install` or OpenBLAS tries to install a shared `libopenblas*.so` that was never built.
-- **Static link flags.** Linux uses static OpenBLAS and METIS. Keep OpenBLAS' dependent `-lm -lpthread -lgfortran` in the LAPACK lflags, and keep `-lm` in both the MUMPS `--with-metis-lflags` and IPOPT `--with-mumps-lflags`; otherwise configure/link checks fail on Linux.
+- **Static link flags.** Linux uses static OpenBLAS, METIS and GKlib. Keep OpenBLAS' dependent `-lm -lpthread -lgfortran` in the LAPACK lflags, and keep `-lm` in both the MUMPS `--with-metis-lflags` and IPOPT `--with-mumps-lflags`; otherwise configure/link checks fail on Linux.
 - **AOT solver harness.** `al.qp(...)` (PIQP) and `al.nlp(...)` (IPOPT) are wired through `ctypes` for direct Python calls and through generated C for nested JIT/AOT use; see [`solvers.md`](solvers.md). What is still TODO before distribution: a CI-level standalone C/C++ harness that links `-lpiqpc`/`-lipopt` directly outside Python and exercises the exact AOT path the static-libgfortran work is meant to unblock.
 
 ## 6. ThirdParty version pins (as of 2026-05-19)
@@ -74,8 +75,9 @@ Editable installs use `ALLOY_BUILD_SOLVERS=auto` by default: if the native toolc
 ```
 IPOPT_BRANCH    = "releases/3.14.19"
 MUMPS_BRANCH    = "releases/3.0.12"
-METIS_BRANCH    = "releases/2.0.1"
+METIS_TAG       = "v5.2.1"
+GKLIB_COMMIT    = "3b7d61b9f885063c89901f3901fb4426f9cfb58f"
 OPENBLAS_BRANCH = "v0.3.28"
 ```
 
-These were the latest tags at extraction time. The spec originally listed `releases/2.2.0` for METIS, which does not exist — only the 2.x tags up to 2.0.1 are published.
+IPOPT, MUMPS and OpenBLAS were the latest tags at extraction time. METIS moved from `ThirdParty-Metis releases/2.0.1` (METIS 4.0.3 inside) to upstream 5.2.1 in September 2026, see section 2.

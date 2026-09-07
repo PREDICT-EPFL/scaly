@@ -77,7 +77,7 @@ def _has_cxx_compiler() -> bool:
 
 
 def _missing_ipopt_tools() -> list[str]:
-  missing = [cmd for cmd in ("git", "make") if shutil.which(cmd) is None]
+  missing = [cmd for cmd in ("git", "make", "cmake") if shutil.which(cmd) is None]
   if shutil.which("cc") is None:
     missing.append("cc")
   if not _has_cxx_compiler():
@@ -90,7 +90,8 @@ def _missing_ipopt_tools() -> list[str]:
 _BUILD_CONFIG = json.loads((Path(__file__).parent / "src" / "alloy_ipopt" / "build_config.json").read_text())
 IPOPT_BRANCH = _BUILD_CONFIG["ipopt"]["branch"]
 MUMPS_BRANCH = _BUILD_CONFIG["mumps"]["coinor_branch"]
-METIS_BRANCH = _BUILD_CONFIG["metis"]["coinor_branch"]
+METIS_TAG = _BUILD_CONFIG["metis"]["tag"]
+GKLIB_COMMIT = _BUILD_CONFIG["metis"]["gklib_commit"]
 OPENBLAS_BRANCH = _BUILD_CONFIG["blas"]["linux"]["branch"]
 
 
@@ -126,27 +127,57 @@ def _coinor_clone(hook: "BuildHook", url: str, branch: str, dest: Path) -> None:
   _run(["git", "clone", "--depth=1", "--branch", branch, url, str(dest)], cwd=dest.parent)
 
 
+def _clone_commit(hook: "BuildHook", url: str, commit: str, dest: Path) -> None:
+  """Shallow-fetch one commit; `git clone --depth=1 --branch` only accepts branches and tags."""
+  if dest.exists():
+    return
+  hook.app.display_info(f"Fetching {url}@{commit} to {dest}")
+  dest.mkdir(parents=True)
+  _run(["git", "init", "-q"], cwd=dest)
+  _run(["git", "fetch", "-q", "--depth=1", url, commit], cwd=dest)
+  _run(["git", "checkout", "-q", "FETCH_HEAD"], cwd=dest)
+
+
+def _cmake_build(hook: "BuildHook", src_dir: Path, build_dir: Path, install_dir: Path, defines: list[str]) -> None:
+  build_dir.mkdir(parents=True, exist_ok=True)
+  common = [
+    "-DCMAKE_BUILD_TYPE=Release",
+    f"-DCMAKE_INSTALL_PREFIX={install_dir.resolve()}",
+    "-DCMAKE_INSTALL_LIBDIR=lib",
+    "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+    "-DBUILD_SHARED_LIBS=OFF",
+  ]
+  _run(["cmake", str(src_dir.resolve()), *common, *defines], cwd=build_dir)
+  _run(["cmake", "--build", ".", f"-j{os.cpu_count() or 2}"], cwd=build_dir)
+  _run(["cmake", "--install", "."], cwd=build_dir)
+
+
 def _build_metis(hook: "BuildHook", third_party_dir: Path, install_dir: Path) -> Path:
-  marker = install_dir / "lib"
-  if any(marker.glob("libcoinmetis*")) if marker.exists() else False:
+  """Build GKlib and METIS 5 (both Apache-2.0) as static libraries into one prefix.
+
+  METIS 5 no longer bundles GKlib, so GKlib is built first and METIS is pointed at the same
+  prefix. `make config` upstream only prepends the index and real widths to `metis.h` before
+  calling CMake, so the hook does the same and MUMPS gets the 32-bit `idx_t` it requires."""
+  if (install_dir / "lib" / "libmetis.a").exists():
     hook.app.display_info(f"Using existing METIS install at {install_dir}")
     return install_dir
-  src_dir = third_party_dir / "ThirdParty-Metis"
-  _coinor_clone(hook, "https://github.com/coin-or-tools/ThirdParty-Metis.git", METIS_BRANCH, src_dir)
-  if not any(src_dir.glob("metis-*")) and not (src_dir / "GKlib").exists():
-    hook.app.display_info("Fetching METIS sources via get.Metis...")
-    _run(["./get.Metis"], cwd=src_dir)
-  install_dir.mkdir(parents=True, exist_ok=True)
-  jobs = str(os.cpu_count() or 2)
-  hook.app.display_info("Configuring METIS...")
-  legacy_c_cflags = "-O2 -fPIC -Wno-implicit-function-declaration -Wno-implicit-int -Wno-int-conversion -Wno-error"
-  _run(
-    ["./configure", f"--prefix={install_dir.resolve()}", "--disable-shared", "--with-pic", f"CFLAGS={legacy_c_cflags}"],
-    cwd=src_dir,
-  )
+  gklib_src = third_party_dir / "GKlib"
+  _clone_commit(hook, "https://github.com/KarypisLab/GKlib.git", GKLIB_COMMIT, gklib_src)
+  hook.app.display_info("Building GKlib...")
+  _cmake_build(hook, gklib_src, gklib_src / "build", install_dir, ["-DGKLIB_BUILD_APPS=OFF"])
+
+  metis_src = third_party_dir / "METIS"
+  _coinor_clone(hook, "https://github.com/KarypisLab/METIS.git", METIS_TAG, metis_src)
+  # METIS' GCC flags hardcode -march=native, which would tie the wheel to the build host.
+  gkbuild = metis_src / "conf" / "gkbuild.cmake"
+  gkbuild.write_text(gkbuild.read_text().replace(" -march=native", ""))
+  xinclude = metis_src / "build" / "xinclude"
+  xinclude.mkdir(parents=True, exist_ok=True)
+  (xinclude / "metis.h").write_text("#define IDXTYPEWIDTH 32\n#define REALTYPEWIDTH 32\n" + (metis_src / "include" / "metis.h").read_text())
+  shutil.copy2(metis_src / "include" / "CMakeLists.txt", xinclude / "CMakeLists.txt")
   hook.app.display_info("Building METIS...")
-  _run(["make", f"-j{jobs}"], cwd=src_dir)
-  _run(["make", "install"], cwd=src_dir)
+  # METIS declares cmake_minimum_required 2.8, which CMake 4 refuses without this override.
+  _cmake_build(hook, metis_src, metis_src / "build", install_dir, [f"-DGKLIB_PATH={install_dir.resolve()}", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"])
   return install_dir
 
 
@@ -169,8 +200,8 @@ def _build_mumps(
     _run(["./get.Mumps"], cwd=src_dir)
   install_dir.mkdir(parents=True, exist_ok=True)
   jobs = str(os.cpu_count() or 2)
-  metis_cflags = f"-I{(metis_install / 'include' / 'coin-or' / 'metis').resolve()}"
-  metis_lflags = f"-L{(metis_install / 'lib').resolve()} -lcoinmetis -lm"
+  metis_cflags = f"-I{(metis_install / 'include').resolve()}"
+  metis_lflags = f"-L{(metis_install / 'lib').resolve()} -lmetis -lGKlib -lm"
   hook.app.display_info(f"Configuring MUMPS (FC={fc})...")
   configure_args = [
     "./configure",
@@ -204,7 +235,7 @@ def _build_ipopt(
   install_dir.mkdir(parents=True, exist_ok=True)
   jobs = str(os.cpu_count() or 2)
   mumps_cflags = f"-I{(mumps_install / 'include' / 'coin-or' / 'mumps').resolve()}"
-  mumps_lflags = f"-L{(mumps_install / 'lib').resolve()} -lcoinmumps -L{(metis_install / 'lib').resolve()} -lcoinmetis -lm"
+  mumps_lflags = f"-L{(mumps_install / 'lib').resolve()} -lcoinmumps -L{(metis_install / 'lib').resolve()} -lmetis -lGKlib -lm"
   build_dir = src_dir / "build"
   build_dir.mkdir(exist_ok=True)
   hook.app.display_info(f"Configuring IPOPT (FC={fc})...")

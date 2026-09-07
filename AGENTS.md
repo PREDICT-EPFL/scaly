@@ -86,7 +86,7 @@ Identifier spellings, several of which reach the generated C:
 - **Never let a benchmark be the only thing exercising an IR, AD or codegen path.** Copy a small
   self-contained reproduction into `tests/`, differential against an unrolled or NumPy reference,
   before changing or retiring the benchmark. Prove a new gate can fail by perturbing what it checks.
-- **The vendored solver hooks are their own world.** The `$ORIGIN` escaping, the METIS legacy-C
-  warning flags, and the macOS `install_name` rewriting and re-signing are each explained in a
+- **The vendored solver hooks are their own world.** The `$ORIGIN` escaping, the METIS
+  `-march=native` strip, and the macOS `install_name` rewriting and re-signing are each explained in a
   comment beside the code in `plugins/*/hatch_build.py` — read them there before editing.
   `internal/notes/vendored_solvers.md` tracks what is still open. A cold rebuild is 5 to 8 minutes.
