@@ -3,9 +3,9 @@
 
 # Function templates
 
-Follow-up D3.1 after the solver API lands on dev. The interface sketch and its design rationale
-live in [the typing playground](../../typing_playground/README.md#templates). The sketch does not
-lower, compile, or evaluate expressions; its tests prove the proposed interface only.
+Todo API-1, following the solver API that landed on dev. The interface sketch and its design
+rationale live in [the typing playground](../../typing_playground/README.md#templates). The sketch
+does not lower, compile, or evaluate expressions; its tests prove the proposed interface only.
 
 `FunctionTemplate` owns a declaration with shape holes and produces concrete `Function` instances.
 The compiler continues to consume concrete Functions. This keeps unresolved shapes out of the
@@ -177,7 +177,8 @@ Three holes remain, all on the paths that matter most for composing:
 
 A composition through `vmap` or the low-level derivative builders loses its declared tree types.
 The public Function-level derivative wrappers preserve the source input tree. Extending that
-property to mapped structure remains D3.2. The playground README records this limitation, and
+property to mapped structure remains open (todo API-2). The playground README records this
+limitation, and
 `typing_playground/function.py` holds a candidate interface.
 
 Whatever lands needs both kinds of test the tree work uses, because they catch different things:
