@@ -149,6 +149,17 @@ and the metadata growth together. Rationale and gate status: paper.md §8. Every
 general compiler change with a `tests/` reproduction, per the 2026-08-25 decision in paper.md §10;
 after they land, C'6 reruns the whole study.
 
+Start each compiler item by reading how the tools that shaped Alloy solve the same problem, before
+designing anything. tinygrad, whose IR and pattern-rewrite infrastructure Alloy's are modelled on,
+has a scheduler that fuses elementwise producers into their consumers and a symbolic index
+arithmetic that turns strided views into closed-form index expressions: C'1 and C'2 in one place.
+MLIR's affine dialect and its loop-fusion, affine-map and memref-normalization passes are the
+standard treatment of exactly the loops we emit, and their design notes state the legality
+conditions we would otherwise rediscover. JAX's `vmap` batching rules are the reference for what a
+mapped derivative rule should produce without materializing per-trip index tables. The goal is to
+port the smallest idea that fits Alloy's two dialects, not to adopt a framework; write down what
+was read and what was rejected in `internal/notes/refactorings.md` before the implementation.
+
 - [ ] **C'1. A loop-fusion pass on the program dialect.** The race-car Hessian lowers to about 120
       consecutive loops over the mapped axis: a stage-call loop into a full-length buffer, then a
       full-length zero fill, a full-length gather-scatter, a full-length transpose, and so on for the
