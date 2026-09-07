@@ -101,6 +101,7 @@ def run_chain(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = 
           objective=_finite(stats.obj),
           scalars={
             "iterations": float(stats.iter),
+            **{name: float(getattr(stats, name)) for name in ("n_eval_f", "n_eval_g", "n_eval_grad_f", "n_eval_jac_g", "n_eval_h")},
             "qp_or_solver_time_ms": (stats.t_solver + stats.t_qp) * 1000.0,
             "globalization_time_ms": stats.t_globalization * 1000.0,
             "glue_time_ms": stats.t_glue * 1000.0,
@@ -223,6 +224,7 @@ def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: st
         stats = item.stats
         scalars = {
           "iterations": float(stats.iter),
+          **{name: float(getattr(stats, name)) for name in ("n_eval_f", "n_eval_g", "n_eval_grad_f", "n_eval_jac_g", "n_eval_h")},
           "native_status": float(stats.native_status),
           "qp_or_solver_time_ms": (stats.t_solver + stats.t_qp) * 1000.0,
           "globalization_time_ms": stats.t_globalization * 1000.0,
@@ -410,6 +412,7 @@ def run_npmpc(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = 
           constraint_margin=float(PHI_LIMIT - abs(state[1])),
           scalars={
             "iterations": float(stats.iter),
+            **{name: float(getattr(stats, name)) for name in ("n_eval_f", "n_eval_g", "n_eval_grad_f", "n_eval_jac_g", "n_eval_h")},
             "upright_error_deg": float(np.rad2deg(upright_error(state))),
             "arm_angle": float(state[1]),
             "pendulum_rate": float(state[2]),

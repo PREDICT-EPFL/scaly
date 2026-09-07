@@ -745,7 +745,7 @@ def _unbumpercars_hessian_inputs(size: int, harvested: dict[str, np.ndarray] | N
 
   cfg, filt_cfg, weights = ClosedLoopConfig(ncars=size), FilterConfig(model="dt"), load_dt_mlp_weights()
   if harvested is None:
-    bar_x = sample_initial_states(cfg).reshape(-1)
+    bar_x = sample_initial_states(cfg, collision_free=False).reshape(-1)
     u_des = np.tile([cfg.nominal_speed, 0.0], size)
     pieces = {
       "z": np.concatenate([u_des, np.zeros(cfg.n_slack)]),

@@ -128,11 +128,16 @@ runs. The runner validates machine settings but does not change them.
 
 Each `(workload, size, backend)` cell retains its generated C/header, raw float64 samples, wrapper, binary, and compile log next to the CSV, under `<csv-parent>/repeat_<n>/<workload>/<backend>_<axis><size>/`. With the default CSV this is `benchmarks/results/sweep/repeat_<n>/<workload>/`. Rows stream to CSV as cells finish; a sibling `.provenance.json` records the exact CLI, git state, package and compiler versions, platform, Python, and timestamp. It also records the resolved IPOPT library and its MUMPS, METIS, and OpenBLAS build. After canonical closed-loop runs, the chain-of-masses M=5, race_cars N=40, unbumpercars C=8, and neural-process-MPC N=12 cells automatically consume their harvested `representative_fe_inputs.npz` rather than synthetic samples.
 
+Synthetic unbumpercars kernel inputs use seeded states inside the arena without rejecting
+collisions. Large car counts therefore remain measurable even when collision-free closed-loop
+placement cannot fit them. The closed-loop runner still requires collision-free initial states.
+Kernel timings from this policy and the earlier collision-free pilot are recorded separately.
+
 The stage-based workloads default to Alloy and four CasADi encodings of the repeated dynamics
 stage: unrolled `SX`, unrolled `MX`, repeated calls to an elemental `MX` `Function`, and a serial map
 of an elemental `SX` `Function` in an `MX` outer graph. The objective and inequality expressions
-remain in the problem's canonical outer graph. The chain's literal `casadi_sx` column compiles only
-at M=3 under the default timeout. Unbumpercars defaults to Alloy, `SX`, and `MX` because its pairwise
+remain in the problem's canonical outer graph. The chain smoke tier uses literal `casadi_sx` at M=3 and mapped SX at M=5;
+full sweeps record compilation outcomes at each requested mass count. Unbumpercars defaults to Alloy, `SX`, and `MX` because its pairwise
 formulation has no single repeated stage. If an explicit backend does not apply to a workload, the
 sweep records `not_applicable` and continues.
 
@@ -180,6 +185,26 @@ The doctrine is claims-first: broad sweeps establish scaling and canonical point
 The gates here guard the *measurements*, not the compiler. Op and composition coverage lives in `tests/` as small artificial cases checked against unrolled or NumPy references; a benchmark problem must never be the only thing exercising an IR, AD, or codegen path. That separation is what lets the problem set follow the workload roadmap without silently dropping compiler coverage.
 
 The split runs both ways: a check that is about *a problem* rather than about Alloy belongs in that problem's `checks.py`, not in `tests/`, so the pytest suite never imports a benchmark problem. `race_cars` is the worked example — `problems/race_cars/checks.py` owns its formulation gates, and `tests/integration/test_stage_transcription.py` carries a self-contained copy of the RK4 stage-transcription shape that problem surfaced, so retiring the problem cannot drop the compiler coverage. The chain-of-masses and unbumpercars problems follow the same shape; the IR behaviours they lean on are reproduced self-contained in `tests/ad/test_sparsity.py` and `tests/function/test_factory.py`.
+
+## Studies: every headline run in one directory
+
+```bash
+uv run benchmarks/run.py study --out-dir benchmarks/results/followup/2026-09-07
+uv run benchmarks/run.py study --out-dir benchmarks/results/followup/2026-09-07 --only sweep --problems race_cars,unbumpercars
+uv run benchmarks/run.py study --out-dir benchmarks/results/followup/2026-09-07 --only closed-loop --no-headline --repetitions 1
+uv run benchmarks/run.py report benchmarks/results/followup/2026-09-07
+```
+
+`study` runs the frozen headline grids in `harness/study.py`: the exact-Hessian sweep of every
+problem over its published sizes, and the canonical SQP closed loop with both oracle providers,
+each as its own `run.py` invocation with five fresh processes, seed 0, and the headline CPU checks
+with boost off unless told otherwise. It writes `sweep/<problem>/<problem>.csv` and
+`closed-loop/<problem>/` under the output directory, refuses a directory that already has content,
+and records every command and its exit status with the usual provenance in `study.json`. It ends
+by running `report`, which renders `sweep/<problem>/table.md`, `closed-loop/closed_loop.summary.json`
+and a combined `report.md`; the tables on the results pages are pasted from there. `report` can
+be rerun on any study directory, including one whose runs were launched by hand. Every episode
+writes a per-step `telemetry.csv` beside its MCAP, which is what `report` reads.
 
 ## Closed-loop episodes and Foxglove
 
@@ -241,7 +266,8 @@ runs write to `benchmarks/results/closed-loop/<problem>/<solver>+<oracle>/`, whi
 cannot replace a harvested canonical input. The two SQP columns run the same
 `alloy-sqp` implementation and PIQP
 subsolver with identical settings; only the generated C-ABI oracle provider
-changes. For `race_cars`, the IPOPT/Alloy and IPOPT/CasADi columns solve a
+changes. The CasADi SQP adapter applies `transform({})` to every generated oracle and
+supplies only the upper Hessian triangle, matching the Alloy SQP descriptor. For `race_cars`, the IPOPT/Alloy and IPOPT/CasADi columns solve a
 deliberately identical problem — same decision-variable and
 parameter layout, same cost and constraint rows in the same order, same IPOPT
 with the same options — so the only difference is who differentiates and

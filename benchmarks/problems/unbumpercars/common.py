@@ -443,7 +443,8 @@ def min_pair_distance(states: np.ndarray) -> float:
   return best
 
 
-def sample_initial_states(cfg: ClosedLoopConfig) -> np.ndarray:
+def sample_initial_states(cfg: ClosedLoopConfig, *, collision_free: bool = True) -> np.ndarray:
+  """Sample states in the arena, optionally allowing collisions for kernel measurements."""
   rng = np.random.default_rng(cfg.seed)
   margin = max(cfg.safety_radius + 0.4, cfg.wall_margin + 0.4)
   lo = np.array([cfg.physics.x_min + margin, cfg.physics.y_min + margin])
@@ -455,7 +456,7 @@ def sample_initial_states(cfg: ClosedLoopConfig) -> np.ndarray:
   for i in range(cfg.ncars):
     for _ in range(5000):
       xy = rng.uniform(lo, hi)
-      if all(np.linalg.norm(xy - p) >= cfg.safety_radius + 0.35 for p in placed):
+      if not collision_free or all(np.linalg.norm(xy - p) >= cfg.safety_radius + 0.35 for p in placed):
         states[i, 0:2] = xy
         states[i, 2] = rng.uniform(-np.pi, np.pi)
         states[i, 3] = 0.05

@@ -17,7 +17,9 @@ groups below have to happen roughly in sequence, and items inside a group are in
 
 D2, D1, D1.5, and A11 are complete. D3 completes the solver API work on 2026-09-05. Continue API
 iteration on dev through D3.1 to D3.3 below. Tracks A and B are complete as of 2026-09-05;
-C1 is the next benchmark task.
+C1–C4 measurements are complete as of 2026-09-06 and leave the paper claim unratified (paper.md
+§8). Track C' is the compiler and formulation work those measurements demand; it is the current
+focus. Track W is the wrap-up and comes last.
 
 ## A. Harness work, before any headline run
 
@@ -115,59 +117,90 @@ the paper quotes has to come from the benchmark harness instead, so the runs are
 Nothing below A and B is worth doing until they land, and nothing in the paper is ratified until this
 group completes.
 
-- [ ] **C1. Run the pilot on the reference machine under the frozen protocol.** Use it to ratify or
-      rewrite the thesis and the claim gates, so that later optimization has a fixed target.
-- [ ] **C2. Full sweeps at range** with the mapped pair rows, to C=32.
-- [ ] **C3. One closed-loop headline per problem** at the canonical point, with the function
-      evaluation, QP solve and globalization split from the statistics ABI.
-- [ ] **C4. Re-measure the chain on the Lagrangian Hessian.** The pilot has Alloy losing the chain
-      *equality Jacobian* by 1.5x to 2.4x, and that sentence is published. Internal validation only;
-      chain is cut from the short paper.
+- [x] **C1. Run the pilot on the reference machine under the frozen protocol.** Kernel pilot completed
+      2026-09-05 with performance selected, boost off, and five fresh processes per cell. Initial
+      Hessian microbenchmark results with synthetic inputs cover race_cars N=10,40,100, unbumpercars C=2,4,8, and npmpc
+      N=6,12. [Results](../docs/results/scalability.md#initial-frozen-protocol-pilot-2026-09-05) and
+      gate decisions (paper.md §8). The 20% runtime target remains
+      failed. C1 contains no closed-loop episodes; C3 records those separately. C2 extends the
+      kernel measurements to the full ranges.
+- [x] **C2. Full sweeps at range** with the mapped pair rows, to C=32. Completed 2026-09-06
+      with five fresh processes through race-car N=500, neural-process N=200, and unbumpercars C=32.
+      [Results](../docs/results/scalability.md#extended-hessian-sweeps-2026-09-06) retain timeouts,
+      the C=32 source cap, and the separate full-grid unbumpercars sampling rerun. Decisions: paper.md §8.
+- [x] **C3. One closed-loop headline per problem** at the canonical point, with the function
+      evaluation, QP solve and globalization split from the statistics ABI. Completed 2026-09-05
+      with five fresh processes per SQP oracle provider on all four problems, after correcting
+      CasADi SQP transformation and Hessian-triangle handling. All 40 episodes succeed.
+      [Results](../docs/results/index.md#canonical-closed-loop-sqp-runs-2026-09-05) include the
+      failed equal-work check on unbumpercars. Claim limits: paper.md §8, C3 decision.
+- [x] **C4. Re-measure the chain on the Lagrangian Hessian.** Completed 2026-09-06 at M=3,5,9
+      and N=40 with five fresh processes. [Results](../docs/results/scalability.md#chain-hessian-2026-09-06) and the
+      decision in paper.md §8 record the larger Hessian deficit and partial SX compilation at M=5. The published Jacobian
+      section is labeled historical; chain remains outside the short paper.
+
+## C'. Compiler and formulation work the measurements demand
+
+The 2026-09-06 [sweeps](../docs/results/scalability.md#extended-hessian-sweeps-2026-09-06) fail claim
+gates 2 and 3 on race-car, cap unbumpercars at C=32 on static metadata, and win npmpc and
+unbumpercars at range only because the faster CasADi encodings stop compiling inside the budget.
+Reading the generated kernels gives one structural cause for the runtime gap, the workspace growth
+and the metadata growth together. Rationale and gate status: paper.md §8. Every item here is a
+general compiler change with a `tests/` reproduction, per the 2026-08-25 decision in paper.md §10;
+after they land, C'6 reruns the whole study.
+
+- [ ] **C'1. A loop-fusion pass on the program dialect.** The race-car Hessian lowers to about 120
+      consecutive loops over the mapped axis: a stage-call loop into a full-length buffer, then a
+      full-length zero fill, a full-length gather-scatter, a full-length transpose, and so on for the
+      next mapped op. Every intermediate is materialized at `N × width`, which is the caller
+      workspace that grows with N on race_cars and npmpc and the extra memory passes `SX` never
+      makes. Fuse producer and consumer loops over the same trip count into one stage loop whose
+      body is per-stage scalar code and whose intermediates are per-stage scratch. Gate: race-car
+      `workspace` does not grow with N in the sweep CSV, and the runtime ratio to `SX` narrows. This
+      is the single change that attacks gates 2 and 3 at once.
+- [ ] **C'2. Affine index maps instead of materialized tables.** The VMAP multi-seed forward rule in
+      `ad/forward.py` builds `gather` index arrays of size `nseed × length × slice` (`flat_idx`,
+      `tile_indices`), and the reverse rule in `ad/reverse.py` builds per-iteration index lists; the
+      renderer emits each as a `static const int64_t` table. Their contents are affine in the trip
+      index (`start + it * stride + j`), and the coloring seed tile repeats one stage-invariant 0/1
+      pattern per stage. These tables are the static metadata that grows with N on race_cars and
+      reaches 54 MB at unbumpercars C=32. Represent affine gathers and scatters structurally
+      (a strided window or an index expression) and broadcast stage-invariant constants instead of
+      tiling them. Gate: `static_metadata_bytes` fixed across N on race_cars, and the unbumpercars
+      C=32 cell compiles under the 50 MiB cap.
+- [ ] **C'3. Fold the identities the AD rules introduce, at the expression level.** The SUM rule
+      emits `d0 @ ones`, the stride-0 reverse rule emits `ones @ segments`, and the seed tiles are
+      multiplied in as dense 0/1 masks; `passes/expr.py` folds `x * 1` only when the constant has the
+      result's shape and knows nothing about matmul-with-ones or gathers with identity indices. Add
+      those rewrites in `passes/expr.py` so the program dialect never sees them. Pin each with a
+      small fixture. Second-order after C'1 and C'2, but cheap.
+- [ ] **B5. Vmap the unbumpercars wall rows.** `filters.py` still builds the four wall barriers per
+      car in a Python loop after the pair rows were mapped in B1, which is why Alloy's executable
+      source still grows with C (145 KB at C=2 to 835 KB at C=32) and why gate 1 fails on that
+      problem. Same port shape as B1, with the existing unbumpercars gates retained; extend
+      `pair_jac_codegen_growth` so it fails while any row family still unrolls.
+- [ ] **C'4. Chain: exploit the stage-block structure.** The coloring width grows with M (12, 24,
+      42 at M=3,5,9), so the per-stage Hessian pays that many forward-over-reverse sweeps where `SX`
+      computes one symbolic Hessian. Investigate a scalar-level second-order pass inside the stage
+      body, then a scatter. Internal workload, so lower priority than C'1 to C'3; it decides whether
+      chain can ever enter the long paper's tables.
+- [ ] **C'5. Harness gaps.** `dispatch_trip_count`, `dispatch_workspace` and `dispatch_arithmetic`
+      are empty for the race_cars and unbumpercars Alloy cells and filled only for npmpc and chain,
+      so Table 2 cannot be built from the CSV yet. Gate 4's causal claim needs a same-protocol
+      pre-port control: either measure the unrolled pair rows behind a flag or drop the causal
+      wording and keep the descriptive one.
+- [ ] **C'6. Rerun the study after C'1 to C'3 and B5.** `uv run benchmarks/run.py study --out-dir
+      benchmarks/results/followup/<date>`, then paste `report.md` into the results pages and
+      re-decide every gate in paper.md §8. The npmpc and unbumpercars range wins are compile-budget
+      wins today; after the rerun they are either real wins against a completed encoding or they
+      are labeled as budget wins in the paper.
 
 ## D. API and release, before the paper freezes
 
 D1 to D4 are the refactorings required before submission. The remaining designs live in
 `internal/notes/refactorings.md`; completed sections are removed when they land. D3.1 to D3.3 are
-follow-ups on dev, not prerequisites for merging D3. Paper examples freeze after D1 and D2.
-
-- [ ] **D0. Move `internal/paper.md` out of this repository before merging to main.** Blocking, and
-      enforced: `.config/wt.toml` has a `pre-merge` check that fails while the file is tracked.
-
-      Why it is urgent rather than tidy: the note contains the "sell only if the reruns establish
-      it" list, the "do not sell" list and the objections rehearsal, which are the three things a
-      reviewer should least find in our own words. Deleting it at release time does nothing, because
-      the content stays in every clone's history, and excising it afterwards means
-      `git filter-repo --path internal/paper.md --invert-paths`, which rewrites every SHA from its
-      first appearance onward and breaks any archive link or tag that references an old one.
-
-      The file has never been on main, but it is tracked in dev's history. Fast-forwarding this
-      API branch to dev preserves that history. Before merging dev into main, move the note out
-      and squash the public changes, or remove the private path from the history being published.
-      Deleting the file alone does not make a fast-forward to main safe.
-
-      The design, agreed 2026-08-25:
-
-      - `~/dev/alloy-notes/` as its own git repo, with its own private remote for backup, holding
-        `paper.md` and any later private notes. Keeping it under git matters: the note is a dated
-        decision log and a plain untracked file would lose its history.
-      - `notes -> /home/ted/dev/alloy-notes` as a gitignored symlink in every worktree, with an
-        **absolute** target so the link keeps pointing at the one source of truth even if a tool
-        copies rather than links it. `/notes/` goes in `.gitignore`.
-      - A `[post-start]` step in `.config/wt.toml` that recreates the symlink, so the behaviour does
-        not depend on what `wt step copy-ignored` does with symlinks.
-      - A line in `AGENTS.md`: what `notes/` is, that nothing public may depend on it, and never
-        `git add -f` under it.
-
-      Properties this buys. One source of truth across every worktree and branch, which is correct
-      for a planning document since the plan is not per-branch. The worst possible accident commits a
-      path string, never content. And the public rationale stays public, because
-      `docs/results/fairness.md` carries the methodology and contains no strategy.
-
-      Rejected: a submodule leaks its existence and URL in a committed `.gitmodules` and is unpleasant
-      with worktrees; an orphan branch leaves the objects in the same store, so a full clone still
-      exposes them; `git-crypt` or `age` puts ciphertext in public history permanently, a poor risk
-      profile for a document whose value is candour; an external tool loses grep-ability and
-      proximity to the code, which is the whole reason the note works.
+follow-ups on dev, not prerequisites for merging D3. Paper examples freeze after D1 and D2. The
+release and archive steps that used to sit here are in track W.
 
 - [x] **D1. Land the derivative API redesign.** One name per concept, specs moved under
       `al.factory` and capitalized, `Function.factory` demoted. The five derivative names are
@@ -207,12 +240,9 @@ follow-ups on dev, not prerequisites for merging D3. Paper examples freeze after
       D2, so the byte-for-byte C corpus regenerates once rather than twice. Repointing
       `passes/program.py`'s three `_transform` call sites is where the memo lands, which also closes
       the recursive-Program-IR-passes item in F. Design: refactorings.md "One matcher".
-- [ ] **D5. Add an immutable publication mode**: clean release candidate, every raw run retained, and
-      an archive of source, lockfile, inputs, generated code, logs, statistics and manifest.
 - [ ] **D6. Validation additions**: one public `fwd` and `adj` test on the same nontrivial `VMAP`
       fixture compared against the unrolled form with a forward/reverse duality check, and a
       finite-difference check of the Lagrangian gradient in the pairwise-map sparse-Hessian test.
-- [ ] **D7. Freeze measurements on `0.1.0rc1`, publish `alloy-v0.1.0`** and a durable archive.
 
 ## D'. Documentation rework
 
@@ -241,6 +271,54 @@ audit found in the results pages: prose that outran what the code does.
       authors so the width study becomes a measured closed-loop column instead of an extrapolation.
       Also worth telling them their released episode's reported cost metric cannot be reproduced from
       the trajectory it ships with.
+
+## W. Wrap-up, the very last step
+
+Only after every track above works and the documentation is in good shape: these steps make the
+tree public and permanent, and each is cheap to do once and expensive to redo.
+
+- [ ] **W1. Move `internal/paper.md` out of this repository before merging to main.** Blocking, and
+      enforced: `.config/wt.toml` has a `pre-merge` check that fails while the file is tracked.
+
+      Why it is urgent rather than tidy: the note contains the "sell only if the reruns establish
+      it" list, the "do not sell" list and the objections rehearsal, which are the three things a
+      reviewer should least find in our own words. Deleting it at release time does nothing, because
+      the content stays in every clone's history, and excising it afterwards means
+      `git filter-repo --path internal/paper.md --invert-paths`, which rewrites every SHA from its
+      first appearance onward and breaks any archive link or tag that references an old one.
+
+      The file has never been on main, but it is tracked in dev's history. Fast-forwarding this
+      API branch to dev preserves that history. Before merging dev into main, move the note out
+      and squash the public changes, or remove the private path from the history being published.
+      Deleting the file alone does not make a fast-forward to main safe.
+
+      The design, agreed 2026-08-25:
+
+      - `~/dev/alloy-notes/` as its own git repo, with its own private remote for backup, holding
+        `paper.md` and any later private notes. Keeping it under git matters: the note is a dated
+        decision log and a plain untracked file would lose its history.
+      - `notes -> /home/ted/dev/alloy-notes` as a gitignored symlink in every worktree, with an
+        **absolute** target so the link keeps pointing at the one source of truth even if a tool
+        copies rather than links it. `/notes/` goes in `.gitignore`.
+      - A `[post-start]` step in `.config/wt.toml` that recreates the symlink, so the behaviour does
+        not depend on what `wt step copy-ignored` does with symlinks.
+      - A line in `AGENTS.md`: what `notes/` is, that nothing public may depend on it, and never
+        `git add -f` under it.
+
+      Properties this buys. One source of truth across every worktree and branch, which is correct
+      for a planning document since the plan is not per-branch. The worst possible accident commits a
+      path string, never content. And the public rationale stays public, because
+      `docs/results/fairness.md` carries the methodology and contains no strategy.
+
+      Rejected: a submodule leaks its existence and URL in a committed `.gitmodules` and is unpleasant
+      with worktrees; an orphan branch leaves the objects in the same store, so a full clone still
+      exposes them; `git-crypt` or `age` puts ciphertext in public history permanently, a poor risk
+      profile for a document whose value is candour; an external tool loses grep-ability and
+      proximity to the code, which is the whole reason the note works.
+
+- [ ] **W2. Add an immutable publication mode**: clean release candidate, every raw run retained, and
+      an archive of source, lockfile, inputs, generated code, logs, statistics and manifest.
+- [ ] **W3. Freeze measurements on `0.1.0rc1`, publish `alloy-v0.1.0`** and a durable archive.
 
 ## F. Backlog, not scheduled
 

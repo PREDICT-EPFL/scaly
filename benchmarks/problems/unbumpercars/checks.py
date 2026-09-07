@@ -374,6 +374,16 @@ def check_exact_hess_matches_casadi_on_closed_loop_samples() -> None:
     sim.step(safe)
 
 
+def check_synthetic_hessian_inputs_at_range() -> None:
+  """The C=16 and C=32 kernels have finite inputs without collision-free placement."""
+  from benchmarks.harness.sweep import _unbumpercars_hessian_inputs
+
+  for size in (16, 32):
+    pieces, expected = _unbumpercars_hessian_inputs(size, None)
+    assert pieces["bar_x"].shape == (NSTATE * size,)
+    assert np.all(np.isfinite(expected)) and np.any(expected != 0.0)
+
+
 def check_canonical_hessian_handoff() -> None:
   """A canonical C=8 artifact drives both exact-Hessian codegen providers."""
   import tempfile
@@ -579,6 +589,7 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "dt_filter_model_matches_numpy": (check_dt_filter_model_matches_numpy, False, True),
   "oracles_solve_alike": (check_oracles_solve_alike_per_step, True, True),
   "exact_hess": (check_exact_hess_matches_casadi_on_closed_loop_samples, True, True),
+  "synthetic_hessian_inputs_at_range": (check_synthetic_hessian_inputs_at_range, False, True),
   "canonical_hessian_handoff": (check_canonical_hessian_handoff, False, True),
   "casadi_ipopt_compiled": (check_casadi_ipopt_is_compiled, True, True),
   "sqp_matches_ipopt": (check_sqp_matches_ipopt_per_step, True, False),

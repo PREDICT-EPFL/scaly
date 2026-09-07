@@ -79,9 +79,12 @@ def build_casadi_external_sqp(
   if n_ineq:
     bound_outputs += [ca.DM(l_ineq), ca.DM(u_ineq)]
   bounds = ca.Function(f"{name}_bounds", [p], bound_outputs)
+  hess_args = [hess.mx_in(i) for i in range(hess.n_in())]
+  hess = ca.Function(hess.name(), hess_args, [ca.triu(hess.call(hess_args, True, False)[0])])
   functions = {"base": base, "grad": grad, "hess": hess, "bounds": bounds}
   if jac is not None:
     functions["jac"] = jac
+  functions = {key: fn.transform({}) for key, fn in functions.items()}
   with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     cwd = Path.cwd()
@@ -96,8 +99,8 @@ def build_casadi_external_sqp(
     generated = (root / f"{name}_oracles.c").read_text()
   raw_symbols = {key: f"{name}_{key}_raw_external" for key in functions}
   source = generated + "\n\n" + "\n\n".join(_adapter(fn, raw_symbols[key]) for key, fn in functions.items())
-  jac_rows, jac_cols = jac.sparsity_out(0).get_triplet() if jac is not None else ([], [])
-  hess_rows, hess_cols = hess.sparsity_out(0).get_triplet()
+  jac_rows, jac_cols = functions["jac"].sparsity_out(0).get_triplet() if jac is not None else ([], [])
+  hess_rows, hess_cols = functions["hess"].sparsity_out(0).get_triplet()
   solver = external_nlp(
     name=name,
     n=n,

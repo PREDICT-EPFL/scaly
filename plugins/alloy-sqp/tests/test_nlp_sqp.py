@@ -555,13 +555,30 @@ def test_sqp_rejects_invalid_options(options: dict[str, str | int | float | bool
 
 
 @pytest.mark.solver("sqp")
-def test_same_sqp_wrapper_accepts_casadi_codegen_oracles() -> None:
+def test_same_sqp_wrapper_accepts_casadi_codegen_oracles(monkeypatch: pytest.MonkeyPatch) -> None:
   import casadi as ca
 
+  import alloy_sqp.casadi as adapter
   from alloy_sqp.casadi import build_casadi_external_sqp
 
+  captured = {}
+  transformed = []
+  render_adapter, transform = adapter._adapter, ca.Function.transform
+
+  def capture(fn, raw_symbol):
+    captured[fn.name()] = fn
+    return render_adapter(fn, raw_symbol)
+
+  def record_transform(fn, options):
+    assert options == {}
+    transformed.append(fn.name())
+    return transform(fn, options)
+
+  monkeypatch.setattr(adapter, "_adapter", capture)
+  monkeypatch.setattr(ca.Function, "transform", record_transform)
+
   x, p = ca.MX.sym("x", 2), ca.MX.sym("p", 2)
-  f = 0.5 * ca.dot(x - p, x - p)
+  f = 0.5 * ca.dot(x - p, x - p) + 0.125 * ca.sum1(x - p) ** 2
   g = ca.vertcat(x[0] + x[1] - 1.0)
   lam_f, lam_g = ca.MX.sym("lam_f"), ca.MX.sym("lam_g", 1)
   base = ca.Function("external_fixture_base", [x, p], [f, g])
@@ -581,6 +598,14 @@ def test_same_sqp_wrapper_accepts_casadi_codegen_oracles() -> None:
     l_ineq=np.zeros(0),
     u_ineq=np.zeros(0),
   )
+  assert set(transformed) == {fn.name() for fn in (base, grad, jac, hess)} | {"external_fixture_sqp_bounds"}
+  for fn in (base, grad, jac):
+    assert captured[fn.name()].serialize() == transform(fn, {}).serialize()
+  pattern = solver.descriptor.hess_sparsity
+  assert pattern is not None and pattern.nnz == 3
+  assert all(r <= c for r, c in zip(pattern.rows, pattern.cols))
+  values = (np.array([0.3, 0.7]), np.array([0.2, 0.8]), 1.7, np.array([0.4]))
+  np.testing.assert_allclose(np.asarray(captured[hess.name()](*values)), np.triu(np.asarray(hess(*values))))
   out = solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(0), np.zeros(2), np.array([0.2, 0.8]))
   assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.2, 0.8], atol=2e-6)

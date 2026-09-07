@@ -52,6 +52,11 @@ though Alloy's dispersion increased slightly and both kernels became slower. Fiv
 workload do not establish a general variance advantage. This check selects a machine configuration,
 not a paper result. The pilot must use the same recorded configuration for every column.
 
+The [initial Hessian scalability pilot](scalability.md#initial-frozen-protocol-pilot-2026-09-05)
+uses this selected configuration with five fresh processes per cell. Its tables, dispersion, and
+compile failures are recorded on the scalability page. Those measurements use synthetic inputs
+and do not measure closed-loop solver performance.
+
 ## The measurement protocol
 
 Rules the numbers on this page follow, and that a headline run must follow more strictly.
@@ -67,6 +72,13 @@ Rules the numbers on this page follow, and that a headline run must follow more 
   supplies its selected output, and every result-pointer array is reset before each call because
   generated `res` slots are also used as scratch by nested calls. No parameter-sensitivity result
   is requested by either timed kernel.
+- **Record the kernel input policy.** Canonical cells consume harvested closed-loop inputs when
+  available; otherwise they use synthetic samples shared by the compared encodings. A kernel
+  sample must permit finite derivative evaluation, but need not be a feasible controller initial
+  state. Unbumpercars synthetic kernels use seeded arena states without collision rejection:
+  the closed-loop placement rule cannot fit the larger scalability counts in the default arena.
+  A problem gate checks finite Hessian reference values at C=16 and C=32. The original
+  collision-free-input pilot remains separate from the full-grid rerun under this policy.
 - **Correctness gates before timing.** Every cell checks its compact derivative against a dense
   reference built by a different construction, and produces no timing if it disagrees. The race-car
   Jacobian and the chain, race-car and neural-process MPC Lagrangian Hessians have NumPy references:
@@ -463,8 +475,11 @@ alloy against the best CasADi encoding before and after `transform({})`:
 Generated source shrinks 15 to 30% everywhere. The rule that follows is the one this page already
 states: the CasADi column is CasADi's best configuration, so every CasADi kernel is taken after
 `transform({})`. Sweeps enable this by default. Compiled CasADi IPOPT solvers use transformed
-versions of every generated oracle, including values and derivatives. This closes the open question
-of `ca.cse` per problem, in favour of always.
+versions of every generated oracle, including values and derivatives. The SQP CasADi adapter
+also transforms every generated oracle and selects the upper Hessian triangle before code
+generation. The initial C3 runs exposed that this adapter had omitted both steps. Those runs are
+retained under `benchmarks/results/followup/2026-09-05/diagnostic-sqp-before-protocol/` and are
+not headline evidence. This closes the open question of `ca.cse` per problem, in favour of always.
 
 **The dense kernels and the BLAS selector cannot reach the timed oracles.** The mode is an attribute
 of the `MX` multiplication node, read at evaluation and code generation. `ad_forward` and `ad_reverse`

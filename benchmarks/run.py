@@ -28,6 +28,8 @@ from benchmarks.harness import SMOKE_RESULTS, SWEEP_RESULTS, closed_loop_results
 from benchmarks.harness.closed_loop import run as run_closed_loop
 from benchmarks.harness.recording import layout_path
 from benchmarks.harness.provenance import collect, write, require_headline_settings
+from benchmarks.harness.report import report
+from benchmarks.harness.study import PARTS, PROBLEMS, run_study
 from benchmarks.harness.sweep import BACKENDS, DEFAULT_SIZES, build_kernel, run_cell, run_sweep
 from benchmarks.problems import chain, npmpc
 
@@ -398,6 +400,18 @@ def main() -> None:
     default=True,
     help="run CasADi 3.8's default Function.transform() simplification flow on every CasADi kernel (default: enabled)",
   )
+  study_parser = subparsers.add_parser("study", help="run the frozen headline sweeps and closed loops into one directory, then report")
+  study_parser.add_argument("--out-dir", type=Path, required=True, help="unused directory receiving sweep/<problem>/ and closed-loop/<problem>/")
+  study_parser.add_argument("--problems", type=_csv, default=list(PROBLEMS))
+  study_parser.add_argument("--only", type=_csv, default=list(PARTS), help="comma-separated subset of: sweep, closed-loop")
+  study_parser.add_argument("--repetitions", type=int, default=5, help="fresh processes per cell and per provider (default: 5)")
+  study_parser.add_argument("--order-seed", type=int, default=0)
+  study_parser.add_argument(
+    "--headline", action=argparse.BooleanOptionalAction, default=True, help="require performance governor and the --boost state (default: enabled)"
+  )
+  study_parser.add_argument("--boost", choices=("on", "off"), default="off")
+  report_parser = subparsers.add_parser("report", help="re-render the tables of an existing study directory")
+  report_parser.add_argument("study_dir", type=Path)
   modes_parser = subparsers.add_parser("modes", help="derive the deployment table from recorded episode mode files")
   modes_parser.add_argument("inputs", type=Path, nargs="+", help="modes.csv files or episode result directories")
   modes_parser.add_argument("--out", type=Path, default=SWEEP_RESULTS.parent / "modes.csv")
@@ -425,6 +439,13 @@ def main() -> None:
     if args.backends is not None:
       args.backends = _choices(args.backends, BACKENDS, parser, "--backends")
     success = run_sweep(args, sys.argv[1:])
+  elif args.command == "study":
+    args.problems = _choices(args.problems, PROBLEMS, parser, "--problems")
+    args.only = _choices(args.only, PARTS, parser, "--only")
+    success = run_study(args, sys.argv[1:])
+  elif args.command == "report":
+    print(f"report written to {report(args.study_dir.resolve())}")
+    success = True
   elif args.command == "modes":
     from benchmarks.harness.timing import summarize_modes
 

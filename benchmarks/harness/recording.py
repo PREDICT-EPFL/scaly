@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import csv
 from dataclasses import dataclass
 from io import BytesIO
 import json
@@ -821,6 +822,7 @@ class Recorder:
     self._context = Context()
     self._writer = open_mcap(self.path, allow_overwrite=allow_overwrite, context=self._context)
     self._channels: list[Any] = []
+    self._telemetry_rows: list[ScalarTelemetry] = []
     self._metadata = self._channel("/run/metadata", RunMetadata)
     self._telemetry = self._channel("/telemetry", ScalarTelemetry)
     self._control = self._channel("/control", ControlState)
@@ -873,6 +875,7 @@ class Recorder:
 
   def record_telemetry(self, telemetry: ScalarTelemetry | Mapping[str, Any]) -> ScalarTelemetry:
     validated = ScalarTelemetry.model_validate(telemetry)
+    self._telemetry_rows.append(validated)
     return self._log(self._telemetry, ScalarTelemetry, validated, _log_time(validated.time_s))  # type: ignore[return-value]
 
   def record_control(self, controls: Sequence[ControlState | Mapping[str, Any]]) -> list[ControlState]:
@@ -888,6 +891,21 @@ class Recorder:
       channel.close()
     self._writer.close()
     self._closed = True
+    if self._telemetry_rows:
+      self._write_telemetry_csv()
+
+  def _write_telemetry_csv(self) -> None:
+    # The per-step table the report reads, so analysis never needs an MCAP reader.
+    rows = []
+    for item in self._telemetry_rows:
+      row = item.model_dump(mode="json")
+      row.update(row.pop("scalars"))
+      rows.append(row)
+    fields = list(dict.fromkeys(key for row in rows for key in row))
+    with (self.path.parent / "telemetry.csv").open("w", newline="") as stream:
+      writer = csv.DictWriter(stream, fieldnames=fields)
+      writer.writeheader()
+      writer.writerows(rows)
 
   def __enter__(self) -> Self:
     return self

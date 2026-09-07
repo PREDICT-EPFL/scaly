@@ -1,14 +1,13 @@
 # Benchmark results
 
-These are the latest published measured numbers. They are regenerated from the benchmark suite in this
-repository rather than copied from a paper, so when alloy improves or a new problem lands, this is
-the page that changes first.
+The current measurements cover the September 2026 Hessian scalability sweeps and canonical
+closed-loop runs below. Earlier measurements follow with their scope and limitations.
 
 Everything here is measured against **CasADi**, in both its SX (scalar) and MX (block) forms, on
 the same problem, and every measurement is gated by a correctness check: each backend's compact
 derivative is scattered into a dense matrix using its own sparsity pattern and compared entry by
 entry against a reference built by a different construction — NumPy for the race-car Jacobian and
-for the chain, race-car and neural-process MPC Lagrangian Hessians, Alloy's dense per-stage Jacobian
+for the chain, race-car and neural-process model predictive control (MPC) Lagrangian Hessians, Alloy's dense per-stage Jacobian
 of an unrolled twin for the chain and neural-process MPC Jacobians, and a CasADi Lagrangian Hessian
 for the safety filter. A cell that does not agree produces no timing.
 
@@ -19,7 +18,7 @@ for the safety filter. A cell that does not agree produces no timing.
     correction and measured equality rows only. They remain labeled as historical rather than being
     relabeled with numbers from a different kernel.
 
-!!! warning "The solver-in-the-loop numbers on this page are not yet a fair comparison"
+!!! warning "The historical IPOPT numbers below are not yet a fair comparison"
 
     An audit in August 2026 found that the `ipopt+alloy` and `ipopt+casadi` columns differ in two
     things besides the oracle provider: they link **different builds of IPOPT** (worth 2.7× to 17× in
@@ -30,38 +29,126 @@ for the safety filter. A cell that does not agree produces no timing.
     and is marked as such. The kernel sweeps, the code-size figures and the two `alloy-sqp` columns
     are unaffected. [Read the audit](fairness.md).
 
-## The short version
+## Hessian scalability baseline, September 2026
 
-**Alloy was close to CasADi SX on speed, at a fraction of the generated source.** On the historical
-race-car equality Jacobian, alloy was slightly ahead at the smallest horizons and fell behind as they grew —
-level at one stage, about 15% slower at 200 and 19% at 500. Meanwhile the generated source at a
-50-stage horizon is 22 KB against SX's 455 KB, and at 500 stages 78 KB against 4.5 MB. Alloy's line
-count is *flat*: 482 lines at ten stages and 482 at five hundred, because the whole interstage
-Jacobian is one loop calling one function.
+These generated-C microbenchmarks measure the exact sparse Lagrangian Hessian with synthetic
+inputs. The reference desktop used `performance`, boost off, five fresh processes per cell,
+and varied backend order. Race-car and neural-process measurements combine the pilot and its
+range extension. Unbumpercars uses a fresh full grid with the corrected synthetic-input policy;
+its original pilot remains recorded separately.
 
-**Against CasADi MX, alloy is about twice as fast** wherever MX still compiles at all. MX exceeds a
-180-second compile budget at 200 stages.
+The table shows the canonical size for each problem. Runtime is the process mean. Dispersion is
+the sample coefficient of variation (CV) across processes. The CasADi column is the fastest
+completed encoding among those tested at that size.
 
-**On the hanging chain, alloy loses on runtime and wins everything else.** 1.5–2.4× slower than
-CasADi's fastest configuration, from 583 lines against 26 822 and a 0.87-second compile against 25
-seconds — or against never, since CasADi's scalar expansion does not compile at this size in ten
-minutes.
+| Problem | Size | Alloy mean, µs | Alloy CV, % | Best CasADi encoding | CasADi mean, µs | CasADi CV, % |
+|---|---|---:|---:|---|---:|---:|
+| Race-car | N=40 | 26.500 | 0.45 | SX | 17.035 | 0.07 |
+| Unbumpercars | C=8 | 3478.775 | 0.53 | MX | 9949.845 | 1.15 |
+| Neural-process model predictive control | N=12 | 83.458 | 1.47 | MX | 52.672 | 2.17 |
 
-**On a dense network evaluated at every node of a horizon, the code-size result is categorical.**
-Alloy's generated source for the neural-process-MPC Jacobian is 417 lines at every horizon from 6 to
-200 *and* every decoder width from 16 to 256; CasADi SX reaches 1.31 million lines and stops
-compiling, and CasADi MX needs 227 seconds for the 50-stage Hessian that alloy compiles in 0.8. In
-closed loop, with both sides code-generated and compiled, the same swing-up episode solves in 1.29 ms
-per step against 1.57 ms — a modest win, and a much smaller one than the code-size figures suggest,
-because on oracle evaluation alone alloy and a compiled CasADi are close.
+Race-car covers N=1–500. Alloy takes 1.44–1.62 times SX runtime throughout the grid, so the
+20% runtime target remains unmet. Its executable source stays near 50 KB, but its large-horizon
+caller workspace exceeds SX's.
 
-**On a solver-in-the-loop workload the reported gap is larger, and most of it is not the oracles.**
-Driving the same nonlinear program through IPOPT and changing which library provides the oracles,
-alloy runs 4.5× faster on the safety filter's discrete model. But the two columns also run two
-different IPOPT builds and the CasADi one runs interpreted, and the audit puts the share attributable
-to the oracles at a fraction of that. Where the comparison *is* controlled — the two `alloy-sqp`
-columns, both code-generated compiled C differing only in who generated it — the margin is
-**1.2–1.4×**. That is the number to quote for oracle performance.
+Neural-process covers N=6–200. Alloy remains slower than plain MX through N=25. Under the frozen
+compile budget it is 1.22 and 1.24 times faster than the best completed CasADi encoding at N=50
+and N=100, and 3.56 times faster at N=200, where only call-node MX completes among the CasADi
+variants. The large-horizon source and caller-workspace comparison also favors Alloy.
+
+Unbumpercars covers C=2–32. Alloy is 1.06, 1.63, and 2.86 times faster than MX at C=2,4,8.
+Only Alloy completes at C=16 among the tested encodings. No encoding supplies a timing at C=32:
+Alloy reaches the 50 MiB generated-source cap, mostly because of static metadata; the CasADi
+variants are skipped after smaller-size failures.
+
+The primary grids contain 615 rows: 445 successful timings, 75 compilation timeouts, 90 skips
+after smaller-size failures, and five source-limit skips. No correctness check failed in these
+completed sweeps. Every timed primary cell has five successful processes. The
+[initial pilot](scalability.md#initial-frozen-protocol-pilot-2026-09-05) remains intact; the
+[range tables and reproduction commands](scalability.md#extended-hessian-sweeps-2026-09-06)
+record the current full grids and their input policies. See also the
+[measurement protocol](fairness.md#the-measurement-protocol).
+
+Closed-loop timings are a separate experiment below.
+
+## Canonical closed-loop SQP runs, 2026-09-05
+
+These runs execute the full receding-horizon controller with sequential quadratic programming
+(SQP), compiled Alloy or CasADi oracles, and the shared PIQP library. Both providers use the
+same SQP implementation and problem settings. Each provider compiles its own solver-and-oracle
+wrapper, so the complete binaries are not identical. CasADi uses each problem's existing
+SQP oracle construction, with every generated oracle transformed and only the upper Hessian
+triangle requested. This column does not select an encoding from the kernel sweep. All runs use the
+[reference-machine protocol](fairness.md#the-measurement-protocol), performance selected,
+boost disabled, seed 0, and five fresh processes per provider with separate empty caches.
+Both complete wrappers compile with cc 13.3.0 at `-O2`. The study manifest records that compiler
+separately from the clang compiler used for the kernel sweeps.
+
+Timing is the mean native solver time per control step, including the first step, averaged across
+the five processes. The native statistics separate function evaluation, solving the quadratic
+program (QP), globalization, and glue code. Timing excludes Python dispatch,
+controller construction, plant simulation, and recording. CV is the sample coefficient of variation
+of the five process means. Construction and first-solve wall times remain in the saved mode tables.
+
+| Problem | Provider | Total, ms | Total CV, % | Function evaluation, ms | QP, ms | Globalization, ms | Glue, ms |
+|---|---|---:|---:|---:|---:|---:|---:|
+| race_cars | alloy | 2.632 | 0.77 | 0.183 | 2.356 | 0.007 | 0.085 |
+| race_cars | casadi | 2.669 | 0.84 | 0.225 | 2.349 | 0.007 | 0.088 |
+| unbumpercars | alloy | 37.838 | 0.20 | 36.552 | 1.242 | 0.010 | 0.033 |
+| unbumpercars | casadi | 110.892 | 0.61 | 109.527 | 1.313 | 0.011 | 0.041 |
+| npmpc | alloy | 1.658 | 1.02 | 0.854 | 0.680 | 0.005 | 0.120 |
+| npmpc | casadi | 1.693 | 0.68 | 0.878 | 0.690 | 0.004 | 0.121 |
+| chain | alloy | 10.213 | 1.44 | 3.998 | 5.482 | 0.008 | 0.725 |
+| chain | casadi | 14.273 | 0.31 | 8.053 | 5.475 | 0.008 | 0.736 |
+
+### Episode agreement
+
+The comparisons below use every recorded control step. Matching mean iteration counts alone
+would not establish that the providers did the same work. Mismatch counts sum across all five
+episode pairs. The oracle column counts individual counter entries, so one step can contribute five.
+
+| Problem | Steps per episode | Successful solves | Per-step iteration mismatches | Per-step oracle-count mismatches | Maximum state difference | Maximum control difference |
+|---|---:|---|---:|---:|---:|---:|
+| race_cars | 1367 | 13670/13670 | 0 | 0 | 6.45e-12 | 6.02e-09 |
+| unbumpercars | 200 | 2000/2000 | 10 | 50 | 3.05e-07 | 2.35e-07 |
+| npmpc | 100 | 1000/1000 | 0 | 0 | 5.12e-09 | 3.51e-11 |
+| chain | 90 | 900/900 | 0 | 0 | 4.9e-09 | 1.92e-08 |
+
+Race-car runs use N=40 and complete one 1,367-step lap of `fsds_competition_1`.
+The race-car comparison has matching per-step iterations and all five oracle-call counters in
+every repetition. QP work dominates the total. The measured total-time gap is only 1.4%,
+with process CVs of 0.77% and 0.84%; this does not establish a substantial total-time improvement.
+
+Unbumpercars uses C=8 and 200 control steps. All ten episodes completed without solver failures
+or collisions. Steps 148 and 198 have different iteration and oracle-call counts between
+providers, despite maximum state and control differences below 4e-7. Its total timing ratio
+is an observed closed-loop result, not a strict equal-work oracle-cost comparison.
+
+Neural-process MPC uses N=12 and 100 control steps. Chain uses M=5, a controller horizon of
+N=12, and 90 control steps. Both comparisons have matching per-step iterations and oracle-call
+counts in every pair. The separate chain Hessian microbenchmark uses N=40.
+
+### Reproduce the closed-loop runs
+
+One command runs all four problems into an unused directory and renders both tables above:
+
+```bash
+uv run benchmarks/run.py study --out-dir benchmarks/results/followup/<date> --only closed-loop
+```
+
+A single problem is the underlying command, shown here for the race-car run:
+
+```bash
+uv run benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle both --repetitions 5 --order-seed 0 --headline --boost off --out-dir benchmarks/results/followup/<date>/closed-loop/race_cars
+```
+
+Raw episodes, trajectories, per-step `telemetry.csv`, mode tables, and provenance are local
+gitignored artifacts under `benchmarks/results/followup/2026-09-05/closed-loop/<problem>/`.
+`uv run benchmarks/run.py report <study-dir>` reads the telemetry, compares the providers step by
+step, and writes `closed_loop.summary.json` and `report.md`. These are measured runs with retained
+artifacts, not an immutable publication archive.
+
+The older measurements below retain their original limitations.
 
 ## Race-car equality Jacobian — historical
 
@@ -84,7 +171,7 @@ Construction time follows: 248 ms to build the 500-stage case against SX's 481 m
 
 Full tables, workspace figures and the reasoning are in [the scalability sweep](scalability.md).
 
-## Hanging chain of masses — where alloy loses
+## Hanging chain of masses — historical Jacobian result
 
 The classic chain NMPC: `M` point masses on springs under gravity, RK4 over a 40-step horizon, with
 the equality Jacobian as the kernel. This is the suite's largest sparse structured problem, and it is
@@ -100,10 +187,9 @@ C++ loop; one variant at a time on an idle machine.
 | 17 | CasADi SX + `map` | **2.52 ms** | 494 159 | 20.0 MB | 38.4 s |
 | 17 | every other CasADi encoding | — | 318 036 – 1 784 091 | 14.7–36.9 MB | **> 600 s** |
 
-So it is a trade, not a win: **alloy generates three orders of magnitude less code and compiles it in
-a second, and evaluates it 1.5–2.4× slower.** The gap narrows as the problem grows, which is the
-expected shape — the per-iteration callee dispatch amortizes — but at these sizes it is real, and
-CasADi's scalar expansion stops being compilable well before alloy's output stops being small.
+In this earlier equality-Jacobian experiment, Alloy evaluates 1.5–2.4 times slower while
+generating less source and compiling faster. These measurements use an older kernel and protocol;
+they do not establish the performance of the current Lagrangian Hessian.
 
 These numbers had never been published; the sweep ran and the results went nowhere. Details and the
 full variant matrix are in [the fairness audit](fairness.md#the-chain-sweep-a-suspected-handicap-that-was-not-one-and-a-result-that-is-not-published).
@@ -226,6 +312,9 @@ formulation, provenance and closed-loop behaviour live with the problem, in
 ## Reproducing
 
 ```bash
+# every headline sweep and closed loop on these pages, one directory, then the rendered tables
+uv run benchmarks/run.py study --out-dir benchmarks/results/followup/<date>
+
 # the full sweep
 uv run python benchmarks/run.py sweep
 
