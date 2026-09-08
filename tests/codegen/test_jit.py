@@ -103,6 +103,17 @@ def test_invalidate_cache_handles_missing_directory(isolated_cache) -> None:
   assert fn._compiled is None
 
 
+def test_jit_compile_command_targets_host(isolated_cache, monkeypatch) -> None:
+  commands: list[list[str]] = []
+  real_run = jit.subprocess.run
+  monkeypatch.setattr(jit.subprocess, "run", lambda cmd, **kwargs: commands.append(cmd) or real_run(cmd, **kwargs))
+  _simple_fn()(np.zeros(3))
+  (cmd,) = commands
+  flags = list(jit.compile_flags())
+  assert cmd[1 : 1 + len(flags)] == flags
+  assert "-fno-math-errno" in flags and any(flag.endswith("=native") for flag in flags)
+
+
 def test_jit_input_shape_mismatch_raises(isolated_cache) -> None:
   fn = _simple_fn()
   with pytest.raises(ValueError, match="shape"):
