@@ -10,7 +10,7 @@ import subprocess
 import time
 
 from alloy.codegen.abi import c_ident
-from benchmarks.harness import ROOT
+from benchmarks.harness import NATIVE_CFLAGS, ROOT
 
 
 def compiler() -> str:
@@ -340,7 +340,7 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
 
 def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, float | None, str]:
   cflags, libs = gbench_flags()
-  common = [compiler(), "-O3", "-std=c++17", "-I", str(out_dir), *cflags]
+  common = [compiler(), "-O3", *NATIVE_CFLAGS, "-std=c++17", "-I", str(out_dir), *cflags]
   commands = {
     "kernel_compile_ms": [*common, "-c", str(info["source"]), "-o", "kernel.o"],
     "wrapper_compile_ms": [*common, "-c", "benchmark.cpp", "-o", "wrapper.o"],

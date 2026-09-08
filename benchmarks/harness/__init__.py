@@ -1,12 +1,16 @@
 """Benchmark generation, correctness, and sweep helpers."""
 
 from pathlib import Path
+from alloy.codegen.jit import HOST_CFLAGS
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "benchmarks" / "results"
 CLOSED_LOOP_RESULTS = RESULTS / "closed-loop"
 SMOKE_RESULTS = RESULTS / "smoke"
 SWEEP_RESULTS = RESULTS / "sweep"
+# Every kernel the harness compiles targets the machine that runs it, with the JIT's own flags. Only
+# distributed binaries (the solver plugin wheels) stay at the portable x86-64 baseline.
+NATIVE_CFLAGS = HOST_CFLAGS
 
 
 def closed_loop_results_root(*, smoke: bool, out_dir: Path | None = None) -> Path:

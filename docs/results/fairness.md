@@ -67,6 +67,25 @@ Rules the numbers on this page follow, and that a headline run must follow more 
 - **Kernel figures come from the Google Benchmark harness**, which calls the generated C symbol with
   preallocated buffers and no Python in the loop. Both closed-loop IPOPT columns now use
   `clock_gettime` around a generated C entry point.
+- **Compile for the machine that runs the kernel.** The sweep compiles both providers' kernels with
+  `-O3 -march=native -fno-math-errno`; the closed-loop CasADi IPOPT wrapper adds the same two flags
+  to the optimization level it shares with Alloy's JIT, and the JIT applies them too. Alloy compiles
+  on the machine it runs on, so the native target is the deployment reality, and only binaries
+  distributed to other machines, such as the solver plugin wheels, stay at the portable x86-64
+  baseline. Both providers get identical flags, so the comparison stays controlled, but the flags do
+  not move both encodings equally, which is why the baseline is a handicap rather than a neutral
+  choice. The portable target withholds fused multiply-add (FMA), and clang's default
+  `-ffp-contract=on` fuses only within one expression: Alloy renders compound expressions and gets
+  the contraction, while SX emits one operation per statement (`a=(a*b); a=(a+c);`) and never forms
+  an FMA. Race-car Hessian at N=50, µs, Alloy then SX: `-O3` alone 32.9 and 21.3; `-mfma` alone
+  27.8 and 20.7; `-march=native` 26.9 and 20.7; `-march=native -ffp-contract=off` 35.2 and 20.5. The
+  gain is contraction, not vector width, and the native SX object contains no FMA and no vector
+  instruction at all. `-fno-math-errno` lets `sqrt` and the other libm calls inline instead of
+  setting `errno` nothing reads: 31.8 against 33.4 for Alloy and 20.6 against 21.3 for SX on the
+  same cell. **Every number currently published on this site was measured at the old flags**, `-O3`
+  alone in the sweep and `-O2` alone in the closed loop; the study rerun re-measures all of them, and
+  the tables move then, not before. The `.provenance.json` sidecars and `study.json` record the flags
+  as `native_cflags`, and each cell's `compile.log` keeps the full command line.
 - **Request only the oracle result that is timed.** CasADi's generated `nlp_jac_g` exposes `g` as
   output 0 and `jac_g_x` as output 1; the harness supplies only result pointer 1. The Hessian
   supplies its selected output, and every result-pointer array is reset before each call because

@@ -24,6 +24,7 @@ from alloy.codegen.toolchain import cache_root, find_c_compiler
 from alloy.solvers.paths import backend_compile_flags, solver_paths
 from alloy.solvers.stats import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, SolverStats, SolverStatus, stats_c_timing_defs
 from alloy.utils.env import shared_lib_ext, shared_lib_flag
+from benchmarks.harness import NATIVE_CFLAGS
 
 INTERPRETED: ContextVar[bool] = ContextVar("casadi_interpreted", default=False)
 
@@ -208,6 +209,7 @@ def _build(spec_path: Path) -> None:
   command = [
     spec["compiler"],
     spec["opt"],
+    *NATIVE_CFLAGS,
     "-fPIC",
     shared_lib_flag(),
     str(source_path),
@@ -264,7 +266,17 @@ class CompiledCasadiIpopt:
     self.configured_ipopt_library = Path(solver_paths(required=True).loads["ipopt"] or "").resolve()
     solver_digest = _library_digest(self.configured_ipopt_library)
     payload = json.dumps({"nlp": nlp.serialize(), "options": options}, sort_keys=True)
-    cache_inputs = payload + str(_CACHE_VERSION) + _INSTRUMENTATION + _SHIM + importlib.metadata.version("casadi") + solver_digest + compiler + opt
+    cache_inputs = (
+      payload
+      + str(_CACHE_VERSION)
+      + _INSTRUMENTATION
+      + _SHIM
+      + importlib.metadata.version("casadi")
+      + solver_digest
+      + compiler
+      + opt
+      + " ".join(NATIVE_CFLAGS)
+    )
     key = hashlib.sha256(cache_inputs.encode()).hexdigest()[:20]
     work = _CACHE / key
     library = work / f"lib{name}{shared_lib_ext()}"

@@ -98,6 +98,19 @@ The caller owns all the storage, including the `w` scratch array whose required 
 tells you. From C++, the header also emits typed structs and an inline `f_call` wrapper that builds
 the pointer arrays for you; pass `typed_buffers=False` to leave them out.
 
+Compile the generated C for the machine that will run it:
+
+```bash
+cc -O3 -march=native -fno-math-errno -c f.c
+```
+
+The generated code is compound expressions such as `a*b + c`, and the portable x86-64 baseline
+withholds the fused multiply-add instructions they contract into; on a race-car Hessian kernel the
+native flags are worth about a fifth of the runtime. `-fno-math-errno` lets `sqrt` and the other
+libm calls inline, since nothing in the generated code reads `errno`. The JIT compiles on the machine
+that runs the result and passes the same flags. A binary distributed to other machines is the
+exception: build it at the portable baseline, as the solver plugin wheels are.
+
 The full contract — status codes, sparse output tables, memory hooks, what a translation unit
 contains — is in [the C ABI](../how_it_works/c_abi.md).
 

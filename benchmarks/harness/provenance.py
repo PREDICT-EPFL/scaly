@@ -9,6 +9,8 @@ import platform
 from pathlib import Path
 import subprocess
 
+from benchmarks.harness import NATIVE_CFLAGS
+
 
 def _run(args: list[str], root: Path) -> str:
   return subprocess.run(args, cwd=root, check=True, text=True, capture_output=True).stdout.strip()
@@ -85,6 +87,7 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
     "casadi_version": casadi_version,
     "native_solvers": native_solvers,
     "compiler": compiler_version,
+    "native_cflags": list(NATIVE_CFLAGS),
     "platform": platform.platform(),
     "cpu_settings": cpu_settings(),
     "compilation_caches": {name: os.environ.get(name) for name in ("ALLOY_CACHE_DIR", "ALLOY_CASADI_IPOPT_CACHE")},

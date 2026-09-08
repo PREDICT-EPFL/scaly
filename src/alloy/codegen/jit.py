@@ -104,12 +104,14 @@ def opt_flag() -> str:
 # gcc and clang both spell the host target ``-march=native`` on x86. On AArch64 (Apple silicon,
 # Linux arm64) clang rejects ``-march=native``; both compilers accept ``-mcpu=native`` there.
 _NATIVE_CPU_FLAG = "-mcpu=native" if platform.machine().lower() in {"arm64", "aarch64"} else "-march=native"
+HOST_CFLAGS: tuple[str, ...] = (_NATIVE_CPU_FLAG, "-fno-math-errno")
+"""The host CPU target (so FMA and wider vectors are available) and ``-fno-math-errno`` (so ``sqrt``
+and friends inline). The benchmark harness compiles both providers with the same two flags."""
 
 
 def compile_flags() -> tuple[str, ...]:
-  """Flags the JIT passes to every compile: the optimization level, the host CPU target (so FMA and
-  wider vectors are available) and ``-fno-math-errno`` (so ``sqrt`` and friends inline)."""
-  return (opt_flag(), _NATIVE_CPU_FLAG, "-fno-math-errno")
+  """Flags the JIT passes to every compile: the optimization level plus ``HOST_CFLAGS``."""
+  return (opt_flag(), *HOST_CFLAGS)
 
 
 def _compute_cache_key(source: str, *, fun_name: str, compile_flags: tuple[str, ...] = ()) -> str:
