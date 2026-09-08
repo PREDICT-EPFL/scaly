@@ -112,7 +112,7 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None) -> Pro
     prog = p.program([*callees.values()])
     prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "solver_root": fun.name}, prog.dtype)
   else:
-    root = _lower_to_proc(fun, callees, solver_fns)
+    root = _lower_to_proc(fun, callees, solver_fns, auto_scalarize=False)
     prog = p.program([*callees.values(), root])
   if solver_fns:
     solver_oracles = {name: tuple(o.name for o in solver_callees(sf)) for name, sf in solver_fns.items()}
@@ -133,7 +133,7 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None) -> Pro
     )
   if observe is not None:
     observe("lowered", prog)
-  prog = optimize_program(prog, observe=observe)  # fusion + workspace packing (see passes/program.py)
+  prog = optimize_program(prog, observe=observe)
   verify_program(prog)
   return prog
 
@@ -159,7 +159,7 @@ def _size_of(shape: tuple[int, ...]) -> int:
   return n
 
 
-def _lower_to_proc(fun: Function, callees: dict[str, ProgramNode], solver_fns: dict[str, Function]) -> ProgramNode:
+def _lower_to_proc(fun: Function, callees: dict[str, ProgramNode], solver_fns: dict[str, Function], *, auto_scalarize: bool = True) -> ProgramNode:
   ctx = LowerCtx(fun, callees, solver_fns)
   ctx.emit_inputs()
   ctx.register_outputs()
@@ -168,7 +168,22 @@ def _lower_to_proc(fun: Function, callees: dict[str, ProgramNode], solver_fns: d
   proc = p.proc(fun.name, ctx.params, ctx.statements)
   # ``input_count`` lets the renderer ``const``-qualify the first N (input) params of a ``_raw``
   # callee; emit_inputs runs before register_outputs, so inputs are the leading params.
-  return ProgramNode(ProgramOp.PROC, proc.args, {**proc.attrs, "input_count": len(fun.inputs)}, proc.dtype)
+  nodes = topo(fun.outputs)
+  hints = {n.lowering for n in (*fun.inputs, *nodes)}
+  lowering = "block" if hints & {"block", "opaque"} else "scalar" if "scalar" in hints else "auto"
+  # Narrower stores round or truncate; scalar substitution must not erase those conversions.
+  return ProgramNode(
+    ProgramOp.PROC,
+    proc.args,
+    {
+      **proc.attrs,
+      "input_count": len(fun.inputs),
+      "lowering": lowering,
+      "scalarize": all(n.type.dtype == dtypes.float64 for n in (*fun.inputs, *nodes))
+      and (lowering == "scalar" or (lowering == "auto" and auto_scalarize)),
+    },
+    proc.dtype,
+  )
 
 
 class LowerCtx:

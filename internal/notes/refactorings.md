@@ -121,6 +121,15 @@ regenerated once instead of twice.
   a seam change with the layout fixed or a move with no logic change, and this one is neither. It
   stayed out so that a C-snapshot diff during the restructure could only ever mean a mistake.
 
+# Shared compiler rewrites
+
+The 2026-09-08 [investigation](algebraic_simplification_2026_09_08.md) updates C-12's proposed scope
+and supersedes the size-only acceptance condition in "One matcher" above. The useful comparison
+is now shared arithmetic across both dialects and both program forms. Combining the verifier's
+tables with the matcher is optional. The investigation owns the source comparison and design;
+C-52 owns the fixed pipeline package, C-12 the matcher, C-53 the arithmetic rules, and C-54 later
+memory-aware cleanup. Their actionable status lives only in `internal/todo.md`.
+
 # Open problems
 
 These remaining limitations have follow-up entries in `internal/todo.md`. Their implementation

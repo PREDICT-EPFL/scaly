@@ -35,19 +35,76 @@ lower normally.
 Not covered: device placement other than the host, and the operations listed as deferred in
 [the expression dialect](expr_ir.md#operations). Both raise `LoweringError`.
 
+## Program forms
+
+**Loopy code**, or **loop form**, retains buffers and loops. **Scalarized code**, or **scalar form**,
+expands eligible procedures into scalar calculations. Both are forms of the program dialect, and
+one program can contain procedures in both forms. Loopy code can still contain scalar calculations
+and undergo optimization. The existing `.block()` hint requests loopy form; it does not mean
+matrix tiling or disabling optimization.
+
 ## The optimization pipeline
 
-`optimize_program` runs a registered, ordered list of program-to-program rewrites at the tail of
-lowering, between the naive lowering and the verifier. Adding an optimization means adding one
-function:
+`optimize_program` runs the explicit `PASS_PIPELINE` sequence in `passes/program/__init__.py`
+at the tail of lowering, between the initial program and the verifier. Each pass has its own
+module. Adding an optimization means adding its function to this sequence at the required
+position. Imports do not determine execution order.
 
-```python
-@register_pass("my_pass")
-def my_pass(prog: ProgramNode) -> ProgramNode:
-    ...
-```
+Five passes run today, in this order.
 
-Four passes run today, in this order.
+**`scalarize`** expands selected float64 procedures before any buffer fusion or workspace reuse.
+It substitutes constant loop indices, tracks the current scalar value of each buffer element,
+and expands eligible pure callees. Views become scalar references, repeated expressions share
+one value, and constant arithmetic and zero/one identities fold per element. Reductions keep
+their original accumulation order. Shared values become typed scalar declarations. Single-use
+arithmetic stays in expression trees, with a temporary inserted at depth 32 to bound rendering
+depth and C parser nesting.
+
+The `Expr.lowering` hint selects the containing procedure:
+
+- `expr.scalar()` requests expansion even at the entry point and overrides its automatic size limits.
+- `expr.block()` or `expr.opaque()` prevents expansion of the containing procedure. These hints
+  take precedence if a body contains conflicting hints.
+- `auto` admits at most 4,096 distinct scalar arithmetic operations per procedure after folding
+  and sharing. Constants, variable references, and loads do not count as arithmetic. A separate
+  program-wide limit of 16,384 counts arithmetic operations plus scalar declarations and output
+  stores, so large copies also consume the budget. Earlier explicit scalarizations consume this
+  capacity for later automatic candidates, but explicit requests always bypass the automatic limits.
+- Before attempting automatic expansion, the pass limits work to 65,536 units per procedure:
+  parameter elements, local buffer elements, executed stores, and nested call work. This prevents
+  a large allocation or loop expansion merely to discover that the result exceeds the code budget.
+  These limits are compiler heuristics, not API guarantees.
+
+Automatic expansion leaves the entry point's mapped horizon intact. A procedure expands only if
+all of its callees are eligible too. Solver calls retain their call boundaries. Float32 and integer
+procedures retain their store boundaries because those stores can round or truncate values.
+Constant tangents already inside a body fold during expansion. Specializing a mapped callee for
+constant arguments is a separate transformation.
+
+### Arithmetic semantics
+
+Alloy applies algebraic simplifications without a math-mode option. Expression simplification
+and scalar expansion can remove neutral elements, multiply by zero, cancel equal symbolic terms,
+and simplify constant powers. For example, expression simplification can replace `x / x` with
+one, and scalar expansion can replace `0 / x` with zero. The available rules and known constants
+differ by compilation stage; a lowering hint does not select an IEEE 754 compliance mode.
+
+These rules do not preserve NaN or infinity propagation, signed zero, or floating-point exception
+behavior. They can also change intermediate rounding, overflow, or underflow. In particular,
+symbolic `0 / x` can become zero even when the runtime value of `x` is zero or NaN. Do not rely
+on an invalid operation surviving graph simplification to detect invalid model inputs.
+
+When scalar expansion knows all operands, it evaluates constant arithmetic before applying
+symbolic identities. Known `inf * 0` produces NaN. An invalid constant operation that the folder
+cannot evaluate, such as `0 / 0` or `sqrt(-1)`, remains a runtime operation. Integer index division
+retains C's truncation toward zero; floating algebraic rules do not relax index semantics or
+permit removal of dtype rounding boundaries.
+
+The scalarization pass keeps reduction accumulation order. This does not promise bit-identical
+results across scalarized and loopy code: emitted expression trees and the selected C compiler
+flags can also affect rounding. Alloy does not enable `-ffast-math` by default.
+
+### Loopy-code optimizations
 
 **`combine_scatter_sums`** replaces a left-associated sum of single-use zero-filled scatters with one zero-fill
 and one scatter-add per term. Slice adjoints produce these scatters. Combining them removes

@@ -27,6 +27,7 @@ Every node has:
 | `type` | a `TensorType`: shape, dtype, sparsity, and the differentiability flag |
 | `attrs` | per-op data that is not an operand — the callee of a `CALL`, the index table of a `GATHER` |
 | `name` | set on inputs, otherwise `None` |
+| `lowering` | `auto`, `scalar`, `block`, or `opaque`. Controls procedure scalarization as described in [Lowering and optimization](lowering.md#the-optimization-pipeline). |
 | `id` | the node's Python object identity. Because nodes are interned, structural equality *is* object identity, so this doubles as a structural key. Printing does not use it — the stable `%0`, `%1` names come from a topological walk. |
 
 Nodes are **interned**: building the same operation on the same arguments with the same attributes

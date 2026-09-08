@@ -56,8 +56,8 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
   """A named expression graph: named inputs, named outputs, and the computation between them.
 
   ``Function`` is the unit of three things at once. **Composition** — ``fn(inputs)`` with ``Expr``
-  leaves puts a first-class call node in a larger graph, and the callee survives into the generated
-  C as a real C function rather than being inlined. **Differentiation** — ``fn.factory(...)``
+  leaves puts a first-class call node in a larger graph. Lowering may inline small pure callees
+  when it scalarizes a procedure. **Differentiation** — ``fn.factory(...)``
   derives a new ``Function`` carrying the requested derivatives. **Compilation** — ``fn(inputs)``
   with array leaves lowers it, renders C, compiles and caches a shared library, and dispatches
   through the universal ABI.

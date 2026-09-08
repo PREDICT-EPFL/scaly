@@ -47,7 +47,7 @@ int wide(const double** arg, double** res, int* iw, double* w, void* mem) {
     }
   }
   for (long long i_t2 = 0; i_t2 < 40; ++i_t2) {
-    s1[i_t2] = 0;
+    s1[i_t2] = 0.0;
   }
   for (long long ib_t2 = 0; ib_t2 < 10; ++ib_t2) {
     for (long long k_t2 = 0; k_t2 < 40; ++k_t2) {
@@ -67,7 +67,7 @@ int wide(const double** arg, double** res, int* iw, double* w, void* mem) {
     s3[i_t50] = ((((exp(s2[i_t50]) + log(sqrt(s1[i_t50]))) * ((((((sin(s2[i_t50]) * cos(s1[i_t50])) + tan(s2[i_t50])) + asin((s2[i_t50] * k26[0]))) + acos((s1[i_t50] * k26[0]))) + atan(s1[i_t50])) + (((sinh(s2[i_t50]) + cosh(s1[i_t50])) + tanh(s1[i_t50])) + erf(s2[i_t50])))) + (floor(s2[i_t50]) + ceil(s1[i_t50]))) / (k13[0] + (arg[1][i_t50] * arg[1][i_t50])));
   }
   for (long long i_z = 0; i_z < 40; ++i_z) {
-    res[0][i_z] = 0;
+    res[0][i_z] = 0.0;
   }
   for (long long ib_z = 0; ib_z < 10; ++ib_z) {
     for (long long k_z = 0; k_z < 40; ++k_z) {
@@ -78,7 +78,7 @@ int wide(const double** arg, double** res, int* iw, double* w, void* mem) {
     }
   }
   for (long long z_tail = 0; z_tail < 4; ++z_tail) {
-    res[1][z_tail] = 0;
+    res[1][z_tail] = 0.0;
   }
   for (long long i_tail = 0; i_tail < 4; ++i_tail) {
     res[1][k52[i_tail]] = t51[i_tail];

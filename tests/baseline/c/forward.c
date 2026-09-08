@@ -34,7 +34,7 @@ int dynamics(const double** arg, double** res, int* iw, double* w, void* mem) {
   static const double k5[1] = {0.10000000000000001};
   double s0[1];
   double s1[1];
-  s0[0] = 0;
+  s0[0] = 0.0;
   for (long long i_t7 = 0; i_t7 < 2; ++i_t7) {
     s0[0] = (s0[0] + (t2[i_t7] * t2[i_t7]));
   }

@@ -103,6 +103,16 @@ def _store_attrs(n: ProgramNode) -> str | None:
   return None
 
 
+def _assign_attrs(n: ProgramNode) -> str | None:
+  if not isinstance(n.attrs.get("target"), str):
+    return "ASSIGN missing string 'target' attr"
+  if len(n.args) != 1 or n.args[0].op not in SCALAR_OPS:
+    return "ASSIGN expects one scalar value"
+  if not isinstance(n.attrs.get("declare", False), bool):
+    return "ASSIGN 'declare' must be boolean"
+  return None
+
+
 def _range_kind(n: ProgramNode) -> str | None:
   if "kind" not in n.attrs or not isinstance(n.attrs["kind"], RangeKind):
     return "RANGE missing valid 'kind' attr"
@@ -161,6 +171,7 @@ spec_program_shared = Spec(
     Rule(ProgramOp.VIEW, "view-scalar-args", _view_args_scalar),
     Rule(ProgramOp.LOAD, "load-takes-view", _load_takes_view),
     Rule(ProgramOp.STORE, "store-attrs", _store_attrs),
+    Rule(ProgramOp.ASSIGN, "assign-attrs", _assign_attrs),
     Rule(ProgramOp.RANGE, "range-attrs", _range_kind),
     Rule(ProgramOp.FOR, "for-body", _for_body),
     Rule(ProgramOp.CALL, "call-attrs", _call_attrs),

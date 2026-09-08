@@ -145,6 +145,19 @@ def test_reduction_kind_range_verifies() -> None:
   verify_program(proc)
 
 
+def test_scalar_declaration_verifies_and_prints() -> None:
+  stmt = p.assign("shared", p.const_float(2), declare=True)
+  proc = p.proc("scalar", [], [stmt])
+  verify_program(proc)
+  assert "float64 shared = 2" in format_program(proc)
+
+
+@pytest.mark.parametrize("attrs,args", [({}, (p.const_float(1),)), ({"target": "v"}, ()), ({"target": "v", "declare": "yes"}, (p.const_float(1),))])
+def test_invalid_scalar_assignment_rejected(attrs, args) -> None:
+  with pytest.raises(VerifyError, match="assign-attrs"):
+    verify_program(ProgramNode(ProgramOp.ASSIGN, args, attrs))
+
+
 def test_range_kind_value_must_be_enum_member() -> None:
   # forge a RANGE with a non-enum 'kind' attr
   bad = ProgramNode(ProgramOp.RANGE, (p.const_int(0), p.const_int(4), p.const_int(1)), attrs={"name": "i", "kind": "bogus"})

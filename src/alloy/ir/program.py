@@ -321,10 +321,11 @@ def store(view_node: ProgramNode, value: ProgramNode) -> ProgramNode:
   return ProgramNode(ProgramOp.STORE, (view_node, value), dtype=value.dtype)
 
 
-def assign(target: str, value: ProgramNode, dtype: DType | None = None) -> ProgramNode:
+def assign(target: str, value: ProgramNode, dtype: DType | None = None, *, declare: bool = False) -> ProgramNode:
+  """Assign a scalar value, optionally declaring a new typed local variable."""
   if value.op not in SCALAR_OPS:
     raise TypeError(f"assign value must be a scalar ProgramNode, got {value.op}")
-  return ProgramNode(ProgramOp.ASSIGN, (value,), attrs={"target": target}, dtype=dtype or value.dtype)
+  return ProgramNode(ProgramOp.ASSIGN, (value,), attrs={"target": target, **({"declare": True} if declare else {})}, dtype=dtype or value.dtype)
 
 
 def range_(

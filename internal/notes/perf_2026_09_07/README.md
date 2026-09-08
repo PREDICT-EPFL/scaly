@@ -417,3 +417,93 @@ two generic transforms, a range split with an accumulator per lane and a choice 
 outermost, and both generalize to `W @ [v1 v2 v3]` and to the matrix-matrix products a vmapped
 neural dynamics would produce. C-43 as written is the right first step because it is twenty lines
 and measured; the generic form is what C-8 should become, and the study lists the six pieces to port.
+
+## C-44 validation, 2026-09-08
+
+`src/alloy/passes/program/scalarize.py` expands selected procedures before fusion and workspace packing.
+It follows the expansion, hash-consing, and single-use expression emission described in
+`tinygrad_rangeify.md` sections 4 and 6. The corresponding tinygrad `codegen/__init__.py`,
+`uop/symbolic.py`, and `renderer/cstyle.py` were read before implementation. Reusing the existing
+lowered indices avoids a second registry of expression lowering rules. Parsing generated C
+remains an investigation tool, not part of the compiler.
+
+The stage comparison reuses the saved original kernels, hand-scalarized kernels, and sample
+inputs from this investigation. Compile flags are `clang++ -O3 -std=c++17`, with no native-target
+flag or fast math. The reference machine uses the performance governor with boost disabled.
+Each number is the best of five timing loops, with 20,000 repetitions for race-car and 300 for
+chain. Compiler jobs and tests were stopped during the final timing run.
+
+| Stage, calls | Seed binding | Hand scalarizer, µs | C-44, µs |
+|---|---|---:|---:|
+| Race-car, 50 | Runtime arguments | 20.24 | 20.82 |
+| Race-car, 50 | Constants inside the body | 18.17 | 19.63 |
+| Chain M=5, 40 | Runtime arguments | 307.93 | 265.06 |
+
+The original tensor stages take 22.92 µs and 1908.23 µs respectively. C-44's chain stage also
+falls within 10% of the folded-seed hand kernel, which takes 246.33 µs in this run. Both C-44
+stage outputs match the original kernels bit for bit on these inputs.
+
+The race-car constant-seed control substitutes the known tile into the expression body before
+lowering. It checks C-44's folding at the same seed binding as the hand rewrite. The mapped
+forward rule still passes runtime seeds. Exposing these constants automatically remains C-45.
+Thus the 19.63 µs control is not the stage time of an ordinary mapped race-car build yet.
+
+The full benchmark cells pass both the Python-call and compiled-kernel dense-reference checks.
+With the current harness flags, `-O3 -march=native -fno-math-errno`, their full-kernel times are
+26.24 µs for race-car N=50, 1068.01 µs for chain M=5, and 46.56 µs for NPMPC N=12.
+These flags differ from the isolated stage comparison above. The chain entry-point workspace
+remains 1,075,248 doubles; scalarization removes the stage's buffers, not the glue buffers.
+
+Local artifacts are in `benchmarks/results/c44/`: the two `*_driver.cpp` files and `*_stages.log`
+files hold the stage comparison, and `cells/results.json` and the cell directories hold the
+full-kernel checks, generated C, compile logs, and timings. Core coverage lives in
+`tests/passes/test_scalarize.py`, including an analytic spring Hessian and runtime versus constant
+seeds. Disabling scalarization fails the loop-removal gates. Disabling floating-point folding
+leaves five sine operations where the folding gate requires one.
+
+### C-44 closeout
+
+The final automatic policy caps each procedure at 4,096 unique arithmetic nodes after folding
+and sharing, expansion work at 65,536 units, and program-wide growth at 16,384 arithmetic nodes,
+assignments, and stores. Tests cover each limit separately, including the exact operation-count
+boundary and a narrow tensor with too many nested sine operations. Explicit scalar selection
+bypasses the limits. The fixed pass pipeline now lives in `src/alloy/passes/program/`.
+
+This closeout regenerated only the race-car N=50 and chain M=5 Hessian kernels and their controls.
+Each control disables the scalarization pass and retains every other pass. Timings are medians
+of three fresh Google Benchmark binary processes with a 0.2-second minimum per process. Each
+generated cell and compiled binary passed the independent dense Hessian check at absolute and
+relative tolerances of `1e-9`. No compiler or test jobs ran alongside timed kernels.
+
+The reference Ryzen 9 7940HS used the performance governor with boost disabled. Clang 20.1.8 used
+the harness flags `-O3 -march=native -fno-math-errno -std=c++17`; GCC 13.3.0 used the default JIT
+flags `-O2 -march=native -fno-math-errno`. Compile times below are single cold kernel compilations,
+excluding the benchmark wrapper and link. This is a minimal diagnostic, not the full frozen
+benchmark protocol. The full rerun is deferred until more Track C work lands.
+
+| Kernel and selection | Runtime, µs | Source, bytes | Clang compile, s | GCC compile, s |
+|---|---:|---:|---:|---:|
+| Race-car, pass disabled | 26.019 | 136,087 | 0.359 | 0.32 |
+| Race-car, auto | 25.909 | 112,637 | 0.286 | 0.20 |
+| Chain, pass disabled | 2,216.842 | 1,274,426 | 4.917 | 4.98 |
+| Chain, explicit derived procedure | 1,081.824 | 1,906,598 | 16.808 | 62.77 |
+
+Race-car runtime is unchanged within noise. Its source is 17.2% smaller and its single Clang
+compile is 20.3% faster. The automatic policy admits its equality stage at 1,618 arithmetic nodes
+and 2,004 arithmetic nodes plus statements. Chain is 2.05 times faster with explicit expansion,
+but its 72,913 arithmetic nodes and 86,416 nodes plus statements explain why it exceeds the
+automatic budgets. Clang compilation costs 3.42 times as much and GCC about 12.6 times as much.
+The entry-point workspace remains 1,075,248 doubles in both chain variants.
+
+The chain experiment sets `lowering="scalar"` on the generated
+`chain_eq_stage_M5_adj0_0_1_fwd24_adj:eq_z` procedure immediately before calling the shipped
+scalarization pass. A `.scalar()` hint on the primal stage output did not reach this derived
+procedure. That first diagnostic retained automatic selection and measured 1,862.941 µs.
+Thus this experiment establishes the explicit pass's benefit; propagating the primal hint through
+derivative construction remains separate work. The earlier stage gate above still records the
+comparison with the hand scalarizer at matching seed binding.
+
+Raw samples, generated C, the temporary runner, and compile logs are under
+`benchmarks/results/c44/closeout/`. The rejected hint-placement attempt is retained separately as
+`chain_5_auto_diagnostic`. The suite passed with 682 tests and one expected failure; Ruff formatting,
+lint, type checking, and the documentation build also passed.

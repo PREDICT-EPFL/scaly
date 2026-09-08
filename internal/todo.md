@@ -23,7 +23,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 52**
+**Next id: 56**
 
 | Prefix | Section |
 |---|---|
@@ -143,17 +143,28 @@ protocol's compile flags.
       a stopgap: the two rules are the special case of a range split with one accumulator per lane
       and a choice of outermost range, which C-8 provides generically; when C-8 lands, C-43's rules
       are deleted, not kept beside it.
-- [ ] **C-44. Scalarize small stage bodies, driven by the `lowering` hint.** For a callee whose
-      body is marked `Expr.scalar()`, or whose tensors are all small under `auto`, and never under
+- [x] **C-44. Scalarize small stage bodies, driven by the `lowering` hint.** For a callee whose
+      body is marked `Expr.scalar()`, or fits a conservative scalar-operation budget under `auto`, and never under
       `block`: unroll to scalar SSA, hash-cons, fold `0`, `1` and constant arithmetic, and render
       expression trees (not one op per statement, which is what stops clang from forming FMAs in
-      SX's output). The hint attribute exists on every `Expr` and no pass reads it today, so this
-      item is also where it becomes live. `notes/perf_2026_09_07/scalarize_stage.py` does the
+      SX's output). The hint is now active. `notes/perf_2026_09_07/scalarize_stage.py` does the
       transform after the fact on the generated C: race-car eq stage 23.0 to 18.1 µs, chain eq
       stage 1910 to 247 µs, both bit-identical. The only item that moves chain, and it subsumes the
       seed half of C-9 and most of C-10. tinygrad's expand-then-devectorize is the reference
       (`notes/perf_2026_09_07/tinygrad_rangeify.md` §4). Gate: the two stage kernels above within
-      10% of the hand-scalarized time.
+      10% of the hand-scalarized time. Implemented 2026-09-08 in `passes/program/scalarize.py`; the
+      [validation](notes/perf_2026_09_07/README.md#c-44-validation-2026-09-08) separates runtime
+      seeds from the constant-seed control. Review follow-up replaces the tensor-width heuristic
+      with limits on scalar operations after folding and sharing, expansion work, and aggregate
+      generated-code growth. The arithmetic contract and exceptional constant cases are documented
+      and tested. The [closeout](notes/perf_2026_09_07/README.md#c-44-closeout) records minimal
+      GCC/Clang compilation and runtime checks; the full benchmark rerun follows more Track C work.
+      Automatic seed specialization remains C-45.
+      Design: [arithmetic policy](notes/algebraic_simplification_2026_09_08.md#proposed-alloy-arithmetic-policy);
+      rationale: [paper §8](paper.md#8-blocking-work-before-the-paper-can-be-written), [measurement protocol](../docs/results/fairness.md#the-measurement-protocol).
+- [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `alloy.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
+- [ ] **C-55. Preserve intended lowering hints through derivative Function construction.** Define which primal hints derived bodies inherit and test selection on the chain Hessian. [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
+- [ ] **C-53. Share arithmetic simplification across both dialects and program forms.** After C-12, extract common rules with dtype/shape adapters and apply them to expression graphs, scalarized code, and loopy code; keep tensor-specific rules in C-10 and new integer-index rules in C-8/C-9. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
 - [ ] **C-45. Bake stage-invariant constant tangents into the VMAP forward callee.** The VMAP
       rule in `ad/forward.py` tiles a constant `jvp_many` seed into an `nseed × length × slice` table
       and passes it as a mapped argument, so the callee multiplies by 0 and 1 at runtime; the const
@@ -173,8 +184,7 @@ protocol's compile flags.
 - [ ] **C-47. One accumulation buffer for a sum of scatters.** Chain's entry point zero-fills 43
       buffers of 23,544 doubles and scatters 576 values into each before summing them: 8 MB of memset
       per call and the 1,075,248-double workspace. `scatter(a) + scatter(b) -> scatter_add` at the
-      expression level, or the fusion in C-8. Also fold `0 / x`, which the N=5 race-car assembly
-      still shows twice.
+      expression level, or the fusion in C-8. Arithmetic identities such as `0 / x` belong to C-53.
 - [ ] **C-49. Audit the AD rules for operation count, starting from the measured chain split.**
       Lean division rules, `(dx - f dy) / y` forward and `q = cot / y; adj_y = -q f` reverse with `f`
       the primal quotient, took race-car N=50 from 31.4 to 28.0 µs and chain M=5 from 2458 to 2277
@@ -246,19 +256,11 @@ protocol's compile flags.
       folded, so C-44 goes first; what remains after it is 2.6 times SX's operation count, of which
       the per-seed division in the DIV tangent rule (1738 divisions per stage against SX's 674) is
       the one identified piece.
-- [ ] **C-12. One matcher: op-indexed tables and one walk-rebuild.** Conditional by design — it
-      lands only if the result is smaller than the 78 + 71 lines of `ir/match.py` and `ir/spec.py`,
-      and closing the section unlanded is a permitted outcome that still has to be written down.
-      Repointing `passes/program.py`'s three `_transform` call sites is where the memo lands, which
-      also closes C-13. Design: refactorings.md "One matcher". Read `tinygrad_rangeify.md` §3 first:
-      hash-consed nodes (structural equality and free CSE from a weakref cache keyed on
-      `(op, src, arg)`), `UPat` patterns with operator overloading, a `PatternMatcher` indexed by
-      root op, and one memoized fixpoint `graph_rewrite` driver with top-down and bottom-up modes,
-      about 300 lines in total. That is the infrastructure C-8's rules and C-44's scalar folding
-      would both sit on, which changes the size argument for this item.
+- [ ] **C-12. One matcher and iterative rewrite driver for both dialects.** After C-52, adapt the useful parts of tinygrad's nested patterns and graph driver, preserving sharing, visiting replacement subgraphs, and checking termination; do not require merging verifier infrastructure or compiled matching. Close C-13 only when its recursive paths and witness are covered. [Updated design](notes/refactorings.md#shared-compiler-rewrites), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
 
 ### Deferred
 
+- [ ] **C-54. Add memory-aware program common-subexpression elimination and dead-code cleanup.** Build on C-12/C-53 with definition/use tracking and conservative read/write/alias handling; retain required calls and output stores, and test repeated loads across writes. Broader loop motion follows demonstrated workload need; load-node interning alone is not a current stale-value bug. [Design](notes/algebraic_simplification_2026_09_08.md#separate-value-cleanup-from-memory-optimization), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
 - **C-13. Make the Program IR passes iterative instead of recursive**, unless C-12 gets there
   first. `passes._transform` and `_expand_inlinables` recurse per node, so an expression
   deeper than ~200 chained elementwise ops dies with a bare `RecursionError` during lowering. Two

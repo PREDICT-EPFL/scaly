@@ -14,55 +14,23 @@ extern "C" {
 
 static __attribute__((noinline)) void dynamics_fwd3c8e1b6ee2b3_znext_z_raw(const double* z, double* fwd_znext_z, double* w) {
   (void)w;
-  static const double k0[4] = {1, 1, 0, 0};
-  static const double k1[2] = {0.050000000000000003, 0};
-  static const double k2[2] = {1, 0};
-  static const double k3[1] = {0.050000000000000003};
-  static const double k4[1] = {0.10000000000000001};
-  static const double k5[1] = {2};
-  const double* t6 = z + 2;
-  double s0[4];
-  double s1[4];
-  double s2[1];
-  static const double k21[2] = {0, 0.050000000000000003};
-  static const double k22[2] = {0, 1};
-  double s3[1];
-  s0[0] = 0;
-  for (long long i_t9 = 0; i_t9 < 2; ++i_t9) {
-    s0[0] = (s0[0] + (k5[0] * (k2[i_t9] * t6[i_t9])));
-  }
-  s1[0] = (k4[0] * s0[0]);
-  s0[0] = 0;
-  for (long long i_t13 = 0; i_t13 < 2; ++i_t13) {
-    s0[0] = (s0[0] + (t6[i_t13] * t6[i_t13]));
-  }
-  s2[0] = (k4[0] * s0[0]);
-  for (long long j_t20_0 = 0; j_t20_0 < 2; ++j_t20_0) {
-    s0[j_t20_0] = k1[j_t20_0];
-  }
-  for (long long j_t20_1 = 0; j_t20_1 < 2; ++j_t20_1) {
-    s0[(2 + j_t20_1)] = (k2[j_t20_1] + (k3[0] * (-((s1[0] * t6[j_t20_1]) + (s2[0] * k2[j_t20_1])))));
-  }
-  s1[0] = 0;
-  for (long long i_t25 = 0; i_t25 < 2; ++i_t25) {
-    s1[0] = (s1[0] + (k5[0] * (k22[i_t25] * t6[i_t25])));
-  }
-  s3[0] = (k4[0] * s1[0]);
-  for (long long j_t33_0 = 0; j_t33_0 < 2; ++j_t33_0) {
-    s1[j_t33_0] = k21[j_t33_0];
-  }
-  for (long long j_t33_1 = 0; j_t33_1 < 2; ++j_t33_1) {
-    s1[(2 + j_t33_1)] = (k22[j_t33_1] + (k3[0] * (-((s3[0] * t6[j_t33_1]) + (s2[0] * k22[j_t33_1])))));
-  }
-  for (long long j_fwd_znext_z_0 = 0; j_fwd_znext_z_0 < 4; ++j_fwd_znext_z_0) {
-    fwd_znext_z[((0 * 4) + j_fwd_znext_z_0)] = k0[j_fwd_znext_z_0];
-  }
-  for (long long j_fwd_znext_z_1 = 0; j_fwd_znext_z_1 < 4; ++j_fwd_znext_z_1) {
-    fwd_znext_z[((1 * 4) + j_fwd_znext_z_1)] = s0[j_fwd_znext_z_1];
-  }
-  for (long long j_fwd_znext_z_2 = 0; j_fwd_znext_z_2 < 4; ++j_fwd_znext_z_2) {
-    fwd_znext_z[((2 * 4) + j_fwd_znext_z_2)] = s1[j_fwd_znext_z_2];
-  }
+  double v0 = z[2];
+  double v1 = (0.10000000000000001 * (2.0 * v0));
+  double v2 = z[3];
+  double v3 = (0.10000000000000001 * ((v0 * v0) + (v2 * v2)));
+  double v4 = (0.10000000000000001 * (2.0 * v2));
+  fwd_znext_z[0] = 1.0;
+  fwd_znext_z[1] = 1.0;
+  fwd_znext_z[2] = 0.0;
+  fwd_znext_z[3] = 0.0;
+  fwd_znext_z[4] = 0.050000000000000003;
+  fwd_znext_z[5] = 0.0;
+  fwd_znext_z[6] = (1.0 + (0.050000000000000003 * (-((v1 * v0) + v3))));
+  fwd_znext_z[7] = (0.050000000000000003 * (-(v1 * v2)));
+  fwd_znext_z[8] = 0.0;
+  fwd_znext_z[9] = 0.050000000000000003;
+  fwd_znext_z[10] = (0.050000000000000003 * (-(v4 * v0)));
+  fwd_znext_z[11] = (1.0 + (0.050000000000000003 * (-((v4 * v2) + v3))));
 }
 
 int shooting_spjac_eq_z_sz_arg(void) { return 2; }

@@ -16,7 +16,9 @@ import alloy as al
 from alloy.codegen.c import render_program_c_source
 from alloy.codegen.jit import _find_compiler
 from alloy.passes.lowering import lower_function, main_proc
-from alloy.passes.program import WORKSPACE_SPILL_THRESHOLD, unroll_unit_loops
+from alloy.passes.program.combine_scatter_sums import combine_scatter_sums
+from alloy.passes.program.pack_workspace import WORKSPACE_SPILL_THRESHOLD
+from alloy.passes.program.unroll_unit_loops import unroll_unit_loops
 from alloy.ir.program import ProgramOp, buffer, const_float, for_, proc as proc_, program, range_, store, var, view
 from alloy.ir.types import dtypes
 
@@ -313,7 +315,6 @@ def test_scatter_sum_preserves_overlaps_and_shared_outputs(shared: bool) -> None
 def test_scatter_sum_does_not_move_source_reads_past_writes(alias: bool) -> None:
   from alloy.ir.expr import scatter
   from alloy.ir.program import ProgramNode, const_int
-  from alloy.passes.program import combine_scatter_sums
 
   x = al.sym("x", 4)
   a = scatter(x[:2] if alias else x, [0, 2] if alias else [0, 2, 4, 6], 8)

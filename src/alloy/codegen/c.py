@@ -11,7 +11,7 @@ their call graph; ``codegen/aot.py`` orchestrates the solver-bearing case, reusi
 
 There is **no silent fallback**: a function outside the lowered subset raises
 ``LoweringError`` loudly. Workspace lifetime/spill packing is a Program-IR pass
-(``passes/program.py``); the renderer just honors the ``sz_w`` / ``workspace_offset`` it sets.
+(``passes/program/pack_workspace.py``); the renderer just honors the ``sz_w`` / ``workspace_offset`` it sets.
 Scalar/statement emission uses compact per-op maps — the lowerer (``passes/lowering.py``)
 holds the extensible ``ExprOp``-keyed registry.
 """
@@ -101,7 +101,7 @@ def _render_entry(proc: ProgramNode, fun: Function) -> list[str]:
   symbol = c_ident(fun.name)
   param_count = int(proc.attrs["param_count"])
   body = list(proc.args[param_count:])
-  sz_w = int(proc.attrs.get("sz_w", 0))  # set by the workspace-packing pass (passes/program.py)
+  sz_w = int(proc.attrs.get("sz_w", 0))  # set by passes/program/pack_workspace.py
 
   # Buffer name -> C pointer expression for the ABI entry (inputs are arg[i], outputs res[i]).
   ptr_expr: dict[str, str] = {}
@@ -229,7 +229,8 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
   elif stmt.op == ProgramOp.STORE:
     lines.append(f"{pad}{_emit_view(stmt.args[0], ptr_expr)} = {_emit_scalar(stmt.args[1], ptr_expr)};")
   elif stmt.op == ProgramOp.ASSIGN:
-    lines.append(f"{pad}{stmt.attrs['target']} = {_emit_scalar(stmt.args[0], ptr_expr)};")
+    declaration = f"{stmt.dtype.c_type} " if stmt.attrs.get("declare") else ""
+    lines.append(f"{pad}{declaration}{c_ident(stmt.attrs['target'])} = {_emit_scalar(stmt.args[0], ptr_expr)};")
   elif stmt.op == ProgramOp.CALL:
     if stmt.attrs.get("external"):
       raise LoweringError("external (mixed-device) CALL rendering is deferred to a later migration step")
@@ -281,7 +282,11 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
   if op == ProgramOp.CONST_INT:
     return str(n.attrs["value"])
   if op == ProgramOp.CONST_FLOAT:
-    return _c_float(n.attrs["value"])
+    value = n.attrs["value"]
+    literal = _c_float(value)
+    if math.isfinite(value) and "." not in literal and "e" not in literal:
+      literal += ".0"
+    return literal
   if op == ProgramOp.VAR:
     return c_ident(n.attrs["name"])
   if op == ProgramOp.LOAD:

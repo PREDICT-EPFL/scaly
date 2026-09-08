@@ -14,23 +14,13 @@ extern "C" {
 
 static inline void dynamics_raw(const double* z, const double* u, double* znext, double* w) {
   (void)w;
-  const double* t0 = z;
-  static const double k1[1] = {0.050000000000000003};
-  const double* t2 = z + 2;
-  static const double k5[1] = {0.10000000000000001};
-  double s0[1];
-  double s1[1];
-  s0[0] = 0;
-  for (long long i_t7 = 0; i_t7 < 2; ++i_t7) {
-    s0[0] = (s0[0] + (t2[i_t7] * t2[i_t7]));
-  }
-  s1[0] = (k5[0] * s0[0]);
-  for (long long j_znext_0 = 0; j_znext_0 < 2; ++j_znext_0) {
-    znext[j_znext_0] = (t0[j_znext_0] + (k1[0] * t2[j_znext_0]));
-  }
-  for (long long j_znext_1 = 0; j_znext_1 < 2; ++j_znext_1) {
-    znext[(2 + j_znext_1)] = (t2[j_znext_1] + (k1[0] * (u[j_znext_1] - (s1[0] * t2[j_znext_1]))));
-  }
+  double v0 = z[2];
+  double v1 = z[3];
+  double v2 = (0.10000000000000001 * ((v0 * v0) + (v1 * v1)));
+  znext[0] = (z[0] + (0.050000000000000003 * v0));
+  znext[1] = (z[1] + (0.050000000000000003 * v1));
+  znext[2] = (v0 + (0.050000000000000003 * (u[0] - (v2 * v0))));
+  znext[3] = (v1 + (0.050000000000000003 * (u[1] - (v2 * v1))));
 }
 
 int shooting_sz_arg(void) { return 2; }

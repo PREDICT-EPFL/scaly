@@ -66,21 +66,16 @@ extern "C" {
 
 static inline void corpus_qp_oracle_raw(const double* mu, double* qp_P, double* qp_c, double* qp_x_lb, double* qp_x_ub, double* w) {
   (void)w;
-  static const double k0[4] = {1, 0, 0, 1};
-  static const double k1[2] = {((double)(-INFINITY)), ((double)(-INFINITY))};
-  static const double k2[2] = {((double)INFINITY), ((double)INFINITY)};
-  for (long long i_qp_c = 0; i_qp_c < 2; ++i_qp_c) {
-    qp_c[i_qp_c] = (-mu[i_qp_c]);
-  }
-  for (long long c_qp_P = 0; c_qp_P < 4; ++c_qp_P) {
-    qp_P[c_qp_P] = k0[c_qp_P];
-  }
-  for (long long c_qp_x_lb = 0; c_qp_x_lb < 2; ++c_qp_x_lb) {
-    qp_x_lb[c_qp_x_lb] = k1[c_qp_x_lb];
-  }
-  for (long long c_qp_x_ub = 0; c_qp_x_ub < 2; ++c_qp_x_ub) {
-    qp_x_ub[c_qp_x_ub] = k2[c_qp_x_ub];
-  }
+  qp_P[0] = 1.0;
+  qp_P[1] = 0.0;
+  qp_P[2] = 0.0;
+  qp_P[3] = 1.0;
+  qp_c[0] = (-mu[0]);
+  qp_c[1] = (-mu[1]);
+  qp_x_lb[0] = ((double)(-INFINITY));
+  qp_x_lb[1] = ((double)(-INFINITY));
+  qp_x_ub[0] = ((double)INFINITY);
+  qp_x_ub[1] = ((double)INFINITY);
 }
 
 static alloy_solver_stats corpus_qp_stats_data;
@@ -192,7 +187,7 @@ int qp_host(const double** arg, double** res, int* iw, double* w, void* mem) {
   double s2[1];
   double s3[1];
   corpus_qp_raw(k0, k0, k1, k1, arg[0], s0, s1, s2, s3, NULL);
-  res[0][0] = 0;
+  res[0][0] = 0.0;
   for (long long i_cost = 0; i_cost < 2; ++i_cost) {
     res[0][0] = (res[0][0] + (s0[i_cost] * s0[i_cost]));
   }

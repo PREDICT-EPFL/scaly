@@ -332,12 +332,15 @@ class Expr:
     return Expr(self.op, self.args, self.type, self.name, self.value, self.attrs, lowering)
 
   def scalar(self) -> Expr:
+    """Request scalarized code: expand eligible float64 procedures into scalar calculations, overriding automatic size limits."""
     return self.with_lowering("scalar")
 
   def block(self) -> Expr:
+    """Keep the containing procedure in loopy form, retaining buffers and loops during scalarization."""
     return self.with_lowering("block")
 
   def opaque(self) -> Expr:
+    """Prevent scalar expansion of the containing procedure, retaining its loopy form."""
     return self.with_lowering("opaque")
 
   def reshape(self, shape: int | tuple[int, ...]) -> Expr:

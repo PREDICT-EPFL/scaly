@@ -49,7 +49,7 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
   x = al.sym("x", 2)
   matrix = al.Expr.const(np.arange(8.0).reshape(4, 2))
   hidden = matrix @ x
-  inner = al.Function._from_exprs("metric_workspace_inner", [x], [(hidden * hidden).sum().reshape((1,))], ["x"], ["y"])
+  inner = al.Function._from_exprs("metric_workspace_inner", [x], [(hidden * hidden).sum().reshape((1,)).block()], ["x"], ["y"])
   y = al.sym("y", 2)
   outer = al.Function._from_exprs("metric_workspace_outer", [y], [inner(y) + 1], ["y"], ["z"])
   z = al.sym("z", 8)
@@ -62,7 +62,7 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
 
 def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
   x = al.sym("x", 1024)
-  inner = al.Function._from_exprs("metric_spill_inner", [x], [x * x], ["x"], ["y"])
+  inner = al.Function._from_exprs("metric_spill_inner", [x], [(x * x).block()], ["x"], ["y"])
   y = al.sym("y", 1024)
   called = inner(y)
   outer = al.Function._from_exprs("metric_spill_outer", [y], [called + 1], ["y"], ["z"])
@@ -70,6 +70,15 @@ def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
   mapped = al.Function._from_exprs("metric_spill_vmap", [z], [al.vmap(outer, 2, [(z, 0, 1024)])], ["z"], ["y"])
 
   assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (2, 1024, 2048)
+
+
+def test_dispatch_metrics_count_shared_scalar_arithmetic_once() -> None:
+  x = al.sym("x", 1)
+  shared = x[0].sin()
+  stage = al.Function._from_exprs("metric_shared_stage", [x], [al.stack([shared * shared, shared + 1])], ["x"], ["y"])
+  z = al.sym("z", 4)
+  mapped = al.Function._from_exprs("metric_shared_vmap", [z], [al.vmap(stage, 4, [(z, 0, 1)])], ["z"], ["y"])
+  assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (4, 0, 3)
 
 
 def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:

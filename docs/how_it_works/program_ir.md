@@ -70,7 +70,7 @@ Forty-three operations in two families.
 | `range` | a loop domain: start, stop, step, and a `RangeKind` |
 | `for` | a loop binding a `range` over a body |
 | `store` | write a scalar to a view |
-| `assign` | write a scalar to a variable |
+| `assign` | write a scalar to a variable; `declare=True` also declares the typed local |
 | `call` | invoke another `proc` |
 | `launch` | start a `kernel` — host only |
 | `barrier` | synchronize within a kernel — device only |

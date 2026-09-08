@@ -64,7 +64,7 @@ grad(np.array([1.0, 2.0]))
 | 5 | Calling it with array leaves runs `__call__` → `numerical_call` → `_flat_numerical_call` → `_compile`, which reaches the backend through `_jit()` — the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](#the-two-sanctioned-exceptions) to import layering. | `function/model.py` |
 | 6 | `CompiledFunction` asks `_build_artifact` for a shared library, which calls `render_c_module`. That lowers the function **once** into a render context every artifact reads from. | `codegen/jit.py`, `codegen/aot.py` |
 | 7 | `lower_function` walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a Function carrying a solver descriptor stays opaque. | `passes/lowering.py` |
-| 8 | `optimize_program` runs the registered pipeline: `combine_scatter_sums`, `fuse_elementwise`, `unroll_unit_loops`, `pack_workspace`. | `passes/program.py` |
+| 8 | `optimize_program` runs the fixed pipeline: `scalarize`, `combine_scatter_sums`, `fuse_elementwise`, `unroll_unit_loops`, `pack_workspace`. | `passes/program/` |
 | 9 | `verify_program` checks the result before anything renders it. | `ir/program_spec.py` |
 | 10 | `render_program_c` emits the translation unit: the callee bodies, then the one entry point exported through the **universal ABI** — the single pointer-array C signature every generated function shares. | `codegen/c.py` |
 | 11 | Header, source, workspace size and solver link flags are packaged as a `CModule`. | `codegen/aot.py` |
@@ -98,7 +98,14 @@ src/alloy/
   passes/                every concrete IR-to-IR transformation
     expr.py              simplify, constant folding, CSE            (Expr -> Expr)
     lowering.py          lower_function, the per-ExprOp rule registry (Expr -> ProgramNode)
-    program.py           PASS_PIPELINE and its passes              (ProgramNode -> ProgramNode)
+    program/             program optimizations                    (ProgramNode -> ProgramNode)
+      __init__.py        explicit PASS_PIPELINE and optimize_program
+      _common.py         shared traversal and buffer helpers
+      scalarize.py       bounded scalar expansion, folding, and scheduling
+      combine_scatter_sums.py  shared accumulation for sums of scatters
+      fuse_elementwise.py     elementwise producer fusion
+      unroll_unit_loops.py    empty- and single-iteration loop removal
+      pack_workspace.py      buffer lifetime packing
 
   function/              the frontend
     model.py             Function, call composition, graph validation
@@ -160,7 +167,7 @@ import layer, never a higher one. That rule keeps the package dependencies from 
 | 3 | `function/model` | `Function` itself — a named graph boundary over import layer 1. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
-| 6 | `passes/{lowering,program}` | Consume a whole `Function` — including its solver callees — and produce the program dialect. |
+| 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |
 | 9 | `alloy/__init__` | The curated public surface sits above everything it re-exports. |
@@ -294,10 +301,14 @@ verifies.
 There is no silent fallback. An op or case outside the lowered subset raises `LoweringError`
 loudly, which is the property that keeps generated C and Python agreeing.
 
-### Optimizing — `passes/program.py`
+### Optimizing — `passes/program/`
 
-`PASS_PIPELINE` is an ordered list built by `@register_pass`; `optimize_program` runs it at the
-tail of lowering. Four passes today:
+`PASS_PIPELINE` is an explicit tuple in `passes/program/__init__.py`; `optimize_program` runs it
+at the tail of lowering. Imports do not determine execution order. Five passes today:
+
+- `scalarize` expands selected small float64 procedures and eligible pure callees into shared
+  scalar values, folds constants and identities, and schedules declarations and expression trees.
+  Expression lowering hints control selection; automatic expansion preserves the entry point.
 
 - `combine_scatter_sums` replaces sums of single-use zero-filled scatters with one zero-fill
   and one scatter-add per term.
@@ -377,10 +388,10 @@ assembly text stays in `ir/text.py`, where the compiler owns it.
 
 | To add | Touch |
 | --- | --- |
-| A scalar math op | `ExprOp` and `OP_INFO` in `ir/expr.py`; a verify rule in `ir/expr_spec.py`; AD rules in `ad/forward.py` and `ad/reverse.py`; a matching `ProgramOp` in `ir/program.py` and its category set; an entry in `_UNARY`/`_BINARY` in `passes/lowering.py` (the elementwise `@lowers` rule is shared, so no new rule); the C spelling in `codegen/c.py`; and `_EXPENSIVE_OPS` in `passes/program.py` if it lowers to a libm call |
+| A scalar math op | `ExprOp` and `OP_INFO` in `ir/expr.py`; a verify rule in `ir/expr_spec.py`; AD rules in `ad/forward.py` and `ad/reverse.py`; a matching `ProgramOp` in `ir/program.py` and its category set; an entry in `_UNARY`/`_BINARY` in `passes/lowering.py` (the elementwise `@lowers` rule is shared, so no new rule); the C spelling in `codegen/c.py`; and `_EXPENSIVE_OPS` in `passes/program/fuse_elementwise.py` if it lowers to a libm call |
 | A structural expression op | the same, minus the elementwise maps, plus its own `@lowers` rule in `passes/lowering.py` and a structural rule in `ad/sparsity.py` |
 | An expression rewrite | a pattern in `passes/expr.py` |
-| A program-dialect optimization | a `@register_pass` function in `passes/program.py` |
+| A program-dialect optimization | a module in `passes/program/` and an explicit entry in its `__init__.py` pipeline |
 | A program op | `ProgramOp`, its builder, and the right op-category set (`SCALAR_OPS`, `UNARY_FN_OPS`, …) in `ir/program.py`; a rule in `ir/program_spec.py`; a branch in `ir/text.py` if it is a statement rather than a scalar; the C spelling in `codegen/c.py` |
 | A derivative kind | a frozen `DerivSpec` subclass in `function/factory.py`, plus a wrapper in `function/api.py` |
 | A solver backend | a distribution under `plugins/`, an entry point, and a `render_wrapper` hook — see [Solver plugins](../dev/solver_plugins.md) |

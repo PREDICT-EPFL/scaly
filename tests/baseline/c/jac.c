@@ -52,7 +52,7 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, v
     s0[((3 * 2) + j_t6_3)] = t5[j_t6_3];
   }
   for (long long i_t10 = 0; i_t10 < 4; ++i_t10) {
-    s1[i_t10] = 0;
+    s1[i_t10] = 0.0;
   }
   for (long long k_t10 = 0; k_t10 < 2; ++k_t10) {
     s1[((0 * 4) + 0)] = (s1[((0 * 4) + 0)] + ((k4[0] * (k1[((((0 * 4) + 0) * 2) + k_t10)] * s0[((((0 * 4) + 0) * 2) + k_t10)])) * k9[k_t10]));
@@ -63,7 +63,7 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, v
   for (long long i_t11 = 0; i_t11 < 4; ++i_t11) {
     s2[i_t11] = (k3[0] * s1[i_t11]);
   }
-  s1[0] = 0;
+  s1[0] = 0.0;
   for (long long i_t14 = 0; i_t14 < 2; ++i_t14) {
     s1[0] = (s1[0] + (t5[i_t14] * t5[i_t14]));
   }

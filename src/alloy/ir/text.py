@@ -212,7 +212,7 @@ def _render_stmt(n: ProgramNode, indent: int, lines: list[str]) -> None:
   elif n.op == ProgramOp.STORE:
     lines.append(f"{pad}prog.store {_render_scalar(n.args[1])}, {_render_view(n.args[0])} : {n.dtype.name}")
   elif n.op == ProgramOp.ASSIGN:
-    lines.append(f"{pad}%{n.attrs['target']} = prog.assign {_render_scalar(n.args[0])} : {n.dtype.name}")
+    lines.append(f"{pad}%{n.attrs['target']} = prog.assign {_render_scalar(n.args[0])} : {n.dtype.name}{_attrs_asm(n.attrs, skip={'target'})}")
   elif n.op == ProgramOp.CALL:
     args = ", ".join(_render_call_arg(a) for a in n.args)
     rets = n.attrs.get("returns", ())
@@ -313,7 +313,8 @@ def _format_node(n: ProgramNode, indent: int, lines: list[str]) -> None:
     value = _format_scalar(n.args[1])
     lines.append(f"{pad}{target} <- {value}")
   elif n.op == ProgramOp.ASSIGN:
-    lines.append(f"{pad}{n.attrs['target']} = {_format_scalar(n.args[0])}")
+    declaration = f"{n.dtype.name} " if n.attrs.get("declare") else ""
+    lines.append(f"{pad}{declaration}{n.attrs['target']} = {_format_scalar(n.args[0])}")
   elif n.op == ProgramOp.CALL:
     args = ", ".join(_format_scalar_or_view(a) for a in n.args)
     rets = n.attrs.get("returns", ())
