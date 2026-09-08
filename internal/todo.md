@@ -53,7 +53,7 @@ only the theme and nothing else has to stay stable.
 
 Ordering constraints across sections, the only sequencing that matters:
 
-- C-43 to C-45, C-50, BH-48, C-8 to C-10 and BP-23 come before BH-20, which re-decides every claim gate in
+- C-43 to C-45, C-8 to C-10 and BP-23 come before BH-20, which re-decides every claim gate in
   paper.md §8.
 - L-28 to L-31 come before any wheel or tag is public, even on test PyPI.
 - R-37 comes before any merge of dev into main.
@@ -183,12 +183,6 @@ protocol's compile flags.
       SX as an explicit forward-over-reverse with the same 24 unit seeds and compare per-operation
       histograms to separate rule quality (2,749 negations per stage is the next suspect) from
       composition. Evidence: `notes/perf_2026_09_07/README.md`, follow-up section.
-- [ ] **C-50. `-march=native` and `-fno-math-errno` in the JIT.** `codegen/jit.py` compiles with
-      `-O2` (or `ALLOY_CC_OPT`) and no target flag, so every JIT kernel is SSE2 scalar code without
-      fused multiply-adds on a machine that has them; measured on race-car N=50, `-mfma` alone is
-      32.9 to 27.8 µs. Add the two flags to the JIT compile line, check that the solver plugins'
-      compile paths (alloy-sqp's wrapper, the PIQP and IPOPT hooks) still link, and keep the plugin
-      wheels themselves at the portable baseline. One line if it plays well with the solvers.
 - [ ] **C-51. Coalesce consecutive scalar loads and stores into vector accesses in the C renderer.**
       After C-44 scalarizes a body, adjacent `buf[i], buf[i+1], ...` accesses can be emitted as one
       clang `ext_vector_type` load or store; tinygrad's `memory_coalescing` does this in about 60
@@ -298,14 +292,6 @@ protocol's compile flags.
       and re-decide every gate in paper.md §8. The npmpc and unbumpercars range wins are
       compile-budget wins today; after the rerun they are either real wins against a completed
       encoding or they are labeled as budget wins in the paper.
-- [ ] **BH-48. Adopt `-march=native` in the benchmarks and the AOT guidance; keep distributed
-      binaries portable.** Decided 2026-09-08: the sweep and closed-loop harnesses compile both
-      providers with `-march=native` (and `-fno-math-errno`), fairness.md states the rule and why;
-      AOT users are told in the docs to pass it and it goes in the suggested CFLAGS; the solver
-      plugin wheels stay at the portable baseline. The JIT side is C-50. Measured reason: on
-      race-car the gain is FMA contraction (`-mfma` alone: Alloy 32.9 to 27.8 µs, SX 21.3 to 20.7,
-      because SX's one-op-per-statement code never contracts), not vector width. Record both flag
-      sets in fairness.md until BH-20 reruns. Evidence: `notes/perf_2026_09_07/README.md`.
 - [ ] **BH-21. Add an immutable publication mode**: clean release candidate, every raw run retained,
       and an archive of source, lockfile, inputs, generated code, logs, statistics and manifest.
 
