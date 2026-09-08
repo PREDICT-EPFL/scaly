@@ -14,8 +14,9 @@ The single actionable list. Rationale lives elsewhere and is linked, never resta
 
 Reorganized 2026-09-07. Sections are themes that outlive the first release. Inside each section,
 **Now** holds what is actively worked on or next in line, and **Deferred** holds what is
-intentionally low priority: the reasoning is still good, nothing depends on it yet. Completed items
-are deleted, not archived: git history and the frozen notes hold the record.
+intentionally low priority: the reasoning is still good, nothing depends on it yet. A finished item
+stays in place with its box checked until it is flushed out by hand; git history and the frozen
+notes hold the record after that.
 
 ### Identifiers
 
@@ -127,6 +128,21 @@ in `internal/notes/refactorings.md` before the implementation.
 Ordered by measured payoff. The numbers are the 2026-09-07 note's, on the reference machine at the
 protocol's compile flags.
 
+- [x] **C-43. Lower matmul by layout.** `_lower_matmul` emits every product as
+      `for i { out[i] = 0; for k out[i] += A[i,k] v[k] }`, a serial add chain per output that the C
+      compiler cannot break without reassociation; `casadi_mtimes_dense` has the same shape, which is
+      why both are slow. Emit the reduction loop outermost when the reduction axis is the matrix's
+      slow axis (`v @ A`, and `A.T @ v` after the fold below), so the inner loop runs over independent
+      outputs and vectorizes; emit a blocked dot with four accumulators as four unrolled statements
+      when the reduction axis is contiguous (`A @ v`), because a four-trip inner loop becomes gathers
+      under `-march=native`. Add `A.T @ v -> v @ A` and `v @ A.T -> A @ v` to `passes/expr.py` so the
+      adjoint products materialize no transpose. Each output keeps its summation order, so results
+      are bit-identical. Measured with the throwaway patch: npmpc N=12 83.2 to 45.7 µs (MX 51.1),
+      unbumpercars C=8 3485 to 827 µs (MX 9950). Tests: a fixture per shape class against NumPy,
+      and the C snapshots updated. The patch is `notes/perf_2026_09_07/experiments.patch`. This is
+      a stopgap: the two rules are the special case of a range split with one accumulator per lane
+      and a choice of outermost range, which C-8 provides generically; when C-8 lands, C-43's rules
+      are deleted, not kept beside it.
 - [ ] **C-44. Scalarize small stage bodies, driven by the `lowering` hint.** For a callee whose
       body is marked `Expr.scalar()`, or whose tensors are all small under `auto`, and never under
       `block`: unroll to scalar SSA, hash-cons, fold `0`, `1` and constant arithmetic, and render
@@ -168,6 +184,12 @@ protocol's compile flags.
       SX as an explicit forward-over-reverse with the same 24 unit seeds and compare per-operation
       histograms to separate rule quality (2,749 negations per stage is the next suspect) from
       composition. Evidence: `notes/perf_2026_09_07/README.md`, follow-up section.
+- [x] **C-50. `-march=native` and `-fno-math-errno` in the JIT.** `codegen/jit.py` compiles with
+      `-O2` (or `ALLOY_CC_OPT`) and no target flag, so every JIT kernel is SSE2 scalar code without
+      fused multiply-adds on a machine that has them; measured on race-car N=50, `-mfma` alone is
+      32.9 to 27.8 µs. Add the two flags to the JIT compile line, check that the solver plugins'
+      compile paths (alloy-sqp's wrapper, the PIQP and IPOPT hooks) still link, and keep the plugin
+      wheels themselves at the portable baseline. One line if it plays well with the solvers.
 - [ ] **C-51. Coalesce consecutive scalar loads and stores into vector accesses in the C renderer.**
       After C-44 scalarizes a body, adjacent `buf[i], buf[i+1], ...` accesses can be emitted as one
       clang `ext_vector_type` load or store; tinygrad's `memory_coalescing` does this in about 60
@@ -278,6 +300,14 @@ protocol's compile flags.
       and re-decide every gate in paper.md §8. The npmpc and unbumpercars range wins are
       compile-budget wins today; after the rerun they are either real wins against a completed
       encoding or they are labeled as budget wins in the paper.
+- [x] **BH-48. Adopt `-march=native` in the benchmarks and the AOT guidance; keep distributed
+      binaries portable.** Decided 2026-09-08: the sweep and closed-loop harnesses compile both
+      providers with `-march=native` (and `-fno-math-errno`), fairness.md states the rule and why;
+      AOT users are told in the docs to pass it and it goes in the suggested CFLAGS; the solver
+      plugin wheels stay at the portable baseline. The JIT side is C-50. Measured reason: on
+      race-car the gain is FMA contraction (`-mfma` alone: Alloy 32.9 to 27.8 µs, SX 21.3 to 20.7,
+      because SX's one-op-per-statement code never contracts), not vector width. Record both flag
+      sets in fairness.md until BH-20 reruns. Evidence: `notes/perf_2026_09_07/README.md`.
 - [ ] **BH-21. Add an immutable publication mode**: clean release candidate, every raw run retained,
       and an archive of source, lockfile, inputs, generated code, logs, statistics and manifest.
 
