@@ -1,0 +1,188 @@
+diff --git a/src/alloy/ad/forward.py b/src/alloy/ad/forward.py
+index 7c5513e..b501887 100644
+--- a/src/alloy/ad/forward.py
++++ b/src/alloy/ad/forward.py
+@@ -126,7 +126,8 @@ def _jvp(expr: Expr, wrt: Expr, seed: Expr, memo: dict[int, Expr], dep_memo: dic
+   if expr.op == ExprOp.MUL:
+     return save(d[0] * args[1] + args[0] * d[1])
+   if expr.op == ExprOp.DIV:
+-    return save((d[0] * args[1] - args[0] * d[1]) / (args[1] ** 2))
++    # EXPERIMENT: same lean form as the many-seed rule: (dx - f dy) * (1/y).
++    return save((d[0] - expr * d[1]) * (Expr.const(np.ones((), dtype=np.float64)) / args[1]))
+   if expr.op == ExprOp.POW:
+     if args[1].op == ExprOp.CONST:
+       return save(args[1] * (args[0] ** (args[1] - 1)) * d[0])
+@@ -382,6 +383,29 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
+       # size O(c_f) instead of O(nseed). The global compressed JVP is then assembled back by, for
+       # each local color `c_local`, gathering the unique nonzero column of `actual_tan` for each
+       # output row and multiplying with the per-iter compressed-JVP slice.
++      # EXPERIMENT: a constant tangent whose per-iteration tile is the same at every iteration
++      # (a stage-periodic coloring) is baked into the callee as const seeds, so 0/1 products fold
++      # inside the stage body and no seed table or gather is emitted.
++      if actual_tan.op == ExprOp.CONST and actual_tan.value is not None:
++        flat_tan = np.asarray(actual_tan.value, dtype=np.float64).reshape(nseed, outer_size)
++        tiles = np.stack([flat_tan[:, start + it * stride : start + it * stride + formal_size] for it in range(length)])
++        if np.all(tiles == tiles[0]):
++          tile = tiles[0].reshape((nseed, *formal.shape))
++          inner_fn, primal_arg_indices, active = _call_jvp_many_const_function(callee, output_idx, formal_idx, tile)
++          if not active:
++            continue
++          primal_specs = [(expr.args[i], starts[i], strides[i]) for i in primal_arg_indices]
++          mapped_flat = vmap(inner_fn, length, primal_specs)
++          mapped_3d = mapped_flat.reshape((length, len(active), slice_size)).transpose((1, 0, 2))
++          if len(active) == nseed:
++            term = mapped_3d.reshape((nseed, length * slice_size))
++          else:
++            active_pos = {row: i for i, row in enumerate(active)}
++            zero_row = Expr.const(np.zeros((length * slice_size,), dtype=np.float64))
++            term = stack([mapped_3d[active_pos[row]].reshape((length * slice_size,)) if row in active_pos else zero_row for row in range(nseed)], axis=0)
++          ret = term if ret is None else ret + term
++          continue
++
+       local_mask = _jac_mask(callee_out, formal, {})
+       local_colors = column_coloring(_mask_sparsity(local_mask)) if local_mask.nnz else ()
+       use_local = bool(local_colors) and (max(local_colors) + 1) < nseed
+@@ -477,10 +501,10 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
+     ) * _broadcast_tangent(d[1], args[1], expr, nseed)
+     return ret
+   if expr.op == ExprOp.DIV:
+-    y = _seed_axis(args[1], nseed, expr)
+-    memo[expr.id] = ret = (
+-      _broadcast_tangent(d[0], args[0], expr, nseed) * y - _seed_axis(args[0], nseed, expr) * _broadcast_tangent(d[1], args[1], expr, nseed)
+-    ) / (y**2)
++    # EXPERIMENT: d(x/y) = (dx - (x/y) dy) / y, one shared reciprocal per node and no y**2.
++    inv = _seed_axis(Expr.const(np.ones((), dtype=np.float64)) / args[1], nseed, expr)
++    f = _seed_axis(expr, nseed, expr)
++    memo[expr.id] = ret = (_broadcast_tangent(d[0], args[0], expr, nseed) - f * _broadcast_tangent(d[1], args[1], expr, nseed)) * inv
+     return ret
+   if expr.op == ExprOp.POW:
+     if args[1].op == ExprOp.CONST:
+diff --git a/src/alloy/ad/reverse.py b/src/alloy/ad/reverse.py
+index 9e9dd7b..0f91be7 100644
+--- a/src/alloy/ad/reverse.py
++++ b/src/alloy/ad/reverse.py
+@@ -168,9 +168,11 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+   if expr.op == ExprOp.MUL:
+     return (_unbroadcast(cot * args[1], args[0].shape, expr.shape), _unbroadcast(cot * args[0], args[1].shape, expr.shape))
+   if expr.op == ExprOp.DIV:
++    # EXPERIMENT: adj_y = -(cot / y) * (x / y), reusing the primal quotient instead of x / y**2.
++    q = cot / args[1]
+     return (
+-      _unbroadcast(cot / args[1], args[0].shape, expr.shape),
+-      _unbroadcast(-cot * args[0] / (args[1] ** 2), args[1].shape, expr.shape),
++      _unbroadcast(q, args[0].shape, expr.shape),
++      _unbroadcast(-(q * expr), args[1].shape, expr.shape),
+     )
+   if expr.op == ExprOp.POW:
+     return (
+diff --git a/src/alloy/passes/expr.py b/src/alloy/passes/expr.py
+index 9681016..af6da32 100644
+--- a/src/alloy/passes/expr.py
++++ b/src/alloy/passes/expr.py
+@@ -10,7 +10,7 @@ from typing import Any, Iterable
+ 
+ import numpy as np
+ 
+-from ..ir.expr import Expr, ExprOp, OP_INFO, _attrs_key, stack, topo, zeros_like
++from ..ir.expr import Expr, ExprOp, OP_INFO, _attrs_key, matmul, stack, topo, zeros_like
+ from ..ir.match import Pattern, _replace_args, rewrite
+ 
+ 
+@@ -281,6 +281,23 @@ def _slice_of_stack(e: Expr) -> Expr:
+   return stack(new_args, axis=new_axis)
+ 
+ 
++def _is_matrix_transpose(e: Expr) -> bool:
++  return e.op == ExprOp.TRANSPOSE and len(e.shape) == 2 and e.attrs["axes"] == (1, 0)
++
++
++def _matmul_transpose_fold_matches(e: Expr) -> bool:
++  a, b = e.args
++  return (len(b.shape) == 1 and _is_matrix_transpose(a)) or (len(a.shape) == 1 and _is_matrix_transpose(b))
++
++
++def _matmul_transpose_fold(e: Expr) -> Expr:
++  """EXPERIMENT: ``A.T @ v -> v @ A`` and ``v @ A.T -> A @ v`` so no transpose is materialized."""
++  a, b = e.args
++  if len(b.shape) == 1 and _is_matrix_transpose(a):
++    return matmul(b, a.args[0])
++  return matmul(b.args[0], a)
++
++
+ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
+   Pattern(None, _all_args_const, _constant_fold),
+   Pattern(ExprOp.ADD, lambda e: e.args[0] is e.args[1] or _is_zero(e.args[0]) or _is_zero(e.args[1]), _add_identity),
+@@ -292,6 +309,7 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
+   Pattern(ExprOp.RESHAPE, lambda e: e.args[0].shape == e.shape, _reshape_identity),
+   Pattern(ExprOp.TRANSPOSE, lambda e: e.attrs["axes"] == tuple(range(len(e.attrs["axes"]))), _transpose_identity),
+   Pattern(ExprOp.MATMUL, lambda e: _is_zero(e.args[0]) or _is_zero(e.args[1]), _matmul_zero),
++  Pattern(ExprOp.MATMUL, _matmul_transpose_fold_matches, _matmul_transpose_fold),
+   Pattern(ExprOp.SUM, lambda e: _is_zero(e.args[0]), _zero_unary),
+   Pattern(ExprOp.GATHER, lambda e: _is_zero(e.args[0]), _zero_unary),
+   Pattern(ExprOp.SCATTER, lambda e: _is_zero(e.args[0]), _zero_unary),
+diff --git a/src/alloy/passes/lowering.py b/src/alloy/passes/lowering.py
+index c56b569..aae4cb7 100644
+--- a/src/alloy/passes/lowering.py
++++ b/src/alloy/passes/lowering.py
+@@ -511,18 +511,31 @@ def _mm_accumulate(
+   dtype: DType,
+   outer: list[ProgramNode],
+   k_rng: ProgramNode,
++  reduce_outer: bool = True,
+ ) -> None:
+   """Common matmul shape: zero out[out_idx], then a REDUCE-k loop adds a*b, nested in ``outer`` loops."""
+   init = p.store(p.view(out, [out_idx]), p.const_float(0.0, dtype=dtype))
+   accum = p.store(p.view(out, [out_idx]), p.add(p.load(p.view(out, [out_idx])), p.mul(a_load, b_load)))
+-  body = [init, p.for_(k_rng, [accum])]
+   if not outer:
+-    ctx.statements.extend(body)
++    ctx.statements.extend([init, p.for_(k_rng, [accum])])
+     return
+-  stmt = p.for_(outer[-1], body)
+-  for rng in reversed(outer[:-1]):
+-    stmt = p.for_(rng, [stmt])
+-  ctx.statements.append(stmt)
++  if not reduce_outer:
++    stmt = p.for_(outer[-1], [init, p.for_(k_rng, [accum])])
++    for rng in reversed(outer[:-1]):
++      stmt = p.for_(rng, [stmt])
++    ctx.statements.append(stmt)
++    return
++
++  def nest(body: list[ProgramNode]) -> ProgramNode:
++    stmt = p.for_(outer[-1], body)
++    for rng in reversed(outer[:-1]):
++      stmt = p.for_(rng, [stmt])
++    return stmt
++
++  # EXPERIMENT: reduction loop outermost so the inner loop runs over independent outputs
++  # (breaks the per-output serial add chain; same per-output summation order, so bit-identical).
++  ctx.statements.append(nest([init]))
++  ctx.statements.append(p.for_(k_rng, [nest([accum])]))
+ 
+ 
+ @lowers(ExprOp.MATMUL)
+@@ -542,8 +555,22 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
+     irng = p.range_(f"i_{nm}", 0, m, kind=RangeKind.GLOBAL)
+     k = p.var(f"k_{nm}")
+     krng = p.range_(f"k_{nm}", 0, kk, kind=RangeKind.REDUCE)
++    if m % 4 == 0 and kk >= 8:
++      # EXPERIMENT: reduction axis is contiguous in ``a``; block four output rows so the compiler
++      # keeps four independent accumulators (same per-output summation order).
++      ib = p.var(f"ib_{nm}")
++      ibrng = p.range_(f"ib_{nm}", 0, m // 4, kind=RangeKind.GLOBAL)
++      init = p.store(p.view(out, [i]), p.const_float(0.0, dtype=dt))
++      accums = []
++      for ii in range(4):  # unrolled so the C compiler keeps four scalar accumulators instead of gathering
++        row = p.add(p.mul(ib, p.const_int(4)), p.const_int(ii))
++        a_load = p.load(p.view(a_buf, [p.add(p.mul(row, p.const_int(kk)), k)]))
++        accums.append(p.store(p.view(out, [row]), p.add(p.load(p.view(out, [row])), p.mul(a_load, p.load(p.view(b_buf, [k]))))))
++      ctx.statements.append(p.for_(irng, [init]))
++      ctx.statements.append(p.for_(ibrng, [p.for_(krng, accums)]))
++      return
+     a_idx = p.add(p.mul(i, p.const_int(kk)), k)
+-    _mm_accumulate(ctx, out, i, p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [k])), dt, [irng], krng)
++    _mm_accumulate(ctx, out, i, p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [k])), dt, [irng], krng, reduce_outer=False)
+   elif len(sa) == 1 and len(sb) == 2:  # vec @ mat
+     kk, n = sb
+     j = p.var(f"j_{nm}")

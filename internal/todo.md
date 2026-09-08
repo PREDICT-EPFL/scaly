@@ -22,7 +22,7 @@ are deleted, not archived: git history and the frozen notes hold the record.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 43**
+**Next id: 52**
 
 | Prefix | Section |
 |---|---|
@@ -53,7 +53,8 @@ only the theme and nothing else has to stay stable.
 
 Ordering constraints across sections, the only sequencing that matters:
 
-- C-8 to C-10 and BP-23 come before BH-20, which re-decides every claim gate in paper.md §8.
+- C-43 to C-45, C-50, BH-48, C-8 to C-10 and BP-23 come before BH-20, which re-decides every claim gate in
+  paper.md §8.
 - L-28 to L-31 come before any wheel or tag is public, even on test PyPI.
 - R-37 comes before any merge of dev into main.
 
@@ -100,34 +101,119 @@ Ordering constraints across sections, the only sequencing that matters:
 The 2026-09-06 [sweeps](../docs/results/scalability.md#extended-hessian-sweeps-2026-09-06) fail claim
 gates 2 and 3 on race-car, cap unbumpercars at C=32 on static metadata, and win npmpc and
 unbumpercars at range only because the faster CasADi encodings stop compiling inside the budget.
-Reading the generated kernels gives one structural cause for the runtime gap, the workspace growth
-and the metadata growth together. Rationale and gate status: paper.md §8. Every item under **Now**
-is a general compiler change with a `tests/` reproduction, per the 2026-08-25 decision in paper.md
-§10; after they land, BH-20 re-decides the gates.
+The 2026-09-07 investigation ([`notes/perf_2026_09_07/`](notes/perf_2026_09_07/README.md)) took the
+generated kernels apart with drivers and ablations. The glue between stage calls is 22% of race-car,
+3% of npmpc and 26% of chain; the stage kernels carry the loss. Race-car pays for tensor-shaped code
+on a scalar body and for 0/1 seeds multiplied at runtime; npmpc and unbumpercars pay for
+matrix-vector products lowered as serial reductions; chain pays for 24 dense tangent vectors and
+1624 loops where straight-line scalar code is 7.7 times faster. Rationale and gate status:
+paper.md §8. Every item under **Now** is a general compiler change with a `tests/` reproduction,
+per the 2026-08-25 decision in paper.md §10; after they land, BH-20 re-decides the gates.
 
 Start each compiler item by reading how the tools that shaped Alloy solve the same problem, before
 designing anything. tinygrad, whose IR and pattern-rewrite infrastructure Alloy's are modelled on,
-has a scheduler that fuses elementwise producers into their consumers and a symbolic index
-arithmetic that turns strided views into closed-form index expressions: C-8 and C-9 in one
-place. MLIR's affine dialect and its loop-fusion, affine-map and
-memref-normalization passes are the standard treatment of exactly the loops we emit, and their
-design notes state the legality conditions we would otherwise rediscover. JAX's `vmap` batching
-rules are the reference for what a mapped derivative rule should produce without materializing
-per-trip index tables. The goal is to port the smallest idea that fits Alloy's two dialects, not to
-adopt a framework; write down what was read and what was rejected in
-`internal/notes/refactorings.md` before the implementation.
+expands small tensor ops into scalar UOps and simplifies them symbolically (C-44), and has a
+scheduler that fuses elementwise producers into their consumers and a symbolic index arithmetic
+that turns strided views into closed-form index expressions (C-8 and C-9). MLIR's affine dialect and
+its loop-fusion, affine-map and memref-normalization passes are the standard treatment of exactly
+the loops we emit, and their design notes state the legality conditions we would otherwise
+rediscover. JAX's `vmap` batching rules are the reference for what a mapped derivative rule should
+produce without materializing per-trip index tables. The goal is to port the smallest idea that
+fits Alloy's two dialects, not to adopt a framework; write down what was read and what was rejected
+in `internal/notes/refactorings.md` before the implementation.
 
 ### Now
 
-- [ ] **C-8. A loop-fusion pass on the program dialect.** The race-car Hessian lowers to about 120
-      consecutive loops over the mapped axis: a stage-call loop into a full-length buffer, then a
-      full-length zero fill, a full-length gather-scatter, a full-length transpose, and so on for the
-      next mapped op. Every intermediate is materialized at `N × width`, which is the caller
-      workspace that grows with N on race_cars and npmpc and the extra memory passes `SX` never
-      makes. Fuse producer and consumer loops over the same trip count into one stage loop whose
-      body is per-stage scalar code and whose intermediates are per-stage scratch. Gate: race-car
-      `workspace` does not grow with N in the sweep CSV, and the runtime ratio to `SX` narrows. This
-      is the single change that attacks gates 2 and 3 at once.
+Ordered by measured payoff. The numbers are the 2026-09-07 note's, on the reference machine at the
+protocol's compile flags.
+
+- [ ] **C-43. Lower matmul by layout.** `_lower_matmul` emits every product as
+      `for i { out[i] = 0; for k out[i] += A[i,k] v[k] }`, a serial add chain per output that the C
+      compiler cannot break without reassociation; `casadi_mtimes_dense` has the same shape, which is
+      why both are slow. Emit the reduction loop outermost when the reduction axis is the matrix's
+      slow axis (`v @ A`, and `A.T @ v` after the fold below), so the inner loop runs over independent
+      outputs and vectorizes; emit a blocked dot with four accumulators as four unrolled statements
+      when the reduction axis is contiguous (`A @ v`), because a four-trip inner loop becomes gathers
+      under `-march=native`. Add `A.T @ v -> v @ A` and `v @ A.T -> A @ v` to `passes/expr.py` so the
+      adjoint products materialize no transpose. Each output keeps its summation order, so results
+      are bit-identical. Measured with the throwaway patch: npmpc N=12 83.2 to 45.7 µs (MX 51.1),
+      unbumpercars C=8 3485 to 827 µs (MX 9950). Tests: a fixture per shape class against NumPy,
+      and the C snapshots updated. The patch is `notes/perf_2026_09_07/experiments.patch`. This is
+      a stopgap: the two rules are the special case of a range split with one accumulator per lane
+      and a choice of outermost range, which C-8 provides generically; when C-8 lands, C-43's rules
+      are deleted, not kept beside it.
+- [ ] **C-44. Scalarize small stage bodies, driven by the `lowering` hint.** For a callee whose
+      body is marked `Expr.scalar()`, or whose tensors are all small under `auto`, and never under
+      `block`: unroll to scalar SSA, hash-cons, fold `0`, `1` and constant arithmetic, and render
+      expression trees (not one op per statement, which is what stops clang from forming FMAs in
+      SX's output). The hint attribute exists on every `Expr` and no pass reads it today, so this
+      item is also where it becomes live. `notes/perf_2026_09_07/scalarize_stage.py` does the
+      transform after the fact on the generated C: race-car eq stage 23.0 to 18.1 µs, chain eq
+      stage 1910 to 247 µs, both bit-identical. The only item that moves chain, and it subsumes the
+      seed half of C-9 and most of C-10. tinygrad's expand-then-devectorize is the reference
+      (`notes/perf_2026_09_07/tinygrad_rangeify.md` §4). Gate: the two stage kernels above within
+      10% of the hand-scalarized time.
+- [ ] **C-45. Bake stage-invariant constant tangents into the VMAP forward callee.** The VMAP
+      rule in `ad/forward.py` tiles a constant `jvp_many` seed into an `nseed × length × slice` table
+      and passes it as a mapped argument, so the callee multiplies by 0 and 1 at runtime; the const
+      path `_call_jvp_many_const_function` exists but is taken only when local coloring wins. When
+      every per-iteration tile of a constant tangent is equal, bake the tile in; extend to a few
+      distinct tiles when the coloring is not exactly periodic. Alone it is 4% on race-car (32.6 to
+      31.4 µs at N=50, 329 to 309 at N=500) because the tensor-level simplifier folds only all-zero
+      and all-one constants, but it removes the seed tables C-9 targets and is what lets C-44 fold
+      the seeds. 23 lines in the patch above.
+- [ ] **C-46. Hoist stage-invariant callee work out of the mapped loop.** The npmpc stage kernels
+      transpose the three weight matrices on every call, 3.5 of 47 µs, because the callee cannot know
+      the argument is the same at every iteration; the `u` kernel also recomputes the primal and
+      adjoint passes the `x` kernel already did, because the forward rule emits one mapped callee per
+      formal. A program-dialect hoist of loop-invariant statements, and one callee for all formals of
+      one VMAP, or one `W @ [v1 v2 v3]` product for batched seeds. With the row-major products then
+      in column-sweep form, npmpc reaches 38.6 µs under `-march=native` by hand against MX's 41.9.
+- [ ] **C-47. One accumulation buffer for a sum of scatters.** Chain's entry point zero-fills 43
+      buffers of 23,544 doubles and scatters 576 values into each before summing them: 8 MB of memset
+      per call and the 1,075,248-double workspace. `scatter(a) + scatter(b) -> scatter_add` at the
+      expression level, or the fusion in C-8. Also fold `0 / x`, which the N=5 race-car assembly
+      still shows twice.
+- [ ] **C-49. Audit the AD rules for operation count, starting from the measured chain split.**
+      Lean division rules, `(dx - f dy) / y` forward and `q = cot / y; adj_y = -q f` reverse with `f`
+      the primal quotient, took race-car N=50 from 31.4 to 28.0 µs and chain M=5 from 2458 to 2277
+      with the harness check passing; that was one afternoon. What remains on chain: the tangent of
+      the adjoint costs 1,100 operations per unit seed after folding, more than the whole primal
+      plus adjoint (993), against at most about 400 per seed in SX. Build the same stage in CasADi
+      SX as an explicit forward-over-reverse with the same 24 unit seeds and compare per-operation
+      histograms to separate rule quality (2,749 negations per stage is the next suspect) from
+      composition. Evidence: `notes/perf_2026_09_07/README.md`, follow-up section.
+- [ ] **C-50. `-march=native` and `-fno-math-errno` in the JIT.** `codegen/jit.py` compiles with
+      `-O2` (or `ALLOY_CC_OPT`) and no target flag, so every JIT kernel is SSE2 scalar code without
+      fused multiply-adds on a machine that has them; measured on race-car N=50, `-mfma` alone is
+      32.9 to 27.8 µs. Add the two flags to the JIT compile line, check that the solver plugins'
+      compile paths (alloy-sqp's wrapper, the PIQP and IPOPT hooks) still link, and keep the plugin
+      wheels themselves at the portable baseline. One line if it plays well with the solvers.
+- [ ] **C-51. Coalesce consecutive scalar loads and stores into vector accesses in the C renderer.**
+      After C-44 scalarizes a body, adjacent `buf[i], buf[i+1], ...` accesses can be emitted as one
+      clang `ext_vector_type` load or store; tinygrad's `memory_coalescing` does this in about 60
+      lines (`tinygrad_rangeify.md` §6) and it is the difference between scalar code and visible
+      SIMD on clang. After C-44.
+- [ ] **C-8. A range-based loop compiler for the program dialect, in the shape of tinygrad's
+      rangeify.** Today every mapped op materializes an `N × width` intermediate: the race-car
+      Hessian is about 120 consecutive full-length loops, the chain entry point zero-fills 43 buffers
+      of 23,544 doubles per call, and the caller workspace grows with N on race_cars and npmpc. The
+      2026-09-08 study (`notes/perf_2026_09_07/tinygrad_rangeify.md`) says how the reference design
+      gets fusion without a dependence analysis: loop variables (ranges) are first-class values;
+      views become index expressions over them; a producer with one consumer inherits the consumer's
+      ranges, which is fusion by construction; a producer whose consumers disagree on an axis is
+      materialized on that axis only; a reduce becomes `acc init / acc op= x / END(range)`; and one
+      substitution `r -> r_outer * amt + r_inner` expresses tile, unroll and upcast, with an
+      accumulator per upcast lane. Port that shape, not the framework, in this order, each step with
+      a `tests/` fixture: (1) ranges and the three-case propagation rule over the lowered loops, which
+      is the fusion pass and the workspace fix; (2) the accumulator lowering of reductions with a
+      per-lane split, which supersedes C-43's matmul rules and generalizes them to `W @ [v1 v2 v3]`
+      and to matrix-matrix products; (3) the reduce-under-broadcast rule so a value is never
+      recomputed under an expand. Gates: race-car `workspace` fixed across N in the sweep CSV, chain
+      workspace under 100k doubles at M=5, npmpc within 5% of the C-43 kernel with C-43 removed.
+      Measured share of runtime today: 22% of race-car, 3% of npmpc, 26% of chain, so this is the
+      workspace fix and the general form of the matmul fix; C-44 and C-45 are what narrow the
+      race-car and chain ratios.
 - [ ] **C-9. Affine index maps instead of materialized tables.** The VMAP multi-seed forward rule in
       `ad/forward.py` builds `gather` index arrays of size `nseed × length × slice` (`flat_idx`,
       `tile_indices`), and the reverse rule in `ad/reverse.py` builds per-iteration index lists; the
@@ -137,10 +223,15 @@ adopt a framework; write down what was read and what was rejected in
       reaches 54 MB at unbumpercars C=32. Represent affine gathers and scatters structurally
       (a strided window or an index expression) and broadcast stage-invariant constants instead of
       tiling them. Gate: `static_metadata_bytes` fixed across N on race_cars, and the unbumpercars
-      C=32 cell compiles under the 50 MiB cap.
-- [ ] **C-10. Fold the identities the AD rules introduce, at the expression level.** The SUM rule
-      emits `d0 @ ones`, the stride-0 reverse rule emits `ones @ segments`, and the seed tiles are
-      multiplied in as dense 0/1 masks; `passes/expr.py` folds `x * 1` only when the constant has the
+      C=32 cell compiles under the 50 MiB cap. The affine folder that makes index expressions stay
+      small is tinygrad's `uop/divandmod.py` (109 lines: gcd factoring, congruence folding, nested
+      div/mod) plus the `(x%c) + (x//c)*c -> x` recombination; see `tinygrad_rangeify.md` §3. With
+      C-45 folding the seed tiles, what remains of C-9 is the index arithmetic, and it is a
+      prerequisite for C-8's views-as-index-expressions.
+- [ ] **C-10. Fold the identities the AD rules introduce, at the expression level.** Mostly
+      subsumed by C-44; keep the matmul-with-ones and identity-gather rewrites, which are
+      tensor-level. The SUM rule emits `d0 @ ones`, the stride-0 reverse rule emits `ones @ segments`,
+      and the seed tiles are multiplied in as dense 0/1 masks; `passes/expr.py` folds `x * 1` only when the constant has the
       result's shape and knows nothing about matmul-with-ones or gathers with identity indices. Add
       those rewrites in `passes/expr.py` so the program dialect never sees them. Pin each with a
       small fixture. Second-order after C-8 and C-9, but cheap.
@@ -148,12 +239,21 @@ adopt a framework; write down what was read and what was rejected in
       42 at M=3,5,9), so the per-stage Hessian pays that many forward-over-reverse sweeps where `SX`
       computes one symbolic Hessian. Investigate a scalar-level second-order pass inside the stage
       body, then a scatter. Internal workload, so lower priority than C-8 to C-10; it
-      decides whether chain can ever enter the long paper's tables.
+      decides whether chain can ever enter the long paper's tables. The 2026-09-07 note measured the
+      stage kernel at 1920 of 2581 µs and the same kernel scalarized at 247 µs with the 24 unit seeds
+      folded, so C-44 goes first; what remains after it is 2.6 times SX's operation count, of which
+      the per-seed division in the DIV tangent rule (1738 divisions per stage against SX's 674) is
+      the one identified piece.
 - [ ] **C-12. One matcher: op-indexed tables and one walk-rebuild.** Conditional by design — it
       lands only if the result is smaller than the 78 + 71 lines of `ir/match.py` and `ir/spec.py`,
       and closing the section unlanded is a permitted outcome that still has to be written down.
       Repointing `passes/program.py`'s three `_transform` call sites is where the memo lands, which
-      also closes C-13. Design: refactorings.md "One matcher".
+      also closes C-13. Design: refactorings.md "One matcher". Read `tinygrad_rangeify.md` §3 first:
+      hash-consed nodes (structural equality and free CSE from a weakref cache keyed on
+      `(op, src, arg)`), `UPat` patterns with operator overloading, a `PatternMatcher` indexed by
+      root op, and one memoized fixpoint `graph_rewrite` driver with top-down and bottom-up modes,
+      about 300 lines in total. That is the infrastructure C-8's rules and C-44's scalar folding
+      would both sit on, which changes the size argument for this item.
 
 ### Deferred
 
@@ -198,6 +298,14 @@ adopt a framework; write down what was read and what was rejected in
       and re-decide every gate in paper.md §8. The npmpc and unbumpercars range wins are
       compile-budget wins today; after the rerun they are either real wins against a completed
       encoding or they are labeled as budget wins in the paper.
+- [ ] **BH-48. Adopt `-march=native` in the benchmarks and the AOT guidance; keep distributed
+      binaries portable.** Decided 2026-09-08: the sweep and closed-loop harnesses compile both
+      providers with `-march=native` (and `-fno-math-errno`), fairness.md states the rule and why;
+      AOT users are told in the docs to pass it and it goes in the suggested CFLAGS; the solver
+      plugin wheels stay at the portable baseline. The JIT side is C-50. Measured reason: on
+      race-car the gain is FMA contraction (`-mfma` alone: Alloy 32.9 to 27.8 µs, SX 21.3 to 20.7,
+      because SX's one-op-per-statement code never contracts), not vector width. Record both flag
+      sets in fairness.md until BH-20 reruns. Evidence: `notes/perf_2026_09_07/README.md`.
 - [ ] **BH-21. Add an immutable publication mode**: clean release candidate, every raw run retained,
       and an archive of source, lockfile, inputs, generated code, logs, statistics and manifest.
 
