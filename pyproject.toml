@@ -77,7 +77,7 @@ typeCheckingMode = "basic"
 reportPrivateImportUsage = false
 
 [tool.ty.src]
-exclude = ["hatch_build.py", "third_party/**", "plugins/*/hatch_build.py", "plugins/*/third_party/**", ".venv/**", "benchmarks/**"]
+exclude = ["hatch_build.py", "third_party/**", "plugins/*/hatch_build.py", "plugins/*/third_party/**", ".venv/**", "benchmarks/**", "internal/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "plugins", "typing_playground"]
