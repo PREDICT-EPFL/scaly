@@ -53,7 +53,7 @@ only the theme and nothing else has to stay stable.
 
 Ordering constraints across sections, the only sequencing that matters:
 
-- C-43 to C-45, C-8 to C-10 and BP-23 come before BH-20, which re-decides every claim gate in
+- C-44, C-45, C-8 to C-10 and BP-23 come before BH-20, which re-decides every claim gate in
   paper.md §8.
 - L-28 to L-31 come before any wheel or tag is public, even on test PyPI.
 - R-37 comes before any merge of dev into main.
@@ -127,21 +127,6 @@ in `internal/notes/refactorings.md` before the implementation.
 Ordered by measured payoff. The numbers are the 2026-09-07 note's, on the reference machine at the
 protocol's compile flags.
 
-- [ ] **C-43. Lower matmul by layout.** `_lower_matmul` emits every product as
-      `for i { out[i] = 0; for k out[i] += A[i,k] v[k] }`, a serial add chain per output that the C
-      compiler cannot break without reassociation; `casadi_mtimes_dense` has the same shape, which is
-      why both are slow. Emit the reduction loop outermost when the reduction axis is the matrix's
-      slow axis (`v @ A`, and `A.T @ v` after the fold below), so the inner loop runs over independent
-      outputs and vectorizes; emit a blocked dot with four accumulators as four unrolled statements
-      when the reduction axis is contiguous (`A @ v`), because a four-trip inner loop becomes gathers
-      under `-march=native`. Add `A.T @ v -> v @ A` and `v @ A.T -> A @ v` to `passes/expr.py` so the
-      adjoint products materialize no transpose. Each output keeps its summation order, so results
-      are bit-identical. Measured with the throwaway patch: npmpc N=12 83.2 to 45.7 µs (MX 51.1),
-      unbumpercars C=8 3485 to 827 µs (MX 9950). Tests: a fixture per shape class against NumPy,
-      and the C snapshots updated. The patch is `notes/perf_2026_09_07/experiments.patch`. This is
-      a stopgap: the two rules are the special case of a range split with one accumulator per lane
-      and a choice of outermost range, which C-8 provides generically; when C-8 lands, C-43's rules
-      are deleted, not kept beside it.
 - [ ] **C-44. Scalarize small stage bodies, driven by the `lowering` hint.** For a callee whose
       body is marked `Expr.scalar()`, or whose tensors are all small under `auto`, and never under
       `block`: unroll to scalar SSA, hash-cons, fold `0`, `1` and constant arithmetic, and render
@@ -201,10 +186,11 @@ protocol's compile flags.
       accumulator per upcast lane. Port that shape, not the framework, in this order, each step with
       a `tests/` fixture: (1) ranges and the three-case propagation rule over the lowered loops, which
       is the fusion pass and the workspace fix; (2) the accumulator lowering of reductions with a
-      per-lane split, which supersedes C-43's matmul rules and generalizes them to `W @ [v1 v2 v3]`
+      per-lane split, which supersedes the layout-specific matmul rules C-43 landed in
+      `_lower_matmul` (delete them then) and generalizes them to `W @ [v1 v2 v3]`
       and to matrix-matrix products; (3) the reduce-under-broadcast rule so a value is never
       recomputed under an expand. Gates: race-car `workspace` fixed across N in the sweep CSV, chain
-      workspace under 100k doubles at M=5, npmpc within 5% of the C-43 kernel with C-43 removed.
+      workspace under 100k doubles at M=5, npmpc within 5% of today's kernel with those rules removed.
       Measured share of runtime today: 22% of race-car, 3% of npmpc, 26% of chain, so this is the
       workspace fix and the general form of the matmul fix; C-44 and C-45 are what narrow the
       race-car and chain ratios.
