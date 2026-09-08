@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, add, for_, load, store
-from ._common import _alias_sources, _map_procs, _private_decls, _proc_parts, _rebuild_proc, _resolve_alias, _size_of, _stmt_refs, _transform
+from ._common import _alias_sources, _map_procs, _private_decls, _proc_parts, _rebuild_proc, _resolve_alias, _size_of, _stmt_refs, rebuild_program
 from .fuse_elementwise import _as_inline_producer, _prune_dead_buffers, _trip_count
 
 
@@ -102,14 +103,14 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
     if not valid or len(leaves) < 2 or drop & removed:
       continue
 
-    def destination(n: ProgramNode) -> ProgramNode:
-      if n.op == ProgramOp.VIEW and n.attrs["buffer"] in leaves:
-        return ProgramNode(n.op, n.args, {**n.attrs, "buffer": root}, n.dtype)
-      return n
+    destination = Pattern(
+      ProgramOp.VIEW, lambda n: n.attrs["buffer"] in leaves, lambda n: ProgramNode(n.op, n.args, {**n.attrs, "buffer": root}, n.dtype)
+    )
+    redirect = lambda stmt: rewrite(stmt, [destination], rebuild=rebuild_program, fixpoint=False)
 
-    replacement = [_transform(body[pads[leaves[0]][0]], destination)]
+    replacement = [redirect(body[pads[leaves[0]][0]])]
     for leaf in leaves:
-      scatter = _transform(body[pads[leaf][1]], destination)
+      scatter = redirect(body[pads[leaf][1]])
       target, value = scatter.args[1].args
       replacement.append(for_(scatter.args[0], [store(target, add(load(target), value))]))
     replacements[end] = replacement

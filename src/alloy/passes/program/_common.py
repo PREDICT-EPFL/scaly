@@ -20,17 +20,25 @@ def _walk(root: ProgramNode) -> Iterable[ProgramNode]:
     stack.extend(n.args)
 
 
-def _transform(node: ProgramNode, fn: Callable[[ProgramNode], ProgramNode]) -> ProgramNode:
-  """Bottom-up rebuild: rebuild ``node``'s args, then apply ``fn`` to the (maybe) new node.
+def _postorder(root: ProgramNode) -> Iterable[ProgramNode]:
+  """Yield every distinct node at/below ``root`` with each node after all of its args."""
+  seen: set[int] = set()
+  stack = [(root, False)]
+  while stack:
+    n, ready = stack.pop()
+    if id(n) in seen:
+      continue
+    if ready:
+      seen.add(id(n))
+      yield n
+      continue
+    stack.append((n, True))
+    stack.extend((a, False) for a in reversed(n.args) if id(a) not in seen)
 
-  ``fn`` returns a replacement node (or its argument unchanged). Hash-consing makes the
-  identity check cheap and keeps untouched subtrees shared.
-  """
-  if node.args:
-    new_args = tuple(_transform(a, fn) for a in node.args)
-    if any(a is not b for a, b in zip(new_args, node.args, strict=True)):
-      node = ProgramNode(node.op, new_args, node.attrs, node.dtype)
-  return fn(node)
+
+def rebuild_program(node: ProgramNode, args: tuple[ProgramNode, ...]) -> ProgramNode:
+  """The program-dialect adapter for ``ir.match.rewrite``: ``node`` with new ``args``."""
+  return ProgramNode(node.op, args, node.attrs, node.dtype)
 
 
 def _procs(prog: ProgramNode) -> tuple[list[ProgramNode], list[ProgramNode]]:

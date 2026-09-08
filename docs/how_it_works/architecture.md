@@ -64,7 +64,7 @@ grad(np.array([1.0, 2.0]))
 | 5 | Calling it with array leaves runs `__call__` → `numerical_call` → `_flat_numerical_call` → `_compile`, which reaches the backend through `_jit()` — the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](#the-two-sanctioned-exceptions) to import layering. | `function/model.py` |
 | 6 | `CompiledFunction` asks `_build_artifact` for a shared library, which calls `render_c_module`. That lowers the function **once** into a render context every artifact reads from. | `codegen/jit.py`, `codegen/aot.py` |
 | 7 | `lower_function` walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a Function carrying a solver descriptor stays opaque. | `passes/lowering.py` |
-| 8 | `optimize_program` runs the fixed pipeline: `scalarize`, `combine_scatter_sums`, `fuse_elementwise`, `unroll_unit_loops`, `pack_workspace`. | `passes/program/` |
+| 8 | `optimize_program` runs the fixed pipeline: `scalarize`, `combine_scatter_sums`, `fuse_elementwise`, `fold_arith`, `unroll_unit_loops`, `pack_workspace`. | `passes/program/` |
 | 9 | `verify_program` checks the result before anything renders it. | `ir/program_spec.py` |
 | 10 | `render_program_c` emits the translation unit: the callee bodies, then the one entry point exported through the **universal ABI** — the single pointer-array C signature every generated function shares. | `codegen/c.py` |
 | 11 | Header, source, workspace size and solver link flags are packaged as a `CModule`. | `codegen/aot.py` |
@@ -104,6 +104,7 @@ src/alloy/
       scalarize.py       bounded scalar expansion, folding, and scheduling
       combine_scatter_sums.py  shared accumulation for sums of scatters
       fuse_elementwise.py     elementwise producer fusion
+      fold_arith.py           constant reads and shared arithmetic identities in loop bodies
       unroll_unit_loops.py    empty- and single-iteration loop removal
       pack_workspace.py      buffer lifetime packing
 
@@ -163,7 +164,7 @@ import layer, never a higher one. That rule keeps the package dependencies from 
 | --- | --- | --- |
 | 0 | `utils/*` | Leaves. Environment and file parsing, no alloy concepts at all. |
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
-| 2 | `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR at all). Nothing here knows what a `Function` is. |
+| 2 | `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR at all). Nothing here knows what a `Function` is. |
 | 3 | `function/model` | `Function` itself — a named graph boundary over import layer 1. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
@@ -314,16 +315,19 @@ at the tail of lowering. Imports do not determine execution order. Five passes t
   and one scatter-add per term.
 - `fuse_elementwise` inlines a single-use elementwise/slice/gather producer into its one consumer,
   collapsing chains into one loop and deleting the intermediate buffer round-trip.
+- `fold_arith` turns reads of constant buffers into constants, applies the arithmetic identities
+  shared with the expression dialect (`passes/arith.py`) inside loop bodies, and makes a loop that
+  fills a private buffer with one constant into a constant buffer.
 - `unroll_unit_loops` erases statically empty loops and inlines single-iteration ones, after
   fusion has had its chance at the loop-shaped form.
 - `pack_workspace` lifetime-packs private buffers into shared slots and spills the large ones to
   the caller's `w[]`, which is what `f_SZ_W` reports. Without it the largest benchmark cells
   overflow the C stack.
 
-These passes recurse over node trees, so expression *depth* becomes Python stack depth. Wide
-graphs are free; long left-fold accumulations are not.
-[Lowering and optimization](lowering.md#a-limitation-worth-knowing-recursion-depth) documents the
-limit and the two ways to write around it.
+Each pass that rebuilds an expression tree goes through `alloy.ir.match.rewrite`, the iterative driver shared
+with the expression dialect (`passes/program/_common.py` holds the `rebuild_program` adapter), so
+expression depth never becomes Python stack depth; see
+[Lowering and optimization](lowering.md#deep-expressions).
 
 ### Rendering — `codegen/c.py`, `codegen/abi.py`
 
@@ -391,6 +395,7 @@ assembly text stays in `ir/text.py`, where the compiler owns it.
 | A scalar math op | `ExprOp` and `OP_INFO` in `ir/expr.py`; a verify rule in `ir/expr_spec.py`; AD rules in `ad/forward.py` and `ad/reverse.py`; a matching `ProgramOp` in `ir/program.py` and its category set; an entry in `_UNARY`/`_BINARY` in `passes/lowering.py` (the elementwise `@lowers` rule is shared, so no new rule); the C spelling in `codegen/c.py`; and `_EXPENSIVE_OPS` in `passes/program/fuse_elementwise.py` if it lowers to a libm call |
 | A structural expression op | the same, minus the elementwise maps, plus its own `@lowers` rule in `passes/lowering.py` and a structural rule in `ad/sparsity.py` |
 | An expression rewrite | a pattern in `passes/expr.py` |
+| An arithmetic identity | a rule in `simplify_arith` in `passes/arith.py`; it reaches expression graphs, scalarized code and loop bodies through their adapters |
 | A program-dialect optimization | a module in `passes/program/` and an explicit entry in its `__init__.py` pipeline |
 | A program op | `ProgramOp`, its builder, and the right op-category set (`SCALAR_OPS`, `UNARY_FN_OPS`, …) in `ir/program.py`; a rule in `ir/program_spec.py`; a branch in `ir/text.py` if it is a statement rather than a scalar; the C spelling in `codegen/c.py` |
 | A derivative kind | a frozen `DerivSpec` subclass in `function/factory.py`, plus a wrapper in `function/api.py` |

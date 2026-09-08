@@ -12,15 +12,19 @@ from alloy.codegen.c import render_program_c_source
 from alloy.ir import program as p
 from alloy.ir.program import ProgramNode, ProgramOp
 from alloy.ir.types import Lowering, dtypes
+from alloy.passes.arith import fold_program
 from alloy.passes.lowering import lower_function, main_proc
 from alloy.passes.program._common import _walk
 from alloy.passes.program.scalarize import (
   AUTO_EXPANSION_WORK_PER_PROC,
   AUTO_SCALAR_GROWTH_PER_PROGRAM,
   AUTO_SCALAR_OPS_PER_PROC,
-  _fold,
   scalarize_program,
 )
+
+
+def _fold(op: ProgramOp, args: tuple[ProgramNode, ...], dtype) -> ProgramNode:
+  return fold_program(ProgramNode(op, args, dtype=dtype))
 
 
 def _function(name: str, inputs: list[al.Expr], outputs: list[al.Expr]) -> al.Function:

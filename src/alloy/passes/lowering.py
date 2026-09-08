@@ -169,8 +169,7 @@ def _lower_to_proc(fun: Function, callees: dict[str, ProgramNode], solver_fns: d
   # ``input_count`` lets the renderer ``const``-qualify the first N (input) params of a ``_raw``
   # callee; emit_inputs runs before register_outputs, so inputs are the leading params.
   nodes = topo(fun.outputs)
-  hints = {n.lowering for n in (*fun.inputs, *nodes)}
-  lowering = "block" if hints & {"block", "opaque"} else "scalar" if "scalar" in hints else "auto"
+  lowering = fun._effective_lowering()
   # Narrower stores round or truncate; scalar substitution must not erase those conversions.
   return ProgramNode(
     ProgramOp.PROC,

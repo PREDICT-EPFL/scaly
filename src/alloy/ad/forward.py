@@ -40,6 +40,12 @@ def _is_zero_const(expr: Expr) -> bool:
   return expr.op == ExprOp.CONST and expr.value is not None and bool(np.all(expr.value == 0))
 
 
+def _inherit_lowering(callee: Any, derived: Expr) -> Expr:
+  """A derived body takes the primal callee's effective hint, so ``.scalar()`` on a stage output reaches its adjoint and tangent procedures."""
+  lowering = callee._effective_lowering()
+  return derived if lowering == "auto" else derived.with_lowering(lowering)
+
+
 def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
   """Forward-mode derivative: ``J(expr, wrt) @ seed``, with ``seed`` shaped like ``wrt``.
 
@@ -201,7 +207,7 @@ def _call_jvp_many_const_function(
     flat_seed = seed_value.reshape((seed_value.shape[0], -1))
     active = tuple(int(i) for i in np.nonzero(np.any(flat_seed != 0, axis=1))[0])
     seed = Expr.const(seed_value[list(active)])
-    deriv = simplify_cse_fixpoint(_jvp_many_unrolled(out, formal, seed))
+    deriv = _inherit_lowering(callee, simplify_cse_fixpoint(_jvp_many_unrolled(out, formal, seed)))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices)
@@ -220,7 +226,7 @@ def _call_jvp_many_function(callee: Any, output_index: int, formal_index: int, n
     formal = callee.inputs[formal_index]
     seed = Expr.sym(f"fwd:{callee.input_names[formal_index]}", (nseed, *formal.shape))
     out = callee.outputs[output_index]
-    deriv = simplify_cse_fixpoint(_jvp_many_unrolled(out, formal, seed))
+    deriv = _inherit_lowering(callee, simplify_cse_fixpoint(_jvp_many_unrolled(out, formal, seed)))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
     takes_seed = _depends_on(deriv, seed, dep_memo)
@@ -239,7 +245,7 @@ def _call_jvp_function(callee: Any, output_index: int, formal_index: int) -> tup
     formal = callee.inputs[formal_index]
     seed = Expr.sym(f"fwd:{callee.input_names[formal_index]}", formal.shape)
     out = callee.outputs[output_index]
-    deriv = jvp(out, formal, seed)
+    deriv = _inherit_lowering(callee, jvp(out, formal, seed))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
     takes_seed = _depends_on(deriv, seed, dep_memo)
@@ -376,6 +382,41 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       outer_size = actual_outer.size
       start = starts[formal_idx]
       stride = strides[formal_idx]
+
+      # A constant tangent whose per-iteration tiles repeat with a short period (at most 8, and at
+      # least twice, so a short horizon of distinct tiles is not unrolled) is baked into one
+      # const-seed callee per tile: the 0/1 products fold inside the body and no seed table or
+      # gather is emitted. Iteration ``it`` uses tile ``it % period``; residue class ``r`` is mapped
+      # with start ``start + r * stride`` and stride ``stride * period``.
+      if length and actual_tan.op == ExprOp.CONST and actual_tan.value is not None:
+        flat_tan = np.asarray(actual_tan.value, dtype=np.float64).reshape(nseed, outer_size)
+        tiles = np.stack([flat_tan[:, start + it * stride : start + it * stride + formal_size] for it in range(length)])
+        period = next(
+          (k for k in range(1, min(8, length // 2) + 1) if length % k == 0 and np.array_equal(tiles, np.tile(tiles[:k], (length // k, 1, 1)))), None
+        )
+        if period is not None:
+          n = length // period
+          zero_rows = Expr.const(np.zeros((n, slice_size), dtype=np.float64))
+          parts: list[Expr] = []
+          for r in range(period):
+            inner_fn, primal_arg_indices, active = _call_jvp_many_const_function(
+              callee, output_idx, formal_idx, tiles[r].reshape((nseed, *formal.shape))
+            )
+            if not active:
+              parts.append(Expr.const(np.zeros((nseed, n, slice_size), dtype=np.float64)))
+              continue
+            primal_specs = [(expr.args[i], starts[i] + r * strides[i], strides[i] * period) for i in primal_arg_indices]
+            mapped_3d = vmap(inner_fn, n, primal_specs).reshape((n, len(active), slice_size))
+            if len(active) == nseed:
+              parts.append(mapped_3d.transpose((1, 0, 2)))
+            else:
+              active_pos = {row: i for i, row in enumerate(active)}
+              parts.append(stack([mapped_3d[:, active_pos[row], :] if row in active_pos else zero_rows for row in range(nseed)], axis=0))
+          if all(_is_zero_const(part) for part in parts):
+            continue
+          term = (parts[0] if period == 1 else stack(parts, axis=2)).reshape((nseed, length * slice_size))
+          ret = term if ret is None else ret + term
+          continue
 
       # Local coloring of the callee's Jacobian tile w.r.t. this formal. When this gives c_f < nseed
       # local colors, baking those local seeds into the per-iteration JVP callee yields a body of

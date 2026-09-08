@@ -48,6 +48,8 @@ stage derivative.
 emits a new `call` node to that function. The constructed function takes only the arguments its
 derivative actually depends on — determined structurally — plus the seed if the seed survives, so
 the derivative of a stage function has a narrower signature than the stage itself.
+Every derived function, forward or adjoint, inherits the callee's effective lowering hint as
+described in [Lowering](lowering.md#the-optimization-pipeline).
 
 **Reverse mode inlines for an ordinary call**, substituting the actual arguments for the formals in
 the callee's adjoint graph, with memoized subgraphs and a topologically cached substitution so that
@@ -62,6 +64,11 @@ expression are accumulated by the enclosing reverse pass.
 
 The result is that `jac`, `grad`, `hess` and `sphess` all work on graphs containing `VMAP` without
 the derivative code growing with the VMAP length.
+
+When the `jvp_many` seeds over a `VMAP` are constant and the per-iteration seed tiles repeat with a
+period of at most eight iterations, forward mode bakes each distinct tile into a const-seed callee
+and maps it over that tile's residue class of iterations, so no seed table or gather reaches the
+generated code. Other constant patterns keep the local-coloring and runtime-seed paths.
 
 One case where one-sided coloring would lose that guarantee is a shared stride-0 formal marked
 differentiable: it gives the Hessian a dense row and column, so coloring the global pattern as a

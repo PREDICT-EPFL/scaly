@@ -11,6 +11,7 @@ from ..function import Function
 from ..function.sugar import vmap
 from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, stack, topo, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
+from .forward import _inherit_lowering
 from .sparsity import _depends_on
 
 
@@ -40,7 +41,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     lam_name = f"lam:{callee.output_names[output_index]}"
     lam = Expr.sym(lam_name, out.shape)
     grads = vjp((out,), tuple(callee.inputs[i] for i in active_formals), (lam,))
-    adj = simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads]))
+    adj = _inherit_lowering(callee, simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads])))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices) + (lam,)

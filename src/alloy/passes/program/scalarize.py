@@ -3,105 +3,18 @@
 from __future__ import annotations
 
 import math
-import operator
 from collections import Counter
 from dataclasses import dataclass
 
 from ...ir import program as p
 from ...ir.program import ProgramNode, ProgramOp
-from ...ir.types import DType
+from ..arith import CONSTANTS, constant, fold_program
 
-
-_CONSTANTS = {ProgramOp.CONST_INT, ProgramOp.CONST_FLOAT}
-_ARITHMETIC = {ProgramOp.ADD: operator.add, ProgramOp.SUB: operator.sub, ProgramOp.MUL: operator.mul, ProgramOp.DIV: operator.truediv}
-_MATH = {op: getattr(math, op.value) for op in (*p.UNARY_FN_OPS, ProgramOp.POW, ProgramOp.ATAN2) if op not in {ProgramOp.ABS}}
-_MATH[ProgramOp.ABS] = abs
 
 AUTO_SCALAR_OPS_PER_PROC = 4096
 AUTO_SCALAR_GROWTH_PER_PROGRAM = 16_384
 AUTO_EXPANSION_WORK_PER_PROC = 65_536
-
-
-def _constant(value: int | float, dtype: DType) -> ProgramNode:
-  return ProgramNode(
-    ProgramOp.CONST_INT if dtype.is_integer else ProgramOp.CONST_FLOAT, attrs={"value": int(value) if dtype.is_integer else float(value)}, dtype=dtype
-  )
-
-
-def _fold(op: ProgramOp, args: tuple[ProgramNode, ...], dtype: DType) -> ProgramNode:
-  node = ProgramNode(op, args, dtype=dtype)
-  if all(a.op in _CONSTANTS for a in args):
-    vals = [a.attrs["value"] for a in args]
-    try:
-      if op in {ProgramOp.DIV, ProgramOp.MOD} and dtype.is_integer:
-        x, y = vals
-        q = (abs(x) // abs(y)) * (-1 if (x < 0) != (y < 0) else 1)
-        value = q if op == ProgramOp.DIV else x - q * y
-      elif op == ProgramOp.NEG:
-        value = -vals[0]
-      elif op in _ARITHMETIC:
-        value = _ARITHMETIC[op](*vals)
-      elif op in _MATH:
-        value = _MATH[op](*vals)
-      elif op in {ProgramOp.MINIMUM, ProgramOp.MAXIMUM} and all(math.isfinite(v) for v in vals):
-        value = (min if op == ProgramOp.MINIMUM else max)(vals)
-      else:
-        return node
-      return _constant(value, dtype)
-    except (ValueError, OverflowError, ZeroDivisionError):
-      return node
-
-  def is_const(a: ProgramNode, value: float) -> bool:
-    return a.op in _CONSTANTS and a.attrs["value"] == value
-
-  x = args[0]
-  if op == ProgramOp.NEG:
-    return x.args[0] if x.op == ProgramOp.NEG else node
-  if len(args) != 2:
-    return node
-  y = args[1]
-  if op == ProgramOp.ADD:
-    if is_const(x, 0):
-      return y
-    if is_const(y, 0):
-      return x
-    if y.op == ProgramOp.NEG:
-      return _fold(ProgramOp.SUB, (x, y.args[0]), dtype)
-    if x.op == ProgramOp.NEG:
-      return _fold(ProgramOp.SUB, (y, x.args[0]), dtype)
-  elif op == ProgramOp.SUB:
-    if is_const(y, 0):
-      return x
-    if is_const(x, 0):
-      return _fold(ProgramOp.NEG, (y,), dtype)
-    if y.op == ProgramOp.NEG:
-      return _fold(ProgramOp.ADD, (x, y.args[0]), dtype)
-  elif op == ProgramOp.MUL:
-    if is_const(x, 0) or is_const(y, 0):
-      return _constant(0, dtype)
-    if is_const(x, 1):
-      return y
-    if is_const(y, 1):
-      return x
-    if is_const(x, -1):
-      return _fold(ProgramOp.NEG, (y,), dtype)
-    if is_const(y, -1):
-      return _fold(ProgramOp.NEG, (x,), dtype)
-    if x.op == y.op == ProgramOp.NEG:
-      return _fold(op, (x.args[0], y.args[0]), dtype)
-  elif op == ProgramOp.DIV:
-    if is_const(x, 0):
-      return x
-    if is_const(y, 1):
-      return x
-  elif op == ProgramOp.POW:
-    if is_const(y, 0) or is_const(x, 1):
-      return _constant(1, dtype)
-    if is_const(y, 1):
-      return x
-    if is_const(y, 2):
-      return _fold(ProgramOp.MUL, (x, x), dtype)
-  return node
+MAX_SCALAR_DEPTH = 32
 
 
 @dataclass(slots=True)
@@ -124,20 +37,26 @@ class _Frame:
     return _Pointer(ptr.values, ptr.offset + offset)
 
   def scalar(self, node: ProgramNode, memo: dict[ProgramNode, ProgramNode]) -> ProgramNode:
-    if node in memo:
-      return memo[node]
-    if node.op in _CONSTANTS:
-      result = node
-    elif node.op == ProgramOp.VAR:
-      result = self.variables[node.attrs["name"]]
-    elif node.op == ProgramOp.LOAD:
-      ptr = self.pointer(node.args[0])
-      result = ptr.values[ptr.offset]
-      assert result is not None, "scalarization read an uninitialized buffer element"
-    else:
-      result = _fold(node.op, tuple(self.scalar(a, memo) for a in node.args), node.dtype)
-    memo[node] = result
-    return result
+    stack = [(node, False)]
+    while stack:
+      n, ready = stack.pop()
+      if n in memo:
+        continue
+      if n.op in CONSTANTS:
+        memo[n] = n
+      elif n.op == ProgramOp.VAR:
+        memo[n] = self.variables[n.attrs["name"]]
+      elif n.op == ProgramOp.LOAD:
+        ptr = self.pointer(n.args[0])
+        value = ptr.values[ptr.offset]
+        assert value is not None, "scalarization read an uninitialized buffer element"
+        memo[n] = value
+      elif ready:
+        memo[n] = fold_program(ProgramNode(n.op, tuple(memo[a] for a in n.args), dtype=n.dtype))
+      else:
+        stack.append((n, True))
+        stack.extend((a, False) for a in reversed(n.args) if a not in memo)
+    return memo[node]
 
   def run(self, body: tuple[ProgramNode, ...]) -> None:
     for stmt in body:
@@ -147,7 +66,7 @@ class _Frame:
           ptr = _Pointer(src.values, src.offset + stmt.attrs["alias_offset"])
         else:
           values = stmt.attrs.get("values")
-          ptr = _Pointer([_constant(v, stmt.dtype) for v in values] if values is not None else [None] * math.prod(stmt.attrs["shape"]))
+          ptr = _Pointer([constant(v, stmt.dtype) for v in values] if values is not None else [None] * math.prod(stmt.attrs["shape"]))
         self.buffers[stmt.attrs["name"]] = ptr
       elif stmt.op == ProgramOp.STORE:
         ptr = self.pointer(stmt.args[0])
@@ -190,7 +109,7 @@ def _schedule(outputs: list[tuple[ProgramNode, ProgramNode]], reserved: set[str]
     args = tuple(values[a] for a in node.args)
     value = ProgramNode(node.op, args, node.attrs, node.dtype)
     d = 1 + max((depth[a] for a in node.args), default=0)
-    if node.op not in {*_CONSTANTS, ProgramOp.VIEW} and (uses[node] > 1 or d >= 32):
+    if node.op not in {*CONSTANTS, ProgramOp.VIEW} and (uses[node] > 1 or d >= MAX_SCALAR_DEPTH):
       while (name := f"v{serial}") in reserved:
         serial += 1
       serial += 1
@@ -224,19 +143,31 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
   procs = {pr.attrs["name"]: pr for pr in prog.args[: prog.attrs["proc_count"]]}
   expansion_work: dict[str, int | None] = {}
 
-  def work(node: ProgramNode) -> int | None:
-    if node.op == ProgramOp.CALL:
-      return expansion_work.get(node.attrs["callee"])
-    if node.op == ProgramOp.FOR:
-      rng = node.args[0]
-      if any(a.op != ProgramOp.CONST_INT for a in rng.args):
+  def work(stmt: ProgramNode) -> int | None:
+    total = 0
+    stack = [(stmt, 1)]
+    while stack:
+      node, factor = stack.pop()
+      if node.op == ProgramOp.CALL:
+        callee_work = expansion_work.get(node.attrs["callee"])
+        if callee_work is None:
+          return None
+        total += factor * callee_work
+      elif node.op == ProgramOp.FOR:
+        rng = node.args[0]
+        if any(a.op != ProgramOp.CONST_INT for a in rng.args):
+          return None
+        start, stop, step = (a.attrs["value"] for a in rng.args)
+        if step <= 0:
+          return None
+        stack.extend((s, factor * len(range(start, stop, step))) for s in node.args[1:])
+      elif node.op == ProgramOp.BUFFER:
+        total += factor * math.prod(node.attrs["shape"])
+      elif node.op == ProgramOp.STORE:
+        total += factor
+      else:
         return None
-      start, stop, step = (a.attrs["value"] for a in rng.args)
-      total = [work(s) for s in node.args[1:]]
-      return len(range(start, stop, step)) * sum(c for c in total if c is not None) if all(c is not None for c in total) and step > 0 else None
-    if node.op == ProgramOp.BUFFER:
-      return math.prod(node.attrs["shape"])
-    return 1 if node.op == ProgramOp.STORE else None
+    return total
 
   def scalar_cost(proc: ProgramNode) -> tuple[int, int]:
     seen: set[ProgramNode] = set()
@@ -247,7 +178,7 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
         continue
       seen.add(node)
       stack.extend(node.args)
-    ops = sum(node.op in p.SCALAR_OPS - {*_CONSTANTS, ProgramOp.VAR, ProgramOp.LOAD} for node in seen)
+    ops = sum(node.op in p.SCALAR_OPS - {*CONSTANTS, ProgramOp.VAR, ProgramOp.LOAD} for node in seen)
     statements = sum(node.op in {ProgramOp.ASSIGN, ProgramOp.STORE} for node in seen)
     return ops, ops + statements
 

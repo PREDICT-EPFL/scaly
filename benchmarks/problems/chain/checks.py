@@ -19,11 +19,15 @@ from collections.abc import Callable, Iterator
 import numpy as np
 
 import alloy as al
+from alloy.ad.sparse import sparse_hessian
+from alloy.passes.lowering import lower_function
 from alloy.solvers.paths import solver_loadable
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.chain import (
   END_REF,
+  HORIZON,
   NU,
+  _eq_stage_fn,
   ChainParams,
   ca_chain_eq_jac,
   ca_chain_nlpsol,
@@ -295,6 +299,25 @@ def check_casadi_sweep_transforms_by_default() -> None:
       np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
+def check_hinted_stage_selects_hessian_procedure() -> None:
+  """A ``.scalar()`` hint on the stage output reaches the Lagrangian Hessian's adjoint-tangent procedure at M=3."""
+  n_masses = 3
+  nx, nz = n_state(n_masses), n_state(n_masses) + NU
+  stage = _eq_stage_fn(n_masses)
+  hinted = al.Function._from_exprs(stage.name, stage.inputs, [stage.outputs[0].scalar()], stage.input_names, stage.output_names)
+  z = al.sym("z", n_dec(n_masses, HORIZON))
+  p = al.sym("p", n_param(n_masses), diff=False)
+  mapped = al.vmap(hinted, HORIZON, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
+  eq = al.concat([z[:nx] - p[:nx], mapped])
+  lam = al.sym("lam", eq.size, diff=False)
+  hess = sparse_hessian(lam @ eq, z, triangle="lower")
+  fn = al.Function._from_exprs("chain_hess_hinted", [z, p, lam], [hess.values], ["z", "p", "lam"], ["h"])
+  procs = lower_function(fn).args[:-1]
+  selected = [proc for proc in procs if str(proc.attrs["name"]).startswith("chain_eq_stage_M3_adj") and str(proc.attrs["name"]).endswith("adj:eq_z")]
+  assert len(selected) == 1, [proc.attrs["name"] for proc in procs]
+  assert selected[0].attrs["lowering"] == "scalar" and selected[0].attrs["scalarize"] and selected[0].attrs["scalarized"], selected[0].attrs
+
+
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)
 CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "casadi_sweep_transform": (check_casadi_sweep_transforms_by_default, True, True),
@@ -308,6 +331,7 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
   "sqp_matches_ipopt": (check_sqp_matches_ipopt, True, False),
   "sqp_oracles_agree": (check_sqp_oracles_agree, True, True),
   "recorded_scene": (check_recorded_scene, True, False),
+  "hinted_stage_hessian": (check_hinted_stage_selects_hessian_procedure, False, False),
 }
 
 

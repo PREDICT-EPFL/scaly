@@ -24,6 +24,7 @@ from .abi import abi_status_defines, c_api_signature, c_ident
 from ..function import Function
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
+from ..passes.program.scalarize import MAX_SCALAR_DEPTH
 from ..ir.program import ProgramNode, ProgramOp
 
 # Scalar ProgramOp -> C spelling. Operators render inline; libm ops render as calls.
@@ -227,10 +228,10 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
       _emit_statement(sub, ptr_expr, lines, indent + 2)
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.STORE:
-    lines.append(f"{pad}{_emit_view(stmt.args[0], ptr_expr)} = {_emit_scalar(stmt.args[1], ptr_expr)};")
+    _emit_assignment(_emit_view(stmt.args[0], ptr_expr), stmt.args[1], ptr_expr, lines, indent)
   elif stmt.op == ProgramOp.ASSIGN:
     declaration = f"{stmt.dtype.c_type} " if stmt.attrs.get("declare") else ""
-    lines.append(f"{pad}{declaration}{c_ident(stmt.attrs['target'])} = {_emit_scalar(stmt.args[0], ptr_expr)};")
+    _emit_assignment(c_ident(stmt.attrs["target"]), stmt.args[0], ptr_expr, lines, indent, declaration)
   elif stmt.op == ProgramOp.CALL:
     if stmt.attrs.get("external"):
       raise LoweringError("external (mixed-device) CALL rendering is deferred to a later migration step")
@@ -246,6 +247,20 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
     lines.append(f"{pad}{c_ident(stmt.attrs['callee'])}_raw({', '.join(ptrs)});")
   else:
     raise LoweringError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
+
+
+def _emit_assignment(target: str, value: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int, declaration: str = "") -> None:
+  """``target = value;`` with subtrees deeper than ``MAX_SCALAR_DEPTH`` hoisted into temporaries
+  inside a block, so a fused chain never exceeds clang's default bracket nesting limit (256)."""
+  pad = " " * indent
+  hoisted: list[str] = []
+  rhs = _emit_scalar(value, ptr_expr, hoisted, pad + "  ")
+  if not hoisted:
+    lines.append(f"{pad}{declaration}{target} = {rhs};")
+    return
+  if declaration:
+    lines.append(f"{pad}{declaration}{target};")
+  lines.extend((f"{pad}{{", *hoisted, f"{pad}  {target} = {rhs};", f"{pad}}}"))
 
 
 def _emit_call_arg(node: ProgramNode, ptr_expr: dict[str, str]) -> str:
@@ -277,29 +292,49 @@ def _c_float(value: float) -> str:
   return f"{value:.17g}"
 
 
-def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
-  op = n.op
-  if op == ProgramOp.CONST_INT:
-    return str(n.attrs["value"])
-  if op == ProgramOp.CONST_FLOAT:
-    value = n.attrs["value"]
-    literal = _c_float(value)
-    if math.isfinite(value) and "." not in literal and "e" not in literal:
-      literal += ".0"
-    return literal
-  if op == ProgramOp.VAR:
-    return c_ident(n.attrs["name"])
-  if op == ProgramOp.LOAD:
-    return _emit_view(n.args[0], ptr_expr)
-  if op == ProgramOp.NEG:
-    return f"(-{_emit_scalar(n.args[0], ptr_expr)})"
-  if op in _BIN_SYM:
-    return f"({_emit_scalar(n.args[0], ptr_expr)} {_BIN_SYM[op]} {_emit_scalar(n.args[1], ptr_expr)})"
-  if op in _UNARY_C:
-    return f"{_UNARY_C[op]}({_emit_scalar(n.args[0], ptr_expr)})"
-  if op in _BINARY_C:
-    return f"{_BINARY_C[op]}({_emit_scalar(n.args[0], ptr_expr)}, {_emit_scalar(n.args[1], ptr_expr)})"
-  raise LoweringError(f"Program IR C renderer: scalar op {op} not yet handled")
+def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], hoist: list[str] | None = None, pad: str = "") -> str:
+  """Render a scalar tree bottom up. With ``hoist`` given, a subtree at ``MAX_SCALAR_DEPTH``
+  becomes a temporary declared into ``hoist`` and the expression continues from its name."""
+  text: dict[int, str] = {}
+  depth: dict[int, int] = {}
+  stack = [(n, False)]
+  while stack:
+    node, ready = stack.pop()
+    if id(node) in text:
+      continue
+    op = node.op
+    if not ready and op not in {ProgramOp.LOAD, ProgramOp.CONST_INT, ProgramOp.CONST_FLOAT, ProgramOp.VAR}:
+      stack.append((node, True))
+      stack.extend((a, False) for a in reversed(node.args) if id(a) not in text)
+      continue
+    args = [text[id(a)] for a in node.args] if ready else []
+    d = 1 + max((depth[id(a)] for a in node.args), default=0) if ready else 0
+    if op == ProgramOp.CONST_INT:
+      s = str(node.attrs["value"])
+    elif op == ProgramOp.CONST_FLOAT:
+      value = node.attrs["value"]
+      s = _c_float(value)
+      if math.isfinite(value) and "." not in s and "e" not in s:
+        s += ".0"
+    elif op == ProgramOp.VAR:
+      s = c_ident(node.attrs["name"])
+    elif op == ProgramOp.LOAD:
+      s = _emit_view(node.args[0], ptr_expr)
+    elif op == ProgramOp.NEG:
+      s = f"(-{args[0]})"
+    elif op in _BIN_SYM:
+      s = f"({args[0]} {_BIN_SYM[op]} {args[1]})"
+    elif op in _UNARY_C:
+      s = f"{_UNARY_C[op]}({args[0]})"
+    elif op in _BINARY_C:
+      s = f"{_BINARY_C[op]}({args[0]}, {args[1]})"
+    else:
+      raise LoweringError(f"Program IR C renderer: scalar op {op} not yet handled")
+    if hoist is not None and d >= MAX_SCALAR_DEPTH:
+      hoist.append(f"{pad}{node.dtype.c_type} _h{len(hoist)} = {s};")
+      s, d = f"_h{len(hoist) - 1}", 0
+    text[id(node)], depth[id(node)] = s, d
+  return text[id(n)]
 
 
 __all__ = [

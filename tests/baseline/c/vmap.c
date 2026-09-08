@@ -42,7 +42,7 @@ int shooting(const double** arg, double** res, int* iw, double* w, void* mem) {
   double s0[12];
   const double* t1 = arg[0] + 4;
   for (long long it_t0 = 0; it_t0 < 3; ++it_t0) {
-    dynamics_raw((arg[0] + (0 + (4 * it_t0))), (arg[1] + (0 + (2 * it_t0))), (s0 + (it_t0 * 4)), NULL);
+    dynamics_raw((arg[0] + (4 * it_t0)), (arg[1] + (2 * it_t0)), (s0 + (it_t0 * 4)), NULL);
   }
   for (long long i_eq = 0; i_eq < 12; ++i_eq) {
     res[0][i_eq] = (s0[i_eq] - t1[i_eq]);

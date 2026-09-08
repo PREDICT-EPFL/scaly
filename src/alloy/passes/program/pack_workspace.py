@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp
 from ...ir.types import DType, DeviceSpec
 from ._common import (
@@ -16,8 +17,8 @@ from ._common import (
   _resolve_alias,
   _size_of,
   _stmt_refs,
-  _transform,
   _walk,
+  rebuild_program,
 )
 
 WORKSPACE_SPILL_THRESHOLD = 1024
@@ -209,7 +210,7 @@ def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int]) -> Pro
   new_body: list[ProgramNode] = []
   seen_slot: set[str] = set()
   for stmt in body:
-    rewritten = _transform(stmt, fn)
+    rewritten = rewrite(stmt, [Pattern(None, lambda n: True, fn)], rebuild=rebuild_program, fixpoint=False)
     if rewritten.op == ProgramOp.BUFFER:
       slot_name = rewritten.attrs["name"]
       if slot_name in seen_slot:

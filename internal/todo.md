@@ -163,17 +163,16 @@ protocol's compile flags.
       Design: [arithmetic policy](notes/algebraic_simplification_2026_09_08.md#proposed-alloy-arithmetic-policy);
       rationale: [paper §8](paper.md#8-blocking-work-before-the-paper-can-be-written), [measurement protocol](../docs/results/fairness.md#the-measurement-protocol).
 - [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `alloy.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
-- [ ] **C-55. Preserve intended lowering hints through derivative Function construction.** Define which primal hints derived bodies inherit and test selection on the chain Hessian. [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
-- [ ] **C-53. Share arithmetic simplification across both dialects and program forms.** After C-12, extract common rules with dtype/shape adapters and apply them to expression graphs, scalarized code, and loopy code; keep tensor-specific rules in C-10 and new integer-index rules in C-8/C-9. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
-- [ ] **C-45. Bake stage-invariant constant tangents into the VMAP forward callee.** The VMAP
-      rule in `ad/forward.py` tiles a constant `jvp_many` seed into an `nseed × length × slice` table
-      and passes it as a mapped argument, so the callee multiplies by 0 and 1 at runtime; the const
-      path `_call_jvp_many_const_function` exists but is taken only when local coloring wins. When
-      every per-iteration tile of a constant tangent is equal, bake the tile in; extend to a few
-      distinct tiles when the coloring is not exactly periodic. Alone it is 4% on race-car (32.6 to
-      31.4 µs at N=50, 329 to 309 at N=500) because the tensor-level simplifier folds only all-zero
-      and all-one constants, but it removes the seed tables C-9 targets and is what lets C-44 fold
-      the seeds. 23 lines in the patch above.
+- [x] **C-55. Preserve intended lowering hints through derivative Function construction.** Implemented 2026-09-08: every derived `Function` built in `ad/` takes the primal callee's effective hint (`block`/`opaque` -> `block`, `scalar` -> `scalar`, `auto` inherits nothing) on its output root, through `Function._effective_lowering`; the chain check `hinted_stage_hessian` and `tests/ad/test_lowering_hints.py` pin selection. The chain benchmark stage now carries `.scalar()` (decided 2026-09-08: the comparison is against each side's best formulation, and this is ours); the M=5 Hessian kernel runs at 835 µs against 1769 µs without. Race-car gets nothing from the hint because the automatic policy already selects its stage ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)). [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
+- [x] **C-53. Share arithmetic simplification across both dialects and program forms.** Implemented 2026-09-08 in `passes/arith.py` (one adapter per dialect, rules for neutral elements, zero annihilation, self-cancellation, negation normalization, bounded constant powers, dtype-checked constant evaluation) and applied through `passes/expr.py`, `scalarize`, and the new `fold_arith` loop-body pass after fusion; `tests/passes/test_arith.py` runs the same cases in all three forms. Left open: `_h{n}` renderer temporaries have no collision guard and deep index expressions are not hoisted, both unobserved in practice. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
+- [x] **C-45. Bake stage-invariant constant tangents into the VMAP forward callee.** Implemented
+      2026-09-08 in `ad/forward.py`: a constant `jvp_many` tangent whose per-iteration tiles repeat
+      with period `k <= 8` (and at least twice, so short horizons of distinct tiles are not unrolled)
+      is baked into one const-seed callee per tile, each mapped over its residue class and assembled
+      with stack/transpose/reshape, so no seed table or gather is emitted; other constant patterns
+      keep the local-coloring and runtime-seed paths. `tests/ad/test_const_seed_bake.py` pins equal,
+      periodic, and fallback tiles. Race-car N=50 measured 26.0 to 24.0 µs together with C-53/C-10,
+      static metadata 107 to 90 KB ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)).
 - [ ] **C-46. Hoist stage-invariant callee work out of the mapped loop.** The npmpc stage kernels
       transpose the three weight matrices on every call, 3.5 of 47 µs, because the callee cannot know
       the argument is the same at every iteration; the `u` kernel also recomputes the primal and
@@ -240,13 +239,12 @@ protocol's compile flags.
       div/mod) plus the `(x%c) + (x//c)*c -> x` recombination; see `tinygrad_rangeify.md` §3. With
       C-45 folding the seed tiles, what remains of C-9 is the index arithmetic, and it is a
       prerequisite for C-8's views-as-index-expressions.
-- [ ] **C-10. Fold the identities the AD rules introduce, at the expression level.** Mostly
-      subsumed by C-44; keep the matmul-with-ones and identity-gather rewrites, which are
-      tensor-level. The SUM rule emits `d0 @ ones`, the stride-0 reverse rule emits `ones @ segments`,
-      and the seed tiles are multiplied in as dense 0/1 masks; `passes/expr.py` folds `x * 1` only when the constant has the
-      result's shape and knows nothing about matmul-with-ones or gathers with identity indices. Add
-      those rewrites in `passes/expr.py` so the program dialect never sees them. Pin each with a
-      small fixture. Second-order after C-8 and C-9, but cheap.
+- [x] **C-10. Fold the identities the AD rules introduce, at the expression level.** Implemented
+      2026-09-08 in `passes/expr.py`: `v @ ones -> sum(v)`, identity-index gathers become reshapes,
+      uniform 0/1 masks of the result shape fold, each pinned in `tests/passes/test_expr.py`. The
+      matrix forms `A @ ones` and `ones @ A` were tried as stacked row sums and reverted: in loop
+      form they lower to one loop per row and lose the fused producer, slower than the matmul. They
+      wait for an axis reduction in the IR, which is C-8's accumulator lowering.
 - [ ] **C-11. Chain: exploit the stage-block structure.** The coloring width grows with M (12, 24,
       42 at M=3,5,9), so the per-stage Hessian pays that many forward-over-reverse sweeps where `SX`
       computes one symbolic Hessian. Investigate a scalar-level second-order pass inside the stage
@@ -256,17 +254,18 @@ protocol's compile flags.
       folded, so C-44 goes first; what remains after it is 2.6 times SX's operation count, of which
       the per-seed division in the DIV tangent rule (1738 divisions per stage against SX's 674) is
       the one identified piece.
-- [ ] **C-12. One matcher and iterative rewrite driver for both dialects.** After C-52, adapt the useful parts of tinygrad's nested patterns and graph driver, preserving sharing, visiting replacement subgraphs, and checking termination; do not require merging verifier infrastructure or compiled matching. Close C-13 only when its recursive paths and witness are covered. [Updated design](notes/refactorings.md#shared-compiler-rewrites), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
+- [x] **C-12. One matcher and iterative rewrite driver for both dialects.** Implemented 2026-09-08: `ir/match.py` is generic over both node types with an iterative driver (`fixpoint`, `revisit`, `max_steps`), `rebuild_program` in `passes/program/_common.py` is the program adapter, and `_transform` is gone. No nested patterns or captures: no call site needed them. C-13 closed with it. [Updated design](notes/refactorings.md#shared-compiler-rewrites), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
 
 ### Deferred
 
 - [ ] **C-54. Add memory-aware program common-subexpression elimination and dead-code cleanup.** Build on C-12/C-53 with definition/use tracking and conservative read/write/alias handling; retain required calls and output stores, and test repeated loads across writes. Broader loop motion follows demonstrated workload need; load-node interning alone is not a current stale-value bug. [Design](notes/algebraic_simplification_2026_09_08.md#separate-value-cleanup-from-memory-optimization), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
-- **C-13. Make the Program IR passes iterative instead of recursive**, unless C-12 gets there
-  first. `passes._transform` and `_expand_inlinables` recurse per node, so an expression
-  deeper than ~200 chained elementwise ops dies with a bare `RecursionError` during lowering. Two
-  witnesses: the race-car objective as a left fold, and the neural-process-MPC objective as a *flat*
-  reduction over per-stage slices, which also unrolled and died at N=100. See
-  `docs/how_it_works/lowering.md` and the `xfail` in `tests/passes/test_program.py`.
+- [x] **C-13. Make the Program IR passes iterative instead of recursive.** Done 2026-09-08 with
+      C-12: the program passes, `scalarize`, and the C renderer no longer recurse per expression node,
+      and the renderer hoists subtrees deeper than `MAX_SCALAR_DEPTH` into temporaries so clang's
+      bracket limit is not hit. Witnesses in `tests/passes/test_program.py`: left folds at 400 and
+      3000, the NPMPC-shaped flat per-stage reduction at N=100, and a hinted scalar fold, each
+      compiled and checked against NumPy. Recursion proportional to statement nesting (loop and call
+      depth) remains and is documented in `docs/how_it_works/lowering.md`.
 - **C-14. Confirm or drop the reverse / row-coloured sparse-Jacobian hypothesis.** `sparse_jacobian`
   colours columns only, and npmpc's per-stage block is wider than it is tall, which is consistent
   with running more forward sweeps than a row-coloured or reverse pass would need. Prize is bounded

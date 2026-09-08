@@ -59,31 +59,55 @@ def test_fusion_collapses_elementwise_chain() -> None:
   assert len(loops) == 1
 
 
-def _long_scalar_chain(length: int) -> al.Function:
+def _long_scalar_chain(length: int, *, scalar: bool = False) -> al.Function:
   """``x[0]*1 + x[1]*2 + ...`` accumulated as a left fold, so the expression is ``length`` deep."""
   x = al.sym("x", 4)
   acc = al.const(0.0)
   for i in range(length):
     acc = acc + x[i % 4] * float(i + 1)
-  return al.Function._from_exprs(f"fold{length}", [x], [acc.reshape((1,))], ["x"], ["y"])
+  out = acc.reshape((1,))
+  return al.Function._from_exprs(f"fold{length}", [x], [out.scalar() if scalar else out], ["x"], ["y"])
 
 
-def test_fusion_survives_a_moderately_deep_scalar_fold() -> None:
-  """Guards the headroom below the recursion limit documented in `docs/how_it_works/lowering.md`."""
-  render_program_c_source(_long_scalar_chain(150))
+def _long_scalar_chain_numpy(length: int, x: np.ndarray) -> float:
+  return sum(x[i % 4] * float(i + 1) for i in range(length))
 
 
-@pytest.mark.xfail(raises=RecursionError, strict=True, reason="fuse_elementwise recurses per chain level; see docs/how_it_works/lowering.md")
-def test_fusion_of_a_very_deep_scalar_fold_exhausts_the_python_stack() -> None:
-  """`_expand_inlinables` re-enters itself for every inlined producer and `_transform` recurses
-  per argument, so depth in the *expression* becomes depth on the *Python stack* — about five
-  frames per level, which exhausts the default 1000-frame limit somewhere just under 200 chained
-  scalar ops. Anything that accumulates a long left fold (a per-stage NMPC cost written as
-  `cost = cost + ...`) hits this as a RecursionError during codegen rather than a clean error.
+def _flat_stage_fold(stages: int, n: int = 4) -> al.Function:
+  """Per-stage ``slice * weights`` products summed flat, one term at a time, as a left fold."""
+  x = al.sym("x", stages * n)
+  w = al.sym("w", n)
+  terms = [(x[i * n : (i + 1) * n] * w)[k] for i in range(stages) for k in range(n)]
+  total = sum(terms, al.const(0.0))
+  return al.Function._from_exprs(f"stages{stages}", [x, w], [total.reshape((1,))], ["x", "w"], ["y"])
 
-  Fixing the passes to iterate instead of recurse turns this into an XPASS.
-  """
-  render_program_c_source(_long_scalar_chain(400))
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the deep-fold witnesses")
+@pytest.mark.parametrize("length", [400, 3000])
+def test_deep_scalar_fold_lowers_renders_and_runs(length: int) -> None:
+  """Depth in the expression must not become depth on the Python stack or in the C source: the
+  passes and renderer are iterative, and the renderer splits trees at ``MAX_SCALAR_DEPTH``."""
+  f = _long_scalar_chain(length)
+  assert "_h0 = " in render_program_c_source(f)
+  x = np.arange(1.0, 5.0)
+  np.testing.assert_allclose(f(x), _long_scalar_chain_numpy(length, x), rtol=1e-12)
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the deep-fold witnesses")
+def test_deep_scalar_fold_through_scalarize_runs() -> None:
+  f = _long_scalar_chain(3000, scalar=True)
+  assert main_proc(lower_function(f)).attrs.get("scalarized")
+  x = np.arange(1.0, 5.0)
+  np.testing.assert_allclose(f(x), _long_scalar_chain_numpy(3000, x), rtol=1e-12)
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the deep-fold witnesses")
+def test_flat_per_stage_fold_at_a_hundred_stages_runs() -> None:
+  """The NPMPC-shaped objective written as a flat Python fold over per-stage products."""
+  f = _flat_stage_fold(100)
+  x = np.linspace(-1.0, 1.0, 400)
+  w = np.arange(1.0, 5.0)
+  np.testing.assert_allclose(f((x, w)), (x.reshape(100, 4) * w).sum(), rtol=1e-12)
 
 
 def test_fusion_skips_matmul_operand() -> None:

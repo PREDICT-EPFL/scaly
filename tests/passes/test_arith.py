@@ -1,0 +1,135 @@
+"""The shared arithmetic identities hold in expression graphs, scalarized code and loop bodies alike."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+import numpy as np
+import pytest
+
+import alloy as al
+from alloy.ir import program as p
+from alloy.ir.expr import topo
+from alloy.ir.program import ProgramNode, ProgramOp
+from alloy.ir.types import dtypes
+from alloy.passes.arith import fold_program
+from alloy.passes.lowering import lower_function, main_proc
+from alloy.passes.program._common import _walk
+from alloy.passes.program.fold_arith import fold_arith
+
+DATA = np.array([0.5, -1.25, 2.0])
+
+# name -> (build, reference, operations that must disappear)
+CASES: dict[str, tuple[Callable[[al.Expr], al.Expr], Callable[[np.ndarray], np.ndarray], set[str]]] = {
+  "add_zero": (lambda x: x + 0.0, lambda v: v, {"add"}),
+  "zero_add": (lambda x: 0.0 + x, lambda v: v, {"add"}),
+  "sub_zero": (lambda x: x - 0.0, lambda v: v, {"sub"}),
+  "zero_sub": (lambda x: 0.0 - x, lambda v: -v, {"sub"}),
+  "mul_one": (lambda x: x * 1.0, lambda v: v, {"mul"}),
+  "one_mul": (lambda x: 1.0 * x, lambda v: v, {"mul"}),
+  "div_one": (lambda x: x / 1.0, lambda v: v, {"div"}),
+  "pow_one": (lambda x: x**1.0, lambda v: v, {"pow"}),
+  "mul_zero": (lambda x: x * 0.0, lambda v: 0 * v, {"mul"}),
+  "zero_div": (lambda x: 0.0 / x, lambda v: 0 * v, {"div"}),
+  "sub_self": (lambda x: x - x, lambda v: 0 * v, {"sub"}),
+  "div_self": (lambda x: x / x, lambda v: v / v, {"div"}),
+  "neg_neg": (lambda x: -(-x), lambda v: v, {"neg"}),
+  "add_neg": (lambda x: x + (-x.sin()), lambda v: v - np.sin(v), {"neg"}),
+  "neg_add": (lambda x: (-x.sin()) + x, lambda v: v - np.sin(v), {"neg"}),
+  "sub_neg": (lambda x: x - (-x.sin()), lambda v: v + np.sin(v), {"neg"}),
+  "neg_mul_neg": (lambda x: (-x) * (-x.sin()), lambda v: v * np.sin(v), {"neg"}),
+  "minus_one_mul": (lambda x: -1.0 * x, lambda v: -v, {"mul"}),
+  "pow_zero": (lambda x: x**0.0, lambda v: np.ones_like(v), {"pow"}),
+  "pow_two": (lambda x: x**2.0, lambda v: v * v, {"pow"}),
+  "constants": (lambda x: x + al.const(3.0) / al.const(2.0), lambda v: v + 1.5, {"div"}),
+  "uniform_tensor": (lambda x: x * al.const([1.0, 1.0, 1.0]) + al.const([0.0, 0.0, 0.0]), lambda v: v, {"mul", "add"}),
+}
+
+
+def _function(name: str, x: al.Expr, y: al.Expr) -> al.Function:
+  return al.Function._from_exprs(name, [x], [y], ["x"], ["y"])
+
+
+def _proc_ops(proc: ProgramNode) -> set[str]:
+  return {str(n.op) for stmt in proc.args[proc.attrs["param_count"] :] for n in _walk(stmt)}
+
+
+@pytest.mark.parametrize("name", sorted(CASES))
+def test_expression_graph(name: str) -> None:
+  build, reference, gone = CASES[name]
+  x = al.sym("x", 3)
+  y = al.simplify(build(x))
+  assert not gone & {str(n.op) for n in topo([y])}
+  np.testing.assert_allclose(_function(f"arith_expr_{name}", x, y)(DATA), reference(DATA), rtol=1e-15, atol=0)
+
+
+@pytest.mark.parametrize("name", sorted(CASES))
+def test_scalarized_procedure(name: str) -> None:
+  build, reference, gone = CASES[name]
+  x = al.sym("x", 3)
+  fn = _function(f"arith_scalar_{name}", x, build(x).scalar())
+  proc = main_proc(lower_function(fn))
+  assert proc.attrs.get("scalarized")
+  assert not gone & _proc_ops(proc)
+  np.testing.assert_allclose(fn(DATA), reference(DATA), rtol=1e-15, atol=0)
+
+
+@pytest.mark.parametrize("name", sorted(CASES))
+def test_loop_body(name: str) -> None:
+  build, reference, gone = CASES[name]
+  x = al.sym("x", 3)
+  fn = _function(f"arith_loop_{name}", x, build(x).block())
+  proc = main_proc(lower_function(fn))
+  assert not proc.attrs.get("scalarized") and "for" in _proc_ops(proc)
+  assert not gone & _proc_ops(proc)
+  np.testing.assert_allclose(fn(DATA), reference(DATA), rtol=1e-15, atol=0)
+
+
+def test_mixed_constant_tensor_folds_per_element_only_where_the_element_is_known() -> None:
+  x = al.sym("x", 3)
+  build = lambda hint: (x * al.const([1.0, 0.0, 2.0]) + al.const([0.0, 1.0, 0.0]) * x.sin()).with_lowering(hint)
+  scalar = _function("mixed_scalar", x, build("scalar"))
+  ops = [n.op for stmt in main_proc(lower_function(scalar)).args[1:] for n in _walk(stmt)]
+  assert ops.count(ProgramOp.MUL) == 1 and ops.count(ProgramOp.SIN) == 1
+  loop = _function("mixed_loop", x, build("block"))
+  assert {"mul", "add", "sin", "for"} <= _proc_ops(main_proc(lower_function(loop)))
+  expected = DATA * [1.0, 0.0, 2.0] + [0.0, 1.0, 0.0] * np.sin(DATA)
+  for fn in (scalar, loop):
+    np.testing.assert_allclose(fn(DATA), expected, rtol=1e-15, atol=0)
+
+
+def test_int64_index_arithmetic_folds_with_c_truncation() -> None:
+  x, y = (p.buffer(name, dtypes.float64, (4,)) for name in ("ix", "iy"))
+  i = p.var("i")
+  index = p.add(p.mul(i, p.const_int(1)), p.div(p.const_int(-7), p.const_int(2)))
+  loop = p.for_(p.range_("i", 3, 4), [p.store(p.view(y, [index]), p.load(p.view(x, [p.sub(i, p.const_int(0))])))])
+  prog = fold_arith(p.program([p.proc("index", [x, y], [loop])]))
+  store = prog.args[0].args[2].args[1]
+  target, value = store.args
+  assert target.args[0].op == ProgramOp.ADD and target.args[0].args[0] is i
+  assert target.args[0].args[1].op == ProgramOp.CONST_INT and target.args[0].args[1].attrs["value"] == -3
+  assert value.args[0].args[0] is i
+
+
+def test_known_invalid_constants_stay_runtime_operations() -> None:
+  zero = p.const_float(0.0)
+  assert fold_program(ProgramNode(ProgramOp.DIV, (zero, zero))).op == ProgramOp.DIV
+  x = al.sym("x", 2)
+  kept = al.simplify(al.const([0.0, 1.0]) / al.const([0.0, 0.0]))
+  assert kept.op == al.ExprOp.DIV
+  assert al.simplify(al.const(0.0) / al.const(0.0)).op == al.ExprOp.DIV
+  assert al.simplify(al.const(1000.0).exp()).op == al.ExprOp.EXP
+  assert al.simplify(al.const(0.0) / x).op == al.ExprOp.CONST
+  fn = _function("invalid_loop", x, (x + al.const(0.0) / al.const(0.0)).block())
+  assert "div" in _proc_ops(main_proc(lower_function(fn)))
+  assert np.isnan(fn(np.ones(2))).all()
+
+
+def test_integer_constant_evaluation_refuses_values_outside_the_dtype() -> None:
+  from alloy.ir.program import ProgramNode, ProgramOp, const_int
+  from alloy.ir.types import dtypes
+  from alloy.passes.arith import fold_program
+
+  big = ProgramNode(ProgramOp.MUL, (const_int(1 << 40), const_int(1 << 40)), dtype=dtypes.int64)
+  assert fold_program(big).op == ProgramOp.MUL
+  assert fold_program(ProgramNode(ProgramOp.ADD, (const_int(1 << 40), const_int(1)), dtype=dtypes.int64)).attrs["value"] == (1 << 40) + 1

@@ -333,3 +333,16 @@ procedures; mixed constant tensors; different dtypes; repeated stores through al
 values; and pure versus opaque calls. Exceptional-value cases should pin the chosen algebraic
 contract instead of assuming strict IEEE 754 propagation. Benchmark measurements must separately
 check graph construction, lowering, C compilation, and execution time.
+
+## Implementation status, 2026-09-08
+
+C-53 and C-10 landed the same day, after C-12. `passes/arith.py` holds the shared rules over an
+`Arith` adapter (operation kind, constant value, shape/dtype fit, constant materialization, node
+construction) with one instance per dialect. The expression pass, `scalarize`, and the new
+`fold_arith` loop-body pass call the same `fold`. Integer constant evaluation truncates toward zero
+and refuses results outside the dtype; float evaluation refuses division by zero, invalid
+operations, and overflow but accepts underflow. `0 / x -> 0` is applied as documented above, so a
+signed zero from a negative denominator is not preserved. The matrix forms of matmul-with-ones were
+reverted after review showed them slower in loop form; see C-10 in the todo. Independent reviews
+(one Fable, one GPT through `codex`) found no ordering error in the residue-class seed assembly or
+in the rewrite driver's memo.

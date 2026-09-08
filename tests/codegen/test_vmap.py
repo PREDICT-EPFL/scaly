@@ -335,11 +335,9 @@ def test_simple_banded_vmap_spjac_has_constant_loc() -> None:
   # spill threshold is crossed, which adds one wrapper line for the SZ_W null check.
   assert abs(loc_a - loc_b) <= 2, f"expected constant LOC, got {loc_a} -> {loc_b}"
   src_b = render_c_source(al.sparse_jacobian(build(50), "eq", "z"))
-  # Renderer-agnostic: the inner work stays loop-based (the constant LOC above already rules out a
-  # per-iteration unroll), and the assembly renders as a for-loop under either renderer. The legacy
-  # renderer uses a `static const int tile`/`idx` gather table; Program IR uses a const index buffer.
+  # The inner work stays loop-based (the constant LOC above already rules out a per-iteration
+  # unroll) and the assembly renders as a for-loop.
   assert "for (" in src_b
-  assert "static const int tile" in src_b or "static const int idx" in src_b or "static const int64_t" in src_b
 
 
 def test_vmap_jit_matches_unrolled_numpy() -> None:

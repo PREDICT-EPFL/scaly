@@ -507,3 +507,22 @@ Raw samples, generated C, the temporary runner, and compile logs are under
 `benchmarks/results/c44/closeout/`. The rejected hint-placement attempt is retained separately as
 `chain_5_auto_diagnostic`. The suite passed with 682 tests and one expected failure; Ruff formatting,
 lint, type checking, and the documentation build also passed.
+
+## Track C follow-up, 2026-09-08
+
+After C-45, C-55, C-12, C-13, C-53 and C-10 landed together. Same method as the C-44 closeout:
+`sweep.run_cell` with the harness flags, then two more benchmark processes, median of three; the
+pre-change tree ran from a detached worktree of the same commit; no compiler, test or agent jobs
+ran during the timed cells; each cell passed the harness dense-reference check.
+
+| Cell | Before, µs | After, µs | Source, bytes | Static metadata, bytes |
+|---|---:|---:|---:|---:|
+| Race-car N=50 Hessian | 26.01 | 24.02 | 112,637 -> 90,070 | 107,137 -> 90,115 |
+| Chain M=5 Hessian | 1,869.7 | 1,769.0 | 1,265,670 -> 1,174,015 | 1,331,095 -> 1,264,721 |
+| Chain M=5 Hessian, `.scalar()` on the stage output | - | 835.2 | 1,273,458 | 1,205,031 |
+
+The hinted chain row is a diagnostic of C-55: the hint reaches the adjoint-tangent procedure
+automatically, where the C-44 closeout had to force it after the fact (1,081.8 µs then). The chain
+stage now carries the hint in `benchmarks/problems/chain`. Race-car was tried with the same hint and
+produced byte-identical source, since the automatic policy already selects its stage. The entry-point
+workspace is unchanged at 1,075,248 doubles on chain: C-8 owns that.

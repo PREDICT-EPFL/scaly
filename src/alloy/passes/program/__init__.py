@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from ...ir.program import ProgramNode
 from .combine_scatter_sums import combine_scatter_sums
+from .fold_arith import fold_arith
 from .fuse_elementwise import fuse_elementwise
 from .pack_workspace import WORKSPACE_SPILL_THRESHOLD, pack_workspace
 from .scalarize import scalarize_program
@@ -17,6 +18,7 @@ PASS_PIPELINE: tuple[tuple[str, PassFn], ...] = (
   ("scalarize", scalarize_program),
   ("combine_scatter_sums", combine_scatter_sums),
   ("fuse_elementwise", fuse_elementwise),
+  ("fold_arith", fold_arith),
   ("unroll_unit_loops", unroll_unit_loops),
   ("pack_workspace", pack_workspace),
 )
@@ -36,6 +38,7 @@ __all__ = [
   "WORKSPACE_SPILL_THRESHOLD",
   "ProgramObserver",
   "combine_scatter_sums",
+  "fold_arith",
   "fuse_elementwise",
   "optimize_program",
   "pack_workspace",

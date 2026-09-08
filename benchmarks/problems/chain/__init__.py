@@ -134,7 +134,7 @@ def _eq_stage_fn(n_masses: int) -> al.Function:
   xnext = al.sym("xnext", nx)
   params = al.sym("params", N_PARAMS, diff=False)
   step = chain_step_fn(n_masses)((z[:nx], z[nx:], *[params[i : i + 1] for i in range(N_PARAMS)]))
-  return al.Function._from_exprs(f"chain_eq_stage_M{n_masses}", [z, xnext, params], [step - xnext], ["z", "xnext", "params"], ["eq"])
+  return al.Function._from_exprs(f"chain_eq_stage_M{n_masses}", [z, xnext, params], [(step - xnext).scalar()], ["z", "xnext", "params"], ["eq"])
 
 
 def _chain_eq_expr(z: al.Expr, p: al.Expr, n_masses: int, horizon: int) -> al.Expr:

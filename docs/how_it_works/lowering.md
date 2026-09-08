@@ -74,6 +74,11 @@ The `Expr.lowering` hint selects the containing procedure:
   parameter elements, local buffer elements, executed stores, and nested call work. This prevents
   a large allocation or loop expansion merely to discover that the result exceeds the code budget.
   These limits are compiler heuristics, not API guarantees.
+- Derivative Functions that AD builds for a `call` or `vmap` callee (its tangent, adjoint, and
+  adjoint-tangent bodies) inherit the callee's effective hint: `block` or `opaque` anywhere in the
+  callee makes the derived body `block`, otherwise `scalar` anywhere makes it `scalar`, and `auto`
+  inherits nothing. A `.scalar()` on a stage output therefore selects the stage's Hessian
+  procedures too.
 
 Automatic expansion leaves the entry point's mapped horizon intact. A procedure expands only if
 all of its callees are eligible too. Solver calls retain their call boundaries. Float32 and integer
@@ -123,6 +128,13 @@ It declines in one case. Operations that lower to a libm call — the transcende
 when the consumer's iteration domain is larger than the producer's (a broadcast) or when there is
 more than one read. Cheap arithmetic is always safe to duplicate; a `sin` is not.
 
+**`fold_arith`** runs the arithmetic identities shared with the expression dialect
+(`passes/arith.py`) over every loop body after fusion, where index substitution exposes `x * 1`,
+`x + 0` and constant index arithmetic, and evaluates all-constant scalars with the operation's
+dtype. A loop that fills a private, otherwise unwritten buffer with one constant becomes a constant
+buffer so its readers fold on the next round. Invalid constants such as `0 / 0` stay runtime
+operations.
+
 **`unroll_unit_loops`** erases loops that are statically empty and inlines loops that run exactly
 once, substituting the loop variable with its only value. It runs after fusion so that fusion sees
 canonical loop-shaped producers first, and it removes the resulting single-iteration noise before
@@ -137,29 +149,25 @@ This is the pass that makes large workloads compile at all. Without it the bigge
 declare every temporary as a C local and overflow the 8 MB stack. Zero-copy alias buffers are
 handled explicitly: they own no slot but extend the lifetime of whatever they point into.
 
-## A limitation worth knowing: recursion depth
+## Deep expressions
 
-The passes walk node trees recursively, so **depth in your expression becomes depth on the Python
-stack**. `fuse_elementwise` is the binding constraint — it re-enters itself for every inlined
-producer and once per argument, at roughly five stack frames per level of chaining. Against
-CPython's default limit of 1000 frames, that runs out somewhere just under 200 chained scalar
-operations, and it surfaces as a bare `RecursionError` during lowering rather than as a diagnosable
-alloy error.
+Depth in your expression does not become depth on the Python stack. The Program IR passes and the
+C renderer walk node graphs iteratively: rewrites go through the shared driver `alloy.ir.match.rewrite`,
+which uses an explicit stack and one identity-keyed memo, and the remaining traversals
+(`_max_load_executions`, `_count_buf_loads`, the scalarizer's value substitution, `_emit_scalar`)
+keep their own explicit stacks. A left fold of several thousand chained scalar operations lowers,
+renders, compiles and runs; `tests/passes/test_program.py` pins folds at 400 and 3000 and a flat
+per-stage reduction at 100 stages.
 
-The shape that hits this is an accumulator written as a left fold — a per-stage cost built with
-`cost = cost + <stage terms>` over a few dozen stages. Two ways around it, in order of preference:
+The generated C stays bounded too. Clang caps bracket nesting at 256, so a fused chain deeper than
+`MAX_SCALAR_DEPTH` (32, shared with the scalarizer's temporary scheduling) is split by the renderer
+into scalar temporaries inside a block. Depth is still cheaper to avoid than to render: a wide flat
+reduction (`al.dot(al.const(weights), al.stack(residuals) ** 2)`) or a pairwise sum reads better in
+the generated source than a long fold, but neither is required for correctness any more.
 
-1. **Write the accumulation as one flat reduction.** A sum of weighted squares is
-   `al.dot(al.const(weights), al.stack(residuals) ** 2)`: a single `sum` over a wide `stack`, so
-   the tree is shallow no matter how many stages there are. Recursion cost tracks tree *depth*, not
-   *width* — wide nodes are free. This is what the race-car objective does.
-2. **Sum pairwise**, as a balanced binary reduction, when a flat reduction does not fit. That takes
-   depth from `O(n)` to `O(log n)`.
-
-Raising `sys.setrecursionlimit` is not a fix: it trades a clean `RecursionError` for a possible
-interpreter crash on the real C stack. Making the passes iterative is tracked on the roadmap, and
-`tests/passes/test_program.py` pins both the current headroom and the failure, with an `xfail` that
-flips the day the passes stop recursing.
+What still recurses is proportional to statement nesting, not expression depth: `FOR` bodies in
+`unroll_unit_loops`, the scalarizer's `run` and the renderer's `_emit_statement`, and `CALL`
+chains in the scalarizer. Loop nests are a few levels deep in practice.
 
 ## Watching it happen
 

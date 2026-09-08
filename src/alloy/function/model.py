@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Mapping, Sequence, ca
 import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, linear_combination, topo
-from ..ir.types import DeviceSpec, SparsityType, TensorType, backend_supports
+from ..ir.types import DeviceSpec, Lowering, SparsityType, TensorType, backend_supports
 from .tree import Tree, flat_tree
 
 if TYPE_CHECKING:
@@ -298,6 +298,11 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     if self._compiled is None:
       raise jit.JitError(f"function {self.name!r} has not been compiled or run")
     return self._compiled.solver_stats(name)
+
+  def _effective_lowering(self) -> Lowering:
+    """The hint that selects this Function's procedure: ``block`` or ``opaque`` anywhere wins, then ``scalar``, else ``auto``."""
+    hints = {n.lowering for n in (*self.inputs, *topo(self.outputs))}
+    return "block" if hints & {"block", "opaque"} else "scalar" if "scalar" in hints else "auto"
 
   def _flat_symbolic_call(self, args: Sequence[Any], /) -> tuple[Expr, ...]:
     """Build a call node from flat leaves. Raw values are coerced with ``as_expr``.

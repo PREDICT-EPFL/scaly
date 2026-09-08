@@ -12,13 +12,16 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, OP_INFO, _attrs_key, matmul, stack, topo, zeros_like
 from ..ir.match import Pattern, _replace_args, rewrite
+from .arith import ARITH_EXPR, fold
 
 
 def simplify(expr: Expr) -> Expr:
   """Apply algebraic identities and constant folding until the graph stops changing.
 
-  Covers ``x + 0``, ``x * 1``, ``x * 0``, ``x ** 0``, ``x ** 1``, identity reshape and transpose, slice of slice, slice
-  of stack, ``A.T @ v`` as ``v @ A`` (and ``v @ A.T`` as ``A @ v``), and folding of all-constant subgraphs.
+  Covers the shared arithmetic identities of ``passes/arith.py`` (neutral elements, zero
+  annihilation, ``x - x``, negation normalization, small constant powers), folding of all-constant
+  subgraphs, identity reshape, transpose and gather, slice of slice, slice of stack, ``A.T @ v`` as
+  ``v @ A`` (and ``v @ A.T`` as ``A @ v``), and a matmul with an all-ones vector as sums.
   """
   for _ in range(8):
     new = rewrite(expr, SIMPLIFY_PATTERNS)
@@ -99,6 +102,15 @@ def _constant_fold(e: Expr) -> Expr:
   if any(v is None for v in vals):
     return e
   args = [v for v in vals if v is not None]
+  try:
+    with np.errstate(divide="raise", invalid="raise", over="raise"):
+      out = _evaluate(e, args)
+  except FloatingPointError:
+    return e
+  return e if out is None else Expr.const(out, dtype=e.type.dtype, lowering=e.lowering)
+
+
+def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None:
   if e.op == ExprOp.RESHAPE:
     out = args[0].reshape(e.attrs["shape"])
   elif e.op == ExprOp.TRANSPOSE:
@@ -123,9 +135,9 @@ def _constant_fold(e: Expr) -> Expr:
   else:
     info = OP_INFO[ExprOp(e.op)]
     if info.numpy is None:
-      return e
+      return None
     out = info.numpy(*args)
-  return Expr.const(out, dtype=e.type.dtype, lowering=e.lowering)
+  return out
 
 
 def _const_value(e: Expr) -> np.ndarray | None:
@@ -142,34 +154,8 @@ def _is_one(e: Expr) -> bool:
   return value is not None and bool(np.all(value == 1))
 
 
-def _same_shape_as_result(arg: Expr, result: Expr) -> bool:
-  return arg.shape == result.shape
-
-
-def _add_identity(e: Expr) -> Expr:
-  x, y = e.args
-  if x is y:
-    return Expr.const(2.0, lowering=e.lowering) * x
-  if _is_zero(y) and _same_shape_as_result(x, e):
-    return x
-  if _is_zero(x) and _same_shape_as_result(y, e):
-    return y
-  return e
-
-
-def _sub_identity(e: Expr) -> Expr:
-  x, y = e.args
-  if x is y:
-    return zeros_like(e)
-  if _is_zero(y) and _same_shape_as_result(x, e):
-    return x
-  if _is_zero(x) and _same_shape_as_result(y, e):
-    return -y
-  return e
-
-
-def _neg_of_neg(e: Expr) -> Expr:
-  return e.args[0].args[0]
+def _arith(e: Expr) -> Expr:
+  return fold(ARITH_EXPR, e)
 
 
 def _zero_unary(e: Expr) -> Expr:
@@ -178,35 +164,6 @@ def _zero_unary(e: Expr) -> Expr:
 
 def _all_args_zero(e: Expr) -> bool:
   return bool(e.args) and all(_is_zero(a) for a in e.args)
-
-
-def _mul_identity_or_zero(e: Expr) -> Expr:
-  x, y = e.args
-  if _is_zero(x) or _is_zero(y):
-    return zeros_like(e)
-  if _is_one(y) and _same_shape_as_result(x, e):
-    return x
-  if _is_one(x) and _same_shape_as_result(y, e):
-    return y
-  return e
-
-
-def _div_identity(e: Expr) -> Expr:
-  x, y = e.args
-  if x is y:
-    return Expr.const(np.ones(e.shape, dtype=np.float64), lowering=e.lowering)
-  if _is_one(y) and _same_shape_as_result(x, e):
-    return x
-  return e
-
-
-def _pow_identity(e: Expr) -> Expr:
-  base, exponent = e.args
-  if _is_zero(exponent):
-    return Expr.const(np.ones(e.shape, dtype=np.float64), lowering=e.lowering)
-  if _is_one(exponent) and _same_shape_as_result(base, e):
-    return base
-  return e
 
 
 def _reshape_identity(e: Expr) -> Expr:
@@ -296,20 +253,34 @@ def _matmul_transpose_fold(e: Expr) -> Expr:
   return matmul(b, a.args[0]) if len(b.shape) == 1 else matmul(b.args[0], a)
 
 
+def _matmul_ones_vector(e: Expr) -> bool:
+  a, b = e.args
+  return len(a.shape) == len(b.shape) == 1 and (_is_one(a) or _is_one(b))
+
+
+def _matmul_ones(e: Expr) -> Expr:
+  """``v @ 1 -> sum(v)``. The matrix forms wait for an axis reduction in the IR: as stacked row sums
+  they lower to one loop per row and lose the fused producer, which is slower in loop form."""
+  a, b = e.args
+  return (b if _is_one(a) else a).sum()
+
+
+def _gather_identity(e: Expr) -> bool:
+  indices = e.attrs["indices"]
+  return indices.size == e.args[0].size and bool(np.array_equal(indices.reshape(-1), np.arange(indices.size)))
+
+
 SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(None, _all_args_const, _constant_fold),
-  Pattern(ExprOp.ADD, lambda e: e.args[0] is e.args[1] or _is_zero(e.args[0]) or _is_zero(e.args[1]), _add_identity),
-  Pattern(ExprOp.SUB, lambda e: e.args[0] is e.args[1] or _is_zero(e.args[0]) or _is_zero(e.args[1]), _sub_identity),
-  Pattern(ExprOp.MUL, lambda e: _is_zero(e.args[0]) or _is_zero(e.args[1]) or _is_one(e.args[0]) or _is_one(e.args[1]), _mul_identity_or_zero),
-  Pattern(ExprOp.DIV, lambda e: e.args[0] is e.args[1] or _is_one(e.args[1]), _div_identity),
-  Pattern(ExprOp.POW, lambda e: _is_zero(e.args[1]) or _is_one(e.args[1]), _pow_identity),
-  Pattern(ExprOp.NEG, lambda e: e.args[0].op == ExprOp.NEG, _neg_of_neg),
+  *(Pattern(op, lambda e: not _all_args_const(e), _arith) for op in (ExprOp.ADD, ExprOp.SUB, ExprOp.MUL, ExprOp.DIV, ExprOp.NEG, ExprOp.POW)),
   Pattern(ExprOp.RESHAPE, lambda e: e.args[0].shape == e.shape, _reshape_identity),
   Pattern(ExprOp.TRANSPOSE, lambda e: e.attrs["axes"] == tuple(range(len(e.attrs["axes"]))), _transpose_identity),
   Pattern(ExprOp.MATMUL, lambda e: _is_zero(e.args[0]) or _is_zero(e.args[1]), _matmul_zero),
   Pattern(ExprOp.MATMUL, _matmul_of_transpose_and_vector, _matmul_transpose_fold),
+  Pattern(ExprOp.MATMUL, _matmul_ones_vector, _matmul_ones),
   Pattern(ExprOp.SUM, lambda e: _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.GATHER, lambda e: _is_zero(e.args[0]), _zero_unary),
+  Pattern(ExprOp.GATHER, _gather_identity, lambda e: e.args[0].reshape(e.shape)),
   Pattern(ExprOp.SCATTER, lambda e: _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.STACK, _all_args_zero, _zero_unary),
   Pattern(ExprOp.CONCAT, _all_args_zero, _zero_unary),

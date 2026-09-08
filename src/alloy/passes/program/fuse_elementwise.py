@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp
 from ._common import (
   _alias_sources,
   _call_arg_buffer,
   _map_procs,
+  _postorder,
   _private_decls,
   _proc_parts,
   _rebuild_proc,
   _size_of,
   _stmt_refs,
-  _transform,
   _walk,
+  rebuild_program,
 )
 
 _EXPENSIVE_OPS: frozenset[ProgramOp] = frozenset(
@@ -71,13 +73,8 @@ def _as_inline_producer(stmt: ProgramNode) -> tuple[str, str, ProgramNode] | Non
 
 def _subst_var(node: ProgramNode, vname: str, repl: ProgramNode) -> ProgramNode:
   """Substitute every ``VAR(vname)`` in ``node`` with ``repl`` (the consumer's index expr)."""
-
-  def fn(n: ProgramNode) -> ProgramNode:
-    if n.op == ProgramOp.VAR and n.attrs["name"] == vname:
-      return repl
-    return n
-
-  return _transform(node, fn)
+  pattern = Pattern(ProgramOp.VAR, lambda n: n.attrs["name"] == vname, lambda n: repl)
+  return rewrite(node, [pattern], rebuild=rebuild_program, fixpoint=False)
 
 
 def _has_expensive(node: ProgramNode) -> bool:
@@ -102,55 +99,42 @@ def _max_load_executions(node: ProgramNode, buf: str, factor: int) -> int | None
   re-reads elements — fine for the elementwise/reduction case (``T == producer_size``), fatal
   for a matmul/contraction (``T == m*n*k ≫ producer_size``). Returns None if any enclosing loop
   has a non-static bound (treat as unbounded — don't inline)."""
-  if node.op == ProgramOp.FOR:
-    rng = node.args[0]
-    tc = _trip_count(rng)
-    if tc is None:
-      return None
-    best = 0
-    for sub in node.args[1:]:
-      r = _max_load_executions(sub, buf, factor * tc)
-      if r is None:
+  best = 0
+  stack = [(node, factor)]
+  while stack:
+    n, factor = stack.pop()
+    if n.op == ProgramOp.FOR:
+      tc = _trip_count(n.args[0])
+      if tc is None:
         return None
-      best = max(best, r)
-    return best
-  best = factor if node.op == ProgramOp.LOAD and node.args[0].attrs["buffer"] == buf else 0
-  for sub in node.args:
-    r = _max_load_executions(sub, buf, factor)
-    if r is None:
-      return None
-    best = max(best, r)
+      stack.extend((sub, factor * tc) for sub in n.args[1:])
+      continue
+    if n.op == ProgramOp.LOAD and n.args[0].attrs["buffer"] == buf:
+      best = max(best, factor)
+    stack.extend((sub, factor) for sub in n.args)
   return best
 
 
 def _count_buf_loads(node: ProgramNode, buf: str) -> int:
   """Textual occurrences of a load of ``buf`` in ``node`` (tree multiplicity: ``buf*buf`` is 2)."""
-  memo: dict[int, int] = {}
-
-  def cnt(n: ProgramNode) -> int:
-    if id(n) in memo:
-      return memo[id(n)]
-    base = 1 if n.op == ProgramOp.LOAD and n.args[0].attrs["buffer"] == buf else 0
-    memo[id(n)] = base + sum(cnt(a) for a in n.args)
-    return memo[id(n)]
-
-  return cnt(node)
+  count: dict[int, int] = {}
+  for n in _postorder(node):
+    count[id(n)] = (n.op == ProgramOp.LOAD and n.args[0].attrs["buffer"] == buf) + sum(count[id(a)] for a in n.args)
+  return count[id(node)]
 
 
 def _expand_inlinables(node: ProgramNode, inlinable: dict[str, tuple[str, ProgramNode]]) -> ProgramNode:
-  """Replace each ``LOAD(VIEW(buf,[E]))`` with the producer RHS at ``E``, recursively, so a whole
-  chain of single-use producers collapses into one fused expression in a single bottom-up pass."""
+  """Replace each ``LOAD(VIEW(buf,[E]))`` with the producer RHS at ``E``; the driver revisits each
+  replacement, so a whole chain of single-use producers collapses in one bottom-up pass."""
 
-  def fn(n: ProgramNode) -> ProgramNode:
-    if n.op == ProgramOp.LOAD:
-      view = n.args[0]
-      buf = view.attrs["buffer"]
-      if buf in inlinable and len(view.args) == 1:
-        v, rhs = inlinable[buf]
-        return _expand_inlinables(_subst_var(rhs, v, view.args[0]), inlinable)
-    return n
+  def inlinable_load(n: ProgramNode) -> bool:
+    return n.args[0].attrs["buffer"] in inlinable and len(n.args[0].args) == 1
 
-  return _transform(node, fn)
+  def expand(n: ProgramNode) -> ProgramNode:
+    v, rhs = inlinable[n.args[0].attrs["buffer"]]
+    return _subst_var(rhs, v, n.args[0].args[0])
+
+  return rewrite(node, [Pattern(ProgramOp.LOAD, inlinable_load, expand)], rebuild=rebuild_program, fixpoint=False, revisit=True)
 
 
 def fuse_elementwise(prog: ProgramNode) -> ProgramNode:
