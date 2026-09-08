@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, OP_INFO, _attrs_key, stack, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, OP_INFO, _attrs_key, matmul, stack, topo, zeros_like
 from ..ir.match import Pattern, _replace_args, rewrite
 
 
@@ -18,7 +18,7 @@ def simplify(expr: Expr) -> Expr:
   """Apply algebraic identities and constant folding until the graph stops changing.
 
   Covers ``x + 0``, ``x * 1``, ``x * 0``, ``x ** 0``, ``x ** 1``, identity reshape and transpose, slice of slice, slice
-  of stack, and folding of all-constant subgraphs.
+  of stack, ``A.T @ v`` as ``v @ A`` (and ``v @ A.T`` as ``A @ v``), and folding of all-constant subgraphs.
   """
   for _ in range(8):
     new = rewrite(expr, SIMPLIFY_PATTERNS)
@@ -281,6 +281,21 @@ def _slice_of_stack(e: Expr) -> Expr:
   return stack(new_args, axis=new_axis)
 
 
+def _is_matrix_transpose(e: Expr) -> bool:
+  return e.op == ExprOp.TRANSPOSE and len(e.shape) == 2 and e.attrs["axes"] == (1, 0)
+
+
+def _matmul_of_transpose_and_vector(e: Expr) -> bool:
+  a, b = e.args
+  return (len(b.shape) == 1 and _is_matrix_transpose(a)) or (len(a.shape) == 1 and _is_matrix_transpose(b))
+
+
+def _matmul_transpose_fold(e: Expr) -> Expr:
+  """``A.T @ v -> v @ A`` and ``v @ A.T -> A @ v``: the same product with no transpose materialized."""
+  a, b = e.args
+  return matmul(b, a.args[0]) if len(b.shape) == 1 else matmul(b.args[0], a)
+
+
 SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(None, _all_args_const, _constant_fold),
   Pattern(ExprOp.ADD, lambda e: e.args[0] is e.args[1] or _is_zero(e.args[0]) or _is_zero(e.args[1]), _add_identity),
@@ -292,6 +307,7 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(ExprOp.RESHAPE, lambda e: e.args[0].shape == e.shape, _reshape_identity),
   Pattern(ExprOp.TRANSPOSE, lambda e: e.attrs["axes"] == tuple(range(len(e.attrs["axes"]))), _transpose_identity),
   Pattern(ExprOp.MATMUL, lambda e: _is_zero(e.args[0]) or _is_zero(e.args[1]), _matmul_zero),
+  Pattern(ExprOp.MATMUL, _matmul_of_transpose_and_vector, _matmul_transpose_fold),
   Pattern(ExprOp.SUM, lambda e: _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.GATHER, lambda e: _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.SCATTER, lambda e: _is_zero(e.args[0]), _zero_unary),

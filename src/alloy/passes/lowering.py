@@ -502,6 +502,20 @@ def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
   ctx.statements.append(stmt)
 
 
+def _nest(ranges: list[ProgramNode], body: list[ProgramNode]) -> list[ProgramNode]:
+  for rng in reversed(ranges):
+    body = [p.for_(rng, body)]
+  return body
+
+
+def _mm_init(out: ProgramNode, idx: ProgramNode, dtype: DType) -> ProgramNode:
+  return p.store(p.view(out, [idx]), p.const_float(0.0, dtype=dtype))
+
+
+def _mm_accum(out: ProgramNode, idx: ProgramNode, a_load: ProgramNode, b_load: ProgramNode) -> ProgramNode:
+  return p.store(p.view(out, [idx]), p.add(p.load(p.view(out, [idx])), p.mul(a_load, b_load)))
+
+
 def _mm_accumulate(
   ctx: LowerCtx,
   out: ProgramNode,
@@ -512,17 +526,15 @@ def _mm_accumulate(
   outer: list[ProgramNode],
   k_rng: ProgramNode,
 ) -> None:
-  """Common matmul shape: zero out[out_idx], then a REDUCE-k loop adds a*b, nested in ``outer`` loops."""
-  init = p.store(p.view(out, [out_idx]), p.const_float(0.0, dtype=dtype))
-  accum = p.store(p.view(out, [out_idx]), p.add(p.load(p.view(out, [out_idx])), p.mul(a_load, b_load)))
-  body = [init, p.for_(k_rng, [accum])]
-  if not outer:
-    ctx.statements.extend(body)
-    return
-  stmt = p.for_(outer[-1], body)
-  for rng in reversed(outer[:-1]):
-    stmt = p.for_(rng, [stmt])
-  ctx.statements.append(stmt)
+  """Zero ``out[out_idx]`` over the ``outer`` loops, then accumulate ``a*b`` with the REDUCE-k loop outermost.
+
+  A dot product per output is a serial add chain the C compiler cannot break without reassociation. With
+  k outermost the inner loop runs over independent outputs and vectorizes, and each output still sums its
+  terms in the same order, so the result is bit-identical to the dot form. Use it when the reduction axis
+  is the matrix's slow axis; a contiguous reduction axis would make the compiler gather under -march=native.
+  """
+  ctx.statements.extend(_nest(outer, [_mm_init(out, out_idx, dtype)]))
+  ctx.statements.extend(_nest([k_rng, *outer], [_mm_accum(out, out_idx, a_load, b_load)]))
 
 
 @lowers(ExprOp.MATMUL)
@@ -536,14 +548,26 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
     k = p.var(f"k_{nm}")
     krng = p.range_(f"k_{nm}", 0, sa[0], kind=RangeKind.REDUCE)
     _mm_accumulate(ctx, out, p.const_int(0), p.load(p.view(a_buf, [k])), p.load(p.view(b_buf, [k])), dt, [], krng)
-  elif len(sa) == 2 and len(sb) == 1:  # mat @ vec
+  elif len(sa) == 2 and len(sb) == 1:  # mat @ vec: the reduction axis is contiguous in ``a``
     m, kk = sa
     i = p.var(f"i_{nm}")
     irng = p.range_(f"i_{nm}", 0, m, kind=RangeKind.GLOBAL)
     k = p.var(f"k_{nm}")
     krng = p.range_(f"k_{nm}", 0, kk, kind=RangeKind.REDUCE)
-    a_idx = p.add(p.mul(i, p.const_int(kk)), k)
-    _mm_accumulate(ctx, out, i, p.load(p.view(a_buf, [a_idx])), p.load(p.view(b_buf, [k])), dt, [irng], krng)
+    row_dot = lambda row: _mm_accum(out, row, p.load(p.view(a_buf, [p.add(p.mul(row, p.const_int(kk)), k)])), p.load(p.view(b_buf, [k])))
+    ctx.statements.extend(_nest([irng], [_mm_init(out, i, dt)]))
+    # Four output rows per pass as four unrolled statements, so the compiler keeps four independent
+    # accumulators; a four-trip inner loop over the rows becomes gathers under -march=native.
+    blocks, tail = divmod(m, 4)
+    if blocks:
+      ib = p.var(f"ib_{nm}")
+      ibrng = p.range_(f"ib_{nm}", 0, blocks, kind=RangeKind.GLOBAL)
+      rows = [p.add(p.mul(ib, p.const_int(4)), p.const_int(r)) for r in range(4)]
+      ctx.statements.extend(_nest([ibrng, krng], [row_dot(row) for row in rows]))
+    if tail:
+      it = p.var(f"it_{nm}")
+      itrng = p.range_(f"it_{nm}", 4 * blocks, m, kind=RangeKind.GLOBAL)
+      ctx.statements.extend(_nest([itrng, krng], [row_dot(it)]))
   elif len(sa) == 1 and len(sb) == 2:  # vec @ mat
     kk, n = sb
     j = p.var(f"j_{nm}")

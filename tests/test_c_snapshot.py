@@ -11,7 +11,7 @@ signature that goes in with it.
 Take a fresh snapshot before starting a refactor and leave it alone until the work lands:
 regenerating a baseline mid-flight is the defect, not the fix, because it is the one thing that can
 turn a real behavior change green. After a *deliberate* codegen change, regenerate in the same diff
-and review what moved: ``uv run python tests/test_c_snapshot.py``.
+and review what moved: ``uv run python -m tests.test_c_snapshot``.
 """
 
 from __future__ import annotations

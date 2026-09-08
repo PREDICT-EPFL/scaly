@@ -19,6 +19,7 @@ from alloy.codegen.aot import render_c_source
 from alloy.codegen.c import can_render_program_c, render_program_c_source
 from alloy.codegen.jit import _find_compiler
 from alloy.passes.lowering import LoweringError, lower_function, main_proc
+from alloy.ir.expr import topo
 from alloy.ir.program import ProgramOp
 from alloy.ir.program_spec import verify_program
 
@@ -337,6 +338,48 @@ def test_program_ir_jit_executes(builder, inputs) -> None:
   got = np.asarray(fn(fn.input_tree.unflatten(tuple(inputs)))).reshape(-1)
   assert got.size == fn.outputs[0].size
   assert np.all(np.isfinite(got))
+
+
+# One entry per matmul loop shape: the serial dot, a blocked mat@vec (two four-row blocks, a block plus
+# a tail of rows, a tail only), the reduction-outermost vec@mat and mat@mat, and the two transpose folds.
+_MATMUL_CASES = {
+  "dot": ((5,), (5,), lambda a, b: a @ b),
+  "matvec_two_blocks": ((8, 5), (5,), lambda a, b: a @ b),
+  "matvec_block_and_tail": ((6, 5), (5,), lambda a, b: a @ b),
+  "matvec_tail_only": ((3, 5), (5,), lambda a, b: a @ b),
+  "vecmat": ((6,), (6, 5), lambda a, b: a @ b),
+  "matmat": ((6, 5), (5, 7), lambda a, b: a @ b),
+  "transposed_mat_vec": ((5, 6), (5,), lambda a, b: a.T @ b),
+  "vec_transposed_mat": ((6,), (5, 6), lambda a, b: a @ b.T),
+}
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
+@pytest.mark.parametrize("name", _MATMUL_CASES)
+def test_matmul_lowering_matches_numpy_exactly(name) -> None:
+  """Integer-valued inputs keep every product and partial sum exact, so the check is exact in any summation order."""
+  sa, sb, product = _MATMUL_CASES[name]
+  a, b = al.sym("a", sa), al.sym("b", sb)
+  fn = al.Function._from_exprs(f"mm_{name}", [a, b], [al.simplify(product(a, b))], ["a", "b"], ["y"])
+  assert all(e.op != al.ExprOp.TRANSPOSE for e in topo(fn.outputs)), "the transpose was not folded into the product"
+  rng = np.random.default_rng(0)
+  av, bv = (rng.integers(-8, 9, shape).astype(np.float64) for shape in (sa, sb))
+  fn.recompile()
+  np.testing.assert_array_equal(fn((av, bv)), product(av, bv))
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
+def test_transpose_fold_is_bit_identical_to_the_transposed_product() -> None:
+  """Both forms sum each output's terms in the same k order, so folding the transpose changes no bit."""
+  a, v, w = al.sym("a", (32, 12)), al.sym("v", 32), al.sym("w", 12)
+  rng = np.random.default_rng(1)
+  av, vv, wv = rng.standard_normal((32, 12)), rng.standard_normal(32), rng.standard_normal(12)
+  for tag, x, xv, product in (("v", v, vv, lambda m, x: m.T @ x), ("w", w, wv, lambda m, x: x @ m.T)):
+    transposed = al.Function._from_exprs(f"mm_transposed_{tag}", [a, x], [product(a, x)], ["a", tag], ["y"])
+    folded = al.Function._from_exprs(f"mm_folded_{tag}", [a, x], [al.simplify(product(a, x))], ["a", tag], ["y"])
+    for fn in (transposed, folded):
+      fn.recompile()
+    np.testing.assert_array_equal(folded((av, xv)), transposed((av, xv)))
 
 
 def test_lowered_program_verifies_and_has_single_proc() -> None:

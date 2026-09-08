@@ -48,8 +48,13 @@ int wide(const double** arg, double** res, int* iw, double* w, void* mem) {
   }
   for (long long i_t2 = 0; i_t2 < 40; ++i_t2) {
     s1[i_t2] = 0;
+  }
+  for (long long ib_t2 = 0; ib_t2 < 10; ++ib_t2) {
     for (long long k_t2 = 0; k_t2 < 40; ++k_t2) {
-      s1[i_t2] = (s1[i_t2] + (k0[((i_t2 * 40) + k_t2)] * arg[0][k_t2]));
+      s1[((ib_t2 * 4) + 0)] = (s1[((ib_t2 * 4) + 0)] + (k0[((((ib_t2 * 4) + 0) * 40) + k_t2)] * arg[0][k_t2]));
+      s1[((ib_t2 * 4) + 1)] = (s1[((ib_t2 * 4) + 1)] + (k0[((((ib_t2 * 4) + 1) * 40) + k_t2)] * arg[0][k_t2]));
+      s1[((ib_t2 * 4) + 2)] = (s1[((ib_t2 * 4) + 2)] + (k0[((((ib_t2 * 4) + 2) * 40) + k_t2)] * arg[0][k_t2]));
+      s1[((ib_t2 * 4) + 3)] = (s1[((ib_t2 * 4) + 3)] + (k0[((((ib_t2 * 4) + 3) * 40) + k_t2)] * arg[0][k_t2]));
     }
   }
   for (long long i_t8 = 0; i_t8 < 40; ++i_t8) {
@@ -63,8 +68,13 @@ int wide(const double** arg, double** res, int* iw, double* w, void* mem) {
   }
   for (long long i_z = 0; i_z < 40; ++i_z) {
     res[0][i_z] = 0;
+  }
+  for (long long ib_z = 0; ib_z < 10; ++ib_z) {
     for (long long k_z = 0; k_z < 40; ++k_z) {
-      res[0][i_z] = (res[0][i_z] + (s0[((i_z * 40) + k_z)] * s3[k_z]));
+      res[0][((ib_z * 4) + 0)] = (res[0][((ib_z * 4) + 0)] + (s0[((((ib_z * 4) + 0) * 40) + k_z)] * s3[k_z]));
+      res[0][((ib_z * 4) + 1)] = (res[0][((ib_z * 4) + 1)] + (s0[((((ib_z * 4) + 1) * 40) + k_z)] * s3[k_z]));
+      res[0][((ib_z * 4) + 2)] = (res[0][((ib_z * 4) + 2)] + (s0[((((ib_z * 4) + 2) * 40) + k_z)] * s3[k_z]));
+      res[0][((ib_z * 4) + 3)] = (res[0][((ib_z * 4) + 3)] + (s0[((((ib_z * 4) + 3) * 40) + k_z)] * s3[k_z]));
     }
   }
   for (long long z_tail = 0; z_tail < 4; ++z_tail) {

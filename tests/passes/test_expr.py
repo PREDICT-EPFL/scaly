@@ -62,3 +62,16 @@ def test_simplify_constant_folds_erf() -> None:
   assert folded.value is not None
   assert folded.value.dtype == np.float64
   np.testing.assert_allclose(folded.value, [math.erf(float(x)) for x in values], rtol=1e-15, atol=1e-15)
+
+
+def test_simplify_folds_matrix_transpose_into_matmul() -> None:
+  A, B, v, w = al.sym("A", (3, 4)), al.sym("B", (3, 5)), al.sym("v", 3), al.sym("w", 4)
+
+  folded = al.simplify(A.T @ v)
+  assert folded.op == al.ExprOp.MATMUL and folded.args[0] is v and folded.args[1] is A
+  folded = al.simplify(w @ A.T)
+  assert folded.op == al.ExprOp.MATMUL and folded.args[0] is A and folded.args[1] is w
+
+  # Only a matrix-vector product loses its transpose; mat @ mat keeps it.
+  kept = al.simplify(A.T @ B)
+  assert kept.args[0].op == al.ExprOp.TRANSPOSE and kept.args[0].args[0] is A
