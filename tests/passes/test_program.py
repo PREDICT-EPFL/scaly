@@ -364,3 +364,23 @@ def test_scatter_sum_preserves_addition_grouping(left_associated: bool) -> None:
   a, b, c = (scatter(x[i : i + 1], [1], 4) for i in range(3))
   f = al.Function._from_exprs("grouped_scatter", [x], [(a + b) + c if left_associated else a + (b + c)], ["x"], ["sum"])
   np.testing.assert_array_equal(f(np.array([1e16, -1e16, 1.0])), [0, 1 if left_associated else 0, 0, 0])
+
+
+def test_scatter_sum_combines_reshaped_scatters() -> None:
+  """The chain Hessian sums flat scatters through a reshape: same size, different declared shape."""
+  from alloy.ir.expr import scatter
+
+  x = al.sym("x", 3)
+  index_sets = [[0, 3, 6], [1, 4, 7], [2, 5, 6], [0, 1, 2]]
+  terms = [scatter((i + 1) * x, idx, 8).reshape((2, 4)) for i, idx in enumerate(index_sets)]
+  f = al.Function._from_exprs("reshaped_scatter_sum", [x], [sum(terms[1:], start=terms[0])], ["x"], ["sum"])
+  _, _, loops = _classify(_main_body(f))
+  zero_fills = [
+    loop for loop in loops if len(loop.args) == 2 and loop.args[1].op == ProgramOp.STORE and loop.args[1].args[1].op == ProgramOp.CONST_FLOAT
+  ]
+  assert len(zero_fills) == 1
+  data = np.array([-1.5, 2.0, 0.25])
+  expected = np.zeros(8)
+  for i, idx in enumerate(index_sets):
+    expected[idx] += (i + 1) * data
+  np.testing.assert_allclose(f(data), expected.reshape(2, 4))

@@ -76,7 +76,10 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
     while pending:
       buf, consumer = pending.pop()
       if buf != root and (
-        buf not in private or buf in pinned or reads.get(buf) != {consumer} or decls[buf].attrs["shape"] != decls[root].attrs["shape"]
+        buf not in private
+        or buf in pinned
+        or reads.get(buf) != {consumer}
+        or _size_of(decls[buf].attrs["shape"]) != _size_of(decls[root].attrs["shape"])
       ):
         valid = False
         break

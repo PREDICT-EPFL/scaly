@@ -181,10 +181,15 @@ protocol's compile flags.
       formal. A program-dialect hoist of loop-invariant statements, and one callee for all formals of
       one VMAP, or one `W @ [v1 v2 v3]` product for batched seeds. With the row-major products then
       in column-sweep form, npmpc reaches 38.6 µs under `-march=native` by hand against MX's 41.9.
-- [ ] **C-47. One accumulation buffer for a sum of scatters.** Chain's entry point zero-fills 43
-      buffers of 23,544 doubles and scatters 576 values into each before summing them: 8 MB of memset
-      per call and the 1,075,248-double workspace. `scatter(a) + scatter(b) -> scatter_add` at the
-      expression level, or the fusion in C-8. Arithmetic identities such as `0 / x` belong to C-53.
+- [x] **C-47. One accumulation buffer for a sum of scatters.** Chain's entry point zero-filled 43
+      buffers of 23,544 doubles and scattered 576 values into each before summing them: 8 MB of memset
+      per call and the 1,075,248-double workspace. `passes/program/combine_scatter_sums.py` already
+      accumulated such sums into one buffer but required every operand to have the sum's declared
+      shape, and chain's scatters are flat `(23544,)` buffers read through a `(24, 981)` reshape.
+      Comparing element counts instead (2026-09-09) lets the pass fire: chain M=5 Hessian workspace
+      1,075,248 -> 109,944 doubles and 850 -> 230 µs; M=3 266,616 -> 26,028 and 162 -> 46 µs, single
+      cells from the harness with `--repetitions 1`. `test_scatter_sum_combines_reshaped_scatters`
+      pins the zero-fill count. Arithmetic identities such as `0 / x` belong to C-53.
 - [ ] **C-49. Audit the AD rules for operation count, starting from the measured chain split.**
       Lean division rules, `(dx - f dy) / y` forward and `q = cot / y; adj_y = -q f` reverse with `f`
       the primal quotient, took race-car N=50 from 31.4 to 28.0 µs and chain M=5 from 2458 to 2277
