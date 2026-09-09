@@ -95,7 +95,18 @@ def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
   )
 
   assert _dispatch_metrics(unit, render_c_module(unit).program) == (1, 0, 1)
-  assert _dispatch_metrics(mixed, render_c_module(mixed).program) == ("", "", "")
+  # Mixed trip counts report the family whose trip count times per-iteration work is largest:
+  # three squares beat two, and two iterations of four operations beat three of one.
+  assert _dispatch_metrics(mixed, render_c_module(mixed).program) == (3, 0, 1)
+  heavy = al.Function._from_exprs("metric_heavy_stage", [x], [((x * x + x) * x).sin()], ["x"], ["y"])
+  weighted = al.Function._from_exprs(
+    "metric_weighted_vmap",
+    [z],
+    [al.concat([al.vmap(heavy, 2, [(z, 0, 1)]), al.vmap(stage, 3, [(z, 2, 1)])])],
+    ["z"],
+    ["y"],
+  )
+  assert _dispatch_metrics(weighted, render_c_module(weighted).program) == (2, 0, 4)
 
 
 def test_sweep_csv_has_dispatch_and_artifact_fields() -> None:

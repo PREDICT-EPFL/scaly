@@ -185,10 +185,16 @@ def _static_trip_count(rng: ProgramNode) -> int | None:
 
 
 def _dispatch_metrics(fun: al.Function, prog: ProgramNode) -> tuple[int | str, int | str, int | str]:
-  """Return the retained VMAP trip count, callee workspace, and arithmetic per iteration."""
+  """Return the retained VMAP trip count, callee workspace, and arithmetic per iteration.
+
+  A function mapped over several axes (race-car stages ``N`` and ``N+1``, unbumpercars cars and
+  pairs) groups its dispatch loops by trip count and reports the family whose trip count times
+  per-iteration arithmetic is largest; the arithmetic column is that family's per-iteration figure
+  and the workspace is the maximum over every dispatch.
+  """
   vmaps = [node for node in topo(fun.outputs) if node.op == ExprOp.VMAP]
   trip_counts = {int(node.attrs["length"]) for node in vmaps}
-  if not vmaps or len(trip_counts) != 1:
+  if not vmaps:
     return "", "", ""
   mapped_callees = {str(node.attrs["callee"].name) for node in vmaps}
   proc_count = int(prog.attrs.get("proc_count", 0))
@@ -245,26 +251,25 @@ def _dispatch_metrics(fun: al.Function, prog: ProgramNode) -> tuple[int | str, i
       workspace_cache[name] = own + max((proc_workspace(callee) for callee in callees), default=0)
     return workspace_cache[name]
 
-  trip_count = trip_counts.pop()
-  dispatches: list[ProgramNode] = []
+  dispatches: dict[int, list[str]] = {}
   root = procs[fun.name]
   for stmt in root.args[int(root.attrs["param_count"]) :]:
-    call = None
+    call, count = None, 1
     if stmt.op == ProgramOp.FOR and len(stmt.args) == 2 and stmt.args[1].op == ProgramOp.CALL:
-      if _static_trip_count(stmt.args[0]) == trip_count:
-        call = stmt.args[1]
-    elif trip_count == 1 and stmt.op == ProgramOp.CALL:
+      call, count = stmt.args[1], _static_trip_count(stmt.args[0])
+    elif stmt.op == ProgramOp.CALL:
       call = stmt
-    if call is not None and str(call.attrs["callee"]) in mapped_callees:
-      dispatches.append(call)
+    if call is not None and count in trip_counts and str(call.attrs["callee"]) in mapped_callees:
+      dispatches.setdefault(count, []).append(str(call.attrs["callee"]))
   if not dispatches:
     return "", "", ""
   try:
-    workspace = max(proc_workspace(str(call.attrs["callee"])) for call in dispatches)
-    work = sum(proc_arithmetic(str(call.attrs["callee"])) for call in dispatches)
+    work = {count: sum(proc_arithmetic(callee) for callee in callees) for count, callees in dispatches.items()}
+    workspace = max(proc_workspace(callee) for callees in dispatches.values() for callee in callees)
   except LookupError:
     return "", "", ""
-  return trip_count, workspace, work
+  trip_count = max(work, key=lambda count: count * work[count])
+  return trip_count, workspace, work[trip_count]
 
 
 def _module_info(

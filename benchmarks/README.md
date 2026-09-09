@@ -155,11 +155,14 @@ backends. For Alloy, it is the number of compressed tangent directions the gener
 derivative actually executes. A structured Jacobian sums the independently executed directions from
 each formal or local batch; a sparse Hessian reports the global star-color count. CasADi leaves the
 field blank because its generated code does not expose its internal derivative count. Alloy rows
-whose maps share one trip count report that count, the maximum floating-point scratch across the
-mapped callees, and the sum of their floating-point Program IR operations per iteration. Scratch
-includes both stack slots and `w[]` slots. The dispatch fields are empty for kernels without a map
-and for kernels whose maps have different trip counts. CasADi does not expose the derivative
-function inside its generated map as a stable inspection boundary, so its dispatch fields are empty.
+group the mapped dispatch loops by trip count and report the family whose trip count times
+per-iteration arithmetic is largest: `dispatch_trip_count` is that family's trip count and
+`dispatch_arithmetic` is the sum of its callees' floating-point Program IR operations per iteration.
+Other families are not reported (the unbumpercars pair rows, for example, lose to the per-car
+network step). `dispatch_workspace` is the maximum floating-point scratch across every mapped
+callee, stack slots and `w[]` slots included. The dispatch fields are empty for kernels without a
+map. CasADi does not expose the derivative function inside its generated map as a stable inspection
+boundary, so its dispatch fields are empty.
 
 All benchmark artifacts follow the same command-first layout:
 

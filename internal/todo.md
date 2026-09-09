@@ -303,11 +303,13 @@ protocol's compile flags.
 
 ### Now
 
-- [ ] **BH-19. Harness gaps.** `dispatch_trip_count`, `dispatch_workspace` and `dispatch_arithmetic`
-      are empty for the race_cars and unbumpercars Alloy cells and filled only for npmpc and chain,
-      so Table 2 cannot be built from the CSV yet. Gate 4's causal claim needs a same-protocol
-      pre-port control: either measure the unrolled pair rows behind a flag or drop the causal
-      wording and keep the descriptive one.
+- [x] **BH-19. Harness gaps.** `dispatch_trip_count`, `dispatch_workspace` and `dispatch_arithmetic`
+      were empty for the race_cars and unbumpercars Alloy cells because `_dispatch_metrics` gave up
+      on any kernel mapped over two axes (`N` and `N+1` stages; cars and pairs). It now reports the
+      dispatch-loop family carrying the most arithmetic per call and the workspace over every
+      dispatch, so all four problems fill the columns. The unrolled pair rows no longer exist in
+      `filters.py` (removed by the pair-row port); we chose not to recover them from history for a
+      same-protocol control, and gate 4 in `paper.md` now keeps only its descriptive wording.
 - [ ] **BH-20. Rerun the study** after C-8 to C-10 and BP-23. `uv run benchmarks/run.py study
       --out-dir benchmarks/results/followup/<date>`, then paste `report.md` into the results pages
       and re-decide every gate in paper.md §8. The npmpc and unbumpercars range wins are
