@@ -35,7 +35,6 @@ int wide(const double** arg, double** res, int* iw, double* w, void* mem) {
   double s2[40];
   double s3[40];
   const double* t51 = res[0];
-  static const int64_t k52[4] = {3, 1, 2, 0};
   for (long long d0_t1 = 0; d0_t1 < 40; ++d0_t1) {
     for (long long d1_t1 = 0; d1_t1 < 40; ++d1_t1) {
       s0[((d0_t1 * 40) + d1_t1)] = k0[(d0_t1 + (d1_t1 * 40))];
@@ -76,7 +75,7 @@ int wide(const double** arg, double** res, int* iw, double* w, void* mem) {
     res[1][z_tail] = 0.0;
   }
   for (long long i_tail = 0; i_tail < 4; ++i_tail) {
-    res[1][k52[i_tail]] = t51[i_tail];
+    res[1][((3 + ((i_tail / 2) * 3)) + (i_tail * -2))] = t51[i_tail];
   }
   return ALLOY_SUCCESS;
 }

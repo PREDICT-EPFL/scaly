@@ -12,7 +12,8 @@ later, a GPU schedule) is a local change — a new rule, not an edit to a monoli
 Covered: elementwise unary/binary (with numpy broadcasting), ``RESHAPE`` (alias),
 ``CONST`` (any size, via ``const_buffer``), general ``SLICE`` (integer / multi-dim /
 strided), ``SUM``, ``MATMUL`` (rank <= 2), ``TRANSPOSE`` (rank <= 4), ``GATHER`` /
-``SCATTER`` (any size, ``static const`` index table), ``STACK`` / ``CONCAT`` (any axis),
+``SCATTER`` (any size, affine indices as arithmetic on the trip index and
+whatever is left as a ``static const`` table), ``STACK`` / ``CONCAT`` (any axis),
 ``CALL`` (multi-PROC, deduped) and ``VMAP``; a ``solver Function`` ``CALL`` is opaque
 (see ``lower_function``). The tracking and unbumpercars workloads (forward + ``jac`` +
 ``spjac``) render and match generated-code / external numeric references. Deferred (re-land from the reference branch):
@@ -23,6 +24,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
+import numpy as np
+
 from ..ir import program as p
 from ..ir.expr import Expr, ExprOp, topo
 from ..function import Function
@@ -30,6 +33,7 @@ from .program import ProgramObserver, optimize_program
 from ..ir.program import ProgramNode, ProgramOp, RangeKind
 from ..ir.program_spec import verify_program
 from ..ir.types import DeviceSpec, DType, dtypes
+from .affine import affine_index_map
 
 
 class LoweringError(NotImplementedError):
@@ -301,6 +305,44 @@ class LowerCtx:
     self.buffers[buf.attrs["name"]] = buf
     self.statements.append(buf)
     return buf
+
+  def index_at(self, idx: np.ndarray, k: ProgramNode) -> ProgramNode:
+    """The GATHER source (or SCATTER destination) for element ``k``, as arithmetic where it can be.
+
+    Every range whose contribution is affine becomes a term over ``k``; only the non-affine
+    residual is materialized, and a residual of one element is a constant, so a fully affine index
+    emits no table at all. An index with no affine structure keeps the whole table, indexed by
+    ``k``, which is what every gather used to emit. An empty index is any constant: its loop runs
+    zero times."""
+    if idx.size == 0:
+      return p.const_int(0)
+    amap = affine_index_map(idx)
+    period = len(amap.residual)
+    out: ProgramNode | None = None
+    if period > 1:
+      table = self.new_const_index(amap.residual)
+      out = p.load(p.view(table, [k if period == idx.size else p.mod(k, p.const_int(period))]))
+    elif int(amap.residual[0]) or not amap.dims:
+      out = p.const_int(int(amap.residual[0]))
+    strides: list[int] = []
+    stride = period
+    for dim in reversed(amap.dims):
+      strides.append(stride)
+      stride *= dim
+    strides.reverse()
+    # Level ``i``'s coordinate is ``(k // strides[i]) % dims[i]``, and the modulo is what makes it a
+    # second division. Because ``k // strides[i] // dims[i] == k // strides[i - 1]``, the coordinates
+    # telescope: the whole sum is a combination of the plain quotients ``q_i = k // strides[i]`` with
+    # coefficients ``c_i - c_(i+1) * dims[i+1]``. So no level needs a modulo, and the innermost
+    # quotient is ``k`` itself whenever the residual has one element.
+    inner = (*(c * d for c, d in zip(amap.coeffs[1:], amap.dims[1:])), 0)
+    for coeff, quotient_stride in zip((c - nxt for c, nxt in zip(amap.coeffs, inner)), strides):
+      if coeff == 0:
+        continue
+      quotient = k if quotient_stride == 1 else p.div(k, p.const_int(quotient_stride))
+      term = quotient if coeff == 1 else p.mul(quotient, p.const_int(coeff))
+      out = term if out is None else p.add(out, term)
+    return out if out is not None else p.const_int(0)
 
   def emit_elementwise(self, node: Expr, pop: ProgramOp, *, arity: int) -> None:
     out = self.alloc_tmp(node)
@@ -686,11 +728,10 @@ def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
   src = node.args[0]
   idx = node.attrs["indices"].reshape(-1)
   out = ctx.alloc_tmp(node)
-  idx_buf = ctx.new_const_index(idx)
   vname = f"i_{out.attrs['name']}"
   rng = p.range_(vname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
   k = p.var(vname)
-  src_idx = p.load(p.view(idx_buf, [k]))
+  src_idx = ctx.index_at(idx, k)
   ctx.statements.append(p.for_(rng, [p.store(p.view(out, [k]), p.load(p.view(ctx.buf_of(src), [src_idx])))]))
 
 
@@ -704,11 +745,10 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
   zrng = p.range_(zname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL)
   z = p.var(zname)
   ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), p.const_float(0.0, dtype=node.type.dtype))]))
-  idx_buf = ctx.new_const_index(idx)
   iname = f"i_{out.attrs['name']}"
   irng = p.range_(iname, 0, len(idx), kind=RangeKind.GLOBAL)
   i = p.var(iname)
-  dst = p.load(p.view(idx_buf, [i]))
+  dst = ctx.index_at(idx, i)
   ctx.statements.append(p.for_(irng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [i])))]))
 
 

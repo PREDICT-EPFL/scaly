@@ -48,6 +48,62 @@ preceded this one asked for the merge to land only if the code shrank; it did no
 by about 40 lines for the generic protocol, replacement revisiting, and the step bound), and the
 condition was superseded by this section's aim. `Spec` in `ir/spec.py` was left as is.
 
+# Affine index maps for gathers and scatters
+
+Landed 2026-09-09; kept because C-9 and C-56 link here for what was read and what was rejected.
+
+Todo C-9. The AD rules build `GATHER` and `SCATTER` index arrays whose contents are affine in the
+trip index, and `passes/lowering.py` emits each one as a `static const int64_t` table. On
+unbumpercars C=32 those tables are 53.9 of the 54.8 MB of generated source, twelve of them
+444,416 entries each, which is why the cell does not compile under the 50 MiB cap.
+
+What was read in tinygrad, and what was taken. `uop/divandmod.py` (109 lines) and the div/mod part
+of `uop/symbolic.py` are the affine folder the todo points at: gcd factoring, congruence folding
+(`rem.vmin // c == rem.vmax // c` means the mod is affine on this range), `nest_by_factor`, and the
+recombination `(x % c) + (x // c) * c -> x` that reverses reshape peeling. `codegen/simplify.py`
+adds `simplify_merge_adjacent` and `pm_split_ranges`, which trade one loop range for `hi * c + lo`
+and keep the result only when `count_divmod` did not increase.
+
+Almost none of it is needed here as a *pass*. tinygrad needs a folder because its indices arrive as
+already-built symbolic trees from reshape and permute, so the div/mod structure has to be recovered
+after the fact. Alloy's tables arrive as concrete integer arrays. Recognising the affine structure
+once, at lowering, and emitting the minimal expression is strictly cheaper than emitting `k` through
+a chain of views and folding it back. Rejected, therefore: the `UPat`/`PatternMatcher` port
+(`ir/match.py` already carries the one driver, and there is no tree to match), the div/mod folder as
+a rewrite over expressions, congruence folding under range bounds (the array's own bounds are
+exact), and the loop-merge/split pair, which is C-8's problem and needs a cost model Alloy does not
+have.
+
+The one rule that *is* needed is the recombination `(x % c) + (x // c) * c -> x`, and it is applied
+at emission rather than as a pass. A coordinate written literally as `(k // stride) % dim` costs two
+divisions, and emitting it that way cost race_cars about 5%. But `k // stride[i] // dims[i]` is
+`k // stride[i - 1]`, so the coordinates telescope: the index is a combination of the plain
+quotients `k // stride[i]` with coefficients `c[i] - c[i+1] * dims[i+1]`, and no level needs a
+modulo at all. That is exact integer algebra for a non-negative trip index, it is nine lines inside
+`index_at`, and it brings the runtime back to the table's. Only the residual table's own index
+`k % len(residual)` survives, and there is no quotient to fold it against.
+
+What was taken is the *shape* of the answer: an index is a base plus a sum of terms, one per range,
+each a coefficient times a coordinate of the trip index. So the representation is one
+`AffineIndexMap(dims, coeffs, residual)` in `passes/affine.py`, recovered from the array by greedy
+factoring: at each level pick the smallest inner block length `m` dividing the remaining length such
+that the reshaped rows differ by one constant offset, record `(d, delta)`, and recurse into the
+first row. Whatever is left when no divisor works stays a table, indexed by `k % m`. A `residual` of
+length one is the fully affine case and emits no table at all; `dims == ()` is the previous
+behaviour unchanged. One representation covers the strided window, the multi-level `start + it * stride + j`
+form, and the mixed case where an inner tile (`unique_j` in `ad/forward.py`) is genuinely arbitrary
+but small and stage-invariant.
+
+A size threshold was tried and reverted. Keeping tables below some length materialized protects a
+small hot gather, but it makes the emitted shape depend on N, which
+`test_vmap_sparse_hessian_c_source_is_constant_in_length` rejects and rightly so. With the
+recombination in place there is nothing to protect.
+
+The consequence is that no AD rule changes. `ad/forward.py` and `ad/reverse.py` keep building
+concrete index arrays, which stay easy to read and to test against NumPy, and the structure is
+recovered where it is needed. Views-as-index-expressions (C-8) is the case this does not cover,
+because there the index is not a materialized array to factor.
+
 # Open problems
 
 These remaining limitations have follow-up entries in `internal/todo.md`. Their implementation

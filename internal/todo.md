@@ -231,20 +231,51 @@ protocol's compile flags.
       Measured share of runtime today: 22% of race-car, 3% of npmpc, 26% of chain, so this is the
       workspace fix and the general form of the matmul fix; C-44 and C-45 are what narrow the
       race-car and chain ratios.
-- [ ] **C-9. Affine index maps instead of materialized tables.** The VMAP multi-seed forward rule in
-      `ad/forward.py` builds `gather` index arrays of size `nseed × length × slice` (`flat_idx`,
-      `tile_indices`), and the reverse rule in `ad/reverse.py` builds per-iteration index lists; the
-      renderer emits each as a `static const int64_t` table. Their contents are affine in the trip
-      index (`start + it * stride + j`), and the coloring seed tile repeats one stage-invariant 0/1
-      pattern per stage. These tables are the static metadata that grows with N on race_cars and
-      reaches 54 MB at unbumpercars C=32. Represent affine gathers and scatters structurally
-      (a strided window or an index expression) and broadcast stage-invariant constants instead of
-      tiling them. Gate: `static_metadata_bytes` fixed across N on race_cars, and the unbumpercars
-      C=32 cell compiles under the 50 MiB cap. The affine folder that makes index expressions stay
-      small is tinygrad's `uop/divandmod.py` (109 lines: gcd factoring, congruence folding, nested
-      div/mod) plus the `(x%c) + (x//c)*c -> x` recombination; see `tinygrad_rangeify.md` §3. With
-      C-45 folding the seed tiles, what remains of C-9 is the index arithmetic, and it is a
-      prerequisite for C-8's views-as-index-expressions.
+- [x] **C-9. Affine index maps instead of materialized tables.** Implemented 2026-09-09 in
+      `passes/affine.py`: `affine_index_map` factors a concrete index array into ranges whose
+      contribution is affine plus a residual table, greedily, outermost first, and
+      `LowerCtx.index_at` emits one term per range over the trip index so a fully affine gather or
+      scatter declares nothing. No AD rule changed; `ad/forward.py` and `ad/reverse.py` still build
+      the arrays, and the structure is recovered at lowering, which also catches every other affine
+      gather in the graph. `passes/program/_common.py` gained `_index_values`, the counterpart that
+      reads the indices back out of the expression, so `combine_scatter_sums` still sees the
+      destinations it needs. `tests/passes/test_affine_index.py` pins the factoring, the forward and
+      reverse VMAP derivatives against NumPy and against the unrolled form, and the two gates; all
+      three gates fail with the affine path disabled.
+      Measured: unbumpercars C=32 source 52.30 MiB to 1.35 MiB and static metadata 53.9 MB to
+      345 KB, so the cell compiles and passes its correctness check under the 50 MiB cap (kernel
+      compile 49.7 s, 8011 µs). race_cars metadata 90,115 to 39,578 bytes at N=50 and 1,015,708 to
+      420,681 at N=500; all eight `int64_t` index tables are gone, and the two 6-entry `unique_j`
+      residuals that remain are constant in N.
+      Runtime is unchanged: race_cars N=50 24.0 µs and N=500 240 µs against 24.0 and 243 to 247 for
+      the tables, three repetitions each. Emitting each level as `(k // stride) % dim` did cost
+      about 5% (25.4 µs and 257 µs), because the modulo is a second division. It is gone: since
+      `k // stride[i] // dims[i] == k // stride[i - 1]`, the coordinates telescope and the index is
+      a combination of the plain quotients `k // stride[i]` with coefficients
+      `c[i] - c[i+1] * dims[i+1]`, which is the `(x % c) + (x // c) * c -> x` recombination applied
+      once at emission rather than as a folding pass. Exact integer algebra for a non-negative trip
+      index, so the indices are unchanged; `tests/passes/test_affine_index.py` gathers through every
+      factored case and compares against NumPy to pin that. A single absolute size threshold was
+      also tried and rejected: it makes the emitted shape depend on N, which
+      `test_vmap_sparse_hessian_c_source_is_constant_in_length` correctly rejects.
+      The one part of the gate not met is `static_metadata_bytes` fixed across N, and index
+      arithmetic cannot make it so; C-56 owns what still grows.
+      Design and what was rejected from tinygrad's `uop/divandmod.py`:
+      [refactorings](notes/refactorings.md#affine-index-maps-for-gathers-and-scatters).
+- [ ] **C-56. The static metadata that still grows with N after C-9.** With every affine index
+      table gone, race_cars metadata is 39,578 bytes at N=50 and 420,681 at N=500, so it still
+      grows roughly linearly. Three things are left, none of them index arithmetic. The generated
+      header's sparsity tables are `O(nnz)` by construction (23,677 bytes at N=50: rows, cols, the
+      CSR and CSC pointers and both value permutations) and the question is whether a banded or
+      per-stage-block encoding can describe them in closed form for a multistage problem instead of
+      listing them. The sparse-assembly gather is a genuine `nnz`-length permutation with no affine
+      structure (`k44`, 657 entries at N=50), and would need the assembly itself restructured, not
+      its index compressed. And three `double` constant tables that C-45's periodic-tile bake did
+      not reach (`k0` 1200, `k22` and `k26` 1224 entries at N=50) grow with N; find out which
+      tangent or weight each one is and whether the bake's period test is simply too narrow. Decide
+      whether the paper needs a metadata claim at all before doing any of this — if artifact size
+      only has to stay under the compile cap, C-9 already achieved that by a wide margin.
+      Rationale: [paper §8](paper.md#8-blocking-work-before-the-paper-can-be-written).
 - [x] **C-10. Fold the identities the AD rules introduce, at the expression level.** Implemented
       2026-09-08 in `passes/expr.py`: `v @ ones -> sum(v)`, identity-index gathers become reshapes,
       uniform 0/1 masks of the result shape fold, each pinned in `tests/passes/test_expr.py`. The

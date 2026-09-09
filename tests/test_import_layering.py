@@ -44,6 +44,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "alloy.ir.spec": 1,
   "alloy.ir.text": 1,
   "alloy.passes": 1,
+  "alloy.passes.affine": 2,
   "alloy.passes.arith": 2,
   "alloy.passes.expr": 2,
   "alloy.ad.sparsity": 2,

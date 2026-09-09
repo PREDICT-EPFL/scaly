@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp, add, for_, load, store
-from ._common import _alias_sources, _map_procs, _private_decls, _proc_parts, _rebuild_proc, _resolve_alias, _size_of, _stmt_refs, rebuild_program
+from ._common import (
+  _alias_sources,
+  _index_values,
+  _map_procs,
+  _private_decls,
+  _proc_parts,
+  _rebuild_proc,
+  _resolve_alias,
+  _size_of,
+  _stmt_refs,
+  rebuild_program,
+)
 from .fuse_elementwise import _as_inline_producer, _prune_dead_buffers, _trip_count
 
 
@@ -52,15 +65,15 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
     target, value = scatter.args[1].args
     if target.attrs["buffer"] != buf or len(target.args) != 1 or value.op != ProgramOp.LOAD:
       continue
-    idx = target.args[0]
-    if idx.op != ProgramOp.LOAD:
-      continue
-    table = decls[idx.args[0].attrs["buffer"]]
-    indices = table.attrs.get("values", ())
-    if not indices or len(set(indices)) != len(indices) or _trip_count(scatter.args[0]) != len(indices):
-      continue
     iv = scatter.args[0].attrs["name"]
-    if any(len(a.args) != 1 or a.args[0].op != ProgramOp.VAR or a.args[0].attrs["name"] != iv for a in (idx.args[0], value.args[0])):
+    source = value.args[0]
+    if len(source.args) != 1 or source.args[0].op != ProgramOp.VAR or source.args[0].attrs["name"] != iv:
+      continue
+    # The destinations must be distinct, so that turning each scatter into an accumulation adds
+    # every source element exactly once. They are read back from the index expression, which after
+    # ``LowerCtx.index_at`` is arithmetic on ``iv`` whenever the scatter is affine.
+    indices = _index_values(target.args[0], scatter.args[0], decls)
+    if indices is None or not len(indices) or len(np.unique(indices)) != len(indices):
       continue
     pads[buf] = i, j
 

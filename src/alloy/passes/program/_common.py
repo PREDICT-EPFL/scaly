@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
+import numpy as np
+
 from ...ir.program import ProgramNode, ProgramOp
 
 
@@ -108,6 +110,55 @@ def _private_decls(body: list[ProgramNode]) -> dict[str, ProgramNode]:
 def _alias_sources(body: list[ProgramNode]) -> dict[str, str]:
   """name -> aliased-source name for every alias BUFFER (zero-copy pointer) in ``body``."""
   return {s.attrs["name"]: s.attrs["alias_of"] for s in body if s.op == ProgramOp.BUFFER and "alias_of" in s.attrs}
+
+
+_INT_BINOP = {
+  ProgramOp.ADD: np.add,
+  ProgramOp.SUB: np.subtract,
+  ProgramOp.MUL: np.multiply,
+  ProgramOp.DIV: np.floor_divide,
+  ProgramOp.MOD: np.mod,
+}
+
+
+def _index_values(idx: ProgramNode, rng: ProgramNode, decls: dict[str, ProgramNode]) -> np.ndarray | None:
+  """The values index expression ``idx`` takes over the trip of ``rng``, or None if it is not
+  statically known non-negative arithmetic over the range variable and constant tables.
+
+  The counterpart of ``LowerCtx.index_at``: a pass that needs the concrete indices of a gather or
+  scatter reads them back from the expression, whether or not a table was materialized. A negative
+  dividend is refused because C division truncates where numpy floors."""
+  start, stop, step = rng.args
+  if any(a.op != ProgramOp.CONST_INT for a in rng.args) or int(step.attrs["value"]) <= 0:
+    return None
+  trip = np.arange(int(start.attrs["value"]), int(stop.attrs["value"]), int(step.attrs["value"]), dtype=np.int64)
+  return _values(idx, rng.attrs["name"], trip, decls)
+
+
+def _values(idx: ProgramNode, var: str, trip: np.ndarray, decls: dict[str, ProgramNode]) -> np.ndarray | None:
+  if idx.op == ProgramOp.CONST_INT:
+    return np.full(len(trip), int(idx.attrs["value"]), dtype=np.int64)
+  if idx.op == ProgramOp.VAR:
+    return trip if idx.attrs["name"] == var else None
+  if idx.op == ProgramOp.LOAD:
+    view = idx.args[0]
+    decl = decls.get(view.attrs["buffer"])
+    values = decl.attrs.get("values") if decl is not None else None
+    if values is None or len(view.args) != 1:
+      return None
+    inner = _values(view.args[0], var, trip, decls)
+    if inner is None or inner.min() < 0 or inner.max() >= len(values):
+      return None
+    return np.asarray(values, dtype=np.int64)[inner]
+  binop = _INT_BINOP.get(idx.op)
+  if binop is None or len(idx.args) != 2:
+    return None
+  left, right = (_values(a, var, trip, decls) for a in idx.args)
+  if left is None or right is None:
+    return None
+  if idx.op in (ProgramOp.DIV, ProgramOp.MOD) and (left.min() < 0 or right.min() < 1):
+    return None
+  return binop(left, right)
 
 
 def _resolve_alias(name: str, alias_src: dict[str, str]) -> str:

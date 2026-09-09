@@ -96,6 +96,7 @@ src/alloy/
     text.py              the stable assembly listings for both dialects, plus format_program
 
   passes/                every concrete IR-to-IR transformation
+    affine.py            the affine structure of a concrete index array, for table-free gathers
     expr.py              simplify, constant folding, CSE            (Expr -> Expr)
     lowering.py          lower_function, the per-ExprOp rule registry (Expr -> ProgramNode)
     program/             program optimizations                    (ProgramNode -> ProgramNode)
@@ -164,7 +165,7 @@ import layer, never a higher one. That rule keeps the package dependencies from 
 | --- | --- | --- |
 | 0 | `utils/*` | Leaves. Environment and file parsing, no alloy concepts at all. |
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
-| 2 | `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR at all). Nothing here knows what a `Function` is. |
+| 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR at all). Nothing here knows what a `Function` is. |
 | 3 | `function/model` | `Function` itself — a named graph boundary over import layer 1. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
