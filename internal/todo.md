@@ -199,6 +199,15 @@ protocol's compile flags.
       SX as an explicit forward-over-reverse with the same 24 unit seeds and compare per-operation
       histograms to separate rule quality (2,749 negations per stage is the next suspect) from
       composition. Evidence: `notes/perf_2026_09_07/README.md`, follow-up section.
+      Diagnosis done 2026-09-09 in [`c49_ad_op_audit.md`](notes/perf_2026_09_07/c49_ad_op_audit.md):
+      the stage costs 28,682 ops against SX's 17,969 for the same explicit forward-over-reverse (SX
+      is 700 per seed, not 400). Composition dominates, not the rules: the same stage built without
+      CALL/VMAP costs 16,826, already below SX. The excess is the per-formal JVP split in `_jvp`
+      (four active formals, four tangent bodies, 20%) and the callee boundary stopping the shared
+      link adjoint from merging before propagation (21%). Scalar rules are 15%: negation
+      identities in `passes/arith.py` (-1,855 and the 2,749 negations), `x*x`/`dot(x,x)` (-1,428),
+      the lean DIV rules, which were never landed. Implementation is ranked in the note; a symbolic
+      Hessian pass would gain nothing, symmetry is C-11's lever.
 - [x] **C-50. `-march=native` and `-fno-math-errno` in the JIT.** `codegen/jit.py` compiles with
       `-O2` (or `ALLOY_CC_OPT`) and no target flag, so every JIT kernel is SSE2 scalar code without
       fused multiply-adds on a machine that has them; measured on race-car N=50, `-mfma` alone is
