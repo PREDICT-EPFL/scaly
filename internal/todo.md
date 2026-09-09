@@ -23,7 +23,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 57**
+**Next id: 58**
 
 | Prefix | Section |
 |---|---|
@@ -259,10 +259,10 @@ protocol's compile flags.
       also tried and rejected: it makes the emitted shape depend on N, which
       `test_vmap_sparse_hessian_c_source_is_constant_in_length` correctly rejects.
       The one part of the gate not met is `static_metadata_bytes` fixed across N, and index
-      arithmetic cannot make it so; C-56 owns what still grows.
+      arithmetic cannot make it so; C-57 owns what still grows.
       Design and what was rejected from tinygrad's `uop/divandmod.py`:
       [refactorings](notes/refactorings.md#affine-index-maps-for-gathers-and-scatters).
-- [ ] **C-56. The static metadata that still grows with N after C-9.** With every affine index
+- [ ] **C-57. The static metadata that still grows with N after C-9.** With every affine index
       table gone, race_cars metadata is 39,578 bytes at N=50 and 420,681 at N=500, so it still
       grows roughly linearly. Three things are left, none of them index arithmetic. The generated
       header's sparsity tables are `O(nnz)` by construction (23,677 bytes at N=50: rows, cols, the
