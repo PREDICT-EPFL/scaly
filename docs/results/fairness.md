@@ -82,10 +82,12 @@ Rules the numbers on this page follow, and that a headline run must follow more 
   gain is contraction, not vector width, and the native SX object contains no FMA and no vector
   instruction at all. `-fno-math-errno` lets `sqrt` and the other libm calls inline instead of
   setting `errno` nothing reads: 31.8 against 33.4 for Alloy and 20.6 against 21.3 for SX on the
-  same cell. **Every number currently published on this site was measured at the old flags**, `-O3`
-  alone in the sweep and `-O2` alone in the closed loop; the study rerun re-measures all of them, and
-  the tables move then, not before. The `.provenance.json` sidecars and `study.json` record the flags
-  as `native_cflags`, and each cell's `compile.log` keeps the full command line.
+  same cell. The 2026-09-09 interim Track C study uses the native flags for both the sweep and the
+  closed loop. The previous 2026-09-05 and 2026-09-06 tables retain their original `-O3` sweep and
+  `-O2` closed-loop flags. The direct Track C comparison against `dev` therefore measures each
+  compiler's configured policy rather than isolating the passes at fixed flags. The
+  `.provenance.json` sidecars and `study.json` record `native_cflags`, and each cell's `compile.log`
+  keeps the full command line.
 - **Request only the oracle result that is timed.** CasADi's generated `nlp_jac_g` exposes `g` as
   output 0 and `jac_g_x` as output 1; the harness supplies only result pointer 1. The Hessian
   supplies its selected output, and every result-pointer array is reset before each call because

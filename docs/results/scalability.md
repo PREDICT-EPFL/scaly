@@ -3,9 +3,9 @@
 The per-cell measurements behind [the results overview](index.md), which is the page to read first
 if you want the summary rather than the tables.
 
-The initial 2026-09-05 Hessian pilot and its range extensions below are the current kernel
-baseline. Other measurement sections retain earlier results and their limitations. Do not
-combine those older timings with the current baseline.
+The interim 2026-09-09 Track C study below is the current compiler checkpoint. The 2026-09-05
+and 2026-09-06 measurements remain as the previous baseline, with their original scope and
+limitations. Do not combine timings from different sections into one table.
 
 Runs `benchmarks/run.py sweep` over a fixed cell grid for each workload, capturing per-cell codegen / compile / runtime / source-size metrics. Each cell compiles its selected backend into a separate Google Benchmark binary. The binary scatters the compact result into a dense matrix and compares it with an independent reference before it records a timing.
 
@@ -28,6 +28,170 @@ leaves the field blank because its generated code exposes no internal derivative
 The current race-car formulation maps the stage dynamics and cost. Unbumpercars maps car
 dynamics and pair constraints, while its per-car wall rows remain unrolled. Earlier unbumpercars
 measurements below predate the pair-constraint port.
+
+## Interim Track C compiler snapshot, 2026-09-09
+
+!!! warning "Track C is still in progress"
+
+    This is a checkpoint after layout-aware matrix products, bounded scalarization, baked seed
+    tiles, and shared arithmetic rewrites. It is not the final Track C result. The range-based loop
+    compiler in C-8 and its affine-index work remain open, along with loop-invariant hoisting and
+    accumulation-buffer fusion.
+
+The branch ran the complete frozen study under `performance`, boost off, seed 0, five fresh
+processes per cell, and a 0.5-second minimum timing window. A clean `dev` worktree then ran every
+matching Alloy cell with the same machine controls. The branch study also rebuilt every CasADi
+encoding. The direct branch-to-`dev` comparison includes the branch's
+`-march=native -fno-math-errno` code-generation policy, so it measures the configured compilers
+rather than holding compile flags fixed.
+
+Artifacts are local and gitignored under
+`benchmarks/results/followup/2026-09-08/interim-track-c/`. The `branch/` directory contains the
+complete study, its manifest, report, raw rows, generated sources, binaries, samples, and logs.
+The `dev/` directory contains the matching Alloy-only rows and episodes. The directory date is the
+start date; the run completed on 2026-09-09 in Europe/Zurich. Branch provenance reports a dirty
+worktree because the temporary task plan was untracked. No tracked file changed during measurement.
+The `dev` provenance reports a clean worktree.
+
+The complete branch study has 690 rows: 504 successful timings, 76 compile timeouts, 105 skips
+after a smaller-size failure, and five source-cap skips. The direct `dev` run has 115 rows: 110
+successful timings and five source-cap skips. No correctness check failed. Every Alloy cell that
+produced a timing completed in all five processes. Branch runtime CV ranges from 0.22% to 1.43%
+for Alloy.
+
+### Race-car Hessian
+
+| N | Branch Alloy, µs | `dev` Alloy, µs | Change | SX, µs | Branch / SX |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 0.600 | 0.743 | -19.2% | 0.413 | 1.45× |
+| 5 | 2.701 | 3.401 | -20.6% | 1.985 | 1.36× |
+| 10 | 5.242 | 6.784 | -22.7% | 3.913 | 1.34× |
+| 25 | 12.966 | 16.614 | -22.0% | 9.883 | 1.31× |
+| 40 | 20.725 | 26.521 | -21.9% | 15.894 | 1.30× |
+| 50 | 24.023 | 32.583 | -26.3% | 19.851 | 1.21× |
+| 100 | 48.014 | 65.715 | -26.9% | 40.680 | 1.18× |
+| 200 | 96.242 | 130.341 | -26.2% | 83.967 | 1.15× |
+| 500 | 243.773 | 329.688 | -26.1% | 212.714 | 1.15× |
+
+SX remains fastest at every horizon. Alloy now comes within the 20% target at N=100, 200, and
+500, but not across the full grid. A focused N=50 flag control moved the old kernel from 33.4 µs
+at `-O3` to 26.5 µs with the native target. The remaining movement to 24.0 µs is consistent with
+baked seed tiles and arithmetic simplification. Native flags
+explain most of the direct branch-to-`dev` gain.
+
+### Neural-process MPC Hessian
+
+| N | Branch Alloy, µs | `dev` Alloy, µs | Change | Best completed CasADi | CasADi, µs | Current result |
+|---:|---:|---:|---:|---|---:|---:|
+| 6 | 23.961 | 42.076 | -43.1% | MX | 20.599 | 1.16× slower |
+| 12 | 46.586 | 83.626 | -44.3% | MX | 43.759 | 1.06× slower |
+| 25 | 97.055 | 173.812 | -44.2% | MX | 93.967 | 1.03× slower |
+| 50 | 192.291 | 345.131 | -44.3% | MX | 189.212 | 1.02× slower |
+| 100 | 388.077 | 693.306 | -44.0% | MX GEMM classic | 904.231 | 2.33× faster |
+| 200 | 774.717 | 1395.931 | -44.5% | called MX | 4988.224 | 6.44× faster |
+
+The N=50 MX mean uses four successful processes; its fifth build exceeded 180 seconds. Plain MX
+has no successful build at N=100 or N=200. The three GEMM forms compile through N=100 and time out
+at N=200. Layout-aware matrix-product lowering explains the nearly constant 43–45% Alloy gain:
+a focused N=12 compiler experiment moved 83.2 µs to 45.7 µs before the full study. Native flags did
+not create that result; they moved the optimized prototype slightly in the wrong direction.
+
+### Unbumpercars Hessian
+
+| C | Branch Alloy, µs | `dev` Alloy, µs | Change | Best completed CasADi | CasADi, µs | Current result |
+|---:|---:|---:|---:|---|---:|---:|
+| 2 | 232.258 | 849.029 | -72.6% | MX | 956.365 | 4.12× faster |
+| 4 | 472.386 | 1715.311 | -72.5% | MX | 3023.688 | 6.40× faster |
+| 8 | 976.155 | 3462.814 | -71.8% | MX | 10749.947 | 11.01× faster |
+| 16 | 2270.197 | 7316.158 | -69.0% | none |  | only Alloy timed |
+| 32 | source cap | source cap |  | none |  | no timing |
+
+The same matrix-product change drives this result. A focused C=8 experiment moved the old
+3.485 ms kernel to 0.827 ms before native flags; compiling that version for the host moved it to
+0.974 ms, almost exactly the 0.976 ms study result. At C=16, all CasADi variants time out or inherit
+a smaller-size failure. At C=32, both Alloy versions exceed the 50 MiB source cap. The branch C
+source is 54,845,309 bytes against 54,708,980 on `dev`, a 0.25% increase, so the failure class did
+not change.
+
+### Chain Hessian
+
+| M | Branch Alloy, µs | `dev` Alloy, µs | Change | Mapped SX, µs | Branch / mapped SX |
+|---:|---:|---:|---:|---:|---:|
+| 3 | 163.977 | 467.538 | -64.9% | 123.560 | 1.33× |
+| 5 | 828.436 | 2609.411 | -68.3% | 635.349 | 1.30× |
+| 9 | 4950.341 | 12408.323 | -60.1% | 2478.722 | 2.00× |
+
+The chain benchmark explicitly requests scalar lowering for its stage function. This is Alloy's
+best current formulation, not an automatic choice made by `dev`. Scalarization cuts runtime at all
+three sizes, and makes Alloy slightly faster than called MX at M=3 and effectively tied at M=5.
+Mapped SX remains faster throughout. The gap widens at M=9 as the coloring width and scalar body
+grow, which is one reason the loop compiler still matters.
+
+### Construction, source, workspace, and compilation
+
+Executable source excludes static metadata. Workspace counts caller-supplied doubles. Compilation
+is the generated kernel only.
+
+| Problem | Point | Branch C source | `dev` C source | Branch executable | `dev` executable | Branch metadata | `dev` metadata |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Race-car | N=50 | 90070 | 136009 | 23632 | 49689 | 90115 | 109997 |
+| Race-car | N=500 | 779728 | 999801 | 23702 | 49765 | 1015708 | 1209718 |
+| Neural-process MPC | N=12 | 66952 | 66254 | 36385 | 33853 | 37583 | 39420 |
+| Neural-process MPC | N=200 | 583943 | 583803 | 36553 | 34014 | 653397 | 655796 |
+| Unbumpercars | C=8 | 912560 | 903661 | 300799 | 278329 | 617761 | 631332 |
+| Unbumpercars | C=16 | 6360113 | 6307930 | 528589 | 456440 | 5848829 | 5868795 |
+| Unbumpercars | C=32 | 54845309 | 54708980 | 1015748 | 835338 | 53894782 | 53938863 |
+| Chain | M=3 | 296913 | 385218 | 123617 | 172350 | 275576 | 315148 |
+| Chain | M=5 | 1273458 | 1273796 | 462664 | 334535 | 1205031 | 1333498 |
+| Chain | M=9 | 4240074 | 3976856 | 1225140 | 550679 | 4185793 | 4597036 |
+
+| Problem | Point | Branch workspace | `dev` workspace | Branch codegen, ms | `dev` codegen, ms | Branch compile, ms | `dev` compile, ms |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Race-car | N=50 | 8472 | 8472 | 432.1 | 523.3 | 266.7 | 318.4 |
+| Race-car | N=500 | 90084 | 90084 | 481.8 | 609.2 | 421.4 | 519.3 |
+| Neural-process MPC | N=12 | 0 | 1024 | 1337.9 | 233.1 | 685.5 | 546.9 |
+| Neural-process MPC | N=200 | 74445 | 75469 | 1442.3 | 348.5 | 830.0 | 707.6 |
+| Unbumpercars | C=8 | 16896 | 51200 | 3622.3 | 3340.1 | 9078.5 | 3995.2 |
+| Unbumpercars | C=16 | 222400 | 256704 | 6103.2 | 5107.0 | 45328.4 | 14344.7 |
+| Unbumpercars | C=32 | 1721904 | 1756208 | 11889.1 | 10035.7 | source cap | source cap |
+| Chain | M=3 | 266616 | 266616 | 44793.4 | 45118.3 | 830.4 | 1616.9 |
+| Chain | M=5 | 1075248 | 1075248 | 48512.8 | 45399.9 | 4495.5 | 4951.6 |
+| Chain | M=9 | 3778740 | 3778740 | 62604.3 | 46532.8 | 19268.7 | 14954.4 |
+
+The branch removes the fixed 1,024-double neural-process workspace at N=6 and N=12, and removes
+34,304 doubles from unbumpercars at C=2 and C=4. Race-car source and executable source shrink at
+every size. Neural-process code generation rises from 0.23–0.35 seconds to 1.34–1.44 seconds,
+mostly in C rendering, and kernel compilation rises 17–25%. Unbumpercars compilation rises 2.27× at
+C=8 and 3.16× at C=16. Chain M=9 code generation rises 35%, executable source grows 2.22×, and
+compilation rises 29%. At chain M=3 and M=5, compilation instead falls 49% and 9%.
+
+C-8 must retain the better arithmetic schedule while reducing repeated loop bodies, deep scalar
+expressions, and materialized index data.
+
+### Reproduce the interim snapshot
+
+Run the complete branch study from the compiler branch:
+
+```bash
+uv run benchmarks/run.py study --out-dir benchmarks/results/followup/<date>/interim-track-c/branch
+```
+
+Run the four Alloy-only sweeps from a clean `dev` worktree. Use the sizes in the tables above and
+add `--backends alloy --repetitions 5 --order-seed 0 --benchmark-min-time 0.5s --headline --boost off`.
+For example:
+
+```bash
+uv run benchmarks/run.py sweep --workloads race_cars --sizes 1,5,10,25,40,50,100,200,500 --backends alloy --repetitions 5 --order-seed 0 --benchmark-min-time 0.5s --headline --boost off --out <comparison-dir>/sweep/race_cars/race_cars.csv
+```
+
+Run each `dev` closed loop with the same process count and machine controls:
+
+```bash
+uv run benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle alloy --repetitions 5 --order-seed 0 --headline --boost off --out-dir <comparison-dir>/closed-loop/race_cars
+```
+
+Repeat the last two commands for `npmpc`, `unbumpercars`, and `chain` with their table sizes. Run
+`uv run benchmarks/run.py report <study-dir>` to render a study directory again.
 
 ## Initial frozen-protocol pilot, 2026-09-05
 

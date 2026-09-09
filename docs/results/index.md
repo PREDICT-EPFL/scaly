@@ -29,6 +29,63 @@ for the safety filter. A cell that does not agree produces no timing.
     and is marked as such. The kernel sweeps, the code-size figures and the two `alloy-sqp` columns
     are unaffected. [Read the audit](fairness.md).
 
+## Interim Track C snapshot, 2026-09-09
+
+!!! warning "This is an interim compiler checkpoint"
+
+    These measurements cover the Track C work through layout-aware matrix products, bounded
+    scalarization, baked seed tiles, and shared arithmetic rewrites. Track C is not finished. In
+    particular, C-8's range-based loop compiler and its affine-index work remain open. Replace this
+    checkpoint after that work rather than treating these numbers as the final compiler result.
+
+The branch ran the complete frozen study: 690 kernel attempts and 40 SQP episodes, arranged in
+20 provider pairs. A clean
+`dev` worktree then ran every matching Alloy kernel and Alloy SQP episode, 115 kernel attempts and
+20 episodes. Both runs used five fresh processes, seed 0, the `performance` governor, boost off,
+and the same machine. The branch's native compile flags are part of the measured change, so this
+is a comparison of the two configured compilers, not a pass-only ablation.
+
+Every timed kernel passed its independent dense-reference check. The branch recorded 504 successful
+timings, 76 compile timeouts, 105 skips after an earlier failure, and five source-cap skips. The
+`dev` Alloy run recorded 110 successful timings and five source-cap skips.
+
+| Problem | Point | Branch Alloy, µs | `dev` Alloy, µs | Change | Best current CasADi | Current comparison |
+|---|---:|---:|---:|---:|---|---:|
+| Race-car | N=40 | 20.725 | 26.521 | -21.9% | SX, 15.894 µs | 1.30× slower |
+| Race-car | N=500 | 243.773 | 329.688 | -26.1% | SX, 212.714 µs | 1.15× slower |
+| Neural-process MPC | N=12 | 46.586 | 83.626 | -44.3% | MX, 43.759 µs | 1.06× slower |
+| Neural-process MPC | N=200 | 774.717 | 1395.931 | -44.5% | called MX, 4988.224 µs | 6.44× faster |
+| Unbumpercars | C=8 | 976.155 | 3462.814 | -71.8% | MX, 10749.947 µs | 11.01× faster |
+| Unbumpercars | C=16 | 2270.197 | 7316.158 | -69.0% | none completed | only Alloy timed |
+| Chain | M=5 | 828.436 | 2609.411 | -68.3% | mapped SX, 635.349 µs | 1.30× slower |
+
+Race-car remains slower than SX, but it comes within 20% at N=100, 200, and 500. Neural-process
+MPC is within 17% of MX through N=50, then wins once MX exceeds the compile budget. The
+layout-aware matrix-product lowering changes unbumpercars most: Alloy's advantage over MX at C=8
+grows from 2.9× on `dev` to 11.0×. Explicit scalarization cuts the chain kernel by 60–68% against
+`dev`, but mapped SX remains 1.30–2.00× faster across M=3, 5, and 9.
+
+Some generated kernels take longer to build or use more source. Neural-process kernel compilation rises by 17–25%. Unbumpercars
+kernel compilation rises 2.27× at C=8 and 3.16× at C=16. At chain M=9, executable code grows
+2.22× and compilation rises 29%. Race-car moves the other way: executable code drops by about
+half and runtime falls 19–27%. The [interim scalability tables](scalability.md#interim-track-c-compiler-snapshot-2026-09-09)
+give every size and the source, workspace, and compilation tradeoffs.
+
+The same compiler changes carry into the closed loop:
+
+| Problem | Branch total, ms | `dev` total, ms | Change | Branch function evaluation, ms | `dev` function evaluation, ms | Change | Current CasADi total, ms |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| race_cars | 2.574 | 2.613 | -1.5% | 0.140 | 0.183 | -23.5% | 2.681 |
+| npmpc | 1.369 | 1.649 | -17.0% | 0.570 | 0.852 | -33.1% | 1.863 |
+| unbumpercars | 11.302 | 37.864 | -70.2% | 10.032 | 36.572 | -72.6% | 106.683 |
+| chain | 7.728 | 10.165 | -24.0% | 1.537 | 3.976 | -61.3% | 14.362 |
+
+All 60 episodes completed successfully. On the branch, race-car, neural-process MPC, and chain
+matched per-step iterations and oracle counts between providers in every repetition. Unbumpercars
+had 15 iteration mismatches across 1,000 paired steps, with matching oracle counts and maximum
+state and control differences below 3.4e-8. Race-car's lower function-evaluation cost barely moves
+the total because the quadratic program dominates each step.
+
 ## Hessian scalability baseline, September 2026
 
 These generated-C microbenchmarks measure the exact sparse Lagrangian Hessian with synthetic
@@ -66,7 +123,7 @@ after smaller-size failures, and five source-limit skips. No correctness check f
 completed sweeps. Every timed primary cell has five successful processes. The
 [initial pilot](scalability.md#initial-frozen-protocol-pilot-2026-09-05) remains intact; the
 [range tables and reproduction commands](scalability.md#extended-hessian-sweeps-2026-09-06)
-record the current full grids and their input policies. See also the
+record the previous full grids and their input policies. See also the
 [measurement protocol](fairness.md#the-measurement-protocol).
 
 Closed-loop timings are a separate experiment below.
