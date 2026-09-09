@@ -78,9 +78,10 @@ Ordering constraints across sections, the only sequencing that matters:
       This benchmark may use the packed parameter length as its specialization key because it does
       not add more MLP layouts; a general template must distinguish individual layer shapes because
       equal parameter counts do not prove equal architectures.
-- [ ] **API-5. Validation additions**: one public `fwd` and `adj` test on the same nontrivial `VMAP`
+- [x] **API-5. Validation additions**: one public `fwd` and `adj` test on the same nontrivial `VMAP`
       fixture compared against the unrolled form with a forward/reverse duality check, and a
       finite-difference check of the Lagrangian gradient in the pairwise-map sparse-Hessian test.
+      Lives in `tests/ad/test_vmap.py` (duality) and `tests/integration/test_vmap.py` (pairwise Hessian).
 
 ### Deferred
 

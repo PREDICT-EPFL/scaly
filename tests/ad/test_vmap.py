@@ -88,3 +88,32 @@ def test_grad_factory_over_vmap_matches_unrolled_and_finite_difference() -> None
   np.testing.assert_allclose(
     mapped_grad((zv, lamv)), finite_difference(lambda value: np.dot(lamv, np.asarray(mapped_fn(value))), zv).reshape(-1), rtol=1e-6, atol=1e-7
   )
+
+
+@al.function(al.G(al.L("x", 3), al.L("q", 2)), al.L("y", ...), name="vmap_duality_piece")
+def duality_piece(inputs):
+  x, q = inputs
+  return al.stack([x[0] * x[1] * q[0].sin() + x[2].exp(), (1.0 + al.dot(x, x)).sqrt() * q[1] + x[0] * x[2]])
+
+
+def test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual() -> None:
+  N = 5
+  z, q = al.sym("z", 3 * N), al.sym("q", 2 * N)
+  mapped = al.vmap(duality_piece, N, [(z, 0, 3), (q, 0, 2)])
+  unrolled = al.concat([duality_piece((z[3 * k : 3 * (k + 1)], q[2 * k : 2 * (k + 1)])) for k in range(N)])
+  fn_vmap = al.Function._from_exprs("duality_vmap", [z, q], [mapped], ["z", "q"], ["y"])
+  fn_unroll = al.Function._from_exprs("duality_unroll", [z, q], [unrolled], ["z", "q"], ["y"])
+
+  rng = np.random.default_rng(5)
+  zv, qv = rng.normal(size=3 * N), rng.normal(size=2 * N)
+  v, w = rng.normal(size=3 * N), rng.normal(size=2 * N)
+  # Inputs are unit normal and the callee holds exp and products of three, so |y|, |J| stay around 10.
+  fwd = {name: np.asarray(al.forward(fn, "y", "z")(((zv, qv), v))) for name, fn in (("vmap", fn_vmap), ("unroll", fn_unroll))}
+  adj = {name: np.asarray(al.adjoint(fn, "y", "z")(((zv, qv), w))) for name, fn in (("vmap", fn_vmap), ("unroll", fn_unroll))}
+  jac = np.asarray(al.jacobian(fn_unroll, "y", "z")((zv, qv)))
+  np.testing.assert_allclose(fwd["vmap"], fwd["unroll"], rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(adj["vmap"], adj["unroll"], rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(fwd["vmap"], jac @ v, rtol=1e-10, atol=1e-10)
+  np.testing.assert_allclose(adj["vmap"], jac.T @ w, rtol=1e-10, atol=1e-10)
+  # Forward/reverse duality: <J v, w> == <v, J^T w>.
+  np.testing.assert_allclose(w @ fwd["vmap"], v @ adj["vmap"], rtol=1e-12)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 import alloy as al
+from alloy.ad import finite_difference
 
 
 @al.function(al.G(al.L("x", 3), al.L("p", 3)), al.L("y", ...), name="scale_add")
@@ -273,6 +274,13 @@ def test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense() -> None:
     dense_hess[name] = np.zeros(hsp.shape)
     dense_hess[name][np.asarray(hsp.rows), np.asarray(hsp.cols)] = np.asarray(hf((uv, pv, lam)), dtype=np.float64).reshape(-1)
   np.testing.assert_allclose(dense_hess["vmap"], dense_hess["unroll"], rtol=1e-9, atol=1e-9)
+
+  # The mapped Hessian must also be the derivative of the mapped Lagrangian gradient, so a wrong
+  # entry shared by both forms cannot hide behind their agreement. Entries are below 0.2 and the
+  # barrier is smooth at this sample, so central differences at 1e-6 land within 1e-9 of them.
+  grad_l = al.adjoint(fn, "h", "u")
+  fd_hess = finite_difference(lambda value: np.asarray(grad_l(((value, pv), lam))), uv)
+  np.testing.assert_allclose(dense_hess["vmap"], fd_hess, rtol=1e-7, atol=1e-7)
 
 
 def test_matmul_inside_vmap_callee_differentiates() -> None:
