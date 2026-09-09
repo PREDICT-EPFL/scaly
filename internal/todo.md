@@ -23,7 +23,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 56**
+**Next id: 57**
 
 | Prefix | Section |
 |---|---|
@@ -262,6 +262,12 @@ protocol's compile flags.
       the one identified piece.
 - [x] **C-12. One matcher and iterative rewrite driver for both dialects.** Implemented 2026-09-08: `ir/match.py` is generic over both node types with an iterative driver (`fixpoint`, `revisit`, `max_steps`), `rebuild_program` in `passes/program/_common.py` is the program adapter, and `_transform` is gone. No nested patterns or captures: no call site needed them. C-13 closed with it. [Updated design](notes/refactorings.md#shared-compiler-rewrites), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
 
+- [ ] **C-56. Workspace slot names can collide with user output names.** `pack_workspace` names
+      scratch slots `s{n}`; a Function whose output or parameter is named `s0`, `s1`, ... shares a
+      buffer with the renamed scratch and returns wrong values silently. Found while reviewing C-47:
+      `_from_exprs("b3", [x], [t0+t1+t2, t0+t3+t2], ["x"], ["s1", "s2"])` returns a wrong first
+      output and is correct once the outputs are renamed. Use a prefix no user name can carry and
+      pin it with a test.
 ### Deferred
 
 - [ ] **C-54. Add memory-aware program common-subexpression elimination and dead-code cleanup.** Build on C-12/C-53 with definition/use tracking and conservative read/write/alias handling; retain required calls and output stores, and test repeated loads across writes. Broader loop motion follows demonstrated workload need; load-node interning alone is not a current stale-value bug. [Design](notes/algebraic_simplification_2026_09_08.md#separate-value-cleanup-from-memory-optimization), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
