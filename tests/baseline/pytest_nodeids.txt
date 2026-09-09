@@ -219,6 +219,8 @@ tests/codegen/test_c.py::test_c_source_column_slice_is_not_contiguous
 tests/codegen/test_c.py::test_c_source_executes_scalar_subset_through_universal_abi
 tests/codegen/test_c.py::test_c_source_lowers_call_nodes_through_internal_raw_function
 tests/codegen/test_c.py::test_compiled_erf_matches_math_erf
+tests/codegen/test_c.py::test_scalarized_stores_coalesce_into_vector_accesses
+tests/codegen/test_c.py::test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target
 tests/codegen/test_input_validation.py::test_jit_reports_input_errors
 tests/codegen/test_jit.py::test_call_uses_jit_and_matches_numpy
 tests/codegen/test_jit.py::test_invalidate_cache_handles_missing_directory

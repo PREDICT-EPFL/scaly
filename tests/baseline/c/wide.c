@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 
 #define ALLOY_SUCCESS 0
 #define ALLOY_ERR_NULL_ABI 1

@@ -63,7 +63,13 @@ def can_render_program_c(fun: Function) -> bool:
 
 
 def _includes(extra: tuple[str, ...] = ()) -> list[str]:
-  return ["#include <math.h>", "#include <stddef.h>", "#include <stdint.h>", *extra]
+  # Vector types for coalesced stores (``_emit_body``): ``aligned(8)`` because the ABI only
+  # promises double alignment, ``may_alias`` because they access plain double storage.
+  return ["#include <math.h>", "#include <stddef.h>", "#include <stdint.h>", *extra, _VECTOR_TYPEDEF]
+
+
+# Width 4 measured slower than scalar stores under GCC on the chain M=5 Hessian.
+_VECTOR_TYPEDEF = "typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));"
 
 
 def render_program_c_source(fun: Function, observe: ProgramObserver | None = None) -> str:
@@ -134,10 +140,7 @@ def _render_entry(proc: ProgramNode, fun: Function) -> list[str]:
   for i in range(len(fun.outputs)):
     lines.append(f"  if (!res[{i}]) return ALLOY_ERR_NULL_RESULT;")
   _emit_local_buffers(body, lines, ptr_expr, indent=2)
-  for stmt in body:
-    if stmt.op == ProgramOp.BUFFER:
-      continue
-    _emit_statement(stmt, ptr_expr, lines, indent=2)
+  _emit_body(body, ptr_expr, lines, indent=2)
   lines += ["  return ALLOY_SUCCESS;", "}"]
   return lines
 
@@ -177,10 +180,7 @@ def _render_raw_callee(proc: ProgramNode) -> list[str]:
   if not sz_w:
     out.append("  (void)w;")
   _emit_local_buffers(body, out, ptr_expr, indent=2)
-  for stmt in body:
-    if stmt.op == ProgramOp.BUFFER:
-      continue
-    _emit_statement(stmt, ptr_expr, out, indent=2)
+  _emit_body(body, ptr_expr, out, indent=2)
   out.append("}")
   return out
 
@@ -214,7 +214,64 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
 
 
-def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:
+def _emit_body(body: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int, aliases: dict[str, str] | None = None) -> None:
+  """Statements in order, except that two STOREs to consecutive constant indices of one double
+  buffer (the shape scalarization emits) become one ``double2`` store."""
+  if aliases is None:
+    aliases = {s.attrs["name"]: s.attrs["alias_of"] for s in body if s.op == ProgramOp.BUFFER and "alias_of" in s.attrs}
+  i = 0
+  while i < len(body):
+    stmt = body[i]
+    if stmt.op == ProgramOp.BUFFER:
+      i += 1
+      continue
+    start = _const_store_index(stmt)
+    buffer: str = stmt.args[0].attrs.get("buffer", "")
+    if (
+      start is not None
+      and i + 1 < len(body)
+      and _const_store_index(body[i + 1]) == start + 1
+      and body[i + 1].args[0].attrs["buffer"] == buffer
+      and not _reads(body[i + 1].args[1], _alias_root(buffer, aliases), aliases)
+    ):
+      ptr = ptr_expr.get(buffer, c_ident(buffer))
+      target = f"*(double2*)({ptr}{f' + {start}' if start else ''})"
+      _emit_assignment(target, [stmt.args[1], body[i + 1].args[1]], ptr_expr, lines, indent)
+      i += 2
+    else:
+      _emit_statement(stmt, ptr_expr, lines, indent, aliases)
+      i += 1
+
+
+def _alias_root(buffer: str, aliases: dict[str, str]) -> str:
+  while buffer in aliases:
+    buffer = aliases[buffer]
+  return buffer
+
+
+def _reads(value: ProgramNode, root: str, aliases: dict[str, str]) -> bool:
+  """Whether ``value`` loads from the buffer ``root`` or an alias of it; a vector store computes
+  every lane before writing any, so a lane reading an earlier lane's target must stay scalar."""
+  stack = [value]
+  while stack:
+    node = stack.pop()
+    if node.op == ProgramOp.LOAD and _alias_root(node.args[0].attrs["buffer"], aliases) == root:
+      return True
+    stack.extend(node.args)
+  return False
+
+
+def _const_store_index(stmt: ProgramNode) -> int | None:
+  """The constant index of a STORE into a double buffer, else ``None``."""
+  if stmt.op != ProgramOp.STORE or stmt.dtype.c_type != "double":
+    return None
+  view = stmt.args[0]
+  if len(view.args) != 1 or view.args[0].op != ProgramOp.CONST_INT:
+    return None
+  return int(view.args[0].attrs["value"])
+
+
+def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int, aliases: dict[str, str] | None = None) -> None:
   pad = " " * indent
   if stmt.op == ProgramOp.FOR:
     rng = stmt.args[0]
@@ -224,14 +281,13 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
     step = _emit_scalar(rng.args[2], ptr_expr)
     incr = f"++{name}" if step == "1" else f"{name} += {step}"
     lines.append(f"{pad}for (long long {name} = {start}; {name} < {stop}; {incr}) {{")
-    for sub in stmt.args[1:]:
-      _emit_statement(sub, ptr_expr, lines, indent + 2)
+    _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2, aliases)
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.STORE:
-    _emit_assignment(_emit_view(stmt.args[0], ptr_expr), stmt.args[1], ptr_expr, lines, indent)
+    _emit_assignment(_emit_view(stmt.args[0], ptr_expr), [stmt.args[1]], ptr_expr, lines, indent)
   elif stmt.op == ProgramOp.ASSIGN:
     declaration = f"{stmt.dtype.c_type} " if stmt.attrs.get("declare") else ""
-    _emit_assignment(c_ident(stmt.attrs["target"]), stmt.args[0], ptr_expr, lines, indent, declaration)
+    _emit_assignment(c_ident(stmt.attrs["target"]), [stmt.args[0]], ptr_expr, lines, indent, declaration)
   elif stmt.op == ProgramOp.CALL:
     if stmt.attrs.get("external"):
       raise LoweringError("external (mixed-device) CALL rendering is deferred to a later migration step")
@@ -249,12 +305,14 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
     raise LoweringError(f"Program IR C renderer: statement op {stmt.op} not yet handled")
 
 
-def _emit_assignment(target: str, value: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int, declaration: str = "") -> None:
-  """``target = value;`` with subtrees deeper than ``MAX_SCALAR_DEPTH`` hoisted into temporaries
-  inside a block, so a fused chain never exceeds clang's default bracket nesting limit (256)."""
+def _emit_assignment(target: str, values: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int, declaration: str = "") -> None:
+  """``target = value;`` (two values form a ``double2`` literal) with subtrees deeper than
+  ``MAX_SCALAR_DEPTH`` hoisted into temporaries inside a block, so a fused chain never exceeds
+  clang's default bracket nesting limit (256)."""
   pad = " " * indent
   hoisted: list[str] = []
-  rhs = _emit_scalar(value, ptr_expr, hoisted, pad + "  ")
+  parts = [_emit_scalar(value, ptr_expr, hoisted, pad + "  ") for value in values]
+  rhs = parts[0] if len(parts) == 1 else f"(double2){{{', '.join(parts)}}}"
   if not hoisted:
     lines.append(f"{pad}{declaration}{target} = {rhs};")
     return

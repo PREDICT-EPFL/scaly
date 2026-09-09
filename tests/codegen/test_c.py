@@ -331,3 +331,43 @@ int main() {
   subprocess.run([cc, "-c", str(source), "-o", str(obj)], check=True)
   subprocess.run([cxx, "-std=c++17", str(cpp), str(obj), "-lm", "-o", str(exe)], check=True)
   subprocess.run([str(exe)], check=True)
+
+
+def test_scalarized_stores_coalesce_into_vector_accesses() -> None:
+  from alloy.codegen.c import render_program_c_source
+
+  x = al.sym("x", 7)
+  f = al.Function._from_exprs("coalesced", [x], [(x * 2.0 + 1.0).scalar()], ["x"], ["y"])
+  source = render_program_c_source(f)
+  assert "*(double2*)(res[0]) = (double2){" in source
+  assert "*(double2*)(res[0] + 4) = (double2){" in source
+  assert "res[0][6] = " in source
+  values = np.arange(7.0) + 0.5
+
+  assert np.array_equal(f(values), values * 2.0 + 1.0)
+
+
+def test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target() -> None:
+  from alloy.codegen.c import _render_raw_callee
+  from alloy.ir import program as p
+  from alloy.ir.program import ProgramNode, ProgramOp
+  from alloy.ir.types import dtypes
+
+  x = p.buffer("x", dtypes.float64, (4,))
+  y = p.buffer("y", dtypes.float64, (5,))
+
+  def at(buf, i):
+    return p.view(buf, [p.const_int(i)])
+
+  a = ProgramNode(ProgramOp.BUFFER, (), {**y.attrs, "name": "a", "alias_of": "y", "alias_offset": 0}, y.dtype)
+  body = [
+    a,
+    p.store(at(y, 0), p.load(at(x, 0))),
+    p.store(at(y, 2), p.load(at(x, 2))),
+    p.store(at(y, 3), p.load(at(y, 2))),
+    p.store(at(y, 4), p.load(at(a, 3))),
+  ]
+  source = "\n".join(_render_raw_callee(p.proc("gaps", [x, y], body)))
+
+  assert "double2" not in source
+  assert "y[0] = x[0];" in source and "y[2] = x[2];" in source and "y[3] = y[2];" in source and "y[4] = a[3];" in source

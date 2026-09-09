@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 
 #define ALLOY_SUCCESS 0
 #define ALLOY_ERR_NULL_ABI 1
@@ -19,18 +20,12 @@ static __attribute__((noinline)) void dynamics_fwd3c8e1b6ee2b3_znext_z_raw(const
   double v2 = z[3];
   double v3 = (0.10000000000000001 * ((v0 * v0) + (v2 * v2)));
   double v4 = (0.10000000000000001 * (2.0 * v2));
-  fwd_znext_z[0] = 1.0;
-  fwd_znext_z[1] = 1.0;
-  fwd_znext_z[2] = 0.0;
-  fwd_znext_z[3] = 0.0;
-  fwd_znext_z[4] = 0.050000000000000003;
-  fwd_znext_z[5] = 0.0;
-  fwd_znext_z[6] = (1.0 + (0.050000000000000003 * (-((v1 * v0) + v3))));
-  fwd_znext_z[7] = (0.050000000000000003 * (-(v1 * v2)));
-  fwd_znext_z[8] = 0.0;
-  fwd_znext_z[9] = 0.050000000000000003;
-  fwd_znext_z[10] = (0.050000000000000003 * (-(v4 * v0)));
-  fwd_znext_z[11] = (1.0 + (0.050000000000000003 * (-((v4 * v2) + v3))));
+  *(double2*)(fwd_znext_z) = (double2){1.0, 1.0};
+  *(double2*)(fwd_znext_z + 2) = (double2){0.0, 0.0};
+  *(double2*)(fwd_znext_z + 4) = (double2){0.050000000000000003, 0.0};
+  *(double2*)(fwd_znext_z + 6) = (double2){(1.0 + (0.050000000000000003 * (-((v1 * v0) + v3)))), (0.050000000000000003 * (-(v1 * v2)))};
+  *(double2*)(fwd_znext_z + 8) = (double2){0.0, 0.050000000000000003};
+  *(double2*)(fwd_znext_z + 10) = (double2){(0.050000000000000003 * (-(v4 * v0))), (1.0 + (0.050000000000000003 * (-((v4 * v2) + v3))))};
 }
 
 int shooting_spjac_eq_z_sz_arg(void) { return 2; }

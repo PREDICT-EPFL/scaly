@@ -205,11 +205,14 @@ protocol's compile flags.
       32.9 to 27.8 µs. Add the two flags to the JIT compile line, check that the solver plugins'
       compile paths (alloy-sqp's wrapper, the PIQP and IPOPT hooks) still link, and keep the plugin
       wheels themselves at the portable baseline. One line if it plays well with the solvers.
-- [ ] **C-51. Coalesce consecutive scalar loads and stores into vector accesses in the C renderer.**
+- [x] **C-51. Coalesce consecutive scalar loads and stores into vector accesses in the C renderer.**
       After C-44 scalarizes a body, adjacent `buf[i], buf[i+1], ...` accesses can be emitted as one
       clang `ext_vector_type` load or store; tinygrad's `memory_coalescing` does this in about 60
       lines (`tinygrad_rangeify.md` §6) and it is the difference between scalar code and visible
-      SIMD on clang. After C-44.
+      SIMD on clang. After C-44. Landed as store coalescing only (`codegen/c.py`, `_emit_body`),
+      width 2 via `vector_size`: race-car N=50 24.4 to 23.2 µs on clang, 30.3 to 30.4 µs on GCC;
+      chain M=5 within noise on both. Width 4 slowed GCC on chain by about 5 %, and loads were left
+      scalar because scalarized bodies consume them lane by lane.
 - [ ] **C-8. A range-based loop compiler for the program dialect, in the shape of tinygrad's
       rangeify.** Today every mapped op materializes an `N × width` intermediate: the race-car
       Hessian is about 120 consecutive full-length loops, the chain entry point zero-fills 43 buffers

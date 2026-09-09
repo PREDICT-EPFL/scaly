@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 
 #define ALLOY_SUCCESS 0
 #define ALLOY_ERR_NULL_ABI 1
@@ -17,10 +18,8 @@ static inline void dynamics_raw(const double* z, const double* u, double* znext,
   double v0 = z[2];
   double v1 = z[3];
   double v2 = (0.10000000000000001 * ((v0 * v0) + (v1 * v1)));
-  znext[0] = (z[0] + (0.050000000000000003 * v0));
-  znext[1] = (z[1] + (0.050000000000000003 * v1));
-  znext[2] = (v0 + (0.050000000000000003 * (u[0] - (v2 * v0))));
-  znext[3] = (v1 + (0.050000000000000003 * (u[1] - (v2 * v1))));
+  *(double2*)(znext) = (double2){(z[0] + (0.050000000000000003 * v0)), (z[1] + (0.050000000000000003 * v1))};
+  *(double2*)(znext + 2) = (double2){(v0 + (0.050000000000000003 * (u[0] - (v2 * v0)))), (v1 + (0.050000000000000003 * (u[1] - (v2 * v1))))};
 }
 
 int shooting_sz_arg(void) { return 2; }

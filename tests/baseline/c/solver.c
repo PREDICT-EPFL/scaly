@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <time.h>
 #include "piqp/piqp.h"
+typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 
 #define ALLOY_SUCCESS 0
 #define ALLOY_ERR_NULL_ABI 1
@@ -66,16 +67,11 @@ extern "C" {
 
 static inline void corpus_qp_oracle_raw(const double* mu, double* qp_P, double* qp_c, double* qp_x_lb, double* qp_x_ub, double* w) {
   (void)w;
-  qp_P[0] = 1.0;
-  qp_P[1] = 0.0;
-  qp_P[2] = 0.0;
-  qp_P[3] = 1.0;
-  qp_c[0] = (-mu[0]);
-  qp_c[1] = (-mu[1]);
-  qp_x_lb[0] = ((double)(-INFINITY));
-  qp_x_lb[1] = ((double)(-INFINITY));
-  qp_x_ub[0] = ((double)INFINITY);
-  qp_x_ub[1] = ((double)INFINITY);
+  *(double2*)(qp_P) = (double2){1.0, 0.0};
+  *(double2*)(qp_P + 2) = (double2){0.0, 1.0};
+  *(double2*)(qp_c) = (double2){(-mu[0]), (-mu[1])};
+  *(double2*)(qp_x_lb) = (double2){((double)(-INFINITY)), ((double)(-INFINITY))};
+  *(double2*)(qp_x_ub) = (double2){((double)INFINITY), ((double)INFINITY)};
 }
 
 static alloy_solver_stats corpus_qp_stats_data;
