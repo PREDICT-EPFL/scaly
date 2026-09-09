@@ -182,6 +182,8 @@ def _lower_to_proc(fun: Function, callees: dict[str, ProgramNode], solver_fns: d
       **proc.attrs,
       "input_count": len(fun.inputs),
       "lowering": lowering,
+      # True: may expand as a root and inline into an expanding caller; ``hoist_invariant`` sets
+      # "callee" on a prologue that should only ever be inlined.
       "scalarize": all(n.type.dtype == dtypes.float64 for n in (*fun.inputs, *nodes))
       and (lowering == "scalar" or (lowering == "auto" and auto_scalarize)),
     },

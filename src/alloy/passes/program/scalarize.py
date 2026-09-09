@@ -194,6 +194,9 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     if not eligible:
       expansion_work[name] = None
       continue
+    if proc.attrs["scalarize"] == "callee":  # inlined into expanding callers, never a root
+      expansion_work[name] = total_work
+      continue
     candidate = _scalarize_proc(proc, procs)
     ops, growth = scalar_cost(candidate)
     if proc.attrs["lowering"] == "auto" and (ops > AUTO_SCALAR_OPS_PER_PROC or scalar_growth + growth > AUTO_SCALAR_GROWTH_PER_PROGRAM):

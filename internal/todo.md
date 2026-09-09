@@ -181,6 +181,13 @@ protocol's compile flags.
       formal. A program-dialect hoist of loop-invariant statements, and one callee for all formals of
       one VMAP, or one `W @ [v1 v2 v3]` product for batched seeds. With the row-major products then
       in column-sweep form, npmpc reaches 38.6 µs under `-march=native` by hand against MX's 41.9.
+      Landed 2026-09-09: the hoist, as `passes/program/hoist_invariant.py`, first in the pipeline. By
+      then the layout fold of C-43 had already removed the weight transposes; what the pass finds in
+      npmpc is the seed-times-weight columns of the sigmoid tangent, npmpc N=12 47.5 to 44.6 µs
+      ([timing](notes/perf_2026_09_07/README.md#c-46-hoist-2026-09-09)). `tests/passes/test_program.py`
+      pins the split and the per-trip negative. Still open: one callee for all formals of one VMAP
+      (the `u` kernel's repeated primal and adjoint passes), which needs the forward rule in
+      `ad/forward.py` to emit one mapped callee with several outputs.
 - [x] **C-47. One accumulation buffer for a sum of scatters.** Chain's entry point zero-filled 43
       buffers of 23,544 doubles and scattered 576 values into each before summing them: 8 MB of memset
       per call and the 1,075,248-double workspace. `passes/program/combine_scatter_sums.py` already

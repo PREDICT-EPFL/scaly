@@ -17,9 +17,27 @@ from alloy.codegen.c import render_program_c_source
 from alloy.codegen.jit import _find_compiler
 from alloy.passes.lowering import lower_function, main_proc
 from alloy.passes.program.combine_scatter_sums import combine_scatter_sums
+from alloy.passes.program.hoist_invariant import hoist_invariant
+from alloy.passes.program._common import _walk
 from alloy.passes.program.pack_workspace import WORKSPACE_SPILL_THRESHOLD
 from alloy.passes.program.unroll_unit_loops import unroll_unit_loops
-from alloy.ir.program import ProgramOp, buffer, const_float, for_, proc as proc_, program, range_, store, var, view
+from alloy.ir.program import (
+  ProgramNode,
+  ProgramOp,
+  add,
+  buffer,
+  const_float,
+  const_int,
+  for_,
+  load,
+  mul,
+  proc as proc_,
+  program,
+  range_,
+  store,
+  var,
+  view,
+)
 from alloy.ir.types import dtypes
 
 _HAVE_CC = _find_compiler() is not None
@@ -384,3 +402,92 @@ def test_scatter_sum_combines_reshaped_scatters() -> None:
   for i, idx in enumerate(index_sets):
     expected[idx] += (i + 1) * data
   np.testing.assert_allclose(f(data), expected.reshape(2, 4))
+
+
+# --- loop-invariant hoisting ---------------------------------------------------------
+
+
+def _mapped_mlp(stages: int, *, broadcast: bool) -> tuple[al.Function, np.ndarray, np.ndarray]:
+  """``sin(exp(W) @ x_i)`` per stage; ``W`` is one broadcast matrix or a fresh one per stage."""
+  x, w = al.sym("x", 3), al.sym("w", 9)
+  stage = al.Function._from_exprs("hoist_stage", [x, w], [(w.reshape((3, 3)).exp() @ x).sin()], ["x", "w"], ["y"])
+  z, weights = al.sym("z", 3 * stages), al.sym("weights", 9 if broadcast else 9 * stages)
+  out = al.vmap(stage, stages, {"x": (z, 0, 3), "w": (weights, 0, 0 if broadcast else 9)})
+  fn = al.Function._from_exprs(f"hoist_map_{broadcast}", [z, weights], [out], ["z", "weights"], ["y"])
+  rng = np.random.default_rng(3)
+  return fn, rng.normal(size=3 * stages), rng.normal(size=weights.shape[0])
+
+
+def _proc_names(fn: al.Function) -> list[str]:
+  prog = lower_function(fn)
+  return [pr.attrs["name"] for pr in prog.args[: int(prog.attrs["proc_count"])]]
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
+def test_hoist_moves_broadcast_argument_work_before_the_mapped_loop() -> None:
+  fn, z, w = _mapped_mlp(5, broadcast=True)
+  assert _proc_names(fn) == ["hoist_stage_hoist1", "hoist_stage_hoisted1", "hoist_map_True"]
+  body = [s for s in _main_body(fn) if s.op != ProgramOp.BUFFER]
+  calls = [s for s in body if s.op == ProgramOp.CALL]
+  loops = [s for s in body if s.op == ProgramOp.FOR and s.args[1].op == ProgramOp.CALL]
+  assert [c.attrs["callee"] for c in calls] == ["hoist_stage_hoist1"] and body.index(calls[0]) < body.index(loops[0])
+  assert loops[0].args[1].attrs["callee"] == "hoist_stage_hoisted1"
+  # The prologue owns the exp of the broadcast matrix; the body keeps the per-stage product and
+  # its zero-filled accumulator, which is written per trip and so must not move.
+  prologue, hoisted = lower_function(fn).args[:2]
+  ops = lambda proc: {n.op for stmt in proc.args[int(proc.attrs["param_count"]) :] for n in _walk(stmt)}
+  assert ProgramOp.EXP in ops(prologue) and ProgramOp.EXP not in ops(hoisted)
+  assert ProgramOp.SIN in ops(hoisted) and ProgramOp.SIN not in ops(prologue)
+  expected = np.sin(np.exp(w.reshape(3, 3)) @ z.reshape(5, 3).T).T.reshape(-1)
+  np.testing.assert_allclose(fn((z, w)), expected, rtol=1e-14, atol=1e-14)
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
+def test_hoist_leaves_per_trip_arguments_in_the_loop() -> None:
+  fn, z, w = _mapped_mlp(5, broadcast=False)
+  assert _proc_names(fn) == ["hoist_stage", "hoist_map_False"]
+  expected = np.sin(np.einsum("sij,sj->si", np.exp(w.reshape(5, 3, 3)), z.reshape(5, 3))).reshape(-1)
+  np.testing.assert_allclose(fn((z, w)), expected, rtol=1e-14, atol=1e-14)
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
+def test_hoist_names_each_invariant_position_set_of_one_callee() -> None:
+  """The same callee mapped once with ``w`` broadcast and once with ``x`` broadcast gets two distinct splits."""
+  x, w = al.sym("x", 3), al.sym("w", 9)
+  stage = al.Function._from_exprs("hoist_two", [x, w], [(w.reshape((3, 3)).exp() @ x.exp()).sin()], ["x", "w"], ["y"])
+  z, weights = al.sym("z", 12), al.sym("weights", 36)
+  first = al.vmap(stage, 4, {"x": (z, 0, 3), "w": (weights, 0, 0)})
+  second = al.vmap(stage, 4, {"x": (z, 0, 0), "w": (weights, 0, 9)})
+  fn = al.Function._from_exprs("hoist_two_map", [z, weights], [first + second], ["z", "weights"], ["y"])
+  assert _proc_names(fn) == ["hoist_two_hoist1", "hoist_two_hoisted1", "hoist_two_hoist0", "hoist_two_hoisted0", "hoist_two_map"]
+  zv, wv = np.random.default_rng(5).normal(size=12), np.random.default_rng(6).normal(size=36)
+  ew, ex = np.exp(wv.reshape(4, 3, 3)), np.exp(zv.reshape(4, 3))
+  expected = np.sin(ew[0] @ ex.T).T + np.sin(np.einsum("sij,j->si", ew, ex[0]))
+  np.testing.assert_allclose(fn((zv, wv)), expected.reshape(-1), rtol=1e-14, atol=1e-14)
+
+
+def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:
+  """``t = a; y = t * x; t = 2a; y += t``: both writes of ``t`` are invariant, but the first read must see the first."""
+  a, x, y = (buffer(n, dtypes.float64, (1,)) for n in ("a", "x", "y"))
+  t = buffer("t", dtypes.float64, (1,), address_space="private")
+  at = lambda b: view(b, [const_int(0)])
+  body = [
+    t,
+    store(at(t), load(at(a))),
+    store(at(y), mul(load(at(t)), load(at(x)))),
+    store(at(t), mul(const_float(2.0), load(at(a)))),
+    store(at(y), add(load(at(y)), load(at(t)))),
+  ]
+  callee = ProgramNode(
+    ProgramOp.PROC, (a, x, y, *body), {**proc_("twice", [a, x, y], body).attrs, "input_count": 2, "lowering": "auto", "scalarize": True}
+  )
+  za, zx, zy = (buffer(n, dtypes.float64, (4,)) for n in ("za", "zx", "zy"))
+  rng = range_("it", 0, 4)
+  call = ProgramNode(
+    ProgramOp.CALL,
+    (view(za, [const_int(0)]), view(zx, [var("it")]), view(zy, [var("it")])),
+    {"callee": "twice", "n_in": 2, "n_out": 1, "returns": ()},
+  )
+  root = ProgramNode(ProgramOp.PROC, (za, zx, zy, for_(rng, [call])), {**proc_("root", [za, zx, zy], []).attrs, "input_count": 2})
+  prog = program([callee, root])
+  assert hoist_invariant(prog) is prog

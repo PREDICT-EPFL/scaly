@@ -313,7 +313,12 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   hess = sparse_hessian(lam @ eq, z, triangle="lower")
   fn = al.Function._from_exprs("chain_hess_hinted", [z, p, lam], [hess.values], ["z", "p", "lam"], ["h"])
   procs = lower_function(fn).args[:-1]
-  selected = [proc for proc in procs if str(proc.attrs["name"]).startswith("chain_eq_stage_M3_adj") and str(proc.attrs["name"]).endswith("adj:eq_z")]
+  # ``hoist_invariant`` splits the mapped procedure; the per-stage half keeps the hint.
+  selected = [
+    proc
+    for proc in procs
+    if str(proc.attrs["name"]).startswith("chain_eq_stage_M3_adj") and str(proc.attrs["name"]).split("adj:eq_z")[-1] in ("", "_hoisted1")
+  ]
   assert len(selected) == 1, [proc.attrs["name"] for proc in procs]
   assert selected[0].attrs["lowering"] == "scalar" and selected[0].attrs["scalarize"] and selected[0].attrs["scalarized"], selected[0].attrs
 

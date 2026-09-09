@@ -548,6 +548,10 @@ tests/passes/test_program.py::test_flat_per_stage_fold_at_a_hundred_stages_runs
 tests/passes/test_program.py::test_fusion_collapses_elementwise_chain
 tests/passes/test_program.py::test_fusion_into_reduction
 tests/passes/test_program.py::test_fusion_skips_matmul_operand
+tests/passes/test_program.py::test_hoist_leaves_per_trip_arguments_in_the_loop
+tests/passes/test_program.py::test_hoist_moves_broadcast_argument_work_before_the_mapped_loop
+tests/passes/test_program.py::test_hoist_names_each_invariant_position_set_of_one_callee
+tests/passes/test_program.py::test_hoist_refuses_a_buffer_read_between_two_invariant_writes
 tests/passes/test_program.py::test_no_spill_when_temps_small
 tests/passes/test_program.py::test_optimized_program_still_verifies
 tests/passes/test_program.py::test_packing_reuses_slots_and_spills
@@ -705,6 +709,7 @@ tests/test_import_layering.py::test_module_imports_standalone[alloy.passes.progr
 tests/test_import_layering.py::test_module_imports_standalone[alloy.passes.program.combine_scatter_sums]
 tests/test_import_layering.py::test_module_imports_standalone[alloy.passes.program.fold_arith]
 tests/test_import_layering.py::test_module_imports_standalone[alloy.passes.program.fuse_elementwise]
+tests/test_import_layering.py::test_module_imports_standalone[alloy.passes.program.hoist_invariant]
 tests/test_import_layering.py::test_module_imports_standalone[alloy.passes.program.pack_workspace]
 tests/test_import_layering.py::test_module_imports_standalone[alloy.passes.program.scalarize]
 tests/test_import_layering.py::test_module_imports_standalone[alloy.passes.program.unroll_unit_loops]

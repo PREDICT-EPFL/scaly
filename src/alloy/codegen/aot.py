@@ -240,8 +240,8 @@ def _render_solver_bearing_source(ctx: _RenderCtx) -> str:
   """One translation unit for a solver-bearing graph. The non-solver Functions (oracles, the host
   caller, any intermediates) are Program-IR ``_raw`` callees; each ``solver Function`` is the
   ``solver`` wrapper driving them. ``_function_order`` is topological — a solver sits after its
-  oracle PROCs and before the function that calls it — so emitting definitions in that order never
-  forward-references a ``_raw``."""
+  oracle PROCs and before the function that calls it — so emitting each wrapper after the PROCs up
+  to its oracles never forward-references a ``_raw``."""
   fun, prog = ctx.fun, ctx.prog  # solver callees opaque; oracles + host fns are PROCs (see passes/lowering.py)
   pc = int(prog.attrs.get("proc_count", 1))
   procs = {pr.attrs["name"]: pr for pr in prog.args[:pc]}
@@ -271,9 +271,23 @@ def _render_solver_bearing_source(ctx: _RenderCtx) -> str:
         external_sources.append(oracle.source)
   for source in external_sources:
     lines += [*source.splitlines(), ""]
+  # Program order also puts a callee before its callers, and it is the only order that knows the
+  # PROCs the program passes split off a Function's PROC (``passes/program/hoist_invariant.py``).
+  pending = [pr for pr in prog.args[:pc] if pr.attrs["name"] != fun.name]
+
+  def flush(until: str | None) -> None:
+    names = [pr.attrs["name"] for pr in pending]
+    count = names.index(until) + 1 if until in names else len(pending) if until is None else 0
+    for pr in pending[:count]:
+      lines.extend((*_render_raw_callee(pr), ""))
+    del pending[:count]
+
   for fn in order if is_solver_function(fun) else order[:-1]:
-    lines += render_solver_raw(fn, include_external_sources=False) if is_solver_function(fn) else _render_raw_callee(procs[fn.name])
-    lines.append("")
+    if is_solver_function(fn):
+      lines.extend((*render_solver_raw(fn, include_external_sources=False), ""))
+    else:
+      flush(fn.name)
+  flush(None)
   if is_solver_function(fun):
     lines += _render_solver_entry(fun, ctx.workspace_size)
   else:

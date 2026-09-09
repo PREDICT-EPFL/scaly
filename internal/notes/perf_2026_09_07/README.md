@@ -526,3 +526,20 @@ automatically, where the C-44 closeout had to force it after the fact (1,081.8 �
 stage now carries the hint in `benchmarks/problems/chain`. Race-car was tried with the same hint and
 produced byte-identical source, since the automatic policy already selects its stage. The entry-point
 workspace is unchanged at 1,075,248 doubles on chain: C-8 owns that.
+
+## C-46 hoist, 2026-09-09
+
+`hoist_invariant` alone, measured with `sweep.run_cell` and the harness flags on the same tree, the
+before variant with the pass removed from `PASS_PIPELINE` in the probe process; median of three
+alternating runs, each cell passing the harness dense-reference check.
+
+| Cell | Before, µs | After, µs | Executable, bytes |
+|---|---:|---:|---:|
+| npmpc N=12 Hessian | 47.47 | 44.55 | 36,385 -> 38,108 |
+
+The weight transposes this item named are gone since the C-43 layout fold, so nothing of the
+3.5 µs remains to hoist. What the pass moves out of the `x` stage kernel is the tangent of the
+sigmoid input under the constant unit seeds: two 32-element columns of `-(W0[:, k] * scale_k)`,
+recomputed per stage before. The `u` kernel has no invariant buffer at all; its duplicate primal
+and adjoint passes are the callee-merge half of C-46, still open.
+

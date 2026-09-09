@@ -50,7 +50,20 @@ at the tail of lowering, between the initial program and the verifier. Each pass
 module. Adding an optimization means adding its function to this sequence at the required
 position. Imports do not determine execution order.
 
-Five passes run today, in this order.
+Seven passes run today, in this order.
+
+**`hoist_invariant`** runs first, on the loop-shaped program. A `VMAP` that broadcasts an argument
+(stride 0) lowers to a loop whose call passes the same pointer at every trip, but the callee cannot
+know that and recomputes everything derived from it. The pass finds, inside the callee, the private
+buffers written only by statements that read invariant inputs, constant buffers and other
+invariant buffers, and splits the callee: a `_hoist<positions>` prologue computes those buffers
+once before the loop, and a `_hoisted<positions>` body takes them as extra inputs; the suffix
+names the invariant argument positions, so one callee mapped two ways gets two distinct splits. A buffer that any per-trip statement
+also writes, such as a zero-filled accumulator, stays in the body. Call sites whose arguments all
+vary keep the original callee, which is dropped once nothing calls it. Under `auto` the prologue
+is marked `scalarize: "callee"`: `scalarize` inlines it into an expanding caller but never expands
+it on its own, since code that runs once per call gains nothing from expansion and would grow the
+source with the invariant argument's size.
 
 **`scalarize`** expands selected float64 procedures before any buffer fusion or workspace reuse.
 It substitutes constant loop indices, tracks the current scalar value of each buffer element,

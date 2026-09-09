@@ -76,6 +76,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "alloy.passes.program.combine_scatter_sums": 6,
   "alloy.passes.program.fold_arith": 6,
   "alloy.passes.program.fuse_elementwise": 6,
+  "alloy.passes.program.hoist_invariant": 6,
   "alloy.passes.program.pack_workspace": 6,
   "alloy.passes.program.unroll_unit_loops": 6,
   "alloy.passes.program.scalarize": 6,
