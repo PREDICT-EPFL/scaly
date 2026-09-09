@@ -94,12 +94,14 @@ source = { editable = "plugins/alloy-sqp" }
 dependencies = [
     { name = "alloy" },
     { name = "alloy-piqp" },
+    { name = "jinja2" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "alloy", editable = "." },
     { name = "alloy-piqp", editable = "plugins/alloy-piqp" },
+    { name = "jinja2", specifier = ">=3.1.6" },
 ]
 
 [[package]]

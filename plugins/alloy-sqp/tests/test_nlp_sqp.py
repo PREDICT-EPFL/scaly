@@ -108,11 +108,12 @@ def test_sqp_trace_prefix_sanitizes_hostile_names() -> None:
     x_lb=np.zeros(2),
     x_ub=np.ones(2),
     solver="sqp",
-    name='pct%s "quote',
+    name='pct%s "quote\fsep\u2028end',
     options={"trace": True},
   )
   source = render_c_source(fun)
-  assert "[alloy-sqp pct_s__quote]" in source
+  assert "[alloy-sqp pct_s__quote_sep_end]" in source
+  assert '// PIQP-backed SQP wrapper for pct%s "quote\fsep\u2028end (' in source
   # the raw name may appear in comments, but never inside a format string
   assert all("pct%s" not in line and '"quote' not in line for line in source.splitlines() if "fprintf" in line)
 

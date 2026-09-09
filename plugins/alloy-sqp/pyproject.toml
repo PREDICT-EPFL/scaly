@@ -2,7 +2,7 @@
 name = "alloy-sqp"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["alloy", "alloy-piqp"]
+dependencies = ["alloy", "alloy-piqp", "jinja2>=3.1.6"]
 
 [build-system]
 requires = ["hatchling"]
