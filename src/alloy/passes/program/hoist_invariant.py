@@ -139,6 +139,7 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...]) -> _Split | None:
     [*params[:n_in], *shared],
     params[n_in:],
     [s for i, s in enumerate(body) if keep(s) or (i in refs and i not in hoist)],
+    hoisted_from=proc.attrs.get("hoisted_from", name),
   )
   return prologue, hoisted, used, exported
 

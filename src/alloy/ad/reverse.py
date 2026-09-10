@@ -171,7 +171,7 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   if expr.op == ExprOp.DIV:
     return (
       _unbroadcast(cot / args[1], args[0].shape, expr.shape),
-      _unbroadcast(-cot * args[0] / (args[1] ** 2), args[1].shape, expr.shape),
+      _unbroadcast(-((cot / args[1]) * expr), args[1].shape, expr.shape),
     )
   if expr.op == ExprOp.POW:
     return (

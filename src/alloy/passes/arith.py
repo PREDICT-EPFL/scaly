@@ -82,6 +82,10 @@ def simplify_arith[Node: _HasArgs](d: Arith[Node], node: Node) -> Node | None:
       return d.build("neg", (x,), node)
     if d.kind(x) == d.kind(y) == "neg":
       return d.build("mul", (x.args[0], y.args[0]), node)
+    if d.kind(x) == "neg":
+      return d.build("neg", (d.build("mul", (x.args[0], y), node),), node)
+    if d.kind(y) == "neg":
+      return d.build("neg", (d.build("mul", (x, y.args[0]), node),), node)
   elif kind == "div":
     if x is y:
       return d.full(1, node)
@@ -89,6 +93,10 @@ def simplify_arith[Node: _HasArgs](d: Arith[Node], node: Node) -> Node | None:
       return d.full(0, node)
     if cy == 1 and d.fits(x, node):
       return x
+    if d.kind(x) == "neg":
+      return d.build("neg", (d.build("div", (x.args[0], y), node),), node)
+    if d.kind(y) == "neg":
+      return d.build("neg", (d.build("div", (x, y.args[0]), node),), node)
   elif kind == "pow":
     if cy == 0 or cx == 1:
       return d.full(1, node)

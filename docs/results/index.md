@@ -1,7 +1,8 @@
 # Benchmark results
 
-The current measurements cover the September 2026 Hessian scalability sweeps and canonical
-closed-loop runs below. Earlier measurements follow with their scope and limitations.
+The latest compiler closeout was interrupted; its partial measurements appear first. Earlier
+complete Hessian scalability sweeps and canonical closed-loop runs follow with their scope and
+limitations.
 
 Everything here is measured against **CasADi**, in both its SX (scalar) and MX (block) forms, on
 the same problem, and every measurement is gated by a correctness check: each backend's compact
@@ -28,6 +29,82 @@ for the safety filter. A cell that does not agree produces no timing.
     reports. Every closed-loop IPOPT multiple below is therefore an upper bound on the oracle effect
     and is marked as such. The kernel sweeps, the code-size figures and the two `alloy-sqp` columns
     are unaffected. [Read the audit](fairness.md).
+
+## Partial Track C closeout, 2026-09-09 to 2026-09-10
+
+!!! warning "Interrupted study, partial results only"
+
+    The run started on 2026-09-09 and stopped during chain repetition 4. It saved 671 of the
+    planned 690 sweep rows and 30 of 40 closed-loop episodes. The last log update was
+    2026-09-10 at 00:45 Zurich time. The process was absent when checked that morning.
+    The cause is unconfirmed. No final study manifest or automatic report was produced.
+    These tables summarize saved results after the interruption. They do not establish a
+    complete study or ratify the paper's suite-wide claims.
+
+The saved runs used the frozen protocol: five fresh processes, order seed 0, the performance
+CPU governor, boost off, a 180-second kernel compile limit, and the 50 MiB source cap. The source
+snapshot still matched every recorded file checksum when checked on 2026-09-10, before this
+write-up. All 500 saved timings passed the workload correctness checks. No saved row reports a
+correctness or runtime error. An interrupted attempt has no result and is not counted as a timeout.
+
+| Workload | Saved / planned rows | Successful timings | Compile timeouts | Skips after timeout | Episodes |
+|---|---:|---:|---:|---:|---:|
+| race_cars | 225 / 225 | 210 | 5 | 10 | 10 / 10 |
+| npmpc | 240 / 240 | 166 | 30 | 44 | 10 / 10 |
+| unbumpercars | 150 / 150 | 85 | 25 | 40 | 10 / 10 |
+| chain | 56 / 75 | 39 | 10 | 7 | 0 / 10 |
+| Total | 671 / 690 | 500 | 70 | 101 | 30 / 40 |
+
+The completed workload sweeps give these process means. The CasADi column names the fastest
+completed encoding at that size. All displayed timings have five successful processes.
+CV denotes the sample coefficient of variation across processes.
+
+| Problem | Size | Alloy, µs | Alloy CV, % | Best completed CasADi | CasADi, µs |
+|---|---:|---:|---:|---|---:|
+| Race-car | N=40 | 19.834 | 0.83 | SX | 15.906 |
+| Race-car | N=500 | 228.815 | 0.77 | SX | 216.058 |
+| Neural-process MPC | N=12 | 34.725 | 0.30 | MX | 43.160 |
+| Neural-process MPC | N=200 | 592.402 | 0.94 | called MX | 4964.348 |
+| Unbumpercars | C=8 | 876.016 | 1.34 | MX | 10761.821 |
+| Unbumpercars | C=16 | 2086.643 | 0.38 | none completed | |
+| Unbumpercars | C=32 | 6985.492 | 0.52 | none completed | |
+
+Alloy remains 24.7% slower than SX
+at race-car N=40, so the 20% runtime gate is not met across the useful range. At N=500 the gap
+is 5.9%. Neural-process MPC at N=12 is 19.5% faster than completed MX. Its N=200 comparison
+is still conditional on the compile budget: plain MX failed at N=100 and all three matrix multiplication variants
+failed at N=200. Unbumpercars at C=8 is 12.3× faster than completed MX. Alloy now completes
+C=32, but no CasADi encoding completes C=16 or C=32 under the budget, so those sizes establish
+completed Alloy evaluations rather than a measured runtime advantage over those missing builds.
+
+### Completed closed-loop workloads
+
+All 30 saved episodes succeeded. Each row below averages five processes. Times are per step.
+QP denotes time spent solving the quadratic program.
+
+| Problem | Solver | Provider | Total, ms | Total CV, % | Function evaluation, ms | QP, ms | Globalization, ms | Glue, ms | Steps | Processes |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| npmpc | sqp | alloy | 1.304 | 0.87 | 0.504 | 0.675 | 0.004 | 0.120 | 100 | 5 |
+| npmpc | sqp | casadi | 1.860 | 1.57 | 1.039 | 0.694 | 0.004 | 0.123 | 100 | 5 |
+| race_cars | sqp | alloy | 2.569 | 0.83 | 0.134 | 2.344 | 0.007 | 0.083 | 1367 | 5 |
+| race_cars | sqp | casadi | 2.651 | 0.78 | 0.219 | 2.339 | 0.008 | 0.085 | 1367 | 5 |
+| unbumpercars | sqp | alloy | 10.778 | 0.58 | 9.510 | 1.228 | 0.010 | 0.031 | 200 | 5 |
+| unbumpercars | sqp | casadi | 106.724 | 0.69 | 105.364 | 1.305 | 0.011 | 0.044 | 200 | 5 |
+
+| Problem | Solver | Repetitions | Per-step iteration mismatches | Per-step oracle-count mismatches | Maximum state difference | Maximum control difference |
+|---|---|---:|---:|---:|---:|---:|
+| npmpc | sqp | 5 | 0 | 0 | 4.86e-10 | 2.04e-12 |
+| race_cars | sqp | 5 | 0 | 0 | 4.68e-12 | 3.39e-09 |
+| unbumpercars | sqp | 5 | 10 | 0 | 2.62e-07 | 2.02e-07 |
+
+Race-car and neural-process MPC match per-step iteration and oracle-call counts across providers.
+Unbumpercars has ten iteration mismatches across 1,000 paired steps. Its total-time ratio is an
+observed closed-loop result, not a strictly equal-work comparison. There are no chain episodes
+from this run. The providers use the same sequential quadratic programming source and PIQP library but separate
+compiled wrappers.
+
+[The partial scalability tables](scalability.md#partial-track-c-closeout-2026-09-09-to-2026-09-10)
+retain every size for the three completed sweeps and describe the missing chain attempts.
 
 ## Interim Track C snapshot, 2026-09-09
 

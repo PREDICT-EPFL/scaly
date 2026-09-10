@@ -239,6 +239,22 @@ def test_packing_reuses_slots_and_spills() -> None:
   assert _sz_w(f) == 1600
 
 
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler for the numeric workspace collision check")
+def test_workspace_slots_do_not_collide_with_output_names() -> None:
+  x = al.sym("x", 4)
+  matrix = x.reshape((2, 2))
+  square = matrix @ matrix
+  cube = square @ matrix
+  f = al.Function._from_exprs("slot_collision", [x], [square + cube, square - cube], ["x"], ["s1", "s2"])
+
+  data = np.arange(1.0, 5.0)
+  square_ref = data.reshape((2, 2)) @ data.reshape((2, 2))
+  cube_ref = square_ref @ data.reshape((2, 2))
+  got_sum, got_difference = f(data)
+  np.testing.assert_allclose(got_sum, square_ref + cube_ref)
+  np.testing.assert_allclose(got_difference, square_ref - cube_ref)
+
+
 def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
   """Regression for the macOS Apple-clang inline-callee miscompile.
 
@@ -256,11 +272,12 @@ def test_call_output_does_not_reuse_slot_that_produced_input() -> None:
   jf = outer.factory("J", ["z"], [al.factory.Jac("y", "z")])
 
   source = render_program_c_source(jf)
-  assert "static __attribute__((noinline)) void inner_fwd2_y_x_raw" in source
-  match = re.search(r"inner_fwd2_y_x_raw\(([^)]*)\);", source)
+  declaration = re.search(r"static __attribute__\(\(noinline\)\) void (inner_fwd2\w+_raw)\(", source)
+  assert declaration is not None
+  match = re.search(re.escape(declaration.group(1)) + r"\(([^)]*)\);", source)
   assert match is not None
   args = [a.strip() for a in match.group(1).split(",")]
-  assert args[:3] == ["s0", "s2", "s3"]
+  assert args[:3] == ["s0", "s3", "s4"]
 
 
 def test_regular_raw_callees_stay_inline() -> None:

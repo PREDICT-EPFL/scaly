@@ -184,3 +184,31 @@ A fix must either include those paths in the cache identity or remove the artifa
 on worktree paths. Verify relocation after the original directory disappears; a successful load
 while both worktrees exist does not exercise the failure. A separate cache is the temporary
 workaround, not the intended behavior.
+
+# Joint derivative callees and scalar rules
+
+C-46 and C-49, 2026-09-09. The [operation audit](perf_2026_09_07/c49_ad_op_audit.md)
+compares the same chain stage with CasADi SX's explicit forward-over-reverse construction. It also
+isolates the cost of separate tangents for each formal input. That comparison supports joint
+propagation and smaller scalar rules. Automatic expansion before differentiation remains deferred.
+
+`ad/forward.py` seeds every active formal in one sweep for ordinary calls and generic mapped
+calls. Constant seeds enter the same helper for ordinary calls. Mapped constant tiles and local
+coloring retain their specialized seed counts, because replacing them with the global seed count
+would increase work. Their derivative bodies share one concatenated output when the iteration
+count and shared input slices agree. Gathers recover the separate results in their original order.
+
+Packing is deliberate. The current VMAP lowering executes each selected output separately and
+uses scratch storage for the other outputs. A helper with several outputs would therefore still
+repeat the primal and adjoint work. One concatenated output shares that work through the existing
+VMAP representation without adding a lowering pass or changing the public function outputs.
+The helper cache remains weakly keyed by the source callee, with active formal indices and seed
+values in the specialization keys. Derived bodies retain the source callee's lowering hint.
+
+The scalar changes reuse the primal quotient in division derivatives, share the square-root
+reciprocal across seeds, recognize elementwise squares and vector self-dots, and move negation
+outside products and quotients. Matrix self-products retain both product-rule terms. Reverse
+multiplication already returns the same expression for both operands of a square, so it needs no
+special case. These rules follow the existing [arithmetic semantics](../../docs/how_it_works/lowering.md#arithmetic-semantics),
+including their rounding and exceptional-value limits. Tests also cover finite inputs at scales
+of `1e-200` and `1e200`, where squaring the denominator in the old rule loses the derivative.

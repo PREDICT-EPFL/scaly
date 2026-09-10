@@ -60,6 +60,19 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
   assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (4, 6, 25)
 
 
+@pytest.mark.parametrize("stages", [1, 5])
+def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages: int) -> None:
+  x, w = al.sym("x", 3), al.sym("w", 9)
+  stage = al.Function._from_exprs("metric_hoist_stage", [x, w], [(w.reshape((3, 3)).exp() @ x).sin().block()], ["x", "w"], ["y"])
+  z, weights = al.sym("z", 3 * stages), al.sym("weights", 9)
+  mapped = al.Function._from_exprs(
+    "metric_hoist_map", [z, weights], [al.vmap(stage, stages, {"x": (z, 0, 3), "w": (weights, 0, 0)})], ["z", "weights"], ["y"]
+  )
+  program = render_c_module(mapped).program
+  assert any(proc.attrs.get("hoisted_from") == stage.name for proc in program.args)
+  assert _dispatch_metrics(mapped, program) == (stages, 3, 21)
+
+
 def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
   x = al.sym("x", 1024)
   inner = al.Function._from_exprs("metric_spill_inner", [x], [(x * x).block()], ["x"], ["y"])

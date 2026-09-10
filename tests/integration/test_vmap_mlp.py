@@ -214,9 +214,12 @@ def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows
   """Both kernels stay one loop nest however many stages there are, and the twin shows it matters.
 
   The Hessian is the one that pins the *cost* to its VMAP form: written as a Python reduction over
-  per-stage slices it unrolls, which grows the source linearly and, deep enough, exceeds the pass
-  recursion limit during lowering.
+  per-stage slices it unrolls. The control pins one retained caller dispatch per stage instead of
+  measuring those calls together with the fixed helper bodies.
   """
+  from alloy.ir.program import ProgramOp
+  from alloy.passes.lowering import lower_function, main_proc
+
   sizes = (2, 8, 32)
   for kernel, request in (("spjac", al.factory.SpJac("eq", "z")), ("sphess", al.factory.SpHess("gamma", "z"))):
     lines = []
@@ -227,8 +230,10 @@ def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows
       lines.append(len(render_c_source(built).splitlines()))
     assert max(lines) < 1.2 * min(lines), f"{kernel} source grew with the horizon: {dict(zip(sizes, lines, strict=True))}"
 
-  unrolled_lines = []
+  unrolled_calls = []
   for stages in sizes:
     built = unrolled(stages).factory(f"vmap_mlp_unrolled_spjac_N{stages}", ["z", "p"], [al.factory.SpJac("eq", "z")])
-    unrolled_lines.append(len(render_c_source(built).splitlines()))
-  assert unrolled_lines[-1] > 3 * unrolled_lines[0], f"the unrolled twin should grow: {unrolled_lines}"
+    proc = main_proc(lower_function(built))
+    body = proc.args[int(proc.attrs["param_count"]) :]
+    unrolled_calls.append(sum(stmt.op == ProgramOp.CALL for stmt in body))
+  assert unrolled_calls == list(sizes), f"the unrolled twin should retain one caller dispatch per stage: {unrolled_calls}"

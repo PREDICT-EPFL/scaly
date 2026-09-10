@@ -608,10 +608,9 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
     return v_x + s * (a_env**4 + q**4).sqrt().sqrt()
 
   m = loop_cfg.wall_margin
-  x_min, x_max, y_min, y_max = [physics[i] for i in range(4, 8)]
 
-  def wall_b(pack: al.Expr, i: int) -> list[al.Expr]:
-    xi = pack[NSTATE * i : NSTATE * (i + 1)]
+  def wall_b(xi: al.Expr, physics: al.Expr) -> al.Expr:
+    x_min, x_max, y_min, y_max = [physics[i] for i in range(4, 8)]
     vx, vy, _ = _world_vel_expr(xi, physics)
     clearances = [xi[0] - (x_min + m), (x_max - m) - xi[0], xi[1] - (y_min + m), (y_max - m) - xi[1]]
     out = []
@@ -620,7 +619,7 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
       s = clearance / d_eps
       v_max = hcbf.single_envelope_c * d_eps**hcbf.envelope_q
       out.append((s * v_max - v_closing))
-    return out
+    return al.stack(out)
 
   @al.function(
     al.G(al.L("xi", NSTATE), al.L("xj", NSTATE), al.L("xi_next", NSTATE), al.L("xj_next", NSTATE), al.L("physics", N_PHYSICS)),
@@ -630,6 +629,15 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
   def pair_hcbf(inputs):
     xi, xj, xi_next, xj_next, physics = inputs
     return al.stack([pair_b(xi_next, xj_next, physics) - (1.0 - loop_cfg.pair_gamma) * pair_b(xi, xj, physics)])
+
+  @al.function(
+    al.G(al.L("state", NSTATE), al.L("state_next", NSTATE), al.L("physics", N_PHYSICS)),
+    al.L("g", 4),
+    name="wall_hcbf",
+  )
+  def wall_hcbf(inputs):
+    state, state_next, physics = inputs
+    return wall_b(state_next, physics) - (1.0 - loop_cfg.wall_gamma) * wall_b(state, physics)
 
   rows: list[al.Expr] = []
   if loop_cfg.n_pairs:
@@ -649,9 +657,7 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
       )
     )
   if loop_cfg.arena_avoidance:
-    for i in range(ncars):
-      for bn, bc in zip(wall_b(states_next, i), wall_b(bar_x, i), strict=True):
-        rows.append(al.stack([bn - (1.0 - loop_cfg.wall_gamma) * bc]))
+    rows.append(al.vmap(wall_hcbf, ncars, [(bar_x, 0, NSTATE), (states_next, 0, NSTATE), (physics, 0, 0)]))
   g = (al.concat(rows) + slack) if rows else al.const(np.zeros((0,)))
   assert g.shape == (n_s,)
   diff = u - u_des

@@ -43,11 +43,11 @@ The whole point of a `call` node is that the callee's structure survives into ge
 has to preserve that, or a horizon of a hundred identical stages becomes a hundred copies of the
 stage derivative.
 
-**Forward mode builds a derivative function and calls it.** For each distinct
-(callee, output, formal input) triple it constructs a derivative `Function` once, caches it, and
-emits a new `call` node to that function. The constructed function takes only the arguments its
-derivative actually depends on — determined structurally — plus the seed if the seed survives, so
-the derivative of a stage function has a narrower signature than the stage itself.
+**Forward mode builds a derivative function and calls it.** One derivative `Function` propagates
+all active formal inputs together for a callee output. Its cache key includes the active formal
+indices, seed count, and any baked seed values. The function takes only the primal arguments and
+seed inputs that its derivative depends on, so a stage derivative can have a narrower signature
+than the stage itself.
 Every derived function, forward or adjoint, inherits the callee's effective lowering hint as
 described in [Lowering](lowering.md#the-optimization-pipeline).
 
@@ -67,8 +67,14 @@ the derivative code growing with the VMAP length.
 
 When the `jvp_many` seeds over a `VMAP` are constant and the per-iteration seed tiles repeat with a
 period of at most eight iterations, forward mode bakes each distinct tile into a const-seed callee
-and maps it over that tile's residue class of iterations, so no seed table or gather reaches the
-generated code. Other constant patterns keep the local-coloring and runtime-seed paths.
+and maps it over that tile's residue class of iterations. This avoids runtime seed tables and seed
+gathers. Other constant patterns keep the local-coloring and runtime-seed paths.
+
+Different formals can need different local seed counts. Forward mode packs their specialized
+results into one concatenated callee output when the iteration count and shared input slices agree.
+One mapped call then shares the primal and adjoint expressions across those results. Gathers recover
+each result's original seed layout, including zero seed rows. Generic runtime seeds instead enter
+one joint derivative helper for all active formals.
 
 One case where one-sided coloring would lose that guarantee is a shared stride-0 formal marked
 differentiable: it gives the Hessian a dense row and column, so coloring the global pattern as a

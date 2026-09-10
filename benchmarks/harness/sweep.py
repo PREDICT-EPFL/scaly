@@ -259,8 +259,11 @@ def _dispatch_metrics(fun: al.Function, prog: ProgramNode) -> tuple[int | str, i
       call, count = stmt.args[1], _static_trip_count(stmt.args[0])
     elif stmt.op == ProgramOp.CALL:
       call = stmt
-    if call is not None and count in trip_counts and str(call.attrs["callee"]) in mapped_callees:
-      dispatches.setdefault(count, []).append(str(call.attrs["callee"]))
+    if call is not None and count in trip_counts:
+      callee = str(call.attrs["callee"])
+      origin = procs[callee].attrs.get("hoisted_from", callee) if callee in procs else callee
+      if origin in mapped_callees:
+        dispatches.setdefault(count, []).append(callee)
   if not dispatches:
     return "", "", ""
   try:

@@ -543,3 +543,77 @@ sigmoid input under the constant unit seeds: two 32-element columns of `-(W0[:, 
 recomputed per stage before. The `u` kernel has no invariant buffer at all; its duplicate primal
 and adjoint passes are the callee-merge half of C-46, still open.
 
+## C-46 and C-49 closeout, 2026-09-09
+
+The remaining C-46 work shares the specialized `x` and `u` derivative results through one packed
+mapped output. Joint forward propagation handles all active formals of ordinary calls and generic
+mapped calls. C-49 also adds the lean division rules, shared square-root reciprocals, square and
+vector self-dot rules, and negation identities. The [design rationale](../refactorings.md#joint-derivative-callees-and-scalar-rules)
+explains why specialized local seed counts remain separate within the packed result. Automatic
+expansion before differentiation and generic sharing between distinct original Function outputs
+remain outside this change.
+
+Each row below is the median of three fresh `sweep.run_cell` processes per variant, using the
+harness toolchain and flags with a 0.5-second minimum benchmark time. Runs alternated before and
+after, reversing the order in the second pair. The baseline loaded the pre-closeout AD and
+arithmetic sources in its isolated process. Both variants used the same remaining compiler,
+including invariant hoisting and the workspace fixes. No project test or compiler jobs overlapped
+the timed kernels. All twelve cells passed the dense-reference check and completed compilation
+and execution. These focused comparisons do not replace BH-20.
+
+| Hessian cell | Before, µs | After, µs | Executable source, bytes | Static metadata, bytes |
+|---|---:|---:|---:|---:|
+| npmpc N=12 | 43.268 | 34.647 | 37,822 -> 31,877 | 22,149 -> 22,150 |
+| Chain M=5 | 398.553 | 201.827 | 1,010,832 -> 412,955 | 474,100 -> 474,100 |
+
+npmpc's generated neural stage now has one tangent procedure instead of separate `x` and `u`
+procedures. Its dispatch workspace falls from 553 to 466 doubles and its dispatch arithmetic from
+33,968 to 28,138 operations. Chain's caller workspace stays at 109,944 doubles, while its dispatch
+arithmetic falls from 53,826 to 21,780 operations. The stage-only histogram from the
+[C-49 audit](c49_ad_op_audit.md), which measures one adjoint and its 24 unit-seed tangents, falls
+from 28,682 to 19,946 operations. The full-kernel dispatch count includes more derivative work.
+
+The twelve generated cells, compiled binaries, checks, and raw measurements are under
+`benchmarks/results/followup/2026-09-09/closeout-probes/`; `rows.json` collects the measurements.
+The baseline modules and probe scripts are stored alongside them. The tests cover numerical
+agreement, overlapping slices, different local seed counts, zero seed rows, formal labels, and
+helper cache identity. Disabling packing in a separate process makes the shared-Hessian regression
+fail because it finds two mapped calls instead of one.
+
+### BP-23 wall-row mapping
+
+BP-23 replaces the four Python-unrolled wall rows per car with one mapped `wall_hcbf` Function.
+A constraint-only sparse Hessian diagnostic, with `gamma` built from `g` rather than the full study
+Lagrangian, gives these sizes at C=2, 4, and 8:
+
+| C | Executable source, bytes | Static metadata, bytes | Complete artifact, bytes |
+|---:|---:|---:|---:|
+| 2 | 101,702 | 2,707 | 104,409 |
+| 4 | 135,605 | 7,422 | 143,027 |
+| 8 | 199,768 | 23,425 | 223,193 |
+
+The C=4 and C=8 programs have the same 16 procedures and the same pair and wall helper bodies.
+The root grows from 426 to 846 statements because sparse-Hessian output assembly and coloring still
+depend on C. C-8 owns that remaining growth.
+
+The benchmark gate uses the full `cost` and `g` Lagrangian at C=4 and C=8. It requires both mapped
+row families. Their call counts, parameter and buffer shapes, body sizes, and loop counts must match
+across the two sizes. Loading the pre-BP-23 wall formulation in memory makes the gate fail at
+C=4 because the wall helper family is empty. The current formulation passes.
+
+## Interrupted BH-20 closeout, recorded 2026-09-10
+
+The full study stopped during chain repetition 4 after the monitoring agent hit its usage limit.
+The benchmark continued beyond the agent's last message. Session cleanup is a possible cause of
+its later termination, not an established diagnosis. No study restart was made. Ted requested
+that the session close with the partial results recorded and committed.
+
+The [results overview](../../../docs/results/index.md#partial-track-c-closeout-2026-09-09-to-2026-09-10)
+records the 671 saved rows and 30 episodes, timing comparisons, and caveats. The
+[scalability tables](../../../docs/results/scalability.md#partial-track-c-closeout-2026-09-09-to-2026-09-10)
+retain the completed grids, partial chain counts, and artifact locations. BH-20 stays open.
+
+All pre-run source-file checksums matched before the write-up. The source archive SHA-256 is
+`2c3c5ed9bc15355b69a2aca4c7fb8142357ea02597cd733d6023bb59bf4a303d`.
+The implementation had passed all 850 tests, Ruff formatting and lint, strict ty checks, the
+benchmark smoke run, and independent reviews before this source snapshot was frozen.

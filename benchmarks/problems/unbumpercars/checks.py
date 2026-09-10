@@ -92,16 +92,60 @@ def check_oracle_matches_casadi() -> None:
 
 
 def check_pair_jac_codegen_growth() -> None:
-  """Mapped pair arithmetic keeps Jacobian source-line growth below the unrolled formulation."""
-  from alloy.codegen.aot import render_c_source
+  """Mapped pair and wall rows stay retained in the Jacobian and exact Hessian."""
+  from alloy.codegen.aot import render_c_module, render_c_source
+  from alloy.ir.program import ProgramOp
   from benchmarks.problems.unbumpercars.filters import build_alloy_oracle
 
   lines = []
+  hess_families = []
   for ncars in (2, 4, 8):
     oracle = build_alloy_oracle(ClosedLoopConfig(ncars=ncars), FilterConfig())
     jac = oracle.factory("pair_jac", list(oracle.input_names), [al.factory.SpJac("g", "z")])
     lines.append(len(render_c_source(jac).splitlines()))
-  assert lines[-1] < 2 * lines[0], f"pair Jacobian source lines grew too fast for C=2,4,8: {lines}"
+    if ncars < 4:
+      continue
+    hess = oracle.factory(
+      "row_hess",
+      [*oracle.input_names, "lam:cost", "lam:g"],
+      [al.factory.SpHess("gamma", "z")],
+      aux={"gamma": ["cost", "g"]},
+    )
+    program = render_c_module(hess, typed_buffers=False).program
+    procs = {proc.attrs["name"]: proc for proc in program.args[: int(program.attrs["proc_count"])]}
+
+    def walk(nodes):
+      stack = list(nodes)
+      while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(node.args)
+
+    root = procs[hess.name]
+    families: dict[str, list[tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...], int, int]]] = {"pair": [], "wall": []}
+    for node in walk(root.args[int(root.attrs["param_count"]) :]):
+      if node.op != ProgramOp.CALL or node.attrs["callee"] not in procs:
+        continue
+      helper = procs[node.attrs["callee"]]
+      origin = str(helper.attrs.get("hoisted_from", helper.attrs["name"]))
+      family = next((name for name in families if origin.startswith(f"{name}_hcbf")), None)
+      if family is None:
+        continue
+      params = helper.args[: int(helper.attrs["param_count"])]
+      body = helper.args[len(params) :]
+      body_nodes = list(walk(body))
+      families[family].append(
+        (
+          tuple(tuple(param.attrs["shape"]) for param in params),
+          tuple(tuple(item.attrs["shape"]) for item in body_nodes if item.op == ProgramOp.BUFFER),
+          len(body),
+          sum(item.op == ProgramOp.FOR for item in body_nodes),
+        )
+      )
+    assert all(families.values()), f"exact Hessian lost a mapped row family at C={ncars}: {families}"
+    hess_families.append({name: sorted(signatures) for name, signatures in families.items()})
+  assert lines[-1] - lines[-2] < 100, f"Jacobian source lines grew with a row family for C=2,4,8: {lines}"
+  assert hess_families[0] == hess_families[1], "exact Hessian pair/wall call families changed between C=4 and C=8"
 
 
 def check_parameter_tail_order() -> None:

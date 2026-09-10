@@ -3,9 +3,10 @@
 The per-cell measurements behind [the results overview](index.md), which is the page to read first
 if you want the summary rather than the tables.
 
-The interim 2026-09-09 Track C study below is the current compiler checkpoint. The 2026-09-05
-and 2026-09-06 measurements remain as the previous baseline, with their original scope and
-limitations. Do not combine timings from different sections into one table.
+The latest Track C closeout was interrupted; its partial results appear first. The earlier complete
+2026-09-09 study remains the interim compiler checkpoint. The 2026-09-05 and 2026-09-06
+measurements retain their original scope and limitations. Do not combine timings from different
+sections into one table.
 
 Runs `benchmarks/run.py sweep` over a fixed cell grid for each workload, capturing per-cell codegen / compile / runtime / source-size metrics. Each cell compiles its selected backend into a separate Google Benchmark binary. The binary scatters the compact result into a dense matrix and compares it with an independent reference before it records a timing.
 
@@ -28,6 +29,184 @@ leaves the field blank because its generated code exposes no internal derivative
 The current race-car formulation maps the stage dynamics and cost. Unbumpercars maps car
 dynamics and pair constraints, while its per-car wall rows remain unrolled. Earlier unbumpercars
 measurements below predate the pair-constraint port.
+
+## Partial Track C closeout, 2026-09-09 to 2026-09-10
+
+!!! warning "Interrupted study, partial results only"
+
+    The run started on 2026-09-09 and stopped during chain repetition 4. It saved 671 of the
+    planned 690 sweep rows and 30 of 40 closed-loop episodes. The last log update was
+    2026-09-10 at 00:45 Zurich time. The process was absent when checked that morning.
+    The cause is unconfirmed. No final study manifest or automatic report was produced.
+    These tables summarize saved results after the interruption. They do not establish a
+    complete study or ratify the paper's suite-wide claims.
+
+These tables use the existing `sweep_table` renderer on the three completed workload CSVs and
+their process summaries. Successful-process fractions refer to recorded attempts. No incomplete
+chain cell is treated as having five processes. The [results overview](index.md#partial-track-c-closeout-2026-09-09-to-2026-09-10)
+contains the timing interpretation and completed closed-loop comparisons.
+
+### Race-car
+
+| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | `alloy` | 5/5 | 0.569 | 1.70 | 28301 | 0 | 234.8 |
+| 1 | `casadi_sx` | 5/5 | 0.412 | 0.09 | 25755 | 108 | 177.2 |
+| 1 | `casadi_mx` | 5/5 | 0.509 | 0.51 | 95400 | 304 | 387.7 |
+| 1 | `casadi_call_mx` | 5/5 | 0.923 | 0.29 | 228004 | 1067 | 775.7 |
+| 1 | `casadi_map_sx` | 5/5 | 0.767 | 0.26 | 94438 | 826 | 393.8 |
+| 5 | `alloy` | 5/5 | 2.662 | 0.66 | 23958 | 0 | 232.1 |
+| 5 | `casadi_sx` | 5/5 | 1.997 | 0.49 | 107717 | 119 | 337.5 |
+| 5 | `casadi_mx` | 5/5 | 2.669 | 0.64 | 441760 | 1085 | 1727.6 |
+| 5 | `casadi_call_mx` | 5/5 | 4.953 | 1.32 | 248703 | 2244 | 1816.2 |
+| 5 | `casadi_map_sx` | 5/5 | 5.338 | 0.30 | 120288 | 5914 | 1954.2 |
+| 10 | `alloy` | 5/5 | 4.904 | 0.47 | 23980 | 0 | 241.2 |
+| 10 | `casadi_sx` | 5/5 | 3.954 | 0.49 | 209958 | 119 | 569.7 |
+| 10 | `casadi_mx` | 5/5 | 5.509 | 1.10 | 879492 | 2065 | 4271.0 |
+| 10 | `casadi_call_mx` | 5/5 | 9.649 | 0.84 | 269955 | 3494 | 2516.7 |
+| 10 | `casadi_map_sx` | 5/5 | 10.322 | 0.26 | 142699 | 11334 | 1932.4 |
+| 25 | `alloy` | 5/5 | 12.426 | 0.62 | 24044 | 2400 | 294.6 |
+| 25 | `casadi_sx` | 5/5 | 9.892 | 0.70 | 516870 | 119 | 1310.0 |
+| 25 | `casadi_mx` | 5/5 | 14.035 | 1.05 | 2360004 | 5020 | 23460.1 |
+| 25 | `casadi_call_mx` | 5/5 | 24.238 | 1.10 | 334019 | 7484 | 2022.5 |
+| 25 | `casadi_map_sx` | 5/5 | 25.814 | 1.61 | 206150 | 27594 | 1168.7 |
+| 40 | `alloy` | 5/5 | 19.834 | 0.83 | 24044 | 3840 | 265.3 |
+| 40 | `casadi_sx` | 5/5 | 15.906 | 0.61 | 823845 | 119 | 2075.7 |
+| 40 | `casadi_mx` | 5/5 | 22.611 | 0.50 | 3799659 | 7975 | 60923.8 |
+| 40 | `casadi_call_mx` | 5/5 | 39.231 | 1.14 | 398502 | 11414 | 2566.1 |
+| 40 | `casadi_map_sx` | 5/5 | 41.646 | 1.06 | 273406 | 43854 | 1278.4 |
+| 50 | `alloy` | 5/5 | 23.473 | 0.37 | 24071 | 8472 | 270.8 |
+| 50 | `casadi_sx` | 5/5 | 19.993 | 0.63 | 1028495 | 119 | 2610.5 |
+| 50 | `casadi_mx` | 5/5 | 28.166 | 0.30 | 4762326 | 9945 | 99671.6 |
+| 50 | `casadi_call_mx` | 5/5 | 48.610 | 0.63 | 441709 | 14034 | 7487.0 |
+| 50 | `casadi_map_sx` | 5/5 | 51.940 | 0.46 | 318176 | 54694 | 5460.2 |
+| 100 | `alloy` | 5/5 | 47.126 | 0.29 | 24096 | 16872 | 359.9 |
+| 100 | `casadi_sx` | 5/5 | 40.515 | 0.55 | 2052051 | 119 | 5893.5 |
+| 100 | `casadi_mx` | 0/5 | timeout |  | 9614050 | 19795 |  |
+| 100 | `casadi_call_mx` | 5/5 | 99.165 | 4.94 | 679651 | 27134 | 7568.3 |
+| 100 | `casadi_map_sx` | 5/5 | 105.407 | 0.70 | 543857 | 108894 | 3358.2 |
+| 200 | `alloy` | 5/5 | 90.090 | 0.37 | 24132 | 36084 | 294.6 |
+| 200 | `casadi_sx` | 5/5 | 83.167 | 1.06 | 4100194 | 119 | 14239.9 |
+| 200 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 200 | `casadi_call_mx` | 5/5 | 195.614 | 0.49 | 1143240 | 53874 | 19700.1 |
+| 200 | `casadi_map_sx` | 5/5 | 213.161 | 0.73 | 1030885 | 217294 | 6748.9 |
+| 500 | `alloy` | 5/5 | 228.815 | 0.77 | 24142 | 90084 | 340.0 |
+| 500 | `casadi_sx` | 5/5 | 216.058 | 4.59 | 10246853 | 119 | 49169.5 |
+| 500 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 500 | `casadi_call_mx` | 5/5 | 501.765 | 0.10 | 2552822 | 134274 | 119770.8 |
+| 500 | `casadi_map_sx` | 5/5 | 545.677 | 0.72 | 2535806 | 542494 | 31971.8 |
+
+### Neural-process MPC
+
+| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 6 | `alloy` | 5/5 | 18.257 | 1.06 | 31844 | 0 | 618.7 |
+| 6 | `casadi_sx` | 5/5 | 72.185 | 0.61 | 7564935 | 15913 | 104605.1 |
+| 6 | `casadi_mx` | 5/5 | 20.616 | 1.40 | 151448 | 7570 | 5166.2 |
+| 6 | `casadi_call_mx` | 5/5 | 147.864 | 0.58 | 232343 | 46861 | 6783.4 |
+| 6 | `casadi_map_sx` | 5/5 | 199.500 | 0.66 | 4261664 | 341213 | 136042.5 |
+| 6 | `casadi_mx_gemm` | 5/5 | 45.587 | 0.48 | 109496 | 8660 | 2470.5 |
+| 6 | `casadi_mx_gemm_classic` | 5/5 | 46.012 | 1.31 | 109504 | 8660 | 2437.6 |
+| 6 | `casadi_mx_gemm_blasfeo` | 5/5 | 45.512 | 0.67 | 109504 | 8660 | 2465.3 |
+| 12 | `alloy` | 5/5 | 34.725 | 0.30 | 31877 | 0 | 598.8 |
+| 12 | `casadi_sx` | 0/5 | timeout |  | 15063206 | 30463 |  |
+| 12 | `casadi_mx` | 5/5 | 43.160 | 0.59 | 276488 | 9813 | 12825.5 |
+| 12 | `casadi_call_mx` | 5/5 | 297.612 | 0.23 | 371542 | 68072 | 10535.9 |
+| 12 | `casadi_map_sx` | 1/5 | 459.063 |  | 5788748 | 774841 | 178215.0 |
+| 12 | `casadi_mx_gemm` | 5/5 | 103.777 | 0.76 | 189660 | 13031 | 5202.2 |
+| 12 | `casadi_mx_gemm_classic` | 5/5 | 104.060 | 0.66 | 189668 | 13031 | 5239.6 |
+| 12 | `casadi_mx_gemm_blasfeo` | 5/5 | 103.896 | 0.83 | 189668 | 13031 | 5211.5 |
+| 25 | `alloy` | 5/5 | 72.070 | 0.57 | 31861 | 2700 | 609.5 |
+| 25 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 25 | `casadi_mx` | 5/5 | 96.947 | 7.76 | 545609 | 15595 | 41617.2 |
+| 25 | `casadi_call_mx` | 5/5 | 623.903 | 1.19 | 424096 | 89139 | 11502.0 |
+| 25 | `casadi_map_sx` | 0/5 | skipped_after_failure; timeout |  | 7858327 | 1603408 |  |
+| 25 | `casadi_mx_gemm` | 5/5 | 217.465 | 0.83 | 343012 | 22648 | 8299.7 |
+| 25 | `casadi_mx_gemm_classic` | 5/5 | 221.491 | 1.22 | 343020 | 22648 | 8303.7 |
+| 25 | `casadi_mx_gemm_blasfeo` | 5/5 | 218.598 | 1.17 | 343020 | 22648 | 8317.3 |
+| 50 | `alloy` | 5/5 | 148.725 | 0.33 | 31973 | 9870 | 646.0 |
+| 50 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 50 | `casadi_mx` | 5/5 | 185.551 | 0.86 | 1063583 | 25782 | 166170.2 |
+| 50 | `casadi_call_mx` | 5/5 | 1261.508 | 0.96 | 520231 | 130185 | 13674.4 |
+| 50 | `casadi_map_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 50 | `casadi_mx_gemm` | 5/5 | 446.226 | 0.91 | 638917 | 41169 | 25708.6 |
+| 50 | `casadi_mx_gemm_classic` | 5/5 | 444.821 | 1.21 | 638925 | 41169 | 26027.6 |
+| 50 | `casadi_mx_gemm_blasfeo` | 5/5 | 442.915 | 0.36 | 638925 | 41169 | 25867.8 |
+| 100 | `alloy` | 5/5 | 297.762 | 1.27 | 32007 | 19670 | 664.1 |
+| 100 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 100 | `casadi_mx` | 0/5 | timeout |  | 2191474 | 46937 |  |
+| 100 | `casadi_call_mx` | 5/5 | 2498.140 | 0.74 | 712196 | 210580 | 21345.4 |
+| 100 | `casadi_map_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 100 | `casadi_mx_gemm` | 5/5 | 910.287 | 1.35 | 1232183 | 77961 | 93500.2 |
+| 100 | `casadi_mx_gemm_classic` | 5/5 | 905.256 | 0.90 | 1232191 | 77961 | 92956.4 |
+| 100 | `casadi_mx_gemm_blasfeo` | 5/5 | 908.569 | 1.09 | 1232191 | 77961 | 93083.5 |
+| 200 | `alloy` | 5/5 | 592.402 | 0.94 | 32051 | 44670 | 729.9 |
+| 200 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 200 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 200 | `casadi_call_mx` | 5/5 | 4964.348 | 0.10 | 1127544 | 371260 | 52136.5 |
+| 200 | `casadi_map_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 200 | `casadi_mx_gemm` | 0/5 | timeout |  | 2524675 | 151836 |  |
+| 200 | `casadi_mx_gemm_classic` | 0/5 | timeout |  | 2524683 | 151836 |  |
+| 200 | `casadi_mx_gemm_blasfeo` | 0/5 | timeout |  | 2524683 | 151836 |  |
+
+### Unbumpercars
+
+| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 2 | `alloy` | 5/5 | 207.162 | 0.63 | 103391 | 0 | 852.1 |
+| 2 | `casadi_sx` | 0/5 | timeout |  | 26778898 | 37182 |  |
+| 2 | `casadi_mx` | 5/5 | 956.333 | 1.03 | 110035 | 110087 | 2292.6 |
+| 2 | `casadi_mx_gemm` | 5/5 | 1071.053 | 1.42 | 124566 | 112315 | 2290.1 |
+| 2 | `casadi_mx_gemm_classic` | 5/5 | 1074.012 | 1.25 | 124574 | 112315 | 2260.8 |
+| 2 | `casadi_mx_gemm_blasfeo` | 5/5 | 1080.319 | 1.91 | 124574 | 112315 | 2265.6 |
+| 4 | `alloy` | 5/5 | 416.187 | 0.94 | 137653 | 0 | 1162.7 |
+| 4 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 4 | `casadi_mx` | 5/5 | 3030.679 | 0.64 | 361999 | 112213 | 7419.3 |
+| 4 | `casadi_mx_gemm` | 5/5 | 3759.182 | 0.57 | 629111 | 120257 | 5031.5 |
+| 4 | `casadi_mx_gemm_classic` | 5/5 | 3755.696 | 0.79 | 629119 | 120257 | 5034.1 |
+| 4 | `casadi_mx_gemm_blasfeo` | 5/5 | 3779.019 | 0.66 | 629119 | 120257 | 5034.4 |
+| 8 | `alloy` | 5/5 | 876.016 | 1.34 | 202716 | 20384 | 4535.7 |
+| 8 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 8 | `casadi_mx` | 5/5 | 10761.821 | 1.16 | 1327412 | 116049 | 52486.6 |
+| 8 | `casadi_mx_gemm` | 5/5 | 14046.692 | 0.63 | 4569620 | 136111 | 34768.6 |
+| 8 | `casadi_mx_gemm_classic` | 5/5 | 14162.585 | 0.83 | 4569628 | 136111 | 34703.1 |
+| 8 | `casadi_mx_gemm_blasfeo` | 5/5 | 14167.477 | 0.77 | 4569628 | 136111 | 34551.2 |
+| 16 | `alloy` | 5/5 | 2086.643 | 0.38 | 338066 | 176848 | 19534.8 |
+| 16 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 16 | `casadi_mx` | 0/5 | timeout |  | 5399074 | 125987 |  |
+| 16 | `casadi_mx_gemm` | 0/5 | timeout |  | 35514289 | 171611 |  |
+| 16 | `casadi_mx_gemm_classic` | 0/5 | timeout |  | 35514297 | 171611 |  |
+| 16 | `casadi_mx_gemm_blasfeo` | 0/5 | timeout |  | 35514297 | 171611 |  |
+| 32 | `alloy` | 5/5 | 6985.492 | 0.52 | 623257 | 1285536 | 18462.7 |
+| 32 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 32 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 32 | `casadi_mx_gemm` | 0/5 | skipped_after_failure |  |  |  |  |
+| 32 | `casadi_mx_gemm_classic` | 0/5 | skipped_after_failure |  |  |  |  |
+| 32 | `casadi_mx_gemm_blasfeo` | 0/5 | skipped_after_failure |  |  |  |  |
+
+### Interrupted chain sweep
+
+| Repetition | Saved / planned rows | Successful timings | Compile timeouts | Skips after timeout |
+|---:|---:|---:|---:|---:|
+| 1 | 15 / 15 | 10 | 3 | 2 |
+| 2 | 15 / 15 | 10 | 3 | 2 |
+| 3 | 15 / 15 | 10 | 3 | 2 |
+| 4 | 11 / 15 | 9 | 1 | 1 |
+| 5 | 0 / 15 | 0 | 0 | 0 |
+
+The last saved row is repetition 4, M=9, mapped SX. The log stops during called MX at the same
+size. That interrupted attempt has no CSV result. Four rows from repetition 4 and all 15 rows
+from repetition 5 are missing. There is no final chain process summary and no chain closed-loop
+run. The saved 56 rows remain available for diagnosis; this section does not pool their unequal
+process counts into a replacement headline table.
+
+### Saved artifacts
+
+The raw directory is `benchmarks/results/followup/2026-09-09/track-c-closeout/`. The sibling
+`track-c-closeout.log` preserves stdout. `track-c-closeout-source/` holds the pre-run source
+archive, dirty patch, file lists, lockfile hash, and SHA-256 manifests. These local benchmark
+artifacts are gitignored. The post-interruption `partial-report.md` summarizes only saved data;
+it does not replace the absent final `study.json` or claim a successful runner exit.
 
 ## Interim Track C compiler snapshot, 2026-09-09
 

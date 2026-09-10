@@ -39,7 +39,7 @@ def test_derived_procs_inherit_stage_hint(hint: Lowering) -> None:
   names = [str(proc.attrs["name"]) for proc in callees]
   assert any("_adj0_0" in n and "fwd" not in n for n in names)
   assert any("_adj0_0_fwd6c" in n for n in names)
-  assert any(n.endswith("_fwd2_y_x") for n in names)
-  assert any(n.endswith("_fwd_y_x") for n in names)
+  assert any("_fwd2j" in n for n in names)
+  assert any(n.endswith("_fwd0_0") for n in names)
   assert all(proc.attrs["lowering"] == hint for proc in callees)
   assert all(bool(proc.attrs.get("scalarized")) is (hint == "scalar") for proc in callees)

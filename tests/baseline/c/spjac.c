@@ -23,9 +23,9 @@ static __attribute__((noinline)) void dynamics_fwd3c8e1b6ee2b3_znext_z_raw(const
   *(double2*)(fwd_znext_z) = (double2){1.0, 1.0};
   *(double2*)(fwd_znext_z + 2) = (double2){0.0, 0.0};
   *(double2*)(fwd_znext_z + 4) = (double2){0.050000000000000003, 0.0};
-  *(double2*)(fwd_znext_z + 6) = (double2){(1.0 + (0.050000000000000003 * (-((v1 * v0) + v3)))), (0.050000000000000003 * (-(v1 * v2)))};
+  *(double2*)(fwd_znext_z + 6) = (double2){(1.0 - (0.050000000000000003 * ((v1 * v0) + v3))), (-(0.050000000000000003 * (v1 * v2)))};
   *(double2*)(fwd_znext_z + 8) = (double2){0.0, 0.050000000000000003};
-  *(double2*)(fwd_znext_z + 10) = (double2){(0.050000000000000003 * (-(v4 * v0))), (1.0 + (0.050000000000000003 * (-((v4 * v2) + v3))))};
+  *(double2*)(fwd_znext_z + 10) = (double2){(-(0.050000000000000003 * (v4 * v0))), (1.0 - (0.050000000000000003 * ((v4 * v2) + v3)))};
 }
 
 int shooting_spjac_eq_z_sz_arg(void) { return 2; }

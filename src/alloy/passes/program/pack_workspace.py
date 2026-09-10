@@ -91,6 +91,7 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   # Pack per dtype, in first-write order (ties: declaration order via the dict insertion order).
   order = sorted((name for name in packable if name in first_write), key=lambda b: (first_write[b], b))
   free_at: dict[str, int] = {}  # slot -> first statement index at which it is reusable
+  used_names = {n.attrs["name"] for n in _walk(proc) if n.op == ProgramOp.BUFFER}
   counter = 0
   for buf in order:
     dt = packable[buf].dtype
@@ -101,7 +102,9 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
         chosen = slot
         break
     if chosen is None:
-      chosen = f"s{counter}"
+      while (chosen := f"s{counter}") in used_names:
+        counter += 1
+      used_names.add(chosen)
       counter += 1
       plan.slot_dtype[chosen] = dt
       plan.slot_size[chosen] = 0

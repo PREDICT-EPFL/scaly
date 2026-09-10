@@ -287,8 +287,8 @@ expressions over a colored pattern. Keeping the two apart is what lets `sparsity
 and be reused from below.
 
 Call and `VMAP` nodes are differentiated without expanding the callee, but not the same way in both
-modes. Forward mode builds a cached derivative `Function` per (callee, output, formal) and emits a
-new call to it. Reverse mode inlines the callee's adjoint graph for an ordinary call, and caches one
+modes. Forward mode builds a cached derivative `Function` for a callee output and propagates all active
+formals together, then emits a call to it. Reverse mode inlines the callee's adjoint graph for an ordinary call, and caches one
 mapped adjoint `Function` for a `VMAP`. Either way, repeated named structure — an RK4 stage inside a
 horizon constraint — does not re-walk the same graph once per stage.
 
