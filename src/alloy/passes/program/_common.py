@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 
 import numpy as np
 
+from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp
+from ...utils.names import c_ident
 
 
 def _walk(root: ProgramNode) -> Iterable[ProgramNode]:
@@ -41,6 +44,44 @@ def _postorder(root: ProgramNode) -> Iterable[ProgramNode]:
 def rebuild_program(node: ProgramNode, args: tuple[ProgramNode, ...]) -> ProgramNode:
   """The program-dialect adapter for ``ir.match.rewrite``: ``node`` with new ``args``."""
   return ProgramNode(node.op, args, node.attrs, node.dtype)
+
+
+def inline_producer(stmt: ProgramNode) -> tuple[str, str, ProgramNode] | None:
+  """Match ``for v in [0,N) step 1 { buf[v] = rhs }``."""
+  if stmt.op != ProgramOp.FOR:
+    return None
+  rng, *body = stmt.args
+  if len(body) != 1 or body[0].op != ProgramOp.STORE:
+    return None
+  target, rhs = body[0].args
+  if target.op != ProgramOp.VIEW or len(target.args) != 1:
+    return None
+  name = rng.attrs["name"]
+  index = target.args[0]
+  start, _stop, step = rng.args
+  if index.op != ProgramOp.VAR or index.attrs["name"] != name:
+    return None
+  if start.op != ProgramOp.CONST_INT or start.attrs["value"] != 0:
+    return None
+  if step.op != ProgramOp.CONST_INT or step.attrs["value"] != 1:
+    return None
+  return target.attrs["buffer"], name, rhs
+
+
+def substitute_var(node: ProgramNode, name: str, replacement: ProgramNode) -> ProgramNode:
+  """Replace each variable named ``name`` below ``node``."""
+  pattern = Pattern(ProgramOp.VAR, lambda n: n.attrs["name"] == name, lambda _n: replacement)
+  return rewrite(node, [pattern], rebuild=rebuild_program, fixpoint=False)
+
+
+def trip_count(rng: ProgramNode) -> int | None:
+  """Return a static range's iteration count, or ``None`` for dynamic or invalid ranges."""
+  start, stop, step = rng.args
+  if any(node.op != ProgramOp.CONST_INT for node in (start, stop, step)):
+    return None
+  span = int(stop.attrs["value"]) - int(start.attrs["value"])
+  stride = int(step.attrs["value"])
+  return max(0, -(-span // stride)) if stride > 0 else None
 
 
 def _procs(prog: ProgramNode) -> tuple[list[ProgramNode], list[ProgramNode]]:
@@ -82,24 +123,57 @@ def _call_arg_buffer(arg: ProgramNode) -> str | None:
   return None
 
 
-def _stmt_refs(stmt: ProgramNode) -> tuple[set[str], set[str], set[str]]:
-  """``(loads, stores, call_args)``: buffer names this statement LOADs, STOREs to, or passes
-  (in or out) to a CALL. CALL args are pointer passes, not loads/stores — tracked separately so
-  fusion knows a buffer feeding a CALL must stay materialized."""
+@dataclass(frozen=True)
+class BufferRefs:
+  """Buffer names read and written directly or through calls by one statement."""
+
+  loads: frozenset[str]
+  stores: frozenset[str]
+  call_inputs: frozenset[str]
+  call_outputs: frozenset[str]
+
+  @property
+  def reads(self) -> frozenset[str]:
+    return self.loads | self.call_inputs
+
+  @property
+  def writes(self) -> frozenset[str]:
+    return self.stores | self.call_outputs
+
+  @property
+  def call_args(self) -> frozenset[str]:
+    return self.call_inputs | self.call_outputs
+
+
+def buffer_refs(stmt: ProgramNode, aliases: dict[str, str] | None = None) -> BufferRefs:
+  """Return direct and call-mediated buffer references, optionally resolved to storage owners."""
   loads: set[str] = set()
   stores: set[str] = set()
-  call_args: set[str] = set()
+  call_inputs: set[str] = set()
+  call_outputs: set[str] = set()
   for n in _walk(stmt):
     if n.op == ProgramOp.LOAD:
       loads.add(n.args[0].attrs["buffer"])
-    elif n.op == ProgramOp.STORE:
+    elif n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR):
       stores.add(n.args[0].attrs["buffer"])
-    elif n.op == ProgramOp.CALL:
-      for a in n.args:
+    elif n.op in (ProgramOp.CALL, ProgramOp.LAUNCH):
+      args = n.args if n.op == ProgramOp.CALL else n.args[int(n.attrs["grid_dims"]) + int(n.attrs["block_dims"]) :]
+      n_in, n_out = n.attrs.get("n_in"), n.attrs.get("n_out")
+      for k, a in enumerate(args):
         name = _call_arg_buffer(a)
         if name is not None:
-          call_args.add(name)
-  return loads, stores, call_args
+          if n_in is None or k < n_in:
+            call_inputs.add(name)
+          if n_in is None or n_out is None or n_in <= k < n_in + n_out:
+            call_outputs.add(name)
+  if aliases is not None:
+    alias_map = aliases
+
+    def resolve(names: set[str]) -> frozenset[str]:
+      return frozenset(_resolve_alias(name, alias_map) for name in names)
+
+    return BufferRefs(resolve(loads), resolve(stores), resolve(call_inputs), resolve(call_outputs))
+  return BufferRefs(frozenset(loads), frozenset(stores), frozenset(call_inputs), frozenset(call_outputs))
 
 
 def _private_decls(body: list[ProgramNode]) -> dict[str, ProgramNode]:
@@ -107,7 +181,7 @@ def _private_decls(body: list[ProgramNode]) -> dict[str, ProgramNode]:
   return {s.attrs["name"]: s for s in body if s.op == ProgramOp.BUFFER and s.attrs.get("address_space") == "private"}
 
 
-def _alias_sources(body: list[ProgramNode]) -> dict[str, str]:
+def _alias_sources(body: Iterable[ProgramNode]) -> dict[str, str]:
   """name -> aliased-source name for every alias BUFFER (zero-copy pointer) in ``body``."""
   return {s.attrs["name"]: s.attrs["alias_of"] for s in body if s.op == ProgramOp.BUFFER and "alias_of" in s.attrs}
 
@@ -168,3 +242,56 @@ def _resolve_alias(name: str, alias_src: dict[str, str]) -> str:
     seen.add(name)
     name = alias_src[name]
   return name
+
+
+def allocated_name(base: str, spellings: set[str]) -> str:
+  """Reserve ``base`` or a numbered suffix against occupied C identifier spellings."""
+  name = base
+  suffix = 2
+  while c_ident(name) in spellings:
+    name = f"{base}_{suffix}"
+    suffix += 1
+  spellings.add(c_ident(name))
+  return name
+
+
+def prune_dead_buffers(proc: ProgramNode) -> ProgramNode:
+  """Drop buffer declarations no remaining statement or live alias references."""
+  params, body = _proc_parts(proc)
+  referenced: set[str] = set()
+  for stmt in body:
+    if stmt.op != ProgramOp.BUFFER:
+      refs = buffer_refs(stmt)
+      referenced.update(refs.reads | refs.writes)
+  alias_src = _alias_sources(body)
+  while True:
+    sources = {src for name, src in alias_src.items() if name in referenced and src not in referenced}
+    if not sources:
+      break
+    referenced.update(sources)
+  param_names = {param.attrs["name"] for param in params}
+  kept = [stmt for stmt in body if stmt.op != ProgramOp.BUFFER or stmt.attrs["name"] in referenced or stmt.attrs["name"] in param_names]
+  return proc if len(kept) == len(body) else _rebuild_proc(proc, params, kept)
+
+
+def prune_procedures(prog: ProgramNode) -> ProgramNode:
+  """Keep procedures reachable from the entry procedure and solver oracle roots."""
+  procs, kernels = _procs(prog)
+  if not procs:
+    return prog
+  table = {proc.attrs["name"]: proc for proc in procs}
+  roots = {procs[-1].attrs["name"]}
+  roots.update(name for names in prog.attrs.get("solver_oracles", {}).values() for name in names)
+  roots.update(node.attrs["callee"] for kernel in kernels for node in _walk(kernel) if node.op == ProgramOp.CALL)
+  reachable: set[str] = set()
+  pending = list(roots)
+  while pending:
+    name = pending.pop()
+    if name in reachable or name not in table:
+      continue
+    reachable.add(name)
+    pending.extend(n.attrs["callee"] for n in _walk(table[name]) if n.op == ProgramOp.CALL)
+  kept = [proc for proc in procs if proc.attrs["name"] in reachable]
+  if len(kept) == len(procs):
+    return prog
+  return ProgramNode(ProgramOp.PROGRAM, (*kept, *kernels), {**prog.attrs, "proc_count": len(kept)}, prog.dtype)

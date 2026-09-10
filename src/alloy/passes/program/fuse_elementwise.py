@@ -6,14 +6,18 @@ from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp
 from ._common import (
   _alias_sources,
-  _call_arg_buffer,
+  buffer_refs,
+  inline_producer as _as_inline_producer,
   _map_procs,
   _postorder,
   _private_decls,
   _proc_parts,
   _rebuild_proc,
+  _resolve_alias,
   _size_of,
-  _stmt_refs,
+  prune_dead_buffers,
+  substitute_var as _subst_var,
+  trip_count as _trip_count,
   _walk,
   rebuild_program,
 )
@@ -39,56 +43,8 @@ _EXPENSIVE_OPS: frozenset[ProgramOp] = frozenset(
 )
 
 
-# ---------------------------------------------------------------------------
-# Pass pipeline.
-def _as_inline_producer(stmt: ProgramNode) -> tuple[str, str, ProgramNode] | None:
-  """If ``stmt`` is ``for v in [0,N) step 1 { buf[v] = rhs }`` return ``(buf, v, rhs)``, else None.
-
-  This is the shape every elementwise / SLICE / GATHER / copy rule emits: a single contiguous
-  loop with one STORE indexed by the loop variable. Because the store index *is* the loop var,
-  ``buf[k] == rhs[v:=k]`` for all ``k`` the loop visits, so a consumer reading ``buf[E]`` can
-  inline ``rhs[v:=E]`` for any in-range ``E``. Reductions (extra init STORE), MATMUL/TRANSPOSE
-  (composite store index), and STACK/CONCAT (multiple loops per buffer) deliberately don't match.
-  """
-  if stmt.op != ProgramOp.FOR:
-    return None
-  rng, *body = stmt.args
-  if len(body) != 1 or body[0].op != ProgramOp.STORE:
-    return None
-  store = body[0]
-  target = store.args[0]
-  if target.op != ProgramOp.VIEW or len(target.args) != 1:
-    return None
-  v = rng.attrs["name"]
-  idx = target.args[0]
-  if idx.op != ProgramOp.VAR or idx.attrs["name"] != v:
-    return None
-  start, _stop, step = rng.args
-  if not (start.op == ProgramOp.CONST_INT and start.attrs["value"] == 0):
-    return None
-  if not (step.op == ProgramOp.CONST_INT and step.attrs["value"] == 1):
-    return None
-  return target.attrs["buffer"], v, store.args[1]
-
-
-def _subst_var(node: ProgramNode, vname: str, repl: ProgramNode) -> ProgramNode:
-  """Substitute every ``VAR(vname)`` in ``node`` with ``repl`` (the consumer's index expr)."""
-  pattern = Pattern(ProgramOp.VAR, lambda n: n.attrs["name"] == vname, lambda n: repl)
-  return rewrite(node, [pattern], rebuild=rebuild_program, fixpoint=False)
-
-
 def _has_expensive(node: ProgramNode) -> bool:
   return any(n.op in _EXPENSIVE_OPS for n in _walk(node))
-
-
-def _trip_count(rng: ProgramNode) -> int | None:
-  """Static iteration count of a ``[0, stop) step 1`` RANGE, or None if not statically known."""
-  start, stop, step = rng.args
-  if start.op != ProgramOp.CONST_INT or stop.op != ProgramOp.CONST_INT or step.op != ProgramOp.CONST_INT:
-    return None
-  span = int(stop.attrs["value"]) - int(start.attrs["value"])
-  step_v = int(step.attrs["value"])
-  return max(0, -(-span // step_v)) if step_v > 0 else None
 
 
 def _max_load_executions(node: ProgramNode, buf: str, factor: int) -> int | None:
@@ -146,6 +102,7 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
   private = _private_decls(body)
   if not private:
     return proc
+  aliases = _alias_sources(body)
   # A buffer that backs an alias (a zero-copy pointer view) must keep its storage — never inline it.
   pinned = set(_alias_sources(body).values())
 
@@ -153,10 +110,12 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
   load_in: dict[str, set[int]] = {name: set() for name in private}
   store_in: dict[str, set[int]] = {name: set() for name in private}
   call_in: dict[str, set[int]] = {name: set() for name in private}
+  resolved_refs = [buffer_refs(stmt, aliases) for stmt in body]
   for i, stmt in enumerate(body):
     if stmt.op == ProgramOp.BUFFER:
       continue
-    loads, stores, calls = _stmt_refs(stmt)
+    refs = buffer_refs(stmt)
+    loads, stores, calls = refs.loads, refs.stores, refs.call_args
     for b in loads & private.keys():
       load_in[b].add(i)
     for b in stores & private.keys():
@@ -171,6 +130,8 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
   # times). Expensive (libm) producers additionally must appear exactly once textually so the
   # call isn't duplicated (``buf*buf``).
   inlinable: dict[str, tuple[str, ProgramNode]] = {}
+  expanded_expensive: dict[str, bool] = {}
+  expanded_reads: dict[str, frozenset[str]] = {}
   for i, stmt in enumerate(body):
     pr = _as_inline_producer(stmt)
     if pr is None or pr[0] not in private:
@@ -186,9 +147,19 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
     execs = _max_load_executions(body[ci], buf, 1)
     if execs is None or execs > producer_size:
       continue
-    if _has_expensive(rhs) and _count_buf_loads(body[ci], buf) != 1:
+    rhs_loads = buffer_refs(rhs).loads
+    is_expensive = _has_expensive(rhs) or any(expanded_expensive.get(name, False) for name in rhs_loads)
+    if is_expensive and _count_buf_loads(body[ci], buf) != 1:
+      continue
+    moved_reads = set(buffer_refs(rhs, aliases).reads)
+    for name in rhs_loads & inlinable.keys():
+      moved_reads.discard(_resolve_alias(name, aliases))
+      moved_reads.update(expanded_reads[name])
+    if ci <= i or any(moved_reads & resolved_refs[j].writes for j in range(i + 1, ci + 1)):
       continue
     inlinable[buf] = (v, rhs)
+    expanded_expensive[buf] = is_expensive
+    expanded_reads[buf] = frozenset(moved_reads)
 
   if not inlinable:
     return proc
@@ -204,45 +175,7 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
       continue  # decl of an inlined buffer
     new_body.append(_expand_inlinables(stmt, inlinable))
 
-  return _prune_dead_buffers(_rebuild_proc(proc, params, new_body))
-
-
-def _prune_dead_buffers(proc: ProgramNode) -> ProgramNode:
-  """Drop BUFFER decls (private or constant) no longer referenced by any VIEW or CALL arg."""
-  params, body = _proc_parts(proc)
-  referenced: set[str] = set()
-  for stmt in body:
-    if stmt.op == ProgramOp.BUFFER:
-      continue
-    for n in _walk(stmt):
-      if n.op == ProgramOp.VIEW:
-        referenced.add(n.attrs["buffer"])
-      elif n.op == ProgramOp.BUFFER:
-        referenced.add(n.attrs["name"])
-      elif n.op == ProgramOp.CALL:
-        for a in n.args:
-          name = _call_arg_buffer(a)
-          if name is not None:
-            referenced.add(name)
-  # A *live* alias keeps its source alive (chase chains to a fixpoint).
-  alias_src = _alias_sources(body)
-  changed = True
-  while changed:
-    changed = False
-    for name, src in alias_src.items():
-      if name in referenced and src not in referenced:
-        referenced.add(src)
-        changed = True
-  param_names = {pp.attrs["name"] for pp in params}
-  kept = [s for s in body if s.op != ProgramOp.BUFFER or s.attrs["name"] in referenced or s.attrs["name"] in param_names]
-  if len(kept) == len(body):
-    return proc
-  return _rebuild_proc(proc, params, kept)
-
-
-# ---------------------------------------------------------------------------
-# Pass 2: empty-loop removal + unit-loop unrolling.
-# ---------------------------------------------------------------------------
+  return prune_dead_buffers(_rebuild_proc(proc, params, new_body))
 
 
 __all__ = ["fuse_elementwise"]

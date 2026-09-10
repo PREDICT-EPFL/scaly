@@ -77,9 +77,9 @@ class CModule:
 
 
 class RenderObserver(Protocol):
-  """One render's worth of callbacks: every program the pipeline produces, then the C, then the
-  outcome. ``alloy.viz.VisualizationRecording`` is the implementation in this repository."""
+  """One render's callbacks: normalized expressions, each Program stage, the C, and the outcome. ``alloy.viz.VisualizationRecording`` is the implementation in this repository."""
 
+  def add_normalized_expr(self, name: str, fun: Function) -> None: ...
   def add_program(self, name: str, root: ProgramNode) -> None: ...
   def add_code(self, source: str) -> None: ...
   def finish(self, *, error: str | None = None) -> None: ...
@@ -107,14 +107,14 @@ class _RenderCtx:
   workspace_size: int
 
 
-def _lower(fun: Function, observe: ProgramObserver | None = None) -> _RenderCtx:
+def _lower(fun: Function, observe: ProgramObserver | None = None, observe_expr: Callable[[str, Function], None] | None = None) -> _RenderCtx:
   """Lower ``fun`` once. ``workspace_size`` is the doubles of scratch it needs in ``w[]`` — the
   packed ``sz_w`` from ``passes.pack_workspace``, which also accounts for a solver wrapper passing
   its ``w`` straight to the oracle."""
   backends = solver_backends_used(fun)
   if backends:
     solver_stats_symbols(fun)  # validate duplicate solver symbols before lowering or compilation
-  prog = lower_function(fun, observe=observe)
+  prog = lower_function(fun, observe=observe, observe_expr=observe_expr)
   sz_w = _solver_root_workspace(prog, fun.name) if is_solver_function(fun) else int(main_proc(prog).attrs.get("sz_w", 0))
   return _RenderCtx(fun, prog, backends, sz_w)
 
@@ -326,15 +326,19 @@ def _render_solver_entry(fun: Function, sz_w: int) -> list[str]:
 
 def _render_observed(fun: Function) -> tuple[_RenderCtx, str]:
   """Lower and render ``fun`` under the registered observers: one lowering, one source, and the
-  ``add_program`` / ``add_code`` / ``finish`` sequence ``alloy.viz`` records."""
+  expression, Program, code, and outcome sequence ``alloy.viz`` records."""
   observers = [obs for begin in _RENDER_OBSERVERS if (obs := begin(fun)) is not None]
 
   def observe(name: str, root: ProgramNode) -> None:
     for obs in observers:
       obs.add_program(name, root)
 
+  def observe_expr(name: str, normalized: Function) -> None:
+    for obs in observers:
+      obs.add_normalized_expr(name, normalized)
+
   try:
-    ctx = _lower(fun, observe if observers else None)
+    ctx = _lower(fun, observe if observers else None, observe_expr if observers else None)
     source = _render_source(ctx)
   except Exception as exc:
     for obs in observers:

@@ -116,13 +116,19 @@ class VisualizationRecording:
     return self.label or self.fun.name
 
   def add_expr(self) -> None:
+    self._add_expr("expression", self.fun)
+
+  def add_normalized_expr(self, name: str, fun: Function) -> None:
+    self._add_expr(f"{name}:{fun.name}", fun)
+
+  def _add_expr(self, name: str, fun: Function) -> None:
     self.steps.append(
       {
-        "name": "expression",
+        "name": name,
         "phase": "expression dialect",
         "dialect": "expr",
-        "assembly": render_expr_assembly(self.fun),
-        "graph": expr_graph(self.fun),
+        "assembly": render_expr_assembly(fun),
+        "graph": expr_graph(fun),
       }
     )
 

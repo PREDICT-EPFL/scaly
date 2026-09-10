@@ -255,8 +255,8 @@ def _dispatch_metrics(fun: al.Function, prog: ProgramNode) -> tuple[int | str, i
   root = procs[fun.name]
   for stmt in root.args[int(root.attrs["param_count"]) :]:
     call, count = None, 1
-    if stmt.op == ProgramOp.FOR and len(stmt.args) == 2 and stmt.args[1].op == ProgramOp.CALL:
-      call, count = stmt.args[1], _static_trip_count(stmt.args[0])
+    if stmt.op == ProgramOp.FOR and stmt.args[-1].op == ProgramOp.CALL and all(node.op == ProgramOp.ASSIGN for node in stmt.args[1:-1]):
+      call, count = stmt.args[-1], _static_trip_count(stmt.args[0])
     elif stmt.op == ProgramOp.CALL:
       call = stmt
     if call is not None and count in trip_counts:

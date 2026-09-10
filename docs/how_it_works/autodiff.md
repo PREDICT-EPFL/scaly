@@ -48,7 +48,9 @@ all active formal inputs together for a callee output. Its cache key includes th
 indices, seed count, and any baked seed values. The function takes only the primal arguments and
 seed inputs that its derivative depends on, so a stage derivative can have a narrower signature
 than the stage itself.
-Every derived function, forward or adjoint, inherits the callee's effective lowering hint as
+Constant and runtime seeds use the same helper construction; periodic specialization and local
+coloring still select their own seed layouts. Hint inheritance belongs to `Function`, so both AD
+modes use the same policy. Every derived function inherits the callee's effective lowering hint as
 described in [Lowering](lowering.md#the-optimization-pipeline).
 
 **Reverse mode inlines for an ordinary call**, substituting the actual arguments for the formals in

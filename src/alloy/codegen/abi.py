@@ -3,10 +3,10 @@ buffer struct."""
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from ..ir.types import DType, as_dtype
+from ..utils.names import c_ident as c_ident
 
 C_API_SIGNATURE = "int f(const double** arg, double** res, int* iw, double* w, void* mem)"
 
@@ -48,17 +48,3 @@ class BufferType:
 def c_api_signature(symbol: str = "f") -> str:
   """The universal ABI entry signature, spelled for a given symbol name."""
   return C_API_SIGNATURE.replace(" f(", f" {symbol}(")
-
-
-def c_ident(name: str) -> str:
-  """Sanitize an alloy name into the C identifier codegen exports it under.
-
-  Function, buffer, var and callee names may contain ``:`` (derivative names like ``fwd:eq:z``) or
-  other non-identifier characters. Names colliding with the emitters' own identifiers (the ``w``
-  workspace tail, the ``arg``/``res``/``iw``/``mem`` ABI params) are suffixed with ``_``. Every
-  renderer and the JIT's symbol lookup go through this one function, so they cannot disagree.
-  """
-  ident = re.sub(r"\W", "_", name)
-  if ident in ("w", "arg", "res", "iw", "mem"):
-    ident += "_"
-  return f"_{ident}" if ident[:1].isdigit() else ident

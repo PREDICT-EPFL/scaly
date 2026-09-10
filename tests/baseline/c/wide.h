@@ -19,7 +19,7 @@
 #define wide_SZ_ARG 2
 #define wide_SZ_RES 2
 #define wide_SZ_IW 0
-#define wide_SZ_W 1600
+#define wide_SZ_W 0
 
 // Universal CasADi-style ABI for wide.
 #ifdef __cplusplus

@@ -63,8 +63,8 @@ grad(np.array([1.0, 2.0]))
 | 4 | The result is another `Function`, in the same dialect as the first. Nothing has been compiled yet. | `function/model.py` |
 | 5 | Calling it with array leaves runs `__call__` → `numerical_call` → `_flat_numerical_call` → `_compile`, which reaches the backend through `_jit()` — the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](#the-two-sanctioned-exceptions) to import layering. | `function/model.py` |
 | 6 | `CompiledFunction` asks `_build_artifact` for a shared library, which calls `render_c_module`. That lowers the function **once** into a render context every artifact reads from. | `codegen/jit.py`, `codegen/aot.py` |
-| 7 | `lower_function` walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a Function carrying a solver descriptor stays opaque. | `passes/lowering.py` |
-| 8 | `optimize_program` runs the fixed pipeline: `hoist_invariant`, `scalarize`, `combine_scatter_sums`, `fuse_elementwise`, `fold_arith`, `unroll_unit_loops`, `pack_workspace`. | `passes/program/` |
+| 7 | `lower_function` privately normalizes each ordinary Function’s outputs, then walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a Function carrying a solver descriptor stays opaque. | `passes/lowering.py` |
+| 8 | `optimize_program` runs the fixed pipeline: `hoist_invariant`, `scalarize`, `prune_procedures`, `combine_scatter_sums`, `fuse_elementwise`, `fold_arith`, `unroll_unit_loops`, `fold_arith_after_unroll`, `pack_workspace`, `coalesce_stores`, `prepare_scalar`. | `passes/program/` |
 | 9 | `verify_program` checks the result before anything renders it. | `ir/program_spec.py` |
 | 10 | `render_program_c` emits the translation unit: the callee bodies, then the one entry point exported through the **universal ABI** — the single pointer-array C signature every generated function shares. | `codegen/c.py` |
 | 11 | Header, source, workspace size and solver link flags are packaged as a `CModule`. | `codegen/aot.py` |
@@ -101,7 +101,7 @@ src/alloy/
     lowering.py          lower_function, the per-ExprOp rule registry (Expr -> ProgramNode)
     program/             program optimizations                    (ProgramNode -> ProgramNode)
       __init__.py        explicit PASS_PIPELINE and optimize_program
-      _common.py         shared traversal and buffer helpers
+      _common.py         shared buffer references, loop helpers, names, and reachability
       hoist_invariant.py loop-invariant callee work moved before a mapped loop
       scalarize.py       bounded scalar expansion, folding, and scheduling
       combine_scatter_sums.py  shared accumulation for sums of scatters
@@ -109,6 +109,9 @@ src/alloy/
       fold_arith.py           constant reads and shared arithmetic identities in loop bodies
       unroll_unit_loops.py    empty- and single-iteration loop removal
       pack_workspace.py      buffer lifetime packing
+      coalesce_stores.py     alias-safe adjacent store pairing
+      scheduling.py          shared scalar value scheduling
+      prepare_scalar.py      statement-local depth bounds before rendering
 
   function/              the frontend
     model.py             Function, call composition, graph validation
@@ -150,6 +153,7 @@ src/alloy/
 
   utils/
     env.py               the environment variables and platform facts alloy reads
+    names.py             C identifier spelling shared by passes and code generation
     torch_state_dict.py  reading PyTorch checkpoints without depending on torch
 ```
 
@@ -164,7 +168,7 @@ import layer, never a higher one. That rule keeps the package dependencies from 
 
 | Import layer | Modules | Why here |
 | --- | --- | --- |
-| 0 | `utils/*` | Leaves. Environment and file parsing, no alloy concepts at all. |
+| 0 | `utils/*` | Leaves. Environment, identifier spelling, and file parsing; no alloy concepts. |
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR at all). Nothing here knows what a `Function` is. |
 | 3 | `function/model` | `Function` itself — a named graph boundary over import layer 1. |
@@ -297,7 +301,8 @@ horizon constraint — does not re-walk the same graph once per stage.
 Dispatch is a registry keyed by `ExprOp`: each op's lowering is a self-contained rule registered
 with `@lowers(...)`. The elementwise family shares one rule driven by the `_UNARY` / `_BINARY`
 op maps, so adding a scalar math op is a map entry and adding a structural op is a rule — either
-way a local change, not an edit to a monolith. `lower_function` walks the DAG topologically, emits
+way a local change, not an edit to a monolith. `lower_function` normalizes private outputs while
+preserving Function policy and metadata, walks the DAG topologically, emits
 one procedure per reached `Function`, deduplicates callees, runs the optimization pipeline, and
 verifies.
 
@@ -307,7 +312,7 @@ loudly, which is the property that keeps generated C and Python agreeing.
 ### Optimizing — `passes/program/`
 
 `PASS_PIPELINE` is an explicit tuple in `passes/program/__init__.py`; `optimize_program` runs it
-at the tail of lowering. Imports do not determine execution order. Seven passes today:
+at the tail of lowering. Imports do not determine execution order:
 
 - `hoist_invariant` splits a mapped callee whose arguments are partly the same at every trip into
   a prologue called once before the loop and a body that receives the prologue's buffers as extra
@@ -316,6 +321,7 @@ at the tail of lowering. Imports do not determine execution order. Seven passes 
   scalar values, folds constants and identities, and schedules declarations and expression trees.
   Expression lowering hints control selection; automatic expansion preserves the entry point.
 
+- `prune_procedures` removes unreachable procedures while retaining solver-oracle roots.
 - `combine_scatter_sums` replaces sums of single-use zero-filled scatters with one zero-fill
   and one scatter-add per term.
 - `fuse_elementwise` inlines a single-use elementwise/slice/gather producer into its one consumer,
@@ -325,9 +331,13 @@ at the tail of lowering. Imports do not determine execution order. Seven passes 
   fills a private buffer with one constant into a constant buffer.
 - `unroll_unit_loops` erases statically empty loops and inlines single-iteration ones, after
   fusion has had its chance at the loop-shaped form.
+- `fold_arith_after_unroll` resolves arithmetic and constant reads exposed by loop substitution
+  and prunes unused buffer declarations.
 - `pack_workspace` lifetime-packs private buffers into shared slots and spills the large ones to
   the caller's `w[]`, which is what `f_SZ_W` reports. Without it the largest benchmark cells
   overflow the C stack.
+- `coalesce_stores` pairs adjacent stores after physical aliases are known.
+- `prepare_scalar` bounds statement expression depth using the scalarizer’s shared scheduler.
 
 Each pass that rebuilds an expression tree goes through `alloy.ir.match.rewrite`, the iterative driver shared
 with the expression dialect (`passes/program/_common.py` holds the `rebuild_program` adapter), so
@@ -389,7 +399,7 @@ it reach, which flags does it need). The plugin contract is
 
 `viz/recording.py` registers a factory into `codegen/aot.py`'s observer hook. When a function has
 been marked with `visualize(...)`, a render produces an observer that captures the expression
-graph, the lowered program, each pass result, and the generated C. Nothing is recorded otherwise.
+graph, each Function’s normalized outputs, the lowered program, each pass result, and the generated C. Nothing is recorded otherwise.
 `viz/graph.py` owns presentation — graph JSON, colors, labels — while the stable, diffable
 assembly text stays in `ir/text.py`, where the compiler owns it.
 

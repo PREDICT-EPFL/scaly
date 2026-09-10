@@ -67,7 +67,9 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, vo
   }
   for (long long d0_t14 = 0; d0_t14 < 12; ++d0_t14) {
     for (long long d1_t14 = 0; d1_t14 < 4; ++d1_t14) {
-      s0[((d0_t14 * 4) + d1_t14)] = ((((k0[(d0_t14 + (d1_t14 * 12))] * s1[(((((d0_t14 + (d1_t14 * 12)) / 4) % 3) * 4) + ((d0_t14 + (d1_t14 * 12)) % 4))]) + (k4[(d0_t14 + (d1_t14 * 12))] * s2[(((((d0_t14 + (d1_t14 * 12)) / 4) % 3) * 4) + ((d0_t14 + (d1_t14 * 12)) % 4))])) + (k8[(d0_t14 + (d1_t14 * 12))] * s3[(((((d0_t14 + (d1_t14 * 12)) / 4) % 3) * 4) + ((d0_t14 + (d1_t14 * 12)) % 4))])) - k12[(d0_t14 + (d1_t14 * 12))]);
+      int64_t v0 = (d0_t14 + (d1_t14 * 12));
+      int64_t v1 = ((((v0 / 4) % 3) * 4) + (v0 % 4));
+      s0[((d0_t14 * 4) + d1_t14)] = ((((k0[v0] * s1[v1]) + (k4[v0] * s2[v1])) + (k8[v0] * s3[v1])) - k12[v0]);
     }
   }
   for (long long i_spjac_eq_z = 0; i_spjac_eq_z < 36; ++i_spjac_eq_z) {

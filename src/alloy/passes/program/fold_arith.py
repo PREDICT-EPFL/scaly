@@ -6,8 +6,19 @@ from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp
 from ..arith import CONSTANTS, constant, fold_program
-from ._common import _alias_sources, _map_procs, _private_decls, _proc_parts, _rebuild_proc, _size_of, _stmt_refs, rebuild_program
-from .fuse_elementwise import _as_inline_producer, _prune_dead_buffers, _trip_count
+from ._common import (
+  _alias_sources,
+  _map_procs,
+  _private_decls,
+  _proc_parts,
+  _rebuild_proc,
+  _size_of,
+  buffer_refs,
+  inline_producer as _as_inline_producer,
+  prune_dead_buffers,
+  rebuild_program,
+  trip_count as _trip_count,
+)
 
 
 def fold_arith(prog: ProgramNode) -> ProgramNode:
@@ -28,7 +39,8 @@ def _fold_proc(proc: ProgramNode) -> ProgramNode:
     if all(a is b for a, b in zip(new_body, body, strict=True)):
       break
     body, changed = new_body, True
-  return _prune_dead_buffers(_rebuild_proc(proc, params, body)) if changed else proc
+  rebuilt = _rebuild_proc(proc, params, body) if changed else proc
+  return prune_dead_buffers(rebuilt)
 
 
 def _fold_body(body: list[ProgramNode]) -> list[ProgramNode]:
@@ -58,8 +70,8 @@ def _constant_fills(body: list[ProgramNode]) -> list[ProgramNode]:
   writers: dict[str, int] = {}
   for stmt in body:
     if stmt.op != ProgramOp.BUFFER:
-      _, stores, call_args = _stmt_refs(stmt)
-      for name in stores | call_args:
+      refs = buffer_refs(stmt)
+      for name in refs.writes | refs.call_inputs:
         writers[name] = writers.get(name, 0) + 1
   fills: dict[str, ProgramNode] = {}
   for stmt in body:

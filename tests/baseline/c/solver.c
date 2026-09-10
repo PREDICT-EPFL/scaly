@@ -185,7 +185,8 @@ int qp_host(const double** arg, double** res, int* iw, double* w, void* mem) {
   corpus_qp_raw(k0, k0, k1, k1, arg[0], s0, s1, s2, s3, NULL);
   res[0][0] = 0.0;
   for (long long i_cost = 0; i_cost < 2; ++i_cost) {
-    res[0][0] = (res[0][0] + (s0[i_cost] * s0[i_cost]));
+    double v0 = s0[i_cost];
+    res[0][0] = (res[0][0] + (v0 * v0));
   }
   return ALLOY_SUCCESS;
 }

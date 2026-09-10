@@ -46,6 +46,8 @@ _PROGRAM_NODE_COLORS = {
   ProgramOp.RANGE: "#c8a0e0",
   ProgramOp.FOR: "#c8a0e0",
   ProgramOp.STORE: "#87ceeb",
+  ProgramOp.STORE_PAIR: "#87ceeb",
+  ProgramOp.ASSIGN: "#87ceeb",
   ProgramOp.LOAD: "#ffc0c0",
   ProgramOp.CALL: "#00b7c8",
   ProgramOp.LAUNCH: "#00b7c8",

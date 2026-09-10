@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from ...ir.program import ProgramNode, ProgramOp
-from ._common import _map_procs, _proc_parts, _rebuild_proc
-from .fuse_elementwise import _prune_dead_buffers, _subst_var, _trip_count
+from ._common import _map_procs, _proc_parts, _rebuild_proc, prune_dead_buffers, substitute_var as _subst_var, trip_count as _trip_count
 
 
 def unroll_unit_loops(prog: ProgramNode) -> ProgramNode:
@@ -25,7 +24,7 @@ def _unroll_unit_loops_proc(proc: ProgramNode) -> ProgramNode:
     repl = _unroll_unit_loop_stmt(stmt)
     changed = changed or len(repl) != 1 or repl[0] is not stmt
     new_body.extend(repl)
-  return _prune_dead_buffers(_rebuild_proc(proc, params, new_body)) if changed else proc
+  return prune_dead_buffers(_rebuild_proc(proc, params, new_body)) if changed else proc
 
 
 def _unroll_unit_loop_stmt(stmt: ProgramNode) -> list[ProgramNode]:

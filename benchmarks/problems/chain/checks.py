@@ -317,10 +317,12 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   selected = [
     proc
     for proc in procs
-    if str(proc.attrs["name"]).startswith("chain_eq_stage_M3_adj") and str(proc.attrs["name"]).split("adj:eq_z")[-1] in ("", "_hoisted1")
+    if str(proc.attrs["name"]).startswith("chain_eq_stage_M3_adj") and str(proc.attrs["name"]).split("adj:eq_z")[-1] in ("", "_hoisted_1")
   ]
   assert len(selected) == 1, [proc.attrs["name"] for proc in procs]
-  assert selected[0].attrs["lowering"] == "scalar" and selected[0].attrs["scalarize"] and selected[0].attrs["scalarized"], selected[0].attrs
+  assert selected[0].attrs["lowering"] == "scalar" and selected[0].attrs["scalarize_mode"] == "procedure" and selected[0].attrs["scalarized"], (
+    selected[0].attrs
+  )
 
 
 # name -> (check, requires an IPOPT-backed solve, requires CasADi)

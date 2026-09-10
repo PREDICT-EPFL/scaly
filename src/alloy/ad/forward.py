@@ -30,9 +30,6 @@ _CALL_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple
   weakref.WeakKeyDictionary()
 )
 _CALL_JVP_PACK_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Any]] = weakref.WeakKeyDictionary()
-_CALL_JVP_MANY_CONST_CACHE: weakref.WeakKeyDictionary[
-  Any, dict[tuple[int, int, tuple[int, ...], bytes], tuple[Any, tuple[int, ...], tuple[int, ...]]]
-] = weakref.WeakKeyDictionary()
 
 
 class _JVPManyUnsupported(Exception):
@@ -43,12 +40,6 @@ class _JVPManyUnsupported(Exception):
 
 def _is_zero_const(expr: Expr) -> bool:
   return expr.op == ExprOp.CONST and expr.value is not None and bool(np.all(expr.value == 0))
-
-
-def _inherit_lowering(callee: Any, derived: Expr) -> Expr:
-  """A derived body takes the primal callee's effective hint, so ``.scalar()`` on a stage output reaches its adjoint and tangent procedures."""
-  lowering = callee._effective_lowering()
-  return derived if lowering == "auto" else derived.with_lowering(lowering)
 
 
 def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
@@ -176,29 +167,6 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
   raise NotImplementedError(f"JVP for op {expr.op!r} is not implemented")
 
 
-def _call_jvp_many_const_function(
-  callee: Any, output_index: int, formal_index: int, seed_value: np.ndarray
-) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
-  key = (output_index, formal_index, tuple(seed_value.shape), seed_value.tobytes())
-  cache = _CALL_JVP_MANY_CONST_CACHE.setdefault(callee, {})
-  if key not in cache:
-    formal = callee.inputs[formal_index]
-    out = callee.outputs[output_index]
-    flat_seed = seed_value.reshape((seed_value.shape[0], -1))
-    active = tuple(int(i) for i in np.nonzero(np.any(flat_seed != 0, axis=1))[0])
-    seed = Expr.const(seed_value[list(active)])
-    deriv = _inherit_lowering(callee, simplify_cse_fixpoint(_jvp_many_unrolled(out, formal, seed)))
-    dep_memo: dict[tuple[int, int], bool] = {}
-    arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
-    inputs = tuple(callee.inputs[i] for i in arg_indices)
-    input_names = tuple(callee.input_names[i] for i in arg_indices)
-    seed_hash = hashlib.sha1(seed_value.tobytes()).hexdigest()[:10]
-    name = f"{callee.name}_fwd{seed_value.shape[0]}c{seed_hash}_{callee.output_names[output_index]}_{callee.input_names[formal_index]}"
-    fn = Function._from_exprs(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"])
-    cache[key] = (fn, arg_indices, active)
-  return cache[key]
-
-
 def _call_jvp_many_function(
   callee: Any, output_index: int, formal_indices: tuple[int, ...], nseed: int, constants: tuple[np.ndarray | None, ...]
 ) -> tuple[Any, tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
@@ -213,18 +181,39 @@ def _call_jvp_many_function(
       for i, value in zip(formal_indices, constants, strict=True)
     }
     out = callee.outputs[output_index]
-    deriv = stack([_jvp(out, {callee.inputs[i]: seed[row] for i, seed in seeds.items()}, {}, {}) for row in range(len(active))], axis=0)
-    deriv = _inherit_lowering(callee, simplify_cse_fixpoint(deriv))
+    single_constant = len(formal_indices) == 1 and constants[0] is not None
+    if single_constant:
+      formal_index = formal_indices[0]
+      deriv = _jvp_many_unrolled(out, callee.inputs[formal_index], seeds[formal_index])
+    else:
+      deriv = stack([_jvp(out, {callee.inputs[i]: seed[row] for i, seed in seeds.items()}, {}, {}) for row in range(len(active))], axis=0)
+    deriv = callee._inherit_lowering(simplify_cse_fixpoint(deriv))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
     seed_indices = tuple(i for i, value in zip(formal_indices, constants, strict=True) if value is None and _depends_on(deriv, seeds[i], dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(f"fwd:{callee.input_names[i]}" for i in seed_indices)
-    seed_hash = hashlib.sha1(repr(key).encode()).hexdigest()[:10]
-    name = f"{callee.name}_fwd{nseed}j{seed_hash}_{output_index}_" + "_".join(str(i) for i in formal_indices)
-    fn = Function._from_exprs(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}"])
+    if single_constant:
+      formal_index = formal_indices[0]
+      seed_hash = hashlib.sha1(constants[0].tobytes()).hexdigest()[:10]  # type: ignore[union-attr]
+      name = f"{callee.name}_fwd{nseed}c{seed_hash}_{callee.output_names[output_index]}_{callee.input_names[formal_index]}"
+      output_name = f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"
+    else:
+      seed_hash = hashlib.sha1(repr(key).encode()).hexdigest()[:10]
+      name = f"{callee.name}_fwd{nseed}j{seed_hash}_{output_index}_" + "_".join(str(i) for i in formal_indices)
+      output_name = f"fwd:{callee.output_names[output_index]}"
+    fn = Function._from_exprs(name, inputs, [deriv], input_names, [output_name])
     cache[key] = (fn, arg_indices, seed_indices, active)
   return cache[key]
+
+
+def _call_jvp_many_const_function(
+  callee: Any, output_index: int, formal_index: int, seed_value: np.ndarray
+) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
+  """Specialize the joint JVP helper for one formal with a constant seed."""
+  fn, arg_indices, seed_indices, active = _call_jvp_many_function(callee, output_index, (formal_index,), seed_value.shape[0], (seed_value,))
+  assert not seed_indices
+  return fn, arg_indices, active
 
 
 def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int, ...]) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
@@ -232,7 +221,7 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
   cache = _CALL_JVP_CACHE.setdefault(callee, {})
   if key not in cache:
     seeds = {i: Expr.sym(f"fwd:{callee.input_names[i]}", callee.inputs[i].shape) for i in formal_indices}
-    deriv = _inherit_lowering(callee, _jvp(callee.outputs[output_index], {callee.inputs[i]: seed for i, seed in seeds.items()}, {}, {}))
+    deriv = callee._inherit_lowering(_jvp(callee.outputs[output_index], {callee.inputs[i]: seed for i, seed in seeds.items()}, {}, {}))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
     seed_indices = tuple(i for i, seed in seeds.items() if _depends_on(deriv, seed, dep_memo))
@@ -267,7 +256,7 @@ def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
     key = (*functions, inputs)
     if key not in cache:
       outputs = [fn.outputs[0].reshape((fn.outputs[0].size,)) for fn in functions]
-      packed = _inherit_lowering(callee, simplify_cse_fixpoint(concat(outputs)))
+      packed = callee._inherit_lowering(simplify_cse_fixpoint(concat(outputs)))
       name_hash = hashlib.sha1(";".join(fn.name for fn in functions).encode()).hexdigest()[:10]
       names = {inp: name for fn in functions for inp, name in zip(fn.inputs, fn.input_names, strict=True)}
       cache[key] = Function._from_exprs(f"{callee.name}_fwd_pack_{name_hash}", inputs, [packed], [names[inp] for inp in inputs], ["fwd"])
@@ -281,6 +270,26 @@ def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
       replacements[member] = gather(mapped, indices)
       offset += size
   return substitute(result, replacements) if replacements else result
+
+
+def _periodic_seed_tiles(
+  tangent: Expr, nseed: int, outer_size: int, start: int, stride: int, formal_size: int, length: int
+) -> tuple[np.ndarray, int] | None:
+  if not length or tangent.op != ExprOp.CONST or tangent.value is None:
+    return None
+  flat = np.asarray(tangent.value, dtype=np.float64).reshape(nseed, outer_size)
+  tiles = np.stack([flat[:, start + it * stride : start + it * stride + formal_size] for it in range(length)])
+  period = next(
+    (k for k in range(1, min(8, length // 2) + 1) if length % k == 0 and np.array_equal(tiles, np.tile(tiles[:k], (length // k, 1, 1)))),
+    None,
+  )
+  return None if period is None else (tiles, period)
+
+
+def _local_seed_colors(callee_out: Expr, formal: Expr, nseed: int) -> tuple[Any, tuple[int, ...]] | None:
+  mask = _jac_mask(callee_out, formal, {})
+  colors = column_coloring(_mask_sparsity(mask)) if mask.nnz else ()
+  return (mask, colors) if colors and max(colors) + 1 < nseed else None
 
 
 def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
@@ -422,45 +431,40 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       # const-seed callee per tile: the 0/1 products fold inside the body and no seed table or
       # gather is emitted. Iteration ``it`` uses tile ``it % period``; residue class ``r`` is mapped
       # with start ``start + r * stride`` and stride ``stride * period``.
-      if length and actual_tan.op == ExprOp.CONST and actual_tan.value is not None:
-        flat_tan = np.asarray(actual_tan.value, dtype=np.float64).reshape(nseed, outer_size)
-        tiles = np.stack([flat_tan[:, start + it * stride : start + it * stride + formal_size] for it in range(length)])
-        period = next(
-          (k for k in range(1, min(8, length // 2) + 1) if length % k == 0 and np.array_equal(tiles, np.tile(tiles[:k], (length // k, 1, 1)))), None
-        )
-        if period is not None:
-          n = length // period
-          zero_rows = Expr.const(np.zeros((n, slice_size), dtype=np.float64))
-          parts: list[Expr] = []
-          for r in range(period):
-            inner_fn, primal_arg_indices, active = _call_jvp_many_const_function(
-              callee, output_idx, formal_idx, tiles[r].reshape((nseed, *formal.shape))
-            )
-            if not active:
-              parts.append(Expr.const(np.zeros((nseed, n, slice_size), dtype=np.float64)))
-              continue
-            primal_specs = [(expr.args[i], starts[i] + r * strides[i], strides[i] * period) for i in primal_arg_indices]
-            mapped_3d = mapped_call(inner_fn, n, primal_specs).reshape((n, len(active), slice_size))
-            if len(active) == nseed:
-              parts.append(mapped_3d.transpose((1, 0, 2)))
-            else:
-              active_pos = {row: i for i, row in enumerate(active)}
-              parts.append(stack([mapped_3d[:, active_pos[row], :] if row in active_pos else zero_rows for row in range(nseed)], axis=0))
-          if all(_is_zero_const(part) for part in parts):
+      periodic = _periodic_seed_tiles(actual_tan, nseed, outer_size, start, stride, formal_size, length)
+      if periodic is not None:
+        tiles, period = periodic
+        n = length // period
+        zero_rows = Expr.const(np.zeros((n, slice_size), dtype=np.float64))
+        parts: list[Expr] = []
+        for r in range(period):
+          inner_fn, primal_arg_indices, active = _call_jvp_many_const_function(
+            callee, output_idx, formal_idx, tiles[r].reshape((nseed, *formal.shape))
+          )
+          if not active:
+            parts.append(Expr.const(np.zeros((nseed, n, slice_size), dtype=np.float64)))
             continue
-          term = (parts[0] if period == 1 else stack(parts, axis=2)).reshape((nseed, length * slice_size))
-          ret = term if ret is None else ret + term
+          primal_specs = [(expr.args[i], starts[i] + r * strides[i], strides[i] * period) for i in primal_arg_indices]
+          mapped_3d = mapped_call(inner_fn, n, primal_specs).reshape((n, len(active), slice_size))
+          if len(active) == nseed:
+            parts.append(mapped_3d.transpose((1, 0, 2)))
+          else:
+            active_pos = {row: i for i, row in enumerate(active)}
+            parts.append(stack([mapped_3d[:, active_pos[row], :] if row in active_pos else zero_rows for row in range(nseed)], axis=0))
+        if all(_is_zero_const(part) for part in parts):
           continue
+        term = (parts[0] if period == 1 else stack(parts, axis=2)).reshape((nseed, length * slice_size))
+        ret = term if ret is None else ret + term
+        continue
 
       # Local coloring of the callee's Jacobian tile w.r.t. this formal. When this gives c_f < nseed
       # local colors, baking those local seeds into the per-iteration JVP callee yields a body of
       # size O(c_f) instead of O(nseed). The global compressed JVP is then assembled back by, for
       # each local color `c_local`, gathering the unique nonzero column of `actual_tan` for each
       # output row and multiplying with the per-iter compressed-JVP slice.
-      local_mask = _jac_mask(callee_out, formal, {})
-      local_colors = column_coloring(_mask_sparsity(local_mask)) if local_mask.nnz else ()
-      use_local = bool(local_colors) and (max(local_colors) + 1) < nseed
-      if use_local:
+      local = _local_seed_colors(callee_out, formal, nseed)
+      if local is not None:
+        local_mask, local_colors = local
         c_f = max(local_colors) + 1
         seed_f = np.zeros((c_f, formal_size), dtype=np.float64)
         for j, c in enumerate(local_colors):

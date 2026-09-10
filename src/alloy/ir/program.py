@@ -54,6 +54,7 @@ class ProgramOp(StrEnum):
   RANGE = "range"
   ASSIGN = "assign"
   STORE = "store"
+  STORE_PAIR = "store_pair"
   CALL = "call"
   LAUNCH = "launch"
   BARRIER = "barrier"
@@ -321,6 +322,17 @@ def store(view_node: ProgramNode, value: ProgramNode) -> ProgramNode:
   return ProgramNode(ProgramOp.STORE, (view_node, value), dtype=value.dtype)
 
 
+def store_pair(view_node: ProgramNode, first: ProgramNode, second: ProgramNode) -> ProgramNode:
+  """Store two float64 values at a view and its next scalar element."""
+  if view_node.op != ProgramOp.VIEW:
+    raise TypeError(f"store_pair expects a VIEW target, got {view_node.op}")
+  if first.op not in SCALAR_OPS or second.op not in SCALAR_OPS:
+    raise TypeError("store_pair values must be scalar ProgramNodes")
+  if view_node.dtype != dtypes.float64 or first.dtype != dtypes.float64 or second.dtype != dtypes.float64:
+    raise TypeError("store_pair requires float64 target and values")
+  return ProgramNode(ProgramOp.STORE_PAIR, (view_node, first, second), dtype=dtypes.float64)
+
+
 def assign(target: str, value: ProgramNode, dtype: DType | None = None, *, declare: bool = False) -> ProgramNode:
   """Assign a scalar value, optionally declaring a new typed local variable."""
   if value.op not in SCALAR_OPS:
@@ -461,6 +473,7 @@ __all__ = [
   "program",
   "range_",
   "store",
+  "store_pair",
   "sub",
   "var",
   "view",

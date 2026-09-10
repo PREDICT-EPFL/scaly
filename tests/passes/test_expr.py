@@ -3,8 +3,10 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pytest
 
 import alloy as al
+from alloy.ir.types import Lowering
 
 
 def test_cse_merges_equivalent_subgraphs() -> None:
@@ -126,3 +128,36 @@ def test_constant_mask_of_the_result_shape_folds_when_uniform() -> None:
   data = np.array([0.5, -1.5, 2.5])
   np.testing.assert_array_equal(_eval("mask_mixed", [x], mixed, data), data * [1.0, 0.0, 1.0])
   np.testing.assert_array_equal(_eval("mask_broadcast", [row], kept, data[None, :]), np.tile(data, (2, 1)))
+
+
+@pytest.mark.parametrize("hint", ["scalar", "block", "opaque"])
+def test_simplify_keeps_hint_when_replacement_is_declared_input(hint: Lowering) -> None:
+  x = al.sym("x", 3)
+  simplified = al.simplify((x * 1.0).with_lowering(hint))
+  fn = al.Function._from_exprs("hinted_identity", [x], [simplified], ["x"], ["y"])
+
+  assert simplified.lowering == hint
+  assert simplified.op == al.ExprOp.RESHAPE
+  assert fn.inputs == (x,)
+
+
+def test_simplify_revisits_new_children_in_one_bounded_walk() -> None:
+  x = al.sym("x", 2)
+  expr = (x + 0.0).reshape((2,)).reshape((2,)) * 1.0
+
+  assert al.simplify(expr) is x
+
+
+def test_simplify_preserves_conflicting_hint_precedence() -> None:
+  x = al.sym("x", 2)
+
+  assert al.simplify((x.sin().block() + 0.0).scalar()).lowering == "block"
+  annihilated = al.simplify(x.block() * 0.0)
+  assert annihilated.op == al.ExprOp.CONST
+  assert annihilated.lowering == "block"
+
+
+def test_simplify_preserves_isolated_opaque_spelling() -> None:
+  x = al.sym("x", 2)
+
+  assert al.simplify((x + 0.0).opaque()).lowering == "opaque"

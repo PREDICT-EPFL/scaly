@@ -2,7 +2,7 @@
 
 These exercise the passes directly on lowered Program IR (structural assertions) plus a couple of
 end-to-end numeric checks under the Program IR renderer. See ``docs/how_it_works/lowering.md``
-(Step 5b): fusion + workspace packing/spilling + contiguous-slice aliasing.
+for the pipeline order and pass contracts.
 """
 
 from __future__ import annotations
@@ -17,8 +17,12 @@ from alloy.codegen.c import render_program_c_source
 from alloy.codegen.jit import _find_compiler
 from alloy.passes.lowering import lower_function, main_proc
 from alloy.passes.program.combine_scatter_sums import combine_scatter_sums
+from alloy.passes.program.fold_arith import fold_arith
+from alloy.passes.program.fuse_elementwise import fuse_elementwise
 from alloy.passes.program.hoist_invariant import hoist_invariant
-from alloy.passes.program._common import _walk
+from alloy.passes.program._common import _walk, allocated_name, prune_procedures
+from alloy.ir import program as p
+from alloy.ir.program_spec import verify_program
 from alloy.passes.program.pack_workspace import WORKSPACE_SPILL_THRESHOLD
 from alloy.passes.program.unroll_unit_loops import unroll_unit_loops
 from alloy.ir.program import (
@@ -38,7 +42,7 @@ from alloy.ir.program import (
   var,
   view,
 )
-from alloy.ir.types import dtypes
+from alloy.ir.types import Lowering, dtypes
 
 _HAVE_CC = _find_compiler() is not None
 
@@ -106,7 +110,7 @@ def test_deep_scalar_fold_lowers_renders_and_runs(length: int) -> None:
   """Depth in the expression must not become depth on the Python stack or in the C source: the
   passes and renderer are iterative, and the renderer splits trees at ``MAX_SCALAR_DEPTH``."""
   f = _long_scalar_chain(length)
-  assert "_h0 = " in render_program_c_source(f)
+  assert re.search(r"double v\d+ = ", render_program_c_source(f))
   x = np.arange(1.0, 5.0)
   np.testing.assert_allclose(f(x), _long_scalar_chain_numpy(length, x), rtol=1e-12)
 
@@ -156,6 +160,68 @@ def test_fusion_into_reduction() -> None:
   assert len(loops) == 1  # the single reduce loop
 
 
+def test_fusion_counts_expensive_work_through_producer_chains() -> None:
+  x, y = (buffer(name, dtypes.float64, (4,)) for name in ("x", "y"))
+  a, b = (buffer(name, dtypes.float64, (4,), address_space="private") for name in ("a", "b"))
+  i = var("i")
+  at = lambda buf: view(buf, [i])
+  sin = ProgramNode(ProgramOp.SIN, (load(at(x)),), dtype=dtypes.float64)
+  body = [
+    a,
+    b,
+    for_(range_("i", 0, 4), [store(at(a), sin)]),
+    for_(range_("i", 0, 4), [store(at(b), add(load(at(a)), const_float(1.0)))]),
+    for_(range_("i", 0, 4), [store(at(y), mul(load(at(b)), load(at(b))))]),
+  ]
+  result = fuse_elementwise(program([proc_("chain_cost", [x, y], body)])).args[0]
+  result_body = result.args[int(result.attrs["param_count"]) :]
+  assert sum(stmt.op == ProgramOp.FOR for stmt in result_body) == 2
+  assert sum(node.op == ProgramOp.SIN for stmt in result_body for node in _walk(stmt)) == 1
+
+
+def test_fusion_does_not_move_reads_into_a_consumer_that_overwrites_them() -> None:
+  x = buffer("x", dtypes.float64, (4,))
+  a = buffer("a", dtypes.float64, (4,), address_space="private")
+  i = var("i")
+  body = [
+    a,
+    for_(range_("i", 0, 4), [store(view(a, [i]), add(load(view(x, [i])), const_float(1.0)))]),
+    for_(range_("i", 0, 4), [store(view(x, [i]), load(view(a, [p.sub(const_int(3), i)])))]),
+  ]
+  prog = program([proc_("read_motion_consumer", [x], body)])
+  verify_program(prog)
+  assert fuse_elementwise(prog) is prog
+
+
+@pytest.mark.parametrize("invocation", ["call", "launch"])
+def test_buffer_analysis_keeps_arguments_with_unspecified_access_modes(invocation: str) -> None:
+  from alloy.passes.program._common import buffer_refs, prune_dead_buffers
+
+  a = buffer("a", dtypes.float64, (4,), address_space="private")
+  stmt = p.call("external", [a]) if invocation == "call" else p.launch("kernel", [1], [1], [a])
+  proc = proc_("invoke", [], [a, stmt])
+  verify_program(proc)
+  refs = buffer_refs(stmt)
+  assert refs.reads == refs.writes == frozenset({"a"})
+  assert prune_dead_buffers(proc) is proc
+  assert fuse_elementwise(program([proc])).args[0] is proc
+
+
+def test_fusion_does_not_move_a_read_past_a_write() -> None:
+  x, y = (buffer(name, dtypes.float64, (1,)) for name in ("x", "y"))
+  a = buffer("a", dtypes.float64, (1,), address_space="private")
+  i = var("i")
+  at = lambda buf: view(buf, [i])
+  body = [
+    a,
+    for_(range_("i", 0, 1), [store(at(a), mul(load(at(x)), const_float(2.0)))]),
+    store(view(x, [const_int(0)]), const_float(3.0)),
+    for_(range_("i", 0, 1), [store(at(y), add(load(at(a)), const_float(1.0)))]),
+  ]
+  result = fuse_elementwise(program([proc_("read_motion", [x, y], body)])).args[0]
+  assert any(stmt.op == ProgramOp.BUFFER and stmt.attrs["name"] == "a" for stmt in result.args)
+
+
 # --- unit-loop unrolling ---------------------------------------------------------
 
 
@@ -184,6 +250,107 @@ def test_unit_loop_pass_removes_empty_and_substitutes_only_value() -> None:
   assert body[0].op == ProgramOp.STORE
   assert body[0].args[0].args[0].op == ProgramOp.CONST_INT
   assert body[0].args[0].args[0].attrs["value"] == 3
+
+
+def test_fold_after_unit_unroll_reads_nonuniform_constant_table() -> None:
+  table = ProgramNode(
+    ProgramOp.BUFFER,
+    (),
+    {"name": "table", "shape": (2,), "address_space": "constant", "values": (2.0, 7.0)},
+    dtypes.float64,
+  )
+  y = buffer("y", dtypes.float64, (1,))
+  i = var("i")
+  loop = for_(range_("i", 1, 2), [store(view(y, [const_int(0)]), load(view(table, [i])))])
+  result = fold_arith(unroll_unit_loops(program([proc_("constant_unit", [y], [table, loop])]))).args[0]
+  stores = [node for node in result.args if node.op == ProgramOp.STORE]
+  assert stores[0].args[1].op == ProgramOp.CONST_FLOAT
+  assert stores[0].args[1].attrs["value"] == 7.0
+
+
+def test_procedure_pruning_keeps_entry_calls_and_solver_oracles_in_order() -> None:
+  leaf = proc_("leaf", [], [])
+  dead = proc_("dead", [], [])
+  oracle = proc_("oracle", [], [])
+  kernel_proc = proc_("kernel_proc", [], [])
+  call = ProgramNode(ProgramOp.CALL, (), {"callee": "leaf", "n_in": 0, "n_out": 0, "returns": ()})
+  entry = proc_("entry", [], [call])
+  kernel_call = ProgramNode(ProgramOp.CALL, (), {"callee": "kernel_proc", "n_in": 0, "n_out": 0, "returns": ()})
+  kernel = ProgramNode(ProgramOp.KERNEL, (kernel_call,), {"name": "kernel", "param_count": 0})
+  prog = ProgramNode(
+    ProgramOp.PROGRAM,
+    (leaf, dead, oracle, kernel_proc, entry, kernel),
+    {"proc_count": 5, "kernel_count": 1, "solver_oracles": {"solver": ("oracle",)}},
+  )
+  result = prune_procedures(prog)
+  assert [proc.attrs["name"] for proc in result.args] == ["leaf", "oracle", "kernel_proc", "entry", "kernel"]
+
+
+def test_generated_name_reserves_raw_and_c_identifier_collisions() -> None:
+  from alloy.utils.names import c_ident
+
+  used = {c_ident(name) for name in ("split-name", "split_name_2")}
+  assert allocated_name("split_name", used) == "split_name_3"
+
+
+def test_generated_names_do_not_rescan_the_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+  from alloy.passes.program import _common
+
+  calls = 0
+  c_ident = _common.c_ident
+
+  def counted(name: str) -> str:
+    nonlocal calls
+    calls += 1
+    return c_ident(name)
+
+  monkeypatch.setattr(_common, "c_ident", counted)
+  spellings = {f"input_{i}" for i in range(1000)}
+  for i in range(100):
+    assert allocated_name(f"output_{i}", spellings) == f"output_{i}"
+  assert calls <= 200
+
+
+def test_dead_buffer_removal_analyzes_each_statement_once(monkeypatch: pytest.MonkeyPatch) -> None:
+  from alloy.passes.program import _common
+
+  a = buffer("a", dtypes.float64, (4,), address_space="private")
+  stmt = store(view(a, [const_int(0)]), const_float(1.0))
+  calls: list[ProgramNode] = []
+  buffer_refs = _common.buffer_refs
+
+  def counted(node: ProgramNode, aliases: dict[str, str] | None = None):
+    calls.append(node)
+    return buffer_refs(node, aliases)
+
+  monkeypatch.setattr(_common, "buffer_refs", counted)
+  _common.prune_dead_buffers(proc_("references", [], [a, stmt]))
+  assert calls == [stmt]
+
+
+def test_hoist_reserves_exported_names_across_repeated_loop_variables() -> None:
+  a, x, y = (buffer(name, dtypes.float64, (1,)) for name in ("a", "x", "y"))
+  temp = buffer("temp", dtypes.float64, (1,), address_space="private")
+  zero = const_int(0)
+  sin_a = ProgramNode(ProgramOp.SIN, (load(view(a, [zero])),), dtype=dtypes.float64)
+  callee_body = [temp, store(view(temp, [zero]), sin_a), store(view(y, [zero]), mul(load(view(temp, [zero])), load(view(x, [zero]))))]
+  callee = ProgramNode(
+    ProgramOp.PROC,
+    (a, x, y, *callee_body),
+    {**proc_("mapped", [a, x, y], callee_body).attrs, "input_count": 2, "scalarize_mode": "disabled"},
+  )
+  za, zx, zy = (buffer(name, dtypes.float64, (2,)) for name in ("za", "zx", "zy"))
+  call = lambda: ProgramNode(
+    ProgramOp.CALL,
+    (view(za, [zero]), view(zx, [var("it")]), view(zy, [var("it")])),
+    {"callee": "mapped", "n_in": 2, "n_out": 1, "returns": ()},
+  )
+  root_body = [for_(range_("it", 0, 2), [call()]), for_(range_("it", 0, 2), [call()])]
+  root_proc = ProgramNode(ProgramOp.PROC, (za, zx, zy, *root_body), {**proc_("root", [za, zx, zy], root_body).attrs, "input_count": 2})
+  result = hoist_invariant(program([callee, root_proc]))
+  root_result = result.args[-1]
+  names = [node.attrs["name"] for node in root_result.args if node.op == ProgramOp.BUFFER and node.attrs.get("address_space") == "private"]
+  assert names == ["it_temp", "it_temp_2"]
 
 
 # --- contiguous-slice aliasing --------------------------------------------------
@@ -335,10 +502,16 @@ def test_slice_gradient_combines_pads(count: int) -> None:
   combined = main_proc(stages["pass:combine_scatter_sums"])
   buffers, _, _ = _classify(list(combined.args[int(combined.attrs["param_count"]) :]))
   assert not [b for b in buffers if b.attrs["shape"] == (4 * count,)]
+  combined_loops = [
+    loop
+    for loop in combined.args[int(combined.attrs["param_count"]) :]
+    if loop.op == ProgramOp.FOR and loop.args[1].op == ProgramOp.STORE and loop.args[1].args[0].attrs["buffer"] == "grad_cost_x"
+  ]
+  assert len(combined_loops) == count + 1
   compute, _, loops = _classify(_main_body(grad))
   assert not [b for b in compute if b.attrs["shape"] == (4 * count,)]
   output_loops = [loop for loop in loops if loop.args[1].op == ProgramOp.STORE and loop.args[1].args[0].attrs["buffer"] == "grad_cost_x"]
-  assert len(output_loops) == count + 1
+  assert output_loops
   assert sum(loop.args[1].args[1].op == ProgramOp.CONST_FLOAT for loop in loops if len(loop.args) == 2 and loop.args[1].op == ProgramOp.STORE) == 1
   data = np.linspace(-1.0, 2.0, 4 * count)
   expected = np.zeros_like(data)
@@ -443,12 +616,12 @@ def _proc_names(fn: al.Function) -> list[str]:
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
 def test_hoist_moves_broadcast_argument_work_before_the_mapped_loop() -> None:
   fn, z, w = _mapped_mlp(5, broadcast=True)
-  assert _proc_names(fn) == ["hoist_stage_hoist1", "hoist_stage_hoisted1", "hoist_map_True"]
+  assert _proc_names(fn) == ["hoist_stage_hoist_1", "hoist_stage_hoisted_1", "hoist_map_True"]
   body = [s for s in _main_body(fn) if s.op != ProgramOp.BUFFER]
   calls = [s for s in body if s.op == ProgramOp.CALL]
   loops = [s for s in body if s.op == ProgramOp.FOR and s.args[1].op == ProgramOp.CALL]
-  assert [c.attrs["callee"] for c in calls] == ["hoist_stage_hoist1"] and body.index(calls[0]) < body.index(loops[0])
-  assert loops[0].args[1].attrs["callee"] == "hoist_stage_hoisted1"
+  assert [c.attrs["callee"] for c in calls] == ["hoist_stage_hoist_1"] and body.index(calls[0]) < body.index(loops[0])
+  assert loops[0].args[1].attrs["callee"] == "hoist_stage_hoisted_1"
   # The prologue owns the exp of the broadcast matrix; the body keeps the per-stage product and
   # its zero-filled accumulator, which is written per trip and so must not move.
   prologue, hoisted = lower_function(fn).args[:2]
@@ -476,7 +649,7 @@ def test_hoist_names_each_invariant_position_set_of_one_callee() -> None:
   first = al.vmap(stage, 4, {"x": (z, 0, 3), "w": (weights, 0, 0)})
   second = al.vmap(stage, 4, {"x": (z, 0, 0), "w": (weights, 0, 9)})
   fn = al.Function._from_exprs("hoist_two_map", [z, weights], [first + second], ["z", "weights"], ["y"])
-  assert _proc_names(fn) == ["hoist_two_hoist1", "hoist_two_hoisted1", "hoist_two_hoist0", "hoist_two_hoisted0", "hoist_two_map"]
+  assert _proc_names(fn) == ["hoist_two_hoist_1", "hoist_two_hoisted_1", "hoist_two_hoist_0", "hoist_two_hoisted_0", "hoist_two_map"]
   zv, wv = np.random.default_rng(5).normal(size=12), np.random.default_rng(6).normal(size=36)
   ew, ex = np.exp(wv.reshape(4, 3, 3)), np.exp(zv.reshape(4, 3))
   expected = np.sin(ew[0] @ ex.T).T + np.sin(np.einsum("sij,j->si", ew, ex[0]))
@@ -496,7 +669,9 @@ def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:
     store(at(y), add(load(at(y)), load(at(t)))),
   ]
   callee = ProgramNode(
-    ProgramOp.PROC, (a, x, y, *body), {**proc_("twice", [a, x, y], body).attrs, "input_count": 2, "lowering": "auto", "scalarize": True}
+    ProgramOp.PROC,
+    (a, x, y, *body),
+    {**proc_("twice", [a, x, y], body).attrs, "input_count": 2, "lowering": "auto", "scalarize_mode": "inline"},
   )
   za, zx, zy = (buffer(n, dtypes.float64, (4,)) for n in ("za", "zx", "zy"))
   rng = range_("it", 0, 4)
@@ -507,4 +682,71 @@ def test_hoist_refuses_a_buffer_read_between_two_invariant_writes() -> None:
   )
   root = ProgramNode(ProgramOp.PROC, (za, zx, zy, for_(rng, [call])), {**proc_("root", [za, zx, zy], []).attrs, "input_count": 2})
   prog = program([callee, root])
+  assert hoist_invariant(prog) is prog
+
+
+@pytest.mark.parametrize("hint,mode", [("auto", "inline"), ("scalar", "procedure"), ("block", "disabled"), ("opaque", "disabled")])
+def test_hoist_prunes_before_scalarization_and_preserves_prologue_policy(hint: Lowering, mode: str) -> None:
+  x, w = al.sym("x", 1), al.sym("w", 1)
+  output = (x * w.sin()).with_lowering(hint)
+  stage = al.Function._from_exprs("policy_stage", [x, w], [output], ["x", "w"], ["y"])
+  z = al.sym("z", 3)
+  root = al.Function._from_exprs("policy_root", [z, w], [al.vmap(stage, 3, [(z, 0, 1), (w, 0, 0)])], ["z", "w"], ["y"])
+  stages = {}
+  lower_function(root, observe=lambda name, prog: stages.__setitem__(name, prog))
+  procs = stages["pass:hoist_invariant"].args
+  assert stage.name not in {proc.attrs["name"] for proc in procs}
+  prologue = next(proc for proc in procs if proc.attrs["name"].startswith("policy_stage_hoist_"))
+  assert prologue.attrs["scalarize_mode"] == mode
+
+
+def test_hoist_recognizes_generated_pure_callees_in_nested_maps() -> None:
+  x, w = al.sym("x", 1), al.sym("w", 1)
+  inner = al.Function._from_exprs("nested_inner", [x, w], [x * w.sin()], ["x", "w"], ["y"])
+  z = al.sym("z", 2)
+  middle = al.Function._from_exprs("nested_middle", [z, w], [al.vmap(inner, 2, [(z, 0, 1), (w, 0, 0)]).block()], ["z", "w"], ["y"])
+  outer_z = al.sym("outer_z", 6)
+  root = al.Function._from_exprs("nested_root", [outer_z, w], [al.vmap(middle, 3, [(outer_z, 0, 2), (w, 0, 0)])], ["z", "w"], ["y"])
+  stages = {}
+  lower_function(root, observe=lambda name, prog: stages.__setitem__(name, prog))
+  assert any(proc.attrs.get("hoisted_from") == middle.name for proc in stages["pass:hoist_invariant"].args)
+  values = np.arange(6.0)
+  np.testing.assert_allclose(root((values, np.array([0.3]))), values * np.sin(0.3))
+
+
+def test_hoist_positions_and_existing_procedure_names_do_not_collide() -> None:
+  inputs = [al.sym(f"x{i}", 1) for i in range(13)]
+  stage = al.Function._from_exprs(
+    "position_stage", inputs, [sum((x.sin() for x in inputs), al.const(0.0)).block()], [f"x{i}" for i in range(13)], ["y"]
+  )
+  other = al.Function._from_exprs("position_stage_hoist_1_2", [inputs[0]], [inputs[0].cos().block()], ["x"], ["y"])
+  outer = [al.sym(f"z{i}", 3) for i in range(13)]
+  mapped = [al.vmap(stage, 3, [(z, 0, 0 if i in fixed else 1) for i, z in enumerate(outer)]) for fixed in [(1, 2), (12,)]]
+  root = al.Function._from_exprs("position_root", outer, [other(outer[0][:1]) + mapped[0] + mapped[1]], [f"z{i}" for i in range(13)], ["y"])
+  procs = lower_function(root).args
+  names = [proc.attrs["name"] for proc in procs]
+  assert len(names) == len(set(names))
+  assert other.name in names
+  assert "position_stage_hoist_1_2_2" in names
+  assert "position_stage_hoisted_1_2" in names and "position_stage_hoisted_12" in names
+  values = tuple(np.arange(3.0) / 4 + i / 10 for i in range(13))
+  expected = np.full(3, np.cos(values[0][0]))
+  for fixed in [(1, 2), (12,)]:
+    expected += sum(np.sin(z[0] if i in fixed else z) for i, z in enumerate(values))
+  np.testing.assert_allclose(root(values), expected)
+
+
+def test_hoist_keeps_unknown_call_outputs_inside_the_map() -> None:
+  a, x, y = (buffer(name, dtypes.float64, (1,)) for name in ("a", "x", "y"))
+  temp = buffer("temp", dtypes.float64, (1,), address_space="private")
+  at = lambda b: view(b, [const_int(0)])
+  opaque = ProgramNode(ProgramOp.CALL, (a, temp), {"callee": "external_solver", "n_in": 1, "n_out": 1, "returns": ()})
+  raw = proc_("opaque_stage", [a, x, y], [temp, opaque, store(at(y), mul(load(at(temp)), load(at(x))))])
+  stage = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 2, "lowering": "block", "scalarize_mode": "disabled"}, raw.dtype)
+  z, out = (buffer(name, dtypes.float64, (3,)) for name in ("z", "out"))
+  call = ProgramNode(
+    ProgramOp.CALL, (a, view(z, [var("i")]), view(out, [var("i")])), {"callee": "opaque_stage", "n_in": 2, "n_out": 1, "returns": ()}
+  )
+  root = proc_("opaque_root", [a, z, out], [for_(range_("i", 0, 3), [call])])
+  prog = program([stage, root])
   assert hoist_invariant(prog) is prog

@@ -471,3 +471,97 @@ def test_empty_reduction_and_output_leave_adjacent_memory_untouched() -> None:
   assert compiled._entry(args, outputs, None, work, None) == 0
   np.testing.assert_array_equal(cost, [values[:2].sum() + 1000.0 * values[2:2].sum()])
   np.testing.assert_array_equal(untouched, [23.0])
+
+
+def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None:
+  matrix = al.sym("matrix", (3, 2))
+  vector = al.sym("vector", 3)
+  output = (matrix.T @ vector).block()
+  sparsity = al.SparsityType((2, 1), (0, 1), (0, 0))
+  fn = al.Function._from_exprs(
+    "normalized_metadata",
+    [matrix, vector],
+    [output],
+    ["matrix", "vector"],
+    ["product"],
+    [sparsity],
+    output_coloring_widths=[2],
+  )
+  observed: list[tuple[str, al.Function]] = []
+
+  lower_function(fn, observe_expr=lambda name, normalized: observed.append((name, normalized)))
+
+  assert fn.outputs == (output,)
+  assert fn.outputs[0].args[0].op == al.ExprOp.TRANSPOSE
+  assert len(observed) == 1
+  name, normalized = observed[0]
+  assert name == "normalized"
+  assert normalized is not fn
+  assert normalized.inputs == fn.inputs
+  assert normalized.input_tree is fn.input_tree
+  assert normalized.output_tree is fn.output_tree
+  assert normalized.output_sparsities == (sparsity,)
+  assert normalized.output_coloring_widths == (2,)
+  assert normalized.outputs[0].op == al.ExprOp.MATMUL
+  assert normalized._effective_lowering() == "block"
+
+
+@pytest.mark.parametrize("identity", ["none", "compile", "simplify"])
+def test_normalization_preserves_shared_work_across_hinted_outputs(identity: str) -> None:
+  x = al.sym("x", 64)
+  a = x.sin()
+  outputs = [a.cos().block(), a] if identity == "none" else [a.cos(), (a * 1.0).block()]
+  if identity == "simplify":
+    outputs = [al.simplify(output) for output in outputs]
+  fn = al.Function._from_exprs(f"shared_outputs_{identity}", [x], outputs, ["x"], ["cos", "sin"])
+
+  assert render_c_source(fn).count("sin(") == 1
+  values = np.linspace(-2.0, 2.0, 64)
+  cosine, sine = fn(values)
+  np.testing.assert_allclose(cosine, np.cos(np.sin(values)))
+  np.testing.assert_allclose(sine, np.sin(values))
+
+
+def test_normalization_keeps_constant_and_conflicting_function_hints() -> None:
+  x = al.sym("x", 2, lowering="block")
+  fn = al.Function._from_exprs("normalized_hints", [x], [(x * 1.0).scalar(), al.const([2.0, 3.0]).scalar()], ["x"], ["identity", "constant"])
+  observed: list[al.Function] = []
+
+  lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized))
+
+  normalized = observed[0]
+  assert normalized._effective_lowering() == "block"
+  assert normalized.outputs[0] is x
+  assert normalized.outputs[1].op == al.ExprOp.CONST
+  assert normalized.outputs[1] is fn.outputs[1]
+  assert main_proc(lower_function(fn)).attrs["lowering"] == "block"
+
+
+@pytest.mark.parametrize(("dtype", "value"), [("float32", np.float32(1.0)), ("int64", np.int64(1))])
+def test_normalization_preserves_typed_identity_boundaries(dtype: str, value: object) -> None:
+  x = al.sym("x", 2, dtype=dtype)
+  one = al.const(np.full(2, value), dtype=dtype)
+  fn = al.Function._from_exprs(f"normalized_{dtype}", [x], [(x * one).scalar()], ["x"], ["y"])
+  observed: list[al.Function] = []
+
+  proc = main_proc(lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized)))
+
+  assert observed[0].outputs[0].type.dtype == x.type.dtype
+  assert proc.attrs["scalarize_mode"] == "disabled"
+
+
+@pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
+def test_automatic_transpose_normalization_preserves_cancellation_order_and_empty_reduction() -> None:
+  matrix = al.sym("matrix", (3, 2))
+  vector = al.sym("vector", 3)
+  product = al.Function._from_exprs("normalized_cancel", [matrix, vector], [matrix.T @ vector], ["matrix", "vector"], ["y"])
+  matrix_value = np.array([[1e16, -1e16], [1.0, 1.0], [-1e16, 1e16]])
+  vector_value = np.ones(3)
+  np.testing.assert_array_equal(product((matrix_value, vector_value)), vector_value @ matrix_value)
+
+  empty_matrix = al.sym("empty_matrix", (2, 0))
+  empty_vector = al.sym("empty_vector", 0)
+  empty = al.Function._from_exprs(
+    "normalized_empty_product", [empty_matrix, empty_vector], [empty_matrix @ empty_vector], ["matrix", "vector"], ["y"]
+  )
+  np.testing.assert_array_equal(empty((np.empty((2, 0)), np.empty(0))), np.zeros(2))

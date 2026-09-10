@@ -34,6 +34,7 @@ from ..ir.program import ProgramNode, ProgramOp, RangeKind
 from ..ir.program_spec import verify_program
 from ..ir.types import DeviceSpec, DType, dtypes
 from .affine import affine_index_map
+from .expr import cse_many, simplify
 
 
 class LoweringError(NotImplementedError):
@@ -87,7 +88,10 @@ def lowers(*ops: ExprOp) -> Callable[[LowerRule], LowerRule]:
   return deco
 
 
-def lower_function(fun: Function, observe: ProgramObserver | None = None) -> ProgramNode:
+ExprObserver = Callable[[str, Function], None]
+
+
+def lower_function(fun: Function, observe: ProgramObserver | None = None, observe_expr: ExprObserver | None = None) -> ProgramNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
 
   Host placement only for now: the returned PROGRAM holds every lowered callee
@@ -112,11 +116,11 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None) -> Pro
     solver_fns[fun.name] = fun
     for oracle in solver_callees(fun):
       if oracle.name not in callees:
-        callees[oracle.name] = _lower_to_proc(oracle, callees, solver_fns)
+        callees[oracle.name] = _lower_to_proc(oracle, callees, solver_fns, observe_expr=observe_expr)
     prog = p.program([*callees.values()])
     prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "solver_root": fun.name}, prog.dtype)
   else:
-    root = _lower_to_proc(fun, callees, solver_fns, auto_scalarize=False)
+    root = _lower_to_proc(fun, callees, solver_fns, auto_scalarize=False, observe_expr=observe_expr)
     prog = p.program([*callees.values(), root])
   if solver_fns:
     solver_oracles = {name: tuple(o.name for o in solver_callees(sf)) for name, sf in solver_fns.items()}
@@ -163,8 +167,29 @@ def _size_of(shape: tuple[int, ...]) -> int:
   return n
 
 
-def _lower_to_proc(fun: Function, callees: dict[str, ProgramNode], solver_fns: dict[str, Function], *, auto_scalarize: bool = True) -> ProgramNode:
-  ctx = LowerCtx(fun, callees, solver_fns)
+def _normalize_function(fun: Function) -> Function:
+  outputs = fun.outputs
+  for _ in range(4):
+    normalized = cse_many(simplify(output) for output in outputs)
+    if all(new is old for new, old in zip(normalized, outputs, strict=True)):
+      break
+    outputs = normalized
+  return fun._with_outputs(outputs)
+
+
+def _lower_to_proc(
+  fun: Function,
+  callees: dict[str, ProgramNode],
+  solver_fns: dict[str, Function],
+  *,
+  auto_scalarize: bool = True,
+  observe_expr: ExprObserver | None = None,
+) -> ProgramNode:
+  lowering = fun._effective_lowering()
+  fun = _normalize_function(fun)
+  if observe_expr is not None:
+    observe_expr("normalized", fun)
+  ctx = LowerCtx(fun, callees, solver_fns, observe_expr)
   ctx.emit_inputs()
   ctx.register_outputs()
   ctx.emit_body()
@@ -173,7 +198,6 @@ def _lower_to_proc(fun: Function, callees: dict[str, ProgramNode], solver_fns: d
   # ``input_count`` lets the renderer ``const``-qualify the first N (input) params of a ``_raw``
   # callee; emit_inputs runs before register_outputs, so inputs are the leading params.
   nodes = topo(fun.outputs)
-  lowering = fun._effective_lowering()
   # Narrower stores round or truncate; scalar substitution must not erase those conversions.
   return ProgramNode(
     ProgramOp.PROC,
@@ -182,10 +206,11 @@ def _lower_to_proc(fun: Function, callees: dict[str, ProgramNode], solver_fns: d
       **proc.attrs,
       "input_count": len(fun.inputs),
       "lowering": lowering,
-      # True: may expand as a root and inline into an expanding caller; ``hoist_invariant`` sets
-      # "callee" on a prologue that should only ever be inlined.
-      "scalarize": all(n.type.dtype == dtypes.float64 for n in (*fun.inputs, *nodes))
-      and (lowering == "scalar" or (lowering == "auto" and auto_scalarize)),
+      # A procedure may expand on its own and inside an expanding caller. Hoisted prologues use
+      # "inline" because they only expand with their caller.
+      "scalarize_mode": "procedure"
+      if all(n.type.dtype == dtypes.float64 for n in (*fun.inputs, *nodes)) and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
+      else "disabled",
     },
     proc.dtype,
   )
@@ -194,10 +219,17 @@ def _lower_to_proc(fun: Function, callees: dict[str, ProgramNode], solver_fns: d
 class LowerCtx:
   """Per-Function lowering state: buffers, statements, and the Expr-id -> buffer map."""
 
-  def __init__(self, fun: Function, callees: dict[str, ProgramNode], solver_fns: dict[str, Function]) -> None:
+  def __init__(
+    self,
+    fun: Function,
+    callees: dict[str, ProgramNode],
+    solver_fns: dict[str, Function],
+    observe_expr: ExprObserver | None = None,
+  ) -> None:
     self.fun = fun
     self.callees = callees
     self.solver_fns = solver_fns  # name -> solver Function (opaque callees; rendered by codegen/solver)
+    self.observe_expr = observe_expr
     self.params: list[ProgramNode] = []
     self.statements: list[ProgramNode] = []
     self.buffers: dict[str, ProgramNode] = {}
@@ -664,7 +696,7 @@ def _ensure_callee(ctx: LowerCtx, callee: Function) -> None:
       _ensure_callee(ctx, oracle)
     return
   if callee.name not in ctx.callees:
-    ctx.callees[callee.name] = _lower_to_proc(callee, ctx.callees, ctx.solver_fns)
+    ctx.callees[callee.name] = _lower_to_proc(callee, ctx.callees, ctx.solver_fns, observe_expr=ctx.observe_expr)
 
 
 @lowers(ExprOp.CALL)

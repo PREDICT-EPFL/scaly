@@ -152,6 +152,38 @@ def test_scalar_declaration_verifies_and_prints() -> None:
   assert "float64 shared = 2" in format_program(proc)
 
 
+def test_paired_store_verifies_and_prints() -> None:
+  out = p.buffer("out", dtypes.float64, (2,))
+  stmt = p.store_pair(p.view(out, [p.const_int(0)]), p.const_float(1), p.const_float(2))
+  proc = p.proc("paired", [out], [stmt])
+  verify_program(proc)
+  assert "out[0] <- pair(1, 2)" in format_program(proc)
+
+
+def test_paired_store_rejects_non_double_values() -> None:
+  out = p.buffer("out", dtypes.float64, (2,))
+  with pytest.raises(TypeError, match="requires float64"):
+    p.store_pair(p.view(out, [p.const_int(0)]), p.const_float(1), p.const_float(2, dtypes.float32))
+
+
+def test_program_rejects_duplicate_procedure_names() -> None:
+  with pytest.raises(VerifyError, match="duplicate procedure name 'same'"):
+    verify_program(p.program([p.proc("same", [], []), p.proc("same", [], [])]))
+
+
+def test_every_observed_program_stage_verifies() -> None:
+  import alloy as al
+  from alloy.passes.lowering import lower_function
+
+  x = al.sym("x", 5)
+  fun = al.Function._from_exprs("observed", [x], [(x.sin() + x * x).scalar()], ["x"], ["y"])
+  stages: list[ProgramNode] = []
+  lower_function(fun, observe=lambda _name, prog: stages.append(prog))
+  assert stages
+  for stage in stages:
+    verify_program(stage)
+
+
 @pytest.mark.parametrize("attrs,args", [({}, (p.const_float(1),)), ({"target": "v"}, ()), ({"target": "v", "declare": "yes"}, (p.const_float(1),))])
 def test_invalid_scalar_assignment_rejected(attrs, args) -> None:
   with pytest.raises(VerifyError, match="assign-attrs"):

@@ -47,7 +47,7 @@ def test_render_c_source_tracing_is_opt_in(tmp_path, monkeypatch):
   assert len(captured) == 1
   assert captured[0]["name"] == "debug square"
   step_names = [s["name"] for s in captured[0]["steps"]]
-  assert step_names[:2] == ["expression", "lowered"]
+  assert step_names[:3] == ["expression", "normalized:square_plus_one", "lowered"]
   assert captured[0]["steps"][0]["phase"] == "expression dialect"
   assert captured[0]["steps"][0]["dialect"] == "expr"
   assert "pass:fuse_elementwise" in step_names
@@ -60,3 +60,20 @@ def test_render_c_source_tracing_is_opt_in(tmp_path, monkeypatch):
   disk = json.loads((tmp_path / "recordings.json").read_text())
   assert len(disk) == 1
   assert disk[0]["name"] == "debug square"
+
+
+def test_recording_keeps_original_and_normalized_expressions(tmp_path, monkeypatch):
+  monkeypatch.setenv("ALLOY_VIZ_DIR", str(tmp_path))
+  matrix, vector = sym("matrix", (2, 3)), sym("vector", 2)
+  output = matrix.T @ vector
+  fun = Function._from_exprs("normalized_matmul", [matrix, vector], [output], ["matrix", "vector"], ["y"])
+  clear_recordings(disk=True)
+  visualize_function(fun)
+  try:
+    render_c_source(fun)
+  finally:
+    unvisualize_function(fun)
+  original, normalized = recordings()[0]["steps"][:2]
+  assert original["name"] == "expression" and "expr.transpose" in original["assembly"]
+  assert normalized["name"] == "normalized:normalized_matmul" and "expr.transpose" not in normalized["assembly"]
+  assert fun.outputs[0] is output

@@ -482,6 +482,17 @@ These steps make the tree public and permanent, and each is cheap to do once and
 
 ## Track C closeout before merging to dev
 
+- [x] **C-59. Complete the approved optimization cleanup.** Follow the
+      [review and plan](notes/optimization_cleanup_2026_09_10.md), preserving the arithmetic and
+      measurement contracts in [fairness](../docs/results/fairness.md).
+  - [x] Pin regressions and capture the baseline.
+  - [x] Centralize Program analyses, names, and procedure reachability.
+  - [x] Normalize compilation expressions and consolidate derivative helpers.
+  - [x] Close fusion, arithmetic, and scalarization interactions.
+  - [x] Move store coalescing and scalar scheduling into Program passes.
+  - [x] Validate the combined compiler and refresh documentation.
+  - [x] Address Fable's review and repeat the controlled comparison. The remaining generation overhead is measured and accepted for this cleanup.
+
 Complete the implementation and independent reviews, then run BH-20 on the combined tree.
 C-56 and BP-23 can run independently. C-46 and C-49 share derivative construction and run together.
 After integration, refresh the test baselines and run the full suite, formatting, lint, and strict

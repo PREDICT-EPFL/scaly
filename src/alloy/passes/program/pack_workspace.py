@@ -9,14 +9,13 @@ from ...ir.program import ProgramNode, ProgramOp
 from ...ir.types import DType, DeviceSpec
 from ._common import (
   _alias_sources,
-  _call_arg_buffer,
+  buffer_refs,
   _private_decls,
   _proc_parts,
   _procs,
   _rebuild_proc,
   _resolve_alias,
   _size_of,
-  _stmt_refs,
   _walk,
   rebuild_program,
 )
@@ -69,9 +68,10 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   for i, stmt in enumerate(body):
     if stmt.op == ProgramOp.BUFFER:
       continue
-    loads, stores, _calls = _stmt_refs(stmt)
-    call_inputs = {owner(b) for b in calls_in(stmt)} & packable.keys()
-    call_outputs = {owner(b) for b in calls_out(stmt)} & packable.keys()
+    refs = buffer_refs(stmt)
+    loads, stores = refs.loads, refs.stores
+    call_inputs = {owner(b) for b in refs.call_inputs} & packable.keys()
+    call_outputs = {owner(b) for b in refs.call_outputs} & packable.keys()
     writes = {owner(b) for b in stores} & packable.keys() | call_outputs
     reads = ({owner(b) for b in loads} & packable.keys()) | call_inputs
     for b in call_inputs:
@@ -120,30 +120,6 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
       total += plan.slot_size[slot]
   plan.own_spill = total
   return plan
-
-
-def calls_out(stmt: ProgramNode) -> set[str]:
-  out: set[str] = set()
-  for n in _walk(stmt):
-    if n.op == ProgramOp.CALL:
-      n_in, n_out = int(n.attrs["n_in"]), int(n.attrs["n_out"])
-      for a in n.args[n_in : n_in + n_out]:
-        name = _call_arg_buffer(a)
-        if name is not None:
-          out.add(name)
-  return out
-
-
-def calls_in(stmt: ProgramNode) -> set[str]:
-  ins: set[str] = set()
-  for n in _walk(stmt):
-    if n.op == ProgramOp.CALL:
-      n_in = int(n.attrs["n_in"])
-      for a in n.args[:n_in]:
-        name = _call_arg_buffer(a)
-        if name is not None:
-          ins.add(name)
-  return ins
 
 
 def pack_workspace(prog: ProgramNode) -> ProgramNode:

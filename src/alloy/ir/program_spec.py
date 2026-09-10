@@ -29,6 +29,12 @@ def _walk(root: ProgramNode) -> Iterable[ProgramNode]:
 def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
   if spec is None:
     spec = spec_program_full
+  if root.op == ProgramOp.PROGRAM:
+    pc = int(root.attrs.get("proc_count", 0))
+    names = [node.attrs.get("name") for node in root.args[:pc]]
+    duplicate = next((name for i, name in enumerate(names) if name in names[:i]), None)
+    if duplicate is not None:
+      raise VerifyError(f"verify_program: duplicate procedure name {duplicate!r}")
   for node in _walk(root):
     result = spec.check(node)
     if result is not None:
@@ -103,6 +109,18 @@ def _store_attrs(n: ProgramNode) -> str | None:
   return None
 
 
+def _store_pair_attrs(n: ProgramNode) -> str | None:
+  if len(n.args) != 3:
+    return f"STORE_PAIR expects 3 args (view, first, second), got {len(n.args)}"
+  if n.args[0].op != ProgramOp.VIEW:
+    return "STORE_PAIR target must be VIEW"
+  if n.args[0].dtype.c_type != "double" or n.dtype.c_type != "double":
+    return "STORE_PAIR target must have double dtype"
+  if any(value.op not in SCALAR_OPS or value.dtype.c_type != "double" for value in n.args[1:]):
+    return "STORE_PAIR values must be double scalars"
+  return None
+
+
 def _assign_attrs(n: ProgramNode) -> str | None:
   if not isinstance(n.attrs.get("target"), str):
     return "ASSIGN missing string 'target' attr"
@@ -158,6 +176,9 @@ def _proc_or_kernel_params(n: ProgramNode) -> str | None:
   for i in range(pc):
     if n.args[i].op != ProgramOp.BUFFER:
       return f"PROC/KERNEL param {i} op={n.args[i].op} is not BUFFER"
+  mode = n.attrs.get("scalarize_mode")
+  if mode is not None and mode not in {"disabled", "inline", "procedure"}:
+    return f"PROC/KERNEL scalarize_mode {mode!r} is not disabled/inline/procedure"
   return None
 
 
@@ -171,6 +192,7 @@ spec_program_shared = Spec(
     Rule(ProgramOp.VIEW, "view-scalar-args", _view_args_scalar),
     Rule(ProgramOp.LOAD, "load-takes-view", _load_takes_view),
     Rule(ProgramOp.STORE, "store-attrs", _store_attrs),
+    Rule(ProgramOp.STORE_PAIR, "store-pair-attrs", _store_pair_attrs),
     Rule(ProgramOp.ASSIGN, "assign-attrs", _assign_attrs),
     Rule(ProgramOp.RANGE, "range-attrs", _range_kind),
     Rule(ProgramOp.FOR, "for-body", _for_body),

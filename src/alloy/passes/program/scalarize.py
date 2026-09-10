@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import math
-from collections import Counter
 from dataclasses import dataclass
 
 from ...ir import program as p
 from ...ir.program import ProgramNode, ProgramOp
+from ...utils.names import c_ident
 from ..arith import CONSTANTS, constant, fold_program
+from .scheduling import ScalarNameAllocator, schedule_values
 
 
 AUTO_SCALAR_OPS_PER_PROC = 4096
 AUTO_SCALAR_GROWTH_PER_PROGRAM = 16_384
 AUTO_EXPANSION_WORK_PER_PROC = 65_536
-MAX_SCALAR_DEPTH = 32
 
 
 @dataclass(slots=True)
@@ -85,41 +85,6 @@ class _Frame:
         raise NotImplementedError(f"scalarization does not support {stmt.op}")
 
 
-def _schedule(outputs: list[tuple[ProgramNode, ProgramNode]], reserved: set[str]) -> list[ProgramNode]:
-  order: list[ProgramNode] = []
-  seen: set[ProgramNode] = set()
-  pending = [(value, False) for _, value in reversed(outputs)]
-  while pending:
-    node, ready = pending.pop()
-    if node in seen:
-      continue
-    if not ready:
-      pending.append((node, True))
-      pending.extend((a, False) for a in reversed(node.args))
-      continue
-    seen.add(node)
-    order.append(node)
-  uses = Counter(a for n in order for a in n.args)
-  uses.update(value for _, value in outputs)
-  values: dict[ProgramNode, ProgramNode] = {}
-  depth: dict[ProgramNode, int] = {}
-  body: list[ProgramNode] = []
-  serial = 0
-  for node in order:
-    args = tuple(values[a] for a in node.args)
-    value = ProgramNode(node.op, args, node.attrs, node.dtype)
-    d = 1 + max((depth[a] for a in node.args), default=0)
-    if node.op not in {*CONSTANTS, ProgramOp.VIEW} and (uses[node] > 1 or d >= MAX_SCALAR_DEPTH):
-      while (name := f"v{serial}") in reserved:
-        serial += 1
-      serial += 1
-      body.append(p.assign(name, value, declare=True))
-      value, d = p.var(name, node.dtype), 0
-    values[node], depth[node] = value, d
-  body.extend(p.store(target, values[value]) for target, value in outputs)
-  return body
-
-
 def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
   params = proc.args[: proc.attrs["param_count"]]
   n_in = proc.attrs["input_count"]
@@ -134,7 +99,9 @@ def _scalarize_proc(proc: ProgramNode, procs: dict[str, ProgramNode]) -> Program
     for i, value in enumerate(ptr.values):
       assert value is not None, "scalarization left an output element uninitialized"
       outputs.append((p.view(param, [p.const_int(i)]), value))
-  body = _schedule(outputs, {param.attrs["name"] for param in params})
+  names = ScalarNameAllocator({c_ident(param.attrs["name"]) for param in params})
+  declarations, values = schedule_values([value for _, value in outputs], names)
+  body = [*declarations, *(p.store(target, value) for (target, _), value in zip(outputs, values, strict=True))]
   return ProgramNode(proc.op, (*params, *body), {**proc.attrs, "scalarized": True}, proc.dtype)
 
 
@@ -188,13 +155,14 @@ def scalarize_program(prog: ProgramNode) -> ProgramNode:
     body_work = [work(stmt) for stmt in proc.args[proc.attrs["param_count"] :]]
     param_work = sum(math.prod(param.attrs["shape"]) for param in proc.args[: proc.attrs["param_count"]])
     total_work = param_work + sum(value for value in body_work if value is not None)
-    eligible = proc.attrs.get("scalarize") and all(value is not None for value in body_work)
+    mode = proc.attrs.get("scalarize_mode", "disabled")
+    eligible = mode != "disabled" and all(value is not None for value in body_work)
     if eligible and proc.attrs["lowering"] == "auto" and total_work > AUTO_EXPANSION_WORK_PER_PROC:
       eligible = False
     if not eligible:
       expansion_work[name] = None
       continue
-    if proc.attrs["scalarize"] == "callee":  # inlined into expanding callers, never a root
+    if mode == "inline":
       expansion_work[name] = total_work
       continue
     candidate = _scalarize_proc(proc, procs)

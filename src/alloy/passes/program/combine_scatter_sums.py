@@ -15,10 +15,12 @@ from ._common import (
   _rebuild_proc,
   _resolve_alias,
   _size_of,
-  _stmt_refs,
+  buffer_refs,
+  inline_producer as _as_inline_producer,
+  prune_dead_buffers,
+  trip_count as _trip_count,
   rebuild_program,
 )
-from .fuse_elementwise import _as_inline_producer, _prune_dead_buffers, _trip_count
 
 
 def combine_scatter_sums(prog: ProgramNode) -> ProgramNode:
@@ -32,13 +34,15 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
   aliases = _alias_sources(body)
   pinned = set(aliases.values())
   decls = {s.attrs["name"]: s for s in (*params, *body) if s.op == ProgramOp.BUFFER}
-  refs = [_stmt_refs(s) if s.op != ProgramOp.BUFFER else (set(), set(), set()) for s in body]
+  refs = [buffer_refs(s) if s.op != ProgramOp.BUFFER else None for s in body]
   reads: dict[str, set[int]] = {}
   writes: dict[str, set[int]] = {}
-  for i, (loads, stores, calls) in enumerate(refs):
-    for b in loads | calls:
+  for i, ref in enumerate(refs):
+    if ref is None:
+      continue
+    for b in ref.reads:
       reads.setdefault(b, set()).add(i)
-    for b in stores | calls:
+    for b in ref.writes:
       writes.setdefault(b, set()).add(i)
 
   sums: dict[str, tuple[int, tuple[str, ...]]] = {}
@@ -105,9 +109,11 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
         pending.extend((operand, i) for operand in reversed(operands))
       elif buf in pads:
         start, scatter = pads[buf]
-        sources = {_resolve_alias(b, aliases) for b in refs[scatter][0]}
+        scatter_refs = refs[scatter]
+        assert scatter_refs is not None
+        sources = {_resolve_alias(b, aliases) for b in scatter_refs.loads}
         if _resolve_alias(root, aliases) in sources or any(
-          sources & {_resolve_alias(b, aliases) for b in stores | calls} for _, stores, calls in refs[scatter + 1 : end]
+          sources & {_resolve_alias(b, aliases) for b in ref.writes} for ref in refs[scatter + 1 : end] if ref is not None
         ):
           valid = False
           break
@@ -134,7 +140,7 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
   if not replacements:
     return proc
   new_body = [s for i, stmt in enumerate(body) for s in (replacements[i] if i in replacements else [] if i in removed else [stmt])]
-  return _prune_dead_buffers(_rebuild_proc(proc, params, new_body))
+  return prune_dead_buffers(_rebuild_proc(proc, params, new_body))
 
 
 __all__ = ["combine_scatter_sums"]

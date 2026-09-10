@@ -9,6 +9,7 @@ from alloy.ir.expr import ExprOp
 from alloy.ir.match import Pattern, rewrite
 from alloy.ir.program import ProgramNode, ProgramOp, add, buffer, const_float, load, var, view
 from alloy.ir.types import dtypes
+from alloy.ir.types import Lowering
 from alloy.passes.program._common import rebuild_program
 
 
@@ -86,3 +87,20 @@ def test_revisit_rejects_a_replacement_that_contains_the_replaced_node() -> None
   wrap = Pattern(ProgramOp.LOAD, lambda n: True, lambda n: add(n, const_float(1.0)))
   with pytest.raises(RuntimeError, match="contains the node it replaces"):
     rewrite(load(view(a, [var("i")])), [wrap], rebuild=rebuild_program, fixpoint=False, revisit=True)
+
+
+@pytest.mark.parametrize("hint", ["scalar", "block", "opaque"])
+def test_expression_replacement_preserves_explicit_lowering(hint: Lowering) -> None:
+  x = al.sym("x", 2)
+  out = rewrite((x * 1.0).with_lowering(hint), [Pattern(ExprOp.MUL, lambda e: True, lambda e: e.args[0])])
+
+  assert out.lowering == hint
+  assert out.args == (x,)
+  assert out.op == ExprOp.RESHAPE
+
+
+def test_expression_replacement_preserves_effective_subgraph_policy() -> None:
+  x = al.sym("x", 2)
+  out = rewrite((x.block() * 1.0).scalar(), [Pattern(ExprOp.MUL, lambda e: True, lambda e: e.args[0])])
+
+  assert out.lowering == "block"

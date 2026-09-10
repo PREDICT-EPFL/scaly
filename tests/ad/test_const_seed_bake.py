@@ -11,7 +11,13 @@ from alloy.ir.expr import ExprOp, topo
 from alloy.ir.program import ProgramNode
 from alloy.passes.lowering import lower_function
 
-TILES = [np.eye(3), np.eye(3)[[1, 2, 0]], np.eye(3)[[2, 0, 1]], np.array([[1.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]])]
+TILES = [
+  np.eye(3),
+  np.eye(3)[[1, 2, 0]],
+  np.eye(3)[[2, 0, 1]],
+  np.array([[1.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]),
+  *(np.eye(3) * scale for scale in range(2, 7)),
+]
 
 
 def _stage() -> al.Function:
@@ -41,10 +47,12 @@ def _callee_params(prog: ProgramNode) -> list[str]:
     ([3] * 4, True),
     ([0, 1] * 3, True),
     ([0, 1, 2] * 3, True),
+    (list(range(8)) * 2, True),
+    (list(range(9)) * 2, False),
     ([0, 1] * 4 + [2], False),
     ([0, 1, 2], False),
   ],
-  ids=["equal", "equal_with_zero_row", "period2", "period3", "aperiodic", "distinct_short"],
+  ids=["equal", "equal_with_zero_row", "period2", "period3", "period8", "period9", "aperiodic", "distinct_short"],
 )
 def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   stage = _stage()

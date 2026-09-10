@@ -8,9 +8,10 @@ import pytest
 import alloy as al
 from alloy.ad.forward import jvp, jvp_many
 from alloy.ad.reverse import vjp
-from alloy.ir.program import ProgramNode
+from alloy.ir.program import ProgramNode, ProgramOp
 from alloy.ir.types import Lowering
 from alloy.passes.lowering import lower_function
+from alloy.passes.program._common import _walk
 
 
 def _callees(prog: ProgramNode) -> list[ProgramNode]:
@@ -43,3 +44,6 @@ def test_derived_procs_inherit_stage_hint(hint: Lowering) -> None:
   assert any(n.endswith("_fwd0_0") for n in names)
   assert all(proc.attrs["lowering"] == hint for proc in callees)
   assert all(bool(proc.attrs.get("scalarized")) is (hint == "scalar") for proc in callees)
+  assert not [
+    (proc.attrs["name"], node) for proc in callees for node in _walk(proc) if node.op == ProgramOp.RANGE and node.attrs["name"].startswith("c_")
+  ]

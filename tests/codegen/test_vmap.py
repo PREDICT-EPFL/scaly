@@ -119,9 +119,7 @@ def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: py
 
   source = render_c_source(lower)
   declaration_lengths = {
-    int(line.split("[", 1)[1].split("]", 1)[0])
-    for line in source.splitlines()
-    if "[" in line and any(name in line.split("[", 1)[0].split() for name in ("double", "int64_t"))
+    int(match[1]) for match in re.finditer(r"^\s*(?:static\s+)?(?:const\s+)?(?:double|int64_t)\s+\w+\[(\d+)\]", source, re.MULTILINE)
   }
   assert full_sp.nnz not in declaration_lengths
 

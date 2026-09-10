@@ -347,11 +347,13 @@ def test_scalarized_stores_coalesce_into_vector_accesses() -> None:
   assert np.array_equal(f(values), values * 2.0 + 1.0)
 
 
-def test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target() -> None:
+def test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target(tmp_path) -> None:
   from alloy.codegen.c import _render_raw_callee
   from alloy.ir import program as p
   from alloy.ir.program import ProgramNode, ProgramOp
   from alloy.ir.types import dtypes
+  from alloy.passes.program.coalesce_stores import coalesce_stores
+  from alloy.passes.program.prepare_scalar import prepare_scalar_expressions
 
   x = p.buffer("x", dtypes.float64, (4,))
   y = p.buffer("y", dtypes.float64, (5,))
@@ -367,7 +369,38 @@ def test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target() 
     p.store(at(y, 3), p.load(at(y, 2))),
     p.store(at(y, 4), p.load(at(a, 3))),
   ]
-  source = "\n".join(_render_raw_callee(p.proc("gaps", [x, y], body)))
+  proc = p.proc("gaps", [x, y], body)
+  optimized = prepare_scalar_expressions(coalesce_stores(p.program([proc]))).args[0]
+  assert all(stmt.op != ProgramOp.STORE_PAIR for stmt in optimized.args[optimized.attrs["param_count"] :])
+  source = "\n".join(_render_raw_callee(optimized))
 
   assert "double2" not in source
   assert "y[0] = x[0];" in source and "y[2] = x[2];" in source and "y[3] = y[2];" in source and "y[4] = a[3];" in source
+
+  cc = shutil.which("cc")
+  if cc is None:
+    pytest.skip("cc is required for generated C smoke test")
+  src = tmp_path / "gaps.c"
+  lib_path = tmp_path / ("libgaps.dylib" if sys.platform == "darwin" else "libgaps.so")
+  src.write_text("#include <stddef.h>\n" + source + "\nvoid gaps_test(double* x, double* y) { gaps_raw(x, y, NULL); }\n")
+  cmd = [cc, "-fPIC", str(src), "-o", str(lib_path)]
+  cmd.insert(1, "-dynamiclib" if sys.platform == "darwin" else "-shared")
+  subprocess.run(cmd, check=True)
+  lib = ctypes.CDLL(str(lib_path))
+  c_double_p = ctypes.POINTER(ctypes.c_double)
+  lib.gaps_test.argtypes = [c_double_p, c_double_p]
+  xv = (ctypes.c_double * 4)(1, 2, 3, 4)
+  yv = (ctypes.c_double * 5)()
+  lib.gaps_test(xv, yv)
+  assert list(yv) == [1, 0, 3, 3, 3]
+
+
+def test_renderer_spells_explicit_paired_store() -> None:
+  from alloy.codegen.c import _render_raw_callee
+  from alloy.ir import program as p
+  from alloy.ir.types import dtypes
+
+  out = p.buffer("out", dtypes.float64, (2,))
+  proc = p.proc("paired", [out], [p.store_pair(p.view(out, [p.const_int(0)]), p.const_float(1), p.const_float(2))])
+  source = "\n".join(_render_raw_callee(proc))
+  assert "*(double2*)(out) = (double2){1.0, 2.0};" in source

@@ -21,6 +21,9 @@ from alloy.passes.program.scalarize import (
   AUTO_SCALAR_OPS_PER_PROC,
   scalarize_program,
 )
+from alloy.passes.program.coalesce_stores import coalesce_stores
+from alloy.passes.program.prepare_scalar import prepare_scalar_expressions
+from alloy.passes.program.scheduling import MAX_SCALAR_DEPTH
 
 
 def _fold(op: ProgramOp, args: tuple[ProgramNode, ...], dtype) -> ProgramNode:
@@ -38,6 +41,78 @@ def _body(proc: ProgramNode) -> tuple[ProgramNode, ...]:
 def _assert_scalar(proc: ProgramNode) -> None:
   assert proc.attrs.get("scalarized")
   assert all(n.op not in {ProgramOp.FOR, ProgramOp.CALL, ProgramOp.BUFFER} for stmt in _body(proc) for n in _walk(stmt))
+
+
+def _depth(node: ProgramNode) -> int:
+  return 1 + max((_depth(arg) for arg in node.args), default=0)
+
+
+def test_final_preparation_bounds_values_indices_and_call_offsets() -> None:
+  x = p.buffer("_h0", dtypes.float64, (4,))
+  y = p.buffer("y", dtypes.float64, (4,))
+  index = p.const_int(0)
+  for _ in range(MAX_SCALAR_DEPTH + 4):
+    index = p.add(index, p.const_int(0))
+  value = p.load(p.view(x, [index]))
+  for _ in range(MAX_SCALAR_DEPTH + 4):
+    value = ProgramNode(ProgramOp.SIN, (value,), dtype=value.dtype)
+  body = [p.store(p.view(y, [index]), value), p.call("callee", [p.view(x, [index]), y])]
+  raw = p.proc("prepared", [x, y], body)
+  prepared = prepare_scalar_expressions(p.program([raw])).args[0]
+  assert any(stmt.op == ProgramOp.ASSIGN for stmt in _body(prepared))
+  assert all(_depth(arg) <= MAX_SCALAR_DEPTH + 1 for stmt in _body(prepared) for arg in stmt.args)
+
+
+def test_final_preparation_preserves_range_frequency_and_loop_scope() -> None:
+  x = p.buffer("x", dtypes.float64, (1,))
+  n = p.buffer("n", dtypes.int64, (1,))
+  y = p.buffer("y", dtypes.float64, (1,))
+  bound = p.load(p.view(x, [p.const_int(0)]))
+  bound_int = p.load(p.view(n, [p.const_int(0)]))
+  rng = p.range_("i", p.add(bound_int, p.const_int(0)), p.add(bound_int, p.const_int(1)), step=p.add(bound_int, p.const_int(2)))
+  value = bound
+  for _ in range(MAX_SCALAR_DEPTH + 4):
+    value = ProgramNode(ProgramOp.SIN, (value,), dtype=value.dtype)
+  loop = p.for_(rng, [p.store(p.view(y, [p.const_int(0)]), value)])
+  prepared = prepare_scalar_expressions(p.program([p.proc("loop", [x, n, y], [loop])])).args[0]
+  final_loop = _body(prepared)[0]
+  assert final_loop.op == ProgramOp.FOR and final_loop.args[0] is rng
+  assert any(stmt.op == ProgramOp.ASSIGN for stmt in final_loop.args[1:])
+
+
+def test_final_preparation_normalizes_names_once_per_procedure(monkeypatch) -> None:
+  import alloy.passes.program.prepare_scalar as prepare_module
+
+  calls = 0
+  original = prepare_module.c_ident
+
+  def counted(name: str) -> str:
+    nonlocal calls
+    calls += 1
+    return original(name)
+
+  monkeypatch.setattr(prepare_module, "c_ident", counted)
+  x = p.buffer("x", dtypes.float64, (1,))
+  y = p.buffer("y", dtypes.float64, (300,))
+  load = p.load(p.view(x, [p.const_int(0)]))
+  repeated = p.add(load, load)
+  body = [p.store(p.view(y, [p.const_int(i)]), repeated) for i in range(300)]
+  prepare_module.prepare_scalar_expressions(p.program([p.proc("many", [x, y], body)]))
+  assert calls < 1000
+
+
+def test_store_pair_selection_is_explicit_and_respects_dependencies() -> None:
+  x = p.buffer("x", dtypes.float64, (4,))
+  y = p.buffer("y", dtypes.float64, (4,))
+  at = lambda buf, i: p.view(buf, [p.const_int(i)])
+  safe = p.proc("safe", [x, y], [p.store(at(y, 0), p.load(at(x, 0))), p.store(at(y, 1), p.load(at(x, 1)))])
+  dependent = p.proc("dependent", [y], [p.store(at(y, 2), p.const_float(1)), p.store(at(y, 3), p.load(at(y, 2)))])
+  alias = ProgramNode(ProgramOp.BUFFER, (), {**y.attrs, "name": "alias", "alias_of": "y", "alias_offset": 0}, y.dtype)
+  late_alias = p.proc("late_alias", [y], [p.store(at(y, 0), p.const_float(1)), p.store(at(y, 1), p.load(at(alias, 0))), alias])
+  result = coalesce_stores(p.program([safe, dependent, late_alias]))
+  assert _body(result.args[0])[0].op == ProgramOp.STORE_PAIR
+  assert [stmt.op for stmt in _body(result.args[1])] == [ProgramOp.STORE, ProgramOp.STORE]
+  assert [stmt.op for stmt in _body(result.args[2])] == [ProgramOp.STORE, ProgramOp.STORE, ProgramOp.BUFFER]
 
 
 @pytest.mark.parametrize("hint", ["auto", "scalar", "block", "opaque"])
@@ -90,7 +165,7 @@ def _policy_proc(name: str, count: int, *, arithmetic: bool = True, lowering: Lo
   value = p.add(source, p.const_float(1.0)) if arithmetic else source
   loop = p.for_(p.range_(i.attrs["name"], 0, count), [p.store(p.view(y, [i]), value)])
   raw = p.proc(name, [x, y], [loop])
-  return ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize": True, "lowering": lowering}, raw.dtype)
+  return ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": lowering}, raw.dtype)
 
 
 def test_auto_uses_folded_scalar_operations_instead_of_tensor_shape() -> None:
@@ -132,7 +207,7 @@ def test_auto_counts_shared_post_fold_computation_once() -> None:
   shared = ProgramNode(ProgramOp.SIN, (p.load(p.view(x, [p.const_int(0)])),), dtype=dtypes.float64)
   loop = p.for_(p.range_(i.attrs["name"], 0, count), [p.store(p.view(y, [i]), p.add(shared, p.const_float(0)))])
   raw = p.proc("shared_computation", [x, y], [loop])
-  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize": True, "lowering": "auto"}, raw.dtype)
+  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "auto"}, raw.dtype)
   scalarized = scalarize_program(p.program([proc])).args[0]
   _assert_scalar(scalarized)
   nodes = {node for stmt in _body(scalarized) for node in _walk(stmt)}
@@ -143,7 +218,7 @@ def test_auto_counts_shared_post_fold_computation_once() -> None:
 def test_auto_preflight_bounds_buffer_materialization() -> None:
   scratch = p.buffer("huge_scratch", dtypes.float64, (AUTO_EXPANSION_WORK_PER_PROC + 1,), address_space="private")
   raw = p.proc("huge_allocation", [], [scratch])
-  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 0, "scalarize": True, "lowering": "auto"}, raw.dtype)
+  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 0, "scalarize_mode": "procedure", "lowering": "auto"}, raw.dtype)
   assert scalarize_program(p.program([proc])).args[0] is proc
 
 
@@ -151,7 +226,7 @@ def test_auto_rejects_call_when_callee_exceeds_budget() -> None:
   callee = _policy_proc("expensive_callee", AUTO_SCALAR_OPS_PER_PROC + 1)
   x, y = (p.buffer(name, dtypes.float64, (AUTO_SCALAR_OPS_PER_PROC + 1,)) for name in ("caller_x", "caller_y"))
   raw = p.proc("caller", [x, y], [p.call(callee.attrs["name"], [x, y])])
-  caller = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize": True, "lowering": "auto"}, raw.dtype)
+  caller = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "auto"}, raw.dtype)
   result = scalarize_program(p.program([callee, caller]))
   assert result.args == (callee, caller)
 
@@ -262,7 +337,7 @@ def test_repeated_stores_and_aliases_read_the_latest_value() -> None:
       p.store(p.view(out, [p.const_int(1)]), read),
     ],
   )
-  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 0, "scalarize": True, "lowering": "scalar"}, raw.dtype)
+  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 0, "scalarize_mode": "procedure", "lowering": "scalar"}, raw.dtype)
   scalar = scalarize_program(p.program([proc])).args[0]
   _assert_scalar(scalar)
   assert len(_body(scalar)) == 2
@@ -372,3 +447,21 @@ def test_mixed_constant_math_folds_per_element() -> None:
   assert not any(n.op in {ProgramOp.SQRT, ProgramOp.POW} for n in _walk(proc))
   np.testing.assert_array_equal(fn(np.array([2.0, 3.0, 4.0])), [3, 7, 22])
   assert _fold(ProgramOp.SIN, (p.const_float(1.0),), dtypes.float64).attrs["value"] == math.sin(1.0)
+
+
+def test_final_preparation_reserves_later_scalar_declarations() -> None:
+  x = p.buffer("x", dtypes.float64, (1,))
+  out = p.buffer("out", dtypes.float64, (2,))
+  value = p.load(p.view(x, [p.const_int(0)]))
+  for _ in range(MAX_SCALAR_DEPTH + 1):
+    value = ProgramNode(ProgramOp.SIN, (value,), dtype=value.dtype)
+  body = [
+    p.store(p.view(out, [p.const_int(0)]), value),
+    p.assign("v0", p.const_float(1), declare=True),
+    p.store(p.view(out, [p.const_int(1)]), p.var("v0", dtypes.float64)),
+  ]
+  prepared = prepare_scalar_expressions(p.program([p.proc("late_names", [x, out], body)]))
+  names = [node.attrs["target"] for node in _body(prepared.args[0]) if node.op == ProgramOp.ASSIGN]
+  assert len(names) > 1
+  assert len(names) == len(set(names))
+  assert names[-1] == "v0"

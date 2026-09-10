@@ -24,7 +24,6 @@ from .abi import abi_status_defines, c_api_signature, c_ident
 from ..function import Function
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
-from ..passes.program.scalarize import MAX_SCALAR_DEPTH
 from ..ir.program import ProgramNode, ProgramOp
 
 # Scalar ProgramOp -> C spelling. Operators render inline; libm ops render as calls.
@@ -214,64 +213,15 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
 
 
-def _emit_body(body: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int, aliases: dict[str, str] | None = None) -> None:
-  """Statements in order, except that two STOREs to consecutive constant indices of one double
-  buffer (the shape scalarization emits) become one ``double2`` store."""
-  if aliases is None:
-    aliases = {s.attrs["name"]: s.attrs["alias_of"] for s in body if s.op == ProgramOp.BUFFER and "alias_of" in s.attrs}
-  i = 0
-  while i < len(body):
-    stmt = body[i]
+def _emit_body(body: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:
+  """Render Program statements in order."""
+  for stmt in body:
     if stmt.op == ProgramOp.BUFFER:
-      i += 1
       continue
-    start = _const_store_index(stmt)
-    buffer: str = stmt.args[0].attrs.get("buffer", "")
-    if (
-      start is not None
-      and i + 1 < len(body)
-      and _const_store_index(body[i + 1]) == start + 1
-      and body[i + 1].args[0].attrs["buffer"] == buffer
-      and not _reads(body[i + 1].args[1], _alias_root(buffer, aliases), aliases)
-    ):
-      ptr = ptr_expr.get(buffer, c_ident(buffer))
-      target = f"*(double2*)({ptr}{f' + {start}' if start else ''})"
-      _emit_assignment(target, [stmt.args[1], body[i + 1].args[1]], ptr_expr, lines, indent)
-      i += 2
-    else:
-      _emit_statement(stmt, ptr_expr, lines, indent, aliases)
-      i += 1
+    _emit_statement(stmt, ptr_expr, lines, indent)
 
 
-def _alias_root(buffer: str, aliases: dict[str, str]) -> str:
-  while buffer in aliases:
-    buffer = aliases[buffer]
-  return buffer
-
-
-def _reads(value: ProgramNode, root: str, aliases: dict[str, str]) -> bool:
-  """Whether ``value`` loads from the buffer ``root`` or an alias of it; a vector store computes
-  every lane before writing any, so a lane reading an earlier lane's target must stay scalar."""
-  stack = [value]
-  while stack:
-    node = stack.pop()
-    if node.op == ProgramOp.LOAD and _alias_root(node.args[0].attrs["buffer"], aliases) == root:
-      return True
-    stack.extend(node.args)
-  return False
-
-
-def _const_store_index(stmt: ProgramNode) -> int | None:
-  """The constant index of a STORE into a double buffer, else ``None``."""
-  if stmt.op != ProgramOp.STORE or stmt.dtype.c_type != "double":
-    return None
-  view = stmt.args[0]
-  if len(view.args) != 1 or view.args[0].op != ProgramOp.CONST_INT:
-    return None
-  return int(view.args[0].attrs["value"])
-
-
-def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int, aliases: dict[str, str] | None = None) -> None:
+def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:
   pad = " " * indent
   if stmt.op == ProgramOp.FOR:
     rng = stmt.args[0]
@@ -281,10 +231,16 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
     step = _emit_scalar(rng.args[2], ptr_expr)
     incr = f"++{name}" if step == "1" else f"{name} += {step}"
     lines.append(f"{pad}for (long long {name} = {start}; {name} < {stop}; {incr}) {{")
-    _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2, aliases)
+    _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2)
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.STORE:
     _emit_assignment(_emit_view(stmt.args[0], ptr_expr), [stmt.args[1]], ptr_expr, lines, indent)
+  elif stmt.op == ProgramOp.STORE_PAIR:
+    view = stmt.args[0]
+    ptr = ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"]))
+    index = _emit_scalar(view.args[0], ptr_expr) if view.args else "0"
+    target = f"*(double2*)({ptr}{f' + {index}' if index != '0' else ''})"
+    _emit_assignment(target, list(stmt.args[1:]), ptr_expr, lines, indent)
   elif stmt.op == ProgramOp.ASSIGN:
     declaration = f"{stmt.dtype.c_type} " if stmt.attrs.get("declare") else ""
     _emit_assignment(c_ident(stmt.attrs["target"]), [stmt.args[0]], ptr_expr, lines, indent, declaration)
@@ -306,19 +262,11 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
 
 
 def _emit_assignment(target: str, values: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int, declaration: str = "") -> None:
-  """``target = value;`` (two values form a ``double2`` literal) with subtrees deeper than
-  ``MAX_SCALAR_DEPTH`` hoisted into temporaries inside a block, so a fused chain never exceeds
-  clang's default bracket nesting limit (256)."""
+  """Render one scalar or paired assignment."""
   pad = " " * indent
-  hoisted: list[str] = []
-  parts = [_emit_scalar(value, ptr_expr, hoisted, pad + "  ") for value in values]
+  parts = [_emit_scalar(value, ptr_expr) for value in values]
   rhs = parts[0] if len(parts) == 1 else f"(double2){{{', '.join(parts)}}}"
-  if not hoisted:
-    lines.append(f"{pad}{declaration}{target} = {rhs};")
-    return
-  if declaration:
-    lines.append(f"{pad}{declaration}{target};")
-  lines.extend((f"{pad}{{", *hoisted, f"{pad}  {target} = {rhs};", f"{pad}}}"))
+  lines.append(f"{pad}{declaration}{target} = {rhs};")
 
 
 def _emit_call_arg(node: ProgramNode, ptr_expr: dict[str, str]) -> str:
@@ -350,11 +298,9 @@ def _c_float(value: float) -> str:
   return f"{value:.17g}"
 
 
-def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], hoist: list[str] | None = None, pad: str = "") -> str:
-  """Render a scalar tree bottom up. With ``hoist`` given, a subtree at ``MAX_SCALAR_DEPTH``
-  becomes a temporary declared into ``hoist`` and the expression continues from its name."""
+def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
+  """Render a prepared scalar tree bottom up."""
   text: dict[int, str] = {}
-  depth: dict[int, int] = {}
   stack = [(n, False)]
   while stack:
     node, ready = stack.pop()
@@ -366,7 +312,6 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], hoist: list[str] | No
       stack.extend((a, False) for a in reversed(node.args) if id(a) not in text)
       continue
     args = [text[id(a)] for a in node.args] if ready else []
-    d = 1 + max((depth[id(a)] for a in node.args), default=0) if ready else 0
     if op == ProgramOp.CONST_INT:
       s = str(node.attrs["value"])
     elif op == ProgramOp.CONST_FLOAT:
@@ -388,10 +333,7 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], hoist: list[str] | No
       s = f"{_BINARY_C[op]}({args[0]}, {args[1]})"
     else:
       raise LoweringError(f"Program IR C renderer: scalar op {op} not yet handled")
-    if hoist is not None and d >= MAX_SCALAR_DEPTH:
-      hoist.append(f"{pad}{node.dtype.c_type} _h{len(hoist)} = {s};")
-      s, d = f"_h{len(hoist) - 1}", 0
-    text[id(node)], depth[id(node)] = s, d
+    text[id(node)] = s
   return text[id(n)]
 
 

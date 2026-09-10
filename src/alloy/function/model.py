@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Mapping, Sequence, ca
 import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, linear_combination, topo
+from ..ir.match import _apply_lowering
 from ..ir.types import DeviceSpec, Lowering, SparsityType, TensorType, backend_supports
 from .tree import Tree, flat_tree
 
@@ -303,6 +304,26 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     """The hint that selects this Function's procedure: ``block`` or ``opaque`` anywhere wins, then ``scalar``, else ``auto``."""
     hints = {n.lowering for n in (*self.inputs, *topo(self.outputs))}
     return "block" if hints & {"block", "opaque"} else "scalar" if "scalar" in hints else "auto"
+
+  def _inherit_lowering(self, derived: Expr, lowering: Lowering | None = None) -> Expr:
+    """Apply this Function's effective lowering policy to a derived expression."""
+    policy = self._effective_lowering() if lowering is None else lowering
+    return _apply_lowering(derived, policy)
+
+  def _with_outputs(self, outputs: Sequence[Expr]) -> Function[Any, Any, Any, Any]:
+    """Return a private graph copy with replacement outputs and preserved Function metadata."""
+    instance = type(self).__new__(type(self))
+    instance._init_graph(
+      self.name,
+      self.inputs,
+      outputs,
+      self.input_tree,
+      self.output_tree,
+      self.output_sparsities,
+      self.device,
+      self.output_coloring_widths,
+    )
+    return instance
 
   def _flat_symbolic_call(self, args: Sequence[Any], /) -> tuple[Expr, ...]:
     """Build a call node from flat leaves. Raw values are coerced with ``as_expr``.

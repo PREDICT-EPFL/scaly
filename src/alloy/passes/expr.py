@@ -23,12 +23,7 @@ def simplify(expr: Expr) -> Expr:
   subgraphs, identity reshape, transpose and gather, slice of slice, slice of stack, ``A.T @ v`` as
   ``v @ A`` (and ``v @ A.T`` as ``A @ v``), and a matmul with an all-ones vector as sums.
   """
-  for _ in range(8):
-    new = rewrite(expr, SIMPLIFY_PATTERNS)
-    if new is expr:
-      return expr
-    expr = new
-  return expr
+  return rewrite(expr, SIMPLIFY_PATTERNS, fixpoint=False, revisit=True, max_steps=100_000)
 
 
 def cse(expr: Expr) -> Expr:
@@ -60,26 +55,20 @@ def cse_many(outputs: Iterable[Expr]) -> tuple[Expr, ...]:
   """
   outputs = tuple(outputs)
   memo: dict[tuple[Any, ...], Expr] = {}
-  keys: dict[int, tuple[Any, ...]] = {}
   replacements: dict[int, Expr] = {}
   for node in topo(outputs):
     cur = _replace_args(node, replacements)
-    key = _structural_key(cur, keys)
+    key = _structural_key(cur)
     cur = memo.setdefault(key, cur)
-    keys[node.id] = key
-    keys[cur.id] = key
     replacements[node.id] = cur
   return tuple(replacements[out.id] for out in outputs)
 
 
-def _structural_key(expr: Expr, child_keys: dict[int, tuple[Any, ...]]) -> tuple[Any, ...]:
+def _structural_key(expr: Expr) -> tuple[Any, ...]:
   value_key = None if expr.value is None else (expr.value.shape, str(expr.value.dtype), expr.value.tobytes())
-  children = tuple(child_keys[arg.id] for arg in expr.args)
+  children = tuple(arg.id for arg in expr.args)
   if expr.op in {ExprOp.ADD, ExprOp.MUL}:
-    # hash gives a fast total order even when children carry heterogeneous attrs (e.g. SLICE
-    # index tuples with `(int, slice)` vs `(slice,)`); raw tuple `<` fails on int-vs-tuple at
-    # the same position. CSE only needs determinism for commutativity, not lexical correctness.
-    children = tuple(sorted(children, key=hash))
+    children = tuple(sorted(children))
   return (
     ExprOp(expr.op).value,
     expr.name,
@@ -273,7 +262,7 @@ def _gather_identity(e: Expr) -> bool:
 SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(None, _all_args_const, _constant_fold),
   *(Pattern(op, lambda e: not _all_args_const(e), _arith) for op in (ExprOp.ADD, ExprOp.SUB, ExprOp.MUL, ExprOp.DIV, ExprOp.NEG, ExprOp.POW)),
-  Pattern(ExprOp.RESHAPE, lambda e: e.args[0].shape == e.shape, _reshape_identity),
+  Pattern(ExprOp.RESHAPE, lambda e: e.args[0].shape == e.shape and not e.attrs.get("lowering_identity"), _reshape_identity),
   Pattern(ExprOp.TRANSPOSE, lambda e: e.attrs["axes"] == tuple(range(len(e.attrs["axes"]))), _transpose_identity),
   Pattern(ExprOp.MATMUL, lambda e: _is_zero(e.args[0]) or _is_zero(e.args[1]), _matmul_zero),
   Pattern(ExprOp.MATMUL, _matmul_of_transpose_and_vector, _matmul_transpose_fold),

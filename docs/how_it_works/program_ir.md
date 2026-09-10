@@ -54,7 +54,7 @@ kernel k_neg(in_:float64(16,), out_:float64(16,)) device=cuda:0:
 
 ## Operations
 
-Forty-three operations in two families.
+Operations fall into two families.
 
 ### Structure — statements and declarations
 
@@ -70,6 +70,7 @@ Forty-three operations in two families.
 | `range` | a loop domain: start, stop, step, and a `RangeKind` |
 | `for` | a loop binding a `range` over a body |
 | `store` | write a scalar to a view |
+| `store_pair` | evaluate two float64 values, then write consecutive lanes starting at a view |
 | `assign` | write a scalar to a variable; `declare=True` also declares the typed local |
 | `call` | invoke another `proc` |
 | `launch` | start a `kernel` — host only |
@@ -119,6 +120,9 @@ Four specs, composed from the same `Rule`/`Spec` machinery the expression dialec
 | `spec_kernel_program` | a `kernel` contains no host-only op (no `launch`) |
 | `spec_program_full` | both — the whole-program check |
 
+Whole modules also require unique procedure names. The paired-store rule checks its target and
+value types; the pairing pass establishes alias safety.
+
 `lower_function` runs `verify_program` on its output before returning, so a malformed program is
 caught at the boundary that produced it rather than as strange C much later.
 
@@ -137,10 +141,11 @@ print(al.render_program_assembly(lower_function(f)))
 
 ```text
 prog.module {
-  prog.proc @f(%x: memref<3xfloat64>, %y: memref<1xfloat64>) {device=host, input_count=1, sz_w=0, w_self=0} {
+  prog.proc @f(%x: memref<3xfloat64>, %y: memref<1xfloat64>) {device=host, input_count=1, lowering="auto", scalarize_mode="disabled", sz_w=0, w_self=0} {
     prog.store 0, %y[0] : float64
     prog.for %i_y = 0 to 3 step 1 {kind=reduce} {
-      prog.store prog.add(prog.load %y[0], prog.add(prog.sin(prog.load %x[%i_y]), prog.mul(prog.load %x[%i_y], prog.load %x[%i_y]))), %y[0] : float64
+      %v0 = prog.assign prog.load %x[%i_y] : float64 {declare=True}
+      prog.store prog.add(prog.load %y[0], prog.add(prog.sin(%v0), prog.mul(%v0, %v0))), %y[0] : float64
     }
   }
 }

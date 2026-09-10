@@ -118,3 +118,44 @@ def test_jit_input_shape_mismatch_raises(isolated_cache) -> None:
   fn = _simple_fn()
   with pytest.raises(ValueError, match="shape"):
     fn(np.zeros(5))
+
+
+@pytest.mark.solver("ipopt")
+@pytest.mark.parametrize("nested", [False, True])
+def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) -> None:
+  from alloy.codegen import render_c_module
+  from tests.solvers.problem_helpers import build_nlp
+
+  value, target = al.sym("value", 1), al.sym("target", 1)
+  stage = al.Function._from_exprs("oracle_stage", [value, target], [((value - target.exp()) ** 2).sum().block()], ["value", "target"], ["cost"])
+  x, param = al.sym("x", 3), al.sym("param", 1)
+  cost = al.vmap(stage, 3, [(x, 0, 1), (param, 0, 0)]).sum()
+  solver = build_nlp(x=x, f=cost, p=param, name="hoisted_oracle_solver")
+  if nested:
+    inputs = (al.const(np.zeros(3)), al.const(np.zeros(3)), al.const(np.zeros(0)), al.const(np.zeros(0)), param)
+    fun = al.Function._from_exprs("hoisted_oracle_host", [param], [solver.symbolic_call(inputs)[0]], ["param"], ["solution"])
+  else:
+    fun = solver
+  module = render_c_module(fun)
+  procs = module.program.args[: module.program.attrs["proc_count"]]
+  assert any(proc.attrs.get("hoisted_from") == stage.name for proc in procs)
+  names = {proc.attrs["name"] for proc in procs}
+  assert all(name in names for oracles in module.program.attrs["solver_oracles"].values() for name in oracles)
+  pv = np.array([0.2])
+  result = fun(pv) if nested else fun((np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0), pv))[0]
+  np.testing.assert_allclose(result, np.full(3, np.exp(pv[0])), atol=1e-7)
+
+
+@pytest.mark.parametrize("input_name", ["_h0", "v0", "v:0"])
+def test_deep_block_callee_temporaries_do_not_shadow_inputs(isolated_cache, input_name: str) -> None:
+  x = al.sym(input_name, 1)
+  value = x
+  for _ in range(40):
+    value = value.sin() + 0.1
+  stage = al.Function._from_exprs("named_deep_stage", [x], [value.block()], [input_name], ["y"])
+  z = al.sym("z", 1)
+  root = al.Function._from_exprs("named_deep_root", [z], [stage(z)], ["z"], ["y"])
+  expected = np.array([0.3])
+  for _ in range(40):
+    expected = np.sin(expected) + 0.1
+  np.testing.assert_allclose(root(np.array([0.3])), expected)

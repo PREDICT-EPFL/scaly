@@ -24,6 +24,11 @@ driven by the `_UNARY` map from `ExprOp` to `ProgramOp`, and every binary op sha
 deduplicates callees so a block used a hundred times is lowered once, runs the optimization
 pipeline, and verifies the result before returning it.
 
+Before allocating buffers, lowering normalizes a private copy of each ordinary Function’s outputs
+with the expression rewrite rules. The copy retains the declared inputs and output metadata.
+Lowering captures the Function's effective hint before rewriting and applies it to the procedure
+without copying shared output expressions. The user's graph and the graph used by differentiation stay intact.
+
 What is covered today: elementwise unary and binary with NumPy broadcasting; `reshape` as an alias;
 `const` of any size through a constant buffer; general `slice` including integer, multi-dimensional
 and strided forms; `sum`; `matmul` up to rank 2; `transpose` up to rank 4; `gather` and `scatter`
@@ -50,20 +55,23 @@ at the tail of lowering, between the initial program and the verifier. Each pass
 module. Adding an optimization means adding its function to this sequence at the required
 position. Imports do not determine execution order.
 
-Seven passes run today, in this order.
+The sequence starts with hoisting and scalar expansion, then cleans up loops and storage, and
+ends with explicit store pairing and scalar preparation.
 
 **`hoist_invariant`** runs first, on the loop-shaped program. A `VMAP` that broadcasts an argument
 (stride 0) lowers to a loop whose call passes the same pointer at every trip, but the callee cannot
 know that and recomputes everything derived from it. The pass finds, inside the callee, the private
 buffers written only by statements that read invariant inputs, constant buffers and other
-invariant buffers, and splits the callee: a `_hoist<positions>` prologue computes those buffers
-once before the loop, and a `_hoisted<positions>` body takes them as extra inputs; the suffix
+invariant buffers, and splits the callee: a `_hoist_<positions>` prologue computes those buffers
+once before the loop, and a `_hoisted_<positions>` body takes them as extra inputs; the suffix
 names the invariant argument positions, so one callee mapped two ways gets two distinct splits. A buffer that any per-trip statement
 also writes, such as a zero-filled accumulator, stays in the body. Call sites whose arguments all
 vary keep the original callee, which is dropped once nothing calls it. Under `auto` the prologue
-is marked `scalarize: "callee"`: `scalarize` inlines it into an expanding caller but never expands
+has `scalarize_mode="inline"`: `scalarize` inlines it into an expanding caller but never expands
 it on its own, since code that runs once per call gains nothing from expansion and would grow the
-source with the invariant argument's size.
+source with the invariant argument's size. Other selection modes are `disabled` and `procedure`;
+the separate lowering hint controls automatic budgets. Generated procedure names reserve existing
+names and separate argument positions unambiguously. Opaque and solver-bearing calls stay in place.
 
 **`scalarize`** expands selected float64 procedures before any buffer fusion or workspace reuse.
 It substitutes constant loop indices, tracks the current scalar value of each buffer element,
@@ -98,6 +106,10 @@ all of its callees are eligible too. Solver calls retain their call boundaries. 
 procedures retain their store boundaries because those stores can round or truncate values.
 Constant tangents already inside a body fold during expansion. Specializing a mapped callee for
 constant arguments is a separate transformation.
+
+**`prune_procedures`** removes procedures made unreachable by call expansion. It retains the entry
+point, solver oracles, and callees of retained kernels, follows their calls, and preserves callee-before-caller order. Hoisting
+uses the same reachability analysis after splitting callees.
 
 ### Arithmetic semantics
 
@@ -136,10 +148,10 @@ gather lowering produces. The pass substitutes the producer's right-hand side at
 load site and deletes both the producer loop and its buffer. Chains collapse into one loop and the
 intermediate round-trips through memory disappear.
 
-It declines in one case. Operations that lower to a libm call — the transcendentals, `pow`,
+It checks the fully expanded producer chain, including source writes and aliases. Operations that lower to a libm call — the transcendentals, `pow`,
 `atan2` — are not duplicated into a consumer that would evaluate them more than once, which happens
 when the consumer's iteration domain is larger than the producer's (a broadcast) or when there is
-more than one read. Cheap arithmetic is always safe to duplicate; a `sin` is not.
+more than one read. Cheap arithmetic can be duplicated only when moving its source reads is safe.
 
 **`fold_arith`** runs the arithmetic identities shared with the expression dialect
 (`passes/arith.py`) over every loop body after fusion, where index substitution exposes `x * 1`,
@@ -153,6 +165,9 @@ once, substituting the loop variable with its only value. It runs after fusion s
 canonical loop-shaped producers first, and it removes the resulting single-iteration noise before
 anything renders.
 
+A second arithmetic cleanup, observed as **`fold_arith_after_unroll`**, resolves constant indices
+and identities exposed by loop substitution, then removes unused buffer declarations.
+
 **`pack_workspace`** decides where temporaries live. It lifetime-packs the private buffers of each
 procedure into shared slots — buffers whose lifetimes do not overlap reuse a slot — then spills
 slots of 1024 doubles or more into the caller-provided `w[]` array while smaller ones stay as local
@@ -161,6 +176,15 @@ C arrays. The spilled total is what the generated header reports as `f_SZ_W`.
 This is the pass that makes large workloads compile at all. Without it the biggest benchmark cells
 declare every temporary as a C local and overflow the 8 MB stack. Zero-copy alias buffers are
 handled explicitly: they own no slot but extend the lifetime of whatever they point into.
+
+**`coalesce_stores`** replaces eligible adjacent float64 stores with an explicit `STORE_PAIR`
+statement after workspace packing. The two values are evaluated before either lane is written.
+Pair selection accounts for physical buffer aliases and refuses a pair when the second value
+reads the first destination. Odd tails stay scalar.
+
+**`prepare_scalar`** inserts typed temporaries to bound expression depth before C rendering. It
+shares the scheduler used by scalar expansion, but limits sharing to a statement so loads keep
+their timing across writes and calls. Generated names reserve existing C identifier spellings.
 
 ## Deep expressions
 
@@ -173,8 +197,10 @@ renders, compiles and runs; `tests/passes/test_program.py` pins folds at 400 and
 per-stage reduction at 100 stages.
 
 The generated C stays bounded too. Clang caps bracket nesting at 256, so a fused chain deeper than
-`MAX_SCALAR_DEPTH` (32, shared with the scalarizer's temporary scheduling) is split by the renderer
-into scalar temporaries inside a block. Depth is still cheaper to avoid than to render: a wide flat
+`MAX_SCALAR_DEPTH` (32, shared with the scalarizer's temporary scheduling) is split by Program preparation
+into scalar temporaries. Store values, indices, and call offsets use the same depth bound.
+Range expressions stay unchanged so start, stop, and step retain their evaluation frequency;
+the depth bound does not apply to hand-built deep range expressions. Depth is still cheaper to avoid than to render: a wide flat
 reduction (`al.dot(al.const(weights), al.stack(residuals) ** 2)`) or a pairwise sum reads better in
 the generated source than a long fold, but neither is required for correctness any more.
 
@@ -185,7 +211,7 @@ chains in the scalarizer. Loop nests are a few levels deep in practice.
 ## Watching it happen
 
 Every step above is observable. Mark a function, call it, and the recorder captures the expression
-graph, the lowered program, the result of each individual pass, and the generated C:
+graph, the normalized outputs of each reached Function, the lowered program, the result of each individual pass, and the generated C:
 
 ```python
 from alloy.viz import visualize, serve

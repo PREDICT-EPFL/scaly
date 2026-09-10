@@ -11,7 +11,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Callable, Hashable, Iterable, Protocol, cast
 
-from .expr import Expr
+from .expr import Expr, ExprOp
+from .types import Lowering
 
 
 class _HasOpArgs(Protocol):
@@ -60,6 +61,29 @@ class PatternMatcher[Node: _HasOpArgs]:
     return None
 
 
+def _combined_lowering(own: Lowering, children: Iterable[Lowering]) -> Lowering:
+  hints = {own, *children} - {"auto"}
+  if "block" in hints or "opaque" in hints and len(hints) > 1:
+    return "block"
+  if "opaque" in hints:
+    return "opaque"
+  return "scalar" if "scalar" in hints else "auto"
+
+
+def _apply_lowering(expr: Expr, lowering: Lowering, *, preserve_identity: bool = False) -> Expr:
+  if lowering == "auto" or expr.lowering == lowering:
+    return expr
+  if expr.op == ExprOp.INPUT or preserve_identity and expr.op != ExprOp.CONST:
+    return Expr(
+      ExprOp.RESHAPE,
+      (expr,),
+      expr.type,
+      attrs={"shape": expr.shape, "lowering_identity": True},
+      lowering=lowering,
+    )
+  return expr.with_lowering(lowering)
+
+
 def rebuild_expr(expr: Expr, args: tuple[Expr, ...]) -> Expr:
   """The expression-dialect adapter: ``expr`` with new ``args`` and everything else kept."""
   return Expr(expr.op, args, expr.type, expr.name, expr.value, dict(expr.attrs), expr.lowering)
@@ -86,6 +110,7 @@ def rewrite[Node: _HasOpArgs](
   matcher = patterns if isinstance(patterns, PatternMatcher) else PatternMatcher(patterns)
   rebuild = rebuild or cast(Callable[[Node, tuple[Node, ...]], Node], rebuild_expr)
   done: dict[int, Node] = {}
+  lowerings: dict[int, Lowering] = {}
   forward: dict[int, Node] = {}
   alive: list[Node] = []
   steps = 0
@@ -102,15 +127,20 @@ def rewrite[Node: _HasOpArgs](
       if id(target) not in done:
         raise RuntimeError(f"rewrite replacement at {node.op} contains the node it replaces")
       done[id(node)] = done[id(target)]
+      if isinstance(node, Expr):
+        lowerings[id(node)] = lowerings[id(target)]
       continue
     args = tuple(done[id(a)] for a in node.args)
     cur = node if all(a is b for a, b in zip(args, node.args, strict=True)) else rebuild(node, args)
+    lowering = _combined_lowering(node.lowering, (lowerings[id(arg)] for arg in node.args)) if isinstance(node, Expr) else "auto"
     new = matcher.rewrite(cur)
     while new is not None:
       steps += 1
       if steps > max_steps:
         names = sorted({getattr(p.replacement, "__qualname__", repr(p.replacement)) for p in matcher.candidates(cur.op)})
         raise RuntimeError(f"rewrite exceeded {max_steps} steps at {cur.op} with patterns {names}")
+      if isinstance(new, Expr):
+        new = cast(Node, _apply_lowering(new, lowering, preserve_identity=id(new) in lowerings))
       alive.append(new)
       if revisit:
         forward[id(node)] = new
@@ -120,6 +150,9 @@ def rewrite[Node: _HasOpArgs](
       new = matcher.rewrite(cur) if fixpoint else None
     else:
       done[id(node)] = cur
+      if isinstance(node, Expr):
+        lowerings[id(node)] = lowering
+        lowerings[id(cur)] = lowering
   return done[id(root)]
 
 

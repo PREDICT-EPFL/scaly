@@ -33,6 +33,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "alloy"
 IMPORT_LAYERS: dict[str, int] = {
   "alloy.utils": 0,
   "alloy.utils.env": 0,
+  "alloy.utils.names": 0,
   "alloy.utils.torch_state_dict": 0,
   "alloy.ir": 1,
   "alloy.ir.types": 1,
@@ -80,6 +81,9 @@ IMPORT_LAYERS: dict[str, int] = {
   "alloy.passes.program.pack_workspace": 6,
   "alloy.passes.program.unroll_unit_loops": 6,
   "alloy.passes.program.scalarize": 6,
+  "alloy.passes.program.coalesce_stores": 6,
+  "alloy.passes.program.prepare_scalar": 6,
+  "alloy.passes.program.scheduling": 6,
   "alloy.passes.lowering": 6,
   "alloy.codegen.abi": 7,
   "alloy.codegen.jit": 7,

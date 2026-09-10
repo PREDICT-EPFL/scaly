@@ -2,8 +2,7 @@
 
 A refactor of the IR, the passes or the renderer must leave the generated C identical, so this
 pins it byte for byte. Each corpus entry covers one lowering path — a forward function, a dense
-Jacobian, a compact sparse Jacobian, a VMAP workload, a wide function that spills to the workspace
-and uses most of the math surface, and a solver-bearing graph — and every run re-renders and diffs
+Jacobian, a compact sparse Jacobian, a VMAP workload, a wide function using most of the math surface, a workspace spill, and a solver-bearing graph — and every run re-renders and diffs
 against the recorded source and header. A diff means something semantic moved with the code. Byte
 equality also keeps the JIT cache key stable: it hashes the source, and the header pins the ABI
 signature that goes in with it.
@@ -54,11 +53,7 @@ def _shooting() -> al.Function:
 
 
 def _wide() -> al.Function:
-  """Two outputs, a 40x40 matmul either way round, the transcendental surface, and a scatter.
-
-  Big enough that ``passes.pack_workspace`` spills to ``w[]`` (``sz_w`` is 1600 doubles), so the
-  workspace packing and spill rendering are inside the gate too.
-  """
+  """Two outputs, a 40x40 matmul either way round, the transcendental surface, and a scatter."""
 
   @al.function(al.G(al.L("x", 40), al.L("y", 40)), al.G(al.L("z", ...), al.L("tail", ...)), name="wide")
   def wide(inputs):
@@ -75,6 +70,13 @@ def _wide() -> al.Function:
   return wide
 
 
+def _workspace() -> al.Function:
+  """A shared intermediate large enough to spill after expression normalization."""
+  x = al.sym("x", 2048)
+  value = x.sin()
+  return al.Function._from_exprs("workspace", [x], [value.sum(), (value * value).sum()], ["x"], ["sum", "sumsqr"])
+
+
 def _qp_host() -> al.Function:
   """A host function whose graph reaches a solver through a nested call."""
   mu = al.sym("mu", 2)
@@ -89,6 +91,7 @@ CORPUS = {
   "vmap": _shooting,
   "spjac": lambda: al.sparse_jacobian(_shooting(), "eq", "z"),
   "wide": _wide,
+  "workspace": _workspace,
 }
 SOLVER_CORPUS = {"solver": _qp_host}
 

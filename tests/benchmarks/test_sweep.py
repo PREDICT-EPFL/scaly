@@ -73,6 +73,28 @@ def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages
   assert _dispatch_metrics(mapped, program) == (stages, 3, 21)
 
 
+def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None:
+  from alloy.ir.program import ProgramNode, ProgramOp, const_int
+
+  x = al.sym("x", 2)
+  stage = al.Function._from_exprs("metric_scheduled_stage", [x], [2.0 * x + x.sin()], ["x"], ["y"])
+  z = al.sym("z", 8)
+  mapped = al.Function._from_exprs("metric_scheduled_map", [z], [al.vmap(stage, 4, [(z, 0, 2)])], ["z"], ["y"])
+  program = render_c_module(mapped).program
+  proc_count = int(program.attrs["proc_count"])
+  procs = list(program.args[:proc_count])
+  root = procs[-1]
+  param_count = int(root.attrs["param_count"])
+  body = list(root.args[param_count:])
+  loop_index = next(i for i, stmt in enumerate(body) if stmt.op == ProgramOp.FOR and stmt.args[-1].op == ProgramOp.CALL)
+  loop = body[loop_index]
+  scheduled = ProgramNode(ProgramOp.ASSIGN, (const_int(0),), {"target": "v0", "declare": True}, const_int(0).dtype)
+  body[loop_index] = ProgramNode(loop.op, (loop.args[0], scheduled, *loop.args[1:]), {**loop.attrs, "body_len": 2}, loop.dtype)
+  changed_root = ProgramNode(root.op, (*root.args[:param_count], *body), root.attrs, root.dtype)
+  changed = ProgramNode(program.op, (*procs[:-1], changed_root, *program.args[proc_count:]), program.attrs, program.dtype)
+  assert _dispatch_metrics(mapped, changed) == (4, 0, 6)
+
+
 def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
   x = al.sym("x", 1024)
   inner = al.Function._from_exprs("metric_spill_inner", [x], [(x * x).block()], ["x"], ["y"])
@@ -92,6 +114,23 @@ def test_dispatch_metrics_count_shared_scalar_arithmetic_once() -> None:
   z = al.sym("z", 4)
   mapped = al.Function._from_exprs("metric_shared_vmap", [z], [al.vmap(stage, 4, [(z, 0, 1)])], ["z"], ["y"])
   assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (4, 0, 3)
+
+
+def test_store_pairs_preserve_dispatch_arithmetic() -> None:
+  from alloy.ir.program import ProgramOp
+  from alloy.passes.lowering import lower_function
+  from alloy.passes.program._common import _walk
+
+  x = al.sym("x", 3)
+  stage = al.Function._from_exprs("metric_pair_stage", [x], [(x * x).scalar()], ["x"], ["y"])
+  z = al.sym("z", 12)
+  mapped = al.Function._from_exprs("metric_pair_map", [z], [al.vmap(stage, 4, [(z, 0, 3)])], ["z"], ["y"])
+  stages = {}
+  lower_function(mapped, observe=lambda name, program: stages.__setitem__(name, program))
+  before, paired, prepared = (stages[name] for name in ("pass:pack_workspace", "pass:coalesce_stores", "pass:prepare_scalar"))
+  assert not any(node.op == ProgramOp.STORE_PAIR for node in _walk(before))
+  assert any(node.op == ProgramOp.STORE_PAIR for node in _walk(paired))
+  assert [_dispatch_metrics(mapped, program) for program in (before, paired, prepared)] == [(4, 0, 3)] * 3
 
 
 def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
@@ -120,6 +159,16 @@ def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
     ["y"],
   )
   assert _dispatch_metrics(weighted, render_c_module(weighted).program) == (2, 0, 4)
+
+
+def test_unit_dispatch_excludes_an_unmapped_top_level_call() -> None:
+  x = al.sym("x", 1)
+  stage = al.Function._from_exprs("metric_unit_stage", [x], [(x * x).block()], ["x"], ["y"])
+  other = al.Function._from_exprs("metric_unmapped_stage", [x], [((x + 1) * (x + 2)).block()], ["x"], ["y"])
+  z = al.sym("z", 1)
+  mapped = al.vmap(stage, 1, [(z, 0, 1)])
+  root = al.Function._from_exprs("metric_unit_with_call", [z], [mapped + other(z)], ["z"], ["y"])
+  assert _dispatch_metrics(root, render_c_module(root).program) == (1, 0, 1)
 
 
 def test_sweep_csv_has_dispatch_and_artifact_fields() -> None:
