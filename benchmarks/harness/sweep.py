@@ -1041,12 +1041,12 @@ def run_sweep(args, cli_args: list[str]) -> bool:
   for workload in args.workloads:
     orders[workload] = list(args.backends or DEFAULT_BACKENDS[workload])
     rng.shuffle(orders[workload])
+  gave_up: dict[tuple[str, str], tuple[int, str]] = {}
   with args.out.open("w", newline="") as fp:
     writer = csv.DictWriter(fp, fieldnames=FIELDS)
     writer.writeheader()
     for repetition in range(repetitions):
       for workload in args.workloads:
-        gave_up: dict[str, tuple[int, str]] = {}
         initial = orders[workload]
         offset = repetition % len(initial)
         backends = initial[offset:] + initial[:offset]
@@ -1064,15 +1064,15 @@ def run_sweep(args, cli_args: list[str]) -> bool:
                 runtime_status="skipped",
                 note=f"{backend} has no repeated element for {workload}",
               )
-            elif backend in gave_up:
-              failed_size, status = gave_up[backend]
+            elif (workload, backend) in gave_up and size >= gave_up[workload, backend][0]:
+              failed_size, status = gave_up[workload, backend]
               result = row(
                 workload=workload,
                 size=size,
                 backend=backend,
                 compile_status="skipped_after_failure",
                 runtime_status="skipped",
-                note=f"{backend} {status} at size={failed_size}; larger sizes won't fit",
+                note=f"{backend} {status} at size={failed_size}; this size and larger won't fit",
               )
             else:
               out_dir = args.out.parent / f"repeat_{repetition + 1}" / workload / f"{backend}_{CELL_AXES[workload]}{size}"
@@ -1087,7 +1087,7 @@ def run_sweep(args, cli_args: list[str]) -> bool:
             status = result["runtime_status"] or result["compile_status"]
             print(f"{status}" + (f": {result['note']}" if result["note"] else ""))
             if result["compile_status"] in {"timeout", "skipped_size", "compile_error", "codegen_timeout", "codegen_error"}:
-              gave_up[backend] = (size, str(result["compile_status"]))
+              gave_up[workload, backend] = (size, str(result["compile_status"]))
             if result["runtime_status"] in {"runtime_error", "runtime_timeout", "correctness_fail", "parse_fail"} or result["compile_status"] in {
               "compile_error",
               "codegen_error",

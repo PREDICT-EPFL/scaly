@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import subprocess
 import sys
+import time
 
-from benchmarks.harness import ROOT, gbench
+from benchmarks.harness import CLOSED_LOOP_PAIRS, ROOT, gbench
 from benchmarks.harness.provenance import collect
 from benchmarks.harness.report import report
 
@@ -23,15 +25,15 @@ PARTS = ("sweep", "closed-loop")
 
 def run_study(args, cli_args: list[str]) -> bool:
   out = args.out_dir.resolve()
-  if out.exists() and any(out.iterdir()):
-    raise SystemExit(f"study requires an unused output directory: {out}")
+  if out.exists() and any(out.iterdir()) and not args.overwrite:
+    raise SystemExit(f"study requires an unused output directory: {out} (or pass --overwrite)")
   out.mkdir(parents=True, exist_ok=True)
   run_py = str(ROOT / "benchmarks" / "run.py")
   common = ["--repetitions", str(args.repetitions), "--order-seed", str(args.order_seed)]
   if args.headline:
     common += ["--headline", "--boost", args.boost]
   commands = []
-  for problem in args.problems:
+  for problem in args.problem:
     if "sweep" in args.only:
       sizes = ",".join(str(size) for size in SWEEP_GRID[problem])
       target = out / "sweep" / problem / f"{problem}.csv"
@@ -39,15 +41,34 @@ def run_study(args, cli_args: list[str]) -> bool:
         [sys.executable, run_py, "sweep", "--workloads", problem, "--sizes", sizes, "--benchmark-min-time", "0.5s", *common, "--out", str(target)]
       )
     if "closed-loop" in args.only:
-      target = out / "closed-loop" / problem
-      commands.append(
-        [sys.executable, run_py, "closed-loop", "--problem", problem, "--solver", "sqp", "--oracle", "both", *common, "--out-dir", str(target)]
-      )
+      overwrite = ["--overwrite"] if args.overwrite else []
+      for solver in ("ipopt", "sqp"):
+        target = out / "closed-loop" / problem / solver
+        oracles = ",".join(oracle for s, oracle in CLOSED_LOOP_PAIRS[problem] if s == solver and oracle)
+        commands.append(
+          [
+            sys.executable,
+            run_py,
+            "closed-loop",
+            "--problem",
+            problem,
+            "--solver",
+            solver,
+            "--oracle",
+            oracles,
+            *common,
+            *overwrite,
+            "--out-dir",
+            str(target),
+          ]
+        )
   record = []
   for command in commands:
     print("$ " + " ".join(command[1:]), flush=True)
+    started = datetime.now(timezone.utc)
+    tick = time.monotonic()
     status = subprocess.run(command).returncode
-    record.append({"command": command[1:], "returncode": status})
+    record.append({"command": command[1:], "returncode": status, "started": started.isoformat(), "seconds": round(time.monotonic() - tick, 1)})
   manifest = {**collect(ROOT, gbench.compiler(), cli_args), "commands": record}
   (out / "study.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
   print(f"report written to {report(out)}")

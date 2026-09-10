@@ -13,6 +13,14 @@ SWEEP_RESULTS = RESULTS / "sweep"
 NATIVE_CFLAGS = HOST_CFLAGS
 
 
+CLOSED_LOOP_PAIRS: dict[str, tuple[tuple[str, str | None], ...]] = {
+  "chain": (("ipopt", "alloy"), ("sqp", "alloy"), ("sqp", "casadi")),
+  "race_cars": (("ipopt", "alloy"), ("ipopt", "casadi"), ("sqp", "alloy"), ("sqp", "casadi")),
+  "unbumpercars": (("ipopt", "alloy"), ("ipopt", "casadi"), ("sqp", "alloy"), ("sqp", "casadi"), ("none", None)),
+  "npmpc": (("ipopt", "alloy"), ("ipopt", "casadi"), ("sqp", "alloy"), ("sqp", "casadi")),
+}
+
+
 def closed_loop_results_root(*, smoke: bool, out_dir: Path | None = None) -> Path:
   if out_dir is not None:
     return out_dir

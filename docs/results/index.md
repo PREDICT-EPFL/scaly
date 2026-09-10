@@ -273,7 +273,7 @@ uv run benchmarks/run.py study --out-dir benchmarks/results/followup/<date> --on
 A single problem is the underlying command, shown here for the race-car run:
 
 ```bash
-uv run benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle both --repetitions 5 --order-seed 0 --headline --boost off --out-dir benchmarks/results/followup/<date>/closed-loop/race_cars
+uv run benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle alloy,casadi --repetitions 5 --order-seed 0 --headline --boost off --out-dir benchmarks/results/followup/<date>/closed-loop/race_cars
 ```
 
 Raw episodes, trajectories, per-step `telemetry.csv`, mode tables, and provenance are local

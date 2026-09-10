@@ -59,21 +59,40 @@ def test_closed_loop_cli_rotates_oracles_and_rejects_reused_caches(tmp_path, mon
 
   calls = []
   monkeypatch.setattr(
-    sys, "argv", ["run.py", "closed-loop", "--problem", "race_cars", "--oracle", "both", "--repetitions", "3", "--out-dir", str(tmp_path)]
+    sys,
+    "argv",
+    [
+      "run.py",
+      "closed-loop",
+      "--problem",
+      "race_cars",
+      "--solver",
+      "ipopt,sqp",
+      "--oracle",
+      "alloy,casadi",
+      "--repetitions",
+      "3",
+      "--out-dir",
+      str(tmp_path),
+    ],
   )
   monkeypatch.setattr(run.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)))
   monkeypatch.setattr(run, "collect", lambda *args: {})
   monkeypatch.setattr(run, "write", lambda *args: None)
   monkeypatch.setattr(timing, "summarize_modes", lambda *args: [])
   run.main()
-  providers = [command[command.index("--oracle") + 1] for command, _ in calls]
-  assert providers == ["alloy", "casadi", "casadi", "alloy", "alloy", "casadi"]
+  pairs = [(command[command.index("--solver") + 1], command[command.index("--oracle") + 1]) for command, _ in calls]
+  assert len(pairs) == 12 and len(set(pairs[:4])) == 4
+  assert pairs[4:8] == pairs[1:4] + pairs[:1] and pairs[8:] == pairs[2:4] + pairs[:2]
   caches = [kwargs["env"]["ALLOY_CACHE_DIR"] for _, kwargs in calls]
-  assert len(set(caches)) == 6 and all(Path(cache).is_dir() for cache in caches)
+  assert len(set(caches)) == 12 and all(Path(cache).is_dir() for cache in caches)
   with pytest.raises(SystemExit) as error:
     run.main()
   assert error.value.code == 2
-  assert len(calls) == 6
+  assert len(calls) == 12
+  sys.argv.append("--overwrite")
+  run.main()
+  assert len(calls) == 24
 
 
 def test_cpu_provenance_without_linux_interfaces(tmp_path, monkeypatch):

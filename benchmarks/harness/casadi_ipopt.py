@@ -276,6 +276,7 @@ class CompiledCasadiIpopt:
       + compiler
       + opt
       + " ".join(NATIVE_CFLAGS)
+      + " ".join(backend_compile_flags(("ipopt",)))  # the rpath baked into the library must match this checkout
     )
     key = hashlib.sha256(cache_inputs.encode()).hexdigest()[:20]
     work = _CACHE / key
