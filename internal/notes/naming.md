@@ -64,6 +64,60 @@ the system an identity of its own.
 
 ## Current shortlist
 
+As of September 10, 2026, **Scara** and **Scali** are the main contenders.
+Neither is an accepted rename. Their working taglines are recorded below for
+the README, documentation, and repository description.
+
+This round relaxes the earlier preference for a metal connection. Scale and
+adaptability give both names room to describe the whole system, while their
+Romanian or Swiss associations make them personal to the project.
+
+### Scara
+
+> High-level Python. Down-to-earth C.
+
+```python
+import scara as sc
+```
+
+Scara draws on Romanian **scară**, meaning ladder, stairs, or scale. The
+physical image connects levels of abstraction and changes in problem size.
+The spelling also suggests "scalar" and "scale" to a numerical audience.
+
+The tagline connects Python to generated C through the idea of moving between
+levels. "Generate C from Python. Scale up or down." was another option, but the
+line above is the preferred working tagline.
+
+SCARA already names a robot configuration, the Selective Compliance Assembly
+Robot Arm. Ted considers this overlap acceptable. The resemblance to Scala,
+the programming language developed at the École polytechnique fédérale de
+Lausanne, adds another association with the project's home institution.
+Package availability has not yet been checked for this candidate.
+
+### Scali
+
+> Make your optimal control problems scale.
+
+```python
+import scali as sc
+```
+
+Scali grew from **scaly**, combining scalability with the scales of a python.
+The final `i` gives the name a Swiss German diminutive flavor to Ted's ear.
+This is an intended association, not a claim that Scali is an existing dialect
+word. The result feels more playful than Scara.
+
+"Make your problems scali" introduced the wordplay that led to the preferred
+tagline above. Scali keeps the snake association less explicit than Scaly,
+though a listener may still guess either spelling.
+
+An existing [Scaly programming language](https://scaly.io/lang/tutorial.htm)
+uses the original spelling. Ted considers its visibility too low to rule out
+the name on that basis alone. Package availability has not yet been checked
+for `scali`.
+
+## Earlier shortlist: Maiastra and Toupin
+
 Review of Orichal changed the direction of the search. Its spelling is hard to
 recover from speech, and a French speaker may pronounce it in an unintended
 way. The phonetic spelling `Orikal` would reduce those problems but weaken the
@@ -71,7 +125,7 @@ link to orichalcum.
 
 The search then moved closer to the project's home cultures in Romania and
 French-speaking Switzerland, with a preference for Vaud. **Maiastra** and
-**Toupin** are the two main contenders. Neither name has been accepted.
+**Toupin** became the two main contenders at that stage. Neither was accepted.
 
 ### Maiastra
 
@@ -128,8 +182,8 @@ the software namespace is otherwise quiet. The `toupin` PyPI slug was unclaimed
 when checked on August 26, 2026.
 
 Maiastra has the richer folklore and art connection. Toupin is shorter, closer
-to Vaud, and more directly connected to the metal lineage. That is the current
-unresolved choice.
+to Vaud, and more directly connected to the metal lineage. Scara and Scali
+have since displaced them as the main contenders.
 
 ## Earlier candidate: Orichal
 
@@ -204,7 +258,7 @@ release containing a useful core of the project, not a "coming soon" stub.
 Defining that minimum releasable core is deferred to a separate design session.
 Nothing has been uploaded to PyPI as part of this exploration.
 
-For now, the project remains **Alloy**. **Maiastra and Toupin are the main
+For now, the project remains **Alloy**. **Scara and Scali are the main
 contenders, not accepted renames.**
 
 ## References and provenance
