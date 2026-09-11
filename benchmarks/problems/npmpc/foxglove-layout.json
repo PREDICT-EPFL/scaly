@@ -1,0 +1,188 @@
+{
+  "configById": {
+    "3D!18i6zy7": {
+      "layers": {
+        "9478d73c-dac5-4853-82d8-5f160381fed1": {
+          "visible": false,
+          "drawBehind": false,
+          "instanceId": "9478d73c-dac5-4853-82d8-5f160381fed1",
+          "layerId": "foxglove.Grid",
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "color": "#b5d9ffff",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "order": 1
+        }
+      },
+      "cameraState": {
+        "perspective": true,
+        "distance": 0.8753261807504418,
+        "phi": 65.51261132309003,
+        "thetaOffset": -44.88925348646972,
+        "targetOffset": [
+          -0.017721716512180758,
+          0.10033982704768234,
+          1.1817621840498045e-17
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {
+        "transforms": {
+          "offsetReferenceFrame": "parent",
+          "lineWidth": 0,
+          "visible": false
+        }
+      },
+      "transforms": {
+        "frame:car/0": {
+          "visible": false
+        }
+      },
+      "topics": {
+        "/scene": {
+          "visible": true
+        },
+        "/scene/static": {
+          "visible": true
+        },
+        "/scene/horizon": {
+          "visible": true
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "synchronize": false,
+      "imageMode": {},
+      "followTf": "world"
+    },
+    "Plot!392cap6": {
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/telemetry.solver_time_ms",
+          "enabled": true,
+          "color": "#4e98e2",
+          "id": "a5d38f72-0fc9-4a10-aee2-4cc63bd8fc9d",
+          "label": ""
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/telemetry.fe_time_ms",
+          "enabled": true,
+          "color": "#f5774d",
+          "id": "42c8200b-3090-4b73-9acf-665eab329a98"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/telemetry.scalars.glue_time_ms",
+          "enabled": true,
+          "color": "#f7df71",
+          "id": "d990e0a0-cfd6-435d-bf64-97b1bdbaf13b"
+        }
+      ],
+      "foxglovePanelTitle": "solver runtime"
+    },
+    "Plot!2s843gc": {
+      "paths": [
+        {
+          "value": "/telemetry.scalars.iterations",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "showLine": true,
+          "color": "#4e98e2",
+          "id": "e9336b66-eeef-460c-a161-6d90116620bf"
+        }
+      ],
+      "foxglovePanelTitle": "solver iterations"
+    },
+    "Indicator!9t113g": {
+      "path": "/telemetry.success",
+      "style": "background",
+      "fontSize": 36,
+      "fallbackColor": "#ff0000",
+      "fallbackLabel": "failure",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#68e24a",
+          "label": "success"
+        }
+      ],
+      "foxglovePanelTitle": "solver success"
+    },
+    "RawMessages!2m765nk": {
+      "defaultExpanded": false,
+      "topicPath": "/run/metadata"
+    },
+    "RawMessages!os6rgs": {
+      "defaultExpanded": false,
+      "topicPath": "/telemetry",
+      "diffEnabled": false
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "drawerConfig": {
+    "tracks": []
+  },
+  "layout": {
+    "first": "3D!18i6zy7",
+    "second": {
+      "first": {
+        "first": {
+          "first": "Plot!392cap6",
+          "second": "Plot!2s843gc",
+          "direction": "column",
+          "splitPercentage": 47.98246233229951
+        },
+        "second": "Indicator!9t113g",
+        "direction": "column",
+        "splitPercentage": 81.13142807234253
+      },
+      "second": {
+        "first": "RawMessages!2m765nk",
+        "second": "RawMessages!os6rgs",
+        "direction": "column",
+        "splitPercentage": 50.06831240291216
+      },
+      "direction": "row",
+      "splitPercentage": 71.19437939110068
+    },
+    "direction": "row"
+  }
+}
