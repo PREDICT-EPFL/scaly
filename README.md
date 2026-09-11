@@ -45,13 +45,11 @@ uv run python -m alloy.codegen mymodule:rosenbrock -o generated/
 - **A compiler you can read.** Pure Python, with NumPy for values and SciPy only for structural
   sparsity analysis, two small intermediate representations, and a well-documented architecture.
 
-In our benchmarks, alloy matches CasADi SX on runtime while generating a fraction of the
-source — 78 KB against 4.5 MB at a 500-stage horizon, and 417 lines regardless of horizon for a
-neural-network-per-node model where CasADi reaches 1.31 million and stops compiling. On
-solver-in-the-loop workloads, where oracle evaluation is the thing being compared, alloy is ahead by
-1.1–1.4× against a CasADi that is code-generated and compiled the same way. See
-[the results](docs/results/index.md) and, for what those comparisons do and do not hold constant,
-[the fairness audit](docs/results/fairness.md).
+The current study shows a workload-dependent result. Alloy trails CasADi SX on the race-car
+Hessian, but leads the fastest completed CasADi encoding on the neural-process model
+predictive control and safety-filter sweeps. The controlled closed-loop runs separate function
+evaluation from shared solver work. See [the current results](docs/results/index.md) and the
+[fairness audit](docs/results/fairness.md).
 
 ## Status
 

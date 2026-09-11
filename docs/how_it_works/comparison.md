@@ -57,21 +57,16 @@ problem.** Alloy writes repetition with [`al.vmap`](../guide/functions.md), and 
 survives colored sparse differentiation to second order and lowering, emitted as a real `for` loop
 around one function body.
 
-The measurement, on a horizon with a small dense network at every node: alloy's sparse equality
-Jacobian is 417 lines at every horizon from 6 to 200, and its exact Lagrangian Hessian 1041. Every
-CasADi encoding of the same problem grows with the horizon, and the best and worst of them differ by
-about an order of magnitude in generated code, so finding the good one is per-problem work.
+The current study measures every supported CasADi encoding rather than choosing one global
+baseline. The fastest encoding changes by problem and size. Pure SX remains faster on the race-car
+Hessian, while Alloy leads the completed neural-process MPC and safety-filter kernels. At larger
+sizes, compile limits bound some comparisons.
 
-**This is not a claim that CasADi cannot express a loop.** It can, and on the race-car horizon the
-retained-map encoding is both the most compact CasADi form and faster to compile than alloy — 0.3 s
-against about a second at a 500-stage horizon. The claim is narrower: in alloy the decision is one
-construct whose meaning does not depend on the rest of the graph, and it is preserved through the
-second-order sparse derivative rather than only through the primal. What alloy gives up in exchange
-is real and is measured on the same page: on a scalar-dominated kernel, CasADi's scalar expansion
-evaluates the race-car oracle about three times faster than alloy's generated C.
+This supports a narrow claim: Alloy makes loop preservation a local construct and carries it through
+second-order sparse differentiation. It does not show that CasADi cannot express loops or that Alloy
+wins every kernel. The [benchmark results](../results/index.md) contain the current numbers, and the
+[fairness audit](../results/fairness.md) states their limits.
 
-[Are the comparisons fair?](../results/fairness.md) is the accounting behind all of those numbers,
-including what the suite got wrong about them for a while.
 
 *Pure Python.* CasADi is a C++ library with Python bindings. Alloy is Python with NumPy for
 array values and SciPy as an internal structural-sparsity dependency. The entire compiler — both dialects, automatic differentiation (AD),

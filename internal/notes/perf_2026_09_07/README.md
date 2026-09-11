@@ -608,10 +608,10 @@ The benchmark continued beyond the agent's last message. Session cleanup is a po
 its later termination, not an established diagnosis. No study restart was made. Ted requested
 that the session close with the partial results recorded and committed.
 
-The [results overview](../../../docs/results/index.md#partial-track-c-closeout-2026-09-09-to-2026-09-10)
-records the 671 saved rows and 30 episodes, timing comparisons, and caveats. The
-[scalability tables](../../../docs/results/scalability.md#partial-track-c-closeout-2026-09-09-to-2026-09-10)
-retain the completed grids, partial chain counts, and artifact locations. BH-20 stays open.
+The interrupted artifacts remain in their original study directory. The current
+[results overview](../../../docs/results/index.md) and
+[scalability tables](../../../docs/results/scalability.md) report only the completed replacement
+study. BH-20 closed when that study finished.
 
 All pre-run source-file checksums matched before the write-up. The source archive SHA-256 is
 `2c3c5ed9bc15355b69a2aca4c7fb8142357ea02597cd733d6023bb59bf4a303d`.

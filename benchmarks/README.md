@@ -131,7 +131,7 @@ Each `(workload, size, backend)` cell retains its generated C/header, raw float6
 Synthetic unbumpercars kernel inputs use seeded states inside the arena without rejecting
 collisions. Large car counts therefore remain measurable even when collision-free closed-loop
 placement cannot fit them. The closed-loop runner still requires collision-free initial states.
-Kernel timings from this policy and the earlier collision-free pilot are recorded separately.
+The provenance records this input policy for every affected cell.
 
 The stage-based workloads default to Alloy and four CasADi encodings of the repeated dynamics
 stage: unrolled `SX`, unrolled `MX`, repeated calls to an elemental `MX` `Function`, and a serial map
@@ -176,12 +176,8 @@ benchmarks/results/
   smoke/solver_call/                 # generated solver-call smoke artifacts
 ```
 
-**Only harness numbers count.** Timing a backend from Python measures Python. A
-pre-sweep probe on the neural-process-MPC kernel called both backends through their
-Python bindings and reported roughly 4x against CasADi SX and 2x against MX; under
-the Google Benchmark harness the SX figure held and almost all of the MX margin
-turned out to be call overhead, leaving a tie. Treat a Python-level reading as a
-smoke test for whether a cell builds, never as a result.
+**Only harness numbers count.** Timing a backend from Python includes dispatch overhead.
+Treat a Python-level reading as a smoke test for whether a cell builds, never as a result.
 
 The doctrine is claims-first: broad sweeps establish scaling and canonical points support comparisons; correctness gates always run before speed is measured; every result carries enough provenance to reproduce it. See [internal/paper.md](../internal/paper.md) for the governing claim matrix.
 
@@ -192,14 +188,14 @@ The split runs both ways: a check that is about *a problem* rather than about Al
 ## Studies: every headline run in one directory
 
 ```bash
-uv run benchmarks/run.py study --out-dir benchmarks/results/followup/2026-09-07
-uv run benchmarks/run.py study --out-dir benchmarks/results/followup/2026-09-07 --only sweep --problems race_cars,unbumpercars
-uv run benchmarks/run.py study --out-dir benchmarks/results/followup/2026-09-07 --only closed-loop --no-headline --repetitions 1
-uv run benchmarks/run.py report benchmarks/results/followup/2026-09-07
+uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name>
+uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name> --only sweep --problems race_cars,unbumpercars
+uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name> --only closed-loop --no-headline --repetitions 1
+uv run benchmarks/run.py report benchmarks/results/<study-name>
 ```
 
 `study` runs the frozen headline grids in `harness/study.py`: the exact-Hessian sweep of every
-problem over its published sizes, and the canonical SQP closed loop with both oracle providers,
+problem over its published sizes, and each supported canonical IPOPT and SQP closed loop,
 each as its own `run.py` invocation with five fresh processes, seed 0, and the headline CPU checks
 with boost off unless told otherwise. It writes `sweep/<problem>/<problem>.csv` and
 `closed-loop/<problem>/` under the output directory, refuses a directory that already has content,
@@ -283,10 +279,8 @@ unbumpercars controller is represented by `--solver none` and writes under
 All SQP columns use exact Lagrangian Hessians by default, assembled into PIQP's
 sparse interface from the oracle sparsity patterns and convexified by a modified
 sparse LDL^T over the same pattern, after constraint-normal `A.T @ A` damping
-where the problem has equalities. No column selects `alloy-sqp`'s `qp="dense"`
-option: sparse is faster at every canonical point (race N=40 2.0 ms against
-20.5, chain 5.2 against 15.2, unbumpercars 16.7 against 19.9), with identical
-trajectories.
+where the problem has equalities. Canonical runs use `alloy-sqp`'s sparse QP path. The dense
+path remains a diagnostic option rather than a published comparison.
 
 The canonical unbumpercars SQP column uses the default filter first, at the
 solver's default tolerances, and gives rare active-barrier solves up to 1000
@@ -404,7 +398,7 @@ faster correctness and code-size smoke gates.
 | chain of masses | number of masses | laopt/acados chain-mass formulation; `M=5` is the canonical point |
 | race cars | horizon | CasADi SX/MX; reference stages followed by symbolic vehicle parameters in `p` |
 | unbumpercars HCBF filter | number of cars | CasADi MX; neural weights followed by symbolic vehicle parameters and `dt` |
-| neural process MPC | horizon (`npmpc`) and decoder width (`npmpc_decoder`); append `_jac` for the long-paper Jacobian rows | the Furuta-pendulum controller of *Neural Process Model Predictive Control*; a conditional-neural-process decoder evaluated at every horizon node, weights and latent code in the parameter tail. Formulation, vendored data, departures from the reference implementation, closed-loop numbers and the decoder-width study are in [`problems/npmpc/README.md`](problems/npmpc/README.md) |
+| neural process MPC | horizon (`npmpc`) and decoder width (`npmpc_decoder`); append `_jac` for the long-paper Jacobian rows | the Furuta-pendulum controller of *Neural Process Model Predictive Control*; a conditional-neural-process decoder evaluated at every horizon node, weights and latent code in the parameter tail. Formulation, vendored data, and departures from the reference implementation are in [`problems/npmpc/README.md`](problems/npmpc/README.md) |
 
 ### Race-car track data
 
@@ -435,8 +429,7 @@ globalization time.
 `ca_npmpc_pieces` the sweep kernels use and reading its bounds from the same two
 functions as the Alloy formulation. The harness code-generates the complete
 `nlpsol` with `expand=False` and links it to the same IPOPT library as the
-Alloy column. The next canonical run replaces the interpreted-column timings and
-old build-cost figures. `problems/npmpc/README.md` carries the decoder-width study.
+Alloy column. The [current results](../docs/results/index.md) report the controlled comparison.
 
 `problems/race_cars/reference.py` fits a minimum-curvature closed cubic spline to
 the center line, samples it uniformly in arc length, and reads a constant-speed

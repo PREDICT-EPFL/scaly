@@ -193,14 +193,12 @@ removes all of it. `C=8`, 200 steps, seeds `{42, 1, 2, 3, 7}`, Alloy:
 | steps inside the 1.9 m collision radius | 9 / 1000, in 2 of 5 episodes | **0 / 1000, in 0 of 5** |
 | mean tracking cost | 32.29 | **4.07** |
 | mean IPOPT iterations | 19.3 | **14.1** |
-| mean solve, Alloy | 37.8 ms | **31.7 ms** |
 | solver failures | 0 | 0 |
 
-Safer, 8x cheaper to track, *and* faster despite a network with 7.3x the weights — because the
-discrete model is already a one-step map, so the oracle evaluates it once where the RK4 path
-evaluates its smaller network four times, and the better-conditioned problem needs a third fewer
-iterations. This is the same 2.27 m and tracking ~4 the filter achieved back when its model *was*
-the plant, so the mismatch penalty is simply gone rather than traded away.
+The matched model removes the sampled collisions, lowers tracking cost, and needs fewer IPOPT
+iterations. The discrete model is a one-step map, while the RK4 path evaluates its smaller network
+four times. This is the same 2.27 m and tracking cost near 4 that the filter achieved when its model
+matched the plant.
 
 **The chaos goes with it.** The sensitivity documented below is a symptom of the mismatch, not a
 property of the plant: with the matched model a 1e-9 perturbation amplifies 1.015x per step
@@ -224,11 +222,6 @@ wants C², and the `vf` deadzone is dropped because it is a jump discontinuity t
 in these episodes. The one place they genuinely disagree is `vf` near zero under hard braking,
 where the network extrapolates negative and the plant clamps to a standstill; no state in any
 measured episode reached it.
-
-**Alloy's margin widens.** Same NLP, same IPOPT, seed 42, 200 steps, `--filter-model dt`:
-32.4 ms per solve for Alloy against **292.1 ms** for CasADi, a **9.0x** gap where the
-continuous-time model gave 3.8x. The bigger network is where the oracle provider starts to
-matter: FE is 41 ms of Alloy's solve and 374 ms of CasADi's.
 
 ## The discrete-time MLP plant
 
@@ -433,15 +426,11 @@ measurements behind each one are the reason the change was scoped the way it was
    predicts with `tau * 3`. Moving the filter over *removes* that mismatch rather than adding
    one. It accounts for nearly all the raw `beta_f`/`delta` disagreement between the two
    models (74% of the CT model's own step change once matched, 234% when not).
-4. **Oracle cost — a 2x forward graph, not 7x, and in the event it came out faster.** The DT
-   network is `6 -> 256 -> 128 -> 3`, 35,075 weights against the CT model's 4,803. But it is
-   already a one-step map, so the oracle evaluates it **once** where the CT path evaluates its
-   small network four times for RK4: 34,688 versus 18,688 multiply-accumulates per car per step,
-   a factor 1.86. The prediction of "roughly 2x slower" was wrong in the right direction —
-   Alloy's mean solve *fell* from 37.8 to 31.7 ms, because the better-conditioned problem needs
-   a third fewer IPOPT iterations, which more than pays for the heavier oracle. The cost shows up
-   in build time instead (5.1 s to 10.9 s) and, far more sharply, in CasADi (72.6 ms to 292.1 ms
-   per solve) — the scalability question this problem exists to surface, answered.
+4. **Oracle cost.** The DT network is `6 -> 256 -> 128 -> 3`, with 35,075 weights against
+   the CT model's 4,803. The oracle evaluates the one-step DT model once, while the CT path
+   evaluates its smaller network four times for RK4. That is 34,688 versus 18,688
+   multiply-accumulates per car per step. The [current results](../../../docs/results/index.md)
+   own the measured solver and function-evaluation costs.
 
 ### The envelope refit: the constant does double duty
 
@@ -694,88 +683,13 @@ Instrumentation recorded per step (from the `alloy_solver_stats` struct):
 - Alloy build/JIT-compile timings,
 - sparse Jacobian nnz and lower-triangular Hessian nnz.
 
-## Interpreting the IPOPT Alloy-vs-CasADi timings
+## Benchmark results
 
-Both implementations use the same IPOPT library and warm-start primal variables plus constraint
-and box multipliers. Alloy runs entirely through the generated C solver wrapper:
-IPOPT callbacks call generated kernels in the same `.so`, with no Python or
-ctypes callback in the solve loop. Its stable stats ABI separates FE, native
-solver, and wrapper/glue time and records evaluation counts. CasADi reports its
-own solver and callback counters, so the categories are close but not guaranteed
-to have identical accounting boundaries.
-
-The default comparison uses exact Lagrangian Hessians on both sides;
-`--limited-memory-hessian` selects IPOPT's approximation instead. Both paths receive the same
-symbolic model constants and `dt`. The CasADi path retains MX with `expand=False`.
-Strict comparisons should retain raw IPOPT
-status in addition to the benchmark's strict solver-success and feasibility
-rule.
-
-## HCBF migration results (2026-08-11)
-
-> These performance measurements predate the 2026-08-12 velocity-wall correction above.
-> They describe the same pair HCBF and model, but the older, cheaper position wall graph;
-> regenerate the scalability sweep before quoting them for the current formulation.
-
-Position DTCBF → HCBF at `C=4`, 80 steps, seed 42, IPOPT with Alloy oracles — the operating point
-before the canonical one grew, so the two columns are directly comparable:
-
-| | position DTCBF | HCBF |
-|---|---|---|
-| min pair distance | 1.552 m | 2.280 m |
-| steps inside the 1.9 m collision radius | 40 / 81 | 0 / 81 |
-| average tracking cost | 14.72 | 1.68 |
-| average IPOPT time | 18.7 ms | 7.5 ms |
-| solver failures | 0 | 0 |
-
-Across `C ∈ {4, 8}` × seeds `{42, 1, 2, 3, 7}`: no collisions, no solver failures,
-minimum pair distance 2.279–2.280 m in every episode, largest slack anywhere 0.18.
-
-### Alloy vs CasADi
-
-Same NLP, same IPOPT, same options — only the oracle provider differs.
-[`docs/results/scalability.md`](../../../docs/results/scalability.md#discrete-time-hcbf-safety-filter-unbumpercars)
-carries the current numbers across `C ∈ {2, 4, 8}` and both filter models, and is the place to
-update: **the short version is 2.8–3.9x on the continuous-time model and 4.5–9.0x on the
-discrete MLP**, the advantage growing with both car count and network size, with identical IPOPT
-iteration counts in every cell.
-
-What follows is the original per-solve breakdown at the canonical point (`C=8`, 200 steps) in
-both Hessian modes, kept for the Hessian-mode comparison the scalability doc does not repeat.
-**Measured with the CT plant** (`--plant ct`) and the CT filter model, where both oracle providers walk a
-bit-identical state sequence:
-
-| | | total | p95 | IPOPT iters | FE | native solver | glue |
-|---|---|---|---|---|---|---|---|
-| exact Hessian (default) | alloy | 19.27 ms | 25.87 ms | 9.5 | 17.72 ms | 1.33 ms | 0.21 ms |
-| | casadi | 72.60 ms | 97.21 ms | 9.5 | — | — | — |
-| `--limited-memory-hessian` | alloy | 17.60 ms | 22.08 ms | 19.2 | 11.08 ms | 6.32 ms | 0.20 ms |
-| | casadi | 56.07 ms | 69.94 ms | 19.3 | — | — | — |
-
-Alloy is **3.8x faster with exact Hessians, 3.2x with limited-memory**, and the matching
-iteration counts say IPOPT walks the same path in both columns — so the gap is oracle
-evaluation and call overhead, not a different solve.
-
-The `—` cells are what the table was written with; CasADi's FE share is now measured rather
-than estimated. `nlpsol` accumulates per-callback wall time in `stats()` under
-`t_wall_nlp_*`, and the filter reports their sum as `eval_ms["fe_total"]`, the same quantity
-Alloy's `stats.t_fe` carries — so `stats.csv` and the Foxglove `fe_time_ms` channel are now
-populated for both oracle providers. On a spot check (`C=4`, 30 steps, exact Hessian, DT plant) FE is
-**90% of CasADi's solve wall time**. The per-function columns beside it are still single
-re-evaluations at the solution, so they do not sum to `fe_total`; at `C=8` exact they were
-`f` 0.199, `g` 0.448, `grad_f` 0.185, `jac_g` 0.813 and `hess_lag` **3.711** ms — the Hessian
-alone is most of the difference.
-
-Exact Hessians halve the iteration count (19.2 → 9.5) and nearly eliminate IPOPT's own
-time (6.32 → 1.33 ms for Alloy), at the cost of evaluating `sphess:gamma:z:z` every
-iteration (FE 11.08 → 17.72 ms). Net wall clock is a wash for Alloy and clearly worse for
-CasADi. They are the default anyway, because the sparse-Hessian-through-`ExprOp.VMAP` path is
-what this problem exists to exercise.
-
-With exact Hessians the two oracle providers stay bit-for-bit together over the whole episode
-(average tracking cost 4.254 both, minimum distance 2.274 m both). Under limited-memory
-they drift slightly apart by the end (3.99 vs 3.91) — the closed loop amplifies last-bit
-differences in the iterate over 20 s. Neither has a collision or a solver failure.
+Both IPOPT providers use the same library, nonlinear program, options, warm starts, and compiled C
+boundary. The SQP providers likewise share one solver implementation and differ only in their
+generated oracles. This README does not retain copied timing tables. See the
+[current closed-loop results](../../../docs/results/index.md) and the
+[current Hessian sweep](../../../docs/results/scalability.md).
 
 ## Alloy features closed by this prototype
 

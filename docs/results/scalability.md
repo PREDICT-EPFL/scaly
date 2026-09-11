@@ -1,1328 +1,207 @@
 # Alloy scalability sweep
 
-The per-cell measurements behind [the results overview](index.md), which is the page to read first
-if you want the summary rather than the tables.
+These are all exact sparse Lagrangian Hessian cells from the study that started on 2026-09-10 and
+finished on 2026-09-11. The [results overview](index.md) summarizes the canonical points, and the
+[fairness audit](fairness.md) defines the comparison.
 
-The latest Track C closeout was interrupted; its partial results appear first. The earlier complete
-2026-09-09 study remains the interim compiler checkpoint. The 2026-09-05 and 2026-09-06
-measurements retain their original scope and limitations. Do not combine timings from different
-sections into one table.
+Each cell compiles one generated C kernel into a separate Google Benchmark binary. Before timing,
+the binary scatters the compact Hessian into a dense matrix and compares it with an independent
+reference. A failed check produces no timing.
 
-Runs `benchmarks/run.py sweep` over a fixed cell grid for each workload, capturing per-cell codegen / compile / runtime / source-size metrics. Each cell compiles its selected backend into a separate Google Benchmark binary. The binary scatters the compact result into a dense matrix and compares it with an independent reference before it records a timing.
+Each timing aggregates five fresh processes. Mean is the mean of their Google Benchmark timings,
+and CV is the sample coefficient of variation. Executable bytes exclude static metadata. Workspace
+counts caller-owned doubles. Kernel compile time includes compilation of the generated kernel, but
+not the benchmark wrapper or linker.
 
-The unsuffixed workloads measure the exact sparse Lagrangian Hessian from the solver descriptor.
-The `_jac` workloads retain the constraint Jacobian rows for the long paper and do not run by default.
+The harness applies a 180-second compile limit and a 50 MiB generated-source limit. After a backend
+fails at one size, the harness skips larger sizes for that backend because source size and compile
+cost increase with the problem axis. The backend names are:
 
-Skip rules applied automatically:
+- `alloy`: Alloy's sparse generated C.
+- `casadi_sx`: an unrolled CasADi SX graph.
+- `casadi_mx`: a CasADi MX graph.
+- `casadi_call_mx`: MX with first-class calls.
+- `casadi_map_sx`: serial `Function.map` over SX.
+- `casadi_mx_gemm*`: MX matrix products with the default, classic, or BLASFEO lowering.
 
-- per-cell compile timeout (default 180 s);
-- max generated source size (default 50 MiB) — skip without compiling;
-- after a backend hits any of the above at one size, larger sizes for that backend are skipped immediately, because both generated source size and compile cost are monotonically increasing in the iteration count.
+## Hanging chain of masses (`chain`)
 
-CSV with the raw cell data: `benchmarks/results/sweep/scalability.csv`. Each cell's generated code, samples, binary, and logs live beside it under `benchmarks/results/sweep/repeat_<n>/<workload>/<backend>_<axis><size>/`.
-
-`coloring_width` is an Alloy-owned construction metric, not a cross-backend comparison. It counts
-the compressed tangent directions that Alloy executes. Structured Jacobian rows add the independently
-executed per-formal or local batches, while Hessian rows use the global star-color count. CasADi
-leaves the field blank because its generated code exposes no internal derivative count.
-
-The current race-car formulation maps the stage dynamics and cost. Unbumpercars maps car
-dynamics and pair constraints, while its per-car wall rows remain unrolled. Earlier unbumpercars
-measurements below predate the pair-constraint port.
-
-## Partial Track C closeout, 2026-09-09 to 2026-09-10
-
-!!! warning "Interrupted study, partial results only"
-
-    The run started on 2026-09-09 and stopped during chain repetition 4. It saved 671 of the
-    planned 690 sweep rows and 30 of 40 closed-loop episodes. The last log update was
-    2026-09-10 at 00:45 Zurich time. The process was absent when checked that morning.
-    The cause is unconfirmed. No final study manifest or automatic report was produced.
-    These tables summarize saved results after the interruption. They do not establish a
-    complete study or ratify the paper's suite-wide claims.
-
-These tables use the existing `sweep_table` renderer on the three completed workload CSVs and
-their process summaries. Successful-process fractions refer to recorded attempts. No incomplete
-chain cell is treated as having five processes. The [results overview](index.md#partial-track-c-closeout-2026-09-09-to-2026-09-10)
-contains the timing interpretation and completed closed-loop comparisons.
-
-### Race-car
+75 rows: 50 ok, 22 skipped_after_failure, 3 timeout.
 
 | Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 1 | `alloy` | 5/5 | 0.569 | 1.70 | 28301 | 0 | 234.8 |
-| 1 | `casadi_sx` | 5/5 | 0.412 | 0.09 | 25755 | 108 | 177.2 |
-| 1 | `casadi_mx` | 5/5 | 0.509 | 0.51 | 95400 | 304 | 387.7 |
-| 1 | `casadi_call_mx` | 5/5 | 0.923 | 0.29 | 228004 | 1067 | 775.7 |
-| 1 | `casadi_map_sx` | 5/5 | 0.767 | 0.26 | 94438 | 826 | 393.8 |
-| 5 | `alloy` | 5/5 | 2.662 | 0.66 | 23958 | 0 | 232.1 |
-| 5 | `casadi_sx` | 5/5 | 1.997 | 0.49 | 107717 | 119 | 337.5 |
-| 5 | `casadi_mx` | 5/5 | 2.669 | 0.64 | 441760 | 1085 | 1727.6 |
-| 5 | `casadi_call_mx` | 5/5 | 4.953 | 1.32 | 248703 | 2244 | 1816.2 |
-| 5 | `casadi_map_sx` | 5/5 | 5.338 | 0.30 | 120288 | 5914 | 1954.2 |
-| 10 | `alloy` | 5/5 | 4.904 | 0.47 | 23980 | 0 | 241.2 |
-| 10 | `casadi_sx` | 5/5 | 3.954 | 0.49 | 209958 | 119 | 569.7 |
-| 10 | `casadi_mx` | 5/5 | 5.509 | 1.10 | 879492 | 2065 | 4271.0 |
-| 10 | `casadi_call_mx` | 5/5 | 9.649 | 0.84 | 269955 | 3494 | 2516.7 |
-| 10 | `casadi_map_sx` | 5/5 | 10.322 | 0.26 | 142699 | 11334 | 1932.4 |
-| 25 | `alloy` | 5/5 | 12.426 | 0.62 | 24044 | 2400 | 294.6 |
-| 25 | `casadi_sx` | 5/5 | 9.892 | 0.70 | 516870 | 119 | 1310.0 |
-| 25 | `casadi_mx` | 5/5 | 14.035 | 1.05 | 2360004 | 5020 | 23460.1 |
-| 25 | `casadi_call_mx` | 5/5 | 24.238 | 1.10 | 334019 | 7484 | 2022.5 |
-| 25 | `casadi_map_sx` | 5/5 | 25.814 | 1.61 | 206150 | 27594 | 1168.7 |
-| 40 | `alloy` | 5/5 | 19.834 | 0.83 | 24044 | 3840 | 265.3 |
-| 40 | `casadi_sx` | 5/5 | 15.906 | 0.61 | 823845 | 119 | 2075.7 |
-| 40 | `casadi_mx` | 5/5 | 22.611 | 0.50 | 3799659 | 7975 | 60923.8 |
-| 40 | `casadi_call_mx` | 5/5 | 39.231 | 1.14 | 398502 | 11414 | 2566.1 |
-| 40 | `casadi_map_sx` | 5/5 | 41.646 | 1.06 | 273406 | 43854 | 1278.4 |
-| 50 | `alloy` | 5/5 | 23.473 | 0.37 | 24071 | 8472 | 270.8 |
-| 50 | `casadi_sx` | 5/5 | 19.993 | 0.63 | 1028495 | 119 | 2610.5 |
-| 50 | `casadi_mx` | 5/5 | 28.166 | 0.30 | 4762326 | 9945 | 99671.6 |
-| 50 | `casadi_call_mx` | 5/5 | 48.610 | 0.63 | 441709 | 14034 | 7487.0 |
-| 50 | `casadi_map_sx` | 5/5 | 51.940 | 0.46 | 318176 | 54694 | 5460.2 |
-| 100 | `alloy` | 5/5 | 47.126 | 0.29 | 24096 | 16872 | 359.9 |
-| 100 | `casadi_sx` | 5/5 | 40.515 | 0.55 | 2052051 | 119 | 5893.5 |
-| 100 | `casadi_mx` | 0/5 | timeout |  | 9614050 | 19795 |  |
-| 100 | `casadi_call_mx` | 5/5 | 99.165 | 4.94 | 679651 | 27134 | 7568.3 |
-| 100 | `casadi_map_sx` | 5/5 | 105.407 | 0.70 | 543857 | 108894 | 3358.2 |
-| 200 | `alloy` | 5/5 | 90.090 | 0.37 | 24132 | 36084 | 294.6 |
-| 200 | `casadi_sx` | 5/5 | 83.167 | 1.06 | 4100194 | 119 | 14239.9 |
-| 200 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 200 | `casadi_call_mx` | 5/5 | 195.614 | 0.49 | 1143240 | 53874 | 19700.1 |
-| 200 | `casadi_map_sx` | 5/5 | 213.161 | 0.73 | 1030885 | 217294 | 6748.9 |
-| 500 | `alloy` | 5/5 | 228.815 | 0.77 | 24142 | 90084 | 340.0 |
-| 500 | `casadi_sx` | 5/5 | 216.058 | 4.59 | 10246853 | 119 | 49169.5 |
-| 500 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 500 | `casadi_call_mx` | 5/5 | 501.765 | 0.10 | 2552822 | 134274 | 119770.8 |
-| 500 | `casadi_map_sx` | 5/5 | 545.677 | 0.72 | 2535806 | 542494 | 31971.8 |
-
-### Neural-process MPC
-
-| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
-|---:|---|---:|---:|---:|---:|---:|---:|
-| 6 | `alloy` | 5/5 | 18.257 | 1.06 | 31844 | 0 | 618.7 |
-| 6 | `casadi_sx` | 5/5 | 72.185 | 0.61 | 7564935 | 15913 | 104605.1 |
-| 6 | `casadi_mx` | 5/5 | 20.616 | 1.40 | 151448 | 7570 | 5166.2 |
-| 6 | `casadi_call_mx` | 5/5 | 147.864 | 0.58 | 232343 | 46861 | 6783.4 |
-| 6 | `casadi_map_sx` | 5/5 | 199.500 | 0.66 | 4261664 | 341213 | 136042.5 |
-| 6 | `casadi_mx_gemm` | 5/5 | 45.587 | 0.48 | 109496 | 8660 | 2470.5 |
-| 6 | `casadi_mx_gemm_classic` | 5/5 | 46.012 | 1.31 | 109504 | 8660 | 2437.6 |
-| 6 | `casadi_mx_gemm_blasfeo` | 5/5 | 45.512 | 0.67 | 109504 | 8660 | 2465.3 |
-| 12 | `alloy` | 5/5 | 34.725 | 0.30 | 31877 | 0 | 598.8 |
-| 12 | `casadi_sx` | 0/5 | timeout |  | 15063206 | 30463 |  |
-| 12 | `casadi_mx` | 5/5 | 43.160 | 0.59 | 276488 | 9813 | 12825.5 |
-| 12 | `casadi_call_mx` | 5/5 | 297.612 | 0.23 | 371542 | 68072 | 10535.9 |
-| 12 | `casadi_map_sx` | 1/5 | 459.063 |  | 5788748 | 774841 | 178215.0 |
-| 12 | `casadi_mx_gemm` | 5/5 | 103.777 | 0.76 | 189660 | 13031 | 5202.2 |
-| 12 | `casadi_mx_gemm_classic` | 5/5 | 104.060 | 0.66 | 189668 | 13031 | 5239.6 |
-| 12 | `casadi_mx_gemm_blasfeo` | 5/5 | 103.896 | 0.83 | 189668 | 13031 | 5211.5 |
-| 25 | `alloy` | 5/5 | 72.070 | 0.57 | 31861 | 2700 | 609.5 |
-| 25 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 25 | `casadi_mx` | 5/5 | 96.947 | 7.76 | 545609 | 15595 | 41617.2 |
-| 25 | `casadi_call_mx` | 5/5 | 623.903 | 1.19 | 424096 | 89139 | 11502.0 |
-| 25 | `casadi_map_sx` | 0/5 | skipped_after_failure; timeout |  | 7858327 | 1603408 |  |
-| 25 | `casadi_mx_gemm` | 5/5 | 217.465 | 0.83 | 343012 | 22648 | 8299.7 |
-| 25 | `casadi_mx_gemm_classic` | 5/5 | 221.491 | 1.22 | 343020 | 22648 | 8303.7 |
-| 25 | `casadi_mx_gemm_blasfeo` | 5/5 | 218.598 | 1.17 | 343020 | 22648 | 8317.3 |
-| 50 | `alloy` | 5/5 | 148.725 | 0.33 | 31973 | 9870 | 646.0 |
-| 50 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 50 | `casadi_mx` | 5/5 | 185.551 | 0.86 | 1063583 | 25782 | 166170.2 |
-| 50 | `casadi_call_mx` | 5/5 | 1261.508 | 0.96 | 520231 | 130185 | 13674.4 |
-| 50 | `casadi_map_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 50 | `casadi_mx_gemm` | 5/5 | 446.226 | 0.91 | 638917 | 41169 | 25708.6 |
-| 50 | `casadi_mx_gemm_classic` | 5/5 | 444.821 | 1.21 | 638925 | 41169 | 26027.6 |
-| 50 | `casadi_mx_gemm_blasfeo` | 5/5 | 442.915 | 0.36 | 638925 | 41169 | 25867.8 |
-| 100 | `alloy` | 5/5 | 297.762 | 1.27 | 32007 | 19670 | 664.1 |
-| 100 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 100 | `casadi_mx` | 0/5 | timeout |  | 2191474 | 46937 |  |
-| 100 | `casadi_call_mx` | 5/5 | 2498.140 | 0.74 | 712196 | 210580 | 21345.4 |
-| 100 | `casadi_map_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 100 | `casadi_mx_gemm` | 5/5 | 910.287 | 1.35 | 1232183 | 77961 | 93500.2 |
-| 100 | `casadi_mx_gemm_classic` | 5/5 | 905.256 | 0.90 | 1232191 | 77961 | 92956.4 |
-| 100 | `casadi_mx_gemm_blasfeo` | 5/5 | 908.569 | 1.09 | 1232191 | 77961 | 93083.5 |
-| 200 | `alloy` | 5/5 | 592.402 | 0.94 | 32051 | 44670 | 729.9 |
-| 200 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 200 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 200 | `casadi_call_mx` | 5/5 | 4964.348 | 0.10 | 1127544 | 371260 | 52136.5 |
-| 200 | `casadi_map_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 200 | `casadi_mx_gemm` | 0/5 | timeout |  | 2524675 | 151836 |  |
-| 200 | `casadi_mx_gemm_classic` | 0/5 | timeout |  | 2524683 | 151836 |  |
-| 200 | `casadi_mx_gemm_blasfeo` | 0/5 | timeout |  | 2524683 | 151836 |  |
-
-### Unbumpercars
-
-| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
-|---:|---|---:|---:|---:|---:|---:|---:|
-| 2 | `alloy` | 5/5 | 207.162 | 0.63 | 103391 | 0 | 852.1 |
-| 2 | `casadi_sx` | 0/5 | timeout |  | 26778898 | 37182 |  |
-| 2 | `casadi_mx` | 5/5 | 956.333 | 1.03 | 110035 | 110087 | 2292.6 |
-| 2 | `casadi_mx_gemm` | 5/5 | 1071.053 | 1.42 | 124566 | 112315 | 2290.1 |
-| 2 | `casadi_mx_gemm_classic` | 5/5 | 1074.012 | 1.25 | 124574 | 112315 | 2260.8 |
-| 2 | `casadi_mx_gemm_blasfeo` | 5/5 | 1080.319 | 1.91 | 124574 | 112315 | 2265.6 |
-| 4 | `alloy` | 5/5 | 416.187 | 0.94 | 137653 | 0 | 1162.7 |
-| 4 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 4 | `casadi_mx` | 5/5 | 3030.679 | 0.64 | 361999 | 112213 | 7419.3 |
-| 4 | `casadi_mx_gemm` | 5/5 | 3759.182 | 0.57 | 629111 | 120257 | 5031.5 |
-| 4 | `casadi_mx_gemm_classic` | 5/5 | 3755.696 | 0.79 | 629119 | 120257 | 5034.1 |
-| 4 | `casadi_mx_gemm_blasfeo` | 5/5 | 3779.019 | 0.66 | 629119 | 120257 | 5034.4 |
-| 8 | `alloy` | 5/5 | 876.016 | 1.34 | 202716 | 20384 | 4535.7 |
-| 8 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 8 | `casadi_mx` | 5/5 | 10761.821 | 1.16 | 1327412 | 116049 | 52486.6 |
-| 8 | `casadi_mx_gemm` | 5/5 | 14046.692 | 0.63 | 4569620 | 136111 | 34768.6 |
-| 8 | `casadi_mx_gemm_classic` | 5/5 | 14162.585 | 0.83 | 4569628 | 136111 | 34703.1 |
-| 8 | `casadi_mx_gemm_blasfeo` | 5/5 | 14167.477 | 0.77 | 4569628 | 136111 | 34551.2 |
-| 16 | `alloy` | 5/5 | 2086.643 | 0.38 | 338066 | 176848 | 19534.8 |
-| 16 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 16 | `casadi_mx` | 0/5 | timeout |  | 5399074 | 125987 |  |
-| 16 | `casadi_mx_gemm` | 0/5 | timeout |  | 35514289 | 171611 |  |
-| 16 | `casadi_mx_gemm_classic` | 0/5 | timeout |  | 35514297 | 171611 |  |
-| 16 | `casadi_mx_gemm_blasfeo` | 0/5 | timeout |  | 35514297 | 171611 |  |
-| 32 | `alloy` | 5/5 | 6985.492 | 0.52 | 623257 | 1285536 | 18462.7 |
-| 32 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 32 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 32 | `casadi_mx_gemm` | 0/5 | skipped_after_failure |  |  |  |  |
-| 32 | `casadi_mx_gemm_classic` | 0/5 | skipped_after_failure |  |  |  |  |
-| 32 | `casadi_mx_gemm_blasfeo` | 0/5 | skipped_after_failure |  |  |  |  |
-
-### Interrupted chain sweep
-
-| Repetition | Saved / planned rows | Successful timings | Compile timeouts | Skips after timeout |
-|---:|---:|---:|---:|---:|
-| 1 | 15 / 15 | 10 | 3 | 2 |
-| 2 | 15 / 15 | 10 | 3 | 2 |
-| 3 | 15 / 15 | 10 | 3 | 2 |
-| 4 | 11 / 15 | 9 | 1 | 1 |
-| 5 | 0 / 15 | 0 | 0 | 0 |
-
-The last saved row is repetition 4, M=9, mapped SX. The log stops during called MX at the same
-size. That interrupted attempt has no CSV result. Four rows from repetition 4 and all 15 rows
-from repetition 5 are missing. There is no final chain process summary and no chain closed-loop
-run. The saved 56 rows remain available for diagnosis; this section does not pool their unequal
-process counts into a replacement headline table.
-
-### Saved artifacts
-
-The raw directory is `benchmarks/results/followup/2026-09-09/track-c-closeout/`. The sibling
-`track-c-closeout.log` preserves stdout. `track-c-closeout-source/` holds the pre-run source
-archive, dirty patch, file lists, lockfile hash, and SHA-256 manifests. These local benchmark
-artifacts are gitignored. The post-interruption `partial-report.md` summarizes only saved data;
-it does not replace the absent final `study.json` or claim a successful runner exit.
-
-## Interim Track C compiler snapshot, 2026-09-09
-
-!!! warning "Track C is still in progress"
-
-    This is a checkpoint after layout-aware matrix products, bounded scalarization, baked seed
-    tiles, and shared arithmetic rewrites. It is not the final Track C result. The range-based loop
-    compiler in C-8 and its affine-index work remain open, along with loop-invariant hoisting and
-    accumulation-buffer fusion.
-
-The branch ran the complete frozen study under `performance`, boost off, seed 0, five fresh
-processes per cell, and a 0.5-second minimum timing window. A clean `dev` worktree then ran every
-matching Alloy cell with the same machine controls. The branch study also rebuilt every CasADi
-encoding. The direct branch-to-`dev` comparison includes the branch's
-`-march=native -fno-math-errno` code-generation policy, so it measures the configured compilers
-rather than holding compile flags fixed.
-
-Artifacts are local and gitignored under
-`benchmarks/results/followup/2026-09-08/interim-track-c/`. The `branch/` directory contains the
-complete study, its manifest, report, raw rows, generated sources, binaries, samples, and logs.
-The `dev/` directory contains the matching Alloy-only rows and episodes. The directory date is the
-start date; the run completed on 2026-09-09 in Europe/Zurich. Branch provenance reports a dirty
-worktree because the temporary task plan was untracked. No tracked file changed during measurement.
-The `dev` provenance reports a clean worktree.
-
-The complete branch study has 690 rows: 504 successful timings, 76 compile timeouts, 105 skips
-after a smaller-size failure, and five source-cap skips. The direct `dev` run has 115 rows: 110
-successful timings and five source-cap skips. No correctness check failed. Every Alloy cell that
-produced a timing completed in all five processes. Branch runtime CV ranges from 0.22% to 1.43%
-for Alloy.
-
-### Race-car Hessian
-
-| N | Branch Alloy, µs | `dev` Alloy, µs | Change | SX, µs | Branch / SX |
-|---:|---:|---:|---:|---:|---:|
-| 1 | 0.600 | 0.743 | -19.2% | 0.413 | 1.45× |
-| 5 | 2.701 | 3.401 | -20.6% | 1.985 | 1.36× |
-| 10 | 5.242 | 6.784 | -22.7% | 3.913 | 1.34× |
-| 25 | 12.966 | 16.614 | -22.0% | 9.883 | 1.31× |
-| 40 | 20.725 | 26.521 | -21.9% | 15.894 | 1.30× |
-| 50 | 24.023 | 32.583 | -26.3% | 19.851 | 1.21× |
-| 100 | 48.014 | 65.715 | -26.9% | 40.680 | 1.18× |
-| 200 | 96.242 | 130.341 | -26.2% | 83.967 | 1.15× |
-| 500 | 243.773 | 329.688 | -26.1% | 212.714 | 1.15× |
-
-SX remains fastest at every horizon. Alloy now comes within the 20% target at N=100, 200, and
-500, but not across the full grid. A focused N=50 flag control moved the old kernel from 33.4 µs
-at `-O3` to 26.5 µs with the native target. The remaining movement to 24.0 µs is consistent with
-baked seed tiles and arithmetic simplification. Native flags
-explain most of the direct branch-to-`dev` gain.
-
-### Neural-process MPC Hessian
-
-| N | Branch Alloy, µs | `dev` Alloy, µs | Change | Best completed CasADi | CasADi, µs | Current result |
-|---:|---:|---:|---:|---|---:|---:|
-| 6 | 23.961 | 42.076 | -43.1% | MX | 20.599 | 1.16× slower |
-| 12 | 46.586 | 83.626 | -44.3% | MX | 43.759 | 1.06× slower |
-| 25 | 97.055 | 173.812 | -44.2% | MX | 93.967 | 1.03× slower |
-| 50 | 192.291 | 345.131 | -44.3% | MX | 189.212 | 1.02× slower |
-| 100 | 388.077 | 693.306 | -44.0% | MX GEMM classic | 904.231 | 2.33× faster |
-| 200 | 774.717 | 1395.931 | -44.5% | called MX | 4988.224 | 6.44× faster |
-
-The N=50 MX mean uses four successful processes; its fifth build exceeded 180 seconds. Plain MX
-has no successful build at N=100 or N=200. The three GEMM forms compile through N=100 and time out
-at N=200. Layout-aware matrix-product lowering explains the nearly constant 43–45% Alloy gain:
-a focused N=12 compiler experiment moved 83.2 µs to 45.7 µs before the full study. Native flags did
-not create that result; they moved the optimized prototype slightly in the wrong direction.
-
-### Unbumpercars Hessian
-
-| C | Branch Alloy, µs | `dev` Alloy, µs | Change | Best completed CasADi | CasADi, µs | Current result |
-|---:|---:|---:|---:|---|---:|---:|
-| 2 | 232.258 | 849.029 | -72.6% | MX | 956.365 | 4.12× faster |
-| 4 | 472.386 | 1715.311 | -72.5% | MX | 3023.688 | 6.40× faster |
-| 8 | 976.155 | 3462.814 | -71.8% | MX | 10749.947 | 11.01× faster |
-| 16 | 2270.197 | 7316.158 | -69.0% | none |  | only Alloy timed |
-| 32 | source cap | source cap |  | none |  | no timing |
-
-The same matrix-product change drives this result. A focused C=8 experiment moved the old
-3.485 ms kernel to 0.827 ms before native flags; compiling that version for the host moved it to
-0.974 ms, almost exactly the 0.976 ms study result. At C=16, all CasADi variants time out or inherit
-a smaller-size failure. At C=32, both Alloy versions exceed the 50 MiB source cap. The branch C
-source is 54,845,309 bytes against 54,708,980 on `dev`, a 0.25% increase, so the failure class did
-not change.
-
-### Chain Hessian
-
-| M | Branch Alloy, µs | `dev` Alloy, µs | Change | Mapped SX, µs | Branch / mapped SX |
-|---:|---:|---:|---:|---:|---:|
-| 3 | 163.977 | 467.538 | -64.9% | 123.560 | 1.33× |
-| 5 | 828.436 | 2609.411 | -68.3% | 635.349 | 1.30× |
-| 9 | 4950.341 | 12408.323 | -60.1% | 2478.722 | 2.00× |
-
-The chain benchmark explicitly requests scalar lowering for its stage function. This is Alloy's
-best current formulation, not an automatic choice made by `dev`. Scalarization cuts runtime at all
-three sizes, and makes Alloy slightly faster than called MX at M=3 and effectively tied at M=5.
-Mapped SX remains faster throughout. The gap widens at M=9 as the coloring width and scalar body
-grow, which is one reason the loop compiler still matters.
-
-### Construction, source, workspace, and compilation
-
-Executable source excludes static metadata. Workspace counts caller-supplied doubles. Compilation
-is the generated kernel only.
-
-| Problem | Point | Branch C source | `dev` C source | Branch executable | `dev` executable | Branch metadata | `dev` metadata |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Race-car | N=50 | 90070 | 136009 | 23632 | 49689 | 90115 | 109997 |
-| Race-car | N=500 | 779728 | 999801 | 23702 | 49765 | 1015708 | 1209718 |
-| Neural-process MPC | N=12 | 66952 | 66254 | 36385 | 33853 | 37583 | 39420 |
-| Neural-process MPC | N=200 | 583943 | 583803 | 36553 | 34014 | 653397 | 655796 |
-| Unbumpercars | C=8 | 912560 | 903661 | 300799 | 278329 | 617761 | 631332 |
-| Unbumpercars | C=16 | 6360113 | 6307930 | 528589 | 456440 | 5848829 | 5868795 |
-| Unbumpercars | C=32 | 54845309 | 54708980 | 1015748 | 835338 | 53894782 | 53938863 |
-| Chain | M=3 | 296913 | 385218 | 123617 | 172350 | 275576 | 315148 |
-| Chain | M=5 | 1273458 | 1273796 | 462664 | 334535 | 1205031 | 1333498 |
-| Chain | M=9 | 4240074 | 3976856 | 1225140 | 550679 | 4185793 | 4597036 |
-
-| Problem | Point | Branch workspace | `dev` workspace | Branch codegen, ms | `dev` codegen, ms | Branch compile, ms | `dev` compile, ms |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Race-car | N=50 | 8472 | 8472 | 432.1 | 523.3 | 266.7 | 318.4 |
-| Race-car | N=500 | 90084 | 90084 | 481.8 | 609.2 | 421.4 | 519.3 |
-| Neural-process MPC | N=12 | 0 | 1024 | 1337.9 | 233.1 | 685.5 | 546.9 |
-| Neural-process MPC | N=200 | 74445 | 75469 | 1442.3 | 348.5 | 830.0 | 707.6 |
-| Unbumpercars | C=8 | 16896 | 51200 | 3622.3 | 3340.1 | 9078.5 | 3995.2 |
-| Unbumpercars | C=16 | 222400 | 256704 | 6103.2 | 5107.0 | 45328.4 | 14344.7 |
-| Unbumpercars | C=32 | 1721904 | 1756208 | 11889.1 | 10035.7 | source cap | source cap |
-| Chain | M=3 | 266616 | 266616 | 44793.4 | 45118.3 | 830.4 | 1616.9 |
-| Chain | M=5 | 1075248 | 1075248 | 48512.8 | 45399.9 | 4495.5 | 4951.6 |
-| Chain | M=9 | 3778740 | 3778740 | 62604.3 | 46532.8 | 19268.7 | 14954.4 |
-
-The branch removes the fixed 1,024-double neural-process workspace at N=6 and N=12, and removes
-34,304 doubles from unbumpercars at C=2 and C=4. Race-car source and executable source shrink at
-every size. Neural-process code generation rises from 0.23–0.35 seconds to 1.34–1.44 seconds,
-mostly in C rendering, and kernel compilation rises 17–25%. Unbumpercars compilation rises 2.27× at
-C=8 and 3.16× at C=16. Chain M=9 code generation rises 35%, executable source grows 2.22×, and
-compilation rises 29%. At chain M=3 and M=5, compilation instead falls 49% and 9%.
-
-C-8 must retain the better arithmetic schedule while reducing repeated loop bodies, deep scalar
-expressions, and materialized index data.
-
-### Reproduce the interim snapshot
-
-Run the complete branch study from the compiler branch:
-
-```bash
-uv run benchmarks/run.py study --out-dir benchmarks/results/followup/<date>/interim-track-c/branch
-```
-
-Run the four Alloy-only sweeps from a clean `dev` worktree. Use the sizes in the tables above and
-add `--backends alloy --repetitions 5 --order-seed 0 --benchmark-min-time 0.5s --headline --boost off`.
-For example:
-
-```bash
-uv run benchmarks/run.py sweep --workloads race_cars --sizes 1,5,10,25,40,50,100,200,500 --backends alloy --repetitions 5 --order-seed 0 --benchmark-min-time 0.5s --headline --boost off --out <comparison-dir>/sweep/race_cars/race_cars.csv
-```
-
-Run each `dev` closed loop with the same process count and machine controls:
-
-```bash
-uv run benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle alloy --repetitions 5 --order-seed 0 --headline --boost off --out-dir <comparison-dir>/closed-loop/race_cars
-```
-
-Repeat the last two commands for `npmpc`, `unbumpercars`, and `chain` with their table sizes. Run
-`uv run benchmarks/run.py report <study-dir>` to render a study directory again.
-
-## Initial frozen-protocol pilot, 2026-09-05
-
-The [reference machine and measurement protocol](fairness.md#the-reference-machine) define the
-comparison. The reference machine used `performance` on every CPU policy, boost disabled, and unrestricted
-affinity across CPUs 0 through 15. Each cell ran in five fresh processes, with backend order
-rotated from seed 0 and a minimum Google Benchmark duration of 0.5 seconds. Compilation and
-timing ran sequentially. The existing Quanser broker and development server remained running.
-
-These are exact sparse Lagrangian Hessian kernel measurements with synthetic inputs. No harvested
-closed-loop inputs were present. They do not measure closed-loop solve time. The compiler and
-benchmark implementation were unchanged during measurement. Provenance reports a dirty tree because of local documentation
-edits and untracked files, including the temporary task plan.
-
-Raw CSVs, summaries, provenance, generated source, samples, binaries, and compile logs are local,
-gitignored artifacts under `benchmarks/results/pilot/2026-09-05/`. This is an initial baseline,
-not the immutable publication archive. CasADi 3.8 transformation was enabled. The default limits
-were 300 seconds for code generation, 180 seconds for compilation, and 50 MiB of generated C source.
-
-The 245 recorded rows contain 210 successful timings, 20 compile-budget failures, and 15 skips
-after a smaller-size failure. No correctness check failed. Every timed combination has all five
-successful processes. The runtime coefficient of variation (CV) ranges from 0.07% to 2.17%.
-
-### Race-car Hessian
-
-Reproduce with:
-
-```bash
-uv run benchmarks/run.py sweep --workloads race_cars --sizes 10,40,100 --repetitions 5 --order-seed 0 --benchmark-min-time 0.5s --headline --boost off --out benchmarks/results/pilot/2026-09-05/race_cars/race.csv
-```
-
-All 70 completed timings passed the dense-reference correctness check. Unrolled MX at N=100
-hit the 180-second generated-kernel compile timeout in all five attempts.
-
-Runtime is the process mean in microseconds. CV is the sample coefficient of variation across
-processes. Executable source excludes static metadata. Workspace counts caller-supplied doubles,
-not total memory or stack storage. Compilation is the generated kernel only, excluding the wrapper
-and linking.
-
-| N | Backend | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
-|---:|---|---:|---:|---:|---:|---:|
-| 10 | `alloy` | 6.705 | 0.21 | 49591 | 0 | 297.7 |
-| 10 | `casadi_sx` | 4.263 | 0.66 | 209958 | 119 | 693.8 |
-| 10 | `casadi_mx` | 5.928 | 2.14 | 879492 | 2065 | 4034.0 |
-| 10 | `casadi_call_mx` | 14.267 | 1.04 | 269955 | 3494 | 1590.4 |
-| 10 | `casadi_map_sx` | 15.202 | 1.07 | 142699 | 11334 | 1061.1 |
-| 40 | `alloy` | 26.500 | 0.45 | 49659 | 3840 | 306.4 |
-| 40 | `casadi_sx` | 17.035 | 0.07 | 823845 | 119 | 2978.1 |
-| 40 | `casadi_mx` | 23.261 | 1.01 | 3799659 | 7975 | 57645.3 |
-| 40 | `casadi_call_mx` | 56.940 | 0.82 | 398502 | 11414 | 2238.7 |
-| 40 | `casadi_map_sx` | 59.902 | 0.67 | 273406 | 43854 | 924.3 |
-| 100 | `alloy` | 65.553 | 0.52 | 49713 | 16872 | 339.9 |
-| 100 | `casadi_sx` | 43.910 | 0.78 | 2052051 | 119 | 9697.0 |
-| 100 | `casadi_mx` | timeout |  | 9614050 | 19795 | >180000 |
-| 100 | `casadi_call_mx` | 142.841 | 1.25 | 679651 | 27134 | 7117.0 |
-| 100 | `casadi_map_sx` | 151.281 | 0.34 | 543857 | 108894 | 2042.2 |
-
-SX is fastest at all three sizes. Alloy takes 1.49 to 1.57 times as long as SX, missing the
-20% runtime margin. Against retained mapped SX, Alloy is about 2.3 times faster and
-uses less executable source and caller workspace. Alloy executable source changes from 49,591
-to 49,713 bytes as N grows from 10 to 100. SX caller workspace stays at 119 doubles, so these
-measurements do not establish a workspace advantage over the fastest CasADi encoding.
-
-### Unbumpercars Hessian
-
-Reproduce with:
-
-```bash
-uv run benchmarks/run.py sweep --workloads unbumpercars --sizes 2,4,8 --repetitions 5 --order-seed 0 --benchmark-min-time 0.5s --headline --boost off --out benchmarks/results/pilot/2026-09-05/unbumpercars/unbumpercars.csv
-```
-
-The columns use the same units and definitions as the race-car table.
-
-| C | Backend | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
-|---:|---|---:|---:|---:|---:|---:|
-| 2 | `alloy` | 847.714 | 0.46 | 145442 | 34304 | 856.5 |
-| 2 | `casadi_sx` | timeout |  | 26778898 | 37182 | >180000 |
-| 2 | `casadi_mx` | 890.748 | 0.98 | 110035 | 110087 | 1071.6 |
-| 2 | `casadi_mx_gemm` | 1003.622 | 0.57 | 124566 | 112315 | 830.8 |
-| 2 | `casadi_mx_gemm_classic` | 1006.313 | 0.35 | 124574 | 112315 | 829.6 |
-| 2 | `casadi_mx_gemm_blasfeo` | 1004.488 | 1.01 | 124574 | 112315 | 831.1 |
-| 4 | `alloy` | 1708.219 | 0.22 | 190260 | 34304 | 1576.2 |
-| 4 | `casadi_sx` | skipped_after_failure |  |  |  |  |
-| 4 | `casadi_mx` | 2820.784 | 0.94 | 361999 | 112213 | 4474.7 |
-| 4 | `casadi_mx_gemm` | 3499.961 | 0.75 | 629111 | 120257 | 3174.3 |
-| 4 | `casadi_mx_gemm_classic` | 3502.710 | 0.45 | 629119 | 120257 | 3178.5 |
-| 4 | `casadi_mx_gemm_blasfeo` | 3475.076 | 0.65 | 629119 | 120257 | 3181.4 |
-| 8 | `alloy` | 3485.192 | 0.38 | 278329 | 51200 | 3994.0 |
-| 8 | `casadi_sx` | skipped_after_failure |  |  |  |  |
-| 8 | `casadi_mx` | 9982.943 | 1.10 | 1327412 | 116049 | 39891.0 |
-| 8 | `casadi_mx_gemm` | 13058.710 | 0.66 | 4569620 | 136111 | 29820.3 |
-| 8 | `casadi_mx_gemm_classic` | 13068.264 | 0.80 | 4569628 | 136111 | 29695.5 |
-| 8 | `casadi_mx_gemm_blasfeo` | 13060.631 | 0.49 | 4569628 | 136111 | 29716.6 |
-
-All 75 completed timings passed correctness. Literal SX exceeded the 180-second kernel compile
-limit at C=2 in all five processes. The runner skipped C=4 and C=8 for SX after each failure.
-Plain MX is the fastest completed CasADi encoding at every size. Alloy is 1.05, 1.65, and 2.86
-times faster at C=2, 4, and 8. Alloy executable source grows
-from 145,442 to 278,329 bytes between C=2 and C=8, while MX grows from 110,035 to 1,327,412 bytes.
-Pair constraints are mapped, but per-car wall rows remain unrolled in `filters.py`. These data
-support improved source-size scaling over MX, not fixed total executable source. No pre-port
-measurement under this protocol was run, so the table alone does not isolate the effect of the port.
-
-### Neural-process model predictive control Hessian
-
-These neural-process measurements predate the 1427-entry runtime-parameter interface and describe
-the earlier 1400-entry implementation. Rerun this workload before citing its timings or source-size
-figures as measurements of the current code.
-
-Reproduce with:
-
-```bash
-uv run benchmarks/run.py sweep --workloads npmpc --sizes 6,12 --repetitions 5 --order-seed 0 --benchmark-min-time 0.5s --headline --boost off --out benchmarks/results/pilot/2026-09-05/npmpc/npmpc.csv
-```
-
-The columns use the same units and definitions as the race-car table.
-
-| N | Backend | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
-|---:|---|---:|---:|---:|---:|---:|
-| 6 | `alloy` | 41.330 | 0.10 | 32175 | 1024 | 535.9 |
-| 6 | `casadi_sx` | 78.975 | 1.06 | 7564280 | 15690 | 96243.4 |
-| 6 | `casadi_mx` | 25.227 | 1.63 | 146908 | 7502 | 5789.9 |
-| 6 | `casadi_call_mx` | 154.818 | 0.25 | 211807 | 46693 | 8013.1 |
-| 6 | `casadi_map_sx` | timeout |  | 4900634 | 392119 |  |
-| 6 | `casadi_mx_gemm` | 50.541 | 0.65 | 113631 | 8579 | 1609.0 |
-| 6 | `casadi_mx_gemm_classic` | 50.804 | 0.96 | 113639 | 8579 | 1609.3 |
-| 6 | `casadi_mx_gemm_blasfeo` | 50.554 | 0.48 | 113639 | 8579 | 1590.0 |
-| 12 | `alloy` | 83.458 | 1.47 | 32208 | 1024 | 534.9 |
-| 12 | `casadi_sx` | timeout |  | 15056568 | 30274 | >180000 |
-| 12 | `casadi_mx` | 52.672 | 2.17 | 267896 | 10356 | 14747.1 |
-| 12 | `casadi_call_mx` | 300.577 | 0.37 | 233070 | 56263 | 8222.2 |
-| 12 | `casadi_map_sx` | skipped_after_failure |  |  |  |  |
-| 12 | `casadi_mx_gemm` | 99.608 | 0.94 | 180446 | 12882 | 2752.3 |
-| 12 | `casadi_mx_gemm_classic` | 99.574 | 0.76 | 180454 | 12882 | 2733.8 |
-| 12 | `casadi_mx_gemm_blasfeo` | 100.174 | 0.92 | 180454 | 12882 | 2750.1 |
-
-All 65 completed timings passed correctness. Mapped SX at N=6 exhausted the 180-second compile
-budget in every process, four during kernel compilation and one during wrapper compilation.
-Its N=12 cells were skipped after those failures. Literal SX compiled at N=6 but exceeded the
-kernel compile limit at N=12 in all five processes.
-
-Plain MX is fastest at both horizons. Alloy takes 1.64 and 1.58 times as long at N=6 and N=12,
-but uses less executable source and caller workspace. Its executable source changes from 32,175
-to 32,208 bytes, and caller workspace stays at 1,024 doubles. MX grows from 146,908 to 267,896
-executable bytes and from 7,502 to 10,356 caller-workspace doubles. These two horizons establish
-an initial runtime-versus-size comparison, not full-range scaling.
-
-## Extended Hessian sweeps, 2026-09-06
-
-Race-car and neural-process runs extend the initial pilot under the same compiler, CPU controls,
-five-process protocol, and synthetic-input policy. Unbumpercars repeats its full grid under the
-corrected sampling policy described below. The original pilot remains above. Combined CSVs retain
-the pilot and extension rows for the stage workloads, and the fresh full grid for unbumpercars.
-
-Artifacts are local and gitignored under `benchmarks/results/followup/2026-09-05/`:
-`sweep/<problem>/` holds each new run, and `combined/<problem>.csv` and `.summary.csv` hold the
-pilot and extension rows pooled into the full primary grid. The pooling was a one-off; a future
-run measures each full grid in one invocation through `run.py study`, and `run.py report` renders
-every table below from the study directory. The directory uses the study's start date; runs
-continued after midnight in Europe/Zurich.
-
-The table units match the pilot. A timeout has no runtime estimate. Compilation limits are the
-same 180-second budget, and larger cells are skipped after a smaller-size failure within each
-invocation. The extension starts a new invocation, so it attempts N=200 MX even though the
-pilot already recorded a failure at N=100.
-
-### Race-car extension
-
-```bash
-uv run benchmarks/run.py sweep --workloads race_cars --sizes 1,5,25,50,200,500 --repetitions 5 --order-seed 0 --benchmark-min-time 0.5s --headline --boost off --out benchmarks/results/followup/2026-09-05/sweep/race_cars/race_cars.csv
-```
-
-The extension records 140 successful timings, five MX compilation timeouts at N=200, and five
-resulting MX skips at N=500. Combined with the pilot, the full grid has 225 rows: 210 successful
-timings, ten timeouts, and five skips. No correctness check failed. Every timed cell has five
-successful processes; runtime CV over the combined grid ranges from 0.07% to 2.39%.
-
-| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
-|---:|---|---:|---:|---:|---:|---:|---:|
-| 1 | `alloy` | 5/5 | 0.747 | 1.40 | 49306 | 0 | 276.3 |
-| 1 | `casadi_sx` | 5/5 | 0.460 | 0.35 | 25755 | 108 | 183.2 |
-| 1 | `casadi_mx` | 5/5 | 0.519 | 2.39 | 95400 | 304 | 366.2 |
-| 1 | `casadi_call_mx` | 5/5 | 1.382 | 0.98 | 228004 | 1067 | 784.4 |
-| 1 | `casadi_map_sx` | 5/5 | 1.217 | 0.26 | 94438 | 826 | 381.6 |
-| 5 | `alloy` | 5/5 | 3.418 | 0.70 | 49570 | 0 | 285.6 |
-| 5 | `casadi_sx` | 5/5 | 2.162 | 0.75 | 107717 | 119 | 401.8 |
-| 5 | `casadi_mx` | 5/5 | 2.953 | 0.95 | 441760 | 1085 | 1555.0 |
-| 5 | `casadi_call_mx` | 5/5 | 7.146 | 1.19 | 248703 | 2244 | 1247.4 |
-| 5 | `casadi_map_sx` | 5/5 | 7.652 | 0.67 | 120288 | 5914 | 926.9 |
-| 25 | `alloy` | 5/5 | 16.624 | 0.93 | 49659 | 2400 | 301.8 |
-| 25 | `casadi_sx` | 5/5 | 10.622 | 0.21 | 516870 | 119 | 1774.4 |
-| 25 | `casadi_mx` | 5/5 | 14.515 | 1.47 | 2360004 | 5020 | 22377.9 |
-| 25 | `casadi_call_mx` | 5/5 | 35.254 | 1.03 | 334019 | 7484 | 1852.4 |
-| 25 | `casadi_map_sx` | 5/5 | 37.302 | 0.32 | 206150 | 27594 | 936.3 |
-| 50 | `alloy` | 5/5 | 32.606 | 0.14 | 49689 | 8472 | 313.1 |
-| 50 | `casadi_sx` | 5/5 | 21.329 | 0.08 | 1028495 | 119 | 3862.8 |
-| 50 | `casadi_mx` | 5/5 | 29.314 | 0.99 | 4762326 | 9945 | 95956.4 |
-| 50 | `casadi_call_mx` | 5/5 | 70.756 | 0.40 | 441709 | 14034 | 3232.0 |
-| 50 | `casadi_map_sx` | 5/5 | 75.131 | 0.93 | 318176 | 54694 | 1508.1 |
-| 200 | `alloy` | 5/5 | 129.489 | 0.25 | 49753 | 36084 | 380.7 |
-| 200 | `casadi_sx` | 5/5 | 90.008 | 2.01 | 4100194 | 119 | 26807.9 |
-| 200 | `casadi_mx` | 0/5 | timeout |  | 20493309 | 39495 |  |
-| 200 | `casadi_call_mx` | 5/5 | 283.605 | 0.42 | 1143240 | 53874 | 23221.7 |
-| 200 | `casadi_map_sx` | 5/5 | 307.094 | 0.74 | 1030885 | 217294 | 5995.0 |
-| 500 | `alloy` | 5/5 | 329.479 | 0.20 | 49765 | 90084 | 521.9 |
-| 500 | `casadi_sx` | 5/5 | 227.813 | 2.35 | 10246853 | 119 | 153075.8 |
-| 500 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 500 | `casadi_call_mx` | 5/5 | 725.616 | 0.49 | 2552822 | 134274 | 148584.2 |
-| 500 | `casadi_map_sx` | 5/5 | 786.129 | 0.78 | 2535806 | 542494 | 30216.1 |
-
-SX is fastest at every sampled horizon from N=1 to N=500. Alloy takes 1.44–1.62 times SX
-runtime, so the 20% runtime target remains unmet across the extended range. At N=500 the means
-are 329.479 µs for Alloy and 227.813 µs for SX. Their process CVs are 0.20% and 2.35%.
-
-Alloy executable source grows from 49,306 bytes at N=1 to 49,765 at N=500. SX grows from
-25,755 to 10,246,853 bytes. At N=500, however, Alloy uses 90,084 caller-workspace doubles
-against SX's 119. The runtime and workspace comparison therefore differs from the source-size
-comparison. Against retained mapped SX at N=500, Alloy is 2.39 times faster and uses less
-executable source and caller workspace.
-
-### Neural-process extension
-
-```bash
-uv run benchmarks/run.py sweep --workloads npmpc --sizes 25,50,100,200 --repetitions 5 --order-seed 0 --benchmark-min-time 0.5s --headline --boost off --out benchmarks/results/followup/2026-09-05/sweep/npmpc/npmpc.csv
-```
-
-The extension records 90 successful timings, 30 compilation timeouts, and 40 skips after failures.
-Combined with the pilot, the N=6–200 grid has 240 rows: 155 successful timings, 40 timeouts,
-and 45 skips. No correctness check failed. Every timed cell has five successful processes;
-runtime CV over the combined grid ranges from 0.10% to 2.17%.
-
-| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
-|---:|---|---:|---:|---:|---:|---:|---:|
-| 25 | `alloy` | 5/5 | 173.354 | 0.39 | 32252 | 3724 | 545.0 |
-| 25 | `casadi_sx` | 0/5 | timeout |  | 31293142 | 61622 |  |
-| 25 | `casadi_mx` | 5/5 | 113.075 | 1.57 | 530986 | 16763 | 49545.2 |
-| 25 | `casadi_call_mx` | 5/5 | 611.673 | 0.57 | 272875 | 76952 | 9447.6 |
-| 25 | `casadi_map_sx` | 0/5 | timeout |  | 7834848 | 1601822 |  |
-| 25 | `casadi_mx_gemm` | 5/5 | 213.102 | 1.85 | 326890 | 22332 | 6268.9 |
-| 25 | `casadi_mx_gemm_classic` | 5/5 | 211.544 | 0.62 | 326898 | 22332 | 6287.3 |
-| 25 | `casadi_mx_gemm_blasfeo` | 5/5 | 213.932 | 1.07 | 326898 | 22332 | 6235.2 |
-| 50 | `alloy` | 5/5 | 344.498 | 0.21 | 32319 | 17134 | 569.0 |
-| 50 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 50 | `casadi_mx` | 0/5 | timeout |  | 1038918 | 28973 |  |
-| 50 | `casadi_call_mx` | 5/5 | 1244.162 | 1.35 | 350742 | 116487 | 10269.4 |
-| 50 | `casadi_map_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 50 | `casadi_mx_gemm` | 5/5 | 422.725 | 0.92 | 610767 | 40458 | 17902.8 |
-| 50 | `casadi_mx_gemm_classic` | 5/5 | 421.391 | 0.52 | 610775 | 40458 | 17976.8 |
-| 50 | `casadi_mx_gemm_blasfeo` | 5/5 | 424.026 | 0.73 | 610775 | 40458 | 18007.1 |
-| 100 | `alloy` | 5/5 | 689.953 | 0.71 | 32344 | 33034 | 592.1 |
-| 100 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 100 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 100 | `casadi_call_mx` | 5/5 | 2443.511 | 0.24 | 508705 | 195857 | 15991.6 |
-| 100 | `casadi_map_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 100 | `casadi_mx_gemm` | 5/5 | 859.817 | 1.18 | 1180957 | 76728 | 68284.5 |
-| 100 | `casadi_mx_gemm_classic` | 5/5 | 854.254 | 0.56 | 1180965 | 76728 | 69272.1 |
-| 100 | `casadi_mx_gemm_blasfeo` | 5/5 | 859.453 | 1.38 | 1180965 | 76728 | 70411.5 |
-| 200 | `alloy` | 5/5 | 1378.616 | 0.51 | 32369 | 64834 | 673.3 |
-| 200 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 200 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 200 | `casadi_call_mx` | 5/5 | 4910.648 | 1.19 | 850524 | 354397 | 37432.8 |
-| 200 | `casadi_map_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 200 | `casadi_mx_gemm` | 0/5 | timeout |  | 2424113 | 149268 |  |
-| 200 | `casadi_mx_gemm_classic` | 0/5 | timeout |  | 2424121 | 149268 |  |
-| 200 | `casadi_mx_gemm_blasfeo` | 0/5 | timeout |  | 2424121 | 149268 |  |
-
-Both SX variants exceed the kernel compile limit at N=25 in all five processes. Plain MX
-compiles at N=25 but times out at N=50. All three matrix-product variants compile through
-N=100 and time out at N=200. These limits change which CasADi encoding supplies the fastest
-completed timing at each horizon.
-
-Alloy takes 1.53 times plain MX runtime at N=25. At N=50 and N=100 it is 1.22 and 1.24 times
-faster than the fastest completed CasADi variant, classic matrix-product MX. At N=200 it is
-3.56 times faster than call-node MX, the only CasADi encoding that completes under the budget.
-This comparison is conditional on the recorded compile limit; it does not establish the runtime
-of an encoding that failed to compile.
-
-Alloy executable source grows from 32,175 bytes at N=6 to 32,369 at N=200. Caller workspace
-does not stay fixed: it grows from 1,024 to 64,834 doubles. At N=200, call-node MX uses
-850,524 executable bytes and 354,397 caller-workspace doubles. The large-horizon measurements
-support runtime, source-size, and caller-workspace advantages over the best completed encoding.
-
-### Unbumpercars full-grid rerun
-
-The original collision-free synthetic placement cannot fit C=16 and C=32 in the default arena.
-The interrupted extension is retained under `diagnostic-unbumpercars-placement/`; its
-`correctness_fail` rows report input-construction errors, not derivative mismatches.
-
-This rerun uses seed 42 to sample states inside the same arena without rejecting collisions.
-The full C=2,4,8,16,32 grid was rerun, so no collision-free-input pilot timings are pooled into
-this table. All encodings receive the same synthetic inputs at each size. Closed-loop placement
-keeps its collision-free default. The new C=16/32 input gate and all existing unbumpercars problem
-gates passed before timing; restoring the old placement policy makes the new gate fail.
-The [measurement protocol](fairness.md#the-measurement-protocol) explains this distinction.
-
-```bash
-uv run benchmarks/run.py sweep --workloads unbumpercars --sizes 2,4,8,16,32 --repetitions 5 --order-seed 0 --benchmark-min-time 0.5s --headline --boost off --out benchmarks/results/followup/2026-09-05/sweep/unbumpercars/unbumpercars.csv
-```
-
-The 150 rows contain 80 successful timings, 25 compilation timeouts,
-40 skips after smaller-size failures, and 5 source-limit skips. No correctness check failed in this rerun.
-Every timed cell has five successful processes. Runtime CV ranges from 0.28% to 1.38%.
-`skipped_size` means the generated C exceeds the frozen 50 MiB source cap.
-
-| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
-|---:|---|---:|---:|---:|---:|---:|---:|
-| 2 | `alloy` | 5/5 | 845.802 | 0.28 | 145442 | 34304 | 858.5 |
-| 2 | `casadi_sx` | 0/5 | timeout |  | 26778898 | 37182 |  |
-| 2 | `casadi_mx` | 5/5 | 899.868 | 0.95 | 110035 | 110087 | 1052.6 |
-| 2 | `casadi_mx_gemm` | 5/5 | 1007.041 | 0.56 | 124566 | 112315 | 828.7 |
-| 2 | `casadi_mx_gemm_classic` | 5/5 | 1004.844 | 0.66 | 124574 | 112315 | 836.1 |
-| 2 | `casadi_mx_gemm_blasfeo` | 5/5 | 1007.824 | 0.51 | 124574 | 112315 | 831.0 |
-| 4 | `alloy` | 5/5 | 1715.191 | 0.30 | 190260 | 34304 | 1582.1 |
-| 4 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 4 | `casadi_mx` | 5/5 | 2800.886 | 1.00 | 361999 | 112213 | 4518.5 |
-| 4 | `casadi_mx_gemm` | 5/5 | 3523.587 | 1.38 | 629111 | 120257 | 3213.1 |
-| 4 | `casadi_mx_gemm_classic` | 5/5 | 3500.195 | 0.40 | 629119 | 120257 | 3204.6 |
-| 4 | `casadi_mx_gemm_blasfeo` | 5/5 | 3513.676 | 0.47 | 629119 | 120257 | 3203.3 |
-| 8 | `alloy` | 5/5 | 3478.775 | 0.53 | 278329 | 51200 | 3975.3 |
-| 8 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 8 | `casadi_mx` | 5/5 | 9949.845 | 1.15 | 1327412 | 116049 | 39969.4 |
-| 8 | `casadi_mx_gemm` | 5/5 | 13079.191 | 0.61 | 4569620 | 136111 | 29718.6 |
-| 8 | `casadi_mx_gemm_classic` | 5/5 | 13011.433 | 0.75 | 4569628 | 136111 | 29643.5 |
-| 8 | `casadi_mx_gemm_blasfeo` | 5/5 | 13070.838 | 0.70 | 4569628 | 136111 | 29767.3 |
-| 16 | `alloy` | 5/5 | 7319.301 | 0.54 | 456440 | 256704 | 14573.5 |
-| 16 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 16 | `casadi_mx` | 0/5 | timeout |  | 5399074 | 125987 |  |
-| 16 | `casadi_mx_gemm` | 0/5 | timeout |  | 35514289 | 171611 |  |
-| 16 | `casadi_mx_gemm_classic` | 0/5 | timeout |  | 35514297 | 171611 |  |
-| 16 | `casadi_mx_gemm_blasfeo` | 0/5 | timeout |  | 35514297 | 171611 |  |
-| 32 | `alloy` | 0/5 | skipped_size |  | 835338 | 1756208 |  |
-| 32 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 32 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 32 | `casadi_mx_gemm` | 0/5 | skipped_after_failure |  |  |  |  |
-| 32 | `casadi_mx_gemm_classic` | 0/5 | skipped_after_failure |  |  |  |  |
-| 32 | `casadi_mx_gemm_blasfeo` | 0/5 | skipped_after_failure |  |  |  |  |
-
-Plain MX is the fastest completed CasADi encoding at C=2,4,8. Alloy is 1.06, 1.63, and
-2.86 times faster at those sizes. At C=16, Alloy completes in 7.319 ms on average; all
-tested CasADi encodings time out or are skipped after smaller-size failures. There is no C=16
-CasADi runtime estimate to divide by. No encoding produces a timing at C=32 under these limits.
-
-#### Executable source and metadata
-
-Alloy's executable source is much smaller than its complete generated artifact. The source cap
-checks the C file before compilation; artifact bytes also include the generated header.
-
-| C | Executable bytes | Static metadata bytes | Total artifact bytes | C source bytes | Caller workspace, doubles |
-|---:|---:|---:|---:|---:|---:|
-| 2 | 145442 | 16222 | 161664 | 159106 | 34304 |
-| 4 | 190260 | 78641 | 268901 | 265685 | 34304 |
-| 8 | 278329 | 631332 | 909661 | 903661 | 51200 |
-| 16 | 456440 | 5868795 | 6325235 | 6307930 | 256704 |
-| 32 | 835338 | 53938863 | 54774201 | 54708980 | 1756208 |
-
-At C=32, the C file is 54,708,980 bytes (52.2 MiB), above the 50 MiB cap. Its complete artifact
-contains 835,338 executable bytes and 53,938,863 static-metadata bytes. This is a generated-source
-limit, not a measured compile failure or runtime. Reporting only executable bytes would hide the
-reason that this cell supplies no timing. The mapped pair rows do not make the total artifact
-fixed-size, and the remaining unrolled wall rows also contribute executable-source growth.
-
-### Chain Hessian, 2026-09-06
-
-Internal validation: chain stays outside the short paper. These exact sparse Lagrangian Hessian
-measurements use M=3,5,9 at a fixed horizon N=40 under the same protocol as the other extensions,
-with seed 0 and five fresh processes per cell. They compare backends on the current Hessian; they
-are not a before/after measurement of a compiler change.
-
-```bash
-uv run benchmarks/run.py sweep --workloads chain --sizes 3,5,9 --repetitions 5 --order-seed 0 --benchmark-min-time 0.5s --headline --boost off --out benchmarks/results/followup/2026-09-05/sweep/chain/chain.csv
-```
-
-The 75 rows contain 48 successful timings, 15 compile-budget failures, and 12 skips after
-failures. No correctness check failed. SX at M=5 completed in only three of five processes;
-its timing and dispersion use those three successes. Every other timed cell has five successes.
-Runtime CV ranges from 0.34% to 4.18%, with the largest CV on mapped SX at M=9.
-
-| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
-|---:|---|---:|---:|---:|---:|---:|---:|
-| 3 | `alloy` | 5/5 | 468.743 | 0.34 | 172350 | 266616 | 1609.9 |
-| 3 | `casadi_sx` | 5/5 | 28.782 | 1.45 | 3330455 | 188 | 23568.0 |
-| 3 | `casadi_mx` | 0/5 | timeout |  | 9410547 | 23678 |  |
-| 3 | `casadi_call_mx` | 5/5 | 191.841 | 1.50 | 602188 | 27321 | 11700.7 |
-| 3 | `casadi_map_sx` | 5/5 | 136.518 | 0.94 | 556793 | 94736 | 1844.4 |
-| 5 | `alloy` | 5/5 | 2599.884 | 1.54 | 334535 | 1075248 | 4944.5 |
-| 5 | `casadi_sx` | 3/5 | 95.470 | 0.48 | 10330465 | 335 | 174408.2 |
+| 3 | `alloy` | 5/5 | 38.271 | 0.98 | 102918 | 26028 | 669.7 |
+| 3 | `casadi_sx` | 5/5 | 25.979 | 0.16 | 3330455 | 188 | 19034.8 |
+| 3 | `casadi_mx` | 0/5 | timeout; skipped_after_failure |  | 9410547 | 23678 |  |
+| 3 | `casadi_call_mx` | 5/5 | 181.407 | 0.50 | 602188 | 27321 | 13029.2 |
+| 3 | `casadi_map_sx` | 5/5 | 123.653 | 1.34 | 556793 | 94736 | 4635.8 |
+| 5 | `alloy` | 5/5 | 202.900 | 0.90 | 393431 | 109944 | 2548.0 |
+| 5 | `casadi_sx` | 5/5 | 82.632 | 0.69 | 10330465 | 335 | 92304.0 |
 | 5 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 5 | `casadi_call_mx` | 5/5 | 972.449 | 1.19 | 2097970 | 100698 | 88149.7 |
-| 5 | `casadi_map_sx` | 5/5 | 708.640 | 1.27 | 2561051 | 349353 | 11583.2 |
-| 9 | `alloy` | 5/5 | 12433.306 | 0.56 | 550679 | 3778740 | 14929.8 |
+| 5 | `casadi_call_mx` | 5/5 | 825.058 | 0.18 | 2097970 | 100698 | 78595.1 |
+| 5 | `casadi_map_sx` | 5/5 | 627.198 | 0.92 | 2561051 | 349353 | 10318.1 |
+| 9 | `alloy` | 5/5 | 550.460 | 0.93 | 1044312 | 398916 | 9989.2 |
 | 9 | `casadi_sx` | 0/5 | timeout; skipped_after_failure |  | 24350782 | 897 |  |
 | 9 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
-| 9 | `casadi_call_mx` | 0/5 | timeout |  | 6664454 | 280960 |  |
-| 9 | `casadi_map_sx` | 5/5 | 2804.120 | 4.18 | 9650809 | 999844 | 69531.8 |
+| 9 | `casadi_call_mx` | 0/5 | timeout; skipped_after_failure |  | 6664454 | 280960 |  |
+| 9 | `casadi_map_sx` | 5/5 | 2455.255 | 1.63 | 9650809 | 999844 | 59340.9 |
 
-Alloy is 3.43, 3.67, and 4.43 times slower than retained mapped SX at M=3,5,9. Against unrolled
-SX it is 16.29 times slower at M=3 and 27.23 times slower at M=5, with the latter comparison
-conditional on SX's three completed builds. The historical equality-Jacobian loss of 1.5–2.4
-times does not describe this Hessian result. Alloy emits less executable source than the completed
-CasADi encodings but uses more caller workspace: at M=9, 550,679 executable bytes and 3,778,740
-workspace doubles against mapped SX's 9,650,809 bytes and 999,844 doubles. The coloring width
-grows with M (12, 24, 42), so the per-stage Hessian pays more forward-over-reverse sweeps as the
-stage block widens.
+## Neural-process model predictive control (`npmpc`)
 
-The [chain closed-loop run](index.md#canonical-closed-loop-sqp-runs-2026-09-05) measures a different
-setup: N=12, all requested oracles together, and each problem's existing SQP oracle construction.
-Its lower Alloy function-evaluation time does not overturn this N=40 kernel comparison.
+240 rows: 169 ok, 64 skipped_after_failure, 7 timeout.
 
-## Why a C++ harness (and not the Google Benchmark Python bindings)
+| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 6 | `alloy` | 5/5 | 18.238 | 1.08 | 31757 | 0 | 611.2 |
+| 6 | `casadi_sx` | 5/5 | 72.871 | 0.90 | 7564935 | 15913 | 102529.2 |
+| 6 | `casadi_mx` | 5/5 | 20.859 | 1.58 | 151448 | 7570 | 5172.1 |
+| 6 | `casadi_call_mx` | 5/5 | 149.281 | 1.06 | 232343 | 46861 | 6800.1 |
+| 6 | `casadi_map_sx` | 5/5 | 198.880 | 1.33 | 4261664 | 341213 | 135464.6 |
+| 6 | `casadi_mx_gemm` | 5/5 | 45.631 | 0.77 | 109496 | 8660 | 2498.1 |
+| 6 | `casadi_mx_gemm_classic` | 5/5 | 45.906 | 2.09 | 109504 | 8660 | 2417.5 |
+| 6 | `casadi_mx_gemm_blasfeo` | 5/5 | 45.739 | 1.36 | 109504 | 8660 | 2417.3 |
+| 12 | `alloy` | 5/5 | 34.737 | 0.27 | 31783 | 0 | 609.4 |
+| 12 | `casadi_sx` | 0/5 | timeout; skipped_after_failure |  | 15063206 | 30463 |  |
+| 12 | `casadi_mx` | 5/5 | 44.184 | 2.22 | 276488 | 9813 | 12861.8 |
+| 12 | `casadi_call_mx` | 5/5 | 298.150 | 0.19 | 371542 | 68072 | 10368.6 |
+| 12 | `casadi_map_sx` | 2/5 | 462.489 | 1.06 | 5788748 | 774841 | 176811.9 |
+| 12 | `casadi_mx_gemm` | 5/5 | 104.590 | 2.00 | 189660 | 13031 | 5253.9 |
+| 12 | `casadi_mx_gemm_classic` | 5/5 | 105.657 | 1.80 | 189668 | 13031 | 5246.1 |
+| 12 | `casadi_mx_gemm_blasfeo` | 5/5 | 103.946 | 0.88 | 189668 | 13031 | 5225.0 |
+| 25 | `alloy` | 5/5 | 72.575 | 0.88 | 31755 | 2700 | 613.7 |
+| 25 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 25 | `casadi_mx` | 5/5 | 94.092 | 0.54 | 545609 | 15595 | 41382.4 |
+| 25 | `casadi_call_mx` | 5/5 | 624.902 | 0.81 | 424096 | 89139 | 11540.5 |
+| 25 | `casadi_map_sx` | 2/5 | 1011.685 | 4.14 | 7858327 | 1603408 | 178523.9 |
+| 25 | `casadi_mx_gemm` | 5/5 | 219.006 | 2.07 | 343012 | 22648 | 8327.9 |
+| 25 | `casadi_mx_gemm_classic` | 5/5 | 217.633 | 0.99 | 343020 | 22648 | 8321.9 |
+| 25 | `casadi_mx_gemm_blasfeo` | 5/5 | 218.387 | 0.84 | 343020 | 22648 | 8295.7 |
+| 50 | `alloy` | 5/5 | 148.625 | 0.87 | 31867 | 9870 | 644.3 |
+| 50 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 50 | `casadi_mx` | 5/5 | 186.418 | 1.55 | 1063583 | 25782 | 166608.9 |
+| 50 | `casadi_call_mx` | 5/5 | 1260.787 | 0.51 | 520231 | 130185 | 13658.2 |
+| 50 | `casadi_map_sx` | 0/5 | timeout; skipped_after_failure |  | 11844334 | 3196692 |  |
+| 50 | `casadi_mx_gemm` | 5/5 | 444.467 | 0.99 | 638917 | 41169 | 26122.1 |
+| 50 | `casadi_mx_gemm_classic` | 5/5 | 447.959 | 1.96 | 638925 | 41169 | 25910.4 |
+| 50 | `casadi_mx_gemm_blasfeo` | 5/5 | 446.412 | 0.90 | 638925 | 41169 | 25768.6 |
+| 100 | `alloy` | 5/5 | 297.443 | 0.94 | 31890 | 19670 | 663.7 |
+| 100 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 100 | `casadi_mx` | 0/5 | timeout; skipped_after_failure |  | 2191474 | 46937 |  |
+| 100 | `casadi_call_mx` | 5/5 | 2524.257 | 1.24 | 712196 | 210580 | 21310.3 |
+| 100 | `casadi_map_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 100 | `casadi_mx_gemm` | 5/5 | 904.245 | 1.21 | 1232183 | 77961 | 91547.2 |
+| 100 | `casadi_mx_gemm_classic` | 5/5 | 909.814 | 2.08 | 1232191 | 77961 | 92973.0 |
+| 100 | `casadi_mx_gemm_blasfeo` | 5/5 | 904.997 | 0.81 | 1232191 | 77961 | 91622.0 |
+| 200 | `alloy` | 5/5 | 595.213 | 1.17 | 31931 | 44670 | 723.1 |
+| 200 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 200 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 200 | `casadi_call_mx` | 5/5 | 5037.273 | 1.59 | 1127544 | 371260 | 51396.7 |
+| 200 | `casadi_map_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 200 | `casadi_mx_gemm` | 0/5 | timeout; skipped_after_failure |  | 2524675 | 151836 |  |
+| 200 | `casadi_mx_gemm_classic` | 0/5 | timeout; skipped_after_failure |  | 2524683 | 151836 |  |
+| 200 | `casadi_mx_gemm_blasfeo` | 0/5 | timeout; skipped_after_failure |  | 2524683 | 151836 |  |
 
-Every cell in the sweep codegens C, compiles a focused Google Benchmark binary, and calls the generated symbol from a tight C++ loop (`for (auto _ : state) fn(arg, res, ...)`). There is **zero Python in the timed region** — this is on purpose. The numbers above are a *codegen-quality* comparison: how fast is the generated C, with both backends measured identically.
+## Race-car model predictive control (`race_cars`)
 
-The obvious simplification is to drop the per-cell C++ compile and instead drive [the google-benchmark Python bindings](https://pypi.org/project/google-benchmark/) (`@gb.register` + `while state:`) over `Function.__call__` and CasADi's `caf(DM)`. We measured whether that's viable:
+225 rows: 210 ok, 14 skipped_after_failure, 1 timeout.
 
-- **The binding's own loop floor is negligible.** An empty `while state:` body benchmarks at ~14 ns/iter; a trivial Python call at ~24 ns. So the bindings do *not* add meaningful overhead on their own — whatever you call inside the loop is what you measure.
-- **Per-call dispatch is the catch, and it is not symmetric between backends.** Anchoring against the race-car C-level numbers above (mean over the loop, M-series, default args):
-
-  | N | Alloy C kernel | Alloy `cf.run()` (Python) | CasADi SX C kernel | CasADi `caf(DM)` (Python) |
-  |---:|---:|---:|---:|---:|
-  | 5 | 0.53 µs | 3.9 µs | 0.48 µs | 5.2 µs |
-  | 100 | 10.3 µs | 15.1 µs | 9.3 µs | **79.5 µs** |
-
-  Alloy's ctypes dispatch (`jit.py::CompiledFunction.run`: `np.asarray` inputs, allocate outputs + workspace, build pointer arrays, one FFI call, reshape) is a roughly **fixed ~3.3 µs floor** — its *relative* weight shrinks as the kernel grows (+47 % at N=100). CasADi's `caf(DM)` overhead instead **scales with nnz**, because it materializes a sparse `DM` return each call (≈ +70 µs at N=100). `caf(np, np)` is worse still (~120 µs at N=100) due to input conversion.
-
-**Conclusion — use the right harness per question:**
-
-- **Codegen-quality / scalability-vs-CasADi (these tables): keep the C++ harness.** A Python-level benchmark would report Alloy ~5× faster than CasADi SX at N=100 (15 vs 80 µs) when the generated code is actually within ~10 % (10.3 vs 9.3 µs). The 8× distortion is pure binding overhead, so the C++ harness is load-bearing here, not overhead-paranoia.
-- **Alloy's own end-to-end Python latency, dispatch budgeting, and per-commit regression tracking: the Google Benchmark Python bindings are a great fit** — no per-cell compile, no 180 s timeouts, no source-size caps, and they measure the *realistic* cost paid when Alloy runs inside a Python solver loop. As a bonus they surface a genuinely favorable (and true) axis the C-only tables hide: Alloy's end-to-end Python dispatch is far lighter than CasADi's (15 vs 80 µs at N=100). The ~3.3 µs `cf.run()` floor is itself worth optimizing (preallocate workspace/outputs, cache the ctypes pointer arrays).
-
-A minimal worked example used to live in `test_tracking_workload.py::test_tracking_eq_jac_python_gbench` (opt-in via `ALLOY_GBENCH=1`): it reproduced the equality-Jacobian cell through the Google Benchmark Python bindings, checked the result against the CasADi dense reference outside the timed loop, and recorded the dispatch time via `record_property`. It was dropped when the suite moved in-repo in `8b1dd3f`.
-
-## Race-car equality Jacobian (`spjac:eq:z`) — historical
-
-4-state, 2-control bicycle with slip-angle β=δ/2 and `tanh` rolling-resistance term, RK4 over the horizon. Decision vector size `(N+1)·6`, output size `(N+1)·4`. Dynamics:
-
-```python
-phi, v = x[2], x[3]
-beta = 0.5 * delta
-vx = v * cos(beta)
-[v*cos(phi+beta), v*sin(phi+beta), v*sin(beta)/lr,
- (C_M0*throttle - (C_R0 + C_R1*vx + C_R2*vx*vx) * tanh(10*vx)) / M]
-```
-
-The Alloy fixture wrapped the interstage residual in a stage `Function` and assembled the equality
-vector via `al.vmap(eq_interstage, length=N, ...)`. The current
-`RaceCarConstraintJac` cell instead takes the full equality-plus-corridor Jacobian from the solver
-descriptor. The table in this section predates that correction and remains an equality-only result
-until the reference machine reruns the sweep.
-
-Runtime (µs, mean from Google Benchmark `cpu_time`):
-
-| N | Alloy | CasADi SX | CasADi MX |
-|---:|---:|---:|---:|
-| 1 | 0.09 | 0.09 | 0.13 |
-| 5 | 0.53 | 0.48 | 0.74 |
-| 10 | 1.05 | 0.91 | 1.50 |
-| 25 | 2.53 | 2.28 | 3.75 |
-| 50 | 5.24 | 4.70 | 8.39 |
-| 100 | 10.27 | 9.28 | 18.72 |
-| 200 | 21.20 | 18.44 | (compile >180 s — skipped) |
-| 500 | 54.46 | 45.76 | (skipped_after_failure at N=200) |
-
-Source size (KB):
-
-| N | Alloy | CasADi SX | CasADi MX |
-|---:|---:|---:|---:|
-| 1 | 19.3 | 14.1 | 42.2 |
-| 5 | 17.8 | 50.0 | 190.8 |
-| 10 | 17.9 | 95.0 | 374.6 |
-| 25 | 19.5 | 229.8 | 985.1 |
-| 50 | 22.1 | 455.1 | 1996.0 |
-| 100 | 28.3 | 907.0 | 4019.8 |
-| 200 | 40.6 | 1810.8 | 8676.0 (gen, compile timed out) |
-| 500 | 78.0 | 4528.9 | (skipped) |
-
-Alloy source LOC stays essentially constant — 596 at N=1, then 481-482 from N=10 through N=500 — because the entire interstage Jacobian is one `for it` loop calling one const-seed JVP callee, and the byte count grows only with the constant `idx[]` gather/scatter tables (data, not code).
-
-Workspace (doubles allocated by the generated function, reported via `SZ_W`):
-
-| backend | workspace |
-|---|---:|
-| Alloy | 0 at N ≤ 25, then ≈ 63·N from N ≥ 50 (e.g. 31 504 at N=500) — spilled slots only |
-| CasADi SX | 77 (constant) |
-| CasADi MX | scales linearly: 199 at N=1 → 30 788 at N=200 |
-
-Reading:
-
-- Alloy and CasADi SX are within ~10 % of each other on runtime across the whole range, with Alloy slightly ahead at very small N and SX slightly ahead from N≈25 upward (per-iteration callee dispatch costs less than SX's scalar tape on the smallest cells but the gap closes as N grows).
-- Alloy beats CasADi MX by ≈ 2× at every N where MX still compiles; MX times out at N=200 already.
-- Alloy source at N=500 is 78 KB, **58× smaller than CasADi SX** (4.5 MB). LOC at N=500 is 482 — the same as at N=10.
-- The per-cell codegen time at N=500 is 248 ms for Alloy vs 481 ms for CasADi SX (and >10 min for older variants of the Alloy path). That's the Python-AD-construction win from routing the JVP through one per-formal small graph instead of through the global unrolled tape.
-
-## Neural-process MPC on the Furuta pendulum (`npmpc`)
-
-A conditional-neural-process decoder — `9 → 32 → 32 → 2`, sigmoid, weights and latent code read out
-of the parameter tail — evaluated at **every node of a prediction horizon**. This is the one workload
-in the suite where a dense matmul sits inside the VMAP stage body, so it is the one that separates
-loop-preserving lowering from scalar expansion most sharply. Formulation, vendored data and
-closed-loop numbers live with the problem, in `benchmarks/problems/npmpc/README.md`; this section is
-the sweep.
-
-Both axes are gated per cell against a dense reference before any timing is recorded, and both
-backends compile at `-O3` with the same compiler.
-
-### Equality Jacobian (`spjac:eq:z`), horizon axis — historical
-
-| N | alloy lines | SX lines | MX lines | alloy ns | SX ns | MX ns | SX/alloy | MX/alloy |
-|---|---|---|---|---|---|---|---|---|
-| 6 | **417** | 80 111 | 2 471 | 17 087 | 26 552 | 15 299 | 1.55 | 0.90 |
-| 12 | **417** | 158 646 | 4 294 | 34 291 | 66 382 | 28 610 | 1.94 | 0.83 |
-| 25 | **417** | 328 807 | 8 243 | 71 850 | 213 096 | 64 810 | 2.97 | 0.90 |
-| 50 | **417** | 656 038 | 15 837 | 143 016 | 637 475 | 158 745 | 4.46 | 1.11 |
-| 100 | **417** | 1 310 500 | 31 024 | 287 899 | *compile > 900 s* | 288 986 | — | 1.00 |
-| 200 | **417** | *skipped* | 61 400 | 553 644 | — | *compile > 900 s* | — | — |
-
-### Exact Lagrangian Hessian (`sphess:gamma:z`), horizon axis
-
-| N | alloy lines | SX lines | MX lines | alloy ns | SX ns | MX ns | alloy compile | MX compile |
-|---|---|---|---|---|---|---|---|---|
-| 6 | **1041** | 293 452 | 4 924 | 31 969 | 62 620 | 26 512 | 0.8 s | 5 s |
-| 12 | **1041** | 584 683 | 8 834 | 64 358 | 136 167 | 52 956 | 0.8 s | 13 s |
-| 25 | **1041** | 1 215 891 | 17 355 | 134 614 | 273 704 | 116 385 | 0.8 s | 47 s |
-| 50 | **1041** | *53 MB > cap* | 33 688 | 273 575 | — | 237 982 | 0.8 s | **227 s** |
-| 100 | **1041** | *skipped* | 66 358 | 542 518 | — | *compile > 900 s* | 0.9 s | — |
-| 200 | **1041** | *skipped* | — | 1 067 826 | — | — | 0.9 s | — |
-
-### Decoder-width axis at N = 12
-
-Untrained weights at every width, including 32, so the axis stays homogeneous: kernel timing and
-generated code size depend on the graph's shape rather than on the numbers in it. These are code-size
-and timing cells only, never accuracy cells.
-
-Equality Jacobian — historical:
-
-| W | alloy lines | SX lines | MX lines | alloy ns | SX ns | MX ns | MX/alloy |
-|---|---|---|---|---|---|---|---|
-| 16 | **417** | 45 496 | 4 156 | 10 054 | 9 078 | 8 457 | 0.84 |
-| 32 | **417** | 158 646 | 4 294 | 33 201 | 52 663 | 27 023 | 0.81 |
-| 64 | **417** | 590 768 | 4 762 | 145 176 | *compile > 900 s* | 126 174 | 0.87 |
-| 128 | **417** | *skipped* | 6 466 | 597 719 | — | 815 594 | **1.36** |
-| 256 | **417** | *skipped* | 12 946 | 2 890 248 | — | 7 539 505 | **2.61** |
-
-Exact Lagrangian Hessian:
-
-| W | alloy lines | SX lines | MX lines | alloy ns | SX ns | MX ns | MX/alloy |
-|---|---|---|---|---|---|---|---|
-| 16 | **1043** | 160 550 | 8 696 | 20 981 | 30 382 | 16 736 | 0.80 |
-| 32 | **1041** | 584 612 | 8 834 | 65 064 | 131 291 | 52 576 | 0.81 |
-| 64 | **1041** | *55 MB > cap* | 9 302 | 271 564 | — | 240 323 | 0.88 |
-| 128 | **1041** | *skipped* | 11 006 | 1 284 817 | — | 1 382 204 | **1.08** |
-| 256 | **1041** | *skipped* | 17 486 | 7 186 310 | — | 12 468 110 | **1.73** |
-
-Reading, in descending order of confidence:
-
-- **The code-size and compile-time result is unambiguous and large.** Alloy's source is 417 lines for
-  the Jacobian at *every* point on *both* axes, and 1041 for the Hessian at every point but W = 16
-  (1043 there), because the weights are read
-  out of the parameter tail rather than baked in as literals and the stage body uses VMAP rather than
-  unrolled. SX reaches 1.31 million lines at N = 100 — a factor of 3142 — and stops being compilable
-  at all: clang exceeds a 15-minute budget there, and MX joins it at N = 200 for the Jacobian and
-  N = 100 for the Hessian, where it already needs 227 s at N = 50. Alloy compiles the N = 200 Hessian
-  in 0.94 s.
-- **Against SX the runtime advantage is real**, and on the Jacobian it grows with the horizon: 1.55×
-  at N = 6 to 4.46× at N = 50, after which SX drops out. On the Hessian it is flat instead, 1.96–2.12×
-  over N = 6…25. The one cell where SX is ahead is the narrowest decoder, W = 16, at 0.90.
-- **Against MX the horizon axis is a tie** — 0.82–1.11 with no trend — and the *width* axis is where
-  alloy pulls ahead. Alloy's runtime grows 3.3×, 4.4×, 4.1×, 4.8× per doubling, which is the quadratic
-  cost a matmul-dominated kernel should have. MX grows 891× over a 16× width increase against a ~256×
-  quadratic expectation, so it crosses from 1.2× faster than alloy at the shipped width to 2.6×
-  *slower* at W = 256. MX's source barely grows, because it keeps the matmuls as operations, so the
-  blowup is in what its Jacobian does at runtime rather than in code size.
-
-Alloy is *not* scalar-expanding these matmuls: the generated C contains real loop nests. The small
-fixed handicap at narrow decoders and short horizons (0.80–0.90 across W = 16–64 and N = 6–25; by
-N = 50 and N = 100 on the Jacobian axis it is gone, at 1.11 and 1.00) is ours, and the likeliest
-cause is the AD mode — Alloy's `sparse_jacobian` colours columns only, and the per-stage block here is wider
-than it is tall, which is the regime where a row-coloured or reverse sweep needs fewer passes. That
-is a hypothesis with supporting structure, not a measured cause.
+| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | `alloy` | 5/5 | 0.567 | 0.70 | 28095 | 0 | 239.5 |
+| 1 | `casadi_sx` | 5/5 | 0.412 | 0.29 | 25755 | 108 | 175.8 |
+| 1 | `casadi_mx` | 5/5 | 0.510 | 0.78 | 95400 | 304 | 393.3 |
+| 1 | `casadi_call_mx` | 5/5 | 0.927 | 0.88 | 228004 | 1067 | 783.5 |
+| 1 | `casadi_map_sx` | 5/5 | 0.765 | 0.07 | 94438 | 826 | 398.1 |
+| 5 | `alloy` | 5/5 | 2.625 | 0.31 | 23926 | 0 | 233.2 |
+| 5 | `casadi_sx` | 5/5 | 1.987 | 0.32 | 107717 | 119 | 333.1 |
+| 5 | `casadi_mx` | 5/5 | 2.728 | 1.81 | 441760 | 1085 | 1739.0 |
+| 5 | `casadi_call_mx` | 5/5 | 4.935 | 0.97 | 248703 | 2244 | 1827.9 |
+| 5 | `casadi_map_sx` | 5/5 | 5.332 | 0.98 | 120288 | 5914 | 1994.1 |
+| 10 | `alloy` | 5/5 | 4.871 | 0.98 | 23946 | 0 | 238.8 |
+| 10 | `casadi_sx` | 5/5 | 3.954 | 0.79 | 209958 | 119 | 557.5 |
+| 10 | `casadi_mx` | 5/5 | 5.621 | 1.48 | 879492 | 2065 | 4251.2 |
+| 10 | `casadi_call_mx` | 5/5 | 9.855 | 1.94 | 269955 | 3494 | 2526.8 |
+| 10 | `casadi_map_sx` | 5/5 | 10.391 | 0.94 | 142699 | 11334 | 1956.9 |
+| 25 | `alloy` | 5/5 | 12.338 | 0.60 | 24007 | 2400 | 297.9 |
+| 25 | `casadi_sx` | 5/5 | 9.873 | 0.41 | 516870 | 119 | 1320.5 |
+| 25 | `casadi_mx` | 5/5 | 14.015 | 1.02 | 2360004 | 5020 | 23498.3 |
+| 25 | `casadi_call_mx` | 5/5 | 24.273 | 1.25 | 334019 | 7484 | 2022.3 |
+| 25 | `casadi_map_sx` | 5/5 | 25.978 | 1.76 | 206150 | 27594 | 1171.7 |
+| 40 | `alloy` | 5/5 | 19.601 | 0.94 | 24007 | 3840 | 267.7 |
+| 40 | `casadi_sx` | 5/5 | 15.898 | 0.59 | 823845 | 119 | 2038.8 |
+| 40 | `casadi_mx` | 5/5 | 22.663 | 0.41 | 3799659 | 7975 | 60500.8 |
+| 40 | `casadi_call_mx` | 5/5 | 38.961 | 1.06 | 398502 | 11414 | 2551.0 |
+| 40 | `casadi_map_sx` | 5/5 | 41.666 | 1.10 | 273406 | 43854 | 1288.2 |
+| 50 | `alloy` | 5/5 | 23.499 | 0.18 | 24034 | 8472 | 270.2 |
+| 50 | `casadi_sx` | 5/5 | 19.900 | 0.55 | 1028495 | 119 | 2597.8 |
+| 50 | `casadi_mx` | 5/5 | 28.175 | 0.33 | 4762326 | 9945 | 97738.9 |
+| 50 | `casadi_call_mx` | 5/5 | 48.883 | 1.49 | 441709 | 14034 | 7234.6 |
+| 50 | `casadi_map_sx` | 5/5 | 51.813 | 0.15 | 318176 | 54694 | 5501.4 |
+| 100 | `alloy` | 5/5 | 47.051 | 0.73 | 24057 | 16872 | 357.5 |
+| 100 | `casadi_sx` | 5/5 | 40.369 | 0.37 | 2052051 | 119 | 5861.1 |
+| 100 | `casadi_mx` | 0/5 | timeout; skipped_after_failure |  | 9614050 | 19795 |  |
+| 100 | `casadi_call_mx` | 5/5 | 96.760 | 0.38 | 679651 | 27134 | 7547.3 |
+| 100 | `casadi_map_sx` | 5/5 | 104.417 | 0.26 | 543857 | 108894 | 3371.9 |
+| 200 | `alloy` | 5/5 | 89.722 | 0.46 | 24090 | 36084 | 300.4 |
+| 200 | `casadi_sx` | 5/5 | 82.833 | 0.44 | 4100194 | 119 | 14113.7 |
+| 200 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 200 | `casadi_call_mx` | 5/5 | 194.878 | 0.10 | 1143240 | 53874 | 19764.3 |
+| 200 | `casadi_map_sx` | 5/5 | 214.172 | 0.95 | 1030885 | 217294 | 6712.7 |
+| 500 | `alloy` | 5/5 | 228.589 | 0.97 | 24100 | 90084 | 337.0 |
+| 500 | `casadi_sx` | 5/5 | 209.352 | 0.78 | 10246853 | 119 | 48849.8 |
+| 500 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 500 | `casadi_call_mx` | 5/5 | 517.671 | 6.33 | 2552822 | 134274 | 119352.0 |
+| 500 | `casadi_map_sx` | 5/5 | 550.675 | 1.54 | 2535806 | 542494 | 32139.8 |
 
 ## Discrete-time HCBF safety filter (`unbumpercars`)
 
-The Phase 5 driving workload: a centralized one-step CBF filter over `C` cars, with
-`C(C-1)/2` hyperbolic pair rows plus four order-1 velocity wall rows per car, one L1 slack
-per row, and a neural vehicle model inside the constraint. The formulation and its provenance live with the problem, in
-`benchmarks/problems/unbumpercars/README.md`; this section is only the numbers.
+150 rows: 85 ok, 60 skipped_after_failure, 5 timeout.
 
-> **Measurement date:** the tables below were recorded before the 2026-08-12 migration from
-> position wall rows to order-1 velocity wall rows. They remain the latest backend-scaling
-> measurements, but absolute oracle and solve times describe the older wall graph and need to
-> be regenerated before being quoted for the current formulation.
+| Size | Backend | Successful processes | Mean, µs | CV, % | Executable bytes | Workspace, doubles | Kernel compile mean, ms |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 2 | `alloy` | 5/5 | 207.925 | 1.02 | 100661 | 0 | 856.1 |
+| 2 | `casadi_sx` | 0/5 | timeout; skipped_after_failure |  | 26778898 | 37182 |  |
+| 2 | `casadi_mx` | 5/5 | 954.281 | 1.36 | 110035 | 110087 | 2283.5 |
+| 2 | `casadi_mx_gemm` | 5/5 | 1076.646 | 0.62 | 124566 | 112315 | 2258.5 |
+| 2 | `casadi_mx_gemm_classic` | 5/5 | 1076.588 | 1.33 | 124574 | 112315 | 2235.3 |
+| 2 | `casadi_mx_gemm_blasfeo` | 5/5 | 1068.185 | 1.20 | 124574 | 112315 | 2254.4 |
+| 4 | `alloy` | 5/5 | 414.715 | 0.18 | 135779 | 0 | 1165.2 |
+| 4 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 4 | `casadi_mx` | 5/5 | 3061.284 | 2.99 | 361999 | 112213 | 7356.8 |
+| 4 | `casadi_mx_gemm` | 5/5 | 3776.939 | 0.93 | 629111 | 120257 | 5073.3 |
+| 4 | `casadi_mx_gemm_classic` | 5/5 | 3763.502 | 1.00 | 629119 | 120257 | 5020.2 |
+| 4 | `casadi_mx_gemm_blasfeo` | 5/5 | 3758.067 | 0.85 | 629119 | 120257 | 5066.5 |
+| 8 | `alloy` | 5/5 | 875.151 | 1.03 | 200043 | 20384 | 4526.1 |
+| 8 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 8 | `casadi_mx` | 5/5 | 10959.742 | 3.29 | 1327412 | 116049 | 52601.6 |
+| 8 | `casadi_mx_gemm` | 5/5 | 14204.947 | 0.38 | 4569620 | 136111 | 34535.3 |
+| 8 | `casadi_mx_gemm_classic` | 5/5 | 14105.729 | 0.80 | 4569628 | 136111 | 34410.1 |
+| 8 | `casadi_mx_gemm_blasfeo` | 5/5 | 14040.066 | 0.74 | 4569628 | 136111 | 34536.9 |
+| 16 | `alloy` | 5/5 | 2089.176 | 1.00 | 334411 | 176848 | 19481.9 |
+| 16 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 16 | `casadi_mx` | 0/5 | timeout; skipped_after_failure |  | 5399074 | 125987 |  |
+| 16 | `casadi_mx_gemm` | 0/5 | timeout; skipped_after_failure |  | 35514289 | 171611 |  |
+| 16 | `casadi_mx_gemm_classic` | 0/5 | timeout; skipped_after_failure |  | 35514297 | 171611 |  |
+| 16 | `casadi_mx_gemm_blasfeo` | 0/5 | timeout; skipped_after_failure |  | 35514297 | 171611 |  |
+| 32 | `alloy` | 5/5 | 6872.175 | 0.22 | 616253 | 1285536 | 18462.4 |
+| 32 | `casadi_sx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 32 | `casadi_mx` | 0/5 | skipped_after_failure |  |  |  |  |
+| 32 | `casadi_mx_gemm` | 0/5 | skipped_after_failure |  |  |  |  |
+| 32 | `casadi_mx_gemm_classic` | 0/5 | skipped_after_failure |  |  |  |  |
+| 32 | `casadi_mx_gemm_blasfeo` | 0/5 | skipped_after_failure |  |  |  |  |
 
-**Two model choices matter for cost.** The default, `--filter-model dt`, predicts with the
-natively discrete MLP; `--filter-model ct` predicts with an RK4 map of a
-continuous-time network (`6 → 64 → 64 → 3`, SiLU, 4,803 weights, four evaluations per step for
-the RK4 stages). The discrete MLP is `6 → 256 → 128 → 3`, smoothed ReLU, 35,075 weights, and
-**one** evaluation per step because it is already a one-step map — 7.3x the weights but only
-1.86x the multiply-accumulates.
-
-Two different things are measured below, and they do not say the same thing: one isolated
-kernel, and the whole oracle inside a real IPOPT loop.
-
-### Isolated exact Lagrangian Hessian (`sphess:gamma:z:z`) — current
-
-The current C=2/4/8 sweep uses the canonical discrete-time model and evaluates
-the compact structurally sparse exact Lagrangian Hessian. Each cell checks
-the reconstructed dense matrix against a CasADi MX reference before timing.
-At C=8 it consumes the complete canonical closed-loop handoff: primal,
-objective factor, constraint multipliers, state, desired input, model weights,
-physics, and time step.
-
-Measured 2026-08-20 on the current formulation (AMD Ryzen 9 7940HS, clang 20 at `-O3`,
-single-threaded, both backends through the same Google Benchmark harness). CasADi SX is not run: it
-was already past a 180 s compile budget at C=4 on the easier Jacobian kernel.
-
-| C | backend | runtime | source | lines | workspace | compile |
-|---:|---|---:|---:|---:|---:|---:|
-| 2 | alloy | **654 µs** | 83.9 KB | 2 294 | 34 304 | 1.0 s |
-| 2 | casadi_mx | 760 µs | 288.0 KB | 8 937 | 214 251 | 1.4 s |
-| 4 | alloy | **1 315 µs** | 164.6 KB | 4 015 | 34 304 | 1.8 s |
-| 4 | casadi_mx | 2 333 µs | 619.3 KB | 19 851 | 356 642 | 4.3 s |
-| 8 | alloy | **2 681 µs** | 471.8 KB | 10 559 | 36 736 | 7.8 s |
-| 8 | casadi_mx | 8 135 µs | 2 005.6 KB | 62 466 | 641 811 | 33.6 s |
-
-**This is the suite's cleanest compiled-against-compiled oracle win, and it grows with the car
-count**: 1.16× at C=2, 1.77× at C=4, **3.03× at C=8**, against 3.4–4.3× less source, 4–17× less
-workspace and 1.4–4.3× less compile time. Alloy's workspace is essentially flat (34 304 → 36 736
-doubles over a 4× car count) because the per-car neural dynamics stay a loop; CasADi MX's triples.
-
-Alloy's advantage growing in C while its own workspace does not is the VMAP Hessian doing what it
-is for. Note that alloy's source still grows here, because the `C(C-1)/2` pair rows are built by a
-Python loop rather than `al.vmap` — the one place in the suite where *we* write the code-size growth
-that the code-size claim argues against (tracked internally).
-
-This kernel is also the right anchor for reading the problem's closed-loop numbers. At C=8 the closed
-loop is 93% function evaluation, and CasADi's interpreted MX oracle set costs 126 ms per solve
-against alloy's 50 ms — so the ~2.6× there and the 3.03× here are the same effect, and compiling
-CasADi's oracles would close only part of it. The [fairness audit](fairness.md#unbumpercars-c8-40-steps-exact-lagrangian-hessian) has the
-per-configuration closed-loop table.
-
-### Isolated constraint Jacobian (`jac:g:z`) — historical
-
-Historical sweep cells, Apple M-series, `-O3`, single-threaded. These cells pin the continuous-time model
-(`FilterConfig(model="ct")`) rather than following the default, so they stay comparable with the
-numbers recorded before the default changed:
-
-| C | backend | runtime | source | lines | compile |
-|---:|---|---:|---:|---:|---:|
-| 2 | alloy | 61.0 µs | 59 KB | 849 | 0.6 s |
-| 2 | casadi_sx | 64.3 µs | 5.4 MB | 236,847 | 144 s |
-| 2 | casadi_mx | 65.1 µs | 185 KB | 5,619 | 2.8 s |
-| 4 | alloy | 128.8 µs | 81 KB | 1,407 | 0.7 s |
-| 4 | casadi_sx | — | 11.8 MB | 470,243 | **>180 s, timeout** |
-| 4 | casadi_mx | 131.4 µs | 460 KB | 14,487 | 6.4 s |
-| 8 | alloy | 263.4 µs | 170 KB | 3,459 | 2.6 s |
-| 8 | casadi_mx | 263.3 µs | 1.4 MB | 45,312 | 18.4 s |
-
-On this kernel **Alloy and CasADi MX tie on runtime** at every size, to within 1.5%. The win is
-in the artefacts around it: 3–8x smaller C, 4–7x faster to compile, and zero workspace against
-MX's 55k–179k doubles. CasADi SX is not viable here at all — 5.4 MB and 144 s to compile at
-`C=2`, and past the 180 s budget by `C=4`, so the sweep short-circuits the larger cells.
-
-### Per-solve, inside IPOPT
-
-The kernel above is not what a solve actually calls: the solve wants `f`, `g`, `grad_f`, a
-*sparse* `jac_g` and an exact sparse Lagrangian Hessian, several times per iteration. Mean per
-solve over a 60-step episode, plant matched to the filter's model, exact Hessians:
-
-| filter model | C | Alloy | CasADi | Alloy speedup | IPOPT iters (both) |
-|---|---:|---:|---:|---:|---:|
-| ct | 2 | 3.13 ms | 8.65 ms | 2.8x | 5.5 |
-| ct | 4 | 8.09 ms | 25.31 ms | 3.1x | 7.8 |
-| ct | 8 | 21.69 ms | 84.26 ms | 3.9x | 10.6 |
-| dt | 2 | 3.78 ms | 17.13 ms | 4.5x | 5.9 |
-| dt | 4 | 10.63 ms | 63.91 ms | 6.0x | 9.2 |
-| dt | 8 | **32.02 ms** | **289.10 ms** | **9.0x** | 14.0 |
-
-Iteration counts are identical between the two backends in every cell, so IPOPT walks the same
-path and only the oracle provider differs.
-
-Reading:
-
-- **Alloy's advantage grows along both axes** — with car count (2.8x → 3.9x for `ct`, 4.5x → 9.0x
-  for `dt`) and with network size (3.9x → 9.0x at `C=8`). The bigger the constraint graph, the
-  more the oracle provider matters.
-- **Function evaluation is where the solve lives**: 30.0 of Alloy's 32.0 ms and 279.5 of CasADi's
-  289.1 ms at the largest cell. So the gap is essentially all oracle, not solver.
-- **The gap is not in the dense Jacobian**, which ties above. It is in the exact Lagrangian
-  Hessian and the call path: Alloy's generated C wrapper calls the kernels directly, where CasADi
-  re-enters its own machinery per call. Measured per-call at `C=8` on the `ct` model, CasADi's
-  `hess_lag` alone is 3.7 ms against 0.2–0.8 ms for its other oracle outputs.
-- **The heavier network costs Alloy 1.5x and CasADi 3.4x** per solve at `C=8` (21.7 → 32.0 ms
-  against 84.3 → 289.1 ms), for 7.3x the weights.
-- **Superlinear in `C` for both**, as expected — the pair rows grow as `C(C-1)/2` and the
-  iteration count grows too: Alloy ≈2.6x (`ct`) and ≈2.8x (`dt`) per doubling of `C`, CasADi
-  ≈3.1x and ≈3.9x.
-- **Build cost** is the one place Alloy pays: 5.0 s against CasADi's 2.2 s at `C=8` on `ct`, and
-  3.8 s against 4.3 s on `dt`. It is a once-per-configuration cost, and the `.so` is cached.
-
-One caveat on the `dt`-versus-`ct` rows: each is measured against *its own* plant, so they are
-two coherent configurations rather than a controlled A/B. Against the faithful (discrete) plant,
-which is the default, the `dt` filter is both safer and *faster* than the `ct` one — 31.7 ms
-against 37.8 ms — because the mismatched filter needs 19.3 iterations to the matched filter's
-14.1. The problem README has that comparison.
-
-### How to reproduce
+## Reproduce the sweep
 
 ```bash
-# Current isolated exact-Hessian cells
-uv run python benchmarks/run.py sweep --workloads unbumpercars --out /tmp/sweep.csv
+# Run every headline sweep and closed loop, then render the report.
+uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name>
 
-# Per-solve (the second table), one cell per invocation
-uv run python -m benchmarks.problems.unbumpercars.run_closed_loop \
-  --solver ipopt --oracle both --filter-model dt --ncars 8 --steps 60
+# Run only the frozen sweep grids.
+uv run benchmarks/run.py study --out-dir benchmarks/results/<study-name> --only sweep
+
+# Render an existing study again.
+uv run benchmarks/run.py report benchmarks/results/<study-name>
 ```
 
-Canonical unified-runner episodes write under
-`benchmarks/results/closed-loop/unbumpercars/<solver>+<oracle>/`; unified `--smoke`
-episodes use `benchmarks/results/smoke/closed-loop/unbumpercars/<solver>+<oracle>/` so
-they cannot replace the canonical handoff. The direct problem module writes to
-the canonical location unless given another output directory.
-
-## Unbumpercars inequality Jacobian (`spjac:ineq:u`) — historical
-
-> **The workload measured here no longer exists.** Its implementation and
-> the retired `test_unbumpercars_workload.py` were removed in `1b03820`
-> (2026-08-10): the fixture was the only thing exercising gather-fed and chained VMAPs,
-> and its two numeric tests had been silently skipping because the
-> `model_kinematic_mlp.pth` checkpoint is not in the repo — so it read as coverage
-> without being any. The pattern moved to
-> `tests/integration/test_vmap.py::test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense`,
-> which runs unconditionally on small artificial cases.
->
-> The current workload reuses the canonical `unbumpercars` ID at
-> `benchmarks/problems/unbumpercars/`. It keeps `al.vmap` for
-> the per-car neural dynamics but builds its `C(C-1)/2` pair rows with an unrolled Python
-> loop, so the constant-LOC property below does **not** hold for it: its `spjac:g:z`
-> kernel goes 845 → 1403 → 3455 lines for `C = 2 → 4 → 8`. Porting it back onto the
-> gather-fed shape is tracked internally; the numbers below are what that
-> port is expected to recover, and are kept for that reason.
-
-Official-size MLP (`256 → 128 → 3` with the example `model_kinematic_mlp.pth` weights), RK4 pose update per car, pairwise C3BF + per-car wall residuals, slack column. Decision vector size `2C + 1`, constraint count `C(C-1)/2 + 4C` (quadratic in `C`).
-
-`unbumpercars_ineq_function` was built as three `ExprOp.VMAP` nodes:
-
-1. `dynamics_fn` mapped over `C` packed states / `C` packed inputs (with `pw` broadcast).
-2. `pair_c3bf_fn` mapped over `C(C-1)/2` `(i,j)` pairs, fed by `al.gather` from two constant index tables — one per side of the pair, each built as `concatenate([arange(NSTATE) + k * NSTATE for k in bodies])` over the strict upper triangle, so a gather produces exactly the contiguous `NSTATE` block per iteration that a VMAP wants. The same two tables gather both the parameter states and the first VMAP's output, which is what makes it a VMAP → gather → VMAP chain.
-3. `wall_residuals_fn` mapped over `C` cars.
-
-CasADi SX is dropped past C=2 because at C=2 it already takes >180 s to compile a 12 MB source file; the sweep records that and short-circuits larger C for SX.
-
-Runtime (µs):
-
-| C | Alloy | CasADi SX | CasADi MX | Alloy speedup over MX |
-|---:|---:|---:|---:|---:|
-| 2 | 96.1 | (compile >180 s — skipped) | 263.4 | 2.74× |
-| 4 | 197.5 | (skipped after C=2) | 518.1 | 2.62× |
-| 8 | 396.9 | (skipped) | 1058.6 | 2.67× |
-| 16 | 875.1 | (skipped) | 2207.1 | 2.52× |
-| 32 | 2254.4 | (skipped) | 4237.5 | 1.88× |
-
-Source size (KB):
-
-| C | Alloy | CasADi MX |
-|---:|---:|---:|
-| 2 | 47.2 | 211.8 |
-| 4 | 53.6 | 326.4 |
-| 8 | 91.5 | 739.3 |
-| 16 | 338.1 | 2495.1 |
-| 32 | 2406.1 | 9883.2 |
-
-Alloy source LOC ranges from **1601 to 1889 across C=2..32** — the only thing that grows with `C` is the constant gather/scatter index tables.
-
-Workspace (doubles):
-
-| backend | C=2 | C=4 | C=8 | C=16 | C=32 |
-|---|---:|---:|---:|---:|---:|
-| Alloy | 0 | 0 | 6 664 | 110 616 | 1 092 752 |
-| CasADi MX | 141 500 | 212 674 | 355 264 | 641 476 | 1 218 028 |
-
-Reading:
-
-- Alloy beats CasADi MX by a consistent **~2.5-2.7×** through C=16, narrowing to **1.88×** at C=32 — see the jump discussion below. Alloy's colored sparse Jacobian shares the per-car dynamics callee across colors and applies it inside a `for` loop, while MX clones the per-iteration graph through every JVP step (workspace and source both scale linearly in `C`).
-- **Both Alloy and MX now compile at C=32**: Alloy at 1.6 s codegen + 1.1 s compile (source 2.4 MB); MX at 1.5 s codegen + 100 s compile (source 9.9 MB). The old unrolled Alloy path needed 18.5 MB of source at C=32 and timed out at compile.
-- The 1.09 M-double Alloy workspace at C=32 lives in `w[]`; the wrapper allocates it `static` so the inner benchmark loop never goes through `malloc`. Without the spill threshold this would be ~8.7 MB of stack arrays and segfault under the 8 MB subprocess default `ulimit -s`.
-
-### Why does runtime jump between C=16 and C=32?
-
-Both backends slow down per-nnz between these two sizes:
-
-| transition | Alloy ratio | MX ratio | nnz ratio |
-|---|---:|---:|---:|
-| C=4 → 8 | 2.01× | 2.04× | 3.03× |
-| C=8 → 16 | 2.20× | 2.08× | 3.36× |
-| C=16 → 32 | 2.58× | 1.92× | 3.62× |
-
-So both backends are sub-linear in `nnz`, but the slope flattens noticeably at C=32. The bench runs on an Apple M-series chip with two CPU tiers (perf cores: L1-D 128 KB, L1-I 192 KB, L2 16 MB shared by 6 cores; efficiency cores: L1-D 64 KB, L1-I 128 KB, L2 4 MB shared by 4 cores), and `Run on` reports the smaller efficiency-core caches. Working-set sizes are:
-
-| C | alloy workspace | alloy source | combined | vs L2 (eff 4 MB) |
-|---:|---:|---:|---:|---:|
-| 8 | 52 KB | 91 KB | 0.14 MB | fits |
-| 16 | 885 KB | 338 KB | 1.22 MB | fits |
-| 32 | 8.74 MB | 2.41 MB | 11.2 MB | spills (eff), fits (perf) |
-
-So between C=16 and C=32 the combined code+data footprint goes from 1.2 MB to 11 MB — that's the first cell that exceeds the 4 MB efficiency-core L2. The macOS scheduler can place the bench thread on either core type, and on efficiency cores (or under perf-core L2 sharing with other threads) we start eating L2 misses. MX experiences a milder version of the same effect — its workspace was already past 4 MB at C=16 (5.1 MB) so the C=16→32 step doesn't cross a new boundary on the data side, only on the code side (2.5 MB → 9.9 MB).
-
-Treat this as a hardware-locality story rather than a backend ceiling: the alloy code at C=32 is still 4× smaller than MX (2.4 MB vs 9.9 MB) and ~2× faster, just not the constant 2.7× we see at smaller `C`.
-
-## Comparison with `tracking-nmpc-benchmarks` worktree
-
-Tracking, N=50:
-
-| metric | experiment2 (anvil, N=50, simple 4-state bicycle) | this sweep (alloy, N=50, slip-angle + tanh drag) |
-|---|---:|---:|
-| dense `jac:eq:z` | 72.1 µs | not measured (only spjac path benchmarked) |
-| colored `spjac:eq:z` | 5.06 µs | 5.24 µs |
-| `spjac_unroll` (CONST basis) | 103 µs (~87 s codegen) | n/a — alloy does not generate this path |
-| `multistage` (per-block Jac) | **1.53 µs**, O(1) source | not yet — see plan |
-| CasADi SX | 1.34 µs (experiment1, simple dynamics) | 4.70 µs (this sweep, fancier dynamics) |
-| CasADi MX | 5.83 µs (experiment1) | 8.39 µs (this sweep) |
-
-The 3-4× absolute-runtime gap between this sweep's SX/MX column and experiment1's matching column is from the heavier dynamics in our fixture (β-slip + tanh drag + division by `lr`), not from a backend regression — confirmed by inspecting both `bicycle_cont` implementations side by side.
-
-For unbumpercars vs. `experiment3` of the worktree:
-
-| C | alloy (this sweep) | anvil_ineq_jac (worktree, same colored-sparse approach) | CasADi MX (this sweep) | CasADi MX (worktree) |
-|---:|---:|---:|---:|---:|
-| 2 | 96.1 µs | 322 µs | 263 µs | 189 µs |
-| 4 | 197.5 µs | 603 µs | 518 µs | 333 µs |
-| 8 | 396.9 µs | 1417 µs | 1059 µs | 618 µs |
-| 16 | 875.1 µs | 3978 µs | 2207 µs | 1179 µs |
-| 32 | 2254.4 µs | 12273 µs | 4237 µs | 2329 µs |
-
-Alloy beats the worktree's `anvil_ineq_jac` (which uses the same conceptual colored-sparse approach) by ~3.3-5.4× across the C=2..32 range, mostly thanks to the VMAP structure (loop-shaped per-car dynamics + pair C3BF), the sparse-constant matvec, scalar/vector inlining, the gather peephole, and the workspace spill that lets C=32 compile at all. CasADi MX's apparent disadvantage vs. its own worktree numbers is partly the heavier MLP fixture (official `256→128→3` weights vs. the worktree's simpler reduced MLP).
-
-## Comparison with CasADi `Function.map(N, "serial")` (tracking)
-
-For curiosity we ran the same workload through CasADi's own loop-preserving primitive: the interstage residual is wrapped in a stage `Function`, mapped over `N` via `.map(N, "serial")`, then `casadi.jacobian` is applied to the assembled equality vector.
-
-| N   | CasADi SX unrolled  | CasADi SX with `.map`  | CasADi MX with `.map`        |
-| --- | ------------------- | ---------------------- | ---------------------------- |
-| 10  | 1030 ns / 96.97 KB  | 1026 ns / 96.88 KB     | 2113 ns / 109.1 KB, sz_w=4205 |
-| 50  | 4574 ns / 466 KB    | 4534 ns / 466 KB       | 10190 ns / 196 KB, sz_w=20405 |
-| 100 | 8951 ns / 928 KB    | 8946 ns / 928 KB       | 20475 ns / 317 KB, sz_w=40331 |
-| 200 | 17830 ns / 1.85 MB  | 17879 ns / 1.85 MB     | 41339 ns / 560 KB, sz_w=80506 |
-
-Reading:
-
-- **CasADi SX with `.map` is byte-for-byte indistinguishable from fully unrolling** — SX flattens to scalars at codegen, so the `.map` abstraction does not survive past graph construction.
-- **CasADi MX with `.map`** does keep a loop shape and is the most source-efficient CasADi configuration in the table, but `sz_w` grows linearly (4205 → 80506 doubles at N=200) and runtime is ~2× slower than SX/unrolled at every N. The MX evaluator's per-iteration workspace plumbing eats the win.
-- **alloy** at N=200 is **45× less source than SX and 13× less than MX with `.map`**, runs at ~21 µs (close to SX, ~2× faster than MX `.map`), and uses 12 604 doubles of workspace — about 6× less than MX `.map`.
-
-## How to reproduce
-
-```bash
-# Every headline grid on this page and the closed loops on the results index, into one directory
-uv run benchmarks/run.py study --out-dir benchmarks/results/followup/<date>
-
-# Only the kernel sweeps, or only one problem's sweep
-uv run benchmarks/run.py study --out-dir benchmarks/results/followup/<date> --only sweep
-uv run benchmarks/run.py study --out-dir benchmarks/results/followup/<date> --only sweep --problems race_cars
-
-# Re-render the Markdown tables of an existing study directory
-uv run benchmarks/run.py report benchmarks/results/followup/<date>
-
-# Full exact-Hessian sweep with default cells
-uv run benchmarks/run.py sweep --out benchmarks/results/sweep/scalability.csv
-
-# Long-paper race-car Jacobian row
-uv run benchmarks/run.py sweep --workloads race_cars_jac --out /tmp/race_cars-jac.csv
-
-# Custom horizons / car counts / per-cell compile timeout
-uv run benchmarks/run.py sweep \
-    --workloads race_cars \
-    --sizes 1,10,50,200 \
-    --compile-timeout 60 \
-    --out /tmp/quick.csv
-```
-
-Cells that hit the size cap or the per-cell compile timeout get `skipped_size` or `timeout` in
-`compile_status`. A backend that does not apply to a workload gets `not_applicable`. After a backend
-times out or exceeds the size cap, larger cells get `skipped_after_failure`. Runtime errors and parse
-failures appear in `runtime_status`.
-
-Race-car N=1000 used to appear in this table; it is dropped from the default cell grid because the bench-time dense reference (single-seed JVP × 6006 columns through the unrolled fixture) is the bottleneck rather than alloy itself — supply `--workloads race_cars --sizes 1000` to add it back when you're willing to wait several minutes.
-
-## Continuous-time CBF safety filter — historical
-
-> **The fixture measured here no longer exists.** Both
-> the retired `test_safety_filter_workload.py` and
-> `benchmarks/alloy_safety_filter_benchmark.py` are gone, so nothing below can be
-> regenerated. It is kept because the input-affine-versus-fully-nonlinear reading still
-> explains why the live workload is shaped the way it is: the dense `jac:ineq:u` blow-up on
-> the nonlinear variant (4.4 ms at N=8 against an 89 µs forward) is exactly why
-> `unbumpercars` calls `spjac`/`sphess` rather than dense factories. The successor is
-> [Discrete-time HCBF safety filter](#discrete-time-hcbf-safety-filter-unbumpercars)
-> above, whose per-solve numbers supersede these per-kernel ones. Note also that the
-> Lagrangian-Hessian limitation this section records as blocking has since been closed —
-> `sphess` through `ExprOp.VMAP` works and is what the live workload uses.
-
-Fixture: the retired `test_safety_filter_workload.py` built the two variants of the retired
-continuous-time HOCBF design study (both the fixture and that design are gone; see
-`benchmarks/problems/unbumpercars/README.md` for the filter that exists):
-
-- **Input-affine** — per-car velocity net `f_nn(x) + g_nn(x)·u` with a shared MLP body (`7 → 256 → 128`, SiLU) and two heads (drift 128→3, control 128→6). The constraint vector is the HOCBF residual `ḧ_ij + (γ1+γ2)·ḣ_ij + γ1·γ2·h_ij + s` over all `N(N-1)/2` pairs plus 4 wall residuals per car, with the slack term `s` shared. Cost is `Σ (u_i − u_des_i)^T Q (u_i − u_des_i) + M·s²`.
-- **Fully nonlinear** — same shape but the velocity block is a single `f_nn(x, u)` MLP (`9 → 256 → 128 → 3`); the rest of the chain (pose kinematics, slack, HOCBF combination, cost) is unchanged.
-
-The driver `benchmarks/alloy_safety_filter_benchmark.py` derives, for each `(ncars, variant)` cell, five single-output Alloy `Function`s — forward `ineq`, forward `cost`, dense `jac:ineq:u`, sparse `spjac:ineq:u`, and `grad:cost:u`. The sparse Lagrangian Hessian (`sphess:gamma:u:u`) is also requested but currently fails the `ExprOp.VMAP` reverse-mode path in `alloy.ad.reverse._local_vjp`, so it is caught and skipped per cell rather than working around the IR limitation here.
-
-Each Function is rendered to C, compared against the Python interpreter on a deterministic input vector, and timed by Google Benchmark on the universal ABI entry point.
-
-Runtime (Apple M-series, `-O3`, single-threaded; ns/call from `cpu_time`):
-
-| Cell             | ineq   | cost  | jac\_u    | spjac\_u | grad\_cost\_u |
-|------------------|-------:|------:|----------:|---------:|--------------:|
-| affine N=2       | 22 µs  | 1.5 ns | 22 µs    | 22 µs    | 1.2 ns        |
-| affine N=4       | 44 µs  | 1.9 ns | 44 µs    | 44 µs    | 1.5 ns        |
-| affine N=8       | 89 µs  | 2.7 ns | 90 µs    | 88 µs    | 2.3 ns        |
-| nonlin N=2       | 22 µs  | 1.5 ns | **288 µs** | 64 µs  | 1.3 ns        |
-| nonlin N=4       | 44 µs  | 1.9 ns | **1.19 ms** | 129 µs | 1.5 ns       |
-| nonlin N=8       | 89 µs  | 2.7 ns | **4.40 ms** | 267 µs | 2.3 ns       |
-
-Source size / codegen (bytes, lines, NNZ for sparse Jacobian; codegen ms is Python-side):
-
-| Cell             | ineq           | jac\_u           | spjac\_u (nnz)         |
-|------------------|----------------|------------------|-----------------------:|
-| affine N=2       | 16 KB / 559 L  | 27 KB / 875 L    | 12 KB / 422 L (20)     |
-| affine N=4       | 28 KB / 1024 L | 96 KB / 3034 L   | 27 KB / 1120 L (56)    |
-| affine N=8       | 69 KB / 2569 L | 493 KB / 14370 L | 133 KB / 5455 L (176)  |
-| nonlin N=2       | 15 KB / 516 L  | 27 KB / 889 L    | 16 KB / 546 L (20)     |
-| nonlin N=4       | 26 KB / 951 L  | 88 KB / 2817 L   | 32 KB / 1237 L (56)    |
-| nonlin N=8       | 66 KB / 2436 L | 452 KB / 13257 L | 136 KB / 5464 L (176)  |
-
-Reading:
-
-- **Forward `ineq` is linear in ncars** and identical between variants at the same size — both go through one per-car MLP forward, which is what dominates (~10 µs/car at this network sizing). Pair count grows as N(N-1)/2 but adds negligible work; the floor is the network.
-- **Cost and `grad:cost:u` are essentially free** (single-digit ns). The quadratic cost touches no MLP and only `O(N)` doubles.
-- **Affine `jac:ineq:u` runs in the same envelope as the forward** — expected, because the constraint is linear in u and the Jacobian rows `b_ij^i = 2·Δπ^T·(∂κ_π/∂v)·g_nn(x_i)` just reuse the per-car NN outputs. The QP path is essentially "one forward and you have A".
-- **Nonlinear `jac:ineq:u` is the obvious hotspot** — dense Jacobian seeds u (size `2·ncars`) through the MLP, which is roughly `2·ncars` forward passes; that is exactly the ~50× scaling we see at N=8 (`4.4 ms` vs `89 µs`).
-- **`spjac:ineq:u` recovers most of that loss** for the nonlinear case (`267 µs` at N=8, ~3× the forward instead of ~50×) because Alloy's column coloring reduces the seed count to the number of structurally distinct columns. This is the right object for an NLP solver loop to call per IPOPT iteration.
-- The Lagrangian Hessian wrt u would be the other per-iteration object for the NLP path; it is the most natural next target once `ExprOp.VMAP` is added to the reverse-mode AD (`alloy/ad/reverse.py::_local_vjp`).
-
-How these were reproduced, at the time. **None of these commands work now** —
-`alloy_safety_filter_benchmark.py` was removed along with the formulation it measured, and is
-recorded here only so the numbers above can be read in context:
-
-```bash
-# Default sweep: ncars=2,4,8 over both variants
-uv run python benchmarks/alloy_safety_filter_benchmark.py --ncars 2 4 8 --clean
-
-# Just one variant or one size
-uv run python benchmarks/alloy_safety_filter_benchmark.py --variant affine --ncars 8
-
-# Code + source size stats only (skip compile + run)
-uv run python benchmarks/alloy_safety_filter_benchmark.py --ncars 2 4 8 --stats-only
-```
+Raw comma-separated value files, generated code, samples, binaries, logs, and provenance live below
+the selected study directory. The report command regenerates the tables on this page.

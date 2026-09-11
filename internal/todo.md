@@ -56,8 +56,7 @@ only the theme and nothing else has to stay stable.
 
 Ordering constraints across sections, the only sequencing that matters:
 
-- The Track C closeout at the end of this file precedes BH-20, which re-decides every claim
-  gate in paper.md §8. C-8 and C-57 do not block this study or the merge into dev.
+- Track C and BH-20 are complete. The API and documentation work now precedes the release tasks.
 - L-28 to L-31 come before any wheel or tag is public, even on test PyPI.
 - R-37 comes before any merge of dev into main.
 
@@ -102,17 +101,10 @@ Ordering constraints across sections, the only sequencing that matters:
 
 ## Compiler internals
 
-The 2026-09-06 [sweeps](../docs/results/scalability.md#extended-hessian-sweeps-2026-09-06) fail claim
-gates 2 and 3 on race-car, cap unbumpercars at C=32 on static metadata, and win npmpc and
-unbumpercars at range only because the faster CasADi encodings stop compiling inside the budget.
-The 2026-09-07 investigation ([`notes/perf_2026_09_07/`](notes/perf_2026_09_07/README.md)) took the
-generated kernels apart with drivers and ablations. The glue between stage calls is 22% of race-car,
-3% of npmpc and 26% of chain; the stage kernels carry the loss. Race-car pays for tensor-shaped code
-on a scalar body and for 0/1 seeds multiplied at runtime; npmpc and unbumpercars pay for
-matrix-vector products lowered as serial reductions; chain pays for 24 dense tangent vectors and
-1624 loops where straight-line scalar code is 7.7 times faster. Rationale and gate status:
-paper.md §8. Compiler changes require a `tests/` reproduction, per the 2026-08-25 decision in
-paper.md §10. The remaining work before BH-20 is grouped at the end of this file.
+The [completed study](../docs/results/index.md) supplies the current measurements, and §8 of
+[`paper.md`](paper.md) records the claim decisions. The 2026-09-07 investigation under
+[`notes/perf_2026_09_07/`](notes/perf_2026_09_07/README.md) remains the rationale and validation
+record for the completed compiler tasks below.
 
 Start each compiler item by reading how the tools that shaped Alloy solve the same problem, before
 designing anything. tinygrad, whose IR and pattern-rewrite infrastructure Alloy's are modelled on,
@@ -164,10 +156,10 @@ protocol's compile flags.
       GCC/Clang compilation and runtime checks; the full benchmark rerun follows more Track C work.
       Automatic seed specialization remains C-45.
       Design: [arithmetic policy](notes/algebraic_simplification_2026_09_08.md#proposed-alloy-arithmetic-policy);
-      rationale: [paper §8](paper.md#8-blocking-work-before-the-paper-can-be-written), [measurement protocol](../docs/results/fairness.md#the-measurement-protocol).
-- [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `alloy.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
-- [x] **C-55. Preserve intended lowering hints through derivative Function construction.** Implemented 2026-09-08: every derived `Function` built in `ad/` takes the primal callee's effective hint (`block`/`opaque` -> `block`, `scalar` -> `scalar`, `auto` inherits nothing) on its output root, through `Function._effective_lowering`; the chain check `hinted_stage_hessian` and `tests/ad/test_lowering_hints.py` pin selection. The chain benchmark stage now carries `.scalar()` (decided 2026-09-08: the comparison is against each side's best formulation, and this is ours); the M=5 Hessian kernel runs at 835 µs against 1769 µs without. Race-car gets nothing from the hint because the automatic policy already selects its stage ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)). [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
-- [x] **C-53. Share arithmetic simplification across both dialects and program forms.** Implemented 2026-09-08 in `passes/arith.py` (one adapter per dialect, rules for neutral elements, zero annihilation, self-cancellation, negation normalization, bounded constant powers, dtype-checked constant evaluation) and applied through `passes/expr.py`, `scalarize`, and the new `fold_arith` loop-body pass after fusion; `tests/passes/test_arith.py` runs the same cases in all three forms. Left open: `_h{n}` renderer temporaries have no collision guard and deep index expressions are not hoisted, both unobserved in practice. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
+      rationale: [paper §8](paper.md#8-claim-gates-and-remaining-work), [measurement protocol](../docs/results/fairness.md#the-measurement-protocol).
+- [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `alloy.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision), [rationale](paper.md#8-claim-gates-and-remaining-work).
+- [x] **C-55. Preserve intended lowering hints through derivative Function construction.** Implemented 2026-09-08: every derived `Function` built in `ad/` takes the primal callee's effective hint (`block`/`opaque` -> `block`, `scalar` -> `scalar`, `auto` inherits nothing) on its output root, through `Function._effective_lowering`; the chain check `hinted_stage_hessian` and `tests/ad/test_lowering_hints.py` pin selection. The chain benchmark stage now carries `.scalar()` (decided 2026-09-08: the comparison is against each side's best formulation, and this is ours); the M=5 Hessian kernel runs at 835 µs against 1769 µs without. Race-car gets nothing from the hint because the automatic policy already selects its stage ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)). [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout), [rationale](paper.md#8-claim-gates-and-remaining-work).
+- [x] **C-53. Share arithmetic simplification across both dialects and program forms.** Implemented 2026-09-08 in `passes/arith.py` (one adapter per dialect, rules for neutral elements, zero annihilation, self-cancellation, negation normalization, bounded constant powers, dtype-checked constant evaluation) and applied through `passes/expr.py`, `scalarize`, and the new `fold_arith` loop-body pass after fusion; `tests/passes/test_arith.py` runs the same cases in all three forms. Left open: `_h{n}` renderer temporaries have no collision guard and deep index expressions are not hoisted, both unobserved in practice. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation), [rationale](paper.md#8-claim-gates-and-remaining-work).
 - [x] **C-45. Bake stage-invariant constant tangents into the VMAP forward callee.** Implemented
       2026-09-08 in `ad/forward.py`: a constant `jvp_many` tangent whose per-iteration tiles repeat
       with period `k <= 8` (and at least twice, so short horizons of distinct tiles are not unrolled)
@@ -236,7 +228,7 @@ protocol's compile flags.
       matrix forms `A @ ones` and `ones @ A` were tried as stacked row sums and reverted: in loop
       form they lower to one loop per row and lose the fused producer, slower than the matmul. They
       wait for an axis reduction in the IR, which is C-8's accumulator lowering.
-- [x] **C-12. One matcher and iterative rewrite driver for both dialects.** Implemented 2026-09-08: `ir/match.py` is generic over both node types with an iterative driver (`fixpoint`, `revisit`, `max_steps`), `rebuild_program` in `passes/program/_common.py` is the program adapter, and `_transform` is gone. No nested patterns or captures: no call site needed them. C-13 closed with it. [Updated design](notes/refactorings.md#shared-compiler-rewrites), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
+- [x] **C-12. One matcher and iterative rewrite driver for both dialects.** Implemented 2026-09-08: `ir/match.py` is generic over both node types with an iterative driver (`fixpoint`, `revisit`, `max_steps`), `rebuild_program` in `passes/program/_common.py` is the program adapter, and `_transform` is gone. No nested patterns or captures: no call site needed them. C-13 closed with it. [Updated design](notes/refactorings.md#shared-compiler-rewrites), [rationale](paper.md#8-claim-gates-and-remaining-work).
 
 ### Deferred
 
@@ -275,7 +267,7 @@ protocol's compile flags.
       Deferred 2026-09-09: the initial paper accepts growing metadata, reports it separately from
       executable code, and requires artifacts to stay within the compile cap. Revisit if measured
       artifact size becomes a deployment limit.
-      Rationale: [paper §8](paper.md#8-blocking-work-before-the-paper-can-be-written).
+      Rationale: [paper §8](paper.md#8-claim-gates-and-remaining-work).
 
 - [ ] **C-11. Chain: exploit the stage-block structure.** The coloring width grows with M (12, 24,
       42 at M=3,5,9), so the per-stage Hessian pays that many forward-over-reverse sweeps where `SX`
@@ -283,13 +275,13 @@ protocol's compile flags.
       body, then a scatter. Deferred beyond this closeout. The
       [C-49 audit](notes/perf_2026_09_07/c49_ad_op_audit.md#what-is-inherent-to-forward-over-reverse-here)
       finds composition accounts for most excess operations, with symmetry the remaining
-      second-order opportunity. Reassess after C-46, C-49, and BH-20.
+      second-order opportunity. Reassess only if a current workload justifies the work.
 
 - [ ] **C-58. Inline small pure callees before differentiation.** Revisit a bounded expansion policy
       if measured workloads justify it. Excluded from C-49 closeout to preserve mapped structure
       without introducing a new expansion policy. Diagnosis: [C-49 audit](notes/perf_2026_09_07/c49_ad_op_audit.md#ranked-rule-and-composition-edits-for-an-implementer).
 
-- [ ] **C-54. Add memory-aware program common-subexpression elimination and dead-code cleanup.** Build on C-12/C-53 with definition/use tracking and conservative read/write/alias handling; retain required calls and output stores, and test repeated loads across writes. Broader loop motion follows demonstrated workload need; load-node interning alone is not a current stale-value bug. [Design](notes/algebraic_simplification_2026_09_08.md#separate-value-cleanup-from-memory-optimization), [rationale](paper.md#8-blocking-work-before-the-paper-can-be-written).
+- [ ] **C-54. Add memory-aware program common-subexpression elimination and dead-code cleanup.** Build on C-12/C-53 with definition/use tracking and conservative read/write/alias handling; retain required calls and output stores, and test repeated loads across writes. Broader loop motion follows demonstrated workload need; load-node interning alone is not a current stale-value bug. [Design](notes/algebraic_simplification_2026_09_08.md#separate-value-cleanup-from-memory-optimization), [rationale](paper.md#8-claim-gates-and-remaining-work).
 - [x] **C-13. Make the Program IR passes iterative instead of recursive.** Done 2026-09-08 with
       C-12: the program passes, `scalarize`, and the C renderer no longer recurse per expression node,
       and the renderer hoists subtrees deeper than `MAX_SCALAR_DEPTH` into temporaries so clang's
@@ -402,7 +394,8 @@ the code does.
 
 - [ ] **D-32. Rewrite the user-facing documentation**, the index and the guide first. Scoped to what
       is stable today: install, core concepts, the derivative API, Functions and solvers. Leave a
-      marked gap where `FunctionTemplate` (API-1) will go, and quote no numbers until BH-20.
+      marked gap where `FunctionTemplate` (API-1) will go, and link result claims to the
+      canonical pages.
 - [ ] **D-33. Rework `docs/how_it_works/comparison.md`.** A scoped fix landed on 2026-08-25: the
       CasADi section's "one graph with a per-node hint" paragraph presented an inert mechanism as a
       departure, and it now states the repetition claim that is actually true and measured, with the
@@ -414,9 +407,9 @@ the code does.
       supporting mechanism is recorded but not wired up, and a number with no machine attached.
       The lowering-hint claims have been removed. Check any surviving timing that predates the
       reference-machine rule in `AGENTS.md`.
-- [ ] **D-35. Reconcile the problem READMEs with the audit.** `benchmarks/problems/*/README.md`
-      still describe the CasADi columns as "same NLP, same IPOPT, same options, only the oracle
-      provider differs", which the audit disproved on two counts.
+- [x] **D-35. Reconcile the problem READMEs with the audit.** Completed 2026-09-11. The problem
+      READMEs now describe only the current formulations and link measured comparisons to the
+      canonical result pages.
 
 ### Deferred
 
@@ -538,10 +531,8 @@ merge into dev and prioritize documentation.
       retain their original callee identity for dispatch metrics. Unit-trip and longer maps exclude
       the one-time prologue. Disabling the identity lookup makes the regression fail.
 
-- [ ] **BH-20. Complete the interrupted closeout study and re-decide the claim gates.** The
-      2026-09-09 run saved 671/690 sweep rows and 30/40 episodes before interruption. The
-      [partial results](../docs/results/index.md#partial-track-c-closeout-2026-09-09-to-2026-09-10)
-      and [missing chain attempts](../docs/results/scalability.md#interrupted-chain-sweep) are
-      recorded. Preserve the original attempt and distinguish any recovery run from it. The
-      session closed on 2026-09-10 with no restart. Revisit every gate in paper.md §8 after
-      completing the measurements, retaining the compile-budget caveats.
+- [x] **BH-20. Complete the closeout study and re-decide the claim gates.** Completed 2026-09-11
+      in `benchmarks/results/study-2026-09-10`. The [results overview](../docs/results/index.md)
+      and [scalability tables](../docs/results/scalability.md) contain the completed study.
+      `paper.md` §8 records the resulting gate decisions. The interrupted 2026-09-09 attempt
+      remains preserved in its original result directory and frozen investigation note.

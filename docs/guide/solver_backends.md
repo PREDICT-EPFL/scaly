@@ -78,9 +78,7 @@ any user can make. IPOPT consumes the lower triangle. `al.solver` asks for that 
 the descriptor, so the descriptor pattern and oracle values already match and the generated wrapper
 writes them directly into IPOPT's value buffer.
 
-**Exact Hessians are the default**, and worth keeping. On the safety-filter benchmark they roughly
-halve IPOPT's iteration count against a limited-memory approximation — see
-[the results](../results/index.md#safety-filter-with-a-solver-in-the-loop). Pass
+**Exact Hessians are the default.** Pass
 `options={"hessian_approximation": "limited-memory"}` if you want the other behaviour.
 
 **Warm starting** is split. `x0` is always IPOPT's starting point. The *multipliers* are always

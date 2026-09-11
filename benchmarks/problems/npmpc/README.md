@@ -181,90 +181,12 @@ for system 3 and establishes that this re-implementation of their decoder is fai
   be used on any path that claims to reproduce the paper, because it changes the model and so moves
   the latent code.
 
-## Results
+## Benchmark results
 
-The measurements below predate the 1427-entry runtime-parameter interface and must be rerun before
-they are cited as measurements of the current implementation. In particular, the generated source
-line counts and recorded closed-loop parameter vectors describe the earlier 1400-entry interface.
-
-The current harness code-generates the CasADi `nlpsol` with `expand=False` and compiles it
-against the same IPOPT library as the Alloy column. The next canonical run will populate the
-current result table. The earlier configuration audit measured all four interpreter and JIT
-combinations before selecting the generated MX path:
-
-| expand | jit | build | total | FE | FE share |
-|---|---|---|---|---|---|
-| True | no | 0.7 s | 17.35 ms | 13.02 ms | 75% |
-| True | yes | **966 s** | 7.75 ms | 3.19 ms | 41% |
-| False | no | 0.1 s | 9.50 ms | 4.84 ms | 51% |
-| False | yes | 23.9 s | **5.37 ms** | **1.46 ms** | 27% |
-
-The table settles two choices. Expanding to scalar SX triples the interpreter's work,
-and once compiled it hands the C compiler some 750 000 lines for a sixteen-minute build only to land
-slower than compiled MX. Against a compiled CasADi, function evaluation is a wash: 1.46 ms
-against Alloy's 1.53 — which is exactly what the kernel sweeps predicted, since they put CasADi MX at
-0.83–0.90× of Alloy at this decoder width. The old interpreted column's 8.5× gap was a
-configuration artifact.
-
-What survives that, and what this problem should be cited for:
-
-- **Code size and build time.** 417 lines for the Jacobian and 1041 for the Hessian at every horizon
-  and every decoder width, against CasADi SX's 1.31 million and its refusal to compile past N = 50.
-  In the closed loop the same thing shows up as build cost: about a second for Alloy's whole oracle
-  set, 24 s for compiled CasADi MX, sixteen minutes for compiled CasADi SX.
-- **The decoder-width axis**, where Alloy crosses from 1.2× behind CasADi MX at W = 32 to 2.6× ahead
-  at W = 256 (`docs/results/scalability.md`).
-- **The whole-solve comparison between the two SQP columns**, which are both code-generated and
-  compiled C and therefore fair: 1.29 ms against 1.57 ms, and 0.66 ms against 0.92 ms on function
-  evaluation. That 1.4× is the honest oracle margin on this problem.
-- **The function-evaluation share itself**, 40–58% for the compiled columns against `race_cars`'
-  23%, which is the property that put the problem in the suite: 65 decision variables leave the
-  solver almost no linear algebra to do.
-
-Trajectory agreement between columns over the full 100 steps, which is what makes the comparison
-controlled: the two IPOPT columns agree to 8.3e-16 in applied torque and 2.4e-13 in state, the two
-SQP columns to 3.5e-11 and 5.1e-9, and SQP against IPOPT to 3.6e-7 and 7.7e-5. All four take
-identical iteration counts within their solver.
-
-### How wide the decoder can be
-
-The authors shrank their decoder to meet the 20 ms sampling time, so the paper-facing question is
-what this stack buys back. Only the shipped width has a trained checkpoint, and an untrained decoder
-cannot produce a meaningful trajectory, so what is measured is deliberately narrower than a
-closed-loop column: **time per solver iteration**, which does not depend on the trajectory being
-sensible. Reproduce with `uv run python -m benchmarks.problems.npmpc.width_study`, which also prints
-the weight draw each cell used — at some widths a given draw sends the trajectory somewhere the
-solver will not follow, so the study measures the first draw that completes all six warm solves and
-reports which one that was.
-
-| W | `sqp` total/iteration | `sqp` FE/iteration | `ipopt` total/iteration | `ipopt` FE/iteration |
-|---|---|---|---|---|
-| 32 (shipped) | 0.355 ms | 0.185 ms | 0.488 ms | 0.198 ms |
-| 64 | 0.983 ms | 0.796 ms | 0.703 ms | 0.498 ms |
-| 128 | 3.62 ms | 3.43 ms | 2.28 ms | 2.07 ms |
-| 256 | 18.8 ms | 18.6 ms | 11.4 ms | 11.2 ms |
-
-Turning that into a per-solve time needs an iteration count, and the only trustworthy one is the
-trained decoder's measured 4.67. Multiplying it by the absolute per-iteration totals above puts
-`sqp+alloy` at **4.6 ms at W = 64, 17 ms at W = 128 and 88 ms at W = 256**. Anchoring the other way
-— scaling the measured 1.29 ms by the table's per-iteration *ratios* — gives 3.6, 13 and 68 ms,
-because the trained decoder's own per-iteration cost (0.276 ms) is 22% below the untrained W = 32 row.
-So the honest answer at W = 128 is **13 to 17 ms**: inside their 20 ms budget, but not comfortably.
-
-Either way this stack reaches W = 128 — **two doublings past the width they shrank to**. Note what
-this is and is not compared against: the configuration the authors actually deployed is uncompiled
-and sits at about 17.4 ms at W = 32, which is what their paper's 10–20 ms and their episode's
-14.1–19.3 ms `mpc_t` describe, so the comparison against *their system* is sound. It is not a
-comparison against CasADi at its best, and it does not need to be — the claim is about Alloy against
-a 20 ms budget. Where Alloy genuinely pulls away from a compiled CasADi is the kernel-level width
-axis (`docs/results/scalability.md`), crossing from 1.2× behind MX at W = 32 to 2.6× ahead at
-W = 256.
-
-That last step is an extrapolation from measured quantities, not a measurement, and it is sensitive
-to the anchoring — which is why both anchorings are given. It also transfers an iteration count
-across decoder widths, which a trained wide decoder might not honour. Turning it into a closed-loop
-column needs such a checkpoint, which is worth asking the authors for; until one arrives the claim is
-a per-iteration claim and says so.
+This README owns the formulation, reference data, and correctness gates. It does not copy timing
+tables. The [current benchmark results](../../../docs/results/index.md) contain the canonical
+closed-loop comparison, and the [scalability tables](../../../docs/results/scalability.md) contain
+every horizon cell from the latest study.
 
 ## Gates
 

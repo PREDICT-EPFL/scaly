@@ -1,6 +1,7 @@
 # Alloy roadmap
 
-Alloy is an experimental, pure-Python symbolic IR package living beside `anvil`. It should stay isolated until the design proves that it can express CasADi-like modeling, AD, solvers, integrators, and code generation better than extending the current anvil/tinygrad stack directly.
+Alloy is a pure-Python symbolic compiler for optimal-control problems. This roadmap records
+future library direction. Completed implementation history belongs in git and the frozen notes.
 
 The guiding idea is:
 
@@ -23,22 +24,11 @@ Alloy to this interface or to implementing it. Future region-formation work must
 per-expression hints are useful before adopting them. This status supersedes the historical hint
 plans below.
 
-## Current experiment pivot
+## Current status
 
-The IR-level proof of concept is in place. Tracking NMPC and unbumpercars showed that one Alloy graph — named `Function`s, VMAP-based loop preservation, colored sparse AD, and the scalar C renderer — can match CasADi SX runtime within ~10% and emit 20-58× less C source than SX (see [`scalability.md`](scalability.md) and the Phase 1/3 progress below). The next pivot is from "prove the IR on Jacobian benchmarks" to "build a real control workload on Alloy."
-
-### Driving application: CBF safety filter with neural dynamics
-
-The concrete target is a CBF-based safety filter for a system whose continuous dynamics are a neural network. Two variants matter:
-
-1. **Input-affine model** `xdot = f(x) + g(x) u`, with `f`, `g` neural networks. At each safety-filter call `x` is fixed, so `f(x)`, `g(x)`, and any required derivatives are evaluated once. The CBF condition is then affine in `u` and the filter is a **QP** with constant data for that step. PIQP is the candidate sparse-QP backend.
-2. **Fully nonlinear model** `xdot = f(x, u)`, with `f` a neural network. The CBF condition is nonlinear in `u` and the network must be re-evaluated at every optimization step. The filter is an **NLP** with IPOPT as the candidate backend.
-
-Both variants stress the capabilities the IR proof already covered (dense NN matmul/activation blocks + scalar/sparse barrier assembly + named-function reuse + colored sparse Jacobians) and force the two pieces still missing for a usable surface: a JIT execution path and first-class QP/NLP solver functions.
-
-Success means a single Python file that declares the neural dynamics as an Alloy `Function` (loading weights from a `.pth` checkpoint), declares the CBF condition and slack/objective terms, assembles the filter through `al.qp(...)` or `al.nlp(...)`, and is callable through the universal ABI from a small C++ harness with realistic per-step runtime.
-
-Historical benchmarks (tracking NMPC equality Jacobian and unbumpercars inequality Jacobian) remain in `tests/alloy/*_workload.py` and `benchmarks/scalability_sweep.py` as regression guards while the focus moves to the new workload.
+The compiler, sparse automatic differentiation, generated C path, and solver integrations are in
+place. The [current benchmark results](../docs/results/index.md) measure the implementation. The
+[actionable list](todo.md) owns the remaining work.
 
 ## North star
 
@@ -121,52 +111,8 @@ Exit criteria:
 
 ## Phase 1 — Solidify the symbolic core
 
-Goal: make Alloy comfortable enough for small nonlinear models.
-
-Status: in progress.
-
-Progress:
-
-- `Function` evaluation now runs through JIT-compiled C generated from Program IR; the old Python tape/`Expr.eval` execution path was removed to keep Python and AOT on the same backend.
-- Program IR workspace packing provides deterministic lifetime-based scratch layout/spilling for non-leaf buffers.
-- Basic construction/execution errors are explicit for function signature arity, undeclared symbolic inputs, call argument shapes, missing inputs, input shape mismatches, invalid `matmul`, invalid transpose axes, and invalid stack/concat axes/shapes.
-- Structural coverage expanded with `transpose`, `Expr.T`, `vec`, `slice`/indexing, `split`, flat `gather`, `scatter`, and `concat`; JVP rules and Program IR lowering support them.
-- Reduction helpers now include shape-checked `dot`, `sumsqr`, and `norm_2`.
-- Named-function keyword evaluation now rejects missing and extra keyword inputs instead of silently ignoring extras.
-- JVP can differentiate through `CallOp` by inlining the callee derivative graph; this is the first policy for nested named-function AD.
-- Added explicit `ScalarType` and `SparsityType` vocabulary, plus symbolic `jacobian_sparsity(expr, wrt)` for the current structural/arithmetic subset, including call-node chain rule.
-- Added compact `SparseJacobian` metadata/values wrapper, CSR/CSC conversion helpers on `SparsityType`, and greedy column coloring helpers for future sparse derivative evaluation.
-- Added a first colored sparse-Jacobian value path: `sparse_jacobian_colored` uses `jacobian_sparsity`, `column_coloring`, compressed seed vectors, batched color JVPs through structural/nonlinear elementwise subsets and call structure, and simplification/CSE cleanup; `sparse_jacobian_reference` keeps the old dense-Jacobian-then-gather implementation for correctness checks. The default `spjac` factory path now uses the colored implementation. The tracking path preserves named stage derivative calls and color batches, but still lacks a true horizon loop IR.
-- Added factory-level `SpJac(of, wrt)` and human `sparse_jacobian(fn, of, wrt)` wrapper; sparse outputs carry `Function.output_sparsities` metadata.
-- Added `SpHess(of, wrt)` and `sparse_hessian`, plus the sparse Lagrangian-Hessian convenience wrapper over auxiliary factory outputs.
-- C API header generation now emits sparse output metadata (`NNZ`, `NROW`, `NCOL`, COO `rows`/`cols`, CSR, and CSC arrays) for compact derivative buffers.
-- Added structural equality/hash helpers separate from `Expr.id`, plus CSE over structurally equivalent subgraphs.
-- Added stable topological debug printing (`Expr.debug()`, `format_expr`) for inspecting small graphs without relying on construction IDs.
-- Added stable expression debug printing (`Expr.debug()`, `format_expr`) for topological graph inspection.
-- Lowering metadata is preserved directly on `Expr` nodes; executable region formation belongs in Program IR/lowering passes.
-- Added a tiny graph rewrite layer (`Pattern`, `PatternMatcher`, `rewrite`, `simplify`) with constant folding and first algebraic cleanups (`x + 0`, `x * 1`, `x * 0`, identity reshape/transpose). Rewrites and CSE now walk the DAG in topological order with replacement caches instead of recursive tree traversal.
-- Added `.opaque()` and the `opaque` lowering hint to represent named call, solver, and integrator boundaries before full mixed-lowering region formation exists.
-- `TensorType.diff` now propagates through expression constructors, structural ops, call outputs, and marks nonsmooth ops like `floor`/`minimum` as non-differentiable metadata.
-- `TensorType`, `SparsityType`, and symbolic shape construction now reject negative dimensions, and tensor sparsity metadata must match tensor shape.
-- Explicit split section lists now reject negative sizes before building slice expressions.
-- `Function` now validates that sparse output metadata agrees with the compact output buffer size.
-- Forward and reverse AD now prune subgraphs independent of the requested variables, so nonsmooth parameter-only terms do not block smooth derivatives.
-- `SparsityType` now rejects duplicate COO coordinates so `nnz` and compact sparse buffers stay canonical.
-- `Expr` now has method forms for binary nonlinear helpers: `.atan2(...)`, `.minimum(...)`, and `.maximum(...)`.
-- `Function.call(...)` now normalizes raw constant-like arguments into `Expr` nodes before shape checking and call-node construction.
-- Added an anvil-style `@alloy.function(...)` scoped construction helper that creates fresh symbolic inputs from a declared signature and returns the same IR-level `Function` object as explicit graph construction.
-- JVP construction now memoizes subgraphs and substitutes call derivatives with a topological cache, which is required for named-call Jacobians such as the tracking NMPC stage dynamics.
-- Added the tracking NMPC equality-Jacobian fixture with an opt-in `ALLOY_TRACKING_SWEEP=1` pytest harness for horizons `N=1,2,5,10`, recording graph size, sparsity nnz, color count, colored sparse-AD construction time, and generated source size while comparing compact values against CasADi.
-- Added `benchmarks/alloy_tracking_eq_jac_benchmark.py`, a Google Benchmark C++ harness generator for Alloy vs CasADi SX/MX tracking equality Jacobians. After local-temporary codegen, slice aliasing, and constant-seed specialization, a local `N=50` run produced Alloy code at 364 KB / 13112 lines / 0 workspace and 5.1 us, CasADi SX at 466 KB / 25902 lines / 77 workspace doubles and 4.6 us, and CasADi MX at 2.0 MB / 63134 lines / 8046 workspace doubles and 8.4 us.
-- Added an official-size unbumpercars inequality-Jacobian fixture in `tests/alloy/test_unbumpercars_workload.py`, using the example model dimensions (`256 -> 128 -> 3`) and official `model_kinematic_mlp.pth` weights in the parameter vector, plus scalar C3BF/wall/slack sparse assembly, CasADi MX dense/sparse structural checks, and lowering metadata assertions. Added `benchmarks/alloy_unbumpercars_ineq_jac_benchmark.py` for Google Benchmark comparisons against CasADi SX/MX. A local official-size `N=2` stats run after zero-matmul, zero-constant cleanup, and active color-lane compression produced Alloy at 61 KB / 2289 lines / 0 workspace, CasADi SX at 12.2 MB / 447759 lines / 36274 workspace doubles, and CasADi MX at 217 KB / 6689 lines / 141500 workspace doubles; the Alloy native run was 48 us and the latest Alloy-vs-MX run was 46 us vs 237 us. SX is now correctly enormous for the dense MLP case and is best inspected with `--stats-only` unless a long compile is desired.
-- Fixed a C codegen correctness bug where `_contiguous_slice_offset` accepted column-style slices like `(slice(None), 1)` on a `(5, 7)` tensor and emitted a `v + 1` pointer alias that read flat indices `[1,2,3,4,5]` instead of the column `[1,8,15,22,29]`. Added a regression test that compiles a column slice and verifies its values.
-- Simplify now iterates the rewrite loop to fixed point. Added two structural rewrites that benefit the benchmark paths: `slice(stack(args, axis=A), index)` with a full slice on `A` becomes a stack of per-arg slices, and `slice(slice(x, idx1), idx2)` with step-1 indices composes into a single slice. Together they eliminate intermediate stacked tensors that were materialized only to read individual rows/columns, and they collapse double pointer aliasing chains like `v9 = v8 + 0; v10 = v9 + 0` introduced by the JVP slicing path.
-- Added several codegen cleanups: literal `(k % N)` / `(k / N)` coord expressions fold when the loop variable is a constant, sparse-constant matvec terms drop `1.0 * x` factors (and emit `-x` for `-1.0`), and single-use scalar (size-1) elementwise ops now inline their C expression at the consumer instead of materializing a 1-element buffer.
-- Extended the gather-transposed-concat peephole to also recognize `gather(transpose(stack(args, axis=1)))` where each stack arg is rank-1, skipping the materialized stack+transpose buffer the colored sparse-Jacobian assembly used to leave behind.
-- Generalized the inline table to single-use vector elementwise ops (`v_X[k] = expr(args[k])`) and threaded it through `STACK`/`CONCAT` arg reads and the gather peephole's `_read_element` recursion. Chains like `v115 = -v44 * v114; v116 = v37 * v115; v117 = v107 + v116; v118 = v117 * v42` collapse into one fused loop body. After these passes the official `N=2` unbumpercars Jacobian source dropped to 38 KB / 1235 lines (N=4 to 137 KB / 4251 lines) and the tracking `N=50` source dropped to ~340 KB / ~13 k lines, while Alloy's native runtime is ~94 us for the official `N=2` unbumpercars Jacobian (vs ~252 us for CasADi MX) and ~4.97 us for tracking `N=50` (vs ~4.6 us for CasADi SX and ~8.3 us for CasADi MX).
-- Added a fail-fast correctness check to both benchmark harnesses. Each Python-side run scatters Alloy's Python compact output into a dense Jacobian, cross-checks it against the dense factory output, and writes the realistic sample input plus the dense reference to side-by-side binary files. The compiled binary loads these at startup, runs each backend, scatters its compact output into a dense matrix using that backend's own `(rows, cols)`, and reports an exact per-element diff (including NaN-vs-finite mismatches) before any benchmark runs. The earlier compact-vs-compact comparison was wrong: Alloy emits COO row-major nnz order while CasADi emits CSC column-major. This check also re-exposed a `~2x` runtime regression that the prior column-slice codegen bug had been silently masking on the unbumpercars workload (the buggy pointer alias was reading flat indices into the zero-padded stack rows, so most of the "fast 46 us" computation was effectively no-ops on zeros).
-- Added lifetime-based buffer packing. Each storage-owning instruction is now assigned to a shared C local `sN` sized to the max instruction in the slot; aliases (RESHAPE / contiguous SLICE), inlined chains, and peephole-skipped intermediates propagate their last-use to the underlying storage so a reused slot is never overwritten while still observable. The MLP JVP callee's stack frame drops from ~25 KB / 16 disjoint 256/128-element buffers to ~14 KB across 9 shared slots, the unbumpercars `N=2` source drops to 34 KB / 1129 lines, and tracking `N=50` runtime improves from ~4.97 us to ~4.66 us (vs CasADi SX ~4.37 us, CasADi MX ~8.09 us). The benchmark correctness check guards every backend so any lifetime bug fails loudly.
-- Added `benchmarks/scalability_sweep.py`, a unified per-cell sweep across tracking horizons `N ∈ {1, 5, 10, 25, 50, 100, 200, 500, 1000}` and unbumpercars car counts `C ∈ {2, 4, 8, 16, 32}` with all three backends. Each cell compiles its own Google Benchmark binary (with a configurable per-compile timeout and a max-source-size cap) so the existing dense-comparison correctness check guards every measurement. A backend that hits a compile timeout or size cap at one cell is short-circuited to `skipped_after_failure` for every larger cell of the same workload, because both source size and compile cost are monotonically increasing in the iteration count. Results live in `benchmarks/scalability_results.csv`; see `docs/alloy/scalability.md` for the summary tables and the comparison against the `tracking-nmpc-benchmarks` worktree experiments. On the tracking workload Alloy runtime sits within ~10% of CasADi SX from `N=1` through `N=200` and produces less C source than SX past `N=10`; on official-size unbumpercars Alloy beats CasADi MX by roughly 2.7× across the cells that compile, and CasADi SX is bounded by the 180 s compile timeout at the very first cell because of the dense MLP. Every backend still scales linearly in source size and runtime — closing that with constant-source loop preservation is the next concrete milestone (see Phase 3 below).
+Complete. The expression graph, construction model, operations, rewrite system, and evaluators are
+covered by the sections below.
 
 ### Expression and type system
 
@@ -316,7 +262,9 @@ Exit criteria:
 
 Goal: make the central hypothesis real: one graph can contain scalar and block regions. Scalarization should happen here, not inside AD. AD should produce mathematical derivative graphs/linear maps with shape, sparsity, and seed metadata; lowering decides which pieces become scalar SX-like code, block loops, compact sparse assembly, or opaque calls.
 
-**Status: loop-preserving lowering done; broader mixed lowering on standby.** The loop-preserving milestone below is complete on both benchmark workloads (constant-source primal and `spjac:*` on tracking, VMAP-based unbumpercars). The rest of this phase — explicit `scalar`/`block`/`opaque` region formation, boundary pack/unpack/project ops, real block-loop codegen, and automatic lowering heuristics — is deferred until the safety-filter workload demonstrates a concrete need. Today `block` is metadata. **Corrected 2026-08-20 by the neural-process-MPC workload (`internal/notes/benchmark-buildout.md` §2.8):** matmuls are *not* rendered as scalar C — the generated source for a VMAP MLP stage body contains real loop nests (`for i < 32 { for k < 9 { ... } }`), and it is constant in the decoder width because the weights are read out of the parameter tail. What that workload shows is that alloy scales cleanly in the network width and CasADi MX does not: alloy is 1.2x slower than MX at width 32 and 2.6x faster at width 256, so the crossing is in alloy's favour, and the small fixed handicap it carries is confined to narrow decoders and short horizons. The trigger this phase was waiting for has therefore fired, but for the opposite reason to the one it anticipated: the candidate fix is not real block lowering, it is the sparse-Jacobian sweep strategy — column colouring only, on per-stage blocks that are wider than they are tall. That item is in `internal/todo.md` as an unconfirmed hypothesis with a bounded prize; block lowering stays on standby until something demands it.
+**Status: loop-preserving lowering is complete; broader mixed lowering is on standby.** The
+current compiler retains mapped structure through sparse Jacobians and exact sparse Hessians.
+Block-region work remains deferred until a workload needs it.
 
 Benchmark target for this phase:
 
@@ -344,56 +292,10 @@ Benchmark target for this phase:
 - Introduce loop IR for map/reduce/scan patterns.
 - Add local pattern rewrites.
 
-### Loop-preserving lowering (done)
+### Loop-preserving lowering
 
-The scalability sweep showed Alloy already matches CasADi SX runtime on the tracking `eq:z` Jacobian and beats CasADi MX by ~2.7× on the official-size unbumpercars `ineq:u` Jacobian, while generating less C source than SX. Every backend grows source linearly in `N`/`C` because the user-side fixture spells out `N` separate `Function.call(...)` constructions — the IR has no concept of "the same callee N times with index-shifted slices." Anvil's `multistage` codegen produces an `O(1)`-source C `for` loop calling one shared per-stage kernel, which is what gets it to 1.5 µs at `N=50` (about 3× faster than us). The goal of this milestone is to give Alloy the same property: keep current runtime, drive source size down to `O(1)` in the iteration count.
-
-Plan, in roughly the order that minimizes blast radius:
-
-1. **`ExprOp.VMAP` in the IR**. Hold `(callee, length, input_slice_specs, output_slice_spec)`. Each spec is `(outer_tensor, start, stride, slice_size)` and describes how the i-th iteration's argument is sliced out of an outer tensor and where the i-th output writes into the outer assembly. Shape inference yields `(length * out_slice_size, ...)` along the assembly axis. **Done**: `ExprOp.VMAP` added with rank-1 inputs/outputs, `(start, stride)` per callee input (stride=0 broadcasts), Program IR lowering/codegen, plus expression pretty-printing. Tests in `tests/ir/test_vmap.py` compare against unrolled NumPy/generated-code references for fully-strided, overlapping-stride, zero-length, and broadcast cases.
-2. **Scoped sugar `al.vmap(...)`**. One IR node instead of N call nodes:
-   ```python
-   parts = al.vmap(eq_interstage, length=N,
-                   inputs={"z":     (z, 0,  NZ),
-                           "znext": (z, NZ, NZ),
-                           "p":     (p, NX, NX)})
-   ```
-   **Done**: `al.vmap` is exported from `alloy` and accepts either a sequence of `(outer, start, stride)` tuples ordered to match `callee.inputs`, or a `Mapping[str, ...]` keyed by callee input name. The dict form errors loudly on unknown or missing callee input names. `slice_size` is taken from the callee input shape, so callers do not have to spell it out.
-3. **Scalar codegen for `ExprOp.VMAP`**. One new branch in `_render_instruction`: emit `for (int it = 0; it < N; ++it) { callee_raw(arg_bases + it*stride, ..., out_base + it*out_stride); }`. Lifetime treats the VMAP output buffer as a single slot of size `length * out_slice_size`. Validate: rewrite the tracking fixture with `al.vmap` and confirm the **primal** source is constant in `N` while the benchmark correctness check still passes. **Done**: the renderer emits the loop, declares scratch for any non-selected callee outputs once before the loop, and `_callees` now also walks `ExprOp.VMAP` so the nested callee's raw body is emitted alongside the caller. On the tracking primal fixture the rendered C source is 76 lines from `N=10` through `N=500` (the unrolled-`concat`-of-call equivalent grows from 193 to 6073 lines), and the compiled output matches the unrolled reference.
-4. **JVP rule for `ExprOp.VMAP`**. `jvp_many(vmap(f, ...), wrt, seeds) = vmap(jvp_many_of_f, ...)`. The per-iteration JVP callee already exists in the `_call_jvp_many_function` / `_call_jvp_many_const_function` caches. After this step `spjac:eq:z` stays constant-source: the colored JVP graph collapses N calls into one VMAP node whose body is the cached per-stage JVP function. **Done**: `_jvp_many_structural` has a VMAP branch. Each per-input tangent is transposed and flattened so the per-iteration seed slice (`(formal.size, nseed)` row-major = `formal.size * nseed` contiguous doubles) is a leading-axis slice. A new `_call_jvp_many_flat_function` caches a thin wrapper around the existing leading-seed JVP callee that reshapes/transposes the flat seed at entry and the leading-seed output at exit; the wrapper itself contains a CALL to the inner JVP callee so codegen sees the loop body as a fixed function. The VMAP-of-JVP output is then transposed back to the leading-seed convention. Also fixes a pre-existing CSE crash where children of `ADD`/`MUL` were sorted by raw tuple `<` which fails on heterogeneous attrs (e.g. SLICE index `(int, slice)` vs `(slice,)`); the sort key is now `hash`.
-5. **Sparsity propagation through `ExprOp.VMAP`**. `_jac_mask(vmap(f, ...), wrt)` produces a tile pattern repeated `length` times along the assembly axis. `jacobian_sparsity` should build the tile + length in `O(1)` time even though the materialized `SparsityType.rows / cols` arrays remain `O(N)` (they are still data, not source code). **Done**: `_vmap_mask` reuses the per-formal callee dependency tile across iterations and only slices a different range of the outer-tensor dependency mask each iteration. End-to-end `sparse_jacobian` over a VMAP-based tracking fixture matches the unrolled-concat equivalent numerically and has identical sparsity metadata; the new test fixture in `tests/integration/test_vmap.py` exercises this with the full RK4 dynamics.
-6. **Tile-strided gather lowering**. When the compact-value gather indices form a tile pattern (`base[i*nnz_per_stage..(i+1)*nnz_per_stage]` for `i in [0, length)`), emit a `for` loop instead of an O(N) unrolled index table. This is the last unrolled site that keeps the rendered C source from being `O(1)`. **Done**: two complementary paths land constant LOC. `_detect_tile` finds `(prefix, tile_size, length, stride, base)` patterns in the flat gather indices and emits a nested `for` loop reading from the gather source. The transposed-concat peephole now groups output entries by their CONCAT input block and, for groups above 32 entries, emits a single static `idx[]` table + a `for` loop whose body is built via `_read_element` — so the inline-through-ADD/SUB chains still apply when the block is itself a skipped sum of materialized tensors. With this, the realistic RK4 tracking spjac source stays at 724 LOC across `N=5` through `N=500` (the unrolled-call variant grows from 2579 to 32647 LOC). The byte count still grows linearly because the `idx[]` table is O(nnz) bytes of data, but that no longer feeds the C parser as code.
-
-Replacing the JVP wrapper with a tile-strided gather is the matching fix on the IR side: the VMAP-JVP rule now builds a per-iteration leading-seed seed buffer via `gather(actual_tan, tile_indices)` and calls the existing `_call_jvp_many_function` body directly, so each VMAP iteration is just a function call with no transpose pre/post. The VMAP constructor also accepts rank-N callee inputs/outputs as long as the outer tensor stays rank-1.
-
-7. **Structured sparse Jacobian for VMAP (per-formal local coloring + const-seed JVP)**. **Done**: the runtime gap is closed. `al.sparse_jacobian` now tries `_sparse_jacobian_structured` first: it splits the top-level expression along axis 0 (handling `ExprOp.CONCAT` as a piecewise decomposition), and for each piece that is itself an `ExprOp.VMAP` whose outer tensors are exactly `wrt`, it dispatches to `_sparse_jacobian_vmap`. Per formal input of the callee, that routine (a) computes the local Jacobian sparsity tile of shape `(slice_size, formal.size)`, (b) greedily colors **just that tile**, (c) builds a constant local-color seed matrix, (d) routes it through the existing `_call_jvp_many_const_function` cache (which simplifies/CSEs the JVP graph with the seed embedded as a constant — so per-color DCE eliminates the entire dead tangent subgraph), (e) wraps that DCE'd per-formal JVP in `ExprOp.VMAP` over the original slicing pattern, and (f) assembles the global compact nnz buffer via a constant-table `gather + scatter`. Multiple formals overlapping at the same `(row, col)` are summed. The fallback path (any formal whose outer tensor depends on `wrt` through computation rather than identity) is the old global-colored route, so nothing regresses. The result for tracking NMPC `spjac:eq:z`:
-
-| N   | unrolled          | vmap (old, global)     | **vmap_structured (new)** | CasADi SX           | CasADi MX        |
-| --- | ----------------- | --------------------- | ------------------------ | ------------------- | ---------------- |
-| 10  | 878 ns / 125 KB   | 1309 ns / 31 KB       | **960 ns / 18 KB**       | 830 ns / 97 KB      | 1380 ns / 384 KB |
-| 50  | 4448 ns / 184 KB  | 6559 ns / 47 KB       | **4623 ns / 23 KB**      | 4193 ns / 466 KB    | 7860 ns / 2.0 MB |
-| 100 | 9249 ns / 259 KB  | 13727 ns / 69 KB      | **9557 ns / 29 KB**      | 8800 ns / 929 KB    | 17712 ns / 4.1 MB|
-| 200 | 19084 ns / 416 KB | 29374 ns / 112 KB     | **20068 ns / 42 KB**     | 18411 ns / 1.85 MB  | 39185 ns / 8.7 MB|
-| 500 | 51881 ns / 889 KB | 72958 ns / 243 KB     | **54112 ns / 80 KB**     | 44718 ns / 4.64 MB  | (skipped)        |
-
-The previous ~48% vmap-vs-unrolled gap drops to ~3-5%; runtime is now within ~9-21% of CasADi SX (closer for medium N, slightly behind at the extremes) while emitting 20-58× less C source. The rendered C source stays at **481 LOC from N=2 through N=500** (the byte count grows only because of the gather/scatter index tables, which are data, not code). Codegen time at N=500 drops from 14.2 s (unrolled) and 13.5 s (old VMAP path) to **252 ms** — the new path's AD construction is independent of `N`.
-
-Comparison against CasADi's own `Function.map(N, "serial")` primitive on the same workload: CasADi SX with `.map` produces source byte-for-byte identical to fully unrolling (95 bytes of difference at N=200 in a 1.85 MB file) — SX collapses the loop at codegen time. CasADi MX with `.map` keeps a loop shape but its workspace grows linearly (`sz_w` = 80 506 doubles at N=200) and runtime is ~2× slower than SX/unrolled. Alloy's structured VMAP path is the only configuration in the comparison that gives both constant source and runtime within ~10% of CasADi SX, with `SZ_W == 0`.
-
-Anvil's per-stage `multistage` approach reaches 1.5 µs at N=50 on a simpler 4-state bicycle; the slip-angle + tanh-drag fixture here is about 3× heavier per stage, so the absolute speedup is workload-bound. The mechanism is now matched: per-stage coloring with const-seed JVP bodies, plus a constant-index assembly into the global compact buffer — without introducing a `multistage` primitive.
-
-Each step is a separate commit with a benchmark guard. After step 3 we already have constant-source **primal** tracking. Steps 4-6 carry that property through `spjac:*`.
-
-Risks to watch:
-
-- An opaque per-iteration callee blocks the C compiler's loop optimizer from fusing/vectorizing across iterations. Right now the unrolled call sites let it inline the callee body once at each site. If we lose 10-20% runtime moving to a real loop, consider marking the callee body `__attribute__((always_inline))` for small callees, or have the codegen emit both an inlined unroll for small `N` and the loop form otherwise, picking per benchmark target.
-- The lifetime-packing pass treats slot lifetimes per IR instruction. The map node holds a single instruction-level lifetime but its slot covers `length` iterations — sizing and reuse must allocate the outer assembly buffer once and not over-pack iteration-local scratch with anything outside the loop body.
-- `SparsityType` continues to materialize the full COO triple. That keeps existing benchmark/correctness/sparsity-metadata paths working unchanged. A future move to a structured sparsity representation would also strip the `O(N)` data table, but is not required by this milestone.
-
-Exit criteria:
-
-- A tracking fixture rewritten with `al.vmap` produces C source whose size is `O(1)` in `N` for both the primal and `spjac:eq:z` paths, with runtime within ~10% of the current unrolled form across the existing horizon sweep.
-- The benchmark correctness check still passes on every cell in the sweep.
+Complete. The [automatic-differentiation design](../docs/how_it_works/autodiff.md) explains the
+implementation. The [scalability results](../docs/results/scalability.md) own measured behavior.
 
 ### Policy
 
@@ -649,78 +551,11 @@ Exit criteria:
 - Two-sided general inequalities are exercised by tests on both backends.
 - Lagrangian Hessian and sparse Jacobian factory paths are exercised end-to-end by the NLP variant.
 
-## Benchmark-driven development plan
+## Benchmark-driven development
 
-Before broadening solvers/integrators, add a small Alloy benchmark suite modeled on the `tracking-nmpc-benchmarks` worktree. The suite should be runnable in tiers: quick structural/codegen checks in normal tests, and slower compile/runtime sweeps behind an explicit benchmark flag.
-
-### Workload A: tracking NMPC equality Jacobian
-
-Source model: `examples/tracking_nmpc/nmpc_anvil.py` and `candidacy_experiments/experiment1/2` from the benchmark worktree.
-
-What to build in Alloy:
-
-- scoped-function versions of `eq_initial` and `eq_interstage`;
-- a horizon-level equality constraint function using `CallOp` or a future map/loop region;
-- `spjac:eq:x` over the flattened horizon decision vector;
-- CasADi SX/MX and current anvil comparison scripts for small horizons first, then `N = 10, 20, 50, 100`.
-
-What to learn:
-
-- whether repeated stage structure survives AD and lowering;
-- where graph size grows with `N`;
-- whether coloring and sparse assembly happen without full scalar unrolling;
-- whether mixed lowering can reproduce the per-block multistage result without hard-coding `MultistageProblem`.
-
-### Workload B: unbumpercars inequality Jacobian
-
-Source model: `examples/unbumpercars/safety_filter_anvil.py` and `candidacy_experiments/experiment3` from the benchmark worktree.
-
-What to build in Alloy:
-
-- scoped-function versions of per-car dynamics, MLP forward, global velocity, C3BF, wall residuals, and the full inequality vector;
-- dense block lowering for MLP matmuls and activations;
-- scalar/sparse lowering for pairwise C3BF, wall residuals, slack column, and compact Jacobian assembly;
-- comparison against CasADi MX and current anvil for `N = 2, 4, 8, 16, 32` where feasible.
-
-What to learn:
-
-- how to merge dense neural-network blocks with sparse solver-facing derivatives;
-- whether call-node derivative policy should inline or call per-car derivative helpers;
-- whether automatic lowering heuristics can identify dense matmul regions and scalar sparse regions.
-
-### Workload C: CBF safety filter with neural dynamics
-
-This is the driving workload for the next phase pivot. Source model: a small input-affine and a small fully-nonlinear neural dynamics example, sized similarly to unbumpercars' MLP (`256 -> 128 -> {NX or NX*NU}`), loaded from a `.pth` checkpoint.
-
-What to build in Alloy:
-
-- scoped `f`, `g` (input-affine) or `f` (nonlinear) neural-network `Function`s;
-- a CBF condition and its required Jacobian/Hessian through the factory;
-- safety-filter assembly via `al.qp(...)` (PIQP) and `al.nlp(...)` (IPOPT);
-- end-to-end calls through the JIT path and through a generated C++ harness.
-
-What to learn:
-
-- whether the existing IR (named functions + VMAP + sparse AD + scalar C codegen) is enough to express both filter variants without ad-hoc IR additions;
-- where solver-call boundaries should sit (opaque call vs. inlined unroll) and how warm-start state propagates through `mem`;
-- whether the QP specialization (extract `H`, `q`, `A` symbolically from an `x`-affine objective/constraint) needs new IR support or fits inside existing factory passes;
-- whether IPOPT's Jacobian/Hessian evaluator callback shape requires changes to the sparse derivative ABI.
-
-Metrics specific to this workload:
-
-- generated source size, compile time, JIT cache hit/miss behavior;
-- per-step runtime of the filter for representative state samples;
-- numerical agreement of `u*` with a reference CasADi+IPOPT and CasADi+PIQP build;
-- sparse Hessian/Jacobian nnz, coloring count, and compact output order match between Alloy and the reference build.
-
-Metrics for all workloads:
-
-- expression/Program IR node counts before and after rewrites;
-- AD construction time and graph size;
-- sparsity pattern, nnz, coloring count, and compact output order;
-- generated source size and compile time;
-- runtime of generated/JIT code;
-- numerical agreement with CasADi/anvil and finite differences on sampled inputs.
+The workloads now serve as regression and measurement cases. Current behavior belongs in the
+[results](../docs/results/index.md); new compiler work requires a failing test and measured workload,
+then becomes an actionable item in [todo.md](todo.md).
 
 ## Test strategy
 
