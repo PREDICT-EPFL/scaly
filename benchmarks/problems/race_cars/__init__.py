@@ -13,14 +13,11 @@ command.
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 
 import numpy as np
 
 import alloy as al
-from alloy.codegen.aot import render_c_source
-from alloy.ir.expr import topo
 
 NX = 4
 NU = 2
@@ -113,27 +110,37 @@ def _rk4(x, u, params):
 
 
 @al.function(al.G(al.L("z", NZ), al.L("p", NX)), al.L("eq", ...), name="race_car_eq_initial")
-def eq_initial(inputs):
+def eq_initial(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
   z, p = inputs
   return z[:NX] - p[:NX]
 
 
 @al.function(al.G(al.L("z", NZ), al.L("znext", NZ), al.L("params", N_PARAMS)), al.L("eq", ...), name="race_car_eq_interstage")
-def eq_interstage(inputs):
+def eq_interstage(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
   z, znext, params = inputs
   return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
 
 
+# TODO(API-1): Replace this horizon-specialized builder with an ``@al.function`` template.
 def race_car_eq_function(horizon: int) -> al.Function:
-  z = al.sym("z", NZ * (horizon + 1))
-  p = al.sym("p", n_param(horizon), diff=False)
-  params = p[NX * (horizon + 1) :]
-  parts = [eq_initial((z[:NZ], p[:NX]))]
-  for i in range(horizon):
-    zi = z[i * NZ : (i + 1) * NZ]
-    znext = z[(i + 1) * NZ : (i + 2) * NZ]
-    parts.append(eq_interstage((zi, znext, params)))
-  return al.Function._from_exprs(f"race_car_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
+  """Build the multiple-shooting equality residual for one prediction horizon."""
+
+  @al.function(
+    al.G(al.L("z", NZ * (horizon + 1)), al.L("p", al.TensorType((n_param(horizon),), diff=False))),
+    al.L("eq", ...),
+    name=f"race_car_eq_N{horizon}",
+  )
+  def equality(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+    z, p = inputs
+    params = p[NX * (horizon + 1) :]
+    parts = [eq_initial((z[:NZ], p[:NX]))]
+    for i in range(horizon):
+      zi = z[i * NZ : (i + 1) * NZ]
+      znext = z[(i + 1) * NZ : (i + 2) * NZ]
+      parts.append(eq_interstage((zi, znext, params)))
+    return al.concat(parts)
+
+  return equality
 
 
 def _race_car_eq_vmap_expr(z: al.Expr, p: al.Expr, horizon: int) -> al.Expr:
@@ -177,30 +184,3 @@ def race_car_constraint_jac_dense_reference(horizon: int, z: np.ndarray, p: np.n
     dense[row : row + 2, col + 1] = cos_ref
     dense[row : row + 2, col + 2] = 0.5 * CAR_LENGTH * np.cos(d_phi) + np.array([-0.5, 0.5]) * CAR_WIDTH * np.sin(d_phi)
   return dense
-
-
-def race_car_eq_sparse_metrics(horizon: int, *, render_source: bool = False) -> dict[str, float | int]:
-  t0 = time.perf_counter()
-  fn = race_car_eq_function(horizon)
-  build_ms = (time.perf_counter() - t0) * 1000.0
-
-  base_nodes = len(topo(fn.outputs))
-  sparsity = al.jacobian_sparsity(fn.outputs[0], fn.inputs[0])
-  colors = al.column_coloring(sparsity)
-
-  t0 = time.perf_counter()
-  sj = al.sparse_jacobian_colored(fn.outputs[0], fn.inputs[0])
-  ad_ms = (time.perf_counter() - t0) * 1000.0
-  spjf = al.Function._from_exprs(f"race_car_eq_N{horizon}_spjac_colored", fn.inputs, [sj.values], fn.input_names, ["spjac_eq_z"], [sj.sparsity])
-  source_bytes = len(render_c_source(spjf)) if render_source else 0
-
-  return {
-    "horizon": horizon,
-    "expr_nodes": base_nodes,
-    "sparse_expr_nodes": len(topo(spjf.outputs)),
-    "sparsity_nnz": sparsity.nnz,
-    "colors": max(colors) + 1 if colors else 0,
-    "function_build_ms": build_ms,
-    "colored_ad_ms": ad_ms,
-    "source_bytes": source_bytes,
-  }

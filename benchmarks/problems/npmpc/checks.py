@@ -49,6 +49,7 @@ from benchmarks.problems.npmpc import (
   n_dec,
   n_param,
   npmpc_bounds,
+  npmpc_ineq_bounds,
   npmpc_constraint_exprs,
   npmpc_eq_function,
   npmpc_lag_function,
@@ -281,9 +282,17 @@ def check_constraint_rows_and_bounds() -> None:
   or a slack on the wrong side of a row shows up as a value difference rather than as a shape one.
   """
   horizon = 3
-  z_sym, xstart_sym = al.sym("z", n_dec(horizon)), al.sym("xstart", NX, diff=False)
-  rows, lower, upper = npmpc_constraint_exprs(z_sym, xstart_sym, horizon)
-  fn = al.Function._from_exprs("npmpc_ineq_check", [z_sym, xstart_sym], [rows], ["z", "xstart"], ["g"])
+  lower, upper = npmpc_ineq_bounds(horizon)
+
+  @al.function(
+    al.G(al.L("z", n_dec(horizon)), al.L("xstart", al.TensorType((NX,), diff=False))),
+    al.L("g", ...),
+    name="npmpc_ineq_check",
+  )
+  def constraints(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+    z, xstart = inputs
+    rows, _, _ = npmpc_constraint_exprs(z, xstart, horizon)
+    return rows
 
   rng = np.random.default_rng(9)
   z = rng.normal(size=n_dec(horizon))
@@ -291,9 +300,9 @@ def check_constraint_rows_and_bounds() -> None:
   states = z[: NX * (horizon + 1)].reshape(horizon + 1, NX)
   slack = z[-1]
   expected = np.concatenate([states[0] - xstart, states[:, 1] + slack, states[:, 1] - slack])
-  np.testing.assert_allclose(np.asarray(fn((z, xstart))).reshape(-1), expected, rtol=0.0, atol=1e-14)
+  np.testing.assert_allclose(np.asarray(constraints((z, xstart))).reshape(-1), expected, rtol=0.0, atol=1e-14)
 
-  assert rows.size == NX + 2 * (horizon + 1)
+  assert constraints.outputs[0].size == NX + 2 * (horizon + 1)
   np.testing.assert_array_equal(lower[:NX], -X0_BAND)
   np.testing.assert_array_equal(upper[:NX], X0_BAND)
   np.testing.assert_array_equal(lower[NX : NX + horizon + 1], -PHI_LIMIT)

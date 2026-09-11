@@ -19,13 +19,13 @@ from collections.abc import Callable, Iterator
 import numpy as np
 
 import alloy as al
-from alloy.ad.sparse import sparse_hessian
 from alloy.passes.lowering import lower_function
 from alloy.solvers.paths import solver_loadable
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.chain import (
   END_REF,
   HORIZON,
+  N_PARAMS,
   NU,
   _eq_stage_fn,
   ChainParams,
@@ -304,14 +304,31 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   n_masses = 3
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   stage = _eq_stage_fn(n_masses)
-  hinted = al.Function._from_exprs(stage.name, stage.inputs, [stage.outputs[0].scalar()], stage.input_names, stage.output_names)
-  z = al.sym("z", n_dec(n_masses, HORIZON))
-  p = al.sym("p", n_param(n_masses), diff=False)
-  mapped = al.vmap(hinted, HORIZON, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
-  eq = al.concat([z[:nx] - p[:nx], mapped])
-  lam = al.sym("lam", eq.size, diff=False)
-  hess = sparse_hessian(lam @ eq, z, triangle="lower")
-  fn = al.Function._from_exprs("chain_hess_hinted", [z, p, lam], [hess.values], ["z", "p", "lam"], ["h"])
+
+  @al.function(
+    al.G(al.L("z", nz), al.L("xnext", nx), al.L("params", al.TensorType((N_PARAMS,), diff=False))),
+    al.L("eq", ...),
+    name=stage.name,
+  )
+  def hinted(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
+    return stage(inputs).scalar()
+
+  @al.function(
+    al.G(
+      al.L("z", n_dec(n_masses, HORIZON)),
+      al.L("p", al.TensorType((n_param(n_masses),), diff=False)),
+      al.L("lam", al.TensorType((nx * (HORIZON + 1),), diff=False)),
+    ),
+    al.L("h", ...),
+    name="chain_hess_hinted",
+  )
+  def hessian_values(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
+    z, p, lam = inputs
+    mapped = al.vmap(hinted, HORIZON, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
+    eq = al.concat([z[:nx] - p[:nx], mapped])
+    return al.sparse_hessian(lam @ eq, z, triangle="lower").values
+
+  fn = hessian_values
   procs = lower_function(fn).args[:-1]
   # ``hoist_invariant`` splits the mapped procedure; the per-stage half keeps the hint.
   selected = [

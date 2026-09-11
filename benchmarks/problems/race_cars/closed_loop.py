@@ -31,8 +31,6 @@ import numpy as np
 from benchmarks.harness.timing import SolveTiming
 
 import alloy as al
-from alloy.ir.expr import substitute
-from alloy.solvers import SolverStats
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
@@ -86,7 +84,7 @@ class EpisodeConfig:
 
 @dataclass(frozen=True)
 class StepTelemetry:
-  stats: SolverStats
+  stats: al.SolverStats
   arc_length: float
   laps: int
   # constraint violations of the accepted solution, for the SQP-versus-IPOPT divergence report
@@ -124,7 +122,7 @@ class StepRecord:
   prediction: np.ndarray | None
   reference_horizon: np.ndarray
   oracle_input: dict[str, np.ndarray] | None
-  stats: SolverStats | None
+  stats: al.SolverStats | None
   telemetry: StepTelemetry | None
 
 
@@ -154,7 +152,7 @@ def steady_throttle(v: float, params: RaceCarParams = RaceCarParams()) -> float:
 
 
 @al.function(al.G(al.L("z", NZ), al.L("ref", NX)), al.L("corridor", ...), name="race_car_corridor_stage")
-def _corridor_stage(inputs):  # type: ignore[no-untyped-def]
+def _corridor_stage(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
   z, ref = inputs
   cos_ref, sin_ref = ref[2].cos(), ref[2].sin()
   dx, dy = z[0] - ref[0], z[1] - ref[1]
@@ -166,7 +164,7 @@ def _corridor_stage(inputs):  # type: ignore[no-untyped-def]
 
 
 @al.function(al.G(al.L("z", NZ), al.L("ref", NX), al.L("params", N_PARAMS)), al.L("residuals", ...), name="race_car_cost_stage")
-def _cost_stage(inputs):
+def _cost_stage(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
   z, ref, params = inputs
   c_m0, c_r0, c_r1, c_r2 = params[3], params[4], params[5], params[6]
   v_ref = ref[3]
@@ -229,40 +227,35 @@ def race_car_lag_hess_dense_reference(config: EpisodeConfig, z: np.ndarray, p: n
 
 def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: dict[str, str | int | float] | None = None) -> al.Function:
   n = config.horizon
-  z = al.sym("z", NZ * (n + 1))
-  p = al.sym("p", n_param(n), diff=False)
   weights = np.tile([config.r_throttle, config.r_steering, config.q_lon, config.q_lat, config.q_phi, config.q_v], (n + 1, 1))
   weights[-1, 2:] = [config.q_lon_f, config.q_lat_f, config.q_phi_f, config.q_v_f]
   weights[0, 2:] = 0.0
-  residuals = al.vmap(
-    _cost_stage,
-    length=n + 1,
-    inputs={"z": (z, 0, NZ), "ref": (p, 0, NX), "params": (p, NX * (n + 1), 0)},
-  )
-  corridor = al.vmap(
-    _corridor_stage,
-    length=n,
-    inputs={"z": (z, NZ, NZ), "ref": (p, NX, NX)},
-  )
-  cost = al.dot(al.const(weights.reshape(-1)), residuals**2)
-
-  eq = _race_car_eq_vmap_expr(z, p, n)
-  lb, ub = np.full(z.size, -np.inf), np.full(z.size, np.inf)
+  n_variables = NZ * (n + 1)
+  lb, ub = np.full(n_variables, -np.inf), np.full(n_variables, np.inf)
   for i in range(n + 1):
     lb[i * NZ + 3], ub[i * NZ + 3] = 0.0, config.max_speed
     lb[i * NZ + NX : (i + 1) * NZ] = [-T_MAX, -DELTA_MAX]
     ub[i * NZ + NX : (i + 1) * NZ] = [T_MAX, DELTA_MAX]
   problem_name = f"race_car_closed_loop_N{n}"
 
-  @al.problem(vars=al.L("z", z.type), params=al.L("p", p.type), name=problem_name)
-  def problem(new_z, new_p):
-    replacements = {z: new_z, p: new_p}
+  @al.problem(vars=al.L("z", n_variables), params=al.L("p", n_param(n)), name=problem_name)
+  def problem(z: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
+    residuals = al.vmap(
+      _cost_stage,
+      length=n + 1,
+      inputs={"z": (z, 0, NZ), "ref": (p, 0, NX), "params": (p, NX * (n + 1), 0)},
+    )
+    corridor = al.vmap(
+      _corridor_stage,
+      length=n,
+      inputs={"z": (z, NZ, NZ), "ref": (p, NX, NX)},
+    )
     return al.ProblemSpec(
-      minimize=substitute(cost, replacements),
-      eq=(substitute(eq, replacements),),
+      minimize=al.dot(al.const(weights.reshape(-1)), residuals**2),
+      eq=(_race_car_eq_vmap_expr(z, p, n),),
       ineq=(
         al.bounded(
-          substitute(corridor, replacements),
+          corridor,
           lo=al.const(np.full(2 * n, -config.track_half_width)),
           hi=al.const(np.full(2 * n, config.track_half_width)),
           name="corridor",

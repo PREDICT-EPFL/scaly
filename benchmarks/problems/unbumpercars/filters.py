@@ -8,8 +8,7 @@ from typing import Any, Protocol
 import numpy as np
 
 import alloy as al
-from alloy.codegen.aot import render_c_module
-from alloy.ir.expr import substitute
+from alloy.codegen import render_c_module
 from benchmarks.harness.casadi_ipopt import make_casadi_ipopt
 from .common import (
   ClosedLoopConfig,
@@ -495,7 +494,7 @@ def _world_vel_expr(state: al.Expr, physics: al.Expr) -> tuple[al.Expr, al.Expr,
 
 
 @al.function(al.G(al.L("state", NSTATE), al.L("u", NCTRL), al.L("pw", N_PW), al.L("physics", N_PHYSICS)), al.L("xdot", ...), name="ctdt_ctfull_ode")
-def alloy_ctfull_ode_fn(inputs):  # type: ignore[no-untyped-def]
+def alloy_ctfull_ode_fn(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
   state, u, pw, physics = inputs
   max_delta, steering_time_constant = physics[2], physics[3]
   delta = state[6]
@@ -514,7 +513,7 @@ def alloy_ctfull_ode_fn(inputs):  # type: ignore[no-untyped-def]
   al.L("next", ...),
   name="ctdt_ctfull_rk4",
 )
-def alloy_ctfull_rk4_fn(inputs):  # type: ignore[no-untyped-def]
+def alloy_ctfull_rk4_fn(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
   state, u, pw, physics, dt = inputs
   h = dt[0]
   k1 = alloy_ctfull_ode_fn((state, u, pw, physics))
@@ -541,7 +540,7 @@ def _unpack_pw_dt_expr(pw: al.Expr) -> tuple[al.Expr, ...]:
 
 
 @al.function(al.G(al.L("state", NSTATE), al.L("physics", N_PHYSICS)), al.L("posedot", ...), name="ctdt_pose_dot")
-def alloy_pose_dot_fn(inputs):  # type: ignore[no-untyped-def]
+def alloy_pose_dot_fn(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
   state, physics = inputs
   x_dot, y_dot, omega = _world_vel_expr(state, physics)
   zero = 0.0 * state[3]
@@ -553,9 +552,9 @@ def alloy_pose_dot_fn(inputs):  # type: ignore[no-untyped-def]
   al.L("next", ...),
   name="ctdt_dt_mlp_step",
 )
-def alloy_dt_mlp_step_fn(inputs):  # type: ignore[no-untyped-def]
-  state, u, pw, physics, dt = inputs
+def alloy_dt_mlp_step_fn(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
   """The discrete MLP's one-step map; see ``common.dt_mlp_step_smooth_np``."""
+  state, u, pw, physics, dt = inputs
   h_dt = dt[0]
   max_delta, steering_time_constant = physics[2], physics[3]
   delta = state[6]
@@ -573,16 +572,42 @@ def alloy_dt_mlp_step_fn(inputs):  # type: ignore[no-untyped-def]
   return al.stack([pose[0], pose[1], pose[2], learned[0], learned[1] + delta_next, learned[2], delta_next])
 
 
+# TODO(API-1): Replace this configuration-specialized builder with an ``@al.function`` template.
 def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al.Function:
+  """Build the safety filter's tracking cost and discrete barrier rows."""
   ncars = loop_cfg.ncars
   n_u = NCTRL * ncars
   n_s = loop_cfg.n_slack
-  z = al.sym("z", n_u + n_s)
-  bar_x = al.sym("bar_x", NSTATE * ncars, diff=False)
-  u_des = al.sym("u_des", n_u, diff=False)
-  pw = al.sym("pw", filter_n_pw(filt_cfg), diff=False)
-  physics = al.sym("physics", N_PHYSICS, diff=False)
-  dt = al.sym("dt", 1, diff=False)
+
+  def constant(size: int) -> al.TensorType:
+    return al.TensorType((size,), diff=False)
+
+  @al.function(
+    al.G(
+      al.L("z", n_u + n_s),
+      al.L("bar_x", constant(NSTATE * ncars)),
+      al.L("u_des", constant(n_u)),
+      al.L("pw", constant(filter_n_pw(filt_cfg))),
+      al.L("physics", constant(N_PHYSICS)),
+      al.L("dt", constant(1)),
+    ),
+    al.G(al.L("cost", ...), al.L("g", ...)),
+    name=f"ctdt_alloy_oracle_N{ncars}_{'walls' if loop_cfg.arena_avoidance else 'pairs'}",
+  )
+  def oracle(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> tuple[al.Expr, al.Expr]:
+    return _alloy_oracle_outputs(inputs, loop_cfg, filt_cfg)
+
+  return oracle
+
+
+def _alloy_oracle_outputs(
+  inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr], loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig
+) -> tuple[al.Expr, al.Expr]:
+  """Build the objective and barrier rows traced by ``build_alloy_oracle``."""
+  z, bar_x, u_des, pw, physics, dt = inputs
+  ncars = loop_cfg.ncars
+  n_u = NCTRL * ncars
+  n_s = loop_cfg.n_slack
   u = z[:n_u]
   slack = z[n_u:]
   step_fn = alloy_dt_mlp_step_fn if filt_cfg.model == "dt" else alloy_ctfull_rk4_fn
@@ -626,7 +651,7 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
     al.L("g", 1),
     name="pair_hcbf",
   )
-  def pair_hcbf(inputs):
+  def pair_hcbf(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
     xi, xj, xi_next, xj_next, physics = inputs
     return al.stack([pair_b(xi_next, xj_next, physics) - (1.0 - loop_cfg.pair_gamma) * pair_b(xi, xj, physics)])
 
@@ -635,7 +660,7 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
     al.L("g", 4),
     name="wall_hcbf",
   )
-  def wall_hcbf(inputs):
+  def wall_hcbf(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
     state, state_next, physics = inputs
     return wall_b(state_next, physics) - (1.0 - loop_cfg.wall_gamma) * wall_b(state, physics)
 
@@ -663,13 +688,7 @@ def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al
   diff = u - u_des
   weights = al.const(np.tile(np.asarray(filt_cfg.R, dtype=np.float64), ncars))
   cost = al.dot(diff, weights * diff) + filt_cfg.slack_weight * slack.sum()
-  return al.Function._from_exprs(
-    f"ctdt_alloy_oracle_N{ncars}_{'walls' if loop_cfg.arena_avoidance else 'pairs'}",
-    [z, bar_x, u_des, pw, physics, dt],
-    [cost, g],
-    ["z", "bar_x", "u_des", "pw", "physics", "dt"],
-    ["cost", "g"],
-  )
+  return cost, g
 
 
 def build_alloy_nlp(
@@ -680,27 +699,26 @@ def build_alloy_nlp(
   options: dict[str, str | int | float] | None = None,
   oracle: al.Function | None = None,
 ) -> al.Function:
-  """Build the nonlinear program used by the Alloy safety-filter column."""
+  """Build the safety-filter NLP over car controls and nonnegative barrier slacks."""
   base = build_alloy_oracle(loop_cfg, filt_cfg) if oracle is None else oracle
-  z, bar_x, u_des, pw, physics, dt = base.inputs
-  _, g = base.outputs
-  n_u, n_s, n_g = NCTRL * loop_cfg.ncars, loop_cfg.n_slack, g.shape[0]
+  n_u, n_s = NCTRL * loop_cfg.ncars, loop_cfg.n_slack
   vars_tree = al.G(al.L("u", (n_u,)), al.L("s", (n_s,)))
   params_tree = al.G(
-    al.L("bar_x", bar_x.type),
-    al.L("u_des", u_des.type),
-    al.L("pw", pw.type),
-    al.L("physics", physics.type),
-    al.L("dt", dt.type),
+    al.L("bar_x", NSTATE * loop_cfg.ncars),
+    al.L("u_des", n_u),
+    al.L("pw", filter_n_pw(filt_cfg)),
+    al.L("physics", N_PHYSICS),
+    al.L("dt", 1),
   )
   problem_name = base.name.replace("_oracle", "_problem")
 
   @al.problem(vars=vars_tree, params=params_tree, name=problem_name)
-  def problem(variables, params):
+  def problem(
+    variables: tuple[al.Expr, al.Expr], params: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]
+  ) -> al.ProblemSpec[tuple[al.Expr, al.Expr]]:
     u, s = variables
-    replacements = dict(zip(base.inputs, (al.concat([u, s]), *params), strict=True))
-    cost, constraints = (substitute(output, replacements) for output in base.outputs)
-    inequalities = (al.bounded(constraints, lo=al.const(np.zeros(n_g)), name="barrier"),) if n_g else ()
+    cost, constraints = _alloy_oracle_outputs((al.concat([u, s]), *params), loop_cfg, filt_cfg)
+    inequalities = (al.bounded(constraints, lo=al.const(np.zeros(n_s)), name="barrier"),) if n_s else ()
     return al.ProblemSpec(
       minimize=cost,
       ineq=inequalities,

@@ -1,3 +1,5 @@
+"""Hanging-chain MPC problem with RK4 dynamics and a direct multiple-shooting transcription."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,7 +7,6 @@ from dataclasses import dataclass
 import numpy as np
 
 import alloy as al
-from alloy.ir.expr import substitute
 
 NU = 3
 N_PARAMS = 5
@@ -55,7 +56,7 @@ def n_param(n_masses: int) -> int:
 
 
 @al.function(al.G(al.L("dist", 3), al.L("mass", 1), al.L("spring_d", 1), al.L("rest_len", 1)), al.L("accel", ...), name="chain_link_accel")
-def chain_link_accel_fn(inputs):  # type: ignore[no-untyped-def]
+def chain_link_accel_fn(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
   dist, mass, spring_d, rest_len = inputs
   return (spring_d[0] / mass[0]) * (1.0 - rest_len[0] / al.norm_2(dist)) * dist
 
@@ -65,76 +66,87 @@ def chain_link_accel_fn(inputs):  # type: ignore[no-untyped-def]
   al.L("accel", ...),
   name="chain_mass_accel",
 )
-def chain_mass_accel_fn(inputs):  # type: ignore[no-untyped-def]
+def chain_mass_accel_fn(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
   left, pos, right, mass, spring_d, rest_len, gravity = inputs
   left_accel = chain_link_accel_fn((pos - left, mass, spring_d, rest_len))
   right_accel = chain_link_accel_fn((right - pos, mass, spring_d, rest_len))
   return right_accel - left_accel + al.stack([0.0, 0.0, gravity[0]])
 
 
+# TODO(API-1): Replace these shape-specialized builders with ``@al.function`` templates.
 def chain_ode_fn(n_masses: int) -> al.Function:
+  """Build the continuous-time chain dynamics for the free masses and actuated end mass."""
   nx = n_state(n_masses)
-  x = al.sym("x", nx)
-  u = al.sym("u", NU)
-  mass, spring_d, rest_len, gravity, dt = (al.sym(name, 1, diff=False) for name in ("mass", "spring_d", "rest_len", "gravity", "dt"))
-  n_intermediate = n_masses - 2
-  positions = al.concat([al.const(np.zeros(3)), x[: 3 * (n_masses - 1)]])
-  velocities = x[3 * (n_masses - 1) :]
-  accel = al.vmap(
-    chain_mass_accel_fn,
-    length=n_intermediate,
-    inputs={
-      "left": (positions, 0, 3),
-      "pos": (positions, 3, 3),
-      "right": (positions, 6, 3),
-      "mass": (mass, 0, 0),
-      "spring_d": (spring_d, 0, 0),
-      "rest_len": (rest_len, 0, 0),
-      "gravity": (gravity, 0, 0),
-    },
+  constant = al.TensorType((1,), diff=False)
+
+  @al.function(
+    al.G(al.L("x", nx), al.L("u", NU), *(al.L(name, constant) for name in ("mass", "spring_d", "rest_len", "gravity"))),
+    al.L("xdot", ...),
+    name=f"chain_ode_M{n_masses}",
   )
-  xdot = al.concat([velocities, u, accel])
-  return al.Function._from_exprs(
-    f"chain_ode_M{n_masses}",
-    [x, u, mass, spring_d, rest_len, gravity, dt],
-    [xdot],
-    ["x", "u", "mass", "spring_d", "rest_len", "gravity", "dt"],
-    ["xdot"],
-  )
+  def ode(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
+    x, u, mass, spring_d, rest_len, gravity = inputs
+    positions = al.concat([al.const(np.zeros(3)), x[: 3 * (n_masses - 1)]])
+    velocities = x[3 * (n_masses - 1) :]
+    accel = al.vmap(
+      chain_mass_accel_fn,
+      length=n_masses - 2,
+      inputs={
+        "left": (positions, 0, 3),
+        "pos": (positions, 3, 3),
+        "right": (positions, 6, 3),
+        "mass": (mass, 0, 0),
+        "spring_d": (spring_d, 0, 0),
+        "rest_len": (rest_len, 0, 0),
+        "gravity": (gravity, 0, 0),
+      },
+    )
+    return al.concat([velocities, u, accel])
+
+  return ode
 
 
 def chain_step_fn(n_masses: int) -> al.Function:
+  """Build one fourth-order Runge-Kutta step with a runtime time step."""
   nx = n_state(n_masses)
-  x = al.sym("x", nx)
-  u = al.sym("u", NU)
-  mass, spring_d, rest_len, gravity, dt = (al.sym(name, 1, diff=False) for name in ("mass", "spring_d", "rest_len", "gravity", "dt"))
   ode = chain_ode_fn(n_masses)
+  constant = al.TensorType((1,), diff=False)
 
-  def rhs(state):  # type: ignore[no-untyped-def]
-    return ode((state, u, mass, spring_d, rest_len, gravity, dt))
-
-  h = dt[0]
-  k1 = rhs(x)
-  k2 = rhs(x + 0.5 * h * k1)
-  k3 = rhs(x + 0.5 * h * k2)
-  k4 = rhs(x + h * k3)
-  step = x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-  return al.Function._from_exprs(
-    f"chain_step_M{n_masses}",
-    [x, u, mass, spring_d, rest_len, gravity, dt],
-    [step],
-    ["x", "u", "mass", "spring_d", "rest_len", "gravity", "dt"],
-    ["next"],
+  @al.function(
+    al.G(al.L("x", nx), al.L("u", NU), *(al.L(name, constant) for name in ("mass", "spring_d", "rest_len", "gravity", "dt"))),
+    al.L("next", ...),
+    name=f"chain_step_M{n_masses}",
   )
+  def step(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
+    x, u, mass, spring_d, rest_len, gravity, dt = inputs
+
+    def rhs(state: al.Expr) -> al.Expr:
+      return ode((state, u, mass, spring_d, rest_len, gravity))
+
+    h = dt[0]
+    k1 = rhs(x)
+    k2 = rhs(x + 0.5 * h * k1)
+    k3 = rhs(x + 0.5 * h * k2)
+    k4 = rhs(x + h * k3)
+    return x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+  return step
 
 
 def _eq_stage_fn(n_masses: int) -> al.Function:
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
-  z = al.sym("z", nz)
-  xnext = al.sym("xnext", nx)
-  params = al.sym("params", N_PARAMS, diff=False)
-  step = chain_step_fn(n_masses)((z[:nx], z[nx:], *[params[i : i + 1] for i in range(N_PARAMS)]))
-  return al.Function._from_exprs(f"chain_eq_stage_M{n_masses}", [z, xnext, params], [(step - xnext).scalar()], ["z", "xnext", "params"], ["eq"])
+
+  @al.function(
+    al.G(al.L("z", nz), al.L("xnext", nx), al.L("params", al.TensorType((N_PARAMS,), diff=False))),
+    al.L("eq", ...),
+    name=f"chain_eq_stage_M{n_masses}",
+  )
+  def equality(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
+    z, xnext, params = inputs
+    predicted = chain_step_fn(n_masses)((z[:nx], z[nx:], *[params[i : i + 1] for i in range(N_PARAMS)]))
+    return (predicted - xnext).scalar()
+
+  return equality
 
 
 def _chain_eq_expr(z: al.Expr, p: al.Expr, n_masses: int, horizon: int) -> al.Expr:
@@ -144,20 +156,37 @@ def _chain_eq_expr(z: al.Expr, p: al.Expr, n_masses: int, horizon: int) -> al.Ex
 
 
 def chain_eq_function(n_masses: int, horizon: int) -> al.Function:
-  z = al.sym("z", n_dec(n_masses, horizon))
-  p = al.sym("p", n_param(n_masses), diff=False)
-  return al.Function._from_exprs(f"chain_eq_vmap_M{n_masses}_N{horizon}", [z, p], [_chain_eq_expr(z, p, n_masses, horizon)], ["z", "p"], ["eq"])
+  """Build the initial-state and multiple-shooting equalities for the full horizon."""
+
+  @al.function(
+    al.G(al.L("z", n_dec(n_masses, horizon)), al.L("p", al.TensorType((n_param(n_masses),), diff=False))),
+    al.L("eq", ...),
+    name=f"chain_eq_vmap_M{n_masses}_N{horizon}",
+  )
+  def equality(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+    z, p = inputs
+    return _chain_eq_expr(z, p, n_masses, horizon)
+
+  return equality
 
 
 def chain_eq_function_unrolled(n_masses: int, horizon: int) -> al.Function:
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
-  z = al.sym("z", n_dec(n_masses, horizon))
-  p = al.sym("p", n_param(n_masses), diff=False)
   stage = _eq_stage_fn(n_masses)
-  parts = [z[:nx] - p[:nx]]
-  for i in range(horizon):
-    parts.append(stage((z[i * nz : (i + 1) * nz], z[(i + 1) * nz : (i + 1) * nz + nx], p[nx:])))
-  return al.Function._from_exprs(f"chain_eq_M{n_masses}_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
+
+  @al.function(
+    al.G(al.L("z", n_dec(n_masses, horizon)), al.L("p", al.TensorType((n_param(n_masses),), diff=False))),
+    al.L("eq", ...),
+    name=f"chain_eq_M{n_masses}_N{horizon}",
+  )
+  def equality(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+    z, p = inputs
+    parts = [z[:nx] - p[:nx]]
+    for i in range(horizon):
+      parts.append(stage((z[i * nz : (i + 1) * nz], z[(i + 1) * nz : (i + 1) * nz + nx], p[nx:])))
+    return al.concat(parts)
+
+  return equality
 
 
 def chain_eq_jac_dense_reference(n_masses: int, horizon: int, z: np.ndarray, p: np.ndarray) -> np.ndarray:
@@ -238,7 +267,7 @@ def chain_lag_hess_dense_reference(n_masses: int, horizon: int, z: np.ndarray, p
   return dense
 
 
-def _objective(z, n_masses: int, horizon: int):  # type: ignore[no-untyped-def]
+def _objective(z: al.Expr, n_masses: int, horizon: int) -> al.Expr:
   # laopt transcribes on normalized time: each stage cost enters as h*(0.5*|x-xref|^2_P + 0.5*u'Pu) with h=1/N, the Mayer term unscaled.
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   end = 3 * (n_masses - 2)
@@ -253,30 +282,33 @@ def _objective(z, n_masses: int, horizon: int):  # type: ignore[no-untyped-def]
   return cost + 0.5 * Q_END_TERMINAL * al.sumsqr(terminal[end : end + 3] - ref)
 
 
+# TODO(API-1): Replace this shape-specialized builder with an ``@al.function`` template.
 def chain_objective_fn(n_masses: int, horizon: int) -> al.Function:
   """The transcribed objective on its own, so its stationary points can be checked directly."""
-  z = al.sym("z", n_dec(n_masses, horizon))
-  return al.Function._from_exprs(f"chain_obj_M{n_masses}_N{horizon}", [z], [_objective(z, n_masses, horizon)], ["z"], ["f"])
+
+  @al.function(al.L("z", n_dec(n_masses, horizon)), al.L("f", ...), name=f"chain_obj_M{n_masses}_N{horizon}")
+  def objective(z: al.Expr) -> al.Expr:
+    return _objective(z, n_masses, horizon)
+
+  return objective
 
 
 def chain_nlp(n_masses: int, horizon: int, *, solver: str = "ipopt"):
+  """Build the chain MPC solver with bounded controls and runtime initial state and physics."""
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
-  z = al.sym("z", n_dec(n_masses, horizon))
-  p = al.sym("p", n_param(n_masses), diff=False)
-  eq = _chain_eq_expr(z, p, n_masses, horizon)
-  lb = np.full(z.size, -np.inf)
-  ub = np.full(z.size, np.inf)
+  n_variables = n_dec(n_masses, horizon)
+  lb = np.full(n_variables, -np.inf)
+  ub = np.full(n_variables, np.inf)
   for i in range(horizon):
     lb[i * nz + nx : (i + 1) * nz] = -1.0
     ub[i * nz + nx : (i + 1) * nz] = 1.0
   problem_name = f"chain_M{n_masses}_N{horizon}"
 
-  @al.problem(vars=al.L("z", z.type), params=al.L("p", p.type), name=problem_name)
-  def problem(new_z, new_p):
-    replacements = {z: new_z, p: new_p}
+  @al.problem(vars=al.L("z", n_variables), params=al.L("p", n_param(n_masses)), name=problem_name)
+  def problem(z: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
     return al.ProblemSpec(
-      minimize=substitute(_objective(z, n_masses, horizon), replacements),
-      eq=(substitute(eq, replacements),),
+      minimize=_objective(z, n_masses, horizon),
+      eq=(_chain_eq_expr(z, p, n_masses, horizon),),
       lb=al.const(lb),
       ub=al.const(ub),
     )

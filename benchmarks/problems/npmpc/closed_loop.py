@@ -31,7 +31,7 @@ import numpy as np
 
 from benchmarks.harness.timing import SolveTiming
 
-from alloy.solvers import SolverStats
+from alloy import SolverStats
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
   DT,
