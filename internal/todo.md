@@ -23,7 +23,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 59**
+**Next id: 69**
 
 | Prefix | Section |
 |---|---|
@@ -54,11 +54,22 @@ section because items move between sections more often than expected, because ei
 eight places to get wrong once completed items are deleted, and because the letters then carry
 only the theme and nothing else has to stay stable.
 
-Ordering constraints across sections, the only sequencing that matters:
+Priority order from 2026-09-11, the road to a public repository and a first alpha. Each step is
+cheap once and expensive to redo, so the order is the sequencing that matters:
 
-- Track C and BH-20 are complete. The API and documentation work now precedes the release tasks.
-- L-28 to L-31 come before any wheel or tag is public, even on test PyPI.
-- R-37 comes before any merge of dev into main.
+1. R-60 reserve the PyPI names, then R-59 rename everything to scaly.
+2. L-28 to L-31 with EPFL as copyright holder.
+3. R-37 move `paper.md` out, R-61 scrub anvil from file contents, R-63 audit `internal/`.
+4. R-40 versioning policy.
+5. R-62 rewrite history and force-push the renamed repository, then R-64 secrets scan and
+   metadata, then merge dev into main.
+6. D-32 to D-34 documentation rewrite, D-68 acknowledgements and AI disclosure, D-65 the two
+   docs deployments.
+7. R-67 make the repository public. CI runs only after that, because the month's Actions minutes
+   are spent; run the suite, ruff and ty locally on the rewritten tree first.
+8. R-66 platform-only wheel tags, R-41 wheels on test PyPI, R-42 `0.1.0a1`.
+
+R-38 Windows and the API items stay off this path.
 
 ## API
 
@@ -365,7 +376,8 @@ licenses, which we do not copy. Surveyed 2026-09-07. What we ship and what it as
 
 ### Now
 
-- [ ] **L-28. Root `LICENSE` (BSD-2-Clause, Tudor Oancea, 2026)**, `license = "BSD-2-Clause"` and
+- [ ] **L-28. Root `LICENSE` (BSD-2-Clause, copyright EPFL, 2026)**, the holder the lab's other
+      projects name, with the author only in the pyproject `authors` entry;, `license = "BSD-2-Clause"` and
       `license-files = ["LICENSE"]` in the root `pyproject.toml`, and the README "License" section
       replaces "TBD".
 - [ ] **L-29. Copy the same `LICENSE` into each of `plugins/alloy-{sqp,piqp,ipopt}/`** with the same
@@ -407,6 +419,15 @@ the code does.
       supporting mechanism is recorded but not wired up, and a number with no machine attached.
       The lowering-hint claims have been removed. Check any surviving timing that predates the
       reference-machine rule in `AGENTS.md`.
+- [ ] **D-68. Acknowledgements and AI disclosure in the README and `docs/index.md`.** An
+      acknowledgement of NCCR Automation, which funded the research, and a disclosure that AI coding
+      agents (Claude, Codex and others) were used to write parts of the code and documentation.
+      Before R-67, so the first public snapshot carries both.
+- [ ] **D-65. Two documentation deployments.** GitHub Pages publishes the user-facing docs from
+      `main` on each version tag, through a `docs.yml` job with `pages: write` and `id-token: write`
+      permissions on a tag trigger. Cloudflare Pages publishes the latest docs from `main` and a
+      preview per branch, which the existing every-branch build already produces. Each site carries
+      a banner or version switcher saying which one it is.
 - [x] **D-35. Reconcile the problem READMEs with the audit.** Completed 2026-09-11. The problem
       READMEs now describe only the current formulations and link measured comparisons to the
       canonical result pages.
@@ -447,8 +468,10 @@ These steps make the tree public and permanent, and each is cheap to do once and
         copies rather than links it. `/notes/` goes in `.gitignore`.
       - A `[post-start]` step in `.config/wt.toml` that recreates the symlink, so the behaviour does
         not depend on what `wt step copy-ignored` does with symlinks.
-      - A line in `AGENTS.md`: what `notes/` is, that nothing public may depend on it, and never
-        `git add -f` under it.
+      - A gitignored `AGENTS.local.md` holding the agent instructions that must not be public,
+        imported from the tracked `CLAUDE.md` with an `@AGENTS.local.md` line next to `@AGENTS.md`;
+        a missing import is skipped silently, so public clones are unaffected. It says what `notes/`
+        is, that nothing public may depend on it, and never `git add -f` under it.
 
       Properties this buys. One source of truth across every worktree and branch, which is correct
       for a planning document since the plan is not per-branch. The worst possible accident commits a
@@ -464,14 +487,59 @@ These steps make the tree public and permanent, and each is cheap to do once and
 - [ ] **R-38. Windows support.** Decide the toolchain (MSVC or clang) and the target: the core JIT
       plus `alloy-sqp` and `alloy-piqp` first; `alloy-ipopt` on Windows is a separate later item
       because it drags in Fortran and its own licensing survey.
-- [ ] **R-39. Finalize the name.** Decide whether `alloy` ships under that name; see
-      `internal/notes/naming.md`.
+- [x] **R-39. Finalize the name.** Decided 2026-09-14: `scaly`. `scali` was the first choice, but
+      PyPI refused it as too similar to `scaii`, an abandoned 2019 project: PyPI treats `l`, `i`
+      and `1` as one character when comparing names, and nobody can override that check. `scaly`
+      is pronounced the same, is a real word people spell right after hearing it, and matches the
+      scale-filled S of the logo.
+- [ ] **R-60. Reserve the PyPI names** `scaly`, `scaly-sqp`, `scaly-piqp` and `scaly-ipopt`: a
+      placeholder package per name at version `0.0.0a0` whose description says what it will become,
+      built with `uv build` and uploaded with `uv publish` from the gitignored
+      `package-placeholders/`. A pre-release version so `0.1.0a1` stays free; PyPI never lets a
+      version be reused. `scaly` is reserved as of 2026-09-14; the three plugins wait on PyPI's
+      new-project rate limit. The `scali-sqp`, `scali-piqp` and `scali-ipopt` placeholders published
+      before the name changed stay up as tombstones, since deleting a project frees its name for
+      anyone; point their descriptions at the `scaly` packages once those exist.
+- [ ] **R-59. Rename everything to scaly.** The package `src/alloy` and the three plugin
+      distributions and directories, the `alloy_*` modules and `ALLOY_BUILD_SOLVERS`, the two console
+      scripts, the JIT cache directory, CI cache paths, `.config/wt.toml`, `zensical.toml`, `docs/`
+      and `internal/` including `todo.md` itself. Check the Foxglove layouts for the string and, if
+      present, re-export them from Desktop rather than editing. Then rename the GitHub repository in
+      place, which keeps the redirect from the old name, and `git remote set-url` in every clone.
+- [ ] **R-61. Scrub anvil from file contents.** History may keep it. Hits on 2026-09-11:
+      `AGENTS.md`, `internal/roadmap.md`, `internal/notes/anvil.md`, `naming.md` and
+      `benchmark-buildout.md`. Delete `anvil.md`; its two useful sentences move to
+      `AGENTS.local.md` (R-37). `naming.md` becomes a short "why scaly" note or moves to the private
+      notes repo, since its current content is about the old name.
+- [ ] **R-63. Audit `internal/` for publication.** It stays in the public repository and off the
+      documentation site, which Zensical already guarantees because it builds `docs/` only. Nothing
+      under it may mention anvil or alloy. Add a `pre-merge` grep in `.config/wt.toml` for both
+      words over the tracked tree, so the gate outlives the audit.
+- [ ] **R-62. Rewrite history and force-push the renamed repository.** After R-37, R-59, R-61 and
+      R-63: drop the local `refs/t3/checkpoints/*` refs, `git filter-repo --invert-paths` on
+      `internal/paper.md` and the old `docs/paper.md`, re-add `origin`, force-push every branch and
+      tag, delete stale remote branches, and hard-reset or re-clone every other clone and worktree
+      rather than pulling. GitHub keeps unreachable commits fetchable by SHA until its garbage
+      collection; accepted because the repository is private with lab-only access until R-67.
+- [ ] **R-64. Publication metadata and hygiene.** A secrets scan over the rewritten history,
+      `CITATION.cff`, a Zenodo record at the first tag, a real pyproject description, and ruff's
+      `target-version` aligned with `requires-python`.
+- [ ] **R-67. Make the repository public.** After R-62, R-64 and the merge into main, with the suite,
+      ruff and ty green locally. The first CI run happens here because the month's Actions minutes
+      are spent, and both workflows will consume them once they refill.
 - [ ] **R-40. Versioning policy.** What a minor bump promises about the generated C symbols, the
       sparsity-table prefixes and the plugin ABI; written into `docs/dev/contributing.md`.
-- [ ] **R-41. Wheel building and publishing** for the workspace packages (cibuildwheel, per-package
-      native builds), test PyPI first. After L-28 to L-31.
-- [ ] **R-42. Freeze measurements on `0.1.0rc1`, publish `alloy-v0.1.0`** and a durable archive.
-      After R-41.
+- [ ] **R-66. Platform-only wheel tags for the plugins.** Nothing in the plugins touches the Python
+      C API, the solvers load through ctypes, yet `hatch_build.py` in `alloy-piqp` and `alloy-ipopt`
+      sets `infer_tag = True`, which stamps the running interpreter's `cpXY-cpXY-<platform>` tag.
+      Set the tag to `py3-none-<platform>` explicitly instead, so one wheel per OS and architecture
+      serves every Python version and no per-interpreter build matrix or stable ABI is needed.
+- [ ] **R-41. Wheel building and publishing.** cibuildwheel with one matrix entry per OS and
+      architecture, solvers built natively on each runner as CI already does. `scaly`, `scaly-sqp`
+      and `scaly-piqp` first; `scaly-ipopt` follows once its Fortran runtime licensing (L-30) is
+      settled. Test PyPI first. After L-28 to L-31 and R-66.
+- [ ] **R-42. Freeze measurements on `0.1.0a1`, tag `v0.1.0a1`** and publish the wheels and a durable
+      archive. After R-41.
 
 ## Track C closeout before merging to dev
 

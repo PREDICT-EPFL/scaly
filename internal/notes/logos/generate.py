@@ -4,10 +4,10 @@ import bisect, math, sys
 # advance width in front of them. Scales are laid along a hand-placed centreline and the
 # glyph outline clips them, so the silhouette is exactly the font's.
 K = 0.1000977                     # font units -> drawing units, as used for the letters
-SX, BASE = 90.0, 210.0            # S origin; 'cali' starts one advance (1300 units) later
+SX, BASE = 90.0, 210.0            # S origin; 'caly' starts one advance (1300 units) later
 import json
 import os
-FONT = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "glyphs.json")))       # DejaVu Sans Bold: S, c, a, l, i
+FONT = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "glyphs.json")))       # DejaVu Sans Bold: S, c, a, l, y
 GLYPH = FONT["S"]["d"]
 _rx = lambda x: 147 + (x - 135) * (1325 - 147) / (1186 - 135)   # regular-S spine -> bold-S bbox
 SPINE = [(60,200),(175,170),(380,90),(614,53),(850,110),(1010,250),(1080,405),(1040,560),(880,680),
@@ -62,7 +62,7 @@ while s<L+a:
 
 _x = SX + FONT["S"]["adv"] * K
 _parts = []
-for ch in "cali":
+for ch in "caly":
     _parts.append(f'<path d="{FONT[ch]["d"]}" transform="translate({_x:.3f} {BASE}) scale({K} -{K})"/>')
     _x += FONT[ch]["adv"] * K
 letters = '<g fill="#151e22">\n' + "\n".join(_parts) + '\n</g>'
@@ -81,9 +81,9 @@ def write(name, body, x0, y0, x1, y1, title):
 '''
     open(os.path.join(HERE, name), "w").write(svg)
 
-top, bottom = BASE - 1556*K - 16, BASE + 29*K + 16
-write("scali-wordmark.svg", letters, SX + 147*K - 16, top, RIGHT - 172*K + 16, bottom,
-      "Scali: the S filled with charcoal snake scales")
-write("scali-mark.svg", "", SX + 147*K - 16, top, SX + 1325*K + 16, bottom,
-      "Scali mark: an S filled with charcoal snake scales")
+top, bottom = BASE - 1556*K - 16, BASE - FONT["y"]["bbox"][1]*K + 16   # the y descender sets the bottom
+write("scaly-wordmark.svg", letters, SX + 147*K - 16, top, RIGHT - (FONT["y"]["adv"] - FONT["y"]["bbox"][2])*K + 16, bottom,
+      "Scaly: the S filled with charcoal snake scales")
+write("scaly-mark.svg", "", SX + 147*K - 16, top, SX + 1325*K + 16, bottom,
+      "Scaly mark: an S filled with charcoal snake scales")
 print("cells", len(cells))
