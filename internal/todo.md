@@ -55,13 +55,11 @@ Priority order from 2026-09-11, the road to a public repository and a first alph
 cheap once and expensive to redo, so the order is the sequencing that matters:
 
 1. R-40 versioning policy.
-2. R-62 rewrite history and force-push the renamed repository, then R-64 secrets scan and
-   metadata, then merge dev into main.
-3. D-32 to D-34 documentation rewrite, D-68 acknowledgements and AI disclosure, D-65 the two
+2. D-32 to D-34 documentation rewrite, D-68 acknowledgements and AI disclosure, D-65 the two
    docs deployments.
-4. R-67 make the repository public, after running the suite, ruff and ty locally on the rewritten
+3. R-67 make the repository public, after running the suite, ruff and ty locally on the rewritten
    tree.
-5. R-66 platform-only wheel tags, R-41 wheels on test PyPI, R-42 `0.1.0a1`.
+4. R-66 platform-only wheel tags, R-41 wheels on test PyPI, R-42 `0.1.0a1`.
 
 ## API
 
@@ -472,13 +470,13 @@ These steps make the tree public and permanent, and each is cheap to do once and
       pass. It stays in the public repository and off the documentation site, which Zensical
       guarantees because it builds `docs/` only. The `no-private-names` `pre-merge` hook in
       `.config/wt.toml` keeps the gate alive after the audit.
-- [ ] **R-62. Rewrite history and force-push the renamed repository.** After R-37, R-59, R-61 and
+- [x] **R-62. Rewrite history and force-push the renamed repository.** After R-37, R-59, R-61 and
       R-63 (all done): drop the local `refs/t3/checkpoints/*` refs, `git filter-repo --invert-paths` on
       the paths R-37 removed, re-add `origin`, force-push every branch and
       tag, delete stale remote branches, and hard-reset or re-clone every other clone and worktree
       rather than pulling. Do this while the repository is still private, since GitHub keeps
       unreachable commits fetchable by SHA until its garbage collection.
-- [ ] **R-64. Publication metadata and hygiene.** A secrets scan over the rewritten history,
+- [x] **R-64. Publication metadata and hygiene.** A secrets scan over the rewritten history,
       `CITATION.cff`, a real pyproject description, and ruff's `target-version` aligned with `requires-python`.
 - [ ] **R-67. Make the repository public.** After R-62, R-64 and the merge into main, with the suite,
       ruff and ty green locally. The first CI run happens here because the month's Actions minutes

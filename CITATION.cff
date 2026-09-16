@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use scaly in your research, please cite it as below."
+type: software
+title: "scaly"
+abstract: "A pure-Python symbolic compiler for optimal-control problems. Named functions over one typed expression graph are differentiated, their sparsity exploited, and lowered to standalone C."
+authors:
+  - family-names: Oancea
+    given-names: Tudor
+    email: tudor.oancea@epfl.ch
+    affiliation: "EPFL"
+version: 0.1.0a1
+date-released: 2026-09-16
+license: BSD-2-Clause
+repository-code: "https://github.com/PREDICT-EPFL/scaly"
+keywords:
+  - optimal control
+  - automatic differentiation
+  - code generation
+  - model predictive control

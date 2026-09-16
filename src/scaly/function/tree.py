@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import EllipsisType
-from typing import Any, TypeIs, cast, overload
+from typing import Any, TypeGuard, cast, overload
 
 import numpy as np
 
@@ -78,7 +78,7 @@ class Tree[Symbolic, Numerical]:
       raise ValueError(f"unknown name {name!r}; declared {self.names}")
     return self.names.index(name)
 
-  def is_symbolic(self, value: Symbolic | Numerical, /) -> TypeIs[Symbolic]:
+  def is_symbolic(self, value: Symbolic | Numerical, /) -> TypeGuard[Symbolic]:
     """Whether ``value`` has at least one leaf and every leaf is an ``Expr``.
 
     This is the leaf-kind half of ``Function.__call__``'s dispatch; it deliberately ignores
@@ -88,7 +88,7 @@ class Tree[Symbolic, Numerical]:
     leaves = _leaves(value)
     return bool(leaves) and all(isinstance(leaf, Expr) for leaf in leaves)
 
-  def is_numerical(self, value: Symbolic | Numerical, /) -> TypeIs[Numerical]:
+  def is_numerical(self, value: Symbolic | Numerical, /) -> TypeGuard[Numerical]:
     """Whether no leaf of ``value`` is an ``Expr``.
 
     The numerical side is the fallback: array-likes are coerced by ``flatten_numerical``, so a

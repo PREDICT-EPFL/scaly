@@ -1,18 +1,36 @@
 [project]
 name = "scaly"
-version = "0.1.0"
-description = "A symbolic IR and code-generation framework for optimal control problems."
+version = "0.1.0a1"
+description = "Symbolic compiler for optimal control: typed expression graphs, sparse derivatives and standalone generated C."
 readme = "README.md"
 authors = [
     { name = "Tudor Oancea", email = "tudor.oancea@epfl.ch" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.3.3",
     "scipy>=1.18.0",
 ]
 license = "BSD-2-Clause"
 license-files = ["LICENSE.md"]
+keywords = ["optimal-control", "automatic-differentiation", "code-generation", "symbolic", "sparse", "mpc", "nonlinear-programming"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: C",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Compilers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+]
+
+[project.urls]
+Repository = "https://github.com/PREDICT-EPFL/scaly"
+Issues = "https://github.com/PREDICT-EPFL/scaly/issues"
 
 [build-system]
 requires = ["hatchling"]
@@ -67,7 +85,6 @@ scaly-sqp = { workspace = true }
 [tool.ruff]
 indent-width = 2
 line-length = 150
-target-version = "py312"
 include = ["src/scaly/**/*.py", "tests/**/*.py", "benchmarks/**/*.py", "plugins/**/*.py", "typing_playground/**/*.py"]
 exclude = [".venv"]
 lint.ignore = ["E731"]

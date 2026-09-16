@@ -226,7 +226,7 @@ class ProgramNode:
     cached = _PROGRAM_NODE_CACHE.get(key)
     if cached is not None:
       return cached
-    instance = super().__new__(cls)
+    instance = object.__new__(cls)
     object.__setattr__(instance, "op", op)
     object.__setattr__(instance, "args", tuple(args))
     object.__setattr__(instance, "attrs", attrs)

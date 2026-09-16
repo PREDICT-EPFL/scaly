@@ -1,6 +1,7 @@
 [project]
 name = "scaly-ipopt"
-version = "0.1.0"
+version = "0.1.0a1"
+description = "IPOPT backend for scaly: the vendored solver plus the nlp() oracle bindings."
 requires-python = ">=3.12"
 dependencies = ["scaly"]
 license = "BSD-2-Clause"
