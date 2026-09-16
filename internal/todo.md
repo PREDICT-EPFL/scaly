@@ -479,8 +479,7 @@ These steps make the tree public and permanent, and each is cheap to do once and
       rather than pulling. Do this while the repository is still private, since GitHub keeps
       unreachable commits fetchable by SHA until its garbage collection.
 - [ ] **R-64. Publication metadata and hygiene.** A secrets scan over the rewritten history,
-      `CITATION.cff`, a Zenodo record at the first tag, a real pyproject description, and ruff's
-      `target-version` aligned with `requires-python`.
+      `CITATION.cff`, a real pyproject description, and ruff's `target-version` aligned with `requires-python`.
 - [ ] **R-67. Make the repository public.** After R-62, R-64 and the merge into main, with the suite,
       ruff and ty green locally. The first CI run happens here because the month's Actions minutes
       are spent, and both workflows will consume them once they refill.
