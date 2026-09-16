@@ -376,7 +376,7 @@ licenses, which we do not copy. Surveyed 2026-09-07. What we ship and what it as
 
 ### Now
 
-- [ ] **L-28. Root `LICENSE` (BSD-2-Clause, copyright EPFL, 2026)**, the holder the lab's other
+- [x] **L-28. Root `LICENSE` (BSD-2-Clause, copyright EPFL, 2026)**, the holder the lab's other
       projects name, with the author only in the pyproject `authors` entry;, `license = "BSD-2-Clause"` and
       `license-files = ["LICENSE"]` in the root `pyproject.toml`, and the README "License" section
       replaces "TBD".
@@ -492,7 +492,7 @@ These steps make the tree public and permanent, and each is cheap to do once and
       and `1` as one character when comparing names, and nobody can override that check. `scaly`
       is pronounced the same, is a real word people spell right after hearing it, and matches the
       scale-filled S of the logo.
-- [ ] **R-60. Reserve the PyPI names** `scaly`, `scaly-sqp`, `scaly-piqp` and `scaly-ipopt`: a
+- [x] **R-60. Reserve the PyPI names** `scaly`, `scaly-sqp`, `scaly-piqp` and `scaly-ipopt`: a
       placeholder package per name at version `0.0.0a0` whose description says what it will become,
       built with `uv build` and uploaded with `uv publish` from the gitignored
       `package-placeholders/`. A pre-release version so `0.1.0a1` stays free; PyPI never lets a

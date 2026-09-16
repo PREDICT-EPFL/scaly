@@ -114,4 +114,4 @@ record, deliberately not published: `internal/paper.md` is the paper's scope and
 
 ## License
 
-TBD.
+BSD-2-Clause

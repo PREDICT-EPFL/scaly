@@ -11,6 +11,8 @@ dependencies = [
     "numpy>=2.3.3",
     "scipy>=1.18.0",
 ]
+license = ["BSD-2-Clause"]
+license-files = ["LICENSE.md"]
 
 [build-system]
 requires = ["hatchling"]
