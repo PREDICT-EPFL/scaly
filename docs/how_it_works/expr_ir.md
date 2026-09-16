@@ -1,6 +1,6 @@
 # The expression dialect
 
-The expression dialect is what you build when you write scaly. It records *what* to compute and
+The expression dialect is what you build when you write scaly. It records what to compute and
 nothing about how: a graph of values and the operations between them, with no loops, no buffers
 and no memory. That is what makes it differentiable and rewritable. Choosing an implementation
 happens later, in [the program dialect](program_ir.md).
@@ -22,17 +22,17 @@ Every node has:
 
 | Field | Meaning |
 | --- | --- |
-| `op` | an `ExprOp` — the operation this node performs |
+| `op` | an `ExprOp`, the operation this node performs |
 | `args` | the operand nodes, in order |
 | `type` | a `TensorType`: shape, dtype, sparsity, and the differentiability flag |
-| `attrs` | per-op data that is not an operand — the callee of a `CALL`, the index table of a `GATHER` |
+| `attrs` | per-op data that is not an operand, such as the callee of a `CALL` or the index table of a `GATHER` |
 | `name` | set on inputs, otherwise `None` |
 | `lowering` | `auto`, `scalar`, `block`, or `opaque`. Controls procedure scalarization as described in [Lowering and optimization](lowering.md#the-optimization-pipeline). |
-| `id` | the node's Python object identity. Because nodes are interned, structural equality *is* object identity, so this doubles as a structural key. Printing does not use it — the stable `%0`, `%1` names come from a topological walk. |
+| `id` | the node's Python object identity. Because nodes are interned, structural equality is object identity, so this doubles as a structural key. Printing does not use it; the stable `%0`, `%1` names come from a topological walk. |
 
-Nodes are **interned**: building the same operation on the same arguments with the same attributes
+Nodes are interned: building the same operation on the same arguments with the same attributes
 returns the object you already have. Two structurally identical subgraphs are therefore one
-subgraph, shared by both consumers, and common subexpressions collapse as you build rather than in
+subgraph, shared by both consumers, and common subexpressions collapse as you build instead of in
 a later pass. Interning is by value in a weak-reference table, so nodes nothing refers to are
 collected.
 
@@ -48,15 +48,11 @@ mean two intern tables, and identity silently stops meaning equality. See
 sc.TensorType(shape=(3, 4), dtype=sc.dtypes.float64, sparsity=None, diff=True)
 ```
 
-**Shape** is a tuple of non-negative integers; `()` is a scalar. Shapes are static — there are no
+`shape` is a tuple of non-negative integers; `()` is a scalar. Shapes are static; there are no
 symbolic dimensions.
 
-**`DType`** is a small interned descriptor with a name, a bit width and a C spelling. The canonical
+`DType` is a small interned descriptor with a name, a bit width and a C spelling. The canonical
 instances live in `sc.dtypes`:
-
-These are the types *inside* the graph. They are not the ABI: a generated function always exchanges
-`double` buffers with its caller, and the Python call path converts to and from `float64` at the
-boundary. See [the C ABI](c_abi.md#calling-convention).
 
 | Instance | C type | Bytes |
 | --- | --- | --- |
@@ -66,23 +62,27 @@ boundary. See [the C ABI](c_abi.md#calling-convention).
 | `sc.dtypes.float32` | `float` | 4 |
 | `sc.dtypes.float64` | `double` | 8 (the default) |
 
-Mixed-dtype arithmetic is refused rather than promoted. There is no implicit widening: an
-expression combining `float32` and `float64` raises at construction. The rule is conservative on
-purpose — it keeps today's `float64` workloads exactly as they are, and it means that when an
-explicit `Expr.cast` op lands, every mixed-precision decision will be visible at the call site
-where it was made.
+These are the types inside the graph. They are not the ABI: a generated function always exchanges
+`double` buffers with its caller, and the Python call path converts to and from `float64` at the
+boundary. See [the C ABI](c_abi.md#calling-convention).
 
-**`diff`** marks whether a value depends differentiably on symbolic inputs. Constants are not
+Mixed-dtype arithmetic is refused. There is no implicit widening: an expression combining
+`float32` and `float64` raises at construction. This keeps today's `float64` workloads exactly as
+they are, and when an explicit `Expr.cast` op lands, every mixed-precision decision will be
+visible at the call site where it was made.
+
+`diff` marks whether a value depends differentiably on symbolic inputs. Constants are not
 differentiable; structural operations pass the flag through; arithmetic propagates it from its
 operands; and the non-smooth operations (`floor`, `ceil`, `minimum`, `maximum`, `solver_call`)
-clear it. AD reads this flag to decide where a derivative is zero by construction.
+clear it. AD (automatic differentiation) reads this flag to decide where a derivative is zero by
+construction.
 
-**`SparsityType`** attaches a structural pattern to a rank-2 value — see
+`SparsityType` attaches a structural pattern to a rank-2 value; see
 [Sparsity](../guide/sparsity.md). When present, its shape must match the tensor shape exactly.
 
 ## Operations
 
-Thirty-nine operations, grouped by what they do. `arity` is the operand count; a dash means
+Thirty-nine operations, grouped by what they do. `arity` is the operand count; `n` means
 variadic. `diff` is whether AD can pass through the op at all.
 
 ### Arithmetic and elementwise
@@ -99,8 +99,8 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `erf` | 1 | yes | |
 | `exp` `log` `sqrt` | 1 | yes | |
 | `abs` | 1 | yes | no multi-seed forward rule yet |
-| `floor` `ceil` | 1 | **no** | result is marked non-differentiable |
-| `minimum` `maximum` | 2 | **no** | result is marked non-differentiable |
+| `floor` `ceil` | 1 | no | result is marked non-differentiable |
+| `minimum` `maximum` | 2 | no | result is marked non-differentiable |
 
 ### Structural
 
@@ -113,23 +113,23 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `transpose` | 1 | axes must be a permutation |
 | `slice` | 1 | integer, multi-dimensional and strided indexing |
 | `gather` `scatter` | 1 | flat index tables |
-| `stack` `concat` | – | along any axis |
-| `vec` | 1 | flatten to rank 1 |
-| `matmul` | 2 | rank ≤ 2 |
+| `stack` `concat` | n | along any axis |
+| `matmul` | 2 | rank at most 2 |
 
 ### Boundaries
 
 | Op | Arity | Diff | Notes |
 | --- | --- | --- | --- |
-| `call` | – | yes | a named `Function` applied to arguments |
-| `VMAP` | – | yes | one callee applied across slices of its arguments |
-| `solver_call` | – | **no** | an opaque solve; see [Solvers](solvers.md) |
+| `call` | n | yes | a named `Function` applied to arguments |
+| `VMAP` | n | yes | one callee applied across slices of its arguments |
+| `solver_call` | n | no | an opaque solve; see [Solvers](solvers.md) |
 
-`dot`, `sumsqr` and `norm_2` are not operations — they are builders that expand into the ops above.
+`dot`, `sumsqr`, `norm_2` and `vec` are not operations. They are builders that expand into the
+ops above; `vec` emits a `reshape` to rank 1.
 
-Deliberately absent for now: `expm1` and `log1p` (useful, not load-bearing); splines and
-interpolants, which need their own design for knots, extrapolation, derivative behaviour and table
-codegen before they can be an op; and matrix decompositions and control flow.
+Absent for now: `expm1` and `log1p`; splines and interpolants, which need their own design for
+knots, extrapolation, derivative behaviour and table codegen before they can be an op; matrix
+decompositions; and control flow.
 
 ## Functions
 
@@ -140,14 +140,14 @@ per output.
 f = sc.Function("f", [x], [y], ["x"], ["y"])
 ```
 
-It is the unit of three different things at once — composition (`f.call(...)` puts a first-class
-`call` node in a bigger graph), differentiation (`f.factory(...)` derives a new `Function`), and
-compilation (calling it produces C).
+It is the unit of composition (`f.call(...)` puts a `call` node in a bigger graph), of
+differentiation (`f.factory(...)` derives a new `Function`), and of compilation (calling it
+produces C).
 
 `Function.call` normalizes constant-like arguments to `Expr` and checks every argument shape
-against the corresponding formal. Because a call is a real node rather than an inlining, the
-callee's structure survives into the generated C as a real C function, which is what keeps
-generated code small when the same block appears a hundred times.
+against the corresponding formal. Because a call is a node and not an inlining, the callee's
+structure survives into the generated C as a C function, which keeps generated code small when
+the same block appears a hundred times.
 
 ## Verification
 
@@ -159,34 +159,35 @@ sc.verify_expr(y)                     # silent on success
 sc.verify_expr(y, spec=sc.spec_expr)  # naming the spec explicitly
 ```
 
-The verifier walks the graph in topological order and raises `VerifyError` at the *first* invalid
+The verifier walks the graph in topological order and raises `VerifyError` at the first invalid
 node, naming the node, its op and the rule it failed. Two specs are exported:
 
-- `spec_expr_shared` — what every node must satisfy: non-negative shape, a real `DType`, arity
+- `spec_expr_shared` is what every node must satisfy: non-negative shape, a real `DType`, arity
   matching `OP_INFO`, sparsity shape agreeing with tensor shape.
-- `spec_expr` — the above plus per-op rules: `reshape` preserves size, `transpose` axes are a
-  permutation, `matmul` contracting dimensions agree, `call` argument shapes match the callee,
-  `VMAP` outer tensors are rank 1 with a consistent slice size, `const` value shape and dtype match
-  the declared type.
+- `spec_expr` adds the per-op rules: `reshape` preserves size, `transpose` axes are a permutation,
+  `matmul` contracting dimensions agree, `call` argument shapes match the callee, `VMAP` outer
+  tensors are rank 1 with a consistent slice size, `const` value shape and dtype match the declared
+  type.
 
 Run it after a non-trivial rewrite or an AD transform, and write negative tests against it. It is
 the same `Rule` and `Spec` machinery the [program dialect](program_ir.md) verifies with.
 
 ## Structural equality and rewrites
 
-`Expr.id` is construction identity. For structure, use `structural_key()`, `structural_hash()` and
-`structurally_equal()` — they compare the shape of the graph without disturbing node identity,
-which is what lets a pass recognize an equivalent subgraph without rewriting anything.
+`Expr.id` is construction identity. For structure, use the `Expr` methods `y.structural_key()`,
+`y.structural_hash()` and `y.structurally_equal(other)`. They compare the shape of the graph
+without disturbing node identity, which lets a pass recognize an equivalent subgraph without
+rewriting anything.
 
-The rewrite layer is small and deliberately so:
+The rewrite layer is small:
 
 ```python
 y_cse = sc.cse(y)
 y_clean = sc.simplify(y_cse)
 ```
 
-`simplify` covers constant folding and algebraic identities — `x + 0`, `x * 1`, `x * 0`, identity
-reshape and transpose, slice-of-slice, slice-of-stack. `cse` merges structurally equal subgraphs.
+`simplify` covers constant folding and algebraic identities (`x + 0`, `x * 1`, `x * 0`, identity
+reshape and transpose, slice-of-slice, slice-of-stack). `cse` merges structurally equal subgraphs.
 Both go through an op-indexed `PatternMatcher` with a topological replacement cache, so DAG sharing
 survives a rewrite instead of being expanded into a tree. This is far smaller than tinygrad's
 `UPat`/`PatternMatcher`, and it is enough for AD cleanup and canonicalization.
@@ -200,11 +201,11 @@ sc.render_expr_assembly(f)    # SSA-like assembly, expr.* prefix
 sc.expr_graph(y)              # nodes and edges as JSON, for tooling
 ```
 
-The assembly form is the stable one: it is meant to be diffed, pasted into a bug report and
+The assembly form is the stable one. It is meant to be diffed, pasted into a bug report and
 asserted on in tests. A `Function` renders as an `expr.module` that includes the bodies of every
-function it transitively calls — the same set that will appear in the generated C.
+function it transitively calls, the same set that will appear in the generated C.
 
-For watching a graph move through the compiler instead of reading one snapshot, see
+To watch a graph move through the compiler instead of reading one snapshot, see
 [Visualization](../guide/visualization.md).
 
 ## Device placement
@@ -218,5 +219,5 @@ assert fn_gpu.device == sc.DeviceSpec("cuda", 0)
 
 Each backend registers a `BackendSupport` capability table, so placing a `float64` graph on a
 backend that does not advertise `float64` fails at construction with a diagnostic naming the
-offending input — not at runtime, and never as a silent fall back to the host. Today only `host`
-lowers; other placements are accepted, tracked and printed, and raise `JitError` when called.
+offending input. There is no silent fall back to the host. Today only `host` lowers; other
+placements are accepted, tracked and printed, and raise `LoweringError` when called.

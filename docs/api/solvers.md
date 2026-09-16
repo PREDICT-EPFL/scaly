@@ -22,6 +22,8 @@
 
 ::: scaly.solvers.qp.qp_problem
 
+::: scaly.solvers.qp.QPData
+
 ::: scaly.solvers.qp.NotQuadratic
 
 ## Plugin descriptors

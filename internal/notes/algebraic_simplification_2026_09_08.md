@@ -26,7 +26,7 @@ explicit `.scalar()`. Boundary and stress fixtures pin operation count, aggregat
 expansion work separately. The [closeout measurements](perf_2026_09_07/README.md#c-44-closeout)
 record the minimal runtime and cold-compilation comparison. A full benchmark rerun follows more
 Track C work, as requested. Measurements follow the
-[existing protocol](../../docs/results/fairness.md#the-measurement-protocol).
+[existing protocol](../../docs/results/fairness.md#measurement-protocol).
 
 C-44 owns scalarization and disclosure of the current algebraic contract. C-52 owns the completed
 package split with fixed pass order. Shared rules and matcher work follow as C-12/C-53. Task status

@@ -157,7 +157,7 @@ protocol's compile flags.
       GCC/Clang compilation and runtime checks; the full benchmark rerun follows more Track C work.
       Automatic seed specialization remains C-45.
       Design: [arithmetic policy](notes/algebraic_simplification_2026_09_08.md#proposed-scaly-arithmetic-policy);
-      rationale: [measurement protocol](../docs/results/fairness.md#the-measurement-protocol).
+      rationale: [measurement protocol](../docs/results/fairness.md#measurement-protocol).
 - [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `scaly.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision).
 - [x] **C-55. Preserve intended lowering hints through derivative Function construction.** Implemented 2026-09-08: every derived `Function` built in `ad/` takes the primal callee's effective hint (`block`/`opaque` -> `block`, `scalar` -> `scalar`, `auto` inherits nothing) on its output root, through `Function._effective_lowering`; the chain check `hinted_stage_hessian` and `tests/ad/test_lowering_hints.py` pin selection. The chain benchmark stage now carries `.scalar()` (decided 2026-09-08: the comparison is against each side's best formulation, and this is ours); the M=5 Hessian kernel runs at 835 µs against 1769 µs without. Race-car gets nothing from the hint because the automatic policy already selects its stage ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)). [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout).
 - [x] **C-53. Share arithmetic simplification across both dialects and program forms.** Implemented 2026-09-08 in `passes/arith.py` (one adapter per dialect, rules for neutral elements, zero annihilation, self-cancellation, negation normalization, bounded constant powers, dtype-checked constant evaluation) and applied through `passes/expr.py`, `scalarize`, and the new `fold_arith` loop-body pass after fusion; `tests/passes/test_arith.py` runs the same cases in all three forms. Left open: `_h{n}` renderer temporaries have no collision guard and deep index expressions are not hoisted, both unobserved in practice. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation).
@@ -397,22 +397,25 @@ the code does.
 
 ### Now
 
-- [ ] **D-32. Rewrite the user-facing documentation**, the index and the guide first. Scoped to what
-      is stable today: install, core concepts, the derivative API, Functions and solvers. Leave a
-      marked gap where `FunctionTemplate` (API-1) will go, and link result claims to the
-      canonical pages.
-- [ ] **D-33. Rework `docs/how_it_works/comparison.md`.** A scoped fix landed on 2026-08-25: the
+- [x] **D-32. Rewrite the user-facing documentation.** Done 2026-09-16: every page under `docs/`
+      and the README rewritten for register and accuracy, the wordmark added to both entry points,
+      the single status admonition in `docs/index.md` (remove it at 0.1.0), and the plain-speech
+      rules recorded in `docs/dev/conventions.md`. `FunctionTemplate` (API-1) is not mentioned in
+      the docs; add its page when it lands. Wheel installation instructions belong to R-41.
+- [x] **D-33. Rework `docs/how_it_works/comparison.md`.** Done 2026-09-16: every Taken/Changed row
+      checked against code; `sc.problem` returns a `Problem`, only one upward import is checked. A scoped fix landed on 2026-08-25: the
       CasADi section's "one graph with a per-node hint" paragraph presented an inert mechanism as a
       departure, and it now states the repetition claim that is actually true and measured, with the
       lowering-hint discussion subsequently removed from the published docs. The rest of the page still
       predates a lot. Check every "Taken / Changed" row against what the code does today, and check
       the tinygrad, MLIR and JAX sections the same way.
-- [ ] **D-34. Audit the whole of `docs/` for claims that outran the implementation**, the way the
+- [x] **D-34. Audit the whole of `docs/` for claims that outran the implementation.** Done
+      2026-09-16; every guide snippet executed, two were broken and are fixed. Originally: the way the
       results pages were audited. The pattern to look for is a stated departure or capability whose
       supporting mechanism is recorded but not wired up, and a number with no machine attached.
       The lowering-hint claims have been removed. Check any surviving timing that predates the
       reference-machine rule in `AGENTS.md`.
-- [ ] **D-68. Acknowledgements and AI disclosure in the README and `docs/index.md`.** An
+- [x] **D-68. Acknowledgements and AI disclosure in the README and `docs/index.md`.** Done 2026-09-16. An
       acknowledgement of NCCR Automation, which funded the research, and a disclosure that AI coding
       agents (Claude, Codex and others) were used to write parts of the code and documentation.
       Before R-67, so the first public snapshot carries both.

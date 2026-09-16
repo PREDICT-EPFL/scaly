@@ -1,8 +1,8 @@
 # Visualization
 
-Scaly can record everything it does to a function — the expression graph you built, the lowered
-program, the result of each optimization pass, and the generated C — and serve it in a browser.
-It is the fastest way to answer "why is my generated code like that?"
+Scaly can record everything it does to a function, from the expression graph you built through the
+lowered program and each optimization pass to the generated C, and serve it in a browser. Use it
+when you want to know why the generated code looks the way it does.
 
 ## Recording a function
 
@@ -14,11 +14,11 @@ fn(x_value)       # compiling it now records every stage
 serve()           # browse at http://127.0.0.1:8000
 ```
 
-Recording is **opt-in per function object**, not global. Nothing is captured unless you marked that
-specific `Function`, so leaving `visualize` in a script costs nothing for everything else in it.
-Importing `scaly.viz` is what arms the machinery at all; a plain `import scaly` does not.
+Recording is opt-in per function object. Nothing is captured unless you marked that specific
+`Function`, so leaving `visualize` in a script costs nothing for everything else in it. Importing
+`scaly.viz` is what installs the observer; a plain `import scaly` does not.
 
-`serve(host="0.0.0.0", port=8000)` to expose it beyond localhost. `unvisualize_function(fn)` stops
+`serve(host="0.0.0.0", port=8000)` exposes it beyond localhost. `unvisualize_function(fn)` stops
 recording it.
 
 ## What you get
@@ -27,8 +27,8 @@ The browser view has a sidebar of recorded functions and, for each, the stages i
 
 1. the expression graph, as `expr.*` assembly;
 2. the lowered program, as `prog.*` assembly;
-3. one snapshot after each optimization pass — `fuse_elementwise`, `unroll_unit_loops`,
-   `pack_workspace`;
+3. one snapshot after each pass in `PASS_PIPELINE` (`scaly.passes.program`), eleven today, from
+   `hoist_invariant` to `prepare_scalar`;
 4. the generated C.
 
 Stepping through the passes is the useful part. If a loop you expected to survive got unrolled, or
@@ -43,8 +43,8 @@ Set `SCALY_VIZ_DIR` to move it, or pass `--recording-path` to the server.
 uv run scaly_viz --recording-path path/to/recordings.json --browser
 ```
 
-That serves a recording produced elsewhere — a benchmark run, a colleague's bug report — without
-re-running anything.
+That serves a recording produced elsewhere, such as a benchmark run or a colleague's bug report,
+without re-running anything.
 
 ```python
 from scaly.viz import recordings, clear_recordings
@@ -65,12 +65,12 @@ sc.expr_graph(expr)                   # nodes and edges as JSON
 sc.program_graph(prog)
 ```
 
-The assembly forms are the stable ones. They are meant to be diffed, pasted into an issue and
-asserted on in tests; the graph JSON is for building your own tooling.
+The assembly forms are the stable ones. Diff them, paste them into an issue, assert on them in
+tests. The graph JSON is for building your own tooling.
 
 ## How it stays out of the way
 
 The visualizer registers itself into an observer hook that the code generator owns, so nothing in
-the compiler imports the visualizer or knows it exists. That is one of the two deliberate exceptions
-in Scaly's import-layer rules, and it is why recording can be genuinely zero-cost when you have not asked for
-it — see [the architecture](../how_it_works/architecture.md#the-two-sanctioned-exceptions).
+the compiler imports the visualizer or knows it exists. That is one of the two exceptions in
+Scaly's import-layer rules, and it is why recording costs nothing when you have not asked for it.
+See [the architecture](../how_it_works/architecture.md#the-two-sanctioned-exceptions).

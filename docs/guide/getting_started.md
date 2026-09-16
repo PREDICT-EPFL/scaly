@@ -1,11 +1,11 @@
 # Getting started
 
-This tutorial builds a model, differentiates it, turns it into an optimization problem, and calls a
+This tutorial builds a model, differentiates it, turns it into an optimization problem and calls a
 generated solver. Every numerical result comes from compiled C.
 
 ## Build expressions
 
-`sc.sym` creates a named symbolic input and `sc.const` creates a constant:
+`sc.sym` creates a named symbolic input and `sc.const` creates a constant.
 
 ```python
 import scaly as sc
@@ -16,8 +16,8 @@ u = sc.sym("u", 1)
 znext = z + 0.1 * sc.concat([z[1:], u])
 ```
 
-Operations on an `Expr` build graph nodes. They do not evaluate Python values. Shapes and dtypes
-are static, and arithmetic follows NumPy broadcasting.
+Operations on an `Expr` build graph nodes; they do not evaluate anything. Shapes and dtypes are
+static and arithmetic follows NumPy broadcasting.
 
 ```python
 print(znext.shape)       # (2,)
@@ -41,10 +41,11 @@ def step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     return z + 0.1 * sc.concat([z[1:], u])
 ```
 
-`sc.L` declares one tensor. `sc.G` groups trees. The body takes one value with the input structure
-and returns one value with the output structure. `...` asks Scaly to infer the output shape during
+`sc.L` declares one tensor and `sc.G` groups trees. The body takes one value with the input
+structure and returns one value with the output structure. `...` infers the output shape during
 tracing.
-Run it numerically by calling it with its input tree:
+
+Call it with arrays to run it:
 
 ```python
 z1 = step((np.array([1.0, 2.0]), np.array([0.5])))
@@ -52,12 +53,12 @@ z1 = step((np.array([1.0, 2.0]), np.array([0.5])))
 ```
 
 The input tree is an `sc.G` of two leaves, so the call takes a 2-tuple. The output tree is a single
-`sc.L`, so the result is that array itself and not a one-element tuple — see
-[a single leaf is unpacked](functions.md#a-single-leaf-is-unpacked).
+`sc.L`, so the result is the array itself, see
+[a single leaf is unpacked](functions.md#a-single-leaf-is-unpacked). The first call lowers the
+graph, renders C, compiles a shared library and stores it in the just-in-time (JIT) cache. Later
+calls reuse it.
 
-The first call lowers the graph, renders C, compiles a shared library, and stores it in the
-just-in-time cache. Later calls reuse the artifact.
-Compose it symbolically by calling it with `Expr` leaves instead:
+Call it with `Expr` leaves to compose it symbolically:
 
 ```python
 N = 20
@@ -76,15 +77,14 @@ def rollout(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     return z, cost + 10.0 * sc.sumsqr(z)
 ```
 
-One call spelling covers both: `step(...)` dispatches on the leaves it is given, to `numerical_call`
-for arrays and to `symbolic_call` for expressions. The symbolic reading adds a first-class `CALL`
-node, so the generated C contains one `step` procedure and calls it from `rollout`.
-See [Building functions](functions.md) for nested trees, inferred outputs, the two named call
-methods, and `vmap`.
+`step(...)` dispatches on the leaves it is given: `numerical_call` for arrays, `symbolic_call` for
+expressions. The symbolic call adds a `CALL` node, so the generated C contains one `step`
+procedure and calls it from `rollout`. See [Building functions](functions.md) for nested trees,
+inferred outputs, the two named call methods and `vmap`.
 
 ## Differentiate the function
 
-Named derivative wrappers return typed functions:
+Derivative wrappers return typed functions.
 
 ```python
 grad = sc.gradient(rollout, "cost", "us")
@@ -94,6 +94,7 @@ gradient_value = grad((np.array([1.0, 0.0]), np.zeros(N)))
 
 The derivative keeps `rollout`'s complete input tree, `(z0, us)`. There is no separate parameter
 list to maintain.
+
 The common wrappers are:
 
 ```python
@@ -106,12 +107,12 @@ sc.forward(fn, "y", "x")
 sc.adjoint(fn, "y", "x")
 ```
 
-Differentiation is graph-to-graph. The result compiles, nests, and renders like any other
+Differentiation is graph-to-graph. The result compiles, nests and renders like any other
 `Function`. See [Derivatives](derivatives.md) and [Sparsity](sparsity.md).
 
 ## Declare an optimization problem
 
-A `Problem` separates the mathematical model from the solver backend:
+A `Problem` separates the model from the solver backend.
 
 ```python
 @sc.problem(
@@ -128,8 +129,9 @@ def shooting_problem(us: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     )
 ```
 
-The objective is scalar. Equality groups are constrained to zero. Use `sc.bounded` for one- or
+The objective is scalar and equality groups are constrained to zero. Use `sc.bounded` for one- or
 two-sided inequality groups. Variable bounds have the declared variable structure.
+
 Choose a backend:
 
 ```python
@@ -140,8 +142,8 @@ solve = sc.solver(
 )
 ```
 
-IPOPT, PIQP, and scaly-sqp are discovered as plugins. PIQP is accepted only when Scaly can prove
-the cost quadratic, the constraints affine, and the bounds independent of the variables.
+IPOPT, PIQP and scaly-sqp are discovered as plugins. PIQP is accepted only when scaly can prove the
+cost quadratic, the constraints affine and the bounds independent of the variables.
 
 ## Call the solver
 
@@ -169,19 +171,18 @@ stats = solve.solver_stats()
 print(stats.obj, stats.iter, stats.to_solver_status())
 ```
 
-Multiplier categories remain in the signature when absent, using length-zero arrays. Box and
-inequality multipliers are signed: positive means the upper side is active and negative means the
-lower side is active.
+Absent multiplier categories stay in the signature as length-zero arrays. Box and inequality
+multipliers are signed: positive means the upper side is active, negative the lower side.
+
 A solver is a plain `Function`. Call it with `Expr` leaves to put it inside another graph; the host,
-oracles, and native wrapper then compile into one shared library.
-See [Solvers](solvers.md) for multi-block variables, bounded groups, `qp_problem`, sparse PIQP
-data, nesting, and statistics. See [Solver backends](solver_backends.md) for backend-specific
-options and warm-start behavior.
+oracles and native wrapper then compile into one shared library. See [Solvers](solvers.md) for
+multi-block variables, bounded groups, `qp_problem`, sparse PIQP data, nesting and statistics, and
+[Solver backends](solver_backends.md) for backend options and warm-start behavior.
 
 ## Preserve regular repetition
 
 The Python loop in `rollout` creates `N` call sites. When iterations are independent, `sc.vmap`
-represents the repetition as one node and lowers it to a C loop:
+represents the repetition as one node and lowers it to a C loop.
 
 ```python
 @sc.function(
@@ -207,21 +208,21 @@ defects = sc.vmap(
 )
 ```
 
-Each mapping tuple is `(outer, start, stride)`. Iteration `i` reads a slice beginning at
-`start + i * stride`. Derivatives preserve this mapping, so source size and derivative construction scale
-with the local stage rather than an unrolled copy of every stage.
+Each mapping tuple is `(outer, start, stride)`; iteration `i` reads a slice beginning at
+`start + i * stride`. A derivative of a vmapped function is another vmapped function, so source
+size and derivative construction scale with one stage, not with the horizon.
 
 ## Render C ahead of time
 
-The ahead-of-time command uses the same lowering and renderer as the numerical call:
+The ahead-of-time (AOT) command uses the same lowering and renderer as the numerical call.
 
 ```bash
-uv run -m scaly.codegen mymodule:solve -o generated/
+uv run python -m scaly.codegen mymodule:solve -o generated/
 ```
 
-It writes one C source file and one header exposing the universal pointer-array ABI and typed C++
-helpers. Solver-bearing modules include their backend link flags. See [Code generation](codegen.md)
-and [the C ABI](../how_it_works/c_abi.md).
+It writes one C source file and one header exposing the pointer-array ABI and typed C++ helpers.
+Solver-bearing modules include their backend link flags. See [Code generation](codegen.md) and
+[the C ABI](../how_it_works/c_abi.md).
 
 ## Next steps
 

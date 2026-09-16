@@ -25,7 +25,8 @@ sc.adjoint(fn, "y", "x")
 Function forms take the declared output name `of` and input name `wrt`. An unknown name fails when
 the derivative is built and reports the declared choices. Pass `name=` to set the derived
 function's artifact name.
-Unseeded derivatives preserve the source's input tree. If `fn` takes `(x, p)`, then
+
+Unseeded derivatives keep the source's input tree. If `fn` takes `(x, p)`, then
 `sc.gradient(fn, "f", "x")` also takes `(x, p)`:
 
 ```python
@@ -34,10 +35,11 @@ value = grad((x_value, p_value))
 ```
 
 There is no `extra_inputs` option. Parameters and other source inputs remain available because
-dropping them would make the derived expression incomplete and would break the source's typed call
+dropping them would leave the derived expression incomplete and break the source's typed call
 structure.
-Sparse Hessians accept `triangle="full"`, `"lower"`, or `"upper"`. The selected triangle preserves
-the full pattern's order.
+
+Sparse Hessians accept `triangle="full"`, `"lower"` or `"upper"`. The selected triangle keeps the
+full pattern's order.
 
 ## Seeded modes
 
@@ -76,10 +78,10 @@ sparse_lag_hess = sc.sparse_lagrangian_hessian(
 dense = lag_hess(((x_value, p_value), (lam_f, lam_g)))
 ```
 
-The wrappers build an auxiliary scalar named `gamma` from the declared output order. Pass
-`aux_name=` to change that internal name. The derived output is `hess_gamma_x_x` or
-`sphess_gamma_x_x`. The doubled `wrt` name is part of the generated C symbol and sparsity-table
-prefix.
+The wrappers build an auxiliary scalar named `gamma` from the declared output order; pass
+`aux_name=` to change it. The derived output is `hess_gamma_x_x` or `sphess_gamma_x_x`. The doubled
+`wrt` name is part of the generated C symbol and sparsity-table prefix.
+
 Solver construction uses the same mechanism. Each backend selects its Hessian triangle, while the
 `Problem` cache shares the full derivative construction.
 
@@ -118,12 +120,15 @@ Include `fwd:<wrt>` or `lam:<of>` in the factory input list for a seeded request
 
 ## Work directly on expressions
 
-Use expression forms inside a graph that does not need function metadata:
+Use expression forms inside a graph that does not need function metadata. `sc.jvp` takes a seed
+shaped like `wrt`; `sc.vjp` takes a cotangent shaped like the output:
 
 ```python
-seed = sc.sym("seed", y.shape)
-(vjp_x,) = sc.vjp((y,), (x,), (seed,))
+seed = sc.sym("seed", x.shape)
 tangent = sc.jvp(y, x, seed)
+
+cot = sc.sym("cot", y.shape)
+(vjp_x,) = sc.vjp((y,), (x,), (cot,))
 
 seeds = sc.sym("seeds", (4, *x.shape))
 batched = sc.jvp_many(y, x, seeds)
@@ -132,13 +137,14 @@ dense_jac = sc.jacobian(y, x)
 sparse_jac = sc.sparse_jacobian(y, x)
 ```
 
-A sparse expression derivative returns `SparseJacobian` with `values`, `sparsity`, and
+A sparse expression derivative returns `SparseJacobian` with `values`, `sparsity` and
 `to_dense()`.
 
 ## Cost and preserved structure
 
 `gradient` uses one reverse sweep. `jacobian` pushes identity columns through batched forward mode.
-`hessian` differentiates a gradient. Unsupported multi-seed rules fall back to one seed at a time
-unless `SCALY_STRICT_JVP_MANY=1` is set.
-Derivatives through `CALL` and `VMAP` preserve those structures rather than expanding them. See
+`hessian` differentiates a gradient. Operations without a multi-seed rule fall back to one seed at a
+time unless `SCALY_STRICT_JVP_MANY=1` is set.
+
+Derivatives through `CALL` and `VMAP` keep those nodes instead of expanding them. See
 [How differentiation works](../how_it_works/autodiff.md).

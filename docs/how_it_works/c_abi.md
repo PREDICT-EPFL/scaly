@@ -6,10 +6,11 @@ Every function scaly generates is reachable through one C signature:
 int f(const double** arg, double** res, int* iw, double* w, void* mem);
 ```
 
-This is CasADi's universal ABI in spirit, and the choice is deliberate: it is the lowest common
-denominator that lets generated functions call each other, lets a generated solver drive generated
-oracles, and lets an existing C or C++ codebase consume scaly output without knowing anything about
-scaly. Typed wrappers exist on top of it, but this pointer signature is the stable interface.
+This follows CasADi's universal application binary interface (ABI) in spirit. It is the lowest
+common denominator that lets generated functions call each other, lets a generated solver drive
+generated oracles, and lets an existing C or C++ codebase consume scaly output without knowing
+anything about scaly. Typed wrappers exist on top of it; this pointer signature is the stable
+interface.
 
 ## Calling convention
 
@@ -17,10 +18,10 @@ The caller owns all storage. Nothing is allocated inside.
 
 | Argument | Contract |
 | --- | --- |
-| `arg` | array of `f_SZ_ARG` input pointers. Each `arg[i]` points to a contiguous row-major `double` buffer of the statically known flattened input size. Every input is required — there are no defaults, so no `arg[i]` may be null. |
+| `arg` | array of `f_SZ_ARG` input pointers. Each `arg[i]` points to a contiguous row-major `double` buffer of the statically known flattened input size. Every input is required. There are no defaults, so no `arg[i]` may be null. |
 | `res` | array of `f_SZ_RES` output pointers, each to caller-owned contiguous row-major storage of the statically known flattened output size. |
 | `iw` | integer workspace. Currently unused (`f_SZ_IW` is always 0); pass null. |
-| `w` | floating workspace: at least `f_SZ_W` doubles. May be null only when `f_SZ_W == 0`. |
+| `w` | floating workspace of at least `f_SZ_W` doubles. May be null only when `f_SZ_W == 0`. |
 | `mem` | reserved for stateful functions. Pass null after using the memory hooks below. |
 
 Buffers are assumed to have ordinary C `double` and `int` alignment.
@@ -43,15 +44,15 @@ int   f_init_mem(void* mem);
 void  f_free_mem(void* mem);
 ```
 
-The `f_SZ_*` macros are for callers that need the sizes at compile time — to stack-allocate a
-workspace, for instance. The `f_sz_*` functions are the same numbers at run time, for callers
+The `f_SZ_*` macros are for callers that need the sizes at compile time, for example to
+stack-allocate a workspace. The `f_sz_*` functions return the same numbers at run time, for callers
 reaching the module through `dlopen`.
 
 `f_SZ_W` is the packed spill size decided by the workspace packer, not the total temporary
-footprint: small temporaries stay as C locals inside the function and never appear here. Small
+footprint. Small temporaries stay as C locals inside the function and never appear here, so small
 functions routinely report `0`.
 
-The memory hooks are shaped for a future in which a generated function holds state. Today
+The memory hooks exist for a future in which a generated function holds state. Today
 `f_alloc_mem()` returns `NULL`, `f_init_mem(mem)` ignores its argument and returns `SCALY_SUCCESS`,
 and `f_free_mem(mem)` does nothing. Having the hooks now means adding solver or integrator memory
 later will not change the exported signature.
@@ -82,20 +83,21 @@ static inline int f_call(const f_x_in& in_x, f_y_out& out_y);
 ```
 
 Generated C++ headers add `static_assert`s that each struct flattens to the expected number of
-doubles. This is sugar — convenient and type-checked at the call site, but the pointer ABI
-underneath is what stays stable. Pass `typed_buffers=False` to omit it.
+doubles. The wrapper is type-checked at the call site; the pointer ABI underneath is what stays
+stable. Pass `typed_buffers=False` to omit it.
 
 ## What a translation unit contains
 
 One rendered module is one `.c` file and one `.h` file. Inside the `.c`:
 
-1. `static inline` bodies for every callee reached from the root, named `<callee>_raw`;
+1. `static` bodies for every callee reached from the root, named `<callee>_raw`. They are `static
+   inline`, or `static __attribute__((noinline))` for the forward-AD helpers covered by the clang
+   workaround in `codegen/c.py`;
 2. any solver wrappers, in dependency order after the oracle bodies they drive;
 3. the exported ABI entry for the root function.
 
 Only the root is exported. Nested calls become direct C calls to the `_raw` bodies, which is why
-generated code stays small when the same block appears many times — the block is one C function,
-not a hundred inlined copies.
+generated code stays small when the same block appears many times. The block is one C function.
 
 The `.c` file includes the generated header, so the pair compiles as an ordinary translation unit
 and links into a C++ caller that includes the same header.
@@ -118,20 +120,20 @@ static const int f_spjac_y_x_csc_row_ind[4]  = {0, 2, 1, 1};
 static const int f_spjac_y_x_csc_val_perm[4] = {0, 3, 1, 2};
 ```
 
-**The value buffer the function writes is in `(rows, cols)` order, and that order is not
-necessarily sorted.** The structured path through `VMAP` emits nonzeros piece by piece, so the
-coordinate list — not row-major order — is the authority on what value belongs where.
+The value buffer the function writes is in `(rows, cols)` order, and that order is not necessarily
+sorted. The structured path through `VMAP` emits nonzeros piece by piece, so the coordinate list is
+the authority on which value belongs where.
 
-The `_val_perm` tables are how you pair the values with a sorted index structure:
-`values_csr[k] = values[csr_val_perm[k]]`, and likewise for CSC. `SparsityType.to_csr()` and
-`to_csc()` return the same permutation as their third element, so Python and C agree by
-construction.
+The `_val_perm` tables pair the values with a sorted compressed sparse row (CSR) or compressed
+sparse column (CSC) structure: `values_csr[k] = values[csr_val_perm[k]]`, and likewise for CSC.
+`SparsityType.to_csr()` and `to_csc()` return the same permutation as their third element, so
+Python and C agree by construction.
 
 ## Solver-bearing modules
 
 A module containing a solver additionally defines the versioned, fixed-width `scaly_solver_stats`
 struct and exports `int <solver_symbol>_stats(scaly_solver_stats* out)` for each wrapper in the
-translation unit. The query copies the wrapper's latest process-local statistics; it adds no
+translation unit. The query copies the wrapper's latest process-local statistics. It adds no
 symbolic output and does not change the entry signature.
 
 Version 3 is a 136-byte layout: version, scaly status, native status and iteration count; then the
@@ -142,15 +144,15 @@ length, merit penalty, backtrack count and accumulated QP iterations.
 Scaly status codes are backend-neutral: `OK=0`, `ACCEPTABLE=1`, `MAX_ITER=2`, `PRIMAL_INFEASIBLE=3`,
 `DUAL_INFEASIBLE=4`, `NUMERICS=5`, `USER_STOP=6`, `ERROR=7`.
 
-Timing is instrumented unconditionally with a monotonic clock, and the split is designed to add up:
-`t_fe` covers generated oracle work, `t_glue` is the remainder, and
+Timing is instrumented unconditionally with a monotonic clock, and the split adds up. `t_fe` covers
+generated oracle work, `t_glue` is the remainder, and
 `t_total = t_fe + t_solver + t_qp + t_globalization + t_glue` to within floating-point rounding.
-Each backend fills the middle terms differently — PIQP reports setup, update and solve in `t_qp`;
+Each backend fills the middle terms differently. PIQP reports setup, update and solve in `t_qp`;
 IPOPT reports solve time outside callbacks in `t_solver`; the SQP plugin separates its PIQP
-subproblems into `t_qp` from its line-search work in `t_globalization`.
+subproblems in `t_qp` from its line-search work in `t_globalization`.
 
-One caveat worth stating plainly: wrapper state, including the latest statistics and the solver
-workspace, lives in translation-unit statics. **Generated solver wrappers are not reentrant.**
+Wrapper state, including the latest statistics and the solver workspace, lives in translation-unit
+statics. Generated solver wrappers are not reentrant.
 
 ## Producing a module
 
@@ -173,6 +175,6 @@ From the command line:
 uv run python -m scaly.codegen mymodule:my_function -o generated/
 ```
 
-The JIT consumes exactly this object — it compiles `module.body` and keys its cache on that text —
-so what you ship ahead of time and what runs when you call the function from Python are the same
-translation unit. See [Code generation](../guide/codegen.md) for the usage side.
+The just-in-time (JIT) path consumes exactly this object. It compiles `module.body` and keys its
+cache on that text, so what you ship ahead of time and what runs when you call the function from
+Python are the same translation unit. See [Code generation](../guide/codegen.md) for the usage side.

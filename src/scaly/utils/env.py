@@ -36,7 +36,6 @@ ENV_VARS: tuple[EnvVar, ...] = (
   EnvVar("SCALY_BUILD_SOLVERS", "auto", "Build-hook solver mode: auto, skip, or required/1/true."),
   EnvVar("SCALY_STRICT_JVP_MANY", "0", "Raise instead of using the unrolled multi-seed JVP fallback."),
   EnvVar("SCALY_VIZ_DIR", None, "Visualization recording directory."),
-  EnvVar("SCALY_TRACKING_SWEEP", "0", "Run the opt-in tracking sparse-Jacobian sweep."),
 )
 
 

@@ -1,5 +1,8 @@
 # Contributing
 
+How to set up a checkout, which checks a change must pass, where tests live and what to read before
+changing the compiler.
+
 ## Setup
 
 ```bash
@@ -8,34 +11,35 @@ cd scaly
 uv sync
 ```
 
-Use `uv run` for everything — `uv run pytest`, `uv run benchmarks/run.py`. `uv run` takes a script
-path directly, so the `python` in `uv run python script.py` is redundant. Do not activate the
-virtual environment by hand.
+Use `uv run` for everything, for example `uv run pytest` or `uv run benchmarks/run.py`. `uv run`
+takes a script path directly, so the `python` in `uv run python script.py` is redundant. Do not
+activate the virtual environment by hand.
 
 The vendored solvers (PIQP, IPOPT) build on the first sync and take 5 to 8 minutes cold. Without a
 native toolchain the sync skips them and the solver tests skip with them; everything else works.
 See [Installation](../guide/installation.md).
 
-A new vendored dependency needs an entry in the plugin's `src/scaly_*/build_config.json`, which
-pins its version, and a row in the `_write_third_party_notices` call of that plugin's
-`hatch_build.py`, which copies its license texts into the wheel. The `test_*_notices.py` test in
-each plugin fails when a pinned dependency has no license directory.
+In the two vendoring plugins (`scaly-piqp`, `scaly-ipopt`), a new vendored dependency needs an entry
+in `src/scaly_*/build_config.json`, which pins its version, and a row in the
+`_write_third_party_notices` call of that plugin's `hatch_build.py`, which copies its license texts
+into the wheel. The `test_*_notices.py` test in each of those plugins fails when a pinned dependency
+has no license directory.
 
 ## The checks
 
 ```bash
-uv run pytest -n=auto     # the suite, in parallel
-uv run ruff check         # lint
-uv run ruff format        # format
-uv run ty check --error-on-warning  # types, including expected-error assertions
+uv run pytest -n=auto              # the suite, in parallel
+uv run ruff check                  # lint
+uv run ruff format --check         # formatting, as CI runs it; drop --check to fix
+uv run ty check --error-on-warning # types, including expected-error assertions
 ```
 
 Run all four before you consider a change done. `pytest` collects `tests/`, `plugins/`, and
 `typing_playground/`. Strict type checking covers the assertions in `tests/typing/` and the
-playground: an expected error that disappears leaves an unused ignore, which must fail the check.
+playground. An expected error that disappears leaves an unused ignore, which fails the check.
 
-The full-collection node-ID baseline is checked by the root `conftest.py`. After adding, removing, or
-renaming a test, regenerate it safely from the complete collection:
+The root `conftest.py` checks the full-collection node-ID baseline. After adding, removing, or
+renaming a test, regenerate it from the complete collection:
 
 ```bash
 (
@@ -52,11 +56,11 @@ generation_status=$?
 [ "$generation_status" -eq 0 ] && uv run pytest --collect-only -q
 ```
 
-The first collection can exit nonzero because the existing baseline is stale or missing. The `grep` keeps only
-pytest node IDs, including parameter IDs with spaces, and `sort` makes the file deterministic. The final
-collection must pass.
+The first collection can exit nonzero because the existing baseline is stale or missing. The `grep`
+keeps only pytest node IDs, including parameter IDs with spaces, and `sort` makes the file
+deterministic. The final collection must pass.
 
-A test needing a built solver is marked, not skipped by hand:
+A test that needs a built solver carries a marker:
 
 ```python
 @pytest.mark.solver("piqp")
@@ -66,50 +70,48 @@ def test_something(): ...
 The root `conftest.py` skips those when the library is absent, and CI splits the suite on
 `-m solver` against `-m "not solver"`. Never hand-roll a "is the solver loadable" skip condition.
 
-One thing to know before you read a red run as a real failure: an xdist worker occasionally dies
-inside the isolated library load in the vendored-solver plugin tests. It reproduces on unmodified
-checkouts, so a lone worker crash there is probably not yours. Rerun before believing it.
+An xdist worker occasionally dies inside the isolated library load in the vendored-solver plugin
+tests. It reproduces on unmodified checkouts, so a lone worker crash there is probably not yours.
+Rerun before reading it as a failure.
 
 ## Where things live
 
 `tests/` mirrors `src/scaly/` directory for directory, so a change to `src/scaly/passes/lowering.py`
-has its tests in `tests/passes/test_lowering.py`. Beyond the mirror there are two extra
-directories: `tests/integration/` for workload-shaped end-to-end checks, and `tests/benchmarks/`
-for the benchmark *harness* — the benchmark *problems* keep their own gates. See
-[Conventions](conventions.md#tests-against-benchmarks) for which side a check belongs on.
+has its tests in `tests/passes/test_lowering.py`. Outside the mirror:
 
-Two tests are structural rather than functional, and both are meant to be permanent:
+- `tests/integration/` holds workload-shaped end-to-end checks.
+- `tests/benchmarks/` tests the benchmark harness. The benchmark problems keep their own gates; see
+  [Conventions](conventions.md#tests-against-benchmarks) for which side a check belongs on.
+- `tests/typing/` holds the expected-error assertions that `ty check` covers.
+- `tests/baseline/` holds `pytest_nodeids.txt` and the generated-C snapshots under `c/`, checked by
+  the root-level `tests/test_c_snapshot.py`.
 
-- `tests/test_import_layering.py` holds the import-layer table, the two sanctioned exceptions and the
-  acyclicity check. A new module needs an entry in `IMPORT_LAYERS`.
-- `tests/test_import_boundaries.py` pins the public surface — that `sc.Expr` really is
-  `scaly.ir.expr.Expr`, that both dialects verify through the same types, and that retired module
-  paths stay retired.
+Two root-level tests are structural and permanent. `tests/test_import_layering.py` holds the
+import-layer table, the two sanctioned exceptions and the acyclicity check; a new module needs an
+entry in `IMPORT_LAYERS`. `tests/test_import_boundaries.py` pins the public names: that `sc.Expr` is
+`scaly.ir.expr.Expr`, that both dialects verify through the same types, and that retired module
+paths stay retired.
 
-Some compiler paths are exercised only by workload-shaped fixtures — the RK4 stage-transcription
+Some compiler paths are exercised only by workload-shaped fixtures, mainly the RK4 stage-transcription
 Jacobian in `tests/integration/test_stage_transcription.py` and the chained-VMAP fixtures in
-`tests/integration/test_vmap.py` are the main ones. They build both a mapped and a fully unrolled version of
-the same graph and hold the values, Jacobians and Hessians against each other, so a coloring bug
-cannot hide behind a false structural zero. Keep them working.
+`tests/integration/test_vmap.py`. They build a mapped and a fully unrolled version of the same graph
+and compare values, Jacobians and Hessians, so a coloring bug cannot hide behind a false structural
+zero. Keep them working.
 
 ## Making a change
 
-Read [the architecture](../how_it_works/architecture.md) first if you have not. In particular
-[Where to add things](../how_it_works/architecture.md#where-to-add-things) lists, for each kind of
-change, every file it touches — adding a scalar operation touches six.
+Read [the architecture](../how_it_works/architecture.md) first. [Where to add
+things](../how_it_works/architecture.md#where-to-add-things) lists, for each kind of change, every
+file it touches; adding a scalar operation touches seven.
 
-Then the ordinary discipline: read the surrounding code, follow what is already there, make a
-focused change, run the narrowest relevant check, then widen. Match the style you find; see
-[Conventions](conventions.md).
+Then read the surrounding code, follow what is already there, make a focused change, run the
+narrowest relevant check, then widen. Match the style you find; see [Conventions](conventions.md).
 
-Two things specific to this repository:
+Anything touching the IR, differentiation or code generation runs the full suite. Those paths break
+subtly and are expensive to debug later.
 
-**Anything touching the IR, differentiation or code generation runs the full suite.** Those paths
-are cheap to break subtly and expensive to debug later.
-
-**Do not add import to `torch` or other libraries.** Scaly depends on NumPy and nothing else at
-run time, and that is a feature worth defending. Prioritize adding a small implementation if 
-possible, like we did with `scaly.utils.load_torch_state_dict`.
+Do not import `torch` or other libraries at run time. Scaly depends on NumPy and nothing else, and
+a small local implementation is preferred, as with `scaly.utils.load_torch_state_dict`.
 
 ## Adding a solver backend
 
@@ -126,9 +128,9 @@ uv run --only-group docs zensical serve    # live preview
 uv run --only-group docs zensical build    # into site/
 ```
 
-`docs/` is what gets published — all of it. Zensical has no exclusion mechanism, so anything that
-should stay unpublished lives in `internal/` at the repository root instead: the actionable list
-and the frozen design notes, kept for the record but off the site.
+Everything under `docs/` is published. Zensical has no exclusion mechanism, so anything that should
+stay unpublished lives in `internal/` at the repository root: the actionable list and the frozen
+design notes.
 
-The API reference is generated from docstrings, so a new public name needs one. Google style, and
-say what the thing is for rather than restating its signature.
+The API reference is generated from docstrings, so a new public name needs one. Use Google style
+and say what the thing is for instead of restating its signature.

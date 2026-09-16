@@ -1,10 +1,14 @@
-# scaly
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scaly-wordmark-dark.svg">
+    <img alt="scaly" src="docs/assets/scaly-wordmark.svg" width="320">
+  </picture>
+</p>
 
-**Make your optimal control problems scale.**
-
-Scaly is a symbolic compiler for optimal control. You describe dynamics, costs and constraints as
-named functions over a typed expression graph; scaly differentiates them, exploits their sparsity,
-and generates standalone C that runs with no Python anywhere near it.
+Scaly is a symbolic compiler for optimal control, written in Python. You write dynamics, costs and
+constraints as named functions over a typed expression graph. Scaly differentiates them, works out
+their sparsity, and generates standalone C. The C is compiled and cached on the first call from
+Python, and the same C can be written to disk for a build that has no Python in it.
 
 ```python
 import scaly as sc
@@ -14,14 +18,15 @@ import numpy as np
 def rosenbrock(x: sc.Expr) -> sc.Expr:
     return (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
 
-rosenbrock(np.array([1.0, 2.0]))          # 100.0
+rosenbrock(np.array([1.0, 2.0]))          # array(100.)
 
 grad = sc.gradient(rosenbrock, "f", "x")
 grad(np.array([1.0, 2.0]))                # array([-400.,  200.])
 ```
 
-The first call compiled that function to C, built a shared library and cached it. There is no
-interpreter behind scaly — what you test from Python is the artifact you deploy.
+The first call lowered the graph, rendered C, compiled a shared library and cached it. There is no
+Python evaluator behind these calls, so the values you test against are computed by the same C you
+ship. To render that C to files instead:
 
 ```bash
 uv run python -m scaly.codegen mymodule:rosenbrock -o generated/
@@ -29,46 +34,40 @@ uv run python -m scaly.codegen mymodule:rosenbrock -o generated/
 
 ## What it does
 
-- **Derivatives that stay small.** Gradients, Jacobians, Hessians and Lagrangian Hessians, dense or
-  sparse, as efficient and small as possible.
-- **Sparsity as a first-class property.** Structural patterns are derived symbolically, colored,
-  and turned into code that computes only the nonzeros — with the pattern carried into the
-  generated header.
-- **Structure that survives codegen.** codegenerating the same function evaluated in a loop preserves the loop through
-  differentiation and code generation, so a hundred-stage horizon produces roughly the code of a
-  one-stage horizon.
-- **Solvers as graph nodes.** `sc.problem(...)` declares a backend-free problem and `sc.solver(...)` returns a real function, so a solver
-  can be nested inside a larger model and the whole thing compiles into one artifact that links
-  against PIQP or IPOPT directly.
-- **One C ABI.** A single CasADi-style signature per generated function, plus optional typed C++
-  wrappers over it.
-- **A compiler you can read.** Pure Python, with NumPy for values and SciPy only for structural
-  sparsity analysis, two small intermediate representations, and a well-documented architecture.
+- Derivatives are graphs. `sc.gradient`, `sc.jacobian`, `sc.hessian`, `sc.lagrangian_hessian` and
+  their sparse forms return ordinary functions, which compile, nest and differentiate again.
+- Sparsity is computed from the graph structure. Jacobians and Hessians are colored, the generated
+  code computes only the nonzeros, and the header carries the pattern as index tables.
+- Repetition is preserved. `sc.vmap` evaluates one function over a horizon of stages as a single
+  node, and that node stays a loop through differentiation and code generation.
+- Solvers are functions. `sc.problem` declares a problem without naming a backend, and `sc.solver`
+  turns it into a function that calls PIQP, IPOPT or scaly's own generated SQP, and can sit inside
+  a larger graph.
+- Every generated function has the same C signature, the one CasADi uses, plus optional typed C++
+  wrappers.
+- The compiler is about ten thousand lines of Python. NumPy holds values and SciPy is used for
+  structural sparsity analysis. There are no other runtime dependencies.
 
-The current study shows a workload-dependent result. Scaly trails CasADi SX on the race-car
-Hessian, but leads the fastest completed CasADi encoding on the neural-process model
-predictive control and safety-filter sweeps. The controlled closed-loop runs separate function
-evaluation from shared solver work. See [the current results](docs/results/index.md) and the
-[fairness audit](docs/results/fairness.md).
+[Benchmark results](docs/results/index.md) compares generated Hessians and closed-loop controllers
+against CasADi, and [Are the comparisons fair?](docs/results/fairness.md) says what each comparison
+holds constant. The outcome depends on the workload, and both pages say where scaly is slower.
 
 ## Status
 
-Pre-1.0 and under active development. The API still moves; breaks are deliberate and documented,
-but they happen — see [Versioning](docs/dev/versioning.md).
+Scaly is at version 0.1.0a1. The public API can still change between minor versions;
+[Versioning](docs/dev/versioning.md) says what a change is allowed to break.
 
 Working today: the full expression set on the host, forward and reverse differentiation, colored
-sparse Jacobians and exact sparse Lagrangian Hessians through preserved `VMAP` structure, and PIQP,
-IPOPT and a generated-C SQP solver drivable from inside a compiled graph.
+sparse Jacobians and exact sparse Lagrangian Hessians through preserved `vmap` structure, and
+PIQP, IPOPT and a generated-C SQP solver callable from inside a compiled graph. Linux and macOS,
+Python 3.12 or newer.
 
-Open: iterative rather than recursive passes, warm-start handover into PIQP, differentiating
-through a solve, and a GPU backend.
+Not yet: differentiating through a solver call (its derivatives are zero), warm-start handover
+into PIQP, Windows, and any target other than the host CPU.
 
 ## Installation
 
-> [!NOTE]
-> Replace this with wheel installation instructions when available.
-
-Requirements:  Python 3.12 or newer, and a C compiler.
+Requirements: Python 3.12 or newer and a C compiler.
 
 ```bash
 git clone https://github.com/PREDICT-EPFL/scaly.git
@@ -76,8 +75,7 @@ cd scaly
 uv sync
 ```
 
-The solver interfaces additionally need the vendored PIQP and IPOPT builds, which want a Fortran
-compiler and CMake:
+The solver plugins build vendored PIQP and IPOPT, which need CMake and a Fortran compiler:
 
 ```bash
 # macOS
@@ -85,33 +83,35 @@ brew install gcc cmake
 # Debian / Ubuntu
 sudo apt-get install gfortran cmake build-essential
 
-SCALY_BUILD_SOLVERS=required uv sync     # 5-8 minutes cold
+SCALY_BUILD_SOLVERS=required uv sync     # 5 to 8 minutes cold
 ```
 
 `uv run python -m scaly.codegen.toolchain` reports the active compiler, the cache directory and
-solver discovery. Windows is not supported in version 1. Full details in
-[Installation](docs/guide/installation.md).
+which solvers were found. Full details in [Installation](docs/guide/installation.md).
 
 ## Documentation
 
-The [documentation](docs/index.md) is organized for two readers at once.
-
 | | |
 | --- | --- |
-| [User Guide](docs/guide/getting_started.md) | building functions, derivatives, sparsity, solvers, generating C |
-| [How It Works](docs/how_it_works/architecture.md) | the architecture, the two IRs, lowering, the ABI |
-| [Benchmark Results](docs/results/index.md) | measured against CasADi SX and MX, kept current |
-| [Developer Guide](docs/dev/contributing.md) | contributing, conventions, solver plugins, versioning |
-| [API Reference](docs/api/index.md) | the public surface, generated from source |
+| [User guide](docs/guide/getting_started.md) | installation, building functions, derivatives, sparsity, solvers, generating C |
+| [How it works](docs/how_it_works/architecture.md) | the architecture, the two dialects, lowering, differentiation, the C ABI |
+| [Benchmark results](docs/results/index.md) | measured against CasADi SX and MX |
+| [Developer guide](docs/dev/contributing.md) | contributing, conventions, solver plugins, versioning |
+| [API reference](docs/api/index.md) | the public names, generated from the docstrings |
 
-If you already know CasADi, JAX, tinygrad or MLIR, start with
-[Scaly next to its neighbours](docs/how_it_works/comparison.md): what scaly took from each, and
-where it deliberately differs.
+If you know CasADi, JAX, tinygrad or MLIR, [Next to its neighbours](docs/how_it_works/comparison.md)
+says what scaly took from each and what it does differently.
 
-`internal/` holds the actionable list and frozen design notes — kept in the repository for the
-record, deliberately not published: `internal/todo.md` is the actionable list and
-`internal/notes/` the frozen history.
+`internal/` holds the todo list and frozen design notes. It is tracked but not published.
+
+## Acknowledgements
+
+Scaly is developed at EPFL in the PREDICT group. The research behind it is funded by the Swiss
+National Science Foundation through NCCR Automation (grant agreement 51NF40_180545).
+
+Parts of the code and of the documentation were written with AI coding agents (Claude, Codex and
+others), under the direction and review of the authors, who are responsible for the result.
 
 ## License
 
-BSD-2-Clause
+BSD-2-Clause. See [LICENSE.md](LICENSE.md).

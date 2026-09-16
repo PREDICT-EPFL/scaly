@@ -7,51 +7,50 @@ extra_javascript = [
     "docs/javascripts/mathjax.js",
     "https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js",
 ]
-# Zensical publishes everything under docs/, with no exclusion mechanism. The repository's own
-# record — the todo and the frozen design notes — therefore lives in internal/ at the root,
-# outside this tree, rather than relying on a config key to keep it off the site.
+# Zensical publishes everything under docs/ and has no exclusion mechanism, so the todo list and
+# the frozen design notes live in internal/ at the repository root instead.
 nav = [
     { "Home" = "index.md" },
-    { "User Guide" = [
+    { "User guide" = [
         { "Installation" = "guide/installation.md" },
-        { "Getting Started" = "guide/getting_started.md" },
-        { "Building Functions" = "guide/functions.md" },
+        { "Getting started" = "guide/getting_started.md" },
+        { "Building functions" = "guide/functions.md" },
         { "Derivatives" = "guide/derivatives.md" },
         { "Sparsity" = "guide/sparsity.md" },
         { "Solvers" = "guide/solvers.md" },
-        { "Solver Backends" = "guide/solver_backends.md" },
+        { "Solver backends" = "guide/solver_backends.md" },
         { "Code generation" = "guide/codegen.md" },
         { "Visualization" = "guide/visualization.md" },
-        { "Environment Variables" = "guide/env_vars.md" },
+        { "Environment variables" = "guide/env_vars.md" },
     ] },
-    { "How It Works" = [
+    { "How it works" = [
         { "Architecture" = "how_it_works/architecture.md" },
-        { "The Expression Dialect" = "how_it_works/expr_ir.md" },
-        { "The Program Dialect" = "how_it_works/program_ir.md" },
-        { "Lowering and Optimization" = "how_it_works/lowering.md" },
+        { "The expression dialect" = "how_it_works/expr_ir.md" },
+        { "The program dialect" = "how_it_works/program_ir.md" },
+        { "Lowering and optimization" = "how_it_works/lowering.md" },
         { "Differentiation" = "how_it_works/autodiff.md" },
         { "The C ABI" = "how_it_works/c_abi.md" },
         { "Solvers" = "how_it_works/solvers.md" },
-        { "Next to its Neighbours" = "how_it_works/comparison.md" },
+        { "Next to its neighbours" = "how_it_works/comparison.md" },
     ] },
-    { "Benchmark Results" = [
+    { "Benchmark results" = [
         { "Overview" = "results/index.md" },
-        { "Scalability Sweep" = "results/scalability.md" },
+        { "Scalability sweep" = "results/scalability.md" },
         { "Are the comparisons fair?" = "results/fairness.md" },
     ] },
-    { "Developer Guide" = [
+    { "Developer guide" = [
         { "Contributing" = "dev/contributing.md" },
         { "Conventions" = "dev/conventions.md" },
-        { "Solver Plugins" = "dev/solver_plugins.md" },
+        { "Solver plugins" = "dev/solver_plugins.md" },
         { "Versioning" = "dev/versioning.md" },
         { "Fuzzing" = "dev/fuzzing.md" },
     ] },
-    { "API Reference" = [
+    { "API reference" = [
         { "Overview" = "api/index.md" },
         { "Core" = "api/core.md" },
-        { "Building Functions" = "api/functions.md" },
+        { "Building functions" = "api/functions.md" },
         { "Differentiation" = "api/ad.md" },
-        { "Code Generation" = "api/codegen.md" },
+        { "Code generation" = "api/codegen.md" },
         { "Solvers" = "api/solvers.md" },
         { "Visualization" = "api/viz.md" },
     ] },

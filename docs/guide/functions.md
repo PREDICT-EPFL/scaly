@@ -1,18 +1,15 @@
 # Building functions
 
 A `Function` is a named expression graph with declared input and output trees. The same trees
-describe symbolic calls with `Expr` leaves and numerical calls with NumPy-array leaves. They also
+describe symbolic calls with `Expr` leaves and numerical calls with NumPy-array leaves, and they
 give ty enough information to reject a call with the wrong structure.
 
 ## Declare a function
 
-Build trees from two constructors:
+Build trees from two constructors. `sc.L(name, shape)` declares one tensor. `sc.G(*trees)` groups
+trees and may be nested; the type stubs cover up to eight children, the runtime accepts any count.
 
-- `sc.L(name, shape)` declares one tensor.
-
-- `sc.G(*trees)` groups two to eight trees and may be nested.
-
-An integer shape means a rank-1 tensor, `()` is a scalar, and a tuple is used as written. Pass a
+An integer shape means a rank-1 tensor, `()` is a scalar and a tuple is used as written. Pass a
 `TensorType` when you need an explicit dtype or differentiability flag.
 
 ```python
@@ -29,11 +26,12 @@ def features(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
 ```
 
 The decorator traces the body once with symbolic inputs. The body takes one value with the declared
-input structure and returns one value with the declared output structure.
-Use `...` when an output shape should be inferred. A written output shape is checked immediately.
-The decorator also rejects the wrong output count or structure.
-Names are external metadata. They need not match the body's local variable names. They identify
-derivative inputs and outputs, generated C buffers, sparse tables, and assembly text, so each name
+input structure and returns one value with the declared output structure. Use `...` when an output
+shape should be inferred; a written output shape is checked immediately, as are the output count
+and structure.
+
+Names are external metadata and need not match the body's local variable names. They identify
+derivative inputs and outputs, generated C buffers, sparse tables and assembly text, so each name
 must be unique within its tree.
 
 ## Symbolic and numerical calls
@@ -48,25 +46,21 @@ symbolic_sum, symbolic_projection = symbolic
 numeric_sum, numeric_projection = numeric
 ```
 
-`Expr` leaves create first-class `CALL` nodes in a larger expression graph. Numerical leaves
-compile on first use, cache the shared library, and reconstruct the declared output tree.
+`Expr` leaves create `CALL` nodes in a larger expression graph. Numerical leaves compile on first
+use, cache the shared library and reconstruct the declared output tree.
 
-`__call__` is a dispatcher over two methods you can also call directly, and should when the
-distinction is the point you are making:
+`__call__` dispatches to two methods you can also call directly when the distinction matters:
+`fn.symbolic_call(tree)` always builds a call node and `fn.numerical_call(tree)` always evaluates.
 
-- `fn.symbolic_call(tree)` always builds a call node.
+A tree that mixes `Expr` and numerical leaves is an error. Wrap the constants in `sc.const` to make
+the symbolic reading explicit.
 
-- `fn.numerical_call(tree)` always evaluates.
-
-A tree that mixes `Expr` and numerical leaves is an error rather than a guess. Wrap the constants
-in `sc.const` to make the symbolic reading explicit.
-
-Structure is checked statically by ty and again at runtime. Shapes are checked at runtime because
-shapes are values in Python's type system.
+Ty checks structure statically and the runtime checks it again. Shapes are checked at runtime only,
+because shapes are values in Python's type system.
 
 ## A single leaf is unpacked
 
-Only `sc.G` introduces a tuple. A tree of one `sc.L` *is* that leaf, so a one-leaf input takes the
+Only `sc.G` introduces a tuple. A tree of one `sc.L` is that leaf, so a one-leaf input takes the
 tensor itself and a one-leaf output returns the tensor itself:
 
 ```python
@@ -85,16 +79,15 @@ scaled = scale(np.ones(3))     # correct
 (scaled,) = scale(np.ones(3))  # wrong
 ```
 
-The second line is wrong in a way worth knowing about, because it is not always loud. It iterates
-the returned array along its first axis, exactly as NumPy or PyTorch would, so it raises for a
-length-3 output but *succeeds* whenever the leading axis has length one — binding a scalar slice
-instead of the whole tensor. Symbolic calls behave the same way, with an `Expr` in place of the
-array.
+The second line is not always loud. It iterates the returned array along its first axis, as NumPy
+or PyTorch would, so it raises for a length-3 output but succeeds whenever the leading axis has
+length one, binding a scalar slice instead of the whole tensor. Symbolic calls behave the same way,
+with an `Expr` in place of the array.
 
 ## Grouping and the C signature
 
 Grouping exists for Python readability and typing. The generated signature uses the leaves in tree
-order. These declarations therefore have the same flat input signature:
+order, so these declarations have the same flat input signature:
 
 ```python
 nested = sc.G(
@@ -109,11 +102,11 @@ flat = sc.G(
 )
 ```
 
-Choose the grouping that matches the domain object passed by the caller.
+Choose the grouping that matches the object the caller passes.
 
 ## Compose functions
 
-Calling a function with `Expr` leaves preserves the callee as a call in the graph:
+Calling a function with `Expr` leaves keeps the callee as a call in the graph:
 
 ```python
 @sc.function(sc.L("x", 3), sc.L("square", ...))
@@ -125,8 +118,8 @@ def energy(x: sc.Expr) -> sc.Expr:
     return square(x).sum()
 ```
 
-The generated C contains one `square` procedure and a call from `energy`. Differentiation preserves
-that boundary instead of copying the callee graph into every call site.
+The generated C contains one `square` procedure and a call from `energy`. Differentiation keeps
+that boundary; it does not copy the callee graph into every call site.
 
 ## Regular repetition: `vmap`
 

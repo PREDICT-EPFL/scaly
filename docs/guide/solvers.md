@@ -1,7 +1,7 @@
 # Solvers
 
-A solver starts from a backend-free `Problem`. Declare variables, parameters, objective, and
-constraints once, then choose PIQP, IPOPT, or scaly-sqp with `sc.solver`. The result is an ordinary
+A solver starts from a `Problem`, which names no backend. Declare variables, parameters, objective and
+constraints once, then choose PIQP, IPOPT or scaly-sqp with `sc.solver`. The result is an ordinary
 typed `Function`, so it can run numerically or appear as a call node in a larger graph.
 [Solver backends](solver_backends.md) compares the implementations. [How solvers
 work](../how_it_works/solvers.md) describes their generated wrappers.
@@ -9,7 +9,7 @@ work](../how_it_works/solvers.md) describes their generated wrappers.
 ## Declare a problem
 
 Use `sc.L(name, shape)` for one tensor and `sc.G(...)` to group tensors. The declared tree
-determines the symbolic structure seen by the body and the NumPy structure used at calls.
+is the symbolic structure the body sees and the NumPy structure calls take.
 
 ```python
 import scaly as sc
@@ -45,16 +45,17 @@ def tracking_problem(
 | `ub` | optional upper bounds with the variables' structure |
 
 At least one of `lo` and `hi` is required for a bounded group. A scalar bound broadcasts over its
-group or variable leaf. `lb` and `ub` must have the variables’ tree structure. Use `sc.NO_LB` or
+group or variable leaf. `lb` and `ub` must have the variables' tree structure. Use `sc.NO_LB` or
 `sc.NO_UB` when one leaf has no bound on that side; use `None` when the entire lower or upper side
-is absent. These constants are scalar `Expr` values, so the tree remains statically typed. Names are
+is absent. These constants are scalar `Expr` values, so the tree stays statically typed. Names are
 metadata and need not match local Python variable names.
+
 Pass a parameter tree when the public interface is fixed. If `params` is omitted, Scaly collects
 named expressions closed over by the body and builds the parameter tree from them.
 
 ## Select one solver
 
-The backend is positional. The artifact name and backend options belong to the solver construction:
+The backend is positional. The artifact name and backend options are given when the solver is built:
 
 ```python
 solve = sc.solver(
@@ -69,6 +70,7 @@ PIQP accepts only problems that Scaly can prove are quadratic programs. The cost
 variable-independent Hessian, every constraint must have a variable-independent Jacobian, and
 bounds must not depend on the variables. Failure raises `sc.NotQuadratic` when the solver is built.
 IPOPT and scaly-sqp accept nonlinear problems.
+
 A problem caches its common objective, gradient, constraint Jacobian, and bounds oracles. Solvers
 that need different Hessian triangles share the common oracles and cache one Hessian per triangle.
 
@@ -101,8 +103,9 @@ u, slack = variables
 ```
 
 `lam_ineq` and `lam_box` are signed. A positive value means the upper bound is active; a negative
-value means the lower bound is active. IPOPT and scaly-sqp consume warm starts. PIQP currently
+value means the lower bound is active. IPOPT and scaly-sqp consume warm starts. PIQP
 ignores them because its C interface has no warm-start entry point.
+
 `solve.input_names` and `solve.output_names` show the flattened C signature. Grouping affects
 Python and static types, but not leaf order in the generated ABI.
 
@@ -135,6 +138,7 @@ x, lam_box, lam_eq, lam_ineq = solve_qp(
 
 This helper goes through the same quadratic proof and extraction as any other `Problem`. Bounds on
 `x` are not part of `QPData`; declare a problem directly when you need them.
+
 For `0.5 * x @ P @ x`, the extracted Hessian is `0.5 * (P + P.T)`. Provide a symmetric matrix when
 that distinction matters.
 
@@ -150,8 +154,9 @@ solve_sparse = sc.solver(problem, "piqp", options={"sparse": True})
 
 The sparse path rejects QP matrices computed from another solver output because solver calls are
 opaque to structural dependency analysis. The dense path has no such restriction.
+
 Problem oracles represent an absent bound with IEEE negative or positive infinity. Built-in solver
-adapters translate those values to the backend’s native convention before solving.
+adapters translate those values to the backend's native convention before solving.
 
 ## Nesting a solver in a graph
 
@@ -178,8 +183,7 @@ def filtered_control(params: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 ```
 
 The call lowers to one generated solver wrapper in the same shared library as the host function and
-its oracles. `SOLVER_CALL` is currently non-differentiable, so derivatives through a solve are
-zero.
+its oracles. `SOLVER_CALL` is not differentiable, so derivatives through a solve are zero.
 
 ## Statistics
 
@@ -195,23 +199,19 @@ if status is not None and not status.ok:
 A host function can reach more than one solver. Pass the solver artifact name to
 `host.solver_stats(name)` to select one. Statistics include statuses, iteration count, objective,
 oracle evaluation counts, timing splits, primal violation, last step norm, accepted step length,
-backtracks, and accumulated QP iterations.
+backtracks and accumulated QP iterations.
 
 ## Shipping one in C
 
 A solver-bearing function renders through the same C API as any other function. Its module also
-carries the include, library, runtime-path, and link flags for every reached plugin. See [Code
+carries the include, library, runtime-path and link flags for every plugin it reaches. See [Code
 generation](codegen.md) and [the C ABI](../how_it_works/c_abi.md).
 
 ## Limits
 
-- The vendored PIQP and IPOPT libraries build on the first sync and can take 5 to 8 minutes from a
+- The vendored PIQP and IPOPT libraries build on the first sync and take 5 to 8 minutes from a
   cold checkout.
-
 - PIQP does not consume warm starts.
-
 - Generated wrappers use per-symbol static storage and are not reentrant.
-
-- Backend options are compiled into the wrapper.
-
+- Backend options are compiled into the wrapper, so changing one recompiles it.
 - Differentiation through a solve is not implemented.

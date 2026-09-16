@@ -8,7 +8,7 @@ call, and caches the resulting shared library.
 Read before changing anything:
 
 - [Architecture](docs/how_it_works/architecture.md) — the import-layer table, and *Where to add things*
-  lists every file each kind of change touches (a new scalar operation touches six)
+  lists every file each kind of change touches (a new scalar operation touches seven)
 - [Conventions](docs/dev/conventions.md) — naming, code style, which side of the
   tests-versus-benchmarks line a check belongs on
 - [Contributing](docs/dev/contributing.md) — the checks, where tests live, known flakes

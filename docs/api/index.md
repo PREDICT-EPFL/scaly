@@ -1,22 +1,22 @@
 # API reference
 
-The public surface, grouped by what it is for and generated from the source, so it follows the
-code.
+The public API, grouped by what it is for and generated from the source docstrings.
 
-A few names in the `scaly` namespace are aliases or constants that carry no documentation of their
-own and so do not appear below: `sc.sym` and `sc.const` are `Expr.sym` and `Expr.const`, and
-`sc.C_API_SIGNATURE` is the ABI signature string. `scaly.__all__` is the
-authoritative list of what is public.
+These pages are the public API. `scaly.__all__` is the subset re-exported in the `scaly` namespace;
+a few of its members (`BACKEND_SUPPORT`, `COMMON_OPS`, `OP_INFO`,
+`SCALY_SOLVER_STATS_VERSION`, `factory`, `spec_expr`, `spec_expr_shared`, `C_API_SIGNATURE`) have
+no docstring of their own and are not listed here. `sc.sym` and `sc.const` are `Expr.sym` and
+`Expr.const`, documented under [Core](core.md).
 
-For prose explanations rather than signatures, start with the [User Guide](../guide/getting_started.md).
+For prose explanations, start with the [User Guide](../guide/getting_started.md).
 
 | Page | Contains |
 | --- | --- |
 | [Core](core.md) | `Expr`, `Function`, the type vocabulary, and the expression builders |
 | [Building functions](functions.md) | the `@function` decorator, derivative specs, and the named derivative wrappers |
 | [Differentiation](ad.md) | forward and reverse mode, whole derivatives, sparsity and coloring |
-| [Code generation](codegen.md) | rendering C, the ABI surface, the toolchain |
+| [Code generation](codegen.md) | rendering C, the ABI, the toolchain |
 | [Solvers](solvers.md) | typed problems, solver selection, quadratic proof, and solve statistics |
 | [Visualization](viz.md) | recording a compile and serving it |
 
-Anything not on these pages is internal, and may move without notice.
+Anything not on these pages is internal and may move without notice.
