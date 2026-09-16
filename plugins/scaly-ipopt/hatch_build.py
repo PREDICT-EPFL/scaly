@@ -99,6 +99,40 @@ def _run(cmd: list[str], cwd: Path, env: dict | None = None) -> None:
   subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
+NOTICES = "THIRD_PARTY_NOTICES.md"
+
+
+def _write_third_party_notices(
+  hook: "BuildHook", licenses_dir: Path, distribution: str, entries: list[tuple[str, str, str, str, list[Path]]]
+) -> None:
+  """Copy each bundled dependency's license texts into `licenses_dir/<name>/` and index them in THIRD_PARTY_NOTICES.md.
+
+  Entries are (name, version, license, upstream URL, license files in the cloned source). Copying
+  from the pinned sources at build time keeps the notices from drifting from `build_config.json`."""
+  if licenses_dir.exists():
+    shutil.rmtree(licenses_dir)
+  lines = [
+    f"# Third-party notices for {distribution}",
+    "",
+    "The native libraries under `lib/` in this distribution bundle the software below. The license",
+    "texts of each row, copied from the pinned upstream sources when the wheel was built, are in the",
+    "named subdirectory.",
+    "",
+    "| Component | Version | License | Upstream | Texts |",
+    "|---|---|---|---|---|",
+  ]
+  for name, version, license_id, url, files in entries:
+    dst = licenses_dir / name
+    dst.mkdir(parents=True)
+    for src in files:
+      if not src.exists():
+        raise RuntimeError(f"license text {src} for {name} is missing; upstream moved it, so update the notices entry")
+      shutil.copy2(src, dst / src.name)
+    lines.append(f"| {name} | {version} | {license_id} | {url} | `{name}/` |")
+  (licenses_dir / NOTICES).write_text("\n".join(lines) + "\n")
+  hook.app.display_info(f"Wrote {licenses_dir / NOTICES}")
+
+
 def _build_openblas(hook: "BuildHook", third_party_dir: Path, install_dir: Path) -> Path:
   marker = install_dir / "lib" / "libopenblas.a"
   if marker.exists():
@@ -383,7 +417,7 @@ def _linux_self_contained(lib_dir: Path, lib_name: str) -> bool:
   return all(resolved and Path(resolved).parent == lib_dir.resolve() for resolved in _linux_runtime_deps(lib_dir.resolve() / lib_name).values())
 
 
-def _ipopt_built(system: str, lib_dir: Path, include_dir: Path) -> bool:
+def _ipopt_built(system: str, lib_dir: Path, include_dir: Path, licenses_dir: Path) -> bool:
   lib_name = _shared_lib_name(system, "ipopt")
   has_lib = (lib_dir / lib_name).exists()
   if system == "Linux":
@@ -392,7 +426,7 @@ def _ipopt_built(system: str, lib_dir: Path, include_dir: Path) -> bool:
   # copies, so it would not load off this machine: rebuild it
   if has_lib and not (_macos_self_contained if system == "Darwin" else _linux_self_contained)(lib_dir, lib_name):
     return False
-  return has_lib and (include_dir / "coin-or" / "IpStdCInterface.h").exists()
+  return has_lib and (licenses_dir / NOTICES).exists() and (include_dir / "coin-or" / "IpStdCInterface.h").exists()
 
 
 def _linux_major_so_name(path: Path) -> str:
@@ -400,10 +434,10 @@ def _linux_major_so_name(path: Path) -> str:
   return ".".join(parts[:3]) if len(parts) >= 3 else path.name
 
 
-def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path) -> None:
+def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path, licenses_dir: Path) -> None:
   system = platform.system()
   lib_name = _shared_lib_name(system, "ipopt")
-  if _ipopt_built(system, lib_dir, include_dir):
+  if _ipopt_built(system, lib_dir, include_dir, licenses_dir):
     hook.app.display_info(f"IPOPT already built at {lib_dir}")
     return
 
@@ -453,6 +487,48 @@ def _build_ipopt_stack(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, 
   ipopt_headers_dir = ipopt_install / "include" / "coin-or"
   for header in ipopt_headers_dir.glob("*.h"):
     shutil.copy2(header, include_dir / "coin-or" / header.name)
+
+  mumps_src = third_party_dir / "ThirdParty-Mumps"
+  gklib_src = third_party_dir / "GKlib"
+  runtime = sorted(p.name for p in lib_dir.iterdir() if p.name.startswith(("libgfortran", "libquadmath", "libgcc_s")))
+  entries = [
+    ("ipopt", _BUILD_CONFIG["ipopt"]["version"], "EPL-2.0", "https://github.com/coin-or/Ipopt", [third_party_dir / "Ipopt" / "LICENSE"]),
+    ("mumps", _BUILD_CONFIG["mumps"]["version"], "CeCILL-C", "https://mumps-solver.org", [mumps_src / "MUMPS" / "LICENSE"]),
+    (
+      "thirdparty-mumps",
+      _BUILD_CONFIG["mumps"]["coinor_version"],
+      "EPL-2.0",
+      "https://github.com/coin-or-tools/ThirdParty-Mumps",
+      [mumps_src / "LICENSE"],
+    ),
+    ("metis", _BUILD_CONFIG["metis"]["version"], "Apache-2.0", "https://github.com/KarypisLab/METIS", [third_party_dir / "METIS" / "LICENSE"]),
+    (
+      "gklib",
+      f"commit {GKLIB_COMMIT[:12]}",
+      "Apache-2.0, plus the LGPL-2.1-or-later and BSD-3-Clause files listed in LICENSES.md",
+      "https://github.com/KarypisLab/GKlib",
+      [gklib_src / "LICENSE.txt", gklib_src / "LICENSES.md", gklib_src / "LICENSES" / "BSD-3-Clause-MT.txt", gklib_src / "LICENSES" / "LGPL-2.1.txt"],
+    ),
+    (
+      "gcc-runtime",
+      ", ".join(runtime),
+      "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "https://gcc.gnu.org",
+      [third_party_dir.parent / "licenses" / "gcc-runtime" / name for name in ("COPYING3", "COPYING.RUNTIME")],
+    ),
+  ]
+  if system == "Linux":
+    openblas_src = third_party_dir / "openblas"
+    entries.append(
+      (
+        "openblas",
+        _BUILD_CONFIG["blas"]["linux"]["version"],
+        "BSD-3-Clause",
+        "https://github.com/OpenMathLib/OpenBLAS",
+        [openblas_src / "LICENSE", openblas_src / "GotoBLAS_00License.txt"],
+      )
+    )
+  _write_third_party_notices(hook, licenses_dir, "scaly-ipopt", entries)
   hook.app.display_info("IPOPT build complete.")
 
 
@@ -468,6 +544,7 @@ class BuildHook(BuildHookInterface):
     third_party_dir = root / "third_party"
     lib_dir = root / "src" / "scaly_ipopt" / "lib"
     include_dir = root / "src" / "scaly_ipopt" / "include"
+    licenses_dir = root / "src" / "scaly_ipopt" / "licenses"
     mode = _solver_build_mode()
     strict = mode == "require" or (mode == "auto" and version != "editable")
     system = platform.system()
@@ -485,18 +562,23 @@ class BuildHook(BuildHookInterface):
       self.app.display_info(f"Skipping vendored solver build for editable install: {msg}")
       return
 
-    missing = [] if _ipopt_built(system, lib_dir, include_dir) else _missing_ipopt_tools()
+    missing = [] if _ipopt_built(system, lib_dir, include_dir, licenses_dir) else _missing_ipopt_tools()
     if missing:
       msg = f"missing native toolchain for IPOPT build: {', '.join(missing)}"
       if strict:
         raise RuntimeError(f"{msg}. Install gfortran via `brew install gcc` (macOS) or `sudo apt-get install gfortran` (Linux).")
       self.app.display_info(f"Skipping IPOPT build for editable install ({msg}); set SCALY_BUILD_SOLVERS=required to make this fatal.")
     else:
-      _build_ipopt_stack(self, third_party_dir, lib_dir, include_dir)
+      _build_ipopt_stack(self, third_party_dir, lib_dir, include_dir, licenses_dir)
 
   def clean(self, versions: list[str]) -> None:
     root = Path(self.root)
-    for path in (root / "src" / "scaly_ipopt" / "lib", root / "src" / "scaly_ipopt" / "include", root / "third_party"):
+    for path in (
+      root / "src" / "scaly_ipopt" / "lib",
+      root / "src" / "scaly_ipopt" / "include",
+      root / "src" / "scaly_ipopt" / "licenses",
+      root / "third_party",
+    ):
       if path.exists():
         self.app.display_info(f"Removing {path}")
         shutil.rmtree(path)

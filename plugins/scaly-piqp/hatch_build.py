@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
@@ -57,21 +58,61 @@ def _missing_piqp_tools(*, build_piqp: bool) -> list[str]:
   return missing
 
 
+_BUILD_CONFIG = json.loads((Path(__file__).parent / "src" / "scaly_piqp" / "build_config.json").read_text())
+PIQP_TAG = _BUILD_CONFIG["piqp"]["tag"]
+EIGEN_TAG = _BUILD_CONFIG["eigen"]["tag"]
+BLASFEO_TAG = _BUILD_CONFIG["blasfeo"]["tag"]
+
+
 def _run(cmd: list[str], cwd: Path, env: dict | None = None) -> None:
   subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
-def _piqp_built(system: str, lib_dir: Path, include_dir: Path) -> bool:
+NOTICES = "THIRD_PARTY_NOTICES.md"
+
+
+def _write_third_party_notices(
+  hook: "BuildHook", licenses_dir: Path, distribution: str, entries: list[tuple[str, str, str, str, list[Path]]]
+) -> None:
+  """Copy each bundled dependency's license texts into `licenses_dir/<name>/` and index them in THIRD_PARTY_NOTICES.md.
+
+  Entries are (name, version, license, upstream URL, license files in the cloned source). Copying
+  from the pinned sources at build time keeps the notices from drifting from `build_config.json`."""
+  if licenses_dir.exists():
+    shutil.rmtree(licenses_dir)
+  lines = [
+    f"# Third-party notices for {distribution}",
+    "",
+    "The native libraries under `lib/` in this distribution bundle the software below. The license",
+    "texts of each row, copied from the pinned upstream sources when the wheel was built, are in the",
+    "named subdirectory.",
+    "",
+    "| Component | Version | License | Upstream | Texts |",
+    "|---|---|---|---|---|",
+  ]
+  for name, version, license_id, url, files in entries:
+    dst = licenses_dir / name
+    dst.mkdir(parents=True)
+    for src in files:
+      if not src.exists():
+        raise RuntimeError(f"license text {src} for {name} is missing; upstream moved it, so update the notices entry")
+      shutil.copy2(src, dst / src.name)
+    lines.append(f"| {name} | {version} | {license_id} | {url} | `{name}/` |")
+  (licenses_dir / NOTICES).write_text("\n".join(lines) + "\n")
+  hook.app.display_info(f"Wrote {licenses_dir / NOTICES}")
+
+
+def _piqp_built(system: str, lib_dir: Path, include_dir: Path, licenses_dir: Path) -> bool:
   lib_path = lib_dir / _shared_lib_name(system, "piqpc")
-  return lib_path.exists() and (include_dir / "piqp.h").exists() and (include_dir / "piqp_typedef.h").exists()
+  return lib_path.exists() and (licenses_dir / NOTICES).exists() and (include_dir / "piqp.h").exists() and (include_dir / "piqp_typedef.h").exists()
 
 
-def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path) -> None:
+def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include_dir: Path, licenses_dir: Path) -> None:
   system = platform.system()
   machine = platform.machine().lower()
   lib_name = _shared_lib_name(system, "piqpc")
 
-  if _piqp_built(system, lib_dir, include_dir):
+  if _piqp_built(system, lib_dir, include_dir, licenses_dir):
     hook.app.display_info(f"PIQP C interface already built at {lib_dir}")
     return
 
@@ -80,14 +121,14 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
   eigen_dir = third_party_dir / "eigen"
   eigen_install_dir = third_party_dir / "eigen_install"
   eigen_cmake_dir = eigen_install_dir / "share" / "eigen3" / "cmake"
+  third_party_dir.mkdir(parents=True, exist_ok=True)
+  if not eigen_dir.exists():
+    hook.app.display_info(f"Cloning Eigen {EIGEN_TAG} to {eigen_dir}")
+    subprocess.run(
+      ["git", "clone", "--depth=1", "--branch", EIGEN_TAG, "https://gitlab.com/libeigen/eigen.git", str(eigen_dir)],
+      check=True,
+    )
   if not eigen_cmake_dir.exists():
-    third_party_dir.mkdir(parents=True, exist_ok=True)
-    if not eigen_dir.exists():
-      hook.app.display_info(f"Cloning Eigen 3.4.1 to {eigen_dir}")
-      subprocess.run(
-        ["git", "clone", "--depth=1", "--branch", "3.4.1", "https://gitlab.com/libeigen/eigen.git", str(eigen_dir)],
-        check=True,
-      )
     eigen_build_dir = eigen_dir / "build"
     eigen_build_dir.mkdir(exist_ok=True)
     eigen_install_dir.mkdir(exist_ok=True)
@@ -114,9 +155,8 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
   blasfeo_dir = third_party_dir / "blasfeo"
   blasfeo_install_root = third_party_dir / "blasfeo_install"
   if not blasfeo_dir.exists():
-    third_party_dir.mkdir(parents=True, exist_ok=True)
-    hook.app.display_info(f"Cloning Blasfeo to {blasfeo_dir}")
-    subprocess.run(["git", "clone", "--depth=1", "https://github.com/giaf/blasfeo.git", str(blasfeo_dir)], check=True)
+    hook.app.display_info(f"Cloning Blasfeo {BLASFEO_TAG} to {blasfeo_dir}")
+    subprocess.run(["git", "clone", "--depth=1", "--branch", BLASFEO_TAG, "https://github.com/giaf/blasfeo.git", str(blasfeo_dir)], check=True)
 
   blasfeo_target, blasfeo_suffix = _blasfeo_target(system, machine)
   blasfeo_install_dir = blasfeo_install_root / blasfeo_suffix
@@ -150,10 +190,9 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
 
   piqp_dir = third_party_dir / "piqp"
   if not piqp_dir.exists():
-    third_party_dir.mkdir(parents=True, exist_ok=True)
-    hook.app.display_info(f"Cloning PIQP v0.6.2 to {piqp_dir}")
+    hook.app.display_info(f"Cloning PIQP {PIQP_TAG} to {piqp_dir}")
     subprocess.run(
-      ["git", "clone", "--depth=1", "--branch", "v0.6.2", "https://github.com/PREDICT-EPFL/piqp.git", str(piqp_dir)],
+      ["git", "clone", "--depth=1", "--branch", PIQP_TAG, "https://github.com/PREDICT-EPFL/piqp.git", str(piqp_dir)],
       check=True,
     )
   else:
@@ -171,6 +210,9 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
     "-DBUILD_EXAMPLES=OFF",
     "-DBUILD_PYTHON_INTERFACE=OFF",
     "-DBUILD_SHARED_LIBS=ON",
+    # Eigen refuses to compile any file that is not MPL-2.0 under this define, so the build itself
+    # proves the shipped library carries no LGPL Eigen code; THIRD_PARTY_NOTICES.md relies on that.
+    "-DCMAKE_CXX_FLAGS=-DEIGEN_MPL2_ONLY",
     f"-DEigen3_DIR={eigen_cmake_dir}",
     "-DFETCHCONTENT_FULLY_DISCONNECTED=ON",
     "-DBUILD_WITH_BLASFEO=ON",
@@ -206,6 +248,32 @@ def _build_piqp(hook: "BuildHook", third_party_dir: Path, lib_dir: Path, include
     dst = include_dir / header
     hook.app.display_info(f"Copying {src} to {dst}")
     shutil.copy2(src, dst)
+
+  vendored = third_party_dir.parent / "licenses"
+  piqp_version = _BUILD_CONFIG["piqp"]["version"]
+  _write_third_party_notices(
+    hook,
+    licenses_dir,
+    "scaly-piqp",
+    [
+      ("piqp", piqp_version, "BSD-2-Clause", "https://github.com/PREDICT-EPFL/piqp", [piqp_dir / "LICENSE"]),
+      (
+        "ldl",
+        f"modified copy inside PIQP {piqp_version}",
+        "LGPL-2.1-or-later",
+        "https://github.com/DrTimothyAldenDavis/SuiteSparse",
+        [piqp_dir / "include" / "piqp" / "sparse" / "LDL_License.txt", vendored / "LGPL-2.1.txt"],
+      ),
+      (
+        "eigen",
+        _BUILD_CONFIG["eigen"]["version"],
+        "MPL-2.0 (compiled with EIGEN_MPL2_ONLY)",
+        "https://gitlab.com/libeigen/eigen",
+        [eigen_dir / name for name in ("COPYING.MPL2", "COPYING.BSD", "COPYING.README")],
+      ),
+      ("blasfeo", _BUILD_CONFIG["blasfeo"]["version"], "BSD-2-Clause", "https://github.com/giaf/blasfeo", [blasfeo_dir / "LICENSE.txt"]),
+    ],
+  )
   hook.app.display_info("PIQP C interface build complete.")
 
 
@@ -221,6 +289,7 @@ class BuildHook(BuildHookInterface):
     third_party_dir = root / "third_party"
     lib_dir = root / "src" / "scaly_piqp" / "lib"
     include_dir = root / "src" / "scaly_piqp" / "include" / "piqp"
+    licenses_dir = root / "src" / "scaly_piqp" / "licenses"
     mode = _solver_build_mode()
     strict = mode == "require" or (mode == "auto" and version != "editable")
     system = platform.system()
@@ -238,19 +307,19 @@ class BuildHook(BuildHookInterface):
       self.app.display_info(f"Skipping vendored solver build for editable install: {msg}")
       return
 
-    missing = _missing_piqp_tools(build_piqp=not _piqp_built(system, lib_dir, include_dir))
+    missing = _missing_piqp_tools(build_piqp=not _piqp_built(system, lib_dir, include_dir, licenses_dir))
     if missing:
       msg = f"missing native toolchain for PIQP build: {', '.join(missing)}"
       if strict:
         raise RuntimeError(f"{msg}. Install CMake, git, and a C/C++ compiler.")
       self.app.display_info(f"Skipping PIQP build for editable install ({msg}); set SCALY_BUILD_SOLVERS=required to make this fatal.")
     else:
-      _build_piqp(self, third_party_dir, lib_dir, include_dir)
+      _build_piqp(self, third_party_dir, lib_dir, include_dir, licenses_dir)
 
   def clean(self, versions: list[str]) -> None:
     root = Path(self.root)
     package_dir = root / "src" / "scaly_piqp"
-    for path in (package_dir / "lib", package_dir / "include", root / "third_party"):
+    for path in (package_dir / "lib", package_dir / "include", package_dir / "licenses", root / "third_party"):
       if path.exists():
         self.app.display_info(f"Removing {path}")
         shutil.rmtree(path)

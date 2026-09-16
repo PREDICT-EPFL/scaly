@@ -16,6 +16,11 @@ The vendored solvers (PIQP, IPOPT) build on the first sync and take 5 to 8 minut
 native toolchain the sync skips them and the solver tests skip with them; everything else works.
 See [Installation](../guide/installation.md).
 
+A new vendored dependency needs an entry in the plugin's `src/scaly_*/build_config.json`, which
+pins its version, and a row in the `_write_third_party_notices` call of that plugin's
+`hatch_build.py`, which copies its license texts into the wheel. The `test_*_notices.py` test in
+each plugin fails when a pinned dependency has no license directory.
+
 ## The checks
 
 ```bash

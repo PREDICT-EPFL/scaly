@@ -6,6 +6,8 @@
   },
   "mumps": {
     "coinor_branch": "releases/3.0.12",
+    "coinor_version": "3.0.12",
+    "version": "5.8.2",
     "linkage": "static"
   },
   "metis": {

@@ -1,0 +1,17 @@
+{
+  "piqp": {
+    "tag": "v0.6.2",
+    "version": "0.6.2",
+    "linkage": "shared"
+  },
+  "eigen": {
+    "tag": "3.4.1",
+    "version": "3.4.1",
+    "linkage": "header-only"
+  },
+  "blasfeo": {
+    "tag": "0.1.4.3",
+    "version": "0.1.4.3",
+    "linkage": "static"
+  }
+}

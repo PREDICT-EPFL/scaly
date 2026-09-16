@@ -3,6 +3,8 @@ name = "scaly-sqp"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = ["scaly", "scaly-piqp", "jinja2>=3.1.6"]
+license = "BSD-2-Clause"
+license-files = ["LICENSE.md"]
 
 [build-system]
 requires = ["hatchling"]

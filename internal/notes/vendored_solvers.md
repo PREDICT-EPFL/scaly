@@ -28,7 +28,7 @@ METIS comes from `KarypisLab/METIS` at tag `v5.2.1` (Apache-2.0), not from COIN-
 - MUMPS and IPOPT link `-lmetis -lGKlib -lm`; `ThirdParty-Mumps` reads `METIS_VER_MAJOR` from `metis.h` and switches its Fortran to the METIS 5 `METIS_NodeND` entry point on its own.
 - MUMPS insists on `idx_t` being a plain `int`, so the hook writes `IDXTYPEWIDTH 32` into the generated `build/xinclude/metis.h`, exactly what upstream's `make config` would do.
 - METIS' `conf/gkbuild.cmake` hardcodes `-march=native` under GCC. The hook strips it after cloning; otherwise the Linux wheel would be tied to the build host while OpenBLAS goes to the trouble of `DYNAMIC_ARCH=1`.
-- GKlib's `LICENSES.md` lists two glibc-derived headers under LGPL-2.1-or-later and one BSD-3-Clause file next to the Apache-2.0 default. The notices for L-30 have to carry those too.
+- GKlib's `LICENSES.md` lists two glibc-derived headers under LGPL-2.1-or-later and one BSD-3-Clause file next to the Apache-2.0 default. `_write_third_party_notices` copies all four texts into `licenses/gklib/`.
 
 The METIS 4 legacy-C warning flags are gone with it; METIS 5 is modern C.
 

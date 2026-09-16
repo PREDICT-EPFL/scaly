@@ -1,3 +1,4 @@
+plugins/scaly-ipopt/tests/test_ipopt_notices.py::test_license_directory_per_pinned_dependency
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns[diagonal]
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns[empty]
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_ipopt_wrapper_accepts_lower_diagonal_and_empty_hessian_patterns[lower]
@@ -16,6 +17,7 @@ plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_nlp_rosenbrock_equality_constr
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_nlp_two_sided_inequality_and_lagrangian_hessian
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_nlp_with_symbolic_parameter
 plugins/scaly-ipopt/tests/test_nlp_ipopt.py::test_vendored_ipopt_can_coexist_with_casadi_ipopt
+plugins/scaly-piqp/tests/test_piqp_notices.py::test_license_directory_per_pinned_dependency
 plugins/scaly-piqp/tests/test_qp_piqp.py::test_generated_qp_satisfies_kkt_over_parameter_sweep
 plugins/scaly-piqp/tests/test_qp_piqp.py::test_nested_qp_call_uses_the_declared_tree
 plugins/scaly-piqp/tests/test_qp_piqp.py::test_nested_qp_in_scaly_function
