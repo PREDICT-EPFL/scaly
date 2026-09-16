@@ -1,14 +1,14 @@
 """Core AD/codegen coverage for a stage-transcribed OCP constraint, self-contained.
 
 A 4-state / 2-control kinematic bicycle discretised with RK4 and transcribed into one
-equality residual per horizon. The shape matters for Alloy: scoped stage functions
-composed through ``Function.call``, ``al.concat`` of the per-stage pieces, a symbolic
+equality residual per horizon. The shape matters for Scaly: scoped stage functions
+composed through ``Function.call``, ``sc.concat`` of the per-stage pieces, a symbolic
 parameter tail read by every stage, and a `cos`/`sin`/`tanh`/divide mix inside the
 integrator. It is where structured sparse Jacobians, column coloring, and derivative
 factories all meet.
 
 This is a *minimal reproduction* of a form the race-car benchmark surfaced, deliberately
-copied rather than imported: per `AGENTS.md` the pytest suite covers Alloy's core and must
+copied rather than imported: per `AGENTS.md` the pytest suite covers Scaly's core and must
 not depend on a benchmark problem, so retiring or reshaping that problem cannot silently
 drop this coverage. The benchmark keeps its own formulation gates in
 ``benchmarks/problems/race_cars/checks.py``.
@@ -19,8 +19,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import alloy as al
-from alloy.ir.expr import topo
+import scaly as sc
+from scaly.ir.expr import topo
 
 pytest.importorskip("casadi")
 
@@ -40,7 +40,7 @@ def _ode(x, u, params):
   phi, v = x[2], x[3]
   beta = 0.5 * u[1]
   vx = v * beta.cos()
-  return al.stack(
+  return sc.stack(
     [
       v * (phi + beta).cos(),
       v * (phi + beta).sin(),
@@ -59,40 +59,40 @@ def _rk4(x, u, params):
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@al.function(al.G(al.L("z", NZ), al.L("p", NX)), al.L("eq", ...), name="bicycle_stage_initial")
+@sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="bicycle_stage_initial")
 def stage_initial(inputs):
   z, p = inputs
   return z[:NX] - p[:NX]
 
 
-@al.function(al.G(al.L("z", NZ), al.L("znext", NZ), al.L("params", N_PARAMS)), al.L("eq", ...), name="bicycle_stage_interstage")
+@sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("params", N_PARAMS)), sc.L("eq", ...), name="bicycle_stage_interstage")
 def stage_interstage(inputs):
   z, znext, params = inputs
   return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
 
 
-def bicycle_eq_function(horizon: int) -> al.Function:
+def bicycle_eq_function(horizon: int) -> sc.Function:
   """Per-stage unrolled transcription, built from `Function.call` on the stage functions."""
-  z = al.sym("z", NZ * (horizon + 1))
-  p = al.sym("p", n_param(horizon), diff=False)
+  z = sc.sym("z", NZ * (horizon + 1))
+  p = sc.sym("p", n_param(horizon), diff=False)
   params = p[NX * (horizon + 1) :]
   parts = [stage_initial((z[:NZ], p[:NX]))]
   for i in range(horizon):
     parts.append(stage_interstage((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], params)))
-  return al.Function._from_exprs(f"bicycle_eq_N{horizon}", [z, p], [al.concat(parts)], ["z", "p"], ["eq"])
+  return sc.Function._from_exprs(f"bicycle_eq_N{horizon}", [z, p], [sc.concat(parts)], ["z", "p"], ["eq"])
 
 
-def bicycle_eq_function_vmap(horizon: int) -> al.Function:
-  """Same semantics through `al.vmap`, so the loop survives into the rendered C."""
-  z = al.sym("z", NZ * (horizon + 1))
-  p = al.sym("p", n_param(horizon), diff=False)
+def bicycle_eq_function_vmap(horizon: int) -> sc.Function:
+  """Same semantics through `sc.vmap`, so the loop survives into the rendered C."""
+  z = sc.sym("z", NZ * (horizon + 1))
+  p = sc.sym("p", n_param(horizon), diff=False)
   initial = stage_initial((z[:NZ], p[:NX]))
-  mapped = al.vmap(
+  mapped = sc.vmap(
     stage_interstage,
     length=horizon,
     inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
   )
-  return al.Function._from_exprs(f"bicycle_eq_vmap_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+  return sc.Function._from_exprs(f"bicycle_eq_vmap_N{horizon}", [z, p], [sc.concat([initial, mapped])], ["z", "p"], ["eq"])
 
 
 def ca_bicycle_eq_jac(horizon: int, name: str = "ca_bicycle_eq_jac", sym_t=None):
@@ -174,7 +174,7 @@ def test_forward_residual_matches_numpy_at_asymmetric_parameters() -> None:
 @pytest.mark.parametrize("horizon", [1, 2])
 def test_dense_jacobian_matches_casadi(horizon: int) -> None:
   fn = bicycle_eq_function(horizon)
-  jf = fn.factory(f"bicycle_eq_jac_N{horizon}", ["z", "p"], [al.factory.Jac("eq", "z")])
+  jf = fn.factory(f"bicycle_eq_jac_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
   zv, pv = _sample(horizon, 0)
   np.testing.assert_allclose(jf((zv, pv)), np.array(ca_bicycle_eq_jac(horizon)(zv, pv)), rtol=1e-10, atol=1e-10)
 
@@ -182,8 +182,8 @@ def test_dense_jacobian_matches_casadi(horizon: int) -> None:
 @pytest.mark.parametrize("horizon", [1, 2])
 def test_sparse_jacobian_metadata_matches_dense(horizon: int) -> None:
   fn = bicycle_eq_function(horizon)
-  spjf = fn.factory(f"bicycle_eq_spjac_N{horizon}", ["z", "p"], [al.factory.SpJac("eq", "z")])
-  jf = fn.factory(f"bicycle_eq_jac_dense_N{horizon}", ["z", "p"], [al.factory.Jac("eq", "z")])
+  spjf = fn.factory(f"bicycle_eq_spjac_N{horizon}", ["z", "p"], [sc.factory.SpJac("eq", "z")])
+  jf = fn.factory(f"bicycle_eq_jac_dense_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
   zv, pv = _sample(horizon, 1)
   sparsity = spjf.output_sparsities[0]
   assert sparsity is not None
@@ -197,11 +197,11 @@ def test_sparse_jacobian_metadata_matches_dense(horizon: int) -> None:
 @pytest.mark.parametrize("horizon", [1, 2])
 def test_colored_sparse_jacobian_matches_the_reference_path(horizon: int) -> None:
   fn = bicycle_eq_function(horizon)
-  colored = al.sparse_jacobian_colored(fn.outputs[0], fn.inputs[0])
-  reference = al.sparse_jacobian_reference(fn.outputs[0], fn.inputs[0])
-  colored_fn = al.Function._from_exprs("bicycle_spjac_colored", fn.inputs, [colored.values], fn.input_names, ["colored"])
-  reference_fn = al.Function._from_exprs("bicycle_spjac_reference", fn.inputs, [reference.values], fn.input_names, ["reference"])
-  compare = al.Function._from_exprs("bicycle_spjac_compare", fn.inputs, [colored.values, reference.values], fn.input_names, ["colored", "reference"])
+  colored = sc.sparse_jacobian_colored(fn.outputs[0], fn.inputs[0])
+  reference = sc.sparse_jacobian_reference(fn.outputs[0], fn.inputs[0])
+  colored_fn = sc.Function._from_exprs("bicycle_spjac_colored", fn.inputs, [colored.values], fn.input_names, ["colored"])
+  reference_fn = sc.Function._from_exprs("bicycle_spjac_reference", fn.inputs, [reference.values], fn.input_names, ["reference"])
+  compare = sc.Function._from_exprs("bicycle_spjac_compare", fn.inputs, [colored.values, reference.values], fn.input_names, ["colored", "reference"])
   zv, pv = _sample(horizon, 2)
   assert colored.sparsity == reference.sparsity
   assert len(topo(colored_fn.outputs)) < len(topo(reference_fn.outputs))
@@ -211,10 +211,10 @@ def test_colored_sparse_jacobian_matches_the_reference_path(horizon: int) -> Non
 
 @pytest.mark.parametrize("horizon", [2, 3])
 def test_vmap_transcription_matches_the_unrolled_one(horizon: int) -> None:
-  """`al.vmap` and the unrolled `Function.call` chain must agree on residual and Jacobian."""
+  """`sc.vmap` and the unrolled `Function.call` chain must agree on residual and Jacobian."""
   mapped, unrolled = bicycle_eq_function_vmap(horizon), bicycle_eq_function(horizon)
   zv, pv = _sample(horizon, 5)
   np.testing.assert_allclose(np.asarray(mapped((zv, pv))).reshape(-1), np.asarray(unrolled((zv, pv))).reshape(-1), rtol=1e-12, atol=1e-12)
-  mapped_jac = mapped.factory(f"bicycle_vmap_jac_N{horizon}", ["z", "p"], [al.factory.Jac("eq", "z")])
-  unrolled_jac = unrolled.factory(f"bicycle_unrolled_jac_N{horizon}", ["z", "p"], [al.factory.Jac("eq", "z")])
+  mapped_jac = mapped.factory(f"bicycle_vmap_jac_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
+  unrolled_jac = unrolled.factory(f"bicycle_unrolled_jac_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
   np.testing.assert_allclose(mapped_jac((zv, pv)), unrolled_jac((zv, pv)), rtol=1e-10, atol=1e-10)

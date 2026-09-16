@@ -7,17 +7,17 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
-import alloy as al
-from alloy.ad.sparse import SparseJacobian
+import scaly as sc
+from scaly.ad.sparse import SparseJacobian
 
 
 def test_scoped_function_decorator_builds_fresh_named_function() -> None:
-  @al.function(al.G(al.L("x", 3), al.L("p", al.TensorType((3,), diff=False))), al.L("y", ...), name="scoped")
+  @sc.function(sc.G(sc.L("x", 3), sc.L("p", sc.TensorType((3,), diff=False))), sc.L("y", ...), name="scoped")
   def scoped(inputs):
     x, p = inputs
     return (x + p).sin()
 
-  assert isinstance(scoped, al.Function)
+  assert isinstance(scoped, sc.Function)
   assert scoped.name == "scoped"
   assert scoped.input_names == ("x", "p")
   assert scoped.output_names == ("y",)
@@ -30,7 +30,7 @@ def test_scoped_function_decorator_builds_fresh_named_function() -> None:
 
 
 def test_scoped_function_decorator_outputs_default_names() -> None:
-  @al.function(al.L("x", 2), al.G(al.L("out0", ...), al.L("out1", ...)), name="pair")
+  @sc.function(sc.L("x", 2), sc.G(sc.L("out0", ...), sc.L("out1", ...)), name="pair")
   def pair(x):
     return x, x.sum()
 
@@ -41,59 +41,59 @@ def test_scoped_function_decorator_outputs_default_names() -> None:
 
 
 def test_derivative_names_dispatch_for_expression_and_function_inputs() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   y = (x * x).sum()
-  fn = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  fn = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
-  builders = (al.jacobian, al.gradient, al.hessian, al.sparse_jacobian, al.sparse_hessian)
+  builders = (sc.jacobian, sc.gradient, sc.hessian, sc.sparse_jacobian, sc.sparse_hessian)
   for build in builders:
     signature = inspect.signature(build)
     assert signature.parameters["wrt"].kind is inspect.Parameter.KEYWORD_ONLY
     assert tuple(signature.parameters)[1] != "of"
     expr_result = build(y, x)
     keyword_expr_result = build(y, wrt=x)
-    if build in (al.sparse_jacobian, al.sparse_hessian):
+    if build in (sc.sparse_jacobian, sc.sparse_hessian):
       assert isinstance(expr_result, SparseJacobian)
       assert isinstance(keyword_expr_result, SparseJacobian)
     else:
-      assert isinstance(expr_result, al.Expr)
-      assert isinstance(keyword_expr_result, al.Expr)
+      assert isinstance(expr_result, sc.Expr)
+      assert isinstance(keyword_expr_result, sc.Expr)
     dynamic_build = cast(Any, build)
     with pytest.raises(TypeError):
       dynamic_build(y, wrt=x, name="expr")
     with pytest.raises(TypeError):
       dynamic_build(y, wrt=x, extra_inputs=("p",))
-    assert isinstance(build(fn, "y", "x"), al.Function)
-    assert isinstance(build(fn, of="y", wrt="x"), al.Function)
+    assert isinstance(build(fn, "y", "x"), sc.Function)
+    assert isinstance(build(fn, of="y", wrt="x"), sc.Function)
 
 
 def test_factory_specs_are_frozen_and_hessian_names_are_doubled() -> None:
-  specs = (al.factory.Jac, al.factory.Grad, al.factory.Hess, al.factory.SpJac, al.factory.SpHess, al.factory.Fwd, al.factory.Adj)
+  specs = (sc.factory.Jac, sc.factory.Grad, sc.factory.Hess, sc.factory.SpJac, sc.factory.SpHess, sc.factory.Fwd, sc.factory.Adj)
   for spec_type in specs:
     spec = spec_type("y", "x")
     assert is_dataclass(spec)
-    expected_fields = ("of", "wrt", "triangle") if spec_type is al.factory.SpHess else ("of", "wrt")
+    expected_fields = ("of", "wrt", "triangle") if spec_type is sc.factory.SpHess else ("of", "wrt")
     assert tuple(field.name for field in fields(spec)) == expected_fields
     with pytest.raises(FrozenInstanceError):
       setattr(spec, "of", "other")
 
-  assert is_dataclass(al.factory.DerivSpec)
-  assert al.factory.DerivSpec.__dataclass_params__.frozen
-  assert al.factory.Hess("y", "x").output_name == "hess_y_x_x"
-  assert al.factory.SpHess("y", "x").output_name == "sphess_y_x_x"
+  assert is_dataclass(sc.factory.DerivSpec)
+  assert sc.factory.DerivSpec.__dataclass_params__.frozen
+  assert sc.factory.Hess("y", "x").output_name == "hess_y_x_x"
+  assert sc.factory.SpHess("y", "x").output_name == "sphess_y_x_x"
   with pytest.raises(TypeError):
-    getattr(al.factory, "Hess")("y", "x", "other")
+    getattr(sc.factory, "Hess")("y", "x", "other")
   with pytest.raises(TypeError):
-    getattr(al.factory, "SpHess")("y", "x", "other")
+    getattr(sc.factory, "SpHess")("y", "x", "other")
 
 
 def test_gradient_convenience_api_matches_factory() -> None:
-  x = al.sym("x", 3)
+  x = sc.sym("x", 3)
   y = (x.sin() + x * x).sum()
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
-  g_api = al.gradient(f, "y", "x")
-  g_factory = f.factory("g", ["x"], [al.factory.Grad("y", "x")])
+  g_api = sc.gradient(f, "y", "x")
+  g_factory = f.factory("g", ["x"], [sc.factory.Grad("y", "x")])
   xv = np.array([0.1, 0.4, 0.9])
 
   assert g_api.input_names == ("x",)
@@ -102,12 +102,12 @@ def test_gradient_convenience_api_matches_factory() -> None:
 
 
 def test_forward_convenience_api_matches_factory() -> None:
-  x = al.sym("x", 2)
-  y = al.stack([x[0] * x[1], x[0].sin()])
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  x = sc.sym("x", 2)
+  y = sc.stack([x[0] * x[1], x[0].sin()])
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
-  fwd_api = al.forward(f, "y", "x")
-  fwd_factory = f.factory("fwd", ["x", "fwd:x"], [al.factory.Fwd("y", "x")])
+  fwd_api = sc.forward(f, "y", "x")
+  fwd_factory = f.factory("fwd", ["x", "fwd:x"], [sc.factory.Fwd("y", "x")])
   xv = np.array([0.3, 2.0])
   seed = np.array([1.5, -0.25])
 
@@ -117,12 +117,12 @@ def test_forward_convenience_api_matches_factory() -> None:
 
 
 def test_adjoint_convenience_api_matches_factory() -> None:
-  x = al.sym("x", 2)
-  y = al.stack([x[0] * x[1], x[0].sin()])
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  x = sc.sym("x", 2)
+  y = sc.stack([x[0] * x[1], x[0].sin()])
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
-  adj_api = al.adjoint(f, "y", "x")
-  adj_factory = f.factory("adj", ["x", "lam:y"], [al.factory.Adj("y", "x")])
+  adj_api = sc.adjoint(f, "y", "x")
+  adj_factory = f.factory("adj", ["x", "lam:y"], [sc.factory.Adj("y", "x")])
   xv = np.array([0.3, 2.0])
   lam = np.array([1.5, -0.25])
 
@@ -132,11 +132,11 @@ def test_adjoint_convenience_api_matches_factory() -> None:
 
 
 def test_seeded_factory_outputs_require_seed_inputs() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   y = x * x
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
-  for spec, missing in [(al.factory.Fwd("y", "x"), "fwd:x"), (al.factory.Adj("y", "x"), "lam:y")]:
+  for spec, missing in [(sc.factory.Fwd("y", "x"), "fwd:x"), (sc.factory.Adj("y", "x"), "lam:y")]:
     try:
       _ = f.factory("bad", ["x"], [spec])
     except ValueError as e:
@@ -146,15 +146,15 @@ def test_seeded_factory_outputs_require_seed_inputs() -> None:
 
 
 def test_factory_unknown_names_report_value_errors() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   y = x * x
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
 
   cases = [
     (lambda: f.factory("bad", ["missing"], ["y"]), "unknown factory inputs: ['missing']"),
     (lambda: f.factory("bad", ["x"], ["missing"]), "unknown factory output 'missing'"),
-    (lambda: f.factory("bad", ["x"], [al.factory.Jac("missing", "x")]), "unknown factory output 'missing' in output Jac(of='missing', wrt='x')"),
-    (lambda: f.factory("bad", ["x"], [al.factory.Jac("y", "missing")]), "unknown factory input 'missing' in output Jac(of='y', wrt='missing')"),
+    (lambda: f.factory("bad", ["x"], [sc.factory.Jac("missing", "x")]), "unknown factory output 'missing' in output Jac(of='missing', wrt='x')"),
+    (lambda: f.factory("bad", ["x"], [sc.factory.Jac("y", "missing")]), "unknown factory input 'missing' in output Jac(of='y', wrt='missing')"),
     (lambda: f.factory("bad", ["x"], ["gamma"], aux={"gamma": ["missing"]}), "unknown factory aux outputs for 'gamma': ['missing']"),
     (lambda: f.factory("bad", ["x"], ["y"], aux={"y": ["y"]}), "factory aux output 'y' shadows an existing output"),
   ]
@@ -168,13 +168,13 @@ def test_factory_unknown_names_report_value_errors() -> None:
 
 
 def test_lagrangian_hessian_convenience_api() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   f_expr = x.sin().sum()
   g_expr = x * x
-  nlp = al.Function._from_exprs("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
+  nlp = sc.Function._from_exprs("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
 
-  h_api = al.lagrangian_hessian(nlp, "x")
-  h_factory = nlp.factory("h", ["x", "lam:f", "lam:g"], [al.factory.Hess("gamma", "x")], aux={"gamma": ["f", "g"]})
+  h_api = sc.lagrangian_hessian(nlp, "x")
+  h_factory = nlp.factory("h", ["x", "lam:f", "lam:g"], [sc.factory.Hess("gamma", "x")], aux={"gamma": ["f", "g"]})
 
   xv = np.array([0.2, 0.5])
   lam_f = np.array(1.2)

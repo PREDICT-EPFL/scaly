@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import pytest
 
-from alloy.ir import program as p
-from alloy.ir.program import ProgramNode, ProgramOp, RangeKind
-from alloy.ir.text import format_program
-from alloy.ir.program_spec import spec_host_program, spec_kernel_program, spec_program_full, verify_program
-from alloy.ir.spec import VerifyError
-from alloy.ir.types import dtypes
+from scaly.ir import program as p
+from scaly.ir.program import ProgramNode, ProgramOp, RangeKind
+from scaly.ir.text import format_program
+from scaly.ir.program_spec import spec_host_program, spec_kernel_program, spec_program_full, verify_program
+from scaly.ir.spec import VerifyError
+from scaly.ir.types import dtypes
 
 
 def _elementwise_neg_kernel() -> ProgramNode:
@@ -172,11 +172,11 @@ def test_program_rejects_duplicate_procedure_names() -> None:
 
 
 def test_every_observed_program_stage_verifies() -> None:
-  import alloy as al
-  from alloy.passes.lowering import lower_function
+  import scaly as sc
+  from scaly.passes.lowering import lower_function
 
-  x = al.sym("x", 5)
-  fun = al.Function._from_exprs("observed", [x], [(x.sin() + x * x).scalar()], ["x"], ["y"])
+  x = sc.sym("x", 5)
+  fun = sc.Function._from_exprs("observed", [x], [(x.sin() + x * x).scalar()], ["x"], ["y"])
   stages: list[ProgramNode] = []
   lower_function(fun, observe=lambda _name, prog: stages.append(prog))
   assert stages

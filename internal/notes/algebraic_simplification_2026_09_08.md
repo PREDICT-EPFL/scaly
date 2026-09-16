@@ -1,4 +1,4 @@
-# Algebraic simplification across Alloy's dialects
+# Algebraic simplification across Scaly's dialects
 
 Design investigation, 2026-09-08. This note records source evidence, the scalarization closeout,
 and proposed shared compiler rewrites. The current arithmetic contract is documented in
@@ -37,7 +37,7 @@ lives in `internal/todo.md`.
 Two Luna agents independently inspected CasADi and tinygrad. CasADi probes used the installed
 3.8.0 release. Tinygrad inspection and probes used the clean local checkout at upstream revision
 `69915d61c233182deb34eab3680be93729c2eff5`, dated 2026-09-07. The tables map numerical
-rule families relevant to Alloy and identify additional structural passes. They are not an
+rule families relevant to Scaly and identify additional structural passes. They are not an
 enumeration of every backend instruction-selection pattern in either library.
 
 ### CasADi 3.8.0
@@ -83,7 +83,7 @@ confirmed these default results:
 | `T(0)/T(nan)` | Zero | NaN |
 
 Here `T` is the type in the column. These are observed implementation details, not behavior
-recommended for Alloy. SX also canonicalizes a literal negative zero to its cached zero node.
+recommended for Scaly. SX also canonicalizes a literal negative zero to its cached zero node.
 [`sx_elem.cpp`](https://github.com/casadi/casadi/blob/3.8.0/casadi/core/sx_elem.cpp).
 
 Sparse structure participates in simplification. MX combines input sparsities using operation
@@ -149,7 +149,7 @@ Additional source mappings explain which mechanisms generalize:
 
 | Mechanism | Source and limits |
 | --- | --- |
-| Integer index algebra | [`uop/divandmod.py`](https://github.com/tinygrad/tinygrad/blob/69915d61c233182deb34eab3680be93729c2eff5/tinygrad/uop/divandmod.py) uses sign, divisibility, congruence, and interval conditions for quotient/remainder rewrites. Floor division is not interchangeable with Alloy's C-style truncating integer division. |
+| Integer index algebra | [`uop/divandmod.py`](https://github.com/tinygrad/tinygrad/blob/69915d61c233182deb34eab3680be93729c2eff5/tinygrad/uop/divandmod.py) uses sign, divisibility, congruence, and interval conditions for quotient/remainder rewrites. Floor division is not interchangeable with Scaly's C-style truncating integer division. |
 | Constant evaluation and interning | [`uop/ops.py`](https://github.com/tinygrad/tinygrad/blob/69915d61c233182deb34eab3680be93729c2eff5/tinygrad/uop/ops.py) provides `exec_alu`, structural interning, and graph traversal. The symbolic folder retains mathematical integer constants until a later width commitment; this is tinygrad's representation choice. |
 | Loop simplification | [`codegen/simplify.py`](https://github.com/tinygrad/tinygrad/blob/69915d61c233182deb34eab3680be93729c2eff5/tinygrad/codegen/simplify.py) merges or splits ranges and collapses range-independent reductions. These transformations need range and use information. |
 | Transcendental evaluation | [`codegen/decomp/transcendental.py`](https://github.com/tinygrad/tinygrad/blob/69915d61c233182deb34eab3680be93729c2eff5/tinygrad/codegen/decomp/transcendental.py) has explicit exceptional-value cases and approximation algorithms. A bounded-input sine shortcut is separate from the normal path. |
@@ -161,10 +161,10 @@ It still has separate movement, index, range, buffer, and target-specific rules.
 from shared representation plus explicit dependencies, not from every operation having identical
 semantics at every stage.
 
-## Proposed Alloy arithmetic policy
+## Proposed Scaly arithmetic policy
 
 Always-on symbolic identities are a defensible default for this compiler. Both libraries provide
-precedent, but neither is a specification for Alloy. Document the selected rule families and test
+precedent, but neither is a specification for Scaly. Document the selected rule families and test
 them directly. Do not describe them as preserving IEEE 754 exceptional values or signed zero.
 Some identities can also avoid overflow, underflow, or intermediate rounding for finite inputs.
 
@@ -184,7 +184,7 @@ boundaries. No graph hint or global `-ffast-math` flag is needed to express this
 
 ## The architectural decision
 
-Alloy can share arithmetic rules and rewrite machinery across its expression and program dialects
+Scaly can share arithmetic rules and rewrite machinery across its expression and program dialects
 without adopting a general compiler framework. It cannot make every optimization independent of
 types, shape, memory, and execution order. Those facts determine whether a rewrite is valid.
 
@@ -196,18 +196,18 @@ No identifier rename is part of this investigation.
 
 ## What already exists
 
-- `src/alloy/ir/match.py` provides an operation-indexed pattern matcher and a bottom-up,
+- `src/scaly/ir/match.py` provides an operation-indexed pattern matcher and a bottom-up,
   memoized graph rewrite. Its implementation currently depends on `Expr` and `ExprOp`.
-- `src/alloy/ir/expr.py` and `src/alloy/ir/program.py` both intern structurally identical nodes.
+- `src/scaly/ir/expr.py` and `src/scaly/ir/program.py` both intern structurally identical nodes.
   This shares graph representation. Sharing execution additionally requires valid value lifetimes.
-- `src/alloy/passes/expr.py` contains algebraic identities, tensor constant evaluation, and
+- `src/scaly/passes/expr.py` contains algebraic identities, tensor constant evaluation, and
   common-subexpression elimination (CSE), including normalization of commutative operands.
-- `src/alloy/passes/program/scalarize.py` separately implements scalar arithmetic folding, substitutes
+- `src/scaly/passes/program/scalarize.py` separately implements scalar arithmetic folding, substitutes
   buffer contents, and schedules the reachable output graph into scalar declarations and stores.
-- `src/alloy/passes/program/_common.py` contains another graph walker and rebuilder.
+- `src/scaly/passes/program/_common.py` contains another graph walker and rebuilder.
   `_prune_dead_buffers` in `program/fuse_elementwise.py` removes unused declarations;
   it is not general dead-code elimination (DCE).
-- `LowerCtx.emit_elementwise` in `src/alloy/passes/lowering.py` already places ordinary
+- `LowerCtx.emit_elementwise` in `src/scaly/passes/lowering.py` already places ordinary
   `ProgramNode` arithmetic inside loop bodies. Scalar expansion is unnecessary for rewriting
   these arithmetic trees.
 
@@ -244,17 +244,17 @@ Tinygrad provides a concrete reference for this change. At the pinned revision,
 indexes patterns by root operation, rejects impossible child-operation matches early, combines
 matchers, and passes optional context to rewrite functions. `UPat` supports nested operands,
 named captures, repeated captures, dtype restrictions, constants, and operand permutations.
-Alloy's current `Pattern` instead delegates the match to an arbitrary predicate on an `Expr`.
+Scaly's current `Pattern` instead delegates the match to an arbitrary predicate on an `Expr`.
 
 [`RewriteContext`](https://github.com/tinygrad/tinygrad/blob/69915d61c233182deb34eab3680be93729c2eff5/tinygrad/uop/ops.py#L1690-L1802)
 uses an explicit work stack and a replacement map to preserve graph sharing. Its full driver
 visits newly created replacement subgraphs. A separate walk mode deliberately does not revisit
 them. It also controls traversal into call bodies and includes cycle/stack checks. These are
-specific capabilities to assess for Alloy, rather than a proposal to make `match.py` abstract
+specific capabilities to assess for Scaly, rather than a proposal to make `match.py` abstract
 without a use case. Start with nested matching, dialect rebuilding, shared replacements, and
 termination checks. Compiled pattern matching and detailed rewrite tracing can wait for measured
 need. Tinygrad's matcher itself still assumes `UOp`; copying it unchanged would not support both
-Alloy node types.
+Scaly node types.
 
 New affine and integer-index rewrite families remain with C-8 and C-9. The common arithmetic
 machinery must preserve existing index semantics, but does not need those new analyses first.
@@ -284,7 +284,7 @@ store(p[0], 7)
 b = load(p[0])
 ```
 
-The two load nodes can have identical syntax and object identity in Alloy today. Their values
+The two load nodes can have identical syntax and object identity in Scaly today. Their values
 are different. A variable name reused in a loop has the same problem. A shared arithmetic matcher
 does not establish that a load or variable denotes the same value across statements.
 
@@ -311,7 +311,7 @@ prerequisite for shared arithmetic simplification now.
 MLIR's canonicalizer combines a common bounded rewrite driver with operation-specific patterns
 and constant-folding hooks. That separation is useful here. Its CSE pass separately consults
 memory-effect information. These are two distinct reusable mechanisms, not one universal
-algebraic rewrite. Alloy can adopt that separation while retaining its two node types and explicit
+algebraic rewrite. Scaly can adopt that separation while retaining its two node types and explicit
 pipeline. [Canonicalization](https://mlir.llvm.org/docs/Canonicalization/),
 [CSE](https://mlir.llvm.org/docs/Passes/#-cse).
 
@@ -322,7 +322,7 @@ respecting memory effects, rather than building a framework.
 
 ## A usable first implementation
 
-The `alloy.passes.program` package split preserves the existing pass order in an explicit pipeline.
+The `scaly.passes.program` package split preserves the existing pass order in an explicit pipeline.
 Shared arithmetic folding can then serve both existing dialects, with cleanup
 applied to loop form as well as scalar form. Pure-value cleanup and conservative program liveness
 are subsequent, separately reviewable changes. Stronger memory optimization should follow an

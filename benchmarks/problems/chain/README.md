@@ -14,11 +14,11 @@ the problem stays the same.
 ```bash
 uv run python benchmarks/run.py closed-loop --problem chain          # canonical episode
 uv run python benchmarks/run.py closed-loop --problem chain --smoke  # short toolchain check
-uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle scaly
 uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle casadi
 ```
 
-The SQP columns share one solver and differ only in whether Alloy or CasADi
+The SQP columns share one solver and differ only in whether Scaly or CasADi
 generates the C-ABI objective and derivative oracles.
 
 ## Model
@@ -66,7 +66,7 @@ minimize  Σ_k h·½·( Q_END·‖p_end,k − END_REF‖² + Q_VEL·‖v_k‖² 
 Q_END = 2.5   Q_VEL = 25.0   R_U = 0.1   Q_END_TERMINAL = 10.0   END_REF = (0.75, 0, 0)
 ```
 
-`END_REF` is defined once, in `__init__.py`, and read by both the Alloy objective and its
+`END_REF` is defined once, in `__init__.py`, and read by both the Scaly objective and its
 CasADi mirror.
 
 **This is where we knowingly differ from laopt.** laopt writes each end-mass term

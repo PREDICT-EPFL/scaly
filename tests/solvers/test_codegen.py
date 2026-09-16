@@ -1,10 +1,10 @@
 """Structural tests for solver function input validation and the shared solver ABI.
 
-These cover Alloy's own machinery — argument checking, the universal C entry, the
-`alloy_solver_stats` handshake, identifier mangling across one translation unit, and
+These cover Scaly's own machinery — argument checking, the universal C entry, the
+`scaly_solver_stats` handshake, identifier mangling across one translation unit, and
 JIT cache keying. PIQP is only the vehicle: a second QP backend would exercise the
 same code. Backend-specific behaviour (PIQP's CSC baking, its status mapping) stays
-in `plugins/alloy-piqp/tests/`.
+in `plugins/scaly-piqp/tests/`.
 """
 
 from __future__ import annotations
@@ -14,15 +14,15 @@ import ctypes
 import numpy as np
 import pytest
 
-import alloy as al
+import scaly as sc
 from tests.solvers.problem_helpers import build_qp
-from alloy.codegen import render_c_api_header, render_c_source
-from alloy.codegen.jit import CompiledFunction, JitError
-from alloy.solvers.registry import available_backends
-from alloy.solvers.stats import CSolverStats
+from scaly.codegen import render_c_api_header, render_c_source
+from scaly.codegen.jit import CompiledFunction, JitError
+from scaly.solvers.registry import available_backends
+from scaly.solvers.stats import CSolverStats
 
 pytestmark = pytest.mark.skipif(
-  "piqp" not in available_backends(), reason="structural tests build the private QP differential fixture and need the alloy-piqp plugin installed"
+  "piqp" not in available_backends(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
 )
 
 
@@ -42,8 +42,8 @@ def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
   source = render_c_source(qp)
   header = render_c_api_header(qp)
   assert "int standalone_qp(const double** arg, double** res, int* iw, double* w, void* mem)" in source
-  assert "int standalone_qp_stats(alloy_solver_stats* out);" in header
-  assert "ALLOY_SOLVER_STATS_VERSION 3" in header
+  assert "int standalone_qp_stats(scaly_solver_stats* out);" in header
+  assert "SCALY_SOLVER_STATS_VERSION 3" in header
 
 
 @pytest.mark.solver("piqp")
@@ -61,14 +61,14 @@ def test_qp_settings_are_baked_into_jit_cache_key() -> None:
 
 @pytest.mark.solver("piqp")
 def test_solver_stats_reject_uninitialized_and_mismatched_versions() -> None:
-  """The `alloy_solver_stats` handshake is Alloy's contract with every backend."""
+  """The `scaly_solver_stats` handshake is Scaly's contract with every backend."""
   qp = build_qp(P=np.eye(2), c=np.zeros(2), name="stats_version_qp")
   compiled = CompiledFunction(qp)
   with pytest.raises(JitError, match="has not run yet"):
     compiled.solver_stats()
 
   def mismatched_stats(out: ctypes.c_void_p) -> int:
-    ctypes.cast(out, ctypes.POINTER(CSolverStats)).contents.version = al.ALLOY_SOLVER_STATS_VERSION + 1
+    ctypes.cast(out, ctypes.POINTER(CSolverStats)).contents.version = sc.SCALY_SOLVER_STATS_VERSION + 1
     return 0
 
   compiled._stats_entries["stats_version_qp"] = mismatched_stats
@@ -81,9 +81,9 @@ def test_sparse_qp_rejects_nested_solver_data() -> None:
   so the structural QP proof must reject it before the sparse-pattern probe
   would execute the inner solve."""
   inner = build_qp(P=np.eye(2), c=np.array([-1.0, 0.0]), x_lb=np.zeros(2), x_ub=np.ones(2), name="inner_for_pattern")
-  x_inner = inner.symbolic_call((al.const(np.zeros(2)), al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), ()))[0]
-  P = al.stack([al.stack([2.0 + x_inner[0], al.const(0.0)]), al.stack([al.const(0.0), al.const(2.0)])], axis=0)
-  with pytest.raises(al.NotQuadratic, match="cannot prove QP structure through a nested solver"):
+  x_inner = inner.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), ()))[0]
+  P = sc.stack([sc.stack([2.0 + x_inner[0], sc.const(0.0)]), sc.stack([sc.const(0.0), sc.const(2.0)])], axis=0)
+  with pytest.raises(sc.NotQuadratic, match="cannot prove QP structure through a nested solver"):
     build_qp(P=P, c=np.zeros(2), sparse=True, name="outer_sparse_over_solver")
 
 
@@ -92,11 +92,11 @@ def test_two_solver_wrappers_in_one_translation_unit() -> None:
   """Two distinct solvers (one sparse, one dense) called from one host
   Function share a single generated TU; their static state must not collide."""
 
-  @al.function(al.L("t", (2,)), al.L("x_sum", ...), name="two_qp_host")
+  @sc.function(sc.L("t", (2,)), sc.L("x_sum", ...), name="two_qp_host")
   def host(t):
-    qp_a = build_qp(P=np.diag([2.0, 4.0]), c=al.stack([t[0], t[1]]), sparse=True, name="tu_qp_a")
-    qp_b = build_qp(P=np.diag([1.0, 1.0]), c=al.stack([t[1], -t[0]]), name="tu_qp_b")
-    zeros = [al.const(np.zeros(2)), al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0))]
+    qp_a = build_qp(P=np.diag([2.0, 4.0]), c=sc.stack([t[0], t[1]]), sparse=True, name="tu_qp_a")
+    qp_b = build_qp(P=np.diag([1.0, 1.0]), c=sc.stack([t[1], -t[0]]), name="tu_qp_b")
+    zeros = [sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0))]
     xa, *_ = qp_a((*zeros, t))
     xb, *_ = qp_b((*zeros, t))
     return xa + xb

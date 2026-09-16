@@ -46,4 +46,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy site --project-name="alloy-docs" --branch="${{ github.ref_name }}"
+          command: pages deploy site --project-name="scaly-docs" --branch="${{ github.ref_name }}"

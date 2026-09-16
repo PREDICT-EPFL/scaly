@@ -1,4 +1,4 @@
-"""Stand-ins for ``alloy.Expr`` and ``np.ndarray``: shapes, and the polynomial degree the QP proof uses."""
+"""Stand-ins for ``scaly.Expr`` and ``np.ndarray``: shapes, and the polynomial degree the QP proof uses."""
 
 from __future__ import annotations
 

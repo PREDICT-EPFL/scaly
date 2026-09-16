@@ -1,8 +1,8 @@
 [project]
-site_name = "alloy"
+site_name = "scaly"
 site_description = "A symbolic compiler for optimal control: write models in Python, ship them as C"
-repo_url = "https://github.com/PREDICT-EPFL/alloy"
-repo_name = "PREDICT-EPFL/alloy"
+repo_url = "https://github.com/PREDICT-EPFL/scaly"
+repo_name = "PREDICT-EPFL/scaly"
 extra_javascript = [
     "docs/javascripts/mathjax.js",
     "https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js",

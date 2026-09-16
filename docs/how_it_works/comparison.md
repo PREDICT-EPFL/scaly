@@ -1,14 +1,14 @@
-# Alloy next to its neighbours
+# Scaly next to its neighbours
 
 
-In the process of developing alloy, we have looked at a multitude of existing libraries that offer similar features, but not always with the same focus.
-This page mentions a few projects that have shaped what alloy is today, what we took inspiration from, and what we deliberately changed.
+In the process of developing scaly, we have looked at a multitude of existing libraries that offer similar features, but not always with the same focus.
+This page mentions a few projects that have shaped what scaly is today, what we took inspiration from, and what we deliberately changed.
 
-<!--Alloy sits at an intersection that already has good tools in it. CasADi owns symbolic optimal
+<!--Scaly sits at an intersection that already has good tools in it. CasADi owns symbolic optimal
 control. tinygrad showed how small a real compiler can be. MLIR set the vocabulary for staged
 intermediate representations. JAX settled what composable differentiation looks like.-->
 
-<!--Alloy borrows from all four, and departs from each of them somewhere specific. This page is the
+<!--Scaly borrows from all four, and departs from each of them somewhere specific. This page is the
 accounting: what was taken, what was changed, and why. It is written to be argued with — if a
 departure below is wrong, that is worth knowing.-->
 
@@ -21,10 +21,10 @@ departure below is wrong, that is worth knowing.-->
 
 ## CasADi
 
-CasADi is the closest relative and the tool alloy is measured against, in
+CasADi is the closest relative and the tool scaly is measured against, in
 [Benchmark results](../results/index.md).
 
-**What alloy keeps.** `Function` as the unit of composition, differentiation and compilation is
+**What scaly keeps.** `Function` as the unit of composition, differentiation and compilation is
 CasADi's idea and it is the right one — it gives derivatives a name, generated symbols a name, and
 a horizon of identical stages one C function instead of a hundred. The generated
 [C ABI](c_abi.md) is CasADi-compatible in spirit for a practical reason: a shared calling
@@ -35,10 +35,10 @@ metadata carried alongside a value, with CSR and CSC views on it, is also CasADi
 `Function.factory` remains a shorthand for building several named derivatives. It is not the unit
 of composition, and it is not the graph-merging mechanism.
 
-**Where alloy departs.**
+**Where scaly departs.**
 
 *Derivative requests are typed objects, not strings.* CasADi asks for a derivative with a factory
-string — `"jac:eq:z"`. Alloy asks with `al.factory.Jac("eq", "z")`. The string grammar is expressive and
+string — `"jac:eq:z"`. Scaly asks with `sc.factory.Jac("eq", "z")`. The string grammar is expressive and
 compact, but it cannot be completed by an editor and it needs a parser that becomes a small
 language of its own. The typed form gives up nothing, deletes the parser, and puts the request's
 structure in the type system — the output and input names are still checked when the request is
@@ -53,22 +53,22 @@ symbolic type the graph was built with, and that choice is not local to the repe
 propagates. `SX` flattens a `Function.map` at construction, so the mapped and unrolled forms emit
 identical C. `MX` keeps the loop and pays per-node cost. The encoding that does best is a mixture, an
 `SX` elemental function inside an `MX` outer graph, and **which mixture wins changes with the
-problem.** Alloy writes repetition with [`al.vmap`](../guide/functions.md), and it
+problem.** Scaly writes repetition with [`sc.vmap`](../guide/functions.md), and it
 survives colored sparse differentiation to second order and lowering, emitted as a real `for` loop
 around one function body.
 
 The current study measures every supported CasADi encoding rather than choosing one global
 baseline. The fastest encoding changes by problem and size. Pure SX remains faster on the race-car
-Hessian, while Alloy leads the completed neural-process MPC and safety-filter kernels. At larger
+Hessian, while Scaly leads the completed neural-process MPC and safety-filter kernels. At larger
 sizes, compile limits bound some comparisons.
 
-This supports a narrow claim: Alloy makes loop preservation a local construct and carries it through
-second-order sparse differentiation. It does not show that CasADi cannot express loops or that Alloy
+This supports a narrow claim: Scaly makes loop preservation a local construct and carries it through
+second-order sparse differentiation. It does not show that CasADi cannot express loops or that Scaly
 wins every kernel. The [benchmark results](../results/index.md) contain the current numbers, and the
 [fairness audit](../results/fairness.md) states their limits.
 
 
-*Pure Python.* CasADi is a C++ library with Python bindings. Alloy is Python with NumPy for
+*Pure Python.* CasADi is a C++ library with Python bindings. Scaly is Python with NumPy for
 array values and SciPy as an internal structural-sparsity dependency. The entire compiler — both dialects, automatic differentiation (AD),
 lowering,
 the passes and the renderer — is about ten thousand lines, editable without a build step. The
@@ -77,7 +77,7 @@ it in C++. It is not paid at run time, because the output is C either way.
 
 ## tinygrad
 
-**What alloy keeps.** The single-node-class IR is tinygrad's `UOp` design and it is why alloy's
+**What scaly keeps.** The single-node-class IR is tinygrad's `UOp` design and it is why scaly's
 two dialects can share one verifier, one pattern matcher and one printer between them: a frozen,
 hash-consed class with a `StrEnum` op tag and everything else in arguments and attributes, where
 "is this a statement or an expression" is answered by the tag rather than by the class. Rewrites
@@ -85,46 +85,46 @@ are op-indexed pattern matching over that graph. `RangeKind` is tinygrad's `Axis
 carrying their own intent, so a backend binds them without re-deriving what they were for. So is
 the sizing discipline: every line earns its place, and a speculative abstraction is a defect.
 
-**Where alloy departs.** tinygrad is a tensor runtime that lazily schedules and executes; alloy is
+**Where scaly departs.** tinygrad is a tensor runtime that lazily schedules and executes; scaly is
 an ahead-of-time compiler for named functions with no runtime at all. That difference shows up in
-three places. Alloy verifies explicitly, with per-dialect rule tables and a `VerifyError` naming
+three places. Scaly verifies explicitly, with per-dialect rule tables and a `VerifyError` naming
 the first bad node, because a compiler that emits C has to fail at the boundary rather than
-downstream. Alloy's second dialect is a separate language with its own operations and its own
-verifier, not a linearized form of the first. And alloy's graph has named function boundaries in
+downstream. Scaly's second dialect is a separate language with its own operations and its own
+verifier, not a linearized form of the first. And scaly's graph has named function boundaries in
 it, which a tensor runtime has no reason to want.
 
 ## MLIR
 
-**What alloy keeps.** The word "dialect" and the discipline behind it: a named IR with its own
+**What scaly keeps.** The word "dialect" and the discipline behind it: a named IR with its own
 operations, its own verifier, and a stable textual form, with lowering as an explicit staged
-transition between them rather than as one function that emits code. Alloy's assembly text borrows
+transition between them rather than as one function that emits code. Scaly's assembly text borrows
 MLIR's spelling closely enough to be readable by anyone who has seen MLIR — `expr.*` and `prog.*`
 prefixes, `tensor<3xfloat64 diff>`, `memref<16xfloat64, private>` — because the value of that text
 is that it can be diffed, pasted into a bug report and asserted on in tests.
 
-**Where alloy departs.** There is no MLIR here — no dependency, no TableGen, no C++. A dialect is a
+**Where scaly departs.** There is no MLIR here — no dependency, no TableGen, no C++. A dialect is a
 Python module. There are two of them and there will not be twenty; the tower of progressive
 dialects is the right structure for a general compiler infrastructure and the wrong one for a
-library with a single well-understood target. And alloy's text is a printer with no parser: round
+library with a single well-understood target. And scaly's text is a printer with no parser: round
 tripping is not a goal, which frees the format to be optimized for a human reading it.
 
 ## JAX
 
-**What alloy keeps.** The AD model. `jvp` and `vjp` are the primitives, whole derivatives are
+**What scaly keeps.** The AD model. `jvp` and `vjp` are the primitives, whole derivatives are
 composed from them, and every transformation maps a graph to a graph — no tape, no recording, no
 runtime. A derivative is the same kind of object as the thing it came from and gets the same
-treatment downstream, which is what makes `hessian` simply be `jacobian` of `gradient`. Alloy
+treatment downstream, which is what makes `hessian` simply be `jacobian` of `gradient`. Scaly
 inherits JAX's term `vmap` for independent vectorized mapping, but gives it a different
 abstraction boundary.
 
-**Where alloy departs.**
+**Where scaly departs.**
 
 *Construction is explicit.* JAX traces Python functions, which is ergonomic and means the traced
-object is a shadow of code you did not write for the tracer. Alloy builds the graph directly
+object is a shadow of code you did not write for the tracer. Scaly builds the graph directly
 through operator overloading and keeps your names on it. There is no tracing abstraction, nothing
 to retrace, and no gap between what you wrote and what the compiler holds.
 
-*The word "JIT" means something narrower here.* Alloy's just-in-time path is not `jax.jit`. There is
+*The word "JIT" means something narrower here.* Scaly's just-in-time path is not `jax.jit`. There is
 no decorator and nothing to opt into: a `Function` is already a graph, so the only thing deferred is
 the compile, which happens on the first call and is cached on disk. Nothing is specialized on the
 values you pass, so there is no retracing, no recompilation when a shape changes — a shape *is* a
@@ -133,20 +133,20 @@ same compiler the ahead-of-time path runs, invoked on demand; that is why what y
 is what you ship as C. See [Code generation](../guide/codegen.md).
 
 *`vmap` is explicit and survives into the output.* JAX's `vmap` is a function-level
-transformation driven by batching rules: it returns a batched function. Alloy's `vmap` builds an
+transformation driven by batching rules: it returns a batched function. Scaly's `vmap` builds an
 expression-level `VMAP` node around an already named `Function`, taking explicit outer expressions
 and slice rules. That node remains present through AD and lowering and becomes a real loop in the
 generated C, so a hundred-stage horizon produces code of roughly constant size rather than a
-hundred unrolled stages. `al.vmap` is therefore not a drop-in version of `jax.vmap`; it preserves
+hundred unrolled stages. `sc.vmap` is therefore not a drop-in version of `jax.vmap`; it preserves
 the repeated expression structure at a different boundary. See [the numbers](../results/scalability.md).
 
 *Sparsity is first-class.* JAX has no real equivalent, and does not need one — dense batched
 arithmetic on accelerators is the workload it was built for. Optimal control is the opposite: a
-constraint Jacobian is mostly zeros with structure worth exploiting, so alloy carries structural
+constraint Jacobian is mostly zeros with structure worth exploiting, so scaly carries structural
 patterns, colors them, and emits compact nonzero values. That machinery is a large part of what
-alloy is *for*.
+scaly is *for*.
 
-## What is alloy's own
+## What is scaly's own
 
 Three things are not borrowed from anywhere above.
 
@@ -155,7 +155,7 @@ a pattern is standard. Doing it on the *callee* of a `VMAP` — coloring a small
 constant seeds through one derivative function, and mapping the result — is what keeps generated
 derivative code from growing with the horizon.
 
-**Solvers as graph nodes.** `al.problem(...)` and `al.solver(...)` produce real `Function`s whose body is a
+**Solvers as graph nodes.** `sc.problem(...)` and `sc.solver(...)` produce real `Function`s whose body is a
 `solver_call`, so a solve nests inside a larger graph like any other operation, and the whole
 thing — oracles, wrapper, host function — compiles into a single shared library with no Python in
 the loop. See [Solvers](solvers.md).

@@ -1,7 +1,7 @@
-diff --git a/src/alloy/ad/forward.py b/src/alloy/ad/forward.py
+diff --git a/src/scaly/ad/forward.py b/src/scaly/ad/forward.py
 index 7c5513e..b501887 100644
---- a/src/alloy/ad/forward.py
-+++ b/src/alloy/ad/forward.py
+--- a/src/scaly/ad/forward.py
++++ b/src/scaly/ad/forward.py
 @@ -126,7 +126,8 @@ def _jvp(expr: Expr, wrt: Expr, seed: Expr, memo: dict[int, Expr], dep_memo: dic
    if expr.op == ExprOp.MUL:
      return save(d[0] * args[1] + args[0] * d[1])
@@ -57,10 +57,10 @@ index 7c5513e..b501887 100644
      return ret
    if expr.op == ExprOp.POW:
      if args[1].op == ExprOp.CONST:
-diff --git a/src/alloy/ad/reverse.py b/src/alloy/ad/reverse.py
+diff --git a/src/scaly/ad/reverse.py b/src/scaly/ad/reverse.py
 index 9e9dd7b..0f91be7 100644
---- a/src/alloy/ad/reverse.py
-+++ b/src/alloy/ad/reverse.py
+--- a/src/scaly/ad/reverse.py
++++ b/src/scaly/ad/reverse.py
 @@ -168,9 +168,11 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
    if expr.op == ExprOp.MUL:
      return (_unbroadcast(cot * args[1], args[0].shape, expr.shape), _unbroadcast(cot * args[0], args[1].shape, expr.shape))
@@ -75,10 +75,10 @@ index 9e9dd7b..0f91be7 100644
      )
    if expr.op == ExprOp.POW:
      return (
-diff --git a/src/alloy/passes/expr.py b/src/alloy/passes/expr.py
+diff --git a/src/scaly/passes/expr.py b/src/scaly/passes/expr.py
 index 9681016..af6da32 100644
---- a/src/alloy/passes/expr.py
-+++ b/src/alloy/passes/expr.py
+--- a/src/scaly/passes/expr.py
++++ b/src/scaly/passes/expr.py
 @@ -10,7 +10,7 @@ from typing import Any, Iterable
  
  import numpy as np
@@ -120,10 +120,10 @@ index 9681016..af6da32 100644
    Pattern(ExprOp.SUM, lambda e: _is_zero(e.args[0]), _zero_unary),
    Pattern(ExprOp.GATHER, lambda e: _is_zero(e.args[0]), _zero_unary),
    Pattern(ExprOp.SCATTER, lambda e: _is_zero(e.args[0]), _zero_unary),
-diff --git a/src/alloy/passes/lowering.py b/src/alloy/passes/lowering.py
+diff --git a/src/scaly/passes/lowering.py b/src/scaly/passes/lowering.py
 index c56b569..aae4cb7 100644
---- a/src/alloy/passes/lowering.py
-+++ b/src/alloy/passes/lowering.py
+--- a/src/scaly/passes/lowering.py
++++ b/src/scaly/passes/lowering.py
 @@ -511,18 +511,31 @@ def _mm_accumulate(
    dtype: DType,
    outer: list[ProgramNode],

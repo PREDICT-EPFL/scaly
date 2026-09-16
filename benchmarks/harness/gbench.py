@@ -9,7 +9,7 @@ import signal
 import subprocess
 import time
 
-from alloy.codegen.abi import c_ident
+from scaly.codegen.abi import c_ident
 from benchmarks.harness import NATIVE_CFLAGS, ROOT
 
 
@@ -105,7 +105,7 @@ def _kernel_input_names(kernel) -> tuple[str, ...]:
 def _ordered_inputs(info: dict) -> tuple[tuple[str, str, int], ...]:
   """Return ``(sample key, C identifier, size)`` entries in the kernel's ABI order.
 
-  Alloy keeps names such as ``lam:f`` in the Function object while the generated C ABI sanitizes
+  Scaly keeps names such as ``lam:f`` in the Function object while the generated C ABI sanitizes
   them to ``lam_f``. The benchmark metadata historically used the sanitized spelling, so matching
   both forms lets the driver follow the kernel without changing sample-file names.
   """

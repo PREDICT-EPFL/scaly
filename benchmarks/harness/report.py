@@ -11,7 +11,7 @@ import statistics
 import numpy as np
 
 BACKEND_ORDER = (
-  "alloy",
+  "scaly",
   "casadi_sx",
   "casadi_mx",
   "casadi_call_mx",
@@ -89,9 +89,9 @@ def closed_loop_summary(root: Path) -> dict:
     episodes[(run["problem"], run["solver"], run["repetition"], run["oracle"])] = (telemetry.parent, rows)
   comparisons = []
   for problem, solver, repetition in sorted({key[:3] for key in episodes}):
-    if any((problem, solver, repetition, oracle) not in episodes for oracle in ("alloy", "casadi")):
+    if any((problem, solver, repetition, oracle) not in episodes for oracle in ("scaly", "casadi")):
       continue
-    a, ar = episodes[(problem, solver, repetition, "alloy")]
+    a, ar = episodes[(problem, solver, repetition, "scaly")]
     b, br = episodes[(problem, solver, repetition, "casadi")]
     row: dict = dict(problem=problem, solver=solver, repetition=repetition, same_steps=len(ar) == len(br))
     if len(ar) == len(br):

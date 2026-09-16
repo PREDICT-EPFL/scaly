@@ -97,7 +97,7 @@ def test_recorders_write_valid_mcaps_with_strict_schemas(tmp_path: Path) -> None
   paths = [tmp_path / f"{name}.mcap" for name in ("chain", "race_cars", "unbumpercars", "npmpc")]
   with ChainRecorder(paths[0]) as chain:
     harvest(chain)
-    chain.record_metadata(RunMetadata(run_id="smoke", problem="chain", solver="ipopt", oracle="alloy", seed=42, dt=0.1))
+    chain.record_metadata(RunMetadata(run_id="smoke", problem="chain", solver="ipopt", oracle="scaly", seed=42, dt=0.1))
     chain.record_telemetry(ScalarTelemetry(step=0, time_s=0.0, success=True, solver_time_ms=1.2, objective=3.0))
     chain.record_chain_references({"end-mass reference": (0.75, 0.0, 0.0)})
     chain.record_chain(
@@ -645,7 +645,7 @@ def test_sweep_cells_live_next_to_the_selected_csv(tmp_path: Path, monkeypatch: 
     out=Path("custom") / "measurements.csv",
     workloads=["chain"],
     sizes=[3],
-    backends=["alloy"],
+    backends=["scaly"],
     codegen_timeout=1.0,
     compile_timeout=1.0,
     max_source_mb=1.0,
@@ -654,7 +654,7 @@ def test_sweep_cells_live_next_to_the_selected_csv(tmp_path: Path, monkeypatch: 
 
   assert sweep.run_sweep(args, [])
   assert len(cells) == 3
-  assert [cell[3] for cell in cells] == [args.out.parent / f"repeat_{i}" / "chain" / "alloy_M3" for i in range(1, 4)]
+  assert [cell[3] for cell in cells] == [args.out.parent / f"repeat_{i}" / "chain" / "scaly_M3" for i in range(1, 4)]
   assert args.out.with_suffix(".summary.csv").is_file()
 
 

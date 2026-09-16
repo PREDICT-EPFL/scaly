@@ -1,6 +1,6 @@
 # The expression dialect
 
-The expression dialect is what you build when you write alloy. It records *what* to compute and
+The expression dialect is what you build when you write scaly. It records *what* to compute and
 nothing about how: a graph of values and the operations between them, with no loops, no buffers
 and no memory. That is what makes it differentiable and rewritable. Choosing an implementation
 happens later, in [the program dialect](program_ir.md).
@@ -11,9 +11,9 @@ An `Expr` is one node in a directed acyclic graph. It is frozen, it carries a ty
 its arguments:
 
 ```python
-import alloy as al
+import scaly as sc
 
-x = al.sym("x", 3)          # an INPUT node, shape (3,)
+x = sc.sym("x", 3)          # an INPUT node, shape (3,)
 y = x.sin() + x * x         # ADD(SIN(x), MUL(x, x))
 z = y.sum()                 # SUM(...)  -> shape ()
 ```
@@ -45,14 +45,14 @@ mean two intern tables, and identity silently stops meaning equality. See
 `TensorType` is the type of every expression.
 
 ```python
-al.TensorType(shape=(3, 4), dtype=al.dtypes.float64, sparsity=None, diff=True)
+sc.TensorType(shape=(3, 4), dtype=sc.dtypes.float64, sparsity=None, diff=True)
 ```
 
 **Shape** is a tuple of non-negative integers; `()` is a scalar. Shapes are static — there are no
 symbolic dimensions.
 
 **`DType`** is a small interned descriptor with a name, a bit width and a C spelling. The canonical
-instances live in `al.dtypes`:
+instances live in `sc.dtypes`:
 
 These are the types *inside* the graph. They are not the ABI: a generated function always exchanges
 `double` buffers with its caller, and the Python call path converts to and from `float64` at the
@@ -60,11 +60,11 @@ boundary. See [the C ABI](c_abi.md#calling-convention).
 
 | Instance | C type | Bytes |
 | --- | --- | --- |
-| `al.dtypes.bool_` | `uint8_t` | 1 |
-| `al.dtypes.int32` | `int32_t` | 4 |
-| `al.dtypes.int64` | `int64_t` | 8 |
-| `al.dtypes.float32` | `float` | 4 |
-| `al.dtypes.float64` | `double` | 8 (the default) |
+| `sc.dtypes.bool_` | `uint8_t` | 1 |
+| `sc.dtypes.int32` | `int32_t` | 4 |
+| `sc.dtypes.int64` | `int64_t` | 8 |
+| `sc.dtypes.float32` | `float` | 4 |
+| `sc.dtypes.float64` | `double` | 8 (the default) |
 
 Mixed-dtype arithmetic is refused rather than promoted. There is no implicit widening: an
 expression combining `float32` and `float64` raises at construction. The rule is conservative on
@@ -137,7 +137,7 @@ A `Function` is a named graph boundary: named inputs, named outputs, and optiona
 per output.
 
 ```python
-f = al.Function("f", [x], [y], ["x"], ["y"])
+f = sc.Function("f", [x], [y], ["x"], ["y"])
 ```
 
 It is the unit of three different things at once — composition (`f.call(...)` puts a first-class
@@ -155,8 +155,8 @@ Construction checks the cheap invariants inline so the common path stays fast. E
 an explicit pass:
 
 ```python
-al.verify_expr(y)                     # silent on success
-al.verify_expr(y, spec=al.spec_expr)  # naming the spec explicitly
+sc.verify_expr(y)                     # silent on success
+sc.verify_expr(y, spec=sc.spec_expr)  # naming the spec explicitly
 ```
 
 The verifier walks the graph in topological order and raises `VerifyError` at the *first* invalid
@@ -181,8 +181,8 @@ which is what lets a pass recognize an equivalent subgraph without rewriting any
 The rewrite layer is small and deliberately so:
 
 ```python
-y_cse = al.cse(y)
-y_clean = al.simplify(y_cse)
+y_cse = sc.cse(y)
+y_clean = sc.simplify(y_cse)
 ```
 
 `simplify` covers constant folding and algebraic identities — `x + 0`, `x * 1`, `x * 0`, identity
@@ -195,9 +195,9 @@ survives a rewrite instead of being expanded into a tree. This is far smaller th
 
 ```python
 y.debug()                     # topological dump with stable %0, %1, ... names
-al.format_expr(y)             # the same thing as a string
-al.render_expr_assembly(f)    # SSA-like assembly, expr.* prefix
-al.expr_graph(y)              # nodes and edges as JSON, for tooling
+sc.format_expr(y)             # the same thing as a string
+sc.render_expr_assembly(f)    # SSA-like assembly, expr.* prefix
+sc.expr_graph(y)              # nodes and edges as JSON, for tooling
 ```
 
 The assembly form is the stable one: it is meant to be diffed, pasted into a bug report and
@@ -213,7 +213,7 @@ Every `Function` carries a `DeviceSpec`:
 
 ```python
 fn_gpu = fn.with_device("cuda:0")
-assert fn_gpu.device == al.DeviceSpec("cuda", 0)
+assert fn_gpu.device == sc.DeviceSpec("cuda", 0)
 ```
 
 Each backend registers a `BackendSupport` capability table, so placing a `float64` graph on a

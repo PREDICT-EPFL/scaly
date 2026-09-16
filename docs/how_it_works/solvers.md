@@ -1,6 +1,6 @@
 # How solvers work
 
-A solver in Alloy is a plain typed `Function` whose outputs are opaque `SOLVER_CALL` nodes sharing
+A solver in Scaly is a plain typed `Function` whose outputs are opaque `SOLVER_CALL` nodes sharing
 one `SolverDescriptor`. Its data comes from ordinary generated functions, and a plugin-owned C
 wrapper drives the native solver. Python is not part of a solve.
 The usage side is [Solvers](../guide/solvers.md). The plugin contract is [Solver
@@ -8,15 +8,15 @@ plugins](../dev/solver_plugins.md).
 
 ## From a Problem to oracles
 
-`@al.problem` traces a `ProblemSpec` over declared variable and parameter trees. The resulting
-`Problem` is independent of a backend. `al.solver(problem, backend)` selects an entry point and
+`@sc.problem` traces a `ProblemSpec` over declared variable and parameter trees. The resulting
+`Problem` is independent of a backend. `sc.solver(problem, backend)` selects an entry point and
 builds the descriptor family required by its `kind`.
 Multi-block variables are concatenated into one internal decision vector for differentiation and
 native solver calls. Substitution maps each declared variable symbol to its slice of that vector.
 The solver function maps native results back to the declared variable tree.
 ### Nonlinear-program oracles
 
-IPOPT and alloy-sqp consume the same normalized nonlinear-program oracles:
+IPOPT and scaly-sqp consume the same normalized nonlinear-program oracles:
 | Oracle | Inputs | Outputs |
 | --- | --- | --- |
 | `base` | `(x, params)` | objective `f` and stacked constraints `g` |
@@ -30,7 +30,7 @@ Equalities come first in `g`, followed by bounded inequalities.
 Box-bound leaves have the variables’ tree structure. Scalar leaves broadcast, and IEEE negative or
 positive infinity represents an absent lower or upper bound until the solver adapter normalizes it.
 
-The backend chooses the Hessian triangle: IPOPT asks for lower and alloy-sqp asks for upper.
+The backend chooses the Hessian triangle: IPOPT asks for lower and scaly-sqp asks for upper.
 A `Problem` caches `base`, `grad`, `jac`, the full Hessian construction, and `bounds`. It also
 caches one compact Hessian function per requested triangle. Building two solver artifacts from one
 problem therefore shares all compatible machinery without giving the artifacts the same C symbols.
@@ -92,8 +92,8 @@ ships no Python numerical solver.
 | `solvers/graph.py` | solver reachability and link-flag queries |
 | `solvers/paths.py` | vendored library and header discovery |
 | `solvers/stats.py` | the versioned statistics layout and statuses |
-| `codegen/solver.py` | Alloy-owned wrapper framing and statistics accessors |
-| `plugins/alloy-{piqp,ipopt,sqp}` | backend metadata and C wrapper templates |
+| `codegen/solver.py` | Scaly-owned wrapper framing and statistics accessors |
+| `plugins/scaly-{piqp,ipopt,sqp}` | backend metadata and C wrapper templates |
 
 ## What the generated wrapper contains
 
@@ -105,10 +105,10 @@ The IPOPT wrapper emits a static context, Jacobian and Hessian index tables, and
 rendered oracles. Each callback receives the caller's packed workspace, updates timing and
 evaluation counters, and writes directly in the descriptor's sparse order. The wrapper maps the
 typed warm start to IPOPT's primal, constraint-dual, and sign-split box-dual buffers.
-The alloy-sqp wrapper assembles each subproblem for PIQP. It bakes permutations from oracle
+The scaly-sqp wrapper assembles each subproblem for PIQP. It bakes permutations from oracle
 sparsity order to compressed sparse column order and refills values at each iteration. Its modified
 LDL factorization regularizes the quadratic model while preserving the fixed structural pattern.
-Every wrapper fills the Alloy statistics structure on success and failure. Native status values are
+Every wrapper fills the Scaly statistics structure on success and failure. Native status values are
 mapped through constants from the vendored headers, so an upstream enum change fails at compile
 time instead of silently changing meaning.
 

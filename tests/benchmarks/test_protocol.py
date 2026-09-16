@@ -35,7 +35,7 @@ def test_cpu_settings_reads_linux_policies_and_boost(tmp_path):
 
 def test_dispersion_uses_successful_processes_and_keeps_failure_counts(tmp_path: Path):
   rows = [
-    dict(workload="fixture", size=2, backend="alloy", runtime_status=status, runtime_ns=runtime)
+    dict(workload="fixture", size=2, backend="scaly", runtime_status=status, runtime_ns=runtime)
     for status, runtime in [("ok", "10"), ("ok", "20"), ("correctness_fail", "1000")]
   ]
   out = tmp_path / "summary.csv"
@@ -69,7 +69,7 @@ def test_closed_loop_cli_rotates_oracles_and_rejects_reused_caches(tmp_path, mon
       "--solver",
       "ipopt,sqp",
       "--oracle",
-      "alloy,casadi",
+      "scaly,casadi",
       "--repetitions",
       "3",
       "--out-dir",
@@ -84,7 +84,7 @@ def test_closed_loop_cli_rotates_oracles_and_rejects_reused_caches(tmp_path, mon
   pairs = [(command[command.index("--solver") + 1], command[command.index("--oracle") + 1]) for command, _ in calls]
   assert len(pairs) == 12 and len(set(pairs[:4])) == 4
   assert pairs[4:8] == pairs[1:4] + pairs[:1] and pairs[8:] == pairs[2:4] + pairs[:2]
-  caches = [kwargs["env"]["ALLOY_CACHE_DIR"] for _, kwargs in calls]
+  caches = [kwargs["env"]["SCALY_CACHE_DIR"] for _, kwargs in calls]
   assert len(set(caches)) == 12 and all(Path(cache).is_dir() for cache in caches)
   with pytest.raises(SystemExit) as error:
     run.main()

@@ -7,7 +7,7 @@ repository root points here.
 
 **Derivative suffixes are abbreviated.** `_grad`, `_jac`, `_hess` — never `_gradient`,
 `_jacobian`, `_hessian` in an identifier. The long forms exist as the user-facing wrapper names
-(`al.gradient`, `al.jacobian`, `al.hessian`) and nowhere else.
+(`sc.gradient`, `sc.jacobian`, `sc.hessian`) and nowhere else.
 
 **Multistage stage variables are `zprev`, `z`, `znext`.** Never `zm`/`zp`. The abbreviation saves
 two characters and costs a reader a guess about whether `m` means minus or measured.
@@ -23,7 +23,7 @@ prefixes of the sparsity tables in the header, so renaming one moves symbols in 
 
 ## Code style
 
-Alloy is meant to read like tinygrad: small, dense, every line earning its place. Concretely:
+Scaly is meant to read like tinygrad: small, dense, every line earning its place. Concretely:
 
 - Two-space indentation, 150-column lines. `uv run ruff format` decides; do not argue with it.
 - No speculative abstractions. A configuration option with one caller, a base class with one
@@ -48,8 +48,8 @@ package coherent; that sentence does, because it is what makes an incoherent add
 
 Correctness checks have two homes, and each check belongs in exactly one.
 
-**`tests/` covers alloy itself** — the intermediate representations, differentiation, code
-generation, solver plumbing. It mirrors `src/alloy/` directory for directory. It must never import
+**`tests/` covers scaly itself** — the intermediate representations, differentiation, code
+generation, solver plumbing. It mirrors `src/scaly/` directory for directory. It must never import
 `benchmarks.problems`, and imports `benchmarks.harness` only to test the harness.
 
 **`benchmarks/problems/<problem>/checks.py` covers that problem** — its input data, its

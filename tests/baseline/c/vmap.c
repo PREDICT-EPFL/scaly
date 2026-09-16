@@ -3,11 +3,11 @@
 #include <stdint.h>
 typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 
-#define ALLOY_SUCCESS 0
-#define ALLOY_ERR_NULL_ABI 1
-#define ALLOY_ERR_NULL_WORK 2
-#define ALLOY_ERR_NULL_RESULT 3
-#define ALLOY_ERR_NULL_INPUT 4
+#define SCALY_SUCCESS 0
+#define SCALY_ERR_NULL_ABI 1
+#define SCALY_ERR_NULL_WORK 2
+#define SCALY_ERR_NULL_RESULT 3
+#define SCALY_ERR_NULL_INPUT 4
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,17 +27,17 @@ int shooting_sz_res(void) { return 1; }
 int shooting_sz_iw(void) { return 0; }
 int shooting_sz_w(void) { return 0; }
 void* shooting_alloc_mem(void) { return NULL; }
-int shooting_init_mem(void* mem) { (void)mem; return ALLOY_SUCCESS; }
+int shooting_init_mem(void* mem) { (void)mem; return SCALY_SUCCESS; }
 void shooting_free_mem(void* mem) { (void)mem; }
 
 int shooting(const double** arg, double** res, int* iw, double* w, void* mem) {
   (void)iw;
   (void)mem;
-  if (!arg || !res) return ALLOY_ERR_NULL_ABI;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
   (void)w;
-  if (!arg[0]) return ALLOY_ERR_NULL_INPUT;
-  if (!arg[1]) return ALLOY_ERR_NULL_INPUT;
-  if (!res[0]) return ALLOY_ERR_NULL_RESULT;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
   double s0[12];
   const double* t1 = arg[0] + 4;
   for (long long it_t0 = 0; it_t0 < 3; ++it_t0) {
@@ -46,7 +46,7 @@ int shooting(const double** arg, double** res, int* iw, double* w, void* mem) {
   for (long long i_eq = 0; i_eq < 12; ++i_eq) {
     res[0][i_eq] = (s0[i_eq] - t1[i_eq]);
   }
-  return ALLOY_SUCCESS;
+  return SCALY_SUCCESS;
 }
 
 #ifdef __cplusplus

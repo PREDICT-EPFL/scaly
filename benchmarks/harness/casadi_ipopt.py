@@ -19,16 +19,16 @@ from typing import Any
 
 import numpy as np
 
-from alloy.codegen.jit import _load_library, opt_flag
-from alloy.codegen.toolchain import cache_root, find_c_compiler
-from alloy.solvers.paths import backend_compile_flags, solver_paths
-from alloy.solvers.stats import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, SolverStats, SolverStatus, stats_c_timing_defs
-from alloy.utils.env import shared_lib_ext, shared_lib_flag
+from scaly.codegen.jit import _load_library, opt_flag
+from scaly.codegen.toolchain import cache_root, find_c_compiler
+from scaly.solvers.paths import backend_compile_flags, solver_paths
+from scaly.solvers.stats import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, SolverStats, SolverStatus, stats_c_timing_defs
+from scaly.utils.env import shared_lib_ext, shared_lib_flag
 from benchmarks.harness import NATIVE_CFLAGS
 
 INTERPRETED: ContextVar[bool] = ContextVar("casadi_interpreted", default=False)
 
-_CACHE = Path(os.environ.get("ALLOY_CASADI_IPOPT_CACHE", cache_root() / "casadi-ipopt"))
+_CACHE = Path(os.environ.get("SCALY_CASADI_IPOPT_CACHE", cache_root() / "casadi-ipopt"))
 _CACHE_VERSION = 4
 _ORACLE_NAMES = ("f", "g", "grad_f", "jac_g", "hess_l")
 _DP = ctypes.POINTER(ctypes.c_double)
@@ -42,44 +42,44 @@ _INSTRUMENTATION = (
   "\n#include <time.h>\n"
   + "\n".join(stats_c_timing_defs())
   + r"""
-static double alloy_bench_fe_s = 0.0;
-static double alloy_bench_ipopt_s = 0.0;
-static ipindex alloy_bench_iter = 0;
-static int alloy_bench_n_f = 0;
-static int alloy_bench_n_g = 0;
-static int alloy_bench_n_grad_f = 0;
-static int alloy_bench_n_jac_g = 0;
-static int alloy_bench_n_hess_l = 0;
-static bool alloy_bench_intermediate(
+static double scaly_bench_fe_s = 0.0;
+static double scaly_bench_ipopt_s = 0.0;
+static ipindex scaly_bench_iter = 0;
+static int scaly_bench_n_f = 0;
+static int scaly_bench_n_g = 0;
+static int scaly_bench_n_grad_f = 0;
+static int scaly_bench_n_jac_g = 0;
+static int scaly_bench_n_hess_l = 0;
+static bool scaly_bench_intermediate(
     ipindex alg_mod, ipindex iter_count, ipnumber obj_value, ipnumber inf_pr,
     ipnumber inf_du, ipnumber mu, ipnumber d_norm, ipnumber regularization_size,
     ipnumber alpha_du, ipnumber alpha_pr, ipindex ls_trials, UserDataPtr user_data) {
   (void)alg_mod; (void)obj_value; (void)inf_pr; (void)inf_du; (void)mu;
   (void)d_norm; (void)regularization_size; (void)alpha_du; (void)alpha_pr;
   (void)ls_trials; (void)user_data;
-  alloy_bench_iter = iter_count;
+  scaly_bench_iter = iter_count;
   return true;
 }
 """
 )
 
 _SHIM = r"""
-static double alloy_bench_total_s = 0.0;
-int alloy_bench_solve(const double** arg, double** res, long long* iw, double* w, int mem) {
-  alloy_bench_fe_s = 0.0;
-  alloy_bench_ipopt_s = 0.0;
-  alloy_bench_iter = 0;
-  alloy_bench_n_f = alloy_bench_n_g = alloy_bench_n_grad_f = 0;
-  alloy_bench_n_jac_g = alloy_bench_n_hess_l = 0;
-  double t0 = alloy_clock_s();
+static double scaly_bench_total_s = 0.0;
+int scaly_bench_solve(const double** arg, double** res, long long* iw, double* w, int mem) {
+  scaly_bench_fe_s = 0.0;
+  scaly_bench_ipopt_s = 0.0;
+  scaly_bench_iter = 0;
+  scaly_bench_n_f = scaly_bench_n_g = scaly_bench_n_grad_f = 0;
+  scaly_bench_n_jac_g = scaly_bench_n_hess_l = 0;
+  double t0 = scaly_clock_s();
   int rc = {name}(arg, res, (casadi_int*)iw, w, mem);
-  alloy_bench_total_s = alloy_clock_s() - t0;
+  scaly_bench_total_s = scaly_clock_s() - t0;
   return rc;
 }
-int alloy_bench_checkout(void) {{ return {name}_checkout(); }}
-void alloy_bench_release(int mem) {{ {name}_release(mem); }}
-int alloy_bench_native_status(int mem) {{ return (int)casadi_f0_mem[mem].status; }}
-int alloy_bench_status(int mem) {{
+int scaly_bench_checkout(void) {{ return {name}_checkout(); }}
+void scaly_bench_release(int mem) {{ {name}_release(mem); }}
+int scaly_bench_native_status(int mem) {{ return (int)casadi_f0_mem[mem].status; }}
+int scaly_bench_status(int mem) {{
   switch (casadi_f0_mem[mem].status) {{
     case Solve_Succeeded: return 0;
     case Solved_To_Acceptable_Level: return 1;
@@ -97,23 +97,23 @@ int alloy_bench_status(int mem) {{
     default: return 7;
   }}
 }}
-long long alloy_bench_sizes(long long* out) {{
+long long scaly_bench_sizes(long long* out) {{
   casadi_int sz_arg, sz_res, sz_iw, sz_w;
   {name}_work(&sz_arg, &sz_res, &sz_iw, &sz_w);
   out[0] = sz_arg; out[1] = sz_res; out[2] = sz_iw; out[3] = sz_w;
   return 0;
 }}
-double alloy_bench_total(void) {{ return alloy_bench_total_s; }}
-double alloy_bench_fe(void) {{ return alloy_bench_fe_s; }}
-double alloy_bench_ipopt(void) {{ return alloy_bench_ipopt_s; }}
-long long alloy_bench_iter_count(void) {{ return alloy_bench_iter; }}
-long long alloy_bench_eval_count(int which) {{
+double scaly_bench_total(void) {{ return scaly_bench_total_s; }}
+double scaly_bench_fe(void) {{ return scaly_bench_fe_s; }}
+double scaly_bench_ipopt(void) {{ return scaly_bench_ipopt_s; }}
+long long scaly_bench_iter_count(void) {{ return scaly_bench_iter; }}
+long long scaly_bench_eval_count(int which) {{
   switch (which) {{
-    case 0: return alloy_bench_n_f;
-    case 1: return alloy_bench_n_g;
-    case 2: return alloy_bench_n_grad_f;
-    case 3: return alloy_bench_n_jac_g;
-    case 4: return alloy_bench_n_hess_l;
+    case 0: return scaly_bench_n_f;
+    case 1: return scaly_bench_n_g;
+    case 2: return scaly_bench_n_grad_f;
+    case 3: return scaly_bench_n_jac_g;
+    case 4: return scaly_bench_n_hess_l;
     default: return 0;
   }}
 }}
@@ -128,14 +128,14 @@ def _instrument(source: str, name: str, *, exact_hessian: bool) -> str:
   presolve = "  casadi_ipopt_presolve(d);\n"
   if source.count(presolve) != 1:
     raise RuntimeError("CasADi IPOPT code no longer has one presolve call")
-  callback = "  if (!SetIntermediateCallback(d->ipopt, alloy_bench_intermediate)) { FreeIpoptProblem(d->ipopt); return 1; }\n"
+  callback = "  if (!SetIntermediateCallback(d->ipopt, scaly_bench_intermediate)) { FreeIpoptProblem(d->ipopt); return 1; }\n"
   source = source.replace(presolve, presolve + callback, 1)
 
   call_pattern = re.compile(r"if \((casadi_f\d+\(d->arg, d->res, d->iw, d->w, 0\))\) return false;")
 
   def timed(match: re.Match[str]) -> str:
     call = match.group(1)
-    return f"{{ double t0 = alloy_clock_s(); int rc = {call}; alloy_bench_fe_s += alloy_clock_s() - t0; if (rc) return false; }}"
+    return f"{{ double t0 = scaly_clock_s(); int rc = {call}; scaly_bench_fe_s += scaly_clock_s() - t0; if (rc) return false; }}"
 
   source, count = call_pattern.subn(timed, source)
   expected_callbacks = len(_ORACLE_NAMES) if exact_hessian else len(_ORACLE_NAMES) - 1
@@ -146,7 +146,7 @@ def _instrument(source: str, name: str, *, exact_hessian: bool) -> str:
       signature = re.compile(rf"(bool casadi_nlp_{oracle}\d*\([^{{]+\) \{{\n(?:.*\n)*?  if \(values\) \{{\n)")
     else:
       signature = re.compile(rf"(bool casadi_nlp_{oracle}\d*\([^{{]+\) \{{\n)")
-    source, count = signature.subn(rf"\1  ++alloy_bench_n_{oracle};\n", source, count=1)
+    source, count = signature.subn(rf"\1  ++scaly_bench_n_{oracle};\n", source, count=1)
     expected = int(oracle != "hess_l" or exact_hessian)
     if count != expected:
       raise RuntimeError(f"CasADi IPOPT code no longer has one {oracle} callback")
@@ -169,7 +169,7 @@ def _instrument(source: str, name: str, *, exact_hessian: bool) -> str:
     raise RuntimeError("CasADi IPOPT code no longer has one solve call")
   source = source.replace(
     solve,
-    "  { double t0 = alloy_clock_s(); casadi_ipopt_solve(d); alloy_bench_ipopt_s = alloy_clock_s() - t0; }\n",
+    "  { double t0 = scaly_clock_s(); casadi_ipopt_solve(d); scaly_bench_ipopt_s = scaly_clock_s() - t0; }\n",
     1,
   )
   shim = _SHIM.replace("{name}", name).replace("{{", "{").replace("}}", "}")
@@ -253,7 +253,7 @@ def _library_digest(path: Path) -> str:
 
 
 class CompiledCasadiIpopt:
-  """A code-generated CasADi `nlpsol` linked to Alloy's IPOPT library."""
+  """A code-generated CasADi `nlpsol` linked to Scaly's IPOPT library."""
 
   compiled = True
 
@@ -304,16 +304,16 @@ class CompiledCasadiIpopt:
         "the loaded IPOPT build does not match the benchmark configuration"
       )
     self.ipopt_library = self.resolved_ipopt_library
-    self._solve = self._dll.alloy_bench_solve
+    self._solve = self._dll.scaly_bench_solve
     self._solve.argtypes = [ctypes.POINTER(_DP), ctypes.POINTER(_DP), ctypes.POINTER(ctypes.c_longlong), _DP, ctypes.c_int]
     self._solve.restype = ctypes.c_int
-    self._dll.alloy_bench_checkout.restype = ctypes.c_int
-    self._dll.alloy_bench_release.argtypes = [ctypes.c_int]
-    self._mem = int(self._dll.alloy_bench_checkout())
+    self._dll.scaly_bench_checkout.restype = ctypes.c_int
+    self._dll.scaly_bench_release.argtypes = [ctypes.c_int]
+    self._mem = int(self._dll.scaly_bench_checkout())
     if self._mem < 0:
       raise RuntimeError("all generated CasADi nlpsol memory slots are busy; close the existing solver instance")
     sizes = (ctypes.c_longlong * 4)()
-    self._dll.alloy_bench_sizes(sizes)
+    self._dll.scaly_bench_sizes(sizes)
     sz_arg, sz_res, sz_iw, sz_w = (int(value) for value in sizes)
     self._argp = (_DP * max(sz_arg, 1))()
     self._resp = (_DP * max(sz_res, 1))()
@@ -326,19 +326,19 @@ class CompiledCasadiIpopt:
     self._out_ptrs = [out.ctypes.data_as(_DP) if size else _DP() for out, size in zip(self._outs, self._out_sizes, strict=True)]
     self.last_stats: SolverStats | None = None
     self.last_status: SolverStatus | None = None
-    for function in ("alloy_bench_total", "alloy_bench_fe", "alloy_bench_ipopt"):
+    for function in ("scaly_bench_total", "scaly_bench_fe", "scaly_bench_ipopt"):
       getattr(self._dll, function).restype = ctypes.c_double
-    self._dll.alloy_bench_iter_count.restype = ctypes.c_longlong
-    self._dll.alloy_bench_eval_count.argtypes = [ctypes.c_int]
-    self._dll.alloy_bench_eval_count.restype = ctypes.c_longlong
-    self._dll.alloy_bench_native_status.argtypes = [ctypes.c_int]
-    self._dll.alloy_bench_native_status.restype = ctypes.c_int
-    self._dll.alloy_bench_status.argtypes = [ctypes.c_int]
-    self._dll.alloy_bench_status.restype = ctypes.c_int
+    self._dll.scaly_bench_iter_count.restype = ctypes.c_longlong
+    self._dll.scaly_bench_eval_count.argtypes = [ctypes.c_int]
+    self._dll.scaly_bench_eval_count.restype = ctypes.c_longlong
+    self._dll.scaly_bench_native_status.argtypes = [ctypes.c_int]
+    self._dll.scaly_bench_native_status.restype = ctypes.c_int
+    self._dll.scaly_bench_status.argtypes = [ctypes.c_int]
+    self._dll.scaly_bench_status.restype = ctypes.c_int
 
   def close(self) -> None:
     if getattr(self, "_mem", -1) >= 0:
-      self._dll.alloy_bench_release(self._mem)
+      self._dll.scaly_bench_release(self._mem)
       self._mem = -1
 
   def __del__(self) -> None:
@@ -358,17 +358,17 @@ class CompiledCasadiIpopt:
     rc = int(self._solve(self._argp, self._resp, self._iw, self._w, self._mem))
     if rc:
       raise RuntimeError(f"generated CasADi nlpsol returned {rc}")
-    total = float(self._dll.alloy_bench_total())
-    fe = float(self._dll.alloy_bench_fe())
-    ipopt = float(self._dll.alloy_bench_ipopt())
-    native = int(self._dll.alloy_bench_native_status(self._mem))
-    status = AlloySolveStatus(int(self._dll.alloy_bench_status(self._mem)))
-    counts = [int(self._dll.alloy_bench_eval_count(index)) for index in range(len(_ORACLE_NAMES))]
+    total = float(self._dll.scaly_bench_total())
+    fe = float(self._dll.scaly_bench_fe())
+    ipopt = float(self._dll.scaly_bench_ipopt())
+    native = int(self._dll.scaly_bench_native_status(self._mem))
+    status = ScalySolveStatus(int(self._dll.scaly_bench_status(self._mem)))
+    counts = [int(self._dll.scaly_bench_eval_count(index)) for index in range(len(_ORACLE_NAMES))]
     self.last_stats = SolverStats(
-      version=ALLOY_SOLVER_STATS_VERSION,
+      version=SCALY_SOLVER_STATS_VERSION,
       status=status,
       native_status=native,
-      iter=int(self._dll.alloy_bench_iter_count()),
+      iter=int(self._dll.scaly_bench_iter_count()),
       obj=float(self._outs[1][0]),
       t_total=total,
       t_fe=fe,
@@ -411,30 +411,30 @@ class InterpretedCasadiIpopt:
     raw = self.solver.stats()
     native = str(raw["return_status"])
     status, native_code = {
-      "Solve_Succeeded": (AlloySolveStatus.OK, 0),
-      "Solved_To_Acceptable_Level": (AlloySolveStatus.ACCEPTABLE, 1),
-      "Feasible_Point_Found": (AlloySolveStatus.ACCEPTABLE, 6),
-      "Maximum_Iterations_Exceeded": (AlloySolveStatus.MAX_ITER, -1),
-      "Maximum_CpuTime_Exceeded": (AlloySolveStatus.MAX_ITER, -4),
-      "Maximum_WallTime_Exceeded": (AlloySolveStatus.MAX_ITER, -5),
-      "Infeasible_Problem_Detected": (AlloySolveStatus.PRIMAL_INFEASIBLE, 2),
-      "Diverging_Iterates": (AlloySolveStatus.NUMERICS, 4),
-      "Search_Direction_Becomes_Too_Small": (AlloySolveStatus.NUMERICS, 3),
-      "Restoration_Failed": (AlloySolveStatus.NUMERICS, -2),
-      "Error_In_Step_Computation": (AlloySolveStatus.NUMERICS, -3),
-      "Invalid_Number_Detected": (AlloySolveStatus.NUMERICS, -13),
-      "User_Requested_Stop": (AlloySolveStatus.USER_STOP, 5),
-      "Not_Enough_Degrees_Of_Freedom": (AlloySolveStatus.ERROR, -10),
-      "Invalid_Problem_Definition": (AlloySolveStatus.ERROR, -11),
-      "Invalid_Option": (AlloySolveStatus.ERROR, -12),
-      "Unrecoverable_Exception": (AlloySolveStatus.ERROR, -100),
-      "NonIpopt_Exception_Thrown": (AlloySolveStatus.ERROR, -101),
-      "Insufficient_Memory": (AlloySolveStatus.ERROR, -102),
-      "Internal_Error": (AlloySolveStatus.ERROR, -199),
-    }.get(native, (AlloySolveStatus.ERROR, -199))
+      "Solve_Succeeded": (ScalySolveStatus.OK, 0),
+      "Solved_To_Acceptable_Level": (ScalySolveStatus.ACCEPTABLE, 1),
+      "Feasible_Point_Found": (ScalySolveStatus.ACCEPTABLE, 6),
+      "Maximum_Iterations_Exceeded": (ScalySolveStatus.MAX_ITER, -1),
+      "Maximum_CpuTime_Exceeded": (ScalySolveStatus.MAX_ITER, -4),
+      "Maximum_WallTime_Exceeded": (ScalySolveStatus.MAX_ITER, -5),
+      "Infeasible_Problem_Detected": (ScalySolveStatus.PRIMAL_INFEASIBLE, 2),
+      "Diverging_Iterates": (ScalySolveStatus.NUMERICS, 4),
+      "Search_Direction_Becomes_Too_Small": (ScalySolveStatus.NUMERICS, 3),
+      "Restoration_Failed": (ScalySolveStatus.NUMERICS, -2),
+      "Error_In_Step_Computation": (ScalySolveStatus.NUMERICS, -3),
+      "Invalid_Number_Detected": (ScalySolveStatus.NUMERICS, -13),
+      "User_Requested_Stop": (ScalySolveStatus.USER_STOP, 5),
+      "Not_Enough_Degrees_Of_Freedom": (ScalySolveStatus.ERROR, -10),
+      "Invalid_Problem_Definition": (ScalySolveStatus.ERROR, -11),
+      "Invalid_Option": (ScalySolveStatus.ERROR, -12),
+      "Unrecoverable_Exception": (ScalySolveStatus.ERROR, -100),
+      "NonIpopt_Exception_Thrown": (ScalySolveStatus.ERROR, -101),
+      "Insufficient_Memory": (ScalySolveStatus.ERROR, -102),
+      "Internal_Error": (ScalySolveStatus.ERROR, -199),
+    }.get(native, (ScalySolveStatus.ERROR, -199))
     fe = sum(float(raw.get(f"t_wall_nlp_{name}", 0.0)) for name in _ORACLE_NAMES)
     self.last_stats = SolverStats(
-      version=ALLOY_SOLVER_STATS_VERSION,
+      version=SCALY_SOLVER_STATS_VERSION,
       status=status,
       native_status=native_code,
       iter=int(raw["iter_count"]),
@@ -457,7 +457,7 @@ def make_casadi_ipopt(name, nlp, options):
 
 
 class CasadiIpoptSolver:
-  """`al.Function`-shaped adapter for a compiled CasADi IPOPT NLP."""
+  """`sc.Function`-shaped adapter for a compiled CasADi IPOPT NLP."""
 
   compiled = True
 

@@ -1,7 +1,7 @@
 # Solver backends
 
-Three backends ship with alloy. Each is a separate distribution under `plugins/`, discovered by
-entry point, so installing one is what makes its name available to `al.solver(problem, backend)`. This page
+Three backends ship with scaly. Each is a separate distribution under `plugins/`, discovered by
+entry point, so installing one is what makes its name available to `sc.solver(problem, backend)`. This page
 is what each one is, when to reach for it, and what it costs you to ship.
 
 How to *use* a solver — problem shapes, calling conventions, nesting one in a graph — is
@@ -10,10 +10,10 @@ How to *use* a solver — problem shapes, calling conventions, nesting one in a 
 
 ## Choosing one
 
-| | **PIQP** | **IPOPT** | **alloy-sqp** |
+| | **PIQP** | **IPOPT** | **scaly-sqp** |
 | --- | --- | --- | --- |
 | Solves | quadratic programs | nonlinear programs | nonlinear programs |
-| Reached through | `al.solver(problem, "piqp")` | `al.solver(problem, "ipopt")` | `al.solver(problem, "sqp")` |
+| Reached through | `sc.solver(problem, "piqp")` | `sc.solver(problem, "ipopt")` | `sc.solver(problem, "sqp")` |
 | Method | proximal interior point | primal-dual interior point, filter line search | sequential quadratic programming, PIQP subproblems |
 | Sparse data | `options={"sparse": True}` for the problem data | sparse Jacobian and Hessian, always | sparse oracles always; sparse subproblems by default, `qp="dense"` to switch |
 | Exact Lagrangian Hessian | n/a (the Hessian is your `P`) | yes, default | yes, default; `hessian="objective"` to approximate |
@@ -28,17 +28,17 @@ barrier-function filter qualifies: this repository's own safety-filter benchmark
 inside its constraints, so it is an NLP.)
 
 **Reach for IPOPT** when the problem is nonlinear and you want a solver with two decades of use
-behind it and its own extensive documentation. Select it with `al.solver(problem, "ipopt")`.
+behind it and its own extensive documentation. Select it with `sc.solver(problem, "ipopt")`.
 
-**Reach for alloy-sqp** when you want the solve itself in generated C with no external solver
+**Reach for scaly-sqp** when you want the solve itself in generated C with no external solver
 binary beyond PIQP, when you want to read and modify the solver, or when your oracles come from
-somewhere other than alloy. It is the newest of the three and the least battle-tested.
+somewhere other than scaly. It is the newest of the three and the least battle-tested.
 
 ## PIQP
 
-A proximal interior-point QP solver. Select it with `al.solver(problem, "piqp")`.
+A proximal interior-point QP solver. Select it with `sc.solver(problem, "piqp")`.
 
-**Dense by default, sparse on request.** `al.solver(problem, "piqp")` assembles the problem for PIQP's dense
+**Dense by default, sparse on request.** `sc.solver(problem, "piqp")` assembles the problem for PIQP's dense
 interface unless you pass `options={"sparse": True}`, which instead derives the structural patterns of `P`,
 `A_eq` and `G_ineq` once and bakes them into the wrapper as static CSC tables, so each solve
 refills values only. Which is faster depends on how sparse your data actually is; there is no
@@ -55,7 +55,7 @@ Two things only the sparse path does, and they are the reasons to think before s
   such restriction at all, which is why the
   [nesting example](solvers.md#nesting-a-solver-in-a-graph) works.
 
-**Symmetry.** Alloy extracts the objective Hessian before either PIQP path. For `0.5 * x @ P @ x`,
+**Symmetry.** Scaly extracts the objective Hessian before either PIQP path. For `0.5 * x @ P @ x`,
 both paths therefore use `0.5 * (P + P.T)`. The sparse path bakes exactly its upper triangle. Pass a
 symmetric `P` when that distinction matters.
 
@@ -70,11 +70,11 @@ rebuilding.
 
 ## IPOPT
 
-The COIN-OR interior-point NLP solver. Select it with `al.solver(problem, "ipopt")`.
+The COIN-OR interior-point NLP solver. Select it with `sc.solver(problem, "ipopt")`.
 
-Alloy feeds it a compact sparse constraint Jacobian and a compact sparse Lagrangian Hessian, both
-built through `Function.factory` from the same `al.factory.SpJac` and `al.factory.SpHess` requests
-any user can make. IPOPT consumes the lower triangle. `al.solver` asks for that triangle when it builds
+Scaly feeds it a compact sparse constraint Jacobian and a compact sparse Lagrangian Hessian, both
+built through `Function.factory` from the same `sc.factory.SpJac` and `sc.factory.SpHess` requests
+any user can make. IPOPT consumes the lower triangle. `sc.solver` asks for that triangle when it builds
 the descriptor, so the descriptor pattern and oracle values already match and the generated wrapper
 writes them directly into IPOPT's value buffer.
 
@@ -86,27 +86,27 @@ passed too — `mult_g` from the equality and inequality duals, `mult_x_L`/`mult
 sign-split box duals — but IPOPT ignores them unless you also pass
 `options={"warm_start_init_point": "yes"}`.
 
-**Options** are IPOPT's own, passed as strings, integers or floats. Alloy defaults to
+**Options** are IPOPT's own, passed as strings, integers or floats. Scaly defaults to
 `print_level=0` and `sb="yes"` so the solver stays quiet inside a control loop; pass `options={...}`
 to override or extend. A rejected option does not crash — it surfaces as `ERROR` statistics with a
 native status of `Invalid_Option` and defined outputs.
 
 **Status mapping** is compiled against the vendored header's own enum constants, so an upstream
-change breaks the build rather than silently remapping a status onto the wrong alloy code.
+change breaks the build rather than silently remapping a status onto the wrong scaly code.
 
-## alloy-sqp
+## scaly-sqp
 
 A sequential quadratic programming solver written for this project and emitted as generated C. Its
 subproblems go to PIQP, so it needs PIQP's library but no separate solver binary of its own.
 
 It exists for three reasons: the whole solve is readable and modifiable C rather than a vendored
-blob; it accepts oracles that alloy did not generate; and it is a control on the other two — a
+blob; it accepts oracles that scaly did not generate; and it is a control on the other two — a
 second NLP implementation to disagree with.
 
 **The QP backend is PIQP, and only PIQP.** If you know CasADi's `sqpmethod`, where any registered
-QP solver plugs in as the subproblem solver, do not expect the same here. alloy-sqp does not go
-through the QP plugin contract that `al.solver(problem, "piqp")` uses; its generated C calls PIQP's
-C API directly and borrows the vendored library from `alloy-piqp`. A future QP plugin such as OSQP
+QP solver plugs in as the subproblem solver, do not expect the same here. scaly-sqp does not go
+through the QP plugin contract that `sc.solver(problem, "piqp")` uses; its generated C calls PIQP's
+C API directly and borrows the vendored library from `scaly-piqp`. A future QP plugin such as OSQP
 or HPIPM would be selectable as a standalone solver but would not be usable as the SQP subproblem
 solver. Making that possible needs a second, narrower contract for in-C QP subproblems, plus the
 problem-form reconciliation CasADi's `conic` layer does, and it is tracked as backlog work.
@@ -114,7 +114,7 @@ problem-form reconciliation CasADi's `conic` layer does, and it is tracked as ba
 **Warm starting is unconditional.** All four initial iterates are used on every solve: `x0` is
 clamped into the variable bounds and taken as the starting point, and the equality, inequality and
 box multipliers seed the corresponding duals directly. There is no option to turn this on, so
-alloy-sqp has the simplest warm-start semantics of the three in a receding-horizon loop where each
+scaly-sqp has the simplest warm-start semantics of the three in a receding-horizon loop where each
 solve starts from the last one.
 
 **Globalization** is a bounded objective/violation filter by default, or an l1 merit function
@@ -135,7 +135,7 @@ worth knowing if you are comparing status codes against another solver that is m
 an infeasibility certificate, the SQP continues from its best iterate and lets globalization and
 the KKT test decide. Only PIQP's numerical, unsolved and invalid-settings statuses stop it.
 
-**Hessian handling** is where most of the care went. The descriptor hands alloy-sqp PIQP's upper
+**Hessian handling** is where most of the care went. The descriptor hands scaly-sqp PIQP's upper
 triangle; the wrapper maps each `(row, column)` to its canonical `(min(row, column), max(row, column))`
 slot, so foreign oracles may supply either one triangle or a full symmetric pattern.
 Equality-constrained problems regularize in the constraint-normal space so the added curvature does not damp
@@ -171,13 +171,13 @@ Because the option is baked into the generated C, turning it on recompiles the s
 
 ### Driving the SQP with foreign oracles
 
-`alloy_sqp.external_nlp` builds the same solver interface around oracles alloy did not generate.
+`scaly_sqp.external_nlp` builds the same solver interface around oracles scaly did not generate.
 You supply C source defining the oracle symbols — `base`, `grad`, `hess` and `bounds`, plus `jac`
 once there are constraints, with the same signatures typed problem construction produces — along with the
 sparsity patterns, and get back an ordinary typed `Function`:
 
 ```python
-from alloy_sqp import external_nlp
+from scaly_sqp import external_nlp
 
 solver = external_nlp(
     name="my_nlp",
@@ -196,8 +196,8 @@ solver = external_nlp(
 )
 ```
 
-This is how you put a solver in front of a model you cannot or do not want to rewrite in alloy.
-`alloy_sqp.casadi.build_casadi_external_sqp` is a worked instance of it: hand it CasADi `Function`
+This is how you put a solver in front of a model you cannot or do not want to rewrite in scaly.
+`scaly_sqp.casadi.build_casadi_external_sqp` is a worked instance of it: hand it CasADi `Function`
 objects for the objective, gradient, Jacobian and Hessian and it code-generates them, wraps each in
 an adapter, and hands the result to `external_nlp`. The benchmark suite uses it to run the identical
 NLP through the identical SQP solver with only the oracle provider changed — a controlled
@@ -207,21 +207,21 @@ different way: identical iteration counts on both sides.)
 
 ## What each one vendors
 
-Alloy builds its solver stacks from source rather than depending on system packages, so a plugin
+Scaly builds its solver stacks from source rather than depending on system packages, so a plugin
 carries its own dependencies rather than expecting them installed. This matters when you ship.
 
 | Plugin | Builds | Also pulls in |
 | --- | --- | --- |
-| `alloy-piqp` | PIQP v0.6.2 | Eigen 3.4.1, Blasfeo (**unpinned** — see below) |
-| `alloy-ipopt` | IPOPT 3.14.19 | MUMPS (ThirdParty 3.0.12), METIS 5.2.1 with GKlib, and on Linux OpenBLAS v0.3.28 — macOS uses Apple's Accelerate framework |
-| `alloy-sqp` | nothing of its own | links PIQP's library, so it needs `alloy-piqp` built |
+| `scaly-piqp` | PIQP v0.6.2 | Eigen 3.4.1, Blasfeo (**unpinned** — see below) |
+| `scaly-ipopt` | IPOPT 3.14.19 | MUMPS (ThirdParty 3.0.12), METIS 5.2.1 with GKlib, and on Linux OpenBLAS v0.3.28 — macOS uses Apple's Accelerate framework |
+| `scaly-sqp` | nothing of its own | links PIQP's library, so it needs `scaly-piqp` built |
 
 Everything is pinned to a tag except **Blasfeo**, which is cloned from its default branch. Two
 builds on different days can therefore pick up different Blasfeo revisions, which is worth knowing
 if you need a reproducible artifact.
 
-Build requirements differ by plugin: `alloy-piqp` needs Git, CMake and a C/C++ compiler;
-`alloy-ipopt` needs Git, Make and a C/C++/Fortran compiler, and uses `./configure` rather than
+Build requirements differ by plugin: `scaly-piqp` needs Git, CMake and a C/C++ compiler;
+`scaly-ipopt` needs Git, Make and a C/C++/Fortran compiler, and uses `./configure` rather than
 CMake. A cold build of both is 5 to 8 minutes; see
 [Installation](installation.md#the-solvers). Later syncs reuse the cached artifacts.
 
@@ -230,13 +230,13 @@ the build bundles the Fortran runtime next to `libipopt` so it resolves without 
 
 !!! note "Licensing"
     <!-- TODO: fill in once the project's own licence and the vendored terms are settled. -->
-    Alloy's own licence is not yet decided, and neither is what to state here about the vendored
-    stacks above. If you are evaluating alloy for a context where the licence of the solver closure
+    Scaly's own licence is not yet decided, and neither is what to state here about the vendored
+    stacks above. If you are evaluating scaly for a context where the licence of the solver closure
     matters, ask before assuming.
 
 ## Adding your own
 
 A backend is a small distribution: packaging metadata naming the library and its link flags, plus
 one `render_wrapper` hook that emits the C body driving your solver. Core hands it a context and
-frames the result with alloy's own statistics storage. The contract is
+frames the result with scaly's own statistics storage. The contract is
 [Solver plugins](../dev/solver_plugins.md).

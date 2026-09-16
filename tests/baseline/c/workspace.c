@@ -3,11 +3,11 @@
 #include <stdint.h>
 typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 
-#define ALLOY_SUCCESS 0
-#define ALLOY_ERR_NULL_ABI 1
-#define ALLOY_ERR_NULL_WORK 2
-#define ALLOY_ERR_NULL_RESULT 3
-#define ALLOY_ERR_NULL_INPUT 4
+#define SCALY_SUCCESS 0
+#define SCALY_ERR_NULL_ABI 1
+#define SCALY_ERR_NULL_WORK 2
+#define SCALY_ERR_NULL_RESULT 3
+#define SCALY_ERR_NULL_INPUT 4
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,17 +18,17 @@ int workspace_sz_res(void) { return 2; }
 int workspace_sz_iw(void) { return 0; }
 int workspace_sz_w(void) { return 2048; }
 void* workspace_alloc_mem(void) { return NULL; }
-int workspace_init_mem(void* mem) { (void)mem; return ALLOY_SUCCESS; }
+int workspace_init_mem(void* mem) { (void)mem; return SCALY_SUCCESS; }
 void workspace_free_mem(void* mem) { (void)mem; }
 
 int workspace(const double** arg, double** res, int* iw, double* w, void* mem) {
   (void)iw;
   (void)mem;
-  if (!arg || !res) return ALLOY_ERR_NULL_ABI;
-  if (!w) return ALLOY_ERR_NULL_WORK;
-  if (!arg[0]) return ALLOY_ERR_NULL_INPUT;
-  if (!res[0]) return ALLOY_ERR_NULL_RESULT;
-  if (!res[1]) return ALLOY_ERR_NULL_RESULT;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  if (!w) return SCALY_ERR_NULL_WORK;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  if (!res[1]) return SCALY_ERR_NULL_RESULT;
   double* s0 = w + 0;
   for (long long i_t0 = 0; i_t0 < 2048; ++i_t0) {
     s0[i_t0] = sin(arg[0][i_t0]);
@@ -42,7 +42,7 @@ int workspace(const double** arg, double** res, int* iw, double* w, void* mem) {
     double v0 = s0[i_sumsqr];
     res[1][0] = (res[1][0] + (v0 * v0));
   }
-  return ALLOY_SUCCESS;
+  return SCALY_SUCCESS;
 }
 
 #ifdef __cplusplus

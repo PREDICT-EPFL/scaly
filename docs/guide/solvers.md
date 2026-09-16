@@ -1,36 +1,36 @@
 # Solvers
 
 A solver starts from a backend-free `Problem`. Declare variables, parameters, objective, and
-constraints once, then choose PIQP, IPOPT, or alloy-sqp with `al.solver`. The result is an ordinary
+constraints once, then choose PIQP, IPOPT, or scaly-sqp with `sc.solver`. The result is an ordinary
 typed `Function`, so it can run numerically or appear as a call node in a larger graph.
 [Solver backends](solver_backends.md) compares the implementations. [How solvers
 work](../how_it_works/solvers.md) describes their generated wrappers.
 
 ## Declare a problem
 
-Use `al.L(name, shape)` for one tensor and `al.G(...)` to group tensors. The declared tree
+Use `sc.L(name, shape)` for one tensor and `sc.G(...)` to group tensors. The declared tree
 determines the symbolic structure seen by the body and the NumPy structure used at calls.
 
 ```python
-import alloy as al
+import scaly as sc
 import numpy as np
 
-@al.problem(
-    vars=al.G(al.L("u", 2), al.L("slack", 1)),
-    params=al.G(al.L("target", 2), al.L("bias", 1)),
+@sc.problem(
+    vars=sc.G(sc.L("u", 2), sc.L("slack", 1)),
+    params=sc.G(sc.L("target", 2), sc.L("bias", 1)),
 )
 def tracking_problem(
-    variables: tuple[al.Expr, al.Expr],
-    params: tuple[al.Expr, al.Expr],
-) -> al.ProblemSpec[tuple[al.Expr, al.Expr]]:
+    variables: tuple[sc.Expr, sc.Expr],
+    params: tuple[sc.Expr, sc.Expr],
+) -> sc.ProblemSpec[tuple[sc.Expr, sc.Expr]]:
     u, slack = variables
     target, bias = params
-    return al.ProblemSpec(
-        minimize=al.sumsqr(u - target) + 10.0 * al.sumsqr(slack - bias),
+    return sc.ProblemSpec(
+        minimize=sc.sumsqr(u - target) + 10.0 * sc.sumsqr(slack - bias),
         eq=(u[0:1] - u[1:2],),
-        ineq=(al.bounded(u + slack, lo=0.0, name="safe"),),
-        lb=(al.NO_LB, al.const(0.0)),
-        ub=(al.NO_UB, al.NO_UB),
+        ineq=(sc.bounded(u + slack, lo=0.0, name="safe"),),
+        lb=(sc.NO_LB, sc.const(0.0)),
+        ub=(sc.NO_UB, sc.NO_UB),
     )
 ```
 
@@ -40,16 +40,16 @@ def tracking_problem(
 | --- | --- |
 | `minimize` | scalar objective |
 | `eq` | tuple of scalar or vector expressions constrained to zero |
-| `ineq` | tuple of `al.bounded(expr, lo=..., hi=..., name=...)` groups |
+| `ineq` | tuple of `sc.bounded(expr, lo=..., hi=..., name=...)` groups |
 | `lb` | optional lower bounds with the variables' structure |
 | `ub` | optional upper bounds with the variables' structure |
 
 At least one of `lo` and `hi` is required for a bounded group. A scalar bound broadcasts over its
-group or variable leaf. `lb` and `ub` must have the variables’ tree structure. Use `al.NO_LB` or
-`al.NO_UB` when one leaf has no bound on that side; use `None` when the entire lower or upper side
+group or variable leaf. `lb` and `ub` must have the variables’ tree structure. Use `sc.NO_LB` or
+`sc.NO_UB` when one leaf has no bound on that side; use `None` when the entire lower or upper side
 is absent. These constants are scalar `Expr` values, so the tree remains statically typed. Names are
 metadata and need not match local Python variable names.
-Pass a parameter tree when the public interface is fixed. If `params` is omitted, Alloy collects
+Pass a parameter tree when the public interface is fixed. If `params` is omitted, Scaly collects
 named expressions closed over by the body and builds the parameter tree from them.
 
 ## Select one solver
@@ -57,7 +57,7 @@ named expressions closed over by the body and builds the parameter tree from the
 The backend is positional. The artifact name and backend options belong to the solver construction:
 
 ```python
-solve = al.solver(
+solve = sc.solver(
     tracking_problem,
     "sqp",
     name="tracking_sqp",
@@ -65,10 +65,10 @@ solve = al.solver(
 )
 ```
 
-PIQP accepts only problems that Alloy can prove are quadratic programs. The cost must have a
+PIQP accepts only problems that Scaly can prove are quadratic programs. The cost must have a
 variable-independent Hessian, every constraint must have a variable-independent Jacobian, and
-bounds must not depend on the variables. Failure raises `al.NotQuadratic` when the solver is built.
-IPOPT and alloy-sqp accept nonlinear problems.
+bounds must not depend on the variables. Failure raises `sc.NotQuadratic` when the solver is built.
+IPOPT and scaly-sqp accept nonlinear problems.
 A problem caches its common objective, gradient, constraint Jacobian, and bounds oracles. Solvers
 that need different Hessian triangles share the common oracles and cache one Hessian per triangle.
 
@@ -101,14 +101,14 @@ u, slack = variables
 ```
 
 `lam_ineq` and `lam_box` are signed. A positive value means the upper bound is active; a negative
-value means the lower bound is active. IPOPT and alloy-sqp consume warm starts. PIQP currently
+value means the lower bound is active. IPOPT and scaly-sqp consume warm starts. PIQP currently
 ignores them because its C interface has no warm-start entry point.
 `solve.input_names` and `solve.output_names` show the flattened C signature. Grouping affects
 Python and static types, but not leaf order in the generated ABI.
 
 ## Matrix-data quadratic programs
 
-`al.qp_problem(n, n_eq, n_ineq)` is the typed matrix form:
+`sc.qp_problem(n, n_eq, n_ineq)` is the typed matrix form:
 
 ```text
 minimize  0.5 x' P x + c' x
@@ -120,8 +120,8 @@ Its parameter structure is `((P, c), (A, b), (G, g_lb, g_ub))`. Use zero-sized a
 constraint blocks:
 
 ```python
-problem = al.qp_problem(2, 0, 0)
-solve_qp = al.solver(problem, "piqp")
+problem = sc.qp_problem(2, 0, 0)
+solve_qp = sc.solver(problem, "piqp")
 
 data = (
     (np.eye(2), np.array([-1.0, -2.0])),
@@ -145,7 +145,7 @@ patterns of the extracted `P`, `A`, and `G` and bake compressed sparse column ta
 C:
 
 ```python
-solve_sparse = al.solver(problem, "piqp", options={"sparse": True})
+solve_sparse = sc.solver(problem, "piqp", options={"sparse": True})
 ```
 
 The sparse path rejects QP matrices computed from another solver output because solver calls are
@@ -158,19 +158,19 @@ adapters translate those values to the backend’s native convention before solv
 Call the solver with `Expr` leaves, in the same declared structure, to embed a solve:
 
 ```python
-@al.function(
-    al.G(al.L("target", 2), al.L("bias", 1)),
-    al.L("u", ...),
+@sc.function(
+    sc.G(sc.L("target", 2), sc.L("bias", 1)),
+    sc.L("u", ...),
 )
-def filtered_control(params: tuple[al.Expr, al.Expr]) -> al.Expr:
+def filtered_control(params: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     target, bias = params
-    nested = al.solver(tracking_problem, "sqp", name="nested_tracking")
+    nested = sc.solver(tracking_problem, "sqp", name="nested_tracking")
     result = nested(
         (
-            (al.const(np.zeros(2)), al.const(np.zeros(1))),
-            (al.const(np.zeros(2)), al.const(np.zeros(1))),
-            al.const(np.zeros(1)),
-            al.const(np.zeros(2)),
+            (sc.const(np.zeros(2)), sc.const(np.zeros(1))),
+            (sc.const(np.zeros(2)), sc.const(np.zeros(1))),
+            sc.const(np.zeros(1)),
+            sc.const(np.zeros(2)),
             (target, bias),
         )
     )

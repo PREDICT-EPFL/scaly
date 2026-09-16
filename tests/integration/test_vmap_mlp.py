@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import numpy as np
 
-import alloy as al
-from alloy.codegen import render_c_source
+import scaly as sc
+from scaly.codegen import render_c_source
 
 # Two positions, two velocities and one input, so the stage closes its position rows by trapezoidal
 # integration exactly as a second-order mechanical system does.
@@ -39,16 +39,16 @@ def step_np(pw: np.ndarray, x: np.ndarray, u: np.ndarray) -> np.ndarray:
   return x + np.concatenate([DT * (x[NY:] + y / 2.0), y])
 
 
-def stage_function() -> al.Function:
+def stage_function() -> sc.Function:
   scale, w0, w1, bias = _slices()
 
-  @al.function(al.G(al.L("x", NX), al.L("xnext", NX), al.L("u", NU), al.L("pw", N_PW)), al.L("eq", ...), name="vmap_mlp_stage")
+  @sc.function(sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU), sc.L("pw", N_PW)), sc.L("eq", ...), name="vmap_mlp_stage")
   def stage(inputs):  # type: ignore[no-untyped-def]
     x, xnext, u, pw = inputs
-    h = al.concat([x, u]) * pw[scale]
+    h = sc.concat([x, u]) * pw[scale]
     h = 1.0 / (1.0 + (-(pw[w0].reshape(SHAPES[0]) @ h)).exp())
     y = pw[w1].reshape(SHAPES[1]) @ h + pw[bias]
-    return x + al.concat([DT * (x[NY:] + y / 2.0), y]) - xnext
+    return x + sc.concat([DT * (x[NY:] + y / 2.0), y]) - xnext
 
   return stage
 
@@ -57,37 +57,37 @@ def n_dec(stages: int) -> int:
   return NX * (stages + 1) + NU * stages
 
 
-def _cost_stage() -> al.Function:
-  @al.function(al.G(al.L("x", NX), al.L("xnext", NX), al.L("u", NU)), al.L("cost", ...), name="vmap_mlp_stage_cost")
+def _cost_stage() -> sc.Function:
+  @sc.function(sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU)), sc.L("cost", ...), name="vmap_mlp_stage_cost")
   def cost(inputs):  # type: ignore[no-untyped-def]
     x, xnext, u = inputs
     difference = xnext - x
-    return al.sumsqr(x) + 2.0 * u[0] * u[0] + 0.5 * al.sumsqr(difference)
+    return sc.sumsqr(x) + 2.0 * u[0] * u[0] + 0.5 * sc.sumsqr(difference)
 
   return cost
 
 
-def vmapped(stages: int) -> al.Function:
+def vmapped(stages: int) -> sc.Function:
   """Objective and equalities together, both using VMAP, which is what a Lagrangian Hessian needs."""
-  z = al.sym("z", n_dec(stages))
-  p = al.sym("p", N_PW, diff=False)
-  eq = al.vmap(
+  z = sc.sym("z", n_dec(stages))
+  p = sc.sym("p", N_PW, diff=False)
+  eq = sc.vmap(
     stage_function(),
     length=stages,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU), "pw": (p, 0, 0)},
   )
-  cost = al.vmap(
+  cost = sc.vmap(
     _cost_stage(),
     length=stages,
     inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU)},
   )
-  return al.Function._from_exprs(f"vmap_mlp_N{stages}", [z, p], [cost.sum(), eq], ["z", "p"], ["cost", "eq"])
+  return sc.Function._from_exprs(f"vmap_mlp_N{stages}", [z, p], [cost.sum(), eq], ["z", "p"], ["cost", "eq"])
 
 
-def unrolled(stages: int) -> al.Function:
+def unrolled(stages: int) -> sc.Function:
   """The same formulation stage by stage, so the VMAP version can be tested against it."""
-  z = al.sym("z", n_dec(stages))
-  p = al.sym("p", N_PW, diff=False)
+  z = sc.sym("z", n_dec(stages))
+  p = sc.sym("p", N_PW, diff=False)
   stage, cost_stage = stage_function(), _cost_stage()
   offset = NX * (stages + 1)
   rows, terms = [], []
@@ -99,7 +99,7 @@ def unrolled(stages: int) -> al.Function:
   cost = terms[0]
   for term in terms[1:]:
     cost = cost + term
-  return al.Function._from_exprs(f"vmap_mlp_unrolled_N{stages}", [z, p], [cost, al.concat(rows)], ["z", "p"], ["cost", "eq"])
+  return sc.Function._from_exprs(f"vmap_mlp_unrolled_N{stages}", [z, p], [cost, sc.concat(rows)], ["z", "p"], ["cost", "eq"])
 
 
 def sample(stages: int, seed: int = 3) -> tuple[np.ndarray, np.ndarray]:
@@ -121,7 +121,7 @@ def dense_jac_reference(stages: int, z: np.ndarray, pw: np.ndarray) -> np.ndarra
   being built from the stage function alone, it never touches the VMAP graph under test.
   """
   jac = stage_function().factory(
-    "vmap_mlp_stage_jac", ["x", "xnext", "u", "pw"], [al.factory.Jac("eq", "x"), al.factory.Jac("eq", "u"), al.factory.Jac("eq", "xnext")]
+    "vmap_mlp_stage_jac", ["x", "xnext", "u", "pw"], [sc.factory.Jac("eq", "x"), sc.factory.Jac("eq", "u"), sc.factory.Jac("eq", "xnext")]
   )
   offset = NX * (stages + 1)
   dense = np.zeros((NX * stages, n_dec(stages)))
@@ -135,7 +135,7 @@ def dense_jac_reference(stages: int, z: np.ndarray, pw: np.ndarray) -> np.ndarra
   return dense
 
 
-def _scatter(sparse: al.Function, z: np.ndarray, pw: np.ndarray, *extra: np.ndarray) -> np.ndarray:
+def _scatter(sparse: sc.Function, z: np.ndarray, pw: np.ndarray, *extra: np.ndarray) -> np.ndarray:
   sparsity = sparse.output_sparsities[0]
   assert sparsity is not None
   dense = np.zeros(sparsity.shape)
@@ -169,7 +169,7 @@ def test_vmapped_and_unrolled_agree_in_value_jacobian_and_hessian() -> None:
     np.testing.assert_allclose(np.asarray(vmap_fn((z, pw))[0]), np.asarray(flat_fn((z, pw))[0]), rtol=0.0, atol=1e-12)
     np.testing.assert_allclose(np.asarray(vmap_fn((z, pw))[1]), np.asarray(flat_fn((z, pw))[1]), rtol=0.0, atol=1e-13)
 
-    jacobians = [fn.factory(f"{fn.name}_spjac", ["z", "p"], [al.factory.SpJac("eq", "z")]) for fn in (vmap_fn, flat_fn)]
+    jacobians = [fn.factory(f"{fn.name}_spjac", ["z", "p"], [sc.factory.SpJac("eq", "z")]) for fn in (vmap_fn, flat_fn)]
     dense = [_scatter(fn, z, pw) for fn in jacobians]
     np.testing.assert_allclose(dense[0], dense[1], rtol=0.0, atol=1e-13)
     np.testing.assert_allclose(dense[0], dense_jac_reference(stages, z, pw), rtol=0.0, atol=1e-13)
@@ -177,7 +177,7 @@ def test_vmapped_and_unrolled_agree_in_value_jacobian_and_hessian() -> None:
     assert pattern is not None and pattern.nnz < dense[0].size
 
     hessians = [
-      fn.factory(f"{fn.name}_sphess", ["z", "lam:cost", "lam:eq", "p"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["cost", "eq"]})
+      fn.factory(f"{fn.name}_sphess", ["z", "lam:cost", "lam:eq", "p"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["cost", "eq"]})
       for fn in (vmap_fn, flat_fn)
     ]
     hess = [_scatter(fn, z, pw, np.array(1.0), lam) for fn in hessians]
@@ -195,8 +195,8 @@ def test_lagrangian_hessian_through_the_vmap_matches_finite_differences() -> Non
   z, pw = sample(stages)
   lam = np.linspace(-0.7, 0.9, NX * stages)
   fn = vmapped(stages)
-  gradient = fn.factory("vmap_mlp_lag_grad", ["z", "lam:cost", "lam:eq", "p"], [al.factory.Grad("gamma", "z")], aux={"gamma": ["cost", "eq"]})
-  hessian = fn.factory("vmap_mlp_lag_sphess", ["z", "lam:cost", "lam:eq", "p"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["cost", "eq"]})
+  gradient = fn.factory("vmap_mlp_lag_grad", ["z", "lam:cost", "lam:eq", "p"], [sc.factory.Grad("gamma", "z")], aux={"gamma": ["cost", "eq"]})
+  hessian = fn.factory("vmap_mlp_lag_sphess", ["z", "lam:cost", "lam:eq", "p"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["cost", "eq"]})
   exact = _scatter(hessian, z, pw, np.array(1.0), lam)
 
   step = 1e-6
@@ -217,11 +217,11 @@ def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows
   per-stage slices it unrolls. The control pins one retained caller dispatch per stage instead of
   measuring those calls together with the fixed helper bodies.
   """
-  from alloy.ir.program import ProgramOp
-  from alloy.passes.lowering import lower_function, main_proc
+  from scaly.ir.program import ProgramOp
+  from scaly.passes.lowering import lower_function, main_proc
 
   sizes = (2, 8, 32)
-  for kernel, request in (("spjac", al.factory.SpJac("eq", "z")), ("sphess", al.factory.SpHess("gamma", "z"))):
+  for kernel, request in (("spjac", sc.factory.SpJac("eq", "z")), ("sphess", sc.factory.SpHess("gamma", "z"))):
     lines = []
     for stages in sizes:
       names = ["z", "p"] if kernel == "spjac" else ["z", "lam:cost", "lam:eq", "p"]
@@ -232,7 +232,7 @@ def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows
 
   unrolled_calls = []
   for stages in sizes:
-    built = unrolled(stages).factory(f"vmap_mlp_unrolled_spjac_N{stages}", ["z", "p"], [al.factory.SpJac("eq", "z")])
+    built = unrolled(stages).factory(f"vmap_mlp_unrolled_spjac_N{stages}", ["z", "p"], [sc.factory.SpJac("eq", "z")])
     proc = main_proc(lower_function(built))
     body = proc.args[int(proc.attrs["param_count"]) :]
     unrolled_calls.append(sum(stmt.op == ProgramOp.CALL for stmt in body))

@@ -35,19 +35,19 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            plugins/alloy-piqp/third_party
-            plugins/alloy-piqp/src/alloy_piqp/lib
-            plugins/alloy-piqp/src/alloy_piqp/include
-            plugins/alloy-ipopt/third_party
-            plugins/alloy-ipopt/src/alloy_ipopt/lib
-            plugins/alloy-ipopt/src/alloy_ipopt/include
-          key: ${{ runner.os }}-${{ runner.arch }}-vendored-${{ steps.toolchain.outputs.id }}-${{ hashFiles('plugins/alloy-piqp/hatch_build.py', 'plugins/alloy-ipopt/hatch_build.py') }}
+            plugins/scaly-piqp/third_party
+            plugins/scaly-piqp/src/scaly_piqp/lib
+            plugins/scaly-piqp/src/scaly_piqp/include
+            plugins/scaly-ipopt/third_party
+            plugins/scaly-ipopt/src/scaly_ipopt/lib
+            plugins/scaly-ipopt/src/scaly_ipopt/include
+          key: ${{ runner.os }}-${{ runner.arch }}-vendored-${{ steps.toolchain.outputs.id }}-${{ hashFiles('plugins/scaly-piqp/hatch_build.py', 'plugins/scaly-ipopt/hatch_build.py') }}
 
       - name: Report cache state
         run: |
           echo "cache-hit=${{ steps.cache-vendored.outputs.cache-hit }}"
           echo "cache-primary-key=${{ steps.cache-vendored.outputs.cache-primary-key }}"
-          ls -lh plugins/alloy-piqp/src/alloy_piqp/lib plugins/alloy-ipopt/src/alloy_ipopt/lib 2>/dev/null || echo "plugin libs not present — will cold-build"
+          ls -lh plugins/scaly-piqp/src/scaly_piqp/lib plugins/scaly-ipopt/src/scaly_ipopt/lib 2>/dev/null || echo "plugin libs not present — will cold-build"
 
       - name: Install system toolchain (Linux)
         if: runner.os == 'Linux' && steps.cache-vendored.outputs.cache-hit != 'true'
@@ -72,7 +72,7 @@ jobs:
       - name: uv sync (builds PIQP + IPOPT on cache miss)
         if: steps.cache-vendored.outputs.cache-hit != 'true'
         env:
-          ALLOY_BUILD_SOLVERS: required
+          SCALY_BUILD_SOLVERS: required
         run: uv sync --frozen
 
       - name: Save third_party + built libs
@@ -80,19 +80,19 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            plugins/alloy-piqp/third_party
-            plugins/alloy-piqp/src/alloy_piqp/lib
-            plugins/alloy-piqp/src/alloy_piqp/include
-            plugins/alloy-ipopt/third_party
-            plugins/alloy-ipopt/src/alloy_ipopt/lib
-            plugins/alloy-ipopt/src/alloy_ipopt/include
+            plugins/scaly-piqp/third_party
+            plugins/scaly-piqp/src/scaly_piqp/lib
+            plugins/scaly-piqp/src/scaly_piqp/include
+            plugins/scaly-ipopt/third_party
+            plugins/scaly-ipopt/src/scaly_ipopt/lib
+            plugins/scaly-ipopt/src/scaly_ipopt/include
           key: ${{ steps.cache-vendored.outputs.cache-primary-key }}
 
       - name: Inspect vendored libs
         run: |
-          ls -lh plugins/alloy-piqp/src/alloy_piqp/lib plugins/alloy-ipopt/src/alloy_ipopt/lib
-          if [ "$RUNNER_OS" = "macOS" ]; then otool -L plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.dylib; fi
-          if [ "$RUNNER_OS" = "Linux" ]; then ldd plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.so; fi
+          ls -lh plugins/scaly-piqp/src/scaly_piqp/lib plugins/scaly-ipopt/src/scaly_ipopt/lib
+          if [ "$RUNNER_OS" = "macOS" ]; then otool -L plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.dylib; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then ldd plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.so; fi
 
       # Only the built libraries and their headers — `third_party` is build scratch the
       # consumer never reads, since the hooks skip once lib+header are present. Every
@@ -103,10 +103,10 @@ jobs:
         with:
           name: vendored-solvers-${{ runner.os }}-${{ runner.arch }}
           path: |
-            plugins/alloy-piqp/src/alloy_piqp/lib
-            plugins/alloy-piqp/src/alloy_piqp/include
-            plugins/alloy-ipopt/src/alloy_ipopt/lib
-            plugins/alloy-ipopt/src/alloy_ipopt/include
+            plugins/scaly-piqp/src/scaly_piqp/lib
+            plugins/scaly-piqp/src/scaly_piqp/include
+            plugins/scaly-ipopt/src/scaly_ipopt/lib
+            plugins/scaly-ipopt/src/scaly_ipopt/include
           retention-days: 3
 
   lint-type:
@@ -128,11 +128,11 @@ jobs:
 
       - name: uv sync (Python/core only)
         env:
-          ALLOY_BUILD_SOLVERS: skip
+          SCALY_BUILD_SOLVERS: skip
         run: uv sync --frozen
 
       - name: Native toolchain report
-        run: uv run python -m alloy.codegen.toolchain
+        run: uv run python -m scaly.codegen.toolchain
 
       - name: Ruff lint
         run: uv run ruff check .
@@ -165,7 +165,7 @@ jobs:
 
       - name: uv sync (Python/core only)
         env:
-          ALLOY_BUILD_SOLVERS: skip
+          SCALY_BUILD_SOLVERS: skip
         run: uv sync --frozen
 
       - name: C compiler report
@@ -205,21 +205,21 @@ jobs:
 
       - name: uv sync (uses restored vendored solvers)
         env:
-          ALLOY_BUILD_SOLVERS: required
+          SCALY_BUILD_SOLVERS: required
         run: uv sync --frozen
 
       - name: Native solver report
-        run: uv run python -m alloy.codegen.toolchain
+        run: uv run python -m scaly.codegen.toolchain
 
       - name: Inspect vendored libs
         run: |
-          ls -lh plugins/alloy-piqp/src/alloy_piqp/lib plugins/alloy-ipopt/src/alloy_ipopt/lib
-          if [ "$RUNNER_OS" = "macOS" ]; then otool -L plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.dylib; fi
-          if [ "$RUNNER_OS" = "Linux" ]; then ldd plugins/alloy-ipopt/src/alloy_ipopt/lib/libipopt.so; fi
+          ls -lh plugins/scaly-piqp/src/scaly_piqp/lib plugins/scaly-ipopt/src/scaly_ipopt/lib
+          if [ "$RUNNER_OS" = "macOS" ]; then otool -L plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.dylib; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then ldd plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.so; fi
 
       - name: Pytest solver suite
         env:
-          ALLOY_REQUIRE_SOLVERS: "1"
+          SCALY_REQUIRE_SOLVERS: "1"
         run: uv run pytest -n=auto -m solver
 
       - name: Solver-call smoke
@@ -227,27 +227,27 @@ jobs:
 
       - name: Solver-backed problem gates
         env:
-          ALLOY_REQUIRE_SOLVERS: "1"
+          SCALY_REQUIRE_SOLVERS: "1"
         run: uv run python benchmarks/run.py smoke --select problems
 
       - name: Public closed-loop smoke commands
         run: |
-          uv run python benchmarks/run.py closed-loop --problem chain --solver ipopt --oracle alloy --smoke
-          uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle alloy --smoke
+          uv run python benchmarks/run.py closed-loop --problem chain --solver ipopt --oracle scaly --smoke
+          uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle scaly --smoke
           uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle alloy --smoke
+          uv run python benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly --smoke
           uv run python benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle alloy --smoke
+          uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle scaly --smoke
           uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle alloy --smoke
+          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle scaly --smoke
           uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle casadi --smoke
-          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle alloy --smoke
+          uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle scaly --smoke
           uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle casadi --smoke
           uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver none --smoke
 
       - name: Repeated benchmark commands
         run: |
-          uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends alloy,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
+          uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends scaly,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
           uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle both --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
           uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
           uv run benchmarks/run.py modes benchmarks/results/smoke/repeated/episodes --out benchmarks/results/smoke/repeated/modes.csv

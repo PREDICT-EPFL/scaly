@@ -1,12 +1,12 @@
 """Formulation correctness gates for the unbumpercars HCBF filter problem.
 
-These are properties of *this benchmark problem* — the agreement between the Alloy
+These are properties of *this benchmark problem* — the agreement between the Scaly
 and CasADi oracles, the ordering of the parameter tail, the pair barrier's relative
 degree, and the exact-Hessian path over closed-loop samples. They run before any timing is recorded, via
 ``benchmarks/run.py smoke``.
 
 They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite
-covers Alloy's core and must not depend on a benchmark problem. The sparse Lagrangian
+covers Scaly's core and must not depend on a benchmark problem. The sparse Lagrangian
 Hessian and CasADi-differential behaviours these lean on have self-contained
 reproductions in ``tests/ad/test_sparsity.py`` and
 ``tests/function/test_factory.py``.
@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterator
 from itertools import product
 from typing import cast
 
-import alloy as al
+import scaly as sc
 import numpy as np
 
 from benchmarks.problems.unbumpercars.common import (
@@ -55,14 +55,14 @@ def check_default_output_dir() -> None:
 
 
 def check_oracle_matches_casadi() -> None:
-  """Alloy and CasADi build the same cost and constraint rows for the same filter, either model."""
-  from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter, build_alloy_oracle
+  """Scaly and CasADi build the same cost and constraint rows for the same filter, either model."""
+  from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter, build_scaly_oracle
 
   for model, ncars, arena in product(("ct", "dt"), (1, 4), (False, True)):
     loop_cfg = ClosedLoopConfig(ncars=ncars, arena_avoidance=arena)
     filt_cfg = FilterConfig(model=model)
     weights = load_dt_mlp_weights() if model == "dt" else load_ct_full_weights()
-    oracle = build_alloy_oracle(loop_cfg, filt_cfg)
+    oracle = build_scaly_oracle(loop_cfg, filt_cfg)
     ca_filt = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
     rng = np.random.default_rng(3)
     bar_x = sample_initial_states(loop_cfg).reshape(-1)
@@ -79,10 +79,10 @@ def check_oracle_matches_casadi() -> None:
     if loop_cfg.n_pairs:
       args = (z, bar_x, u_des, weights.packed, physics, dt)
       for spec, reference in (
-        (al.factory.SpJac("g", "z"), np.asarray(ca_filt.jac_fn(z, p))),
-        (al.factory.SpHess("gamma", "z"), np.asarray(ca_filt.hess_fn(z, p, 0.0, np.arange(1.0, loop_cfg.n_slack + 1)))),
+        (sc.factory.SpJac("g", "z"), np.asarray(ca_filt.jac_fn(z, p))),
+        (sc.factory.SpHess("gamma", "z"), np.asarray(ca_filt.hess_fn(z, p, 0.0, np.arange(1.0, loop_cfg.n_slack + 1)))),
       ):
-        is_hess = isinstance(spec, al.factory.SpHess)
+        is_hess = isinstance(spec, sc.factory.SpHess)
         derivative = oracle.factory("pair_derivative", [*oracle.input_names, *(["lam:g"] if is_hess else [])], [spec], aux={"gamma": ["g"]})
         sparsity = derivative.output_sparsities[0]
         assert sparsity is not None
@@ -93,22 +93,22 @@ def check_oracle_matches_casadi() -> None:
 
 def check_pair_jac_codegen_growth() -> None:
   """Mapped pair and wall rows stay retained in the Jacobian and exact Hessian."""
-  from alloy.codegen.aot import render_c_module, render_c_source
-  from alloy.ir.program import ProgramOp
-  from benchmarks.problems.unbumpercars.filters import build_alloy_oracle
+  from scaly.codegen.aot import render_c_module, render_c_source
+  from scaly.ir.program import ProgramOp
+  from benchmarks.problems.unbumpercars.filters import build_scaly_oracle
 
   lines = []
   hess_families = []
   for ncars in (2, 4, 8):
-    oracle = build_alloy_oracle(ClosedLoopConfig(ncars=ncars), FilterConfig())
-    jac = oracle.factory("pair_jac", list(oracle.input_names), [al.factory.SpJac("g", "z")])
+    oracle = build_scaly_oracle(ClosedLoopConfig(ncars=ncars), FilterConfig())
+    jac = oracle.factory("pair_jac", list(oracle.input_names), [sc.factory.SpJac("g", "z")])
     lines.append(len(render_c_source(jac).splitlines()))
     if ncars < 4:
       continue
     hess = oracle.factory(
       "row_hess",
       [*oracle.input_names, "lam:cost", "lam:g"],
-      [al.factory.SpHess("gamma", "z")],
+      [sc.factory.SpHess("gamma", "z")],
       aux={"gamma": ["cost", "g"]},
     )
     program = render_c_module(hess, typed_buffers=False).program
@@ -150,12 +150,12 @@ def check_pair_jac_codegen_growth() -> None:
 
 def check_parameter_tail_order() -> None:
   """An independent NumPy reference with a distinct value per physics entry pins the p-tail order."""
-  from benchmarks.problems.unbumpercars.filters import build_alloy_oracle
+  from benchmarks.problems.unbumpercars.filters import build_scaly_oracle
 
   physics = CarPhysics(lf=0.9, lr=1.3, max_delta=0.7, steering_time_constant=0.45, x_min=-3.0, x_max=11.0, y_min=1.0, y_max=17.0)
   loop_cfg = ClosedLoopConfig(ncars=2, physics=physics, dt=0.17)
   weights = load_ct_full_weights()
-  oracle = build_alloy_oracle(loop_cfg, FilterConfig(model="ct"))
+  oracle = build_scaly_oracle(loop_cfg, FilterConfig(model="ct"))
 
   rng = np.random.default_rng(9)
   states = sample_initial_states(loop_cfg)
@@ -209,7 +209,7 @@ def check_velocity_wall_barrier_has_control_authority() -> None:
   The order-1 barrier instead reads the predicted velocity and must make the filter intervene
   before the car crosses the wall.
   """
-  from benchmarks.problems.unbumpercars.filters import AlloyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter
+  from benchmarks.problems.unbumpercars.filters import ScalyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter
   from benchmarks.problems.unbumpercars.run_closed_loop import Simulator
 
   loop_cfg = ClosedLoopConfig(ncars=1, steps=150, target_center=False)
@@ -220,7 +220,7 @@ def check_velocity_wall_barrier_has_control_authority() -> None:
   throttle = dt_mlp_step_smooth_np(state, np.array([1.0, 0.0]), loop_cfg.dt, weights, loop_cfg.physics)
   assert wall_b_np(brake, loop_cfg)[1] - wall_b_np(throttle, loop_cfg)[1] > 0.1
 
-  alloy_filter = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
+  scaly_filter = ScalyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
   casadi_filter = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
   sim = Simulator(sample_initial_states(loop_cfg), loop_cfg)
   min_clearance = float("inf")
@@ -228,14 +228,14 @@ def check_velocity_wall_barrier_has_control_authority() -> None:
   for step in range(loop_cfg.steps):
     desired = sim.desired_inputs()
     assert desired[0, 1] == 0.0
-    safe = alloy_filter.compute_safe_input(sim.states, desired, step)
+    safe = scaly_filter.compute_safe_input(sim.states, desired, step)
     safe_casadi = casadi_filter.compute_safe_input(sim.states, desired, step)
     np.testing.assert_allclose(safe, safe_casadi, rtol=0.0, atol=1e-7)
     max_override = max(max_override, float(np.max(np.abs(safe - desired))))
     sim.step(safe)
     min_clearance = min(min_clearance, min(wall_h_np(sim.states[0], loop_cfg)))
 
-  assert all(item.success for safety_filter in (alloy_filter, casadi_filter) for item in safety_filter.stats_history)
+  assert all(item.success for safety_filter in (scaly_filter, casadi_filter) for item in safety_filter.stats_history)
   assert max_override > 0.1, "the wall barrier never materially changed the requested control"
   assert min_clearance > -0.01, f"the car escaped {abs(min_clearance):.3f} m past the wall margin"
 
@@ -301,7 +301,7 @@ def check_dt_filter_model_matches_numpy() -> None:
   smoothed ReLU and the dropped deadzone — by checking the filter against a reference that has
   them and the plant against one that does not (`dt_plant_pieces`).
   """
-  from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter, alloy_dt_mlp_step_fn
+  from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter, scaly_dt_mlp_step_fn
 
   physics = CarPhysics()
   weights = load_dt_mlp_weights()
@@ -322,7 +322,7 @@ def check_dt_filter_model_matches_numpy() -> None:
     u = rng.uniform(-1.0, 1.0, 2)
     want = dt_mlp_step_smooth_np(state, u, loop_cfg.dt, weights, physics)
     got_ca = np.asarray(ca_step(state, u, pw, ph, loop_cfg.dt), dtype=np.float64).reshape(-1)
-    got_al = np.asarray(alloy_dt_mlp_step_fn((state, u, pw, ph, np.array([loop_cfg.dt]))), dtype=np.float64).reshape(-1)
+    got_al = np.asarray(scaly_dt_mlp_step_fn((state, u, pw, ph, np.array([loop_cfg.dt]))), dtype=np.float64).reshape(-1)
     np.testing.assert_allclose(got_ca, want, rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(got_al, want, rtol=1e-10, atol=1e-10)
     # The smoothing is an approximation of the plant, not a rewrite of it. Its pose rows are the
@@ -350,13 +350,13 @@ def check_oracles_solve_alike_per_step() -> None:
   enough apart that every row is slack, the filter returns the desired input untouched, and
   the comparison holds no matter what either provider computes.
   """
-  from benchmarks.problems.unbumpercars.filters import AlloyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter
+  from benchmarks.problems.unbumpercars.filters import ScalyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter
   from benchmarks.problems.unbumpercars.run_closed_loop import Simulator
 
   loop_cfg = ClosedLoopConfig(ncars=3, steps=5)
   filt_cfg = FilterConfig(model="ct")
   weights = load_ct_full_weights()
-  alloy_filt = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
+  scaly_filt = ScalyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
   casadi_filt = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
   # two closing head-on 3 m apart, inside the 2.28 m envelope's reach, plus a third crossing
   converging = np.array(
@@ -371,16 +371,16 @@ def check_oracles_solve_alike_per_step() -> None:
   acting = slacked = 0
   for step in range(loop_cfg.steps):
     desired = sim.desired_inputs()
-    u_alloy = alloy_filt.compute_safe_input(sim.states, desired, step)
+    u_scaly = scaly_filt.compute_safe_input(sim.states, desired, step)
     u_casadi = casadi_filt.compute_safe_input(sim.states, desired, step)
-    alloy_stats, casadi_stats = alloy_filt.stats_history[-1], casadi_filt.stats_history[-1]
-    assert alloy_stats.success and casadi_stats.success
-    acting += np.abs(u_alloy - desired).max() > 1e-3
-    slacked += alloy_stats.slack_l1 > 1e-3
-    np.testing.assert_allclose(u_alloy, u_casadi, rtol=0.0, atol=1e-7)
-    np.testing.assert_allclose(alloy_stats.objective, casadi_stats.objective, rtol=0.0, atol=1e-9)
-    np.testing.assert_allclose(alloy_stats.slack_l1, casadi_stats.slack_l1, rtol=0.0, atol=1e-7)
-    sim.step(u_alloy)
+    scaly_stats, casadi_stats = scaly_filt.stats_history[-1], casadi_filt.stats_history[-1]
+    assert scaly_stats.success and casadi_stats.success
+    acting += np.abs(u_scaly - desired).max() > 1e-3
+    slacked += scaly_stats.slack_l1 > 1e-3
+    np.testing.assert_allclose(u_scaly, u_casadi, rtol=0.0, atol=1e-7)
+    np.testing.assert_allclose(scaly_stats.objective, casadi_stats.objective, rtol=0.0, atol=1e-9)
+    np.testing.assert_allclose(scaly_stats.slack_l1, casadi_stats.slack_l1, rtol=0.0, atol=1e-7)
+    sim.step(u_scaly)
   # Non-vacuity is a property of the run, not of each step: the filter must override the
   # desired input on most steps, so the solution actually depends on the formulation, and the
   # L1 slack kink must be reached at least once. How many steps need slack depends on how well
@@ -390,31 +390,31 @@ def check_oracles_solve_alike_per_step() -> None:
 
 def check_exact_hess_matches_casadi_on_closed_loop_samples() -> None:
   """The default exact Lagrangian Hessian tracks CasADi along a real closed-loop rollout."""
-  from benchmarks.problems.unbumpercars.filters import AlloyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter
+  from benchmarks.problems.unbumpercars.filters import ScalyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter
   from benchmarks.problems.unbumpercars.run_closed_loop import Simulator
 
   loop_cfg = ClosedLoopConfig(ncars=2, steps=5)
   filt_cfg = FilterConfig(model="ct")
   assert not filt_cfg.limited_memory_hessian
   weights = load_ct_full_weights()
-  alloy_filt = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
+  scaly_filt = ScalyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
   casadi_filt = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
-  assert alloy_filt.hess_fn is not None and casadi_filt.hess_fn is not None
+  assert scaly_filt.hess_fn is not None and casadi_filt.hess_fn is not None
   sim = Simulator(sample_initial_states(loop_cfg), loop_cfg)
 
   for step in range(loop_cfg.steps):
     desired = sim.desired_inputs()
-    safe = alloy_filt.compute_safe_input(sim.states, desired, step)
-    assert alloy_filt.last_z is not None and alloy_filt.last_mult_g is not None
-    z, lam = alloy_filt.last_z, alloy_filt.last_mult_g
+    safe = scaly_filt.compute_safe_input(sim.states, desired, step)
+    assert scaly_filt.last_z is not None and scaly_filt.last_mult_g is not None
+    z, lam = scaly_filt.last_z, scaly_filt.last_mult_g
     bar_x, u_des = sim.states.reshape(-1), desired.reshape(-1)
     physics, dt = loop_cfg.physics.array(), np.array([loop_cfg.dt])
     p = np.concatenate([bar_x, u_des, weights.packed, physics, dt])
-    hess_fn = cast(al.Function, alloy_filt.hess_fn)
+    hess_fn = cast(sc.Function, scaly_filt.hess_fn)
     hess_inputs = ((z, (bar_x, u_des, weights.packed, physics, dt)), (np.array(1.0), lam))
-    alloy_values = np.asarray(hess_fn(hess_inputs), dtype=np.float64).reshape(-1)
+    scaly_values = np.asarray(hess_fn(hess_inputs), dtype=np.float64).reshape(-1)
     casadi_dense = np.asarray(casadi_filt.hess_fn(z, p, 1.0, lam), dtype=np.float64)
-    np.testing.assert_allclose(alloy_values, casadi_dense[alloy_filt.hess_rows, alloy_filt.hess_cols], rtol=1e-8)
+    np.testing.assert_allclose(scaly_values, casadi_dense[scaly_filt.hess_rows, scaly_filt.hess_cols], rtol=1e-8)
     sim.step(safe)
 
 
@@ -465,11 +465,11 @@ def check_canonical_hessian_handoff() -> None:
     )
     with np.load(artifact) as loaded:
       harvested = {name: np.asarray(loaded[name], dtype=np.float64) for name in loaded.files}
-    for backend in ("alloy", "casadi_sx", "casadi_mx"):
+    for backend in ("scaly", "casadi_sx", "casadi_mx"):
       output = root / backend
       output.mkdir()
       info = build_kernel("unbumpercars", cfg.ncars, backend, output)
-      if backend == "alloy":
+      if backend == "scaly":
         assert info["layout"] == "lower"
       else:
         assert info["symbol"] == "nlp_hess_l"
@@ -485,14 +485,14 @@ def check_canonical_hessian_handoff() -> None:
 
 
 def check_casadi_ipopt_is_compiled() -> None:
-  """The timed CasADi column is generated C linked to Alloy's IPOPT."""
+  """The timed CasADi column is generated C linked to Scaly's IPOPT."""
   from pathlib import Path
   from types import SimpleNamespace
   from unittest.mock import patch
 
   from benchmarks.problems.unbumpercars import filters
 
-  from alloy.solvers.paths import solver_paths
+  from scaly.solvers.paths import solver_paths
   from benchmarks.problems.unbumpercars.filters import CasadiDTCBFSafetyFilter
 
   loop_cfg = ClosedLoopConfig(ncars=2, steps=1)
@@ -537,14 +537,14 @@ def check_sqp_matches_ipopt_per_step() -> None:
   divergence the message carries the first diverging step with both solvers' status and
   constraint violation — the signal the Phase 9 robustness work consumes.
   """
-  from benchmarks.problems.unbumpercars.filters import AlloyDTCBFSafetyFilter
+  from benchmarks.problems.unbumpercars.filters import ScalyDTCBFSafetyFilter
   from benchmarks.problems.unbumpercars.run_closed_loop import Simulator
 
   loop_cfg = ClosedLoopConfig(ncars=2, steps=4, target_center=False)
   filt_cfg = FilterConfig(ipopt_max_iter=40)
   weights = load_dt_mlp_weights()
-  ipopt_filter = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
-  sqp_filter = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp")
+  ipopt_filter = ScalyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
+  sqp_filter = ScalyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp")
   initial = np.zeros((2, NSTATE), dtype=np.float64)
   initial[:, :2] = [[6.3, 7.35], [8.7, 7.7]]
   initial[:, 2] = [0.0, np.pi]
@@ -571,16 +571,16 @@ def check_sqp_matches_ipopt_per_step() -> None:
 
 
 def check_sqp_oracles_agree() -> None:
-  """The SQP's Alloy and CasADi C oracles return the same controls and timing split."""
-  from benchmarks.problems.unbumpercars.filters import AlloyDTCBFSafetyFilter
+  """The SQP's Scaly and CasADi C oracles return the same controls and timing split."""
+  from benchmarks.problems.unbumpercars.filters import ScalyDTCBFSafetyFilter
   from benchmarks.problems.unbumpercars.run_closed_loop import Simulator
 
   loop_cfg = ClosedLoopConfig(ncars=2, steps=2, target_center=False)
   filt_cfg = FilterConfig(ipopt_max_iter=40)
   assert not filt_cfg.limited_memory_hessian
   weights = load_dt_mlp_weights()
-  alloy_filter = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp")
-  casadi_filter = AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp", oracle_provider="casadi")
+  scaly_filter = ScalyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp")
+  casadi_filter = ScalyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp", oracle_provider="casadi")
   initial = np.zeros((2, NSTATE), dtype=np.float64)
   initial[:, :2] = [[6.3, 7.5], [8.7, 7.5]]
   initial[:, 2] = [0.0, np.pi]
@@ -589,28 +589,28 @@ def check_sqp_oracles_agree() -> None:
   acted = False
   for step in range(loop_cfg.steps):
     desired = sim.desired_inputs()
-    alloy_u = alloy_filter.compute_safe_input(sim.states, desired, step)
+    scaly_u = scaly_filter.compute_safe_input(sim.states, desired, step)
     casadi_u = casadi_filter.compute_safe_input(sim.states, desired, step)
-    np.testing.assert_allclose(alloy_u, casadi_u, rtol=1e-9, atol=1e-9)
-    acted |= bool(np.max(np.abs(alloy_u - desired)) > 1e-3)
-    for controller in (alloy_filter, casadi_filter):
+    np.testing.assert_allclose(scaly_u, casadi_u, rtol=1e-9, atol=1e-9)
+    acted |= bool(np.max(np.abs(scaly_u - desired)) > 1e-3)
+    for controller in (scaly_filter, casadi_filter):
       stats = controller.nlp.solver_stats()
       report = controller.stats_history[-1]
       assert stats is not None and stats.status.name == "OK" and report.success and report.min_g >= -1e-6
       assert stats.t_qp > 0.0 and stats.n_eval_h > 0
       np.testing.assert_allclose(stats.t_total, stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rtol=1e-10)
-    sim.step(alloy_u)
+    sim.step(scaly_u)
   assert acted, "the SQP oracle-provider gate never exercised a binding constraint"
 
 
 def check_typed_problem_keeps_hessian_in_place() -> None:
   """The typed problem preserves bounded Hessian source and workspace sizes."""
-  from alloy.codegen import render_c_module
+  from scaly.codegen import render_c_module
 
   from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig
-  from benchmarks.problems.unbumpercars.filters import build_alloy_nlp
+  from benchmarks.problems.unbumpercars.filters import build_scaly_nlp
 
-  hessian = build_alloy_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).descriptor.hess
+  hessian = build_scaly_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).descriptor.hess
   module = render_c_module(hessian, typed_buffers=False)
 
   # Baselines are about 86 KB and 34k doubles. Headroom catches a CALL boundary materializing
@@ -643,7 +643,7 @@ CHECKS: dict[str, tuple[Callable[[], None], bool, bool]] = {
 
 def run_checks() -> Iterator[tuple[str, str]]:
   """Yield ``(name, outcome)`` for each gate; ``outcome`` is "ok", "skipped: ..." or raises."""
-  from alloy.solvers.paths import solver_loadable
+  from scaly.solvers.paths import solver_loadable
 
   have_ipopt = solver_loadable("ipopt")
   try:

@@ -1,6 +1,6 @@
 # The program dialect
 
-The program dialect is the lower of alloy's two representations. Where an `Expr` says what a value
+The program dialect is the lower of scaly's two representations. Where an `Expr` says what a value
 *is*, a `ProgramNode` says how it gets computed: which loops run, which buffer holds which value,
 which procedure runs on which device. It is close enough to code that rendering it to C is
 mechanical, and far enough from C that the same program could be rendered to something else.
@@ -19,11 +19,11 @@ matcher, one verifier and one printer work across the whole dialect.
 Here is a small program built directly, so the pieces are visible:
 
 ```python
-from alloy.ir import program as p
-from alloy.ir.program import RangeKind
-from alloy.ir.program_spec import verify_program
-from alloy.ir.text import format_program
-from alloy.ir.types import dtypes
+from scaly.ir import program as p
+from scaly.ir.program import RangeKind
+from scaly.ir.program_spec import verify_program
+from scaly.ir.text import format_program
+from scaly.ir.types import dtypes
 
 in_buf = p.buffer("in_", dtypes.float64, (16,))
 out_buf = p.buffer("out_", dtypes.float64, (16,))
@@ -129,14 +129,14 @@ caught at the boundary that produced it rather than as strange C much later.
 ## Reading a lowered program
 
 ```python
-import alloy as al
-from alloy.passes.lowering import lower_function
+import scaly as sc
+from scaly.passes.lowering import lower_function
 
-@al.function(al.L("x", 3), al.L("y", ...))
-def f(x: al.Expr) -> al.Expr:
+@sc.function(sc.L("x", 3), sc.L("y", ...))
+def f(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x * x).sum()
 
-print(al.render_program_assembly(lower_function(f)))
+print(sc.render_program_assembly(lower_function(f)))
 ```
 
 ```text

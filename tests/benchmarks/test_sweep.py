@@ -5,10 +5,10 @@ from pathlib import Path
 import shutil
 from typing import cast
 
-import alloy as al
+import scaly as sc
 import numpy as np
 import pytest
-from alloy.codegen import render_c_module
+from scaly.codegen import render_c_module
 
 from benchmarks.harness import gbench
 from benchmarks.harness.correctness import check_dense_reference, write_samples
@@ -37,23 +37,23 @@ def test_artifact_sizes_split_static_data_from_executable_source() -> None:
 
 
 def test_dispatch_metrics_count_retained_vmap_work_per_iteration() -> None:
-  x = al.sym("x", 2)
-  stage = al.Function._from_exprs("metric_stage", [x], [2.0 * x + x.sin()], ["x"], ["y"])
-  z = al.sym("z", 8)
-  mapped = al.Function._from_exprs("metric_vmap", [z], [al.vmap(stage, 4, [(z, 0, 2)])], ["z"], ["y"])
+  x = sc.sym("x", 2)
+  stage = sc.Function._from_exprs("metric_stage", [x], [2.0 * x + x.sin()], ["x"], ["y"])
+  z = sc.sym("z", 8)
+  mapped = sc.Function._from_exprs("metric_vmap", [z], [sc.vmap(stage, 4, [(z, 0, 2)])], ["z"], ["y"])
 
   assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (4, 0, 6)
 
 
 def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -> None:
-  x = al.sym("x", 2)
-  matrix = al.Expr.const(np.arange(8.0).reshape(4, 2))
+  x = sc.sym("x", 2)
+  matrix = sc.Expr.const(np.arange(8.0).reshape(4, 2))
   hidden = matrix @ x
-  inner = al.Function._from_exprs("metric_workspace_inner", [x], [(hidden * hidden).sum().reshape((1,)).block()], ["x"], ["y"])
-  y = al.sym("y", 2)
-  outer = al.Function._from_exprs("metric_workspace_outer", [y], [inner(y) + 1], ["y"], ["z"])
-  z = al.sym("z", 8)
-  mapped = al.Function._from_exprs("metric_workspace_vmap", [z], [al.vmap(outer, 4, [(z, 0, 2)])], ["z"], ["y"])
+  inner = sc.Function._from_exprs("metric_workspace_inner", [x], [(hidden * hidden).sum().reshape((1,)).block()], ["x"], ["y"])
+  y = sc.sym("y", 2)
+  outer = sc.Function._from_exprs("metric_workspace_outer", [y], [inner(y) + 1], ["y"], ["z"])
+  z = sc.sym("z", 8)
+  mapped = sc.Function._from_exprs("metric_workspace_vmap", [z], [sc.vmap(outer, 4, [(z, 0, 2)])], ["z"], ["y"])
 
   # Five slots in the inner callee and its caller's one call-output slot coexist. The 25 operations
   # are floating point only: integer multiply/add nodes used in generated subscripts do not count.
@@ -62,11 +62,11 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
 
 @pytest.mark.parametrize("stages", [1, 5])
 def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages: int) -> None:
-  x, w = al.sym("x", 3), al.sym("w", 9)
-  stage = al.Function._from_exprs("metric_hoist_stage", [x, w], [(w.reshape((3, 3)).exp() @ x).sin().block()], ["x", "w"], ["y"])
-  z, weights = al.sym("z", 3 * stages), al.sym("weights", 9)
-  mapped = al.Function._from_exprs(
-    "metric_hoist_map", [z, weights], [al.vmap(stage, stages, {"x": (z, 0, 3), "w": (weights, 0, 0)})], ["z", "weights"], ["y"]
+  x, w = sc.sym("x", 3), sc.sym("w", 9)
+  stage = sc.Function._from_exprs("metric_hoist_stage", [x, w], [(w.reshape((3, 3)).exp() @ x).sin().block()], ["x", "w"], ["y"])
+  z, weights = sc.sym("z", 3 * stages), sc.sym("weights", 9)
+  mapped = sc.Function._from_exprs(
+    "metric_hoist_map", [z, weights], [sc.vmap(stage, stages, {"x": (z, 0, 3), "w": (weights, 0, 0)})], ["z", "weights"], ["y"]
   )
   program = render_c_module(mapped).program
   assert any(proc.attrs.get("hoisted_from") == stage.name for proc in program.args)
@@ -74,12 +74,12 @@ def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages
 
 
 def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None:
-  from alloy.ir.program import ProgramNode, ProgramOp, const_int
+  from scaly.ir.program import ProgramNode, ProgramOp, const_int
 
-  x = al.sym("x", 2)
-  stage = al.Function._from_exprs("metric_scheduled_stage", [x], [2.0 * x + x.sin()], ["x"], ["y"])
-  z = al.sym("z", 8)
-  mapped = al.Function._from_exprs("metric_scheduled_map", [z], [al.vmap(stage, 4, [(z, 0, 2)])], ["z"], ["y"])
+  x = sc.sym("x", 2)
+  stage = sc.Function._from_exprs("metric_scheduled_stage", [x], [2.0 * x + x.sin()], ["x"], ["y"])
+  z = sc.sym("z", 8)
+  mapped = sc.Function._from_exprs("metric_scheduled_map", [z], [sc.vmap(stage, 4, [(z, 0, 2)])], ["z"], ["y"])
   program = render_c_module(mapped).program
   proc_count = int(program.attrs["proc_count"])
   procs = list(program.args[:proc_count])
@@ -96,35 +96,35 @@ def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None
 
 
 def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
-  x = al.sym("x", 1024)
-  inner = al.Function._from_exprs("metric_spill_inner", [x], [(x * x).block()], ["x"], ["y"])
-  y = al.sym("y", 1024)
+  x = sc.sym("x", 1024)
+  inner = sc.Function._from_exprs("metric_spill_inner", [x], [(x * x).block()], ["x"], ["y"])
+  y = sc.sym("y", 1024)
   called = inner(y)
-  outer = al.Function._from_exprs("metric_spill_outer", [y], [called + 1], ["y"], ["z"])
-  z = al.sym("z", 2048)
-  mapped = al.Function._from_exprs("metric_spill_vmap", [z], [al.vmap(outer, 2, [(z, 0, 1024)])], ["z"], ["y"])
+  outer = sc.Function._from_exprs("metric_spill_outer", [y], [called + 1], ["y"], ["z"])
+  z = sc.sym("z", 2048)
+  mapped = sc.Function._from_exprs("metric_spill_vmap", [z], [sc.vmap(outer, 2, [(z, 0, 1024)])], ["z"], ["y"])
 
   assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (2, 1024, 2048)
 
 
 def test_dispatch_metrics_count_shared_scalar_arithmetic_once() -> None:
-  x = al.sym("x", 1)
+  x = sc.sym("x", 1)
   shared = x[0].sin()
-  stage = al.Function._from_exprs("metric_shared_stage", [x], [al.stack([shared * shared, shared + 1])], ["x"], ["y"])
-  z = al.sym("z", 4)
-  mapped = al.Function._from_exprs("metric_shared_vmap", [z], [al.vmap(stage, 4, [(z, 0, 1)])], ["z"], ["y"])
+  stage = sc.Function._from_exprs("metric_shared_stage", [x], [sc.stack([shared * shared, shared + 1])], ["x"], ["y"])
+  z = sc.sym("z", 4)
+  mapped = sc.Function._from_exprs("metric_shared_vmap", [z], [sc.vmap(stage, 4, [(z, 0, 1)])], ["z"], ["y"])
   assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (4, 0, 3)
 
 
 def test_store_pairs_preserve_dispatch_arithmetic() -> None:
-  from alloy.ir.program import ProgramOp
-  from alloy.passes.lowering import lower_function
-  from alloy.passes.program._common import _walk
+  from scaly.ir.program import ProgramOp
+  from scaly.passes.lowering import lower_function
+  from scaly.passes.program._common import _walk
 
-  x = al.sym("x", 3)
-  stage = al.Function._from_exprs("metric_pair_stage", [x], [(x * x).scalar()], ["x"], ["y"])
-  z = al.sym("z", 12)
-  mapped = al.Function._from_exprs("metric_pair_map", [z], [al.vmap(stage, 4, [(z, 0, 3)])], ["z"], ["y"])
+  x = sc.sym("x", 3)
+  stage = sc.Function._from_exprs("metric_pair_stage", [x], [(x * x).scalar()], ["x"], ["y"])
+  z = sc.sym("z", 12)
+  mapped = sc.Function._from_exprs("metric_pair_map", [z], [sc.vmap(stage, 4, [(z, 0, 3)])], ["z"], ["y"])
   stages = {}
   lower_function(mapped, observe=lambda name, program: stages.__setitem__(name, program))
   before, paired, prepared = (stages[name] for name in ("pass:pack_workspace", "pass:coalesce_stores", "pass:prepare_scalar"))
@@ -134,14 +134,14 @@ def test_store_pairs_preserve_dispatch_arithmetic() -> None:
 
 
 def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
-  x = al.sym("x", 1)
-  stage = al.Function._from_exprs("metric_scalar_stage", [x], [x * x], ["x"], ["y"])
-  z = al.sym("z", 5)
-  unit = al.Function._from_exprs("metric_unit_vmap", [z], [al.vmap(stage, 1, [(z, 0, 1)])], ["z"], ["y"])
-  mixed = al.Function._from_exprs(
+  x = sc.sym("x", 1)
+  stage = sc.Function._from_exprs("metric_scalar_stage", [x], [x * x], ["x"], ["y"])
+  z = sc.sym("z", 5)
+  unit = sc.Function._from_exprs("metric_unit_vmap", [z], [sc.vmap(stage, 1, [(z, 0, 1)])], ["z"], ["y"])
+  mixed = sc.Function._from_exprs(
     "metric_mixed_vmap",
     [z],
-    [al.concat([al.vmap(stage, 2, [(z, 0, 1)]), al.vmap(stage, 3, [(z, 2, 1)])])],
+    [sc.concat([sc.vmap(stage, 2, [(z, 0, 1)]), sc.vmap(stage, 3, [(z, 2, 1)])])],
     ["z"],
     ["y"],
   )
@@ -150,11 +150,11 @@ def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
   # Mixed trip counts report the family whose trip count times per-iteration work is largest:
   # three squares beat two, and two iterations of four operations beat three of one.
   assert _dispatch_metrics(mixed, render_c_module(mixed).program) == (3, 0, 1)
-  heavy = al.Function._from_exprs("metric_heavy_stage", [x], [((x * x + x) * x).sin()], ["x"], ["y"])
-  weighted = al.Function._from_exprs(
+  heavy = sc.Function._from_exprs("metric_heavy_stage", [x], [((x * x + x) * x).sin()], ["x"], ["y"])
+  weighted = sc.Function._from_exprs(
     "metric_weighted_vmap",
     [z],
-    [al.concat([al.vmap(heavy, 2, [(z, 0, 1)]), al.vmap(stage, 3, [(z, 2, 1)])])],
+    [sc.concat([sc.vmap(heavy, 2, [(z, 0, 1)]), sc.vmap(stage, 3, [(z, 2, 1)])])],
     ["z"],
     ["y"],
   )
@@ -162,12 +162,12 @@ def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
 
 
 def test_unit_dispatch_excludes_an_unmapped_top_level_call() -> None:
-  x = al.sym("x", 1)
-  stage = al.Function._from_exprs("metric_unit_stage", [x], [(x * x).block()], ["x"], ["y"])
-  other = al.Function._from_exprs("metric_unmapped_stage", [x], [((x + 1) * (x + 2)).block()], ["x"], ["y"])
-  z = al.sym("z", 1)
-  mapped = al.vmap(stage, 1, [(z, 0, 1)])
-  root = al.Function._from_exprs("metric_unit_with_call", [z], [mapped + other(z)], ["z"], ["y"])
+  x = sc.sym("x", 1)
+  stage = sc.Function._from_exprs("metric_unit_stage", [x], [(x * x).block()], ["x"], ["y"])
+  other = sc.Function._from_exprs("metric_unmapped_stage", [x], [((x + 1) * (x + 2)).block()], ["x"], ["y"])
+  z = sc.sym("z", 1)
+  mapped = sc.vmap(stage, 1, [(z, 0, 1)])
+  root = sc.Function._from_exprs("metric_unit_with_call", [z], [mapped + other(z)], ["z"], ["y"])
   assert _dispatch_metrics(root, render_c_module(root).program) == (1, 0, 1)
 
 
@@ -179,12 +179,12 @@ def test_sweep_csv_has_dispatch_and_artifact_fields() -> None:
 
 
 def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
-  x = al.sym("x", 3)
+  x = sc.sym("x", 3)
   y = x[0] * x[0] + x[1] * x[2]
-  primal = al.Function._from_exprs("sweep_width_fixture", [x], [y], ["x"], ["y"])
-  hessian = al.sparse_hessian(primal, "y", "x")
+  primal = sc.Function._from_exprs("sweep_width_fixture", [x], [y], ["x"], ["y"])
+  hessian = sc.sparse_hessian(primal, "y", "x")
   descriptor = SimpleNamespace(name="sweep_width_fixture", hess=hessian, hess_sparsity=hessian.output_sparsities[0])
-  solver = cast(al.Function, SimpleNamespace(descriptor=descriptor))
+  solver = cast(sc.Function, SimpleNamespace(descriptor=descriptor))
 
   _, sparsity, coloring_width = _descriptor_kernel(solver, "hess")
 
@@ -194,23 +194,23 @@ def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
 
 
 def test_module_info_records_constructed_local_coloring_width() -> None:
-  a = al.sym("a", 1)
-  b = al.sym("b", 1)
-  piece = al.Function._from_exprs("module_info_piece", [a, b], [al.stack([a, b])], ["a", "b"], ["y"])
-  z = al.sym("z", 5)
-  mapped_expr = al.vmap(piece, 4, [(z, 0, 1), (z, 1, 1)])
-  mapped = al.Function._from_exprs("module_info_mapped", [z], [mapped_expr], ["z"], ["y"])
-  built = mapped.factory("module_info_spjac", ["z"], [al.factory.SpJac("y", "z")])
+  a = sc.sym("a", 1)
+  b = sc.sym("b", 1)
+  piece = sc.Function._from_exprs("module_info_piece", [a, b], [sc.stack([a, b])], ["a", "b"], ["y"])
+  z = sc.sym("z", 5)
+  mapped_expr = sc.vmap(piece, 4, [(z, 0, 1), (z, 1, 1)])
+  mapped = sc.Function._from_exprs("module_info_mapped", [z], [mapped_expr], ["z"], ["y"])
+  built = mapped.factory("module_info_spjac", ["z"], [sc.factory.SpJac("y", "z")])
   sparsity = built.output_sparsities[0]
   coloring_width = built.output_coloring_widths[0]
   assert sparsity is not None
   assert coloring_width == 2
-  assert max(al.column_coloring(sparsity), default=-1) + 1 == 1
+  assert max(sc.column_coloring(sparsity), default=-1) + 1 == 1
 
   module = render_c_module(built, header_name="module_info_spjac.h", source_name="module_info_spjac.c", typed_buffers=False)
   info = _module_info(
     built.name,
-    "alloy",
+    "scaly",
     module,
     [("z", 5)],
     sparsity,
@@ -524,15 +524,15 @@ int nlp_jac_g(const double** arg, double** res, int*, double*, void*) {
   _run_compiled_driver(tmp_path, info, source, header, {"first": np.array([2.0]), "second": np.array([3.0])}, np.array([2.0, 3.0]))
 
 
-def test_compiled_driver_runs_a_rendered_alloy_kernel_with_sanitized_inputs(tmp_path: Path) -> None:
-  x = al.sym("x", 1)
-  lam_f = al.sym("lam:f", 1)
-  lam_g = al.sym("lam:g", 1)
-  kernel = al.Function._from_exprs("rendered_driver_kernel", [x, lam_f, lam_g], [x + lam_f + 2.0 * lam_g], ["x", "lam:f", "lam:g"], ["y"])
+def test_compiled_driver_runs_a_rendered_scaly_kernel_with_sanitized_inputs(tmp_path: Path) -> None:
+  x = sc.sym("x", 1)
+  lam_f = sc.sym("lam:f", 1)
+  lam_g = sc.sym("lam:g", 1)
+  kernel = sc.Function._from_exprs("rendered_driver_kernel", [x, lam_f, lam_g], [x + lam_f + 2.0 * lam_g], ["x", "lam:f", "lam:g"], ["y"])
   module = render_c_module(kernel, header_name="rendered_driver_kernel.h", source_name="rendered_driver_kernel.c", typed_buffers=False)
   info = {
     "name": "wrong_construction_label",
-    "backend": "alloy",
+    "backend": "scaly",
     "source": Path(module.source_name),
     "header": module.header_name,
     "callable": kernel,
@@ -547,7 +547,7 @@ def test_compiled_driver_runs_a_rendered_alloy_kernel_with_sanitized_inputs(tmp_
     "res_size": 1,
     "output_nnz": (1,),
     "layout": "full",
-    "benchmark": "BM_CompiledAlloyFixture",
+    "benchmark": "BM_CompiledScalyFixture",
   }
   _run_compiled_driver(
     tmp_path,
@@ -582,7 +582,7 @@ int sparse_lower_fixture(const double**, double** res, const int*, double*, void
   info = {
     "name": "sparse_lower_fixture",
     "symbol": "sparse_lower_fixture",
-    "backend": "alloy",
+    "backend": "scaly",
     "source": Path("sparse_lower_fixture.c"),
     "header": "sparse_lower_fixture.h",
     "inputs": [],

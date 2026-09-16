@@ -1,0 +1,28 @@
+[project]
+name = "scaly-ipopt"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["scaly"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.entry-points."scaly.solvers"]
+ipopt = "scaly_ipopt:BACKEND"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scaly_ipopt"]
+artifacts = [
+  "src/scaly_ipopt/lib/*",
+  "src/scaly_ipopt/include/**/*",
+]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/", "hatch_build.py"]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
+[tool.uv.sources]
+scaly = { workspace = true }

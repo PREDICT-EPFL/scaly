@@ -1,6 +1,6 @@
 # The C ABI
 
-Every function alloy generates is reachable through one C signature:
+Every function scaly generates is reachable through one C signature:
 
 ```c
 int f(const double** arg, double** res, int* iw, double* w, void* mem);
@@ -8,8 +8,8 @@ int f(const double** arg, double** res, int* iw, double* w, void* mem);
 
 This is CasADi's universal ABI in spirit, and the choice is deliberate: it is the lowest common
 denominator that lets generated functions call each other, lets a generated solver drive generated
-oracles, and lets an existing C or C++ codebase consume alloy output without knowing anything about
-alloy. Typed wrappers exist on top of it, but this pointer signature is the stable interface.
+oracles, and lets an existing C or C++ codebase consume scaly output without knowing anything about
+scaly. Typed wrappers exist on top of it, but this pointer signature is the stable interface.
 
 ## Calling convention
 
@@ -52,7 +52,7 @@ footprint: small temporaries stay as C locals inside the function and never appe
 functions routinely report `0`.
 
 The memory hooks are shaped for a future in which a generated function holds state. Today
-`f_alloc_mem()` returns `NULL`, `f_init_mem(mem)` ignores its argument and returns `ALLOY_SUCCESS`,
+`f_alloc_mem()` returns `NULL`, `f_init_mem(mem)` ignores its argument and returns `SCALY_SUCCESS`,
 and `f_free_mem(mem)` does nothing. Having the hooks now means adding solver or integrator memory
 later will not change the exported signature.
 
@@ -60,11 +60,11 @@ later will not change the exported signature.
 
 | Code | Value | Meaning |
 | --- | --- | --- |
-| `ALLOY_SUCCESS` | 0 | Evaluation succeeded. |
-| `ALLOY_ERR_NULL_ABI` | 1 | The `arg` or `res` array itself is null. |
-| `ALLOY_ERR_NULL_WORK` | 2 | The function needs floating workspace and `w` is null. |
-| `ALLOY_ERR_NULL_RESULT` | 3 | A required `res[i]` is null. |
-| `ALLOY_ERR_NULL_INPUT` | 4 | A required `arg[i]` is null. |
+| `SCALY_SUCCESS` | 0 | Evaluation succeeded. |
+| `SCALY_ERR_NULL_ABI` | 1 | The `arg` or `res` array itself is null. |
+| `SCALY_ERR_NULL_WORK` | 2 | The function needs floating workspace and `w` is null. |
+| `SCALY_ERR_NULL_RESULT` | 3 | A required `res[i]` is null. |
+| `SCALY_ERR_NULL_INPUT` | 4 | A required `arg[i]` is null. |
 
 Headers guard these defines with `#ifndef`, so several generated modules can be included into one
 translation unit without colliding.
@@ -129,17 +129,17 @@ construction.
 
 ## Solver-bearing modules
 
-A module containing a solver additionally defines the versioned, fixed-width `alloy_solver_stats`
-struct and exports `int <solver_symbol>_stats(alloy_solver_stats* out)` for each wrapper in the
+A module containing a solver additionally defines the versioned, fixed-width `scaly_solver_stats`
+struct and exports `int <solver_symbol>_stats(scaly_solver_stats* out)` for each wrapper in the
 translation unit. The query copies the wrapper's latest process-local statistics; it adds no
 symbolic output and does not change the entry signature.
 
-Version 3 is a 136-byte layout: version, alloy status, native status and iteration count; then the
+Version 3 is a 136-byte layout: version, scaly status, native status and iteration count; then the
 objective and the total, function-evaluation, solver, QP, globalization and glue times in seconds;
 five evaluation counters with explicit padding; then primal violation, last step norm, accepted step
 length, merit penalty, backtrack count and accumulated QP iterations.
 
-Alloy status codes are backend-neutral: `OK=0`, `ACCEPTABLE=1`, `MAX_ITER=2`, `PRIMAL_INFEASIBLE=3`,
+Scaly status codes are backend-neutral: `OK=0`, `ACCEPTABLE=1`, `MAX_ITER=2`, `PRIMAL_INFEASIBLE=3`,
 `DUAL_INFEASIBLE=4`, `NUMERICS=5`, `USER_STOP=6`, `ERROR=7`.
 
 Timing is instrumented unconditionally with a monotonic clock, and the split is designed to add up:
@@ -155,7 +155,7 @@ workspace, lives in translation-unit statics. **Generated solver wrappers are no
 ## Producing a module
 
 ```python
-from alloy.codegen import render_c_module, workspace_size, write_module
+from scaly.codegen import render_c_module, workspace_size, write_module
 
 module = render_c_module(fn)
 module.header          # the .h text
@@ -170,7 +170,7 @@ write_module(fn, out_dir)
 From the command line:
 
 ```bash
-uv run python -m alloy.codegen mymodule:my_function -o generated/
+uv run python -m scaly.codegen mymodule:my_function -o generated/
 ```
 
 The JIT consumes exactly this object — it compiles `module.body` and keys its cache on that text —

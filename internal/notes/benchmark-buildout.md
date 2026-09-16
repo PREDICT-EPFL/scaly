@@ -22,12 +22,12 @@ It in turn superseded everything that lived in `fast_benchmarks/` (the FastBench
 
 ## 2. Benchmark suite
 
-### 2.1 Location: in the alloy repo, under `benchmarks/`
+### 2.1 Location: in the scaly repo, under `benchmarks/`
 
 The earlier separate-repo decision is reversed. Rationale: the suite's scope
 shrank to CasADi + laopt baselines (no acados/BOPTEST/OpenFAST-class
 dependencies), so the original reasons (heavy deps, credibility of a standalone
-suite) no longer outweigh the friction of a second repo. The suite tests alloy
+suite) no longer outweigh the friction of a second repo. The suite tests scaly
 through its installed API surface regardless.
 
 Plan:
@@ -39,7 +39,7 @@ Plan:
 - Benchmarks are excluded from the default `uv run pytest -n=auto tests/` run.
   A dedicated runner script executes them; it is wired into CI and the
   worktrunk checks.
-- The existing gbench harness generators (`benchmarks/alloy_*_benchmark.py`,
+- The existing gbench harness generators (`benchmarks/scaly_*_benchmark.py`,
   `benchmarks/scalability_sweep.py`) are absorbed into the new layout — their
   mechanics (per-cell compile, fail-fast dense-reference correctness check,
   monotonic short-circuit on timeout/size caps) become the sweep runner.
@@ -64,8 +64,8 @@ benchmarks/
 |---|---|---|
 | chain of masses | number of masses | classic hanging-chain NMPC (Wirsching/Bock/Diehl form); match the laopt paper's instance parameters where possible for an external reference point |
 | race cars: tracking NMPC, kinematic bicycle | horizon N | full-size Formula Student car on vendored FSDS tracks, with the minimum-curvature spline reference generator and lateral corridor constraint from `minimal_tracking_nmpc`; **later replaced by Johannes' MPFC with dynamic bicycle** (backlog), which lands in the same `race_cars/` package |
-| unbumpercars safety filter, neural DT dynamics + order-1 HCBF | number of cars | **based on `examples/ct_dt_cbf_filter/`** (neural model, RK4 one-step map, centralized, `al.vmap` over the car axis; CasADi + alloy implementations, closed loop, and per-step instrumentation already exist there). Fold the desired control into the **simulator's** dynamics only (not the OCP's), so the closed loop is plant + filter with no third controller entity. The older input-affine safety-filter variants in `benchmarks/` are **removed**. The pair barrier is the colleague's hyperbolic CBF (§2.5); the walls use the colleague's order-1 velocity barrier (§2.7). |
-| neural process MPC, Furuta pendulum swing-up | horizon N (`npmpc`) **and** decoder width W (`npmpc_decoder`) | the controller of *Neural Process Model Predictive Control* (Waibel, Mello Rella, Jones, EJC 2026), reference implementation `PREDICT-EPFL/neural_process_mpc`. A conditional-neural-process decoder evaluated at **every node of a prediction horizon** — the suite's only dense-NN-inside-a-horizon cell, and the one problem whose own paper states a real-time limit alloy may lift. Four workload names share one problem package because the harness allows one axis each (§2.8). |
+| unbumpercars safety filter, neural DT dynamics + order-1 HCBF | number of cars | **based on `examples/ct_dt_cbf_filter/`** (neural model, RK4 one-step map, centralized, `sc.vmap` over the car axis; CasADi + scaly implementations, closed loop, and per-step instrumentation already exist there). Fold the desired control into the **simulator's** dynamics only (not the OCP's), so the closed loop is plant + filter with no third controller entity. The older input-affine safety-filter variants in `benchmarks/` are **removed**. The pair barrier is the colleague's hyperbolic CBF (§2.5); the walls use the colleague's order-1 velocity barrier (§2.7). |
+| neural process MPC, Furuta pendulum swing-up | horizon N (`npmpc`) **and** decoder width W (`npmpc_decoder`) | the controller of *Neural Process Model Predictive Control* (Waibel, Mello Rella, Jones, EJC 2026), reference implementation `PREDICT-EPFL/neural_process_mpc`. A conditional-neural-process decoder evaluated at **every node of a prediction horizon** — the suite's only dense-NN-inside-a-horizon cell, and the one problem whose own paper states a real-time limit scaly may lift. Four workload names share one problem package because the harness allows one axis each (§2.8). |
 
 Future problem candidates (not now): diffusion-based stuff, GP stuff,
 hovercraft MBD/DIAL.
@@ -81,7 +81,7 @@ Retained doctrine from the previous strategy round:
 - **Correctness gates before speed**: every backend's outputs cross-checked
   against a reference (NumPy/CasADi) on shared episodes before any timing is
   recorded; per-cell artifacts (generated source, compile logs, raw traces)
-  archived with provenance (alloy commit/version, mode).
+  archived with provenance (scaly commit/version, mode).
 - **Steelman the baselines**: recurring passes tuning CasADi/laopt options per
   problem, tuning logs archived.
 
@@ -90,17 +90,17 @@ Retained doctrine from the previous strategy round:
 Eventual plugin coverage: QP — piqp, osqp, proxqp; NLP — ipopt, fatrop, laopt,
 acados. Start small and grow problems and solvers together.
 
-**Now** (no structure beyond what `al.nlp` already provides):
+**Now** (no structure beyond what `sc.nlp` already provides):
 
 | toolchain | solver path |
 |---|---|
 | casadi | IPOPT via Opti, JIT enabled |
-| alloy | IPOPT (existing `al.nlp` backend, moved to plugin) |
-| alloy-sqp | **one solver, two oracle providers**: the custom SQP (§3.3) run once with alloy C-ABI oracles and once with CasADi-codegen oracles (same ABI) — a controlled FE comparison |
+| scaly | IPOPT (existing `sc.nlp` backend, moved to plugin) |
+| scaly-sqp | **one solver, two oracle providers**: the custom SQP (§3.3) run once with scaly C-ABI oracles and once with CasADi-codegen oracles (same ABI) — a controlled FE comparison |
 
-The alloy-sqp design gives the cleanest fairness story available: the solver
+The scaly-sqp design gives the cleanest fairness story available: the solver
 binary, QP subsolver, globalization, and tolerances are *identical* across the
-two columns; only the oracle provider changes — which is exactly where alloy's
+two columns; only the oracle provider changes — which is exactly where scaly's
 claims live. CasADi's builtin `sqpmethod` is at most a secondary reference
 column: it differs in globalization details (line search, regularization,
 no laopt-style constraint relaxation), so a cross-solver comparison against it
@@ -114,14 +114,14 @@ specific need for a built-in CasADi SQP reference.
 
 **Later**: laopt as an *external baseline* where its problem implementations
 already exist (MPFC in the racing repo), once it is published;
-casadi+FATROP via Opti (JIT); alloy+FATROP (needs the structured OCP tier,
+casadi+FATROP via Opti (JIT); scaly+FATROP (needs the structured OCP tier,
 backlog); acados.
 
 ### 2.4 Metrics and tests
 
 Two complementary benchmark types:
 
-1. **Artificial FE scalability benchmarks** — focus on alloy's actual novelty,
+1. **Artificial FE scalability benchmarks** — focus on scaly's actual novelty,
    the function evaluation (oracles: dynamics, constraints, sparse
    Jacobians/Hessians). Measured with the Google Benchmark C++ harness (small
    generated wrapper, as done until now). Inputs are **representative problem
@@ -130,7 +130,7 @@ Two complementary benchmark types:
    axis; also record generated source size/LOC, compile time, workspace size.
 2. **Closed-loop benchmarks** — show usefulness in practical scenarios at the
    canonical operating points. Use the solvers' internal timings (solver vs FE
-   split where available; for laopt the alloy adapter times FE itself, since
+   split where available; for laopt the scaly adapter times FE itself, since
    laopt exposes no timing — see §3.3). Dump everything needed for
    visualization into **MCAP files** (written with the `foxglove-sdk` Python
    package; every message definition is a JSON schema generated from a
@@ -149,7 +149,7 @@ A standing rule for this problem, worth restating before the details: the benchm
 *representative reproduction* of the `bumper_car_simulator` filter, not that filter's
 development center. Controller research happens upstream; here a formulation only has to be
 faithful enough to be representative and stable enough (no collisions, no solver failures at
-the canonical point) that Alloy-vs-CasADi measurements on it mean something. Formulation
+the canonical point) that Scaly-vs-CasADi measurements on it mean something. Formulation
 choices below are tie-broken by benchmark stability, not filter quality.
 
 The unbumpercars filter moved off the one-step *position* DTCBF onto the order-1
@@ -172,18 +172,18 @@ is documented in the problem's README; what matters at roadmap level:
 - **The canonical point moved to C=8, 200 steps** (20 s) with **exact Lagrangian
   Hessians as the default on both backends** — the sparse-Hessian-through-`ExprOp.VMAP`
   path is what this problem exists to exercise, and `--limited-memory-hessian` is now
-  the opt-out. That is where the Alloy/CasADi gap is worth quoting:
+  the opt-out. That is where the Scaly/CasADi gap is worth quoting:
 
-  | Hessian | alloy | casadi | ratio | iters |
+  | Hessian | scaly | casadi | ratio | iters |
   |---|---|---|---|---|
   | exact (default) | 19.27 ms (p95 25.87) | 72.60 ms (p95 97.21) | 3.8x | 9.5 |
   | limited-memory | 17.60 ms (p95 22.08) | 56.07 ms (p95 69.94) | 3.2x | 19.2 |
 
   Iteration counts match to 0.1 across backends, so IPOPT walks the same path and the
-  gap is oracle cost. Alloy's stats split the exact column into 17.72 ms FE, 1.33 ms
+  gap is oracle cost. Scaly's stats split the exact column into 17.72 ms FE, 1.33 ms
   native solver, 0.21 ms glue; CasADi's `hess_lag` alone costs 3.711 ms per call.
   Exact Hessians halve the iterations and nearly remove IPOPT's own time, at the cost
-  of one `sphess` per iteration — a wash in wall clock for Alloy, clearly worse for
+  of one `sphess` per iteration — a wash in wall clock for Scaly, clearly worse for
   CasADi. Both reach 0 collisions and a 2.274 m minimum distance, and with exact
   Hessians the two backends stay together over the whole 20 s episode (tracking cost
   4.254 both); under limited-memory they drift slightly (3.99 vs 3.91), the closed
@@ -191,7 +191,7 @@ is documented in the problem's README; what matters at roadmap level:
 - **Two radii are now tracked**: `collision_radius = 1.9` (body discs touch, the
   only thing collisions are counted against) and `safety_radius = 2.28` (what the
   filter enforces) — the reference implementation's `safety_factor = 1.2`.
-- **No Alloy gap was exposed.** Everything the barrier needs (`sqrt`, integer
+- **No Scaly gap was exposed.** Everything the barrier needs (`sqrt`, integer
   `pow`, the nested smooth-max, exact sparse Lagrangian Hessians through `ExprOp.VMAP`)
   worked unchanged, and the exact-Hessian column still matches CasADi at rtol 1e-8.
   The one thing worth doing is a benchmark-side improvement, listed in §6: the
@@ -201,7 +201,7 @@ The reference implementation's own discrete-time mode refuses HCBF because its
 braking envelope is a tabulated NumPy inversion of the full-brake speed map. We
 replaced it with a fitted power-law envelope `c d^q` — since §2.6, one conservative
 fit covering both vehicle models — which is smooth and branch-free, so the symbolic
-path that blocked them is simply not blocked for us. That is a small but real "Alloy/CasADi made this
+path that blocked them is simply not blocked for us. That is a small but real "Scaly/CasADi made this
 easy" data point for the paper: the colleague hand-writes every barrier gradient,
 and the migration needed none of them.
 
@@ -223,7 +223,7 @@ the mismatched filter that choice was worth 24 colliding steps — so the shippe
 a single conservative fit `(1.00994, 0.8355)`, the tightest power law that never over-predicts
 either model's exact pair stopping envelope on `d ∈ [0.1, 3] m` (the CT-fitted `sqrt` it replaces
 over-promised the discrete model's braking by up to 0.4 m/s), collision- and failure-free for both
-matched pairings at the canonical point. And **Alloy's margin widens from
+matched pairings at the canonical point. And **Scaly's margin widens from
 3.8x to 9.0x** (32.4 ms against CasADi's 292.1 ms), since the bigger network is where the oracle
 provider starts to dominate.
 
@@ -327,26 +327,26 @@ established.
 (`race_cars`), neural dynamics without a horizon (`unbumpercars`) and a large sparse structured NLP
 (`chain`). This is the missing combination, and it is the shape most deployed learning-based MPC
 actually has. It is also the first problem where the reference implementation's own paper states a
-limit alloy may lift: the authors report a 20 ms sampling time, 10–20 ms solves, and that they shrank
+limit scaly may lift: the authors report a 20 ms sampling time, 10–20 ms solves, and that they shrank
 the decoder "as small as possible while providing the necessary performance" (§5.3). With 65 decision
 variables there is almost no linear algebra for the solver to do, so function evaluation is most of
 the solve — 40–58% measured for the three compiled-C columns, against `race_cars`' 23%
 (`benchmarks/README.md`'s race-car table: 2.73 ms total against 0.62 ms FE).
 
-**The code-size result is categorical.** Alloy's generated source is 417 lines for the sparse
+**The code-size result is categorical.** Scaly's generated source is 417 lines for the sparse
 equality Jacobian at *every* point on *both* axes — N = 6…200 and W = 16…256 — and 1041 for the exact
 Lagrangian Hessian at every point but one (1043 at W = 16, where the narrower matmul renders two
 lines differently), because the stage body uses VMAP and the weights are read out of the parameter
 tail rather than baked in as literals. CasADi SX reaches 1.31 million lines at N = 100 (a
 factor of 3142) and stops being compilable; CasADi MX runs out too on the Hessian, needing 227 s at
-N = 50 and exceeding a 900 s budget at N = 100. Alloy compiles the N = 200 Hessian in 0.94 s.
+N = 50 and exceeding a 900 s budget at N = 100. Scaly compiles the N = 200 Hessian in 0.94 s.
 
-**The runtime result has to be stated on the width axis.** Against SX on the horizon axis alloy is
+**The runtime result has to be stated on the width axis.** Against SX on the horizon axis scaly is
 1.55–4.46× faster wherever SX compiles, and 1.96–2.12× on the Hessian; the one cell where SX is ahead
 is the narrowest decoder, W = 16, at 0.90. Against MX the horizon axis is a tie (0.82–1.11, no trend)
-and the width axis is not: alloy grows ~4× per doubling, which is the quadratic cost a matmul-dominated kernel should have,
+and the width axis is not: scaly grows ~4× per doubling, which is the quadratic cost a matmul-dominated kernel should have,
 while MX grows 891× over a 16× width increase and crosses from 1.2× faster at the shipped width to
-2.6× slower at W = 256. An earlier draft's claim that alloy buys a doubling of decoder width *at the
+2.6× slower at W = 256. An earlier draft's claim that scaly buys a doubling of decoder width *at the
 kernel level* did not survive counting both kernels — it was a Jacobian-only artifact, and it is
 withdrawn.
 
@@ -356,9 +356,9 @@ in state (IPOPT pair) and 5.1e-9 (SQP pair):
 
 | column | mean solve | mean FE | FE share | mean iterations |
 |---|---|---|---|---|
-| `ipopt+alloy` | 3.85 ms | 1.53 ms | 40% | 10.07 |
+| `ipopt+scaly` | 3.85 ms | 1.53 ms | 40% | 10.07 |
 | `ipopt+casadi` | 17.34 ms | 12.93 ms | 75% | 10.07 |
-| `sqp+alloy` | **1.29 ms** | 0.66 ms | 51% | 4.67 |
+| `sqp+scaly` | **1.29 ms** | 0.66 ms | 51% | 4.67 |
 | `sqp+casadi` | 1.57 ms | 0.92 ms | 58% | 4.67 |
 
 **The `ipopt+casadi` column violates §2.3's own definition of the CasADi baseline, knowingly.**
@@ -373,17 +373,17 @@ expanded/compiled 7.75 ms after a **966 s** build, unexpanded/interpreted 9.50 m
 unexpanded/compiled **5.37 ms** after 23.9 s. Two conclusions worth carrying into the harmonization.
 Expanding to scalar SX is a trap — it triples the interpreter's work, and compiled it costs a
 sixteen-minute build to land slower than compiled MX. And **against a compiled CasADi function
-evaluation is a wash**: 1.46 ms against Alloy's 1.53. That is what the kernel sweeps already said
-(MX at 0.83–0.90× of Alloy at this width), which makes the interpreted column's 8.5× gap a
+evaluation is a wash**: 1.46 ms against Scaly's 1.53. That is what the kernel sweeps already said
+(MX at 0.83–0.90× of Scaly at this width), which makes the interpreted column's 8.5× gap a
 configuration artifact and not a result. A closed loop disagreeing with its own sweep by an order of
 magnitude was a bug report, not a caveat, and it was written up as a caveat first.
 
 So the durable claims from this problem are the ones that do not depend on that column:
 
 - **Code size and build time.** Constant generated source on both axes against SX's 1.31 M lines and
-  its failure to compile; in the closed loop, ~1 s to build Alloy's oracle set against 24 s for
+  its failure to compile; in the closed loop, ~1 s to build Scaly's oracle set against 24 s for
   compiled CasADi MX and 966 s for compiled CasADi SX.
-- **The decoder-width axis**, where Alloy crosses from 1.2× behind MX at W = 32 to 2.6× ahead at 256.
+- **The decoder-width axis**, where Scaly crosses from 1.2× behind MX at W = 32 to 2.6× ahead at 256.
 - **The two SQP columns**, which are both code-generated compiled C and therefore already fair:
   1.29 against 1.57 ms per solve and 0.66 against 0.92 ms of function evaluation, a 1.4× oracle
   margin. This is the number to quote for oracle performance on this problem.
@@ -394,7 +394,7 @@ both compile at `-O3`, but the §2.2 steelmanning pass — per-problem option tu
 tuning log — has not been done for this problem, so the SX and MX ratios above are provisional in the
 same way every other problem's are.
 
-**A candidate L-track item this surfaced, not yet confirmed.** Alloy is not scalar-expanding these
+**A candidate L-track item this surfaced, not yet confirmed.** Scaly is not scalar-expanding these
 matmuls; the generated C contains real loop nests. The small fixed handicap against MX at narrow
 widths (0.80–0.90 over W = 16–64 and N = 6–25; at N = 50 and 100 on the Jacobian axis it is gone, at
 1.11 and 1.00) is ours, and the likeliest cause is the AD mode: `sparse_jacobian` colours columns
@@ -402,18 +402,18 @@ only, and the per-stage block here is wider than it is tall, which is the regime
 or reverse sweep needs fewer passes — the opposite of `unbumpercars`, where the Jacobian is taken with
 respect to two controls per car and forward is right. Confirming it means adding a row-coloured or
 reverse sparse-Jacobian path and re-measuring, or instrumenting sweep counts. The prize is bounded and
-knowable: roughly 0.85 → 1.1 at the shipped width, and no change to the width-axis result alloy
+knowable: roughly 0.85 → 1.1 at the shipped width, and no change to the width-axis result scaly
 already wins.
 
 ## 3. Solver plugin system
 
 ### 3.1 Architecture (unchanged from previous round, restated)
 
-Solver integrations are separate Python packages developed in the alloy repo as
+Solver integrations are separate Python packages developed in the scaly repo as
 a **uv workspace** (per <https://docs.astral.sh/uv/concepts/projects/workspaces/>),
-so users install only what they need while alloy stays batteries-included:
+so users install only what they need while scaly stays batteries-included:
 
-- Core owns the small versioned **oracle protocol** — what `al.qp`/`al.nlp`
+- Core owns the small versioned **oracle protocol** — what `sc.qp`/`sc.nlp`
   normalize to today (`x, p → f, h_eq, g_ineq` + factory-built `spjac`/
   `sphess`, PIQP-style explicit constraint categories). Registry via
   `importlib.metadata` entry points behind the existing `solver="..."` API.
@@ -426,19 +426,19 @@ so users install only what they need while alloy stays batteries-included:
   hidden symbol visibility, never a shared linalg package; licensing isolated
   per package (EPL-2.0 IPOPT, etc.).
 - Consequence: PIQP and IPOPT eventually move out of `hatch_build.py` into
-  `alloy-piqp` / `alloy-ipopt`, making core a pure-Python wheel (NumPy only).
+  `scaly-piqp` / `scaly-ipopt`, making core a pure-Python wheel (NumPy only).
 
-Initial workspace members: `alloy` (core), `alloy-piqp`, `alloy-ipopt`,
-`alloy-sqp`. Layout sketch (solver plugins live under `plugins/`):
+Initial workspace members: `scaly` (core), `scaly-piqp`, `scaly-ipopt`,
+`scaly-sqp`. Layout sketch (solver plugins live under `plugins/`):
 
 ```text
-alloy/                    # repo root = uv workspace root
+scaly/                    # repo root = uv workspace root
   pyproject.toml          # core package + workspace table
-  src/alloy/
+  src/scaly/
   plugins/
-    alloy-piqp/
-    alloy-ipopt/
-    alloy-sqp/
+    scaly-piqp/
+    scaly-ipopt/
+    scaly-sqp/
   benchmarks/
   examples/
   tests/
@@ -453,7 +453,7 @@ to outside users, and nothing in the benchmark or paper path needs them.
 ### 3.2 laopt: investigation findings (2026-07-13) — adapter path dropped
 
 **Decision: no laopt adapter for now.** Instead we build our own generated-C SQP
-(`alloy-sqp`, §3.3), using laopt's textbook-but-comprehensive SQP as the
+(`scaly-sqp`, §3.3), using laopt's textbook-but-comprehensive SQP as the
 algorithmic reference — the same approach previously taken in anvil. The
 findings below motivated the decision and are kept for the record; laopt
 returns later as an external baseline for MPFC (§2.3, backlog).
@@ -463,46 +463,46 @@ laopt (Waibel, Schwan, Jones — EPFL LA; header-only C++17; **not yet public**,
 it) solves NLPs of exactly the form `min φ(ξ) s.t. c(ξ)=0, ξ_lb≤ξ≤ξ_ub,
 h_lb≤h(ξ)≤h_ub`. Verified against the code (`~/dev/laopt`):
 
-- **Problem form matches `al.nlp`** (two-sided general inequalities + separate
+- **Problem form matches `sc.nlp`** (two-sided general inequalities + separate
   box; equalities are rows with `lb==ub`, reclassified at the QP layer with
   `EQ_TOL=1e-10`). No runtime parameter vector through the oracle — fixed data
-  live as C++ members; re-solves re-linearize. An adapter holds alloy's `p`
+  live as C++ members; re-solves re-linearize. An adapter holds scaly's `p`
   and updates it between solves.
 - **No external-oracle interface today.** Users write templated C++ functions
   (CRTP `Differentiable`); derivatives come from laopt's Eigen forward-AD or
   from a CasADi AD backend it drives itself (`differentiable_casadi.hpp`,
   optionally JIT). It does **not** load pre-generated CasADi-C-ABI functions
   in the main path (the raw C ABI appears only in a benchmark comparison).
-  The integration point for alloy is laopt's internal problem dispatch:
+  The integration point for scaly is laopt's internal problem dispatch:
   `eval_objective`, `eval_objective_gradient`, `eval_objective_hessian` (GN),
   `eval_constraints(cons, lb, ub)`, `eval_constraints_jacobian`,
   `eval_lagrangian_hessian(obj_factor, dual, hess)` — all Eigen sparse **CSC**,
-  which alloy's `SparsityType` already converts to. Hessian: Gauss-Newton is
-  the default, exact optional — the alloy oracle should serve both.
+  which scaly's `SparsityType` already converts to. Hessian: Gauss-Newton is
+  the default, exact optional — the scaly oracle should serve both.
 - **PIQP is the default and only enabled-by-default QP backend**, consumed as
   the *header-only C++ template* `piqp::SparseSolver` via `find_package` —
-  compiled into the binary, no shared library. Therefore **the `alloy-piqp`
+  compiled into the binary, no shared library. Therefore **the `scaly-piqp`
   dylib (`libpiqpc`, the C interface) cannot be reused by laopt**; instead
-  `alloy-laopt` builds PIQP headers into its own extension. This is consistent
+  `scaly-laopt` builds PIQP headers into its own extension. This is consistent
   with the duplicate-don't-share vendoring rule.
-- **Dimensions are compile-time template parameters.** An `alloy-laopt`
+- **Dimensions are compile-time template parameters.** An `scaly-laopt`
   backend therefore likely generates and JIT-compiles a small C++ translation
   unit per problem (instantiating `SQPSolver<Problem, PIQPSolver<double>>`
-  with the problem dims, linking alloy's generated oracle `.so`) — the same
-  render/compile/cache model as `src/alloy/codegen/jit.py`. Whether laopt tolerates
+  with the problem dims, linking scaly's generated oracle `.so`) — the same
+  render/compile/cache model as `src/scaly/codegen/jit.py`. Whether laopt tolerates
   dynamic sizes instead is an open question to check with the authors.
 - **laopt reports no timings** (only iteration counts and convergence
-  metrics). Since the alloy adapter *is* the oracle, it times FE itself; total
+  metrics). Since the scaly adapter *is* the oracle, it times FE itself; total
   solve time is wrapped externally. For the casadi-laopt baseline, instrument
   the same way.
 
 Paper reference points (mini race car, N=25, tf=0.9 s): laopt SQP/PIQP 8.8 ms
 vs IPOPT 15.6 ms, FATROP 9.9 ms, acados 10.0 ms; laopt RTI 1.5 ms.
 
-### 3.3 `alloy-sqp`: a custom generated-C SQP plugin
+### 3.3 `scaly-sqp`: a custom generated-C SQP plugin
 
 Rather than adapting laopt (private, pre-publication, no external-oracle path,
-compile-time dims), `alloy-sqp` ships a Python render hook that emits the SQP
+compile-time dims), `scaly-sqp` ships a Python render hook that emits the SQP
 wrapper into the same C translation unit as its oracles. Its accepted algorithm
 uses exact Lagrangian Hessians by default (objective Hessian as an explicit
 alternative), a filter line search by default (l1/watchdog as an explicit
@@ -512,15 +512,15 @@ elastic constraints, or second-order correction.
 
 Design points:
 
-- **Oracle interface = Alloy's flat-buffer raw C convention**, with one pointer
+- **Oracle interface = Scaly's flat-buffer raw C convention**, with one pointer
   per input/output, a trailing workspace pointer, and explicit COO sparsity
-  metadata. Alloy emits this natively; a small generated adapter exposes CasADi
+  metadata. Scaly emits this natively; a small generated adapter exposes CasADi
   codegen functions through the same convention. One solver implementation
   therefore runs with either oracle provider — the controlled-comparison design
   of §2.3, and the reason this solver is a measurement instrument first,
   product feature second.
 - **QP subsolver: PIQP through its C interface** (`piqp_c`) — i.e. it links
-  the same shared library `alloy-piqp` vendors, so the dylib is genuinely
+  the same shared library `scaly-piqp` vendors, so the dylib is genuinely
   reused (unlike laopt, which inlines PIQP's C++ templates). Runtime dims,
   no per-problem C++ compilation.
 - **Timing built in from day one**: FE time per oracle function vs QP time vs
@@ -529,8 +529,8 @@ Design points:
 - Exposes solve + stats through the same `SolverFunction` surface as the
   piqp/ipopt backends (entry-point registered, `solver="sqp"`).
 - Paper positioning caution: this stays consistent with the §1 non-claim —
-  it is a solver *for* alloy (plugin infrastructure and measurement
-  instrument), not a solver written *in* alloy's IR, and it is not a headline
+  it is a solver *for* scaly (plugin infrastructure and measurement
+  instrument), not a solver written *in* scaly's IR, and it is not a headline
   contribution. Report it as such.
 
 ### 3.4 Binding doctrine: generated C glue, one artifact (decided 2026-07-14)
@@ -546,7 +546,7 @@ built, and it is the same artifact used at deployment.
 
 Consequences:
 
-- The Python-interleaved solve path (`al.qp`/`al.nlp` calling oracle and
+- The Python-interleaved solve path (`sc.qp`/`sc.nlp` calling oracle and
   solver from Python) is **removed** (initially planned as a demoted
   reference/debug mode; dropped outright 2026-07-15 — correctness is gated by
   analytic/KKT/CasADi references instead, and IPOPT/PIQP update rarely enough
@@ -558,7 +558,7 @@ Consequences:
   lands in the generated wrapper, where the CSC pattern is known at codegen
   time and baked in as static tables (values-only `piqp_update_sparse` at
   runtime).
-- **Stats/error resurfacing** is the one real design task: alloy owns a small,
+- **Stats/error resurfacing** is the one real design task: scaly owns a small,
   stable C stats struct (status code, iterations, objective, and the
   FE / solver / glue timing split the paper needs) that every generated
   wrapper fills from the solver's native info struct. The mapping lives in the
@@ -566,11 +566,11 @@ Consequences:
   upstream struct/enum drift breaks loudly at vendor bumps instead of
   silently — the drift problem hand-written bindings have is dissolved
   structurally. Solver-native structs never cross into Python; Python-side
-  status names/dataclasses are driven by the alloy enum.
+  status names/dataclasses are driven by the scaly enum.
 - Solver settings are baked into the generated wrapper as constants; the JIT
   cache keys on them, so option-tuning sweeps recompile per point — acceptable
   given per-cell artifact archiving (§2.4) already assumes per-cell builds.
-- `alloy-sqp` (§3.3) is already a native citizen of this model (C-ABI oracles
+- `scaly-sqp` (§3.3) is already a native citizen of this model (C-ABI oracles
   in, `piqp_c` inside, stats struct out) and needs no adaptation.
 
 This reframes L2 (§5) from a one-off filter deliverable into the universal
@@ -579,28 +579,28 @@ solver-integration mechanism, and raises its priority accordingly.
 ### 3.5 Plugin-owned codegen templates (decided + landed 2026-07-15)
 
 L2 landed with the per-solver C wrapper templates living in core
-(`src/alloy/codegen/solver.py`) — an abstraction leak: everything else about
+(`src/scaly/codegen/solver.py`) — an abstraction leak: everything else about
 a solver was already plugin-local (vendored lib, headers, entry point), but
-adding a new solver still meant editing the alloy codebase. That is exactly
+adding a new solver still meant editing the scaly codebase. That is exactly
 CasADi's plugin model (`Conic`/`Nlpsol` plugins are written in-tree against
 internal headers), and its weakness: third parties cannot ship a solver
 integration as their own package.
 
 Decision: **the wrapper template is part of the plugin.** The
-`SolverBackend` entry-point protocol (`src/alloy/solvers/registry.py`) gains a
+`SolverBackend` entry-point protocol (`src/scaly/solvers/registry.py`) gains a
 `render_wrapper(fun, ctx)` codegen hook next to the packaging metadata;
 protocol version bumped to 2. The PIQP/IPOPT templates moved to
-`alloy_piqp/codegen.py` / `alloy_ipopt/codegen.py` unchanged (the generated C
+`scaly_piqp/codegen.py` / `scaly_ipopt/codegen.py` unchanged (the generated C
 is byte-identical for single-backend units, verified by JIT-cache hits across
 the move; a unit reaching *both* backends orders includes/link flags
 alphabetically now instead of piqp-first — a one-time cache miss, accepted). Core keeps
 everything that makes the contract stable — problem normalization and oracle
 assembly, the `_raw` calling convention and Program-IR kernel rendering, the
-`alloy_solver_stats` struct + status enum + clock, JIT/cache/link-flag
+`scaly_solver_stats` struct + status enum + clock, JIT/cache/link-flag
 plumbing, and the framing of every wrapper (stats storage + accessor) — and
 `codegen/toolchain.py` / `codegen/solver.py` lost their hardcoded piqp/ipopt
 knowledge (backend discovery, includes, link flags, and the
-`ALLOY_<NAME>_LIB` override env vars are all registry-driven now).
+`SCALY_<NAME>_LIB` override env vars are all registry-driven now).
 
 The full contract a plugin must respect is documented in
 [`docs/dev/solver_plugins.md`](../../docs/dev/solver_plugins.md): required `_raw` signature,
@@ -610,7 +610,7 @@ the protocol-versioning rules. A structural test suite
 (`tests/solvers/test_registry.py`) pins the registry gates and the
 core/plugin codegen handoff with a fake in-test backend.
 
-Why now (and not with B4): `alloy-sqp` (§3.3) is the first new backend; had it
+Why now (and not with B4): `scaly-sqp` (§3.3) is the first new backend; had it
 been written against a core-owned template file it would have grown core the
 same way CasADi grows. Writing it as an external plugin against this protocol
 is the validation that the interface is complete — see B4.
@@ -645,7 +645,7 @@ summary for the future distillation:
 - The repo's CasADi `MO*` variants implement the same formulation via CasADi
   Opti + IPOPT — the natural reference when writing the casadi baseline impl.
 - Distillation goal: only the model, one track, and a simple closed loop over
-  1–2 laps. Reimplement model + cost in alloy (and CasADi), copy the track
+  1–2 laps. Reimplement model + cost in scaly (and CasADi), copy the track
   YAML, write the small runner. Do **not** port the C++ controller stack.
 
 ## 5. Execution plan
@@ -657,7 +657,7 @@ that the benchmarks expose as prerequisites.
 ### Library prerequisites (L-track)
 
 Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
-("Missing Alloy features exposed by this prototype"):
+("Missing Scaly features exposed by this prototype"):
 
 - **L1 — sparse Lagrangian Hessian through `ExprOp.VMAP`**
   (`sphess:lagrangian:z:z` over mapped neural RK4). Required for exact-Hessian
@@ -669,7 +669,7 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
   (cached concat-adjoint mapped once, three stride-class assemblies),
   tensor-form matmul VJP + structural `jvp_many` SCATTER/GATHER/TRANSPOSE
   rules, sphess-through-VMAP end-to-end with the permanent
-  `ALLOY_STRICT_JVP_MANY` tripwire, and the unbumpercars `--exact-hessian`
+  `SCALY_STRICT_JVP_MANY` tripwire, and the unbumpercars `--exact-hessian`
   column cross-validated against CasADi's `ctdt_hess_lag` at rtol 1e-8. The
   cross-check also flushed out a repo-lifetime CALL-VJP bug (formal
   substitution rewrote symbols inside the incoming cotangent; fixed). Known
@@ -680,7 +680,7 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
   Python goes through a generated C wrapper — the nested `SOLVER_CALL`
   single-`.so` path, extended — that calls the solver's C API directly with
   the generated oracle kernels; no Python/ctypes callbacks in the loop.
-  Scope: (a) the alloy-owned stats struct with per-layer timing (FE vs solver
+  Scope: (a) the scaly-owned stats struct with per-layer timing (FE vs solver
   vs glue: callback transition, buffer copies, kernel); (b) sparse PIQP via
   `piqp_c` with the CSC pattern baked at codegen time; (c) IPOPT through
   `IpStdCInterface.h` with callbacks pointing at generated kernels; (d) the
@@ -689,7 +689,7 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
   The unbumpercars standalone filter is the first consumer, not the scope.
   **Status: COMPLETE (2026-07-15). (a) L2-1 (2026-07-14): stats ABI +
   standalone dense QP through the generated wrapper. (b)+(c) L2-2:
-  `al.qp(..., sparse=True)` bakes structural CSC patterns of P/A_eq/G_ineq as
+  `sc.qp(..., sparse=True)` bakes structural CSC patterns of P/A_eq/G_ineq as
   static tables with compact CSC-ordered oracle values and values-only
   `piqp_update_sparse`; the IPOPT wrapper passes the caller's workspace into
   the eval callbacks (root cause of the chain-scale crash), fills the stats
@@ -700,7 +700,7 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
   without a soak period: the Python-interleaved path, the nanobind
   `_piqp_ext` + `_piqp_ctypes.py`, and the ctypes IPOPT callback binding are
   deleted; plugins ship vendored libs + headers + entry-point metadata only.
-  The unbumpercars CT-DTCBF filter (first consumer) runs through `al.nlp`'s
+  The unbumpercars CT-DTCBF filter (first consumer) runs through `sc.nlp`'s
   generated wrapper with cross-step warm starts and stats-derived
   instrumentation.**
 - **L3 — IPOPT low-level binding parity**: accept/return `lam_x`/`lam_g`
@@ -710,7 +710,7 @@ Verified gaps, documented first-hand in `examples/ct_dt_cbf_filter/README.md`
   symbolic parameters in the decorated ODE functions instead of baked-in
   values (blocks tuning sweeps). **Status: COMPLETE (2026-07-13).** Chain,
   race-car, and CT-DTCBF dynamics receive their physical constants and step
-  size through symbolic parameter vectors in both Alloy and CasADi paths
+  size through symbolic parameter vectors in both Scaly and CasADi paths
   (`1326b75`).
 - **L5 — plugin-owned solver codegen templates** (§3.5): move the per-solver
   C wrapper templates out of core into the plugins via the `render_wrapper`
@@ -735,10 +735,10 @@ columns respectively — interleave them between B2 and B4.
   assertions; runtime record-only). `examples/ct_dt_cbf_filter/` moves
   wholesale to `benchmarks/problems/unbumpercars/` and `examples/` is
   deleted. All legacy `benchmarks/` scripts are removed once their mechanics
-  are absorbed into the new harness (`alloy_safety_filter_benchmark.py`,
-  `measure_safety_filter.py`, `alloy_solver_aot_demo.py`,
-  `viz_tracking_eq_jac_probe.py`, `alloy_tracking_eq_jac_benchmark.py`,
-  `alloy_unbumpercars_ineq_jac_benchmark.py`, `scalability_sweep.py`,
+  are absorbed into the new harness (`scaly_safety_filter_benchmark.py`,
+  `measure_safety_filter.py`, `scaly_solver_aot_demo.py`,
+  `viz_tracking_eq_jac_probe.py`, `scaly_tracking_eq_jac_benchmark.py`,
+  `scaly_unbumpercars_ineq_jac_benchmark.py`, `scalability_sweep.py`,
   `scalability_results.csv`, `gen/`). **Status: COMPLETE (2026-07-13,
   `8b1dd3f`).** The suite lives under `benchmarks/`, smoke runs in CI, sweeps
   remain manual, and generated artifacts carry provenance. The obsolete
@@ -746,7 +746,7 @@ columns respectively — interleave them between B2 and B4.
   during B3 cleanup; its focused Program-IR regression fixture remains for
   compiler coverage.
 - **B1 — workspace + existing plugins**: convert the repo to a uv workspace
-  with solver plugins under `plugins/`; extract `alloy-piqp` / `alloy-ipopt`
+  with solver plugins under `plugins/`; extract `scaly-piqp` / `scaly-ipopt`
   from `hatch_build.py` (core goes pure-Python); formalize the oracle
   protocol + entry-point registry behind the existing `solver=` API.
   Wheels: backlog. **Status: COMPLETE (2026-07-13, `2c51692`).** Core is a
@@ -755,7 +755,7 @@ columns respectively — interleave them between B2 and B4.
 - **B2 — problems v1** (with L3/L4): chain of masses, race-car tracking NMPC
   (kinematic bicycle, from the existing fixture), unbumpercars CT-DTCBF filter promoted
   from `examples/ct_dt_cbf_filter/` (desired control folded into dynamics).
-  Alloy + CasADi implementations, NumPy/CasADi reference gates, sweep axes
+  Scaly + CasADi implementations, NumPy/CasADi reference gates, sweep axes
   wired, `expand=True` added to the CasADi columns. **Status: COMPLETE
   (2026-07-13, `3111b52` + `1326b75`).** The three selected formulations,
   symbolic model parameters, CasADi expansion, reference checks, and
@@ -774,11 +774,11 @@ columns respectively — interleave them between B2 and B4.
   `fsds_competition_1`, 1367 steps at 0.05 s), and
   unbumpercars C=8 (200 steps, seed 42). Their midpoint successful oracle inputs
   feed the canonical gbench cells; discrete-time exact-Lagrangian-Hessian
-  C=2/4/8 Alloy + CasADi sweep cells replace the legacy input-affine
+  C=2/4/8 Scaly + CasADi sweep cells replace the legacy input-affine
   unbumpercars axis. The
   `benchmarks/run.py closed-loop` command owns smoke/canonical execution and
   reproducibility artifacts. The race-car problem carries both closed-loop
-  columns of §2.3's **Now** table: `--solver ipopt --oracle alloy` and
+  columns of §2.3's **Now** table: `--solver ipopt --oracle scaly` and
   `--solver ipopt --oracle casadi`
   build a deliberately identical NLP (same `z`/`p` layout, same rows in the same
   order, same IPOPT options, `expand=True`) and are gated against each other by
@@ -786,21 +786,21 @@ columns respectively — interleave them between B2 and B4.
   **B3 closeout (2026-08-12):** the canonical unbumpercars FE handoff now
   consumes the discrete C=8 artifact and times the exact Lagrangian Hessian,
   including all primal, multiplier, model-weight, physics, and time-step
-  inputs. Both Alloy and CasADi MX are checked against a dense reference before
+  inputs. Both Scaly and CasADi MX are checked against a dense reference before
   timing. Exact-Hessian gates are unconditional, and the solver CI job reruns
   every problem gate plus each public closed-loop smoke command with skipped
   solver checks treated as failures.
-- **B4 — `alloy-sqp`** (after L1/L2): the custom SQP per §3.3 over `piqp_c`;
-  the one-solver-two-oracles columns (alloy oracles vs CasADi-codegen oracles)
+- **B4 — `scaly-sqp`** (after L1/L2): the custom SQP per §3.3 over `piqp_c`;
+  the one-solver-two-oracles columns (scaly oracles vs CasADi-codegen oracles)
   added to all B2 problems; FE/QP/line-search timing split in stats.
   **Must be built as an external plugin against the L5 protocol (§3.5,
   `docs/dev/solver_plugins.md`)**: `BACKEND` + `render_wrapper` in
-  `plugins/alloy-sqp`, zero edits to `src/alloy/` — if a core edit turns out
+  `plugins/scaly-sqp`, zero edits to `src/scaly/` — if a core edit turns out
   to be needed, that is a gap in the plugin protocol to fix explicitly (with
   a protocol-version bump if breaking), not a reason to special-case core.
   B4 doubles as the acceptance test that L5's interface is complete.
   **Status: COMPLETE (2026-08-14).**
-  **B4 closeout (2026-08-14):** `alloy-sqp` is an external plugin against
+  **B4 closeout (2026-08-14):** `scaly-sqp` is an external plugin against
   solver-plugin protocol v4 with zero core edits; the one-solver-two-oracles
   columns run on all three problems and stats v3 carries the
   FE/QP/globalization timing split. Robustness follows LAOPT: filter line
@@ -824,12 +824,12 @@ columns respectively — interleave them between B2 and B4.
   `qp="dense"` option covered by plugin unit tests; no benchmark selects it.
 - **B6 — neural process MPC** (§2.8): the fourth problem, a dense conditional-neural-process
   decoder evaluated at every node of a 12-step Furuta-pendulum horizon. Two sweep axes (horizon and
-  decoder width, each in Jacobian and Hessian form), the full `al.nlp` with the reference
+  decoder width, each in Jacobian and Hessian form), the full `sc.nlp` with the reference
   implementation's cost and bounds, the analytic plant, all four solver/oracle columns, a 3D scene,
   and a per-step cross-implementation gate against the authors' released episode.
   **Status: COMPLETE (2026-08-20).** Generated source is constant on both axes (417 lines for the
   Jacobian, 1041 for the Hessian bar one 1043 cell) where CasADi SX reaches 1.31 M lines and stops
-  compiling; the canonical episode swings the pendulum up in 0.2 s and `sqp+alloy` closes the loop in
+  compiling; the canonical episode swings the pendulum up in 0.2 s and `sqp+scaly` closes the loop in
   1.29 ms mean against the compiled CasADi SQP column's 1.57 ms. Function evaluation against a
   *compiled* CasADi is a wash, so the durable wins are code size, build time and the decoder-width
   axis; the `ipopt+casadi` column is knowingly uncompiled pending the §6 harmonization and carries no

@@ -1,7 +1,7 @@
 # Unbumpercars safety filter
 
 This directory is a *representative reproduction* of the centralized safety filter in
-`~/dev/bumper_car_simulator`, kept only so Alloy has a realistic workload to be fast on: a
+`~/dev/bumper_car_simulator`, kept only so Scaly has a realistic workload to be fast on: a
 neural model inside pairwise constraints, exact sparse Lagrangian Hessians through `ExprOp.VMAP`,
 and a CasADi implementation of the same NLP to compare against.
 
@@ -14,8 +14,8 @@ is benchmark stability, not filter quality. Concretely this gives us a fast iter
 for:
 
 - solver/runtime instrumentation on a realistic closed loop,
-- inspection of Alloy-generated C kernels,
-- identifying missing Alloy features that block a fair replacement of CasADi.
+- inspection of Scaly-generated C kernels,
+- identifying missing Scaly features that block a fair replacement of CasADi.
 
 ## Model and filter being tested
 
@@ -27,8 +27,8 @@ benchmarks/problems/unbumpercars/data/ct_full_xlarge.pt    # the continuous-time
 ```
 
 No `torch` dependency is required. Both are read with
-`alloy.utils.load_torch_state_dict`, then evaluated with plain NumPy for the
-simulator and with CasADi / Alloy expressions inside the filters.
+`scaly.utils.load_torch_state_dict`, then evaluated with plain NumPy for the
+simulator and with CasADi / Scaly expressions inside the filters.
 
 Per car state and input are:
 
@@ -46,7 +46,7 @@ and a first-order steering actuator at the checkpoint's own `tau = 0.155 s`.
 
 `--plant ct` and `--filter-model ct` select the continuous-time `CTFullModel` instead,
 discretized with RK4 into a one-step map at `dt = 0.1` (`rk4_step_np` /
-`alloy_ctfull_rk4_fn`). Nothing in the barriers depends on how the next state is produced,
+`scaly_ctfull_rk4_fn`). Nothing in the barriers depends on how the next state is produced,
 so either model can sit on either side; every measurement before 2026-08-11 was taken with
 the CT model on both. The long study below of what a *mismatched* pairing costs (DT plant,
 CT filter) is kept as the measured argument for the matched default.
@@ -112,7 +112,7 @@ sampled-data loop, so the Lie-derivative machinery buys nothing the one-step map
 already give; and the order-1 HCBF turned out to *outperform* it on the thing that matters —
 2.28 m minimum distance against 1.55 m, at a lower tracking cost. The input-affine QP variant
 is the one piece with residual value: it is the natural workload if this benchmark ever needs
-to exercise `al.qp` on a network-bearing problem, and it would need a two-head checkpoint that
+to exercise `sc.qp` on a network-bearing problem, and it would need a two-head checkpoint that
 does not exist.
 
 ### Wall constraints, slacks, and the NLP
@@ -184,7 +184,7 @@ Status: **the default.** Plant and filter both run the discrete MLP; `--plant ct
 Everything below this section documents the filter predicting with the RK4'd continuous-time
 model against a discrete-MLP plant, and the trouble that mismatch causes — it is kept because it
 is the measured argument for the default being what it is. Giving the filter the plant's own model
-removes all of it. `C=8`, 200 steps, seeds `{42, 1, 2, 3, 7}`, Alloy:
+removes all of it. `C=8`, 200 steps, seeds `{42, 1, 2, 3, 7}`, Scaly:
 
 | | `--filter-model ct` (the old default) | `--filter-model dt` (now the default) |
 |---|---|---|
@@ -260,7 +260,7 @@ and the actuator's time constant.
 
 ### What the mismatch costs
 
-`C=8`, 200 steps, IPOPT with Alloy oracles, exact Hessians, same filter throughout — only the plant
+`C=8`, 200 steps, IPOPT with Scaly oracles, exact Hessians, same filter throughout — only the plant
 differs. **Aggregated over seeds `{42, 1, 2, 3, 7}`, because single episodes on the DT plant
 are not decision-grade** — see the noise floor two sections down:
 
@@ -288,7 +288,7 @@ tracking-cost gap.
 *This section describes `--filter-model ct`. Under `--filter-model dt` the loop is not sensitive
 and none of it applies.*
 
-With the mismatched filter, the Alloy and CasADi rollouts visibly separate — different paths,
+With the mismatched filter, the Scaly and CasADi rollouts visibly separate — different paths,
 different per-step slacks. **This is not an oracle disagreement.** Three measurements pin it down:
 
 1. **Per step, on the same state, the two providers agree to 7e-14** in the commanded input,
@@ -296,7 +296,7 @@ different per-step slacks. **This is not an oracle disagreement.** Three measure
    all steps: 7.3e-14). They are solving the same NLP to the same point. `oracles_solve_alike`
    gates this.
 2. **The same provider against itself diverges identically.** Perturb one car's initial speed by
-   1e-9 and run Alloy twice: with the DT plant the gap grows to 5.8e-4 by step 39 and 5.8 by
+   1e-9 and run Scaly twice: with the DT plant the gap grows to 5.8e-4 by step 39 and 5.8 by
    step 79, a geometric mean amplification of **1.33x per step**. With the CT plant the same
    perturbation ends at 3.2e-8 — amplification 1.045x per step, i.e. flat.
 3. **The plant map alone is not the amplifier.** Open loop under a fixed control sequence, a
@@ -520,7 +520,7 @@ Every deliberate divergence, so a future upstream bump can be diffed against thi
 
 | # | Upstream | Here | Why |
 |---|---|---|---|
-| 1 | `gradient_HCBF` returns `(h, h_dot, grad_h_dot_i_j, grad_h_dot_j_i)` — two pages of hand-written gradients | only the barrier value (upstream's `h_dot`; its `h` is identically 0) | CasADi and Alloy differentiate it. This is the single largest simplification and the reason the port is short. |
+| 1 | `gradient_HCBF` returns `(h, h_dot, grad_h_dot_i_j, grad_h_dot_j_i)` — two pages of hand-written gradients | only the barrier value (upstream's `h_dot`; its `h` is identically 0) | CasADi and Scaly differentiate it. This is the single largest simplification and the reason the port is short. |
 | 2 | `MLPModel.braking_profile`: tabulates `D(v)` on a 2048-point grid from the discrete full-brake recursion, then inverts it | `V(d) = c d^q`, one conservative fit under both models' exact recursions | The table has no symbolic counterpart — the stated reason `CentralizedCBF` refuses HCBF under `time_domain="DT"`. |
 | 3 | Envelope saturated at `2 * v_cap` (`saturate=True`) | no saturation | Capping the envelope *tightens* the constraint at long range, where nothing is at risk. Ours is only queried where the row is live. |
 | 4 | Constraint imposed in continuous time through Lie derivatives (HCBF and velocity walls are CT-only upstream) | DTCBF decrease condition on the filter model's one-step prediction | Both barriers have relative degree 1, so the discrete model suffices. |
@@ -547,16 +547,16 @@ From the repository root:
 ```bash
 uv run python benchmarks/run.py closed-loop --problem unbumpercars --smoke
 uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle casadi
-uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle scaly
 uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle casadi
 uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver none
-uv run python -m benchmarks.problems.unbumpercars.run_closed_loop --solver ipopt --oracle both --dump-alloy-c
+uv run python -m benchmarks.problems.unbumpercars.run_closed_loop --solver ipopt --oracle both --dump-scaly-c
 ```
 
 Runs write under `benchmarks/results/closed-loop/unbumpercars/<solver>+<oracle>/`
 (`none/` for open loop); import this directory's hand-authored
 `foxglove-layout.json` in Foxglove Desktop to view it. The direct module remains
-useful for side-by-side Alloy/CasADi runs and advanced filter options.
+useful for side-by-side Scaly/CasADi runs and advanced filter options.
 
 Common options:
 
@@ -581,7 +581,7 @@ representative_fe_inputs.npz closed-loop oracle input for FE benchmarks
 config/provenance/metadata   reproducibility data
 trajectories.png             matplotlib trajectory plot
 performance.png              solve/evaluation timing plot
-alloy_c/                     generated C kernels when --dump-alloy-c is used with Alloy
+scaly_c/                     generated C kernels when --dump-scaly-c is used with Scaly
 ```
 
 Generated outputs belong under `benchmarks/results/`.
@@ -627,7 +627,7 @@ corresponds to this, which is why the scene draws only the two discs.
 
 `CasadiDTCBFSafetyFilter` builds one MX NLP with `expand=False` and an exact
 Lagrangian Hessian. A fresh process code-generates the complete `nlpsol`, then the
-timing process loads it against Alloy's IPOPT. Separate `ca.Function` objects provide
+timing process loads it against Scaly's IPOPT. Separate `ca.Function` objects provide
 the per-oracle probes. `--limited-memory-hessian` swaps both IPOPT oracle providers to
 `ipopt.hessian_approximation = limited-memory` instead.
 
@@ -644,43 +644,43 @@ Important caveat: the explicit instrumentation functions are close to, but not
 necessarily identical to, the exact internal oracle functions CasADi wires into
 IPOPT.
 
-### Alloy
+### Scaly
 
-`AlloyDTCBFSafetyFilter` builds an Alloy oracle with outputs:
+`ScalyDTCBFSafetyFilter` builds an Scaly oracle with outputs:
 
 ```text
 cost(z, bar_x, u_des, weights, physics, dt)
 g(z, bar_x, u_des, weights, physics, dt)
 ```
 
-The RK4 neural dynamics are evaluated with `al.vmap` over the car axis, so the
+The RK4 neural dynamics are evaluated with `sc.vmap` over the car axis, so the
 prototype exercises the mapped neural dynamics path we care about. The filter
-then creates Alloy factories for:
+then creates Scaly factories for:
 
 - `grad:cost:z`,
 - `spjac:g:z`,
 - `sphess:gamma:z:z` with `gamma = lam:cost * cost + dot(lam:g, g)`, unless
   `--limited-memory-hessian` is passed.
 
-The whole solve is one `al.nlp(...)` SolverFunction: the derivative factories
-above are built inside `al.nlp`, and the filter runs through a generated C
+The whole solve is one `sc.nlp(...)` SolverFunction: the derivative factories
+above are built inside `sc.nlp`, and the filter runs through a generated C
 solver wrapper with no Python callbacks in the loop. With `--solver ipopt`, the
-wrapper drives `IpStdCInterface.h`; with `--solver sqp`, `alloy-sqp` assembles
-sparse PIQP subproblems and can use either Alloy- or CasADi-generated oracles.
+wrapper drives `IpStdCInterface.h`; with `--solver sqp`, `scaly-sqp` assembles
+sparse PIQP subproblems and can use either Scaly- or CasADi-generated oracles.
 The SQP controller tries its default filter globalization first and retries a
 strict failure from the same warm start through l1/watchdog-five; reported time
 and evaluation counts include both attempts. Warm starts carry the primal
 iterate plus the constraint and box multipliers between steps
-(`lam_ineq0`/`lam_box0`). With `--dump-alloy-c`, the full solver module
+(`lam_ineq0`/`lam_box0`). With `--dump-scaly-c`, the full solver module
 (wrapper + kernels) is rendered to inspectable C files.
 
-Instrumentation recorded per step (from the `alloy_solver_stats` struct):
+Instrumentation recorded per step (from the `scaly_solver_stats` struct):
 
 - total solve time with the FE / solver / QP / globalization / glue split,
-  status (alloy + native), and iteration count,
+  status (scaly + native), and iteration count,
 - objective, min constraint value, the L1 slack total (largest single slack under `max_slack`),
 - per-oracle-function evaluation counts,
-- Alloy build/JIT-compile timings,
+- Scaly build/JIT-compile timings,
 - sparse Jacobian nnz and lower-triangular Hessian nnz.
 
 ## Benchmark results
@@ -691,10 +691,10 @@ generated oracles. This README does not retain copied timing tables. See the
 [current closed-loop results](../../../docs/results/index.md) and the
 [current Hessian sweep](../../../docs/results/scalability.md).
 
-## Alloy features closed by this prototype
+## Scaly features closed by this prototype
 
 The original prototype exposed the following gaps; all are now closed on the
-Alloy path.
+Scaly path.
 
 ### 1. Exact sparse Hessian through `ExprOp.VMAP` (closed)
 
@@ -705,21 +705,21 @@ with respect to `z` through the mapped RK4 neural dynamics:
 sphess:lagrangian:z:z
 ```
 
-The oracle deliberately uses `al.vmap` to evaluate the per-car neural RK4 model.
-Alloy now propagates reverse and sparse second-order AD through `ExprOp.VMAP` while
+The oracle deliberately uses `sc.vmap` to evaluate the per-car neural RK4 model.
+Scaly now propagates reverse and sparse second-order AD through `ExprOp.VMAP` while
 preserving the compact mapped representation. The filter builds
 `sphess:gamma:z:z`, passes its lower-triangular sparsity to IPOPT, and evaluates
 it from IPOPT's objective factor and constraint multipliers.
 
 ### 2. Native generated-C solver path (closed)
 
-The filter is an `al.nlp(...)` SolverFunction. Its generated C wrapper calls
+The filter is an `sc.nlp(...)` SolverFunction. Its generated C wrapper calls
 `IpStdCInterface.h` directly, routes IPOPT callbacks to generated oracle kernels,
-and fills Alloy's stable stats struct with FE/solver/glue timings.
+and fills Scaly's stable stats struct with FE/solver/glue timings.
 
 ### 3. IPOPT warm-start/status parity (closed)
 
-The low-level Alloy IPOPT wrapper now exposes and accepts the same data we use
+The low-level Scaly IPOPT wrapper now exposes and accepts the same data we use
 from CasADi:
 
 - previous `lam_x`,
@@ -728,17 +728,17 @@ from CasADi:
 - iteration count,
 - value-callback counts.
 
-The closed-loop Alloy filter reuses these multipliers after successful solves
+The closed-loop Scaly filter reuses these multipliers after successful solves
 and reports iteration and callback statistics alongside CasADi's measurements.
 
 ### 4. Callback accounting (closed)
 
 The generated wrapper avoids Python callbacks entirely and reports FE, native
-solver, and wrapper/glue timing through `alloy_solver_stats`.
+solver, and wrapper/glue timing through `scaly_solver_stats`.
 
 ### 5. Parameterized model constants (closed)
 
-The Alloy and CasADi ODE/RK4 paths take physical constants and `dt` symbolically.
+The Scaly and CasADi ODE/RK4 paths take physical constants and `dt` symbolically.
 `CarPhysics` and `ClosedLoopConfig` defaults fill those values for normal runs.
 
 ## Next comparison matrix
@@ -748,8 +748,8 @@ Suggested next benchmarking pass:
 1. CasADi MX baseline, limited-memory Hessian.
 2. CasADi MX with `expand=False`, limited-memory Hessian.
 3. CasADi exact Hessian.
-4. Alloy generated-C solver path, limited-memory Hessian.
-5. Alloy generated-C solver path with exact sparse Hessian.
+4. Scaly generated-C solver path, limited-memory Hessian.
+5. Scaly generated-C solver path with exact sparse Hessian.
 
 For each row, record:
 

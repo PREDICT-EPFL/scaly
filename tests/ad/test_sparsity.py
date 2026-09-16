@@ -5,37 +5,37 @@ from typing import cast
 import numpy as np
 import pytest
 
-import alloy as al
-from alloy.ad import finite_difference
-from alloy.ad.sparse import Triangle
+import scaly as sc
+from scaly.ad import finite_difference
+from scaly.ad.sparse import Triangle
 
 
-def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[al.Function, al.Function]:
-  x = al.sym("x", 2)
+def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[sc.Function, sc.Function]:
+  x = sc.sym("x", 2)
   if shared:
-    s = al.sym("s", 1)
-    hidden = al.stack([x[0] * x[1] + s[0] * x[0], x[0] - 0.4 * x[1] + s[0] * x[1]])
-    piece = al.Function._from_exprs("mapped_sphess_shared_piece", [x, s], [al.stack([(hidden.tanh() ** 2).sum()])], ["x", "s"], ["g"])
+    s = sc.sym("s", 1)
+    hidden = sc.stack([x[0] * x[1] + s[0] * x[0], x[0] - 0.4 * x[1] + s[0] * x[1]])
+    piece = sc.Function._from_exprs("mapped_sphess_shared_piece", [x, s], [sc.stack([(hidden.tanh() ** 2).sum()])], ["x", "s"], ["g"])
   else:
-    hidden = al.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
-    piece = al.Function._from_exprs("mapped_sphess_piece", [x], [al.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
+    hidden = sc.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
+    piece = sc.Function._from_exprs("mapped_sphess_piece", [x], [sc.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
 
-  z = al.sym("z", 2 * length + int(shared))
+  z = sc.sym("z", 2 * length + int(shared))
   specs = [(z, 0, 2), *(((z, 2 * length, 0),) if shared else ())]
-  mapped = al.vmap(piece, length, specs)
+  mapped = sc.vmap(piece, length, specs)
   calls = []
   for it in range(length):
     args = [z[2 * it : 2 * (it + 1)], *((z[2 * length : 2 * length + 1],) if shared else ())]
     calls.append(piece(piece.input_tree.unflatten(tuple(args))))
-  unrolled = al.concat(calls)
+  unrolled = sc.concat(calls)
   f = (z * z).sum()
   return (
-    al.Function._from_exprs(f"mapped_sphess_{length}_{int(shared)}", [z], [f, mapped], ["z"], ["f", "g"]),
-    al.Function._from_exprs(f"unrolled_sphess_{length}_{int(shared)}", [z], [f, unrolled], ["z"], ["f", "g"]),
+    sc.Function._from_exprs(f"mapped_sphess_{length}_{int(shared)}", [z], [f, mapped], ["z"], ["f", "g"]),
+    sc.Function._from_exprs(f"unrolled_sphess_{length}_{int(shared)}", [z], [f, unrolled], ["z"], ["f", "g"]),
   )
 
 
-def _scatter_sparse(values: np.ndarray, sparsity: al.SparsityType) -> np.ndarray:
+def _scatter_sparse(values: np.ndarray, sparsity: sc.SparsityType) -> np.ndarray:
   dense = np.zeros(sparsity.shape)
   dense[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = values
   return dense
@@ -43,21 +43,21 @@ def _scatter_sparse(values: np.ndarray, sparsity: al.SparsityType) -> np.ndarray
 
 def test_sparsity_type_roundtrip_and_bounds() -> None:
   mask = np.array([[True, False, True], [False, True, False]])
-  sp = al.SparsityType.from_mask(mask)
+  sp = sc.SparsityType.from_mask(mask)
 
   assert sp.shape == (2, 3)
   assert sp.nnz == 3
   np.testing.assert_array_equal(sp.to_mask(), mask)
 
   try:
-    _ = al.SparsityType((2, 2), (0, 2), (0, 1))
+    _ = sc.SparsityType((2, 2), (0, 2), (0, 1))
   except ValueError as e:
     assert "out of bounds" in str(e)
   else:  # pragma: no cover
     raise AssertionError("invalid sparsity should fail")
 
   try:
-    _ = al.SparsityType((2, 2), (0, 0), (1, 1))
+    _ = sc.SparsityType((2, 2), (0, 0), (1, 1))
   except ValueError as e:
     assert "sparsity indices must be unique" in str(e)
   else:  # pragma: no cover
@@ -65,7 +65,7 @@ def test_sparsity_type_roundtrip_and_bounds() -> None:
 
 
 def test_sparsity_type_csr_csc_conversions() -> None:
-  sp = al.SparsityType((3, 4), (2, 0, 1, 1), (3, 2, 0, 3))
+  sp = sc.SparsityType((3, 4), (2, 0, 1, 1), (3, 2, 0, 3))
 
   row_ptr, col_ind, csr_perm = sp.to_csr()
   assert row_ptr == (0, 1, 3, 4)
@@ -73,33 +73,33 @@ def test_sparsity_type_csr_csc_conversions() -> None:
   # val_perm maps CSR slot -> COO position: sorted (row, col) order of the COO pattern above.
   assert csr_perm == (1, 2, 3, 0)
   assert tuple((sp.rows[i], sp.cols[i]) for i in csr_perm) == ((0, 2), (1, 0), (1, 3), (2, 3))
-  np.testing.assert_array_equal(al.SparsityType.from_csr(sp.shape, row_ptr, col_ind).to_mask(), sp.to_mask())
+  np.testing.assert_array_equal(sc.SparsityType.from_csr(sp.shape, row_ptr, col_ind).to_mask(), sp.to_mask())
 
   col_ptr, row_ind, csc_perm = sp.to_csc()
   assert col_ptr == (0, 1, 1, 2, 4)
   assert row_ind == (1, 0, 1, 2)
   assert csc_perm == (2, 1, 3, 0)
   assert tuple((sp.cols[i], sp.rows[i]) for i in csc_perm) == ((0, 1), (2, 0), (3, 1), (3, 2))
-  np.testing.assert_array_equal(al.SparsityType.from_csc(sp.shape, col_ptr, row_ind).to_mask(), sp.to_mask())
+  np.testing.assert_array_equal(sc.SparsityType.from_csc(sp.shape, col_ptr, row_ind).to_mask(), sp.to_mask())
 
 
 def test_sparsity_type_compressed_format_errors() -> None:
   try:
-    _ = al.SparsityType.from_csr((2, 3), (0, 1), (0,))
+    _ = sc.SparsityType.from_csr((2, 3), (0, 1), (0,))
   except ValueError as e:
     assert "row_ptr must have length 3" in str(e)
   else:  # pragma: no cover
     raise AssertionError("short CSR row pointer should fail")
 
   try:
-    _ = al.SparsityType.from_csc((2, 3), (0, 2, 1, 1), (0,))
+    _ = sc.SparsityType.from_csc((2, 3), (0, 2, 1, 1), (0,))
   except ValueError as e:
     assert "col_ptr must be nondecreasing" in str(e)
   else:  # pragma: no cover
     raise AssertionError("invalid CSC column pointer should fail")
 
   try:
-    _ = al.SparsityType.from_csr((2, 3), (0, 1, 1), (3,))
+    _ = sc.SparsityType.from_csr((2, 3), (0, 1, 1), (3,))
   except ValueError as e:
     assert "CSR column indices out of bounds" in str(e)
   else:  # pragma: no cover
@@ -107,9 +107,9 @@ def test_sparsity_type_compressed_format_errors() -> None:
 
 
 def test_jacobian_sparsity_for_structural_ops() -> None:
-  x = al.sym("x", 4)
-  y = al.stack([x[0], x[2:4].sum(), al.gather(x, [1, 3]).sum()])
-  sp = al.jacobian_sparsity(y, x)
+  x = sc.sym("x", 4)
+  y = sc.stack([x[0], x[2:4].sum(), sc.gather(x, [1, 3]).sum()])
+  sp = sc.jacobian_sparsity(y, x)
 
   np.testing.assert_array_equal(
     sp.to_mask(),
@@ -124,18 +124,18 @@ def test_jacobian_sparsity_for_structural_ops() -> None:
 
 
 def test_jacobian_sparsity_tracks_concat_axis_layout() -> None:
-  x = al.sym("x", (2, 2))
-  y = al.concat([x[:, :1], x[:, 1:2]], axis=1)
-  sp = al.jacobian_sparsity(y, x)
+  x = sc.sym("x", (2, 2))
+  y = sc.concat([x[:, :1], x[:, 1:2]], axis=1)
+  sp = sc.jacobian_sparsity(y, x)
 
   np.testing.assert_array_equal(sp.to_mask(), np.eye(4, dtype=bool))
 
 
 def test_sparse_hessian_factory_returns_compact_values_with_sparsity_metadata() -> None:
-  x = al.sym("x", 3)
+  x = sc.sym("x", 3)
   y = x[0] * x[0] + x[1] * x[2]
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
-  shf = al.sparse_hessian(f, "y", "x")
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  shf = sc.sparse_hessian(f, "y", "x")
   xv = np.array([2.0, 3.0, 4.0])
 
   assert shf.output_names == ("sphess_y_x_x",)
@@ -148,10 +148,10 @@ def test_sparse_hessian_factory_returns_compact_values_with_sparsity_metadata() 
 
 @pytest.mark.parametrize("triangle", ("lower", "upper"))
 def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None:
-  x = al.sym("triangle_x", 4)
+  x = sc.sym("triangle_x", 4)
   y = (x[0] * x[1]).sin() + (x[2] * x[3]).sin()
-  full_expr = al.sparse_hessian(y, x)
-  triangle_expr = al.sparse_hessian(y, x, triangle=triangle)
+  full_expr = sc.sparse_hessian(y, x)
+  triangle_expr = sc.sparse_hessian(y, x, triangle=triangle)
   selected_expr = full_expr.triangle(triangle)
   full_sp, triangle_sp = full_expr.sparsity, triangle_expr.sparsity
   keep = np.asarray(full_sp.rows) >= np.asarray(full_sp.cols) if triangle == "lower" else np.asarray(full_sp.rows) <= np.asarray(full_sp.cols)
@@ -161,7 +161,7 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
   assert triangle_expr.coloring_width == selected_expr.coloring_width == full_expr.coloring_width
   assert selected_expr._compressed is full_expr._compressed
   np.testing.assert_array_equal(selected_expr._recovery, triangle_expr._recovery)
-  value_fn = al.Function._from_exprs(
+  value_fn = sc.Function._from_exprs(
     f"triangle_expr_{triangle}",
     [x],
     [full_expr.values, triangle_expr.values, selected_expr.values],
@@ -172,9 +172,9 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
   np.testing.assert_allclose(triangle_values, full_values[keep], rtol=1e-10, atol=1e-10)
   np.testing.assert_allclose(selected_values, triangle_values, rtol=1e-10, atol=1e-10)
 
-  fn = al.Function._from_exprs("triangle_fn", [x], [y], ["triangle_x"], ["y"])
-  full_fn = al.sparse_hessian(fn, "y", "triangle_x", name=f"triangle_fn_full_{triangle}")
-  triangle_fn = al.sparse_hessian(fn, "y", "triangle_x", name=f"triangle_fn_{triangle}", triangle=triangle)
+  fn = sc.Function._from_exprs("triangle_fn", [x], [y], ["triangle_x"], ["y"])
+  full_fn = sc.sparse_hessian(fn, "y", "triangle_x", name=f"triangle_fn_full_{triangle}")
+  triangle_fn = sc.sparse_hessian(fn, "y", "triangle_x", name=f"triangle_fn_{triangle}", triangle=triangle)
   assert full_fn.output_names == triangle_fn.output_names == ("sphess_y_triangle_x_triangle_x",)
   assert full_fn.output_coloring_widths == triangle_fn.output_coloring_widths
   full_fn_sp, triangle_fn_sp = full_fn.output_sparsities[0], triangle_fn.output_sparsities[0]
@@ -190,11 +190,11 @@ def test_sparse_hessian_triangle_matches_masked_full(triangle: Triangle) -> None
 
 
 def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   f_expr = x[0] * x[0]
-  g_expr = al.stack([x[0] * x[1], x[1] * x[1]])
-  nlp = al.Function._from_exprs("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
-  shf = al.sparse_lagrangian_hessian(nlp, "x")
+  g_expr = sc.stack([x[0] * x[1], x[1] * x[1]])
+  nlp = sc.Function._from_exprs("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
+  shf = sc.sparse_lagrangian_hessian(nlp, "x")
 
   assert shf.input_names == ("x", "lam:f", "lam:g")
   assert shf.output_names == ("sphess_gamma_x_x",)
@@ -206,12 +206,12 @@ def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
 
 
 def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   mapped, unrolled = _mapped_sphess_fixture(3)
-  mapped_sphess = mapped.factory("mapped_sphess_exact", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
-  unrolled_sphess = unrolled.factory("unrolled_sphess_exact", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
-  unrolled_hess = unrolled.factory("unrolled_hess_dense", ["z", "lam:f", "lam:g"], [al.factory.Hess("gamma", "z")], aux={"gamma": ["f", "g"]})
-  unrolled_grad = unrolled.factory("unrolled_grad_for_fd", ["z", "lam:f", "lam:g"], [al.factory.Grad("gamma", "z")], aux={"gamma": ["f", "g"]})
+  mapped_sphess = mapped.factory("mapped_sphess_exact", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
+  unrolled_sphess = unrolled.factory("unrolled_sphess_exact", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
+  unrolled_hess = unrolled.factory("unrolled_hess_dense", ["z", "lam:f", "lam:g"], [sc.factory.Hess("gamma", "z")], aux={"gamma": ["f", "g"]})
+  unrolled_grad = unrolled.factory("unrolled_grad_for_fd", ["z", "lam:f", "lam:g"], [sc.factory.Grad("gamma", "z")], aux={"gamma": ["f", "g"]})
 
   mapped_sp, unrolled_sp = mapped_sphess.output_sparsities[0], unrolled_sphess.output_sparsities[0]
   assert mapped_sp is not None and unrolled_sp is not None
@@ -228,9 +228,9 @@ def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd(mo
 
 
 def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   mapped, _ = _mapped_sphess_fixture(3)
-  sphess = mapped.factory("mapped_sphess_weighting", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
+  sphess = mapped.factory("mapped_sphess_weighting", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
   sparsity = sphess.output_sparsities[0]
   assert sparsity is not None
   zv = np.array([-0.7, 0.2, 0.4, -0.5, 0.8, 0.3])
@@ -245,9 +245,9 @@ def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch:
   assert np.any(np.abs(delta[2:4, 2:4]) > 1e-9)
 
   shared, shared_unrolled = _mapped_sphess_fixture(3, shared=True)
-  shared_sphess = shared.factory("mapped_sphess_shared_fill", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
+  shared_sphess = shared.factory("mapped_sphess_shared_fill", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
   shared_unrolled_sphess = shared_unrolled.factory(
-    "unrolled_sphess_shared_fill", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]}
+    "unrolled_sphess_shared_fill", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]}
   )
   shared_sp, shared_unrolled_sp = shared_sphess.output_sparsities[0], shared_unrolled_sphess.output_sparsities[0]
   assert shared_sp is not None and shared_unrolled_sp is not None
@@ -267,24 +267,24 @@ def test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill(monkeypatch:
 
 @pytest.mark.parametrize("triangle", ("lower", "upper"))
 def test_sparse_lagrangian_hessian_triangle_matches_masked_full_on_shared_vmap(monkeypatch: pytest.MonkeyPatch, triangle: Triangle) -> None:
-  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   mapped, unrolled = _mapped_sphess_fixture(3, shared=True)
   full = mapped.factory(
     "shared_triangle_full",
     ["z", "lam:f", "lam:g"],
-    [al.factory.SpHess("gamma", "z")],
+    [sc.factory.SpHess("gamma", "z")],
     aux={"gamma": ["f", "g"]},
   )
   triangle_fn = mapped.factory(
     f"shared_triangle_{triangle}",
     ["z", "lam:f", "lam:g"],
-    [al.factory.SpHess("gamma", "z", triangle=triangle)],
+    [sc.factory.SpHess("gamma", "z", triangle=triangle)],
     aux={"gamma": ["f", "g"]},
   )
   unrolled_triangle = unrolled.factory(
     f"unrolled_triangle_{triangle}",
     ["z", "lam:f", "lam:g"],
-    [al.factory.SpHess("gamma", "z", triangle=triangle)],
+    [sc.factory.SpHess("gamma", "z", triangle=triangle)],
     aux={"gamma": ["f", "g"]},
   )
   full_sp, triangle_sp = full.output_sparsities[0], triangle_fn.output_sparsities[0]
@@ -312,21 +312,21 @@ def test_sparse_lagrangian_hessian_triangle_matches_masked_full_on_shared_vmap(m
 
 @pytest.mark.parametrize("triangle", ("diagonal", None, 1))
 def test_sparse_hessian_rejects_invalid_triangle(triangle: object) -> None:
-  x = al.sym("invalid_triangle_x", 2)
+  x = sc.sym("invalid_triangle_x", 2)
   y = x[0] * x[1]
   invalid_triangle = cast(Triangle, triangle)
   with pytest.raises(ValueError, match="triangle must be one of"):
-    al.sparse_hessian(y, x, triangle=invalid_triangle)
-  fn = al.Function._from_exprs("invalid_triangle", [x], [y], ["invalid_triangle_x"], ["y"])
+    sc.sparse_hessian(y, x, triangle=invalid_triangle)
+  fn = sc.Function._from_exprs("invalid_triangle", [x], [y], ["invalid_triangle_x"], ["y"])
   with pytest.raises(ValueError, match="triangle must be one of"):
-    al.sparse_hessian(fn, "y", "invalid_triangle_x", triangle=invalid_triangle)
+    sc.sparse_hessian(fn, "y", "invalid_triangle_x", triangle=invalid_triangle)
 
 
 def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:
-  x = al.sym("x", 4)
-  y = al.stack([x[0], x[2:4].sum(), x[1]])
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
-  spjf = al.sparse_jacobian(f, "y", "x")
+  x = sc.sym("x", 4)
+  y = sc.stack([x[0], x[2:4].sum(), x[1]])
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  spjf = sc.sparse_jacobian(f, "y", "x")
   xv = np.array([1.0, 2.0, 3.0, 4.0])
 
   assert spjf.output_names == ("spjac_y_x",)
@@ -338,9 +338,9 @@ def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:
 
 
 def test_function_rejects_sparse_output_metadata_size_mismatch() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   try:
-    _ = al.Function._from_exprs("bad", [x], [x], ["x"], ["sp"], output_sparsities=[al.SparsityType.dense((2, 2))])
+    _ = sc.Function._from_exprs("bad", [x], [x], ["x"], ["sp"], output_sparsities=[sc.SparsityType.dense((2, 2))])
   except ValueError as e:
     assert "sparse output metadata for 'sp' has 4 nonzeros" in str(e)
     assert "output shape (2,) has 2 entries" in str(e)
@@ -349,28 +349,28 @@ def test_function_rejects_sparse_output_metadata_size_mismatch() -> None:
 
 
 def test_sparse_jacobian_preserves_constructed_local_coloring_width() -> None:
-  a = al.sym("a", 1)
-  b = al.sym("b", 1)
-  piece = al.Function._from_exprs("two_formal_piece", [a, b], [al.stack([a, b])], ["a", "b"], ["y"])
-  z = al.sym("z", 5)
-  mapped_expr = al.vmap(piece, 4, [(z, 0, 1), (z, 1, 1)])
-  mapped = al.Function._from_exprs("two_formal_mapped", [z], [mapped_expr], ["z"], ["y"])
-  sj = al.sparse_jacobian(mapped_expr, z)
+  a = sc.sym("a", 1)
+  b = sc.sym("b", 1)
+  piece = sc.Function._from_exprs("two_formal_piece", [a, b], [sc.stack([a, b])], ["a", "b"], ["y"])
+  z = sc.sym("z", 5)
+  mapped_expr = sc.vmap(piece, 4, [(z, 0, 1), (z, 1, 1)])
+  mapped = sc.Function._from_exprs("two_formal_mapped", [z], [mapped_expr], ["z"], ["y"])
+  sj = sc.sparse_jacobian(mapped_expr, z)
 
-  np.testing.assert_array_equal(sj.sparsity.to_mask(), al.jacobian_sparsity(mapped_expr, z).to_mask())
+  np.testing.assert_array_equal(sj.sparsity.to_mask(), sc.jacobian_sparsity(mapped_expr, z).to_mask())
   assert sj.coloring_width == 2
-  assert max(al.column_coloring(sj.sparsity), default=-1) + 1 == 1
+  assert max(sc.column_coloring(sj.sparsity), default=-1) + 1 == 1
 
-  built = mapped.factory("two_formal_spjac", ["z"], [al.factory.SpJac("y", "z")])
+  built = mapped.factory("two_formal_spjac", ["z"], [sc.factory.SpJac("y", "z")])
   assert built.output_coloring_widths == (2,)
 
 
 def test_colored_sparse_jacobian_matches_dense_gather_reference() -> None:
-  x = al.sym("x", 4)
-  y = al.stack([x[0] * x[2], x[2:4].sum(), x[1].sin()])
-  colored = al.sparse_jacobian_colored(y, x)
-  reference = al.sparse_jacobian_reference(y, x)
-  f = al.Function._from_exprs("sj_compare", [x], [colored.values, reference.values], ["x"], ["colored", "reference"])
+  x = sc.sym("x", 4)
+  y = sc.stack([x[0] * x[2], x[2:4].sum(), x[1].sin()])
+  colored = sc.sparse_jacobian_colored(y, x)
+  reference = sc.sparse_jacobian_reference(y, x)
+  f = sc.Function._from_exprs("sj_compare", [x], [colored.values, reference.values], ["x"], ["colored", "reference"])
   xv = np.array([1.0, 2.0, 3.0, 4.0])
 
   assert colored.sparsity == reference.sparsity
@@ -379,10 +379,10 @@ def test_colored_sparse_jacobian_matches_dense_gather_reference() -> None:
 
 
 def test_sparse_jacobian_values_round_trip_to_dense() -> None:
-  x = al.sym("x", 4)
-  y = al.stack([x[0], x[2:4].sum(), x[1]])
-  sj = al.sparse_jacobian(y, x)
-  f = al.Function._from_exprs("sj", [x], [sj.values, sj.to_dense()], ["x"], ["values", "dense"])
+  x = sc.sym("x", 4)
+  y = sc.stack([x[0], x[2:4].sum(), x[1]])
+  sj = sc.sparse_jacobian(y, x)
+  f = sc.Function._from_exprs("sj", [x], [sj.values, sj.to_dense()], ["x"], ["values", "dense"])
   xv = np.array([1.0, 2.0, 3.0, 4.0])
 
   assert sj.sparsity.rows == (0, 1, 1, 2)
@@ -402,7 +402,7 @@ def test_sparse_jacobian_values_round_trip_to_dense() -> None:
 
 
 def test_column_coloring_groups_nonoverlapping_columns() -> None:
-  sp = al.SparsityType.from_mask(
+  sp = sc.SparsityType.from_mask(
     np.array(
       [
         [True, False, True, False],
@@ -411,25 +411,25 @@ def test_column_coloring_groups_nonoverlapping_columns() -> None:
       ]
     )
   )
-  colors = al.column_coloring(sp)
+  colors = sc.column_coloring(sp)
 
   assert colors == (0, 0, 1, 1)
-  assert al.color_groups(colors) == ((0, 1), (2, 3))
+  assert sc.color_groups(colors) == ((0, 1), (2, 3))
 
 
 def test_jacobian_sparsity_for_matmul_and_call_chain_rule() -> None:
-  x = al.sym("x", 3)
-  a = al.const(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]))
+  x = sc.sym("x", 3)
+  a = sc.const(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]))
   y = a @ x
-  np.testing.assert_array_equal(al.jacobian_sparsity(y, x).to_mask(), np.ones((2, 3), dtype=bool))
+  np.testing.assert_array_equal(sc.jacobian_sparsity(y, x).to_mask(), np.ones((2, 3), dtype=bool))
 
-  u = al.sym("u", 2)
-  inner = al.Function._from_exprs("inner", [u], [al.stack([u[0], u[0] + u[1]])], ["u"], ["y"])
-  z = al.sym("z", 3)
-  inner_z = inner(al.gather(z, [2, 0]))
+  u = sc.sym("u", 2)
+  inner = sc.Function._from_exprs("inner", [u], [sc.stack([u[0], u[0] + u[1]])], ["u"], ["y"])
+  z = sc.sym("z", 3)
+  inner_z = inner(sc.gather(z, [2, 0]))
 
   np.testing.assert_array_equal(
-    al.jacobian_sparsity(inner_z, z).to_mask(),
+    sc.jacobian_sparsity(inner_z, z).to_mask(),
     np.array(
       [
         [False, False, True],
@@ -440,34 +440,34 @@ def test_jacobian_sparsity_for_matmul_and_call_chain_rule() -> None:
 
 
 def test_dependency_composition_keeps_exactly_256_shared_paths() -> None:
-  u = al.sym("u", 256)
-  inner = al.Function._from_exprs("shared_256_inner", [u], [u.sum()], ["u"], ["y"])
-  x = al.sym("x", 1)
+  u = sc.sym("u", 256)
+  inner = sc.Function._from_exprs("shared_256_inner", [u], [u.sum()], ["u"], ["y"])
+  x = sc.sym("x", 1)
   y = inner(x + np.zeros(256))
 
-  np.testing.assert_array_equal(al.jacobian_sparsity(y, x).to_mask(), np.ones((1, 1), dtype=bool))
-  colored = al.sparse_jacobian_colored(y, x)
-  reference = al.sparse_jacobian_reference(y, x)
-  f = al.Function._from_exprs("shared_256_jac", [x], [colored.values, reference.values], ["x"], ["colored", "reference"])
+  np.testing.assert_array_equal(sc.jacobian_sparsity(y, x).to_mask(), np.ones((1, 1), dtype=bool))
+  colored = sc.sparse_jacobian_colored(y, x)
+  reference = sc.sparse_jacobian_reference(y, x)
+  f = sc.Function._from_exprs("shared_256_jac", [x], [colored.values, reference.values], ["x"], ["colored", "reference"])
   colored_values, reference_values = f(np.array([2.0]))
   np.testing.assert_allclose(colored_values, np.array([256.0]))
   np.testing.assert_allclose(colored_values, reference_values)
 
 
 def test_column_coloring_detects_exactly_256_shared_rows() -> None:
-  sparsity = al.SparsityType.from_mask(np.ones((256, 2), dtype=bool))
+  sparsity = sc.SparsityType.from_mask(np.ones((256, 2), dtype=bool))
 
-  assert al.column_coloring(sparsity) == (0, 1)
+  assert sc.column_coloring(sparsity) == (0, 1)
 
 
 def test_mapped_sparsity_storage_grows_with_nonzeros_not_global_mask() -> None:
-  from alloy.ad.sparsity import _jac_mask
+  from scaly.ad.sparsity import _jac_mask
 
   def mapped_mask(length: int):
-    u = al.sym(f"u_{length}", 2)
-    piece = al.Function._from_exprs(f"storage_piece_{length}", [u], [al.stack([u.sum()])], ["u"], ["y"])
-    z = al.sym(f"z_{length}", 2 * length)
-    return _jac_mask(al.vmap(piece, length, [(z, 0, 2)]), z, {})
+    u = sc.sym(f"u_{length}", 2)
+    piece = sc.Function._from_exprs(f"storage_piece_{length}", [u], [sc.stack([u.sum()])], ["u"], ["y"])
+    z = sc.sym(f"z_{length}", 2 * length)
+    return _jac_mask(sc.vmap(piece, length, [(z, 0, 2)]), z, {})
 
   small = mapped_mask(32)
   large = mapped_mask(128)
@@ -480,7 +480,7 @@ def test_mapped_sparsity_storage_grows_with_nonzeros_not_global_mask() -> None:
 
 
 def test_star_coloring_is_not_distance_two_coloring() -> None:
-  sparsity = al.SparsityType.from_mask(
+  sparsity = sc.SparsityType.from_mask(
     np.array(
       [
         [True, False, True],
@@ -490,14 +490,14 @@ def test_star_coloring_is_not_distance_two_coloring() -> None:
     )
   )
 
-  colors = al.star_coloring(sparsity)
+  colors = sc.star_coloring(sparsity)
 
   assert colors[0] == colors[1]
   assert colors[0] != colors[2]
 
 
 def test_star_coloring_rejects_bicolored_four_vertex_path() -> None:
-  path = al.SparsityType.from_mask(
+  path = sc.SparsityType.from_mask(
     np.array(
       [
         [True, True, False, False],
@@ -508,7 +508,7 @@ def test_star_coloring_rejects_bicolored_four_vertex_path() -> None:
     )
   )
 
-  colors = al.star_coloring(path)
+  colors = sc.star_coloring(path)
 
   assert colors == (0, 1, 0, 2)
   assert colors != (0, 1, 0, 1)
@@ -519,11 +519,11 @@ def test_star_coloring_rejects_bicolored_four_vertex_path() -> None:
 
 def test_star_coloring_rejects_non_square_and_symmetrizes_asymmetric_graphs() -> None:
   with pytest.raises(ValueError, match="square"):
-    al.star_coloring(al.SparsityType.from_mask(np.ones((2, 3), dtype=bool)))
+    sc.star_coloring(sc.SparsityType.from_mask(np.ones((2, 3), dtype=bool)))
 
-  from alloy.ad.sparsity import _symmetrize_sparsity
+  from scaly.ad.sparsity import _symmetrize_sparsity
 
-  asymmetric = al.SparsityType.from_mask(
+  asymmetric = sc.SparsityType.from_mask(
     np.array(
       [
         [True, True, False],
@@ -543,40 +543,40 @@ def test_star_coloring_rejects_non_square_and_symmetrizes_asymmetric_graphs() ->
       ]
     ),
   )
-  colors = al.star_coloring(asymmetric)
+  colors = sc.star_coloring(asymmetric)
   assert colors[0] == colors[2] != colors[1]
 
 
 def test_star_recovery_rejects_ambiguous_orientation() -> None:
-  from alloy.ad.sparse import _star_recovery_indices
+  from scaly.ad.sparse import _star_recovery_indices
 
-  sparsity = al.SparsityType.from_mask(np.ones((3, 3), dtype=bool))
+  sparsity = sc.SparsityType.from_mask(np.ones((3, 3), dtype=bool))
   with pytest.raises(ValueError, match="cannot recover Hessian entry"):
     _star_recovery_indices(sparsity, (0, 0, 0))
 
 
 def test_shared_fill_star_hessian_matches_one_sided_and_dense(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   star_widths: list[int] = []
   one_sided_widths: list[int] = []
 
   for length in (1, 2, 4):
     mapped, _ = _mapped_sphess_fixture(length, shared=True)
     z = mapped.inputs[0]
-    lam_f = al.sym(f"shared_fill_lam_f_{length}")
-    lam_g = al.sym(f"shared_fill_lam_g_{length}", length)
+    lam_f = sc.sym(f"shared_fill_lam_f_{length}")
+    lam_g = sc.sym(f"shared_fill_lam_g_{length}", length)
     lagrangian = mapped.outputs[0] * lam_f + (mapped.outputs[1] * lam_g).sum()
-    gradient = al.gradient(lagrangian, z).reshape((z.size,))
-    one_sided = al.sparse_jacobian_colored(gradient, z)
-    star = al.sparse_hessian(lagrangian, z)
-    dense = al.hessian(lagrangian, z)
+    gradient = sc.gradient(lagrangian, z).reshape((z.size,))
+    one_sided = sc.sparse_jacobian_colored(gradient, z)
+    star = sc.sparse_hessian(lagrangian, z)
+    dense = sc.hessian(lagrangian, z)
 
     assert one_sided.sparsity == star.sparsity
     assert star.coloring_width is not None
     assert one_sided.coloring_width is not None
     star_widths.append(star.coloring_width)
     one_sided_widths.append(one_sided.coloring_width)
-    fn = al.Function._from_exprs(
+    fn = sc.Function._from_exprs(
       f"shared_fill_differential_{length}",
       [z, lam_f, lam_g],
       [star.values, one_sided.values, star.to_dense(), one_sided.to_dense(), dense],

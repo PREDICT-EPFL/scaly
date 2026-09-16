@@ -7,8 +7,8 @@ from typing import Any, Protocol
 
 import numpy as np
 
-import alloy as al
-from alloy.codegen import render_c_module
+import scaly as sc
+from scaly.codegen import render_c_module
 from benchmarks.harness.casadi_ipopt import make_casadi_ipopt
 from .common import (
   ClosedLoopConfig,
@@ -32,7 +32,7 @@ from .common import (
 )
 
 
-# Shared alloy-sqp settings for this problem. The dual KKT tolerance is the
+# Shared scaly-sqp settings for this problem. The dual KKT tolerance is the
 # solver default: the modified sparse LDL^T convexification removed the 8e-3
 # stationarity floor the earlier dense Cholesky-probe regularization put under
 # active-barrier steps, and the looser tolerance was what made SQP and IPOPT
@@ -374,7 +374,7 @@ class CasadiDTCBFSafetyFilter:
     stats = self.solver.last_stats
     assert stats is not None
     solver_ms = stats.t_total * 1000.0
-    raw_success = stats.status in (al.AlloySolveStatus.OK, al.AlloySolveStatus.ACCEPTABLE)
+    raw_success = stats.status in (sc.ScalySolveStatus.OK, sc.ScalySolveStatus.ACCEPTABLE)
     z_sol, f_sol, g_sol, lam_x, lam_g, _ = sol
     feasible = bool(np.all(np.isfinite(z_sol)) and (not g_sol.size or np.min(g_sol) >= -1e-6))
     success = raw_success and feasible
@@ -440,7 +440,7 @@ def build_casadi_sqp(
 ):
   import casadi as ca
 
-  from alloy_sqp.casadi import build_casadi_external_sqp
+  from scaly_sqp.casadi import build_casadi_external_sqp
 
   controller = CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, _build_solver=False)
   assert controller.hess_fn is not None
@@ -464,16 +464,16 @@ def build_casadi_sqp(
 
 
 # ---------------------------------------------------------------------------
-# Alloy oracle. The neural ODE/RK4 step is a per-car Function, and the full
-# safety-filter oracle uses al.vmap(...) to evaluate it across the car axis.
+# Scaly oracle. The neural ODE/RK4 step is a per-car Function, and the full
+# safety-filter oracle uses sc.vmap(...) to evaluate it across the car axis.
 # ---------------------------------------------------------------------------
 
 
-def _silu_expr(x: al.Expr) -> al.Expr:
+def _silu_expr(x: sc.Expr) -> sc.Expr:
   return x / (1.0 + (-x).exp())
 
 
-def _unpack_pw_expr(pw: al.Expr) -> tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]:
+def _unpack_pw_expr(pw: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
   x_scale = pw[OFFSETS[0] : OFFSETS[1]]
   w0 = pw[OFFSETS[1] : OFFSETS[2]].reshape(W0_SHAPE)
   b0 = pw[OFFSETS[2] : OFFSETS[3]]
@@ -484,7 +484,7 @@ def _unpack_pw_expr(pw: al.Expr) -> tuple[al.Expr, al.Expr, al.Expr, al.Expr, al
   return x_scale, w0, b0, w1, b1, w2, b2
 
 
-def _world_vel_expr(state: al.Expr, physics: al.Expr) -> tuple[al.Expr, al.Expr, al.Expr]:
+def _world_vel_expr(state: sc.Expr, physics: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   lf, lr = physics[0], physics[1]
   theta, vf, beta_f, beta_r = state[2], state[3], state[4], state[5]
   omega = vf * (beta_f - beta_r).sin() / ((lf + lr) * beta_r.cos())
@@ -493,41 +493,41 @@ def _world_vel_expr(state: al.Expr, physics: al.Expr) -> tuple[al.Expr, al.Expr,
   return vx_b * theta.cos() - vy_b * theta.sin(), vx_b * theta.sin() + vy_b * theta.cos(), omega
 
 
-@al.function(al.G(al.L("state", NSTATE), al.L("u", NCTRL), al.L("pw", N_PW), al.L("physics", N_PHYSICS)), al.L("xdot", ...), name="ctdt_ctfull_ode")
-def alloy_ctfull_ode_fn(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
+@sc.function(sc.G(sc.L("state", NSTATE), sc.L("u", NCTRL), sc.L("pw", N_PW), sc.L("physics", N_PHYSICS)), sc.L("xdot", ...), name="ctdt_ctfull_ode")
+def scaly_ctfull_ode_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   state, u, pw, physics = inputs
   max_delta, steering_time_constant = physics[2], physics[3]
   delta = state[6]
   x_dot, y_dot, omega = _world_vel_expr(state, physics)
   delta_dot = (u[1] * max_delta - delta) / (steering_time_constant * 3.0)
   x_scale, w0, b0, w1, b1, w2, b2 = _unpack_pw_expr(pw)
-  phi = al.concat([state[3:7] / x_scale, u])
+  phi = sc.concat([state[3:7] / x_scale, u])
   h = _silu_expr((w0 @ phi + b0))
   h = _silu_expr((w1 @ h + b1))
   learned = w2 @ h + b2
-  return al.stack([x_dot, y_dot, omega, learned[0], learned[1], learned[2], delta_dot])
+  return sc.stack([x_dot, y_dot, omega, learned[0], learned[1], learned[2], delta_dot])
 
 
-@al.function(
-  al.G(al.L("state", NSTATE), al.L("u", NCTRL), al.L("pw", N_PW), al.L("physics", N_PHYSICS), al.L("dt", 1)),
-  al.L("next", ...),
+@sc.function(
+  sc.G(sc.L("state", NSTATE), sc.L("u", NCTRL), sc.L("pw", N_PW), sc.L("physics", N_PHYSICS), sc.L("dt", 1)),
+  sc.L("next", ...),
   name="ctdt_ctfull_rk4",
 )
-def alloy_ctfull_rk4_fn(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
+def scaly_ctfull_rk4_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   state, u, pw, physics, dt = inputs
   h = dt[0]
-  k1 = alloy_ctfull_ode_fn((state, u, pw, physics))
-  k2 = alloy_ctfull_ode_fn((state + 0.5 * h * k1, u, pw, physics))
-  k3 = alloy_ctfull_ode_fn((state + 0.5 * h * k2, u, pw, physics))
-  k4 = alloy_ctfull_ode_fn((state + h * k3, u, pw, physics))
+  k1 = scaly_ctfull_ode_fn((state, u, pw, physics))
+  k2 = scaly_ctfull_ode_fn((state + 0.5 * h * k1, u, pw, physics))
+  k3 = scaly_ctfull_ode_fn((state + 0.5 * h * k2, u, pw, physics))
+  k4 = scaly_ctfull_ode_fn((state + h * k3, u, pw, physics))
   return state + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
 
-def _smooth_relu_expr(x: al.Expr) -> al.Expr:
+def _smooth_relu_expr(x: sc.Expr) -> sc.Expr:
   return 0.5 * (x + (x * x + DT_RELU_EPS**2).sqrt())
 
 
-def _unpack_pw_dt_expr(pw: al.Expr) -> tuple[al.Expr, ...]:
+def _unpack_pw_dt_expr(pw: sc.Expr) -> tuple[sc.Expr, ...]:
   return (
     pw[DT_OFFSETS[0] : DT_OFFSETS[1]],
     pw[DT_OFFSETS[1] : DT_OFFSETS[2]].reshape(DT_W0_SHAPE),
@@ -539,82 +539,82 @@ def _unpack_pw_dt_expr(pw: al.Expr) -> tuple[al.Expr, ...]:
   )
 
 
-@al.function(al.G(al.L("state", NSTATE), al.L("physics", N_PHYSICS)), al.L("posedot", ...), name="ctdt_pose_dot")
-def alloy_pose_dot_fn(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+@sc.function(sc.G(sc.L("state", NSTATE), sc.L("physics", N_PHYSICS)), sc.L("posedot", ...), name="ctdt_pose_dot")
+def scaly_pose_dot_fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   state, physics = inputs
   x_dot, y_dot, omega = _world_vel_expr(state, physics)
   zero = 0.0 * state[3]
-  return al.stack([x_dot, y_dot, omega, zero, zero, zero, zero])
+  return sc.stack([x_dot, y_dot, omega, zero, zero, zero, zero])
 
 
-@al.function(
-  al.G(al.L("state", NSTATE), al.L("u", NCTRL), al.L("pw", N_PW_DT), al.L("physics", N_PHYSICS), al.L("dt", 1)),
-  al.L("next", ...),
+@sc.function(
+  sc.G(sc.L("state", NSTATE), sc.L("u", NCTRL), sc.L("pw", N_PW_DT), sc.L("physics", N_PHYSICS), sc.L("dt", 1)),
+  sc.L("next", ...),
   name="ctdt_dt_mlp_step",
 )
-def alloy_dt_mlp_step_fn(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
+def scaly_dt_mlp_step_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   """The discrete MLP's one-step map; see ``common.dt_mlp_step_smooth_np``."""
   state, u, pw, physics, dt = inputs
   h_dt = dt[0]
   max_delta, steering_time_constant = physics[2], physics[3]
   delta = state[6]
-  k1 = alloy_pose_dot_fn((state, physics))
-  k2 = alloy_pose_dot_fn((state + 0.5 * h_dt * k1, physics))
-  k3 = alloy_pose_dot_fn((state + 0.5 * h_dt * k2, physics))
-  k4 = alloy_pose_dot_fn((state + h_dt * k3, physics))
+  k1 = scaly_pose_dot_fn((state, physics))
+  k2 = scaly_pose_dot_fn((state + 0.5 * h_dt * k1, physics))
+  k3 = scaly_pose_dot_fn((state + 0.5 * h_dt * k2, physics))
+  k4 = scaly_pose_dot_fn((state + h_dt * k3, physics))
   pose = state + (h_dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
   x_scale, w0, b0, w1, b1, w2, b2 = _unpack_pw_dt_expr(pw)
-  phi = al.concat([al.stack([state[3], state[4] - delta, state[5], delta]) / x_scale, al.stack([u[1], u[0]])])
+  phi = sc.concat([sc.stack([state[3], state[4] - delta, state[5], delta]) / x_scale, sc.stack([u[1], u[0]])])
   h = _smooth_relu_expr((w0 @ phi + b0))
   h = _smooth_relu_expr((w1 @ h + b1))
   learned = w2 @ h + b2
   delta_next = delta + h_dt * (u[1] * max_delta - delta) / steering_time_constant
-  return al.stack([pose[0], pose[1], pose[2], learned[0], learned[1] + delta_next, learned[2], delta_next])
+  return sc.stack([pose[0], pose[1], pose[2], learned[0], learned[1] + delta_next, learned[2], delta_next])
 
 
-# TODO(API-1): Replace this configuration-specialized builder with an ``@al.function`` template.
-def build_alloy_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> al.Function:
+# TODO(API-1): Replace this configuration-specialized builder with an ``@sc.function`` template.
+def build_scaly_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> sc.Function:
   """Build the safety filter's tracking cost and discrete barrier rows."""
   ncars = loop_cfg.ncars
   n_u = NCTRL * ncars
   n_s = loop_cfg.n_slack
 
-  def constant(size: int) -> al.TensorType:
-    return al.TensorType((size,), diff=False)
+  def constant(size: int) -> sc.TensorType:
+    return sc.TensorType((size,), diff=False)
 
-  @al.function(
-    al.G(
-      al.L("z", n_u + n_s),
-      al.L("bar_x", constant(NSTATE * ncars)),
-      al.L("u_des", constant(n_u)),
-      al.L("pw", constant(filter_n_pw(filt_cfg))),
-      al.L("physics", constant(N_PHYSICS)),
-      al.L("dt", constant(1)),
+  @sc.function(
+    sc.G(
+      sc.L("z", n_u + n_s),
+      sc.L("bar_x", constant(NSTATE * ncars)),
+      sc.L("u_des", constant(n_u)),
+      sc.L("pw", constant(filter_n_pw(filt_cfg))),
+      sc.L("physics", constant(N_PHYSICS)),
+      sc.L("dt", constant(1)),
     ),
-    al.G(al.L("cost", ...), al.L("g", ...)),
-    name=f"ctdt_alloy_oracle_N{ncars}_{'walls' if loop_cfg.arena_avoidance else 'pairs'}",
+    sc.G(sc.L("cost", ...), sc.L("g", ...)),
+    name=f"ctdt_scaly_oracle_N{ncars}_{'walls' if loop_cfg.arena_avoidance else 'pairs'}",
   )
-  def oracle(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> tuple[al.Expr, al.Expr]:
-    return _alloy_oracle_outputs(inputs, loop_cfg, filt_cfg)
+  def oracle(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
+    return _scaly_oracle_outputs(inputs, loop_cfg, filt_cfg)
 
   return oracle
 
 
-def _alloy_oracle_outputs(
-  inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr, al.Expr], loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig
-) -> tuple[al.Expr, al.Expr]:
-  """Build the objective and barrier rows traced by ``build_alloy_oracle``."""
+def _scaly_oracle_outputs(
+  inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr], loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig
+) -> tuple[sc.Expr, sc.Expr]:
+  """Build the objective and barrier rows traced by ``build_scaly_oracle``."""
   z, bar_x, u_des, pw, physics, dt = inputs
   ncars = loop_cfg.ncars
   n_u = NCTRL * ncars
   n_s = loop_cfg.n_slack
   u = z[:n_u]
   slack = z[n_u:]
-  step_fn = alloy_dt_mlp_step_fn if filt_cfg.model == "dt" else alloy_ctfull_rk4_fn
-  states_next = al.vmap(step_fn, ncars, [(bar_x, 0, NSTATE), (u, 0, NCTRL), (pw, 0, 0), (physics, 0, 0), (dt, 0, 0)])
+  step_fn = scaly_dt_mlp_step_fn if filt_cfg.model == "dt" else scaly_ctfull_rk4_fn
+  states_next = sc.vmap(step_fn, ncars, [(bar_x, 0, NSTATE), (u, 0, NCTRL), (pw, 0, 0), (physics, 0, 0), (dt, 0, 0)])
   hcbf, R = loop_cfg.hcbf, loop_cfg.safety_radius
 
-  def pair_b(xi: al.Expr, xj: al.Expr, physics: al.Expr) -> al.Expr:
+  def pair_b(xi: sc.Expr, xj: sc.Expr, physics: sc.Expr) -> sc.Expr:
     """Order-1 hyperbolic pair barrier; see ``common.HCBFConfig``."""
     px, py = xj[0] - xi[0], xj[1] - xi[1]
     vxi, vyi, _ = _world_vel_expr(xi, physics)
@@ -634,7 +634,7 @@ def _alloy_oracle_outputs(
 
   m = loop_cfg.wall_margin
 
-  def wall_b(xi: al.Expr, physics: al.Expr) -> al.Expr:
+  def wall_b(xi: sc.Expr, physics: sc.Expr) -> sc.Expr:
     x_min, x_max, y_min, y_max = [physics[i] for i in range(4, 8)]
     vx, vy, _ = _world_vel_expr(xi, physics)
     clearances = [xi[0] - (x_min + m), (x_max - m) - xi[0], xi[1] - (y_min + m), (y_max - m) - xi[1]]
@@ -644,102 +644,102 @@ def _alloy_oracle_outputs(
       s = clearance / d_eps
       v_max = hcbf.single_envelope_c * d_eps**hcbf.envelope_q
       out.append((s * v_max - v_closing))
-    return al.stack(out)
+    return sc.stack(out)
 
-  @al.function(
-    al.G(al.L("xi", NSTATE), al.L("xj", NSTATE), al.L("xi_next", NSTATE), al.L("xj_next", NSTATE), al.L("physics", N_PHYSICS)),
-    al.L("g", 1),
+  @sc.function(
+    sc.G(sc.L("xi", NSTATE), sc.L("xj", NSTATE), sc.L("xi_next", NSTATE), sc.L("xj_next", NSTATE), sc.L("physics", N_PHYSICS)),
+    sc.L("g", 1),
     name="pair_hcbf",
   )
-  def pair_hcbf(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
+  def pair_hcbf(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     xi, xj, xi_next, xj_next, physics = inputs
-    return al.stack([pair_b(xi_next, xj_next, physics) - (1.0 - loop_cfg.pair_gamma) * pair_b(xi, xj, physics)])
+    return sc.stack([pair_b(xi_next, xj_next, physics) - (1.0 - loop_cfg.pair_gamma) * pair_b(xi, xj, physics)])
 
-  @al.function(
-    al.G(al.L("state", NSTATE), al.L("state_next", NSTATE), al.L("physics", N_PHYSICS)),
-    al.L("g", 4),
+  @sc.function(
+    sc.G(sc.L("state", NSTATE), sc.L("state_next", NSTATE), sc.L("physics", N_PHYSICS)),
+    sc.L("g", 4),
     name="wall_hcbf",
   )
-  def wall_hcbf(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
+  def wall_hcbf(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     state, state_next, physics = inputs
     return wall_b(state_next, physics) - (1.0 - loop_cfg.wall_gamma) * wall_b(state, physics)
 
-  rows: list[al.Expr] = []
+  rows: list[sc.Expr] = []
   if loop_cfg.n_pairs:
     pairs = np.triu_indices(ncars, k=1)
     idx_i, idx_j = [np.concatenate([np.arange(NSTATE) + k * NSTATE for k in bodies]) for bodies in pairs]
     rows.append(
-      al.vmap(
+      sc.vmap(
         pair_hcbf,
         loop_cfg.n_pairs,
         [
-          (al.gather(bar_x, idx_i), 0, NSTATE),
-          (al.gather(bar_x, idx_j), 0, NSTATE),
-          (al.gather(states_next, idx_i), 0, NSTATE),
-          (al.gather(states_next, idx_j), 0, NSTATE),
+          (sc.gather(bar_x, idx_i), 0, NSTATE),
+          (sc.gather(bar_x, idx_j), 0, NSTATE),
+          (sc.gather(states_next, idx_i), 0, NSTATE),
+          (sc.gather(states_next, idx_j), 0, NSTATE),
           (physics, 0, 0),
         ],
       )
     )
   if loop_cfg.arena_avoidance:
-    rows.append(al.vmap(wall_hcbf, ncars, [(bar_x, 0, NSTATE), (states_next, 0, NSTATE), (physics, 0, 0)]))
-  g = (al.concat(rows) + slack) if rows else al.const(np.zeros((0,)))
+    rows.append(sc.vmap(wall_hcbf, ncars, [(bar_x, 0, NSTATE), (states_next, 0, NSTATE), (physics, 0, 0)]))
+  g = (sc.concat(rows) + slack) if rows else sc.const(np.zeros((0,)))
   assert g.shape == (n_s,)
   diff = u - u_des
-  weights = al.const(np.tile(np.asarray(filt_cfg.R, dtype=np.float64), ncars))
-  cost = al.dot(diff, weights * diff) + filt_cfg.slack_weight * slack.sum()
+  weights = sc.const(np.tile(np.asarray(filt_cfg.R, dtype=np.float64), ncars))
+  cost = sc.dot(diff, weights * diff) + filt_cfg.slack_weight * slack.sum()
   return cost, g
 
 
-def build_alloy_nlp(
+def build_scaly_nlp(
   loop_cfg: ClosedLoopConfig,
   filt_cfg: FilterConfig,
   *,
   solver: str = "ipopt",
   options: dict[str, str | int | float] | None = None,
-  oracle: al.Function | None = None,
-) -> al.Function:
+  oracle: sc.Function | None = None,
+) -> sc.Function:
   """Build the safety-filter NLP over car controls and nonnegative barrier slacks."""
-  base = build_alloy_oracle(loop_cfg, filt_cfg) if oracle is None else oracle
+  base = build_scaly_oracle(loop_cfg, filt_cfg) if oracle is None else oracle
   n_u, n_s = NCTRL * loop_cfg.ncars, loop_cfg.n_slack
-  vars_tree = al.G(al.L("u", (n_u,)), al.L("s", (n_s,)))
-  params_tree = al.G(
-    al.L("bar_x", NSTATE * loop_cfg.ncars),
-    al.L("u_des", n_u),
-    al.L("pw", filter_n_pw(filt_cfg)),
-    al.L("physics", N_PHYSICS),
-    al.L("dt", 1),
+  vars_tree = sc.G(sc.L("u", (n_u,)), sc.L("s", (n_s,)))
+  params_tree = sc.G(
+    sc.L("bar_x", NSTATE * loop_cfg.ncars),
+    sc.L("u_des", n_u),
+    sc.L("pw", filter_n_pw(filt_cfg)),
+    sc.L("physics", N_PHYSICS),
+    sc.L("dt", 1),
   )
   problem_name = base.name.replace("_oracle", "_problem")
 
-  @al.problem(vars=vars_tree, params=params_tree, name=problem_name)
+  @sc.problem(vars=vars_tree, params=params_tree, name=problem_name)
   def problem(
-    variables: tuple[al.Expr, al.Expr], params: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]
-  ) -> al.ProblemSpec[tuple[al.Expr, al.Expr]]:
+    variables: tuple[sc.Expr, sc.Expr], params: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]
+  ) -> sc.ProblemSpec[tuple[sc.Expr, sc.Expr]]:
     u, s = variables
-    cost, constraints = _alloy_oracle_outputs((al.concat([u, s]), *params), loop_cfg, filt_cfg)
-    inequalities = (al.bounded(constraints, lo=al.const(np.zeros(n_s)), name="barrier"),) if n_s else ()
-    return al.ProblemSpec(
+    cost, constraints = _scaly_oracle_outputs((sc.concat([u, s]), *params), loop_cfg, filt_cfg)
+    inequalities = (sc.bounded(constraints, lo=sc.const(np.zeros(n_s)), name="barrier"),) if n_s else ()
+    return sc.ProblemSpec(
       minimize=cost,
       ineq=inequalities,
-      lb=(al.const(-np.ones(n_u)), al.const(np.zeros(n_s))),
-      ub=(al.const(np.ones(n_u)), al.const(np.full(n_s, np.inf))),
+      lb=(sc.const(-np.ones(n_u)), sc.const(np.zeros(n_s))),
+      ub=(sc.const(np.ones(n_u)), sc.const(np.full(n_s, np.inf))),
     )
 
-  result = al.solver(problem, solver, name=base.name.replace("_oracle", f"_{solver}_nlp"), options=options)
+  result = sc.solver(problem, solver, name=base.name.replace("_oracle", f"_{solver}_nlp"), options=options)
   setattr(result, "_benchmark_base", base)
   return result
 
 
-class AlloyDTCBFSafetyFilter:
+class ScalyDTCBFSafetyFilter:
   """DTCBF filter through a generated typed solver Function.
 
-  IPOPT or SQP can consume Alloy-generated oracles; SQP can also consume
+  IPOPT or SQP can consume Scaly-generated oracles; SQP can also consume
   CasADi-generated C oracles through the same wrapper contract. Warm starts
   carry the primal plus signed constraint and box multipliers between steps.
   """
 
-  name = "alloy_dt_hcbf"
+  name = "scaly_dt_hcbf"
 
   def __init__(
     self,
@@ -748,14 +748,14 @@ class AlloyDTCBFSafetyFilter:
     weights: CTFullWeights | DTMLPWeights,
     *,
     solver: str = "ipopt",
-    oracle_provider: str = "alloy",
+    oracle_provider: str = "scaly",
   ):
     if solver != "ipopt" and filt_cfg.limited_memory_hessian:
       raise ValueError("limited-memory Hessians apply only to IPOPT")
     self.loop_cfg = loop_cfg
     self.filt_cfg = filt_cfg
     self.weights = weights
-    self.name = "alloy_dt_hcbf" if (solver, oracle_provider) == ("ipopt", "alloy") else f"{solver}_{oracle_provider}_dt_hcbf"
+    self.name = "scaly_dt_hcbf" if (solver, oracle_provider) == ("ipopt", "scaly") else f"{solver}_{oracle_provider}_dt_hcbf"
     self.ncars = loop_cfg.ncars
     self.n_u = NCTRL * self.ncars
     self.n_s = loop_cfg.n_slack
@@ -764,11 +764,11 @@ class AlloyDTCBFSafetyFilter:
     self.last_z: np.ndarray | None = None
     self.last_mult_g: np.ndarray | None = None
     self.last_lam_box: np.ndarray | None = None
-    self.fallback_nlp: al.Function | None = None
+    self.fallback_nlp: sc.Function | None = None
     self._packed_params = oracle_provider == "casadi"
     self._compile_ms: dict[str, float] = {}
     t0 = time.perf_counter()
-    base = build_alloy_oracle(loop_cfg, filt_cfg)
+    base = build_scaly_oracle(loop_cfg, filt_cfg)
     g = base.outputs[1]
     self.n_g = g.shape[0]
     options: dict[str, str | int | float] = {
@@ -780,14 +780,14 @@ class AlloyDTCBFSafetyFilter:
     }
     if self.filt_cfg.limited_memory_hessian:
       options["hessian_approximation"] = "limited-memory"
-    if oracle_provider == "alloy":
+    if oracle_provider == "scaly":
       if solver == "sqp":
         options = {
           "max_iter": SQP_MAX_ITER,
           "tol": self.filt_cfg.ipopt_tol,
           "dual_tol": SQP_DUAL_TOL,
         }
-      self.nlp = build_alloy_nlp(loop_cfg, filt_cfg, solver=solver, options=options, oracle=base)
+      self.nlp = build_scaly_nlp(loop_cfg, filt_cfg, solver=solver, options=options, oracle=base)
     elif oracle_provider == "casadi" and solver == "sqp":
       self.nlp = build_casadi_sqp(loop_cfg, filt_cfg, weights)
     else:
@@ -800,8 +800,8 @@ class AlloyDTCBFSafetyFilter:
         "globalization": "l1",
         "watchdog": 5,
       }
-      if oracle_provider == "alloy":
-        self.fallback_nlp = build_alloy_nlp(loop_cfg, filt_cfg, solver="sqp", options=fallback_options, oracle=base)
+      if oracle_provider == "scaly":
+        self.fallback_nlp = build_scaly_nlp(loop_cfg, filt_cfg, solver="sqp", options=fallback_options, oracle=base)
       else:
         self.fallback_nlp = build_casadi_sqp(loop_cfg, filt_cfg, weights, sqp_options={"globalization": "l1", "watchdog": 5})
     self.jac_sparsity = self.nlp.descriptor.jac_sparsity
@@ -851,7 +851,7 @@ class AlloyDTCBFSafetyFilter:
 
     self.last_solve_wall_ms = 0.0
 
-    def solve(active_nlp: al.Function):
+    def solve(active_nlp: sc.Function):
       descriptor = active_nlp.descriptor
       if descriptor.n_var_blocks == 2:
         variables0 = (z0[: self.n_u], z0[self.n_u :])
@@ -868,7 +868,7 @@ class AlloyDTCBFSafetyFilter:
       else:
         z_sol, box_sol = variables, box
       evaluator = getattr(active_nlp, "_benchmark_base")
-      if isinstance(evaluator, al.Function):
+      if isinstance(evaluator, sc.Function):
         _, constraints = evaluator.numerical_call((z_sol, *params))
       else:
         _, constraints = evaluator(z_sol, *params)
@@ -883,12 +883,12 @@ class AlloyDTCBFSafetyFilter:
     active_nlp = self.nlp
     out, stats = solve(active_nlp)
     attempt_stats = [stats]
-    if stats.status not in (al.AlloySolveStatus.OK, al.AlloySolveStatus.ACCEPTABLE) and self.fallback_nlp is not None:
+    if stats.status not in (sc.ScalySolveStatus.OK, sc.ScalySolveStatus.ACCEPTABLE) and self.fallback_nlp is not None:
       active_nlp = self.fallback_nlp
       out, stats = solve(active_nlp)
       attempt_stats.append(stats)
     g_val = np.asarray(out["g_ineq"], dtype=np.float64).reshape(-1)
-    raw_success = stats.status in (al.AlloySolveStatus.OK, al.AlloySolveStatus.ACCEPTABLE)
+    raw_success = stats.status in (sc.ScalySolveStatus.OK, sc.ScalySolveStatus.ACCEPTABLE)
     feasible = bool(np.all(np.isfinite(out["x"])) and (not g_val.size or np.min(g_val) >= -1e-6))
     success = raw_success and feasible
     if success:

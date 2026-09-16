@@ -12,12 +12,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import alloy as al
-from alloy.codegen import solver
-from alloy.solvers import graph as solver_graph
-from alloy.solvers import registry
-from alloy.solvers.registry import SOLVER_PLUGIN_PROTOCOL_VERSION, SolverPluginError
-from alloy.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
+import scaly as sc
+from scaly.codegen import solver
+from scaly.solvers import graph as solver_graph
+from scaly.solvers import registry
+from scaly.solvers.registry import SOLVER_PLUGIN_PROTOCOL_VERSION, SolverPluginError
+from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
 
 
 class _FakeEntryPoint:
@@ -47,12 +47,12 @@ class _FakeBackend:
     outputs = ", ".join(f"double* out{i}" for i in range(len(fun.descriptor.output_signature)))
     return [
       f"static void {ctx.raw_symbol}({inputs}, {outputs}, double* w) {{",
-      f"  {ctx.stats_symbol}.version = ALLOY_SOLVER_STATS_VERSION;",
+      f"  {ctx.stats_symbol}.version = SCALY_SOLVER_STATS_VERSION;",
       "}",
     ]
 
 
-def _fake_solver_function(backend: str = "fake") -> al.Function:
+def _fake_solver_function(backend: str = "fake") -> sc.Function:
   desc = SolverDescriptor(
     name="fake_qp",
     backend=backend,
@@ -116,17 +116,17 @@ def test_loaded_backends_skips_version_mismatch_with_warning(monkeypatch: pytest
 
 
 def test_generic_lib_env_var_override(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-  from alloy.solvers import paths as solver_paths_module
-  from alloy.utils import env
+  from scaly.solvers import paths as solver_paths_module
+  from scaly.utils import env
 
   lib = tmp_path / f"libfake{env.shared_lib_ext()}"
   lib.write_text("")
   monkeypatch.setattr(solver_paths_module, "_backends", lambda: {"fake": _FakeBackend()})
   monkeypatch.setattr(solver_paths_module, "_plugin_solver_paths", lambda: [])
-  monkeypatch.setenv("ALLOY_FAKE_LIB", str(lib))
+  monkeypatch.setenv("SCALY_FAKE_LIB", str(lib))
   paths = solver_paths_module.solver_paths()
   assert paths.loads["fake"] == str(lib)
-  assert paths.source == "ALLOY_FAKE_LIB"
+  assert paths.source == "SCALY_FAKE_LIB"
 
 
 def test_kind_mismatch_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,13 +143,13 @@ def test_nlp_descriptor_uses_backend_hessian_triangle(monkeypatch: pytest.Monkey
 
   fake_backend = lambda name: _FakeNlpBackend()  # noqa: E731
   monkeypatch.setattr(registry, "get_backend", fake_backend)
-  monkeypatch.setattr(sys.modules["alloy.solvers.solver"], "get_backend", fake_backend)
+  monkeypatch.setattr(sys.modules["scaly.solvers.solver"], "get_backend", fake_backend)
 
-  @al.problem(vars=al.L(f"layout_x_{triangle}", 2), name=f"layout_{triangle}")
+  @sc.problem(vars=sc.L(f"layout_x_{triangle}", 2), name=f"layout_{triangle}")
   def problem(x):
-    return al.ProblemSpec(minimize=x[0] * x[1])
+    return sc.ProblemSpec(minimize=x[0] * x[1])
 
-  nlp = al.solver(problem, "fake", name=f"layout_{triangle}")
+  nlp = sc.solver(problem, "fake", name=f"layout_{triangle}")
   sparsity = nlp.descriptor.hess_sparsity
   assert sparsity is not None
   assert all(row >= col if triangle == "lower" else row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
@@ -177,11 +177,11 @@ def test_render_solver_raw_dispatches_to_plugin_and_frames_stats(monkeypatch: py
   fun = _fake_solver_function()
   lines = solver.render_solver_raw(fun)
   # Core-owned framing: stats storage before the plugin body, accessor after.
-  assert lines[0] == "static alloy_solver_stats fake_qp_stats_data;"
+  assert lines[0] == "static scaly_solver_stats fake_qp_stats_data;"
   assert "static void fake_qp_raw(const double* in0, const double* in1, const double* in2, double* out0, double* w) {" in lines
-  assert "int fake_qp_stats(alloy_solver_stats* out) {" in lines
+  assert "int fake_qp_stats(scaly_solver_stats* out) {" in lines
   # The plugin body was told about the same stats symbol core declared.
-  assert "  fake_qp_stats_data.version = ALLOY_SOLVER_STATS_VERSION;" in lines
+  assert "  fake_qp_stats_data.version = SCALY_SOLVER_STATS_VERSION;" in lines
 
 
 def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -213,7 +213,7 @@ def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch
   monkeypatch.setattr(registry, "get_backend", lambda name: _ExternalBackend())
   source = "\n".join(solver.render_solver_raw(descriptor_function(desc)))
   assert oracle.source in source
-  assert source.index(oracle.source) < source.index("static alloy_solver_stats external_qp_stats_data;")
+  assert source.index(oracle.source) < source.index("static scaly_solver_stats external_qp_stats_data;")
 
 
 def test_external_oracle_workspace_is_part_of_solver_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -238,13 +238,13 @@ def test_external_oracle_workspace_is_part_of_solver_workspace(monkeypatch: pyte
     base=oracle,
   )
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
-  from alloy.codegen.aot import render_c_module
+  from scaly.codegen.aot import render_c_module
 
   header = render_c_module(descriptor_function(desc)).header
   assert "#define external_workspace_SZ_W 7" in header
 
 
-def _external_solver(name: str, oracle: ExternalOracle) -> al.Function:
+def _external_solver(name: str, oracle: ExternalOracle) -> sc.Function:
   return descriptor_function(
     SolverDescriptor(
       name=name,
@@ -265,11 +265,11 @@ def test_external_oracle_source_is_deduplicated_across_solver_wrappers(monkeypat
   source = "static void shared_raw(const double* x, double* y, double* w) { y[0] = x[0]; (void)w; }"
   oracle = ExternalOracle("shared", "shared_raw", source, (("x", (1,)),), (("f", ()),))
   left, right = _external_solver("left_solver", oracle), _external_solver("right_solver", oracle)
-  args = [al.const(np.zeros(1)), al.const(np.zeros(0)), al.const(np.zeros(0))]
-  host = al.Function._from_exprs("two_external_solvers", [], [left(tuple(args)) + right(tuple(args))], [], ["x"])
+  args = [sc.const(np.zeros(1)), sc.const(np.zeros(0)), sc.const(np.zeros(0))]
+  host = sc.Function._from_exprs("two_external_solvers", [], [left(tuple(args)) + right(tuple(args))], [], ["x"])
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
 
-  from alloy.codegen.aot import render_c_module
+  from scaly.codegen.aot import render_c_module
 
   assert render_c_module(host).source.count(source) == 1
 
@@ -278,11 +278,11 @@ def test_conflicting_external_oracle_symbol_definitions_are_rejected(monkeypatch
   first = ExternalOracle("first", "shared_raw", "static void shared_raw(void) {}", (), ())
   second = ExternalOracle("second", "shared_raw", "static void shared_raw(int x) { (void)x; }", (), ())
   left, right = _external_solver("left_conflict", first), _external_solver("right_conflict", second)
-  args = [al.const(np.zeros(1)), al.const(np.zeros(0)), al.const(np.zeros(0))]
-  host = al.Function._from_exprs("conflicting_external_solvers", [], [left(tuple(args)) + right(tuple(args))], [], ["x"])
+  args = [sc.const(np.zeros(1)), sc.const(np.zeros(0)), sc.const(np.zeros(0))]
+  host = sc.Function._from_exprs("conflicting_external_solvers", [], [left(tuple(args)) + right(tuple(args))], [], ["x"])
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
 
-  from alloy.codegen.aot import render_c_module
+  from scaly.codegen.aot import render_c_module
 
   with pytest.raises(ValueError, match="conflicting source definitions"):
     render_c_module(host)
@@ -293,9 +293,9 @@ def test_stats_abi_v3_layout_is_additive() -> None:
   and keeps the struct 8-aligned (four doubles at offset 96, two int32)."""
   import ctypes
 
-  from alloy.solvers.stats import ALLOY_SOLVER_STATS_VERSION, STATS_FIELDS, CSolverStats
+  from scaly.solvers.stats import SCALY_SOLVER_STATS_VERSION, STATS_FIELDS, CSolverStats
 
-  assert ALLOY_SOLVER_STATS_VERSION == 3
+  assert SCALY_SOLVER_STATS_VERSION == 3
   names = [name for name, _ in STATS_FIELDS]
   assert names[:17] == [
     "version", "status", "native_status", "iter",

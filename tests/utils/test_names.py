@@ -2,8 +2,8 @@
 
 import pytest
 
-from alloy.codegen.abi import c_ident as abi_ident
-from alloy.utils.names import c_ident
+from scaly.codegen.abi import c_ident as abi_ident
+from scaly.utils.names import c_ident
 
 
 @pytest.mark.parametrize(

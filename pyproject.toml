@@ -1,5 +1,5 @@
 [project]
-name = "alloy"
+name = "scaly"
 version = "0.1.0"
 description = "A symbolic IR and code-generation framework for optimal control problems."
 readme = "README.md"
@@ -19,7 +19,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/alloy"]
+packages = ["src/scaly"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -31,9 +31,9 @@ allow-direct-references = true
 
 [dependency-groups]
 dev = [
-    "alloy-ipopt",
-    "alloy-piqp",
-    "alloy-sqp",
+    "scaly-ipopt",
+    "scaly-piqp",
+    "scaly-sqp",
     "casadi>=3.8.0",
     "pytest>=8.4.2",
     "pytest-xdist>=3.8.0",
@@ -50,8 +50,8 @@ docs = [
 ]
 
 [project.scripts]
-alloy_viz = "alloy.viz.serve:main"
-alloy_toolchain = "alloy.codegen.toolchain:main"
+scaly_viz = "scaly.viz.serve:main"
+scaly_toolchain = "scaly.codegen.toolchain:main"
 
 [tool.uv]
 default-groups = ["dev", "docs"]
@@ -60,15 +60,15 @@ default-groups = ["dev", "docs"]
 members = ["plugins/*"]
 
 [tool.uv.sources]
-alloy-ipopt = { workspace = true }
-alloy-piqp = { workspace = true }
-alloy-sqp = { workspace = true }
+scaly-ipopt = { workspace = true }
+scaly-piqp = { workspace = true }
+scaly-sqp = { workspace = true }
 
 [tool.ruff]
 indent-width = 2
 line-length = 150
 target-version = "py312"
-include = ["src/alloy/**/*.py", "tests/**/*.py", "benchmarks/**/*.py", "plugins/**/*.py", "typing_playground/**/*.py"]
+include = ["src/scaly/**/*.py", "tests/**/*.py", "benchmarks/**/*.py", "plugins/**/*.py", "typing_playground/**/*.py"]
 exclude = [".venv"]
 lint.ignore = ["E731"]
 

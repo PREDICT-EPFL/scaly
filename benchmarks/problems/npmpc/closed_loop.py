@@ -31,7 +31,7 @@ import numpy as np
 
 from benchmarks.harness.timing import SolveTiming
 
-from alloy import SolverStats
+from scaly import SolverStats
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
   DT,
@@ -110,9 +110,9 @@ class EpisodeResult:
   timing: dict[str, object]
 
 
-def build_solver(config: EpisodeConfig, solver: str = "ipopt", oracle: str = "alloy"):
+def build_solver(config: EpisodeConfig, solver: str = "ipopt", oracle: str = "scaly"):
   """Build the selected solver with either provider's generated oracles."""
-  if oracle == "alloy":
+  if oracle == "scaly":
     options = (
       {"tol": config.sqp_tol, "max_iter": config.sqp_max_iter}
       if solver == "sqp"
@@ -154,7 +154,7 @@ def run_episode(
   *,
   smoke: bool = False,
   solver: str = "ipopt",
-  oracle: str = "alloy",
+  oracle: str = "scaly",
   weights: np.ndarray | None = None,
 ) -> EpisodeResult:
   """Run one deterministic episode and return everything the recorder and the gates consume."""

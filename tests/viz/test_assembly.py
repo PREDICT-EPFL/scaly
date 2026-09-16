@@ -1,9 +1,9 @@
 import json
 
-from alloy import Function, render_expr_assembly, render_program_assembly, sym
-from alloy.codegen.aot import render_c_source
-from alloy.passes.lowering import lower_function
-from alloy.viz import clear_recordings, recordings, unvisualize_function, visualize_function
+from scaly import Function, render_expr_assembly, render_program_assembly, sym
+from scaly.codegen.aot import render_c_source
+from scaly.passes.lowering import lower_function
+from scaly.viz import clear_recordings, recordings, unvisualize_function, visualize_function
 
 
 def _fun() -> Function:
@@ -30,7 +30,7 @@ def test_expr_and_program_assembly():
 
 
 def test_render_c_source_tracing_is_opt_in(tmp_path, monkeypatch):
-  monkeypatch.setenv("ALLOY_VIZ_DIR", str(tmp_path))
+  monkeypatch.setenv("SCALY_VIZ_DIR", str(tmp_path))
   f = _fun()
   clear_recordings(disk=True)
   render_c_source(f)
@@ -63,7 +63,7 @@ def test_render_c_source_tracing_is_opt_in(tmp_path, monkeypatch):
 
 
 def test_recording_keeps_original_and_normalized_expressions(tmp_path, monkeypatch):
-  monkeypatch.setenv("ALLOY_VIZ_DIR", str(tmp_path))
+  monkeypatch.setenv("SCALY_VIZ_DIR", str(tmp_path))
   matrix, vector = sym("matrix", (2, 3)), sym("vector", 2)
   output = matrix.T @ vector
   fun = Function._from_exprs("normalized_matmul", [matrix, vector], [output], ["matrix", "vector"], ["y"])

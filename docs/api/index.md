@@ -3,9 +3,9 @@
 The public surface, grouped by what it is for and generated from the source, so it follows the
 code.
 
-A few names in the `alloy` namespace are aliases or constants that carry no documentation of their
-own and so do not appear below: `al.sym` and `al.const` are `Expr.sym` and `Expr.const`, and
-`al.C_API_SIGNATURE` is the ABI signature string. `alloy.__all__` is the
+A few names in the `scaly` namespace are aliases or constants that carry no documentation of their
+own and so do not appear below: `sc.sym` and `sc.const` are `Expr.sym` and `Expr.const`, and
+`sc.C_API_SIGNATURE` is the ABI signature string. `scaly.__all__` is the
 authoritative list of what is public.
 
 For prose explanations rather than signatures, start with the [User Guide](../guide/getting_started.md).

@@ -1,6 +1,6 @@
-# Alloy roadmap
+# Scaly roadmap
 
-Alloy is a pure-Python symbolic compiler for optimal-control problems. This roadmap records
+Scaly is a pure-Python symbolic compiler for optimal-control problems. This roadmap records
 future library direction. Completed implementation history belongs in git and the frozen notes.
 
 The guiding idea is:
@@ -20,7 +20,7 @@ differentiation preserve them. The focused graph and substitution tests in `test
 cover that metadata behavior. Ordinary models and published documentation do not use the hints.
 
 The prototype can change or be removed without compatibility guarantees. Keeping it does not commit
-Alloy to this interface or to implementing it. Future region-formation work must decide whether
+Scaly to this interface or to implementing it. Future region-formation work must decide whether
 per-expression hints are useful before adopting them. This status supersedes the historical hint
 plans below.
 
@@ -32,7 +32,7 @@ place. The [current benchmark results](../docs/results/index.md) measure the imp
 
 ## North star
 
-Alloy should become a small CasADi-like core with a modern compiler architecture:
+Scaly should become a small CasADi-like core with a modern compiler architecture:
 
 - **CasADi-like user model**: symbolic expressions, named functions, derivative factories, QP/NLP builders.
 - **Unified IR**: no hard global SX/MX split; individual regions can lower as scalar code, block loops, kernels, or opaque calls.
@@ -42,9 +42,9 @@ Alloy should become a small CasADi-like core with a modern compiler architecture
 
 ## Concept map
 
-A useful way to keep Alloy aligned with compiler/tinygrad/anvil terminology:
+A useful way to keep Scaly aligned with compiler/tinygrad/anvil terminology:
 
-| Alloy concept | Compiler role | tinygrad/anvil/CasADi analogy |
+| Scaly concept | Compiler role | tinygrad/anvil/CasADi analogy |
 | --- | --- | --- |
 | `ExprOp` | opcode enum | tinygrad `ExprOp` |
 | `Expr` | immutable operation node / SSA value | tinygrad `UOp` |
@@ -53,7 +53,7 @@ A useful way to keep Alloy aligned with compiler/tinygrad/anvil terminology:
 | `CallOp` / `ExprOp.CALL` | function invocation node | CasADi call node, future external/solver/integrator calls |
 | `Program IR` | lowered executable schedule | tinygrad scheduled UOps, generated CasADi/anvil code |
 | `Function.factory()` | derivative/helper function builder | CasADi factory request language |
-| `alloy.function.api.gradient(fn, ...)` | human convenience layer | thin wrapper over factory requests |
+| `scaly.function.api.gradient(fn, ...)` | human convenience layer | thin wrapper over factory requests |
 | lowering hints | unused prototype metadata | intended scalar vs block preference, ignored by lowering |
 | `PatternMatcher` | graph rewrite system | tinygrad `PatternMatcher`/`UPat` |
 
@@ -61,7 +61,7 @@ This map should stay visible in the design: `Expr` is not the high-level tensor 
 
 ## Construction model
 
-Alloy should support the low-level CasADi-like style of creating symbolic values and then wrapping them in a `Function`, because it is useful for tests, imports, debugging, and graph surgery. It should not be the only or preferred user model. Long-term user-facing modeling should look closer to anvil: a Python-scoped function/decorator/builder creates fresh symbolic inputs from a declared signature, traces the body, and returns a named `Function`.
+Scaly should support the low-level CasADi-like style of creating symbolic values and then wrapping them in a `Function`, because it is useful for tests, imports, debugging, and graph surgery. It should not be the only or preferred user model. Long-term user-facing modeling should look closer to anvil: a Python-scoped function/decorator/builder creates fresh symbolic inputs from a declared signature, traces the body, and returns a named `Function`.
 
 Reasons to keep the explicit graph constructor:
 
@@ -93,7 +93,7 @@ Status: started.
 
 Implemented:
 
-- `src/alloy` as a separate package.
+- `src/scaly` as a separate package.
 - `Expr`, `ExprOp`, `Function`.
 - JIT execution through generated C.
 - Basic symbolic JVP-based `jacobian`, `gradient`, `hessian`.
@@ -128,7 +128,7 @@ covered by the sections below.
 Add an anvil-style user construction layer while keeping the current explicit `Expr.sym` + `Function(...)` IR constructor. Candidate API:
 
 ```python
-@alloy.function("eq_interstage", inputs={"z": (6,), "znext": (6,), "p": (4,)})
+@scaly.function("eq_interstage", inputs={"z": (6,), "znext": (6,), "p": (4,)})
 def eq_interstage(z, znext, p):
   return {"eq": rk4_dynamics(z[:4], z[4:]) - znext[:4]}
 ```
@@ -205,7 +205,7 @@ Progress:
 - Added factory-level `Fwd` requests and a human `forward(fn, of, wrt)` wrapper for seeded `J(of, wrt) @ fwd:wrt` products.
 - Added factory-level `Adj` requests and a human `adjoint(fn, of, wrt)` wrapper for seeded `J(of, wrt).T @ lam:of` reverse products.
 - Added lower-level multi-seed `jvp_many` and `vjp_many` APIs using a leading seed axis.
-- Added Alloy reverse-mode tests for scalar outputs, vector-seeded VJPs, broadcasted multi-output accumulation, structural/matmul paths, nested `CallOp` reverse AD, factory/API forward/adjoint directional derivatives, multi-seed AD, and clear errors for omitted directional seeds.
+- Added Scaly reverse-mode tests for scalar outputs, vector-seeded VJPs, broadcasted multi-output accumulation, structural/matmul paths, nested `CallOp` reverse AD, factory/API forward/adjoint directional derivatives, multi-seed AD, and clear errors for omitted directional seeds.
 - Factory construction now reports unknown requested inputs, derivative-spec inputs/outputs, and aux outputs as explicit `ValueError`s instead of leaking raw mapping errors.
 - Factory aux outputs now reject names that shadow real function outputs.
 
@@ -315,7 +315,7 @@ Exit criteria:
 
 ## Phase 4 — C ABI, codegen, JIT, and typed wrappers
 
-Goal: make Alloy functions callable from generated C/C++ and compatible with CasADi-like consumers. The generated path should also become the default execution path: `Function.__call__` should eventually lazily JIT and cache native code, with the interpreter kept as a reference/debug mode.
+Goal: make Scaly functions callable from generated C/C++ and compatible with CasADi-like consumers. The generated path should also become the default execution path: `Function.__call__` should eventually lazily JIT and cache native code, with the interpreter kept as a reference/debug mode.
 
 Status: started.
 
@@ -325,11 +325,11 @@ Progress:
 - Added a standalone scalar C source renderer for the current expression op subset: constants, inputs, elementwise ops, reductions, structural reshape/transpose/slice/gather/scatter/stack/concat, and rank-1/rank-2 matmul.
 - Added a compiled `ctypes` smoke test that builds generated C with `cc`, calls the universal ABI, checks the `sz_*` helpers, and verifies numerical outputs.
 - `render_c_source(outer)` now emits nested callee raw bodies before callers and lowers `CallOp` instructions by invoking those internal raw bodies directly; only the root function is exported through the universal ABI for a rendered translation unit.
-- C codegen now emits temporaries as local C arrays with contiguous slice/reshape aliases instead of monotonically growing caller workspace. This fixed the tracking benchmark symptom where Alloy's reported workspace grew with horizon; pure generated functions now usually have `SZ_W == 0`, while the ABI still reserves `w` for regions that need caller scratch.
+- C codegen now emits temporaries as local C arrays with contiguous slice/reshape aliases instead of monotonically growing caller workspace. This fixed the tracking benchmark symptom where Scaly's reported workspace grew with horizon; pure generated functions now usually have `SZ_W == 0`, while the ABI still reserves `w` for regions that need caller scratch.
 - Added a compiled nested-call ABI test covering a callee with multiple outputs.
 - Generated headers now expose compile-time ABI size macros and an inline C++ typed-buffer wrapper that calls the universal ABI internally.
 - Added a C++ compile-and-run smoke test for the typed wrapper path.
-- Generated headers/source now define named `ALLOY_*` ABI status codes for success, null ABI arrays, missing workspace, null result slots, and null input slots.
+- Generated headers/source now define named `SCALY_*` ABI status codes for success, null ABI arrays, missing workspace, null result slots, and null input slots.
 - Expanded the compiled ABI test to verify those null-pointer error paths.
 - Added `render_c_module`, which returns a paired generated header/source module with explicit output filenames and the source including the generated header.
 - Updated the C++ wrapper smoke test to compile the generated C source separately and link it into a C++ caller.
@@ -345,17 +345,17 @@ Progress:
 
 Landed:
 
-- `src/alloy/codegen/jit.py` owns the JIT pipeline: SHA-256 cache key over (`_JIT_CACHE_VERSION`, `C_API_SIGNATURE`, function name, generated C source), per-user cache directory (`$ALLOY_CACHE_DIR` overrides, otherwise `$XDG_CACHE_HOME/alloy/jit` or `~/.cache/alloy/jit`), `cc -O2 -fPIC -shared/-dynamiclib` invocation, and a `CompiledFunction` that wires `ctypes` against the universal ABI entry point and `_sz_w` helper.
+- `src/scaly/codegen/jit.py` owns the JIT pipeline: SHA-256 cache key over (`_JIT_CACHE_VERSION`, `C_API_SIGNATURE`, function name, generated C source), per-user cache directory (`$SCALY_CACHE_DIR` overrides, otherwise `$XDG_CACHE_HOME/scaly/jit` or `~/.cache/scaly/jit`), `cc -O2 -fPIC -shared/-dynamiclib` invocation, and a `CompiledFunction` that wires `ctypes` against the universal ABI entry point and `_sz_w` helper.
 - A process-local `_artifact_cache` lets multiple `Function` instances with identical generated source share the same `.so` after the first compile; the on-disk cache survives across processes.
 - `Function._compiled` holds the per-instance handle. `Function.recompile()` drops the in-process handle and removes the cached source/library directory. `Function.__call__` and `Function.numerical_call` are the public execution entry points; `Function._flat_numerical_call` is the leaf-level seam beneath them.
 - Internal `CALL`/`VMAP` nodes lower through Program IR, so nested Python execution and AOT share the same code path.
 - Fixed a latent codegen bug uncovered by this work: `_skipped_instructions` was vacuously dropping output-only TRANSPOSE/ADD/SUB nodes because `all(...)` over an empty consumer list is `True`. Output instructions are now excluded from the skip set so the final copy loop always has a materialized buffer.
-- Test coverage in `tests/alloy/test_alloy_jit.py` covers: JIT matches explicit NumPy references, cache keys are stable across `Function` instances of the same graph, `recompile()` invalidates both in-memory and on-disk caches, multi-output + keyword inputs, factory `sparse_jacobian` outputs (sparse compact buffer), nested `CALL` nodes, and shape-mismatch validation.
+- Test coverage in `tests/scaly/test_scaly_jit.py` covers: JIT matches explicit NumPy references, cache keys are stable across `Function` instances of the same graph, `recompile()` invalidates both in-memory and on-disk caches, multi-output + keyword inputs, factory `sparse_jacobian` outputs (sparse compact buffer), nested `CALL` nodes, and shape-mismatch validation.
 
 Resolved open questions:
 
 - Multiple `Function` instances with identical generated source share an `.so` via `_artifact_cache` keyed by the SHA-256 hash, but each `Function` still holds its own `ctypes.CDLL` handle (cheap relative to the compile itself).
-- The JIT cache lives under a separate Alloy directory (`~/.cache/alloy/jit/<hash>/`) so it is independent of tinygrad's cache.
+- The JIT cache lives under a separate Scaly directory (`~/.cache/scaly/jit/<hash>/`) so it is independent of tinygrad's cache.
 - The workspace buffer `w` is allocated per call as a ctypes array of size `sz_w`. Workspace sizes in benchmark workloads are zero or tiny, so per-call allocation is fine; revisit if a workload pushes `sz_w` high enough that allocation cost shows up in profiles.
 
 ### Universal ABI
@@ -393,31 +393,31 @@ Exit criteria:
 - ABI tests execute generated functions through `ctypes` or compiled test binaries.
 - Typed wrappers are tested for shape/signature correctness.
 
-## Phase 5 — QP and NLP solvers as Alloy Functions
+## Phase 5 — QP and NLP solvers as Scaly Functions
 
-Goal: make `al.qp(...)` and `al.nlp(...)` return real callable Alloy `Function`s whose oracles are driven by Alloy's derivative factory, with PIQP and IPOPT as the first concrete backends. Driving workload: the CBF safety filter described in [Current experiment pivot](#current-experiment-pivot).
+Goal: make `sc.qp(...)` and `sc.nlp(...)` return real callable Scaly `Function`s whose oracles are driven by Scaly's derivative factory, with PIQP and IPOPT as the first concrete backends. Driving workload: the CBF safety filter described in [Current experiment pivot](#current-experiment-pivot).
 
 ### Repository split
 
-Phase 5 starts by lifting Alloy out of the anvil repository into its own project. Reasons:
+Phase 5 starts by lifting Scaly out of the anvil repository into its own project. Reasons:
 
 - the IR no longer imports from `anvil`; the dependency tree is meaningfully smaller (no `tinygrad`, `jax`, `scipy`, `networkx`);
-- the build hook is about to grow significantly to vendor IPOPT + MUMPS + BLAS/LAPACK, and that machinery is alloy-specific;
-- independent versioning lets Alloy release without dragging anvil's experimental state along;
-- the PIQP shared library built for anvil and the one Alloy needs are the same artifact; cleaner if each project owns its own copy.
+- the build hook is about to grow significantly to vendor IPOPT + MUMPS + BLAS/LAPACK, and that machinery is scaly-specific;
+- independent versioning lets Scaly release without dragging anvil's experimental state along;
+- the PIQP shared library built for anvil and the one Scaly needs are the same artifact; cleaner if each project owns its own copy.
 
-The new `alloy` repository owns all `src/alloy/`, `tests/alloy/`, `docs/alloy/`, `benchmarks/`, and `plugins/` artifacts from this worktree, plus its own `pyproject.toml`, per-plugin hatch hooks, `.github/workflows/`, worktrunk config, and `uv`/`ruff`/`ty` settings. The anvil repository keeps its current state; cross-references stay as documentation only.
+The new `scaly` repository owns all `src/scaly/`, `tests/scaly/`, `docs/scaly/`, `benchmarks/`, and `plugins/` artifacts from this worktree, plus its own `pyproject.toml`, per-plugin hatch hooks, `.github/workflows/`, worktrunk config, and `uv`/`ruff`/`ty` settings. The anvil repository keeps its current state; cross-references stay as documentation only.
 
 ### Vendored solver shared libraries
 
-PIQP and IPOPT are built as shared libraries in their respective `plugins/alloy-{piqp,ipopt}/src/*/lib/` directories, with C headers in each plugin's `include/` directory. These artifacts are already used for local development and CI; making the final wheels fully redistributable still requires the static/runtime dependency cleanup tracked in `vendored_solvers.md`. The same artifacts are used:
+PIQP and IPOPT are built as shared libraries in their respective `plugins/scaly-{piqp,ipopt}/src/*/lib/` directories, with C headers in each plugin's `include/` directory. These artifacts are already used for local development and CI; making the final wheels fully redistributable still requires the static/runtime dependency cleanup tracked in `vendored_solvers.md`. The same artifacts are used:
 
 - by the Python runtime, loaded via `ctypes` from the JITed wrapper Functions;
-- by AOT C++ consumers that link against `-lpiqpc` / `-lipopt` using the include/lib/rpath flags reported by `alloy.solvers.graph.solver_compile_flags()`.
+- by AOT C++ consumers that link against `-lpiqpc` / `-lipopt` using the include/lib/rpath flags reported by `scaly.solvers.graph.solver_compile_flags()`.
 
 Build strategy:
 
-- **PIQP**: reuse the existing anvil hatch-hook pattern in `plugins/alloy-piqp/hatch_build.py`. Clone PIQP v0.6.2, Eigen 3.4.1, blasfeo; build `piqp_c` as a shared library; copy headers. Cold build ~1-2 min.
+- **PIQP**: reuse the existing anvil hatch-hook pattern in `plugins/scaly-piqp/hatch_build.py`. Clone PIQP v0.6.2, Eigen 3.4.1, blasfeo; build `piqp_c` as a shared library; copy headers. Cold build ~1-2 min.
 - **IPOPT**: source build via a coinbrew-style hook. Clone coin-or/Ipopt 3.14+, `ThirdParty-Mumps`, upstream METIS 5 with GKlib, and either OpenBLAS (Linux) or rely on Apple Accelerate (macOS). Build MUMPS (sequential, no MPI) and IPOPT against them. The target is to **statically link `libgfortran`, `libgcc`, and `libstdc++` into `libipopt`** (`-static-libgfortran -static-libgcc -static-libstdc++`) so the resulting `.dylib`/`.so` has no runtime dependency on the host's Fortran toolchain. Current CI source builds pass but still dynamically depend on those runtime libraries; see `vendored_solvers.md`. Cold build ~5-8 min.
 - **Caching**: identical to the anvil hook — skip each rebuild if its plugin lib + headers already exist.
 - **Platform support**: macOS (arm64 + x86_64) and Linux (manylinux_2_28) for v1. Windows is deferred: MSVC has no Fortran, MinGW/intel Fortran would require its own build path. Document the limitation; revisit if a concrete Windows user appears.
@@ -428,7 +428,7 @@ cyipopt was considered as a runtime dependency and rejected: although its wheel 
 
 ### Problem formulation: PIQP-style explicit constraints
 
-Alloy deliberately departs from CasADi's bilateral `lba ≤ Ax ≤ uba` convention in favour of PIQP-style explicit constraint categories. Each category carries structural information the solver can exploit directly, without runtime detection of equalities from `lba == uba`.
+Scaly deliberately departs from CasADi's bilateral `lba ≤ Ax ≤ uba` convention in favour of PIQP-style explicit constraint categories. Each category carries structural information the solver can exploit directly, without runtime detection of equalities from `lba == uba`.
 
 QP shape:
 
@@ -458,7 +458,7 @@ IPOPT path: at solver build time, stack `[h_eq; g_ineq]` into IPOPT's `g(x)` wit
 
 Two schemas, both built on top of the existing `Function` API and factory language. Derivative helpers are generated through the factory and cached as named `Function`s so they take the JIT path the same way user code does.
 
-**NLP oracle** for `al.nlp(...)`:
+**NLP oracle** for `sc.nlp(...)`:
 
 - inputs: `x`, `p`
 - outputs: `f`, `h_eq`, `g_ineq`
@@ -467,7 +467,7 @@ Two schemas, both built on top of the existing `Function` API and factory langua
   - `nlp_jac`: `x, p -> grad:f:x, jac:h_eq:x, jac:g_ineq:x` (sparse Jacobians)
   - `nlp_hess_l`: `x, p, lam_eq, lam_ineq -> hess:lagrangian:x:x` (sparse Lagrangian Hessian)
 
-**QP oracle** for `al.qp(...)`. The QP backend consumes the affine-in-`x` specialization of the same shape: at solver build time Alloy extracts `P = hess:f:x:x`, `c = grad:f:x` at `x=0`, `A_eq = jac:h_eq:x`, `b_eq = -h_eq(x=0)`, `G_ineq = jac:g_ineq:x`, and shifted bounds from `g_ineq(x=0)` via the factory. The resulting QP data are `Function`s of `p` only. This is the correct specialization for input-affine CBF filters, where `f(x)`, `g(x)`, and their Jacobians are evaluated once per step and become the QP's `p`.
+**QP oracle** for `sc.qp(...)`. The QP backend consumes the affine-in-`x` specialization of the same shape: at solver build time Scaly extracts `P = hess:f:x:x`, `c = grad:f:x` at `x=0`, `A_eq = jac:h_eq:x`, `b_eq = -h_eq(x=0)`, `G_ineq = jac:g_ineq:x`, and shifted bounds from `g_ineq(x=0)` via the factory. The resulting QP data are `Function`s of `p` only. This is the correct specialization for input-affine CBF filters, where `f(x)`, `g(x)`, and their Jacobians are evaluated once per step and become the QP's `p`.
 
 Both schemas accept dict-form builders for ergonomics but normalize to the same internal `Oracle` object.
 
@@ -475,22 +475,22 @@ Both schemas accept dict-form builders for ergonomics but normalize to the same 
 
 A plugin-style registry similar to CasADi's `nlpsol` / `conic` plugins — but
 external: a solver plugin is a separate pip-installable package registering an
-`alloy.solvers` entry point, and since 2026-07-15 it also owns its C wrapper
+`scaly.solvers` entry point, and since 2026-07-15 it also owns its C wrapper
 template (contract in [`docs/dev/solver_plugins.md`](../docs/dev/solver_plugins.md); decision in
 `notes/benchmark-buildout.md` §3.5):
 
-- **`piqp`** (QP backend). Sparse interior-point QP. Suitable for the input-affine CBF safety filter, where the QP data is rebuilt every step but the sparsity is fixed. Bind through PIQP's C interface; Alloy supplies sparsity patterns from `SparsityType` so PIQP's sparse path is used directly without conversion overhead. PIQP's native `A_eq`/`G_ineq`/`x_lb`/`x_ub` fields map one-to-one to the alloy QP schema.
-- **`ipopt`** (NLP backend). Standard NLP backend for the fully nonlinear CBF safety filter. Bind through IPOPT's C interface (`IpStdCInterface.h`), with Alloy supplying eval callbacks via the JITed oracle functions. Sparse Jacobian/Hessian patterns come from `SparsityType`; coloring stays internal to Alloy since IPOPT consumes structured sparse triplets, not colored seeds. The eq/ineq stacking conversion happens at solver construction.
+- **`piqp`** (QP backend). Sparse interior-point QP. Suitable for the input-affine CBF safety filter, where the QP data is rebuilt every step but the sparsity is fixed. Bind through PIQP's C interface; Scaly supplies sparsity patterns from `SparsityType` so PIQP's sparse path is used directly without conversion overhead. PIQP's native `A_eq`/`G_ineq`/`x_lb`/`x_ub` fields map one-to-one to the scaly QP schema.
+- **`ipopt`** (NLP backend). Standard NLP backend for the fully nonlinear CBF safety filter. Bind through IPOPT's C interface (`IpStdCInterface.h`), with Scaly supplying eval callbacks via the JITed oracle functions. Sparse Jacobian/Hessian patterns come from `SparsityType`; coloring stays internal to Scaly since IPOPT consumes structured sparse triplets, not colored seeds. The eq/ineq stacking conversion happens at solver construction.
 
 Each backend is a `Function` wrapper around the solver. From the outside, calling a QP/NLP solver `Function` follows the universal ABI and the JIT-as-default path from Phase 4. The memory hooks (`alloc_mem`, `init_mem`, `free_mem`) are no longer no-ops here — they own the solver workspace, factorizations, and cached warm-start state.
 
 ### Solver API
 
 ```python
-import alloy as al
+import scaly as sc
 
 # QP — PIQP backend
-qp = al.qp(
+qp = sc.qp(
     P=P_expr, c=c_expr,
     A_eq=A_eq_expr, b_eq=b_eq_expr,
     G_ineq=G_ineq_expr, l_ineq=l_ineq_expr, u_ineq=u_ineq_expr,
@@ -499,7 +499,7 @@ qp = al.qp(
 )
 
 # NLP — IPOPT backend
-nlp = al.nlp(
+nlp = sc.nlp(
     x=x_sym, p=p_sym,
     f=f_expr,
     h_eq=h_eq_expr,
@@ -522,28 +522,28 @@ Solvers are opaque `Function`s by default — their expression graph contains `S
 The concrete API target for the driving workload looks like:
 
 ```python
-import alloy as al
+import scaly as sc
 
-dynamics = al.load_nn_dynamics("model.pth")  # input-affine: returns (f, g) Functions
+dynamics = sc.load_nn_dynamics("model.pth")  # input-affine: returns (f, g) Functions
 
-@al.function("safety_filter", {"x": (NX,), "u_ref": (NU,)})
+@sc.function("safety_filter", {"x": (NX,), "u_ref": (NU,)})
 def safety_filter(x, u_ref):
     f_x = dynamics.f(x)
     g_x = dynamics.g(x)
     h, h_grad = cbf(x)
-    P = al.eye(NU)
+    P = sc.eye(NU)
     c = -u_ref
     G_ineq = h_grad @ g_x
     l_ineq = -(h_grad @ f_x + alpha * h)
-    u_ineq = al.inf
-    return {"u": al.qp(P=P, c=c, G_ineq=G_ineq, l_ineq=l_ineq, u_ineq=u_ineq, solver="piqp")}
+    u_ineq = sc.inf
+    return {"u": sc.qp(P=P, c=c, G_ineq=G_ineq, l_ineq=l_ineq, u_ineq=u_ineq, solver="piqp")}
 ```
 
-The same shape carries over to the NLP variant with `al.nlp(...)` and `f(x, u)` evaluated inside the oracle.
+The same shape carries over to the NLP variant with `sc.nlp(...)` and `f(x, u)` evaluated inside the oracle.
 
 Exit criteria:
 
-- Alloy repository split out, with PIQP + IPOPT building and shipping in wheels for macOS (arm64 + x86_64) and Linux (manylinux_2_28).
+- Scaly repository split out, with PIQP + IPOPT building and shipping in wheels for macOS (arm64 + x86_64) and Linux (manylinux_2_28).
 - `libipopt.{dylib,so}` is either statically linked against libgfortran/libgcc/libstdc++ or repaired/vendored so a standalone C++ binary has no undeclared host Fortran-runtime dependency.
 - Both safety-filter variants build, JIT, and execute through the universal ABI.
 - PIQP and IPOPT bindings pass small NLP/QP test problems against reference solutions (CasADi+PIQP, CasADi+IPOPT).
@@ -606,6 +606,6 @@ then becomes an actionable item in [todo.md](todo.md).
 3. **M2 Scalable rewrites + sparse AD**: tinygrad-inspired graph rewrites, reverse mode, true colored sparse derivatives, no dense-Jacobian-then-gather for benchmark paths. *Done.*
 4. **M3 Loop-preserving lowering**: VMAP-based per-stage callee reuse and colored sparse Jacobians constant in `N`/`C`, demonstrated on tracking NMPC `eq_constraints_jac` and VMAP-based unbumpercars `ineq_constraints_jac`. *Done.* Broader mixed scalar/block/opaque region formation is on standby until the safety-filter workload requires it.
 5. **M4 JIT as default**: `Function.__call__` lazily renders, compiles, caches, and dispatches through the universal ABI; interpreter preserved as debug fallback. *Done.*
-6. **M5 QP and NLP solvers**: `al.qp(...)` with PIQP and `al.nlp(...)` with IPOPT, driven by the CBF safety-filter workload. *Bindings + IR nesting + C codegen + AOT/C++ workflow landed*. Both builders ship, sparse Jacobian / sparse Lagrangian Hessian for IPOPT come through `Function.factory(...)`, and the new `ExprOp.SOLVER_CALL` op + `SolverFunction` subclassing `Function` lets a solver be embedded inside any other `@al.function` graph. **Nested QP and NLP both compile to a single `.so` that links directly against the vendored `libpiqpc` / `libipopt` — no Python in the hot path.** An AOT Google Benchmark harness measured ~4 µs/solve (QP) and ~450 µs/solve (NLP) on a recent macOS arm64 dev box; that script has since been absorbed into `benchmarks/run.py`. See [`docs/guide/solvers.md`](../docs/guide/solvers.md). Direction (2026-07-14, `internal/notes/benchmark-buildout.md` §3.4 + L2), **landed 2026-07-15**: the generated single-`.so` path is the universal solver integration and the **only** solve path — sparse PIQP lives there (`al.qp(..., sparse=True)`, CSC patterns baked at codegen, values-only updates), IPOPT callbacks point at generated kernels (workspace pass-through fixed the chain-scale crash) with full warm starts (`x0`, `lam_eq0`/`lam_ineq0`, sign-split `lam_box0`), and the alloy-owned stats struct resurfaces status/iterations/eval counts and the FE/solver/glue timing split. The Python-interleaved backends (nanobind `_piqp_ext`, ctypes IPOPT callbacks) are **deleted**; solver plugins ship vendored libs + headers + entry-point metadata + their C wrapper template (`render_wrapper`, moved out of core 2026-07-15 — see [`docs/dev/solver_plugins.md`](../docs/dev/solver_plugins.md) and `notes/benchmark-buildout.md` §3.5). Still open: PIQP warm-start handover (no C API for it upstream), implicit-function AD through `SOLVER_CALL`.
+6. **M5 QP and NLP solvers**: `sc.qp(...)` with PIQP and `sc.nlp(...)` with IPOPT, driven by the CBF safety-filter workload. *Bindings + IR nesting + C codegen + AOT/C++ workflow landed*. Both builders ship, sparse Jacobian / sparse Lagrangian Hessian for IPOPT come through `Function.factory(...)`, and the new `ExprOp.SOLVER_CALL` op + `SolverFunction` subclassing `Function` lets a solver be embedded inside any other `@sc.function` graph. **Nested QP and NLP both compile to a single `.so` that links directly against the vendored `libpiqpc` / `libipopt` — no Python in the hot path.** An AOT Google Benchmark harness measured ~4 µs/solve (QP) and ~450 µs/solve (NLP) on a recent macOS arm64 dev box; that script has since been absorbed into `benchmarks/run.py`. See [`docs/guide/solvers.md`](../docs/guide/solvers.md). Direction (2026-07-14, `internal/notes/benchmark-buildout.md` §3.4 + L2), **landed 2026-07-15**: the generated single-`.so` path is the universal solver integration and the **only** solve path — sparse PIQP lives there (`sc.qp(..., sparse=True)`, CSC patterns baked at codegen, values-only updates), IPOPT callbacks point at generated kernels (workspace pass-through fixed the chain-scale crash) with full warm starts (`x0`, `lam_eq0`/`lam_ineq0`, sign-split `lam_box0`), and the scaly-owned stats struct resurfaces status/iterations/eval counts and the FE/solver/glue timing split. The Python-interleaved backends (nanobind `_piqp_ext`, ctypes IPOPT callbacks) are **deleted**; solver plugins ship vendored libs + headers + entry-point metadata + their C wrapper template (`render_wrapper`, moved out of core 2026-07-15 — see [`docs/dev/solver_plugins.md`](../docs/dev/solver_plugins.md) and `notes/benchmark-buildout.md` §3.5). Still open: PIQP warm-start handover (no C API for it upstream), implicit-function AD through `SOLVER_CALL`.
 
 GPU codegen and broader CasADi/anvil interop are deferred until a workload's CPU runtime or migration need actually justifies them.

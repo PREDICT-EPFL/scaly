@@ -1,25 +1,25 @@
 # Visualization
 
-Importing `alloy.viz` is what arms recording; a plain `import alloy` does not.
+Importing `scaly.viz` is what arms recording; a plain `import scaly` does not.
 
 ## Recording
 
-::: alloy.viz.recording.visualize_function
+::: scaly.viz.recording.visualize_function
 
-::: alloy.viz.recording.unvisualize_function
+::: scaly.viz.recording.unvisualize_function
 
-::: alloy.viz.recording.recordings
+::: scaly.viz.recording.recordings
 
-::: alloy.viz.recording.clear_recordings
+::: scaly.viz.recording.clear_recordings
 
-::: alloy.viz.recording.recording_path
+::: scaly.viz.recording.recording_path
 
 ## Serving
 
-::: alloy.viz.serve.serve
+::: scaly.viz.serve.serve
 
 ## Graph data
 
-::: alloy.viz.graph.expr_graph
+::: scaly.viz.graph.expr_graph
 
-::: alloy.viz.graph.program_graph
+::: scaly.viz.graph.program_graph

@@ -7,11 +7,11 @@ from typing import Any, cast
 
 import numpy as np
 
-import alloy as al
-from alloy.function.tree import Tree, flat_tree
-from alloy.ir.expr import Expr, as_expr, substitute
-from alloy.ir.types import TensorType
-from alloy.solvers.model import SolverDescriptor
+import scaly as sc
+from scaly.function.tree import Tree, flat_tree
+from scaly.ir.expr import Expr, as_expr, substitute
+from scaly.ir.types import TensorType
+from scaly.solvers.model import SolverDescriptor
 
 
 def build_nlp(
@@ -28,17 +28,17 @@ def build_nlp(
   solver: str = "ipopt",
   name: str | None = None,
   options: dict[str, Any] | None = None,
-) -> al.Function:
+) -> sc.Function:
   """Express an old flat NLP test fixture through ProblemSpec."""
   if x.name is None:
     raise ValueError("test decision variable needs a name")
-  variables = al.L(x.name, x.type)
+  variables = sc.L(x.name, x.type)
   declared_params = () if p is None else ((p,) if isinstance(p, Expr) else tuple(p))
   for param in declared_params:
     if param.name is None:
       raise ValueError("test parameter needs a name")
 
-  def spec(replacements: dict[Expr, Expr]) -> al.ProblemSpec[Expr]:
+  def spec(replacements: dict[Expr, Expr]) -> sc.ProblemSpec[Expr]:
     def sub(value: Any) -> Expr:
       return substitute(as_expr(value), replacements)
 
@@ -46,13 +46,13 @@ def build_nlp(
     inequalities = ()
     if g_ineq is not None:
       inequalities = (
-        al.bounded(
+        sc.bounded(
           sub(g_ineq),
           None if l_ineq is None else sub(l_ineq),
           None if u_ineq is None else sub(u_ineq),
         ),
       )
-    return al.ProblemSpec(
+    return sc.ProblemSpec(
       minimize=sub(f),
       eq=equalities,
       ineq=inequalities,
@@ -62,8 +62,8 @@ def build_nlp(
 
   if not declared_params:
 
-    @al.problem(vars=variables, name=name)
-    def problem_body(new_x: Expr) -> al.ProblemSpec[Expr]:
+    @sc.problem(vars=variables, name=name)
+    def problem_body(new_x: Expr) -> sc.ProblemSpec[Expr]:
       return spec({x: new_x})
 
   else:
@@ -72,13 +72,13 @@ def build_nlp(
       tuple(TensorType(param.shape, param.type.dtype, param.type.sparsity, diff=False) for param in declared_params),
     )
 
-    @al.problem(vars=variables, params=param_tree, name=name)
-    def problem_body(new_x: Expr, new_params: Any) -> al.ProblemSpec[Expr]:
+    @sc.problem(vars=variables, params=param_tree, name=name)
+    def problem_body(new_x: Expr, new_params: Any) -> sc.ProblemSpec[Expr]:
       replacements = {x: new_x}
       replacements.update(zip(declared_params, param_tree.flatten_symbolic(new_params, "test parameters"), strict=True))
       return spec(replacements)
 
-  return al.solver(problem_body, solver, name=name, options=options)
+  return sc.solver(problem_body, solver, name=name, options=options)
 
 
 def build_qp(
@@ -96,7 +96,7 @@ def build_qp(
   name: str | None = None,
   options: dict[str, Any] | None = None,
   sparse: bool = False,
-) -> al.Function:
+) -> sc.Function:
   """Express an old matrix-form QP test fixture through ProblemSpec."""
   P_expr, c_expr = as_expr(P), as_expr(c)
   if len(P_expr.shape) != 2 or P_expr.shape[0] != P_expr.shape[1]:
@@ -104,15 +104,15 @@ def build_qp(
   n = P_expr.shape[0]
   if c_expr.shape != (n,):
     raise ValueError(f"c must have shape ({n},), got {c_expr.shape}")
-  variable = al.L("decision", n)
+  variable = sc.L("decision", n)
 
-  @al.problem(vars=variable, name=name)
-  def problem_body(x: Expr) -> al.ProblemSpec[Expr]:
+  @sc.problem(vars=variable, name=name)
+  def problem_body(x: Expr) -> sc.ProblemSpec[Expr]:
     equalities = () if A_eq is None else (as_expr(A_eq) @ x - as_expr(b_eq),)
     inequalities = ()
     if G_ineq is not None:
-      inequalities = (al.bounded(as_expr(G_ineq) @ x, l_ineq, u_ineq),)
-    return al.ProblemSpec(
+      inequalities = (sc.bounded(as_expr(G_ineq) @ x, l_ineq, u_ineq),)
+    return sc.ProblemSpec(
       minimize=0.5 * (x @ P_expr @ x) + c_expr @ x,
       eq=equalities,
       ineq=inequalities,
@@ -120,11 +120,11 @@ def build_qp(
       ub=None if x_ub is None else as_expr(x_ub),
     )
 
-  return al.solver(problem_body, solver, name=name, options={"sparse": sparse, **(options or {})})
+  return sc.solver(problem_body, solver, name=name, options={"sparse": sparse, **(options or {})})
 
 
 def solve_qp(
-  solver: al.Function,
+  solver: sc.Function,
   x0: np.ndarray,
   lam_eq0: np.ndarray,
   lam_ineq0: np.ndarray,
@@ -145,7 +145,7 @@ def solve_qp(
 
 
 def solve_nlp(
-  solver: al.Function,
+  solver: sc.Function,
   x0: np.ndarray,
   lam_eq: np.ndarray,
   lam_ineq: np.ndarray,
@@ -159,7 +159,7 @@ def solve_nlp(
   param_values: Any = () if not params else params[0] if len(params) == 1 else params
   x, lam_box, lam_eq, lam_ineq = solver.numerical_call((x0, lam_box, lam_eq, lam_ineq, param_values))
   base = descriptor.base
-  if isinstance(base, al.Function):
+  if isinstance(base, sc.Function):
     values = base.numerical_call((np.asarray(x).reshape(-1), param_values))
     if isinstance(values, tuple):
       f, constraints = values

@@ -1,25 +1,25 @@
-"""The shared rewrite driver in ``alloy.ir.match``: sharing, fixpoint, revisit, termination."""
+"""The shared rewrite driver in ``scaly.ir.match``: sharing, fixpoint, revisit, termination."""
 
 from __future__ import annotations
 
 import pytest
 
-import alloy as al
-from alloy.ir.expr import ExprOp
-from alloy.ir.match import Pattern, rewrite
-from alloy.ir.program import ProgramNode, ProgramOp, add, buffer, const_float, load, var, view
-from alloy.ir.types import dtypes
-from alloy.ir.types import Lowering
-from alloy.passes.program._common import rebuild_program
+import scaly as sc
+from scaly.ir.expr import ExprOp
+from scaly.ir.match import Pattern, rewrite
+from scaly.ir.program import ProgramNode, ProgramOp, add, buffer, const_float, load, var, view
+from scaly.ir.types import dtypes
+from scaly.ir.types import Lowering
+from scaly.passes.program._common import rebuild_program
 
 
 def test_shared_subgraph_is_rewritten_once_and_stays_shared() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   shared = x * 1.0
   root = shared + shared
-  calls: list[al.Expr] = []
+  calls: list[sc.Expr] = []
 
-  def drop_one(e: al.Expr) -> al.Expr:
+  def drop_one(e: sc.Expr) -> sc.Expr:
     calls.append(e)
     return e.args[0]
 
@@ -29,7 +29,7 @@ def test_shared_subgraph_is_rewritten_once_and_stays_shared() -> None:
 
 
 def test_fixpoint_retries_per_node_and_single_application_does_not() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   root = -(-(-x))
   cancel = Pattern(ExprOp.NEG, lambda e: e.args[0].op == ExprOp.NEG, lambda e: e.args[0].args[0])
   assert rewrite(root, [cancel]) is -x
@@ -73,9 +73,9 @@ def test_deep_program_chain_does_not_recurse() -> None:
 
 
 def test_max_steps_names_the_offending_pattern() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
 
-  def grow(e: al.Expr) -> al.Expr:
+  def grow(e: sc.Expr) -> sc.Expr:
     return e + 1.0
 
   with pytest.raises(RuntimeError, match="grow"):
@@ -91,7 +91,7 @@ def test_revisit_rejects_a_replacement_that_contains_the_replaced_node() -> None
 
 @pytest.mark.parametrize("hint", ["scalar", "block", "opaque"])
 def test_expression_replacement_preserves_explicit_lowering(hint: Lowering) -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   out = rewrite((x * 1.0).with_lowering(hint), [Pattern(ExprOp.MUL, lambda e: True, lambda e: e.args[0])])
 
   assert out.lowering == hint
@@ -100,7 +100,7 @@ def test_expression_replacement_preserves_explicit_lowering(hint: Lowering) -> N
 
 
 def test_expression_replacement_preserves_effective_subgraph_policy() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   out = rewrite((x.block() * 1.0).scalar(), [Pattern(ExprOp.MUL, lambda e: True, lambda e: e.args[0])])
 
   assert out.lowering == "block"

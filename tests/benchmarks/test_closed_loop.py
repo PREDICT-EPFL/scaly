@@ -14,7 +14,7 @@ pytestmark = pytest.mark.solver("ipopt")
 @pytest.mark.parametrize("runner,problem", [(run_chain, "chain"), (run_race_cars, "race_cars")])
 def test_solver_backed_smoke_episode_writes_replay_and_harvest_artifacts(tmp_path: Path, runner, problem: str) -> None:
   output = runner(smoke=True, out_dir=tmp_path, cli_args=["closed-loop", "--problem", problem, "--smoke"])
-  assert output.name == "ipopt+alloy"
+  assert output.name == "ipopt+scaly"
 
   for name in (
     "episode.mcap",
@@ -30,7 +30,7 @@ def test_solver_backed_smoke_episode_writes_replay_and_harvest_artifacts(tmp_pat
   metadata = json.loads((output / "metadata.json").read_text())
   assert metadata["representative_step"] in metadata["successful_steps"]
   summary = json.loads((output / "summary.json").read_text())
-  assert summary["solver"] == "ipopt" and summary["oracle"] == "alloy"
+  assert summary["solver"] == "ipopt" and summary["oracle"] == "scaly"
   with np.load(output / "representative_fe_inputs.npz") as inputs:
     assert set(inputs.files) == {"p", "z"}
     assert all(np.all(np.isfinite(inputs[name])) for name in inputs.files)

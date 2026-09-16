@@ -6,7 +6,7 @@ closed-loop episode's shapes. They run before any timing is recorded, via
 ``benchmarks/run.py smoke``.
 
 They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite
-covers Alloy's core and must not depend on a benchmark problem. The IR/AD/codegen
+covers Scaly's core and must not depend on a benchmark problem. The IR/AD/codegen
 behaviours these touch have self-contained reproductions in
 ``tests/integration/test_stage_transcription.py`` and ``tests/ad/test_sparsity.py``,
 so this problem can be retired without dropping compiler coverage.
@@ -18,9 +18,9 @@ from collections.abc import Callable, Iterator
 
 import numpy as np
 
-import alloy as al
-from alloy.passes.lowering import lower_function
-from alloy.solvers.paths import solver_loadable
+import scaly as sc
+from scaly.passes.lowering import lower_function
+from scaly.solvers.paths import solver_loadable
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.chain import (
   END_REF,
@@ -62,9 +62,9 @@ def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
   """Dense and sparse equality Jacobians agree with CasADi and with the dense reference."""
   for n_masses, horizon in ((3, 2), (5, 3)):
     fn = chain_eq_function(n_masses, horizon)
-    dense = fn.factory(f"chain_dense_M{n_masses}_N{horizon}", ["z", "p"], [al.factory.Jac("eq", "z")])
+    dense = fn.factory(f"chain_dense_M{n_masses}_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
     sparse = chain_nlp(n_masses, horizon).descriptor.jac
-    assert isinstance(sparse, al.Function)
+    assert isinstance(sparse, sc.Function)
     ca_dense = ca_chain_eq_jac(n_masses, horizon)
     zv, pv = sample_inputs(n_masses, horizon, seed=11)
 
@@ -81,7 +81,7 @@ def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
 
 
 def check_nlp_objective_matches_casadi() -> None:
-  """Alloy/IPOPT and CasADi/IPOPT reach the same optimal objective from the same start."""
+  """Scaly/IPOPT and CasADi/IPOPT reach the same optimal objective from the same start."""
   n_masses, horizon = 3, 10
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   zv, pv = sample_inputs(n_masses, horizon, seed=0)
@@ -94,7 +94,7 @@ def check_nlp_objective_matches_casadi() -> None:
   generated = chain_nlp(n_masses, horizon)
   assert generated.descriptor.hess is not None
   assert dict(generated.descriptor.options).get("hessian_approximation") != "limited-memory"
-  alloy_out = solve_problem(generated, zv, np.zeros(nx * (horizon + 1)), np.zeros(0), np.zeros(n_dec(n_masses, horizon)), pv)
+  scaly_out = solve_problem(generated, zv, np.zeros(nx * (horizon + 1)), np.zeros(0), np.zeros(n_dec(n_masses, horizon)), pv)
   stats = problem_stats(generated)
   assert stats is not None and stats.to_solver_status().ok and stats.iter > 0
 
@@ -105,7 +105,7 @@ def check_nlp_objective_matches_casadi() -> None:
   ca_solver = ca_chain_nlpsol(n_masses, horizon)
   ca_out = ca_solver(x0=zv, p=pv, lbg=0.0, ubg=0.0, lbx=lb, ubx=ub)
   assert ca_solver.stats()["success"]
-  np.testing.assert_allclose(float(alloy_out["f"]), float(ca_out["f"]), rtol=1e-6)
+  np.testing.assert_allclose(float(scaly_out["f"]), float(ca_out["f"]), rtol=1e-6)
 
 
 def check_one_reference_for_every_end_mass_term() -> None:
@@ -119,7 +119,7 @@ def check_one_reference_for_every_end_mass_term() -> None:
   n_masses, horizon = 5, 4
   nz = n_state(n_masses) + NU
   end = 3 * (n_masses - 2)
-  grad = chain_objective_fn(n_masses, horizon).factory(f"chain_obj_grad_M{n_masses}_N{horizon}", ["z"], [al.factory.Grad("f", "z")])
+  grad = chain_objective_fn(n_masses, horizon).factory(f"chain_obj_grad_M{n_masses}_N{horizon}", ["z"], [sc.factory.Grad("f", "z")])
 
   z = np.zeros(n_dec(n_masses, horizon))
   for stage in range(horizon + 1):
@@ -185,13 +185,13 @@ def check_episode_artifacts() -> None:
 
 
 def check_sqp_oracles_agree() -> None:
-  """The same SQP produces the same smoke episode from Alloy and CasADi C oracles."""
+  """The same SQP produces the same smoke episode from Scaly and CasADi C oracles."""
   config = ClosedLoopConfig.smoke()
-  alloy_run = run_episode(config, solver="sqp", oracle="alloy")
+  scaly_run = run_episode(config, solver="sqp", oracle="scaly")
   casadi_run = run_episode(config, solver="sqp", oracle="casadi")
-  np.testing.assert_allclose(alloy_run.controls, casadi_run.controls, rtol=1e-8, atol=1e-8)
-  np.testing.assert_allclose(alloy_run.states, casadi_run.states, rtol=1e-9, atol=5e-10)
-  for run in (alloy_run, casadi_run):
+  np.testing.assert_allclose(scaly_run.controls, casadi_run.controls, rtol=1e-8, atol=1e-8)
+  np.testing.assert_allclose(scaly_run.states, casadi_run.states, rtol=1e-9, atol=5e-10)
+  for run in (scaly_run, casadi_run):
     for stats in run.telemetry:
       assert stats.status.value <= 1 and stats.t_qp > 0.0
       np.testing.assert_allclose(stats.t_total, stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rtol=1e-10)
@@ -208,8 +208,8 @@ def check_sqp_matches_ipopt() -> None:
   violation — the signal Phase 9 robustness work consumes.
   """
   config = ClosedLoopConfig.smoke()
-  ipopt_run = run_episode(config, solver="ipopt", oracle="alloy")
-  sqp_run = run_episode(config, solver="sqp", oracle="alloy")
+  ipopt_run = run_episode(config, solver="ipopt", oracle="scaly")
+  sqp_run = run_episode(config, solver="sqp", oracle="scaly")
   assert len(ipopt_run.controls) == len(sqp_run.controls) == config.steps
   eq_fn = chain_eq_function(config.n_masses, config.horizon)
   for k in range(config.steps):
@@ -305,28 +305,28 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
   nx, nz = n_state(n_masses), n_state(n_masses) + NU
   stage = _eq_stage_fn(n_masses)
 
-  @al.function(
-    al.G(al.L("z", nz), al.L("xnext", nx), al.L("params", al.TensorType((N_PARAMS,), diff=False))),
-    al.L("eq", ...),
+  @sc.function(
+    sc.G(sc.L("z", nz), sc.L("xnext", nx), sc.L("params", sc.TensorType((N_PARAMS,), diff=False))),
+    sc.L("eq", ...),
     name=stage.name,
   )
-  def hinted(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
+  def hinted(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     return stage(inputs).scalar()
 
-  @al.function(
-    al.G(
-      al.L("z", n_dec(n_masses, HORIZON)),
-      al.L("p", al.TensorType((n_param(n_masses),), diff=False)),
-      al.L("lam", al.TensorType((nx * (HORIZON + 1),), diff=False)),
+  @sc.function(
+    sc.G(
+      sc.L("z", n_dec(n_masses, HORIZON)),
+      sc.L("p", sc.TensorType((n_param(n_masses),), diff=False)),
+      sc.L("lam", sc.TensorType((nx * (HORIZON + 1),), diff=False)),
     ),
-    al.L("h", ...),
+    sc.L("h", ...),
     name="chain_hess_hinted",
   )
-  def hessian_values(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
+  def hessian_values(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, p, lam = inputs
-    mapped = al.vmap(hinted, HORIZON, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
-    eq = al.concat([z[:nx] - p[:nx], mapped])
-    return al.sparse_hessian(lam @ eq, z, triangle="lower").values
+    mapped = sc.vmap(hinted, HORIZON, inputs={"z": (z, 0, nz), "xnext": (z, nz, nz), "params": (p, nx, 0)})
+    eq = sc.concat([z[:nx] - p[:nx], mapped])
+    return sc.sparse_hessian(lam @ eq, z, triangle="lower").values
 
   fn = hessian_values
   procs = lower_function(fn).args[:-1]

@@ -7,12 +7,12 @@ import numpy as np
 
 def prepare_solver(controller) -> None:
   """Compile the solver and standalone oracles used by benchmark result checks."""
-  import alloy as al
-  from alloy.codegen.jit import CompiledFunction
+  import scaly as sc
+  from scaly.codegen.jit import CompiledFunction
 
-  if isinstance(controller, al.Function):
+  if isinstance(controller, sc.Function):
     for function in (controller, controller.descriptor.base, getattr(controller, "_benchmark_base", None)):
-      if isinstance(function, al.Function) and function._compiled is None:
+      if isinstance(function, sc.Function) and function._compiled is None:
         function._compiled = CompiledFunction(function)
 
 
@@ -52,7 +52,7 @@ def mode_rows(summary: dict, *, interpreted: bool = False) -> list[dict]:
     "per_step_ms": summary.get("steady_step_ms"),
     "build_ms": summary.get("build_ms"),
     "timing_scope": "wall solve call; build includes result-check oracles; steady excludes first step; prebuilt excludes construction and loading",
-    "ipopt_provider": ("CasADi wheel" if interpreted else "configured Alloy solver plugin") if summary["solver"] == "ipopt" else "not applicable",
+    "ipopt_provider": ("CasADi wheel" if interpreted else "configured Scaly solver plugin") if summary["solver"] == "ipopt" else "not applicable",
     "cache_policy": "process cache as configured; jit startup includes observed build or cache load",
   }
   first = summary.get("first_solve_ms")

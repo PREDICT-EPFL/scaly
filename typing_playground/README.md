@@ -1,10 +1,10 @@
 # Typing playground
 
-Interface sketches for Alloy's typed API: functions over declared pytrees, templates that
+Interface sketches for Scaly's typed API: functions over declared pytrees, templates that
 instantiate them per shape, derivative wrappers, problems and solvers. Nothing here lowers or runs.
 `Expr` and `Buffer` are stand-ins and every body fabricates values of the right shape. The package
 exists to prove a design at type-check time and at run time before it is implemented in
-`src/alloy`, and to keep the reasoning after it lands.
+`src/scaly`, and to keep the reasoning after it lands.
 
 Two checks, and both must stay green:
 
@@ -37,7 +37,7 @@ package; ruff and pytest reach it through `pyproject.toml`.
   leaf kind on both the symbolic and the numerical side (`test_typing.py`, "functions").
 - **One structure, two leaf types.** `Tree[Symbolic, Numerical]` is the same nesting over `Expr`
   and over `Buffer`; mixing them in a call is a type error. Typed numerical calls are the seam
-  between Alloy and the rest of a user's program and are not negotiable.
+  between Scaly and the rest of a user's program and are not negotiable.
 - **Grouping is for readability, not signature.** Grouped and flat declarations of the same leaves
   are the same C signature (`test_grouping_is_not_a_signature`).
 - **Names are metadata, one per leaf, unique within a tree, never how a value is addressed.** They
@@ -156,15 +156,15 @@ typing rules. Its rules:
 - *Multi-parameter bodies* (`def cost(x, y)`). The single-tree calling convention is what makes the
   twin symbolic/numerical typing work; a second convention forks every call surface.
 
-## Mapping to `src/alloy`
+## Mapping to `src/scaly`
 
 Every name here is a stand-in for machinery that exists and must be kept, with its interface
 swapped:
 
-- `Buffer` is `np.ndarray`; there is no new runtime type. `Expr` is `alloy.Expr`, and `degree`
+- `Buffer` is `np.ndarray`; there is no new runtime type. `Expr` is `scaly.Expr`, and `degree`
   stands in for the structural dependency analysis `ad/sparsity.py`'s `_jac_mask` already does.
   The QP proof must be written on `_jac_mask` over the real gradient and Hessian expressions.
-- `Function.__init__` traces the body as `@al.function` does; `symbolic_call` is today's `CALL`
+- `Function.__init__` traces the body as `@sc.function` does; `symbolic_call` is today's `CALL`
   node, `numerical_call` today's JIT call. `function/tree.py` already stores `Ellipsis` decls and
   resolves them with `with_types`; `L` needs its shape argument made optional and templates need
   nothing else from it. The bare mode's inferred trees are `flat_tree`'s job.
@@ -183,7 +183,7 @@ swapped:
 
 ## Open items
 
-The Function and solver API over declared trees is implemented in `src/alloy`. Templates and the typed
+The Function and solver API over declared trees is implemented in `src/scaly`. Templates and the typed
 `vmap` candidate remain sketches. Follow-up work is tracked as D3.1 to D3.3 in
 [`internal/todo.md`](../internal/todo.md), with production constraints in
 [`internal/notes/refactorings.md`](../internal/notes/refactorings.md).

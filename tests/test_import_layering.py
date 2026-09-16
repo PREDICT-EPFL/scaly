@@ -1,4 +1,4 @@
-"""Import-layer discipline for ``src/alloy``.
+"""Import-layer discipline for ``src/scaly``.
 
 Every module has an import layer (``docs/how_it_works/architecture.md``): a module may import modules in its own import layer
 or a lower import layer, never a higher one. Two dicts hold the exceptions. ``SEAM`` is the one sanctioned upward edge —
@@ -26,83 +26,83 @@ from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "alloy"
+SRC = Path(__file__).resolve().parents[1] / "src" / "scaly"
 
 # Import layer per module. Keys are today's module paths; the numbers are the target layout's, so a key
 # is renamed when its file moves but its import layer only changes if the design changes.
 IMPORT_LAYERS: dict[str, int] = {
-  "alloy.utils": 0,
-  "alloy.utils.env": 0,
-  "alloy.utils.names": 0,
-  "alloy.utils.torch_state_dict": 0,
-  "alloy.ir": 1,
-  "alloy.ir.types": 1,
-  "alloy.ir.expr": 1,
-  "alloy.ir.match": 1,
-  "alloy.ir.program": 1,
-  "alloy.ir.program_spec": 1,
-  "alloy.ir.expr_spec": 1,
-  "alloy.ir.spec": 1,
-  "alloy.ir.text": 1,
-  "alloy.passes": 1,
-  "alloy.passes.affine": 2,
-  "alloy.passes.arith": 2,
-  "alloy.passes.expr": 2,
-  "alloy.ad.sparsity": 2,
-  "alloy.solvers.stats": 2,
-  "alloy.function": 3,
-  "alloy.function.model": 3,
-  "alloy.function.tree": 3,
-  "alloy.ad": 4,
-  "alloy.ad.derivatives": 4,
-  "alloy.ad.forward": 4,
-  "alloy.ad.reverse": 4,
-  "alloy.ad.sparse": 4,
+  "scaly.utils": 0,
+  "scaly.utils.env": 0,
+  "scaly.utils.names": 0,
+  "scaly.utils.torch_state_dict": 0,
+  "scaly.ir": 1,
+  "scaly.ir.types": 1,
+  "scaly.ir.expr": 1,
+  "scaly.ir.match": 1,
+  "scaly.ir.program": 1,
+  "scaly.ir.program_spec": 1,
+  "scaly.ir.expr_spec": 1,
+  "scaly.ir.spec": 1,
+  "scaly.ir.text": 1,
+  "scaly.passes": 1,
+  "scaly.passes.affine": 2,
+  "scaly.passes.arith": 2,
+  "scaly.passes.expr": 2,
+  "scaly.ad.sparsity": 2,
+  "scaly.solvers.stats": 2,
+  "scaly.function": 3,
+  "scaly.function.model": 3,
+  "scaly.function.tree": 3,
+  "scaly.ad": 4,
+  "scaly.ad.derivatives": 4,
+  "scaly.ad.forward": 4,
+  "scaly.ad.reverse": 4,
+  "scaly.ad.sparse": 4,
   # Import layer 4, not the plan's 5: ``vmap`` needs a ``Function``, and ``ad`` needs ``vmap``.
-  "alloy.function.sugar": 4,
-  "alloy.function.api": 5,
-  "alloy.function.factory": 5,
-  "alloy.solvers": 5,
-  "alloy.solvers._oracle": 5,
-  "alloy.solvers.graph": 5,
-  "alloy.solvers.nlp": 5,
-  "alloy.solvers.problem": 5,
-  "alloy.solvers.solver": 5,
-  "alloy.solvers.paths": 5,
-  "alloy.solvers.qp": 5,
-  "alloy.solvers.registry": 5,
-  "alloy.solvers.model": 5,
-  "alloy.passes.program": 6,
-  "alloy.passes.program._common": 6,
-  "alloy.passes.program.combine_scatter_sums": 6,
-  "alloy.passes.program.fold_arith": 6,
-  "alloy.passes.program.fuse_elementwise": 6,
-  "alloy.passes.program.hoist_invariant": 6,
-  "alloy.passes.program.pack_workspace": 6,
-  "alloy.passes.program.unroll_unit_loops": 6,
-  "alloy.passes.program.scalarize": 6,
-  "alloy.passes.program.coalesce_stores": 6,
-  "alloy.passes.program.prepare_scalar": 6,
-  "alloy.passes.program.scheduling": 6,
-  "alloy.passes.lowering": 6,
-  "alloy.codegen.abi": 7,
-  "alloy.codegen.jit": 7,
-  "alloy.codegen.toolchain": 7,
-  "alloy.codegen": 7,
-  "alloy.codegen.__main__": 7,
-  "alloy.codegen.aot": 7,
-  "alloy.codegen.c": 7,
-  "alloy.codegen.solver": 7,
-  "alloy.viz": 8,
-  "alloy.viz.graph": 8,
-  "alloy.viz.recording": 8,
-  "alloy.viz.serve": 8,
-  "alloy": 9,  # the curated public re-exports sit above everything they re-export
+  "scaly.function.sugar": 4,
+  "scaly.function.api": 5,
+  "scaly.function.factory": 5,
+  "scaly.solvers": 5,
+  "scaly.solvers._oracle": 5,
+  "scaly.solvers.graph": 5,
+  "scaly.solvers.nlp": 5,
+  "scaly.solvers.problem": 5,
+  "scaly.solvers.solver": 5,
+  "scaly.solvers.paths": 5,
+  "scaly.solvers.qp": 5,
+  "scaly.solvers.registry": 5,
+  "scaly.solvers.model": 5,
+  "scaly.passes.program": 6,
+  "scaly.passes.program._common": 6,
+  "scaly.passes.program.combine_scatter_sums": 6,
+  "scaly.passes.program.fold_arith": 6,
+  "scaly.passes.program.fuse_elementwise": 6,
+  "scaly.passes.program.hoist_invariant": 6,
+  "scaly.passes.program.pack_workspace": 6,
+  "scaly.passes.program.unroll_unit_loops": 6,
+  "scaly.passes.program.scalarize": 6,
+  "scaly.passes.program.coalesce_stores": 6,
+  "scaly.passes.program.prepare_scalar": 6,
+  "scaly.passes.program.scheduling": 6,
+  "scaly.passes.lowering": 6,
+  "scaly.codegen.abi": 7,
+  "scaly.codegen.jit": 7,
+  "scaly.codegen.toolchain": 7,
+  "scaly.codegen": 7,
+  "scaly.codegen.__main__": 7,
+  "scaly.codegen.aot": 7,
+  "scaly.codegen.c": 7,
+  "scaly.codegen.solver": 7,
+  "scaly.viz": 8,
+  "scaly.viz.graph": 8,
+  "scaly.viz.recording": 8,
+  "scaly.viz.serve": 8,
+  "scaly": 9,  # the curated public re-exports sit above everything they re-export
 }
 
 # The one upward import the architecture sanctions (docs/how_it_works/architecture.md, "Import layers").
 SEAM: dict[tuple[str, str], str] = {
-  ("alloy.function.model", "alloy.codegen.jit"): "calling a Function JIT-compiles it",
+  ("scaly.function.model", "scaly.codegen.jit"): "calling a Function JIT-compiles it",
 }
 
 # Violations the restructure has not reached yet. Shrinks every phase; empty when it is done.
@@ -240,7 +240,7 @@ def test_each_seam_is_a_single_import() -> None:
 # The flat leaf seams under ``symbolic_call``/``numerical_call``. ``function/model.py`` defines and
 # uses them; differentiation is the one sanctioned consumer, because it synthesizes callees from
 # flat expression lists and calls them with that same list.
-FLAT_SEAM_USERS = {"alloy.function.model", "alloy.ad.forward"}
+FLAT_SEAM_USERS = {"scaly.function.model", "scaly.ad.forward"}
 
 
 def test_flat_call_seams_stay_inside_their_sanctioned_modules() -> None:

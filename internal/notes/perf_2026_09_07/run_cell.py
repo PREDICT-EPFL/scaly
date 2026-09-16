@@ -1,7 +1,7 @@
 import sys, os
 from pathlib import Path
-sys.path.insert(0, '/home/ted/.t3/worktrees/alloy/t3code-324f664d')
-os.chdir('/home/ted/.t3/worktrees/alloy/t3code-324f664d')
+sys.path.insert(0, '/home/ted/.t3/worktrees/scaly/t3code-324f664d')
+os.chdir('/home/ted/.t3/worktrees/scaly/t3code-324f664d')
 from benchmarks.harness.sweep import run_cell
 workload, size, backend = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 tag = sys.argv[4] if len(sys.argv) > 4 else 'x'

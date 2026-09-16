@@ -2,14 +2,14 @@
 
 This note records the June 2026 `toolchain` branch experiment around avoiding source builds, using
 conda-forge native prefixes, and repairing conda-vendored solver wheels. It is intentionally historical:
-the project direction after the experiment is to keep Alloy focused on a small, first-party PIQP/IPOPT
+the project direction after the experiment is to keep Scaly focused on a small, first-party PIQP/IPOPT
 source build rather than becoming a broad binary aggregation layer.
 
 ## Goals tested
 
 - Keep Python dependency management on `uv` while using conda/micromamba only as a native binary prefix.
 - Let editable installs and core tests run without building PIQP/IPOPT.
-- Point solver tests at `ALLOY_SOLVER_PREFIX=/path/to/prefix` without activating conda.
+- Point solver tests at `SCALY_SOLVER_PREFIX=/path/to/prefix` without activating conda.
 - Try building wheels by copying PIQP/IPOPT from a conda prefix and repairing transitive dependencies with
   `delocate`/`auditwheel`.
 - Compare the approach with CasADi's vendored solver wheel process.
@@ -19,7 +19,7 @@ source build rather than becoming a broad binary aggregation layer.
 A local prefix was created with:
 
 ```bash
-mamba create -y -p "$TMPDIR/alloy-native-conda-test" -c conda-forge \
+mamba create -y -p "$TMPDIR/scaly-native-conda-test" -c conda-forge \
   ipopt=3.14.19 piqp=0.6.2 pkg-config
 ```
 
@@ -28,8 +28,8 @@ Observations on macOS arm64:
 - `libipopt.dylib` and `libpiqpc.dylib` are present under `lib/`.
 - IPOPT headers are under `include/coin-or/`.
 - PIQP's C headers are under `include/piqp_c/`, not `include/piqp/`.
-- With discovery adjusted for `piqp_c`, `ALLOY_SOLVER_PREFIX=$PREFIX` was enough for both direct ctypes
-  solver calls and nested solver JIT tests when the existing `src/alloy/lib` and `src/alloy/include`
+- With discovery adjusted for `piqp_c`, `SCALY_SOLVER_PREFIX=$PREFIX` was enough for both direct ctypes
+  solver calls and nested solver JIT tests when the existing `src/scaly/lib` and `src/scaly/include`
   directories were temporarily moved out of the checkout.
 
 This validated that conda-forge can be a useful local developer prefix, but it also showed that it adds a
@@ -37,14 +37,14 @@ second binary layout to support.
 
 ## Conda-prefix wheel vendoring test
 
-A wheel was built by copying from the conda prefix into `src/alloy/lib` and `src/alloy/include`. The
+A wheel was built by copying from the conda prefix into `src/scaly/lib` and `src/scaly/include`. The
 unrepaired wheel contained only:
 
 ```text
-alloy/lib/libipopt.dylib
-alloy/lib/libpiqpc.dylib
-alloy/include/coin-or/...
-alloy/include/piqp_c/...
+scaly/lib/libipopt.dylib
+scaly/lib/libpiqpc.dylib
+scaly/include/coin-or/...
+scaly/include/piqp_c/...
 ```
 
 `delocate` does scan ordinary `.dylib` files inside a wheel; a Python extension module is not required.
@@ -53,7 +53,7 @@ not resolve the transitive dependencies unless the top-level copied solver libra
 build-time rpath back to `<prefix>/lib`.
 
 After adding that temporary rpath and ad-hoc re-signing the modified top-level dylibs, delocate copied a
-large transitive closure into `alloy/.dylibs`, including MUMPS, OpenBLAS, libgfortran, libomp, BLASFEO,
+large transitive closure into `scaly/.dylibs`, including MUMPS, OpenBLAS, libgfortran, libomp, BLASFEO,
 libc++, compression libraries, and graph-partitioning libraries. The repaired wheel was roughly 11 MB.
 
 A remaining macOS issue was OpenBLAS aliasing in the conda prefix:
@@ -100,11 +100,11 @@ No OpenBLAS dylib is bundled in that wheel.
 
 ## Decision after the experiment
 
-Alloy should not become an aggregate binary distribution for many solvers. The long-term direction is to
-write optimization loops directly in Alloy, while PIQP/IPOPT provide a small out-of-the-box path for optimal
+Scaly should not become an aggregate binary distribution for many solvers. The long-term direction is to
+write optimization loops directly in Scaly, while PIQP/IPOPT provide a small out-of-the-box path for optimal
 control users. For that reason:
 
-- The primary vendored solver path should remain Alloy's own source build of PIQP and IPOPT.
+- The primary vendored solver path should remain Scaly's own source build of PIQP and IPOPT.
 - macOS solver builds should continue to link IPOPT/MUMPS against Accelerate for the smallest and most
   native wheel dependency set.
 - Linux can keep the explicit OpenBLAS/source dependency story where needed.

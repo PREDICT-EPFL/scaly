@@ -14,14 +14,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import alloy as al
-from alloy.codegen.aot import render_c_source
-from alloy.codegen.c import can_render_program_c, render_program_c_source
-from alloy.codegen.jit import _find_compiler
-from alloy.passes.lowering import LoweringError, lower_function, main_proc
-from alloy.ir.expr import topo
-from alloy.ir.program import ProgramOp
-from alloy.ir.program_spec import verify_program
+import scaly as sc
+from scaly.codegen.aot import render_c_source
+from scaly.codegen.c import can_render_program_c, render_program_c_source
+from scaly.codegen.jit import _find_compiler
+from scaly.passes.lowering import LoweringError, lower_function, main_proc
+from scaly.ir.expr import topo
+from scaly.ir.program import ProgramOp
+from scaly.ir.program_spec import verify_program
 
 _HAVE_CC = _find_compiler() is not None
 
@@ -29,24 +29,24 @@ _HAVE_CC = _find_compiler() is not None
 # --- covered corpus: (name, builder, inputs) -------------------------------------
 
 
-def _neg() -> al.Function:
-  @al.function(al.L("x", 4), al.L("out0", ...), name="pm_neg")
+def _neg() -> sc.Function:
+  @sc.function(sc.L("x", 4), sc.L("out0", ...), name="pm_neg")
   def f(x):
     return -x
 
   return f
 
 
-def _trig_chain() -> al.Function:
-  @al.function(al.L("x", 4), al.L("out0", ...), name="pm_trig")
+def _trig_chain() -> sc.Function:
+  @sc.function(sc.L("x", 4), sc.L("out0", ...), name="pm_trig")
   def f(x):
     return x.sin().cos() + x.tan()
 
   return f
 
 
-def _exp_log() -> al.Function:
-  @al.function(al.G(al.L("x", 3), al.L("y", 3)), al.L("out0", ...), name="pm_exp_log")
+def _exp_log() -> sc.Function:
+  @sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("out0", ...), name="pm_exp_log")
   def f(inputs):
     x, y = inputs
     return x.exp() + y.log()
@@ -54,8 +54,8 @@ def _exp_log() -> al.Function:
   return f
 
 
-def _arith() -> al.Function:
-  @al.function(al.G(al.L("x", 3), al.L("y", 3)), al.L("out0", ...), name="pm_arith")
+def _arith() -> sc.Function:
+  @sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("out0", ...), name="pm_arith")
   def f(inputs):
     x, y = inputs
     return x * y - x / y
@@ -63,8 +63,8 @@ def _arith() -> al.Function:
   return f
 
 
-def _tanh_sqrt() -> al.Function:
-  @al.function(al.G(al.L("x", 3), al.L("y", 3)), al.L("out0", ...), name="pm_tanh_sqrt")
+def _tanh_sqrt() -> sc.Function:
+  @sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("out0", ...), name="pm_tanh_sqrt")
   def f(inputs):
     x, y = inputs
     return x.tanh() * y.sqrt() + x.abs()
@@ -72,8 +72,8 @@ def _tanh_sqrt() -> al.Function:
   return f
 
 
-def _pow_same_shape() -> al.Function:
-  @al.function(al.G(al.L("x", 2), al.L("y", 2)), al.L("out0", ...), name="pm_pow")
+def _pow_same_shape() -> sc.Function:
+  @sc.function(sc.G(sc.L("x", 2), sc.L("y", 2)), sc.L("out0", ...), name="pm_pow")
   def f(inputs):
     x, y = inputs
     return x**y
@@ -81,16 +81,16 @@ def _pow_same_shape() -> al.Function:
   return f
 
 
-def _const_add() -> al.Function:
-  @al.function(al.L("x", 4), al.L("out0", ...), name="pm_const")
+def _const_add() -> sc.Function:
+  @sc.function(sc.L("x", 4), sc.L("out0", ...), name="pm_const")
   def f(x):
-    return x + al.const(np.array([1.0, 2.0, 3.0, 4.0]))
+    return x + sc.const(np.array([1.0, 2.0, 3.0, 4.0]))
 
   return f
 
 
-def _reshape() -> al.Function:
-  @al.function(al.L("x", 4), al.L("out0", ...), name="pm_reshape")
+def _reshape() -> sc.Function:
+  @sc.function(sc.L("x", 4), sc.L("out0", ...), name="pm_reshape")
   def f(x):
     r = x.reshape((2, 2))
     return r * r
@@ -98,40 +98,40 @@ def _reshape() -> al.Function:
   return f
 
 
-def _large_const() -> al.Function:
-  @al.function(al.L("x", 24), al.L("out0", ...), name="pm_large_const")
+def _large_const() -> sc.Function:
+  @sc.function(sc.L("x", 24), sc.L("out0", ...), name="pm_large_const")
   def f(x):
-    return x + al.const(np.arange(24, dtype=np.float64))  # > the old size-16 inline cap
+    return x + sc.const(np.arange(24, dtype=np.float64))  # > the old size-16 inline cap
 
   return f
 
 
-def _slice_contiguous() -> al.Function:
-  @al.function(al.L("x", 5), al.L("out0", ...), name="pm_slice_contig")
+def _slice_contiguous() -> sc.Function:
+  @sc.function(sc.L("x", 5), sc.L("out0", ...), name="pm_slice_contig")
   def f(x):
     return x[1:4].sin()  # rank-1 contiguous slice feeding an elementwise op
 
   return f
 
 
-def _slice_scalar() -> al.Function:
-  @al.function(al.L("x", 5), al.L("out0", ...), name="pm_slice_scalar")
+def _slice_scalar() -> sc.Function:
+  @sc.function(sc.L("x", 5), sc.L("out0", ...), name="pm_slice_scalar")
   def f(x):
     return x[2] * x[2]  # integer index -> scalar (drops the dim)
 
   return f
 
 
-def _slice_strided() -> al.Function:
-  @al.function(al.L("x", 6), al.L("out0", ...), name="pm_slice_strided")
+def _slice_strided() -> sc.Function:
+  @sc.function(sc.L("x", 6), sc.L("out0", ...), name="pm_slice_strided")
   def f(x):
     return x[::2] + x[1::2]  # strided slices, same output length
 
   return f
 
 
-def _slice_multidim_row() -> al.Function:
-  @al.function(al.L("x", 12), al.L("out0", ...), name="pm_slice_row")
+def _slice_multidim_row() -> sc.Function:
+  @sc.function(sc.L("x", 12), sc.L("out0", ...), name="pm_slice_row")
   def f(x):
     m = x.reshape((3, 4))
     return m[1, :] * m[2, :]  # integer index on dim 0, full slice on dim 1
@@ -139,8 +139,8 @@ def _slice_multidim_row() -> al.Function:
   return f
 
 
-def _dot() -> al.Function:
-  @al.function(al.G(al.L("x", 4), al.L("y", 4)), al.L("out0", ...), name="pm_dot")
+def _dot() -> sc.Function:
+  @sc.function(sc.G(sc.L("x", 4), sc.L("y", 4)), sc.L("out0", ...), name="pm_dot")
   def f(inputs):
     x, y = inputs
     return x @ y
@@ -148,8 +148,8 @@ def _dot() -> al.Function:
   return f
 
 
-def _matvec() -> al.Function:
-  @al.function(al.G(al.L("A", (3, 4)), al.L("x", 4)), al.L("out0", ...), name="pm_matvec")
+def _matvec() -> sc.Function:
+  @sc.function(sc.G(sc.L("A", (3, 4)), sc.L("x", 4)), sc.L("out0", ...), name="pm_matvec")
   def f(inputs):
     A, x = inputs
     return A @ x
@@ -157,8 +157,8 @@ def _matvec() -> al.Function:
   return f
 
 
-def _vecmat() -> al.Function:
-  @al.function(al.G(al.L("x", 3), al.L("A", (3, 4))), al.L("out0", ...), name="pm_vecmat")
+def _vecmat() -> sc.Function:
+  @sc.function(sc.G(sc.L("x", 3), sc.L("A", (3, 4))), sc.L("out0", ...), name="pm_vecmat")
   def f(inputs):
     x, A = inputs
     return x @ A
@@ -166,8 +166,8 @@ def _vecmat() -> al.Function:
   return f
 
 
-def _matmat() -> al.Function:
-  @al.function(al.G(al.L("A", (2, 3)), al.L("B", (3, 2))), al.L("out0", ...), name="pm_matmat")
+def _matmat() -> sc.Function:
+  @sc.function(sc.G(sc.L("A", (2, 3)), sc.L("B", (3, 2))), sc.L("out0", ...), name="pm_matmat")
   def f(inputs):
     A, B = inputs
     return A @ B
@@ -175,28 +175,28 @@ def _matmat() -> al.Function:
   return f
 
 
-def _sum() -> al.Function:
-  @al.function(al.L("x", 5), al.L("out0", ...), name="pm_sum")
+def _sum() -> sc.Function:
+  @sc.function(sc.L("x", 5), sc.L("out0", ...), name="pm_sum")
   def f(x):
     return (x.sin() + x).sum()
 
   return f
 
 
-def _transpose() -> al.Function:
-  @al.function(al.L("x", 6), al.L("out0", ...), name="pm_transpose")
+def _transpose() -> sc.Function:
+  @sc.function(sc.L("x", 6), sc.L("out0", ...), name="pm_transpose")
   def f(x):
     return x.reshape((2, 3)).transpose()
 
   return f
 
 
-def _call() -> al.Function:
-  @al.function(al.L("a", 3), al.L("out0", ...), name="pm_call_inner")
+def _call() -> sc.Function:
+  @sc.function(sc.L("a", 3), sc.L("out0", ...), name="pm_call_inner")
   def inner(a):
     return a.sin() + a
 
-  @al.function(al.L("x", 3), al.L("out0", ...), name="pm_call_outer")
+  @sc.function(sc.L("x", 3), sc.L("out0", ...), name="pm_call_outer")
   def f(x):
     y = inner(x)
     return y * x
@@ -204,36 +204,36 @@ def _call() -> al.Function:
   return f
 
 
-def _vmap() -> al.Function:
-  @al.function(al.L("s", 2), al.L("out0", ...), name="pm_vmap_cell")
+def _vmap() -> sc.Function:
+  @sc.function(sc.L("s", 2), sc.L("out0", ...), name="pm_vmap_cell")
   def cell(s):
     return s.tanh() + s
 
-  @al.function(al.L("z", 6), al.L("out0", ...), name="pm_vmap_outer")
+  @sc.function(sc.L("z", 6), sc.L("out0", ...), name="pm_vmap_outer")
   def f(z):
-    return al.vmap(cell, 3, [(z, 0, 2)])  # 3 independent calls over z[2i:2i+2]
+    return sc.vmap(cell, 3, [(z, 0, 2)])  # 3 independent calls over z[2i:2i+2]
 
   return f
 
 
-def _gather() -> al.Function:
-  @al.function(al.L("x", 6), al.L("out0", ...), name="pm_gather")
+def _gather() -> sc.Function:
+  @sc.function(sc.L("x", 6), sc.L("out0", ...), name="pm_gather")
   def f(x):
     return x.gather(np.array([5, 0, 3, 3, 1]))  # repeats + reorder, via const index table
 
   return f
 
 
-def _scatter() -> al.Function:
-  @al.function(al.L("x", 3), al.L("out0", ...), name="pm_scatter")
+def _scatter() -> sc.Function:
+  @sc.function(sc.L("x", 3), sc.L("out0", ...), name="pm_scatter")
   def f(x):
-    return al.scatter(x, np.array([4, 1, 2]), 6)  # zero-filled length-6 output
+    return sc.scatter(x, np.array([4, 1, 2]), 6)  # zero-filled length-6 output
 
   return f
 
 
-def _broadcast_matrix() -> al.Function:
-  @al.function(al.G(al.L("x", (3, 4)), al.L("b", 4)), al.L("out0", ...), name="pm_bcast_mat")
+def _broadcast_matrix() -> sc.Function:
+  @sc.function(sc.G(sc.L("x", (3, 4)), sc.L("b", 4)), sc.L("out0", ...), name="pm_bcast_mat")
   def f(inputs):
     x, b = inputs
     return x + b  # (3,4) + (4,) row broadcast
@@ -241,25 +241,25 @@ def _broadcast_matrix() -> al.Function:
   return f
 
 
-def _broadcast_scalar() -> al.Function:
-  @al.function(al.L("x", 4), al.L("out0", ...), name="pm_bcast_scalar")
+def _broadcast_scalar() -> sc.Function:
+  @sc.function(sc.L("x", 4), sc.L("out0", ...), name="pm_bcast_scalar")
   def f(x):
     return x * 2.0 + 1.0  # scalar-const broadcast
 
   return f
 
 
-def _concat() -> al.Function:
-  @al.function(al.G(al.L("x", 3), al.L("y", 2)), al.L("out0", ...), name="pm_concat")
+def _concat() -> sc.Function:
+  @sc.function(sc.G(sc.L("x", 3), sc.L("y", 2)), sc.L("out0", ...), name="pm_concat")
   def f(inputs):
     x, y = inputs
-    return al.concat([x.sin(), y])
+    return sc.concat([x.sin(), y])
 
   return f
 
 
-def _mlp_layer() -> al.Function:
-  @al.function(al.G(al.L("W", (4, 3)), al.L("x", 3), al.L("b", 4)), al.L("out0", ...), name="pm_mlp_layer")
+def _mlp_layer() -> sc.Function:
+  @sc.function(sc.G(sc.L("W", (4, 3)), sc.L("x", 3), sc.L("b", 4)), sc.L("out0", ...), name="pm_mlp_layer")
   def f(inputs):
     W, x, b = inputs
     return (W @ x + b).tanh()  # matmul + bias broadcast + activation
@@ -267,20 +267,20 @@ def _mlp_layer() -> al.Function:
   return f
 
 
-def _concat_axis1() -> al.Function:
-  @al.function(al.G(al.L("a", (2, 3)), al.L("b", (2, 2))), al.L("out0", ...), name="pm_concat_ax1")
+def _concat_axis1() -> sc.Function:
+  @sc.function(sc.G(sc.L("a", (2, 3)), sc.L("b", (2, 2))), sc.L("out0", ...), name="pm_concat_ax1")
   def f(inputs):
     a, b = inputs
-    return al.concat([a, b], axis=1)  # (2,3) ++ (2,2) -> (2,5) along axis 1
+    return sc.concat([a, b], axis=1)  # (2,3) ++ (2,2) -> (2,5) along axis 1
 
   return f
 
 
-def _stack_axis1() -> al.Function:
-  @al.function(al.G(al.L("x", 3), al.L("y", 3)), al.L("out0", ...), name="pm_stack_ax1")
+def _stack_axis1() -> sc.Function:
+  @sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("out0", ...), name="pm_stack_ax1")
   def f(inputs):
     x, y = inputs
-    return al.stack([x.sin(), y], axis=1)  # two (3,) -> (3,2) along a new axis 1
+    return sc.stack([x.sin(), y], axis=1)  # two (3,) -> (3,2) along a new axis 1
 
   return f
 
@@ -359,9 +359,9 @@ _MATMUL_CASES = {
 def test_matmul_lowering_matches_numpy_exactly(name) -> None:
   """Integer-valued inputs keep every product and partial sum exact, so the check is exact in any summation order."""
   sa, sb, product = _MATMUL_CASES[name]
-  a, b = al.sym("a", sa), al.sym("b", sb)
-  fn = al.Function._from_exprs(f"mm_{name}", [a, b], [al.simplify(product(a, b))], ["a", "b"], ["y"])
-  assert all(e.op != al.ExprOp.TRANSPOSE for e in topo(fn.outputs)), "the transpose was not folded into the product"
+  a, b = sc.sym("a", sa), sc.sym("b", sb)
+  fn = sc.Function._from_exprs(f"mm_{name}", [a, b], [sc.simplify(product(a, b))], ["a", "b"], ["y"])
+  assert all(e.op != sc.ExprOp.TRANSPOSE for e in topo(fn.outputs)), "the transpose was not folded into the product"
   rng = np.random.default_rng(0)
   av, bv = (rng.integers(-8, 9, shape).astype(np.float64) for shape in (sa, sb))
   fn.recompile()
@@ -371,12 +371,12 @@ def test_matmul_lowering_matches_numpy_exactly(name) -> None:
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 def test_transpose_fold_is_bit_identical_to_the_transposed_product() -> None:
   """Both forms sum each output's terms in the same k order, so folding the transpose changes no bit."""
-  a, v, w = al.sym("a", (32, 12)), al.sym("v", 32), al.sym("w", 12)
+  a, v, w = sc.sym("a", (32, 12)), sc.sym("v", 32), sc.sym("w", 12)
   rng = np.random.default_rng(1)
   av, vv, wv = rng.standard_normal((32, 12)), rng.standard_normal(32), rng.standard_normal(12)
   for tag, x, xv, product in (("v", v, vv, lambda m, x: m.T @ x), ("w", w, wv, lambda m, x: x @ m.T)):
-    transposed = al.Function._from_exprs(f"mm_transposed_{tag}", [a, x], [product(a, x)], ["a", tag], ["y"])
-    folded = al.Function._from_exprs(f"mm_folded_{tag}", [a, x], [al.simplify(product(a, x))], ["a", tag], ["y"])
+    transposed = sc.Function._from_exprs(f"mm_transposed_{tag}", [a, x], [product(a, x)], ["a", tag], ["y"])
+    folded = sc.Function._from_exprs(f"mm_folded_{tag}", [a, x], [sc.simplify(product(a, x))], ["a", tag], ["y"])
     for fn in (transposed, folded):
       fn.recompile()
     np.testing.assert_array_equal(folded((av, xv)), transposed((av, xv)))
@@ -394,13 +394,13 @@ def test_uncovered_case_raises_loudly() -> None:
   # A host function calling a device-placed callee: mixed-device lowering is deferred
   # (a host->GPU call is meaningless on a CPU build). With the legacy renderer deleted there is
   # no fallback — both the Program-IR renderer and the public entry raise loudly.
-  @al.function(al.L("a", 3), al.L("out0", ...), name="pm_inner_dev")
+  @sc.function(sc.L("a", 3), sc.L("out0", ...), name="pm_inner_dev")
   def inner(a):
     return a.sin()
 
   inner_gpu = inner.with_device("cuda:0")
 
-  @al.function(al.L("x", 3), al.L("out0", ...), name="pm_outer_mix")
+  @sc.function(sc.L("x", 3), sc.L("out0", ...), name="pm_outer_mix")
   def fn(x):
     y = inner_gpu(x)
     return y + x
@@ -430,8 +430,8 @@ def test_stage_transcription_renders_and_matches(kind) -> None:
   base = tw.bicycle_eq_function(3)
   fn = {
     "forward": base,
-    "jacobian": base.factory("bicycle_program_jac", ["z", "p"], [al.factory.Jac("eq", "z")]),
-    "sparse_jacobian": base.factory("bicycle_program_spjac", ["z", "p"], [al.factory.SpJac("eq", "z")]),
+    "jacobian": base.factory("bicycle_program_jac", ["z", "p"], [sc.factory.Jac("eq", "z")]),
+    "sparse_jacobian": base.factory("bicycle_program_spjac", ["z", "p"], [sc.factory.SpJac("eq", "z")]),
   }[kind]
   render_program_c_source(fn)  # loud: must render through Program IR
   assert can_render_program_c(fn)
@@ -447,18 +447,18 @@ def test_gather_fed_chained_vmaps_render_through_program_ir() -> None:
   # Pairwise-barrier shape: VMAP -> gather -> VMAP, concatenated with a per-body VMAP.
   fn = _import_sibling("test_vmap")._build_pairs_fn(True)
   assert can_render_program_c(fn)
-  assert can_render_program_c(fn.factory("pairs_program_spjac", ["u", "p"], [al.factory.SpJac("h", "u")]))
+  assert can_render_program_c(fn.factory("pairs_program_spjac", ["u", "p"], [sc.factory.SpJac("h", "u")]))
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 def test_empty_reduction_and_output_leave_adjacent_memory_untouched() -> None:
   import ctypes
 
-  from alloy.codegen.jit import get_compiled
+  from scaly.codegen.jit import get_compiled
 
-  @al.function(al.L("x", 3), al.G(al.L("cost", ...), al.L("empty", ...)))
+  @sc.function(sc.L("x", 3), sc.G(sc.L("cost", ...), sc.L("empty", ...)))
   def fn(x):
-    return x[:2].sum() + 1000.0 * x[2:2].sum(), al.const(np.zeros(0))
+    return x[:2].sum() + 1000.0 * x[2:2].sum(), sc.const(np.zeros(0))
 
   compiled = get_compiled(fn)
   values = np.array([2.0, 3.0, 17.0])
@@ -474,11 +474,11 @@ def test_empty_reduction_and_output_leave_adjacent_memory_untouched() -> None:
 
 
 def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None:
-  matrix = al.sym("matrix", (3, 2))
-  vector = al.sym("vector", 3)
+  matrix = sc.sym("matrix", (3, 2))
+  vector = sc.sym("vector", 3)
   output = (matrix.T @ vector).block()
-  sparsity = al.SparsityType((2, 1), (0, 1), (0, 0))
-  fn = al.Function._from_exprs(
+  sparsity = sc.SparsityType((2, 1), (0, 1), (0, 0))
+  fn = sc.Function._from_exprs(
     "normalized_metadata",
     [matrix, vector],
     [output],
@@ -487,12 +487,12 @@ def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None
     [sparsity],
     output_coloring_widths=[2],
   )
-  observed: list[tuple[str, al.Function]] = []
+  observed: list[tuple[str, sc.Function]] = []
 
   lower_function(fn, observe_expr=lambda name, normalized: observed.append((name, normalized)))
 
   assert fn.outputs == (output,)
-  assert fn.outputs[0].args[0].op == al.ExprOp.TRANSPOSE
+  assert fn.outputs[0].args[0].op == sc.ExprOp.TRANSPOSE
   assert len(observed) == 1
   name, normalized = observed[0]
   assert name == "normalized"
@@ -502,18 +502,18 @@ def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None
   assert normalized.output_tree is fn.output_tree
   assert normalized.output_sparsities == (sparsity,)
   assert normalized.output_coloring_widths == (2,)
-  assert normalized.outputs[0].op == al.ExprOp.MATMUL
+  assert normalized.outputs[0].op == sc.ExprOp.MATMUL
   assert normalized._effective_lowering() == "block"
 
 
 @pytest.mark.parametrize("identity", ["none", "compile", "simplify"])
 def test_normalization_preserves_shared_work_across_hinted_outputs(identity: str) -> None:
-  x = al.sym("x", 64)
+  x = sc.sym("x", 64)
   a = x.sin()
   outputs = [a.cos().block(), a] if identity == "none" else [a.cos(), (a * 1.0).block()]
   if identity == "simplify":
-    outputs = [al.simplify(output) for output in outputs]
-  fn = al.Function._from_exprs(f"shared_outputs_{identity}", [x], outputs, ["x"], ["cos", "sin"])
+    outputs = [sc.simplify(output) for output in outputs]
+  fn = sc.Function._from_exprs(f"shared_outputs_{identity}", [x], outputs, ["x"], ["cos", "sin"])
 
   assert render_c_source(fn).count("sin(") == 1
   values = np.linspace(-2.0, 2.0, 64)
@@ -523,26 +523,26 @@ def test_normalization_preserves_shared_work_across_hinted_outputs(identity: str
 
 
 def test_normalization_keeps_constant_and_conflicting_function_hints() -> None:
-  x = al.sym("x", 2, lowering="block")
-  fn = al.Function._from_exprs("normalized_hints", [x], [(x * 1.0).scalar(), al.const([2.0, 3.0]).scalar()], ["x"], ["identity", "constant"])
-  observed: list[al.Function] = []
+  x = sc.sym("x", 2, lowering="block")
+  fn = sc.Function._from_exprs("normalized_hints", [x], [(x * 1.0).scalar(), sc.const([2.0, 3.0]).scalar()], ["x"], ["identity", "constant"])
+  observed: list[sc.Function] = []
 
   lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized))
 
   normalized = observed[0]
   assert normalized._effective_lowering() == "block"
   assert normalized.outputs[0] is x
-  assert normalized.outputs[1].op == al.ExprOp.CONST
+  assert normalized.outputs[1].op == sc.ExprOp.CONST
   assert normalized.outputs[1] is fn.outputs[1]
   assert main_proc(lower_function(fn)).attrs["lowering"] == "block"
 
 
 @pytest.mark.parametrize(("dtype", "value"), [("float32", np.float32(1.0)), ("int64", np.int64(1))])
 def test_normalization_preserves_typed_identity_boundaries(dtype: str, value: object) -> None:
-  x = al.sym("x", 2, dtype=dtype)
-  one = al.const(np.full(2, value), dtype=dtype)
-  fn = al.Function._from_exprs(f"normalized_{dtype}", [x], [(x * one).scalar()], ["x"], ["y"])
-  observed: list[al.Function] = []
+  x = sc.sym("x", 2, dtype=dtype)
+  one = sc.const(np.full(2, value), dtype=dtype)
+  fn = sc.Function._from_exprs(f"normalized_{dtype}", [x], [(x * one).scalar()], ["x"], ["y"])
+  observed: list[sc.Function] = []
 
   proc = main_proc(lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized)))
 
@@ -552,16 +552,16 @@ def test_normalization_preserves_typed_identity_boundaries(dtype: str, value: ob
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 def test_automatic_transpose_normalization_preserves_cancellation_order_and_empty_reduction() -> None:
-  matrix = al.sym("matrix", (3, 2))
-  vector = al.sym("vector", 3)
-  product = al.Function._from_exprs("normalized_cancel", [matrix, vector], [matrix.T @ vector], ["matrix", "vector"], ["y"])
+  matrix = sc.sym("matrix", (3, 2))
+  vector = sc.sym("vector", 3)
+  product = sc.Function._from_exprs("normalized_cancel", [matrix, vector], [matrix.T @ vector], ["matrix", "vector"], ["y"])
   matrix_value = np.array([[1e16, -1e16], [1.0, 1.0], [-1e16, 1e16]])
   vector_value = np.ones(3)
   np.testing.assert_array_equal(product((matrix_value, vector_value)), vector_value @ matrix_value)
 
-  empty_matrix = al.sym("empty_matrix", (2, 0))
-  empty_vector = al.sym("empty_vector", 0)
-  empty = al.Function._from_exprs(
+  empty_matrix = sc.sym("empty_matrix", (2, 0))
+  empty_vector = sc.sym("empty_vector", 0)
+  empty = sc.Function._from_exprs(
     "normalized_empty_product", [empty_matrix, empty_vector], [empty_matrix @ empty_vector], ["matrix", "vector"], ["y"]
   )
   np.testing.assert_array_equal(empty((np.empty((2, 0)), np.empty(0))), np.zeros(2))

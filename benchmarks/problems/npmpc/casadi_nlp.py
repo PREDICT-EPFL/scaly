@@ -1,7 +1,7 @@
-"""CasADi mirror of the neural-process MPC, as a drop-in stand-in for the Alloy solver.
+"""CasADi mirror of the neural-process MPC, as a drop-in stand-in for the Scaly solver.
 
 `CasadiNpmpcSolver` presents the same call signature, output keys and statistics as the
-`al.Function` built by `npmpc_nlp`, so one episode loop drives either oracle provider. The
+`sc.Function` built by `npmpc_nlp`, so one episode loop drives either oracle provider. The
 decision-variable layout, the parameter layout, the cost, the equality and inequality rows, the
 bounds and the IPOPT options are identical by construction -- both sides read them out of
 `ca_npmpc_pieces`, `npmpc_ineq_bounds` and `npmpc_bounds` -- so the only difference is which tool
@@ -11,7 +11,7 @@ there is almost no linear algebra for IPOPT to do, so function evaluation is mos
 
 The reference implementation builds the same problem through `ca.Opti` with per-stage matrices,
 which it needs for its own warm-start bookkeeping. Here the variables are one flat vector in
-Alloy's order, so the two columns solve a bit-for-bit identical problem.
+Scaly's order, so the two columns solve a bit-for-bit identical problem.
 """
 
 from __future__ import annotations
@@ -35,10 +35,10 @@ def build_casadi_npmpc(config, *, solver: str = "ipopt"):
 
 
 def build_casadi_npmpc_sqp(config, pieces: dict[str, Any]):
-  """`alloy-sqp` driving CasADi-generated oracles, at the same settings as the Alloy column."""
+  """`scaly-sqp` driving CasADi-generated oracles, at the same settings as the Scaly column."""
   import casadi as ca
 
-  from alloy_sqp.casadi import build_casadi_external_sqp
+  from scaly_sqp.casadi import build_casadi_external_sqp
 
   z, p, cost = pieces["z"], pieces["p"], pieces["f"]
   constraints = ca.vertcat(pieces["h_eq"], pieces["g_ineq"])
@@ -56,7 +56,7 @@ def build_casadi_npmpc_sqp(config, pieces: dict[str, Any]):
     x_ub=pieces["x_ub"],
     l_ineq=pieces["l_ineq"],
     u_ineq=pieces["u_ineq"],
-    # identical SQP settings to the Alloy column in closed_loop.build_solver
+    # identical SQP settings to the Scaly column in closed_loop.build_solver
     options={"tol": config.sqp_tol, "max_iter": config.sqp_max_iter},
   )
 

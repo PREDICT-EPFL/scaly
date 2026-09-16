@@ -7,29 +7,29 @@ complete input tree.
 ## Expression and function forms
 
 ```python
-al.gradient(expr, x)
-al.jacobian(expr, x)
-al.hessian(expr, x)
-al.sparse_jacobian(expr, x)
-al.sparse_hessian(expr, x, triangle="upper")
+sc.gradient(expr, x)
+sc.jacobian(expr, x)
+sc.hessian(expr, x)
+sc.sparse_jacobian(expr, x)
+sc.sparse_hessian(expr, x, triangle="upper")
 
-al.gradient(fn, "f", "x")
-al.jacobian(fn, "y", "x")
-al.hessian(fn, "f", "x")
-al.sparse_jacobian(fn, "y", "x")
-al.sparse_hessian(fn, "f", "x", triangle="lower")
-al.forward(fn, "y", "x")
-al.adjoint(fn, "y", "x")
+sc.gradient(fn, "f", "x")
+sc.jacobian(fn, "y", "x")
+sc.hessian(fn, "f", "x")
+sc.sparse_jacobian(fn, "y", "x")
+sc.sparse_hessian(fn, "f", "x", triangle="lower")
+sc.forward(fn, "y", "x")
+sc.adjoint(fn, "y", "x")
 ```
 
 Function forms take the declared output name `of` and input name `wrt`. An unknown name fails when
 the derivative is built and reports the declared choices. Pass `name=` to set the derived
 function's artifact name.
 Unseeded derivatives preserve the source's input tree. If `fn` takes `(x, p)`, then
-`al.gradient(fn, "f", "x")` also takes `(x, p)`:
+`sc.gradient(fn, "f", "x")` also takes `(x, p)`:
 
 ```python
-grad = al.gradient(fn, "f", "x")
+grad = sc.gradient(fn, "f", "x")
 value = grad((x_value, p_value))
 ```
 
@@ -51,10 +51,10 @@ adjoint inputs = (source_inputs, lam:<of>)
 For example:
 
 ```python
-fwd = al.forward(fn, "y", "x")
+fwd = sc.forward(fn, "y", "x")
 dy = fwd(((x_value, p_value), x_tangent))
 
-adj = al.adjoint(fn, "y", "x")
+adj = sc.adjoint(fn, "y", "x")
 dx = adj(((x_value, p_value), y_cotangent))
 ```
 
@@ -66,8 +66,8 @@ A Lagrangian wrapper weights every leaf in the source output tree. Its inputs pa
 tree with a multiplier tree that has the source output structure:
 
 ```python
-lag_hess = al.lagrangian_hessian(fn, "x")
-sparse_lag_hess = al.sparse_lagrangian_hessian(
+lag_hess = sc.lagrangian_hessian(fn, "x")
+sparse_lag_hess = sc.sparse_lagrangian_hessian(
     fn,
     "x",
     triangle="lower",
@@ -93,8 +93,8 @@ combined = fn.factory(
     ["x", "p"],
     [
         "f",
-        al.factory.Grad("f", "x"),
-        al.factory.SpJac("g", "x"),
+        sc.factory.Grad("f", "x"),
+        sc.factory.SpJac("g", "x"),
     ],
 )
 combined.output_names
@@ -105,31 +105,31 @@ A request is a frozen value naming `of` and `wrt`:
 
 | Request | Produces | Derived output name |
 | --- | --- | --- |
-| `al.factory.Jac(of, wrt)` | dense Jacobian | `jac_<of>_<wrt>` |
-| `al.factory.Grad(of, wrt)` | scalar-output gradient | `grad_<of>_<wrt>` |
-| `al.factory.Hess(of, wrt)` | scalar-output Hessian | `hess_<of>_<wrt>_<wrt>` |
-| `al.factory.SpJac(of, wrt)` | compact Jacobian values and pattern | `spjac_<of>_<wrt>` |
-| `al.factory.SpHess(of, wrt, triangle=...)` | compact Hessian values and pattern | `sphess_<of>_<wrt>_<wrt>` |
-| `al.factory.Fwd(of, wrt)` | `J(of, wrt) @ fwd:<wrt>` | `fwd_<of>_<wrt>` |
-| `al.factory.Adj(of, wrt)` | `J(of, wrt).T @ lam:<of>` | `adj_<of>_<wrt>` |
+| `sc.factory.Jac(of, wrt)` | dense Jacobian | `jac_<of>_<wrt>` |
+| `sc.factory.Grad(of, wrt)` | scalar-output gradient | `grad_<of>_<wrt>` |
+| `sc.factory.Hess(of, wrt)` | scalar-output Hessian | `hess_<of>_<wrt>_<wrt>` |
+| `sc.factory.SpJac(of, wrt)` | compact Jacobian values and pattern | `spjac_<of>_<wrt>` |
+| `sc.factory.SpHess(of, wrt, triangle=...)` | compact Hessian values and pattern | `sphess_<of>_<wrt>_<wrt>` |
+| `sc.factory.Fwd(of, wrt)` | `J(of, wrt) @ fwd:<wrt>` | `fwd_<of>_<wrt>` |
+| `sc.factory.Adj(of, wrt)` | `J(of, wrt).T @ lam:<of>` | `adj_<of>_<wrt>` |
 
 Include `fwd:<wrt>` or `lam:<of>` in the factory input list for a seeded request.
-`al.factory.DerivSpec` is the common request base class.
+`sc.factory.DerivSpec` is the common request base class.
 
 ## Work directly on expressions
 
 Use expression forms inside a graph that does not need function metadata:
 
 ```python
-seed = al.sym("seed", y.shape)
-(vjp_x,) = al.vjp((y,), (x,), (seed,))
-tangent = al.jvp(y, x, seed)
+seed = sc.sym("seed", y.shape)
+(vjp_x,) = sc.vjp((y,), (x,), (seed,))
+tangent = sc.jvp(y, x, seed)
 
-seeds = al.sym("seeds", (4, *x.shape))
-batched = al.jvp_many(y, x, seeds)
+seeds = sc.sym("seeds", (4, *x.shape))
+batched = sc.jvp_many(y, x, seeds)
 
-dense_jac = al.jacobian(y, x)
-sparse_jac = al.sparse_jacobian(y, x)
+dense_jac = sc.jacobian(y, x)
+sparse_jac = sc.sparse_jacobian(y, x)
 ```
 
 A sparse expression derivative returns `SparseJacobian` with `values`, `sparsity`, and
@@ -139,6 +139,6 @@ A sparse expression derivative returns `SparseJacobian` with `values`, `sparsity
 
 `gradient` uses one reverse sweep. `jacobian` pushes identity columns through batched forward mode.
 `hessian` differentiates a gradient. Unsupported multi-seed rules fall back to one seed at a time
-unless `ALLOY_STRICT_JVP_MANY=1` is set.
+unless `SCALY_STRICT_JVP_MANY=1` is set.
 Derivatives through `CALL` and `VMAP` preserve those structures rather than expanding them. See
 [How differentiation works](../how_it_works/autodiff.md).

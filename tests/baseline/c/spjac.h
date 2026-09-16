@@ -1,19 +1,19 @@
 #pragma once
 
-#ifndef ALLOY_SUCCESS
-#define ALLOY_SUCCESS 0
+#ifndef SCALY_SUCCESS
+#define SCALY_SUCCESS 0
 #endif
-#ifndef ALLOY_ERR_NULL_ABI
-#define ALLOY_ERR_NULL_ABI 1
+#ifndef SCALY_ERR_NULL_ABI
+#define SCALY_ERR_NULL_ABI 1
 #endif
-#ifndef ALLOY_ERR_NULL_WORK
-#define ALLOY_ERR_NULL_WORK 2
+#ifndef SCALY_ERR_NULL_WORK
+#define SCALY_ERR_NULL_WORK 2
 #endif
-#ifndef ALLOY_ERR_NULL_RESULT
-#define ALLOY_ERR_NULL_RESULT 3
+#ifndef SCALY_ERR_NULL_RESULT
+#define SCALY_ERR_NULL_RESULT 3
 #endif
-#ifndef ALLOY_ERR_NULL_INPUT
-#define ALLOY_ERR_NULL_INPUT 4
+#ifndef SCALY_ERR_NULL_INPUT
+#define SCALY_ERR_NULL_INPUT 4
 #endif
 
 #define shooting_spjac_eq_z_SZ_ARG 2

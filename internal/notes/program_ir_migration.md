@@ -1,13 +1,13 @@
 # Program IR migration roadmap
 
-> **Frozen note.** Kept for the record, not maintained. For how alloy works now, see
+> **Frozen note.** Kept for the record, not maintained. For how scaly works now, see
 > [`docs/how_it_works/architecture.md`](../../docs/how_it_works/architecture.md).
 
 > **Status (2026-06-08):** Steps 0–5b done — **functional *and* performance parity reached**. Every
 > workload compute function (forward + `jac` + `spjac` for tracking and unbumpercars) lowers,
 > optimizes, and renders through Program IR as the sole path and is **bit-identical** to the legacy
 > renderer. The Step 5b perf/scale gaps are **closed**: a third architectural leg —
-> Program-IR → Program-IR **optimization passes** (`src/alloy/passes/program.py`) — now ports the legacy
+> Program-IR → Program-IR **optimization passes** (`src/scaly/passes/program.py`) — now ports the legacy
 > renderer's custom optimizations as explicit, individually-testable passes. Re-measured
 > head-to-head (same box, raw C-entry, best-of-5, output bit-identical):
 >
@@ -28,7 +28,7 @@
 > body is not lowered) and the `codegen/solver` wrapper template — the one sanctioned non-Program-IR path
 > (rule 6) — is the only hand-written C left. `render_c_source` is now a thin orchestrator that emits
 > the Program-IR `_raw` callees, splices in the solver wrappers, and reuses the Program-IR ABI entry.
-> The `ALLOY_USE_PROGRAM_IR_C` / `ALLOY_PROGRAM_IR_FALLBACK` flags are gone; mixed-device CALL is a
+> The `SCALY_USE_PROGRAM_IR_C` / `SCALY_PROGRAM_IR_FALLBACK` flags are gone; mixed-device CALL is a
 > hard `LoweringError` (no fallback). `_raw` input params are now `const`-qualified so solver wrappers
 > pass `const double*` arguments without discarding qualifiers. Full suite green on a **cold cache, in
 > parallel** (228 passed, 6 skipped); `ruff`/`ty` clean. Remaining: **merge (Step 7)**.
@@ -66,7 +66,7 @@ exit criteria — read it for the deep context). It proved a great deal:
 - structured sparsity descriptors.
 
 But it optimized for **breadth over depth**: a "first slice" of every phase, all wired together
-behind a feature flag (`ALLOY_USE_PROGRAM_IR_C`) with a **silent fallback** to the legacy
+behind a feature flag (`SCALY_USE_PROGRAM_IR_C`) with a **silent fallback** to the legacy
 renderer. The fallback masked the truth. An empirical probe (2026-06-08) showed:
 
 > The Program IR path could render **none** of the production benchmark workloads
@@ -188,9 +188,9 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   `@lowers(...)`, keyed by expression `ExprOp`) + `codegen/c.py` (compact per-op maps; emits the
   full universal-ABI TU so `codegen.jit.CompiledFunction` dispatches it unchanged). Covered as sole path:
   all elementwise unary/binary with identical operand shapes, `RESHAPE` (alias), small `CONST`.
-  Selection is opt-in via `ALLOY_USE_PROGRAM_IR_C=1` and **strict** — an uncovered op raises
-  `LoweringError` (no silent fallback) unless the explicit escape hatch `ALLOY_PROGRAM_IR_FALLBACK=1`
-  is set. `tests/alloy/test_program_migration.py` is the self-certifying harness: it renders the
+  Selection is opt-in via `SCALY_USE_PROGRAM_IR_C=1` and **strict** — an uncovered op raises
+  `LoweringError` (no silent fallback) unless the explicit escape hatch `SCALY_PROGRAM_IR_FALLBACK=1`
+  is set. `tests/scaly/test_program_migration.py` is the self-certifying harness: it renders the
   Program IR source directly (loud on gaps), confirms `render_c_source` selects that exact source
   under the flag, and matched the then-existing interpreter oracle. Temporaries are stack-local arrays (`sz_w=0`);
   workspace packing is deferred. Not yet covered (raise loudly): broadcasting, `SLICE`, large
@@ -243,10 +243,10 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   parity (≤5%) and its LOC is constant in N. But three regressions surfaced (all expected from
   optimizations the migration deferred):
 
-- **Step 5b — Close the perf/scale gaps.** ✅ Done. Added `src/alloy/passes/program.py` — the optimization
+- **Step 5b — Close the perf/scale gaps.** ✅ Done. Added `src/scaly/passes/program.py` — the optimization
   leg (rule 2) — with an ordered `PASS_PIPELINE` run by `optimize_program` inside `lower_function`.
   The legacy renderer's custom optimizations are ported as discrete, individually-tested passes
-  (`tests/alloy/test_passes.py`):
+  (`tests/scaly/test_passes.py`):
   1. **Workspace spilling — `pack_workspace`.** Lifetime-packs `private` BUFFERs into shared slots
      (greedy left-edge over statement order) and spills float64 slots ≥ 1024 doubles to the
      caller's `w[]` (`double* sN = w + offset;`), with a real `sz_w = own_spill + max(callee sz_w)`.
@@ -302,7 +302,7 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   `_renders_through_program_ir` = `host AND not _uses_solver(fun)`, where `_uses_solver` uses
   `uses_piqp`/`uses_ipopt` (which traverse callees *and* `SOLVER_CALL` nodes — `_function_order`
   does not, so a plain function that merely *calls* a solver is correctly kept on legacy/`codegen/solver`).
-  `ALLOY_USE_PROGRAM_IR_C=0` is a transitional escape hatch to force the legacy renderer (removed in
+  `SCALY_USE_PROGRAM_IR_C=0` is a transitional escape hatch to force the legacy renderer (removed in
   Step 6). The two `test_vmap.py` source-structure asserts were already reconciled in 5b.
 
   **Fixed the cold-cache solver bug here (it was a link-order bug, not a flag bug).** Root cause:
@@ -341,8 +341,8 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
      raise, no fallback.
   5. **Deleted** the scalar renderer (`_render_c_raw_function` / `_render_instruction` /
      `_elementwise_*` / `_matmul` / `_inline_scalar_table` / `_skipped_instructions` / `_detect_tile`
-     / `_compute_lifetimes` / `_pack_slots` / `_spill_plan` / …) and the `ALLOY_PROGRAM_IR_FALLBACK` /
-     `ALLOY_USE_PROGRAM_IR_C` flag glue. `c.py` shrank from ~1240 to ~300 lines. Kept
+     / `_compute_lifetimes` / `_pack_slots` / `_spill_plan` / …) and the `SCALY_PROGRAM_IR_FALLBACK` /
+     `SCALY_USE_PROGRAM_IR_C` flag glue. `c.py` shrank from ~1240 to ~300 lines. Kept
      `render_c_api_header` / `render_c_module` / `_c_ident` / `CModule`, `_function_order` / `_callees`,
      and a `_workspace_size` shim (now `= program_ir_sz_w`) so the benchmark imports keep resolving.
      The `codegen/solver` wrapper codegen is retained (rule 6). Three now-dead solver helpers
@@ -370,7 +370,7 @@ Each step ends green and makes Program IR the **sole** path for the ops it migra
   1.00–1.02×, tracking ms 1.01–1.03×.
 - Source size does not regress materially. ✅ — fusion cut the blow-up to ~1.3–1.5× (tracking ms LOC
   constant in N); gather index-table compaction is a deferred source-size-only follow-up.
-- `codegen/c.py`'s legacy scalar renderer is deleted; no `ALLOY_USE_PROGRAM_IR_C` flag remains. ✅ Step 6.
+- `codegen/c.py`'s legacy scalar renderer is deleted; no `SCALY_USE_PROGRAM_IR_C` flag remains. ✅ Step 6.
 - `codegen/solver.py` host-wrapper path retained; solver oracles lower through Program IR. ✅
 - `uv run pytest -n=auto tests/`, `uv run ruff check`, `uv run ty check` all clean. ✅ — now green on a
   **cold cache, in parallel** (228 passed, 6 skipped); the Step 5b cold-cache solver link-flag bug was

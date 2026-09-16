@@ -85,7 +85,7 @@ R-38 Windows and the API items stay off this path.
       Preserve legitimate parameterless solver oracles. Rationale: refactorings.md
       "Zero-input `Function`s, and the flat call seam that survives because of them".
 - [ ] **API-4. Finish the npmpc `FunctionTemplate` example** after API-1. The public
-      typed decorators, exact `Function` annotations, and shared Alloy/CasADi runtime parameters
+      typed decorators, exact `Function` annotations, and shared Scaly/CasADi runtime parameters
       landed first. Replace the remaining decoder-architecture builders with `FunctionTemplate`.
       This benchmark may use the packed parameter length as its specialization key because it does
       not add more MLP layouts; a general template must distinguish individual layer shapes because
@@ -97,8 +97,8 @@ R-38 Windows and the API items stay off this path.
 
 ### Deferred
 
-- **API-6. A QP-subproblem contract so alloy-sqp can use other QP plugins.** Today `alloy-sqp`
-  imports only `include_dir`/`lib_dir` from `alloy_piqp` and its C template calls
+- **API-6. A QP-subproblem contract so scaly-sqp can use other QP plugins.** Today `scaly-sqp`
+  imports only `include_dir`/`lib_dir` from `scaly_piqp` and its C template calls
   `piqp_setup/update/solve` and reads `qp->result` directly, so a future OSQP, ProxQP or HPIPM
   plugin would be a standalone solver but not an SQP backend. The contract is narrower than
   `render_wrapper`: set up a QP with fixed sparsity, refill values, solve, read the step and
@@ -106,7 +106,7 @@ R-38 Windows and the API items stay off this path.
   form reconciliation (two-sided rows and box bounds versus OSQP's single `l <= Ax <= u`, and
   stage-structured solvers) the way CasADi's `conic` layer does it. Documented as a limitation in
   `docs/guide/solver_backends.md`.
-- **API-7. Specialized OCP problem/solver tier** in alloy (structured staged OCP lowering to general
+- **API-7. Specialized OCP problem/solver tier** in scaly (structured staged OCP lowering to general
   form), then **fatrop** as its consumer plus a casadi-fatrop baseline. osqp / proxqp / acados as
   claims demand.
 
@@ -117,8 +117,8 @@ The [completed study](../docs/results/index.md) supplies the current measurement
 [`notes/perf_2026_09_07/`](notes/perf_2026_09_07/README.md) remains the rationale and validation
 record for the completed compiler tasks below.
 
-Start each compiler item by reading how the tools that shaped Alloy solve the same problem, before
-designing anything. tinygrad, whose IR and pattern-rewrite infrastructure Alloy's are modelled on,
+Start each compiler item by reading how the tools that shaped Scaly solve the same problem, before
+designing anything. tinygrad, whose IR and pattern-rewrite infrastructure Scaly's are modelled on,
 expands small tensor ops into scalar UOps and simplifies them symbolically (C-44), and has a
 scheduler that fuses elementwise producers into their consumers and a symbolic index arithmetic
 that turns strided views into closed-form index expressions (C-8 and C-9). MLIR's affine dialect and
@@ -126,7 +126,7 @@ its loop-fusion, affine-map and memref-normalization passes are the standard tre
 the loops we emit, and their design notes state the legality conditions we would otherwise
 rediscover. JAX's `vmap` batching rules are the reference for what a mapped derivative rule should
 produce without materializing per-trip index tables. The goal is to port the smallest idea that
-fits Alloy's two dialects, not to adopt a framework; write down what was read and what was rejected
+fits Scaly's two dialects, not to adopt a framework; write down what was read and what was rejected
 in `internal/notes/refactorings.md` before the implementation.
 
 ### Now
@@ -166,9 +166,9 @@ protocol's compile flags.
       and tested. The [closeout](notes/perf_2026_09_07/README.md#c-44-closeout) records minimal
       GCC/Clang compilation and runtime checks; the full benchmark rerun follows more Track C work.
       Automatic seed specialization remains C-45.
-      Design: [arithmetic policy](notes/algebraic_simplification_2026_09_08.md#proposed-alloy-arithmetic-policy);
+      Design: [arithmetic policy](notes/algebraic_simplification_2026_09_08.md#proposed-scaly-arithmetic-policy);
       rationale: [paper §8](paper.md#8-claim-gates-and-remaining-work), [measurement protocol](../docs/results/fairness.md#the-measurement-protocol).
-- [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `alloy.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision), [rationale](paper.md#8-claim-gates-and-remaining-work).
+- [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `scaly.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision), [rationale](paper.md#8-claim-gates-and-remaining-work).
 - [x] **C-55. Preserve intended lowering hints through derivative Function construction.** Implemented 2026-09-08: every derived `Function` built in `ad/` takes the primal callee's effective hint (`block`/`opaque` -> `block`, `scalar` -> `scalar`, `auto` inherits nothing) on its output root, through `Function._effective_lowering`; the chain check `hinted_stage_hessian` and `tests/ad/test_lowering_hints.py` pin selection. The chain benchmark stage now carries `.scalar()` (decided 2026-09-08: the comparison is against each side's best formulation, and this is ours); the M=5 Hessian kernel runs at 835 µs against 1769 µs without. Race-car gets nothing from the hint because the automatic policy already selects its stage ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)). [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout), [rationale](paper.md#8-claim-gates-and-remaining-work).
 - [x] **C-53. Share arithmetic simplification across both dialects and program forms.** Implemented 2026-09-08 in `passes/arith.py` (one adapter per dialect, rules for neutral elements, zero annihilation, self-cancellation, negation normalization, bounded constant powers, dtype-checked constant evaluation) and applied through `passes/expr.py`, `scalarize`, and the new `fold_arith` loop-body pass after fusion; `tests/passes/test_arith.py` runs the same cases in all three forms. Left open: `_h{n}` renderer temporaries have no collision guard and deep index expressions are not hoisted, both unobserved in practice. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation), [rationale](paper.md#8-claim-gates-and-remaining-work).
 - [x] **C-45. Bake stage-invariant constant tangents into the VMAP forward callee.** Implemented
@@ -189,10 +189,10 @@ protocol's compile flags.
       cells from the harness with `--repetitions 1`. `test_scatter_sum_combines_reshaped_scatters`
       pins the zero-fill count. Arithmetic identities such as `0 / x` belong to C-53.
 - [x] **C-50. `-march=native` and `-fno-math-errno` in the JIT.** `codegen/jit.py` compiles with
-      `-O2` (or `ALLOY_CC_OPT`) and no target flag, so every JIT kernel is SSE2 scalar code without
+      `-O2` (or `SCALY_CC_OPT`) and no target flag, so every JIT kernel is SSE2 scalar code without
       fused multiply-adds on a machine that has them; measured on race-car N=50, `-mfma` alone is
       32.9 to 27.8 µs. Add the two flags to the JIT compile line, check that the solver plugins'
-      compile paths (alloy-sqp's wrapper, the PIQP and IPOPT hooks) still link, and keep the plugin
+      compile paths (scaly-sqp's wrapper, the PIQP and IPOPT hooks) still link, and keep the plugin
       wheels themselves at the portable baseline. One line if it plays well with the solvers.
 - [x] **C-51. Coalesce consecutive scalar loads and stores into vector accesses in the C renderer.**
       After C-44 scalarizes a body, adjacent `buf[i], buf[i+1], ...` accesses can be emitted as one
@@ -304,7 +304,7 @@ protocol's compile flags.
   colours columns only, and npmpc's per-stage block is wider than it is tall, which is consistent
   with running more forward sweeps than a row-coloured or reverse pass would need. Prize is bounded
   and knowable, roughly 0.85 -> 1.1 at the shipped decoder width, and it does not change the
-  width-axis result Alloy already wins.
+  width-axis result Scaly already wins.
 
 ## Solvers
 
@@ -319,7 +319,7 @@ protocol's compile flags.
   search paths in the cache identity or make cached artifacts independent of them. Rationale:
   refactorings.md "Compiled CasADi artifacts across worktrees".
 - **S-18. CasADi `sqpmethod` as a secondary reference column.** Opt-in and record-only; its
-  globalization, regularization and QP path differ from `alloy-sqp`. Add only if review asks for it.
+  globalization, regularization and QP path differ from `scaly-sqp`. Add only if review asks for it.
 
 ## Benchmark harness
 
@@ -330,7 +330,7 @@ protocol's compile flags.
       providers with `-march=native` (and `-fno-math-errno`), fairness.md states the rule and why;
       AOT users are told in the docs to pass it and it goes in the suggested CFLAGS; the solver
       plugin wheels stay at the portable baseline. The JIT side is C-50. Measured reason: on
-      race-car the gain is FMA contraction (`-mfma` alone: Alloy 32.9 to 27.8 µs, SX 21.3 to 20.7,
+      race-car the gain is FMA contraction (`-mfma` alone: Scaly 32.9 to 27.8 µs, SX 21.3 to 20.7,
       because SX's one-op-per-statement code never contracts), not vector width. Record both flag
       sets in fairness.md until BH-20 reruns. Evidence: `notes/perf_2026_09_07/README.md`.
 - [ ] **BH-21. Add an immutable publication mode**: clean release candidate, every raw run retained,
@@ -355,7 +355,7 @@ protocol's compile flags.
 
 ## Licensing
 
-Alloy and the three plugins are BSD-2-Clause. The plugin wheels also ship other people's binaries,
+Scaly and the three plugins are BSD-2-Clause. The plugin wheels also ship other people's binaries,
 so each wheel carries its dependencies' license texts the way CasADi does
 (`casadi/include/licenses/<dep>/LICENSE`), except that CasADi's `mumps-external` and
 `metis-external` entries are the COIN-OR wrapper's EPL text rather than the real MUMPS and METIS
@@ -363,11 +363,11 @@ licenses, which we do not copy. Surveyed 2026-09-07. What we ship and what it as
 
 | Package | Component | License | Obligation |
 |---|---|---|---|
-| alloy, alloy-sqp | our code | BSD-2 | none |
-| alloy-piqp | PIQP, BLASFEO | BSD-2 | notice |
+| scaly, scaly-sqp | our code | BSD-2 | none |
+| scaly-piqp | PIQP, BLASFEO | BSD-2 | notice |
 | | Eigen | MPL-2.0 | notice; the build must define `EIGEN_MPL2_ONLY` |
 | | LDL inside PIQP (`piqp/sparse/LDL_License.txt`) | LGPL-2.1 | notice; check how it is used |
-| alloy-ipopt | IPOPT | EPL-2.0 | notice, upstream source of the pinned version; a separate dynamically loaded module, so our BSD-2 is unaffected |
+| scaly-ipopt | IPOPT | EPL-2.0 | notice, upstream source of the pinned version; a separate dynamically loaded module, so our BSD-2 is unaffected |
 | | MUMPS | CeCILL-C | notice |
 | | OpenBLAS (static, Linux) | BSD-3 | notice |
 | | libgfortran, libquadmath | GPL-3 + GCC runtime exception | notice; the exception covers this use |
@@ -380,12 +380,12 @@ licenses, which we do not copy. Surveyed 2026-09-07. What we ship and what it as
       projects name, with the author only in the pyproject `authors` entry;, `license = "BSD-2-Clause"` and
       `license-files = ["LICENSE"]` in the root `pyproject.toml`, and the README "License" section
       replaces "TBD".
-- [ ] **L-29. Copy the same `LICENSE` into each of `plugins/alloy-{sqp,piqp,ipopt}/`** with the same
+- [ ] **L-29. Copy the same `LICENSE` into each of `plugins/scaly-{sqp,piqp,ipopt}/`** with the same
       two pyproject fields. Each plugin is its own sdist and wheel, so each needs the file in its
       own tree; a copy, not a symlink, so sdists stay correct.
-- [ ] **L-30. Third-party notices generated by the build hooks.** `hatch_build.py` in `alloy-piqp`
-      and `alloy-ipopt` copies each dependency's license text from the already-cloned
-      `third_party/` sources into `src/alloy_{piqp,ipopt}/licenses/<dep>/` and writes a short
+- [ ] **L-30. Third-party notices generated by the build hooks.** `hatch_build.py` in `scaly-piqp`
+      and `scaly-ipopt` copies each dependency's license text from the already-cloned
+      `third_party/` sources into `src/scaly_{piqp,ipopt}/licenses/<dep>/` and writes a short
       `THIRD_PARTY_NOTICES.md` listing name, pinned version from `build_config.json`, license and
       upstream URL; the directory joins the wheel `artifacts`. Generating at build time keeps the
       notices from drifting from the pins. libgfortran and libquadmath are not cloned, so their
@@ -460,10 +460,10 @@ These steps make the tree public and permanent, and each is cheap to do once and
 
       The design, agreed 2026-08-25:
 
-      - `~/dev/alloy-notes/` as its own git repo, with its own private remote for backup, holding
+      - `~/dev/scaly-notes/` as its own git repo, with its own private remote for backup, holding
         `paper.md` and any later private notes. Keeping it under git matters: the note is a dated
         decision log and a plain untracked file would lose its history.
-      - `notes -> /home/ted/dev/alloy-notes` as a gitignored symlink in every worktree, with an
+      - `notes -> /home/ted/dev/scaly-notes` as a gitignored symlink in every worktree, with an
         **absolute** target so the link keeps pointing at the one source of truth even if a tool
         copies rather than links it. `/notes/` goes in `.gitignore`.
       - A `[post-start]` step in `.config/wt.toml` that recreates the symlink, so the behaviour does
@@ -485,7 +485,7 @@ These steps make the tree public and permanent, and each is cheap to do once and
       proximity to the code, which is the whole reason the note works.
 
 - [ ] **R-38. Windows support.** Decide the toolchain (MSVC or clang) and the target: the core JIT
-      plus `alloy-sqp` and `alloy-piqp` first; `alloy-ipopt` on Windows is a separate later item
+      plus `scaly-sqp` and `scaly-piqp` first; `scaly-ipopt` on Windows is a separate later item
       because it drags in Fortran and its own licensing survey.
 - [x] **R-39. Finalize the name.** Decided 2026-09-14: `scaly`. `scali` was the first choice, but
       PyPI refused it as too similar to `scaii`, an abandoned 2019 project: PyPI treats `l`, `i`
@@ -500,12 +500,14 @@ These steps make the tree public and permanent, and each is cheap to do once and
       new-project rate limit. The `scali-sqp`, `scali-piqp` and `scali-ipopt` placeholders published
       before the name changed stay up as tombstones, since deleting a project frees its name for
       anyone; point their descriptions at the `scaly` packages once those exist.
-- [ ] **R-59. Rename everything to scaly.** The package `src/alloy` and the three plugin
-      distributions and directories, the `alloy_*` modules and `ALLOY_BUILD_SOLVERS`, the two console
-      scripts, the JIT cache directory, CI cache paths, `.config/wt.toml`, `zensical.toml`, `docs/`
-      and `internal/` including `todo.md` itself. Check the Foxglove layouts for the string and, if
-      present, re-export them from Desktop rather than editing. Then rename the GitHub repository in
-      place, which keeps the redirect from the old name, and `git remote set-url` in every clone.
+- [x] **R-59. Rename everything to scaly.** Done 2026-09-16: the package, the three plugin
+      distributions and directories, the `scaly_*` modules, `SCALY_*` environment variables, the two
+      console scripts, the JIT cache directory, CI cache paths, `.config/wt.toml`, `zensical.toml`,
+      `docs/` and `internal/`; `import scaly as sc` replaces the old alias everywhere. The Foxglove
+      layouts never contained the string. The GitHub repository was renamed in place and this
+      clone's `origin` now points at `PREDICT-EPFL/scaly`; any other clone needs
+      `git remote set-url origin git@github.com:PREDICT-EPFL/scaly.git` and, if its directory was
+      renamed too, a recreated `.venv` since uv's console scripts hardcode the venv path.
 - [ ] **R-61. Scrub anvil from file contents.** History may keep it. Hits on 2026-09-11:
       `AGENTS.md`, `internal/roadmap.md`, `internal/notes/anvil.md`, `naming.md` and
       `benchmark-buildout.md`. Delete `anvil.md`; its two useful sentences move to
@@ -530,7 +532,7 @@ These steps make the tree public and permanent, and each is cheap to do once and
 - [ ] **R-40. Versioning policy.** What a minor bump promises about the generated C symbols, the
       sparsity-table prefixes and the plugin ABI; written into `docs/dev/contributing.md`.
 - [ ] **R-66. Platform-only wheel tags for the plugins.** Nothing in the plugins touches the Python
-      C API, the solvers load through ctypes, yet `hatch_build.py` in `alloy-piqp` and `alloy-ipopt`
+      C API, the solvers load through ctypes, yet `hatch_build.py` in `scaly-piqp` and `scaly-ipopt`
       sets `infer_tag = True`, which stamps the running interpreter's `cpXY-cpXY-<platform>` tag.
       Set the tag to `py3-none-<platform>` explicitly instead, so one wheel per OS and architecture
       serves every Python version and no per-interpreter build matrix or stable ABI is needed.
@@ -589,7 +591,7 @@ merge into dev and prioritize documentation.
       still grows with car count and remains part of deferred C-8. Independently reviewed 2026-09-09.
 
 - [x] **BH-19. Harness gaps.** `dispatch_trip_count`, `dispatch_workspace` and `dispatch_arithmetic`
-      were empty for the race_cars and unbumpercars Alloy cells because `_dispatch_metrics` gave up
+      were empty for the race_cars and unbumpercars Scaly cells because `_dispatch_metrics` gave up
       on any kernel mapped over two axes (`N` and `N+1` stages; cars and pairs). It now reports the
       dispatch-loop family carrying the most arithmetic per call and the workspace over every
       dispatch, so all four problems fill the columns. The unrolled pair rows no longer exist in

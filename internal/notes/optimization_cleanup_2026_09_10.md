@@ -11,7 +11,7 @@ A replacement loop compiler is unnecessary for this merge.
 
 ## What was reviewed
 
-The source paths below are relative to `src/alloy/`. Automatic differentiation is abbreviated AD;
+The source paths below are relative to `src/scaly/`. Automatic differentiation is abbreviated AD;
 a Jacobian-vector product is abbreviated JVP.
 
 | Optimization | Current owner and branch change | Recommended disposition |
@@ -61,7 +61,7 @@ checking local-name collisions.
 ### Expression rewrites have no uniform compilation boundary
 
 `Function` construction and `_lower_to_proc` do not run `simplify`. Derivative builders and
-explicit `al.simplify` calls do. Consequently, an ordinary `A.T @ v` still materializes a
+explicit `sc.simplify` calls do. Consequently, an ordinary `A.T @ v` still materializes a
 transpose, while its explicitly simplified equivalent uses the new layout-aware product.
 The matmul tests explicitly simplify the expression, so they do not cover this difference.
 
@@ -76,7 +76,7 @@ mechanical file moves, especially for large graphs, typed constants, and opaque 
 
 ### Hints can disappear during simplification
 
-The probe `al.simplify((A.T @ v).block())` returns an `auto` expression. The same happens for
+The probe `sc.simplify((A.T @ v).block())` returns an `auto` expression. The same happens for
 `.scalar()` and `.opaque()`, and for ones-vector, identity-gather, and neutral-element rewrites.
 Some of these losses predate the branch; the branch now makes the hints operational.
 
@@ -221,7 +221,7 @@ the benchmark dispatch metrics use. Replace hoisting's private pruning logic wit
 ### Phase 3: Define expression normalization and simplify AD helper construction
 
 Normalize private compilation outputs and preserve policy before rewriting. Exercise ordinary
-Function compilation without a manual `al.simplify` call. Keep the original expressions available
+Function compilation without a manual `sc.simplify` call. Keep the original expressions available
 to the recorder and keep output sparsity metadata attached to the correct outputs.
 
 Move hint inheritance beside the existing Function policy. Consolidate the single-formal constant
@@ -318,10 +318,10 @@ The review used the [architecture](../../docs/how_it_works/architecture.md),
 [arithmetic investigation](algebraic_simplification_2026_09_08.md),
 [refactoring notes](refactorings.md), [derivative operation audit](perf_2026_09_07/c49_ad_op_audit.md),
 [closeout record](perf_2026_09_07/README.md), and [current task status](../todo.md).
-The relevant implementations are [AD](../../src/alloy/ad/forward.py),
-[expression rewriting](../../src/alloy/passes/expr.py), [shared arithmetic](../../src/alloy/passes/arith.py),
-[lowering](../../src/alloy/passes/lowering.py), [Program passes](../../src/alloy/passes/program/),
-[rendering](../../src/alloy/codegen/c.py), and [compilation](../../src/alloy/codegen/jit.py).
+The relevant implementations are [AD](../../src/scaly/ad/forward.py),
+[expression rewriting](../../src/scaly/passes/expr.py), [shared arithmetic](../../src/scaly/passes/arith.py),
+[lowering](../../src/scaly/passes/lowering.py), [Program passes](../../src/scaly/passes/program/),
+[rendering](../../src/scaly/codegen/c.py), and [compilation](../../src/scaly/codegen/jit.py).
 
 The range-based compiler, general memory-aware common-subexpression elimination, static metadata
 redesign, and pre-AD inlining remain C-8, C-54, C-57, and C-58. This cleanup does not need them.
@@ -335,7 +335,7 @@ scalarization and retains solver oracles and callees reached from retained kerne
 hoist procedures remain eligible for subsequent nested hoisting; automatic prologues only expand
 inside an expanding caller.
 
-Expression rewriting preserves effective subtree hints, including public `al.simplify` calls made
+Expression rewriting preserves effective subtree hints, including public `sc.simplify` calls made
 before Function construction. The compiler also captures Function policy before private
 normalization. Common-subexpression keys use canonical child identities so their size stays bounded
 on deep graphs. Constant and runtime derivative helpers share cache construction while retaining

@@ -2,12 +2,12 @@
 
 These are properties of *this benchmark problem* — the vendored track data, the
 spline reference generator, the physical constants, the transcription's parameter
-layout, and the agreement between the Alloy and CasADi implementations of the
+layout, and the agreement between the Scaly and CasADi implementations of the
 same NLP. They run before any timing is recorded, via
 ``benchmarks/run.py smoke``.
 
 They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite
-covers Alloy's core and must not depend on a benchmark problem. Where one of these
+covers Scaly's core and must not depend on a benchmark problem. Where one of these
 checks also pins an IR/AD/codegen behaviour, a minimal self-contained reproduction
 of that behaviour lives in ``tests/integration/test_stage_transcription.py`` instead, so
 this problem can be retired or reshaped without dropping compiler coverage.
@@ -22,8 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
-import alloy as al
-from alloy.solvers.paths import solver_loadable, solver_paths
+import scaly as sc
+from scaly.solvers.paths import solver_loadable, solver_paths
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
@@ -154,7 +154,7 @@ def check_default_constants() -> None:
   horizon = 1
   solver = _race_car_nlp(EpisodeConfig(horizon=horizon))
   fn, sparsity = solver.descriptor.jac, solver.descriptor.jac_sparsity
-  assert isinstance(fn, al.Function) and sparsity is not None
+  assert isinstance(fn, sc.Function) and sparsity is not None
   rng = np.random.default_rng(0)
   zv = rng.normal(size=NZ * (horizon + 1))
   pv = np.zeros(n_param(horizon))
@@ -177,7 +177,7 @@ def check_default_constants() -> None:
 
 
 def check_casadi_mirror_dimensions() -> None:
-  """The CasADi mirror declares the same decision vector, rows, and bounds as the Alloy builder."""
+  """The CasADi mirror declares the same decision vector, rows, and bounds as the Scaly builder."""
   from benchmarks.problems.race_cars.casadi_nlp import build_casadi_race_car_nlp
 
   config = EpisodeConfig(horizon=4)
@@ -227,7 +227,7 @@ def check_exact_hessian_default() -> None:
 
 
 def check_casadi_ipopt_is_compiled() -> None:
-  """The timed CasADi column is generated C linked to Alloy's IPOPT."""
+  """The timed CasADi column is generated C linked to Scaly's IPOPT."""
   config = EpisodeConfig.smoke()
   controller = build_solver(config, "ipopt", "casadi")
   expected = solver_paths(required=True).loads["ipopt"]
@@ -260,7 +260,7 @@ def check_harvested_sqp_globalizations() -> None:
   encoded = (Path(__file__).parent / "data" / "step_198.npz.b64").read_text()
   with np.load(io.BytesIO(base64.b64decode(encoded))) as stored:
     inputs = {name: stored[name] for name in ("z0", "lam_eq0", "lam_ineq0", "lam_box0", "p")}
-  for oracle in ("alloy", "casadi"):
+  for oracle in ("scaly", "casadi"):
     for name, options, expected_iter in (
       ("filter", {}, 3),
       ("l1-watchdog-five", {"globalization": "l1", "watchdog": 5, "hessian": "objective"}, 4),
@@ -309,7 +309,7 @@ def check_recorded_scene_and_artifacts() -> None:
   from benchmarks.harness.closed_loop import run_race_cars
 
   record_track, record_horizons = recording.RaceCarRecorder.record_track, recording.RaceCarRecorder.record_horizons
-  for oracle in ("alloy", "casadi"):
+  for oracle in ("scaly", "casadi"):
     tracks: list[tuple[tuple[int, ...], dict[str, int]]] = []
     horizons: list[list[str]] = []
 
@@ -353,15 +353,15 @@ def check_oracles_agree() -> None:
   drifted from the other, and any timing comparison between them would be meaningless.
   """
   config = EpisodeConfig(horizon=8, max_steps=6)
-  alloy_run = run_episode(config, solver="ipopt", oracle="alloy")
+  scaly_run = run_episode(config, solver="ipopt", oracle="scaly")
   casadi_run = run_episode(config, solver="ipopt", oracle="casadi")
-  np.testing.assert_allclose(alloy_run.controls, casadi_run.controls, rtol=1e-6, atol=1e-6)
-  np.testing.assert_allclose(alloy_run.states, casadi_run.states, rtol=1e-8, atol=1e-8)
-  np.testing.assert_allclose(alloy_run.predictions, casadi_run.predictions, rtol=1e-6, atol=1e-6)
-  alloy_iters = [item.stats.iter for item in alloy_run.telemetry]
+  np.testing.assert_allclose(scaly_run.controls, casadi_run.controls, rtol=1e-6, atol=1e-6)
+  np.testing.assert_allclose(scaly_run.states, casadi_run.states, rtol=1e-8, atol=1e-8)
+  np.testing.assert_allclose(scaly_run.predictions, casadi_run.predictions, rtol=1e-6, atol=1e-6)
+  scaly_iters = [item.stats.iter for item in scaly_run.telemetry]
   casadi_iters = [item.stats.iter for item in casadi_run.telemetry]
-  assert alloy_iters == casadi_iters, f"iteration counts diverged: {alloy_iters} vs {casadi_iters}"
-  for run in (alloy_run, casadi_run):
+  assert scaly_iters == casadi_iters, f"iteration counts diverged: {scaly_iters} vs {casadi_iters}"
+  for run in (scaly_run, casadi_run):
     for item in run.telemetry:
       assert item.stats.status.value <= 1, f"solve reported {item.stats.status.name}"
       assert item.stats.t_fe > 0.0 and item.stats.n_eval_jac_g > 0, "provider reported no oracle work"
@@ -379,8 +379,8 @@ def check_sqp_matches_ipopt() -> None:
   accepted step.
   """
   config = EpisodeConfig.smoke()
-  ipopt_run = run_episode(config, solver="ipopt", oracle="alloy")
-  sqp_run = run_episode(config, solver="sqp", oracle="alloy")
+  ipopt_run = run_episode(config, solver="ipopt", oracle="scaly")
+  sqp_run = run_episode(config, solver="sqp", oracle="scaly")
   assert len(ipopt_run.controls) == len(sqp_run.controls)
   for k in range(len(ipopt_run.controls)):
     tel_i, tel_s = ipopt_run.telemetry[k], sqp_run.telemetry[k]
@@ -401,11 +401,11 @@ def check_sqp_matches_ipopt() -> None:
 
 def check_sqp_oracles_agree() -> None:
   """One SQP configuration follows the same smoke trajectory with either C oracle provider."""
-  alloy_run = run_episode(smoke=True, solver="sqp", oracle="alloy")
+  scaly_run = run_episode(smoke=True, solver="sqp", oracle="scaly")
   casadi_run = run_episode(smoke=True, solver="sqp", oracle="casadi")
-  np.testing.assert_allclose(alloy_run.controls, casadi_run.controls, rtol=1e-8, atol=1e-8)
-  np.testing.assert_allclose(alloy_run.states, casadi_run.states, rtol=1e-10, atol=1e-10)
-  for run in (alloy_run, casadi_run):
+  np.testing.assert_allclose(scaly_run.controls, casadi_run.controls, rtol=1e-8, atol=1e-8)
+  np.testing.assert_allclose(scaly_run.states, casadi_run.states, rtol=1e-10, atol=1e-10)
+  for run in (scaly_run, casadi_run):
     for item in run.telemetry:
       stats = item.stats
       assert stats.status.value <= 1 and stats.t_qp > 0.0 and stats.n_eval_h > 0
@@ -419,18 +419,18 @@ def check_failure_closes_incremental_mcap_and_writes_partial_artifacts() -> None
   from unittest.mock import patch
 
   from benchmarks.harness.closed_loop import run_race_cars
-  from alloy.solvers import ALLOY_SOLVER_STATS_VERSION, AlloySolveStatus, SolverStats
+  from scaly.solvers import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, SolverStats
   from benchmarks.problems.race_cars import NX, NU
   from benchmarks.problems.race_cars import closed_loop
   from benchmarks.problems.race_cars.closed_loop import StepRecord, StepTelemetry
 
-  def stats(status: AlloySolveStatus, native: int) -> SolverStats:
-    return SolverStats(ALLOY_SOLVER_STATS_VERSION, status, native, 2, 1.0, 0.01, 0.002, 0.0, 0.006, 0.001, 0.001, 2, 2, 2, 2, 2)
+  def stats(status: ScalySolveStatus, native: int) -> SolverStats:
+    return SolverStats(SCALY_SOLVER_STATS_VERSION, status, native, 2, 1.0, 0.01, 0.002, 0.0, 0.006, 0.001, 0.001, 2, 2, 2, 2, 2)
 
   def fail(config, *, solver, oracle, record_step, **_kwargs):
     reference = np.zeros((config.horizon + 1, NX))
     prediction = reference.copy()
-    good_stats = stats(AlloySolveStatus.OK, 1)
+    good_stats = stats(ScalySolveStatus.OK, 1)
     telemetry = StepTelemetry(good_stats, 0.1, 0, 0.0, 0.0, 0.0)
     record_step(
       StepRecord(
@@ -445,7 +445,7 @@ def check_failure_closes_incremental_mcap_and_writes_partial_artifacts() -> None
         telemetry,
       )
     )
-    failed_stats = stats(AlloySolveStatus.MAX_ITER, -1)
+    failed_stats = stats(ScalySolveStatus.MAX_ITER, -1)
     record_step(StepRecord(1, np.ones(NX), np.ones(NX), None, None, reference, {"z": np.ones(1), "p": np.ones(1)}, failed_stats, None))
     raise RuntimeError(f"synthetic {solver}+{oracle} failure")
 
@@ -454,11 +454,11 @@ def check_failure_closes_incremental_mcap_and_writes_partial_artifacts() -> None
     try:
       run_race_cars(smoke=True, out_dir=tmp_path, cli_args=["closed-loop", "--problem", "race_cars", "--smoke"])
     except RuntimeError as error:
-      assert "synthetic ipopt+alloy failure" in str(error), str(error)
+      assert "synthetic ipopt+scaly failure" in str(error), str(error)
     else:
       raise AssertionError("the failed episode did not raise")
 
-    output = tmp_path / "race_cars" / "ipopt+alloy"
+    output = tmp_path / "race_cars" / "ipopt+scaly"
     data = (output / "episode.mcap").read_bytes()
     assert data.startswith(b"\x89MCAP0\r\n") and data.endswith(b"\x89MCAP0\r\n")
     with np.load(output / "rollout.npz") as rollout:

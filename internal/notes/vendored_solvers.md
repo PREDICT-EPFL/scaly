@@ -1,6 +1,6 @@
 # Vendored solver build — known issues
 
-The `plugins/alloy-{piqp,ipopt}/hatch_build.py` hooks ship each solver's shared library and C headers inside its plugin wheel. These notes track open issues we should fix before the wheels.yml workflow is exercised at scale. Historical notes from the conda-prefix/delocate experiment live in [`native_toolchain_exploration.md`](native_toolchain_exploration.md).
+The `plugins/scaly-{piqp,ipopt}/hatch_build.py` hooks ship each solver's shared library and C headers inside its plugin wheel. These notes track open issues we should fix before the wheels.yml workflow is exercised at scale. Historical notes from the conda-prefix/delocate experiment live in [`native_toolchain_exploration.md`](native_toolchain_exploration.md).
 
 ## 1. Runtime bundling replaced static linking — done, and enforced
 
@@ -51,9 +51,9 @@ build_data["pure_python"] = False
 build_data["infer_tag"] = True
 ```
 
-ABI tag stays `none` because the vendored libs are loaded via `ctypes`, not linked as a CPython extension module — there's no Python ABI to bind to. Output becomes `alloy-0.1.0-py3-none-macosx_14_0_arm64.whl` / `alloy-0.1.0-py3-none-linux_x86_64.whl` per build host.
+ABI tag stays `none` because the vendored libs are loaded via `ctypes`, not linked as a CPython extension module — there's no Python ABI to bind to. Output becomes `scaly-0.1.0-py3-none-macosx_14_0_arm64.whl` / `scaly-0.1.0-py3-none-linux_x86_64.whl` per build host.
 
-Editable installs use `ALLOY_BUILD_SOLVERS=auto` by default: if the native toolchain is present, `uv sync` builds the solver stack; if it is missing (for example no `gfortran`), the hook skips the missing solver libraries and solver tests are skipped. CI sets `ALLOY_BUILD_SOLVERS=required` so missing toolchains/build regressions remain fatal. `ALLOY_BUILD_SOLVERS=skip` is available for intentionally Python-only syncs.
+Editable installs use `SCALY_BUILD_SOLVERS=auto` by default: if the native toolchain is present, `uv sync` builds the solver stack; if it is missing (for example no `gfortran`), the hook skips the missing solver libraries and solver tests are skipped. CI sets `SCALY_BUILD_SOLVERS=required` so missing toolchains/build regressions remain fatal. `SCALY_BUILD_SOLVERS=skip` is available for intentionally Python-only syncs.
 
 **Still required before distribution:** a correct tag is necessary but not sufficient; PyPI rejects raw `linux_*` and the wheel may still pull in host-specific shared libs.
 
@@ -68,7 +68,7 @@ Editable installs use `ALLOY_BUILD_SOLVERS=auto` by default: if the native toolc
 - **CI cache key.** Keyed on OS, architecture, and both plugin `hatch_build.py` files. Cold IPOPT build is ~5-8 min, so a stale cache hides a lot.
 - **Static OpenBLAS install.** `_build_openblas` builds with `NO_SHARED=1 USE_OPENMP=0 DYNAMIC_ARCH=1`; pass the same flags to `make install` or OpenBLAS tries to install a shared `libopenblas*.so` that was never built.
 - **Static link flags.** Linux uses static OpenBLAS, METIS and GKlib. Keep OpenBLAS' dependent `-lm -lpthread -lgfortran` in the LAPACK lflags, and keep `-lm` in both the MUMPS `--with-metis-lflags` and IPOPT `--with-mumps-lflags`; otherwise configure/link checks fail on Linux.
-- **AOT solver harness.** `al.qp(...)` (PIQP) and `al.nlp(...)` (IPOPT) are wired through `ctypes` for direct Python calls and through generated C for nested JIT/AOT use; see [`solvers.md`](solvers.md). What is still TODO before distribution: a CI-level standalone C/C++ harness that links `-lpiqpc`/`-lipopt` directly outside Python and exercises the exact AOT path the static-libgfortran work is meant to unblock.
+- **AOT solver harness.** `sc.qp(...)` (PIQP) and `sc.nlp(...)` (IPOPT) are wired through `ctypes` for direct Python calls and through generated C for nested JIT/AOT use; see [`solvers.md`](solvers.md). What is still TODO before distribution: a CI-level standalone C/C++ harness that links `-lpiqpc`/`-lipopt` directly outside Python and exercises the exact AOT path the static-libgfortran work is meant to unblock.
 
 ## 6. ThirdParty version pins (as of 2026-05-19)
 

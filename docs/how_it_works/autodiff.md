@@ -1,6 +1,6 @@
 # How differentiation works
 
-Alloy differentiates graphs, not values. Every derivative is a new expression-dialect graph built
+Scaly differentiates graphs, not values. Every derivative is a new expression-dialect graph built
 from the old one, so a derivative is an ordinary `Function` that gets lowered, optimized and
 compiled exactly like the thing it came from. There is no tape and no runtime.
 
@@ -29,12 +29,12 @@ derivative — and turn per-column chain-rule unrolling into small matrix produc
 `(nseed, input.size)` and multiplies each row by an all-ones vector. The reduction stays in one
 graph instead of becoming one Python-unrolled reduction per seed, so generated source does not grow
 with the seed count. The generated loop still performs one extra multiply for each summed element
-and seed. `dispatch_arithmetic` counts those multiplies, so Alloy pays for them in the reported work.
+and seed. `dispatch_arithmetic` counts those multiplies, so Scaly pays for them in the reported work.
 
 Not every operation has a multi-seed rule yet: `abs`, `asin`, `acos`, `atan`, `atan2`, `minimum`,
 `maximum`, `floor`, `ceil`, and any `transpose` whose result is rank 4 or higher (the seed axis
 would push it past the rank-4 lowering limit) fall back to evaluating seeds one at a time. The fallback is silent by default because it is correct, just slower. Set
-`ALLOY_STRICT_JVP_MANY=1` to make it raise instead, which is what you want when you are adding a
+`SCALY_STRICT_JVP_MANY=1` to make it raise instead, which is what you want when you are adding a
 rule and need to know whether it is being used.
 
 ## Differentiating across a call

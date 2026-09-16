@@ -1,11 +1,11 @@
 # macOS Apple-clang miscompile of inlined `_raw` callees
 
-> **Frozen note.** Kept for the record, not maintained. For how alloy works now, see
+> **Frozen note.** Kept for the record, not maintained. For how scaly works now, see
 > [`docs/how_it_works/architecture.md`](../../docs/how_it_works/architecture.md).
 
 ## Summary
 
-`tests/alloy/test_factory_casadi.py::test_jacobian_through_call_node_matches_casadi_mx`
+`tests/scaly/test_factory_casadi.py::test_jacobian_through_call_node_matches_casadi_mx`
 failed only on the `core tests / macos-latest` CI job. The root cause is a
 **deterministic miscompilation by the CI runner's Apple clang** (Xcode 16 /
 macOS 15 arm64), not a test-isolation or hash-consing problem. The immediate
@@ -16,13 +16,13 @@ same call's inputs.
 
 Mitigated in two layers:
 
-1. `src/alloy/passes/program.py` (`pack_workspace`) tracks the transitive producer
+1. `src/scaly/passes/program.py` (`pack_workspace`) tracks the transitive producer
    closure for each private buffer and extends those producer lifetimes through
    any `CALL` that consumes the buffer. This removes the originally identified
    hazardous reuse (`inner_fwd2_y_x_raw(s0, s2, s1)` where `s2` was produced
    from `s1`).
 2. The CI compiler still miscompiled the same forward-AD helper after that
-   reuse was removed, so `src/alloy/codegen/c.py` now selectively emits
+   reuse was removed, so `src/scaly/codegen/c.py` now selectively emits
    generated forward-AD helper callees (`*_fwd*`) as
    `static __attribute__((noinline)) void ...`. Normal user `_raw` callees stay
    `static inline`.
@@ -33,7 +33,7 @@ The test differentiates `outer(z) = inner(z·z)` with `inner(w) = sin(w) + w²`
 (forward-AD through a `CALL` node) and compares against CasADi:
 
 ```
-[1, 1]: 11.833016900971549 (ACTUAL, alloy)   7.225016900971549 (DESIRED, casadi)
+[1, 1]: 11.833016900971549 (ACTUAL, scaly)   7.225016900971549 (DESIRED, casadi)
 ACTUAL : [[1.045782, 0], [0, 11.833017]]
 DESIRED: [[1.045782, 0], [0,  7.225017]]
 ```
@@ -164,7 +164,7 @@ inner_fwd2_y_x_raw(s0, s2, s3, NULL);  // output slot is disjoint from input pro
 However, Apple clang 17 still produced the same wrong value with the output
 moved to `s3`, so the second retained fix is selective: only generated forward-AD
 helper raw callees are marked `noinline`. A regression guard in
-`tests/alloy/test_passes.py` asserts both parts: the failing AD-through-call
+`tests/scaly/test_passes.py` asserts both parts: the failing AD-through-call
 pattern gets a distinct output slot and the forward helper is noinline, while a
 regular user `inner_raw` callee remains inline.
 

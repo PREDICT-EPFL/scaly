@@ -23,7 +23,7 @@ Rule quality is the smaller half. The larger half is composition: the same graph
 VMAP nodes costs 16,826 (658 per seed), already below SX, and 14,771 (573 per seed) with the rule
 edits. The "at most about 400 per seed in SX" in the todo was optimistic: SX's explicit
 forward-over-reverse is 700 per seed, its one-shot `ca.hessian` 633, and the `nlp_hess_l` the harness
-benchmarks, which emits only the upper triangle, about 500. Alloy computes the full 24 × 45 block.
+benchmarks, which emits only the upper triangle, about 500. Scaly computes the full 24 × 45 block.
 
 The lean division rules from the 2026-09-08 follow-up were never landed: `git log -S"q * expr"`
 finds nothing and `forward.py`/`reverse.py` still carry `(dx*y - x*dy)/y**2` and `-cot*x/y**2`. The
@@ -35,7 +35,7 @@ below); it is cured by the negation identity, not by touching DIV again.
 Stage under test: `_eq_stage_fn(5)` from `benchmarks/problems/chain/__init__.py`, differentiated the
 way `sparse_hessian` does it for the mapped stage: `R._vmap_adj_function(stage, 0, (0, 1))` for the
 adjoint callee, then `F._call_jvp_many_const_function(adj_fn, 0, 0, np.eye(24))` for the folded
-unit-seed tangents. Lowering the resulting `Function` with `alloy.codegen.aot._lower` and counting
+unit-seed tangents. Lowering the resulting `Function` with `scaly.codegen.aot._lower` and counting
 unique `ProgramOp` arithmetic nodes in the scalarized procedure gives the same 28,682 as lowering the
 whole `chain_nlp(5, 40).descriptor.hess` (checked; that build takes 33 s, the stage-only build 5 s).
 
@@ -69,7 +69,7 @@ So SX's explicit forward-over-reverse is (17,969 − 1,166) / 24 = 700 per seed;
 from the follow-up's 10,500 figure, which this measurement does not reproduce (13,213 with the
 harness's exact construction).
 
-## Alloy, one stage at M=5, current tree
+## Scaly, one stage at M=5, current tree
 
 | Build | Adjoint only | Adjoint + 24 tangents | Per seed |
 |---|---:|---:|---:|
@@ -82,7 +82,7 @@ harness's exact construction).
 
 Histogram of the real stage against SX forward-over-reverse:
 
-| Op | Alloy | SX | Excess |
+| Op | Scaly | SX | Excess |
 |---|---:|---:|---:|
 | mul | 15,603 | 8,735 (+611 `twice`, +48 `sq`) | +6,209 |
 | add | 7,388 | 4,937 | +2,451 |
@@ -185,10 +185,10 @@ in the shared identities), `MATMUL` for the 1-D dot product apart from the `x is
 
 ## What is inherent to forward-over-reverse here
 
-With the graph inlined and the four rule edits applied, Alloy's explicit forward-over-reverse is
+With the graph inlined and the four rule edits applied, Scaly's explicit forward-over-reverse is
 14,771 against SX's 17,969 for the identical construction, and against 16,367 for SX's one-shot
 symbolic Hessian: the composition itself is not the problem, and there is nothing to gain from a
-"symbolic Hessian" pass on this stage. What Alloy does not exploit is symmetry: it computes the full
+"symbolic Hessian" pass on this stage. What Scaly does not exploit is symmetry: it computes the full
 24 × 45 block (24 seeds, `z` and `xnext` adjoint rows), where the harness's SX `nlp_hess_l` computes
 the upper triangle and lands at 13,213 including the cost term. Star colouring cannot reduce a dense
 24 × 24 block, so the remaining structural lever is C-11's: either a reverse-over-reverse per row of
@@ -227,7 +227,7 @@ Everything ran from the worktree root with the venv's `casadi` 3.8.0; the script
 ```sh
 uv run /tmp/c49/sx_hist.py 5          # SX histograms
 uv run /tmp/c49/sx_nlp_hist.py 5      # harness nlp_hess_l per-stage count
-uv run /tmp/c49/alloy_hist.py 5 base  # whole chain_nlp Hessian, per-procedure histograms (33 s build)
+uv run /tmp/c49/scaly_hist.py 5 base  # whole chain_nlp Hessian, per-procedure histograms (33 s build)
 uv run /tmp/c49/stage_variants.py                       # real stage, base
 uv run /tmp/c49/stage_variants.py div sqrt sq negfold   # real stage, rule edits
 uv run /tmp/c49/stage_variants.py joint                 # real stage, joint JVP
@@ -300,9 +300,9 @@ from variants import F, R, A, apply
 names = sys.argv[1:]
 apply(names)
 from benchmarks.problems.chain import _eq_stage_fn, n_state, NU
-from alloy.codegen.aot import _lower
-from alloy.codegen.c import render_program_c
-from alloy.ir.program import ProgramOp
+from scaly.codegen.aot import _lower
+from scaly.codegen.c import render_program_c
+from scaly.ir.program import ProgramOp
 
 M = 5
 nz = n_state(M) + NU
@@ -346,37 +346,37 @@ import numpy as np
 from variants import F, R, A, apply
 names = sys.argv[1:]
 apply(names)
-import alloy as al
-from alloy.function import Function
-from alloy.passes.expr import simplify_cse_fixpoint
-from alloy.codegen.aot import _lower
-from alloy.codegen.c import render_program_c
-from alloy.ir.program import ProgramOp
+import scaly as sc
+from scaly.function import Function
+from scaly.passes.expr import simplify_cse_fixpoint
+from scaly.codegen.aot import _lower
+from scaly.codegen.c import render_program_c
+from scaly.ir.program import ProgramOp
 from benchmarks.problems.chain import n_state, NU, N_PARAMS
 
 M = 5
 nx, nz = n_state(M), n_state(M) + NU
-z, xnext = al.sym('z', nz), al.sym('xnext', nx)
-params, lam = al.sym('params', N_PARAMS, diff=False), al.sym('lam_eq', nx)
+z, xnext = sc.sym('z', nz), sc.sym('xnext', nx)
+params, lam = sc.sym('params', N_PARAMS, diff=False), sc.sym('lam_eq', nx)
 mass, spring_d, rest_len, gravity, dt = (params[i] for i in range(N_PARAMS))
 x, u = z[:nx], z[nx:]
 
 def link(dist):
-  return (spring_d / mass) * (1.0 - rest_len / al.norm_2(dist)) * dist
+  return (spring_d / mass) * (1.0 - rest_len / sc.norm_2(dist)) * dist
 
 def rhs(state):
-  positions = al.concat([al.const(np.zeros(3)), state[: 3 * (M - 1)]])
+  positions = sc.concat([sc.const(np.zeros(3)), state[: 3 * (M - 1)]])
   accel = []
   for i in range(M - 2):
     left, pos, right = positions[3 * i: 3 * i + 3], positions[3 * i + 3: 3 * i + 6], positions[3 * i + 6: 3 * i + 9]
-    accel.append(link(right - pos) - link(pos - left) + al.stack([0.0, 0.0, gravity]))
-  return al.concat([state[3 * (M - 1):], u, *accel])
+    accel.append(link(right - pos) - link(pos - left) + sc.stack([0.0, 0.0, gravity]))
+  return sc.concat([state[3 * (M - 1):], u, *accel])
 
 MODE = os.environ.get('MODE', 'inlined')
 pslices = [params[i:i + 1] for i in range(N_PARAMS)]
 if MODE == 'callode':
-  xs, us = al.sym('x', nx), al.sym('u', NU)
-  ps = [al.sym(n, 1, diff=False) for n in ('mass', 'spring_d', 'rest_len', 'gravity', 'dt')]
+  xs, us = sc.sym('x', nx), sc.sym('u', NU)
+  ps = [sc.sym(n, 1, diff=False) for n in ('mass', 'spring_d', 'rest_len', 'gravity', 'dt')]
   mass, spring_d, rest_len, gravity, dt = (p_[0] for p_ in ps)
   u = us
   ode_fn = Function._from_exprs('inl_ode', [xs, us, *ps], [rhs(xs)], ['x', 'u', 'mass', 'spring_d', 'rest_len', 'gravity', 'dt'], ['xdot'])
@@ -386,23 +386,23 @@ if MODE == 'callode':
 elif MODE == 'callaccel':
   from benchmarks.problems.chain import chain_mass_accel_fn
   def rhs(state):
-    positions = al.concat([al.const(np.zeros(3)), state[: 3 * (M - 1)]])
+    positions = sc.concat([sc.const(np.zeros(3)), state[: 3 * (M - 1)]])
     accel = [chain_mass_accel_fn((positions[3 * i: 3 * i + 3], positions[3 * i + 3: 3 * i + 6], positions[3 * i + 6: 3 * i + 9], *pslices[:4])) for i in range(M - 2)]
-    return al.concat([state[3 * (M - 1):], u, *accel])
+    return sc.concat([state[3 * (M - 1):], u, *accel])
 elif MODE == 'vmapaccel':
   from benchmarks.problems.chain import chain_mass_accel_fn
   def rhs(state):
-    positions = al.concat([al.const(np.zeros(3)), state[: 3 * (M - 1)]])
-    accel = al.vmap(chain_mass_accel_fn, length=M - 2, inputs={"left": (positions, 0, 3), "pos": (positions, 3, 3), "right": (positions, 6, 3),
+    positions = sc.concat([sc.const(np.zeros(3)), state[: 3 * (M - 1)]])
+    accel = sc.vmap(chain_mass_accel_fn, length=M - 2, inputs={"left": (positions, 0, 3), "pos": (positions, 3, 3), "right": (positions, 6, 3),
       "mass": (pslices[0], 0, 0), "spring_d": (pslices[1], 0, 0), "rest_len": (pslices[2], 0, 0), "gravity": (pslices[3], 0, 0)})
-    return al.concat([state[3 * (M - 1):], u, accel])
+    return sc.concat([state[3 * (M - 1):], u, accel])
 
 h = dt
 k1 = rhs(x); k2 = rhs(x + 0.5 * h * k1); k3 = rhs(x + 0.5 * h * k2); k4 = rhs(x + h * k3)
 step = x + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-L = al.dot(lam, step - xnext)
-adj = simplify_cse_fixpoint(R.vjp((L,), (z,), (al.const(np.ones(())),))[0])
-tan = simplify_cse_fixpoint(F._jvp_many_unrolled(adj, z, al.const(np.eye(nz))))
+L = sc.dot(lam, step - xnext)
+adj = simplify_cse_fixpoint(R.vjp((L,), (z,), (sc.const(np.ones(())),))[0])
+tan = simplify_cse_fixpoint(F._jvp_many_unrolled(adj, z, sc.const(np.eye(nz))))
 ARITH = {ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL, ProgramOp.DIV, ProgramOp.NEG, ProgramOp.SQRT, ProgramOp.POW}
 
 def histogram(expr, name):   # same counting as stage_variants.py, on Function._from_exprs(name, [z, params, lam], [expr.scalar()], ...)
@@ -436,9 +436,9 @@ open(f'/tmp/c49/stage_{tag}.c', 'w').write(render_program_c(prog, fn))
 joint-JVP sketch:
 
 ```python
-import alloy.ad.forward as F
-import alloy.ad.reverse as R
-import alloy.passes.arith as A
+import scaly.ad.forward as F
+import scaly.ad.reverse as R
+import scaly.passes.arith as A
 
 VARIANTS = {
   'div': [

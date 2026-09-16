@@ -9,28 +9,28 @@ import sys
 import numpy as np
 import pytest
 
-import alloy as al
+import scaly as sc
 
 
 def test_compiled_erf_matches_math_erf() -> None:
-  x = al.sym("x", 9)
-  f = al.Function._from_exprs("compiled_erf", [x], [x.erf()], ["x"], ["y"])
+  x = sc.sym("x", 9)
+  f = sc.Function._from_exprs("compiled_erf", [x], [x.erf()], ["x"], ["y"])
   values = np.array([-6.0, -4.5, -2.0, -0.25, 0.0, 0.25, 2.0, 4.5, 6.0])
 
   np.testing.assert_allclose(f(values), [math.erf(float(value)) for value in values], rtol=1e-14, atol=1e-15)
 
 
 def test_c_api_header_exposes_universal_and_typed_buffers() -> None:
-  x = al.sym("x", 2)
-  f = al.Function._from_exprs("f", [x], [x + 1], ["x"], ["y"])
-  from alloy.codegen import render_c_api_header
+  x = sc.sym("x", 2)
+  f = sc.Function._from_exprs("f", [x], [x + 1], ["x"], ["y"])
+  from scaly.codegen import render_c_api_header
 
   header = render_c_api_header(f)
-  assert "#define ALLOY_SUCCESS 0" in header
-  assert "#define ALLOY_ERR_NULL_ABI 1" in header
-  assert "#define ALLOY_ERR_NULL_WORK 2" in header
-  assert "#define ALLOY_ERR_NULL_RESULT 3" in header
-  assert "#define ALLOY_ERR_NULL_INPUT 4" in header
+  assert "#define SCALY_SUCCESS 0" in header
+  assert "#define SCALY_ERR_NULL_ABI 1" in header
+  assert "#define SCALY_ERR_NULL_WORK 2" in header
+  assert "#define SCALY_ERR_NULL_RESULT 3" in header
+  assert "#define SCALY_ERR_NULL_INPUT 4" in header
   assert "#define f_SZ_ARG 1" in header
   assert "#define f_SZ_RES 1" in header
   assert "#define f_SZ_IW 0" in header
@@ -52,10 +52,10 @@ def test_c_api_header_exposes_universal_and_typed_buffers() -> None:
 
 
 def test_c_api_header_exposes_sparse_output_metadata() -> None:
-  x = al.sym("x", 3)
-  y = al.stack([x[0], x[2]])
-  f = al.sparse_jacobian(al.Function._from_exprs("f", [x], [y], ["x"], ["y"]), "y", "x", name="f_spjac")
-  from alloy.codegen import render_c_api_header
+  x = sc.sym("x", 3)
+  y = sc.stack([x[0], x[2]])
+  f = sc.sparse_jacobian(sc.Function._from_exprs("f", [x], [y], ["x"], ["y"]), "y", "x", name="f_spjac")
+  from scaly.codegen import render_c_api_header
 
   header = render_c_api_header(f)
   assert "typedef struct { double data[2]; } f_spjac_spjac_y_x_out;" in header
@@ -75,11 +75,11 @@ def test_c_source_executes_scalar_subset_through_universal_abi(tmp_path) -> None
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  x = al.sym("x", 2)
-  a = al.const(np.array([[2.0, -1.0], [0.5, 3.0]]))
-  y = al.concat([(a @ x).sin(), x.gather([1, 0])])
-  f = al.Function._from_exprs("f", [x], [y, y.sum()], ["x"], ["y", "s"])
-  from alloy.codegen import render_c_source
+  x = sc.sym("x", 2)
+  a = sc.const(np.array([[2.0, -1.0], [0.5, 3.0]]))
+  y = sc.concat([(a @ x).sin(), x.gather([1, 0])])
+  f = sc.Function._from_exprs("f", [x], [y, y.sum()], ["x"], ["y", "s"])
+  from scaly.codegen import render_c_source
 
   src = tmp_path / "f.c"
   lib_path = tmp_path / ("libf.dylib" if sys.platform == "darwin" else "libf.so")
@@ -133,10 +133,10 @@ def test_c_source_column_slice_is_not_contiguous(tmp_path) -> None:
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  x = al.sym("x", (5, 7))
-  y = al.sym("y", (5, 1, 7))
-  f = al.Function._from_exprs("g", [x, y], [x[:, 1], x[2, :], y[:, 0, :]], ["x", "y"], ["col1", "row2", "row2d"])
-  from alloy.codegen import render_c_source
+  x = sc.sym("x", (5, 7))
+  y = sc.sym("y", (5, 1, 7))
+  f = sc.Function._from_exprs("g", [x, y], [x[:, 1], x[2, :], y[:, 0, :]], ["x", "y"], ["col1", "row2", "row2d"])
+  from scaly.codegen import render_c_source
 
   src = tmp_path / "g.c"
   lib_path = tmp_path / ("libg.dylib" if sys.platform == "darwin" else "libg.so")
@@ -170,12 +170,12 @@ def test_c_source_lowers_call_nodes_through_internal_raw_function(tmp_path) -> N
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  x = al.sym("x", 2)
-  inner = al.Function._from_exprs("inner", [x], [x * x, x.sum()], ["x"], ["sq", "sum"])
-  z = al.sym("z", 2)
+  x = sc.sym("x", 2)
+  inner = sc.Function._from_exprs("inner", [x], [x * x, x.sum()], ["x"], ["sq", "sum"])
+  z = sc.sym("z", 2)
   inner_sq, inner_sum = inner(z + 1.0)
-  outer = al.Function._from_exprs("outer", [z], [inner_sq + inner_sum], ["z"], ["y"])
-  from alloy.codegen import render_c_source
+  outer = sc.Function._from_exprs("outer", [z], [inner_sq + inner_sum], ["z"], ["y"])
+  from scaly.codegen import render_c_source
 
   src = tmp_path / "outer.c"
   lib_path = tmp_path / ("libouter.dylib" if sys.platform == "darwin" else "libouter.so")
@@ -212,11 +212,11 @@ def test_c_module_executes_sparse_jacobian_factory_output(tmp_path) -> None:
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  x = al.sym("x", 4)
-  y = al.stack([x[0], x[2:4].sum(), x[1] * x[3]])
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
-  spjf = al.sparse_jacobian(f, "y", "x", name="f_spjac")
-  from alloy.codegen import render_c_module
+  x = sc.sym("x", 4)
+  y = sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  spjf = sc.sparse_jacobian(f, "y", "x", name="f_spjac")
+  from scaly.codegen import render_c_module
 
   module = render_c_module(spjf)
   assert "#define f_spjac_spjac_y_x_NNZ 5" in module.header
@@ -250,9 +250,9 @@ def test_c_api_header_typed_cpp_wrapper_compiles_and_runs(tmp_path) -> None:
   if cc is None or cxx is None:
     pytest.skip("cc and c++ are required for generated C++ wrapper smoke test")
 
-  x = al.sym("x", 2)
-  f = al.Function._from_exprs("f", [x], [x.sin() + 2.0], ["x"], ["y"])
-  from alloy.codegen import render_c_module
+  x = sc.sym("x", 2)
+  f = sc.Function._from_exprs("f", [x], [x.sin() + 2.0], ["x"], ["y"])
+  from scaly.codegen import render_c_module
 
   module = render_c_module(f)
   assert module.header_name == "f.h"
@@ -292,10 +292,10 @@ def test_c_api_header_typed_cpp_wrapper_handles_factory_names(tmp_path) -> None:
   if cc is None or cxx is None:
     pytest.skip("cc and c++ are required for generated C++ wrapper smoke test")
 
-  x = al.sym("x", 2)
-  nlp = al.Function._from_exprs("nlp", [x], [x[0] * x[0], x * x], ["x"], ["f", "g"])
-  hess = al.lagrangian_hessian(nlp, "x", name="h")
-  from alloy.codegen import render_c_module
+  x = sc.sym("x", 2)
+  nlp = sc.Function._from_exprs("nlp", [x], [x[0] * x[0], x * x], ["x"], ["f", "g"])
+  hess = sc.lagrangian_hessian(nlp, "x", name="h")
+  from scaly.codegen import render_c_module
 
   module = render_c_module(hess)
   assert "h_lam_f_in" in module.header
@@ -334,10 +334,10 @@ int main() {
 
 
 def test_scalarized_stores_coalesce_into_vector_accesses() -> None:
-  from alloy.codegen.c import render_program_c_source
+  from scaly.codegen.c import render_program_c_source
 
-  x = al.sym("x", 7)
-  f = al.Function._from_exprs("coalesced", [x], [(x * 2.0 + 1.0).scalar()], ["x"], ["y"])
+  x = sc.sym("x", 7)
+  f = sc.Function._from_exprs("coalesced", [x], [(x * 2.0 + 1.0).scalar()], ["x"], ["y"])
   source = render_program_c_source(f)
   assert "*(double2*)(res[0]) = (double2){" in source
   assert "*(double2*)(res[0] + 4) = (double2){" in source
@@ -348,12 +348,12 @@ def test_scalarized_stores_coalesce_into_vector_accesses() -> None:
 
 
 def test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target(tmp_path) -> None:
-  from alloy.codegen.c import _render_raw_callee
-  from alloy.ir import program as p
-  from alloy.ir.program import ProgramNode, ProgramOp
-  from alloy.ir.types import dtypes
-  from alloy.passes.program.coalesce_stores import coalesce_stores
-  from alloy.passes.program.prepare_scalar import prepare_scalar_expressions
+  from scaly.codegen.c import _render_raw_callee
+  from scaly.ir import program as p
+  from scaly.ir.program import ProgramNode, ProgramOp
+  from scaly.ir.types import dtypes
+  from scaly.passes.program.coalesce_stores import coalesce_stores
+  from scaly.passes.program.prepare_scalar import prepare_scalar_expressions
 
   x = p.buffer("x", dtypes.float64, (4,))
   y = p.buffer("y", dtypes.float64, (5,))
@@ -396,9 +396,9 @@ def test_store_run_stays_scalar_when_not_contiguous_or_reading_its_own_target(tm
 
 
 def test_renderer_spells_explicit_paired_store() -> None:
-  from alloy.codegen.c import _render_raw_callee
-  from alloy.ir import program as p
-  from alloy.ir.types import dtypes
+  from scaly.codegen.c import _render_raw_callee
+  from scaly.ir import program as p
+  from scaly.ir.types import dtypes
 
   out = p.buffer("out", dtypes.float64, (2,))
   proc = p.proc("paired", [out], [p.store_pair(p.view(out, [p.const_int(0)]), p.const_float(1), p.const_float(2))])

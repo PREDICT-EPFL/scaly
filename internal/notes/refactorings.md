@@ -28,7 +28,7 @@ The production implementation still needs decisions and verification in these pl
   builder uses flattened slices, starts, and strides. Calling a template inside a traced body
   can instantiate it there; a consumer that inspects a callee needs a concrete instance.
 
-The existing implementation is in `src/alloy/function/{tree,model,api}.py`; the template sketch
+The existing implementation is in `src/scaly/function/{tree,model,api}.py`; the template sketch
 is `typing_playground/templates.py`. Naming and declaration shorthand remain the playground's
 open questions. Overload sets and constraints on shape holes remain deferred.
 
@@ -66,12 +66,12 @@ and keep the result only when `count_divmod` did not increase.
 
 Almost none of it is needed here as a *pass*. tinygrad needs a folder because its indices arrive as
 already-built symbolic trees from reshape and permute, so the div/mod structure has to be recovered
-after the fact. Alloy's tables arrive as concrete integer arrays. Recognising the affine structure
+after the fact. Scaly's tables arrive as concrete integer arrays. Recognising the affine structure
 once, at lowering, and emitting the minimal expression is strictly cheaper than emitting `k` through
 a chain of views and folding it back. Rejected, therefore: the `UPat`/`PatternMatcher` port
 (`ir/match.py` already carries the one driver, and there is no tree to match), the div/mod folder as
 a rewrite over expressions, congruence folding under range bounds (the array's own bounds are
-exact), and the loop-merge/split pair, which is C-8's problem and needs a cost model Alloy does not
+exact), and the loop-merge/split pair, which is C-8's problem and needs a cost model Scaly does not
 have.
 
 The one rule that *is* needed is the recombination `(x % c) + (x // c) * c -> x`, and it is applied
@@ -142,14 +142,14 @@ signature stays legal or the descriptor stops building one.
 
 `Function` is meant to be the unit of composition, and after the typed call surface it nearly is:
 `fn(tree)` is typed on both the symbolic and the numeric side, and the derivative wrappers keep the
-source's input tree, so `al.gradient(fn, "f", "x")` is a `Function[SI, NI, Expr, np.ndarray]`.
+source's input tree, so `sc.gradient(fn, "f", "x")` is a `Function[SI, NI, Expr, np.ndarray]`.
 Three holes remain, all on the paths that matter most for composing:
 
-- **`al.vmap` is untyped end to end.** `vmap(callee: Any, length: int, inputs: Any, output: int = 0)
+- **`sc.vmap` is untyped end to end.** `vmap(callee: Any, length: int, inputs: Any, output: int = 0)
   -> Expr` in `function/sugar.py`. The callee's declared trees are never read, the result is a bare
   flat `Expr` rather than the callee's output tree repeated, and an output is selected by integer
   index — the addressing-by-position that the declared trees removed everywhere else.
-- **`al.jvp`, `al.jvp_many`, `al.vjp` and `al.vjp_many` are expression-level.** They take
+- **`sc.jvp`, `sc.jvp_many`, `sc.vjp` and `sc.vjp_many` are expression-level.** They take
   `Sequence[Expr]` and return `tuple[Expr, ...]`: typed, but tree-blind, with no Function-level
   spelling that preserves structure.
 - **The callees AD synthesizes are `Any`-typed.** Every builder in `ad/forward.py` and
@@ -173,7 +173,7 @@ runtime structure tests beside `tests/function/test_tree.py`, and static ones in
 
 The API merge review reproduced four CasADi IPOPT test failures from cached libraries whose
 runtime search paths pointed into a deleted worktree. All five tests in
-`tests/benchmarks/test_casadi_ipopt.py` passed with a fresh `ALLOY_CASADI_IPOPT_CACHE`.
+`tests/benchmarks/test_casadi_ipopt.py` passed with a fresh `SCALY_CASADI_IPOPT_CACHE`.
 
 `benchmarks/harness/casadi_ipopt.py` keys its cache on the serialized problem, options, CasADi
 version, solver library content, compiler, and optimization flag. The key omits the library search

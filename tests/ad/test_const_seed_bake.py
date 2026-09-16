@@ -5,11 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import alloy as al
-from alloy.ad.forward import _jvp_many_unrolled
-from alloy.ir.expr import ExprOp, topo
-from alloy.ir.program import ProgramNode
-from alloy.passes.lowering import lower_function
+import scaly as sc
+from scaly.ad.forward import _jvp_many_unrolled
+from scaly.ir.expr import ExprOp, topo
+from scaly.ir.program import ProgramNode
+from scaly.passes.lowering import lower_function
 
 TILES = [
   np.eye(3),
@@ -20,9 +20,9 @@ TILES = [
 ]
 
 
-def _stage() -> al.Function:
-  x = al.sym("x", 3)
-  return al.Function._from_exprs("bake_stage", [x], [x.sin() * (x @ al.const(np.ones(3)))], ["x"], ["y"])
+def _stage() -> sc.Function:
+  x = sc.sym("x", 3)
+  return sc.Function._from_exprs("bake_stage", [x], [x.sin() * (x @ sc.const(np.ones(3)))], ["x"], ["y"])
 
 
 def _jac_np(x: np.ndarray) -> np.ndarray:
@@ -57,13 +57,13 @@ def _callee_params(prog: ProgramNode) -> list[str]:
 def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   stage = _stage()
   length = len(pattern)
-  z = al.sym("z", 3 * length)
-  mapped = al.vmap(stage, length, [(z, 0, 3)])
+  z = sc.sym("z", 3 * length)
+  mapped = sc.vmap(stage, length, [(z, 0, 3)])
   seeds = _seeds(pattern)
-  structural = al.jvp_many(mapped, z, al.const(seeds))
-  unrolled = _jvp_many_unrolled(mapped, z, al.const(seeds))
-  fn = al.Function._from_exprs("bake", [z], [structural], ["z"], ["dy"])
-  ref = al.Function._from_exprs("bake_ref", [z], [unrolled], ["z"], ["dy"])
+  structural = sc.jvp_many(mapped, z, sc.const(seeds))
+  unrolled = _jvp_many_unrolled(mapped, z, sc.const(seeds))
+  fn = sc.Function._from_exprs("bake", [z], [structural], ["z"], ["dy"])
+  ref = sc.Function._from_exprs("bake_ref", [z], [unrolled], ["z"], ["dy"])
   zv = np.random.default_rng(1).normal(size=3 * length)
   expected = np.zeros((3, 3 * length))
   for it in range(length):

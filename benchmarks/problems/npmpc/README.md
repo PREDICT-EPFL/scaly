@@ -68,12 +68,12 @@ band of inequalities rather than an equality, as theirs is.
 
 `P` solves the discrete algebraic Riccati equation for the learned dynamics linearized at the upright
 equilibrium with `Q_f = diag(1, 10, 0.1, 0.1)` and `R_f = 1`. Their code takes `A`, `B` from
-`torch.autograd`; `linearize` takes them from one typed Alloy derivative function instead, which
-removes the torch dependency and exercises Alloy's own differentiation in the problem's setup. The
+`torch.autograd`; `linearize` takes them from one typed Scaly derivative function instead, which
+removes the torch dependency and exercises Scaly's own differentiation in the problem's setup. The
 Riccati residual is gated regardless, so a pinned `P` cannot drift from the linearization it claims
 to come from.
 
-Both the dynamics and the per-stage cost use `al.vmap`. Using VMAP for the cost is not cosmetic: written
+Both the dynamics and the per-stage cost use `sc.vmap`. Using VMAP for the cost is not cosmetic: written
 as a Python loop over stages it unrolls, which grows the Lagrangian Hessian's generated source
 linearly in the horizon and, past roughly 75 stages, exceeds the Program IR passes' recursion depth
 during lowering.
@@ -116,7 +116,7 @@ recovered latent code both belong to: `l_p = 0.1378`, `m_p = 0.00881`, `l_r = 0.
 
 | file | what |
 |---|---|
-| `data/cnp_model.pth` | their trained checkpoint, read without torch by `alloy.utils.load_torch_state_dict` |
+| `data/cnp_model.pth` | their trained checkpoint, read without torch by `scaly.utils.load_torch_state_dict` |
 | `data/reference_config.json` | their `model/furuta_mpc.json`, verbatim — the authoritative source for every weight and bound |
 | `data/reference_episode.npz` | their released `experiment_np_m3.npz`, trimmed |
 
@@ -174,10 +174,10 @@ for system 3 and establishes that this re-implementation of their decoder is fai
   The runner uses the first. Their own episode settles at step 14, and the difference is exactly the
   delay their compensation exists to cover.
 - **The encoder is not reproduced.** It is `GELU[64, 128, 128, 64]`, and GELU needs `erf`, which
-  Alloy's expression surface does not have. Nothing in this benchmark needs the encoder: the latent
+  Scaly's expression surface does not have. Nothing in this benchmark needs the encoder: the latent
   code is pinned. An in-graph encoder is only needed for the online adaptation their conclusion
-  points at, and the clean route there is an `erf` op in Alloy rather than a benchmark workaround —
-  CasADi has `ca.erf` natively, so only Alloy is missing a primitive. A tanh approximation must not
+  points at, and the clean route there is an `erf` op in Scaly rather than a benchmark workaround —
+  CasADi has `ca.erf` natively, so only Scaly is missing a primitive. A tanh approximation must not
   be used on any path that claims to reproduce the paper, because it changes the model and so moves
   the latent code.
 
@@ -200,12 +200,12 @@ being any.
 | `dims_and_checkpoint` | declared dimensions, the vendored checkpoint's layer shapes, the pinned latent code |
 | `reference_config` | every weight, bound and constant read out of *their* config file |
 | `parameter_tail_order` | the tail's order, against an evaluation that indexes it without asking `Decoder` |
-| `decoder_rollout` | the learned model against their released neural-process rollout, and Alloy against NumPy |
+| `decoder_rollout` | the learned model against their released neural-process rollout, and Scaly against NumPy |
 | `plant_rollout` | the analytic plant against their analytic rollout, plus substep convergence and both equilibria |
 | `terminal_riccati` | `A`, `B` against finite differences, and `P` against the Riccati equation |
 | `constraint_rows` | the inequality rows and box bounds against a hand-written evaluation |
-| `runtime_tuning_parameters` | one compiled Alloy function responds to runtime changes in `dt`, cost weights and `P` |
-| `casadi_runtime_parameters` | CasADi reads the same runtime fields and matches Alloy after each change |
+| `runtime_tuning_parameters` | one compiled Scaly function responds to runtime changes in `dt`, cost weights and `P` |
+| `casadi_runtime_parameters` | CasADi reads the same runtime fields and matches Scaly after each change |
 | `initial_guess` | the cold start rotates *forward* to upright, which picks the swing-up direction |
 | `exact_hessian` | the IPOPT column really consumes the generated exact Lagrangian Hessian |
 | `episode_artifacts` | shapes, finiteness, the first node inside the band, the plan's first control applied |
@@ -249,7 +249,7 @@ instead and the first diverging step is named on failure.
 Firing perturbations, one example each where the gate is not obvious: zeroing the terminal weight or
 biasing the latent code by 0.3 stops `episode_swings_up`, and so does widening or tightening the
 torque bound tenfold; handing IPOPT a `limited-memory` Hessian approximation trips `exact_hessian`
-(via the Hessian oracle's call count dropping to zero, since `al.nlp` always *attaches* one);
+(via the Hessian oracle's call count dropping to zero, since `sc.nlp` always *attaches* one);
 opening the arm-angle upper family downwards trips `constraint_rows`; a 0.1% change in the terminal
 weight moves `sqp_matches_ipopt`; dropping the inter-stage cost from the CasADi mirror alone trips
 both `oracles_agree` gates; swapping the two recorded angles trips `recorded_scene`.

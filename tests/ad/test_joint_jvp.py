@@ -5,33 +5,33 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import alloy as al
-from alloy.ad.forward import _call_jvp_function
-from alloy.ir.expr import ExprOp, topo
-from alloy.ir.program import ProgramOp
-from alloy.passes.lowering import lower_function
-from alloy.passes.program._common import _walk
+import scaly as sc
+from scaly.ad.forward import _call_jvp_function
+from scaly.ir.expr import ExprOp, topo
+from scaly.ir.program import ProgramOp
+from scaly.passes.lowering import lower_function
+from scaly.passes.program._common import _walk
 
 
 @pytest.mark.parametrize("mapped", [False, True])
 @pytest.mark.parametrize("constant", [False, True])
 @pytest.mark.parametrize("nseed", [1, 2, 3])
 def test_joint_active_formals(mapped: bool, constant: bool, nseed: int) -> None:
-  x, y, unused = al.sym("x", 2), al.sym("y", 2), al.sym("unused", 2)
+  x, y, unused = sc.sym("x", 2), sc.sym("y", 2), sc.sym("unused", 2)
   wx, wy = np.array([[1.0, 0.2], [-0.3, 0.7]]), np.array([[0.8, -0.1], [0.4, 0.9]])
-  a, b = x @ al.const(wx), y @ al.const(wy)
+  a, b = x @ sc.const(wx), y @ sc.const(wy)
   body = (a * b).sin() + a / b
-  stage = al.Function._from_exprs("joint_stage", [x, y, unused], [body], ["x", "y", "unused"], ["out"])
+  stage = sc.Function._from_exprs("joint_stage", [x, y, unused], [body], ["x", "y", "unused"], ["out"])
   length = 4 if mapped else 1
-  z = al.sym("z", 2 * length + 1)
-  value = al.vmap(stage, length, [(z, 0, 2), (z, 1, 2), (z, 0, 2)]) if mapped else stage((z[:2], z[1:], z[:2]))
+  z = sc.sym("z", 2 * length + 1)
+  value = sc.vmap(stage, length, [(z, 0, 2), (z, 1, 2), (z, 0, 2)]) if mapped else stage((z[:2], z[1:], z[:2]))
   sv = np.random.default_rng(3).normal(size=(nseed, z.size))
   if nseed > 1:
     sv[1] = 0
-  seed = al.const(sv) if constant else al.sym("seed", sv.shape)
-  derivative = al.jvp(value, z, seed[0]) if nseed == 1 else al.jvp_many(value, z, seed)
+  seed = sc.const(sv) if constant else sc.sym("seed", sv.shape)
+  derivative = sc.jvp(value, z, seed[0]) if nseed == 1 else sc.jvp_many(value, z, seed)
   inputs = [z] if constant else [z, seed]
-  fn = al.Function._from_exprs("joint_actual", inputs, [derivative], ["z"] if constant else ["z", "seed"], ["dy"])
+  fn = sc.Function._from_exprs("joint_actual", inputs, [derivative], ["z"] if constant else ["z", "seed"], ["dy"])
   zv = np.linspace(0.5, 1.5, z.size)
   expected = np.empty((nseed, 2 * length))
   for it in range(length):
@@ -45,17 +45,17 @@ def test_joint_active_formals(mapped: bool, constant: bool, nseed: int) -> None:
 
 
 def test_packed_mapped_hessian_shares_primal_and_preserves_zero_seed_rows() -> None:
-  x, u = al.sym("value", 2), al.sym("value", 1)
+  x, u = sc.sym("value", 2), sc.sym("value", 1)
   weights = np.array([0.3, -0.7, 0.4])
-  body = (x @ al.const(weights[:2]) + weights[2] * u[0]).exp().scalar()
-  stage = al.Function._from_exprs("packed_stage", [x, u], [body], ["x", "u"], ["cost"])
+  body = (x @ sc.const(weights[:2]) + weights[2] * u[0]).exp().scalar()
+  stage = sc.Function._from_exprs("packed_stage", [x, u], [body], ["x", "u"], ["cost"])
   length = 4
-  z = al.sym("z", 3 * length)
-  mapped = al.vmap(stage, length, [(z, 0, 3), (z, 2, 3)])
-  grad = al.vjp((mapped,), (z,), (al.const(np.ones(length)),))[0]
+  z = sc.sym("z", 3 * length)
+  mapped = sc.vmap(stage, length, [(z, 0, 3), (z, 2, 3)])
+  grad = sc.vjp((mapped,), (z,), (sc.const(np.ones(length)),))[0]
   seeds = np.tile(np.vstack([np.eye(3), np.zeros(3)]), (1, length))
-  hess = al.jvp_many(grad, z, al.const(seeds))
-  fn = al.Function._from_exprs("packed_hess", [z], [hess], ["z"], ["h"])
+  hess = sc.jvp_many(grad, z, sc.const(seeds))
+  fn = sc.Function._from_exprs("packed_hess", [z], [hess], ["z"], ["h"])
   zv = np.linspace(-0.8, 1.0, z.size)
   expected = np.zeros((4, z.size))
   for it in range(length):
@@ -69,8 +69,8 @@ def test_packed_mapped_hessian_shares_primal_and_preserves_zero_seed_rows() -> N
 
 
 def test_joint_helper_cache_distinguishes_formal_sets() -> None:
-  a, b, c = (al.sym(name, 2) for name in ("a_b", "a", "b"))
-  stage = al.Function._from_exprs("joint_names", [a, b, c], [a * b + c.sin()], ["a_b", "a", "b"], ["y"])
+  a, b, c = (sc.sym(name, 2) for name in ("a_b", "a", "b"))
+  stage = sc.Function._from_exprs("joint_names", [a, b, c], [a * b + c.sin()], ["a_b", "a", "b"], ["y"])
   first = _call_jvp_function(stage, 0, (0,))
   second = _call_jvp_function(stage, 0, (1, 2))
   assert first[0] is _call_jvp_function(stage, 0, (0,))[0]
@@ -81,10 +81,10 @@ def test_joint_helper_cache_distinguishes_formal_sets() -> None:
 @pytest.mark.parametrize("matrix", [False, True])
 def test_self_products_keep_matrix_product_rule(matrix: bool) -> None:
   shape = (2, 2) if matrix else (4,)
-  x, seed = al.sym("x", shape), al.sym("seed", (2, *shape))
+  x, seed = sc.sym("x", shape), sc.sym("seed", (2, *shape))
   dot = x @ x
-  outputs = [al.jvp(dot, x, seed[0]), al.jvp_many(dot, x, seed), al.jvp_many(x * x, x, seed)]
-  fn = al.Function._from_exprs("self_products", [x, seed], outputs, ["x", "seed"], ["one", "many", "square"])
+  outputs = [sc.jvp(dot, x, seed[0]), sc.jvp_many(dot, x, seed), sc.jvp_many(x * x, x, seed)]
+  fn = sc.Function._from_exprs("self_products", [x, seed], outputs, ["x", "seed"], ["one", "many", "square"])
   xv = np.array([0.2, -0.7, 1.1, 0.9]).reshape(shape)
   sv = np.arange(8.0).reshape((2, *shape)) / 5 - 0.6
   one, many, square = fn((xv, sv))
@@ -96,13 +96,13 @@ def test_self_products_keep_matrix_product_rule(matrix: bool) -> None:
 
 @pytest.mark.parametrize("scale", [1e-200, 1.0, 1e200])
 def test_division_and_sqrt_derivatives_across_finite_scales(scale: float) -> None:
-  x, y = al.sym("x", ()), al.sym("y", ())
+  x, y = sc.sym("x", ()), sc.sym("y", ())
   quotient = x / y
-  dx = al.jvp(quotient, x, al.const(1.0))
-  dy = al.jvp_many(quotient, y, al.const([1.0, -0.5]))
-  gx, gy = al.vjp((quotient,), (x, y), (al.const(1.0),))
-  root = al.jvp_many(x.sqrt(), x, al.const([1.0, -0.5]))
-  fn = al.Function._from_exprs("finite_derivatives", [x, y], [dx, dy, gx, gy, root], ["x", "y"], ["dx", "dy", "gx", "gy", "root"])
+  dx = sc.jvp(quotient, x, sc.const(1.0))
+  dy = sc.jvp_many(quotient, y, sc.const([1.0, -0.5]))
+  gx, gy = sc.vjp((quotient,), (x, y), (sc.const(1.0),))
+  root = sc.jvp_many(x.sqrt(), x, sc.const([1.0, -0.5]))
+  fn = sc.Function._from_exprs("finite_derivatives", [x, y], [dx, dy, gx, gy, root], ["x", "y"], ["dx", "dy", "gx", "gy", "root"])
   actual = fn((scale, scale))
   expected = [1.0 / scale, np.array([-1.0, 0.5]) / scale, 1.0 / scale, -1.0 / scale, np.array([0.5, -0.25]) / np.sqrt(scale)]
   for value, reference in zip(actual, expected, strict=True):
@@ -111,13 +111,13 @@ def test_division_and_sqrt_derivatives_across_finite_scales(scale: float) -> Non
 
 
 def test_mapped_local_and_generic_seeds_share_one_callee() -> None:
-  x, u = al.sym("x", 2), al.sym("u", 1)
+  x, u = sc.sym("x", 2), sc.sym("u", 1)
   weights = np.array([[1.0, 0.2], [-0.3, 0.7]])
-  stage = al.Function._from_exprs("mixed_seed_stage", [x, u], [((x @ al.const(weights)) * u).sin()], ["x", "u"], ["out"])
-  z, seeds = al.sym("z", 12), al.sym("seeds", (2, 12))
-  mapped = al.vmap(stage, 4, [(z, 0, 3), (z, 2, 3)])
-  derivative = al.jvp_many(mapped, z, seeds)
-  fn = al.Function._from_exprs("mixed_seed_actual", [z, seeds], [derivative], ["z", "seeds"], ["dy"])
+  stage = sc.Function._from_exprs("mixed_seed_stage", [x, u], [((x @ sc.const(weights)) * u).sin()], ["x", "u"], ["out"])
+  z, seeds = sc.sym("z", 12), sc.sym("seeds", (2, 12))
+  mapped = sc.vmap(stage, 4, [(z, 0, 3), (z, 2, 3)])
+  derivative = sc.jvp_many(mapped, z, seeds)
+  fn = sc.Function._from_exprs("mixed_seed_actual", [z, seeds], [derivative], ["z", "seeds"], ["dy"])
   zv = np.linspace(0.1, 1.2, 12)
   sv = np.random.default_rng(2).normal(size=(2, 12))
   expected = np.empty((2, 8))
@@ -131,13 +131,13 @@ def test_mapped_local_and_generic_seeds_share_one_callee() -> None:
 
 
 def test_call_combines_constant_and_runtime_tangents() -> None:
-  x, y = al.sym("x", 2), al.sym("y", 2)
-  stage = al.Function._from_exprs("mixed_call", [x, y], [(x * y).sin()], ["x", "y"], ["out"])
-  z = al.sym("z", 2)
+  x, y = sc.sym("x", 2), sc.sym("y", 2)
+  stage = sc.Function._from_exprs("mixed_call", [x, y], [(x * y).sin()], ["x", "y"], ["out"])
+  z = sc.sym("z", 2)
   value = stage((z, z.sin() + 2))
   seeds = np.vstack([np.eye(2), np.zeros(2)])
-  derivative = al.jvp_many(value, z, al.const(seeds))
-  fn = al.Function._from_exprs("mixed_call_actual", [z], [derivative], ["z"], ["dy"])
+  derivative = sc.jvp_many(value, z, sc.const(seeds))
+  fn = sc.Function._from_exprs("mixed_call_actual", [z], [derivative], ["z"], ["dy"])
   zv = np.array([0.2, -0.7])
   expected = seeds * (np.cos(zv * (np.sin(zv) + 2)) * (np.sin(zv) + 2 + zv * np.cos(zv)))
   np.testing.assert_allclose(fn(zv), expected, atol=1e-12, rtol=1e-12)

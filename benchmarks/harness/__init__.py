@@ -1,7 +1,7 @@
 """Benchmark generation, correctness, and sweep helpers."""
 
 from pathlib import Path
-from alloy.codegen.jit import HOST_CFLAGS
+from scaly.codegen.jit import HOST_CFLAGS
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "benchmarks" / "results"
@@ -14,10 +14,10 @@ NATIVE_CFLAGS = HOST_CFLAGS
 
 
 CLOSED_LOOP_PAIRS: dict[str, tuple[tuple[str, str | None], ...]] = {
-  "chain": (("ipopt", "alloy"), ("sqp", "alloy"), ("sqp", "casadi")),
-  "race_cars": (("ipopt", "alloy"), ("ipopt", "casadi"), ("sqp", "alloy"), ("sqp", "casadi")),
-  "unbumpercars": (("ipopt", "alloy"), ("ipopt", "casadi"), ("sqp", "alloy"), ("sqp", "casadi"), ("none", None)),
-  "npmpc": (("ipopt", "alloy"), ("ipopt", "casadi"), ("sqp", "alloy"), ("sqp", "casadi")),
+  "chain": (("ipopt", "scaly"), ("sqp", "scaly"), ("sqp", "casadi")),
+  "race_cars": (("ipopt", "scaly"), ("ipopt", "casadi"), ("sqp", "scaly"), ("sqp", "casadi")),
+  "unbumpercars": (("ipopt", "scaly"), ("ipopt", "casadi"), ("sqp", "scaly"), ("sqp", "casadi"), ("none", None)),
+  "npmpc": (("ipopt", "scaly"), ("ipopt", "casadi"), ("sqp", "scaly"), ("sqp", "casadi")),
 }
 
 
@@ -36,17 +36,17 @@ def solver_oracle_name(solver: str, oracle: str | None) -> str:
 
 
 def solve_problem(solver, x0, lam_eq, lam_ineq, lam_box, params):
-  """Run either a typed Alloy solver Function or the benchmark CasADi adapter."""
+  """Run either a typed Scaly solver Function or the benchmark CasADi adapter."""
   import numpy as np
-  import alloy as al
+  import scaly as sc
 
-  if not isinstance(solver, al.Function):
+  if not isinstance(solver, sc.Function):
     return solver(x0, lam_eq, lam_ineq, lam_box, params)
 
   x, lam_box, lam_eq, lam_ineq = solver.numerical_call((x0, lam_box, lam_eq, lam_ineq, params))
   descriptor = solver.descriptor
   base = descriptor.base
-  if isinstance(base, al.Function):
+  if isinstance(base, sc.Function):
     values = base.numerical_call((np.asarray(x).reshape(-1), params))
   else:
     evaluator = getattr(solver, "_benchmark_base", None)
@@ -70,7 +70,7 @@ def solve_problem(solver, x0, lam_eq, lam_ineq, lam_box, params):
 
 
 def problem_stats(solver):
-  """Return stats from either a typed Alloy Function or the CasADi adapter."""
-  import alloy as al
+  """Return stats from either a typed Scaly Function or the CasADi adapter."""
+  import scaly as sc
 
-  return solver.solver_stats() if isinstance(solver, al.Function) else solver.last_stats
+  return solver.solver_stats() if isinstance(solver, sc.Function) else solver.last_stats

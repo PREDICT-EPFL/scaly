@@ -1,0 +1,19 @@
+[project]
+name = "scaly-sqp"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["scaly", "scaly-piqp", "jinja2>=3.1.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.entry-points."scaly.solvers"]
+sqp = "scaly_sqp:BACKEND"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scaly_sqp"]
+
+[tool.uv.sources]
+scaly = { workspace = true }
+scaly-piqp = { workspace = true }

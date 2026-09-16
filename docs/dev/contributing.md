@@ -3,8 +3,8 @@
 ## Setup
 
 ```bash
-git clone https://github.com/PREDICT-EPFL/alloy.git
-cd alloy
+git clone https://github.com/PREDICT-EPFL/scaly.git
+cd scaly
 uv sync
 ```
 
@@ -67,7 +67,7 @@ checkouts, so a lone worker crash there is probably not yours. Rerun before beli
 
 ## Where things live
 
-`tests/` mirrors `src/alloy/` directory for directory, so a change to `src/alloy/passes/lowering.py`
+`tests/` mirrors `src/scaly/` directory for directory, so a change to `src/scaly/passes/lowering.py`
 has its tests in `tests/passes/test_lowering.py`. Beyond the mirror there are two extra
 directories: `tests/integration/` for workload-shaped end-to-end checks, and `tests/benchmarks/`
 for the benchmark *harness* — the benchmark *problems* keep their own gates. See
@@ -77,8 +77,8 @@ Two tests are structural rather than functional, and both are meant to be perman
 
 - `tests/test_import_layering.py` holds the import-layer table, the two sanctioned exceptions and the
   acyclicity check. A new module needs an entry in `IMPORT_LAYERS`.
-- `tests/test_import_boundaries.py` pins the public surface — that `al.Expr` really is
-  `alloy.ir.expr.Expr`, that both dialects verify through the same types, and that retired module
+- `tests/test_import_boundaries.py` pins the public surface — that `sc.Expr` really is
+  `scaly.ir.expr.Expr`, that both dialects verify through the same types, and that retired module
   paths stay retired.
 
 Some compiler paths are exercised only by workload-shaped fixtures — the RK4 stage-transcription
@@ -102,9 +102,9 @@ Two things specific to this repository:
 **Anything touching the IR, differentiation or code generation runs the full suite.** Those paths
 are cheap to break subtly and expensive to debug later.
 
-**Do not add import to `torch` or other libraries.** Alloy depends on NumPy and nothing else at
+**Do not add import to `torch` or other libraries.** Scaly depends on NumPy and nothing else at
 run time, and that is a feature worth defending. Prioritize adding a small implementation if 
-possible, like we did with `alloy.utils.load_torch_state_dict`.
+possible, like we did with `scaly.utils.load_torch_state_dict`.
 
 ## Adding a solver backend
 

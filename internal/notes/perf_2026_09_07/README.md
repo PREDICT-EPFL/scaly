@@ -1,7 +1,7 @@
 # Where the Hessian kernels lose time, 2026-09-07
 
 An exploration note, not a plan. It takes the 2026-09-05 sweep cells apart, measures where each
-Alloy kernel spends its time against the fastest CasADi encoding, and tests candidate fixes by
+Scaly kernel spends its time against the fastest CasADi encoding, and tests candidate fixes by
 hand-editing the generated C and by small throwaway edits to the compiler. The tasks that follow
 from it live in `internal/todo.md` (C-43 to C-49, BH-48). This note owns the evidence.
 
@@ -33,7 +33,7 @@ materialized `N × width` intermediates and the index tables (C-8, C-9). Measure
 of race-car, 3% of npmpc and 26% of chain. The stage kernels themselves carry the loss, for three
 different reasons on the three problems:
 
-| Problem, size | Alloy | Best CasADi | Where Alloy's time goes | Main cause |
+| Problem, size | Scaly | Best CasADi | Where Scaly's time goes | Main cause |
 |---|---:|---:|---|---|
 | race-car N=50 | 32.7 µs | SX 21.4 | eq stage 23.0, glue 7.3, cost+corridor 2.4 | tensor-shaped code for a scalar body: no scalar CSE, 0/1 seeds multiplied at runtime; libm is 7.7 of the 23.0 |
 | npmpc N=12 | 82.8 µs | MX 51.1 | two MLP stage kernels 79.8, glue 2.8 | 204 matrix-vector products emitted as serial dot-product reductions: 61 of the 83 µs |
@@ -85,7 +85,7 @@ ablation and drivers.
 
 Budget, in µs, from the driver decomposition:
 
-| Piece | Alloy | SX |
+| Piece | Scaly | SX |
 |---|---:|---:|
 | eq-interstage stage kernel, 50 calls | 23.0 | |
 | glue loops in the entry point | 7.3 | |
@@ -94,17 +94,17 @@ Budget, in µs, from the driver decomposition:
 | of which libm (`sin`, `cos`, `tanh` replaced by identity) | 7.7 in the eq stage | 10.7 |
 
 The eq stage kernel alone costs more than SX's entire Hessian. Both spend a third to a half of their
-time in libm: on this machine a dependent `sin` or `cos` costs 12 ns and `tanh` 32 ns, Alloy makes
+time in libm: on this machine a dependent `sin` or `cos` costs 12 ns and `tanh` 32 ns, Scaly makes
 14 calls per stage (5 `sin`, 5 `cos`, 4 `tanh`, `pow(x, 2)` folds to a multiply) and SX 18.
 
 Per-stage instruction counts from the object files, SX divided by 50:
 
 | | mul | add | sub | div | calls |
 |---|---:|---:|---:|---:|---:|
-| Alloy eq stage | 977 | 596 | 53 | 63 | 14 |
+| Scaly eq stage | 977 | 596 | 53 | 63 | 14 |
 | SX per stage, everything | 600 | 230 | 84 | 39 | 19 |
 
-Alloy does 1.6× the multiplies and 2.6× the adds for the same result. Two causes, separated by the
+Scaly does 1.6× the multiplies and 2.6× the adds for the same result. Two causes, separated by the
 scalarizer:
 
 - **No scalar-level CSE and a loop-and-array code shape.** The stage body declares 109 stack
@@ -148,16 +148,16 @@ of 1224.
 
 Compiler flags, same kernels:
 
-| Flags | Alloy | SX |
+| Flags | Scaly | SX |
 |---|---:|---:|
 | `-O3` (protocol) | 33.4 | 21.3 |
 | `-O3 -fno-math-errno` | 31.8 | 20.6 |
 | `-O3 -march=native` | 26.5 | 20.5 |
 | `-O3 -ffast-math` | 24.9 | 16.4 |
 
-The baseline `x86-64` target compiles both kernels to SSE2 scalar code. Alloy's loop-shaped code
+The baseline `x86-64` target compiles both kernels to SSE2 scalar code. Scaly's loop-shaped code
 gains 21% from `-march=native` and SX's straight-line code 4%. The sweep protocol therefore
-handicaps the loop-preserving encoding more than the unrolled one, and Alloy's actual use is a JIT
+handicaps the loop-preserving encoding more than the unrolled one, and Scaly's actual use is a JIT
 on the target machine. Whether the fair comparison is with or without `-march=native` is a protocol
 decision for `fairness.md`; the numbers here say it is worth one column.
 
@@ -165,7 +165,7 @@ decision for `fairness.md`; the numbers here say it is worth one column.
 
 Budget for npmpc, µs:
 
-| Piece | Alloy |
+| Piece | Scaly |
 |---|---:|
 | `h32x32 ... fwd3c... adj_eq_x`, 12 calls | 51.5 |
 | `h32x32 ... fwd1c... adj_eq_u`, 12 calls | 28.3 |
@@ -191,7 +191,7 @@ Isolated 32×32 matvec, `-O3` and `-O3 -march=native`, ns per product:
 
 | Form | `-O3` | native |
 |---|---:|---:|
-| Alloy nest as generated (dot form) | 350 | 328 |
+| Scaly nest as generated (dot form) | 350 | 328 |
 | `casadi_mtimes_dense`, either `tr` | 388 | 438 |
 | column sweep on a contiguous transpose, `for k: for i: s[i] += WT[k*32+i] * v[k]` | 173 | 43 |
 | same sweep on the row-major matrix (stride 32) | 197 | 364 |
@@ -238,7 +238,7 @@ seeds into one `W @ [v1 v2 v3]` product is the same idea from the other side.
 
 Budget, µs, from the ablation:
 
-| Piece | Alloy | SX | mapped SX |
+| Piece | Scaly | SX | mapped SX |
 |---|---:|---:|---:|
 | eq stage kernel, 40 calls | 1920 | | |
 | glue | 660 | | |
@@ -262,7 +262,7 @@ time with full-length tangent vectors.
 The 6.4× between the first two rows is code shape alone: loops over materialized buffers,
 zero-fill-then-scatter patterns, and 24 dense tangent vectors where the unrolled scalar graph
 has one live value per nonzero. Folding the unit seeds is a further 2.7× in operation count but
-only 1.2× in time. After both, Alloy still executes 2.6× SX's operations; 1738 divisions per stage
+only 1.2× in time. After both, Scaly still executes 2.6× SX's operations; 1738 divisions per stage
 against SX's 674 is one visible piece (the DIV tangent rule divides once per seed where a shared
 reciprocal would multiply), worth about 7% of the folded time. The rest is the forward-over-reverse
 composition itself and is not resolved here.
@@ -306,7 +306,7 @@ Item 4 changes that. The comparison should be reported both ways until the proto
 
 ## Feedback on the text assembly
 
-`al.render_expr_assembly(fn)` was readable and useful for one thing the C could not show: which
+`sc.render_expr_assembly(fn)` was readable and useful for one thing the C could not show: which
 identities the simplifier leaves behind. In the race-car N=5 module, 2 of 63 divisions have a
 constant-zero numerator and 49 of 873 multiplies have a mixed 0/1 vector constant as one operand.
 For the rest of this investigation the generated C plus a driver was the better artifact, because
@@ -334,10 +334,10 @@ arithmetic) and confirming the libm share without the identity-stub trick, and `
 have shown the dependent add chains in the matvec directly. The driver-and-ablation route reached
 the same numbers, so the conclusions do not depend on it.
 
-**Why `-march=native` helps Alloy's race-car kernel and not SX's: FMA contraction, not vector
+**Why `-march=native` helps Scaly's race-car kernel and not SX's: FMA contraction, not vector
 width.** Race-car N=50, µs:
 
-| Flags | Alloy | SX |
+| Flags | Scaly | SX |
 |---|---:|---:|
 | `-O3` | 32.9 | 21.3 |
 | `-O3 -mfma` | 27.8 | 20.7 |
@@ -346,13 +346,13 @@ width.** Race-car N=50, µs:
 | `-O3 -march=native -ffp-contract=off` | 35.2 | 20.5 |
 | `-O3 -march=native -ffp-contract=fast` | 27.9 | 18.8 |
 
-`-mfma` alone gives Alloy almost the whole gain and vector width adds one microsecond; with
-contraction disabled the native build is slower than the baseline. The native Alloy object has 439
+`-mfma` alone gives Scaly almost the whole gain and vector width adds one microsecond; with
+contraction disabled the native build is slower than the baseline. The native Scaly object has 439
 fused multiply-adds and 758 AVX instructions, mostly in the glue loops (10 loops vectorized against
 5 at baseline, and 14 gathers from the index tables). The native SX object has zero fused
 multiply-adds and zero vector instructions: SX emits one operation per statement, `a=(a*b);
 a=(a+c);`, and clang's default `-ffp-contract=on` contracts only within one expression, so the
-straight-line code never forms an FMA. Alloy's renderer writes compound expressions and gets
+straight-line code never forms an FMA. Scaly's renderer writes compound expressions and gets
 contraction for free. This is a code-shape effect worth keeping when C-44 scalarizes: render
 expression trees, not one op per line. There is no evidence here that the horizon loops
 auto-vectorize; the stage body is called per iteration through a `noinline` function, so the
@@ -412,7 +412,7 @@ loop-order cost model either, its C backend emits a plain i-j-k nest with the re
 it gets multiple accumulators from a generic mechanism (an UPCAST split of an output axis becomes
 extra accumulator lanes when the reduce is turned into `acc init / acc op= x / END`) rather than a
 matmul rule. Its fusion policy is "share the range variable", three cases and a 3-buffer cap, in
-about 40 lines. The honest reading for Alloy: the two matmul rules in C-43 are the special case of
+about 40 lines. The honest reading for Scaly: the two matmul rules in C-43 are the special case of
 two generic transforms, a range split with an accumulator per lane and a choice of which range is
 outermost, and both generalize to `W @ [v1 v2 v3]` and to the matrix-matrix products a vmapped
 neural dynamics would produce. C-43 as written is the right first step because it is twenty lines
@@ -420,7 +420,7 @@ and measured; the generic form is what C-8 should become, and the study lists th
 
 ## C-44 validation, 2026-09-08
 
-`src/alloy/passes/program/scalarize.py` expands selected procedures before fusion and workspace packing.
+`src/scaly/passes/program/scalarize.py` expands selected procedures before fusion and workspace packing.
 It follows the expansion, hash-consing, and single-use expression emission described in
 `tinygrad_rangeify.md` sections 4 and 6. The corresponding tinygrad `codegen/__init__.py`,
 `uop/symbolic.py`, and `renderer/cstyle.py` were read before implementation. Reusing the existing
@@ -467,7 +467,7 @@ The final automatic policy caps each procedure at 4,096 unique arithmetic nodes 
 and sharing, expansion work at 65,536 units, and program-wide growth at 16,384 arithmetic nodes,
 assignments, and stores. Tests cover each limit separately, including the exact operation-count
 boundary and a narrow tensor with too many nested sine operations. Explicit scalar selection
-bypasses the limits. The fixed pass pipeline now lives in `src/alloy/passes/program/`.
+bypasses the limits. The fixed pass pipeline now lives in `src/scaly/passes/program/`.
 
 This closeout regenerated only the race-car N=50 and chain M=5 Hessian kernels and their controls.
 Each control disables the scalarization pass and retains every other pass. Timings are medians

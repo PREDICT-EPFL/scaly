@@ -66,8 +66,8 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
     casadi_version = importlib.metadata.version("casadi")
   except importlib.metadata.PackageNotFoundError:
     casadi_version = "not installed"
-  from alloy.solvers.paths import solver_paths
-  from alloy.solvers.registry import loaded_backends
+  from scaly.solvers.paths import solver_paths
+  from scaly.solvers.registry import loaded_backends
 
   paths = solver_paths()
   ipopt = loaded_backends().get("ipopt")
@@ -83,14 +83,14 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
   return {
     "git_commit": commit,
     "git_dirty": dirty,
-    "alloy_version": importlib.metadata.version("alloy"),
+    "scaly_version": importlib.metadata.version("scaly"),
     "casadi_version": casadi_version,
     "native_solvers": native_solvers,
     "compiler": compiler_version,
     "native_cflags": list(NATIVE_CFLAGS),
     "platform": platform.platform(),
     "cpu_settings": cpu_settings(),
-    "compilation_caches": {name: os.environ.get(name) for name in ("ALLOY_CACHE_DIR", "ALLOY_CASADI_IPOPT_CACHE")},
+    "compilation_caches": {name: os.environ.get(name) for name in ("SCALY_CACHE_DIR", "SCALY_CASADI_IPOPT_CACHE")},
     "python_version": platform.python_version(),
     "timestamp": datetime.now(timezone.utc).isoformat(),
     "cli_args": cli_args,

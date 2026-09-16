@@ -3,11 +3,11 @@
 #include <stdint.h>
 typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 
-#define ALLOY_SUCCESS 0
-#define ALLOY_ERR_NULL_ABI 1
-#define ALLOY_ERR_NULL_WORK 2
-#define ALLOY_ERR_NULL_RESULT 3
-#define ALLOY_ERR_NULL_INPUT 4
+#define SCALY_SUCCESS 0
+#define SCALY_ERR_NULL_ABI 1
+#define SCALY_ERR_NULL_WORK 2
+#define SCALY_ERR_NULL_RESULT 3
+#define SCALY_ERR_NULL_INPUT 4
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,17 +18,17 @@ int dynamics_sz_res(void) { return 1; }
 int dynamics_sz_iw(void) { return 0; }
 int dynamics_sz_w(void) { return 0; }
 void* dynamics_alloc_mem(void) { return NULL; }
-int dynamics_init_mem(void* mem) { (void)mem; return ALLOY_SUCCESS; }
+int dynamics_init_mem(void* mem) { (void)mem; return SCALY_SUCCESS; }
 void dynamics_free_mem(void* mem) { (void)mem; }
 
 int dynamics(const double** arg, double** res, int* iw, double* w, void* mem) {
   (void)iw;
   (void)mem;
-  if (!arg || !res) return ALLOY_ERR_NULL_ABI;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
   (void)w;
-  if (!arg[0]) return ALLOY_ERR_NULL_INPUT;
-  if (!arg[1]) return ALLOY_ERR_NULL_INPUT;
-  if (!res[0]) return ALLOY_ERR_NULL_RESULT;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
   const double* t0 = arg[0];
   const double* t2 = arg[0] + 2;
   double s0[1];
@@ -46,7 +46,7 @@ int dynamics(const double** arg, double** res, int* iw, double* w, void* mem) {
     double v1 = t2[j_znext_1];
     res[0][(2 + j_znext_1)] = (v1 + (0.050000000000000003 * (arg[1][j_znext_1] - (s1[0] * v1))));
   }
-  return ALLOY_SUCCESS;
+  return SCALY_SUCCESS;
 }
 
 #ifdef __cplusplus

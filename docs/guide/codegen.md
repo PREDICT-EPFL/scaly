@@ -1,6 +1,6 @@
 # Code generation
 
-Alloy compiles to C, and there is only one path to it. Calling a function from Python and shipping
+Scaly compiles to C, and there is only one path to it. Calling a function from Python and shipping
 one in a C++ application run the same lowering, the same passes and the same renderer — the
 difference is only whether the result is compiled in place or written to a file.
 
@@ -32,8 +32,8 @@ one.
 fn.recompile()    # drop the in-process handle and the on-disk entry for this function
 ```
 
-Cached artifacts live under `$XDG_CACHE_HOME/alloy/jit` — or `~/.cache/alloy/jit`, or wherever
-`ALLOY_CACHE_DIR` points. Deleting that directory is always safe.
+Cached artifacts live under `$XDG_CACHE_HOME/scaly/jit` — or `~/.cache/scaly/jit`, or wherever
+`SCALY_CACHE_DIR` points. Deleting that directory is always safe.
 
 There is no fallback path. A missing compiler raises `JitUnavailable`; a compiler that returns an
 error, or a function placed on a non-host device, raises `JitError`. An operation the lowerer does
@@ -43,7 +43,7 @@ not cover raises `LoweringError` when you render files, and reaches you as `JitU
 ## Writing files: the AOT path
 
 ```python
-from alloy.codegen import render_c_module
+from scaly.codegen import render_c_module
 
 module = render_c_module(fn)
 module.header           # the .h text
@@ -57,14 +57,14 @@ module.link_flags       # link flags for any solver plugins reached
 Or write the pair directly:
 
 ```python
-from alloy.codegen import write_module
+from scaly.codegen import write_module
 write_module(fn, out_dir)
 ```
 
 From a shell:
 
 ```bash
-uv run python -m alloy.codegen mymodule:my_function -o generated/
+uv run python -m scaly.codegen mymodule:my_function -o generated/
 ```
 
 The argument is `<module>:<attribute>` — an importable module and the name of a `Function` in it.
@@ -75,7 +75,7 @@ is only one number.
 
 ## Using the result
 
-The generated pair has no dependency on alloy, on Python, or on anything but libm. Every function
+The generated pair has no dependency on scaly, on Python, or on anything but libm. Every function
 is reachable through one signature:
 
 ```c
@@ -117,7 +117,7 @@ contains — is in [the C ABI](../how_it_works/c_abi.md).
 ## How much scratch space
 
 ```python
-from alloy.codegen import workspace_size
+from scaly.codegen import workspace_size
 workspace_size(fn)
 ```
 
@@ -142,7 +142,7 @@ program dialect, and it drives its oracles, which are rendered normally. See
 ## Checking the toolchain
 
 ```bash
-uv run python -m alloy.codegen.toolchain
+uv run python -m scaly.codegen.toolchain
 ```
 
 Prints the active compiler, the cache root, the shared-library extension and the state of vendored

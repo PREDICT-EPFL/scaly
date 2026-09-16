@@ -1,0 +1,221 @@
+"""PIQP plugin solver tests."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+import pytest
+
+import scaly as sc
+from tests.solvers.problem_helpers import build_qp, solve_qp
+
+
+@pytest.mark.solver("piqp")
+def test_qp_equality_constrained_quadratic() -> None:
+  """min 0.5 (x-1)^2 + 0.5 (y-2)^2  s.t.  x + y == 3, x, y >= 0.
+
+  Expected x* = (1, 2), lam_eq[0] = 0 (constraint slack at optimum).
+  """
+  P = np.eye(2)
+  c = np.array([-1.0, -2.0])
+  A = np.array([[1.0, 1.0]])
+  b = np.array([3.0])
+  qp = build_qp(P=P, c=c, A_eq=A, b_eq=b, x_lb=np.zeros(2))
+  out = solve_qp(qp, np.zeros(2), np.zeros(1), np.zeros(0))
+  assert qp.solver_stats().to_solver_status() is not None and qp.solver_stats().to_solver_status().ok
+  np.testing.assert_allclose(out["x"], [1.0, 2.0], atol=1e-7)
+  # 0.5 (x-1)^2 + 0.5 (y-2)^2 in the form 0.5 xPx + cx (constant dropped):
+  # PIQP reports 0.5 x^T x + c^T x = 0.5 (1 + 4) + (-1 - 4) = -2.5
+  np.testing.assert_allclose(out["cost"], -2.5, atol=1e-7)
+
+
+@pytest.mark.solver("piqp")
+def test_qp_two_sided_inequality_box() -> None:
+  """min 0.5 x^T x  s.t.  1 <= x[0] + x[1] <= 2, |x[0]| <= 1.
+
+  Expected: minimum norm subject to x[0]+x[1] >= 1 is x* = (0.5, 0.5);
+  this hits the lower side of the two-sided ineq -> negative lam_ineq.
+  """
+  P = np.eye(2)
+  c = np.zeros(2)
+  G = np.array([[1.0, 1.0]])
+  qp = build_qp(
+    P=P,
+    c=c,
+    G_ineq=G,
+    l_ineq=np.array([1.0]),
+    u_ineq=np.array([2.0]),
+    x_lb=np.array([-1.0, -np.inf]),
+    x_ub=np.array([1.0, np.inf]),
+  )
+  out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(1))
+  assert qp.solver_stats().to_solver_status() is not None and qp.solver_stats().to_solver_status().ok
+  np.testing.assert_allclose(out["x"], [0.5, 0.5], atol=1e-7)
+  # lower side active -> z_l > 0, z_u = 0 -> lam_ineq = z_u - z_l < 0.
+  assert out["lam_ineq"][0] < 0
+
+
+@pytest.mark.solver("piqp")
+def test_qp_with_symbolic_parameters() -> None:
+  """The QP data may be Scaly ``Expr``s of free parameters.
+
+  Solve min 0.5 (x - mu)^T (x - mu) for several ``mu`` values without rebuilding
+  the solver; this is the input-affine MPC/CBF pattern.
+  """
+  mu = sc.sym("mu", 2)
+  P = sc.const(np.eye(2))
+  c = -mu  # -mu shifts the quadratic minimum to mu
+  qp = build_qp(P=P, c=c)
+  for mu_val in [np.array([0.0, 0.0]), np.array([1.5, -0.3]), np.array([-2.0, 4.0])]:
+    out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0), mu=mu_val)
+    assert qp.solver_stats().to_solver_status() is not None and qp.solver_stats().to_solver_status().ok
+    np.testing.assert_allclose(out["x"], mu_val, atol=1e-7)
+
+
+@pytest.mark.solver("piqp")
+def test_generated_qp_satisfies_kkt_over_parameter_sweep() -> None:
+  """Fully parameterized QP (P/c/A/b/G/bounds all depend on t): the generated
+  solve must satisfy stationarity and primal feasibility at every point."""
+  theta = sc.sym("theta", 1)
+  t = theta[0]
+  P = sc.stack([sc.stack([2.0 + 0.1 * t, 0.05 * t]), sc.stack([0.05 * t, 1.5 - 0.1 * t])])
+  c = sc.stack([-0.4 + 0.2 * t, 0.3 - 0.1 * t])
+  A_eq = sc.stack([sc.stack([1.0 + 0.05 * t, 1.0 - 0.05 * t])])
+  b_eq = sc.stack([0.2 + 0.1 * t])
+  G_ineq = sc.stack([sc.stack([1.0, 0.1 * t]), sc.stack([-0.1 * t, 1.0])])
+  l_ineq = sc.stack([-0.8 + 0.1 * t, -0.9 - 0.1 * t])
+  u_ineq = sc.stack([0.9 + 0.1 * t, 1.0 - 0.1 * t])
+  x_lb = sc.stack([-1.0 + 0.05 * t, -1.1 - 0.05 * t])
+  x_ub = sc.stack([1.1 + 0.05 * t, 1.2 - 0.05 * t])
+  kwargs: dict[str, Any] = dict(P=P, c=c, A_eq=A_eq, b_eq=b_eq, G_ineq=G_ineq, l_ineq=l_ineq, u_ineq=u_ineq, x_lb=x_lb, x_ub=x_ub)
+  qp = build_qp(**kwargs, name="qp_kkt_sweep")
+  x0 = np.zeros(2)
+  for t_value in (-0.6, 0.1, 0.8):
+    out = solve_qp(qp, x0, np.zeros(1), np.zeros(2), np.array([t_value]))
+    assert qp.solver_stats().to_solver_status() is not None and qp.solver_stats().to_solver_status().ok
+    P_np = np.array([[2.0 + 0.1 * t_value, 0.05 * t_value], [0.05 * t_value, 1.5 - 0.1 * t_value]])
+    c_np = np.array([-0.4 + 0.2 * t_value, 0.3 - 0.1 * t_value])
+    A_np = np.array([[1.0 + 0.05 * t_value, 1.0 - 0.05 * t_value]])
+    G_np = np.array([[1.0, 0.1 * t_value], [-0.1 * t_value, 1.0]])
+    stationarity = P_np @ out["x"] + c_np + A_np.T @ out["lam_eq"] + G_np.T @ out["lam_ineq"] + out["lam_box"]
+    np.testing.assert_allclose(stationarity, np.zeros(2), atol=1e-6)
+    np.testing.assert_allclose(A_np @ out["x"], [0.2 + 0.1 * t_value], atol=1e-7)
+    x0 = out["x"]
+
+
+@pytest.mark.solver("piqp")
+def test_qp_against_analytic_kkt_reference() -> None:
+  """Cross-check a small equality-only QP against its dense KKT solution."""
+  P_np = np.array([[2.0, 0.5], [0.5, 1.0]])
+  c_np = np.array([-1.0, -0.5])
+  A_np = np.array([[1.0, 1.0]])
+  b_np = np.array([1.5])
+  # Analytic KKT for an equality-only QP: [[P, A^T], [A, 0]] [x; lam] = [-c; b]
+  K = np.block([[P_np, A_np.T], [A_np, np.zeros((1, 1))]])
+  rhs = np.concatenate([-c_np, b_np])
+  sol = np.linalg.solve(K, rhs)
+  x_ref = sol[:2]
+  qp = build_qp(P=P_np, c=c_np, A_eq=A_np, b_eq=b_np)
+  out = solve_qp(qp, np.zeros(2), np.zeros(1), np.zeros(0))
+  np.testing.assert_allclose(out["x"], x_ref, atol=1e-8)
+
+
+# ---------------------------------------------------------------------------
+# NLP (IPOPT)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.solver("piqp")
+def test_nested_qp_in_scaly_function() -> None:
+  """The safety-filter assembly pattern: build QP data symbolically and wrap
+  the solve as a node inside a larger ``Function``."""
+
+  @sc.function(sc.L("mu", (2,)), sc.G(sc.L("x", ...), sc.L("cost", ...)), name="track_qp")
+  def track_qp(mu):
+    # min 0.5 |x - mu|^2  -> solution is mu itself
+    qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
+    out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
+    return (out[0], 0.5 * sc.dot(out[0], out[0]) - sc.dot(mu, out[0]))
+
+  for mu_val in [np.array([0.5, -1.2]), np.zeros(2), np.array([3.0, 2.0])]:
+    x, cost = track_qp(mu_val)
+    np.testing.assert_allclose(x, mu_val, atol=1e-7)
+    # cost = 0.5 mu^T mu + (-mu)^T mu = -0.5 mu^T mu
+    np.testing.assert_allclose(cost, -0.5 * float(np.dot(mu_val, mu_val)), atol=1e-7)
+
+
+@pytest.mark.solver("piqp")
+def test_nested_qp_postprocessed() -> None:
+  """Combine solver output with downstream symbolic math."""
+
+  @sc.function(sc.L("mu", (2,)), sc.L("y", ...), name="squared_norm_via_qp")
+  def sq_norm(mu):
+    qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
+    out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
+    x_star = out[0]
+    return sc.dot(x_star, x_star)
+
+  mu_val = np.array([1.5, -0.3])
+  y = sq_norm(mu_val)
+  np.testing.assert_allclose(y, float(np.dot(mu_val, mu_val)), atol=1e-7)
+
+
+@pytest.mark.solver("piqp")
+def test_nested_qp_with_general_inequality() -> None:
+  """Two-sided general inequality inside a nested QP."""
+
+  @sc.function(sc.L("u_ref", (2,)), sc.L("u", ...), name="constrained_filter")
+  def filter_fn(u_ref):
+    G = sc.const(np.array([[1.0, 1.0]]))
+    l_ineq = sc.const(np.array([-0.5]))
+    u_ineq = sc.const(np.array([0.5]))
+    qp = build_qp(P=sc.const(np.eye(2)), c=-u_ref, G_ineq=G, l_ineq=l_ineq, u_ineq=u_ineq)
+    out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(1)), u_ref))
+    return out[0]
+
+  # u_ref = (1, 1) is infeasible -> the QP projects onto the band.
+  u = filter_fn(np.array([1.0, 1.0]))
+  np.testing.assert_allclose(np.sum(u), 0.5, atol=1e-6)
+  # u_ref = (-0.1, -0.2) is feasible -> solution is u_ref itself.
+  u = filter_fn(np.array([-0.1, -0.2]))
+  np.testing.assert_allclose(u, [-0.1, -0.2], atol=1e-7)
+
+
+@pytest.mark.solver("piqp")
+def test_nested_qp_jit_compiles_through_piqp() -> None:
+  """JIT path: render C that links against libpiqpc and drives the solve."""
+
+  @sc.function(sc.G(sc.L("x", (2,)), sc.L("u_ref", (2,))), sc.L("u", ...), name="safety_filter")
+  def safety_filter(inputs):
+    x, u_ref = inputs
+    P = sc.const(np.eye(2))
+    c = -u_ref
+    G = sc.stack([sc.stack([x[0], x[1]], axis=0)], axis=0)
+    l_ineq = sc.stack([sc.const(-1.0)], axis=0)
+    u_ineq = sc.stack([sc.const(1.0)], axis=0)
+    qp = build_qp(P=P, c=c, G_ineq=G, l_ineq=l_ineq, u_ineq=u_ineq)
+    u, *_ = qp((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(1)), (u_ref, x)))
+    return u
+
+  u = safety_filter((np.array([1.0, 1.0]), np.array([0.5, 0.5])))
+  # Unconstrained min is u_ref=(0.5,0.5); G*u = 1 = upper bound -> on boundary.
+  np.testing.assert_allclose(u, [0.5, 0.5], atol=1e-3)
+
+  # Same call again exercises the static-workspace update path inside the
+  # compiled solver wrapper.
+  u2 = safety_filter((np.array([1.0, -1.0]), np.array([0.0, 0.0])))
+  np.testing.assert_allclose(u2, [0.0, 0.0], atol=1e-7)
+
+
+@pytest.mark.solver("piqp")
+def test_nested_qp_call_uses_the_declared_tree() -> None:
+  """A nested solve takes the solver's declared input tree; leaf order comes from the declaration."""
+  u_ref = sc.sym("u_ref", 2)
+  qp = build_qp(P=sc.const(np.eye(2)), c=-u_ref)
+  assert qp.input_names == ("decision", "lam:decision", "lam_eq", "lam_ineq", "u_ref")
+  out_exprs = qp((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), u_ref))
+  assert len(out_exprs) == len(qp.output_names)
+  wrapped = sc.Function._from_exprs("wrapped", [u_ref], [out_exprs[0]], ["u_ref"], ["u"])
+  result = wrapped(np.array([1.5, -0.3]))
+  np.testing.assert_allclose(result, [1.5, -0.3], atol=1e-7)

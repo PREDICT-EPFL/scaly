@@ -6,7 +6,7 @@ weight, the analytic plant, the transcribed NLP's constraint rows, and the agree
 formulation with the reference implementation that produced the episode. They run before any timing
 is recorded, via ``benchmarks/run.py smoke``.
 
-They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite covers Alloy's
+They deliberately do **not** live in ``tests/``: per `AGENTS.md`, the pytest suite covers Scaly's
 core and must not depend on a benchmark problem. The IR behaviour this problem leans on — a dense
 matmul body used through VMAP over a horizon, differentiated to second order — has a self-contained
 reproduction in ``tests/integration/test_vmap_mlp.py``, so retiring this problem cannot drop the
@@ -20,8 +20,8 @@ from dataclasses import replace
 
 import numpy as np
 
-import alloy as al
-from alloy.solvers.paths import solver_loadable, solver_paths
+import scaly as sc
+from scaly.solvers.paths import solver_loadable, solver_paths
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
   DT,
@@ -184,7 +184,7 @@ def check_decoder_matches_reference_rollout() -> None:
 
   This is what validates the recovered latent code and the extracted weights together: their
   `x_np` is a full neural-process rollout from their torch model, and our one-step map has to land
-  on it from every recorded state. The Alloy stage function then has to land on our NumPy one.
+  on it from every recorded state. The Scaly stage function then has to land on our NumPy one.
   """
   decoder = Decoder()
   pw = pack_params(decoder, load_decoder_weights(decoder))
@@ -251,7 +251,7 @@ def check_plant_matches_reference_oracle() -> None:
 def check_terminal_riccati_weight() -> None:
   """The terminal weight solves the Riccati equation for the linearization it claims to come from.
 
-  `linearize` reads `A` and `B` off `al.factory.Jac` on the stage residual rather than from an autograd
+  `linearize` reads `A` and `B` off `sc.factory.Jac` on the stage residual rather than from an autograd
   pass, so the finite-difference comparison is what keeps that shortcut honest, and the residual is
   what stops a pinned `P` from drifting away from the model it was solved for.
   """
@@ -284,12 +284,12 @@ def check_constraint_rows_and_bounds() -> None:
   horizon = 3
   lower, upper = npmpc_ineq_bounds(horizon)
 
-  @al.function(
-    al.G(al.L("z", n_dec(horizon)), al.L("xstart", al.TensorType((NX,), diff=False))),
-    al.L("g", ...),
+  @sc.function(
+    sc.G(sc.L("z", n_dec(horizon)), sc.L("xstart", sc.TensorType((NX,), diff=False))),
+    sc.L("g", ...),
     name="npmpc_ineq_check",
   )
-  def constraints(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+  def constraints(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, xstart = inputs
     rows, _, _ = npmpc_constraint_exprs(z, xstart, horizon)
     return rows
@@ -350,20 +350,20 @@ def check_runtime_tuning_parameters() -> None:
 
 
 def check_casadi_runtime_parameters_match() -> None:
-  """CasADi reads the same runtime tuning fields as Alloy for every changed field."""
+  """CasADi reads the same runtime tuning fields as Scaly for every changed field."""
   import casadi as ca
 
   from benchmarks.problems.npmpc import _ca_npmpc_joint_parameter_pieces
 
   decoder, z, parameters = _runtime_parameter_cases()
-  alloy = npmpc_lag_function(2, decoder)
+  scaly = npmpc_lag_function(2, decoder)
   pieces = _ca_npmpc_joint_parameter_pieces(2, decoder, ca.MX)
   casadi = ca.Function("npmpc_runtime_parameters", [pieces["z"], pieces["p"]], [pieces["f"], pieces["h_eq"]])
   for p in parameters:
-    alloy_cost, alloy_eq = alloy((z, p))
+    scaly_cost, scaly_eq = scaly((z, p))
     casadi_cost, casadi_eq = casadi(z, p)
-    np.testing.assert_allclose(np.asarray(casadi_cost), np.asarray(alloy_cost), rtol=0.0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(casadi_eq).reshape(-1), np.asarray(alloy_eq).reshape(-1), rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(casadi_cost), np.asarray(scaly_cost), rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(casadi_eq).reshape(-1), np.asarray(scaly_eq).reshape(-1), rtol=0.0, atol=1e-12)
 
 
 def check_nlp_uses_an_exact_hessian() -> None:
@@ -379,7 +379,7 @@ def check_nlp_uses_an_exact_hessian() -> None:
   config = replace(EpisodeConfig(), horizon=4, steps=1)
   pw = pack_params(config.decoder, load_decoder_weights(config.decoder))
   P = terminal_P(config.decoder, pw, config.weights, config.dt)
-  controller = build_solver(config, "ipopt", "alloy")
+  controller = build_solver(config, "ipopt", "scaly")
   assert controller.descriptor.hess is not None
   requested = dict(controller.descriptor.options).get("hessian_approximation")
   assert requested is None, f"the IPOPT column asks for hessian_approximation={requested!r}"
@@ -400,7 +400,7 @@ def check_nlp_uses_an_exact_hessian() -> None:
 
 
 def check_casadi_ipopt_is_compiled() -> None:
-  """The timed CasADi column is generated C linked to Alloy's IPOPT."""
+  """The timed CasADi column is generated C linked to Scaly's IPOPT."""
   from pathlib import Path
 
   config = replace(EpisodeConfig.smoke(), steps=1)
@@ -576,7 +576,7 @@ def _comparison_config() -> EpisodeConfig:
 
 
 def check_oracles_agree() -> None:
-  """Alloy and CasADi oracles drive the same IPOPT to the same episode.
+  """Scaly and CasADi oracles drive the same IPOPT to the same episode.
 
   The two columns solve a deliberately identical problem -- same decision-variable and parameter
   layout, same cost, same rows in the same order, same IPOPT with the same options -- so the only
@@ -587,29 +587,29 @@ def check_oracles_agree() -> None:
   compiled, and a gate that skipped the build would check a configuration that no timing uses.
   """
   config = _comparison_config()
-  alloy = run_episode(config, solver="ipopt", oracle="alloy")
+  scaly = run_episode(config, solver="ipopt", oracle="scaly")
   casadi = run_episode(config, solver="ipopt", oracle="casadi")
-  assert [stats.iter for stats in alloy.telemetry] == [stats.iter for stats in casadi.telemetry], "iteration counts diverge"
-  np.testing.assert_allclose(alloy.controls, casadi.controls, rtol=0.0, atol=ORACLE_IPOPT_TOL)
-  np.testing.assert_allclose(alloy.states, casadi.states, rtol=0.0, atol=1e2 * ORACLE_IPOPT_TOL)
-  np.testing.assert_allclose(alloy.predictions, casadi.predictions, rtol=0.0, atol=1e2 * ORACLE_IPOPT_TOL)
+  assert [stats.iter for stats in scaly.telemetry] == [stats.iter for stats in casadi.telemetry], "iteration counts diverge"
+  np.testing.assert_allclose(scaly.controls, casadi.controls, rtol=0.0, atol=ORACLE_IPOPT_TOL)
+  np.testing.assert_allclose(scaly.states, casadi.states, rtol=0.0, atol=1e2 * ORACLE_IPOPT_TOL)
+  np.testing.assert_allclose(scaly.predictions, casadi.predictions, rtol=0.0, atol=1e2 * ORACLE_IPOPT_TOL)
 
 
 def check_sqp_oracles_agree() -> None:
-  """The same SQP produces the same episode from Alloy and CasADi generated-C oracles.
+  """The same SQP produces the same episode from Scaly and CasADi generated-C oracles.
 
-  Both columns run `alloy-sqp` with its PIQP subsolver at identical settings, and both feed it
+  Both columns run `scaly-sqp` with its PIQP subsolver at identical settings, and both feed it
   code-generated, compiled C. Both IPOPT columns are compiled too, so all four columns are
   compiled-code comparisons; what differs between the two *pairs* is the mix of
   oracle calls each optimizer makes, which is why their function-evaluation ratios differ.
   """
   config = _comparison_config()
-  alloy = run_episode(config, solver="sqp", oracle="alloy")
+  scaly = run_episode(config, solver="sqp", oracle="scaly")
   casadi = run_episode(config, solver="sqp", oracle="casadi")
-  assert [stats.iter for stats in alloy.telemetry] == [stats.iter for stats in casadi.telemetry], "iteration counts diverge"
-  np.testing.assert_allclose(alloy.controls, casadi.controls, rtol=0.0, atol=ORACLE_SQP_TOL)
-  np.testing.assert_allclose(alloy.states, casadi.states, rtol=0.0, atol=1e2 * ORACLE_SQP_TOL)
-  for run in (alloy, casadi):
+  assert [stats.iter for stats in scaly.telemetry] == [stats.iter for stats in casadi.telemetry], "iteration counts diverge"
+  np.testing.assert_allclose(scaly.controls, casadi.controls, rtol=0.0, atol=ORACLE_SQP_TOL)
+  np.testing.assert_allclose(scaly.states, casadi.states, rtol=0.0, atol=1e2 * ORACLE_SQP_TOL)
+  for run in (scaly, casadi):
     for step, stats in enumerate(run.telemetry):
       assert stats.status.value <= 1 and stats.t_qp > 0.0, f"step {step}: {stats.status.name}, qp time {stats.t_qp}"
       np.testing.assert_allclose(stats.t_total, stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rtol=1e-10)
@@ -623,8 +623,8 @@ def check_sqp_matches_ipopt() -> None:
   carries the first diverging step with both solvers' status, objective and equality violation.
   """
   config = _comparison_config()
-  ipopt = run_episode(config, solver="ipopt", oracle="alloy")
-  sqp = run_episode(config, solver="sqp", oracle="alloy")
+  ipopt = run_episode(config, solver="ipopt", oracle="scaly")
+  sqp = run_episode(config, solver="sqp", oracle="scaly")
   assert len(ipopt.controls) == len(sqp.controls) == config.steps
   for step in range(config.steps):
     stats_i, stats_s = ipopt.telemetry[step], sqp.telemetry[step]

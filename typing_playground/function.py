@@ -1,6 +1,6 @@
 """``Function``: a graph with fully resolved leaf shapes, plus the derivative wrappers and ``vmap`` over it.
 
-Every body here is a stand-in. The real ``Function.__init__`` traces the body as ``@al.function``
+Every body here is a stand-in. The real ``Function.__init__`` traces the body as ``@sc.function``
 does today; ``symbolic_call`` is a ``CALL`` node and ``numerical_call`` goes through the JIT. The
 derivative wrappers are shape bookkeeping here and the existing ``function/api.py`` wrappers there.
 """
@@ -148,7 +148,7 @@ def lagrangian_hessian[SI, NI, SO, NO](fn: Function[SI, NI, SO, NO], wrt: str, /
 
 def vmap[SI, NI, SO, NO](callee: Function[SI, NI, SO, NO], length: int, /) -> Function[SI, NI, SO, NO]:
   """Map ``callee`` over a leading axis of ``length``: every leaf of both trees gains that axis and
-  the structure is preserved, so the result is typed by the callee's trees. The real ``al.vmap``
+  the structure is preserved, so the result is typed by the callee's trees. The real ``sc.vmap``
   slices flat outer tensors and returns a bare ``Expr``; this is the shape of what could replace it.
   A template callee is instantiated explicitly first: the per-iteration shape is vmap's input."""
   batched_in = callee.inputs.with_shapes(tuple((length, *s) for s in callee.input_shapes))

@@ -4,104 +4,10 @@ requires-python = ">=3.13"
 
 [manifest]
 members = [
-    "alloy",
-    "alloy-ipopt",
-    "alloy-piqp",
-    "alloy-sqp",
-]
-
-[[package]]
-name = "alloy"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "numpy" },
-    { name = "scipy" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "alloy-ipopt" },
-    { name = "alloy-piqp" },
-    { name = "alloy-sqp" },
-    { name = "casadi" },
-    { name = "foxglove-sdk" },
-    { name = "matplotlib" },
-    { name = "pydantic" },
-    { name = "pytest" },
-    { name = "pytest-xdist" },
-    { name = "ruff" },
-    { name = "scipy" },
-    { name = "ty" },
-]
-docs = [
-    { name = "mkdocstrings-python" },
-    { name = "zensical" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=2.3.3" },
-    { name = "scipy", specifier = ">=1.18.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "alloy-ipopt", editable = "plugins/alloy-ipopt" },
-    { name = "alloy-piqp", editable = "plugins/alloy-piqp" },
-    { name = "alloy-sqp", editable = "plugins/alloy-sqp" },
-    { name = "casadi", specifier = ">=3.8.0" },
-    { name = "foxglove-sdk", specifier = ">=0.25.3" },
-    { name = "matplotlib", specifier = ">=3.11.0" },
-    { name = "pydantic", specifier = ">=2.13.4" },
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pytest-xdist", specifier = ">=3.8.0" },
-    { name = "ruff", specifier = ">=0.13.3" },
-    { name = "scipy", specifier = ">=1.14" },
-    { name = "ty", specifier = ">=0.0.75" },
-]
-docs = [
-    { name = "mkdocstrings-python", specifier = ">=2.0.3" },
-    { name = "zensical", specifier = ">=0.0.28" },
-]
-
-[[package]]
-name = "alloy-ipopt"
-version = "0.1.0"
-source = { editable = "plugins/alloy-ipopt" }
-dependencies = [
-    { name = "alloy" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "alloy", editable = "." }]
-
-[[package]]
-name = "alloy-piqp"
-version = "0.1.0"
-source = { editable = "plugins/alloy-piqp" }
-dependencies = [
-    { name = "alloy" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "alloy", editable = "." }]
-
-[[package]]
-name = "alloy-sqp"
-version = "0.1.0"
-source = { editable = "plugins/alloy-sqp" }
-dependencies = [
-    { name = "alloy" },
-    { name = "alloy-piqp" },
-    { name = "jinja2" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alloy", editable = "." },
-    { name = "alloy-piqp", editable = "plugins/alloy-piqp" },
-    { name = "jinja2", specifier = ">=3.1.6" },
+    "scaly",
+    "scaly-ipopt",
+    "scaly-piqp",
+    "scaly-sqp",
 ]
 
 [[package]]
@@ -955,6 +861,100 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6b/8c/b1e1666aef7fc6555094d73ae6cd981701781ae85b97ceefc0eebd0b4668/ruff-0.15.13-py3-none-win32.whl", hash = "sha256:4044f94208b3b05ba0fc4a4abd0558cf4d6459bd18325eead7fd8cc66f909b41", size = 10721455, upload-time = "2026-05-14T13:44:35.697Z" },
     { url = "https://files.pythonhosted.org/packages/ab/a6/870a3e8a50590bb92be184ad928c2922f088b00d9dc5c5ec7b924ee08c22/ruff-0.15.13-py3-none-win_amd64.whl", hash = "sha256:7064884d442b7d477b4e7473d12da7f08851d2b1982763c5d3f388a19468a1a4", size = 11900409, upload-time = "2026-05-14T13:44:30.389Z" },
     { url = "https://files.pythonhosted.org/packages/9b/36/9c015cd052fca743dae8cb2aeb16b551444787467db42ceab0fc968865af/ruff-0.15.13-py3-none-win_arm64.whl", hash = "sha256:2471da9bd1068c8c064b5fd9c0c4b6dddffd6369cb1cd68b29993b1709ff1b21", size = 11179336, upload-time = "2026-05-14T13:44:33.026Z" },
+]
+
+[[package]]
+name = "scaly"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "casadi" },
+    { name = "foxglove-sdk" },
+    { name = "matplotlib" },
+    { name = "pydantic" },
+    { name = "pytest" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+    { name = "scaly-ipopt" },
+    { name = "scaly-piqp" },
+    { name = "scaly-sqp" },
+    { name = "scipy" },
+    { name = "ty" },
+]
+docs = [
+    { name = "mkdocstrings-python" },
+    { name = "zensical" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.3.3" },
+    { name = "scipy", specifier = ">=1.18.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "casadi", specifier = ">=3.8.0" },
+    { name = "foxglove-sdk", specifier = ">=0.25.3" },
+    { name = "matplotlib", specifier = ">=3.11.0" },
+    { name = "pydantic", specifier = ">=2.13.4" },
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "ruff", specifier = ">=0.13.3" },
+    { name = "scaly-ipopt", editable = "plugins/scaly-ipopt" },
+    { name = "scaly-piqp", editable = "plugins/scaly-piqp" },
+    { name = "scaly-sqp", editable = "plugins/scaly-sqp" },
+    { name = "scipy", specifier = ">=1.14" },
+    { name = "ty", specifier = ">=0.0.75" },
+]
+docs = [
+    { name = "mkdocstrings-python", specifier = ">=2.0.3" },
+    { name = "zensical", specifier = ">=0.0.28" },
+]
+
+[[package]]
+name = "scaly-ipopt"
+version = "0.1.0"
+source = { editable = "plugins/scaly-ipopt" }
+dependencies = [
+    { name = "scaly" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "scaly", editable = "." }]
+
+[[package]]
+name = "scaly-piqp"
+version = "0.1.0"
+source = { editable = "plugins/scaly-piqp" }
+dependencies = [
+    { name = "scaly" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "scaly", editable = "." }]
+
+[[package]]
+name = "scaly-sqp"
+version = "0.1.0"
+source = { editable = "plugins/scaly-sqp" }
+dependencies = [
+    { name = "jinja2" },
+    { name = "scaly" },
+    { name = "scaly-piqp" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "scaly", editable = "." },
+    { name = "scaly-piqp", editable = "plugins/scaly-piqp" },
 ]
 
 [[package]]

@@ -43,7 +43,7 @@ def _provenance(cli_args: list[str]) -> dict[str, object]:
   return collect(ROOT, gbench.compiler(), cli_args)
 
 
-def run_chain(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = "ipopt", oracle: str = "alloy") -> Path:
+def run_chain(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = "ipopt", oracle: str = "scaly") -> Path:
   from benchmarks.problems.chain import END_REF, HORIZON, NU, n_dec, n_state
   from benchmarks.problems.chain.closed_loop import ClosedLoopConfig, plant_step, run_episode
 
@@ -141,7 +141,7 @@ def run_chain(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = 
   return output
 
 
-def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = "ipopt", oracle: str = "alloy") -> Path:
+def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = "ipopt", oracle: str = "scaly") -> Path:
   from benchmarks.problems.race_cars import CAR_HEIGHT, CAR_LENGTH, CAR_WIDTH, DELTA_MAX, T_MAX, WHEELBASE
   from benchmarks.problems.race_cars.closed_loop import EpisodeConfig, StepRecord, run_episode
   from benchmarks.problems.race_cars.reference import MotionPlanner
@@ -345,7 +345,7 @@ def run_race_cars(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: st
   return output
 
 
-def run_npmpc(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = "ipopt", oracle: str = "alloy") -> Path:
+def run_npmpc(*, smoke: bool, out_dir: Path, cli_args: list[str], solver: str = "ipopt", oracle: str = "scaly") -> Path:
   from benchmarks.problems.npmpc import PHI_LIMIT, PLANT_SUBSTEPS, TORQUE_LIMIT
   from benchmarks.problems.npmpc.closed_loop import EpisodeConfig, run_episode, settling_step, upright_error
 

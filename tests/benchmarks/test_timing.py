@@ -13,7 +13,7 @@ def test_modes_derive_startup_and_exclude_first_step(monkeypatch):
   for _ in range(3):
     timing.start_step()
     timing.end_step()
-  summary = {"problem": "synthetic", "solver": "ipopt", "oracle": "alloy", **timing.summary()}
+  summary = {"problem": "synthetic", "solver": "ipopt", "oracle": "scaly", **timing.summary()}
   jit, prebuilt = mode_rows(summary)
   assert jit["time_to_first_solve_ms"] == pytest.approx(130.0)
   assert prebuilt["time_to_first_solve_ms"] == pytest.approx(30.0)
@@ -28,7 +28,7 @@ def test_one_step_has_no_steady_state_sample():
   timing.prepared()
   timing.start_step()
   timing.end_step()
-  summary = {"problem": "synthetic", "solver": "ipopt", "oracle": "alloy", **timing.summary()}
+  summary = {"problem": "synthetic", "solver": "ipopt", "oracle": "scaly", **timing.summary()}
   assert all(row["per_step_ms"] is None for row in mode_rows(summary))
 
 
@@ -52,7 +52,7 @@ def test_interpreted_casadi_mode_solves_and_records_stats():
   assert solver.last_stats.status.value == 0
   assert solver.last_stats.t_total > 0
   assert solver.last_stats.n_eval_f > 0
-  from alloy.utils.env import shared_lib_ext
+  from scaly.utils.env import shared_lib_ext
 
   from pathlib import Path
 
@@ -70,7 +70,7 @@ def test_repeated_modes_report_dispersion_and_missing_samples(tmp_path):
     summary = {
       "problem": "synthetic",
       "solver": "ipopt",
-      "oracle": "alloy",
+      "oracle": "scaly",
       "build_ms": 100.0,
       "first_solve_ms": first,
       "steady_step_ms": 5.0 if first is not None else None,
@@ -102,8 +102,8 @@ def test_failed_episode_keeps_unavailable_mode_rows(tmp_path, monkeypatch, excep
 
   monkeypatch.setattr(closed_loop, "_run", fail)
   with pytest.raises(exception, match="synthetic solve failure"):
-    closed_loop.run("synthetic", smoke=True, solver="ipopt", oracle="alloy", out_dir=tmp_path, cli_args=[])
-  with (tmp_path / "synthetic" / "ipopt+alloy" / "modes.csv").open(newline="") as stream:
+    closed_loop.run("synthetic", smoke=True, solver="ipopt", oracle="scaly", out_dir=tmp_path, cli_args=[])
+  with (tmp_path / "synthetic" / "ipopt+scaly" / "modes.csv").open(newline="") as stream:
     rows = list(csv.DictReader(stream))
   assert len(rows) == 2
   assert all(row["time_to_first_solve_ms"] == row["per_step_ms"] == "" for row in rows)
@@ -111,20 +111,20 @@ def test_failed_episode_keeps_unavailable_mode_rows(tmp_path, monkeypatch, excep
 
 @pytest.mark.solver("ipopt")
 def test_prepared_solver_never_compiles_during_first_solve(tmp_path, monkeypatch):
-  import alloy as al
+  import scaly as sc
   import numpy as np
-  from alloy.codegen import jit
+  from scaly.codegen import jit
   from benchmarks.harness import solve_problem
 
-  monkeypatch.setenv("ALLOY_CACHE_DIR", str(tmp_path))
+  monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
 
-  @al.problem(vars=al.L("x", 1), params=al.L("target", 1))
+  @sc.problem(vars=sc.L("x", 1), params=sc.L("target", 1))
   def problem(x, target):
-    return al.ProblemSpec(minimize=((x - target) ** 2).sum())
+    return sc.ProblemSpec(minimize=((x - target) ** 2).sum())
 
-  solver = al.solver(problem, "ipopt", name="mode_warmup", options={"print_level": 0, "sb": "yes"})
-  x = al.sym("diagnostic_x", 1)
-  diagnostic = al.Function._from_exprs("mode_diagnostic", [x], [x.sin()], ["x"], ["y"])
+  solver = sc.solver(problem, "ipopt", name="mode_warmup", options={"print_level": 0, "sb": "yes"})
+  x = sc.sym("diagnostic_x", 1)
+  diagnostic = sc.Function._from_exprs("mode_diagnostic", [x], [x.sin()], ["x"], ["y"])
   setattr(solver, "_benchmark_base", diagnostic)
   timing = SolveTiming()
   timing.prepared(solver)

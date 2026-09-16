@@ -17,7 +17,7 @@ import numpy as np
 
 from benchmarks.harness.timing import SolveTiming
 
-from alloy import SolverStats
+from scaly import SolverStats
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.chain import (
   NU,
@@ -133,7 +133,7 @@ def run_episode(
   *,
   smoke: bool = False,
   solver: str = "ipopt",
-  oracle: str = "alloy",
+  oracle: str = "scaly",
 ) -> ClosedLoopEpisode:
   """Run one deterministic model-in-the-loop episode.
 
@@ -146,9 +146,9 @@ def run_episode(
   config = config if config is not None else (ClosedLoopConfig.smoke() if smoke else ClosedLoopConfig.canonical())
   nx, nz = n_state(config.n_masses), n_state(config.n_masses) + NU
   timing = SolveTiming()
-  if (solver, oracle) == ("ipopt", "alloy"):
+  if (solver, oracle) == ("ipopt", "scaly"):
     controller = chain_nlp(config.n_masses, config.horizon)
-  elif (solver, oracle) == ("sqp", "alloy"):
+  elif (solver, oracle) == ("sqp", "scaly"):
     controller = chain_nlp(config.n_masses, config.horizon, solver="sqp")
   elif (solver, oracle) == ("sqp", "casadi"):
     from benchmarks.problems.chain import ca_chain_sqp

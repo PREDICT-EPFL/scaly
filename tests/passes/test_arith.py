@@ -7,20 +7,20 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
-import alloy as al
-from alloy.ir import program as p
-from alloy.ir.expr import topo
-from alloy.ir.program import ProgramNode, ProgramOp
-from alloy.ir.types import dtypes
-from alloy.passes.arith import fold_program
-from alloy.passes.lowering import lower_function, main_proc
-from alloy.passes.program._common import _walk
-from alloy.passes.program.fold_arith import fold_arith
+import scaly as sc
+from scaly.ir import program as p
+from scaly.ir.expr import topo
+from scaly.ir.program import ProgramNode, ProgramOp
+from scaly.ir.types import dtypes
+from scaly.passes.arith import fold_program
+from scaly.passes.lowering import lower_function, main_proc
+from scaly.passes.program._common import _walk
+from scaly.passes.program.fold_arith import fold_arith
 
 DATA = np.array([0.5, -1.25, 2.0])
 
 # name -> (build, reference, operations that must disappear)
-CASES: dict[str, tuple[Callable[[al.Expr], al.Expr], Callable[[np.ndarray], np.ndarray], set[str]]] = {
+CASES: dict[str, tuple[Callable[[sc.Expr], sc.Expr], Callable[[np.ndarray], np.ndarray], set[str]]] = {
   "add_zero": (lambda x: x + 0.0, lambda v: v, {"add"}),
   "zero_add": (lambda x: 0.0 + x, lambda v: v, {"add"}),
   "sub_zero": (lambda x: x - 0.0, lambda v: v, {"sub"}),
@@ -45,13 +45,13 @@ CASES: dict[str, tuple[Callable[[al.Expr], al.Expr], Callable[[np.ndarray], np.n
   "minus_one_mul": (lambda x: -1.0 * x, lambda v: -v, {"mul"}),
   "pow_zero": (lambda x: x**0.0, lambda v: np.ones_like(v), {"pow"}),
   "pow_two": (lambda x: x**2.0, lambda v: v * v, {"pow"}),
-  "constants": (lambda x: x + al.const(3.0) / al.const(2.0), lambda v: v + 1.5, {"div"}),
-  "uniform_tensor": (lambda x: x * al.const([1.0, 1.0, 1.0]) + al.const([0.0, 0.0, 0.0]), lambda v: v, {"mul", "add"}),
+  "constants": (lambda x: x + sc.const(3.0) / sc.const(2.0), lambda v: v + 1.5, {"div"}),
+  "uniform_tensor": (lambda x: x * sc.const([1.0, 1.0, 1.0]) + sc.const([0.0, 0.0, 0.0]), lambda v: v, {"mul", "add"}),
 }
 
 
-def _function(name: str, x: al.Expr, y: al.Expr) -> al.Function:
-  return al.Function._from_exprs(name, [x], [y], ["x"], ["y"])
+def _function(name: str, x: sc.Expr, y: sc.Expr) -> sc.Function:
+  return sc.Function._from_exprs(name, [x], [y], ["x"], ["y"])
 
 
 def _proc_ops(proc: ProgramNode) -> set[str]:
@@ -61,8 +61,8 @@ def _proc_ops(proc: ProgramNode) -> set[str]:
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_expression_graph(name: str) -> None:
   build, reference, gone = CASES[name]
-  x = al.sym("x", 3)
-  y = al.simplify(build(x))
+  x = sc.sym("x", 3)
+  y = sc.simplify(build(x))
   assert not gone & {str(n.op) for n in topo([y])}
   np.testing.assert_allclose(_function(f"arith_expr_{name}", x, y)(DATA), reference(DATA), rtol=1e-15, atol=0)
 
@@ -70,7 +70,7 @@ def test_expression_graph(name: str) -> None:
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_scalarized_procedure(name: str) -> None:
   build, reference, gone = CASES[name]
-  x = al.sym("x", 3)
+  x = sc.sym("x", 3)
   fn = _function(f"arith_scalar_{name}", x, build(x).scalar())
   proc = main_proc(lower_function(fn))
   assert proc.attrs.get("scalarized")
@@ -81,7 +81,7 @@ def test_scalarized_procedure(name: str) -> None:
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_loop_body(name: str) -> None:
   build, reference, gone = CASES[name]
-  x = al.sym("x", 3)
+  x = sc.sym("x", 3)
   fn = _function(f"arith_loop_{name}", x, build(x).block())
   proc = main_proc(lower_function(fn))
   assert not proc.attrs.get("scalarized") and "for" in _proc_ops(proc)
@@ -90,8 +90,8 @@ def test_loop_body(name: str) -> None:
 
 
 def test_mixed_constant_tensor_folds_per_element_only_where_the_element_is_known() -> None:
-  x = al.sym("x", 3)
-  build = lambda hint: (x * al.const([1.0, 0.0, 2.0]) + al.const([0.0, 1.0, 0.0]) * x.sin()).with_lowering(hint)
+  x = sc.sym("x", 3)
+  build = lambda hint: (x * sc.const([1.0, 0.0, 2.0]) + sc.const([0.0, 1.0, 0.0]) * x.sin()).with_lowering(hint)
   scalar = _function("mixed_scalar", x, build("scalar"))
   ops = [n.op for stmt in main_proc(lower_function(scalar)).args[1:] for n in _walk(stmt)]
   assert ops.count(ProgramOp.MUL) == 1 and ops.count(ProgramOp.SIN) == 1
@@ -118,21 +118,21 @@ def test_int64_index_arithmetic_folds_with_c_truncation() -> None:
 def test_known_invalid_constants_stay_runtime_operations() -> None:
   zero = p.const_float(0.0)
   assert fold_program(ProgramNode(ProgramOp.DIV, (zero, zero))).op == ProgramOp.DIV
-  x = al.sym("x", 2)
-  kept = al.simplify(al.const([0.0, 1.0]) / al.const([0.0, 0.0]))
-  assert kept.op == al.ExprOp.DIV
-  assert al.simplify(al.const(0.0) / al.const(0.0)).op == al.ExprOp.DIV
-  assert al.simplify(al.const(1000.0).exp()).op == al.ExprOp.EXP
-  assert al.simplify(al.const(0.0) / x).op == al.ExprOp.CONST
-  fn = _function("invalid_loop", x, (x + al.const(0.0) / al.const(0.0)).block())
+  x = sc.sym("x", 2)
+  kept = sc.simplify(sc.const([0.0, 1.0]) / sc.const([0.0, 0.0]))
+  assert kept.op == sc.ExprOp.DIV
+  assert sc.simplify(sc.const(0.0) / sc.const(0.0)).op == sc.ExprOp.DIV
+  assert sc.simplify(sc.const(1000.0).exp()).op == sc.ExprOp.EXP
+  assert sc.simplify(sc.const(0.0) / x).op == sc.ExprOp.CONST
+  fn = _function("invalid_loop", x, (x + sc.const(0.0) / sc.const(0.0)).block())
   assert "div" in _proc_ops(main_proc(lower_function(fn)))
   assert np.isnan(fn(np.ones(2))).all()
 
 
 def test_integer_constant_evaluation_refuses_values_outside_the_dtype() -> None:
-  from alloy.ir.program import ProgramNode, ProgramOp, const_int
-  from alloy.ir.types import dtypes
-  from alloy.passes.arith import fold_program
+  from scaly.ir.program import ProgramNode, ProgramOp, const_int
+  from scaly.ir.types import dtypes
+  from scaly.passes.arith import fold_program
 
   big = ProgramNode(ProgramOp.MUL, (const_int(1 << 40), const_int(1 << 40)), dtype=dtypes.int64)
   assert fold_program(big).op == ProgramOp.MUL

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-import alloy as al
+import scaly as sc
 
 NX = 4
 NU = 2
@@ -90,7 +90,7 @@ def _continuous_dynamics(x, u, params):
   beta = 0.5 * delta
   vx = v * beta.cos()
   lr = 0.5 * wheelbase
-  return al.stack(
+  return sc.stack(
     [
       v * (phi + beta).cos(),
       v * (phi + beta).sin(),
@@ -109,28 +109,28 @@ def _rk4(x, u, params):
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@al.function(al.G(al.L("z", NZ), al.L("p", NX)), al.L("eq", ...), name="race_car_eq_initial")
-def eq_initial(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+@sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_initial")
+def eq_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   z, p = inputs
   return z[:NX] - p[:NX]
 
 
-@al.function(al.G(al.L("z", NZ), al.L("znext", NZ), al.L("params", N_PARAMS)), al.L("eq", ...), name="race_car_eq_interstage")
-def eq_interstage(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
+@sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("params", N_PARAMS)), sc.L("eq", ...), name="race_car_eq_interstage")
+def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   z, znext, params = inputs
   return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
 
 
-# TODO(API-1): Replace this horizon-specialized builder with an ``@al.function`` template.
-def race_car_eq_function(horizon: int) -> al.Function:
+# TODO(API-1): Replace this horizon-specialized builder with an ``@sc.function`` template.
+def race_car_eq_function(horizon: int) -> sc.Function:
   """Build the multiple-shooting equality residual for one prediction horizon."""
 
-  @al.function(
-    al.G(al.L("z", NZ * (horizon + 1)), al.L("p", al.TensorType((n_param(horizon),), diff=False))),
-    al.L("eq", ...),
+  @sc.function(
+    sc.G(sc.L("z", NZ * (horizon + 1)), sc.L("p", sc.TensorType((n_param(horizon),), diff=False))),
+    sc.L("eq", ...),
     name=f"race_car_eq_N{horizon}",
   )
-  def equality(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+  def equality(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     params = p[NX * (horizon + 1) :]
     parts = [eq_initial((z[:NZ], p[:NX]))]
@@ -138,19 +138,19 @@ def race_car_eq_function(horizon: int) -> al.Function:
       zi = z[i * NZ : (i + 1) * NZ]
       znext = z[(i + 1) * NZ : (i + 2) * NZ]
       parts.append(eq_interstage((zi, znext, params)))
-    return al.concat(parts)
+    return sc.concat(parts)
 
   return equality
 
 
-def _race_car_eq_vmap_expr(z: al.Expr, p: al.Expr, horizon: int) -> al.Expr:
+def _race_car_eq_vmap_expr(z: sc.Expr, p: sc.Expr, horizon: int) -> sc.Expr:
   initial = eq_initial((z[:NZ], p[:NX]))
-  mapped = al.vmap(
+  mapped = sc.vmap(
     eq_interstage,
     length=horizon,
     inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
   )
-  return al.concat([initial, mapped])
+  return sc.concat([initial, mapped])
 
 
 def race_car_constraint_jac_dense_reference(horizon: int, z: np.ndarray, p: np.ndarray) -> np.ndarray:

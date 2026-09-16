@@ -113,7 +113,7 @@ uses the same reachability analysis after splitting callees.
 
 ### Arithmetic semantics
 
-Alloy applies algebraic simplifications without a math-mode option. Expression simplification
+Scaly applies algebraic simplifications without a math-mode option. Expression simplification
 and scalar expansion can remove neutral elements, multiply by zero, cancel equal symbolic terms,
 and simplify constant powers. For example, expression simplification can replace `x / x` with
 one, and scalar expansion can replace `0 / x` with zero. The available rules and known constants
@@ -132,7 +132,7 @@ permit removal of dtype rounding boundaries.
 
 The scalarization pass keeps reduction accumulation order. This does not promise bit-identical
 results across scalarized and loopy code: emitted expression trees and the selected C compiler
-flags can also affect rounding. Alloy does not enable `-ffast-math` by default.
+flags can also affect rounding. Scaly does not enable `-ffast-math` by default.
 
 ### Loopy-code optimizations
 
@@ -189,7 +189,7 @@ their timing across writes and calls. Generated names reserve existing C identif
 ## Deep expressions
 
 Depth in your expression does not become depth on the Python stack. The Program IR passes and the
-C renderer walk node graphs iteratively: rewrites go through the shared driver `alloy.ir.match.rewrite`,
+C renderer walk node graphs iteratively: rewrites go through the shared driver `scaly.ir.match.rewrite`,
 which uses an explicit stack and one identity-keyed memo, and the remaining traversals
 (`_max_load_executions`, `_count_buf_loads`, the scalarizer's value substitution, `_emit_scalar`)
 keep their own explicit stacks. A left fold of several thousand chained scalar operations lowers,
@@ -201,7 +201,7 @@ The generated C stays bounded too. Clang caps bracket nesting at 256, so a fused
 into scalar temporaries. Store values, indices, and call offsets use the same depth bound.
 Range expressions stay unchanged so start, stop, and step retain their evaluation frequency;
 the depth bound does not apply to hand-built deep range expressions. Depth is still cheaper to avoid than to render: a wide flat
-reduction (`al.dot(al.const(weights), al.stack(residuals) ** 2)`) or a pairwise sum reads better in
+reduction (`sc.dot(sc.const(weights), sc.stack(residuals) ** 2)`) or a pairwise sum reads better in
 the generated source than a long fold, but neither is required for correctness any more.
 
 What still recurses is proportional to statement nesting, not expression depth: `FOR` bodies in
@@ -214,7 +214,7 @@ Every step above is observable. Mark a function, call it, and the recorder captu
 graph, the normalized outputs of each reached Function, the lowered program, the result of each individual pass, and the generated C:
 
 ```python
-from alloy.viz import visualize, serve
+from scaly.viz import visualize, serve
 
 visualize(f)
 f(x_value)

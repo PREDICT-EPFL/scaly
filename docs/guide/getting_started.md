@@ -5,15 +5,15 @@ generated solver. Every numerical result comes from compiled C.
 
 ## Build expressions
 
-`al.sym` creates a named symbolic input and `al.const` creates a constant:
+`sc.sym` creates a named symbolic input and `sc.const` creates a constant:
 
 ```python
-import alloy as al
+import scaly as sc
 import numpy as np
 
-z = al.sym("z", 2)
-u = al.sym("u", 1)
-znext = z + 0.1 * al.concat([z[1:], u])
+z = sc.sym("z", 2)
+u = sc.sym("u", 1)
+znext = z + 0.1 * sc.concat([z[1:], u])
 ```
 
 Operations on an `Expr` build graph nodes. They do not evaluate Python values. Shapes and dtypes
@@ -21,7 +21,7 @@ are static, and arithmetic follows NumPy broadcasting.
 
 ```python
 print(znext.shape)       # (2,)
-print(al.format_expr(znext))
+print(sc.format_expr(znext))
 ```
 
 See [the expression dialect](../how_it_works/expr_ir.md#operations) for the full operation set.
@@ -32,17 +32,17 @@ A `Function` gives a graph a named boundary. Its input and output trees describe
 numerical calls.
 
 ```python
-@al.function(
-    al.G(al.L("z", 2), al.L("u", 1)),
-    al.L("znext", ...),
+@sc.function(
+    sc.G(sc.L("z", 2), sc.L("u", 1)),
+    sc.L("znext", ...),
 )
-def step(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+def step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, u = inputs
-    return z + 0.1 * al.concat([z[1:], u])
+    return z + 0.1 * sc.concat([z[1:], u])
 ```
 
-`al.L` declares one tensor. `al.G` groups trees. The body takes one value with the input structure
-and returns one value with the output structure. `...` asks Alloy to infer the output shape during
+`sc.L` declares one tensor. `sc.G` groups trees. The body takes one value with the input structure
+and returns one value with the output structure. `...` asks Scaly to infer the output shape during
 tracing.
 Run it numerically by calling it with its input tree:
 
@@ -51,8 +51,8 @@ z1 = step((np.array([1.0, 2.0]), np.array([0.5])))
 # array([1.2, 2.05])
 ```
 
-The input tree is an `al.G` of two leaves, so the call takes a 2-tuple. The output tree is a single
-`al.L`, so the result is that array itself and not a one-element tuple — see
+The input tree is an `sc.G` of two leaves, so the call takes a 2-tuple. The output tree is a single
+`sc.L`, so the result is that array itself and not a one-element tuple — see
 [a single leaf is unpacked](functions.md#a-single-leaf-is-unpacked).
 
 The first call lowers the graph, renders C, compiles a shared library, and stores it in the
@@ -62,18 +62,18 @@ Compose it symbolically by calling it with `Expr` leaves instead:
 ```python
 N = 20
 
-@al.function(
-    al.G(al.L("z0", 2), al.L("us", N)),
-    al.G(al.L("zN", ...), al.L("cost", ...)),
+@sc.function(
+    sc.G(sc.L("z0", 2), sc.L("us", N)),
+    sc.G(sc.L("zN", ...), sc.L("cost", ...)),
 )
-def rollout(inputs: tuple[al.Expr, al.Expr]) -> tuple[al.Expr, al.Expr]:
+def rollout(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     z, us = inputs
-    cost = al.const(0.0)
+    cost = sc.const(0.0)
     for k in range(N):
         u = us[k : k + 1]
-        cost = cost + al.sumsqr(z) + 0.1 * al.sumsqr(u)
+        cost = cost + sc.sumsqr(z) + 0.1 * sc.sumsqr(u)
         z = step((z, u))
-    return z, cost + 10.0 * al.sumsqr(z)
+    return z, cost + 10.0 * sc.sumsqr(z)
 ```
 
 One call spelling covers both: `step(...)` dispatches on the leaves it is given, to `numerical_call`
@@ -87,7 +87,7 @@ methods, and `vmap`.
 Named derivative wrappers return typed functions:
 
 ```python
-grad = al.gradient(rollout, "cost", "us")
+grad = sc.gradient(rollout, "cost", "us")
 
 gradient_value = grad((np.array([1.0, 0.0]), np.zeros(N)))
 ```
@@ -97,13 +97,13 @@ list to maintain.
 The common wrappers are:
 
 ```python
-al.gradient(fn, "f", "x")
-al.jacobian(fn, "y", "x")
-al.hessian(fn, "f", "x")
-al.sparse_jacobian(fn, "y", "x")
-al.sparse_hessian(fn, "f", "x")
-al.forward(fn, "y", "x")
-al.adjoint(fn, "y", "x")
+sc.gradient(fn, "f", "x")
+sc.jacobian(fn, "y", "x")
+sc.hessian(fn, "f", "x")
+sc.sparse_jacobian(fn, "y", "x")
+sc.sparse_hessian(fn, "f", "x")
+sc.forward(fn, "y", "x")
+sc.adjoint(fn, "y", "x")
 ```
 
 Differentiation is graph-to-graph. The result compiles, nests, and renders like any other
@@ -114,33 +114,33 @@ Differentiation is graph-to-graph. The result compiles, nests, and renders like 
 A `Problem` separates the mathematical model from the solver backend:
 
 ```python
-@al.problem(
-    vars=al.L("us", N),
-    params=al.L("z0", 2),
+@sc.problem(
+    vars=sc.L("us", N),
+    params=sc.L("z0", 2),
 )
-def shooting_problem(us: al.Expr, z0: al.Expr) -> al.ProblemSpec[al.Expr]:
+def shooting_problem(us: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     zN, cost = rollout((z0, us))
-    return al.ProblemSpec(
+    return sc.ProblemSpec(
         minimize=cost,
         eq=(zN,),
-        lb=al.const(np.full(N, -2.0)),
-        ub=al.const(np.full(N, 2.0)),
+        lb=sc.const(np.full(N, -2.0)),
+        ub=sc.const(np.full(N, 2.0)),
     )
 ```
 
-The objective is scalar. Equality groups are constrained to zero. Use `al.bounded` for one- or
+The objective is scalar. Equality groups are constrained to zero. Use `sc.bounded` for one- or
 two-sided inequality groups. Variable bounds have the declared variable structure.
 Choose a backend:
 
 ```python
-solve = al.solver(
+solve = sc.solver(
     shooting_problem,
     "ipopt",
     options={"print_level": 0},
 )
 ```
 
-IPOPT, PIQP, and alloy-sqp are discovered as plugins. PIQP is accepted only when Alloy can prove
+IPOPT, PIQP, and scaly-sqp are discovered as plugins. PIQP is accepted only when Scaly can prove
 the cost quadratic, the constraints affine, and the bounds independent of the variables.
 
 ## Call the solver
@@ -180,23 +180,23 @@ options and warm-start behavior.
 
 ## Preserve regular repetition
 
-The Python loop in `rollout` creates `N` call sites. When iterations are independent, `al.vmap`
+The Python loop in `rollout` creates `N` call sites. When iterations are independent, `sc.vmap`
 represents the repetition as one node and lowers it to a C loop:
 
 ```python
-@al.function(
-    al.G(al.L("z", 2), al.L("u", 1), al.L("znext", 2)),
-    al.L("defect", ...),
+@sc.function(
+    sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2)),
+    sc.L("defect", ...),
 )
-def defect(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
+def defect(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, u, znext = inputs
     return step((z, u)) - znext
 
-decision = al.sym("decision", 2 * (N + 1) + N)
+decision = sc.sym("decision", 2 * (N + 1) + N)
 states = decision[: 2 * (N + 1)]
 controls = decision[2 * (N + 1) :]
 
-defects = al.vmap(
+defects = sc.vmap(
     defect,
     N,
     [
@@ -216,7 +216,7 @@ with the local stage rather than an unrolled copy of every stage.
 The ahead-of-time command uses the same lowering and renderer as the numerical call:
 
 ```bash
-uv run -m alloy.codegen mymodule:solve -o generated/
+uv run -m scaly.codegen mymodule:solve -o generated/
 ```
 
 It writes one C source file and one header exposing the universal pointer-array ABI and typed C++

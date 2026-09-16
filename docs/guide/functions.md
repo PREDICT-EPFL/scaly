@@ -8,22 +8,22 @@ give ty enough information to reject a call with the wrong structure.
 
 Build trees from two constructors:
 
-- `al.L(name, shape)` declares one tensor.
+- `sc.L(name, shape)` declares one tensor.
 
-- `al.G(*trees)` groups two to eight trees and may be nested.
+- `sc.G(*trees)` groups two to eight trees and may be nested.
 
 An integer shape means a rank-1 tensor, `()` is a scalar, and a tuple is used as written. Pass a
 `TensorType` when you need an explicit dtype or differentiability flag.
 
 ```python
-import alloy as al
+import scaly as sc
 import numpy as np
 
-@al.function(
-    al.G(al.L("x", 3), al.L("A", (2, 3))),
-    al.G(al.L("sum", ...), al.L("projection", 2)),
+@sc.function(
+    sc.G(sc.L("x", 3), sc.L("A", (2, 3))),
+    sc.G(sc.L("sum", ...), sc.L("projection", 2)),
 )
-def features(inputs: tuple[al.Expr, al.Expr]) -> tuple[al.Expr, al.Expr]:
+def features(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     x, A = inputs
     return x.sum(), A @ x
 ```
@@ -41,7 +41,7 @@ must be unique within its tree.
 Call a `Function` with its declared input tree. The leaves decide what the call means:
 
 ```python
-symbolic = features((al.sym("x0", 3), al.sym("A0", (2, 3))))
+symbolic = features((sc.sym("x0", 3), sc.sym("A0", (2, 3))))
 numeric = features((np.ones(3), np.eye(2, 3)))
 
 symbolic_sum, symbolic_projection = symbolic
@@ -59,19 +59,19 @@ distinction is the point you are making:
 - `fn.numerical_call(tree)` always evaluates.
 
 A tree that mixes `Expr` and numerical leaves is an error rather than a guess. Wrap the constants
-in `al.const` to make the symbolic reading explicit.
+in `sc.const` to make the symbolic reading explicit.
 
 Structure is checked statically by ty and again at runtime. Shapes are checked at runtime because
 shapes are values in Python's type system.
 
 ## A single leaf is unpacked
 
-Only `al.G` introduces a tuple. A tree of one `al.L` *is* that leaf, so a one-leaf input takes the
+Only `sc.G` introduces a tuple. A tree of one `sc.L` *is* that leaf, so a one-leaf input takes the
 tensor itself and a one-leaf output returns the tensor itself:
 
 ```python
-@al.function(al.L("x", 3), al.L("scaled", ...))
-def scale(x: al.Expr) -> al.Expr:
+@sc.function(sc.L("x", 3), sc.L("scaled", ...))
+def scale(x: sc.Expr) -> sc.Expr:
     return 2.0 * x
 
 scale(np.ones(3))                      # L in, L out -> one array in, one array out
@@ -97,15 +97,15 @@ Grouping exists for Python readability and typing. The generated signature uses 
 order. These declarations therefore have the same flat input signature:
 
 ```python
-nested = al.G(
-    al.G(al.L("state", 4), al.L("control", 2)),
-    al.G(al.L("weights", 10), al.L("dt", ())),
+nested = sc.G(
+    sc.G(sc.L("state", 4), sc.L("control", 2)),
+    sc.G(sc.L("weights", 10), sc.L("dt", ())),
 )
-flat = al.G(
-    al.L("state", 4),
-    al.L("control", 2),
-    al.L("weights", 10),
-    al.L("dt", ()),
+flat = sc.G(
+    sc.L("state", 4),
+    sc.L("control", 2),
+    sc.L("weights", 10),
+    sc.L("dt", ()),
 )
 ```
 
@@ -116,12 +116,12 @@ Choose the grouping that matches the domain object passed by the caller.
 Calling a function with `Expr` leaves preserves the callee as a call in the graph:
 
 ```python
-@al.function(al.L("x", 3), al.L("square", ...))
-def square(x: al.Expr) -> al.Expr:
+@sc.function(sc.L("x", 3), sc.L("square", ...))
+def square(x: sc.Expr) -> sc.Expr:
     return x * x
 
-@al.function(al.L("x", 3), al.L("energy", ...))
-def energy(x: al.Expr) -> al.Expr:
+@sc.function(sc.L("x", 3), sc.L("energy", ...))
+def energy(x: sc.Expr) -> sc.Expr:
     return square(x).sum()
 ```
 
@@ -130,16 +130,16 @@ that boundary instead of copying the callee graph into every call site.
 
 ## Regular repetition: `vmap`
 
-Use `al.vmap` when every iteration applies the same function to a different slice. The mapping
+Use `sc.vmap` when every iteration applies the same function to a different slice. The mapping
 stays one node through differentiation and lowers to a C loop.
 
 ```python
-@al.function(al.L("x", 3), al.L("sum", ...))
-def reduce3(x: al.Expr) -> al.Expr:
+@sc.function(sc.L("x", 3), sc.L("sum", ...))
+def reduce3(x: sc.Expr) -> sc.Expr:
     return x.sum().reshape((1,))
 
-xs = al.sym("xs", 15)
-mapped = al.vmap(reduce3, 5, [(xs, 0, 3)])
+xs = sc.sym("xs", 15)
+mapped = sc.vmap(reduce3, 5, [(xs, 0, 3)])
 ```
 
 Each input specification is `(outer, start, stride)`. Iteration `i` reads a slice beginning at
@@ -150,12 +150,12 @@ source size.
 ## Inspect and verify
 
 ```python
-al.verify_expr(symbolic_projection)
-print(al.format_expr(symbolic_projection))
-print(al.render_expr_assembly(features))
+sc.verify_expr(symbolic_projection)
+print(sc.format_expr(symbolic_projection))
+print(sc.render_expr_assembly(features))
 ```
 
-Construction checks declarations and shapes. `al.verify_expr` checks the complete expression graph
+Construction checks declarations and shapes. `sc.verify_expr` checks the complete expression graph
 and raises `VerifyError` at the first invalid node.
 
 ## Device placement

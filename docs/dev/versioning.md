@@ -44,9 +44,9 @@ Every published package version has exactly one package-qualified Git tag, for
 example:
 
 ```text
-alloy-v0.1.0
-alloy-piqp-v0.1.0
-alloy-ipopt-v0.1.0
+scaly-v0.1.0
+scaly-piqp-v0.1.0
+scaly-ipopt-v0.1.0
 ```
 
 There is no additional repository-wide release tag. Several package tags may

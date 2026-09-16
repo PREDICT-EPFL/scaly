@@ -42,7 +42,7 @@ from .common import (
   sample_initial_states,
   write_json,
 )
-from .filters import AlloyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter, FilterStats, OpenLoopFilter, SafetyFilter
+from .filters import ScalyDTCBFSafetyFilter, CasadiDTCBFSafetyFilter, FilterStats, OpenLoopFilter, SafetyFilter
 
 PROBLEM = "unbumpercars"
 DEFAULT_OUT_DIR = CLOSED_LOOP_RESULTS
@@ -87,12 +87,12 @@ class Simulator:
 def make_filter(solver: str, oracle: str | None, loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig, weights):
   if (solver, oracle) == ("ipopt", "casadi"):
     return CasadiDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
-  if (solver, oracle) == ("ipopt", "alloy"):
-    return AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
-  if (solver, oracle) == ("sqp", "alloy"):
-    return AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp")
+  if (solver, oracle) == ("ipopt", "scaly"):
+    return ScalyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights)
+  if (solver, oracle) == ("sqp", "scaly"):
+    return ScalyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp")
   if (solver, oracle) == ("sqp", "casadi"):
-    return AlloyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp", oracle_provider="casadi")
+    return ScalyDTCBFSafetyFilter(loop_cfg, filt_cfg, weights, solver="sqp", oracle_provider="casadi")
   if (solver, oracle) == ("none", None):
     return OpenLoopFilter()
   raise ValueError(f"unsupported unbumpercars solver/oracle pair {solver!r}/{oracle!r}")
@@ -106,7 +106,7 @@ def run_one(
   filt_cfg: FilterConfig,
   weights,
   out_dir: Path,
-  dump_alloy_c: bool,
+  dump_scaly_c: bool,
 ):
   name = solver_oracle_name(solver, oracle)
   from benchmarks.harness.timing import SolveTiming
@@ -117,8 +117,8 @@ def run_one(
   sim = Simulator(initial_state, loop_cfg)
   impl_dir = out_dir / name
   impl_dir.mkdir(parents=True, exist_ok=True)
-  if dump_alloy_c and isinstance(safety_filter, AlloyDTCBFSafetyFilter):
-    safety_filter.dump_c(impl_dir / "alloy_c")
+  if dump_scaly_c and isinstance(safety_filter, ScalyDTCBFSafetyFilter):
+    safety_filter.dump_c(impl_dir / "scaly_c")
   states = sim.states
   state_traj = np.zeros((loop_cfg.steps + 1, loop_cfg.ncars, states.shape[1]), dtype=np.float64)
   desired_traj = np.zeros((loop_cfg.steps, loop_cfg.ncars, 2), dtype=np.float64)
@@ -384,7 +384,7 @@ def parse_args() -> argparse.Namespace:
     description="Closed-loop centralized DTCBF safety filter: the natively discrete MLP as both the plant and the filter's model by default."
   )
   p.add_argument("--solver", choices=["ipopt", "sqp", "none"], default="ipopt")
-  p.add_argument("--oracle", choices=["alloy", "casadi", "both"], help="oracle provider; defaults to casadi")
+  p.add_argument("--oracle", choices=["scaly", "casadi", "both"], help="oracle provider; defaults to casadi")
   p.add_argument(
     "--plant",
     choices=list(PLANT_MODELS),
@@ -416,7 +416,7 @@ def parse_args() -> argparse.Namespace:
     help="Use IPOPT's limited-memory Hessian approximation with either oracle provider instead of exact Lagrangian Hessians.",
   )
   p.add_argument("--eval-repeats", type=int, default=1)
-  p.add_argument("--dump-alloy-c", action="store_true")
+  p.add_argument("--dump-scaly-c", action="store_true")
   p.add_argument("--show", action="store_true")
   return p.parse_args()
 
@@ -427,7 +427,7 @@ def main() -> None:
     raise SystemExit("--solver none does not accept --oracle")
   if args.solver != "ipopt" and args.limited_memory_hessian:
     raise SystemExit("--limited-memory-hessian applies only to --solver ipopt")
-  oracles = [None] if args.solver == "none" else (["alloy", "casadi"] if args.oracle == "both" else [args.oracle or "casadi"])
+  oracles = [None] if args.solver == "none" else (["scaly", "casadi"] if args.oracle == "both" else [args.oracle or "casadi"])
   out_dir = result_dir(args.out_dir)
   weights = load_dt_mlp_weights() if args.filter_model == "dt" else load_ct_full_weights()
   loop_cfg = ClosedLoopConfig(
@@ -463,7 +463,7 @@ def main() -> None:
       f"[run] {name}  ncars={loop_cfg.ncars} steps={loop_cfg.steps} walls={loop_cfg.arena_avoidance}"
       f" plant={loop_cfg.plant} filter_model={filt_cfg.model}"
     )
-    result = run_one(args.solver, oracle, initial, loop_cfg, filt_cfg, weights, out_dir, args.dump_alloy_c)
+    result = run_one(args.solver, oracle, initial, loop_cfg, filt_cfg, weights, out_dir, args.dump_scaly_c)
     results[name] = result
     controller, min_dist, collisions = result[0], result[4], result[5]
     stats = controller.stats_history

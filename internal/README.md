@@ -12,7 +12,7 @@ instead.
   definition; read them for the reasoning, not for how anything works today. The exception is
   [`notes/refactorings.md`](notes/refactorings.md), which is forward-looking and maintained.
 
-For how alloy works now, see [`docs/how_it_works/architecture.md`](../docs/how_it_works/architecture.md).
+For how scaly works now, see [`docs/how_it_works/architecture.md`](../docs/how_it_works/architecture.md).
 
 ## What is in `notes/`
 

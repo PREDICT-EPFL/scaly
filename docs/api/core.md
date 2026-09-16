@@ -4,118 +4,118 @@ The expression graph and the types on it.
 
 ## Expressions
 
-::: alloy.ir.expr.Expr
+::: scaly.ir.expr.Expr
     options:
       show_source: false
       filters:
         - "!^_"
         - "!^(lowering|with_lowering|scalar|block|opaque|sym|const)$"
 
-::: alloy.ir.expr.Expr.sym
+::: scaly.ir.expr.Expr.sym
     options:
       show_source: false
       show_signature: false
       heading: "sym(name, shape=None, *, dtype=dtypes.float64, diff=True)"
 
-::: alloy.ir.expr.Expr.const
+::: scaly.ir.expr.Expr.const
     options:
       show_source: false
       show_signature: false
       heading: "const(value, *, dtype=None)"
 
-::: alloy.ir.expr.ExprOp
+::: scaly.ir.expr.ExprOp
 
-::: alloy.ir.expr.OpInfo
+::: scaly.ir.expr.OpInfo
 
 ## Functions
 
-::: alloy.function.model.Function
+::: scaly.function.model.Function
 
 
 ## Types
 
-::: alloy.ir.types.TensorType
+::: scaly.ir.types.TensorType
 
-::: alloy.ir.types.DType
+::: scaly.ir.types.DType
 
-::: alloy.ir.types.dtypes
+::: scaly.ir.types.dtypes
 
-::: alloy.ir.types.ScalarType
+::: scaly.ir.types.ScalarType
 
-::: alloy.ir.types.SparsityType
+::: scaly.ir.types.SparsityType
 
-::: alloy.ir.types.DeviceSpec
+::: scaly.ir.types.DeviceSpec
 
-::: alloy.ir.types.BackendSupport
+::: scaly.ir.types.BackendSupport
 
-::: alloy.ir.types.as_dtype
+::: scaly.ir.types.as_dtype
 
-::: alloy.ir.types.backend_supports
+::: scaly.ir.types.backend_supports
 
 ## Builders
 
-::: alloy.ir.expr.dot
+::: scaly.ir.expr.dot
 
-::: alloy.ir.expr.sumsqr
+::: scaly.ir.expr.sumsqr
 
-::: alloy.ir.expr.norm_2
+::: scaly.ir.expr.norm_2
 
-::: alloy.ir.expr.stack
+::: scaly.ir.expr.stack
     options:
       show_source: false
 
-::: alloy.ir.expr.concat
+::: scaly.ir.expr.concat
     options:
       show_source: false
 
-::: alloy.ir.expr.split
+::: scaly.ir.expr.split
 
-::: alloy.ir.expr.vec
+::: scaly.ir.expr.vec
 
-::: alloy.ir.expr.gather
+::: scaly.ir.expr.gather
     options:
       show_source: false
 
-::: alloy.ir.expr.scatter
+::: scaly.ir.expr.scatter
     options:
       show_source: false
 
-::: alloy.ir.expr.atan2
+::: scaly.ir.expr.atan2
 
-::: alloy.ir.expr.minimum
+::: scaly.ir.expr.minimum
 
-::: alloy.ir.expr.maximum
+::: scaly.ir.expr.maximum
 
-::: alloy.function.sugar.vmap
+::: scaly.function.sugar.vmap
     options:
       show_source: false
 
 ## Verification and rewriting
 
-::: alloy.ir.expr_spec.verify_expr
+::: scaly.ir.expr_spec.verify_expr
 
-::: alloy.ir.spec.Spec
+::: scaly.ir.spec.Spec
 
-::: alloy.ir.spec.Rule
+::: scaly.ir.spec.Rule
 
-::: alloy.ir.spec.VerifyError
+::: scaly.ir.spec.VerifyError
 
-::: alloy.ir.match.Pattern
+::: scaly.ir.match.Pattern
 
-::: alloy.ir.match.PatternMatcher
+::: scaly.ir.match.PatternMatcher
 
-::: alloy.ir.match.rewrite
+::: scaly.ir.match.rewrite
 
-::: alloy.passes.expr.simplify
+::: scaly.passes.expr.simplify
 
-::: alloy.passes.expr.cse
+::: scaly.passes.expr.cse
 
-::: alloy.passes.expr.cse_many
+::: scaly.passes.expr.cse_many
 
 ## Text
 
-::: alloy.ir.expr.format_expr
+::: scaly.ir.expr.format_expr
 
-::: alloy.ir.text.render_expr_assembly
+::: scaly.ir.text.render_expr_assembly
 
-::: alloy.ir.text.render_program_assembly
+::: scaly.ir.text.render_program_assembly

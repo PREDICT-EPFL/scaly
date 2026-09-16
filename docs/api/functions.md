@@ -2,55 +2,55 @@
 
 ## Declared trees
 
-::: alloy.function.tree.Tree
+::: scaly.function.tree.Tree
 
-::: alloy.function.tree.L
+::: scaly.function.tree.L
 
-::: alloy.function.tree.G
+::: scaly.function.tree.G
 
 ## The decorator
 
-::: alloy.function.api.function
+::: scaly.function.api.function
 
 ## Derivative requests
 
 Typed requests passed to `Function.factory`.
 
-::: alloy.function.factory.DerivSpec
+::: scaly.function.factory.DerivSpec
 
-::: alloy.function.factory.Jac
+::: scaly.function.factory.Jac
 
-::: alloy.function.factory.Grad
+::: scaly.function.factory.Grad
 
-::: alloy.function.factory.Hess
+::: scaly.function.factory.Hess
 
-::: alloy.function.factory.SpJac
+::: scaly.function.factory.SpJac
 
-::: alloy.function.factory.SpHess
+::: scaly.function.factory.SpHess
 
-::: alloy.function.factory.Fwd
+::: scaly.function.factory.Fwd
 
-::: alloy.function.factory.Adj
+::: scaly.function.factory.Adj
 
 ## Named wrappers
 
 The common derivative functions accept either an Expr and an Expr input, or a Function, an output
 name, and an input name.
 
-::: alloy.function.api.jacobian
+::: scaly.function.api.jacobian
 
-::: alloy.function.api.gradient
+::: scaly.function.api.gradient
 
-::: alloy.function.api.hessian
+::: scaly.function.api.hessian
 
-::: alloy.function.api.sparse_jacobian
+::: scaly.function.api.sparse_jacobian
 
-::: alloy.function.api.sparse_hessian
+::: scaly.function.api.sparse_hessian
 
-::: alloy.function.api.forward
+::: scaly.function.api.forward
 
-::: alloy.function.api.adjoint
+::: scaly.function.api.adjoint
 
-::: alloy.function.api.lagrangian_hessian
+::: scaly.function.api.lagrangian_hessian
 
-::: alloy.function.api.sparse_lagrangian_hessian
+::: scaly.function.api.sparse_lagrangian_hessian

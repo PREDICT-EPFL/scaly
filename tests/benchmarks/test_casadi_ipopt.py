@@ -10,14 +10,14 @@ import pytest
 
 from benchmarks.harness.casadi_ipopt import CompiledCasadiIpopt, _transformed_nlpsol
 from benchmarks.harness.provenance import collect
-from alloy_ipopt import BUILD_CONFIG
+from scaly_ipopt import BUILD_CONFIG
 
 ca = pytest.importorskip("casadi")
 
 pytestmark = pytest.mark.solver("ipopt")
 
 
-def test_compiled_nlpsol_uses_alloy_ipopt_and_refreshes_outputs() -> None:
+def test_compiled_nlpsol_uses_scaly_ipopt_and_refreshes_outputs() -> None:
   x = ca.MX.sym("x", 2)
   p = ca.MX.sym("p")
   nlp = ca.Function("compiled_nlpsol_test", [x, p], [ca.sumsqr(x - p), ca.sum1(x)])

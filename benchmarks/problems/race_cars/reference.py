@@ -8,7 +8,7 @@ drifting away from it.
 
 Ported from ``minimal_tracking_nmpc/motion_planning.py``. The one change is the
 spline fit: the original solves the equality-constrained QP with OSQP through
-``qpsolvers``/``scipy.sparse``, which alloy does not depend on. The same problem
+``qpsolvers``/``scipy.sparse``, which scaly does not depend on. The same problem
 is solved here as a dense KKT system, which is both dependency-free and more
 accurate (continuity residuals ~1e-14 instead of ~1e-9).
 """

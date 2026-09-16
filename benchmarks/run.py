@@ -20,11 +20,11 @@ if str(ROOT) not in sys.path:
 
 import numpy as np
 
-import alloy as al
-from alloy.ir.expr import substitute
-from alloy.codegen.aot import render_c_module
-from alloy.solvers.graph import solver_compile_flags
-from alloy.solvers.paths import solver_loadable
+import scaly as sc
+from scaly.ir.expr import substitute
+from scaly.codegen.aot import render_c_module
+from scaly.solvers.graph import solver_compile_flags
+from scaly.solvers.paths import solver_loadable
 from benchmarks.harness import CLOSED_LOOP_PAIRS, SMOKE_RESULTS, SWEEP_RESULTS, closed_loop_results_root, gbench, solver_oracle_name
 from benchmarks.harness.closed_loop import run as run_closed_loop
 from benchmarks.harness.recording import layout_path
@@ -57,71 +57,71 @@ NX, NU, N_OBSTACLES = 4, 4, 3
 SAFETY_MARGIN, ALPHA = 0.5, 1.0
 
 
-def _qp_filter() -> al.Function:
+def _qp_filter() -> sc.Function:
   obstacles = np.array([[1.0, 1.0], [-1.0, 1.5], [0.0, -2.0]], dtype=np.float64)
 
-  @al.function(al.G(al.L("x", (NX,)), al.L("u_ref", (NU,))), al.L("u", ...), name="smoke_safety_filter_qp")
+  @sc.function(sc.G(sc.L("x", (NX,)), sc.L("u_ref", (NU,))), sc.L("u", ...), name="smoke_safety_filter_qp")
   def safety_filter_qp(inputs):
     x, u_ref = inputs
-    cars = al.stack([al.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
+    cars = sc.stack([sc.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
     rows, bias = [], []
     for car in range(2):
       for obstacle in obstacles:
-        diff = cars[car] - al.const(obstacle)
+        diff = cars[car] - sc.const(obstacle)
         grad = 2.0 * diff
-        rows.append(al.stack([grad[d] if k == car else al.const(0.0) for k in range(2) for d in range(2)], axis=0))
-        bias.append(ALPHA * (al.dot(diff, diff) - al.const(SAFETY_MARGIN**2)))
+        rows.append(sc.stack([grad[d] if k == car else sc.const(0.0) for k in range(2) for d in range(2)], axis=0))
+        bias.append(ALPHA * (sc.dot(diff, diff) - sc.const(SAFETY_MARGIN**2)))
 
-    @al.problem(vars=al.L("u", NU), name="smoke_safety_filter_qp_problem")
+    @sc.problem(vars=sc.L("u", NU), name="smoke_safety_filter_qp_problem")
     def problem(u):
-      return al.ProblemSpec(
-        minimize=0.5 * al.dot(u, u) - al.dot(u_ref, u),
-        ineq=(al.bounded(al.stack(rows, axis=0) @ u, lo=-al.stack(bias, axis=0), name="obstacles"),),
+      return sc.ProblemSpec(
+        minimize=0.5 * sc.dot(u, u) - sc.dot(u_ref, u),
+        ineq=(sc.bounded(sc.stack(rows, axis=0) @ u, lo=-sc.stack(bias, axis=0), name="obstacles"),),
       )
 
-    solve = al.solver(problem, "piqp", name="smoke_safety_filter_qp")
+    solve = sc.solver(problem, "piqp", name="smoke_safety_filter_qp")
     params = problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names))
-    return solve.symbolic_call((al.const(np.zeros(NU)), al.const(np.zeros(NU)), al.const(np.zeros(0)), al.const(np.zeros(len(bias))), params))[0]
+    return solve.symbolic_call((sc.const(np.zeros(NU)), sc.const(np.zeros(NU)), sc.const(np.zeros(0)), sc.const(np.zeros(len(bias))), params))[0]
 
   return safety_filter_qp
 
 
-def _nlp_filter() -> al.Function:
+def _nlp_filter() -> sc.Function:
   obstacles = np.array([[1.0, 1.0], [-1.0, 1.5], [0.0, -2.0]], dtype=np.float64)
 
-  @al.function(al.G(al.L("x", (NX,)), al.L("u_ref", (NU,))), al.L("u", ...), name="smoke_safety_filter_nlp")
+  @sc.function(sc.G(sc.L("x", (NX,)), sc.L("u_ref", (NU,))), sc.L("u", ...), name="smoke_safety_filter_nlp")
   def safety_filter_nlp(inputs):
     x, u_ref = inputs
-    u = al.sym("u", NU)
-    cars = al.stack([al.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
+    u = sc.sym("u", NU)
+    cars = sc.stack([sc.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
     rows = []
     for car in range(2):
       for obstacle in obstacles:
-        diff = cars[car] - al.const(obstacle)
+        diff = cars[car] - sc.const(obstacle)
         grad = 2.0 * diff
-        rows.append(grad[0] * u[2 * car] + grad[1] * u[2 * car + 1] + ALPHA * (al.dot(diff, diff) - al.const(SAFETY_MARGIN**2)))
+        rows.append(grad[0] * u[2 * car] + grad[1] * u[2 * car + 1] + ALPHA * (sc.dot(diff, diff) - sc.const(SAFETY_MARGIN**2)))
 
-    @al.problem(vars=al.L("u", (NU,)), name="smoke_safety_filter_problem")
+    @sc.problem(vars=sc.L("u", (NU,)), name="smoke_safety_filter_problem")
     def problem(variable):
-      return al.ProblemSpec(
-        minimize=0.5 * al.dot(variable - u_ref, variable - u_ref),
+      return sc.ProblemSpec(
+        minimize=0.5 * sc.dot(variable - u_ref, variable - u_ref),
         ineq=(
-          al.bounded(
-            al.stack([substitute(row, {u: variable}) for row in rows], axis=0),
-            lo=al.const(np.zeros(len(rows))),
-            hi=al.const(np.full(len(rows), 1e30)),
+          sc.bounded(
+            sc.stack([substitute(row, {u: variable}) for row in rows], axis=0),
+            lo=sc.const(np.zeros(len(rows))),
+            hi=sc.const(np.full(len(rows), 1e30)),
             name="obstacles",
           ),
         ),
       )
 
-    nlp = al.solver(problem, "ipopt", name="smoke_safety_filter_nlp")
+    nlp = sc.solver(problem, "ipopt", name="smoke_safety_filter_nlp")
     return nlp.symbolic_call(
       (
-        al.const(np.zeros(NU)),
-        al.const(np.zeros(NU)),
-        al.const(np.zeros(0)),
-        al.const(np.zeros(len(rows))),
+        sc.const(np.zeros(NU)),
+        sc.const(np.zeros(NU)),
+        sc.const(np.zeros(0)),
+        sc.const(np.zeros(len(rows))),
         problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names)),
       )
     )[0]
@@ -183,7 +183,7 @@ def _solver_call_smoke(required: bool) -> str | None:
 
 
 def _benchmark_smoke() -> None:
-  for backend in ("alloy", "casadi_sx", "casadi_call_mx", "casadi_map_sx"):
+  for backend in ("scaly", "casadi_sx", "casadi_call_mx", "casadi_map_sx"):
     result, info = run_cell(
       "race_cars",
       5,
@@ -204,15 +204,15 @@ def _benchmark_smoke() -> None:
     assert info["nnz"] < info["n_rows"] * info["n_cols"], "race_cars Hessian must be sparse"
   race_jac = []
   for size in (5, 50):
-    out_dir = SMOKE_RESULTS / "race_cars" / f"alloy_jac_N{size}"
+    out_dir = SMOKE_RESULTS / "race_cars" / f"scaly_jac_N{size}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    race_jac.append(build_kernel("race_cars_jac", size, "alloy", out_dir))
+    race_jac.append(build_kernel("race_cars_jac", size, "scaly", out_dir))
   assert race_jac[1]["source_lines"] < 1.2 * race_jac[0]["source_lines"], (
     f"race_cars Jacobian loop preservation regressed: N=50 has {race_jac[1]['source_lines']} lines, N=5 has {race_jac[0]['source_lines']}"
   )
   assert int(race_jac[1]["w_size"]) <= 3 * 2100, f"race_cars Jacobian workspace regressed: N=50 needs {race_jac[1]['w_size']} doubles"
   print(f"smoke race_cars Jacobian loop preservation: ok ({race_jac[0]['source_lines']} lines at N=5, {race_jac[1]['source_lines']} at N=50)")
-  for backend, size in (("alloy", 5), ("casadi_map_sx", 5), ("casadi_sx", 3)):
+  for backend, size in (("scaly", 5), ("casadi_map_sx", 5), ("casadi_sx", 3)):
     result, info = run_cell(
       "chain",
       size,
@@ -232,15 +232,15 @@ def _benchmark_smoke() -> None:
   assert chain.n_state(5) == 21 and chain.NU == 3
   chain_jac = []
   for size in (5, 33):
-    out_dir = SMOKE_RESULTS / "chain" / f"alloy_jac_M{size}"
+    out_dir = SMOKE_RESULTS / "chain" / f"scaly_jac_M{size}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    chain_jac.append(build_kernel("chain_jac", size, "alloy", out_dir))
+    chain_jac.append(build_kernel("chain_jac", size, "scaly", out_dir))
   assert chain_jac[1]["source_lines"] < 1.2 * chain_jac[0]["source_lines"], (
     f"chain Jacobian loop preservation regressed: M=33 has {chain_jac[1]['source_lines']} lines, M=5 has {chain_jac[0]['source_lines']}"
   )
   print(f"smoke chain Jacobian loop preservation: ok ({chain_jac[0]['source_lines']} lines at M=5, {chain_jac[1]['source_lines']} at M=33)")
   print(f"smoke chain Jacobian workspace (record only): {chain_jac[0]['w_size']} doubles at M=5, {chain_jac[1]['w_size']} at M=33")
-  for backend in ("alloy", "casadi_mx"):
+  for backend in ("scaly", "casadi_mx"):
     result, info = run_cell(
       "unbumpercars",
       2,
@@ -269,7 +269,7 @@ def _npmpc_smoke() -> None:
   forms.
   """
   infos = []
-  for backend in ("alloy", "casadi_sx"):
+  for backend in ("scaly", "casadi_sx"):
     result, info = run_cell(
       "npmpc_jac",
       6,
@@ -288,9 +288,9 @@ def _npmpc_smoke() -> None:
     assert info["nnz"] > 0 and info["w_size"] is not None and info["nnz"] < info["n_rows"] * info["n_cols"]
     infos.append(info)
   assert npmpc.n_dec(npmpc.HORIZON) == 65 and npmpc.Decoder().n_pw == 1396
-  out_dir = SMOKE_RESULTS / "npmpc" / "alloy_N100"
+  out_dir = SMOKE_RESULTS / "npmpc" / "scaly_N100"
   out_dir.mkdir(parents=True, exist_ok=True)
-  large = build_kernel("npmpc_jac", 100, "alloy", out_dir)
+  large = build_kernel("npmpc_jac", 100, "scaly", out_dir)
   assert large["source_lines"] < 1.2 * infos[0]["source_lines"], (
     f"npmpc loop preservation regressed: N=100 has {large['source_lines']} lines, N=6 has {infos[0]['source_lines']}"
   )
@@ -298,9 +298,9 @@ def _npmpc_smoke() -> None:
   # baseline 1600 doubles at N=100 (VMAP buffers scale linearly with the horizon); 3x headroom catches superlinear regressions
   assert int(large["w_size"]) <= 3 * 1600, f"npmpc workspace regressed: N=100 needs {large['w_size']} doubles (baseline 1600)"
   print(f"smoke npmpc workspace: ok ({infos[0]['w_size']} doubles at N=6, {large['w_size']} at N=100)")
-  wide_dir = out_dir.parent / "alloy_W128"
+  wide_dir = out_dir.parent / "scaly_W128"
   wide_dir.mkdir(parents=True, exist_ok=True)
-  wide = build_kernel("npmpc_decoder_jac", 128, "alloy", wide_dir)
+  wide = build_kernel("npmpc_decoder_jac", 128, "scaly", wide_dir)
   assert wide["source_lines"] < 1.2 * infos[0]["source_lines"], (
     f"npmpc decoder width leaked into source size: W=128 has {wide['source_lines']} lines, W=32 has {infos[0]['source_lines']}"
   )
@@ -309,20 +309,20 @@ def _npmpc_smoke() -> None:
   # it is the one that caught an unrolled objective: a cost built as a Python loop over stages grows
   # the Hessian source linearly and, past roughly 75 stages, exceeds the Program IR passes' recursion
   # depth. Scanning the cost keeps this constant, so the gate is on the horizon as well as the width.
-  hess_dirs = [SMOKE_RESULTS / "npmpc" / f"alloy_hess_N{n}" for n in (6, 100)]
+  hess_dirs = [SMOKE_RESULTS / "npmpc" / f"scaly_hess_N{n}" for n in (6, 100)]
   hess = []
   for out, size in zip(hess_dirs, (6, 100), strict=True):
     out.mkdir(parents=True, exist_ok=True)
-    hess.append(build_kernel("npmpc", size, "alloy", out))
+    hess.append(build_kernel("npmpc", size, "scaly", out))
   assert hess[1]["source_lines"] < 1.2 * hess[0]["source_lines"], (
     f"npmpc Hessian loop preservation regressed: N=100 has {hess[1]['source_lines']} lines, N=6 has {hess[0]['source_lines']}"
   )
   assert hess[0]["nnz"] < hess[1]["nnz"], "the Hessian pattern must grow with the horizon even though its source does not"
   print(f"smoke npmpc lagrangian hessian: ok ({hess[0]['source_lines']} lines at N=6, {hess[1]['source_lines']} at N=100)")
 
-  hess_wide_dir = SMOKE_RESULTS / "npmpc" / "alloy_hess_W128"
+  hess_wide_dir = SMOKE_RESULTS / "npmpc" / "scaly_hess_W128"
   hess_wide_dir.mkdir(parents=True, exist_ok=True)
-  hess_wide = build_kernel("npmpc_decoder", 128, "alloy", hess_wide_dir)
+  hess_wide = build_kernel("npmpc_decoder", 128, "scaly", hess_wide_dir)
   assert hess_wide["source_lines"] < 1.2 * hess[0]["source_lines"], (
     f"npmpc Hessian decoder width leaked into source size: W=128 has {hess_wide['source_lines']} lines, W=32 has {hess[0]['source_lines']}"
   )
@@ -333,7 +333,7 @@ def _problem_checks(problem: str) -> None:
   checks = importlib.import_module(f"benchmarks.problems.{problem}.checks")
   for name, outcome in checks.run_checks():
     print(f"smoke {problem}/{name}: {outcome}", flush=True)
-    if os.environ.get("ALLOY_REQUIRE_SOLVERS") == "1" and outcome.startswith("skipped:"):
+    if os.environ.get("SCALY_REQUIRE_SOLVERS") == "1" and outcome.startswith("skipped:"):
       raise RuntimeError(f"{problem}/{name} unexpectedly {outcome}")
 
 
@@ -374,7 +374,7 @@ def smoke(args) -> bool:
 
 
 def main() -> None:
-  parser = argparse.ArgumentParser(description="Alloy correctness-gated benchmark harness")
+  parser = argparse.ArgumentParser(description="Scaly correctness-gated benchmark harness")
   subparsers = parser.add_subparsers(dest="command", required=True)
   sweep_parser = subparsers.add_parser("sweep", help="run the scalability cell grid")
   sweep_parser.add_argument("--workloads", type=_csv, default=["race_cars", "unbumpercars", "chain", "npmpc", "npmpc_decoder"])
@@ -419,7 +419,7 @@ def main() -> None:
     "--problem", type=_csv, default=["unbumpercars"], help="comma-separated subset of chain, race_cars, unbumpercars, npmpc"
   )
   closed_loop_parser.add_argument("--solver", type=_csv, default=["ipopt"], help="comma-separated subset of ipopt, sqp, none (default: ipopt)")
-  closed_loop_parser.add_argument("--oracle", type=_csv, help="comma-separated subset of alloy, casadi; defaults to alloy")
+  closed_loop_parser.add_argument("--oracle", type=_csv, help="comma-separated subset of scaly, casadi; defaults to scaly")
   closed_loop_parser.add_argument("--smoke", action="store_true", help="use a short toolchain-check episode instead of the canonical point")
   closed_loop_parser.add_argument("--out-dir", type=Path)
   closed_loop_parser.add_argument("--casadi-interpreted", action="store_true", help="measure CasADi virtual-machine mode with its wheel IPOPT")
@@ -460,7 +460,7 @@ def main() -> None:
       parser.error("--headline requires --boost on or off")
     problems = _choices(args.problem, tuple(CLOSED_LOOP_PAIRS), parser, "--problem")
     solvers = _choices(args.solver, ("ipopt", "sqp", "none"), parser, "--solver")
-    oracles = _choices(args.oracle or ["alloy"], ("alloy", "casadi"), parser, "--oracle")
+    oracles = _choices(args.oracle or ["scaly"], ("scaly", "casadi"), parser, "--oracle")
     if solvers == ["none"] and args.oracle is not None:
       parser.error("--solver none does not accept --oracle")
     pairs = [(solver, oracle) for solver in solvers for oracle in ([None] if solver == "none" else oracles)]
@@ -516,7 +516,7 @@ def main() -> None:
             shutil.rmtree(repeat_root / problem / name, ignore_errors=True)
           cache.mkdir(parents=True)
           subprocess.run(
-            command, check=True, env={**os.environ, "ALLOY_CACHE_DIR": str(cache), "ALLOY_CASADI_IPOPT_CACHE": str(cache / "casadi-ipopt")}
+            command, check=True, env={**os.environ, "SCALY_CACHE_DIR": str(cache), "SCALY_CASADI_IPOPT_CACHE": str(cache / "casadi-ipopt")}
           )
           if args.headline:
             require_headline_settings(args.boost == "on")

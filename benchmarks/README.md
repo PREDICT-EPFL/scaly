@@ -1,6 +1,6 @@
 # Benchmarks
 
-This package owns Alloy's reproducible benchmark workloads and correctness-gated harness. Generated sources, binaries, logs, CSV files, and provenance live under `benchmarks/results/` and are not committed.
+This package owns Scaly's reproducible benchmark workloads and correctness-gated harness. Generated sources, binaries, logs, CSV files, and provenance live under `benchmarks/results/` and are not committed.
 
 ## Layout
 
@@ -16,7 +16,7 @@ the harness clones the pinned tag in `harness/gbench.py` and builds it into
 then links that static library by absolute path. The build takes a few seconds and is
 skipped once the header and library are in place. It stays inside the checkout, so
 parallel worktrees never read a prefix another one is still installing, and the
-alloy JIT cache under `~/.cache/alloy` keeps holding only what alloy itself compiles.
+scaly JIT cache under `~/.cache/scaly` keeps holding only what scaly itself compiles.
 Delete the directory to force a rebuild, and read `build.log` inside it if the build
 fails.
 
@@ -34,14 +34,14 @@ Smoke runs three groups, all on by default:
   (`problems/*/checks.py`). For `race_cars` that is the vendored track data, the
   spline reference generator, the parameter-tail order, a pin on the physical
   constants, the episode's shapes and bounds, the recorded scene, and the
-  Alloy-vs-CasADi trajectory agreement; for the chain of masses the dimensions and
+  Scaly-vs-CasADi trajectory agreement; for the chain of masses the dimensions and
   RK4 plant, the equality Jacobian against CasADi and a dense reference, the NLP
   objective against CasADi, the single end-mass reference behind both cost terms,
   the episode's shapes, and the recorded scene; for `unbumpercars` the
-  Alloy-vs-CasADi oracle, the parameter-tail order, the pair barrier's relative
+  Scaly-vs-CasADi oracle, the parameter-tail order, the pair barrier's relative
   degree, the discrete-MLP plant's three pieces and its reversed control order,
   both symbolic discrete-MLP prediction paths against a NumPy reference, per-step
-  Alloy-vs-CasADi solution agreement on a binding state, and the default
+  Scaly-vs-CasADi solution agreement on a binding state, and the default
   exact-Hessian rollout; for `npmpc` the vendored checkpoint and reference episode,
   every weight and bound read out of the reference implementation's own config file, the
   parameter-tail order, the terminal Riccati weight, the transcribed constraint rows, the
@@ -57,7 +57,7 @@ Smoke runs three groups, all on by default:
   SQP robustness work consumes. Gates needing IPOPT or CasADi report `skipped: ...`
   rather than passing silently.
 - `benchmarks` — Python and compiled-C derivative kernels against a dense reference,
-  plus sparsity, workspace, and loop-preservation invariants. Every Alloy cell evaluates the exact
+  plus sparsity, workspace, and loop-preservation invariants. Every Scaly cell evaluates the exact
   sparse Jacobian or Hessian and sparsity supplied by its solver descriptor. For `npmpc` the
   loop-preservation gate runs on two axes: the generated source must not grow with the
   horizon (the decoder uses VMAP, not per-stage unrolling) and must not grow with the
@@ -96,7 +96,7 @@ trajectory-agreement gate, while biasing one control term will.
 
 ```bash
 uv run benchmarks/run.py sweep
-uv run benchmarks/run.py sweep --workloads race_cars --sizes 1,5,10,50 --backends alloy,casadi_sx,casadi_mx,casadi_call_mx,casadi_map_sx
+uv run benchmarks/run.py sweep --workloads race_cars --sizes 1,5,10,50 --backends scaly,casadi_sx,casadi_mx,casadi_call_mx,casadi_map_sx
 uv run benchmarks/run.py sweep --out benchmarks/results/sweep/my-sweep.csv
 ```
 
@@ -133,11 +133,11 @@ collisions. Large car counts therefore remain measurable even when collision-fre
 placement cannot fit them. The closed-loop runner still requires collision-free initial states.
 The provenance records this input policy for every affected cell.
 
-The stage-based workloads default to Alloy and four CasADi encodings of the repeated dynamics
+The stage-based workloads default to Scaly and four CasADi encodings of the repeated dynamics
 stage: unrolled `SX`, unrolled `MX`, repeated calls to an elemental `MX` `Function`, and a serial map
 of an elemental `SX` `Function` in an `MX` outer graph. The objective and inequality expressions
 remain in the problem's canonical outer graph. The chain smoke tier uses literal `casadi_sx` at M=3 and mapped SX at M=5;
-full sweeps record compilation outcomes at each requested mass count. Unbumpercars defaults to Alloy, `SX`, and `MX` because its pairwise
+full sweeps record compilation outcomes at each requested mass count. Unbumpercars defaults to Scaly, `SX`, and `MX` because its pairwise
 formulation has no single repeated stage. If an explicit backend does not apply to a workload, the
 sweep records `not_applicable` and continues.
 
@@ -151,10 +151,10 @@ earlier runs.
 
 The CSV records floating-point and integer ABI workspace and the required lengths of the argument
 and result pointer arrays. `coloring_width` is specific to each backend and must not be compared across
-backends. For Alloy, it is the number of compressed tangent directions the generated
+backends. For Scaly, it is the number of compressed tangent directions the generated
 derivative actually executes. A structured Jacobian sums the independently executed directions from
 each formal or local batch; a sparse Hessian reports the global star-color count. CasADi leaves the
-field blank because its generated code does not expose its internal derivative count. Alloy rows
+field blank because its generated code does not expose its internal derivative count. Scaly rows
 group the mapped dispatch loops by trip count and report the family whose trip count times
 per-iteration arithmetic is largest: `dispatch_trip_count` is that family's trip count and
 `dispatch_arithmetic` is the sum of its callees' floating-point Program IR operations per iteration.
@@ -183,7 +183,7 @@ The doctrine is claims-first: broad sweeps establish scaling and canonical point
 
 The gates here guard the *measurements*, not the compiler. Op and composition coverage lives in `tests/` as small artificial cases checked against unrolled or NumPy references; a benchmark problem must never be the only thing exercising an IR, AD, or codegen path. That separation is what lets the problem set follow the workload roadmap without silently dropping compiler coverage.
 
-The split runs both ways: a check that is about *a problem* rather than about Alloy belongs in that problem's `checks.py`, not in `tests/`, so the pytest suite never imports a benchmark problem. `race_cars` is the worked example — `problems/race_cars/checks.py` owns its formulation gates, and `tests/integration/test_stage_transcription.py` carries a self-contained copy of the RK4 stage-transcription shape that problem surfaced, so retiring the problem cannot drop the compiler coverage. The chain-of-masses and unbumpercars problems follow the same shape; the IR behaviours they lean on are reproduced self-contained in `tests/ad/test_sparsity.py` and `tests/function/test_factory.py`.
+The split runs both ways: a check that is about *a problem* rather than about Scaly belongs in that problem's `checks.py`, not in `tests/`, so the pytest suite never imports a benchmark problem. `race_cars` is the worked example — `problems/race_cars/checks.py` owns its formulation gates, and `tests/integration/test_stage_transcription.py` carries a self-contained copy of the RK4 stage-transcription shape that problem surfaced, so retiring the problem cannot drop the compiler coverage. The chain-of-masses and unbumpercars problems follow the same shape; the IR behaviours they lean on are reproduced self-contained in `tests/ad/test_sparsity.py` and `tests/function/test_factory.py`.
 
 ## Studies: every headline run in one directory
 
@@ -207,7 +207,7 @@ writes a per-step `telemetry.csv` beside its MCAP, which is what `report` reads.
 
 ## Closed-loop episodes and Foxglove
 
-Run a short end-to-end episode, including the generated Alloy/IPOPT path and MCAP recording:
+Run a short end-to-end episode, including the generated Scaly/IPOPT path and MCAP recording:
 
 ```bash
 uv run python benchmarks/run.py closed-loop --problem race_cars --smoke
@@ -217,18 +217,18 @@ Canonical runs omit `--smoke`:
 
 ```bash
 uv run python benchmarks/run.py closed-loop --problem chain
-uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle scaly
 uv run python benchmarks/run.py closed-loop --problem chain --solver sqp --oracle casadi
 uv run python benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi
-uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle scaly
 uv run python benchmarks/run.py closed-loop --problem race_cars --solver sqp --oracle casadi
-uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle alloy
-uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver ipopt --oracle scaly
+uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle scaly
 uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver sqp --oracle casadi
 uv run python benchmarks/run.py closed-loop --problem unbumpercars --solver none
-uv run python benchmarks/run.py closed-loop --problem npmpc --solver ipopt --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem npmpc --solver ipopt --oracle scaly
 uv run python benchmarks/run.py closed-loop --problem npmpc --solver ipopt --oracle casadi
-uv run python benchmarks/run.py closed-loop --problem npmpc --solver sqp --oracle alloy
+uv run python benchmarks/run.py closed-loop --problem npmpc --solver sqp --oracle scaly
 uv run python benchmarks/run.py closed-loop --problem npmpc --solver sqp --oracle casadi
 ```
 
@@ -263,23 +263,23 @@ for example, chain does not currently provide an IPOPT/CasADi runner. Canonical
 runs write to `benchmarks/results/closed-loop/<problem>/<solver>+<oracle>/`, while
 `--smoke` writes under `benchmarks/results/smoke/closed-loop/`, so a CI smoke
 cannot replace a harvested canonical input. The two SQP columns run the same
-`alloy-sqp` implementation and PIQP
+`scaly-sqp` implementation and PIQP
 subsolver with identical settings; only the generated C-ABI oracle provider
 changes. The CasADi SQP adapter applies `transform({})` to every generated oracle and
-supplies only the upper Hessian triangle, matching the Alloy SQP descriptor. For `race_cars`, the IPOPT/Alloy and IPOPT/CasADi columns solve a
+supplies only the upper Hessian triangle, matching the Scaly SQP descriptor. For `race_cars`, the IPOPT/Scaly and IPOPT/CasADi columns solve a
 deliberately identical problem — same decision-variable and
 parameter layout, same cost and constraint rows in the same order, same IPOPT
 with the same options — so the only difference is who differentiates and
 evaluates the oracles. The `race_cars/oracles_agree` smoke gate holds them to
 that with a cross-provider trajectory comparison, and the default
-`ipopt+alloy` run is the column the FE sweep harvests from. The open-loop
+`ipopt+scaly` run is the column the FE sweep harvests from. The open-loop
 unbumpercars controller is represented by `--solver none` and writes under
 `none/` because it has no oracle.
 
 All SQP columns use exact Lagrangian Hessians by default, assembled into PIQP's
 sparse interface from the oracle sparsity patterns and convexified by a modified
 sparse LDL^T over the same pattern, after constraint-normal `A.T @ A` damping
-where the problem has equalities. Canonical runs use `alloy-sqp`'s sparse QP path. The dense
+where the problem has equalities. Canonical runs use `scaly-sqp`'s sparse QP path. The dense
 path remains a diagnostic option rather than a published comparison.
 
 The canonical unbumpercars SQP column uses the default filter first, at the
@@ -293,7 +293,7 @@ The canonical N=40 race episode starts both SQP oracle columns from the same
 problem-owned nominal primal in `problems/race_cars/data/nominal_N40.npz.b64`.
 It is the deterministic IPOPT solution of the canonical initial NLP and is used
 only as the first NMPC guess; every online call, including that first call, is
-solved and timed by `alloy-sqp`, and subsequent calls use the shifted SQP
+solved and timed by `scaly-sqp`, and subsequent calls use the shifted SQP
 primal/dual warm start. The independent SQP-versus-IPOPT smoke gate does not use
 this N=40 nominal.
 
@@ -313,7 +313,7 @@ track), with the reference and predicted horizons redrawn every step.
 Race-car recording happens inside the plant loop. Every completed step is
 flushed to the open MCAP before the next solve; if a later solve raises, the
 recorder's context still closes a valid file. The runner then writes a partial
-`rollout.npz` and a summary containing the failing step plus Alloy and native
+`rollout.npz` and a summary containing the failing step plus Scaly and native
 statuses before re-raising the failure. The complete failing warm start is also
 written to `failing_solver_inputs.npz` for one-call replay. Successful episodes
 keep the same artifact shapes and channels as before.
@@ -415,10 +415,10 @@ lap logic; `build_solver(config, solver, oracle)` selects the optimizer and
 generated function provider independently.
 `problems/race_cars/casadi_nlp.py` is the CasADi mirror of the same NLP. The
 harness code-generates the complete `nlpsol` with `expand=True` in a fresh
-process, compiles it against Alloy's IPOPT, and calls it through the same C-level
+process, compiles it against Scaly's IPOPT, and calls it through the same C-level
 boundary used for timing. Generated-code instrumentation fills the same
-`SolverStats` fields as the Alloy column. The
-`sqp+alloy` and `sqp+casadi` columns provide the controlled
+`SolverStats` fields as the Scaly column. The
+`sqp+scaly` and `sqp+casadi` columns provide the controlled
 one-solver, two-oracle comparison; their telemetry separates FE, QP, and
 globalization time.
 
@@ -427,9 +427,9 @@ globalization time.
 `problems/npmpc/closed_loop.py` owns the plant, the warm starts and the episode;
 `problems/npmpc/casadi_nlp.py` is the CasADi mirror, built from the same
 `ca_npmpc_pieces` the sweep kernels use and reading its bounds from the same two
-functions as the Alloy formulation. The harness code-generates the complete
+functions as the Scaly formulation. The harness code-generates the complete
 `nlpsol` with `expand=False` and links it to the same IPOPT library as the
-Alloy column. The [current results](../docs/results/index.md) report the controlled comparison.
+Scaly column. The [current results](../docs/results/index.md) report the controlled comparison.
 
 `problems/race_cars/reference.py` fits a minimum-curvature closed cubic spline to
 the center line, samples it uniformly in arc length, and reads a constant-speed

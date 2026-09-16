@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
-import alloy as al
+import scaly as sc
 
 casadi = pytest.importorskip("casadi")
 if TYPE_CHECKING:
@@ -13,10 +13,10 @@ if TYPE_CHECKING:
 
 
 def test_gradient_matches_casadi_sx() -> None:
-  x = al.sym("x", 3)
+  x = sc.sym("x", 3)
   y = (x.sin() + x * x).sum()
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
-  g = f.factory("g", ["x"], [al.factory.Grad("y", "x")])
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  g = f.factory("g", ["x"], [sc.factory.Grad("y", "x")])
 
   xv = np.array([0.2, 0.7, 1.1])
   np.testing.assert_allclose(g(xv), np.cos(xv) + 2 * xv)
@@ -28,10 +28,10 @@ def test_gradient_matches_casadi_sx() -> None:
 
 
 def test_jacobian_matches_casadi_sx() -> None:
-  x = al.sym("x", 2)
-  y = al.stack([x.sin(), x * x], axis=0).reshape((4,))
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
-  jf = f.factory("J", ["x"], [al.factory.Jac("y", "x")])
+  x = sc.sym("x", 2)
+  y = sc.stack([x.sin(), x * x], axis=0).reshape((4,))
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  jf = f.factory("J", ["x"], [sc.factory.Jac("y", "x")])
 
   xv = np.array([0.3, 1.2])
   cx = casadi.SX.sym("x", 2)
@@ -41,10 +41,10 @@ def test_jacobian_matches_casadi_sx() -> None:
 
 
 def test_forward_matches_casadi_sx() -> None:
-  x = al.sym("x", 3)
-  y = al.stack([x[0] * x[1], x[2].sin() + x[0]])
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
-  ff = f.factory("fwd", ["x", "fwd:x"], [al.factory.Fwd("y", "x")])
+  x = sc.sym("x", 3)
+  y = sc.stack([x[0] * x[1], x[2].sin() + x[0]])
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  ff = f.factory("fwd", ["x", "fwd:x"], [sc.factory.Fwd("y", "x")])
 
   xv = np.array([0.3, 1.2, 0.7])
   seed = np.array([1.5, -0.25, 0.4])
@@ -57,10 +57,10 @@ def test_forward_matches_casadi_sx() -> None:
 
 
 def test_adjoint_matches_casadi_sx() -> None:
-  x = al.sym("x", 3)
-  y = al.stack([x[0] * x[1], x[2].sin() + x[0]])
-  f = al.Function._from_exprs("f", [x], [y], ["x"], ["y"])
-  af = f.factory("adj", ["x", "lam:y"], [al.factory.Adj("y", "x")])
+  x = sc.sym("x", 3)
+  y = sc.stack([x[0] * x[1], x[2].sin() + x[0]])
+  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  af = f.factory("adj", ["x", "lam:y"], [sc.factory.Adj("y", "x")])
 
   xv = np.array([0.3, 1.2, 0.7])
   lam = np.array([1.5, -0.25])
@@ -73,12 +73,12 @@ def test_adjoint_matches_casadi_sx() -> None:
 
 
 def test_jacobian_through_call_node_matches_casadi_mx() -> None:
-  x = al.sym("x", 2)
-  inner = al.Function._from_exprs("inner", [x], [x.sin() + x * x], ["x"], ["y"])
-  z = al.sym("z", 2)
+  x = sc.sym("x", 2)
+  inner = sc.Function._from_exprs("inner", [x], [x.sin() + x * x], ["x"], ["y"])
+  z = sc.sym("z", 2)
   inner_z = inner(z * z)
-  outer = al.Function._from_exprs("outer", [z], [inner_z], ["z"], ["y"])
-  jf = outer.factory("J", ["z"], [al.factory.Jac("y", "z")])
+  outer = sc.Function._from_exprs("outer", [z], [inner_z], ["z"], ["y"])
+  jf = outer.factory("J", ["z"], [sc.factory.Jac("y", "z")])
 
   zv = np.array([0.4, 1.2])
   cz = casadi.MX.sym("z", 2)
@@ -91,11 +91,11 @@ def test_jacobian_through_call_node_matches_casadi_mx() -> None:
 
 
 def test_hessian_of_lagrangian_style_aux_matches_casadi_sx() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   f_expr = (x.sin()).sum()
   g_expr = x * x
-  nlp = al.Function._from_exprs("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
-  hfun = nlp.factory("h", ["x", "lam:f", "lam:g"], [al.factory.Hess("gamma", "x")], aux={"gamma": ["f", "g"]})
+  nlp = sc.Function._from_exprs("nlp", [x], [f_expr, g_expr], ["x"], ["f", "g"])
+  hfun = nlp.factory("h", ["x", "lam:f", "lam:g"], [sc.factory.Hess("gamma", "x")], aux={"gamma": ["f", "g"]})
 
   xv = np.array([0.4, 0.9])
   lam_f = np.array(1.3)

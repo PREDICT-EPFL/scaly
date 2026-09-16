@@ -2,17 +2,17 @@
 
 #include <stdint.h>
 
-#ifndef ALLOY_SOLVER_STATS_DEFINED
-#define ALLOY_SOLVER_STATS_DEFINED
-#define ALLOY_SOLVER_STATS_VERSION 3
-#define ALLOY_SOLVE_OK 0
-#define ALLOY_SOLVE_ACCEPTABLE 1
-#define ALLOY_SOLVE_MAX_ITER 2
-#define ALLOY_SOLVE_PRIMAL_INFEASIBLE 3
-#define ALLOY_SOLVE_DUAL_INFEASIBLE 4
-#define ALLOY_SOLVE_NUMERICS 5
-#define ALLOY_SOLVE_USER_STOP 6
-#define ALLOY_SOLVE_ERROR 7
+#ifndef SCALY_SOLVER_STATS_DEFINED
+#define SCALY_SOLVER_STATS_DEFINED
+#define SCALY_SOLVER_STATS_VERSION 3
+#define SCALY_SOLVE_OK 0
+#define SCALY_SOLVE_ACCEPTABLE 1
+#define SCALY_SOLVE_MAX_ITER 2
+#define SCALY_SOLVE_PRIMAL_INFEASIBLE 3
+#define SCALY_SOLVE_DUAL_INFEASIBLE 4
+#define SCALY_SOLVE_NUMERICS 5
+#define SCALY_SOLVE_USER_STOP 6
+#define SCALY_SOLVE_ERROR 7
 typedef struct {
   int32_t version;
   int32_t status;
@@ -37,23 +37,23 @@ typedef struct {
   double merit_penalty;
   int32_t backtracks;
   int32_t qp_iter;
-} alloy_solver_stats;
+} scaly_solver_stats;
 #endif
 
-#ifndef ALLOY_SUCCESS
-#define ALLOY_SUCCESS 0
+#ifndef SCALY_SUCCESS
+#define SCALY_SUCCESS 0
 #endif
-#ifndef ALLOY_ERR_NULL_ABI
-#define ALLOY_ERR_NULL_ABI 1
+#ifndef SCALY_ERR_NULL_ABI
+#define SCALY_ERR_NULL_ABI 1
 #endif
-#ifndef ALLOY_ERR_NULL_WORK
-#define ALLOY_ERR_NULL_WORK 2
+#ifndef SCALY_ERR_NULL_WORK
+#define SCALY_ERR_NULL_WORK 2
 #endif
-#ifndef ALLOY_ERR_NULL_RESULT
-#define ALLOY_ERR_NULL_RESULT 3
+#ifndef SCALY_ERR_NULL_RESULT
+#define SCALY_ERR_NULL_RESULT 3
 #endif
-#ifndef ALLOY_ERR_NULL_INPUT
-#define ALLOY_ERR_NULL_INPUT 4
+#ifndef SCALY_ERR_NULL_INPUT
+#define SCALY_ERR_NULL_INPUT 4
 #endif
 
 #define qp_host_SZ_ARG 1
@@ -73,7 +73,7 @@ int qp_host_sz_w(void);
 void* qp_host_alloc_mem(void);
 int qp_host_init_mem(void* mem);
 void qp_host_free_mem(void* mem);
-int corpus_qp_stats(alloy_solver_stats* out);
+int corpus_qp_stats(scaly_solver_stats* out);
 #ifdef __cplusplus
 }
 #endif

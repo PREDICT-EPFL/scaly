@@ -7,31 +7,31 @@ import math
 import numpy as np
 import pytest
 
-import alloy as al
-from alloy.codegen.c import render_program_c_source
-from alloy.ir import program as p
-from alloy.ir.program import ProgramNode, ProgramOp
-from alloy.ir.types import Lowering, dtypes
-from alloy.passes.arith import fold_program
-from alloy.passes.lowering import lower_function, main_proc
-from alloy.passes.program._common import _walk
-from alloy.passes.program.scalarize import (
+import scaly as sc
+from scaly.codegen.c import render_program_c_source
+from scaly.ir import program as p
+from scaly.ir.program import ProgramNode, ProgramOp
+from scaly.ir.types import Lowering, dtypes
+from scaly.passes.arith import fold_program
+from scaly.passes.lowering import lower_function, main_proc
+from scaly.passes.program._common import _walk
+from scaly.passes.program.scalarize import (
   AUTO_EXPANSION_WORK_PER_PROC,
   AUTO_SCALAR_GROWTH_PER_PROGRAM,
   AUTO_SCALAR_OPS_PER_PROC,
   scalarize_program,
 )
-from alloy.passes.program.coalesce_stores import coalesce_stores
-from alloy.passes.program.prepare_scalar import prepare_scalar_expressions
-from alloy.passes.program.scheduling import MAX_SCALAR_DEPTH
+from scaly.passes.program.coalesce_stores import coalesce_stores
+from scaly.passes.program.prepare_scalar import prepare_scalar_expressions
+from scaly.passes.program.scheduling import MAX_SCALAR_DEPTH
 
 
 def _fold(op: ProgramOp, args: tuple[ProgramNode, ...], dtype) -> ProgramNode:
   return fold_program(ProgramNode(op, args, dtype=dtype))
 
 
-def _function(name: str, inputs: list[al.Expr], outputs: list[al.Expr]) -> al.Function:
-  return al.Function._from_exprs(name, inputs, outputs, [str(x.name) for x in inputs], [f"out{i}" for i in range(len(outputs))])
+def _function(name: str, inputs: list[sc.Expr], outputs: list[sc.Expr]) -> sc.Function:
+  return sc.Function._from_exprs(name, inputs, outputs, [str(x.name) for x in inputs], [f"out{i}" for i in range(len(outputs))])
 
 
 def _body(proc: ProgramNode) -> tuple[ProgramNode, ...]:
@@ -81,7 +81,7 @@ def test_final_preparation_preserves_range_frequency_and_loop_scope() -> None:
 
 
 def test_final_preparation_normalizes_names_once_per_procedure(monkeypatch) -> None:
-  import alloy.passes.program.prepare_scalar as prepare_module
+  import scaly.passes.program.prepare_scalar as prepare_module
 
   calls = 0
   original = prepare_module.c_ident
@@ -117,12 +117,12 @@ def test_store_pair_selection_is_explicit_and_respects_dependencies() -> None:
 
 @pytest.mark.parametrize("hint", ["auto", "scalar", "block", "opaque"])
 def test_hint_selects_callee_without_expanding_mapped_horizon(hint: Lowering) -> None:
-  x = al.sym("x", 3)
+  x = sc.sym("x", 3)
   stage = _function("hint_stage", [x], [(x.sin() + x * x).with_lowering(hint)])
   procs = []
   for length in (3, 41):
-    z = al.sym("z", 3 * length)
-    fn = _function("hint_map", [z], [al.vmap(stage, length, [(z, 0, 3)])])
+    z = sc.sym("z", 3 * length)
+    fn = _function("hint_map", [z], [sc.vmap(stage, length, [(z, 0, 3)])])
     prog = lower_function(fn)
     callee = prog.args[0]
     if hint in {"auto", "scalar"}:
@@ -141,7 +141,7 @@ def test_hint_selects_callee_without_expanding_mapped_horizon(hint: Lowering) ->
 
 
 def test_explicit_scalar_root_and_block_precedence() -> None:
-  x = al.sym("x", 4)
+  x = sc.sym("x", 4)
   scalar = _function("explicit", [x], [(x.sin() + x * x).scalar()])
   _assert_scalar(main_proc(lower_function(scalar)))
   blocked = _function("blocked", [x], [(x.sin().block() + x * x).scalar()])
@@ -151,7 +151,7 @@ def test_explicit_scalar_root_and_block_precedence() -> None:
 
 
 def test_scalarization_can_be_reapplied_to_its_result() -> None:
-  x = al.sym("x", 3)
+  x = sc.sym("x", 3)
   fn = _function("repeated_pass", [x], [(x.sin() * x.sin()).scalar()])
   prog = lower_function(fn)
   _assert_scalar(main_proc(prog))
@@ -176,7 +176,7 @@ def test_auto_uses_folded_scalar_operations_instead_of_tensor_shape() -> None:
   assert not rejected.attrs.get("scalarized")
   _assert_scalar(explicit)
 
-  x = al.sym("x", 64)
+  x = sc.sym("x", 64)
   value = x
   for _ in range(AUTO_SCALAR_OPS_PER_PROC // 64 + 1):
     value = value.sin()
@@ -233,20 +233,20 @@ def test_auto_rejects_call_when_callee_exceeds_budget() -> None:
 
 @pytest.mark.parametrize("dtype", [dtypes.float32, dtypes.int32, dtypes.int64])
 def test_other_dtypes_keep_their_store_boundaries(dtype) -> None:
-  x = al.sym("x", 4, dtype=dtype)
-  y = (x + al.const([1, 2, 3, 4], dtype=dtype)).scalar()
+  x = sc.sym("x", 4, dtype=dtype)
+  y = (x + sc.const([1, 2, 3, 4], dtype=dtype)).scalar()
   fn = _function("typed_stage", [x], [y])
   assert not main_proc(lower_function(fn)).attrs.get("scalarized")
 
 
 def test_views_broadcast_gather_and_scatter() -> None:
-  x = al.sym("x", (3, 4))
+  x = sc.sym("x", (3, 4))
   sliced = x[::-1, 1::2]
   broadcast = sliced + x[1:2, 1::2]
-  moved = al.concat([broadcast.T, sliced.T], axis=1).reshape((12,))
-  gathered = al.gather(moved, np.array([[11, 0, 4], [3, 9, 1]]))
-  scattered = al.scatter(gathered.reshape((6,)), np.array([3, 1, 4, 0, 5, 2]), (7,))
-  fn = _function("views", [x], [al.stack([scattered, scattered * 2], axis=1).scalar(), x[1:, :][1:, 1:3]])
+  moved = sc.concat([broadcast.T, sliced.T], axis=1).reshape((12,))
+  gathered = sc.gather(moved, np.array([[11, 0, 4], [3, 9, 1]]))
+  scattered = sc.scatter(gathered.reshape((6,)), np.array([3, 1, 4, 0, 5, 2]), (7,))
+  fn = _function("views", [x], [sc.stack([scattered, scattered * 2], axis=1).scalar(), x[1:, :][1:, 1:3]])
   _assert_scalar(main_proc(lower_function(fn)))
   data = np.arange(12, dtype=float).reshape(3, 4) / 7
   s = data[::-1, 1::2]
@@ -259,11 +259,11 @@ def test_views_broadcast_gather_and_scatter() -> None:
 
 
 def test_scalar_constants_cse_and_expression_trees() -> None:
-  x = al.sym("v0", 3)
-  a = al.gather(x, np.array([2, 0, 2])).sin()
-  b = al.gather(x, np.array([0, 2, 0])).sin()
-  masked = a * al.const([1.0, 0.0, 2.0]) + b * al.const([0.0, 1.0, 0.0])
-  constants = al.const([0.0, 1.0, 2.0]).sin()
+  x = sc.sym("v0", 3)
+  a = sc.gather(x, np.array([2, 0, 2])).sin()
+  b = sc.gather(x, np.array([0, 2, 0])).sin()
+  masked = a * sc.const([1.0, 0.0, 2.0]) + b * sc.const([0.0, 1.0, 0.0])
+  constants = sc.const([0.0, 1.0, 2.0]).sin()
   fn = _function("folded", [x], [(masked + constants).scalar()])
   proc = main_proc(lower_function(fn))
   _assert_scalar(proc)
@@ -279,13 +279,13 @@ def test_scalar_constants_cse_and_expression_trees() -> None:
 
 
 def test_nested_calls_offsets_multiple_outputs_and_repeated_invocations() -> None:
-  x = al.sym("x", 3)
+  x = sc.sym("x", 3)
   inner = _function("nested_inner", [x], [x * x, x.sum()])
-  z = al.sym("z", 7)
+  z = sc.sym("z", 7)
   a, b = inner(z[1:4])
   c, d = inner(z[3:6])
   again, _ = inner(z[1:4])
-  fn = _function("nested_outer", [z], [(a + c + again).scalar(), b + d, a, al.const([2.0, 3.0])])
+  fn = _function("nested_outer", [z], [(a + c + again).scalar(), b + d, a, sc.const([2.0, 3.0])])
   _assert_scalar(main_proc(lower_function(fn)))
   data = np.arange(7, dtype=float) / 4
   got = fn(data)
@@ -295,7 +295,7 @@ def test_nested_calls_offsets_multiple_outputs_and_repeated_invocations() -> Non
 
 
 def test_block_callee_keeps_its_call_boundary() -> None:
-  x = al.sym("x", 4)
+  x = sc.sym("x", 4)
   inner = _function("block_inner", [x], [x.sin().block()])
   fn = _function("block_outer", [x], [(inner(x) * x).scalar()])
   prog = lower_function(fn)
@@ -306,9 +306,9 @@ def test_block_callee_keeps_its_call_boundary() -> None:
 
 
 def test_reductions_keep_left_to_right_order_and_handle_empty_inputs() -> None:
-  x = al.sym("x", 4)
-  empty = al.sym("empty", 0)
-  fn = _function("reduce", [x, empty], [x.sum().scalar(), x @ al.const(np.ones(4)), empty.sum(), empty])
+  x = sc.sym("x", 4)
+  empty = sc.sym("empty", 0)
+  fn = _function("reduce", [x, empty], [x.sum().scalar(), x @ sc.const(np.ones(4)), empty.sum(), empty])
   _assert_scalar(main_proc(lower_function(fn)))
   data = np.array([1e16, 1.0, -1e16, 1.0])
   total, dot, zero, blank = fn((data, np.empty(0)))
@@ -345,10 +345,10 @@ def test_repeated_stores_and_aliases_read_the_latest_value() -> None:
 
 
 def test_small_nested_maps_expand_inside_a_stage() -> None:
-  x = al.sym("x", 2)
+  x = sc.sym("x", 2)
   inner = _function("small_map_inner", [x], [x * x, x.sum()])
-  z = al.sym("z", 8)
-  mapped = al.vmap(inner, 3, [(z, 1, 2)], output=1)
+  z = sc.sym("z", 8)
+  mapped = sc.vmap(inner, 3, [(z, 1, 2)], output=1)
   stage = _function("small_map_stage", [z], [mapped])
   outer = _function("small_map_outer", [z], [stage(z)])
   proc = next(pr for pr in lower_function(outer).args if pr.attrs["name"] == stage.name)
@@ -358,15 +358,15 @@ def test_small_nested_maps_expand_inside_a_stage() -> None:
 
 
 def test_forward_over_reverse_folds_constant_seeds_and_matches_analytic_hessian() -> None:
-  dist = al.sym("dist", 3)
-  link = _function("spring_link", [dist], [(1 - 0.3 / al.norm_2(dist)) * dist])
-  x, lam = al.sym("x", 6), al.sym("lam", 6)
+  dist = sc.sym("dist", 3)
+  link = _function("spring_link", [dist], [(1 - 0.3 / sc.norm_2(dist)) * dist])
+  x, lam = sc.sym("x", 6), sc.sym("lam", 6)
   accel = link(x[3:] - x[:3])
-  residual = al.concat([x[:3] + 0.1 * accel, x[3:] - 0.1 * accel])
-  grad = al.vjp((residual,), (x,), (lam,))[0]
-  seeds = al.sym("seeds", (6, 6))
-  symbolic = _function("spring_symbolic", [x, lam, seeds], [al.jvp_many(grad, x, seeds).scalar()])
-  baked = _function("spring_baked", [x, lam], [al.jvp_many(grad, x, al.const(np.eye(6))).scalar()])
+  residual = sc.concat([x[:3] + 0.1 * accel, x[3:] - 0.1 * accel])
+  grad = sc.vjp((residual,), (x,), (lam,))[0]
+  seeds = sc.sym("seeds", (6, 6))
+  symbolic = _function("spring_symbolic", [x, lam, seeds], [sc.jvp_many(grad, x, seeds).scalar()])
+  baked = _function("spring_baked", [x, lam], [sc.jvp_many(grad, x, sc.const(np.eye(6))).scalar()])
   procs = [main_proc(lower_function(fn)) for fn in (symbolic, baked)]
   for proc in procs:
     _assert_scalar(proc)
@@ -386,7 +386,7 @@ def test_forward_over_reverse_folds_constant_seeds_and_matches_analytic_hessian(
 
 @pytest.mark.parametrize("left,right", [((3,), (3,)), ((5, 3), (3,)), ((3,), (3, 5)), ((5, 3), (3, 4))])
 def test_scalar_matmul_matches_numpy(left: tuple[int, ...], right: tuple[int, ...]) -> None:
-  x, y = al.sym("x", left), al.sym("y", right)
+  x, y = sc.sym("x", left), sc.sym("y", right)
   fn = _function("scalar_mm", [x, y], [(x @ y).scalar()])
   _assert_scalar(main_proc(lower_function(fn)))
   rng = np.random.default_rng(8)
@@ -395,7 +395,7 @@ def test_scalar_matmul_matches_numpy(left: tuple[int, ...], right: tuple[int, ..
 
 
 def test_deep_scalar_reduction_has_bounded_expression_trees() -> None:
-  x = al.sym("x", 1500)
+  x = sc.sym("x", 1500)
   fn = _function("deep_reduce", [x], [x.sum().scalar()])
   proc = main_proc(lower_function(fn))
   _assert_scalar(proc)
@@ -420,7 +420,7 @@ def test_invalid_constant_math_remains_a_runtime_operation(op: ProgramOp, values
 
 
 def test_symbolic_zero_identities_and_known_invalid_constants_have_distinct_semantics() -> None:
-  x = al.sym("x", 4)
+  x = sc.sym("x", 4)
   fn = _function("symbolic_zero", [x], [((x * 0) + (0 / x)).scalar()])
   values = np.array([np.nan, np.inf, -np.inf, 0.0])
   np.testing.assert_array_equal(fn(values), np.zeros(4))
@@ -431,8 +431,8 @@ def test_symbolic_zero_identities_and_known_invalid_constants_have_distinct_sema
 
 
 def test_unfolded_constant_division_uses_floating_point_in_c() -> None:
-  x = al.sym("x", 1)
-  fn = _function("invalid_division", [x], [(al.const([0.0, 1.0]) / al.const([0.0, 0.0])).scalar()])
+  x = sc.sym("x", 1)
+  fn = _function("invalid_division", [x], [(sc.const([0.0, 1.0]) / sc.const([0.0, 0.0])).scalar()])
   source = render_program_c_source(fn)
   assert "(0.0 / 0.0)" in source and "(1.0 / 0.0)" in source
   result = fn(np.ones(1))
@@ -440,8 +440,8 @@ def test_unfolded_constant_division_uses_floating_point_in_c() -> None:
 
 
 def test_mixed_constant_math_folds_per_element() -> None:
-  x = al.sym("x", 3)
-  y = al.const([0.0, 1.0, 4.0]).sqrt() + al.const([2.0, 3.0, 4.0]) ** al.const([0.0, 1.0, 2.0])
+  x = sc.sym("x", 3)
+  y = sc.const([0.0, 1.0, 4.0]).sqrt() + sc.const([2.0, 3.0, 4.0]) ** sc.const([0.0, 1.0, 2.0])
   fn = _function("constant_math", [x], [(x + y).scalar()])
   proc = main_proc(lower_function(fn))
   assert not any(n.op in {ProgramOp.SQRT, ProgramOp.POW} for n in _walk(proc))

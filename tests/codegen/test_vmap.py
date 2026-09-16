@@ -9,22 +9,22 @@ import sys
 import numpy as np
 import pytest
 
-import alloy as al
+import scaly as sc
 
 
-@al.function(al.G(al.L("x", 3), al.L("p", 3)), al.L("y", ...), name="scale_add")
+@sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
 def scale_add(inputs):
   x, p = inputs
   return 2.0 * x + p
 
 
 def test_vmap_c_source_loop_size_is_independent_of_length() -> None:
-  from alloy.codegen import render_c_source
+  from scaly.codegen import render_c_source
 
   def render(N: int) -> str:
-    z = al.sym("z", 3 * N)
-    p = al.sym("p", 3 * N)
-    fn = al.Function._from_exprs(f"scale_vmap_{N}", [z, p], [al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
+    z = sc.sym("z", 3 * N)
+    p = sc.sym("p", 3 * N)
+    fn = sc.Function._from_exprs(f"scale_vmap_{N}", [z, p], [sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
     return render_c_source(fn)
 
   # Past the 32-element threshold where the trailing copy loop also folds, the rendered source
@@ -40,20 +40,20 @@ def test_vmap_c_source_loop_size_is_independent_of_length() -> None:
 
 
 def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.MonkeyPatch) -> None:
-  from alloy.codegen import render_c_source
-  from alloy.ir.expr import topo
+  from scaly.codegen import render_c_source
+  from scaly.ir.expr import topo
 
-  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
-  x = al.sym("x", 2)
-  hidden = al.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
-  piece = al.Function._from_exprs("vmap_sphess_codegen_piece", [x], [al.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  x = sc.sym("x", 2)
+  hidden = sc.stack([x[0] * x[1], x[0] - 0.4 * x[1]])
+  piece = sc.Function._from_exprs("vmap_sphess_codegen_piece", [x], [sc.stack([(hidden.tanh() ** 2).sum()])], ["x"], ["g"])
 
   def render(length: int) -> tuple[str, tuple[str, ...], int, dict[str, int]]:
-    z = al.sym("z", 2 * length)
-    mapped = al.vmap(piece, length, [(z, 0, 2)])
-    base = al.Function._from_exprs(f"vmap_sphess_codegen_base_{length}", [z], [(z * z).sum(), mapped], ["z"], ["f", "g"])
-    sphess = base.factory(f"vmap_sphess_codegen_{length}", ["z", "lam:f", "lam:g"], [al.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
-    vmap_nodes = [node for node in topo(sphess.outputs) if node.op == al.ExprOp.VMAP]
+    z = sc.sym("z", 2 * length)
+    mapped = sc.vmap(piece, length, [(z, 0, 2)])
+    base = sc.Function._from_exprs(f"vmap_sphess_codegen_base_{length}", [z], [(z * z).sum(), mapped], ["z"], ["f", "g"])
+    sphess = base.factory(f"vmap_sphess_codegen_{length}", ["z", "lam:f", "lam:g"], [sc.factory.SpHess("gamma", "z")], aux={"gamma": ["f", "g"]})
+    vmap_nodes = [node for node in topo(sphess.outputs) if node.op == sc.ExprOp.VMAP]
     mapped_callees = sorted({node.attrs["callee"].name for node in vmap_nodes})
     second_order = tuple(name for name in mapped_callees if "_adj" in name and "_fwd" in name)
     source = render_c_source(sphess)
@@ -79,35 +79,35 @@ def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.
 
 
 def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
-  from alloy.codegen import render_c_source
-  from alloy.ir.expr import topo
+  from scaly.codegen import render_c_source
+  from scaly.ir.expr import topo
 
-  monkeypatch.setenv("ALLOY_STRICT_JVP_MANY", "1")
-  piece_x = al.sym("triangle_shared_piece_x", 2)
-  shared = al.sym("triangle_shared_piece_shared", 1)
-  hidden = al.stack([piece_x[0] * piece_x[1] + shared[0] * piece_x[0], piece_x[0] - 0.4 * piece_x[1] + shared[0] * piece_x[1]])
-  piece = al.Function._from_exprs(
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  piece_x = sc.sym("triangle_shared_piece_x", 2)
+  shared = sc.sym("triangle_shared_piece_shared", 1)
+  hidden = sc.stack([piece_x[0] * piece_x[1] + shared[0] * piece_x[0], piece_x[0] - 0.4 * piece_x[1] + shared[0] * piece_x[1]])
+  piece = sc.Function._from_exprs(
     "triangle_shared_piece",
     [piece_x, shared],
-    [al.stack([(hidden.tanh() ** 2).sum()])],
+    [sc.stack([(hidden.tanh() ** 2).sum()])],
     ["x", "shared"],
     ["g"],
   )
   length = 3
-  z = al.sym("triangle_shared_vmap_z", 2 * length + 1)
-  mapped = al.vmap(piece, length, [(z, 0, 2), (z, 2 * length, 0)])
+  z = sc.sym("triangle_shared_vmap_z", 2 * length + 1)
+  mapped = sc.vmap(piece, length, [(z, 0, 2), (z, 2 * length, 0)])
   f = (z * z).sum()
-  base = al.Function._from_exprs("triangle_shared_vmap_base", [z], [f, mapped], ["z"], ["f", "g"])
+  base = sc.Function._from_exprs("triangle_shared_vmap_base", [z], [f, mapped], ["z"], ["f", "g"])
   full = base.factory(
     "triangle_shared_vmap_full",
     ["z", "lam:f", "lam:g"],
-    [al.factory.SpHess("gamma", "z")],
+    [sc.factory.SpHess("gamma", "z")],
     aux={"gamma": ["f", "g"]},
   )
   lower = base.factory(
     "triangle_shared_vmap_lower",
     ["z", "lam:f", "lam:g"],
-    [al.factory.SpHess("gamma", "z", triangle="lower")],
+    [sc.factory.SpHess("gamma", "z", triangle="lower")],
     aux={"gamma": ["f", "g"]},
   )
   full_sp, lower_sp = full.output_sparsities[0], lower.output_sparsities[0]
@@ -115,7 +115,7 @@ def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: py
   assert lower_sp.nnz < full_sp.nnz
   shared_index = 2 * length
   assert any(row == shared_index and col < shared_index for row, col in zip(full_sp.rows, full_sp.cols, strict=True))
-  assert any(node.op == al.ExprOp.VMAP for node in topo(lower.outputs))
+  assert any(node.op == sc.ExprOp.VMAP for node in topo(lower.outputs))
 
   source = render_c_source(lower)
   declaration_lengths = {
@@ -127,10 +127,10 @@ def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: py
 def test_callee_formal_named_w_avoids_workspace_collision() -> None:
   # The rendered callee signature appends the `double* w` workspace tail; a formal named `w` used
   # to redefine that parameter and fail to compile.
-  x, w = al.sym("x", 3), al.sym("w", 3)
-  piece = al.Function._from_exprs("w_name_piece", [x, w], [x * w + w.sin()], ["x", "w"], ["y"])
-  z, wv = al.sym("z", 6), al.sym("w", 3)
-  fn = al.Function._from_exprs("w_name_vmap", [z, wv], [al.vmap(piece, 2, [(z, 0, 3), (wv, 0, 0)])], ["z", "w"], ["y"])
+  x, w = sc.sym("x", 3), sc.sym("w", 3)
+  piece = sc.Function._from_exprs("w_name_piece", [x, w], [x * w + w.sin()], ["x", "w"], ["y"])
+  z, wv = sc.sym("z", 6), sc.sym("w", 3)
+  fn = sc.Function._from_exprs("w_name_vmap", [z, wv], [sc.vmap(piece, 2, [(z, 0, 3), (wv, 0, 0)])], ["z", "w"], ["y"])
   zval = np.arange(6.0)
   wval = np.array([0.3, -0.2, 0.8])
   expected = np.concatenate([zval[3 * i : 3 * i + 3] * wval + np.sin(wval) for i in range(2)])
@@ -142,12 +142,12 @@ def test_vmap_compiled_c_matches_unrolled_concat(tmp_path) -> None:
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  from alloy.codegen import render_c_module
+  from scaly.codegen import render_c_module
 
   N = 5
-  z = al.sym("z", 3 * N)
-  p = al.sym("p", 3 * N)
-  fn = al.Function._from_exprs("scale_vmap_compiled", [z, p], [al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
+  z = sc.sym("z", 3 * N)
+  p = sc.sym("p", 3 * N)
+  fn = sc.Function._from_exprs("scale_vmap_compiled", [z, p], [sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])], ["z", "p"], ["y"])
   module = render_c_module(fn)
   (tmp_path / module.header_name).write_text(module.header)
   source = tmp_path / module.source_name
@@ -186,7 +186,7 @@ def test_vmap_compiled_c_matches_unrolled_concat(tmp_path) -> None:
 RK4_NX, RK4_NU, RK4_NZ, RK4_N_PARAMS = 4, 2, 6, 7
 
 
-def _rk4_bicycle_eq_vmap(horizon: int) -> al.Function:
+def _rk4_bicycle_eq_vmap(horizon: int) -> sc.Function:
   """VMAP-based RK4 bicycle stage transcription with a symbolic parameter tail in ``p``.
 
   Self-contained on purpose: this is the realistic shape that produces a piece-ordered
@@ -199,7 +199,7 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> al.Function:
     wheelbase, _, mass, c_m0, c_r0, c_r1, c_r2 = [params[i] for i in range(RK4_N_PARAMS)]
     beta = 0.5 * u[1]
     vx = x[3] * beta.cos()
-    return al.stack(
+    return sc.stack(
       [
         x[3] * (x[2] + beta).cos(),
         x[3] * (x[2] + beta).sin(),
@@ -216,25 +216,25 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> al.Function:
     k4 = ode(x + dt * k3, u, params)
     return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @al.function(al.G(al.L("z", RK4_NZ), al.L("p", RK4_NX)), al.L("eq", ...), name="rk4_bicycle_initial")
+  @sc.function(sc.G(sc.L("z", RK4_NZ), sc.L("p", RK4_NX)), sc.L("eq", ...), name="rk4_bicycle_initial")
   def eq_initial(inputs):
     z, p = inputs
     return z[:RK4_NX] - p[:RK4_NX]
 
-  @al.function(al.G(al.L("z", RK4_NZ), al.L("znext", RK4_NZ), al.L("params", RK4_N_PARAMS)), al.L("eq", ...), name="rk4_bicycle_interstage")
+  @sc.function(sc.G(sc.L("z", RK4_NZ), sc.L("znext", RK4_NZ), sc.L("params", RK4_N_PARAMS)), sc.L("eq", ...), name="rk4_bicycle_interstage")
   def eq_interstage(inputs):
     z, znext, params = inputs
     return rk4(z[:RK4_NX], z[RK4_NX : RK4_NX + RK4_NU], params) - znext[:RK4_NX]
 
-  z = al.sym("z", RK4_NZ * (horizon + 1))
-  p = al.sym("p", n_param, diff=False)
+  z = sc.sym("z", RK4_NZ * (horizon + 1))
+  p = sc.sym("p", n_param, diff=False)
   initial = eq_initial((z[:RK4_NZ], p[:RK4_NX]))
-  mapped = al.vmap(
+  mapped = sc.vmap(
     eq_interstage,
     length=horizon,
     inputs={"z": (z, 0, RK4_NZ), "znext": (z, RK4_NZ, RK4_NZ), "params": (p, RK4_NX * (horizon + 1), 0)},
   )
-  return al.Function._from_exprs(f"rk4_bicycle_eq_vmap_N{horizon}", [z, p], [al.concat([initial, mapped])], ["z", "p"], ["eq"])
+  return sc.Function._from_exprs(f"rk4_bicycle_eq_vmap_N{horizon}", [z, p], [sc.concat([initial, mapped])], ["z", "p"], ["eq"])
 
 
 def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
@@ -245,11 +245,11 @@ def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
 
   import re
 
-  from alloy.codegen.aot import render_c_module
+  from scaly.codegen.aot import render_c_module
 
   N = 3
   fn = _rk4_bicycle_eq_vmap(N)
-  spjf = fn.factory(f"trk_vmap_valperm_N{N}", ["z", "p"], [al.factory.SpJac("eq", "z")])
+  spjf = fn.factory(f"trk_vmap_valperm_N{N}", ["z", "p"], [sc.factory.SpJac("eq", "z")])
   sp = spjf.output_sparsities[0]
   assert sp is not None
   coo = list(zip(sp.rows, sp.cols))
@@ -288,11 +288,11 @@ def test_spjac_keeps_constant_loc_on_rk4_race_car_vmap() -> None:
   C source stays at constant LOC across horizons because the transposed-concat peephole now emits
   per-block loops with a static `idx[]` table when the per-block group is large."""
 
-  from alloy.codegen import render_c_source
+  from scaly.codegen import render_c_source
 
   def loc(N: int) -> int:
     fn = _rk4_bicycle_eq_vmap(N)
-    spj = fn.factory(f"rk4_bicycle_eq_vmap_N{N}_spjac_eq_z", ["z", "p"], [al.factory.SpJac("eq", "z")])
+    spj = fn.factory(f"rk4_bicycle_eq_vmap_N{N}_spjac_eq_z", ["z", "p"], [sc.factory.SpJac("eq", "z")])
     return render_c_source(spj).count("\n")
 
   loc_a = loc(10)
@@ -308,31 +308,31 @@ def test_simple_banded_vmap_spjac_has_constant_loc() -> None:
   plus a constant scatter index table; without it, the tile-strided gather peephole would
   fire instead. Either way the LOC must not grow with N."""
 
-  from alloy.codegen import render_c_source
+  from scaly.codegen import render_c_source
 
   NX, NZ = 4, 6
 
-  @al.function(al.L("z", NZ), al.L("eq", ...), name="eq_initial_t")
+  @sc.function(sc.L("z", NZ), sc.L("eq", ...), name="eq_initial_t")
   def eq_initial(z):
     return z[:NX] * 2.0
 
-  @al.function(al.G(al.L("z", NZ), al.L("znext", NZ)), al.L("eq", ...), name="eq_interstage_t")
+  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ)), sc.L("eq", ...), name="eq_interstage_t")
   def eq_interstage(inputs):
     z, znext = inputs
     return z[:NX] * 1.5 - znext[:NX]
 
-  def build(N: int) -> al.Function:
-    z = al.sym("z", NZ * (N + 1))
+  def build(N: int) -> sc.Function:
+    z = sc.sym("z", NZ * (N + 1))
     initial = eq_initial(z[:NZ])
-    mapped = al.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ)})
-    return al.Function._from_exprs(f"banded_N{N}", [z], [al.concat([initial, mapped])], ["z"], ["eq"])
+    mapped = sc.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ)})
+    return sc.Function._from_exprs(f"banded_N{N}", [z], [sc.concat([initial, mapped])], ["z"], ["eq"])
 
-  loc_a = render_c_source(al.sparse_jacobian(build(10), "eq", "z")).count("\n")
-  loc_b = render_c_source(al.sparse_jacobian(build(50), "eq", "z")).count("\n")
+  loc_a = render_c_source(sc.sparse_jacobian(build(10), "eq", "z")).count("\n")
+  loc_b = render_c_source(sc.sparse_jacobian(build(50), "eq", "z")).count("\n")
   # LOC is bounded by a tiny constant — variation comes only from whether the workspace
   # spill threshold is crossed, which adds one wrapper line for the SZ_W null check.
   assert abs(loc_a - loc_b) <= 2, f"expected constant LOC, got {loc_a} -> {loc_b}"
-  src_b = render_c_source(al.sparse_jacobian(build(50), "eq", "z"))
+  src_b = render_c_source(sc.sparse_jacobian(build(50), "eq", "z"))
   # The inner work stays loop-based (the constant LOC above already rules out a per-iteration
   # unroll) and the assembly renders as a for-loop.
   assert "for (" in src_b
@@ -340,10 +340,10 @@ def test_simple_banded_vmap_spjac_has_constant_loc() -> None:
 
 def test_vmap_jit_matches_unrolled_numpy() -> None:
   N = 2
-  z = al.sym("z", 6)
-  p = al.sym("p", 6)
-  mapped = al.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-  fn = al.Function._from_exprs("eval_path", [z, p], [mapped], ["z", "p"], ["y"])
+  z = sc.sym("z", 6)
+  p = sc.sym("p", 6)
+  mapped = sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
+  fn = sc.Function._from_exprs("eval_path", [z, p], [mapped], ["z", "p"], ["y"])
   zv = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
   pv = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
   expected = np.concatenate([2.0 * zv[i * 3 : (i + 1) * 3] + pv[i * 3 : (i + 1) * 3] for i in range(N)])

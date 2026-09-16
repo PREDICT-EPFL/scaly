@@ -5,44 +5,44 @@ These operate on `Expr` graphs directly. For derivatives of a named `Function`, 
 
 ## Modes
 
-::: alloy.ad.forward.jvp
+::: scaly.ad.forward.jvp
 
-::: alloy.ad.forward.jvp_many
+::: scaly.ad.forward.jvp_many
 
-::: alloy.ad.reverse.vjp
+::: scaly.ad.reverse.vjp
 
-::: alloy.ad.reverse.vjp_many
+::: scaly.ad.reverse.vjp_many
 
 ## Whole derivatives
 
-::: alloy.ad.derivatives.jacobian
+::: scaly.ad.derivatives.jacobian
 
-::: alloy.ad.derivatives.gradient
+::: scaly.ad.derivatives.gradient
 
-::: alloy.ad.derivatives.hessian
+::: scaly.ad.derivatives.hessian
 
-::: alloy.ad.derivatives.basis
+::: scaly.ad.derivatives.basis
 
-::: alloy.ad.derivatives.finite_difference
+::: scaly.ad.derivatives.finite_difference
 
 ## Sparsity
 
-::: alloy.ad.sparsity.jacobian_sparsity
+::: scaly.ad.sparsity.jacobian_sparsity
 
-::: alloy.ad.sparsity.column_coloring
+::: scaly.ad.sparsity.column_coloring
 
-::: alloy.ad.sparsity.star_coloring
+::: scaly.ad.sparsity.star_coloring
 
-::: alloy.ad.sparsity.color_groups
+::: scaly.ad.sparsity.color_groups
 
 ## Sparse derivatives
 
-::: alloy.ad.sparse.SparseJacobian
+::: scaly.ad.sparse.SparseJacobian
 
-::: alloy.ad.sparse.sparse_jacobian
+::: scaly.ad.sparse.sparse_jacobian
 
-::: alloy.ad.sparse.sparse_hessian
+::: scaly.ad.sparse.sparse_hessian
 
-::: alloy.ad.sparse.sparse_jacobian_colored
+::: scaly.ad.sparse.sparse_jacobian_colored
 
-::: alloy.ad.sparse.sparse_jacobian_reference
+::: scaly.ad.sparse.sparse_jacobian_reference

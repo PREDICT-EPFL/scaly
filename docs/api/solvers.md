@@ -2,46 +2,46 @@
 
 ## Problem construction
 
-::: alloy.solvers.problem.Bounded
+::: scaly.solvers.problem.Bounded
 
-::: alloy.solvers.problem.bounded
+::: scaly.solvers.problem.bounded
 
-::: alloy.solvers.problem.NO_LB
+::: scaly.solvers.problem.NO_LB
 
-::: alloy.solvers.problem.NO_UB
+::: scaly.solvers.problem.NO_UB
 
-::: alloy.solvers.problem.ProblemSpec
+::: scaly.solvers.problem.ProblemSpec
 
-::: alloy.solvers.problem.Problem
+::: scaly.solvers.problem.Problem
 
-::: alloy.solvers.problem.problem
+::: scaly.solvers.problem.problem
 
 ## Solver selection
 
-::: alloy.solvers.solver.solver
+::: scaly.solvers.solver.solver
 
-::: alloy.solvers.qp.qp_problem
+::: scaly.solvers.qp.qp_problem
 
-::: alloy.solvers.qp.NotQuadratic
+::: scaly.solvers.qp.NotQuadratic
 
 ## Plugin descriptors
 
-::: alloy.solvers.model.SolverDescriptor
+::: scaly.solvers.model.SolverDescriptor
 
-::: alloy.solvers.model.ExternalOracle
+::: scaly.solvers.model.ExternalOracle
 
 ## Statistics
 
-::: alloy.solvers.stats.SolverStats
+::: scaly.solvers.stats.SolverStats
 
-::: alloy.solvers.stats.SolverStatus
+::: scaly.solvers.stats.SolverStatus
 
-::: alloy.solvers.stats.AlloySolveStatus
+::: scaly.solvers.stats.ScalySolveStatus
 
 ## Graph queries
 
-::: alloy.solvers.graph.is_solver_function
+::: scaly.solvers.graph.is_solver_function
 
-::: alloy.solvers.graph.solver_callees
+::: scaly.solvers.graph.solver_callees
 
-::: alloy.solvers.graph.solver_compile_flags
+::: scaly.solvers.graph.solver_compile_flags

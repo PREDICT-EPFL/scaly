@@ -6,93 +6,93 @@ from typing import TYPE_CHECKING, assert_type
 
 import numpy as np
 
-import alloy as al
-from alloy.function import Tree
+import scaly as sc
+from scaly.function import Tree
 
 
-@al.function(al.L("x", 3), al.G(al.L("first", ...), al.L("second", 3)))
-def duplicate(x: al.Expr) -> tuple[al.Expr, al.Expr]:
+@sc.function(sc.L("x", 3), sc.G(sc.L("first", ...), sc.L("second", 3)))
+def duplicate(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return x, x
 
 
-@al.function(al.G(al.L("x", 3), al.L("y", 3)), al.L("prod", ...))
-def multiply(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+@sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("prod", ...))
+def multiply(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, y = inputs
   return x * y
 
 
-@al.function(al.L("x", 3), al.L("square", ...))
-def square(x: al.Expr) -> al.Expr:
+@sc.function(sc.L("x", 3), sc.L("square", ...))
+def square(x: sc.Expr) -> sc.Expr:
   return multiply.symbolic_call(duplicate.symbolic_call(x))
 
 
-@al.function(al.G(al.L("x", 3), al.L("p", ())), al.L("f", ...))
-def cost(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+@sc.function(sc.G(sc.L("x", 3), sc.L("p", ())), sc.L("f", ...))
+def cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return (x * x).sum() * p
 
 
-@al.function(
-  al.G(al.G(al.L("state", 4), al.L("u", 2)), al.G(al.L("pw", 10), al.L("physics", 3), al.L("dt", ()))),
-  al.L("next", ...),
+@sc.function(
+  sc.G(sc.G(sc.L("state", 4), sc.L("u", 2)), sc.G(sc.L("pw", 10), sc.L("physics", 3), sc.L("dt", ()))),
+  sc.L("next", ...),
 )
-def step(inputs: tuple[tuple[al.Expr, al.Expr], tuple[al.Expr, al.Expr, al.Expr]]) -> al.Expr:
+def step(inputs: tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr, sc.Expr]]) -> sc.Expr:
   (state, _u), (_pw, _physics, _dt) = inputs
   return state
 
 
-@al.function(al.G(al.L("state", 4), al.L("u", 2), al.L("pw", 10), al.L("physics", 3), al.L("dt", ())), al.L("next", ...))
-def step_flat(inputs: tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr]) -> al.Expr:
+@sc.function(sc.G(sc.L("state", 4), sc.L("u", 2), sc.L("pw", 10), sc.L("physics", 3), sc.L("dt", ())), sc.L("next", ...))
+def step_flat(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   state, _u, _pw, _physics, _dt = inputs
   return state
 
 
-@al.problem(vars=al.L("x", 3), params=al.L("scale", ()))
-def quadratic(x: al.Expr, scale: al.Expr) -> al.ProblemSpec[al.Expr]:
-  return al.ProblemSpec(minimize=(x * x).sum() * scale, lb=al.const(-1.0), ub=al.const(1.0))
+@sc.problem(vars=sc.L("x", 3), params=sc.L("scale", ()))
+def quadratic(x: sc.Expr, scale: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+  return sc.ProblemSpec(minimize=(x * x).sum() * scale, lb=sc.const(-1.0), ub=sc.const(1.0))
 
 
-@al.problem(vars=al.G(al.L("u", 2), al.L("s", 1)), params=al.G(al.L("x", 4), al.L("u_ref", 2)))
-def filter_problem(variables: tuple[al.Expr, al.Expr], params: tuple[al.Expr, al.Expr]) -> al.ProblemSpec[tuple[al.Expr, al.Expr]]:
+@sc.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.G(sc.L("x", 4), sc.L("u_ref", 2)))
+def filter_problem(variables: tuple[sc.Expr, sc.Expr], params: tuple[sc.Expr, sc.Expr]) -> sc.ProblemSpec[tuple[sc.Expr, sc.Expr]]:
   u, s = variables
   x, u_ref = params
   barrier = x[:2] @ u + x[2:].sum()
-  return al.ProblemSpec(
+  return sc.ProblemSpec(
     minimize=0.5 * ((u - u_ref) * (u - u_ref)).sum() + 10.0 * s.sum(),
     eq=(u[0:1] - u[1:2],),
-    ineq=(al.bounded(barrier + s, lo=0.0, name="cbf"), al.bounded(u, lo=-1.0, hi=1.0, name="u_box")),
-    lb=(al.NO_LB, al.const(0.0)),
-    ub=(al.NO_UB, al.NO_UB),
+    ineq=(sc.bounded(barrier + s, lo=0.0, name="cbf"), sc.bounded(u, lo=-1.0, hi=1.0, name="u_box")),
+    lb=(sc.NO_LB, sc.const(0.0)),
+    ub=(sc.NO_UB, sc.NO_UB),
   )
 
 
-quadratic_ipopt = al.solver(quadratic, "ipopt")
-filter_sqp = al.solver(filter_problem, "sqp")
-qp3 = al.qp_problem(3, 1, 2)
-qp3_piqp = al.solver(qp3, "piqp")
+quadratic_ipopt = sc.solver(quadratic, "ipopt")
+filter_sqp = sc.solver(filter_problem, "sqp")
+qp3 = sc.qp_problem(3, 1, 2)
+qp3_piqp = sc.solver(qp3, "piqp")
 
-grad_f_x = al.gradient(cost, "f", "x")
-hess_f_x = al.hessian(cost, "f", "x")
-jac_square_x = al.jacobian(square, "square", "x")
-fwd_f_x = al.forward(cost, "f", "x")
-adj_square_x = al.adjoint(square, "square", "x")
-hess_l = al.lagrangian_hessian(duplicate, "x")
+grad_f_x = sc.gradient(cost, "f", "x")
+hess_f_x = sc.hessian(cost, "f", "x")
+jac_square_x = sc.jacobian(square, "square", "x")
+fwd_f_x = sc.forward(cost, "f", "x")
+adj_square_x = sc.adjoint(square, "square", "x")
+hess_l = sc.lagrangian_hessian(duplicate, "x")
 
 
 if TYPE_CHECKING:
-  assert_type(al.NO_LB, al.Expr)
-  assert_type(al.NO_UB, al.Expr)
-  al.L("x", "3")  # ty: ignore[invalid-argument-type]
-  al.G(al.L("x", 3))  # ty: ignore[no-matching-overload]
-  al.G(al.L("x", 3), al.L("y", 3), ("z", 3))  # ty: ignore[invalid-argument-type]
-  assert_type(al.G(al.L("x", 3), al.L("p", ())), Tree[tuple[al.Expr, al.Expr], tuple[np.ndarray, np.ndarray]])
+  assert_type(sc.NO_LB, sc.Expr)
+  assert_type(sc.NO_UB, sc.Expr)
+  sc.L("x", "3")  # ty: ignore[invalid-argument-type]
+  sc.G(sc.L("x", 3))  # ty: ignore[no-matching-overload]
+  sc.G(sc.L("x", 3), sc.L("y", 3), ("z", 3))  # ty: ignore[invalid-argument-type]
+  assert_type(sc.G(sc.L("x", 3), sc.L("p", ())), Tree[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]])
   assert_type(
-    al.G(al.G(al.L("a", 1), al.L("b", 1)), al.L("c", 1)),
-    Tree[tuple[tuple[al.Expr, al.Expr], al.Expr], tuple[tuple[np.ndarray, np.ndarray], np.ndarray]],
+    sc.G(sc.G(sc.L("a", 1), sc.L("b", 1)), sc.L("c", 1)),
+    Tree[tuple[tuple[sc.Expr, sc.Expr], sc.Expr], tuple[tuple[np.ndarray, np.ndarray], np.ndarray]],
   )
 
-  assert_type(duplicate, al.Function[al.Expr, np.ndarray, tuple[al.Expr, al.Expr], tuple[np.ndarray, np.ndarray]])
-  assert_type(duplicate.symbolic_call(al.sym("x", 3)), tuple[al.Expr, al.Expr])
+  assert_type(duplicate, sc.Function[sc.Expr, np.ndarray, tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]])
+  assert_type(duplicate.symbolic_call(sc.sym("x", 3)), tuple[sc.Expr, sc.Expr])
   assert_type(duplicate.numerical_call(np.zeros(3)), tuple[np.ndarray, np.ndarray])
   assert_type(multiply.numerical_call((np.zeros(3), np.zeros(3))), np.ndarray)
   assert_type(
@@ -102,76 +102,76 @@ if TYPE_CHECKING:
   assert_type(step_flat.numerical_call((np.zeros(4), np.zeros(2), np.zeros(10), np.zeros(3), np.zeros(()))), np.ndarray)
   multiply.numerical_call((np.zeros(3),))  # ty: ignore[invalid-argument-type]
   multiply.numerical_call(np.zeros(3))  # ty: ignore[invalid-argument-type]
-  multiply.numerical_call((al.sym("x", 3), al.sym("y", 3)))  # ty: ignore[invalid-argument-type]
+  multiply.numerical_call((sc.sym("x", 3), sc.sym("y", 3)))  # ty: ignore[invalid-argument-type]
   multiply.symbolic_call((np.zeros(3), np.zeros(3)))  # ty: ignore[invalid-argument-type]
-  duplicate.symbolic_call((al.sym("x", 3),))  # ty: ignore[invalid-argument-type]
+  duplicate.symbolic_call((sc.sym("x", 3),))  # ty: ignore[invalid-argument-type]
   step.numerical_call((np.zeros(4), np.zeros(2), np.zeros(10), np.zeros(3), np.zeros(())))  # ty: ignore[invalid-argument-type]
   step_flat.numerical_call(((np.zeros(4), np.zeros(2)), (np.zeros(10), np.zeros(3), np.zeros(()))))  # ty: ignore[invalid-argument-type]
 
-  al.function(al.G(al.L("x", 3), al.L("y", 3)), al.L("z", ...))(lambda x: x)  # ty: ignore[invalid-argument-type]
-  al.function(al.L("x", 3), al.G(al.L("a", ...), al.L("b", ...)))(lambda x: x)  # ty: ignore[invalid-argument-type]
+  sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("z", ...))(lambda x: x)  # ty: ignore[invalid-argument-type]
+  sc.function(sc.L("x", 3), sc.G(sc.L("a", ...), sc.L("b", ...)))(lambda x: x)  # ty: ignore[invalid-argument-type]
 
-  assert_type(multiply.symbolic_call(duplicate.symbolic_call(al.sym("x", 3))), al.Expr)
-  multiply.symbolic_call(square.symbolic_call(al.sym("x", 3)))  # ty: ignore[invalid-argument-type]
+  assert_type(multiply.symbolic_call(duplicate.symbolic_call(sc.sym("x", 3))), sc.Expr)
+  multiply.symbolic_call(square.symbolic_call(sc.sym("x", 3)))  # ty: ignore[invalid-argument-type]
 
   # __call__ dispatches on the leaf kind and is typed as precisely as the two named methods.
-  assert_type(duplicate(al.sym("x", 3)), tuple[al.Expr, al.Expr])
+  assert_type(duplicate(sc.sym("x", 3)), tuple[sc.Expr, sc.Expr])
   assert_type(duplicate(np.zeros(3)), tuple[np.ndarray, np.ndarray])
-  assert_type(multiply((al.sym("x", 3), al.sym("y", 3))), al.Expr)
+  assert_type(multiply((sc.sym("x", 3), sc.sym("y", 3))), sc.Expr)
   assert_type(multiply((np.zeros(3), np.zeros(3))), np.ndarray)
   assert_type(step(((np.zeros(4), np.zeros(2)), (np.zeros(10), np.zeros(3), np.zeros(())))), np.ndarray)
-  assert_type(multiply(duplicate(al.sym("x", 3))), al.Expr)
+  assert_type(multiply(duplicate(sc.sym("x", 3))), sc.Expr)
   assert_type(hess_l((np.zeros(3), (np.zeros(3), np.zeros(3)))), np.ndarray)
   multiply((np.zeros(3),))  # ty: ignore[no-matching-overload]
-  multiply((al.sym("x", 3), np.zeros(3)))  # ty: ignore[no-matching-overload]
+  multiply((sc.sym("x", 3), np.zeros(3)))  # ty: ignore[no-matching-overload]
   step((np.zeros(4), np.zeros(2), np.zeros(10), np.zeros(3), np.zeros(())))  # ty: ignore[no-matching-overload]
-  multiply(square(al.sym("x", 3)))  # ty: ignore[no-matching-overload]
+  multiply(square(sc.sym("x", 3)))  # ty: ignore[no-matching-overload]
 
-  assert_type(grad_f_x, al.Function[tuple[al.Expr, al.Expr], tuple[np.ndarray, np.ndarray], al.Expr, np.ndarray])
-  assert_type(hess_f_x, al.Function[tuple[al.Expr, al.Expr], tuple[np.ndarray, np.ndarray], al.Expr, np.ndarray])
-  assert_type(jac_square_x, al.Function[al.Expr, np.ndarray, al.Expr, np.ndarray])
+  assert_type(grad_f_x, sc.Function[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], sc.Expr, np.ndarray])
+  assert_type(hess_f_x, sc.Function[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], sc.Expr, np.ndarray])
+  assert_type(jac_square_x, sc.Function[sc.Expr, np.ndarray, sc.Expr, np.ndarray])
   assert_type(grad_f_x.numerical_call((np.zeros(3), np.zeros(()))), np.ndarray)
   assert_type(
     fwd_f_x,
-    al.Function[tuple[tuple[al.Expr, al.Expr], al.Expr], tuple[tuple[np.ndarray, np.ndarray], np.ndarray], al.Expr, np.ndarray],
+    sc.Function[tuple[tuple[sc.Expr, sc.Expr], sc.Expr], tuple[tuple[np.ndarray, np.ndarray], np.ndarray], sc.Expr, np.ndarray],
   )
-  assert_type(adj_square_x, al.Function[tuple[al.Expr, al.Expr], tuple[np.ndarray, np.ndarray], al.Expr, np.ndarray])
+  assert_type(adj_square_x, sc.Function[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], sc.Expr, np.ndarray])
   assert_type(
     hess_l,
-    al.Function[tuple[al.Expr, tuple[al.Expr, al.Expr]], tuple[np.ndarray, tuple[np.ndarray, np.ndarray]], al.Expr, np.ndarray],
+    sc.Function[tuple[sc.Expr, tuple[sc.Expr, sc.Expr]], tuple[np.ndarray, tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray],
   )
   assert_type(fwd_f_x.numerical_call(((np.zeros(3), np.zeros(())), np.zeros(3))), np.ndarray)
   assert_type(hess_l.numerical_call((np.zeros(3), (np.zeros(3), np.zeros(3)))), np.ndarray)
 
-  assert_type(quadratic, al.Problem[al.Expr, np.ndarray, al.Expr, np.ndarray])
+  assert_type(quadratic, sc.Problem[sc.Expr, np.ndarray, sc.Expr, np.ndarray])
   assert_type(
     filter_problem,
-    al.Problem[
-      tuple[al.Expr, al.Expr],
+    sc.Problem[
+      tuple[sc.Expr, sc.Expr],
       tuple[np.ndarray, np.ndarray],
-      tuple[al.Expr, al.Expr],
+      tuple[sc.Expr, sc.Expr],
       tuple[np.ndarray, np.ndarray],
     ],
   )
-  assert_type(qp3, al.Problem[al.Expr, np.ndarray, al.QPData[al.Expr], al.QPData[np.ndarray]])
-  al.problem(vars=al.G(al.L("u", 2), al.L("s", 1)), params=al.L("p", ()))(lambda variables, p: al.ProblemSpec(minimize=variables.sum()))  # ty: ignore[unresolved-attribute]
-  al.problem(vars=al.L("x", 2), params=al.L("p", ()))(lambda x, p: al.ProblemSpec(minimize=x.sum(), lb=(x, x)))  # ty: ignore[invalid-argument-type]
+  assert_type(qp3, sc.Problem[sc.Expr, np.ndarray, sc.QPData[sc.Expr], sc.QPData[np.ndarray]])
+  sc.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.L("p", ()))(lambda variables, p: sc.ProblemSpec(minimize=variables.sum()))  # ty: ignore[unresolved-attribute]
+  sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))(lambda x, p: sc.ProblemSpec(minimize=x.sum(), lb=(x, x)))  # ty: ignore[invalid-argument-type]
 
   assert_type(
     quadratic_ipopt,
-    al.Function[
-      tuple[al.Expr, al.Expr, al.Expr, al.Expr, al.Expr],
+    sc.Function[
+      tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
       tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-      tuple[al.Expr, al.Expr, al.Expr, al.Expr],
+      tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr],
       tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
     ],
   )
   assert_type(
     filter_sqp,
-    al.Function[
-      tuple[tuple[al.Expr, al.Expr], tuple[al.Expr, al.Expr], al.Expr, al.Expr, tuple[al.Expr, al.Expr]],
+    sc.Function[
+      tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr, tuple[sc.Expr, sc.Expr]],
       tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray]],
-      tuple[tuple[al.Expr, al.Expr], tuple[al.Expr, al.Expr], al.Expr, al.Expr],
+      tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr],
       tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray],
     ],
   )
@@ -190,14 +190,14 @@ if TYPE_CHECKING:
   assert_type(
     filter_sqp.symbolic_call(
       (
-        (al.sym("u0", 2), al.sym("s0", 1)),
-        (al.sym("lam_u0", 2), al.sym("lam_s0", 1)),
-        al.sym("lam_eq0", 1),
-        al.sym("lam_ineq0", 3),
-        (al.sym("x0", 4), al.sym("u_ref0", 2)),
+        (sc.sym("u0", 2), sc.sym("s0", 1)),
+        (sc.sym("lam_u0", 2), sc.sym("lam_s0", 1)),
+        sc.sym("lam_eq0", 1),
+        sc.sym("lam_ineq0", 3),
+        (sc.sym("x0", 4), sc.sym("u_ref0", 2)),
       )
     ),
-    tuple[tuple[al.Expr, al.Expr], tuple[al.Expr, al.Expr], al.Expr, al.Expr],
+    tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr],
   )
   assert_type(
     qp3_piqp.numerical_call(
@@ -217,7 +217,7 @@ if TYPE_CHECKING:
   )
   quadratic_ipopt.numerical_call((np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0)))  # ty: ignore[invalid-argument-type]
   filter_sqp.numerical_call(((np.zeros(2),), (np.zeros(2), np.zeros(1)), np.zeros(1), np.zeros(3), (np.zeros(4), np.zeros(2))))  # ty: ignore[invalid-argument-type]
-  filter_sqp.numerical_call(((al.sym("u", 2), al.sym("s", 1)), (np.zeros(2), np.zeros(1)), np.zeros(1), np.zeros(3), (np.zeros(4), np.zeros(2))))  # ty: ignore[invalid-argument-type]
+  filter_sqp.numerical_call(((sc.sym("u", 2), sc.sym("s", 1)), (np.zeros(2), np.zeros(1)), np.zeros(1), np.zeros(3), (np.zeros(4), np.zeros(2))))  # ty: ignore[invalid-argument-type]
 
   grad_f_x.numerical_call(np.zeros(3))  # ty: ignore[invalid-argument-type]
   fwd_f_x.numerical_call((np.zeros(3), np.zeros(()), np.zeros(3)))  # ty: ignore[invalid-argument-type]

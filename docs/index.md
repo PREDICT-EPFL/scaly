@@ -1,38 +1,38 @@
-# alloy
+# scaly
 
-**Write optimal-control models in Python. Ship them as C.**
+**Make your optimal control problems scale.**
 
-Alloy is a symbolic compiler for optimal control. You describe dynamics, costs and constraints as
-named functions over a typed expression graph; alloy differentiates them, exploits their sparsity,
+Scaly is a symbolic compiler for optimal control. You describe dynamics, costs and constraints as
+named functions over a typed expression graph; scaly differentiates them, exploits their sparsity,
 and generates efficient, small and standalone C that runs with no Python anywhere near it.
 
 !!! warning "Under active development"
-    Alloy is pre-1.0 and the API still moves. Breaks are deliberate and documented, but they do
+    Scaly is pre-1.0 and the API still moves. Breaks are deliberate and documented, but they do
     happen — see [Versioning](dev/versioning.md).
 
 ```python
-import alloy as al
+import scaly as sc
 import numpy as np
 
-@al.function(al.L("x", 2), al.L("f", ...))
-def rosenbrock(x: al.Expr) -> al.Expr:
+@sc.function(sc.L("x", 2), sc.L("f", ...))
+def rosenbrock(x: sc.Expr) -> sc.Expr:
     return (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
 
 rosenbrock(np.array([1.0, 2.0]))          # 100.0
 
-grad = al.gradient(rosenbrock, "f", "x")
+grad = sc.gradient(rosenbrock, "f", "x")
 grad(np.array([1.0, 2.0]))                # array([-400.,  200.])
 ```
 
 The first call compiled that function to C, built a shared library and cached it — the just-in-time
-path (JIT). There is no interpreter behind alloy — what you test from Python is the artifact you
+path (JIT). There is no interpreter behind scaly — what you test from Python is the artifact you
 deploy.
 
 The same compiler renders the same C to files for someone else to build, which is the ahead-of-time
 path (AOT):
 
 ```bash
-uv run python -m alloy.codegen mymodule:rosenbrock -o generated/
+uv run python -m scaly.codegen mymodule:rosenbrock -o generated/
 ```
 
 ## What it is for
@@ -45,7 +45,7 @@ uv run python -m alloy.codegen mymodule:rosenbrock -o generated/
 - **Structure that survives codegen.** codegenerating the same function evaluated in a loop preserves the loop through
   differentiation and code generation, so a hundred-stage horizon produces roughly the code of a
   one-stage horizon.
-- **Solvers as graph nodes.** `al.problem(...)` declares a backend-free problem and `al.solver(...)` returns a real function, so a solver
+- **Solvers as graph nodes.** `sc.problem(...)` declares a backend-free problem and `sc.solver(...)` returns a real function, so a solver
   can be nested inside a larger model and the whole thing compiles into one artifact that links
   against PIQP or IPOPT directly.
 - **One C ABI.** A single CasADi-style signature per generated function, plus optional typed C++
@@ -53,7 +53,7 @@ uv run python -m alloy.codegen mymodule:rosenbrock -o generated/
 - **A compiler you can read.** Pure Python, with NumPy for values and SciPy only for structural
   sparsity analysis, two small intermediate representations, and a well-documented architecture.
 
-The current study shows a workload-dependent result. Alloy trails CasADi SX on the race-car
+The current study shows a workload-dependent result. Scaly trails CasADi SX on the race-car
 Hessian, but leads the fastest completed CasADi encoding on the neural-process model
 predictive control and safety-filter sweeps. The controlled closed-loop runs separate function
 evaluation from shared solver work. See [the current results](results/index.md) and the
@@ -76,7 +76,7 @@ evaluation from shared solver work. See [the current results](results/index.md) 
 - **Curious how it works**
 
     [Architecture](how_it_works/architecture.md) for the shape of the compiler, or
-    [Alloy next to its neighbours](how_it_works/comparison.md) if you already know CasADi, JAX,
+    [Scaly next to its neighbours](how_it_works/comparison.md) if you already know CasADi, JAX,
     tinygrad or MLIR.
 
 - **Comparing against CasADi**
@@ -89,7 +89,7 @@ evaluation from shared solver work. See [the current results](results/index.md) 
 
 ```mermaid
 flowchart LR
-  py["Python<br/>@al.function"] --> fn["Function<br/>expression graph"]
+  py["Python<br/>@sc.function"] --> fn["Function<br/>expression graph"]
   fn -->|"derivatives"| fn
   fn -->|"lowering"| prog["program<br/>loops and buffers"]
   prog -->|"optimization passes"| prog
@@ -104,7 +104,7 @@ map.
 
 ## Status
 
-Alloy generates C for the full expression set on the host, differentiates it forward and in
+Scaly generates C for the full expression set on the host, differentiates it forward and in
 reverse, produces colored sparse Jacobians and exact sparse Lagrangian Hessians through preserved
 `VMAP` structure, and drives PIQP, IPOPT and its own generated-C SQP solver from inside a compiled
 graph.

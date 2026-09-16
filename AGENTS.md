@@ -1,4 +1,4 @@
-# Alloy
+# Scaly
 
 A pure-Python symbolic compiler for optimal-control problems: named `Function`s over one sparse
 typed expression graph, typed derivative requests, first-class call nodes, preserved mapped
@@ -58,7 +58,7 @@ derivatives together. Not "objective evaluation", when the whole set is meant.
 Identifier spellings, several of which reach the generated C:
 
 - `_grad`, `_jac`, `_hess` — never `_gradient`, `_jacobian`, `_hessian`. The long forms exist only
-  as the user-facing wrappers `al.gradient`, `al.jacobian`, `al.hessian`.
+  as the user-facing wrappers `sc.gradient`, `sc.jacobian`, `sc.hessian`.
 - `zprev`, `z`, `znext` for multistage stage variables — never `zm`/`zp`.
 - `Expr*` for expression-dialect names, `Program*` for program-dialect names. There is no third
   vocabulary; "semantic IR" and the `P`-prefixed spellings are gone.
@@ -76,8 +76,8 @@ Identifier spellings, several of which reach the generated C:
   moment the work merges. Name the file, function or change instead. Hashes already on `main` are
   safe to cite.
 - **No `anvil`, `tinygrad` or `torch` imports.** NumPy is the only runtime dependency and that is
-  worth defending; for PyTorch checkpoints use `alloy.utils.load_torch_state_dict`.
-- **Anvil is gone.** Alloy was extracted from the `anvil` monorepo in May 2026 and shares no runtime
+  worth defending; for PyTorch checkpoints use `scaly.utils.load_torch_state_dict`.
+- **Anvil is gone.** Scaly was extracted from the `anvil` monorepo in May 2026 and shares no runtime
   code with it. Never name it in public surfaces — the README, `docs/`, or code. If a question
   genuinely needs anvil's SQP or multistage design notes, ask the user for a checkout.
 - **A new module needs an `IMPORT_LAYERS` entry in `tests/test_import_layering.py`** and a one-line docstring

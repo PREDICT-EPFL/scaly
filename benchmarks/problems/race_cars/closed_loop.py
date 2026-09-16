@@ -1,4 +1,4 @@
-"""Model-in-the-loop race-car NMPC over Alloy's generated IPOPT path or CasADi's.
+"""Model-in-the-loop race-car NMPC over Scaly's generated IPOPT path or CasADi's.
 
 The canonical episode drives one lap of ``fsds_competition_1`` with a 40-step
 horizon and the 50 ms sample time from :class:`RaceCarParams`, following the
@@ -12,8 +12,8 @@ directions can be weighted independently, a steady-state throttle feedforward in
 the control cost, and a corridor constraint keeping the car's front corners
 within the track.
 
-The solver and oracle provider are selected independently. CasADi or Alloy can
-supply the generated oracles while IPOPT or Alloy's SQP implementation drives
+The solver and oracle provider are selected independently. CasADi or Scaly can
+supply the generated oracles while IPOPT or Scaly's SQP implementation drives
 the solve. Everything else — plant, planner, warm starts, and lap logic — is
 shared.
 """
@@ -30,7 +30,7 @@ import numpy as np
 
 from benchmarks.harness.timing import SolveTiming
 
-import alloy as al
+import scaly as sc
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
@@ -84,7 +84,7 @@ class EpisodeConfig:
 
 @dataclass(frozen=True)
 class StepTelemetry:
-  stats: al.SolverStats
+  stats: sc.SolverStats
   arc_length: float
   laps: int
   # constraint violations of the accepted solution, for the SQP-versus-IPOPT divergence report
@@ -122,7 +122,7 @@ class StepRecord:
   prediction: np.ndarray | None
   reference_horizon: np.ndarray
   oracle_input: dict[str, np.ndarray] | None
-  stats: al.SolverStats | None
+  stats: sc.SolverStats | None
   telemetry: StepTelemetry | None
 
 
@@ -151,8 +151,8 @@ def steady_throttle(v: float, params: RaceCarParams = RaceCarParams()) -> float:
   return float(np.tanh(10.0 * v) * (params.c_r0 + params.c_r1 * v + params.c_r2 * v * v) / params.c_m0)
 
 
-@al.function(al.G(al.L("z", NZ), al.L("ref", NX)), al.L("corridor", ...), name="race_car_corridor_stage")
-def _corridor_stage(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
+@sc.function(sc.G(sc.L("z", NZ), sc.L("ref", NX)), sc.L("corridor", ...), name="race_car_corridor_stage")
+def _corridor_stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   z, ref = inputs
   cos_ref, sin_ref = ref[2].cos(), ref[2].sin()
   dx, dy = z[0] - ref[0], z[1] - ref[1]
@@ -160,18 +160,18 @@ def _corridor_stage(inputs: tuple[al.Expr, al.Expr]) -> al.Expr:
   d_phi = z[2] - ref[2]
   reach = e_lat + 0.5 * CAR_LENGTH * d_phi.sin()
   half_width = 0.5 * CAR_WIDTH * d_phi.cos()
-  return al.stack([reach + half_width, reach - half_width])
+  return sc.stack([reach + half_width, reach - half_width])
 
 
-@al.function(al.G(al.L("z", NZ), al.L("ref", NX), al.L("params", N_PARAMS)), al.L("residuals", ...), name="race_car_cost_stage")
-def _cost_stage(inputs: tuple[al.Expr, al.Expr, al.Expr]) -> al.Expr:
+@sc.function(sc.G(sc.L("z", NZ), sc.L("ref", NX), sc.L("params", N_PARAMS)), sc.L("residuals", ...), name="race_car_cost_stage")
+def _cost_stage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   z, ref, params = inputs
   c_m0, c_r0, c_r1, c_r2 = params[3], params[4], params[5], params[6]
   v_ref = ref[3]
   throttle_ref = (10.0 * v_ref).tanh() * (c_r0 + c_r1 * v_ref + c_r2 * v_ref * v_ref) / c_m0
   cos_ref, sin_ref = ref[2].cos(), ref[2].sin()
   dx, dy = z[0] - ref[0], z[1] - ref[1]
-  return al.stack([z[NX] - throttle_ref, z[NX + 1], cos_ref * dx + sin_ref * dy, -sin_ref * dx + cos_ref * dy, z[2] - ref[2], z[3] - v_ref])
+  return sc.stack([z[NX] - throttle_ref, z[NX + 1], cos_ref * dx + sin_ref * dy, -sin_ref * dx + cos_ref * dy, z[2] - ref[2], z[3] - v_ref])
 
 
 def race_car_lag_hess_dense_reference(config: EpisodeConfig, z: np.ndarray, p: np.ndarray, lam_f: float, lam_g: np.ndarray) -> np.ndarray:
@@ -225,7 +225,7 @@ def race_car_lag_hess_dense_reference(config: EpisodeConfig, z: np.ndarray, p: n
   return dense
 
 
-def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: dict[str, str | int | float] | None = None) -> al.Function:
+def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: dict[str, str | int | float] | None = None) -> sc.Function:
   n = config.horizon
   weights = np.tile([config.r_throttle, config.r_steering, config.q_lon, config.q_lat, config.q_phi, config.q_v], (n + 1, 1))
   weights[-1, 2:] = [config.q_lon_f, config.q_lat_f, config.q_phi_f, config.q_v_f]
@@ -238,34 +238,34 @@ def _race_car_nlp(config: EpisodeConfig, *, solver: str = "ipopt", sqp_options: 
     ub[i * NZ + NX : (i + 1) * NZ] = [T_MAX, DELTA_MAX]
   problem_name = f"race_car_closed_loop_N{n}"
 
-  @al.problem(vars=al.L("z", n_variables), params=al.L("p", n_param(n)), name=problem_name)
-  def problem(z: al.Expr, p: al.Expr) -> al.ProblemSpec[al.Expr]:
-    residuals = al.vmap(
+  @sc.problem(vars=sc.L("z", n_variables), params=sc.L("p", n_param(n)), name=problem_name)
+  def problem(z: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    residuals = sc.vmap(
       _cost_stage,
       length=n + 1,
       inputs={"z": (z, 0, NZ), "ref": (p, 0, NX), "params": (p, NX * (n + 1), 0)},
     )
-    corridor = al.vmap(
+    corridor = sc.vmap(
       _corridor_stage,
       length=n,
       inputs={"z": (z, NZ, NZ), "ref": (p, NX, NX)},
     )
-    return al.ProblemSpec(
-      minimize=al.dot(al.const(weights.reshape(-1)), residuals**2),
+    return sc.ProblemSpec(
+      minimize=sc.dot(sc.const(weights.reshape(-1)), residuals**2),
       eq=(_race_car_eq_vmap_expr(z, p, n),),
       ineq=(
-        al.bounded(
+        sc.bounded(
           corridor,
-          lo=al.const(np.full(2 * n, -config.track_half_width)),
-          hi=al.const(np.full(2 * n, config.track_half_width)),
+          lo=sc.const(np.full(2 * n, -config.track_half_width)),
+          hi=sc.const(np.full(2 * n, config.track_half_width)),
           name="corridor",
         ),
       ),
-      lb=al.const(lb),
-      ub=al.const(ub),
+      lb=sc.const(lb),
+      ub=sc.const(ub),
     )
 
-  return al.solver(
+  return sc.solver(
     problem,
     solver,
     name=f"{problem_name}_{solver}",
@@ -327,18 +327,18 @@ def _canonical_nominal(config: EpisodeConfig) -> np.ndarray | None:
 def build_solver(
   config: EpisodeConfig,
   solver: str = "ipopt",
-  oracle: str = "alloy",
+  oracle: str = "scaly",
   *,
   sqp_options: dict[str, str | int | float] | None = None,
 ):
   """Build the selected solver with either provider's generated oracles."""
-  if (solver, oracle) == ("ipopt", "alloy"):
+  if (solver, oracle) == ("ipopt", "scaly"):
     return _race_car_nlp(config)
   if (solver, oracle) == ("ipopt", "casadi"):
     from benchmarks.problems.race_cars.casadi_nlp import CasadiRaceCarSolver
 
     return CasadiRaceCarSolver(config)
-  if (solver, oracle) == ("sqp", "alloy"):
+  if (solver, oracle) == ("sqp", "scaly"):
     return _race_car_nlp(config, solver="sqp", sqp_options=sqp_options)
   if (solver, oracle) == ("sqp", "casadi"):
     from benchmarks.problems.race_cars.casadi_nlp import build_casadi_race_car_sqp
@@ -352,7 +352,7 @@ def run_episode(
   *,
   smoke: bool = False,
   solver: str = "ipopt",
-  oracle: str = "alloy",
+  oracle: str = "scaly",
   sqp_options: dict[str, str | int | float] | None = None,
   record_step: Callable[[StepRecord], None] | None = None,
 ) -> EpisodeResult:

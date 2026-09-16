@@ -1,4 +1,4 @@
-"""Generated-C snapshots: the gate that says a refactor did not change what alloy emits.
+"""Generated-C snapshots: the gate that says a refactor did not change what scaly emits.
 
 A refactor of the IR, the passes or the renderer must leave the generated C identical, so this
 pins it byte for byte. Each corpus entry covers one lowering path — a forward function, a dense
@@ -21,82 +21,82 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import alloy as al
+import scaly as sc
 from tests.solvers.problem_helpers import build_qp
-from alloy.codegen import render_c_api_header, render_c_source
-from alloy.solvers.registry import available_backends
+from scaly.codegen import render_c_api_header, render_c_source
+from scaly.solvers.registry import available_backends
 
 BASELINE = Path(__file__).resolve().parent / "baseline" / "c"
 N_STAGES = 3
 WEIGHTS = (np.arange(40 * 40, dtype=np.float64).reshape(40, 40) % 7 - 3.0) / 11.0
 
 
-def _dynamics() -> al.Function:
+def _dynamics() -> sc.Function:
   """Elementwise math, slicing, a reduction and a concat."""
 
-  @al.function(al.G(al.L("z", 4), al.L("u", 2)), al.L("znext", ...), name="dynamics")
+  @sc.function(sc.G(sc.L("z", 4), sc.L("u", 2)), sc.L("znext", ...), name="dynamics")
   def dynamics(inputs):
     z, u = inputs
     pos, vel = z[:2], z[2:]
-    drag = 0.1 * al.sumsqr(vel)
-    return al.concat([pos + 0.05 * vel, vel + 0.05 * (u - drag * vel)])
+    drag = 0.1 * sc.sumsqr(vel)
+    return sc.concat([pos + 0.05 * vel, vel + 0.05 * (u - drag * vel)])
 
   return dynamics
 
 
-def _shooting() -> al.Function:
+def _shooting() -> sc.Function:
   """Multiple shooting defect over ``N_STAGES`` VMAP iterations."""
-  z = al.sym("z", 4 * (N_STAGES + 1))
-  u = al.sym("u", 2 * N_STAGES)
-  defect = al.vmap(_dynamics(), N_STAGES, [(z, 0, 4), (u, 0, 2)]) - z[4:]
-  return al.Function._from_exprs("shooting", [z, u], [defect], ["z", "u"], ["eq"])
+  z = sc.sym("z", 4 * (N_STAGES + 1))
+  u = sc.sym("u", 2 * N_STAGES)
+  defect = sc.vmap(_dynamics(), N_STAGES, [(z, 0, 4), (u, 0, 2)]) - z[4:]
+  return sc.Function._from_exprs("shooting", [z, u], [defect], ["z", "u"], ["eq"])
 
 
-def _wide() -> al.Function:
+def _wide() -> sc.Function:
   """Two outputs, a 40x40 matmul either way round, the transcendental surface, and a scatter."""
 
-  @al.function(al.G(al.L("x", 40), al.L("y", 40)), al.G(al.L("z", ...), al.L("tail", ...)), name="wide")
+  @sc.function(sc.G(sc.L("x", 40), sc.L("y", 40)), sc.G(sc.L("z", ...), sc.L("tail", ...)), name="wide")
   def wide(inputs):
     x, y = inputs
-    h = al.const(WEIGHTS) @ x
-    a = al.maximum(h, 0.0) - al.minimum(h, 0.0) * 0.5
-    b = al.atan2(a, y) + (a**3.0) / (1.0 + y.abs())
+    h = sc.const(WEIGHTS) @ x
+    a = sc.maximum(h, 0.0) - sc.minimum(h, 0.0) * 0.5
+    b = sc.atan2(a, y) + (a**3.0) / (1.0 + y.abs())
     trig = a.sin() * b.cos() + a.tan() + (a * 0.1).asin() + (b * 0.1).acos() + b.atan()
     hyp = a.sinh() + b.cosh() + b.tanh() + a.erf()
     c = (a.exp() + b.sqrt().log()) * (trig + hyp) + (a.floor() + b.ceil())
-    z = al.const(WEIGHTS).T @ (c / (1.0 + y * y))
-    return (z, al.scatter(z[:4], np.array([3, 1, 2, 0]), (4,)))
+    z = sc.const(WEIGHTS).T @ (c / (1.0 + y * y))
+    return (z, sc.scatter(z[:4], np.array([3, 1, 2, 0]), (4,)))
 
   return wide
 
 
-def _workspace() -> al.Function:
+def _workspace() -> sc.Function:
   """A shared intermediate large enough to spill after expression normalization."""
-  x = al.sym("x", 2048)
+  x = sc.sym("x", 2048)
   value = x.sin()
-  return al.Function._from_exprs("workspace", [x], [value.sum(), (value * value).sum()], ["x"], ["sum", "sumsqr"])
+  return sc.Function._from_exprs("workspace", [x], [value.sum(), (value * value).sum()], ["x"], ["sum", "sumsqr"])
 
 
-def _qp_host() -> al.Function:
+def _qp_host() -> sc.Function:
   """A host function whose graph reaches a solver through a nested call."""
-  mu = al.sym("mu", 2)
-  qp = build_qp(P=al.const(np.eye(2)), c=-mu, name="corpus_qp")
-  x = qp.symbolic_call((al.const(np.zeros(2)), al.const(np.zeros(2)), al.const(np.zeros(0)), al.const(np.zeros(0)), mu))[0]
-  return al.Function._from_exprs("qp_host", [mu], [al.sumsqr(x)], ["mu"], ["cost"])
+  mu = sc.sym("mu", 2)
+  qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="corpus_qp")
+  x = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))[0]
+  return sc.Function._from_exprs("qp_host", [mu], [sc.sumsqr(x)], ["mu"], ["cost"])
 
 
 CORPUS = {
   "forward": _dynamics,
-  "jac": lambda: al.jacobian(_dynamics(), "znext", "z"),
+  "jac": lambda: sc.jacobian(_dynamics(), "znext", "z"),
   "vmap": _shooting,
-  "spjac": lambda: al.sparse_jacobian(_shooting(), "eq", "z"),
+  "spjac": lambda: sc.sparse_jacobian(_shooting(), "eq", "z"),
   "wide": _wide,
   "workspace": _workspace,
 }
 SOLVER_CORPUS = {"solver": _qp_host}
 
 
-def _rendered(fun: al.Function) -> dict[str, str]:
+def _rendered(fun: sc.Function) -> dict[str, str]:
   return {".c": render_c_source(fun), ".h": render_c_api_header(fun)}
 
 
@@ -125,7 +125,7 @@ def main() -> int:
   if "piqp" in available_backends():
     builders |= SOLVER_CORPUS
   else:
-    print("skipping the solver entry: the alloy-piqp plugin is not installed")
+    print("skipping the solver entry: the scaly-piqp plugin is not installed")
   for name, build in sorted(builders.items()):
     fun = build()
     for suffix, text in _rendered(fun).items():

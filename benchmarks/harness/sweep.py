@@ -16,11 +16,11 @@ import time
 
 import numpy as np
 
-import alloy as al
-from alloy.codegen.abi import c_ident
-from alloy.codegen.aot import render_c_module
-from alloy.ir.expr import ExprOp, topo
-from alloy.ir.program import ProgramNode, ProgramOp
+import scaly as sc
+from scaly.codegen.abi import c_ident
+from scaly.codegen.aot import render_c_module
+from scaly.ir.expr import ExprOp, topo
+from scaly.ir.program import ProgramNode, ProgramOp
 from benchmarks.harness import ROOT, RESULTS, gbench
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.provenance import collect, write, require_headline_settings
@@ -37,14 +37,14 @@ DEFAULT_SIZES = {
   "npmpc_decoder": [16, 32, 64, 128, 256],
   "npmpc_decoder_jac": [16, 32, 64, 128, 256],
 }
-STAGE_BACKENDS = ("alloy", "casadi_sx", "casadi_mx", "casadi_call_mx", "casadi_map_sx")
+STAGE_BACKENDS = ("scaly", "casadi_sx", "casadi_mx", "casadi_call_mx", "casadi_map_sx")
 # The gemm encodings batch every repetition's dense network layer into one matrix-matrix product,
 # so they exist only for the two problems with a network in the stage.
 GEMM_BACKENDS = ("casadi_mx_gemm", "casadi_mx_gemm_classic", "casadi_mx_gemm_blasfeo")
 BACKENDS = (*STAGE_BACKENDS, *GEMM_BACKENDS)
 NPMPC_WORKLOADS = ("npmpc", "npmpc_jac", "npmpc_decoder", "npmpc_decoder_jac")
 DEFAULT_BACKENDS = {
-  workload: ("alloy", "casadi_sx", "casadi_mx", *GEMM_BACKENDS)
+  workload: ("scaly", "casadi_sx", "casadi_mx", *GEMM_BACKENDS)
   if workload == "unbumpercars"
   else (BACKENDS if workload in NPMPC_WORKLOADS else STAGE_BACKENDS)
   for workload in DEFAULT_SIZES
@@ -66,7 +66,7 @@ def _kernel_kind(workload: str) -> str:
   return "jac" if workload.endswith("_jac") else "hess"
 
 
-def _alloy_inputs(kernel: al.Function) -> list[tuple[str, int]]:
+def _scaly_inputs(kernel: sc.Function) -> list[tuple[str, int]]:
   return [(c_ident(name), expr.size) for name, expr in zip(kernel.input_names, kernel.inputs, strict=True)]
 
 
@@ -169,7 +169,7 @@ def _artifact_sizes(source: str, header: str) -> tuple[int, int, int]:
   """Return total artifact, executable source, and static metadata bytes.
 
   The executable part is the translation unit with ``static const`` declarations removed. The
-  metadata part is those declarations plus the public header, which contains Alloy's sparse tables.
+  metadata part is those declarations plus the public header, which contains Scaly's sparse tables.
   """
   source_bytes, header_bytes = source.encode(), header.encode()
   static_source = sum(len(match.group()) for match in _STATIC_CONST.finditer(source_bytes))
@@ -184,7 +184,7 @@ def _static_trip_count(rng: ProgramNode) -> int | None:
   return max(0, -(-span // int(step.attrs["value"])))
 
 
-def _dispatch_metrics(fun: al.Function, prog: ProgramNode) -> tuple[int | str, int | str, int | str]:
+def _dispatch_metrics(fun: sc.Function, prog: ProgramNode) -> tuple[int | str, int | str, int | str]:
   """Return the retained VMAP trip count, callee workspace, and arithmetic per iteration.
 
   A function mapped over several axes (race-car stages ``N`` and ``N+1``, unbumpercars cars and
@@ -324,7 +324,7 @@ def _module_info(
   }
 
 
-def _render_alloy(fun: al.Function, name: str, out_dir: Path):
+def _render_scaly(fun: sc.Function, name: str, out_dir: Path):
   started = time.perf_counter()
   module = render_c_module(fun, header_name=f"{name}.h", source_name=f"{name}.c", typed_buffers=False)
   (out_dir / module.header_name).write_text(module.header)
@@ -332,12 +332,12 @@ def _render_alloy(fun: al.Function, name: str, out_dir: Path):
   return module, (time.perf_counter() - started) * 1000
 
 
-def _descriptor_kernel(solver: al.Function, kind: str):
+def _descriptor_kernel(solver: sc.Function, kind: str):
   descriptor = solver.descriptor
   function = getattr(descriptor, kind)
   sparsity = getattr(descriptor, f"{kind}_sparsity")
-  if not isinstance(function, al.Function) or sparsity is None:
-    raise TypeError(f"{descriptor.name} has no Alloy {kind} kernel")
+  if not isinstance(function, sc.Function) or sparsity is None:
+    raise TypeError(f"{descriptor.name} has no Scaly {kind} kernel")
   assert function.output_sparsities[0] == sparsity
   return function, sparsity, function.output_coloring_widths[0]
 
@@ -443,7 +443,7 @@ def _npmpc_repeated_pieces(horizon: int, decoder, stage_sym, *, mapped: bool):
   return {**pieces, "h_eq": ca.reshape(rows, npmpc.NX * horizon, 1)}
 
 
-def _race_cars_alloy(workload: str, size: int, out_dir: Path) -> dict:
+def _race_cars_scaly(workload: str, size: int, out_dir: Path) -> dict:
   from benchmarks.problems.race_cars.closed_loop import EpisodeConfig, _race_car_nlp
 
   kind = _kernel_kind(workload)
@@ -451,12 +451,12 @@ def _race_cars_alloy(workload: str, size: int, out_dir: Path) -> dict:
   kernel, sparsity, coloring_width = _descriptor_kernel(_race_car_nlp(EpisodeConfig(horizon=size)), kind)
   name = kernel.name
   build_ms = (time.perf_counter() - started) * 1000
-  module, render_ms = _render_alloy(kernel, name, out_dir)
-  inputs = _alloy_inputs(kernel)
-  benchmark = f"BM_AlloyRaceCar{'ConstraintJac' if kind == 'jac' else 'LagHess'}N{size}"
+  module, render_ms = _render_scaly(kernel, name, out_dir)
+  inputs = _scaly_inputs(kernel)
+  benchmark = f"BM_ScalyRaceCar{'ConstraintJac' if kind == 'jac' else 'LagHess'}N{size}"
   return _module_info(
     name,
-    "alloy",
+    "scaly",
     module,
     inputs,
     sparsity,
@@ -471,19 +471,19 @@ def _race_cars_alloy(workload: str, size: int, out_dir: Path) -> dict:
   )
 
 
-def _chain_alloy(workload: str, size: int, out_dir: Path) -> dict:
+def _chain_scaly(workload: str, size: int, out_dir: Path) -> dict:
   horizon = chain.HORIZON
   kind = _kernel_kind(workload)
-  benchmark = f"BM_AlloyChain{'EqJac' if kind == 'jac' else 'LagHess'}M{size}"
+  benchmark = f"BM_ScalyChain{'EqJac' if kind == 'jac' else 'LagHess'}M{size}"
   started = time.perf_counter()
   kernel, sparsity, coloring_width = _descriptor_kernel(chain.chain_nlp(size, horizon), kind)
-  inputs = _alloy_inputs(kernel)
+  inputs = _scaly_inputs(kernel)
   name = kernel.name
   build_ms = (time.perf_counter() - started) * 1000
-  module, render_ms = _render_alloy(kernel, name, out_dir)
+  module, render_ms = _render_scaly(kernel, name, out_dir)
   return _module_info(
     name,
-    "alloy",
+    "scaly",
     module,
     inputs,
     sparsity,
@@ -498,27 +498,27 @@ def _chain_alloy(workload: str, size: int, out_dir: Path) -> dict:
   )
 
 
-def _unbumpercars_alloy(size: int, out_dir: Path) -> dict:
+def _unbumpercars_scaly(size: int, out_dir: Path) -> dict:
   from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig
-  from benchmarks.problems.unbumpercars.filters import build_alloy_nlp
+  from benchmarks.problems.unbumpercars.filters import build_scaly_nlp
 
   started = time.perf_counter()
   cfg = ClosedLoopConfig(ncars=size)
-  solver = build_alloy_nlp(cfg, FilterConfig(model="dt"))
+  solver = build_scaly_nlp(cfg, FilterConfig(model="dt"))
   kernel, sparsity, coloring_width = _descriptor_kernel(solver, "hess")
   name = kernel.name
   build_ms = (time.perf_counter() - started) * 1000
-  module, render_ms = _render_alloy(kernel, name, out_dir)
+  module, render_ms = _render_scaly(kernel, name, out_dir)
   return _module_info(
     name,
-    "alloy",
+    "scaly",
     module,
-    _alloy_inputs(kernel),
+    _scaly_inputs(kernel),
     sparsity,
     sparsity.shape,
     build_ms,
     render_ms,
-    f"BM_AlloyUnbumpercarsLagHessC{size}",
+    f"BM_ScalyUnbumpercarsLagHessC{size}",
     coloring_width=coloring_width,
     layout="lower",
     w_size=module.workspace_size,
@@ -544,7 +544,7 @@ def _npmpc_cell(workload: str, size: int) -> tuple[int, npmpc.Decoder, np.ndarra
   return npmpc.HORIZON, decoder, npmpc.random_decoder_weights(decoder), None
 
 
-def _npmpc_alloy(workload: str, size: int, out_dir: Path) -> dict:
+def _npmpc_scaly(workload: str, size: int, out_dir: Path) -> dict:
   horizon, decoder, _, _ = _npmpc_cell(workload, size)
   axis = CELL_AXES[workload]
   started = time.perf_counter()
@@ -552,15 +552,15 @@ def _npmpc_alloy(workload: str, size: int, out_dir: Path) -> dict:
   built, sparsity, coloring_width = _descriptor_kernel(npmpc.npmpc_nlp(horizon, decoder), kind)
   name = built.name
   if kind == "hess":
-    benchmark = f"BM_AlloyNpmpcLagHess{axis}{size}"
+    benchmark = f"BM_ScalyNpmpcLagHess{axis}{size}"
   else:
-    benchmark = f"BM_AlloyNpmpcConstraintJac{axis}{size}"
-  inputs = _alloy_inputs(built)
+    benchmark = f"BM_ScalyNpmpcConstraintJac{axis}{size}"
+  inputs = _scaly_inputs(built)
   build_ms = (time.perf_counter() - started) * 1000
-  module, render_ms = _render_alloy(built, name, out_dir)
+  module, render_ms = _render_scaly(built, name, out_dir)
   return _module_info(
     name,
-    "alloy",
+    "scaly",
     module,
     inputs,
     sparsity,
@@ -579,7 +579,7 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform:
   import casadi as ca
 
   kind = backend.removeprefix("casadi_")
-  if backend not in BACKENDS or kind == "alloy":
+  if backend not in BACKENDS or kind == "scaly":
     raise ValueError(f"unsupported CasADi backend {backend!r}")
   repeated = kind in {"call_mx", "map_sx"}
   mapped = kind == "map_sx"
@@ -708,26 +708,26 @@ def _casadi(workload: str, size: int, backend: str, out_dir: Path, *, transform:
 
 
 def build_kernel(workload: str, size: int, backend: str, out_dir: Path, *, casadi_transform: bool = True) -> dict:
-  if backend == "alloy":
+  if backend == "scaly":
     if workload in NPMPC_WORKLOADS:
-      return _npmpc_alloy(workload, size, out_dir)
+      return _npmpc_scaly(workload, size, out_dir)
     if workload in ("chain", "chain_jac"):
-      return _chain_alloy(workload, size, out_dir)
+      return _chain_scaly(workload, size, out_dir)
     if workload in ("race_cars", "race_cars_jac"):
-      return _race_cars_alloy(workload, size, out_dir)
-    return _unbumpercars_alloy(size, out_dir)
+      return _race_cars_scaly(workload, size, out_dir)
+    return _unbumpercars_scaly(size, out_dir)
   return _casadi(workload, size, backend, out_dir, transform=casadi_transform)
 
 
 def _harvested_inputs(workload: str, size: int) -> dict[str, np.ndarray] | None:
   canonical = {
-    ("chain", 5): RESULTS / "closed-loop" / "chain" / "ipopt+alloy",
-    ("chain_jac", 5): RESULTS / "closed-loop" / "chain" / "ipopt+alloy",
-    ("race_cars", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+alloy",
-    ("race_cars_jac", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+alloy",
-    ("unbumpercars", 8): RESULTS / "closed-loop" / "unbumpercars" / "ipopt+alloy",
-    ("npmpc", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+alloy",
-    ("npmpc_jac", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+alloy",
+    ("chain", 5): RESULTS / "closed-loop" / "chain" / "ipopt+scaly",
+    ("chain_jac", 5): RESULTS / "closed-loop" / "chain" / "ipopt+scaly",
+    ("race_cars", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+scaly",
+    ("race_cars_jac", 40): RESULTS / "closed-loop" / "race_cars" / "ipopt+scaly",
+    ("unbumpercars", 8): RESULTS / "closed-loop" / "unbumpercars" / "ipopt+scaly",
+    ("npmpc", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+scaly",
+    ("npmpc_jac", npmpc.HORIZON): RESULTS / "closed-loop" / "npmpc" / "ipopt+scaly",
   }.get((workload, size))
   if canonical is None:
     return None
@@ -858,7 +858,7 @@ def _samples(
     pieces, expected = _unbumpercars_hessian_inputs(size, harvested)
     values = (
       pieces
-      if info["backend"] == "alloy"
+      if info["backend"] == "scaly"
       else {
         "z": pieces["z"],
         "lam_f": pieces["lam_f"],
@@ -874,12 +874,12 @@ def _samples(
       return values["z"]
     raise KeyError(f"no sample value for {name!r}; available values are {sorted(values)}")
 
-  # CasADi's nlpsol oracle names are the ABI: x, p, lam_f, lam_g. Alloy keeps its own named
+  # CasADi's nlpsol oracle names are the ABI: x, p, lam_f, lam_g. Scaly keeps its own named
   # parameter inputs, so the x/z alias is resolved only at this boundary.
   sample_values = {name: sample_value(name) for name, _ in info["inputs"]}
   args = list(sample_values.values())
   kernel = info["callable"]
-  # CasADi takes flat positional leaves; an alloy Function takes its declared tree, so rebuild it.
+  # CasADi takes flat positional leaves; an scaly Function takes its declared tree, so rebuild it.
   result = kernel(*args) if info["backend"].startswith("casadi") else kernel(kernel.input_tree.unflatten(tuple(args)))
   if info["backend"].startswith("casadi"):
     outputs = result if isinstance(result, (tuple, list)) else (result,)

@@ -3,11 +3,11 @@
 #include <stdint.h>
 typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 
-#define ALLOY_SUCCESS 0
-#define ALLOY_ERR_NULL_ABI 1
-#define ALLOY_ERR_NULL_WORK 2
-#define ALLOY_ERR_NULL_RESULT 3
-#define ALLOY_ERR_NULL_INPUT 4
+#define SCALY_SUCCESS 0
+#define SCALY_ERR_NULL_ABI 1
+#define SCALY_ERR_NULL_WORK 2
+#define SCALY_ERR_NULL_RESULT 3
+#define SCALY_ERR_NULL_INPUT 4
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,17 +18,17 @@ int dynamics_jac_znext_z_sz_res(void) { return 1; }
 int dynamics_jac_znext_z_sz_iw(void) { return 0; }
 int dynamics_jac_znext_z_sz_w(void) { return 0; }
 void* dynamics_jac_znext_z_alloc_mem(void) { return NULL; }
-int dynamics_jac_znext_z_init_mem(void* mem) { (void)mem; return ALLOY_SUCCESS; }
+int dynamics_jac_znext_z_init_mem(void* mem) { (void)mem; return SCALY_SUCCESS; }
 void dynamics_jac_znext_z_free_mem(void* mem) { (void)mem; }
 
 int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, void* mem) {
   (void)iw;
   (void)mem;
-  if (!arg || !res) return ALLOY_ERR_NULL_ABI;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
   (void)w;
-  if (!arg[0]) return ALLOY_ERR_NULL_INPUT;
-  if (!arg[1]) return ALLOY_ERR_NULL_INPUT;
-  if (!res[0]) return ALLOY_ERR_NULL_RESULT;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
   static const double k0[8] = {1, 0, 0, 1, 0.050000000000000003, 0, 0, 0.050000000000000003};
   static const double k1[8] = {0, 0, 0, 0, 1, 0, 0, 1};
   const double* t5 = arg[0] + 2;
@@ -97,7 +97,7 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, v
       res[0][((d0_jac_znext_z * 4) + d1_jac_znext_z)] = s2[(d0_jac_znext_z + (d1_jac_znext_z * 4))];
     }
   }
-  return ALLOY_SUCCESS;
+  return SCALY_SUCCESS;
 }
 
 #ifdef __cplusplus
