@@ -461,4 +461,4 @@ stay gone.
 - [Conventions](../dev/conventions.md) — naming rules and the test/benchmark boundary
 - [Versioning](../dev/versioning.md) — the pre-1.0 compatibility policy
 - [Benchmark results](../results/index.md) — measured against CasADi SX and MX
-- `internal/roadmap.md` — phases, current status, exit criteria (not published)
+- `internal/todo.md` — the actionable list (not published)

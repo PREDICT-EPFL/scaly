@@ -8,7 +8,7 @@ extra_javascript = [
     "https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js",
 ]
 # Zensical publishes everything under docs/, with no exclusion mechanism. The repository's own
-# record — the roadmap and the frozen design notes — therefore lives in internal/ at the root,
+# record — the todo and the frozen design notes — therefore lives in internal/ at the root,
 # outside this tree, rather than relying on a config key to keep it off the site.
 nav = [
     { "Home" = "index.md" },

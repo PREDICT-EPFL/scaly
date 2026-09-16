@@ -179,7 +179,7 @@ benchmarks/results/
 **Only harness numbers count.** Timing a backend from Python includes dispatch overhead.
 Treat a Python-level reading as a smoke test for whether a cell builds, never as a result.
 
-The doctrine is claims-first: broad sweeps establish scaling and canonical points support comparisons; correctness gates always run before speed is measured; every result carries enough provenance to reproduce it. See [internal/paper.md](../internal/paper.md) for the governing claim matrix.
+The doctrine is claims-first: broad sweeps establish scaling and canonical points support comparisons; correctness gates always run before speed is measured; every result carries enough provenance to reproduce it. The governing claim matrix lives in the paper repository.
 
 The gates here guard the *measurements*, not the compiler. Op and composition coverage lives in `tests/` as small artificial cases checked against unrolled or NumPy references; a benchmark problem must never be the only thing exercising an IR, AD, or codegen path. That separation is what lets the problem set follow the workload roadmap without silently dropping compiler coverage.
 

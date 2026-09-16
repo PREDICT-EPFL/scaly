@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "A symbolic IR and code-generation framework for optimal control problems."
 readme = "README.md"
 authors = [
-    { name = "Tudor Oancea", email = "oancea.tudor@icloud.com" }
+    { name = "Tudor Oancea", email = "tudor.oancea@epfl.ch" }
 ]
 requires-python = ">=3.13"
 dependencies = [

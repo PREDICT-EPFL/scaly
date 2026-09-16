@@ -2,15 +2,12 @@
 
 The single actionable list. Rationale lives elsewhere and is linked, never restated:
 
-- **Why we are writing what we write** — [`internal/paper.md`](paper.md): thesis, scope, narrative,
-  outline, claim gates, objections.
 - **Why a number is or is not admissible** — [`docs/results/fairness.md`](../docs/results/fairness.md):
   what the comparisons hold constant, the measurement protocol, the reference machine.
 - **How the suite got here** — [`internal/notes/benchmark-buildout.md`](notes/benchmark-buildout.md):
   the completed B-track and L-track, formulation history, retired workloads.
 - **What shape a refactoring should take** — [`internal/notes/refactorings.md`](notes/refactorings.md):
   one `#` section per refactoring, kept until that refactoring lands.
-- **Library-internal phases** — [`internal/roadmap.md`](roadmap.md).
 
 Reorganized 2026-09-07. Sections are themes that outlive the first release. Inside each section,
 **Now** holds what is actively worked on or next in line, and **Deferred** holds what is
@@ -57,19 +54,14 @@ only the theme and nothing else has to stay stable.
 Priority order from 2026-09-11, the road to a public repository and a first alpha. Each step is
 cheap once and expensive to redo, so the order is the sequencing that matters:
 
-1. R-60 reserve the PyPI names, then R-59 rename everything to scaly.
-2. L-28 to L-31 with EPFL as copyright holder.
-3. R-37 move `paper.md` out, R-61 scrub anvil from file contents, R-63 audit `internal/`.
-4. R-40 versioning policy.
-5. R-62 rewrite history and force-push the renamed repository, then R-64 secrets scan and
+1. R-40 versioning policy.
+2. R-62 rewrite history and force-push the renamed repository, then R-64 secrets scan and
    metadata, then merge dev into main.
-6. D-32 to D-34 documentation rewrite, D-68 acknowledgements and AI disclosure, D-65 the two
+3. D-32 to D-34 documentation rewrite, D-68 acknowledgements and AI disclosure, D-65 the two
    docs deployments.
-7. R-67 make the repository public. CI runs only after that, because the month's Actions minutes
-   are spent; run the suite, ruff and ty locally on the rewritten tree first.
-8. R-66 platform-only wheel tags, R-41 wheels on test PyPI, R-42 `0.1.0a1`.
-
-R-38 Windows and the API items stay off this path.
+4. R-67 make the repository public, after running the suite, ruff and ty locally on the rewritten
+   tree.
+5. R-66 platform-only wheel tags, R-41 wheels on test PyPI, R-42 `0.1.0a1`.
 
 ## API
 
@@ -113,7 +105,7 @@ R-38 Windows and the API items stay off this path.
 ## Compiler internals
 
 The [completed study](../docs/results/index.md) supplies the current measurements, and §8 of
-[`paper.md`](paper.md) records the claim decisions. The 2026-09-07 investigation under
+The 2026-09-07 investigation under
 [`notes/perf_2026_09_07/`](notes/perf_2026_09_07/README.md) remains the rationale and validation
 record for the completed compiler tasks below.
 
@@ -167,10 +159,10 @@ protocol's compile flags.
       GCC/Clang compilation and runtime checks; the full benchmark rerun follows more Track C work.
       Automatic seed specialization remains C-45.
       Design: [arithmetic policy](notes/algebraic_simplification_2026_09_08.md#proposed-scaly-arithmetic-policy);
-      rationale: [paper §8](paper.md#8-claim-gates-and-remaining-work), [measurement protocol](../docs/results/fairness.md#the-measurement-protocol).
-- [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `scaly.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision), [rationale](paper.md#8-claim-gates-and-remaining-work).
-- [x] **C-55. Preserve intended lowering hints through derivative Function construction.** Implemented 2026-09-08: every derived `Function` built in `ad/` takes the primal callee's effective hint (`block`/`opaque` -> `block`, `scalar` -> `scalar`, `auto` inherits nothing) on its output root, through `Function._effective_lowering`; the chain check `hinted_stage_hessian` and `tests/ad/test_lowering_hints.py` pin selection. The chain benchmark stage now carries `.scalar()` (decided 2026-09-08: the comparison is against each side's best formulation, and this is ours); the M=5 Hessian kernel runs at 835 µs against 1769 µs without. Race-car gets nothing from the hint because the automatic policy already selects its stage ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)). [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout), [rationale](paper.md#8-claim-gates-and-remaining-work).
-- [x] **C-53. Share arithmetic simplification across both dialects and program forms.** Implemented 2026-09-08 in `passes/arith.py` (one adapter per dialect, rules for neutral elements, zero annihilation, self-cancellation, negation normalization, bounded constant powers, dtype-checked constant evaluation) and applied through `passes/expr.py`, `scalarize`, and the new `fold_arith` loop-body pass after fusion; `tests/passes/test_arith.py` runs the same cases in all three forms. Left open: `_h{n}` renderer temporaries have no collision guard and deep index expressions are not hoisted, both unobserved in practice. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation), [rationale](paper.md#8-claim-gates-and-remaining-work).
+      rationale: [measurement protocol](../docs/results/fairness.md#the-measurement-protocol).
+- [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `scaly.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision).
+- [x] **C-55. Preserve intended lowering hints through derivative Function construction.** Implemented 2026-09-08: every derived `Function` built in `ad/` takes the primal callee's effective hint (`block`/`opaque` -> `block`, `scalar` -> `scalar`, `auto` inherits nothing) on its output root, through `Function._effective_lowering`; the chain check `hinted_stage_hessian` and `tests/ad/test_lowering_hints.py` pin selection. The chain benchmark stage now carries `.scalar()` (decided 2026-09-08: the comparison is against each side's best formulation, and this is ours); the M=5 Hessian kernel runs at 835 µs against 1769 µs without. Race-car gets nothing from the hint because the automatic policy already selects its stage ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)). [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout).
+- [x] **C-53. Share arithmetic simplification across both dialects and program forms.** Implemented 2026-09-08 in `passes/arith.py` (one adapter per dialect, rules for neutral elements, zero annihilation, self-cancellation, negation normalization, bounded constant powers, dtype-checked constant evaluation) and applied through `passes/expr.py`, `scalarize`, and the new `fold_arith` loop-body pass after fusion; `tests/passes/test_arith.py` runs the same cases in all three forms. Left open: `_h{n}` renderer temporaries have no collision guard and deep index expressions are not hoisted, both unobserved in practice. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation).
 - [x] **C-45. Bake stage-invariant constant tangents into the VMAP forward callee.** Implemented
       2026-09-08 in `ad/forward.py`: a constant `jvp_many` tangent whose per-iteration tiles repeat
       with period `k <= 8` (and at least twice, so short horizons of distinct tiles are not unrolled)
@@ -239,7 +231,7 @@ protocol's compile flags.
       matrix forms `A @ ones` and `ones @ A` were tried as stacked row sums and reverted: in loop
       form they lower to one loop per row and lose the fused producer, slower than the matmul. They
       wait for an axis reduction in the IR, which is C-8's accumulator lowering.
-- [x] **C-12. One matcher and iterative rewrite driver for both dialects.** Implemented 2026-09-08: `ir/match.py` is generic over both node types with an iterative driver (`fixpoint`, `revisit`, `max_steps`), `rebuild_program` in `passes/program/_common.py` is the program adapter, and `_transform` is gone. No nested patterns or captures: no call site needed them. C-13 closed with it. [Updated design](notes/refactorings.md#shared-compiler-rewrites), [rationale](paper.md#8-claim-gates-and-remaining-work).
+- [x] **C-12. One matcher and iterative rewrite driver for both dialects.** Implemented 2026-09-08: `ir/match.py` is generic over both node types with an iterative driver (`fixpoint`, `revisit`, `max_steps`), `rebuild_program` in `passes/program/_common.py` is the program adapter, and `_transform` is gone. No nested patterns or captures: no call site needed them. C-13 closed with it. [Updated design](notes/refactorings.md#shared-compiler-rewrites).
 
 ### Deferred
 
@@ -275,10 +267,9 @@ protocol's compile flags.
       its index compressed. And three `double` constant tables that C-45's periodic-tile bake did
       not reach (`k0` 1200, `k22` and `k26` 1224 entries at N=50) grow with N; find out which
       tangent or weight each one is and whether the bake's period test is simply too narrow.
-      Deferred 2026-09-09: the initial paper accepts growing metadata, reports it separately from
-      executable code, and requires artifacts to stay within the compile cap. Revisit if measured
-      artifact size becomes a deployment limit.
-      Rationale: [paper §8](paper.md#8-claim-gates-and-remaining-work).
+      Deferred 2026-09-09: growing metadata is reported separately from executable code and
+      artifacts must stay within the compile cap. Revisit if measured artifact size becomes a
+      deployment limit.
 
 - [ ] **C-11. Chain: exploit the stage-block structure.** The coloring width grows with M (12, 24,
       42 at M=3,5,9), so the per-stage Hessian pays that many forward-over-reverse sweeps where `SX`
@@ -292,7 +283,7 @@ protocol's compile flags.
       if measured workloads justify it. Excluded from C-49 closeout to preserve mapped structure
       without introducing a new expansion policy. Diagnosis: [C-49 audit](notes/perf_2026_09_07/c49_ad_op_audit.md#ranked-rule-and-composition-edits-for-an-implementer).
 
-- [ ] **C-54. Add memory-aware program common-subexpression elimination and dead-code cleanup.** Build on C-12/C-53 with definition/use tracking and conservative read/write/alias handling; retain required calls and output stores, and test repeated loads across writes. Broader loop motion follows demonstrated workload need; load-node interning alone is not a current stale-value bug. [Design](notes/algebraic_simplification_2026_09_08.md#separate-value-cleanup-from-memory-optimization), [rationale](paper.md#8-claim-gates-and-remaining-work).
+- [ ] **C-54. Add memory-aware program common-subexpression elimination and dead-code cleanup.** Deferred, like all compiler work, unless a measured workload requires it. Build on C-12/C-53 with definition/use tracking and conservative read/write/alias handling; retain required calls and output stores, and test repeated loads across writes. Broader loop motion follows demonstrated workload need; load-node interning alone is not a current stale-value bug. [Design](notes/algebraic_simplification_2026_09_08.md#separate-value-cleanup-from-memory-optimization).
 - [x] **C-13. Make the Program IR passes iterative instead of recursive.** Done 2026-09-08 with
       C-12: the program passes, `scalarize`, and the C renderer no longer recurse per expression node,
       and the renderer hoists subtrees deeper than `MAX_SCALAR_DEPTH` into temporaries so clang's
@@ -314,7 +305,7 @@ protocol's compile flags.
 
 - **S-16. Separate the IPOPT gap into version against build configuration.** Rebuild 3.14.11 with
   our hook's flags, or 3.14.19 against the wheel's OpenBLAS. "We ship a better-tuned linear algebra
-  stack" is defensible; "our IPOPT is newer" is not. Rationale: paper.md §5.4.
+  stack" is defensible; "our IPOPT is newer" is not. Rationale: [fairness](../docs/results/fairness.md).
 - **S-17. Make the compiled CasADi IPOPT cache survive worktree removal.** Include the library
   search paths in the cache identity or make cached artifacts independent of them. Rationale:
   refactorings.md "Compiled CasADi artifacts across worktrees".
@@ -438,8 +429,8 @@ the code does.
 
 ### Deferred
 
-- **D-36. GPU backend milestone definition** in `internal/roadmap.md`, the prerequisite for the
-  paper's outlook becoming a claim in any later paper.
+- **D-36. GPU backend milestone definition**: what a first accelerator target must demonstrate before
+  any backend work starts.
 
 ## Release
 
@@ -447,47 +438,9 @@ These steps make the tree public and permanent, and each is cheap to do once and
 
 ### Now
 
-- [ ] **R-37. Move `internal/paper.md` out of this repository before merging to main.** Blocking,
-      and enforced: `.config/wt.toml` has a `pre-merge` check that fails while the file is tracked.
-
-      Why it is urgent rather than tidy: the note contains the "sell only if the reruns establish
-      it" list, the "do not sell" list and the objections rehearsal, which are the three things a
-      reviewer should least find in our own words. Deleting it at release time does nothing, because
-      the content stays in every clone's history, and excising it afterwards means
-      `git filter-repo --path internal/paper.md --invert-paths`, which rewrites every SHA from its
-      first appearance onward and breaks any archive link or tag that references an old one.
-
-      The file has never been on main, but it is tracked in dev's history. Fast-forwarding this
-      API branch to dev preserves that history. Before merging dev into main, move the note out
-      and squash the public changes, or remove the private path from the history being published.
-      Deleting the file alone does not make a fast-forward to main safe.
-
-      The design, agreed 2026-08-25:
-
-      - `~/dev/scaly-notes/` as its own git repo, with its own private remote for backup, holding
-        `paper.md` and any later private notes. Keeping it under git matters: the note is a dated
-        decision log and a plain untracked file would lose its history.
-      - `notes -> /home/ted/dev/scaly-notes` as a gitignored symlink in every worktree, with an
-        **absolute** target so the link keeps pointing at the one source of truth even if a tool
-        copies rather than links it. `/notes/` goes in `.gitignore`.
-      - A `[post-start]` step in `.config/wt.toml` that recreates the symlink, so the behaviour does
-        not depend on what `wt step copy-ignored` does with symlinks.
-      - A gitignored `AGENTS.local.md` holding the agent instructions that must not be public,
-        imported from the tracked `CLAUDE.md` with an `@AGENTS.local.md` line next to `@AGENTS.md`;
-        a missing import is skipped silently, so public clones are unaffected. It says what `notes/`
-        is, that nothing public may depend on it, and never `git add -f` under it.
-
-      Properties this buys. One source of truth across every worktree and branch, which is correct
-      for a planning document since the plan is not per-branch. The worst possible accident commits a
-      path string, never content. And the public rationale stays public, because
-      `docs/results/fairness.md` carries the methodology and contains no strategy.
-
-      Rejected: a submodule leaks its existence and URL in a committed `.gitmodules` and is unpleasant
-      with worktrees; an orphan branch leaves the objects in the same store, so a full clone still
-      exposes them; `git-crypt` or `age` puts ciphertext in public history permanently, a poor risk
-      profile for a document whose value is candour; an external tool loses grep-ability and
-      proximity to the code, which is the whole reason the note works.
-
+- [x] **R-37. Move the paper design note out of this repository.** Done 2026-09-16; it goes to
+      the paper's own repository. The note was never on main but is in dev's history, which R-62
+      rewrites.
 - [ ] **R-38. Windows support.** Decide the toolchain (MSVC or clang) and the target: the core JIT
       plus `scaly-sqp` and `scaly-piqp` first; `scaly-ipopt` on Windows is a separate later item
       because it drags in Fortran and its own licensing survey.
@@ -507,26 +460,24 @@ These steps make the tree public and permanent, and each is cheap to do once and
 - [x] **R-59. Rename everything to scaly.** Done 2026-09-16: the package, the three plugin
       distributions and directories, the `scaly_*` modules, `SCALY_*` environment variables, the two
       console scripts, the JIT cache directory, CI cache paths, `.config/wt.toml`, `zensical.toml`,
-      `docs/` and `internal/`; `import scaly as sc` replaces the old alias everywhere. The Foxglove
-      layouts never contained the string. The GitHub repository was renamed in place and this
+      `docs/` and `internal/`, and the `sc` import alias. The Foxglove layouts never contained the
+      old string. The GitHub repository was renamed in place and this
       clone's `origin` now points at `PREDICT-EPFL/scaly`; any other clone needs
       `git remote set-url origin git@github.com:PREDICT-EPFL/scaly.git` and, if its directory was
       renamed too, a recreated `.venv` since uv's console scripts hardcode the venv path.
-- [ ] **R-61. Scrub anvil from file contents.** History may keep it. Hits on 2026-09-11:
-      `AGENTS.md`, `internal/roadmap.md`, `internal/notes/anvil.md`, `naming.md` and
-      `benchmark-buildout.md`. Delete `anvil.md`; its two useful sentences move to
-      `AGENTS.local.md` (R-37). `naming.md` becomes a short "why scaly" note or moves to the private
-      notes repo, since its current content is about the old name.
-- [ ] **R-63. Audit `internal/` for publication.** It stays in the public repository and off the
-      documentation site, which Zensical already guarantees because it builds `docs/` only. Nothing
-      under it may mention anvil or alloy. Add a `pre-merge` grep in `.config/wt.toml` for both
-      words over the tracked tree, so the gate outlives the audit.
+- [x] **R-61. Remove the pre-extraction history from file contents.** Done 2026-09-16; the
+      library roadmap went with it, since everything it planned is either implemented or too
+      vague to keep.
+- [x] **R-63. Audit `internal/` for publication.** Done 2026-09-16 with an independent second
+      pass. It stays in the public repository and off the documentation site, which Zensical
+      guarantees because it builds `docs/` only. The `no-private-names` `pre-merge` hook in
+      `.config/wt.toml` keeps the gate alive after the audit.
 - [ ] **R-62. Rewrite history and force-push the renamed repository.** After R-37, R-59, R-61 and
-      R-63: drop the local `refs/t3/checkpoints/*` refs, `git filter-repo --invert-paths` on
-      `internal/paper.md` and the old `docs/paper.md`, re-add `origin`, force-push every branch and
+      R-63 (all done): drop the local `refs/t3/checkpoints/*` refs, `git filter-repo --invert-paths` on
+      the paths R-37 removed, re-add `origin`, force-push every branch and
       tag, delete stale remote branches, and hard-reset or re-clone every other clone and worktree
-      rather than pulling. GitHub keeps unreachable commits fetchable by SHA until its garbage
-      collection; accepted because the repository is private with lab-only access until R-67.
+      rather than pulling. Do this while the repository is still private, since GitHub keeps
+      unreachable commits fetchable by SHA until its garbage collection.
 - [ ] **R-64. Publication metadata and hygiene.** A secrets scan over the rewritten history,
       `CITATION.cff`, a Zenodo record at the first tag, a real pyproject description, and ruff's
       `target-version` aligned with `requires-python`.
@@ -600,13 +551,13 @@ merge into dev and prioritize documentation.
       dispatch-loop family carrying the most arithmetic per call and the workspace over every
       dispatch, so all four problems fill the columns. The unrolled pair rows no longer exist in
       `filters.py` (removed by the pair-row port); we chose not to recover them from history for a
-      same-protocol control, and gate 4 in `paper.md` now keeps only its descriptive wording.
+      same-protocol control, so the mapped-pair result is reported descriptively.
       Closeout follow-up implemented and independently reviewed 2026-09-09: hoisted procedures
       retain their original callee identity for dispatch metrics. Unit-trip and longer maps exclude
       the one-time prologue. Disabling the identity lookup makes the regression fail.
 
-- [x] **BH-20. Complete the closeout study and re-decide the claim gates.** Completed 2026-09-11
+- [x] **BH-20. Complete the closeout study.** Completed 2026-09-11
       in `benchmarks/results/study-2026-09-10`. The [results overview](../docs/results/index.md)
       and [scalability tables](../docs/results/scalability.md) contain the completed study.
-      `paper.md` §8 records the resulting gate decisions. The interrupted 2026-09-09 attempt
+      The interrupted 2026-09-09 attempt
       remains preserved in its original result directory and frozen investigation note.

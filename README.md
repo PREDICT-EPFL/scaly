@@ -108,9 +108,9 @@ If you already know CasADi, JAX, tinygrad or MLIR, start with
 [Scaly next to its neighbours](docs/how_it_works/comparison.md): what scaly took from each, and
 where it deliberately differs.
 
-`internal/` holds the library roadmap and frozen design notes — kept in the repository for the
-record, deliberately not published: `internal/paper.md` is the paper's scope and narrative,
-`internal/todo.md` the actionable list, and `internal/notes/` the frozen history.
+`internal/` holds the actionable list and frozen design notes — kept in the repository for the
+record, deliberately not published: `internal/todo.md` is the actionable list and
+`internal/notes/` the frozen history.
 
 ## License
 

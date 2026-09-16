@@ -64,7 +64,7 @@ class CarPhysics:
 
 @dataclass(slots=True)
 class HCBFConfig:
-  """Order-1 hyperbolic barrier for a car pair (`gradient_HCBF` in the colleague's
+  """Order-1 hyperbolic barrier for a car pair (`gradient_HCBF` in the reference
   `bumper_car_simulator`), which constrains the *closing speed* of the pair rather
   than its distance:
 

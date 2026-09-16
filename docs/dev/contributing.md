@@ -127,7 +127,7 @@ uv run --only-group docs zensical build    # into site/
 ```
 
 `docs/` is what gets published — all of it. Zensical has no exclusion mechanism, so anything that
-should stay unpublished lives in `internal/` at the repository root instead: the library roadmap
+should stay unpublished lives in `internal/` at the repository root instead: the actionable list
 and the frozen design notes, kept for the record but off the site.
 
 The API reference is generated from docstrings, so a new public name needs one. Google style, and

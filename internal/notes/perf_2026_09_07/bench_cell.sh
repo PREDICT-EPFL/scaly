@@ -5,7 +5,7 @@ cell=$1; shift
 src=${1:-}; shift || true
 cd $cell
 if [ -z "$src" ]; then src=$(ls *.c | grep -v short | head -1); fi
-GB=/home/ted/dev/scaly/benchmarks/third_party/gbench/v1.9.5
+GB=$(cd "$(dirname "$0")/../../.." && pwd)/benchmarks/third_party/gbench/v1.9.5
 clang++ -O3 -std=c++17 -I . -I $GB/include -pthread "$@" -c $src -o kernel_x.o 2>/dev/null
 [ -f wrapper.o ] || clang++ -O3 -std=c++17 -I . -I $GB/include -pthread -c benchmark.cpp -o wrapper.o
 clang++ -I $GB/include -pthread kernel_x.o wrapper.o -o bench_x $GB/lib/libbenchmark.a -lm

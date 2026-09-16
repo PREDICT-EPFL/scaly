@@ -38,3 +38,8 @@ site/
 .wrangler
 
 package-placeholders
+
+# Agent instructions and merge-gate words that must not be public
+AGENTS.local.md
+CLAUDE.local.md
+.config/private-names

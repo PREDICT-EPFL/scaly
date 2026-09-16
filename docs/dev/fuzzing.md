@@ -23,11 +23,11 @@ Design decisions that matter more than the generator itself:
 
 A natural extension is **metamorphic testing**: apply semantics-preserving transforms to a graph (unroll a `VMAP` into concatenated calls, permute stages where valid, re-slice a `CONCAT`) and assert identical outputs. It needs no oracle and composes with the same generator; the hand-written VMAP-versus-unrolled tests in `tests/ad/test_vmap.py` are already this pattern done manually.
 
-**Paper credibility.** A fuzzing campaign is also empirical validation for the upcoming paper: "N random graphs over the full op set, differentially checked against CasADi and finite differences, zero mismatches" (plus a table of bugs found and fixed during development) is a much stronger correctness claim than "our three benchmarks agree with CasADi". Compiler papers routinely cite exactly this kind of campaign (the Csmith and NNSmith papers made careers out of it), and it directly answers the reviewer question "how do you know the generated code is correct beyond your benchmarks?".
+**Evidence.** A fuzzing campaign is also the correctness evidence a compiler can point to: "N random graphs over the full op set, differentially checked against CasADi and finite differences, zero mismatches", plus the bugs it found and fixed along the way. Csmith and NNSmith established this as the standard way to answer "how do you know the generated code is correct beyond your benchmarks?".
 
 ## System 2: agent-based workload recreation (core + solver)
 
-A separate repository, run on a schedule, in which an agent periodically finds concrete optimal-control workloads (papers, open-source examples: the acados examples directory, do-mpc, the COPS collection, Betts' book problems) and recreates them end-to-end with scaly — its own internal benchmark set that nobody reads until it detects something worth a human's attention. This is dogfooding with the human cost removed: it finds what no graph fuzzer can — "scaly cannot express this formulation", "the obvious way to write this is 50× slower than the clever way", "this error message sends you down the wrong path" — which is exactly the class of failure feared from real adoption.
+A separate repository, run on a schedule, in which an agent periodically finds concrete optimal-control workloads (papers, open-source examples: the acados examples directory, do-mpc, the COPS collection, Betts' book problems) and recreates them end-to-end with scaly — its own internal benchmark set that nobody reads until it detects something worth a human's attention. This is dogfooding with the human cost removed: it finds what no graph fuzzer can — "scaly cannot express this formulation", "the obvious way to write this is 50× slower than the clever way", "this error message sends you down the wrong path" — which is the class of failure that shows up in real adoption.
 
 **Triage is the whole game, and agent failures are mostly the agent's fault.** Experience building control systems with agents from scratch shows that a large fraction of failures are attributable to the agent, not the tooling — so the agent's raw success rate is too volatile to serve as a quality metric for scaly, and unfiltered agent reports would erode trust until nobody reads them. The pipeline that makes the signal reliable:
 
@@ -61,6 +61,6 @@ Performance regressions on the canonical problems (the existing benchmark gates 
 ## Suggested sequencing
 
 1. Coverage map (small, informs everything after).
-2. System 1, the Hypothesis-based differential fuzzer — all oracles exist, it is already roadmapped, and it feeds both the regression-test corpus and the paper's validation section.
+2. System 1, the Hypothesis-based differential fuzzer — all oracles exist, it is already roadmapped, and it feeds the regression-test corpus.
 3. System 3, the codegen-review agent — can start as soon as System 1 supplies graphs, useful pre-freeze.
 4. System 2, the workload recreator — spec it now, launch it at core freeze alongside the external beta.

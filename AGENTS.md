@@ -16,17 +16,13 @@ Read before changing anything:
 Everything under `docs/` is published to the documentation site, all of it, because Zensical has no
 exclusion mechanism. Anything unpublished lives in `internal/`:
 
-- `internal/roadmap.md` is the library roadmap.
-- `internal/paper.md` owns the first paper's thesis, scope, narrative, outline, claim gates and
-  objections. It contains no task lists.
 - `internal/todo.md` is the single actionable list. Each item links its rationale to
-  `internal/paper.md` or `docs/results/fairness.md` instead of restating it.
+  `docs/results/fairness.md` instead of restating it.
 - `internal/notes/` holds frozen design and migration notes, including the completed benchmark and
   solver-plugin build-out.
 
 The published `docs/results/fairness.md` owns what comparisons hold constant, the measurement
-protocol, the reference machine and the evidence behind each rule. Put rationale in `paper.md` or
-`fairness.md`, and put the corresponding one-line task in `todo.md`. Do not repeat the same prose.
+protocol, the reference machine and the evidence behind each rule. Put rationale in `fairness.md` and put the corresponding one-line task in `todo.md`. Do not repeat the same prose.
 
 ## Commands
 
@@ -75,11 +71,8 @@ Identifier spellings, several of which reach the generated C:
   commit messages. Branches land squashed through `wt merge`, so such a hash stops existing the
   moment the work merges. Name the file, function or change instead. Hashes already on `main` are
   safe to cite.
-- **No `anvil`, `tinygrad` or `torch` imports.** NumPy is the only runtime dependency and that is
-  worth defending; for PyTorch checkpoints use `scaly.utils.load_torch_state_dict`.
-- **Anvil is gone.** Scaly was extracted from the `anvil` monorepo in May 2026 and shares no runtime
-  code with it. Never name it in public surfaces — the README, `docs/`, or code. If a question
-  genuinely needs anvil's SQP or multistage design notes, ask the user for a checkout.
+- **No `tinygrad` or `torch` imports.** NumPy is the only runtime dependency and that is worth
+  defending; for PyTorch checkpoints use `scaly.utils.load_torch_state_dict`.
 - **A new module needs an `IMPORT_LAYERS` entry in `tests/test_import_layering.py`** and a one-line docstring
   saying what it owns. Imports go down import layers, never up. A new public name needs a docstring too:
   the API reference is generated from them and `tests/test_import_boundaries.py` pins the surface.

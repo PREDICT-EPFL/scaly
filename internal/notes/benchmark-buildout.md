@@ -3,7 +3,6 @@
 **Frozen record, not a plan.** This was `BENCHMARKS.md` at the repository root until 2026-08-25,
 when the three live concerns it had accumulated were split out:
 
-- the paper's thesis, scope and baselines moved to [`internal/paper.md`](../paper.md);
 - the backlog and every open task moved to [`internal/todo.md`](../todo.md);
 - the fairness rationale and measurement protocol live in
   [`docs/results/fairness.md`](../../docs/results/fairness.md).
@@ -17,8 +16,7 @@ reference-machine protocol, and `docs/results/fairness.md` supersedes it.
 
 It in turn superseded everything that lived in `fast_benchmarks/` (the FastBench prototype,
 `BENCHMARK_SUITE_PLAN.md`, `REAL_BENCHMARK_CANDIDATES.md`, `STRATEGY_NOTES.md`), and was called
-`ROADMAP.md` before that, until the name collided with
-[`internal/roadmap.md`](../roadmap.md).
+`ROADMAP.md` before that, until the name collided with the library roadmap of the time.
 
 ## 2. Benchmark suite
 
@@ -153,7 +151,7 @@ the canonical point) that Scaly-vs-CasADi measurements on it mean something. For
 choices below are tie-broken by benchmark stability, not filter quality.
 
 The unbumpercars filter moved off the one-step *position* DTCBF onto the order-1
-hyperbolic CBF our colleague uses in `~/dev/bumper_car_simulator`
+hyperbolic CBF the reference implementation `bumper_car_simulator` uses
 (`control/algorithms.py::gradient_HCBF`), with per-row L1 slacks. The formulation
 is documented in the problem's README; what matters at roadmap level:
 
@@ -202,7 +200,7 @@ braking envelope is a tabulated NumPy inversion of the full-brake speed map. We
 replaced it with a fitted power-law envelope `c d^q` — since §2.6, one conservative
 fit covering both vehicle models — which is smooth and branch-free, so the symbolic
 path that blocked them is simply not blocked for us. That is a small but real "Scaly/CasADi made this
-easy" data point for the paper: the colleague hand-writes every barrier gradient,
+easy" data point: the reference implementation hand-writes every barrier gradient,
 and the migration needed none of them.
 
 ### 2.6 Unbumpercars: the natively-discrete model (plant, and now the filter too)
@@ -218,7 +216,7 @@ times, and the better-conditioned problem needs a third fewer iterations.
 Three side effects worth carrying forward. The closed loop **stops being chaotic** (perturbation
 amplification 1.015x per step against 1.329x), so single episodes are decision-grade again — the
 sensitivity was a symptom of the mismatch, not of the plant. The **envelope stops being
-load-bearing**: the honest DT fit and the incumbent CT one become indistinguishable, where against
+load-bearing**: the refitted DT model and the incumbent CT one become indistinguishable, where against
 the mismatched filter that choice was worth 24 colliding steps — so the shipped constants are now
 a single conservative fit `(1.00994, 0.8355)`, the tightest power law that never over-predicts
 either model's exact pair stopping envelope on `d ∈ [0.1, 3] m` (the CT-fitted `sqrt` it replaces
@@ -242,8 +240,8 @@ prediction path. Per-solve numbers for both models are in
 
 #### The road there (plant first, filter second)
 
-The **plant** now runs the colleague's natively discrete `MLPModel` — what their own HCBF
-runs on — vendored from `~/dev/unbumpercars/model_kinematic_mlp.pth` (absent from the
+The **plant** now runs the reference implementation's natively discrete `MLPModel` — what its
+own HCBF runs on — vendored from the authors' training checkpoint (absent from the
 public `bumper_car_simulator`) as `data/dt_kinematic_mlp.pt`. At that stage the **filter**
 still predicted with the RK4 map of the continuous-time `ct_full_xlarge.pt`, because the model
 swap was not a drop-in there: the discrete model brakes with the opposite speed dependence (per-step loss
@@ -274,7 +272,7 @@ the incumbent's 9 in 2 of 5.
 The cause is a conflation, not a bad fit. The barrier is `b = v_x + s V(d_eps)` with `s` the
 smooth sign of `d`, so outside the safety radius the envelope caps closing speed (a braking
 claim) while inside it demands separation at that same rate (a recovery gain). This plant is
-inside the radius 809 of 1000 steps, so an honest braking model makes recovery limp: demanded
+inside the radius 809 of 1000 steps, so a faithful braking model makes recovery limp: demanded
 separation falls 0.423 -> 0.164 m/s and penetration doubles. Scaling is no escape — it just
 trades that failure for the over-promise one — and no setting tested makes this plant safe. The
 clean fix is separate constants for the two regimes, blended by `(1 ± s)/2` so it stays smooth
@@ -376,7 +374,7 @@ sixteen-minute build to land slower than compiled MX. And **against a compiled C
 evaluation is a wash**: 1.46 ms against Scaly's 1.53. That is what the kernel sweeps already said
 (MX at 0.83–0.90× of Scaly at this width), which makes the interpreted column's 8.5× gap a
 configuration artifact and not a result. A closed loop disagreeing with its own sweep by an order of
-magnitude was a bug report, not a caveat, and it was written up as a caveat first.
+magnitude is a bug report, not a caveat.
 
 So the durable claims from this problem are the ones that do not depend on that column:
 
@@ -454,14 +452,13 @@ to outside users, and nothing in the benchmark or paper path needs them.
 
 **Decision: no laopt adapter for now.** Instead we build our own generated-C SQP
 (`scaly-sqp`, §3.3), using laopt's textbook-but-comprehensive SQP as the
-algorithmic reference — the same approach previously taken in anvil. The
+algorithmic reference. The
 findings below motivated the decision and are kept for the record; laopt
 returns later as an external baseline for MPFC (§2.3, backlog).
 
-laopt (Waibel, Schwan, Jones — EPFL LA; header-only C++17; **not yet public**,
-"available upon publication" — coordinate with the authors before depending on
-it) solves NLPs of exactly the form `min φ(ξ) s.t. c(ξ)=0, ξ_lb≤ξ≤ξ_ub,
-h_lb≤h(ξ)≤h_ub`. Verified against the code (`~/dev/laopt`):
+laopt (Waibel, Schwan, Jones — EPFL LA; header-only C++17; private at the time of this
+investigation, public since) solves NLPs of exactly the form `min φ(ξ) s.t. c(ξ)=0, ξ_lb≤ξ≤ξ_ub,
+h_lb≤h(ξ)≤h_ub`. Verified against the laopt source:
 
 - **Problem form matches `sc.nlp`** (two-sided general inequalities + separate
   box; equalities are rows with `lb==ub`, reclassified at the QP layer with
@@ -496,12 +493,12 @@ h_lb≤h(ξ)≤h_ub`. Verified against the code (`~/dev/laopt`):
   solve time is wrapped externally. For the casadi-laopt baseline, instrument
   the same way.
 
-Paper reference points (mini race car, N=25, tf=0.9 s): laopt SQP/PIQP 8.8 ms
+Reference points from the laopt paper (mini race car, N=25, tf=0.9 s): laopt SQP/PIQP 8.8 ms
 vs IPOPT 15.6 ms, FATROP 9.9 ms, acados 10.0 ms; laopt RTI 1.5 ms.
 
 ### 3.3 `scaly-sqp`: a custom generated-C SQP plugin
 
-Rather than adapting laopt (private, pre-publication, no external-oracle path,
+Rather than adapting laopt (then private, no external-oracle path,
 compile-time dims), `scaly-sqp` ships a Python render hook that emits the SQP
 wrapper into the same C translation unit as its oracles. Its accepted algorithm
 uses exact Lagrangian Hessians by default (objective Hessian as an explicit
@@ -536,7 +533,7 @@ Design points:
 ### 3.4 Binding doctrine: generated C glue, one artifact (decided 2026-07-14)
 
 Hand-written Python solver bindings are **transitional, not the model**. The
-target is the anvil pattern throughout: every function callable from Python is
+target is the same pattern throughout: every function callable from Python is
 JIT-compiled, and JIT thinly wraps AOT with a ctypes interface generated
 specifically for that function. Solver integrations therefore become
 **generated C wrappers emitted alongside the oracle code** — calling the
@@ -621,9 +618,8 @@ render hook), not in-tree plugins. Worth a paragraph in the deployment story.
 
 ## 4. MPFC benchmark (backlog item, scouted 2026-07-13)
 
-Johannes' MPFC is the racing formulation from the laopt paper, living in
-`~/dev/racing-project-ros2/mpc-control-racing-ros2/lib/mpc-control-racing/`
-(`SplineFollowingTire_LAMP`: laopt + multiple shooting + PIQP). Scouting
+The MPFC is the racing formulation from the laopt paper, living in the lab's racing ROS 2
+stack under `mpc-control-racing` (`SplineFollowingTire_LAMP`: laopt + multiple shooting + PIQP). Scouting
 summary for the future distillation:
 
 - **Formulation**: dynamic bicycle (6 states, simplified Pacejka front/rear,
@@ -636,8 +632,7 @@ summary for the future distillation:
   (`config/la_track_spline2.yaml`, 36 cubic pieces + left/right offsets),
   optionally the sampled centerline (`la_track_sampled.yaml`) for the progress
   locator/width.
-- **Closed-loop simulator: use `simulation-driving`** —
-  `~/dev/racing-project-ros2/simulation-driving-ros2/lib/simulation-driving/`
+- **Closed-loop simulator: use `simulation-driving`** from the same stack
   (`DrivingSimulator`, `BotSimulator`) is exactly the simple model-in-the-loop
   simulator this benchmark needs; distill/port its plant loop rather than
   writing one from scratch. Lap counting via γ-wrap. The MPC numeric core has

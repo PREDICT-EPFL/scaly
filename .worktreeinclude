@@ -1,2 +1,5 @@
 plugins/*/src/*/lib/
 plugins/*/src/*/include/
+AGENTS.local.md
+CLAUDE.local.md
+.config/private-names

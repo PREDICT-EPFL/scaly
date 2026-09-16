@@ -1,7 +1,7 @@
 # Unbumpercars safety filter
 
 This directory is a *representative reproduction* of the centralized safety filter in
-`~/dev/bumper_car_simulator`, kept only so Scaly has a realistic workload to be fast on: a
+the `bumper_car_simulator` project, kept only so Scaly has a realistic workload to be fast on: a
 neural model inside pairwise constraints, exact sparse Lagrangian Hessians through `ExprOp.VMAP`,
 and a CasADi implementation of the same NLP to compare against.
 
@@ -39,8 +39,8 @@ u = [u_m, u_s]
 
 By default **both the plant and the filter run the discrete `MLPModel`**
 (`common.dt_mlp_step_np` for the plant, `common.dt_mlp_step_smooth_np` and its two symbolic
-mirrors for the filter) — the more faithful of the two models and the one the colleague's
-own HCBF runs on. It is three pieces, of which only the middle is learned: RK4 pose
+mirrors for the filter) — the more faithful of the two models and the one the reference
+implementation's own HCBF runs on. It is three pieces, of which only the middle is learned: RK4 pose
 integration with the velocity block held over the step, the network for the velocity block,
 and a first-order steering actuator at the checkpoint's own `tau = 0.155 s`.
 
@@ -232,9 +232,9 @@ one is how we found out what the mismatch actually costs, and those measurements
 matched pairing is now the default.
 
 The natively discrete `MLPModel` from the reference repo is the more faithful model — it is
-what the colleague's own HCBF runs on, and it is a one-step map rather than an integrated
+what the reference implementation's own HCBF runs on, and it is a one-step map rather than an integrated
 ODE, so it would need no RK4 inside the filter. Its checkpoint is **not** in the public
-`bumper_car_simulator`; it came from `~/dev/unbumpercars/model_kinematic_mlp.pth` and is
+`bumper_car_simulator`; it came from the authors' training checkpoint `model_kinematic_mlp.pth` and is
 vendored here as `data/dt_kinematic_mlp.pt`, byte-identical (143,104 bytes; keys
 `model.{0,2,4}.{weight,bias}`; `6 -> 256 -> 128 -> 3` with two ReLUs, matching `MLPModel`'s
 defaults exactly). No normalization is stored in the checkpoint — it comes from the

@@ -74,8 +74,7 @@ expanded, as `-q·x + ½·w·‖p‖²`, which by completing the square is minim
 It then uses the same `q = -7.5` for the stage and the terminal term against `w = 2.5`
 and `w = 10` respectively, so its stage cost pulls the end mass towards `x = 3.0` while
 its terminal cost pulls towards `x = 0.75` (`examples/chain_mass/chain_mass_ocp.hpp`
-lines 38-52 in the laopt source tree, which is unpublished, so there is no link to
-give). The reference implementations of this problem track one position throughout:
+lines 38-52 in the laopt source tree). The reference implementations of this problem track one position throughout:
 
 - **acados** `chain_mass` uses a `LINEAR_LS` cost with `yref = [xrest; 0]` and
   `yref_e = xrest` under `W_e = Q` — the same reference *and* the same weight matrix at

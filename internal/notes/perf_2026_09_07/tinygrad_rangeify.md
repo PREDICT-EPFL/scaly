@@ -1,6 +1,6 @@
 # How tinygrad's rangeify loop compiler works, read 2026-09-08
 
-Report from a read-only study of `~/dev/tinygrad` at commit `69915d61` (2026-09-07), written to
+Report from a read-only study of a tinygrad checkout at commit `69915d61` (2026-09-07), written to
 inform C-43, C-44 and C-8. Paths are relative to that checkout. Nothing was executed; the loop-nest
 description in section 5 is derived from the code path.
 
