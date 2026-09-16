@@ -1038,7 +1038,7 @@ requires-dist = [{ name = "scaly", editable = "." }]
 
 [[package]]
 name = "scaly-piqp"
-version = "0.1.0"
+version = "0.1.0a1"
 source = { editable = "plugins/scaly-piqp" }
 dependencies = [
     { name = "scaly" },
@@ -1049,7 +1049,7 @@ requires-dist = [{ name = "scaly", editable = "." }]
 
 [[package]]
 name = "scaly-sqp"
-version = "0.1.0"
+version = "0.1.0a1"
 source = { editable = "plugins/scaly-sqp" }
 dependencies = [
     { name = "jinja2" },

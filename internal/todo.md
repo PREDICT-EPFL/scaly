@@ -481,8 +481,9 @@ These steps make the tree public and permanent, and each is cheap to do once and
 - [ ] **R-67. Make the repository public.** After R-62, R-64 and the merge into main, with the suite,
       ruff and ty green locally. The first CI run happens here because the month's Actions minutes
       are spent, and both workflows will consume them once they refill.
-- [ ] **R-40. Versioning policy.** What a minor bump promises about the generated C symbols, the
-      sparsity-table prefixes and the plugin ABI; written into `docs/dev/contributing.md`.
+- [x] **R-40. Versioning policy.** What a minor bump promises about the generated C symbols, the
+      sparsity-table prefixes and the plugin ABI; written into `docs/dev/versioning.md`, with the
+      plugins pinning `scaly>=0.1.0a1,<0.2`.
 - [ ] **R-66. Platform-only wheel tags for the plugins.** Nothing in the plugins touches the Python
       C API, the solvers load through ctypes, yet `hatch_build.py` in `scaly-piqp` and `scaly-ipopt`
       sets `infer_tag = True`, which stamps the running interpreter's `cpXY-cpXY-<platform>` tag.

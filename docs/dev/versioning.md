@@ -31,12 +31,38 @@ commit, but equality has no compatibility meaning.
 
 Compatibility is enforced in two places:
 
-- Each plugin declares the supported core-package range in its package
-  dependencies, for example `core>=0.1.0,<0.2` for the `0.1.x` compatibility
-  line.
+- Each plugin declares the supported core range in its package dependencies,
+  `scaly>=0.1.0a1,<0.2` for the `0.1.x` compatibility line. Naming a pre-release
+  on the lower bound lets installers pick `0.1.0b1` or `0.1.0rc1` without `--pre`;
+  the exclusive upper bound also excludes every `0.2` pre-release.
 - The solver registry checks the plugin protocol version at runtime. A breaking
   change to the plugin contract bumps that protocol version and requires
   coordinated releases of the affected official plugins.
+
+## What a release may change
+
+Three generated surfaces reach other people's builds, so each carries an explicit promise.
+
+**Exported C symbols.** The stable interface is the universal pointer signature of the exported
+entry `<name>` and, for solver modules, the `<name>_stats` accessor, together with the derived-output
+names `{kind}_{of}_{wrt}` such as `f_spjac_y_x`. A patch release changes none of these. A minor
+release may rename, reorder or remove them, and the change is listed in the release notes. The
+typed C++ wrappers are sugar over the pointer signature and follow the same rule. The `static`
+`_raw` bodies are internal and may change in any release.
+
+**Sparsity tables.** The `<prefix>_NNZ`, `_NROW` and `_NCOL` macros and the index tables in the
+generated header take their prefix from the derived-output name, so their *names* follow the
+symbol rule above. Their *contents* are stable in no release: the coordinate order is an artifact
+of lowering, and a coloring or `VMAP` change legitimately reorders it. A consumer stays correct by
+reading values through the `_val_perm` tables, as [the C ABI](../how_it_works/c_abi.md#sparse-outputs)
+describes. Whenever generated output changes, `_JIT_CACHE_VERSION` in `src/scaly/codegen/jit.py`
+is bumped so a cached library from an older version is never reused.
+
+**Plugin protocol.** `SOLVER_PLUGIN_PROTOCOL_VERSION` and `SCALY_SOLVER_STATS_VERSION` version the
+contract between core and solver plugins; [Solver plugins](solver_plugins.md#versioning) lists
+what each covers and its history. A protocol bump is a minor release of `scaly` and a coordinated
+release of every official plugin, which raise their lower bound on `scaly` in the same commit. A
+patch release never bumps either constant.
 
 ## Git tags
 
@@ -55,8 +81,9 @@ packages that are not released receive no new tag.
 
 ## Release process
 
-Releases are manually started in continuous integration rather than triggered
-by pushing a tag. The operator selects the package or packages to release, and
+Releases will be started manually in continuous integration rather than
+triggered by pushing a tag. The workflow does not exist yet; this section
+records its design so the first one is built to it. The operator selects the package or packages to release, and
 the versions in their package metadata are the source of truth. The workflow
 then:
 
