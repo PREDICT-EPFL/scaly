@@ -1,4 +1,4 @@
-/* The header shows the wordmark alone; the site name text and the page title on scroll are hidden. */
+/* The header and mobile drawer show the wordmark without repeating the site name. */
 .md-header__title {
   visibility: hidden;
 }
@@ -8,7 +8,15 @@
   width: auto;
 }
 
-[data-md-color-scheme="slate"] .md-header__button.md-logo img {
+.md-nav--primary > .md-nav__title[for="__drawer"] {
+  font-size: 0;
+}
+
+.md-nav--primary > .md-nav__title[for="__drawer"] .md-logo {
+  width: auto;
+}
+
+[data-md-color-scheme="slate"] .md-logo img {
   content: url("../assets/scaly-wordmark-dark.svg");
 }
 
