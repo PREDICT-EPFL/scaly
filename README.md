@@ -29,7 +29,7 @@ Python evaluator behind these calls, so the values you test against are computed
 ship. To render that C to files instead:
 
 ```bash
-uv run python -m scaly.codegen mymodule:rosenbrock -o generated/
+uv run scaly_codegen mymodule:rosenbrock -o generated/
 ```
 
 ## What it does
@@ -86,8 +86,13 @@ sudo apt-get install gfortran cmake build-essential
 SCALY_BUILD_SOLVERS=required uv sync     # 5 to 8 minutes cold
 ```
 
-`uv run python -m scaly.codegen.toolchain` reports the active compiler, the cache directory and
-which solvers were found. Full details in [Installation](docs/guide/installation.md).
+The project provides three command-line tools:
+
+- `uv run scaly_codegen <module>:<attribute> -o generated/` writes a function's C source and header.
+- `uv run scaly_toolchain` reports the active compiler, cache directory and solver discovery.
+- `uv run scaly_viz` serves recorded compiler visualizations. See [Visualization](docs/guide/visualization.md).
+
+See [Installation](docs/guide/installation.md) and [Code generation](docs/guide/codegen.md) for details.
 
 ## Documentation
 

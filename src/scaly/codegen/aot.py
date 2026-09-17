@@ -398,7 +398,7 @@ def write_module(fun: Function, out_dir: Path, *, typed_buffers: bool = True) ->
 
 
 def main(argv: list[str] | None = None) -> None:
-  parser = argparse.ArgumentParser(prog="python -m scaly.codegen", description="Render a Function to a C header/source pair.")
+  parser = argparse.ArgumentParser(prog="scaly_codegen", description="Render a Function to a C header/source pair.")
   parser.add_argument("target", help="module:attribute naming a Function or a zero-argument factory returning one")
   parser.add_argument("-o", "--out-dir", type=Path, default=Path(), help="directory to write into (default: cwd)")
   parser.add_argument("--no-typed-buffers", action="store_true", help="omit the typed buffer structs and the C++ call wrapper")

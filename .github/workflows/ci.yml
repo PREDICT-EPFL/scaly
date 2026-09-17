@@ -138,7 +138,7 @@ jobs:
         run: uv sync --frozen
 
       - name: Native toolchain report
-        run: uv run python -m scaly.codegen.toolchain
+        run: uv run scaly_toolchain
 
       - name: Ruff lint
         run: uv run ruff check .
@@ -215,7 +215,7 @@ jobs:
         run: uv sync --frozen
 
       - name: Native solver report
-        run: uv run python -m scaly.codegen.toolchain
+        run: uv run scaly_toolchain
 
       - name: Inspect vendored libs
         run: |

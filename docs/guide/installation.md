@@ -32,7 +32,7 @@ Scaly looks for `cc` on your `PATH`, the POSIX name for the system default C com
 macOS and the BSDs. Set `SCALY_CC` to override it.
 
 ```bash
-uv run python -m scaly.codegen.toolchain
+uv run scaly_toolchain
 ```
 
 That prints the active compiler, the cache directory and the state of solver discovery. Run it

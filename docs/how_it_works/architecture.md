@@ -70,7 +70,7 @@ grad(np.array([1.0, 2.0]))
 | 11 | Header, source, workspace size and solver link flags are packaged as a `CModule`. | `codegen/aot.py` |
 | 12 | A SHA-256 over (cache version, ABI signature, function name, source text, compile flags) keys the artifact. On a miss, `cc` builds a shared library; then `dlopen` and a ctypes call through that ABI. The library is cached under `$XDG_CACHE_HOME/scaly/jit` (or `SCALY_CACHE_DIR`) and reused by every function with the same key. | `codegen/jit.py` |
 
-AOT stops at step 11 and writes the pair to disk (`python -m scaly.codegen <module>:<attr> -o <dir>`).
+AOT stops at step 11 and writes the pair to disk (`scaly_codegen <module>:<attr> -o <dir>`).
 Both consumers read the same `CModule`, so the header's `SZ_W`, the source's spill size and the
 scratch array a caller has to allocate cannot disagree.
 
@@ -130,7 +130,7 @@ src/scaly/
   codegen/
     abi.py               the universal C ABI: signature, status codes, mangling, typed buffers
     c.py                 ProgramNode -> standalone scalar C; no lowering policy of its own
-    __main__.py          `python -m scaly.codegen`, the AOT command line
+    __main__.py          compatibility shim for `python -m scaly.codegen`
     solver.py            solver-wrapper framing around a plugin-rendered body
     aot.py               one lowering -> CModule, the file-writing driver, the CLI
     jit.py               CModule -> compile, cache, dlopen, ctypes dispatch
@@ -365,10 +365,10 @@ artifacts. `_JIT_CACHE_VERSION` is bumped when generated output changes incompat
 solver-bearing artifacts load into an isolated linker namespace to keep vendored dependencies out
 of the host process.
 
-The CLI is `python -m scaly.codegen`, not `python -m scaly.codegen.aot`. `codegen/__init__.py`
-already imports `.aot`, so running the submodule directly would execute it a second time as
-`__main__` and leave two copies of the observer registry, letting a CLI render escape a recorder
-that was armed elsewhere.
+The CLI is `scaly_codegen`. `codegen/__init__.py` imports `.aot`, so running
+`python -m scaly.codegen.aot` directly would execute it a second time as `__main__` and leave two
+copies of the observer registry, letting a CLI render escape a recorder that was armed elsewhere.
+The `python -m scaly.codegen` shim remains available for compatibility.
 
 ### Solvers: `solvers/`, `plugins/`
 

@@ -68,6 +68,7 @@ docs = [
 ]
 
 [project.scripts]
+scaly_codegen = "scaly.codegen.aot:main"
 scaly_viz = "scaly.viz.serve:main"
 scaly_toolchain = "scaly.codegen.toolchain:main"
 

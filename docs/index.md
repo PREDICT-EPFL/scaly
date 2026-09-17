@@ -33,7 +33,7 @@ Python evaluator behind these calls, so the values you test against are computed
 ship. To render that C to files instead:
 
 ```bash
-uv run python -m scaly.codegen mymodule:rosenbrock -o generated/
+uv run scaly_codegen mymodule:rosenbrock -o generated/
 ```
 
 ## What it does

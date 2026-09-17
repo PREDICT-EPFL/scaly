@@ -217,7 +217,7 @@ size and derivative construction scale with one stage, not with the horizon.
 The ahead-of-time (AOT) command uses the same lowering and renderer as the numerical call.
 
 ```bash
-uv run python -m scaly.codegen mymodule:solve -o generated/
+uv run scaly_codegen mymodule:solve -o generated/
 ```
 
 It writes one C source file and one header exposing the pointer-array ABI and typed C++ helpers.

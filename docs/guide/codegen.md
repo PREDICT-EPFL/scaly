@@ -60,7 +60,7 @@ write_module(fn, out_dir)
 From a shell:
 
 ```bash
-uv run python -m scaly.codegen mymodule:my_function -o generated/
+uv run scaly_codegen mymodule:my_function -o generated/
 ```
 
 The argument is `<module>:<attribute>`, an importable module and the name of a `Function` in it.
@@ -139,7 +139,7 @@ which are rendered normally. See [Solvers](solvers.md#shipping-one-in-c).
 ## Checking the toolchain
 
 ```bash
-uv run python -m scaly.codegen.toolchain
+uv run scaly_toolchain
 ```
 
 Prints the cache root, the compiler and where it was found, the solver discovery source with its

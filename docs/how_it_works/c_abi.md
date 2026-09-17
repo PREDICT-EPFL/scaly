@@ -172,7 +172,7 @@ write_module(fn, out_dir)
 From the command line:
 
 ```bash
-uv run python -m scaly.codegen mymodule:my_function -o generated/
+uv run scaly_codegen mymodule:my_function -o generated/
 ```
 
 The just-in-time (JIT) path consumes exactly this object. It compiles `module.body` and keys its
