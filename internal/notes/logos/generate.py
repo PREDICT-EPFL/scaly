@@ -42,7 +42,9 @@ def curvature(s,h=2.0):
     _,_,x0,y0,_,_=frame(s-h); _,_,x1,y1,_,_=frame(s+h); return (x0*y1-y0*x1)/(2*h)
 
 W, GAP = 48.0, 3.2                # band a little wider than the glyph stroke, so the clip always cuts
-COLORS=["#111b20","#182226","#1e282b"]
+# Sage green. Light: dark forest through mid sage; dark: pale sage on slate.
+SCHEMES = {"light": (["#182a21","#3f6851","#79a389"], "#182a21"),
+           "dark": (["#7fa992","#a9c9b7","#d5e6dc"], "#e8f0eb")}
 def lozenge(s,t,a,b,k=0.64):
     c=lambda ds,dt: pos(s+ds,t+dt)
     P0,P1,P2,P3=c(-a,0),c(0,-b),c(a,0),c(0,b)
@@ -52,24 +54,26 @@ def lozenge(s,t,a,b,k=0.64):
     return d+"Z"
 
 p=W/2; b=p/2-GAP/2; a=1.35*b
-cells=[]; s=-a; row=0; ci=0
-while s<L+a:
-    kap=curvature(s)
-    for t in ([-p,0,p] if row%2==0 else [-0.5*p,0.5*p]):
-        if 1-kap*t>0.2:
-            cells.append(f'<path d="{lozenge(s,t,a,b)}" fill="{COLORS[ci%3]}"/>'); ci+=1
-    s+=a+GAP; row+=1
+def scales(colors):
+    cells=[]; s=-a; row=0; ci=0
+    while s<L+a:
+        kap=curvature(s)
+        for t in ([-p,0,p] if row%2==0 else [-0.5*p,0.5*p]):
+            if 1-kap*t>0.2:
+                cells.append(f'<path d="{lozenge(s,t,a,b)}" fill="{colors[ci%3]}"/>'); ci+=1
+        s+=a+GAP; row+=1
+    return cells
 
 _x = SX + FONT["S"]["adv"] * K
 _parts = []
 for ch in "caly":
     _parts.append(f'<path d="{FONT[ch]["d"]}" transform="translate({_x:.3f} {BASE}) scale({K} -{K})"/>')
     _x += FONT[ch]["adv"] * K
-letters = '<g fill="#151e22">\n' + "\n".join(_parts) + '\n</g>'
+letters = lambda color: f'<g fill="{color}">\n' + "\n".join(_parts) + '\n</g>'
 RIGHT = _x
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-def write(name, body, x0, y0, x1, y1, title):
+def write(name, cells, body, x0, y0, x1, y1, title):
     svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="{x0:.0f} {y0:.0f} {x1-x0:.0f} {y1-y0:.0f}" role="img" aria-labelledby="title">
 <title id="title">{title}</title>
 <defs><clipPath id="glyph"><path d="{GLYPH}" transform="translate({SX} {BASE}) scale({K} -{K})"/></clipPath></defs>
@@ -82,8 +86,13 @@ def write(name, body, x0, y0, x1, y1, title):
     open(os.path.join(HERE, name), "w").write(svg)
 
 top, bottom = BASE - 1556*K - 16, BASE - FONT["y"]["bbox"][1]*K + 16   # the y descender sets the bottom
-write("scaly-wordmark.svg", letters, SX + 147*K - 16, top, RIGHT - (FONT["y"]["adv"] - FONT["y"]["bbox"][2])*K + 16, bottom,
-      "Scaly: the S filled with charcoal snake scales")
-write("scaly-mark.svg", "", SX + 147*K - 16, top, SX + 1325*K + 16, bottom,
-      "Scaly mark: an S filled with charcoal snake scales")
-print("cells", len(cells))
+right = RIGHT - (FONT["y"]["adv"] - FONT["y"]["bbox"][2])*K + 16
+for scheme, (colors, ink) in SCHEMES.items():
+    cells = scales(colors)
+    suffix = "" if scheme == "light" else f"-{scheme}"
+    write(f"scaly-wordmark{suffix}.svg", cells, letters(ink), SX + 147*K - 16, top, right, bottom,
+          "Scaly: the S filled with sage snake scales")
+    if scheme == "light":
+        write("scaly-mark.svg", cells, "", SX + 147*K - 16, top, SX + 1325*K + 16, bottom,
+              "Scaly mark: an S filled with sage snake scales")
+    print(scheme, "cells", len(cells))

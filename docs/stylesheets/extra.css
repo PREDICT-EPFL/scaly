@@ -1,0 +1,31 @@
+/* The header shows the wordmark alone; the site name text and the page title on scroll are hidden. */
+.md-header__title {
+  visibility: hidden;
+}
+
+.md-header__button.md-logo img {
+  height: 1.8rem;
+  width: auto;
+}
+
+[data-md-color-scheme="slate"] .md-header__button.md-logo img {
+  content: url("../assets/scaly-wordmark-dark.svg");
+}
+
+/* Sage palette, the same tones as the scales in the logo (internal/notes/logos/generate.py). */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #3f6851;
+  --md-primary-fg-color--light: #79a389;
+  --md-primary-fg-color--dark: #182a21;
+  --md-accent-fg-color: #2f7a55;
+  --md-accent-fg-color--transparent: #2f7a551a;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #182a21;
+  --md-primary-fg-color--light: #3f6851;
+  --md-primary-fg-color--dark: #10201a;
+  --md-accent-fg-color: #a9c9b7;
+  --md-accent-fg-color--transparent: #a9c9b71a;
+  --md-typeset-a-color: #7fa992;
+}

@@ -2,9 +2,6 @@
 title: Home
 ---
 
-![scaly](assets/scaly-wordmark.svg#only-light){ width="320" }
-![scaly](assets/scaly-wordmark-dark.svg#only-dark){ width="320" }
-
 Scaly is a symbolic compiler for optimal control, written in Python. You write dynamics, costs and
 constraints as named functions over a typed expression graph. Scaly differentiates them, works out
 their sparsity, and generates standalone C. The C is compiled and cached on the first call from
