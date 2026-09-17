@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 69**
+**Next id: 71**
 
 | Prefix | Section |
 |---|---|
@@ -87,6 +87,12 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 
 ### Deferred
 
+- **API-69. Shorter numerical solver calls.** The five input groups make every call spell out
+  zero arrays for the initial multipliers, including the empty inequality group; see the README
+  example. Consider defaults for the multiplier groups or a keyword form before 1.0.
+- **API-70. Rethink the `sc.vmap` mapping tuples.** The `(outer, start, stride)` triples are the
+  one construct in the README example a newcomer cannot guess. Consider a named or sliced form
+  before 1.0.
 - **API-6. A QP-subproblem contract so scaly-sqp can use other QP plugins.** Today `scaly-sqp`
   imports only `include_dir`/`lib_dir` from `scaly_piqp` and its C template calls
   `piqp_setup/update/solve` and reads `qp->result` directly, so a future OSQP, ProxQP or HPIPM
@@ -402,7 +408,7 @@ the code does.
       the single status admonition in `docs/index.md` (remove it at 0.1.0), and the plain-speech
       rules recorded in `docs/dev/conventions.md`. `FunctionTemplate` (API-1) is not mentioned in
       the docs; add its page when it lands. Wheel installation instructions belong to R-41.
-- [x] **D-33. Rework `docs/how_it_works/comparison.md`.** Done 2026-09-16: every Taken/Changed row
+- [x] **D-33. Rework `docs/how_it_works/comparison.md` (now `influences.md`).** Done 2026-09-16: every Taken/Changed row
       checked against code; `sc.problem` returns a `Problem`, only one upward import is checked. A scoped fix landed on 2026-08-25: the
       CasADi section's "one graph with a per-node hint" paragraph presented an inert mechanism as a
       departure, and it now states the repetition claim that is actually true and measured, with the
