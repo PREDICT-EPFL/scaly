@@ -210,10 +210,10 @@ expecting system packages. This matters when you ship.
 
 Every dependency is pinned to a tag or release branch in the plugin's `build_config.json`.
 
-Build requirements differ by plugin. `scaly-piqp` needs Git, CMake and a C/C++ compiler.
-`scaly-ipopt` needs Git, Make and a C/C++/Fortran compiler, and uses `./configure`. A cold build
-of both is 5 to 8 minutes; see [Installation](installation.md#the-solvers). Later syncs reuse the
-cached artifacts.
+Build requirements differ by plugin. `scaly-piqp` needs Git and a C/C++ compiler.
+`scaly-ipopt` needs Git, Make and a C/C++/Fortran compiler, and uses `./configure`. Both get CMake
+from PyPI as a build requirement. A cold build of both is 5 to 8 minutes; see
+[Contributing](../dev/contributing.md#setup). Later syncs reuse the cached artifacts.
 
 The whole `lib/` directory of a plugin has to travel with it. The build bundles the Fortran runtime
 next to `libipopt` so it resolves without a system install.

@@ -8,7 +8,7 @@ prototyping in Python to deployment using generated C code.
 
 !!! note "Early release"
     Scaly is still in development and the public API can still change between minor
-    versions. See [versioning policy](docs/dev/versioning.md) for more details.
+    versions. See [versioning policy](dev/versioning.md) for more details.
 
 ```python
 import numpy as np

@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 71**
+**Next id: 72**
 
 | Prefix | Section |
 |---|---|
@@ -450,7 +450,10 @@ These steps make the tree public and permanent, and each is cheap to do once and
       rewrites.
 - [ ] **R-38. Windows support.** Decide the toolchain (MSVC or clang) and the target: the core JIT
       plus `scaly-sqp` and `scaly-piqp` first; `scaly-ipopt` on Windows is a separate later item
-      because it drags in Fortran and its own licensing survey.
+      because it drags in Fortran and its own licensing survey. Candidate toolchain: make `ziglang`
+      (R-71) a required dependency on Windows through a `sys_platform == 'win32'` marker, and build
+      the Windows `scaly-piqp` wheel with `zig cc` as the CMake C and C++ compiler, so the JIT and
+      the solver library share one toolchain and no MSVC-versus-MinGW runtime mismatch can arise.
 - [x] **R-39. Finalize the name.** Decided 2026-09-14: `scaly`. `scali` was the first choice, but
       PyPI refused it as too similar to `scaii`, an abandoned 2019 project: PyPI treats `l`, `i`
       and `1` as one character when comparing names, and nobody can override that check. `scaly`
@@ -501,7 +504,14 @@ These steps make the tree public and permanent, and each is cheap to do once and
 - [ ] **R-41. Wheel building and publishing.** cibuildwheel with one matrix entry per OS and
       architecture, solvers built natively on each runner as CI already does. `scaly`, `scaly-sqp`
       and `scaly-piqp` first; `scaly-ipopt` follows once its Fortran runtime licensing (L-30) is
-      settled. Test PyPI first. After L-28 to L-31 and R-66.
+      settled. Test PyPI first. After L-28 to L-31 and R-66. Decide the compiler the wheels are
+      built with at that point; the system compiler on each runner is the default. `cmake` comes
+      from PyPI as a build requirement of both plugins; a C++ compiler and gfortran stay system-wide
+      prerequisites for anyone building the wheels themselves.
+- [ ] **R-71. `zig cc` as the last fallback compiler.** After `SCALY_CC`, `CC` and `cc` on `PATH`,
+      the JIT tries `python -m ziglang cc` when `ziglang` is importable. It wraps clang, so the flag
+      dialect the JIT already emits applies. The compiler becomes a command list rather than a
+      binary path, which `scaly_toolchain` must print. Expose it as the `scaly[toolchain]` extra.
 - [ ] **R-42. Freeze measurements on `0.1.0a1`, tag `v0.1.0a1`** and publish the wheels and a durable
       archive. After R-41.
 

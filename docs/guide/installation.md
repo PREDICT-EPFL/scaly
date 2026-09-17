@@ -1,72 +1,44 @@
 # Installation
 
-Scaly requires Python 3.12 or newer on Linux or macOS. At runtime it depends on NumPy and SciPy,
-plus a C compiler.
-
-## The library
+Scaly requires Python 3.12 or newer, on Linux and macOS, and only requires
+a C compiler to be installed system wide. Using [uv](https://docs.astral.sh/uv):
 
 ```bash
-git clone https://github.com/PREDICT-EPFL/scaly.git
-cd scaly
-uv sync
+# install just the core library
+uv add scaly
+# or with an additional solver interface
+uv add "scaly[ipopt]"
+# or with all solvers
+uv add "scaly[solvers]"
 ```
 
-That is enough to build functions, differentiate them, generate C and call it.
+You can of course also use pip by replacing `uv add` with `pip install`.
 
-Scaly is not on PyPI yet. To depend on it from your own project, point at the repository:
+The solver plugins ship prebuilt libraries. A solve raises `SolverLibraryError` when the library it
+needs is not there. If no wheel matches your platform, or you want a checkout of the repository,
+build the solvers from source as described in [Contributing](../dev/contributing.md#setup).
 
-```bash
-uv add git+https://github.com/PREDICT-EPFL/scaly.git
-```
-
-The solver backends are separate distributions in the same repository, added the same way with a
-subdirectory:
-
-```bash
-uv add git+https://github.com/PREDICT-EPFL/scaly.git#subdirectory=plugins/scaly-ipopt
-```
-
-## A C compiler
+## C compiler
 
 Scaly looks for `cc` on your `PATH`, the POSIX name for the system default C compiler on Linux,
-macOS and the BSDs. Set `SCALY_CC` to override it.
+macOS and the BSDs. Set the `SCALY_CC` environment variable to override it.
+
+To check what C/C++ compiler scaly uses, you can run the `scaly_toolchain` script via
 
 ```bash
+# with uv
 uv run scaly_toolchain
+# or if you have activated the virtual environment simply
+scaly_toolchain
 ```
 
-That prints the active compiler, the cache directory and the state of solver discovery. Run it
-first when something will not compile.
-
-## The solvers
-
-`sc.solver(problem, "piqp")` and `sc.solver(problem, "ipopt")` need the PIQP and IPOPT plugins,
-which scaly vendors and builds from source. The build needs a Fortran compiler and CMake:
-
-```bash
-# macOS
-brew install gcc cmake
-
-# Debian / Ubuntu
-sudo apt-get install gfortran cmake build-essential
-```
-
-Then:
-
-```bash
-SCALY_BUILD_SOLVERS=required uv sync
-```
-
-A cold build takes 5 to 8 minutes; later syncs reuse the cached artifacts. Without
-`SCALY_BUILD_SOLVERS=required`, a missing native toolchain makes `uv sync` skip the solver
-libraries instead of failing. Everything except the solver interfaces still works, and a solve
-raises `SolverLibraryError` when it needs a library that is not there. See
-[Environment variables](env_vars.md).
-
-To force a clean rebuild, delete the plugin's `src/*/lib`, `src/*/include` and `third_party`
-directories.
+This script also prints other useful information to debug errors at the C
+compilation level: the JIT's cache directory, the JIT compilation flags, and the
+status of each solver plugin.
 
 ## Checking it works
+
+You can run the following small example:
 
 ```bash
 uv run python -c "
@@ -77,9 +49,8 @@ import scaly as sc
 def f(x):
     return (x.sin() + x * x).sum()
 
-print(f(np.ones(3)))
+np.testing.assert_allclose(5.524412954423689, f(np.ones(3)))
 "
 ```
 
-If that prints a number, the graph built, the C rendered, the compiler ran and the result came back
-through the ABI.
+If an assertion error is raised, something went wrong.

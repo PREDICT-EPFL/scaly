@@ -979,6 +979,22 @@ dependencies = [
     { name = "scipy" },
 ]
 
+[package.optional-dependencies]
+ipopt = [
+    { name = "scaly-ipopt" },
+]
+piqp = [
+    { name = "scaly-piqp" },
+]
+solvers = [
+    { name = "scaly-ipopt" },
+    { name = "scaly-piqp" },
+    { name = "scaly-sqp" },
+]
+sqp = [
+    { name = "scaly-sqp" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "casadi" },
@@ -1002,8 +1018,13 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.3.3" },
+    { name = "scaly", extras = ["piqp", "ipopt", "sqp"], marker = "extra == 'solvers'" },
+    { name = "scaly-ipopt", marker = "extra == 'ipopt'", editable = "plugins/scaly-ipopt" },
+    { name = "scaly-piqp", marker = "extra == 'piqp'", editable = "plugins/scaly-piqp" },
+    { name = "scaly-sqp", marker = "extra == 'sqp'", editable = "plugins/scaly-sqp" },
     { name = "scipy", specifier = ">=1.18.0" },
 ]
+provides-extras = ["piqp", "ipopt", "sqp", "solvers"]
 
 [package.metadata.requires-dev]
 dev = [

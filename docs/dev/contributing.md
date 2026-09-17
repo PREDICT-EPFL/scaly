@@ -15,9 +15,31 @@ Use `uv run` for everything, for example `uv run pytest` or `uv run benchmarks/r
 takes a script path directly, so the `python` in `uv run python script.py` is redundant. Do not
 activate the virtual environment by hand.
 
-The vendored solvers (PIQP, IPOPT) build on the first sync and take 5 to 8 minutes cold. Without a
-native toolchain the sync skips them and the solver tests skip with them; everything else works.
-See [Installation](../guide/installation.md).
+Scaly itself is pure Python, but the `scaly-piqp` and `scaly-ipopt` plugins vendor their solvers
+and build them from source on the first sync. CMake comes from PyPI as a build requirement; a C++
+compiler and a Fortran compiler have to be installed system-wide:
+
+```bash
+# macOS
+brew install gcc
+
+# Debian / Ubuntu
+sudo apt-get install gfortran build-essential
+```
+
+Then:
+
+```bash
+SCALY_BUILD_SOLVERS=required uv sync
+```
+
+A cold build takes 5 to 8 minutes; later syncs reuse the cached artifacts. Without
+`SCALY_BUILD_SOLVERS=required`, a missing native toolchain makes `uv sync` skip the solver
+libraries instead of failing, and the solver tests skip with them; everything else works. See
+[Environment variables](../guide/env_vars.md).
+
+To force a clean rebuild, delete the plugin's `src/*/lib`, `src/*/include` and `third_party`
+directories.
 
 In the two vendoring plugins (`scaly-piqp`, `scaly-ipopt`), a new vendored dependency needs an entry
 in `src/scaly_*/build_config.json`, which pins its version, and a row in the

@@ -3,34 +3,43 @@ name = "scaly"
 version = "0.1.0a1"
 description = "Symbolic compiler for optimal control: typed expression graphs, sparse derivatives and standalone generated C."
 readme = "README.md"
-authors = [
-    { name = "Tudor Oancea", email = "tudor.oancea@epfl.ch" }
-]
+authors = [{ name = "Tudor Oancea", email = "tudor.oancea@epfl.ch" }]
 requires-python = ">=3.12"
-dependencies = [
-    "numpy>=2.3.3",
-    "scipy>=1.18.0",
-]
+dependencies = ["numpy>=2.3.3", "scipy>=1.18.0"]
 license = "BSD-2-Clause"
 license-files = ["LICENSE.md"]
-keywords = ["optimal-control", "automatic-differentiation", "code-generation", "symbolic", "sparse", "mpc", "nonlinear-programming"]
+keywords = [
+  "optimal-control",
+  "automatic-differentiation",
+  "code-generation",
+  "symbolic",
+  "sparse",
+  "mpc",
+  "nonlinear-programming",
+]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
-    "Programming Language :: C",
-    "Topic :: Scientific/Engineering",
-    "Topic :: Software Development :: Compilers",
-    "Operating System :: MacOS",
-    "Operating System :: POSIX :: Linux",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: C",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development :: Compilers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
 ]
 
 [project.urls]
 Repository = "https://github.com/PREDICT-EPFL/scaly"
 Issues = "https://github.com/PREDICT-EPFL/scaly/issues"
+
+[project.optional-dependencies]
+piqp = ["scaly-piqp>=0.1.0a1,<0.2"]
+ipopt = ["scaly-ipopt>=0.1.0a1,<0.2"]
+sqp = ["scaly-sqp>=0.1.0a1,<0.2"]
+solvers = ["scaly[piqp,ipopt,sqp]"]
 
 [build-system]
 requires = ["hatchling"]
@@ -40,32 +49,27 @@ build-backend = "hatchling.build"
 packages = ["src/scaly"]
 
 [tool.hatch.build.targets.sdist]
-include = [
-    "src/",
-]
+include = ["src/"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
 
 [dependency-groups]
 dev = [
-    "scaly-ipopt",
-    "scaly-piqp",
-    "scaly-sqp",
-    "casadi>=3.8.0",
-    "pytest>=8.4.2",
-    "pytest-xdist>=3.8.0",
-    "ruff>=0.13.3",
-    "ty>=0.0.75",
-    "matplotlib>=3.11.0",
-    "foxglove-sdk>=0.25.3",
-    "pydantic>=2.13.4",
-    "scipy>=1.14",
+  "scaly-ipopt",
+  "scaly-piqp",
+  "scaly-sqp",
+  "casadi>=3.8.0",
+  "pytest>=8.4.2",
+  "pytest-xdist>=3.8.0",
+  "ruff>=0.13.3",
+  "ty>=0.0.75",
+  "matplotlib>=3.11.0",
+  "foxglove-sdk>=0.25.3",
+  "pydantic>=2.13.4",
+  "scipy>=1.14",
 ]
-docs = [
-    "zensical>=0.0.28",
-    "mkdocstrings-python>=2.0.3",
-]
+docs = ["zensical>=0.0.28", "mkdocstrings-python>=2.0.3"]
 
 [project.scripts]
 scaly_codegen = "scaly.codegen.aot:main"
@@ -86,7 +90,13 @@ scaly-sqp = { workspace = true }
 [tool.ruff]
 indent-width = 2
 line-length = 150
-include = ["src/scaly/**/*.py", "tests/**/*.py", "benchmarks/**/*.py", "plugins/**/*.py", "typing_playground/**/*.py"]
+include = [
+  "src/scaly/**/*.py",
+  "tests/**/*.py",
+  "benchmarks/**/*.py",
+  "plugins/**/*.py",
+  "typing_playground/**/*.py",
+]
 exclude = [".venv"]
 lint.ignore = ["E731"]
 
@@ -97,9 +107,19 @@ typeCheckingMode = "basic"
 reportPrivateImportUsage = false
 
 [tool.ty.src]
-exclude = ["hatch_build.py", "third_party/**", "plugins/*/hatch_build.py", "plugins/*/third_party/**", ".venv/**", "benchmarks/**", "internal/**"]
+exclude = [
+  "hatch_build.py",
+  "third_party/**",
+  "plugins/*/hatch_build.py",
+  "plugins/*/third_party/**",
+  ".venv/**",
+  "benchmarks/**",
+  "internal/**",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "plugins", "typing_playground"]
 norecursedirs = ["third_party", ".venv"]
-markers = ["solver(name): needs a loadable vendored solver; skipped without it, selected by CI's solver job"]
+markers = [
+  "solver(name): needs a loadable vendored solver; skipped without it, selected by CI's solver job",
+]
