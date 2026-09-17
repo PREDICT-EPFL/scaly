@@ -2,7 +2,7 @@
 
 Importing this package is what arms recording: ``recording.py`` registers into the observer hook
 ``codegen/aot.py`` owns, so the dependency runs backend-to-frontend and nothing in the compiler
-imports ``viz`` (``docs/how_it_works/architecture.md``).
+imports ``viz`` (``docs/dev/codebase.md``).
 """
 
 from __future__ import annotations

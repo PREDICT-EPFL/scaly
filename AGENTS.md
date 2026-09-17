@@ -7,8 +7,10 @@ call, and caches the resulting shared library.
 
 Read before changing anything:
 
-- [Architecture](docs/how_it_works/architecture.md) — the import-layer table, and *Where to add things*
-  lists every file each kind of change touches (a new scalar operation touches seven)
+- [Architecture](docs/how_it_works/architecture.md) — the pipeline, the two dialects, what each stage owns
+- [The codebase](docs/dev/codebase.md) — the package map, the import-layer table, *Where to add things*
+  (a new scalar operation touches seven files) and the rules that keep the tree in shape. These
+  rules bind agents exactly as they bind human contributors; follow them, do not work around them.
 - [Conventions](docs/dev/conventions.md) — naming, code style, which side of the
   tests-versus-benchmarks line a check belongs on
 - [Contributing](docs/dev/contributing.md) — the checks, where tests live, known flakes

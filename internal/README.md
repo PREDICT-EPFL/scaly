@@ -11,7 +11,7 @@ instead.
   definition; read them for the reasoning, not for how anything works today. The exception is
   [`notes/refactorings.md`](notes/refactorings.md), which is forward-looking and maintained.
 
-For how scaly works now, see [`docs/how_it_works/architecture.md`](../docs/how_it_works/architecture.md).
+For how scaly works now, see [`docs/how_it_works/architecture.md`](../docs/how_it_works/architecture.md) and [`docs/dev/codebase.md`](../docs/dev/codebase.md).
 
 ## What is in `notes/`
 
@@ -22,3 +22,4 @@ For how scaly works now, see [`docs/how_it_works/architecture.md`](../docs/how_i
 | `native_toolchain_exploration.md` | the conda-prefix and delocate experiments behind the vendored-solver build |
 | `vendored_solvers.md` | known issues in the vendored PIQP and IPOPT builds |
 | `macos_clang_call_miscompile.md` | the Apple-clang miscompile of inlined callee bodies, and the fix |
+| `fuzzing.md` | notes and ideas on fuzz testing of the compiler core |

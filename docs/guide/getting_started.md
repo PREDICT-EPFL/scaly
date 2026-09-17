@@ -24,7 +24,7 @@ print(znext.shape)       # (2,)
 print(sc.format_expr(znext))
 ```
 
-See [the expression dialect](../how_it_works/expr_ir.md#operations) for the full operation set.
+See [the expression dialect](../how_it_works/ir.md#operations) for the full operation set.
 
 ## Declare a typed function
 

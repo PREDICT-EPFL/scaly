@@ -1,6 +1,6 @@
 """Import-layer discipline for ``src/scaly``.
 
-Every module has an import layer (``docs/how_it_works/architecture.md``): a module may import modules in its own import layer
+Every module has an import layer (``docs/dev/codebase.md``): a module may import modules in its own import layer
 or a lower import layer, never a higher one. Two dicts hold the exceptions. ``SEAM`` is the one sanctioned upward edge —
 calling a ``Function`` JIT-compiles it. ``TOLERATED`` is the escape hatch for a violation being
 carried deliberately through a refactor in progress, and is empty; an entry there is a decision to
@@ -100,7 +100,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly": 9,  # the curated public re-exports sit above everything they re-export
 }
 
-# The one upward import the architecture sanctions (docs/how_it_works/architecture.md, "Import layers").
+# The one upward import the architecture sanctions (docs/dev/codebase.md, "Import layers").
 SEAM: dict[tuple[str, str], str] = {
   ("scaly.function.model", "scaly.codegen.jit"): "calling a Function JIT-compiles it",
 }

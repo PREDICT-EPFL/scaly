@@ -1,4 +1,4 @@
-# Scaly next to its neighbours
+# Influences
 
 Scaly borrows from four projects: CasADi for symbolic optimal control, tinygrad for a small
 compiler, MLIR for staged intermediate representations, and JAX for composable differentiation.
@@ -143,4 +143,4 @@ with no Python in the loop. See [Solvers](solvers.md).
 
 The tests enforce import layers. Which packages may import which is a table in a test, and the one
 sanctioned upward import is named and checked. This keeps the compiler legible as it grows. See
-[the import-layer rules](architecture.md#import-layers).
+[the import-layer rules](../dev/codebase.md#import-layers).

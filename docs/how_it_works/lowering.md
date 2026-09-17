@@ -38,7 +38,7 @@ a callee carrying a solver descriptor. The solver callee stays opaque and its wr
 separately, while its oracle functions lower normally.
 
 Not covered: device placement other than the host, and the operations listed as absent in
-[the expression dialect](expr_ir.md#operations). Both raise `LoweringError`.
+[the expression dialect](ir.md#operations). Both raise `LoweringError`.
 
 ## Program forms
 

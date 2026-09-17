@@ -1,4 +1,4 @@
-"""The curated public surface: re-exports only, no definitions of its own (``docs/how_it_works/architecture.md``)."""
+"""The curated public surface: re-exports only, no definitions of its own (``docs/dev/codebase.md``)."""
 
 from typing import Any
 

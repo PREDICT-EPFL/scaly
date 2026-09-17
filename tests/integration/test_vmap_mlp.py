@@ -59,7 +59,7 @@ def n_dec(stages: int) -> int:
 
 def _cost_stage() -> sc.Function:
   @sc.function(sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU)), sc.L("cost", ...), name="vmap_mlp_stage_cost")
-  def cost(inputs):  # type: ignore[no-untyped-def]
+  def cost(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, xnext, u = inputs
     difference = xnext - x
     return sc.sumsqr(x) + 2.0 * u[0] * u[0] + 0.5 * sc.sumsqr(difference)

@@ -73,4 +73,4 @@ tests. The graph JSON is for building your own tooling.
 The visualizer registers itself into an observer hook that the code generator owns, so nothing in
 the compiler imports the visualizer or knows it exists. That is one of the two exceptions in
 Scaly's import-layer rules, and it is why recording costs nothing when you have not asked for it.
-See [the architecture](../how_it_works/architecture.md#the-two-sanctioned-exceptions).
+See [the architecture](../dev/codebase.md#the-two-sanctioned-exceptions).

@@ -40,7 +40,7 @@ Scaly is meant to read like tinygrad: small and dense, with every line earning i
 
 Every module has an import layer. A module may import its own import layer or a lower one, never a
 higher one. The table and its two sanctioned exceptions are in
-[the architecture](../how_it_works/architecture.md#import-layers), and
+[The codebase](codebase.md#import-layers), and
 `tests/test_import_layering.py` enforces them.
 
 Every module also carries a one-line docstring saying what it owns. That sentence, not the directory

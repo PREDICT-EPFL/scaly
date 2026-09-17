@@ -26,13 +26,12 @@ nav = [
     ] },
     { "How it works" = [
         { "Architecture" = "how_it_works/architecture.md" },
-        { "The expression dialect" = "how_it_works/expr_ir.md" },
-        { "The program dialect" = "how_it_works/program_ir.md" },
+        { "The intermediate representations" = "how_it_works/ir.md" },
         { "Lowering and optimization" = "how_it_works/lowering.md" },
         { "Differentiation" = "how_it_works/autodiff.md" },
         { "The C ABI" = "how_it_works/c_abi.md" },
         { "Solvers" = "how_it_works/solvers.md" },
-        { "Next to its neighbours" = "how_it_works/comparison.md" },
+        { "Influences" = "how_it_works/influences.md" },
     ] },
     { "Benchmark results" = [
         { "Overview" = "results/index.md" },
@@ -42,6 +41,7 @@ nav = [
     { "Developer guide" = [
         { "Contributing" = "dev/contributing.md" },
         { "Conventions" = "dev/conventions.md" },
+        { "The codebase" = "dev/codebase.md" },
         { "Solver plugins" = "dev/solver_plugins.md" },
         { "Versioning" = "dev/versioning.md" },
         { "Fuzzing" = "dev/fuzzing.md" },

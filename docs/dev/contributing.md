@@ -100,8 +100,8 @@ zero. Keep them working.
 
 ## Making a change
 
-Read [the architecture](../how_it_works/architecture.md) first. [Where to add
-things](../how_it_works/architecture.md#where-to-add-things) lists, for each kind of change, every
+Read [the architecture](../how_it_works/architecture.md) first, then [The codebase](codebase.md).
+[Where to add things](codebase.md#where-to-add-things) lists, for each kind of change, every
 file it touches; adding a scalar operation touches seven.
 
 Then read the surrounding code, follow what is already there, make a focused change, run the

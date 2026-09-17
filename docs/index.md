@@ -2,121 +2,90 @@
 title: Home
 ---
 
-Scaly is a symbolic compiler for optimal control, written in Python. You write dynamics, costs and
-constraints as named functions over a typed expression graph. Scaly differentiates them, works out
-their sparsity, and generates standalone C. The C is compiled and cached on the first call from
-Python, and the same C can be written to disk for a build that has no Python in it.
+Scaly is a modelling and code-generation library for optimal control. You
+describe dynamics, costs and constraints once, and use the same description from
+prototyping in Python to deployment using generated C code.
 
 !!! note "Early release"
-    Scaly is at version 0.1.0a1. The public API can still change between minor versions, and
-    [Versioning](dev/versioning.md) says what a change is allowed to break.
+    Scaly is still in development and the public API can still change between minor
+    versions. See [versioning policy](docs/dev/versioning.md) for more details.
 
 ```python
-import scaly as sc
 import numpy as np
+import scaly as sc
 
-@sc.function(sc.L("x", 2), sc.L("f", ...))
-def rosenbrock(x: sc.Expr) -> sc.Expr:
-    return (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
+N = 20  # the decision vector w stacks N + 1 states of size 2, then N controls
 
-rosenbrock(np.array([1.0, 2.0]))          # array(100.)
+@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2)), sc.L("defect", ...))
+def defect(inputs):
+    z, u, znext = inputs
+    return z + 0.1 * sc.concat([z[1:], u]) - znext
 
-grad = sc.gradient(rosenbrock, "f", "x")
-grad(np.array([1.0, 2.0]))                # array([-400.,  200.])
+@sc.problem(vars=sc.L("w", 3 * N + 2), params=sc.L("z0", 2))
+def multiple_shooting(w, z0):
+    zs, us = w[: 2 * N + 2], w[2 * N + 2 :]
+    defects = sc.vmap(defect, N, [(zs, 0, 2), (us, 0, 1), (zs, 2, 2)])  # one loop, not N copies
+    return sc.ProblemSpec(minimize=sc.sumsqr(zs) + 0.1 * sc.sumsqr(us), eq=(zs[:2] - z0, defects))
+
+solve = sc.solver(multiple_shooting, "ipopt")
+w_opt, *_ = solve((np.zeros(3 * N + 2), np.zeros(3 * N + 2), np.zeros(2 * N + 2), np.zeros(0), np.array([1.0, 0.0])))
 ```
 
-The first call lowered the graph, rendered C, compiled a shared library and cached it. There is no
-Python evaluator behind these calls, so the values you test against are computed by the same C you
-ship. To render that C to files instead:
+Behind the scenes, scaly traces the costs, constraints and their derivatives,
+generates and compiles on the fly C code to call them within the solver. You can
+also generate the same C code in a specific directory so you can embed it into
+an external application, either from Python:
+
+```python
+from pathlib import Path
+from scaly.codegen import write_module
+
+write_module(solve, Path("generated/"))   # generated/multiple_shooting_ipopt.h and .c
+```
+
+or from the command line, naming the module and the function in it:
 
 ```bash
-uv run scaly_codegen mymodule:rosenbrock -o generated/
+scaly_codegen mymodule:solve -o generated/
 ```
-
-## What it does
-
-Derivatives are graphs. `sc.gradient`, `sc.jacobian`, `sc.hessian`, `sc.lagrangian_hessian` and
-their sparse forms return ordinary functions, which compile, nest and differentiate again like any
-other. A derivative keeps the input tree of the function it came from.
-
-Sparsity is computed from the graph structure before any value exists. Jacobians and Hessians are
-colored and the generated code computes only the nonzeros. The header carries the pattern as index
-tables, so a consumer can assemble a sparse matrix without asking Python.
-
-Repetition is preserved. `sc.vmap` evaluates one function over a horizon of stages as a single
-node, and that node stays a loop through differentiation, lowering and code generation. A hundred
-identical stages produce one loop body, not a hundred copies.
-
-Solvers are functions. `sc.problem` declares a problem without naming a backend, and `sc.solver`
-turns it into a function that calls PIQP, IPOPT or scaly's own generated SQP. A solver can sit
-inside a larger graph, and the whole graph compiles into one shared library.
-
-Every generated function has the same C signature, the one CasADi uses, plus optional typed C++
-wrappers. See [the C ABI](how_it_works/c_abi.md).
-
-The compiler is about ten thousand lines of Python with two intermediate representations. NumPy
-holds values and SciPy is used for structural sparsity analysis. There are no other runtime
-dependencies.
-
-[Benchmark results](results/index.md) compares generated Hessians and closed-loop controllers
-against CasADi, and [Are the comparisons fair?](results/fairness.md) says what each comparison holds
-constant. The outcome depends on the workload, and both pages say where scaly is slower.
 
 ## Where to start
 
 <div class="grid cards" markdown>
 
-- **New here**
+- **User guide**
 
-    [Installation](guide/installation.md), then [Getting started](guide/getting_started.md):
-    one function, one derivative, one solver call, and the generated C.
-
-- **Building a model**
-
-    [Building functions](guide/functions.md), [Derivatives](guide/derivatives.md),
-    [Sparsity](guide/sparsity.md), [Solvers](guide/solvers.md).
+    After [Installation](guide/installation.md), go to [Getting started](guide/getting_started.md) for
+    a quick overview of the library. The rest of the guide
+    covers [functions](guide/functions.md), [derivatives](guide/derivatives.md),
+    [sparsity](guide/sparsity.md), [solvers](guide/solvers.md) and
+    [code generation](guide/codegen.md).
 
 - **How it works**
 
-    [Architecture](how_it_works/architecture.md) for the shape of the compiler.
-    [Next to its neighbours](how_it_works/comparison.md) if you know CasADi, JAX, tinygrad or MLIR.
+    Start with the [Compiler architecture](how_it_works/architecture.md), then dive deeper into the
+    [IR](how_it_works/ir.md), the [Lowering & Optimization passes](how_it_works/lowering.md), the [C
+    ABI](how_it_works/c_abi.md), or check the other [projects that have
+    influenced scaly](how_it_works/influences.md).
 
-- **Comparing against CasADi**
+- **Benchmarks**
 
-    [Benchmark results](results/index.md), measured against CasADi SX and MX.
+    To see how the generated code compares with CasADi's, read the [headline
+    results](results/index.md) on scalability microbenchmarks and full
+    closed-loop controllers benchmarks on actual systems.
+
+- **Developer guide and API reference**
+
+    Explore the [codebase structure](dev/codebase.md) and our
+    [conventions](dev/conventions.md) if you want to start
+    [contributing](dev/contributing.md). The [API reference](api/index.md) lists
+    the public names, generated from the docstrings.
 
 </div>
 
-## How it fits together
-
-```mermaid
-flowchart LR
-  py["Python<br/>@sc.function"] --> fn["Function<br/>expression graph"]
-  fn -->|"derivatives"| fn
-  fn -->|"lowering"| prog["program<br/>loops and buffers"]
-  prog -->|"optimization passes"| prog
-  prog -->|"rendering"| c["C source"]
-  c -->|"compile"| so["shared library<br/>or files on disk"]
-```
-
-The expression graph says what to compute. Differentiation and simplification work on it. The
-program says how, with explicit loops, buffers and memory, and the optimization passes work on
-that. [Architecture](how_it_works/architecture.md) has the full map.
-
-## Status
-
-Working today: the full expression set on the host, forward and reverse differentiation, colored
-sparse Jacobians and exact sparse Lagrangian Hessians through preserved `vmap` structure, and
-PIQP, IPOPT and a generated-C SQP solver callable from inside a compiled graph. Linux and macOS,
-Python 3.12 or newer.
-
-Not yet: differentiating through a solver call (its derivatives are zero), warm-start handover
-into PIQP, Windows, and any target other than the host CPU.
-
 ## Acknowledgements
 
-Scaly is developed at EPFL in the PREDICT group. The research behind it is funded by the Swiss
-National Science Foundation through NCCR Automation (grant agreement 51NF40_180545).
-
-Parts of the code and of this documentation were written with AI coding agents (Claude, Codex and
-others), under the direction and review of the authors, who are responsible for the result.
+Scaly is developed at EPFL in the [PREDICT](https://www.epfl.ch/labs/la3/)
+group. The research behind it is funded by the [Swiss National Science
+Foundation](https://www.snf.ch) through the [NCCR
+Automation](https://nccr-automation.ch).
