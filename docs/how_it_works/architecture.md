@@ -68,7 +68,7 @@ grad(np.array([1.0, 2.0]))
 | 11 | Header, source, workspace size and solver link flags are packaged as a `CModule`. | `codegen/aot.py` |
 | 12 | A SHA-256 over (cache version, ABI signature, function name, source text, compile flags) keys the artifact. On a miss, `cc` builds a shared library; then `dlopen` and a ctypes call through that ABI. The library is cached under `$XDG_CACHE_HOME/scaly/jit` (or `SCALY_CACHE_DIR`) and reused by every function with the same key. | `codegen/jit.py` |
 
-AOT stops at step 11 and writes the pair to disk (`scaly_codegen <module>:<attr> -o <dir>`).
+AOT stops at step 11 and writes the pair to disk (`uv run scaly_codegen <module>:<attr> -o <dir>`).
 Both consumers read the same `CModule`, so the header's `SZ_W`, the source's spill size and the
 scratch array a caller has to allocate cannot disagree.
 

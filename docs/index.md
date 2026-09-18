@@ -46,7 +46,7 @@ write_module(solve, Path("generated/"))   # generated/multiple_shooting_ipopt.h 
 or from the command line, naming the module and the function in it:
 
 ```bash
-scaly_codegen mymodule:solve -o generated/
+uv run scaly_codegen mymodule:solve -o generated/
 ```
 
 ## Where to start
