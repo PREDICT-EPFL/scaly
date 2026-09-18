@@ -13,15 +13,7 @@ typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 extern "C" {
 #endif
 
-int wide_sz_arg(void) { return 2; }
-int wide_sz_res(void) { return 2; }
-int wide_sz_iw(void) { return 0; }
-int wide_sz_w(void) { return 0; }
-void* wide_alloc_mem(void) { return NULL; }
-int wide_init_mem(void* mem) { (void)mem; return SCALY_SUCCESS; }
-void wide_free_mem(void* mem) { (void)mem; }
-
-int wide(const double** arg, double** res, int* iw, double* w, void* mem) {
+int wide(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
   (void)mem;
   if (!arg || !res) return SCALY_ERR_NULL_ABI;

@@ -114,7 +114,7 @@ back to back and the pattern is permuted to match, so no full-size scatter tempo
 materialized. Overlapping supports fall back to per-formal constant-index scatters that are summed.
 
 This is why the compact ordering is piece-ordered instead of row-major, and why `(rows, cols)` is
-the authority on coordinates. See [the ABI](c_abi.md#sparse-outputs) for what that means on the C
+the authority on coordinates. See [the generated interface](generated_interface.md#sparse-outputs) for what that means on the C
 side.
 
 Anything that is not a `VMAP` piece goes through `sparse_jacobian_colored`, which computes the

@@ -139,7 +139,7 @@ translation unit.
 
 Wrapper state is stored in per-symbol statics. Distinct solver artifacts in one translation unit
 are independent, but one compiled solver is not reentrant. See
-[the C ABI](c_abi.md#solver-bearing-modules).
+[the generated interface](generated_interface.md#solver-bearing-modules).
 
 ## Open work
 

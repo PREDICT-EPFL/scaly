@@ -72,7 +72,7 @@ instances live in `sc.dtypes`:
 
 These are the types inside the graph. They are not the ABI: a generated function always exchanges
 `double` buffers with its caller, and the Python call path converts to and from `float64` at the
-boundary. See [the C ABI](c_abi.md#calling-convention).
+boundary. See [the generated interface](generated_interface.md#the-pointer-abi).
 
 Mixed-dtype arithmetic is refused. There is no implicit widening: an expression combining
 `float32` and `float64` raises at construction. This keeps today's `float64` workloads exactly as
@@ -238,7 +238,7 @@ which procedure runs on which device. It is close enough to code that rendering 
 mechanical, and far enough from C that the same program could be rendered to something else.
 
 You do not normally build it by hand. [Lowering](lowering.md) produces it from a `Function`, and
-the [C renderer](c_abi.md) consumes it. This page is the vocabulary, for when you need to read a
+the [C renderer](generated_interface.md) consumes it. This page is the vocabulary, for when you need to read a
 dump or add an operation.
 
 ### One node class

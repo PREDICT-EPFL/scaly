@@ -475,14 +475,14 @@ def test_compiled_driver_checks_casadi_result_index_and_kernel_input_order(tmp_p
 #ifdef __cplusplus
 extern "C" {
 #endif
-int nlp_jac_g(const double** arg, double** res, int* iw, double* w, void* mem);
+int nlp_jac_g(const double** arg, double** res, int* iw, double* w, int mem);
 #ifdef __cplusplus
 }
 #endif
 """
   source = """
 #include "casadi_jac_fixture.h"
-int nlp_jac_g(const double** arg, double** res, int*, double*, void*) {
+int nlp_jac_g(const double** arg, double** res, int*, double*, int) {
   if (!arg[0] || !arg[1] || arg[0][0] != 2.0 || arg[1][0] != 3.0) return 11;
   if (res[0] != 0 || !res[1]) return 12;
   res[1][0] = arg[0][0];
@@ -565,14 +565,14 @@ def test_compiled_driver_rejects_omitted_nonzero_triangle_entry(tmp_path: Path) 
 #ifdef __cplusplus
 extern "C" {
 #endif
-int sparse_lower_fixture(const double** arg, double** res, const int* iw, double* w, void* mem);
+int sparse_lower_fixture(const double** arg, double** res, const int* iw, double* w, int mem);
 #ifdef __cplusplus
 }
 #endif
 """
   source = """
 #include "sparse_lower_fixture.h"
-int sparse_lower_fixture(const double**, double** res, const int*, double*, void*) {
+int sparse_lower_fixture(const double**, double** res, const int*, double*, int) {
   if (!res[0]) return 11;
   res[0][0] = 1.0;
   res[0][1] = 3.0;

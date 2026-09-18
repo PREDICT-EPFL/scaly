@@ -92,7 +92,7 @@ static void <ctx.raw_symbol>(const double* in0, ..., const double* in{I-1},
 `w` is the caller's packed scratch workspace. Pass it through as the last argument of every oracle
 `_raw` call; the kernels need it and crash on NULL at any nontrivial size. Do not use it for the
 wrapper's own storage. Solver workspaces and O(n²) buffers belong in `static` locals, since the
-wrapper is non-reentrant by contract (see [the ABI](../how_it_works/c_abi.md)).
+wrapper is non-reentrant by contract (see [the generated interface](../how_it_works/generated_interface.md)).
 
 ### Oracle calling convention
 

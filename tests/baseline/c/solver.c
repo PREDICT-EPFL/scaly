@@ -161,15 +161,7 @@ int corpus_qp_stats(scaly_solver_stats* out) {
   return 0;
 }
 
-int qp_host_sz_arg(void) { return 1; }
-int qp_host_sz_res(void) { return 1; }
-int qp_host_sz_iw(void) { return 0; }
-int qp_host_sz_w(void) { return 0; }
-void* qp_host_alloc_mem(void) { return NULL; }
-int qp_host_init_mem(void* mem) { (void)mem; return SCALY_SUCCESS; }
-void qp_host_free_mem(void* mem) { (void)mem; }
-
-int qp_host(const double** arg, double** res, int* iw, double* w, void* mem) {
+int qp_host(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
   (void)mem;
   if (!arg || !res) return SCALY_ERR_NULL_ABI;

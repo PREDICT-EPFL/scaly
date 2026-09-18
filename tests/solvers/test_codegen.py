@@ -41,7 +41,7 @@ def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
   qp = build_qp(P=np.eye(2), c=np.zeros(2), name="standalone_qp")
   source = render_c_source(qp)
   header = render_c_api_header(qp)
-  assert "int standalone_qp(const double** arg, double** res, int* iw, double* w, void* mem)" in source
+  assert "int standalone_qp(const double** arg, double** res, int* iw, double* w, int mem)" in source
   assert "int standalone_qp_stats(scaly_solver_stats* out);" in header
   assert "SCALY_SOLVER_STATS_VERSION 3" in header
 

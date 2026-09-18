@@ -2,8 +2,9 @@
 file-writing driver here and ``codegen/jit.py`` consume.
 
 ``_lower`` is the single render context. It lowers ``fun`` exactly once and holds everything the
-artifacts read off that lowering, so the header's ``SZ_W``, the source's ``_sz_w`` and a consumer's
-workspace allocation cannot disagree. A function with no solver in its call graph renders entirely
+artifacts read off that lowering, so the header's ``SZ_W``, the entry's null check and a consumer's
+workspace allocation cannot disagree. The header comes in two languages (``lang="c"`` here,
+``lang="cpp"`` in ``codegen/cpp.py``) and either can carry the CasADi layer (``codegen/casadi.py``). A function with no solver in its call graph renders entirely
 through ``codegen/c``. A **solver-bearing** graph is orchestrated here: every non-solver Function
 (oracle, host caller, intermediate) is a Program-IR ``_raw`` and each ``solver Function`` is the
 ``codegen/solver`` wrapper template that drives its (Program-IR) oracles — the one sanctioned
@@ -19,8 +20,17 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from scaly.codegen.abi import abi_status_defines, c_api_signature, c_ident
-from scaly.codegen.c import _includes, _render_entry, _render_raw_callee, render_program_c
+from scaly.codegen.abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
+from scaly.codegen.c import _includes, _render_entry, _render_raw_callee, entry_prologue, entry_workspace, render_program_c
+from scaly.codegen.casadi import (
+  casadi_declarations,
+  casadi_defines,
+  casadi_gather,
+  casadi_output_sparsities,
+  check_casadi_layout,
+  render_casadi_queries,
+)
+from scaly.codegen.cpp import render_cpp_header
 from scaly.codegen.solver import render_solver_raw, solver_includes, solver_stats_symbols
 from scaly.ir.expr import ExprOp, topo
 from scaly.function import Function
@@ -34,14 +44,17 @@ if TYPE_CHECKING:
   from collections.abc import Callable
 
   from scaly.ir.program import ProgramNode
+  from scaly.ir.types import SparsityType
 
 
 @dataclass(frozen=True)
 class CModule:
-  """One rendered function: the ``.h`` and ``.c`` to write, plus what a consumer needs to compile
-  and call them. ``body`` is the translation unit. ``program`` is the optimized Program IR that
-  produced it. ``workspace_size`` is the entry's ``w[]`` length, and ``backends`` lists the solver
-  plugins that the function calls.
+  """One rendered function: the header and the ``.c`` to write, plus what a consumer needs to
+  compile and call them. ``body`` is the translation unit. ``program`` is the optimized Program IR
+  that produced it. ``workspace_size`` is the entry's ``w[]`` length, and ``backends`` lists the
+  solver plugins that the function calls. ``lang`` picks the header language (``"c"`` or
+  ``"cpp"``); ``casadi`` adds the CasADi-compatible symbols; ``typed_buffers`` toggles the C
+  header's structs and ``_call`` wrapper.
 
   ``header``, ``source`` and ``link_flags`` are rendered on first access. The JIT compiles ``body``
   and asks for none of them; for a big sparse function the header alone is larger than the source.
@@ -55,14 +68,19 @@ class CModule:
   workspace_size: int
   backends: tuple[str, ...]
   typed_buffers: bool
+  lang: str = "c"
+  casadi: bool = False
 
   @cached_property
   def header(self) -> str:
-    return _render_header(self.fun, self.backends, self.workspace_size, typed_buffers=self.typed_buffers)
+    return _render_header(self.fun, self.backends, self.workspace_size, typed_buffers=self.typed_buffers, lang=self.lang, casadi=self.casadi)
 
   @cached_property
   def source(self) -> str:
-    """The ``.c`` as written: ``body`` behind an include of the paired header."""
+    """The ``.c`` as written: ``body`` behind an include of the paired C header. A C++ header
+    cannot be included from C, so under ``lang="cpp"`` the kernel is ``body`` alone."""
+    if self.lang == "cpp":
+      return self.body
     include = self.header_name.replace("\\", "\\\\").replace('"', '\\"')
     return f'#include "{include}"\n\n{self.body}'
 
@@ -134,109 +152,118 @@ def _c_array(values: tuple[int, ...]) -> str:
   return "{" + ", ".join(str(v) for v in values) + "}"
 
 
-def _typed_cpp_wrapper(fun: Function, symbol: str) -> list[str]:
+_ALIGNAS = [
+  "#ifndef SCALY_ALIGNAS",
+  "#ifdef __cplusplus",
+  "#define SCALY_ALIGNAS(n) alignas(n)",
+  "#else",
+  "#define SCALY_ALIGNAS(n) _Alignas(n)",
+  "#endif",
+  "#endif",
+]
+
+
+def _typed_buffers(fun: Function, symbol: str) -> list[str]:
+  """One 16-byte aligned struct per input and output, the caller-owned workspace struct, and a
+  ``_call`` wrapper that builds the pointer arrays. Plain C; the same text compiles as C++."""
   params: list[str] = []
   arg_values: list[str] = []
   res_values: list[str] = []
-  checks: list[str] = []
-  for name, expr in zip(fun.input_names, fun.inputs, strict=True):
-    assert isinstance(name, str)
-    ident = c_ident(name)
-    type_name = f"{symbol}_{ident}_in"
-    params.append(f"const {type_name}& in_{ident}")
-    arg_values.append(f"in_{ident}.data")
-    checks.append(f'static_assert(sizeof({type_name}) == sizeof(double) * {expr.size}, "{type_name} size mismatch");')
-  for name, expr in zip(fun.output_names, fun.outputs, strict=True):
-    assert isinstance(name, str)
-    ident = c_ident(name)
-    type_name = f"{symbol}_{ident}_out"
-    params.append(f"{type_name}& out_{ident}")
-    res_values.append(f"out_{ident}.data")
-    checks.append(f'static_assert(sizeof({type_name}) == sizeof(double) * {expr.size}, "{type_name} size mismatch");')
-
-  arg_init = ", ".join(arg_values) or "nullptr"
-  res_init = ", ".join(res_values) or "nullptr"
+  lines = ["", "// Typed buffers: one struct per input and output, and the caller-owned workspace."]
+  inputs, outputs = buffer_idents(fun)
+  for ident, expr in zip(inputs, fun.inputs, strict=True):
+    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.size, 1)}]; }} {symbol}_{ident}_t;")
+    params.append(f"const {symbol}_{ident}_t* {ident}")
+    arg_values.append(f"{ident}->data")
+  for ident, expr in zip(outputs, fun.outputs, strict=True):
+    lines.append(f"typedef struct {{ SCALY_ALIGNAS(16) double data[{max(expr.size, 1)}]; }} {symbol}_{ident}_t;")
+    params.append(f"{symbol}_{ident}_t* {ident}")
+    res_values.append(f"{ident}->data")
+  params.append(f"{symbol}_workspace_t* workspace")
   return [
-    "#ifdef __cplusplus",
-    *checks,
+    *lines,
+    f"typedef struct {{ SCALY_ALIGNAS(16) double data[{symbol}_SZ_W > 0 ? {symbol}_SZ_W : 1]; }} {symbol}_workspace_t;",
     f"static inline int {symbol}_call({', '.join(params)}) {{",
-    f"  double w[{symbol}_SZ_W > 0 ? {symbol}_SZ_W : 1];",
-    f"  const double* arg[{symbol}_SZ_ARG > 0 ? {symbol}_SZ_ARG : 1] = {{{arg_init}}};",
-    f"  double* res[{symbol}_SZ_RES > 0 ? {symbol}_SZ_RES : 1] = {{{res_init}}};",
-    f"  return {symbol}(arg, res, nullptr, {symbol}_SZ_W ? w : nullptr, nullptr);",
+    f"  const double* arg[{symbol}_SZ_ARG > 0 ? {symbol}_SZ_ARG : 1] = {{{', '.join(arg_values) or 'NULL'}}};",
+    f"  double* res[{symbol}_SZ_RES > 0 ? {symbol}_SZ_RES : 1] = {{{', '.join(res_values) or 'NULL'}}};",
+    f"  return {symbol}(arg, res, NULL, workspace ? workspace->data : NULL, 0);",
     "}",
-    "#endif",
   ]
 
 
-def _render_header(fun: Function, backends: tuple[str, ...], sz_w: int, *, typed_buffers: bool) -> str:
+def _sparse_tables(fun: Function, symbol: str, sparsities: tuple[SparsityType | None, ...]) -> list[str]:
+  lines: list[str] = []
+  for name, sp in zip(fun.output_names, sparsities, strict=True):
+    if sp is None:
+      continue
+    prefix = f"{symbol}_{c_ident(name)}"
+    row_ptr, col_ind, csr_perm = sp.to_csr()
+    col_ptr, row_ind, csc_perm = sp.to_csc()
+    lines += [
+      f"#define {prefix}_NNZ {sp.nnz}",
+      f"#define {prefix}_NROW {sp.shape[0]}",
+      f"#define {prefix}_NCOL {sp.shape[1]}",
+      f"static const int {prefix}_rows[{sp.nnz}] = {_c_array(sp.rows)};",
+      f"static const int {prefix}_cols[{sp.nnz}] = {_c_array(sp.cols)};",
+      f"static const int {prefix}_csr_row_ptr[{sp.shape[0] + 1}] = {_c_array(row_ptr)};",
+      f"static const int {prefix}_csr_col_ind[{sp.nnz}] = {_c_array(col_ind)};",
+      # The compact value buffer stays in (rows, cols) COO order, which is not necessarily sorted;
+      # values_csr[k] = values[csr_val_perm[k]] (and likewise for CSC) pairs it with the indices.
+      f"static const int {prefix}_csr_val_perm[{sp.nnz}] = {_c_array(csr_perm)};",
+      f"static const int {prefix}_csc_col_ptr[{sp.shape[1] + 1}] = {_c_array(col_ptr)};",
+      f"static const int {prefix}_csc_row_ind[{sp.nnz}] = {_c_array(row_ind)};",
+      f"static const int {prefix}_csc_val_perm[{sp.nnz}] = {_c_array(csc_perm)};",
+    ]
+  return ["", "// Sparse output metadata for compact derivative buffers.", *lines] if lines else []
+
+
+def header_sparsities(fun: Function, *, casadi: bool) -> tuple[SparsityType | None, ...]:
+  """The patterns a header describes: the native order, or under ``casadi`` the compressed-column
+  order the entry gathers into."""
+  return casadi_output_sparsities(fun) if casadi else tuple(fun.output_sparsities)
+
+
+def _render_header(fun: Function, backends: tuple[str, ...], sz_w: int, *, typed_buffers: bool, lang: str, casadi: bool) -> str:
+  if lang == "cpp":
+    return render_cpp_header(fun, backends, sz_w, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
   symbol = c_ident(fun.name)
   lines = [
     "#pragma once",
     "",
-    *(["#include <stdint.h>", "", *stats_c_defs(), ""] if backends else []),
+    "#include <stddef.h>",
+    *(["#include <stdint.h>", "", *stats_c_defs()] if backends else []),
+    "",
     *abi_status_defines(guarded=True),
+    *(["", *casadi_defines()] if casadi else []),
+    *(["", *_ALIGNAS] if typed_buffers else []),
     "",
     f"#define {symbol}_SZ_ARG {len(fun.inputs)}",
     f"#define {symbol}_SZ_RES {len(fun.outputs)}",
     f"#define {symbol}_SZ_IW 0",
     f"#define {symbol}_SZ_W {sz_w}",
     "",
-    f"// Universal CasADi-style ABI for {fun.name}.",
+    f"// The pointer ABI for {fun.name}.",
     "#ifdef __cplusplus",
     'extern "C" {',
     "#endif",
     c_api_signature(symbol) + ";",
-  ]
-  lines += [
-    f"int {symbol}_sz_arg(void);",
-    f"int {symbol}_sz_res(void);",
-    f"int {symbol}_sz_iw(void);",
-    f"int {symbol}_sz_w(void);",
-    f"void* {symbol}_alloc_mem(void);",
-    f"int {symbol}_init_mem(void* mem);",
-    f"void {symbol}_free_mem(void* mem);",
     *(f"int {solver_symbol}_stats(scaly_solver_stats* out);" for solver_symbol in solver_stats_symbols(fun)),
+    *(casadi_declarations(symbol) if casadi else []),
     "#ifdef __cplusplus",
     "}",
     "#endif",
   ]
   if typed_buffers:
-    lines += ["", "// Optional typed buffer wrappers for statically known shapes."]
-    for name, expr in zip(fun.input_names, fun.inputs, strict=True):
-      lines.append(f"typedef struct {{ double data[{expr.size}]; }} {symbol}_{c_ident(name)}_in;")
-    for name, expr in zip(fun.output_names, fun.outputs, strict=True):
-      lines.append(f"typedef struct {{ double data[{expr.size}]; }} {symbol}_{c_ident(name)}_out;")
-    lines += _typed_cpp_wrapper(fun, symbol)
-  sparse_outputs = [(name, sp) for name, sp in zip(fun.output_names, fun.output_sparsities, strict=True) if sp is not None]
-  if sparse_outputs:
-    lines += ["", "// Sparse output metadata for compact derivative buffers."]
-    for name, sp in sparse_outputs:
-      assert sp is not None
-      prefix = f"{symbol}_{c_ident(name)}"
-      lines.append(f"#define {prefix}_NNZ {sp.nnz}")
-      lines.append(f"#define {prefix}_NROW {sp.shape[0]}")
-      lines.append(f"#define {prefix}_NCOL {sp.shape[1]}")
-      row_ptr, col_ind, csr_perm = sp.to_csr()
-      col_ptr, row_ind, csc_perm = sp.to_csc()
-      lines.append(f"static const int {prefix}_rows[{sp.nnz}] = {_c_array(sp.rows)};")
-      lines.append(f"static const int {prefix}_cols[{sp.nnz}] = {_c_array(sp.cols)};")
-      lines.append(f"static const int {prefix}_csr_row_ptr[{sp.shape[0] + 1}] = {_c_array(row_ptr)};")
-      lines.append(f"static const int {prefix}_csr_col_ind[{sp.nnz}] = {_c_array(col_ind)};")
-      # The compact value buffer stays in (rows, cols) COO order, which is not necessarily sorted;
-      # values_csr[k] = values[csr_val_perm[k]] (and likewise for CSC) pairs it with the indices.
-      lines.append(f"static const int {prefix}_csr_val_perm[{sp.nnz}] = {_c_array(csr_perm)};")
-      lines.append(f"static const int {prefix}_csc_col_ptr[{sp.shape[1] + 1}] = {_c_array(col_ptr)};")
-      lines.append(f"static const int {prefix}_csc_row_ind[{sp.nnz}] = {_c_array(row_ind)};")
-      lines.append(f"static const int {prefix}_csc_val_perm[{sp.nnz}] = {_c_array(csc_perm)};")
+    lines += _typed_buffers(fun, symbol)
+  lines += _sparse_tables(fun, symbol, header_sparsities(fun, casadi=casadi))
   return "\n".join(lines) + "\n"
 
 
-def _render_source(ctx: _RenderCtx) -> str:
-  return _render_solver_bearing_source(ctx) if ctx.backends else render_program_c(ctx.prog, ctx.fun)
+def _render_source(ctx: _RenderCtx, *, casadi: bool) -> str:
+  return _render_solver_bearing_source(ctx, casadi=casadi) if ctx.backends else render_program_c(ctx.prog, ctx.fun, casadi=casadi)
 
 
-def _render_solver_bearing_source(ctx: _RenderCtx) -> str:
+def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   """One translation unit for a solver-bearing graph. The non-solver Functions (oracles, the host
   caller, any intermediates) are Program-IR ``_raw`` callees; each ``solver Function`` is the
   ``solver`` wrapper driving them. ``_function_order`` is topological — a solver sits after its
@@ -254,6 +281,7 @@ def _render_solver_bearing_source(ctx: _RenderCtx) -> str:
     "",
     *stats_c_timing_defs(),
     "",
+    *(casadi_defines() + [""] if casadi else []),
     "#ifdef __cplusplus",
     'extern "C" {',
     "#endif",
@@ -289,42 +317,31 @@ def _render_solver_bearing_source(ctx: _RenderCtx) -> str:
       flush(fn.name)
   flush(None)
   if is_solver_function(fun):
-    lines += _render_solver_entry(fun, ctx.workspace_size)
+    lines += _render_solver_entry(fun, ctx.workspace_size, casadi=casadi)
   else:
-    lines += _render_entry(procs[fun.name], fun)
+    lines += _render_entry(procs[fun.name], fun, casadi=casadi)
+  if casadi:
+    lines += ["", *render_casadi_queries(fun, entry_workspace(fun, ctx.workspace_size, casadi=True))]
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
   return "\n".join(lines).rstrip() + "\n"
 
 
-def _render_solver_entry(fun: Function, sz_w: int) -> list[str]:
+def _render_solver_entry(fun: Function, sz_w: int, *, casadi: bool) -> list[str]:
+  """The entry of a root ``solver Function``: the null checks, then one call into its wrapper."""
   symbol = c_ident(fun.name)
-  raw_symbol = f"{symbol}_raw"
-  args = [*(f"arg[{i}]" for i in range(len(fun.inputs))), *(f"res[{i}]" for i in range(len(fun.outputs))), "w"]
-  lines = [
-    f"int {symbol}_sz_arg(void) {{ return {len(fun.inputs)}; }}",
-    f"int {symbol}_sz_res(void) {{ return {len(fun.outputs)}; }}",
-    f"int {symbol}_sz_iw(void) {{ return 0; }}",
-    f"int {symbol}_sz_w(void) {{ return {sz_w}; }}",
-    f"void* {symbol}_alloc_mem(void) {{ return NULL; }}",
-    f"int {symbol}_init_mem(void* mem) {{ (void)mem; return SCALY_SUCCESS; }}",
-    f"void {symbol}_free_mem(void* mem) {{ (void)mem; }}",
-    "",
-    c_api_signature(symbol) + " {",
-    "  (void)iw;",
-    "  (void)mem;",
-    "  if (!arg || !res) return SCALY_ERR_NULL_ABI;",
-  ]
-  if sz_w:
-    lines.append("  if (!w) return SCALY_ERR_NULL_WORK;")
-  else:
-    lines.append("  (void)w;")
-  lines += [f"  if (!arg[{i}]) return SCALY_ERR_NULL_INPUT;" for i in range(len(fun.inputs))]
-  lines += [f"  if (!res[{i}]) return SCALY_ERR_NULL_RESULT;" for i in range(len(fun.outputs))]
-  lines += [f"  {raw_symbol}({', '.join(args)});", "  return SCALY_SUCCESS;", "}"]
-  return lines
+  res = {name: f"res[{i}]" for i, name in enumerate(fun.output_names)}
+  lines = entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi))
+  epilogue: list[str] = []
+  if casadi:
+    gather = casadi_gather(fun, sz_w)
+    res.update(gather.ptr)
+    lines += gather.setup
+    epilogue = gather.epilogue
+  args = [*(f"arg[{i}]" for i in range(len(fun.inputs))), *res.values(), "w"]
+  return [*lines, f"  {symbol}_raw({', '.join(args)});", *epilogue, "  return SCALY_SUCCESS;", "}"]
 
 
-def _render_observed(fun: Function) -> tuple[_RenderCtx, str]:
+def _render_observed(fun: Function, *, casadi: bool) -> tuple[_RenderCtx, str]:
   """Lower and render ``fun`` under the registered observers: one lowering, one source, and the
   expression, Program, code, and outcome sequence ``scaly.viz`` records."""
   observers = [obs for begin in _RENDER_OBSERVERS if (obs := begin(fun)) is not None]
@@ -338,8 +355,10 @@ def _render_observed(fun: Function) -> tuple[_RenderCtx, str]:
       obs.add_normalized_expr(name, normalized)
 
   try:
+    if casadi:
+      check_casadi_layout(fun)
     ctx = _lower(fun, observe if observers else None, observe_expr if observers else None)
-    source = _render_source(ctx)
+    source = _render_source(ctx, casadi=casadi)
   except Exception as exc:
     for obs in observers:
       obs.finish(error=repr(exc))
@@ -350,47 +369,66 @@ def _render_observed(fun: Function) -> tuple[_RenderCtx, str]:
   return ctx, source
 
 
-def render_c_source(fun: Function) -> str:
-  """Render a standalone universal-ABI C implementation of ``fun`` and its callees.
+def render_c_source(fun: Function, *, casadi: bool = False) -> str:
+  """Render a standalone pointer-ABI C implementation of ``fun`` and its callees. ``casadi`` adds
+  the CasADi 3.8 compatible symbols.
 
   A ``LoweringError`` (e.g. a still-deferred mixed-device CALL) propagates — there is no fallback.
   """
-  return _render_observed(fun)[1]
+  return _render_observed(fun, casadi=casadi)[1]
 
 
-def render_c_api_header(fun: Function, *, typed_buffers: bool = True) -> str:
-  """Render the public ``.h`` for ``fun``: the ABI declarations, ``SZ_*`` constants, optional typed
-  buffer wrappers, and sparse-output metadata."""
+def _check_lang(lang: str) -> None:
+  if lang not in ("c", "cpp"):
+    raise ValueError(f"lang must be 'c' or 'cpp', got {lang!r}")
+
+
+def render_c_api_header(fun: Function, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> str:
+  """Render the public header for ``fun``: the ABI declarations, ``SZ_*`` constants, the typed
+  buffers of the chosen ``lang`` (``typed_buffers=False`` omits them from the C header), the
+  sparse-output tables, and with ``casadi`` the CasADi query prototypes."""
+  _check_lang(lang)
+  if casadi:
+    check_casadi_layout(fun)
   ctx = _lower(fun)
-  return _render_header(ctx.fun, ctx.backends, ctx.workspace_size, typed_buffers=typed_buffers)
-
-
-def render_c_module(fun: Function, *, header_name: str | None = None, source_name: str | None = None, typed_buffers: bool = True) -> CModule:
-  """Render ``fun`` into its ``.h`` / ``.c`` pair from a single lowering."""
-  ctx, body = _render_observed(fun)
-  symbol = c_ident(fun.name)
-  return CModule(
-    fun=fun,
-    header_name=f"{symbol}.h" if header_name is None else header_name,
-    source_name=f"{symbol}.c" if source_name is None else source_name,
-    body=body,
-    program=ctx.prog,
-    workspace_size=ctx.workspace_size,
-    backends=ctx.backends,
-    typed_buffers=typed_buffers,
+  return _render_header(
+    ctx.fun, ctx.backends, entry_workspace(fun, ctx.workspace_size, casadi=casadi), typed_buffers=typed_buffers, lang=lang, casadi=casadi
   )
 
 
-def workspace_size(fun: Function) -> int:
-  """Doubles of scratch ``fun`` needs in ``w[]`` — the value its header's ``SZ_W`` and its rendered
-  ``<symbol>_sz_w`` both quote. ``CModule.workspace_size`` is the same number without a second
-  lowering, so prefer it when the module is already in hand."""
-  return _lower(fun).workspace_size
+def render_c_module(
+  fun: Function, *, header_name: str | None = None, source_name: str | None = None, typed_buffers: bool = True, lang: str = "c", casadi: bool = False
+) -> CModule:
+  """Render ``fun`` into its header / ``.c`` pair from a single lowering. The kernel is always C;
+  ``lang`` picks the header a caller includes (``f.h`` or ``f.hpp``) and ``casadi`` adds the
+  CasADi 3.8 compatible symbols to both."""
+  _check_lang(lang)
+  ctx, body = _render_observed(fun, casadi=casadi)
+  symbol = c_ident(fun.name)
+  return CModule(
+    fun=fun,
+    header_name=f"{symbol}.{'hpp' if lang == 'cpp' else 'h'}" if header_name is None else header_name,
+    source_name=f"{symbol}.c" if source_name is None else source_name,
+    body=body,
+    program=ctx.prog,
+    workspace_size=entry_workspace(fun, ctx.workspace_size, casadi=casadi),
+    backends=ctx.backends,
+    typed_buffers=typed_buffers,
+    lang=lang,
+    casadi=casadi,
+  )
 
 
-def write_module(fun: Function, out_dir: Path, *, typed_buffers: bool = True) -> CModule:
-  """Write ``fun``'s ``.h`` / ``.c`` into ``out_dir`` and return the module."""
-  module = render_c_module(fun, typed_buffers=typed_buffers)
+def workspace_size(fun: Function, *, casadi: bool = False) -> int:
+  """Doubles of scratch ``fun`` needs in ``w[]`` — the value its header's ``SZ_W`` quotes.
+  ``CModule.workspace_size`` is the same number without a second lowering, so prefer it when the
+  module is already in hand."""
+  return entry_workspace(fun, _lower(fun).workspace_size, casadi=casadi)
+
+
+def write_module(fun: Function, out_dir: Path, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> CModule:
+  """Write ``fun``'s header / ``.c`` into ``out_dir`` and return the module."""
+  module = render_c_module(fun, typed_buffers=typed_buffers, lang=lang, casadi=casadi)
   out_dir.mkdir(parents=True, exist_ok=True)
   (out_dir / module.header_name).write_text(module.header)
   (out_dir / module.source_name).write_text(module.source)
@@ -398,10 +436,18 @@ def write_module(fun: Function, out_dir: Path, *, typed_buffers: bool = True) ->
 
 
 def main(argv: list[str] | None = None) -> None:
-  parser = argparse.ArgumentParser(prog="scaly_codegen", description="Render a Function to a C header/source pair.")
+  parser = argparse.ArgumentParser(prog="scaly_codegen", description="Render a Function to a header/source pair: a C kernel and a C or C++ header.")
   parser.add_argument("target", help="module:attribute naming a Function or a zero-argument factory returning one")
   parser.add_argument("-o", "--out-dir", type=Path, default=Path(), help="directory to write into (default: cwd)")
-  parser.add_argument("--no-typed-buffers", action="store_true", help="omit the typed buffer structs and the C++ call wrapper")
+  parser.add_argument(
+    "--lang", choices=("c", "cpp"), default="c", help="header language: C structs and f_call (f.h), or C++ Buffer types in a namespace (f.hpp)"
+  )
+  parser.add_argument(
+    "--casadi",
+    action="store_true",
+    help="also export the CasADi 3.8 compatible symbols (f_n_in, f_sparsity_out, f_work, ...) and hand sparse outputs over in compressed-column order",
+  )
+  parser.add_argument("--no-typed-buffers", action="store_true", help="C header only: omit the typed buffer structs and the f_call wrapper")
   args = parser.parse_args(argv)
   module_name, _, attr = args.target.partition(":")
   if not attr:
@@ -409,7 +455,7 @@ def main(argv: list[str] | None = None) -> None:
   fun = getattr(importlib.import_module(module_name), attr)
   if not isinstance(fun, Function):
     fun = fun()
-  module = write_module(fun, args.out_dir, typed_buffers=not args.no_typed_buffers)
+  module = write_module(fun, args.out_dir, typed_buffers=not args.no_typed_buffers, lang=args.lang, casadi=args.casadi)
   print(args.out_dir / module.header_name)
   print(args.out_dir / module.source_name)
   print(f"sz_w: {module.workspace_size}")

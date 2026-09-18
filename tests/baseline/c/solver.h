@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifndef SCALY_SOLVER_STATS_DEFINED
@@ -56,38 +57,35 @@ typedef struct {
 #define SCALY_ERR_NULL_INPUT 4
 #endif
 
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#else
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#endif
+#endif
+
 #define qp_host_SZ_ARG 1
 #define qp_host_SZ_RES 1
 #define qp_host_SZ_IW 0
 #define qp_host_SZ_W 0
 
-// Universal CasADi-style ABI for qp_host.
+// The pointer ABI for qp_host.
 #ifdef __cplusplus
 extern "C" {
 #endif
-int qp_host(const double** arg, double** res, int* iw, double* w, void* mem);
-int qp_host_sz_arg(void);
-int qp_host_sz_res(void);
-int qp_host_sz_iw(void);
-int qp_host_sz_w(void);
-void* qp_host_alloc_mem(void);
-int qp_host_init_mem(void* mem);
-void qp_host_free_mem(void* mem);
+int qp_host(const double** arg, double** res, int* iw, double* w, int mem);
 int corpus_qp_stats(scaly_solver_stats* out);
 #ifdef __cplusplus
 }
 #endif
 
-// Optional typed buffer wrappers for statically known shapes.
-typedef struct { double data[2]; } qp_host_mu_in;
-typedef struct { double data[1]; } qp_host_cost_out;
-#ifdef __cplusplus
-static_assert(sizeof(qp_host_mu_in) == sizeof(double) * 2, "qp_host_mu_in size mismatch");
-static_assert(sizeof(qp_host_cost_out) == sizeof(double) * 1, "qp_host_cost_out size mismatch");
-static inline int qp_host_call(const qp_host_mu_in& in_mu, qp_host_cost_out& out_cost) {
-  double w[qp_host_SZ_W > 0 ? qp_host_SZ_W : 1];
-  const double* arg[qp_host_SZ_ARG > 0 ? qp_host_SZ_ARG : 1] = {in_mu.data};
-  double* res[qp_host_SZ_RES > 0 ? qp_host_SZ_RES : 1] = {out_cost.data};
-  return qp_host(arg, res, nullptr, qp_host_SZ_W ? w : nullptr, nullptr);
+// Typed buffers: one struct per input and output, and the caller-owned workspace.
+typedef struct { SCALY_ALIGNAS(16) double data[2]; } qp_host_mu_t;
+typedef struct { SCALY_ALIGNAS(16) double data[1]; } qp_host_cost_t;
+typedef struct { SCALY_ALIGNAS(16) double data[qp_host_SZ_W > 0 ? qp_host_SZ_W : 1]; } qp_host_workspace_t;
+static inline int qp_host_call(const qp_host_mu_t* mu, qp_host_cost_t* cost, qp_host_workspace_t* workspace) {
+  const double* arg[qp_host_SZ_ARG > 0 ? qp_host_SZ_ARG : 1] = {mu->data};
+  double* res[qp_host_SZ_RES > 0 ? qp_host_SZ_RES : 1] = {cost->data};
+  return qp_host(arg, res, NULL, workspace ? workspace->data : NULL, 0);
 }
-#endif

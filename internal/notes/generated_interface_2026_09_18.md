@@ -1,7 +1,7 @@
 # The generated C and C++ interface for the first release
 
 Design note, 2026-09-18, frozen. Decisions settled the same day; the tasks are CAPI-72 to CAPI-76 in
-`todo.md`. The current interface is documented in [the C ABI](../../docs/how_it_works/c_abi.md)
+`todo.md`. The current interface is documented in [the C ABI](../../docs/how_it_works/generated_interface.md)
 and rendered by `codegen/aot.py` (`_render_header`, `_typed_cpp_wrapper`) and `codegen/c.py`
 (`_render_entry`).
 
@@ -94,8 +94,9 @@ typedef struct { _Alignas(16) double data[f_SZ_W > 0 ? f_SZ_W : 1]; } f_workspac
 static inline int f_call(const f_x_t* x, f_y_t* y, f_workspace_t* w);
 ```
 
-The `_in`/`_out` suffixes go: a name is an input or an output, never both, and the suffix bought
-nothing but length. The workspace is a struct the caller places where it likes (stack, static,
+The `_in`/`_out` suffixes go where a name is unambiguous. Correction at implementation: a solver
+Function's warm start and solution share names (`w` in, `w` out), so a name that is both an input
+and an output keeps the suffix; the rest drop it. The workspace is a struct the caller places where it likes (stack, static,
 heap). Sparse outputs keep the macros and static tables exactly as today; they are the right C
 spelling.
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stddef.h>
+
 #ifndef SCALY_SUCCESS
 #define SCALY_SUCCESS 0
 #endif
@@ -16,42 +18,38 @@
 #define SCALY_ERR_NULL_INPUT 4
 #endif
 
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#else
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#endif
+#endif
+
 #define shooting_spjac_eq_z_SZ_ARG 2
 #define shooting_spjac_eq_z_SZ_RES 1
 #define shooting_spjac_eq_z_SZ_IW 0
 #define shooting_spjac_eq_z_SZ_W 0
 
-// Universal CasADi-style ABI for shooting_spjac_eq_z.
+// The pointer ABI for shooting_spjac_eq_z.
 #ifdef __cplusplus
 extern "C" {
 #endif
-int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, void* mem);
-int shooting_spjac_eq_z_sz_arg(void);
-int shooting_spjac_eq_z_sz_res(void);
-int shooting_spjac_eq_z_sz_iw(void);
-int shooting_spjac_eq_z_sz_w(void);
-void* shooting_spjac_eq_z_alloc_mem(void);
-int shooting_spjac_eq_z_init_mem(void* mem);
-void shooting_spjac_eq_z_free_mem(void* mem);
+int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, int mem);
 #ifdef __cplusplus
 }
 #endif
 
-// Optional typed buffer wrappers for statically known shapes.
-typedef struct { double data[16]; } shooting_spjac_eq_z_z_in;
-typedef struct { double data[6]; } shooting_spjac_eq_z_u_in;
-typedef struct { double data[36]; } shooting_spjac_eq_z_spjac_eq_z_out;
-#ifdef __cplusplus
-static_assert(sizeof(shooting_spjac_eq_z_z_in) == sizeof(double) * 16, "shooting_spjac_eq_z_z_in size mismatch");
-static_assert(sizeof(shooting_spjac_eq_z_u_in) == sizeof(double) * 6, "shooting_spjac_eq_z_u_in size mismatch");
-static_assert(sizeof(shooting_spjac_eq_z_spjac_eq_z_out) == sizeof(double) * 36, "shooting_spjac_eq_z_spjac_eq_z_out size mismatch");
-static inline int shooting_spjac_eq_z_call(const shooting_spjac_eq_z_z_in& in_z, const shooting_spjac_eq_z_u_in& in_u, shooting_spjac_eq_z_spjac_eq_z_out& out_spjac_eq_z) {
-  double w[shooting_spjac_eq_z_SZ_W > 0 ? shooting_spjac_eq_z_SZ_W : 1];
-  const double* arg[shooting_spjac_eq_z_SZ_ARG > 0 ? shooting_spjac_eq_z_SZ_ARG : 1] = {in_z.data, in_u.data};
-  double* res[shooting_spjac_eq_z_SZ_RES > 0 ? shooting_spjac_eq_z_SZ_RES : 1] = {out_spjac_eq_z.data};
-  return shooting_spjac_eq_z(arg, res, nullptr, shooting_spjac_eq_z_SZ_W ? w : nullptr, nullptr);
+// Typed buffers: one struct per input and output, and the caller-owned workspace.
+typedef struct { SCALY_ALIGNAS(16) double data[16]; } shooting_spjac_eq_z_z_t;
+typedef struct { SCALY_ALIGNAS(16) double data[6]; } shooting_spjac_eq_z_u_t;
+typedef struct { SCALY_ALIGNAS(16) double data[36]; } shooting_spjac_eq_z_spjac_eq_z_t;
+typedef struct { SCALY_ALIGNAS(16) double data[shooting_spjac_eq_z_SZ_W > 0 ? shooting_spjac_eq_z_SZ_W : 1]; } shooting_spjac_eq_z_workspace_t;
+static inline int shooting_spjac_eq_z_call(const shooting_spjac_eq_z_z_t* z, const shooting_spjac_eq_z_u_t* u, shooting_spjac_eq_z_spjac_eq_z_t* spjac_eq_z, shooting_spjac_eq_z_workspace_t* workspace) {
+  const double* arg[shooting_spjac_eq_z_SZ_ARG > 0 ? shooting_spjac_eq_z_SZ_ARG : 1] = {z->data, u->data};
+  double* res[shooting_spjac_eq_z_SZ_RES > 0 ? shooting_spjac_eq_z_SZ_RES : 1] = {spjac_eq_z->data};
+  return shooting_spjac_eq_z(arg, res, NULL, workspace ? workspace->data : NULL, 0);
 }
-#endif
 
 // Sparse output metadata for compact derivative buffers.
 #define shooting_spjac_eq_z_spjac_eq_z_NNZ 36

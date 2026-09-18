@@ -35,7 +35,7 @@ def _dynamics() -> sc.Function:
   """Elementwise math, slicing, a reduction and a concat."""
 
   @sc.function(sc.G(sc.L("z", 4), sc.L("u", 2)), sc.L("znext", ...), name="dynamics")
-  def dynamics(inputs: tuple[sc.Expr, sc.Expr])-> sc.Expr:
+  def dynamics(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, u = inputs
     pos, vel = z[:2], z[2:]
     drag = 0.1 * sc.sumsqr(vel)

@@ -3,9 +3,8 @@ decisions of its own.
 
 This is the renderer half of the Program-IR architecture (``docs/how_it_works/architecture.md``):
 ``passes.lowering.lower_function`` produces the Program IR; this module turns it into a
-translation unit exposing the universal ABI (``<symbol>(arg,res,iw,w,mem)`` plus
-the ``<symbol>_sz_*`` / ``*_mem`` helpers) so ``codegen.jit.CompiledFunction`` dispatches
-it unchanged. It is the sole CPU renderer for host functions with no solver in
+translation unit exposing the pointer ABI (``<symbol>(arg,res,iw,w,mem)``) so
+``codegen.jit.CompiledFunction`` dispatches it unchanged. It is the sole CPU renderer for host functions with no solver in
 their call graph; ``codegen/aot.py`` orchestrates the solver-bearing case, reusing
 ``_render_raw_callee`` / ``_render_entry`` here and splicing in the solver wrappers.
 
@@ -21,6 +20,7 @@ from __future__ import annotations
 import math
 
 from .abi import abi_status_defines, c_api_signature, c_ident
+from .casadi import casadi_defines, casadi_gather, casadi_scratch, render_casadi_queries
 from ..function import Function
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
@@ -77,8 +77,9 @@ def render_program_c_source(fun: Function, observe: ProgramObserver | None = Non
   return render_program_c(lower_function(fun, observe=observe), fun)
 
 
-def render_program_c(prog: ProgramNode, fun: Function) -> str:
-  """Render ``fun``'s lowered PROGRAM to a standalone universal-ABI translation unit."""
+def render_program_c(prog: ProgramNode, fun: Function, *, casadi: bool = False) -> str:
+  """Render ``fun``'s lowered PROGRAM to a standalone pointer-ABI translation unit. ``casadi`` adds
+  the CasADi query functions and the compressed-column gather (``codegen/casadi.py``)."""
   proc = main_proc(prog)
   pc = int(prog.attrs.get("proc_count", 1))
   callees = list(prog.args[: pc - 1])
@@ -87,6 +88,7 @@ def render_program_c(prog: ProgramNode, fun: Function) -> str:
     "",
     *abi_status_defines(),
     "",
+    *(casadi_defines() + [""] if casadi else []),
     "#ifdef __cplusplus",
     'extern "C" {',
     "#endif",
@@ -95,16 +97,38 @@ def render_program_c(prog: ProgramNode, fun: Function) -> str:
   for callee in callees:
     lines += _render_raw_callee(callee)
     lines.append("")
-  lines += _render_entry(proc, fun)
+  lines += _render_entry(proc, fun, casadi=casadi)
+  if casadi:
+    lines += ["", *render_casadi_queries(fun, entry_workspace(fun, int(proc.attrs.get("sz_w", 0)), casadi=True))]
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
   return "\n".join(lines).rstrip() + "\n"
 
 
-def _render_entry(proc: ProgramNode, fun: Function) -> list[str]:
-  """Emit the universal-ABI entry (``<symbol>_sz_*`` helpers + ``<symbol>(arg,res,iw,w,mem)``) with
-  ``fun``'s main PROC body inlined. ``codegen/aot.py`` reuses this for solver-bearing functions, so
-  the top function's body lowers through Program IR exactly like any other host function."""
+def entry_workspace(fun: Function, sz_w: int, *, casadi: bool) -> int:
+  """The ``SZ_W`` an entry needs: the packed spill size plus, under ``casadi``, the gather scratch."""
+  return sz_w + (casadi_scratch(fun) if casadi else 0)
+
+
+def entry_prologue(fun: Function, sz_w: int) -> list[str]:
+  """The opening of a pointer-ABI entry: the signature and the null checks behind the status codes.
+  ``iw`` and ``mem`` are accepted and ignored; ``sz_w`` is the total workspace the entry reads."""
   symbol = c_ident(fun.name)
+  lines = [
+    c_api_signature(symbol) + " {",
+    "  (void)iw;",
+    "  (void)mem;",
+    "  if (!arg || !res) return SCALY_ERR_NULL_ABI;",
+    "  if (!w) return SCALY_ERR_NULL_WORK;" if sz_w else "  (void)w;",
+  ]
+  lines += [f"  if (!arg[{i}]) return SCALY_ERR_NULL_INPUT;" for i in range(len(fun.inputs))]
+  lines += [f"  if (!res[{i}]) return SCALY_ERR_NULL_RESULT;" for i in range(len(fun.outputs))]
+  return lines
+
+
+def _render_entry(proc: ProgramNode, fun: Function, *, casadi: bool = False) -> list[str]:
+  """Emit the pointer-ABI entry ``<symbol>(arg,res,iw,w,mem)`` with ``fun``'s main PROC body
+  inlined. ``codegen/aot.py`` reuses this for solver-bearing functions, so the top function's body
+  lowers through Program IR exactly like any other host function."""
   param_count = int(proc.attrs["param_count"])
   body = list(proc.args[param_count:])
   sz_w = int(proc.attrs.get("sz_w", 0))  # set by passes/program/pack_workspace.py
@@ -116,31 +140,16 @@ def _render_entry(proc: ProgramNode, fun: Function) -> list[str]:
   for i, name in enumerate(fun.output_names):
     ptr_expr[name] = f"res[{i}]"
 
-  lines = [
-    f"int {symbol}_sz_arg(void) {{ return {len(fun.inputs)}; }}",
-    f"int {symbol}_sz_res(void) {{ return {len(fun.outputs)}; }}",
-    f"int {symbol}_sz_iw(void) {{ return 0; }}",
-    f"int {symbol}_sz_w(void) {{ return {sz_w}; }}",
-    f"void* {symbol}_alloc_mem(void) {{ return NULL; }}",
-    f"int {symbol}_init_mem(void* mem) {{ (void)mem; return SCALY_SUCCESS; }}",
-    f"void {symbol}_free_mem(void* mem) {{ (void)mem; }}",
-    "",
-    c_api_signature(symbol) + " {",
-    "  (void)iw;",
-    "  (void)mem;",
-    "  if (!arg || !res) return SCALY_ERR_NULL_ABI;",
-  ]
-  if sz_w:
-    lines.append("  if (!w) return SCALY_ERR_NULL_WORK;")
-  else:
-    lines.append("  (void)w;")
-  for i in range(len(fun.inputs)):
-    lines.append(f"  if (!arg[{i}]) return SCALY_ERR_NULL_INPUT;")
-  for i in range(len(fun.outputs)):
-    lines.append(f"  if (!res[{i}]) return SCALY_ERR_NULL_RESULT;")
+  lines = entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi))
+  epilogue: list[str] = []
+  if casadi:
+    gather = casadi_gather(fun, sz_w)
+    ptr_expr.update(gather.ptr)
+    lines += gather.setup
+    epilogue = gather.epilogue
   _emit_local_buffers(body, lines, ptr_expr, indent=2)
   _emit_body(body, ptr_expr, lines, indent=2)
-  lines += ["  return SCALY_SUCCESS;", "}"]
+  lines += [*epilogue, "  return SCALY_SUCCESS;", "}"]
   return lines
 
 

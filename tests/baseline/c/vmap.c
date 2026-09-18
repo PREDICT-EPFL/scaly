@@ -22,15 +22,7 @@ static inline void dynamics_raw(const double* z, const double* u, double* znext,
   *(double2*)(znext + 2) = (double2){(v0 + (0.050000000000000003 * (u[0] - (v2 * v0)))), (v1 + (0.050000000000000003 * (u[1] - (v2 * v1))))};
 }
 
-int shooting_sz_arg(void) { return 2; }
-int shooting_sz_res(void) { return 1; }
-int shooting_sz_iw(void) { return 0; }
-int shooting_sz_w(void) { return 0; }
-void* shooting_alloc_mem(void) { return NULL; }
-int shooting_init_mem(void* mem) { (void)mem; return SCALY_SUCCESS; }
-void shooting_free_mem(void* mem) { (void)mem; }
-
-int shooting(const double** arg, double** res, int* iw, double* w, void* mem) {
+int shooting(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
   (void)mem;
   if (!arg || !res) return SCALY_ERR_NULL_ABI;

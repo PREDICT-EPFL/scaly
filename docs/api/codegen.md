@@ -20,6 +20,18 @@
 
 ::: scaly.codegen.abi.BufferType
 
+## The C++ header
+
+::: scaly.codegen.cpp.render_cpp_header
+
+## The CasADi layer
+
+::: scaly.codegen.casadi.check_casadi_layout
+
+::: scaly.codegen.casadi.casadi_sparsity
+
+::: scaly.codegen.casadi.casadi_scratch
+
 ## Compiling and caching
 
 ::: scaly.codegen.jit.CompiledFunction

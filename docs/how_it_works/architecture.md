@@ -191,9 +191,11 @@ is one translation unit: `static` raw callee bodies (inline, or noinline for the
 workaround in `_force_noinline_raw`), then the exported universal-ABI entry, so only the root is
 exported and nested calls are direct.
 
-`codegen/abi.py` owns the ABI itself: the entry signature, the status codes, symbol mangling, and
-the typed buffer structs. The signature follows CasADi's shape and is specified in
-[The C ABI](c_abi.md).
+`codegen/abi.py` owns the ABI itself: the entry signature, the status codes and symbol mangling.
+The typed layers on top are an API, not the ABI: the C header's structs render in `codegen/aot.py`,
+the C++ `Buffer` and namespace in `codegen/cpp.py`, and the CasADi 3.8 compatible symbols in
+`codegen/casadi.py`. The signature follows CasADi's and everything is specified in
+[The generated interface](generated_interface.md).
 
 ### Compiling: `codegen/aot.py`, `codegen/jit.py`
 
@@ -249,7 +251,7 @@ it.
 - [The intermediate representations](ir.md): the two dialects, their operations, types and verifiers
 - [Lowering and optimization](lowering.md): the rule registry, the passes, the known limits
 - [Differentiation](autodiff.md): how AD crosses calls and mapped structure
-- [The C ABI](c_abi.md): the calling convention, status codes and sparse output tables
+- [The generated interface](generated_interface.md): the pointer ABI, then the C, C++ and CasADi layers on top of it
 - [Solvers](solvers.md): what typed problem and solver construction assemble underneath
 - [Influences](influences.md): what scaly took from CasADi, tinygrad, MLIR and JAX
 - [The codebase](../dev/codebase.md): the package map, import layers and where to add things

@@ -323,22 +323,22 @@ The generated C, C++ and CasADi-compatible interface. [Design](notes/generated_i
 
 ### Now
 
-- [ ] **CAPI-72. Native entry cleanup.** `mem` becomes `int`; the `f_sz_*()` functions and the
+- [x] **CAPI-72. Native entry cleanup.** `mem` becomes `int`; the `f_sz_*()` functions and the
       `alloc_mem/init_mem/free_mem` stubs go from `codegen/c.py` and `codegen/aot.py`; the JIT
       reads `module.workspace_size` instead of calling `f_sz_w()`; the ABI doc follows. Touches
       every rendered header, so the whole suite runs and the `benchmarks/results/smoke/**`
       fixtures are regenerated if compared textually. [Design](notes/generated_interface_2026_09_18.md#the-pointer-entry-both-languages-always).
-- [ ] **CAPI-73. C header with a caller-owned workspace.** After CAPI-72. Buffer structs become
+- [x] **CAPI-73. C header with a caller-owned workspace.** After CAPI-72. Buffer structs become
       `f_x_t` (no `_in`/`_out`), 16-byte aligned; `f_workspace_t` is passed to `f_call` instead of
       being stack-allocated inside it. Update the two C++ smoke tests in `tests/codegen/test_c.py`.
       [Design](notes/generated_interface_2026_09_18.md#the-c-header-langc).
-- [ ] **CAPI-74. C++ header.** After CAPI-73, independent of CAPI-75. `lang="cpp"` renders `f.hpp`
+- [x] **CAPI-74. C++ header.** After CAPI-73, independent of CAPI-75. `lang="cpp"` renders `f.hpp`
       beside the same `f.c`: a guarded `Buffer<T, Ns...>` with inline aligned storage and a
       `constexpr shape`, a namespace per function with `x_t`/`workspace_t` aliases, `constexpr`
       sparsity tables, `call(..., workspace_t&)`; no enclosing `scaly` namespace. Smoke test: a C++
       caller against a `(N, nx)`-shaped function and a sparse Jacobian, reading a value through
       `csc_val_perm`. [Design](notes/generated_interface_2026_09_18.md#the-c-header-langcpp).
-- [ ] **CAPI-75. CasADi 3.8 compatible symbols.** After CAPI-73, independent of CAPI-74. `casadi=True`
+- [x] **CAPI-75. CasADi 3.8 compatible symbols.** After CAPI-73, independent of CAPI-74. `casadi=True`
       adds the guarded `casadi_int`/`casadi_real` typedefs, the query set (`_n_in`, `_n_out`,
       `_name_in`, `_name_out`, `_default_in`, `_sparsity_in`, `_sparsity_out`, `_work`,
       `_work_bytes`, `_checkout`, `_release`, `_incref`, `_decref`), compressed-column sparsity
@@ -346,7 +346,7 @@ The generated C, C++ and CasADi-compatible interface. [Design](notes/generated_i
       `nnz` to `f_SZ_W`). Dense matrix inputs or outputs are rejected at render time. Tests: load
       the library with `casadi.external` and compare against `numerical_call`; assert the six
       symbols acados needs resolve through `ctypes`. [Design](notes/generated_interface_2026_09_18.md#the-casadi-layer-casaditrue-either-language).
-- [ ] **CAPI-76. Document the generated interface.** After CAPI-74 and CAPI-75. Rename the ABI page to
+- [x] **CAPI-76. Document the generated interface.** After CAPI-74 and CAPI-75. Rename the ABI page to
       "The generated interface": the pointer ABI, then the C, C++ and CasADi layers; say plainly
       that both header languages compile the same kernel. Update `guide/codegen.md` and the CLI
       help (`--lang`, `--casadi`). [Why ABI and API are both right](notes/generated_interface_2026_09_18.md#what-this-is-called).

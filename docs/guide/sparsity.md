@@ -59,7 +59,7 @@ spj.output_sparsities[0].nnz
 ```
 
 The pattern also reaches the generated C as static index tables in the header. See
-[the ABI](../how_it_works/c_abi.md#sparse-outputs).
+[the generated interface](../how_it_works/generated_interface.md#sparse-outputs).
 
 ## The ordering rule
 

@@ -92,6 +92,8 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.codegen.__main__": 7,
   "scaly.codegen.aot": 7,
   "scaly.codegen.c": 7,
+  "scaly.codegen.casadi": 7,
+  "scaly.codegen.cpp": 7,
   "scaly.codegen.solver": 7,
   "scaly.viz": 8,
   "scaly.viz.graph": 8,

@@ -13,15 +13,7 @@ typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
 extern "C" {
 #endif
 
-int workspace_sz_arg(void) { return 1; }
-int workspace_sz_res(void) { return 2; }
-int workspace_sz_iw(void) { return 0; }
-int workspace_sz_w(void) { return 2048; }
-void* workspace_alloc_mem(void) { return NULL; }
-int workspace_init_mem(void* mem) { (void)mem; return SCALY_SUCCESS; }
-void workspace_free_mem(void* mem) { (void)mem; }
-
-int workspace(const double** arg, double** res, int* iw, double* w, void* mem) {
+int workspace(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
   (void)mem;
   if (!arg || !res) return SCALY_ERR_NULL_ABI;

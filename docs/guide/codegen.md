@@ -41,8 +41,10 @@ that `LoweringError` as its cause when you call the function from Python.
 ```python
 from scaly.codegen import render_c_module
 
-module = render_c_module(fn)
-module.header           # the .h text
+module = render_c_module(fn)                 # f.h and f.c
+module = render_c_module(fn, lang="cpp")     # f.hpp and the same f.c
+module = render_c_module(fn, casadi=True)    # plus the CasADi 3.8 compatible symbols
+module.header           # the header text
 module.source           # the .c text
 module.header_name      # the filename it expects
 module.source_name
@@ -54,18 +56,19 @@ Or write the pair directly:
 
 ```python
 from scaly.codegen import write_module
-write_module(fn, out_dir)
+write_module(fn, out_dir, lang="cpp")
 ```
 
 From a shell:
 
 ```bash
-uv run scaly_codegen mymodule:my_function -o generated/
+uv run scaly_codegen mymodule:my_function -o generated/ --lang cpp --casadi
 ```
 
 The argument is `<module>:<attribute>`, an importable module and the name of a `Function` in it.
-`--no-typed-buffers` omits the typed structs and C++ wrapper described below; it is the shell form
-of `typed_buffers=False`.
+`--lang c` (the default) writes a C header with a struct per buffer, `--lang cpp` a C++ header with
+`Buffer` types in a namespace; `--casadi` adds the symbols acados and `casadi.external` look for;
+`--no-typed-buffers` strips the C header down to the pointer signature and the sparsity tables.
 
 The AOT output and the JIT read the same `CModule`, produced from a single lowering. The header's
 `SZ_W` and the source's scratch use cannot drift apart, because there is only one number.
@@ -75,7 +78,7 @@ The AOT output and the JIT read the same `CModule`, produced from a single lower
 The generated pair depends on nothing but libm. Every function is reachable through one signature:
 
 ```c
-int f(const double** arg, double** res, int* iw, double* w, void* mem);
+int f(const double** arg, double** res, int* iw, double* w, int mem);
 ```
 
 ```c
@@ -87,13 +90,15 @@ const double* arg[] = {x};
 double* res[] = {y};
 double w[f_SZ_W > 0 ? f_SZ_W : 1];
 
-int rc = f(arg, res, NULL, f_SZ_W ? w : NULL, NULL);
+int rc = f(arg, res, NULL, f_SZ_W ? w : NULL, 0);
 ```
 
 The caller owns all the storage, including the `w` scratch array whose required size the header
-gives. From C++, the header also emits typed structs and an inline `f_call` wrapper that builds
-the pointer arrays for you; pass `typed_buffers=False` to `render_c_module` or `write_module` to
-leave them out.
+gives. The C header also declares a struct per buffer and a workspace struct, so the same call is
+`f_call(&x, &y, &workspace)` with `f_x_t x`, `f_y_t y` and a `f_workspace_t` you place wherever you
+like. The C++ header spells it `f::call(x, y, workspace)` with `f::x_t` and friends, which keep the
+`Expr` shape and index as `x(i, j)`. Both headers declare the same kernel; pick the one your caller
+is written in.
 
 Compile the generated C for the machine that will run it:
 
@@ -110,8 +115,9 @@ compiles on the machine that runs the result and passes the same flags (`-mcpu=n
 A binary distributed to other machines is the exception: build it at the portable baseline, as the
 solver plugin wheels are.
 
-The full contract, with status codes, sparse output tables, memory hooks and what a translation
-unit contains, is in [the C ABI](../how_it_works/c_abi.md).
+The full contract, with status codes, sparse output tables, the C++ `Buffer`, the CasADi layer
+and what a translation unit contains, is in
+[the generated interface](../how_it_works/generated_interface.md).
 
 ## How much scratch space
 

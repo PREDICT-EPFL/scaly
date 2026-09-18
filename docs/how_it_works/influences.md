@@ -21,7 +21,7 @@ CasADi is the closest relative and the tool scaly is measured against in
 
 `Function` as the unit of composition, differentiation and compilation is CasADi's idea. It gives
 derivatives a name, generated symbols a name, and a horizon of identical stages one C function
-instead of a hundred. The generated [C ABI](c_abi.md) follows CasADi's in spirit, so generated
+instead of a hundred. The [generated interface](generated_interface.md) follows CasADi's, so generated
 functions can call each other, a generated solver can drive generated oracles, and an existing C++
 consumer has nothing new to learn. Sparsity as structural metadata carried alongside a value, with
 compressed sparse row (CSR) and compressed sparse column (CSC) views on it, is also CasADi's model.

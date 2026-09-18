@@ -205,7 +205,7 @@ backtracks and accumulated QP iterations.
 
 A solver-bearing function renders through the same C API as any other function. Its module also
 carries the include, library, runtime-path and link flags for every plugin it reaches. See [Code
-generation](codegen.md) and [the C ABI](../how_it_works/c_abi.md).
+generation](codegen.md) and [the generated interface](../how_it_works/generated_interface.md).
 
 ## Limits
 

@@ -164,7 +164,7 @@ def test_vmap_compiled_c_matches_unrolled_concat(tmp_path) -> None:
     ctypes.POINTER(c_double_p),
     ctypes.POINTER(ctypes.c_int),
     c_double_p,
-    ctypes.c_void_p,
+    ctypes.c_int,
   ]
   lib.scale_vmap_compiled.restype = ctypes.c_int
 
@@ -175,11 +175,11 @@ def test_vmap_compiled_c_matches_unrolled_concat(tmp_path) -> None:
   z_buf = (ctypes.c_double * (3 * N))(*zv)
   p_buf = (ctypes.c_double * (3 * N))(*pv)
   y_buf = (ctypes.c_double * (3 * N))()
-  w_buf = (ctypes.c_double * max(lib.scale_vmap_compiled_sz_w(), 1))()
+  w_buf = (ctypes.c_double * max(module.workspace_size, 1))()
   args = (c_double_p * 2)(ctypes.cast(z_buf, c_double_p), ctypes.cast(p_buf, c_double_p))
   res = (c_double_p * 1)(ctypes.cast(y_buf, c_double_p))
 
-  assert lib.scale_vmap_compiled(args, res, None, w_buf, None) == 0
+  assert lib.scale_vmap_compiled(args, res, None, w_buf, 0) == 0
   np.testing.assert_allclose(np.array(y_buf), 2.0 * zv + pv)
 
 

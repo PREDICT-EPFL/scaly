@@ -41,8 +41,9 @@ Three generated interfaces reach other people's builds, and each carries a promi
 Exported C symbols. The stable interface is the universal pointer signature of the exported entry
 `<name>` and, for solver modules, the `<name>_stats` accessor, together with the derived-output
 names `{kind}_{of}_{wrt}` such as `f_spjac_y_x`. A patch release changes none of these. A minor
-release may rename, reorder or remove them, and the release notes list the change. The typed C++
-wrappers are sugar over the pointer signature and follow the same rule. The `static` `_raw` bodies
+release may rename, reorder or remove them, and the release notes list the change. The typed C
+structs, the C++ `Buffer` aliases and the CasADi query functions are sugar over the pointer
+signature and follow the same rule. The `static` `_raw` bodies
 are internal and may change in any release.
 
 Sparsity tables. The `<prefix>_NNZ`, `_NROW` and `_NCOL` macros and the index tables in the
@@ -50,7 +51,7 @@ generated header take their prefix from the derived-output name, so their names 
 rule above. Their contents are stable in no release. The coordinate order is an artifact of lowering,
 and a coloring or `VMAP` change may reorder it. A consumer stays correct by reading values through
 the `<prefix>_csr_val_perm` and `<prefix>_csc_val_perm` tables, as
-[the C ABI](../how_it_works/c_abi.md#sparse-outputs) describes. Whenever generated output changes,
+[the generated interface](../how_it_works/generated_interface.md#sparse-outputs) describes. Whenever generated output changes,
 `_JIT_CACHE_VERSION` in `src/scaly/codegen/jit.py` is bumped so a cached library from an older
 version is never reused.
 

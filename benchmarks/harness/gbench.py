@@ -247,7 +247,7 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
     f"  std::array<double*, {_array_size(res_size)}> res{{}};",
     "  res.fill(nullptr);",
     *[f"  res[{index}] = {output_buffers[index]}.data();" for index in requested_outputs],
-    f"  int rc = {symbol}(arg.data(), res.data(), " + ("iw.data(), w.data(), 0);" if label.startswith("casadi") else "nullptr, w.data(), nullptr);"),
+    f"  int rc = {symbol}(arg.data(), res.data(), " + ("iw.data(), w.data(), 0);" if label.startswith("casadi") else "nullptr, w.data(), 0);"),
     f'  if (rc != 0) {{ std::fprintf(stderr, "{label} returned %d\\n", rc); return 1; }}',
   ]
   if layout in {"lower", "upper"}:
@@ -315,8 +315,7 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
     "  for (auto _ : state) {",
     "    res.fill(nullptr);",
     *[f"    res[{index}] = {output_buffers[index]}.data();" for index in requested_outputs],
-    f"    int rc = {symbol}(arg.data(), res.data(), "
-    + ("iw.data(), w.data(), 0);" if label.startswith("casadi") else "nullptr, w.data(), nullptr);"),
+    f"    int rc = {symbol}(arg.data(), res.data(), " + ("iw.data(), w.data(), 0);" if label.startswith("casadi") else "nullptr, w.data(), 0);"),
     "    benchmark::DoNotOptimize(rc);",
     *[f"    benchmark::DoNotOptimize({output_buffers[index]}.data());" for index in requested_outputs],
     "  }",

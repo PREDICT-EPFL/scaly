@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly so
 # that previously cached `.so` files are not reused by a newer Scaly version.
-_JIT_CACHE_VERSION = "3"
+_JIT_CACHE_VERSION = "4"
 
 _C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 _C_INT_P = ctypes.POINTER(ctypes.c_int)
@@ -141,6 +141,7 @@ class _Artifact:
   lib_path: Path
   key: str
   flags: tuple[str, ...]
+  workspace_size: int
 
 
 _artifact_cache: dict[str, _Artifact] = {}
@@ -183,8 +184,9 @@ def _build_artifact(fun: Function) -> _Artifact:
   lib_path = cache_dir / f"lib{symbol}{shared_lib_ext()}"
 
   if not lib_path.exists():
-    # Write to a temp file then rename to avoid partially-written sources on concurrent builds.
-    tmp_source = source_path.with_suffix(source_path.suffix + ".tmp")
+    # Write to a process-unique temp file then rename, so concurrent builds neither read a
+    # half-written source nor race each other on the rename.
+    tmp_source = source_path.with_suffix(source_path.suffix + f".{os.getpid()}.tmp")
     tmp_source.write_text(module.body)
     tmp_source.replace(source_path)
     # Compile to a process-unique temp lib then atomically rename, so concurrent builds of the same
@@ -201,7 +203,7 @@ def _build_artifact(fun: Function) -> _Artifact:
       raise JitError(f"failed to compile {fun.name!r}: {exc.stderr or exc.stdout}") from exc
     tmp_lib.replace(lib_path)
 
-  artifact = _Artifact(lib_path=lib_path, key=key, flags=extra_flags)
+  artifact = _Artifact(lib_path=lib_path, key=key, flags=extra_flags, workspace_size=module.workspace_size)
   with _artifact_lock:
     _artifact_cache[key] = artifact
   return artifact
@@ -211,8 +213,8 @@ class CompiledFunction:
   """Handle around a JIT-compiled `Function`.
 
   Holds the ``ctypes.CDLL`` for the cached shared object, the resolved entry point with
-  ``argtypes``/``restype`` set up for the universal ABI, and the workspace size queried
-  from the compiled ``<symbol>_sz_w`` helper.
+  ``argtypes``/``restype`` set up for the pointer ABI, and the workspace size the rendered module
+  reported (the header's ``SZ_W``; the library exports no size query of its own).
   """
 
   __slots__ = (
@@ -244,7 +246,7 @@ class CompiledFunction:
       ctypes.POINTER(_C_DOUBLE_P),
       _C_INT_P,
       _C_DOUBLE_P,
-      ctypes.c_void_p,
+      ctypes.c_int,
     ]
     entry.restype = ctypes.c_int
     self._entry = entry
@@ -257,9 +259,7 @@ class CompiledFunction:
       stats_entry.argtypes = [ctypes.POINTER(CSolverStats)]
       stats_entry.restype = ctypes.c_int
       self._stats_entries[stats_symbol] = stats_entry
-    sz_w_fn = getattr(self._lib, f"{symbol}_sz_w")
-    sz_w_fn.restype = ctypes.c_int
-    self._sz_w = int(sz_w_fn())
+    self._sz_w = self._artifact.workspace_size
     self._input_names = tuple(fun.input_names)
     self._input_shapes = tuple(e.shape for e in fun.inputs)
     self._input_sizes = tuple(int(e.size) for e in fun.inputs)
@@ -332,7 +332,7 @@ class CompiledFunction:
       w_buf = None  # noqa: F841 -- keep lifetime explicit even when unused
       w_ptr = _C_DOUBLE_P()
 
-    status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, None)
+    status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, 0)
     if status != 0:
       raise JitError(f"{self._fun.name} returned ABI status {status}")
 

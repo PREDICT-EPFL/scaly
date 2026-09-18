@@ -220,9 +220,9 @@ The ahead-of-time (AOT) command uses the same lowering and renderer as the numer
 uv run scaly_codegen mymodule:solve -o generated/
 ```
 
-It writes one C source file and one header exposing the pointer-array ABI and typed C++ helpers.
+It writes one C source file and one header, C or C++, exposing the pointer ABI and typed buffers.
 Solver-bearing modules include their backend link flags. See [Code generation](codegen.md) and
-[the C ABI](../how_it_works/c_abi.md).
+[the generated interface](../how_it_works/generated_interface.md).
 
 ## Next steps
 

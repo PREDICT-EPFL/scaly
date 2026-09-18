@@ -64,8 +64,8 @@ scaly_codegen mymodule:solve -o generated/
 - **How it works**
 
     Start with the [Compiler architecture](how_it_works/architecture.md), then dive deeper into the
-    [IR](how_it_works/ir.md), the [Lowering & Optimization passes](how_it_works/lowering.md), the [C
-    ABI](how_it_works/c_abi.md), or check the other [projects that have
+    [IR](how_it_works/ir.md), the [Lowering & Optimization passes](how_it_works/lowering.md), the [generated
+    interface](how_it_works/generated_interface.md), or check the other [projects that have
     influenced scaly](how_it_works/influences.md).
 
 - **Benchmarks**

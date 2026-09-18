@@ -60,11 +60,13 @@ src/scaly/
     sparse.py            sparse_jacobian, sparse_hessian: AD driven by a structural pattern
 
   codegen/
-    abi.py               the universal C ABI: signature, status codes, mangling, typed buffers
+    abi.py               the pointer ABI: signature, status codes, mangling
     c.py                 ProgramNode -> standalone scalar C; no lowering policy of its own
+    cpp.py               the C++ header: the Buffer template and a namespace per function
+    casadi.py            the CasADi 3.8 layer: query functions, CSC encoding, the gather
     __main__.py          compatibility shim for `python -m scaly.codegen`
     solver.py            solver-wrapper framing around a plugin-rendered body
-    aot.py               one lowering -> CModule, the file-writing driver, the CLI
+    aot.py               one lowering -> CModule, the C header, the file-writing driver, the CLI
     jit.py               CModule -> compile, cache, dlopen, ctypes dispatch
     toolchain.py         C compiler discovery, cache root, the diagnostics report
 

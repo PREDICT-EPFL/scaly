@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stddef.h>
+
 #ifndef SCALY_SUCCESS
 #define SCALY_SUCCESS 0
 #endif
@@ -16,39 +18,35 @@
 #define SCALY_ERR_NULL_INPUT 4
 #endif
 
+#ifndef SCALY_ALIGNAS
+#ifdef __cplusplus
+#define SCALY_ALIGNAS(n) alignas(n)
+#else
+#define SCALY_ALIGNAS(n) _Alignas(n)
+#endif
+#endif
+
 #define workspace_SZ_ARG 1
 #define workspace_SZ_RES 2
 #define workspace_SZ_IW 0
 #define workspace_SZ_W 2048
 
-// Universal CasADi-style ABI for workspace.
+// The pointer ABI for workspace.
 #ifdef __cplusplus
 extern "C" {
 #endif
-int workspace(const double** arg, double** res, int* iw, double* w, void* mem);
-int workspace_sz_arg(void);
-int workspace_sz_res(void);
-int workspace_sz_iw(void);
-int workspace_sz_w(void);
-void* workspace_alloc_mem(void);
-int workspace_init_mem(void* mem);
-void workspace_free_mem(void* mem);
+int workspace(const double** arg, double** res, int* iw, double* w, int mem);
 #ifdef __cplusplus
 }
 #endif
 
-// Optional typed buffer wrappers for statically known shapes.
-typedef struct { double data[2048]; } workspace_x_in;
-typedef struct { double data[1]; } workspace_sum_out;
-typedef struct { double data[1]; } workspace_sumsqr_out;
-#ifdef __cplusplus
-static_assert(sizeof(workspace_x_in) == sizeof(double) * 2048, "workspace_x_in size mismatch");
-static_assert(sizeof(workspace_sum_out) == sizeof(double) * 1, "workspace_sum_out size mismatch");
-static_assert(sizeof(workspace_sumsqr_out) == sizeof(double) * 1, "workspace_sumsqr_out size mismatch");
-static inline int workspace_call(const workspace_x_in& in_x, workspace_sum_out& out_sum, workspace_sumsqr_out& out_sumsqr) {
-  double w[workspace_SZ_W > 0 ? workspace_SZ_W : 1];
-  const double* arg[workspace_SZ_ARG > 0 ? workspace_SZ_ARG : 1] = {in_x.data};
-  double* res[workspace_SZ_RES > 0 ? workspace_SZ_RES : 1] = {out_sum.data, out_sumsqr.data};
-  return workspace(arg, res, nullptr, workspace_SZ_W ? w : nullptr, nullptr);
+// Typed buffers: one struct per input and output, and the caller-owned workspace.
+typedef struct { SCALY_ALIGNAS(16) double data[2048]; } workspace_x_t;
+typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sum_t;
+typedef struct { SCALY_ALIGNAS(16) double data[1]; } workspace_sumsqr_t;
+typedef struct { SCALY_ALIGNAS(16) double data[workspace_SZ_W > 0 ? workspace_SZ_W : 1]; } workspace_workspace_t;
+static inline int workspace_call(const workspace_x_t* x, workspace_sum_t* sum, workspace_sumsqr_t* sumsqr, workspace_workspace_t* workspace) {
+  const double* arg[workspace_SZ_ARG > 0 ? workspace_SZ_ARG : 1] = {x->data};
+  double* res[workspace_SZ_RES > 0 ? workspace_SZ_RES : 1] = {sum->data, sumsqr->data};
+  return workspace(arg, res, NULL, workspace ? workspace->data : NULL, 0);
 }
-#endif

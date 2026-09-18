@@ -468,7 +468,7 @@ def test_empty_reduction_and_output_leave_adjacent_memory_untouched() -> None:
   args = (pointer * 1)(values.ctypes.data_as(pointer))
   outputs = (pointer * 2)(cost.ctypes.data_as(pointer), untouched.ctypes.data_as(pointer))
   work = (ctypes.c_double * compiled._sz_w)()
-  assert compiled._entry(args, outputs, None, work, None) == 0
+  assert compiled._entry(args, outputs, None, work, 0) == 0
   np.testing.assert_array_equal(cost, [values[:2].sum() + 1000.0 * values[2:2].sum()])
   np.testing.assert_array_equal(untouched, [23.0])
 

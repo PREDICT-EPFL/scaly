@@ -28,15 +28,7 @@ static __attribute__((noinline)) void dynamics_fwd3c8e1b6ee2b3_znext_z_raw(const
   *(double2*)(fwd_znext_z + 10) = (double2){(-(0.050000000000000003 * (v4 * v0))), (1.0 - (0.050000000000000003 * ((v4 * v2) + v3)))};
 }
 
-int shooting_spjac_eq_z_sz_arg(void) { return 2; }
-int shooting_spjac_eq_z_sz_res(void) { return 1; }
-int shooting_spjac_eq_z_sz_iw(void) { return 0; }
-int shooting_spjac_eq_z_sz_w(void) { return 0; }
-void* shooting_spjac_eq_z_alloc_mem(void) { return NULL; }
-int shooting_spjac_eq_z_init_mem(void* mem) { (void)mem; return SCALY_SUCCESS; }
-void shooting_spjac_eq_z_free_mem(void* mem) { (void)mem; }
-
-int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, void* mem) {
+int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, int mem) {
   (void)iw;
   (void)mem;
   if (!arg || !res) return SCALY_ERR_NULL_ABI;
