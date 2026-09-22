@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 77**
+**Next id: 83**
 
 | Prefix | Section |
 |---|---|
@@ -240,6 +240,139 @@ protocol's compile flags.
 
 ### Deferred
 
+The 2026-09-22 items below come from re-measuring a hand-optimized race-car Hessian on the M4 Max;
+[`notes/perf_2026_09_22/`](notes/perf_2026_09_22/README.md) holds the numbers, the generality
+analysis of each hand change, the `zig cc` and compiler-extension survey, and the rendering
+decision. Like C-8 they are deferred and not required for 0.1.0: the current kernels already beat
+CasADi on every benchmark cell, and the release work comes first. They are organized around C-8
+rather than beside it. C-77 *is* C-8's step 0 (inline scalarized callees into their mapped loop,
+which nothing in C-8 covered) and step 1 (range propagation); doing it lands the first third of
+C-8 and the assembly fix at once. C-78 is three independent passes that need none of C-8 and can
+go first if cheap wins are wanted. C-79 is one more rewrite over ranges, tinygrad's `shift_to`,
+and sits after C-8's step 1 because a widened kernel that still writes 48 outputs to memory gains
+little; it must not be built as a separate `VMAP`-loop transformation that C-8 would then delete,
+the way C-43 is scheduled for deletion. C-80 is solver work. C-81 was the x86 re-run; it
+confirmed the order C-77 then C-79 and settled C-79's lane width and loop shape. The same
+evening the "libm only, everywhere" stance was revised after a three-model review: the
+generated C stays portable by default, and a target-aware opt-in (`lanes`, `vector_libm`, a CPU
+recipe) buys the measured 2× on x86; C-79, C-83 and R-71 record the result. When
+C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
+
+- [ ] **C-77. Inline scalar callees into their mapped loops and fuse the derivative assembly.**
+      C-8 step 0 and step 1. Today `_lower_vmap` emits `FOR { CALL }` and every pass stops at the
+      `CALL`, so the sparse-Hessian recovery (`gather(transpose(jvp_many(...)))`) runs as 15
+      separate array passes: 35% of the race-car N=200 Hessian, and the reason inlining alone buys
+      nothing (43.5 to 43.0 µs) while fusion lets 6 of 16 block entries die (28.4 to 18.0 µs).
+      The triangle selection in `ad/sparse.py` already gathers straight from the compressed
+      block, so the six upper entries per stage are dead only once the kernel body and its
+      gather share a range; nothing before that can drop them. They are unread rows inside seed
+      directions the star coloring needs anyway, not extra directions, so this is dead-store
+      elimination, not an AD change; computing fewer sweeps is C-11's second-order reverse pass. Gates: no assembly loops in the
+      generated C; no store of an upper-triangle compressed entry in the stage body; the
+      workspace holds no colored or transposed intermediate, so `SZ_W` is zero at W = 1 and grows
+      only with lane staging (the hand-written kernel needs no `w[]` at all); race-car hess lower
+      N=200 under 22 µs on the M4 without vectorization.
+- [ ] **C-78. Constant-tile folding, invariant-divisor reciprocals, terminal-trip peeling.** Three
+      small passes. A `static const` table that tiles a period P becomes `k[i % P]`, a scalar at
+      P=1; `k0`, `k22`, `k26` from C-57 are exactly these. `x / y` with `y` loop invariant becomes
+      `x * inv_y` hoisted, behind a policy flag because it moves the last bit; both race-car
+      divisors are invariant and this is the `-ffast-math` gap (18.0 to 15.5 µs). Peeling the last
+      trip of a mapped axis whose slice differs makes the recovery gather `k44` affine (period 24,
+      residual 13, verified) so C-9's map replaces the table. Gates: no `double` table growing
+      with N in the race-car header; no division in the stage body.
+- [ ] **C-79. Explicit lanes on mapped ranges.** Port tinygrad's `shift_to`,
+      `r -> r_outer * W + r_lane` with `r_lane` of `RangeKind.VECTOR`, applied to the mapped axis
+      first (independent trips, no dependence analysis), then a contiguous output axis, then a
+      reduction axis with one accumulator per lane. Under a widened range a unit-stride access is
+      a vector load or store, a constant stride is a staging transpose at the ABI boundary (buffers
+      created under the range are lane major; ABI arrays stay stage major), anything else is per
+      lane; `minimum` and `maximum` render per lane. W comes from a `lanes` render option:
+      `"auto"` (the AOT default) renders a preprocessor block that picks W from the compiler's
+      target macros, 8 under `__AVX512F__`, 4 under `__AVX__` or 256-bit SVE, 2 under `__SSE2__`
+      or `__aarch64__`, otherwise 1 (Cortex-M and ARMv7 have no double vectors), overridable with
+      `-DSCALY_LANES=n`, so one generated file serves several CPU builds and cross targets need
+      no target description; an integer renders a fixed W and drops the block, which is what the
+      JIT passes because the host is known and the `.so` never moves. Python caps W per kernel by
+      register pressure (`live values × W ≤ 4 × register file`, note §3.1), emitted as a cap on
+      the macro. The fused stage body is rendered once as an `always_inline` function
+      taking the stage index and a count of valid lanes; the main loop runs the `N / SCALY_LANES`
+      full trips with the count fixed at W, and one remainder call under
+      `#if (N % SCALY_LANES) != 0` handles the last partial vector with clamped loads and guarded
+      stores. No scalar tail and no second copy of the body. Staging buffers are sized for W = 8 so
+      the workspace size in the generated header does not depend on the macro. Two render modes,
+      documented in `docs/api/codegen.md` with their differences and supported compilers when this
+      lands: `gnu` (default; `vector_size` types, `v[i]`, `__builtin_shufflevector`,
+      `__builtin_convertvector`, `restrict`; gcc ≥ 12, clang, `zig cc`, armclang) and `c` (opt in;
+      the widened program as a scalar body inside an inner lane loop over the same staging buffers;
+      any C99 compiler). Transcendentals are per-lane scalar libm calls by default, and a third
+      render option `vector_libm="none" | "glibc"` (default `none`) turns on glibc libmvec: C-81
+      measured 26.6 µs at 8 lanes against 12.7 with the `_ZGVeN8v_*` prototypes declared in the
+      source, equal to the hand-written kernel on gcc, clang and `zig cc` alike, so declaring
+      them ourselves is compiler-neutral and `-fveclib`, gcc's `simd` attribute and
+      `__builtin_elementwise_*` all stay out. The `glibc` option renders a prototype block for
+      the ops the program uses, guarded on `__x86_64__`, `__GLIBC__`, the matching width
+      (`_ZGVeN8v_*` needs `__AVX512F__` and W = 8, `_ZGVdN4v_*` needs `__AVX__` and W = 4, never
+      a wider W on a narrower build) and `__GLIBC_PREREQ(2, 35)` for `tanh`; a build that fails
+      the guard hits an `#error` naming the option and the `-lmvec` link flag, so a wrong AOT
+      build fails at compile time with a sentence rather than at link time with an undefined
+      symbol. It moves results (glibc documents 4 ulp against scalar libm's under 1), so it is
+      off in distributed AOT output, on in the JIT on a glibc x86-64 host once the version check
+      passes, and off under `zig cc` cross builds, whose glibc stubs omit libmvec. Check whether
+      `-lm` alone already pulls `libmvec` through glibc's `libm.so` linker script before
+      documenting `-lmvec`. No vendored SLEEF, no Accelerate (vForce is array-based and would
+      undo C-77's fusion; Apple's scalar `sin` is 2 ns so the M4 gain is bounded at 5.7 of
+      14.2 µs), no own polynomials; `generic` means `lanes="auto"`, `vector_libm="none"`.
+      Compiler and OS are not dimensions of the generated C, only of the build recipe: a small
+      table in `codegen/toolchain.py` keyed by CPU level (`native`, `x86-64-v3`, `x86-64-v4`,
+      `apple-m4`, `generic`) yields the gcc and clang flag spellings, defines and link flags, and
+      the same `BuildRecipe` value is printed by `scaly_toolchain`, by the AOT CLI
+      (`--cpu`, `--lanes`, `--dialect`, `--vector-libm`; no named OS × arch × compiler targets,
+      which would render byte-identical C) and as a comment block at the top of the generated
+      `.c` and `.h` with the exact build line, the CPU baseline and the libc requirement.
+      Distributable AOT output requires an explicit CPU baseline; `native` is for host-local
+      builds. When this lands, record in `docs/results/fairness.md` that headline rows keep
+      scalar libm for both providers and a libmvec row is reported separately with its accuracy
+      statement. Gates: compile matrix gcc × clang × W ∈ {1, 2, 4, 8} × `vector_libm` on and
+      off; byte-identical output between the two modes and across W at the same compiler and
+      flags with `vector_libm="none"` (bitwise equality across targets never existed: FMA
+      contraction and Apple versus glibc libm already move the last bits); an `nm` check that no
+      `_ZGV*` symbol appears when off, perturbed to prove it can fail; on the x86 reference
+      machine within 1.2× of `variant_w8_lane.c` (26.6 µs, gcc 13) when off and within 1.1× of
+      the hand-written kernel (12.7 µs) when on; no regression on the M4 at W = 2.
+- [ ] **C-80. Parameter-only oracle prologue.** An oracle whose subgraph depends only on `p`
+      runs once per solve and its result is reused across SQP iterations (the race-car cost block,
+      and the 402 `cos`/`sin` of the reference heading that the cost tangent and adjoint callees
+      each recompute per stage; they depend on `p` alone). Function or solver level, not a program
+      pass; belongs with the S items once C-77 lands.
+- [x] **C-81. Re-run the 2026-09-22 variants on the x86 reference machine.** Done 2026-09-22,
+      section 5 of `notes/perf_2026_09_22/README.md`, `x86_variants.sh` reproduces it. C-77 stays
+      first (108.5 to 59.4 µs on gcc). A native `zig cc` links `-lmvec`. Declared
+      glibc `_ZGV*` prototypes reach the hand-written kernel (12.7 µs) and gcc's `simd` attribute
+      does so from scalar source; the prototypes became C-79's opt-in `vector_libm="glibc"` the
+      same evening, the `simd` attribute and `__builtin_elementwise_*` stay out because clang
+      ignores the former and LLVM's libmvec table stops at 4 lanes without `tanh` for the
+      latter. Side finding: gcc 13, the JIT's `cc` here, is 40% slower than clang 20 on today's
+      generated code at the protocol flags, one reason R-71 puts `zig cc` first.
+- [ ] **C-83. Fingerprint the host in the JIT cache key.** `_compute_cache_key` in
+      `codegen/jit.py` hashes the flag string `-march=native`, not the CPU it resolves to, nor the
+      compiler identity. A cache directory shared across machines (an NFS home on a mixed
+      cluster) can hand an AVX-512 `.so` to a node without AVX-512, and a compiler upgrade reuses
+      stale objects. Add the resolved CPU features (`sysctl` or `/proc/cpuinfo`), the compiler
+      command and its version string, and, once C-79 lands, the render options and the glibc
+      version to the key. Gate: a test that changing any of them misses the cache.
+- [ ] **C-82. A frame budget in `pack_workspace` instead of the per-buffer spill threshold.**
+      Fusion (C-77) and lane staging (C-79) move memory from full-length intermediates into
+      per-stage locals, and inlined callees add their locals to the caller's frame; the
+      hand-written kernel uses no `w[]` and about 40 kB of stack. Today a slot spills to `w[]`
+      only when it alone reaches 1024 doubles, so nothing bounds the frame. Replace it with a
+      per-procedure estimate (local buffers plus inlined callees' locals plus a fixed allowance
+      for scalar spills) against a budget, default about 64 kB on hosts and a compile option for
+      embedded builds, where zero sends everything to a caller-provided `w[]`; spill the largest
+      buffers until the estimate fits; report the estimate beside `SZ_W` in the header. Verify
+      the estimate with the compiler: a test builds a generated module with
+      `-Wframe-larger-than=<budget> -Werror` on gcc and clang and fails if the estimate was
+      optimistic. After C-77, since that is what shifts memory onto the stack.
+
 - [ ] **C-8. A range-based loop compiler for the program dialect, in the shape of tinygrad's
       rangeify.** Caller workspace still grows with N on race_cars and npmpc. C-47 removed chain's
       43 separate scatter accumulation buffers and reduced M=5 workspace to 109,944 doubles.
@@ -256,7 +389,8 @@ protocol's compile flags.
       per-lane split, which supersedes the layout-specific matmul rules C-43 landed in
       `_lower_matmul` (delete them then) and generalizes them to `W @ [v1 v2 v3]`
       and to matrix-matrix products; (3) the reduce-under-broadcast rule so a value is never
-      recomputed under an expand. Gates: race-car `workspace` fixed across N in the sweep CSV, chain
+      recomputed under an expand. Gates: race-car `workspace` free of colored and transposed
+      intermediates (zero at W = 1, lane staging only otherwise; see C-77 and C-82), chain
       workspace under 100k doubles at M=5, npmpc within 5% of today's kernel with those rules removed.
       The pre-optimization caller shares were 22% of race-car, 3% of npmpc, and 26% of chain.
       Re-measure the remaining costs before resuming this work.
@@ -282,7 +416,12 @@ protocol's compile flags.
       body, then a scatter. Deferred beyond this closeout. The
       [C-49 audit](notes/perf_2026_09_07/c49_ad_op_audit.md#what-is-inherent-to-forward-over-reverse-here)
       finds composition accounts for most excess operations, with symmetry the remaining
-      second-order opportunity. Reassess only if a current workload justifies the work.
+      second-order opportunity. Reassess only if a current workload justifies the work. Rediscovered
+      empirically on 2026-09-22 while hand-optimizing the race-car Hessian kernel
+      ([note](notes/perf_2026_09_22/README.md)): each of the 4 seed directions yields all 4 rows of
+      the block, 16 entries where the lower triangle needs 10. There the 6 are dead rows that C-77's
+      fusion deletes for free; only where the coloring width itself grows does a second-order
+      reverse sweep (edge pushing) that touches each nonzero once pay for its complexity.
 
 - [ ] **C-58. Inline small pure callees before differentiation.** Revisit a bounded expansion policy
       if measured workloads justify it. Excluded from C-49 closeout to preserve mapped structure
@@ -543,10 +682,17 @@ These steps make the tree public and permanent, and each is cheap to do once and
       built with at that point; the system compiler on each runner is the default. `cmake` comes
       from PyPI as a build requirement of both plugins; a C++ compiler and gfortran stay system-wide
       prerequisites for anyone building the wheels themselves.
-- [ ] **R-71. `zig cc` as the last fallback compiler.** After `SCALY_CC`, `CC` and `cc` on `PATH`,
-      the JIT tries `python -m ziglang cc` when `ziglang` is importable. It wraps clang, so the flag
-      dialect the JIT already emits applies. The compiler becomes a command list rather than a
-      binary path, which `scaly_toolchain` must print. Expose it as the `scaly[toolchain]` extra.
+- [ ] **R-71. `zig cc` as the JIT's preferred compiler.** Order: `SCALY_CC`, then
+      `python -m ziglang cc` when `ziglang` is importable, then `CC`, then `cc` on `PATH`. It wraps
+      clang, so the JIT always speaks one flag dialect and gcc-only behaviour (the sincos merge
+      that blocks vectorization, the 40% gap to clang measured in C-81) leaves the JIT path; on
+      the x86 reference machine zig's clang 21 was within 10% of clang 20 on the baseline and
+      linked `-lmvec` natively (11.6 µs on the 8-lane libmvec variant). The compiler becomes a
+      command list rather than a binary path, which `scaly_toolchain` must print. Before flipping
+      the default, check that the solver plugins' JIT paths (the `scaly-sqp` wrapper, the PIQP and
+      IPOPT hooks) link against the vendored libraries with zig's driver on all three operating
+      systems, and measure cold compile latency, since zig builds its own libc on first use.
+      Expose it as the `scaly[toolchain]` extra, required on Windows (R-38).
 - [ ] **R-42. Freeze measurements on `0.1.0a1`, tag `v0.1.0a1`** and publish the wheels and a durable
       archive. After R-41.
 
