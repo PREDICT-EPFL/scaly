@@ -251,9 +251,9 @@ C-8 and the assembly fix at once. C-78 is three independent passes that need non
 go first if cheap wins are wanted. C-79 is one more rewrite over ranges, tinygrad's `shift_to`,
 and sits after C-8's step 1 because a widened kernel that still writes 48 outputs to memory gains
 little; it must not be built as a separate `VMAP`-loop transformation that C-8 would then delete,
-the way C-43 is scheduled for deletion. C-80 is solver work. C-81 is measurement and can run any
-time. When C-8 is resumed, fold C-77 and C-79 into its step list and close them there; their
-order is the M4's, and C-81 may swap C-77 and C-79.
+the way C-43 is scheduled for deletion. C-80 is solver work. C-81 was the x86 re-run; it
+confirmed the order C-77 then C-79 and settled C-79's lane width and loop shape. When
+C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
 
 - [ ] **C-77. Inline scalar callees into their mapped loops and fuse the derivative assembly.**
       C-8 step 0 and step 1. Today `_lower_vmap` emits `FOR { CALL }` and every pass stops at the
@@ -276,25 +276,36 @@ order is the M4's, and C-81 may swap C-77 and C-79.
       reduction axis with one accumulator per lane. Under a widened range a unit-stride access is
       a vector load or store, a constant stride is a staging transpose at the ABI boundary (buffers
       created under the range are lane major; ABI arrays stay stage major), anything else is per
-      lane; libm ops, `minimum` and `maximum` render per lane; a scalar tail handles N mod W. W
-      comes from the target triple (AVX-512 8, AVX2 4, NEON 2, no double vectors on Cortex-M or
-      ARMv7 so 1), capped by live values against the register file, overridable by `SCALY_LANES`.
-      Two render modes, documented in `docs/api/codegen.md` with their differences and supported
-      compilers when this lands: `gnu` (default; `vector_size` types, `v[i]`,
-      `__builtin_shufflevector`, `__builtin_convertvector`, `restrict`; gcc ≥ 12, clang, `zig cc`,
-      armclang) and `c` (opt in; the widened program as a scalar body inside an inner lane loop
-      over the same staging buffers; any C99 compiler). No vendored vector libm and no own
-      polynomials: transcendentals stay per-lane scalar calls, measured 18.0 to 14.2 µs at 8
-      lanes on the M4 and the bulk of the other agent's 45 to 11 µs on AVX-512. Gates: within 1.5×
-      of the hand-written kernel on the x86 reference machine; no regression on the M4 at W=2;
-      byte-identical output between the two modes.
+      lane; libm ops, `minimum` and `maximum` render per lane. W is chosen by the C preprocessor
+      from the compiler's target macros, not by Scaly: 8 under `__AVX512F__`, 4 under `__AVX__` or
+      256-bit SVE, 2 under `__SSE2__` or `__aarch64__`, otherwise 1 (Cortex-M and ARMv7 have no
+      double vectors), overridable with `-DSCALY_LANES=n`; the compiler legalizes any W, so W is a
+      performance knob only. The fused stage body is rendered once as an `always_inline` function
+      taking the stage index and a count of valid lanes; the main loop runs the `N / SCALY_LANES`
+      full trips with the count fixed at W, and one remainder call under
+      `#if (N % SCALY_LANES) != 0` handles the last partial vector with clamped loads and guarded
+      stores. No scalar tail and no second copy of the body. Staging buffers are sized for W = 8 so
+      the workspace size in the generated header does not depend on the macro. Two render modes,
+      documented in `docs/api/codegen.md` with their differences and supported compilers when this
+      lands: `gnu` (default; `vector_size` types, `v[i]`, `__builtin_shufflevector`,
+      `__builtin_convertvector`, `restrict`; gcc ≥ 12, clang, `zig cc`, armclang) and `c` (opt in;
+      the widened program as a scalar body inside an inner lane loop over the same staging buffers;
+      any C99 compiler). No vendored vector libm, no glibc libmvec, no own polynomials:
+      transcendentals are per-lane scalar libm calls on every target, decided for OS and compiler
+      portability. C-81 measured the price on the x86 reference machine: 26.6 µs at 8 lanes against
+      12.7 with libmvec, the whole gap being trig. Gates: within 1.2× of `variant_w8_lane.c` on the
+      x86 reference machine (26.6 µs, gcc 13); no regression on the M4 at W = 2; byte-identical
+      output between the two modes.
 - [ ] **C-80. Parameter-only oracle prologue.** An oracle whose subgraph depends only on `p`
       runs once per solve and its result is reused across SQP iterations (the race-car cost block).
       Function or solver level, not a program pass; belongs with the S items once C-77 lands.
-- [ ] **C-81. Re-run the 2026-09-22 variants on the x86 reference machine.** `gen_hess_kernel.py`
-      and `mkvariant.py` under the protocol's flags, plus one check that a native `zig cc` links
-      `-lmvec` on glibc. Decides the order of C-77 and C-79 and whether the `clang`-only
-      `__builtin_elementwise_*` plus `-fveclib=libmvec` render option is worth its one line.
+- [x] **C-81. Re-run the 2026-09-22 variants on the x86 reference machine.** Done 2026-09-22,
+      section 5 of `notes/perf_2026_09_22/README.md`, `x86_variants.sh` reproduces it. C-77 stays
+      first (108.5 to 59.4 µs on gcc). A native `zig cc` links `-lmvec`. Declared
+      glibc `_ZGV*` prototypes reach the hand-written kernel (12.7 µs) and gcc's `simd` attribute
+      does so from scalar source, but both are libmvec and stay out for portability; the
+      `__builtin_elementwise_*` option is dropped too. Side finding not yet acted on: gcc 13, the JIT's `cc` here, is 40% slower than
+      clang 20 on today's generated code at the protocol flags.
 
 - [ ] **C-8. A range-based loop compiler for the program dialect, in the shape of tinygrad's
       rangeify.** Caller workspace still grows with N on race_cars and npmpc. C-47 removed chain's

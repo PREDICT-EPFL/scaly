@@ -176,8 +176,9 @@ transcendentals as per-lane scalar calls (mode 1). That is the 18.0 to 14.2 µs 
 keeps the generated C free of any dependency beyond libm, and the effort budget is reserved for
 the fusion work and for the GPU backend. Where the platform ships a vector libm for free, glibc's
 libmvec on x86 Linux, mode 2 costs nothing more than declaring `_ZGVdN4v_sin` and friends in the
-generated source and linking `-lmvec`; that is a rendering option, not a dependency, and the x86
-re-run decides whether it is worth even that.
+generated source and linking `-lmvec`; that is a rendering option, not a dependency. The x86
+re-run (section 5) measured it at 26.6 against 12.7 µs, and the decision after it was still no:
+the generated C stays free of anything but libm on every operating system and compiler.
 
 ### 3.3 What else the extensions buy
 
@@ -266,9 +267,10 @@ lane work stops at vector arithmetic, and the render has two modes:
   staging buffers; any C99 compiler, MSVC and vendor compilers included. Correct rather than fast.
 
 Both render from one program, so they must produce byte-identical outputs and the tests pin that.
-The `clang`-only `__builtin_elementwise_*` plus `-fveclib` path is not a mode; if C-81 shows the
-per-lane trig dominating on x86 after widening, it becomes a one-line option inside `gnu`,
-guarded by `#ifdef __clang__`. `zig cc` ties in as the compiler the JIT can always ship, on all
+The `clang`-only `__builtin_elementwise_*` plus `-fveclib` path is not a mode. C-81 (section 5)
+showed the per-lane trig dominating on x86 after widening, and that declaring glibc's `_ZGV*`
+prototypes would close the gap on all three compilers; it stays out, with every other vector
+libm, for portability of the generated C. `zig cc` ties in as the compiler the JIT can always ship, on all
 three operating systems and cross-compiling for embedded targets, which is what makes `gnu` a
 safe default there; AOT users with another compiler pass the `c` mode.
 
@@ -295,6 +297,94 @@ re-run that may swap C-77 and C-79. Expected differences on x86: a similar assem
 larger width gain, and per-lane scalar trig roughly ten times more expensive than Apple's libm,
 which is what decides whether the `__builtin_elementwise_*` option earns its line.
 
+## 5. The x86 reference machine, 2026-09-22 (C-81)
+
+Same variants on the reference machine of `docs/results/fairness.md` (Ryzen 9 7940HS, Zen 4 with
+AVX-512, glibc 2.39, `performance` governor, boost off, pinned to one core), protocol flags
+`-O3 -march=native -fno-math-errno`, gcc 13.3 (the JIT's compiler), clang 20.1 and a native
+`zig cc` (zig 0.16, clang 21). Best of 5 × 20000 calls; every number repeated within 3% except the `-ffast-math` rows, which vary by 10%. All
+variants match the gcc baseline to 9.1e-13 absolute on entries up to 1400; the per-lane libm
+variants to 5.3e-14. `x86_variants.sh` beside this note rebuilds and times everything.
+
+| Variant | gcc 13 | clang 20 | `zig cc` | Vector libm calls |
+| --- | ---: | ---: | ---: | --- |
+| Generated code as of today | 108.5 | 77.3 | 84.1 | |
+| Same, `noinline` removed | 110.1 | 76.2 | | |
+| The 200 stage kernels alone, out of line | 71.7 | 60.3 | | |
+| Fused per-stage assembly, original out-of-line kernel | 62.0 | 52.5 | | |
+| Fused assembly, kernel inlined, scalar source | 59.4 | 24.6 | 24.4 | |
+| Same, 2 lanes, libm per lane | 38.5 | 32.4 | | |
+| Same, 4 lanes | 30.3 | 25.6 | | |
+| Same, 8 lanes | 26.6 | 25.8 | 24.5 | |
+| Fused scalar source, `-ffast-math` | 11.3 to 13.4 | 23.0 | 22.8 | gcc: `_ZGVeN8v_{sin,cos,tanh}` |
+| 4 lanes, glibc `_ZGVdN4v_*` prototypes declared, `-lmvec` | 17.5 | 15.6 | | 4 wide |
+| 8 lanes, glibc `_ZGVeN8v_*` prototypes declared, `-lmvec` | 12.7 | 12.8 | 11.6 | 8 wide, `tanh` included |
+| Same with `-ffast-math` | 11.1 to 12.3 | 10.8 | 11.7 | isolates the reciprocal gain, 0.4 to 1.6 µs |
+| The other agent's hand-written AVX-512 file | 12.65 | 12.6 | 13.4 | 8 wide |
+| Fused scalar source, `__attribute__((simd("notinbranch")))` on `sin`, `cos`, `tanh`, no fast-math | 12.6 to 13.1 | 24.6 (ignored) | | gcc: 8 wide, `tanh` included |
+| Fused scalar source, `-fveclib=libmvec` | | 21.9 | 44.8 | 4 wide, no `tanh`; the loop is 8 wide |
+| Same, `-mprefer-vector-width=256` | | 14.6 | | 4 wide loop, 4 wide calls |
+| 4 lanes, `__builtin_elementwise_*`, `-fveclib=libmvec` | rejected | 14.7 | 14.8 | 4 wide, `tanh` scalar |
+| 8 lanes, `__builtin_elementwise_*`, `-fveclib=libmvec` | rejected | 24.5 | | none: LLVM's libmvec table stops at 4 lanes |
+| 2000 `sin`/`cos` and 800 `tanh` scalar libm calls | 23.5 | 23.6 | | 8.4 ns per call, against 2.0 on Apple libm |
+
+All times in µs per call. What it says, against the M4 table in section 1:
+
+1. **Fusion is still the first step, and larger here.** 108.5 to 59.4 on gcc, 45% of the
+   baseline against 35% on the M4. The kernel share is also larger: the 200 kernels alone are 66%
+   of the gcc baseline. C-77 keeps its place before C-79.
+2. **Inlining alone buys nothing on either compiler**, as on the M4 (108.5 to 110.1, 77.3 to
+   76.2). But once fused, the two compilers part ways: clang vectorizes the fused scalar loop 8
+   wide by itself, scalarizing the 14 `sin`/`cos`/`tanh` calls per stage into per-lane calls
+   (24.6 µs, the same as our explicit 8-lane variant at 25.8), while gcc refuses to vectorize any
+   loop containing a call without a simd clone and stays scalar at 59.4.
+3. **Per-lane scalar trig dominates after widening**, which is the question section 3.6 left to
+   this run. Explicit 8 lanes with libm per lane is 26.6 on gcc; the identical source with the
+   three glibc `_ZGVeN8v_*` prototypes declared is 12.7. That 14 µs is the trig, and it is the
+   whole gap to the hand-written kernel (12.65): the explicit-lane render with per-lane trig, as
+   C-79 was decided, would sit at 2.1× the hand kernel and miss its own 1.5× gate on this machine.
+   With the prototypes declared it is at 1.0×.
+4. **The right one line is not `__builtin_elementwise_*`.** On clang 20 and zig's clang 21 the
+   libmvec mapping stops at 4 lanes and has no `tanh`, so the 8-wide `__builtin_elementwise_*`
+   variant degrades to per-lane scalar calls (24.5) and the 4-wide one reaches only 14.7. Declaring
+   the glibc prototypes ourselves works on gcc, clang and `zig cc` alike, at 8 lanes, `tanh`
+   included: 12.7, 12.8, 11.6. That replaces the `#ifdef __clang__` option of section 3.6.
+5. **On gcc, the compiler does the widening itself given a declaration.** Three
+   `__attribute__((__simd__("notinbranch")))` declarations on the fused *scalar* source, no
+   vector types, no `-ffast-math`, give 12.6 to 13.1 µs with `_ZGVeN8v_*` calls, equal to the
+   hand-written kernel. This is exactly what glibc's `bits/math-vector.h` does under
+   `__FAST_MATH__`, which is why `-ffast-math` on the scalar source jumps from 59.4 to 11.3; the
+   remaining 0.4 to 1.6 µs of fast-math is the reciprocal of invariant divisors, C-78. Clang ignores the
+   attribute and `#pragma omp declare simd` on external functions, so on clang the explicit
+   `_ZGV` prototypes remain the way. So the C-79 `c` mode (scalar body, inner lane loop) plus a
+   per-target block of simd declarations reaches the hand-written kernel on gcc, and the `gnu`
+   mode plus the same declarations reaches it on clang and `zig cc`.
+6. **`zig cc` native links `-lmvec`.** Every `-lmvec` build linked and ran; `ldd` shows
+   `libmvec.so.1`. The cross-compile limitation of section 3.5 does not apply to the JIT's native
+   use. Its own `-fveclib=libmvec` behaves like clang's (4 wide, no `tanh`).
+7. **Side finding: gcc 13 is 40% slower than clang 20 on today's generated code** (108.5 against
+   77.3 at the same flags), and 8% slower than `zig cc`. The M4 numbers are all clang. The JIT
+   picks `cc`, which is gcc on this machine, and the published Scaly timings come from it. Worth
+   one measurement across the sweep before the release, not settled here.
+
+What changes in the todo: C-81 is done and C-77 stays first. Points 3 to 5 show how to reach the
+hand-written kernel, and the decision is still not to: libmvec is x86 glibc only, and the
+portability of the generated C across operating systems and compilers outranks the 14 µs. So
+transcendentals stay per-lane scalar libm calls everywhere, and C-79's gate is measured against
+`variant_w8_lane.c` (26.6 µs on gcc 13 here) rather than the hand-written file. The same
+discussion settled two more things for C-79: W is chosen by the preprocessor from the compiler's
+target macros (`__AVX512F__` 8, `__AVX__` 4, `__SSE2__` or `__aarch64__` 2, else 1, override
+`-DSCALY_LANES`), and the stage body is rendered once as an `always_inline` function called for
+the `N / SCALY_LANES` full trips plus one remainder call under `#if (N % SCALY_LANES) != 0` with
+clamped loads and guarded stores, so there is no scalar tail. Staging is sized for W = 8 to keep
+the header's workspace size macro independent. Two alternatives were weighed and dropped: a
+fixed W = 4 everywhere is correct (the compiler legalizes any width) but costs 10 to 12% against
+the per-target width on both machines, and a peeled scalar tail costs N mod W scalar trips, 38% of
+the stages at N = 13 and W = 8, plus a second copy of the body in the source. The guarded store at
+the ABI boundary is a stride-13 scatter of extracted lanes, so no masked vector store is expected
+or wanted from either compiler; with the lane count a constant at each call site the guards fold
+away in the full trips and survive only in the remainder call.
+
 ## Reproduction
 
 ```sh
@@ -306,6 +396,8 @@ cc -O3 -mcpu=native -fno-math-errno -DFN=race_car_closed_loop_N200_hess_lower \
    -o bench variant_w2_lane.c <repo>/internal/notes/perf_2026_09_22/bench_hess.c -lm && ./bench 0 out.bin
 ```
 
-`mode orig` needs the original stage kernel extracted from the generated source into
+`bench_hess.c` includes the generated header, so add `-I.` when it is not compiled from the kernel's
+directory. `x86_variants.sh <repo>` derives the vector-libm variants and runs the whole section 5
+table with gcc, clang and `zig cc`. `mode orig` needs the original stage kernel extracted from the generated source into
 `orig_kernel.c` (lines of `..._hoisted_1_raw`, `static` dropped). `kern_only.c` times the 200
 kernels alone; `trigcost.c` times the libm calls alone.
