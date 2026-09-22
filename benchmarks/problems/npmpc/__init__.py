@@ -44,12 +44,7 @@ type NpmpcLagFunction = sc.Function[
   tuple[sc.Expr, sc.Expr],
   tuple[np.ndarray, np.ndarray],
 ]
-type NpmpcSolver = sc.Function[
-  tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
-  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-  tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr],
-  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-]
+type NpmpcSolver = sc.Solver[sc.Expr, np.ndarray, sc.Expr, np.ndarray]
 
 # State (theta, phi, theta_dot, phi_dot) with theta = 0 upright, input (torque,), decoder output (d theta_dot, d phi_dot).
 NX, NU, NY = 4, 1, 2

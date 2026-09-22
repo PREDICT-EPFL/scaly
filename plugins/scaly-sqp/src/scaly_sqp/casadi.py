@@ -6,6 +6,7 @@ import tempfile
 
 import numpy as np
 
+from scaly import Solver
 from scaly.ir.types import SparsityType
 from .external import external_nlp
 
@@ -40,7 +41,7 @@ def build_casadi_external_sqp(
   l_ineq: np.ndarray,
   u_ineq: np.ndarray,
   options: dict[str, str | int | float] | None = None,
-):
+) -> Solver:
   """Embed CasADi-codegenerated oracles behind the same SQP descriptor as Scaly."""
   import casadi as ca
 
@@ -114,4 +115,4 @@ def build_casadi_external_sqp(
     options=options,
   )
   setattr(solver, "_benchmark_base", base)
-  return solver
+  return Solver(solver)

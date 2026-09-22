@@ -157,8 +157,9 @@ if TYPE_CHECKING:
   sc.problem(vars=sc.G(sc.L("u", 2), sc.L("s", 1)), params=sc.L("p", ()))(lambda variables, p: sc.ProblemSpec(minimize=variables.sum()))  # ty: ignore[unresolved-attribute]
   sc.problem(vars=sc.L("x", 2), params=sc.L("p", ()))(lambda x, p: sc.ProblemSpec(minimize=x.sum(), lb=(x, x)))  # ty: ignore[invalid-argument-type]
 
+  assert_type(quadratic_ipopt, sc.Solver[sc.Expr, np.ndarray, sc.Expr, np.ndarray])
   assert_type(
-    quadratic_ipopt,
+    quadratic_ipopt.function,
     sc.Function[
       tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
       tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
@@ -166,8 +167,23 @@ if TYPE_CHECKING:
       tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
     ],
   )
+  assert_type(quadratic_ipopt(np.zeros(())), tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray])
+  assert_type(quadratic_ipopt(np.zeros(()), x0=np.zeros(3)), tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray])
+  assert_type(quadratic_ipopt(sc.sym("scale", ())), tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr])
   assert_type(
     filter_sqp,
+    sc.Solver[tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray], tuple[sc.Expr, sc.Expr], tuple[np.ndarray, np.ndarray]],
+  )
+  assert_type(
+    filter_sqp((np.zeros(4), np.zeros(2))),
+    tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray],
+  )
+  assert_type(
+    filter_sqp((sc.sym("x0", 4), sc.sym("u_ref0", 2)), x0=(sc.sym("u0", 2), sc.sym("s0", 1))),
+    tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr],
+  )
+  assert_type(
+    filter_sqp.function,
     sc.Function[
       tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr, tuple[sc.Expr, sc.Expr]],
       tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray]],
@@ -176,7 +192,7 @@ if TYPE_CHECKING:
     ],
   )
   assert_type(
-    filter_sqp.numerical_call(
+    filter_sqp.function.numerical_call(
       (
         (np.zeros(2), np.zeros(1)),
         (np.zeros(2), np.zeros(1)),
@@ -188,7 +204,7 @@ if TYPE_CHECKING:
     tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray],
   )
   assert_type(
-    filter_sqp.symbolic_call(
+    filter_sqp.function.symbolic_call(
       (
         (sc.sym("u0", 2), sc.sym("s0", 1)),
         (sc.sym("lam_u0", 2), sc.sym("lam_s0", 1)),
@@ -199,8 +215,9 @@ if TYPE_CHECKING:
     ),
     tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr],
   )
+  assert_type(qp3_piqp, sc.Solver[sc.Expr, np.ndarray, sc.QPData[sc.Expr], sc.QPData[np.ndarray]])
   assert_type(
-    qp3_piqp.numerical_call(
+    qp3_piqp.function.numerical_call(
       (
         np.zeros(3),
         np.zeros(3),
@@ -215,9 +232,13 @@ if TYPE_CHECKING:
     ),
     tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
   )
-  quadratic_ipopt.numerical_call((np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0)))  # ty: ignore[invalid-argument-type]
-  filter_sqp.numerical_call(((np.zeros(2),), (np.zeros(2), np.zeros(1)), np.zeros(1), np.zeros(3), (np.zeros(4), np.zeros(2))))  # ty: ignore[invalid-argument-type]
-  filter_sqp.numerical_call(((sc.sym("u", 2), sc.sym("s", 1)), (np.zeros(2), np.zeros(1)), np.zeros(1), np.zeros(3), (np.zeros(4), np.zeros(2))))  # ty: ignore[invalid-argument-type]
+  quadratic_ipopt.function.numerical_call((np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0)))  # ty: ignore[invalid-argument-type]
+  filter_sqp((np.zeros(4),))  # ty: ignore[no-matching-overload]
+  filter_sqp((np.zeros(4), np.zeros(2)), x0=np.zeros(3))  # ty: ignore[no-matching-overload]
+  filter_sqp.function.numerical_call(((np.zeros(2),), (np.zeros(2), np.zeros(1)), np.zeros(1), np.zeros(3), (np.zeros(4), np.zeros(2))))  # ty: ignore[invalid-argument-type]
+  filter_sqp.function.numerical_call(
+    ((sc.sym("u", 2), sc.sym("s", 1)), (np.zeros(2), np.zeros(1)), np.zeros(1), np.zeros(3), (np.zeros(4), np.zeros(2)))  # ty: ignore[invalid-argument-type]
+  )
 
   grad_f_x.numerical_call(np.zeros(3))  # ty: ignore[invalid-argument-type]
   fwd_f_x.numerical_call((np.zeros(3), np.zeros(()), np.zeros(3)))  # ty: ignore[invalid-argument-type]

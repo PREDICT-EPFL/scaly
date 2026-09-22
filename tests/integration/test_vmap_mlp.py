@@ -43,7 +43,7 @@ def stage_function() -> sc.Function:
   scale, w0, w1, bias = _slices()
 
   @sc.function(sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU), sc.L("pw", N_PW)), sc.L("eq", ...), name="vmap_mlp_stage")
-  def stage(inputs):  # type: ignore[no-untyped-def]
+  def stage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, xnext, u, pw = inputs
     h = sc.concat([x, u]) * pw[scale]
     h = 1.0 / (1.0 + (-(pw[w0].reshape(SHAPES[0]) @ h)).exp())

@@ -8,12 +8,12 @@ import numpy as np
 def prepare_solver(controller) -> None:
   """Compile the solver and standalone oracles used by benchmark result checks."""
   import scaly as sc
-  from scaly.codegen.jit import CompiledFunction
 
-  if isinstance(controller, sc.Function):
-    for function in (controller, controller.descriptor.base, getattr(controller, "_benchmark_base", None)):
-      if isinstance(function, sc.Function) and function._compiled is None:
-        function._compiled = CompiledFunction(function)
+  if isinstance(controller, sc.Solver):
+    plain = controller.function
+    for function in (plain, plain.descriptor.base, getattr(plain, "_benchmark_base", None)):
+      if isinstance(function, sc.Function):
+        function.compile()
 
 
 class SolveTiming:

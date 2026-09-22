@@ -38,6 +38,7 @@ from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program import ProgramObserver
 from scaly.solvers.graph import external_oracles, is_solver_function, solver_backends_used, solver_callees
 from scaly.solvers.paths import backend_compile_flags
+from scaly.solvers.solver import Solver
 from scaly.solvers.stats import stats_c_defs, stats_c_timing_defs
 
 if TYPE_CHECKING:
@@ -426,8 +427,10 @@ def workspace_size(fun: Function, *, casadi: bool = False) -> int:
   return entry_workspace(fun, _lower(fun).workspace_size, casadi=casadi)
 
 
-def write_module(fun: Function, out_dir: Path, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> CModule:
-  """Write ``fun``'s header / ``.c`` into ``out_dir`` and return the module."""
+def write_module(fun: Function | Solver, out_dir: Path, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> CModule:
+  """Write ``fun``'s header / ``.c`` into ``out_dir`` and return the module; a ``Solver`` renders its ``function``."""
+  if isinstance(fun, Solver):
+    fun = fun.function
   module = render_c_module(fun, typed_buffers=typed_buffers, lang=lang, casadi=casadi)
   out_dir.mkdir(parents=True, exist_ok=True)
   (out_dir / module.header_name).write_text(module.header)
@@ -437,7 +440,7 @@ def write_module(fun: Function, out_dir: Path, *, typed_buffers: bool = True, la
 
 def main(argv: list[str] | None = None) -> None:
   parser = argparse.ArgumentParser(prog="scaly_codegen", description="Render a Function to a header/source pair: a C kernel and a C or C++ header.")
-  parser.add_argument("target", help="module:attribute naming a Function or a zero-argument factory returning one")
+  parser.add_argument("target", help="module:attribute naming a Function or Solver, or a zero-argument factory returning one")
   parser.add_argument("-o", "--out-dir", type=Path, default=Path(), help="directory to write into (default: cwd)")
   parser.add_argument(
     "--lang", choices=("c", "cpp"), default="c", help="header language: C structs and f_call (f.h), or C++ Buffer types in a namespace (f.hpp)"
@@ -453,7 +456,7 @@ def main(argv: list[str] | None = None) -> None:
   if not attr:
     parser.error(f"target {args.target!r} is not module:attribute")
   fun = getattr(importlib.import_module(module_name), attr)
-  if not isinstance(fun, Function):
+  if not isinstance(fun, Function | Solver):
     fun = fun()
   module = write_module(fun, args.out_dir, typed_buffers=not args.no_typed_buffers, lang=args.lang, casadi=args.casadi)
   print(args.out_dir / module.header_name)

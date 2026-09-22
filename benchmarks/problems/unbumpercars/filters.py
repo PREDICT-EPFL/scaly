@@ -611,7 +611,7 @@ def _scaly_oracle_outputs(
   u = z[:n_u]
   slack = z[n_u:]
   step_fn = scaly_dt_mlp_step_fn if filt_cfg.model == "dt" else scaly_ctfull_rk4_fn
-  states_next = sc.vmap(step_fn, ncars, [(bar_x, 0, NSTATE), (u, 0, NCTRL), (pw, 0, 0), (physics, 0, 0), (dt, 0, 0)])
+  states_next = sc.vmap(step_fn, ncars, [bar_x, u, (pw, 0, 0), (physics, 0, 0), (dt, 0, 0)])
   hcbf, R = loop_cfg.hcbf, loop_cfg.safety_radius
 
   def pair_b(xi: sc.Expr, xj: sc.Expr, physics: sc.Expr) -> sc.Expr:
@@ -673,16 +673,16 @@ def _scaly_oracle_outputs(
         pair_hcbf,
         loop_cfg.n_pairs,
         [
-          (sc.gather(bar_x, idx_i), 0, NSTATE),
-          (sc.gather(bar_x, idx_j), 0, NSTATE),
-          (sc.gather(states_next, idx_i), 0, NSTATE),
-          (sc.gather(states_next, idx_j), 0, NSTATE),
+          sc.gather(bar_x, idx_i),
+          sc.gather(bar_x, idx_j),
+          sc.gather(states_next, idx_i),
+          sc.gather(states_next, idx_j),
           (physics, 0, 0),
         ],
       )
     )
   if loop_cfg.arena_avoidance:
-    rows.append(sc.vmap(wall_hcbf, ncars, [(bar_x, 0, NSTATE), (states_next, 0, NSTATE), (physics, 0, 0)]))
+    rows.append(sc.vmap(wall_hcbf, ncars, [bar_x, states_next, (physics, 0, 0)]))
   g = (sc.concat(rows) + slack) if rows else sc.const(np.zeros((0,)))
   assert g.shape == (n_s,)
   diff = u - u_des
@@ -698,7 +698,7 @@ def build_scaly_nlp(
   solver: str = "ipopt",
   options: dict[str, str | int | float] | None = None,
   oracle: sc.Function | None = None,
-) -> sc.Function:
+) -> sc.Solver:
   """Build the safety-filter NLP over car controls and nonnegative barrier slacks."""
   base = build_scaly_oracle(loop_cfg, filt_cfg) if oracle is None else oracle
   n_u, n_s = NCTRL * loop_cfg.ncars, loop_cfg.n_slack
@@ -727,7 +727,7 @@ def build_scaly_nlp(
     )
 
   result = sc.solver(problem, solver, name=base.name.replace("_oracle", f"_{solver}_nlp"), options=options)
-  setattr(result, "_benchmark_base", base)
+  setattr(result.function, "_benchmark_base", base)
   return result
 
 
@@ -764,7 +764,7 @@ class ScalyDTCBFSafetyFilter:
     self.last_z: np.ndarray | None = None
     self.last_mult_g: np.ndarray | None = None
     self.last_lam_box: np.ndarray | None = None
-    self.fallback_nlp: sc.Function | None = None
+    self.fallback_nlp: sc.Solver | None = None
     self._packed_params = oracle_provider == "casadi"
     self._compile_ms: dict[str, float] = {}
     t0 = time.perf_counter()
@@ -804,9 +804,9 @@ class ScalyDTCBFSafetyFilter:
         self.fallback_nlp = build_scaly_nlp(loop_cfg, filt_cfg, solver="sqp", options=fallback_options, oracle=base)
       else:
         self.fallback_nlp = build_casadi_sqp(loop_cfg, filt_cfg, weights, sqp_options={"globalization": "l1", "watchdog": 5})
-    self.jac_sparsity = self.nlp.descriptor.jac_sparsity
-    self.hess_fn = self.nlp.descriptor.hess
-    hess_sp = self.nlp.descriptor.hess_sparsity
+    self.jac_sparsity = self.nlp.function.descriptor.jac_sparsity
+    self.hess_fn = self.nlp.function.descriptor.hess
+    hess_sp = self.nlp.function.descriptor.hess_sparsity
     assert self.jac_sparsity is not None and hess_sp is not None
     self.hess_rows = np.asarray(hess_sp.rows, dtype=np.int32)
     self.hess_cols = np.asarray(hess_sp.cols, dtype=np.int32)
@@ -826,7 +826,8 @@ class ScalyDTCBFSafetyFilter:
 
   def dump_c(self, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    module = render_c_module(self.nlp, header_name=f"{self.nlp.name}.h", source_name=f"{self.nlp.name}.c", typed_buffers=False)
+    nlp = self.nlp.function
+    module = render_c_module(nlp, header_name=f"{nlp.name}.h", source_name=f"{nlp.name}.c", typed_buffers=False)
     (out_dir / module.header_name).write_text(module.header)
     (out_dir / module.source_name).write_text(module.source)
     (out_dir / "solver.txt").write_text(f"{module.source_name}: {module.source.count(chr(10)) + 1} lines\n")
@@ -851,8 +852,8 @@ class ScalyDTCBFSafetyFilter:
 
     self.last_solve_wall_ms = 0.0
 
-    def solve(active_nlp: sc.Function):
-      descriptor = active_nlp.descriptor
+    def solve(active_nlp: sc.Solver):
+      descriptor = active_nlp.function.descriptor
       if descriptor.n_var_blocks == 2:
         variables0 = (z0[: self.n_u], z0[self.n_u :])
         box0 = (lam_box0[: self.n_u], lam_box0[self.n_u :])
@@ -860,14 +861,14 @@ class ScalyDTCBFSafetyFilter:
         variables0, box0 = z0, lam_box0
       param_values = params[0] if self._packed_params else params
       started = time.perf_counter()
-      variables, box, lam_eq, lam_ineq = active_nlp.numerical_call((variables0, box0, np.zeros(0), lam_g0, param_values))
+      variables, box, lam_eq, lam_ineq = active_nlp(param_values, warm=(variables0, box0, np.zeros(0), lam_g0))
       self.last_solve_wall_ms += (time.perf_counter() - started) * 1000.0
       if descriptor.n_var_blocks == 2:
         z_sol = np.concatenate(variables)
         box_sol = np.concatenate(box)
       else:
         z_sol, box_sol = variables, box
-      evaluator = getattr(active_nlp, "_benchmark_base")
+      evaluator = getattr(active_nlp.function, "_benchmark_base")
       if isinstance(evaluator, sc.Function):
         _, constraints = evaluator.numerical_call((z_sol, *params))
       else:
@@ -878,7 +879,7 @@ class ScalyDTCBFSafetyFilter:
         "lam_eq": lam_eq,
         "lam_ineq": lam_ineq,
         "lam_box": np.asarray(box_sol),
-      }, active_nlp.solver_stats()
+      }, active_nlp.stats()
 
     active_nlp = self.nlp
     out, stats = solve(active_nlp)

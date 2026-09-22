@@ -36,22 +36,22 @@ def solver_oracle_name(solver: str, oracle: str | None) -> str:
 
 
 def solve_problem(solver, x0, lam_eq, lam_ineq, lam_box, params):
-  """Run either a typed Scaly solver Function or the benchmark CasADi adapter."""
+  """Run either a typed Scaly ``Solver`` or the benchmark CasADi adapter."""
   import numpy as np
   import scaly as sc
 
-  if not isinstance(solver, sc.Function):
+  if not isinstance(solver, sc.Solver):
     return solver(x0, lam_eq, lam_ineq, lam_box, params)
 
-  x, lam_box, lam_eq, lam_ineq = solver.numerical_call((x0, lam_box, lam_eq, lam_ineq, params))
-  descriptor = solver.descriptor
+  x, lam_box, lam_eq, lam_ineq = solver(params, warm=(x0, lam_box, lam_eq, lam_ineq))
+  descriptor = solver.function.descriptor
   base = descriptor.base
   if isinstance(base, sc.Function):
     values = base.numerical_call((np.asarray(x).reshape(-1), params))
   else:
-    evaluator = getattr(solver, "_benchmark_base", None)
+    evaluator = getattr(solver.function, "_benchmark_base", None)
     if evaluator is None:
-      raise TypeError(f"solver {solver.name!r} has no numerical benchmark oracle")
+      raise TypeError(f"solver {solver.function.name!r} has no numerical benchmark oracle")
     values = evaluator(np.asarray(x).reshape(-1), params)
   if isinstance(values, tuple):
     cost, constraints = values
@@ -70,7 +70,7 @@ def solve_problem(solver, x0, lam_eq, lam_ineq, lam_box, params):
 
 
 def problem_stats(solver):
-  """Return stats from either a typed Scaly Function or the CasADi adapter."""
+  """Return stats from either a typed Scaly ``Solver`` or the CasADi adapter."""
   import scaly as sc
 
-  return solver.solver_stats() if isinstance(solver, sc.Function) else solver.last_stats
+  return solver.stats() if isinstance(solver, sc.Solver) else solver.last_stats

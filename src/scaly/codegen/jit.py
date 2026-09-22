@@ -53,8 +53,8 @@ _SOLVER_NAMESPACE_ANCHOR: ctypes.CDLL | None = None
 _SOLVER_NAMESPACE_LOCK = threading.Lock()
 
 
-def _load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
-  """Keep Linux solver dependencies out of the host process linker namespace."""
+def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
+  """Load a shared library; ``isolated`` keeps Linux solver dependencies out of the host process linker namespace."""
   global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR
   if not isolated or sys.platform != "linux":
     return ctypes.CDLL(str(path))
@@ -237,7 +237,7 @@ class CompiledFunction:
   def __init__(self, fun: Function):
     self._fun = fun
     self._artifact = _build_artifact(fun)
-    self._lib = _load_library(self._artifact.lib_path, isolated=bool(self._artifact.flags))
+    self._lib = load_library(self._artifact.lib_path, isolated=bool(self._artifact.flags))
     symbol = c_ident(fun.name)
     self._symbol = symbol
     entry = getattr(self._lib, symbol)

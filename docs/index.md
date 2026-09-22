@@ -24,11 +24,11 @@ def defect(inputs):
 @sc.problem(vars=sc.L("w", 3 * N + 2), params=sc.L("z0", 2))
 def multiple_shooting(w, z0):
     zs, us = w[: 2 * N + 2], w[2 * N + 2 :]
-    defects = sc.vmap(defect, N, [(zs, 0, 2), (us, 0, 1), (zs, 2, 2)])  # one loop, not N copies
+    defects = sc.vmap(defect, N, {"z": zs[:-2], "u": us, "znext": zs[2:]})  # one loop, not N copies
     return sc.ProblemSpec(minimize=sc.sumsqr(zs) + 0.1 * sc.sumsqr(us), eq=(zs[:2] - z0, defects))
 
 solve = sc.solver(multiple_shooting, "ipopt")
-w_opt, *_ = solve((np.zeros(3 * N + 2), np.zeros(3 * N + 2), np.zeros(2 * N + 2), np.zeros(0), np.array([1.0, 0.0])))
+w_opt, *_ = solve(np.array([1.0, 0.0]))
 ```
 
 Behind the scenes, scaly traces the costs, constraints and their derivatives,
@@ -40,7 +40,7 @@ an external application, either from Python:
 from pathlib import Path
 from scaly.codegen import write_module
 
-write_module(solve, Path("generated/"))   # generated/multiple_shooting_ipopt.h and .c
+write_module(solve, Path("generated/"))  # generated/multiple_shooting_ipopt.h and .c
 ```
 
 or from the command line, naming the module and the function in it:

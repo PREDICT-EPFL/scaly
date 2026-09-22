@@ -63,7 +63,7 @@ def check_eq_jacobian_matches_casadi_and_dense_reference() -> None:
   for n_masses, horizon in ((3, 2), (5, 3)):
     fn = chain_eq_function(n_masses, horizon)
     dense = fn.factory(f"chain_dense_M{n_masses}_N{horizon}", ["z", "p"], [sc.factory.Jac("eq", "z")])
-    sparse = chain_nlp(n_masses, horizon).descriptor.jac
+    sparse = chain_nlp(n_masses, horizon).function.descriptor.jac
     assert isinstance(sparse, sc.Function)
     ca_dense = ca_chain_eq_jac(n_masses, horizon)
     zv, pv = sample_inputs(n_masses, horizon, seed=11)
@@ -92,8 +92,8 @@ def check_nlp_objective_matches_casadi() -> None:
   zv[horizon * nz :] = base
 
   generated = chain_nlp(n_masses, horizon)
-  assert generated.descriptor.hess is not None
-  assert dict(generated.descriptor.options).get("hessian_approximation") != "limited-memory"
+  assert generated.function.descriptor.hess is not None
+  assert dict(generated.function.descriptor.options).get("hessian_approximation") != "limited-memory"
   scaly_out = solve_problem(generated, zv, np.zeros(nx * (horizon + 1)), np.zeros(0), np.zeros(n_dec(n_masses, horizon)), pv)
   stats = problem_stats(generated)
   assert stats is not None and stats.to_solver_status().ok and stats.iter > 0

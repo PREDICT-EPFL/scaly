@@ -18,10 +18,12 @@ def vmap(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
   """Create an ``ExprOp.VMAP`` node: ``length`` independent calls of ``callee`` whose i-th argument list is
   sliced out of outer tensors with per-input ``(start, stride)`` strides.
 
-  ``inputs`` is either a sequence of ``(outer_tensor, start, stride)`` tuples ordered to match
-  ``callee.inputs``, or a mapping from callee input name to the same tuple. The i-th iteration reads
-  ``outer[start + i*stride : start + i*stride + callee.inputs[k].size]`` for callee input ``k``.
-  Iterations are independent: ``stride=0`` broadcasts the same slice every iteration.
+  ``inputs`` is a sequence ordered to match ``callee.inputs``, or a mapping from callee input name
+  to the same entries. An entry is usually a bare outer tensor: one of size ``length * formal.size``
+  is cut into ``length`` contiguous chunks, one of size ``formal.size`` is broadcast to every
+  iteration. The explicit ``(outer_tensor, start, stride)`` tuple covers overlapping or offset
+  windows: the i-th iteration reads ``outer[start + i*stride : start + i*stride + formal.size]``,
+  and ``stride=0`` broadcasts the same slice every iteration.
 
   Only the outer tensors must be rank-1. Callee formals and outputs may be rank-2 (as well as scalar
   or rank-1); each iteration reads a flat slice of ``formal.size`` values and the produced node has
@@ -52,9 +54,22 @@ def vmap(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
   starts: list[int] = []
   strides: list[int] = []
   for i, spec in enumerate(specs):
-    outer, start, stride = spec
-    outer = as_expr(outer)
     formal = callee.inputs[i]
+    if isinstance(spec, tuple):
+      outer, start, stride = spec
+      outer = as_expr(outer)
+    else:
+      outer = as_expr(spec)
+      start = 0
+      if outer.size == length * formal.size:
+        stride = formal.size
+      elif outer.size == formal.size:
+        stride = 0
+      else:
+        raise ValueError(
+          f"vmap input {callee.input_names[i]!r} has size {outer.size}; expected {length * formal.size} "
+          f"({length} chunks of {formal.size}) or {formal.size} (broadcast)"
+        )
     if len(outer.shape) != 1:
       raise NotImplementedError(f"vmap currently requires rank-1 outer tensors, got {outer.shape} for input {i}")
     start = int(start)

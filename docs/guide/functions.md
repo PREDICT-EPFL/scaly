@@ -132,11 +132,14 @@ def reduce3(x: sc.Expr) -> sc.Expr:
     return x.sum().reshape((1,))
 
 xs = sc.sym("xs", 15)
-mapped = sc.vmap(reduce3, 5, [(xs, 0, 3)])
+mapped = sc.vmap(reduce3, 5, [xs])
 ```
 
-Each input specification is `(outer, start, stride)`. Iteration `i` reads a slice beginning at
-`start + i * stride`. A zero stride broadcasts one slice across every iteration. See
+Inputs are given in the callee's order, or as a mapping from callee input name to outer tensor. An
+outer tensor of `length` times the formal's size is cut into contiguous chunks, one per iteration.
+One of exactly the formal's size is broadcast to every iteration. Overlapping or offset windows use
+the explicit form `(outer, start, stride)`: iteration `i` then reads a slice beginning at
+`start + i * stride`, and a zero stride broadcasts. See
 [Sparsity](sparsity.md) for how mapped structure reduces derivative construction and generated
 source size.
 

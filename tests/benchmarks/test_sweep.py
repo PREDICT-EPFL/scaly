@@ -40,7 +40,7 @@ def test_dispatch_metrics_count_retained_vmap_work_per_iteration() -> None:
   x = sc.sym("x", 2)
   stage = sc.Function._from_exprs("metric_stage", [x], [2.0 * x + x.sin()], ["x"], ["y"])
   z = sc.sym("z", 8)
-  mapped = sc.Function._from_exprs("metric_vmap", [z], [sc.vmap(stage, 4, [(z, 0, 2)])], ["z"], ["y"])
+  mapped = sc.Function._from_exprs("metric_vmap", [z], [sc.vmap(stage, 4, [z])], ["z"], ["y"])
 
   assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (4, 0, 6)
 
@@ -53,7 +53,7 @@ def test_dispatch_metrics_include_stack_scratch_and_exclude_index_arithmetic() -
   y = sc.sym("y", 2)
   outer = sc.Function._from_exprs("metric_workspace_outer", [y], [inner(y) + 1], ["y"], ["z"])
   z = sc.sym("z", 8)
-  mapped = sc.Function._from_exprs("metric_workspace_vmap", [z], [sc.vmap(outer, 4, [(z, 0, 2)])], ["z"], ["y"])
+  mapped = sc.Function._from_exprs("metric_workspace_vmap", [z], [sc.vmap(outer, 4, [z])], ["z"], ["y"])
 
   # Five slots in the inner callee and its caller's one call-output slot coexist. The 25 operations
   # are floating point only: integer multiply/add nodes used in generated subscripts do not count.
@@ -66,7 +66,7 @@ def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages
   stage = sc.Function._from_exprs("metric_hoist_stage", [x, w], [(w.reshape((3, 3)).exp() @ x).sin().block()], ["x", "w"], ["y"])
   z, weights = sc.sym("z", 3 * stages), sc.sym("weights", 9)
   mapped = sc.Function._from_exprs(
-    "metric_hoist_map", [z, weights], [sc.vmap(stage, stages, {"x": (z, 0, 3), "w": (weights, 0, 0)})], ["z", "weights"], ["y"]
+    "metric_hoist_map", [z, weights], [sc.vmap(stage, stages, {"x": z, "w": (weights, 0, 0)})], ["z", "weights"], ["y"]
   )
   program = render_c_module(mapped).program
   assert any(proc.attrs.get("hoisted_from") == stage.name for proc in program.args)
@@ -79,7 +79,7 @@ def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None
   x = sc.sym("x", 2)
   stage = sc.Function._from_exprs("metric_scheduled_stage", [x], [2.0 * x + x.sin()], ["x"], ["y"])
   z = sc.sym("z", 8)
-  mapped = sc.Function._from_exprs("metric_scheduled_map", [z], [sc.vmap(stage, 4, [(z, 0, 2)])], ["z"], ["y"])
+  mapped = sc.Function._from_exprs("metric_scheduled_map", [z], [sc.vmap(stage, 4, [z])], ["z"], ["y"])
   program = render_c_module(mapped).program
   proc_count = int(program.attrs["proc_count"])
   procs = list(program.args[:proc_count])
@@ -102,7 +102,7 @@ def test_dispatch_metrics_include_spilled_nested_call_output() -> None:
   called = inner(y)
   outer = sc.Function._from_exprs("metric_spill_outer", [y], [called + 1], ["y"], ["z"])
   z = sc.sym("z", 2048)
-  mapped = sc.Function._from_exprs("metric_spill_vmap", [z], [sc.vmap(outer, 2, [(z, 0, 1024)])], ["z"], ["y"])
+  mapped = sc.Function._from_exprs("metric_spill_vmap", [z], [sc.vmap(outer, 2, [z])], ["z"], ["y"])
 
   assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (2, 1024, 2048)
 
@@ -112,7 +112,7 @@ def test_dispatch_metrics_count_shared_scalar_arithmetic_once() -> None:
   shared = x[0].sin()
   stage = sc.Function._from_exprs("metric_shared_stage", [x], [sc.stack([shared * shared, shared + 1])], ["x"], ["y"])
   z = sc.sym("z", 4)
-  mapped = sc.Function._from_exprs("metric_shared_vmap", [z], [sc.vmap(stage, 4, [(z, 0, 1)])], ["z"], ["y"])
+  mapped = sc.Function._from_exprs("metric_shared_vmap", [z], [sc.vmap(stage, 4, [z])], ["z"], ["y"])
   assert _dispatch_metrics(mapped, render_c_module(mapped).program) == (4, 0, 3)
 
 
@@ -124,7 +124,7 @@ def test_store_pairs_preserve_dispatch_arithmetic() -> None:
   x = sc.sym("x", 3)
   stage = sc.Function._from_exprs("metric_pair_stage", [x], [(x * x).scalar()], ["x"], ["y"])
   z = sc.sym("z", 12)
-  mapped = sc.Function._from_exprs("metric_pair_map", [z], [sc.vmap(stage, 4, [(z, 0, 3)])], ["z"], ["y"])
+  mapped = sc.Function._from_exprs("metric_pair_map", [z], [sc.vmap(stage, 4, [z])], ["z"], ["y"])
   stages = {}
   lower_function(mapped, observe=lambda name, program: stages.__setitem__(name, program))
   before, paired, prepared = (stages[name] for name in ("pass:pack_workspace", "pass:coalesce_stores", "pass:prepare_scalar"))
@@ -166,7 +166,7 @@ def test_unit_dispatch_excludes_an_unmapped_top_level_call() -> None:
   stage = sc.Function._from_exprs("metric_unit_stage", [x], [(x * x).block()], ["x"], ["y"])
   other = sc.Function._from_exprs("metric_unmapped_stage", [x], [((x + 1) * (x + 2)).block()], ["x"], ["y"])
   z = sc.sym("z", 1)
-  mapped = sc.vmap(stage, 1, [(z, 0, 1)])
+  mapped = sc.vmap(stage, 1, [z])
   root = sc.Function._from_exprs("metric_unit_with_call", [z], [mapped + other(z)], ["z"], ["y"])
   assert _dispatch_metrics(root, render_c_module(root).program) == (1, 0, 1)
 
@@ -184,7 +184,7 @@ def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
   primal = sc.Function._from_exprs("sweep_width_fixture", [x], [y], ["x"], ["y"])
   hessian = sc.sparse_hessian(primal, "y", "x")
   descriptor = SimpleNamespace(name="sweep_width_fixture", hess=hessian, hess_sparsity=hessian.output_sparsities[0])
-  solver = cast(sc.Function, SimpleNamespace(descriptor=descriptor))
+  solver = cast(sc.Solver, SimpleNamespace(function=SimpleNamespace(descriptor=descriptor)))
 
   _, sparsity, coloring_width = _descriptor_kernel(solver, "hess")
 

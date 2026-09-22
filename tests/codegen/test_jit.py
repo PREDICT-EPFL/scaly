@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from typing import cast
 from pathlib import Path
 
 import numpy as np
@@ -129,20 +130,19 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
   value, target = sc.sym("value", 1), sc.sym("target", 1)
   stage = sc.Function._from_exprs("oracle_stage", [value, target], [((value - target.exp()) ** 2).sum().block()], ["value", "target"], ["cost"])
   x, param = sc.sym("x", 3), sc.sym("param", 1)
-  cost = sc.vmap(stage, 3, [(x, 0, 1), (param, 0, 0)]).sum()
+  cost = sc.vmap(stage, 3, [x, param]).sum()
   solver = build_nlp(x=x, f=cost, p=param, name="hoisted_oracle_solver")
   if nested:
-    inputs = (sc.const(np.zeros(3)), sc.const(np.zeros(3)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), param)
-    fun = sc.Function._from_exprs("hoisted_oracle_host", [param], [solver.symbolic_call(inputs)[0]], ["param"], ["solution"])
+    fun = sc.Function._from_exprs("hoisted_oracle_host", [param], [solver(param)[0]], ["param"], ["solution"])
   else:
-    fun = solver
+    fun = cast(sc.Function, solver.function)
   module = render_c_module(fun)
   procs = module.program.args[: module.program.attrs["proc_count"]]
   assert any(proc.attrs.get("hoisted_from") == stage.name for proc in procs)
   names = {proc.attrs["name"] for proc in procs}
   assert all(name in names for oracles in module.program.attrs["solver_oracles"].values() for name in oracles)
   pv = np.array([0.2])
-  result = fun(pv) if nested else fun((np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0), pv))[0]
+  result = fun(pv) if nested else solver(pv)[0]
   np.testing.assert_allclose(result, np.full(3, np.exp(pv[0])), atol=1e-7)
 
 

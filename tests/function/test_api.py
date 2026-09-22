@@ -13,7 +13,7 @@ from scaly.ad.sparse import SparseJacobian
 
 def test_scoped_function_decorator_builds_fresh_named_function() -> None:
   @sc.function(sc.G(sc.L("x", 3), sc.L("p", sc.TensorType((3,), diff=False))), sc.L("y", ...), name="scoped")
-  def scoped(inputs):
+  def scoped(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, p = inputs
     return (x + p).sin()
 
@@ -31,7 +31,7 @@ def test_scoped_function_decorator_builds_fresh_named_function() -> None:
 
 def test_scoped_function_decorator_outputs_default_names() -> None:
   @sc.function(sc.L("x", 2), sc.G(sc.L("out0", ...), sc.L("out1", ...)), name="pair")
-  def pair(x):
+  def pair(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return x, x.sum()
 
   assert pair.output_names == ("out0", "out1")

@@ -270,6 +270,10 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     actuals = self.input_tree.flatten_numerical(inputs, f"{self.name}.numerical_call")
     return cast(NumericalOutputs, self.output_tree.unflatten(self._flat_numerical_call(*actuals)))
 
+  def compile(self) -> None:
+    """Compile ahead of the first numerical call, or reuse the cached library."""
+    self._compile()
+
   def _compile(self) -> Any:
     """Lazily JIT-compile this function and cache the handle."""
     if self._compiled is None:

@@ -594,7 +594,7 @@ def check_sqp_oracles_agree() -> None:
     np.testing.assert_allclose(scaly_u, casadi_u, rtol=1e-9, atol=1e-9)
     acted |= bool(np.max(np.abs(scaly_u - desired)) > 1e-3)
     for controller in (scaly_filter, casadi_filter):
-      stats = controller.nlp.solver_stats()
+      stats = controller.nlp.stats()
       report = controller.stats_history[-1]
       assert stats is not None and stats.status.name == "OK" and report.success and report.min_g >= -1e-6
       assert stats.t_qp > 0.0 and stats.n_eval_h > 0
@@ -610,7 +610,7 @@ def check_typed_problem_keeps_hessian_in_place() -> None:
   from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig
   from benchmarks.problems.unbumpercars.filters import build_scaly_nlp
 
-  hessian = build_scaly_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).descriptor.hess
+  hessian = build_scaly_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).function.descriptor.hess
   module = render_c_module(hessian, typed_buffers=False)
 
   # Baselines are about 86 KB and 34k doubles. Headroom catches a CALL boundary materializing

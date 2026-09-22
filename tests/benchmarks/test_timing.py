@@ -119,13 +119,13 @@ def test_prepared_solver_never_compiles_during_first_solve(tmp_path, monkeypatch
   monkeypatch.setenv("SCALY_CACHE_DIR", str(tmp_path))
 
   @sc.problem(vars=sc.L("x", 1), params=sc.L("target", 1))
-  def problem(x, target):
+  def problem(x: sc.Expr, target: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=((x - target) ** 2).sum())
 
   solver = sc.solver(problem, "ipopt", name="mode_warmup", options={"print_level": 0, "sb": "yes"})
   x = sc.sym("diagnostic_x", 1)
   diagnostic = sc.Function._from_exprs("mode_diagnostic", [x], [x.sin()], ["x"], ["y"])
-  setattr(solver, "_benchmark_base", diagnostic)
+  setattr(solver.function, "_benchmark_base", diagnostic)
   timing = SolveTiming()
   timing.prepared(solver)
 

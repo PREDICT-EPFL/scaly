@@ -74,40 +74,40 @@ IPOPT and scaly-sqp accept nonlinear problems.
 A problem caches its common objective, gradient, constraint Jacobian, and bounds oracles. Solvers
 that need different Hessian triangles share the common oracles and cache one Hessian per triangle.
 
-## Solver input and output structure
+## Calling a solver
 
-Every solver has the same five input groups and four output groups:
-
-```text
-inputs  = (vars_init, lam_box0, lam_eq0, lam_ineq0, params)
-outputs = (vars,      lam_box,  lam_eq,  lam_ineq)
-```
-
-The variable and box-multiplier groups have the declared variable tree. The parameter group has the
-declared parameter tree. Equality and inequality multipliers are flat arrays whose lengths are
-`problem.n_eq` and `problem.n_ineq`. An absent category is still present as an array of length
-zero.
+`sc.solver` returns a `Solver`. It is called with the declared parameter tree and returns four
+groups: the variables in the declared variable tree, the box multipliers in the same tree, and the
+equality and inequality multipliers as flat arrays of lengths `problem.n_eq` and `problem.n_ineq`.
+An absent category is still present as an array of length zero.
 
 ```python
-result = solve(
-    (
-        (np.zeros(2), np.zeros(1)),
-        (np.zeros(2), np.zeros(1)),
-        np.zeros(1),
-        np.zeros(2),
-        (np.array([0.25, -0.75]), np.array([0.1])),
-    )
-)
-(variables, lam_box, lam_eq, lam_ineq) = result
+variables, lam_box, lam_eq, lam_ineq = solve((np.array([0.25, -0.75]), np.array([0.1])))
 u, slack = variables
+```
+
+The variables and multipliers start at zero. `x0=` gives an initial guess in the variable tree,
+and `warm=` takes a previous result, whose four groups are exactly the four initial groups:
+
+```python
+result = solve(params, x0=(np.ones(2), np.zeros(1)))
+result = solve(next_params, warm=result)
 ```
 
 `lam_ineq` and `lam_box` are signed. A positive value means the upper bound is active; a negative
 value means the lower bound is active. IPOPT and scaly-sqp consume warm starts. PIQP
 ignores them because its C interface has no warm-start entry point.
 
-`solve.input_names` and `solve.output_names` show the flattened C signature. Grouping affects
-Python and static types, but not leaf order in the generated ABI.
+`solve.function` is the plain `Function` the solver wraps. It has five input groups and four
+output groups, and this is the signature of the generated C:
+
+```text
+inputs  = (vars_init, lam_box0, lam_eq0, lam_ineq0, params)
+outputs = (vars,      lam_box,  lam_eq,  lam_ineq)
+```
+
+`solve.function.input_names` and `solve.function.output_names` show the flattened C signature.
+Grouping affects Python and static types, but not leaf order in the generated ABI.
 
 ## Matrix-data quadratic programs
 
@@ -160,7 +160,8 @@ adapters translate those values to the backend's native convention before solvin
 
 ## Nesting a solver in a graph
 
-Call the solver with `Expr` leaves, in the same declared structure, to embed a solve:
+Call the solver with `Expr` leaves, in the same declared structure, to embed a solve. The initial
+point and multipliers default to constant zeros; `x0=` and `warm=` take `Expr` trees:
 
 ```python
 @sc.function(
@@ -170,15 +171,7 @@ Call the solver with `Expr` leaves, in the same declared structure, to embed a s
 def filtered_control(params: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     target, bias = params
     nested = sc.solver(tracking_problem, "sqp", name="nested_tracking")
-    result = nested(
-        (
-            (sc.const(np.zeros(2)), sc.const(np.zeros(1))),
-            (sc.const(np.zeros(2)), sc.const(np.zeros(1))),
-            sc.const(np.zeros(1)),
-            sc.const(np.zeros(2)),
-            (target, bias),
-        )
-    )
+    result = nested((target, bias))
     return result[0][0]
 ```
 
@@ -187,10 +180,10 @@ its oracles. `SOLVER_CALL` is not differentiable, so derivatives through a solve
 
 ## Statistics
 
-After a numerical call, read the latest statistics from the compiled function:
+After a numerical call, read the latest statistics:
 
 ```python
-stats = solve.solver_stats()
+stats = solve.stats()
 status = stats.to_solver_status()
 if status is not None and not status.ok:
     raise RuntimeError(status)

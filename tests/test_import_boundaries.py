@@ -18,6 +18,7 @@ from scaly.ir.program_spec import spec_program_full
 from scaly.ir.spec import Rule, Spec, VerifyError
 from scaly.solvers.problem import NO_LB, NO_UB, Bounded, Problem, ProblemSpec
 from scaly.solvers.qp import NotQuadratic, QPData, qp_problem
+from scaly.solvers.solver import Solver
 
 
 def test_public_exports_are_canonical() -> None:
@@ -35,10 +36,22 @@ def test_public_exports_are_canonical() -> None:
   assert sc.NO_UB is NO_UB
   assert sc.QPData is QPData
   assert sc.qp_problem is qp_problem
+  assert sc.Solver is Solver
   assert callable(sc.bounded) and callable(sc.problem) and callable(sc.solver)
-  assert {"Bounded", "NO_LB", "NO_UB", "NotQuadratic", "Problem", "ProblemSpec", "QPData", "bounded", "problem", "qp_problem", "solver"} <= set(
-    sc.__all__
-  )
+  assert {
+    "Bounded",
+    "NO_LB",
+    "NO_UB",
+    "NotQuadratic",
+    "Problem",
+    "ProblemSpec",
+    "QPData",
+    "Solver",
+    "bounded",
+    "problem",
+    "qp_problem",
+    "solver",
+  } <= set(sc.__all__)
   assert not hasattr(sc, "nlp")
   assert not hasattr(sc, "qp")
   assert not hasattr(sc, "SolverFunction")

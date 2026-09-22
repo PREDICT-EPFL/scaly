@@ -11,7 +11,7 @@ from scaly.ir.types import SparsityType
 from tests.solvers.problem_helpers import build_nlp, solve_nlp
 
 
-def _problem(*, hessian: str = "exact", max_iter: int = 30, trace: bool = False, **options) -> sc.Function:
+def _problem(*, hessian: str = "exact", max_iter: int = 30, trace: bool = False, **options) -> sc.Solver:
   x = sc.sym("x", 2)
   target = sc.sym("target", 2, diff=False)
   suffix = "".join(f"_{key}_{value}" for key, value in sorted(options.items()))
@@ -33,7 +33,7 @@ def _problem(*, hessian: str = "exact", max_iter: int = 30, trace: bool = False,
 
 @pytest.mark.parametrize("interface", ["sparse", "dense"])
 def test_sqp_generated_wrapper_reuses_one_qp_workspace(interface: str) -> None:
-  source = render_c_source(_problem() if interface == "sparse" else _problem(qp="dense"))
+  source = render_c_source((_problem() if interface == "sparse" else _problem(qp="dense")).function)
   assert source.count(f"piqp_setup_{interface}") == 1
   assert source.count(f"piqp_update_{interface}") == 1
   assert source.count("piqp_cleanup") == 1
@@ -49,7 +49,7 @@ def test_sqp_generated_wrapper_reuses_one_qp_workspace(interface: str) -> None:
 def test_sqp_hessian_modes_solve_constrained_quadratic(hessian: str) -> None:
   solver = _problem(hessian=hessian)
   out = solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
-  assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
+  assert solver.stats().to_solver_status() is not None and solver.stats().to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.25, 0.75], atol=2e-6)
   np.testing.assert_allclose(out["h_eq"], 0.0, atol=1e-7)
   assert out["g_ineq"][0] == pytest.approx(-0.5, abs=2e-6)
@@ -59,7 +59,7 @@ def test_sqp_hessian_modes_solve_constrained_quadratic(hessian: str) -> None:
 def test_sqp_stats_split_is_additive() -> None:
   solver = _problem()
   solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
-  stats = solver.solver_stats()
+  stats = solver.stats()
   assert stats is not None and stats.status == sc.ScalySolveStatus.OK
   assert stats.t_fe >= 0.0 and stats.t_qp > 0.0 and stats.t_globalization >= 0.0
   assert stats.t_solver == 0.0
@@ -71,7 +71,7 @@ def test_sqp_stats_split_is_additive() -> None:
 def test_sqp_diagnostics_stats_fields() -> None:
   solver = _problem()
   solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
-  stats = solver.solver_stats()
+  stats = solver.stats()
   assert stats is not None and stats.status == sc.ScalySolveStatus.OK
   assert stats.version == sc.SCALY_SOLVER_STATS_VERSION
   assert stats.qp_iter > 0 and stats.backtracks >= 0
@@ -89,11 +89,11 @@ def test_sqp_rejects_nonfinite_warm_starts_before_the_kkt_check() -> None:
     args = [value.copy() for value in valid]
     args[slot].reshape(-1)[0] = np.nan
     solve_nlp(solver, *args)
-    assert solver.solver_stats() is not None and solver.solver_stats().status == sc.ScalySolveStatus.NUMERICS
+    assert solver.stats() is not None and solver.stats().status == sc.ScalySolveStatus.NUMERICS
 
 
 def test_sqp_trace_is_off_by_default() -> None:
-  source = render_c_source(_problem())
+  source = render_c_source(_problem().function)
   assert "fprintf" not in source and "stdio.h" not in source
 
 
@@ -111,7 +111,7 @@ def test_sqp_trace_prefix_sanitizes_hostile_names() -> None:
     name='pct%s "quote\fsep\u2028end',
     options={"trace": True},
   )
-  source = render_c_source(fun)
+  source = render_c_source(fun.function)
   assert "[scaly-sqp pct_s__quote_sep_end]" in source
   assert '// PIQP-backed SQP wrapper for pct%s "quote\fsep\u2028end (' in source
   # the raw name may appear in comments, but never inside a format string
@@ -128,7 +128,7 @@ def test_sqp_trace_prints_per_iteration_lines_to_stderr(capfd: pytest.CaptureFix
 
 
 def test_sqp_generated_globalization_mechanics_are_explicit() -> None:
-  filter_source = render_c_source(_problem())
+  filter_source = render_c_source(_problem().function)
   assert "static double filter_f[20], filter_v[20]" in filter_source
   assert "trial_f > filter_f[j] && trial_violation > filter_v[j]" in filter_source
   assert "filter_f[keep] = filter_f[j]" in filter_source
@@ -136,7 +136,7 @@ def test_sqp_generated_globalization_mechanics_are_explicit() -> None:
   assert "x[i] += alpha * step[i]" in filter_source
   assert "lam_g[i] += alpha * (qp_lam_g[i] - lam_g[i])" in filter_source
 
-  l1_source = render_c_source(_problem(globalization="l1", watchdog=2))
+  l1_source = render_c_source(_problem(globalization="l1", watchdog=2).function)
   assert "trial_merit <= merit + alpha * 0.25 * dmerit" in l1_source
   for state in ("checkpoint_x", "checkpoint_lam_g", "checkpoint_step", "checkpoint_qp_lam_g"):
     assert state in l1_source
@@ -149,7 +149,7 @@ def _c_table(source: str, name: str) -> list[int]:
   return [int(value) for value in match.group(1).split(",")]
 
 
-def _coupled_problem(name: str, *, solver: str = "sqp", **options) -> sc.Function:
+def _coupled_problem(name: str, *, solver: str = "sqp", **options) -> sc.Solver:
   """Scrambled Jacobian/Hessian patterns: the objective couples (0,3) and (1,2),
   the constraints touch non-adjacent variables, so a wrong COO-to-CSC
   permutation lands values in the wrong rows instead of cancelling out."""
@@ -171,11 +171,11 @@ def _coupled_problem(name: str, *, solver: str = "sqp", **options) -> sc.Functio
 
 def test_sqp_descriptor_hessian_is_the_backend_selected_upper_triangle() -> None:
   solver = _coupled_problem("sqp_upper_descriptor")
-  sparsity = solver.descriptor.hess_sparsity
+  sparsity = solver.function.descriptor.hess_sparsity
   assert sparsity is not None
   assert all(row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
-  assert isinstance(solver.descriptor.hess, sc.Function)
-  assert solver.descriptor.hess.output_sparsities[0] == sparsity
+  assert isinstance(solver.function.descriptor.hess, sc.Function)
+  assert solver.function.descriptor.hess.output_sparsities[0] == sparsity
 
 
 def test_external_nlp_uses_the_supplied_pattern_as_the_hessian_layout() -> None:
@@ -232,10 +232,10 @@ def test_sqp_maps_lower_and_full_hessian_patterns_to_first_canonical_sources(
 
 def test_sqp_bakes_csc_patterns_from_the_descriptor_sparsity() -> None:
   solver = _coupled_problem("sqp_csc_pattern")
-  desc = solver.descriptor
+  desc = solver.function.descriptor
   assert desc.jac_sparsity is not None and desc.hess_sparsity is not None
   jac_sparsity, hess_sparsity = desc.jac_sparsity, desc.hess_sparsity
-  source = render_c_source(solver)
+  source = render_c_source(solver.function)
   n, nh = desc.n, desc.n_eq
 
   p_ptr, p_row = _c_table(source, "P_p"), _c_table(source, "P_i")
@@ -273,11 +273,11 @@ def test_sqp_sparse_assembly_reaches_the_same_solution_as_ipopt() -> None:
   start = np.array([0.5, 1.0, -0.5, 0.25])
   sqp = _coupled_problem("sqp_vs_ipopt_sparse")
   sqp_out = solve_nlp(sqp, start, np.zeros(2), np.zeros(2), np.zeros(4))
-  assert sqp.solver_stats().to_solver_status() is not None and sqp.solver_stats().to_solver_status().ok
+  assert sqp.stats().to_solver_status() is not None and sqp.stats().to_solver_status().ok
 
   ipopt = _coupled_problem("sqp_vs_ipopt_ipopt", solver="ipopt")
   ipopt_out = solve_nlp(ipopt, start, np.zeros(2), np.zeros(2), np.zeros(4))
-  assert ipopt.solver_stats().to_solver_status() is not None and ipopt.solver_stats().to_solver_status().ok
+  assert ipopt.stats().to_solver_status() is not None and ipopt.stats().to_solver_status().ok
   np.testing.assert_allclose(sqp_out["x"], ipopt_out["x"], rtol=1e-6, atol=1e-7)
   assert sqp_out["f"] == pytest.approx(float(ipopt_out["f"]), abs=1e-8)
   np.testing.assert_allclose(sqp_out["h_eq"], 0.0, atol=1e-9)
@@ -293,8 +293,8 @@ def test_sqp_sparse_and_dense_qp_interfaces_agree() -> None:
   for interface in ("sparse", "dense"):
     solver = _coupled_problem(f"sqp_interface_{interface}") if interface == "sparse" else _coupled_problem("sqp_interface_dense", qp="dense")
     out = solve_nlp(solver, start, np.zeros(2), np.zeros(2), np.zeros(4))
-    assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
-    results[interface] = (out, solver.solver_stats())
+    assert solver.stats().to_solver_status() is not None and solver.stats().to_solver_status().ok
+    results[interface] = (out, solver.stats())
   sparse_out, sparse_stats = results["sparse"]
   dense_out, dense_stats = results["dense"]
   for key in ("x", "f", "h_eq", "g_ineq", "lam_eq", "lam_ineq", "lam_box"):
@@ -304,7 +304,7 @@ def test_sqp_sparse_and_dense_qp_interfaces_agree() -> None:
 
 
 def test_sqp_convexifies_with_a_modified_ldl_factorization() -> None:
-  source = render_c_source(_problem())
+  source = render_c_source(_problem().function)
   # the modification is a diagonal shift, so it goes straight onto P's diagonal
   assert "double target = fabs(dk); if (target < min_reg) target = min_reg;" in source
   assert "if (target > dk) { double e = target - dk; P_x[P_diag[k]] += e;" in source
@@ -354,7 +354,7 @@ def test_sqp_solves_an_indefinite_coupled_hessian() -> None:
     options={"tol": 1e-8, "max_iter": 40},
   )
   out = solve_nlp(solver, np.array([0.3, -0.2]), np.zeros(0), np.zeros(0), np.zeros(2))
-  assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
+  assert solver.stats().to_solver_status() is not None and solver.stats().to_solver_status().ok
   assert out["f"] == pytest.approx(-1.0, abs=1e-7)
   np.testing.assert_allclose(np.abs(out["x"]), 1.0, atol=1e-7)
   assert out["x"][0] * out["x"][1] < 0.0
@@ -372,7 +372,7 @@ def test_sqp_globalizations_backtrack_before_accepting(globalization: str) -> No
     options={"globalization": globalization, "regularization": 0.3, "tol": 1e-8, "max_iter": 30},
   )
   out = solve_nlp(solver, np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
-  stats = solver.solver_stats()
+  stats = solver.stats()
   assert stats is not None and stats.status == sc.ScalySolveStatus.OK
   assert stats.backtracks > 0 and 0.0 < stats.alpha <= 1.0
   np.testing.assert_allclose(np.abs(out["x"]), 1.0, atol=2e-5)
@@ -391,7 +391,7 @@ def test_sqp_fails_when_filter_has_no_acceptable_trial() -> None:
     options={"line_search_beta": 1e-5, "regularization": 0.03, "max_iter": 2},
   )
   solve_nlp(solver, np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
-  stats = solver.solver_stats()
+  stats = solver.stats()
   assert stats is not None and stats.status == sc.ScalySolveStatus.NUMERICS
   assert stats.alpha == 0.0 and stats.backtracks == 1
 
@@ -407,7 +407,7 @@ def test_sqp_watchdog_falls_back_to_checkpoint_line_search() -> None:
     options={"globalization": "l1", "watchdog": 1, "regularization": 0.3, "tol": 1e-8, "max_iter": 30},
   )
   out = solve_nlp(solver, np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
-  stats = solver.solver_stats()
+  stats = solver.stats()
   assert stats is not None and stats.status == sc.ScalySolveStatus.OK
   assert stats.backtracks > 0 and 0.0 < stats.alpha <= 1.0
   np.testing.assert_allclose(np.abs(out["x"]), 1.0, atol=2e-5)
@@ -420,7 +420,7 @@ def test_sqp_kkt_terminates_at_initial_bound_optima_with_signed_multipliers() ->
   lower = build_nlp(x=x, f=x[0], x_lb=np.array([0.0]), x_ub=np.array([1.0]), solver="sqp", name="sqp_lower_kkt")
   for solver, x0, lam in ((upper, 1.0, 1.0), (lower, 0.0, -1.0)):
     solve_nlp(solver, np.array([x0]), np.zeros(0), np.zeros(0), np.array([lam]))
-    stats = solver.solver_stats()
+    stats = solver.stats()
     assert stats is not None and stats.status == sc.ScalySolveStatus.OK
     assert stats.iter == 0 and stats.qp_iter == 0 and stats.alpha == 0.0
 
@@ -438,7 +438,7 @@ def test_sqp_bound_complementarity_uses_the_slack_selected_by_multiplier_sign() 
     options={"max_iter": 1},
   )
   solve_nlp(solver, np.array([1.0]), np.zeros(0), np.zeros(0), np.array([-1.0]))
-  stats = solver.solver_stats()
+  stats = solver.stats()
   assert stats is not None and stats.iter == 1
 
 
@@ -455,7 +455,7 @@ def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> No
     name="sqp_upper_ineq_kkt",
   )
   solve_nlp(solver, np.array([1.0]), np.zeros(0), np.array([1.0]), np.zeros(1))
-  stats = solver.solver_stats()
+  stats = solver.stats()
   assert stats is not None and stats.status == sc.ScalySolveStatus.OK and stats.iter == 0
 
 
@@ -463,7 +463,7 @@ def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> No
 def test_sqp_nested_in_host_function() -> None:
   solver = _problem()
   target = sc.sym("target", 2, diff=False)
-  x = solver.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(1)), sc.const(np.zeros(1)), target))[0]
+  x = solver(target)[0]
   host = sc.Function._from_exprs("nested_sqp_host", [target], [sc.dot(x, x)], ["target"], ["norm"])
   np.testing.assert_allclose(host(np.array([0.2, 0.8])), 0.625, atol=3e-6)
 
@@ -474,7 +474,7 @@ def test_sqp_continues_with_best_iterate_after_qp_max_iter() -> None:
   # iterate; like laopt, the SQP must use it and still converge
   solver = _problem(qp_max_iter=4)
   out = solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
-  stats = solver.solver_stats()
+  stats = solver.stats()
   assert stats is not None and stats.status == sc.ScalySolveStatus.OK
   assert stats.native_status == -1  # PIQP_MAX_ITER_REACHED on the last QP
   np.testing.assert_allclose(out["x"], [0.25, 0.75], atol=2e-6)
@@ -492,7 +492,7 @@ def test_sqp_max_iter_status() -> None:
     options={"max_iter": 1, "tol": 1e-12},
   )
   solve_nlp(solver, np.array([0.5]), np.zeros(1), np.zeros(0), np.zeros(1))
-  assert solver.solver_stats() is not None and solver.solver_stats().status == sc.ScalySolveStatus.MAX_ITER
+  assert solver.stats() is not None and solver.stats().status == sc.ScalySolveStatus.MAX_ITER
 
 
 @pytest.mark.solver("sqp")
@@ -512,7 +512,7 @@ def test_sqp_enforces_coupled_constraints_and_reports_box_multiplier() -> None:
     options={"tol": 1e-8},
   )
   out = solve_nlp(solver, np.array([2.0, -1.0]), np.zeros(1), np.zeros(1), np.zeros(2))
-  assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
+  assert solver.stats().to_solver_status() is not None and solver.stats().to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.5, 0.5], atol=2e-7)
   np.testing.assert_allclose(out["h_eq"], 0.0, atol=1e-8)
   assert out["g_ineq"][0] <= 1e-8
@@ -522,7 +522,7 @@ def test_sqp_enforces_coupled_constraints_and_reports_box_multiplier() -> None:
     x=y, f=0.5 * (y[0] - 2.0) ** 2, x_lb=np.array([0.0]), x_ub=np.array([1.0]), solver="sqp", name="sqp_bound", options={"qp_tol": 1e-8}
   )
   bound_out = solve_nlp(bound, np.array([2.0]), np.zeros(0), np.zeros(0), np.zeros(1))
-  assert bound.solver_stats().to_solver_status() is not None and bound.solver_stats().to_solver_status().ok
+  assert bound.stats().to_solver_status() is not None and bound.stats().to_solver_status().ok
   np.testing.assert_allclose(bound_out["x"], [1.0], atol=1e-8)
   assert bound_out["lam_box"][0] > 0.0
 
@@ -532,7 +532,7 @@ def test_sqp_does_not_accept_unconverged_unconstrained_iterate() -> None:
   x = sc.sym("x", 1)
   solver = build_nlp(x=x, f=(x[0] - 2.0) ** 4, solver="sqp", name="sqp_unconverged", options={"max_iter": 1, "tol": 1e-12})
   solve_nlp(solver, np.array([0.0]), np.zeros(0), np.zeros(0), np.zeros(1))
-  assert solver.solver_stats() is not None and solver.solver_stats().status == sc.ScalySolveStatus.MAX_ITER
+  assert solver.stats() is not None and solver.stats().status == sc.ScalySolveStatus.MAX_ITER
 
 
 @pytest.mark.parametrize(
@@ -602,13 +602,13 @@ def test_same_sqp_wrapper_accepts_casadi_codegen_oracles(monkeypatch: pytest.Mon
   assert set(transformed) == {fn.name() for fn in (base, grad, jac, hess)} | {"external_fixture_sqp_bounds"}
   for fn in (base, grad, jac):
     assert captured[fn.name()].serialize() == transform(fn, {}).serialize()
-  pattern = solver.descriptor.hess_sparsity
+  pattern = solver.function.descriptor.hess_sparsity
   assert pattern is not None and pattern.nnz == 3
   assert all(r <= c for r, c in zip(pattern.rows, pattern.cols))
   values = (np.array([0.3, 0.7]), np.array([0.2, 0.8]), 1.7, np.array([0.4]))
   np.testing.assert_allclose(np.asarray(captured[hess.name()](*values)), np.triu(np.asarray(hess(*values))))
   out = solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(0), np.zeros(2), np.array([0.2, 0.8]))
-  assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
+  assert solver.stats().to_solver_status() is not None and solver.stats().to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.2, 0.8], atol=2e-6)
 
 
@@ -678,5 +678,5 @@ def test_casadi_external_sqp_supports_unconstrained_problem_without_jacobian() -
     options={"qp_tol": 1e-8},
   )
   out = solve_nlp(solver, np.zeros(1), np.zeros(0), np.zeros(0), np.zeros(1), np.array([0.75]))
-  assert solver.solver_stats().to_solver_status() is not None and solver.solver_stats().to_solver_status().ok
+  assert solver.stats().to_solver_status() is not None and solver.stats().to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.75], atol=1e-6)

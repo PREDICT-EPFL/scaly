@@ -147,35 +147,23 @@ cost quadratic, the constraints affine and the bounds independent of the variabl
 
 ## Call the solver
 
-All solver functions have the same five input groups and four output groups:
-
-```text
-inputs  = (vars_init, lam_box0, lam_eq0, lam_ineq0, params)
-outputs = (vars,      lam_box,  lam_eq,  lam_ineq)
-```
-
-For this problem, the variable and parameter trees each have one leaf:
+A solver takes its parameters and returns the variables and the three multiplier groups:
 
 ```python
-us_opt, lam_box, lam_eq, lam_ineq = solve(
-    (
-        np.zeros(N),
-        np.zeros(N),
-        np.zeros(2),
-        np.zeros(0),
-        np.array([1.0, 0.0]),
-    )
-)
+us_opt, lam_box, lam_eq, lam_ineq = solve(np.array([1.0, 0.0]))
 
-stats = solve.solver_stats()
+stats = solve.stats()
 print(stats.obj, stats.iter, stats.to_solver_status())
 ```
 
-Absent multiplier categories stay in the signature as length-zero arrays. Box and inequality
+The variables and multipliers start at zero. Pass `x0=` for an initial guess in the variable tree,
+or `warm=` with a previous result to warm-start the next solve from it. Box and inequality
 multipliers are signed: positive means the upper side is active, negative the lower side.
 
-A solver is a plain `Function`. Call it with `Expr` leaves to put it inside another graph; the host,
-oracles and native wrapper then compile into one shared library. See [Solvers](solvers.md) for
+`solve.function` is the plain `Function` behind the solver, with the five input groups
+`(vars_init, lam_box0, lam_eq0, lam_ineq0, params)` that the generated C takes. Call `solve` with
+`Expr` leaves to put it inside another graph; the host, oracles and native wrapper then compile
+into one shared library. See [Solvers](solvers.md) for
 multi-block variables, bounded groups, `qp_problem`, sparse PIQP data, nesting and statistics, and
 [Solver backends](solver_backends.md) for backend options and warm-start behavior.
 
@@ -197,19 +185,11 @@ decision = sc.sym("decision", 2 * (N + 1) + N)
 states = decision[: 2 * (N + 1)]
 controls = decision[2 * (N + 1) :]
 
-defects = sc.vmap(
-    defect,
-    N,
-    [
-        (states, 0, 2),
-        (controls, 0, 1),
-        (states, 2, 2),
-    ],
-)
+defects = sc.vmap(defect, N, {"z": states[:-2], "u": controls, "znext": states[2:]})
 ```
 
-Each mapping tuple is `(outer, start, stride)`; iteration `i` reads a slice beginning at
-`start + i * stride`. A derivative of a vmapped function is another vmapped function, so source
+Each outer tensor is cut into `N` contiguous chunks of its formal's size, so iteration `i` reads
+states `i` and `i + 1` and control `i`. A derivative of a vmapped function is another vmapped function, so source
 size and derivative construction scale with one stage, not with the horizon.
 
 ## Render C ahead of time

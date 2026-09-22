@@ -61,7 +61,7 @@ def _qp_filter() -> sc.Function:
   obstacles = np.array([[1.0, 1.0], [-1.0, 1.5], [0.0, -2.0]], dtype=np.float64)
 
   @sc.function(sc.G(sc.L("x", (NX,)), sc.L("u_ref", (NU,))), sc.L("u", ...), name="smoke_safety_filter_qp")
-  def safety_filter_qp(inputs):
+  def safety_filter_qp(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, u_ref = inputs
     cars = sc.stack([sc.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
     rows, bias = [], []
@@ -73,7 +73,7 @@ def _qp_filter() -> sc.Function:
         bias.append(ALPHA * (sc.dot(diff, diff) - sc.const(SAFETY_MARGIN**2)))
 
     @sc.problem(vars=sc.L("u", NU), name="smoke_safety_filter_qp_problem")
-    def problem(u):
+    def problem(u: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
       return sc.ProblemSpec(
         minimize=0.5 * sc.dot(u, u) - sc.dot(u_ref, u),
         ineq=(sc.bounded(sc.stack(rows, axis=0) @ u, lo=-sc.stack(bias, axis=0), name="obstacles"),),
@@ -81,7 +81,7 @@ def _qp_filter() -> sc.Function:
 
     solve = sc.solver(problem, "piqp", name="smoke_safety_filter_qp")
     params = problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names))
-    return solve.symbolic_call((sc.const(np.zeros(NU)), sc.const(np.zeros(NU)), sc.const(np.zeros(0)), sc.const(np.zeros(len(bias))), params))[0]
+    return solve(params)[0]
 
   return safety_filter_qp
 
@@ -90,7 +90,7 @@ def _nlp_filter() -> sc.Function:
   obstacles = np.array([[1.0, 1.0], [-1.0, 1.5], [0.0, -2.0]], dtype=np.float64)
 
   @sc.function(sc.G(sc.L("x", (NX,)), sc.L("u_ref", (NU,))), sc.L("u", ...), name="smoke_safety_filter_nlp")
-  def safety_filter_nlp(inputs):
+  def safety_filter_nlp(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, u_ref = inputs
     u = sc.sym("u", NU)
     cars = sc.stack([sc.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
@@ -102,7 +102,7 @@ def _nlp_filter() -> sc.Function:
         rows.append(grad[0] * u[2 * car] + grad[1] * u[2 * car + 1] + ALPHA * (sc.dot(diff, diff) - sc.const(SAFETY_MARGIN**2)))
 
     @sc.problem(vars=sc.L("u", (NU,)), name="smoke_safety_filter_problem")
-    def problem(variable):
+    def problem(variable: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
       return sc.ProblemSpec(
         minimize=0.5 * sc.dot(variable - u_ref, variable - u_ref),
         ineq=(
@@ -116,15 +116,7 @@ def _nlp_filter() -> sc.Function:
       )
 
     nlp = sc.solver(problem, "ipopt", name="smoke_safety_filter_nlp")
-    return nlp.symbolic_call(
-      (
-        sc.const(np.zeros(NU)),
-        sc.const(np.zeros(NU)),
-        sc.const(np.zeros(0)),
-        sc.const(np.zeros(len(rows))),
-        problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names)),
-      )
-    )[0]
+    return nlp(problem.params.unflatten(tuple({"x": x, "u_ref": u_ref}[name] for name in problem.params.names)))[0]
 
   return safety_filter_nlp
 

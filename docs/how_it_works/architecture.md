@@ -223,10 +223,10 @@ The `python -m scaly.codegen` shim remains available for compatibility.
 
 ### Solvers: `solvers/`, `plugins/`
 
-`sc.problem(...)` declares a typed backend-free problem. `sc.solver(...)` returns a plain
-`Function` whose body is `ExprOp.SOLVER_CALL` nodes sharing a `SolverDescriptor`. Calling it with
-`Expr` leaves returns the declared expression tree, so a solver nests directly inside a larger
-graph. `SOLVER_CALL` is non-differentiable.
+`sc.problem(...)` declares a typed backend-free problem. `sc.solver(...)` returns a `Solver`
+wrapping a plain `Function` whose body is `ExprOp.SOLVER_CALL` nodes sharing a `SolverDescriptor`;
+the wrapper only fills in zero initial points and multipliers. Calling it with `Expr` leaves
+returns the declared expression tree, so a solver nests directly inside a larger graph. `SOLVER_CALL` is non-differentiable.
 
 The solver wrapper is the one sanctioned render path outside the program dialect.
 `codegen/solver.py` frames a body produced by the plugin's `render_wrapper` hook with scaly-owned

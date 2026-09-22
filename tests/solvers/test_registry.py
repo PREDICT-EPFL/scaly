@@ -146,14 +146,14 @@ def test_nlp_descriptor_uses_backend_hessian_triangle(monkeypatch: pytest.Monkey
   monkeypatch.setattr(sys.modules["scaly.solvers.solver"], "get_backend", fake_backend)
 
   @sc.problem(vars=sc.L(f"layout_x_{triangle}", 2), name=f"layout_{triangle}")
-  def problem(x):
+  def problem(x: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     return sc.ProblemSpec(minimize=x[0] * x[1])
 
   nlp = sc.solver(problem, "fake", name=f"layout_{triangle}")
-  sparsity = nlp.descriptor.hess_sparsity
+  sparsity = nlp.function.descriptor.hess_sparsity
   assert sparsity is not None
   assert all(row >= col if triangle == "lower" else row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
-  assert not hasattr(nlp.descriptor, "hess_lower_mask")
+  assert not hasattr(nlp.function.descriptor, "hess_lower_mask")
 
 
 def test_nlp_backend_must_declare_a_hessian_triangle(monkeypatch: pytest.MonkeyPatch) -> None:

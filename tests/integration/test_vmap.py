@@ -7,7 +7,7 @@ from scaly.ad import finite_difference
 
 
 @sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
-def scale_add(inputs):
+def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return 2.0 * x + p
 
@@ -28,7 +28,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
   C_R1 = 0.01
   C_R2 = 0.001
 
-  def cont(x, u):
+  def cont(x: sc.Expr, u: sc.Expr) -> sc.Expr:
     phi, v = x[2], x[3]
     throttle, delta = u[0], u[1]
     beta = 0.5 * delta
@@ -43,7 +43,7 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
       ]
     )
 
-  def rk4(x, u):
+  def rk4(x: sc.Expr, u: sc.Expr) -> sc.Expr:
     k1 = cont(x, u)
     k2 = cont(x + DT / 2 * k1, u)
     k3 = cont(x + DT / 2 * k2, u)
@@ -51,12 +51,12 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
   @sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_initial")
-  def eq_initial(inputs):
+  def eq_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     return z[:NX] - p[:NX]
 
   @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_interstage")
-  def eq_interstage(inputs):
+  def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext, p = inputs
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
@@ -100,7 +100,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
   WHEELBASE, DT, M = 0.3, 0.05, 3.47
   C_M0, C_R0, C_R1, C_R2 = 11.0, 0.1, 0.01, 0.001
 
-  def cont(x, u):
+  def cont(x: sc.Expr, u: sc.Expr) -> sc.Expr:
     phi, v = x[2], x[3]
     throttle, delta = u[0], u[1]
     beta = 0.5 * delta
@@ -115,7 +115,7 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
       ]
     )
 
-  def rk4(x, u):
+  def rk4(x: sc.Expr, u: sc.Expr) -> sc.Expr:
     k1 = cont(x, u)
     k2 = cont(x + DT / 2 * k1, u)
     k3 = cont(x + DT / 2 * k2, u)
@@ -123,12 +123,12 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
   @sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_initial2")
-  def eq_initial(inputs):
+  def eq_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     return z[:NX] - p[:NX]
 
   @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_interstage2")
-  def eq_interstage(inputs):
+  def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext, p = inputs
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
@@ -180,13 +180,13 @@ PAIRS = [(i, j) for i in range(NB) for j in range(i + 1, NB)]
 
 
 @sc.function(sc.G(sc.L("s", NS), sc.L("u", NU)), sc.L("next", ...), name="pairs_step")
-def pairs_step(inputs):
+def pairs_step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   s, u = inputs
   return sc.stack([s[0] + 0.1 * s[2].cos() * u[0], s[1] + 0.1 * s[2].sin() * u[1], s[2] + 0.1 * (u[0] - u[1])])
 
 
 @sc.function(sc.G(sc.L("prev_i", NS), sc.L("prev_j", NS), sc.L("si", NS), sc.L("sj", NS), sc.L("slack", 1)), sc.L("h", ...), name="pairs_barrier")
-def pairs_barrier(inputs):
+def pairs_barrier(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   # The trailing p-norm term mirrors the smooth-max a velocity-margin barrier uses; it is what
   # brings integer POW, a *non-integer* POW (the shape of such a barrier's braking envelope,
   # `c * d^q`) and a nested sqrt into the second-order path through the VMAP. As in the real
@@ -199,7 +199,7 @@ def pairs_barrier(inputs):
 
 
 @sc.function(sc.G(sc.L("s", NS), sc.L("snext", NS), sc.L("slack", 1)), sc.L("h", ...), name="pairs_wall")
-def pairs_wall(inputs):
+def pairs_wall(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   s, snext, slack = inputs
   return sc.stack([(snext[0] - 0.5 * s[0] + slack[0]), (1.0 - snext[1].exp() + slack[0])])
 
@@ -289,7 +289,7 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
   b = np.array([0.05, -0.15])
 
   @sc.function(sc.L("s", 3), sc.L("y", ...), name="vmap_dense_layer")
-  def layer(s):
+  def layer(s: sc.Expr) -> sc.Expr:
     phi = sc.stack([s[0], s[1], s[2]])
     h = sc.const(w) @ phi + sc.const(b)
     return sc.stack([(h * h).sum()])
@@ -308,7 +308,7 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
 
 def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
   @sc.function(sc.G(sc.L("x", 2), sc.L("ref", 2), sc.L("scale", 1)), sc.L("r", ...))
-  def residual(inputs):
+  def residual(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, ref, scale = inputs
     return sc.stack([x[0] - ref[0], ref[1].cos() * x[1] - scale[0].tanh()])
 

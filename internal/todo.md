@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 83**
+**Next id: 84**
 
 | Prefix | Section |
 |---|---|
@@ -86,14 +86,28 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       finite-difference check of the Lagrangian gradient in the pairwise-map sparse-Hessian test.
       Lives in `tests/ad/test_vmap.py` (duality) and `tests/integration/test_vmap.py` (pairwise Hessian).
 
+- [x] **API-70. Infer `sc.vmap` slicing from sizes.** A bare outer tensor of `length * formal.size`
+      is cut into contiguous chunks and one of `formal.size` is broadcast; the user positions data
+      with ordinary slicing and the dict form names each slice by callee input. The
+      `(outer, start, stride)` tuple stays for overlapping windows. No axis convention: outers stay
+      rank-1 until the IR carries arbitrary-rank tensors and the loop compiler (C-8) lands, at which
+      point a rank-2 outer mapped over its leading axis is a strict extension.
+- [x] **API-69. Shorter numerical solver calls.** `sc.solver` returns a `Solver` whose call is
+      `solve(params, *, x0=None, warm=None)`: missing groups default to zeros, `warm` takes a
+      previous result since the four outputs are the first four inputs. `.function` holds the
+      plain `Function` for `write_module`, the `scaly_codegen` CLI, `input_names` and nested
+      symbolic calls; `write_module` and the CLI accept either. The C ABI does not change.
+
 ### Deferred
 
-- **API-69. Shorter numerical solver calls.** The five input groups make every call spell out
-  zero arrays for the initial multipliers, including the empty inequality group; see the README
-  example. Consider defaults for the multiplier groups or a keyword form before 1.0.
-- **API-70. Rethink the `sc.vmap` mapping tuples.** The `(outer, start, stride)` triples are the
-  one construct in the README example a newcomer cannot guess. Consider a named or sliced form
-  before 1.0.
+- **API-83. Retire `Function._from_exprs` from tests.** An audit on 2026-09-22 found 273 call
+  sites in 42 test files, 264 of them expressible as `@sc.function(sc.G(...), sc.L(...))` bodies
+  reading symbols back through `fn.inputs`; the necessary ones test the constructor itself
+  (`tests/function/test_model.py`), pass `output_sparsities=` (`tests/ad/test_sparsity.py`), or
+  build zero-input hosts (`tests/solvers/test_problem.py`), which API-3 owns. Same sweep: replace
+  `_walk` from `passes/program/_common` (6 files) with a test helper, `_find_compiler` with
+  `toolchain.find_c_compiler` (2 files), `_jac_mask` with `sc.jacobian_sparsity` (1 file).
+  Benchmarks are already free of private Scaly names.
 - **API-6. A QP-subproblem contract so scaly-sqp can use other QP plugins.** Today `scaly-sqp`
   imports only `include_dir`/`lib_dir` from `scaly_piqp` and its C template calls
   `piqp_setup/update/solve` and reads `qp->result` directly, so a future OSQP, ProxQP or HPIPM

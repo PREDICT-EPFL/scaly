@@ -35,7 +35,7 @@ def n_param(horizon: int) -> int:
   return NX * (horizon + 1) + N_PARAMS
 
 
-def _ode(x, u, params):
+def _ode(x: sc.Expr, u: sc.Expr, params: sc.Expr) -> sc.Expr:
   wheelbase, _, mass, c_m0, c_r0, c_r1, c_r2 = [params[i] for i in range(N_PARAMS)]
   phi, v = x[2], x[3]
   beta = 0.5 * u[1]
@@ -50,7 +50,7 @@ def _ode(x, u, params):
   )
 
 
-def _rk4(x, u, params):
+def _rk4(x: sc.Expr, u: sc.Expr, params: sc.Expr) -> sc.Expr:
   dt = params[1]
   k1 = _ode(x, u, params)
   k2 = _ode(x + dt / 2 * k1, u, params)
@@ -60,13 +60,13 @@ def _rk4(x, u, params):
 
 
 @sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="bicycle_stage_initial")
-def stage_initial(inputs):
+def stage_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   z, p = inputs
   return z[:NX] - p[:NX]
 
 
 @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("params", N_PARAMS)), sc.L("eq", ...), name="bicycle_stage_interstage")
-def stage_interstage(inputs):
+def stage_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   z, znext, params = inputs
   return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
 

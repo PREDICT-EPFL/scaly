@@ -1,7 +1,8 @@
 # How solvers work
 
 A solver in Scaly is a plain typed `Function` whose outputs are opaque `SOLVER_CALL` nodes sharing
-one `SolverDescriptor`. Its data comes from ordinary generated functions, and a plugin-owned C
+one `SolverDescriptor`; `sc.solver` hands it back inside a `Solver` that only supplies zero initial
+points and multipliers. Its data comes from ordinary generated functions, and a plugin-owned C
 wrapper drives the native solver. Python is not part of a solve.
 
 The usage side is [Solvers](../guide/solvers.md). The plugin contract is

@@ -72,7 +72,7 @@ def test_fusion_collapses_elementwise_chain() -> None:
   """A same-shape elementwise chain fuses into a single loop with no intermediate buffers."""
 
   @sc.function(sc.G(sc.L("x", 8), sc.L("y", 8)), sc.L("out0", ...), name="chain")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return ((x.sin() + y) * y - x).tanh()
 
@@ -138,7 +138,7 @@ def test_fusion_skips_matmul_operand() -> None:
   blow-up that an unguarded fusion introduces."""
 
   @sc.function(sc.G(sc.L("A", (4, 4)), sc.L("x", 4)), sc.L("out0", ...), name="mm_operand")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     A, x = inputs
     return A @ x.sin()  # sin(x) is the matvec operand — must stay materialized
 
@@ -151,7 +151,7 @@ def test_fusion_into_reduction() -> None:
   """An elementwise producer feeding a SUM fuses into the reduce loop (each element read once)."""
 
   @sc.function(sc.L("x", 8), sc.L("out0", ...), name="sumf")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x).sum()
 
   compute, _aliases, loops = _classify(_main_body(f))
@@ -227,7 +227,7 @@ def test_fusion_does_not_move_a_read_past_a_write() -> None:
 
 def test_unit_loop_unrolls_scalar_elementwise_output() -> None:
   @sc.function(sc.G(sc.L("x", 1), sc.L("y", 1)), sc.L("out0", ...), name="scalar_add")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return x + y
 
@@ -360,7 +360,7 @@ def test_contiguous_slice_aliases_source() -> None:
   """A contiguous slice becomes a zero-copy pointer alias (no copy loop), unlike a strided one."""
 
   @sc.function(sc.L("x", 8), sc.L("out0", ...), name="slc")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     s = x[2:6]
     return (s * s).sin()  # use s twice so it stays materialized (not inlined) -> visible alias
 
@@ -372,7 +372,7 @@ def test_contiguous_slice_aliases_source() -> None:
 
 def test_strided_slice_is_not_aliased() -> None:
   @sc.function(sc.L("x", 8), sc.L("out0", ...), name="strided")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return x[::2] + x[1::2]  # strided -> no contiguous offset -> no alias
 
   _compute, aliases, _loops = _classify(_main_body(f))
@@ -384,7 +384,7 @@ def test_strided_slice_is_not_aliased() -> None:
 
 def test_no_spill_when_temps_small() -> None:
   @sc.function(sc.G(sc.L("x", 8), sc.L("y", 8)), sc.L("out0", ...), name="small")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return (x.sin() + y).tanh()
 
@@ -396,7 +396,7 @@ def test_packing_reuses_slots_and_spills() -> None:
   (not 3200) — proving both lifetime slot-reuse and the >= 1024 spill-to-w[] threshold."""
 
   @sc.function(sc.G(sc.L("A", (40, 40)), sc.L("B", (40, 40))), sc.L("out0", ...), name="spill")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     A, B = inputs
     c = (A @ B).sum()  # C (1600) lives only until this reduce
     d = (B @ A).sum()  # D (1600) is born after C is dead -> reuses C's slot
@@ -465,7 +465,7 @@ def test_spilled_function_matches_numpy() -> None:
   allocates w from the rendered sz_w and passes it through)."""
 
   @sc.function(sc.G(sc.L("A", (40, 40)), sc.L("B", (40, 40))), sc.L("out0", ...), name="spill_num")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     A, B = inputs
     return ((A @ B) + (B @ A)).sum()
 
@@ -483,7 +483,7 @@ def test_optimized_program_still_verifies() -> None:
   """The pass pipeline output must pass the Program IR verifier (lower_function asserts this)."""
 
   @sc.function(sc.L("x", 6), sc.L("out0", ...), name="verif")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     m = x.reshape((2, 3))
     return (m @ x[:3]).sin() + x[3:5]  # (2,3)@(3,) -> (2,), + x[3:5] (2,)
 

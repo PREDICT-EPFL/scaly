@@ -153,7 +153,7 @@ def check_default_constants() -> None:
   """Regression pin on the full-size Formula Student defaults; any constant edit changes these."""
   horizon = 1
   solver = _race_car_nlp(EpisodeConfig(horizon=horizon))
-  fn, sparsity = solver.descriptor.jac, solver.descriptor.jac_sparsity
+  fn, sparsity = solver.function.descriptor.jac, solver.function.descriptor.jac_sparsity
   assert isinstance(fn, sc.Function) and sparsity is not None
   rng = np.random.default_rng(0)
   zv = rng.normal(size=NZ * (horizon + 1))
@@ -198,7 +198,7 @@ def check_mapped_cost_matches_casadi() -> None:
   rng = np.random.default_rng(19)
   for horizon in (1, 4):
     config = EpisodeConfig(horizon=horizon)
-    descriptor = _race_car_nlp(config).descriptor
+    descriptor = _race_car_nlp(config).function.descriptor
     pieces = build_casadi_race_car_nlp(config)
     z, p, cost = pieces["z"], pieces["p"], pieces["f"]
     reference = ca.Function("cost_reference", [z, p], [cost, ca.gradient(cost, z), ca.hessian(cost, z)[0]])
@@ -220,10 +220,10 @@ def check_mapped_cost_matches_casadi() -> None:
 def check_exact_hessian_default() -> None:
   """The canonical solver asks every provider for exact Lagrangian Hessians."""
   solver = _race_car_nlp(EpisodeConfig.smoke())
-  assert solver.descriptor.hess is not None
-  assert dict(solver.descriptor.options).get("hessian_approximation") != "limited-memory"
+  assert solver.function.descriptor.hess is not None
+  assert dict(solver.function.descriptor.options).get("hessian_approximation") != "limited-memory"
   sqp = _race_car_nlp(EpisodeConfig.smoke(), solver="sqp")
-  assert dict(sqp.descriptor.options).get("hessian", "exact") == "exact"
+  assert dict(sqp.function.descriptor.options).get("hessian", "exact") == "exact"
 
 
 def check_casadi_ipopt_is_compiled() -> None:

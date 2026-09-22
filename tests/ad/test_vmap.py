@@ -6,7 +6,7 @@ import scaly as sc
 
 
 @sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
-def scale_add(inputs):
+def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return 2.0 * x + p
 
@@ -67,7 +67,7 @@ def test_grad_factory_over_vmap_matches_unrolled_and_finite_difference() -> None
   from scaly.ir.expr import topo
 
   @sc.function(sc.L("x", 2), sc.L("y", ...), name="vmap_grad_piece")
-  def piece(x):
+  def piece(x: sc.Expr) -> sc.Expr:
     return x * x + x.sin()
 
   N = 4
@@ -91,7 +91,7 @@ def test_grad_factory_over_vmap_matches_unrolled_and_finite_difference() -> None
 
 
 @sc.function(sc.G(sc.L("x", 3), sc.L("q", 2)), sc.L("y", ...), name="vmap_duality_piece")
-def duality_piece(inputs):
+def duality_piece(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, q = inputs
   return sc.stack([x[0] * x[1] * q[0].sin() + x[2].exp(), (1.0 + sc.dot(x, x)).sqrt() * q[1] + x[0] * x[2]])
 

@@ -31,7 +31,7 @@ _HAVE_CC = _find_compiler() is not None
 
 def _neg() -> sc.Function:
   @sc.function(sc.L("x", 4), sc.L("out0", ...), name="pm_neg")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return -x
 
   return f
@@ -39,7 +39,7 @@ def _neg() -> sc.Function:
 
 def _trig_chain() -> sc.Function:
   @sc.function(sc.L("x", 4), sc.L("out0", ...), name="pm_trig")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return x.sin().cos() + x.tan()
 
   return f
@@ -47,7 +47,7 @@ def _trig_chain() -> sc.Function:
 
 def _exp_log() -> sc.Function:
   @sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("out0", ...), name="pm_exp_log")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return x.exp() + y.log()
 
@@ -56,7 +56,7 @@ def _exp_log() -> sc.Function:
 
 def _arith() -> sc.Function:
   @sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("out0", ...), name="pm_arith")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return x * y - x / y
 
@@ -65,7 +65,7 @@ def _arith() -> sc.Function:
 
 def _tanh_sqrt() -> sc.Function:
   @sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("out0", ...), name="pm_tanh_sqrt")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return x.tanh() * y.sqrt() + x.abs()
 
@@ -74,7 +74,7 @@ def _tanh_sqrt() -> sc.Function:
 
 def _pow_same_shape() -> sc.Function:
   @sc.function(sc.G(sc.L("x", 2), sc.L("y", 2)), sc.L("out0", ...), name="pm_pow")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return x**y
 
@@ -83,7 +83,7 @@ def _pow_same_shape() -> sc.Function:
 
 def _const_add() -> sc.Function:
   @sc.function(sc.L("x", 4), sc.L("out0", ...), name="pm_const")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return x + sc.const(np.array([1.0, 2.0, 3.0, 4.0]))
 
   return f
@@ -91,7 +91,7 @@ def _const_add() -> sc.Function:
 
 def _reshape() -> sc.Function:
   @sc.function(sc.L("x", 4), sc.L("out0", ...), name="pm_reshape")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     r = x.reshape((2, 2))
     return r * r
 
@@ -100,7 +100,7 @@ def _reshape() -> sc.Function:
 
 def _large_const() -> sc.Function:
   @sc.function(sc.L("x", 24), sc.L("out0", ...), name="pm_large_const")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return x + sc.const(np.arange(24, dtype=np.float64))  # > the old size-16 inline cap
 
   return f
@@ -108,7 +108,7 @@ def _large_const() -> sc.Function:
 
 def _slice_contiguous() -> sc.Function:
   @sc.function(sc.L("x", 5), sc.L("out0", ...), name="pm_slice_contig")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return x[1:4].sin()  # rank-1 contiguous slice feeding an elementwise op
 
   return f
@@ -116,7 +116,7 @@ def _slice_contiguous() -> sc.Function:
 
 def _slice_scalar() -> sc.Function:
   @sc.function(sc.L("x", 5), sc.L("out0", ...), name="pm_slice_scalar")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return x[2] * x[2]  # integer index -> scalar (drops the dim)
 
   return f
@@ -124,7 +124,7 @@ def _slice_scalar() -> sc.Function:
 
 def _slice_strided() -> sc.Function:
   @sc.function(sc.L("x", 6), sc.L("out0", ...), name="pm_slice_strided")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return x[::2] + x[1::2]  # strided slices, same output length
 
   return f
@@ -132,7 +132,7 @@ def _slice_strided() -> sc.Function:
 
 def _slice_multidim_row() -> sc.Function:
   @sc.function(sc.L("x", 12), sc.L("out0", ...), name="pm_slice_row")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     m = x.reshape((3, 4))
     return m[1, :] * m[2, :]  # integer index on dim 0, full slice on dim 1
 
@@ -141,7 +141,7 @@ def _slice_multidim_row() -> sc.Function:
 
 def _dot() -> sc.Function:
   @sc.function(sc.G(sc.L("x", 4), sc.L("y", 4)), sc.L("out0", ...), name="pm_dot")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return x @ y
 
@@ -150,7 +150,7 @@ def _dot() -> sc.Function:
 
 def _matvec() -> sc.Function:
   @sc.function(sc.G(sc.L("A", (3, 4)), sc.L("x", 4)), sc.L("out0", ...), name="pm_matvec")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     A, x = inputs
     return A @ x
 
@@ -159,7 +159,7 @@ def _matvec() -> sc.Function:
 
 def _vecmat() -> sc.Function:
   @sc.function(sc.G(sc.L("x", 3), sc.L("A", (3, 4))), sc.L("out0", ...), name="pm_vecmat")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, A = inputs
     return x @ A
 
@@ -168,7 +168,7 @@ def _vecmat() -> sc.Function:
 
 def _matmat() -> sc.Function:
   @sc.function(sc.G(sc.L("A", (2, 3)), sc.L("B", (3, 2))), sc.L("out0", ...), name="pm_matmat")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     A, B = inputs
     return A @ B
 
@@ -177,7 +177,7 @@ def _matmat() -> sc.Function:
 
 def _sum() -> sc.Function:
   @sc.function(sc.L("x", 5), sc.L("out0", ...), name="pm_sum")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x).sum()
 
   return f
@@ -185,7 +185,7 @@ def _sum() -> sc.Function:
 
 def _transpose() -> sc.Function:
   @sc.function(sc.L("x", 6), sc.L("out0", ...), name="pm_transpose")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return x.reshape((2, 3)).transpose()
 
   return f
@@ -193,11 +193,11 @@ def _transpose() -> sc.Function:
 
 def _call() -> sc.Function:
   @sc.function(sc.L("a", 3), sc.L("out0", ...), name="pm_call_inner")
-  def inner(a):
+  def inner(a: sc.Expr) -> sc.Expr:
     return a.sin() + a
 
   @sc.function(sc.L("x", 3), sc.L("out0", ...), name="pm_call_outer")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     y = inner(x)
     return y * x
 
@@ -206,11 +206,11 @@ def _call() -> sc.Function:
 
 def _vmap() -> sc.Function:
   @sc.function(sc.L("s", 2), sc.L("out0", ...), name="pm_vmap_cell")
-  def cell(s):
+  def cell(s: sc.Expr) -> sc.Expr:
     return s.tanh() + s
 
   @sc.function(sc.L("z", 6), sc.L("out0", ...), name="pm_vmap_outer")
-  def f(z):
+  def f(z: sc.Expr) -> sc.Expr:
     return sc.vmap(cell, 3, [(z, 0, 2)])  # 3 independent calls over z[2i:2i+2]
 
   return f
@@ -218,7 +218,7 @@ def _vmap() -> sc.Function:
 
 def _gather() -> sc.Function:
   @sc.function(sc.L("x", 6), sc.L("out0", ...), name="pm_gather")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return x.gather(np.array([5, 0, 3, 3, 1]))  # repeats + reorder, via const index table
 
   return f
@@ -226,7 +226,7 @@ def _gather() -> sc.Function:
 
 def _scatter() -> sc.Function:
   @sc.function(sc.L("x", 3), sc.L("out0", ...), name="pm_scatter")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return sc.scatter(x, np.array([4, 1, 2]), 6)  # zero-filled length-6 output
 
   return f
@@ -234,7 +234,7 @@ def _scatter() -> sc.Function:
 
 def _broadcast_matrix() -> sc.Function:
   @sc.function(sc.G(sc.L("x", (3, 4)), sc.L("b", 4)), sc.L("out0", ...), name="pm_bcast_mat")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, b = inputs
     return x + b  # (3,4) + (4,) row broadcast
 
@@ -243,7 +243,7 @@ def _broadcast_matrix() -> sc.Function:
 
 def _broadcast_scalar() -> sc.Function:
   @sc.function(sc.L("x", 4), sc.L("out0", ...), name="pm_bcast_scalar")
-  def f(x):
+  def f(x: sc.Expr) -> sc.Expr:
     return x * 2.0 + 1.0  # scalar-const broadcast
 
   return f
@@ -251,7 +251,7 @@ def _broadcast_scalar() -> sc.Function:
 
 def _concat() -> sc.Function:
   @sc.function(sc.G(sc.L("x", 3), sc.L("y", 2)), sc.L("out0", ...), name="pm_concat")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return sc.concat([x.sin(), y])
 
@@ -260,7 +260,7 @@ def _concat() -> sc.Function:
 
 def _mlp_layer() -> sc.Function:
   @sc.function(sc.G(sc.L("W", (4, 3)), sc.L("x", 3), sc.L("b", 4)), sc.L("out0", ...), name="pm_mlp_layer")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     W, x, b = inputs
     return (W @ x + b).tanh()  # matmul + bias broadcast + activation
 
@@ -269,7 +269,7 @@ def _mlp_layer() -> sc.Function:
 
 def _concat_axis1() -> sc.Function:
   @sc.function(sc.G(sc.L("a", (2, 3)), sc.L("b", (2, 2))), sc.L("out0", ...), name="pm_concat_ax1")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     a, b = inputs
     return sc.concat([a, b], axis=1)  # (2,3) ++ (2,2) -> (2,5) along axis 1
 
@@ -278,7 +278,7 @@ def _concat_axis1() -> sc.Function:
 
 def _stack_axis1() -> sc.Function:
   @sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("out0", ...), name="pm_stack_ax1")
-  def f(inputs):
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, y = inputs
     return sc.stack([x.sin(), y], axis=1)  # two (3,) -> (3,2) along a new axis 1
 
@@ -395,13 +395,13 @@ def test_uncovered_case_raises_loudly() -> None:
   # (a host->GPU call is meaningless on a CPU build). With the legacy renderer deleted there is
   # no fallback — both the Program-IR renderer and the public entry raise loudly.
   @sc.function(sc.L("a", 3), sc.L("out0", ...), name="pm_inner_dev")
-  def inner(a):
+  def inner(a: sc.Expr) -> sc.Expr:
     return a.sin()
 
   inner_gpu = inner.with_device("cuda:0")
 
   @sc.function(sc.L("x", 3), sc.L("out0", ...), name="pm_outer_mix")
-  def fn(x):
+  def fn(x: sc.Expr) -> sc.Expr:
     y = inner_gpu(x)
     return y + x
 
@@ -457,7 +457,7 @@ def test_empty_reduction_and_output_leave_adjacent_memory_untouched() -> None:
   from scaly.codegen.jit import get_compiled
 
   @sc.function(sc.L("x", 3), sc.G(sc.L("cost", ...), sc.L("empty", ...)))
-  def fn(x):
+  def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     return x[:2].sum() + 1000.0 * x[2:2].sum(), sc.const(np.zeros(0))
 
   compiled = get_compiled(fn)

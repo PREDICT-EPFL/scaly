@@ -13,7 +13,7 @@ import scaly as sc
 
 
 @sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
-def scale_add(inputs):
+def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return 2.0 * x + p
 
@@ -195,7 +195,7 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> sc.Function:
   """
   n_param = RK4_NX * (horizon + 1) + RK4_N_PARAMS
 
-  def ode(x, u, params):
+  def ode(x: sc.Expr, u: sc.Expr, params: sc.Expr) -> sc.Expr:
     wheelbase, _, mass, c_m0, c_r0, c_r1, c_r2 = [params[i] for i in range(RK4_N_PARAMS)]
     beta = 0.5 * u[1]
     vx = x[3] * beta.cos()
@@ -208,7 +208,7 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> sc.Function:
       ]
     )
 
-  def rk4(x, u, params):
+  def rk4(x: sc.Expr, u: sc.Expr, params: sc.Expr) -> sc.Expr:
     dt = params[1]
     k1 = ode(x, u, params)
     k2 = ode(x + dt / 2 * k1, u, params)
@@ -217,12 +217,12 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> sc.Function:
     return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
   @sc.function(sc.G(sc.L("z", RK4_NZ), sc.L("p", RK4_NX)), sc.L("eq", ...), name="rk4_bicycle_initial")
-  def eq_initial(inputs):
+  def eq_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     return z[:RK4_NX] - p[:RK4_NX]
 
   @sc.function(sc.G(sc.L("z", RK4_NZ), sc.L("znext", RK4_NZ), sc.L("params", RK4_N_PARAMS)), sc.L("eq", ...), name="rk4_bicycle_interstage")
-  def eq_interstage(inputs):
+  def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext, params = inputs
     return rk4(z[:RK4_NX], z[RK4_NX : RK4_NX + RK4_NU], params) - znext[:RK4_NX]
 
@@ -313,11 +313,11 @@ def test_simple_banded_vmap_spjac_has_constant_loc() -> None:
   NX, NZ = 4, 6
 
   @sc.function(sc.L("z", NZ), sc.L("eq", ...), name="eq_initial_t")
-  def eq_initial(z):
+  def eq_initial(z: sc.Expr) -> sc.Expr:
     return z[:NX] * 2.0
 
   @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ)), sc.L("eq", ...), name="eq_interstage_t")
-  def eq_interstage(inputs):
+  def eq_interstage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext = inputs
     return z[:NX] * 1.5 - znext[:NX]
 

@@ -32,15 +32,15 @@ def test_solver_function_signature_errors() -> None:
   c = np.zeros(2)
   qp = build_qp(P=P, c=c)
   with pytest.raises(ValueError, match="declared structure"):
-    qp.numerical_call((np.zeros(2), np.zeros(2), np.zeros(0), np.zeros(0)))
+    qp.function.numerical_call((np.zeros(2), np.zeros(2), np.zeros(0), np.zeros(0)))  # ty: ignore[invalid-argument-type]
   with pytest.raises(ValueError, match=r"expected shape \(2,\).*got \(3,\)"):
-    qp.numerical_call((np.zeros(3), np.zeros(2), np.zeros(0), np.zeros(0), ()))
+    qp((), x0=np.zeros(3))
 
 
 def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
   qp = build_qp(P=np.eye(2), c=np.zeros(2), name="standalone_qp")
-  source = render_c_source(qp)
-  header = render_c_api_header(qp)
+  source = render_c_source(qp.function)
+  header = render_c_api_header(qp.function)
   assert "int standalone_qp(const double** arg, double** res, int* iw, double* w, int mem)" in source
   assert "int standalone_qp_stats(scaly_solver_stats* out);" in header
   assert "SCALY_SOLVER_STATS_VERSION 3" in header
@@ -49,7 +49,7 @@ def test_standalone_qp_renders_universal_entry_and_stats_query() -> None:
 @pytest.mark.solver("piqp")
 def test_qp_settings_are_baked_into_jit_cache_key() -> None:
   def build(eps_abs: float) -> CompiledFunction:
-    return CompiledFunction(build_qp(P=np.eye(2), c=np.zeros(2), name="settings_qp", options={"eps_abs": eps_abs}))
+    return CompiledFunction(build_qp(P=np.eye(2), c=np.zeros(2), name="settings_qp", options={"eps_abs": eps_abs}).function)
 
   first = build(1e-8)
   same = build(1e-8)
@@ -63,7 +63,7 @@ def test_qp_settings_are_baked_into_jit_cache_key() -> None:
 def test_solver_stats_reject_uninitialized_and_mismatched_versions() -> None:
   """The `scaly_solver_stats` handshake is Scaly's contract with every backend."""
   qp = build_qp(P=np.eye(2), c=np.zeros(2), name="stats_version_qp")
-  compiled = CompiledFunction(qp)
+  compiled = CompiledFunction(qp.function)
   with pytest.raises(JitError, match="has not run yet"):
     compiled.solver_stats()
 
@@ -81,7 +81,7 @@ def test_sparse_qp_rejects_nested_solver_data() -> None:
   so the structural QP proof must reject it before the sparse-pattern probe
   would execute the inner solve."""
   inner = build_qp(P=np.eye(2), c=np.array([-1.0, 0.0]), x_lb=np.zeros(2), x_ub=np.ones(2), name="inner_for_pattern")
-  x_inner = inner.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), ()))[0]
+  x_inner = inner.function.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), ()))[0]
   P = sc.stack([sc.stack([2.0 + x_inner[0], sc.const(0.0)]), sc.stack([sc.const(0.0), sc.const(2.0)])], axis=0)
   with pytest.raises(sc.NotQuadratic, match="cannot prove QP structure through a nested solver"):
     build_qp(P=P, c=np.zeros(2), sparse=True, name="outer_sparse_over_solver")
@@ -93,12 +93,11 @@ def test_two_solver_wrappers_in_one_translation_unit() -> None:
   Function share a single generated TU; their static state must not collide."""
 
   @sc.function(sc.L("t", (2,)), sc.L("x_sum", ...), name="two_qp_host")
-  def host(t):
+  def host(t: sc.Expr) -> sc.Expr:
     qp_a = build_qp(P=np.diag([2.0, 4.0]), c=sc.stack([t[0], t[1]]), sparse=True, name="tu_qp_a")
     qp_b = build_qp(P=np.diag([1.0, 1.0]), c=sc.stack([t[1], -t[0]]), name="tu_qp_b")
-    zeros = [sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0))]
-    xa, *_ = qp_a((*zeros, t))
-    xb, *_ = qp_b((*zeros, t))
+    xa, *_ = qp_a(t)
+    xb, *_ = qp_b(t)
     return xa + xb
 
   tv = np.array([1.0, -2.0])

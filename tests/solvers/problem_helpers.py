@@ -28,7 +28,7 @@ def build_nlp(
   solver: str = "ipopt",
   name: str | None = None,
   options: dict[str, Any] | None = None,
-) -> sc.Function:
+) -> sc.Solver[Any, Any, Any, np.ndarray | tuple[Any, ...]]:
   """Express an old flat NLP test fixture through ProblemSpec."""
   if x.name is None:
     raise ValueError("test decision variable needs a name")
@@ -96,7 +96,7 @@ def build_qp(
   name: str | None = None,
   options: dict[str, Any] | None = None,
   sparse: bool = False,
-) -> sc.Function:
+) -> sc.Solver[Any, Any, Any, np.ndarray | tuple[Any, ...]]:
   """Express an old matrix-form QP test fixture through ProblemSpec."""
   P_expr, c_expr = as_expr(P), as_expr(c)
   if len(P_expr.shape) != 2 or P_expr.shape[0] != P_expr.shape[1]:
@@ -124,7 +124,7 @@ def build_qp(
 
 
 def solve_qp(
-  solver: sc.Function,
+  solver: sc.Solver,
   x0: np.ndarray,
   lam_eq0: np.ndarray,
   lam_ineq0: np.ndarray,
@@ -132,20 +132,21 @@ def solve_qp(
   **named_params: np.ndarray,
 ) -> dict[str, np.ndarray]:
   """Run a typed one-block QP and expose the retired matrix-builder result names."""
-  descriptor = cast(SolverDescriptor, solver.descriptor)
+  descriptor = cast(SolverDescriptor, solver.function.descriptor)
   if params and named_params:
     raise TypeError("pass positional or named QP parameters, not both")
   values = params or tuple(named_params[name] for name in descriptor.param_names)
-  outputs = solver(solver.input_tree.unflatten((x0, np.zeros_like(x0), lam_eq0, lam_ineq0, *values)))
-  result = dict(zip(solver.output_names, outputs, strict=True))
+  param_values: Any = () if not values else values[0] if len(values) == 1 else values
+  outputs = solver(param_values, warm=(x0, np.zeros_like(x0), lam_eq0, lam_ineq0))
+  result = dict(zip(solver.function.output_names, outputs, strict=True))
   result["x"] = outputs[0]
   result["lam_box"] = outputs[1]
-  result["cost"] = np.asarray(solver.solver_stats().obj)
+  result["cost"] = np.asarray(solver.stats().obj)
   return result
 
 
 def solve_nlp(
-  solver: sc.Function,
+  solver: sc.Solver,
   x0: np.ndarray,
   lam_eq: np.ndarray,
   lam_ineq: np.ndarray,
@@ -153,11 +154,11 @@ def solve_nlp(
   *params: np.ndarray,
 ) -> dict[str, np.ndarray]:
   """Run a typed one-block solver and expose oracle values for old assertions."""
-  descriptor = cast(SolverDescriptor, solver.descriptor)
+  descriptor = cast(SolverDescriptor, solver.function.descriptor)
   if len(params) != len(descriptor.param_names):
     raise ValueError(f"expected {len(descriptor.param_names)} parameters, got {len(params)}")
   param_values: Any = () if not params else params[0] if len(params) == 1 else params
-  x, lam_box, lam_eq, lam_ineq = solver.numerical_call((x0, lam_box, lam_eq, lam_ineq, param_values))
+  x, lam_box, lam_eq, lam_ineq = solver(param_values, warm=(x0, lam_box, lam_eq, lam_ineq))
   base = descriptor.base
   if isinstance(base, sc.Function):
     values = base.numerical_call((np.asarray(x).reshape(-1), param_values))

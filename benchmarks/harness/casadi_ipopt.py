@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from scaly.codegen.jit import _load_library, opt_flag
+from scaly.codegen.jit import load_library, opt_flag
 from scaly.codegen.toolchain import cache_root, find_c_compiler
 from scaly.solvers.paths import backend_compile_flags, solver_paths
 from scaly.solvers.stats import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, SolverStats, SolverStatus, stats_c_timing_defs
@@ -296,7 +296,7 @@ class CompiledCasadiIpopt:
     self.build_ms = (time.perf_counter() - started) * 1000.0
     self.metadata = json.loads(metadata_path.read_text())
     self.library = library
-    self._dll = _load_library(library, isolated=True)
+    self._dll = load_library(library, isolated=True)
     self.resolved_ipopt_library = _symbol_library(self._dll, "CreateIpoptProblem")
     if _library_digest(self.resolved_ipopt_library) != _library_digest(self.configured_ipopt_library):
       raise RuntimeError(

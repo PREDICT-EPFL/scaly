@@ -48,7 +48,7 @@ def _shooting() -> sc.Function:
   """Multiple shooting defect over ``N_STAGES`` VMAP iterations."""
   z = sc.sym("z", 4 * (N_STAGES + 1))
   u = sc.sym("u", 2 * N_STAGES)
-  defect = sc.vmap(_dynamics(), N_STAGES, [(z, 0, 4), (u, 0, 2)]) - z[4:]
+  defect = sc.vmap(_dynamics(), N_STAGES, [(z, 0, 4), u]) - z[4:]
   return sc.Function._from_exprs("shooting", [z, u], [defect], ["z", "u"], ["eq"])
 
 
@@ -56,7 +56,7 @@ def _wide() -> sc.Function:
   """Two outputs, a 40x40 matmul either way round, the transcendental surface, and a scatter."""
 
   @sc.function(sc.G(sc.L("x", 40), sc.L("y", 40)), sc.G(sc.L("z", ...), sc.L("tail", ...)), name="wide")
-  def wide(inputs):
+  def wide(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     x, y = inputs
     h = sc.const(WEIGHTS) @ x
     a = sc.maximum(h, 0.0) - sc.minimum(h, 0.0) * 0.5
@@ -81,7 +81,7 @@ def _qp_host() -> sc.Function:
   """A host function whose graph reaches a solver through a nested call."""
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="corpus_qp")
-  x = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))[0]
+  x = qp(mu)[0]
   return sc.Function._from_exprs("qp_host", [mu], [sc.sumsqr(x)], ["mu"], ["cost"])
 
 

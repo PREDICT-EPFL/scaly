@@ -7,7 +7,7 @@ import scaly as sc
 
 
 @sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
-def scale_add(inputs):
+def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return 2.0 * x + p
 
@@ -36,7 +36,7 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
   N = 3
 
   @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), sc.L("eq", ...), name="step")
-  def step(inputs):
+  def step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, znext, p = inputs
     return (z[:NX] - znext[:NX]) + p
 
@@ -121,3 +121,15 @@ def test_vmap_accepts_input_dict_keyed_by_name() -> None:
     sc.vmap(scale_add, length=N, inputs={"x": (z, 0, 3), "q": (p, 0, 3)})
   with pytest.raises(ValueError, match="missing entries for callee inputs"):
     sc.vmap(scale_add, length=N, inputs={"x": (z, 0, 3)})
+
+
+def test_vmap_infers_chunked_and_broadcast_strides_from_sizes() -> None:
+  N = 4
+  z = sc.sym("z", 3 * N)
+  p = sc.sym("p", 3)
+  inferred = sc.vmap(scale_add, N, {"x": z, "p": p})
+  explicit = sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 0)])
+  assert inferred.structurally_equal(explicit)
+
+  with pytest.raises(ValueError, match="input 'x' has size 10; expected 12 .* or 3"):
+    sc.vmap(scale_add, N, [sc.sym("bad", 10), p])

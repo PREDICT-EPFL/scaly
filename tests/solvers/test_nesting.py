@@ -19,16 +19,16 @@ pytestmark = pytest.mark.skipif(
 def test_solver_call_returns_expressions() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
-  out_exprs = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
-  assert len(out_exprs) == len(qp.output_names)
+  out_exprs = qp(mu)
+  assert len(out_exprs) == len(qp.function.output_names)
   # call() inherits from Function and wraps each output in an ExprOp.CALL node
   # whose callee is the solver function — the inner SOLVER_CALL nodes live in
   # the callee's own expression graph.
   for e in out_exprs:
     assert e.op == ExprOp.CALL
-    assert e.attrs["callee"] is qp
+    assert e.attrs["callee"] is qp.function
   # Shapes line up with the descriptor's output signature.
-  expected_shapes = tuple(s for _, s in qp.descriptor.output_signature)
+  expected_shapes = tuple(s for _, s in qp.function.descriptor.output_signature)
   for e, expected in zip(out_exprs, expected_shapes, strict=True):
     assert e.shape == expected
 
@@ -36,8 +36,8 @@ def test_solver_call_returns_expressions() -> None:
 def test_solver_descriptor_present_in_inner_graph() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
-  solver_calls = [node for node in topo(qp.outputs) if node.op == ExprOp.SOLVER_CALL]
-  assert len(solver_calls) == len(qp.output_names)
+  solver_calls = [node for node in topo(qp.function.outputs) if node.op == ExprOp.SOLVER_CALL]
+  assert len(solver_calls) == len(qp.function.output_names)
   descriptors = {id(node.attrs["solver"]) for node in solver_calls}
   assert len(descriptors) == 1  # all outputs share one descriptor
   desc = solver_calls[0].attrs["solver"]
@@ -52,8 +52,8 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
 
   @sc.function(sc.L("mu", (2,)), sc.G(sc.L("x", ...), sc.L("lam_box", ...), sc.L("lam_eq", ...)), name="multi_out")
-  def multi_out(mu):
-    out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
+  def multi_out(mu: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    out = qp(mu)
     return (out[0], out[1], out[2])
 
   from scaly.passes.lowering import lower_function, main_proc
@@ -61,14 +61,14 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
 
   calls = [stmt for stmt in main_proc(lower_function(multi_out)).args if stmt.op == ProgramOp.CALL]
   assert len(calls) == 1
-  assert calls[0].attrs["callee"] == qp.name
+  assert calls[0].attrs["callee"] == qp.function.name
 
 
 @pytest.mark.solver("piqp")
 def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="nested_stats_qp")
-  out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
+  out = qp(mu)
   host = sc.Function._from_exprs("nested_stats_host", [mu], [out[0]], ["mu"], ["x"])
   np.testing.assert_allclose(host(np.array([0.5, -0.25])), [0.5, -0.25], atol=1e-8)
   stats = host.solver_stats("nested_stats_qp")
@@ -80,7 +80,7 @@ def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
 def test_duplicate_nested_solver_names_fail_before_c_compilation() -> None:
   mu = sc.sym("mu", 2)
   qps = [build_qp(P=np.eye(2), c=-mu) for _ in range(2)]
-  outs = [qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)) for qp in qps]
+  outs = [qp(mu) for qp in qps]
   host = sc.Function._from_exprs("duplicate_solver_host", [mu], [outs[0][0], outs[1][0]], ["mu"], ["x0", "x1"])
   with pytest.raises(ValueError, match="duplicate solver symbol 'problem_body_piqp'"):
     render_c_source(host)
