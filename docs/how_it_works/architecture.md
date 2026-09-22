@@ -21,6 +21,11 @@ Scaly has two intermediate representations and one direction of travel.
 - `codegen/` renders the program dialect to C, then either writes it to disk (the ahead-of-time
   path, AOT) or compiles, caches and dispatches it in-process (the just-in-time path, JIT). There is
   no interpreter. Python calls, tests and generated C all take the same path, and gaps raise.
+  The target is C rather than LLVM IR or an MLIR dialect because a `.c` file compiles with any
+  toolchain, including the vendor compilers of embedded platforms, drops into the C and C++
+  applications that consume it without a runtime, and keeps NumPy the only dependency; the
+  vectorization that other compilers get from LLVM vector types comes from the GNU vector
+  extension gcc, clang and `zig cc` share, with plain C as the opt-in fallback.
 - Everything else hangs off that spine. `ad/` builds derivative graphs inside the expression
   dialect. `function/` is the user-facing frontend. `solvers/` wraps vendored QP and NLP (quadratic
   and nonlinear programming) backends as opaque `Function`s. `viz/` watches the pipeline without

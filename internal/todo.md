@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 77**
+**Next id: 82**
 
 | Prefix | Section |
 |---|---|
@@ -239,6 +239,62 @@ protocol's compile flags.
 - [x] **C-12. One matcher and iterative rewrite driver for both dialects.** Implemented 2026-09-08: `ir/match.py` is generic over both node types with an iterative driver (`fixpoint`, `revisit`, `max_steps`), `rebuild_program` in `passes/program/_common.py` is the program adapter, and `_transform` is gone. No nested patterns or captures: no call site needed them. C-13 closed with it. [Updated design](notes/refactorings.md#shared-compiler-rewrites).
 
 ### Deferred
+
+The 2026-09-22 items below come from re-measuring a hand-optimized race-car Hessian on the M4 Max;
+[`notes/perf_2026_09_22/`](notes/perf_2026_09_22/README.md) holds the numbers, the generality
+analysis of each hand change, the `zig cc` and compiler-extension survey, and the rendering
+decision. Like C-8 they are deferred and not required for 0.1.0: the current kernels already beat
+CasADi on every benchmark cell, and the release work comes first. They are organized around C-8
+rather than beside it. C-77 *is* C-8's step 0 (inline scalarized callees into their mapped loop,
+which nothing in C-8 covered) and step 1 (range propagation); doing it lands the first third of
+C-8 and the assembly fix at once. C-78 is three independent passes that need none of C-8 and can
+go first if cheap wins are wanted. C-79 is one more rewrite over ranges, tinygrad's `shift_to`,
+and sits after C-8's step 1 because a widened kernel that still writes 48 outputs to memory gains
+little; it must not be built as a separate `VMAP`-loop transformation that C-8 would then delete,
+the way C-43 is scheduled for deletion. C-80 is solver work. C-81 is measurement and can run any
+time. When C-8 is resumed, fold C-77 and C-79 into its step list and close them there; their
+order is the M4's, and C-81 may swap C-77 and C-79.
+
+- [ ] **C-77. Inline scalar callees into their mapped loops and fuse the derivative assembly.**
+      C-8 step 0 and step 1. Today `_lower_vmap` emits `FOR { CALL }` and every pass stops at the
+      `CALL`, so the sparse-Hessian recovery (`gather(transpose(jvp_many(...)))`) runs as 15
+      separate array passes: 35% of the race-car N=200 Hessian, and the reason inlining alone buys
+      nothing (43.5 to 43.0 µs) while fusion lets 6 of 16 block entries die (28.4 to 18.0 µs).
+      Gates: no assembly loops in the generated C, `workspace` fixed across N in the sweep,
+      race-car hess lower N=200 under 22 µs on the M4 without vectorization.
+- [ ] **C-78. Constant-tile folding, invariant-divisor reciprocals, terminal-trip peeling.** Three
+      small passes. A `static const` table that tiles a period P becomes `k[i % P]`, a scalar at
+      P=1; `k0`, `k22`, `k26` from C-57 are exactly these. `x / y` with `y` loop invariant becomes
+      `x * inv_y` hoisted, behind a policy flag because it moves the last bit; both race-car
+      divisors are invariant and this is the `-ffast-math` gap (18.0 to 15.5 µs). Peeling the last
+      trip of a mapped axis whose slice differs makes the recovery gather `k44` affine (period 24,
+      residual 13, verified) so C-9's map replaces the table. Gates: no `double` table growing
+      with N in the race-car header; no division in the stage body.
+- [ ] **C-79. Explicit lanes on mapped ranges.** Port tinygrad's `shift_to`,
+      `r -> r_outer * W + r_lane` with `r_lane` of `RangeKind.VECTOR`, applied to the mapped axis
+      first (independent trips, no dependence analysis), then a contiguous output axis, then a
+      reduction axis with one accumulator per lane. Under a widened range a unit-stride access is
+      a vector load or store, a constant stride is a staging transpose at the ABI boundary (buffers
+      created under the range are lane major; ABI arrays stay stage major), anything else is per
+      lane; libm ops, `minimum` and `maximum` render per lane; a scalar tail handles N mod W. W
+      comes from the target triple (AVX-512 8, AVX2 4, NEON 2, no double vectors on Cortex-M or
+      ARMv7 so 1), capped by live values against the register file, overridable by `SCALY_LANES`.
+      Two render modes, documented in `docs/api/codegen.md` with their differences and supported
+      compilers when this lands: `gnu` (default; `vector_size` types, `v[i]`,
+      `__builtin_shufflevector`, `__builtin_convertvector`, `restrict`; gcc ≥ 12, clang, `zig cc`,
+      armclang) and `c` (opt in; the widened program as a scalar body inside an inner lane loop
+      over the same staging buffers; any C99 compiler). No vendored vector libm and no own
+      polynomials: transcendentals stay per-lane scalar calls, measured 18.0 to 14.2 µs at 8
+      lanes on the M4 and the bulk of the other agent's 45 to 11 µs on AVX-512. Gates: within 1.5×
+      of the hand-written kernel on the x86 reference machine; no regression on the M4 at W=2;
+      byte-identical output between the two modes.
+- [ ] **C-80. Parameter-only oracle prologue.** An oracle whose subgraph depends only on `p`
+      runs once per solve and its result is reused across SQP iterations (the race-car cost block).
+      Function or solver level, not a program pass; belongs with the S items once C-77 lands.
+- [ ] **C-81. Re-run the 2026-09-22 variants on the x86 reference machine.** `gen_hess_kernel.py`
+      and `mkvariant.py` under the protocol's flags, plus one check that a native `zig cc` links
+      `-lmvec` on glibc. Decides the order of C-77 and C-79 and whether the `clang`-only
+      `__builtin_elementwise_*` plus `-fveclib=libmvec` render option is worth its one line.
 
 - [ ] **C-8. A range-based loop compiler for the program dialect, in the shape of tinygrad's
       rangeify.** Caller workspace still grows with N on race_cars and npmpc. C-47 removed chain's
