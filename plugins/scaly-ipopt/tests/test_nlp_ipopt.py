@@ -245,8 +245,11 @@ def test_nlp_two_sided_inequality_and_lagrangian_hessian() -> None:
 @pytest.mark.solver("ipopt")
 def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
-  piece_x = sc.sym("piece_x", 2)
-  piece = sc.Function._from_exprs("nlp_mapped_constraint_piece", [piece_x], [sc.stack([piece_x[1] - piece_x[0] ** 2])], ["piece_x"], ["h"])
+
+  @sc.function(sc.L("piece_x", 2), sc.L("h", ...), name="nlp_mapped_constraint_piece")
+  def piece(piece_x: sc.Expr) -> sc.Expr:
+    return sc.stack([piece_x[1] - piece_x[0] ** 2])
+
   target = np.array([0.5, 0.25, -0.7, 0.49])
 
   def build(mapped: bool):
@@ -276,9 +279,11 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
   assert mapped_nlp.stats() is not None and mapped_nlp.stats().n_eval_h > 0
 
   def hess_dense(mapped: bool, xv: np.ndarray, lam: np.ndarray) -> np.ndarray:
-    x = sc.sym("x", 4)
-    h_eq = sc.vmap(piece, 2, [x]) if mapped else sc.concat([piece(x[2 * it : 2 * (it + 1)]) for it in range(2)])
-    base = sc.Function._from_exprs(f"nlp_hess_base_{int(mapped)}", [x], [((x - target) ** 2).sum(), h_eq], ["x"], ["f", "g"])
+    @sc.function(sc.L("x", 4), sc.G(sc.L("f", ...), sc.L("g", ...)), name=f"nlp_hess_base_{int(mapped)}")
+    def base(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+      h_eq = sc.vmap(piece, 2, [x]) if mapped else sc.concat([piece(x[2 * it : 2 * (it + 1)]) for it in range(2)])
+      return ((x - target) ** 2).sum(), h_eq
+
     shf = sc.sparse_lagrangian_hessian(base, "x")
     sp = shf.output_sparsities[0]
     assert sp is not None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ...ir.match import Pattern, rewrite
-from ...ir.program import ProgramNode, ProgramOp
+from ...ir.program import ProgramNode, ProgramOp, walk_program
 from ._common import (
   _alias_sources,
   buffer_refs,
@@ -18,7 +18,6 @@ from ._common import (
   prune_dead_buffers,
   substitute_var as _subst_var,
   trip_count as _trip_count,
-  _walk,
   rebuild_program,
 )
 
@@ -44,7 +43,7 @@ _EXPENSIVE_OPS: frozenset[ProgramOp] = frozenset(
 
 
 def _has_expensive(node: ProgramNode) -> bool:
-  return any(n.op in _EXPENSIVE_OPS for n in _walk(node))
+  return any(n.op in _EXPENSIVE_OPS for n in walk_program(node))
 
 
 def _max_load_executions(node: ProgramNode, buf: str, factor: int) -> int | None:

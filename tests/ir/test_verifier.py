@@ -30,9 +30,11 @@ def test_simple_scalar_graph_verifies() -> None:
 
 
 def test_matmul_named_call_verifies() -> None:
-  a = sc.sym("a", (3, 4))
-  b = sc.sym("b", (4, 2))
-  fn = sc.Function._from_exprs("mm", [a, b], [a @ b], ["a", "b"], ["c"])
+  @sc.function(sc.G(sc.L("a", (3, 4)), sc.L("b", (4, 2))), sc.L("c", ...), name="mm")
+  def fn(ab: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    a, b = ab
+    return a @ b
+
   c = sc.sym("c", (3, 4))
   d = sc.sym("d", (4, 2))
   out = fn((c, d))
@@ -40,17 +42,20 @@ def test_matmul_named_call_verifies() -> None:
 
 
 def test_vmap_graph_verifies() -> None:
-  stage_in = sc.sym("u", 2)
-  stage = sc.Function._from_exprs("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
+  @sc.function(sc.L("u", 2), sc.L("y", ...))
+  def stage(u: sc.Expr) -> sc.Expr:
+    return u.sin().sum()
+
   batch = sc.sym("batch", 8)
   mapped = sc.vmap(stage, length=4, inputs=[(batch, 0, 2)])
   verify_expr(mapped)
 
 
 def test_jacobian_factory_output_verifies() -> None:
-  x = sc.sym("x", 3)
-  y = (x.sin() + x * x).sum()
-  fn = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  @sc.function(sc.L("x", 3), sc.L("y", ...), name="f")
+  def fn(x: sc.Expr) -> sc.Expr:
+    return (x.sin() + x * x).sum()
+
   jac = sc.jacobian(fn, "y", "x")
   verify_expr(jac.outputs)
 
@@ -118,8 +123,10 @@ def test_matmul_contracting_dim_mismatch_caught() -> None:
 
 
 def test_call_arg_shape_mismatch_caught() -> None:
-  x = sc.sym("x", 3)
-  fn = sc.Function._from_exprs("f", [x], [x.sum()], ["x"], ["y"])
+  @sc.function(sc.L("x", 3), sc.L("y", ...), name="f")
+  def fn(x: sc.Expr) -> sc.Expr:
+    return x.sum()
+
   bad_arg = sc.sym("z", 5)
   bad = Expr(
     ExprOp.CALL,
@@ -132,8 +139,10 @@ def test_call_arg_shape_mismatch_caught() -> None:
 
 
 def test_vmap_rank1_outer_required() -> None:
-  stage_in = sc.sym("u", 2)
-  stage = sc.Function._from_exprs("stage", [stage_in], [stage_in.sin().sum()], ["u"], ["y"])
+  @sc.function(sc.L("u", 2), sc.L("y", ...))
+  def stage(u: sc.Expr) -> sc.Expr:
+    return u.sin().sum()
+
   bad_outer = sc.sym("batch", (4, 2))  # not rank-1
   bad = Expr(
     ExprOp.VMAP,
@@ -173,10 +182,12 @@ def test_verify_walks_subgraph_and_names_first_failure() -> None:
 
 def test_verifier_smoke_on_workload_graphs() -> None:
   """Smoke: a small structurally-rich graph (slice + matmul + sum) verifies, including its Jacobian."""
-  z = sc.sym("z", 6)
-  A = sc.const(np.eye(4, 6))
-  res = A @ z + z[:4]
-  fn = sc.Function._from_exprs("f", [z], [res.sum()], ["z"], ["y"])
+
+  @sc.function(sc.L("z", 6), sc.L("y", ...), name="f")
+  def fn(z: sc.Expr) -> sc.Expr:
+    A = sc.const(np.eye(4, 6))
+    return (A @ z + z[:4]).sum()
+
   verify_expr(fn.outputs)
   jac = sc.jacobian(fn, "y", "z")
   verify_expr(jac.outputs)

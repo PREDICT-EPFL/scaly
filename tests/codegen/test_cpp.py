@@ -15,14 +15,23 @@ from scaly.codegen import render_c_module
 
 
 def _spjac() -> sc.Function:
-  x = sc.sym("x", 4)
-  y = sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
-  return sc.sparse_jacobian(sc.Function._from_exprs("f", [x], [y], ["x"], ["y"]), "y", "x", name="f_spjac")
+  @sc.function(sc.L("x", 4), sc.L("y", ...))
+  def f(x: sc.Expr) -> sc.Expr:
+    return sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
+
+  return sc.sparse_jacobian(f, "y", "x", name="f_spjac")
+
+
+def _roll() -> sc.Function:
+  @sc.function(sc.L("traj", (3, 2)), sc.L("out", ...))
+  def roll(traj: sc.Expr) -> sc.Expr:
+    return traj.sin()
+
+  return roll
 
 
 def test_cpp_header_declares_namespace_buffers_and_constexpr_tables() -> None:
-  traj = sc.sym("traj", (3, 2))
-  f = sc.Function._from_exprs("roll", [traj], [traj.sin()], ["traj"], ["out"])
+  f = _roll()
   module = render_c_module(f, lang="cpp")
   assert module.header_name == "roll.hpp" and module.source_name == "roll.c"
   assert "#include" not in module.source.replace(module.body, "")
@@ -50,8 +59,7 @@ def test_cpp_header_compiles_and_runs(tmp_path) -> None:
   if cc is None or cxx is None:
     pytest.skip("cc and c++ are required for the generated C++ header smoke test")
 
-  traj = sc.sym("traj", (3, 2))
-  roll = render_c_module(sc.Function._from_exprs("roll", [traj], [traj.sin()], ["traj"], ["out"]), lang="cpp")
+  roll = render_c_module(_roll(), lang="cpp")
   spjac = render_c_module(_spjac(), lang="cpp")
   for module in (roll, spjac):
     (tmp_path / module.header_name).write_text(module.header)
@@ -109,8 +117,10 @@ int main() {
 
 
 def test_cpp_header_and_c_header_compile_the_same_kernel() -> None:
-  x = sc.sym("x", 2)
-  f = sc.Function._from_exprs("same", [x], [x * 2.0], ["x"], ["y"])
+  @sc.function(sc.L("x", 2), sc.L("y", ...), name="same")
+  def f(x: sc.Expr) -> sc.Expr:
+    return x * 2.0
+
   assert render_c_module(f, lang="c").body == render_c_module(f, lang="cpp").body
   with pytest.raises(ValueError, match="lang"):
     render_c_module(f, lang="rust")
@@ -123,8 +133,12 @@ def test_headers_survive_buffer_names_that_collide_with_the_wrapper(tmp_path) ->
   cxx = shutil.which("c++")
   if cc is None or cxx is None:
     pytest.skip("cc and c++ are required for the generated header smoke test")
-  f, workspace, arg = sc.sym("f", 2), sc.sym("workspace", 2), sc.sym("arg", 2)
-  fun = sc.Function._from_exprs("f", [f, workspace, arg], [f + workspace + arg], ["f", "workspace", "arg"], ["res"])
+
+  @sc.function(sc.G(sc.L("f", 2), sc.L("workspace", 2), sc.L("arg", 2)), sc.L("res", ...), name="f")
+  def fun(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
+    f, workspace, arg = inputs
+    return f + workspace + arg
+
   c = render_c_module(fun)
   cpp = render_c_module(fun, lang="cpp")
   assert (
@@ -153,8 +167,12 @@ def test_headers_split_names_shared_by_an_input_and_an_output(tmp_path) -> None:
   cxx = shutil.which("c++")
   if cc is None or cxx is None:
     pytest.skip("cc and c++ are required for the generated header smoke test")
-  w, lam, z0 = sc.sym("w", 3), sc.sym("lam", 0), sc.sym("z0", 2)
-  fun = sc.Function._from_exprs("solve", [w, lam, z0], [w + z0[0], lam], ["w", "lam", "z0"], ["w", "lam"])
+
+  @sc.function(sc.G(sc.L("w", 3), sc.L("lam", 0), sc.L("z0", 2)), sc.G(sc.L("w", ...), sc.L("lam", ...)), name="solve")
+  def fun(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
+    w, lam, z0 = inputs
+    return (w + z0[0], lam)
+
   c = render_c_module(fun)
   cpp = render_c_module(fun, lang="cpp")
   assert "typedef struct { SCALY_ALIGNAS(16) double data[1]; } solve_lam_in_t;" in c.header

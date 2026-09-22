@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from ...ir import program as p
-from ...ir.program import ProgramNode, ProgramOp
+from ...ir.program import ProgramNode, ProgramOp, walk_program
 from ...utils.names import c_ident
-from ._common import _walk
 from .scheduling import ScalarNameAllocator, schedule_values
 
 
@@ -55,7 +54,7 @@ def prepare_scalar_expressions(prog: ProgramNode) -> ProgramNode:
     if node.op in {ProgramOp.PROC, ProgramOp.KERNEL}:
       pc = node.attrs["param_count"]
       reserved = {arg.attrs["name"] for arg in node.args[:pc]}
-      for current in _walk(ProgramNode(ProgramOp.BLOCK, node.args[pc:])):
+      for current in walk_program(ProgramNode(ProgramOp.BLOCK, node.args[pc:])):
         if current.op == ProgramOp.BUFFER:
           reserved.add(current.attrs["name"])
         elif current.op == ProgramOp.ASSIGN:

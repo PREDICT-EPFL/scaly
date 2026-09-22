@@ -1,15 +1,17 @@
 import json
 
-from scaly import Function, render_expr_assembly, render_program_assembly, sym
+from scaly import G, Function, L, function, render_expr_assembly, render_program_assembly
 from scaly.codegen.aot import render_c_source
 from scaly.passes.lowering import lower_function
 from scaly.viz import clear_recordings, recordings, unvisualize_function, visualize_function
 
 
 def _fun() -> Function:
-  x = sym("x", (2,))
-  y = x * x + 1.0
-  return Function._from_exprs("square_plus_one", [x], [y], output_names=["y"])
+  @function(L("x", (2,)), L("y", ...))
+  def square_plus_one(x):
+    return x * x + 1.0
+
+  return square_plus_one
 
 
 def test_expr_and_program_assembly():
@@ -64,9 +66,13 @@ def test_render_c_source_tracing_is_opt_in(tmp_path, monkeypatch):
 
 def test_recording_keeps_original_and_normalized_expressions(tmp_path, monkeypatch):
   monkeypatch.setenv("SCALY_VIZ_DIR", str(tmp_path))
-  matrix, vector = sym("matrix", (2, 3)), sym("vector", 2)
-  output = matrix.T @ vector
-  fun = Function._from_exprs("normalized_matmul", [matrix, vector], [output], ["matrix", "vector"], ["y"])
+
+  @function(G(L("matrix", (2, 3)), L("vector", 2)), L("y", ...), name="normalized_matmul")
+  def fun(inputs):
+    matrix, vector = inputs
+    return matrix.T @ vector
+
+  (output,) = fun.outputs
   clear_recordings(disk=True)
   visualize_function(fun)
   try:

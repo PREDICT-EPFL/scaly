@@ -29,7 +29,7 @@ schedule decisions is ``ir/text.py``.
 from __future__ import annotations
 
 import weakref
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -248,6 +248,19 @@ class ProgramNode:
   def __repr__(self) -> str:  # pragma: no cover - cosmetic
     attr_str = "" if not self.attrs else f" {self.attrs}"
     return f"ProgramNode({self.op.value}, {len(self.args)} args{attr_str})"
+
+
+def walk_program(root: ProgramNode) -> Iterator[ProgramNode]:
+  """Yield ``root`` and its descendants once by identity in depth-first order."""
+  seen: set[int] = set()
+  stack = [root]
+  while stack:
+    node = stack.pop()
+    if id(node) in seen:
+      continue
+    seen.add(id(node))
+    yield node
+    stack.extend(node.args)
 
 
 # ---------------------------------------------------------------------------
@@ -477,4 +490,5 @@ __all__ = [
   "sub",
   "var",
   "view",
+  "walk_program",
 ]

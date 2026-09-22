@@ -61,11 +61,14 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
   def build(N: int) -> sc.Function:
-    z = sc.sym("z", NZ * (N + 1))
-    p = sc.sym("p", NX * (N + 1), diff=False)
-    initial = eq_initial((z[:NZ], p[:NX]))
-    mapped = sc.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
-    return sc.Function._from_exprs(f"race_car_eq_vmap_N{N}", [z, p], [sc.concat([initial, mapped])], ["z", "p"], ["eq"])
+    @sc.function(sc.G(sc.L("z", NZ * (N + 1)), sc.L("p", sc.TensorType((NX * (N + 1),), diff=False))), sc.L("eq", ...), name=f"race_car_eq_vmap_N{N}")
+    def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+      z, p = inputs
+      initial = eq_initial((z[:NZ], p[:NX]))
+      mapped = sc.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
+      return sc.concat([initial, mapped])
+
+    return fn
 
   fn_a = build(50)
   fn_b = build(100)
@@ -75,14 +78,16 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     N = (fn.inputs[0].size // NZ) - 1
     zv = rng.normal(size=NZ * (N + 1))
     pv = rng.normal(size=NX * (N + 1))
+
     # Sanity: the primal numerically matches the unrolled concat-of-call equivalent.
-    parts = [eq_initial((fn.inputs[0][:NZ], fn.inputs[1][:NX]))]
-    for i in range(N):
-      zi = fn.inputs[0][i * NZ : (i + 1) * NZ]
-      znext = fn.inputs[0][(i + 1) * NZ : (i + 2) * NZ]
-      pi = fn.inputs[1][(i + 1) * NX : (i + 2) * NX]
-      parts.append(eq_interstage((zi, znext, pi)))
-    ref = sc.Function._from_exprs(f"race_car_eq_ref_N{N}", [fn.inputs[0], fn.inputs[1]], [sc.concat(parts)], ["z", "p"], ["eq"])
+    @sc.function(fn.input_tree, sc.L("eq", ...), name=f"race_car_eq_ref_N{N}")
+    def ref(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+      z, p = inputs
+      parts = [eq_initial((z[:NZ], p[:NX]))]
+      for i in range(N):
+        parts.append(eq_interstage((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX])))
+      return sc.concat(parts)
+
     np.testing.assert_allclose(fn((zv, pv)), ref((zv, pv)), rtol=1e-12, atol=1e-12)
 
   src_a = render_c_source(fn_a)
@@ -132,20 +137,29 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     z, znext, p = inputs
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
 
+  def inputs_tree(N: int):
+    return sc.G(sc.L("z", NZ * (N + 1)), sc.L("p", sc.TensorType((NX * (N + 1),), diff=False)))
+
   def build_vmap(N: int) -> sc.Function:
-    z = sc.sym("z", NZ * (N + 1))
-    p = sc.sym("p", NX * (N + 1), diff=False)
-    initial = eq_initial((z[:NZ], p[:NX]))
-    mapped = sc.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
-    return sc.Function._from_exprs(f"tr_vmap_N{N}", [z, p], [sc.concat([initial, mapped])], ["z", "p"], ["eq"])
+    @sc.function(inputs_tree(N), sc.L("eq", ...), name=f"tr_vmap_N{N}")
+    def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+      z, p = inputs
+      initial = eq_initial((z[:NZ], p[:NX]))
+      mapped = sc.vmap(eq_interstage, length=N, inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "p": (p, NX, NX)})
+      return sc.concat([initial, mapped])
+
+    return fn
 
   def build_unroll(N: int) -> sc.Function:
-    z = sc.sym("z", NZ * (N + 1))
-    p = sc.sym("p", NX * (N + 1), diff=False)
-    parts = [eq_initial((z[:NZ], p[:NX]))]
-    for i in range(N):
-      parts.append(eq_interstage((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX])))
-    return sc.Function._from_exprs(f"tr_unroll_N{N}", [z, p], [sc.concat(parts)], ["z", "p"], ["eq"])
+    @sc.function(inputs_tree(N), sc.L("eq", ...), name=f"tr_unroll_N{N}")
+    def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+      z, p = inputs
+      parts = [eq_initial((z[:NZ], p[:NX]))]
+      for i in range(N):
+        parts.append(eq_interstage((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX])))
+      return sc.concat(parts)
+
+    return fn
 
   N = 4
   fn_vmap = build_vmap(N)
@@ -209,26 +223,29 @@ def _pair_index_table(bodies: list[int]) -> np.ndarray:
 
 
 def _build_pairs_fn(mapped: bool) -> sc.Function:
-  u = sc.sym("u", NU * NB + 1)
-  p = sc.sym("p", NS * NB, diff=False)
-  uu, slack = u[: NU * NB], u[NU * NB : NU * NB + 1]
-  if mapped:
-    nxt = sc.vmap(pairs_step, NB, [(p, 0, NS), (uu, 0, NU)])
-    idx_i, idx_j = _pair_index_table([i for i, _ in PAIRS]), _pair_index_table([j for _, j in PAIRS])
-    pair_rows = sc.vmap(
-      pairs_barrier,
-      len(PAIRS),
-      [(sc.gather(p, idx_i), 0, NS), (sc.gather(p, idx_j), 0, NS), (sc.gather(nxt, idx_i), 0, NS), (sc.gather(nxt, idx_j), 0, NS), (slack, 0, 0)],
-    )
-    body_rows = sc.vmap(pairs_wall, NB, [(p, 0, NS), (nxt, 0, NS), (slack, 0, 0)])
-    h = sc.concat([pair_rows, body_rows])
-  else:
+  @sc.function(
+    sc.G(sc.L("u", NU * NB + 1), sc.L("p", sc.TensorType((NS * NB,), diff=False))), sc.L("h", ...), name=f"pairs_{'vmap' if mapped else 'unroll'}"
+  )
+  def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    u, p = inputs
+    uu, slack = u[: NU * NB], u[NU * NB : NU * NB + 1]
+    if mapped:
+      nxt = sc.vmap(pairs_step, NB, [(p, 0, NS), (uu, 0, NU)])
+      idx_i, idx_j = _pair_index_table([i for i, _ in PAIRS]), _pair_index_table([j for _, j in PAIRS])
+      pair_rows = sc.vmap(
+        pairs_barrier,
+        len(PAIRS),
+        [(sc.gather(p, idx_i), 0, NS), (sc.gather(p, idx_j), 0, NS), (sc.gather(nxt, idx_i), 0, NS), (sc.gather(nxt, idx_j), 0, NS), (slack, 0, 0)],
+      )
+      body_rows = sc.vmap(pairs_wall, NB, [(p, 0, NS), (nxt, 0, NS), (slack, 0, 0)])
+      return sc.concat([pair_rows, body_rows])
     nxt = sc.concat([pairs_step((p[NS * k : NS * (k + 1)], uu[NU * k : NU * (k + 1)])) for k in range(NB)])
     sl = lambda e, k: e[NS * k : NS * (k + 1)]  # noqa: E731
     rows = [pairs_barrier((sl(p, i), sl(p, j), sl(nxt, i), sl(nxt, j), slack)) for i, j in PAIRS]
     rows += [pairs_wall((sl(p, k), sl(nxt, k), slack)) for k in range(NB)]
-    h = sc.concat(rows)
-  return sc.Function._from_exprs(f"pairs_{'vmap' if mapped else 'unroll'}", [u, p], [h], ["u", "p"], ["h"])
+    return sc.concat(rows)
+
+  return fn
 
 
 def _pairs_sample() -> tuple[np.ndarray, np.ndarray]:
@@ -295,8 +312,10 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
     return sc.stack([(h * h).sum()])
 
   N = 4
-  z = sc.sym("z", 3 * N)
-  fn = sc.Function._from_exprs("vmap_dense", [z], [sc.vmap(layer, N, [(z, 0, 3)])], ["z"], ["y"])
+
+  @sc.function(sc.L("z", 3 * N), sc.L("y", ...), name="vmap_dense")
+  def fn(z: sc.Expr) -> sc.Expr:
+    return sc.vmap(layer, N, [(z, 0, 3)])
 
   zv = np.random.default_rng(3).normal(size=3 * N)
   expected = np.zeros((N, 3 * N))
@@ -313,15 +332,21 @@ def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
     return sc.stack([x[0] - ref[0], ref[1].cos() * x[1] - scale[0].tanh()])
 
   n = 4
-  x, p = sc.sym("x", 2 * n), sc.sym("p", 2 * n + 1, diff=False)
   weights = sc.const(np.array([0.0, 0.3, 1.2, 0.3, 1.2, 0.3, 5.0, 0.3]))
-  mapped = sc.vmap(residual, n, [(x, 0, 2), (p, 0, 2), (p, 2 * n, 0)])
-  unrolled = sc.concat([residual((x[2 * i : 2 * i + 2], p[2 * i : 2 * i + 2], p[-1:])) for i in range(n)])
   rng = np.random.default_rng(21)
-  inputs = rng.normal(size=x.size), rng.normal(size=p.size)
+  inputs = rng.normal(size=2 * n), rng.normal(size=2 * n + 1)
   values = []
-  for name, r in (("mapped", mapped), ("unrolled", unrolled)):
-    fn = sc.Function._from_exprs(name, [x, p], [sc.dot(weights, r**2)], ["x", "p"], ["f"])
+  for name in ("mapped", "unrolled"):
+
+    @sc.function(sc.G(sc.L("x", 2 * n), sc.L("p", sc.TensorType((2 * n + 1,), diff=False))), sc.L("f", ...), name=name)
+    def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+      x, p = inputs
+      if name == "mapped":
+        r = sc.vmap(residual, n, [(x, 0, 2), (p, 0, 2), (p, 2 * n, 0)])
+      else:
+        r = sc.concat([residual((x[2 * i : 2 * i + 2], p[2 * i : 2 * i + 2], p[-1:])) for i in range(n)])
+      return sc.dot(weights, r**2)
+
     derivatives = fn.factory(name + "_derivatives", ["x", "p"], ["f", sc.factory.Grad("f", "x"), sc.factory.SpHess("f", "x")])
     values.append(derivatives(inputs))
   for actual, expected in zip(values[0], values[1], strict=True):

@@ -123,8 +123,11 @@ def test_prepared_solver_never_compiles_during_first_solve(tmp_path, monkeypatch
     return sc.ProblemSpec(minimize=((x - target) ** 2).sum())
 
   solver = sc.solver(problem, "ipopt", name="mode_warmup", options={"print_level": 0, "sb": "yes"})
-  x = sc.sym("diagnostic_x", 1)
-  diagnostic = sc.Function._from_exprs("mode_diagnostic", [x], [x.sin()], ["x"], ["y"])
+
+  @sc.function(sc.L("x", 1), sc.L("y", ...), name="mode_diagnostic")
+  def diagnostic(x: sc.Expr) -> sc.Expr:
+    return x.sin()
+
   setattr(solver.function, "_benchmark_base", diagnostic)
   timing = SolveTiming()
   timing.prepared(solver)

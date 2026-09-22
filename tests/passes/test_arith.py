@@ -10,11 +10,10 @@ import pytest
 import scaly as sc
 from scaly.ir import program as p
 from scaly.ir.expr import topo
-from scaly.ir.program import ProgramNode, ProgramOp
+from scaly.ir.program import ProgramNode, ProgramOp, walk_program
 from scaly.ir.types import dtypes
 from scaly.passes.arith import fold_program
 from scaly.passes.lowering import lower_function, main_proc
-from scaly.passes.program._common import _walk
 from scaly.passes.program.fold_arith import fold_arith
 
 DATA = np.array([0.5, -1.25, 2.0])
@@ -50,12 +49,16 @@ CASES: dict[str, tuple[Callable[[sc.Expr], sc.Expr], Callable[[np.ndarray], np.n
 }
 
 
-def _function(name: str, x: sc.Expr, y: sc.Expr) -> sc.Function:
-  return sc.Function._from_exprs(name, [x], [y], ["x"], ["y"])
+def _function(name: str, build: Callable[[sc.Expr], sc.Expr], shape: int = 3) -> sc.Function:
+  @sc.function(sc.L("x", shape), sc.L("y", ...), name=name)
+  def fn(x: sc.Expr) -> sc.Expr:
+    return build(x)
+
+  return fn
 
 
 def _proc_ops(proc: ProgramNode) -> set[str]:
-  return {str(n.op) for stmt in proc.args[proc.attrs["param_count"] :] for n in _walk(stmt)}
+  return {str(n.op) for stmt in proc.args[proc.attrs["param_count"] :] for n in walk_program(stmt)}
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
@@ -64,14 +67,13 @@ def test_expression_graph(name: str) -> None:
   x = sc.sym("x", 3)
   y = sc.simplify(build(x))
   assert not gone & {str(n.op) for n in topo([y])}
-  np.testing.assert_allclose(_function(f"arith_expr_{name}", x, y)(DATA), reference(DATA), rtol=1e-15, atol=0)
+  np.testing.assert_allclose(_function(f"arith_expr_{name}", lambda x: sc.simplify(build(x)))(DATA), reference(DATA), rtol=1e-15, atol=0)
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_scalarized_procedure(name: str) -> None:
   build, reference, gone = CASES[name]
-  x = sc.sym("x", 3)
-  fn = _function(f"arith_scalar_{name}", x, build(x).scalar())
+  fn = _function(f"arith_scalar_{name}", lambda x: build(x).scalar())
   proc = main_proc(lower_function(fn))
   assert proc.attrs.get("scalarized")
   assert not gone & _proc_ops(proc)
@@ -81,8 +83,7 @@ def test_scalarized_procedure(name: str) -> None:
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_loop_body(name: str) -> None:
   build, reference, gone = CASES[name]
-  x = sc.sym("x", 3)
-  fn = _function(f"arith_loop_{name}", x, build(x).block())
+  fn = _function(f"arith_loop_{name}", lambda x: build(x).block())
   proc = main_proc(lower_function(fn))
   assert not proc.attrs.get("scalarized") and "for" in _proc_ops(proc)
   assert not gone & _proc_ops(proc)
@@ -90,12 +91,11 @@ def test_loop_body(name: str) -> None:
 
 
 def test_mixed_constant_tensor_folds_per_element_only_where_the_element_is_known() -> None:
-  x = sc.sym("x", 3)
-  build = lambda hint: (x * sc.const([1.0, 0.0, 2.0]) + sc.const([0.0, 1.0, 0.0]) * x.sin()).with_lowering(hint)
-  scalar = _function("mixed_scalar", x, build("scalar"))
-  ops = [n.op for stmt in main_proc(lower_function(scalar)).args[1:] for n in _walk(stmt)]
+  build = lambda x, hint: (x * sc.const([1.0, 0.0, 2.0]) + sc.const([0.0, 1.0, 0.0]) * x.sin()).with_lowering(hint)
+  scalar = _function("mixed_scalar", lambda x: build(x, "scalar"))
+  ops = [n.op for stmt in main_proc(lower_function(scalar)).args[1:] for n in walk_program(stmt)]
   assert ops.count(ProgramOp.MUL) == 1 and ops.count(ProgramOp.SIN) == 1
-  loop = _function("mixed_loop", x, build("block"))
+  loop = _function("mixed_loop", lambda x: build(x, "block"))
   assert {"mul", "add", "sin", "for"} <= _proc_ops(main_proc(lower_function(loop)))
   expected = DATA * [1.0, 0.0, 2.0] + [0.0, 1.0, 0.0] * np.sin(DATA)
   for fn in (scalar, loop):
@@ -124,7 +124,7 @@ def test_known_invalid_constants_stay_runtime_operations() -> None:
   assert sc.simplify(sc.const(0.0) / sc.const(0.0)).op == sc.ExprOp.DIV
   assert sc.simplify(sc.const(1000.0).exp()).op == sc.ExprOp.EXP
   assert sc.simplify(sc.const(0.0) / x).op == sc.ExprOp.CONST
-  fn = _function("invalid_loop", x, (x + sc.const(0.0) / sc.const(0.0)).block())
+  fn = _function("invalid_loop", lambda x: (x + sc.const(0.0) / sc.const(0.0)).block(), shape=2)
   assert "div" in _proc_ops(main_proc(lower_function(fn)))
   assert np.isnan(fn(np.ones(2))).all()
 

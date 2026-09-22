@@ -462,9 +462,12 @@ def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> No
 @pytest.mark.solver("sqp")
 def test_sqp_nested_in_host_function() -> None:
   solver = _problem()
-  target = sc.sym("target", 2, diff=False)
-  x = solver(target)[0]
-  host = sc.Function._from_exprs("nested_sqp_host", [target], [sc.dot(x, x)], ["target"], ["norm"])
+
+  @sc.function(sc.L("target", sc.TensorType((2,), diff=False)), sc.L("norm", ...), name="nested_sqp_host")
+  def host(target: sc.Expr) -> sc.Expr:
+    x = solver(target)[0]
+    return sc.dot(x, x)
+
   np.testing.assert_allclose(host(np.array([0.2, 0.8])), 0.625, atol=3e-6)
 
 

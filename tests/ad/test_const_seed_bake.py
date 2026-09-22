@@ -21,8 +21,11 @@ TILES = [
 
 
 def _stage() -> sc.Function:
-  x = sc.sym("x", 3)
-  return sc.Function._from_exprs("bake_stage", [x], [x.sin() * (x @ sc.const(np.ones(3)))], ["x"], ["y"])
+  @sc.function(sc.L("x", 3), sc.L("y", ...), name="bake_stage")
+  def stage(x):
+    return x.sin() * (x @ sc.const(np.ones(3)))
+
+  return stage
 
 
 def _jac_np(x: np.ndarray) -> np.ndarray:
@@ -57,13 +60,17 @@ def _callee_params(prog: ProgramNode) -> list[str]:
 def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   stage = _stage()
   length = len(pattern)
-  z = sc.sym("z", 3 * length)
-  mapped = sc.vmap(stage, length, [(z, 0, 3)])
   seeds = _seeds(pattern)
-  structural = sc.jvp_many(mapped, z, sc.const(seeds))
-  unrolled = _jvp_many_unrolled(mapped, z, sc.const(seeds))
-  fn = sc.Function._from_exprs("bake", [z], [structural], ["z"], ["dy"])
-  ref = sc.Function._from_exprs("bake_ref", [z], [unrolled], ["z"], ["dy"])
+
+  @sc.function(sc.L("z", 3 * length), sc.L("dy", ...), name="bake")
+  def fn(z):
+    return sc.jvp_many(sc.vmap(stage, length, [(z, 0, 3)]), z, sc.const(seeds))
+
+  @sc.function(sc.L("z", 3 * length), sc.L("dy", ...), name="bake_ref")
+  def ref(z):
+    return _jvp_many_unrolled(sc.vmap(stage, length, [(z, 0, 3)]), z, sc.const(seeds))
+
+  (structural,) = fn.outputs
   zv = np.random.default_rng(1).normal(size=3 * length)
   expected = np.zeros((3, 3 * length))
   for it in range(length):

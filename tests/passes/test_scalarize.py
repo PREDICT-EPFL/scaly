@@ -10,11 +10,10 @@ import pytest
 import scaly as sc
 from scaly.codegen.c import render_program_c_source
 from scaly.ir import program as p
-from scaly.ir.program import ProgramNode, ProgramOp
+from scaly.ir.program import ProgramNode, ProgramOp, walk_program
 from scaly.ir.types import Lowering, dtypes
 from scaly.passes.arith import fold_program
 from scaly.passes.lowering import lower_function, main_proc
-from scaly.passes.program._common import _walk
 from scaly.passes.program.scalarize import (
   AUTO_EXPANSION_WORK_PER_PROC,
   AUTO_SCALAR_GROWTH_PER_PROGRAM,
@@ -30,17 +29,13 @@ def _fold(op: ProgramOp, args: tuple[ProgramNode, ...], dtype) -> ProgramNode:
   return fold_program(ProgramNode(op, args, dtype=dtype))
 
 
-def _function(name: str, inputs: list[sc.Expr], outputs: list[sc.Expr]) -> sc.Function:
-  return sc.Function._from_exprs(name, inputs, outputs, [str(x.name) for x in inputs], [f"out{i}" for i in range(len(outputs))])
-
-
 def _body(proc: ProgramNode) -> tuple[ProgramNode, ...]:
   return proc.args[proc.attrs["param_count"] :]
 
 
 def _assert_scalar(proc: ProgramNode) -> None:
   assert proc.attrs.get("scalarized")
-  assert all(n.op not in {ProgramOp.FOR, ProgramOp.CALL, ProgramOp.BUFFER} for stmt in _body(proc) for n in _walk(stmt))
+  assert all(n.op not in {ProgramOp.FOR, ProgramOp.CALL, ProgramOp.BUFFER} for stmt in _body(proc) for n in walk_program(stmt))
 
 
 def _depth(node: ProgramNode) -> int:
@@ -117,12 +112,13 @@ def test_store_pair_selection_is_explicit_and_respects_dependencies() -> None:
 
 @pytest.mark.parametrize("hint", ["auto", "scalar", "block", "opaque"])
 def test_hint_selects_callee_without_expanding_mapped_horizon(hint: Lowering) -> None:
-  x = sc.sym("x", 3)
-  stage = _function("hint_stage", [x], [(x.sin() + x * x).with_lowering(hint)])
+  @sc.function(sc.L("x", 3), sc.L("out0", ...), name="hint_stage")
+  def stage(x: sc.Expr) -> sc.Expr:
+    return (x.sin() + x * x).with_lowering(hint)
+
   procs = []
   for length in (3, 41):
-    z = sc.sym("z", 3 * length)
-    fn = _function("hint_map", [z], [sc.vmap(stage, length, [(z, 0, 3)])])
+    fn = sc.function(sc.L("z", 3 * length), sc.L("out0", ...), name="hint_map")(lambda z: sc.vmap(stage, length, [(z, 0, 3)]))
     prog = lower_function(fn)
     callee = prog.args[0]
     if hint in {"auto", "scalar"}:
@@ -141,18 +137,16 @@ def test_hint_selects_callee_without_expanding_mapped_horizon(hint: Lowering) ->
 
 
 def test_explicit_scalar_root_and_block_precedence() -> None:
-  x = sc.sym("x", 4)
-  scalar = _function("explicit", [x], [(x.sin() + x * x).scalar()])
+  scalar = sc.function(sc.L("x", 4), sc.L("out0", ...), name="explicit")(lambda x: (x.sin() + x * x).scalar())
   _assert_scalar(main_proc(lower_function(scalar)))
-  blocked = _function("blocked", [x], [(x.sin().block() + x * x).scalar()])
+  blocked = sc.function(sc.L("x", 4), sc.L("out0", ...), name="blocked")(lambda x: (x.sin().block() + x * x).scalar())
   assert not main_proc(lower_function(blocked)).attrs.get("scalarized")
   data = np.arange(4, dtype=float) / 3
   np.testing.assert_array_equal(scalar(data), blocked(data))
 
 
 def test_scalarization_can_be_reapplied_to_its_result() -> None:
-  x = sc.sym("x", 3)
-  fn = _function("repeated_pass", [x], [(x.sin() * x.sin()).scalar()])
+  fn = sc.function(sc.L("x", 3), sc.L("out0", ...), name="repeated_pass")(lambda x: (x.sin() * x.sin()).scalar())
   prog = lower_function(fn)
   _assert_scalar(main_proc(prog))
   assert scalarize_program(prog) is prog
@@ -176,12 +170,13 @@ def test_auto_uses_folded_scalar_operations_instead_of_tensor_shape() -> None:
   assert not rejected.attrs.get("scalarized")
   _assert_scalar(explicit)
 
-  x = sc.sym("x", 64)
-  value = x
-  for _ in range(AUTO_SCALAR_OPS_PER_PROC // 64 + 1):
-    value = value.sin()
-  stage = _function("costly_stage", [x], [value])
-  outer = _function("costly_outer", [x], [stage(x)])
+  @sc.function(sc.L("x", 64), sc.L("out0", ...), name="costly_stage")
+  def stage(x: sc.Expr) -> sc.Expr:
+    for _ in range(AUTO_SCALAR_OPS_PER_PROC // 64 + 1):
+      x = x.sin()
+    return x
+
+  outer = sc.function(sc.L("x", 64), sc.L("out0", ...), name="costly_outer")(stage)
   assert not lower_function(outer).args[0].attrs.get("scalarized")
 
 
@@ -210,7 +205,7 @@ def test_auto_counts_shared_post_fold_computation_once() -> None:
   proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "auto"}, raw.dtype)
   scalarized = scalarize_program(p.program([proc])).args[0]
   _assert_scalar(scalarized)
-  nodes = {node for stmt in _body(scalarized) for node in _walk(stmt)}
+  nodes = {node for stmt in _body(scalarized) for node in walk_program(stmt)}
   assert sum(node.op == ProgramOp.SIN for node in nodes) == 1
   assert not any(node.op == ProgramOp.ADD for node in nodes)
 
@@ -233,20 +228,22 @@ def test_auto_rejects_call_when_callee_exceeds_budget() -> None:
 
 @pytest.mark.parametrize("dtype", [dtypes.float32, dtypes.int32, dtypes.int64])
 def test_other_dtypes_keep_their_store_boundaries(dtype) -> None:
-  x = sc.sym("x", 4, dtype=dtype)
-  y = (x + sc.const([1, 2, 3, 4], dtype=dtype)).scalar()
-  fn = _function("typed_stage", [x], [y])
+  fn = sc.function(sc.L("x", sc.TensorType((4,), dtype=dtype)), sc.L("out0", ...), name="typed_stage")(
+    lambda x: (x + sc.const([1, 2, 3, 4], dtype=dtype)).scalar()
+  )
   assert not main_proc(lower_function(fn)).attrs.get("scalarized")
 
 
 def test_views_broadcast_gather_and_scatter() -> None:
-  x = sc.sym("x", (3, 4))
-  sliced = x[::-1, 1::2]
-  broadcast = sliced + x[1:2, 1::2]
-  moved = sc.concat([broadcast.T, sliced.T], axis=1).reshape((12,))
-  gathered = sc.gather(moved, np.array([[11, 0, 4], [3, 9, 1]]))
-  scattered = sc.scatter(gathered.reshape((6,)), np.array([3, 1, 4, 0, 5, 2]), (7,))
-  fn = _function("views", [x], [sc.stack([scattered, scattered * 2], axis=1).scalar(), x[1:, :][1:, 1:3]])
+  @sc.function(sc.L("x", (3, 4)), sc.G(sc.L("out0", ...), sc.L("out1", ...)), name="views")
+  def fn(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    sliced = x[::-1, 1::2]
+    broadcast = sliced + x[1:2, 1::2]
+    moved = sc.concat([broadcast.T, sliced.T], axis=1).reshape((12,))
+    gathered = sc.gather(moved, np.array([[11, 0, 4], [3, 9, 1]]))
+    scattered = sc.scatter(gathered.reshape((6,)), np.array([3, 1, 4, 0, 5, 2]), (7,))
+    return sc.stack([scattered, scattered * 2], axis=1).scalar(), x[1:, :][1:, 1:3]
+
   _assert_scalar(main_proc(lower_function(fn)))
   data = np.arange(12, dtype=float).reshape(3, 4) / 7
   s = data[::-1, 1::2]
@@ -259,15 +256,17 @@ def test_views_broadcast_gather_and_scatter() -> None:
 
 
 def test_scalar_constants_cse_and_expression_trees() -> None:
-  x = sc.sym("v0", 3)
-  a = sc.gather(x, np.array([2, 0, 2])).sin()
-  b = sc.gather(x, np.array([0, 2, 0])).sin()
-  masked = a * sc.const([1.0, 0.0, 2.0]) + b * sc.const([0.0, 1.0, 0.0])
-  constants = sc.const([0.0, 1.0, 2.0]).sin()
-  fn = _function("folded", [x], [(masked + constants).scalar()])
+  @sc.function(sc.L("v0", 3), sc.L("out0", ...), name="folded")
+  def fn(x: sc.Expr) -> sc.Expr:
+    a = sc.gather(x, np.array([2, 0, 2])).sin()
+    b = sc.gather(x, np.array([0, 2, 0])).sin()
+    masked = a * sc.const([1.0, 0.0, 2.0]) + b * sc.const([0.0, 1.0, 0.0])
+    constants = sc.const([0.0, 1.0, 2.0]).sin()
+    return (masked + constants).scalar()
+
   proc = main_proc(lower_function(fn))
   _assert_scalar(proc)
-  nodes = {n for s in _body(proc) for n in _walk(s)}
+  nodes = {n for s in _body(proc) for n in walk_program(s)}
   assert sum(n.op == ProgramOp.SIN for n in nodes) == 1
   assert all(n.attrs["target"] != "v0" for n in _body(proc) if n.op == ProgramOp.ASSIGN)
   source = render_program_c_source(fn)
@@ -279,13 +278,15 @@ def test_scalar_constants_cse_and_expression_trees() -> None:
 
 
 def test_nested_calls_offsets_multiple_outputs_and_repeated_invocations() -> None:
-  x = sc.sym("x", 3)
-  inner = _function("nested_inner", [x], [x * x, x.sum()])
-  z = sc.sym("z", 7)
-  a, b = inner(z[1:4])
-  c, d = inner(z[3:6])
-  again, _ = inner(z[1:4])
-  fn = _function("nested_outer", [z], [(a + c + again).scalar(), b + d, a, sc.const([2.0, 3.0])])
+  inner = sc.function(sc.L("x", 3), sc.G(sc.L("out0", ...), sc.L("out1", ...)), name="nested_inner")(lambda x: (x * x, x.sum()))
+
+  @sc.function(sc.L("z", 7), sc.G(sc.L("out0", ...), sc.L("out1", ...), sc.L("out2", ...), sc.L("out3", ...)), name="nested_outer")
+  def fn(z: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
+    a, b = inner(z[1:4])
+    c, d = inner(z[3:6])
+    again, _ = inner(z[1:4])
+    return (a + c + again).scalar(), b + d, a, sc.const([2.0, 3.0])
+
   _assert_scalar(main_proc(lower_function(fn)))
   data = np.arange(7, dtype=float) / 4
   got = fn(data)
@@ -295,20 +296,21 @@ def test_nested_calls_offsets_multiple_outputs_and_repeated_invocations() -> Non
 
 
 def test_block_callee_keeps_its_call_boundary() -> None:
-  x = sc.sym("x", 4)
-  inner = _function("block_inner", [x], [x.sin().block()])
-  fn = _function("block_outer", [x], [(inner(x) * x).scalar()])
+  inner = sc.function(sc.L("x", 4), sc.L("out0", ...), name="block_inner")(lambda x: x.sin().block())
+  fn = sc.function(sc.L("x", 4), sc.L("out0", ...), name="block_outer")(lambda x: (inner(x) * x).scalar())
   prog = lower_function(fn)
   assert not any(pr.attrs.get("scalarized") for pr in prog.args)
-  assert any(n.op == ProgramOp.CALL for n in _walk(main_proc(prog)))
+  assert any(n.op == ProgramOp.CALL for n in walk_program(main_proc(prog)))
   data = np.linspace(0, 1, 4)
   np.testing.assert_allclose(fn(data), np.sin(data) * data, rtol=1e-14, atol=1e-14)
 
 
 def test_reductions_keep_left_to_right_order_and_handle_empty_inputs() -> None:
-  x = sc.sym("x", 4)
-  empty = sc.sym("empty", 0)
-  fn = _function("reduce", [x, empty], [x.sum().scalar(), x @ sc.const(np.ones(4)), empty.sum(), empty])
+  @sc.function(sc.G(sc.L("x", 4), sc.L("empty", 0)), sc.G(sc.L("out0", ...), sc.L("out1", ...), sc.L("out2", ...), sc.L("out3", ...)), name="reduce")
+  def fn(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
+    x, empty = inputs
+    return x.sum().scalar(), x @ sc.const(np.ones(4)), empty.sum(), empty
+
   _assert_scalar(main_proc(lower_function(fn)))
   data = np.array([1e16, 1.0, -1e16, 1.0])
   total, dot, zero, blank = fn((data, np.empty(0)))
@@ -345,12 +347,9 @@ def test_repeated_stores_and_aliases_read_the_latest_value() -> None:
 
 
 def test_small_nested_maps_expand_inside_a_stage() -> None:
-  x = sc.sym("x", 2)
-  inner = _function("small_map_inner", [x], [x * x, x.sum()])
-  z = sc.sym("z", 8)
-  mapped = sc.vmap(inner, 3, [(z, 1, 2)], output=1)
-  stage = _function("small_map_stage", [z], [mapped])
-  outer = _function("small_map_outer", [z], [stage(z)])
+  inner = sc.function(sc.L("x", 2), sc.G(sc.L("out0", ...), sc.L("out1", ...)), name="small_map_inner")(lambda x: (x * x, x.sum()))
+  stage = sc.function(sc.L("z", 8), sc.L("out0", ...), name="small_map_stage")(lambda z: sc.vmap(inner, 3, [(z, 1, 2)], output=1))
+  outer = sc.function(sc.L("z", 8), sc.L("out0", ...), name="small_map_outer")(stage)
   proc = next(pr for pr in lower_function(outer).args if pr.attrs["name"] == stage.name)
   _assert_scalar(proc)
   data = np.arange(8, dtype=float) / 3
@@ -358,19 +357,27 @@ def test_small_nested_maps_expand_inside_a_stage() -> None:
 
 
 def test_forward_over_reverse_folds_constant_seeds_and_matches_analytic_hessian() -> None:
-  dist = sc.sym("dist", 3)
-  link = _function("spring_link", [dist], [(1 - 0.3 / sc.norm_2(dist)) * dist])
-  x, lam = sc.sym("x", 6), sc.sym("lam", 6)
-  accel = link(x[3:] - x[:3])
-  residual = sc.concat([x[:3] + 0.1 * accel, x[3:] - 0.1 * accel])
-  grad = sc.vjp((residual,), (x,), (lam,))[0]
-  seeds = sc.sym("seeds", (6, 6))
-  symbolic = _function("spring_symbolic", [x, lam, seeds], [sc.jvp_many(grad, x, seeds).scalar()])
-  baked = _function("spring_baked", [x, lam], [sc.jvp_many(grad, x, sc.const(np.eye(6))).scalar()])
+  link = sc.function(sc.L("dist", 3), sc.L("out0", ...), name="spring_link")(lambda dist: (1 - 0.3 / sc.norm_2(dist)) * dist)
+
+  def grad(x: sc.Expr, lam: sc.Expr) -> sc.Expr:
+    accel = link(x[3:] - x[:3])
+    residual = sc.concat([x[:3] + 0.1 * accel, x[3:] - 0.1 * accel])
+    return sc.vjp((residual,), (x,), (lam,))[0]
+
+  @sc.function(sc.G(sc.L("x", 6), sc.L("lam", 6), sc.L("seeds", (6, 6))), sc.L("out0", ...), name="spring_symbolic")
+  def symbolic(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
+    x, lam, seeds = inputs
+    return sc.jvp_many(grad(x, lam), x, seeds).scalar()
+
+  @sc.function(sc.G(sc.L("x", 6), sc.L("lam", 6)), sc.L("out0", ...), name="spring_baked")
+  def baked(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    x, lam = inputs
+    return sc.jvp_many(grad(x, lam), x, sc.const(np.eye(6))).scalar()
+
   procs = [main_proc(lower_function(fn)) for fn in (symbolic, baked)]
   for proc in procs:
     _assert_scalar(proc)
-  arithmetic = lambda pr: sum(n.op in {ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL, ProgramOp.DIV} for s in _body(pr) for n in _walk(s))
+  arithmetic = lambda pr: sum(n.op in {ProgramOp.ADD, ProgramOp.SUB, ProgramOp.MUL, ProgramOp.DIV} for s in _body(pr) for n in walk_program(s))
   assert arithmetic(procs[1]) < arithmetic(procs[0]) * 2 / 3
   rng = np.random.default_rng(92)
   for _ in range(3):
@@ -386,8 +393,7 @@ def test_forward_over_reverse_folds_constant_seeds_and_matches_analytic_hessian(
 
 @pytest.mark.parametrize("left,right", [((3,), (3,)), ((5, 3), (3,)), ((3,), (3, 5)), ((5, 3), (3, 4))])
 def test_scalar_matmul_matches_numpy(left: tuple[int, ...], right: tuple[int, ...]) -> None:
-  x, y = sc.sym("x", left), sc.sym("y", right)
-  fn = _function("scalar_mm", [x, y], [(x @ y).scalar()])
+  fn = sc.function(sc.G(sc.L("x", left), sc.L("y", right)), sc.L("out0", ...), name="scalar_mm")(lambda xy: (xy[0] @ xy[1]).scalar())
   _assert_scalar(main_proc(lower_function(fn)))
   rng = np.random.default_rng(8)
   xv, yv = rng.normal(size=left), rng.normal(size=right)
@@ -395,8 +401,7 @@ def test_scalar_matmul_matches_numpy(left: tuple[int, ...], right: tuple[int, ..
 
 
 def test_deep_scalar_reduction_has_bounded_expression_trees() -> None:
-  x = sc.sym("x", 1500)
-  fn = _function("deep_reduce", [x], [x.sum().scalar()])
+  fn = sc.function(sc.L("x", 1500), sc.L("out0", ...), name="deep_reduce")(lambda x: x.sum().scalar())
   proc = main_proc(lower_function(fn))
   _assert_scalar(proc)
   assert any(n.op == ProgramOp.ASSIGN for n in _body(proc))
@@ -420,8 +425,7 @@ def test_invalid_constant_math_remains_a_runtime_operation(op: ProgramOp, values
 
 
 def test_symbolic_zero_identities_and_known_invalid_constants_have_distinct_semantics() -> None:
-  x = sc.sym("x", 4)
-  fn = _function("symbolic_zero", [x], [((x * 0) + (0 / x)).scalar()])
+  fn = sc.function(sc.L("x", 4), sc.L("out0", ...), name="symbolic_zero")(lambda x: ((x * 0) + (0 / x)).scalar())
   values = np.array([np.nan, np.inf, -np.inf, 0.0])
   np.testing.assert_array_equal(fn(values), np.zeros(4))
   zero_div_zero = _fold(ProgramOp.DIV, (p.const_float(0), p.const_float(0)), dtypes.float64)
@@ -431,8 +435,7 @@ def test_symbolic_zero_identities_and_known_invalid_constants_have_distinct_sema
 
 
 def test_unfolded_constant_division_uses_floating_point_in_c() -> None:
-  x = sc.sym("x", 1)
-  fn = _function("invalid_division", [x], [(sc.const([0.0, 1.0]) / sc.const([0.0, 0.0])).scalar()])
+  fn = sc.function(sc.L("x", 1), sc.L("out0", ...), name="invalid_division")(lambda x: (sc.const([0.0, 1.0]) / sc.const([0.0, 0.0])).scalar())
   source = render_program_c_source(fn)
   assert "(0.0 / 0.0)" in source and "(1.0 / 0.0)" in source
   result = fn(np.ones(1))
@@ -440,11 +443,10 @@ def test_unfolded_constant_division_uses_floating_point_in_c() -> None:
 
 
 def test_mixed_constant_math_folds_per_element() -> None:
-  x = sc.sym("x", 3)
   y = sc.const([0.0, 1.0, 4.0]).sqrt() + sc.const([2.0, 3.0, 4.0]) ** sc.const([0.0, 1.0, 2.0])
-  fn = _function("constant_math", [x], [(x + y).scalar()])
+  fn = sc.function(sc.L("x", 3), sc.L("out0", ...), name="constant_math")(lambda x: (x + y).scalar())
   proc = main_proc(lower_function(fn))
-  assert not any(n.op in {ProgramOp.SQRT, ProgramOp.POW} for n in _walk(proc))
+  assert not any(n.op in {ProgramOp.SQRT, ProgramOp.POW} for n in walk_program(proc))
   np.testing.assert_array_equal(fn(np.array([2.0, 3.0, 4.0])), [3, 7, 22])
   assert _fold(ProgramOp.SIN, (p.const_float(1.0),), dtypes.float64).attrs["value"] == math.sin(1.0)
 

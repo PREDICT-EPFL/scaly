@@ -17,13 +17,13 @@ import pytest
 import scaly as sc
 from scaly.codegen.aot import render_c_source
 from scaly.codegen.c import can_render_program_c, render_program_c_source
-from scaly.codegen.jit import _find_compiler
+from scaly.codegen.toolchain import find_c_compiler
 from scaly.passes.lowering import LoweringError, lower_function, main_proc
 from scaly.ir.expr import topo
 from scaly.ir.program import ProgramOp
 from scaly.ir.program_spec import verify_program
 
-_HAVE_CC = _find_compiler() is not None
+_HAVE_CC = find_c_compiler() is not None
 
 
 # --- covered corpus: (name, builder, inputs) -------------------------------------
@@ -359,8 +359,12 @@ _MATMUL_CASES = {
 def test_matmul_lowering_matches_numpy_exactly(name) -> None:
   """Integer-valued inputs keep every product and partial sum exact, so the check is exact in any summation order."""
   sa, sb, product = _MATMUL_CASES[name]
-  a, b = sc.sym("a", sa), sc.sym("b", sb)
-  fn = sc.Function._from_exprs(f"mm_{name}", [a, b], [sc.simplify(product(a, b))], ["a", "b"], ["y"])
+
+  @sc.function(sc.G(sc.L("a", sa), sc.L("b", sb)), sc.L("y", ...), name=f"mm_{name}")
+  def fn(inputs):
+    a, b = inputs
+    return sc.simplify(product(a, b))
+
   assert all(e.op != sc.ExprOp.TRANSPOSE for e in topo(fn.outputs)), "the transpose was not folded into the product"
   rng = np.random.default_rng(0)
   av, bv = (rng.integers(-8, 9, shape).astype(np.float64) for shape in (sa, sb))
@@ -371,12 +375,20 @@ def test_matmul_lowering_matches_numpy_exactly(name) -> None:
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 def test_transpose_fold_is_bit_identical_to_the_transposed_product() -> None:
   """Both forms sum each output's terms in the same k order, so folding the transpose changes no bit."""
-  a, v, w = sc.sym("a", (32, 12)), sc.sym("v", 32), sc.sym("w", 12)
   rng = np.random.default_rng(1)
   av, vv, wv = rng.standard_normal((32, 12)), rng.standard_normal(32), rng.standard_normal(12)
-  for tag, x, xv, product in (("v", v, vv, lambda m, x: m.T @ x), ("w", w, wv, lambda m, x: x @ m.T)):
-    transposed = sc.Function._from_exprs(f"mm_transposed_{tag}", [a, x], [product(a, x)], ["a", tag], ["y"])
-    folded = sc.Function._from_exprs(f"mm_folded_{tag}", [a, x], [sc.simplify(product(a, x))], ["a", tag], ["y"])
+  for tag, shape, xv, product in (("v", 32, vv, lambda m, x: m.T @ x), ("w", 12, wv, lambda m, x: x @ m.T)):
+
+    @sc.function(sc.G(sc.L("a", (32, 12)), sc.L(tag, shape)), sc.L("y", ...), name=f"mm_transposed_{tag}")
+    def transposed(inputs):
+      a, x = inputs
+      return product(a, x)
+
+    @sc.function(sc.G(sc.L("a", (32, 12)), sc.L(tag, shape)), sc.L("y", ...), name=f"mm_folded_{tag}")
+    def folded(inputs):
+      a, x = inputs
+      return sc.simplify(product(a, x))
+
     for fn in (transposed, folded):
       fn.recompile()
     np.testing.assert_array_equal(folded((av, xv)), transposed((av, xv)))
@@ -508,12 +520,11 @@ def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None
 
 @pytest.mark.parametrize("identity", ["none", "compile", "simplify"])
 def test_normalization_preserves_shared_work_across_hinted_outputs(identity: str) -> None:
-  x = sc.sym("x", 64)
-  a = x.sin()
-  outputs = [a.cos().block(), a] if identity == "none" else [a.cos(), (a * 1.0).block()]
-  if identity == "simplify":
-    outputs = [sc.simplify(output) for output in outputs]
-  fn = sc.Function._from_exprs(f"shared_outputs_{identity}", [x], outputs, ["x"], ["cos", "sin"])
+  @sc.function(sc.L("x", 64), sc.G(sc.L("cos", ...), sc.L("sin", ...)), name=f"shared_outputs_{identity}")
+  def fn(x):
+    a = x.sin()
+    outputs = [a.cos().block(), a] if identity == "none" else [a.cos(), (a * 1.0).block()]
+    return tuple(sc.simplify(output) for output in outputs) if identity == "simplify" else tuple(outputs)
 
   assert render_c_source(fn).count("sin(") == 1
   values = np.linspace(-2.0, 2.0, 64)
@@ -539,9 +550,13 @@ def test_normalization_keeps_constant_and_conflicting_function_hints() -> None:
 
 @pytest.mark.parametrize(("dtype", "value"), [("float32", np.float32(1.0)), ("int64", np.int64(1))])
 def test_normalization_preserves_typed_identity_boundaries(dtype: str, value: object) -> None:
-  x = sc.sym("x", 2, dtype=dtype)
   one = sc.const(np.full(2, value), dtype=dtype)
-  fn = sc.Function._from_exprs(f"normalized_{dtype}", [x], [(x * one).scalar()], ["x"], ["y"])
+
+  @sc.function(sc.L("x", sc.TensorType((2,), dtype=sc.as_dtype(dtype))), sc.L("y", ...), name=f"normalized_{dtype}")
+  def fn(x):
+    return (x * one).scalar()
+
+  x = fn.inputs[0]
   observed: list[sc.Function] = []
 
   proc = main_proc(lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized)))
@@ -552,16 +567,18 @@ def test_normalization_preserves_typed_identity_boundaries(dtype: str, value: ob
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
 def test_automatic_transpose_normalization_preserves_cancellation_order_and_empty_reduction() -> None:
-  matrix = sc.sym("matrix", (3, 2))
-  vector = sc.sym("vector", 3)
-  product = sc.Function._from_exprs("normalized_cancel", [matrix, vector], [matrix.T @ vector], ["matrix", "vector"], ["y"])
+  @sc.function(sc.G(sc.L("matrix", (3, 2)), sc.L("vector", 3)), sc.L("y", ...), name="normalized_cancel")
+  def product(inputs):
+    matrix, vector = inputs
+    return matrix.T @ vector
+
   matrix_value = np.array([[1e16, -1e16], [1.0, 1.0], [-1e16, 1e16]])
   vector_value = np.ones(3)
   np.testing.assert_array_equal(product((matrix_value, vector_value)), vector_value @ matrix_value)
 
-  empty_matrix = sc.sym("empty_matrix", (2, 0))
-  empty_vector = sc.sym("empty_vector", 0)
-  empty = sc.Function._from_exprs(
-    "normalized_empty_product", [empty_matrix, empty_vector], [empty_matrix @ empty_vector], ["matrix", "vector"], ["y"]
-  )
+  @sc.function(sc.G(sc.L("matrix", (2, 0)), sc.L("vector", 0)), sc.L("y", ...), name="normalized_empty_product")
+  def empty(inputs):
+    matrix, vector = inputs
+    return matrix @ vector
+
   np.testing.assert_array_equal(empty((np.empty((2, 0)), np.empty(0))), np.zeros(2))

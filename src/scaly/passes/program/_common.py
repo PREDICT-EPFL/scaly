@@ -8,21 +8,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from ...ir.match import Pattern, rewrite
-from ...ir.program import ProgramNode, ProgramOp
+from ...ir.program import ProgramNode, ProgramOp, walk_program
 from ...utils.names import c_ident
-
-
-def _walk(root: ProgramNode) -> Iterable[ProgramNode]:
-  """Yield every distinct node at/below ``root`` (id-deduped; hash-consing collapses equals)."""
-  seen: set[int] = set()
-  stack = [root]
-  while stack:
-    n = stack.pop()
-    if id(n) in seen:
-      continue
-    seen.add(id(n))
-    yield n
-    stack.extend(n.args)
 
 
 def _postorder(root: ProgramNode) -> Iterable[ProgramNode]:
@@ -151,7 +138,7 @@ def buffer_refs(stmt: ProgramNode, aliases: dict[str, str] | None = None) -> Buf
   stores: set[str] = set()
   call_inputs: set[str] = set()
   call_outputs: set[str] = set()
-  for n in _walk(stmt):
+  for n in walk_program(stmt):
     if n.op == ProgramOp.LOAD:
       loads.add(n.args[0].attrs["buffer"])
     elif n.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR):
@@ -282,7 +269,7 @@ def prune_procedures(prog: ProgramNode) -> ProgramNode:
   table = {proc.attrs["name"]: proc for proc in procs}
   roots = {procs[-1].attrs["name"]}
   roots.update(name for names in prog.attrs.get("solver_oracles", {}).values() for name in names)
-  roots.update(node.attrs["callee"] for kernel in kernels for node in _walk(kernel) if node.op == ProgramOp.CALL)
+  roots.update(node.attrs["callee"] for kernel in kernels for node in walk_program(kernel) if node.op == ProgramOp.CALL)
   reachable: set[str] = set()
   pending = list(roots)
   while pending:
@@ -290,7 +277,7 @@ def prune_procedures(prog: ProgramNode) -> ProgramNode:
     if name in reachable or name not in table:
       continue
     reachable.add(name)
-    pending.extend(n.attrs["callee"] for n in _walk(table[name]) if n.op == ProgramOp.CALL)
+    pending.extend(n.attrs["callee"] for n in walk_program(table[name]) if n.op == ProgramOp.CALL)
   kept = [proc for proc in procs if proc.attrs["name"] in reachable]
   if len(kept) == len(procs):
     return prog

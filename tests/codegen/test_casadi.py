@@ -23,10 +23,12 @@ ACADOS_SYMBOLS = ("", "_work", "_sparsity_in", "_sparsity_out", "_n_in", "_n_out
 
 
 def _spjac() -> sc.Function:
-  x = sc.sym("x", 4)
-  p = sc.sym("p", 2)
-  y = sc.stack([x[0] * p[0], x[2:4].sum(), x[1] * x[3] + p[1]])
-  return sc.sparse_jacobian(sc.Function._from_exprs("f", [x, p], [y], ["x", "p"], ["y"]), "y", "x", name="f_spjac")
+  @sc.function(sc.G(sc.L("x", 4), sc.L("p", 2)), sc.L("y", ...))
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    x, p = inputs
+    return sc.stack([x[0] * p[0], x[2:4].sum(), x[1] * x[3] + p[1]])
+
+  return sc.sparse_jacobian(f, "y", "x", name="f_spjac")
 
 
 def _build(tmp_path, fun: sc.Function, **kwargs):
@@ -134,8 +136,10 @@ def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:
 
 
 def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:
-  x = sc.sym("x", 3)
-  fun = sc.Function._from_exprs("g", [x], [x.sin(), x.sum()], ["x"], ["y", "s"])
+  @sc.function(sc.L("x", 3), sc.G(sc.L("y", ...), sc.L("s", ...)), name="g")
+  def fun(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return (x.sin(), x.sum())
+
   module, lib_path = _build(tmp_path, fun, lang="cpp")
   assert module.header_name == "g.hpp" and module.workspace_size == workspace_size(fun)
   ext = casadi.external("g", str(lib_path))
@@ -147,11 +151,17 @@ def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:
 
 
 def test_casadi_rejects_dense_matrix_buffers() -> None:
-  m = sc.sym("m", (2, 3))
-  fun = sc.Function._from_exprs("dense", [m], [m * 2.0], ["m"], ["n"])
+  @sc.function(sc.L("m", (2, 3)), sc.L("n", ...), name="dense")
+  def fun(m: sc.Expr) -> sc.Expr:
+    return m * 2.0
+
   with pytest.raises(ValueError, match="column-major"):
     render_c_module(fun, casadi=True)
   with pytest.raises(ValueError, match="input 'm'"):
     render_c_api_header(fun, casadi=True)
-  row = sc.sym("row", (1, 3))
-  render_c_module(sc.Function._from_exprs("row_ok", [row], [row * 2.0], ["row"], ["n"]), casadi=True)
+
+  @sc.function(sc.L("row", (1, 3)), sc.L("n", ...))
+  def row_ok(row: sc.Expr) -> sc.Expr:
+    return row * 2.0
+
+  render_c_module(row_ok, casadi=True)

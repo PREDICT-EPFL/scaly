@@ -97,17 +97,13 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       previous result since the four outputs are the first four inputs. `.function` holds the
       plain `Function` for `write_module`, the `scaly_codegen` CLI, `input_names` and nested
       symbolic calls; `write_module` and the CLI accept either. The C ABI does not change.
+- [x] **API-83. Retire `Function._from_exprs` from ordinary tests.** Converted 264 calls to
+      `@sc.function` bodies. Nine remain for constructor checks, sparse or lowering metadata,
+      and zero-input hosts. Tests use `walk_program`, `find_c_compiler`, and
+      `sc.jacobian_sparsity` in place of the audited private helpers.
 
 ### Deferred
 
-- **API-83. Retire `Function._from_exprs` from tests.** An audit on 2026-09-22 found 273 call
-  sites in 42 test files, 264 of them expressible as `@sc.function(sc.G(...), sc.L(...))` bodies
-  reading symbols back through `fn.inputs`; the necessary ones test the constructor itself
-  (`tests/function/test_model.py`), pass `output_sparsities=` (`tests/ad/test_sparsity.py`), or
-  build zero-input hosts (`tests/solvers/test_problem.py`), which API-3 owns. Same sweep: replace
-  `_walk` from `passes/program/_common` (6 files) with a test helper, `_find_compiler` with
-  `toolchain.find_c_compiler` (2 files), `_jac_mask` with `sc.jacobian_sparsity` (1 file).
-  Benchmarks are already free of private Scaly names.
 - **API-6. A QP-subproblem contract so scaly-sqp can use other QP plugins.** Today `scaly-sqp`
   imports only `include_dir`/`lib_dir` from `scaly_piqp` and its C template calls
   `piqp_setup/update/solve` and reads `qp->result` directly, so a future OSQP, ProxQP or HPIPM

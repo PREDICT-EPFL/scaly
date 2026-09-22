@@ -14,14 +14,17 @@ def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 def test_vmap_eval_matches_unrolled_concat_of_call() -> None:
   N = 4
-  z = sc.sym("z", 3 * N)
-  p = sc.sym("p", 3 * N)
+  inputs = sc.G(sc.L("z", 3 * N), sc.L("p", 3 * N))
 
-  mapped = sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-  unrolled = sc.concat([scale_add((z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3])) for i in range(N)])
+  @sc.function(inputs, sc.L("y", ...), name="scaled_vmap")
+  def fn_vmap(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    z, p = zp
+    return sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
 
-  fn_vmap = sc.Function._from_exprs("scaled_vmap", [z, p], [mapped], ["z", "p"], ["y"])
-  fn_concat = sc.Function._from_exprs("scaled_concat", [z, p], [unrolled], ["z", "p"], ["y"])
+  @sc.function(inputs, sc.L("y", ...), name="scaled_concat")
+  def fn_concat(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    z, p = zp
+    return sc.concat([scale_add((z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3])) for i in range(N)])
 
   rng = np.random.default_rng(0)
   zv = rng.normal(size=3 * N)
@@ -40,17 +43,20 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
     z, znext, p = inputs
     return (z[:NX] - znext[:NX]) + p
 
-  z = sc.sym("z", NZ * (N + 1))
-  p = sc.sym("p", NX * (N + 1))
+  inputs = sc.G(sc.L("z", NZ * (N + 1)), sc.L("p", NX * (N + 1)))
 
-  mapped = sc.vmap(step, N, [(z, 0, NZ), (z, NZ, NZ), (p, NX, NX)])
-  parts = []
-  for i in range(N):
-    parts.append(step((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX])))
-  unrolled = sc.concat(parts)
+  @sc.function(inputs, sc.L("eq", ...), name="step_vmap")
+  def fn_vmap(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    z, p = zp
+    return sc.vmap(step, N, [(z, 0, NZ), (z, NZ, NZ), (p, NX, NX)])
 
-  fn_vmap = sc.Function._from_exprs("step_vmap", [z, p], [mapped], ["z", "p"], ["eq"])
-  fn_concat = sc.Function._from_exprs("step_concat", [z, p], [unrolled], ["z", "p"], ["eq"])
+  @sc.function(inputs, sc.L("eq", ...), name="step_concat")
+  def fn_concat(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    z, p = zp
+    parts = []
+    for i in range(N):
+      parts.append(step((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], p[(i + 1) * NX : (i + 2) * NX])))
+    return sc.concat(parts)
 
   rng = np.random.default_rng(1)
   zv = rng.normal(size=NZ * (N + 1))
@@ -60,10 +66,11 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
 
 
 def test_vmap_zero_length_returns_empty() -> None:
-  z = sc.sym("z", 3)
-  p = sc.sym("p", 3)
-  empty = sc.vmap(scale_add, 0, [(z, 0, 0), (p, 0, 0)])
-  fn = sc.Function._from_exprs("empty_vmap", [z, p], [empty], ["z", "p"], ["y"])
+  @sc.function(sc.G(sc.L("z", 3), sc.L("p", 3)), sc.L("y", ...), name="empty_vmap")
+  def fn(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    z, p = zp
+    return sc.vmap(scale_add, 0, [(z, 0, 0), (p, 0, 0)])
+
   out = fn((np.zeros(3), np.zeros(3)))
   assert isinstance(out, np.ndarray)
   assert out.shape == (0,)
@@ -71,10 +78,12 @@ def test_vmap_zero_length_returns_empty() -> None:
 
 def test_vmap_broadcast_stride_zero_repeats_same_slice() -> None:
   N = 3
-  z = sc.sym("z", 3)
-  p = sc.sym("p", 3)
-  mapped = sc.vmap(scale_add, N, [(z, 0, 0), (p, 0, 0)])
-  fn = sc.Function._from_exprs("broadcast_vmap", [z, p], [mapped], ["z", "p"], ["y"])
+
+  @sc.function(sc.G(sc.L("z", 3), sc.L("p", 3)), sc.L("y", ...), name="broadcast_vmap")
+  def fn(zp: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    z, p = zp
+    return sc.vmap(scale_add, N, [(z, 0, 0), (p, 0, 0)])
+
   zv = np.array([1.0, 2.0, 3.0])
   pv = np.array([0.5, -1.0, 0.25])
   expected = np.tile(2.0 * zv + pv, N)

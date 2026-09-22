@@ -8,30 +8,37 @@ import pytest
 import scaly as sc
 from scaly.ad.forward import _call_jvp_function
 from scaly.ir.expr import ExprOp, topo
-from scaly.ir.program import ProgramOp
+from scaly.ir.program import ProgramOp, walk_program
 from scaly.passes.lowering import lower_function
-from scaly.passes.program._common import _walk
 
 
 @pytest.mark.parametrize("mapped", [False, True])
 @pytest.mark.parametrize("constant", [False, True])
 @pytest.mark.parametrize("nseed", [1, 2, 3])
 def test_joint_active_formals(mapped: bool, constant: bool, nseed: int) -> None:
-  x, y, unused = sc.sym("x", 2), sc.sym("y", 2), sc.sym("unused", 2)
   wx, wy = np.array([[1.0, 0.2], [-0.3, 0.7]]), np.array([[0.8, -0.1], [0.4, 0.9]])
-  a, b = x @ sc.const(wx), y @ sc.const(wy)
-  body = (a * b).sin() + a / b
-  stage = sc.Function._from_exprs("joint_stage", [x, y, unused], [body], ["x", "y", "unused"], ["out"])
+
+  @sc.function(sc.G(sc.L("x", 2), sc.L("y", 2), sc.L("unused", 2)), sc.L("out", ...), name="joint_stage")
+  def stage(inputs):
+    x, y, _unused = inputs
+    a, b = x @ sc.const(wx), y @ sc.const(wy)
+    return (a * b).sin() + a / b
+
   length = 4 if mapped else 1
-  z = sc.sym("z", 2 * length + 1)
-  value = sc.vmap(stage, length, [(z, 0, 2), (z, 1, 2), (z, 0, 2)]) if mapped else stage((z[:2], z[1:], z[:2]))
-  sv = np.random.default_rng(3).normal(size=(nseed, z.size))
+  sv = np.random.default_rng(3).normal(size=(nseed, 2 * length + 1))
   if nseed > 1:
     sv[1] = 0
-  seed = sc.const(sv) if constant else sc.sym("seed", sv.shape)
-  derivative = sc.jvp(value, z, seed[0]) if nseed == 1 else sc.jvp_many(value, z, seed)
-  inputs = [z] if constant else [z, seed]
-  fn = sc.Function._from_exprs("joint_actual", inputs, [derivative], ["z"] if constant else ["z", "seed"], ["dy"])
+  input_tree = sc.L("z", 2 * length + 1) if constant else sc.G(sc.L("z", 2 * length + 1), sc.L("seed", sv.shape))
+
+  @sc.function(input_tree, sc.L("dy", ...), name="joint_actual")
+  def fn(inputs):
+    z = inputs if constant else inputs[0]
+    value = sc.vmap(stage, length, [(z, 0, 2), (z, 1, 2), (z, 0, 2)]) if mapped else stage((z[:2], z[1:], z[:2]))
+    seed = sc.const(sv) if constant else inputs[1]
+    return sc.jvp(value, z, seed[0]) if nseed == 1 else sc.jvp_many(value, z, seed)
+
+  z = fn.inputs[0]
+  derivative = fn.outputs[0]
   zv = np.linspace(0.5, 1.5, z.size)
   expected = np.empty((nseed, 2 * length))
   for it in range(length):
@@ -45,17 +52,24 @@ def test_joint_active_formals(mapped: bool, constant: bool, nseed: int) -> None:
 
 
 def test_packed_mapped_hessian_shares_primal_and_preserves_zero_seed_rows() -> None:
-  x, u = sc.sym("value", 2), sc.sym("value", 1)
   weights = np.array([0.3, -0.7, 0.4])
-  body = (x @ sc.const(weights[:2]) + weights[2] * u[0]).exp().scalar()
-  stage = sc.Function._from_exprs("packed_stage", [x, u], [body], ["x", "u"], ["cost"])
+
+  @sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), sc.L("cost", ...), name="packed_stage")
+  def stage(inputs):
+    x, u = inputs
+    return (x @ sc.const(weights[:2]) + weights[2] * u[0]).exp().scalar()
+
   length = 4
-  z = sc.sym("z", 3 * length)
-  mapped = sc.vmap(stage, length, [(z, 0, 3), (z, 2, 3)])
-  grad = sc.vjp((mapped,), (z,), (sc.const(np.ones(length)),))[0]
   seeds = np.tile(np.vstack([np.eye(3), np.zeros(3)]), (1, length))
-  hess = sc.jvp_many(grad, z, sc.const(seeds))
-  fn = sc.Function._from_exprs("packed_hess", [z], [hess], ["z"], ["h"])
+
+  @sc.function(sc.L("z", 3 * length), sc.L("h", ...), name="packed_hess")
+  def fn(z):
+    mapped = sc.vmap(stage, length, [(z, 0, 3), (z, 2, 3)])
+    grad = sc.vjp((mapped,), (z,), (sc.const(np.ones(length)),))[0]
+    return sc.jvp_many(grad, z, sc.const(seeds))
+
+  hess = fn.outputs[0]
+  z = fn.inputs[0]
   zv = np.linspace(-0.8, 1.0, z.size)
   expected = np.zeros((4, z.size))
   for it in range(length):
@@ -64,13 +78,16 @@ def test_packed_mapped_hessian_shares_primal_and_preserves_zero_seed_rows() -> N
   calls = [node for node in topo([hess]) if node.op == ExprOp.VMAP]
   assert len(calls) == 1 and "_fwd_pack_" in calls[0].attrs["callee"].name
   prog = lower_function(fn)
-  exp_nodes = {node for node in _walk(prog) if node.op == ProgramOp.EXP}
+  exp_nodes = {node for node in walk_program(prog) if node.op == ProgramOp.EXP}
   assert len(exp_nodes) == 1
 
 
 def test_joint_helper_cache_distinguishes_formal_sets() -> None:
-  a, b, c = (sc.sym(name, 2) for name in ("a_b", "a", "b"))
-  stage = sc.Function._from_exprs("joint_names", [a, b, c], [a * b + c.sin()], ["a_b", "a", "b"], ["y"])
+  @sc.function(sc.G(sc.L("a_b", 2), sc.L("a", 2), sc.L("b", 2)), sc.L("y", ...), name="joint_names")
+  def stage(inputs):
+    a, b, c = inputs
+    return a * b + c.sin()
+
   first = _call_jvp_function(stage, 0, (0,))
   second = _call_jvp_function(stage, 0, (1, 2))
   assert first[0] is _call_jvp_function(stage, 0, (0,))[0]
@@ -81,10 +98,15 @@ def test_joint_helper_cache_distinguishes_formal_sets() -> None:
 @pytest.mark.parametrize("matrix", [False, True])
 def test_self_products_keep_matrix_product_rule(matrix: bool) -> None:
   shape = (2, 2) if matrix else (4,)
-  x, seed = sc.sym("x", shape), sc.sym("seed", (2, *shape))
-  dot = x @ x
-  outputs = [sc.jvp(dot, x, seed[0]), sc.jvp_many(dot, x, seed), sc.jvp_many(x * x, x, seed)]
-  fn = sc.Function._from_exprs("self_products", [x, seed], outputs, ["x", "seed"], ["one", "many", "square"])
+
+  @sc.function(
+    sc.G(sc.L("x", shape), sc.L("seed", (2, *shape))), sc.G(sc.L("one", ...), sc.L("many", ...), sc.L("square", ...)), name="self_products"
+  )
+  def fn(inputs):
+    x, seed = inputs
+    dot = x @ x
+    return sc.jvp(dot, x, seed[0]), sc.jvp_many(dot, x, seed), sc.jvp_many(x * x, x, seed)
+
   xv = np.array([0.2, -0.7, 1.1, 0.9]).reshape(shape)
   sv = np.arange(8.0).reshape((2, *shape)) / 5 - 0.6
   one, many, square = fn((xv, sv))
@@ -96,14 +118,24 @@ def test_self_products_keep_matrix_product_rule(matrix: bool) -> None:
 
 @pytest.mark.parametrize("scale", [1e-200, 1.0, 1e200])
 def test_division_and_sqrt_derivatives_across_finite_scales(scale: float) -> None:
-  x, y = sc.sym("x", ()), sc.sym("y", ())
-  quotient = x / y
-  dx = sc.jvp(quotient, x, sc.const(1.0))
-  dy = sc.jvp_many(quotient, y, sc.const([1.0, -0.5]))
-  gx, gy = sc.vjp((quotient,), (x, y), (sc.const(1.0),))
-  root = sc.jvp_many(x.sqrt(), x, sc.const([1.0, -0.5]))
-  fn = sc.Function._from_exprs("finite_derivatives", [x, y], [dx, dy, gx, gy, root], ["x", "y"], ["dx", "dy", "gx", "gy", "root"])
-  actual = fn((scale, scale))
+  @sc.function(
+    sc.G(sc.L("x", ()), sc.L("y", ())),
+    sc.G(sc.L("dx", ...), sc.L("dy", ...), sc.L("gx", ...), sc.L("gy", ...), sc.L("root", ...)),
+    name="finite_derivatives",
+  )
+  def fn(inputs):
+    x, y = inputs
+    quotient = x / y
+    gx, gy = sc.vjp((quotient,), (x, y), (sc.const(1.0),))
+    return (
+      sc.jvp(quotient, x, sc.const(1.0)),
+      sc.jvp_many(quotient, y, sc.const([1.0, -0.5])),
+      gx,
+      gy,
+      sc.jvp_many(x.sqrt(), x, sc.const([1.0, -0.5])),
+    )
+
+  actual = fn((np.array(scale), np.array(scale)))
   expected = [1.0 / scale, np.array([-1.0, 0.5]) / scale, 1.0 / scale, -1.0 / scale, np.array([0.5, -0.25]) / np.sqrt(scale)]
   for value, reference in zip(actual, expected, strict=True):
     assert np.isfinite(value).all()
@@ -111,13 +143,19 @@ def test_division_and_sqrt_derivatives_across_finite_scales(scale: float) -> Non
 
 
 def test_mapped_local_and_generic_seeds_share_one_callee() -> None:
-  x, u = sc.sym("x", 2), sc.sym("u", 1)
   weights = np.array([[1.0, 0.2], [-0.3, 0.7]])
-  stage = sc.Function._from_exprs("mixed_seed_stage", [x, u], [((x @ sc.const(weights)) * u).sin()], ["x", "u"], ["out"])
-  z, seeds = sc.sym("z", 12), sc.sym("seeds", (2, 12))
-  mapped = sc.vmap(stage, 4, [(z, 0, 3), (z, 2, 3)])
-  derivative = sc.jvp_many(mapped, z, seeds)
-  fn = sc.Function._from_exprs("mixed_seed_actual", [z, seeds], [derivative], ["z", "seeds"], ["dy"])
+
+  @sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), sc.L("out", ...), name="mixed_seed_stage")
+  def stage(inputs):
+    x, u = inputs
+    return ((x @ sc.const(weights)) * u).sin()
+
+  @sc.function(sc.G(sc.L("z", 12), sc.L("seeds", (2, 12))), sc.L("dy", ...), name="mixed_seed_actual")
+  def fn(inputs):
+    z, seeds = inputs
+    return sc.jvp_many(sc.vmap(stage, 4, [(z, 0, 3), (z, 2, 3)]), z, seeds)
+
+  derivative = fn.outputs[0]
   zv = np.linspace(0.1, 1.2, 12)
   sv = np.random.default_rng(2).normal(size=(2, 12))
   expected = np.empty((2, 8))
@@ -131,13 +169,18 @@ def test_mapped_local_and_generic_seeds_share_one_callee() -> None:
 
 
 def test_call_combines_constant_and_runtime_tangents() -> None:
-  x, y = sc.sym("x", 2), sc.sym("y", 2)
-  stage = sc.Function._from_exprs("mixed_call", [x, y], [(x * y).sin()], ["x", "y"], ["out"])
-  z = sc.sym("z", 2)
-  value = stage((z, z.sin() + 2))
+  @sc.function(sc.G(sc.L("x", 2), sc.L("y", 2)), sc.L("out", ...), name="mixed_call")
+  def stage(inputs):
+    x, y = inputs
+    return (x * y).sin()
+
   seeds = np.vstack([np.eye(2), np.zeros(2)])
-  derivative = sc.jvp_many(value, z, sc.const(seeds))
-  fn = sc.Function._from_exprs("mixed_call_actual", [z], [derivative], ["z"], ["dy"])
+
+  @sc.function(sc.L("z", 2), sc.L("dy", ...), name="mixed_call_actual")
+  def fn(z):
+    return sc.jvp_many(stage((z, z.sin() + 2)), z, sc.const(seeds))
+
+  derivative = fn.outputs[0]
   zv = np.array([0.2, -0.7])
   expected = seeds * (np.cos(zv * (np.sin(zv) + 2)) * (np.sin(zv) + 2 + zv * np.cos(zv)))
   np.testing.assert_allclose(fn(zv), expected, atol=1e-12, rtol=1e-12)

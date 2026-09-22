@@ -73,26 +73,40 @@ def stage_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
 
 def bicycle_eq_function(horizon: int) -> sc.Function:
   """Per-stage unrolled transcription, built from `Function.call` on the stage functions."""
-  z = sc.sym("z", NZ * (horizon + 1))
-  p = sc.sym("p", n_param(horizon), diff=False)
-  params = p[NX * (horizon + 1) :]
-  parts = [stage_initial((z[:NZ], p[:NX]))]
-  for i in range(horizon):
-    parts.append(stage_interstage((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], params)))
-  return sc.Function._from_exprs(f"bicycle_eq_N{horizon}", [z, p], [sc.concat(parts)], ["z", "p"], ["eq"])
+
+  @sc.function(
+    sc.G(sc.L("z", NZ * (horizon + 1)), sc.L("p", sc.TensorType((n_param(horizon),), diff=False))), sc.L("eq", ...), name=f"bicycle_eq_N{horizon}"
+  )
+  def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    z, p = inputs
+    params = p[NX * (horizon + 1) :]
+    parts = [stage_initial((z[:NZ], p[:NX]))]
+    for i in range(horizon):
+      parts.append(stage_interstage((z[i * NZ : (i + 1) * NZ], z[(i + 1) * NZ : (i + 2) * NZ], params)))
+    return sc.concat(parts)
+
+  return fn
 
 
 def bicycle_eq_function_vmap(horizon: int) -> sc.Function:
   """Same semantics through `sc.vmap`, so the loop survives into the rendered C."""
-  z = sc.sym("z", NZ * (horizon + 1))
-  p = sc.sym("p", n_param(horizon), diff=False)
-  initial = stage_initial((z[:NZ], p[:NX]))
-  mapped = sc.vmap(
-    stage_interstage,
-    length=horizon,
-    inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
+
+  @sc.function(
+    sc.G(sc.L("z", NZ * (horizon + 1)), sc.L("p", sc.TensorType((n_param(horizon),), diff=False))),
+    sc.L("eq", ...),
+    name=f"bicycle_eq_vmap_N{horizon}",
   )
-  return sc.Function._from_exprs(f"bicycle_eq_vmap_N{horizon}", [z, p], [sc.concat([initial, mapped])], ["z", "p"], ["eq"])
+  def fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    z, p = inputs
+    initial = stage_initial((z[:NZ], p[:NX]))
+    mapped = sc.vmap(
+      stage_interstage,
+      length=horizon,
+      inputs={"z": (z, 0, NZ), "znext": (z, NZ, NZ), "params": (p, NX * (horizon + 1), 0)},
+    )
+    return sc.concat([initial, mapped])
+
+  return fn
 
 
 def ca_bicycle_eq_jac(horizon: int, name: str = "ca_bicycle_eq_jac", sym_t=None):
@@ -199,9 +213,23 @@ def test_colored_sparse_jacobian_matches_the_reference_path(horizon: int) -> Non
   fn = bicycle_eq_function(horizon)
   colored = sc.sparse_jacobian_colored(fn.outputs[0], fn.inputs[0])
   reference = sc.sparse_jacobian_reference(fn.outputs[0], fn.inputs[0])
-  colored_fn = sc.Function._from_exprs("bicycle_spjac_colored", fn.inputs, [colored.values], fn.input_names, ["colored"])
-  reference_fn = sc.Function._from_exprs("bicycle_spjac_reference", fn.inputs, [reference.values], fn.input_names, ["reference"])
-  compare = sc.Function._from_exprs("bicycle_spjac_compare", fn.inputs, [colored.values, reference.values], fn.input_names, ["colored", "reference"])
+  from scaly.ir.expr import substitute
+
+  def rebound(expr: sc.Expr, inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    return substitute(expr, dict(zip(fn.inputs, inputs, strict=True)))
+
+  @sc.function(fn.input_tree, sc.L("colored", ...), name="bicycle_spjac_colored")
+  def colored_fn(inputs):
+    return rebound(colored.values, inputs)
+
+  @sc.function(fn.input_tree, sc.L("reference", ...), name="bicycle_spjac_reference")
+  def reference_fn(inputs):
+    return rebound(reference.values, inputs)
+
+  @sc.function(fn.input_tree, sc.G(sc.L("colored", ...), sc.L("reference", ...)), name="bicycle_spjac_compare")
+  def compare(inputs):
+    return rebound(colored.values, inputs), rebound(reference.values, inputs)
+
   zv, pv = _sample(horizon, 2)
   assert colored.sparsity == reference.sparsity
   assert len(topo(colored_fn.outputs)) < len(topo(reference_fn.outputs))

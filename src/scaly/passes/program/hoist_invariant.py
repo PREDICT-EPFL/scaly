@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ...ir.program import ProgramNode, ProgramOp, buffer, for_
+from ...ir.program import ProgramNode, ProgramOp, buffer, for_, walk_program
 from ...utils.names import c_ident
 from ._common import (
   allocated_name,
@@ -14,7 +14,6 @@ from ._common import (
   _procs,
   _rebuild_proc,
   _resolve_alias,
-  _walk,
 )
 
 _Split = tuple[ProgramNode, ProgramNode, tuple[int, ...], list[ProgramNode]]
@@ -38,7 +37,7 @@ def hoist_invariant(prog: ProgramNode) -> ProgramNode:
   for pr in procs:  # callees precede callers, so a split always sees the callee's rewritten body
     table[pr.attrs["name"]] = _hoist_proc(pr, table, splits, used_names, pure)
     rewritten.append(table[pr.attrs["name"]])
-    if all(n.attrs["callee"] in pure for n in _walk(table[pr.attrs["name"]]) if n.op == ProgramOp.CALL):
+    if all(n.attrs["callee"] in pure for n in walk_program(table[pr.attrs["name"]]) if n.op == ProgramOp.CALL):
       pure.add(pr.attrs["name"])
   if all(a is b for a, b in zip(procs, rewritten, strict=True)):
     return prog
@@ -62,7 +61,7 @@ def _hoist_proc(
 ) -> ProgramNode:
   params, body = _proc_parts(proc)
   aliases = _alias_sources(body)
-  local_names = {c_ident(n.attrs["name"]) for n in _walk(proc) if n.op in (ProgramOp.BUFFER, ProgramOp.RANGE, ProgramOp.VAR)}
+  local_names = {c_ident(n.attrs["name"]) for n in walk_program(proc) if n.op in (ProgramOp.BUFFER, ProgramOp.RANGE, ProgramOp.VAR)}
   new_body: list[ProgramNode] = []
   for stmt in body:
     if stmt.op != ProgramOp.FOR or len(stmt.args) != 2 or stmt.args[1].op != ProgramOp.CALL or stmt.args[1].attrs["callee"] not in table:
@@ -70,7 +69,7 @@ def _hoist_proc(
       continue
     rng, c = stmt.args
     n_in = int(c.attrs["n_in"])
-    invariant = tuple(k for k in range(n_in) if not any(n.op == ProgramOp.VAR for n in _walk(c.args[k])))
+    invariant = tuple(k for k in range(n_in) if not any(n.op == ProgramOp.VAR for n in walk_program(c.args[k])))
     written = {_resolve_alias(a.attrs.get("buffer", a.attrs.get("name")), aliases) for a in c.args[n_in:]}
     if not invariant or any(_resolve_alias(c.args[k].attrs.get("buffer", c.args[k].attrs.get("name")), aliases) in written for k in invariant):
       new_body.append(stmt)
@@ -113,7 +112,7 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: set[str], 
   opaque_calls = {
     i
     for i, stmt in enumerate(body)
-    if stmt.op != ProgramOp.BUFFER and any(n.op == ProgramOp.CALL and n.attrs["callee"] not in pure for n in _walk(stmt))
+    if stmt.op != ProgramOp.BUFFER and any(n.op == ProgramOp.CALL and n.attrs["callee"] not in pure for n in walk_program(stmt))
   }
   call_buffers = {name for i in opaque_calls for name in stmt_refs[i].reads | stmt_refs[i].writes}
   hoist = {i for i, (reads, writes) in refs.items() if not writes & outputs and i not in opaque_calls and not (reads | writes) & call_buffers}
@@ -160,7 +159,7 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: set[str], 
     hoisted_from=proc.attrs.get("hoisted_from", name),
   )
   for generated in (prologue, hoisted):
-    if all(n.attrs["callee"] in pure for n in _walk(generated) if n.op == ProgramOp.CALL):
+    if all(n.attrs["callee"] in pure for n in walk_program(generated) if n.op == ProgramOp.CALL):
       pure.add(generated.attrs["name"])
   return prologue, hoisted, used, exported
 

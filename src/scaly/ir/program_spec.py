@@ -7,23 +7,9 @@ The shared ``Rule``/``Spec`` machinery is ``ir/spec.py``.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
-from .program import ADDRESS_SPACES, DEVICE_ONLY_OPS, HOST_ONLY_OPS, SCALAR_OPS, ProgramNode, ProgramOp, RangeKind
+from .program import ADDRESS_SPACES, DEVICE_ONLY_OPS, HOST_ONLY_OPS, SCALAR_OPS, ProgramNode, ProgramOp, RangeKind, walk_program
 from .spec import Rule, Spec, VerifyError
 from .types import DType, DeviceSpec
-
-
-def _walk(root: ProgramNode) -> Iterable[ProgramNode]:
-  seen: set[int] = set()
-  stack: list[ProgramNode] = [root]
-  while stack:
-    n = stack.pop()
-    if id(n) in seen:
-      continue
-    seen.add(id(n))
-    yield n
-    stack.extend(n.args)
 
 
 def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
@@ -35,7 +21,7 @@ def verify_program(root: ProgramNode, spec: "Spec | None" = None) -> None:
     duplicate = next((name for i, name in enumerate(names) if name in names[:i]), None)
     if duplicate is not None:
       raise VerifyError(f"verify_program: duplicate procedure name {duplicate!r}")
-  for node in _walk(root):
+  for node in walk_program(root):
     result = spec.check(node)
     if result is not None:
       rule, diag = result
@@ -206,7 +192,7 @@ spec_program_shared = Spec(
 
 
 def _host_proc_no_device_only(n: ProgramNode) -> str | None:
-  for sub in _walk(n):
+  for sub in walk_program(n):
     if sub is n:
       continue
     if sub.op in DEVICE_ONLY_OPS:
@@ -215,7 +201,7 @@ def _host_proc_no_device_only(n: ProgramNode) -> str | None:
 
 
 def _kernel_no_host_only(n: ProgramNode) -> str | None:
-  for sub in _walk(n):
+  for sub in walk_program(n):
     if sub is n:
       continue
     if sub.op in HOST_ONLY_OPS:

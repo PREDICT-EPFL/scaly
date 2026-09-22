@@ -28,9 +28,11 @@ def isolated_cache(tmp_path, monkeypatch):
 
 
 def _simple_fn() -> sc.Function:
-  x = sc.sym("x", 3)
-  y = (x.sin() + x * x).sum()
-  return sc.Function._from_exprs("smoke_jit", [x], [y], ["x"], ["y"])
+  @sc.function(sc.L("x", 3), sc.L("y", ...), name="smoke_jit")
+  def fn(x):
+    return (x.sin() + x * x).sum()
+
+  return fn
 
 
 def test_call_uses_jit_and_matches_numpy(isolated_cache) -> None:
@@ -67,9 +69,11 @@ def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
 
 
 def test_jit_handles_multi_output(isolated_cache) -> None:
-  x = sc.sym("x", 2)
-  y = sc.sym("y", 2)
-  fn = sc.Function._from_exprs("kw_jit", [x, y], [x + y, x * y, (x - y).sum()], ["x", "y"], ["sum", "prod", "diff"])
+  @sc.function(sc.G(sc.L("x", 2), sc.L("y", 2)), sc.G(sc.L("sum", ...), sc.L("prod", ...), sc.L("diff", ...)), name="kw_jit")
+  def fn(inputs):
+    x, y = inputs
+    return (x + y, x * y, (x - y).sum())
+
   xv = np.array([1.0, 2.0])
   yv = np.array([3.0, -1.0])
   s, p, d = fn((xv, yv))
@@ -79,9 +83,10 @@ def test_jit_handles_multi_output(isolated_cache) -> None:
 
 
 def test_jit_handles_sparse_jacobian_factory_output(isolated_cache) -> None:
-  x = sc.sym("x", 4)
-  y = sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
-  f = sc.Function._from_exprs("f_sj", [x], [y], ["x"], ["y"])
+  @sc.function(sc.L("x", 4), sc.L("y", ...), name="f_sj")
+  def f(x):
+    return sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
+
   spjf = sc.sparse_jacobian(f, "y", "x", name="f_sj_jac")
   xv = np.array([2.0, 3.0, 5.0, 7.0])
   values = spjf(xv)
@@ -89,11 +94,14 @@ def test_jit_handles_sparse_jacobian_factory_output(isolated_cache) -> None:
 
 
 def test_jit_handles_nested_call_nodes(isolated_cache) -> None:
-  x = sc.sym("x", 3)
-  inner = sc.Function._from_exprs("inner_jit", [x], [x * x], ["x"], ["sq"])
-  z = sc.sym("z", 3)
-  inner_sq = inner(z + 1.0)
-  outer = sc.Function._from_exprs("outer_jit", [z], [inner_sq.sum()], ["z"], ["s"])
+  @sc.function(sc.L("x", 3), sc.L("sq", ...), name="inner_jit")
+  def inner(x):
+    return x * x
+
+  @sc.function(sc.L("z", 3), sc.L("s", ...), name="outer_jit")
+  def outer(z):
+    return inner(z + 1.0).sum()
+
   zv = np.array([0.25, -0.75, 2.0])
   np.testing.assert_allclose(outer(zv), ((zv + 1.0) ** 2).sum())
 
@@ -127,13 +135,20 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
   from scaly.codegen import render_c_module
   from tests.solvers.problem_helpers import build_nlp
 
-  value, target = sc.sym("value", 1), sc.sym("target", 1)
-  stage = sc.Function._from_exprs("oracle_stage", [value, target], [((value - target.exp()) ** 2).sum().block()], ["value", "target"], ["cost"])
+  @sc.function(sc.G(sc.L("value", 1), sc.L("target", 1)), sc.L("cost", ...), name="oracle_stage")
+  def stage(inputs):
+    value, target = inputs
+    return ((value - target.exp()) ** 2).sum().block()
+
   x, param = sc.sym("x", 3), sc.sym("param", 1)
   cost = sc.vmap(stage, 3, [x, param]).sum()
   solver = build_nlp(x=x, f=cost, p=param, name="hoisted_oracle_solver")
   if nested:
-    fun = sc.Function._from_exprs("hoisted_oracle_host", [param], [solver(param)[0]], ["param"], ["solution"])
+
+    @sc.function(sc.L("param", 1), sc.L("solution", ...), name="hoisted_oracle_host")
+    def fun(param):
+      return solver(param)[0]
+
   else:
     fun = cast(sc.Function, solver.function)
   module = render_c_module(fun)
@@ -148,13 +163,16 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
 
 @pytest.mark.parametrize("input_name", ["_h0", "v0", "v:0"])
 def test_deep_block_callee_temporaries_do_not_shadow_inputs(isolated_cache, input_name: str) -> None:
-  x = sc.sym(input_name, 1)
-  value = x
-  for _ in range(40):
-    value = value.sin() + 0.1
-  stage = sc.Function._from_exprs("named_deep_stage", [x], [value.block()], [input_name], ["y"])
-  z = sc.sym("z", 1)
-  root = sc.Function._from_exprs("named_deep_root", [z], [stage(z)], ["z"], ["y"])
+  @sc.function(sc.L(input_name, 1), sc.L("y", ...), name="named_deep_stage")
+  def stage(value):
+    for _ in range(40):
+      value = value.sin() + 0.1
+    return value.block()
+
+  @sc.function(sc.L("z", 1), sc.L("y", ...), name="named_deep_root")
+  def root(z):
+    return stage(z)
+
   expected = np.array([0.3])
   for _ in range(40):
     expected = np.sin(expected) + 0.1

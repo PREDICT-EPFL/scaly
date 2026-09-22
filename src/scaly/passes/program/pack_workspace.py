@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ...ir.match import Pattern, rewrite
-from ...ir.program import ProgramNode, ProgramOp
+from ...ir.program import ProgramNode, ProgramOp, walk_program
 from ...ir.types import DType, DeviceSpec
 from ._common import (
   _alias_sources,
@@ -16,7 +16,6 @@ from ._common import (
   _rebuild_proc,
   _resolve_alias,
   _size_of,
-  _walk,
   rebuild_program,
 )
 
@@ -49,7 +48,7 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   plan = _PackPlan()
   if not packable:
     for stmt in body:
-      for n in _walk(stmt):
+      for n in walk_program(stmt):
         if n.op == ProgramOp.CALL:
           plan.callees.add(n.attrs["callee"])
     return plan
@@ -84,14 +83,14 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
         deps[b].update(deps.get(r, set()))
     for b in writes | reads:
       last_use[b] = i
-    for n in _walk(stmt):
+    for n in walk_program(stmt):
       if n.op == ProgramOp.CALL:
         plan.callees.add(n.attrs["callee"])
 
   # Pack per dtype, in first-write order (ties: declaration order via the dict insertion order).
   order = sorted((name for name in packable if name in first_write), key=lambda b: (first_write[b], b))
   free_at: dict[str, int] = {}  # slot -> first statement index at which it is reusable
-  used_names = {n.attrs["name"] for n in _walk(proc) if n.op == ProgramOp.BUFFER}
+  used_names = {n.attrs["name"] for n in walk_program(proc) if n.op == ProgramOp.BUFFER}
   counter = 0
   for buf in order:
     dt = packable[buf].dtype

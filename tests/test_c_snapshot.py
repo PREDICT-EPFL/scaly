@@ -46,10 +46,13 @@ def _dynamics() -> sc.Function:
 
 def _shooting() -> sc.Function:
   """Multiple shooting defect over ``N_STAGES`` VMAP iterations."""
-  z = sc.sym("z", 4 * (N_STAGES + 1))
-  u = sc.sym("u", 2 * N_STAGES)
-  defect = sc.vmap(_dynamics(), N_STAGES, [(z, 0, 4), u]) - z[4:]
-  return sc.Function._from_exprs("shooting", [z, u], [defect], ["z", "u"], ["eq"])
+
+  @sc.function(sc.G(sc.L("z", 4 * (N_STAGES + 1)), sc.L("u", 2 * N_STAGES)), sc.L("eq", ...), name="shooting")
+  def shooting(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    z, u = inputs
+    return sc.vmap(_dynamics(), N_STAGES, [(z, 0, 4), u]) - z[4:]
+
+  return shooting
 
 
 def _wide() -> sc.Function:
@@ -72,17 +75,24 @@ def _wide() -> sc.Function:
 
 def _workspace() -> sc.Function:
   """A shared intermediate large enough to spill after expression normalization."""
-  x = sc.sym("x", 2048)
-  value = x.sin()
-  return sc.Function._from_exprs("workspace", [x], [value.sum(), (value * value).sum()], ["x"], ["sum", "sumsqr"])
+
+  @sc.function(sc.L("x", 2048), sc.G(sc.L("sum", ...), sc.L("sumsqr", ...)), name="workspace")
+  def workspace(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    value = x.sin()
+    return (value.sum(), (value * value).sum())
+
+  return workspace
 
 
 def _qp_host() -> sc.Function:
   """A host function whose graph reaches a solver through a nested call."""
-  mu = sc.sym("mu", 2)
-  qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="corpus_qp")
-  x = qp(mu)[0]
-  return sc.Function._from_exprs("qp_host", [mu], [sc.sumsqr(x)], ["mu"], ["cost"])
+
+  @sc.function(sc.L("mu", 2), sc.L("cost", ...), name="qp_host")
+  def qp_host(mu: sc.Expr) -> sc.Expr:
+    qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="corpus_qp")
+    return sc.sumsqr(qp(mu)[0])
+
+  return qp_host
 
 
 CORPUS = {

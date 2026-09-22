@@ -57,6 +57,10 @@ def n_dec(stages: int) -> int:
   return NX * (stages + 1) + NU * stages
 
 
+def _inputs_tree(stages: int):
+  return sc.G(sc.L("z", n_dec(stages)), sc.L("p", sc.TensorType((N_PW,), diff=False)))
+
+
 def _cost_stage() -> sc.Function:
   @sc.function(sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU)), sc.L("cost", ...), name="vmap_mlp_stage_cost")
   def cost(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -69,37 +73,45 @@ def _cost_stage() -> sc.Function:
 
 def vmapped(stages: int) -> sc.Function:
   """Objective and equalities together, both using VMAP, which is what a Lagrangian Hessian needs."""
-  z = sc.sym("z", n_dec(stages))
-  p = sc.sym("p", N_PW, diff=False)
-  eq = sc.vmap(
-    stage_function(),
-    length=stages,
-    inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU), "pw": (p, 0, 0)},
-  )
-  cost = sc.vmap(
-    _cost_stage(),
-    length=stages,
-    inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU)},
-  )
-  return sc.Function._from_exprs(f"vmap_mlp_N{stages}", [z, p], [cost.sum(), eq], ["z", "p"], ["cost", "eq"])
+
+  @sc.function(_inputs_tree(stages), sc.G(sc.L("cost", ...), sc.L("eq", ...)), name=f"vmap_mlp_N{stages}")
+  def fn(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
+    z, p = inputs
+    eq = sc.vmap(
+      stage_function(),
+      length=stages,
+      inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU), "pw": (p, 0, 0)},
+    )
+    cost = sc.vmap(
+      _cost_stage(),
+      length=stages,
+      inputs={"x": (z, 0, NX), "xnext": (z, NX, NX), "u": (z, NX * (stages + 1), NU)},
+    )
+    return cost.sum(), eq
+
+  return fn
 
 
 def unrolled(stages: int) -> sc.Function:
   """The same formulation stage by stage, so the VMAP version can be tested against it."""
-  z = sc.sym("z", n_dec(stages))
-  p = sc.sym("p", N_PW, diff=False)
   stage, cost_stage = stage_function(), _cost_stage()
   offset = NX * (stages + 1)
-  rows, terms = [], []
-  for i in range(stages):
-    x, xnext = z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)]
-    u = z[offset + NU * i : offset + NU * (i + 1)]
-    rows.append(stage((x, xnext, u, p)))
-    terms.append(cost_stage((x, xnext, u)))
-  cost = terms[0]
-  for term in terms[1:]:
-    cost = cost + term
-  return sc.Function._from_exprs(f"vmap_mlp_unrolled_N{stages}", [z, p], [cost, sc.concat(rows)], ["z", "p"], ["cost", "eq"])
+
+  @sc.function(_inputs_tree(stages), sc.G(sc.L("cost", ...), sc.L("eq", ...)), name=f"vmap_mlp_unrolled_N{stages}")
+  def fn(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
+    z, p = inputs
+    rows, terms = [], []
+    for i in range(stages):
+      x, xnext = z[NX * i : NX * (i + 1)], z[NX * (i + 1) : NX * (i + 2)]
+      u = z[offset + NU * i : offset + NU * (i + 1)]
+      rows.append(stage((x, xnext, u, p)))
+      terms.append(cost_stage((x, xnext, u)))
+    cost = terms[0]
+    for term in terms[1:]:
+      cost = cost + term
+    return cost, sc.concat(rows)
+
+  return fn
 
 
 def sample(stages: int, seed: int = 3) -> tuple[np.ndarray, np.ndarray]:

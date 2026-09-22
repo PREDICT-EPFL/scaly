@@ -13,16 +13,20 @@ import scaly as sc
 
 
 def test_compiled_erf_matches_math_erf() -> None:
-  x = sc.sym("x", 9)
-  f = sc.Function._from_exprs("compiled_erf", [x], [x.erf()], ["x"], ["y"])
+  @sc.function(sc.L("x", 9), sc.L("y", ...), name="compiled_erf")
+  def f(x: sc.Expr) -> sc.Expr:
+    return x.erf()
+
   values = np.array([-6.0, -4.5, -2.0, -0.25, 0.0, 0.25, 2.0, 4.5, 6.0])
 
   np.testing.assert_allclose(f(values), [math.erf(float(value)) for value in values], rtol=1e-14, atol=1e-15)
 
 
 def test_c_api_header_exposes_pointer_abi_and_typed_buffers() -> None:
-  x = sc.sym("x", 2)
-  f = sc.Function._from_exprs("f", [x], [x + 1], ["x"], ["y"])
+  @sc.function(sc.L("x", 2), sc.L("y", ...))
+  def f(x: sc.Expr) -> sc.Expr:
+    return x + 1
+
   from scaly.codegen import render_c_api_header
 
   header = render_c_api_header(f)
@@ -49,9 +53,11 @@ def test_c_api_header_exposes_pointer_abi_and_typed_buffers() -> None:
 
 
 def test_c_api_header_exposes_sparse_output_metadata() -> None:
-  x = sc.sym("x", 3)
-  y = sc.stack([x[0], x[2]])
-  f = sc.sparse_jacobian(sc.Function._from_exprs("f", [x], [y], ["x"], ["y"]), "y", "x", name="f_spjac")
+  @sc.function(sc.L("x", 3), sc.L("y", ...), name="f")
+  def primal(x: sc.Expr) -> sc.Expr:
+    return sc.stack([x[0], x[2]])
+
+  f = sc.sparse_jacobian(primal, "y", "x", name="f_spjac")
   from scaly.codegen import render_c_api_header
 
   header = render_c_api_header(f)
@@ -72,10 +78,12 @@ def test_c_source_executes_scalar_subset_through_universal_abi(tmp_path) -> None
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  x = sc.sym("x", 2)
-  a = sc.const(np.array([[2.0, -1.0], [0.5, 3.0]]))
-  y = sc.concat([(a @ x).sin(), x.gather([1, 0])])
-  f = sc.Function._from_exprs("f", [x], [y, y.sum()], ["x"], ["y", "s"])
+  @sc.function(sc.L("x", 2), sc.G(sc.L("y", ...), sc.L("s", ...)))
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    a = sc.const(np.array([[2.0, -1.0], [0.5, 3.0]]))
+    y = sc.concat([(a @ x).sin(), x.gather([1, 0])])
+    return (y, y.sum())
+
   from scaly.codegen import render_c_source
 
   src = tmp_path / "f.c"
@@ -118,9 +126,11 @@ def test_c_source_column_slice_is_not_contiguous(tmp_path) -> None:
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  x = sc.sym("x", (5, 7))
-  y = sc.sym("y", (5, 1, 7))
-  f = sc.Function._from_exprs("g", [x, y], [x[:, 1], x[2, :], y[:, 0, :]], ["x", "y"], ["col1", "row2", "row2d"])
+  @sc.function(sc.G(sc.L("x", (5, 7)), sc.L("y", (5, 1, 7))), sc.G(sc.L("col1", ...), sc.L("row2", ...), sc.L("row2d", ...)), name="g")
+  def f(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    x, y = inputs
+    return (x[:, 1], x[2, :], y[:, 0, :])
+
   from scaly.codegen import render_c_source
 
   src = tmp_path / "g.c"
@@ -155,11 +165,15 @@ def test_c_source_lowers_call_nodes_through_internal_raw_function(tmp_path) -> N
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  x = sc.sym("x", 2)
-  inner = sc.Function._from_exprs("inner", [x], [x * x, x.sum()], ["x"], ["sq", "sum"])
-  z = sc.sym("z", 2)
-  inner_sq, inner_sum = inner(z + 1.0)
-  outer = sc.Function._from_exprs("outer", [z], [inner_sq + inner_sum], ["z"], ["y"])
+  @sc.function(sc.L("x", 2), sc.G(sc.L("sq", ...), sc.L("sum", ...)))
+  def inner(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return (x * x, x.sum())
+
+  @sc.function(sc.L("z", 2), sc.L("y", ...))
+  def outer(z: sc.Expr) -> sc.Expr:
+    inner_sq, inner_sum = inner(z + 1.0)
+    return inner_sq + inner_sum
+
   from scaly.codegen import render_c_source
 
   src = tmp_path / "outer.c"
@@ -193,9 +207,10 @@ def test_c_module_executes_sparse_jacobian_factory_output(tmp_path) -> None:
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  x = sc.sym("x", 4)
-  y = sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
-  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  @sc.function(sc.L("x", 4), sc.L("y", ...))
+  def f(x: sc.Expr) -> sc.Expr:
+    return sc.stack([x[0], x[2:4].sum(), x[1] * x[3]])
+
   spjf = sc.sparse_jacobian(f, "y", "x", name="f_spjac")
   from scaly.codegen import render_c_module
 
@@ -231,8 +246,10 @@ def test_c_header_typed_buffers_compile_and_run_from_c(tmp_path) -> None:
   if cc is None:
     pytest.skip("cc is required for generated C smoke test")
 
-  x = sc.sym("x", 3)
-  f = sc.Function._from_exprs("f", [x], [x.sin() + 2.0, x.sum()], ["x"], ["y", "s"])
+  @sc.function(sc.L("x", 3), sc.G(sc.L("y", ...), sc.L("s", ...)))
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return (x.sin() + 2.0, x.sum())
+
   from scaly.codegen import render_c_module
 
   module = render_c_module(f)
@@ -279,8 +296,10 @@ def test_c_header_typed_buffers_compile_and_run_from_cpp(tmp_path) -> None:
   if cc is None or cxx is None:
     pytest.skip("cc and c++ are required for generated C++ wrapper smoke test")
 
-  x = sc.sym("x", 2)
-  nlp = sc.Function._from_exprs("nlp", [x], [x[0] * x[0], x * x], ["x"], ["f", "g"])
+  @sc.function(sc.L("x", 2), sc.G(sc.L("f", ...), sc.L("g", ...)))
+  def nlp(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return (x[0] * x[0], x * x)
+
   hess = sc.lagrangian_hessian(nlp, "x", name="h")
   from scaly.codegen import render_c_module
 
@@ -326,8 +345,10 @@ int main() {
 def test_scalarized_stores_coalesce_into_vector_accesses() -> None:
   from scaly.codegen.c import render_program_c_source
 
-  x = sc.sym("x", 7)
-  f = sc.Function._from_exprs("coalesced", [x], [(x * 2.0 + 1.0).scalar()], ["x"], ["y"])
+  @sc.function(sc.L("x", 7), sc.L("y", ...), name="coalesced")
+  def f(x: sc.Expr) -> sc.Expr:
+    return (x * 2.0 + 1.0).scalar()
+
   source = render_program_c_source(f)
   assert "*(double2*)(res[0]) = (double2){" in source
   assert "*(double2*)(res[0] + 4) = (double2){" in source

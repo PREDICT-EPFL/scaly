@@ -8,9 +8,9 @@ from scaly.ir.expr import substitute, topo
 
 
 def test_elementwise_eval_and_topological_order() -> None:
-  x = sc.sym("x", 3)
-  y = (x.sin() + x * x).sum()
-  f = sc.Function._from_exprs("f", [x], [y], ["x"], ["y"])
+  @sc.function(sc.L("x", 3), sc.L("y", ...))
+  def f(x: sc.Expr) -> sc.Expr:
+    return (x.sin() + x * x).sum()
 
   np.testing.assert_allclose(f(np.array([1.0, 2.0, 3.0])), np.sin([1.0, 2.0, 3.0]).sum() + 14.0)
 
@@ -48,12 +48,12 @@ def test_common_ops_contains_modeling_basics() -> None:
 
 
 def test_binary_nonlinear_method_helpers_eval() -> None:
-  x = sc.sym("x", 3)
-  y = sc.sym("y", 3)
-  atan = x.atan2(y)
-  mn = x.minimum(y)
-  mx = x.maximum(y)
-  f = sc.Function._from_exprs("binary_helpers", [x, y], [atan, mn, mx], ["x", "y"], ["atan", "min", "max"])
+  @sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.G(sc.L("atan", ...), sc.L("min", ...), sc.L("max", ...)), name="binary_helpers")
+  def f(xy: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    x, y = xy
+    return x.atan2(y), x.minimum(y), x.maximum(y)
+
+  atan, mn, mx = f.outputs
   xv = np.array([0.5, -1.0, 2.0])
   yv = np.array([1.5, 2.0, -0.25])
 
@@ -67,8 +67,10 @@ def test_binary_nonlinear_method_helpers_eval() -> None:
 
 
 def test_dot_sumsqr_and_norm_2() -> None:
-  x = sc.sym("x", (2, 2))
-  f = sc.Function._from_exprs("f", [x], [sc.dot(x, x.T), x.sumsqr(), sc.norm_2(x)], ["x"], ["dot", "sumsqr", "norm"])
+  @sc.function(sc.L("x", (2, 2)), sc.G(sc.L("dot", ...), sc.L("sumsqr", ...), sc.L("norm", ...)))
+  def f(x: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
+    return sc.dot(x, x.T), x.sumsqr(), sc.norm_2(x)
+
   xv = np.array([[1.0, 2.0], [3.0, 4.0]])
 
   dot_val, sumsqr_val, norm_val = f(xv)
@@ -152,8 +154,10 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
   assert not x.floor().type.diff
   assert not sc.minimum(x, p).type.diff
 
-  u = sc.sym("u", 3)
-  inner = sc.Function._from_exprs("inner", [u], [u * u], ["u"], ["y"])
+  @sc.function(sc.L("u", 3), sc.L("y", ...))
+  def inner(u: sc.Expr) -> sc.Expr:
+    return u * u
+
   diff_call = inner(x)
   const_call = inner(c)
   assert diff_call.type.diff
@@ -161,11 +165,12 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
 
 
 def test_mixed_lowering_hints_survive_expr_graph() -> None:
-  x = sc.sym("x", 3)
-  scalar_region = (x.sin() + x * x).scalar()
-  block_region = (sc.const(np.eye(3)) @ x).block()
-  opaque_region = (x + 1.0).opaque()
-  f = sc.Function._from_exprs("mixed", [x], [scalar_region + block_region + opaque_region], ["x"], ["y"])
+  @sc.function(sc.L("x", 3), sc.L("y", ...), name="mixed")
+  def f(x: sc.Expr) -> sc.Expr:
+    scalar_region = (x.sin() + x * x).scalar()
+    block_region = (sc.const(np.eye(3)) @ x).block()
+    opaque_region = (x + 1.0).opaque()
+    return scalar_region + block_region + opaque_region
 
   lowerings = [e.lowering for e in topo(f.outputs) if e.lowering != "auto"]
   assert "scalar" in lowerings
@@ -193,8 +198,10 @@ def test_substitute_rejects_incompatible_shape_or_dtype() -> None:
 
 
 def test_substitute_rebuilds_call_and_vmap_actuals_without_entering_callees() -> None:
-  formal = sc.sym("sub_formal", 2)
-  callee = sc.Function._from_exprs("sub_callee", [formal], [formal * formal], ["u"], ["y"])
+  @sc.function(sc.L("u", 2), sc.L("y", ...), name="sub_callee")
+  def callee(formal: sc.Expr) -> sc.Expr:
+    return formal * formal
+
   x = sc.sym("sub_actual_x", 2)
   z = sc.sym("sub_actual_z", 2)
   called = callee(x)

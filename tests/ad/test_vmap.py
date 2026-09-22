@@ -13,18 +13,17 @@ def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 def test_jvp_many_of_vmap_matches_unrolled_jvp() -> None:
   N = 4
-  z = sc.sym("z", 3 * N)
-  p = sc.sym("p", 3 * N)
 
-  mapped = sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-  unrolled = sc.concat([scale_add((z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3])) for i in range(N)])
+  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("p", 3 * N)), sc.L("dy", ...), name="jvp_vmap")
+  def fn_vmap(inputs):
+    z, p = inputs
+    return sc.jvp_many(sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)]), z, sc.const(np.eye(3 * N)))
 
-  seeds = sc.const(np.eye(3 * N))
-  jvp_vmap = sc.jvp_many(mapped, z, seeds)
-  jvp_ref = sc.jvp_many(unrolled, z, seeds)
-
-  fn_vmap = sc.Function._from_exprs("jvp_vmap", [z, p], [jvp_vmap], ["z", "p"], ["dy"])
-  fn_ref = sc.Function._from_exprs("jvp_ref", [z, p], [jvp_ref], ["z", "p"], ["dy"])
+  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("p", 3 * N)), sc.L("dy", ...), name="jvp_ref")
+  def fn_ref(inputs):
+    z, p = inputs
+    unrolled = sc.concat([scale_add((z[i * 3 : (i + 1) * 3], p[i * 3 : (i + 1) * 3])) for i in range(N)])
+    return sc.jvp_many(unrolled, z, sc.const(np.eye(3 * N)))
 
   rng = np.random.default_rng(0)
   zv = rng.normal(size=3 * N)
@@ -35,14 +34,16 @@ def test_jvp_many_of_vmap_matches_unrolled_jvp() -> None:
 
 def test_jacobian_of_vmap_matches_finite_differences() -> None:
   N = 5
-  z = sc.sym("z", 3 * N)
-  p = sc.sym("p", 3 * N)
-  mapped = sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
-  fn = sc.Function._from_exprs("mapped", [z, p], [mapped], ["z", "p"], ["y"])
 
-  seeds = sc.const(np.eye(3 * N))
-  jacobian = sc.jvp_many(mapped, z, seeds).T  # (3N, 3N)
-  jac_fn = sc.Function._from_exprs("jac", [z, p], [jacobian], ["z", "p"], ["jac"])
+  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("p", 3 * N)), sc.L("y", ...), name="mapped")
+  def fn(inputs):
+    z, p = inputs
+    return sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
+
+  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("p", 3 * N)), sc.L("jac", ...))
+  def jac_fn(inputs):
+    z, p = inputs
+    return sc.jvp_many(sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)]), z, sc.const(np.eye(3 * N))).T
 
   rng = np.random.default_rng(1)
   zv = rng.normal(size=3 * N)
@@ -71,11 +72,15 @@ def test_grad_factory_over_vmap_matches_unrolled_and_finite_difference() -> None
     return x * x + x.sin()
 
   N = 4
-  z = sc.sym("z", 2 * N)
-  mapped = sc.vmap(piece, N, [(z, 0, 2)])
-  unrolled = sc.concat([piece(z[2 * it : 2 * (it + 1)]) for it in range(N)])
-  mapped_fn = sc.Function._from_exprs("vmap_grad_factory", [z], [mapped], ["z"], ["y"])
-  unrolled_fn = sc.Function._from_exprs("vmap_grad_unrolled", [z], [unrolled], ["z"], ["y"])
+
+  @sc.function(sc.L("z", 2 * N), sc.L("y", ...), name="vmap_grad_factory")
+  def mapped_fn(z):
+    return sc.vmap(piece, N, [(z, 0, 2)])
+
+  @sc.function(sc.L("z", 2 * N), sc.L("y", ...), name="vmap_grad_unrolled")
+  def unrolled_fn(z):
+    return sc.concat([piece(z[2 * it : 2 * (it + 1)]) for it in range(N)])
+
   mapped_grad = mapped_fn.factory("vmap_grad_factory_grad", ["z", "lam:y"], [sc.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
   unrolled_grad = unrolled_fn.factory("vmap_grad_unrolled_grad", ["z", "lam:y"], [sc.factory.Grad("gamma", "z")], aux={"gamma": ["y"]})
   vmap_nodes = [node for node in topo(mapped_grad.outputs) if node.op == sc.ExprOp.VMAP]
@@ -98,11 +103,16 @@ def duality_piece(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 def test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual() -> None:
   N = 5
-  z, q = sc.sym("z", 3 * N), sc.sym("q", 2 * N)
-  mapped = sc.vmap(duality_piece, N, [(z, 0, 3), (q, 0, 2)])
-  unrolled = sc.concat([duality_piece((z[3 * k : 3 * (k + 1)], q[2 * k : 2 * (k + 1)])) for k in range(N)])
-  fn_vmap = sc.Function._from_exprs("duality_vmap", [z, q], [mapped], ["z", "q"], ["y"])
-  fn_unroll = sc.Function._from_exprs("duality_unroll", [z, q], [unrolled], ["z", "q"], ["y"])
+
+  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("q", 2 * N)), sc.L("y", ...), name="duality_vmap")
+  def fn_vmap(inputs):
+    z, q = inputs
+    return sc.vmap(duality_piece, N, [(z, 0, 3), (q, 0, 2)])
+
+  @sc.function(sc.G(sc.L("z", 3 * N), sc.L("q", 2 * N)), sc.L("y", ...), name="duality_unroll")
+  def fn_unroll(inputs):
+    z, q = inputs
+    return sc.concat([duality_piece((z[3 * k : 3 * (k + 1)], q[2 * k : 2 * (k + 1)])) for k in range(N)])
 
   rng = np.random.default_rng(5)
   zv, qv = rng.normal(size=3 * N), rng.normal(size=2 * N)
