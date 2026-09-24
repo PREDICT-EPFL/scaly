@@ -17,7 +17,7 @@ import pytest
 import scaly as sc
 from scaly.codegen.aot import render_c_source
 from scaly.codegen.c import can_render_program_c, render_program_c_source
-from scaly.codegen.toolchain import find_c_compiler
+from scaly.codegen.toolchain import BuildRecipe, find_c_compiler
 from scaly.passes.lowering import LoweringError, lower_function, main_proc
 from scaly.ir.expr import topo
 from scaly.ir.program import ProgramOp
@@ -325,7 +325,7 @@ def test_covered_function_renders_through_program_ir(builder, inputs) -> None:
   src = render_program_c_source(fn)
   assert can_render_program_c(fn)
   # The public renderer is Program IR (the sole CPU path), so it must select exactly this source.
-  assert render_c_source(fn) == src
+  assert render_c_source(fn, lanes=1) == BuildRecipe(lanes=1).comment(f"{fn.name}.c") + src
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
@@ -526,7 +526,7 @@ def test_normalization_preserves_shared_work_across_hinted_outputs(identity: str
     outputs = [a.cos().block(), a] if identity == "none" else [a.cos(), (a * 1.0).block()]
     return tuple(sc.simplify(output) for output in outputs) if identity == "simplify" else tuple(outputs)
 
-  assert render_c_source(fn).count("sin(") == 1
+  assert render_c_source(fn, lanes=1).count("sin(") == 1
   values = np.linspace(-2.0, 2.0, 64)
   cosine, sine = fn(values)
   np.testing.assert_allclose(cosine, np.cos(np.sin(values)))

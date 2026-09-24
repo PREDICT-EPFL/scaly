@@ -55,8 +55,9 @@ at the tail of lowering, between the initial program and the verifier. Each pass
 module. Adding an optimization means adding its function to this sequence at the required
 position. Imports do not determine execution order.
 
-The sequence starts with hoisting and scalar expansion, then cleans up loops and storage, and
-ends with explicit store pairing and scalar preparation.
+The sequence starts with hoisting and scalar expansion, then cleans up loops and storage.
+Optional reciprocal hoisting and lane widening run before workspace packing. Scalar expressions
+are prepared before widening, or at the end of the pipeline when widening is disabled.
 
 ### `hoist_invariant`
 
@@ -114,6 +115,23 @@ procedures keep their store boundaries because those stores can round or truncat
 Constant tangents already inside a body fold during expansion. Specializing a mapped callee for
 constant arguments is a separate transformation.
 
+### Periodic constants and mapped range fusion
+
+`fold_tiles` replaces a complete repeated constant table with one copy of its shortest tile.
+Loads use the original index modulo the tile length. Scalar-safe uniform tables become constants.
+The comparison uses the declared dtype's bits. Tables exposed through aliases or calls retain
+storage, as do tables that have writes.
+
+`fuse_ranges` expands scalarized mapped callees into shared scalar expressions, then propagates
+consumer indices through static assembly loops. Consumers that use the same mapped stage share
+its expressions. Only demanded outputs are scheduled, so unused compressed derivative entries
+lose both their stores and their arithmetic. Different boundary demands produce separate ranges.
+
+The pass retains storage for unsupported cross-stage dependencies, interfering writes, pointer
+escapes, or index maps that would need new tables. It also bounds generated expression groups and
+keeps upstream broadcast work from being repeated at every stage. The derivative graph and its
+coloring remain unchanged.
+
 ### `prune_procedures`
 
 Removes procedures made unreachable by call expansion. It keeps the entry point, solver oracles
@@ -139,9 +157,16 @@ cannot evaluate, such as `0 / 0` or `sqrt(-1)`, remains a runtime operation. Int
 keeps C's truncation toward zero; floating algebraic rules do not relax index semantics or permit
 removal of dtype rounding boundaries.
 
-The scalarization pass keeps reduction accumulation order. This does not promise bit-identical
-results across scalarized and loopy code: emitted expression trees and the selected C compiler
-flags can also affect rounding. Scaly does not enable `-ffast-math` by default.
+Scalarization and lane widening keep reduction accumulation order. Widened reductions apply
+lane contributions in the original scalar sequence, so the lane transformation preserves the
+scalar result bit for bit under the same compiler flags and math policy. This does not promise
+bit-identical results across other transformations or different compiler flags. Scaly does not
+enable `-ffast-math` by default.
+
+`reciprocal=True` separately permits an invariant `x / y` to become `x * (1 / y)`. Computing the
+reciprocal first changes rounding and can change the representable range. For example,
+`1e-310 / 1e-310` is finite, while computing `1 / 1e-310` first can overflow. This option is
+independent of lane widening and does not enable other compiler fast-math flags.
 
 ### Loopy-code optimizations
 
@@ -170,13 +195,45 @@ dtype. A loop that fills a private, otherwise unwritten buffer with one constant
 buffer so its readers fold on the next round. Invalid constants such as `0 / 0` stay runtime
 operations.
 
-`unroll_unit_loops` erases loops that are statically empty and inlines loops that run exactly
+`unroll_unit_loops` erases loops that are statically empty and inlines ordinary loops that run exactly
 once, substituting the loop variable with its only value. It runs after fusion so that fusion sees
 canonical loop-shaped producers first, and it removes the resulting single-iteration noise before
-anything renders.
+anything renders. Mapped ranges retain their provenance, including single-trip boundary ranges.
 
 A second arithmetic cleanup, recorded as `fold_arith_after_unroll`, resolves constant indices and
 identities exposed by loop substitution, then removes unused buffer declarations.
+
+### Reciprocal hoisting and lane widening
+
+`hoist_reciprocals` runs only when `reciprocal=True`. It moves `1 / y` before a statically
+nonempty loop and replaces eligible floating divisions with multiplication. Shared divisors
+share a reciprocal. Integer division remains unchanged.
+
+A divisor is invariant only if its inputs remain unchanged throughout the loop. The pass resolves
+scalar definitions transitively when each has one declaring assignment that dominates its use.
+Reassignments, loop variables, local buffers, and buffers that calls or stores can change block
+hoisting. Definitions inside a nested scope do not escape that scope. Empty or potentially empty
+loops do not evaluate a new reciprocal outside the loop.
+
+`widen_ranges` splits an eligible range into chunks and explicit `RangeKind.VECTOR` lanes.
+It first handles mapped ranges, then independent contiguous output ranges and supported ordered
+reductions. Mapped callees can expand into the range while their local buffers gain separate
+storage for each lane. Opaque calls and dependencies that the pass cannot prove safe keep their
+scalar form.
+
+The pass records contiguous, strided, or gathered access layouts in Program IR. The renderer
+spells these as vector accesses, staging copies, or per-lane accesses. External arrays keep their
+original layout. Staging storage reserves eight lanes but packs active elements at the effective
+helper width. Private aliases become offsets into their owning buffer before that layout change.
+Partial chunks clamp input indices and guard output stores. One helper body handles full and
+partial chunks with the same private stride.
+
+Lane width comes from the render option and a per-range register-pressure cap. The cap limits
+the product of peak live scalar values and lane width to four times the estimated register
+capacity. This is a compiler heuristic. The [code-generation reference](../api/codegen.md#render-options)
+lists target selection, fixed widths, the two C dialects, and math-library choices.
+
+### Workspace and final scheduling
 
 `pack_workspace` decides where temporaries live. It lifetime-packs the private buffers of each
 procedure into shared slots (buffers whose lifetimes do not overlap reuse a slot), then spills

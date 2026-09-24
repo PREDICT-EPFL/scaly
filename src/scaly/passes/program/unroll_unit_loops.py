@@ -42,7 +42,7 @@ def _unroll_unit_loop_stmt(stmt: ProgramNode) -> list[ProgramNode]:
   trip_count = _trip_count(rng)
   if trip_count == 0:
     return []
-  if trip_count == 1:
+  if trip_count == 1 and not rng.attrs.get("mapped"):
     vname = rng.attrs["name"]
     only_value = rng.args[0]
     out: list[ProgramNode] = []

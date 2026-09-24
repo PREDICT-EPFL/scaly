@@ -16,6 +16,12 @@ from scaly.passes.arith import fold_program
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program.fold_arith import fold_arith
 
+
+@pytest.fixture(autouse=True)
+def scalar_libm(monkeypatch):
+  monkeypatch.setenv("SCALY_VECTOR_LIBM", "none")
+
+
 DATA = np.array([0.5, -1.25, 2.0])
 
 # name -> (build, reference, operations that must disappear)

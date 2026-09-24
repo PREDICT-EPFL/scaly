@@ -83,7 +83,7 @@ def test_dispatch_metrics_follow_hoisted_callees_and_exclude_the_prologue(stages
 
   program = render_c_module(mapped).program
   assert any(proc.attrs.get("hoisted_from") == stage.name for proc in program.args)
-  assert _dispatch_metrics(mapped, program) == (stages, 3, 21)
+  assert _dispatch_metrics(mapped, program) == (stages, 3 if stages == 1 else 24, 21)
 
 
 def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None:
@@ -91,13 +91,13 @@ def test_dispatch_metrics_allow_scheduled_indices_before_a_mapped_call() -> None
 
   @sc.function(sc.L("x", 2), sc.L("y", ...), name="metric_scheduled_stage")
   def stage(x: sc.Expr) -> sc.Expr:
-    return 2.0 * x + x.sin()
+    return (2.0 * x + x.sin()).block()
 
   @sc.function(sc.L("z", 8), sc.L("y", ...), name="metric_scheduled_map")
   def mapped(z: sc.Expr) -> sc.Expr:
     return sc.vmap(stage, 4, [z])
 
-  program = render_c_module(mapped).program
+  program = render_c_module(mapped, lanes=1).program
   proc_count = int(program.attrs["proc_count"])
   procs = list(program.args[:proc_count])
   root = procs[-1]
@@ -151,7 +151,7 @@ def test_store_pairs_preserve_dispatch_arithmetic() -> None:
 
   @sc.function(sc.L("z", 12), sc.L("y", ...), name="metric_pair_map")
   def mapped(z: sc.Expr) -> sc.Expr:
-    return sc.vmap(stage, 4, [z])
+    return sc.vmap(stage, 4, [z]).sum()
 
   stages = {}
   lower_function(mapped, observe=lambda name, program: stages.__setitem__(name, program))
@@ -175,9 +175,9 @@ def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
     return sc.concat([sc.vmap(stage, 2, [(z, 0, 1)]), sc.vmap(stage, 3, [(z, 2, 1)])])
 
   assert _dispatch_metrics(unit, render_c_module(unit).program) == (1, 0, 1)
-  # Mixed trip counts report the family whose trip count times per-iteration work is largest:
-  # three squares beat two, and two iterations of four operations beat three of one.
-  assert _dispatch_metrics(mixed, render_c_module(mixed).program) == (3, 0, 1)
+  # Fusion shares the first two trips, then peels the third square. The repeated
+  # range therefore contains two squares, or the heavy expression and one square.
+  assert _dispatch_metrics(mixed, render_c_module(mixed).program) == (2, 0, 2)
 
   @sc.function(sc.L("x", 1), sc.L("y", ...), name="metric_heavy_stage")
   def heavy(x: sc.Expr) -> sc.Expr:
@@ -187,7 +187,7 @@ def test_dispatch_metrics_handle_unit_and_mixed_trip_counts() -> None:
   def weighted(z: sc.Expr) -> sc.Expr:
     return sc.concat([sc.vmap(heavy, 2, [(z, 0, 1)]), sc.vmap(stage, 3, [(z, 2, 1)])])
 
-  assert _dispatch_metrics(weighted, render_c_module(weighted).program) == (2, 0, 4)
+  assert _dispatch_metrics(weighted, render_c_module(weighted).program) == (2, 0, 5)
 
 
 def test_unit_dispatch_excludes_an_unmapped_top_level_call() -> None:
@@ -642,3 +642,13 @@ int sparse_lower_fixture(const double**, double** res, const int*, double*, int)
   }
   status, _, note = _run_compiled_driver(tmp_path, info, source, header, {}, np.array([1.0, 2.0, 2.0, 3.0]))
   assert status == "correctness_fail", note
+
+
+def test_dispatch_workspace_counts_promoted_lane_scratch():
+  x = sc.sym("x", 12)
+  matrix = x.reshape((3, 4))
+  stage = sc.Function._from_exprs("metric_lane_stage", [x], [(matrix @ matrix.T).sin().block()], ["x"], ["y"])
+  z = sc.sym("z", 60)
+  mapped = sc.Function._from_exprs("metric_lane_map", [z], [sc.vmap(stage, 5, [(z, 0, 12)])], ["z"], ["y"])
+  assert _dispatch_metrics(mapped, render_c_module(mapped, lanes=1).program) == (5, 21, 81)
+  assert _dispatch_metrics(mapped, render_c_module(mapped, lanes=4).program) == (5, 168, 81)

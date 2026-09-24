@@ -67,7 +67,7 @@ grad(np.array([1.0, 2.0]))
 | 5 | Calling it with array leaves runs `__call__`, `numerical_call`, `_flat_numerical_call` and `_compile`, which reaches the backend through `_jit()`. That is the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](../dev/codebase.md#the-two-sanctioned-exceptions) to import layering. | `function/model.py` |
 | 6 | `CompiledFunction` asks `_build_artifact` for a shared library, which calls `render_c_module`. That lowers the function once into a render context every artifact reads from. | `codegen/jit.py`, `codegen/aot.py` |
 | 7 | `lower_function` normalizes a private copy of each ordinary Function's outputs, then walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a Function carrying a solver descriptor stays opaque. | `passes/lowering.py` |
-| 8 | `optimize_program` runs the fixed pipeline: `hoist_invariant`, `scalarize`, `prune_procedures`, `combine_scatter_sums`, `fuse_elementwise`, `fold_arith`, `unroll_unit_loops`, `fold_arith_after_unroll`, `pack_workspace`, `coalesce_stores`, `prepare_scalar`. | `passes/program/` |
+| 8 | `optimize_program` runs the ordered pipeline: `hoist_invariant`, `scalarize`, `fold_tiles`, `fuse_ranges`, `prune_procedures`, `combine_scatter_sums`, `fuse_elementwise`, `fold_arith`, `unroll_unit_loops`, `fold_arith_after_unroll`, optional `hoist_reciprocals`, optional `prepare_scalar` and `widen_ranges`, `pack_workspace`, `coalesce_stores`. Without widening, `prepare_scalar` runs last. | `passes/program/` |
 | 9 | `verify_program` checks the result before anything renders it. | `ir/program_spec.py` |
 | 10 | `render_program_c` emits the translation unit: the callee bodies, then the one entry point exported through the universal ABI, the single pointer-array C signature every generated function shares. | `codegen/c.py` |
 | 11 | Header, source, workspace size and solver link flags are packaged as a `CModule`. | `codegen/aot.py` |
@@ -157,7 +157,9 @@ what keeps generated C and Python agreeing.
 ### Optimizing: `passes/program/`
 
 `PASS_PIPELINE` is an explicit tuple in `passes/program/__init__.py`; `optimize_program` runs it
-at the tail of lowering. Imports do not determine execution order.
+at the tail of lowering. Before `pack_workspace`, it inserts `hoist_reciprocals` when
+`reciprocal=True`, then scalar preparation and `widen_ranges` when `lanes != 1`. With widening,
+it skips the final scalar preparation pass. Imports do not determine execution order.
 
 - `hoist_invariant` splits a mapped callee whose arguments are partly the same at every trip into
   a prologue called once before the loop and a body that receives the prologue's buffers as extra
@@ -165,6 +167,11 @@ at the tail of lowering. Imports do not determine execution order.
 - `scalarize` expands selected small float64 procedures and eligible pure callees into shared
   scalar values, folds constants and identities, and schedules declarations and expression trees.
   Expression lowering hints control selection; automatic expansion preserves the entry point.
+- `fold_tiles` shrinks repeated, load-only constant tables and replaces their indices with modulo
+  expressions. Pointer-visible tables retain their storage.
+- `fuse_ranges` expands scalar mapped callees and propagates their ranges through static assembly
+  views. Matching consumers share scalar expressions, unused derivative stores disappear, and
+  differing boundary demands become separate range intervals. Unsupported dependencies retain storage.
 - `prune_procedures` removes unreachable procedures while retaining solver-oracle roots.
 - `combine_scatter_sums` replaces sums of single-use zero-filled scatters with one zero-fill
   and one scatter-add per term.
@@ -173,10 +180,18 @@ at the tail of lowering. Imports do not determine execution order.
 - `fold_arith` turns reads of constant buffers into constants, applies the arithmetic identities
   shared with the expression dialect (`passes/arith.py`) inside loop bodies, and makes a loop that
   fills a private buffer with one constant into a constant buffer.
-- `unroll_unit_loops` erases statically empty loops and inlines single-iteration ones, after
-  fusion has seen the loop-shaped form.
+- `unroll_unit_loops` erases statically empty loops and inlines ordinary single-iteration loops.
+  Mapped ranges retain their scheduling boundary even when they contain one trip.
 - `fold_arith_after_unroll` resolves arithmetic and constant reads exposed by loop substitution
   and prunes unused buffer declarations.
+- `hoist_reciprocals` replaces division by a loop-invariant divisor with multiplication by a
+  reciprocal computed before the loop. It requires explicit opt-in because rounding, overflow,
+  and underflow can change. Mutable or aliased divisors and possibly empty loops retain division.
+- `widen_ranges` splits eligible mapped or independent output ranges into chunks with explicit
+  vector lanes. It inlines eligible mapped callees, stages private storage by lane, and caps width
+  using peak scalar liveness. Tail loads clamp their indices and stores guard inactive lanes.
+  Reductions retain their original accumulation order. Scalar preparation runs before widening,
+  and workspace packing accounts for the expanded private storage.
 - `pack_workspace` lifetime-packs private buffers into shared slots and spills the large ones to
   the caller's `w[]`, which is what `f_SZ_W` reports. Without it the largest benchmark cells
   overflow the C stack.

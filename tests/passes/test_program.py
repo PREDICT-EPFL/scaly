@@ -649,14 +649,12 @@ def _proc_names(fn: sc.Function) -> list[str]:
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
 def test_hoist_moves_broadcast_argument_work_before_the_mapped_loop() -> None:
   fn, z, w = _mapped_mlp(5, broadcast=True)
-  assert _proc_names(fn) == ["hoist_stage_hoist_1", "hoist_stage_hoisted_1", "hoist_map_True"]
+  assert _proc_names(fn) == ["hoist_stage_hoist_1", "hoist_map_True"]
   body = [s for s in _main_body(fn) if s.op != ProgramOp.BUFFER]
   calls = [s for s in body if s.op == ProgramOp.CALL]
-  loops = [s for s in body if s.op == ProgramOp.FOR and s.args[1].op == ProgramOp.CALL]
+  loops = [s for s in body if s.op == ProgramOp.FOR]
   assert [c.attrs["callee"] for c in calls] == ["hoist_stage_hoist_1"] and body.index(calls[0]) < body.index(loops[0])
-  assert loops[0].args[1].attrs["callee"] == "hoist_stage_hoisted_1"
-  # The prologue owns the exp of the broadcast matrix; the body keeps the per-stage product and
-  # its zero-filled accumulator, which is written per trip and so must not move.
+  assert not any(n.op == ProgramOp.CALL for n in walk_program(loops[0]))
   prologue, hoisted = lower_function(fn).args[:2]
   ops = lambda proc: {n.op for stmt in proc.args[int(proc.attrs["param_count"]) :] for n in walk_program(stmt)}
   assert ProgramOp.EXP in ops(prologue) and ProgramOp.EXP not in ops(hoisted)
@@ -668,7 +666,7 @@ def test_hoist_moves_broadcast_argument_work_before_the_mapped_loop() -> None:
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler")
 def test_hoist_leaves_per_trip_arguments_in_the_loop() -> None:
   fn, z, w = _mapped_mlp(5, broadcast=False)
-  assert _proc_names(fn) == ["hoist_stage", "hoist_map_False"]
+  assert _proc_names(fn) == ["hoist_map_False"]
   expected = np.sin(np.einsum("sij,sj->si", np.exp(w.reshape(5, 3, 3)), z.reshape(5, 3))).reshape(-1)
   np.testing.assert_allclose(fn((z, w)), expected, rtol=1e-14, atol=1e-14)
 
@@ -689,7 +687,7 @@ def test_hoist_names_each_invariant_position_set_of_one_callee() -> None:
     second = sc.vmap(stage, 4, {"x": (z, 0, 0), "w": (weights, 0, 9)})
     return first + second
 
-  assert _proc_names(fn) == ["hoist_two_hoist_1", "hoist_two_hoisted_1", "hoist_two_hoist_0", "hoist_two_hoisted_0", "hoist_two_map"]
+  assert _proc_names(fn) == ["hoist_two_hoist_1", "hoist_two_hoist_0", "hoist_two_map"]
   zv, wv = np.random.default_rng(5).normal(size=12), np.random.default_rng(6).normal(size=36)
   ew, ex = np.exp(wv.reshape(4, 3, 3)), np.exp(zv.reshape(4, 3))
   expected = np.sin(ew[0] @ ex.T).T + np.sin(np.einsum("sij,j->si", ew, ex[0]))

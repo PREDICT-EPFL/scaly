@@ -20,8 +20,9 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from scaly.codegen.toolchain import BuildRecipe, CPU_LEVELS
 from scaly.codegen.abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
-from scaly.codegen.c import _includes, _render_entry, _render_raw_callee, entry_prologue, entry_workspace, render_program_c
+from scaly.codegen.c import _c_reserved_names, _includes, _render_entry, _render_raw_callee, entry_prologue, entry_workspace, render_program_c
 from scaly.codegen.casadi import (
   casadi_declarations,
   casadi_defines,
@@ -71,10 +72,13 @@ class CModule:
   typed_buffers: bool
   lang: str = "c"
   casadi: bool = False
+  recipe: BuildRecipe = BuildRecipe()
 
   @cached_property
   def header(self) -> str:
-    return _render_header(self.fun, self.backends, self.workspace_size, typed_buffers=self.typed_buffers, lang=self.lang, casadi=self.casadi)
+    return self.recipe.comment(self.source_name) + _render_header(
+      self.fun, self.backends, self.workspace_size, typed_buffers=self.typed_buffers, lang=self.lang, casadi=self.casadi
+    )
 
   @cached_property
   def source(self) -> str:
@@ -83,16 +87,16 @@ class CModule:
     if self.lang == "cpp":
       return self.body
     include = self.header_name.replace("\\", "\\\\").replace('"', '\\"')
-    return f'#include "{include}"\n\n{self.body}'
+    recipe = self.recipe.comment(self.source_name)
+    return recipe + f'#include "{include}"\n\n' + self.body.removeprefix(recipe)
 
   @cached_property
   def link_flags(self) -> tuple[str, ...]:
-    """Compiler/linker flags for ``backends`` — include, lib, rpath and ``-l`` flags. Empty without
-    a solver. Resolved on demand because ``solvers.paths`` raises ``SolverLibraryError`` when a
+    """Compiler/linker flags for ``backends`` — include, lib, rpath and ``-l`` flags, plus libraries required by the math recipe. Resolved on demand because ``solvers.paths`` raises ``SolverLibraryError`` when a
     backend's library or header is missing: rendering has to stay possible on a machine without the
     vendored solver stack, and against a backend that has no library at all (the fake backends in
     ``tests/solvers/test_registry.py``)."""
-    return tuple(backend_compile_flags(self.backends))
+    return (*backend_compile_flags(self.backends), *self.recipe.link_flags)
 
 
 class RenderObserver(Protocol):
@@ -124,18 +128,25 @@ class _RenderCtx:
   prog: ProgramNode
   backends: tuple[str, ...]
   workspace_size: int
+  recipe: BuildRecipe
 
 
-def _lower(fun: Function, observe: ProgramObserver | None = None, observe_expr: Callable[[str, Function], None] | None = None) -> _RenderCtx:
+def _lower(
+  fun: Function,
+  observe: ProgramObserver | None = None,
+  observe_expr: Callable[[str, Function], None] | None = None,
+  *,
+  recipe: BuildRecipe = BuildRecipe(),
+) -> _RenderCtx:
   """Lower ``fun`` once. ``workspace_size`` is the doubles of scratch it needs in ``w[]`` — the
   packed ``sz_w`` from ``passes.pack_workspace``, which also accounts for a solver wrapper passing
   its ``w`` straight to the oracle."""
   backends = solver_backends_used(fun)
   if backends:
     solver_stats_symbols(fun)  # validate duplicate solver symbols before lowering or compilation
-  prog = lower_function(fun, observe=observe, observe_expr=observe_expr)
+  prog = lower_function(fun, observe=observe, observe_expr=observe_expr, reciprocal=recipe.reciprocal, lanes=recipe.lanes)
   sz_w = _solver_root_workspace(prog, fun.name) if is_solver_function(fun) else int(main_proc(prog).attrs.get("sz_w", 0))
-  return _RenderCtx(fun, prog, backends, sz_w)
+  return _RenderCtx(fun, prog, backends, sz_w, recipe)
 
 
 def _solver_root_workspace(prog: ProgramNode, name: str) -> int:
@@ -157,16 +168,18 @@ _ALIGNAS = [
   "#ifndef SCALY_ALIGNAS",
   "#ifdef __cplusplus",
   "#define SCALY_ALIGNAS(n) alignas(n)",
-  "#else",
+  "#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L",
   "#define SCALY_ALIGNAS(n) _Alignas(n)",
+  "#else",
+  "#define SCALY_ALIGNAS(n)",
   "#endif",
   "#endif",
 ]
 
 
 def _typed_buffers(fun: Function, symbol: str) -> list[str]:
-  """One 16-byte aligned struct per input and output, the caller-owned workspace struct, and a
-  ``_call`` wrapper that builds the pointer arrays. Plain C; the same text compiles as C++."""
+  """One struct per input and output, the caller-owned workspace struct, and a
+  ``_call`` wrapper that builds the pointer arrays. C11 and C++ align to 16 bytes; C99 uses natural alignment."""
   params: list[str] = []
   arg_values: list[str] = []
   res_values: list[str] = []
@@ -261,7 +274,11 @@ def _render_header(fun: Function, backends: tuple[str, ...], sz_w: int, *, typed
 
 
 def _render_source(ctx: _RenderCtx, *, casadi: bool) -> str:
-  return _render_solver_bearing_source(ctx, casadi=casadi) if ctx.backends else render_program_c(ctx.prog, ctx.fun, casadi=casadi)
+  return (
+    _render_solver_bearing_source(ctx, casadi=casadi)
+    if ctx.backends
+    else render_program_c(ctx.prog, ctx.fun, casadi=casadi, dialect=ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm)
+  )
 
 
 def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
@@ -274,7 +291,7 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   pc = int(prog.attrs.get("proc_count", 1))
   procs = {pr.attrs["name"]: pr for pr in prog.args[:pc]}
   lines: list[str] = [
-    *_includes(("#include <time.h>", *solver_includes(fun))),
+    *_includes(("#include <time.h>", *solver_includes(fun)), dialect=ctx.recipe.dialect, prog=prog, vector_libm=ctx.recipe.vector_libm),
     "",
     *abi_status_defines(),
     "",
@@ -303,12 +320,13 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   # Program order also puts a callee before its callers, and it is the only order that knows the
   # PROCs the program passes split off a Function's PROC (``passes/program/hoist_invariant.py``).
   pending = [pr for pr in prog.args[:pc] if pr.attrs["name"] != fun.name]
+  reserved_names = _c_reserved_names(prog)
 
   def flush(until: str | None) -> None:
     names = [pr.attrs["name"] for pr in pending]
     count = names.index(until) + 1 if until in names else len(pending) if until is None else 0
     for pr in pending[:count]:
-      lines.extend((*_render_raw_callee(pr), ""))
+      lines.extend((*_render_raw_callee(pr, dialect=ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm, reserved_names=reserved_names), ""))
     del pending[:count]
 
   for fn in order if is_solver_function(fun) else order[:-1]:
@@ -320,7 +338,7 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   if is_solver_function(fun):
     lines += _render_solver_entry(fun, ctx.workspace_size, casadi=casadi)
   else:
-    lines += _render_entry(procs[fun.name], fun, casadi=casadi)
+    lines += _render_entry(procs[fun.name], fun, casadi=casadi, dialect=ctx.recipe.dialect, vector_libm=ctx.recipe.vector_libm)
   if casadi:
     lines += ["", *render_casadi_queries(fun, entry_workspace(fun, ctx.workspace_size, casadi=True))]
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
@@ -342,7 +360,7 @@ def _render_solver_entry(fun: Function, sz_w: int, *, casadi: bool) -> list[str]
   return [*lines, f"  {symbol}_raw({', '.join(args)});", *epilogue, "  return SCALY_SUCCESS;", "}"]
 
 
-def _render_observed(fun: Function, *, casadi: bool) -> tuple[_RenderCtx, str]:
+def _render_observed(fun: Function, *, casadi: bool, recipe: BuildRecipe = BuildRecipe(), source_name: str | None = None) -> tuple[_RenderCtx, str]:
   """Lower and render ``fun`` under the registered observers: one lowering, one source, and the
   expression, Program, code, and outcome sequence ``scaly.viz`` records."""
   observers = [obs for begin in _RENDER_OBSERVERS if (obs := begin(fun)) is not None]
@@ -358,8 +376,8 @@ def _render_observed(fun: Function, *, casadi: bool) -> tuple[_RenderCtx, str]:
   try:
     if casadi:
       check_casadi_layout(fun)
-    ctx = _lower(fun, observe if observers else None, observe_expr if observers else None)
-    source = _render_source(ctx, casadi=casadi)
+    ctx = _lower(fun, observe if observers else None, observe_expr if observers else None, recipe=recipe)
+    source = recipe.comment(source_name or f"{c_ident(fun.name)}.c") + _render_source(ctx, casadi=casadi)
   except Exception as exc:
     for obs in observers:
       obs.finish(error=repr(exc))
@@ -370,13 +388,23 @@ def _render_observed(fun: Function, *, casadi: bool) -> tuple[_RenderCtx, str]:
   return ctx, source
 
 
-def render_c_source(fun: Function, *, casadi: bool = False) -> str:
+def render_c_source(
+  fun: Function,
+  *,
+  casadi: bool = False,
+  lanes: int | str = "auto",
+  dialect: str = "gnu",
+  vector_libm: str = "none",
+  reciprocal: bool = False,
+  cpu: str = "generic",
+) -> str:
   """Render a standalone pointer-ABI C implementation of ``fun`` and its callees. ``casadi`` adds
   the CasADi 3.8 compatible symbols.
 
   A ``LoweringError`` (e.g. a still-deferred mixed-device CALL) propagates — there is no fallback.
   """
-  return _render_observed(fun, casadi=casadi)[1]
+  recipe = BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal)
+  return _render_observed(fun, casadi=casadi, recipe=recipe)[1]
 
 
 def _check_lang(lang: str) -> None:
@@ -384,27 +412,54 @@ def _check_lang(lang: str) -> None:
     raise ValueError(f"lang must be 'c' or 'cpp', got {lang!r}")
 
 
-def render_c_api_header(fun: Function, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> str:
+def render_c_api_header(
+  fun: Function,
+  *,
+  typed_buffers: bool = True,
+  lang: str = "c",
+  casadi: bool = False,
+  lanes: int | str = "auto",
+  dialect: str = "gnu",
+  vector_libm: str = "none",
+  reciprocal: bool = False,
+  cpu: str = "generic",
+) -> str:
   """Render the public header for ``fun``: the ABI declarations, ``SZ_*`` constants, the typed
   buffers of the chosen ``lang`` (``typed_buffers=False`` omits them from the C header), the
   sparse-output tables, and with ``casadi`` the CasADi query prototypes."""
   _check_lang(lang)
   if casadi:
     check_casadi_layout(fun)
-  ctx = _lower(fun)
-  return _render_header(
+  ctx = _lower(fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal))
+  return ctx.recipe.comment(f"{c_ident(fun.name)}.c") + _render_header(
     ctx.fun, ctx.backends, entry_workspace(fun, ctx.workspace_size, casadi=casadi), typed_buffers=typed_buffers, lang=lang, casadi=casadi
   )
 
 
 def render_c_module(
-  fun: Function, *, header_name: str | None = None, source_name: str | None = None, typed_buffers: bool = True, lang: str = "c", casadi: bool = False
+  fun: Function,
+  *,
+  header_name: str | None = None,
+  source_name: str | None = None,
+  typed_buffers: bool = True,
+  lang: str = "c",
+  casadi: bool = False,
+  lanes: int | str = "auto",
+  dialect: str = "gnu",
+  vector_libm: str = "none",
+  reciprocal: bool = False,
+  cpu: str = "generic",
 ) -> CModule:
   """Render ``fun`` into its header / ``.c`` pair from a single lowering. The kernel is always C;
   ``lang`` picks the header a caller includes (``f.h`` or ``f.hpp``) and ``casadi`` adds the
   CasADi 3.8 compatible symbols to both."""
   _check_lang(lang)
-  ctx, body = _render_observed(fun, casadi=casadi)
+  ctx, body = _render_observed(
+    fun,
+    casadi=casadi,
+    recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal),
+    source_name=source_name,
+  )
   symbol = c_ident(fun.name)
   return CModule(
     fun=fun,
@@ -417,21 +472,49 @@ def render_c_module(
     typed_buffers=typed_buffers,
     lang=lang,
     casadi=casadi,
+    recipe=ctx.recipe,
   )
 
 
-def workspace_size(fun: Function, *, casadi: bool = False) -> int:
+def workspace_size(
+  fun: Function,
+  *,
+  casadi: bool = False,
+  lanes: int | str = "auto",
+  dialect: str = "gnu",
+  vector_libm: str = "none",
+  reciprocal: bool = False,
+  cpu: str = "generic",
+) -> int:
   """Doubles of scratch ``fun`` needs in ``w[]`` — the value its header's ``SZ_W`` quotes.
   ``CModule.workspace_size`` is the same number without a second lowering, so prefer it when the
   module is already in hand."""
-  return entry_workspace(fun, _lower(fun).workspace_size, casadi=casadi)
+  return entry_workspace(
+    fun,
+    _lower(fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal)).workspace_size,
+    casadi=casadi,
+  )
 
 
-def write_module(fun: Function | Solver, out_dir: Path, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> CModule:
+def write_module(
+  fun: Function | Solver,
+  out_dir: Path,
+  *,
+  typed_buffers: bool = True,
+  lang: str = "c",
+  casadi: bool = False,
+  lanes: int | str = "auto",
+  dialect: str = "gnu",
+  vector_libm: str = "none",
+  reciprocal: bool = False,
+  cpu: str = "generic",
+) -> CModule:
   """Write ``fun``'s header / ``.c`` into ``out_dir`` and return the module; a ``Solver`` renders its ``function``."""
   if isinstance(fun, Solver):
     fun = fun.function
-  module = render_c_module(fun, typed_buffers=typed_buffers, lang=lang, casadi=casadi)
+  module = render_c_module(
+    fun, typed_buffers=typed_buffers, lang=lang, casadi=casadi, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, cpu=cpu
+  )
   out_dir.mkdir(parents=True, exist_ok=True)
   (out_dir / module.header_name).write_text(module.header)
   (out_dir / module.source_name).write_text(module.source)
@@ -451,6 +534,11 @@ def main(argv: list[str] | None = None) -> None:
     help="also export the CasADi 3.8 compatible symbols (f_n_in, f_sparsity_out, f_work, ...) and hand sparse outputs over in compressed-column order",
   )
   parser.add_argument("--no-typed-buffers", action="store_true", help="C header only: omit the typed buffer structs and the f_call wrapper")
+  parser.add_argument("--cpu", choices=CPU_LEVELS, default="generic", help="CPU baseline; native is host-local")
+  parser.add_argument("--lanes", choices=("auto", "1", "2", "4", "8"), default="auto")
+  parser.add_argument("--dialect", choices=("gnu", "c"), default="gnu")
+  parser.add_argument("--vector-libm", choices=("none", "glibc"), default="none")
+  parser.add_argument("--reciprocal", action="store_true", help="allow reciprocal multiplication, including changed rounding and overflow")
   args = parser.parse_args(argv)
   module_name, _, attr = args.target.partition(":")
   if not attr:
@@ -458,11 +546,23 @@ def main(argv: list[str] | None = None) -> None:
   fun = getattr(importlib.import_module(module_name), attr)
   if not isinstance(fun, Function | Solver):
     fun = fun()
-  module = write_module(fun, args.out_dir, typed_buffers=not args.no_typed_buffers, lang=args.lang, casadi=args.casadi)
+  module = write_module(
+    fun,
+    args.out_dir,
+    typed_buffers=not args.no_typed_buffers,
+    lang=args.lang,
+    casadi=args.casadi,
+    cpu=args.cpu,
+    lanes="auto" if args.lanes == "auto" else int(args.lanes),
+    dialect=args.dialect,
+    vector_libm=args.vector_libm,
+    reciprocal=args.reciprocal,
+  )
   print(args.out_dir / module.header_name)
   print(args.out_dir / module.source_name)
   print(f"sz_w: {module.workspace_size}")
-  if module.backends:
+  print(module.recipe.comment(module.source_name).rstrip())
+  if module.link_flags:
     print("link flags: " + " ".join(module.link_flags))
 
 

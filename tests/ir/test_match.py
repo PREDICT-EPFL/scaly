@@ -104,3 +104,31 @@ def test_expression_replacement_preserves_effective_subgraph_policy() -> None:
   out = rewrite((x.block() * 1.0).scalar(), [Pattern(ExprOp.MUL, lambda e: True, lambda e: e.args[0])])
 
   assert out.lowering == "block"
+
+
+@pytest.mark.parametrize("revisit", [False, True])
+def test_expression_nodes_reject_caller_memo(revisit: bool) -> None:
+  x = sc.sym("memo_x", 2)
+  shared = (x.sin() * 1.0).scalar()
+  patterns = [Pattern(op, lambda e: True, lambda e: e.args[0]) for op in (ExprOp.MUL, ExprOp.ADD)]
+  with pytest.raises(ValueError, match="only supported for Program nodes"):
+    rewrite(shared, patterns, revisit=revisit, memo={})
+
+
+def test_memo_reuses_completed_revisited_replacements() -> None:
+  a = buffer("memo_a", dtypes.float64, (1,))
+  b = buffer("memo_b", dtypes.float64, (1,))
+  first, second = load(view(a, [var("i")])), load(view(b, [var("i")]))
+  producers = {first: add(second, const_float(1.0)), second: const_float(2.0)}
+  visits = []
+
+  def inline(node):
+    visits.append(node)
+    return producers[node]
+
+  patterns = [Pattern(ProgramOp.LOAD, lambda n: n in producers, inline)]
+  memo = {}
+  rewrite(first, patterns, rebuild=rebuild_program, revisit=True, memo=memo)
+  result = rewrite(add(first, second), patterns, rebuild=rebuild_program, revisit=True, memo=memo)
+  assert result is add(add(const_float(2.0), const_float(1.0)), const_float(2.0))
+  assert visits == [first, second]

@@ -640,3 +640,35 @@ def test_shared_fill_star_hessian_matches_one_sided_and_dense(monkeypatch: pytes
   assert len(set(star_widths)) == 1
   assert star_widths[0] == 3
   assert one_sided_widths[-1] > one_sided_widths[0]
+
+
+@pytest.mark.parametrize("mapped", [False, True])
+def test_nested_callee_sparsity_is_analyzed_once_per_variable(monkeypatch, mapped: bool) -> None:
+  from collections import Counter
+
+  from scaly.ad import sparsity as analysis
+
+  x, y = sc.sym("callee_x", 2), sc.sym("callee_y", 2)
+  leaf = sc.Function._from_exprs("mask_leaf", [x, y], [sc.stack([x[0] * y[1], x[1]])], ["x", "y"], ["out"])
+  nested = sc.Function._from_exprs("mask_nested", [x, y], [leaf((x, y)) + leaf((y, x))], ["x", "y"], ["out"])
+  z = sc.sym("mask_z", 8)
+  output = sc.vmap(nested, 2, [(z, 0, 4), (z, 2, 4)]) if mapped else sc.concat([nested((z[:2], z[2:4])), nested((z[4:6], z[6:8]))])
+  visits = Counter()
+  original = analysis._jac_mask_uncached
+
+  def counted(expr, wrt, memo):
+    visits[expr.id, wrt.id] += 1
+    return original(expr, wrt, memo)
+
+  monkeypatch.setattr(analysis, "_jac_mask_uncached", counted)
+  mask = analysis.jacobian_sparsity(output, z).to_mask()
+  block = np.array([[True, True, True, True], [False, True, False, True]])
+  expected = np.zeros((4, 8), dtype=bool)
+  expected[:2, :4] = block
+  expected[2:, 4:] = block
+  np.testing.assert_array_equal(mask, expected)
+  assert max(visits.values()) == 1
+  values = np.arange(1.0, 9.0)
+  fn = sc.Function._from_exprs("nested_mask_values", [z], [output], ["z"], ["out"])
+  reference = np.array([[a * d + c * b, b + d] for a, b, c, d in values.reshape(2, 4)])
+  np.testing.assert_array_equal(fn(values), reference.reshape(-1))

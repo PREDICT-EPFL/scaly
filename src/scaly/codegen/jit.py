@@ -8,6 +8,7 @@ rendering decisions of its own.
 - ``SCALY_CC`` overrides the C compiler binary (default: ``cc`` from ``$PATH``).
 - ``SCALY_CC_OPT`` overrides the optimization flag (default: ``-O2``). Benchmark harnesses that
   compile a baseline at ``-O3`` should set it, so both sides of a comparison get the same level.
+- ``SCALY_VECTOR_LIBM`` selects ``none`` or ``glibc``; unset uses the native recipe.
 
 The JIT compiles for the machine it runs on, so it also passes the host CPU target and
 ``-fno-math-errno``; the distributed solver plugin wheels stay at the portable baseline.
@@ -18,23 +19,22 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import os
-import platform
 import shutil
 import subprocess
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from .abi import C_API_SIGNATURE, c_ident
-from .aot import render_c_module
+from .aot import CModule, render_c_module
 from .solver import solver_stats_symbols
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
-from .toolchain import cache_root, find_c_compiler
-from ..utils.env import shared_lib_ext, shared_lib_flag
+from .toolchain import BuildRecipe, cache_root, find_c_compiler, native_recipe
+from ..utils.env import ToolchainError, env, shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
   from ..function import Function
@@ -101,17 +101,28 @@ def opt_flag() -> str:
   return os.environ.get("SCALY_CC_OPT") or "-O2"
 
 
-# gcc and clang both spell the host target ``-march=native`` on x86. On AArch64 (Apple silicon,
-# Linux arm64) clang rejects ``-march=native``; both compilers accept ``-mcpu=native`` there.
-_NATIVE_CPU_FLAG = "-mcpu=native" if platform.machine().lower() in {"arm64", "aarch64"} else "-march=native"
-HOST_CFLAGS: tuple[str, ...] = (_NATIVE_CPU_FLAG, "-fno-math-errno")
-"""The host CPU target (so FMA and wider vectors are available) and ``-fno-math-errno`` (so ``sqrt``
-and friends inline). The benchmark harness compiles both providers with the same two flags."""
+HOST_CFLAGS: tuple[str, ...] = (*BuildRecipe(cpu="native").cpu_flags, "-fno-math-errno")
+"""Host CPU target and math flags shared by both benchmark providers."""
 
 
-def compile_flags() -> tuple[str, ...]:
-  """Flags the JIT passes to every compile: the optimization level plus ``HOST_CFLAGS``."""
-  return (opt_flag(), *HOST_CFLAGS)
+def compile_flags(recipe: BuildRecipe | None = None) -> tuple[str, ...]:
+  """Optimization and target flags matching the module recipe, or the native benchmark defaults."""
+  return (opt_flag(), *(HOST_CFLAGS if recipe is None else (*recipe.cpu_flags, "-fno-math-errno")))
+
+
+def _render_native(fun: Function, compiler: str) -> CModule:
+  try:
+    recipe = native_recipe(compiler)
+  except (OSError, subprocess.CalledProcessError) as exc:
+    raise JitError(f"failed to probe native C compiler {compiler!r}: {exc}") from exc
+  override = env("SCALY_VECTOR_LIBM")
+  if override is not None:
+    if override not in {"none", "glibc"}:
+      raise ToolchainError(f"SCALY_VECTOR_LIBM must be 'none' or 'glibc', got {override!r}")
+    recipe = replace(recipe, vector_libm=override)
+  return render_c_module(
+    fun, cpu=recipe.cpu, lanes=recipe.lanes, dialect=recipe.dialect, vector_libm=recipe.vector_libm, reciprocal=recipe.reciprocal
+  )
 
 
 def _compute_cache_key(source: str, *, fun_name: str, compile_flags: tuple[str, ...] = ()) -> str:
@@ -142,6 +153,7 @@ class _Artifact:
   key: str
   flags: tuple[str, ...]
   workspace_size: int
+  solver_library: bool
 
 
 _artifact_cache: dict[str, _Artifact] = {}
@@ -161,7 +173,7 @@ def _build_artifact(fun: Function) -> _Artifact:
   cc = compiler.cc
 
   try:
-    module = render_c_module(fun)
+    module = _render_native(fun, cc)
   except NotImplementedError as exc:
     raise JitUnavailable(f"codegen does not support function {fun.name!r}: {exc}") from exc
 
@@ -170,7 +182,7 @@ def _build_artifact(fun: Function) -> _Artifact:
   # ``.c`` carries — so the key is a hash of exactly the text handed to the compiler.
   # The compile flags are part of the key: two flag sets produce different machine code from the
   # same source, so they must not share a cache entry.
-  flags = compile_flags()
+  flags = compile_flags(module.recipe)
   key = _compute_cache_key(module.body, fun_name=fun.name, compile_flags=(*flags, *extra_flags))
   with _artifact_lock:
     cached = _artifact_cache.get(key)
@@ -203,7 +215,7 @@ def _build_artifact(fun: Function) -> _Artifact:
       raise JitError(f"failed to compile {fun.name!r}: {exc.stderr or exc.stdout}") from exc
     tmp_lib.replace(lib_path)
 
-  artifact = _Artifact(lib_path=lib_path, key=key, flags=extra_flags, workspace_size=module.workspace_size)
+  artifact = _Artifact(lib_path=lib_path, key=key, flags=extra_flags, workspace_size=module.workspace_size, solver_library=bool(module.backends))
   with _artifact_lock:
     _artifact_cache[key] = artifact
   return artifact
@@ -237,7 +249,7 @@ class CompiledFunction:
   def __init__(self, fun: Function):
     self._fun = fun
     self._artifact = _build_artifact(fun)
-    self._lib = load_library(self._artifact.lib_path, isolated=bool(self._artifact.flags))
+    self._lib = load_library(self._artifact.lib_path, isolated=self._artifact.solver_library)
     symbol = c_ident(fun.name)
     self._symbol = symbol
     entry = getattr(self._lib, symbol)
@@ -350,11 +362,14 @@ def invalidate_cache(fun: Function) -> None:
   Safe to call when nothing is cached yet; codegen failures (``NotImplementedError``) are
   swallowed since there cannot be a corresponding cache entry to remove.
   """
+  compiler = find_c_compiler()
+  if compiler is None:
+    return
   try:
-    module = render_c_module(fun)
+    module = _render_native(fun, compiler.cc)
   except NotImplementedError:
     return
-  key = _compute_cache_key(module.body, fun_name=fun.name, compile_flags=(*compile_flags(), *module.link_flags))
+  key = _compute_cache_key(module.body, fun_name=fun.name, compile_flags=(*compile_flags(module.recipe), *module.link_flags))
   with _artifact_lock:
     _artifact_cache.pop(key, None)
   cache_dir = cache_root() / key

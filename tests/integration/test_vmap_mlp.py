@@ -11,6 +11,7 @@ formulation, so nothing here depends on a trained checkpoint or on a solver plug
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 import scaly as sc
 from scaly.codegen import render_c_source
@@ -222,7 +223,8 @@ def test_lagrangian_hessian_through_the_vmap_matches_finite_differences() -> Non
   np.testing.assert_allclose(exact, approx, rtol=2e-5, atol=2e-6)
 
 
-def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows() -> None:
+@pytest.mark.parametrize("lanes", [1, "auto"])
+def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows(lanes: int | str) -> None:
   """Both kernels stay one loop nest however many stages there are, and the twin shows it matters.
 
   The Hessian is the one that pins the *cost* to its VMAP form: written as a Python reduction over
@@ -232,14 +234,15 @@ def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows
   from scaly.ir.program import ProgramOp
   from scaly.passes.lowering import lower_function, main_proc
 
-  sizes = (2, 8, 32)
+  # Auto widening starts once the horizon supplies a full vector chunk.
+  sizes = (2, 8, 32) if lanes == 1 else (8, 16, 32)
   for kernel, request in (("spjac", sc.factory.SpJac("eq", "z")), ("sphess", sc.factory.SpHess("gamma", "z"))):
     lines = []
     for stages in sizes:
       names = ["z", "p"] if kernel == "spjac" else ["z", "lam:cost", "lam:eq", "p"]
       aux = None if kernel == "spjac" else {"gamma": ["cost", "eq"]}
       built = vmapped(stages).factory(f"vmap_mlp_{kernel}_N{stages}", names, [request], aux=aux)
-      lines.append(len(render_c_source(built).splitlines()))
+      lines.append(len(render_c_source(built, lanes=lanes).splitlines()))
     assert max(lines) < 1.2 * min(lines), f"{kernel} source grew with the horizon: {dict(zip(sizes, lines, strict=True))}"
 
   unrolled_calls = []

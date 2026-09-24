@@ -24,7 +24,8 @@ from .casadi import casadi_defines, casadi_gather, casadi_scratch, render_casadi
 from ..function import Function
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
-from ..ir.program import ProgramNode, ProgramOp
+from ..ir.program import walk_program, ProgramNode, ProgramOp
+from ..passes.program._common import allocated_name, buffer_refs
 
 # Scalar ProgramOp -> C spelling. Operators render inline; libm ops render as calls.
 _BIN_SYM = {ProgramOp.ADD: "+", ProgramOp.SUB: "-", ProgramOp.MUL: "*", ProgramOp.DIV: "/", ProgramOp.MOD: "%"}
@@ -61,10 +62,17 @@ def can_render_program_c(fun: Function) -> bool:
   return True
 
 
-def _includes(extra: tuple[str, ...] = ()) -> list[str]:
+def _includes(extra: tuple[str, ...] = (), *, dialect: str = "gnu", prog: ProgramNode | None = None, vector_libm: str = "none") -> list[str]:
   # Vector types for coalesced stores (``_emit_body``): ``aligned(8)`` because the ABI only
   # promises double alignment, ``may_alias`` because they access plain double storage.
-  return ["#include <math.h>", "#include <stddef.h>", "#include <stdint.h>", *extra, _VECTOR_TYPEDEF]
+  return [
+    "#include <math.h>",
+    "#include <stddef.h>",
+    "#include <stdint.h>",
+    *extra,
+    *([_VECTOR_TYPEDEF] if dialect == "gnu" else []),
+    *_lane_defines(prog),
+  ]
 
 
 # Width 4 measured slower than scalar stores under GCC on the chain M=5 Hessian.
@@ -77,14 +85,14 @@ def render_program_c_source(fun: Function, observe: ProgramObserver | None = Non
   return render_program_c(lower_function(fun, observe=observe), fun)
 
 
-def render_program_c(prog: ProgramNode, fun: Function, *, casadi: bool = False) -> str:
+def render_program_c(prog: ProgramNode, fun: Function, *, casadi: bool = False, dialect: str = "gnu", vector_libm: str = "none") -> str:
   """Render ``fun``'s lowered PROGRAM to a standalone pointer-ABI translation unit. ``casadi`` adds
   the CasADi query functions and the compressed-column gather (``codegen/casadi.py``)."""
   proc = main_proc(prog)
   pc = int(prog.attrs.get("proc_count", 1))
   callees = list(prog.args[: pc - 1])
   lines: list[str] = [
-    *_includes(),
+    *_includes(dialect=dialect, prog=prog, vector_libm=vector_libm),
     "",
     *abi_status_defines(),
     "",
@@ -94,10 +102,11 @@ def render_program_c(prog: ProgramNode, fun: Function, *, casadi: bool = False) 
     "#endif",
     "",
   ]
+  reserved_names = _c_reserved_names(prog)
   for callee in callees:
-    lines += _render_raw_callee(callee)
+    lines += _render_raw_callee(callee, dialect=dialect, vector_libm=vector_libm, reserved_names=reserved_names)
     lines.append("")
-  lines += _render_entry(proc, fun, casadi=casadi)
+  lines += _render_entry(proc, fun, casadi=casadi, dialect=dialect, vector_libm=vector_libm)
   if casadi:
     lines += ["", *render_casadi_queries(fun, entry_workspace(fun, int(proc.attrs.get("sz_w", 0)), casadi=True))]
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
@@ -125,7 +134,7 @@ def entry_prologue(fun: Function, sz_w: int) -> list[str]:
   return lines
 
 
-def _render_entry(proc: ProgramNode, fun: Function, *, casadi: bool = False) -> list[str]:
+def _render_entry(proc: ProgramNode, fun: Function, *, casadi: bool = False, dialect: str = "gnu", vector_libm: str = "none") -> list[str]:
   """Emit the pointer-ABI entry ``<symbol>(arg,res,iw,w,mem)`` with ``fun``'s main PROC body
   inlined. ``codegen/aot.py`` reuses this for solver-bearing functions, so the top function's body
   lowers through Program IR exactly like any other host function."""
@@ -140,7 +149,7 @@ def _render_entry(proc: ProgramNode, fun: Function, *, casadi: bool = False) -> 
   for i, name in enumerate(fun.output_names):
     ptr_expr[name] = f"res[{i}]"
 
-  lines = entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi))
+  lines = [*_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm), *entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi))]
   epilogue: list[str] = []
   if casadi:
     gather = casadi_gather(fun, sz_w)
@@ -148,7 +157,7 @@ def _render_entry(proc: ProgramNode, fun: Function, *, casadi: bool = False) -> 
     lines += gather.setup
     epilogue = gather.epilogue
   _emit_local_buffers(body, lines, ptr_expr, indent=2)
-  _emit_body(body, ptr_expr, lines, indent=2)
+  _emit_body(body, ptr_expr, lines, indent=2, dialect=dialect)
   lines += [*epilogue, "  return SCALY_SUCCESS;", "}"]
   return lines
 
@@ -160,7 +169,15 @@ def _force_noinline_raw(proc_name: str) -> bool:
   return "_fwd" in proc_name
 
 
-def _render_raw_callee(proc: ProgramNode) -> list[str]:
+def _c_reserved_names(prog: ProgramNode) -> set[str]:
+  names = {
+    c_ident(n.attrs[key]) for n in walk_program(prog) for key in ("name", "target", "vector_helper", "vector_prefix", "lane_width") if key in n.attrs
+  }
+  names.update(f"{c_ident(n.attrs['name'])}_raw" for n in walk_program(prog) if n.op == ProgramOp.PROC)
+  return names
+
+
+def _render_raw_callee(proc: ProgramNode, *, dialect: str = "gnu", vector_libm: str = "none", reserved_names: set[str] | None = None) -> list[str]:
   """A callee renders as ``static inline void <name>_raw(const <dtype>* p0, ..., double* w)`` — a
   pointer per param plus the workspace tail (spilled slots index into ``w``; ``call`` sites pass
   the caller's ``w`` advanced past its own spill window). The leading ``input_count`` params are
@@ -183,13 +200,22 @@ def _render_raw_callee(proc: ProgramNode) -> list[str]:
     ]
   )
   proc_name = proc.attrs["name"]
-  qualifier = "static __attribute__((noinline))" if _force_noinline_raw(proc_name) else "static inline"
-  out = [f"{qualifier} void {c_ident(proc_name)}_raw({param_decls}) {{"]
+  noinline = _force_noinline_raw(proc_name)
+  qualifier = ("static __attribute__((noinline))" if dialect == "gnu" else "static") if noinline else "static inline"
+  raw_name = f"{c_ident(proc_name)}_raw"
+  implementation = (
+    allocated_name(f"{raw_name}_impl", reserved_names if reserved_names is not None else _c_reserved_names(proc))
+    if noinline and dialect == "c"
+    else raw_name
+  )
+  out = [*_render_vector_helpers(proc, dialect=dialect, vector_libm=vector_libm), f"{qualifier} void {implementation}({param_decls}) {{"]
   if not sz_w:
     out.append("  (void)w;")
   _emit_local_buffers(body, out, ptr_expr, indent=2)
-  _emit_body(body, ptr_expr, out, indent=2)
+  _emit_body(body, ptr_expr, out, indent=2, dialect=dialect)
   out.append("}")
+  if implementation != raw_name:
+    out.append(f"static void (*volatile {raw_name})({param_decls}) = {implementation};")
   return out
 
 
@@ -222,17 +248,19 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
 
 
-def _emit_body(body: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:
+def _emit_body(body: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int, *, dialect: str = "gnu") -> None:
   """Render Program statements in order."""
   for stmt in body:
     if stmt.op == ProgramOp.BUFFER:
       continue
-    _emit_statement(stmt, ptr_expr, lines, indent)
+    _emit_statement(stmt, ptr_expr, lines, indent, dialect=dialect)
 
 
-def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:
+def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int, *, dialect: str = "gnu") -> None:
   pad = " " * indent
-  if stmt.op == ProgramOp.FOR:
+  if stmt.op == ProgramOp.FOR and "vector_helper" in stmt.attrs:
+    _emit_vector_calls(stmt, ptr_expr, lines, indent)
+  elif stmt.op == ProgramOp.FOR:
     rng = stmt.args[0]
     name = c_ident(rng.attrs["name"])
     start = _emit_scalar(rng.args[0], ptr_expr)
@@ -240,7 +268,7 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
     step = _emit_scalar(rng.args[2], ptr_expr)
     incr = f"++{name}" if step == "1" else f"{name} += {step}"
     lines.append(f"{pad}for (long long {name} = {start}; {name} < {stop}; {incr}) {{")
-    _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2)
+    _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2, dialect=dialect)
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.STORE:
     _emit_assignment(_emit_view(stmt.args[0], ptr_expr), [stmt.args[1]], ptr_expr, lines, indent)
@@ -248,8 +276,12 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
     view = stmt.args[0]
     ptr = ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"]))
     index = _emit_scalar(view.args[0], ptr_expr) if view.args else "0"
-    target = f"*(double2*)({ptr}{f' + {index}' if index != '0' else ''})"
-    _emit_assignment(target, list(stmt.args[1:]), ptr_expr, lines, indent)
+    if dialect == "c":
+      for offset, value in enumerate(stmt.args[1:]):
+        _emit_assignment(f"{ptr}[({index}) + {offset}]", [value], ptr_expr, lines, indent)
+    else:
+      target = f"*(double2*)({ptr}{f' + {index}' if index != '0' else ''})"
+      _emit_assignment(target, list(stmt.args[1:]), ptr_expr, lines, indent)
   elif stmt.op == ProgramOp.ASSIGN:
     declaration = f"{stmt.dtype.c_type} " if stmt.attrs.get("declare") else ""
     _emit_assignment(c_ident(stmt.attrs["target"]), [stmt.args[0]], ptr_expr, lines, indent, declaration)
@@ -289,13 +321,13 @@ def _emit_call_arg(node: ProgramNode, ptr_expr: dict[str, str]) -> str:
   raise LoweringError(f"unsupported CALL arg op {node.op}")
 
 
-def _emit_view(view: ProgramNode, ptr_expr: dict[str, str]) -> str:
+def _emit_view(view: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, str] | None = None) -> str:
   if view.op != ProgramOp.VIEW:
     raise LoweringError(f"expected a VIEW, got {view.op}")
   ptr = ptr_expr.get(view.attrs["buffer"], c_ident(view.attrs["buffer"]))
   if len(view.args) > 1:
     raise LoweringError("multi-index VIEW rendering is not implemented yet (lands with SLICE/MATMUL)")
-  idx = _emit_scalar(view.args[0], ptr_expr) if view.args else "0"
+  idx = _emit_scalar(view.args[0], ptr_expr, var_expr) if view.args else "0"
   return f"{ptr}[{idx}]"
 
 
@@ -304,10 +336,10 @@ def _c_float(value: float) -> str:
     return "((double)NAN)"
   if math.isinf(value):
     return "((double)(-INFINITY))" if value < 0 else "((double)INFINITY)"
-  return f"{value:.17g}"
+  return "-0.0" if value == 0 and math.copysign(1, value) < 0 else f"{value:.17g}"
 
 
-def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
+def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, str] | None = None) -> str:
   """Render a prepared scalar tree bottom up."""
   text: dict[int, str] = {}
   stack = [(n, False)]
@@ -329,15 +361,18 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
       if math.isfinite(value) and "." not in s and "e" not in s:
         s += ".0"
     elif op == ProgramOp.VAR:
-      s = c_ident(node.attrs["name"])
+      s = (var_expr or {}).get(node.attrs["name"], c_ident(node.attrs["name"]))
     elif op == ProgramOp.LOAD:
-      s = _emit_view(node.args[0], ptr_expr)
+      s = (var_expr or {}).get(f"@load{id(node)}") or _emit_view(node.args[0], ptr_expr, var_expr)
     elif op == ProgramOp.NEG:
       s = f"(-{args[0]})"
     elif op in _BIN_SYM:
       s = f"({args[0]} {_BIN_SYM[op]} {args[1]})"
     elif op in _UNARY_C:
       s = f"{_UNARY_C[op]}({args[0]})"
+    elif op in (ProgramOp.MINIMUM, ProgramOp.MAXIMUM) and node.dtype.is_integer:
+      comparison = "<" if op == ProgramOp.MINIMUM else ">"
+      s = f"({args[0]} {comparison} {args[1]} ? {args[0]} : {args[1]})"
     elif op in _BINARY_C:
       s = f"{_BINARY_C[op]}({args[0]}, {args[1]})"
     else:
@@ -351,3 +386,264 @@ __all__ = [
   "render_program_c",
   "render_program_c_source",
 ]
+
+
+def _lane_defines(prog: ProgramNode | None) -> list[str]:
+  if prog is None:
+    return []
+  ranges = [n for n in walk_program(prog) if n.op == ProgramOp.RANGE and "lanes" in n.attrs]
+  if not ranges:
+    return []
+  lanes = ranges[0].attrs["lanes"]
+  lines = (
+    [f"#define SCALY_LANES {lanes}"]
+    if lanes != "auto"
+    else [
+      "#ifndef SCALY_LANES",
+      "#if defined(__AVX512F__)",
+      "#define SCALY_LANES 8",
+      "#elif defined(__AVX__) || (defined(__ARM_FEATURE_SVE_BITS) && __ARM_FEATURE_SVE_BITS >= 256)",
+      "#define SCALY_LANES 4",
+      "#elif defined(__SSE2__) || defined(__aarch64__)",
+      "#define SCALY_LANES 2",
+      "#else",
+      "#define SCALY_LANES 1",
+      "#endif",
+      "#endif",
+      "#if SCALY_LANES != 1 && SCALY_LANES != 2 && SCALY_LANES != 4 && SCALY_LANES != 8",
+      '#error "SCALY_LANES must be 1, 2, 4 or 8"',
+      "#endif",
+    ]
+  )
+  lines += [
+    "#if defined(__AVX512F__)",
+    "#define SCALY_REGISTER_SLOTS 256",
+    "#elif defined(__AVX__) || defined(__aarch64__)",
+    "#define SCALY_REGISTER_SLOTS 64",
+    "#elif defined(__SSE2__)",
+    "#define SCALY_REGISTER_SLOTS 32",
+    "#else",
+    "#define SCALY_REGISTER_SLOTS 16",
+    "#endif",
+  ]
+  for rng in ranges:
+    caps = rng.attrs["lane_caps"]
+    cap = f"(SCALY_REGISTER_SLOTS == 256 ? {caps[3]} : SCALY_REGISTER_SLOTS == 64 ? {caps[2]} : SCALY_REGISTER_SLOTS == 32 ? {caps[1]} : {caps[0]})"
+    lines.append(f"#define {rng.attrs['lane_width']} (SCALY_LANES < {cap} ? SCALY_LANES : {cap})")
+  return lines
+
+
+def _vector_captures(stmt: ProgramNode) -> tuple[list[ProgramNode], list[ProgramNode]]:
+  nodes = list(walk_program(stmt))
+  declared = {n.attrs["name"] for n in nodes if n.op == ProgramOp.BUFFER}
+  buffers = {n.attrs["buffer"]: n for n in nodes if n.op == ProgramOp.VIEW and n.attrs["buffer"] not in declared}
+  local = {n.attrs["target"] for n in nodes if n.op == ProgramOp.ASSIGN}
+  local.update(n.attrs["name"] for n in nodes if n.op == ProgramOp.RANGE)
+  local.add("SCALY_LANES")
+  local.update(n.attrs["lane_width"] for n in nodes if n.op == ProgramOp.RANGE and "lane_width" in n.attrs)
+  variables = {n.attrs["name"]: n for n in nodes if n.op == ProgramOp.VAR and n.attrs["name"] not in local}
+  return [buffers[name] for name in sorted(buffers)], [variables[name] for name in sorted(variables)]
+
+
+def _vector_width(stmt: ProgramNode) -> str:
+  return stmt.args[1].args[0].attrs["lane_width"]
+
+
+def _emit_vector_calls(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int) -> None:
+  pad = " " * indent
+  helper = stmt.attrs["vector_helper"]
+  outer = c_ident(stmt.args[0].attrs["name"])
+  count, width = stmt.attrs["vector_count"], _vector_width(stmt)
+  buffers, variables = _vector_captures(stmt)
+  captures = [ptr_expr.get(n.attrs["buffer"], c_ident(n.attrs["buffer"])) for n in buffers]
+  captures += [c_ident(n.attrs["name"]) for n in variables]
+  suffix = ", " + ", ".join(captures) if captures else ""
+  lines += [
+    f"{pad}for (long long {outer} = 0; {outer} < {count} / {width}; ++{outer}) {{",
+    f"{pad}  {helper}({outer}, {width}{suffix});",
+    f"{pad}}}",
+    f"#if ({count} % {width}) != 0",
+    f"{pad}{helper}({count} / {width}, {count} % {width}{suffix});",
+    "#endif",
+  ]
+
+
+def _render_vector_helpers(proc: ProgramNode, *, dialect: str, vector_libm: str) -> list[str]:
+  lines: list[str] = []
+  for stmt in reversed(list(walk_program(proc))):
+    if stmt.op != ProgramOp.FOR or "vector_helper" not in stmt.attrs:
+      continue
+    helper = stmt.attrs["vector_helper"]
+    vector = stmt.args[1]
+    lane = c_ident(vector.args[0].attrs["name"])
+    outer = c_ident(stmt.args[0].attrs["name"])
+    prefix = stmt.attrs["vector_prefix"]
+    valid = f"{prefix}_valid"
+    width, vec = _vector_width(stmt), f"{prefix}_vec"
+    buffers, variables = _vector_captures(stmt)
+    writes = buffer_refs(stmt).writes
+    params = [f"long long {outer}", f"long long {valid}"]
+    params += [f"{'const ' if n.attrs['buffer'] not in writes else ''}{n.dtype.c_type}* {c_ident(n.attrs['buffer'])}" for n in buffers]
+    params += [f"{n.dtype.c_type} {c_ident(n.attrs['name'])}" for n in variables]
+    operations = {n.op for n in walk_program(vector) if n.op in _UNARY_C or n.op in _BINARY_C and n.dtype.is_floating}
+    if dialect == "gnu":
+      lines.append(f"typedef double {vec} __attribute__((vector_size(8 * {width}), aligned(8), may_alias));")
+      for op in sorted(operations):
+        lines += _vector_math(helper, vec, width, op, vector_libm)
+    qualifier = "static inline __attribute__((always_inline))" if dialect == "gnu" else "static inline"
+    lines.append(f"{qualifier} void {helper}({', '.join(params)}) {{")
+    local_buffers = [n for n in reversed(list(walk_program(vector))) if n.op == ProgramOp.BUFFER]
+    _emit_local_buffers(local_buffers, lines, {}, 2)
+    if dialect == "c":
+      lines.append(f"  for (long long {lane} = 0; {lane} < {valid}; ++{lane}) {{")
+      _emit_body(list(vector.args[1:]), {}, lines, 4, dialect="c")
+      lines.append("  }")
+    else:
+      _emit_vector_body(list(vector.args[1:]), vec, helper, vector.args[0].attrs["name"], width, lines, prefix, valid)
+    lines.append("}")
+  return lines
+
+
+def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: str) -> list[str]:
+  function = _UNARY_C.get(op, _BINARY_C.get(op, ""))
+  binary = op in _BINARY_C
+  params = f"{vec} x, {vec} y" if binary else f"{vec} x"
+  args = "x[i], y[i]" if binary else "x[i]"
+  lines = [f"static inline __attribute__((always_inline)) {vec} {helper}_{function}({params}) {{"]
+  glibc = vector_libm == "glibc" and op in {ProgramOp.SIN, ProgramOp.COS, ProgramOp.TAN, ProgramOp.EXP, ProgramOp.LOG, ProgramOp.POW, ProgramOp.TANH}
+  if glibc:
+    lines += [
+      f"#if {width} > 1",
+      "#if !defined(__x86_64__) || !defined(__GLIBC__)",
+      '#error "vector_libm=glibc requires x86-64 glibc and -lmvec"',
+      "#endif",
+    ]
+    if op == ProgramOp.TANH:
+      lines += ["#if !__GLIBC_PREREQ(2, 35)", '#error "vector_libm=glibc tanh requires glibc >= 2.35 and -lmvec"', "#endif"]
+    for index, (w, abi, feature) in enumerate(((8, "e", "__AVX512F__"), (4, "d", "__AVX__"), (2, "b", "__SSE2__"))):
+      symbol = f"_ZGV{abi}N{w}{'vv' if binary else 'v'}_{function}"
+      lines += [
+        f"#{'if' if index == 0 else 'elif'} {width} == {w}",
+        f"#ifndef {feature}",
+        f'#error "vector_libm=glibc width {w} requires {feature} and -lmvec"',
+        "#endif",
+        f"  extern {vec} {symbol}({vec}{', ' + vec if binary else ''});",
+        f"  return {symbol}(x{', y' if binary else ''});",
+      ]
+    lines += ["#endif", "#else"]
+  lines += [f"  {vec} result;", f"  for (int i = 0; i < {width}; ++i) result[i] = {function}({args});", "  return result;"]
+  if glibc:
+    lines.append("#endif")
+  lines.append("}")
+  return lines
+
+
+def _emit_vector_body(body: list[ProgramNode], vec: str, helper: str, lane: str, width: str, lines: list[str], prefix: str, valid_count: str) -> None:
+  lane_name, lane = lane, c_ident(lane)
+  vector_vars: set[str] = set()
+  lane_vars: dict[str, str] = {}
+  serial = 0
+
+  def expression(root: ProgramNode) -> str:
+    nonlocal serial
+    text: dict[ProgramNode, str] = {}
+    stack = [(root, False)]
+    while stack:
+      node, ready = stack.pop()
+      if node in text:
+        continue
+      if not ready and node.op not in (ProgramOp.LOAD, ProgramOp.VAR, ProgramOp.CONST_FLOAT, ProgramOp.CONST_INT):
+        stack.append((node, True))
+        stack.extend((a, False) for a in reversed(node.args))
+        continue
+      args = [text[a] for a in node.args] if ready else []
+      if node.op == ProgramOp.LOAD:
+        serial += 1
+        name = f"{prefix}_load_{serial}"
+        lines.append(f"  {vec} {name};")
+        view = node.args[0]
+        source = _emit_view(view, {}, lane_vars)
+        if view.attrs.get("lane_stride") == 1:
+          first = _emit_view(view, {}, {**{key: value.replace(f"[{lane}]", "[0]") for key, value in lane_vars.items()}, lane_name: "0"})
+          lines.append(f"  if ({valid_count} == {width}) {name} = *(const {vec}*)(&{first});")
+          lines.append(f"  else for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {source};")
+        else:
+          lines.append(f"  double {name}_stage[8];")
+          lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}_stage[{lane}] = {source};")
+          lines.append(f"  {name} = *(const {vec}*){name}_stage;")
+        value = name
+      elif node.op == ProgramOp.VAR and node.attrs["name"] in vector_vars:
+        value = c_ident(node.attrs["name"])
+      elif node.op in (ProgramOp.VAR, ProgramOp.CONST_FLOAT, ProgramOp.CONST_INT):
+        serial += 1
+        name = f"{prefix}_broadcast_{serial}"
+        lines.append(f"  {vec} {name};")
+        lines.append(f"  for (int {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {_emit_scalar(node, {})};")
+        value = name
+      elif node.op == ProgramOp.NEG:
+        value = f"(-{args[0]})"
+      elif node.op in _BIN_SYM:
+        value = f"({args[0]} {_BIN_SYM[node.op]} {args[1]})"
+      elif node.op in _UNARY_C or node.op in _BINARY_C:
+        value = f"{helper}_{_UNARY_C.get(node.op, _BINARY_C.get(node.op))}({', '.join(args)})"
+      else:
+        raise LoweringError(f"unsupported vector scalar op {node.op}")
+      text[node] = value
+    return text[root]
+
+  def emit(statements: list[ProgramNode]) -> None:
+    nonlocal serial
+    for stmt in statements:
+      if stmt.op == ProgramOp.BUFFER:
+        continue
+      if stmt.op == ProgramOp.FOR:
+        rng = stmt.args[0]
+        name = c_ident(rng.attrs["name"])
+        start, stop, step = (_emit_scalar(n, {}) for n in rng.args)
+        lines.append(f"  for (long long {name} = {start}; {name} < {stop}; {name} += {step}) {{")
+        first = len(lines)
+        emit(list(stmt.args[1:]))
+        for i in range(first, len(lines)):
+          lines[i] = "  " + lines[i]
+        lines.append("  }")
+      elif stmt.op == ProgramOp.ASSIGN:
+        name = c_ident(stmt.attrs["target"])
+        if stmt.dtype.is_floating:
+          value = expression(stmt.args[0])
+          lines.append(f"  {vec + ' ' if stmt.attrs.get('declare') else ''}{name} = {value};")
+          vector_vars.add(stmt.attrs["target"])
+        else:
+          lines.append(f"  {stmt.dtype.c_type} {name}[8];")
+          value = _emit_scalar(stmt.args[0], {}, lane_vars)
+          lines.append(f"  for (long long {lane} = 0; {lane} < {width}; ++{lane}) {name}[{lane}] = {value};")
+          lane_vars[stmt.attrs["target"]] = f"{name}[{lane}]"
+      elif stmt.op == ProgramOp.STORE and stmt.attrs.get("ordered_reduction"):
+        target, value = stmt.args
+        staged = dict(lane_vars)
+        for node in walk_program(value):
+          if node.op == ProgramOp.LOAD and node.args[0] is not target:
+            loaded = expression(node)
+            staged[f"@load{id(node)}"] = f"{loaded}[{lane}]"
+        destination = _emit_view(target, {}, staged)
+        rhs = _emit_scalar(value, {}, staged)
+        lines.append(f"  for (long long {lane} = 0; {lane} < {valid_count}; ++{lane}) {destination} = {rhs};")
+      elif stmt.op in (ProgramOp.STORE, ProgramOp.STORE_PAIR):
+        for offset, root in enumerate(stmt.args[1:]):
+          value = expression(root)
+          serial += 1
+          name = f"{prefix}_store_{serial}"
+          lines.append(f"  {vec} {name} = {value};")
+          view = stmt.args[0]
+          pointer = c_ident(view.attrs["buffer"])
+          index = _emit_scalar(view.args[0], {}, lane_vars)
+          valid = width if view.attrs.get("lane_local") else valid_count
+          if view.attrs.get("lane_stride") == 1:
+            first = _emit_scalar(view.args[0], {}, {**{key: value.replace(f"[{lane}]", "[0]") for key, value in lane_vars.items()}, lane_name: "0"})
+            lines.append(f"  if ({valid} == {width}) *({vec}*)(&{pointer}[({first}) + {offset}]) = {name};")
+            lines.append(f"  else for (long long {lane} = 0; {lane} < {valid}; ++{lane}) {pointer}[({index}) + {offset}] = {name}[{lane}];")
+          else:
+            lines.append(f"  for (long long {lane} = 0; {lane} < {valid}; ++{lane}) {pointer}[({index}) + {offset}] = {name}[{lane}];")
+      else:
+        raise LoweringError(f"unsupported vector statement {stmt.op}")
+
+  emit(body)

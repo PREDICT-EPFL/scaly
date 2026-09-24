@@ -15,6 +15,8 @@ def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
   """Rewriting the race-car fixture with `sc.vmap` yields C source whose size does not grow with N."""
 
+  import re
+
   from scaly.codegen import render_c_source
 
   NX = 4
@@ -90,11 +92,11 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
 
     np.testing.assert_allclose(fn((zv, pv)), ref((zv, pv)), rtol=1e-12, atol=1e-12)
 
-  src_a = render_c_source(fn_a)
-  src_b = render_c_source(fn_b)
-  # Source size grows only with the literal-N loop bound differences; the loop body is shared.
-  diff = abs(len(src_a) - len(src_b))
-  assert diff < 200, f"primal source grew by {diff} bytes from N=50 to N=100, expected near-constant"
+  # Ignore changing numeric literals and generated identifiers, but require the same C structure.
+  for lanes in (1, "auto"):
+    src_a = render_c_source(fn_a, lanes=lanes)
+    src_b = render_c_source(fn_b, lanes=lanes)
+    assert re.sub(r"\d+", "N", src_a) == re.sub(r"\d+", "N", src_b)
 
 
 def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:

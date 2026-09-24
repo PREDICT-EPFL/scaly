@@ -212,3 +212,97 @@ multiplication already returns the same expression for both operands of a square
 special case. These rules follow the existing [arithmetic semantics](../../docs/how_it_works/lowering.md#arithmetic-semantics),
 including their rounding and exceptional-value limits. Tests also cover finite inputs at scales
 of `1e-200` and `1e200`, where squaring the denominator in the old rule loses the derivative.
+
+# Mapped scalar ranges and derivative assembly
+
+C-77 starts the range propagation part of C-8 in the Program dialect. Sources read are
+`perf_2026_09_07/tinygrad_rangeify.md`, particularly the consumer agreement rule in sections 1
+and 2, and the current scalarizer, scalar scheduler, mapped lowering, and elementwise fusion.
+Scalarized call bodies expand back into a shared expression graph at the mapped call site.
+Their pointer views retain the caller's offsets. Only the surviving output expressions are
+scheduled, so discarded compressed derivative entries no longer keep arithmetic alive.
+
+Assembly views already have integer index expressions in Program IR. Static index maps can
+associate each demanded scalar with the mapped range that produces it. Consumers agreeing on
+that range share the producer; incompatible demands retain storage. Writes and pointer aliases
+bound propagation, and hoisted calls keep their original execution frequency.
+
+Rejected are changes to derivative coloring, benchmark-specific output maps, generated-C edits,
+and extending the single-store elementwise matcher with stage-specific cases. Those approaches
+either change a different compiler layer or lose the producer's shared scalar expressions.
+The full tinygrad scheduler and reduction machinery remain outside this first step.
+
+### Periodic constants and invariant reciprocals
+
+The September 22 performance study, section 2, identifies repeated constant tiles and repeated
+loop-invariant divisions. The earlier tinygrad rangeify study, section 1, places constant-buffer
+folding before materialization. Scaly will shrink load-only constant tables to their shortest
+complete period and index them modulo that period. A period of one becomes a scalar. Comparison
+uses the declared dtype's bytes, preserving signed zeros and NaN payloads. Aliases, calls and
+non-load uses retain the original storage. This runs before fusion so constant masks are visible.
+
+Reciprocal rewriting is explicitly opt-in. Multiplication by a reciprocal can round differently,
+and the reciprocal itself can overflow or underflow when direct division would remain finite. A scalar pass hoists one reciprocal per divisor outside a statically
+nonempty loop. It rejects divisors depending on loop variables, scalar assignments in the loop,
+or buffer storage the loop can change. Nested loops are processed within their own scope so an
+empty inner loop cannot introduce a speculative division.
+
+## CPU build recipes for C79
+
+The C79 task and the September 22 compiler survey specify one generated program with lane and
+math-library options. `codegen/toolchain.py` will describe CPU flags, link flags, and the deployment
+baseline in an immutable `BuildRecipe`. The existing AOT render context will retain that recipe so
+headers, source comments, and link flags describe the same render. Compiler selection will not
+change the generated program. Lowering receives only the lane and reciprocal options, preserving
+the import layers. JIT build and invalidation will resolve the same native recipe.
+
+The two render dialects remain independent of the C or C++ header language. Scalar libm stays the
+AOT and headline-study default. Native JIT may select glibc vector libm only on a compatible host.
+The recipe uses existing compiler discovery; replacing it with zig is the separate R71 task.
+
+### Explicit mapped lanes
+
+The September 22 performance study, sections 3.1 through 3.6, supplies the lane split and target
+policy. The tinygrad rangeify study describes preserving independent axes through scheduling.
+The widening pass will represent chunks and lanes as nested ranges. It retains a single scheduled
+body, clamps the substituted stage index for inactive lanes, and bounds stores by the number of
+valid lanes. Scalar C traverses valid lanes; GNU C evaluates arithmetic with vector values and
+uses per-lane loads, stores and scalar library calls where a vector operation is unavailable.
+
+Each widened range becomes one helper shared by full chunks and the remainder. Its width is a
+fixed render choice or a compiler-selected macro, capped by peak simultaneous scalar liveness.
+The budget uses 64-bit scalar slots, selected from the compiler target macros. AVX-512 has 256
+slots, AVX and AArch64 have 64, SSE2 has 32, and a generic scalar target has 16. The cap permits a
+fourfold allowance for spills. Local lane storage reserves eight elements, so changing the macro cannot change caller
+workspace. Optional glibc vector calls require matching instruction-set and library-version guards.
+Plain C emits scalar paired stores and omits GNU attributes and vector declarations.
+
+Standalone reduction widening stages independent loads, then evaluates the original scalar
+recurrence in lane order. It preserves summation order and scalar expression grouping, including
+multiply-add contraction. Reductions nested under mapped lanes keep their original serial loops.
+
+### Per-query sparsity masks across calls
+
+The chain M9 study profile spends its first 45 seconds in structural Jacobian analysis before
+rendering. Reviewed `ad/sparsity.py` and the unchanged baseline implementation: CALL and VMAP
+restart the mask memo for every formal argument, repeating nested callee analysis. Reuse the
+query's memo with `(expression id, differentiation-variable id)` keys so distinct formals retain
+separate masks. Reject a global cache because query-local reuse fixes the repeated work without
+retaining expression graphs or sparse matrices between queries. NumPy mask comparisons and a
+count of uncached node/variable pairs will cover correctness and construction complexity.
+
+The next profile reaches `fuse_ranges._rewrite`: its second rewrite walks every inserted scalar
+subgraph again for each assembly output. Keep substitution unchanged and memoize the following
+bottom-up arithmetic fold for the lifetime of one procedure fusion. The existing generic rewrite
+driver has a per-call memo, so using it separately on each output cannot share this work. An optional caller memo on the shared rewrite driver avoids another traversal implementation.
+It retains original nodes and results, and is valid only for unchanged patterns, rebuilding and
+options across calls. Caller memoization rejects expression nodes because their lowering hints
+depend on traversal provenance; the optimization serves Program nodes only.
+
+### Active-width private lane storage
+
+Private lane buffers reserve eight lanes in the workspace but index elements with the helper's
+selected width. This keeps smaller widths contiguous without changing workspace upper bounds.
+Resolve private alias chains to owner-buffer offsets before inserting the lane stride, and remove
+the resulting unused alias declarations. Aliases of external buffers retain their layout by leaving
+that candidate loop scalar. The stride uses the helper width even in a partial final chunk.

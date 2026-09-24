@@ -97,6 +97,7 @@ def rewrite[Node: _HasOpArgs](
   fixpoint: bool = True,
   revisit: bool = False,
   max_steps: int = 1_000_000,
+  memo: dict[Node, Node] | None = None,
 ) -> Node:
   """Apply ``patterns`` across a graph, bottom up, and return the rewritten root.
 
@@ -105,8 +106,12 @@ def rewrite[Node: _HasOpArgs](
   shared subgraphs stay shared. ``fixpoint`` retries the matcher on a node until nothing fires;
   ``revisit`` instead walks into a replacement's subgraph so nested rewrites collapse in one
   pass. ``max_steps`` bounds the total number of replacements. ``rebuild`` defaults to the
-  expression adapter ``rebuild_expr``.
+  expression adapter ``rebuild_expr``. Program adapters may reuse ``memo`` across roots with
+  identical patterns, rebuild, and options. Expression nodes do not support caller memoization
+  because their lowering hints depend on traversal provenance.
   """
+  if memo is not None and isinstance(root, Expr):
+    raise ValueError("caller memoization is only supported for Program nodes")
   matcher = patterns if isinstance(patterns, PatternMatcher) else PatternMatcher(patterns)
   rebuild = rebuild or cast(Callable[[Node, tuple[Node, ...]], Node], rebuild_expr)
   done: dict[int, Node] = {}
@@ -119,6 +124,9 @@ def rewrite[Node: _HasOpArgs](
     node, ready = stack.pop()
     if id(node) in done:
       continue
+    if memo is not None and node in memo:
+      done[id(node)] = memo[node]
+      continue
     if not ready:
       stack.append((node, True))
       stack.extend((a, False) for a in reversed(node.args) if id(a) not in done)
@@ -129,6 +137,8 @@ def rewrite[Node: _HasOpArgs](
       done[id(node)] = done[id(target)]
       if isinstance(node, Expr):
         lowerings[id(node)] = lowerings[id(target)]
+      if memo is not None:
+        memo[node] = done[id(node)]
       continue
     args = tuple(done[id(a)] for a in node.args)
     cur = node if all(a is b for a, b in zip(args, node.args, strict=True)) else rebuild(node, args)
@@ -153,6 +163,8 @@ def rewrite[Node: _HasOpArgs](
       if isinstance(node, Expr):
         lowerings[id(node)] = lowering
         lowerings[id(cur)] = lowering
+      if memo is not None:
+        memo[node] = cur
   return done[id(root)]
 
 

@@ -1,3 +1,11 @@
+/* Scaly build recipe
+ * CPU baseline: generic
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * Math library: scalar libm
+ * gcc -O3 -fno-math-errno -c shooting_spjac_eq_z.c
+ * clang -O3 -fno-math-errno -c shooting_spjac_eq_z.c
+ * Link with: -lm
+ */
 #pragma once
 
 #include <stddef.h>
@@ -21,8 +29,10 @@
 #ifndef SCALY_ALIGNAS
 #ifdef __cplusplus
 #define SCALY_ALIGNAS(n) alignas(n)
-#else
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #define SCALY_ALIGNAS(n) _Alignas(n)
+#else
+#define SCALY_ALIGNAS(n)
 #endif
 #endif
 

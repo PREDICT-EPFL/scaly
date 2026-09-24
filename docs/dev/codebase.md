@@ -36,9 +36,13 @@ src/scaly/
       _common.py         shared buffer references, loop helpers, names, and reachability
       hoist_invariant.py loop-invariant callee work moved before a mapped loop
       scalarize.py       bounded scalar expansion, folding, and scheduling
+      fold_tiles.py      exact periodic constant-table compression
+      fuse_ranges.py     mapped scalar bodies and their derivative assembly in one range
       combine_scatter_sums.py  shared accumulation for sums of scatters
       fuse_elementwise.py     elementwise producer fusion
       fold_arith.py           constant reads and shared arithmetic identities in loop bodies
+      hoist_reciprocals.py     optional invariant divisor reciprocals with scalar-definition checks
+      widen_ranges.py         explicit lanes, access layouts, and ordered reductions
       unroll_unit_loops.py    empty- and single-iteration loop removal
       pack_workspace.py      buffer lifetime packing
       coalesce_stores.py     alias-safe adjacent store pairing
@@ -61,14 +65,14 @@ src/scaly/
 
   codegen/
     abi.py               the pointer ABI: signature, status codes, mangling
-    c.py                 ProgramNode -> standalone scalar C; no lowering policy of its own
+    c.py                 ProgramNode -> GNU vector C or C99 lane loops; no lowering policy of its own
     cpp.py               the C++ header: the Buffer template and a namespace per function
     casadi.py            the CasADi 3.8 layer: query functions, CSC encoding, the gather
     __main__.py          compatibility shim for `python -m scaly.codegen`
     solver.py            solver-wrapper framing around a plugin-rendered body
     aot.py               one lowering -> CModule, the C header, the file-writing driver, the CLI
     jit.py               CModule -> compile, cache, dlopen, ctypes dispatch
-    toolchain.py         C compiler discovery, cache root, the diagnostics report
+    toolchain.py         CPU build recipes, native feature detection, compiler discovery, cache root
 
   solvers/
     model.py             SolverDescriptor and its opaque plain Function

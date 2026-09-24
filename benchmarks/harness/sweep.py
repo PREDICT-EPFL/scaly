@@ -20,8 +20,9 @@ import scaly as sc
 from scaly.codegen.abi import c_ident
 from scaly.codegen.aot import render_c_module
 from scaly.ir.expr import ExprOp, topo
-from scaly.ir.program import ProgramNode, ProgramOp
-from benchmarks.harness import ROOT, RESULTS, gbench
+from scaly.ir.program import walk_program, ProgramNode, ProgramOp
+from scaly.passes.program._common import _resolve_alias
+from benchmarks.harness import ROOT, RESULTS, gbench, vector_libm
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.provenance import collect, write, require_headline_settings
 from benchmarks.problems import chain, npmpc, race_cars
@@ -185,7 +186,7 @@ def _static_trip_count(rng: ProgramNode) -> int | None:
 
 
 def _dispatch_metrics(fun: sc.Function, prog: ProgramNode) -> tuple[int | str, int | str, int | str]:
-  """Return the retained VMAP trip count, callee workspace, and arithmetic per iteration.
+  """Return the retained mapped range trip count, workspace, and arithmetic per iteration.
 
   A function mapped over several axes (race-car stages ``N`` and ``N+1``, unbumpercars cars and
   pairs) groups its dispatch loops by trip count and reports the family whose trip count times
@@ -203,6 +204,8 @@ def _dispatch_metrics(fun: sc.Function, prog: ProgramNode) -> tuple[int | str, i
   workspace_cache: dict[str, int] = {}
 
   def arithmetic(node: ProgramNode) -> int:
+    if node.op == ProgramOp.FOR and "vector_helper" in node.attrs:
+      return int(node.attrs["vector_count"]) * sum(arithmetic(child) for child in node.args[1].args[1:])
     if node.op == ProgramOp.FOR:
       count = _static_trip_count(node.args[0])
       if count is None:
@@ -252,8 +255,31 @@ def _dispatch_metrics(fun: sc.Function, prog: ProgramNode) -> tuple[int | str, i
     return workspace_cache[name]
 
   dispatches: dict[int, list[str]] = {}
+  fused: dict[int, int] = {}
   root = procs[fun.name]
+  declarations = {node.attrs["name"]: node for node in walk_program(root) if node.op == ProgramOp.BUFFER}
+  aliases = {name: node.attrs["alias_of"] for name, node in declarations.items() if "alias_of" in node.attrs}
+  fused_workspace = 0
   for stmt in root.args[int(root.attrs["param_count"]) :]:
+    retained_call = stmt.op == ProgramOp.FOR and stmt.args[-1].op == ProgramOp.CALL
+    if stmt.op == ProgramOp.FOR and not retained_call and (stmt.args[0].attrs.get("mapped") or stmt.attrs.get("vector_mapped")):
+      count = int(stmt.attrs["vector_count"]) if stmt.attrs.get("vector_mapped") else _static_trip_count(stmt.args[0])
+      body = stmt.args[1].args[1:] if stmt.attrs.get("vector_mapped") else stmt.args[1:]
+      if count is not None:
+        try:
+          fused[count] = fused.get(count, 0) + sum(arithmetic(child) for child in body)
+          owners = {
+            _resolve_alias(node.attrs["buffer"], aliases) for node in walk_program(stmt) if node.op == ProgramOp.VIEW and node.attrs.get("lane_local")
+          }
+          scratch = sum(
+            int(np.prod(declarations[name].attrs["shape"]))
+            for name in owners
+            if name in declarations and declarations[name].dtype.is_floating and declarations[name].attrs.get("address_space") == "private"
+          )
+          fused_workspace = max(fused_workspace, scratch + max((proc_workspace(name) for name in calls(stmt)), default=0))
+        except LookupError:
+          return "", "", ""
+      continue
     call, count = None, 1
     if stmt.op == ProgramOp.FOR and stmt.args[-1].op == ProgramOp.CALL and all(node.op == ProgramOp.ASSIGN for node in stmt.args[1:-1]):
       call, count = stmt.args[-1], _static_trip_count(stmt.args[0])
@@ -264,11 +290,13 @@ def _dispatch_metrics(fun: sc.Function, prog: ProgramNode) -> tuple[int | str, i
       origin = procs[callee].attrs.get("hoisted_from", callee) if callee in procs else callee
       if origin in mapped_callees:
         dispatches.setdefault(count, []).append(callee)
-  if not dispatches:
+  if not dispatches and not fused:
     return "", "", ""
   try:
-    work = {count: sum(proc_arithmetic(callee) for callee in callees) for count, callees in dispatches.items()}
-    workspace = max(proc_workspace(callee) for callees in dispatches.values() for callee in callees)
+    work = dict(fused)
+    for count, callees in dispatches.items():
+      work[count] = work.get(count, 0) + sum(proc_arithmetic(callee) for callee in callees)
+    workspace = max(fused_workspace, max((proc_workspace(callee) for callees in dispatches.values() for callee in callees), default=0))
   except LookupError:
     return "", "", ""
   trip_count = max(work, key=lambda count: count * work[count])
@@ -326,7 +354,7 @@ def _module_info(
 
 def _render_scaly(fun: sc.Function, name: str, out_dir: Path):
   started = time.perf_counter()
-  module = render_c_module(fun, header_name=f"{name}.h", source_name=f"{name}.c", typed_buffers=False)
+  module = render_c_module(fun, header_name=f"{name}.h", source_name=f"{name}.c", typed_buffers=False, vector_libm=vector_libm())
   (out_dir / module.header_name).write_text(module.header)
   (out_dir / module.source_name).write_text(module.source)
   return module, (time.perf_counter() - started) * 1000

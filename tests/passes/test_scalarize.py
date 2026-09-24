@@ -119,8 +119,9 @@ def test_hint_selects_callee_without_expanding_mapped_horizon(hint: Lowering) ->
   procs = []
   for length in (3, 41):
     fn = sc.function(sc.L("z", 3 * length), sc.L("out0", ...), name="hint_map")(lambda z: sc.vmap(stage, length, [(z, 0, 3)]))
-    prog = lower_function(fn)
-    callee = prog.args[0]
+    observed = {}
+    prog = lower_function(fn, observe=lambda name, program: observed.__setitem__(name, program))
+    callee = observed["pass:scalarize"].args[0]
     if hint in {"auto", "scalar"}:
       _assert_scalar(callee)
     else:
@@ -136,7 +137,8 @@ def test_hint_selects_callee_without_expanding_mapped_horizon(hint: Lowering) ->
   assert procs[0] is procs[1]
 
 
-def test_explicit_scalar_root_and_block_precedence() -> None:
+def test_explicit_scalar_root_and_block_precedence(monkeypatch) -> None:
+  monkeypatch.setenv("SCALY_VECTOR_LIBM", "none")
   scalar = sc.function(sc.L("x", 4), sc.L("out0", ...), name="explicit")(lambda x: (x.sin() + x * x).scalar())
   _assert_scalar(main_proc(lower_function(scalar)))
   blocked = sc.function(sc.L("x", 4), sc.L("out0", ...), name="blocked")(lambda x: (x.sin().block() + x * x).scalar())

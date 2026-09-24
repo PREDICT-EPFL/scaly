@@ -10,7 +10,7 @@ import subprocess
 import time
 
 from scaly.codegen.abi import c_ident
-from benchmarks.harness import NATIVE_CFLAGS, ROOT
+from benchmarks.harness import NATIVE_CFLAGS, ROOT, math_flags, vector_symbols
 
 
 def compiler() -> str:
@@ -339,11 +339,23 @@ def write_cpp(info: dict, out_dir: Path, input_paths: dict[str, Path], expected_
 
 def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, float | None, str]:
   cflags, libs = gbench_flags()
-  common = [compiler(), "-O3", *NATIVE_CFLAGS, "-std=c++17", "-I", str(out_dir), *cflags]
+  math_cflags, math_libs = math_flags(compiler())
+  common = [compiler(), "-O3", *NATIVE_CFLAGS, *math_cflags, "-std=c++17", "-I", str(out_dir), *cflags]
   commands = {
     "kernel_compile_ms": [*common, "-c", str(info["source"]), "-o", "kernel.o"],
     "wrapper_compile_ms": [*common, "-c", "benchmark.cpp", "-o", "wrapper.o"],
-    "link_ms": [compiler(), *cflags, "kernel.o", "wrapper.o", "-o", str(out_dir / "benchmark"), *libs, *info.get("extra_libs", ()), "-lm"],
+    "link_ms": [
+      compiler(),
+      *cflags,
+      "kernel.o",
+      "wrapper.o",
+      "-o",
+      str(out_dir / "benchmark"),
+      *libs,
+      *info.get("extra_libs", ()),
+      *math_libs,
+      "-lm",
+    ],
   }
   started = time.perf_counter()
   timings = info["compile_timings"] = {}
@@ -370,7 +382,9 @@ def compile_kernel(info: dict, out_dir: Path, timeout: float) -> tuple[str, floa
       log.write(stdout + stderr)
       if proc.returncode:
         return "compile_error", (time.perf_counter() - started) * 1000, (stderr or stdout)[-400:].strip().replace("\n", " ")
-  return "ok", (time.perf_counter() - started) * 1000, ""
+  elapsed = (time.perf_counter() - started) * 1000
+  (out_dir / "vector-symbols.json").write_text(json.dumps(vector_symbols(out_dir / "kernel.o"), indent=2) + "\n")
+  return "ok", elapsed, ""
 
 
 def _text(value) -> str:

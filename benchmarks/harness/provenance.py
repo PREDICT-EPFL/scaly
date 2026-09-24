@@ -9,7 +9,9 @@ import platform
 from pathlib import Path
 import subprocess
 
-from benchmarks.harness import NATIVE_CFLAGS
+from benchmarks.harness import NATIVE_CFLAGS, compiler_version, math_flags, vector_libm, vector_symbols
+from scaly.codegen.jit import opt_flag
+from scaly.codegen.toolchain import find_c_compiler
 
 
 def _run(args: list[str], root: Path) -> str:
@@ -59,9 +61,9 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
   except (FileNotFoundError, subprocess.CalledProcessError):
     commit, dirty = "unknown", None
   try:
-    compiler_version = subprocess.run([compiler, "--version"], check=True, text=True, capture_output=True).stdout.splitlines()[0]
+    cxx_version = compiler_version(compiler)
   except (FileNotFoundError, subprocess.CalledProcessError, IndexError):
-    compiler_version = "unknown"
+    cxx_version = "unknown"
   try:
     casadi_version = importlib.metadata.version("casadi")
   except importlib.metadata.PackageNotFoundError:
@@ -70,6 +72,11 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
   from scaly.solvers.registry import loaded_backends
 
   paths = solver_paths()
+  c_compiler = find_c_compiler()
+  c_math = math_flags(c_compiler.cc) if c_compiler is not None else ((), ())
+  cxx_math = math_flags(compiler)
+  cache = os.environ.get("SCALY_CACHE_DIR")
+  jit_symbols = {str(path.relative_to(cache)): vector_symbols(path) for path in Path(cache).rglob("*.so")} if cache else {}
   ipopt = loaded_backends().get("ipopt")
   ipopt_library = paths.loads.get("ipopt")
   native_solvers = {}
@@ -86,8 +93,21 @@ def collect(root: Path, compiler: str, cli_args: list[str]) -> dict[str, object]
     "scaly_version": importlib.metadata.version("scaly"),
     "casadi_version": casadi_version,
     "native_solvers": native_solvers,
-    "compiler": compiler_version,
+    "compiler": cxx_version,
+    "compiler_commands": {
+      "sweep": {"compiler": compiler, "cflags": ["-O3", *NATIVE_CFLAGS, *cxx_math[0], "-std=c++17"], "math_libs": [*cxx_math[1], "-lm"]},
+      "closed_loop": {
+        "compiler": c_compiler.cc if c_compiler else None,
+        "version": compiler_version(c_compiler.cc) if c_compiler else None,
+        "cflags": [opt_flag(), *NATIVE_CFLAGS, *c_math[0]],
+        "math_libs": [*c_math[1], "-lm"],
+      },
+    },
+    "vector_libm": vector_libm(),
+    "glibc": platform.libc_ver(),
+    "jit_vector_symbols": jit_symbols,
     "native_cflags": list(NATIVE_CFLAGS),
+    "scaly_vector_libm_override": os.environ.get("SCALY_VECTOR_LIBM"),
     "platform": platform.platform(),
     "cpu_settings": cpu_settings(),
     "compilation_caches": {name: os.environ.get(name) for name in ("SCALY_CACHE_DIR", "SCALY_CASADI_IPOPT_CACHE")},

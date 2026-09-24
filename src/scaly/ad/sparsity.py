@@ -78,15 +78,16 @@ def _incidence(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> sp
   return sparse.csr_array((np.ones(rows.size, dtype=bool), (rows, cols)), shape=shape)
 
 
-def _jac_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
-  if expr.id in memo:
-    return memo[expr.id]
+def _jac_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
+  key = (expr.id, wrt.id)
+  if key in memo:
+    return memo[key]
   mask = _jac_mask_uncached(expr, wrt, memo)
-  memo[expr.id] = mask
+  memo[key] = mask
   return mask
 
 
-def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
+def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   if expr.op == ExprOp.INPUT:
     return sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else _empty((expr.size, wrt.size))
   if expr.op == ExprOp.CONST:
@@ -139,13 +140,15 @@ def _broadcast_mask(mask: sparse.csr_array, in_shape: tuple[int, ...], out_shape
   return mask[np.broadcast_to(source, out_shape).reshape(-1)]
 
 
-def _combine_children(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array], child_index: np.ndarray, elem_index: np.ndarray) -> sparse.csr_array:
+def _combine_children(
+  expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array], child_index: np.ndarray, elem_index: np.ndarray
+) -> sparse.csr_array:
   offsets = np.cumsum([0, *(arg.size for arg in expr.args[:-1])])
   children = sparse.vstack([_jac_mask(arg, wrt, memo) for arg in expr.args], format="csr")
   return children[offsets[child_index] + elem_index]
 
 
-def _stack_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
+def _stack_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   base = expr.args[0].shape
   axis = expr.attrs.get("axis", 0)
   child = np.stack([np.full(base, i, dtype=np.int64) for i in range(len(expr.args))], axis=axis).reshape(-1)
@@ -153,14 +156,14 @@ def _stack_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spa
   return _combine_children(expr, wrt, memo, child, elem)
 
 
-def _concat_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
+def _concat_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   axis = expr.attrs.get("axis", 0)
   child = np.concatenate([np.full(arg.shape, i, dtype=np.int64) for i, arg in enumerate(expr.args)], axis=axis).reshape(-1)
   elem = np.concatenate([np.arange(arg.size, dtype=np.int64).reshape(arg.shape) for arg in expr.args], axis=axis).reshape(-1)
   return _combine_children(expr, wrt, memo, child, elem)
 
 
-def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
+def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   x, y = expr.args
   xm, ym = _jac_mask(x, wrt, memo), _jac_mask(y, wrt, memo)
   x_rows: list[int] = []
@@ -189,16 +192,16 @@ def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sp
   )
 
 
-def _call_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
+def _call_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   callee = expr.attrs["callee"]
   callee_out = callee.outputs[expr.attrs["output"]]
   ret = _empty((expr.size, wrt.size))
   for formal, actual in zip(callee.inputs, expr.args, strict=True):
-    ret = _or(ret, _compose(_jac_mask(callee_out, formal, {}), _jac_mask(actual, wrt, memo)))
+    ret = _or(ret, _compose(_jac_mask(callee_out, formal, memo), _jac_mask(actual, wrt, memo)))
   return ret
 
 
-def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
+def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_array]) -> sparse.csr_array:
   callee = expr.attrs["callee"]
   callee_out = callee.outputs[expr.attrs["output"]]
   length = expr.attrs["length"]
@@ -209,7 +212,7 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
     return ret
   for formal_idx, actual_outer in enumerate(expr.args):
     formal = callee.inputs[formal_idx]
-    callee_dep = _jac_mask(callee_out, formal, {})
+    callee_dep = _jac_mask(callee_out, formal, memo)
     outer_dep = _jac_mask(actual_outer, wrt, memo)
     start, stride = starts[formal_idx], strides[formal_idx]
     window_cols = np.repeat(start + np.arange(length) * stride, formal.size) + np.tile(np.arange(formal.size), length)

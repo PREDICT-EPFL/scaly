@@ -18,7 +18,8 @@ def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   return 2.0 * x + p
 
 
-def test_vmap_c_source_loop_size_is_independent_of_length() -> None:
+@pytest.mark.parametrize("lanes", [1, "auto"])
+def test_vmap_c_source_loop_size_is_independent_of_length(lanes: int | str) -> None:
   from scaly.codegen import render_c_source
 
   def render(N: int) -> str:
@@ -27,21 +28,21 @@ def test_vmap_c_source_loop_size_is_independent_of_length() -> None:
       z, p = inputs
       return sc.vmap(scale_add, N, [(z, 0, 3), (p, 0, 3)])
 
-    return render_c_source(fn)
+    return render_c_source(fn, lanes=lanes)
 
-  # Past the 32-element threshold where the trailing copy loop also folds, the rendered source
-  # must be identical except for the loop bound and the function name.
   src_a = render(20)
   src_b = render(100)
-  # Renderer-agnostic: the VMAP body is one loop whose bound scales with N (not unrolled) and the
-  # source LOC stays constant in N. The legacy renderer emits `for (int it = 0; it < N; ++it)`,
-  # the Program IR renderer `for (long long it_y = 0; it_y < N; ++it_y)` — both carry the `< N;` bound.
-  assert "< 20;" in src_a
-  assert "< 100;" in src_b
+  if lanes == 1:
+    assert "< 20;" in src_a
+    assert "< 100;" in src_b
+  else:
+    assert "SCALY_LANES" in src_a
+  assert src_a.count("for (") == src_b.count("for (") > 0
   assert src_a.count("\n") == src_b.count("\n")
 
 
-def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("lanes", [1, "auto"])
+def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.MonkeyPatch, lanes: int | str) -> None:
   from scaly.codegen import render_c_source
   from scaly.ir.expr import topo
 
@@ -61,7 +62,7 @@ def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.
     vmap_nodes = [node for node in topo(sphess.outputs) if node.op == sc.ExprOp.VMAP]
     mapped_callees = sorted({node.attrs["callee"].name for node in vmap_nodes})
     second_order = tuple(name for name in mapped_callees if "_adj" in name and "_fwd" in name)
-    source = render_c_source(sphess)
+    source = render_c_source(sphess, lanes=lanes)
     copies = {name: source.count(f"{name.replace(':', '_')}_raw(") for name in mapped_callees}
     return source, second_order, len(vmap_nodes), copies
 
@@ -69,18 +70,14 @@ def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.
   assert len({source.count("\n") for source, _, _, _ in rendered}) == 1
   assert all(names for _, names, _, _ in rendered)
   assert len({names for _, names, _, _ in rendered}) == 1
-  # The sphess graph's VMAP-node count is a property of (#formals x #local-color-groups), never of
-  # the vmap length; every mapped callee (primal, adjoint, second-order) renders one definition and
-  # a length-independent number of call sites.
   assert len({vmap_count for _, _, vmap_count, _ in rendered}) == 1
-  assert len({tuple(sorted(copies.items())) for _, _, _, copies in rendered}) == 1
-  for source, names, _, copies in rendered:
-    for name, count in copies.items():
-      assert count >= 2, f"{name} rendered without a call site"
-    for name in names:
-      c_name = name.replace(":", "_")
-      assert copies[name] == 2  # one definition and one call in one VMAP loop
-      assert len(re.findall(rf"for \([^\n]+\) \{{\n\s+{re.escape(c_name)}_raw\(", source)) == 1
+  for source, _, _, copies in rendered:
+    assert all(count == 0 for count in copies.values())
+    if lanes == 1:
+      assert source.count("for (") == 1
+    else:
+      assert "SCALY_LANES" in source
+  assert len({source.count("for (") for source, _, _, _ in rendered}) == 1
 
 
 def test_sparse_hessian_triangle_c_source_has_no_full_nnz_buffer(monkeypatch: pytest.MonkeyPatch) -> None:

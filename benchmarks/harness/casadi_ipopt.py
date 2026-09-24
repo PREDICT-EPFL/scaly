@@ -24,7 +24,7 @@ from scaly.codegen.toolchain import cache_root, find_c_compiler
 from scaly.solvers.paths import backend_compile_flags, solver_paths
 from scaly.solvers.stats import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, SolverStats, SolverStatus, stats_c_timing_defs
 from scaly.utils.env import shared_lib_ext, shared_lib_flag
-from benchmarks.harness import NATIVE_CFLAGS
+from benchmarks.harness import NATIVE_CFLAGS, math_flags, vector_symbols
 
 INTERPRETED: ContextVar[bool] = ContextVar("casadi_interpreted", default=False)
 
@@ -206,14 +206,17 @@ def _build(spec_path: Path) -> None:
   tmp_source.replace(source_path)
   library = work / f"lib{spec['name']}{shared_lib_ext()}"
   tmp_library = library.with_suffix(library.suffix + suffix)
+  math_cflags, math_libs = math_flags(spec["compiler"])
   command = [
     spec["compiler"],
     spec["opt"],
     *NATIVE_CFLAGS,
+    *math_cflags,
     "-fPIC",
     shared_lib_flag(),
     str(source_path),
     *backend_compile_flags(("ipopt",)),
+    *math_libs,
     "-lm",
     "-o",
     str(tmp_library),
@@ -231,7 +234,17 @@ def _build(spec_path: Path) -> None:
   metadata = work / "metadata.json"
   tmp_metadata = metadata.with_suffix(metadata.suffix + suffix)
   tmp_metadata.write_text(
-    json.dumps({"compile_s": compile_s, "source_bytes": len(source.encode()), "source_lines": len(source.splitlines())}, indent=2) + "\n"
+    json.dumps(
+      {
+        "compile_s": compile_s,
+        "source_bytes": len(source.encode()),
+        "source_lines": len(source.splitlines()),
+        "vector_symbols": vector_symbols(tmp_library),
+        "compile_command": command,
+      },
+      indent=2,
+    )
+    + "\n"
   )
   tmp_metadata.replace(metadata)
   tmp_library.replace(library)
@@ -276,6 +289,7 @@ class CompiledCasadiIpopt:
       + compiler
       + opt
       + " ".join(NATIVE_CFLAGS)
+      + repr(math_flags(compiler))
       + " ".join(backend_compile_flags(("ipopt",)))  # the rpath baked into the library must match this checkout
     )
     key = hashlib.sha256(cache_inputs.encode()).hexdigest()[:20]

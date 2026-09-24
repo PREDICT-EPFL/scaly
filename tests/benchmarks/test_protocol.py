@@ -9,6 +9,56 @@ from benchmarks.harness import provenance
 from benchmarks.harness.sweep import summarize_runs
 
 
+def test_vector_math_policy_matches_supported_compiler_flags(monkeypatch):
+  from benchmarks import harness
+  from scaly.codegen.toolchain import BuildRecipe, Compiler
+
+  monkeypatch.setattr(harness, "compiler_version", lambda compiler: compiler)
+  monkeypatch.setenv("SCALY_VECTOR_LIBM", "glibc")
+  assert harness.math_flags("clang version 20") == (("-fveclib=libmvec",), ("-lmvec",))
+  assert harness.math_flags("gcc version 13") == ((), ("-lmvec",))
+  monkeypatch.setenv("SCALY_VECTOR_LIBM", "none")
+  assert harness.math_flags("clang version 20") == ((), ())
+  assert harness.math_flags("gcc version 13") == ((), ())
+  monkeypatch.delenv("SCALY_VECTOR_LIBM")
+  monkeypatch.setattr(harness, "find_c_compiler", lambda: Compiler("gcc", "CC"))
+  monkeypatch.setattr(harness, "native_recipe", lambda compiler: BuildRecipe(vector_libm="none"))
+  harness.configure_math_policy()
+  assert harness.vector_libm() == "none"
+  monkeypatch.setenv("SCALY_VECTOR_LIBM", "glibc")
+  with pytest.raises(ValueError, match="glibc x86-64 host"):
+    harness.configure_math_policy()
+
+
+def test_vector_math_policy_rejects_unequal_clang_jit_flags(monkeypatch):
+  from benchmarks import harness
+  from scaly.codegen.toolchain import BuildRecipe, Compiler
+
+  monkeypatch.setattr(harness, "find_c_compiler", lambda: Compiler("clang", "SCALY_CC"))
+  monkeypatch.setattr(harness, "native_recipe", lambda compiler: BuildRecipe(vector_libm="glibc"))
+  monkeypatch.setattr(harness, "compiler_version", lambda compiler: "clang version 20")
+  monkeypatch.delenv("SCALY_VECTOR_LIBM", raising=False)
+  with pytest.raises(ValueError, match="Scaly JIT does not pass"):
+    harness.configure_math_policy()
+  harness.configure_math_policy(measured_jit=False)
+  monkeypatch.setenv("SCALY_VECTOR_LIBM", "none")
+  harness.configure_math_policy()
+  assert harness.vector_libm() == "none"
+
+
+def test_sweep_render_uses_the_selected_math_policy(tmp_path, monkeypatch):
+  import scaly as sc
+  from benchmarks.harness.sweep import _render_scaly
+
+  x = sc.sym("x", 4)
+  kernel = sc.Function._from_exprs("math_policy", [x], [x.sin()], ["x"], ["y"])
+  for policy in ("glibc", "none"):
+    monkeypatch.setenv("SCALY_VECTOR_LIBM", policy)
+    module, _ = _render_scaly(kernel, "math_policy", tmp_path)
+    assert module.recipe.vector_libm == policy
+    assert ("-lmvec" in module.link_flags) == (policy == "glibc")
+
+
 def test_headline_settings_reject_powersave_and_wrong_boost(monkeypatch):
   settings = {"policies": {"policy0": {"scaling_governor": "powersave"}}, "boost_enabled": True}
   monkeypatch.setattr(provenance, "cpu_settings", lambda: settings)
@@ -58,6 +108,7 @@ def test_closed_loop_cli_rotates_oracles_and_rejects_reused_caches(tmp_path, mon
   from benchmarks.harness import timing
 
   calls = []
+  monkeypatch.setattr(run, "configure_math_policy", lambda **kwargs: None)
   monkeypatch.setattr(
     sys,
     "argv",

@@ -8,6 +8,10 @@ module reads it for the report and nothing else depends on that direction.
 from __future__ import annotations
 
 import os
+import platform
+import shlex
+import subprocess
+from functools import lru_cache
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +24,88 @@ from ..utils.env import env_path
 class Compiler:
   cc: str
   source: str
+
+
+CPU_LEVELS = ("generic", "native", "x86-64-v3", "x86-64-v4", "apple-m4")
+
+
+@dataclass(frozen=True, slots=True)
+class BuildRecipe:
+  """CPU baseline, render policy, and compiler flags for one generated module."""
+
+  cpu: str = "generic"
+  lanes: int | str = "auto"
+  dialect: str = "gnu"
+  vector_libm: str = "none"
+  reciprocal: bool = False
+
+  def __post_init__(self) -> None:
+    if self.cpu not in CPU_LEVELS:
+      raise ValueError(f"cpu must be one of {CPU_LEVELS}, got {self.cpu!r}")
+    if self.lanes != "auto" and (type(self.lanes) is not int or self.lanes not in (1, 2, 4, 8)):
+      raise ValueError("lanes must be 'auto', 1, 2, 4, or 8")
+    if self.dialect not in ("gnu", "c"):
+      raise ValueError("dialect must be 'gnu' or 'c'")
+    if self.vector_libm not in ("none", "glibc"):
+      raise ValueError("vector_libm must be 'none' or 'glibc'")
+    if self.dialect == "c" and self.vector_libm != "none":
+      raise ValueError("vector_libm='glibc' requires dialect='gnu'")
+
+  @property
+  def cpu_flags(self) -> tuple[str, ...]:
+    """Target flags shared by GCC and Clang for the selected CPU baseline."""
+    native = "-mcpu=native" if platform.machine().lower() in ("arm64", "aarch64") else "-march=native"
+    return {
+      "generic": (),
+      "native": (native,),
+      "x86-64-v3": ("-march=x86-64-v3",),
+      "x86-64-v4": ("-march=x86-64-v4",),
+      "apple-m4": ("-mcpu=apple-m4",),
+    }[self.cpu]
+
+  @property
+  def link_flags(self) -> tuple[str, ...]:
+    """Additional libraries required by the selected math implementation."""
+    return ("-lmvec",) if self.vector_libm == "glibc" else ()
+
+  def comment(self, source_name: str) -> str:
+    """Describe the CPU contract and exact object-build commands for generated source."""
+    baseline = "host-local native CPU" if self.cpu == "native" else self.cpu
+    libc = "glibc x86-64; tanh requires glibc >= 2.35" if self.vector_libm == "glibc" else "scalar libm"
+    flags = ("-O3", *self.cpu_flags, "-fno-math-errno", "-c", source_name)
+    commands = [shlex.join((cc, *flags)) for cc in ("gcc", "clang")]
+    return "\n".join(
+      (
+        "/* Scaly build recipe",
+        f" * CPU baseline: {baseline}",
+        f" * lanes={self.lanes}, dialect={self.dialect}, vector_libm={self.vector_libm}, reciprocal={self.reciprocal}",
+        f" * Math library: {libc}",
+        *(f" * {command}" for command in commands),
+        " * Link with: " + " ".join((*self.link_flags, "-lm")),
+        " */",
+        "",
+      )
+    )
+
+
+@lru_cache(maxsize=8)
+def native_recipe(compiler: str) -> BuildRecipe:
+  """Resolve fixed host lanes and the available native math library for JIT compilation."""
+  recipe = BuildRecipe(cpu="native")
+  result = subprocess.run(
+    [compiler, *recipe.cpu_flags, "-dM", "-E", "-x", "c", "-"],
+    input="",
+    text=True,
+    capture_output=True,
+    check=True,
+  )
+  macros = {parts[1]: parts[2] if len(parts) > 2 else "" for line in result.stdout.splitlines() if (parts := line.split())[:1] == ["#define"]}
+  sve256 = macros.get("__ARM_FEATURE_SVE_BITS", "0").isdigit() and int(macros.get("__ARM_FEATURE_SVE_BITS", "0")) >= 256
+  lanes = 8 if "__AVX512F__" in macros else 4 if "__AVX__" in macros or sve256 else 2 if {"__SSE2__", "__aarch64__"} & macros.keys() else 1
+  libc, version = platform.libc_ver()
+  version_parts = tuple(int(part) for part in version.split(".")[:2]) if version and all(p.isdigit() for p in version.split(".")[:2]) else ()
+  vector_libm = "glibc" if "__x86_64__" in macros and libc == "glibc" and version_parts >= (2, 35) and lanes > 1 else "none"
+  return BuildRecipe(cpu="native", lanes=lanes, vector_libm=vector_libm)
 
 
 def cache_root() -> Path:
@@ -46,6 +132,8 @@ def _format_report() -> str:
   compiler = find_c_compiler()
   lines = ["Scaly native toolchain", f"  cache root: {cache_root()}"]
   lines.append(f"  cc: {compiler.cc} ({compiler.source})" if compiler is not None else "  cc: <missing>")
+  if compiler is not None:
+    lines.extend(("  native build recipe:", native_recipe(compiler.cc).comment("module.c").rstrip()))
   lines += [
     f"  solver source: {paths.source}",
     f"  include dirs: {', '.join(str(p) for p in paths.include_dirs) or '<none>'}",

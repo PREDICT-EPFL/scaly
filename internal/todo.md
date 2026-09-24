@@ -268,7 +268,7 @@ generated C stays portable by default, and a target-aware opt-in (`lanes`, `vect
 recipe) buys the measured 2× on x86; C-79, C-83 and R-71 record the result. When
 C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
 
-- [ ] **C-77. Inline scalar callees into their mapped loops and fuse the derivative assembly.**
+- [x] **C-77. Inline scalar callees into their mapped loops and fuse the derivative assembly.**
       C-8 step 0 and step 1. Today `_lower_vmap` emits `FOR { CALL }` and every pass stops at the
       `CALL`, so the sparse-Hessian recovery (`gather(transpose(jvp_many(...)))`) runs as 15
       separate array passes: 35% of the race-car N=200 Hessian, and the reason inlining alone buys
@@ -282,7 +282,10 @@ C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
       workspace holds no colored or transposed intermediate, so `SZ_W` is zero at W = 1 and grows
       only with lane staging (the hand-written kernel needs no `w[]` at all); race-car hess lower
       N=200 under 22 µs on the M4 without vectorization.
-- [ ] **C-78. Constant-tile folding, invariant-divisor reciprocals, terminal-trip peeling.** Three
+      Implemented 2026-09-22: 957 tests pass, 3 skip; independent review passed. On the x86
+      reference host, N=200 medians are 59.71 µs GCC and 25.36 µs Clang, with zero workspace.
+      The M4 timing gate has not been remeasured.
+- [x] **C-78. Constant-tile folding, invariant-divisor reciprocals, terminal-trip peeling.** Three
       small passes. A `static const` table that tiles a period P becomes `k[i % P]`, a scalar at
       P=1; `k0`, `k22`, `k26` from C-57 are exactly these. `x / y` with `y` loop invariant becomes
       `x * inv_y` hoisted, behind a policy flag because it moves the last bit; both race-car
@@ -290,10 +293,14 @@ C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
       trip of a mapped axis whose slice differs makes the recovery gather `k44` affine (period 24,
       residual 13, verified) so C-9's map replaces the table. Gates: no `double` table growing
       with N in the race-car header; no division in the stage body.
+      Implemented 2026-09-22: periodic tables and terminal intervals fold during C-77 fusion;
+      reciprocal multiplication is opt-in. No stage-body division remains when enabled.
+      Independent review and 980 tests pass (3 skip); GCC N=200 improves 59.71 to 57.01 µs,
+      while Clang remains at about 25.3 µs.
 - [ ] **C-79. Explicit lanes on mapped ranges.** Port tinygrad's `shift_to`,
       `r -> r_outer * W + r_lane` with `r_lane` of `RangeKind.VECTOR`, applied to the mapped axis
       first (independent trips, no dependence analysis), then a contiguous output axis, then a
-      reduction axis with one accumulator per lane. Under a widened range a unit-stride access is
+      reduction axis with terms staged per lane and accumulated in their original order. Under a widened range a unit-stride access is
       a vector load or store, a constant stride is a staging transpose at the ABI boundary (buffers
       created under the range are lane major; ABI arrays stay stage major), anything else is per
       lane; `minimum` and `maximum` render per lane. W comes from a `lanes` render option:
@@ -340,15 +347,32 @@ C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
       which would render byte-identical C) and as a comment block at the top of the generated
       `.c` and `.h` with the exact build line, the CPU baseline and the libc requirement.
       Distributable AOT output requires an explicit CPU baseline; `native` is for host-local
-      builds. When this lands, record in `docs/results/fairness.md` that headline rows keep
-      scalar libm for both providers and a libmvec row is reported separately with its accuracy
-      statement. Gates: compile matrix gcc × clang × W ∈ {1, 2, 4, 8} × `vector_libm` on and
+      builds. The complete vector-math study finished on 2026-09-23 under the
+      [shared policy](../docs/results/fairness.md#vector-math-study-policy). Retain the scalar-libm
+      comparison separately. Merge approved with the performance follow-up deferred to a new
+      branch. Keep C-79 open until the
+      [remaining regressions](notes/benchmark_comparison_history.md#remaining-regressions-and-limits) are resolved. Gates: compile matrix gcc × clang × W ∈ {1, 2, 4, 8} × `vector_libm` on and
       off; byte-identical output between the two modes and across W at the same compiler and
       flags with `vector_libm="none"` (bitwise equality across targets never existed: FMA
       contraction and Apple versus glibc libm already move the last bits); an `nm` check that no
       `_ZGV*` symbol appears when off, perturbed to prove it can fail; on the x86 reference
       machine within 1.2× of `variant_w8_lane.c` (26.6 µs, gcc 13) when off and within 1.1× of
       the hand-written kernel (12.7 µs) when on; no regression on the M4 at W = 2.
+      Implemented 2026-09-23 with original-order reduction accumulation. Independent review,
+      all 1,178 tests, and the complete vector-math study pass. All 23 Scaly sweep cells completed
+      five processes, and all 75 controller episodes succeeded. Latest five-process race N=200
+      microbenchmark medians: scalar libm 27.21 µs GCC / 24.69 µs Clang; libmvec 12.34 µs GCC /
+      12.23 µs Clang. Both x86 limits pass; M4 performance remains unmeasured.
+      Follow-up on a new branch: isolate UB base/gradient/Jacobian/Hessian costs on retained
+      canonical inputs, then compare compiler and lane-width effects without changing reduction
+      order. Recover the September 10 closed-loop function-evaluation baseline of 16.419 ms IPOPT
+      and 9.513 ms SQP; the latest study measures 17.022 and 10.045 ms. Investigate UB C=16/C=32
+      slowdowns against the intermediate scalar-policy study separately. Preserve the artifacts
+      under `benchmarks/results/study-2026-09-23-c77-c79-libmvec` and
+      `benchmarks/results/study-2026-09-23-c77-c79-final`. Recheck the race microbenchmark and
+      targeted UB comparisons before a final full study. The user approved merging the current
+      implementation on 2026-09-24 with these measured regressions deferred, not resolved.
+
 - [ ] **C-80. Parameter-only oracle prologue.** An oracle whose subgraph depends only on `p`
       runs once per solve and its result is reused across SQP iterations (the race-car cost block,
       and the 402 `cos`/`sin` of the reference heading that the cost tangent and adjoint callees

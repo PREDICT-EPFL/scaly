@@ -69,7 +69,9 @@ def test_aot_cli_writes_the_module_pair(tmp_path, monkeypatch, capsys) -> None:
   out = tmp_path / "generated"
   aot.main(["scaly_aot_cli_target:build", "-o", str(out)])
   assert "#define aot_cli_SZ_W 0" in (out / "aot_cli.h").read_text()
-  assert (out / "aot_cli.c").read_text().startswith('#include "aot_cli.h"')
+  source = (out / "aot_cli.c").read_text()
+  assert source.startswith("/* Scaly build recipe")
+  assert '#include "aot_cli.h"' in source
   assert "sz_w: 0" in capsys.readouterr().out
 
   # The documented invocation goes through codegen/__main__.py. Running aot itself would re-execute
@@ -87,3 +89,88 @@ def test_env_registry_mentions_native_build_controls() -> None:
   assert "SCALY_CACHE_DIR" in names
   assert "SCALY_CC" in names
   assert "SCALY_BUILD_SOLVERS" in names
+
+
+def test_build_recipe_validates_render_controls() -> None:
+  from scaly.codegen.toolchain import BuildRecipe
+
+  for build in (
+    lambda: BuildRecipe(cpu="avx"),
+    lambda: BuildRecipe(lanes=3),
+    lambda: BuildRecipe(lanes=True),
+    lambda: BuildRecipe(dialect="cpp"),
+    lambda: BuildRecipe(vector_libm="sleef"),
+    lambda: BuildRecipe(dialect="c", vector_libm="glibc"),
+  ):
+    with pytest.raises(ValueError):
+      build()
+  recipe = BuildRecipe(cpu="x86-64-v3", lanes=4, vector_libm="glibc")
+  assert recipe.cpu_flags == ("-march=x86-64-v3",)
+  assert recipe.link_flags == ("-lmvec",)
+  assert "gcc -O3 -march=x86-64-v3 -fno-math-errno -c kernel.c" in recipe.comment("kernel.c")
+  assert "glibc >= 2.35" in recipe.comment("kernel.c")
+
+
+@pytest.mark.parametrize("macros,expected", [("__AVX512F__", 8), ("__AVX__", 4), ("__SSE2__", 2), ("__aarch64__", 2), ("", 1)])
+def test_native_recipe_uses_compiler_target_macros(monkeypatch, macros: str, expected: int) -> None:
+  from scaly.codegen import toolchain
+
+  toolchain.native_recipe.cache_clear()
+  commands = []
+
+  def preprocess(command, **kwargs):
+    commands.append(command)
+    return subprocess.CompletedProcess(command, 0, f"#define {macros} 1\n" if macros else "", "")
+
+  monkeypatch.setattr(toolchain.subprocess, "run", preprocess)
+  monkeypatch.setattr(toolchain.platform, "libc_ver", lambda: ("", ""))
+  recipe = toolchain.native_recipe("cc")
+  assert recipe.lanes == expected
+  assert recipe.vector_libm == "none"
+  assert commands[0][-5:] == ["-dM", "-E", "-x", "c", "-"]
+  toolchain.native_recipe.cache_clear()
+
+
+@pytest.mark.parametrize("libc,version,expected", [("glibc", "2.35", "glibc"), ("glibc", "2.34", "none"), ("musl", "1.2", "none")])
+def test_native_recipe_checks_vector_libm_host(monkeypatch, libc: str, version: str, expected: str) -> None:
+  from scaly.codegen import toolchain
+
+  toolchain.native_recipe.cache_clear()
+  monkeypatch.setattr(
+    toolchain.subprocess, "run", lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "#define __AVX__ 1\n#define __x86_64__ 1\n", "")
+  )
+  monkeypatch.setattr(toolchain.platform, "libc_ver", lambda: (libc, version))
+  assert toolchain.native_recipe("cc").vector_libm == expected
+  toolchain.native_recipe.cache_clear()
+
+
+def test_native_recipe_uses_fixed_sve_width(monkeypatch):
+  from scaly.codegen import toolchain
+
+  toolchain.native_recipe.cache_clear()
+  monkeypatch.setattr(
+    toolchain.subprocess,
+    "run",
+    lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "#define __ARM_FEATURE_SVE_BITS 256\n#define __aarch64__ 1\n", ""),
+  )
+  monkeypatch.setattr(toolchain.platform, "libc_ver", lambda: ("", ""))
+  assert toolchain.native_recipe("cc").lanes == 4
+  toolchain.native_recipe.cache_clear()
+
+
+def test_plain_c_module_header_compiles_as_c99(tmp_path):
+  import shutil
+  import scaly as sc
+
+  compiler = shutil.which("cc")
+  if compiler is None:
+    pytest.skip("C compiler required")
+  x = sc.sym("x", 5)
+  fun = sc.Function._from_exprs("plain_c99", [x], [x.sin() * x], ["x"], ["y"])
+  module = aot.write_module(fun, tmp_path, dialect="c")
+  result = subprocess.run(
+    [compiler, "-std=c99", "-pedantic-errors", "-c", str(tmp_path / module.source_name), "-o", str(tmp_path / "kernel.o")],
+    capture_output=True,
+    text=True,
+  )
+  assert result.returncode == 0, result.stderr

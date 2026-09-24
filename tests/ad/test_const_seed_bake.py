@@ -79,7 +79,9 @@ def test_constant_seed_tiles(pattern: list[int], baked: bool) -> None:
   np.testing.assert_allclose(fn(zv), ref(zv), rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(fn(zv), expected, rtol=1e-12, atol=1e-12)
 
-  params = _callee_params(lower_function(fn))
+  observed = {}
+  lower_function(fn, observe=lambda name, program: observed.__setitem__(name, program))
+  params = _callee_params(observed["pass:scalarize"])
   has_seed_input = any(name.startswith("fwd:") and ":" not in name[4:] for name in params)
   has_gather = any(n.op == ExprOp.GATHER for n in topo([structural]))
   assert has_seed_input is (not baked)

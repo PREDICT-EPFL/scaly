@@ -6,6 +6,7 @@ from ...ir import program as p
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp
 from ..arith import CONSTANTS, constant, fold_program
+from .fold_tiles import _period, _scalar_safe
 from ._common import (
   _alias_sources,
   _map_procs,
@@ -44,7 +45,9 @@ def _fold_proc(proc: ProgramNode) -> ProgramNode:
 
 
 def _fold_body(body: list[ProgramNode]) -> list[ProgramNode]:
-  constants = {s.attrs["name"]: s.attrs["values"] for s in body if s.op == ProgramOp.BUFFER and "values" in s.attrs}
+  declarations = {s.attrs["name"]: s for s in body if s.op == ProgramOp.BUFFER and "values" in s.attrs}
+  constants = {name: decl.attrs["values"] for name, decl in declarations.items()}
+  uniform = {name for name, decl in declarations.items() if _period(decl) == 1 and _scalar_safe(constants[name][0])}
 
   def constant_read(n: ProgramNode) -> bool:
     view = n.args[0]
@@ -52,7 +55,9 @@ def _fold_body(body: list[ProgramNode]) -> list[ProgramNode]:
     if not values or len(view.args) != 1:
       return False
     index = view.args[0]
-    return (index.op == ProgramOp.CONST_INT and 0 <= index.attrs["value"] < len(values)) or all(v == values[0] for v in values)
+    return (index.op == ProgramOp.CONST_INT and 0 <= index.attrs["value"] < len(values) and _scalar_safe(values[index.attrs["value"]])) or view.attrs[
+      "buffer"
+    ] in uniform
 
   def read(n: ProgramNode) -> ProgramNode:
     index = n.args[0].args[0]

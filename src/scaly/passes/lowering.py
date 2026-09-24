@@ -91,7 +91,9 @@ def lowers(*ops: ExprOp) -> Callable[[LowerRule], LowerRule]:
 ExprObserver = Callable[[str, Function], None]
 
 
-def lower_function(fun: Function, observe: ProgramObserver | None = None, observe_expr: ExprObserver | None = None) -> ProgramNode:
+def lower_function(
+  fun: Function, observe: ProgramObserver | None = None, observe_expr: ExprObserver | None = None, *, reciprocal: bool = False, lanes: int | str = 1
+) -> ProgramNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
 
   Host placement only for now: the returned PROGRAM holds every lowered callee
@@ -141,7 +143,7 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None, observ
     )
   if observe is not None:
     observe("lowered", prog)
-  prog = optimize_program(prog, observe=observe)
+  prog = optimize_program(prog, observe=observe, reciprocal=reciprocal, lanes=lanes)
   verify_program(prog)
   return prog
 
@@ -738,6 +740,7 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
     return
   loop = f"it_{out.attrs['name']}"
   rng = p.range_(loop, 0, length, kind=RangeKind.GLOBAL)
+  rng = ProgramNode(rng.op, rng.args, {**rng.attrs, "mapped": True}, rng.dtype)
   it = p.var(loop)
   in_args = []
   for k, outer in enumerate(node.args):

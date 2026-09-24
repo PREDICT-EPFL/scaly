@@ -29,6 +29,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
   EnvVar("SCALY_CACHE_DIR", None, "Override the JIT cache root."),
   EnvVar("SCALY_CC", None, "Override the C compiler used by the JIT."),
   EnvVar("SCALY_CC_OPT", "-O2", "Optimization flag the JIT passes to the C compiler."),
+  EnvVar("SCALY_VECTOR_LIBM", None, "JIT vector math override: none or glibc; unset uses native host detection."),
   EnvVar("SCALY_SOLVER_INCLUDE_DIR", None, "Override the vendored solver C header directory."),
   EnvVar("SCALY_SOLVER_LIB_DIR", None, "Override the vendored solver shared-library directory."),
   EnvVar("SCALY_<NAME>_LIB", None, "Exact path to an installed solver plugin's shared library (e.g. SCALY_PIQP_LIB, SCALY_IPOPT_LIB)."),

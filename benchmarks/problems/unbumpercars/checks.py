@@ -604,17 +604,17 @@ def check_sqp_oracles_agree() -> None:
 
 
 def check_typed_problem_keeps_hessian_in_place() -> None:
-  """The typed problem preserves bounded Hessian source and workspace sizes."""
+  """The typed problem preserves bounded scalar Hessian source and workspace sizes."""
   from scaly.codegen import render_c_module
 
   from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig
   from benchmarks.problems.unbumpercars.filters import build_scaly_nlp
 
   hessian = build_scaly_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).function.descriptor.hess
-  module = render_c_module(hessian, typed_buffers=False)
+  module = render_c_module(hessian, typed_buffers=False, lanes=1)
 
-  # Baselines are about 86 KB and 34k doubles. Headroom catches a CALL boundary materializing
-  # batched-JVP seed tables without pinning harmless local code-generation changes.
+  # Scalar lowering isolates CALL boundaries from vector helper code and lane staging.
+  # These budgets catch a CALL boundary materializing batched-JVP seed tables.
   assert len(module.body.encode()) < 200_000
   assert module.workspace_size < 100_000
 

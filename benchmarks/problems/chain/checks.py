@@ -328,13 +328,14 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
     eq = sc.concat([z[:nx] - p[:nx], mapped])
     return sc.sparse_hessian(lam @ eq, z, triangle="lower").values
 
-  fn = hessian_values
-  procs = lower_function(fn).args[:-1]
-  # ``hoist_invariant`` splits the mapped procedure; the per-stage half keeps the hint.
+  observed = {}
+  lower_function(hessian_values, observe=lambda name, program: observed.__setitem__(name, program))
+  procs = observed["pass:scalarize"].args[:-1]
+  # Inspect the per-stage procedure before range fusion inlines it into the caller.
   selected = [
     proc
     for proc in procs
-    if str(proc.attrs["name"]).startswith("chain_eq_stage_M3_adj") and str(proc.attrs["name"]).split("adj:eq_z")[-1] in ("", "_hoisted_1")
+    if str(proc.attrs.get("hoisted_from", "")).startswith(f"{stage.name}_adj") and str(proc.attrs["hoisted_from"]).endswith("adj:eq_z")
   ]
   assert len(selected) == 1, [proc.attrs["name"] for proc in procs]
   assert selected[0].attrs["lowering"] == "scalar" and selected[0].attrs["scalarize_mode"] == "procedure" and selected[0].attrs["scalarized"], (

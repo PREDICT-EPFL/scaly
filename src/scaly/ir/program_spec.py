@@ -76,6 +76,10 @@ def _view_args_scalar(n: ProgramNode) -> str | None:
       return f"VIEW index component op={a.op} is not scalar"
   if "buffer" not in n.attrs:
     return "VIEW missing 'buffer' name attr"
+  if "lane_stride" in n.attrs and not isinstance(n.attrs["lane_stride"], int):
+    return "VIEW lane_stride must be an integer"
+  if "lane_storage" in n.attrs and n.attrs["lane_storage"] != 8:
+    return "VIEW lane storage must reserve eight elements"
   return None
 
 
@@ -122,6 +126,11 @@ def _range_kind(n: ProgramNode) -> str | None:
     return "RANGE missing valid 'kind' attr"
   if "name" not in n.attrs:
     return "RANGE missing 'name' attr"
+  if "lanes" in n.attrs:
+    if n.attrs["kind"] != RangeKind.VECTOR or n.attrs["lanes"] not in ("auto", 1, 2, 4, 8):
+      return "lane width requires a VECTOR range and auto or 1, 2, 4, 8 lanes"
+    if n.attrs.get("lane_cap") not in (1, 2, 4, 8):
+      return "lane cap must be 1, 2, 4 or 8"
   if len(n.args) != 3:
     return f"RANGE expects 3 args (start, stop, step), got {len(n.args)}"
   for arg, label in zip(n.args, ("start", "stop", "step"), strict=True):
@@ -133,6 +142,11 @@ def _range_kind(n: ProgramNode) -> str | None:
 def _for_body(n: ProgramNode) -> str | None:
   if not n.args or n.args[0].op != ProgramOp.RANGE:
     return "FOR first arg must be RANGE"
+  if "vector_helper" in n.attrs:
+    if len(n.args) != 2 or n.args[1].op != ProgramOp.FOR or n.args[1].args[0].attrs.get("kind") != RangeKind.VECTOR:
+      return "vector helper requires exactly one nested VECTOR range"
+    if not isinstance(n.attrs.get("vector_count"), int) or n.attrs["vector_count"] < 1:
+      return "vector helper requires a positive static trip count"
   return None
 
 

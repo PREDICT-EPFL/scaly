@@ -117,7 +117,7 @@ def test_jit_compile_command_targets_host(isolated_cache, monkeypatch) -> None:
   real_run = jit.subprocess.run
   monkeypatch.setattr(jit.subprocess, "run", lambda cmd, **kwargs: commands.append(cmd) or real_run(cmd, **kwargs))
   _simple_fn()(np.zeros(3))
-  (cmd,) = commands
+  (cmd,) = [command for command in commands if "-dM" not in command]
   flags = list(jit.compile_flags())
   assert cmd[1 : 1 + len(flags)] == flags
   assert "-fno-math-errno" in flags and any(flag.endswith("=native") for flag in flags)
@@ -177,3 +177,106 @@ def test_deep_block_callee_temporaries_do_not_shadow_inputs(isolated_cache, inpu
   for _ in range(40):
     expected = np.sin(expected) + 0.1
   np.testing.assert_allclose(root(np.array([0.3])), expected)
+
+
+@pytest.mark.parametrize("override,expected", [(None, "glibc"), ("none", "none"), ("glibc", "glibc")])
+def test_native_render_recipe_and_math_override(monkeypatch, override, expected):
+  from scaly.codegen.toolchain import BuildRecipe
+
+  if override is None:
+    monkeypatch.delenv("SCALY_VECTOR_LIBM", raising=False)
+  else:
+    monkeypatch.setenv("SCALY_VECTOR_LIBM", override)
+  compilers = []
+  options = {}
+  recipe = BuildRecipe(cpu="native", lanes=4, vector_libm="glibc")
+  monkeypatch.setattr(jit, "native_recipe", lambda compiler: compilers.append(compiler) or recipe)
+  sentinel = object()
+
+  def render(_fun, **kwargs):
+    options.update(kwargs)
+    return sentinel
+
+  monkeypatch.setattr(jit, "render_c_module", render)
+  assert jit._render_native(_simple_fn(), "chosen-compiler") is sentinel
+  assert compilers == ["chosen-compiler"]
+  assert options == {"cpu": "native", "lanes": 4, "dialect": "gnu", "vector_libm": expected, "reciprocal": False}
+
+
+@pytest.mark.parametrize("value", ["", "auto", "sleef", "GLIBC"])
+def test_vector_math_override_rejects_invalid_values(monkeypatch, value):
+  from scaly.codegen.toolchain import BuildRecipe
+  from scaly.utils.env import ToolchainError
+
+  monkeypatch.setenv("SCALY_VECTOR_LIBM", value)
+  monkeypatch.setattr(jit, "native_recipe", lambda _compiler: BuildRecipe(cpu="native", lanes=1))
+  with pytest.raises(ToolchainError, match="SCALY_VECTOR_LIBM"):
+    jit._render_native(_simple_fn(), "unused")
+
+
+def test_native_recipe_render_policies_separate_cache_entries(monkeypatch):
+  from scaly.codegen.toolchain import BuildRecipe
+
+  monkeypatch.delenv("SCALY_VECTOR_LIBM", raising=False)
+  fun = _simple_fn()
+  keys = []
+  for lanes, vector_libm in ((1, "none"), (4, "none"), (4, "glibc")):
+    recipe = BuildRecipe(cpu="native", lanes=lanes, vector_libm=vector_libm)
+    monkeypatch.setattr(jit, "native_recipe", lambda _compiler: recipe)
+    module = jit._render_native(fun, "unused")
+    assert module.recipe == recipe
+    assert "-lmvec" in module.link_flags if vector_libm == "glibc" else "-lmvec" not in module.link_flags
+    keys.append(jit._compute_cache_key(module.body, fun_name=fun.name, compile_flags=(*jit.compile_flags(module.recipe), *module.link_flags)))
+  assert len(set(keys)) == 3
+
+
+def test_scalar_math_override_compile_and_invalidation_use_same_recipe(isolated_cache, monkeypatch):
+  from scaly.codegen.toolchain import BuildRecipe
+
+  monkeypatch.setenv("SCALY_VECTOR_LIBM", "none")
+  monkeypatch.setattr(jit, "native_recipe", lambda _compiler: BuildRecipe(cpu="native", lanes=4, vector_libm="glibc"))
+  fun = _simple_fn()
+  artifact = jit._build_artifact(fun)
+  source = next(artifact.lib_path.parent.glob("*.c")).read_text()
+  assert "lanes=4, dialect=gnu, vector_libm=none" in source
+  assert "-lmvec" not in artifact.flags
+  assert artifact.key in jit._artifact_cache
+  jit.invalidate_cache(fun)
+  assert artifact.key not in jit._artifact_cache
+  assert not artifact.lib_path.parent.exists()
+
+
+def test_vector_math_environment_variable_is_registered():
+  from scaly.utils.env import scaly_env_vars
+
+  setting = next(var for var in scaly_env_vars() if var.name == "SCALY_VECTOR_LIBM")
+  assert setting.default is None
+
+
+def test_math_library_does_not_use_solver_namespace(isolated_cache, monkeypatch):
+  from scaly.codegen.toolchain import BuildRecipe
+
+  monkeypatch.setattr(jit, "native_recipe", lambda _compiler: BuildRecipe(cpu="native", lanes=1, vector_libm="glibc"))
+  monkeypatch.delenv("SCALY_VECTOR_LIBM", raising=False)
+  loaded = []
+  original = jit.load_library
+
+  def load(path, *, isolated):
+    loaded.append(isolated)
+    return original(path, isolated=isolated)
+
+  monkeypatch.setattr(jit, "load_library", load)
+  compiled = jit.CompiledFunction(_simple_fn())
+  assert "-lmvec" in compiled._artifact.flags
+  assert loaded == [False]
+
+
+def test_native_compiler_probe_has_jit_diagnostic(monkeypatch):
+  import subprocess
+
+  def fail(_compiler):
+    raise subprocess.CalledProcessError(1, ["cc", "-dM"])
+
+  monkeypatch.setattr(jit, "native_recipe", fail)
+  with pytest.raises(jit.JitError, match="failed to probe native C compiler"):
+    jit._render_native(_simple_fn(), "cc")

@@ -1,3 +1,11 @@
+/* Scaly build recipe
+ * CPU baseline: generic
+ * lanes=auto, dialect=gnu, vector_libm=none, reciprocal=False
+ * Math library: scalar libm
+ * gcc -O3 -fno-math-errno -c qp_host.c
+ * clang -O3 -fno-math-errno -c qp_host.c
+ * Link with: -lm
+ */
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>

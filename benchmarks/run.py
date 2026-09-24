@@ -25,7 +25,15 @@ from scaly.ir.expr import substitute
 from scaly.codegen.aot import render_c_module
 from scaly.solvers.graph import solver_compile_flags
 from scaly.solvers.paths import solver_loadable
-from benchmarks.harness import CLOSED_LOOP_PAIRS, SMOKE_RESULTS, SWEEP_RESULTS, closed_loop_results_root, gbench, solver_oracle_name
+from benchmarks.harness import (
+  CLOSED_LOOP_PAIRS,
+  SMOKE_RESULTS,
+  SWEEP_RESULTS,
+  closed_loop_results_root,
+  configure_math_policy,
+  gbench,
+  solver_oracle_name,
+)
 from benchmarks.harness.closed_loop import run as run_closed_loop
 from benchmarks.harness.recording import layout_path
 from benchmarks.harness.provenance import collect, write, require_headline_settings
@@ -421,6 +429,8 @@ def main() -> None:
   closed_loop_parser.add_argument("--headline", action="store_true", help="require performance governor and explicit boost setting")
   closed_loop_parser.add_argument("--boost", choices=("on", "off"), help="required CPU boost state")
   args = parser.parse_args()
+  if args.command in {"sweep", "study", "closed-loop", "smoke"}:
+    configure_math_policy(measured_jit=args.command != "sweep" and (args.command != "study" or "closed-loop" in args.only))
   if args.command == "sweep":
     if args.repetitions < 1 or (args.headline and args.repetitions < 3):
       parser.error("--repetitions must be positive, and at least 3 for --headline")
