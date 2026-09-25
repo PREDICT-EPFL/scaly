@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 1 Summary Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:27px;margin:0 0 4px}h2{font-size:19px;margin:38px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 1 primitives: summary</h1>
+<p class="sub">Branch <code>claude/tier1-primitives</code> (8 commits on <code>t3code/plan-compiler-performance-passes</code>) · todo C-82…C-88 · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>All seven planned PRs are implemented, tested, benchmarked and committed.</b> An independent review then found four real bugs; all are fixed, each with a regression test.</p>
+<p><b>Final state:</b></p>
+<ul>
+<li>954 tests pass and 88 are skipped. The skips are the solver and CasADi tests this machine cannot load.</li>
+<li><code>ruff check</code>, <code>ruff format --check</code> and <code>ty check --error-on-warning</code> are clean.</li>
+<li>The docs site builds.</li>
+<li>The six existing C snapshots are byte-identical to <code>main</code>'s output, and one deliberate snapshot (<code>control</code>) was added.</li>
+</ul>
+<p style="margin-bottom:0">The change is +1 902 / −94 lines in <code>src/</code> and +1 590 lines of tests. Each PR's report is <code>internal/notes/tier1_pr1_report.html</code> … <code>tier1_pr7_report.html</code>.</p>
+</div>
+
+<h2>What Scaly can now express</h2>
+<div class="scroll"><table>
+<tr><th>PR</th><th>Capability</th><th>Public API</th></tr>
+<tr><td>1</td><td>Data-dependent choice; <code>bool</code> through the <code>double</code> ABI</td><td><code>&lt; &lt;= &gt; &gt;= &amp; | ~</code>, <code>sc.where</code>, <code>equal</code>, <code>not_equal</code>, <code>isfinite</code>, <code>copysign</code>, <code>cast</code>, logical ops</td></tr>
+<tr><td>2</td><td>Options, derivatives of <code>max</code>/<code>min</code>/<code>abs</code>, reductions</td><td><code>sc.options</code>, <code>set_options</code>, <code>get_options</code> (<code>nonsmooth="split"|"first"|"error"</code>); <code>reduce_max</code>, <code>reduce_min</code>, <code>norm_inf</code>, <code>norm_1</code></td></tr>
+<tr><td>3</td><td>Sparse kernels over fixed patterns</td><td>Accumulating <code>scatter</code>; <code>segment_sum</code>, <code>segment_max</code>, <code>segment_min</code>; linear-time <code>gather</code> adjoint</td></tr>
+<tr><td>4</td><td>Sequential loops with a carry, as a loop in C</td><td><code>sc.scan</code></td></tr>
+<tr><td>5</td><td>Iteration until converged, with a derivative</td><td><code>sc.while_loop</code></td></tr>
+<tr><td>6</td><td>Carries updated in place</td><td><code>sc.index_add</code>, <code>sc.index_set</code></td></tr>
+<tr><td>7</td><td>Implicit and other hand-written derivatives</td><td><code>sc.custom_derivative</code></td></tr>
+</table></div>
+
+<h2>Headline results</h2>
+<div class="scroll"><table>
+<tr><th>Measurement (aarch64 VM, indicative)</th><th>Result</th></tr>
+<tr><td>RK4 rollout plus gradient, N = 200: <code>scan</code> vs the unrolled chain</td><td>~80 ms vs 22 s to build (<b>~270×</b>); 27.9 vs 36.9 µs per call. The C is 126 lines for any N.</td></tr>
+<tr><td>SpMV at 80k nonzeros vs SciPy's CSR kernel</td><td>Within <b>1.7×</b>, including ~6 µs of ctypes call overhead.</td></tr>
+<tr><td><code>gather</code> adjoint build at n = 2000</td><td>1.3 s → 1.6 ms.</td></tr>
+<tr><td>Newton solve converging in 7 of 50 steps: <code>while_loop</code> vs <code>scan(50)</code></td><td>3.2× faster.</td></tr>
+<tr><td>4-entry update of a 100k-entry carry, 1000 steps: in place vs two slots</td><td><b>354×</b> faster (151 µs vs 53.6 ms).</td></tr>
+<tr><td>Gradient of a solve, n = 1000: implicit rule vs through the steps</td><td>5.6× faster, and exact at the solution. It costs the same as the value.</td></tr>
+<tr><td>Single <code>where</code> vs <code>fmax</code> vs NumPy, n = 10⁶</td><td>281 / 277 / 403 µs.</td></tr>
+</table></div>
+
+<h2>Independent review</h2>
+<p>A separate agent reviewed the finished branch, trying to break it with experiments. It found four bugs that tests at the time did not catch:</p>
+<div class="scroll"><table>
+<tr><th>Severity</th><th>Bug</th><th>Fix</th></tr>
+<tr><td class="bad">high</td><td>The in-place rule computed the read set of later updates against a chain link, which derivative patterns do not treat as a variable, so it came out empty. A body that swaps two entries was accepted and gave [10, 1, 1, 3] instead of [10, 2, 1, 3].</td><td>The values are cut at the link and the pattern is taken against a stand-in symbol.</td></tr>
+<tr><td class="bad">high</td><td>Derivative patterns omit reads that have no derivative, such as <code>copysign</code>'s sign. An accepted body gave [3, 5] instead of [3, −5].</td><td>Read sets are only trusted through an explicit list of operations whose pattern equals their reads. Any other operation on the path to the carry is treated as reading every entry.</td></tr>
+<tr><td class="bad">high</td><td>A <code>custom_derivative</code> copy kept its Function's name, so derivative helpers keyed by name were shared. With <code>fn</code> and its copy in one graph, the result was 12 or 120 instead of 66.</td><td>The copy gets its own name, derived from its rules.</td></tr>
+<tr><td class="warn">medium</td><td>Custom rules were ignored when the Function was a <code>scan</code> or <code>while_loop</code> body.</td><td>Every derivative that looks inside a Function now goes through <code>body_tangents</code>/<code>body_cotangents</code>.</td></tr>
+<tr><td>low</td><td>Next to a NaN operand, the derivative of <code>maximum</code>/<code>minimum</code> went to the operand <code>fmax</code> discards.</td><td>The weight follows the operand C returns.</td></tr>
+</table></div>
+<p>Two plausible issues were also hardened:</p>
+<ul>
+<li>The in-place chain is now recomputed on the exact graph being lowered.</li>
+<li>The <code>while_loop</code> tangent cache is keyed by the condition object instead of its <code>id</code>.</li>
+</ul>
+<p>The reviewer also checked, and confirmed correct, a wide set of other cases: scan lowering (lengths 0–4, shared outputs, nesting, scan inside vmap), scan AD with rank-2 carries and negative and zero strides (including reverse over reverse), <code>while_loop</code> AD and Hessians, and the <code>bool</code> ABI.</p>
+
+<h2>Open items (in <code>internal/todo.md</code>)</h2>
+<div class="scroll"><table>
+<tr><th>Item</th><th>What</th><th>Why it matters</th></tr>
+<tr><td>C-89</td><td>Keep reduction accumulators in registers and fuse producers into them.</td><td><code>sum</code> (existing) and <code>max</code> are 6–7× slower than NumPy at 10⁶.</td></tr>
+<tr><td>C-90</td><td>Rewrite nested <code>where</code> into <code>fmin</code>/<code>fmax</code>.</td><td>A nested ternary stays branchy under gcc and runs 9× slower.</td></tr>
+<tr><td>C-91</td><td>One backward scan per forward scan.</td><td>Differentiating two outputs of a scan does the reverse work twice.</td></tr>
+<tr><td>C-92</td><td>Backward pass of <code>while_loop</code> over the steps taken only.</td><td>Today it runs <code>max_iter</code> masked steps, so value plus gradient costs 5.8× the value.</td></tr>
+<tr><td>(noted)</td><td>Step-indexed index tables in loop bodies.</td><td>Needed for LDLᵀ as a scan over columns (Tier 2). The in-place machinery is ready for it.</td></tr>
+<tr><td>(noted)</td><td>A Function whose input and output share a name.</td><td>Pre-existing: it lowers to a clobbered buffer. It should be a clear error at construction.</td></tr>
+<tr><td>(noted)</td><td>Build time of large scalarized rule procedures.</td><td>2.4 s for a 1000-entry implicit rule. Worth tightening scalarize's budget on elementwise procedures.</td></tr>
+</table></div>
+
+<h2>Before merging: please check on the Mac</h2>
+<ul>
+<li>All work ran in a Linux VM against your checkout. These tests could not run there:
+  <ul>
+  <li>the solver tests (the vendored PIQP and Ipopt builds are macOS);</li>
+  <li>the CasADi tests (its wheel needs a newer libstdc++);</li>
+  <li>three Google Benchmark driver tests.</li>
+  </ul>
+  Run <code>uv run pytest -n=auto</code>, <code>uv run ruff check</code> and <code>uv run ty check --error-on-warning</code> on the Mac.</li>
+<li><b>Node-ID baseline:</b> <code>tests/baseline/pytest_nodeids.txt</code> was regenerated as the union of this VM's collection and the 29 baseline IDs it could not collect. The full-suite check on the Mac should therefore pass unchanged; if it doesn't, regenerate the baseline with the recipe in <code>contributing.md</code>.</li>
+<li><b>Commit author:</b> commits are authored as "Colin Jones &lt;colin.cn.jones@gmail.com&gt;", set through environment variables because the VM has no git identity. Your git config was not touched. Amend if you want a different identity.</li>
+<li><b>Untouched local files:</b> the uncommitted <code>.python-version</code> change, <code>docs/.obsidian</code>, <code>mymodule.py</code> and <code>pla/</code> are left exactly as they were.</li>
+</ul>
+</main></body></html>
