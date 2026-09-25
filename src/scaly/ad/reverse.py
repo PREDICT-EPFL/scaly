@@ -11,7 +11,7 @@ from ..function import Function
 from ..function.sugar import _scan_node, _while_node, vmap
 from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, as_expr, cast, concat, copysign, gather, index_set, scatter, stack, topo, where, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
-from .forward import extremum_weight, reduce_weights, segment_weights, sign
+from .forward import custom_vjp_call as _custom_vjp, extremum_weight, reduce_weights, segment_weights, sign
 from .sparsity import _depends_on
 
 
@@ -40,7 +40,10 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     out = callee.outputs[output_index]
     lam_name = f"lam:{callee.output_names[output_index]}"
     lam = Expr.sym(lam_name, out.shape)
-    grads = vjp((out,), tuple(callee.inputs[i] for i in active_formals), (lam,))
+    if callee.custom_vjp is not None:
+      grads = tuple(_custom_vjp(callee, callee.inputs, output_index, lam)[i] for i in active_formals)
+    else:
+      grads = vjp((out,), tuple(callee.inputs[i] for i in active_formals), (lam,))
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads])))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
@@ -369,6 +372,8 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return _concat_vjp(cot, args, expr.attrs.get("axis", 0))
   if expr.op == ExprOp.MATMUL:
     return _matmul_vjp(args[0], args[1], cot)
+  if expr.op == ExprOp.CALL and expr.attrs["callee"].custom_vjp is not None:
+    return _custom_vjp(expr.attrs["callee"], args, expr.attrs["output"], cot)
   if expr.op == ExprOp.CALL:
     callee = expr.attrs["callee"]
     output_idx = expr.attrs["output"]

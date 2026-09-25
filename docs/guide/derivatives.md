@@ -148,3 +148,25 @@ time unless `SCALY_STRICT_JVP_MANY=1` is set.
 
 Derivatives through `CALL` and `VMAP` keep those nodes instead of expanding them. See
 [How differentiation works](../how_it_works/autodiff.md).
+
+## Custom derivatives
+
+`sc.custom_derivative(fn, jvp=..., vjp=...)` returns a copy of `fn` whose derivatives come from the
+given Functions instead of from its body. The forward rule takes `(*inputs, *input_tangents)` and
+returns one tangent per output. The reverse rule takes `(*inputs, *outputs, *output_cotangents)` and
+returns one cotangent per input. A missing direction differentiates the body as usual.
+
+The typical use is a solver. Differentiating a `while_loop` differentiates the steps it took, which
+only approximates the derivative of the solution and costs a backward pass over every step. The
+implicit-function rule at the solution is exact and costs one linear solve:
+
+```python
+# x solves x**3 + x = p, so dx/dp = 1 / (3 x^2 + 1)
+p, x, xbar = sc.sym("p", n), sc.sym("x", n), sc.sym("xbar", n)
+rule = sc.Function._from_exprs("implicit", [p, x, xbar], [xbar / (3 * x * x + 1)], ["p", "x", "xbar"], ["pbar"])
+solve_with_rule = sc.custom_derivative(solve, vjp=rule)
+```
+
+The reverse rule receives the call's outputs, so it reuses the solution instead of solving again.
+The rules are honored through calls, `vmap` and every derivative built on them; sparsity patterns
+still come from the body.

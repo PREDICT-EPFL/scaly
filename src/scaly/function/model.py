@@ -180,6 +180,9 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     if missing:
       raise ValueError(f"function {self.name!r} has undeclared symbolic inputs: {missing}")
     self._compiled: Any = None
+    # Derivative rules that replace differentiating the body; set by ``sc.custom_derivative``.
+    self.custom_jvp: Function | None = None
+    self.custom_vjp: Function | None = None
 
   def __repr__(self) -> str:
     suffix = f" device={self.device}" if self.device.kind != "host" else ""

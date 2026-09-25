@@ -4,7 +4,7 @@ from typing import Any
 
 from .codegen.abi import C_API_SIGNATURE, BufferType, c_api_signature
 from .ad import jvp, jvp_many, vjp, vjp_many
-from .function.sugar import scan, vmap, while_loop
+from .function.sugar import custom_derivative, scan, vmap, while_loop
 from .function.api import (
   adjoint,
   forward,
@@ -168,6 +168,7 @@ __all__ = [
   "vmap",
   "scan",
   "while_loop",
+  "custom_derivative",
   "maximum",
   "minimum",
   "cast",

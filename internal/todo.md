@@ -149,7 +149,7 @@ the per-step reports sit beside it as `notes/tier1_pr*_report.html`.
       after 7 of 50 steps pays 50 backward steps (`notes/tier1_pr5_report.html`). Start the backward
       loop at the step count, which needs a scan whose trip count is read at run time.
 - [x] **C-87. In-place carry updates under a conservative donation rule.** `index_add`/`index_set` chains rooted at the carry lower to an `_inplace` body over one aliased slot; the rule is `in_place_chain` in `passes/lowering.py`.
-- [ ] **C-88. Custom derivatives on a `Function`.**
+- [x] **C-88. Custom derivatives on a `Function`.** `sc.custom_derivative(fn, jvp=, vjp=)`, honored through `CALL`, `VMAP` and multi-seed forward mode.
 
 ### Now
 

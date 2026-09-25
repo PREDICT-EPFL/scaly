@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import weakref
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -356,6 +357,15 @@ def segment_weights(expr: Expr) -> Expr:
   return count / gather(segment_sum(count, ids, n), ids)
 
 
+def custom_vjp_call(callee: Any, args: Sequence[Expr], output: int, cot: Expr) -> tuple[Expr, ...]:
+  """Input cotangents from a callee's own reverse rule, given the cotangent of one of its outputs.
+  The primal outputs it receives are the call's own outputs, so the rule reuses the solution.
+  Lives here, beside the other flat-call synthesis, for reverse mode to use."""
+  outputs = callee._flat_symbolic_call(list(args))
+  cots = [cot if j == output else zeros_like(out) for j, out in enumerate(outputs)]
+  return callee.custom_vjp._flat_symbolic_call([*args, *outputs, *cots])
+
+
 def _copysign_slope(x: Expr, s: Expr) -> Expr:
   """``d copysign(x, s) / dx = sign(x) * sign(s)``, taking the sign bit of zero as C does."""
   return copysign(1.0, x) * copysign(1.0, s)
@@ -415,7 +425,11 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
   cache = _CALL_JVP_CACHE.setdefault(callee, {})
   if key not in cache:
     seeds = {i: Expr.sym(f"fwd:{callee.input_names[i]}", callee.inputs[i].shape) for i in formal_indices}
-    deriv = callee._inherit_lowering(_jvp(callee.outputs[output_index], {callee.inputs[i]: seed for i, seed in seeds.items()}, {}, {}))
+    if callee.custom_jvp is not None:
+      tangents = [seeds[i] if i in seeds else zeros_like(inp) for i, inp in enumerate(callee.inputs)]
+      deriv = callee.custom_jvp._flat_symbolic_call([*callee.inputs, *tangents])[output_index]
+    else:
+      deriv = callee._inherit_lowering(_jvp(callee.outputs[output_index], {callee.inputs[i]: seed for i, seed in seeds.items()}, {}, {}))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
     seed_indices = tuple(i for i, seed in seeds.items() if _depends_on(deriv, seed, dep_memo))
@@ -598,6 +612,8 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     ones = Expr.const(np.ones(expr.args[0].size), dtype=d0.type.dtype)
     memo[expr.id] = ret = d0.reshape((nseed, expr.args[0].size)) @ ones
     return ret
+  if expr.op in (ExprOp.VMAP, ExprOp.CALL) and expr.attrs["callee"].custom_jvp is not None:
+    raise _JVPManyUnsupported("custom jvp")  # the per-seed fallback honors the rule through ``_call_jvp_function``
   if expr.op == ExprOp.VMAP:
     callee = expr.attrs["callee"]
     output_idx = expr.attrs["output"]

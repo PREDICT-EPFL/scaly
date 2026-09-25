@@ -200,3 +200,37 @@ def _while_node(cond: Function, body: Function, init: Expr, max_iter: int, outpu
   return Expr(
     ExprOp.WHILE, (init,), type_, attrs={"callee": body, "cond": cond, "max_iter": int(max_iter), "output": int(output)}, lowering=init.lowering
   )
+
+
+def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None) -> Function:
+  """A copy of ``fn`` whose derivatives come from the given Functions instead of from its body.
+
+  ``jvp`` takes ``(*inputs, *input_tangents)`` and returns one tangent per output. ``vjp`` takes
+  ``(*inputs, *outputs, *output_cotangents)`` and returns one cotangent per input; receiving the
+  outputs lets an implicit-function rule use the solution without solving again. Either may be
+  omitted, and that direction then differentiates the body as usual. The typical use is a solver
+  loop: its derivative through the iterations is replaced by the implicit-function derivative at
+  the solution, which costs one linear solve and is exact there. Sparsity patterns still come from
+  the body.
+  """
+  if not isinstance(fn, Function):
+    raise TypeError(f"custom_derivative needs a scaly Function, got {type(fn).__name__}")
+  shapes_in = [e.shape for e in fn.inputs]
+  shapes_out = [e.shape for e in fn.outputs]
+  for label, rule, takes, gives in (
+    ("jvp", jvp, shapes_in + shapes_in, shapes_out),
+    ("vjp", vjp, shapes_in + shapes_out + shapes_out, shapes_in),
+  ):
+    if rule is None:
+      continue
+    if not isinstance(rule, Function):
+      raise TypeError(f"custom {label} must be a scaly Function")
+    got_in, got_out = [e.shape for e in rule.inputs], [e.shape for e in rule.outputs]
+    if got_in != takes or got_out != gives:
+      raise ValueError(f"custom {label} for {fn.name!r} must map shapes {takes} -> {gives}, got {got_in} -> {got_out}")
+  copy = fn._with_outputs(fn.outputs)
+  if hasattr(fn, "descriptor"):
+    copy.descriptor = fn.descriptor
+  copy.custom_jvp = jvp if jvp is not None else fn.custom_jvp
+  copy.custom_vjp = vjp if vjp is not None else fn.custom_vjp
+  return copy

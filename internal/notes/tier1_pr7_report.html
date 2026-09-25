@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 1 PR 7 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 1 · PR 7 report</h1>
+<p class="sub">Custom derivatives on a <code>Function</code> · branch <code>claude/tier1-primitives</code> · todo C-88 · 26 Sep 2026</p>
+
+<div class="box"><b>Status:</b> <span class="ok">done</span>. The full suite passes: 952 passed, 88 skipped, 0 failed. ruff and ty are clean, and all seven C snapshots are byte-identical.</div>
+
+<h2>New capability</h2>
+<pre># x solves x**3 + x = p (a Newton while_loop inside `solve`); dx/dp = 1 / (3x^2 + 1)
+rule  = sc.Function._from_exprs("implicit", [p, x, xbar], [xbar / (3*x*x + 1)], ["p", "x", "xbar"], ["pbar"])
+solve = sc.custom_derivative(solve, vjp=rule)     # jvp=... likewise; either may be omitted</pre>
+<ul>
+<li><b>Replacing the body's derivative:</b> the forward rule takes <code>(*inputs, *tangents)</code> and returns one tangent per output. The reverse rule takes <code>(*inputs, *outputs, *cotangents)</code> and returns input cotangents. Because it receives the call's own outputs, the implicit rule reuses the solution rather than solving again.</li>
+<li><b>Where it is honored:</b> every derivative path uses the rules: forward mode at <code>CALL</code> and <code>VMAP</code>; the multi-seed forward mode behind <code>sc.jacobian</code>, through its per-seed path; reverse mode at <code>CALL</code> and inside the per-iteration adjoint of <code>VMAP</code>; and everything built on these, such as gradients, Hessians and sparse Jacobians.</li>
+<li><b>Missing direction:</b> a direction that is not given differentiates the body as before. Sparsity patterns still come from the body.</li>
+<li><b>Solver Functions:</b> the copy keeps a solver Function's descriptor, so the same mechanism can later attach implicit sensitivities to the vendored QP and NLP solvers.</li>
+</ul>
+
+<h2>What was changed</h2>
+<div class="scroll"><table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>function/model.py</code></td><td>Two attributes on every <code>Function</code>: <code>custom_jvp</code> and <code>custom_vjp</code>.</td></tr>
+<tr><td><code>function/sugar.py</code></td><td>The <code>sc.custom_derivative</code> builder. It checks the rule signatures shape by shape, copies the Function (including a solver descriptor) and attaches the rules.</td></tr>
+<tr><td><code>ad/forward.py</code></td><td><code>_call_jvp_function</code> builds the tangent from the rule. It serves both <code>CALL</code> and <code>VMAP</code>. The structural multi-seed path defers to the per-seed path for such callees. <code>custom_vjp_call</code> lives here because <code>test_import_layering</code> allows flat-call synthesis only in <code>ad/forward.py</code> and <code>function/model.py</code>.</td></tr>
+<tr><td><code>ad/reverse.py</code></td><td>The <code>CALL</code> rule and the <code>VMAP</code> adjoint body both use the reverse rule when it is present.</td></tr>
+<tr><td>docs, todo</td><td>A "Custom derivatives" section in <code>guide/derivatives.md</code>. C-88 marked done.</td></tr>
+</table></div>
+
+<h2>Test results</h2>
+<div class="scroll"><table>
+<tr><th>Test</th><th>What it checks</th><th>Result</th></tr>
+<tr><td><code>test_custom_derivatives_replace_differentiating_the_solver_steps</code></td><td>A Newton <code>while_loop</code> for x³ + x = p with both rules attached:
+  <ul>
+  <li>the value equals the real root from <code>np.roots</code>;</li>
+  <li>the dense Jacobian, the reverse-mode gradient and the sparse Jacobian all equal the analytic <code>1/(3x²+1)</code> to 1e-12;</li>
+  <li>the lowered gradient program contains no backward pass over the solver steps.</li>
+  </ul></td><td class="ok">pass</td></tr>
+<tr><td><code>test_custom_rules_are_the_ones_used_in_both_modes_and_under_vmap</code></td><td>The rules are <b>deliberately wrong (×2)</b>, and the solver is mapped with <code>vmap</code>. Both the forward Jacobian and the reverse gradient come out doubled, which proves the rules are dispatched in both modes and through <code>VMAP</code>.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_a_missing_direction_differentiates_the_body</code></td><td>With only the reverse rule attached, forward mode goes through the Newton steps and matches the implicit value to 1e-9 at this tolerance. A rule with the wrong shapes, and a rule that is not a Function, are both refused.</td><td class="ok">pass</td></tr>
+<tr><td>Full suite</td><td>Including <code>test_flat_call_seams_stay_inside_their_sanctioned_modules</code>, which first flagged the helper in <code>ad/reverse.py</code>; it was moved.</td><td class="ok">952 passed, 88 skipped</td></tr>
+</table></div>
+<p><b>Mutation checks</b>, each reverted afterwards:</p>
+<ul>
+<li>Bypassing forward dispatch: 1 failure.</li>
+<li>Bypassing reverse dispatch at <code>CALL</code> and <code>VMAP</code>: 2 failures.</li>
+</ul>
+
+<h2>Benchmarks</h2>
+<p>Script: <code>internal/notes/perf_2026_09_25_tier1/pr7_custom.py</code>. The gradient of <code>‖x(p)‖²</code>, where <code>x</code> is the Newton solve (7–8 steps, <code>max_iter</code> = 50). Median µs per call on the aarch64 VM.</p>
+<div class="scroll"><table>
+<tr><th>n</th><th>value only</th><th>gradient through the steps</th><th>gradient via the implicit rule</th><th>speed-up</th></tr>
+<tr><td class="r">10</td><td class="r">7.1</td><td class="r">10.6</td><td class="r">7.0</td><td class="r">1.5×</td></tr>
+<tr><td class="r">100</td><td class="r">13.6</td><td class="r">57.1</td><td class="r">13.7</td><td class="r">4.2×</td></tr>
+<tr><td class="r">1000</td><td class="r">143.4</td><td class="r">830.5</td><td class="r">148.4</td><td class="r"><b>5.6×</b></td></tr>
+</table></div>
+<ul>
+<li>With the implicit rule, the gradient costs about the same as the value: one extra division per entry. It is also exact at the solution, whereas the derivative through the steps is not.</li>
+<li><span class="warn">Finding:</span> at n = 1000 the implicit-rule gradient takes 2.4 s to build, against 0.3 s for the other variants. The run time is fine. The likely cause is that the auto policy scalarizes the 1000-entry rule procedure into straight-line code, and compiling it is slow. It's worth tightening scalarize's budget on elementwise procedures.</li>
+</ul>
+
+<h2>Deviations and notes</h2>
+<ul>
+<li>A <code>sparsity=</code> override for the rules was in the plan as an option. It is not added. The body's pattern is always a sound superset, and there is no caller for an override yet.</li>
+<li>The forward rule receives only inputs, as the plan specified, so an implicit forward rule has to call the solver itself, as the test does. It could also take the outputs, symmetric with the reverse rule; that is a one-line change if you prefer it.</li>
+</ul>
+</main></body></html>

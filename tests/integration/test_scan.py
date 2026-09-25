@@ -440,3 +440,80 @@ def test_index_updates_differentiate() -> None:
   np.testing.assert_allclose(g[1], lam @ sc.jacobian(f, "y", "v")((cv, vv)), rtol=1e-12, atol=1e-14)
   with pytest.raises(ValueError, match="distinct"):
     sc.index_set(c, [1, 1], v[:2])
+
+
+def _cubic_solver(n: int, name: str) -> sc.Function:
+  """``x**3 + x = p`` elementwise by Newton inside a ``while_loop``; ``dx/dp = 1 / (3x^2 + 1)``."""
+  c = sc.sym("c", 2 * n)
+  x, p = c[:n], c[n:]
+  body = sc.Function._from_exprs(f"{name}_step", [c], [sc.concat([x - (x**3 + x - p) / (3 * x * x + 1), p])], ["c"], ["cn"])
+  cond = sc.Function._from_exprs(f"{name}_go", [c], [sc.norm_inf(x**3 + x - p) > 1e-14], ["c"], ["go"])
+  pp = sc.sym("p", n)
+  final, _ = sc.while_loop(cond, body, sc.concat([sc.const(np.zeros(n)), pp]), max_iter=60)
+  return sc.Function._from_exprs(name, [pp], [final[:n]], ["p"], ["x"])
+
+
+def _implicit_rules(n: int, name: str, scale: float = 1.0) -> tuple[sc.Function, sc.Function]:
+  p, x, bar, dp = sc.sym("p", n), sc.sym("x", n), sc.sym("xbar", n), sc.sym("dp", n)
+  slope = scale / (3 * x * x + 1)
+  # The forward rule gets only the inputs, so it recomputes the solution through the solver itself.
+  solver = _cubic_solver(n, f"{name}_inner")
+  xs = solver(p)
+  jvp = sc.Function._from_exprs(f"{name}_jvp", [p, dp], [dp * scale / (3 * xs * xs + 1)], ["p", "dp"], ["dx"])
+  vjp = sc.Function._from_exprs(f"{name}_vjp", [p, x, bar], [bar * slope], ["p", "x", "xbar"], ["pbar"])
+  return jvp, vjp
+
+
+P = np.array([0.5, 2.0, 10.0])
+
+
+def _cubic_root(p: np.ndarray) -> np.ndarray:
+  return np.array([np.real([r for r in np.roots([1.0, 0.0, 1.0, -v]) if abs(r.imag) < 1e-12][0]) for v in p])
+
+
+def test_custom_derivatives_replace_differentiating_the_solver_steps() -> None:
+  solver = _cubic_solver(3, "cd_solve")
+  jvp, vjp = _implicit_rules(3, "cd_rules")
+  custom = sc.custom_derivative(solver, jvp=jvp, vjp=vjp)
+  q = sc.sym("q", 3)
+  host = sc.Function._from_exprs("cd_host", [q], [custom(q)], ["q"], ["x"])
+  xs = _cubic_root(P)
+  exact = np.diag(1.0 / (3 * xs * xs + 1))
+  np.testing.assert_allclose(host(P), xs, rtol=1e-13)
+  np.testing.assert_allclose(sc.jacobian(host, "x", "q")(P), exact, rtol=1e-12, atol=1e-15)
+  cost = sc.Function._from_exprs("cd_cost", [q], [(custom(q) ** 2).sum()], ["q"], ["c"])
+  grad = sc.gradient(cost, "c", "q")
+  np.testing.assert_allclose(grad(P), 2 * xs * np.diag(exact), rtol=1e-12)
+  np.testing.assert_allclose(sc.sparse_jacobian(host, "x", "q")(P), np.diag(exact), rtol=1e-12)
+  # The gradient reads the solution and never runs a backward pass over the solver's steps.
+  names = {pr.attrs["name"] for pr in lower_function(grad).args}
+  assert not any("whileadj" in name for name in names)
+
+
+def test_custom_rules_are_the_ones_used_in_both_modes_and_under_vmap() -> None:
+  solver = _cubic_solver(1, "cd_wrong_solve")
+  jvp, vjp = _implicit_rules(1, "cd_wrong", scale=2.0)  # deliberately twice the true derivative
+  custom = sc.custom_derivative(solver, jvp=jvp, vjp=vjp)
+  q = sc.sym("q", 3)
+  mapped = sc.vmap(custom, 3, [(q, 0, 1)])
+  host = sc.Function._from_exprs("cd_wrong_host", [q], [mapped], ["q"], ["x"])
+  xs = _cubic_root(P)
+  doubled = np.diag(2.0 / (3 * xs * xs + 1))
+  np.testing.assert_allclose(sc.jacobian(host, "x", "q")(P), doubled, rtol=1e-12, atol=1e-15)
+  (g,) = sc.vjp((mapped,), (q,), (sc.const(np.ones(3)),))
+  np.testing.assert_allclose(sc.Function._from_exprs("cd_wrong_g", [q], [g], ["q"], ["g"])(P), np.diag(doubled), rtol=1e-12)
+
+
+def test_a_missing_direction_differentiates_the_body() -> None:
+  solver = _cubic_solver(3, "cd_half_solve")
+  _, vjp = _implicit_rules(3, "cd_half")
+  custom = sc.custom_derivative(solver, vjp=vjp)
+  q = sc.sym("q", 3)
+  host = sc.Function._from_exprs("cd_half_host", [q], [custom(q)], ["q"], ["x"])
+  xs = _cubic_root(P)
+  # Forward mode goes through the Newton steps; at this tolerance that matches the implicit value.
+  np.testing.assert_allclose(sc.jacobian(host, "x", "q")(P), np.diag(1.0 / (3 * xs * xs + 1)), rtol=1e-9, atol=1e-12)
+  with pytest.raises(ValueError, match="must map shapes"):
+    sc.custom_derivative(solver, vjp=sc.Function._from_exprs("cd_bad", [sc.sym("a", 3)], [sc.sym("a", 3)], ["a"], ["b"]))
+  with pytest.raises(TypeError, match="scaly Function"):
+    sc.custom_derivative(solver, jvp=lambda p: p)
