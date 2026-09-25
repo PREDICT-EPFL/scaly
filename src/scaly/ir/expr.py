@@ -80,6 +80,7 @@ class ExprOp(StrEnum):
   CALL = "call"
   VMAP = "vmap"
   SCAN = "scan"
+  WHILE = "while"
   SOLVER_CALL = "solver_call"
 
 
@@ -142,11 +143,13 @@ COMMON_STRUCTURAL = {
   ExprOp.CALL,
   ExprOp.VMAP,
   ExprOp.SCAN,
+  ExprOp.WHILE,
   ExprOp.SOLVER_CALL,
 }
 
-# Ops whose ``callee`` attr names a ``Function`` the graph runs; ``callees_of`` lists them per node.
-CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP, ExprOp.SCAN}
+# Ops whose ``callee`` attr names a ``Function`` the graph runs (a ``while`` also runs its ``cond``);
+# ``callees_of`` lists them per node.
+CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP, ExprOp.SCAN, ExprOp.WHILE}
 
 # Deliberately not in the MVP set: expm1/log1p (nice but low priority), splines/interpolants
 # (important but require carefully specified extrapolation, knots, derivatives, and codegen tables),
@@ -222,6 +225,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, None),
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, None),
   ExprOp.SCAN: OpInfo(ExprOp.SCAN, None, None),
+  ExprOp.WHILE: OpInfo(ExprOp.WHILE, 1, None),
   ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, None, differentiable=False),
 }
 
@@ -612,8 +616,11 @@ def _attrs_key(attrs: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
 
 
 def callees_of(node: Expr) -> tuple[Any, ...]:
-  """The Functions ``node`` runs: its callee for a call, a map or a loop, and none otherwise."""
-  return (node.attrs["callee"],) if node.op in CALLEE_OPS else ()
+  """The Functions ``node`` runs: its callee for a call, a map or a loop (and a while loop's
+  condition), and none otherwise."""
+  if node.op not in CALLEE_OPS:
+    return ()
+  return (node.attrs["callee"], node.attrs["cond"]) if node.op == ExprOp.WHILE else (node.attrs["callee"],)
 
 
 def as_expr(x: Any) -> Expr:
@@ -1057,6 +1064,8 @@ def format_expr(outputs: Expr | Iterable[Expr]) -> str:
       starts, strides = e.attrs["starts"], e.attrs["strides"]
       bindings = ", ".join([f"%{loc[e.args[0].id]}", *(f"%{loc[a.id]}[{s}::{st}]" for a, s, st in zip(e.args[1:], starts, strides, strict=True))])
       rhs = f"scan[{e.attrs['length']}] {callee.name}[{e.attrs['output']}]({bindings})"
+    elif e.op == ExprOp.WHILE:
+      rhs = f"while[{e.attrs['max_iter']}] {e.attrs['cond'].name} {e.attrs['callee'].name}[{e.attrs['output']}](%{loc[e.args[0].id]})"
     else:
       rhs = f"{ExprOp(e.op).value}({', '.join(f'%{loc[a.id]}' for a in e.args)})"
     lines.append(f"{lhs} = {rhs} : {e.type.dtype}{e.shape}")

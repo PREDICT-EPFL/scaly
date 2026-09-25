@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from ..function import Function
-from ..function.sugar import _scan_node, vmap
+from ..function.sugar import _scan_node, _while_node, vmap
 from ..ir.expr import (
   PREDICATE_OPS,
   Expr,
@@ -99,6 +99,9 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return ret
   if expr.op == ExprOp.SCAN:
     memo[expr.id] = ret = _scan_jvp(expr, [_jvp(arg, seeds, memo, dep_memo) for arg in expr.args])
+    return ret
+  if expr.op == ExprOp.WHILE:
+    memo[expr.id] = ret = _while_jvp(expr, _jvp(expr.args[0], seeds, memo, dep_memo))
     return ret
   if expr.op == ExprOp.SOLVER_CALL:
     # Solver outputs are treated as non-differentiable today. Implicit
@@ -256,6 +259,47 @@ def _scan_jvp(expr: Expr, tangents: list[Expr]) -> Expr:
     picks = (np.arange(length)[:, None] * 2 * cs + cs + np.arange(cs)[None, :]).reshape(-1)
     return gather(node(-1), picks)
   return node(1 + n_ys + output - 1)
+
+
+_WHILE_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[int, tuple[Function, Function]]] = weakref.WeakKeyDictionary()
+
+
+def _while_jvp_functions(cond: Function, body: Function) -> tuple[Function, Function]:
+  """The condition and body of the tangent loop, over the carry ``[c, dc]`` flat: the condition
+  reads ``c`` only, so the tangent loop takes exactly the primal's steps."""
+  cache = _WHILE_JVP_CACHE.setdefault(body, {})
+  if id(cond) not in cache:
+    carry = body.inputs[0]
+    cs = carry.size
+    aug = Expr.sym(f"fwd:{body.input_names[0]}", (2 * cs,))
+    dcarry = Expr.sym(f"fwd:{body.input_names[0]}:dc", carry.shape)
+    tangent = _jvp(body.outputs[0], {carry: dcarry}, {}, {})
+    split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
+    nxt = substitute(concat([body.outputs[0].reshape((cs,)), tangent.reshape((cs,))]), split)
+    aug_body = Function._from_exprs(
+      f"{body.name}_whilefwd", [aug], [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(aug.name)], ["fwd:carry"]
+    )
+    go = substitute(cond.outputs[0], {cond.inputs[0]: aug[:cs].reshape(carry.shape)})
+    aug_cond = Function._from_exprs(f"{cond.name}_whilefwd", [aug], [go], [str(aug.name)], ["go"])
+    cache[id(cond)] = (aug_cond, aug_body)
+  return cache[id(cond)]
+
+
+def _while_jvp(expr: Expr, tangent: Expr) -> Expr:
+  """A while loop's tangent is a while loop whose carry also carries the tangent. The step count is
+  piecewise constant in the input, so its derivative is zero."""
+  output = int(expr.attrs["output"])
+  if output == 1 or _is_zero_const(tangent):
+    return zeros_like(expr)
+  cond, body, max_iter = expr.attrs["cond"], expr.attrs["callee"], int(expr.attrs["max_iter"])
+  init = expr.args[0]
+  cs = init.size
+  aug_cond, aug_body = _while_jvp_functions(cond, body)
+  aug_init = concat([init.reshape((cs,)), tangent.reshape((cs,))])
+  if output == 0:
+    return _while_node(aug_cond, aug_body, aug_init, max_iter, 0)[cs:].reshape(expr.shape)
+  picks = (np.arange(max_iter)[:, None] * 2 * cs + cs + np.arange(cs)[None, :]).reshape(-1)
+  return gather(_while_node(aug_cond, aug_body, aug_init, max_iter, -1), picks)
 
 
 def sign(x: Expr) -> Expr:

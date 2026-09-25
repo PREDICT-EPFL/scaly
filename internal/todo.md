@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 92**
+**Next id: 93**
 
 | Prefix | Section |
 |---|---|
@@ -143,7 +143,11 @@ the per-step reports sit beside it as `notes/tier1_pr*_report.html`.
 - [ ] **C-91. One reverse scan per forward scan.** Reverse mode differentiates each used output of a
       scan (final carry, each stacked output) with its own backward scan; by linearity they could
       share one whose seed carries every cotangent at once.
-- [ ] **C-86. Differentiable `while_loop` with a static `max_iter`.**
+- [x] **C-86. Differentiable `while_loop` with a static `max_iter`.** A SERIAL loop with `BREAK_IF` and an `exit_var` trip count; forward mode is a while loop over `[c, dc]`, reverse mode a masked `max_iter`-step backward scan.
+- [ ] **C-92. Run the backward pass of a `while_loop` for the steps taken only.** It runs all
+      `max_iter` masked steps and evaluates the adjoint body in each, so a Newton solve that stops
+      after 7 of 50 steps pays 50 backward steps (`notes/tier1_pr5_report.html`). Start the backward
+      loop at the step count, which needs a scan whose trip count is read at run time.
 - [ ] **C-87. In-place carry updates under a conservative donation rule.**
 - [ ] **C-88. Custom derivatives on a `Function`.**
 

@@ -202,7 +202,8 @@ def _render_stmt(n: ProgramNode, indent: int, lines: list[str]) -> None:
     rng = n.args[0]
     var = rng.attrs["name"]
     start, stop, step = (_render_scalar(a) for a in rng.args)
-    lines.append(f"{pad}prog.for %{var} = {start} to {stop} step {step} {{kind={rng.attrs['kind'].value}}} {{")
+    exit_var = ", exit_var" if n.attrs.get("exit_var") else ""
+    lines.append(f"{pad}prog.for %{var} = {start} to {stop} step {step} {{kind={rng.attrs['kind'].value}{exit_var}}} {{")
     for stmt in n.args[1:]:
       _render_stmt(stmt, indent + 1, lines)
     lines.append(f"{pad}}}")
@@ -226,6 +227,8 @@ def _render_stmt(n: ProgramNode, indent: int, lines: list[str]) -> None:
     lines.append(f"{pad}prog.launch @{n.attrs['kernel']} grid({grid}) block({block}) ({args})")
   elif n.op == ProgramOp.BARRIER:
     lines.append(f"{pad}prog.barrier {n.attrs['kind']}")
+  elif n.op == ProgramOp.BREAK_IF:
+    lines.append(f"{pad}prog.break_if {_render_scalar(n.args[0])}")
   else:
     lines.append(f"{pad}// stmt {n.op.value}: {_render_scalar(n) if n.op in SCALAR_OPS else _attrs_asm(n.attrs)}")
 
@@ -335,6 +338,8 @@ def _format_node(n: ProgramNode, indent: int, lines: list[str]) -> None:
     lines.append(f"{pad}launch {n.attrs['kernel']}<<<({grid}), ({block_dims})>>>({kargs})")
   elif n.op == ProgramOp.BARRIER:
     lines.append(f"{pad}barrier {n.attrs['kind']}")
+  elif n.op == ProgramOp.BREAK_IF:
+    lines.append(f"{pad}break if {_format_scalar(n.args[0])}")
   else:
     # fallback for unknown / scalar at statement scope
     lines.append(f"{pad}{n.op.value}")

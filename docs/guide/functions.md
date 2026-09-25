@@ -164,6 +164,27 @@ derivative of a scan is a scan: forward mode carries the tangent alongside the c
 mode runs the steps backwards over the carries the forward pass stored, which costs
 `(length + 1) * carry.size` values of workspace.
 
+## Iteration until done: `while_loop`
+
+Use `sc.while_loop` for an iteration that stops on a condition, such as a Newton solve. `cond` maps
+the carry to one `bool`, `body` maps it to the next carry, and `max_iter` bounds the number of
+steps:
+
+```python
+carry, n_iter = sc.while_loop(not_converged, newton_step, x0, max_iter=50)
+```
+
+`n_iter` is the number of steps taken, as a `float64`. The loop lowers to one C loop that calls
+the condition, leaves when it is false and otherwise calls the body, so the code size does not
+depend on `max_iter`.
+
+A while loop is differentiable through the steps it took: the step count is treated as locally
+constant, which it is except where the input crosses a point where the count changes. Forward mode
+runs a loop that also carries the tangent. Reverse mode stores the carry at each of the at most
+`max_iter` steps and runs `max_iter` backward steps, passing the cotangent unchanged through steps
+the loop did not take. For a solver, the derivative through the steps only approximates the
+derivative of the solution, and it improves as the stopping tolerance shrinks.
+
 ## Inspect and verify
 
 ```python

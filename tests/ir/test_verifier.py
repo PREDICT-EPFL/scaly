@@ -240,3 +240,19 @@ def test_scan_rule() -> None:
   bad = Expr(ExprOp.SCAN, final.args, TensorType((5,), dtype=dtypes.float64), attrs=dict(final.attrs))
   with pytest.raises(VerifyError, match="scan-attrs"):
     verify_expr(bad)
+
+
+def test_while_rule_and_contract() -> None:
+  c = sc.sym("c", 2)
+  body = sc.Function._from_exprs("vw_step", [c], [c * 0.5], ["c"], ["cn"])
+  cond = sc.Function._from_exprs("vw_go", [c], [c[0] > 1.0], ["c"], ["go"])
+  final, count = sc.while_loop(cond, body, sc.sym("c0", 2), max_iter=4)
+  verify_expr([final, count])
+  bad = Expr(ExprOp.WHILE, final.args, TensorType((3,), dtype=dtypes.float64), attrs=dict(final.attrs))
+  with pytest.raises(VerifyError, match="while-attrs"):
+    verify_expr(bad)
+  not_bool = sc.Function._from_exprs("vw_nb", [c], [c[:1]], ["c"], ["go"])
+  with pytest.raises(ValueError, match="one bool"):
+    sc.while_loop(not_bool, body, sc.sym("c0", 2), max_iter=4)
+  with pytest.raises(ValueError, match="does not match the carry"):
+    sc.while_loop(cond, body, sc.sym("c0", 3), max_iter=4)

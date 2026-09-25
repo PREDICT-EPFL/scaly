@@ -206,6 +206,7 @@ tests/ad/test_sparsity.py::test_star_coloring_is_not_distance_two_coloring
 tests/ad/test_sparsity.py::test_star_coloring_rejects_bicolored_four_vertex_path
 tests/ad/test_sparsity.py::test_star_coloring_rejects_non_square_and_symmetrizes_asymmetric_graphs
 tests/ad/test_sparsity.py::test_star_recovery_rejects_ambiguous_orientation
+tests/ad/test_sparsity.py::test_while_loop_pattern_is_the_closure_of_the_step
 tests/ad/test_vmap.py::test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual
 tests/ad/test_vmap.py::test_grad_factory_over_vmap_matches_unrolled_and_finite_difference
 tests/ad/test_vmap.py::test_jacobian_of_vmap_matches_finite_differences
@@ -418,6 +419,10 @@ tests/integration/test_scan.py::test_scan_matches_unrolled_calls_and_numpy[2]
 tests/integration/test_scan.py::test_scan_matches_unrolled_calls_and_numpy[3]
 tests/integration/test_scan.py::test_scan_matches_unrolled_calls_and_numpy[50]
 tests/integration/test_scan.py::test_slicing_broadcast_strided_and_backwards
+tests/integration/test_scan.py::test_while_loop_code_is_constant_in_max_iter_and_copies_once
+tests/integration/test_scan.py::test_while_loop_derivatives_through_the_steps
+tests/integration/test_scan.py::test_while_loop_edge_counts
+tests/integration/test_scan.py::test_while_loop_newton_matches_a_python_loop
 tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[banded_kkt]
 tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[one_full_row]
 tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[permutation]
@@ -520,6 +525,7 @@ tests/ir/test_verifier.py::test_verifier_smoke_on_workload_graphs
 tests/ir/test_verifier.py::test_verify_walks_subgraph_and_names_first_failure
 tests/ir/test_verifier.py::test_vmap_graph_verifies
 tests/ir/test_verifier.py::test_vmap_rank1_outer_required
+tests/ir/test_verifier.py::test_while_rule_and_contract
 tests/ir/test_vmap.py::test_vmap_accepts_input_dict_keyed_by_name
 tests/ir/test_vmap.py::test_vmap_broadcast_stride_zero_repeats_same_slice
 tests/ir/test_vmap.py::test_vmap_eval_matches_unrolled_concat_of_call
@@ -734,6 +740,7 @@ tests/passes/test_lowering.py::test_stage_transcription_renders_and_matches[jaco
 tests/passes/test_lowering.py::test_stage_transcription_renders_and_matches[sparse_jacobian]
 tests/passes/test_lowering.py::test_transpose_fold_is_bit_identical_to_the_transposed_product
 tests/passes/test_lowering.py::test_uncovered_case_raises_loudly
+tests/passes/test_program.py::test_break_if_must_sit_in_a_serial_loop
 tests/passes/test_program.py::test_buffer_analysis_keeps_arguments_with_unspecified_access_modes[call]
 tests/passes/test_program.py::test_buffer_analysis_keeps_arguments_with_unspecified_access_modes[launch]
 tests/passes/test_program.py::test_call_output_does_not_reuse_slot_that_produced_input
@@ -742,6 +749,7 @@ tests/passes/test_program.py::test_dead_buffer_removal_analyzes_each_statement_o
 tests/passes/test_program.py::test_deep_scalar_fold_lowers_renders_and_runs[3000]
 tests/passes/test_program.py::test_deep_scalar_fold_lowers_renders_and_runs[400]
 tests/passes/test_program.py::test_deep_scalar_fold_through_scalarize_runs
+tests/passes/test_program.py::test_early_exit_loops_survive_every_program_pass
 tests/passes/test_program.py::test_flat_per_stage_fold_at_a_hundred_stages_runs
 tests/passes/test_program.py::test_fold_after_unit_unroll_reads_nonuniform_constant_table
 tests/passes/test_program.py::test_fusion_collapses_elementwise_chain

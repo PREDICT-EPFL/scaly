@@ -134,6 +134,8 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     return _vmap_mask(expr, wrt, memo)
   if expr.op == ExprOp.SCAN:
     return _scan_mask(expr, wrt, memo)
+  if expr.op == ExprOp.WHILE:
+    return _while_mask(expr, wrt, memo)
   if expr.op == ExprOp.SOLVER_CALL:
     return _empty((expr.size, wrt.size))
   raise NotImplementedError(f"jacobian sparsity for op {expr.op!r} is not implemented")
@@ -273,6 +275,25 @@ def _scan_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
   if output == 0:
     return reach
   return sparse.vstack(rows, format="csr") if rows else _empty((0, wrt.size))
+
+
+def _while_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
+  """The carry after any number of steps up to ``max_iter``: the union of the step pattern's powers,
+  grown until it stops changing. Every stored carry gets the same union; the step count has none."""
+  output, max_iter = int(expr.attrs["output"]), int(expr.attrs["max_iter"])
+  if output == 1:
+    return _empty((1, wrt.size))
+  body = expr.attrs["callee"]
+  step = _jac_mask(body.outputs[0], body.inputs[0], {})
+  reach = _jac_mask(expr.args[0], wrt, memo)
+  frontier = reach
+  for _ in range(max_iter):
+    frontier = _compose(step, frontier)
+    grown = _or(reach, frontier)
+    if grown.nnz == reach.nnz:
+      break
+    reach = grown
+  return reach if output == 0 else sparse.vstack([reach] * max_iter, format="csr") if max_iter else _empty((0, wrt.size))
 
 
 def star_coloring(sparsity: SparsityType) -> tuple[int, ...]:

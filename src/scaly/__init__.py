@@ -4,7 +4,7 @@ from typing import Any
 
 from .codegen.abi import C_API_SIGNATURE, BufferType, c_api_signature
 from .ad import jvp, jvp_many, vjp, vjp_many
-from .function.sugar import scan, vmap
+from .function.sugar import scan, vmap, while_loop
 from .function.api import (
   adjoint,
   forward,
@@ -165,6 +165,7 @@ __all__ = [
   "lagrangian_hessian",
   "vmap",
   "scan",
+  "while_loop",
   "maximum",
   "minimum",
   "cast",

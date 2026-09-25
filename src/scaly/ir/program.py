@@ -58,6 +58,7 @@ class ProgramOp(StrEnum):
   CALL = "call"
   LAUNCH = "launch"
   BARRIER = "barrier"
+  BREAK_IF = "break_if"
 
   # Scalar/index-level
   CONST_INT = "const_int"
@@ -375,10 +376,19 @@ def range_(
   return ProgramNode(ProgramOp.RANGE, (s, e, st), attrs={"name": name, "kind": RangeKind(kind)}, dtype=dtypes.int64)
 
 
-def for_(rng: ProgramNode, body: Sequence[ProgramNode]) -> ProgramNode:
+def for_(rng: ProgramNode, body: Sequence[ProgramNode], *, exit_var: bool = False) -> ProgramNode:
+  """A loop. With ``exit_var`` the loop variable outlives the loop and holds the trip count reached,
+  which is what a loop left early by ``break_if`` reports."""
   if rng.op != ProgramOp.RANGE:
     raise TypeError(f"for_ requires a RANGE, got {rng.op}")
-  return ProgramNode(ProgramOp.FOR, (rng, *body), attrs={"body_len": len(body)})
+  return ProgramNode(ProgramOp.FOR, (rng, *body), attrs={"body_len": len(body), **({"exit_var": True} if exit_var else {})})
+
+
+def break_if(cond: ProgramNode) -> ProgramNode:
+  """Leave the innermost enclosing ``SERIAL`` loop when the ``bool`` scalar ``cond`` holds."""
+  if cond.op not in SCALAR_OPS or not cond.dtype.is_bool:
+    raise TypeError(f"break_if needs a bool scalar, got {cond.op} {cond.dtype}")
+  return ProgramNode(ProgramOp.BREAK_IF, (cond,))
 
 
 def block(*statements: ProgramNode) -> ProgramNode:
@@ -506,6 +516,7 @@ __all__ = [
   "assign",
   "barrier",
   "block",
+  "break_if",
   "buffer",
   "call",
   "cast",

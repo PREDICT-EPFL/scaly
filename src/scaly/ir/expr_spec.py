@@ -258,6 +258,22 @@ def _scan_attrs(expr: Expr) -> str | None:
   return None
 
 
+def _while_attrs(expr: Expr) -> str | None:
+  body, cond = expr.attrs.get("callee"), expr.attrs.get("cond")
+  if body is None or cond is None or "max_iter" not in expr.attrs or "output" not in expr.attrs:
+    return "WHILE needs 'callee', 'cond', 'max_iter' and 'output' attrs"
+  carry = body.inputs[0]
+  if expr.args[0].shape != carry.shape or body.outputs[0].shape != carry.shape or cond.inputs[0].shape != carry.shape:
+    return f"WHILE carry shape must be preserved by {body.name!r} and read by {cond.name!r}"
+  if cond.outputs[0].size != 1 or not cond.outputs[0].type.dtype.is_bool:
+    return f"WHILE condition {cond.name!r} must return one bool"
+  output = int(expr.attrs["output"])
+  expected = {0: carry.shape, 1: (), -1: (int(expr.attrs["max_iter"]) * carry.size,)}.get(output)
+  if expr.shape != expected:
+    return f"WHILE output {output} shape {expr.shape} != {expected}"
+  return None
+
+
 def _scatter_indices(expr: Expr) -> str | None:
   if "indices" not in expr.attrs:
     return "SCATTER missing 'indices' attr"
@@ -402,6 +418,7 @@ spec_expr = Spec(
     Rule(ExprOp.CALL, "call-attrs", _call_attrs),
     Rule(ExprOp.VMAP, "vmap-attrs", _vmap_attrs),
     Rule(ExprOp.SCAN, "scan-attrs", _scan_attrs),
+    Rule(ExprOp.WHILE, "while-attrs", _while_attrs),
     Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
     Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
     *(Rule(op, "segment-extremum", _segment_extremum) for op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)),

@@ -662,3 +662,19 @@ def test_scan_patterns_equal_the_unrolled_patterns() -> None:
   np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(final, c0)), np.eye(3, k=1, dtype=bool) | np.eye(3, k=-2, dtype=bool))
   assert sc.jacobian_sparsity(final, w).nnz == 3
   assert time.perf_counter() - t0 < 1.0
+
+
+def test_while_loop_pattern_is_the_closure_of_the_step() -> None:
+  c = sc.sym("c", 4)
+  # A two-step shift: entry i reaches entry i - 1 each step, so after enough steps every lower entry.
+  body = sc.Function._from_exprs("wl_shift", [c], [sc.stack([c[0], c[0] + c[1], c[1] * c[2], c[3]])], ["c"], ["cn"])
+  cond = sc.Function._from_exprs("wl_go", [c], [c[0] < 1.0], ["c"], ["go"])
+  c0 = sc.sym("c0", 4)
+  final, count = sc.while_loop(cond, body, c0, max_iter=50)
+  expected = np.array([[1, 0, 0, 0], [1, 1, 0, 0], [1, 1, 1, 0], [0, 0, 0, 1]], dtype=bool)
+  np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(final, c0)), expected)
+  assert sc.jacobian_sparsity(count, c0).nnz == 0
+  one, _ = sc.while_loop(cond, body, c0, max_iter=1)
+  np.testing.assert_array_equal(
+    _dense(sc.jacobian_sparsity(one, c0)), expected & ~np.array([[0, 0, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0], [0, 0, 0, 0]], dtype=bool)
+  )

@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..ir.expr import Expr, ExprOp, as_expr, common_lowering
-from ..ir.types import TensorType
+from ..ir.types import TensorType, dtypes
 from .model import Function
 
 
@@ -152,4 +152,51 @@ def _scan_node(
     TensorType(shape, produced.type.dtype, diff=diff),
     attrs={"callee": body, "output": int(output), "length": int(length), "starts": starts, "strides": strides},
     lowering=common_lowering(*args),
+  )
+
+
+def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int) -> tuple[Expr, Expr]:
+  """Apply ``body`` to the carry while ``cond`` holds, at most ``max_iter`` times.
+
+  ``cond`` maps the carry to one ``bool``; ``body`` maps the carry to the next carry, with the same
+  shape and dtype. Returns ``(carry, n_iter)``, where ``n_iter`` counts the steps taken as a
+  ``float64`` scalar (exact for any count a loop can reach). The bound is fixed when the graph is
+  built, so the generated code and the workspace of its derivative are known ahead of time.
+
+  Both outputs are differentiable in the usual sense for an iteration: the number of steps is
+  treated as locally constant, which it is except where the input crosses a switching boundary.
+  Reverse mode stores the carry at each of the at most ``max_iter`` steps. For a solver, attaching
+  the implicit-function derivative with ``sc.custom_derivative`` avoids differentiating the steps.
+  """
+  if not isinstance(cond, Function) or not isinstance(body, Function):
+    raise TypeError("while_loop cond and body must be scaly Functions")
+  init = as_expr(init)
+  if len(body.inputs) != 1 or len(body.outputs) != 1 or len(cond.inputs) != 1 or len(cond.outputs) != 1:
+    raise ValueError("while_loop cond and body take the carry as their only input and return one output")
+  carry = body.inputs[0]
+  for label, e in (("init", init), ("body output", body.outputs[0]), ("cond input", cond.inputs[0])):
+    if e.shape != carry.shape or e.type.dtype != carry.type.dtype:
+      raise ValueError(f"while_loop {label} {e.type.dtype}{e.shape} does not match the carry {carry.type.dtype}{carry.shape}")
+  flag = cond.outputs[0]
+  if flag.size != 1 or not flag.type.dtype.is_bool:
+    raise ValueError(f"while_loop cond must return one bool, got {flag.type.dtype}{flag.shape}")
+  max_iter = int(max_iter)
+  if max_iter < 0:
+    raise ValueError(f"while_loop max_iter must be non-negative, got {max_iter}")
+  return _while_node(cond, body, init, max_iter, 0), _while_node(cond, body, init, max_iter, 1)
+
+
+def _while_node(cond: Function, body: Function, init: Expr, max_iter: int, output: int) -> Expr:
+  """One output of a while loop: the carry (0), the step count (1), or with ``output=-1`` the carry
+  entering each of the ``max_iter`` possible steps, stacked; slots past the last step taken hold the
+  final carry. Reverse mode reads the last one."""
+  carry = body.inputs[0]
+  if output == 0:
+    type_ = TensorType(carry.shape, carry.type.dtype, diff=init.type.diff and body.outputs[0].type.diff)
+  elif output == 1:
+    type_ = TensorType((), dtypes.float64, diff=False)
+  else:
+    type_ = TensorType((max_iter * carry.size,), carry.type.dtype, diff=init.type.diff and body.outputs[0].type.diff)
+  return Expr(
+    ExprOp.WHILE, (init,), type_, attrs={"callee": body, "cond": cond, "max_iter": int(max_iter), "output": int(output)}, lowering=init.lowering
   )

@@ -189,6 +189,28 @@ def _for_body(n: ProgramNode) -> str | None:
   return None
 
 
+def _break_if_attrs(n: ProgramNode) -> str | None:
+  if len(n.args) != 1 or n.args[0].op not in SCALAR_OPS or not n.args[0].dtype.is_bool:
+    return "BREAK_IF takes one bool scalar"
+  return None
+
+
+def _breaks_inside_serial_loops(n: ProgramNode) -> str | None:
+  """A ``BREAK_IF`` must sit inside a ``SERIAL`` loop of the same procedure: breaking out of a
+  parallel loop, or out of no loop at all, has no meaning."""
+  pending = [(stmt, False) for stmt in n.args[n.attrs.get("param_count", 0) :]]
+  while pending:
+    stmt, in_serial = pending.pop()
+    if stmt.op == ProgramOp.BREAK_IF and not in_serial:
+      return "BREAK_IF outside a SERIAL loop"
+    if stmt.op == ProgramOp.FOR:
+      serial = stmt.args[0].attrs.get("kind") == RangeKind.SERIAL
+      pending.extend((sub, serial) for sub in stmt.args[1:])
+    elif stmt.op == ProgramOp.BLOCK:
+      pending.extend((sub, in_serial) for sub in stmt.args)
+  return None
+
+
 def _call_attrs(n: ProgramNode) -> str | None:
   if "callee" not in n.attrs:
     return "CALL missing 'callee' name attr"
@@ -241,6 +263,8 @@ spec_program_shared = Spec(
     Rule(ProgramOp.RANGE, "range-attrs", _range_kind),
     Rule(ProgramOp.FOR, "for-body", _for_body),
     Rule(ProgramOp.CALL, "call-attrs", _call_attrs),
+    Rule(ProgramOp.BREAK_IF, "break-if-attrs", _break_if_attrs),
+    Rule(ProgramOp.PROC, "break-inside-serial-loop", _breaks_inside_serial_loops),
     Rule(ProgramOp.LAUNCH, "launch-attrs", _launch_attrs),
     Rule(ProgramOp.BARRIER, "barrier-kind", _barrier_kind),
     Rule(ProgramOp.PROC, "proc-params", _proc_or_kernel_params),

@@ -221,3 +221,87 @@ def test_scan_contract_errors() -> None:
   bad = sc.Function._from_exprs("grow", [c], [sc.concat([c, c])], ["c"], ["n"])
   with pytest.raises(ValueError, match="carry like its input"):
     sc.scan(bad, c, [], length=2)
+
+
+def _newton(n: int, name: str) -> tuple[sc.Function, sc.Function]:
+  """Newton's method for ``x**3 = target`` elementwise; the carry is ``[x, target]``."""
+  c = sc.sym("c", 2 * n)
+  x, target = c[:n], c[n:]
+  body = sc.Function._from_exprs(f"{name}_step", [c], [sc.concat([x - (x**3 - target) / (3.0 * x * x), target])], ["c"], ["cn"])
+  cond = sc.Function._from_exprs(f"{name}_go", [c], [sc.norm_inf(x**3 - target) > 1e-12], ["c"], ["go"])
+  return cond, body
+
+
+def test_while_loop_newton_matches_a_python_loop() -> None:
+  cond, body = _newton(5, "wn")
+  c0 = sc.sym("c0", 10)
+  final, count = sc.while_loop(cond, body, c0, max_iter=60)
+  f = sc.Function._from_exprs("wn_solve", [c0], [final, count], ["c0"], ["c", "n"])
+  targets = np.array([8.0, 27.0, 0.5, 2.0, 100.0])
+  start = np.concatenate([np.full(5, 1.5), targets])
+  got, n = f(start)
+  x, steps = start[:5].copy(), 0
+  while steps < 60 and np.max(np.abs(x**3 - targets)) > 1e-12:
+    x = x - (x**3 - targets) / (3 * x * x)
+    steps += 1
+  np.testing.assert_array_equal(got[:5], x)
+  assert n == steps and 3 < steps < 60
+  np.testing.assert_allclose(got[:5], np.cbrt(targets), rtol=1e-12)
+
+
+def test_while_loop_edge_counts() -> None:
+  c = sc.sym("c", 1)
+  inc = sc.Function._from_exprs("we_inc", [c], [c + 1.0], ["c"], ["cn"])
+  never = sc.Function._from_exprs("we_never", [c], [c[0] > 1e9], ["c"], ["go"])
+  always = sc.Function._from_exprs("we_always", [c], [c[0] > -1e9], ["c"], ["go"])
+  finite = sc.Function._from_exprs("we_finite", [c], [sc.isfinite(c[0])], ["c"], ["go"])
+  double = sc.Function._from_exprs("we_double", [c], [c * c], ["c"], ["cn"])
+  c0 = sc.sym("c0", 1)
+  outs = [*sc.while_loop(never, inc, c0, max_iter=5), *sc.while_loop(always, inc, c0, max_iter=5), *sc.while_loop(finite, double, c0, max_iter=40)]
+  outs += [*sc.while_loop(always, inc, c0, max_iter=0), *sc.while_loop(always, inc, c0, max_iter=1)]
+  f = sc.Function._from_exprs("we", [c0], outs, ["c0"], ["a", "na", "b", "nb", "d", "nd", "z", "nz", "o", "no"])
+  a, na, b, nb, d, nd, z, nz, o, no = f(np.array([3.0]))
+  assert (a[0], na, b[0], nb) == (3.0, 0.0, 8.0, 5.0)  # zero steps return init; max_iter steps equal a scan
+  assert d[0] == np.inf and nd == 10  # 3**(2**k) overflows at the 10th squaring and the guard stops it
+  assert (z[0], nz, o[0], no) == (3.0, 0.0, 4.0, 1.0)
+  (scanned,) = sc.scan(inc, c0, [], length=5)
+  np.testing.assert_array_equal(sc.Function._from_exprs("we_scan", [c0], [scanned], ["c0"], ["s"])(np.array([3.0])), b)
+
+
+def test_while_loop_derivatives_through_the_steps() -> None:
+  """A contractive fixed-point iteration ``x = 0.5 cos x + p``: the derivative through the steps taken
+  matches finite differences, and it approaches the implicit derivative as the tolerance shrinks."""
+  c = sc.sym("c", 2)
+  x, p = c[0], c[1]
+  body = sc.Function._from_exprs("wd_step", [c], [sc.stack([0.5 * x.cos() + p, p])], ["c"], ["cn"])
+
+  def solve(tol: float) -> sc.Function:
+    cond = sc.Function._from_exprs(f"wd_go_{tol:g}", [c], [(0.5 * x.cos() + p - x).abs() > tol], ["c"], ["go"])
+    c0 = sc.sym("c0", 2)
+    final, _ = sc.while_loop(cond, body, c0, max_iter=200)
+    return sc.Function._from_exprs(f"wd_{tol:g}", [c0], [final[:1] * 2.0], ["c0"], ["x"])
+
+  start = np.array([0.0, 0.3])
+  loose, tight = solve(1e-3), solve(1e-13)
+  x_star = tight(start)[0] / 2.0
+  implicit = 2.0 / (1.0 + 0.5 * np.sin(x_star))
+  for fun in (loose, tight):
+    jac = sc.jacobian(fun, "x", "c0")(start)
+    np.testing.assert_allclose(jac, finite_difference(lambda v: fun(v), start).reshape(jac.shape), rtol=1e-6, atol=1e-8)
+    g = sc.gradient(sc.Function._from_exprs(f"{fun.name}_s", list(fun.inputs), [fun.outputs[0].sum()], ["c0"], ["s"]), "s", "c0")(start)
+    np.testing.assert_allclose(g, jac.reshape(-1), rtol=1e-12, atol=1e-14)
+  assert abs(sc.jacobian(loose, "x", "c0")(start)[0, 1] - implicit) > 1e-5
+  assert abs(sc.jacobian(tight, "x", "c0")(start)[0, 1] - implicit) < 1e-10
+
+
+def test_while_loop_code_is_constant_in_max_iter_and_copies_once() -> None:
+  cond, body = _newton(3, "wc")
+
+  def render(max_iter: int) -> str:
+    c0 = sc.sym("c0", 6)
+    final, count = sc.while_loop(cond, body, c0, max_iter=max_iter)
+    return render_c_source(sc.Function._from_exprs("wc", [c0], [final, count], ["c0"], ["c", "n"])).replace(f" < {max_iter};", " < K;")
+
+  assert render(10) == render(100_000)
+  src = render(10)
+  assert src.count("break;") == 1 and src.count("long long k_") == 1

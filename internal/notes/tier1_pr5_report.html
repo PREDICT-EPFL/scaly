@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 1 PR 5 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 1 · PR 5 report</h1>
+<p class="sub">Differentiable <code>while_loop</code> with a static <code>max_iter</code> · branch <code>claude/tier1-primitives</code> · todo C-86 · 26 Sep 2026</p>
+
+<div class="box"><b>Status:</b> <span class="ok">done</span>. The full suite passes: 943 passed, 88 skipped, 0 failed. ruff and ty are clean, and all seven C snapshots are byte-identical.</div>
+
+<h2>New capability</h2>
+<pre>x, n_iter = sc.while_loop(not_converged, newton_step, x0, max_iter=50)</pre>
+<p>This is the generated C for a Newton solve, and it is the same for any <code>max_iter</code>:</p>
+<pre>long long k_t0 = 0;
+for (; k_t0 &lt; 50; ++k_t0) {
+  notdone_raw((s0 + ((k_t0 % 2) * 2)), s1, NULL);
+  if ((!s1[0])) break;
+  newton_raw((s0 + ((k_t0 % 2) * 2)), (s0 + (((k_t0 + 1) % 2) * 2)), NULL);
+}
+s2[0] = ((double)k_t0);                       // n_iter
+res[0][c] = s0[(((k_t0 % 2) * 2) + c)];       // the final carry, copied out once</pre>
+<ul>
+<li><b>Contract:</b> <code>cond</code> maps the carry to one <code>bool</code> and <code>body</code> maps it to the next carry. <code>n_iter</code> is a <code>float64</code>, which is exact for any count; this follows the Q4 decision.</li>
+<li><b>Carry storage:</b> the same ping-pong storage as <code>scan</code>. The final slot is known only at run time, so the carry is copied out once after the loop, not once per step.</li>
+<li><b>Differentiable (Q3):</b>
+  <ul>
+  <li>Forward mode is a while loop over <code>[c, ċ]</code>. Its condition reads <code>c</code> only, so it takes exactly the primal's steps.</li>
+  <li>Reverse mode is a <code>max_iter</code>-step backward <code>scan</code> over the stored carries. Steps with <code>k ≥ n_iter</code> pass the cotangent through unchanged via <code>select</code>. The stored slots past the last step hold the final carry, so the backward pass never reads uninitialised memory.</li>
+  <li>The step count gets a zero derivative, since it is piecewise constant.</li>
+  </ul></li>
+<li><b>Sparsity:</b> the carry's pattern is the closure of the step pattern (at most <code>max_iter</code> powers, stopping when it stops growing). The step count has no pattern.</li>
+<li><b>New program-dialect construct:</b>
+  <ul>
+  <li><code>BREAK_IF</code>, which the verifier only accepts inside a <code>SERIAL</code> loop.</li>
+  <li><code>FOR(exit_var=True)</code>, whose loop variable outlives the loop and holds the trip count.</li>
+  <li><code>unroll_unit_loops</code> never removes such a loop. The other program passes needed no changes: scalarize already declines statements it does not know, and <code>hoist_invariant</code> only matches single-call loops.</li>
+  </ul></li>
+</ul>
+
+<h2>What was changed</h2>
+<div class="scroll"><table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>ir/expr.py</code></td><td><code>ExprOp.WHILE</code>. It joins <code>CALLEE_OPS</code>, and <code>callees_of</code> returns both the body and the condition, so code generation and solver discovery pick both up with no other edits.</td></tr>
+<tr><td><code>function/sugar.py</code></td><td>The <code>sc.while_loop</code> builder with contract checks, and <code>_while_node</code> (outputs 0, 1 and −1).</td></tr>
+<tr><td><code>ir/program.py</code>, <code>program_spec.py</code>, <code>text.py</code>, <code>codegen/c.py</code></td><td><code>ProgramOp.BREAK_IF</code>, <code>break_if()</code> and <code>for_(…, exit_var=True)</code>. Verifier rules <code>break-if-attrs</code> and <code>break-inside-serial-loop</code>. Both listings, and the C for a variable declared outside the loop.</td></tr>
+<tr><td><code>passes/lowering.py</code></td><td><code>_lower_while</code> and <code>_emit_while</code>: condition call, break, body call, the count, the final copy, and filling the trajectory slots past the last step.</td></tr>
+<tr><td><code>passes/program/unroll_unit_loops.py</code></td><td>Keeps <code>exit_var</code> loops.</td></tr>
+<tr><td><code>ad/forward.py</code>, <code>reverse.py</code>, <code>sparsity.py</code></td><td><code>_while_jvp</code>, <code>_while_vjp</code> (the masked backward scan) and <code>_while_mask</code>.</td></tr>
+<tr><td>docs, todo</td><td>A "Iteration until done: <code>while_loop</code>" section in the guide and an <code>ir.md</code> row. C-86 marked done; new item C-92.</td></tr>
+</table></div>
+
+<h2>Test results</h2>
+<div class="scroll"><table>
+<tr><th>Test</th><th>What it checks</th><th>Result</th></tr>
+<tr><td><code>test_while_loop_newton_matches_a_python_loop</code></td><td>A 5-D Newton solve for cube roots. Result and step count are bit-identical to a Python loop, and the result agrees with <code>np.cbrt</code>.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_while_loop_edge_counts</code></td><td>A condition that is never true gives 0 steps and returns init. One that is always true gives <code>max_iter</code> steps and equals <code>scan(max_iter)</code>. An <code>isfinite</code> guard stops a squaring at the overflow step (10). <code>max_iter</code> = 0 and 1 are covered.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_while_loop_derivatives_through_the_steps</code></td><td>The fixed point <code>x = ½cos x + p</code>. Jacobian vs finite differences at a loose and a tight tolerance, and reverse mode equals forward mode. The derivative through the steps is measurably different from the implicit derivative at tolerance 1e-3, and <b>within 1e-10 of it at 1e-13</b>. This demonstrates the Q3 semantics.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_while_loop_code_is_constant_in_max_iter…</code></td><td>The source is identical at <code>max_iter</code> = 10 and 100 000, apart from the bound. Exactly one <code>break</code> and one outer-declared loop variable.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_early_exit_loops_survive_every_program_pass</code></td><td>With <code>max_iter</code> = 1 and 3 and a scalar lowering hint on the entry, the loop keeps its break, is not scalarized, and computes the right values.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_break_if_must_sit_in_a_serial_loop</code></td><td>A <code>BREAK_IF</code> outside any loop, or inside a <code>GLOBAL</code> loop, is rejected. Inside a <code>SERIAL</code> loop it is accepted, and a non-bool condition is refused.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_while_loop_pattern_is_the_closure_of_the_step</code></td><td>The exact closure pattern, the pattern after one step, and the empty pattern for the step count.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_while_rule_and_contract</code></td><td>A malformed node, a condition that is not <code>bool</code>, and a carry that does not match.</td><td class="ok">pass</td></tr>
+<tr><td>Full suite</td><td></td><td class="ok">943 passed, 88 skipped</td></tr>
+</table></div>
+<p><b>Mutation checks</b>, each reverted afterwards:</p>
+<ul>
+<li>Guard bound off by one: 3 failures.</li>
+<li>Inverted break condition: 3 failures.</li>
+<li>Backward mask <code>&lt;</code> changed to <code>≤</code>: 1 failure.</li>
+</ul>
+
+<h2>Benchmarks</h2>
+<p>Script: <code>internal/notes/perf_2026_09_25_tier1/pr5_while.py</code>. Newton for n cube roots, <code>max_iter</code> = 50, converging in 7 steps. <code>while_loop</code> is compared with the same step as a fixed 50-step <code>scan</code>. Median µs per call on the aarch64 VM.</p>
+<div class="scroll"><table>
+<tr><th>n</th><th><code>while_loop</code></th><th><code>scan(50)</code></th><th><code>while_loop</code> + gradient</th><th><code>scan(50)</code> + gradient</th></tr>
+<tr><td>10</td><td class="r">6.7</td><td class="r">9.3</td><td class="r">9.8</td><td class="r">14.3</td></tr>
+<tr><td>100</td><td class="r">11.3</td><td class="r">38.2</td><td class="r">38.1</td><td class="r">81.8</td></tr>
+<tr><td>1000</td><td class="r">93.8</td><td class="r">301.7</td><td class="r warn">547.5</td><td class="r">682.8</td></tr>
+</table></div>
+<ul>
+<li>Stopping early makes the value 3.2× faster than the fixed-length scan at n = 1000.</li>
+<li><span class="warn">Finding:</span> the gradient runs all 50 backward steps and evaluates the adjoint body even where it is masked out, so value plus gradient costs 5.8× the value. Filed as <b>C-92</b>: start the backward loop at the step count. That needs a scan whose trip count is read at run time.</li>
+<li>First-call build is 43–266 ms. Most of it is compiling the scalarized step bodies at n = 100.</li>
+</ul>
+
+<h2>Deviations and notes</h2>
+<ul>
+<li>Reverse mode <em>through the stored carries</em> (reverse over reverse) raises <code>NotImplementedError</code>. Forward over reverse, which is what <code>sc.hessian</code> needs, is supported.</li>
+<li>The <code>control</code> C snapshot was not extended with a while loop. The code shape is pinned by <code>test_while_loop_code_is_constant_in_max_iter…</code> instead, which also checks the break and the loop variable declaration.</li>
+<li>Found in passing (pre-existing, not changed): a Function whose input and output share a name, such as <code>["x"] → ["x"]</code>, lowers to a clobbered buffer and fails in scalarize with an unhelpful assertion. Only solver Functions are meant to share names. This should become a clear error at <code>Function</code> construction.</li>
+</ul>
+</main></body></html>

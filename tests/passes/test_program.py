@@ -42,6 +42,8 @@ from scaly.ir.program import (
   var,
   view,
 )
+from scaly.ir.program import RangeKind
+from scaly.ir.spec import VerifyError
 from scaly.ir.types import Lowering, dtypes
 
 _HAVE_CC = _find_compiler() is not None
@@ -750,3 +752,36 @@ def test_hoist_keeps_unknown_call_outputs_inside_the_map() -> None:
   root = proc_("opaque_root", [a, z, out], [for_(range_("i", 0, 3), [call])])
   prog = program([stage, root])
   assert hoist_invariant(prog) is prog
+
+
+def test_early_exit_loops_survive_every_program_pass() -> None:
+  """A loop left early is kept as written by the whole pipeline, even with one trip and a scalar hint:
+  unrolling it would orphan its break and the step count read after it."""
+  c = sc.sym("c", 2)
+  body = sc.Function._from_exprs("ee_step", [c], [c * 0.5 + 1.0], ["c"], ["cn"])
+  cond = sc.Function._from_exprs("ee_go", [c], [c[0] < 1.5], ["c"], ["go"])
+  for max_iter in (1, 3):
+    c0 = sc.sym("c0", 2).scalar()
+    final, count = sc.while_loop(cond, body, c0, max_iter=max_iter)
+    fun = sc.Function._from_exprs(f"ee_{max_iter}", [c0], [final, count], ["c0"], ["c", "n"])
+    root = lower_function(fun).args[-1]
+    loops = [n for n in _walk(root) if n.op == ProgramOp.FOR and n.attrs.get("exit_var")]
+    assert len(loops) == 1 and any(n.op == ProgramOp.BREAK_IF for n in _walk(loops[0]))
+    assert not root.attrs.get("scalarized")
+    got_c, got_n = fun(np.array([0.0, 0.0]))
+    expected, n = np.zeros(2), 0
+    while n < max_iter and expected[0] < 1.5:
+      expected, n = expected * 0.5 + 1.0, n + 1
+    np.testing.assert_array_equal(got_c, expected)
+    assert got_n == n
+
+
+def test_break_if_must_sit_in_a_serial_loop() -> None:
+  flag = p.buffer("flag", dtypes.bool_, (1,))
+  stop = p.break_if(p.load(p.view(flag, [p.const_int(0)])))
+  for body in ([stop], [p.for_(p.range_("i", 0, 3, kind=RangeKind.GLOBAL), [stop])]):
+    with pytest.raises(VerifyError, match="break-inside-serial-loop"):
+      verify_program(p.program([p.proc("bad", [flag], body)]))
+  verify_program(p.program([p.proc("ok", [flag], [p.for_(p.range_("i", 0, 3, kind=RangeKind.SERIAL), [stop], exit_var=True)])]))
+  with pytest.raises(TypeError, match="bool scalar"):
+    p.break_if(p.const_float(1.0))

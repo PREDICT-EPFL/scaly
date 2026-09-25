@@ -241,7 +241,12 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
     stop = _emit_scalar(rng.args[1], ptr_expr)
     step = _emit_scalar(rng.args[2], ptr_expr)
     incr = f"++{name}" if step == "1" else f"{name} += {step}"
-    lines.append(f"{pad}for (long long {name} = {start}; {name} < {stop}; {incr}) {{")
+    if stmt.attrs.get("exit_var"):
+      # The variable is declared outside the loop, so what follows reads the trip count reached.
+      lines.append(f"{pad}long long {name} = {start};")
+      lines.append(f"{pad}for (; {name} < {stop}; {incr}) {{")
+    else:
+      lines.append(f"{pad}for (long long {name} = {start}; {name} < {stop}; {incr}) {{")
     _emit_body(list(stmt.args[1:]), ptr_expr, lines, indent + 2)
     lines.append(f"{pad}}}")
   elif stmt.op == ProgramOp.STORE:
@@ -255,6 +260,8 @@ def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str
   elif stmt.op == ProgramOp.ASSIGN:
     declaration = f"{stmt.dtype.c_type} " if stmt.attrs.get("declare") else ""
     _emit_assignment(c_ident(stmt.attrs["target"]), [stmt.args[0]], ptr_expr, lines, indent, declaration)
+  elif stmt.op == ProgramOp.BREAK_IF:
+    lines.append(f"{pad}if ({_emit_scalar(stmt.args[0], ptr_expr)}) break;")
   elif stmt.op == ProgramOp.CALL:
     if stmt.attrs.get("external"):
       raise LoweringError("external (mixed-device) CALL rendering is deferred to a later migration step")

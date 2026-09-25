@@ -28,7 +28,9 @@ def _unroll_unit_loops_proc(proc: ProgramNode) -> ProgramNode:
 
 
 def _unroll_unit_loop_stmt(stmt: ProgramNode) -> list[ProgramNode]:
-  if stmt.op != ProgramOp.FOR:
+  # A loop whose variable outlives it (the trip count of a loop left early) is kept whatever its trip
+  # count: the variable is read after the loop, and a break inside needs a loop to leave.
+  if stmt.op != ProgramOp.FOR or stmt.attrs.get("exit_var"):
     return [stmt]
 
   rng, *body = stmt.args

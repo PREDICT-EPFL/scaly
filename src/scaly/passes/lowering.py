@@ -887,6 +887,65 @@ def _emit_scan(ctx: LowerCtx, node: Expr) -> dict[int, str]:
   return bufs
 
 
+def _while_key(node: Expr) -> tuple[object, ...]:
+  return ("while", id(node.attrs["callee"]), id(node.attrs["cond"]), node.args[0].id, node.attrs["max_iter"])
+
+
+@lowers(ExprOp.WHILE)
+def _lower_while(ctx: LowerCtx, node: Expr) -> None:
+  """A ``SERIAL`` loop of at most ``max_iter`` trips that calls the condition, leaves when it is
+  false, and otherwise calls the body. The carry alternates between two slots as in ``scan``, or
+  keeps every step when reverse mode reads them; the loop variable outlives the loop and is the
+  step count. Because the last slot written is only known at run time, the final carry is copied
+  out once after the loop."""
+  key = _while_key(node)
+  if key not in ctx.scan_invocations:
+    ctx.scan_invocations[key] = _emit_while(ctx, node, key)
+  ctx.value_buffers[node.id] = ctx.scan_invocations[key][int(node.attrs["output"])]
+
+
+def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int, str]:
+  body, cond = node.attrs["callee"], node.attrs["cond"]
+  max_iter, init = int(node.attrs["max_iter"]), node.args[0]
+  carry = body.inputs[0]
+  cs, dtype = carry.size, carry.type.dtype
+  trajectory = any(n.op == ExprOp.WHILE and n.attrs["output"] == -1 and _while_key(n) == key for n in topo(ctx.fun.outputs))
+  _ensure_callee(ctx, body)
+  _ensure_callee(ctx, cond)
+  store = ctx.new_private(dtype, ((max_iter + 1 if trajectory else 2) * cs,))
+  flag = ctx.new_private(dtypes.bool_, (1,))
+  ctx.statements.append(_copy_loop(ctx.buf_of(init), store, (cs,)))
+  name = f"k_{store.attrs['name']}"
+  k = p.var(name)
+
+  def slot(step: ProgramNode) -> ProgramNode:
+    return p.mul(step if trajectory else p.mod(step, p.const_int(2)), p.const_int(cs))
+
+  read = p.view(store, [slot(k)])
+  check = ProgramNode(ProgramOp.CALL, (read, flag), attrs={"callee": cond.name, "n_in": 1, "n_out": 1, "returns": ()})
+  leave = p.break_if(ProgramNode(ProgramOp.NOT, (p.load(p.view(flag, [p.const_int(0)])),), dtype=dtypes.bool_))
+  step = ProgramNode(
+    ProgramOp.CALL, (read, p.view(store, [slot(p.add(k, p.const_int(1)))])), attrs={"callee": body.name, "n_in": 1, "n_out": 1, "returns": ()}
+  )
+  ctx.statements.append(p.for_(p.range_(name, 0, max_iter, kind=RangeKind.SERIAL), [check, leave, step], exit_var=True))
+  count = ctx.new_private(dtypes.float64, ())
+  ctx.statements.append(p.store(p.view(count, [p.const_int(0)]), p.cast(k, dtypes.float64)))
+  final = ctx.new_private(dtype, carry.shape)
+  c = p.var(f"c_{final.attrs['name']}")
+  source = p.load(p.view(store, [p.add(slot(k), c)]))
+  ctx.statements.append(p.for_(p.range_(c.attrs["name"], 0, cs, kind=RangeKind.GLOBAL), [p.store(p.view(final, [c]), source)]))
+  bufs = {0: final.attrs["name"], 1: count.attrs["name"]}
+  if trajectory:
+    # Slots past the last step taken hold the final carry, so a backward pass that reads them sees
+    # finite values; it discards what it computes from them.
+    j = p.var(f"j_{store.attrs['name']}")
+    fill = p.store(p.view(store, [p.add(p.mul(j, p.const_int(cs)), c)]), p.load(p.view(final, [c])))
+    rng = p.range_(j.attrs["name"], p.add(k, p.const_int(1)), max_iter, kind=RangeKind.GLOBAL)
+    ctx.statements.append(p.for_(rng, [p.for_(p.range_(c.attrs["name"], 0, cs, kind=RangeKind.GLOBAL), [fill])]))
+    bufs[-1] = ctx.new_alias(dtype, (max_iter * cs,), store.attrs["name"], 0).attrs["name"]
+  return bufs
+
+
 @lowers(ExprOp.GATHER)
 def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
   """``out[k] = src[indices[k]]`` via a ``static const`` index table + one GLOBAL loop (any size)."""

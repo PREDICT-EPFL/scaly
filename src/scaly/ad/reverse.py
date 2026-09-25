@@ -8,7 +8,7 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 
 from ..function import Function
-from ..function.sugar import _scan_node, vmap
+from ..function.sugar import _scan_node, _while_node, vmap
 from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, as_expr, cast, concat, copysign, gather, scatter, stack, topo, where, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from .forward import extremum_weight, reduce_weights, segment_weights, sign
@@ -163,6 +163,50 @@ def _scan_vjp(expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple[
   return ret
 
 
+_WHILE_ADJ_CACHE: weakref.WeakKeyDictionary[Any, Any] = weakref.WeakKeyDictionary()
+
+
+def _while_adj_function(body: Any) -> Any:
+  """One backward step of a while loop, masked: inputs ``lam``, the carry entering step ``k``, ``k``
+  and the step count ``n``; output the cotangent of the entering carry when ``k < n``, else ``lam``
+  unchanged, so steps the loop never took pass the cotangent through."""
+  if body not in _WHILE_ADJ_CACHE:
+    carry = body.inputs[0]
+    lam = Expr.sym(f"lam:{body.input_names[0]}", carry.shape)
+    step, count = Expr.sym("step", (1,)), Expr.sym("count", (1,), diff=False)
+    (back,) = vjp((body.outputs[0],), (carry,), (lam,))
+    out = where(step[0] < count[0], back, lam)
+    _WHILE_ADJ_CACHE[body] = Function._from_exprs(
+      f"{body.name}_whileadj",
+      [lam, carry, step, count],
+      [body._inherit_lowering(simplify_cse_fixpoint(out))],
+      ["lam", *body.input_names, "step", "count"],
+      ["adj:carry"],
+    )
+  return _WHILE_ADJ_CACHE[body]
+
+
+def _while_vjp(expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
+  """Reverse mode through a while loop: a ``max_iter``-step scan backwards over the stored carries,
+  where steps at or beyond the step count leave the cotangent unchanged."""
+  output = int(expr.attrs["output"])
+  if output == 1:
+    return []
+  if output == -1:
+    raise NotImplementedError("reverse mode through the stored carries of a while_loop (reverse over reverse) is not implemented")
+  cond, body, max_iter = expr.attrs["cond"], expr.attrs["callee"], int(expr.attrs["max_iter"])
+  init = expr.args[0]
+  if max_iter == 0:
+    return [(init, cot)]
+  cs = init.size
+  carries = _while_node(cond, body, init, max_iter, -1)
+  count = _while_node(cond, body, init, max_iter, 1).reshape((1,))
+  steps = Expr.const(np.arange(max_iter, dtype=np.float64))
+  specs = ((carries, steps, count), ((max_iter - 1) * cs, max_iter - 1, 0), (-cs, -1, 0))
+  (lam0,) = (_scan_node(_while_adj_function(body), cot, specs[0], specs[1], specs[2], max_iter, 0),)
+  return [(init, lam0)]
+
+
 def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr]) -> tuple[Expr, ...]:
   """Reverse-mode derivative: one adjoint per entry of ``wrts``, seeded by ``cotangents``.
 
@@ -188,8 +232,9 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
     cot = adjoints.get(expr.id)
     if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST} or expr.op in PREDICATE_OPS or not needed(expr):
       continue
-    if expr.op in (ExprOp.VMAP, ExprOp.SCAN):
-      pairs = _vmap_vjp(expr, cot, wrts, dep_memo) if expr.op == ExprOp.VMAP else _scan_vjp(expr, cot, wrts, dep_memo)
+    if expr.op in (ExprOp.VMAP, ExprOp.SCAN, ExprOp.WHILE):
+      rule = {ExprOp.VMAP: _vmap_vjp, ExprOp.SCAN: _scan_vjp, ExprOp.WHILE: _while_vjp}[ExprOp(expr.op)]
+      pairs = rule(expr, cot, wrts, dep_memo)
       for arg, arg_cot in pairs:
         if arg.id in expr_ids:
           adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
