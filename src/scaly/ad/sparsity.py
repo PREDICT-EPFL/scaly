@@ -118,7 +118,7 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     return _jac_mask(expr.args[0], wrt, memo)[order]
   if expr.op == ExprOp.GATHER:
     return _jac_mask(expr.args[0], wrt, memo)[expr.attrs["indices"].reshape(-1)]
-  if expr.op == ExprOp.SCATTER:
+  if expr.op in {ExprOp.SCATTER, ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN}:
     child = _jac_mask(expr.args[0], wrt, memo)
     indices = expr.attrs["indices"].reshape(-1)
     return _compose(_incidence((expr.size, child.shape[0]), indices, np.arange(child.shape[0])), child)

@@ -96,6 +96,7 @@ tests/ad/test_derivatives.py::test_ad_skips_nonsmooth_parameter_terms_independen
 tests/ad/test_derivatives.py::test_derivative_flows_only_through_the_chosen_branch
 tests/ad/test_derivatives.py::test_erf_forward_reverse_jacobian_and_sparse_hessian
 tests/ad/test_derivatives.py::test_float32_reduction_derivative_paths
+tests/ad/test_derivatives.py::test_gather_with_repeated_indices_differentiates_and_its_adjoint_is_one_node
 tests/ad/test_derivatives.py::test_jvp_many_broadcast_scalar_tangent_over_vector
 tests/ad/test_derivatives.py::test_jvp_many_rank4_transpose_falls_back_and_strict_raises
 tests/ad/test_derivatives.py::test_jvp_many_scatter_and_gather_stays_structural
@@ -123,6 +124,8 @@ tests/ad/test_derivatives.py::test_nonsmooth_derivatives_match_finite_difference
 tests/ad/test_derivatives.py::test_nonsmooth_derivatives_match_finite_differences_away_from_ties[reduce_min-split]
 tests/ad/test_derivatives.py::test_nonsmooth_tie_conventions_are_exact[first-expected1]
 tests/ad/test_derivatives.py::test_nonsmooth_tie_conventions_are_exact[split-expected0]
+tests/ad/test_derivatives.py::test_segment_extrema_derivatives[first]
+tests/ad/test_derivatives.py::test_segment_extrema_derivatives[split]
 tests/ad/test_derivatives.py::test_select_copysign_cast_jacobians_match_finite_differences_both_modes
 tests/ad/test_derivatives.py::test_select_structural_jvp_many_matches_unrolled
 tests/ad/test_derivatives.py::test_sparse_jacobian_colored_scalar_plus_vector
@@ -168,6 +171,7 @@ tests/ad/test_joint_jvp.py::test_self_products_keep_matrix_product_rule[False]
 tests/ad/test_joint_jvp.py::test_self_products_keep_matrix_product_rule[True]
 tests/ad/test_lowering_hints.py::test_derived_procs_inherit_stage_hint[block]
 tests/ad/test_lowering_hints.py::test_derived_procs_inherit_stage_hint[scalar]
+tests/ad/test_sparsity.py::test_accumulating_scatter_and_segment_extrema_patterns
 tests/ad/test_sparsity.py::test_colored_sparse_jacobian_matches_dense_gather_reference
 tests/ad/test_sparsity.py::test_column_coloring_detects_exactly_256_shared_rows
 tests/ad/test_sparsity.py::test_column_coloring_groups_nonoverlapping_columns
@@ -329,6 +333,15 @@ tests/codegen/test_control.py::test_reductions_match_numpy_including_nan[signed_
 tests/codegen/test_control.py::test_reductions_match_numpy_including_nan[signed_zeros-scalar]
 tests/codegen/test_control.py::test_reductions_of_one_element_and_large_inputs
 tests/codegen/test_control.py::test_scalar_lowering_expands_control_ops_and_loop_lowering_keeps_loops
+tests/codegen/test_control.py::test_scatter_and_segment_extrema_match_numpy[affine_repeat-block]
+tests/codegen/test_control.py::test_scatter_and_segment_extrema_match_numpy[affine_repeat-scalar]
+tests/codegen/test_control.py::test_scatter_and_segment_extrema_match_numpy[all_same-block]
+tests/codegen/test_control.py::test_scatter_and_segment_extrema_match_numpy[all_same-scalar]
+tests/codegen/test_control.py::test_scatter_and_segment_extrema_match_numpy[repeated-block]
+tests/codegen/test_control.py::test_scatter_and_segment_extrema_match_numpy[repeated-scalar]
+tests/codegen/test_control.py::test_scatter_and_segment_extrema_match_numpy[unique-block]
+tests/codegen/test_control.py::test_scatter_and_segment_extrema_match_numpy[unique-scalar]
+tests/codegen/test_control.py::test_scatter_lowering_follows_the_index_pattern
 tests/codegen/test_cpp.py::test_cpp_header_and_c_header_compile_the_same_kernel
 tests/codegen/test_cpp.py::test_cpp_header_compiles_and_runs
 tests/codegen/test_cpp.py::test_cpp_header_declares_namespace_buffers_and_constexpr_tables
@@ -390,6 +403,16 @@ tests/function/test_tree.py::test_lagrangian_hessians_accept_constant_output_lea
 tests/function/test_tree.py::test_leaf_shapes_and_group_widths
 tests/function/test_tree.py::test_seeded_derivatives_accept_nondifferentiable_leaves
 tests/function/test_tree.py::test_tree_names_are_unique_and_symbols_follow_structure
+tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[banded_kkt]
+tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[one_full_row]
+tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[permutation]
+tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[random_1pct]
+tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[random_20pct]
+tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[random_5pct]
+tests/integration/test_sparse_primitives.py::test_spmv_derivatives_with_respect_to_data_and_vector[banded_kkt]
+tests/integration/test_sparse_primitives.py::test_spmv_derivatives_with_respect_to_data_and_vector[one_full_row]
+tests/integration/test_sparse_primitives.py::test_spmv_derivatives_with_respect_to_data_and_vector[random_5pct]
+tests/integration/test_sparse_primitives.py::test_spmv_flops_scale_with_nonzeros_not_the_dense_size
 tests/integration/test_stage_transcription.py::test_colored_sparse_jacobian_matches_the_reference_path[1]
 tests/integration/test_stage_transcription.py::test_colored_sparse_jacobian_matches_the_reference_path[2]
 tests/integration/test_stage_transcription.py::test_dense_jacobian_matches_casadi[1]
@@ -472,6 +495,7 @@ tests/ir/test_verifier.py::test_matmul_named_call_verifies
 tests/ir/test_verifier.py::test_negative_shape_caught
 tests/ir/test_verifier.py::test_reduction_extremum_rules
 tests/ir/test_verifier.py::test_reshape_size_mismatch_caught
+tests/ir/test_verifier.py::test_segment_extremum_rule
 tests/ir/test_verifier.py::test_simple_scalar_graph_verifies
 tests/ir/test_verifier.py::test_spec_expr_check_returns_none_on_valid
 tests/ir/test_verifier.py::test_transpose_axes_must_be_permutation

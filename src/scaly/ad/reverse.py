@@ -11,7 +11,7 @@ from ..function import Function
 from ..function.sugar import vmap
 from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, as_expr, cast, concat, copysign, gather, scatter, stack, topo, where, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
-from .forward import extremum_weight, reduce_weights, sign
+from .forward import extremum_weight, reduce_weights, segment_weights, sign
 from .sparsity import _depends_on
 
 
@@ -217,6 +217,8 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return (_unbroadcast(cot * w, args[0].shape, expr.shape), _unbroadcast(cot * (1.0 - w), args[1].shape, expr.shape))
   if expr.op in {ExprOp.MAX, ExprOp.MIN}:
     return (cot * reduce_weights(expr),)
+  if expr.op in {ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN}:
+    return (gather(cot, expr.attrs["indices"]) * segment_weights(expr),)
   if expr.op == ExprOp.SELECT:
     cond, a, b = args
     zero = as_expr(0.0)
@@ -295,12 +297,8 @@ def _unbroadcast(cot: Expr, in_shape: tuple[int, ...], out_shape: tuple[int, ...
 
 
 def _gather_vjp(cot: Expr, indices: np.ndarray, shape: tuple[int, ...]) -> Expr:
-  flat = indices.reshape(-1)
-  vals = []
-  for i in range(int(np.prod(shape, dtype=int))):
-    positions = np.nonzero(flat == i)[0]
-    vals.append(gather(cot, positions).sum() if positions.size else as_expr(0.0))
-  return stack(vals).reshape(shape)
+  """The adjoint of a gather: every read's cotangent accumulates back into the entry it read."""
+  return scatter(cot.reshape((cot.size,)), indices.reshape(-1), shape)
 
 
 def _stack_vjp(cot: Expr, nargs: int, axis: int) -> tuple[Expr, ...]:

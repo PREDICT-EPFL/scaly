@@ -834,7 +834,10 @@ def _lower_gather(ctx: LowerCtx, node: Expr) -> None:
 
 @lowers(ExprOp.SCATTER)
 def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
-  """Zero the output, then ``out[indices[k]] = src[k]`` via a ``static const`` index table."""
+  """Zero the output, then ``out[indices[k]] = src[k]``, with the destination as arithmetic on ``k``
+  where it is affine and a ``static const`` table otherwise. The indices are fixed, so their pattern
+  picks the loop: distinct destinations store (a parallel ``GLOBAL`` loop), and repeated ones
+  accumulate ``out[d] = out[d] + src[k]`` in a ``REDUCE`` loop."""
   src = node.args[0]
   idx = node.attrs["indices"].reshape(-1)
   out = ctx.alloc_tmp(node)
@@ -843,10 +846,39 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
   z = p.var(zname)
   ctx.statements.append(p.for_(zrng, [p.store(p.view(out, [z]), p.const_float(0.0, dtype=node.type.dtype))]))
   iname = f"i_{out.attrs['name']}"
-  irng = p.range_(iname, 0, len(idx), kind=RangeKind.GLOBAL)
   i = p.var(iname)
   dst = ctx.index_at(idx, i)
-  ctx.statements.append(p.for_(irng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [i])))]))
+  value = p.load(p.view(ctx.buf_of(src), [i]))
+  if scatter_is_unique(idx):
+    ctx.statements.append(p.for_(p.range_(iname, 0, len(idx), kind=RangeKind.GLOBAL), [p.store(p.view(out, [dst]), value)]))
+    return
+  accumulate = p.store(p.view(out, [dst]), p.add(p.load(p.view(out, [dst])), value))
+  ctx.statements.append(p.for_(p.range_(iname, 0, len(idx), kind=RangeKind.REDUCE), [accumulate]))
+
+
+def scatter_is_unique(idx: np.ndarray) -> bool:
+  """Whether every destination of a fixed index table is distinct, so a plain store suffices."""
+  return np.unique(idx).size == idx.size
+
+
+@lowers(ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)
+def _lower_segment_extremum(ctx: LowerCtx, node: Expr) -> None:
+  """Fill the output, then each value replaces its bin's entry when it is larger (smaller) or NaN."""
+  src = node.args[0]
+  idx = node.attrs["indices"].reshape(-1)
+  out = ctx.alloc_tmp(node)
+  fname = f"z_{out.attrs['name']}"
+  f = p.var(fname)
+  fill = p.const_float(float(node.attrs["fill"]), dtype=node.type.dtype)
+  ctx.statements.append(p.for_(p.range_(fname, 0, _size_of(node.shape), kind=RangeKind.GLOBAL), [p.store(p.view(out, [f]), fill)]))
+  iname = f"i_{out.attrs['name']}"
+  i = p.var(iname)
+  dst = ctx.index_at(idx, i)
+  cur, value = p.load(p.view(out, [dst])), p.load(p.view(ctx.buf_of(src), [i]))
+  better = p.compare(ProgramOp.LT, cur, value) if node.op == ExprOp.SEGMENT_MAX else p.compare(ProgramOp.LT, value, cur)
+  take = ProgramNode(ProgramOp.OR, (better, p.compare(ProgramOp.NE, value, value)), dtype=dtypes.bool_)
+  kind = RangeKind.GLOBAL if scatter_is_unique(idx) else RangeKind.REDUCE
+  ctx.statements.append(p.for_(p.range_(iname, 0, len(idx), kind=kind), [p.store(p.view(out, [dst]), p.select(take, value, cur))]))
 
 
 @lowers(ExprOp.STACK)

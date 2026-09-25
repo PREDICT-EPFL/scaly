@@ -67,6 +67,8 @@ class ExprOp(StrEnum):
   SUM = "sum"
   MAX = "max"
   MIN = "min"
+  SEGMENT_MAX = "segment_max"
+  SEGMENT_MIN = "segment_min"
   RESHAPE = "reshape"
   TRANSPOSE = "transpose"
   SLICE = "slice"
@@ -126,6 +128,8 @@ COMMON_STRUCTURAL = {
   ExprOp.SUM,
   ExprOp.MAX,
   ExprOp.MIN,
+  ExprOp.SEGMENT_MAX,
+  ExprOp.SEGMENT_MIN,
   ExprOp.RESHAPE,
   ExprOp.TRANSPOSE,
   ExprOp.SLICE,
@@ -200,6 +204,8 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.SUM: OpInfo(ExprOp.SUM, 1, np.sum),
   ExprOp.MAX: OpInfo(ExprOp.MAX, 1, np.max),
   ExprOp.MIN: OpInfo(ExprOp.MIN, 1, np.min),
+  ExprOp.SEGMENT_MAX: OpInfo(ExprOp.SEGMENT_MAX, 1, None),
+  ExprOp.SEGMENT_MIN: OpInfo(ExprOp.SEGMENT_MIN, 1, None),
   ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, np.reshape),
   ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, np.transpose),
   ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1, None),
@@ -891,12 +897,49 @@ def scatter(values: Any, indices: Any, shape: int | tuple[int, ...]) -> Expr:
   idx = _index_array(indices, int(np.prod(shape, dtype=int)))
   if idx.size != values.size:
     raise ValueError(f"scatter has {idx.size} indices but values shape {values.shape} has {values.size} entries")
-  flat = idx.reshape(-1)
-  if len(set(flat.tolist())) != flat.size:
-    raise ValueError("scatter indices must be unique")
   return Expr(
     ExprOp.SCATTER, (values,), TensorType(shape, dtype=values.type.dtype, diff=values.type.diff), attrs={"indices": idx}, lowering=values.lowering
   )
+
+
+def segment_sum(values: Any, segment_ids: Any, num_segments: int) -> Expr:
+  """Sum ``values`` into ``num_segments`` bins: entry ``k`` adds into bin ``segment_ids[k]``.
+
+  The ids are fixed when the graph is built, which is what lets code generation pick an
+  implementation for this exact pattern. Empty bins are zero. The same as ``scatter`` into a
+  vector, spelled the way sparse kernels read.
+  """
+  values = as_expr(values)
+  return scatter(values.reshape((values.size,)), np.asarray(segment_ids).reshape(-1), (int(num_segments),))
+
+
+def _segment_extremum(op: ExprOp, values: Any, segment_ids: Any, num_segments: int, fill: float | None) -> Expr:
+  values = as_expr(values)
+  ids = _index_array(np.asarray(segment_ids).reshape(-1), int(num_segments))
+  if ids.size != values.size:
+    raise ValueError(f"{op.value} has {ids.size} segment ids for {values.size} values")
+  if fill is None:
+    fill = -math.inf if op == ExprOp.SEGMENT_MAX else math.inf
+  return Expr(
+    op,
+    (values.reshape((values.size,)),),
+    TensorType((int(num_segments),), dtype=values.type.dtype, diff=values.type.diff),
+    attrs={"indices": ids, "fill": float(fill)},
+    lowering=values.lowering,
+  )
+
+
+def segment_max(values: Any, segment_ids: Any, num_segments: int, *, fill: float | None = None) -> Expr:
+  """Largest value in each of ``num_segments`` bins; ``fill`` (default ``-inf``) where a bin is empty.
+
+  NaN propagates within its bin. Ties follow ``sc.options(nonsmooth=...)``.
+  """
+  return _segment_extremum(ExprOp.SEGMENT_MAX, values, segment_ids, num_segments, fill)
+
+
+def segment_min(values: Any, segment_ids: Any, num_segments: int, *, fill: float | None = None) -> Expr:
+  """Smallest value in each of ``num_segments`` bins; ``fill`` (default ``inf``) where a bin is empty."""
+  return _segment_extremum(ExprOp.SEGMENT_MIN, values, segment_ids, num_segments, fill)
 
 
 def split(x: Any, sections: int | Iterable[int], *, axis: int = 0) -> tuple[Expr, ...]:

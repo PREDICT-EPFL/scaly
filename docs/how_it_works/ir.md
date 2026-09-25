@@ -103,7 +103,7 @@ so the choice lives in that graph and in the C generated from it; see [Options](
 
 ### Operations
 
-Fifty-two operations, grouped by what they do. `arity` is the operand count; `n` means
+Fifty-four operations, grouped by what they do. `arity` is the operand count; `n` means
 variadic. `diff` is whether AD can pass through the op at all.
 
 #### Arithmetic and elementwise
@@ -146,7 +146,8 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `reshape` | 1 | size-preserving |
 | `transpose` | 1 | axes must be a permutation |
 | `slice` | 1 | integer, multi-dimensional and strided indexing |
-| `gather` `scatter` | 1 | flat index tables |
+| `gather` `scatter` | 1 | flat index tables fixed at build time; repeated `scatter` destinations accumulate (`segment_sum` is `scatter` into a vector) |
+| `segment_max` `segment_min` | 1 | per-bin extremum over fixed segment ids; `fill` where a bin is empty; NaN propagates within its bin |
 | `stack` `concat` | n | along any axis |
 | `matmul` | 2 | rank at most 2 |
 

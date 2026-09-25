@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 1 PR 3 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 1 · PR 3 report</h1>
+<p class="sub">Accumulating <code>scatter</code>, segment reductions, linear-time <code>gather</code> adjoint · branch <code>claude/tier1-primitives</code> · todo C-84 · 26 Sep 2026</p>
+
+<div class="box"><b>Status:</b> <span class="ok">done</span>. The full suite passes: 918 passed, 88 skipped, 0 failed. ruff and ty are clean, and the six C snapshots are byte-identical.</div>
+
+<h2>New capability</h2>
+<p>Sparse kernels over a fixed pattern can now be written directly:</p>
+<pre>Ax  = sc.segment_sum(a * sc.gather(x, cols), rows, m)      # SpMV from the nonzero data vector a
+ATy = sc.segment_sum(a * sc.gather(y, rows), cols, n)      # its transpose, same pattern
+cn  = sc.segment_max(abs_vals, cols, n)                    # column ∞-norms (Ruiz scaling)</pre>
+<ul>
+<li><code>sc.scatter</code> now accumulates repeated indices, as its docstring always said. It used to raise.</li>
+<li><code>sc.segment_sum</code> is a builder over <code>scatter</code>.</li>
+<li><code>sc.segment_max</code> and <code>sc.segment_min</code> are new operations: <code>fill</code> is used for empty bins, NaN propagates within its bin, and ties follow <code>sc.options(nonsmooth=…)</code>.</li>
+<li>All three are differentiable, forward and reverse, with exact structural sparsity. The Jacobian of a SpMV with respect to the data vector comes out with exactly nnz entries.</li>
+<li><b>Implementation picked from the pattern:</b> the indices are fixed when the code is generated, so lowering chooses per pattern:
+  <ul>
+  <li>Distinct destinations become a plain store in a parallel <code>GLOBAL</code> loop, byte-identical to before.</li>
+  <li>Repeated destinations become <code>out[d] = out[d] + v</code> in a <code>REDUCE</code> loop.</li>
+  <li>Either way the destination is arithmetic where it is affine and a constant table otherwise; that part is the existing affine-index recovery.</li>
+  </ul></li>
+<li><b><code>gather</code> adjoint:</b> it is now one accumulating scatter. It used to be one gather-and-sum per source entry, an O(n·nnz) Python loop that emitted O(n) graph nodes.</li>
+</ul>
+
+<h2>What was changed</h2>
+<div class="scroll"><table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>ir/expr.py</code></td><td>Uniqueness check removed from <code>scatter</code>. <code>ExprOp.SEGMENT_MAX</code> and <code>SEGMENT_MIN</code>. Builders <code>segment_sum</code>, <code>segment_max</code>, <code>segment_min</code>.</td></tr>
+<tr><td><code>ir/expr_spec.py</code></td><td>New rule <code>segment-extremum</code>: ranks, id count, id range and required attributes.</td></tr>
+<tr><td><code>passes/lowering.py</code></td><td>The <code>scatter</code> rule chooses between a store and an accumulation (<code>scatter_is_unique</code>). New rule for segment extrema: fill the output, then a NaN-propagating select, as a <code>REDUCE</code> loop when bins repeat.</td></tr>
+<tr><td><code>passes/expr.py</code></td><td>Constant evaluation uses <code>np.add.at</code> for <code>scatter</code> and <code>np.maximum.at</code> / <code>np.minimum.at</code> for the segment ops.</td></tr>
+<tr><td><code>ad/forward.py</code>, <code>reverse.py</code>, <code>sparsity.py</code></td><td><code>segment_weights</code> (split or first, bin by bin), shared by both modes. <code>_gather_vjp</code> is now a single <code>scatter</code>. The scatter incidence rule also covers the segment ops.</td></tr>
+<tr><td>docs, todo</td><td>Structural op table in <code>ir.md</code> updated. C-84 marked done.</td></tr>
+<tr><td>tests</td><td>New <code>tests/integration/test_sparse_primitives.py</code>. One assertion in <code>tests/ad/test_expr.py</code> used to expect repeated indices to raise; it now checks that they accumulate, which is the deliberate Q1 change.</td></tr>
+</table></div>
+
+<h2>Test results</h2>
+<div class="scroll"><table>
+<tr><th>Test</th><th>What it checks</th><th>Result</th></tr>
+<tr><td><code>test_spmv_and_transpose_match_scipy_over_many_value_draws</code> (6 patterns)</td><td>Random 1%, 5% and 20%, a stage-banded shooting pattern, a permutation, and one full row. Each is compiled once, then 20 value draws are compared with <code>scipy.sparse</code> for <code>Ax</code>, <code>Aᵀy</code> and <code>yᵀAx</code>. Rebuilding with the same structure renders identical source, so it hits the JIT cache.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_spmv_derivatives_with_respect_to_data_and_vector</code> (3)</td><td>Dense Jacobian with respect to <code>x</code> equals A. Jacobian with respect to the data vector equals the analytic incidence. The sparse Jacobian has exactly nnz entries. Reverse-mode gradients equal <code>Aᵀy</code> and <code>y[r]x[c]</code>.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_spmv_flops_scale_with_nonzeros…</code></td><td>For a 400×500 matrix with nnz = 400, no loop runs over the 200 000 dense entries.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_scatter_and_segment_extrema_match_numpy</code> (8)</td><td>4 index patterns (unique, repeated, all the same, affine with repeats) × {loop, scalarized}. <code>scatter</code>, <code>segment_max</code> and <code>segment_min</code> checked against <code>np.add.at</code> / <code>np.maximum.at</code>, including NaN, −inf and empty bins.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_scatter_lowering_follows_the_index_pattern</code></td><td>Distinct destinations give no <code>REDUCE</code> loop; repeated ones do. A <b>scalarized repeated-index scatter</b> is exact, which is the hash-consing hazard the plan singled out.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_gather_with_repeated_indices…</code></td><td>Jacobian vs finite differences with repeated reads, and VJP = λᵀJ. At n = 20 000 with 30 000 random reads, the adjoint graph has fewer than 20 nodes and returns the exact <code>bincount</code>.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_segment_extrema_derivatives</code> (split, first)</td><td>Finite differences away from ties, and exact tie values in each bin, for both conventions.</td><td class="ok">pass</td></tr>
+<tr><td>Sparsity and verifier</td><td>Union patterns under repeated ids, and the segment rule.</td><td class="ok">pass</td></tr>
+<tr><td>Full suite</td><td></td><td class="ok">918 passed, 88 skipped</td></tr>
+</table></div>
+<p><b>Mutation checks</b>, each reverted afterwards:</p>
+<ul>
+<li>Turning the accumulation into a plain store: 19 failures.</li>
+<li>Dropping the zero fill: 17 failures.</li>
+<li>Removing NaN propagation from the segment extrema: 8 failures.</li>
+</ul>
+
+<h2>Benchmarks</h2>
+<p>Script: <code>internal/notes/perf_2026_09_25_tier1/pr3_sparse.py</code>. Median µs per call on the aarch64 VM. Every JIT call carries about 6 µs of ctypes overhead.</p>
+<div class="scroll"><table>
+<tr><th>A</th><th>nnz</th><th>build ms</th><th>scaly sparse</th><th>SciPy CSR</th><th>NumPy dense</th><th>scaly dense <code>matmul</code></th></tr>
+<tr><td>100×100</td><td class="r">500</td><td class="r">24</td><td class="r">10.0</td><td class="r">1.5</td><td class="r">1.7</td><td class="r">12.5</td></tr>
+<tr><td>500×500</td><td class="r">2 500</td><td class="r">27</td><td class="r">11.6</td><td class="r">2.6</td><td class="r">32.1</td><td class="r">78.3</td></tr>
+<tr><td>2000×2000</td><td class="r">8 000</td><td class="r">35</td><td class="r">15.6</td><td class="r">5.9</td><td class="r">189</td><td class="r">–</td></tr>
+<tr><td>20000×20000</td><td class="r">80 000</td><td class="r">175</td><td class="r">119</td><td class="r">69</td><td class="r">39 588</td><td class="r">–</td></tr>
+</table></div>
+<ul>
+<li>Sparse cost tracks nnz. At 80 000 nonzeros scaly is within 1.7× of SciPy's hand-written CSR kernel, and the gap is smaller once the ctypes call overhead is removed. It beats every dense formulation from 500×500 upward.</li>
+<li>Build time grows with nnz only through the constant index tables: 175 ms at 80 000 nonzeros.</li>
+</ul>
+<p><b><code>gather</code> adjoint build cost</b> (graph construction plus C render, ms):</p>
+<div class="scroll"><table>
+<tr><th>n</th><th>old build</th><th>old render</th><th>new build</th><th>new render</th></tr>
+<tr><td class="r">200</td><td class="r">4.5</td><td class="r">114</td><td class="r">0.12</td><td class="r">0.8</td></tr>
+<tr><td class="r">2 000</td><td class="r">24.7</td><td class="r">1 299</td><td class="r">0.12</td><td class="r">1.5</td></tr>
+<tr><td class="r">20 000</td><td class="r">383</td><td class="r">not run (minutes)</td><td class="r">0.34</td><td class="r">8.6</td></tr>
+</table></div>
+<p>At n = 2 000 that is about 850× faster end to end, and the new cost is essentially constant.</p>
+
+<h2>Deviations from the plan</h2>
+<ul>
+<li>The plan listed four lowering variants: unique, affine, sorted pointer table, and general accumulate. The sorted-pointer-table variant is <b>not</b> implemented:
+  <ul>
+  <li>Its bounds come from loaded tables, and scalarize cannot expand loops with loaded bounds, so small procedures would lose scalarization.</li>
+  <li>The measured gap to SciPy is already under 2×.</li>
+  </ul>
+  It can come back as a large-pattern-only variant if a Tier 2 kernel needs it.</li>
+<li>The <code>combine_scatter_sums</code> audit found no change needed. The pass only matches scatters whose loop body is a plain load-store with distinct destinations, so an accumulating scatter never qualifies.</li>
+</ul>
+</main></body></html>

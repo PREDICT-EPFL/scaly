@@ -84,9 +84,6 @@ def test_gather_scatter_eval_and_ad() -> None:
   else:  # pragma: no cover
     raise AssertionError("out-of-range gather should fail")
 
-  try:
-    _ = sc.scatter(sc.sym("v", 2), [1, 1], 3)
-  except ValueError as e:
-    assert "scatter indices must be unique" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("duplicate scatter should fail")
+  v = sc.sym("v", 2)
+  repeated = sc.Function._from_exprs("scatter_repeat", [v], [sc.scatter(v, [1, 1], 3)], ["v"], ["y"])
+  np.testing.assert_allclose(repeated(np.array([2.0, 5.0])), [0.0, 7.0, 0.0])  # repeated indices accumulate

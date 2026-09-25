@@ -623,3 +623,12 @@ def test_reduction_extrema_depend_on_every_entry() -> None:
   x = sc.sym("x", 5)
   y = sc.stack([x[:3].max(), x[2:].min(), sc.norm_inf(x[1:2])])
   np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(y, x)), [[1, 1, 1, 0, 0], [0, 0, 1, 1, 1], [0, 1, 0, 0, 0]])
+
+
+def test_accumulating_scatter_and_segment_extrema_patterns() -> None:
+  x = sc.sym("x", 4)
+  ids = np.array([1, 0, 1, 1])
+  expected = np.array([[0, 1, 0, 0], [1, 0, 1, 1]], dtype=bool)
+  np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(sc.scatter(x, ids, 2), x)), expected)
+  np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(sc.segment_max(x, ids, 2), x)), expected)
+  np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(sc.segment_sum(x * x, ids, 3), x)), np.vstack([expected, np.zeros((1, 4), bool)]))

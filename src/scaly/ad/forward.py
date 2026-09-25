@@ -14,7 +14,24 @@ import numpy as np
 
 from ..function import Function
 from ..function.sugar import vmap
-from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, cast, concat, copysign, equal, gather, reduce_min, scatter, stack, substitute, where, zeros_like
+from ..ir.expr import (
+  PREDICATE_OPS,
+  Expr,
+  ExprOp,
+  cast,
+  concat,
+  copysign,
+  equal,
+  gather,
+  reduce_min,
+  scatter,
+  segment_min,
+  segment_sum,
+  stack,
+  substitute,
+  where,
+  zeros_like,
+)
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.env import env_bool
 from ..utils.options import get_options
@@ -146,6 +163,8 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return save(w * d[0] + (1.0 - w) * d[1])
   if expr.op in {ExprOp.MAX, ExprOp.MIN}:
     return save((reduce_weights(expr) * d[0]).sum())
+  if expr.op in {ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN}:
+    return save(segment_sum(segment_weights(expr) * d[0], expr.attrs["indices"], expr.size))
   if expr.op == ExprOp.SELECT:
     return save(where(args[0], d[1], d[2]))
   if expr.op == ExprOp.COPYSIGN:
@@ -215,6 +234,20 @@ def reduce_weights(expr: Expr) -> Expr:
     return cast(equal(index, reduce_min(where(hit, index, float(x.size)))), x.type.dtype)
   count = cast(hit, x.type.dtype)
   return count / count.sum()
+
+
+def segment_weights(expr: Expr) -> Expr:
+  """``reduce_weights`` bin by bin for ``segment_max`` and ``segment_min``: the share of each bin's
+  derivative that each value receives."""
+  x, ids, n = expr.args[0], expr.attrs["indices"], expr.size
+  mode = _nonsmooth_mode(expr.op)
+  hit = equal(x, gather(expr, ids))
+  if mode == "first":
+    index = Expr.const(np.arange(x.size, dtype=np.float64))
+    first = segment_min(where(hit, index, float(x.size)), ids, n, fill=float(x.size))
+    return cast(equal(index, gather(first, ids)), x.type.dtype)
+  count = cast(hit, x.type.dtype)
+  return count / gather(segment_sum(count, ids, n), ids)
 
 
 def _copysign_slope(x: Expr, s: Expr) -> Expr:

@@ -176,3 +176,44 @@ def test_reductions_of_one_element_and_large_inputs() -> None:
   assert body.count("for (") == 2  # one reduction loop each, whatever the size
   with pytest.raises(ValueError, match="empty"):
     sc.sym("e", 0).max()
+
+
+SCATTER_IDS = {
+  "unique": np.array([4, 0, 2, 5, 1]),
+  "repeated": np.array([1, 3, 1, 1, 0]),
+  "all_same": np.array([2, 2, 2, 2, 2]),
+  "affine_repeat": np.array([0, 1, 2, 0, 1]),
+}
+
+
+@pytest.mark.parametrize("lowering", ["block", "scalar"])
+@pytest.mark.parametrize("case", sorted(SCATTER_IDS))
+def test_scatter_and_segment_extrema_match_numpy(case: str, lowering: Lowering) -> None:
+  ids = SCATTER_IDS[case]
+  v = sc.sym("v", 5).with_lowering(lowering)
+  outs = [sc.scatter(v, ids, 6), sc.segment_max(v, ids, 6), sc.segment_min(v, ids, 6, fill=0.0)]
+  inner = sc.Function._from_exprs(f"seg_{case}_{lowering}_in", [v], outs, ["v"], ["s", "mx", "mn"])
+  vo = sc.sym("v", 5)
+  fun = sc.Function._from_exprs(f"seg_{case}_{lowering}", [vo], list(inner(vo)), ["v"], ["s", "mx", "mn"])
+  for values in (np.array([1.5, -2.0, 3.0, 0.5, -1.0]), np.array([np.nan, 1.0, -np.inf, 2.0, 2.0])):
+    s, mx, mn = np.zeros(6), np.full(6, -np.inf), np.zeros(6)
+    np.add.at(s, ids, values)
+    np.maximum.at(mx, ids, values)
+    np.minimum.at(mn, ids, values)
+    got = fun(values)
+    for g, e in zip(got, (s, mx, mn), strict=True):
+      np.testing.assert_array_equal(g, e)
+
+
+def test_scatter_lowering_follows_the_index_pattern() -> None:
+  def kinds(ids: np.ndarray) -> set[str]:
+    v = sc.sym("v", ids.size)
+    fun = sc.Function._from_exprs("seg_kinds", [v], [sc.scatter(v, ids, 8).opaque()], ["v"], ["y"])
+    return {n.attrs["kind"].value for stmt in lower_function(fun).args[-1].args for n in _walk(stmt) if n.op == ProgramOp.RANGE}
+
+  assert "reduce" not in kinds(np.array([3, 1, 7, 0]))  # distinct destinations: a parallel store
+  assert "reduce" in kinds(np.array([3, 1, 3, 0]))  # repeated destinations: an accumulating loop
+  # A scatter below the scalarize budget expands, and the repeated destination still adds up exactly.
+  v = sc.sym("v", 4)
+  small = sc.Function._from_exprs("seg_small", [v], [sc.scatter(v * v, [1, 1, 1, 0], 2).scalar()], ["v"], ["y"])
+  np.testing.assert_array_equal(small(np.array([1.0, 2.0, 3.0, 4.0])), [16.0, 14.0])

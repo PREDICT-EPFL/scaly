@@ -634,3 +634,41 @@ def test_abs_derivative_is_zero_at_zero_and_error_mode_refuses_extrema() -> None
       with pytest.raises(NotImplementedError, match="nonsmooth='error'"):
         sc.jvp(build(), x, sc.const(np.ones(3)))
     sc.vjp((x.abs().sum(),), (x,), (sc.const(1.0),))  # abs is not a tie convention
+
+
+def test_gather_with_repeated_indices_differentiates_and_its_adjoint_is_one_node() -> None:
+  x = sc.sym("x", 4)
+  idx = np.array([2, 0, 2, 3, 2, 1])
+  y = (sc.gather(x, idx) ** 2) * sc.const(np.arange(1.0, 7.0))
+  f = sc.Function._from_exprs("gath_rep", [x], [y], ["x"], ["y"])
+  xv = np.array([0.3, -1.2, 0.8, 2.0])
+  jac = sc.jacobian(f, "y", "x")(xv)
+  np.testing.assert_allclose(jac, finite_difference(lambda v: f(v), xv), rtol=1e-7, atol=1e-9)
+  lam = np.linspace(1.0, 2.0, 6)
+  (g,) = sc.vjp((y,), (x,), (sc.const(lam),))
+  np.testing.assert_allclose(sc.Function._from_exprs("gath_rep_g", [x], [g], ["x"], ["g"])(xv), lam @ jac, rtol=1e-12)
+  # The adjoint of a gather is one accumulating scatter whatever the size, not one sum per entry.
+  big = sc.sym("big", 20_000)
+  picks = np.random.default_rng(0).integers(0, 20_000, size=30_000)
+  (gb,) = sc.vjp((sc.gather(big, picks).sum(),), (big,), (sc.const(1.0),))
+  assert len(topo([gb])) < 20
+  counts = np.bincount(picks, minlength=20_000).astype(float)
+  np.testing.assert_array_equal(sc.Function._from_exprs("gath_big", [big], [gb], ["big"], ["g"])(np.zeros(20_000)), counts)
+
+
+@pytest.mark.parametrize("mode", ["split", "first"])
+def test_segment_extrema_derivatives(mode: str) -> None:
+  ids = np.array([0, 1, 0, 2, 1, 0])
+  x = sc.sym("x", 6)
+  out = sc.stack([sc.segment_max(x * x, ids, 4, fill=0.0).sum(), sc.segment_min(x, ids, 3).sum()])
+  with sc.options(nonsmooth=mode):
+    f = sc.Function._from_exprs(f"seg_d_{mode}", [x], [out], ["x"], ["y"])
+    jac = sc.jacobian(f, "y", "x")
+    (g,) = sc.vjp((out.sum(),), (x,), (sc.const(1.0),))
+  xv = np.array([0.5, -1.0, 1.5, 2.0, 0.25, -0.75])
+  np.testing.assert_allclose(jac(xv), finite_difference(lambda v: f(v), xv), rtol=1e-6, atol=1e-8)
+  gfun = sc.Function._from_exprs(f"seg_g_{mode}", [x], [g], ["x"], ["g"])
+  tie = np.array([1.0, 3.0, -1.0, 2.0, 3.0, 1.0])  # squares tie in bin 0 (1, 1, 1) and bin 1 (9, 9)
+  expected_max = [2 / 3, 3.0, -2 / 3, 4.0, 3.0, 2 / 3] if mode == "split" else [2.0, 6.0, 0.0, 4.0, 0.0, 0.0]
+  expected_min = [0.0, 0.5, 1.0, 1.0, 0.5, 0.0] if mode == "split" else [0.0, 1.0, 1.0, 1.0, 0.0, 0.0]
+  np.testing.assert_allclose(gfun(tie), np.add(expected_max, expected_min))

@@ -337,6 +337,19 @@ def _cast_types(expr: Expr) -> str | None:
   return None
 
 
+def _segment_extremum(expr: Expr) -> str | None:
+  idx = expr.attrs.get("indices")
+  if idx is None or "fill" not in expr.attrs:
+    return f"{expr.op} needs 'indices' and 'fill' attrs"
+  if len(expr.shape) != 1 or len(expr.args[0].shape) != 1:
+    return f"{expr.op} maps a rank-1 operand to a rank-1 result, got {expr.args[0].shape} -> {expr.shape}"
+  if idx.size != expr.args[0].size:
+    return f"{expr.op} has {idx.size} segment ids for {expr.args[0].size} values"
+  if idx.size and (idx.min() < 0 or idx.max() >= expr.shape[0]):
+    return f"{expr.op} segment ids must lie in [0, {expr.shape[0]})"
+  return None
+
+
 def _reduce_shape(expr: Expr) -> str | None:
   if expr.shape != ():
     return f"{expr.op} output must be a scalar, got shape {expr.shape}"
@@ -373,6 +386,7 @@ spec_expr = Spec(
     Rule(ExprOp.VMAP, "vmap-attrs", _vmap_attrs),
     Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
     Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
+    *(Rule(op, "segment-extremum", _segment_extremum) for op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)),
     Rule(ExprOp.STACK, "stack-shapes", _stack_shapes),
     Rule(ExprOp.CONCAT, "concat-shapes", _concat_shapes),
   ]

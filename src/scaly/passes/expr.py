@@ -112,8 +112,11 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
     out = np.take(args[0].reshape(-1), indices).reshape(indices.shape)
   elif e.op == ExprOp.SCATTER:
     out = np.zeros(e.shape, dtype=np.float64).reshape(-1)
-    out[e.attrs["indices"].reshape(-1)] = args[0].reshape(-1)
+    np.add.at(out, e.attrs["indices"].reshape(-1), args[0].reshape(-1))
     out = out.reshape(e.shape)
+  elif e.op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN):
+    out = np.full(e.shape, e.attrs["fill"], dtype=np.float64)
+    (np.maximum if e.op == ExprOp.SEGMENT_MAX else np.minimum).at(out, e.attrs["indices"], args[0])
   elif e.op == ExprOp.STACK:
     out = np.stack(args, axis=e.attrs.get("axis", 0))
   elif e.op == ExprOp.CONCAT:
