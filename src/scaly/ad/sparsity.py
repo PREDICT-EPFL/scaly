@@ -132,6 +132,8 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     return _call_mask(expr, wrt, memo)
   if expr.op == ExprOp.VMAP:
     return _vmap_mask(expr, wrt, memo)
+  if expr.op == ExprOp.SCAN:
+    return _scan_mask(expr, wrt, memo)
   if expr.op == ExprOp.SOLVER_CALL:
     return _empty((expr.size, wrt.size))
   raise NotImplementedError(f"jacobian sparsity for op {expr.op!r} is not implemented")
@@ -225,6 +227,52 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
     tiled = sparse.kron(sparse.eye_array(length, dtype=bool), callee_dep, format="csr")
     ret = _or(ret, _compose(tiled, _compose(windows, outer_dep)))
   return ret
+
+
+def _scan_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
+  """Step the carry's dependence set through the loop: ``R_{k+1} = C R_k ∪ X_k``, where ``C`` is the
+  body's carry-to-carry pattern and ``X_k`` what step ``k``'s slices bring in. With no sliced input
+  that changes from step to step the sequence of patterns is eventually periodic (there are finitely
+  many), so the walk stops at the first repeat and reads the final pattern off the cycle."""
+  callee, length, output = expr.attrs["callee"], int(expr.attrs["length"]), int(expr.attrs["output"])
+  starts, strides = expr.attrs["starts"], expr.attrs["strides"]
+  carry, xs = callee.inputs[0], callee.inputs[1:]
+  init, outers = expr.args[0], expr.args[1:]
+  reach = _jac_mask(init, wrt, memo)
+  step = _jac_mask(callee.outputs[0], carry, {})
+  from_xs = [_jac_mask(callee.outputs[0], x, {}) for x in xs]
+  produced = callee.outputs[output] if output > 0 else None
+  y_carry = _jac_mask(produced, carry, {}) if produced is not None else None
+  y_xs = [_jac_mask(produced, x, {}) for x in xs] if produced is not None else []
+  outer_masks = [_jac_mask(outer, wrt, memo) for outer in outers]
+  rows: list[sparse.csr_array] = []
+  moving = any(stride != 0 for stride in strides)
+  seen: dict[tuple[bytes, bytes, bytes], int] = {}
+  history: list[sparse.csr_array] = []
+  for k in range(length):
+    if output == 0 and not moving:
+      reach.sort_indices()
+      key = (reach.indptr.tobytes(), reach.indices.tobytes(), bytes(reach.shape))
+      if key in seen:
+        first = seen[key]
+        return history[first + (length - first) % (k - first)]
+      seen[key] = k
+      history.append(reach)
+    slices = [m[start + k * stride + np.arange(x.size)] for m, x, start, stride in zip(outer_masks, xs, starts, strides, strict=True)]
+    if output == -1:
+      rows.append(reach)
+    elif y_carry is not None:
+      y = _compose(y_carry, reach)
+      for dep, sl in zip(y_xs, slices, strict=True):
+        y = _or(y, _compose(dep, sl))
+      rows.append(y)
+    nxt = _compose(step, reach)
+    for dep, sl in zip(from_xs, slices, strict=True):
+      nxt = _or(nxt, _compose(dep, sl))
+    reach = sparse.csr_array(nxt, dtype=bool)
+  if output == 0:
+    return reach
+  return sparse.vstack(rows, format="csr") if rows else _empty((0, wrt.size))
 
 
 def star_coloring(sparsity: SparsityType) -> tuple[int, ...]:

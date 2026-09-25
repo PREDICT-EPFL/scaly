@@ -230,3 +230,13 @@ def test_segment_extremum_rule() -> None:
     verify_expr(bad)
   with pytest.raises(ValueError, match="segment ids"):
     sc.segment_max(x, [0, 1], 2)
+
+
+def test_scan_rule() -> None:
+  c, u = sc.sym("c", 2), sc.sym("u", 1)
+  body = sc.Function._from_exprs("vs_step", [c, u], [c + u[0], c[:1]], ["c", "u"], ["n", "y"])
+  final, ys = sc.scan(body, sc.sym("c0", 2), [(sc.sym("us", 3), 0, 1)], length=3)
+  verify_expr([final, ys])
+  bad = Expr(ExprOp.SCAN, final.args, TensorType((5,), dtype=dtypes.float64), attrs=dict(final.attrs))
+  with pytest.raises(VerifyError, match="scan-attrs"):
+    verify_expr(bad)

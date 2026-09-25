@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 1 PR 4 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 1 · PR 4 report</h1>
+<p class="sub"><code>scan</code>: a sequential loop with a carry · branch <code>claude/tier1-primitives</code> · todo C-85 · 26 Sep 2026</p>
+
+<div class="box"><b>Status:</b> <span class="ok">done</span>. The full suite passes: 935 passed, 88 skipped, 0 failed. ruff and ty are clean. The six existing C snapshots are byte-identical, and the planned <code>control</code> snapshot has been added.</div>
+
+<h2>New capability</h2>
+<pre>z_final, costs = sc.scan(step, z0, [(us, 0, 1)], length=N)   # step: (carry, *slices) -> (carry', *ys)</pre>
+<ul>
+<li><b>One loop, whatever N:</b> the scan becomes a single <code>SERIAL</code> loop that calls the body procedure. The generated C is the same size for N = 10 and N = 100 000.</li>
+<li><b>Slicing:</b> inputs are sliced the way <code>vmap</code> slices them, with a zero stride for broadcasting. Negative strides also work, so a scan can walk a sequence backwards.</li>
+<li><b>Outputs and carries:</b> stacked outputs are written in place, directly into the Function's output buffer when they are one. The carry can have any shape, including a matrix.</li>
+<li><b>Carry storage:</b> the carry alternates between two slots selected by <code>k % 2</code>. No step copies it, and no call reads and writes the same memory. When reverse mode needs the per-step carries, the same buffer grows to <code>N+1</code> slots and holds the trajectory. There is no extra copy in either case.</li>
+<li><b>Derivatives are scans too:</b>
+  <ul>
+  <li>Forward mode runs one scan whose carry is <code>[c, ċ]</code>.</li>
+  <li>Reverse mode runs one scan over the reversed steps, reading the stored carries backwards. The slices' cotangents accumulate into their outer tensors through PR 3's accumulating <code>scatter</code>.</li>
+  <li>Sparse Jacobians and symmetric Hessians work through a scan.</li>
+  </ul></li>
+<li><b>Exact structural sparsity:</b> the body's dependence pattern is stepped through the loop. When no input changes from step to step, the patterns are eventually periodic; the walk stops at the first repeat and reads the answer off the cycle, so N = 100 000 takes milliseconds.</li>
+</ul>
+
+<h2>What was changed</h2>
+<div class="scroll"><table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>ir/expr.py</code></td><td><code>ExprOp.SCAN</code>. New <code>CALLEE_OPS</code> and <code>callees_of()</code>, the single place that says which nodes run a callee. Printer support.</td></tr>
+<tr><td><code>function/sugar.py</code></td><td>The <code>sc.scan</code> builder, with contract checks, and <code>_scan_node</code>, which also produces the internal carries output (<code>output=-1</code>).</td></tr>
+<tr><td><code>ir/expr_spec.py</code></td><td>New rule <code>scan-attrs</code>: carry shape preserved, argument count, output index and shape.</td></tr>
+<tr><td><code>passes/lowering.py</code></td><td><code>_lower_scan</code> and <code>_emit_scan</code>. Every output node of one scan shares one invocation. Ping-pong or trajectory storage, stacked outputs written in place, and unused stacked outputs written to a single reused slot.</td></tr>
+<tr><td><code>ad/forward.py</code>, <code>reverse.py</code></td><td><code>_scan_jvp_body</code>/<code>_scan_jvp</code> and <code>_scan_adj_function</code>/<code>_scan_vjp</code>, with helper Functions cached per callee.</td></tr>
+<tr><td><code>ad/sparsity.py</code></td><td><code>_scan_mask</code>, including the cycle detection.</td></tr>
+<tr><td><code>codegen/aot.py</code>, <code>codegen/solver.py</code>, <code>solvers/graph.py</code>, <code>solvers/qp.py</code>, <code>ir/text.py</code></td><td>The five places that listed <code>{CALL, VMAP}</code> now use <code>callees_of</code>, so scan callees are generated, deduplicated and searched for solvers like any other.</td></tr>
+<tr><td><code>scaly/__init__.py</code>, <code>viz/graph.py</code></td><td><code>sc.scan</code> is exported. <code>test_import_boundaries</code> used to pin <code>scan</code> as a retired name; it now pins it as public.</td></tr>
+<tr><td>docs, todo</td><td>A "Sequential repetition: <code>scan</code>" section in <code>guide/functions.md</code> and an op-table row in <code>ir.md</code>. C-85 marked done; new item C-91 (see Findings).</td></tr>
+</table></div>
+
+<h2>Test results</h2>
+<div class="scroll"><table>
+<tr><th>Test</th><th>What it checks</th><th>Result</th></tr>
+<tr><td><code>test_scan_matches_unrolled_calls_and_numpy</code> (N = 0, 1, 2, 3, 50)</td><td>An RK4 cart-pendulum with a stacked stage cost. The scan, the chain of N <code>CALL</code>s and a NumPy loop agree to 1e-12. The small N cover the parity edges and the empty scan.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_long_scan_matches_numpy</code> (N = 1000)</td><td>Agrees with NumPy to 1e-10.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_scan_derivatives_match_the_unrolled_graph…</code> (N = 1, 2, 7)</td><td>Every output/input pair: Jacobian equals the unrolled Jacobian and finite differences. Sparse Jacobian equals the dense one at the reported pattern. Reverse mode with both outputs seeded equals λᵀJ. The Hessian of a cost after the scan is symmetric and equals the unrolled Hessian.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_matrix_carry_kalman_filter_matches_numpy</code></td><td>40 steps of a Kalman filter whose carry is <code>[x, vec(P)]</code>. Estimates and final covariance equal NumPy to 1e-12.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_slicing_broadcast_strided_and_backwards</code></td><td>A stride-0 broadcast together with a slice read backwards every third entry. Values match, the gradient matches finite differences, and entries that are never read get exactly zero gradient.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_generated_code_is_constant_in_the_number_of_steps</code></td><td>The program has the same node count at N = 10, 1 000 and 100 000. At 1 000 and 100 000 the C source is identical apart from the trip count.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_reverse_mode_stores_the_carry_at_every_step…</code></td><td>The forward-only value uses 2 carry slots; with a gradient requested it uses N+1.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_scan_patterns_equal_the_unrolled_patterns</code></td><td>For a shift register, the patterns of the final carry, the stacked output and the carries all equal the unrolled ones. A rotation scanned 100 000 times gives the one-step pattern in under a second.</td><td class="ok">pass</td></tr>
+<tr><td>Contract and verifier tests</td><td>Wrong init shape, reading out of bounds, wrong slice count, a carry that changes shape, and a malformed node.</td><td class="ok">pass</td></tr>
+<tr><td>C snapshot <code>control</code> (new)</td><td>A scan whose step uses <code>select</code>, <code>max</code>, a unique scatter and a repeated-index scatter. The body scalarizes into 12 lines.</td><td class="ok">recorded</td></tr>
+<tr><td>Full suite</td><td></td><td class="ok">935 passed, 88 skipped</td></tr>
+</table></div>
+<p><b>Mutation checks</b>, each reverted afterwards:</p>
+<ul>
+<li>Reading the final carry from the wrong slot: 5 failures.</li>
+<li>Running the reverse sweep forwards: 2 failures.</li>
+<li>Reading the wrong entry of the pattern cycle: 1 failure.</li>
+</ul>
+
+<h2>Benchmarks</h2>
+<p>Script: <code>internal/notes/perf_2026_09_25_tier1/pr4_scan.py</code>. It builds the RK4 rollout's final state <em>and</em> the reverse-mode gradient of <code>‖z_N‖²</code> with respect to all controls, with a fresh JIT cache, on the aarch64 VM.</p>
+<div class="scroll"><table>
+<tr><th>N</th><th>variant</th><th>build graph ms</th><th>render ms</th><th>compile + load ms</th><th>C lines</th><th>µs / call</th></tr>
+<tr><td>10</td><td>scan</td><td class="r">6.0</td><td class="r">22.5</td><td class="r">58.8</td><td class="r">126</td><td class="r">12.0</td></tr>
+<tr><td>10</td><td>unrolled</td><td class="r">19.4</td><td class="r">263</td><td class="r">484</td><td class="r">1 154</td><td class="r">11.9</td></tr>
+<tr><td>50</td><td>scan</td><td class="r">5.8</td><td class="r">19.6</td><td class="r">54.5</td><td class="r">126</td><td class="r">15.4</td></tr>
+<tr><td>50</td><td>unrolled</td><td class="r">108</td><td class="r">1 376</td><td class="r">3 007</td><td class="r">5 554</td><td class="r">17.0</td></tr>
+<tr><td>200</td><td>scan</td><td class="r">5.7</td><td class="r">19.8</td><td class="r">55.7</td><td class="r">126</td><td class="r">27.9</td></tr>
+<tr><td>200</td><td>unrolled</td><td class="r">428</td><td class="r">6 471</td><td class="r">15 212</td><td class="r">22 054</td><td class="r">36.9</td></tr>
+<tr><td>1000</td><td>scan</td><td class="r">5.8</td><td class="r">20.0</td><td class="r">55.9</td><td class="r">126</td><td class="r">96.8</td></tr>
+</table></div>
+<ul>
+<li>Getting to the first call takes about 80 ms whatever N is. The unrolled chain takes 22 s at N = 200, which is <b>~270× slower</b>.</li>
+<li>Run time is the same at N = 10 and 25% <em>faster</em> than the unrolled code at N = 200, because the unrolled source stops fitting the compiler's optimisation windows. Per step the cost is about 0.1 µs for value plus gradient.</li>
+<li>The C is 126 lines at every N.</li>
+</ul>
+
+<h2>Findings and deviations</h2>
+<ul>
+<li>When both the final carry and a stacked output of a scan are differentiated, reverse mode builds <b>one backward scan per output</b>. This is correct by linearity but does the work twice. Filed as <b>C-91</b>: one backward scan seeded with every cotangent.</li>
+<li>A final carry that is also a Function output is copied out of the carry buffer once, which costs O(carry). Stacked outputs are written in place.</li>
+<li>The multi-seed forward rule (<code>jvp_many</code>) has no structural rule for <code>scan</code>, so dense Jacobians use the existing per-seed fallback: one tangent scan per seed. It is correct, and reverse mode or sparse Jacobians are the efficient route.</li>
+<li>Program passes needed no changes. <code>hoist_invariant</code> already treats a loop-dependent view as varying, and scalarize interprets the loop in order.</li>
+</ul>
+</main></body></html>

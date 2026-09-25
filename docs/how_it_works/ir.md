@@ -103,7 +103,7 @@ so the choice lives in that graph and in the C generated from it; see [Options](
 
 ### Operations
 
-Fifty-four operations, grouped by what they do. `arity` is the operand count; `n` means
+Fifty-five operations, grouped by what they do. `arity` is the operand count; `n` means
 variadic. `diff` is whether AD can pass through the op at all.
 
 #### Arithmetic and elementwise
@@ -157,6 +157,7 @@ variadic. `diff` is whether AD can pass through the op at all.
 | --- | --- | --- | --- |
 | `call` | n | yes | a named `Function` applied to arguments |
 | `VMAP` | n | yes | one callee applied across slices of its arguments |
+| `scan` | n | yes | one callee applied in sequence, threading a carry; `output` selects the final carry (0), a stacked output (1..) or the carries entering each step (-1) |
 | `solver_call` | n | no | an opaque solve; see [Solvers](solvers.md) |
 
 `dot`, `sumsqr`, `norm_2` and `vec` are not operations. They are builders that expand into the

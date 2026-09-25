@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from ..function import Function
-from ..function.sugar import vmap
+from ..function.sugar import _scan_node, vmap
 from ..ir.expr import (
   PREDICATE_OPS,
   Expr,
@@ -96,6 +96,9 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
       starts, strides = expr.attrs["starts"], expr.attrs["strides"]
       specs = [(expr.args[i], starts[i], strides[i]) for i in arg_indices] + [(tangents[i], starts[i], strides[i]) for i in seed_indices]
       memo[expr.id] = ret = vmap(fn, expr.attrs["length"], specs)
+    return ret
+  if expr.op == ExprOp.SCAN:
+    memo[expr.id] = ret = _scan_jvp(expr, [_jvp(arg, seeds, memo, dep_memo) for arg in expr.args])
     return ret
   if expr.op == ExprOp.SOLVER_CALL:
     # Solver outputs are treated as non-differentiable today. Implicit
@@ -196,6 +199,63 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
       return save(2 * (args[0] @ d[0]))
     return save(d[0] @ args[1] + args[0] @ d[1])
   raise NotImplementedError(f"JVP for op {expr.op!r} is not implemented")
+
+
+_SCAN_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, ...], Function]] = weakref.WeakKeyDictionary()
+
+
+def _scan_jvp_body(callee: Function, active: tuple[int, ...]) -> Function:
+  """The body of the tangent scan: the carry is ``[c, dc]`` flat, the sliced inputs are the primal
+  ones then the tangents of the ``active`` ones, and the outputs are ``[c', dc']``, the primal
+  stacked outputs, then their tangents."""
+  cache = _SCAN_JVP_CACHE.setdefault(callee, {})
+  if active not in cache:
+    carry, xs = callee.inputs[0], callee.inputs[1:]
+    cs = carry.size
+    aug = Expr.sym(f"fwd:{callee.input_names[0]}", (2 * cs,))
+    dcarry = Expr.sym(f"fwd:{callee.input_names[0]}:dc", carry.shape)
+    dxs = {i: Expr.sym(f"fwd:{callee.input_names[i + 1]}", xs[i].shape) for i in active}
+    seeds = {carry: dcarry, **{xs[i]: dx for i, dx in dxs.items()}}
+    memo: dict[int, Expr] = {}
+    dep: dict[tuple[int, int], bool] = {}
+    tangents = [_jvp(out, seeds, memo, dep) for out in callee.outputs]
+    split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
+    nxt = concat([callee.outputs[0].reshape((cs,)), tangents[0].reshape((cs,))])
+    outputs = [substitute(e, split) for e in (nxt, *callee.outputs[1:], *tangents[1:])]
+    inputs = [aug, *xs, *dxs.values()]
+    names = [str(aug.name), *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
+    out_names = ["fwd:carry", *callee.output_names[1:], *(f"fwd:{n}" for n in callee.output_names[1:])]
+    suffix = "_".join(str(i) for i in active) or "c"
+    cache[active] = Function._from_exprs(
+      f"{callee.name}_scanfwd_{suffix}", inputs, [callee._inherit_lowering(simplify_cse_fixpoint(o)) for o in outputs], names, out_names
+    )
+  return cache[active]
+
+
+def _scan_jvp(expr: Expr, tangents: list[Expr]) -> Expr:
+  """A scan's tangent is another scan whose carry also carries the tangent."""
+  callee, length, output = expr.attrs["callee"], expr.attrs["length"], expr.attrs["output"]
+  if all(_is_zero_const(t) for t in tangents):
+    return zeros_like(expr)
+  init, outers = expr.args[0], expr.args[1:]
+  cs, n_ys = init.size, len(callee.outputs) - 1
+  active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
+  fn = _scan_jvp_body(callee, active)
+  starts, strides = expr.attrs["starts"], expr.attrs["strides"]
+  aug_init = concat([init.reshape((cs,)), tangents[0].reshape((cs,))])
+  aug_outers = (*outers, *(tangents[i + 1] for i in active))
+  aug_starts = (*starts, *(starts[i] for i in active))
+  aug_strides = (*strides, *(strides[i] for i in active))
+
+  def node(k: int) -> Expr:
+    return _scan_node(fn, aug_init, aug_outers, aug_starts, aug_strides, length, k)
+
+  if output == 0:
+    return node(0)[cs:].reshape(expr.shape)
+  if output == -1:
+    picks = (np.arange(length)[:, None] * 2 * cs + cs + np.arange(cs)[None, :]).reshape(-1)
+    return gather(node(-1), picks)
+  return node(1 + n_ys + output - 1)
 
 
 def sign(x: Expr) -> Expr:

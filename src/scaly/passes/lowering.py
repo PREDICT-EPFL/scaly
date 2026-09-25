@@ -263,6 +263,8 @@ class LowerCtx:
     self._output_alias: dict[int, str] = {}
     # (callee_name, arg_buffer_names) -> output buffer names, to dedup repeated CALL invocations.
     self.call_invocations: dict[tuple[str, tuple[str, ...]], tuple[str, ...]] = {}
+    # scan identity -> buffer name per output index (0 final carry, -1 carries, 1.. stacked outputs).
+    self.scan_invocations: dict[tuple[object, ...], dict[int, str]] = {}
     self._tmp = 0
 
   # --- declarations ---------------------------------------------------------
@@ -817,6 +819,72 @@ def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
     ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": callee.name, "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
   )
   ctx.statements.append(p.for_(rng, [call]))
+
+
+def _scan_key(node: Expr) -> tuple[object, ...]:
+  return (id(node.attrs["callee"]), tuple(a.id for a in node.args), node.attrs["length"], node.attrs["starts"], node.attrs["strides"])
+
+
+@lowers(ExprOp.SCAN)
+def _lower_scan(ctx: LowerCtx, node: Expr) -> None:
+  """One ``SERIAL`` loop per scan, shared by every output node of it, calling the body procedure.
+
+  The carry lives in one buffer. Without a consumer of the per-step carries it holds two slots and
+  step ``k`` reads slot ``k % 2`` and writes the other, so nothing is copied between steps and no
+  call reads and writes the same memory. When reverse mode asked for the carries (output ``-1``) it
+  holds ``length + 1`` slots and step ``k`` reads slot ``k`` and writes slot ``k + 1``: the
+  trajectory is the carry storage itself. Stacked outputs are written in place at ``k * size``."""
+  key = _scan_key(node)
+  if key not in ctx.scan_invocations:
+    ctx.scan_invocations[key] = _emit_scan(ctx, node)
+  ctx.value_buffers[node.id] = ctx.scan_invocations[key][int(node.attrs["output"])]
+
+
+def _emit_scan(ctx: LowerCtx, node: Expr) -> dict[int, str]:
+  callee: Function = node.attrs["callee"]
+  length, starts, strides = int(node.attrs["length"]), node.attrs["starts"], node.attrs["strides"]
+  init, outers = node.args[0], node.args[1:]
+  carry = callee.inputs[0]
+  cs, dtype = carry.size, carry.type.dtype
+  key = _scan_key(node)
+  siblings = {int(n.attrs["output"]): n for n in topo(ctx.fun.outputs) if n.op == ExprOp.SCAN and _scan_key(n) == key}
+  trajectory = -1 in siblings
+  # A stacked output someone reads gets its own buffer (the Function's output buffer when it is one);
+  # one nobody reads is written to a single reused slot.
+  ys = {j: ctx.alloc_tmp(siblings[j]) if j in siblings else ctx.new_private(out.type.dtype, (out.size,)) for j, out in enumerate(callee.outputs) if j}
+  bufs = {j: b.attrs["name"] for j, b in ys.items()}
+  if length == 0:
+    bufs[0] = ctx.value_buffers[init.id]
+    bufs[-1] = ctx.new_private(dtype, (0,)).attrs["name"]
+    return bufs
+  _ensure_callee(ctx, callee)
+  store = ctx.new_private(dtype, ((length + 1 if trajectory else 2) * cs,))
+  ctx.statements.append(_copy_loop(ctx.buf_of(init), store, (cs,)))
+  name = f"k_{store.attrs['name']}"
+  k = p.var(name)
+  if trajectory:
+    read = p.mul(k, p.const_int(cs))
+    write = p.mul(p.add(k, p.const_int(1)), p.const_int(cs))
+    final = length * cs
+  else:
+    parity = p.mod(k, p.const_int(2))
+    read = p.mul(parity, p.const_int(cs))
+    write = p.mul(p.sub(p.const_int(1), parity), p.const_int(cs))
+    final = (length % 2) * cs
+  in_args = [p.view(store, [read])]
+  for outer, start, stride in zip(outers, starts, strides, strict=True):
+    offset = p.add(p.const_int(start), p.mul(p.const_int(stride), k)) if stride else p.const_int(start)
+    in_args.append(p.view(ctx.buf_of(outer), [offset]))
+  out_args = [p.view(store, [write])]
+  out_args += [p.view(ys[j], [p.mul(k, p.const_int(out.size)) if j in siblings else p.const_int(0)]) for j, out in enumerate(callee.outputs) if j]
+  call = ProgramNode(
+    ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": callee.name, "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
+  )
+  ctx.statements.append(p.for_(p.range_(name, 0, length, kind=RangeKind.SERIAL), [call]))
+  bufs[0] = ctx.new_alias(dtype, carry.shape, store.attrs["name"], final).attrs["name"]
+  if trajectory:
+    bufs[-1] = ctx.new_alias(dtype, (length * cs,), store.attrs["name"], 0).attrs["name"]
+  return bufs
 
 
 @lowers(ExprOp.GATHER)

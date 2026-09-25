@@ -183,6 +183,7 @@ tests/ad/test_sparsity.py::test_jacobian_sparsity_tracks_concat_axis_layout
 tests/ad/test_sparsity.py::test_mapped_sparse_hessian_multiplier_weighting_and_shared_fill
 tests/ad/test_sparsity.py::test_mapped_sparsity_storage_grows_with_nonzeros_not_global_mask
 tests/ad/test_sparsity.py::test_reduction_extrema_depend_on_every_entry
+tests/ad/test_sparsity.py::test_scan_patterns_equal_the_unrolled_patterns
 tests/ad/test_sparsity.py::test_select_pattern_is_the_branch_union_and_predicates_add_nothing
 tests/ad/test_sparsity.py::test_shared_fill_star_hessian_matches_one_sided_and_dense
 tests/ad/test_sparsity.py::test_sparse_hessian_factory_returns_compact_values_with_sparsity_metadata
@@ -403,6 +404,20 @@ tests/function/test_tree.py::test_lagrangian_hessians_accept_constant_output_lea
 tests/function/test_tree.py::test_leaf_shapes_and_group_widths
 tests/function/test_tree.py::test_seeded_derivatives_accept_nondifferentiable_leaves
 tests/function/test_tree.py::test_tree_names_are_unique_and_symbols_follow_structure
+tests/integration/test_scan.py::test_generated_code_is_constant_in_the_number_of_steps
+tests/integration/test_scan.py::test_long_scan_matches_numpy
+tests/integration/test_scan.py::test_matrix_carry_kalman_filter_matches_numpy
+tests/integration/test_scan.py::test_reverse_mode_stores_the_carry_at_every_step_and_forward_keeps_two
+tests/integration/test_scan.py::test_scan_contract_errors
+tests/integration/test_scan.py::test_scan_derivatives_match_the_unrolled_graph_and_finite_differences[1]
+tests/integration/test_scan.py::test_scan_derivatives_match_the_unrolled_graph_and_finite_differences[2]
+tests/integration/test_scan.py::test_scan_derivatives_match_the_unrolled_graph_and_finite_differences[7]
+tests/integration/test_scan.py::test_scan_matches_unrolled_calls_and_numpy[0]
+tests/integration/test_scan.py::test_scan_matches_unrolled_calls_and_numpy[1]
+tests/integration/test_scan.py::test_scan_matches_unrolled_calls_and_numpy[2]
+tests/integration/test_scan.py::test_scan_matches_unrolled_calls_and_numpy[3]
+tests/integration/test_scan.py::test_scan_matches_unrolled_calls_and_numpy[50]
+tests/integration/test_scan.py::test_slicing_broadcast_strided_and_backwards
 tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[banded_kkt]
 tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[one_full_row]
 tests/integration/test_sparse_primitives.py::test_spmv_and_transpose_match_scipy_over_many_value_draws[permutation]
@@ -495,6 +510,7 @@ tests/ir/test_verifier.py::test_matmul_named_call_verifies
 tests/ir/test_verifier.py::test_negative_shape_caught
 tests/ir/test_verifier.py::test_reduction_extremum_rules
 tests/ir/test_verifier.py::test_reshape_size_mismatch_caught
+tests/ir/test_verifier.py::test_scan_rule
 tests/ir/test_verifier.py::test_segment_extremum_rule
 tests/ir/test_verifier.py::test_simple_scalar_graph_verifies
 tests/ir/test_verifier.py::test_spec_expr_check_returns_none_on_valid
@@ -862,6 +878,7 @@ tests/solvers/test_registry.py::test_render_solver_raw_dispatches_to_plugin_and_
 tests/solvers/test_registry.py::test_solver_backends_used_and_includes
 tests/solvers/test_registry.py::test_stats_abi_v3_layout_is_additive
 tests/test_c_snapshot.py::test_baseline_holds_exactly_the_corpus
+tests/test_c_snapshot.py::test_generated_c_matches_snapshot[control]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[forward]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[jac]
 tests/test_c_snapshot.py::test_generated_c_matches_snapshot[spjac]

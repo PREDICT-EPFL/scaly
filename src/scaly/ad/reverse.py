@@ -8,7 +8,7 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 
 from ..function import Function
-from ..function.sugar import vmap
+from ..function.sugar import _scan_node, vmap
 from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, as_expr, cast, concat, copysign, gather, scatter, stack, topo, where, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from .forward import extremum_weight, reduce_weights, segment_weights, sign
@@ -97,6 +97,72 @@ def _vmap_vjp(vmap_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[t
   return ret
 
 
+_SCAN_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], Any]] = weakref.WeakKeyDictionary()
+
+
+def _scan_adj_function(callee: Any, output: int, active: tuple[int, ...]) -> Any:
+  """One backward step of a scan: from the cotangent ``lam`` of the carry leaving step ``k``, the
+  carry entering it and step ``k``'s slices (and the cotangent of step ``k``'s stacked output or of
+  its entering carry, by ``output``), return the cotangent of the entering carry and of each
+  ``active`` slice."""
+  key = (output, active)
+  cache = _SCAN_ADJ_CACHE.setdefault(callee, {})
+  if key not in cache:
+    carry, xs = callee.inputs[0], callee.inputs[1:]
+    lam = Expr.sym(f"lam:{callee.input_names[0]}", carry.shape)
+    outs, cots, extra = [callee.outputs[0]], [lam], []
+    if output > 0:
+      bar = Expr.sym(f"lam:{callee.output_names[output]}", callee.outputs[output].shape)
+      outs.append(callee.outputs[output])
+      cots.append(bar)
+      extra.append(bar)
+    grads = vjp(tuple(outs), (carry, *(xs[i] for i in active)), tuple(cots))
+    lam_in = grads[0]
+    if output == -1:
+      bar = Expr.sym(f"lam:{callee.input_names[0]}:t", carry.shape)
+      lam_in = lam_in + bar
+      extra.append(bar)
+    inputs = [lam, carry, *xs, *extra]
+    names = [str(e.name) for e in (lam,)] + list(callee.input_names) + [str(e.name) for e in extra]
+    body = [callee._inherit_lowering(simplify_cse_fixpoint(g)) for g in (lam_in, *grads[1:])]
+    suffix = f"{'t' if output < 0 else output}_" + ("_".join(str(i) for i in active) or "c")
+    cache[key] = Function._from_exprs(
+      f"{callee.name}_scanadj{suffix}", inputs, body, names, ["adj:carry", *(f"adj:{callee.input_names[i + 1]}" for i in active)]
+    )
+  return cache[key]
+
+
+def _scan_vjp(expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
+  """A scan's adjoint is a scan over the reversed steps, reading the stored carries backwards; the
+  slices' cotangents come back stacked and accumulate into their outer tensors by ``scatter``."""
+  callee, length, output = expr.attrs["callee"], int(expr.attrs["length"]), int(expr.attrs["output"])
+  init, outers = expr.args[0], expr.args[1:]
+  starts, strides = expr.attrs["starts"], expr.attrs["strides"]
+  if length == 0:
+    return [(init, cot)] if output == 0 else []
+  cs = init.size
+  active = tuple(i for i, outer in enumerate(outers) if any(_depends_on(outer, wrt, dep_memo) for wrt in wrts))
+  fn = _scan_adj_function(callee, output, active)
+  carries = _scan_node(callee, init, tuple(outers), starts, strides, length, -1)
+  rev_outers = [carries, *outers]
+  rev_starts = [(length - 1) * cs, *(s + (length - 1) * st for s, st in zip(starts, strides, strict=True))]
+  rev_strides = [-cs, *(-st for st in strides)]
+  if output != 0:
+    size = cs if output == -1 else callee.outputs[output].size
+    rev_outers.append(cot)
+    rev_starts.append((length - 1) * size)
+    rev_strides.append(-size)
+  lam0 = cot if output == 0 else zeros_like(init)
+  rev = [_scan_node(fn, lam0, tuple(rev_outers), tuple(rev_starts), tuple(rev_strides), length, k) for k in range(1 + len(active))]
+  ret = [(init, rev[0])]
+  for stacked, i in zip(rev[1:], active, strict=True):
+    size = callee.inputs[i + 1].size
+    steps = length - 1 - np.arange(length)
+    dest = (starts[i] + steps[:, None] * strides[i] + np.arange(size)[None, :]).reshape(-1)
+    ret.append((outers[i], scatter(stacked, dest, outers[i].shape)))
+  return ret
+
+
 def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr]) -> tuple[Expr, ...]:
   """Reverse-mode derivative: one adjoint per entry of ``wrts``, seeded by ``cotangents``.
 
@@ -122,8 +188,9 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
     cot = adjoints.get(expr.id)
     if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST} or expr.op in PREDICATE_OPS or not needed(expr):
       continue
-    if expr.op == ExprOp.VMAP:
-      for arg, arg_cot in _vmap_vjp(expr, cot, wrts, dep_memo):
+    if expr.op in (ExprOp.VMAP, ExprOp.SCAN):
+      pairs = _vmap_vjp(expr, cot, wrts, dep_memo) if expr.op == ExprOp.VMAP else _scan_vjp(expr, cot, wrts, dep_memo)
+      for arg, arg_cot in pairs:
         if arg.id in expr_ids:
           adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
       continue

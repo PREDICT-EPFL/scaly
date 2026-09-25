@@ -79,6 +79,7 @@ class ExprOp(StrEnum):
   MATMUL = "matmul"
   CALL = "call"
   VMAP = "vmap"
+  SCAN = "scan"
   SOLVER_CALL = "solver_call"
 
 
@@ -140,8 +141,12 @@ COMMON_STRUCTURAL = {
   ExprOp.MATMUL,
   ExprOp.CALL,
   ExprOp.VMAP,
+  ExprOp.SCAN,
   ExprOp.SOLVER_CALL,
 }
+
+# Ops whose ``callee`` attr names a ``Function`` the graph runs; ``callees_of`` lists them per node.
+CALLEE_OPS = {ExprOp.CALL, ExprOp.VMAP, ExprOp.SCAN}
 
 # Deliberately not in the MVP set: expm1/log1p (nice but low priority), splines/interpolants
 # (important but require carefully specified extrapolation, knots, derivatives, and codegen tables),
@@ -216,6 +221,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, np.matmul),
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, None),
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, None),
+  ExprOp.SCAN: OpInfo(ExprOp.SCAN, None, None),
   ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, None, differentiable=False),
 }
 
@@ -603,6 +609,11 @@ def _attrs_key(attrs: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
     return v
 
   return tuple((k, key(v)) for k, v in sorted(attrs.items()))
+
+
+def callees_of(node: Expr) -> tuple[Any, ...]:
+  """The Functions ``node`` runs: its callee for a call, a map or a loop, and none otherwise."""
+  return (node.attrs["callee"],) if node.op in CALLEE_OPS else ()
 
 
 def as_expr(x: Any) -> Expr:
@@ -1041,6 +1052,11 @@ def format_expr(outputs: Expr | Iterable[Expr]) -> str:
       slice_size = e.attrs["slice_size"]
       bindings = ", ".join(f"%{loc[a.id]}[{s}::{st}]" for a, s, st in zip(e.args, e.attrs["starts"], e.attrs["strides"], strict=True))
       rhs = f"vmap[{length}x{slice_size}] {callee.name}[{e.attrs['output']}]({bindings})"
+    elif e.op == ExprOp.SCAN:
+      callee = e.attrs["callee"]
+      starts, strides = e.attrs["starts"], e.attrs["strides"]
+      bindings = ", ".join([f"%{loc[e.args[0].id]}", *(f"%{loc[a.id]}[{s}::{st}]" for a, s, st in zip(e.args[1:], starts, strides, strict=True))])
+      rhs = f"scan[{e.attrs['length']}] {callee.name}[{e.attrs['output']}]({bindings})"
     else:
       rhs = f"{ExprOp(e.op).value}({', '.join(f'%{loc[a.id]}' for a in e.args)})"
     lines.append(f"{lhs} = {rhs} : {e.type.dtype}{e.shape}")

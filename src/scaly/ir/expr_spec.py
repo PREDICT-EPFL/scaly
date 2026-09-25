@@ -241,6 +241,23 @@ def _vmap_attrs(expr: Expr) -> str | None:
   return None
 
 
+def _scan_attrs(expr: Expr) -> str | None:
+  callee = expr.attrs.get("callee")
+  if callee is None or any(k not in expr.attrs for k in ("output", "length", "starts", "strides")):
+    return "SCAN needs 'callee', 'output', 'length', 'starts' and 'strides' attrs"
+  carry, length, output = callee.inputs[0], int(expr.attrs["length"]), int(expr.attrs["output"])
+  if len(expr.args) != len(callee.inputs) or len(expr.attrs["starts"]) != len(callee.inputs) - 1:
+    return f"SCAN over {callee.name!r} needs the init and {len(callee.inputs) - 1} sliced inputs"
+  if expr.args[0].shape != carry.shape or callee.outputs[0].shape != carry.shape:
+    return f"SCAN carry shape must be preserved: init {expr.args[0].shape}, carry {carry.shape}, next {callee.outputs[0].shape}"
+  if not -1 <= output < len(callee.outputs):
+    return f"SCAN output {output} out of range for {callee.name!r}"
+  expected = carry.shape if output == 0 else (length * (carry.size if output == -1 else callee.outputs[output].size),)
+  if expr.shape != expected:
+    return f"SCAN output {output} shape {expr.shape} != {expected}"
+  return None
+
+
 def _scatter_indices(expr: Expr) -> str | None:
   if "indices" not in expr.attrs:
     return "SCATTER missing 'indices' attr"
@@ -384,6 +401,7 @@ spec_expr = Spec(
     Rule(ExprOp.MATMUL, "matmul-shape", _matmul_shape),
     Rule(ExprOp.CALL, "call-attrs", _call_attrs),
     Rule(ExprOp.VMAP, "vmap-attrs", _vmap_attrs),
+    Rule(ExprOp.SCAN, "scan-attrs", _scan_attrs),
     Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
     Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
     *(Rule(op, "segment-extremum", _segment_extremum) for op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)),

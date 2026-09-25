@@ -12,7 +12,7 @@ from ..ad.sparse import SparseJacobian, sparse_hessian, sparse_jacobian
 from ..ad.sparsity import _jac_mask
 from ..function import Function
 from ..function.tree import G, L, Tree
-from ..ir.expr import Expr, ExprOp, concat, substitute, topo
+from ..ir.expr import Expr, ExprOp, callees_of, concat, substitute, topo
 from ..ir.types import SparsityType, TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from .model import SolverDescriptor, descriptor_function
@@ -58,8 +58,7 @@ def _reaches_solver_call(exprs: Sequence[Expr]) -> bool:
     for node in topo(targets):
       if node.op == ExprOp.SOLVER_CALL:
         return True
-      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
-        callee = node.attrs["callee"]
+      for callee in callees_of(node):
         if id(callee) not in seen:
           seen.add(id(callee))
           if visit(callee.outputs):

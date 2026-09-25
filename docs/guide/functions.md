@@ -140,6 +140,30 @@ Each input specification is `(outer, start, stride)`. Iteration `i` reads a slic
 [Sparsity](sparsity.md) for how mapped structure reduces derivative construction and generated
 source size.
 
+## Sequential repetition: `scan`
+
+Use `sc.scan` when each step needs the result of the previous one: a rollout, a filter, a
+recursion. The body's first input is the carry and its first output is the next carry, with the
+same shape; its other inputs are sliced from outer tensors exactly as `vmap` slices them, and its
+other outputs are stacked one slice per step.
+
+```python
+@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1)), sc.G(sc.L("znext", ...), sc.L("cost", ...)))
+def step(inputs):
+    z, u = inputs
+    znext = sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * u[0]])
+    return znext, sc.stack([sc.sumsqr(z)])
+
+z0, us = sc.sym("z0", 2), sc.sym("us", 50)
+z_final, costs = sc.scan(step, z0, [(us, 0, 1)], length=50)
+```
+
+The step count is fixed when the graph is built. The scan lowers to one loop in C whose size does
+not depend on the count, and the carry alternates between two slots, so no step copies it. A
+derivative of a scan is a scan: forward mode carries the tangent alongside the carry, and reverse
+mode runs the steps backwards over the carries the forward pass stored, which costs
+`(length + 1) * carry.size` values of workspace.
+
 ## Inspect and verify
 
 ```python

@@ -1,12 +1,12 @@
 """Expression builders that need a ``Function``.
 
 ``ir/expr.py`` owns the expression vocabulary and every builder that only needs a node; a builder
-that has to look inside a callee belongs to the frontend instead. Today that is ``vmap``.
+that has to look inside a callee belongs to the frontend instead: ``vmap`` and ``scan``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..ir.expr import Expr, ExprOp, as_expr, common_lowering
@@ -87,4 +87,69 @@ def vmap(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
       "slice_size": int(out_expr.size),
     },
     lowering=common_lowering(*outers) if outers else "auto",
+  )
+
+
+def scan(body: Any, init: Any, xs: Sequence[tuple[Any, int, int]] = (), *, length: int) -> tuple[Expr, ...]:
+  """Run ``body`` ``length`` times in sequence, threading a carry: a loop in the generated C, not an unrolling.
+
+  ``body`` is a ``Function`` whose first input is the carry and whose first output is the next
+  carry, with the same shape and dtype. Its other inputs are sliced from ``xs`` exactly as ``vmap``
+  slices: step ``k`` reads ``outer[start + k*stride : start + k*stride + formal.size]``, and a
+  ``stride`` of zero passes the same slice at every step. Its other outputs are stacked flat, one
+  slice per step. Returns ``(final_carry, *ys)``; ``final_carry`` is ``init`` when ``length`` is zero.
+
+  The number of steps is fixed when the graph is built, which is what makes the code size and the
+  derivative's workspace (reverse mode stores the carry at every step) known ahead of time.
+  """
+  if not isinstance(body, Function):
+    raise TypeError(f"scan body must be an scaly Function, got {type(body).__name__}")
+  if not body.inputs or not body.outputs:
+    raise ValueError("scan body needs the carry as its first input and the next carry as its first output")
+  init = as_expr(init)
+  carry, nxt = body.inputs[0], body.outputs[0]
+  if nxt.shape != carry.shape or nxt.type.dtype != carry.type.dtype:
+    raise ValueError(f"scan body must return a carry like its input: {carry.type.dtype}{carry.shape} -> {nxt.type.dtype}{nxt.shape}")
+  if init.shape != carry.shape or init.type.dtype != carry.type.dtype:
+    raise ValueError(f"scan init {init.type.dtype}{init.shape} does not match the carry {carry.type.dtype}{carry.shape}")
+  specs = tuple(xs)
+  if len(specs) != len(body.inputs) - 1:
+    raise ValueError(f"scan body takes {len(body.inputs) - 1} sliced inputs after the carry, got {len(specs)}")
+  length = int(length)
+  if length < 0:
+    raise ValueError(f"scan length must be non-negative, got {length}")
+  outers = tuple(as_expr(outer) for outer, _, _ in specs)
+  starts = tuple(int(start) for _, start, _ in specs)
+  strides = tuple(int(stride) for _, _, stride in specs)
+  return tuple(_scan_node(body, init, outers, starts, strides, length, k) for k in range(len(body.outputs)))
+
+
+def _scan_node(
+  body: Function, init: Expr, outers: tuple[Expr, ...], starts: tuple[int, ...], strides: tuple[int, ...], length: int, output: int
+) -> Expr:
+  """One output of a scan: the final carry (0), a stacked output (1..), or with ``output=-1`` the carry
+  entering every step, stacked, which reverse mode reads backwards. A negative stride walks backwards."""
+  for i, (outer, start, stride) in enumerate(zip(outers, starts, strides, strict=True)):
+    formal = body.inputs[i + 1]
+    if len(outer.shape) != 1:
+      raise NotImplementedError(f"scan requires rank-1 outer tensors, got {outer.shape} for input {i + 1}")
+    last = start + (length - 1) * stride
+    if length and (min(start, last) < 0 or max(start, last) + formal.size > outer.size):
+      raise ValueError(f"scan input {i + 1} reads outside its outer tensor of size {outer.size}: start={start}, stride={stride}, length={length}")
+  if output == 0:
+    shape: tuple[int, ...] = body.inputs[0].shape
+    produced = body.outputs[0]
+  elif output == -1:
+    shape, produced = (length * body.inputs[0].size,), body.outputs[0]
+  else:
+    produced = body.outputs[output]
+    shape = (length * produced.size,)
+  diff = produced.type.diff and (init.type.diff or any(o.type.diff for o in outers))
+  args = (init, *outers)
+  return Expr(
+    ExprOp.SCAN,
+    args,
+    TensorType(shape, produced.type.dtype, diff=diff),
+    attrs={"callee": body, "output": int(output), "length": int(length), "starts": starts, "strides": strides},
+    lowering=common_lowering(*args),
   )

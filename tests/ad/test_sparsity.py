@@ -632,3 +632,33 @@ def test_accumulating_scatter_and_segment_extrema_patterns() -> None:
   np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(sc.scatter(x, ids, 2), x)), expected)
   np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(sc.segment_max(x, ids, 2), x)), expected)
   np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(sc.segment_sum(x * x, ids, 3), x)), np.vstack([expected, np.zeros((1, 4), bool)]))
+
+
+def test_scan_patterns_equal_the_unrolled_patterns() -> None:
+  c, u = sc.sym("c", 3), sc.sym("u", 1)
+  # A shift register: the carry moves one slot per step, so a dependence takes steps to arrive.
+  body = sc.Function._from_exprs("shift_step", [c, u], [sc.stack([u[0], c[0] * 2.0, c[1] + c[2]]), c[2:] * u[0]], ["c", "u"], ["n", "y"])
+  c0, us = sc.sym("c0", 3), sc.sym("us", 6)
+  from scaly.function.sugar import _scan_node
+
+  scanned = [*sc.scan(body, c0, [(us, 0, 1)], length=6), _scan_node(body, c0, (us,), (0,), (1,), 6, -1)]
+  z, ys, carries = c0, [], []
+  for k in range(6):
+    carries.append(z)
+    z, y = body._flat_symbolic_call([z, us[k : k + 1]])
+    ys.append(y)
+  unrolled = [z, sc.concat(ys), sc.concat(carries)]
+  for got, want in zip(scanned, unrolled, strict=True):
+    for wrt in (c0, us):
+      np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(got, wrt)), _dense(sc.jacobian_sparsity(want, wrt)))
+  # With no input that moves from step to step the patterns cycle, and the walk reads the answer off
+  # the cycle instead of taking 100 000 steps: a rotation, so step 100 000 looks like step 1.
+  w = sc.sym("w", 1)
+  bcast = sc.Function._from_exprs("bcast_step", [c, w], [sc.stack([c[1], c[2], c[0] + w[0]])], ["c", "w"], ["n"])
+  (final,) = sc.scan(bcast, c0, [(w, 0, 0)], length=100_000)
+  import time
+
+  t0 = time.perf_counter()
+  np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(final, c0)), np.eye(3, k=1, dtype=bool) | np.eye(3, k=-2, dtype=bool))
+  assert sc.jacobian_sparsity(final, w).nnz == 3
+  assert time.perf_counter() - t0 < 1.0

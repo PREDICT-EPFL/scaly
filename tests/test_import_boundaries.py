@@ -73,15 +73,15 @@ def test_public_exports_are_canonical() -> None:
   assert program.ProgramOp is ProgramOp
   assert codegen.render_c_source is aot.render_c_source
   assert callable(sc.vmap)
+  assert callable(sc.scan)
   assert not hasattr(sc, "map_")
-  assert not hasattr(sc, "scan")
   assert all(
     not hasattr(sc, name)
     for name in ("DerivSpec", "expr_jacobian", "expr_gradient", "expr_hessian", "jac", "grad", "hess", "spjac", "sphess", "spjacobian", "sphessian")
   )
   assert {"ExprOp", "Rule", "Spec", "VerifyError"} <= set(sc.__all__)
-  assert "vmap" in sc.__all__
-  assert {"map_", "scan"}.isdisjoint(sc.__all__)
+  assert {"vmap", "scan"} <= set(sc.__all__)
+  assert "map_" not in sc.__all__
   assert {"Ops", "VerifyRule", "spec_semantic", "spec_semantic_shared"}.isdisjoint(sc.__all__)
 
 

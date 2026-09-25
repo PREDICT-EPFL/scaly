@@ -21,6 +21,7 @@ _EXPR_COLORS = {
   ExprOp.CONST: "#e0e0e0",
   ExprOp.CALL: "#00b7c8",
   ExprOp.VMAP: "#f6ccff",
+  ExprOp.SCAN: "#e6b3ff",
   ExprOp.ADD: "#ffffc0",
   ExprOp.SUB: "#ffffc0",
   ExprOp.MUL: "#ffffc0",

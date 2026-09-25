@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from .expr import Expr, ExprOp, topo
+from .expr import CALLEE_OPS, Expr, ExprOp, callees_of, topo
 from .program import BINARY_FN_OPS, PREDICATE_OPS, SCALAR_OPS, UNARY_FN_OPS, ProgramNode, ProgramOp
 from .types import TensorType
 
@@ -96,10 +96,8 @@ def _expr_callees(fun: Function) -> list[Function]:
       return
     seen.add(id(fn))
     for node in topo(fn.outputs):
-      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
-        callee = node.attrs.get("callee")
-        if callee is not None:
-          visit(callee)
+      for callee in callees_of(node):
+        visit(callee)
     ordered.append(fn)
 
   visit(fun)
@@ -139,9 +137,8 @@ def _render_expr_region(outputs: Iterable[Expr], *, name: str | None = None) -> 
       attrs = {**attrs, "name": e.name, "lowering": e.lowering}
     elif op == ExprOp.CONST:
       attrs = {**attrs, "value": e.value, "lowering": e.lowering}
-    elif op in {ExprOp.CALL, ExprOp.VMAP}:
-      callee = attrs.get("callee")
-      attrs = {**attrs, "callee": getattr(callee, "name", callee)}
+    elif op in CALLEE_OPS:
+      attrs = {**attrs, **{k: getattr(attrs[k], "name", attrs[k]) for k in ("callee", "cond") if k in attrs}}
     text_args = f"({args})" if args else ""
     lines.append(f"{pad}%{i} = expr.{op.value}{text_args}{_attrs_asm(attrs)} : {type_asm(e.type)}")
   lines.append(f"{pad}expr.return " + ", ".join(f"%{loc[e.id]}" for e in outs))

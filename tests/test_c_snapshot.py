@@ -77,6 +77,18 @@ def _workspace() -> sc.Function:
   return sc.Function._from_exprs("workspace", [x], [value.sum(), (value * value).sum()], ["x"], ["sum", "sumsqr"])
 
 
+def _control() -> sc.Function:
+  """A scan whose step makes a data-dependent choice, takes a max and accumulates a repeated scatter."""
+  c, u = sc.sym("c", 3), sc.sym("u", 2)
+  clipped = sc.where(c > 1.0, 1.0, c) + sc.scatter(u, np.array([0, 2]), (3,))
+  step = sc.Function._from_exprs(
+    "control_step", [c, u], [clipped + sc.scatter(u * u, np.array([1, 1]), (3,)), sc.stack([clipped.max()])], ["c", "u"], ["n", "m"]
+  )
+  c0, us = sc.sym("c0", 3), sc.sym("us", 2 * N_STAGES)
+  final, peaks = sc.scan(step, c0, [(us, 0, 2)], length=N_STAGES)
+  return sc.Function._from_exprs("control", [c0, us], [final, peaks], ["c0", "us"], ["final", "peaks"])
+
+
 def _qp_host() -> sc.Function:
   """A host function whose graph reaches a solver through a nested call."""
   mu = sc.sym("mu", 2)
@@ -92,6 +104,7 @@ CORPUS = {
   "spjac": lambda: sc.sparse_jacobian(_shooting(), "eq", "z"),
   "wide": _wide,
   "workspace": _workspace,
+  "control": _control,
 }
 SOLVER_CORPUS = {"solver": _qp_host}
 

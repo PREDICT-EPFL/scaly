@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..ir.expr import ExprOp, topo
+from ..ir.expr import ExprOp, callees_of, topo
 from ..function import Function
 from .paths import backend_compile_flags
 from .model import ExternalOracle
@@ -56,9 +56,9 @@ def solver_backends_used(fun: Function) -> tuple[str, ...]:
         visit(callee)
       return
     for node in topo(fn.outputs):
-      if node.op in {ExprOp.CALL, ExprOp.VMAP}:
-        visit(node.attrs["callee"])
-      elif node.op == ExprOp.SOLVER_CALL:
+      for callee in callees_of(node):
+        visit(callee)
+      if node.op == ExprOp.SOLVER_CALL:
         found.add(node.attrs["solver"].backend)
 
   visit(fun)

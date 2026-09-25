@@ -32,7 +32,7 @@ from scaly.codegen.casadi import (
 )
 from scaly.codegen.cpp import render_cpp_header
 from scaly.codegen.solver import render_solver_raw, solver_includes, solver_stats_symbols
-from scaly.ir.expr import ExprOp, topo
+from scaly.ir.expr import callees_of, topo
 from scaly.function import Function
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program import ProgramObserver
@@ -492,12 +492,10 @@ def _callees(fun: Function) -> list[Function]:
         ret.append(callee)
     return ret
   for node in topo(fun.outputs):
-    if node.op not in {ExprOp.CALL, ExprOp.VMAP}:
-      continue
-    callee = node.attrs["callee"]
-    if id(callee) not in seen:
-      seen.add(id(callee))
-      ret.append(callee)
+    for callee in callees_of(node):
+      if id(callee) not in seen:
+        seen.add(id(callee))
+        ret.append(callee)
   return ret
 
 
