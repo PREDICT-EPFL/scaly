@@ -171,6 +171,8 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return save((reduce_weights(expr) * d[0]).sum())
   if expr.op in {ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN}:
     return save(segment_sum(segment_weights(expr) * d[0], expr.attrs["indices"], expr.size))
+  if expr.op in {ExprOp.INDEX_ADD, ExprOp.INDEX_SET}:
+    return save(Expr(expr.op, (d[0], d[1]), expr.type, attrs=dict(expr.attrs), lowering=expr.lowering))
   if expr.op == ExprOp.SELECT:
     return save(where(args[0], d[1], d[2]))
   if expr.op == ExprOp.COPYSIGN:

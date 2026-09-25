@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterable
 import numpy as np
 
 from ..ir import program as p
-from ..ir.expr import Expr, ExprOp, topo
+from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, topo
 from ..function import Function
 from .program import ProgramObserver, optimize_program
 from ..ir.program import ProgramNode, ProgramOp, RangeKind
@@ -195,12 +195,13 @@ def _lower_to_proc(
   auto_scalarize: bool = True,
   observe_expr: ExprObserver | None = None,
   entry: bool = False,
+  in_place: tuple[int, ...] | None = None,
 ) -> ProgramNode:
   lowering = fun._effective_lowering()
   fun = _normalize_function(fun)
   if observe_expr is not None:
     observe_expr("normalized", fun)
-  ctx = LowerCtx(fun, callees, solver_fns, observe_expr, entry=entry)
+  ctx = LowerCtx(fun, callees, solver_fns, observe_expr, entry=entry, in_place=in_place)
   ctx.emit_inputs()
   ctx.register_outputs()
   ctx.emit_body()
@@ -219,9 +220,14 @@ def _lower_to_proc(
       "lowering": lowering,
       # A procedure may expand on its own and inside an expanding caller. Hoisted prologues use
       # "inline" because they only expand with their caller.
+      # An in-place procedure reads its carry output before writing it, which only the caller's
+      # aliasing makes defined; scalar expansion models the two as separate buffers, so it is off.
       "scalarize_mode": "procedure"
-      if all(n.type.dtype in _SCALARIZABLE for n in (*fun.inputs, *nodes)) and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
+      if in_place is None
+      and all(n.type.dtype in _SCALARIZABLE for n in (*fun.inputs, *nodes))
+      and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
       else "disabled",
+      **({"in_place": True} if in_place is not None else {}),
     },
     proc.dtype,
   )
@@ -248,9 +254,11 @@ class LowerCtx:
     observe_expr: ExprObserver | None = None,
     *,
     entry: bool = False,
+    in_place: tuple[int, ...] | None = None,
   ) -> None:
     self.fun = fun
     self.entry = entry
+    self.in_place = in_place
     self.callees = callees
     self.solver_fns = solver_fns  # name -> solver Function (opaque callees; rendered by codegen/solver)
     self.observe_expr = observe_expr
@@ -748,6 +756,23 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
     raise LoweringError(f"matmul shapes {sa}@{sb} not lowered (batched / higher-rank deferred)")
 
 
+def _ensure_in_place_callee(ctx: LowerCtx, callee: Function) -> str | None:
+  """Lower an in-place variant of a loop body, named apart from the ordinary procedure (which other
+  call sites may use with separate buffers), and return its name; None when the body does not
+  qualify, or in-place updates are switched off."""
+  if not DONATE_CARRIES or callee.device.kind != ctx.fun.device.kind:
+    return None
+  normalized = _normalize_function(callee)
+  chain = in_place_chain(normalized)
+  if chain is None:
+    return None
+  name = f"{callee.name}_inplace"
+  if name not in ctx.callees:
+    renamed = Function._from_exprs(name, normalized.inputs, normalized.outputs, normalized.input_names, normalized.output_names)
+    ctx.callees[name] = _lower_to_proc(renamed, ctx.callees, ctx.solver_fns, observe_expr=ctx.observe_expr, in_place=chain)
+  return name
+
+
 def _ensure_callee(ctx: LowerCtx, callee: Function) -> None:
   if callee.device.kind != ctx.fun.device.kind:
     raise LoweringError(f"mixed-device CALL ({ctx.fun.device} -> {callee.device}) is deferred to a later migration step")
@@ -857,12 +882,18 @@ def _emit_scan(ctx: LowerCtx, node: Expr) -> dict[int, str]:
     bufs[0] = ctx.value_buffers[init.id]
     bufs[-1] = ctx.new_private(dtype, (0,)).attrs["name"]
     return bufs
-  _ensure_callee(ctx, callee)
-  store = ctx.new_private(dtype, ((length + 1 if trajectory else 2) * cs,))
+  in_place = None if trajectory else _ensure_in_place_callee(ctx, callee)
+  if in_place is None:
+    _ensure_callee(ctx, callee)
+  store = ctx.new_private(dtype, ((length + 1 if trajectory else 1 if in_place else 2) * cs,))
   ctx.statements.append(_copy_loop(ctx.buf_of(init), store, (cs,)))
   name = f"k_{store.attrs['name']}"
   k = p.var(name)
-  if trajectory:
+  if in_place is not None:
+    # The body overwrites its carry where it changes it; the one slot is read and written.
+    read = write = p.const_int(0)
+    final = 0
+  elif trajectory:
     read = p.mul(k, p.const_int(cs))
     write = p.mul(p.add(k, p.const_int(1)), p.const_int(cs))
     final = length * cs
@@ -878,7 +909,7 @@ def _emit_scan(ctx: LowerCtx, node: Expr) -> dict[int, str]:
   out_args = [p.view(store, [write])]
   out_args += [p.view(ys[j], [p.mul(k, p.const_int(out.size)) if j in siblings else p.const_int(0)]) for j, out in enumerate(callee.outputs) if j]
   call = ProgramNode(
-    ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": callee.name, "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
+    ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": in_place or callee.name, "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
   )
   ctx.statements.append(p.for_(p.range_(name, 0, length, kind=RangeKind.SERIAL), [call]))
   bufs[0] = ctx.new_alias(dtype, carry.shape, store.attrs["name"], final).attrs["name"]
@@ -910,22 +941,28 @@ def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int,
   carry = body.inputs[0]
   cs, dtype = carry.size, carry.type.dtype
   trajectory = any(n.op == ExprOp.WHILE and n.attrs["output"] == -1 and _while_key(n) == key for n in topo(ctx.fun.outputs))
-  _ensure_callee(ctx, body)
+  in_place = None if trajectory else _ensure_in_place_callee(ctx, body)
+  if in_place is None:
+    _ensure_callee(ctx, body)
   _ensure_callee(ctx, cond)
-  store = ctx.new_private(dtype, ((max_iter + 1 if trajectory else 2) * cs,))
+  store = ctx.new_private(dtype, ((max_iter + 1 if trajectory else 1 if in_place else 2) * cs,))
   flag = ctx.new_private(dtypes.bool_, (1,))
   ctx.statements.append(_copy_loop(ctx.buf_of(init), store, (cs,)))
   name = f"k_{store.attrs['name']}"
   k = p.var(name)
 
   def slot(step: ProgramNode) -> ProgramNode:
+    if in_place is not None:
+      return p.const_int(0)
     return p.mul(step if trajectory else p.mod(step, p.const_int(2)), p.const_int(cs))
 
   read = p.view(store, [slot(k)])
   check = ProgramNode(ProgramOp.CALL, (read, flag), attrs={"callee": cond.name, "n_in": 1, "n_out": 1, "returns": ()})
   leave = p.break_if(ProgramNode(ProgramOp.NOT, (p.load(p.view(flag, [p.const_int(0)])),), dtype=dtypes.bool_))
   step = ProgramNode(
-    ProgramOp.CALL, (read, p.view(store, [slot(p.add(k, p.const_int(1)))])), attrs={"callee": body.name, "n_in": 1, "n_out": 1, "returns": ()}
+    ProgramOp.CALL,
+    (read, p.view(store, [slot(p.add(k, p.const_int(1)))])),
+    attrs={"callee": in_place or body.name, "n_in": 1, "n_out": 1, "returns": ()},
   )
   ctx.statements.append(p.for_(p.range_(name, 0, max_iter, kind=RangeKind.SERIAL), [check, leave, step], exit_var=True))
   count = ctx.new_private(dtypes.float64, ())
@@ -981,6 +1018,99 @@ def _lower_scatter(ctx: LowerCtx, node: Expr) -> None:
     return
   accumulate = p.store(p.view(out, [dst]), p.add(p.load(p.view(out, [dst])), value))
   ctx.statements.append(p.for_(p.range_(iname, 0, len(idx), kind=RangeKind.REDUCE), [accumulate]))
+
+
+@lowers(ExprOp.INDEX_ADD, ExprOp.INDEX_SET)
+def _lower_index_update(ctx: LowerCtx, node: Expr) -> None:
+  """Copy the base, then add (or store) each value at its index. In a procedure that updates its
+  carry in place (``LowerCtx.in_place``) every link of the update chain is the carry output itself,
+  which the caller passes aliased to the carry input, so nothing is copied and only the indexed
+  entries are touched."""
+  base, values = node.args
+  idx = node.attrs["indices"]
+  if ctx.in_place is not None and node.id in ctx.in_place:
+    out = ctx.buffers[ctx.fun.output_names[0]]
+    ctx.value_buffers[node.id] = out.attrs["name"]
+  else:
+    out = ctx.alloc_tmp(node)
+    if ctx.value_buffers[base.id] != out.attrs["name"]:
+      ctx.statements.append(_copy_loop(ctx.buf_of(base), out, node.shape))
+  iname = f"u_{out.attrs['name']}_{ctx._tmp}"
+  ctx._tmp += 1
+  i = p.var(iname)
+  dst = ctx.index_at(idx, i)
+  value = p.load(p.view(ctx.buf_of(values), [i]))
+  if node.op == ExprOp.INDEX_ADD:
+    value = p.add(p.load(p.view(out, [dst])), value)
+  kind = RangeKind.GLOBAL if scatter_is_unique(idx) else RangeKind.REDUCE
+  ctx.statements.append(p.for_(p.range_(iname, 0, idx.size, kind=kind), [p.store(p.view(out, [dst]), value)]))
+
+
+# Tests switch this off to compare every in-place loop with its two-slot version.
+DONATE_CARRIES = True
+
+
+def in_place_chain(fun: Function) -> tuple[int, ...] | None:
+  """The update nodes (by id) through which ``fun`` may overwrite its carry in place, or None.
+
+  ``fun`` takes the carry first and returns the next carry first. The next carry must be a chain
+  of ``index_add``/``index_set`` rooted at the carry input, ``u_0 = carry, u_i = update(u_{i-1})``,
+  and each read of the chain must happen before the write that would change what it reads:
+
+  - the values of update ``i`` read no chain link but ``u_{i-1}``, and none of the entries update
+    ``i`` writes (a read through a comparison or a ``select`` condition counts as reading every
+    entry, since derivative patterns cannot see it);
+  - no other output reads any chain link.
+
+  These are sufficient, not necessary; anything else keeps the two-slot carry.
+  """
+  from ..ad.sparsity import jacobian_sparsity
+
+  carry, node = fun.inputs[0], fun.outputs[0]
+  chain: list[Expr] = []
+  while node is not carry:
+    if node.op not in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET):
+      return None
+    chain.append(node)
+    node = node.args[0]
+  if not chain:
+    return None
+  chain.reverse()
+  links = [carry, *chain]
+  link_ids = {e.id for e in links}
+
+  def reads(expr: Expr) -> set[int]:
+    """The chain links ``expr`` reads directly: a walk that stops at each link, whose own
+    ancestors are read through the link, not by ``expr``."""
+    found: set[int] = set()
+    seen: set[int] = set()
+    pending = [expr]
+    while pending:
+      node = pending.pop()
+      if node.id in seen:
+        continue
+      seen.add(node.id)
+      if node.id in link_ids:
+        found.add(node.id)
+      else:
+        pending.extend(node.args)
+    return found
+
+  if any(reads(y) for y in fun.outputs[1:]):
+    return None
+  for before, update in zip(links[:-1], chain, strict=True):
+    values = update.args[1]
+    touched = reads(values)
+    if touched - {before.id}:
+      return None
+    if touched:
+      opaque = {ExprOp.SELECT, ExprOp.CAST, ExprOp.SOLVER_CALL, ExprOp.WHILE} | PREDICATE_OPS
+      if any(n.op in opaque for n in topo([values])):
+        return None
+      read = set(jacobian_sparsity(values, before).cols)
+      if read & set(update.attrs["indices"].tolist()):
+        return None
+  return tuple(e.id for e in chain)
 
 
 def scatter_is_unique(idx: np.ndarray) -> bool:

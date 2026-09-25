@@ -69,6 +69,8 @@ class ExprOp(StrEnum):
   MIN = "min"
   SEGMENT_MAX = "segment_max"
   SEGMENT_MIN = "segment_min"
+  INDEX_ADD = "index_add"
+  INDEX_SET = "index_set"
   RESHAPE = "reshape"
   TRANSPOSE = "transpose"
   SLICE = "slice"
@@ -132,6 +134,8 @@ COMMON_STRUCTURAL = {
   ExprOp.MIN,
   ExprOp.SEGMENT_MAX,
   ExprOp.SEGMENT_MIN,
+  ExprOp.INDEX_ADD,
+  ExprOp.INDEX_SET,
   ExprOp.RESHAPE,
   ExprOp.TRANSPOSE,
   ExprOp.SLICE,
@@ -214,6 +218,8 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.MIN: OpInfo(ExprOp.MIN, 1, np.min),
   ExprOp.SEGMENT_MAX: OpInfo(ExprOp.SEGMENT_MAX, 1, None),
   ExprOp.SEGMENT_MIN: OpInfo(ExprOp.SEGMENT_MIN, 1, None),
+  ExprOp.INDEX_ADD: OpInfo(ExprOp.INDEX_ADD, 2, None),
+  ExprOp.INDEX_SET: OpInfo(ExprOp.INDEX_SET, 2, None),
   ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, np.reshape),
   ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, np.transpose),
   ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1, None),
@@ -917,6 +923,37 @@ def scatter(values: Any, indices: Any, shape: int | tuple[int, ...]) -> Expr:
     raise ValueError(f"scatter has {idx.size} indices but values shape {values.shape} has {values.size} entries")
   return Expr(
     ExprOp.SCATTER, (values,), TensorType(shape, dtype=values.type.dtype, diff=values.type.diff), attrs={"indices": idx}, lowering=values.lowering
+  )
+
+
+def index_add(base: Any, indices: Any, values: Any) -> Expr:
+  """``base`` with ``values`` added at flat ``indices`` (repeated indices accumulate).
+
+  The same value as ``base + scatter(values, indices, base.shape)``, kept as one update so that a
+  loop whose carry is changed only this way can update the carry in place: see ``sc.scan``.
+  """
+  return _index_update(ExprOp.INDEX_ADD, base, indices, values)
+
+
+def index_set(base: Any, indices: Any, values: Any) -> Expr:
+  """``base`` with the entries at flat ``indices`` replaced by ``values``; the indices must be distinct."""
+  return _index_update(ExprOp.INDEX_SET, base, indices, values)
+
+
+def _index_update(op: ExprOp, base: Any, indices: Any, values: Any) -> Expr:
+  base, values = _operands(base, values)
+  idx = _index_array(np.asarray(indices).reshape(-1), base.size)
+  if idx.size != values.size:
+    raise ValueError(f"{op.value} has {idx.size} indices for {values.size} values")
+  if op == ExprOp.INDEX_SET and np.unique(idx).size != idx.size:
+    raise ValueError("index_set indices must be distinct")
+  promote_dtype(base, values)
+  return Expr(
+    op,
+    (base, values.reshape((values.size,))),
+    TensorType(base.shape, dtype=base.type.dtype, diff=diff_any(base, values)),
+    attrs={"indices": idx},
+    lowering=common_lowering(base, values),
   )
 
 

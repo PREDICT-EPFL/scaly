@@ -13,7 +13,7 @@ import pytest
 import scaly as sc
 from scaly.ad import finite_difference
 from scaly.codegen import render_c_source
-from scaly.ir.program import ProgramOp
+from scaly.ir.program import ProgramNode, ProgramOp
 from scaly.passes.lowering import lower_function
 from scaly.passes.program._common import _walk
 
@@ -305,3 +305,138 @@ def test_while_loop_code_is_constant_in_max_iter_and_copies_once() -> None:
   assert render(10) == render(100_000)
   src = render(10)
   assert src.count("break;") == 1 and src.count("long long k_") == 1
+
+
+def _accumulator(size: int, name: str) -> sc.Function:
+  """A carry of ``size`` entries of which each step changes four: two sums, a running product and
+  a copy of the freshly updated first sum, the last read after the write in the same step."""
+  c, x = sc.sym("c", size), sc.sym("x", 2)
+  u1 = sc.index_add(c, [0, 1], x * c[2:4])
+  u2 = sc.index_set(u1, [size - 1, size - 2], sc.stack([u1[0] * 0.5, u1[1] + u1[2]]))
+  return sc.Function._from_exprs(name, [c, x], [u2], ["c", "x"], ["cn"])
+
+
+def _procs(fun: sc.Function) -> dict[str, ProgramNode]:
+  return {pr.attrs["name"]: pr for pr in lower_function(fun).args}
+
+
+@pytest.mark.parametrize("size", [6, 400])
+def test_in_place_carry_matches_the_two_slot_carry(size: int, monkeypatch: pytest.MonkeyPatch) -> None:
+  import scaly.passes.lowering as lowering
+
+  body = _accumulator(size, f"acc{size}")
+  c0, xs = sc.sym("c0", size), sc.sym("xs", 40)
+  (scanned,) = sc.scan(body, c0, [(xs, 0, 2)], length=20)
+  start = np.linspace(0.5, 1.5, size)
+  data = np.sin(np.arange(40.0))
+  donated = sc.Function._from_exprs(f"acc_ip{size}", [c0, xs], [scanned], ["c0", "xs"], ["c"])
+  assert f"acc{size}_inplace" in _procs(donated)
+  monkeypatch.setattr(lowering, "DONATE_CARRIES", False)
+  two_slot = sc.Function._from_exprs(f"acc_2s{size}", [c0, xs], [scanned], ["c0", "xs"], ["c"])
+  assert f"acc{size}_inplace" not in _procs(two_slot)
+  np.testing.assert_array_equal(donated((start, data)), two_slot((start, data)))
+  c, ref = start.copy(), None
+  for k in range(20):
+    c[0:2] += data[2 * k : 2 * k + 2] * c[2:4]
+    c[size - 1], c[size - 2] = c[0] * 0.5, c[1] + c[2]
+  ref = c
+  np.testing.assert_allclose(donated((start, data)), ref, rtol=1e-13)
+
+
+def test_in_place_body_touches_only_its_indices_and_holds_one_carry() -> None:
+  size = 400
+  body = _accumulator(size, "acc_struct")
+  c0, xs = sc.sym("c0", size), sc.sym("xs", 40)
+  (scanned,) = sc.scan(body, c0, [(xs, 0, 2)], length=20)
+  procs = _procs(sc.Function._from_exprs("acc_struct_host", [c0, xs], [scanned], ["c0", "xs"], ["c"]))
+  inplace = procs["acc_struct_inplace"]
+  assert inplace.attrs.get("in_place") and inplace.attrs["scalarize_mode"] == "disabled"
+  writes = 0
+  for node in _walk(inplace):
+    if node.op == ProgramOp.FOR:
+      start, stop, _ = (a.attrs["value"] for a in node.args[0].args)
+      writes += (stop - start) * sum(1 for s in node.args[1:] if s.op == ProgramOp.STORE and s.args[0].attrs["buffer"] == "cn")
+    elif (
+      node.op == ProgramOp.STORE
+      and node.args[0].attrs["buffer"] == "cn"
+      and not any(node in set(_walk(f)) for f in _walk(inplace) if f.op == ProgramOp.FOR)
+    ):
+      writes += 1
+  assert writes == 4  # per step, whatever the carry size
+  host = procs["acc_struct_host"]
+  sizes = [int(np.prod(n.attrs["shape"])) for n in _walk(host) if n.op == ProgramOp.BUFFER and n.attrs["address_space"] == "private"]
+  assert size in sizes and 2 * size not in sizes
+
+
+def test_bodies_that_read_what_they_overwrite_keep_two_slots() -> None:
+  c, x = sc.sym("c", 4), sc.sym("x", 1)
+  cases = {
+    # another output reads the carry after it may have been overwritten
+    "ip_neg_y": ([sc.index_add(c, [0], x), c[:1]], ["cn", "y"]),
+    # the second update reads the carry before the first update rather than after it
+    "ip_neg_stale": ([sc.index_add(sc.index_add(c, [0], x), [1], c[:1]), None], ["cn"]),
+    # the values read an entry the same update writes
+    "ip_neg_overlap": ([sc.index_add(c, [0, 1], c[1:3] * x[0]), None], ["cn"]),
+    # a read through a comparison cannot be traced entry by entry
+    "ip_neg_select": ([sc.index_set(c, [3], sc.where(c[0] > 0.0, x, -x)), None], ["cn"]),
+    # the carry is recomputed, not updated
+    "ip_neg_dense": ([c * 2.0, None], ["cn"]),
+  }
+  import scaly.passes.lowering as lowering
+
+  for name, (outs, names) in cases.items():
+    fun = sc.Function._from_exprs(name, [c, x], [o for o in outs if o is not None], ["c", "x"], names)
+    assert lowering.in_place_chain(lowering._normalize_function(fun)) is None, name
+    c0, xs = sc.sym("c0", 4), sc.sym("xs", 3)
+    results = sc.scan(fun, c0, [(xs, 0, 1)], length=3)
+    host = sc.Function._from_exprs(f"{name}_host", [c0, xs], list(results), ["c0", "xs"], [f"o{i}" for i in range(len(results))])
+    assert f"{name}_inplace" not in _procs(host)
+    start, data = np.array([1.0, -2.0, 3.0, 0.5]), np.array([0.3, -0.7, 1.1])
+    cv = start.copy()
+    for k in range(3):
+      step = fun._flat_numerical_call(cv, data[k : k + 1])
+      cv = step[0]
+    np.testing.assert_allclose(host._flat_numerical_call(start, data)[0], cv, rtol=1e-13)
+  ok = sc.Function._from_exprs("ip_pos", [c, x], [sc.index_add(sc.index_add(c, [0], x), [1], sc.index_add(c, [0], x)[:1])], ["c", "x"], ["cn"])
+  assert lowering.in_place_chain(lowering._normalize_function(ok)) is not None
+
+
+def test_in_place_while_loop_and_reverse_mode_fall_back() -> None:
+  size = 50
+  c = sc.sym("c", size)
+  body = sc.Function._from_exprs("ipw_step", [c], [sc.index_add(c, [0, 1], sc.stack([1.0 + 0.0 * c[2], c[0] * 0.0 + 2.0]))], ["c"], ["cn"])
+  cond = sc.Function._from_exprs("ipw_go", [c], [c[0] < 7.5], ["c"], ["go"])
+  c0 = sc.sym("c0", size)
+  final, count = sc.while_loop(cond, body, c0, max_iter=100)
+  fun = sc.Function._from_exprs("ipw", [c0], [final, count], ["c0"], ["c", "n"])
+  assert "ipw_step_inplace" in _procs(fun)
+  got, n = fun(np.zeros(size))
+  assert n == 8 and got[0] == 8.0 and got[1] == 16.0 and not got[2:].any()
+  (grad,) = sc.vjp((final.sum(),), (c0,), (sc.const(1.0),))
+  rev = sc.Function._from_exprs("ipw_grad", [c0], [grad], ["c0"], ["g"])
+  assert "ipw_step_inplace" not in _procs(rev)  # reverse mode needs every carry, so two slots are not enough either
+  np.testing.assert_array_equal(rev(np.zeros(size)), np.ones(size))
+
+
+def test_index_updates_differentiate() -> None:
+  c, v = sc.sym("c", 5), sc.sym("v", 3)
+  y = sc.index_set(sc.index_add(c * c, [1, 1, 4], v.sin()), [0, 2], v[:2] * c[3])
+  f = sc.Function._from_exprs("idx_d", [c, v], [y], ["c", "v"], ["y"])
+  cv, vv = np.array([0.3, -1.0, 2.0, 0.7, 1.5]), np.array([0.2, -0.4, 0.9])
+  expected = cv * cv
+  np.add.at(expected, [1, 1, 4], np.sin(vv))
+  expected[[0, 2]] = vv[:2] * cv[3]
+  np.testing.assert_allclose(f((cv, vv)), expected)
+  for wrt, point in (("c", cv), ("v", vv)):
+    jac = sc.jacobian(f, "y", wrt)((cv, vv))
+    fd = finite_difference(lambda p: f((p, vv) if wrt == "c" else (cv, p)), point)
+    np.testing.assert_allclose(jac, fd.reshape(jac.shape), rtol=1e-7, atol=1e-9)
+    pattern = sc.jacobian_sparsity(y, f.inputs[0 if wrt == "c" else 1])
+    assert set(zip(pattern.rows, pattern.cols)) == {tuple(ix) for ix in np.argwhere(np.abs(jac) > 0)}
+  lam = np.arange(1.0, 6.0)
+  gc, gv = sc.vjp((y,), tuple(f.inputs), (sc.const(lam),))
+  g = sc.Function._from_exprs("idx_g", list(f.inputs), [gc, gv], ["c", "v"], ["gc", "gv"])((cv, vv))
+  np.testing.assert_allclose(g[0], lam @ sc.jacobian(f, "y", "c")((cv, vv)), rtol=1e-12, atol=1e-14)
+  np.testing.assert_allclose(g[1], lam @ sc.jacobian(f, "y", "v")((cv, vv)), rtol=1e-12, atol=1e-14)
+  with pytest.raises(ValueError, match="distinct"):
+    sc.index_set(c, [1, 1], v[:2])

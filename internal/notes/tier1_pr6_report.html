@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 1 PR 6 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 1 · PR 6 report</h1>
+<p class="sub">In-place carry updates · branch <code>claude/tier1-primitives</code> · todo C-87 · 26 Sep 2026</p>
+
+<div class="box"><b>Status:</b> <span class="ok">done</span>. The full suite passes: 949 passed, 88 skipped, 0 failed. ruff and ty are clean, and all seven C snapshots are byte-identical.</div>
+
+<h2>New capability</h2>
+<pre>u1 = sc.index_add(c, [0, 1], x * c[2:4])                       # add at fixed indices
+cn = sc.index_set(u1, [n-1, n-2], sc.stack([u1[0]*0.5, u1[1]+u1[2]]))  # store at fixed indices
+(final,) = sc.scan(step, c0, xs, length=N)                     # step's carry is updated in place</pre>
+<ul>
+<li><code>sc.index_add</code> and <code>sc.index_set</code> are new operations. <code>index_add(b, i, v)</code> equals <code>b + scatter(v, i, b.shape)</code>, but it is kept as a single update. Both have forward and reverse derivatives, exact sparsity, constant folding and a verifier rule.</li>
+<li><b>In place:</b> when a <code>scan</code> or <code>while_loop</code> body's next carry is a chain of these updates rooted at the carry, and the rule below holds, the body lowers to an <code>&lt;name&gt;_inplace</code> procedure. The loop calls it with the same pointer for the carry in and the carry out, the carry has <b>one</b> slot, and each step writes only the indexed entries:
+<pre>static inline void acc_inplace_raw(const double* c, const double* x, double* cn, double* w) {
+  for (u = 0; u &lt; 2; ++u) cn[u] = cn[u] + x[u] * c[2 + u];   // index_add: 2 writes
+  cn[n-1] = cn[0] * 0.5;  cn[n-2] = cn[1] + cn[2];            // index_set: 2 writes, reading the fresh values
+}
+for (k = 0; k &lt; N; ++k) acc_inplace_raw(s0, xs + 2*k, s0, NULL);</pre></li>
+<li><b>The rule</b> (<code>in_place_chain</code>, sufficient rather than necessary). Anything else keeps the two-slot carry and gives identical results.
+  <ul>
+  <li>The values of update <em>i</em> read no chain link except the one just before it.</li>
+  <li>Those values read none of the entries update <em>i</em> writes. A read through a comparison, a <code>select</code>, a cast or a nested loop counts as reading every entry, because derivative patterns cannot see it.</li>
+  <li>No other output reads any chain link.</li>
+  </ul></li>
+<li><b>What the in-place body gives up:</b>
+  <ul>
+  <li>It is never scalarized. Scalar expansion models the carry input and output as separate buffers, and only the caller's aliasing makes reading the output before writing it defined. This is the minimum part of C-54 the change needs.</li>
+  <li>The ordinary body procedure is still generated for any other call site that passes separate buffers.</li>
+  <li>Reverse mode stores every carry, so it never uses the in-place body.</li>
+  </ul></li>
+</ul>
+
+<h2>What was changed</h2>
+<div class="scroll"><table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>ir/expr.py</code>, <code>expr_spec.py</code></td><td><code>ExprOp.INDEX_ADD</code> and <code>INDEX_SET</code>, their builders, and the <code>index-update</code> rule.</td></tr>
+<tr><td><code>passes/expr.py</code></td><td>Constant evaluation (<code>np.add.at</code> and indexed store).</td></tr>
+<tr><td><code>ad/forward.py</code>, <code>reverse.py</code>, <code>sparsity.py</code></td><td>Linear rules. The <code>index_set</code> VJP zeroes the overwritten entries of the base cotangent. The patterns keep the base rows that were not overwritten and add the value rows.</td></tr>
+<tr><td><code>passes/lowering.py</code></td><td><code>_lower_index_update</code>: copy the base, then add or store over the index table, with no copy in place. <code>in_place_chain</code>, which is the rule above. <code>_ensure_in_place_callee</code> lowers the renamed in-place variant with <code>in_place=chain</code> (scalarize disabled, attribute <code>in_place</code>). <code>scan</code> and <code>while_loop</code> use one slot and the in-place body when there is no trajectory. <code>DONATE_CARRIES</code> is the test switch.</td></tr>
+<tr><td>docs, todo</td><td>A paragraph in the guide's <code>scan</code> section and an <code>ir.md</code> table row. C-87 marked done.</td></tr>
+</table></div>
+
+<h2>Test results</h2>
+<div class="scroll"><table>
+<tr><th>Test</th><th>What it checks</th><th>Result</th></tr>
+<tr><td><code>test_in_place_carry_matches_the_two_slot_carry</code> (carry 6 and 400)</td><td>20 steps with the in-place body present, compared against the same scan with <code>DONATE_CARRIES</code> off (in-place body absent). Results are bit-identical, and they equal a NumPy loop. The loop includes a read-after-write within the step.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_in_place_body_touches_only_its_indices_and_holds_one_carry</code></td><td>For a carry of 400: the in-place procedure writes exactly 4 carry entries per step, is marked <code>in_place</code> with scalarize disabled, and the host holds one 400-entry slot, not 800.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_bodies_that_read_what_they_overwrite_keep_two_slots</code></td><td>Five negative cases: another output reads the carry; a stale read of the pre-update carry; a read overlapping the write; a read through <code>select</code>; a rebuilt carry. Each is refused and still matches a step-by-step reference. A positive chain that reads the fresh link is accepted.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_in_place_while_loop_and_reverse_mode_fall_back</code></td><td>A <code>while_loop</code> uses the in-place body and gives the correct count and values. Asking for its gradient removes the in-place body and still gives the right gradient.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_index_updates_differentiate</code></td><td>Repeated <code>index_add</code> and overwriting <code>index_set</code> against NumPy. Jacobians against finite differences. The sparsity pattern equals the nonzeros of the Jacobian exactly. Reverse mode equals λᵀJ. Repeated <code>index_set</code> indices are refused.</td><td class="ok">pass</td></tr>
+<tr><td>Full suite</td><td></td><td class="ok">949 passed, 88 skipped</td></tr>
+</table></div>
+<p><b>Mutation checks.</b> Removing each of the three rule clauses in turn made the negative-case test fail (1 failure each). Separately, with the stale-read clause removed, the in-place code really does compute a wrong carry: 1.6 instead of 0.9 in the second entry. So the guard is necessary, not decorative.</p>
+
+<h2>Benchmarks</h2>
+<p>Script: <code>internal/notes/perf_2026_09_25_tier1/pr6_inplace.py</code>. 1000 steps of the 4-entry update above, on the aarch64 VM.</p>
+<div class="scroll"><table>
+<tr><th>carry size</th><th>in place µs/call</th><th>two slots µs/call</th><th>speed-up</th><th>first call ms (in place / two slots)</th></tr>
+<tr><td class="r">16</td><td class="r">10.9</td><td class="r">14.3</td><td class="r">1.3×</td><td class="r">28 / 26</td></tr>
+<tr><td class="r">1 000</td><td class="r">11.5</td><td class="r">99.2</td><td class="r">8.6×</td><td class="r">25 / 274</td></tr>
+<tr><td class="r">100 000</td><td class="r">151</td><td class="r">53 617</td><td class="r"><b>354×</b></td><td class="r">24 / 78</td></tr>
+</table></div>
+<ul>
+<li>With the two-slot carry, every step rewrites the whole carry. In place, the per-step cost does not depend on the carry size; the remaining time at 100 000 entries is copying the carry in and out once per call.</li>
+<li>Build time is lower too, because the in-place body does not scalarize a carry-sized copy.</li>
+</ul>
+
+<h2>Deviations and notes</h2>
+<ul>
+<li>The plan described <code>index_add</code> and <code>index_set</code> as builders recognised at lowering. They are real operations instead. That keeps the chain visible through simplification, gives them an O(|idx|) lowering outside loops as well, and makes their derivatives exact.</li>
+<li>The rule is deliberately conservative. Tier 2's left-looking LDLᵀ reads earlier columns and writes the current one, which satisfies it. Anything the rule rejects still works, just with two slots.</li>
+</ul>
+</main></body></html>

@@ -9,7 +9,7 @@ import numpy as np
 
 from ..function import Function
 from ..function.sugar import _scan_node, _while_node, vmap
-from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, as_expr, cast, concat, copysign, gather, scatter, stack, topo, where, zeros_like
+from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, as_expr, cast, concat, copysign, gather, index_set, scatter, stack, topo, where, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from .forward import extremum_weight, reduce_weights, segment_weights, sign
 from .sparsity import _depends_on
@@ -331,6 +331,10 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return (cot * reduce_weights(expr),)
   if expr.op in {ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN}:
     return (gather(cot, expr.attrs["indices"]) * segment_weights(expr),)
+  if expr.op == ExprOp.INDEX_ADD:
+    return (cot, gather(cot, expr.attrs["indices"]))
+  if expr.op == ExprOp.INDEX_SET:
+    return (index_set(cot, expr.attrs["indices"], np.zeros(args[1].size)), gather(cot, expr.attrs["indices"]))
   if expr.op == ExprOp.SELECT:
     cond, a, b = args
     zero = as_expr(0.0)

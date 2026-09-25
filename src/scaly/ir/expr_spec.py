@@ -370,6 +370,20 @@ def _cast_types(expr: Expr) -> str | None:
   return None
 
 
+def _index_update(expr: Expr) -> str | None:
+  base, values = expr.args
+  idx = expr.attrs.get("indices")
+  if idx is None or idx.size != values.size or len(values.shape) != 1:
+    return f"{expr.op} needs one rank-1 value per index"
+  if idx.size and (idx.min() < 0 or idx.max() >= base.size):
+    return f"{expr.op} indices must lie in [0, {base.size})"
+  if expr.op == ExprOp.INDEX_SET and np.unique(idx).size != idx.size:
+    return "INDEX_SET indices must be distinct"
+  if expr.shape != base.shape or expr.type.dtype != base.type.dtype or values.type.dtype != base.type.dtype:
+    return f"{expr.op} keeps the base's shape and dtype"
+  return None
+
+
 def _segment_extremum(expr: Expr) -> str | None:
   idx = expr.attrs.get("indices")
   if idx is None or "fill" not in expr.attrs:
@@ -421,6 +435,7 @@ spec_expr = Spec(
     Rule(ExprOp.WHILE, "while-attrs", _while_attrs),
     Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
     Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
+    *(Rule(op, "index-update", _index_update) for op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET)),
     *(Rule(op, "segment-extremum", _segment_extremum) for op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)),
     Rule(ExprOp.STACK, "stack-shapes", _stack_shapes),
     Rule(ExprOp.CONCAT, "concat-shapes", _concat_shapes),
