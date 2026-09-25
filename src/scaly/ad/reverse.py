@@ -11,7 +11,7 @@ from ..function import Function
 from ..function.sugar import _scan_node, _while_node, vmap
 from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, as_expr, cast, concat, copysign, gather, index_set, scatter, stack, topo, where, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
-from .forward import custom_vjp_call as _custom_vjp, extremum_weight, reduce_weights, segment_weights, sign
+from .forward import custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
 from .sparsity import _depends_on
 
 
@@ -40,10 +40,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     out = callee.outputs[output_index]
     lam_name = f"lam:{callee.output_names[output_index]}"
     lam = Expr.sym(lam_name, out.shape)
-    if callee.custom_vjp is not None:
-      grads = tuple(_custom_vjp(callee, callee.inputs, output_index, lam)[i] for i in active_formals)
-    else:
-      grads = vjp((out,), tuple(callee.inputs[i] for i in active_formals), (lam,))
+    grads = body_cotangents(callee, {output_index: lam}, active_formals)
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads])))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
@@ -113,13 +110,12 @@ def _scan_adj_function(callee: Any, output: int, active: tuple[int, ...]) -> Any
   if key not in cache:
     carry, xs = callee.inputs[0], callee.inputs[1:]
     lam = Expr.sym(f"lam:{callee.input_names[0]}", carry.shape)
-    outs, cots, extra = [callee.outputs[0]], [lam], []
+    cots, extra = {0: lam}, []
     if output > 0:
       bar = Expr.sym(f"lam:{callee.output_names[output]}", callee.outputs[output].shape)
-      outs.append(callee.outputs[output])
-      cots.append(bar)
+      cots[output] = bar
       extra.append(bar)
-    grads = vjp(tuple(outs), (carry, *(xs[i] for i in active)), tuple(cots))
+    grads = body_cotangents(callee, cots, (0, *(i + 1 for i in active)))
     lam_in = grads[0]
     if output == -1:
       bar = Expr.sym(f"lam:{callee.input_names[0]}:t", carry.shape)
@@ -177,7 +173,7 @@ def _while_adj_function(body: Any) -> Any:
     carry = body.inputs[0]
     lam = Expr.sym(f"lam:{body.input_names[0]}", carry.shape)
     step, count = Expr.sym("step", (1,)), Expr.sym("count", (1,), diff=False)
-    (back,) = vjp((body.outputs[0],), (carry,), (lam,))
+    (back,) = body_cotangents(body, {0: lam}, (0,))
     out = where(step[0] < count[0], back, lam)
     _WHILE_ADJ_CACHE[body] = Function._from_exprs(
       f"{body.name}_whileadj",
@@ -208,6 +204,17 @@ def _while_vjp(expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple
   specs = ((carries, steps, count), ((max_iter - 1) * cs, max_iter - 1, 0), (-cs, -1, 0))
   (lam0,) = (_scan_node(_while_adj_function(body), cot, specs[0], specs[1], specs[2], max_iter, 0),)
   return [(init, lam0)]
+
+
+def body_cotangents(fn: Any, cots: dict[int, Expr], wrt: tuple[int, ...]) -> tuple[Expr, ...]:
+  """The cotangents of ``fn``'s inputs ``wrt`` (by index) given cotangents of some outputs (by index),
+  in terms of its inputs: from its reverse rule when it has one, else by differentiating its body.
+  The counterpart of ``forward.body_tangents``, used wherever reverse mode looks inside a Function."""
+  if fn.custom_vjp is not None:
+    grads = custom_vjp_call(fn, fn.inputs, cots)
+    return tuple(grads[i] for i in wrt)
+  outs = tuple(fn.outputs[j] for j in cots)
+  return vjp(outs, tuple(fn.inputs[i] for i in wrt), tuple(cots.values()))
 
 
 def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr]) -> tuple[Expr, ...]:
@@ -373,7 +380,7 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   if expr.op == ExprOp.MATMUL:
     return _matmul_vjp(args[0], args[1], cot)
   if expr.op == ExprOp.CALL and expr.attrs["callee"].custom_vjp is not None:
-    return _custom_vjp(expr.attrs["callee"], args, expr.attrs["output"], cot)
+    return custom_vjp_call(expr.attrs["callee"], args, {expr.attrs["output"]: cot})
   if expr.op == ExprOp.CALL:
     callee = expr.attrs["callee"]
     output_idx = expr.attrs["output"]

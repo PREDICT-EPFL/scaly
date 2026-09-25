@@ -381,6 +381,10 @@ def test_bodies_that_read_what_they_overwrite_keep_two_slots() -> None:
     "ip_neg_select": ([sc.index_set(c, [3], sc.where(c[0] > 0.0, x, -x)), None], ["cn"]),
     # the carry is recomputed, not updated
     "ip_neg_dense": ([c * 2.0, None], ["cn"]),
+    # a later update reads entries it writes (a swap): the read set is taken against the link itself
+    "ip_neg_swap": ([sc.index_set(sc.index_add(c, [0], x), [2, 1], sc.index_add(c, [0], x)[1:3]), None], ["cn"]),
+    # copysign's sign operand is read although its derivative pattern omits it
+    "ip_neg_copysign": ([sc.index_set(c, [0, 1], sc.copysign(sc.concat([x, x]), c[1::-1])), None], ["cn"]),
   }
   import scaly.passes.lowering as lowering
 
@@ -517,3 +521,40 @@ def test_a_missing_direction_differentiates_the_body() -> None:
     sc.custom_derivative(solver, vjp=sc.Function._from_exprs("cd_bad", [sc.sym("a", 3)], [sc.sym("a", 3)], ["a"], ["b"]))
   with pytest.raises(TypeError, match="scaly Function"):
     sc.custom_derivative(solver, jvp=lambda p: p)
+
+
+def test_custom_derivative_copies_keep_their_own_derivatives() -> None:
+  """A Function and its custom-derivative copy in one graph each keep their own derivative, in a
+  call, under ``vmap`` in either order, and as a ``scan`` body."""
+  x, t, bar = sc.sym("x", 1), sc.sym("t", 1), sc.sym("bar", 1)
+  plain = sc.Function._from_exprs("cdn_sq", [x], [x * x], ["x"], ["y"])
+  jvp = sc.Function._from_exprs("cdn_jvp", [x, t], [20.0 * x * t], ["x", "t"], ["dy"])
+  vjp = sc.Function._from_exprs("cdn_vjp", [x, sc.sym("y", 1), bar], [20.0 * x * bar], ["x", "y", "bar"], ["xbar"])
+  custom = sc.custom_derivative(plain, jvp=jvp, vjp=vjp)
+  assert custom.name != plain.name
+  q = sc.sym("q", 1)
+  for first, second in ((plain, custom), (custom, plain)):
+    host = sc.Function._from_exprs(f"cdn_host_{first.name}", [q], [first(q) + second(q)], ["q"], ["y"])
+    assert sc.jacobian(host, "y", "q")(np.array([3.0]))[0, 0] == 66.0  # 2x + 20x at x = 3
+    assert (
+      sc.gradient(sc.Function._from_exprs(f"cdn_s_{first.name}", [q], [(first(q) + second(q)).sum()], ["q"], ["s"]), "s", "q")(np.array([3.0]))[0]
+      == 66.0
+    )
+  qs = sc.sym("qs", 2)
+  mapped = sc.vmap(plain, 2, [(qs, 0, 1)]) + sc.vmap(custom, 2, [(qs, 0, 1)])
+  host = sc.Function._from_exprs("cdn_vmap", [qs], [mapped], ["qs"], ["y"])
+  np.testing.assert_array_equal(np.diag(sc.jacobian(host, "y", "qs")(np.array([3.0, 1.0]))), [66.0, 22.0])
+  # As a scan body, the rule of the Function being scanned is the one differentiated.
+  c, u = sc.sym("c", 1), sc.sym("u", 1)
+  step = sc.Function._from_exprs("cdn_step", [c, u], [c * c + u], ["c", "u"], ["cn"])
+  rule = sc.Function._from_exprs(
+    "cdn_step_jvp", [c, u, sc.sym("dc", 1), sc.sym("du", 1)], [5.0 * sc.sym("dc", 1) + sc.sym("du", 1)], ["c", "u", "dc", "du"], ["dcn"]
+  )
+  back = sc.Function._from_exprs("cdn_step_vjp", [c, u, sc.sym("cn", 1), bar], [5.0 * bar, bar], ["c", "u", "cn", "bar"], ["cbar", "ubar"])
+  stepped = sc.custom_derivative(step, jvp=rule, vjp=back)
+  c0, us = sc.sym("c0", 1), sc.sym("us", 3)
+  (final,) = sc.scan(stepped, c0, [(us, 0, 1)], length=3)
+  loop = sc.Function._from_exprs("cdn_loop", [c0, us], [final], ["c0", "us"], ["c"])
+  assert sc.jacobian(loop, "c", "c0")((np.array([0.5]), np.zeros(3)))[0, 0] == 125.0
+  (g,) = sc.vjp((final,), (c0,), (sc.const(np.ones(1)),))
+  assert sc.Function._from_exprs("cdn_loop_g", [c0, us], [g], ["c0", "us"], ["g"])((np.array([0.5]), np.zeros(3)))[0] == 125.0

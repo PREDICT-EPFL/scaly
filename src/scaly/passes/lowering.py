@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterable
 import numpy as np
 
 from ..ir import program as p
-from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, topo
+from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, topo
 from ..function import Function
 from .program import ProgramObserver, optimize_program
 from ..ir.program import ProgramNode, ProgramOp, RangeKind
@@ -195,13 +195,17 @@ def _lower_to_proc(
   auto_scalarize: bool = True,
   observe_expr: ExprObserver | None = None,
   entry: bool = False,
-  in_place: tuple[int, ...] | None = None,
+  in_place: bool = False,
 ) -> ProgramNode:
   lowering = fun._effective_lowering()
   fun = _normalize_function(fun)
   if observe_expr is not None:
     observe_expr("normalized", fun)
-  ctx = LowerCtx(fun, callees, solver_fns, observe_expr, entry=entry, in_place=in_place)
+  # The chain is found on exactly the graph being lowered, so its node ids are this graph's.
+  chain = in_place_chain(fun) if in_place else None
+  if in_place and chain is None:
+    raise LoweringError(f"{fun.name!r} was lowered in place but its carry is not an update chain")
+  ctx = LowerCtx(fun, callees, solver_fns, observe_expr, entry=entry, in_place=chain)
   ctx.emit_inputs()
   ctx.register_outputs()
   ctx.emit_body()
@@ -223,11 +227,11 @@ def _lower_to_proc(
       # An in-place procedure reads its carry output before writing it, which only the caller's
       # aliasing makes defined; scalar expansion models the two as separate buffers, so it is off.
       "scalarize_mode": "procedure"
-      if in_place is None
+      if not in_place
       and all(n.type.dtype in _SCALARIZABLE for n in (*fun.inputs, *nodes))
       and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
       else "disabled",
-      **({"in_place": True} if in_place is not None else {}),
+      **({"in_place": True} if in_place else {}),
     },
     proc.dtype,
   )
@@ -763,13 +767,12 @@ def _ensure_in_place_callee(ctx: LowerCtx, callee: Function) -> str | None:
   if not DONATE_CARRIES or callee.device.kind != ctx.fun.device.kind:
     return None
   normalized = _normalize_function(callee)
-  chain = in_place_chain(normalized)
-  if chain is None:
+  if in_place_chain(normalized) is None:
     return None
   name = f"{callee.name}_inplace"
   if name not in ctx.callees:
     renamed = Function._from_exprs(name, normalized.inputs, normalized.outputs, normalized.input_names, normalized.output_names)
-    ctx.callees[name] = _lower_to_proc(renamed, ctx.callees, ctx.solver_fns, observe_expr=ctx.observe_expr, in_place=chain)
+    ctx.callees[name] = _lower_to_proc(renamed, ctx.callees, ctx.solver_fns, observe_expr=ctx.observe_expr, in_place=True)
   return name
 
 
@@ -1058,13 +1061,17 @@ def in_place_chain(fun: Function) -> tuple[int, ...] | None:
   and each read of the chain must happen before the write that would change what it reads:
 
   - the values of update ``i`` read no chain link but ``u_{i-1}``, and none of the entries update
-    ``i`` writes (a read through a comparison or a ``select`` condition counts as reading every
-    entry, since derivative patterns cannot see it);
+    ``i`` writes;
   - no other output reads any chain link.
 
-  These are sufficient, not necessary; anything else keeps the two-slot carry.
+  Which entries the values read is the structural pattern of the values with respect to
+  ``u_{i-1}``, taken only over operations whose pattern is exactly what they read (``_EXACT_READS``).
+  A path through anything else (a comparison, a ``select`` condition, ``copysign``'s sign, a call)
+  counts as reading every entry. These are sufficient, not necessary; anything else keeps the
+  two-slot carry.
   """
   from ..ad.sparsity import jacobian_sparsity
+  from ..ir.expr import substitute
 
   carry, node = fun.inputs[0], fun.outputs[0]
   chain: list[Expr] = []
@@ -1104,13 +1111,47 @@ def in_place_chain(fun: Function) -> tuple[int, ...] | None:
     if touched - {before.id}:
       return None
     if touched:
-      opaque = {ExprOp.SELECT, ExprOp.CAST, ExprOp.SOLVER_CALL, ExprOp.WHILE} | PREDICATE_OPS
-      if any(n.op in opaque for n in topo([values])):
-        return None
-      read = set(jacobian_sparsity(values, before).cols)
+      # Cut the graph at the link: a fresh symbol in its place is what the pattern is taken against.
+      stand_in = Expr.sym("in_place_link", before.shape, dtype=before.type.dtype)
+      cut = substitute(values, {before: stand_in})
+      reaching: set[int] = set()
+      for n in topo([cut]):  # children first, so one pass finds every node with the link below it
+        if n is stand_in or any(a.id in reaching for a in n.args):
+          reaching.add(n.id)
+          if n.op not in _EXACT_READS:
+            return None
+      read = set(jacobian_sparsity(cut, stand_in).cols)
       if read & set(update.attrs["indices"].tolist()):
         return None
   return tuple(e.id for e in chain)
+
+
+# Operations whose structural sparsity pattern is exactly the set of entries they read, so the pattern
+# can stand in for a read set. Everything else (predicates, ``select``'s condition, ``copysign``'s
+# sign, casts, calls, maps and loops) may read entries its pattern omits.
+_EXACT_READS = frozenset(
+  {
+    ExprOp.INPUT,
+    ExprOp.CONST,
+    *(op for op in COMMON_ELEMENTWISE_UNARY),
+    *(op for op in COMMON_ELEMENTWISE_BINARY if op != ExprOp.COPYSIGN),
+    ExprOp.SUM,
+    ExprOp.MAX,
+    ExprOp.MIN,
+    ExprOp.RESHAPE,
+    ExprOp.TRANSPOSE,
+    ExprOp.SLICE,
+    ExprOp.GATHER,
+    ExprOp.SCATTER,
+    ExprOp.SEGMENT_MAX,
+    ExprOp.SEGMENT_MIN,
+    ExprOp.STACK,
+    ExprOp.CONCAT,
+    ExprOp.MATMUL,
+    ExprOp.INDEX_ADD,
+    ExprOp.INDEX_SET,
+  }
+)
 
 
 def scatter_is_unique(idx: np.ndarray) -> bool:

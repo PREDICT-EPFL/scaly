@@ -23,6 +23,7 @@ from ..ir.expr import (
   concat,
   copysign,
   equal,
+  not_equal,
   gather,
   reduce_min,
   scatter,
@@ -221,10 +222,7 @@ def _scan_jvp_body(callee: Function, active: tuple[int, ...]) -> Function:
     aug = Expr.sym(f"fwd:{callee.input_names[0]}", (2 * cs,))
     dcarry = Expr.sym(f"fwd:{callee.input_names[0]}:dc", carry.shape)
     dxs = {i: Expr.sym(f"fwd:{callee.input_names[i + 1]}", xs[i].shape) for i in active}
-    seeds = {carry: dcarry, **{xs[i]: dx for i, dx in dxs.items()}}
-    memo: dict[int, Expr] = {}
-    dep: dict[tuple[int, int], bool] = {}
-    tangents = [_jvp(out, seeds, memo, dep) for out in callee.outputs]
+    tangents = body_tangents(callee, {0: dcarry, **{i + 1: dx for i, dx in dxs.items()}})
     split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
     nxt = concat([callee.outputs[0].reshape((cs,)), tangents[0].reshape((cs,))])
     outputs = [substitute(e, split) for e in (nxt, *callee.outputs[1:], *tangents[1:])]
@@ -264,19 +262,19 @@ def _scan_jvp(expr: Expr, tangents: list[Expr]) -> Expr:
   return node(1 + n_ys + output - 1)
 
 
-_WHILE_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[int, tuple[Function, Function]]] = weakref.WeakKeyDictionary()
+_WHILE_JVP_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, tuple[Function, Function]]] = weakref.WeakKeyDictionary()
 
 
 def _while_jvp_functions(cond: Function, body: Function) -> tuple[Function, Function]:
   """The condition and body of the tangent loop, over the carry ``[c, dc]`` flat: the condition
   reads ``c`` only, so the tangent loop takes exactly the primal's steps."""
-  cache = _WHILE_JVP_CACHE.setdefault(body, {})
-  if id(cond) not in cache:
+  cache = _WHILE_JVP_CACHE.setdefault(body, weakref.WeakKeyDictionary())
+  if cond not in cache:
     carry = body.inputs[0]
     cs = carry.size
     aug = Expr.sym(f"fwd:{body.input_names[0]}", (2 * cs,))
     dcarry = Expr.sym(f"fwd:{body.input_names[0]}:dc", carry.shape)
-    tangent = _jvp(body.outputs[0], {carry: dcarry}, {}, {})
+    (tangent,) = body_tangents(body, {0: dcarry})
     split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
     nxt = substitute(concat([body.outputs[0].reshape((cs,)), tangent.reshape((cs,))]), split)
     aug_body = Function._from_exprs(
@@ -284,8 +282,8 @@ def _while_jvp_functions(cond: Function, body: Function) -> tuple[Function, Func
     )
     go = substitute(cond.outputs[0], {cond.inputs[0]: aug[:cs].reshape(carry.shape)})
     aug_cond = Function._from_exprs(f"{cond.name}_whilefwd", [aug], [go], [str(aug.name)], ["go"])
-    cache[id(cond)] = (aug_cond, aug_body)
-  return cache[id(cond)]
+    cache[cond] = (aug_cond, aug_body)
+  return cache[cond]
 
 
 def _while_jvp(expr: Expr, tangent: Expr) -> Expr:
@@ -320,10 +318,11 @@ def _nonsmooth_mode(op: ExprOp | str) -> str:
 
 def extremum_weight(expr: Expr) -> Expr:
   """The share of the derivative of ``maximum(a, b)`` or ``minimum(a, b)`` that goes to ``a``, shaped
-  like the result; ``b`` gets the rest. Where ``a`` is NaN the C result is ``b``, and so is the share."""
+  like the result; ``b`` gets the rest. C's ``fmax`` and ``fmin`` return the other operand when one
+  is NaN, and the share follows the operand returned."""
   a, b = expr.args
   mode = _nonsmooth_mode(expr.op)
-  wins = a > b if expr.op == ExprOp.MAXIMUM else a < b
+  wins = (a > b if expr.op == ExprOp.MAXIMUM else a < b) | not_equal(b, b)
   one, half, zero = (Expr.const(v, dtype=expr.type.dtype) for v in (1.0, 0.5, 0.0))
   if mode == "first":
     return where(wins | equal(a, b), one, zero)
@@ -357,13 +356,26 @@ def segment_weights(expr: Expr) -> Expr:
   return count / gather(segment_sum(count, ids, n), ids)
 
 
-def custom_vjp_call(callee: Any, args: Sequence[Expr], output: int, cot: Expr) -> tuple[Expr, ...]:
-  """Input cotangents from a callee's own reverse rule, given the cotangent of one of its outputs.
-  The primal outputs it receives are the call's own outputs, so the rule reuses the solution.
-  Lives here, beside the other flat-call synthesis, for reverse mode to use."""
+def body_tangents(fn: Any, seeds: dict[int, Expr]) -> list[Expr]:
+  """The tangent of every output of ``fn``, in terms of its inputs and the ``seeds`` (by input index):
+  from its forward rule when it has one, else by differentiating its body. Every derivative that
+  looks inside a Function (a call, a map, a loop body) goes through here, so a rule is never skipped."""
+  if fn.custom_jvp is not None:
+    tangents = [seeds[i] if i in seeds else zeros_like(inp) for i, inp in enumerate(fn.inputs)]
+    return list(fn.custom_jvp._flat_symbolic_call([*fn.inputs, *tangents]))
+  memo: dict[int, Expr] = {}
+  dep: dict[tuple[int, int], bool] = {}
+  by_input = {fn.inputs[i]: seed for i, seed in seeds.items()}
+  return [_jvp(out, by_input, memo, dep) for out in fn.outputs]
+
+
+def custom_vjp_call(callee: Any, args: Sequence[Expr], cots: dict[int, Expr]) -> tuple[Expr, ...]:
+  """Input cotangents from a callee's own reverse rule, given cotangents of some of its outputs (by
+  index; the rest are zero). The primal outputs it receives are the call's own outputs, so the rule
+  reuses the solution. Lives here, beside the other flat-call synthesis, for reverse mode to use."""
   outputs = callee._flat_symbolic_call(list(args))
-  cots = [cot if j == output else zeros_like(out) for j, out in enumerate(outputs)]
-  return callee.custom_vjp._flat_symbolic_call([*args, *outputs, *cots])
+  full = [cots[j] if j in cots else zeros_like(out) for j, out in enumerate(outputs)]
+  return callee.custom_vjp._flat_symbolic_call([*args, *outputs, *full])
 
 
 def _copysign_slope(x: Expr, s: Expr) -> Expr:
@@ -425,11 +437,7 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
   cache = _CALL_JVP_CACHE.setdefault(callee, {})
   if key not in cache:
     seeds = {i: Expr.sym(f"fwd:{callee.input_names[i]}", callee.inputs[i].shape) for i in formal_indices}
-    if callee.custom_jvp is not None:
-      tangents = [seeds[i] if i in seeds else zeros_like(inp) for i, inp in enumerate(callee.inputs)]
-      deriv = callee.custom_jvp._flat_symbolic_call([*callee.inputs, *tangents])[output_index]
-    else:
-      deriv = callee._inherit_lowering(_jvp(callee.outputs[output_index], {callee.inputs[i]: seed for i, seed in seeds.items()}, {}, {}))
+    deriv = callee._inherit_lowering(body_tangents(callee, seeds)[output_index])
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
     seed_indices = tuple(i for i, seed in seeds.items() if _depends_on(deriv, seed, dep_memo))

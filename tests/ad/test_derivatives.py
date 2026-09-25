@@ -672,3 +672,12 @@ def test_segment_extrema_derivatives(mode: str) -> None:
   expected_max = [2 / 3, 3.0, -2 / 3, 4.0, 3.0, 2 / 3] if mode == "split" else [2.0, 6.0, 0.0, 4.0, 0.0, 0.0]
   expected_min = [0.0, 0.5, 1.0, 1.0, 0.5, 0.0] if mode == "split" else [0.0, 1.0, 1.0, 1.0, 0.0, 0.0]
   np.testing.assert_allclose(gfun(tie), np.add(expected_max, expected_min))
+
+
+def test_extremum_derivative_follows_the_operand_c_returns_next_to_nan() -> None:
+  p, q = sc.sym("p", 1), sc.sym("q", 1)
+  f = sc.Function._from_exprs("mx_nan", [p, q], [sc.maximum(p, q), sc.minimum(p, q)], ["p", "q"], ["mx", "mn"])
+  for pv, qv, to_p in ((1.0, np.nan, 1.0), (np.nan, 1.0, 0.0)):
+    for out in ("mx", "mn"):
+      assert sc.jacobian(f, out, "p")((np.array([pv]), np.array([qv])))[0, 0] == to_p
+      assert sc.jacobian(f, out, "q")((np.array([pv]), np.array([qv])))[0, 0] == 1.0 - to_p

@@ -6,6 +6,7 @@ that has to look inside a callee belongs to the frontend instead: ``vmap`` and `
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -233,4 +234,8 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None) -> Function:
     copy.descriptor = fn.descriptor
   copy.custom_jvp = jvp if jvp is not None else fn.custom_jvp
   copy.custom_vjp = vjp if vjp is not None else fn.custom_vjp
+  # Procedures and derivative helpers are named after their Function, so the copy needs a name of
+  # its own: in one graph with ``fn``, sharing a name would let one derivative stand for both.
+  rules = ",".join(r.name if r is not None else "-" for r in (copy.custom_jvp, copy.custom_vjp))
+  copy.name = f"{fn.name}_cd{hashlib.sha1(rules.encode()).hexdigest()[:8]}"
   return copy

@@ -167,7 +167,8 @@ mode runs the steps backwards over the carries the forward pass stored, which co
 When a step changes only a few entries of a large carry, write the change with `sc.index_add` and
 `sc.index_set` instead of rebuilding the carry. If the next carry is such a chain of updates rooted
 at the carry, each update's values read only the carry as it stands just before that update and
-none of the entries it writes, and no other output reads the carry, the body updates one carry slot
+none of the entries it writes (a read through a comparison, a `where` condition or `copysign`'s
+sign counts as reading every entry), and no other output reads the carry, the body updates one carry slot
 in place: each step touches only the indexed entries. Otherwise the two slots are kept, with the
 same results. A loop differentiated in reverse mode stores every carry and does not update in place.
 
