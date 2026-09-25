@@ -147,12 +147,24 @@ _ARITHMETIC: dict[ProgramOp, Callable[..., Any]] = {
   ProgramOp.MUL: operator.mul,
   ProgramOp.DIV: operator.truediv,
 }
-_MATH = {op: getattr(math, op.value) for op in (*p.UNARY_FN_OPS, ProgramOp.POW, ProgramOp.ATAN2) if op != ProgramOp.ABS}
+_MATH = {op: getattr(math, op.value) for op in (*p.UNARY_FN_OPS, ProgramOp.POW, ProgramOp.ATAN2, ProgramOp.COPYSIGN) if op != ProgramOp.ABS}
 _MATH[ProgramOp.ABS] = abs
+_PREDICATES: dict[ProgramOp, Callable[..., bool]] = {
+  ProgramOp.LT: operator.lt,
+  ProgramOp.LE: operator.le,
+  ProgramOp.EQ: operator.eq,
+  ProgramOp.NE: operator.ne,
+  ProgramOp.AND: lambda x, y: bool(x) and bool(y),
+  ProgramOp.OR: lambda x, y: bool(x) or bool(y),
+  ProgramOp.NOT: lambda x: not x,
+  ProgramOp.ISFINITE: math.isfinite,
+}
 
 
 def constant(value: int | float, dtype: DType) -> ProgramNode:
-  """A program constant of ``dtype``, truncating to int for integer dtypes."""
+  """A program constant of ``dtype``, truncating to int for integer dtypes; a bool is a 0/1 ``CONST_INT``."""
+  if dtype.is_bool:
+    return ProgramNode(ProgramOp.CONST_INT, attrs={"value": int(bool(value))}, dtype=dtype)
   return ProgramNode(
     ProgramOp.CONST_INT if dtype.is_integer else ProgramOp.CONST_FLOAT, attrs={"value": int(value) if dtype.is_integer else float(value)}, dtype=dtype
   )
@@ -175,6 +187,12 @@ def _evaluate_scalar(op: ProgramOp, values: list[int | float], dtype: DType) -> 
       return q if op == ProgramOp.DIV else x - q * y
     if op == ProgramOp.NEG:
       return -values[0]
+    if op in _PREDICATES:
+      return int(_PREDICATES[op](*values))
+    if op == ProgramOp.SELECT:
+      return values[1] if values[0] else values[2]
+    if op == ProgramOp.CAST:
+      return int(values[0]) if dtype.is_integer else float(values[0])
     if op in _ARITHMETIC:
       return cast(int | float, _ARITHMETIC[op](*values))
     if op in _MATH:
@@ -205,4 +223,11 @@ def fold_program(node: ProgramNode) -> ProgramNode:
   if node.args and all(a.op in CONSTANTS for a in node.args):
     value = evaluate(node.op, [a.attrs["value"] for a in node.args], node.dtype)
     return node if value is None else constant(value, node.dtype)
+  if node.op == ProgramOp.SELECT:
+    cond, x, y = node.args
+    if cond.op in CONSTANTS:
+      return x if cond.attrs["value"] else y
+    return x if x is y else node
+  if node.op == ProgramOp.NOT and node.args[0].op == ProgramOp.NOT:
+    return node.args[0].args[0]
   return fold(ARITH_PROGRAM, node)

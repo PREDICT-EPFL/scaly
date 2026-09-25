@@ -60,6 +60,9 @@ _UNARY: dict[ExprOp, ProgramOp] = {
   ExprOp.ABS: ProgramOp.ABS,
   ExprOp.FLOOR: ProgramOp.FLOOR,
   ExprOp.CEIL: ProgramOp.CEIL,
+  ExprOp.NOT: ProgramOp.NOT,
+  ExprOp.ISFINITE: ProgramOp.ISFINITE,
+  ExprOp.CAST: ProgramOp.CAST,
 }
 
 _BINARY: dict[ExprOp, ProgramOp] = {
@@ -71,6 +74,13 @@ _BINARY: dict[ExprOp, ProgramOp] = {
   ExprOp.ATAN2: ProgramOp.ATAN2,
   ExprOp.MINIMUM: ProgramOp.MINIMUM,
   ExprOp.MAXIMUM: ProgramOp.MAXIMUM,
+  ExprOp.COPYSIGN: ProgramOp.COPYSIGN,
+  ExprOp.LT: ProgramOp.LT,
+  ExprOp.LE: ProgramOp.LE,
+  ExprOp.EQ: ProgramOp.EQ,
+  ExprOp.NE: ProgramOp.NE,
+  ExprOp.AND: ProgramOp.AND,
+  ExprOp.OR: ProgramOp.OR,
 }
 
 LowerRule = Callable[["LowerCtx", Expr], None]
@@ -120,7 +130,7 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None, observ
     prog = p.program([*callees.values()])
     prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "solver_root": fun.name}, prog.dtype)
   else:
-    root = _lower_to_proc(fun, callees, solver_fns, auto_scalarize=False, observe_expr=observe_expr)
+    root = _lower_to_proc(fun, callees, solver_fns, auto_scalarize=False, observe_expr=observe_expr, entry=True)
     prog = p.program([*callees.values(), root])
   if solver_fns:
     solver_oracles = {name: tuple(o.name for o in solver_callees(sf)) for name, sf in solver_fns.items()}
@@ -184,12 +194,13 @@ def _lower_to_proc(
   *,
   auto_scalarize: bool = True,
   observe_expr: ExprObserver | None = None,
+  entry: bool = False,
 ) -> ProgramNode:
   lowering = fun._effective_lowering()
   fun = _normalize_function(fun)
   if observe_expr is not None:
     observe_expr("normalized", fun)
-  ctx = LowerCtx(fun, callees, solver_fns, observe_expr)
+  ctx = LowerCtx(fun, callees, solver_fns, observe_expr, entry=entry)
   ctx.emit_inputs()
   ctx.register_outputs()
   ctx.emit_body()
@@ -209,15 +220,25 @@ def _lower_to_proc(
       # A procedure may expand on its own and inside an expanding caller. Hoisted prologues use
       # "inline" because they only expand with their caller.
       "scalarize_mode": "procedure"
-      if all(n.type.dtype == dtypes.float64 for n in (*fun.inputs, *nodes)) and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
+      if all(n.type.dtype in _SCALARIZABLE for n in (*fun.inputs, *nodes)) and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
       else "disabled",
     },
     proc.dtype,
   )
 
 
+# ``bool`` values only ever come from comparisons, logic and ``isfinite``, never from a narrowing
+# store, so scalar substitution cannot erase a conversion for them.
+_SCALARIZABLE = (dtypes.float64, dtypes.bool_)
+
+
 class LowerCtx:
-  """Per-Function lowering state: buffers, statements, and the Expr-id -> buffer map."""
+  """Per-Function lowering state: buffers, statements, and the Expr-id -> buffer map.
+
+  ``entry`` marks the Function whose procedure becomes the pointer-ABI entry. Its parameters are the
+  caller's ``double`` arrays whatever the declared dtype, so a ``bool`` input is read into a typed
+  temporary (nonzero is true) and a ``bool`` output is written as 0.0 or 1.0 from one.
+  """
 
   def __init__(
     self,
@@ -225,8 +246,11 @@ class LowerCtx:
     callees: dict[str, ProgramNode],
     solver_fns: dict[str, Function],
     observe_expr: ExprObserver | None = None,
+    *,
+    entry: bool = False,
   ) -> None:
     self.fun = fun
+    self.entry = entry
     self.callees = callees
     self.solver_fns = solver_fns  # name -> solver Function (opaque callees; rendered by codegen/solver)
     self.observe_expr = observe_expr
@@ -243,23 +267,36 @@ class LowerCtx:
 
   # --- declarations ---------------------------------------------------------
 
+  def _abi_dtype(self, dtype: DType) -> DType:
+    return dtypes.float64 if self.entry and dtype.is_bool else dtype
+
   def emit_inputs(self) -> None:
+    converted: list[tuple[ProgramNode, Expr]] = []
     for name, expr in zip(self.fun.input_names, self.fun.inputs, strict=True):
-      buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.shape), address_space="global")
+      buf = p.buffer(name, self._abi_dtype(expr.type.dtype), _shape_or_scalar(expr.shape), address_space="global")
       self.params.append(buf)
       self.buffers[name] = buf
       self.value_buffers[expr.id] = name
+      if buf.dtype != expr.type.dtype:
+        converted.append((buf, expr))
+    for buf, expr in converted:
+      tmp = self.new_private(expr.type.dtype, expr.shape)
+      vname = f"c_{tmp.attrs['name']}"
+      i = p.var(vname)
+      nonzero = p.compare(ProgramOp.NE, p.load(p.view(buf, [i])), p.const_float(0.0))
+      self.statements.append(p.for_(p.range_(vname, 0, _size_of(expr.shape), kind=RangeKind.GLOBAL), [p.store(p.view(tmp, [i]), nonzero)]))
+      self.value_buffers[expr.id] = tmp.attrs["name"]
 
   def register_outputs(self) -> None:
     """Register output BUFFER params and alias each unique computed output Expr to
     its output buffer, so its rule writes directly into the output (no copy)."""
     seen: set[int] = set()
     for name, expr in zip(self.fun.output_names, self.fun.outputs, strict=True):
-      buf = p.buffer(name, expr.type.dtype, _shape_or_scalar(expr.shape), address_space="global")
+      buf = p.buffer(name, self._abi_dtype(expr.type.dtype), _shape_or_scalar(expr.shape), address_space="global")
       self.params.append(buf)
       self.buffers[name] = buf
-      if expr.op in (ExprOp.INPUT, ExprOp.CONST) or expr.id in seen:
-        continue  # INPUT/CONST or shared output: emit_outputs inserts the copy
+      if expr.op in (ExprOp.INPUT, ExprOp.CONST) or expr.id in seen or buf.dtype != expr.type.dtype:
+        continue  # INPUT/CONST, shared, or converted output: emit_outputs inserts the copy
       seen.add(expr.id)
       self._output_alias[expr.id] = name
 
@@ -447,7 +484,7 @@ def _copy_loop(src: ProgramNode, dst: ProgramNode, shape: tuple[int, ...]) -> Pr
   vname = f"c_{dst.attrs['name']}"
   rng = p.range_(vname, 0, _size_of(shape), kind=RangeKind.GLOBAL)
   i = p.var(vname)
-  return p.for_(rng, [p.store(p.view(dst, [i]), p.load(p.view(src, [i])))])
+  return p.for_(rng, [p.store(p.view(dst, [i]), p.cast(p.load(p.view(src, [i])), dst.dtype))])
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +500,11 @@ def _lower_unary(ctx: LowerCtx, node: Expr) -> None:
 @lowers(*_BINARY)
 def _lower_binary(ctx: LowerCtx, node: Expr) -> None:
   ctx.emit_elementwise(node, _BINARY[ExprOp(node.op)], arity=2)
+
+
+@lowers(ExprOp.SELECT)
+def _lower_select(ctx: LowerCtx, node: Expr) -> None:
+  ctx.emit_elementwise(node, ProgramOp.SELECT, arity=3)
 
 
 @lowers(ExprOp.RESHAPE)

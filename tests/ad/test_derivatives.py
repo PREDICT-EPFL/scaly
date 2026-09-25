@@ -521,3 +521,52 @@ def test_ad_skips_nonsmooth_parameter_terms_independent_of_wrt() -> None:
     assert "nonsmooth" in str(e)
   else:  # pragma: no cover
     raise AssertionError("nonsmooth JVP through wrt should still fail")
+
+
+def _piecewise(x: sc.Expr) -> sc.Expr:
+  """ReLU, a saturation and a sign transfer: every derivative rule PR 1 adds, away from the kinks."""
+  relu = sc.where(x > 0.0, x, 0.0)
+  sat = sc.where(x > 1.0, 1.0 + 0.0 * x, sc.where(x < -1.0, -1.0 + 0.0 * x, x))
+  return relu * x.sin() + sat**2 + sc.copysign(x * x, x - 0.3) + sc.cast(x < 0.2, "float64") * x
+
+
+PIECEWISE_POINTS = np.array([-1.7, -0.6, 0.05, 0.45, 0.9, 2.3])
+
+
+def test_select_copysign_cast_jacobians_match_finite_differences_both_modes() -> None:
+  x = sc.sym("x", PIECEWISE_POINTS.size)
+  out = _piecewise(x)
+  f = sc.Function._from_exprs("pw", [x], [out], ["x"], ["y"])
+  jac = sc.jacobian(f, "y", "x")(PIECEWISE_POINTS)
+  lam = np.random.default_rng(3).normal(size=PIECEWISE_POINTS.size)
+  (vjp,) = sc.vjp((out,), (x,), (sc.const(lam),))
+  rev = sc.Function._from_exprs("pw_rev", [x], [vjp], ["x"], ["g"])(PIECEWISE_POINTS)
+  fd = finite_difference(lambda v: f(v), PIECEWISE_POINTS)
+  np.testing.assert_allclose(jac, fd, rtol=1e-6, atol=1e-8)
+  np.testing.assert_allclose(rev, lam @ jac, rtol=1e-12, atol=1e-12)
+  np.testing.assert_allclose(sc.sparse_jacobian(f, "y", "x")(PIECEWISE_POINTS), np.diag(jac), rtol=1e-12)
+
+
+def test_select_structural_jvp_many_matches_unrolled() -> None:
+  x = sc.sym("x", 3)
+  y = sc.where(x > 0.0, x * x, x.sin()) + sc.where(x[0] > 0.0, x, 2.0)
+  seeds = sc.const(np.eye(3))
+  structural = _jvp_many_structural(y, x, seeds, {}, {})
+  unrolled = _jvp_many_unrolled(y, x, seeds)
+  f = sc.Function._from_exprs("sel_many", [x], [structural, unrolled], ["x"], ["s", "u"])
+  s, u = f(np.array([0.5, -0.2, 1.1]))
+  np.testing.assert_allclose(s, u, rtol=1e-14)
+  assert structural.op == sc.ExprOp.SELECT or any(n.op == sc.ExprOp.SELECT for n in topo([structural]))
+
+
+def test_derivative_flows_only_through_the_chosen_branch() -> None:
+  x = sc.sym("x", 2)
+  # The unchosen branch is log(x) at a negative x: NaN value, NaN derivative, and neither may leak.
+  y = sc.where(x > 0.0, x.log(), 3.0 * x)
+  (g,) = sc.vjp((y.sum(),), (x,), (sc.const(1.0),))
+  (j,) = sc.jacobian(sc.Function._from_exprs("sel_nan_f", [x], [y], ["x"], ["y"]), "y", "x")._flat_symbolic_call([x])
+  f = sc.Function._from_exprs("sel_nan", [x], [y, g, j], ["x"], ["y", "g", "j"])
+  yv, gv, jv = f(np.array([2.0, -1.0]))
+  np.testing.assert_allclose(yv, [np.log(2.0), -3.0])
+  np.testing.assert_allclose(gv, [0.5, 3.0])
+  np.testing.assert_allclose(jv, np.diag([0.5, 3.0]))

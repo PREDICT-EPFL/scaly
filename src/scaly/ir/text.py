@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from .expr import Expr, ExprOp, topo
-from .program import BINARY_FN_OPS, SCALAR_OPS, UNARY_FN_OPS, ProgramNode, ProgramOp
+from .program import BINARY_FN_OPS, PREDICATE_OPS, SCALAR_OPS, UNARY_FN_OPS, ProgramNode, ProgramOp
 from .types import TensorType
 
 if TYPE_CHECKING:
@@ -267,6 +267,10 @@ def _render_scalar(n: ProgramNode) -> str:
     return f"prog.{n.op.value}({_render_scalar(n.args[0])})"
   if n.op in BINARY_FN_OPS:
     return f"prog.{n.op.value}({_render_scalar(n.args[0])}, {_render_scalar(n.args[1])})"
+  if n.op == ProgramOp.CAST:
+    return f"prog.cast<{n.dtype}>({_render_scalar(n.args[0])})"
+  if n.op in PREDICATE_OPS or n.op == ProgramOp.SELECT:
+    return f"prog.{n.op.value}({', '.join(_render_scalar(a) for a in n.args)})"
   return f"<prog.{n.op.value}>"
 
 
@@ -364,6 +368,10 @@ def _format_scalar(n: ProgramNode) -> str:
     return f"{n.op.value}({_format_scalar(n.args[0])})"
   if n.op in BINARY_FN_OPS:
     return f"{n.op.value}({_format_scalar(n.args[0])}, {_format_scalar(n.args[1])})"
+  if n.op == ProgramOp.CAST:
+    return f"cast<{n.dtype}>({_format_scalar(n.args[0])})"
+  if n.op in PREDICATE_OPS or n.op == ProgramOp.SELECT:
+    return f"{n.op.value}({', '.join(_format_scalar(a) for a in n.args)})"
   return f"<{n.op.value}>"
 
 

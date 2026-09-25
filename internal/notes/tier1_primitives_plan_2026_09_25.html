@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 1 Primitives Plan</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1120px;margin:0 auto;padding:40px 16px 80px}
+h1{font-size:28px;margin:0 0 4px}
+h2{font-size:20px;margin:48px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+h3{font-size:16px;margin:22px 0 6px}
+h4{font-size:13px;margin:16px 0 4px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.sub{color:var(--muted);margin:0 0 20px}
+code{font:13px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:14px 18px;margin:14px 0}
+.pr{background:var(--card);border:1px solid var(--rule);border-left:4px solid var(--acc);border-radius:8px;padding:6px 20px 14px;margin:22px 0}
+.pr h3{margin-top:12px}
+.pr .meta{color:var(--muted);font-size:13px;margin:-2px 0 8px}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600}
+tr:last-child td{border-bottom:none}
+ul,ol{padding-left:22px}li{margin:3px 0}
+.y{color:var(--ok);font-weight:600}.n{color:var(--muted)}.w{color:var(--warn);font-weight:600}
+.q{border-left:4px solid var(--warn)}
+.tag{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:9px;border:1px solid var(--rule);color:var(--muted);margin-right:4px}
+</style>
+</head>
+<body>
+<main>
+<h1>Tier 1 primitives: code-editing plan</h1>
+<p class="sub">Covers items #1–10 of <code>piqp_in_scaly_2026_09_25.html</code>. No code has been written yet. 25 Sep 2026</p>
+
+<div class="box">
+<h3 style="margin-top:4px">Summary</h3>
+<p>The work is <b>eight pull requests</b>, ordered by dependency. Each one lands on its own with the full suite, <code>ruff</code> and <code>ty</code> green. Every new op follows the codebase's <a href="#where">Where to add things</a> recipe. Every new op also gets the same test set:</p>
+<ul>
+<li>a NumPy value reference;</li>
+<li>generated C run through the pointer ABI;</li>
+<li>finite-difference, JVP-versus-VJP and sparse-versus-dense derivative checks, where the op is differentiable;</li>
+<li>a structural-sparsity check;</li>
+<li>scalarized and looped lowering compared against each other;</li>
+<li>a mutation check proving the gate can fail.</li>
+</ul>
+<p>Speed is tested the way the fuzzing note prescribes: <b>structural invariants in <code>tests/</code></b> (node counts, C size constant in trip count, index tables linear in nnz, no quadratic build paths), and <b>wall-clock only in a perf study under <code>internal/notes/</code></b> using the existing Google Benchmark harness.</p>
+<p>Two regression guarantees hold throughout:</p>
+<ul>
+<li>The six existing C snapshots stay <b>byte-identical</b> in every PR. The one deliberate addition is a new <code>control</code> corpus entry in PR 4.</li>
+<li>No existing test changes behaviour, except that derivatives of <code>minimum</code>, <code>maximum</code> and <code>abs</code> now exist (see Q2).</li>
+</ul>
+</div>
+
+<h2>Decisions I need from you before coding</h2>
+<div class="scroll"><table>
+<tr><th>#</th><th>Question</th><th>Recommendation</th><th>Why</th></tr>
+<tr class="q"><td>Q1</td><td>Scatter-add as a new op, or fix <code>scatter</code> to accumulate?</td><td><b>Fix <code>scatter</code></b>, which is what its docstring already promises. Lowering keeps <code>=</code> when the indices are statically unique and uses <code>+=</code> otherwise. <code>segment_sum</code> becomes a builder.</td><td>One op fewer. The existing VJP (<code>gather</code>) is already correct for accumulation. Snapshots stay byte-identical because every current use has unique indices.</td></tr>
+<tr class="q"><td>Q2</td><td>Derivatives of the non-smooth ops (<code>maximum</code>, <code>minimum</code>, <code>reduce_max</code>, <code>abs</code>)</td><td>Subgradient via <code>select</code>. Ties split equally (the JAX convention). <code>abs'(0) = 0</code> instead of today's NaN (<code>x/|x|</code>).</td><td>PIQP needs none of these derivatives, but it is ten lines once <code>select</code> exists, and it removes a <code>NotImplementedError</code> users do hit (ReLU, saturations).</td></tr>
+<tr class="q"><td>Q3</td><td>Where <code>while_loop</code> lives</td><td>A <b>functional</b> <code>ExprOp.WHILE</code> with a callee <code>Function</code> for the condition and one for the body (as <code>VMAP</code> does). It is non-differentiable, and #10 supplies implicit derivatives.</td><td>Keeps <code>Expr</code> pure: no mutation. The carry of an outer solver loop is O(n), so ping-pong buffers cost nothing measurable.</td></tr>
+<tr class="q"><td>Q4</td><td>Integer and bool outputs across the ABI</td><td>Keep the universal <code>double**</code> ABI. Cast at the entry point (exact for |k| &lt; 2⁵³), and record the true dtype in the header metadata. A typed ABI becomes a CAPI item later.</td><td>Changing the universal signature moves the JIT cache key and every consumer. Status codes and counters fit in a double exactly.</td></tr>
+<tr class="q"><td>Q5</td><td>Reverse mode through <code>scan</code></td><td>Store the carry trajectory (O(length·|carry|) workspace), then run a reverse <code>scan</code> of the body VJP. Checkpointing comes later.</td><td>Simplest correct option. Rollouts of MPC length are small.</td></tr>
+<tr class="q"><td>Q6</td><td>Add Hypothesis as a dev dependency for randomized tests?</td><td>Not now. Use seeded, parametrized NumPy generators. Revisit with the fuzzer (System 1 in <code>fuzzing.md</code>).</td><td>No new dependency. Seeds keep the node-ID baseline deterministic.</td></tr>
+</table></div>
+
+<h2>Test architecture used by every PR</h2>
+<h3>Oracles</h3>
+<div class="scroll"><table>
+<tr><th>Oracle</th><th>What it checks</th><th>Where it lives</th></tr>
+<tr><td>NumPy value reference</td><td>Each new op gets an <code>OpInfo.numpy</code> entry (<code>np.where</code>, <code>np.less</code>, <code>np.max</code>, <code>np.add.at</code>, <code>np.maximum.at</code>, …), so constant folding and the tests share one reference.</td><td><code>ir/expr.py</code>; <code>tests/ir/test_expr.py</code></td></tr>
+<tr><td>Compiled vs reference</td><td>JIT-compiled C through the universal ABI matches NumPy on seeded random data, including edge values (±0, ±inf, NaN, ties, empty index sets).</td><td><code>tests/codegen/test_c.py</code>, new <code>tests/codegen/test_control.py</code></td></tr>
+<tr><td>Scalarized vs looped</td><td>The same function rendered with the <code>scalar</code> hint and the <code>loop</code> hint must agree. This catches the hash-consed <code>load</code> across <code>store</code> hazard in accumulating lowerings.</td><td><code>tests/passes/test_scalarize.py</code>, <code>tests/ad/test_lowering_hints.py</code></td></tr>
+<tr><td>Derivatives</td><td><code>finite_difference</code>, forward vs reverse, dense Jacobian vs <code>sparse_jacobian</code> scattered dense, Hessian symmetry.</td><td><code>tests/ad/test_derivatives.py</code>, <code>tests/ad/test_expr.py</code></td></tr>
+<tr><td>Structural sparsity</td><td><code>ad/sparsity.py</code> pattern ⊇ numerical nonzeros on random points, and equals them for generic inputs (no false dense).</td><td><code>tests/ad/test_sparsity.py</code></td></tr>
+<tr><td>Metamorphic</td><td><code>scan</code> of length N ≡ N chained <code>CALL</code>s ≡ Python loop over the compiled body. <code>while_loop</code> with a condition that is always true ≡ <code>scan(max_iter)</code>.</td><td>new <code>tests/integration/test_scan.py</code></td></tr>
+<tr><td>Workload reproductions</td><td>Small self-contained workloads: SpMV via gather + <code>segment_sum</code> vs <code>scipy.sparse</code>; an RK4 rollout via <code>scan</code> vs <code>vmap</code>-style unrolling; a Kalman filter; a Newton iteration via <code>while_loop</code>.</td><td>new <code>tests/integration/test_sparse_primitives.py</code>, <code>test_scan.py</code></td></tr>
+<tr><td>Verifier</td><td>Every malformed node (dtype mismatch, non-bool condition, carry shape change, bad segment ids) raises <code>VerifyError</code> with a clear message.</td><td><code>tests/ir/test_verifier.py</code>, <code>tests/ir/test_program.py</code></td></tr>
+<tr><td>C snapshot</td><td>The existing corpus stays byte-identical. PR 4 adds a <code>control</code> entry (scan + select + <code>reduce_max</code> + accumulating scatter), and later PRs extend it only deliberately.</td><td><code>tests/test_c_snapshot.py</code>, <code>tests/baseline/c/</code></td></tr>
+</table></div>
+
+<h3>Speed tests (structural, in <code>tests/</code>)</h3>
+<ul>
+<li><b>Constant-in-trip-count code:</b> the program node count and the rendered C bytes for <code>scan</code>/<code>while_loop</code> are identical at lengths 10, 1 000 and 100 000, apart from the literal. The template is <code>tests/integration/test_vmap.py::test_race_car_eq_primal_source_is_constant_in_horizon</code>.</li>
+<li><b>Linear-in-nnz metadata:</b> accumulating-scatter and segment-op index tables have exactly nnz entries, and lowering emits one loop, not nnz statements, above the scalarize budget.</li>
+<li><b>No quadratic build paths:</b> the node count of the <code>gather</code> VJP is O(n) (today's <code>_gather_vjp</code> loops over every source element with an <code>np.nonzero</code>, which is O(n·nnz)). The test asserts that the node count at n = 20 000 is ≤ c·n. It does not measure time.</li>
+<li><b>No dense fallback:</b> the flop count of the rendered <code>segment_sum</code> SpMV (counted <code>+</code>/<code>*</code> tokens in the loop body × trip count) is proportional to nnz, not to m·n.</li>
+<li><b>Generous compile ceiling</b> for the largest case only, e.g. render of a 10⁵-length scan &lt; 2 s, as a smoke guard rather than a benchmark.</li>
+</ul>
+
+<h3>Speed study (wall clock, outside <code>tests/</code>)</h3>
+<p><code>internal/notes/perf_2026_10_tier1/</code> with <code>README.md</code> + <code>run.py</code>, reusing <code>benchmarks/harness/gbench.py</code>. Numbers stay in the note. Per <code>conventions.md</code> they are cited nowhere else until they reach <code>docs/results/</code>.</p>
+<ul>
+<li>RK4 rollout, N ∈ {10, 50, 200}: <code>scan</code> vs <code>vmap</code> vs chained calls. Measures runtime, render time and C size.</li>
+<li>SpMV and SpMᵀV from gather + <code>segment_sum</code> vs dense <code>matmul</code> vs a hand-written CSC loop, on the race-car and chain KKT patterns.</li>
+<li><code>reduce_max</code>/<code>norm_inf</code> vs <code>sum</code> (should match), and <code>select</code> vs branchy C.</li>
+<li>Build time of the <code>gather</code> VJP before and after PR 3.</li>
+<li>Optional sanitizer pass: compile the <code>control</code> corpus with <code>-fsanitize=address,undefined</code> and at <code>-O0</code> vs <code>-O2</code>, then compare outputs.</li>
+</ul>
+
+<h3>Standing rules for every PR</h3>
+<ul>
+<li>Run <code>uv run pytest -n=auto</code>, <code>uv run ruff check</code>, <code>uv run ruff format --check</code> and <code>uv run ty check --error-on-warning</code>. Every PR touches the IR or codegen, so the whole suite runs every time.</li>
+<li>Regenerate <code>tests/baseline/pytest_nodeids.txt</code> with the recipe in <code>contributing.md</code>.</li>
+<li><b>Mutation check</b> for each new gate: perturb the implementation locally, record in the PR description that the gate went red, then revert.</li>
+<li>Give each new public name a docstring, a re-export in <code>scaly/__init__.py</code>, and an entry in <code>tests/test_import_boundaries.py</code>. Give each new module an <code>IMPORT_LAYERS</code> entry. None is planned, since everything fits in existing modules.</li>
+<li>Update <code>docs/how_it_works/ir.md</code> (op tables) and, where the ABI is touched, <code>generated_interface.md</code>. Add todo items starting at id 82.</li>
+</ul>
+
+<h2>Pull requests</h2>
+
+<div class="pr">
+<h3>PR 1 · Comparisons, <code>bool</code>, <code>select</code>, casts, <code>isfinite</code>, <code>copysign</code> <span class="tag">#2</span><span class="tag">#5</span></h3>
+<p class="meta">Foundation for everything else. Scalar and elementwise only.</p>
+<h4>Edits</h4>
+<ul>
+<li><code>ir/expr.py</code>: <code>ExprOp.LT, LE, EQ, NE</code> (GT/GE are builder swaps), <code>AND, OR, NOT</code>, <code>SELECT</code> (arity 3), <code>CAST</code> (attr <code>dtype</code>), <code>ISFINITE</code>, <code>COPYSIGN</code>, each with an <code>OpInfo</code> and its NumPy rule. Comparisons return <code>dtypes.bool_</code>, with <code>differentiable=False</code>. Builders <code>sc.where</code>, <code>sc.cast</code>, <code>Expr.__lt__</code> etc. <b>Caution:</b> <code>__eq__</code> must stay structural, because hash-consing depends on it. Equality is <code>sc.equal</code> only, and a test pins this.</li>
+<li><code>ir/expr_spec.py</code>: SELECT's condition is bool and its branches share a dtype; logical ops are bool-only; CAST targets a known dtype; compare operands share a dtype (no implicit widening).</li>
+<li><code>ad/forward.py</code>, <code>ad/reverse.py</code>: SELECT gets <code>select(c, ȧ, ḃ)</code> and <code>(select(c, ū, 0), select(c, 0, ū))</code>. CAST float→float passes through, and int/bool are non-diff. COPYSIGN gets <code>sign</code>-based rules. Then (Q2) MINIMUM, MAXIMUM and ABS get subgradient rules via select, with ties at ½.</li>
+<li><code>ad/sparsity.py</code>: the SELECT pattern is the union of both branches (the condition carries no derivative). Compares are structurally zero.</li>
+<li><code>ir/program.py</code>: matching scalar ProgramOps and their category sets. <code>ir/program_spec.py</code>: rules. <code>passes/lowering.py</code>: <code>_UNARY/_BINARY</code> entries plus a ternary elementwise rule for SELECT. <code>passes/arith.py</code>: <code>select(true,a,b)→a</code>, <code>select(c,a,a)→a</code>, <code>not not x→x</code>, constant compares.</li>
+<li><code>codegen/c.py</code>: spellings <code>(a &lt; b)</code>, <code>(c ? a : b)</code>, <code>(double)x</code>, <code>isfinite</code>, <code>copysign</code>. bool renders as <code>uint8_t</code>. <code>fuse_elementwise.py</code>: <code>_EXPENSIVE_OPS</code> unchanged, since none of these are libm-heavy. The one exception is <code>copysign</code>, which is cheap.</li>
+<li>Non-float temporaries: <code>pack_workspace</code> already spills only floating slots, so bool and int temps stay on the stack. A test pins that a large bool temp renders as a stack array, not <code>w +</code>.</li>
+</ul>
+<h4>Tests</h4>
+<ul>
+<li><code>tests/ir/test_expr.py</code>: dtype results, NumPy parity, and <code>x == y</code> staying structural.</li>
+<li><code>tests/ir/test_verifier.py</code>: bool/float mixing is rejected, and so is a non-bool condition.</li>
+<li>new <code>tests/codegen/test_control.py</code>: a compiled parity grid over {−inf, −1, −0, 0, 1, inf, NaN}² for every compare, select, isfinite and copysign. NaN semantics (every compare with NaN is false except NE) are pinned against NumPy.</li>
+<li><code>tests/ad/test_derivatives.py</code>: finite differences away from kinks; exact subgradients at ties; ReLU and saturation derivative graphs compile; <code>abs'(0)=0</code>.</li>
+<li><code>tests/ad/test_sparsity.py</code>: the select union pattern; a <code>select</code> whose condition depends on x adds no Jacobian entries of its own.</li>
+<li><code>tests/passes/test_arith.py</code>: each new identity is applied, and constant compares fold.</li>
+<li>Mutation checks: swap the SELECT branches in <code>c.py</code>, and make LT render as LE. Both must go red.</li>
+</ul>
+</div>
+
+<div class="pr">
+<h3>PR 2 · Reductions <code>reduce_max</code>/<code>reduce_min</code>, plus <code>norm_inf</code>/<code>norm_1</code> builders <span class="tag">#3</span></h3>
+<h4>Edits</h4>
+<ul>
+<li><code>ir/expr.py</code>: <code>ExprOp.MAX, MIN</code> are full reductions to a scalar, mirroring <code>SUM</code> (no axis, for consistency with <code>sum</code>). <code>norm_inf(x) = max(abs(x))</code> and <code>norm_1</code> sit next to <code>norm_2</code>/<code>sumsqr</code> as builders. Empty input is a verify error, because there is no identity element.</li>
+<li><code>passes/lowering.py</code>: a <code>@lowers</code> rule copied from <code>_lower_sum</code>. It initialises from <code>src[0]</code>, then runs a REDUCE loop with <code>maximum</code>. NaN propagation matches <code>np.max</code>: <code>fmax</code> would drop NaN, so the rule uses <code>x &gt; acc || isnan(x)</code> through PR 1's select.</li>
+<li><code>ad/*</code>: VJP is <code>ū · onehot(x == max) / count</code>, splitting ties per Q2. JVP is the same mask dotted with ẋ. <code>ad/sparsity.py</code>: the output depends on every input.</li>
+<li><code>passes/program/scalarize.py</code>: verify that the REDUCE-with-maximum pattern scalarizes. It should, since scalarize interprets the buffer stores.</li>
+</ul>
+<h4>Tests</h4>
+<ul>
+<li>Compiled parity including NaN, ±inf, all-equal ties and size 1. Scalar vs loop hint at sizes 3 and 5 000.</li>
+<li>Derivatives: finite differences on distinct entries, the exact tie split, forward = reverse.</li>
+<li>Structural: one loop, no per-element statements above the scalarize budget.</li>
+<li>Mutation check: initialise the accumulator to 0 instead of <code>src[0]</code>. The all-negative test must go red.</li>
+</ul>
+</div>
+
+<div class="pr">
+<h3>PR 3 · Accumulating <code>scatter</code>, <code>segment_sum</code>, <code>segment_max</code>/<code>segment_min</code>; linear-time gather VJP <span class="tag">#1</span><span class="tag">#4</span></h3>
+<h4>Edits</h4>
+<ul>
+<li><code>ir/expr.py</code>: remove the uniqueness check in <code>scatter</code>, which then matches its docstring. <code>segment_sum(values, segment_ids, num_segments)</code> is a builder over <code>scatter</code>. New <code>ExprOp.SEGMENT_MAX/MIN</code>, with static <code>segment_ids</code> and an explicit <code>fill</code> value for empty segments (default −inf/+inf, as in NumPy). The NumPy rules are <code>np.add.at</code> and <code>np.maximum.at</code>.</li>
+<li><code>passes/lowering.py</code> <code>_lower_scatter</code>: indices statically unique → today's <code>=</code> store (byte-identical C). Otherwise the body becomes <code>out[idx[i]] = out[idx[i]] + src[i]</code> in a REDUCE-kind range, the same pattern as <code>SUM</code>, which scalarize already interprets correctly. Segment max/min use a fill-initialised output and a select-max accumulate.</li>
+<li><code>passes/program/combine_scatter_sums.py</code>: audit that it treats a repeated-index scatter correctly. It already combines "sums of scatters", so repeated indices inside one scatter are a new case.</li>
+<li><code>ad/reverse.py</code>: rewrite <code>_gather_vjp</code> as a single accumulating <code>scatter(cot, indices, shape)</code>. This is O(nnz) instead of the current O(size·nnz) Python loop. The forward rule is unchanged. Segment max/min VJP uses the argmax mask, gathered back per segment.</li>
+<li><code>ad/sparsity.py</code>: the scatter rule becomes a union over sources per destination, and segment ops follow the same shape. <code>passes/expr.py</code>: the zero-propagation patterns extend to the segment ops.</li>
+</ul>
+<h4>Tests</h4>
+<ul>
+<li>Compiled parity vs <code>np.add.at</code> for random index multisets, including all-same-index, empty segments and a permutation (the unique path).</li>
+<li><b>The hash-consing hazard test:</b> a repeated-index scatter small enough to scalarize, differential against the loop hint. This is the only realistic stale-load path in Tier 1 without in-place carries.</li>
+<li>Snapshot guard: all six baselines are unchanged, so every existing scatter hits the unique path.</li>
+<li>Gather VJP: the dense Jacobian of <code>gather</code> with repeated indices vs finite differences, and a structural node-count O(n) test at n = 20 000.</li>
+<li>Integration: <code>tests/integration/test_sparse_primitives.py</code> checks SpMV and SpMᵀV on random CSC matrices (density 1–20 %) and on a synthetic stage-banded KKT pattern against <code>scipy.sparse</code> (already a dev dependency). Jacobians w.r.t. the data vector must match the analytic ones.</li>
+<li>Structural speed: the flop count of the SpMV body is ∝ nnz, and there is one index table of length nnz.</li>
+<li>Mutation checks: turn the accumulating store into a plain store, and drop the zero fill. Both must go red.</li>
+</ul>
+</div>
+
+<div class="pr">
+<h3>PR 4 · <code>scan</code>: a sequential loop with a carry <span class="tag">#6</span></h3>
+<h4>API</h4>
+<pre>carry_N, ys = sc.scan(body, init, xs=[(x, start, stride), ...], length=N)
+# body: Function (carry, *slices) -> (carry', y)   ; ys stacks y per step (optional)</pre>
+<h4>Edits</h4>
+<ul>
+<li><code>ir/expr.py</code>: <code>ExprOp.SCAN</code> with attrs <code>callee, length, starts, strides, output</code>, modelled on <code>VMAP</code>. As with VMAP, there is one node per selected output and they share one invocation. <code>function/sugar.py</code>: the <code>scan</code> builder, next to <code>vmap</code>. <code>ir/expr_spec.py</code>: the carry's type is preserved and the slice bounds are in range.</li>
+<li><code>passes/lowering.py</code>: a <code>@lowers(ExprOp.SCAN)</code> rule that is a <code>SERIAL</code> for-loop calling the callee procedure. The carry uses <b>ping-pong buffers</b> addressed by <code>(k mod 2)·|carry|</code> views, and the parity is chosen so that the final carry lands in the output buffer. That means no copies and no aliasing between a procedure's input and output, so C-54 is not needed yet. Because <code>length</code> is static, the trip count is constant.</li>
+<li><code>passes/program/*</code>: <code>hoist_invariant</code> must not hoist carry-dependent work. <code>unroll_unit_loops</code> may unroll length 0/1. <code>scalarize</code> may expand a scan only under its existing budget. Where a pass needs to know about SERIAL loops with loop-carried state, add a <code>RangeKind.SERIAL</code> guard.</li>
+<li><code>ad/forward.py</code>: the JVP is a scan of <code>jvp(body)</code> over the augmented carry (carry, ċarry). <code>ad/reverse.py</code> (Q5): the forward scan also emits the carry trajectory as <code>ys</code>, then a reverse scan (negative stride) runs <code>vjp(body)</code>. <code>ad/sparsity.py</code>: iterate the body's Boolean dependency matrix until it stops changing, which takes at most <code>length</code> steps and usually a few.</li>
+<li><code>ad/sparse.py</code>: sparse Jacobians of a scan go through the coloring path, and the coloring must not special-case it as a VMAP.</li>
+<li><code>codegen/aot.py</code> and <code>solver.py</code>: add SCAN wherever <code>{CALL, VMAP}</code> is enumerated (procedure collection).</li>
+</ul>
+<h4>Tests</h4>
+<ul>
+<li><code>tests/integration/test_scan.py</code> (metamorphic): <code>scan</code> ≡ N chained <code>CALL</code>s ≡ a Python loop over the compiled body, for an RK4 rollout, a linear recursion <code>x⁺ = Ax + Bu</code> and a Kalman filter (whose covariance carry is checked against a NumPy KF). Lengths are 0, 1, 2, 3 (parity edges), 50 and 1 000.</li>
+<li>Derivatives: the scan's Jacobian w.r.t. init and xs vs the unrolled Jacobian and finite differences; forward = reverse; <code>sparse_jacobian</code> scattered dense = dense; the Hessian of a scalar cost after a scan is symmetric.</li>
+<li><code>tests/ir/test_verifier.py</code>: a carry that changes shape or dtype, and out-of-range slices, are rejected.</li>
+<li>Structural speed: program nodes and C bytes are equal at N = 10, 1 000 and 100 000 (the test copies <code>test_race_car_eq_primal_source_is_constant_in_horizon</code>); the render time of N = 10⁵ has a smoke ceiling; the trajectory workspace equals N·|carry|.</li>
+<li>Snapshot: add the <code>control</code> corpus entry, a scan rollout whose body uses select, <code>reduce_max</code> and an accumulating scatter. This is a deliberate baseline addition.</li>
+<li>Mutation checks: drop the parity swap, which must fail the length-odd cases, and make the reverse scan run forward.</li>
+</ul>
+</div>
+
+<div class="pr">
+<h3>PR 5 · <code>while_loop</code> with a <code>max_iter</code> guard <span class="tag">#7</span></h3>
+<h4>API</h4>
+<pre>carry, n_iter = sc.while_loop(cond, body, init, max_iter=K)
+# cond: Function carry -> bool scalar ; body: Function carry -> carry ; n_iter is int32</pre>
+<h4>Edits</h4>
+<ul>
+<li><code>ir/expr.py</code>: <code>ExprOp.WHILE</code> (attrs <code>cond, body, max_iter, output</code>), with <code>differentiable=False</code>. <code>function/sugar.py</code>: the builder. <code>ir/expr_spec.py</code>: <code>cond</code> returns a bool scalar and the body preserves the carry.</li>
+<li><code>ir/program.py</code>: one new statement op, <code>BREAK_IF(scalar)</code>, valid only inside a SERIAL <code>FOR</code>. <code>FOR</code> gains an optional <code>exit_var</code> attribute that exposes the trip count after the loop. <code>ir/program_spec.py</code> and <code>ir/text.py</code>: a rule and the listing. <code>codegen/c.py</code>: <code>if (flag) break;</code>, with the loop variable declared outside the <code>for</code> when <code>exit_var</code> is set.</li>
+<li><code>passes/lowering.py</code>: a ping-pong carry as in PR 4, but the parity is only known at run time, so the loop ends with one final copy from <code>buf[n mod 2]</code> to the output. That is one O(|carry|) copy per call, not per iteration.</li>
+<li><code>passes/program/*</code>: every pass must treat a loop containing <code>BREAK_IF</code> as opaque. <code>scalarize</code> refuses it. <code>unroll_unit_loops</code> may not remove it, even with max_iter = 1, since the break still matters. <code>hoist_invariant</code> and <code>fuse_elementwise</code> may not move work across it. <code>pack_workspace</code> keeps both carry buffers live for the whole loop.</li>
+<li><code>ad/*</code>: JVP and VJP raise with a message pointing at #10. <code>ad/sparsity.py</code>: the transitive-closure fixpoint of the body's pattern (conservative).</li>
+</ul>
+<h4>Tests</h4>
+<ul>
+<li><code>tests/integration/test_scan.py</code>: Newton on a scalar and on a 5-D root problem (iteration counts and roots match a Python loop); an always-false condition gives 0 iterations and returns init; an always-true condition gives <code>max_iter</code> and equals <code>scan(max_iter)</code>; NaN in the carry with a guard via <code>isfinite</code>.</li>
+<li><code>tests/passes/test_program.py</code> and <code>test_scalarize.py</code>: one test per pass showing a <code>BREAK_IF</code> loop comes through untouched. <code>tests/ir/test_program.py</code>: a <code>BREAK_IF</code> outside a FOR is rejected.</li>
+<li><code>tests/codegen/test_control.py</code>: the rendered C contains exactly one loop with the guard, and the <code>n_iter</code> output is exact.</li>
+<li>Structural speed: C size is constant in <code>max_iter</code>, and there is exactly one carry copy per call (counted in the program IR).</li>
+<li>Mutation checks: an off-by-one on the guard, and an inverted break condition.</li>
+</ul>
+</div>
+
+<div class="pr">
+<h3>PR 6 · In-place carry updates (a conservative donation rule) <span class="tag">#8</span></h3>
+<p class="meta">Needed for LDLᵀ (Tier 2), where each step touches a few entries of an O(nnz) carry. With ping-pong alone, every step rewrites the whole carry.</p>
+<h4>Edits</h4>
+<ul>
+<li>Add the Expr builder <code>index_add(base, idx, vals) = base + scatter(vals, idx, base.shape)</code> (and <code>index_set</code>). These are builders only, recognised as a pattern at lowering.</li>
+<li><code>passes/lowering.py</code>: inside a <code>scan</code>/<code>while</code> body procedure, when the carry output is an <code>index_add</code>/<code>index_set</code> chain rooted at the carry input, <b>and</b> every other use of the carry input feeds into that chain's <code>vals</code>, then the body writes in place and the scan uses a single buffer. Otherwise it falls back to ping-pong. The second condition is a sufficient condition that every read happens before the write, and the Expr DAG can check it statically.</li>
+<li>This is the C-54 minimum. Program passes must not merge a <code>load</code> across the in-place <code>store</code> inside a donated body. Mark donated procedures <code>attrs["in_place"]</code> and restrict <code>scalarize</code> on them to its interpreting mode, which is already store-ordered. Any value-sharing pass must skip them.</li>
+</ul>
+<h4>Tests</h4>
+<ul>
+<li>The same metamorphic suite as PR 4, with every donated case checked against the forced-ping-pong result (a test-only switch).</li>
+<li>Negative cases, each of which must fall back: the carry input is also read by a <code>y</code> output; it is read after the update; there are two updates with an intermediate read.</li>
+<li><b>A stale-load regression test:</b> a small donated body where the same carry entry is read, updated, then read again in the next iteration, scalarized and looped.</li>
+<li>Structural speed: in a donated scan, the stores per step equal |idx| (not |carry|), and the workspace holds one carry, not two.</li>
+<li>Speed study: a toy left-looking column update, comparing a donated scan, ping-pong and unrolled.</li>
+<li>Mutation check: relax the second condition so it is not enforced. The negative-case tests must go red.</li>
+</ul>
+</div>
+
+<div class="pr">
+<h3>PR 7 · Integer and bool outputs through the ABI <span class="tag">#9</span></h3>
+<h4>Edits</h4>
+<ul>
+<li><code>codegen/aot.py</code> and <code>c.py</code> (Q4): an output of non-float dtype is computed in its own typed buffer and cast into the caller's <code>double*</code> at the store. Inputs of int/bool dtype are cast on load. The header's typed-buffer structs (<code>abi.py</code>) keep the true dtype in their metadata comment, and the sparsity and shape tables are unchanged.</li>
+<li><code>function/model.py</code>: the numerical call returns NumPy arrays of the declared dtype (int32/bool), converted from the double buffer.</li>
+<li><code>docs/how_it_works/generated_interface.md</code>: document the conversion and the 2⁵³ bound. Add a todo item for a typed ABI under CAPI.</li>
+</ul>
+<h4>Tests</h4>
+<ul>
+<li><code>tests/codegen/test_c.py</code>: the int32 counter and bool flag come back through the ABI with exact values, including INT32_MAX. They also round-trip through the C header when compiled from C and C++, reusing the existing typed-buffer tests.</li>
+<li><code>tests/codegen/test_jit.py</code>: the JIT cache key is unchanged for float-only functions.</li>
+<li><code>tests/test_c_snapshot.py</code>: existing baselines are identical, and the <code>control</code> entry gains an <code>n_iter</code> output (a deliberate regeneration).</li>
+</ul>
+</div>
+
+<div class="pr">
+<h3>PR 8 · Custom derivatives on a <code>Function</code> <span class="tag">#10</span></h3>
+<h4>API</h4>
+<pre>f = sc.custom_derivative(f, jvp=f_jvp, vjp=f_vjp)   # either or both
+# f_jvp: (inputs, tangents) -> output tangents ; f_vjp: (inputs, outputs, cotangents) -> input cotangents</pre>
+<h4>Edits</h4>
+<ul>
+<li><code>function/model.py</code>: optional <code>custom_jvp</code>/<code>custom_vjp</code> Function attributes, carried through <code>_from_exprs</code>, hashing and naming. <code>function/sugar.py</code>: the builder.</li>
+<li><code>ad/forward.py</code> and <code>ad/reverse.py</code>: at a <code>CALL</code>, prefer the custom rule. A missing direction falls back to differentiating the body, and raises if the body is non-differentiable (e.g. contains <code>WHILE</code>). <code>ad/sparsity.py</code>: uses the primal body's structural pattern unless a <code>sparsity</code> override is given.</li>
+<li>Check the lowering-hint preservation of C-55 for derived functions built from custom rules.</li>
+</ul>
+<h4>Tests</h4>
+<ul>
+<li>The canonical case is a Newton <code>while_loop</code> solving <code>g(x, p) = 0</code>, with a custom VJP via the implicit function theorem. Its <code>dx/dp</code> must match finite differences and the analytic answer.</li>
+<li>A custom rule that is deliberately wrong (scaled by 2) must be the one used, which proves dispatch. Forward and reverse agreement when both rules are given.</li>
+<li><code>sparse_jacobian</code> through a custom-derivative call vs dense.</li>
+<li>Mutation check: bypass the dispatch. The "deliberately wrong" test must go red.</li>
+</ul>
+</div>
+
+<h2>Sequencing and effort</h2>
+<div class="scroll"><table>
+<tr><th>PR</th><th>Depends on</th><th>Size</th><th>Main risk</th><th>Snapshot effect</th></tr>
+<tr><td>1 compare/select/cast</td><td>—</td><td>M (≈15 files, mostly one-line table entries)</td><td><code>__eq__</code> overloading breaking hash-consing (avoided by design)</td><td class="y">unchanged</td></tr>
+<tr><td>2 reduce_max/min</td><td>1</td><td>S</td><td>NaN semantics</td><td class="y">unchanged</td></tr>
+<tr><td>3 scatter accumulate, segment ops</td><td>1, 2</td><td>M</td><td><code>combine_scatter_sums</code> and scalarize interaction</td><td class="y">unchanged</td></tr>
+<tr><td>4 scan</td><td>1–3 (for the corpus entry)</td><td>L</td><td>Program passes that assume independent iterations; the reverse-mode trajectory</td><td class="w">+ control entry</td></tr>
+<tr><td>5 while_loop</td><td>1, 4</td><td>M–L</td><td>Every pass must respect <code>BREAK_IF</code></td><td class="w">control entry extended</td></tr>
+<tr><td>6 in-place carry</td><td>3, 4</td><td>M</td><td>Stale loads (the C-54 hazard)</td><td class="y">unchanged</td></tr>
+<tr><td>7 int/bool outputs</td><td>1, 5</td><td>S–M</td><td>Header/ABI consumers</td><td class="w">control entry extended</td></tr>
+<tr><td>8 custom derivatives</td><td>5 (for the canonical test)</td><td>M</td><td>Interaction with coloring and hint preservation</td><td class="y">unchanged</td></tr>
+</table></div>
+<p>PRs 1–3 are independent of the loop work and immediately useful for contact and saturation models. PR 6 can be deferred until Tier 2 starts. The perf study is written after PR 4 and extended after PRs 3 and 6.</p>
+
+<h2 id="where">Where each edit lands (checked against the tree)</h2>
+<div class="scroll"><table>
+<tr><th>File</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th></tr>
+<tr><td><code>ir/expr.py</code> (ExprOp, OP_INFO, builders)</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td></td><td></td></tr>
+<tr><td><code>ir/expr_spec.py</code></td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td></td><td></td><td></td></tr>
+<tr><td><code>ir/program.py</code>, <code>program_spec.py</code>, <code>text.py</code></td><td class="y">●</td><td></td><td></td><td></td><td class="y">●</td><td class="y">●</td><td></td><td></td></tr>
+<tr><td><code>ad/forward.py</code>, <code>reverse.py</code></td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td></td><td></td><td class="y">●</td></tr>
+<tr><td><code>ad/sparsity.py</code> (+ <code>sparse.py</code>)</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td></td><td></td><td class="y">●</td></tr>
+<tr><td><code>passes/lowering.py</code></td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td></td></tr>
+<tr><td><code>passes/arith.py</code>, <code>passes/expr.py</code></td><td class="y">●</td><td></td><td class="y">●</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td><code>passes/program/*</code> (scalarize, hoist, unroll, combine_scatter_sums, pack_workspace)</td><td></td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td></td><td></td></tr>
+<tr><td><code>codegen/c.py</code>, <code>aot.py</code>, <code>solver.py</code>, <code>abi.py</code></td><td class="y">●</td><td></td><td></td><td class="y">●</td><td class="y">●</td><td></td><td class="y">●</td><td></td></tr>
+<tr><td><code>function/sugar.py</code>, <code>model.py</code>, <code>scaly/__init__.py</code></td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+<tr><td><code>docs/how_it_works/ir.md</code>, <code>generated_interface.md</code>, <code>internal/todo.md</code></td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td><td class="y">●</td></tr>
+</table></div>
+<p class="n">New test files: <code>tests/codegen/test_control.py</code>, <code>tests/integration/test_scan.py</code>, <code>tests/integration/test_sparse_primitives.py</code>. Everything else extends existing mirrored files. No new source modules, so <code>IMPORT_LAYERS</code> is unchanged.</p>
+</main>
+</body>
+</html>

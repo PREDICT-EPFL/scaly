@@ -53,6 +53,17 @@ class ExprOp(StrEnum):
   ATAN2 = "atan2"
   MINIMUM = "minimum"
   MAXIMUM = "maximum"
+  COPYSIGN = "copysign"
+  LT = "lt"
+  LE = "le"
+  EQ = "eq"
+  NE = "ne"
+  AND = "and"
+  OR = "or"
+  NOT = "not"
+  ISFINITE = "isfinite"
+  SELECT = "select"
+  CAST = "cast"
   SUM = "sum"
   RESHAPE = "reshape"
   TRANSPOSE = "transpose"
@@ -96,7 +107,16 @@ COMMON_ELEMENTWISE_BINARY = {
   ExprOp.ATAN2,
   ExprOp.MINIMUM,
   ExprOp.MAXIMUM,
+  ExprOp.COPYSIGN,
 }
+
+# Ops whose result is ``bool``: comparisons of two same-dtype operands, logic on bools, and the
+# finiteness test. None of them is differentiable; a derivative flows only through ``SELECT``.
+COMPARE_OPS = {ExprOp.LT, ExprOp.LE, ExprOp.EQ, ExprOp.NE}
+LOGICAL_OPS = {ExprOp.AND, ExprOp.OR, ExprOp.NOT}
+PREDICATE_OPS = COMPARE_OPS | LOGICAL_OPS | {ExprOp.ISFINITE}
+
+COMMON_CONTROL = PREDICATE_OPS | {ExprOp.SELECT, ExprOp.CAST}
 
 COMMON_STRUCTURAL = {
   ExprOp.INPUT,
@@ -118,7 +138,7 @@ COMMON_STRUCTURAL = {
 # Deliberately not in the MVP set: expm1/log1p (nice but low priority), splines/interpolants
 # (important but require carefully specified extrapolation, knots, derivatives, and codegen tables),
 # matrix exponentials/decompositions, and solver/control-flow ops.
-COMMON_OPS = COMMON_STRUCTURAL | COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY
+COMMON_OPS = COMMON_STRUCTURAL | COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY | COMMON_CONTROL
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +182,17 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.ATAN2: OpInfo(ExprOp.ATAN2, 2, np.arctan2),
   ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, np.minimum, False),
   ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, np.maximum, False),
+  ExprOp.COPYSIGN: OpInfo(ExprOp.COPYSIGN, 2, np.copysign),
+  ExprOp.LT: OpInfo(ExprOp.LT, 2, np.less, False),
+  ExprOp.LE: OpInfo(ExprOp.LE, 2, np.less_equal, False),
+  ExprOp.EQ: OpInfo(ExprOp.EQ, 2, np.equal, False),
+  ExprOp.NE: OpInfo(ExprOp.NE, 2, np.not_equal, False),
+  ExprOp.AND: OpInfo(ExprOp.AND, 2, np.logical_and, False),
+  ExprOp.OR: OpInfo(ExprOp.OR, 2, np.logical_or, False),
+  ExprOp.NOT: OpInfo(ExprOp.NOT, 1, np.logical_not, False),
+  ExprOp.ISFINITE: OpInfo(ExprOp.ISFINITE, 1, np.isfinite, False),
+  ExprOp.SELECT: OpInfo(ExprOp.SELECT, 3, np.where),
+  ExprOp.CAST: OpInfo(ExprOp.CAST, 1, None),
   ExprOp.SUM: OpInfo(ExprOp.SUM, 1, np.sum),
   ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, np.reshape),
   ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, np.transpose),
@@ -447,6 +478,47 @@ class Expr:
   def maximum(self, other: Any) -> Expr:
     return maximum(self, other)
 
+  def copysign(self, other: Any) -> Expr:
+    return copysign(self, other)
+
+  def isfinite(self) -> Expr:
+    return isfinite(self)
+
+  def cast(self, dtype: DType | str) -> Expr:
+    return cast(self, dtype)
+
+  def __bool__(self) -> bool:
+    # A comparison builds a ``bool`` expression, not a Python truth value; branching on one would
+    # silently take the same path for every input. ``sc.where`` is the data-dependent choice.
+    raise TypeError("an Expr has no Python truth value; use sc.where for a data-dependent choice")
+
+  def __lt__(self, other: Any) -> Expr:
+    return less(self, other)
+
+  def __le__(self, other: Any) -> Expr:
+    return less_equal(self, other)
+
+  def __gt__(self, other: Any) -> Expr:
+    return greater(self, other)
+
+  def __ge__(self, other: Any) -> Expr:
+    return greater_equal(self, other)
+
+  def __and__(self, other: Any) -> Expr:
+    return logical_and(self, other)
+
+  def __rand__(self, other: Any) -> Expr:
+    return logical_and(other, self)
+
+  def __or__(self, other: Any) -> Expr:
+    return logical_or(self, other)
+
+  def __ror__(self, other: Any) -> Expr:
+    return logical_or(other, self)
+
+  def __invert__(self) -> Expr:
+    return logical_not(self)
+
   def __neg__(self) -> Expr:
     return unary(ExprOp.NEG, self)
 
@@ -572,6 +644,121 @@ def minimum(x: Any, y: Any) -> Expr:
 def maximum(x: Any, y: Any) -> Expr:
   """Elementwise maximum. Non-smooth, so the result is marked non-differentiable."""
   return binary(ExprOp.MAXIMUM, as_expr(x), as_expr(y))
+
+
+def copysign(x: Any, y: Any) -> Expr:
+  """Elementwise magnitude of ``x`` with the sign of ``y``, as C's ``copysign``."""
+  return binary(ExprOp.COPYSIGN, as_expr(x), as_expr(y))
+
+
+def _as_bool(x: Any) -> Expr:
+  e = x if isinstance(x, Expr) else Expr.const(x, dtype=dtypes.bool_)
+  if not e.type.dtype.is_bool:
+    raise TypeError(f"logical operation needs bool operands, got {e.type.dtype}; compare first or use sc.cast")
+  return e
+
+
+def _predicate(op: ExprOp, *xs: Expr) -> Expr:
+  shape: tuple[int, ...] = ()
+  for x in xs:
+    shape = broadcast_shape(shape, x.shape)
+  return Expr(op, xs, TensorType(shape, dtype=dtypes.bool_, diff=False), lowering=common_lowering(*xs))
+
+
+def _compare(op: ExprOp, x: Any, y: Any) -> Expr:
+  x, y = _operands(x, y)
+  promote_dtype(x, y)
+  return _predicate(op, x, y)
+
+
+def _operands(x: Any, y: Any) -> tuple[Expr, Expr]:
+  """Two operands where a Python number takes the dtype of the ``Expr`` beside it."""
+  if isinstance(x, Expr) and not isinstance(y, Expr):
+    return x, Expr.const(y, dtype=x.type.dtype)
+  if isinstance(y, Expr) and not isinstance(x, Expr):
+    return Expr.const(x, dtype=y.type.dtype), y
+  return as_expr(x), as_expr(y)
+
+
+def less(x: Any, y: Any) -> Expr:
+  """Elementwise ``x < y`` as a ``bool`` expression. Comparisons with NaN are false."""
+  return _compare(ExprOp.LT, x, y)
+
+
+def less_equal(x: Any, y: Any) -> Expr:
+  """Elementwise ``x <= y`` as a ``bool`` expression."""
+  return _compare(ExprOp.LE, x, y)
+
+
+def greater(x: Any, y: Any) -> Expr:
+  """Elementwise ``x > y``, built as ``y < x``."""
+  return _compare(ExprOp.LT, y, x)
+
+
+def greater_equal(x: Any, y: Any) -> Expr:
+  """Elementwise ``x >= y``, built as ``y <= x``."""
+  return _compare(ExprOp.LE, y, x)
+
+
+def equal(x: Any, y: Any) -> Expr:
+  """Elementwise ``x == y`` as a ``bool`` expression. ``==`` on two ``Expr`` stays identity, which
+  hash-consing relies on, so value equality is spelled out."""
+  return _compare(ExprOp.EQ, x, y)
+
+
+def not_equal(x: Any, y: Any) -> Expr:
+  """Elementwise ``x != y`` as a ``bool`` expression. True whenever either side is NaN."""
+  return _compare(ExprOp.NE, x, y)
+
+
+def logical_and(x: Any, y: Any) -> Expr:
+  """Elementwise conjunction of two ``bool`` expressions."""
+  return _predicate(ExprOp.AND, _as_bool(x), _as_bool(y))
+
+
+def logical_or(x: Any, y: Any) -> Expr:
+  """Elementwise disjunction of two ``bool`` expressions."""
+  return _predicate(ExprOp.OR, _as_bool(x), _as_bool(y))
+
+
+def logical_not(x: Any) -> Expr:
+  """Elementwise negation of a ``bool`` expression."""
+  return _predicate(ExprOp.NOT, _as_bool(x))
+
+
+def isfinite(x: Any) -> Expr:
+  """Elementwise test that ``x`` is neither infinite nor NaN, as a ``bool`` expression."""
+  x = as_expr(x)
+  if not x.type.dtype.is_floating:
+    raise TypeError(f"isfinite needs a floating operand, got {x.type.dtype}")
+  return _predicate(ExprOp.ISFINITE, x)
+
+
+def where(cond: Any, x: Any, y: Any) -> Expr:
+  """Elementwise choice: ``x`` where ``cond`` is true, ``y`` elsewhere, with NumPy broadcasting.
+
+  Both branches are always evaluated, so a branch may produce inf or NaN where it is not chosen
+  without affecting the result. The derivative flows through the chosen branch only.
+  """
+  c = _as_bool(cond)
+  a, b = _operands(x, y)
+  dtype = promote_dtype(a, b)
+  shape = broadcast_shape(c.shape, broadcast_shape(a.shape, b.shape))
+  return Expr(ExprOp.SELECT, (c, a, b), TensorType(shape, dtype=dtype, diff=diff_any(a, b)), lowering=common_lowering(c, a, b))
+
+
+def cast(x: Any, dtype: DType | str) -> Expr:
+  """Convert ``x`` to ``dtype``. To ``bool`` it means ``x != 0``; from ``bool`` it gives 0 or 1.
+
+  A cast between floating types keeps the derivative; any other cast has none.
+  """
+  x, target = as_expr(x), as_dtype(dtype)
+  if x.type.dtype == target:
+    return x
+  if target.is_bool:
+    return not_equal(x, 0)
+  diff = x.type.diff and x.type.dtype.is_floating and target.is_floating
+  return Expr(ExprOp.CAST, (x,), TensorType(x.shape, dtype=target, diff=diff), lowering=x.lowering)
 
 
 def _normalize_index(index: Any, shape: tuple[int, ...]) -> tuple[Any, ...]:

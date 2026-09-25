@@ -14,7 +14,7 @@ import numpy as np
 
 from ..function import Function
 from ..function.sugar import vmap
-from ..ir.expr import Expr, ExprOp, concat, gather, scatter, stack, substitute, zeros_like
+from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, cast, concat, copysign, gather, scatter, stack, substitute, where, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.env import env_bool
 from .sparsity import _depends_on, _jac_mask, _mask_sparsity, column_coloring
@@ -59,7 +59,7 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
   if expr.op == ExprOp.INPUT:
     memo[expr.id] = ret = seeds.get(expr, zeros_like(expr))
     return ret
-  if expr.op == ExprOp.CONST:
+  if expr.op == ExprOp.CONST or expr.op in PREDICATE_OPS:
     memo[expr.id] = ret = zeros_like(expr)
     return ret
   if expr.op in (ExprOp.CALL, ExprOp.VMAP):
@@ -140,6 +140,12 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return save(args[0] / args[0].abs() * d[0])
   if expr.op in {ExprOp.FLOOR, ExprOp.CEIL, ExprOp.MINIMUM, ExprOp.MAXIMUM}:
     raise NotImplementedError(f"JVP for nonsmooth op {expr.op!r} is not implemented")
+  if expr.op == ExprOp.SELECT:
+    return save(where(args[0], d[1], d[2]))
+  if expr.op == ExprOp.COPYSIGN:
+    return save(_copysign_slope(args[0], args[1]) * d[0])
+  if expr.op == ExprOp.CAST:
+    return save(cast(d[0], expr.type.dtype) if expr.type.diff else zeros_like(expr))
   if expr.op == ExprOp.SUM:
     return save(d[0].sum())
   if expr.op == ExprOp.RESHAPE:
@@ -165,6 +171,11 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
       return save(2 * (args[0] @ d[0]))
     return save(d[0] @ args[1] + args[0] @ d[1])
   raise NotImplementedError(f"JVP for op {expr.op!r} is not implemented")
+
+
+def _copysign_slope(x: Expr, s: Expr) -> Expr:
+  """``d copysign(x, s) / dx = sign(x) * sign(s)``, taking the sign bit of zero as C does."""
+  return copysign(1.0, x) * copysign(1.0, s)
 
 
 def _call_jvp_many_function(
@@ -337,8 +348,14 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   if expr.op == ExprOp.INPUT:
     memo[expr.id] = ret = seeds if expr.id == wrt.id else Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
     return ret
-  if expr.op == ExprOp.CONST:
+  if expr.op == ExprOp.CONST or expr.op in PREDICATE_OPS:
     memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+    return ret
+  if expr.op == ExprOp.SELECT:
+    cond, a, b = expr.args
+    da = _broadcast_tangent(_jvp_many_structural(a, wrt, seeds, memo, dep_memo), a, expr, nseed)
+    db = _broadcast_tangent(_jvp_many_structural(b, wrt, seeds, memo, dep_memo), b, expr, nseed)
+    memo[expr.id] = ret = where(cond, da, db)
     return ret
   if expr.op == ExprOp.SLICE:
     memo[expr.id] = ret = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)[(slice(None), *expr.attrs["index"])]

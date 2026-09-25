@@ -230,6 +230,7 @@ class CompiledFunction:
     "_input_names",
     "_output_shapes",
     "_output_sizes",
+    "_output_bool",
     "_n_args",
     "_n_res",
   )
@@ -265,6 +266,7 @@ class CompiledFunction:
     self._input_sizes = tuple(int(e.size) for e in fun.inputs)
     self._output_shapes = tuple(e.shape for e in fun.outputs)
     self._output_sizes = tuple(int(e.size) for e in fun.outputs)
+    self._output_bool = tuple(e.type.dtype.is_bool for e in fun.outputs)
     self._n_args = len(fun.inputs)
     self._n_res = len(fun.outputs)
 
@@ -336,7 +338,8 @@ class CompiledFunction:
     if status != 0:
       raise JitError(f"{self._fun.name} returned ABI status {status}")
 
-    return [out.reshape(self._output_shapes[i]) for i, out in enumerate(outputs)]
+    # A bool output crosses the ABI as 0.0 or 1.0 in its double array.
+    return [(out != 0.0 if self._output_bool[i] else out).reshape(self._output_shapes[i]) for i, out in enumerate(outputs)]
 
 
 def get_compiled(fun: Function) -> CompiledFunction:

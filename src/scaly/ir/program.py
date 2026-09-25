@@ -90,6 +90,17 @@ class ProgramOp(StrEnum):
   ATAN2 = "atan2"
   MINIMUM = "minimum"
   MAXIMUM = "maximum"
+  COPYSIGN = "copysign"
+  LT = "lt"
+  LE = "le"
+  EQ = "eq"
+  NE = "ne"
+  AND = "and"
+  OR = "or"
+  NOT = "not"
+  ISFINITE = "isfinite"
+  SELECT = "select"
+  CAST = "cast"
 
 
 class RangeKind(StrEnum):
@@ -146,8 +157,23 @@ SCALAR_OPS: frozenset[ProgramOp] = frozenset(
     ProgramOp.ATAN2,
     ProgramOp.MINIMUM,
     ProgramOp.MAXIMUM,
+    ProgramOp.COPYSIGN,
+    ProgramOp.LT,
+    ProgramOp.LE,
+    ProgramOp.EQ,
+    ProgramOp.NE,
+    ProgramOp.AND,
+    ProgramOp.OR,
+    ProgramOp.NOT,
+    ProgramOp.ISFINITE,
+    ProgramOp.SELECT,
+    ProgramOp.CAST,
   }
 )
+
+# Scalar ops with a ``bool`` result. Comparisons take two operands of one dtype; AND/OR/NOT take bools.
+COMPARE_OPS: frozenset[ProgramOp] = frozenset({ProgramOp.LT, ProgramOp.LE, ProgramOp.EQ, ProgramOp.NE})
+PREDICATE_OPS: frozenset[ProgramOp] = COMPARE_OPS | {ProgramOp.AND, ProgramOp.OR, ProgramOp.NOT, ProgramOp.ISFINITE}
 
 
 # Scalar unary/binary ProgramOp that render as a C function call (libm), keyed for the
@@ -172,7 +198,7 @@ UNARY_FN_OPS: frozenset[ProgramOp] = frozenset(
     ProgramOp.CEIL,
   }
 )
-BINARY_FN_OPS: frozenset[ProgramOp] = frozenset({ProgramOp.POW, ProgramOp.ATAN2, ProgramOp.MINIMUM, ProgramOp.MAXIMUM})
+BINARY_FN_OPS: frozenset[ProgramOp] = frozenset({ProgramOp.POW, ProgramOp.ATAN2, ProgramOp.MINIMUM, ProgramOp.MAXIMUM, ProgramOp.COPYSIGN})
 
 
 HOST_ONLY_OPS: frozenset[ProgramOp] = frozenset({ProgramOp.LAUNCH})
@@ -442,9 +468,33 @@ def neg(x: ProgramNode) -> ProgramNode:
   return ProgramNode(ProgramOp.NEG, (x,), dtype=x.dtype)
 
 
+def compare(op: ProgramOp, x: ProgramNode, y: ProgramNode) -> ProgramNode:
+  """A comparison of two same-dtype scalars, giving ``bool``."""
+  if op not in COMPARE_OPS:
+    raise TypeError(f"{op} is not a comparison")
+  _scalar_binop(op, x, y)
+  return ProgramNode(op, (x, y), dtype=dtypes.bool_)
+
+
+def select(cond: ProgramNode, x: ProgramNode, y: ProgramNode) -> ProgramNode:
+  """``x`` where the ``bool`` scalar ``cond`` holds, else ``y``."""
+  if not cond.dtype.is_bool or x.dtype != y.dtype:
+    raise TypeError(f"select needs a bool condition and same-dtype branches, got {cond.dtype}, {x.dtype}, {y.dtype}")
+  return ProgramNode(ProgramOp.SELECT, (cond, x, y), dtype=x.dtype)
+
+
+def cast(x: ProgramNode, dtype: DType) -> ProgramNode:
+  """Convert a scalar to ``dtype`` (a C cast; conversion to bool is a comparison, not a cast)."""
+  if x.dtype == dtype:
+    return x
+  return ProgramNode(ProgramOp.CAST, (x,), dtype=dtype)
+
+
 __all__ = [
   "ADDRESS_SPACES",
   "BINARY_FN_OPS",
+  "COMPARE_OPS",
+  "PREDICATE_OPS",
   "DEVICE_ONLY_OPS",
   "HOST_ONLY_OPS",
   "UNARY_FN_OPS",
@@ -458,6 +508,8 @@ __all__ = [
   "block",
   "buffer",
   "call",
+  "cast",
+  "compare",
   "const_buffer",
   "const_float",
   "const_int",
@@ -472,6 +524,7 @@ __all__ = [
   "proc",
   "program",
   "range_",
+  "select",
   "store",
   "store_pair",
   "sub",

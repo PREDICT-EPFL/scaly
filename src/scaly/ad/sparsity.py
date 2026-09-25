@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 from scipy import sparse
 
-from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp
+from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, PREDICATE_OPS, Expr, ExprOp
 from ..ir.types import SparsityType, broadcast_shape
 
 
@@ -89,8 +89,16 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spars
 def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   if expr.op == ExprOp.INPUT:
     return sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else _empty((expr.size, wrt.size))
-  if expr.op == ExprOp.CONST:
+  if expr.op == ExprOp.CONST or expr.op in PREDICATE_OPS:
     return _empty((expr.size, wrt.size))
+  if expr.op == ExprOp.COPYSIGN:
+    # The sign operand only flips the result, so its derivative is zero wherever it exists.
+    return _broadcast_mask(_jac_mask(expr.args[0], wrt, memo), expr.args[0].shape, expr.shape)
+  if expr.op == ExprOp.SELECT:
+    _, a, b = expr.args
+    return _or(_broadcast_mask(_jac_mask(a, wrt, memo), a.shape, expr.shape), _broadcast_mask(_jac_mask(b, wrt, memo), b.shape, expr.shape))
+  if expr.op == ExprOp.CAST:
+    return _jac_mask(expr.args[0], wrt, memo) if expr.type.diff else _empty((expr.size, wrt.size))
   if expr.op in COMMON_ELEMENTWISE_UNARY:
     return _jac_mask(expr.args[0], wrt, memo)
   if expr.op in COMMON_ELEMENTWISE_BINARY:

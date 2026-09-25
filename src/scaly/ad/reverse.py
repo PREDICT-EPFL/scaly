@@ -9,7 +9,7 @@ import numpy as np
 
 from ..function import Function
 from ..function.sugar import vmap
-from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, stack, topo, zeros_like
+from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, as_expr, cast, concat, copysign, gather, scatter, stack, topo, where, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from .sparsity import _depends_on
 
@@ -119,7 +119,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
 
   for expr in reversed(nodes):
     cot = adjoints.get(expr.id)
-    if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST} or not needed(expr):
+    if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST} or expr.op in PREDICATE_OPS or not needed(expr):
       continue
     if expr.op == ExprOp.VMAP:
       for arg, arg_cot in _vmap_vjp(expr, cot, wrts, dep_memo):
@@ -211,6 +211,19 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return (cot * args[0] / args[0].abs(),)
   if expr.op in {ExprOp.FLOOR, ExprOp.CEIL, ExprOp.MINIMUM, ExprOp.MAXIMUM}:
     raise NotImplementedError(f"VJP for nonsmooth op {expr.op!r} is not implemented")
+  if expr.op == ExprOp.SELECT:
+    cond, a, b = args
+    zero = as_expr(0.0)
+    return (
+      zeros_like(cond),
+      _unbroadcast(where(cond, cot, zero), a.shape, expr.shape),
+      _unbroadcast(where(cond, zero, cot), b.shape, expr.shape),
+    )
+  if expr.op == ExprOp.COPYSIGN:
+    x, s = args
+    return (_unbroadcast(cot * copysign(1.0, x) * copysign(1.0, s), x.shape, expr.shape), zeros_like(s))
+  if expr.op == ExprOp.CAST:
+    return (cast(cot, args[0].type.dtype) if expr.type.diff else zeros_like(args[0]),)
   if expr.op == ExprOp.SUM:
     return (cot * _ones_like(args[0]),)
   if expr.op == ExprOp.RESHAPE:

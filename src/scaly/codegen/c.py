@@ -46,7 +46,9 @@ _UNARY_C = {
   ProgramOp.FLOOR: "floor",
   ProgramOp.CEIL: "ceil",
 }
-_BINARY_C = {ProgramOp.POW: "pow", ProgramOp.ATAN2: "atan2", ProgramOp.MINIMUM: "fmin", ProgramOp.MAXIMUM: "fmax"}
+_BINARY_C = {ProgramOp.POW: "pow", ProgramOp.ATAN2: "atan2", ProgramOp.MINIMUM: "fmin", ProgramOp.MAXIMUM: "fmax", ProgramOp.COPYSIGN: "copysign"}
+# Comparisons and logic render as C operators; a C comparison already yields 0 or 1.
+_PRED_SYM = {ProgramOp.LT: "<", ProgramOp.LE: "<=", ProgramOp.EQ: "==", ProgramOp.NE: "!=", ProgramOp.AND: "&&", ProgramOp.OR: "||"}
 
 
 def can_render_program_c(fun: Function) -> bool:
@@ -340,6 +342,16 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
       s = f"{_UNARY_C[op]}({args[0]})"
     elif op in _BINARY_C:
       s = f"{_BINARY_C[op]}({args[0]}, {args[1]})"
+    elif op in _PRED_SYM:
+      s = f"({args[0]} {_PRED_SYM[op]} {args[1]})"
+    elif op == ProgramOp.NOT:
+      s = f"(!{args[0]})"
+    elif op == ProgramOp.ISFINITE:
+      s = f"(isfinite({args[0]}) != 0)"
+    elif op == ProgramOp.SELECT:
+      s = f"({args[0]} ? {args[1]} : {args[2]})"
+    elif op == ProgramOp.CAST:
+      s = f"(({node.dtype.c_type}){args[0]})"
     else:
       raise LoweringError(f"Program IR C renderer: scalar op {op} not yet handled")
     text[id(node)] = s

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .program import ADDRESS_SPACES, DEVICE_ONLY_OPS, HOST_ONLY_OPS, SCALAR_OPS, ProgramNode, ProgramOp, RangeKind
+from .program import ADDRESS_SPACES, COMPARE_OPS, DEVICE_ONLY_OPS, HOST_ONLY_OPS, SCALAR_OPS, ProgramNode, ProgramOp, RangeKind
 from .spec import Rule, Spec, VerifyError
 from .types import DType, DeviceSpec
 
@@ -54,8 +54,47 @@ def _dtype_is_dtype(n: ProgramNode) -> str | None:
 def _const_int_has_value(n: ProgramNode) -> str | None:
   if "value" not in n.attrs or not isinstance(n.attrs["value"], int):
     return "CONST_INT missing integer 'value' attr"
-  if not n.dtype.is_integer:
-    return f"CONST_INT must have integer dtype, got {n.dtype}"
+  if not (n.dtype.is_integer or n.dtype.is_bool):
+    return f"CONST_INT must have integer or bool dtype, got {n.dtype}"
+  return None
+
+
+def _compare_types(n: ProgramNode) -> str | None:
+  if len(n.args) != 2 or n.args[0].dtype != n.args[1].dtype:
+    return f"comparison needs two operands of one dtype, got {[str(a.dtype) for a in n.args]}"
+  if not n.dtype.is_bool:
+    return f"comparison result must be bool, got {n.dtype}"
+  return None
+
+
+def _logical_types(n: ProgramNode) -> str | None:
+  if not n.dtype.is_bool or not all(a.dtype.is_bool for a in n.args):
+    return f"logical op needs bool operands and result, got {[str(a.dtype) for a in n.args]} -> {n.dtype}"
+  return None
+
+
+def _isfinite_types(n: ProgramNode) -> str | None:
+  if len(n.args) != 1 or not n.args[0].dtype.is_floating or not n.dtype.is_bool:
+    return "ISFINITE maps one floating operand to bool"
+  return None
+
+
+def _select_types(n: ProgramNode) -> str | None:
+  if len(n.args) != 3:
+    return f"SELECT expects 3 args (cond, x, y), got {len(n.args)}"
+  cond, x, y = n.args
+  if not cond.dtype.is_bool:
+    return f"SELECT condition must be bool, got {cond.dtype}"
+  if x.dtype != y.dtype or x.dtype != n.dtype:
+    return f"SELECT branches and result must share a dtype, got {x.dtype}, {y.dtype} -> {n.dtype}"
+  return None
+
+
+def _cast_types(n: ProgramNode) -> str | None:
+  if len(n.args) != 1:
+    return f"CAST expects 1 arg, got {len(n.args)}"
+  if n.dtype.is_bool:
+    return "CAST to bool is spelled as a comparison with zero"
   return None
 
 
@@ -188,6 +227,11 @@ spec_program_shared = Spec(
     Rule(ProgramOp.CONST_INT, "const-int-value", _const_int_has_value),
     Rule(ProgramOp.CONST_FLOAT, "const-float-value", _const_float_has_value),
     Rule(ProgramOp.VAR, "var-name", _var_has_name),
+    *(Rule(op, "compare-types", _compare_types) for op in COMPARE_OPS),
+    *(Rule(op, "logical-types", _logical_types) for op in (ProgramOp.AND, ProgramOp.OR, ProgramOp.NOT)),
+    Rule(ProgramOp.ISFINITE, "isfinite-types", _isfinite_types),
+    Rule(ProgramOp.SELECT, "select-types", _select_types),
+    Rule(ProgramOp.CAST, "cast-types", _cast_types),
     Rule(ProgramOp.BUFFER, "buffer-attrs", _buffer_attrs),
     Rule(ProgramOp.VIEW, "view-scalar-args", _view_args_scalar),
     Rule(ProgramOp.LOAD, "load-takes-view", _load_takes_view),

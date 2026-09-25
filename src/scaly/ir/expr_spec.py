@@ -24,7 +24,7 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from .expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, OP_INFO, topo
+from .expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, COMPARE_OPS, Expr, ExprOp, OP_INFO, topo
 from .spec import Rule, Spec, VerifyError
 from .types import DType, broadcast_shape
 
@@ -287,6 +287,56 @@ def _concat_shapes(expr: Expr) -> str | None:
   return None
 
 
+def _broadcast_all(expr: Expr) -> str | None:
+  shape: tuple[int, ...] = ()
+  try:
+    for arg in expr.args:
+      shape = broadcast_shape(shape, arg.shape)
+  except ValueError as e:
+    return f"operands not broadcastable: {e}"
+  if shape != expr.shape:
+    return f"output shape {expr.shape} != broadcast of operand shapes {[a.shape for a in expr.args]}={shape}"
+  return None
+
+
+def _compare_types(expr: Expr) -> str | None:
+  x, y = expr.args
+  if x.type.dtype != y.type.dtype:
+    return f"comparison operands have mismatched dtypes: {x.type.dtype} vs {y.type.dtype}"
+  if not expr.type.dtype.is_bool:
+    return f"comparison result must be bool, got {expr.type.dtype}"
+  return _broadcast_all(expr)
+
+
+def _logical_types(expr: Expr) -> str | None:
+  if not all(a.type.dtype.is_bool for a in expr.args) or not expr.type.dtype.is_bool:
+    return f"logical op needs bool operands and result, got {[str(a.type.dtype) for a in expr.args]} -> {expr.type.dtype}"
+  return _broadcast_all(expr)
+
+
+def _isfinite_types(expr: Expr) -> str | None:
+  if not expr.args[0].type.dtype.is_floating or not expr.type.dtype.is_bool:
+    return f"isfinite maps a floating operand to bool, got {expr.args[0].type.dtype} -> {expr.type.dtype}"
+  return _broadcast_all(expr)
+
+
+def _select_types(expr: Expr) -> str | None:
+  cond, a, b = expr.args
+  if not cond.type.dtype.is_bool:
+    return f"SELECT condition must be bool, got {cond.type.dtype}"
+  if a.type.dtype != b.type.dtype or a.type.dtype != expr.type.dtype:
+    return f"SELECT branches and result must share a dtype, got {a.type.dtype}, {b.type.dtype} -> {expr.type.dtype}"
+  return _broadcast_all(expr)
+
+
+def _cast_types(expr: Expr) -> str | None:
+  if expr.args[0].shape != expr.shape:
+    return f"CAST output shape {expr.shape} != input shape {expr.args[0].shape}"
+  if expr.type.dtype.is_bool:
+    return "CAST to bool is spelled as a comparison with zero"
+  return None
+
+
 # Build rule lists for elementwise op classes.
 _unary_rules = [Rule(op, "unary-shape-dtype-match", _unary_shape_dtype) for op in COMMON_ELEMENTWISE_UNARY]
 _binary_rules = [Rule(op, "binary-shape-dtype-match", _binary_shape_dtype) for op in COMMON_ELEMENTWISE_BINARY]
@@ -299,6 +349,11 @@ spec_expr = Spec(
     Rule(ExprOp.CONST, "const-value-present", _const_value_present),
     *_unary_rules,
     *_binary_rules,
+    *(Rule(op, "compare-types", _compare_types) for op in COMPARE_OPS),
+    *(Rule(op, "logical-types", _logical_types) for op in (ExprOp.AND, ExprOp.OR, ExprOp.NOT)),
+    Rule(ExprOp.ISFINITE, "isfinite-types", _isfinite_types),
+    Rule(ExprOp.SELECT, "select-types", _select_types),
+    Rule(ExprOp.CAST, "cast-types", _cast_types),
     Rule(ExprOp.SUM, "sum-output-scalar", _sum_shape),
     Rule(ExprOp.RESHAPE, "reshape-size", _reshape_size),
     Rule(ExprOp.TRANSPOSE, "transpose-axes", _transpose_axes),

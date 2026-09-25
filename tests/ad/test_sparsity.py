@@ -594,3 +594,26 @@ def test_shared_fill_star_hessian_matches_one_sided_and_dense(monkeypatch: pytes
   assert len(set(star_widths)) == 1
   assert star_widths[0] == 3
   assert one_sided_widths[-1] > one_sided_widths[0]
+
+
+def _dense(sp: sc.SparsityType) -> np.ndarray:
+  out = np.zeros(sp.shape, dtype=bool)
+  out[list(sp.rows), list(sp.cols)] = True
+  return out
+
+
+def test_select_pattern_is_the_branch_union_and_predicates_add_nothing() -> None:
+  x = sc.sym("x", 4)
+  # Branch a reads x[0] and x[1]; branch b reads x[3]; the condition reads x[2], which must not appear.
+  a = sc.stack([x[0], x[1], x[0], x[1]])
+  b = x[3] * sc.const(np.ones(4))
+  y = sc.where(x[2] > 0.0, a, b)
+  mask = _dense(sc.jacobian_sparsity(y, x))
+  expected = np.zeros((4, 4), dtype=bool)
+  expected[[0, 2], 0] = expected[[1, 3], 1] = True
+  expected[:, 3] = True
+  np.testing.assert_array_equal(mask, expected)
+  assert sc.jacobian_sparsity(sc.cast(x < 1.0, "float64"), x).nnz == 0
+  assert sc.jacobian_sparsity(sc.cast(x, "float32"), x).nnz == 4
+  # copysign's sign operand never contributes a derivative.
+  np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(sc.copysign(x[:2], x[2:]), x)), np.eye(2, 4, dtype=bool))

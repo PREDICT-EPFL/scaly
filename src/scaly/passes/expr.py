@@ -11,6 +11,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from ..ir.expr import Expr, ExprOp, OP_INFO, _attrs_key, matmul, stack, topo, zeros_like
+from ..ir.types import dtypes
 from ..ir.match import Pattern, _replace_args, rewrite
 from .arith import ARITH_EXPR, fold
 
@@ -121,6 +122,8 @@ def _evaluate(e: Expr, args: list[np.ndarray]) -> np.ndarray | np.generic | None
     out = np.asarray(np.sum(args[0]), dtype=np.float64)
   elif e.op == ExprOp.MATMUL:
     out = args[0] @ args[1]
+  elif e.op == ExprOp.CAST:
+    out = args[0].astype(e.type.dtype.numpy())
   else:
     info = OP_INFO[ExprOp(e.op)]
     if info.numpy is None:
@@ -254,6 +257,23 @@ def _matmul_ones(e: Expr) -> Expr:
   return (b if _is_one(a) else a).sum()
 
 
+def _select_folds(e: Expr) -> bool:
+  cond, a, b = e.args
+  value = _const_value(cond)
+  uniform = value is not None and value.size > 0 and bool(np.all(value == value.reshape(-1)[0]))
+  if uniform:
+    return (a if value.reshape(-1)[0] else b).shape == e.shape  # type: ignore[union-attr]
+  return (a is b and a.shape == e.shape) or (_is_zero(a) and _is_zero(b) and e.type.dtype == dtypes.float64)
+
+
+def _select_fold(e: Expr) -> Expr:
+  cond, a, b = e.args
+  value = _const_value(cond)
+  if value is not None and value.size > 0:
+    return a if value.reshape(-1)[0] else b
+  return a if a is b else zeros_like(e)
+
+
 def _gather_identity(e: Expr) -> bool:
   indices = e.attrs["indices"]
   return indices.size == e.args[0].size and bool(np.array_equal(indices.reshape(-1), np.arange(indices.size)))
@@ -275,4 +295,6 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(ExprOp.CONCAT, _all_args_zero, _zero_unary),
   Pattern(ExprOp.SLICE, _slice_of_stack_full, _slice_of_stack),
   Pattern(ExprOp.SLICE, _slice_of_slice_step1, _slice_of_slice),
+  Pattern(ExprOp.SELECT, lambda e: not _all_args_const(e) and _select_folds(e), _select_fold),
+  Pattern(ExprOp.NOT, lambda e: e.args[0].op == ExprOp.NOT, lambda e: e.args[0].args[0]),
 )

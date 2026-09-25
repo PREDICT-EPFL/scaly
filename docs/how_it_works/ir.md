@@ -72,12 +72,19 @@ instances live in `sc.dtypes`:
 
 These are the types inside the graph. They are not the ABI: a generated function always exchanges
 `double` buffers with its caller, and the Python call path converts to and from `float64` at the
-boundary. See [the generated interface](generated_interface.md#the-pointer-abi).
+boundary. A `bool` output is written as 0.0 or 1.0 and returned to Python as a NumPy `bool` array,
+and a `bool` input reads any nonzero value as true. See
+[the generated interface](generated_interface.md#the-pointer-abi).
 
 Mixed-dtype arithmetic is refused. There is no implicit widening: an expression combining
-`float32` and `float64` raises at construction. This keeps today's `float64` workloads exactly as
-they are, and when an explicit `Expr.cast` op lands, every mixed-precision decision will be
-visible at the call site where it was made.
+`float32` and `float64` raises at construction, and `sc.cast` makes each conversion visible at the
+call site where it was made. A Python number beside an `Expr` takes that `Expr`'s dtype.
+
+Comparisons (`<`, `<=`, `>`, `>=`, `sc.equal`, `sc.not_equal`) and `sc.isfinite` give `bool`
+expressions, and `&`, `|` and `~` combine them. `==` on two expressions stays structural identity,
+which hash-consing relies on, and an `Expr` has no Python truth value: `if x < y:` raises instead of
+silently taking one branch for every input. The data-dependent choice is `sc.where(cond, a, b)`,
+which evaluates both branches and differentiates through the chosen one.
 
 `diff` marks whether a value depends differentiably on symbolic inputs. Constants are not
 differentiable; structural operations pass the flag through; arithmetic propagates it from its
@@ -90,7 +97,7 @@ construction.
 
 ### Operations
 
-Thirty-nine operations, grouped by what they do. `arity` is the operand count; `n` means
+Fifty operations, grouped by what they do. `arity` is the operand count; `n` means
 variadic. `diff` is whether AD can pass through the op at all.
 
 #### Arithmetic and elementwise
@@ -109,6 +116,18 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `abs` | 1 | yes | no multi-seed forward rule yet |
 | `floor` `ceil` | 1 | no | result is marked non-differentiable |
 | `minimum` `maximum` | 2 | no | result is marked non-differentiable |
+| `copysign` | 2 | yes | magnitude of the first operand, sign of the second; no derivative through the sign |
+
+#### Comparison and choice
+
+| Op | Arity | Diff | Notes |
+| --- | --- | --- | --- |
+| `lt` `le` `eq` `ne` | 2 | no | `bool` result; operands share a dtype; every comparison with NaN is false except `ne` |
+| `and` `or` | 2 | no | `bool` operands and result |
+| `not` | 1 | no | `bool` operand and result |
+| `isfinite` | 1 | no | floating operand, `bool` result |
+| `select` | 3 | yes | `bool` condition, two same-dtype branches, NumPy broadcasting over all three |
+| `cast` | 1 | float to float only | between numeric dtypes; a cast to `bool` is built as `ne(x, 0)` |
 
 #### Structural
 

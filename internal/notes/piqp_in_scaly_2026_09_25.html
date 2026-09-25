@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PIQP in Scaly — Plan</title>
+<style>
+:root{
+  --bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#ffffff;
+  --t1:#2f6f5e;--t2:#3b5fa0;--t3:#8a5a1f;--t4:#9b3b4a;--code:#f1eee8;
+  --have:#2f6f5e;--part:#8a5a1f;--none:#9b3b4a;
+}
+@media (prefers-color-scheme: dark){
+  :root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;
+    --t1:#6fc2a8;--t2:#86a8e8;--t3:#e0ad6a;--t4:#e7899a;--code:#25282d;
+    --have:#6fc2a8;--part:#e0ad6a;--none:#e7899a;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:40px 16px 80px}
+h1{font-size:28px;margin:0 0 4px;letter-spacing:-.01em}
+h2{font-size:19px;margin:44px 0 6px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+h2 .tag{font-size:12px;font-weight:600;padding:2px 8px;border-radius:10px;color:#fff;margin-right:8px;vertical-align:2px}
+.sub{color:var(--muted);margin:0 0 24px}
+p.lead{color:var(--muted);margin:4px 0 14px;max-width:880px}
+code{font:13px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:960px;font-size:13.5px}
+th,td{text-align:left;vertical-align:top;padding:9px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600;background:var(--card);position:sticky;top:0}
+tr:last-child td{border-bottom:none}
+td.n{font-variant-numeric:tabular-nums;color:var(--muted);width:32px}
+td.op{font-weight:600;width:210px}
+td.lvl{width:92px;color:var(--muted);font-size:12.5px}
+td.st{width:108px;font-size:12.5px;font-weight:600}
+.have{color:var(--have)}.part{color:var(--part)}.none{color:var(--none)}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:14px 18px;margin:14px 0}
+.box h3{margin:0 0 6px;font-size:15px}
+ol.ms li,ul li{margin:4px 0}
+.refs li{margin:6px 0;color:var(--muted)}
+.refs a{color:var(--t2)}
+.legend span{margin-right:16px;font-size:13px}
+</style>
+</head>
+<body>
+<main>
+<h1>PIQP in Scaly</h1>
+<p class="sub">Every operation needed to implement PIQP in Scaly, ordered from most generally useful to PIQP-specific · 25 Sep 2026</p>
+
+<div class="box">
+<h3>Scope and assumptions</h3>
+<ul>
+<li>Target: the sparse PIQP algorithm (proximal interior point, Mehrotra predictor–corrector, Ruiz scaling, LDLᵀ), written once in Python and emitted as C specialised to a <b>fixed sparsity pattern</b>. Runtime index arrays are out of scope.</li>
+<li>No CVXGEN-style unrolling: all loops are real loops (<code>scan</code>/<code>while</code>). The whole symbolic phase runs in NumPy at generation time, and the numeric phase is dataflow over constant index tables.</li>
+<li>Keep <code>Expr</code> pure. Loops take a <b>functional carry</b>, and in-place carry donation happens at lowering.</li>
+<li>Checked against the tree: <code>ExprOp</code> has elementwise <code>minimum/maximum</code>, <code>abs</code>, <code>sum</code>, <code>gather</code>, <code>scatter</code> (which rejects repeated indices even though its docstring says they accumulate), <code>call</code>, <code>vmap</code>. <code>DType</code> already defines <code>bool_</code>, <code>int32</code>, <code>int64</code>, but no op produces them and the ABI is <code>double</code>-only. The program dialect has <code>for/range</code>, <code>store</code>, <code>load</code>, <code>mod</code>, but no <code>while</code>/<code>if</code>/compare. C-54 (memory-ordered loads) is deferred.</li>
+</ul>
+<p class="legend"><span class="have">■ exists</span><span class="part">■ partial</span><span class="none">■ missing</span></p>
+</div>
+
+<h2><span class="tag" style="background:var(--t1)">Tier 1</span>Core IR primitives: useful everywhere</h2>
+<p class="lead">These pay off for dynamics (contact, saturation, friction), estimation, SQP/NLP solvers, simulation and sparse derivative assembly, whether or not a QP solver is ever written.</p>
+<div class="scroll"><table>
+<tr><th>#</th><th>Operation</th><th>Level</th><th>Today</th><th>Role in PIQP</th><th>Other uses</th><th>Depends on</th></tr>
+<tr><td class="n">1</td><td class="op"><code>scatter_add</code> / <code>segment_sum</code></td><td class="lvl">Expr op</td><td class="st part">scatter is unique-only</td><td>Sparse matvecs <code>Px, Ax, Aᵀy, Gᵀz</code>; KKT assembly; LDL column updates</td><td>Every sparse op; AD transpose of <code>gather</code> with repeats; sparse Jacobian/Hessian accumulation; graph and mesh ops</td><td>—. VJP is <code>gather</code>, JVP is linear; lower as <code>+=</code> loop over a constant index table</td></tr>
+<tr><td class="n">2</td><td class="op">Compare → <code>bool</code>; <code>where/select</code>; <code>logical_and/or/not</code></td><td class="lvl">Expr op</td><td class="st part">dtype exists, no ops</td><td>Termination, infeasibility tests, masked step ratios, regularisation update rules, retry logic</td><td>Piecewise dynamics, contact-implicit models, saturations, Huber/safe-division, SQP line search, filter logic</td><td>—. Derivative of <code>select</code> routes the cotangent through the chosen branch; compares are non-differentiable</td></tr>
+<tr><td class="n">3</td><td class="op">Reductions <code>reduce_max</code> / <code>reduce_min</code> (+ <code>norm_inf</code>, <code>norm2</code> sugar)</td><td class="lvl">Expr op + sugar</td><td class="st none">only <code>sum</code></td><td>∞-norm residuals, <code>min(s)</code> for the initial shift, fraction-to-boundary</td><td>Constraint-violation metrics, merit functions, adaptive step sizes, diagnostics</td><td>—. Subgradient VJP (one-hot at argmax)</td></tr>
+<tr><td class="n">4</td><td class="op">Segmented reductions <code>segment_max/min</code> over a static pattern</td><td class="lvl">Expr op</td><td class="st none">missing</td><td>Ruiz row/column ∞-norms, per-block norms</td><td>Sparse scaling for any solver, per-stage norms in multistage problems</td><td>#1 (shared segment machinery), #3</td></tr>
+<tr><td class="n">5</td><td class="op">Integer and bool values: <code>cast</code>, integer arithmetic, <code>isfinite</code>, <code>copysign</code></td><td class="lvl">Expr op</td><td class="st part">dtypes only</td><td>Iteration and no-update counters, status code, NaN guards on pivots</td><td>Hybrid and mode-switching models, counters in estimators, robust evaluation</td><td>#2</td></tr>
+<tr><td class="n">6</td><td class="op"><code>scan</code> (sequential loop with carry), static trip count</td><td class="lvl">Expr op → Program <code>for</code></td><td class="st none">missing (only unroll/vmap)</td><td>LDL numeric phase, triangular solves, Ruiz sweeps, bounded outer loop</td><td>Horizon rollouts without unrolling, Kalman and Riccati recursions, fixed-step integrators, RNN-style models</td><td>Carry must be donated in place (#8)</td></tr>
+<tr><td class="n">7</td><td class="op"><code>while_loop(cond, body, carry)</code> with <code>max_iter</code> guard</td><td class="lvl">Expr op → Program <code>while</code></td><td class="st none">missing</td><td>Outer IPM loop, factor-retry loop, adaptive iterative refinement</td><td>SQP/Newton loops, implicit integrators, fixed-point solvers</td><td>#2, #6. Alternative: <code>scan(max_iter)</code> with a <code>done</code> mask frozen via select, giving a deterministic worst-case execution time</td></tr>
+<tr><td class="n">8</td><td class="op">In-place carry lowering + memory-ordered loads (C-54)</td><td class="lvl">Lowering / program passes</td><td class="st none">deferred</td><td>Avoids an O(nnz) copy per LDL step and an O(n) copy per IPM iteration</td><td>Any scan or while carrying arrays</td><td>#6, #7. Hash-consed <code>load</code> across a <code>store</code> becomes a real bug here</td></tr>
+<tr><td class="n">9</td><td class="op">Integer/bool outputs across the ABI</td><td class="lvl">Codegen / ABI</td><td class="st none">double-only</td><td><code>status</code>, <code>iter</code>, <code>factor_retries</code></td><td>Status from any generated solver or estimator; mode outputs</td><td>#5. Stop-gap: encode as double</td></tr>
+<tr><td class="n">10</td><td class="op">Custom derivative hook on a <code>Function</code> (<code>custom_jvp/vjp</code>)</td><td class="lvl">AD</td><td class="st none">missing</td><td>Implicit-function sensitivities at the QP solution, reusing the final factorisation; <code>ldl_solve</code> derivative</td><td>Differentiable solvers, implicit integrators, numerically stable special functions</td><td>—</td></tr>
+</table></div>
+
+<h2><span class="tag" style="background:var(--t2)">Tier 2</span>Sparse linear algebra: useful for Kalman, SQP, MPC and Riccati</h2>
+<p class="lead">Library code over Tier 1, with no further IR changes. Where possible the symbolic parts are plain NumPy, so they can be tested against SciPy.</p>
+<div class="scroll"><table>
+<tr><th>#</th><th>Operation</th><th>Level</th><th>Today</th><th>Role in PIQP</th><th>Other uses</th><th>Depends on</th></tr>
+<tr><td class="n">11</td><td class="op">Python-level sparse tensor (data <code>Expr</code> + static pattern)</td><td class="lvl">Library</td><td class="st part">CSC gathering in <code>solvers/qp.py</code></td><td>Holds P, A, G and the KKT; SpMV, SpMᵀV, sparse add, diagonal update, transpose-by-permutation, block concat</td><td>Sparse Jacobians and Hessians as first-class values; structured estimators</td><td>#1, #4</td></tr>
+<tr><td class="n">12</td><td class="op">Symbolic analysis: ordering (AMD, or user/stage permutation), etree, postorder, column counts, row patterns, supernodes, update tables</td><td class="lvl">Library (NumPy)</td><td class="st none">missing</td><td>Generation-time LDL plan for the fixed KKT pattern</td><td>Any sparse factorisation; multistage KKT (stage ordering coincides with <code>vmap</code>)</td><td>— (pure NumPy)</td></tr>
+<tr><td class="n">13</td><td class="op">Numeric LDLᵀ (left-looking, quasi-definite, static regularisation, sign-fixed pivot clamp)</td><td class="lvl">Library</td><td class="st none">missing</td><td>Factorises the KKT once per iteration</td><td>Newton/SQP steps, Kalman smoothers, Gauss–Newton</td><td>#1, #6, #8, #12</td></tr>
+<tr><td class="n">14</td><td class="op">Triangular solves + <code>ldl_solve</code>; factor/solve split</td><td class="lvl">Library</td><td class="st none">missing</td><td>Predictor and corrector solves reuse one factorisation</td><td>Everywhere #13 is used</td><td>#6, #13</td></tr>
+<tr><td class="n">15</td><td class="op">Factorisation health check (non-finite or wrong-sign pivot → flag)</td><td class="lvl">Library</td><td class="st none">missing</td><td>Triggers the retry with larger regularisation</td><td>Robust Newton, inertia correction in NLP IPM</td><td>#2, #3, #5</td></tr>
+<tr><td class="n">16</td><td class="op">Iterative refinement (fixed k, or adaptive with tolerance and improvement rate)</td><td class="lvl">Library</td><td class="st none">missing</td><td>Recovers accuracy lost to regularisation</td><td>Any regularised solve</td><td>#3, #7, #14</td></tr>
+<tr><td class="n">17</td><td class="op">Dense kernels for supernodes/blocks (<code>scalar</code>-hint dense LDL, or an external BLASFEO call)</td><td class="lvl">Library / codegen</td><td class="st part"><code>call</code> + lowering hints</td><td>Supernodal steps; the block-sparse multistage KKT (PIQP <code>blocksparse</code> mode)</td><td>Riccati, condensing, dense MPC</td><td>#13; an external-procedure ABI if BLASFEO is used</td></tr>
+<tr><td class="n">18</td><td class="op">Generation-time schedule choice (unroll · level schedule · supernodal scan)</td><td class="lvl">Codegen policy</td><td class="st none">missing</td><td>Chooses the LDL/solve implementation from etree height and density</td><td>Any scan-based kernel</td><td>#6, #12, #13</td></tr>
+</table></div>
+
+<h2><span class="tag" style="background:var(--t3)">Tier 3</span>Generic primal–dual IPM machinery: reusable for other QP/NLP IPMs</h2>
+<div class="scroll"><table>
+<tr><th>#</th><th>Operation</th><th>Level</th><th>Today</th><th>Role in PIQP</th><th>Other uses</th><th>Depends on</th></tr>
+<tr><td class="n">19</td><td class="op">Ruiz equilibration + unscaling of results and residuals</td><td class="lvl">Library</td><td class="st none">missing</td><td>Setup (≈10 sweeps); unscale x, y, z and the residual norms</td><td>Scaling for SQP subproblems and first-order QP solvers</td><td>#4, #6 (or a short unroll)</td></tr>
+<tr><td class="n">20</td><td class="op">Parametrised KKT assembly, with the elimination mode chosen at generation</td><td class="lvl">Library</td><td class="st none">missing</td><td><code>[P+ρI, Aᵀ, Gᵀ; A, −δI, 0; G, 0, −(Z⁻¹S+δI)]</code> and the bound diagonals; full vs inequality-eliminated form</td><td>NLP IPM, SQP with IPM subproblems</td><td>#1, #11</td></tr>
+<tr><td class="n">21</td><td class="op">Fraction-to-boundary step</td><td class="lvl">Library</td><td class="st none">missing</td><td>α = min(1, τ / max(ε, maxᵢ(−dsᵢ/sᵢ))), separately for primal and dual</td><td>Any IPM</td><td>#3 (branch-free), or #2</td></tr>
+<tr><td class="n">22</td><td class="op">Mehrotra predictor–corrector (μ, σ = clip(·)³, corrector RHS)</td><td class="lvl">Library</td><td class="st none">missing</td><td>Two solves per iteration</td><td>Any IPM</td><td>#14, #21</td></tr>
+<tr><td class="n">23</td><td class="op">Residuals and termination (abs/rel primal, dual, duality gap)</td><td class="lvl">Library</td><td class="st none">missing</td><td>Convergence test in the loop condition</td><td>Any solver</td><td>#3, #11, #19</td></tr>
+<tr><td class="n">24</td><td class="op">Initial point + positivity shift</td><td class="lvl">Library</td><td class="st none">missing</td><td>One KKT solve, then shift s, z by max(0, −min(·)) + margin</td><td>Any IPM</td><td>#3, #14</td></tr>
+<tr><td class="n">25</td><td class="op">Infinite-bound handling</td><td class="lvl">Library / generation</td><td class="st part">finiteness known at trace</td><td>Drop ±∞ rows of <code>h_l, h_u, x_l, x_u</code>. They are static if bounds are constant, otherwise use masks via #2</td><td>Every bounded problem</td><td>#2 if dynamic</td></tr>
+</table></div>
+
+<h2><span class="tag" style="background:var(--t4)">Tier 4</span>PIQP-specific</h2>
+<div class="scroll"><table>
+<tr><th>#</th><th>Operation</th><th>Level</th><th>Today</th><th>Role in PIQP</th><th>Other uses</th><th>Depends on</th></tr>
+<tr><td class="n">26</td><td class="op">Proximal (ρ, δ) update rules</td><td class="lvl">Library</td><td class="st none">missing</td><td>Shrink ρ and δ with μ when residuals fall by 5%, floored at <code>reg_limit</code>; fine-tune phase to 1e-13</td><td>PMM-type solvers only</td><td>#2, #5</td></tr>
+<tr><td class="n">27</td><td class="op">Proximal infeasibility detection</td><td class="lvl">Library</td><td class="st none">missing</td><td><code>primal/dual_prox_inf</code> vs threshold, with <code>no_primal/dual_update</code> counters → infeasible status</td><td>—</td><td>#2, #3, #5, #9</td></tr>
+<tr><td class="n">28</td><td class="op">Boundary shift</td><td class="lvl">Library</td><td class="st none">missing</td><td>Re-centre when z drops below ε; recompute μ</td><td>—</td><td>#2</td></tr>
+<tr><td class="n">29</td><td class="op">Factorisation retry loop</td><td class="lvl">Library</td><td class="st none">missing</td><td>On a failed factorisation, raise the regularisation, enable refinement and retry up to <code>max_factor_retires</code></td><td>—</td><td>#7, #15, #16</td></tr>
+<tr><td class="n">30</td><td class="op">Settings folded to compile-time constants; <code>Results</code>/status matching PIQP</td><td class="lvl">Library / codegen</td><td class="st part">descriptor exists</td><td>Unused features vanish (no bounds, no equalities, no refinement)</td><td>—</td><td>#9</td></tr>
+<tr><td class="n">31</td><td class="op">Drop-in replacement for the vendored <code>SOLVER_CALL</code>, with warm start</td><td class="lvl">Solver plugin</td><td class="st part"><code>solvers/qp.py</code> extraction</td><td>Same QP data interface as <code>scaly-piqp</code>; a <code>backend="scaly"</code> switch</td><td>—</td><td>All of the above</td></tr>
+<tr><td class="n">32</td><td class="op">Differential tests and benchmarks</td><td class="lvl">Tests</td><td class="st part">PIQP plugin tests</td><td>Compare against vendored PIQP (iterates and status), NumPy eager, a Maros–Mészáros subset and the MPC benchmarks</td><td>—</td><td>—</td></tr>
+</table></div>
+
+<h2>Suggested milestones</h2>
+<ol class="ms">
+<li><b>M1 — primitives (#1–5, #9).</b> Each is a small, self-contained Expr op with AD, lowering and a NumPy reference test. They are immediately useful for contact models and diagnostics.</li>
+<li><b>M2 — loops (#6–8).</b> <code>scan</code> first, then <code>while_loop</code>. C-54 becomes mandatory here. Gate: a Kalman filter or rollout with no unrolling, matching the unrolled result.</li>
+<li><b>M3 — sparse LDLᵀ (#11–18).</b> Gate: residual against <code>scipy.sparse</code> on random quasi-definite KKTs and the MPC benchmark KKTs; render time linear in nnz.</li>
+<li><b>M4 — a plain Mehrotra QP (#19–25)</b> with fixed regularisation. This is already a usable generated QP solver.</li>
+<li><b>M5 — PIQP proper (#26–32).</b> Gate: iterate-by-iterate agreement with vendored PIQP; timing vs vendored PIQP on the benchmarks. Add #10 for sensitivities.</li>
+</ol>
+
+<h2>References</h2>
+<ol class="refs">
+<li>R. Schwan, Y. Jiang, D. Kuhn, C. N. Jones, “PIQP: A Proximal Interior-Point Quadratic Programming Solver,” <i>IEEE CDC</i>, 2023. <a href="https://arxiv.org/abs/2304.00290">arXiv:2304.00290</a></li>
+<li>S. Mehrotra, “On the implementation of a primal-dual interior point method,” <i>SIAM J. Optim.</i> 2(4):575–601, 1992. <a href="https://doi.org/10.1137/0802028">doi:10.1137/0802028</a></li>
+<li>D. Ruiz, “A scaling algorithm to equilibrate both rows and columns norms in matrices,” Tech. Rep. RAL-TR-2001-034, Rutherford Appleton Laboratory, 2001.</li>
+<li>P. R. Amestoy, T. A. Davis, I. S. Duff, “An approximate minimum degree ordering algorithm,” <i>SIAM J. Matrix Anal. Appl.</i> 17(4):886–905, 1996. <a href="https://doi.org/10.1137/S0895479894278952">doi:10.1137/S0895479894278952</a></li>
+<li>B. Stellato et al., “OSQP: an operator splitting solver for quadratic programs,” <i>Math. Prog. Comp.</i> 12:637–672, 2020 (QDLDL). <a href="https://doi.org/10.1007/s12532-020-00179-2">doi:10.1007/s12532-020-00179-2</a></li>
+</ol>
+</main>
+</body>
+</html>

@@ -194,3 +194,20 @@ def test_binary_helper_round_trip_verifies() -> None:
 def test_spec_expr_check_returns_none_on_valid() -> None:
   x = sc.sym("x", 3)
   assert spec_expr.check(x) is None
+
+
+def test_control_op_type_rules_are_enforced() -> None:
+  x = sc.sym("x", 3)
+  cond = x < 1.0
+  bool_t, float_t = TensorType((3,), dtype=dtypes.bool_, diff=False), TensorType((3,), dtype=dtypes.float64)
+  verify_expr(sc.where(cond, x, sc.cast(cond, "float64")) + sc.cast(sc.isfinite(x) & ~cond, "float64"))
+  bad = {
+    "select-types": Expr(ExprOp.SELECT, (x, x, x), float_t),
+    "compare-types": Expr(ExprOp.LT, (x, x), float_t),
+    "logical-types": Expr(ExprOp.AND, (x, cond), bool_t),
+    "isfinite-types": Expr(ExprOp.ISFINITE, (cond,), bool_t),
+    "cast-types": Expr(ExprOp.CAST, (x,), bool_t),
+  }
+  for rule, node in bad.items():
+    with pytest.raises(VerifyError, match=rule):
+      verify_expr(node)

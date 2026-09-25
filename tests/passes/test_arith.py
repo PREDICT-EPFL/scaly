@@ -137,3 +137,25 @@ def test_integer_constant_evaluation_refuses_values_outside_the_dtype() -> None:
   big = ProgramNode(ProgramOp.MUL, (const_int(1 << 40), const_int(1 << 40)), dtype=dtypes.int64)
   assert fold_program(big).op == ProgramOp.MUL
   assert fold_program(ProgramNode(ProgramOp.ADD, (const_int(1 << 40), const_int(1)), dtype=dtypes.int64)).attrs["value"] == (1 << 40) + 1
+
+
+def test_control_ops_fold_in_both_dialects() -> None:
+  one, two = p.const_float(1.0), p.const_float(2.0)
+  x = p.load(p.view(p.buffer("x", dtypes.float64, (1,)), [p.const_int(0)]))
+  assert fold_program(p.compare(ProgramOp.LT, one, two)).attrs["value"] == 1
+  assert fold_program(p.compare(ProgramOp.NE, p.const_float(float("nan")), one)).attrs["value"] == 1
+  assert fold_program(p.compare(ProgramOp.EQ, p.const_float(float("nan")), p.const_float(float("nan")))).attrs["value"] == 0
+  cond = p.compare(ProgramOp.LT, x, one)
+  assert fold_program(p.select(fold_program(p.compare(ProgramOp.LT, one, two)), x, one)) is x
+  assert fold_program(p.select(cond, x, x)) is x
+  assert fold_program(ProgramNode(ProgramOp.NOT, (ProgramNode(ProgramOp.NOT, (cond,), dtype=dtypes.bool_),), dtype=dtypes.bool_)) is cond
+  assert fold_program(ProgramNode(ProgramOp.ISFINITE, (p.const_float(float("inf")),), dtype=dtypes.bool_)).attrs["value"] == 0
+  assert fold_program(p.cast(ProgramNode(ProgramOp.CONST_INT, (), {"value": 1}, dtype=dtypes.bool_), dtypes.float64)).attrs["value"] == 1.0
+
+  y = sc.sym("y", 3)
+  simplified = sc.simplify(sc.where(sc.const(np.ones(3, dtype=bool), dtype="bool"), y, 2.0 * y) + sc.where(y < 0.0, y, y))
+  assert not any(n.op == sc.ExprOp.SELECT for n in topo([simplified]))
+  assert sc.simplify(sc.where(y < 0.0, sc.const(np.zeros(3)), 0.0 * y)).op == sc.ExprOp.CONST
+  assert sc.simplify(~~(y < 0.0)).op == sc.ExprOp.LT
+  folded = sc.simplify(sc.where(sc.const(np.array([1.0, -1.0])) > 0.0, sc.const(np.array([3.0, 4.0])), 5.0))
+  np.testing.assert_array_equal(folded.value, [3.0, 5.0])

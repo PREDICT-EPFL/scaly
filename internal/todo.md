@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 82**
+**Next id: 89**
 
 | Prefix | Section |
 |---|---|
@@ -125,6 +125,22 @@ rediscover. JAX's `vmap` batching rules are the reference for what a mapped deri
 produce without materializing per-trip index tables. The goal is to port the smallest idea that
 fits Scaly's two dialects, not to adopt a framework; write down what was read and what was rejected
 in `internal/notes/refactorings.md` before the implementation.
+
+### Tier 1 primitives
+
+The operations a solver written in Scaly needs, for one fixed sparsity structure per generated
+solver. Plan, ordering and test strategy: [`notes/tier1_primitives_plan_2026_09_25.html`](notes/tier1_primitives_plan_2026_09_25.html);
+the per-step reports sit beside it as `notes/tier1_pr*_report.html`.
+
+- [x] **C-82. Comparisons, `bool`, `select`, `isfinite`, `copysign`, `cast`.** Elementwise ops in
+      both dialects with AD, sparsity, folding and C spellings; `bool` crosses the `double` ABI as
+      0.0/1.0.
+- [ ] **C-83. Options system, non-smooth derivative conventions, `reduce_max`/`reduce_min`.**
+- [ ] **C-84. Accumulating `scatter`, segment reductions, linear-time `gather` VJP.**
+- [ ] **C-85. `scan` with ping-pong carry buffers and trajectory-storing reverse mode.**
+- [ ] **C-86. Differentiable `while_loop` with a static `max_iter`.**
+- [ ] **C-87. In-place carry updates under a conservative donation rule.**
+- [ ] **C-88. Custom derivatives on a `Function`.**
 
 ### Now
 

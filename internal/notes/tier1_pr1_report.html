@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 1 PR 1 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 1 · PR 1 report</h1>
+<p class="sub">Comparisons, <code>bool</code>, <code>select</code>, <code>isfinite</code>, <code>copysign</code>, <code>cast</code> · branch <code>claude/tier1-primitives</code> · todo C-82 · 25 Sep 2026</p>
+
+<div class="box">
+<b>Status:</b> <span class="ok">done</span>. The full suite passes: 855 passed, 88 skipped, 0 failed; that count excludes four tests this machine cannot run, listed under Test results.
+<code>ruff check</code>, <code>ruff format</code> and <code>ty check --error-on-warning</code> are clean. The six C snapshots are byte-identical.
+</div>
+
+<h2>New capability</h2>
+<p>Scaly graphs can now make data-dependent choices without leaving the expression dialect:</p>
+<pre>relu = sc.where(x &gt; 0.0, x, 0.0)                    # select, differentiable through the chosen branch
+ok   = sc.isfinite(r) &amp; (sc.norm_2(r) &lt;= tol)       # bool expressions, combined with &amp; | ~
+step = sc.copysign(sc.sqrt(d), b)                     # sign transfer
+cnt  = sc.cast(active, "float64").sum()               # bool → float</pre>
+<ul>
+<li>Comparisons <code>&lt; &lt;= &gt; &gt;=</code>, <code>sc.equal</code> and <code>sc.not_equal</code> produce <code>bool</code>. <code>==</code> between two expressions stays structural identity, because hash-consing relies on it.</li>
+<li>An <code>Expr</code> now has no Python truth value. <code>if x &lt; y:</code> raises instead of silently taking one branch for every input.</li>
+<li>A Python number takes the dtype of the <code>Expr</code> beside it, and mixed-dtype operations are still refused.</li>
+<li><code>bool</code> crosses the <code>double</code> ABI:
+  <ul>
+  <li>An output is written as 0.0 or 1.0, and Python gets back a NumPy <code>bool</code> array.</li>
+  <li>An input reads any nonzero value as true.</li>
+  <li>Float-only functions are unaffected: their signature, header, source and cache key are all unchanged.</li>
+  </ul></li>
+<li>Procedures that contain <code>bool</code> values can now scalarize. Previously a procedure had to be all <code>float64</code>.</li>
+</ul>
+
+<h2>What was changed</h2>
+<div class="scroll"><table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>ir/expr.py</code></td><td>11 new <code>ExprOp</code>s (<code>lt le eq ne and or not isfinite select cast copysign</code>) with their <code>OP_INFO</code> NumPy rules. Op sets <code>COMPARE_OPS</code>, <code>LOGICAL_OPS</code>, <code>PREDICATE_OPS</code>, <code>COMMON_CONTROL</code>. Builders <code>less … where cast copysign isfinite</code>. Operators <code>__lt__ __le__ __gt__ __ge__ __and__ __or__ __invert__</code>, and <code>__bool__</code>, which raises.</td></tr>
+<tr><td><code>ir/expr_spec.py</code></td><td>Type rules for comparisons, logic, <code>isfinite</code>, <code>select</code> and <code>cast</code>, including broadcast checks.</td></tr>
+<tr><td><code>ir/program.py</code>, <code>program_spec.py</code>, <code>text.py</code></td><td>Matching scalar <code>ProgramOp</code>s, the builders <code>compare</code>, <code>select</code> and <code>cast</code>, verifier rules (a <code>CONST_INT</code> may now have <code>bool</code> dtype), and listings.</td></tr>
+<tr><td><code>ad/forward.py</code>, <code>reverse.py</code></td><td>JVP and VJP for <code>select</code>, <code>copysign</code> and <code>cast</code>. Predicates are zero, and reverse mode skips them. <code>select</code> gets a structural multi-seed rule.</td></tr>
+<tr><td><code>ad/sparsity.py</code></td><td><code>select</code> takes the union of its branches, and the condition adds nothing. Predicates are empty. <code>copysign</code> depends on its first operand only.</td></tr>
+<tr><td><code>passes/arith.py</code>, <code>passes/expr.py</code></td><td>Constant evaluation of every new op. Folds for <code>select</code> with a constant condition, <code>select(c,a,a)</code>, <code>select</code> of two zero branches, <code>¬¬x</code>, and constant <code>cast</code>.</td></tr>
+<tr><td><code>passes/lowering.py</code></td><td>Elementwise lowering for all the new ops. At the entry procedure, <code>bool</code> is converted to and from <code>double</code>. Scalarization is allowed for <code>float64</code> plus <code>bool</code>.</td></tr>
+<tr><td><code>codegen/c.py</code>, <code>jit.py</code></td><td>C spellings (<code>&lt;</code>, <code>&amp;&amp;</code>, <code>?:</code>, <code>isfinite</code>, <code>copysign</code>, <code>(T)</code>), and conversion of <code>bool</code> outputs in the JIT.</td></tr>
+<tr><td><code>scaly/__init__.py</code></td><td>13 new public names.</td></tr>
+<tr><td>docs, todo</td><td><code>docs/how_it_works/ir.md</code> gets a new "Comparison and choice" table and the boundary rules. <code>internal/todo.md</code> gets the Tier 1 section, C-82 to C-88.</td></tr>
+</table></div>
+<p>In total: +542 / −27 lines in <code>src/</code>, and +294 test lines across the new <code>tests/codegen/test_control.py</code> and five extended test files.</p>
+
+<h2>Test results</h2>
+<div class="scroll"><table>
+<tr><th>Test</th><th>What it checks</th><th>Result</th></tr>
+<tr><td><code>test_compiled_control_ops_match_numpy_on_special_values</code> (30 cases)</td><td>15 ops × {loop, scalarized}, on a 7×7 grid of {−inf, −1.5, −0, 0, 1.5, inf, NaN}. Exact equality with NumPy, including NaN semantics and the sign bit of <code>copysign</code>.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_scalar_lowering_expands_control_ops…</code></td><td>The scalar hint removes every loop; the block hint keeps them.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_bool_inputs_and_outputs_cross_the_double_abi</code></td><td>A <code>bool</code> input and output, one passed to a callee, one echoed. A nonzero input reads as true. The header stays all <code>double</code>.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_float_only_functions_render_without_bool_conversions</code></td><td>No casts or <code>uint8_t</code> appear in float-only code.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_expr_has_no_python_truth_value…</code>, <code>test_predicate_types…</code></td><td>Truth-value guard, structural <code>==</code>, dtype adoption, error messages, broadcasting.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_select_copysign_cast_jacobians_match_finite_differences_both_modes</code></td><td>ReLU, saturation, <code>copysign</code> and <code>cast</code> at six points: dense Jacobian vs finite differences, VJP = λᵀJ, sparse Jacobian = diagonal.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_select_structural_jvp_many_matches_unrolled</code></td><td>The new structural multi-seed rule equals the unrolled one.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_derivative_flows_only_through_the_chosen_branch</code></td><td>The NaN from <code>log(−1)</code> in the unchosen branch leaks into neither the value, the gradient nor the Jacobian.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_select_pattern_is_the_branch_union…</code></td><td>Exact structural pattern; the condition's inputs are absent.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_control_op_type_rules_are_enforced</code></td><td>Five malformed nodes, each rejected by the named rule.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_control_ops_fold_in_both_dialects</code></td><td>Program-dialect constant evaluation (including NaN compares) and expression-dialect <code>select</code> folds.</td><td class="ok">pass</td></tr>
+<tr><td>Full suite</td><td><code>tests plugins typing_playground</code></td><td class="ok">855 passed, 88 skipped</td></tr>
+<tr><td>C snapshots</td><td><code>tests/test_c_snapshot.py</code></td><td class="ok">byte-identical</td></tr>
+</table></div>
+<p><b>Mutation checks.</b> Each mutation was applied locally, run against the tests, and reverted:</p>
+<ul>
+<li>Swapping the ternary branches in <code>c.py</code>: 5 failures.</li>
+<li>Rendering <code>&lt;</code> as <code>&lt;=</code>: 6 failures.</li>
+<li>Routing the <code>select</code> VJP cotangent to the wrong branch: 2 failures.</li>
+<li>Making the <code>cast</code> sparsity rule unconditional: no failures. This is an equivalent mutant, because a <code>bool</code> operand's pattern is already empty.</li>
+</ul>
+<p><b>Environment.</b> The tests ran on an aarch64 Linux VM against the Mac checkout. That VM cannot run four tests: the three Google Benchmark driver tests (the vendored gbench build is macOS) and one CasADi test (the wheel needs a newer libstdc++). The 88 skips are the solver and CasADi tests. <b>Please run the suite on the Mac before merging.</b> Because 29 node IDs could not be collected here, the node-ID baseline was regenerated as a union with the existing baseline rather than rewritten from scratch.</p>
+
+<h2>Benchmarks</h2>
+<p>Script: <code>internal/notes/perf_2026_09_25_tier1/pr1_select.py</code>. Median µs per call through the JIT on the aarch64 VM with gcc <code>-O2 -march=native</code>. These are indicative numbers, not taken on the reference machine.</p>
+<div class="scroll"><table>
+<tr><th>n</th><th>variant</th><th class="r">µs / call</th></tr>
+<tr><td>10⁵</td><td><code>where(x&gt;0, x, 0)</code></td><td class="r">35.3</td></tr>
+<tr><td>10⁵</td><td><code>maximum(x, 0)</code> (<code>fmax</code>)</td><td class="r">34.4</td></tr>
+<tr><td>10⁵</td><td>NumPy <code>where</code></td><td class="r">42.3</td></tr>
+<tr><td>10⁵</td><td>saturation, nested <code>where</code></td><td class="r warn">138.4</td></tr>
+<tr><td>10⁵</td><td>saturation, <code>fmin(fmax(·))</code></td><td class="r">33.8</td></tr>
+<tr><td>10⁶</td><td><code>where(x&gt;0, x, 0)</code> / <code>maximum</code> / NumPy <code>where</code></td><td class="r">281 / 277 / 403</td></tr>
+<tr><td>10⁶</td><td>saturation, nested <code>where</code> / <code>fmin(fmax)</code></td><td class="r warn">2603 / 275</td></tr>
+</table></div>
+<ul>
+<li>A single <code>select</code> is if-converted and vectorized, so it runs at the speed of <code>fmax</code> and beats NumPy by about 30%. Lowering fuses the whole piecewise expression into one loop with no <code>bool</code> temporaries.</li>
+<li><span class="warn">Finding:</span> gcc keeps a <em>nested</em> ternary on random data as branches, which is about 9× slower. This is a C-compiler scheduling effect, not a correctness issue. The fix is cheap: an arithmetic rewrite of <code>select(x&gt;c, c, x)</code> into <code>fmin</code>/<code>fmax</code>. I'd like to add it as a follow-up item rather than widen this PR.</li>
+<li>First-call build time (render plus compile) is 17–21 ms for every variant. <code>select</code> adds no measurable build cost.</li>
+</ul>
+
+<h2>Deviations from the plan</h2>
+<ul>
+<li><code>cast</code> to <code>bool</code> is built as <code>x != 0</code> instead of a C cast. A C <code>(uint8_t)</code> cast would truncate 0.5 to 0.</li>
+<li>Scalarization is now allowed for procedures containing <code>bool</code>. The plan did not say this explicitly, but it is needed for select-heavy solver code.</li>
+<li>The structural multi-seed JVP covers <code>select</code>. <code>copysign</code> and <code>cast</code> use the existing unrolled fallback.</li>
+</ul>
+</main></body></html>
