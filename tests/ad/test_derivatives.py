@@ -570,3 +570,67 @@ def test_derivative_flows_only_through_the_chosen_branch() -> None:
   np.testing.assert_allclose(yv, [np.log(2.0), -3.0])
   np.testing.assert_allclose(gv, [0.5, 3.0])
   np.testing.assert_allclose(jv, np.diag([0.5, 3.0]))
+
+
+EXTREMA = {
+  "maximum": lambda x: sc.maximum(x, x[::-1] * 0.5 + 0.1),
+  "minimum": lambda x: sc.minimum(x.sin(), 0.2),
+  "reduce_max": lambda x: sc.stack([(x * x).max(), (-x).max()]),
+  "reduce_min": lambda x: sc.stack([x.min(), (x - 1.0).min() * 2.0]),
+  "norm_inf": lambda x: sc.stack([sc.norm_inf(x), sc.norm_1(x)]),
+  "abs": lambda x: (x - 0.3).abs(),
+}
+
+
+@pytest.mark.parametrize("mode", ["split", "first"])
+@pytest.mark.parametrize("name", sorted(EXTREMA))
+def test_nonsmooth_derivatives_match_finite_differences_away_from_ties(name: str, mode: str) -> None:
+  xv = np.array([-1.3, 0.7, 2.1, -0.4])
+  x = sc.sym("x", 4)
+  with sc.options(nonsmooth=mode):
+    out = EXTREMA[name](x)
+    f = sc.Function._from_exprs(f"ns_{name}_{mode}", [x], [out], ["x"], ["y"])
+    jac = sc.jacobian(f, "y", "x")(xv)
+    lam = np.linspace(-1.0, 1.0, out.size).reshape(out.shape)
+    (g,) = sc.vjp((out,), (x,), (sc.const(lam),))
+  rev = sc.Function._from_exprs(f"ns_{name}_{mode}_rev", [x], [g], ["x"], ["g"])(xv)
+  np.testing.assert_allclose(jac, finite_difference(lambda v: f(v), xv).reshape(jac.shape), rtol=1e-6, atol=1e-8)
+  np.testing.assert_allclose(rev, lam.reshape(-1) @ jac.reshape(out.size, -1), rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize(
+  ("mode", "expected"),
+  [
+    # d/dx of sum(maximum(x, 1)) + max(x) + min(x) at x = [1, 3, 3, -2, -2]
+    ("split", [0.5 + 0.0 + 0.0, 1.0 + 0.5, 1.0 + 0.5, 0.0 + 0.5, 0.0 + 0.5]),
+    ("first", [1.0, 1.0 + 1.0, 1.0, 1.0, 0.0]),
+  ],
+)
+def test_nonsmooth_tie_conventions_are_exact(mode: str, expected: list[float]) -> None:
+  x = sc.sym("x", 5)
+  cost = sc.maximum(x, 1.0).sum() + x.max() + x.min()
+  with sc.options(nonsmooth=mode):
+    (g,) = sc.vjp((cost,), (x,), (sc.const(1.0),))
+    tangent = sc.jvp(cost, x, sc.sym("seed", 5))
+  f = sc.Function._from_exprs(f"ns_tie_{mode}", [x, sc.sym("seed", 5)], [g, tangent], ["x", "seed"], ["g", "t"])
+  xv = np.array([1.0, 3.0, 3.0, -2.0, -2.0])
+  gv = f((xv, np.zeros(5)))[0]
+  np.testing.assert_allclose(gv, expected)
+  forward = np.array([f((xv, np.eye(5)[i]))[1] for i in range(5)])
+  np.testing.assert_allclose(forward, gv)
+
+
+def test_abs_derivative_is_zero_at_zero_and_error_mode_refuses_extrema() -> None:
+  x = sc.sym("x", 3)
+  (g,) = sc.vjp((x.abs().sum(),), (x,), (sc.const(1.0),))
+  f = sc.Function._from_exprs("abs_zero", [x], [g, sc.jvp(x.abs().sum(), x, sc.const(np.ones(3)))], ["x"], ["g", "t"])
+  gv, tv = f(np.array([-2.0, 0.0, 3.0]))
+  np.testing.assert_array_equal(gv, [-1.0, 0.0, 1.0])
+  assert tv == 0.0
+  with sc.options(nonsmooth="error"):
+    for build in (lambda: sc.maximum(x, 0.0).sum(), lambda: x.max(), lambda: sc.norm_inf(x)):
+      with pytest.raises(NotImplementedError, match="nonsmooth='error'"):
+        sc.vjp((build(),), (x,), (sc.const(1.0),))
+      with pytest.raises(NotImplementedError, match="nonsmooth='error'"):
+        sc.jvp(build(), x, sc.const(np.ones(3)))
+    sc.vjp((x.abs().sum(),), (x,), (sc.const(1.0),))  # abs is not a tie convention

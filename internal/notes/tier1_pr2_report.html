@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 1 PR 2 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 1 · PR 2 report</h1>
+<p class="sub">Options system, non-smooth derivatives, <code>reduce_max</code>/<code>reduce_min</code> · branch <code>claude/tier1-primitives</code> · todo C-83 · 25 Sep 2026</p>
+
+<div class="box"><b>Status:</b> <span class="ok">done</span>. The full suite passes: 894 passed, 88 skipped, 0 failed (the four tests this VM cannot run are listed in the PR 1 report). ruff and ty are clean, and the six C snapshots are byte-identical.</div>
+
+<h2>New capability</h2>
+<pre>x.max(), x.min(), sc.reduce_max(x), sc.norm_inf(x), sc.norm_1(x)   # NaN-propagating scalar reductions
+
+with sc.options(nonsmooth="first"):          # "split" (default) | "first" | "error"
+    g = sc.gradient(cost, x)                   # tie convention baked into this graph
+sc.set_options(nonsmooth="split")              # process default</pre>
+<ul>
+<li><b>Differentiable extrema:</b> <code>maximum</code>, <code>minimum</code>, <code>max</code> and <code>min</code> are now differentiable in forward and reverse mode, with sparsity. At a tie:
+  <ul>
+  <li><code>"split"</code> shares the derivative equally among the tied arguments, as JAX does.</li>
+  <li><code>"first"</code> gives it all to the left operand, or to the lowest index.</li>
+  <li><code>"error"</code> keeps the old refusal.</li>
+  </ul>
+  Where one operand is NaN, the derivative follows the value C's <code>fmax</code> returns.</li>
+<li><b><code>abs</code>:</b> the derivative is now <code>sign(x)</code> with <code>abs'(0) = 0</code>. It used to be NaN at 0.</li>
+<li><b>Options system (new):</b> <code>sc.options</code> is a context manager backed by a <code>ContextVar</code>, so it is thread- and task-local. <code>sc.set_options</code> changes the process default, <code>sc.get_options</code> reads the current setting, and <code>sc.Options</code> holds the settings.
+  <ul>
+  <li>An unknown name or value raises at the call.</li>
+  <li>Options are read when a derivative graph is <em>built</em>. A graph built under a setting keeps that setting after the block ends, and the choice reaches the C source and the JIT cache key automatically.</li>
+  </ul></li>
+<li>A Python number passed to <code>maximum</code> or <code>minimum</code> now takes the other operand's dtype, the same rule PR 1 introduced for comparisons.</li>
+</ul>
+
+<h2>What was changed</h2>
+<div class="scroll"><table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>utils/options.py</code> (new, import layer 0)</td><td><code>Options</code>, <code>options</code>, <code>set_options</code>, <code>get_options</code>. Registered in <code>IMPORT_LAYERS</code>.</td></tr>
+<tr><td><code>ir/expr.py</code>, <code>expr_spec.py</code></td><td><code>ExprOp.MAX</code> and <code>ExprOp.MIN</code>. Builders <code>reduce_max</code>, <code>reduce_min</code>, <code>norm_inf</code>, <code>norm_1</code>, and methods <code>Expr.max</code>, <code>Expr.min</code>. <code>minimum</code> and <code>maximum</code> are marked differentiable. New verifier rule <code>reduce-output-scalar</code>, which rejects empty operands.</td></tr>
+<tr><td><code>ad/forward.py</code>, <code>reverse.py</code></td><td>Helpers <code>sign</code>, <code>extremum_weight</code> and <code>reduce_weights</code>, shared by both modes. <code>"first"</code> for reductions finds the lowest tied index with <code>reduce_min</code>, so it needs no new op.</td></tr>
+<tr><td><code>ad/sparsity.py</code></td><td><code>max</code> and <code>min</code> depend on every entry, like <code>sum</code>.</td></tr>
+<tr><td><code>passes/lowering.py</code></td><td>A <code>REDUCE</code> loop seeded with <code>src[0]</code> and updated with <code>select((acc &lt; v) || (v != v), v, acc)</code>, which propagates NaN.</td></tr>
+<tr><td>docs</td><td>New page <code>docs/guide/options.md</code>, added to the site nav. <code>ir.md</code> updates the diff rules and the op tables.</td></tr>
+<tr><td>tests</td><td>New <code>tests/utils/test_options.py</code>. Two existing assertions changed: <code>minimum</code> and <code>maximum</code> are now differentiable, which was the deliberate Q2 change.</td></tr>
+<tr><td><code>internal/todo.md</code></td><td>C-83 marked done. New items C-89 (reductions stay in registers) and C-90 (rewrite nested <code>select</code> to <code>fmin</code>/<code>fmax</code>).</td></tr>
+</table></div>
+
+<h2>Test results</h2>
+<div class="scroll"><table>
+<tr><th>Test</th><th>What it checks</th><th>Result</th></tr>
+<tr><td><code>tests/utils/test_options.py</code> (4)</td><td>Nesting, restoration after an exception, the process default versus a block, a block is invisible to another thread, bad name or value, the convention persisting in the graph and producing different C, and <code>"error"</code> raising.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_nonsmooth_derivatives_match_finite_differences_away_from_ties</code> (12)</td><td>6 constructions × {split, first}: dense Jacobian vs finite differences, and VJP = λᵀJ.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_nonsmooth_tie_conventions_are_exact</code> (2)</td><td>Exact tie values for <code>maximum</code>, <code>max</code> and <code>min</code> together, in both modes. Forward mode, run seed by seed, equals reverse mode.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_abs_derivative_is_zero_at_zero…</code></td><td><code>abs'(0)=0</code> in both modes. <code>"error"</code> refuses <code>maximum</code>, <code>max</code> and <code>norm_inf</code> in both modes, and still allows <code>abs</code>.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_reductions_match_numpy_including_nan</code> (16)</td><td>8 input classes (NaN first, middle and last; ±inf; all equal; signed zeros; all negative; mixed) × {loop, scalarized}, for <code>max</code>, <code>min</code>, <code>norm_inf</code> and <code>norm_1</code>. Exact equality with NumPy.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_reductions_of_one_element_and_large_inputs</code></td><td>Size 1 and size 5000. Exactly one loop per reduction, whatever the size. An empty reduction raises.</td><td class="ok">pass</td></tr>
+<tr><td>Sparsity and verifier</td><td>Exact pattern for extrema over slices, and both reduction rules.</td><td class="ok">pass</td></tr>
+<tr><td>Full suite</td><td></td><td class="ok">894 passed, 88 skipped</td></tr>
+</table></div>
+<p><b>Mutation checks</b>, each reverted afterwards:</p>
+<ul>
+<li>Seeding the accumulator with 0 instead of <code>src[0]</code>: 9 failures.</li>
+<li>Swapping the <code>split</code> and <code>first</code> rules: 3 failures.</li>
+<li>Dropping the NaN term from the reduction update: 4 failures.</li>
+</ul>
+
+<h2>Benchmarks</h2>
+<p>Script: <code>internal/notes/perf_2026_09_25_tier1/pr2_reductions.py</code>. Median µs per call on the aarch64 VM.</p>
+<div class="scroll"><table>
+<tr><th>n</th><th>scaly <code>sum</code></th><th>scaly <code>max</code></th><th>scaly <code>norm_inf</code></th><th>grad <code>max</code> split / first</th><th>NumPy <code>max</code> / <code>abs().max()</code></th></tr>
+<tr><td>10³</td><td class="r">6.9</td><td class="r">6.8</td><td class="r">7.4</td><td class="r">8.7 / 8.5</td><td class="r">1.1 / 1.0</td></tr>
+<tr><td>10⁵</td><td class="r">83.8</td><td class="r">60.9</td><td class="r">173</td><td class="r">275 / 277</td><td class="r">9.6 / 25.8</td></tr>
+<tr><td>10⁶</td><td class="r">775</td><td class="r">543</td><td class="r warn">2293</td><td class="r">3276 / 2708</td><td class="r">83 / 230</td></tr>
+</table></div>
+<ul>
+<li><code>max</code> costs no more than the existing <code>sum</code>. Both are serial: 0.5–0.8 ns per element against NumPy's 0.08.</li>
+<li><span class="warn">Finding (pre-existing, shared with <code>sum</code>):</span> the reduction rule keeps the accumulator in the output array (<code>res[0][0]</code>). The C compiler cannot keep it in a register because that array may alias the inputs, so every trip loads and stores it. That is most of the 6–7× gap to NumPy. <code>norm_inf</code> also materializes <code>abs(x)</code> first instead of fusing it. Filed as <b>C-89</b>. It needs scalarize to understand local scalar variables, which it does not today, so I kept it out of this PR.</li>
+<li><span class="warn">Finding:</span> the <code>"first"</code> gradient of <code>max</code> embeds an n-long index constant in the C source. Build time is 131 ms at n = 10⁵ and 1.4 s at n = 10⁶, against 21–25 ms for <code>"split"</code>. Runtime is the same. It only matters for very large reductions in <code>"first"</code> mode; lowering constants in an affine range to arithmetic would remove it.</li>
+<li>Build time for every other variant is 17–27 ms.</li>
+</ul>
+
+<h2>Deviations from the plan</h2>
+<ul>
+<li>The plan said derived Functions would record the options they were built under, and that listings would show them. I did not add that. The convention is already visible in the derivative graph itself (a different <code>select</code> structure), so a separate record would only duplicate it.</li>
+<li><code>sc.set_options</code> was added next to the context manager, for notebooks and scripts that want one global setting.</li>
+<li><code>maximum</code> and <code>minimum</code> now adopt the dtype of a Python-number operand.</li>
+</ul>
+</main></body></html>

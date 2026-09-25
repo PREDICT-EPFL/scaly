@@ -14,9 +14,10 @@ import numpy as np
 
 from ..function import Function
 from ..function.sugar import vmap
-from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, cast, concat, copysign, gather, scatter, stack, substitute, where, zeros_like
+from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, cast, concat, copysign, equal, gather, reduce_min, scatter, stack, substitute, where, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.env import env_bool
+from ..utils.options import get_options
 from .sparsity import _depends_on, _jac_mask, _mask_sparsity, column_coloring
 
 
@@ -137,9 +138,14 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
   if expr.op == ExprOp.SQRT:
     return save(d[0] * (0.5 / expr))
   if expr.op == ExprOp.ABS:
-    return save(args[0] / args[0].abs() * d[0])
-  if expr.op in {ExprOp.FLOOR, ExprOp.CEIL, ExprOp.MINIMUM, ExprOp.MAXIMUM}:
+    return save(sign(args[0]) * d[0])
+  if expr.op in {ExprOp.FLOOR, ExprOp.CEIL}:
     raise NotImplementedError(f"JVP for nonsmooth op {expr.op!r} is not implemented")
+  if expr.op in {ExprOp.MINIMUM, ExprOp.MAXIMUM}:
+    w = extremum_weight(expr)
+    return save(w * d[0] + (1.0 - w) * d[1])
+  if expr.op in {ExprOp.MAX, ExprOp.MIN}:
+    return save((reduce_weights(expr) * d[0]).sum())
   if expr.op == ExprOp.SELECT:
     return save(where(args[0], d[1], d[2]))
   if expr.op == ExprOp.COPYSIGN:
@@ -171,6 +177,44 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
       return save(2 * (args[0] @ d[0]))
     return save(d[0] @ args[1] + args[0] @ d[1])
   raise NotImplementedError(f"JVP for op {expr.op!r} is not implemented")
+
+
+def sign(x: Expr) -> Expr:
+  """``-1``, ``0`` or ``1``: the derivative of ``abs``, zero at zero whatever the options say."""
+  one, zero = Expr.const(1.0, dtype=x.type.dtype), Expr.const(0.0, dtype=x.type.dtype)
+  return where(x > 0.0, one, where(x < 0.0, -one, zero))
+
+
+def _nonsmooth_mode(op: ExprOp | str) -> str:
+  mode = get_options().nonsmooth
+  if mode == "error":
+    raise NotImplementedError(f"derivative of nonsmooth op {ExprOp(op).value!r} refused under sc.options(nonsmooth='error')")
+  return mode
+
+
+def extremum_weight(expr: Expr) -> Expr:
+  """The share of the derivative of ``maximum(a, b)`` or ``minimum(a, b)`` that goes to ``a``, shaped
+  like the result; ``b`` gets the rest. Where ``a`` is NaN the C result is ``b``, and so is the share."""
+  a, b = expr.args
+  mode = _nonsmooth_mode(expr.op)
+  wins = a > b if expr.op == ExprOp.MAXIMUM else a < b
+  one, half, zero = (Expr.const(v, dtype=expr.type.dtype) for v in (1.0, 0.5, 0.0))
+  if mode == "first":
+    return where(wins | equal(a, b), one, zero)
+  return where(wins, one, where(equal(a, b), half, zero))
+
+
+def reduce_weights(expr: Expr) -> Expr:
+  """How the derivative of ``reduce_max(x)`` or ``reduce_min(x)`` spreads over ``x``: equally over the
+  tied entries under ``"split"``, all to the lowest tied index under ``"first"``."""
+  x = expr.args[0]
+  mode = _nonsmooth_mode(expr.op)
+  hit = equal(x, expr)
+  if mode == "first":
+    index = Expr.const(np.arange(x.size, dtype=np.float64).reshape(x.shape))
+    return cast(equal(index, reduce_min(where(hit, index, float(x.size)))), x.type.dtype)
+  count = cast(hit, x.type.dtype)
+  return count / count.sum()
 
 
 def _copysign_slope(x: Expr, s: Expr) -> Expr:

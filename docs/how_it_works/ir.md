@@ -88,16 +88,22 @@ which evaluates both branches and differentiates through the chosen one.
 
 `diff` marks whether a value depends differentiably on symbolic inputs. Constants are not
 differentiable; structural operations pass the flag through; arithmetic propagates it from its
-operands; and the non-smooth operations (`floor`, `ceil`, `minimum`, `maximum`, `solver_call`)
-clear it. AD (automatic differentiation) reads this flag to decide where a derivative is zero by
-construction.
+operands; and `floor`, `ceil`, the predicates and `solver_call` clear it. AD (automatic
+differentiation) reads this flag to decide where a derivative is zero by construction.
+
+`minimum`, `maximum`, `max`, `min` and `abs` are differentiable everywhere except at ties (or zero),
+where the derivative is a convention. `abs'(0)` is 0. For the extrema,
+`sc.options(nonsmooth=...)` chooses: `"split"` (the default) shares the derivative equally among
+the tied arguments, `"first"` gives it all to the first one (the left operand or the lowest index),
+and `"error"` refuses to differentiate them. The option is read when a derivative graph is built,
+so the choice lives in that graph and in the C generated from it; see [Options](../guide/options.md).
 
 `SparsityType` attaches a structural pattern to a rank-2 value; see
 [Sparsity](../guide/sparsity.md). When present, its shape must match the tensor shape exactly.
 
 ### Operations
 
-Fifty operations, grouped by what they do. `arity` is the operand count; `n` means
+Fifty-two operations, grouped by what they do. `arity` is the operand count; `n` means
 variadic. `diff` is whether AD can pass through the op at all.
 
 #### Arithmetic and elementwise
@@ -113,9 +119,9 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `sinh` `cosh` `tanh` | 1 | yes | |
 | `erf` | 1 | yes | |
 | `exp` `log` `sqrt` | 1 | yes | |
-| `abs` | 1 | yes | no multi-seed forward rule yet |
+| `abs` | 1 | yes | derivative 0 at 0; no multi-seed forward rule yet |
 | `floor` `ceil` | 1 | no | result is marked non-differentiable |
-| `minimum` `maximum` | 2 | no | result is marked non-differentiable |
+| `minimum` `maximum` | 2 | yes | the derivative at a tie follows `sc.options(nonsmooth=...)` |
 | `copysign` | 2 | yes | magnitude of the first operand, sign of the second; no derivative through the sign |
 
 #### Comparison and choice
@@ -136,6 +142,7 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `input` | 0 | a named symbol |
 | `const` | 0 | a materialized array; never differentiable |
 | `sum` | 1 | full reduction to a scalar; there is no axis argument |
+| `max` `min` | 1 | full reduction to a scalar; NaN if any entry is NaN; ties follow `sc.options(nonsmooth=...)` |
 | `reshape` | 1 | size-preserving |
 | `transpose` | 1 | axes must be a permutation |
 | `slice` | 1 | integer, multi-dimensional and strided indexing |

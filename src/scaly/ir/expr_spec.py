@@ -337,6 +337,16 @@ def _cast_types(expr: Expr) -> str | None:
   return None
 
 
+def _reduce_shape(expr: Expr) -> str | None:
+  if expr.shape != ():
+    return f"{expr.op} output must be a scalar, got shape {expr.shape}"
+  if expr.args[0].size == 0:
+    return f"{expr.op} of an empty operand has no value"
+  if expr.args[0].type.dtype != expr.type.dtype:
+    return f"{expr.op} dtype {expr.type.dtype} != operand dtype {expr.args[0].type.dtype}"
+  return None
+
+
 # Build rule lists for elementwise op classes.
 _unary_rules = [Rule(op, "unary-shape-dtype-match", _unary_shape_dtype) for op in COMMON_ELEMENTWISE_UNARY]
 _binary_rules = [Rule(op, "binary-shape-dtype-match", _binary_shape_dtype) for op in COMMON_ELEMENTWISE_BINARY]
@@ -355,6 +365,7 @@ spec_expr = Spec(
     Rule(ExprOp.SELECT, "select-types", _select_types),
     Rule(ExprOp.CAST, "cast-types", _cast_types),
     Rule(ExprOp.SUM, "sum-output-scalar", _sum_shape),
+    *(Rule(op, "reduce-output-scalar", _reduce_shape) for op in (ExprOp.MAX, ExprOp.MIN)),
     Rule(ExprOp.RESHAPE, "reshape-size", _reshape_size),
     Rule(ExprOp.TRANSPOSE, "transpose-axes", _transpose_axes),
     Rule(ExprOp.MATMUL, "matmul-shape", _matmul_shape),

@@ -21,6 +21,7 @@ nav = [
         { "Solvers" = "guide/solvers.md" },
         { "Solver backends" = "guide/solver_backends.md" },
         { "Code generation" = "guide/codegen.md" },
+        { "Options" = "guide/options.md" },
         { "Visualization" = "guide/visualization.md" },
         { "Environment variables" = "guide/env_vars.md" },
     ] },

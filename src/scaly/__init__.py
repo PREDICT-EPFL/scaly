@@ -41,8 +41,12 @@ from .ir.expr import (
   logical_or,
   maximum,
   minimum,
+  norm_1,
   norm_2,
+  norm_inf,
   not_equal,
+  reduce_max,
+  reduce_min,
   scatter,
   split,
   stack,
@@ -51,6 +55,7 @@ from .ir.expr import (
   where,
 )
 from .function import Function, G, L, factory
+from .utils.options import Options, get_options, options, set_options
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
 from .solvers import (
@@ -173,7 +178,15 @@ __all__ = [
   "where",
   "problem",
   "qp_problem",
+  "norm_1",
   "norm_2",
+  "norm_inf",
+  "reduce_max",
+  "reduce_min",
+  "Options",
+  "get_options",
+  "options",
+  "set_options",
   "program_graph",
   "solver",
   "render_expr_assembly",

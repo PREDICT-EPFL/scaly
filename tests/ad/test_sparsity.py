@@ -617,3 +617,9 @@ def test_select_pattern_is_the_branch_union_and_predicates_add_nothing() -> None
   assert sc.jacobian_sparsity(sc.cast(x, "float32"), x).nnz == 4
   # copysign's sign operand never contributes a derivative.
   np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(sc.copysign(x[:2], x[2:]), x)), np.eye(2, 4, dtype=bool))
+
+
+def test_reduction_extrema_depend_on_every_entry() -> None:
+  x = sc.sym("x", 5)
+  y = sc.stack([x[:3].max(), x[2:].min(), sc.norm_inf(x[1:2])])
+  np.testing.assert_array_equal(_dense(sc.jacobian_sparsity(y, x)), [[1, 1, 1, 0, 0], [0, 0, 1, 1, 1], [0, 1, 0, 0, 0]])

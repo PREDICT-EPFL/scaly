@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 89**
+**Next id: 91**
 
 | Prefix | Section |
 |---|---|
@@ -135,7 +135,9 @@ the per-step reports sit beside it as `notes/tier1_pr*_report.html`.
 - [x] **C-82. Comparisons, `bool`, `select`, `isfinite`, `copysign`, `cast`.** Elementwise ops in
       both dialects with AD, sparsity, folding and C spellings; `bool` crosses the `double` ABI as
       0.0/1.0.
-- [ ] **C-83. Options system, non-smooth derivative conventions, `reduce_max`/`reduce_min`.**
+- [x] **C-83. Options system, non-smooth derivative conventions, `reduce_max`/`reduce_min`.** `sc.options(nonsmooth="split"|"first"|"error")`, read at graph build time; NaN-propagating extremum reductions.
+- [ ] **C-89. Keep reduction accumulators in registers and fuse elementwise producers into them.** `sum`, `max` and `min` store the accumulator through the output pointer every trip and run 6-7x slower than NumPy at n = 10^6 (`notes/tier1_pr2_report.html`); `norm_inf` also materializes `abs` first. Scalarize must learn `ASSIGN` or the rule must stay pointer-free.
+- [ ] **C-90. Rewrite `select(x > c, c, x)` and friends to `fmin`/`fmax`.** Nested ternaries on random data stay branches under gcc and run 9x slower (`notes/tier1_pr1_report.html`).
 - [ ] **C-84. Accumulating `scatter`, segment reductions, linear-time `gather` VJP.**
 - [ ] **C-85. `scan` with ping-pong carry buffers and trajectory-storing reverse mode.**
 - [ ] **C-86. Differentiable `while_loop` with a static `max_iter`.**

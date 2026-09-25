@@ -62,8 +62,8 @@ def test_binary_nonlinear_method_helpers_eval() -> None:
   np.testing.assert_allclose(mn_v, np.minimum(xv, yv))
   np.testing.assert_allclose(mx_v, np.maximum(xv, yv))
   assert atan.type.diff
-  assert not mn.type.diff
-  assert not mx.type.diff
+  assert mn.type.diff
+  assert mx.type.diff
 
 
 def test_dot_sumsqr_and_norm_2() -> None:
@@ -150,7 +150,8 @@ def test_differentiability_metadata_propagates_through_exprs() -> None:
   assert sc.stack([p, c]).type.diff is False
   assert sc.concat([x[:1], p[:1]]).type.diff
   assert not x.floor().type.diff
-  assert not sc.minimum(x, p).type.diff
+  assert sc.minimum(x, p).type.diff  # differentiable since the nonsmooth option (tie convention) exists
+  assert not sc.minimum(p, c).type.diff
 
   u = sc.sym("u", 3)
   inner = sc.Function._from_exprs("inner", [u], [u * u], ["u"], ["y"])

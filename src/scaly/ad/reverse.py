@@ -11,6 +11,7 @@ from ..function import Function
 from ..function.sugar import vmap
 from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, as_expr, cast, concat, copysign, gather, scatter, stack, topo, where, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
+from .forward import extremum_weight, reduce_weights, sign
 from .sparsity import _depends_on
 
 
@@ -208,9 +209,14 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   if expr.op == ExprOp.SQRT:
     return (cot / (2 * expr),)
   if expr.op == ExprOp.ABS:
-    return (cot * args[0] / args[0].abs(),)
-  if expr.op in {ExprOp.FLOOR, ExprOp.CEIL, ExprOp.MINIMUM, ExprOp.MAXIMUM}:
+    return (cot * sign(args[0]),)
+  if expr.op in {ExprOp.FLOOR, ExprOp.CEIL}:
     raise NotImplementedError(f"VJP for nonsmooth op {expr.op!r} is not implemented")
+  if expr.op in {ExprOp.MINIMUM, ExprOp.MAXIMUM}:
+    w = extremum_weight(expr)
+    return (_unbroadcast(cot * w, args[0].shape, expr.shape), _unbroadcast(cot * (1.0 - w), args[1].shape, expr.shape))
+  if expr.op in {ExprOp.MAX, ExprOp.MIN}:
+    return (cot * reduce_weights(expr),)
   if expr.op == ExprOp.SELECT:
     cond, a, b = args
     zero = as_expr(0.0)

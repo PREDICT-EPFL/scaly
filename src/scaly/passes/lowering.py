@@ -610,6 +610,27 @@ def _lower_sum(ctx: LowerCtx, node: Expr) -> None:
   ctx.statements.append(p.for_(rng, [p.store(p.view(acc, [z]), p.add(p.load(p.view(acc, [z])), p.load(p.view(ctx.buf_of(src), [i]))))]))
 
 
+@lowers(ExprOp.MAX, ExprOp.MIN)
+def _lower_extremum(ctx: LowerCtx, node: Expr) -> None:
+  """Start from the first element, then a REDUCE loop keeps the larger (smaller) value. A NaN element
+  replaces the accumulator and nothing replaces a NaN accumulator, so NaN propagates as ``np.max``
+  does; C's ``fmax`` would drop it."""
+  src = node.args[0]
+  acc = ctx.alloc_tmp(node)
+  z = p.const_int(0)
+  src_buf = ctx.buf_of(src)
+  ctx.statements.append(p.store(p.view(acc, [z]), p.load(p.view(src_buf, [z]))))
+  if src.size == 1:
+    return
+  name = f"i_{acc.attrs['name']}"
+  i = p.var(name)
+  cur, value = p.load(p.view(acc, [z])), p.load(p.view(src_buf, [i]))
+  better = p.compare(ProgramOp.LT, cur, value) if node.op == ExprOp.MAX else p.compare(ProgramOp.LT, value, cur)
+  take = ProgramNode(ProgramOp.OR, (better, p.compare(ProgramOp.NE, value, value)), dtype=dtypes.bool_)
+  rng = p.range_(name, 1, _size_of(src.shape), kind=RangeKind.REDUCE)
+  ctx.statements.append(p.for_(rng, [p.store(p.view(acc, [z]), p.select(take, value, cur))]))
+
+
 @lowers(ExprOp.TRANSPOSE)
 def _lower_transpose(ctx: LowerCtx, node: Expr) -> None:
   """Permuted copy: ``out[Σ o_i·out_stride_i] = src[Σ o_i·src_stride_{axes[i]}]``, one loop per output axis."""

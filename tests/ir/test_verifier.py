@@ -211,3 +211,12 @@ def test_control_op_type_rules_are_enforced() -> None:
   for rule, node in bad.items():
     with pytest.raises(VerifyError, match=rule):
       verify_expr(node)
+
+
+def test_reduction_extremum_rules() -> None:
+  x = sc.sym("x", 3)
+  verify_expr(x.max() + x.min())
+  with pytest.raises(VerifyError, match="reduce-output-scalar"):
+    verify_expr(Expr(ExprOp.MAX, (x,), TensorType((3,), dtype=dtypes.float64)))
+  with pytest.raises(VerifyError, match="reduce-output-scalar"):
+    verify_expr(Expr(ExprOp.MIN, (sc.sym("e", 0),), TensorType((), dtype=dtypes.float64)))

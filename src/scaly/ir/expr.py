@@ -65,6 +65,8 @@ class ExprOp(StrEnum):
   SELECT = "select"
   CAST = "cast"
   SUM = "sum"
+  MAX = "max"
+  MIN = "min"
   RESHAPE = "reshape"
   TRANSPOSE = "transpose"
   SLICE = "slice"
@@ -122,6 +124,8 @@ COMMON_STRUCTURAL = {
   ExprOp.INPUT,
   ExprOp.CONST,
   ExprOp.SUM,
+  ExprOp.MAX,
+  ExprOp.MIN,
   ExprOp.RESHAPE,
   ExprOp.TRANSPOSE,
   ExprOp.SLICE,
@@ -180,8 +184,8 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.DIV: OpInfo(ExprOp.DIV, 2, np.divide),
   ExprOp.POW: OpInfo(ExprOp.POW, 2, np.power),
   ExprOp.ATAN2: OpInfo(ExprOp.ATAN2, 2, np.arctan2),
-  ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, np.minimum, False),
-  ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, np.maximum, False),
+  ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, np.minimum),
+  ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, np.maximum),
   ExprOp.COPYSIGN: OpInfo(ExprOp.COPYSIGN, 2, np.copysign),
   ExprOp.LT: OpInfo(ExprOp.LT, 2, np.less, False),
   ExprOp.LE: OpInfo(ExprOp.LE, 2, np.less_equal, False),
@@ -194,6 +198,8 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.SELECT: OpInfo(ExprOp.SELECT, 3, np.where),
   ExprOp.CAST: OpInfo(ExprOp.CAST, 1, None),
   ExprOp.SUM: OpInfo(ExprOp.SUM, 1, np.sum),
+  ExprOp.MAX: OpInfo(ExprOp.MAX, 1, np.max),
+  ExprOp.MIN: OpInfo(ExprOp.MIN, 1, np.min),
   ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, np.reshape),
   ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, np.transpose),
   ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1, None),
@@ -411,6 +417,12 @@ class Expr:
 
   def sum(self) -> Expr:
     return Expr(ExprOp.SUM, (self,), TensorType((), dtype=self.type.dtype, diff=self.type.diff), lowering=self.lowering)
+
+  def max(self) -> Expr:
+    return reduce_max(self)
+
+  def min(self) -> Expr:
+    return reduce_min(self)
 
   def dot(self, other: Any) -> Expr:
     return dot(self, other)
@@ -637,13 +649,40 @@ def atan2(y: Any, x: Any) -> Expr:
 
 
 def minimum(x: Any, y: Any) -> Expr:
-  """Elementwise minimum. Non-smooth, so the result is marked non-differentiable."""
-  return binary(ExprOp.MINIMUM, as_expr(x), as_expr(y))
+  """Elementwise minimum. Its derivative at a tie follows ``sc.options(nonsmooth=...)``."""
+  return binary(ExprOp.MINIMUM, *_operands(x, y))
 
 
 def maximum(x: Any, y: Any) -> Expr:
-  """Elementwise maximum. Non-smooth, so the result is marked non-differentiable."""
-  return binary(ExprOp.MAXIMUM, as_expr(x), as_expr(y))
+  """Elementwise maximum. Its derivative at a tie follows ``sc.options(nonsmooth=...)``."""
+  return binary(ExprOp.MAXIMUM, *_operands(x, y))
+
+
+def _reduce(op: ExprOp, x: Any) -> Expr:
+  x = as_expr(x)
+  if x.size == 0:
+    raise ValueError(f"{op.value} of an empty expression has no value")
+  return Expr(op, (x,), TensorType((), dtype=x.type.dtype, diff=x.type.diff), lowering=x.lowering)
+
+
+def reduce_max(x: Any) -> Expr:
+  """Largest entry, as a scalar; NaN if any entry is NaN. Ties follow ``sc.options(nonsmooth=...)``."""
+  return _reduce(ExprOp.MAX, x)
+
+
+def reduce_min(x: Any) -> Expr:
+  """Smallest entry, as a scalar; NaN if any entry is NaN. Ties follow ``sc.options(nonsmooth=...)``."""
+  return _reduce(ExprOp.MIN, x)
+
+
+def norm_inf(x: Any) -> Expr:
+  """Largest absolute entry, as a scalar."""
+  return reduce_max(as_expr(x).abs())
+
+
+def norm_1(x: Any) -> Expr:
+  """Sum of absolute entries, as a scalar."""
+  return as_expr(x).abs().sum()
 
 
 def copysign(x: Any, y: Any) -> Expr:

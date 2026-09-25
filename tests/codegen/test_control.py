@@ -140,3 +140,39 @@ def test_predicate_types_and_python_scalars() -> None:
   with pytest.raises(TypeError, match="bool operands"):
     sc.where(x, x, x)
   assert sc.where(sc.sym("c", (2, 1), dtype="bool"), sc.sym("a", 3), 0.0).shape == (2, 3)
+
+
+REDUCTION_CASES = {
+  "mixed": np.array([1.0, 5.0, -3.0, 5.0, 2.0, 0.0]),
+  "nan": np.array([1.0, np.nan, 3.0, 4.0, 5.0, 6.0]),
+  "nan_first": np.array([np.nan, 1.0, 3.0, 4.0, 5.0, 6.0]),
+  "nan_last": np.array([1.0, 2.0, 3.0, 4.0, 5.0, np.nan]),
+  "all_negative": -np.arange(1.0, 7.0),
+  "infinities": np.array([-np.inf, 0.0, np.inf, 1.0, -1.0, 2.0]),
+  "all_equal": np.full(6, 2.5),
+  "signed_zeros": np.array([-0.0, 0.0, -0.0, 0.0, -0.0, 0.0]),
+}
+
+
+@pytest.mark.parametrize("lowering", ["block", "scalar"])
+@pytest.mark.parametrize("case", sorted(REDUCTION_CASES))
+def test_reductions_match_numpy_including_nan(case: str, lowering: Lowering) -> None:
+  x = sc.sym("x", 6).with_lowering(lowering)
+  inner = sc.Function._from_exprs(f"red_{case}_{lowering}_in", [x], [sc.stack([x.max(), x.min(), sc.norm_inf(x), sc.norm_1(x)])], ["x"], ["y"])
+  xo = sc.sym("x", 6)
+  fun = sc.Function._from_exprs(f"red_{case}_{lowering}", [xo], [inner(xo)], ["x"], ["y"])
+  v = REDUCTION_CASES[case]
+  np.testing.assert_array_equal(fun(v), [np.max(v), np.min(v), np.max(np.abs(v)), np.sum(np.abs(v))])
+
+
+def test_reductions_of_one_element_and_large_inputs() -> None:
+  x1, xl = sc.sym("x", 1), sc.sym("x", 5000)
+  one = sc.Function._from_exprs("red_one", [x1], [x1.max(), x1.min()], ["x"], ["mx", "mn"])
+  assert [float(v) for v in one(np.array([-4.0]))] == [-4.0, -4.0]
+  big = sc.Function._from_exprs("red_big", [xl], [xl.max(), xl.min()], ["x"], ["mx", "mn"])
+  v = np.random.default_rng(1).normal(size=5000)
+  assert [float(r) for r in big(v)] == [v.max(), v.min()]
+  body = render_c_source(big).split("RESULT;")[-1]
+  assert body.count("for (") == 2  # one reduction loop each, whatever the size
+  with pytest.raises(ValueError, match="empty"):
+    sc.sym("e", 0).max()

@@ -104,7 +104,7 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
   if expr.op in COMMON_ELEMENTWISE_BINARY:
     x, y = expr.args
     return _or(_broadcast_mask(_jac_mask(x, wrt, memo), x.shape, expr.shape), _broadcast_mask(_jac_mask(y, wrt, memo), y.shape, expr.shape))
-  if expr.op == ExprOp.SUM:
+  if expr.op in {ExprOp.SUM, ExprOp.MAX, ExprOp.MIN}:
     child = _jac_mask(expr.args[0], wrt, memo)
     incidence = _incidence((1, child.shape[0]), np.zeros(child.shape[0], dtype=np.int64), np.arange(child.shape[0]))
     return _compose(incidence, child)
