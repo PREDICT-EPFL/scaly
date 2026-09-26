@@ -283,6 +283,19 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       run-time bar table), optimal heating of a plate (`SparseLDL` time stepping, `sc.S` between
       Functions) and a hanging-chain calibration (Newton in a `while_loop`, `isfinite`,
       `custom_derivative`). `tests/integration/test_examples.py` checks each against NumPy/SciPy.
+- [x] **C-123. Tier 3 harness (T3-0a).** `tests/data/maros_meszaros/`: the 48 Maros–Mészáros problems
+      with n + m ≤ 1000 from `qpsolvers/maros_meszaros_qpbenchmark` (Apache-2.0, NOTICE with the
+      commit), stored as `.npz` as distributed (408 kB). `tests/ipm/problems.py` maps them to
+      PIQP's form (unit rows become bounds, `l == u` rows equalities, |value| ≥ 1e19 absent,
+      since the set sometimes stores 1e20 as 9.999999999999998e19) and generates infeasible
+      problems and linear MPC QPs. `tests/ipm/piqp_trace.c` runs vendored PIQP with verbose output
+      and prints its result at full precision; `exact_trace` reads every iteration at full
+      precision from runs truncated at `max_iter = k`, which a test shows reproduce the full run.
+      PIQP solves all 51 with both backends; the backends take different iteration counts on 4
+      (QCAPRI 84 sparse against 32 dense), so the reference's trace gate must pick a backend. On
+      the infeasible set PIQP runs two primal-infeasible problems to the iteration limit and
+      calls an unbounded one primal infeasible; the reference has to reproduce both
+      (`perf_2026_09_26_tier3/t3_0_piqp_baseline.py`, `notes/tier3_pr0a_report.html`).
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 

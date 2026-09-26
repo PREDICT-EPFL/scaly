@@ -1,0 +1,18 @@
+Maros–Mészáros convex QP test set, small subset
+
+The 48 problems in this directory with n + m <= 1000 (m counting every row of A, bound rows
+included) come from https://github.com/qpsolvers/maros_meszaros_qpbenchmark, directory data/, at
+commit c7d02f4f3a27e26fc5c248fe8366e2d0b87a6de0 (2024-01-17), distributed under the Apache License
+2.0 (LICENSE in this directory). The original test set is described in
+
+  I. Maros and C. Mészáros, A repository of convex quadratic programming problems,
+  Optimization Methods and Software 11(1-4), 671-681, 1999. doi:10.1080/10556789908805768
+
+Modification: each .mat file was converted to a compressed .npz with the same fields (P and A in
+CSC form, q, r, l, u); no values were changed. The problems read
+
+  minimize 1/2 x^T P x + q^T x + r   subject to   l <= A x <= u,
+
+with P stored in full (both triangles) and +-1e20 (sometimes rounded to 9.999999999999998e19)
+standing for an infinite bound. The loader in
+tests/ipm/problems.py maps them to PIQP's form.

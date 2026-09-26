@@ -106,7 +106,7 @@ Draft PR sequence (agreed 2026-09-26):
 
 | PR | Content | Status |
 |---|---|---|
-| T3-0a | Harness: curated MM subset, infeasible LPs, small MPC/SQP QPs in `tests/data` (Apache-2.0 notice); a PIQP trace harness that parses the vendored solver's verbose per-iteration output | |
+| T3-0a | Harness: curated MM subset, infeasible LPs, small MPC/SQP QPs in `tests/data` (Apache-2.0 notice); a PIQP trace harness that parses the vendored solver's verbose per-iteration output | done (C-123): 48 MM problems (n + m ≤ 1000), generated infeasible and MPC problems, driver with exact per-iteration traces; PIQP solves all 51, backends differ in iterations on 4 |
 | T3-0b | NumPy reference: PIQP 0.6.2 in full, proximal updates included; gate ≥ 90% trace match on the small subset | |
 | T3-1 | C-112: loop-invariant `while_loop` inputs, so the outer loop's carry holds only the iterate | |
 | T3-2 | Ruiz equilibration and unscaling (#19) | |

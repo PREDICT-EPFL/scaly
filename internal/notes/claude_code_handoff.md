@@ -15,7 +15,7 @@ holds what is to be done.
 - **Status summaries:** `tier1_implementation_status.md` and `tier2_implementation_status.md`.
   - Full reports: `tier1_pr*_report.html`, `tier1_summary_report.html`, `tier2_pr1..9_report.html` and `tier2_review_report.html` (the Tier 2 summary and hand-off).
   - Historical gap analysis: `programmatic_branch_analysis.md`.
-- **Open items:** `internal/todo.md`, next id C-123.
+- **Open items:** `internal/todo.md`, next id C-124.
   - Tier 1 leftovers: C-89 … C-100.
   - Tier 2 leftovers: C-107 (a decision for Colin: `-O3` by default), C-111, C-112, and C-114 … C-117.
   - Relevant to Tier 3: **C-112**, loop-invariant `while_loop` inputs for the IPM outer loop, and **C-114**, unpadded factor updates, since the factorization dominates IPM time.
