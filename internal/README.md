@@ -18,6 +18,7 @@ For how scaly works now, see [`docs/how_it_works/architecture.md`](../docs/how_i
 | Note | What it records |
 | --- | --- |
 | `refactorings.md` | refactorings we have decided on but not yet carried out, one `#` section each |
+| `function_templates_plan_2026_09_27.md` | plan for unified `sc.function` templates and multi-parameter bodies (API-1) |
 | `program_ir_migration.md` | the migration that introduced the program dialect and the single lowering path |
 | `native_toolchain_exploration.md` | the conda-prefix and delocate experiments behind the vendored-solver build |
 | `vendored_solvers.md` | known issues in the vendored PIQP and IPOPT builds |

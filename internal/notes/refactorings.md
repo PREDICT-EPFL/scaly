@@ -3,7 +3,8 @@
 
 # Function templates
 
-Todo API-1, following the solver API that landed on dev. The interface sketch and its design
+Todo API-1, following the solver API that landed on dev. **Implementation plan: [`function_templates_plan_2026_09_27.md`](function_templates_plan_2026_09_27.md)**, which
+supersedes the open points below (one decorator, multi-parameter bodies, holes bound per call). The interface sketch and its design
 rationale live in [the typing playground](../../typing_playground/README.md#templates). The sketch
 does not lower, compile, or evaluate expressions; its tests prove the proposed interface only.
 

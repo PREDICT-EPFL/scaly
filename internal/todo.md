@@ -67,8 +67,8 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 ### Now
 
 - [ ] **API-1. Implement `FunctionTemplate` over concrete Functions**, including specialization,
-      deterministic C names, one trace per instance, and lifted derivatives. Design:
-      refactorings.md "Function templates" and `typing_playground/README.md`.
+      deterministic C names, one trace per instance, and lifted derivatives. Plan:
+      `notes/function_templates_plan_2026_09_27.md` (phases P0–P6).
 - [ ] **API-2. Preserve declared trees through `vmap` and Function-level differentiation.** Settle
       the mapped input convention and retain runtime and static acceptance tests. Rationale:
       refactorings.md "`vmap` and the AD entry points erase the callee's declared trees".

@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Scaly Tiers 1–3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
+<style>
+:root{
+  color-scheme: light;
+  --bg:#f6f8f6; --surface:#ffffff; --fg:#17211b; --muted:#56635b; --rule:#dbe2dc;
+  --acc:#2f7a55; --acc-deep:#3f6851; --acc-soft:#e3efe7; --code:#edf2ee;
+  --ok:#2f7a55; --warn:#8a5a1f; --bad:#9b3b4a;
+  --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#111713; --surface:#172019; --fg:#e2e9e4; --muted:#9aa9a0; --rule:#29342d;
+    --acc:#8fc2a5; --acc-deep:#a9c9b7; --acc-soft:#1c2b22; --code:#1c251f;
+    --ok:#8fc2a5; --warn:#e0ad6a; --bad:#e7899a;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#111713; --surface:#172019; --fg:#e2e9e4; --muted:#9aa9a0; --rule:#29342d;
+  --acc:#8fc2a5; --acc-deep:#a9c9b7; --acc-soft:#1c2b22; --code:#1c251f;
+  --ok:#8fc2a5; --warn:#e0ad6a; --bad:#e7899a;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15.5px/1.6 var(--sans);padding-inline:16px}
+main{max-width:920px;margin:0 auto;padding-block:40px 80px}
+h1,h2,h3{text-wrap:balance;line-height:1.25;letter-spacing:-.005em}
+h1{font-size:2rem;font-weight:700;margin:0 0 .35rem}
+h2{font-size:1.4rem;font-weight:600;margin:3.2rem 0 .8rem;padding-top:1rem;border-top:2px solid var(--rule)}
+h3{font-size:1.05rem;font-weight:600;margin:1.8rem 0 .5rem}
+p{margin:.6rem 0;max-width:68ch}
+a{color:var(--acc);text-underline-offset:2px}
+a:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:2px}
+code{font:.86em var(--mono);background:var(--code);padding:.08em .35em;border-radius:4px;white-space:nowrap}
+ul{padding-left:1.3rem;margin:.5rem 0}li{margin:.28rem 0;max-width:70ch}
+.eyebrow{font:500 .75rem/1.2 var(--mono);text-transform:uppercase;letter-spacing:.09em;color:var(--acc-deep);margin:0 0 .6rem}
+.lede{font-size:1.08rem;color:var(--fg);max-width:66ch}
+.meta{color:var(--muted);font-size:.9rem;margin:.2rem 0 0}
+nav.toc{margin:1.6rem 0 0;display:flex;flex-wrap:wrap;gap:.4rem .5rem}
+nav.toc a{font-size:.86rem;text-decoration:none;color:var(--fg);background:var(--surface);border:1px solid var(--rule);border-radius:999px;padding:.22rem .75rem}
+nav.toc a:hover{border-color:var(--acc);color:var(--acc)}
+.muted{color:var(--muted)}
+.small{font-size:.88rem}
+
+/* Highlights */
+.hl{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,26rem),1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden;margin:1.2rem 0}
+.hl > div{background:var(--surface);padding:1rem 1.15rem}
+.hl h3{margin:0 0 .35rem;font-size:1rem}
+.hl p{margin:0;font-size:.93rem;color:var(--fg)}
+.hl .tag{font:500 .7rem var(--mono);color:var(--acc-deep);text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:.3rem}
+
+/* Tables */
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--surface);margin:.9rem 0}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{text-align:left;vertical-align:top;padding:.5rem .7rem;border-bottom:1px solid var(--rule)}
+th{font:500 .72rem var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);background:var(--bg)}
+tr:last-child td{border-bottom:none}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.k{white-space:nowrap;font-family:var(--mono);font-size:.82rem}
+th .nu{text-transform:none}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}
+
+/* Tier ladder */
+.ladder{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.5rem;margin:1.2rem 0 .4rem}
+.ladder div{border:1px solid var(--rule);border-radius:8px;padding:.6rem .7rem;background:var(--surface);font-size:.82rem;line-height:1.35}
+.ladder b{display:block;font:600 .78rem var(--mono);margin-bottom:.2rem}
+.ladder .done{border-color:var(--acc);background:var(--acc-soft)}
+.ladder .st{display:block;margin-top:.35rem;font:500 .68rem var(--mono);text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.ladder .done .st{color:var(--acc-deep)}
+@media (max-width:720px){.ladder{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:420px){.ladder{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.note{border-left:3px solid var(--acc);background:var(--surface);padding:.7rem 1rem;border-radius:0 8px 8px 0;margin:1rem 0;font-size:.93rem}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr));gap:.4rem 2rem}
+ol.refs{padding-left:1.6rem;font-size:.88rem}ol.refs li{margin:.45rem 0}
+footer{margin-top:3rem;color:var(--muted);font-size:.82rem;border-top:1px solid var(--rule);padding-top:1rem}
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <p class="eyebrow">Scaly · progress summary · 27 September 2026</p>
+  <h1>Scaly Tiers 1–3 and the examples gallery</h1>
+  <p class="lede">Over the last few days Scaly gained real loops, run-time indexing, sparse and dense linear algebra and, on top of them, a complete QP interior-point solver (PIQP 0.6.2) that is written once in Python and emitted as C specialised to one sparsity pattern. A gallery of new examples, executed notebooks, a side-by-side port of CasADi's examples and a TinyMPC port exercise all of it.</p>
+  <p class="meta">Repository <code>alloy</code> (the Scaly package) · branches <code>claude/tier1-primitives</code> → <code>claude/tier2-sparse</code> → <code>claude/tier3-ipm</code> → <code>claude/examples-tinympc-notebooks</code> · tags <code>tier1-complete</code>, <code>tier2-complete</code>, <code>tier3-complete</code> · 51 commits, about 44 600 lines added across 325 files.</p>
+  <nav class="toc" aria-label="Contents">
+    <a href="#highlights">Highlights</a><a href="#roadmap">Roadmap</a><a href="#tier1">Tier 1 · primitives</a><a href="#tier2">Tier 2 · linear algebra</a><a href="#between">Between tiers</a><a href="#tier3">Tier 3 · IPM</a><a href="#examples">Examples</a><a href="#casadi">CasADi set</a><a href="#tinympc">TinyMPC</a><a href="#next">Next</a><a href="#refs">References</a>
+  </nav>
+</header>
+
+<section id="highlights">
+<h2>Big-picture highlights</h2>
+<p>The unifying principle is <b>one deployment path: generated code only</b>. Every capability below compiles to plain C with no BLAS, LAPACK or sparse library behind it, and loops stay loops rather than being unrolled into straight-line code.</p>
+
+<div class="hl">
+  <div>
+    <span class="tag">Tier 1</span>
+    <h3>Differentiable control flow in generated C</h3>
+    <p><code>sc.scan</code> and <code>sc.while_loop</code> lower to single C loops with a ping-pong carry, and are differentiable in forward mode (all seeds in one tangent loop) and reverse mode (stored trajectory, one backward scan per scan). A <code>scan</code> builds about 270× faster than the unrolled graph.</p>
+  </div>
+  <div>
+    <span class="tag">Tier 1–2</span>
+    <h3>Logic, nonsmooth ops and run-time indexing</h3>
+    <p>Comparisons, <code>where</code>, tie-aware <code>maximum</code>/<code>abs</code> derivatives, segment reductions, accumulating scatter, <code>take</code>/<code>put</code>/<code>put_add</code> with run-time <code>int64</code> indices, ragged loops and custom derivatives. Loop carries updated through these ops are proven safe to update in place.</p>
+  </div>
+  <div>
+    <span class="tag">Tier 2</span>
+    <h3>Sparse and dense linear algebra as Scaly values</h3>
+    <p><code>SparseMatrix</code> (static CSC pattern, <code>Expr</code> values), symbolic analysis with orderings, and a quasi-definite <code>SparseLDL</code> within 1.04–1.5× of a QDLDL-class C factorization (4–5× faster when unrolled on small KKT systems). Solves carry implicit derivatives to second order.</p>
+  </div>
+  <div>
+    <span class="tag">Tier 3</span>
+    <h3>PIQP as generated code</h3>
+    <p><code>scaly.solvers.ipm.Solver</code> generates PIQP 0.6.2 end to end, with dense and sparse KKT backends. Status parity on 62/62 gate problems and identical decision traces on 48/48 (sparse). The sparse backend runs at 1.26× PIQP's warmed solve time, and 0.81× its setup plus solve.</p>
+  </div>
+  <div>
+    <span class="tag">Examples</span>
+    <h3>Whole algorithms as one C function</h3>
+    <p>iLQR, TinyMPC's ADMM, Newton with continuation, an EKF for identification and more are written in Scaly and emitted as single C functions. The TinyMPC port takes identical iterations to the library, runs 1.4–2.8× faster (geometric mean) and has a fraction of its code size.</p>
+  </div>
+  <div>
+    <span class="tag">Validation</span>
+    <h3>Against CasADi, and reviewed tier by tier</h3>
+    <p>17 of CasADi's own examples ported side by side: all agree, and Scaly runs 2–21× faster than interpreted CasADi on OCPs. Each tier closed with a multi-agent review; every confirmed defect has a regression test. The suite grew from 1 057 to 2 218 passing tests.</p>
+  </div>
+</div>
+
+<h3>Headline numbers</h3>
+<div class="scroll"><table>
+<thead><tr><th>Measure</th><th class="n">Before</th><th class="n">After</th><th>Where</th></tr></thead>
+<tbody>
+<tr><td>Single-shooting MPC Hessian, N = 100</td><td class="n">205 µs</td><td class="n">58 µs</td><td>Tier 1 (multi-seed loops, PR 8–9)</td></tr>
+<tr><td>RK4 Hessian, N = 100</td><td class="n">1 376 µs</td><td class="n">93 µs</td><td>Tier 1; first call 1.6 → 0.33 s</td></tr>
+<tr><td>Trivial JIT call overhead</td><td class="n">6.5 µs</td><td class="n">2.9 µs</td><td>Tiers 1–3 (C-100)</td></tr>
+<tr><td><code>Aᵀy</code> via run-time indices, n = 2 000</td><td class="n">2 283 µs</td><td class="n">51 µs</td><td>Tier 2 in-place proof (T2-3)</td></tr>
+<tr><td>Sparse LDLᵀ vs QDLDL-class C</td><td class="n">—</td><td class="n">1.04–1.5×</td><td>Tier 2, loop schedule</td></tr>
+<tr><td>Generated PIQP (sparse) vs PIQP, warmed solve ≥ 50 µs</td><td class="n">1.49×</td><td class="n">1.26×</td><td>Tier 3, after review speed-ups</td></tr>
+<tr><td>Tests passing</td><td class="n">1 057</td><td class="n">2 218</td><td>end of Tier 1 → end of Tier 3 (Mac)</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="roadmap">
+<h2>Where this sits in the plan</h2>
+<p>The work follows a six-tier plan whose end goal is PIQP as a drop-in <code>backend="scaly"</code>. Two decisions shaped it: general sparse linear algebra comes before multistage structure, and Tier 2 is general-purpose infrastructure rather than a PIQP-private component, so PIQP is only its first consumer.</p>
+<div class="ladder" role="list">
+  <div class="done" role="listitem"><b>Tier 1</b>Core IR primitives: loops, logic, indexing, custom derivatives<span class="st">done</span></div>
+  <div class="done" role="listitem"><b>Tier 2</b>Sparse and dense linear algebra<span class="st">done</span></div>
+  <div class="done" role="listitem"><b>Tier 3</b>Generic primal–dual IPM (PIQP 0.6.2)<span class="st">done</span></div>
+  <div role="listitem"><b>Tier 4</b>Drop-in backend, parity, sensitivities<span class="st">next</span></div>
+  <div role="listitem"><b>Tier 5</b>Multistage / Riccati structure, supernodes<span class="st">later</span></div>
+  <div role="listitem"><b>Tier 6</b>Target selection, optional external kernels<span class="st">later</span></div>
+</div>
+<p class="small muted">Each tier has quantitative gates and a kill criterion, every PR ships a report (capability, tests with mutation checks, benchmarks), and each tier ends with an agent review round.</p>
+</section>
+
+<section id="tier1">
+<h2>Tier 1 · Core IR primitives</h2>
+<p>Tier 1 added the control flow and nonsmooth operations that an optimisation solver needs, all differentiable and all lowered to generated C. Scope decisions: one generated solver per fixed sparsity structure; <code>scatter</code> accumulates on repeated indices; nonsmooth tie conventions are a global option (default <code>"split"</code>); booleans and counters cross the ABI as doubles; reverse mode through loops stores the carry trajectory.</p>
+
+<div class="scroll"><table>
+<thead><tr><th>PR</th><th>Todo</th><th>Capability</th></tr></thead>
+<tbody>
+<tr><td class="k">1</td><td class="k">C-82</td><td>Comparisons and logic, <code>sc.where</code>, <code>isfinite</code>, <code>copysign</code>, <code>cast</code>; an <code>Expr</code> has no truth value</td></tr>
+<tr><td class="k">2</td><td class="k">C-83</td><td><code>sc.options</code>; differentiable <code>maximum</code>/<code>minimum</code>/<code>abs</code> with both tie conventions; <code>reduce_max</code>/<code>reduce_min</code>, <code>norm_inf</code>, <code>norm_1</code></td></tr>
+<tr><td class="k">3</td><td class="k">C-84</td><td>Accumulating <code>scatter</code>; <code>segment_sum</code>/<code>segment_max</code>/<code>segment_min</code>; linear gather adjoint</td></tr>
+<tr><td class="k">4</td><td class="k">C-85</td><td><code>sc.scan</code>: one serial loop, ping-pong carry, trajectory kept for reverse mode</td></tr>
+<tr><td class="k">5</td><td class="k">C-86</td><td><code>sc.while_loop</code> with static <code>max_iter</code>: break condition and trip count; masked backward scan for derivatives</td></tr>
+<tr><td class="k">6</td><td class="k">C-87</td><td><code>index_add</code>/<code>index_set</code>; in-place loop carries for fixed-index update chains</td></tr>
+<tr><td class="k">7</td><td class="k">C-88</td><td><code>sc.custom_derivative(fn, jvp=, vjp=)</code></td></tr>
+<tr><td class="k">8</td><td class="k">C-93</td><td>Multi-seed forward mode through <code>scan</code>/<code>while_loop</code>: one tangent loop carries all seeds (motivated by the single-shooting MPC Hessian, previously N per-seed copies)</td></tr>
+<tr><td class="k">9</td><td class="k">review</td><td>Four-agent review of C-93, fixes and ranked optimizations (below)</td></tr>
+</tbody></table></div>
+
+<h3>Review round and optimizations</h3>
+<ul>
+<li><b>Correctness fixes:</b> a silently wrong Jacobian from interned tangent-symbol names; tangent mix-ups between inlined calls; K² code growth for K calls of a loop Function; a forward-over-forward crash; <code>int64</code> inputs to callees read as raw doubles; generated C that depended on <code>PYTHONHASHSEED</code>.</li>
+<li><b>Optimizations:</b> per-step Jacobian tangents (<code>seeds @ J</code>); one backward scan per scan and one reverse sweep per call (C-91); division-free, composed index maps for gathers and scatters; raw-address JIT entry.</li>
+<li><b>Result:</b> MPC Hessian 109 → 58 µs and RK4 Hessian 1 079 → 93 µs relative to PR 8 (11.6×). A dedicated suite of 88 multi-seed loop cases; each regression test was shown to fail with its fix reverted.</li>
+</ul>
+</section>
+
+<section id="tier2">
+<h2>Tier 2 · Sparse and dense linear algebra</h2>
+<p>Tier 2 makes sparse matrices and factorizations first-class, reusable Scaly values for Newton/SQP KKT steps, Kalman updates, implicit integrators and PIQP. All of it is generated code: the symbolic work happens in NumPy at generation time and the numeric work is emitted as loops over constant index tables.</p>
+
+<div class="cols">
+<div>
+<h3>Compiler support</h3>
+<ul>
+<li>Loop bodies can read the step number (<code>index=True</code>).</li>
+<li><code>take</code>, <code>put</code>, <code>put_add</code> with run-time <code>int64</code> indices; out-of-range lanes read a fill value or write a scratch slot.</li>
+<li>In-place loop carries through these ops, proven at the loop from its index tables.</li>
+<li><code>ragged_add</code>/<code>ragged_dot</code>: inner loops of run-time length.</li>
+<li><code>custom_derivative(sparsity=)</code> and a trajectory-memory guard.</li>
+</ul>
+</div>
+<div>
+<h3>Linear algebra (<code>scaly.linalg</code>)</h3>
+<ul>
+<li><code>SparseMatrix</code>: static CSC pattern with <code>Expr</code> values; algebra, block/KKT assembly, results of <code>sparse_jacobian</code>/<code>sparse_hessian</code>.</li>
+<li><code>analyze</code>: natural, RCM, MMD and <code>auto</code> orderings, elimination tree, pattern of L, segments chosen by dynamic programming.</li>
+<li><code>SparseLDL</code>: quasi-definite LDLᵀ without pivoting; <code>"scan"</code> or <code>"unroll"</code> schedule; <code>solve(b, refine=k)</code>; <code>inertia()</code> and <code>health()</code>.</li>
+<li>Dense <code>cholesky</code>, <code>ldl</code>, <code>solve_triangular</code>, <code>cho_solve</code>, <code>ldl_solve</code>, <code>solve</code>.</li>
+</ul>
+</div>
+</div>
+
+<h3>Gates</h3>
+<div class="scroll"><table>
+<thead><tr><th>Gate</th><th>Result</th><th></th></tr></thead>
+<tbody>
+<tr><td>Accuracy vs SciPy for regularisation δ = 1e-4 … 1e-13</td><td class="ok">met</td><td>refinement reaches rounding at δ = 1e-10</td></tr>
+<tr><td>Factorization ≤ 2× QDLDL-class C</td><td class="ok">met</td><td>1.04–1.5× with loops; 4–5× faster when unrolled on small KKTs</td></tr>
+<tr><td>Generation &lt; 10 s at nnz(L) = 50 k</td><td class="ok">met</td><td>1.2 s at 46 k</td></tr>
+<tr><td>Dense ≤ 2× LAPACK at n = 32–64</td><td class="ok">met</td><td>within 1.6× of OpenBLAS at <code>-O3</code> (see C-107)</td></tr>
+<tr><td>Two non-PIQP examples</td><td class="ok">met</td><td><code>sqp_newton_sparse.py</code>, <code>kalman_update.py</code></td></tr>
+</tbody></table></div>
+
+<h3>Review round</h3>
+<p>Five agents found ten defects, six of them silent wrong numbers (for example generated names shadowing inputs, <code>-0.0</code> in tables, NaN second derivatives of <code>x**p</code> at 0, <code>put</code>'s reverse rule with repeated indices, hoisting that separated a while loop's count from its loop). All are fixed with regression tests; the JIT call dropped from 4.2 to 3.2 µs and adaptive refinement now runs in place. 1 460 tests passed at the close.</p>
+</section>
+
+<section id="between">
+<h2>Landed between Tiers 2 and 3</h2>
+<ul>
+<li><b>Sparse matrices in <code>Function</code> signatures (C-119).</b> <code>sc.S(name, pattern)</code> puts the pattern in the signature: the body receives a <code>SparseMatrix</code>, evaluation takes and returns SciPy matrices with exactly that pattern, and the C signature carries only the values vector.</li>
+<li><b>Derivatives with respect to non-input expressions (C-120).</b> Forward mode and sparsity analysis previously returned zeros without error when differentiating in a slice of an input (e.g. a Newton step inside a <code>while_loop</code> body). Such <code>wrt</code> now get a stand-in input.</li>
+<li><b>Compiler flags (C-107).</b> JIT default <code>-O2</code>, plus <code>-ftree-vectorize</code> for GCC before 12 only; <code>-O3</code> was measured and rejected (1–5.8× compile time on large sources).</li>
+<li><b>macOS run (C-118)</b> and a fix for a JIT cache race.</li>
+</ul>
+</section>
+
+<section id="tier3">
+<h2>Tier 3 · PIQP as a generated interior-point solver</h2>
+<p><code>scaly.solvers.ipm</code> implements PIQP 0.6.2 over one sparsity structure, from Ruiz equilibration to the result, as a single generated Function. The solver is written once in Python; the structure (patterns and which bounds exist) is fixed at generation time and the values are inputs.</p>
+<ul>
+<li><code>QPStructure</code> fixes the patterns and bounds; <code>QPValues.preprocess</code> applies PIQP's preprocessing (free rows, packed box bounds).</li>
+<li><code>ruiz</code>/<code>scale</code>: Ruiz equilibration as a <code>while_loop</code>, with each backend's cost-scaling behaviour reproduced.</li>
+<li><code>KKT</code> and <code>Kernels</code>: a dense backend (condensed Cholesky) and a sparse backend (<code>SparseLDL</code> on the full KKT matrix), with PIQP's factorization retries and iterative refinement.</li>
+<li><code>Solver(structure, backend, Settings()).solve(values, trace=...)</code>: initial point, Mehrotra predictor–corrector, proximal updates, boundary shift, fine-tune switch and infeasibility detection; results in PIQP's layout and status codes, with an optional per-iteration trace.</li>
+<li>Compiler additions: loop-invariant <code>while_loop(..., params=...)</code> inputs with forward/reverse derivatives and sparsity through them (C-112); outputs may be named like inputs (C-125); <code>SparseLDL.solve_with</code> for a factor carried out of a loop; a leaner call layer with one workspace per thread.</li>
+</ul>
+
+<h3>How it was validated</h3>
+<p>A NumPy port of PIQP 0.6.2 serves as a step-by-step oracle; it takes vendored PIQP's decisions on 46 of 48 Maros–Mészáros problems (n + m ≤ 1 000). A trace driver runs vendored PIQP on the same problems, plus infeasible and MPC sets.</p>
+
+<div class="scroll"><table>
+<thead><tr><th>Gate</th><th>Result</th><th></th></tr></thead>
+<tbody>
+<tr><td>NumPy reference takes PIQP's decisions on ≥ 90% of the subset</td><td class="ok">met</td><td>46/48</td></tr>
+<tr><td>Generated IPM matches PIQP's run of the same backend</td><td class="ok">met</td><td>status 62/62 on both backends; decision traces 48/48 (sparse), 47/48 (dense) where PIQP's two backends agree</td></tr>
+<tr><td>Sparse within 1.5× PIQP's solve time</td><td class="ok">met</td><td>1.26× where PIQP takes ≥ 50 µs (35 problems); 0.81× setup + solve; dense 2.24×</td></tr>
+</tbody></table></div>
+
+<h3>Selected timings</h3>
+<p class="small muted">Warmed-up minima of 50 samples on the Mac. Ratios &gt; 1 mean Scaly is slower.</p>
+<div class="scroll"><table>
+<thead><tr><th>Problem</th><th>n / p / m</th><th>Backend</th><th class="n">Iter. Scaly / PIQP</th><th class="n">Scaly <span class="nu">µs</span></th><th class="n">PIQP <span class="nu">µs</span></th><th class="n">Ratio</th></tr></thead>
+<tbody>
+<tr><td>QAFIRO</td><td>32 / 8 / 17</td><td>sparse</td><td class="n">13 / 13</td><td class="n">36</td><td class="n">41</td><td class="n ok">0.89</td></tr>
+<tr><td>CVXQP1_S</td><td>100 / 50 / 0</td><td>sparse</td><td class="n">9 / 9</td><td class="n">225</td><td class="n">180</td><td class="n ok">1.25</td></tr>
+<tr><td>QSC205</td><td>203 / 91 / 114</td><td>sparse</td><td class="n">16 / 16</td><td class="n">451</td><td class="n">390</td><td class="n ok">1.16</td></tr>
+<tr><td>QBORE3D</td><td>315 / 215 / 19</td><td>sparse</td><td class="n">19 / 19</td><td class="n">1 141</td><td class="n">879</td><td class="n ok">1.30</td></tr>
+<tr><td>QCAPRI</td><td>353 / 158 / 129</td><td>sparse</td><td class="n">31 / 84</td><td class="n">3 259</td><td class="n">7 509</td><td class="n ok">0.43</td></tr>
+<tr><td>QRECIPE</td><td>180 / 91 / 24</td><td>sparse</td><td class="n">34 / 19</td><td class="n">1 270</td><td class="n">425</td><td class="n warn">2.99</td></tr>
+<tr><td>mpc_12x4_N20</td><td>332 / 252 / 0</td><td>sparse</td><td class="n">7 / 7</td><td class="n">916</td><td class="n">777</td><td class="n ok">1.18</td></tr>
+<tr><td>mpc_27x6_N30</td><td>1017 / 837 / 0</td><td>sparse</td><td class="n">8 / 8</td><td class="n">7 856</td><td class="n">7 193</td><td class="n ok">1.09</td></tr>
+<tr><td>mpc_27x6_N30</td><td>1017 / 837 / 0</td><td>dense</td><td class="n">8 / 8</td><td class="n">409 433</td><td class="n">94 596</td><td class="n bad">4.33</td></tr>
+</tbody></table></div>
+<p>The dense backend's gap is its Cholesky kernel (80% of a step, about a quarter of Eigen's blocked LLᵀ); the sparse backend's main remaining lever is unpadded factor updates (the factorization is 40–60% of a step).</p>
+
+<h3>Documented deviations from PIQP</h3>
+<ul>
+<li>The dense backend also fails a Cholesky pivot below ε times its diagonal entry when refinement is off, since its sign is rounding noise.</li>
+<li>A bound declared finite that arrives infinite or NaN stops with <code>INVALID_BOUNDS</code> (−11), because the solver is specialised to which bounds exist.</li>
+</ul>
+<p>All other PIQP quirks (signed box maxima, the cost-scaling aliasing, IEEE <code>0/0</code>) are reproduced deliberately.</p>
+
+<h3>Review round</h3>
+<p>Five read-only reviewers (fidelity, IR/lowering/JIT, AD through while <code>params</code>, performance, tests and docs) found crashes (colliding derivative Function names, a cold-cache compile race), wrong or stale numbers (dense cost scaling, garbage after a failed first factorization, stale state on infeasibility exits), resource issues (a 1.7 GB table broadcast, a 510 MB file leak in the harness) and a benchmark-fairness issue in compiler flags. All are fixed; ten mutants were all killed. Four exact speed-ups (four-lane max/min reductions, run-by-run sorted segment extrema, per-matrix Ruiz maxima, hoisting data out of the step) cut sparse solves by 11–25% at identical iterations. The IPM tests pass with FMA contraction both off and fast.</p>
+</section>
+
+<section id="examples">
+<h2>The examples gallery</h2>
+<p>Sixteen new standalone examples, grouped in <code>examples/README.md</code> by the feature each mainly demonstrates. Each prints its results, writes its generated C to <code>examples/generated/&lt;name&gt;/</code>, and is checked in <code>tests/integration/test_examples_gallery.py</code> against a NumPy or SciPy reference, finite differences or a published value. Size: <b>S</b> a first read, <b>L</b> a complete application.</p>
+
+<div class="scroll"><table>
+<thead><tr><th>Feature</th><th>Example</th><th>Size</th><th>Problem and what it shows</th></tr></thead>
+<tbody>
+<tr><td>Codegen</td><td class="k">deploy_in_c</td><td>S</td><td>An attitude propagator with EKF Jacobians shipped as C and C++ headers, a C <code>main</code> compiled with <code>cc</code>, and the CasADi layer loaded via <code>casadi.external</code></td></tr>
+<tr><td rowspan="4">Derivatives</td><td class="k">derivatives_tour</td><td>S</td><td>Lennard-Jones 7-atom cluster: forces, normal modes, rigidity matrix; reaches the global minimum −16.505384</td></tr>
+<tr><td class="k">lagrangian_mechanics</td><td>M</td><td>n-link pendulum from its Lagrangian alone: M(q) as a Hessian, Coriolis terms as a Jacobian of a gradient, RK4 <code>scan</code>, finite-time Lyapunov exponent</td></tr>
+<tr><td class="k">option_greeks</td><td>S/M</td><td>Black–Scholes Greeks and implied volatility by a vmapped Newton <code>while_loop</code></td></tr>
+<tr><td class="k">gaussian_process</td><td>M</td><td>GP hyperparameters by marginal likelihood: gradient and Hessian through a dense Cholesky at order 120</td></tr>
+<tr><td>Sparsity</td><td class="k">bratu_newton</td><td>M</td><td>Bratu PDE by Newton with continuation: coloring finds the stencil, <code>SparseLDL</code> and <code>inertia()</code> inside a <code>while_loop</code></td></tr>
+<tr><td rowspan="4">Loops</td><td class="k">robot_arm_ik</td><td>S/M</td><td>7-joint arm: forward kinematics as a <code>scan</code>, damped least-squares IK vmapped over 500 targets</td></tr>
+<tr><td class="k">periodic_orbit</td><td>M</td><td>Van der Pol limit cycle by single shooting; monodromy matrix and Floquet multipliers; period 6.6632868594</td></tr>
+<tr><td class="k">ekf_identification</td><td>M/L</td><td>Maximum-likelihood identification of a Duffing oscillator: a whole EKF as one <code>scan</code>, reverse mode through 600 steps</td></tr>
+<tr><td class="k">ilqr</td><td>L</td><td>Car-like robot parking past obstacles: the complete iLQR solver (rollout, backward pass, line search, regularization loop) as one C function</td></tr>
+<tr><td rowspan="2">Indexing</td><td class="k">sinkhorn_transport</td><td>M</td><td>Log-domain Sinkhorn with segment log-sum-exps; reverse mode through the loop matches the envelope theorem</td></tr>
+<tr><td class="k">optimal_power_flow</td><td>L</td><td>AC OPF on MATPOWER <code>case9</code> as index tables; IPOPT reproduces the published 5296.69 $/h</td></tr>
+<tr><td rowspan="4">Solvers</td><td class="k">cbf_safety_filter</td><td>M</td><td>CBF filter for a unicycle: PIQP nested inside a controller Function, compiled to one library</td></tr>
+<tr><td class="k">portfolio_qp</td><td>S/M</td><td>Markowitz frontier with a factor model: sparse PIQP and a parameter sweep over one generated solver</td></tr>
+<tr><td class="k">nmpc_cartpole</td><td>L</td><td>Closed-loop NMPC swing-up on a bounded track: multiple shooting, slacked track limits, IPOPT warm starts</td></tr>
+<tr><td class="k">mhe</td><td>M/L</td><td>Moving-horizon estimation of state and friction with the <code>scaly-sqp</code> backend, cross-checked against IPOPT</td></tr>
+</tbody></table></div>
+<h3>Examples added earlier, with Tiers 1–2</h3>
+<p>Eight examples landed with the Tier 2 close (T2-9) and just after it (C-121); they are now in the same gallery and also write their C to <code>examples/generated/</code>.</p>
+<div class="scroll"><table>
+<thead><tr><th>Example</th><th>Problem and what it shows</th></tr></thead>
+<tbody>
+<tr><td class="k">sqp_newton_sparse</td><td>Pendulum swing-up: SQP Newton steps on a sparse KKT with <code>SparseLDL</code>, <code>inertia()</code> and <code>health()</code></td></tr>
+<tr><td class="k">kalman_update</td><td>Kalman update of a spatial field with a sparse information prior; the Kalman gain as Jacobians of a quasi-definite solve</td></tr>
+<tr><td class="k">heat_control</td><td>Optimal heating of a two-material plate: <code>SparseLDL</code> implicit time stepping, adjoint gradients through the solves</td></tr>
+<tr><td class="k">hanging_chain</td><td>Stiffness and mass calibration: Newton in a <code>while_loop</code> with AD inside, implicit-function <code>custom_derivative</code></td></tr>
+<tr><td class="k">lqr_tuning</td><td>LQR weight tuning for a quadrotor: reverse mode through a backward Riccati <code>scan</code> and a forward closed-loop <code>scan</code></td></tr>
+<tr><td class="k">mdp_value_iteration</td><td>Stochastic shortest path: <code>segment_sum</code>/<code>segment_min</code>, a <code>while_loop</code> stopped on <code>norm_inf</code>, an <code>int64</code> policy</td></tr>
+<tr><td class="k">truss_sizing</td><td>Minimum-compliance truss: <code>take</code>/<code>put_add</code> with the bar table as a run-time input, gradients through Cholesky and scatter</td></tr>
+<tr><td class="k">lasso_admm</td><td>Compressed sensing by ADMM: soft thresholding, <code>logical_or</code> stopping test, <code>cho_solve</code>, a <code>bool</code> output</td></tr>
+</tbody></table></div>
+
+<h3>Notebooks</h3>
+<p>Nine executed notebooks in <code>examples/notebooks/</code>, saved with outputs so they read on GitHub without running. Each develops the maths, runs the Scaly code in small cells, plots the results and ends with the generated C. <code>tests/integration/test_notebooks.py</code> runs every one top to bottom.</p>
+<p>Seven notebooks accompany a script from the gallery and go further than it; two on sparse matrices exist only as notebooks.</p>
+<div class="scroll"><table>
+<thead><tr><th>Notebook</th><th>Problem</th><th>What the notebook shows</th><th>Needs</th></tr></thead>
+<tbody>
+<tr><td class="k">lagrangian_mechanics</td><td>n-link pendulum from its Lagrangian</td><td>The mass matrix against the textbook form; the triple pendulum's path and energy error; two runs 1e-9 apart diverging at the rate the Jacobian through the <code>scan</code> predicts</td><td>—</td></tr>
+<tr><td class="k">bratu_newton</td><td>Bratu PDE by Newton with continuation</td><td>The Jacobian pattern and its colouring on the grid; colour count constant from 100 to 25 600 unknowns; quadratic Newton convergence; the solution branch up to the turning point</td><td>—</td></tr>
+<tr><td class="k">ekf_identification</td><td>Duffing oscillator identification by EKF likelihood</td><td>The data record; the gradient against finite differences; the L-BFGS path on a 1 600-point likelihood landscape; innovation whiteness and the filter's error band</td><td>—</td></tr>
+<tr><td class="k">gaussian_process</td><td>GP hyperparameters by marginal likelihood</td><td>The gradient through the Cholesky against the trace formula; the likelihood landscape with Laplace ellipses; the posterior band</td><td>—</td></tr>
+<tr><td class="k">ilqr</td><td>Car-like robot parking past obstacles</td><td>The three nested loops explained one at a time; the iterates in the plane; cost and regularization per iteration (loop body driven from Python); a first-order optimality check</td><td>—</td></tr>
+<tr><td class="k">cbf_safety_filter</td><td>CBF filter for a unicycle among obstacles</td><td>Filtered and unfiltered paths; the barriers over time; the QP's feasible set in the input plane at an active step</td><td>PIQP</td></tr>
+<tr><td class="k">nmpc_cartpole</td><td>Closed-loop NMPC cart-pole swing-up</td><td>States, force and bounds in closed loop; a filmstrip of the swing-up; IPOPT iterations and times per sample; C size against the horizon</td><td>IPOPT</td></tr>
+<tr><td class="k">sparse_fem_topology</td><td>Conduction-tree topology optimisation: P1 FEM on a plate, SIMP with a density filter, optimality criteria</td><td>The <code>SparseMatrix</code> algebra on two triangles (<code>from_coo</code>, pattern union and intersection, sparse–sparse <code>@</code>, <code>tril</code>); assembly of 16 200 triplets and <code>R @ K @ R.T</code>; <code>sc.S</code> between Functions; fill-in and elimination trees under natural, RCM and minimum-degree orderings; the adjoint gradient against the hand-derived formula</td><td>notebook only</td></tr>
+<tr><td class="k">sparse_kkt_mpc</td><td>KKT system of unconstrained linear MPC for a chain of masses, against the Riccati recursion</td><td><code>SparseMatrix.block</code> over stages; a hand-made stage ordering via <code>analyze(perm=...)</code> against automatic, dual-first and random ones; regularization with refinement; <code>inertia()</code> as a convexity certificate and <code>health()</code>; the LQR gain and <code>dV/dA</code> through the solve; Ruiz equilibration</td><td>notebook only</td></tr>
+</tbody></table></div>
+<p class="small muted">Run with <code>uv run --with jupyterlab jupyter lab examples/notebooks</code>; the lock file is untouched.</p>
+</section>
+
+<section id="casadi">
+<h2>CasADi's examples, side by side</h2>
+<p><code>examples/casadi/</code> ports 17 of CasADi's own Python examples (CasADi 3.8.0) as <code>&lt;name&gt;_casadi.py</code> / <code>&lt;name&gt;_scaly.py</code> pairs, covering NLPs, QPs, single and multiple shooting, direct and pseudospectral collocation, MHE, system identification and code generation. <code>compare.py</code> runs each variant in fresh processes with an empty JIT cache and reports agreement, code lines, setup and run time, for interpreted CasADi, CasADi with <code>expand</code> + <code>jit</code> under Scaly's flags, and Scaly.</p>
+<ul>
+<li><b>Agreement:</b> all 17 pairs agree; the worst is 6e-7 on <code>race_car</code> (bounds versus constraints, 38 vs 35 IPOPT iterations).</li>
+<li><b>Run time:</b> Scaly is 2–21× faster than interpreted CasADi on function-evaluation-heavy OCPs and 1.1–1.6× faster than CasADi JIT; it is 1.2–1.6× slower on millisecond NLPs, where IPOPT time and about 0.35 ms of wrapper glue dominate.</li>
+<li><b>Setup:</b> Scaly 0.2–3.6 s (mostly Python lowering) against 2.9–145 s for CasADi JIT, which also ran out of memory on <code>parallel_map</code> and crashed on <code>rocket</code>.</li>
+<li><b>Code size:</b> comparable line counts on every pair.</li>
+<li><b>Not ported, for Scaly reasons:</b> adaptive integrators (CVODES/IDAS), root-finding on unsymmetric systems (no general dense LU yet), differentiation through solver calls, Python callbacks.</li>
+<li><b>Hotspot found:</b> <code>sysid</code> multiple shooting (4 004 variables, arrowhead Hessian) spends 12.6 of 13.5 s of solver construction in star coloring.</li>
+</ul>
+<p class="small muted">Timings are from a 2-vCPU cloud Xeon, not the reference machine used on the results pages.</p>
+</section>
+
+<section id="tinympc">
+<h2>TinyMPC in Scaly</h2>
+<p><code>examples/tinympc/</code> writes TinyMPC's ADMM for linear MPC with box and second-order-cone constraints once in Python; Scaly generates C specialised to each problem, with dimensions, horizon, dynamics and the Riccati cache folded in as constants. One call is one <code>tiny_solve</code>: a <code>while_loop</code> over ADMM iterations around two <code>scan</code>s (backward pass with negative strides, rollout), with warm-start state passed in and out.</p>
+<ul>
+<li><code>solver.py</code> (under 300 lines with comments): <code>build_solver(problem)</code> returns one Function <code>(state, x0, xref, uref, bounds…) → (state_next, iterations, solved, u0)</code>. Box clipping, cone projections (<code>where</code>, <code>sqrt</code>), <code>norm_inf</code> residuals and the stopping test are plain expressions over the whole horizon.</li>
+<li>Disabled bounds are not inputs, and cone code is generated only for declared cones. Options: <code>fixed_bounds</code> makes the bounds constants; <code>lowering="block"</code> keeps stage steps as loops over constant tables instead of straight-line code.</li>
+<li><code>problem.py</code> holds the Riccati cache as the library computes it and a line-by-line NumPy port of the library's <code>solve</code>, used as the test oracle. <code>tests/integration/test_tinympc.py</code> has 10 tests; 11 of 12 mutants are killed (the survivor, <code>Pinf</code> for <code>Pinfᵀ</code>, is equivalent up to rounding).</li>
+</ul>
+
+<h3>Benchmark method</h3>
+<ul>
+<li><b>Library:</b> TinyMPC at commit <code>023f36b</code> (2 Sep 2026), built from source, adaptive ρ off. The only patch removes the <code>std::cout</code> printed on convergence, which would otherwise be timed.</li>
+<li><b>Problems:</b> the three families of <code>mcu-solver-benchmarks</code> as closed-loop scenarios with their published data and sweeps. Random QP-MPC sweeps nx 4–32, nu 4–32 and N 4–50. The safety filter (double integrator) sweeps nx 2–32 at N = 10 and N 4–100 at nx = 10. Rocket landing with a thrust cone sweeps N 2–256. That makes 52 instances of 100–301 MPC steps each.</li>
+<li><b>Same numbers on both sides:</b> the library is set up on each instance and its own Riccati cache is built into the generated solver. The closed loop is run once with the generated solver, and a C++ driver (library) and a C driver (Scaly) then replay the recorded sequence of warm-started solves, so both solve exactly the same QPs.</li>
+<li><b>Timing:</b> only the solve call, with <code>clock_gettime</code>; 5 runs of each episode from a zero workspace; the median episode total divided by the number of steps. Bounds are run-time inputs on both sides.</li>
+<li><b>Build:</b> both sides with gcc 11.4 at <code>-O3 -mcpu=native -fno-math-errno</code> (and again at <code>-O2</code>), Eigen with <code>-DNDEBUG</code>. Sizes are from <code>size</code> on the objects; compile times are the best of three.</li>
+<li><b>Caveat:</b> the machine is an Apple-silicon Mac running a 4-core Linux VM, not a microcontroller, and both sides run in double precision. The <code>float</code> builds TinyMPC uses on microcontrollers are not covered.</li>
+</ul>
+
+<h3>Results by problem family</h3>
+<div class="scroll"><table>
+<thead><tr><th>Family</th><th class="n">Instances</th><th class="n">Geo-mean speed-up <code>-O3</code></th><th class="n"><code>-O2</code></th><th class="n">Range <code>-O3</code></th><th class="n">Scaly <code>.text</code></th><th class="n">max |Δu₀|</th></tr></thead>
+<tbody>
+<tr><td>Random QP-MPC</td><td class="n">23</td><td class="n">1.38×</td><td class="n">1.07×</td><td class="n">0.80–1.86×</td><td class="n">10–63 KiB</td><td class="n">3e-13</td></tr>
+<tr><td>Safety filter</td><td class="n">20</td><td class="n">2.79×</td><td class="n">2.17×</td><td class="n">1.99–5.79×</td><td class="n">7–52 KiB</td><td class="n">2e-14</td></tr>
+<tr><td>Rocket landing (SOC)</td><td class="n">9</td><td class="n">2.66×</td><td class="n">2.34×</td><td class="n">2.09–3.98×</td><td class="n">4–21 KiB</td><td class="n">2e-5</td></tr>
+</tbody></table></div>
+<p class="small muted">Speed-up = library time / Scaly time per MPC solve. The TinyMPC library is 200 KiB of object code for its three objects (40 KiB for <code>admm.o</code> alone), whatever the problem.</p>
+
+<p>How the speed-up varies along each sweep at <code>-O3</code>:</p>
+<ul>
+<li><b>Random QP-MPC, versus nx</b> (nu = 4, N = 10): flat at 1.54–1.86×.</li>
+<li><b>Random QP-MPC, versus nu</b> (nx = 10, N = 10): it falls steadily, from 1.74× at nu = 4 to 1.07× at 12, 0.99× at 16 and 0.80× at 32. These are the only 5 of 52 instances where the library wins.</li>
+<li><b>Random QP-MPC, versus N</b> (nx = 10, nu = 4): 1.30–1.79×, settling near 1.4× for N ≥ 30.</li>
+<li><b>Safety filter, versus nx</b> (N = 10): it rises with dimension, from 2.3–2.8× at nx ≤ 12 to 3.19× at 16, 3.96× at 24 and 5.79× at 32.</li>
+<li><b>Safety filter, versus N</b> (nx = 10): 2.0–2.6×, easing slowly to 1.99× at N = 100.</li>
+<li><b>Rocket landing, versus N:</b> 3.98× at N = 2, falling to 2.5× at N = 32 and 2.1× at N = 192–256.</li>
+</ul>
+
+<h3>Selected instances (<code>-O3</code>)</h3>
+<div class="scroll"><table>
+<thead><tr><th>Instance</th><th class="n">ADMM iters (both)</th><th class="n">TinyMPC <span class="nu">µs</span>/solve</th><th class="n">Scaly <span class="nu">µs</span>/solve</th><th class="n">Speed-up</th><th class="n">ns/iter TinyMPC · Scaly</th><th class="n">Scaly <code>.text</code></th><th class="n">Gen + cc (s)</th><th class="n">max |Δu₀|</th></tr></thead>
+<tbody>
+<tr><td class="k">random nx4 nu4 N10</td><td class="n">2 759</td><td class="n">9.92</td><td class="n">5.63</td><td class="n ok">1.76×</td><td class="n">683 · 388</td><td class="n">38.9 KiB</td><td class="n">0.23 + 1.01</td><td class="n">9e-15</td></tr>
+<tr><td class="k">random nx32 nu4 N10</td><td class="n">144 951</td><td class="n">5 043</td><td class="n">2 733</td><td class="n ok">1.85×</td><td class="n">6 611 · 3 582</td><td class="n">62.9 KiB</td><td class="n">0.29 + 0.66</td><td class="n">2e-15</td></tr>
+<tr><td class="k">random nx10 nu16 N10</td><td class="n">1 327</td><td class="n">14.99</td><td class="n">15.15</td><td class="n">0.99×</td><td class="n">2 146 · 2 169</td><td class="n">31.1 KiB</td><td class="n">0.90 + 0.85</td><td class="n">1e-13</td></tr>
+<tr><td class="k">random nx10 nu32 N10</td><td class="n">760</td><td class="n">14.75</td><td class="n">18.37</td><td class="n warn">0.80×</td><td class="n">3 687 · 4 593</td><td class="n">58.2 KiB</td><td class="n">0.29 + 4.68</td><td class="n">3e-13</td></tr>
+<tr><td class="k">random nx10 nu4 N50</td><td class="n">27 181</td><td class="n">1 124</td><td class="n">800.5</td><td class="n ok">1.40×</td><td class="n">6 201 · 4 418</td><td class="n">19.8 KiB</td><td class="n">0.11 + 0.19</td><td class="n">3e-15</td></tr>
+<tr><td class="k">safety nx2 N10</td><td class="n">44 108</td><td class="n">82.82</td><td class="n">29.16</td><td class="n ok">2.84×</td><td class="n">357 · 126</td><td class="n">10.3 KiB</td><td class="n">0.07 + 0.18</td><td class="n">2e-15</td></tr>
+<tr><td class="k">safety nx32 N10</td><td class="n">44 544</td><td class="n">2 014</td><td class="n">348.2</td><td class="n ok">5.79×</td><td class="n">8 592 · 1 485</td><td class="n">16.3 KiB</td><td class="n">0.29 + 0.13</td><td class="n">4e-15</td></tr>
+<tr><td class="k">safety nx10 N100</td><td class="n">40 386</td><td class="n">5 730</td><td class="n">2 883</td><td class="n ok">1.99×</td><td class="n">14 187 · 7 140</td><td class="n">7.8 KiB</td><td class="n">0.15 + 0.11</td><td class="n">3e-15</td></tr>
+<tr><td class="k">rocket N2</td><td class="n">1 294</td><td class="n">0.84</td><td class="n">0.21</td><td class="n ok">3.98×</td><td class="n">195 · 49</td><td class="n">4.4 KiB</td><td class="n">0.06 + 0.07</td><td class="n">2e-7</td></tr>
+<tr><td class="k">rocket N32</td><td class="n">3 514</td><td class="n">44.79</td><td class="n">17.69</td><td class="n ok">2.53×</td><td class="n">3 837 · 1 516</td><td class="n">9.6 KiB</td><td class="n">0.39 + 0.14</td><td class="n">6e-6</td></tr>
+<tr><td class="k">rocket N256</td><td class="n">4 878</td><td class="n">480.5</td><td class="n">228.5</td><td class="n ok">2.10×</td><td class="n">29 650 · 14 100</td><td class="n">10.2 KiB</td><td class="n">0.17 + 0.14</td><td class="n">2e-5</td></tr>
+</tbody></table></div>
+<p class="small muted">ADMM iterations are totals over the episode (100–301 MPC steps) and are identical for both solvers on every step. The full 52-row tables and the sweep plots are in <code>internal/notes/tinympc_benchmark_report.html</code>.</p>
+
+<h3>Reading the numbers</h3>
+<ul>
+<li><b>Where the generated code wins.</b> The stage steps are matrix–vector products with constant matrices. Scaly expands small ones into straight-line code with the entries as literals, so structural zeros cost nothing. The double integrator's A, B, K and Q<sub>uu</sub>⁻¹ are block-structured, which is why the safety filter's advantage grows with dimension. With fixed sizes the horizon loops have no bookkeeping, the library's dynamic Eigen matrices are gone, and so are the copies of <code>vnew</code>/<code>znew</code> the library makes every iteration for adaptive ρ even when it is off.</li>
+<li><b>Where it loses.</b> The random QP-MPC with 16–32 inputs converges in 4–7 iterations per solve, and each iteration is dominated by dense 16–32-wide products (Q<sub>uu</sub>⁻¹, Kᵀ). Eigen's vectorized kernels beat the scalar sums of the expanded code there (C-117), and packing the carry costs more per solve when there are so few iterations.</li>
+<li><b>The loop carry.</b> A <code>while_loop</code> body used to read only its carry, so the references and bounds were copied at every iteration. Making the bounds constants (<code>--fixed-bounds</code>) saved 2–6% of solve time (2.73 → 2.63 ms at nx = 32; 18.4 → 17.9 µs at nu = 32). This measurement motivated the loop-invariant <code>params</code> added in Tier 3 (C-112).</li>
+<li><b>Code size and compile time</b> are not monotone in problem size. Below Scaly's expansion limits, a whole stage step (for small problems the whole iteration) becomes straight-line code; above them it stays a loop. That produces the 40–65 KiB peaks at nx = 4, nx = 32 and nu = 32, and the 2–5 s compiles at nu ≥ 24. <code>lowering="block"</code> keeps the loops (35 KiB and 0.3 s at nu = 32) at some cost in speed.</li>
+<li><b>Compile time overall:</b> 0.13–4.97 s per instance for Python generation plus <code>gcc -c</code>, against 7.6 s to compile the library once for all problems (its sizes are run-time values).</li>
+</ul>
+
+<h3>Fidelity, and library quirks reproduced on purpose</h3>
+<p>Inputs agree to 3e-13 on the QPs. On the rocket they differ by up to 2e-5 because the library computes part of its cone projection in <code>float</code>; with that made double the difference falls to 9e-14. To compare iterates, the port keeps five places where the library departs from textbook ADMM:</p>
+<ul>
+<li>the linear cost uses (Q + ρI)·x<sub>ref</sub>, because the stored Q is the penalized diagonal;</li>
+<li>one ρ is folded into the Riccati cache however many constraint sets act on a variable (box and cone on the rocket's thrust), so the primal step is not the exact augmented-Lagrangian minimizer there;</li>
+<li>the SOC projection takes <code>float</code> μ and norm, and projects in a metric that scales the cone axis by μ;</li>
+<li>termination tests only the box slacks, so the applied thrust can leave the cone by up to 0.09 at tolerance 1e-2;</li>
+<li>the header names the arguments of <code>tiny_set_cone_constraints</code> in the opposite order to the definition, and the library's own rocket example passes them the wrong way round.</li>
+</ul>
+<p>Iteration counts are those of today's library, which reorders the ADMM steps relative to the version behind the published result sheets (for the safety filter at nx = 4, N = 10 the sheet reports 18 iterations per solve; today's library and the generated code both take 232 on average).</p>
+<p>The port also found C-125: an output named like an input was read back from the output buffer, giving silently wrong numbers. It was fixed in Tier 3.</p>
+</section>
+
+<section id="next">
+<h2>What comes next</h2>
+<div class="cols">
+<div>
+<h3>Tier 4 decisions</h3>
+<ul>
+<li>Parity semantics for the drop-in <code>backend="scaly"</code> (decision traces plus tolerances), and which PIQP quirks it keeps.</li>
+<li>Baselines and the SQP corpus (chain, race_cars, npmpc, unbumpercars).</li>
+<li>Implicit QP sensitivities reusing the final factorization.</li>
+</ul>
+</div>
+<div>
+<h3>Performance levers</h3>
+<ul>
+<li><b>C-114</b> unpadded sparse factor updates (1.6–1.7× in a prototype).</li>
+<li><b>C-117</b> a blocked dense Cholesky with register-tiled kernels.</li>
+<li><b>C-131, C-134</b> loop-carry copies and step overheads (a further 5–10%).</li>
+<li><b>C-130</b> QRECIPE's sparse path takes 34 iterations against PIQP's 19.</li>
+</ul>
+</div>
+</div>
+<p class="small">Example ideas not yet written: <code>nonsmooth_conventions</code>, <code>sensor_localization</code>, <code>goddard_rocket</code>, <code>minimal_surface</code>. Known issue from the gallery: building <code>sc.solver(sc.qp_problem(n, 1, n), "piqp")</code> grows steeply with n (14.4 s at n = 200), mostly in solver construction.</p>
+</section>
+
+<section id="refs">
+<h2>References</h2>
+<ol class="refs">
+<li>R. Schwan, Y. Jiang, D. Kuhn, C. N. Jones, “PIQP: A Proximal Interior-Point Quadratic Programming Solver,” <i>IEEE Conference on Decision and Control (CDC)</i>, 2023. <a href="https://arxiv.org/abs/2304.00290">arXiv:2304.00290</a></li>
+<li>S. Mehrotra, “On the Implementation of a Primal-Dual Interior Point Method,” <i>SIAM J. Optim.</i> 2(4), 575–601, 1992. <a href="https://doi.org/10.1137/0802028">doi:10.1137/0802028</a></li>
+<li>T. A. Davis, “Algorithm 849: A Concise Sparse Cholesky Factorization Package,” <i>ACM Trans. Math. Softw.</i> 31(4), 587–591, 2005. <a href="https://doi.org/10.1145/1114268.1114277">doi:10.1145/1114268.1114277</a></li>
+<li>T. A. Davis, <i>Direct Methods for Sparse Linear Systems</i>, SIAM, 2006. <a href="https://doi.org/10.1137/1.9780898718881">doi:10.1137/1.9780898718881</a></li>
+<li>B. Stellato, G. Banjac, P. Goulart, A. Bemporad, S. Boyd, “OSQP: An Operator Splitting Solver for Quadratic Programs,” <i>Math. Prog. Comp.</i> 12, 637–672, 2020 (QDLDL baseline). <a href="https://doi.org/10.1007/s12532-020-00179-2">doi:10.1007/s12532-020-00179-2</a></li>
+<li>I. Maros, C. Mészáros, “A Repository of Convex Quadratic Programming Problems,” <i>Optim. Methods Softw.</i> 11(1–4), 671–681, 1999. <a href="https://doi.org/10.1080/10556789908805768">doi:10.1080/10556789908805768</a></li>
+<li>K. Nguyen, S. Schoedel, A. Alavilli, B. Plancher, Z. Manchester, “TinyMPC: Model-Predictive Control on Resource-Constrained Microcontrollers,” <i>IEEE ICRA</i>, 2024. <a href="https://arxiv.org/abs/2310.16985">arXiv:2310.16985</a>; library <a href="https://github.com/TinyMPC/TinyMPC">github.com/TinyMPC/TinyMPC</a>; benchmarks <a href="https://github.com/RoboticExplorationLab/mcu-solver-benchmarks">mcu-solver-benchmarks</a></li>
+<li>S. Schoedel, K. Nguyen, E. Nedumaran, B. Plancher, Z. Manchester, “Code Generation and Conic Constraints for Model-Predictive Control on Microcontrollers with Conic-TinyMPC,” 2024. <a href="https://arxiv.org/abs/2403.18149">arXiv:2403.18149</a></li>
+<li>J. A. E. Andersson, J. Gillis, G. Horn, J. B. Rawlings, M. Diehl, “CasADi: A Software Framework for Nonlinear Optimization and Optimal Control,” <i>Math. Prog. Comp.</i> 11(1), 1–36, 2019. <a href="https://doi.org/10.1007/s12532-018-0139-4">doi:10.1007/s12532-018-0139-4</a>; examples <a href="https://github.com/casadi/casadi/tree/main/docs/examples/python">casadi/docs/examples/python</a></li>
+<li>A. Wächter, L. T. Biegler, “On the Implementation of an Interior-Point Filter Line-Search Algorithm for Large-Scale Nonlinear Programming,” <i>Math. Program.</i> 106(1), 25–57, 2006. <a href="https://doi.org/10.1007/s10107-004-0559-y">doi:10.1007/s10107-004-0559-y</a></li>
+<li>R. D. Zimmerman, C. E. Murillo-Sánchez, R. J. Thomas, “MATPOWER: Steady-State Operations, Planning, and Analysis Tools for Power Systems Research and Education,” <i>IEEE Trans. Power Syst.</i> 26(1), 12–19, 2011. <a href="https://doi.org/10.1109/TPWRS.2010.2051168">doi:10.1109/TPWRS.2010.2051168</a></li>
+</ol>
+</section>
+
+<footer>
+Sources in the repository: <code>internal/notes/tier1_summary_report.html</code>, <code>tier2_review_report.html</code>, <code>tier3_review_report.html</code>, the per-PR reports, <code>internal/notes/piqp_plan.md</code>, <code>examples/README.md</code>, <code>examples/casadi/README.md</code>, <code>examples/tinympc/README.md</code> and <code>internal/notes/tinympc_benchmark_report.html</code>.
+</footer>
+
+</main>
+</body>
+</html>

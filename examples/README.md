@@ -73,12 +73,13 @@ a rough guide: **S** is a first read, **L** a complete application.
 | `portfolio_qp.py` | S/M | A Markowitz efficient frontier with a factor risk model, *solver* | a sparse QP (`options={"sparse": True}`) with matrix parameters, a parameter sweep over one generated solver, `qp_problem` for the dense formulation |
 | `nmpc_cartpole.py` | L | Nonlinear MPC swinging up a cart-pole on a bounded track, in closed loop, *solver* | multiple shooting with `vmap`ped RK4 defects, a variable tree with per-leaf bounds and slacks, `bounded` groups, warm starts, `solver_stats()` |
 | `mhe.py` | M/L | Moving-horizon estimation of a pendulum's state and friction, *solver* | `sc.solver(problem, "sqp")` warm-started in a receding horizon, a stride-0 parameter in the `vmap`ped defects; the same `Problem` handed to IPOPT gives the same estimate |
+| `qp_solvers/` | L | Four QP families (linear MPC, a factor-model portfolio, an SVM, a dense random QP) written once as `sc.problem`s, *solver* | the generated PIQP (`scaly.solvers.ipm`) reached from a problem, next to the PIQP library and IPOPT; `compare.ipynb` compares answers, iterations, code size, build, generation and compile time and solve time from C; see `qp_solvers/README.md` |
 | `casadi/` | L | CasADi's own Python examples (17 of them: NLPs, QPs, shooting, collocation, pseudospectral, MHE, system identification, code generation), each written in CasADi and in Scaly, *solver* | `compare.py` checks the two give the same answers and compares code lines, setup time and run time; see `casadi/README.md` |
 
 ## Notebooks
 
-`examples/notebooks/` has seven of the examples as documented, executed notebooks, and two notebooks
-of their own on sparse matrices: the derivation step by step with the maths, the Scaly code in small
+`examples/notebooks/` has seven of the examples as documented, executed notebooks, two notebooks
+of their own on sparse matrices and seven on problems outside control: the derivation step by step with the maths, the Scaly code in small
 cells, plots of the results and of the algorithms at work, and the generated C at the end. They are saved with their outputs, so they read
 on GitHub without running. They write their generated C to the same `examples/generated/<name>/`
 folders as the scripts, and `tests/integration/test_notebooks.py` runs each one top to bottom.
@@ -99,6 +100,20 @@ The two sparse-matrix notebooks have no script version:
 | --- | --- | --- |
 | `sparse_fem_topology.ipynb` | A conduction tree by topology optimization: P1 finite elements on a plate, a heat sink on one edge, SIMP with a density filter, optimality criteria | the `SparseMatrix` algebra on two triangles (`from_coo` summing duplicates, `+` as pattern union, `*` as intersection, sparse–sparse `@`, `tril`, `with_pattern`, `position`); assembly of 16 200 triplets and the restriction `R @ K @ R.T`; `sc.S` between two `Function`s and a call refused for the wrong pattern; fill-in and elimination trees of natural, RCM and minimum-degree orderings from `linalg.analyze`; the adjoint gradient through the solve, the assembly and a constant sparse filter, against the hand-derived formula |
 | `sparse_kkt_mpc.ipynb` | The KKT system of unconstrained linear MPC for a chain of oscillating masses, checked against the Riccati recursion | `SparseMatrix.block` over stages with `from_dense`, `zeros` and `add_diagonal`; `K + K.tril(-1).T` for the symmetric product; a hand-made stage ordering through `analyze(perm=...)` and `SparseLDL(symbolic=...)` against automatic, dual-first and random ones; regularization with refinement against the unregularized matrix; `inertia()` as a convexity certificate and `health(signs=...)`; the LQR gain and `dV/dA` by `sc.jacobian` and `sc.gradient` through the solve; Ruiz equilibration with `segment_max`, `scale_rows` and `scale_cols` |
+
+Seven notebooks go beyond control, to problem classes with the same traits: a structure fixed when
+the graph is built, data that change between calls, and a need for derivatives or an embedded solve.
+They have no script version either:
+
+| Notebook | Problem | What it shows |
+| --- | --- | --- |
+| `pose_graph_slam.ipynb` | 2-D pose-graph SLAM: four laps of odometry and loop closures, by Levenberg–Marquardt | one factor `vmap`ped over the edges after a static `gather`; the pattern of `J.T @ J` from the graph and the fill of its factor under three orderings; the whole LM loop (`while_loop`, accept/reject by `where`) in C, against SciPy's MINPACK; one solver re-used for a Monte Carlo checked against the Laplace covariance |
+| `kinetics_estimation.ipynb` | Arrhenius parameters of A → B → C from four batch runs, by multiple shooting, *IPOPT* | nested `vmap` (intervals inside runs) with a stride-0 parameter; the arrowhead Lagrangian Hessian and its colouring; data as the problem's parameter; single shooting (SciPy) for comparison; the Gauss–Newton covariance from `jacobian` through a `scan`, against a Monte Carlo |
+| `circuit_transient.ipynb` | A Cockcroft–Walton voltage multiplier by nodal analysis, trapezoidal steps and Newton | the netlist as `gather`/`segment_sum` tables; SPICE-style junction limiting with `where`; a Newton `while_loop` inside the time `scan`, with `SparseLDL` on the netlist-shaped Jacobian; against a hand-stamped SciPy implementation; the source waveform as an input |
+| `opf_day_ahead.ipynb` | AC and DC optimal power flow on `case9` over a 24-hour load profile, *IPOPT*, *PIQP* | loads as problem parameters, warm-started re-solves; the Jacobian's pattern equal to the bus adjacency; the DC-OPF as a sparse QP from the same tables; losses and marginal prices, AC against DC |
+| `conductivity_inversion.ipynb` | Imaging conductivity from boundary potentials: a PDE-constrained inverse problem | assembly with `from_coo` on a fixed pattern; one `SparseLDL` factor shared by thirteen sources; the adjoint gradient and Hessian–vector products (`jvp` of the gradient) against differences; L-BFGS against Newton–Krylov (`trust-krylov`) |
+| `spike_deconvolution.ipynb` | Streaming spike inference from a calcium trace: a nonnegative deconvolution QP per window, *PIQP* | a parameter inside the constraint matrix on a fixed pattern; one generated solver called per window; the bidiagonal formulation against the dense one, solve time against window length; L-BFGS-B as reference |
+| `surrogate_optimization.ipynb` | A reactor's operating point optimized on a neural-network surrogate, *IPOPT* | the training loss as a `vmap` over samples with `gradient` for L-BFGS; the trained network as a constant inside an NLP with exact Hessians; the surrogate optimum against the true one; `hessian` against differences; batched C inference |
 
 They use Matplotlib (in the dev group) and a Jupyter kernel, which the dev group does not include:
 `uv run --with jupyterlab jupyter lab examples/notebooks` works without changing the lock file.

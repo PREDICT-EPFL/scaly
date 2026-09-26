@@ -14,22 +14,36 @@ from pathlib import Path
 import pytest
 
 NOTEBOOKS = Path(__file__).resolve().parents[2] / "examples" / "notebooks"
-SOLVER = {"cbf_safety_filter": "piqp", "nmpc_cartpole": "ipopt"}
+SOLVER = {
+  "cbf_safety_filter": ("piqp",),
+  "kinetics_estimation": ("ipopt",),
+  "nmpc_cartpole": ("ipopt",),
+  "opf_day_ahead": ("ipopt", "piqp"),
+  "spike_deconvolution": ("piqp",),
+  "surrogate_optimization": ("ipopt",),
+}
 NAMES = [
   "bratu_newton",
   "cbf_safety_filter",
+  "circuit_transient",
+  "conductivity_inversion",
   "ekf_identification",
   "gaussian_process",
   "ilqr",
+  "kinetics_estimation",
   "lagrangian_mechanics",
   "nmpc_cartpole",
+  "opf_day_ahead",
+  "pose_graph_slam",
   "sparse_fem_topology",
   "sparse_kkt_mpc",
+  "spike_deconvolution",
+  "surrogate_optimization",
 ]
 
 
 def _params() -> list:
-  return [pytest.param(name, marks=pytest.mark.solver(SOLVER[name])) if name in SOLVER else name for name in NAMES]
+  return [pytest.param(name, marks=[pytest.mark.solver(s) for s in SOLVER[name]]) if name in SOLVER else name for name in NAMES]
 
 
 @pytest.mark.parametrize("name", _params())
