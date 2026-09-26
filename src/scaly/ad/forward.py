@@ -34,6 +34,7 @@ from ..ir.expr import (
   scatter,
   segment_min,
   segment_sum,
+  solve_triangular,
   stack,
   substitute,
   take,
@@ -199,6 +200,11 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return save(Expr(expr.op, (d[0], d[1]), expr.type, attrs=dict(expr.attrs), lowering=expr.lowering))
   if expr.op == ExprOp.TAKE:  # linear in x; a fill is a constant
     return save(take(d[0], args[1]))
+  if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
+    return save(zeros_like(expr) if _is_zero_const(d[0]) else factor_tangent(expr, d[0]))
+  if expr.op == ExprOp.TRISOLVE:
+    dt, db = (None if _is_zero_const(t) else t for t in d)
+    return save(zeros_like(expr) if dt is None and db is None else trisolve_tangent(expr, dt, db))
   if expr.op in {ExprOp.PUT_ADD, ExprOp.PUT}:
     return save((put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2]))
   if expr.op == ExprOp.SELECT:
@@ -334,6 +340,119 @@ def _while_jvp(expr: Expr, tangent: Expr) -> Expr:
     return _while_node(aug_cond, aug_body, aug_init, max_iter, 0)[cs:].reshape(expr.shape)
   picks = (np.arange(max_iter)[:, None] * 2 * cs + cs + np.arange(cs)[None, :]).reshape(-1)
   return gather(_while_node(aug_cond, aug_body, aug_init, max_iter, -1), picks)
+
+
+def _tri_mask(n: int, lower: bool, unit: bool) -> Expr:
+  """Ones on the triangle a triangular solve reads (its diagonal too unless unit), zeros elsewhere."""
+  mask = np.tril(np.ones((n, n))) if lower else np.triu(np.ones((n, n)))
+  if unit:
+    np.fill_diagonal(mask, 0.0)
+  return Expr.const(mask)
+
+
+def _lower_as_symmetric(d: Expr) -> Expr:
+  """The symmetric matrix whose lower triangle is that of ``d``: what a factorization reads."""
+  n, nd = d.shape[-1], len(d.shape)
+  strict = d * Expr.const(np.tril(np.ones((n, n)), -1))
+  return d * Expr.const(np.tril(np.ones((n, n)))) + strict.transpose((*range(nd - 2), nd - 1, nd - 2))
+
+
+def _sandwich(t: Expr, s: Expr, *, unit: bool) -> Expr:
+  """``L^{-1} S L^{-T}`` for a symmetric ``S`` and the lower triangle of ``t``."""
+  z = solve_triangular(t, s, lower=True, unit_diagonal=unit)
+  return solve_triangular(t, z.T, lower=True, unit_diagonal=unit).T
+
+
+def factor_tangent(expr: Expr, d: Expr) -> Expr:
+  """The tangent of ``cholesky`` or ``ldl`` along a tangent ``d`` of the matrix.
+
+  ``A = L L^T``: with ``X = L^{-1} S L^{-T}``, ``dL = L (tril(X) - diag(X) / 2)``.
+  ``A = L D L^T`` (packed ``F``): ``dD = diag(X)`` and ``dL = L stril(X) D^{-1}`` for the unit ``L``.
+  ``S`` is the symmetric matrix whose lower triangle is that of ``d``."""
+  n = expr.shape[0]
+  s = _lower_as_symmetric(d)
+  if expr.op == ExprOp.CHOLESKY:
+    phi = np.tril(np.ones((n, n)))
+    np.fill_diagonal(phi, 0.5)
+    return expr @ (_sandwich(expr, s, unit=False) * Expr.const(phi))
+  x = _sandwich(expr, s, unit=True)
+  unit_l = expr * Expr.const(np.tril(np.ones((n, n)), -1)) + Expr.const(np.eye(n))
+  inv_d = 1.0 / gather(expr.reshape((n * n,)), np.arange(n) * (n + 1))
+  return (unit_l @ (x * Expr.const(np.tril(np.ones((n, n)), -1)))) * inv_d.reshape((1, n)) + x * Expr.const(np.eye(n))
+
+
+def trisolve_tangent(expr: Expr, dt: Expr | None, db: Expr | None) -> Expr:
+  """``op(T) dX = dB - op(dT) X`` with ``dT`` restricted to the triangle the solve reads."""
+  t, _ = expr.args
+  lower, trans, unit = (bool(expr.attrs[k]) for k in ("lower", "trans", "unit"))
+  rhs = db
+  if dt is not None:
+    masked = dt * _tri_mask(t.shape[0], lower, unit)
+    term = (masked.T if trans else masked) @ expr
+    rhs = -term if rhs is None else rhs - term
+  assert rhs is not None
+  return solve_triangular(t, rhs, lower=lower, trans=trans, unit_diagonal=unit)
+
+
+def _seeds_as_columns(x: Expr) -> tuple[Expr, tuple[int, ...]]:
+  """A seeded matrix operand ``(nseed, n[, m])`` as one matrix ``(n, nseed * m)``, with what undoes it."""
+  nseed, n = x.shape[0], x.shape[1]
+  m = 1 if len(x.shape) == 2 else x.shape[2]
+  cols = x.reshape((nseed, n, m)).transpose((1, 0, 2)).reshape((n, nseed * m))
+  return cols, (nseed, n, m)
+
+
+def _columns_as_seeds(cols: Expr, layout: tuple[int, ...], shape: tuple[int, ...]) -> Expr:
+  nseed, n, m = layout
+  return cols.reshape((n, nseed, m)).transpose((1, 0, 2)).reshape(shape)
+
+
+def _seed_solve(t: Expr, rhs: Expr, **flags: bool) -> Expr:
+  """One triangular solve for every seed: the seeds become right-hand-side columns."""
+  cols, layout = _seeds_as_columns(rhs)
+  return _columns_as_seeds(solve_triangular(t, cols, **flags), layout, rhs.shape)
+
+
+def _seed_left(m: Expr, x: Expr) -> Expr:
+  """``m @ x_s`` for every seed of a seeded matrix ``x``."""
+  cols, layout = _seeds_as_columns(x)
+  return _columns_as_seeds(m @ cols, layout, x.shape)
+
+
+def _seed_transpose(x: Expr) -> Expr:
+  return x.transpose((0, 2, 1))
+
+
+def _jvp_many_dense(expr: Expr, d: list[Expr], nseed: int) -> Expr:
+  """Multi-seed tangents of ``cholesky``, ``ldl`` and ``solve_triangular``: the single-seed rules
+  with every seed a column of one solve or product."""
+  n = expr.shape[0]
+  if expr.op == ExprOp.TRISOLVE:
+    t, _ = expr.args
+    lower, trans, unit = (bool(expr.attrs[k]) for k in ("lower", "trans", "unit"))
+    rhs = None if _is_zero_const(d[1]) else d[1]
+    if not _is_zero_const(d[0]):
+      masked = d[0] * _tri_mask(n, lower, unit)
+      op = _seed_transpose(masked) if trans else masked
+      x = expr if len(expr.shape) == 2 else expr.reshape((n, 1))
+      term = (op.reshape((nseed * n, n)) @ x).reshape((nseed, *expr.shape))
+      rhs = -term if rhs is None else rhs - term
+    if rhs is None:
+      return Expr.const(np.zeros((nseed, *expr.shape)))
+    return _seed_solve(t, rhs, lower=lower, trans=trans, unit_diagonal=unit)
+  if _is_zero_const(d[0]):
+    return Expr.const(np.zeros((nseed, *expr.shape)))
+  s = _lower_as_symmetric(d[0])
+  unit = expr.op == ExprOp.LDL
+  z = _seed_solve(expr, s, lower=True, unit_diagonal=unit)
+  x = _seed_transpose(_seed_solve(expr, _seed_transpose(z), lower=True, unit_diagonal=unit))
+  if expr.op == ExprOp.CHOLESKY:
+    phi = np.tril(np.ones((n, n)))
+    np.fill_diagonal(phi, 0.5)
+    return _seed_left(expr, x * Expr.const(phi))
+  unit_l = expr * Expr.const(np.tril(np.ones((n, n)), -1)) + Expr.const(np.eye(n))
+  inv_d = 1.0 / gather(expr.reshape((n * n,)), np.arange(n) * (n + 1))
+  return _seed_left(unit_l, x * Expr.const(np.tril(np.ones((n, n)), -1))) * inv_d.reshape((1, 1, n)) + x * Expr.const(np.eye(n))
 
 
 def sign(x: Expr) -> Expr:
@@ -1177,6 +1296,9 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op == ExprOp.SINH:
     memo[expr.id] = ret = _seed_axis(args[0].cosh(), nseed) * d[0]
+    return ret
+  if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL, ExprOp.TRISOLVE}:
+    memo[expr.id] = ret = _jvp_many_dense(expr, d, nseed)
     return ret
   if expr.op == ExprOp.TAKE:  # the seed axis leads and ``take`` indexes the last one
     memo[expr.id] = ret = take(d[0], args[1])

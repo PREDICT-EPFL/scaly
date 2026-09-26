@@ -82,6 +82,9 @@ class ExprOp(StrEnum):
   STACK = "stack"
   CONCAT = "concat"
   MATMUL = "matmul"
+  CHOLESKY = "cholesky"
+  LDL = "ldl"
+  TRISOLVE = "trisolve"
   CALL = "call"
   VMAP = "vmap"
   SCAN = "scan"
@@ -150,6 +153,9 @@ COMMON_STRUCTURAL = {
   ExprOp.STACK,
   ExprOp.CONCAT,
   ExprOp.MATMUL,
+  ExprOp.CHOLESKY,
+  ExprOp.LDL,
+  ExprOp.TRISOLVE,
   ExprOp.CALL,
   ExprOp.VMAP,
   ExprOp.SCAN,
@@ -237,6 +243,9 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.STACK: OpInfo(ExprOp.STACK, None, np.stack),
   ExprOp.CONCAT: OpInfo(ExprOp.CONCAT, None, np.concatenate),
   ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, np.matmul),
+  ExprOp.CHOLESKY: OpInfo(ExprOp.CHOLESKY, 1, None),
+  ExprOp.LDL: OpInfo(ExprOp.LDL, 1, None),
+  ExprOp.TRISOLVE: OpInfo(ExprOp.TRISOLVE, 2, None),
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, None),
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, None),
   ExprOp.SCAN: OpInfo(ExprOp.SCAN, None, None),
@@ -904,6 +913,52 @@ def matmul(x: Expr, y: Expr) -> Expr:
   else:
     raise NotImplementedError(f"matmul shape inference for {x.shape} @ {y.shape}")
   return Expr(ExprOp.MATMUL, (x, y), TensorType(shape, dtype=promote_dtype(x, y), diff=diff_any(x, y)), lowering=common_lowering(x, y))
+
+
+def _square(a: Any, what: str) -> Expr:
+  a = as_expr(a)
+  if len(a.shape) != 2 or a.shape[0] != a.shape[1]:
+    raise ValueError(f"{what} needs a square matrix, got shape {a.shape}")
+  if not a.type.dtype.is_floating:
+    raise TypeError(f"{what} needs a floating-point matrix, got {a.type.dtype}")
+  return a
+
+
+def cholesky(a: Any) -> Expr:
+  """The lower Cholesky factor ``L`` of a symmetric positive definite matrix, ``A = L L^T``.
+
+  Only the lower triangle of ``a`` is read; the upper triangle of the result is zero. No check is
+  made: a matrix that is not positive definite gives NaN (a square root of a negative number).
+  Differentiable, reading the derivative of the lower triangle as that of a symmetric matrix.
+  """
+  a = _square(a, "cholesky")
+  return Expr(ExprOp.CHOLESKY, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), lowering=a.lowering)
+
+
+def ldl(a: Any) -> Expr:
+  """``A = L D L^T`` without pivoting, packed in one matrix: ``L`` (unit lower) below the diagonal,
+  ``D`` on it, zeros above. For quasi-definite matrices (positive and negative definite diagonal
+  blocks), where every leading pivot is nonzero; a zero pivot gives inf or NaN. Only the lower
+  triangle of ``a`` is read."""
+  a = _square(a, "ldl")
+  return Expr(ExprOp.LDL, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), lowering=a.lowering)
+
+
+def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False, unit_diagonal: bool = False) -> Expr:
+  """``X`` with ``op(T) X = B``, ``op(T) = T`` or ``T^T``, for a triangular ``T``; ``B`` a vector or a
+  matrix of right-hand sides. Only the triangle named by ``lower`` is read, and its diagonal only
+  when ``unit_diagonal`` is false."""
+  t = _square(t, "solve_triangular")
+  b = as_expr(b)
+  if len(b.shape) not in (1, 2) or b.shape[0] != t.shape[0]:
+    raise ValueError(f"solve_triangular with a {t.shape} matrix needs a right-hand side of {t.shape[0]} rows, got shape {b.shape}")
+  return Expr(
+    ExprOp.TRISOLVE,
+    (t, b),
+    TensorType(b.shape, dtype=promote_dtype(t, b), diff=diff_any(t, b)),
+    attrs={"lower": bool(lower), "trans": bool(trans), "unit": bool(unit_diagonal)},
+    lowering=common_lowering(t, b),
+  )
 
 
 def dot(x: Any, y: Any) -> Expr:

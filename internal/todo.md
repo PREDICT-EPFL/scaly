@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 106**
+**Next id: 108**
 
 | Prefix | Section |
 |---|---|
@@ -170,6 +170,16 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       left-looking update lanes, statistics, and consecutive segments chosen by a DP over a padded
       work model. Refuses an ordering whose updates exceed 50 M multiply-adds. MMD fill equals
       SuperLU's (`notes/tier2_pr5_report.html`).
+- [x] **C-106. Generated dense kernels (T2-6).** `cholesky`, `ldl` (no pivoting, packed) and
+      `solve_triangular` as expression ops with loop lowerings (row Crout with four partial sums;
+      row sweeps for transposed solves; four rows per pass for several right-hand sides),
+      straight-line code up to order 8, derivatives in both modes and to second order, and
+      conservative sparsity; `scaly.linalg` adds `cho_solve`, `ldl_solve`, `ldl_unpack`, `solve`.
+      Gate met at `-O3` (≤ 1.6× OpenBLAS at n = 32–64, faster below); at gcc 11's `-O2` the
+      multi-RHS solve and `matmul` stay 3× (`notes/tier2_pr6_report.html`).
+- [ ] **C-107. Decide the JIT's default optimization level.** gcc before 12 does not vectorize at
+      `-O2`, which costs dense kernels and `matmul` up to 3× on Linux (`notes/tier2_pr6_report.html`);
+      clang vectorizes at `-O2`. Options: `-O3` by default, or `-O2 -ftree-vectorize` for gcc.
 
 ### Tier 1 primitives
 

@@ -276,6 +276,22 @@ def _put_shapes(expr: Expr) -> str | None:
   return None
 
 
+def _factor_shape(expr: Expr) -> str | None:
+  a = expr.args[0]
+  if len(a.shape) != 2 or a.shape[0] != a.shape[1] or expr.shape != a.shape:
+    return f"{expr.op} needs a square matrix and keeps its shape, got {a.shape} -> {expr.shape}"
+  return None
+
+
+def _trisolve_shapes(expr: Expr) -> str | None:
+  t, b = expr.args
+  if len(t.shape) != 2 or t.shape[0] != t.shape[1] or len(b.shape) not in (1, 2) or b.shape[0] != t.shape[0] or expr.shape != b.shape:
+    return f"TRISOLVE of {t.shape} by {b.shape} -> {expr.shape} is inconsistent"
+  if any(k not in expr.attrs for k in ("lower", "trans", "unit")):
+    return "TRISOLVE needs 'lower', 'trans' and 'unit' attrs"
+  return None
+
+
 def _while_attrs(expr: Expr) -> str | None:
   body, cond = expr.attrs.get("callee"), expr.attrs.get("cond")
   if body is None or cond is None or "max_iter" not in expr.attrs or "output" not in expr.attrs:
@@ -457,6 +473,8 @@ spec_expr = Spec(
     Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
     *(Rule(op, "index-update", _index_update) for op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET)),
     Rule(ExprOp.TAKE, "take-shapes", _take_shapes),
+    *(Rule(op, "factor-shape", _factor_shape) for op in (ExprOp.CHOLESKY, ExprOp.LDL)),
+    Rule(ExprOp.TRISOLVE, "trisolve-shapes", _trisolve_shapes),
     *(Rule(op, "put-shapes", _put_shapes) for op in (ExprOp.PUT_ADD, ExprOp.PUT)),
     *(Rule(op, "segment-extremum", _segment_extremum) for op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)),
     Rule(ExprOp.STACK, "stack-shapes", _stack_shapes),

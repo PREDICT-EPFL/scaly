@@ -60,6 +60,7 @@ src/scaly/
     sparse.py            sparse_jacobian, sparse_hessian: AD driven by a structural pattern
 
   linalg/                sparse and dense linear algebra as generated code
+    dense.py             cholesky, ldl, solve_triangular and the solves built from them
     sparse.py            SparseMatrix: a static CSC pattern with Expr values
     symbolic.py          orderings, elimination tree, the pattern of L, left-looking tables, segments
 

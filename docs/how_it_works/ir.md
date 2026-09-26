@@ -153,6 +153,8 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `put_add` `put` | 3 | the base with values added at (or stored to) run-time `int64` indices on the last axis; an index outside `[0, n)` drops its value into a scratch slot of its own lane |
 | `stack` `concat` | n | along any axis |
 | `matmul` | 2 | rank at most 2 |
+| `cholesky` `ldl` | 1 | dense factorizations of a square matrix's lower triangle; `ldl` is packed (unit `L` below the diagonal, `D` on it), without pivoting |
+| `trisolve` | 2 | `op(T) X = B` for a triangular `T` and a vector or matrix `B`; attrs `lower`, `trans`, `unit` |
 
 #### Boundaries
 

@@ -12,6 +12,7 @@ and no page under `docs/` cites them.
 | `pr2_take.py` | `A x` and `A^T y` with run-time column indices (`take`, a row scan with `take`, a row scan accumulating with `put_add`) against baked-in indices (`gather` + `segment_sum`) and SciPy; `scan-put` is also the T2-3 in-place case |
 | `pr4_sparse_matrix.py` | `SparseMatrix` KKT assembly, `K @ z` and `A^T A` through the JIT against SciPy in Python |
 | `pr5_symbolic.py` | symbolic analysis per matrix and ordering: fill against SuperLU, update lanes, tree height, supernodes, segments and analysis time |
+| `pr6_dense.py` | generated `cholesky`, `ldl`, `solve_triangular` (vector and matrix) and `matmul` against OpenBLAS LAPACK/BLAS through ctypes, per instance, at `-O2` and `-O3` |
 
 Run from this directory, with a fresh cache so first-call times include compilation:
 

@@ -22,6 +22,7 @@ from ..ir.expr import (
   put,
   put_add,
   scatter,
+  solve_triangular,
   stack,
   take,
   topo,
@@ -29,7 +30,7 @@ from ..ir.expr import (
   zeros_like,
 )
 from ..passes.expr import simplify_cse_fixpoint
-from .forward import claim_name, custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
+from .forward import _tri_mask, claim_name, custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
 from .sparsity import _depends_on
 
 
@@ -368,6 +369,28 @@ def vjp_many(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence
   return tuple(stack([seed_grads[i] for seed_grads in per_seed], axis=0) for i in range(len(wrts)))
 
 
+def _factor_cotangent(expr: Expr, cot: Expr) -> Expr:
+  """The cotangent of the matrix under ``cholesky`` or ``ldl`` (which read its lower triangle).
+
+  With ``G = L^{-T} P L^{-1}``, the cotangent is ``tril(G) + stril(G^T)``, where
+  ``P = Phi(L^T Lbar)`` (``tril`` with the diagonal halved) for ``L L^T``, and for ``L D L^T``
+  ``P = stril(L^T stril(Fbar) D^{-1}) + diag(Fbar)`` with the unit ``L`` of the packed factor."""
+  n = expr.shape[0]
+  tril, stril, eye = np.tril(np.ones((n, n))), np.tril(np.ones((n, n)), -1), np.eye(n)
+  if expr.op == ExprOp.CHOLESKY:
+    phi = tril.copy()
+    np.fill_diagonal(phi, 0.5)
+    inner, unit = (expr.T @ cot) * Expr.const(phi), False
+  else:
+    unit_l = expr * Expr.const(stril) + Expr.const(eye)
+    inv_d = 1.0 / gather(expr.reshape((n * n,)), np.arange(n) * (n + 1))
+    inner = (unit_l.T @ ((cot * Expr.const(stril)) * inv_d.reshape((1, n)))) * Expr.const(stril) + cot * Expr.const(eye)
+    unit = True
+  w = solve_triangular(expr, inner, lower=True, trans=True, unit_diagonal=unit)
+  g = solve_triangular(expr, w.T, lower=True, trans=True, unit_diagonal=unit).T
+  return g * Expr.const(tril) + (g * Expr.const(stril.T)).T
+
+
 def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   args = expr.args
   if expr.op == ExprOp.NEG:
@@ -433,6 +456,15 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return (cot, gather(cot, expr.attrs["indices"]))
   if expr.op == ExprOp.INDEX_SET:
     return (index_set(cot, expr.attrs["indices"], np.zeros(args[1].size)), gather(cot, expr.attrs["indices"]))
+  if expr.op == ExprOp.TRISOLVE:
+    t, b = args
+    lower, trans, unit = (bool(expr.attrs[k]) for k in ("lower", "trans", "unit"))
+    b_bar = solve_triangular(t, cot, lower=lower, trans=not trans, unit_diagonal=unit)
+    x2, bb2 = (expr.reshape((expr.size, 1)), b_bar.reshape((b_bar.size, 1))) if len(expr.shape) == 1 else (expr, b_bar)
+    outer = x2 @ bb2.T if trans else bb2 @ x2.T
+    return (-(outer * _tri_mask(t.shape[0], lower, unit)), b_bar)
+  if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
+    return (_factor_cotangent(expr, cot),)
   if expr.op == ExprOp.TAKE:
     return (put_add(zeros_like(args[0]), args[1], cot), zeros_like(args[1]))
   if expr.op == ExprOp.PUT_ADD:

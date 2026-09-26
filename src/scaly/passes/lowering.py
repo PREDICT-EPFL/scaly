@@ -808,6 +808,186 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
     raise LoweringError(f"matmul shapes {sa}@{sb} not lowered (batched / higher-rank deferred)")
 
 
+# Factorizations and triangular solves of order at most this are straight-line code, which scalar
+# expansion then turns into registers; larger ones are loops with triangular bounds.
+DENSE_UNROLL = 8
+
+
+def _entry(buf: ProgramNode, n: int, i: ProgramNode, j: ProgramNode) -> ProgramNode:
+  """The view of entry ``(i, j)`` of a row-major matrix with ``n`` columns."""
+  return p.view(buf, [p.add(p.mul(i, p.const_int(n)), j)])
+
+
+def _unary_node(op: ProgramOp, x: ProgramNode) -> ProgramNode:
+  return ProgramNode(op, (x,), dtype=x.dtype)
+
+
+def _blocked_sum(ctx: LowerCtx, tag: str, start: ProgramNode, stop: ProgramNode, term: Any, dtype: DType) -> tuple[list[ProgramNode], ProgramNode]:
+  """Statements summing ``term(k)`` over ``start <= k < stop`` into four partial sums, and the total.
+
+  A dot product summed in one accumulator is a chain of dependent adds the C compiler may not
+  reorder; four interleaved accumulators overlap four chains. The rounding differs from a single
+  sequential sum the way blocked library kernels do."""
+  c = p.const_int
+  slots = [p.view(ctx.new_private(dtype, ()), [c(0)]) for _ in range(4)]
+  zero = p.const_float(0.0, dtype=dtype)
+  tail = p.sub(stop, p.mod(p.sub(stop, start), c(4)))
+  kb, kt = f"kb_{tag}", f"kt_{tag}"
+  block = [p.store(slots[q], p.add(p.load(slots[q]), term(p.add(p.var(kb), c(q))))) for q in range(4)]
+  stmts = [
+    *(p.store(s, zero) for s in slots),
+    p.for_(p.range_(kb, start, tail, step=4, kind=RangeKind.REDUCE), block),
+    p.for_(p.range_(kt, tail, stop, kind=RangeKind.REDUCE), [p.store(slots[0], p.add(p.load(slots[0]), term(p.var(kt))))]),
+  ]
+  loads = [p.load(s) for s in slots]
+  return stmts, p.add(p.add(loads[0], loads[1]), p.add(loads[2], loads[3]))
+
+
+@lowers(ExprOp.CHOLESKY, ExprOp.LDL)
+def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
+  """Row-by-row (Crout) ``L L^T`` or ``L D L^T``: entry ``(i, j)``, ``j <= i``, is the matrix entry
+  minus a dot product of two rows already computed, both contiguous in row-major storage. For
+  ``L D L^T`` the row being computed is kept scaled by ``D`` in a scratch vector, so every update
+  is one multiply-add. Small orders are unrolled into straight-line code."""
+  a = node.args[0]
+  n = a.shape[0]
+  src, out, dt = ctx.buf_of(a), ctx.alloc_tmp(node), node.type.dtype
+  chol = node.op == ExprOp.CHOLESKY
+  scaled = None if chol else ctx.new_private(dt, (n,))
+  zero = p.const_float(0.0, dtype=dt)
+  c = p.const_int
+
+  def term(i: ProgramNode, j: ProgramNode, k: ProgramNode) -> ProgramNode:
+    """The ``k`` term subtracted for entry ``(i, j)``."""
+    if chol:
+      return p.mul(p.load(_entry(out, n, i, k)), p.load(_entry(out, n, j, k)))
+    assert scaled is not None
+    return p.mul(p.load(p.view(scaled, [k])), p.load(_entry(out, n, j, k)))
+
+  def finish(i: ProgramNode, j: ProgramNode, value: ProgramNode, diagonal: bool) -> list[ProgramNode]:
+    if diagonal:
+      return [p.store(_entry(out, n, i, i), _unary_node(ProgramOp.SQRT, value) if chol else value)]
+    stores = [p.store(p.view(scaled, [j]), value)] if scaled is not None else []
+    return [*stores, p.store(_entry(out, n, i, j), p.div(value, p.load(_entry(out, n, j, j))))]
+
+  if n <= DENSE_UNROLL:
+    for i in range(n):
+      for j in range(i + 1):
+        value = p.load(_entry(src, n, c(i), c(j)))
+        for k in range(j):
+          value = p.sub(value, term(c(i), c(j), c(k)))
+        ctx.statements.extend(finish(c(i), c(j), value, i == j))
+      ctx.statements.extend(p.store(_entry(out, n, c(i), c(z)), zero) for z in range(i + 1, n))
+    return
+  nm = out.attrs["name"]
+  i, j, z = (p.var(f"{v}_{nm}") for v in ("fi", "fj", "fz"))
+  off_sum, off_total = _blocked_sum(ctx, f"o_{nm}", c(0), j, lambda kk: term(i, j, kk), dt)
+  diag_sum, diag_total = _blocked_sum(ctx, f"d_{nm}", c(0), i, lambda kk: term(i, i, kk), dt)
+  off = [*off_sum, *finish(i, j, p.sub(p.load(_entry(src, n, i, j)), off_total), False)]
+  diag = [*diag_sum, *finish(i, i, p.sub(p.load(_entry(src, n, i, i)), diag_total), True)]
+  zeros = p.for_(p.range_(z.attrs["name"], p.add(i, c(1)), n, kind=RangeKind.GLOBAL), [p.store(_entry(out, n, i, z), zero)])
+  row = [p.for_(p.range_(j.attrs["name"], 0, i, kind=RangeKind.SERIAL), off), *diag, zeros]
+  ctx.statements.append(p.for_(p.range_(i.attrs["name"], 0, n, kind=RangeKind.SERIAL), row))
+
+
+@lowers(ExprOp.TRISOLVE)
+def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
+  """Substitution reading the triangle by rows. ``T X = B`` takes each unknown as its right-hand side
+  minus a dot product with the unknowns already found (row ``i`` of ``T``, contiguous); ``T^T X = B``
+  sweeps columns of ``T^T``, which are rows of ``T``: each unknown, once found, is subtracted from
+  the right-hand sides still open. A matrix of right-hand sides does each step for a whole row of
+  ``X``, contiguous. Small orders are unrolled."""
+  t, b = node.args
+  n = t.shape[0]
+  m = 1 if len(b.shape) == 1 else b.shape[1]
+  tb, bb, out, dt = ctx.buf_of(t), ctx.buf_of(b), ctx.alloc_tmp(node), node.type.dtype
+  lower, trans, unit = (bool(node.attrs[key]) for key in ("lower", "trans", "unit"))
+  c = p.const_int
+  nm = out.attrs["name"]
+
+  def x(row: ProgramNode, cc: ProgramNode) -> ProgramNode:
+    return p.view(out, [p.add(p.mul(row, c(m)), cc) if m > 1 else row])
+
+  def rhs(row: ProgramNode, cc: ProgramNode) -> ProgramNode:
+    return p.view(bb, [p.add(p.mul(row, c(m)), cc) if m > 1 else row])
+
+  def per_col(body: Any) -> list[ProgramNode]:
+    """``body(column)`` for every right-hand side: one statement for a vector, a loop otherwise."""
+    if m == 1:
+      return body(c(0))
+    name = f"sc_{nm}_{ctx._tmp}"
+    ctx._tmp += 1
+    return [p.for_(p.range_(name, 0, m, kind=RangeKind.GLOBAL), body(p.var(name)))]
+
+  def scale(i: ProgramNode) -> list[ProgramNode]:
+    if unit:
+      return []
+    return per_col(lambda cc: [p.store(x(i, cc), p.div(p.load(x(i, cc)), p.load(_entry(tb, n, i, i))))])
+
+  # ``order(s)`` is the row handled at step ``s``; ``others(i)`` the range of the other index.
+  forward = lower != trans
+  row_at = (lambda s: s) if forward else (lambda s: p.sub(c(n - 1), s))  # noqa: E731
+  if n <= DENSE_UNROLL:
+    steps = range(n) if forward else range(n - 1, -1, -1)
+    if trans:
+      ctx.statements.append(_copy_loop(bb, out, b.shape))
+      for i in steps:
+        ctx.statements.extend(scale(c(i)))
+        for k in range(i) if lower else range(i + 1, n):
+          ctx.statements.extend(
+            per_col(
+              lambda cc, i=i, k=k: [p.store(x(c(k), cc), p.sub(p.load(x(c(k), cc)), p.mul(p.load(_entry(tb, n, c(i), c(k))), p.load(x(c(i), cc)))))]
+            )
+          )
+      return
+    for i in steps:
+
+      def solve_row(cc: ProgramNode, i: int = i) -> list[ProgramNode]:
+        value = p.load(rhs(c(i), cc))
+        for k in range(i) if lower else range(i + 1, n):
+          value = p.sub(value, p.mul(p.load(_entry(tb, n, c(i), c(k))), p.load(x(c(k), cc))))
+        if not unit:
+          value = p.div(value, p.load(_entry(tb, n, c(i), c(i))))
+        return [p.store(x(c(i), cc), value)]
+
+      ctx.statements.extend(per_col(solve_row))
+    return
+  s, k = p.var(f"ss_{nm}"), p.var(f"sk_{nm}")
+  i = row_at(s)
+  k_rng = (
+    (lambda kind: p.range_(k.attrs["name"], 0, i, kind=kind)) if lower else (lambda kind: p.range_(k.attrs["name"], p.add(i, c(1)), n, kind=kind))
+  )  # noqa: E731
+  if trans:
+    ctx.statements.append(_copy_loop(bb, out, b.shape))
+    sweep = per_col(lambda cc: [p.store(x(k, cc), p.sub(p.load(x(k, cc)), p.mul(p.load(_entry(tb, n, i, k)), p.load(x(i, cc)))))])
+    body = [*scale(i), p.for_(k_rng(RangeKind.GLOBAL), sweep)]
+  elif m == 1:
+    lo, hi = (c(0), i) if lower else (p.add(i, c(1)), c(n))
+    sums, total = _blocked_sum(ctx, f"t_{nm}", lo, hi, lambda kk: p.mul(p.load(_entry(tb, n, i, kk)), p.load(x(kk, c(0)))), dt)
+    value = p.sub(p.load(rhs(i, c(0))), total)
+    body = [*sums, p.store(x(i, c(0)), value if unit else p.div(value, p.load(_entry(tb, n, i, i))))]
+  else:
+    # Four rows of ``X`` per pass over the row being solved: a quarter of its loads and stores.
+    lo, hi = (c(0), i) if lower else (p.add(i, c(1)), c(n))
+    tail = p.sub(hi, p.mod(p.sub(hi, lo), c(4)))
+    kb = p.var(f"kb_{nm}")
+
+    def four(cc: ProgramNode) -> list[ProgramNode]:
+      terms = [p.mul(p.load(_entry(tb, n, i, p.add(kb, c(q)))), p.load(x(p.add(kb, c(q)), cc))) for q in range(4)]
+      return [p.store(x(i, cc), p.sub(p.load(x(i, cc)), p.add(p.add(terms[0], terms[1]), p.add(terms[2], terms[3]))))]
+
+    def one(cc: ProgramNode) -> list[ProgramNode]:
+      return [p.store(x(i, cc), p.sub(p.load(x(i, cc)), p.mul(p.load(_entry(tb, n, i, k)), p.load(x(k, cc)))))]
+
+    body = [
+      *per_col(lambda cc: [p.store(x(i, cc), p.load(rhs(i, cc)))]),
+      p.for_(p.range_(kb.attrs["name"], lo, tail, step=4, kind=RangeKind.SERIAL), per_col(four)),
+      p.for_(p.range_(k.attrs["name"], tail, hi, kind=RangeKind.SERIAL), per_col(one)),
+      *scale(i),
+    ]
+  ctx.statements.append(p.for_(p.range_(s.attrs["name"], 0, n, kind=RangeKind.SERIAL), body))
+
+
 def _ensure_in_place_callee(ctx: LowerCtx, callee: Function, steps: dict[int, np.ndarray] | None = None) -> tuple[str, int] | None:
   """Lower an in-place variant of a loop body, named apart from the ordinary procedure (which other
   call sites may use with separate buffers), and return its name with the scratch slots its carry

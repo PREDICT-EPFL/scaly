@@ -127,6 +127,28 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     return _jac_mask(expr.args[0], wrt, memo)[order]
   if expr.op == ExprOp.GATHER:
     return _jac_mask(expr.args[0], wrt, memo)[expr.attrs["indices"].reshape(-1)]
+  if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
+    # Every entry of the lower triangle of the factor may depend on every entry the factorization reads.
+    a = expr.args[0]
+    n = a.shape[0]
+    lower = np.flatnonzero(np.tril(np.ones((n, n), dtype=bool)).reshape(-1))
+    rows, cols = np.repeat(lower, lower.size), np.tile(lower, lower.size)
+    return _compose(_incidence((expr.size, a.size), rows, cols), _jac_mask(a, wrt, memo))
+  if expr.op == ExprOp.TRISOLVE:
+    # Column c of the solution may depend on all of column c of the right-hand side and on every
+    # entry of the triangle the solve reads.
+    t, b = expr.args
+    n = t.shape[0]
+    m = 1 if len(b.shape) == 1 else b.shape[1]
+    tri = np.tril(np.ones((n, n), dtype=bool)) if expr.attrs["lower"] else np.triu(np.ones((n, n), dtype=bool))
+    if expr.attrs["unit"]:
+      np.fill_diagonal(tri, False)
+    read = np.flatnonzero(tri.reshape(-1))
+    t_rows, t_cols = np.repeat(np.arange(expr.size), read.size), np.tile(read, expr.size)
+    r, r2, col = np.meshgrid(np.arange(n), np.arange(n), np.arange(m), indexing="ij")
+    b_rows, b_cols = (r * m + col).reshape(-1), (r2 * m + col).reshape(-1)
+    from_t = _compose(_incidence((expr.size, t.size), t_rows, t_cols), _jac_mask(t, wrt, memo))
+    return _or(from_t, _compose(_incidence((expr.size, b.size), b_rows, b_cols), _jac_mask(b, wrt, memo)))
   if expr.op == ExprOp.TAKE:
     # The index is known at run time only: lane j of row b may read any entry of row b.
     x = expr.args[0]

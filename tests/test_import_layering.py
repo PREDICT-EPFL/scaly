@@ -74,6 +74,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.solvers.registry": 5,
   "scaly.solvers.model": 5,
   "scaly.linalg": 5,
+  "scaly.linalg.dense": 5,
   "scaly.linalg.sparse": 5,
   "scaly.linalg.symbolic": 5,
   "scaly.passes.program": 6,

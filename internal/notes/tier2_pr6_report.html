@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 2 PR 6 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 6 report</h1>
+<p class="sub">T2-6 · generated dense kernels (C-106) · branch <code>claude/tier2-sparse</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Three new expression ops, each lowered to plain loops:</p>
+<ul>
+<li><code>cholesky</code>;</li>
+<li><code>ldl</code>: <code>L D Lᵀ</code> without pivoting, packed into one matrix;</li>
+<li><code>solve_triangular</code>: lower or upper, transposed or not, unit diagonal or not, one right-hand side or many.</li>
+</ul>
+<p>Orders up to 8 become straight-line code. All three ops have derivatives in forward mode (one seed or many) and reverse mode, and to second order. <code>scaly.linalg</code> adds <code>cho_solve</code>, <code>ldl_solve</code>, <code>ldl_unpack</code> and <code>solve</code>.</p>
+<p><b>Gate: at most 2× LAPACK at n = 32–64.</b></p>
+<ul>
+<li><b>Met at <code>-O3</code>:</b> Cholesky 1.5×, <code>L D Lᵀ</code> 1.2×, triangular solve 0.3×, multi-right-hand-side solve 1.3×, <code>matmul</code> 1.6×, all against OpenBLAS. Below n = 32 everything is faster than LAPACK, which carries about 1 µs of dispatch overhead per call.</li>
+<li><b>Met at the JIT's default <code>-O2</code></b> for the factorizations and the vector solve.</li>
+<li><b>Missed at <code>-O2</code></b> for the multi-right-hand-side solve (3.5×) and <code>matmul</code> (3×). gcc 11 does not vectorize at <code>-O2</code>; clang does. This is recorded as decision C-107.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 1 298 passed, 88 skipped; the same four VM-only failures. ruff, ty and the docs build are clean. <b>Mutation checks:</b> 11 of 11 killed, after one test was added.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td>Ops (<code>ir/expr.py</code>)</td><td>
+<ul>
+<li><code>CHOLESKY</code> and <code>LDL</code> read the lower triangle of a square float matrix.</li>
+<li><code>TRISOLVE(T, B)</code> takes attrs <code>lower</code>, <code>trans</code> and <code>unit</code>, with <code>B</code> a vector or a matrix.</li>
+<li>Each op has a verify rule.</li>
+</ul></td></tr>
+<tr><td>Lowering, loops</td><td>
+<ul>
+<li>Factorizations run row by row (Crout). Entry <code>(i, j)</code> is the matrix entry minus a dot product of rows <code>i</code> and <code>j</code>, both contiguous. For <code>L D Lᵀ</code>, row <code>i</code> is kept scaled by <code>D</code> in a scratch vector, so each term is one multiply-add.</li>
+<li>Dot products use four interleaved partial sums (<code>_blocked_sum</code>) plus a tail.</li>
+<li><code>T X = B</code> uses the dot form. <code>Tᵀ X = B</code> sweeps rows of <code>T</code> (axpy form), so it stays contiguous.</li>
+<li>With a matrix of right-hand sides, each step handles a whole row of <code>X</code>, with four rows of the triangle per pass.</li>
+<li>Loop bounds are triangular expressions of the outer index, so the code size does not depend on the order.</li>
+</ul></td></tr>
+<tr><td>Lowering, unrolled</td><td>For order ≤ <code>DENSE_UNROLL</code> = 8 the same algorithms are emitted with constant indices, which scalar expansion turns into registers.</td></tr>
+<tr><td>Derivatives</td><td>
+<ul>
+<li>Factorization tangents: <code>X = L⁻¹ S L⁻ᵀ</code>, with <code>S</code> the symmetric matrix whose lower triangle is <code>dA</code>'s. Then <code>dL = L Φ(X)</code> for Cholesky, and <code>dD = diag X</code>, <code>dL = L stril(X) D⁻¹</code> for LDLᵀ.</li>
+<li>Factorization cotangents: <code>G = L⁻ᵀ P L⁻¹</code> and <code>Ā = tril G + stril Gᵀ</code>, where <code>P = Φ(Lᵀ L̄)</code>, or <code>stril(Lᵀ stril(F̄) D⁻¹) + diag F̄</code> for LDLᵀ.</li>
+<li>Solves: <code>op(T) dX = dB − op(dT) X</code>, <code>B̄ = op(T)⁻ᵀ X̄</code>, and <code>T̄ = −B̄Xᵀ</code> (or <code>−X B̄ᵀ</code>) restricted to the triangle.</li>
+<li>In multi-seed mode, every seed becomes a column of one solve.</li>
+</ul></td></tr>
+<tr><td>Sparsity</td><td>Conservative: the lower triangle of a factor may depend on all of the lower triangle of its input. Column <code>c</code> of a solution may depend on column <code>c</code> of <code>B</code> and on the whole triangle read.</td></tr>
+<tr><td>Docs</td><td>New guide page <code>guide/linalg.md</code>; IR op table; codebase map.</td></tr>
+</table></div>
+
+<h2>2. Tests</h2>
+<p><code>tests/linalg/test_dense.py</code> has 100 tests.</p>
+<ul>
+<li><b>Factorizations</b> at seven orders straddling the unroll threshold (1, 2, 3, 8, 9, 13, 20; all remainders mod 4) match NumPy. The upper triangle is never read: 100× noise placed there changes nothing. The factor's upper triangle is zero.</li>
+<li><b>Solves.</b> All eight flag combinations × seven orders × vector and matrix right-hand sides match <code>numpy.linalg.solve</code>.</li>
+<li><b>Composed solves.</b> <code>cho_solve</code>, <code>ldl_solve</code>, <code>solve</code> and <code>ldl_unpack</code> are correct. An indefinite matrix gives NaN from Cholesky.</li>
+<li><b>Derivatives</b> for ten ops at orders 4 and 10:
+<ul>
+<li>gradients in the matrix and the right-hand side match finite differences;</li>
+<li>the multi-seed Jacobian equals the gradient in strict mode;</li>
+<li>Hessians in the right-hand side match finite differences, and Hessians in the matrix are symmetric;</li>
+<li>single-seed <code>jvp</code> equals Jacobian × direction.</li>
+</ul></li>
+<li><b>Sparsity.</b> The Jacobian lies inside the pattern, and the columns of a multi-RHS solve stay independent.</li>
+<li><b>Code shape.</b> The unrolled code has no loops, and the loop code has the same size at n = 24 and n = 48.</li>
+<li><b>Other.</b> Validation of shapes and dtypes; <code>vmap</code> over a Cholesky; the <code>scaly.linalg</code> exports.</li>
+</ul>
+<p><b>Mutation checks (11 of 11 killed):</b></p>
+<ul>
+<li>Φ's halved diagonal, in forward and in reverse mode</li>
+<li>symmetric completion of the lower tangent</li>
+<li>the transposed <code>dT</code> term</li>
+<li>the transposed outer product in the solve cotangent</li>
+<li>cotangent symmetrization</li>
+<li>the blocked-sum tail</li>
+<li>LDLᵀ's scaled row</li>
+<li>the seed-column layout</li>
+<li>solve sparsity per column</li>
+<li>the unrolled upper range</li>
+</ul>
+<p>The single-seed transposed tangent first survived because every test went through the multi-seed path; a direct <code>jvp</code> test was added.</p>
+
+<h2>3. Benchmark</h2>
+<p><code>perf_2026_09_26_tier2/pr6_dense.py</code> reports µs per instance on aarch64 with gcc 11. Scaly runs a <code>vmap</code> of 64 instances, minus the call overhead. OpenBLAS is called through ctypes on preallocated copies, minus an empty call. LAPACK has no unpivoted LDLᵀ, so <code>ldl</code> is compared with <code>dpotrf</code>, which has the same flop count.</p>
+<div class="scroll"><table>
+<tr><th>Op</th><th class="r">n</th><th class="r">Scaly −O2</th><th class="r">Scaly −O3</th><th class="r">OpenBLAS</th><th class="r">ratio −O2</th><th class="r">ratio −O3</th></tr>
+<tr><td>cholesky / potrf</td><td class="r">8</td><td class="r">0.04</td><td class="r">0.04</td><td class="r">0.23</td><td class="r">0.17</td><td class="r">0.15</td></tr>
+<tr><td></td><td class="r">16</td><td class="r">0.58</td><td class="r">0.54</td><td class="r">0.53</td><td class="r">1.09</td><td class="r">1.02</td></tr>
+<tr><td></td><td class="r">32</td><td class="r">3.33</td><td class="r">3.02</td><td class="r">2.72</td><td class="r">1.22</td><td class="r">1.11</td></tr>
+<tr><td></td><td class="r">64</td><td class="r">16.8</td><td class="r">15.4</td><td class="r">9.9</td><td class="r"><b>1.69</b></td><td class="r"><b>1.55</b></td></tr>
+<tr><td>ldl (vs potrf)</td><td class="r">32</td><td class="r">2.56</td><td class="r">2.35</td><td class="r">2.72</td><td class="r">0.94</td><td class="r">0.86</td></tr>
+<tr><td></td><td class="r">64</td><td class="r">13.3</td><td class="r">11.8</td><td class="r">10.0</td><td class="r"><b>1.33</b></td><td class="r"><b>1.18</b></td></tr>
+<tr><td>trsv</td><td class="r">64</td><td class="r">0.60</td><td class="r">0.57</td><td class="r">1.76</td><td class="r">0.34</td><td class="r">0.32</td></tr>
+<tr><td>trsm (n right-hand sides)</td><td class="r">32</td><td class="r">4.37</td><td class="r">1.51</td><td class="r">3.57</td><td class="r">1.22</td><td class="r">0.42</td></tr>
+<tr><td></td><td class="r">64</td><td class="r">30.6</td><td class="r">11.1</td><td class="r">8.7</td><td class="r"><span class="bad">3.52</span></td><td class="r"><b>1.27</b></td></tr>
+<tr><td>matmul / gemm (existing lowering)</td><td class="r">32</td><td class="r">10.5</td><td class="r">3.8</td><td class="r">10.2</td><td class="r">1.03</td><td class="r">0.37</td></tr>
+<tr><td></td><td class="r">64</td><td class="r">78.0</td><td class="r">41.7</td><td class="r">26.1</td><td class="r"><span class="bad">2.99</span></td><td class="r"><b>1.60</b></td></tr>
+</table></div>
+<ul>
+<li><b>The optimization step.</b> Four partial sums and row blocking took Cholesky at n = 64 from 2.23× to 1.69× (−O2), and the multi-RHS solve from 4.59× to 3.52× (−O2) and from 2.51× to 1.27× (−O3).</li>
+<li><b>What remains at −O2 is vectorization.</b> On macOS the JIT uses clang, which vectorizes at −O2, so these gcc −O2 numbers are the worst case.</li>
+</ul>
+
+<h2>4. Decision for you (C-107)</h2>
+<p>Should the JIT's default become <code>-O3</code>? Alternatively, add <code>-ftree-vectorize</code> for gcc only. Either would remove the only gate misses and benefit every generated loop on Linux. The cost is somewhat longer compiles and a new cache key.</p>
+<p><b>Next:</b> T2-7, the sparse LDLᵀ and its solves, generated from the T2-5 tables with the T2-2/T2-3 machinery.</p>
+</main></body></html>

@@ -18,6 +18,7 @@ nav = [
         { "Building functions" = "guide/functions.md" },
         { "Derivatives" = "guide/derivatives.md" },
         { "Sparsity" = "guide/sparsity.md" },
+        { "Linear algebra" = "guide/linalg.md" },
         { "Solvers" = "guide/solvers.md" },
         { "Solver backends" = "guide/solver_backends.md" },
         { "Code generation" = "guide/codegen.md" },
