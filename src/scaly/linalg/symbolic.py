@@ -118,6 +118,16 @@ class SymbolicLDL:
   _stats: dict[str, float] = field(default_factory=dict, repr=False)
   _lanes: dict[str, np.ndarray] = field(default_factory=dict, repr=False)
 
+  def check(self, shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> None:
+    """Raise ``ValueError`` unless this analysis was made for a matrix with this pattern."""
+    n = self.n
+    if tuple(shape) != (n, n):
+      raise ValueError(f"the analysis is for a {n}x{n} matrix, not {tuple(shape)}")
+    a_col, a_row, chosen = _permuted_lower(n, np.asarray(rows, dtype=np.int64), np.asarray(cols, dtype=np.int64), self.iperm)
+    col = np.repeat(np.arange(n), np.diff(self.a_ptr))
+    if not (np.array_equal(a_col, col) and np.array_equal(a_row, self.a_rows) and np.array_equal(chosen, self.a_source)):
+      raise ValueError("the analysis was made for a different sparsity pattern")
+
   def _lane_tables(self) -> dict[str, np.ndarray]:
     """The update lanes, one entry per multiply-add: built on first use, since a factorization that
     loops over the runs of each column never needs them."""
@@ -292,19 +302,13 @@ def analyze(
   iperm = np.empty(n, dtype=np.int64)
   iperm[perm] = np.arange(n)
 
-  # The permuted lower triangle, each entry pointing back at an input value.
-  pr, pc = iperm[rows], iperm[cols]
-  lo, hi = np.minimum(pr, pc), np.maximum(pr, pc)
-  from_lower = rows >= cols
-  keys = lo * n + hi  # column-major over the lower triangle: column lo, row hi
-  order = np.lexsort((~from_lower, keys))  # per key, an entry that was in the input's lower triangle first
-  first = np.ones(order.size, dtype=bool)
-  first[1:] = keys[order][1:] != keys[order][:-1]
-  chosen = order[first]
-  a_col, a_row = lo[chosen], hi[chosen]
+  a_col, a_row, chosen = _permuted_lower(n, rows, cols, iperm)
   missing = np.setdiff1d(np.arange(n), a_col[a_row == a_col])
   if missing.size:
-    raise ValueError(f"LDL^T without pivoting needs every diagonal entry stored; columns {missing[:8].tolist()} have none")
+    raise ValueError(
+      f"LDL^T without pivoting needs every diagonal entry stored; columns {np.sort(perm[missing])[:8].tolist()} have none "
+      "(store them, as zeros if need be, with add_diagonal)"
+    )
   a_ptr = np.concatenate([[0], np.cumsum(np.bincount(a_col, minlength=n))]).astype(np.int64)
   a_rows, a_source = a_row, chosen.astype(np.int64)
 
@@ -338,6 +342,20 @@ def analyze(
     )
   u_ptr = np.concatenate([[0], np.cumsum(np.bincount(row_of, weights=counts, minlength=n))]).astype(np.int64)
   return SymbolicLDL(n, name, perm, iperm, a_ptr, a_rows, a_source, parent, postorder, l_ptr, l_rows, r_ptr, r_cols, r_pos, u_ptr)
+
+
+def _permuted_lower(n: int, rows: np.ndarray, cols: np.ndarray, iperm: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+  """The permuted lower triangle in column-major order: its columns, rows, and for each entry the
+  position of the input value it reads (of a mirrored pair, the one in the input's lower triangle)."""
+  pr, pc = iperm[rows], iperm[cols]
+  lo, hi = np.minimum(pr, pc), np.maximum(pr, pc)
+  from_lower = rows >= cols
+  keys = lo * n + hi  # column-major over the lower triangle: column lo, row hi
+  order = np.lexsort((~from_lower, keys))  # per key, an entry that was in the input's lower triangle first
+  first = np.ones(order.size, dtype=bool)
+  first[1:] = keys[order][1:] != keys[order][:-1]
+  chosen = order[first]
+  return lo[chosen], hi[chosen], chosen.astype(np.int64)
 
 
 def _etree(n: int, arow_ptr: np.ndarray, arow_cols: np.ndarray) -> np.ndarray:

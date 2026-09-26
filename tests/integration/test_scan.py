@@ -682,3 +682,19 @@ def test_jacobian_of_a_while_loop_is_one_loop_carrying_every_seed(monkeypatch: p
   np.testing.assert_allclose(jac, finite_difference(f, start).reshape(jac.shape), rtol=1e-5, atol=1e-6)
   loops = _loop_nodes([sc.jacobian(f.outputs[0], c0)])
   assert {n.attrs["callee"].name for n in loops} == {"wm_step_whilefwd6"}
+
+
+def test_sparse_jacobian_of_a_map_honors_the_callee_rule() -> None:
+  """The structured sparse Jacobian of a ``vmap`` colors the callee's pattern; with a forward rule
+  (and a declared pattern) its values must come from the rule, as the dense Jacobian's do."""
+  a, ta = sc.sym("a", 2), sc.sym("ta", 2)
+  body = sc.Function._from_exprs("sjr_body", [a], [a * a], ["a"], ["y"])
+  rule = sc.Function._from_exprs("sjr_rule", [a, ta], [3.0 * ta], ["a", "ta"], ["dy"])  # not the body's 2a
+  x = sc.sym("x", 6)
+  for k, pattern in enumerate((None, lambda out, i: np.eye(2, dtype=bool))):
+    mapped = sc.vmap(sc.custom_derivative(body, jvp=rule, sparsity=pattern), 3, [(x, 0, 2)])
+    sj = sc.sparse_jacobian(mapped, x)
+    (values,) = sc.Function._from_exprs(f"sjr_{k}", [x], [sj.values], ["x"], ["v"])._flat_numerical_call(np.arange(1.0, 7.0))
+    got = np.zeros((6, 6))
+    got[list(sj.sparsity.rows), list(sj.sparsity.cols)] = values
+    np.testing.assert_array_equal(got, 3.0 * np.eye(6))

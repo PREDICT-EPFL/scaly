@@ -116,7 +116,14 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: set[str], 
     if stmt.op != ProgramOp.BUFFER and any(n.op == ProgramOp.CALL and n.attrs["callee"] not in pure for n in _walk(stmt))
   }
   call_buffers = {name for i in opaque_calls for name in stmt_refs[i].reads | stmt_refs[i].writes}
-  hoist = {i for i, (reads, writes) in refs.items() if not writes & outputs and i not in opaque_calls and not (reads | writes) & call_buffers}
+  # A loop whose variable outlives it (``exit_var``) and a statement reading such a variable belong
+  # together, and buffer references do not show that link: neither may move.
+  scoped = {i for i, stmt in enumerate(body) if stmt.op != ProgramOp.BUFFER and _binds_or_reads_outer_var(stmt)}
+  hoist = {
+    i
+    for i, (reads, writes) in refs.items()
+    if not writes & outputs and i not in opaque_calls and i not in scoped and not (reads | writes) & call_buffers
+  }
   while True:
     known = fixed | {b for b, ws in writers.items() if ws <= hoist}
     kept = {i for i in hoist if refs[i][0] <= known and refs[i][1] <= known}
@@ -163,6 +170,16 @@ def _split(proc: ProgramNode, invariant: tuple[int, ...], used_names: set[str], 
     if all(n.attrs["callee"] in pure for n in _walk(generated) if n.op == ProgramOp.CALL):
       pure.add(generated.attrs["name"])
   return prologue, hoisted, used, exported
+
+
+def _binds_or_reads_outer_var(stmt: ProgramNode) -> bool:
+  """Whether ``stmt`` holds a loop whose variable outlives it, sets a variable at the top level, or
+  reads a variable it does not bind."""
+  nodes = list(_walk(stmt))
+  if stmt.op == ProgramOp.ASSIGN or any(n.op == ProgramOp.FOR and n.attrs.get("exit_var") for n in nodes):
+    return True
+  bound = {n.attrs["name"] for n in nodes if n.op == ProgramOp.RANGE} | {n.attrs["target"] for n in nodes if n.op == ProgramOp.ASSIGN}
+  return any(n.op == ProgramOp.VAR and n.attrs["name"] not in bound for n in nodes)
 
 
 def _proc(

@@ -220,8 +220,7 @@ index read from the data does not, and keeps two slots.
 
 All three are differentiable in their floating-point operands. Because the pattern of a run-time
 index is unknown, their sparsity is conservative: an output entry may depend on every entry of its
-row. With repeated indices `put` keeps the last value, and its derivative assumes the indices are
-distinct.
+row. With repeated indices `put` keeps the last value, and only that value gets a derivative.
 
 ## Iteration until done: `while_loop`
 

@@ -287,3 +287,15 @@ def test_where_rejects_a_python_bool_condition() -> None:
   k = sc.sym("k", (), dtype="int64")
   with pytest.raises(TypeError, match="sc.equal"):
     sc.where(k == 0, 2.0, 1.0)  # noqa: SIM300 - the identity comparison is the point
+
+
+@pytest.mark.parametrize("table", [[0.0, -0.0, 0.0], [-0.0, -0.0, -0.0]])
+def test_scan_float_table_keeps_the_sign_of_zero(table: list[float]) -> None:
+  """``-0.0`` and ``0.0`` compare equal but are different values: ``1 / z`` tells them apart."""
+  c, z = sc.sym("c", ()), sc.sym("z", ())
+  body = sc.Function._from_exprs(f"nz_step{len(set(map(str, table)))}", [c, z], [c, 1.0 / z], ["c", "z"], ["n", "y"])
+  x0 = sc.sym("x0", ())
+  _, ys = sc.scan(body, x0, [(sc.const(np.array(table)), 0, 1)], length=3)
+  (got,) = _fn(f"nz{len(set(map(str, table)))}", [x0], [ys])._flat_numerical_call(np.array(1.0))
+  with np.errstate(divide="ignore"):
+    np.testing.assert_array_equal(got, 1.0 / np.array(table))

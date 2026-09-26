@@ -301,3 +301,22 @@ def test_in_range_indices_skip_the_check_and_keep_it_in_derivatives() -> None:
   assert "<=" not in body and " < 6)" not in body
   grad = gradient(sc.sumsqr(y), x)
   assert all(n.attrs.get("in_range") for n in topo([grad]) if n.op in (ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT))
+
+
+@pytest.mark.parametrize("in_range", [False, True])
+def test_put_with_repeated_indices_differentiates_the_surviving_write(in_range: bool) -> None:
+  """With repeats the last write wins; reverse mode gives the derivative only to that lane, as
+  forward mode and finite differences do."""
+  b, v, idx = sc.sym("b", (2, 4)), sc.sym("v", (2, 4)), sc.sym("idx", 4, dtype="int64")
+  y = sc.put(b.sin(), idx, v * v, in_range=in_range)
+  f = (y * sc.const(np.arange(1.0, 9.0).reshape(2, 4))).sum()
+  iv = np.array([1, 3, 1, 2]) if in_range else np.array([1, 7, 1, -1])
+  bv, vv = np.linspace(0.1, 0.8, 8).reshape(2, 4), np.linspace(-1.0, 1.0, 8).reshape(2, 4)
+  fn = _fn(f"put_rep_{in_range}", [b, v, idx], [gradient(f, b), gradient(f, v), jacobian(f.reshape((1,)), v)])
+  gb, gv, jv = fn._flat_numerical_call(bv, vv, iv)
+  point = np.r_[bv.ravel(), vv.ravel()]
+  value = _fn(f"put_rep_v_{in_range}", [b, v, idx], [f.reshape((1,))])
+  fd = finite_difference(lambda z: value._flat_numerical_call(z[:8].reshape(2, 4), z[8:].reshape(2, 4), iv)[0], point).reshape(-1)
+  np.testing.assert_allclose(np.r_[gb.ravel(), gv.ravel()], fd, rtol=1e-6, atol=1e-8)
+  np.testing.assert_allclose(jv.reshape(-1), gv.reshape(-1), rtol=1e-12)
+  assert np.all(gv[:, 0] == 0.0)  # lane 0 writes index 1, which lane 2 overwrites

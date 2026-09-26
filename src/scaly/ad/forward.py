@@ -155,7 +155,7 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return save((d[0] - expr * d[1]) * (1.0 / args[1]))
   if expr.op == ExprOp.POW:
     if args[1].op == ExprOp.CONST:
-      return save(args[1] * (args[0] ** (args[1] - 1)) * d[0])
+      return save(args[1] * (args[0] ** _minus_one(args[1])) * d[0])
     return save(expr * (d[1] * args[0].log() + args[1] * d[0] / args[0]))
   if expr.op == ExprOp.SIN:
     return save(args[0].cos() * d[0])
@@ -479,6 +479,14 @@ def _jvp_many_dense(expr: Expr, d: list[Expr], nseed: int) -> Expr:
   return _seed_left(unit_l, x * Expr.const(np.tril(np.ones((n, n)), -1))) * inv_d.reshape((1, 1, n)) + x * Expr.const(np.eye(n))
 
 
+def _minus_one(exponent: Expr) -> Expr:
+  """``exponent - 1``, folded when the exponent is a constant: the derivative of ``x ** p`` is then
+  again a power with a constant exponent, whose own derivative needs no ``log(x)`` (NaN at 0)."""
+  if exponent.op == ExprOp.CONST and exponent.value is not None:
+    return Expr.const(np.asarray(exponent.value) - 1, dtype=exponent.type.dtype)
+  return exponent - 1
+
+
 def sign(x: Expr) -> Expr:
   """``-1``, ``0`` or ``1``: the derivative of ``abs``, zero at zero whatever the options say."""
   one, zero = Expr.const(1.0, dtype=x.type.dtype), Expr.const(0.0, dtype=x.type.dtype)
@@ -537,8 +545,13 @@ def body_tangents(fn: Any, seeds: dict[int, Expr]) -> list[Expr]:
   from its forward rule when it has one, else by differentiating its body. Every derivative that
   looks inside a Function (a call, a map, a loop body) goes through here, so a rule is never skipped."""
   if fn.custom_jvp is not None:
-    tangents = [seeds[i] if i in seeds else zeros_like(inp) for i, inp in enumerate(fn.inputs)]
-    return list(fn.custom_jvp._flat_symbolic_call([*fn.inputs, *tangents]))
+    rule, n = fn.custom_jvp, len(fn.inputs)
+    # A tangent the rule never reads (an implicit rule ignoring a precomputed factor) is passed as
+    # a zero, so the call does not depend on it and nothing forms it.
+    dep: dict[tuple[int, int], bool] = {}
+    read = [any(_depends_on(out, rule.inputs[n + i], dep) for out in rule.outputs) for i in range(n)]
+    tangents = [seeds[i] if i in seeds and read[i] else zeros_like(inp) for i, inp in enumerate(fn.inputs)]
+    return list(rule._flat_symbolic_call([*fn.inputs, *tangents]))
   memo: dict[int, Expr] = {}
   dep: dict[tuple[int, int], bool] = {}
   by_input = {fn.inputs[i]: seed for i, seed in seeds.items()}
@@ -1306,7 +1319,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op == ExprOp.POW:
     if args[1].op == ExprOp.CONST:
-      memo[expr.id] = ret = _seed_axis(args[1] * (args[0] ** (args[1] - 1)), nseed, expr) * _broadcast_tangent(d[0], args[0], expr, nseed)
+      memo[expr.id] = ret = _seed_axis(args[1] * (args[0] ** _minus_one(args[1])), nseed, expr) * _broadcast_tangent(d[0], args[0], expr, nseed)
     else:
       x = _seed_axis(args[0], nseed, expr)
       y = _seed_axis(args[1], nseed, expr)

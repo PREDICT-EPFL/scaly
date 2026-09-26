@@ -17,6 +17,7 @@ from ..ir.expr import (
   cast,
   concat,
   copysign,
+  equal,
   gather,
   index_set,
   put,
@@ -33,7 +34,7 @@ from ..ir.expr import (
 )
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.options import get_options
-from .forward import _is_zero_const, _tri_mask, claim_name, custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
+from .forward import _is_zero_const, _minus_one, _tri_mask, claim_name, custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
 from .sparsity import _depends_on
 
 
@@ -256,6 +257,21 @@ def _while_adj_function(body: Any) -> Any:
   return _WHILE_ADJ_CACHE[body]
 
 
+def _put_winners(base: Expr, idx: Expr, lane_cot: Expr, in_range: bool) -> Expr:
+  """``lane_cot`` kept only on the lanes of a ``put`` whose write survives: with repeated indices the
+  last lane writing an entry wins. Indices known to be distinct need no mask."""
+  lanes = idx.size
+  if idx.op == ExprOp.CONST and idx.value is not None:
+    known = np.asarray(idx.value).reshape(-1)
+    known = known[(known >= 0) & (known < base.shape[-1])]
+    if np.unique(known).size == known.size:
+      return lane_cot
+  order = Expr.const(np.arange(lanes, dtype=np.float64))
+  marker = put(Expr.const(np.full(base.shape[-1], -1.0)), idx, order, in_range=in_range)
+  won = equal(take(marker, idx, fill=-1.0, in_range=in_range), order)
+  return where(won, lane_cot, 0.0)
+
+
 def _check_trajectory(body: Any, steps: int, carry_size: int) -> None:
   """Reverse mode through a loop stores the carry at every step; refuse a loop whose store would
   exceed ``sc.options(max_trajectory=...)`` values, naming the fix."""
@@ -428,7 +444,7 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     )
   if expr.op == ExprOp.POW:
     return (
-      _unbroadcast(cot * args[1] * (args[0] ** (args[1] - 1)), args[0].shape, expr.shape),
+      _unbroadcast(cot * args[1] * (args[0] ** _minus_one(args[1])), args[0].shape, expr.shape),
       _unbroadcast(cot * expr * args[0].log(), args[1].shape, expr.shape),
     )
   if expr.op == ExprOp.SIN:
@@ -503,8 +519,13 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
       return (put_add(zeros_like(args[0]), args[1], cot, in_range=ok), zeros_like(args[1]))
     if expr.op == ExprOp.PUT_ADD:
       return (cot, zeros_like(args[1]), take(cot, args[1], in_range=ok))
-    # A put's written entries of the base do not reach the output.
-    return (put(cot, args[1], zeros_like(args[2]), in_range=ok), zeros_like(args[1]), take(cot, args[1], in_range=ok))
+    # A put's written entries of the base do not reach the output, and only the last lane writing
+    # an entry does.
+    return (
+      put(cot, args[1], zeros_like(args[2]), in_range=ok),
+      zeros_like(args[1]),
+      _put_winners(args[0], args[1], take(cot, args[1], in_range=ok), ok),
+    )
   if expr.op == ExprOp.SELECT:
     cond, a, b = args
     zero = as_expr(0.0)

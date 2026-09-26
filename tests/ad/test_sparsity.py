@@ -701,6 +701,8 @@ def test_custom_sparsity_replaces_the_body_pattern_in_calls_maps_and_loops() -> 
   np.testing.assert_array_equal(_mask(walked, q), np.eye(3, dtype=bool))
   # Copies keep the declaration unless given their own; the derivative rules are untouched.
   assert sc.custom_derivative(declared).custom_sparsity is declared.custom_sparsity
+  rule = sc.Function._from_exprs("cs_rule", [x, sc.sym("t", 3)], [sc.sym("t", 3) * 2.0], ["x", "t"], ["dy"])
+  assert sc.custom_derivative(declared, jvp=rule).custom_sparsity is None  # new rules, no stale pattern
   np.testing.assert_allclose(
     sc.jacobian(sc.Function._from_exprs("cs_host", [q], [declared(q)], ["q"], ["y"]), "y", "q")(np.ones(3)), np.eye(3) + 1e-30
   )

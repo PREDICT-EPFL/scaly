@@ -313,6 +313,8 @@ def _c_float(value: float) -> str:
     return "((double)NAN)"
   if math.isinf(value):
     return "((double)(-INFINITY))" if value < 0 else "((double)INFINITY)"
+  if value == 0.0 and math.copysign(1.0, value) < 0:
+    return "-0.0"  # "-0" would be the integer 0, which converts to +0.0
   return f"{value:.17g}"
 
 

@@ -1115,8 +1115,8 @@ def put_add(base: Any, indices: Any, values: Any, *, in_range: bool = False) -> 
 def put(base: Any, indices: Any, values: Any, *, in_range: bool = False) -> Expr:
   """``base`` with the entries at ``[..., indices[j]]`` replaced by ``values[..., j]``.
 
-  Indices inside ``[0, n)`` should be distinct: with repeats the last write wins, and the derivative
-  assumes none. An index outside ``[0, n)`` drops its value; ``in_range=True`` promises there is none.
+  With repeated indices inside ``[0, n)`` the last write wins, and only its value gets a derivative.
+  An index outside ``[0, n)`` drops its value; ``in_range=True`` promises there is none.
   """
   return _put(ExprOp.PUT, base, indices, values, in_range)
 

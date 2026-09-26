@@ -693,3 +693,18 @@ def test_jvp_many_through_a_cast_stays_structural(monkeypatch: pytest.MonkeyPatc
   point = np.array([0.2, 0.7, 1.4])
   expected = np.diag((point > 0.5) * np.cos(point) + 2.0 * point)
   np.testing.assert_allclose(fn(point), expected, rtol=1e-12, atol=1e-14)
+
+
+def test_second_derivative_of_a_constant_power_at_zero() -> None:
+  """``d/dx x**p = p x**(p-1)`` keeps a constant exponent, so the second derivative needs no
+  ``log(x)``, which is NaN at an exact zero (a zero triangle entry, a padded lane)."""
+  from scaly.ad.derivatives import hessian as _hessian
+
+  x = sc.sym("x", 3)
+  mask = sc.const(np.array([1.0, 0.0, 1.0]))
+  for p, second in ((2, 2.0), (3, 6.0)):
+    f = ((x * mask) ** p).sum()
+    fn = sc.Function._from_exprs(f"pow_at_zero{p}", [x], [_hessian(f, x), sc.gradient(sc.gradient(f, x)[1], x)], ["x"], ["h", "g"])
+    h, g = fn._flat_numerical_call(np.ones(3))
+    np.testing.assert_array_equal(h, np.diag([second, 0.0, second]))
+    np.testing.assert_array_equal(g, np.zeros(3))

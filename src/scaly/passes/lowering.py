@@ -388,10 +388,18 @@ class LowerCtx:
   def buf_of(self, expr: Expr) -> ProgramNode:
     return self.buffers[self.value_buffers[expr.id]]
 
+  def _fresh(self, prefix: str) -> str:
+    """A buffer name not yet taken in this procedure: generated names share one namespace with
+    the parameters, which are the Function's own input and output names."""
+    while True:
+      name = f"{prefix}{self._tmp}"
+      self._tmp += 1
+      if name not in self.buffers:
+        return name
+
   def new_private(self, dtype: DType, shape: tuple[int, ...]) -> ProgramNode:
     """Allocate a fresh private scratch BUFFER (declared as a local array by the renderer)."""
-    name = f"t{self._tmp}"
-    self._tmp += 1
+    name = self._fresh("t")
     buf = p.buffer(name, dtype, _shape_or_scalar(shape), address_space="private")
     self.buffers[name] = buf
     self.statements.append(buf)  # marks the local-array declaration for the renderer
@@ -412,8 +420,7 @@ class LowerCtx:
     ``const T* tN = <src> + offset;``). Carries ``alias_of`` / ``alias_offset`` so the workspace
     pass leaves it unpacked and keeps its source live. Port of ``codegen/c.py``'s contiguous
     SLICE / RESHAPE pointer aliasing."""
-    name = f"t{self._tmp}"
-    self._tmp += 1
+    name = self._fresh("t")
     buf = ProgramNode(
       ProgramOp.BUFFER,
       (),
@@ -438,8 +445,7 @@ class LowerCtx:
     key = tuple(values)
     if key in self._const_tables:
       return self._const_tables[key]
-    buf = p.const_buffer(f"k{self._tmp}", dtypes.int64, (len(values),), values)
-    self._tmp += 1
+    buf = p.const_buffer(self._fresh("k"), dtypes.int64, (len(values),), values)
     self.buffers[buf.attrs["name"]] = buf
     self.statements.append(buf)
     self._const_tables[key] = buf
@@ -588,8 +594,7 @@ def _lower_const(ctx: LowerCtx, node: Expr) -> None:
   # A constant of any size materializes as a read-only ``constant``-space buffer
   # (rendered ``static const``). Output-aliasing never applies to CONST, so
   # emit_outputs inserts a copy when a CONST is itself an output.
-  name = f"k{ctx._tmp}"
-  ctx._tmp += 1
+  name = ctx._fresh("k")
   buf = p.const_buffer(name, node.type.dtype, _shape_or_scalar(node.shape), [float(v) for v in value.reshape(-1)])
   ctx.buffers[name] = buf
   ctx.value_buffers[node.id] = name
@@ -1196,7 +1201,9 @@ def _constant_per_step(ctx: LowerCtx, outer: Expr, formal: Expr, start: int, str
   values = np.asarray(outer.value).reshape(-1)[start + stride * np.arange(length)]
   if outer.type.dtype == dtypes.int64:
     return ctx.index_at(values.astype(np.int64), k)
-  if outer.type.dtype.is_floating and values.size and np.all(values == values[0]):
+  # Equal bit patterns, so that -0.0 and 0.0 stay apart (and a repeated NaN is still constant).
+  bits = np.ascontiguousarray(values).view(np.uint8).reshape(values.size, -1)
+  if outer.type.dtype.is_floating and values.size and np.all(bits == bits[0]):
     return p.const_float(float(values[0]), dtype=outer.type.dtype)
   return None
 

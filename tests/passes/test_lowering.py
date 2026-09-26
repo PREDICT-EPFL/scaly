@@ -585,3 +585,38 @@ def test_two_different_functions_with_one_name_are_refused() -> None:
   host = sc.Function._from_exprs("dup_twins", [c0, us], [a, t], ["c0", "us"], ["y", "z"])
   y, z = host((np.array([0.3, -0.4]), np.array([0.5, 1.1, -0.7])))
   np.testing.assert_array_equal(y, z)
+
+
+@pytest.mark.parametrize("name", ["k0", "k1", "k2", "k3", "t0", "t2", "t5"])
+def test_input_names_that_look_generated(name: str) -> None:
+  """Generated buffers (``t<n>``, constant tables ``k<n>``) share a namespace with the inputs: a
+  generated name never takes an input's."""
+  from scaly.ir.expr import ragged_add
+
+  x, idx = sc.sym("x", 5), sc.sym(name, 1, dtype="int64")
+  lo, hi = sc.const(np.array([0]), dtype="int64"), sc.const(np.array([3]), dtype="int64")
+  y = sc.put_add(ragged_add(x, x * 1.0, lo, hi, sc.const([2.0]), dst_map=np.array([4, 3, 2])), idx, sc.const([10.0]))
+  fn = sc.Function._from_exprs(f"gen_name_{name}", [x, idx], [y], ["x", name], ["o"])
+  (got,) = fn._flat_numerical_call(np.arange(5.0), np.array([0]))
+  np.testing.assert_array_equal(got, [10.0, 1.0, 6.0, 5.0, 4.0])
+
+
+def test_hoisting_keeps_a_loop_count_with_its_loop() -> None:
+  """A mapped callee whose while loop reports its step count next to work on a broadcast input:
+  the count's read of the loop variable is not hoisted out with the invariant work."""
+  c, p = sc.sym("c", 2), sc.sym("p", 2)
+  body = sc.Function._from_exprs("hk_body", [c], [c * 0.5], ["c"], ["cn"])
+  cond = sc.Function._from_exprs("hk_cond", [c], [c[0] > 1e-3], ["c"], ["go"])
+  x = sc.sym("x", 2)
+  out, count = sc.while_loop(cond, body, x, max_iter=60)
+  inner = sc.Function._from_exprs("hk_inner", [x, p], [out[:1] + count.reshape((1,)) + (p * p).sum().reshape((1,))], ["x", "p"], ["y"])
+  xs, pp = sc.sym("xs", 6), sc.sym("pp", 2)
+  fn = sc.Function._from_exprs("hk_outer", [xs, pp], [sc.vmap(inner, 3, [(xs, 0, 2), (pp, 0, 0)])], ["xs", "pp"], ["y"])
+  (got,) = fn._flat_numerical_call(np.array([1.0, 0.0, 2.0, 0.0, 4.0, 0.0]), np.array([1.0, 2.0]))
+  expected = []
+  for start in (1.0, 2.0, 4.0):
+    v, k = start, 0
+    while v > 1e-3:
+      v, k = v * 0.5, k + 1
+    expected.append(v + k + 5.0)
+  np.testing.assert_allclose(got, expected)

@@ -103,6 +103,8 @@ class SparseLDL:
       raise ValueError(f"schedule must be one of {SCHEDULES}, got {schedule!r}")
     rows, cols = matrix.coordinates()
     self.matrix = matrix
+    if symbolic is not None:
+      symbolic.check(matrix.shape, rows, cols)
     self.symbolic = symbolic if symbolic is not None else analyze(matrix.shape, rows, cols, ordering)
     s = self.symbolic
     self.n = s.n
@@ -316,7 +318,7 @@ class SparseLDL:
         y[j] = y[j] - f[p] * y[int(s.l_rows[p])]
     return stack([y[int(s.iperm[i])] for i in range(n)])
 
-  def _refined_solve(self, f: Expr, kv: Expr, b: Expr, refine: int, tol: float | None) -> Expr:
+  def _refined_solve(self, f: Expr, kv: Expr, b: Expr, refine: int, tol: float | None, tag: str = "") -> Expr:
     """``K^{-1} b`` with iterative refinement: ``x += K^{-1} (b - K x)``, ``refine`` times, or with
     ``tol`` while ``||b - K x||_inf > tol * max(1, ||b||_inf)`` and at most ``refine`` times."""
     x = self._raw_solve(f, b)
@@ -333,8 +335,8 @@ class SparseLDL:
     cf, ck, cb, cx, cr, ct = (c[int(sizes[i]) : int(sizes[i + 1])] for i in range(6))
     xn = cx + self._raw_solve(cf, cr)
     body_out = put(put(c, at(3), xn, in_range=True), at(4), cb - self._k_times(ck, xn), in_range=True)
-    body = Function._from_exprs(f"{self.name}_refine", [c], [body_out], ["c"], ["c_next"])
-    cond = Function._from_exprs(f"{self.name}_refining", [c], [norm_inf(cr) > ct[0]], ["c"], ["go"])
+    body = Function._from_exprs(f"{self.name}{tag}_refine", [c], [body_out], ["c"], ["c_next"])
+    cond = Function._from_exprs(f"{self.name}{tag}_refining", [c], [norm_inf(cr) > ct[0]], ["c"], ["go"])
     threshold = (tol * maximum(1.0, norm_inf(b))).reshape((1,))
     init = concat([f, kv, b, x, b - self._k_times(kv, x), threshold])
     out, _ = while_loop(cond, body, init, max_iter=refine)
@@ -363,16 +365,19 @@ class SparseLDL:
     rules solve with the same factor through a solve that has rules of its own, so second
     derivatives are implicit too; only third derivatives would go through the loops. Refinement,
     if any, is part of every solve, the rules' included."""
+    if refine == 0:
+      tol = None
     key = (refine, tol)
     if key not in self._solvers:
       f, kv, b = Expr.sym("f", (self.w_offset,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
-      tag = "" if refine == 0 else f"_r{refine}" + ("" if tol is None else "a")
-      x = self._refined_solve(f, kv, b, refine, tol)
+      # Every variant, and every rule of it, has a name of its own: several can meet in one graph.
+      tag = "" if refine == 0 else f"_r{refine}" + ("" if tol is None else f"a{sum(t is not None for _, t in self._solvers)}")
+      x = self._refined_solve(f, kv, b, refine, tol, tag)
       base = Function._from_exprs(f"{self.name}_solve{tag}", [f, kv, b], [x], ["f", "kv", "b"], ["x"])
       inner = base
       pattern = self._solve_sparsity()
       for level in (1, 2):
-        inner = custom_derivative(base, jvp=self._jvp_rule(inner, level), vjp=self._vjp_rule(inner, level), sparsity=pattern)
+        inner = custom_derivative(base, jvp=self._jvp_rule(inner, level, tag), vjp=self._vjp_rule(inner, level, tag), sparsity=pattern)
       self._solvers[key] = inner
     return self._solvers[key]
 
@@ -401,15 +406,15 @@ class SparseLDL:
 
     return pattern
 
-  def _jvp_rule(self, inner: Function, level: int) -> Function:
+  def _jvp_rule(self, inner: Function, level: int, tag: str) -> Function:
     f, kv, b = Expr.sym("f", (self.w_offset,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
     df, dkv, db = Expr.sym("df", (self.w_offset,)), Expr.sym("dkv", (self.matrix.nnz,)), Expr.sym("db", (self.n,))
     x = _call(inner, f, kv, b)
     dx = _call(inner, f, kv, db - self._k_times(dkv, x))
     names = ["f", "kv", "b", "df", "dkv", "db"]
-    return Function._from_exprs(f"{self.name}_solve_jvp{level}", [f, kv, b, df, dkv, db], [dx], names, ["dx"])
+    return Function._from_exprs(f"{self.name}_solve{tag}_jvp{level}", [f, kv, b, df, dkv, db], [dx], names, ["dx"])
 
-  def _vjp_rule(self, inner: Function, level: int) -> Function:
+  def _vjp_rule(self, inner: Function, level: int, tag: str) -> Function:
     f, kv, b = Expr.sym("f", (self.w_offset,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
     x, xbar = Expr.sym("xo", (self.n,)), Expr.sym("xbar", (self.n,))
     bbar = _call(inner, f, kv, xbar)
@@ -422,7 +427,9 @@ class SparseLDL:
       grad_used = grad_used - scatter(gather(bbar, c[off]) * gather(x, r[off]), off, (used.size,))
     kbar = scatter(grad_used, used, (self.matrix.nnz,))
     outs = [Expr.const(np.zeros(self.w_offset)), kbar, bbar]
-    return Function._from_exprs(f"{self.name}_solve_vjp{level}", [f, kv, b, x, xbar], outs, ["f", "kv", "b", "xo", "xbar"], ["fbar", "kvbar", "bbar"])
+    return Function._from_exprs(
+      f"{self.name}_solve{tag}_vjp{level}", [f, kv, b, x, xbar], outs, ["f", "kv", "b", "xo", "xbar"], ["fbar", "kvbar", "bbar"]
+    )
 
   def solve(self, b: Any, *, refine: int = 0, tol: float | None = None) -> Expr:
     """``K^{-1} b`` for a vector or a matrix of right-hand sides (``(n,)`` or ``(n, m)``).

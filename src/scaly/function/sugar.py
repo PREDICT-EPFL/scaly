@@ -248,7 +248,8 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: An
   index, input index)`` returning the pattern of that output with respect to that input (a
   ``SparsityType``, a boolean mask, a SciPy sparse matrix, or ``None`` for no dependence). A loop's
   structural pattern through run-time indices is conservative and can be costly to compute; the
-  rule's author usually knows the real one.
+  rule's author usually knows the real one. A copy keeps its source's pattern unless it is given
+  new rules without one.
   """
   if not isinstance(fn, Function):
     raise TypeError(f"custom_derivative needs a scaly Function, got {type(fn).__name__}")
@@ -270,7 +271,9 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: An
     copy.descriptor = fn.descriptor
   copy.custom_jvp = jvp if jvp is not None else fn.custom_jvp
   copy.custom_vjp = vjp if vjp is not None else fn.custom_vjp
-  copy.custom_sparsity = sparsity if sparsity is not None else getattr(fn, "custom_sparsity", None)
+  # A declared pattern describes the rules it came with: new rules without a pattern drop it.
+  inherited = getattr(fn, "custom_sparsity", None) if jvp is None and vjp is None else None
+  copy.custom_sparsity = sparsity if sparsity is not None else inherited
   # Procedures and derivative helpers are named after their Function, so the copy needs a name of
   # its own: in one graph with ``fn``, sharing a name would let one derivative stand for both.
   rules = ",".join(r.name if r is not None else "-" for r in (copy.custom_jvp, copy.custom_vjp))

@@ -194,3 +194,26 @@ def test_single_seed_tangents_match_the_multi_seed_jacobian(name: str) -> None:
   fn = _fn(f"jvp1_{name}", [a, b, bm], [jvp(f, a, sc.const(direction)), jacobian(f.reshape((1,)), a)])
   one, jac = fn._flat_numerical_call(av, RNG.standard_normal(n), RNG.standard_normal((n, 2)))
   np.testing.assert_allclose(one, jac.reshape(-1) @ direction.reshape(-1), rtol=1e-10, atol=1e-12)
+
+
+SECOND_ORDER = {
+  "cholesky": (lambda a, b: cholesky(a).sin().sum() + sc.sumsqr(cholesky(a) @ b), lambda n: _spd(n)),
+  "ldl": (lambda a, b: ldl(a).sin().sum() + sc.sumsqr(ldl(a) @ b), lambda n: _quasi_definite(n)),
+  "trisolve": (lambda a, b: sc.sumsqr(solve_triangular(a, b, trans=True)).sqrt(), lambda n: _spd(n) / n + np.eye(n)),
+  "solve_sym": (lambda a, b: sc.sumsqr(solve(a, b, assume="sym")), lambda n: _quasi_definite(n)),
+}
+
+
+@pytest.mark.parametrize("n", [4, 10])
+@pytest.mark.parametrize("name", list(SECOND_ORDER))
+def test_second_derivatives_in_the_matrix_match_finite_differences(name: str, n: int) -> None:
+  build, make = SECOND_ORDER[name]
+  a, b = sc.sym("a", (n, n)), sc.sym("b", n)
+  f = build(a, b)
+  fn = _fn(f"so_{name}{n}", [a, b], [gradient(f, a), hessian(f, a), jacobian(gradient(f, a).reshape((n * n,)), b)])
+  av, bv = make(n), RNG.standard_normal(n)
+  _, h, hab = fn._flat_numerical_call(av, bv)
+  fd = finite_difference(lambda z: fn._flat_numerical_call(z.reshape(n, n), bv)[0].reshape(-1), av.reshape(-1))
+  np.testing.assert_allclose(h.reshape(n * n, n * n), fd, rtol=1e-4, atol=1e-5 * max(1.0, np.abs(h).max()))
+  fd_b = finite_difference(lambda z: fn._flat_numerical_call(av, z)[0].reshape(-1), bv)
+  np.testing.assert_allclose(hab.reshape(n * n, n), fd_b, rtol=1e-4, atol=1e-5 * max(1.0, np.abs(hab).max()))

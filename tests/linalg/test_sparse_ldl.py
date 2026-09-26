@@ -174,8 +174,15 @@ def test_full_pattern_derivative_reads_the_lower_entry() -> None:
 def test_validation() -> None:
   with pytest.raises(ValueError, match="square"):
     SparseLDL(SparseMatrix.symbol("r", np.ones((2, 3), dtype=bool)))
-  with pytest.raises(ValueError, match="diagonal"):
+  with pytest.raises(ValueError, match=r"diagonal entry stored; columns \[1\] have none"):
     SparseLDL(SparseMatrix.symbol("nd", np.array([[1, 1], [1, 0]], dtype=bool)))
+  # Columns are named in the input's numbering, whatever the ordering.
+  arrow = np.eye(5, dtype=bool)
+  arrow[0, :] = arrow[:, 0] = True
+  arrow[3, 3] = False
+  for ordering in ("natural", "rcm", "mmd"):
+    with pytest.raises(ValueError, match=r"columns \[3\] have none"):
+      SparseLDL(SparseMatrix.symbol("ar", arrow), ordering=ordering)
   fact = SparseLDL(SparseMatrix.symbol("d", np.eye(3, dtype=bool)))
   with pytest.raises(ValueError, match="length 3"):
     fact.solve(sc.sym("b", 4))
@@ -369,3 +376,102 @@ def test_solve_sparsity_is_per_connected_component() -> None:
   got = np.zeros((16, 16))
   got[jac.sparsity.rows, jac.sparsity.cols] = vals
   np.testing.assert_allclose(got, np.linalg.inv(k.toarray()), rtol=1e-9, atol=1e-12)
+
+
+# --- review round (T2-R) -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+@pytest.mark.parametrize("which", ["lower", "upper"])
+def test_second_derivatives_in_the_matrix(monkeypatch: pytest.MonkeyPatch, schedule: str, which: str) -> None:
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  k = _kkt(7, 3, 1e-2, 5)
+  t = _triangle(k, which)
+  mat = SparseMatrix.symbol("K", t)
+  b = sc.sym("b", 10)
+  x = SparseLDL(mat, schedule=schedule).solve(b)
+  f = sc.sumsqr(x) + (x.sin() * b).sum()
+  fn = _fn(f"hk_{schedule}_{which}", [mat.values, b], [gradient(f, mat.values), hessian(f, mat.values), jacobian(gradient(f, mat.values), b)])
+  kv, bv = _values(mat, t), np.random.default_rng(1).standard_normal(10)
+  _, hk, hkb = fn._flat_numerical_call(kv, bv)
+  fd_k = finite_difference(lambda z: fn._flat_numerical_call(z, bv)[0].reshape(-1), kv)
+  np.testing.assert_allclose(hk, fd_k, rtol=1e-4, atol=1e-5 * np.abs(hk).max())
+  fd_b = finite_difference(lambda z: fn._flat_numerical_call(kv, z)[0].reshape(-1), bv)
+  np.testing.assert_allclose(hkb, fd_b, rtol=1e-4, atol=1e-5 * np.abs(hkb).max())
+
+
+@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+def test_matrix_right_hand_side_derivatives(schedule: str) -> None:
+  k = _kkt(7, 3, 1e-2, 6)
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  bm = sc.sym("B", (10, 3))
+  xm = SparseLDL(mat, schedule=schedule).solve(bm)
+  f = xm.sin().sum() + sc.sumsqr(xm)
+  fn = _fn(f"mrhs_{schedule}", [mat.values, bm], [f, gradient(f, mat.values), gradient(f, bm), hessian(f, mat.values)])
+  kv, bv = _values(mat, t), np.random.default_rng(2).standard_normal((10, 3))
+  _, gk, gb, hk = fn._flat_numerical_call(kv, bv)
+  fd_k = finite_difference(lambda z: fn._flat_numerical_call(z, bv)[0].reshape(1), kv).reshape(-1)
+  np.testing.assert_allclose(gk, fd_k, rtol=1e-5, atol=1e-6 * np.abs(gk).max())
+  fd_b = finite_difference(lambda z: fn._flat_numerical_call(kv, z.reshape(10, 3))[0].reshape(1), bv.reshape(-1)).reshape(10, 3)
+  np.testing.assert_allclose(gb, fd_b, rtol=1e-5, atol=1e-6 * np.abs(gb).max())
+  fd_h = finite_difference(lambda z: fn._flat_numerical_call(z, bv)[1].reshape(-1), kv)
+  np.testing.assert_allclose(hk, fd_h, rtol=1e-4, atol=1e-5 * np.abs(hk).max())
+
+
+def test_third_derivatives_go_through_the_loops() -> None:
+  k = _kkt(5, 2, 1e-2, 9)
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  b = sc.sym("b", 7)
+  f = sc.sumsqr(SparseLDL(mat, schedule="scan").solve(b))
+  third = jacobian(hessian(f, b).reshape((49,)), b)  # f is quadratic in b
+  (value,) = _fn("third", [mat.values, b], [third])._flat_numerical_call(_values(mat, t), np.ones(7))
+  np.testing.assert_allclose(value, 0.0, atol=1e-8)
+
+
+@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+def test_every_solve_variant_in_one_graph(schedule: str) -> None:
+  """Solves with and without refinement, fixed or adaptive at two tolerances, for a vector and a
+  matrix right-hand side, and their gradients: every variant and rule has a name of its own."""
+  k = _kkt(8, 3, 1e-6, 17)
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  fact = SparseLDL(mat, schedule=schedule)
+  b, bm = sc.sym("b", 11), sc.sym("B", (11, 2))
+  variants = [{}, {"refine": 1}, {"refine": 2}, {"refine": 3, "tol": 1e-1}, {"refine": 3, "tol": 1e-14}, {"refine": 0, "tol": 1e-3}]
+  xs = [fact.solve(b, **v) for v in variants] + [fact.solve(bm, **v) for v in variants]
+  grads = [gradient(sc.sumsqr(x), mat.values) for x in xs]
+  kv = _values(mat, t)
+  bv, bmv = np.random.default_rng(3).standard_normal(11), np.random.default_rng(4).standard_normal((11, 2))
+  out = _fn(f"variants_{schedule}", [mat.values, b, bm], xs + grads)._flat_numerical_call(kv, bv, bmv)
+  dense = k.toarray()
+  for x, ref in zip(out[: len(xs)], [np.linalg.solve(dense, bv)] * 6 + [np.linalg.solve(dense, bmv)] * 6, strict=True):
+    np.testing.assert_allclose(x, ref, rtol=1e-6, atol=1e-9 * np.abs(ref).max())
+  for g in out[len(xs) : len(xs) + 6]:
+    np.testing.assert_allclose(g, out[len(xs)], rtol=1e-6, atol=1e-9 * np.abs(g).max())
+
+
+def test_forward_mode_never_differentiates_the_factorization() -> None:
+  k = MATRICES["kkt"]()
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  fact = SparseLDL(mat, schedule="scan", name="fwdonly")
+  b = sc.sym("b", k.shape[0])
+  tangent = jvp(fact.solve(b), mat.values, sc.const(np.ones(mat.nnz)))
+  src = str(render_c_module(_fn("fwdonly_run", [mat.values, b], [tangent])).body)
+  loops = set(re.findall(r"void (fwdonly_f\d+\w*)_raw\(", src))
+  assert loops and all(name.endswith("_inplace") for name in loops), loops  # the primal factorization only
+
+
+def test_a_given_analysis_must_match_the_pattern() -> None:
+  k = MATRICES["kkt"]()
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  own = SparseLDL(mat, schedule="scan").symbolic
+  assert SparseLDL(SparseMatrix.symbol("K2", t), symbolic=own, schedule="scan").symbolic is own
+  diag = SparseMatrix.symbol("D", sparse.eye_array(k.shape[0], format="csc"))
+  with pytest.raises(ValueError, match="different sparsity pattern"):
+    SparseLDL(mat, symbolic=SparseLDL(diag).symbolic)
+  with pytest.raises(ValueError, match="is for a"):
+    SparseLDL(SparseMatrix.symbol("S", np.eye(3, dtype=bool)), symbolic=own)

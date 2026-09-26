@@ -237,6 +237,9 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
   strides = vmap_expr.attrs["strides"]
   slice_size = vmap_expr.attrs["slice_size"]
 
+  if getattr(callee, "custom_jvp", None) is not None:
+    # The local seeded tangents below differentiate the body; a rule must be honored instead.
+    return sparse_jacobian_colored(vmap_expr, wrt)
   global_sparsity = jacobian_sparsity(vmap_expr, wrt)
   if global_sparsity.nnz == 0 or length == 0:
     return SparseJacobian(global_sparsity, Expr.const(np.zeros((global_sparsity.nnz,), dtype=np.float64)), 0)
