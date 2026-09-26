@@ -1,6 +1,6 @@
 # PIQP in Scaly — living plan
 
-**Status:** Tier 1 done (git tag `tier1-complete`) · Tier 2 next, on branch `claude/tier2-sparse`, no open decisions blocking it · last updated 2026-09-26 (v4.1)
+**Status:** Tier 1 done (git tag `tier1-complete`) · Tier 2 in progress on `claude/tier2-sparse`: T2-1 … T2-5 done, T2-6 next · last updated 2026-09-26 (v4.2)
 **Copies:** claude.ai project doc `claude/piqp-plan.md` and repo `internal/notes/piqp_plan.md` hold the same text; update both together. Background and review evidence: `internal/notes/piqp_plan_2026_09_26.html` (v3; superseded where they differ). Tier 1 detail: `claude/tier1-implementation-status.md`.
 
 ## Goal and principles
@@ -65,18 +65,20 @@ Kill criteria:
 
 Draft PR sequence:
 
-| PR | Content | Size |
-|---|---|---|
-| T2-1 | Step index (T2.a) | S |
-| T2-2 | `take`/`put_add`/`put` (T2.b) | M |
-| T2-3 | In-place proof at the scan (T2.c) | L |
-| T2-4 | `SparseMatrix` (#11) | M–L |
-| T2-5 | Symbolic analysis (#12) | M |
-| T2-6 | Dense kernels (#17) | M–L |
-| T2-7 | Sparse LDLᵀ and solves (#13–14) | L |
-| T2-8 | Index-aware fusion and ragged loops (T2.d–e) | M–L |
-| T2-9 | Health, refinement, schedule and options (#15, #16, #18); T2.f–g | M |
-| T2-R | Agent review round | M |
+| PR | Content | Size | Status |
+|---|---|---|---|
+| T2-1 | Step index (T2.a) | S | done (C-101): `scan`/`while_loop(index=True)`, no table stored; int64 procedures scalarize |
+| T2-2 | `take`/`put_add`/`put` (T2.b) | M | done (C-102): out-of-range lanes read `fill` or write a per-lane scratch slot |
+| T2-3 | In-place proof at the scan (T2.c) | L | done (C-103): `in_place_steps` from the loop's index tables; `Aᵀy` at n = 2000 2283 → 51 µs |
+| T2-4 | `SparseMatrix` (#11) | M–L | done (C-104): `scaly.linalg.SparseMatrix`, static CSC pattern + `Expr` values |
+| T2-5 | Symbolic analysis (#12) | M | done (C-105): orderings incl. `auto`, etree, L pattern, left-looking lanes, DP segments; MMD fill = SuperLU's |
+| T2-6 | Dense kernels (#17) | M–L | next |
+| T2-7 | Sparse LDLᵀ and solves (#13–14) | L | |
+| T2-8 | Index-aware fusion and ragged loops (T2.d–e) | M–L | |
+| T2-9 | Health, refinement, schedule and options (#15, #16, #18); T2.f–g | M | |
+| T2-R | Agent review round | M | |
+
+Per-PR reports: `internal/notes/tier2_pr{1..}_report.html`; timings: `internal/notes/perf_2026_09_26_tier2/`.
 
 ## Tier 3 — generic primal–dual IPM machinery
 | # | Item | Notes (corrections from the PIQP 0.6.2 sources) |
@@ -144,6 +146,7 @@ Gates:
 - 2026-09-26 v3.1: generic sparse early, multistage later.
 - 2026-09-26 v4: generated-only; plan re-organised into Tiers 1–6; Tier 2 made general-purpose sparse linear algebra; git tag `tier1-complete` marks the end of Tier 1.
 - 2026-09-26 v4.1: the PIQP-specific pending decisions moved to Tiers 3–4; nothing blocks Tier 2.
+- 2026-09-26 v4.2: T2-1 … T2-5 landed (C-101 … C-105).
 
 ## References
 - Schwan, Jiang, Kuhn, Jones, PIQP, CDC 2023 — https://arxiv.org/abs/2304.00290
