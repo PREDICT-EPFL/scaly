@@ -128,13 +128,12 @@ in `internal/notes/refactorings.md` before the implementation.
 
 ### Tier 2+ (PIQP in Scaly)
 
-Revised plan after the Tier 1 results and a three-agent review:
-[`notes/piqp_plan_2026_09_26.html`](notes/piqp_plan_2026_09_26.html) (living copy: `claude/piqp-plan.md`
-in the claude.ai project). Milestones: M0 harness and data, M1 NumPy reference PIQP, M2 foundations
-(dense block kernels, scan step index, SparseMatrix, sparsity override), M3 dense-condensed PIQP,
-M4 stage-periodic sparse PIQP for MPC/SQP, M5 generic sparse LDLᵀ (gated), M6 sensitivities and
-headline benchmark. Tier 2 PRs T2-0 … T2-7 and T2-R are listed in the plan; each gets an id here
-when it starts.
+The living plan is [`notes/piqp_plan.md`](notes/piqp_plan.md) (same text as `claude/piqp-plan.md` in the
+claude.ai project; update both together). Tier 1 ends at the tag `tier1-complete`; Tier 2 (general
+sparse and dense linear algebra, generated code only) runs on `claude/tier2-sparse`. Tiers 3–4
+are the IPM machinery and PIQP proper; Tier 5 (multistage/supernodal) and Tier 6 (platform
+selection, optional external kernels) come later. Tier 2 PRs T2-1 … T2-9 and T2-R get ids here when
+they start. Review evidence: [`notes/piqp_plan_2026_09_26.html`](notes/piqp_plan_2026_09_26.html).
 
 ### Tier 1 primitives
 
