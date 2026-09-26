@@ -1,7 +1,7 @@
 # PIQP in Scaly — living plan
 
 **Status:** Tier 1 done (git tag `tier1-complete`) · Tier 2 done on `claude/tier2-sparse` (git tag `tier2-complete`) · Tier 3 next · last updated 2026-09-26 (v4.3)
-**Copies:** claude.ai project doc `claude/piqp-plan.md` and repo `internal/notes/piqp_plan.md` hold the same text; update both together. Background and review evidence: `internal/notes/piqp_plan_2026_09_26.html` (v3; superseded where they differ). Tier 1 detail: `claude/tier1-implementation-status.md`.
+**Copies:** repo `internal/notes/piqp_plan.md` is authoritative from Tier 3 on, since work continues in Claude Code; the claude.ai project doc `claude/piqp-plan.md` is a mirror. Background and review evidence: `internal/notes/piqp_plan_2026_09_26.html` (v3; superseded where they differ). Status summaries: `internal/notes/tier1_implementation_status.md`, `internal/notes/tier2_implementation_status.md`; working conventions for new sessions: `internal/notes/claude_code_handoff.md`.
 
 ## Goal and principles
 Implement the PIQP QP solver in Scaly, written once in Python and emitted as C specialised to one fixed sparsity pattern, as a drop-in `backend="scaly"` next to the vendored PIQP plugin.
@@ -155,7 +155,7 @@ Gates:
 - 2026-09-26 v4: generated-only; plan re-organised into Tiers 1–6; Tier 2 made general-purpose sparse linear algebra; git tag `tier1-complete` marks the end of Tier 1.
 - 2026-09-26 v4.1: the PIQP-specific pending decisions moved to Tiers 3–4; nothing blocks Tier 2.
 - 2026-09-26 v4.2: T2-1 … T2-5 landed (C-101 … C-105).
-- 2026-09-26 v4.3: T2-6 … T2-9 and the T2-R review round landed (C-106 … C-113); Tier 2 closed with tag `tier2-complete`.
+- 2026-09-26 v4.3: T2-6 … T2-9 and the T2-R review round landed (C-106 … C-113); Tier 2 closed with tag `tier2-complete`. Work moves to Claude Code: the repo copy of this plan becomes authoritative, and a handoff note is added.
 
 ## References
 - Schwan, Jiang, Kuhn, Jones, PIQP, CDC 2023 — https://arxiv.org/abs/2304.00290
