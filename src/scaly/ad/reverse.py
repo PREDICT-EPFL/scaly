@@ -11,7 +11,7 @@ from ..function import Function
 from ..function.sugar import _scan_node, _while_node, vmap
 from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, as_expr, cast, concat, copysign, gather, index_set, scatter, stack, topo, where, zeros_like
 from ..passes.expr import simplify_cse_fixpoint
-from .forward import custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
+from .forward import claim_name, custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
 from .sparsity import _depends_on
 
 
@@ -38,7 +38,8 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
   cache = _VMAP_ADJ_CACHE.setdefault(callee, {})
   if key not in cache:
     out = callee.outputs[output_index]
-    lam_name = f"lam:{callee.output_names[output_index]}"
+    taken = {*callee.input_names, *callee.output_names}
+    lam_name = claim_name(f"lam:{callee.output_names[output_index]}", taken)
     lam = Expr.sym(lam_name, out.shape)
     grads = body_cotangents(callee, {output_index: lam}, active_formals)
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads])))
@@ -49,7 +50,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     # Suffix by formal index, not name: joined names are not injective ({a_b} vs {a, b}) and
     # lowering dedupes callees by name, so a collision would silently reuse the wrong proc body.
     name = f"{callee.name}_adj{output_index}_" + "_".join(str(i) for i in active_formals)
-    fn = Function._from_exprs(name, inputs, [adj], input_names, [f"adj:{callee.output_names[output_index]}"])
+    fn = Function._from_exprs(name, inputs, [adj], input_names, [claim_name(f"adj:{callee.output_names[output_index]}", taken)])
     cache[key] = (fn, arg_indices)
   return cache[key]
 
@@ -109,16 +110,17 @@ def _scan_adj_function(callee: Any, output: int, active: tuple[int, ...]) -> Any
   cache = _SCAN_ADJ_CACHE.setdefault(callee, {})
   if key not in cache:
     carry, xs = callee.inputs[0], callee.inputs[1:]
-    lam = Expr.sym(f"lam:{callee.input_names[0]}", carry.shape)
+    taken = {*callee.input_names, *callee.output_names}
+    lam = Expr.sym(claim_name(f"lam:{callee.input_names[0]}", taken), carry.shape)
     cots, extra = {0: lam}, []
     if output > 0:
-      bar = Expr.sym(f"lam:{callee.output_names[output]}", callee.outputs[output].shape)
+      bar = Expr.sym(claim_name(f"lam:{callee.output_names[output]}", taken), callee.outputs[output].shape)
       cots[output] = bar
       extra.append(bar)
     grads = body_cotangents(callee, cots, (0, *(i + 1 for i in active)))
     lam_in = grads[0]
     if output == -1:
-      bar = Expr.sym(f"lam:{callee.input_names[0]}:t", carry.shape)
+      bar = Expr.sym(claim_name(f"lam:{callee.input_names[0]}:t", taken), carry.shape)
       lam_in = lam_in + bar
       extra.append(bar)
     inputs = [lam, carry, *xs, *extra]
@@ -126,7 +128,11 @@ def _scan_adj_function(callee: Any, output: int, active: tuple[int, ...]) -> Any
     body = [callee._inherit_lowering(simplify_cse_fixpoint(g)) for g in (lam_in, *grads[1:])]
     suffix = f"{'t' if output < 0 else output}_" + ("_".join(str(i) for i in active) or "c")
     cache[key] = Function._from_exprs(
-      f"{callee.name}_scanadj{suffix}", inputs, body, names, ["adj:carry", *(f"adj:{callee.input_names[i + 1]}" for i in active)]
+      f"{callee.name}_scanadj{suffix}",
+      inputs,
+      body,
+      names,
+      [claim_name("adj:carry", taken), *(claim_name(f"adj:{callee.input_names[i + 1]}", taken) for i in active)],
     )
   return cache[key]
 
@@ -171,16 +177,17 @@ def _while_adj_function(body: Any) -> Any:
   unchanged, so steps the loop never took pass the cotangent through."""
   if body not in _WHILE_ADJ_CACHE:
     carry = body.inputs[0]
-    lam = Expr.sym(f"lam:{body.input_names[0]}", carry.shape)
-    step, count = Expr.sym("step", (1,)), Expr.sym("count", (1,), diff=False)
+    taken = {*body.input_names, *body.output_names}
+    lam = Expr.sym(claim_name(f"lam:{body.input_names[0]}", taken), carry.shape)
+    step, count = Expr.sym(claim_name("step", taken), (1,)), Expr.sym(claim_name("count", taken), (1,), diff=False)
     (back,) = body_cotangents(body, {0: lam}, (0,))
     out = where(step[0] < count[0], back, lam)
     _WHILE_ADJ_CACHE[body] = Function._from_exprs(
       f"{body.name}_whileadj",
       [lam, carry, step, count],
       [body._inherit_lowering(simplify_cse_fixpoint(out))],
-      ["lam", *body.input_names, "step", "count"],
-      ["adj:carry"],
+      [claim_name("lam", taken), *body.input_names, str(step.name), str(count.name)],
+      [claim_name("adj:carry", taken)],
     )
   return _WHILE_ADJ_CACHE[body]
 
@@ -390,7 +397,7 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     # inner vjp would make it part of the substituted graph: if the caller reuses a callee formal
     # symbol (the usual construction pattern), occurrences of that symbol *inside the cotangent*
     # would be rewritten to this call's actuals, corrupting the adjoint.
-    lam = Expr.sym(f"lam:{callee.output_names[output_idx]}", callee_out.shape)
+    lam = Expr.sym(claim_name(f"lam:{callee.output_names[output_idx]}", {*callee.input_names, *callee.output_names}), callee_out.shape)
     replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
     replacements[lam.id] = cot
     return tuple(_substitute(g, replacements) for g in vjp((callee_out,), callee.inputs, (lam,)))

@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterable
 import numpy as np
 
 from ..ir import program as p
-from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, topo
+from ..ir.expr import CALLEE_OPS, COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, callees_of, topo
 from ..function import Function
 from .program import ProgramObserver, optimize_program
 from ..ir.program import ProgramNode, ProgramOp, RangeKind
@@ -118,9 +118,11 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None, observ
   """
   if fun.device.kind != "host":
     raise LoweringError(f"non-host placement {fun.device} is not lowered yet (GPU backends are deferred to a later migration step)")
+  from ..solvers.graph import is_solver_function, solver_callees
+
+  _check_function_names(fun, solver_callees)
   callees: dict[str, ProgramNode] = {}
   solver_fns: dict[str, Function] = {}
-  from ..solvers.graph import is_solver_function, solver_callees
 
   if is_solver_function(fun):
     solver_fns[fun.name] = fun
@@ -154,6 +156,41 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None, observ
   prog = optimize_program(prog, observe=observe)
   verify_program(prog)
   return prog
+
+
+def _same_function(a: Function, b: Function) -> bool:
+  """Two Function objects that would lower to the same procedure: interned Exprs make equal graphs
+  the same objects, so identity of inputs and outputs is structural equality."""
+  return a is b or (
+    a.input_names == b.input_names
+    and a.output_names == b.output_names
+    and all(x is y for x, y in zip(a.inputs, b.inputs, strict=True))
+    and len(a.outputs) == len(b.outputs)
+    and all(x is y for x, y in zip(a.outputs, b.outputs, strict=True))
+  )
+
+
+def _check_function_names(fun: Function, solver_callees: Callable[[Function], Iterable[Function]]) -> None:
+  """Refuse two different Functions with one name anywhere in ``fun``'s call tree.
+
+  Procedures are emitted once per name, so the second would silently run the first one's body."""
+  owners: dict[str, Function] = {}
+  todo = [fun]
+  while todo:
+    f = todo.pop()
+    seen = owners.get(f.name)
+    if seen is not None:
+      if not _same_function(seen, f):
+        raise LoweringError(
+          f"two different Functions are named {f.name!r} in the graph of {fun.name!r}; generated code has one procedure "
+          "per name, so give them distinct names"
+        )
+      continue
+    owners[f.name] = f
+    todo.extend(solver_callees(f))
+    for node in topo(f.outputs):
+      if node.op in CALLEE_OPS:
+        todo.extend(callees_of(node))
 
 
 def main_proc(program_node: ProgramNode) -> ProgramNode:
@@ -282,7 +319,10 @@ class LowerCtx:
   # --- declarations ---------------------------------------------------------
 
   def _abi_dtype(self, dtype: DType) -> DType:
-    return dtypes.float64 if self.entry and dtype.is_bool else dtype
+    """The entry point takes and returns ``double`` arrays whatever the declared dtype, so its
+    non-``float64`` inputs are converted once into buffers of their own dtype (a callee reads them
+    through a pointer of that type) and its outputs are converted on the way out."""
+    return dtypes.float64 if self.entry else dtype
 
   def emit_inputs(self) -> None:
     converted: list[tuple[ProgramNode, Expr]] = []
@@ -297,8 +337,9 @@ class LowerCtx:
       tmp = self.new_private(expr.type.dtype, expr.shape)
       vname = f"c_{tmp.attrs['name']}"
       i = p.var(vname)
-      nonzero = p.compare(ProgramOp.NE, p.load(p.view(buf, [i])), p.const_float(0.0))
-      self.statements.append(p.for_(p.range_(vname, 0, _size_of(expr.shape), kind=RangeKind.GLOBAL), [p.store(p.view(tmp, [i]), nonzero)]))
+      value = p.load(p.view(buf, [i]))
+      converted_value = p.compare(ProgramOp.NE, value, p.const_float(0.0)) if expr.type.dtype.is_bool else p.cast(value, expr.type.dtype)
+      self.statements.append(p.for_(p.range_(vname, 0, _size_of(expr.shape), kind=RangeKind.GLOBAL), [p.store(p.view(tmp, [i]), converted_value)]))
       self.value_buffers[expr.id] = tmp.attrs["name"]
 
   def register_outputs(self) -> None:

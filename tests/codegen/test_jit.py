@@ -188,3 +188,20 @@ def test_each_calls_workspace_is_released_without_a_garbage_collection(isolated_
     tracemalloc.stop()
     gc.enable()
   assert grown < 2 * workspace_bytes
+
+
+def test_integer_inputs_reach_callees_as_integers(isolated_cache) -> None:
+  """The entry point takes ``double`` arrays for every input. A callee, a scan or a map reads an
+  ``int64`` input through an ``int64_t`` pointer, so the entry converts it once; passing the
+  ``double`` buffer through made the callee read raw bits (4.6e18 instead of 2)."""
+  c, k = sc.sym("c", 1), sc.sym("k", 1, dtype="int64")
+  body = sc.Function._from_exprs("int_body", [c, k], [c + k.cast("float64")], ["c", "k"], ["cn"])
+  c0, one, three = sc.sym("c0", 1), sc.sym("K1", 1, dtype="int64"), sc.sym("K3", 3, dtype="int64")
+  (called,) = body._flat_symbolic_call([c0, one])
+  (scanned,) = sc.scan(body, c0, [(three, 0, 1)], length=3)
+  mapped = sc.vmap(body, 3, [(sc.const(np.zeros(3)), 0, 1), (three, 0, 1)])
+  fn = sc.Function._from_exprs("int_host", [c0, one, three], [called, scanned, mapped], ["c0", "K1", "K3"], ["called", "scanned", "mapped"])
+  got = fn((np.array([0.5]), np.array([2], dtype=np.int64), np.array([1, 2, 3], dtype=np.int64)))
+  np.testing.assert_array_equal(got[0], [2.5])
+  np.testing.assert_array_equal(got[1], [6.5])
+  np.testing.assert_array_equal(got[2], [1.0, 2.0, 3.0])

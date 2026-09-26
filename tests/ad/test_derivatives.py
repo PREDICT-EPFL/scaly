@@ -681,3 +681,15 @@ def test_extremum_derivative_follows_the_operand_c_returns_next_to_nan() -> None
     for out in ("mx", "mn"):
       assert sc.jacobian(f, out, "p")((np.array([pv]), np.array([qv])))[0, 0] == to_p
       assert sc.jacobian(f, out, "q")((np.array([pv]), np.array([qv])))[0, 0] == 1.0 - to_p
+
+
+def test_jvp_many_through_a_cast_stays_structural(monkeypatch: pytest.MonkeyPatch) -> None:
+  """``cast`` has a multi-seed rule: a Jacobian through ``(x > 0.5).cast(float64) * sin(x)`` does not
+  fall back to one pass per seed."""
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  x = sc.sym("x", 3)
+  y = (x > 0.5).cast("float64") * x.sin() + x.cast("float64") * x
+  fn = sc.Function._from_exprs("cast_jac", [x], [sc.jacobian(y, x)], ["x"], ["j"])
+  point = np.array([0.2, 0.7, 1.4])
+  expected = np.diag((point > 0.5) * np.cos(point) + 2.0 * point)
+  np.testing.assert_allclose(fn(point), expected, rtol=1e-12, atol=1e-14)

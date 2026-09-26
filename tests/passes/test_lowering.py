@@ -565,3 +565,22 @@ def test_automatic_transpose_normalization_preserves_cancellation_order_and_empt
     "normalized_empty_product", [empty_matrix, empty_vector], [empty_matrix @ empty_vector], ["matrix", "vector"], ["y"]
   )
   np.testing.assert_array_equal(empty((np.empty((2, 0)), np.empty(0))), np.zeros(2))
+
+
+def test_two_different_functions_with_one_name_are_refused() -> None:
+  """Generated code has one procedure per name, so a second, different Function with the same name
+  would silently run the first one's body. Two Functions built from the same graph are the same
+  procedure and are accepted."""
+  c, u = sc.sym("c", 2), sc.sym("u", 1)
+  first = sc.Function._from_exprs("dup_step", [c, u], [c * u[0] + c[::-1]], ["c", "u"], ["cn"])
+  second = sc.Function._from_exprs("dup_step", [c, u], [c.sin() * u[0]], ["c", "u"], ["cn"])
+  twin = sc.Function._from_exprs("dup_step", [c, u], [c * u[0] + c[::-1]], ["c", "u"], ["cn"])
+  c0, us = sc.sym("c0", 2), sc.sym("us", 3)
+  (a,) = sc.scan(first, c0, [(us, 0, 1)], length=3)
+  (b,) = sc.scan(second, c0, [(us, 0, 1)], length=3)
+  (t,) = sc.scan(twin, c0, [(us, 0, 1)], length=3)
+  with pytest.raises(LoweringError, match="dup_step"):
+    lower_function(sc.Function._from_exprs("dup_host", [c0, us], [a + b], ["c0", "us"], ["y"]))
+  host = sc.Function._from_exprs("dup_twins", [c0, us], [a, t], ["c0", "us"], ["y", "z"])
+  y, z = host((np.array([0.3, -0.4]), np.array([0.5, 1.1, -0.7])))
+  np.testing.assert_array_equal(y, z)

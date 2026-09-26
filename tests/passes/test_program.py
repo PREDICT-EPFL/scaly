@@ -7,7 +7,10 @@ for the pipeline order and pass contracts.
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -785,3 +788,30 @@ def test_break_if_must_sit_in_a_serial_loop() -> None:
   verify_program(p.program([p.proc("ok", [flag], [p.for_(p.range_("i", 0, 3, kind=RangeKind.SERIAL), [stop], exit_var=True)])]))
   with pytest.raises(TypeError, match="bool scalar"):
     p.break_if(p.const_float(1.0))
+
+
+_HASH_SEED_PROBE = """
+import hashlib
+import numpy as np
+import scaly as sc
+from scaly.codegen import render_c_source
+
+z, u = sc.sym("z", 3), sc.sym("u", 2)
+zn = sc.stack([z[1] * u[0], z[2].sin() + u[1] * z[0], z[0] * z[1] + u[0] * u[1]]) * 0.5 + z
+step = sc.Function._from_exprs("hs_step", [z, u], [zn, zn * zn, sc.stack([sc.sumsqr(z) * u[0]])], ["z", "u"], ["zn", "zo", "c"])
+x0, big_u = sc.sym("x0", 3), sc.sym("U", 10)
+fin, zs, cs = sc.scan(step, x0, [(big_u, 0, 2)], length=5)
+cost = sc.Function._from_exprs("hs_f", [x0, big_u], [cs.sum() + sc.sumsqr(zs) + (fin * fin).sum() * 0.3], ["x0", "U"], ["f"])
+print(hashlib.sha256(render_c_source(sc.hessian(cost, "f", "U")).encode()).hexdigest())
+"""
+
+
+def test_generated_code_does_not_depend_on_the_hash_seed() -> None:
+  """Workspace packing once updated buffer dependencies while iterating a set, so the slot a buffer
+  got, and with it the C text and the JIT's on-disk cache key, changed with ``PYTHONHASHSEED``."""
+  digests = set()
+  for seed in ("0", "1", "12345"):
+    env = {**os.environ, "PYTHONHASHSEED": seed}
+    proc = subprocess.run([sys.executable, "-c", _HASH_SEED_PROBE], check=True, capture_output=True, text=True, env=env)
+    digests.add(proc.stdout.strip())
+  assert len(digests) == 1

@@ -66,6 +66,21 @@ def _is_zero_const(expr: Expr) -> bool:
   return expr.op == ExprOp.CONST and expr.value is not None and bool(np.all(expr.value == 0))
 
 
+def claim_name(base: str, taken: set[str]) -> str:
+  """``base``, primed until it is not in ``taken``, then added to it.
+
+  Derivative helpers name their new inputs after the callee's (``fwd:u`` for the tangent of ``u``).
+  Symbols are interned by name and type, so a new input named like one the callee already has, with
+  the same shape, would be that very input: a tangent would silently alias a primal. That happens
+  whenever the callee is itself a derivative helper (a Jacobian of a Jacobian through a scan) or a
+  user names an input ``fwd:...``. Claiming every new name against the callee's names prevents it."""
+  name = base
+  while name in taken:
+    name += "'"
+  taken.add(name)
+  return name
+
+
 def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
   """Forward-mode derivative: ``J(expr, wrt) @ seed``, with ``seed`` shaped like ``wrt``.
 
@@ -223,16 +238,17 @@ def _scan_jvp_body(callee: Function, active: tuple[int, ...]) -> Function:
   if active not in cache:
     carry, xs = callee.inputs[0], callee.inputs[1:]
     cs = carry.size
-    aug = Expr.sym(f"fwd:{callee.input_names[0]}", (2 * cs,))
-    dcarry = Expr.sym(f"fwd:{callee.input_names[0]}:dc", carry.shape)
-    dxs = {i: Expr.sym(f"fwd:{callee.input_names[i + 1]}", xs[i].shape) for i in active}
+    taken = {*callee.input_names, *callee.output_names}
+    aug = Expr.sym(claim_name(f"fwd:{callee.input_names[0]}", taken), (2 * cs,))
+    dcarry = Expr.sym(claim_name(f"fwd:{callee.input_names[0]}:dc", taken), carry.shape)
+    dxs = {i: Expr.sym(claim_name(f"fwd:{callee.input_names[i + 1]}", taken), xs[i].shape) for i in active}
     tangents = body_tangents(callee, {0: dcarry, **{i + 1: dx for i, dx in dxs.items()}})
     split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
     nxt = concat([callee.outputs[0].reshape((cs,)), tangents[0].reshape((cs,))])
     outputs = [substitute(e, split) for e in (nxt, *callee.outputs[1:], *tangents[1:])]
     inputs = [aug, *xs, *dxs.values()]
     names = [str(aug.name), *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
-    out_names = ["fwd:carry", *callee.output_names[1:], *(f"fwd:{n}" for n in callee.output_names[1:])]
+    out_names = [claim_name("fwd:carry", taken), *callee.output_names[1:], *(claim_name(f"fwd:{n}", taken) for n in callee.output_names[1:])]
     suffix = "_".join(str(i) for i in active) or "c"
     cache[active] = Function._from_exprs(
       f"{callee.name}_scanfwd_{suffix}", inputs, [callee._inherit_lowering(simplify_cse_fixpoint(o)) for o in outputs], names, out_names
@@ -276,8 +292,9 @@ def _while_jvp_functions(cond: Function, body: Function) -> tuple[Function, Func
   if cond not in cache:
     carry = body.inputs[0]
     cs = carry.size
-    aug = Expr.sym(f"fwd:{body.input_names[0]}", (2 * cs,))
-    dcarry = Expr.sym(f"fwd:{body.input_names[0]}:dc", carry.shape)
+    taken = {*body.input_names, *body.output_names, *cond.input_names, *cond.output_names}
+    aug = Expr.sym(claim_name(f"fwd:{body.input_names[0]}", taken), (2 * cs,))
+    dcarry = Expr.sym(claim_name(f"fwd:{body.input_names[0]}:dc", taken), carry.shape)
     (tangent,) = body_tangents(body, {0: dcarry})
     split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
     nxt = substitute(concat([body.outputs[0].reshape((cs,)), tangent.reshape((cs,))]), split)
@@ -393,10 +410,12 @@ def _copysign_slope(x: Expr, s: Expr) -> Expr:
 # the step as well (C-93).
 
 _SCAN_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Function]] = weakref.WeakKeyDictionary()
-_WHILE_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[int, tuple[Function, Function]]]] = (
+_WHILE_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[int, bool], tuple[Function, Function]]]] = (
   weakref.WeakKeyDictionary()
 )
 _CONTAINS_LOOP: weakref.WeakKeyDictionary[Any, bool] = weakref.WeakKeyDictionary()
+# ``Expr.sym`` interns by name and type, so each joint vector needs its own name: two nested joints
+# of one size with a shared name would be one node.
 _JOINT_IDS = itertools.count()
 
 
@@ -456,13 +475,16 @@ def _scan_jvp_many_body(callee: Function, active: tuple[int, ...], nseed: int) -
   ``(nseed, *c.shape)`` tangents seed-major. The sliced inputs are the primal ones, then for each
   ``active`` one its ``(nseed, *x.shape)`` tangents. The outputs are ``[c', Dc']``, the primal stacked
   outputs, then their tangents, each flat and seed-major."""
-  key = (active, nseed)
+  # Strict mode is part of the key: a body built with a per-seed fallback inside must not satisfy a
+  # later strict build, which would then skip the check it asked for.
+  key = (active, nseed, env_bool("SCALY_STRICT_JVP_MANY", False))
   cache = _SCAN_JVP_MANY_CACHE.setdefault(callee, {})
   if key not in cache:
     carry, xs = callee.inputs[0], callee.inputs[1:]
     cs = carry.size
-    aug = Expr.sym(f"fwd:{callee.input_names[0]}", (cs * (1 + nseed),))
-    dxs = {i: Expr.sym(f"fwd:{callee.input_names[i + 1]}", (nseed * xs[i].size,)) for i in active}
+    taken = {*callee.input_names, *callee.output_names}
+    aug = Expr.sym(claim_name(f"fwd:{callee.input_names[0]}", taken), (cs * (1 + nseed),))
+    dxs = {i: Expr.sym(claim_name(f"fwd:{callee.input_names[i + 1]}", taken), (nseed * xs[i].size,)) for i in active}
     seeds = {carry: aug[cs:].reshape((nseed, *carry.shape)), **{xs[i]: dx.reshape((nseed, *xs[i].shape)) for i, dx in dxs.items()}}
     tangents = _jvp_many_joint(callee.outputs, seeds, nseed)
     nxt = concat([callee.outputs[0].reshape((cs,)), tangents[0].reshape((nseed * cs,))])
@@ -471,7 +493,7 @@ def _scan_jvp_many_body(callee: Function, active: tuple[int, ...], nseed: int) -
     outputs = [substitute(e, split) for e in (nxt, *callee.outputs[1:], *flat)]
     inputs = [aug, *xs, *dxs.values()]
     names = [str(aug.name), *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
-    out_names = ["fwd:carry", *callee.output_names[1:], *(f"fwd:{n}" for n in callee.output_names[1:])]
+    out_names = [claim_name("fwd:carry", taken), *callee.output_names[1:], *(claim_name(f"fwd:{n}", taken) for n in callee.output_names[1:])]
     suffix = "_".join(str(i) for i in active) or "c"
     cache[key] = Function._from_exprs(
       f"{callee.name}_scanfwd{nseed}_{suffix}", inputs, [callee._inherit_lowering(simplify_cse_fixpoint(o)) for o in outputs], names, out_names
@@ -518,10 +540,12 @@ def _while_jvp_many_functions(cond: Function, body: Function, nseed: int) -> tup
   """Condition and body of the multi-seed tangent loop over the carry ``[c, Dc]``; the condition
   reads ``c`` only, so the loop takes exactly the primal's steps."""
   cache = _WHILE_JVP_MANY_CACHE.setdefault(body, weakref.WeakKeyDictionary()).setdefault(cond, {})
-  if nseed not in cache:
+  key = (nseed, env_bool("SCALY_STRICT_JVP_MANY", False))
+  if key not in cache:
     carry = body.inputs[0]
     cs = carry.size
-    aug = Expr.sym(f"fwd:{body.input_names[0]}", (cs * (1 + nseed),))
+    taken = {*body.input_names, *body.output_names, *cond.input_names, *cond.output_names}
+    aug = Expr.sym(claim_name(f"fwd:{body.input_names[0]}", taken), (cs * (1 + nseed),))
     (tangent,) = _jvp_many_joint(body.outputs, {carry: aug[cs:].reshape((nseed, *carry.shape))}, nseed)
     split = {carry: aug[:cs].reshape(carry.shape)}
     nxt = substitute(concat([body.outputs[0].reshape((cs,)), tangent.reshape((nseed * cs,))]), split)
@@ -530,8 +554,8 @@ def _while_jvp_many_functions(cond: Function, body: Function, nseed: int) -> tup
     )
     go = substitute(cond.outputs[0], {cond.inputs[0]: aug[:cs].reshape(carry.shape)})
     aug_cond = Function._from_exprs(f"{cond.name}_whilefwd{nseed}", [aug], [go], [str(aug.name)], ["go"])
-    cache[nseed] = (aug_cond, aug_body)
-  return cache[nseed]
+    cache[key] = (aug_cond, aug_body)
+  return cache[key]
 
 
 def _while_jvp_many(expr: Expr, tangent: Expr, nseed: int) -> Expr:
@@ -561,8 +585,10 @@ def _call_jvp_many_function(
     active = tuple(range(nseed))
     if all(value is not None for value in constants):
       active = tuple(row for row in range(nseed) if any(value is not None and np.any(value[row] != 0) for value in constants))
+    taken = {*callee.input_names, *callee.output_names}
+    seed_names = {i: claim_name(f"fwd:{callee.input_names[i]}", taken) for i in formal_indices}
     seeds = {
-      i: Expr.sym(f"fwd:{callee.input_names[i]}", (nseed, *callee.inputs[i].shape)) if value is None else Expr.const(value[list(active)])
+      i: Expr.sym(seed_names[i], (nseed, *callee.inputs[i].shape)) if value is None else Expr.const(value[list(active)])
       for i, value in zip(formal_indices, constants, strict=True)
     }
     out = callee.outputs[output_index]
@@ -581,16 +607,16 @@ def _call_jvp_many_function(
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
     seed_indices = tuple(i for i, value in zip(formal_indices, constants, strict=True) if value is None and _depends_on(deriv, seeds[i], dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
-    input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(f"fwd:{callee.input_names[i]}" for i in seed_indices)
+    input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(seed_names[i] for i in seed_indices)
     if single_constant:
       formal_index = formal_indices[0]
       seed_hash = hashlib.sha1(constants[0].tobytes()).hexdigest()[:10]  # type: ignore[union-attr]
       name = f"{callee.name}_fwd{nseed}c{seed_hash}_{callee.output_names[output_index]}_{callee.input_names[formal_index]}"
-      output_name = f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}"
+      output_name = claim_name(f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}", taken)
     else:
       seed_hash = hashlib.sha1(repr(key).encode()).hexdigest()[:10]
       name = f"{callee.name}_fwd{nseed}j{seed_hash}_{output_index}_" + "_".join(str(i) for i in formal_indices)
-      output_name = f"fwd:{callee.output_names[output_index]}"
+      output_name = claim_name(f"fwd:{callee.output_names[output_index]}", taken)
     fn = Function._from_exprs(name, inputs, [deriv], input_names, [output_name])
     cache[key] = (fn, arg_indices, seed_indices, active)
   return cache[key]
@@ -609,7 +635,8 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
   key = (output_index, formal_indices)
   cache = _CALL_JVP_CACHE.setdefault(callee, {})
   if key not in cache:
-    seeds = {i: Expr.sym(f"fwd:{callee.input_names[i]}", callee.inputs[i].shape) for i in formal_indices}
+    taken = {*callee.input_names, *callee.output_names}
+    seeds = {i: Expr.sym(claim_name(f"fwd:{callee.input_names[i]}", taken), callee.inputs[i].shape) for i in formal_indices}
     deriv = callee._inherit_lowering(body_tangents(callee, seeds)[output_index])
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(deriv, inp, dep_memo))
@@ -617,7 +644,7 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(seeds[i].name for i in seed_indices)
     name = f"{callee.name}_fwd{output_index}_" + "_".join(str(i) for i in formal_indices)
-    fn = Function._from_exprs(name, inputs, [deriv], input_names, [f"fwd:{callee.output_names[output_index]}"])
+    fn = Function._from_exprs(name, inputs, [deriv], input_names, [claim_name(f"fwd:{callee.output_names[output_index]}", taken)])
     cache[key] = (fn, arg_indices, seed_indices)
   return cache[key]
 
@@ -716,6 +743,18 @@ def _jvp_many_unrolled(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
   return stack([jvp(expr, wrt, seeds[i]) for i in range(seeds.shape[0])], axis=0)
 
 
+def _prunable_call(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Expr], dep_memo: dict[tuple[int, int], bool]) -> bool:
+  """Whether every argument tangent of a call is a constant and some seed is zero in all of them."""
+  tangents = [simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo)) for arg in expr.args]
+  if not all(t.op == ExprOp.CONST and t.value is not None for t in tangents):
+    return False
+  nseed = seeds.shape[0]
+  live = np.zeros(nseed, dtype=bool)
+  for t in tangents:
+    live |= np.any(np.asarray(t.value).reshape(nseed, -1) != 0, axis=1)
+  return not bool(live.all())
+
+
 def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Expr], dep_memo: dict[tuple[int, int], bool]) -> Expr:
   if expr.id in memo:
     return memo[expr.id]
@@ -788,6 +827,12 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     full = (np.arange(nseed, dtype=np.int64)[:, None] * expr.size + indices[None, :]).reshape(-1)
     memo[expr.id] = ret = scatter(d0.reshape((nseed * expr.args[0].size,)), full, (nseed * expr.size,)).reshape((nseed, *expr.shape))
     return ret
+  if expr.op == ExprOp.CAST:
+    if not expr.type.diff:
+      memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+    else:
+      memo[expr.id] = ret = cast(_jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo), expr.type.dtype)
+    return ret
   if expr.op == ExprOp.SUM:
     d0 = _jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo)
     ones = Expr.const(np.ones(expr.args[0].size), dtype=d0.type.dtype)
@@ -803,8 +848,11 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       memo[expr.id] = ret = _scan_jvp_many(expr, tangents, nseed)
     return ret
   if expr.op == ExprOp.WHILE:
-    tangent = simplify_cse_fixpoint(_jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo))
-    memo[expr.id] = ret = _while_jvp_many(expr, tangent, nseed)
+    if int(expr.attrs["output"]) == 1:  # the step count is piecewise constant
+      memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+    else:
+      tangent = simplify_cse_fixpoint(_jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo))
+      memo[expr.id] = ret = _while_jvp_many(expr, tangent, nseed)
     return ret
   if expr.op == ExprOp.VMAP:
     callee = expr.attrs["callee"]
@@ -926,12 +974,19 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64)) if ret is None else ret
     memo[expr.id] = ret = _pack_jvp_maps(callee, ret, maps)
     return ret
-  if expr.op == ExprOp.CALL and _contains_loop(expr.attrs["callee"]):
-    # Differentiate the call's body in place. Reverse mode inlines such a body too, so the tangent
-    # loops built here are the same nodes as the ones built for the gradient's stored carries and
-    # are computed once, instead of again inside a helper.
+  if expr.op == ExprOp.CALL and _contains_loop(expr.attrs["callee"]) and not _prunable_call(expr, wrt, seeds, memo, dep_memo):
+    # Differentiate the call's body in place. Reverse mode inlines such a body too, so in a Hessian
+    # the tangent loops built here are the same nodes as the ones built for the gradient's stored
+    # carries, and every output of the call shares them: they are computed once. A call whose
+    # arguments have a constant tangent that is zero for some seeds (one of K shooting intervals,
+    # say) keeps its helper below instead, which drops those seeds; inlined, each of the K calls
+    # would carry every seed.
     callee = expr.attrs["callee"]
     inlined = substitute(callee.outputs[expr.attrs["output"]], dict(zip(callee.inputs, expr.args, strict=True)))
+    # ``memo`` is keyed by node id, and interned nodes are freed once unreferenced, so a later
+    # inlined graph could reuse an id and pick up this one's tangents. Keep the graph alive for as
+    # long as ``memo`` is (a negative key never collides with an id).
+    memo[~inlined.id] = inlined
     memo[expr.id] = ret = _jvp_many_structural(inlined, wrt, seeds, memo, dep_memo)
     return ret
   if expr.op == ExprOp.CALL:

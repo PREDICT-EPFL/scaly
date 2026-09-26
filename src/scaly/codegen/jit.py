@@ -307,6 +307,8 @@ class CompiledFunction:
     if len(args) != self._n_args:
       raise TypeError(f"expected {self._n_args} inputs, got {len(args)}")
 
+    # ``arg_buffers`` and ``outputs`` keep the arrays alive until the C call returns: the pointer
+    # arrays below hold raw addresses only.
     arg_buffers: list[np.ndarray] = []
     arg_array = (_C_DOUBLE_P * max(self._n_args, 1))()
     for i, value in enumerate(args):
