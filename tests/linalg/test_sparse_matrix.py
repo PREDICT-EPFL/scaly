@@ -257,3 +257,13 @@ def test_compact_values_cross_the_function_boundary() -> None:
   got = sparse.coo_array((vals, (prod.sparsity.rows, prod.sparsity.cols)), shape=prod.shape).toarray()
   np.testing.assert_allclose(got, A_NP.toarray() @ C_NP.toarray(), rtol=1e-13, atol=1e-15)
   assert prod.nnz == (sparse.csc_array((A_NP != 0).astype(float)) @ sparse.csc_array((C_NP != 0).astype(float))).nnz
+
+
+def test_scalars_and_misfit_selections_are_refused() -> None:
+  a = SparseMatrix.symbol("A", np.eye(3, dtype=bool))
+  for bad in (lambda: 2.0 + a, lambda: a + 2.0, lambda: a - sc.sym("s", ()), lambda: 1 - a):
+    with pytest.raises(TypeError, match="add_diagonal"):
+      bad()
+  with pytest.raises(ValueError, match="one flag per stored entry"):
+    a.select(np.ones(2, dtype=bool))
+  assert (a + np.eye(3)).nnz == 3 and SparseMatrix.block([[a, None], [None, np.zeros((2, 2))]]).nnz == 3

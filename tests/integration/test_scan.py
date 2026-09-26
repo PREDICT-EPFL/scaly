@@ -396,7 +396,9 @@ def test_bodies_that_read_what_they_overwrite_keep_two_slots() -> None:
     c0, xs = sc.sym("c0", 4), sc.sym("xs", 3)
     results = sc.scan(fun, c0, [(xs, 0, 1)], length=3)
     host = sc.Function._from_exprs(f"{name}_host", [c0, xs], list(results), ["c0", "xs"], [f"o{i}" for i in range(len(results))])
-    assert f"{name}_inplace" not in _procs(host)
+    # The loop-level proof bounds a read through a slice even under a comparison: the select reads
+    # entry 0 and writes entry 3, which it proves apart. Every other case keeps two slots.
+    assert (f"{name}_inplace" in _procs(host)) == (name == "ip_neg_select"), name
     start, data = np.array([1.0, -2.0, 3.0, 0.5]), np.array([0.3, -0.7, 1.1])
     cv = start.copy()
     for k in range(3):

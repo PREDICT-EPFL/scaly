@@ -50,7 +50,7 @@ src/scaly/
     tree.py              the typed pytree declarations (Tree, L, G)
     factory.py           the typed derivative specs and the AD each dispatches to
     api.py               the @function decorator and the convenience derivative wrappers
-    sugar.py             expression builders that need a Function; today just vmap
+    sugar.py             expression builders that need a Function: vmap, scan, while_loop, custom_derivative
 
   ad/                    derivative construction, all of it inside the expression dialect
     forward.py           jvp, jvp_many
@@ -60,7 +60,7 @@ src/scaly/
     sparse.py            sparse_jacobian, sparse_hessian: AD driven by a structural pattern
 
   linalg/                sparse and dense linear algebra as generated code
-    dense.py             cholesky, ldl, solve_triangular and the solves built from them
+    dense.py             the solves built from cholesky, ldl and solve_triangular (ops in ir/expr.py)
     sparse.py            SparseMatrix: a static CSC pattern with Expr values
     symbolic.py          orderings, elimination tree, the pattern of L, left-looking tables, segments
     sparse_factor.py     SparseLDL: the generated left-looking factorization, its solves, implicit derivatives
@@ -113,7 +113,7 @@ one, never a higher one.
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR). Nothing here knows what a `Function` is. |
 | 3 | `function/{model,tree}` | `Function` itself, a named graph boundary over import layer 1, and the pytree declarations. |
-| 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
+| 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the builders that do too (`vmap`, `scan`, `while_loop`, `custom_derivative`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/`, `linalg/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, and linear algebra built from expressions and loops. |
 | 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |

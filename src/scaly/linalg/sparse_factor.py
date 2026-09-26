@@ -332,9 +332,11 @@ class SparseLDL:
     sizes = np.cumsum([0, self.w_offset, self.matrix.nnz, self.n, self.n, self.n, 1])
     at = lambda i: Expr.const(np.arange(sizes[i], sizes[i + 1]), dtype="int64")  # noqa: E731
     c = Expr.sym("c", (int(sizes[-1]),))
-    cf, ck, cb, cx, cr, ct = (c[int(sizes[i]) : int(sizes[i + 1])] for i in range(6))
-    xn = cx + self._raw_solve(cf, cr)
-    body_out = put(put(c, at(3), xn, in_range=True), at(4), cb - self._k_times(ck, xn), in_range=True)
+    cf, ck, cb, _, cr, ct = (c[int(sizes[i]) : int(sizes[i + 1])] for i in range(6))
+    # x += K^{-1} r, then r = b - K x reading the updated x: each update reads only entries no
+    # later update writes, so the loop overwrites its carry in place.
+    u1 = put_add(c, at(3), self._raw_solve(cf, cr), in_range=True)
+    body_out = put(u1, at(4), cb - self._k_times(ck, u1[int(sizes[3]) : int(sizes[4])]), in_range=True)
     body = Function._from_exprs(f"{self.name}{tag}_refine", [c], [body_out], ["c"], ["c_next"])
     cond = Function._from_exprs(f"{self.name}{tag}_refining", [c], [norm_inf(cr) > ct[0]], ["c"], ["go"])
     threshold = (tol * maximum(1.0, norm_inf(b))).reshape((1,))

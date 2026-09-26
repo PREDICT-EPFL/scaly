@@ -293,3 +293,41 @@ def test_whole_link_reads_and_row_positions_are_refused(monkeypatch: pytest.Monk
       ref[:, step] = value
     (got,) = _run_both(monkeypatch, lambda tag, kind=kind: build(tag, kind), (c0,), expect_in_place=False)
     np.testing.assert_allclose(got, ref, rtol=1e-14)
+
+
+@pytest.mark.parametrize("reads_written", [False, True])
+def test_constant_index_updates_without_step_inputs(monkeypatch: pytest.MonkeyPatch, reads_written: bool) -> None:
+  """A body with no input sliced per step and constant update indices: one step stands for all.
+  ``c = [a | x | r]``; ``x += f(a, r)`` then ``r = g(a, x_new)`` runs in place. Computing ``x``'s
+  new value from the old ``x`` (a read of an entry the same update writes) keeps two slots."""
+  n = 3
+
+  def build(tag: str) -> sc.Function:
+    c = sc.sym("c", 3 * n)
+    a, x, r = c[:n], c[n : 2 * n], c[2 * n :]
+    ix, ir = sc.const(np.arange(n, 2 * n), dtype="int64"), sc.const(np.arange(2 * n, 3 * n), dtype="int64")
+    if reads_written:
+      u1 = sc.put(c, ix, x + (a * r).sin(), in_range=True)
+    else:
+      u1 = sc.put_add(c, ix, (a * r).sin(), in_range=True)
+    body = _fn(f"ci_body_{tag}_{reads_written}", [c], [sc.put(u1, ir, a - 0.5 * u1[n : 2 * n], in_range=True)])
+    cond = _fn(f"ci_cond_{tag}_{reads_written}", [c], [sc.norm_inf(c[2 * n :]) > 1e-9])
+    init = sc.sym("init", 3 * n)
+    out, count = sc.while_loop(cond, body, init, max_iter=30)
+    (scanned,) = sc.scan(body, init, length=7)
+    return _fn(f"ci_{tag}_{reads_written}", [init], [out, count, scanned])
+
+  point = (np.r_[np.linspace(0.2, 0.6, n), np.zeros(n), np.ones(n)],)
+  got = _run_both(monkeypatch, build, point, expect_in_place=not reads_written)
+  c = point[0].copy()
+  a = c[:n]
+  steps = []
+  for _ in range(30):
+    if np.abs(c[2 * n :]).max() <= 1e-9:
+      break
+    c[n : 2 * n] += np.sin(a * c[2 * n :])
+    c[2 * n :] = a - 0.5 * c[n : 2 * n]
+    steps.append(c.copy())
+  np.testing.assert_allclose(got[0], c, rtol=1e-14)
+  assert got[1] == len(steps)
+  np.testing.assert_allclose(got[2], steps[6] if len(steps) > 6 else None, rtol=1e-14)

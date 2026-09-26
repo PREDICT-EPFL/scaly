@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 113**
+**Next id: 118**
 
 | Prefix | Section |
 |---|---|
@@ -168,7 +168,7 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       SuperLU MMD and `auto` (least update work) orderings; the permuted lower triangle with a map
       back to the input values; elimination tree, postorder, row and column patterns of `L`, the
       left-looking update lanes, statistics, and consecutive segments chosen by a DP over a padded
-      work model. Refuses an ordering whose updates exceed 50 M multiply-adds. MMD fill equals
+      work model. Refuses an ordering whose updates exceed 50 M multiply-adds (500 M since C-109). MMD fill equals
       SuperLU's (`notes/tier2_pr5_report.html`).
 - [x] **C-106. Generated dense kernels (T2-6).** `cholesky`, `ldl` (no pivoting, packed) and
       `solve_triangular` as expression ops with loop lowerings (row Crout with four partial sums;
@@ -196,7 +196,7 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       nnz(L) = 153 k (`notes/tier2_pr8_report.html`).
 - [x] **C-110. Schedules, refinement, health and options for the sparse factorization (T2-9).**
       `SparseLDL(schedule="auto"|"scan"|"unroll")` (straight-line code at most
-      `sparse_unroll` = 1000 operations, 4–8× faster than the loops there); `solve(refine=k,
+      `sparse_unroll` = 1000 operations; the factorization 5–8× faster than the loops there); `solve(refine=k,
       tol=)` fixed or adaptive (a `while_loop`) refinement inside the implicit rules;
       `inertia()` and `health(signs=, pivot_tol=, x=)`; a per-component sparsity override on the
       solve. Generic: `sc.options(dense_unroll=, sparse_unroll=, max_trajectory=)`, the dense unroll
@@ -212,10 +212,41 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       (`notes/tier2_pr9_report.html`).
 - [ ] **C-112. Loop-invariant inputs for `while_loop` (and T2.g).** Adaptive refinement packs the
       factor, `K` and `b` into its carry because a loop body takes only the carry, which copies them
-      once per solve. A `params` input read by every step (as `scan`'s stride-0 inputs are) would
+      in once per solve (the steps then update the carry in place). A `params` input read by every step (as `scan`'s stride-0 inputs are) would
       remove the copy and serve Tier 3's outer loops. Multi-tensor carries and an int64 carry spill
       (T2.g) were assessed in T2-9 and are not needed: int tables are sliced constants, and an
       integer in a carry is exact as a `float64` up to 2^53.
+- [x] **C-113. Tier 2 review round (T2-R).** Five review agents (lowering and in-place proofs, AD
+      rules, `linalg`, performance, docs and tests). Fixed: generated names shadowing inputs,
+      `-0.0` tables and literals, the vmap sparse Jacobian bypassing a forward rule, `put`'s reverse
+      rule with repeated indices, stale declared patterns, NaN second derivatives of `x**p` at 0, a
+      forward rule's unread tangents formed anyway (jvp of a solve differentiated the
+      factorization), solve-variant name collisions, unchecked `symbolic=`, hoisting a while
+      loop's count away from its loop. Optimized: `fuse_elementwise` and `pack_workspace` no
+      longer quadratic, the JIT call reads array addresses through the buffer protocol (4.2 → 3.1
+      µs for a trivial call; part of C-100), in-place proof for loops with constant indices only
+      (the adaptive refinement loop). `notes/tier2_review_report.html`.
+- [ ] **C-114. Unpadded updates in the sparse factorization.** Each step runs the padded groups
+      of its segment: 22–65% of the group slots are real work. A group loop over the real entries
+      of row `j` (`r_ptr[j] .. r_ptr[j+1]`, each with its column's range and weight read from global
+      tables) needs a two-level ragged op whose scale is `-D[k] L[j,k]` read from the carry. A
+      hand-written C version runs grid 30×30 in 12.7 µs against 20.6 (and the C baseline's 18.0),
+      MPC N = 100 in 20.7 against 35.8; neutral on dense-ish QPs. Needs verify, AD and sparsity
+      rules and the in-place proof for the new op (review prototype `~/review-agents/perf/`).
+- [ ] **C-115. JIT cache key without lowering.** `render_c_module` (lowering, optimization,
+      rendering) runs before the disk-cache lookup, so every new process pays the whole Python
+      generation (2.6 s for an unrolled MPC N = 20 factor) even when the library is cached. Key on
+      a structural hash of the graph (callees, rules, attributes), the scaly version and the
+      compiler flags instead; the risk is a key that misses an input.
+- [ ] **C-116. Compile time of straight-line code.** About 1 000 one-element buffers stay live
+      until paired stores at the end; storing each result into `res` as it is computed halves
+      gcc's time at `-O2` (2.5 → 1.3 s for an unrolled MPC N = 20 factor) with no change at run
+      time. Needs an ABI rule on whether `res` may alias `arg`. Related: C-111.
+- [ ] **C-117. Dense dot kernels and small solves.** Explicit `double2` accumulators with two
+      columns per pass make the order-64 Cholesky 31% faster at `-O2` than the generated code at
+      `-O3` (decide with C-107). For small sparse solves: fold `y / D` into the backward sweep and
+      write the final permutation straight into the output (5–9% on grid 30×30), and move large
+      stack arrays (`double s0[n]`) into the workspace.
 
 ### Tier 1 primitives
 
@@ -275,7 +306,8 @@ protocol's compile flags.
       locals; −40% on the MPC gradient, but 12% slower above about 32 doubles, so gate it.
 - [ ] **C-100. Trim the Function-call layer.** A trivial JIT call costs 4.6 µs, 2.7 of them in
       flattening and validating inputs before the ctypes call; a fast path for float64 C-contiguous
-      arrays of the right shape and cached leaf metadata should halve it.
+      arrays of the right shape and cached leaf metadata should halve it. (C-113 took the address
+      reads from `arr.ctypes.data` to the buffer protocol: `run` 4.2 → 3.1 µs.)
 - [x] **C-43. Lower matmul by layout.** `_lower_matmul` emits every product as
       `for i { out[i] = 0; for k out[i] += A[i,k] v[k] }`, a serial add chain per output that the C
       compiler cannot break without reassociation; `casadi_mtimes_dense` has the same shape, which is

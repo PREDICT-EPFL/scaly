@@ -224,3 +224,16 @@ def test_calls_leave_no_reference_cycles(isolated_cache) -> None:
     assert gc.collect() == 0
   finally:
     gc.enable()
+
+
+def test_inputs_of_every_memory_kind() -> None:
+  """Addresses come from the buffer protocol where it applies; read-only, empty and strided inputs
+  take the fallback (a copy for the strided one) and give the same result."""
+  x, e = sc.sym("mk_x", 3), sc.sym("mk_e", 0)
+  fn = sc.Function._from_exprs("mem_kinds", [x, e], [x * 2.0, e + 1.0], ["x", "e"], ["y", "z"])
+  frozen = np.arange(3.0)
+  frozen.setflags(write=False)
+  for value in (np.arange(3.0), frozen, np.arange(6.0)[::2] / 2.0, [0.0, 1.0, 2.0]):
+    y, z = fn._flat_numerical_call(value, np.zeros(0))
+    np.testing.assert_array_equal(y, [0.0, 2.0, 4.0])
+    assert z.shape == (0,)

@@ -367,6 +367,7 @@ tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inpu
 tests/codegen/test_jit.py::test_each_calls_workspace_is_released_without_a_garbage_collection
 tests/codegen/test_jit.py::test_hoisted_solver_oracles_compile_and_run[False]
 tests/codegen/test_jit.py::test_hoisted_solver_oracles_compile_and_run[True]
+tests/codegen/test_jit.py::test_inputs_of_every_memory_kind
 tests/codegen/test_jit.py::test_integer_inputs_reach_callees_as_integers
 tests/codegen/test_jit.py::test_invalidate_cache_handles_missing_directory
 tests/codegen/test_jit.py::test_jit_cache_key_stable_across_function_instances
@@ -419,6 +420,8 @@ tests/function/test_tree.py::test_seeded_derivatives_accept_nondifferentiable_le
 tests/function/test_tree.py::test_tree_names_are_unique_and_symbols_follow_structure
 tests/integration/test_in_place_runtime.py::test_another_output_reading_the_carry_keeps_two_slots
 tests/integration/test_in_place_runtime.py::test_batched_carry_and_mixed_chain
+tests/integration/test_in_place_runtime.py::test_constant_index_updates_without_step_inputs[False]
+tests/integration/test_in_place_runtime.py::test_constant_index_updates_without_step_inputs[True]
 tests/integration/test_in_place_runtime.py::test_data_dependent_indices_keep_two_slots
 tests/integration/test_in_place_runtime.py::test_proof_follows_the_tables[disjoint-True]
 tests/integration/test_in_place_runtime.py::test_proof_follows_the_tables[one_step-False]
@@ -1013,6 +1016,7 @@ tests/linalg/test_sparse_matrix.py::test_matrix_results_match_scipy[transpose]
 tests/linalg/test_sparse_matrix.py::test_matrix_results_match_scipy[tril]
 tests/linalg/test_sparse_matrix.py::test_matrix_results_match_scipy[triu]
 tests/linalg/test_sparse_matrix.py::test_products_with_dense_operands
+tests/linalg/test_sparse_matrix.py::test_scalars_and_misfit_selections_are_refused
 tests/linalg/test_sparse_matrix.py::test_structural_helpers
 tests/linalg/test_sparse_matrix.py::test_validation
 tests/linalg/test_symbolic.py::test_a_mirrored_pair_is_read_from_its_lower_entry
@@ -1312,6 +1316,7 @@ tests/passes/test_program.py::test_hoist_reserves_exported_names_across_repeated
 tests/passes/test_program.py::test_index_evaluation_truncates_toward_zero_like_c
 tests/passes/test_program.py::test_no_spill_when_temps_small
 tests/passes/test_program.py::test_optimized_program_still_verifies
+tests/passes/test_program.py::test_packing_reuses_a_slot_freed_by_the_previous_statement
 tests/passes/test_program.py::test_packing_reuses_slots_and_spills
 tests/passes/test_program.py::test_procedure_pruning_keeps_entry_calls_and_solver_oracles_in_order
 tests/passes/test_program.py::test_regular_raw_callees_stay_inline
@@ -1324,6 +1329,7 @@ tests/passes/test_program.py::test_scatter_sum_preserves_overlaps_and_shared_out
 tests/passes/test_program.py::test_scatter_sum_preserves_overlaps_and_shared_outputs[True]
 tests/passes/test_program.py::test_slice_gradient_combines_pads[2]
 tests/passes/test_program.py::test_slice_gradient_combines_pads[8]
+tests/passes/test_program.py::test_slot_assignment_matches_the_linear_scan
 tests/passes/test_program.py::test_spilled_function_matches_numpy
 tests/passes/test_program.py::test_strided_slice_is_not_aliased
 tests/passes/test_program.py::test_unit_loop_pass_removes_empty_and_substitutes_only_value

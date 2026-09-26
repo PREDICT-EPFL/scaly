@@ -53,7 +53,7 @@ H_CONST = measurement_matrix()
 )
 def kalman_update(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   lam_values, xbar, z, r = inputs
-  lam = linalg.SparseMatrix.from_pattern(LAM_PATTERN != 0, lam_values)  # the lower triangle of Lam
+  lam = linalg.SparseMatrix.from_pattern(LAM_PATTERN, lam_values)  # the lower triangle of Lam, in its CSC order
   h = linalg.SparseMatrix.from_scipy(H_CONST)
   kkt = linalg.SparseMatrix.block([[lam, None], [h, linalg.SparseMatrix.diag(-r)]])
   innovation = z - h @ xbar

@@ -55,10 +55,10 @@ become loops with triangular bounds that do not grow with the order:
 **Speed.** Against OpenBLAS LAPACK at orders 32–64 (measured on aarch64 Linux, gcc 11, in
 `internal/notes/tier2_pr6_report.html`):
 
-- At `-O3`, the Cholesky, `L D L^T`, triangular solve and matrix-product kernels are within 1.5×.
+- At `-O3`, the Cholesky, `L D L^T`, triangular solve and matrix-product kernels are within 1.6×.
 - Below order 32 the generated code is faster, because it has no library call overhead.
 - At gcc's `-O2`, which does not vectorize before gcc 12, the multi-right-hand-side solve and the
-  matrix product fall to 3× (see `SCALY_CC_OPT` in [Environment variables](env_vars.md)).
+  matrix product fall to 3–3.5× (see `SCALY_CC_OPT` in [Environment variables](env_vars.md)).
 
 ## Sparse `L D L^T`
 
@@ -70,7 +70,18 @@ y = fact.solve(c)                              # the same factorization, reused
 ```
 
 **Which matrices.** `SparseLDL` factors a symmetric quasi-definite matrix without pivoting, for
-example a regularized KKT system `[[P + rho I, A^T], [A, -delta I]]`.
+example a regularized KKT system `[[P + rho I, A^T], [A, -delta I]]`. Every diagonal entry must be
+stored, even where its value is zero: a zero block of `SparseMatrix.block` stores nothing, and
+`add_diagonal` stores the diagonal.
+
+`SparseLDL(matrix, *, ordering="auto", schedule="auto", symbolic=None, cost=None, name=None)`:
+
+- `symbolic` reuses an analysis (`linalg.analyze`, or another factorization's `.symbolic`); it is
+  checked against the matrix's pattern.
+- `cost` is the `CostModel` that chooses the loop segments.
+- `name` prefixes the generated procedures, and must differ between factorizations in one graph.
+- `fact.l_values` and `fact.d` are `L` below the diagonal (CSC of the permuted matrix) and `D`, in
+  the order of `fact.symbolic.perm`.
 
 **Symbolic analysis.** When the graph is built, `linalg.analyze` chooses the ordering, the
 elimination tree and the pattern of `L`. `ordering="auto"`, the default, keeps whichever of natural,
@@ -103,12 +114,16 @@ loop overhead, which dominates small systems:
 **Derivatives.** `fact.solve` carries the implicit derivative. In forward mode,
 `dx = K^{-1}(db - dK x)` is one more solve with the same factor. In reverse mode, `bbar =
 K^{-1} xbar` and `Kbar = -bbar x^T` on the entries the factorization reads (a mirrored pair
-contributes through its lower entry). The factorization loops themselves are never differentiated.
-Second derivatives use the same rules, and multi-seed forward mode maps the rule over the seeds.
+contributes through its lower entry). The factorization loops themselves are never differentiated
+to first or second order: second derivatives use the same rules, one level deeper. Third
+derivatives do go through the loops, and on a large system can exceed
+`sc.options(max_trajectory=...)` ([Options](options.md)). Multi-seed forward mode maps the rule over
+the seeds for a vector right-hand side; with a matrix of right-hand sides it runs one seed at a time.
 
 **Speed.** Against an up-looking C factorization of the QDLDL kind on the same matrix and analysis,
-MPC, random QP and grid systems factor within 1.0–1.4× and solve within 0.5–1.6×
-(`internal/notes/tier2_pr8_report.html`).
+MPC, random QP and grid systems factor within 1.0–1.5× and solve within 0.5–2.1×
+(`internal/notes/tier2_pr8_report.html`, `tier2_review_report.html`). The slowest solves are the
+smallest, where two permutation gathers and the diagonal scaling are a large share of the work.
 
 **Generation cost.** Generation grows with `nnz(L)`, not with the work of the factorization. The
 analysis and the in-place proof keep column runs as ranges instead of enumerating them. At
@@ -119,8 +134,8 @@ analysis and the in-place proof keep column runs as ranges instead of enumeratin
 a `while_loop` only while `||b - K x||_inf > tol * max(1, ||b||_inf)`, at most `k` of them. The
 derivative is the implicit one either way. On a random QP with `delta = 1e-10`, one step takes the
 residual `||b - K x||_inf` from 2e-5 to 8e-11 and two to 4e-15. The adaptive loop carries the
-factor, `K` and `b` with the solution, so it copies them once per solve and once per step; with
-few steps, a fixed count is cheaper.
+factor, `K` and `b` with the solution, so it copies them in once per solve; it then updates the
+solution and residual in place.
 
 **Health.** No pivoting happens, so a factorization of a matrix that is not quasi-definite, or not
 regularized enough, can have a zero, tiny or wrong-signed pivot. Two checks run in the generated
@@ -130,7 +145,7 @@ code next to the factorization:
   `float64` vector of 3. By Sylvester's law of inertia these are the signs of the eigenvalues of
   `K`, so an SQP or interior-point step checks it against `(n, m, 0)` and raises its regularization
   when it differs (see `examples/sqp_newton_sparse.py`).
-- `fact.health(signs=None, pivot_tol=0.0, x=None)`: a bool, true when every pivot is finite with
+- `fact.health(*, signs=None, pivot_tol=0.0, x=None)`: a bool, true when every pivot is finite with
   `|D[j]| > pivot_tol`. With `signs` (`+1`/`-1` per row of `K`), each pivot must also have the
   expected sign, the quasi-definite pattern. With `x`, every entry of the solution must be finite.
 

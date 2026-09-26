@@ -320,14 +320,14 @@ class CompiledFunction:
       if not arr.flags["C_CONTIGUOUS"]:
         arr = np.ascontiguousarray(arr)
       arg_buffers.append(arr)
-      arg_array[i] = arr.ctypes.data
+      arg_array[i] = _address(arr)
 
     outputs: list[np.ndarray] = []
     res_array = self._res_array_type()
     for i in range(self._n_res):
       out = np.empty(self._output_sizes[i], dtype=np.float64)
       outputs.append(out)
-      res_array[i] = out.ctypes.data
+      res_array[i] = _address(out)
 
     # A NumPy buffer, not ``ctypes.cast`` of a ctypes array: the cast ties the array into a reference
     # cycle, so each call's workspace lived until the next garbage collection and a loop of calls on a
@@ -339,6 +339,16 @@ class CompiledFunction:
 
     # A bool output crosses the ABI as 0.0 or 1.0 in its double array.
     return [(out != 0.0 if self._output_bool[i] else out).reshape(self._output_shapes[i]) for i, out in enumerate(outputs)]
+
+
+def _address(arr: np.ndarray) -> int:
+  """The address of a contiguous array's data. ``arr.ctypes.data`` builds a ctypes helper object
+  on each access, which costs about three times as much as reading the address through the buffer
+  protocol; that path needs a writable, non-empty buffer, so anything else takes the slow one."""
+  try:
+    return ctypes.addressof(ctypes.c_char.from_buffer(arr))
+  except (TypeError, ValueError, BufferError):
+    return arr.ctypes.data
 
 
 def get_compiled(fun: Function) -> CompiledFunction:

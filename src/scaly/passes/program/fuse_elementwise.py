@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
+
 from ...ir.match import Pattern, rewrite
 from ...ir.program import ProgramNode, ProgramOp
 from ._common import (
@@ -111,6 +113,23 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
   store_in: dict[str, set[int]] = {name: set() for name in private}
   call_in: dict[str, set[int]] = {name: set() for name in private}
   resolved_refs = [buffer_refs(stmt, aliases) for stmt in body]
+  # Statement positions writing each buffer, ascending: "is it written between i and ci" becomes a
+  # binary search instead of a scan of every statement in between.
+  writes_at: dict[str, list[int]] = {}
+  for j, refs_j in enumerate(resolved_refs):
+    for b in refs_j.writes:
+      writes_at.setdefault(b, []).append(j)
+
+  def written_between(names: set[str], lo: int, hi: int) -> bool:
+    """Whether a statement in ``(lo, hi]`` writes one of ``names``."""
+    for b in names:
+      at = writes_at.get(b)
+      if at:
+        k = bisect_right(at, lo)
+        if k < len(at) and at[k] <= hi:
+          return True
+    return False
+
   for i, stmt in enumerate(body):
     if stmt.op == ProgramOp.BUFFER:
       continue
@@ -155,7 +174,7 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
     for name in rhs_loads & inlinable.keys():
       moved_reads.discard(_resolve_alias(name, aliases))
       moved_reads.update(expanded_reads[name])
-    if ci <= i or any(moved_reads & resolved_refs[j].writes for j in range(i + 1, ci + 1)):
+    if ci <= i or written_between(moved_reads, i, ci):
       continue
     inlinable[buf] = (v, rhs)
     expanded_expensive[buf] = is_expensive

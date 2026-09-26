@@ -1012,7 +1012,7 @@ def _ensure_in_place_callee(ctx: LowerCtx, callee: Function, steps: dict[int, np
   if not DONATE_CARRIES or callee.device.kind != ctx.fun.device.kind:
     return None
   normalized = _normalize_function(callee)
-  if in_place_chain(normalized) is None and (not steps or not in_place_steps(normalized, steps)):
+  if in_place_chain(normalized) is None and not in_place_steps(normalized, steps or {}):
     return None
   name = f"{callee.name}_inplace"
   if name not in ctx.callees:
@@ -1587,7 +1587,8 @@ def update_chain(fun: Function) -> list[Expr] | None:
 
 def in_place_steps(fun: Function, steps: dict[int, np.ndarray]) -> bool:
   """Whether a loop body's update chain may overwrite its carry in place, for the index values the
-  loop feeds it: ``steps[p]`` is input ``p`` at every step, for the inputs sliced from constants.
+  loop feeds it: ``steps[p]`` is input ``p`` at every step, for the inputs sliced from constants
+  (none: every index is a constant, the same at every step).
 
   Every index of every update, and every index through which the values read a chain link, must be
   computable from those inputs and constants alone; it is then computed for all steps at once. The
@@ -1599,7 +1600,9 @@ def in_place_steps(fun: Function, steps: dict[int, np.ndarray]) -> bool:
   chain = update_chain(fun)
   if chain is None:
     return False
-  length = next(iter(steps.values())).shape[0] if steps else 0
+  # With no input sliced per step, every index comes from constants and is the same at every
+  # step: one step stands for all of them.
+  length = next(iter(steps.values())).shape[0] if steps else 1
   carry = fun.inputs[0]
   links = [carry, *chain]
   position = {e.id: j for j, e in enumerate(links)}

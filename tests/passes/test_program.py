@@ -864,3 +864,39 @@ def test_index_evaluation_truncates_toward_zero_like_c() -> None:
   assert got is not None
   expected = [int(v / 2) + (v - 3 * int(v / 3)) for v in range(-5, 6)]
   assert got.tolist() == expected
+
+
+def test_packing_reuses_a_slot_freed_by_the_previous_statement() -> None:
+  """``C`` is last read where ``D = C A`` is made, and ``E = D B`` is the next statement: ``E``
+  takes ``C``'s slot, so two 1600-element slots spill, not three."""
+
+  @sc.function(sc.G(sc.L("A", (40, 40)), sc.L("B", (40, 40))), sc.L("out0", ...), name="chain_reuse")
+  def f(inputs):
+    A, B = inputs
+    return ((A @ B) @ A @ B).sum()
+
+  assert _sz_w(f) == 3200
+
+
+def test_slot_assignment_matches_the_linear_scan() -> None:
+  """The heap-based left-edge assignment picks what scanning every slot in creation order would:
+  the first slot of the kind that is free by the first write (freed the statement after the last
+  use), else a new one."""
+  from scaly.passes.program.pack_workspace import _assign_slots
+
+  rng = np.random.default_rng(5)
+  for _ in range(200):
+    count = int(rng.integers(1, 40))
+    firsts = np.sort(rng.integers(0, 60, size=count))
+    items = [(str(rng.choice(["f", "i"])), int(f), int(f + rng.integers(0, 12))) for f in firsts]
+    free_at: dict[int, int] = {}
+    kinds: dict[int, str] = {}
+    expected = []
+    for kind, first, last in items:
+      slot = next((s for s in free_at if kinds[s] == kind and free_at[s] <= first), None)
+      if slot is None:
+        slot = len(free_at)
+        kinds[slot] = kind
+      free_at[slot] = last + 1
+      expected.append(slot)
+    assert _assign_slots(items) == expected

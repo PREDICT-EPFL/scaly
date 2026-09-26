@@ -179,8 +179,10 @@ class SparseMatrix:
   @staticmethod
   def block(blocks: Sequence[Sequence[SparseMatrix | Expr | None]]) -> SparseMatrix:
     """Assemble a block matrix, such as a KKT matrix. Each entry is a ``SparseMatrix``, a dense rank-2
-    expression (every entry stored) or ``None`` for a zero block. Every block row needs a block that
-    fixes its height and every block column one that fixes its width."""
+    block (as ``from_dense``: a constant stores its nonzeros, an expression every entry) or ``None``
+    for a zero block. Every block row needs a block that fixes its height and every block column one
+    that fixes its width. A zero block stores nothing, diagonal included: ``SparseLDL`` needs every
+    diagonal entry stored, which ``add_diagonal`` gives (as zeros if need be)."""
     grid = [[_as_sparse(b) for b in row] for row in blocks]
     if not grid or len({len(row) for row in grid}) != 1:
       raise ValueError("block needs a non-empty rectangular grid of blocks")
@@ -264,6 +266,8 @@ class SparseMatrix:
   def select(self, keep: np.ndarray) -> SparseMatrix:
     """Only the stored entries where the boolean ``keep`` (one per entry, in values' order) holds."""
     keep = np.asarray(keep, dtype=bool).reshape(-1)
+    if keep.size != self.nnz:
+      raise ValueError(f"select needs one flag per stored entry ({self.nnz}), got {keep.size}")
     rows, cols = self.coordinates()
     indptr = np.concatenate([[0], np.cumsum(np.bincount(cols[keep], minlength=self.shape[1]))])
     return SparseMatrix(self.shape, indptr, rows[keep], gather(self.values, np.flatnonzero(keep)))
@@ -294,6 +298,7 @@ class SparseMatrix:
     return self.with_values(-self.values)
 
   def __add__(self, other: Any) -> SparseMatrix:
+    _refuse_scalar(other, "add")
     other = _as_sparse(other)
     if not isinstance(other, SparseMatrix):
       return NotImplemented
@@ -311,6 +316,7 @@ class SparseMatrix:
   __radd__ = __add__
 
   def __sub__(self, other: Any) -> SparseMatrix:
+    _refuse_scalar(other, "subtract")
     other = _as_sparse(other)
     if not isinstance(other, SparseMatrix):
       return NotImplemented
@@ -378,6 +384,13 @@ class SparseMatrix:
 
   def matvec(self, x: Any) -> Expr:
     return self @ x
+
+
+def _refuse_scalar(other: Any, what: str) -> None:
+  if other is None or isinstance(other, (SparseMatrix, sparse.sparray, sparse.spmatrix)):
+    return
+  if (other.shape if isinstance(other, Expr) else np.shape(other)) == ():
+    raise TypeError(f"cannot {what} a scalar and a sparse matrix: it would store every entry; use add_diagonal, or to_dense() first")
 
 
 def _as_sparse(b: Any) -> SparseMatrix | None:

@@ -11,12 +11,13 @@ matrix is assembled as a ``SparseMatrix`` from the lower triangle of ``H`` and t
 factored by the generated sparse ``L D L^T`` and solved. The whole step is one generated
 ``Function``; the loop below it is plain Python.
 
-``H`` itself may be indefinite; the step is a descent direction when ``H`` is positive definite on
-the null space of ``J``, which holds exactly when the KKT matrix has ``NW`` positive and ``NC``
-negative eigenvalues. By Sylvester's law of inertia these are the signs of the pivots in ``D``, so
-the step returns ``fact.inertia()`` and the loop raises ``rho`` until it is right, as SQP and
-interior-point codes do. ``fact.health()`` checks that every pivot and the step are finite and
-nonzero.
+``H`` itself may be indefinite. The KKT matrix has ``NW`` positive and ``NC`` negative eigenvalues
+exactly when its Schur complement ``H + rho I + J^T J / delta`` is positive definite, which for a
+small ``delta`` and ``J`` of full row rank is ``H + rho I`` positive definite on the null space of
+``J``: the condition for a descent step. By Sylvester's law of inertia these counts are the signs
+of the pivots in ``D``, so the step returns ``fact.inertia()`` and the loop raises ``rho`` until
+they are right, as SQP and interior-point codes do. ``fact.health(x=step)`` checks that every pivot
+is finite and nonzero and the step finite.
 """
 
 from __future__ import annotations

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import heapq
+
+from collections.abc import Hashable, Sequence
 from dataclasses import dataclass, field
 
 from ...ir.match import Pattern, rewrite
@@ -65,6 +68,9 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
   first_write: dict[str, int] = {}
   last_use: dict[str, int] = {}
   deps: dict[str, set[str]] = {}
+  # The closures only matter at a CALL; without one (straight-line code, typically) they would
+  # cost time quadratic in the length of a dependency chain for nothing.
+  track_deps = any(n.op == ProgramOp.CALL for stmt in body if stmt.op != ProgramOp.BUFFER for n in _walk(stmt))
   for i, stmt in enumerate(body):
     if stmt.op == ProgramOp.BUFFER:
       continue
@@ -81,12 +87,14 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
     # Take the closure from the dependencies *before* the statement: updating ``deps`` while
     # iterating ``writes`` made the result depend on set order, so the generated C varied with
     # ``PYTHONHASHSEED`` whenever a statement wrote one buffer and read another it also wrote.
-    produced_from = set(reads)
-    for r in reads:
-      produced_from.update(deps.get(r, set()))
+    if track_deps:
+      produced_from = set(reads)
+      for r in reads:
+        produced_from.update(deps.get(r, set()))
+      for b in writes:
+        deps[b] = set(produced_from)
     for b in writes:
       first_write.setdefault(b, i)
-      deps[b] = set(produced_from)
     for b in writes | reads:
       last_use[b] = i
     for n in _walk(stmt):
@@ -95,27 +103,22 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
 
   # Pack per dtype, in first-write order (ties: declaration order via the dict insertion order).
   order = sorted((name for name in packable if name in first_write), key=lambda b: (first_write[b], b))
-  free_at: dict[str, int] = {}  # slot -> first statement index at which it is reusable
+  ranks = _assign_slots([(packable[buf].dtype, first_write[buf], last_use[buf]) for buf in order])
+  names: dict[int, str] = {}
   used_names = {n.attrs["name"] for n in _walk(proc) if n.op == ProgramOp.BUFFER}
   counter = 0
-  for buf in order:
-    dt = packable[buf].dtype
-    size = _size_of(packable[buf].attrs["shape"])
-    chosen: str | None = None
-    for slot, fa in free_at.items():
-      if plan.slot_dtype[slot] == dt and fa <= first_write[buf]:
-        chosen = slot
-        break
-    if chosen is None:
+  for buf, rank in zip(order, ranks, strict=True):
+    if rank not in names:
       while (chosen := f"s{counter}") in used_names:
         counter += 1
       used_names.add(chosen)
       counter += 1
-      plan.slot_dtype[chosen] = dt
+      names[rank] = chosen
+      plan.slot_dtype[chosen] = packable[buf].dtype
       plan.slot_size[chosen] = 0
+    chosen = names[rank]
     plan.rename[buf] = chosen
-    plan.slot_size[chosen] = max(plan.slot_size[chosen], size)
-    free_at[chosen] = last_use[buf] + 1
+    plan.slot_size[chosen] = max(plan.slot_size[chosen], _size_of(packable[buf].attrs["shape"]))
 
   # Spill plan: float64 slots at/above the threshold get a sequential window in w[].
   total = 0
@@ -125,6 +128,32 @@ def _plan_pack(proc: ProgramNode) -> _PackPlan:
       total += plan.slot_size[slot]
   plan.own_spill = total
   return plan
+
+
+def _assign_slots(items: Sequence[tuple[Hashable, int, int]]) -> list[int]:
+  """Greedy left-edge slot assignment. ``items`` are buffers in first-write order, each ``(kind,
+  first write, last use)``; each takes the earliest-created slot of its kind that is free by its
+  first write (a slot frees the statement after its buffer's last use), else a new slot. Returns
+  each buffer's slot, numbered in creation order.
+
+  First writes only grow along ``items``, so a slot once free stays free until it is taken: per
+  kind, slots wait in a heap by the position they free at and move to a heap by creation order
+  when that position is reached."""
+  waiting: dict[Hashable, list[tuple[int, int]]] = {}
+  free: dict[Hashable, list[int]] = {}
+  slots: list[int] = []
+  created = 0
+  for kind, first, last in items:
+    pending, ready = waiting.setdefault(kind, []), free.setdefault(kind, [])
+    while pending and pending[0][0] <= first:
+      heapq.heappush(ready, heapq.heappop(pending)[1])
+    if ready:
+      slot = heapq.heappop(ready)
+    else:
+      slot, created = created, created + 1
+    slots.append(slot)
+    heapq.heappush(pending, (last + 1, slot))
+  return slots
 
 
 def pack_workspace(prog: ProgramNode) -> ProgramNode:
