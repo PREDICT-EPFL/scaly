@@ -158,4 +158,7 @@ block-diagonal system then colors each block separately.
 optimal-control problem, with the Hessian and the constraint Jacobian as sparse matrices and
 inertia correction. `examples/kalman_update.py` updates a spatial field with a sparse information
 prior through a quasi-definite system and differentiates the update: its Jacobian in the
-measurements is the Kalman gain.
+measurements is the Kalman gain. `examples/heat_control.py` steps a heat equation implicitly with one
+factorization and optimizes the heating through the solves' implicit rules;
+`examples/truss_sizing.py`, `examples/lasso_admm.py`, `examples/lqr_tuning.py` and
+`examples/hanging_chain.py` use the dense kernels. `examples/README.md` lists them all.

@@ -271,6 +271,14 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       (in `ir/expr.py`) now puts a stand-in input for such a `wrt`, and `jvp`, `jvp_many`, `vjp`,
       `vjp_many`, `jacobian_sparsity` and the colored, reference and Hessian sparse paths map the
       result back; the stand-in also keeps `simplify` from folding `x[:3][1]` past the `wrt`.
+- [x] **C-121. Examples for the Tier 1 and 2 capabilities.** Six control, optimization and solve
+      problems in `examples/` (indexed in `examples/README.md`): value iteration for a slippery
+      grid (segment ops, `while_loop`, `int64` policy), the LASSO by ADMM (dense Cholesky,
+      soft thresholding), LQR weight tuning through the Riccati and closed-loop `scan`s (step
+      index, negative stride, reverse mode through loops), truss sizing (`put_add`/`take` with a
+      run-time bar table), optimal heating of a plate (`SparseLDL` time stepping, `sc.S` between
+      Functions) and a hanging-chain calibration (Newton in a `while_loop`, `isfinite`,
+      `custom_derivative`). `tests/integration/test_examples.py` checks each against NumPy/SciPy.
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 

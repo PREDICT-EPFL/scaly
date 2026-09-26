@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 2 Follow-ups</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · follow-ups before Tier 3</h1>
+<p class="sub">C-118 … C-121 · the Mac run, sparse matrices in <code>Function</code> signatures, derivatives in non-input expressions, examples · branch <code>claude/tier2-sparse</code> (after the <code>tier2-complete</code> tag) · 26 Sep 2026 · first Claude Code session</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b></p>
+<ul>
+<li><b>Mac run (C-118).</b> The first macOS run gave 1 575 passed and 2 failed. Both failures were one race: <code>recompile()</code> deleted a cache directory while another process was building into it. A build now restarts once in that case. ty found 30 diagnostics in the Tier 2 tests, now fixed.</li>
+<li><b><code>sc.S(name, pattern)</code> (C-119).</b> A sparse matrix's pattern is now part of a <code>Function</code>'s signature. The body receives a <code>SparseMatrix</code>. A call that passes another pattern, symbolically or as a SciPy matrix, is refused. Results come back as a <code>SparseMatrix</code> or a <code>csc_array</code>. The generated code is byte-identical to that of a Function over the values vector, and a test pins this.</li>
+<li><b>A silent AD bug (C-120).</b> Forward-mode and sparse derivatives with respect to a slice of an input returned <b>zeros</b>, with no error. The hanging-chain example exposed it: a Newton step inside a <code>while_loop</code> differentiates with respect to a slice of the carry. Fixed by putting a stand-in input in place of such a <code>wrt</code> at the entry points.</li>
+<li><b>Six examples (C-121)</b> of control, optimization and numerical solves, each checked against NumPy or SciPy.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 1 615 passed, 0 skipped on the Mac (Apple clang 21, Python 3.14.3). ruff and ty are clean except for untracked local files. <b>Mutation checks:</b> 28 mutants. 25 were killed, four of them only after a test was added. The other three were equivalent and exposed dead code, which was deleted.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Item</th><th>Details</th></tr>
+<tr><td>JIT cache race (C-118)</td><td><ul>
+<li><code>_build_artifact</code> writes, compiles and renames inside <code>_compile_into</code>. If that raises and the cache directory is gone, it runs once more. A compiler error with the directory still present is raised immediately.</li>
+<li>ty fixes: mypy-style <code># type: ignore[arg-type]</code> became <code># ty: ignore[...]</code>; <code>Literal</code>-typed parameters in the Tier 2 tests; <code>SparseMatrix.block</code> is now annotated to accept NumPy and SciPy blocks, as it already did at run time.</li>
+<li>The handoff note's union recipe for the node-ID baseline contradicted <code>conftest.py</code>, which refuses stale ids. It now points to the documented recipe.</li>
+</ul></td></tr>
+<tr><td><code>sc.S</code> (C-119)</td><td><ul>
+<li><code>scaly.linalg.sparse.S</code> is a <code>Tree</code> leaf, so the import layers still point down. It stores the pattern as a <code>SparsityType</code> in the order of the values, plus CSC arrays for the checks.</li>
+<li>Trees gained <code>infer(value)</code>, which resolves <code>sc.S(name, ...)</code> from the traced body, and <code>sparsities</code>. <code>Function.__init__</code> passes those sparsities on as the output metadata, the same route <code>_from_exprs(output_sparsities=...)</code> already took.</li>
+<li><code>SymbolicValue</code> marks library values that stand for an <code>Expr</code> leaf. <code>SparseMatrix</code> is one, so <code>fn((K, x))</code> dispatches symbolically.</li>
+<li>Evaluations accept any SciPy format. Float64 CSC is used as it is, and a non-canonical matrix is canonicalized on a copy, never in place. Explicitly stored zeros count as stored. A pattern mismatch is reported by column, for example <code>column 0 stores rows [0], expected [0, 2]</code>.</li>
+<li>Derived Functions (<code>gradient</code>, <code>lagrangian_hessian</code>) keep the tree, so their sparse arguments are checked too.</li>
+</ul></td></tr>
+<tr><td>Derivatives in non-input expressions (C-120)</td><td><ul>
+<li><code>ir.expr.independent(exprs, wrts)</code> replaces every <code>wrt</code> that is not an input with a stand-in input and returns the map back.</li>
+<li>Applied in <code>jvp</code>, <code>jvp_many</code>, <code>vjp</code>, <code>vjp_many</code>, <code>jacobian_sparsity</code>, <code>sparse_jacobian_colored</code>, <code>sparse_jacobian_reference</code> and <code>sparse_hessian</code>, including the compressed batch that <code>triangle()</code> reads later. <code>hessian</code>, <code>jacobian</code>, <code>gradient</code> and <code>sparse_jacobian</code> reach the guarded primitives.</li>
+<li>Semantics: the <code>wrt</code> is independent, and other paths to the inputs are held fixed. That is what reverse mode already computed.</li>
+</ul></td></tr>
+<tr><td>Examples (C-121)</td><td><ul>
+<li><code>mdp_value_iteration.py</code>: a slippery-grid robot. Segment ops, <code>while_loop</code>, an <code>int64</code> policy.</li>
+<li><code>lasso_admm.py</code>: compressed sensing by ADMM. A Woodbury <code>x</code> step with dense <code>cholesky</code>, and soft thresholding with <code>copysign</code>.</li>
+<li><code>lqr_tuning.py</code>: LQR weights for a quadrotor in a gust, tuned on a vehicle 20% heavier than modelled. The Riccati and closed-loop <code>scan</code>s use the step index and a negative stride, with reverse mode through both.</li>
+<li><code>truss_sizing.py</code>: minimum-compliance design. <code>put_add</code>/<code>take</code> with the bar table as a run-time <code>int64</code> input.</li>
+<li><code>heat_control.py</code>: optimal heating of a two-material plate. <code>SparseLDL</code> time stepping, and <code>sc.S</code> passes <code>K</code> between Functions.</li>
+<li><code>hanging_chain.py</code>: stiffness and mass from two photographs. Newton in a <code>while_loop</code> with an <code>isfinite</code> safeguard, and a <code>custom_derivative</code> implicit rule.</li>
+</ul></td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<div class="scroll"><table>
+<tr><th>Area</th><th>Tests</th><th>Mutants</th></tr>
+<tr><td>JIT race</td><td>The directory vanishes mid-build and the build succeeds. A failing compile runs the compiler once.</td><td class="r">2 / 2 killed (one after a test was added)</td></tr>
+<tr><td><code>sc.S</code></td><td>19 tests in <code>tests/linalg/test_sparse_signature.py</code>: every pattern spelling; SciPy formats; explicit zeros; duplicates without mutating the caller's matrix; five refusals; symbolic checks; inferred and explicit results; chaining two Functions; <b>the same C body and header as the values-vector Function</b>; derivatives; <code>lagrangian_hessian</code> multipliers; groups; <code>diff</code>; results sharing no structure with the declaration.</td><td class="r">14 / 14 killed (two after tests were added); one equivalent mutant exposed a redundant canonical check, now removed</td></tr>
+<tr><td>Non-input <code>wrt</code></td><td>9 tests in <code>tests/ad/test_wrt_expressions.py</code>. Every dense, primitive and sparse form, in all three triangles, is compared against the same derivative taken with an input symbol in the <code>wrt</code>'s place. Also: a slice and an input in one <code>vjp</code>, the structured map path, a triangle taken later, and Newton on a loop carry.</td><td class="r">9 / 9 killed (one after a test was added); two equivalent guards (<code>hessian</code>, <code>sparse_jacobian</code>) removed as dead code</td></tr>
+<tr><td>Examples</td><td>8 tests in <code>tests/integration/test_examples.py</code>. Values match NumPy value iteration; the LASSO satisfies its KKT conditions; the LQR cost and gradient match NumPy and finite differences; the truss compliance and gradient match a textbook reference, and so does a moved truss through the same compiled code; the heat simulation matches <code>spsolve</code> and its gradient matches finite differences; the chain's equilibrium gradient is below 10⁻⁹ and the fit is within 15%.</td><td class="r">—</td></tr>
+</table></div>
+<p>A stale <code>.pyc</code> once made a restored file run as its mutant, because the mutant and the original have the same size and were written within the same second. The mutation script now runs with <code>PYTHONDONTWRITEBYTECODE=1</code>, and every mutant was re-run that way.</p>
+
+<h2>3. Benchmarks</h2>
+<p>The Python cost of a numerical call through <code>sc.S</code> (<code>perf_2026_09_26_tier2/followup_sparse_args.py</code>; Apple M-series, clang, µs, medians):</p>
+<div class="scroll"><table>
+<tr><th>n</th><th>nnz</th><th>flat seam</th><th>S, CSC in</th><th>S, CSR in</th><th>S out</th></tr>
+<tr><td class="r">10</td><td class="r">55</td><td class="r">5.4</td><td class="r">12.2</td><td class="r">24.2</td><td class="r">34.4</td></tr>
+<tr><td class="r">100</td><td class="r">597</td><td class="r">4.5</td><td class="r">11.9</td><td class="r">25.0</td><td class="r">36.0</td></tr>
+<tr><td class="r">1 000</td><td class="r">5 998</td><td class="r">11.2</td><td class="r">19.0</td><td class="r">42.4</td><td class="r">49.1</td></tr>
+<tr><td class="r">10 000</td><td class="r">59 994</td><td class="r">86.9</td><td class="r">89.3</td><td class="r">237.9</td><td class="r">129.3</td></tr>
+</table></div>
+<p>About 7 µs on a CSC argument, mostly the pattern comparison and the tree. A sparse result costs SciPy's constructor, about 5 µs, plus fresh index arrays. The flat seam stays available for hot loops, and the IPM's inner loops run in generated code anyway.</p>
+
+<h2>4. Next</h2>
+<ul>
+<li>C-122: two <code>Expr</code> indexing papercuts, <code>np.int64</code> indices and NumPy-array indices.</li>
+<li>Tier 3, on <code>claude/tier3-ipm</code>, once the start-of-tier decisions are settled.</li>
+</ul>
+</main></body></html>
