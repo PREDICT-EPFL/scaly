@@ -236,10 +236,10 @@ class Kernels:
     noisy factor, only PIQP's own test counts and retries scale the regularization."""
     return where(l_diag * l_diag > EPS * c_diag, 0.0, 1.0).sum() < 0.5
 
-  def _attempt(self, d: Expr, v: Expr, rho: Expr, delta: Expr, ir: Expr) -> tuple[Expr, Expr]:
+  def _attempt(self, d: Expr, v: Expr, rho: Expr, delta: Expr, ir: Expr) -> tuple[list[Expr], Expr]:
     """``update_scalings_and_factor``: the regularizations for the current slacks and duals, the
-    static one if refinement is on, and the factorization. Returns the record and whether it
-    succeeded."""
+    static one if refinement is on, and the factorization. Returns the parts of the record and
+    whether it succeeded."""
     s, r = self.s, self.refinement
     fn, _ = self._factorization
     mats, xb = self.matrices(d)
@@ -261,8 +261,7 @@ class Kernels:
     reg = where(ir, r.static_eps + r.static_rel * max_diag, 0.0)
     x_reg, delta_reg, z_reg_ir = x_reg + reg, delta + reg, z_reg + reg
     f, ok, digits = fn.symbolic_call((d, x_reg, delta_reg, z_reg_ir))
-    rec = concat([stack([delta, delta_reg]), x_reg, z_reg, z_reg_ir, f])
-    return rec, where(ir, ok, digits) > 0.5
+    return [stack([delta, delta_reg]), x_reg, z_reg, z_reg_ir, f], where(ir, ok, digits) > 0.5
 
   @cached_property
   def _retry(self) -> tuple[Function, Function]:
@@ -283,7 +282,8 @@ class Kernels:
       [rho, delta, reg_limit, ir, h["retries"] + where(retry, 1.0, 0.0), Expr.const(1.0), where(ok, 1.0, 0.0), where(retry, 1.0, h["changed"])]
     )
     names = ["c", "D", "V"]
-    body = Function._from_exprs(f"{self.name}_factor_try", [c, d, v], [concat([head, rec])], names, ["next"])
+    # One concatenation, so the factor goes from the factorization's result into the carry once.
+    body = Function._from_exprs(f"{self.name}_factor_try", [c, d, v], [concat([head, *rec])], names, ["next"])
     again = logical_and(h["ok"] < 0.5, logical_or(h["ir"] < 0.5, h["retries"] < float(r.max_factor_retires)))
     go = logical_or(h["tried"] < 0.5, again)
     cond = Function._from_exprs(f"{self.name}_factor_go", [c, d, v], [go], names, ["go"])

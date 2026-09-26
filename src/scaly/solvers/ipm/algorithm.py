@@ -139,11 +139,13 @@ class Layout:
 
 
 def state_layout(s: QPStructure) -> Layout:
-  """The loop's carry: the iterate, the proximal centres (``xi``, ``lam``, ``nu_*``) and PIQP's
-  info scalars (``SCALARS``)."""
+  """The loop's carry: the iterate, the proximal centres (``xi``, ``lam``, ``nu_*``), the
+  unregularized residuals of the iterate (``r_*``, as PIQP keeps ``res_nr`` from one iteration to
+  the next) and PIQP's info scalars (``SCALARS``)."""
   nl, nu = s.x_l_idx.size, s.x_u_idx.size
   sizes = dict(zip(("x", "y", "z_l", "z_u", "z_bl", "z_bu", "s_l", "s_u", "s_bl", "s_bu"), Iterate.sizes(s), strict=True))
   sizes.update({"xi": s.n, "lam": s.p, "nu_l": s.m, "nu_u": s.m, "nu_bl": nl, "nu_bu": nu})
+  sizes.update({"r_x": s.n, "r_y": s.p, "r_z_l": s.m, "r_z_u": s.m, "r_z_bl": nl, "r_z_bu": nu})
   sizes.update({name: 1 for name in SCALARS})
   return Layout(sizes)
 
@@ -343,6 +345,20 @@ def _prox_of(st: dict[str, Expr]) -> Iterate:
   return Iterate(st["xi"], st["lam"], st["nu_l"], st["nu_u"], st["nu_bl"], st["nu_bu"], none, none, none, none)
 
 
+RESIDUALS = ("r_x", "r_y", "r_z_l", "r_z_u", "r_z_bl", "r_z_bu")
+
+
+def _residuals_of(st: dict[str, Expr]) -> Iterate:
+  """The carried residuals, with the zero complementarity parts ``residuals`` gives."""
+  x, y, z_l, z_u, z_bl, z_bu = (st[k] for k in RESIDUALS)
+  return Iterate(x, y, z_l, z_u, z_bl, z_bu, z_l * 0.0, z_u * 0.0, z_bl * 0.0, z_bu * 0.0)
+
+
+def _set_residuals(st: dict[str, Expr], nr: Iterate) -> None:
+  for name, e in zip(RESIDUALS, (nr.x, nr.y, nr.z_l, nr.z_u, nr.z_bl, nr.z_bu), strict=True):
+    st[name] = e
+
+
 def _set_iterate(st: dict[str, Expr], v: Iterate) -> None:
   for name, e in zip(("x", "y", "z_l", "z_u", "z_bl", "z_bu", "s_l", "s_u", "s_bl", "s_bu"), v.fields(), strict=True):
     st[name] = e
@@ -451,6 +467,7 @@ class Solver:
     state.update({"xi": v.x, "lam": v.y, "nu_l": v.z_l, "nu_u": v.z_u, "nu_bl": v.z_bl, "nu_bu": v.z_bu})
     state.update({k: Expr.const(0.0) for k in SCALARS})
     state.update(info)
+    _set_residuals(state, nr)
     state.update(
       {
         "rho": factor.rho,
@@ -478,7 +495,9 @@ class Solver:
     """One pass of PIQP's loop after its convergence test: the infeasibility tests, then the step."""
     s, t = self.s, self.settings
     v, prox = _iterate_of(st), _prox_of(st)
-    nr, info = it.residuals(v)
+    # The residuals of this iterate, as the previous pass (or the initial point) left them.
+    nr = _residuals_of(st)
+    info = {k: st[k] for k in ("primal_res", "primal_res_rel", "dual_res", "dual_res_rel")}
     res, reg = it.regularized(nr, v, prox, st["rho"], st["delta"], {**info})
     primal_inf = logical_and(
       logical_and(st["no_dual_update"] > float(min(5, t.reg_finetune_dual_update_threshold)), reg["primal_prox_inf"] > t.infeasibility_threshold),
@@ -634,6 +653,7 @@ class Solver:
       # Only x and y centre moves in PIQP's branch without inequalities.
       new_prox.update({k: getattr(prox, attr) for k, attr in (("nu_l", "z_l"), ("nu_u", "z_u"), ("nu_bl", "z_bl"), ("nu_bu", "z_bu"))})
     _set_iterate(new, v_new)
+    _set_residuals(new, nr_new)
     new.update(new_prox)
     new.update(info_new)
     new.update(

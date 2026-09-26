@@ -106,13 +106,16 @@ def run(
   refine_always: bool | None = None,
   scale_cost: bool | None = None,
   workdir: Path | None = None,
+  repeat: int = 0,
 ) -> Trace:
-  """Vendored PIQP on ``qp`` with default settings except those given."""
+  """Vendored PIQP on ``qp`` with default settings except those given. With ``repeat``, the solve
+  runs that many more times in the same process and ``info["solve_time_min"]`` is the fastest."""
   workdir = workdir or cache_root() / "piqp_trace" / "problems"
   workdir.mkdir(parents=True, exist_ok=True)
   path = workdir / f"{qp.name}_{'dense' if dense else 'sparse'}_{max_iter}_{refine_always}_{scale_cost}_{os.getpid()}.bin"
   write_problem(qp, path, dense=dense, max_iter=max_iter, refine_always=refine_always, scale_cost=scale_cost)
-  out = subprocess.run([str(driver()), str(path)], check=True, capture_output=True, text=True)
+  env = {**os.environ, "SCALY_TRACE_REPEAT": str(repeat)} if repeat else None
+  out = subprocess.run([str(driver()), str(path)], check=True, capture_output=True, text=True, env=env)
   return parse(out.stdout)
 
 

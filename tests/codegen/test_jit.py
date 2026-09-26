@@ -161,18 +161,24 @@ def test_deep_block_callee_temporaries_do_not_shadow_inputs(isolated_cache, inpu
   np.testing.assert_allclose(root(np.array([0.3])), expected)
 
 
-def test_each_calls_workspace_is_released_without_a_garbage_collection(isolated_cache) -> None:
-  """A call's workspace must be freed when the call returns. ``ctypes.cast`` of a ctypes array puts
-  the array in a reference cycle, which kept every workspace alive until the next collection."""
+def _large_workspace_function(name: str, steps: int = 3000) -> sc.Function:
+  z0, us = sc.sym("z0", 4), sc.sym("us", steps)
+  c, u = sc.sym("c", 4), sc.sym("u", 1)
+  # Nonlinear, so that the gradient reads back the carries the forward pass stored.
+  step = sc.Function._from_exprs(f"{name}_step", [c, u], [c.sin() * 0.99 + u[0] * 0.01], ["c", "u"], ["cn"])
+  (final,) = sc.scan(step, z0, [(us, 0, 1)], length=steps)
+  (grad,) = sc.vjp((final,), (us,), (sc.const(np.ones(4)),))  # stores 3000 carries: a large workspace
+  return sc.Function._from_exprs(name, [z0, us], [grad], ["z0", "us"], ["g"])
+
+
+def test_a_loop_of_calls_does_not_grow_memory(isolated_cache) -> None:
+  """Calls reuse one workspace per thread. Before, each call allocated its own, and ``ctypes.cast``
+  of a ctypes array put it in a reference cycle, which kept every one alive until the next
+  collection."""
   import gc
   import tracemalloc
 
-  z0, us = sc.sym("z0", 4), sc.sym("us", 3000)
-  c, u = sc.sym("c", 4), sc.sym("u", 1)
-  step = sc.Function._from_exprs("ws_step", [c, u], [c * 0.99 + u[0]], ["c", "u"], ["cn"])
-  (final,) = sc.scan(step, z0, [(us, 0, 1)], length=3000)
-  (grad,) = sc.vjp((final,), (us,), (sc.const(np.ones(4)),))  # stores 3000 carries: a large workspace
-  fn = sc.Function._from_exprs("ws_grad", [z0, us], [grad], ["z0", "us"], ["g"])
+  fn = _large_workspace_function("ws_grad")
   point = (np.ones(4), np.zeros(3000))
   fn(point)
   workspace_bytes = 8 * fn._compiled._sz_w
@@ -188,6 +194,35 @@ def test_each_calls_workspace_is_released_without_a_garbage_collection(isolated_
     tracemalloc.stop()
     gc.enable()
   assert grown < 2 * workspace_bytes
+
+
+def test_the_workspace_is_reused_and_its_contents_never_read(isolated_cache) -> None:
+  """The kernel treats its workspace as uninitialized locals: a reused one, even full of NaN, gives
+  the same result as a fresh one."""
+  fn = _large_workspace_function("ws_reuse")
+  point = (np.ones(4), np.linspace(-1.0, 1.0, 3000))
+  first = fn(point)
+  compiled = fn._compiled
+  work = compiled._workspace()
+  assert work is not None and work is compiled._workspace()
+  work[:] = np.nan
+  np.testing.assert_array_equal(fn(point), first)
+
+
+def test_threads_get_workspaces_of_their_own(isolated_cache) -> None:
+  """ctypes releases the GIL during the call, so calls from several threads overlap: each thread has
+  its own workspace, which the backward pass reads the forward pass's carries back from."""
+  from concurrent.futures import ThreadPoolExecutor
+
+  fn = _large_workspace_function("ws_threads", steps=20000)
+  points = [(np.full(4, float(k)), np.linspace(-1.0, 1.0, 20000) * k) for k in range(1, 9)]
+  want = [fn(point) for point in points]
+
+  def work(k: int) -> bool:
+    return all(np.array_equal(fn(points[k]), want[k]) for _ in range(25))
+
+  with ThreadPoolExecutor(max_workers=8) as pool:
+    assert all(pool.map(work, range(8)))
 
 
 def test_integer_inputs_reach_callees_as_integers(isolated_cache) -> None:
@@ -233,10 +268,14 @@ def test_inputs_of_every_memory_kind() -> None:
   fn = sc.Function._from_exprs("mem_kinds", [x, e], [x * 2.0, e + 1.0], ["x", "e"], ["y", "z"])
   frozen = np.arange(3.0)
   frozen.setflags(write=False)
-  for value in (np.arange(3.0), frozen, np.arange(6.0)[::2] / 2.0, [0.0, 1.0, 2.0]):
+  strided = (np.arange(6.0) / 2.0)[::2]
+  assert not strided.flags.c_contiguous
+  for value in (np.arange(3.0), frozen, strided, [0.0, 1.0, 2.0]):
     y, z = fn._flat_numerical_call(value, np.zeros(0))
     np.testing.assert_array_equal(y, [0.0, 2.0, 4.0])
     assert z.shape == (0,)
+  with pytest.raises(ValueError, match="shape"):
+    fn._flat_numerical_call(np.arange(4.0), np.zeros(0))
 
 
 def test_build_survives_its_cache_directory_vanishing(isolated_cache, monkeypatch) -> None:
@@ -264,6 +303,7 @@ def test_a_failing_compile_is_not_retried(isolated_cache, monkeypatch) -> None:
     calls.append(cmd)
     raise jit.subprocess.CalledProcessError(1, cmd, stderr="boom")
 
+  jit.compile_flags()  # asks the compiler for its banner once per process; not a compile
   monkeypatch.setattr(jit.subprocess, "run", failing_run)
   with pytest.raises(jit.JitError, match="boom"):
     _simple_fn()(np.zeros(3))

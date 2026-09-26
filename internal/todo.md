@@ -254,7 +254,11 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       columns per pass make the order-64 Cholesky 31% faster at `-O2` than the generated code at
       `-O3` (decide with C-107). For small sparse solves: fold `y / D` into the backward sweep and
       write the final permutation straight into the output (5–9% on grid 30×30), and move large
-      stack arrays (`double s0[n]`) into the workspace.
+      stack arrays (`double s0[n]`) into the workspace. The dense IPM backend makes this urgent
+      (T3-6): its Cholesky is 80% of a step and runs at about 3 G multiply-adds/s at n ≈ 300, a
+      quarter of Eigen's blocked `LLT` in PIQP (PRIMALC5 1.26 ms against PIQP's whole 0.39 ms
+      iteration). Register blocking of the Crout dot products saves loads but not 4x; a blocked
+      factorization with register-tiled update kernels is what closes it.
 - [x] **C-118. Tier 2 on the Mac.** The first macOS run (Apple clang 21): 1 575 passed, 2 failed.
       Both failures were one race: `recompile()` removes `~/.cache/scaly/jit/<key>`, and a build
       writing into that directory at the same moment lost its temp file. A build now starts over
@@ -369,8 +373,25 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       backend (needs the sum of |L|^2 |D| per pivot), or PIQP's AMD ordering for KKT matrices.
 - [ ] **C-131. The retry loop copies the factor.** The factor travels through the retry loop's
       carry: about five copies of `nnz(L) + n` values (sparse) or `n^2` (dense) per factorization,
-      +5–23% on factor + two solves against T3-3's direct factorization (interleaved A/B). Write
-      the factorization's result in place into the carry, or keep the factor out of the carry.
+      +5–23% on factor + two solves against T3-3's direct factorization (interleaved A/B). T3-6 took
+      one copy out (one concatenation into the carry); what is left costs about 1.5 µs of a 32 µs
+      sparse step (QSC205). The in-place carry proof does not apply: it counts a value reached
+      through a call, here the factorization, as reading every carry entry.
+- [x] **C-132. The generated IPM's speed (T3-6).** A fair protocol first: both sides warmed up
+      (the trace driver repeats PIQP's solve in-process, `SCALY_TRACE_REPEAT`; the first calls of
+      a burst run up to 1.6x slower on Apple Silicon) and the minimum of equally many samples; the
+      1.96x of C-129 was mostly cold starts and medians under a busy indexer. C-side profiling (a
+      piece run K times in a loop, with a run-time zero multiplier so it is not folded) put a sparse
+      step at 1.1-1.4x PIQP's iteration, the factorization its largest part. Changes: the loop carries
+      the residual vectors instead of recomputing them at the top of each step; the Function-call
+      layer passes conforming arrays through as they are (C-100) and reuses one workspace per thread
+      (the kernel never reads workspace it did not write; a test poisons it with NaN, another runs
+      calls from 8 threads); one copy of the factor less per retry loop (C-131). Result, 51 problems:
+      sparse 1.49x PIQP's warmed solve where that takes at least 50 µs (35 problems), 2.11x over
+      all (tiny problems pay a ~12 µs Python call against 1-5 µs C-timed solves), 0.91x PIQP's
+      setup + solve; dense 2.45x / 2.96x / 1.67x (its Cholesky kernel, C-117). 7-12% of it from
+      these changes (A/B on 12 problems). Next levers: C-114 (the factorization is 40-60% of a
+      sparse step) and C-117 (`perf_2026_09_26_tier3/t3_4_ipm.py`, `notes/tier3_pr5_report.html`).
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 
@@ -430,10 +451,12 @@ protocol's compile flags.
       one triangle and mirror it. Measured −38 to −43% (RK4) and −13 to −25% (MPC) by hand.
 - [ ] **C-99. No ping-pong buffer for small carries.** A carry of a few doubles can stay in
       locals; −40% on the MPC gradient, but 12% slower above about 32 doubles, so gate it.
-- [ ] **C-100. Trim the Function-call layer.** A trivial JIT call costs 4.6 µs, 2.7 of them in
-      flattening and validating inputs before the ctypes call; a fast path for float64 C-contiguous
-      arrays of the right shape and cached leaf metadata should halve it. (C-113 took the address
-      reads from `arr.ctypes.data` to the buffer protocol: `run` 4.2 → 3.1 µs.)
+- [x] **C-100. Trim the Function-call layer.** A trivial JIT call cost 4.6 µs, 2.7 of them in
+      flattening and validating inputs before the ctypes call. (C-113 took the address reads from
+      `arr.ctypes.data` to the buffer protocol: `run` 4.2 → 3.1 µs.) Done in T3-6 (C-132): an array
+      already of the declared shape, dtype and layout passes `L.flatten_numerical` and `run`
+      as is, and `DType.numpy()` is cached: a trivial call takes 2.9 µs, a 9-input one 12 instead of
+      22 µs.
 - [x] **C-43. Lower matmul by layout.** `_lower_matmul` emits every product as
       `for i { out[i] = 0; for k out[i] += A[i,k] v[k] }`, a serial add chain per output that the C
       compiler cannot break without reassociation; `casadi_mtimes_dense` has the same shape, which is

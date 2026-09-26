@@ -1,6 +1,6 @@
 # PIQP in Scaly — living plan
 
-**Status:** Tier 1 done (git tag `tier1-complete`) · Tier 2 done on `claude/tier2-sparse` (git tag `tier2-complete`, follow-ups C-118 … C-121 after it) · Tier 3 in progress on `claude/tier3-ipm` (T3-0 … T3-5 done: the generated solver takes PIQP's decisions) · last updated 2026-09-26 (v4.6)
+**Status:** Tier 1 done (git tag `tier1-complete`) · Tier 2 done on `claude/tier2-sparse` (git tag `tier2-complete`, follow-ups C-118 … C-121 after it) · Tier 3 in progress on `claude/tier3-ipm` (T3-0 … T3-6 done: the generated solver takes PIQP's decisions, sparse within 1.5x of its solve time; T3-R next) · last updated 2026-09-26 (v4.7)
 **Copies:** repo `internal/notes/piqp_plan.md` is authoritative from Tier 3 on, since work continues in Claude Code; the claude.ai project doc `claude/piqp-plan.md` is a mirror. Background and review evidence: `internal/notes/piqp_plan_2026_09_26.html` (v3; superseded where they differ). Status summaries: `internal/notes/tier1_implementation_status.md`, `internal/notes/tier2_implementation_status.md`; working conventions for new sessions: `internal/notes/claude_code_handoff.md`.
 
 ## Goal and principles
@@ -119,7 +119,7 @@ Draft PR sequence (agreed 2026-09-26):
 | T3-3 | KKT-solver interface; dense condensed Cholesky and sparse full-KKT `SparseLDL` backends (#20) | done (C-127): both match the reference's solves; factor + 2 solves at 1.3-1.8x (sparse) and 1.5-3x (dense) PIQP's whole iteration |
 | T3-4 | One IPM iteration as a Function: residuals and termination, fraction to boundary, Mehrotra, initial point, infinite bounds, proximal updates, boundary shift, infeasibility checks (#21–#28), matched step by step against the reference | done with T3-5 in one PR (C-129) |
 | T3-5 | Outer `while_loop`; dense backend end to end against the reference (the tier gate) | done (C-129): `scaly.solvers.ipm.Solver`, both backends, with PIQP's retries and refinement (#29, moved from Tier 4); the gate is met against PIQP per backend |
-| T3-6 | Sparse backend end to end, benchmarked against vendored PIQP; C-114 if the factorization dominates | Revised v4.6: both backends already run end to end (C-129: 1.96× PIQP's solve time sparse, 2.29× dense, geometric means over 51 problems). T3-6 is the performance PR: profile an iteration (factorization, solves, residuals, copies), then C-131 (the factor copied through the retry loop), C-114 if the factorization dominates, and for the dense backend C-117 and hoisting AᵀA out of the loop. Target: sparse within 1.5× PIQP's solve time |
+| T3-6 | Sparse backend end to end, benchmarked against vendored PIQP; C-114 if the factorization dominates | done (C-132): a fair protocol (both sides warmed, equal samples) showed C-129's 1.96x was mostly measurement; with carried residuals, a leaner call layer (C-100) and a reused workspace, sparse runs at 1.49x PIQP's warmed solve above the call floor (target met), 0.91x its setup + solve; dense 2.45x, its Cholesky kernel (C-117). C-114 stays the lever for margin: the factorization is 40-60% of a sparse step |
 | T3-R | Review round, summary report, tag `tier3-complete` | |
 
 ## Tier 4 — PIQP-specific and delivery
@@ -177,6 +177,7 @@ Gates:
 - 2026-09-26 v4.1: the PIQP-specific pending decisions moved to Tiers 3–4; nothing blocks Tier 2.
 - 2026-09-26 v4.2: T2-1 … T2-5 landed (C-101 … C-105).
 - 2026-09-26 v4.3: T2-6 … T2-9 and the T2-R review round landed (C-106 … C-113); Tier 2 closed with tag `tier2-complete`. Work moves to Claude Code: the repo copy of this plan becomes authoritative, and a handoff note is added.
+- 2026-09-26 v4.7: T3-6 landed (C-132): the benchmark protocol made fair (warmed, equal samples); sparse at 1.49x PIQP's solve time above the call floor; dense held back by its Cholesky kernel (C-117); C-114 recorded as the next lever.
 - 2026-09-26 v4.6: T3-4 and T3-5 landed together (C-129): the generated solver with both backends. Factorization retries and refinement (#29) move into Tier 3, since condensed Cholesky fails on half the stored problems along PIQP's path and PIQP recovers through them. The gate compares each backend with PIQP's run of the same backend. Todo ids repaired: the Ruiz entry is C-128 (C-126 is TinyMPC).
 - 2026-09-26 v4.5: T3-0a and T3-0b landed (C-123, C-124); the reference gate is met. Proximal updates, boundary shift and infeasibility detection (#26–#28) move from Tier 4 into Tier 3's T3-4, since matching the reference needs them; the decision-trace definition and the PIQP quirks are recorded.
 - 2026-09-26 v4.4: Tier 2 follow-ups after the tag (C-118 … C-121: the Mac run, `sc.S`, derivatives in non-input expressions, examples). The start-of-Tier-3 decisions are taken and the Tier 3 PR sequence is agreed; C-107 lands as `-O2` plus `-ftree-vectorize` for GCC.

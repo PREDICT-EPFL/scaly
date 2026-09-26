@@ -5,7 +5,7 @@ here. Read this first, then the documents it points to. It holds how the work is
 holds what is to be done.
 
 ## Where things stand
-- **Plan:** `internal/notes/piqp_plan.md` (v4.6), the living plan: goal, principles, Tiers 1–6, gates, kill criteria, decisions, change log.
+- **Plan:** `internal/notes/piqp_plan.md` (v4.7), the living plan: goal, principles, Tiers 1–6, gates, kill criteria, decisions, change log.
   - Its twin, the claude.ai project doc `claude/piqp-plan.md`, can't be reached from Claude Code. From now on, the repo copy is authoritative.
 - **Branches and tags:**
   - Tier 1 is done: tag `tier1-complete`, branch `claude/tier1-primitives`.
@@ -15,7 +15,7 @@ holds what is to be done.
 - **Status summaries:** `tier1_implementation_status.md` and `tier2_implementation_status.md`.
   - Full reports: `tier1_pr*_report.html`, `tier1_summary_report.html`, `tier2_pr1..9_report.html` and `tier2_review_report.html` (the Tier 2 summary and hand-off).
   - Historical gap analysis: `programmatic_branch_analysis.md`.
-- **Open items:** `internal/todo.md`, next id C-132. Check the list for an id before taking it: a parallel session's entries once collided with this work's (C-125, C-126).
+- **Open items:** `internal/todo.md`, next id C-133. Check the list for an id before taking it: a parallel session's entries once collided with this work's (C-125, C-126).
   - Tier 1 leftovers: C-89 … C-100.
   - Tier 2 leftovers: C-107 (a decision for Colin: `-O3` by default), C-111, C-112, and C-114 … C-117.
   - Relevant to Tier 3: **C-112**, loop-invariant `while_loop` inputs for the IPM outer loop, and **C-114**, unpadded factor updates, since the factorization dominates IPM time.
@@ -85,4 +85,6 @@ Worked uses: `examples/sqp_newton_sparse.py`, `examples/kalman_update.py`, `test
 - **Nested loops need their body as a Function over symbols.** Build it once per structure and call it everywhere (`scaly.solvers.ipm.Kernels`): the IPM's initial point and loop then share one factorization, and no two Functions share a name.
 - **Condensed Cholesky pivots are rounding noise late in an IPM.** Their sign decides PIQP's retries, and no two kernels agree on it: compare traces only where PIQP's own two backends agree (`piqp_trace.backends_agree`).
 - **Time on the Mac with an A/B, not against old numbers.** Spotlight indexing can double a timing; interleave old (a `git worktree` of the last commit) and new runs and take minima.
+- **Warm both sides up.** Apple Silicon runs the first calls of a burst up to 1.6x slower; a PIQP run is one cold solve unless `piqp_trace.run(..., repeat=k)` repeats it in-process. Compare minima over equally many samples.
+- **Profile generated code in C, not through Python.** A call through the Function layer costs ~3 µs plus ~1 µs per input; run the piece K times in a `while_loop` whose carry depends on it through a run-time zero (Scaly folds `0.0 * x`) and difference two K.
 - **Run the whole suite for any IR, AD or codegen change** (AGENTS.md). Those paths break subtly.

@@ -253,6 +253,7 @@ class CompiledFunction:
     "_n_res",
     "_arg_array_type",
     "_res_array_type",
+    "_workspaces",
   )
 
   def __init__(self, fun: Function):
@@ -289,6 +290,7 @@ class CompiledFunction:
     # Built once: a ctypes array type is a class, and making one per call leaves a cycle to collect.
     self._arg_array_type = ctypes.c_void_p * max(self._n_args, 1)
     self._res_array_type = ctypes.c_void_p * max(self._n_res, 1)
+    self._workspaces = threading.local()
 
   @property
   def lib_path(self) -> Path:
@@ -316,6 +318,19 @@ class CompiledFunction:
       raise JitError(f"solver stats ABI mismatch for {name!r}: artifact version {raw.version}, expected {SCALY_SOLVER_STATS_VERSION}")
     return SolverStats.from_c(raw)
 
+  def _workspace(self) -> np.ndarray | None:
+    """This thread's workspace: allocated on its first call and reused, not zeroed. The kernel
+    assumes nothing about its contents (it holds the buffers that would otherwise be uninitialized
+    C locals), and a fresh allocation per call paid a page fault for every page of a large one. A
+    NumPy buffer rather than ``ctypes.cast`` of a ctypes array, which would tie it into a
+    reference cycle."""
+    if not self._sz_w:
+      return None
+    buf = getattr(self._workspaces, "w", None)
+    if buf is None:
+      buf = self._workspaces.w = np.empty(self._sz_w, dtype=np.float64)
+    return buf
+
   def run(self, args: list[np.ndarray]) -> list[np.ndarray]:
     """Dispatch the compiled entry point with positional NumPy inputs.
 
@@ -332,13 +347,15 @@ class CompiledFunction:
     arg_buffers: list[np.ndarray] = []
     arg_array = self._arg_array_type()
     for i, value in enumerate(args):
-      name = self._input_names[i]
       expected_shape = self._input_shapes[i]
-      arr = np.asarray(value, dtype=np.float64)
-      if arr.shape != expected_shape:
-        raise ValueError(f"input {name!r} has shape {arr.shape}, expected {expected_shape}")
-      if not arr.flags["C_CONTIGUOUS"]:
-        arr = np.ascontiguousarray(arr)
+      if type(value) is np.ndarray and value.dtype == _F64 and value.shape == expected_shape and value.flags.c_contiguous:
+        arr = value  # already what the ABI takes
+      else:
+        arr = np.asarray(value, dtype=np.float64)
+        if arr.shape != expected_shape:
+          raise ValueError(f"input {self._input_names[i]!r} has shape {arr.shape}, expected {expected_shape}")
+        if not arr.flags["C_CONTIGUOUS"]:
+          arr = np.ascontiguousarray(arr)
       arg_buffers.append(arr)
       arg_array[i] = _address(arr)
 
@@ -349,16 +366,16 @@ class CompiledFunction:
       outputs.append(out)
       res_array[i] = _address(out)
 
-    # A NumPy buffer, not ``ctypes.cast`` of a ctypes array: the cast ties the array into a reference
-    # cycle, so each call's workspace lived until the next garbage collection and a loop of calls on a
-    # large workspace grew without bound. ``w_buf`` keeps it alive through the call.
-    w_buf = np.zeros(self._sz_w, dtype=np.float64) if self._sz_w else None
-    status = self._entry(arg_array, res_array, None, None if w_buf is None else w_buf.ctypes.data, 0)
+    w_buf = self._workspace()
+    status = self._entry(arg_array, res_array, None, None if w_buf is None else _address(w_buf), 0)
     if status != 0:
       raise JitError(f"{self._fun.name} returned ABI status {status}")
 
     # A bool output crosses the ABI as 0.0 or 1.0 in its double array.
     return [(out != 0.0 if self._output_bool[i] else out).reshape(self._output_shapes[i]) for i, out in enumerate(outputs)]
+
+
+_F64 = np.dtype(np.float64)
 
 
 def _address(arr: np.ndarray) -> int:

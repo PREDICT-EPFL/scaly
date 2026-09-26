@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 3 PR 5 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Tier 3 · PR 5 report</h1>
+<p class="sub">T3-6 · the generated IPM's speed (C-132, with C-100) · branch <code>claude/tier3-ipm</code> · 26 Sep 2026</p>
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <span class="ok">The target is met:</span> with the sparse backend, the generated solver runs at <b>1.49×</b> PIQP's warmed-up solve time, geometric mean over the 35 problems where PIQP takes at least 50 µs. Against PIQP's setup plus solve it runs at 0.91×.</p>
+<ul>
+<li><b>Measurement first.</b> T3-5's 1.96× was mostly measurement. PIQP's times came from one cold solve per process, ours were medians taken while Spotlight was indexing, and Apple Silicon runs the first calls of a burst up to 1.6× slower. Now both sides are warmed up and take the minimum over the same number of samples: the trace driver repeats PIQP's solve in-process.</li>
+<li><b>Profile in C.</b> Each piece of a step runs K times inside a generated loop. Per iteration, a sparse step costs 1.1–1.4× PIQP's; the factorization is 40–60% of it.</li>
+<li><b>Changes:</b>
+  <ul>
+  <li>The loop carries the residual vectors instead of recomputing them at the top of every step.</li>
+  <li>The Function-call layer passes conforming arrays through unchanged (C-100): a trivial call went from 4.6 to 2.9 µs, a 9-input call from 22 to 12 µs.</li>
+  <li>Each thread reuses one workspace.</li>
+  <li>The retry loop copies the factor once less (C-131).</li>
+  </ul>
+  These changes account for 7–12% (A/B against the previous commit, same protocol).</li>
+<li><b>Dense backend:</b> 2.45× above the call floor. Its Cholesky kernel is 80% of a step and runs at a quarter of Eigen's speed, which is C-117's job.</li>
+</ul>
+<p style="margin-bottom:0"><b>Mutation checks:</b> 8 of 9 killed; the survivor is equivalent. <b>Suite:</b> see the commit.</p>
+</div>
+
+<h2>The protocol</h2>
+<p>Per problem, <code>perf_2026_09_26_tier3/t3_4_ipm.py</code> times the generated solve through the JIT: 0.2 s of warm-up calls, then the fastest of 50. PIQP's figure is the fastest of 51 solves in one process, from its own C timer (<code>piqp_trace.run(..., repeat=50)</code>, <code>SCALY_TRACE_REPEAT</code> in the driver). For QSC205 the warm-up alone moved our time from 864 to 554 µs and PIQP's from 426 to 387 µs.</p>
+<p>The generated time includes the Python call: about 3 µs plus 1 µs per input, so about 12 µs for a QP. On tiny problems that floor sets the ratio (HS21: 14 µs against a 9 µs C-timed solve; TAME: 14 against 1), so geometric means are reported both over all 51 problems and over those where PIQP's solve takes at least 50 µs.</p>
+
+<h2>Profile of a step</h2>
+<p>Each piece runs K times in a generated <code>while_loop</code> whose carry depends on it through a run-time zero, because Scaly folds <code>0.0 * x</code>; the per-piece cost is the difference between K = 51 and K = 1. Figures are µs per call.</p>
+<div class="scroll"><table><tr><th>problem, sparse</th><th>step</th><th>residuals</th><th>regularized residuals</th><th>factorization with retries (bare)</th><th>one solve</th></tr>
+<tr><td>QSC205 (203 / 91 / 114)</td><td class="r">32.4</td><td class="r">4.6</td><td class="r">2.2</td><td class="r">12.5 (11.0)</td><td class="r">3.6</td></tr>
+<tr><td>QPCBLEND (83 / 43 / 29)</td><td class="r">17.3</td><td class="r">2.6</td><td class="r">0.5</td><td class="r">10.4 (9.7)</td><td class="r">1.4</td></tr>
+<tr><td>mpc_12x4_N20 (332 / 252 / 0)</td><td class="r">120.8</td><td class="r">9.6</td><td class="r">3.5</td><td class="r">70.8 (65.5)</td><td class="r">8.5</td></tr>
+</table></div>
+<p>Before the change, each step computed the residuals twice: at its end for the new iterate, and again at the start of the next step for the same iterate. PIQP keeps them. The dense step for PRIMALC5 (n = 287) is 1 594 µs, of which the Cholesky alone is 1 262 µs; PIQP's whole iteration is 392 µs.</p>
+
+<h2>Results</h2>
+<p>All 51 problems, warmed protocol: sparse 2.11× PIQP's solve over all and <b>1.49× over the 35 above the call floor</b>, 0.91× its setup + solve; dense 2.96×, 2.45× and 1.67×. Selected rows (ratio colours: ≤ 1.5 green, ≤ 3 amber):</p>
+<div class="scroll"><table><tr><th>problem</th><th>n / p / m</th><th>backend</th><th>iter Scaly / PIQP</th><th>Scaly (µs)</th><th>PIQP solve (µs)</th><th>PIQP setup + solve (µs)</th><th>Scaly / PIQP solve</th><th>per iteration (µs)</th></tr>
+<tr><td>HS21</td><td>2 / 0 / 1</td><td>sparse</td><td>9 / 9</td><td class="r">14</td><td class="r">9</td><td class="r">46</td><td class="r warn">1.69</td><td>1.6 / 0.9</td></tr>
+<tr><td>HS21</td><td>2 / 0 / 1</td><td>dense</td><td>9 / 9</td><td class="r">14</td><td class="r">4</td><td class="r">9</td><td class="r bad">3.25</td><td>1.6 / 0.5</td></tr>
+<tr><td>QAFIRO</td><td>32 / 8 / 17</td><td>sparse</td><td>13 / 13</td><td class="r">39</td><td class="r">36</td><td class="r">74</td><td class="r ok">1.10</td><td>3.0 / 2.8</td></tr>
+<tr><td>QAFIRO</td><td>32 / 8 / 17</td><td>dense</td><td>13 / 13</td><td class="r">112</td><td class="r">78</td><td class="r">111</td><td class="r ok">1.43</td><td>8.6 / 6.0</td></tr>
+<tr><td>CVXQP1_S</td><td>100 / 50 / 0</td><td>sparse</td><td>9 / 9</td><td class="r">271</td><td class="r">214</td><td class="r">338</td><td class="r ok">1.27</td><td>30.1 / 23.8</td></tr>
+<tr><td>CVXQP1_S</td><td>100 / 50 / 0</td><td>dense</td><td>9 / 9</td><td class="r">806</td><td class="r">354</td><td class="r">519</td><td class="r warn">2.28</td><td>89.6 / 39.3</td></tr>
+<tr><td>QPCBLEND</td><td>83 / 43 / 29</td><td>sparse</td><td>16 / 16</td><td class="r">332</td><td class="r">205</td><td class="r">305</td><td class="r warn">1.62</td><td>20.7 / 12.8</td></tr>
+<tr><td>QPCBLEND</td><td>83 / 43 / 29</td><td>dense</td><td>16 / 16</td><td class="r">883</td><td class="r">593</td><td class="r">740</td><td class="r ok">1.49</td><td>55.2 / 37.0</td></tr>
+<tr><td>DUAL1</td><td>85 / 1 / 0</td><td>sparse</td><td>12 / 12</td><td class="r">1081</td><td class="r">844</td><td class="r">1036</td><td class="r ok">1.28</td><td>90.1 / 70.3</td></tr>
+<tr><td>DUAL1</td><td>85 / 1 / 0</td><td>dense</td><td>12 / 12</td><td class="r">987</td><td class="r">331</td><td class="r">402</td><td class="r warn">2.98</td><td>82.2 / 27.6</td></tr>
+<tr><td>DUALC8</td><td>8 / 1 / 502</td><td>sparse</td><td>10 / 10</td><td class="r">978</td><td class="r">503</td><td class="r">683</td><td class="r warn">1.94</td><td>97.8 / 50.3</td></tr>
+<tr><td>DUALC8</td><td>8 / 1 / 502</td><td>dense</td><td>10 / 10</td><td class="r">667</td><td class="r">205</td><td class="r">280</td><td class="r bad">3.25</td><td>66.7 / 20.5</td></tr>
+<tr><td>QSC205</td><td>203 / 91 / 114</td><td>sparse</td><td>16 / 16</td><td class="r">552</td><td class="r">381</td><td class="r">501</td><td class="r ok">1.45</td><td>34.5 / 23.8</td></tr>
+<tr><td>QSC205</td><td>203 / 91 / 114</td><td>dense</td><td>16 / 16</td><td class="r">9883</td><td class="r">6560</td><td class="r">7491</td><td class="r warn">1.51</td><td>617.7 / 410.0</td></tr>
+<tr><td>QRECIPE</td><td>180 / 91 / 24</td><td>sparse</td><td>34 / 19</td><td class="r">1439</td><td class="r">422</td><td class="r">525</td><td class="r bad">3.41</td><td>42.3 / 22.2</td></tr>
+<tr><td>QRECIPE</td><td>180 / 91 / 24</td><td>dense</td><td>19 / 19</td><td class="r">6911</td><td class="r">3585</td><td class="r">4141</td><td class="r warn">1.93</td><td>363.8 / 188.7</td></tr>
+<tr><td>QBORE3D</td><td>315 / 215 / 19</td><td>sparse</td><td>19 / 19</td><td class="r">1318</td><td class="r">877</td><td class="r">1194</td><td class="r ok">1.50</td><td>69.4 / 46.2</td></tr>
+<tr><td>QBORE3D</td><td>315 / 215 / 19</td><td>dense</td><td>19 / 20</td><td class="r">27860</td><td class="r">10784</td><td class="r">13122</td><td class="r warn">2.58</td><td>1466.3 / 539.2</td></tr>
+<tr><td>QCAPRI</td><td>353 / 158 / 129</td><td>sparse</td><td>31 / 84</td><td class="r">3699</td><td class="r">7511</td><td class="r">7903</td><td class="r ok">0.49</td><td>119.3 / 89.4</td></tr>
+<tr><td>QCAPRI</td><td>353 / 158 / 129</td><td>dense</td><td>31 / 32</td><td class="r">66073</td><td class="r">34544</td><td class="r">37159</td><td class="r warn">1.91</td><td>2131.4 / 1079.5</td></tr>
+<tr><td>mpc_12x4_N20</td><td>332 / 252 / 0</td><td>sparse</td><td>7 / 7</td><td class="r">1160</td><td class="r">779</td><td class="r">1042</td><td class="r ok">1.49</td><td>165.7 / 111.2</td></tr>
+<tr><td>mpc_12x4_N20</td><td>332 / 252 / 0</td><td>dense</td><td>7 / 7</td><td class="r">14037</td><td class="r">4091</td><td class="r">6522</td><td class="r bad">3.43</td><td>2005.2 / 584.4</td></tr>
+<tr><td>mpc_27x6_N30</td><td>1017 / 837 / 0</td><td>sparse</td><td>8 / 8</td><td class="r">9110</td><td class="r">7200</td><td class="r">8655</td><td class="r ok">1.27</td><td>1138.7 / 900.0</td></tr>
+<tr><td>mpc_27x6_N30</td><td>1017 / 837 / 0</td><td>dense</td><td>8 / 8</td><td class="r">410605</td><td class="r">95949</td><td class="r">135081</td><td class="r bad">4.28</td><td>51325.7 / 11993.6</td></tr>
+</table></div>
+<p>A/B on 12 problems, the same script against the previous commit: sparse 1.99 → 1.78× (all) and 1.65 → 1.54× (above the floor); dense 2.51 → 2.19× and 2.13 → 2.02×.</p>
+
+<h2>Tests and mutation checks</h2>
+<ul>
+<li><code>tests/codegen/test_jit.py</code>:
+  <ul>
+  <li>the workspace is reused, and a reused one full of NaN gives the same result;</li>
+  <li>calls from 8 threads overlap (ctypes releases the GIL) and each thread gets its own workspace. The test's scan step is now nonlinear, so that the gradient reads back the stored carries a shared workspace would corrupt;</li>
+  <li>a truly strided input (the old "strided" case, <code>arange(6)[::2] / 2.0</code>, was contiguous);</li>
+  <li>a wrong-shaped input through the flat call.</li>
+  </ul></li>
+<li>One fix to an order-dependent test from C-107: the compiler banner probe is now primed before <code>subprocess.run</code> is patched.</li>
+<li>Call layer, 6 mutants:
+  <ul>
+  <li class="ok">killed: a workspace shared by all threads (only after the step was made nonlinear), both of <code>run</code>'s checks (only after the strided and wrong-shape cases were added), and flattening's shape check;</li>
+  <li class="warn">survived: flattening's dtype check. It is equivalent, since <code>run</code> converts to float64 and the entry converts integers the same way.</li>
+  </ul></li>
+<li>Carried residuals: 3 mutants (not storing them after a step, or at the initial point, and reading two fields swapped); results below.</li>
+</ul>
+<p class="ok">Carried residuals: all 3 mutants killed by the step-by-step and decision-trace tests.</p>
+
+<h2>Next</h2>
+<p>T3-R: the review round, the Tier 3 summary and the <code>tier3-complete</code> tag.</p>
+<ul>
+<li>C-114 (unpadded factor updates) is the lever for margin on sparse problems.</li>
+<li>C-117 (a blocked dense Cholesky) is the lever for the dense backend.</li>
+<li>C-130 (QRECIPE's iteration count) stays open.</li>
+</ul>
+</main></body></html>

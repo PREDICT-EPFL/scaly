@@ -181,6 +181,16 @@ class L(Tree[Expr, np.ndarray]):
     return (value,)
 
   def flatten_numerical(self, value: np.ndarray, what: str) -> tuple[np.ndarray, ...]:
+    decl = self.decls[0]
+    # The common case, an array already of the declared shape, dtype and layout, as is.
+    if (
+      type(value) is np.ndarray
+      and decl is not Ellipsis
+      and value.shape == decl.shape
+      and value.dtype == decl.dtype.numpy()
+      and value.flags.c_contiguous
+    ):
+      return (value,)
     if isinstance(value, Expr):
       raise ValueError(f"{what}: expected a numerical value for {self.names[0]!r}, got Expr")
     array = np.asarray(value, dtype=self.types[0].dtype.numpy())

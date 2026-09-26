@@ -13,6 +13,9 @@ import numpy as np
 Lowering = Literal["auto", "scalar", "block", "opaque"]
 
 
+_NUMPY_DTYPES: dict[str, np.dtype] = {}  # DType.numpy, which call paths ask for on every leaf
+
+
 @dataclass(frozen=True, slots=True)
 class DType:
   """Interned dtype descriptor.
@@ -35,7 +38,10 @@ class DType:
     return self.bits // 8
 
   def numpy(self) -> np.dtype:
-    return np.dtype(self.name)
+    found = _NUMPY_DTYPES.get(self.name)
+    if found is None:
+      found = _NUMPY_DTYPES[self.name] = np.dtype(self.name)
+    return found
 
   def __str__(self) -> str:
     return self.name

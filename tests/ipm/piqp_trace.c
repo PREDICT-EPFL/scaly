@@ -8,7 +8,10 @@
  * is an IEEE infinity, which PIQP reads as absent (anything at or beyond PIQP_INF is).
  *
  * PIQP prints its per-iteration table itself. After it, this prints "SCALY_TRACE_RESULT", one
- * "info <name> <value>" line per field and one "vec <name> <values...>" line per result vector. */
+ * "info <name> <value>" line per field and one "vec <name> <values...>" line per result vector.
+ *
+ * With SCALY_TRACE_REPEAT=k in the environment, the solve then runs k more times in the same
+ * process, quietly, and "info solve_time_min" reports the fastest of all: a warmed-up timing. */
 
 #include <stdint.h>
 #include <stdio.h>
@@ -101,6 +104,17 @@ int main(int argc, char **argv) {
   }
   piqp_status status = piqp_solve(work);
   fflush(stdout);
+  double solve_time_min = (double)work->result->info.solve_time;
+  const char *repeat = getenv("SCALY_TRACE_REPEAT");
+  if (repeat && atoi(repeat) > 0) {
+    settings.verbose = 0;
+    piqp_update_settings(work, &settings);
+    for (int k = 0; k < atoi(repeat); ++k) {
+      piqp_solve(work);
+      double t = (double)work->result->info.solve_time;
+      if (t < solve_time_min) solve_time_min = t;
+    }
+  }
   const piqp_result *r = work->result;
   const piqp_info *info = &r->info;
   printf("SCALY_TRACE_RESULT\n");
@@ -129,6 +143,7 @@ int main(int argc, char **argv) {
   INFO(setup_time);
   INFO(solve_time);
 #undef INFO
+  printf("info solve_time_min %.17g\n", solve_time_min);
   printf("info factor_retires %d\n", (int)info->factor_retires);
   printf("info no_primal_update %d\n", (int)info->no_primal_update);
   printf("info no_dual_update %d\n", (int)info->no_dual_update);
