@@ -449,6 +449,103 @@ def _jvp_many_joint(outs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int) -
   return [substitute(jvp_many(substitute(out, view), joint, seed), back) for out in outs]
 
 
+# Above this many multiply-adds in a step's seed products, the step's Jacobian becomes a callee of its
+# own (straight-line code) and the products stay loops: fully unrolled, they cost seconds of C compile
+# time for no faster code.
+SEED_PRODUCT_UNROLL_LIMIT = 256
+
+
+def _jvp_many_compressed(
+  outs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, *, owner: Function | None = None, name: str = ""
+) -> tuple[list[Expr], list[Expr]]:
+  """Multi-seed tangents of a loop body's ``outs``, formed once per step as a small Jacobian.
+
+  When the seeded inputs hold fewer entries ``m`` than there are seeds, the body's Jacobian with
+  respect to them (``m`` columns, from a pass with constant unit seeds that folds to the nonzero
+  partials) costs less than pushing ``nseed`` tangents through the body, and the tangents are one
+  product ``seeds @ J`` per input: the work that depends on the seeds is a dense matrix product
+  instead of the body's operations repeated per seed. A Hessian through a scan has ``nseed`` equal to
+  the horizon and ``m`` equal to a few states and inputs.
+
+  Returns the primal outputs to use (``outs`` itself unless split) and the tangents. With ``owner``
+  (the Function whose outputs these are) and products larger than ``SEED_PRODUCT_UNROLL_LIMIT``, the
+  primal outputs and every Jacobian that is not a constant are computed by a callee named ``name``
+  (straight-line code), and each tangent is a map over the seeds of a small callee that multiplies one
+  seed row by the Jacobian: one loop over the seeds whose body keeps its accumulators in registers,
+  rather than the products fully unrolled (seconds of C compile time) or one loop per operation
+  (memory traffic on every term)."""
+  sizes = {w: w.size for w in seeds}
+  m = sum(sizes.values())
+  if m >= nseed:
+    return list(outs), _jvp_many_joint(outs, seeds, nseed)
+  unit = np.eye(m, dtype=np.float64)
+  offsets: dict[Expr, int] = {}
+  offset = 0
+  for w, size in sizes.items():
+    offsets[w] = offset
+    offset += size
+  columns = {w: Expr.const(unit[:, offsets[w] : offsets[w] + size].reshape((m, *w.shape))) for w, size in sizes.items()}
+  jacobians = [simplify_cse_fixpoint(j.reshape((m, out.size))) for j, out in zip(_jvp_many_joint(outs, columns, m), outs, strict=True)]
+  primals = list(outs)
+  products = nseed * m * sum(out.size for out in outs)
+  split = owner is not None and products > SEED_PRODUCT_UNROLL_LIMIT
+  if split:
+    assert owner is not None
+    varying = [k for k, j in enumerate(jacobians) if j.op != ExprOp.CONST]
+    exprs = [*(o.reshape((o.size,)) for o in outs), *(jacobians[k].reshape((jacobians[k].size,)) for k in varying)]
+    step = Function._from_exprs(
+      name,
+      list(owner.inputs),
+      [owner._inherit_lowering(simplify_cse_fixpoint(e)) for e in exprs],
+      list(owner.input_names),
+      [f"out{k}" for k in range(len(outs))] + [f"jac{k}" for k in varying],
+    )
+    called = step._flat_symbolic_call(list(owner.inputs))
+    primals = [c.reshape(o.shape) for c, o in zip(called, outs, strict=False)]
+    for k, c in zip(varying, called[len(outs) :], strict=True):
+      jacobians[k] = c.reshape(jacobians[k].shape)
+  tangents = []
+  for k, (out, flat) in enumerate(zip(outs, jacobians, strict=True)):
+    if split:
+      tangents.append(_seed_product_map(f"{name}_seed{k}", flat, seeds, sizes, offsets, nseed).reshape((nseed, *out.shape)))
+      continue
+    total: Expr | None = None
+    for w, size in sizes.items():
+      rows = flat[offsets[w] : offsets[w] + size]
+      if _is_zero_const(simplify_cse_fixpoint(rows)):
+        continue
+      term = seeds[w].reshape((nseed, size)) @ rows
+      total = term if total is None else total + term
+    tangents.append(Expr.const(np.zeros((nseed, *out.shape), dtype=np.float64)) if total is None else total.reshape((nseed, *out.shape)))
+  return primals, tangents
+
+
+def _seed_product_map(name: str, jac: Expr, seeds: dict[Expr, Expr], sizes: dict[Expr, int], offsets: dict[Expr, int], nseed: int) -> Expr:
+  """``sum_w seeds[w] @ jac[rows of w]`` for every seed, as a map over the seeds. A constant
+  Jacobian is folded into the mapped callee; otherwise it is read by every seed (stride 0)."""
+  m, width = jac.shape
+  constant = jac.op == ExprOp.CONST
+  jsym = Expr.sym("jac", (m * width,))
+  matrix = jac if constant else jsym.reshape((m, width))
+  rows = {w: Expr.sym(f"seed{i}", (size,)) for i, (w, size) in enumerate(sizes.items())}
+  total: Expr | None = None
+  for w, size in sizes.items():
+    block = matrix[offsets[w] : offsets[w] + size]
+    if constant and _is_zero_const(simplify_cse_fixpoint(block)):
+      continue
+    term = rows[w] @ block
+    total = term if total is None else total + term
+  if total is None:
+    return Expr.const(np.zeros(nseed * width, dtype=np.float64))
+  inputs = [*rows.values(), *([] if constant else [jsym])]
+  product = Function._from_exprs(name, inputs, [simplify_cse_fixpoint(total)], [str(e.name) for e in inputs], ["tangent"])
+  specs = [(seeds[w].reshape((nseed * size,)), 0, size) for w, size in sizes.items()]
+  if not constant:
+    specs.append((jac.reshape((m * width,)), 0, 0))
+  # ``block``: the loop body stays a loop over the seeds instead of being unrolled seed by seed.
+  return vmap(product, nseed, specs).with_lowering("block")
+
+
 def _strided_view(x: Expr, idx: np.ndarray, rows: int, width: int) -> tuple[Expr, int, int]:
   """Arrange ``x.flat[idx]`` as ``rows`` consecutive blocks of ``width`` for a loop to slice.
 
@@ -486,11 +583,13 @@ def _scan_jvp_many_body(callee: Function, active: tuple[int, ...], nseed: int) -
     aug = Expr.sym(claim_name(f"fwd:{callee.input_names[0]}", taken), (cs * (1 + nseed),))
     dxs = {i: Expr.sym(claim_name(f"fwd:{callee.input_names[i + 1]}", taken), (nseed * xs[i].size,)) for i in active}
     seeds = {carry: aug[cs:].reshape((nseed, *carry.shape)), **{xs[i]: dx.reshape((nseed, *xs[i].shape)) for i, dx in dxs.items()}}
-    tangents = _jvp_many_joint(callee.outputs, seeds, nseed)
-    nxt = concat([callee.outputs[0].reshape((cs,)), tangents[0].reshape((nseed * cs,))])
+    primals, tangents = _jvp_many_compressed(
+      callee.outputs, seeds, nseed, owner=callee, name=f"{callee.name}_stepjac{nseed}_" + ("_".join(str(i) for i in active) or "c")
+    )
+    nxt = concat([primals[0].reshape((cs,)), tangents[0].reshape((nseed * cs,))])
     flat = [t.reshape((t.size,)) for t in tangents[1:]]
     split = {carry: aug[:cs].reshape(carry.shape)}
-    outputs = [substitute(e, split) for e in (nxt, *callee.outputs[1:], *flat)]
+    outputs = [substitute(e, split) for e in (nxt, *primals[1:], *flat)]
     inputs = [aug, *xs, *dxs.values()]
     names = [str(aug.name), *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
     out_names = [claim_name("fwd:carry", taken), *callee.output_names[1:], *(claim_name(f"fwd:{n}", taken) for n in callee.output_names[1:])]
@@ -546,9 +645,11 @@ def _while_jvp_many_functions(cond: Function, body: Function, nseed: int) -> tup
     cs = carry.size
     taken = {*body.input_names, *body.output_names, *cond.input_names, *cond.output_names}
     aug = Expr.sym(claim_name(f"fwd:{body.input_names[0]}", taken), (cs * (1 + nseed),))
-    (tangent,) = _jvp_many_joint(body.outputs, {carry: aug[cs:].reshape((nseed, *carry.shape))}, nseed)
+    (primal,), (tangent,) = _jvp_many_compressed(
+      body.outputs, {carry: aug[cs:].reshape((nseed, *carry.shape))}, nseed, owner=body, name=f"{body.name}_stepjac{nseed}"
+    )
     split = {carry: aug[:cs].reshape(carry.shape)}
-    nxt = substitute(concat([body.outputs[0].reshape((cs,)), tangent.reshape((nseed * cs,))]), split)
+    nxt = substitute(concat([primal.reshape((cs,)), tangent.reshape((nseed * cs,))]), split)
     aug_body = Function._from_exprs(
       f"{body.name}_whilefwd{nseed}", [aug], [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(aug.name)], ["fwd:carry"]
     )

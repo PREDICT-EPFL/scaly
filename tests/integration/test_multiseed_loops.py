@@ -936,3 +936,55 @@ def test_two_inlined_calls_keep_their_own_tangents(monkeypatch: pytest.MonkeyPat
   xs, big_u = sc.sym("ti_X", 4), sc.sym("ti_U", 8)
   y = sc.concat([shoot._flat_symbolic_call([xs[:2], big_u[:4]])[0], shoot._flat_symbolic_call([xs[2:], big_u[4:]])[0]])
   _check_forward("ti", [xs, big_u], [y], [np.array([0.2, -0.3, 0.5, 0.1]), np.linspace(-1.0, 1.0, 8)], rtol=1e-5, atol=1e-6)
+
+
+# --- Per-step Jacobian compression (few body inputs, many seeds) --------------------------------
+
+
+def _pendulum_step(name: str) -> sc.Function:
+  z, u = sc.sym("z", 2), sc.sym("u", 1)
+  nxt = sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * (u[0] * z[0].cos() - 9.81 * z[0].sin())])
+  return sc.Function._from_exprs(name, [z, u], [nxt, sc.stack([sc.sumsqr(z) * u[0] + u[0] ** 3])], ["z", "u"], ["zn", "c"])
+
+
+@pytest.mark.parametrize("length", [2, 12, 60])
+def test_many_seeds_through_a_small_body_use_its_step_jacobian(length: int, monkeypatch: pytest.MonkeyPatch) -> None:
+  """With 3 body inputs and ``length`` seeds, the tangents are ``seeds @ J`` with the body's 3-column
+  Jacobian formed once per step: fewer seeds than inputs push the seeds through the body (length 2),
+  a moderate count forms the products in the body (12), many seeds map a small product callee over
+  the seeds next to a callee for the step's Jacobian (60). All three agree with the per-seed columns
+  and finite differences."""
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  step = _pendulum_step(f"cp{length}_step")
+  x0, us = sc.sym("cp_x0", 2), sc.sym(f"cp_us{length}", length)
+  fin, costs = sc.scan(step, x0, [(us, 0, 1)], length=length)
+  _check_forward(f"cp{length}", [x0, us], [fin, costs], [np.array([0.3, -0.2]), np.linspace(-0.5, 0.5, length)], rtol=1e-5, atol=1e-6)
+  names = _callee_names([jacobian(fin, us), jacobian(costs, us)])
+  split = length == 60
+  assert any(n.startswith(f"cp{length}_step_stepjac") for n in names) == split
+  assert any("_seed" in n for n in names) == split
+
+
+def test_a_hessian_with_many_seeds_matches_the_per_seed_columns(monkeypatch: pytest.MonkeyPatch) -> None:
+  """Forward over reverse with 40 seeds: the adjoint bodies have more inputs than the forward body
+  (cotangent, carry, slice), and a nonlinear adjoint makes the step Jacobian vary per step."""
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  step = _pendulum_step("ch_step")
+  x0, us = sc.sym("ch_x0", 2), sc.sym("ch_us", 40)
+  fin, costs = sc.scan(step, x0, [(us, 0, 1)], length=40)
+  cost = costs.sum() + 5.0 * sc.sumsqr(fin)
+  _check_hessian("ch", cost, [x0, us], 1, [np.array([0.3, -0.2]), np.linspace(-0.5, 0.5, 40)], rtol=1e-4)
+
+
+def test_a_while_loop_with_many_seeds_uses_its_step_jacobian(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  c = sc.sym("c", 2)
+  body = sc.Function._from_exprs("cw_step", [c], [sc.stack([0.5 * c[0].cos() + 0.1 * c[1], 0.9 * c[1]])], ["c"], ["cn"])
+  cond = sc.Function._from_exprs("cw_go", [c], [c[1].abs() > 1e-3], ["c"], ["go"])
+  p = sc.sym("cw_p", 300)
+  final, _ = sc.while_loop(cond, body, sc.stack([p[:150].sum() * 0.01, p[150:].sum() * 0.01]), max_iter=100)
+  jac = jacobian(final, p)
+  assert any(n.startswith("cw_step_stepjac") for n in _callee_names([jac]))
+  point = np.linspace(-0.2, 0.4, 300)
+  got = _run("cw_jac", [p], [jac, _columns(final, p)], [point])
+  np.testing.assert_allclose(got[0], got[1], rtol=1e-10, atol=1e-12)
