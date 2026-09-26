@@ -25,11 +25,16 @@ one more solve with the Hessian. The fit is L-BFGS on the gradient that rule giv
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 from scipy import optimize
 
 import scaly as sc
 from scaly import linalg
+from scaly.codegen import write_module
+
+GENERATED = Path(__file__).resolve().parent / "generated" / "hanging_chain"
 
 SEGMENTS, SPAN, REST, GRAVITY = 10, 1.2, 0.15, 9.81
 FREE = SEGMENTS - 1
@@ -120,3 +125,5 @@ if __name__ == "__main__":
   print(f"start k = {k0:.1f}, m = {m0:.3f}; fitted k = {k:.2f}, m = {m:.4f}; true k = {kt:.1f}, m = {mt:.3f}")
   print(f"{int(out['evaluations'])} equilibrium solves with gradients; residual {np.sqrt(2 * float(out['loss']) / out['photo'].size):.1e} per coordinate")
   print(f"lowest point of the fitted chain: {shape(out['theta'])[:, 1].min():.3f} m")
+  write_module(misfit, GENERATED)
+  print(f"generated C in {GENERATED}")

@@ -20,10 +20,15 @@ reverse mode through the solve, the scatter and the ``take``s.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 import scaly as sc
 from scaly import linalg
+from scaly.codegen import write_module
+
+GENERATED = Path(__file__).resolve().parent / "generated" / "truss_sizing"
 
 NODES_X, NODES_Y, SPACING = 7, 4, 1.0
 E = 1.0
@@ -129,3 +134,5 @@ if __name__ == "__main__":
   print(f"{NB} candidate bars, {NDOF - NF} fixed dofs; compliance {h[0]:.2f} (uniform) -> {h[-1]:.2f} after {len(h)} iterations")
   print(f"{kept} bars above a tenth of the largest area:")
   print(render(out["areas"]))
+  write_module(analyse, GENERATED)
+  print(f"generated C in {GENERATED}")

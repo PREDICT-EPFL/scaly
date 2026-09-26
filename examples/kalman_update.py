@@ -20,11 +20,16 @@ differentiating the factorization.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 from scipy import sparse
 
 import scaly as sc
 from scaly import linalg
+from scaly.codegen import write_module
+
+GENERATED = Path(__file__).resolve().parent / "generated" / "kalman_update"
 
 N, M = 200, 25
 SENSORS = np.linspace(3, N - 4, M).astype(int)
@@ -94,3 +99,6 @@ if __name__ == "__main__":
   post_error = np.sqrt(np.mean((out["x"] - out["truth"]) ** 2))
   print(f"rms error: prior {prior_error:.3f}, posterior {post_error:.3f}")
   print(f"gain {out['gain'].shape}, largest entry {np.abs(out['gain']).max():.3f}")
+  for fn in (kalman_update, sensitivities):
+    write_module(fn, GENERATED)
+  print(f"generated C in {GENERATED}")

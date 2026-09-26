@@ -22,10 +22,15 @@ is finite and nonzero and the step finite.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 import scaly as sc
 from scaly import linalg
+from scaly.codegen import write_module
+
+GENERATED = Path(__file__).resolve().parent / "generated" / "sqp_newton_sparse"
 
 N, H_STEP = 30, 0.1
 NW, NC = 3 * N + 2, 2 * N + 2  # variables: 2 (N + 1) states and N torques; constraints: 2 (N + 1)
@@ -92,3 +97,5 @@ if __name__ == "__main__":
   for k, r in enumerate(result["residuals"]):
     print(f"iteration {k:2d}  ||KKT residual||_inf = {r:.2e}  rho = {result['rhos'][k]:.0e}")
   print("final angle", result["w"][2 * N], "rate", result["w"][2 * N + 1])
+  write_module(newton_step, GENERATED)
+  print(f"generated C in {GENERATED}")

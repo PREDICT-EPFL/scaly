@@ -5,3 +5,5 @@ import scaly as sc
 def simple(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
   x, y = inputs
   return y, 2 * x
+
+print(sc.codegen.render_c_module(simple).body)

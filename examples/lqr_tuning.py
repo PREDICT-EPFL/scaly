@@ -20,12 +20,17 @@ both scans and the factorizations inside them, and SciPy's L-BFGS uses it.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 from scipy import linalg as sla
 from scipy import optimize
 
 import scaly as sc
 from scaly import linalg
+from scaly.codegen import write_module
+
+GENERATED = Path(__file__).resolve().parent / "generated" / "lqr_tuning"
 
 H, N = 0.05, 100  # 5 s horizon
 NX, NU = 6, 2
@@ -136,3 +141,5 @@ if __name__ == "__main__":
   print(f"closed-loop cost: Q = I, R = I gives {float(out['initial_cost']):.3f}; tuned {float(out['tuned_cost']):.3f} after {len(out['history'])} evaluations")
   names = ["x", "z", "theta", "vx", "vz", "omega", "r"]
   print("tuned weights: " + ", ".join(f"{n} {np.exp(w):.3g}" for n, w in zip(names, out["weights"], strict=True)))
+  write_module(tuning_objective, GENERATED)
+  print(f"generated C in {GENERATED}")

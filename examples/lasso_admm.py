@@ -22,10 +22,16 @@ the number of iterations and the recovered support as a ``bool`` vector.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 import scaly as sc
 from scaly import linalg
+
+from scaly.codegen import write_module
+
+GENERATED = Path(__file__).resolve().parent / "generated" / "lasso_admm"
 
 M, N, K_TRUE = 40, 120, 6
 TOL = 1e-8
@@ -106,3 +112,5 @@ if __name__ == "__main__":
   print(f"relative error {np.linalg.norm(out['x'] - out['truth']) / np.linalg.norm(out['truth']):.3f}")
   for rho in (0.3, 3.0):
     print(f"rho = {rho}: {int(main(rho=rho)['iterations'])} iterations")
+  write_module(lasso, GENERATED)
+  print(f"generated C in {GENERATED}")

@@ -1,0 +1,2512 @@
+{
+ "tinympc_commit": "023f36bd5b27267e1a96ed47a774d120b5707f13",
+ "benchmarks_commit": "dfa77a5c86e4c86226b928f02732f625b16e263b",
+ "compiler": "gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0",
+ "flags": [
+  "-O2",
+  "-mcpu=native",
+  "-fno-math-errno"
+ ],
+ "machine": "aarch64",
+ "system": "Linux-6.8.0-138-generic-aarch64-with-glibc2.35",
+ "python": "3.14.7",
+ "reps": 5,
+ "rows": [
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx4_nu4_N10",
+   "nx": 4,
+   "nu": 4,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 2759.0,
+    "solved": 190,
+    "mean_solve_us": 10.577421052631578,
+    "best_mean_solve_us": 10.346,
+    "max_best_solve_us": 153.75,
+    "per_iteration_ns": 728.4197172888728,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 2759.0,
+    "solved": 190,
+    "mean_solve_us": 5.540357894736842,
+    "best_mean_solve_us": 5.40408947368421,
+    "max_best_solve_us": 77.917,
+    "per_iteration_ns": 381.53968829285975,
+    "generate_s": 0.22062016699055675,
+    "compile_s": 0.764862042007735,
+    "size": {
+     "text": 39584,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 1446,
+    "workspace_doubles": 1074
+   },
+   "agreement": {
+    "max_u0_diff": 9.325873406851315e-15,
+    "max_u0_diff_vs_python": 9.769962616701378e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.2282896249962505
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx8_nu4_N10",
+   "nx": 8,
+   "nu": 4,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 20604.0,
+    "solved": 190,
+    "mean_solve_us": 120.3346105263158,
+    "best_mean_solve_us": 119.7059947368421,
+    "max_best_solve_us": 1999.791,
+    "per_iteration_ns": 1109.6668608037273,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 20604.0,
+    "solved": 190,
+    "mean_solve_us": 101.18972631578947,
+    "best_mean_solve_us": 99.08440526315789,
+    "max_best_solve_us": 1644.667,
+    "per_iteration_ns": 933.1221122112212,
+    "generate_s": 0.25538795901229605,
+    "compile_s": 0.12563075000070967,
+    "size": {
+     "text": 11064,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 391,
+    "workspace_doubles": 1642
+   },
+   "agreement": {
+    "max_u0_diff": 3.1086244689504383e-15,
+    "max_u0_diff_vs_python": 2.6645352591003757e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.28328720800345764
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx12_nu4_N10",
+   "nx": 12,
+   "nu": 4,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 27850.0,
+    "solved": 190,
+    "mean_solve_us": 242.8725894736842,
+    "best_mean_solve_us": 241.01991578947369,
+    "max_best_solve_us": 2769.791,
+    "per_iteration_ns": 1656.9404667863555,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 27850.0,
+    "solved": 190,
+    "mean_solve_us": 199.76664736842105,
+    "best_mean_solve_us": 198.77971578947367,
+    "max_best_solve_us": 2248.708,
+    "per_iteration_ns": 1362.8604308797128,
+    "generate_s": 0.4165973339986522,
+    "compile_s": 0.167008459000499,
+    "size": {
+     "text": 17632,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 409,
+    "workspace_doubles": 3315
+   },
+   "agreement": {
+    "max_u0_diff": 3.9968028886505635e-15,
+    "max_u0_diff_vs_python": 3.9968028886505635e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.4486335830006283
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx16_nu4_N10",
+   "nx": 16,
+   "nu": 4,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 13297.0,
+    "solved": 190,
+    "mean_solve_us": 166.02325263157894,
+    "best_mean_solve_us": 164.86393684210526,
+    "max_best_solve_us": 3126.375,
+    "per_iteration_ns": 2372.295856208167,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 13297.0,
+    "solved": 190,
+    "mean_solve_us": 140.47592105263158,
+    "best_mean_solve_us": 139.89933157894737,
+    "max_best_solve_us": 2619.5,
+    "per_iteration_ns": 2007.2516357073025,
+    "generate_s": 0.5985664170002565,
+    "compile_s": 0.21953362500062212,
+    "size": {
+     "text": 25908,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 427,
+    "workspace_doubles": 4167
+   },
+   "agreement": {
+    "max_u0_diff": 1.1102230246251565e-15,
+    "max_u0_diff_vs_python": 8.881784197001252e-16,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.6215040009992663
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx20_nu4_N10",
+   "nx": 20,
+   "nu": 4,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 44357.0,
+    "solved": 189,
+    "mean_solve_us": 745.1798368421053,
+    "best_mean_solve_us": 743.3481473684211,
+    "max_best_solve_us": 12729.75,
+    "per_iteration_ns": 3191.923912798431,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 44357.0,
+    "solved": 189,
+    "mean_solve_us": 631.9814105263158,
+    "best_mean_solve_us": 629.7916368421053,
+    "max_best_solve_us": 10782.083,
+    "per_iteration_ns": 2707.0466442726065,
+    "generate_s": 0.8500050000002375,
+    "compile_s": 0.26420533400960267,
+    "size": {
+     "text": 35868,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 445,
+    "workspace_doubles": 5019
+   },
+   "agreement": {
+    "max_u0_diff": 1.3322676295501878e-15,
+    "max_u0_diff_vs_python": 1.3322676295501878e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.9457886680029333
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx24_nu4_N10",
+   "nx": 24,
+   "nu": 4,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 760.0,
+    "solved": 190,
+    "mean_solve_us": 18.178942105263157,
+    "best_mean_solve_us": 17.616242105263158,
+    "max_best_solve_us": 18.042,
+    "per_iteration_ns": 4544.73552631579,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 760.0,
+    "solved": 190,
+    "mean_solve_us": 17.448068421052632,
+    "best_mean_solve_us": 16.73921052631579,
+    "max_best_solve_us": 17.167,
+    "per_iteration_ns": 4362.017105263158,
+    "generate_s": 1.1067095840116963,
+    "compile_s": 0.34952395799336955,
+    "size": {
+     "text": 48120,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 463,
+    "workspace_doubles": 5871
+   },
+   "agreement": {
+    "max_u0_diff": 1.7763568394002505e-15,
+    "max_u0_diff_vs_python": 1.1102230246251565e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 1.158694125013426
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx28_nu4_N10",
+   "nx": 28,
+   "nu": 4,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 55901.0,
+    "solved": 190,
+    "mean_solve_us": 1702.9225842105263,
+    "best_mean_solve_us": 1697.7576263157896,
+    "max_best_solve_us": 19457.541,
+    "per_iteration_ns": 5788.005420296596,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 55901.0,
+    "solved": 190,
+    "mean_solve_us": 1412.5388157894738,
+    "best_mean_solve_us": 1409.1574210526317,
+    "max_best_solve_us": 16143.125,
+    "per_iteration_ns": 4801.029945797034,
+    "generate_s": 1.470505499994033,
+    "compile_s": 0.4255850830086274,
+    "size": {
+     "text": 62384,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 481,
+    "workspace_doubles": 6723
+   },
+   "agreement": {
+    "max_u0_diff": 2.220446049250313e-15,
+    "max_u0_diff_vs_python": 1.5543122344752192e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 1.6117484169953968
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx32_nu4_N10",
+   "nx": 32,
+   "nu": 4,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 144951.0,
+    "solved": 154,
+    "mean_solve_us": 5681.922184210527,
+    "best_mean_solve_us": 5669.246442105264,
+    "max_best_solve_us": 29778.083,
+    "per_iteration_ns": 7447.794185621348,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 144951.0,
+    "solved": 154,
+    "mean_solve_us": 4573.711205263158,
+    "best_mean_solve_us": 4564.0048789473685,
+    "max_best_solve_us": 23985.833,
+    "per_iteration_ns": 5995.164772923264,
+    "generate_s": 0.29552912499639206,
+    "compile_s": 0.5482544169935863,
+    "size": {
+     "text": 78864,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 643,
+    "workspace_doubles": 7575
+   },
+   "agreement": {
+    "max_u0_diff": 2.220446049250313e-15,
+    "max_u0_diff_vs_python": 1.3322676295501878e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.7941436669934774
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu4_N10",
+   "nx": 10,
+   "nu": 4,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 10420.0,
+    "solved": 190,
+    "mean_solve_us": 73.94121052631579,
+    "best_mean_solve_us": 73.40627368421052,
+    "max_best_solve_us": 1789.541,
+    "per_iteration_ns": 1348.2562380038387,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 10420.0,
+    "solved": 190,
+    "mean_solve_us": 61.953326315789475,
+    "best_mean_solve_us": 61.74834210526316,
+    "max_best_solve_us": 1481.917,
+    "per_iteration_ns": 1129.667178502879,
+    "generate_s": 0.3265766660042573,
+    "compile_s": 0.15503983400412835,
+    "size": {
+     "text": 14328,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 405,
+    "workspace_doubles": 1926
+   },
+   "agreement": {
+    "max_u0_diff": 1.7763568394002505e-15,
+    "max_u0_diff_vs_python": 1.4432899320127035e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.35000112499983516
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu8_N10",
+   "nx": 10,
+   "nu": 8,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 4272.0,
+    "solved": 190,
+    "mean_solve_us": 36.33154210526316,
+    "best_mean_solve_us": 35.885268421052636,
+    "max_best_solve_us": 717.333,
+    "per_iteration_ns": 1615.869147940075,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 4272.0,
+    "solved": 190,
+    "mean_solve_us": 36.150884210526314,
+    "best_mean_solve_us": 35.81506842105263,
+    "max_best_solve_us": 686.417,
+    "per_iteration_ns": 1607.8342696629213,
+    "generate_s": 0.461157291996642,
+    "compile_s": 0.1826585420058109,
+    "size": {
+     "text": 18940,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 421,
+    "workspace_doubles": 3645
+   },
+   "agreement": {
+    "max_u0_diff": 6.772360450213455e-15,
+    "max_u0_diff_vs_python": 7.771561172376096e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.48239733299124055
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu12_N10",
+   "nx": 10,
+   "nu": 12,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 1519.0,
+    "solved": 190,
+    "mean_solve_us": 15.556352631578948,
+    "best_mean_solve_us": 15.276457894736843,
+    "max_best_solve_us": 44.084,
+    "per_iteration_ns": 1945.8242264647795,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 1519.0,
+    "solved": 190,
+    "mean_solve_us": 18.25506842105263,
+    "best_mean_solve_us": 17.80866315789474,
+    "max_best_solve_us": 49.208,
+    "per_iteration_ns": 2283.385780118499,
+    "generate_s": 0.6073241670092102,
+    "compile_s": 0.22678204100520816,
+    "size": {
+     "text": 24788,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 437,
+    "workspace_doubles": 4401
+   },
+   "agreement": {
+    "max_u0_diff": 3.7969627442180354e-14,
+    "max_u0_diff_vs_python": 3.985700658404312e-14,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.6226542919903295
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu16_N10",
+   "nx": 10,
+   "nu": 16,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 1327.0,
+    "solved": 190,
+    "mean_solve_us": 16.689247368421054,
+    "best_mean_solve_us": 16.50322105263158,
+    "max_best_solve_us": 122.375,
+    "per_iteration_ns": 2389.5681989449886,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 1327.0,
+    "solved": 190,
+    "mean_solve_us": 20.71732631578947,
+    "best_mean_solve_us": 20.250415789473685,
+    "max_best_solve_us": 144.042,
+    "per_iteration_ns": 2966.3089675960814,
+    "generate_s": 0.8318426670011831,
+    "compile_s": 0.2840016249974724,
+    "size": {
+     "text": 31764,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 453,
+    "workspace_doubles": 5157
+   },
+   "agreement": {
+    "max_u0_diff": 1.0014211682118912e-13,
+    "max_u0_diff_vs_python": 8.304468224196171e-14,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.8199887079972541
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu20_N10",
+   "nx": 10,
+   "nu": 20,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 950.0,
+    "solved": 190,
+    "mean_solve_us": 14.90211052631579,
+    "best_mean_solve_us": 14.683315789473685,
+    "max_best_solve_us": 14.833,
+    "per_iteration_ns": 2980.422105263158,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 950.0,
+    "solved": 190,
+    "mean_solve_us": 19.005252631578948,
+    "best_mean_solve_us": 18.510047368421052,
+    "max_best_solve_us": 18.875,
+    "per_iteration_ns": 3801.0505263157893,
+    "generate_s": 0.9963194580050185,
+    "compile_s": 0.31960741699731443,
+    "size": {
+     "text": 39044,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 469,
+    "workspace_doubles": 5913
+   },
+   "agreement": {
+    "max_u0_diff": 9.281464485866309e-14,
+    "max_u0_diff_vs_python": 1.099120794378905e-13,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 1.0194044589879923
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu24_N10",
+   "nx": 10,
+   "nu": 24,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 760.0,
+    "solved": 190,
+    "mean_solve_us": 13.349147368421052,
+    "best_mean_solve_us": 12.897478947368421,
+    "max_best_solve_us": 13.0,
+    "per_iteration_ns": 3337.286842105263,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 760.0,
+    "solved": 190,
+    "mean_solve_us": 18.707026315789474,
+    "best_mean_solve_us": 17.467084210526316,
+    "max_best_solve_us": 18.416,
+    "per_iteration_ns": 4676.756578947368,
+    "generate_s": 1.24682962600491,
+    "compile_s": 0.38825191599607933,
+    "size": {
+     "text": 46780,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 485,
+    "workspace_doubles": 6669
+   },
+   "agreement": {
+    "max_u0_diff": 1.2234657731369225e-13,
+    "max_u0_diff_vs_python": 1.283417816466681e-13,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 1.2733818339911522
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu28_N10",
+   "nx": 10,
+   "nu": 28,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 1067.0,
+    "solved": 190,
+    "mean_solve_us": 22.946936842105263,
+    "best_mean_solve_us": 20.78261578947368,
+    "max_best_solve_us": 22.667,
+    "per_iteration_ns": 4086.146204311153,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 1067.0,
+    "solved": 190,
+    "mean_solve_us": 30.78245263157895,
+    "best_mean_solve_us": 30.30454736842105,
+    "max_best_solve_us": 32.541,
+    "per_iteration_ns": 5481.411433926898,
+    "generate_s": 1.4861302089993842,
+    "compile_s": 0.5489024169946788,
+    "size": {
+     "text": 56324,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 501,
+    "workspace_doubles": 7425
+   },
+   "agreement": {
+    "max_u0_diff": 2.2160051571518125e-13,
+    "max_u0_diff_vs_python": 2.575717417130363e-13,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 1.6050488759938162
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu32_N10",
+   "nx": 10,
+   "nu": 32,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 760.0,
+    "solved": 190,
+    "mean_solve_us": 18.613605263157893,
+    "best_mean_solve_us": 17.230689473684212,
+    "max_best_solve_us": 19.292,
+    "per_iteration_ns": 4653.401315789473,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 760.0,
+    "solved": 190,
+    "mean_solve_us": 27.369315789473685,
+    "best_mean_solve_us": 26.662,
+    "max_best_solve_us": 26.959,
+    "per_iteration_ns": 6842.328947368421,
+    "generate_s": 0.29340329200203996,
+    "compile_s": 0.549736208995455,
+    "size": {
+     "text": 66524,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 621,
+    "workspace_doubles": 8181
+   },
+   "agreement": {
+    "max_u0_diff": 3.197442310920451e-13,
+    "max_u0_diff_vs_python": 2.6290081223123707e-13,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.30418795900186524
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu4_N4",
+   "nx": 10,
+   "nu": 4,
+   "N": 4,
+   "steps": 196,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 16794.0,
+    "solved": 196,
+    "mean_solve_us": 43.87457142857143,
+    "best_mean_solve_us": 43.635908163265306,
+    "max_best_solve_us": 1207.708,
+    "per_iteration_ns": 512.0528760271526,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 16794.0,
+    "solved": 196,
+    "mean_solve_us": 25.60695408163265,
+    "best_mean_solve_us": 25.27398469387755,
+    "max_best_solve_us": 703.958,
+    "per_iteration_ns": 298.85453138025485,
+    "generate_s": 0.20385024999268353,
+    "compile_s": 0.6376515009906143,
+    "size": {
+     "text": 38360,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 1022,
+    "workspace_doubles": 0
+   },
+   "agreement": {
+    "max_u0_diff": 2.220446049250313e-15,
+    "max_u0_diff_vs_python": 1.3322676295501878e-15,
+    "same_iterations": 196
+   },
+   "python_closed_loop_s": 0.22062633399036713
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu4_N8",
+   "nx": 10,
+   "nu": 4,
+   "N": 8,
+   "steps": 192,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 16113.0,
+    "solved": 192,
+    "mean_solve_us": 97.983734375,
+    "best_mean_solve_us": 89.67838020833332,
+    "max_best_solve_us": 1343.917,
+    "per_iteration_ns": 1167.5589275740085,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 16113.0,
+    "solved": 192,
+    "mean_solve_us": 80.929015625,
+    "best_mean_solve_us": 78.8548125,
+    "max_best_solve_us": 1157.875,
+    "per_iteration_ns": 964.3375535282071,
+    "generate_s": 0.2590102499962086,
+    "compile_s": 0.15622825000900775,
+    "size": {
+     "text": 14616,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 405,
+    "workspace_doubles": 1534
+   },
+   "agreement": {
+    "max_u0_diff": 1.7763568394002505e-15,
+    "max_u0_diff_vs_python": 1.3322676295501878e-15,
+    "same_iterations": 192
+   },
+   "python_closed_loop_s": 0.27750041701074224
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu4_N12",
+   "nx": 10,
+   "nu": 4,
+   "N": 12,
+   "steps": 188,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 752.0,
+    "solved": 188,
+    "mean_solve_us": 6.791632978723404,
+    "best_mean_solve_us": 6.585265957446809,
+    "max_best_solve_us": 6.667,
+    "per_iteration_ns": 1697.908244680851,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 752.0,
+    "solved": 188,
+    "mean_solve_us": 6.516808510638298,
+    "best_mean_solve_us": 6.362973404255319,
+    "max_best_solve_us": 6.541,
+    "per_iteration_ns": 1629.2021276595744,
+    "generate_s": 0.3757617079972988,
+    "compile_s": 0.14035295801295433,
+    "size": {
+     "text": 14592,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 405,
+    "workspace_doubles": 3477
+   },
+   "agreement": {
+    "max_u0_diff": 1.5543122344752192e-15,
+    "max_u0_diff_vs_python": 1.3322676295501878e-15,
+    "same_iterations": 188
+   },
+   "python_closed_loop_s": 0.3775812919921009
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu4_N16",
+   "nx": 10,
+   "nu": 4,
+   "N": 16,
+   "steps": 184,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 13603.0,
+    "solved": 184,
+    "mean_solve_us": 162.29439130434784,
+    "best_mean_solve_us": 161.01666304347827,
+    "max_best_solve_us": 2395.417,
+    "per_iteration_ns": 2195.2633977799014,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 13603.0,
+    "solved": 184,
+    "mean_solve_us": 139.63109782608694,
+    "best_mean_solve_us": 138.9299402173913,
+    "max_best_solve_us": 2045.75,
+    "per_iteration_ns": 1888.7099904432846,
+    "generate_s": 0.48080504199606366,
+    "compile_s": 0.14000845899863634,
+    "size": {
+     "text": 14960,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 405,
+    "workspace_doubles": 4653
+   },
+   "agreement": {
+    "max_u0_diff": 8.881784197001252e-15,
+    "max_u0_diff_vs_python": 7.771561172376096e-15,
+    "same_iterations": 184
+   },
+   "python_closed_loop_s": 0.5273616249905899
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu4_N30",
+   "nx": 10,
+   "nu": 4,
+   "N": 30,
+   "steps": 170,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 88782.0,
+    "solved": 170,
+    "mean_solve_us": 2226.5779352941177,
+    "best_mean_solve_us": 2167.551723529412,
+    "max_best_solve_us": 7620.667,
+    "per_iteration_ns": 4263.457108422878,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 88782.0,
+    "solved": 170,
+    "mean_solve_us": 2016.5622470588235,
+    "best_mean_solve_us": 1906.7546294117647,
+    "max_best_solve_us": 6716.167,
+    "per_iteration_ns": 3861.3185330359756,
+    "generate_s": 0.9149649169994518,
+    "compile_s": 0.1416800000006333,
+    "size": {
+     "text": 16260,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 405,
+    "workspace_doubles": 8769
+   },
+   "agreement": {
+    "max_u0_diff": 3.552713678800501e-15,
+    "max_u0_diff_vs_python": 2.6645352591003757e-15,
+    "same_iterations": 170
+   },
+   "python_closed_loop_s": 1.1682468340004561
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu4_N40",
+   "nx": 10,
+   "nu": 4,
+   "N": 40,
+   "steps": 160,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 87559.0,
+    "solved": 160,
+    "mean_solve_us": 3235.8015750000004,
+    "best_mean_solve_us": 3113.2107124999998,
+    "max_best_solve_us": 6031.751,
+    "per_iteration_ns": 5912.907319635902,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 87559.0,
+    "solved": 160,
+    "mean_solve_us": 2784.00338125,
+    "best_mean_solve_us": 2743.42995,
+    "max_best_solve_us": 5272.916,
+    "per_iteration_ns": 5087.3187336538795,
+    "generate_s": 0.10875366699474398,
+    "compile_s": 0.15799154099659063,
+    "size": {
+     "text": 17068,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 405,
+    "workspace_doubles": 11709
+   },
+   "agreement": {
+    "max_u0_diff": 1.7763568394002505e-15,
+    "max_u0_diff_vs_python": 1.7763568394002505e-15,
+    "same_iterations": 160
+   },
+   "python_closed_loop_s": 0.46551616600481793
+  },
+  {
+   "family": "random_mpc",
+   "name": "random_mpc_nx10_nu4_N50",
+   "nx": 10,
+   "nu": 4,
+   "N": 50,
+   "steps": 150,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 27181.0,
+    "solved": 150,
+    "mean_solve_us": 1320.2633066666667,
+    "best_mean_solve_us": 1292.0933666666667,
+    "max_best_solve_us": 6899.75,
+    "per_iteration_ns": 7285.953276185571,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 27181.0,
+    "solved": 150,
+    "mean_solve_us": 1177.79916,
+    "best_mean_solve_us": 1164.7905266666667,
+    "max_best_solve_us": 6085.0,
+    "per_iteration_ns": 6499.756226776057,
+    "generate_s": 0.11424049999914132,
+    "compile_s": 0.15224395900440868,
+    "size": {
+     "text": 17860,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 405,
+    "workspace_doubles": 14649
+   },
+   "agreement": {
+    "max_u0_diff": 2.6645352591003757e-15,
+    "max_u0_diff_vs_python": 2.220446049250313e-15,
+    "same_iterations": 150
+   },
+   "python_closed_loop_s": 0.25816095899790525
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx2_N10",
+   "nx": 2,
+   "nu": 1,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 44108.0,
+    "solved": 116,
+    "mean_solve_us": 98.39801052631579,
+    "best_mean_solve_us": 96.86747894736843,
+    "max_best_solve_us": 210.5,
+    "per_iteration_ns": 423.86011607871586,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 44108.0,
+    "solved": 116,
+    "mean_solve_us": 30.305952631578947,
+    "best_mean_solve_us": 30.0207,
+    "max_best_solve_us": 65.25,
+    "per_iteration_ns": 130.54618209848553,
+    "generate_s": 0.07600154100509826,
+    "compile_s": 0.16444683299050666,
+    "size": {
+     "text": 10224,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 636,
+    "workspace_doubles": 0
+   },
+   "agreement": {
+    "max_u0_diff": 1.7763568394002505e-15,
+    "max_u0_diff_vs_python": 1.0436096431476471e-14,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.09327974999905564
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx4_N10",
+   "nx": 4,
+   "nu": 2,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 44176.0,
+    "solved": 116,
+    "mean_solve_us": 151.78464210526317,
+    "best_mean_solve_us": 148.44623684210526,
+    "max_best_solve_us": 324.791,
+    "per_iteration_ns": 652.8223922491851,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 44176.0,
+    "solved": 116,
+    "mean_solve_us": 56.90917894736842,
+    "best_mean_solve_us": 56.108326315789476,
+    "max_best_solve_us": 124.25,
+    "per_iteration_ns": 244.7651213328504,
+    "generate_s": 0.14937333400303032,
+    "compile_s": 0.4071801669924753,
+    "size": {
+     "text": 21084,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 1110,
+    "workspace_doubles": 0
+   },
+   "agreement": {
+    "max_u0_diff": 2.4424906541753444e-15,
+    "max_u0_diff_vs_python": 2.4424906541753444e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.17931370899896137
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx8_N10",
+   "nx": 8,
+   "nu": 4,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 44428.0,
+    "solved": 116,
+    "mean_solve_us": 259.79386315789475,
+    "best_mean_solve_us": 256.9468842105263,
+    "max_best_solve_us": 552.833,
+    "per_iteration_ns": 1111.0298460430358,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 44428.0,
+    "solved": 116,
+    "mean_solve_us": 107.6898894736842,
+    "best_mean_solve_us": 106.41921052631578,
+    "max_best_solve_us": 235.125,
+    "per_iteration_ns": 460.54467903124157,
+    "generate_s": 0.3572021260042675,
+    "compile_s": 1.259381084004417,
+    "size": {
+     "text": 42592,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 2057,
+    "workspace_doubles": 1642
+   },
+   "agreement": {
+    "max_u0_diff": 1.1102230246251565e-15,
+    "max_u0_diff_vs_python": 1.1102230246251565e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.3681337090092711
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx12_N10",
+   "nx": 12,
+   "nu": 6,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 44467.0,
+    "solved": 116,
+    "mean_solve_us": 421.8592105263158,
+    "best_mean_solve_us": 418.0501736842105,
+    "max_best_solve_us": 898.0,
+    "per_iteration_ns": 1802.53333933029,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 44467.0,
+    "solved": 116,
+    "mean_solve_us": 238.23684736842105,
+    "best_mean_solve_us": 236.71816315789474,
+    "max_best_solve_us": 517.875,
+    "per_iteration_ns": 1017.9459149481638,
+    "generate_s": 0.4069328330078861,
+    "compile_s": 0.07505524999578483,
+    "size": {
+     "text": 6268,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 410,
+    "workspace_doubles": 3693
+   },
+   "agreement": {
+    "max_u0_diff": 3.552713678800501e-15,
+    "max_u0_diff_vs_python": 3.552713678800501e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.4490866249980172
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx16_N10",
+   "nx": 16,
+   "nu": 8,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 44488.0,
+    "solved": 116,
+    "mean_solve_us": 637.9118210526316,
+    "best_mean_solve_us": 634.0091368421052,
+    "max_best_solve_us": 1360.375,
+    "per_iteration_ns": 2724.403119942456,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 44488.0,
+    "solved": 116,
+    "mean_solve_us": 318.0683842105263,
+    "best_mean_solve_us": 316.04669473684214,
+    "max_best_solve_us": 691.917,
+    "per_iteration_ns": 1358.41109962237,
+    "generate_s": 0.69176966699888,
+    "compile_s": 0.08139024999400135,
+    "size": {
+     "text": 7648,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 434,
+    "workspace_doubles": 4923
+   },
+   "agreement": {
+    "max_u0_diff": 3.1086244689504383e-15,
+    "max_u0_diff_vs_python": 3.1086244689504383e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.7377498339919839
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx20_N10",
+   "nx": 20,
+   "nu": 10,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 44479.0,
+    "solved": 116,
+    "mean_solve_us": 952.7660421052632,
+    "best_mean_solve_us": 932.3987,
+    "max_best_solve_us": 2014.042,
+    "per_iteration_ns": 4069.910474605994,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 44479.0,
+    "solved": 116,
+    "mean_solve_us": 441.4339789473684,
+    "best_mean_solve_us": 423.66384736842105,
+    "max_best_solve_us": 913.25,
+    "per_iteration_ns": 1885.6641561186177,
+    "generate_s": 0.9751656260050368,
+    "compile_s": 0.08913895799196325,
+    "size": {
+     "text": 9300,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 458,
+    "workspace_doubles": 6153
+   },
+   "agreement": {
+    "max_u0_diff": 1.2656542480726785e-14,
+    "max_u0_diff_vs_python": 1.2878587085651816e-14,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 1.0686936249985592
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx24_N10",
+   "nx": 24,
+   "nu": 12,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 44475.0,
+    "solved": 116,
+    "mean_solve_us": 1438.4614052631578,
+    "best_mean_solve_us": 1326.1495578947367,
+    "max_best_solve_us": 3186.583,
+    "per_iteration_ns": 6145.197684092187,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 44475.0,
+    "solved": 116,
+    "mean_solve_us": 547.8774052631579,
+    "best_mean_solve_us": 501.68093157894737,
+    "max_best_solve_us": 1115.792,
+    "per_iteration_ns": 2340.566767847105,
+    "generate_s": 0.1958602910017362,
+    "compile_s": 0.10309745799168013,
+    "size": {
+     "text": 11144,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 482,
+    "workspace_doubles": 7383
+   },
+   "agreement": {
+    "max_u0_diff": 1.5987211554602254e-14,
+    "max_u0_diff_vs_python": 1.6653345369377348e-14,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.3385670410061721
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx28_N10",
+   "nx": 28,
+   "nu": 14,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 44559.0,
+    "solved": 116,
+    "mean_solve_us": 2018.2995631578947,
+    "best_mean_solve_us": 1847.5197684210527,
+    "max_best_solve_us": 4446.042,
+    "per_iteration_ns": 8606.04854238201,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 44559.0,
+    "solved": 116,
+    "mean_solve_us": 665.0088315789474,
+    "best_mean_solve_us": 598.8212263157895,
+    "max_best_solve_us": 1436.5,
+    "per_iteration_ns": 2835.6039857267892,
+    "generate_s": 0.2870761260128347,
+    "compile_s": 0.13061429200752173,
+    "size": {
+     "text": 13528,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 506,
+    "workspace_doubles": 8613
+   },
+   "agreement": {
+    "max_u0_diff": 7.771561172376096e-15,
+    "max_u0_diff_vs_python": 7.549516567451064e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.3817761249956675
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx32_N10",
+   "nx": 32,
+   "nu": 16,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 44544.0,
+    "solved": 116,
+    "mean_solve_us": 2485.671942105263,
+    "best_mean_solve_us": 2400.442052631579,
+    "max_best_solve_us": 5208.167,
+    "per_iteration_ns": 10602.49795707615,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 44544.0,
+    "solved": 116,
+    "mean_solve_us": 682.943805263158,
+    "best_mean_solve_us": 671.9298421052631,
+    "max_best_solve_us": 1475.917,
+    "per_iteration_ns": 2913.0595141882186,
+    "generate_s": 0.3461099170090165,
+    "compile_s": 0.14823470800183713,
+    "size": {
+     "text": 15992,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 530,
+    "workspace_doubles": 9843
+   },
+   "agreement": {
+    "max_u0_diff": 4.440892098500626e-15,
+    "max_u0_diff_vs_python": 4.440892098500626e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.44736320900847204
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx10_N4",
+   "nx": 10,
+   "nu": 5,
+   "N": 4,
+   "steps": 196,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 32784.0,
+    "solved": 139,
+    "mean_solve_us": 96.77553061224489,
+    "best_mean_solve_us": 95.65641326530613,
+    "max_best_solve_us": 291.083,
+    "per_iteration_ns": 578.5750366032211,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 32784.0,
+    "solved": 139,
+    "mean_solve_us": 34.85395408163266,
+    "best_mean_solve_us": 34.225719387755106,
+    "max_best_solve_us": 104.167,
+    "per_iteration_ns": 208.37527452415813,
+    "generate_s": 0.19352512499608565,
+    "compile_s": 0.3778884999919683,
+    "size": {
+     "text": 20956,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 1047,
+    "workspace_doubles": 0
+   },
+   "agreement": {
+    "max_u0_diff": 1.1102230246251565e-15,
+    "max_u0_diff_vs_python": 9.992007221626409e-16,
+    "same_iterations": 196
+   },
+   "python_closed_loop_s": 0.20517291700525675
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx10_N8",
+   "nx": 10,
+   "nu": 5,
+   "N": 8,
+   "steps": 192,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 38668.0,
+    "solved": 127,
+    "mean_solve_us": 254.285140625,
+    "best_mean_solve_us": 242.868859375,
+    "max_best_solve_us": 632.416,
+    "per_iteration_ns": 1262.613711596152,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 38668.0,
+    "solved": 127,
+    "mean_solve_us": 89.53951041666667,
+    "best_mean_solve_us": 85.370203125,
+    "max_best_solve_us": 223.334,
+    "per_iteration_ns": 444.59465190855485,
+    "generate_s": 0.3691837500082329,
+    "compile_s": 1.2431680010049604,
+    "size": {
+     "text": 42508,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 2037,
+    "workspace_doubles": 1632
+   },
+   "agreement": {
+    "max_u0_diff": 3.552713678800501e-15,
+    "max_u0_diff_vs_python": 5.551115123125783e-15,
+    "same_iterations": 192
+   },
+   "python_closed_loop_s": 0.41293104099167977
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx10_N10",
+   "nx": 10,
+   "nu": 5,
+   "N": 10,
+   "steps": 190,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 44372.0,
+    "solved": 116,
+    "mean_solve_us": 427.29540526315793,
+    "best_mean_solve_us": 417.3710578947368,
+    "max_best_solve_us": 916.666,
+    "per_iteration_ns": 1829.6702199585325,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 44372.0,
+    "solved": 116,
+    "mean_solve_us": 129.3592052631579,
+    "best_mean_solve_us": 128.04232631578947,
+    "max_best_solve_us": 283.75,
+    "per_iteration_ns": 553.9134814748039,
+    "generate_s": 0.47087666699371766,
+    "compile_s": 1.9199307929957286,
+    "size": {
+     "text": 52240,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 2532,
+    "workspace_doubles": 3078
+   },
+   "agreement": {
+    "max_u0_diff": 2.6645352591003757e-15,
+    "max_u0_diff_vs_python": 2.4424906541753444e-15,
+    "same_iterations": 190
+   },
+   "python_closed_loop_s": 0.5119412510102848
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx10_N16",
+   "nx": 10,
+   "nu": 5,
+   "N": 16,
+   "steps": 184,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 54282.0,
+    "solved": 87,
+    "mean_solve_us": 770.980945652174,
+    "best_mean_solve_us": 757.5128858695651,
+    "max_best_solve_us": 1320.458,
+    "per_iteration_ns": 2613.3984377878487,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 54282.0,
+    "solved": 87,
+    "mean_solve_us": 442.02926630434786,
+    "best_mean_solve_us": 431.3561684782609,
+    "max_best_solve_us": 756.334,
+    "per_iteration_ns": 1498.3490844110386,
+    "generate_s": 0.4924640000099316,
+    "compile_s": 0.07654579199152067,
+    "size": {
+     "text": 5928,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 404,
+    "workspace_doubles": 4968
+   },
+   "agreement": {
+    "max_u0_diff": 6.217248937900877e-15,
+    "max_u0_diff_vs_python": 6.217248937900877e-15,
+    "same_iterations": 184
+   },
+   "python_closed_loop_s": 0.5568645000021206
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx10_N22",
+   "nx": 10,
+   "nu": 5,
+   "N": 22,
+   "steps": 178,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 63196.0,
+    "solved": 68,
+    "mean_solve_us": 1208.7647415730337,
+    "best_mean_solve_us": 1176.5936123595507,
+    "max_best_solve_us": 1679.917,
+    "per_iteration_ns": 3404.6478258117604,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 63196.0,
+    "solved": 68,
+    "mean_solve_us": 775.2209550561798,
+    "best_mean_solve_us": 731.0634213483146,
+    "max_best_solve_us": 1059.417,
+    "per_iteration_ns": 2183.5136717513765,
+    "generate_s": 0.6583657499868423,
+    "compile_s": 0.07396445899212267,
+    "size": {
+     "text": 5884,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 404,
+    "workspace_doubles": 6858
+   },
+   "agreement": {
+    "max_u0_diff": 5.773159728050814e-15,
+    "max_u0_diff_vs_python": 7.105427357601002e-15,
+    "same_iterations": 178
+   },
+   "python_closed_loop_s": 0.7709249170002295
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx10_N30",
+   "nx": 10,
+   "nu": 5,
+   "N": 30,
+   "steps": 170,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 64458.0,
+    "solved": 60,
+    "mean_solve_us": 1864.3110352941176,
+    "best_mean_solve_us": 1769.2465588235293,
+    "max_best_solve_us": 2422.333,
+    "per_iteration_ns": 4916.88969561575,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 64458.0,
+    "solved": 60,
+    "mean_solve_us": 1148.6602588235294,
+    "best_mean_solve_us": 1092.880388235294,
+    "max_best_solve_us": 1474.167,
+    "per_iteration_ns": 3029.449315833566,
+    "generate_s": 0.8882114999869373,
+    "compile_s": 0.08144620800158009,
+    "size": {
+     "text": 5948,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 404,
+    "workspace_doubles": 9378
+   },
+   "agreement": {
+    "max_u0_diff": 5.773159728050814e-15,
+    "max_u0_diff_vs_python": 6.217248937900877e-15,
+    "same_iterations": 170
+   },
+   "python_closed_loop_s": 1.0667622500041034
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx10_N32",
+   "nx": 10,
+   "nu": 5,
+   "N": 32,
+   "steps": 168,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 64615.0,
+    "solved": 60,
+    "mean_solve_us": 1981.0349702380952,
+    "best_mean_solve_us": 1911.2604166666667,
+    "max_best_solve_us": 2534.042,
+    "per_iteration_ns": 5150.721581676082,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 64615.0,
+    "solved": 60,
+    "mean_solve_us": 1221.368607142857,
+    "best_mean_solve_us": 1179.720511904762,
+    "max_best_solve_us": 1558.375,
+    "per_iteration_ns": 3175.5772808171478,
+    "generate_s": 0.9623769590107258,
+    "compile_s": 0.07924387500679586,
+    "size": {
+     "text": 5924,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 404,
+    "workspace_doubles": 10008
+   },
+   "agreement": {
+    "max_u0_diff": 4.6629367034256575e-15,
+    "max_u0_diff_vs_python": 4.440892098500626e-15,
+    "same_iterations": 168
+   },
+   "python_closed_loop_s": 1.103834082998219
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx10_N40",
+   "nx": 10,
+   "nu": 5,
+   "N": 40,
+   "steps": 160,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 62882.0,
+    "solved": 54,
+    "mean_solve_us": 2582.4023500000003,
+    "best_mean_solve_us": 2524.85548125,
+    "max_best_solve_us": 3261.75,
+    "per_iteration_ns": 6570.7893514837315,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 62882.0,
+    "solved": 54,
+    "mean_solve_us": 1569.6328,
+    "best_mean_solve_us": 1558.6307124999998,
+    "max_best_solve_us": 2011.625,
+    "per_iteration_ns": 3993.8495594923825,
+    "generate_s": 0.09690570799284615,
+    "compile_s": 0.08078737500181887,
+    "size": {
+     "text": 5912,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 404,
+    "workspace_doubles": 12528
+   },
+   "agreement": {
+    "max_u0_diff": 7.993605777301127e-15,
+    "max_u0_diff_vs_python": 8.43769498715119e-15,
+    "same_iterations": 160
+   },
+   "python_closed_loop_s": 0.31378270899585914
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx10_N50",
+   "nx": 10,
+   "nu": 5,
+   "N": 50,
+   "steps": 150,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 58990.0,
+    "solved": 53,
+    "mean_solve_us": 3152.7252799999997,
+    "best_mean_solve_us": 3048.53614,
+    "max_best_solve_us": 3950.209,
+    "per_iteration_ns": 8016.762027462281,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 58990.0,
+    "solved": 53,
+    "mean_solve_us": 1981.1114599999999,
+    "best_mean_solve_us": 1900.5044933333334,
+    "max_best_solve_us": 2533.083,
+    "per_iteration_ns": 5037.577877606374,
+    "generate_s": 0.10520474999793805,
+    "compile_s": 0.07827766600530595,
+    "size": {
+     "text": 5956,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 404,
+    "workspace_doubles": 15678
+   },
+   "agreement": {
+    "max_u0_diff": 5.329070518200751e-15,
+    "max_u0_diff_vs_python": 4.440892098500626e-15,
+    "same_iterations": 150
+   },
+   "python_closed_loop_s": 0.34726387599948794
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx10_N64",
+   "nx": 10,
+   "nu": 5,
+   "N": 64,
+   "steps": 136,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 54875.0,
+    "solved": 46,
+    "mean_solve_us": 4218.985264705882,
+    "best_mean_solve_us": 4087.70343382353,
+    "max_best_solve_us": 5217.166,
+    "per_iteration_ns": 10456.163936218678,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 54875.0,
+    "solved": 46,
+    "mean_solve_us": 2690.001198529412,
+    "best_mean_solve_us": 2627.561257352941,
+    "max_best_solve_us": 3342.208,
+    "per_iteration_ns": 6666.791125284738,
+    "generate_s": 0.11969429199234582,
+    "compile_s": 0.08396062500833068,
+    "size": {
+     "text": 5996,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 404,
+    "workspace_doubles": 20088
+   },
+   "agreement": {
+    "max_u0_diff": 5.995204332975845e-15,
+    "max_u0_diff_vs_python": 5.773159728050814e-15,
+    "same_iterations": 136
+   },
+   "python_closed_loop_s": 0.4444361670030048
+  },
+  {
+   "family": "safety_filter",
+   "name": "safety_filter_nx10_N100",
+   "nx": 10,
+   "nu": 5,
+   "N": 100,
+   "steps": 100,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 40386.0,
+    "solved": 32,
+    "mean_solve_us": 6415.68124,
+    "best_mean_solve_us": 6350.69283,
+    "max_best_solve_us": 7916.375,
+    "per_iteration_ns": 15885.904125191899,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 40386.0,
+    "solved": 32,
+    "mean_solve_us": 4132.87087,
+    "best_mean_solve_us": 4111.2321,
+    "max_best_solve_us": 5123.875,
+    "per_iteration_ns": 10233.42462734611,
+    "generate_s": 0.15822608300368302,
+    "compile_s": 0.08223200000065845,
+    "size": {
+     "text": 6064,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 404,
+    "workspace_doubles": 31428
+   },
+   "agreement": {
+    "max_u0_diff": 3.3306690738754696e-15,
+    "max_u0_diff_vs_python": 3.1086244689504383e-15,
+    "same_iterations": 100
+   },
+   "python_closed_loop_s": 0.5425662079942413
+  },
+  {
+   "family": "rocket_landing",
+   "name": "rocket_landing_N2",
+   "nx": 6,
+   "nu": 3,
+   "N": 2,
+   "steps": 301,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 1294.0,
+    "solved": 301,
+    "mean_solve_us": 1.0473421926910298,
+    "best_mean_solve_us": 1.0017973421926911,
+    "max_best_solve_us": 3.542,
+    "per_iteration_ns": 243.6244204018547,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 1294.0,
+    "solved": 301,
+    "mean_solve_us": 0.19640531561461794,
+    "best_mean_solve_us": 0.18008305647840533,
+    "max_best_solve_us": 0.541,
+    "per_iteration_ns": 45.68624420401855,
+    "generate_s": 0.06328333399142139,
+    "compile_s": 0.06926824999391101,
+    "size": {
+     "text": 4712,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 368,
+    "workspace_doubles": 0
+   },
+   "agreement": {
+    "max_u0_diff": 1.8952793823245884e-07,
+    "max_u0_diff_vs_python": 5.861977570020827e-14,
+    "same_iterations": 301
+   },
+   "python_closed_loop_s": 0.0678312090021791
+  },
+  {
+   "family": "rocket_landing",
+   "name": "rocket_landing_N4",
+   "nx": 6,
+   "nu": 3,
+   "N": 4,
+   "steps": 301,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 1154.0,
+    "solved": 301,
+    "mean_solve_us": 1.9011328903654485,
+    "best_mean_solve_us": 1.8565249169435216,
+    "max_best_solve_us": 13.667,
+    "per_iteration_ns": 495.8760831889081,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 1154.0,
+    "solved": 301,
+    "mean_solve_us": 0.5134485049833887,
+    "best_mean_solve_us": 0.489,
+    "max_best_solve_us": 2.958,
+    "per_iteration_ns": 133.92374350086655,
+    "generate_s": 0.1034547909948742,
+    "compile_s": 0.15594670799328014,
+    "size": {
+     "text": 10176,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 652,
+    "workspace_doubles": 0
+   },
+   "agreement": {
+    "max_u0_diff": 5.016926394318943e-07,
+    "max_u0_diff_vs_python": 5.684341886080802e-14,
+    "same_iterations": 301
+   },
+   "python_closed_loop_s": 0.10423958300088998
+  },
+  {
+   "family": "rocket_landing",
+   "name": "rocket_landing_N8",
+   "nx": 6,
+   "nu": 3,
+   "N": 8,
+   "steps": 301,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 1358.0,
+    "solved": 301,
+    "mean_solve_us": 4.642574750830565,
+    "best_mean_solve_us": 4.542016611295681,
+    "max_best_solve_us": 55.292,
+    "per_iteration_ns": 1029.0243004418262,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 1358.0,
+    "solved": 301,
+    "mean_solve_us": 1.428704318936877,
+    "best_mean_solve_us": 1.3674285714285714,
+    "max_best_solve_us": 14.125,
+    "per_iteration_ns": 316.6715758468336,
+    "generate_s": 0.1938927079900168,
+    "compile_s": 0.3970894170051906,
+    "size": {
+     "text": 21412,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 1218,
+    "workspace_doubles": 0
+   },
+   "agreement": {
+    "max_u0_diff": 1.3588191336566524e-06,
+    "max_u0_diff_vs_python": 6.927791673660977e-14,
+    "same_iterations": 301
+   },
+   "python_closed_loop_s": 0.18047229200601578
+  },
+  {
+   "family": "rocket_landing",
+   "name": "rocket_landing_N16",
+   "nx": 6,
+   "nu": 3,
+   "N": 16,
+   "steps": 301,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 2147.0,
+    "solved": 301,
+    "mean_solve_us": 15.980365448504983,
+    "best_mean_solve_us": 14.406112956810631,
+    "max_best_solve_us": 377.125,
+    "per_iteration_ns": 2240.3772706101536,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 2147.0,
+    "solved": 301,
+    "mean_solve_us": 8.096514950166112,
+    "best_mean_solve_us": 7.187631229235881,
+    "max_best_solve_us": 176.25,
+    "per_iteration_ns": 1135.0959478341872,
+    "generate_s": 0.2145161249936791,
+    "compile_s": 0.08619924999948125,
+    "size": {
+     "text": 5552,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 422,
+    "workspace_doubles": 1784
+   },
+   "agreement": {
+    "max_u0_diff": 2.9734704867223627e-06,
+    "max_u0_diff_vs_python": 5.684341886080802e-14,
+    "same_iterations": 301
+   },
+   "python_closed_loop_s": 0.26688699999067467
+  },
+  {
+   "family": "rocket_landing",
+   "name": "rocket_landing_N32",
+   "nx": 6,
+   "nu": 3,
+   "N": 32,
+   "steps": 301,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 3514.0,
+    "solved": 301,
+    "mean_solve_us": 52.48504651162791,
+    "best_mean_solve_us": 48.130083056478405,
+    "max_best_solve_us": 1666.458,
+    "per_iteration_ns": 4495.731075697211,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 3514.0,
+    "solved": 301,
+    "mean_solve_us": 27.498308970099668,
+    "best_mean_solve_us": 25.102518272425247,
+    "max_best_solve_us": 821.625,
+    "per_iteration_ns": 2355.4328400682984,
+    "generate_s": 0.45321091600635555,
+    "compile_s": 0.09175774999312125,
+    "size": {
+     "text": 5820,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 422,
+    "workspace_doubles": 5412
+   },
+   "agreement": {
+    "max_u0_diff": 6.444159538432359e-06,
+    "max_u0_diff_vs_python": 1.4210854715202004e-13,
+    "same_iterations": 301
+   },
+   "python_closed_loop_s": 0.4699297080078395
+  },
+  {
+   "family": "rocket_landing",
+   "name": "rocket_landing_N64",
+   "nx": 6,
+   "nu": 3,
+   "N": 64,
+   "steps": 301,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 4626.0,
+    "solved": 300,
+    "mean_solve_us": 124.11693355481728,
+    "best_mean_solve_us": 123.07362126245847,
+    "max_best_solve_us": 4044.459,
+    "per_iteration_ns": 8075.918071768267,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 4626.0,
+    "solved": 300,
+    "mean_solve_us": 67.43280730897011,
+    "best_mean_solve_us": 66.56477408637873,
+    "max_best_solve_us": 2064.084,
+    "per_iteration_ns": 4387.651318633809,
+    "generate_s": 0.7557357089972356,
+    "compile_s": 0.07927787500375416,
+    "size": {
+     "text": 5892,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 422,
+    "workspace_doubles": 10884
+   },
+   "agreement": {
+    "max_u0_diff": 1.3084314275602082e-05,
+    "max_u0_diff_vs_python": 1.7053025658242404e-13,
+    "same_iterations": 301
+   },
+   "python_closed_loop_s": 0.8011149590020068
+  },
+  {
+   "family": "rocket_landing",
+   "name": "rocket_landing_N128",
+   "nx": 6,
+   "nu": 3,
+   "N": 128,
+   "steps": 301,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 4851.0,
+    "solved": 300,
+    "mean_solve_us": 256.93893355481725,
+    "best_mean_solve_us": 254.84660797342192,
+    "max_best_solve_us": 7964.875,
+    "per_iteration_ns": 15942.819830962688,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 4851.0,
+    "solved": 300,
+    "mean_solve_us": 146.34192691029898,
+    "best_mean_solve_us": 144.85382724252491,
+    "max_best_solve_us": 4281.834,
+    "per_iteration_ns": 9080.379303236447,
+    "generate_s": 0.11532470799284056,
+    "compile_s": 0.07938537500740495,
+    "size": {
+     "text": 5980,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 422,
+    "workspace_doubles": 21828
+   },
+   "agreement": {
+    "max_u0_diff": 1.452979506666452e-05,
+    "max_u0_diff_vs_python": 1.1368683772161603e-13,
+    "same_iterations": 301
+   },
+   "python_closed_loop_s": 0.15133012500882614
+  },
+  {
+   "family": "rocket_landing",
+   "name": "rocket_landing_N192",
+   "nx": 6,
+   "nu": 3,
+   "N": 192,
+   "steps": 301,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 4867.0,
+    "solved": 300,
+    "mean_solve_us": 393.15127574750835,
+    "best_mean_solve_us": 389.98570099667774,
+    "max_best_solve_us": 12098.25,
+    "per_iteration_ns": 24314.471748510376,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 4867.0,
+    "solved": 300,
+    "mean_solve_us": 245.35686046511628,
+    "best_mean_solve_us": 238.75317275747508,
+    "max_best_solve_us": 7260.625,
+    "per_iteration_ns": 15174.11444421615,
+    "generate_s": 0.142668375003268,
+    "compile_s": 0.07808841699443292,
+    "size": {
+     "text": 6012,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 421,
+    "workspace_doubles": 37380
+   },
+   "agreement": {
+    "max_u0_diff": 1.523799701885764e-05,
+    "max_u0_diff_vs_python": 1.4210854715202004e-13,
+    "same_iterations": 301
+   },
+   "python_closed_loop_s": 0.22263837499485817
+  },
+  {
+   "family": "rocket_landing",
+   "name": "rocket_landing_N256",
+   "nx": 6,
+   "nu": 3,
+   "N": 256,
+   "steps": 301,
+   "opt": "-O2",
+   "lowering": "auto",
+   "fixed_bounds": false,
+   "tinympc": {
+    "iterations": 4878.0,
+    "solved": 300,
+    "mean_solve_us": 516.9155780730897,
+    "best_mean_solve_us": 514.4803588039866,
+    "max_best_solve_us": 15915.833,
+    "per_iteration_ns": 31896.59471094711,
+    "compile_s": 6.696984502006671,
+    "size": {
+     "text": 167035,
+     "data": 48,
+     "bss": 307
+    }
+   },
+   "scaly": {
+    "iterations": 4878.0,
+    "solved": 300,
+    "mean_solve_us": 309.7645382059801,
+    "best_mean_solve_us": 307.30885382059796,
+    "max_best_solve_us": 9132.417,
+    "per_iteration_ns": 19114.21197211972,
+    "generate_s": 0.1738352499960456,
+    "compile_s": 0.07814062500256114,
+    "size": {
+     "text": 6020,
+     "data": 0,
+     "bss": 0
+    },
+    "c_lines": 421,
+    "workspace_doubles": 49860
+   },
+   "agreement": {
+    "max_u0_diff": 1.7410908668580305e-05,
+    "max_u0_diff_vs_python": 1.4210854715202004e-13,
+    "same_iterations": 301
+   },
+   "python_closed_loop_s": 0.25351941600092687
+  }
+ ]
+}

@@ -26,6 +26,7 @@ equation: one solve with the same factorization per step and no differentiation 
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -33,6 +34,11 @@ from scipy import optimize, sparse
 
 import scaly as sc
 from scaly import linalg
+
+from scaly.codegen import write_module
+
+GENERATED = Path(__file__).resolve().parent / "generated" / "heat_control"
+
 
 N_GRID, STEPS, DT = 14, 25, 0.012
 N_HEATERS, ALPHA, U_MAX = 4, 1e-6, 400.0
@@ -129,3 +135,6 @@ if __name__ == "__main__":
   print(f"cost {float(out['initial_cost']):.3f} with the heaters off -> {float(out['cost']):.4f} after {int(out['iterations'])} L-BFGS-B iterations")
   print(f"final temperature: {out['t_final'][inside].mean():.2f} on the disc, {np.abs(out['t_final'][~inside]).max():.2f} at most elsewhere")
   print("mean heater power: " + ", ".join(f"{p:.1f}" for p in out["u"].mean(axis=0)))
+  for fn in (system, simulate, objective):
+    write_module(fn, GENERATED)
+  print(f"generated C in {GENERATED}")

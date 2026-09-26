@@ -19,9 +19,14 @@ over either parameter reuses the compiled solver.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 import scaly as sc
+from scaly.codegen import write_module
+
+GENERATED = Path(__file__).resolve().parent / "generated" / "mdp_value_iteration"
 
 MAZE = (
   "##############",
@@ -134,3 +139,5 @@ if __name__ == "__main__":
     out = main(slip, puddle)
     print(f"slip {slip}, puddle cost {puddle}: {int(out['sweeps'])} sweeps, expected cost from S {out['value'][START]:.2f}")
     print(render(out["policy"]))
+  write_module(solve, GENERATED)
+  print(f"generated C in {GENERATED}")
