@@ -135,18 +135,21 @@ def _render_entry(proc: ProgramNode, fun: Function, *, casadi: bool = False) -> 
   body = list(proc.args[param_count:])
   sz_w = int(proc.attrs.get("sz_w", 0))  # set by passes/program/pack_workspace.py
 
-  # Buffer name -> C pointer expression for the ABI entry (inputs are arg[i], outputs res[i]).
-  ptr_expr: dict[str, str] = {}
-  for i, name in enumerate(fun.input_names):
-    ptr_expr[name] = f"arg[{i}]"
-  for i, name in enumerate(fun.output_names):
-    ptr_expr[name] = f"res[{i}]"
+  # Buffer name -> C pointer expression for the ABI entry: the parameters are the inputs (arg[i])
+  # then the outputs (res[i]), in order. By position, since an output may share an input's name
+  # (its buffer is then named apart).
+  params = [pp.attrs["name"] for pp in proc.args[:param_count]]
+  n_in = len(fun.inputs)
+  ptr_expr: dict[str, str] = {name: f"arg[{i}]" for i, name in enumerate(params[:n_in])}
+  out_buffers = params[n_in:]
+  ptr_expr.update({name: f"res[{i}]" for i, name in enumerate(out_buffers)})
 
   lines = entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi))
   epilogue: list[str] = []
   if casadi:
     gather = casadi_gather(fun, sz_w)
-    ptr_expr.update(gather.ptr)
+    by_output = dict(zip(fun.output_names, out_buffers, strict=True))
+    ptr_expr.update({by_output[name]: ptr for name, ptr in gather.ptr.items()})
     lines += gather.setup
     epilogue = gather.epilogue
   _emit_local_buffers(body, lines, ptr_expr, indent=2)

@@ -317,6 +317,8 @@ class LowerCtx:
     self.value_buffers: dict[int, str] = {}
     # Output Expr.id -> output buffer name, so the body writes outputs in place.
     self._output_alias: dict[int, str] = {}
+    # Output position -> its buffer's name: the output's own name unless an input already took it.
+    self.output_buffer_names: list[str] = []
     # (callee_name, arg_buffer_names) -> output buffer names, to dedup repeated CALL invocations.
     self.call_invocations: dict[tuple[str, tuple[str, ...]], tuple[str, ...]] = {}
     # scan identity -> buffer name per output index (0 final carry, -1 carries, 1.. stacked outputs).
@@ -354,7 +356,11 @@ class LowerCtx:
     """Register output BUFFER params and alias each unique computed output Expr to
     its output buffer, so its rule writes directly into the output (no copy)."""
     seen: set[int] = set()
-    for name, expr in zip(self.fun.output_names, self.fun.outputs, strict=True):
+    for out_name, expr in zip(self.fun.output_names, self.fun.outputs, strict=True):
+      # An output may share its name with an input (``(x, y) -> (y, z)``); buffers are keyed by
+      # name, so such an output gets one of its own, or it would stand for the input everywhere.
+      name = out_name if out_name not in self.buffers else self._fresh(f"{out_name}_out")
+      self.output_buffer_names.append(name)
       buf = p.buffer(name, self._abi_dtype(expr.type.dtype), _shape_or_scalar(expr.shape), address_space="global")
       self.params.append(buf)
       self.buffers[name] = buf
@@ -363,11 +369,15 @@ class LowerCtx:
       seen.add(expr.id)
       self._output_alias[expr.id] = name
 
+  def output_buffer(self, i: int) -> ProgramNode:
+    """The buffer of output ``i``."""
+    return self.buffers[self.output_buffer_names[i]]
+
   def emit_outputs(self) -> None:
-    for name, expr in zip(self.fun.output_names, self.fun.outputs, strict=True):
+    for out_name, name, expr in zip(self.fun.output_names, self.output_buffer_names, self.fun.outputs, strict=True):
       src = self.value_buffers.get(expr.id)
       if src is None:
-        raise LoweringError(f"output {name!r} expression was not lowered")
+        raise LoweringError(f"output {out_name!r} expression was not lowered")
       if src == name:
         continue  # already written in place via the output alias
       self.statements.append(_copy_loop(self.buffers[src], self.buffers[name], expr.shape))
@@ -1347,7 +1357,7 @@ def _lower_index_update(ctx: LowerCtx, node: Expr) -> None:
   base, values = node.args
   idx = node.attrs["indices"]
   if ctx.in_place is not None and node.id in ctx.in_place:
-    out = ctx.buffers[ctx.fun.output_names[0]]
+    out = ctx.output_buffer(0)
     ctx.value_buffers[node.id] = out.attrs["name"]
   else:
     out = ctx.alloc_tmp(node)
@@ -1429,7 +1439,7 @@ def _lower_put(ctx: LowerCtx, node: Expr) -> None:
   rows = size // n if n else 0
   if ctx.in_place is not None and node.id in ctx.in_place:
     # A link of a proven in-place chain: the carry itself, whose caller keeps the scratch slots.
-    store = ctx.buffers[ctx.fun.output_names[0]]
+    store = ctx.output_buffer(0)
     ctx.value_buffers[node.id] = store.attrs["name"]
   else:
     store = ctx.new_private(node.type.dtype, (size + rows * lanes,))
@@ -1466,7 +1476,7 @@ def _lower_ragged_add(ctx: LowerCtx, node: Expr) -> None:
   inner loop of a sparse column update, one contiguous run of the source per group."""
   base, src, lo, hi, scale = node.args
   if ctx.in_place is not None and node.id in ctx.in_place:
-    out = ctx.buffers[ctx.fun.output_names[0]]
+    out = ctx.output_buffer(0)
     ctx.value_buffers[node.id] = out.attrs["name"]
   else:
     out = ctx.new_private(node.type.dtype, node.shape)

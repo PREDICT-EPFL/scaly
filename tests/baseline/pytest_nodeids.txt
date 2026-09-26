@@ -398,6 +398,10 @@ tests/codegen/test_jit.py::test_jit_handles_nested_call_nodes
 tests/codegen/test_jit.py::test_jit_handles_sparse_jacobian_factory_output
 tests/codegen/test_jit.py::test_jit_input_shape_mismatch_raises
 tests/codegen/test_jit.py::test_recompile_clears_cache_and_recompiles
+tests/codegen/test_name_clash.py::test_a_callee_and_a_loop_body_with_clashing_names
+tests/codegen/test_name_clash.py::test_an_input_passed_straight_through_under_its_own_name
+tests/codegen/test_name_clash.py::test_an_output_named_like_an_input_is_its_own_buffer
+tests/codegen/test_name_clash.py::test_the_typed_header_names_both_sides
 tests/codegen/test_toolchain.py::test_aot_cli_writes_the_module_pair
 tests/codegen/test_toolchain.py::test_env_registry_mentions_native_build_controls
 tests/codegen/test_toolchain.py::test_solver_dir_override_discovery_and_flags
@@ -1773,6 +1777,9 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.progr
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers._oracle]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.graph]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.ipm.ruiz]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.ipm.structure]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.ipm]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.model]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.nlp]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.paths]
