@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 104**
+**Next id: 105**
 
 | Prefix | Section |
 |---|---|
@@ -157,6 +157,13 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       and requires each read to miss the writes of the updates after its link. The carry keeps
       the scratch slots of padded lanes after its entries. `A^T y` by row accumulation at
       n = 2000: 2 283 → 51 µs (`notes/tier2_pr3_report.html`).
+- [x] **C-104. `SparseMatrix` (T2-4).** `scaly.linalg.sparse`: a static CSC pattern in NumPy with
+      an `Expr` of values. Construction from symbols, patterns, COO, dense expressions, SciPy and
+      sparse Jacobians/Hessians; union add, scaling, Hadamard, row/column scaling, transpose,
+      products with dense operands and with sparse ones (pattern at build time), blocks, triangles,
+      diagonal, `to_dense`. Values cross the `Function` boundary compactly with `sparsity` as the
+      output metadata. `Expr` operators defer to operands that set `__array_ufunc__ = None`
+      (`notes/tier2_pr4_report.html`).
 
 ### Tier 1 primitives
 

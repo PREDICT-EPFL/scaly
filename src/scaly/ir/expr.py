@@ -565,6 +565,12 @@ class Expr:
   def __neg__(self) -> Expr:
     return unary(ExprOp.NEG, self)
 
+  @staticmethod
+  def _defers(other: Any) -> bool:
+    """Whether ``other`` opts out of being converted, NumPy's way (``__array_ufunc__ = None``), so its
+    reflected operator runs instead: a ``SparseMatrix`` on the right of ``@``, typically."""
+    return not isinstance(other, Expr) and getattr(type(other), "__array_ufunc__", False) is None
+
   def _operand(self, other: Any) -> Expr:
     """``other`` as an operand of ``+``, ``-`` or ``*`` beside this expression: a Python integer next
     to an integer expression is an integer constant, so index arithmetic needs no casts."""
@@ -573,24 +579,32 @@ class Expr:
     return as_expr(other)
 
   def __add__(self, other: Any) -> Expr:
+    if self._defers(other):
+      return NotImplemented
     return binary(ExprOp.ADD, self, self._operand(other))
 
   def __radd__(self, other: Any) -> Expr:
     return binary(ExprOp.ADD, self._operand(other), self)
 
   def __sub__(self, other: Any) -> Expr:
+    if self._defers(other):
+      return NotImplemented
     return binary(ExprOp.SUB, self, self._operand(other))
 
   def __rsub__(self, other: Any) -> Expr:
     return binary(ExprOp.SUB, self._operand(other), self)
 
   def __mul__(self, other: Any) -> Expr:
+    if self._defers(other):
+      return NotImplemented
     return binary(ExprOp.MUL, self, self._operand(other))
 
   def __rmul__(self, other: Any) -> Expr:
     return binary(ExprOp.MUL, self._operand(other), self)
 
   def __truediv__(self, other: Any) -> Expr:
+    if self._defers(other):
+      return NotImplemented
     return binary(ExprOp.DIV, self, as_expr(other))
 
   def __rtruediv__(self, other: Any) -> Expr:
@@ -603,6 +617,8 @@ class Expr:
     return binary(ExprOp.POW, as_expr(other), self)
 
   def __matmul__(self, other: Any) -> Expr:
+    if self._defers(other):
+      return NotImplemented
     return matmul(self, as_expr(other))
 
   def __rmatmul__(self, other: Any) -> Expr:

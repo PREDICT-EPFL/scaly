@@ -25,9 +25,9 @@ by chain rule through the callee. Propagation uses compressed sparse row (CSR) B
 internally, so horizon-shaped analysis stores dependencies instead of a dense output-by-input mask.
 Public patterns are `SparsityType` coordinate lists.
 
-This sparsity is used to construct and evaluate compact Jacobians and Hessians. It is not a general
-sparse tensor algebra: ordinary expression operations such as `matmul` and `dot` lower as dense
-arithmetic even when an operand carries a pattern. A conservative local `matmul` pattern can add
+This sparsity is used to construct and evaluate compact Jacobians and Hessians. Ordinary
+expression operations such as `matmul` and `dot` lower as dense arithmetic even when an operand
+carries a pattern; for sparse linear algebra use [`SparseMatrix`](#sparse-matrices-as-values). A conservative local `matmul` pattern can add
 possible nonzeros, but keeping each stage as a `vmap` callee keeps the assembled optimal-control
 derivative block sparse. Solver wrappers consume those compact patterns without densifying them.
 
@@ -139,3 +139,51 @@ def f(J: sc.Expr) -> sc.Expr:
 
 The pattern's shape must match the tensor's exactly. This tells the graph about structure it could
 not otherwise infer, most usefully that a matrix coming in from outside is sparse.
+
+## Sparse matrices as values
+
+`sc.SparseMatrix` is a matrix whose pattern is fixed when the graph is built and whose values are an
+expression. The pattern is compressed sparse column (CSC) with sorted row indices; `values` has one
+entry per stored element, in that order.
+
+```python
+P = sc.SparseMatrix.symbol("P", p_pattern)   # values are the input "P", shape (nnz,)
+A = sc.SparseMatrix.symbol("A", a_pattern)
+rho, delta = sc.sym("rho", ()), sc.sym("delta", ())
+
+K = sc.SparseMatrix.block([[P.add_diagonal(rho), A.T], [A, sc.SparseMatrix.identity(m) * (-delta)]])
+r = K @ z                                    # a dense vector expression
+H = sc.SparseMatrix.from_sparse_jacobian(sc.sparse_hessian(f, x))
+```
+
+A pattern can be a `SparsityType`, a boolean mask or a SciPy sparse matrix. The constructors are:
+
+- `symbol`: values are a new input.
+- `from_pattern`: values given in the pattern's own order.
+- `from_coo`: coordinate triplets; repeated coordinates are summed.
+- `from_dense`: the entries of a dense expression on a pattern.
+- `from_scipy`: a constant matrix.
+- `from_sparse_jacobian`: the result of `sparse_jacobian` or `sparse_hessian`.
+- `diag`, `identity` and `zeros`.
+
+The operations are:
+
+- `+`, `-` (the union of the patterns), scaling by a scalar, and `*` between two matrices (the
+  intersection).
+- `scale_rows`, `scale_cols`, `add_diagonal` and `.T`.
+- `@` with a dense vector or matrix on either side.
+- `@` between two sparse matrices, whose pattern is worked out at build time.
+- `block`, `tril`, `triu`, `diagonal`, `select`, `with_pattern` and `to_dense`.
+
+Every result is again a `SparseMatrix` with a static pattern, and its values are ordinary
+expressions (static gathers, products and segment sums), so everything is differentiable through
+the values.
+
+Across a `Function` boundary a sparse matrix is its values vector. As an input, `symbol` gives
+exactly that vector. As an output, pass `values` with `sparsity` as the metadata, whose coordinate
+order is the values' order:
+
+```python
+fn = sc.Function._from_exprs("kkt", [P.values, A.values, rho, delta], [K.values],
+                             output_sparsities=[K.sparsity])
+```

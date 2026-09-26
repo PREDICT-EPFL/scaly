@@ -59,6 +59,9 @@ src/scaly/
     sparsity.py          structural sparsity patterns and greedy coloring; no AD in it
     sparse.py            sparse_jacobian, sparse_hessian: AD driven by a structural pattern
 
+  linalg/                sparse and dense linear algebra as generated code
+    sparse.py            SparseMatrix: a static CSC pattern with Expr values
+
   codegen/
     abi.py               the pointer ABI: signature, status codes, mangling
     c.py                 ProgramNode -> standalone scalar C; no lowering policy of its own
@@ -108,7 +111,7 @@ one, never a higher one.
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR). Nothing here knows what a `Function` is. |
 | 3 | `function/{model,tree}` | `Function` itself, a named graph boundary over import layer 1, and the pytree declarations. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the one builder that does too (`vmap`). |
-| 5 | `function/{factory,api}`, the rest of `solvers/` | The user-facing request layer: typed derivative specs, the decorator, the solver builders. |
+| 5 | `function/{factory,api}`, the rest of `solvers/`, `linalg/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, and linear algebra built from expressions and loops. |
 | 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |

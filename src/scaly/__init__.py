@@ -63,6 +63,7 @@ from .ir.expr import (
   where,
 )
 from .function import Function, G, L, factory
+from .linalg import SparseMatrix
 from .utils.options import Options, get_options, options, set_options
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
@@ -134,6 +135,7 @@ __all__ = [
   "SolverStatus",
   "Spec",
   "SparseJacobian",
+  "SparseMatrix",
   "SparsityType",
   "TensorType",
   "VerifyError",

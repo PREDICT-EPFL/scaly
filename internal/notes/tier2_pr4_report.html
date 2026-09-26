@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 2 PR 4 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 4 report</h1>
+<p class="sub">T2-4 · <code>SparseMatrix</code> (C-104) · branch <code>claude/tier2-sparse</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>sc.SparseMatrix</code> is a matrix whose pattern is fixed when the graph is built, stored as CSC in NumPy. Its values are an <code>Expr</code> in CSC order.</p>
+<p><b>How it is built.</b> Every operation works out the result's pattern at generation time. It expresses the values with ordinary static-index ops (<code>gather</code>, products, <code>segment_sum</code>, <code>scatter</code>). So derivatives, sparsity analysis and code generation see nothing new: the class is a library value in the new package <code>scaly.linalg</code>, and the IR type does not change.</p>
+<p><b>Across a <code>Function</code> boundary</b> the matrix is its compact values vector, with <code>sparsity</code> as the output metadata.</p>
+<p><b>Performance.</b> A KKT matrix with 42 000 nonzeros is assembled in <b>37 µs</b>, which is 16× faster than SciPy's <code>bmat</code> in Python. <code>K @ z</code> runs within 2.5× of SciPy's C matvec. <code>AᵀA</code> with a build-time product pattern takes 29 µs, 6.6× faster than SciPy recomputing the pattern every call.</p>
+<p style="margin-bottom:0"><b>Suite:</b> 1 154 passed, 88 skipped; the same four VM-only failures. ruff, ty and the docs build are clean. <b>Mutation checks:</b> 11 of 11 killed, after two tests were sharpened.</p>
+</div>
+
+<h2>1. The API</h2>
+<div class="scroll"><table>
+<tr><th>Group</th><th>Members</th><th>Notes</th></tr>
+<tr><td>Construction</td><td><code>symbol(name, pattern)</code>, <code>from_pattern(pattern, values)</code>, <code>from_coo(rows, cols, values, shape)</code>, <code>from_dense(x, pattern=None)</code>, <code>from_scipy(a)</code>, <code>from_sparse_jacobian(sj)</code>, <code>diag</code>, <code>identity</code>, <code>zeros</code>, <code>block(grid)</code></td><td>
+<ul>
+<li>A pattern can be a <code>SparsityType</code> (coordinate order), a boolean mask (row-major) or a SciPy matrix (stored order). Values are reordered to CSC with one gather.</li>
+<li><code>from_coo</code> sums duplicates with <code>segment_sum</code>.</li>
+<li><code>block</code> takes <code>SparseMatrix</code>, dense rank-2 expressions, SciPy matrices or <code>None</code>.</li>
+</ul></td></tr>
+<tr><td>Arithmetic</td><td><code>+ − neg</code>, <code>* scalar</code>, <code>/ scalar</code>, <code>A * B</code> (Hadamard product), <code>scale_rows</code>, <code>scale_cols</code>, <code>add_diagonal</code></td><td>Add and subtract use the pattern union, reading zero where an operand has no entry. The Hadamard product uses the intersection.</td></tr>
+<tr><td>Products</td><td><code>A @ x</code>, <code>A @ X</code>, <code>x @ A</code>, <code>X @ A</code>, <code>A @ B</code></td><td>
+<ul>
+<li>Dense operands: one product per stored entry, then a segment sum per row.</li>
+<li>Sparse × sparse: every pair of an entry <code>(i,k)</code> of <code>A</code> and an entry <code>(k,j)</code> of <code>B</code> is enumerated at build time. The unique output keys form the pattern, and the values are a segment sum of the pair products.</li>
+</ul></td></tr>
+<tr><td>Structure</td><td><code>.T</code>, <code>tril</code>, <code>triu</code>, <code>select</code>, <code>with_pattern</code>, <code>diagonal</code>, <code>to_dense</code>, <code>coordinates</code>, <code>position</code>, <code>sparsity</code>, <code>to_scipy</code></td><td><code>with_pattern</code> places the values on a larger pattern: it is how two matrices share one pattern before a loop.</td></tr>
+</table></div>
+<p><b>Operator deferral.</b> <code>Expr</code> operators now return <code>NotImplemented</code> for an operand whose class sets <code>__array_ufunc__ = None</code>, which is NumPy's opt-out convention. As a result, <code>x @ A</code> reaches <code>SparseMatrix.__rmatmul__</code>, and NumPy scalars and arrays also defer to the matrix.</p>
+
+<h2>2. Tests</h2>
+<p><code>tests/linalg/test_sparse_matrix.py</code> has 28 tests.</p>
+<ul>
+<li><b>Construction.</b>
+<ul>
+<li>COO: duplicates summed, unsorted input, and a 3-cycle permutation that is not its own inverse.</li>
+<li><code>from_pattern</code> in all three pattern kinds, including a permuted coordinate list.</li>
+<li>Constants, <code>from_dense</code> with and without a pattern, and a sparse Hessian round-trip.</li>
+</ul></li>
+<li><b>Algebra against SciPy / NumPy.</b> Random 7×5 and 5×6 patterns with symbolic values, 15 matrix-valued operations: add, sub, neg, two scalings, div, Hadamard, row and column scaling, transpose, sparse×sparse, <code>tril(−1)</code>, <code>triu(1)</code>, <code>add_diagonal</code>, and a block with a dense block. Also the four dense-operand product forms, the diagonal with missing entries, <code>with_pattern</code> and <code>select</code>.</li>
+<li><b>KKT.</b> <code>[[P + ρI, Aᵀ], [A, −δI]]</code> equals SciPy's <code>bmat</code>, and its pattern size matches.</li>
+<li><b>Derivatives.</b> A nonlinear function through <code>(A C) x</code> and <code>Aᵀ sin(y)</code>:
+<ul>
+<li>the gradient in the values matches finite differences;</li>
+<li>forward and reverse mode agree in strict multi-seed mode;</li>
+<li>the Hessian in <code>x</code> matches finite differences of the gradient.</li>
+</ul></li>
+<li><b>Function boundary.</b> A product's compact values cross the <code>Function</code> boundary with <code>output_sparsities</code>, and the reconstruction equals the dense product.</li>
+<li><b>Validation.</b> Bad <code>indptr</code>, unsorted or duplicate rows, out-of-range indices, wrong value shapes, duplicate COO in <code>from_pattern</code>, non-scalar scaling, and unsized or mismatched blocks are all rejected.</li>
+</ul>
+<p><b>Mutation checks (11 of 11 killed):</b></p>
+<ul>
+<li>union misses read the wrong entry</li>
+<li>sparse×sparse pairs without offsets</li>
+<li>transpose without permutation</li>
+<li>COO permutation inverted</li>
+<li>matrix product lanes transposed</li>
+<li>row scaling by sorted indices</li>
+<li>block column offsets from rows</li>
+<li><code>with_pattern</code> containment check removed</li>
+<li><code>Expr</code> deferral removed</li>
+<li><code>tril</code> sign</li>
+<li>missing diagonal reading entry 0</li>
+</ul>
+<p>The COO and <code>tril</code> mutants first survived because the tests used a self-inverse permutation and <code>k = 0</code>. Both tests were sharpened.</p>
+
+<h2>3. Benchmark</h2>
+<p><code>perf_2026_09_26_tier2/pr4_sparse_matrix.py</code>: <code>P</code> symmetric, about 5 entries per row; <code>A</code> is <code>n/2 × n</code>. Timings are µs through the JIT on the aarch64 VM, against SciPy doing the same in Python.</p>
+<div class="scroll"><table>
+<tr><th>Case</th><th class="r">n = 50</th><th class="r">n = 500</th><th class="r">n = 5 000</th><th>SciPy at n = 5 000</th></tr>
+<tr><td>KKT values (nnz 419 / 4 244 / 42 496)</td><td class="r">5.6</td><td class="r">10.0</td><td class="r">36.8</td><td><code>bmat</code>: 601</td></tr>
+<tr><td><code>K @ z</code> including assembly</td><td class="r">6.4</td><td class="r">12.8</td><td class="r">61.3</td><td><code>K @ z</code> alone: 24.5</td></tr>
+<tr><td><code>AᵀA</code> values</td><td class="r">3.0</td><td class="r">5.9</td><td class="r">28.6</td><td><code>A.T @ A</code>: 189</td></tr>
+</table></div>
+<p>Generated code is 38–62 lines at every size: each op is one loop over a static table. Generation takes at most 0.17 s at n = 5 000.</p>
+
+<h2>4. Notes</h2>
+<ul>
+<li><b>No sparse layout in the IR.</b> The generated loops are gathers and segment sums over tables. That is fine for assembly and products; the factorization in T2-7 works on the values with its own tables.</li>
+<li><b>Function outputs.</b> A <code>SparseMatrix</code> is returned by passing <code>values</code> and <code>sparsity</code> explicitly. A tree leaf for the decorator (<code>sc.L</code> with a sparse type) would be a small follow-up if wanted.</li>
+</ul>
+<p><b>Next:</b> T2-5, symbolic analysis: orderings, elimination tree, column counts, the L pattern and the left-looking tables.</p>
+</main></body></html>
