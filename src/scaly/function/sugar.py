@@ -234,7 +234,7 @@ def _while_node(cond: Function, body: Function, init: Expr, max_iter: int, outpu
   )
 
 
-def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None) -> Function:
+def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: Any = None) -> Function:
   """A copy of ``fn`` whose derivatives come from the given Functions instead of from its body.
 
   ``jvp`` takes ``(*inputs, *input_tangents)`` and returns one tangent per output. ``vjp`` takes
@@ -242,8 +242,13 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None) -> Function:
   outputs lets an implicit-function rule use the solution without solving again. Either may be
   omitted, and that direction then differentiates the body as usual. The typical use is a solver
   loop: its derivative through the iterations is replaced by the implicit-function derivative at
-  the solution, which costs one linear solve and is exact there. Sparsity patterns still come from
-  the body.
+  the solution, which costs one linear solve and is exact there.
+
+  Sparsity patterns come from the body unless ``sparsity`` gives them: a function of ``(output
+  index, input index)`` returning the pattern of that output with respect to that input (a
+  ``SparsityType``, a boolean mask, a SciPy sparse matrix, or ``None`` for no dependence). A loop's
+  structural pattern through run-time indices is conservative and can be costly to compute; the
+  rule's author usually knows the real one.
   """
   if not isinstance(fn, Function):
     raise TypeError(f"custom_derivative needs a scaly Function, got {type(fn).__name__}")
@@ -265,6 +270,7 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None) -> Function:
     copy.descriptor = fn.descriptor
   copy.custom_jvp = jvp if jvp is not None else fn.custom_jvp
   copy.custom_vjp = vjp if vjp is not None else fn.custom_vjp
+  copy.custom_sparsity = sparsity if sparsity is not None else getattr(fn, "custom_sparsity", None)
   # Procedures and derivative helpers are named after their Function, so the copy needs a name of
   # its own: in one graph with ``fn``, sharing a name would let one derivative stand for both.
   rules = ",".join(r.name if r is not None else "-" for r in (copy.custom_jvp, copy.custom_vjp))

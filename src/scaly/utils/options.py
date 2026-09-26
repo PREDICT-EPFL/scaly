@@ -25,12 +25,29 @@ class Options:
       arguments tie. ``"split"`` shares it equally among the tied arguments, ``"first"`` gives it
       all to the first (the left operand, or the lowest index), and ``"error"`` refuses to
       differentiate these operations at all. Away from ties every convention gives the same value.
+    dense_unroll: the largest order at which ``cholesky``, ``ldl`` and ``solve_triangular`` become
+      straight-line code instead of loops.
+    sparse_unroll: the most multiply-adds and divisions a sparse ``L D L^T`` may take and still be
+      generated as straight-line code instead of loops over its columns
+      (``SparseLDL(schedule="auto")``). Straight-line code runs several times faster but costs
+      about a millisecond of generation per operation.
+    max_trajectory: the most values reverse mode may store for the carries of one loop. A loop over
+      a large carry (a factorization's) differentiated through its steps would exceed any
+      reasonable memory; building such a derivative raises instead and names the loop, since an
+      implicit rule (``sc.custom_derivative``) is the fix.
   """
 
   nonsmooth: Nonsmooth = "split"
+  dense_unroll: int = 8
+  sparse_unroll: int = 1000
+  max_trajectory: int = 50_000_000
 
 
-_CHOICES: dict[str, tuple[Any, ...]] = {"nonsmooth": ("split", "first", "error")}
+def _count(value: Any) -> bool:
+  return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+_CHOICES: dict[str, Any] = {"nonsmooth": ("split", "first", "error"), "dense_unroll": _count, "sparse_unroll": _count, "max_trajectory": _count}
 _default = Options()
 _current: ContextVar[Options | None] = ContextVar("scaly_options", default=None)
 
@@ -40,8 +57,11 @@ def _updated(base: Options, changes: dict[str, Any]) -> Options:
   for name, value in changes.items():
     if name not in known:
       raise TypeError(f"unknown scaly option {name!r}; known options: {sorted(known)}")
-    if value not in _CHOICES[name]:
-      raise ValueError(f"option {name}={value!r} is not one of {_CHOICES[name]}")
+    check = _CHOICES[name]
+    if callable(check) and not check(value):
+      raise ValueError(f"option {name}={value!r} must be a non-negative integer")
+    if not callable(check) and value not in check:
+      raise ValueError(f"option {name}={value!r} is not one of {check}")
   return replace(base, **changes)
 
 

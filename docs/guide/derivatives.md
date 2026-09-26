@@ -177,5 +177,15 @@ solve_with_rule = sc.custom_derivative(solve, vjp=rule)
 ```
 
 The reverse rule receives the call's outputs, so it reuses the solution instead of solving again.
-The rules are honored through calls, `vmap` and every derivative built on them; sparsity patterns
-still come from the body.
+The rules are honored through calls, `vmap` and every derivative built on them.
+
+Sparsity patterns come from the body unless `sparsity=` gives them. It is a function of `(output
+index, input index)` that returns the pattern of that output in that input: a `SparsityType`, a
+boolean mask, a SciPy sparse matrix, or `None` for no dependence. The declared pattern is used
+wherever the Function is applied: a call, a `vmap`, or as a `scan` or `while_loop` body. A solver's
+pattern through its iterations is conservative (often dense) and can be slow to work out, while the
+rule's author usually knows the real one:
+
+```python
+diagonal = sc.custom_derivative(solve, vjp=rule, sparsity=lambda out, k: np.eye(n, dtype=bool))
+```

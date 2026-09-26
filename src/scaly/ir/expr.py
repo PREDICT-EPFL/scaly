@@ -16,6 +16,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
 
+from ..utils.options import get_options
 from .types import DType, Lowering, TensorType, as_dtype, as_shape, broadcast_shape, dtypes
 
 
@@ -930,6 +931,12 @@ def _square(a: Any, what: str) -> Expr:
   return a
 
 
+def _unroll_attr(n: int) -> dict[str, bool]:
+  """Whether a dense factorization or solve of order ``n`` becomes straight-line code, decided when
+  the graph is built (``sc.options(dense_unroll=...)``), so the choice is part of the graph."""
+  return {"unroll": n <= get_options().dense_unroll}
+
+
 def cholesky(a: Any) -> Expr:
   """The lower Cholesky factor ``L`` of a symmetric positive definite matrix, ``A = L L^T``.
 
@@ -938,7 +945,7 @@ def cholesky(a: Any) -> Expr:
   Differentiable, reading the derivative of the lower triangle as that of a symmetric matrix.
   """
   a = _square(a, "cholesky")
-  return Expr(ExprOp.CHOLESKY, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), lowering=a.lowering)
+  return Expr(ExprOp.CHOLESKY, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), attrs=_unroll_attr(a.shape[0]), lowering=a.lowering)
 
 
 def ldl(a: Any) -> Expr:
@@ -947,7 +954,7 @@ def ldl(a: Any) -> Expr:
   blocks), where every leading pivot is nonzero; a zero pivot gives inf or NaN. Only the lower
   triangle of ``a`` is read."""
   a = _square(a, "ldl")
-  return Expr(ExprOp.LDL, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), lowering=a.lowering)
+  return Expr(ExprOp.LDL, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), attrs=_unroll_attr(a.shape[0]), lowering=a.lowering)
 
 
 def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False, unit_diagonal: bool = False) -> Expr:
@@ -962,7 +969,7 @@ def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False,
     ExprOp.TRISOLVE,
     (t, b),
     TensorType(b.shape, dtype=promote_dtype(t, b), diff=diff_any(t, b)),
-    attrs={"lower": bool(lower), "trans": bool(trans), "unit": bool(unit_diagonal)},
+    attrs={"lower": bool(lower), "trans": bool(trans), "unit": bool(unit_diagonal), **_unroll_attr(t.shape[0])},
     lowering=common_lowering(t, b),
   )
 

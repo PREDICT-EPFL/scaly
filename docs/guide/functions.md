@@ -243,7 +243,9 @@ constant, which it is except where the input crosses a point where the count cha
 runs a loop that also carries the tangent. Reverse mode stores the carry at each of the at most
 `max_iter` steps and runs `max_iter` backward steps, passing the cotangent unchanged through steps
 the loop did not take. For a solver, the derivative through the steps only approximates the
-derivative of the solution, and it improves as the stopping tolerance shrinks.
+derivative of the solution, and it improves as the stopping tolerance shrinks. A reverse pass that
+would store more than `sc.options(max_trajectory=...)` values (50 million by default) for one loop,
+`scan` or `while_loop`, raises when it is built ([Options](options.md)).
 
 ## Inspect and verify
 

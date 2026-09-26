@@ -14,6 +14,7 @@ and no page under `docs/` cites them.
 | `pr5_symbolic.py` | symbolic analysis per matrix and ordering: fill against SuperLU, update lanes, tree height, supernodes, segments and analysis time |
 | `pr6_dense.py` | generated `cholesky`, `ldl`, `solve_triangular` (vector and matrix) and `matmul` against OpenBLAS LAPACK/BLAS through ctypes, per instance, at `-O2` and `-O3` |
 | `pr7_sparse_ldl.py` (+ `ldl_baseline.c`) | the generated sparse `L D L^T` and solve against an up-looking C factorization of the QDLDL kind on the same permuted matrix and analysis: MPC, random QP and grid systems (PR 7 and, after the ragged rewrite, PR 8) |
+| `pr9_schedule.py` | the sparse `L D L^T` as straight-line code (`schedule="unroll"`) against loops (`"scan"`) and the C baseline on small KKT systems, per instance in a batched call; fixed and adaptive refinement at `delta = 1e-10`; `jacobian_sparsity` of a solve with and without its declared pattern |
 
 Run from this directory, with a fresh cache so first-call times include compilation:
 

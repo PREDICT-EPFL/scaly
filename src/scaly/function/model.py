@@ -183,6 +183,8 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     # Derivative rules that replace differentiating the body; set by ``sc.custom_derivative``.
     self.custom_jvp: Function | None = None
     self.custom_vjp: Function | None = None
+    # ``(output index, input index) -> pattern``, set by ``sc.custom_derivative(sparsity=...)``.
+    self.custom_sparsity: Any = None
 
   def __repr__(self) -> str:
     suffix = f" device={self.device}" if self.device.kind != "host" else ""

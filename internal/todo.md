@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 110**
+**Next id: 113**
 
 | Prefix | Section |
 |---|---|
@@ -194,6 +194,28 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       and sweeps rewritten on them, lazy lane tables, interval-first in-place proof, one constant
       table per content. Factor 1.0–1.4×, solve 0.5–1.6× the C baseline; 2.5 s to generate at
       nnz(L) = 153 k (`notes/tier2_pr8_report.html`).
+- [x] **C-110. Schedules, refinement, health and options for the sparse factorization (T2-9).**
+      `SparseLDL(schedule="auto"|"scan"|"unroll")` (straight-line code at most
+      `sparse_unroll` = 1000 operations, 4–8× faster than the loops there); `solve(refine=k,
+      tol=)` fixed or adaptive (a `while_loop`) refinement inside the implicit rules;
+      `inertia()` and `health(signs=, pivot_tol=, x=)`; a per-component sparsity override on the
+      solve. Generic: `sc.options(dense_unroll=, sparse_unroll=, max_trajectory=)`, the dense unroll
+      decision as a node attribute, `custom_derivative(sparsity=)` honored by calls, `vmap`, `scan`
+      and `while_loop` bodies and the structured sparse Jacobian, a reverse-pass memory guard, loop
+      patterns that skip loops reading nothing that depends on `wrt`, and a fix for scan patterns
+      with a carry of 256 or more entries. Examples: `examples/sqp_newton_sparse.py`,
+      `examples/kalman_update.py` (`notes/tier2_pr9_report.html`).
+- [ ] **C-111. Generation time of straight-line code.** An unrolled graph costs about 1.2 ms per
+      scalar operation to generate, most of it in lowering and the program passes (`match.rewrite`,
+      `fuse_elementwise`, `fold_arith`, `pack_workspace`), linearly in the size. It caps
+      `sparse_unroll` and `dense_unroll`; halving it would let both double
+      (`notes/tier2_pr9_report.html`).
+- [ ] **C-112. Loop-invariant inputs for `while_loop` (and T2.g).** Adaptive refinement packs the
+      factor, `K` and `b` into its carry because a loop body takes only the carry, which copies them
+      once per solve. A `params` input read by every step (as `scan`'s stride-0 inputs are) would
+      remove the copy and serve Tier 3's outer loops. Multi-tensor carries and an int64 carry spill
+      (T2.g) were assessed in T2-9 and are not needed: int tables are sliced constants, and an
+      integer in a carry is exact as a `float64` up to 2^53.
 
 ### Tier 1 primitives
 

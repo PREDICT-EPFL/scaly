@@ -678,3 +678,64 @@ def test_while_loop_pattern_is_the_closure_of_the_step() -> None:
   np.testing.assert_array_equal(
     _dense(sc.jacobian_sparsity(one, c0)), expected & ~np.array([[0, 0, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0], [0, 0, 0, 0]], dtype=bool)
   )
+
+
+def _mask(expr: sc.Expr, wrt: sc.Expr) -> np.ndarray:
+  return sc.jacobian_sparsity(expr, wrt).to_mask()
+
+
+def test_custom_sparsity_replaces_the_body_pattern_in_calls_maps_and_loops() -> None:
+  """A body whose structural pattern is dense (a sum couples every entry) declared diagonal: the
+  declared pattern is used wherever the Function is applied."""
+  x = sc.sym("x", 3)
+  body = sc.Function._from_exprs("cs_dense", [x], [x + 1e-30 * x.sum()], ["x"], ["y"])
+  declared = sc.custom_derivative(body, sparsity=lambda out, k: np.eye(3, dtype=bool))
+  q = sc.sym("q", 3)
+  assert _mask(body(q), q).all()
+  np.testing.assert_array_equal(_mask(declared(q), q), np.eye(3, dtype=bool))
+  qs = sc.sym("qs", 6)
+  np.testing.assert_array_equal(_mask(sc.vmap(declared, 2, [(qs, 0, 3)]), qs), np.eye(6, dtype=bool))
+  (looped,) = sc.scan(declared, q, length=4)
+  np.testing.assert_array_equal(_mask(looped, q), np.eye(3, dtype=bool))
+  (walked, _) = sc.while_loop(sc.Function._from_exprs("cs_go", [x], [x[0] < 0.0], ["x"], ["go"]), declared, q, max_iter=3)
+  np.testing.assert_array_equal(_mask(walked, q), np.eye(3, dtype=bool))
+  # Copies keep the declaration unless given their own; the derivative rules are untouched.
+  assert sc.custom_derivative(declared).custom_sparsity is declared.custom_sparsity
+  np.testing.assert_allclose(
+    sc.jacobian(sc.Function._from_exprs("cs_host", [q], [declared(q)], ["q"], ["y"]), "y", "q")(np.ones(3)), np.eye(3) + 1e-30
+  )
+
+
+@pytest.mark.parametrize(
+  "pattern",
+  [None, sc.SparsityType((2, 3), (0, 1), (2, 0)), np.array([[0, 0, 1], [1, 0, 0]], dtype=bool)],
+  ids=["none", "sparsity-type", "mask"],
+)
+def test_custom_sparsity_forms(pattern) -> None:
+  x, y = sc.sym("x", 3), sc.sym("y", 1)
+  fn = sc.Function._from_exprs("cs_forms", [x, y], [sc.stack([x.sum(), y[0]])], ["x", "y"], ["z"])
+  declared = sc.custom_derivative(fn, sparsity=lambda out, k: pattern if k == 0 else None)
+  q, r = sc.sym("q", 3), sc.sym("r", 1)
+  z = declared.symbolic_call((q, r))
+  expected = np.zeros((2, 3), dtype=bool) if pattern is None else np.array([[0, 0, 1], [1, 0, 0]], dtype=bool)
+  np.testing.assert_array_equal(_mask(z, q), expected)
+  assert not _mask(z, r).any()  # None: no dependence
+
+
+def test_custom_sparsity_of_the_wrong_shape_raises() -> None:
+  x = sc.sym("x", 3)
+  fn = sc.custom_derivative(sc.Function._from_exprs("cs_bad", [x], [x * 2.0], ["x"], ["y"]), sparsity=lambda out, k: np.eye(2, dtype=bool))
+  with pytest.raises(ValueError, match=r"shape \(2, 2\) does not fit .* \(3, 3\)"):
+    sc.jacobian_sparsity(fn(sc.sym("q", 3)), sc.sym("q", 3))
+
+
+def test_loop_patterns_with_a_large_carry_and_no_dependence() -> None:
+  """A carry of 300 entries (the cycle key once held its shape in single bytes), and a loop that
+  reads nothing depending on ``wrt``, whose pattern is empty without walking its steps."""
+  c, u = sc.sym("c", 300), sc.sym("u", 300)
+  body = sc.Function._from_exprs("big_step", [c], [sc.concat([c[1:], c[:1]])], ["c"], ["cn"])
+  (out,) = sc.scan(body, u, length=7)
+  expected = np.roll(np.eye(300, dtype=bool), 7, axis=1)
+  np.testing.assert_array_equal(_mask(out, u), expected)
+  other = sc.sym("other", 2)
+  assert sc.jacobian_sparsity(out, other).shape == (300, 2) and sc.jacobian_sparsity(out, other).nnz == 0

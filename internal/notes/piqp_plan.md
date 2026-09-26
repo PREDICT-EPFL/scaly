@@ -72,10 +72,10 @@ Draft PR sequence:
 | T2-3 | In-place proof at the scan (T2.c) | L | done (C-103): `in_place_steps` from the loop's index tables; `Aᵀy` at n = 2000 2283 → 51 µs |
 | T2-4 | `SparseMatrix` (#11) | M–L | done (C-104): `scaly.linalg.SparseMatrix`, static CSC pattern + `Expr` values |
 | T2-5 | Symbolic analysis (#12) | M | done (C-105): orderings incl. `auto`, etree, L pattern, left-looking lanes, DP segments; MMD fill = SuperLU's |
-| T2-6 | Dense kernels (#17) | M–L | next |
-| T2-7 | Sparse LDLᵀ and solves (#13–14) | L | |
-| T2-8 | Index-aware fusion and ragged loops (T2.d–e) | M–L | |
-| T2-9 | Health, refinement, schedule and options (#15, #16, #18); T2.f–g | M | |
+| T2-6 | Dense kernels (#17) | M–L | done (C-106): cholesky, ldl, trisolve; within 1.6× of OpenBLAS at `-O3` (C-107 open for `-O2`) |
+| T2-7 | Sparse LDLᵀ and solves (#13–14) | L | done (C-108): `SparseLDL`, in-place column scans, implicit solve derivatives |
+| T2-8 | Index-aware fusion and ragged loops (T2.d–e) | M–L | done (C-109): `ragged_add`/`ragged_dot`; factor 1.04–1.37× the C baseline |
+| T2-9 | Health, refinement, schedule and options (#15, #16, #18); T2.f–g | M | done (C-110): unroll/scan schedules, fixed and adaptive refinement, `inertia`/`health`, `sc.options`, `custom_derivative(sparsity=)`, trajectory guard; T2.g assessed as not needed (C-112); SQP and Kalman examples |
 | T2-R | Agent review round | M | |
 
 Per-PR reports: `internal/notes/tier2_pr{1..}_report.html`; timings: `internal/notes/perf_2026_09_26_tier2/`.

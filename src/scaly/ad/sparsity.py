@@ -7,6 +7,8 @@ one-way is what lets AD ask this module for a pattern.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 from scipy import sparse
 
@@ -265,17 +267,42 @@ def _matmul_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sp
 
 
 def _call_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
-  callee = expr.attrs["callee"]
-  callee_out = callee.outputs[expr.attrs["output"]]
+  callee, output = expr.attrs["callee"], int(expr.attrs["output"])
   ret = _empty((expr.size, wrt.size))
-  for formal, actual in zip(callee.inputs, expr.args, strict=True):
-    ret = _or(ret, _compose(_jac_mask(callee_out, formal, {}), _jac_mask(actual, wrt, memo)))
+  for k, actual in enumerate(expr.args):
+    outer = _jac_mask(actual, wrt, memo)
+    if outer.nnz:  # an argument that does not depend on ``wrt`` needs no pattern of the callee
+      ret = _or(ret, _compose(_callee_mask(callee, output, k), outer))
   return ret
 
 
+def _callee_mask(callee: Any, output: int, k: int) -> sparse.csr_array:
+  """The pattern of ``callee``'s output ``output`` in its input ``k``: the one its
+  ``custom_derivative(sparsity=...)`` gives, else the body's."""
+  out, formal = callee.outputs[output], callee.inputs[k]
+  override = getattr(callee, "custom_sparsity", None)
+  if override is None:
+    return _jac_mask(out, formal, {})
+  return _override_mask(override(output, k), (out.size, formal.size))
+
+
+def _override_mask(pattern: Any, shape: tuple[int, int]) -> sparse.csr_array:
+  """A pattern given by ``custom_derivative(sparsity=...)`` as a boolean CSR array of ``shape``."""
+  if pattern is None:
+    return _empty(shape)
+  if isinstance(pattern, SparsityType):
+    mask = _incidence(pattern.shape, np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64))
+  elif sparse.issparse(pattern):
+    mask = sparse.csr_array(pattern, dtype=bool)
+  else:
+    mask = sparse.csr_array(np.asarray(pattern, dtype=bool))
+  if mask.shape != shape:
+    raise ValueError(f"a custom sparsity pattern of shape {mask.shape} does not fit an output/input pair of shape {shape}")
+  return mask
+
+
 def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
-  callee = expr.attrs["callee"]
-  callee_out = callee.outputs[expr.attrs["output"]]
+  callee, output = expr.attrs["callee"], int(expr.attrs["output"])
   length = expr.attrs["length"]
   starts = expr.attrs["starts"]
   strides = expr.attrs["strides"]
@@ -284,8 +311,10 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
     return ret
   for formal_idx, actual_outer in enumerate(expr.args):
     formal = callee.inputs[formal_idx]
-    callee_dep = _jac_mask(callee_out, formal, {})
     outer_dep = _jac_mask(actual_outer, wrt, memo)
+    if not outer_dep.nnz:
+      continue
+    callee_dep = _callee_mask(callee, output, formal_idx)
     start, stride = starts[formal_idx], strides[formal_idx]
     window_cols = np.repeat(start + np.arange(length) * stride, formal.size) + np.tile(np.arange(formal.size), length)
     windows = _incidence((length * formal.size, actual_outer.size), np.arange(length * formal.size), window_cols)
@@ -301,15 +330,17 @@ def _scan_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
   many), so the walk stops at the first repeat and reads the final pattern off the cycle."""
   callee, length, output = expr.attrs["callee"], int(expr.attrs["length"]), int(expr.attrs["output"])
   starts, strides = expr.attrs["starts"], expr.attrs["strides"]
-  carry, xs = callee.inputs[0], callee.inputs[1:]
+  xs = callee.inputs[1:]
   init, outers = expr.args[0], expr.args[1:]
   reach = _jac_mask(init, wrt, memo)
-  step = _jac_mask(callee.outputs[0], carry, {})
-  from_xs = [_jac_mask(callee.outputs[0], x, {}) for x in xs]
-  produced = callee.outputs[output] if output > 0 else None
-  y_carry = _jac_mask(produced, carry, {}) if produced is not None else None
-  y_xs = [_jac_mask(produced, x, {}) for x in xs] if produced is not None else []
   outer_masks = [_jac_mask(outer, wrt, memo) for outer in outers]
+  if not reach.nnz and not any(m.nnz for m in outer_masks):
+    # Nothing the loop reads depends on ``wrt``: skip walking its steps.
+    return _empty((expr.size, wrt.size))
+  step = _callee_mask(callee, 0, 0)
+  from_xs = [_callee_mask(callee, 0, i + 1) for i in range(len(xs))]
+  y_carry = _callee_mask(callee, output, 0) if output > 0 else None
+  y_xs = [_callee_mask(callee, output, i + 1) for i in range(len(xs))] if output > 0 else []
   rows: list[sparse.csr_array] = []
   # Only a slice that brings in dependence changes from step to step; the step number brings none.
   moving = any(stride != 0 and m.nnz for stride, m in zip(strides, outer_masks, strict=True))
@@ -318,7 +349,7 @@ def _scan_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
   for k in range(length):
     if output == 0 and not moving:
       reach.sort_indices()
-      key = (reach.indptr.tobytes(), reach.indices.tobytes(), bytes(reach.shape))
+      key = (reach.indptr.tobytes(), reach.indices.tobytes(), np.asarray(reach.shape, dtype=np.int64).tobytes())
       if key in seen:
         first = seen[key]
         return history[first + (length - first) % (k - first)]
@@ -348,8 +379,10 @@ def _while_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spa
   if output == 1:
     return _empty((1, wrt.size))
   body = expr.attrs["callee"]
-  step = _jac_mask(body.outputs[0], body.inputs[0], {})
   reach = _jac_mask(expr.args[0], wrt, memo)
+  if not reach.nnz:
+    return _empty((expr.size, wrt.size))
+  step = _callee_mask(body, 0, 0)
   frontier = reach
   for _ in range(max_iter):
     frontier = _compose(step, frontier)

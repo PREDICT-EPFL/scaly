@@ -15,15 +15,39 @@ derivative ``dx = K^{-1} (db - dK x)``: differentiating a solve never differenti
 from __future__ import annotations
 
 import itertools
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
+from scipy import sparse
+from scipy.sparse.csgraph import connected_components
 
 from ..function.model import Function
-from ..function.sugar import custom_derivative, scan, vmap
-from ..ir.expr import Expr, as_expr, concat, gather, put, put_add, ragged_add, ragged_dot, scatter, segment_sum, take
+from ..function.sugar import custom_derivative, scan, vmap, while_loop
+from ..ir.expr import (
+  Expr,
+  as_expr,
+  concat,
+  gather,
+  isfinite,
+  logical_and,
+  maximum,
+  norm_inf,
+  put,
+  put_add,
+  ragged_add,
+  ragged_dot,
+  scatter,
+  segment_sum,
+  stack,
+  take,
+  where,
+)
+from ..utils.options import get_options
 from .sparse import SparseMatrix
 from .symbolic import CostModel, Ordering, Segment, SymbolicLDL, analyze
+
+Schedule = Literal["auto", "scan", "unroll"]
+SCHEDULES: tuple[Schedule, ...] = ("auto", "scan", "unroll")
 
 _NAMES = itertools.count()
 
@@ -68,12 +92,15 @@ class SparseLDL:
     matrix: SparseMatrix,
     *,
     ordering: Ordering = "auto",
+    schedule: Schedule = "auto",
     symbolic: SymbolicLDL | None = None,
     cost: CostModel | None = None,
     name: str | None = None,
   ) -> None:
     if matrix.shape[0] != matrix.shape[1]:
       raise ValueError(f"SparseLDL needs a square matrix, got {matrix.shape}")
+    if schedule not in SCHEDULES:
+      raise ValueError(f"schedule must be one of {SCHEDULES}, got {schedule!r}")
     rows, cols = matrix.coordinates()
     self.matrix = matrix
     self.symbolic = symbolic if symbolic is not None else analyze(matrix.shape, rows, cols, ordering)
@@ -83,6 +110,15 @@ class SparseLDL:
     self.l_size = s.nnz_l
     self.d_offset = s.nnz_l
     self.w_offset = s.nnz_l + s.n
+    if schedule == "auto":
+      schedule = "unroll" if self.work <= get_options().sparse_unroll else "scan"
+    self.schedule: Schedule = schedule
+    self._sweeps: dict[bool, Function] = {}
+    self._solvers: dict[tuple[int, float | None], Function] = {}
+    if schedule == "unroll":
+      self.segments: list[Segment] = []
+      self.values = self._factor_unrolled(matrix.values)
+      return
     self.zero = s.nnz_l + 2 * s.n  # an entry that stays zero: padded reads land here
     # Per column: matrix entries, columns in its row of L (one ragged run each), entries of its column.
     widths = np.stack([np.diff(s.a_ptr), np.diff(s.r_ptr), np.diff(s.l_ptr)], axis=1)
@@ -92,7 +128,12 @@ class SparseLDL:
     self.dump = self.zero + 1  # one scratch slot per lane for padded writes
     self.size = self.dump + lanes
     self.values = self._factor(matrix.values)[: self.w_offset]
-    self._solver: Function | None = None
+
+  @property
+  def work(self) -> int:
+    """Multiply-adds and divisions of the factorization: what ``schedule="auto"`` compares with
+    ``sc.options(sparse_unroll=...)``."""
+    return self.symbolic.update_lanes + self.symbolic.nnz_l
 
   # --- the factorization ----------------------------------------------------------------------
 
@@ -155,6 +196,26 @@ class SparseLDL:
       (carry,) = scan(body, carry, [*xs, (kv, 0, 0)], length=seg.length)
     return carry
 
+  def _factor_unrolled(self, kv: Expr) -> Expr:
+    """The same left-looking factorization as straight-line code: one scalar expression per entry
+    of ``L`` and ``D``, for a matrix small enough that loop overhead would dominate."""
+    s = self.symbolic
+    lv: dict[int, Expr] = {}
+    dv: list[Expr] = []
+    for j in range(s.n):
+      w: dict[int, Expr] = {int(s.a_rows[p]): kv[int(s.a_source[p])] for p in range(s.a_ptr[j], s.a_ptr[j + 1])}
+      for q in range(s.r_ptr[j], s.r_ptr[j + 1]):
+        k, pos = int(s.r_cols[q]), int(s.r_pos[q])
+        t = dv[k] * lv[pos]
+        for p in range(pos, s.l_ptr[k + 1]):
+          i = int(s.l_rows[p])
+          w[i] = w[i] - lv[p] * t if i in w else -(lv[p] * t)
+      dj = w.get(j, Expr.const(0.0))
+      dv.append(dj)
+      for p in range(s.l_ptr[j], s.l_ptr[j + 1]):
+        lv[p] = w[int(s.l_rows[p])] / dj
+    return stack([*(lv[p] for p in range(s.nnz_l)), *dv]) if s.n else Expr.const(np.zeros(0))
+
   @property
   def l_values(self) -> Expr:
     """The entries of ``L`` below the diagonal, CSC of the permuted matrix (``symbolic.l_ptr``/``l_rows``)."""
@@ -165,7 +226,55 @@ class SparseLDL:
     """The diagonal of ``D``, in the permuted order."""
     return self.values[self.d_offset : self.d_offset + self.n]
 
+  # --- health -------------------------------------------------------------------------------
+
+  def inertia(self) -> Expr:
+    """The counts of positive, negative and other (zero or NaN) pivots in ``D``, as a ``float64``
+    vector of 3. For a quasi-definite ``K = [[H, A^T], [A, -G]]`` it is ``(n_H, n_G, 0)``."""
+    d = self.d
+    one, zero = Expr.const(1.0), Expr.const(0.0)
+    pos = where(d > 0.0, one, zero).sum()
+    neg = where(d < 0.0, one, zero).sum()
+    return stack([pos, neg, float(self.n) - pos - neg])
+
+  def health(self, *, signs: Any = None, pivot_tol: float = 0.0, x: Any = None) -> Expr:
+    """``True`` when every pivot is finite with ``|D[j]| > pivot_tol`` (with ``signs``, a vector of
+    ``+1``/``-1`` per row of ``K`` in its own order: ``signs[i] * D > pivot_tol``, the quasi-definite
+    sign pattern), and, given a solution ``x``, every entry of ``x`` is finite. A bool scalar,
+    computed in the generated code next to the factorization: no pivoting happens, so this is the
+    check that a regularization was large enough."""
+    d = self.d
+    if signs is None:
+      ok = logical_and(isfinite(d), d.abs() > pivot_tol)
+    else:
+      sgn = np.asarray(signs, dtype=np.float64)
+      if sgn.shape != (self.n,) or not np.all(np.abs(sgn) == 1.0):
+        raise ValueError(f"signs must be {self.n} entries of +1 or -1")
+      ok = logical_and(isfinite(d), d * Expr.const(sgn[self.symbolic.perm]) > pivot_tol)
+    bad = where(ok, 0.0, 1.0).sum()
+    if x is not None:
+      bad = bad + where(isfinite(as_expr(x)), 0.0, 1.0).sum()
+    return bad < 0.5
+
   # --- the solves -----------------------------------------------------------------------------
+
+  def _sweep_body(self, backward: bool) -> Function:
+    """One column of the unit lower sweep (forward) or of its transpose (backward); built once per
+    factorization, so every solve in a graph calls the same procedure."""
+    if backward not in self._sweeps:
+      s = self.symbolic
+      n = self.n
+      yy, j, col, ff = Expr.sym("y", (n,)), Expr.sym("j", (), dtype="int64"), _int_sym("col", 2), Expr.sym("f", (self.w_offset,))
+      if backward:
+        # x[j] -= sum over the rows i > j of column j of L[i, j] x[i]
+        dot = ragged_dot(ff, yy, col[:1], col[1:], b_map=s.l_rows)
+        nxt = put_add(yy, j.reshape((1,)), -dot, in_range=True)
+      else:
+        # y[i] -= L[i, j] y[j] for the rows i > j of column j
+        nxt = ragged_add(yy, ff, col[:1], col[1:], -take(yy, j.reshape((1,)), in_range=True), dst_map=s.l_rows)
+      tag = "b" if backward else "f"
+      self._sweeps[backward] = Function._from_exprs(f"{self.name}_s{tag}", [yy, j, col, ff], [nxt], ["y", "j", "col", "f"], ["y_next"])
+    return self._sweeps[backward]
 
   def _sweep(self, f: Expr, y: Expr, backward: bool) -> Expr:
     """The unit lower sweep (forward) or its transpose (backward), one column per step."""
@@ -173,30 +282,63 @@ class SparseLDL:
     n = self.n
     if n == 0:
       return y
-    yy, j, col, ff = Expr.sym("y", (n,)), Expr.sym("j", (), dtype="int64"), _int_sym("col", 2), Expr.sym("f", (self.w_offset,))
-    if backward:
-      # x[j] -= sum over the rows i > j of column j of L[i, j] x[i]
-      dot = ragged_dot(ff, yy, col[:1], col[1:], b_map=s.l_rows)
-      nxt = put_add(yy, j.reshape((1,)), -dot, in_range=True)
-    else:
-      # y[i] -= L[i, j] y[j] for the rows i > j of column j
-      nxt = ragged_add(yy, ff, col[:1], col[1:], -take(yy, j.reshape((1,)), in_range=True), dst_map=s.l_rows)
-    tag = "b" if backward else "f"
-    body = Function._from_exprs(f"{self.name}_s{tag}", [yy, j, col, ff], [nxt], ["y", "j", "col", "f"], ["y_next"])
     steps = np.arange(n, dtype=np.int64)
     if backward:
       steps = steps[::-1].copy()
     cols = np.stack([s.l_ptr[steps], s.l_ptr[steps + 1]], axis=1).reshape(-1)
     xs = [(Expr.const(steps, dtype="int64"), 0, 1), (Expr.const(cols, dtype="int64"), 0, 2), (f, 0, 0)]
-    (y,) = scan(body, y, xs, length=n)
+    (y,) = scan(self._sweep_body(backward), y, xs, length=n)
     return y
 
   def _raw_solve(self, f: Expr, b: Expr) -> Expr:
     """``K^{-1} b`` from the factor ``f``, differentiated (if at all) through its loops."""
+    if self.schedule == "unroll":
+      return self._unrolled_solve(f, b)
     s = self.symbolic
     y = self._sweep(f, gather(b, s.perm), backward=False)
     x = self._sweep(f, y / f[self.d_offset : self.d_offset + self.n], backward=True)
     return gather(x, s.iperm)
+
+  def _unrolled_solve(self, f: Expr, b: Expr) -> Expr:
+    """The two sweeps as straight-line code, one scalar expression per entry."""
+    s = self.symbolic
+    n = self.n
+    if n == 0:
+      return b
+    y = [b[int(s.perm[i])] for i in range(n)]
+    for j in range(n):
+      for p in range(s.l_ptr[j], s.l_ptr[j + 1]):
+        i = int(s.l_rows[p])
+        y[i] = y[i] - f[p] * y[j]
+    y = [y[j] / f[self.d_offset + j] for j in range(n)]
+    for j in range(n - 1, -1, -1):
+      for p in range(s.l_ptr[j], s.l_ptr[j + 1]):
+        y[j] = y[j] - f[p] * y[int(s.l_rows[p])]
+    return stack([y[int(s.iperm[i])] for i in range(n)])
+
+  def _refined_solve(self, f: Expr, kv: Expr, b: Expr, refine: int, tol: float | None) -> Expr:
+    """``K^{-1} b`` with iterative refinement: ``x += K^{-1} (b - K x)``, ``refine`` times, or with
+    ``tol`` while ``||b - K x||_inf > tol * max(1, ||b||_inf)`` and at most ``refine`` times."""
+    x = self._raw_solve(f, b)
+    if refine == 0:
+      return x
+    if tol is None:
+      for _ in range(refine):
+        x = x + self._raw_solve(f, b - self._k_times(kv, x))
+      return x
+    # The loop carries [f | K values | b | x | r | threshold]; the body updates x and r in place.
+    sizes = np.cumsum([0, self.w_offset, self.matrix.nnz, self.n, self.n, self.n, 1])
+    at = lambda i: Expr.const(np.arange(sizes[i], sizes[i + 1]), dtype="int64")  # noqa: E731
+    c = Expr.sym("c", (int(sizes[-1]),))
+    cf, ck, cb, cx, cr, ct = (c[int(sizes[i]) : int(sizes[i + 1])] for i in range(6))
+    xn = cx + self._raw_solve(cf, cr)
+    body_out = put(put(c, at(3), xn, in_range=True), at(4), cb - self._k_times(ck, xn), in_range=True)
+    body = Function._from_exprs(f"{self.name}_refine", [c], [body_out], ["c"], ["c_next"])
+    cond = Function._from_exprs(f"{self.name}_refining", [c], [norm_inf(cr) > ct[0]], ["c"], ["go"])
+    threshold = (tol * maximum(1.0, norm_inf(b))).reshape((1,))
+    init = concat([f, kv, b, x, b - self._k_times(kv, x), threshold])
+    out, _ = while_loop(cond, body, init, max_iter=refine)
+    return out[int(sizes[3]) : int(sizes[4])]
 
   def _k_times(self, kv: Expr, x: Expr) -> Expr:
     """``K x`` for values ``kv`` in ``K``'s pattern, reading each mirrored pair once, as the
@@ -212,23 +354,52 @@ class SparseLDL:
     ids = np.concatenate([r, c[off]])
     return segment_sum(concat(terms) if len(terms) > 1 else terms[0], ids, self.n)
 
-  def _solver_function(self) -> Function:
+  def _solver_function(self, refine: int = 0, tol: float | None = None) -> Function:
     """The solve as a ``Function`` of ``(factor, K values, b)`` with implicit derivative rules.
 
     The factor is a function of ``K``'s values computed outside; its own derivative is taken to be
     zero here and the whole derivative flows through the values: ``dx = K^{-1} (db - dK x)``, and in
     reverse ``bbar = K^{-1} xbar``, ``Kbar = -bbar x^T`` on the entries the factorization reads. The
     rules solve with the same factor through a solve that has rules of its own, so second
-    derivatives are implicit too; only third derivatives would go through the loops."""
-    if self._solver is not None:
-      return self._solver
-    f, kv, b = Expr.sym("f", (self.w_offset,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
-    base = Function._from_exprs(f"{self.name}_solve", [f, kv, b], [self._raw_solve(f, b)], ["f", "kv", "b"], ["x"])
-    inner = base
-    for level in (1, 2):
-      inner = custom_derivative(base, jvp=self._jvp_rule(inner, level), vjp=self._vjp_rule(inner, level))
-    self._solver = inner
-    return inner
+    derivatives are implicit too; only third derivatives would go through the loops. Refinement,
+    if any, is part of every solve, the rules' included."""
+    key = (refine, tol)
+    if key not in self._solvers:
+      f, kv, b = Expr.sym("f", (self.w_offset,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
+      tag = "" if refine == 0 else f"_r{refine}" + ("" if tol is None else "a")
+      x = self._refined_solve(f, kv, b, refine, tol)
+      base = Function._from_exprs(f"{self.name}_solve{tag}", [f, kv, b], [x], ["f", "kv", "b"], ["x"])
+      inner = base
+      pattern = self._solve_sparsity()
+      for level in (1, 2):
+        inner = custom_derivative(base, jvp=self._jvp_rule(inner, level), vjp=self._vjp_rule(inner, level), sparsity=pattern)
+      self._solvers[key] = inner
+    return self._solvers[key]
+
+  def _solve_sparsity(self) -> Any:
+    """The pattern of the solution: ``x[i]`` depends on ``b[j]`` and on the entries of ``K`` in
+    ``j``'s connected component of ``K``'s graph, and not on the factor, whose derivative the
+    rules take to be zero. The body's own pattern, through run-time indices, would be dense and slow
+    to compute."""
+    n = self.n
+    rows, cols = self.matrix.coordinates()
+    graph = sparse.csr_array((np.ones(rows.size), (rows, cols)), shape=(n, n))
+    _, label = connected_components(graph, directed=False)
+    used = np.zeros(self.matrix.nnz, dtype=bool)
+    used[self.symbolic.a_source] = True
+    # member[i, c]: row i lies in component c. Built on request: one component makes both dense.
+    member = sparse.csr_array((np.ones(n, dtype=bool), (np.arange(n), label)), shape=(n, int(label.max(initial=-1)) + 1))
+    cache: dict[int, Any] = {}
+
+    def pattern(output: int, k: int) -> Any:
+      if k == 0:
+        return None
+      if k not in cache:
+        other = member if k == 2 else sparse.csr_array(member[rows] * used[:, None])
+        cache[k] = sparse.csr_array(member @ other.T, dtype=bool)
+      return cache[k]
+
+    return pattern
 
   def _jvp_rule(self, inner: Function, level: int) -> Function:
     f, kv, b = Expr.sym("f", (self.w_offset,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
@@ -253,14 +424,22 @@ class SparseLDL:
     outs = [Expr.const(np.zeros(self.w_offset)), kbar, bbar]
     return Function._from_exprs(f"{self.name}_solve_vjp{level}", [f, kv, b, x, xbar], outs, ["f", "kv", "b", "xo", "xbar"], ["fbar", "kvbar", "bbar"])
 
-  def solve(self, b: Any) -> Expr:
+  def solve(self, b: Any, *, refine: int = 0, tol: float | None = None) -> Expr:
     """``K^{-1} b`` for a vector or a matrix of right-hand sides (``(n,)`` or ``(n, m)``).
 
     Differentiable in ``K``'s values and in ``b`` by the implicit rule: the tangent is one more
     solve with the same factor, and reverse mode is one transposed solve and an outer product on
-    ``K``'s pattern. The factorization loops are never differentiated."""
+    ``K``'s pattern. The factorization loops are never differentiated.
+
+    ``refine`` adds steps of iterative refinement, ``x += K^{-1} (b - K x)``, each one more solve
+    and one product with ``K``: exactly ``refine`` of them, or, with ``tol``, only while
+    ``||b - K x||_inf > tol * max(1, ||b||_inf)`` (a ``while_loop`` of at most ``refine`` steps)."""
+    if not isinstance(refine, int) or isinstance(refine, bool) or refine < 0:
+      raise ValueError(f"refine must be a non-negative integer, got {refine!r}")
+    if tol is not None and not tol > 0.0:
+      raise ValueError(f"tol must be positive, got {tol!r}")
     b = as_expr(b)
-    fn = self._solver_function()
+    fn = self._solver_function(refine, None if tol is None else float(tol))
     if len(b.shape) == 1:
       if b.shape != (self.n,):
         raise ValueError(f"solve needs a right-hand side of length {self.n}, got {b.shape}")

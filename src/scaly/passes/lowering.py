@@ -815,7 +815,8 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
 
 
 # Factorizations and triangular solves of order at most this are straight-line code, which scalar
-# expansion then turns into registers; larger ones are loops with triangular bounds.
+# expansion then turns into registers; larger ones are loops with triangular bounds. The graph
+# carries the decision (``sc.options(dense_unroll=...)``); this is the default for a node without it.
 DENSE_UNROLL = 8
 
 
@@ -876,7 +877,7 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
     stores = [p.store(p.view(scaled, [j]), value)] if scaled is not None else []
     return [*stores, p.store(_entry(out, n, i, j), p.div(value, p.load(_entry(out, n, j, j))))]
 
-  if n <= DENSE_UNROLL:
+  if node.attrs.get("unroll", n <= DENSE_UNROLL):
     for i in range(n):
       for j in range(i + 1):
         value = p.load(_entry(src, n, c(i), c(j)))
@@ -933,7 +934,7 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
   # ``order(s)`` is the row handled at step ``s``; ``others(i)`` the range of the other index.
   forward = lower != trans
   row_at = (lambda s: s) if forward else (lambda s: p.sub(c(n - 1), s))  # noqa: E731
-  if n <= DENSE_UNROLL:
+  if node.attrs.get("unroll", n <= DENSE_UNROLL):
     steps = range(n) if forward else range(n - 1, -1, -1)
     if trans:
       ctx.statements.append(_copy_loop(bb, out, b.shape))

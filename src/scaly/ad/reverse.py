@@ -32,6 +32,7 @@ from ..ir.expr import (
   zeros_like,
 )
 from ..passes.expr import simplify_cse_fixpoint
+from ..utils.options import get_options
 from .forward import _is_zero_const, _tri_mask, claim_name, custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
 from .sparsity import _depends_on
 
@@ -208,6 +209,7 @@ def _scan_vjp(expr: Expr, cots: dict[int, Expr], wrts: Sequence[Expr], dep_memo:
   active = tuple(i for i, outer in enumerate(outers) if any(_depends_on(outer, wrt, dep_memo) for wrt in wrts))
   extras = tuple(sorted(output for output in cots if output != 0))
   fn = _scan_adj_function(callee, extras, active)
+  _check_trajectory(callee, length, init.size)
   carries = _scan_node(callee, init, tuple(outers), starts, strides, length, -1)
   rev_outers = [carries, *outers]
   rev_starts = [(length - 1) * cs, *(s + (length - 1) * st for s, st in zip(starts, strides, strict=True))]
@@ -254,6 +256,18 @@ def _while_adj_function(body: Any) -> Any:
   return _WHILE_ADJ_CACHE[body]
 
 
+def _check_trajectory(body: Any, steps: int, carry_size: int) -> None:
+  """Reverse mode through a loop stores the carry at every step; refuse a loop whose store would
+  exceed ``sc.options(max_trajectory=...)`` values, naming the fix."""
+  limit = get_options().max_trajectory
+  if steps * carry_size > limit:
+    raise ValueError(
+      f"reverse mode through the loop over {body.name!r} would store {steps} carries of {carry_size} values "
+      f"({steps * carry_size} in all, over max_trajectory={limit}); give the computation an implicit derivative "
+      "with sc.custom_derivative, or raise sc.options(max_trajectory=...)"
+    )
+
+
 def _while_vjp(expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
   """Reverse mode through a while loop: a ``max_iter``-step scan backwards over the stored carries,
   where steps at or beyond the step count leave the cotangent unchanged."""
@@ -267,6 +281,7 @@ def _while_vjp(expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple
   if max_iter == 0:
     return [(init, cot)]
   cs = init.size
+  _check_trajectory(body, max_iter, init.size)
   carries = _while_node(cond, body, init, max_iter, -1)
   count = _while_node(cond, body, init, max_iter, 1).reshape((1,))
   steps = Expr.const(np.arange(max_iter, dtype=np.float64))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 
 import numpy as np
@@ -14,7 +15,7 @@ from scaly.codegen import render_c_source
 @pytest.fixture(autouse=True)
 def _restore_default():
   yield
-  sc.set_options(nonsmooth="split")
+  sc.set_options(**{f.name: getattr(sc.Options(), f.name) for f in dataclasses.fields(sc.Options)})
 
 
 def test_default_nesting_and_restoration_after_an_exception() -> None:
@@ -41,6 +42,13 @@ def test_unknown_names_and_values_raise_at_the_call() -> None:
   with pytest.raises(ValueError, match="is not one of"):
     sc.set_options(nonsmooth="average")
   assert sc.get_options().nonsmooth == "split"
+  for name in ("dense_unroll", "sparse_unroll", "max_trajectory"):
+    for bad in (-1, 2.5, True, "8"):
+      with pytest.raises(ValueError, match="non-negative integer"):
+        sc.set_options(**{name: bad})
+    with sc.options(**{name: 0}) as inside:
+      assert getattr(inside, name) == 0
+  assert sc.get_options() == sc.Options()
 
 
 def test_a_block_is_local_to_its_thread() -> None:
@@ -78,3 +86,37 @@ def test_the_convention_is_part_of_the_graph_and_the_generated_code() -> None:
   assert render_c_source(split).replace("split", "_") != render_c_source(first).replace("first", "_")
   with sc.options(nonsmooth="error"), pytest.raises(NotImplementedError, match="nonsmooth='error'"):
     sc.vjp((cost,), (x,), (sc.const(1.0),))
+
+
+def test_dense_unroll_is_decided_when_the_node_is_built() -> None:
+  a, b = sc.sym("a", (4, 4)), sc.sym("b", 4)
+  with sc.options(dense_unroll=0):
+    looped = [sc.linalg.cholesky(a), sc.linalg.ldl(a), sc.linalg.solve_triangular(a, b)]
+  unrolled = [sc.linalg.cholesky(a), sc.linalg.ldl(a), sc.linalg.solve_triangular(a, b)]
+  assert all(not e.attrs["unroll"] for e in looped) and all(e.attrs["unroll"] for e in unrolled)
+  fns = {tag: sc.Function._from_exprs(f"du_{tag}", [a, b], outs, ["a", "b"], ["l", "d", "x"]) for tag, outs in (("loop", looped), ("flat", unrolled))}
+  for k, (loop_op, flat_op) in enumerate(zip(looped, unrolled, strict=True)):
+    for tag, op, has_loop in (("loop", loop_op, True), ("flat", flat_op, False)):
+      src = render_c_source(sc.Function._from_exprs(f"du_{tag}{k}", [a, b], [op], ["a", "b"], ["o"]))
+      assert ("for (" in src.split(f"int du_{tag}{k}")[1]) == has_loop
+  m = np.random.default_rng(3).standard_normal((4, 4))
+  av, bv = m @ m.T + 4 * np.eye(4), np.arange(4.0)
+  for got, ref in zip(fns["loop"]._flat_numerical_call(av, bv), fns["flat"]._flat_numerical_call(av, bv), strict=True):
+    np.testing.assert_allclose(got, ref, rtol=1e-13, atol=1e-14)
+  with sc.options(dense_unroll=16):
+    assert sc.linalg.cholesky(sc.sym("big", (12, 12))).attrs["unroll"]
+
+
+def test_max_trajectory_refuses_a_reverse_pass_that_stores_too_much() -> None:
+  c = sc.sym("c", 50)
+  body = sc.Function._from_exprs("traj_step", [c], [c.sin()], ["c"], ["cn"])
+  cond = sc.Function._from_exprs("traj_go", [c], [c[0] < 10.0], ["c"], ["go"])
+  x = sc.sym("x", 50)
+  (scanned,) = sc.scan(body, x, length=100)
+  walked, _ = sc.while_loop(cond, body, x, max_iter=100)
+  for out in (scanned, walked):
+    with sc.options(max_trajectory=4999):
+      with pytest.raises(ValueError, match=r"traj_step.*100 carries of 50 values .*max_trajectory=4999.*custom_derivative"):
+        sc.vjp((out.sum(),), (x,), (sc.const(1.0),))
+    with sc.options(max_trajectory=5000):
+      sc.vjp((out.sum(),), (x,), (sc.const(1.0),))

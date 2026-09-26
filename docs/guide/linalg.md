@@ -43,9 +43,9 @@ mode and to second order.
 - Their sparsity is conservative: the factor's lower triangle may depend on all of the lower
   triangle it reads, and each column of a solution on its whole column of right-hand sides.
 
-**Generated code.** Orders up to `DENSE_UNROLL` (8) become straight-line code, which scalar
-expansion keeps in registers. Larger orders become loops with triangular bounds that do not grow
-with the order:
+**Generated code.** Orders up to `sc.options(dense_unroll=...)` (8 by default, decided when the
+op is built) become straight-line code, which scalar expansion keeps in registers. Larger orders
+become loops with triangular bounds that do not grow with the order:
 
 - The factorizations run row by row, taking dot products of contiguous rows.
 - Dot products use four interleaved partial sums.
@@ -77,7 +77,18 @@ elimination tree and the pattern of `L`. `ordering="auto"`, the default, keeps w
 reverse Cuthill–McKee or minimum degree needs the least work. A stage-ordered MPC matrix usually
 keeps its own order.
 
-**Generated code.**
+**Generated code.** `schedule="scan"` generates loops and `schedule="unroll"` straight-line code.
+The default, `"auto"`, unrolls when the factorization takes at most `sc.options(sparse_unroll=...)`
+multiply-adds and divisions (1000 by default; `fact.work` has the count). Straight-line code has no
+loop overhead, which dominates small systems:
+
+| KKT system | n | work | loops: factor / solve | straight-line: factor / solve | generation (straight-line) |
+| --- | --- | --- | --- | --- | --- |
+| MPC, 2 stages | 24 | 288 | 0.58 / 0.33 µs | 0.10 / 0.10 µs | 0.4 s |
+| random QP 20 + 10 | 30 | 836 | 1.45 / 0.44 µs | 0.24 / 0.23 µs | 1.1 s |
+| MPC, 10 stages | 104 | 1746 | 3.7 / 1.8 µs | 0.64 / 0.76 µs | 2.7 s |
+
+(aarch64 Linux, gcc, per factorization; `internal/notes/tier2_pr9_report.html`.) The loops:
 
 - The factorization is one `scan` per segment of columns. Each step is a left-looking column update
   that reads the analysis tables by the step number.
@@ -102,3 +113,34 @@ MPC, random QP and grid systems factor within 1.0–1.4× and solve within 0.5�
 **Generation cost.** Generation grows with `nnz(L)`, not with the work of the factorization. The
 analysis and the in-place proof keep column runs as ranges instead of enumerating them. At
 `nnz(L)` = 153 k with 25 million multiply-adds, generating and compiling take 2.5 s.
+
+**Refinement.** `fact.solve(b, refine=k)` adds `k` steps of iterative refinement,
+`x += K^{-1}(b - K x)`, each one more solve and one product with `K`. With `tol`, the steps run in
+a `while_loop` only while `||b - K x||_inf > tol * max(1, ||b||_inf)`, at most `k` of them. The
+derivative is the implicit one either way. On a random QP with `delta = 1e-10`, one step takes the
+residual `||b - K x||_inf` from 2e-5 to 8e-11 and two to 4e-15. The adaptive loop carries the
+factor, `K` and `b` with the solution, so it copies them once per solve and once per step; with
+few steps, a fixed count is cheaper.
+
+**Health.** No pivoting happens, so a factorization of a matrix that is not quasi-definite, or not
+regularized enough, can have a zero, tiny or wrong-signed pivot. Two checks run in the generated
+code next to the factorization:
+
+- `fact.inertia()`: the numbers of positive, negative and other (zero or NaN) pivots, as a
+  `float64` vector of 3. By Sylvester's law of inertia these are the signs of the eigenvalues of
+  `K`, so an SQP or interior-point step checks it against `(n, m, 0)` and raises its regularization
+  when it differs (see `examples/sqp_newton_sparse.py`).
+- `fact.health(signs=None, pivot_tol=0.0, x=None)`: a bool, true when every pivot is finite with
+  `|D[j]| > pivot_tol`. With `signs` (`+1`/`-1` per row of `K`), each pivot must also have the
+  expected sign, the quasi-definite pattern. With `x`, every entry of the solution must be finite.
+
+**Sparsity.** A solve declares its own pattern ([Custom derivatives](derivatives.md#custom-derivatives)):
+entry `i` of the solution depends on `b[j]` and on the entries of `K` exactly when they are in the
+same connected component of `K`'s graph, and not on the factor. `sparse_jacobian` of a solve of a
+block-diagonal system then colors each block separately.
+
+**Examples.** `examples/sqp_newton_sparse.py` takes Newton steps on the KKT conditions of an
+optimal-control problem, with the Hessian and the constraint Jacobian as sparse matrices and
+inertia correction. `examples/kalman_update.py` updates a spatial field with a sparse information
+prior through a quasi-definite system and differentiates the update: its Jacobian in the
+measurements is the Kalman gain.

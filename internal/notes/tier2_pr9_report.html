@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 2 PR 9 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 9 report</h1>
+<p class="sub">T2-9 · schedules, refinement, health checks, options and sparsity overrides; the two non-PIQP examples (C-110) · branch <code>claude/tier2-sparse</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> This PR finishes the Tier 2 feature list.</p>
+<ul>
+<li><b>Schedules.</b> <code>SparseLDL</code> can now emit straight-line code (<code>schedule="unroll"</code>) or column loops (<code>"scan"</code>). <code>"auto"</code> unrolls up to <code>sc.options(sparse_unroll=1000)</code> operations. On small KKT systems straight-line code factors <b>5–8× faster</b> than the loops and <b>4–5× faster</b> than the C baseline.</li>
+<li><b>Refinement.</b> <code>solve(b, refine=k, tol=None)</code> refines a fixed number of times, or adaptively in a <code>while_loop</code>. Both run inside the implicit derivative rules. At δ = 10⁻¹⁰, two steps take the residual from 2·10⁻⁵ to 4·10⁻¹⁵.</li>
+<li><b>Health.</b> <code>inertia()</code> and <code>health(signs=, pivot_tol=, x=)</code> are computed in the generated code.</li>
+<li><b>Generic compiler pieces</b> (T2.f):
+<ul>
+<li><code>sc.options(dense_unroll=, sparse_unroll=, max_trajectory=)</code>;</li>
+<li>the dense unroll decision stored in the graph;</li>
+<li><code>custom_derivative(sparsity=)</code>, honoured everywhere a Function is applied;</li>
+<li>a memory guard on reverse passes through loops.</li>
+</ul></li>
+<li><b>Sparsity analysis.</b> Two improvements came out of benchmarking:
+<ul>
+<li>loops that read nothing depending on <code>wrt</code> are skipped (5.1 s → 16 ms for a solve's pattern);</li>
+<li>a crash on scan carries of 256 or more entries is fixed.</li>
+</ul></li>
+<li><b>Examples.</b> An SQP Newton step with a sparse KKT system and inertia correction converges quadratically. A Kalman update with a sparse information prior matches the covariance form, and its Jacobian is the Kalman gain.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 1 421 passed, 88 skipped (1 365 before); the same four VM-only failures. ruff and ty are clean. <b>Mutation checks:</b> 28 of 28 killed; five only after a test was added.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td>Options (<code>utils/options.py</code>)</td><td>
+<ul>
+<li><code>dense_unroll</code> (8), <code>sparse_unroll</code> (1000) and <code>max_trajectory</code> (50 M). Each is a non-negative int, validated at the call.</li>
+<li>Like <code>nonsmooth</code>, each is read when a graph is built. <code>cholesky</code>, <code>ldl</code> and <code>solve_triangular</code> nodes now carry an <code>unroll</code> attribute, which the lowering reads. The choice is therefore part of the graph and of the JIT cache key.</li>
+</ul></td></tr>
+<tr><td>Straight-line sparse LDLᵀ</td><td>
+<ul>
+<li><code>SparseLDL(schedule="unroll")</code> runs the same left-looking algorithm in Python at build time, over the same symbolic tables. It builds one scalar expression per entry of <code>L</code> and <code>D</code>, and the two sweeps the same way.</li>
+<li>The factor layout <code>[L | D]</code>, the solver Function and its rules are shared with the loop schedule.</li>
+<li><code>fact.work</code> = update multiply-adds + nnz(L) is what <code>"auto"</code> compares with the threshold.</li>
+</ul></td></tr>
+<tr><td>Refinement</td><td>
+<ul>
+<li><code>refine=k</code> without <code>tol</code> gives <code>k</code> steps <code>x += K⁻¹(b − Kx)</code>, unrolled in the graph.</li>
+<li>With <code>tol</code>, a <code>while_loop</code> of at most <code>k</code> steps runs while <code>‖b − Kx‖∞ &gt; tol·max(1, ‖b‖∞)</code>. Its carry is <code>[f | K | b | x | r | threshold]</code>, because a loop body reads only its carry.</li>
+<li>The refined solve is the body of the <code>custom_derivative</code>, so tangents and cotangents are refined solves too. One solver Function is kept per <code>(refine, tol)</code>, and the sweep bodies are built once per factorization.</li>
+</ul></td></tr>
+<tr><td>Health</td><td>
+<ul>
+<li><code>inertia()</code> is <code>(#D &gt; 0, #D &lt; 0, rest)</code> as float64.</li>
+<li><code>health()</code> is a bool: every pivot is finite with <code>|D| &gt; pivot_tol</code>. With <code>signs</code> (in <code>K</code>'s own order, permuted internally), it tests <code>signs·D &gt; pivot_tol</code>. With <code>x</code>, the solution must also be finite.</li>
+</ul></td></tr>
+<tr><td>Sparsity override (T2.f)</td><td>
+<ul>
+<li><code>custom_derivative(fn, ..., sparsity=f)</code>, where <code>f(output, input)</code> returns a <code>SparsityType</code>, a mask, a SciPy matrix or <code>None</code>.</li>
+<li>A new <code>_callee_mask</code> is used by calls, <code>vmap</code>, <code>scan</code> and <code>while_loop</code> bodies, and by the structured sparse Jacobian of a <code>vmap</code>. Copies inherit the override.</li>
+<li><code>SparseLDL</code>'s solve declares the per-connected-component pattern. It depends on <code>K</code>'s entries only where the factorization reads them (lower entries of mirrored pairs), and not on the factor. It is built lazily.</li>
+</ul></td></tr>
+<tr><td>Trajectory guard (T2.f)</td><td>Reverse mode through a <code>scan</code> or <code>while_loop</code> refuses to store more than <code>max_trajectory</code> values. The error names the loop body and points to <code>custom_derivative</code>.</td></tr>
+<tr><td>Sparsity analysis fixes</td><td>
+<ul>
+<li>Call, <code>vmap</code>, <code>scan</code> and <code>while</code> patterns return early when no argument depends on <code>wrt</code>. The pattern of a solve in <code>b</code> used to walk every factorization loop, even though the factor does not depend on <code>b</code>.</li>
+<li>The scan-cycle key stored the shape with <code>bytes(shape)</code>, which fails for any dimension of 256 or more.</li>
+</ul></td></tr>
+<tr><td>T2.g (assessed)</td><td>
+<ul>
+<li>Multi-tensor carries and an int64 carry spill are not needed:
+<ul>
+<li>index tables are constants sliced per step;</li>
+<li>every carry so far is float64;</li>
+<li>an integer in a carry is exact up to 2⁵³.</li>
+</ul></li>
+<li>What is missing is loop-invariant inputs for <code>while_loop</code>, which would remove the adaptive refinement's carry copies (C-112).</li>
+</ul></td></tr>
+<tr><td>Examples</td><td>
+<ul>
+<li><code>examples/sqp_newton_sparse.py</code>: a pendulum OCP in multiple-shooting form (N = 30, 92 variables, 62 constraints).
+<ul>
+<li>The Hessian and Jacobian are sparse (<code>sparse_hessian(triangle="lower")</code>, <code>sparse_jacobian</code>), and the KKT matrix is assembled with <code>SparseMatrix.block</code>.</li>
+<li>Each step uses <code>SparseLDL</code> with one refinement step, and <code>inertia()</code> drives an inertia-correcting <code>rho</code>.</li>
+</ul></li>
+<li><code>examples/kalman_update.py</code>: a 200-point field with a pentadiagonal information prior and 25 local-average sensors.
+<ul>
+<li>The update solves the quasi-definite system <code>[[Λ, Hᵀ], [H, −R]]</code>.</li>
+<li><code>jacobian(x, z)</code> is the Kalman gain, and <code>jacobian(x, r)</code> comes from the implicit rule.</li>
+</ul></li>
+</ul></td></tr>
+</table></div>
+<p><b>Inertia, not signs, for SQP.</b> The first version of the example checked <code>signs·D &gt; 0</code>, and Newton then stalled at ρ = 0.1. The Hessian of a nonconvex Lagrangian is legitimately indefinite. What the step needs is the right <i>inertia</i> (<code>(n, m, 0)</code>, by Sylvester's law read off <code>D</code>), and with that check Newton converges quadratically at ρ = 0:</p>
+<pre>iteration 0  ||KKT residual|| = 4.0e+01  rho = 1e-04   (H is singular at the start)
+iteration 1                     5.9e-01        0
+iteration 2                     4.5e-02        0
+iteration 3                     2.8e-04        0
+iteration 4                     5.8e-09        0
+iteration 5                     8.9e-16        0</pre>
+<p><code>signs=</code> remains the right check for a quasi-definite matrix, which is what PIQP's regularized KKT systems are.</p>
+
+<h2>2. Tests</h2>
+<ul>
+<li><b><code>tests/linalg/test_sparse_ldl.py</code></b> (50 → 96 cases):
+<ul>
+<li>the whole factor-and-solve matrix, with 3 matrices × 4 orderings × 3 triangles, and the implicit-derivative test now run for both schedules;</li>
+<li>the unrolled code has no loop procedures;</li>
+<li><code>"auto"</code> switches at exactly <code>work</code>;</li>
+<li>refinement reaches the rounding level, and <code>tol=1e30</code> takes no step;</li>
+<li><b>step counts with an inexact factor</b>: refining against <code>K</code> with the factor of <code>1.2 K</code> contracts the error by exactly 1/6, so <code>k</code> steps give <code>(1 − 6^−(k+1)) K⁻¹b</code>, and the adaptive loop's count (3 for ‖b‖ = 100, 1 for ‖b‖ = 0.01) can be read off the result;</li>
+<li>gradients of refined solves equal those of plain ones;</li>
+<li>inertia and health on a KKT system, including NaN and ∞ entries, a singular matrix, an infinite pivot, wrong signs, <code>pivot_tol</code>, and a non-finite <code>x</code>;</li>
+<li>on a two-block system: the per-component pattern, the entries-read pattern, and a sparse Jacobian that colors to 9 and equals <code>K⁻¹</code>.</li>
+</ul></li>
+<li><b><code>tests/ad/test_sparsity.py</code></b> (+6): the override through call, <code>vmap</code>, <code>scan</code> and <code>while_loop</code>; the three pattern forms and <code>None</code>; the wrong-shape error; a 300-entry scan carry; a loop independent of <code>wrt</code>.</li>
+<li><b><code>tests/utils/test_options.py</code></b> (+2, one extended):
+<ul>
+<li>validation of the three counts;</li>
+<li><code>dense_unroll</code> per op (the attribute, loops or no loops, equal values);</li>
+<li>the trajectory guard for <code>scan</code> and <code>while_loop</code> at exactly the limit.</li>
+</ul></li>
+<li><b><code>tests/linalg/test_examples.py</code></b> (2):
+<ul>
+<li>SQP: quadratic convergence, inertia correction at the start only, and a fixed point at the solution.</li>
+<li>Kalman: the mean, the gain and <code>∂x/∂r = −K diag(S⁻¹ν)</code> against the dense covariance form.</li>
+</ul></li>
+</ul>
+<p><b>Mutation checks (28 of 28 killed).</b></p>
+<ul>
+<li><b>Unrolled factor and solve:</b> update sign, backward sweep, and the diagonal division.</li>
+<li><b>Refinement:</b> fixed count, loop condition, <code>max_iter</code>, the <code>max(1, ·)</code> threshold, and the residual update.</li>
+<li><b>Health:</b> <code>isfinite</code>, the <code>x</code> check, the sign permutation, <code>pivot_tol</code>, and the inertia's <code>&lt;</code>.</li>
+<li><b>Schedule:</b> the auto threshold and the definition of work.</li>
+<li><b>Solve pattern:</b> the entries-read mask and the factor's <code>None</code>.</li>
+<li><b>Override:</b> ignored in <code>vmap</code>, <code>scan</code> and <code>while</code>; the shape check; <code>None</code> as dense.</li>
+<li><b>Other:</b> the 256-byte key; the guard's comparison and the guard missing from <code>while</code>; the unroll attribute ignored in the factor and in the solve lowering; <code>bool</code> accepted as a count.</li>
+</ul>
+<p>Five first survived:</p>
+<ul>
+<li>fixed count, <code>max_iter</code> and threshold: refinement against an exact factor converges in one step, so the step count was invisible;</li>
+<li><code>isfinite</code>: an ∞ entry turned into NaN pivots;</li>
+<li>the factor's unroll attribute: one test covered all three ops.</li>
+</ul>
+<p>Each gained the test above that catches it.</p>
+
+<h2>3. Benchmarks</h2>
+<p><code>perf_2026_09_26_tier2/pr9_schedule.py</code>. Per instance, 256 instances per call through a <code>vmap</code>, so the Python call cost is excluded. C baseline at <code>-O3</code>; Scaly at the default <code>-O2</code>; aarch64 VM.</p>
+<div class="scroll"><table>
+<tr><th>KKT</th><th class="r">n</th><th class="r">work</th><th class="r">loops: factor</th><th class="r">solve</th><th class="r">straight-line: factor</th><th class="r">solve</th><th class="r">C: factor</th><th class="r">solve</th><th class="r">gen. (straight-line)</th></tr>
+<tr><td>QP 10 + 5</td><td class="r">15</td><td class="r">234</td><td class="r">0.62 µs</td><td class="r">0.21</td><td class="r"><b>0.076</b></td><td class="r"><b>0.073</b></td><td class="r">0.38</td><td class="r">0.17</td><td class="r">0.3 s</td></tr>
+<tr><td>MPC N = 2</td><td class="r">24</td><td class="r">288</td><td class="r">0.57</td><td class="r">0.33</td><td class="r"><b>0.100</b></td><td class="r"><b>0.096</b></td><td class="r">0.50</td><td class="r">0.21</td><td class="r">0.4 s</td></tr>
+<tr><td>QP 20 + 10</td><td class="r">30</td><td class="r">836</td><td class="r">1.45</td><td class="r">0.44</td><td class="r"><b>0.244</b></td><td class="r"><b>0.228</b></td><td class="r">1.17</td><td class="r">0.38</td><td class="r">1.1 s</td></tr>
+<tr><td>MPC N = 5</td><td class="r">54</td><td class="r">846</td><td class="r">1.85</td><td class="r">0.85</td><td class="r"><b>0.313</b></td><td class="r"><b>0.335</b></td><td class="r">1.38</td><td class="r">0.67</td><td class="r">1.2 s</td></tr>
+<tr><td>MPC N = 10</td><td class="r">104</td><td class="r">1 746</td><td class="r">3.74</td><td class="r">1.78</td><td class="r"><b>0.637</b></td><td class="r"><b>0.758</b></td><td class="r">2.88</td><td class="r">1.46</td><td class="r">2.7 s</td></tr>
+<tr><td>QP 40 + 20</td><td class="r">60</td><td class="r">3 461</td><td class="r">4.51</td><td class="r">0.83</td><td class="r"><b>0.937</b></td><td class="r"><b>0.570</b></td><td class="r">3.71</td><td class="r">0.88</td><td class="r">6.0 s</td></tr>
+</table></div>
+<ul>
+<li><b>Speed.</b> At these sizes the loops are within 1.2–1.6× of C. Straight-line code is 5–8× faster than the loops and 4–5× faster than C, since neither has anything to amortize its loop overhead against.</li>
+<li><b>Generation cost.</b> Straight-line code costs <b>~1.2 ms per operation</b>, linear in size, against ~0.13 s flat for the loops. The time is spent in lowering and the program passes (<code>match.rewrite</code>, <code>fuse_elementwise</code>, <code>fold_arith</code>, <code>pack_workspace</code>). That cost sets the default of 1000 (≈ 1.2 s); C-111 tracks making it cheaper.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>Refinement, QP 200 + 100, δ = 10⁻¹⁰</th><th class="r">factor + solve</th><th class="r">‖b − Kx‖∞</th><th class="r">backward error</th></tr>
+<tr><td>none</td><td class="r">189 µs</td><td class="r">2.4e-5</td><td class="r">1.4e-16</td></tr>
+<tr><td><code>refine=1</code></td><td class="r">202</td><td class="r">7.5e-11</td><td class="r">4.5e-22</td></tr>
+<tr><td><code>refine=2</code></td><td class="r">224</td><td class="r">4.4e-15</td><td class="r">2.7e-26</td></tr>
+<tr><td><code>refine=5, tol=1e-14</code> (stops after 2)</td><td class="r">264</td><td class="r">4.4e-15</td><td class="r">2.7e-26</td></tr>
+</table></div>
+<ul>
+<li>One refinement step costs a solve and a product with <code>K</code> (13–22 µs here).</li>
+<li>The adaptive loop costs ~40 µs more than two fixed steps. It copies its 10.7 k-entry carry at the start and in each step, since a <code>while_loop</code> body cannot read loop-invariant inputs (C-112).</li>
+</ul>
+<div class="scroll"><table>
+<tr><th><code>jacobian_sparsity(solve(b), b)</code></th><th class="r">n</th><th class="r">declared pattern</th><th class="r">body pattern</th><th class="r">before the early return</th></tr>
+<tr><td>MPC N = 20</td><td class="r">204</td><td class="r">16 ms</td><td class="r">62 ms</td><td class="r">5 129 ms</td></tr>
+<tr><td>QP 100 + 50</td><td class="r">150</td><td class="r">7 ms</td><td class="r">52 ms</td><td class="r">—</td></tr>
+</table></div>
+<p>The two patterns agree here: each system is one connected component. The declared pattern saves the walk through the sweep loops, and it is exact (per component) where the body's is dense.</p>
+
+<h2>4. Tier 2 gates</h2>
+<ul>
+<li><b>Accuracy against SciPy across δ ∈ {10⁻⁴, 10⁻⁸, 10⁻¹⁰, 10⁻¹³}:</b> <span class="ok">met</span> (PR 7). Refinement now reaches residuals at the rounding level at δ = 10⁻¹⁰.</li>
+<li><b>Generated LDLᵀ at most 2× QDLDL-class C:</b> <span class="ok">met</span>. The loops are within 1.04–1.37× (PR 8); straight-line code is below 1× on small systems.</li>
+<li><b>Generation linear in nnz(L), under 10 s at 50 k:</b> <span class="ok">met</span> for the loops (0.8 s at 46 k). Straight-line code is linear in the work and capped by <code>sparse_unroll</code>.</li>
+<li><b>Dense kernels at most 2× LAPACK at n = 32–64:</b> <span class="ok">met at <code>-O3</code></span>; <span class="warn">open at gcc <code>-O2</code></span> (C-107, your decision).</li>
+<li><b>Two non-PIQP examples:</b> <span class="ok">met</span> (SQP Newton step, Kalman update).</li>
+</ul>
+<p><b>Open items:</b></p>
+<ul>
+<li>C-107: the JIT's default optimization level.</li>
+<li>C-111: generation time of straight-line code.</li>
+<li>C-112: <code>while_loop</code> loop-invariant inputs, needed again in Tier 3.</li>
+</ul>
+<p><b>Next:</b> T2-R. An agent review round over the Tier 2 diff, the fixes it finds, a Tier 2 summary, the plan update, and the <code>tier2-complete</code> tag.</p>
+</main></body></html>
