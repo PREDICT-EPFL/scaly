@@ -30,7 +30,7 @@ from ..ir.expr import (
   zeros_like,
 )
 from ..passes.expr import simplify_cse_fixpoint
-from .forward import _tri_mask, claim_name, custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
+from .forward import _is_zero_const, _tri_mask, claim_name, custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
 from .sparsity import _depends_on
 
 
@@ -305,6 +305,12 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       raise ValueError(f"cotangent for output shape {out.shape} has shape {cot.shape}")
     adjoints[out.id] = cot if out.id not in adjoints else adjoints[out.id] + cot
 
+  def accumulate(arg: Expr, arg_cot: Expr) -> None:
+    # A constant zero contributes nothing, and leaving it out keeps reverse mode from walking back
+    # through whatever produced ``arg`` (a factorization an implicit rule does not differentiate).
+    if arg.id in expr_ids and not _is_zero_const(arg_cot):
+      adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
+
   # The output nodes of one call or scan are differentiated together, when the last of them is
   # reached: every node that reads their outputs comes later in ``nodes``, and their arguments earlier.
   group_left: dict[tuple[Any, ...], int] = {}
@@ -326,8 +332,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       cots = group_cots.pop(key)
       pairs = _scan_vjp(expr, cots, wrts, dep_memo) if expr.op == ExprOp.SCAN else _call_vjp(expr, cots)
       for arg, arg_cot in pairs:
-        if arg.id in expr_ids:
-          adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
+        accumulate(arg, arg_cot)
       continue
     if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST} or expr.op in PREDICATE_OPS or not needed(expr):
       continue
@@ -335,12 +340,10 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       rule = _vmap_vjp if expr.op == ExprOp.VMAP else _while_vjp
       pairs = rule(expr, cot, wrts, dep_memo)
       for arg, arg_cot in pairs:
-        if arg.id in expr_ids:
-          adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
+        accumulate(arg, arg_cot)
       continue
     for arg, arg_cot in zip(expr.args, _local_vjp(expr, cot), strict=True):
-      if arg.id in expr_ids:
-        adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
+      accumulate(arg, arg_cot)
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
 
@@ -465,12 +468,14 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return (-(outer * _tri_mask(t.shape[0], lower, unit)), b_bar)
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
     return (_factor_cotangent(expr, cot),)
-  if expr.op == ExprOp.TAKE:
-    return (put_add(zeros_like(args[0]), args[1], cot), zeros_like(args[1]))
-  if expr.op == ExprOp.PUT_ADD:
-    return (cot, zeros_like(args[1]), take(cot, args[1]))
-  if expr.op == ExprOp.PUT:  # the written entries of the base do not reach the output
-    return (put(cot, args[1], zeros_like(args[2])), zeros_like(args[1]), take(cot, args[1]))
+  if expr.op in (ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT):
+    ok = bool(expr.attrs.get("in_range"))
+    if expr.op == ExprOp.TAKE:
+      return (put_add(zeros_like(args[0]), args[1], cot, in_range=ok), zeros_like(args[1]))
+    if expr.op == ExprOp.PUT_ADD:
+      return (cot, zeros_like(args[1]), take(cot, args[1], in_range=ok))
+    # A put's written entries of the base do not reach the output.
+    return (put(cot, args[1], zeros_like(args[2]), in_range=ok), zeros_like(args[1]), take(cot, args[1], in_range=ok))
   if expr.op == ExprOp.SELECT:
     cond, a, b = args
     zero = as_expr(0.0)

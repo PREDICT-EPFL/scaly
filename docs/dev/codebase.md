@@ -63,6 +63,7 @@ src/scaly/
     dense.py             cholesky, ldl, solve_triangular and the solves built from them
     sparse.py            SparseMatrix: a static CSC pattern with Expr values
     symbolic.py          orderings, elimination tree, the pattern of L, left-looking tables, segments
+    sparse_factor.py     SparseLDL: the generated left-looking factorization, its solves, implicit derivatives
 
   codegen/
     abi.py               the pointer ABI: signature, status codes, mangling

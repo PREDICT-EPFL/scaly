@@ -211,6 +211,10 @@ class SymbolicLDL:
 MAX_UPDATE_LANES = 50_000_000
 
 
+class TooMuchWork(ValueError):
+  """An ordering whose factorization exceeds ``max_update_lanes`` multiply-adds."""
+
+
 def analyze(
   shape: tuple[int, int],
   rows: np.ndarray,
@@ -237,10 +241,10 @@ def analyze(
     for candidate in ORDERINGS:
       try:
         found.append(analyze(shape, rows, cols, candidate, max_update_lanes=max_update_lanes))
-      except ValueError:
+      except TooMuchWork:
         continue
     if not found:
-      raise ValueError(f"every ordering leaves more than {max_update_lanes} update multiply-adds")
+      raise TooMuchWork(f"every ordering leaves more than {max_update_lanes} update multiply-adds")
     best = min(found, key=lambda s: (s.u_rows.size, s.nnz_l))
     object.__setattr__(best, "method", f"auto:{best.method}")
     return best
@@ -298,7 +302,7 @@ def analyze(
   counts = l_ptr[r_cols + 1] - r_pos  # entries of column k at rows >= j
   total = int(counts.sum())
   if total > max_update_lanes:
-    raise ValueError(
+    raise TooMuchWork(
       f"the {name} ordering leaves nnz(L) = {r_cols.size} and {total} update multiply-adds, over the limit of {max_update_lanes}; "
       "use a fill-reducing ordering or raise max_update_lanes"
     )

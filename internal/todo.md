@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 108**
+**Next id: 110**
 
 | Prefix | Section |
 |---|---|
@@ -180,6 +180,16 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
 - [ ] **C-107. Decide the JIT's default optimization level.** gcc before 12 does not vectorize at
       `-O2`, which costs dense kernels and `matmul` up to 3× on Linux (`notes/tier2_pr6_report.html`);
       clang vectorizes at `-O2`. Options: `-O3` by default, or `-O2 -ftree-vectorize` for gcc.
+- [x] **C-108. Generated sparse `L D L^T` and solves (T2-7).** `scaly.linalg.SparseLDL`: one
+      in-place `scan` per column segment over a single carry `[L | D | work | 0 | scratch]`, tables
+      padded in range (no bounds checks), factor/solve split, implicit derivatives two levels deep
+      (`custom_derivative`), multi-seed forward mode through a custom rule as one `vmap`. Reverse
+      mode no longer walks back through a constant-zero cotangent. MPC/grid within 1.3–1.7× of an
+      up-looking C LDL, random QPs 2.5× (below the 3× kill line) (`notes/tier2_pr7_report.html`).
+- [ ] **C-109. Ragged update loops for the sparse factorization.** Each update lane loads four index
+      tables and three scattered values; the C baseline walks one contiguous column range per `k`.
+      Group lanes by `k` into an inner loop of run-time length (T2-8), which also shrinks the tables
+      from O(flops) to O(nnz(L)) and generation time with them (10.8 s at 3.1 M lanes).
 
 ### Tier 1 primitives
 

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 2 PR 7 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 7 report</h1>
+<p class="sub">T2-7 · generated sparse LDLᵀ and solves (C-108) · branch <code>claude/tier2-sparse</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>scaly.linalg.SparseLDL(K)</code> factors a symmetric quasi-definite <code>SparseMatrix</code> without pivoting. Everything is generated code:</p>
+<ul>
+<li>one <code>scan</code> per column segment from the T2-5 analysis, each step a left-looking column update;</li>
+<li>all steps writing into a single carry vector with the run-time-index ops of T2-2;</li>
+<li>every loop proven in place by T2-3, so nothing is copied between steps.</li>
+</ul>
+<p><code>fact.solve(b)</code> is a permutation, two sweeps and a diagonal scaling. It carries an implicit derivative, two levels deep, so gradients, Jacobians and Hessians never differentiate the factorization loops.</p>
+<p><b>Gate: at most 2× a QDLDL-class C factorization. Kill criterion: more than 3× after one optimization round.</b> After one round:</p>
+<ul>
+<li>MPC and grid systems factor within <b>1.3–1.7×</b>.</li>
+<li>Random QP systems factor within <b>2.5×</b>: over the gate, under the kill line.</li>
+<li>Solves are within 1.3–1.6×, except a tiny grid solve at 3.0× (8 µs vs 3 µs).</li>
+<li>Backward error is at rounding level (≤ 1e−13) at every tested δ.</li>
+</ul>
+<p><b>The rest of the gap</b> is the lane-table structure. C-109 (ragged loops, in T2-8) targets it; that change would also cut generation time, which grows with the flop count.</p>
+<p style="margin-bottom:0"><b>Suite:</b> 1 344 passed, 88 skipped; the same four VM-only failures. ruff, ty and the docs build are clean. <b>Mutation checks:</b> 9 of 9 killed. One dead store was removed after its mutant survived: the work entry of the diagonal is never read again, so it no longer needs clearing.</p>
+</div>
+
+<h2>1. The factorization</h2>
+<p><b>Carry layout.</b> One vector holds <code>[L below the diagonal (CSC of P K Pᵀ) | D | work w (n) | 0 | scratch (one slot per lane)]</code>.</p>
+<p><b>Step j of a segment, as a chain of updates on the carry:</b></p>
+<pre>u1 = put(c, a_idx, take(kv, a_src))                                  # w[rows of K[:,j]] = K[:,j]
+u2 = put_add(u1, u_w, -(take(c, u_lik) * take(c, u_dk) * take(c, u_ljk)))  # w[i] -= L[i,k] D[k] L[j,k]
+wj = take(u2, w_off + j)
+u3 = put(u2, d_off + j, wj)                                          # D[j] = w[j]
+u4 = put(u3, c_pos, take(u2, c_w) * (1 / wj))                        # L[:,j] = w[rows] / D[j]
+u5 = put(u4, clear, 0)                                               # clear the work rows used</pre>
+<ul>
+<li><b>Tables.</b> Every index comes from the T2-5 tables, sliced one padded row per step. The in-place proof evaluates them for all steps and finds every read disjoint from the step's writes.</li>
+<li><b>Padding in range.</b> A padded lane reads the zero entry, or writes a scratch slot of its own after it. The ops then carry the new <code>in_range=True</code> promise, which drops their bounds checks.</li>
+<li><b>Segments.</b> The segment price includes the carry copy each loop makes on entry. MPC systems end up with 2 segments; random QPs with 12–19.</li>
+</ul>
+<h3>Optimizations made in this round</h3>
+<ul>
+<li>A <code>take</code> of one row now writes <code>out[j]</code>, so producer fusion recognizes it. Its three gathers fuse into the <code>put_add</code> loop.</li>
+<li>In-range padding removes every bounds check.</li>
+<li>One reciprocal per column instead of a divide per entry.</li>
+</ul>
+<p>The first version ran at 3.1–4.1× the baseline; after these changes it runs at 1.6–2.5×.</p>
+
+<h2>2. The solve and its derivative</h2>
+<ul>
+<li><b>Sweeps.</b> The forward sweep scatters column <code>j</code> into the rows below it (<code>put_add</code>). The backward sweep accumulates a dot product into <code>x[j]</code>, reading only rows below <code>j</code>. Both are in place, with in-range padding.</li>
+<li><b>Derivative.</b> <code>solve</code> is a <code>custom_derivative</code> Function of <code>(factor, K values, b)</code>.
+<ul>
+<li>The factor's own derivative is declared zero, and everything flows through the values: <code>dx = K⁻¹(db − dK x)</code>.</li>
+<li>In reverse mode: <code>b̄ = K⁻¹x̄</code>, and <code>K̄ = −b̄xᵀ</code> on the entries the factorization reads, with a mirrored pair contributing through its lower entry and the upper copy getting zero.</li>
+<li>The rules solve with a solve that has rules of its own, so Hessians are implicit too.</li>
+</ul></li>
+</ul>
+<h3>General changes this required</h3>
+<ul>
+<li><b>Constant-zero cotangents.</b> <code>custom_vjp_call</code> hands back a rule's constant-zero cotangent as a constant, and reverse mode drops constant-zero contributions. Without this, the gradient differentiated the factorization loops through the factor's zero cotangent.</li>
+<li><b>Multi-seed forward mode through a custom rule.</b> This is now one <code>vmap</code> of the rule over the seeds instead of the per-seed fallback. Tangents the rule never reads (the factor's) are not formed.</li>
+</ul>
+
+<h2>3. Tests</h2>
+<p><code>tests/linalg/test_sparse_ldl.py</code> has 44 tests; <code>test_runtime_index.py</code> gains one, for <code>in_range</code>.</p>
+<ul>
+<li><b>Factorization and solves.</b> Three matrix families × four orderings × three triangle inputs.
+<ul>
+<li>The factorization's componentwise backward error is below 1e−13·|L||D||Lᵀ|.</li>
+<li>Vector and matrix solves match a dense solve.</li>
+</ul></li>
+<li><b>Accuracy at δ ∈ {1e−4, 1e−8, 1e−10, 1e−13}.</b> The backward error is &lt; 1e−13, and the forward error is within 1000× of what SciPy's own solve reaches.</li>
+<li><b>Generated code.</b>
+<ul>
+<li>Every loop in the C is an in-place procedure.</li>
+<li>Two solves share one factorization: exactly one call per segment.</li>
+<li>The gradient's C holds only in-place loops, so the factorization is not differentiated.</li>
+</ul></li>
+<li><b>Implicit derivatives.</b>
+<ul>
+<li>The gradient in K's values matches finite differences.</li>
+<li>The multi-seed Jacobian equals the gradient in strict mode.</li>
+<li>The gradient and Hessian in <code>b</code> equal the closed forms <code>2K⁻ᵀK⁻¹b + …</code> exactly.</li>
+<li>The single-seed tangent matches the closed form.</li>
+<li>With a full pattern, upper entries get zero gradient.</li>
+</ul></li>
+<li><b>Validation.</b> Non-square matrices, missing diagonals (now reported as such under <code>auto</code>, via <code>TooMuchWork</code>) and right-hand-side shapes are rejected.</li>
+</ul>
+<p><b>Mutation checks (9 of 9 killed):</b></p>
+<ul>
+<li>update sign</li>
+<li>D offset in the update tables</li>
+<li>clearing only scratch</li>
+<li>the off-diagonal cotangent term</li>
+<li>the off-diagonal term of <code>K x</code></li>
+<li>the zero-constant cotangent passthrough</li>
+<li>the reverse-mode zero skip</li>
+<li>multiply by <code>D[j]</code> instead of its reciprocal</li>
+<li>missing diagonal scaling in the solve</li>
+</ul>
+
+<h2>4. Benchmark</h2>
+<p><code>perf_2026_09_26_tier2/pr7_sparse_ldl.py</code> compares against <code>ldl_baseline.c</code>, an up-looking LDLᵀ of the QDLDL/LDL kind written for this benchmark only and not shipped. It is compiled at <code>-O3</code> with the native CPU flag and uses the same permuted matrix and analysis. Scaly times are the best JIT call minus an empty call; the ratio columns divide the Scaly time by the baseline's.</p>
+<div class="scroll"><table>
+<tr><th>Matrix</th><th class="r">n</th><th class="r">nnz(L)</th><th class="r">update lanes</th><th>Ordering</th><th class="r">Gen.</th><th class="r">Factor −O2</th><th class="r">C</th><th class="r">ratio −O2 / −O3</th><th class="r">Solve −O2</th><th class="r">C</th><th class="r">ratio −O2 / −O3</th></tr>
+<tr><td>MPC N = 100</td><td class="r">1 004</td><td class="r">4 591</td><td class="r">13 k</td><td>auto → rcm</td><td class="r">0.2 s</td><td class="r">35.0 µs</td><td class="r">20.6</td><td class="r"><b>1.70 / 1.61</b></td><td class="r">16.6</td><td class="r">11.2</td><td class="r">1.48 / 1.63</td></tr>
+<tr><td>MPC N = 1000</td><td class="r">10 004</td><td class="r">45 991</td><td class="r">134 k</td><td>auto → rcm</td><td class="r">1.3 s</td><td class="r">338</td><td class="r">214</td><td class="r"><b>1.58 / 1.45</b></td><td class="r">155</td><td class="r">114</td><td class="r">1.35 / 1.45</td></tr>
+<tr><td>QP 200 + 100</td><td class="r">300</td><td class="r">7 893</td><td class="r">244 k</td><td>auto → mmd</td><td class="r">1.0 s</td><td class="r">291</td><td class="r">111</td><td class="r"><span class="warn">2.62 / 2.61</span></td><td class="r">17.6</td><td class="r">10.7</td><td class="r">1.64 / 1.64</td></tr>
+<tr><td>QP 500 + 250</td><td class="r">750</td><td class="r">40 206</td><td class="r">3.1 M</td><td>auto → mmd</td><td class="r">10.8 s</td><td class="r">3 384</td><td class="r">1 380</td><td class="r"><span class="warn">2.45 / 2.46</span></td><td class="r">75.9</td><td class="r">57.4</td><td class="r">1.32 / 1.33</td></tr>
+<tr><td>grid 30×30, quasi-definite</td><td class="r">900</td><td class="r">2 772</td><td class="r">6 k</td><td>auto → mmd</td><td class="r">0.1 s</td><td class="r">19.3</td><td class="r">12.5</td><td class="r"><b>1.55 / 1.34</b></td><td class="r">7.9</td><td class="r">2.7</td><td class="r">2.97 / 3.02</td></tr>
+</table></div>
+<p>Residuals are 2e−16 to 9e−16 relative, and <code>D</code> matches the baseline's to 1e−9.</p>
+<ul>
+<li><b>Why random QPs lag.</b> Their updates are many short column ranges. Each lane loads four index tables and three scattered values; the baseline walks one contiguous range per <code>k</code>.</li>
+<li><b>Why generation is slow there.</b> Generation time follows the update lanes (3.1 M → 10.8 s), not <code>nnz(L)</code>. The <10 s gate is met at <code>nnz(L)</code> = 46 k for MPC (1.3 s) but not for flop-heavy random QPs.</li>
+<li><b>The fix for both.</b> Grouping the lanes by <code>k</code> into a run-time-length inner loop (C-109) keeps the tables at O(<code>nnz(L)</code>).</li>
+</ul>
+
+<h2>5. Status against the plan</h2>
+<ul>
+<li><b>Gate ≤ 2× QDLDL-class:</b> met for MPC and grid; missed for random QPs (2.5×) after one optimization round.</li>
+<li><b>Kill criterion (&gt; 3×):</b> not triggered, so the generated-only decision stands.</li>
+<li><b>T2-8</b> takes up the second round (C-109, index-aware fusion, ragged loops). Its gate is the random QPs at ≤ 2×.</li>
+</ul>
+</main></body></html>

@@ -13,6 +13,7 @@ and no page under `docs/` cites them.
 | `pr4_sparse_matrix.py` | `SparseMatrix` KKT assembly, `K @ z` and `A^T A` through the JIT against SciPy in Python |
 | `pr5_symbolic.py` | symbolic analysis per matrix and ordering: fill against SuperLU, update lanes, tree height, supernodes, segments and analysis time |
 | `pr6_dense.py` | generated `cholesky`, `ldl`, `solve_triangular` (vector and matrix) and `matmul` against OpenBLAS LAPACK/BLAS through ctypes, per instance, at `-O2` and `-O3` |
+| `pr7_sparse_ldl.py` (+ `ldl_baseline.c`) | the generated sparse `L D L^T` and solve against an up-looking C factorization of the QDLDL kind on the same permuted matrix and analysis: MPC, random QP and grid systems |
 
 Run from this directory, with a fresh cache so first-call times include compilation:
 

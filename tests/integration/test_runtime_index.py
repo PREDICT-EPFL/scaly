@@ -19,6 +19,7 @@ from scaly.ad import finite_difference
 from scaly.ad.derivatives import gradient, hessian, jacobian
 from scaly.ad.forward import jvp
 from scaly.codegen import render_c_module
+from scaly.ir.expr import ExprOp, topo
 from scaly.passes.lowering import lower_function, main_proc
 
 RNG = np.random.default_rng(202)
@@ -284,3 +285,19 @@ def test_validation() -> None:
     sc.put(sc.sym("m", (2, 4)), sc.sym("i3", 3, dtype="int64"), sc.sym("v3", 3))
   sc.verify_expr(sc.put(sc.sym("m", (2, 4)), sc.sym("i3", 3, dtype="int64"), sc.sym("v23", (2, 3))))
   sc.verify_expr(sc.take(sc.sym("m", (2, 4)), [1, 2, 9]))
+
+
+def test_in_range_indices_skip_the_check_and_keep_it_in_derivatives() -> None:
+  """``in_range=True`` promises every index is inside the array: no bounds test in the C, the same
+  values, and derivatives built with the same promise."""
+  x, v, idx = sc.sym("x", 6), sc.sym("v", 3), sc.sym("idx", 3, dtype="int64")
+  y = sc.put_add(x, idx, sc.take(x, idx, in_range=True) * v, in_range=True)
+  checked = sc.put_add(x, idx, sc.take(x, idx) * v)
+  fn = _fn("inr", [x, v, idx], [y, checked, gradient(sc.sumsqr(y), x), gradient(sc.sumsqr(checked), x)])
+  got = fn._flat_numerical_call(np.arange(6.0), np.array([1.0, 2.0, 3.0]), np.array([5.0, 0.0, 2.0]))
+  np.testing.assert_array_equal(got[0], got[1])
+  np.testing.assert_array_equal(got[2], got[3])
+  body = str(render_c_module(_fn("inr_c", [x, v, idx], [y])).source).split("inr_c(")[1]
+  assert "<=" not in body and " < 6)" not in body
+  grad = gradient(sc.sumsqr(y), x)
+  assert all(n.attrs.get("in_range") for n in topo([grad]) if n.op in (ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT))

@@ -199,14 +199,14 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
   if expr.op in {ExprOp.INDEX_ADD, ExprOp.INDEX_SET}:
     return save(Expr(expr.op, (d[0], d[1]), expr.type, attrs=dict(expr.attrs), lowering=expr.lowering))
   if expr.op == ExprOp.TAKE:  # linear in x; a fill is a constant
-    return save(take(d[0], args[1]))
+    return save(take(d[0], args[1], in_range=bool(expr.attrs.get("in_range"))))
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
     return save(zeros_like(expr) if _is_zero_const(d[0]) else factor_tangent(expr, d[0]))
   if expr.op == ExprOp.TRISOLVE:
     dt, db = (None if _is_zero_const(t) else t for t in d)
     return save(zeros_like(expr) if dt is None and db is None else trisolve_tangent(expr, dt, db))
   if expr.op in {ExprOp.PUT_ADD, ExprOp.PUT}:
-    return save((put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2]))
+    return save((put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2], in_range=bool(expr.attrs.get("in_range"))))
   if expr.op == ExprOp.SELECT:
     return save(where(args[0], d[1], d[2]))
   if expr.op == ExprOp.COPYSIGN:
@@ -527,7 +527,12 @@ def custom_vjp_call(callee: Any, args: Sequence[Expr], cots: dict[int, Expr]) ->
   reuses the solution. Lives here, beside the other flat-call synthesis, for reverse mode to use."""
   outputs = callee._flat_symbolic_call(list(args))
   full = [cots[j] if j in cots else zeros_like(out) for j, out in enumerate(outputs)]
-  return callee.custom_vjp._flat_symbolic_call([*args, *outputs, *full])
+  grads = callee.custom_vjp._flat_symbolic_call([*args, *outputs, *full])
+  # A rule that returns a constant zero for an input says that input receives nothing: hand back the
+  # constant itself, so reverse mode can see it and does not differentiate what produced the input.
+  return tuple(
+    g if not _is_zero_const(r) else Expr.const(np.zeros(r.shape), dtype=r.type.dtype) for g, r in zip(grads, callee.custom_vjp.outputs, strict=True)
+  )
 
 
 def _copysign_slope(x: Expr, s: Expr) -> Expr:
@@ -1074,7 +1079,25 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     ones = Expr.const(np.ones(expr.args[0].size), dtype=d0.type.dtype)
     memo[expr.id] = ret = d0.reshape((nseed, expr.args[0].size)) @ ones
     return ret
-  if expr.op in (ExprOp.VMAP, ExprOp.CALL, ExprOp.SCAN, ExprOp.WHILE) and expr.attrs["callee"].custom_jvp is not None:
+  if expr.op == ExprOp.CALL and expr.attrs["callee"].custom_jvp is not None:
+    # The rule once per seed, as one map: primal arguments broadcast, tangents sliced by seed.
+    rule = expr.attrs["callee"].custom_jvp
+    # A tangent the rule never reads (an implicit rule ignoring a precomputed factor) is not formed.
+    rule_dep: dict[tuple[int, int], bool] = {}
+    out = rule.outputs[int(expr.attrs["output"])]
+    read = [_depends_on(out, rule.inputs[len(expr.args) + i], rule_dep) for i in range(len(expr.args))]
+    tangents = [_jvp_many_structural(arg, wrt, seeds, memo, dep_memo) if r else None for arg, r in zip(expr.args, read, strict=True)]
+    if all(t is None or _is_zero_const(t) for t in tangents):
+      memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+      return ret
+    specs = [(arg.reshape((arg.size,)), 0, 0) for arg in expr.args]
+    specs += [
+      (Expr.const(np.zeros(arg.size)), 0, 0) if t is None else (t.reshape((nseed * arg.size,)), 0, arg.size)
+      for t, arg in zip(tangents, expr.args, strict=True)
+    ]
+    memo[expr.id] = ret = vmap(rule, nseed, specs, output=int(expr.attrs["output"])).reshape((nseed, *expr.shape))
+    return ret
+  if expr.op in (ExprOp.VMAP, ExprOp.SCAN, ExprOp.WHILE) and expr.attrs["callee"].custom_jvp is not None:
     raise _JVPManyUnsupported("custom jvp")  # the per-seed fallback honors the rule through ``_call_jvp_function``
   if expr.op == ExprOp.SCAN:
     tangents = [simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo)) for arg in expr.args]
@@ -1301,10 +1324,10 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     memo[expr.id] = ret = _jvp_many_dense(expr, d, nseed)
     return ret
   if expr.op == ExprOp.TAKE:  # the seed axis leads and ``take`` indexes the last one
-    memo[expr.id] = ret = take(d[0], args[1])
+    memo[expr.id] = ret = take(d[0], args[1], in_range=bool(expr.attrs.get("in_range")))
     return ret
   if expr.op in {ExprOp.PUT_ADD, ExprOp.PUT}:
-    memo[expr.id] = ret = (put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2])
+    memo[expr.id] = ret = (put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2], in_range=bool(expr.attrs.get("in_range")))
     return ret
   if expr.op == ExprOp.MATMUL:
     if args[0] is args[1] and len(args[0].shape) == 1:

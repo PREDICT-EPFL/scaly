@@ -59,3 +59,46 @@ with the order:
 - Below order 32 the generated code is faster, because it has no library call overhead.
 - At gcc's `-O2`, which does not vectorize before gcc 12, the multi-right-hand-side solve and the
   matrix product fall to 3× (see `SCALY_CC_OPT` in [Environment variables](env_vars.md)).
+
+## Sparse `L D L^T`
+
+```python
+K = sc.SparseMatrix.symbol("K", kkt_pattern)   # lower triangle, upper, or both
+fact = linalg.SparseLDL(K)                     # analysis now, factorization loops in the graph
+x = fact.solve(b)                              # b a vector or a matrix of right-hand sides
+y = fact.solve(c)                              # the same factorization, reused
+```
+
+**Which matrices.** `SparseLDL` factors a symmetric quasi-definite matrix without pivoting, for
+example a regularized KKT system `[[P + rho I, A^T], [A, -delta I]]`.
+
+**Symbolic analysis.** When the graph is built, `linalg.analyze` chooses the ordering, the
+elimination tree and the pattern of `L`. `ordering="auto"`, the default, keeps whichever of natural,
+reverse Cuthill–McKee or minimum degree needs the least work. A stage-ordered MPC matrix usually
+keeps its own order.
+
+**Generated code.**
+
+- The factorization is one `scan` per segment of columns. Each step is a left-looking column
+  update that reads the analysis tables by the step number.
+- Updates go to a single carry vector, which the loop proves safe to overwrite in place, so no step
+  copies anything.
+- Padded lanes point at a zero entry or at a scratch slot of their own, so the loops index without
+  bounds checks.
+- `solve` is a permutation, two triangular sweeps and a diagonal scaling.
+
+**Derivatives.** `fact.solve` carries the implicit derivative. In forward mode,
+`dx = K^{-1}(db - dK x)` is one more solve with the same factor. In reverse mode, `bbar =
+K^{-1} xbar` and `Kbar = -bbar x^T` on the entries the factorization reads (a mirrored pair
+contributes through its lower entry). The factorization loops themselves are never differentiated.
+Second derivatives use the same rules, and multi-seed forward mode maps the rule over the seeds.
+
+**Speed.** Against an up-looking C factorization of the QDLDL kind on the same matrix and analysis
+(`internal/notes/tier2_pr7_report.html`):
+
+- MPC and grid systems factor within 1.3–1.7×, and solves within 1.3–1.6×.
+- Random QP systems, whose many short updates are all padded to the widest, factor within 2.5×.
+
+**Generation cost.** The tables grow with the number of update multiply-adds, not with `nnz(L)`.
+A factorization with millions of them generates large sources; `analyze` refuses more than 50
+million.

@@ -1059,7 +1059,7 @@ def _runtime_indices(indices: Any, op: str) -> Expr:
   return idx
 
 
-def take(x: Any, indices: Any, *, fill: float = 0.0) -> Expr:
+def take(x: Any, indices: Any, *, fill: float = 0.0, in_range: bool = False) -> Expr:
   """``out[..., j] = x[..., indices[j]]``, with ``indices`` an ``int64`` vector known only at run time.
 
   The last axis of ``x`` is indexed; leading axes are kept, so ``x`` of shape ``(..., n)`` and
@@ -1068,6 +1068,10 @@ def take(x: Any, indices: Any, *, fill: float = 0.0) -> Expr:
   Differentiable in ``x``; the adjoint is ``put_add``. Unlike ``gather``, whose indices are fixed
   when the graph is built, the indices here may be any ``int64`` expression: a slice of a table
   selected by a loop's step number, typically.
+
+  ``in_range=True`` promises every index is inside ``[0, n)``: the generated code then reads without
+  a check, and an index outside reads whatever memory it reaches. For library code whose padded
+  tables point at real entries.
   """
   x = as_expr(x)
   idx = _runtime_indices(indices, "take")
@@ -1078,32 +1082,33 @@ def take(x: Any, indices: Any, *, fill: float = 0.0) -> Expr:
     ExprOp.TAKE,
     (x, idx),
     TensorType(shape, dtype=x.type.dtype, diff=x.type.diff),
-    attrs={"fill": float(fill)},
+    attrs={"fill": float(fill), **({"in_range": True} if in_range else {})},
     lowering=common_lowering(x, idx),
   )
 
 
-def put_add(base: Any, indices: Any, values: Any) -> Expr:
+def put_add(base: Any, indices: Any, values: Any, *, in_range: bool = False) -> Expr:
   """``base`` with ``values[..., j]`` added at ``[..., indices[j]]``; repeated indices accumulate.
 
   The run-time-index counterpart of ``index_add``, on the last axis of ``base``: ``base`` has shape
   ``(..., n)`` and ``values`` shape ``(..., L)`` for ``L`` indices. An index outside ``[0, n)``
   drops its value (each such lane writes a scratch slot of its own, so padded lanes never form a
-  chain of updates to one address).
+  chain of updates to one address). ``in_range=True`` promises every index is inside ``[0, n)`` and
+  drops the check (see ``take``).
   """
-  return _put(ExprOp.PUT_ADD, base, indices, values)
+  return _put(ExprOp.PUT_ADD, base, indices, values, in_range)
 
 
-def put(base: Any, indices: Any, values: Any) -> Expr:
+def put(base: Any, indices: Any, values: Any, *, in_range: bool = False) -> Expr:
   """``base`` with the entries at ``[..., indices[j]]`` replaced by ``values[..., j]``.
 
   Indices inside ``[0, n)`` should be distinct: with repeats the last write wins, and the derivative
-  assumes none. An index outside ``[0, n)`` drops its value.
+  assumes none. An index outside ``[0, n)`` drops its value; ``in_range=True`` promises there is none.
   """
-  return _put(ExprOp.PUT, base, indices, values)
+  return _put(ExprOp.PUT, base, indices, values, in_range)
 
 
-def _put(op: ExprOp, base: Any, indices: Any, values: Any) -> Expr:
+def _put(op: ExprOp, base: Any, indices: Any, values: Any, in_range: bool = False) -> Expr:
   base, values = _operands(base, values)
   idx = _runtime_indices(indices, op.value)
   if not base.shape:
@@ -1116,6 +1121,7 @@ def _put(op: ExprOp, base: Any, indices: Any, values: Any) -> Expr:
     op,
     (base, idx, values),
     TensorType(base.shape, dtype=base.type.dtype, diff=diff_any(base, values)),
+    attrs={"in_range": True} if in_range else {},
     lowering=common_lowering(base, idx, values),
   )
 

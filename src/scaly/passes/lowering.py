@@ -931,24 +931,24 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
     steps = range(n) if forward else range(n - 1, -1, -1)
     if trans:
       ctx.statements.append(_copy_loop(bb, out, b.shape))
-      for i in steps:
-        ctx.statements.extend(scale(c(i)))
-        for k in range(i) if lower else range(i + 1, n):
+      for r in steps:
+        ctx.statements.extend(scale(c(r)))
+        for k in range(r) if lower else range(r + 1, n):
           ctx.statements.extend(
             per_col(
-              lambda cc, i=i, k=k: [p.store(x(c(k), cc), p.sub(p.load(x(c(k), cc)), p.mul(p.load(_entry(tb, n, c(i), c(k))), p.load(x(c(i), cc)))))]
+              lambda cc, r=r, k=k: [p.store(x(c(k), cc), p.sub(p.load(x(c(k), cc)), p.mul(p.load(_entry(tb, n, c(r), c(k))), p.load(x(c(r), cc)))))]
             )
           )
       return
-    for i in steps:
+    for r in steps:
 
-      def solve_row(cc: ProgramNode, i: int = i) -> list[ProgramNode]:
-        value = p.load(rhs(c(i), cc))
-        for k in range(i) if lower else range(i + 1, n):
-          value = p.sub(value, p.mul(p.load(_entry(tb, n, c(i), c(k))), p.load(x(c(k), cc))))
+      def solve_row(cc: ProgramNode, r: int = r) -> list[ProgramNode]:
+        value = p.load(rhs(c(r), cc))
+        for k in range(r) if lower else range(r + 1, n):
+          value = p.sub(value, p.mul(p.load(_entry(tb, n, c(r), c(k))), p.load(x(c(k), cc))))
         if not unit:
-          value = p.div(value, p.load(_entry(tb, n, c(i), c(i))))
-        return [p.store(x(c(i), cc), value)]
+          value = p.div(value, p.load(_entry(tb, n, c(r), c(r))))
+        return [p.store(x(c(r), cc), value)]
 
       ctx.statements.extend(per_col(solve_row))
     return
@@ -1011,7 +1011,8 @@ def _ensure_in_place_callee(ctx: LowerCtx, callee: Function, steps: dict[int, np
 
 def _put_scratch(chain: Iterable[Expr]) -> int:
   """The scratch slots after the carry's entries that its run-time-index updates write padded lanes to."""
-  return max((e.size // e.shape[-1] * e.args[1].size for e in chain if e.op in (ExprOp.PUT_ADD, ExprOp.PUT) and e.shape[-1]), default=0)
+  puts = (e for e in chain if e.op in (ExprOp.PUT_ADD, ExprOp.PUT) and e.shape[-1] and not e.attrs.get("in_range"))
+  return max((e.size // e.shape[-1] * e.args[1].size for e in puts), default=0)
 
 
 def _loop_steps(callee: Function, outers: Iterable[Expr], starts: Iterable[int], strides: Iterable[int], length: int) -> dict[int, np.ndarray]:
@@ -1335,9 +1336,12 @@ def _lower_index_update(ctx: LowerCtx, node: Expr) -> None:
   ctx.statements.append(p.for_(p.range_(iname, 0, idx.size, kind=kind), [p.store(p.view(out, [dst]), value)]))
 
 
-def _runtime_index(ctx: LowerCtx, idx: Expr, j: ProgramNode, n: int) -> tuple[ProgramNode, ProgramNode]:
-  """The index at lane ``j`` and whether it addresses an entry, ``0 <= i < n``."""
+def _runtime_index(ctx: LowerCtx, idx: Expr, j: ProgramNode, n: int, *, in_range: bool = False) -> tuple[ProgramNode, ProgramNode | None]:
+  """The index at lane ``j`` and whether it addresses an entry, ``0 <= i < n``; no test when the
+  op promises every index is in range."""
   i = p.load(p.view(ctx.buf_of(idx), [j]))
+  if in_range:
+    return i, None
   inside = ProgramNode(ProgramOp.AND, (p.compare(ProgramOp.LE, p.const_int(0), i), p.compare(ProgramOp.LT, i, p.const_int(n))), dtype=dtypes.bool_)
   return i, inside
 
@@ -1371,10 +1375,14 @@ def _lower_take(ctx: LowerCtx, node: Expr) -> None:
     if n == 0:
       value = fill
     else:
-      i, inside = _runtime_index(ctx, idx, j, n)
-      src = p.add(p.mul(b, p.const_int(n)), p.select(inside, i, p.const_int(0)))
-      value = p.select(inside, p.load(p.view(ctx.buf_of(x), [src])), fill)
-    return [p.store(p.view(out, [p.add(p.mul(b, p.const_int(lanes)), j)]), value)]
+      i, inside = _runtime_index(ctx, idx, j, n, in_range=bool(node.attrs.get("in_range")))
+      src = p.add(p.mul(b, p.const_int(n)), i if inside is None else p.select(inside, i, p.const_int(0)))
+      value = p.load(p.view(ctx.buf_of(x), [src]))
+      if inside is not None:
+        value = p.select(inside, value, fill)
+    # One row writes ``out[j]`` itself, the shape producer fusion recognizes.
+    target = j if rows == 1 else p.add(p.mul(b, p.const_int(lanes)), j)
+    return [p.store(p.view(out, [target]), value)]
 
   _lane_loops(ctx, out.attrs["name"], rows, lanes, RangeKind.GLOBAL, body)
 
@@ -1404,9 +1412,10 @@ def _lower_put(ctx: LowerCtx, node: Expr) -> None:
     return
 
   def body(b: ProgramNode, j: ProgramNode) -> list[ProgramNode]:
-    i, inside = _runtime_index(ctx, idx, j, n)
+    i, inside = _runtime_index(ctx, idx, j, n, in_range=bool(node.attrs.get("in_range")))
+    entry = p.add(p.mul(b, p.const_int(n)), i)
     scratch = p.add(p.const_int(size), p.add(p.mul(b, p.const_int(lanes)), j))
-    dst = p.view(store, [p.select(inside, p.add(p.mul(b, p.const_int(n)), i), scratch)])
+    dst = p.view(store, [entry if inside is None else p.select(inside, entry, scratch)])
     value = p.cast(p.load(p.view(ctx.buf_of(values), [p.add(p.mul(b, p.const_int(lanes)), j)])), node.type.dtype)
     if node.op == ExprOp.PUT_ADD:
       value = p.add(p.load(dst), value)
