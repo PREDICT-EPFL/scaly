@@ -258,7 +258,8 @@ def _scan_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
   y_xs = [_jac_mask(produced, x, {}) for x in xs] if produced is not None else []
   outer_masks = [_jac_mask(outer, wrt, memo) for outer in outers]
   rows: list[sparse.csr_array] = []
-  moving = any(stride != 0 for stride in strides)
+  # Only a slice that brings in dependence changes from step to step; the step number brings none.
+  moving = any(stride != 0 and m.nnz for stride, m in zip(strides, outer_masks, strict=True))
   seen: dict[tuple[bytes, bytes, bytes], int] = {}
   history: list[sparse.csr_array] = []
   for k in range(length):

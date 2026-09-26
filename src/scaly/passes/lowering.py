@@ -275,8 +275,10 @@ def _lower_to_proc(
 
 
 # ``bool`` values only ever come from comparisons, logic and ``isfinite``, never from a narrowing
-# store, so scalar substitution cannot erase a conversion for them.
-_SCALARIZABLE = (dtypes.float64, dtypes.bool_)
+# store, so scalar substitution cannot erase a conversion for them. ``int64`` values come from
+# explicit casts, integer constants and integer arithmetic; scalar expansion keeps a store's
+# conversion as a cast wherever the stored value's type differs from the buffer's.
+_SCALARIZABLE = (dtypes.float64, dtypes.bool_, dtypes.int64)
 
 
 class LowerCtx:
@@ -947,7 +949,12 @@ def _emit_scan(ctx: LowerCtx, node: Expr) -> dict[int, str]:
     write = p.mul(p.sub(p.const_int(1), parity), p.const_int(cs))
     final = (length % 2) * cs
   in_args = [p.view(store, [read])]
-  for outer, start, stride in zip(outers, starts, strides, strict=True):
+  counters: list[ProgramNode] = []
+  for formal, outer, start, stride in zip(callee.inputs[1:], outers, starts, strides, strict=True):
+    per_step = _constant_per_step(ctx, outer, formal, start, stride, length, k)
+    if per_step is not None:
+      in_args.append(_scalar_arg(ctx, formal.type.dtype, per_step, counters))
+      continue
     offset = p.add(p.const_int(start), p.mul(p.const_int(stride), k)) if stride else p.const_int(start)
     in_args.append(p.view(ctx.buf_of(outer), [offset]))
   out_args = [p.view(store, [write])]
@@ -955,11 +962,36 @@ def _emit_scan(ctx: LowerCtx, node: Expr) -> dict[int, str]:
   call = ProgramNode(
     ProgramOp.CALL, tuple(in_args + out_args), attrs={"callee": in_place or callee.name, "n_in": len(in_args), "n_out": len(out_args), "returns": ()}
   )
-  ctx.statements.append(p.for_(p.range_(name, 0, length, kind=RangeKind.SERIAL), [call]))
+  ctx.statements.append(p.for_(p.range_(name, 0, length, kind=RangeKind.SERIAL), [*counters, call]))
   bufs[0] = ctx.new_alias(dtype, carry.shape, store.attrs["name"], final).attrs["name"]
   if trajectory:
     bufs[-1] = ctx.new_alias(dtype, (length * cs,), store.attrs["name"], 0).attrs["name"]
   return bufs
+
+
+def _constant_per_step(ctx: LowerCtx, outer: Expr, formal: Expr, start: int, stride: int, length: int, k: ProgramNode) -> ProgramNode | None:
+  """The entry step ``k`` of a scan reads from a constant table one entry per step, computed instead
+  of read where the table allows: arithmetic on the loop counter for an integer table (the step
+  number, typically), which keeps only a non-affine residual as a table, and the value itself for
+  a table whose entries along the walk are all equal (a cotangent of ones, typically). ``None``
+  leaves the slice a read of the table."""
+  if outer.op != ExprOp.CONST or formal.size != 1 or outer.value is None:
+    return None
+  values = np.asarray(outer.value).reshape(-1)[start + stride * np.arange(length)]
+  if outer.type.dtype == dtypes.int64:
+    return ctx.index_at(values.astype(np.int64), k)
+  if outer.type.dtype.is_floating and values.size and np.all(values == values[0]):
+    return p.const_float(float(values[0]), dtype=outer.type.dtype)
+  return None
+
+
+def _scalar_arg(ctx: LowerCtx, dtype: DType, value: ProgramNode, stores: list[ProgramNode]) -> ProgramNode:
+  """A one-element buffer set to ``value`` each step (the store goes in ``stores``) and passed by
+  pointer like any argument; once the call is inlined the C compiler keeps it in a register."""
+  buf = ctx.new_private(dtype, ())
+  slot = p.view(buf, [p.const_int(0)])
+  stores.append(p.store(slot, value))
+  return p.view(buf, [p.const_int(0)])
 
 
 def _while_key(node: Expr) -> tuple[object, ...]:
@@ -1003,12 +1035,15 @@ def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int,
   read = p.view(store, [slot(k)])
   check = ProgramNode(ProgramOp.CALL, (read, flag), attrs={"callee": cond.name, "n_in": 1, "n_out": 1, "returns": ()})
   leave = p.break_if(ProgramNode(ProgramOp.NOT, (p.load(p.view(flag, [p.const_int(0)])),), dtype=dtypes.bool_))
+  counters: list[ProgramNode] = []
+  # A body that takes the step number gets the loop counter itself.
+  extra = [_scalar_arg(ctx, dtypes.int64, k, counters)] if len(body.inputs) == 2 else []
   step = ProgramNode(
     ProgramOp.CALL,
-    (read, p.view(store, [slot(p.add(k, p.const_int(1)))])),
-    attrs={"callee": in_place or body.name, "n_in": 1, "n_out": 1, "returns": ()},
+    (read, *extra, p.view(store, [slot(p.add(k, p.const_int(1)))])),
+    attrs={"callee": in_place or body.name, "n_in": 1 + len(extra), "n_out": 1, "returns": ()},
   )
-  ctx.statements.append(p.for_(p.range_(name, 0, max_iter, kind=RangeKind.SERIAL), [check, leave, step], exit_var=True))
+  ctx.statements.append(p.for_(p.range_(name, 0, max_iter, kind=RangeKind.SERIAL), [check, leave, *counters, step], exit_var=True))
   count = ctx.new_private(dtypes.float64, ())
   ctx.statements.append(p.store(p.view(count, [p.const_int(0)]), p.cast(k, dtypes.float64)))
   final = ctx.new_private(dtype, carry.shape)

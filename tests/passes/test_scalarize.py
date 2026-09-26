@@ -231,12 +231,19 @@ def test_auto_rejects_call_when_callee_exceeds_budget() -> None:
   assert result.args == (callee, caller)
 
 
-@pytest.mark.parametrize("dtype", [dtypes.float32, dtypes.int32, dtypes.int64])
+@pytest.mark.parametrize("dtype", [dtypes.float32, dtypes.int32])
 def test_other_dtypes_keep_their_store_boundaries(dtype) -> None:
   x = sc.sym("x", 4, dtype=dtype)
   y = (x + sc.const([1, 2, 3, 4], dtype=dtype)).scalar()
   fn = _function("typed_stage", [x], [y])
   assert not main_proc(lower_function(fn)).attrs.get("scalarized")
+
+
+def test_int64_values_expand_to_scalars() -> None:
+  x = sc.sym("x", 4, dtype=dtypes.int64)
+  fn = _function("int_stage", [x], [(x + sc.const([1, 2, 3, 4], dtype=dtypes.int64)).scalar()])
+  _assert_scalar(main_proc(lower_function(fn)))
+  np.testing.assert_array_equal(fn(np.array([5.0, -6.0, 7.0, 0.0])), [6.0, -4.0, 10.0, 4.0])
 
 
 def test_views_broadcast_gather_and_scatter() -> None:
@@ -465,3 +472,33 @@ def test_final_preparation_reserves_later_scalar_declarations() -> None:
   assert len(names) > 1
   assert len(names) == len(set(names))
   assert names[-1] == "v0"
+
+
+def test_scalar_expansion_keeps_a_store_conversion_as_a_cast() -> None:
+  """A value stored into a buffer of another type is converted by the store; substituting the value
+  for later loads must keep that conversion (truncation into an integer slot)."""
+  x = p.buffer("cv_x", dtypes.float64, (1,))
+  y = p.buffer("cv_y", dtypes.float64, (1,))
+  slot = p.buffer("cv_t", dtypes.int64, (1,), address_space="private")
+  zero = p.const_int(0)
+  body = [
+    slot,
+    p.store(p.view(slot, [zero]), p.load(p.view(x, [zero]))),
+    p.store(p.view(y, [zero]), p.cast(p.load(p.view(slot, [zero])), dtypes.float64)),
+  ]
+  raw = p.proc("conv", [x, y], body)
+  proc = ProgramNode(raw.op, raw.args, {**raw.attrs, "input_count": 1, "scalarize_mode": "procedure", "lowering": "auto"}, raw.dtype)
+  out = scalarize_program(p.program([proc])).args[0]
+  _assert_scalar(out)
+  casts = [n.dtype for stmt in _body(out) for n in _walk(stmt) if n.op == ProgramOp.CAST]
+  assert dtypes.int64 in casts and dtypes.float64 in casts
+
+
+def test_int64_procedures_scalarize_and_truncate_like_c() -> None:
+  """A procedure with integer values expands to scalars, and a float-to-integer cast inside it still
+  truncates toward zero."""
+  x = sc.sym("x", 4)
+  fn = _function("int_trunc", [x], [(x.cast("int64").cast("float64") * 2.0 + x).scalar()])
+  _assert_scalar(main_proc(lower_function(fn)))
+  data = np.array([-2.7, 2.7, 0.5, -0.5])
+  np.testing.assert_array_equal(fn(data), np.trunc(data) * 2.0 + data)

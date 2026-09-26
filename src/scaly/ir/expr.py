@@ -809,6 +809,10 @@ def where(cond: Any, x: Any, y: Any) -> Expr:
   Both branches are always evaluated, so a branch may produce inf or NaN where it is not chosen
   without affecting the result. The derivative flows through the chosen branch only.
   """
+  if isinstance(cond, bool):
+    # ``k == 0`` on an expression is Python identity and yields a bool, which would select one
+    # branch for good; a constant condition is never what a caller of ``where`` means.
+    raise TypeError("where needs a bool expression as its condition, got a Python bool; compare with sc.equal, sc.less, ... (== is identity)")
   c = _as_bool(cond)
   a, b = _operands(x, y)
   dtype = promote_dtype(a, b)

@@ -164,6 +164,23 @@ derivative of a scan is a scan: forward mode carries the tangent alongside the c
 mode runs the steps backwards over the carries the forward pass stored, which costs
 `(length + 1) * carry.size` values of workspace.
 
+A step that needs to know which step it is takes the step number: with `index=True` the body's
+second input is an `int64` scalar counting from zero, and the sliced inputs follow it.
+
+```python
+@sc.function(sc.G(sc.L("z", 2), sc.L("k", sc.TensorType((), sc.dtypes.int64)), sc.L("u", 1)), sc.L("znext", ...))
+def tv_step(inputs):
+    z, k, u = inputs
+    t = 0.1 * k.cast("float64")  # the time at the start of step k
+    return sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * (u[0] - t * z[0])])
+
+(z_final,) = sc.scan(tv_step, z0, [(us, 0, 1)], length=50, index=True)
+```
+
+The loop passes its own counter, so no table of step numbers is stored, and the backward scan of
+reverse mode passes the same numbers counting down. The index has no derivative. Compare it with
+`sc.equal(k, 0)`, not `k == 0`: `==` between expressions is Python identity, not a comparison.
+
 When a step changes only a few entries of a large carry, write the change with `sc.index_add` and
 `sc.index_set` instead of rebuilding the carry. If the next carry is such a chain of updates rooted
 at the carry, each update's values read only the carry as it stands just before that update and
@@ -182,7 +199,8 @@ steps:
 carry, n_iter = sc.while_loop(not_converged, newton_step, x0, max_iter=50)
 ```
 
-`n_iter` is the number of steps taken, as a `float64`. The loop lowers to one C loop that calls
+`n_iter` is the number of steps taken, as a `float64`. With `index=True`, `body` also takes the
+step number as a second `int64` input, as in `scan`; `cond` still reads only the carry. The loop lowers to one C loop that calls
 the condition, leaves when it is false and otherwise calls the body, so the code size does not
 depend on `max_iter`.
 

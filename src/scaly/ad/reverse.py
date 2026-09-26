@@ -220,12 +220,14 @@ def _while_adj_function(body: Any) -> Any:
     lam = Expr.sym(claim_name(f"lam:{body.input_names[0]}", taken), carry.shape)
     step, count = Expr.sym(claim_name("step", taken), (1,)), Expr.sym(claim_name("count", taken), (1,), diff=False)
     (back,) = body_cotangents(body, {0: lam}, (0,))
+    if len(body.inputs) == 2:  # the body's step number is the backward step's ``step``
+      back = _substitute(back, {body.inputs[1].id: cast(step[0], "int64")})
     out = where(step[0] < count[0], back, lam)
     _WHILE_ADJ_CACHE[body] = Function._from_exprs(
       f"{body.name}_whileadj",
       [lam, carry, step, count],
       [body._inherit_lowering(simplify_cse_fixpoint(out))],
-      [claim_name("lam", taken), *body.input_names, str(step.name), str(count.name)],
+      [claim_name("lam", taken), body.input_names[0], str(step.name), str(count.name)],
       [claim_name("adj:carry", taken)],
     )
   return _WHILE_ADJ_CACHE[body]

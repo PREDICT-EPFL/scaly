@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 101**
+**Next id: 102**
 
 | Prefix | Section |
 |---|---|
@@ -134,6 +134,16 @@ sparse and dense linear algebra, generated code only) runs on `claude/tier2-spar
 are the IPM machinery and PIQP proper; Tier 5 (multistage/supernodal) and Tier 6 (platform
 selection, optional external kernels) come later. Tier 2 PRs T2-1 … T2-9 and T2-R get ids here when
 they start. Review evidence: [`notes/piqp_plan_2026_09_26.html`](notes/piqp_plan_2026_09_26.html).
+Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
+
+- [x] **C-101. Step number as a loop-body input (T2-1).** `sc.scan(..., index=True)` and
+      `sc.while_loop(..., index=True)` hand the body an `int64` step number. A scan slices it from
+      a constant table that lowering never stores: an integer table read one entry per step becomes
+      arithmetic on the loop counter (counting down in the backward scan), and a float table whose
+      entries along the walk are equal becomes the value (the ones of a summed output's
+      cotangent). Procedures holding `int64` values now scalarize, with a store's conversion kept
+      as a cast; `where` refuses a Python `bool`, which is what `k == 0` yields
+      (`notes/tier2_pr1_report.html`).
 
 ### Tier 1 primitives
 

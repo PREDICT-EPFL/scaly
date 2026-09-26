@@ -267,6 +267,8 @@ def _while_attrs(expr: Expr) -> str | None:
     return f"WHILE carry shape must be preserved by {body.name!r} and read by {cond.name!r}"
   if cond.outputs[0].size != 1 or not cond.outputs[0].type.dtype.is_bool:
     return f"WHILE condition {cond.name!r} must return one bool"
+  if len(body.inputs) > 2 or (len(body.inputs) == 2 and (body.inputs[1].shape != () or body.inputs[1].type.dtype.name != "int64")):
+    return f"WHILE body {body.name!r} takes the carry and at most an int64 scalar step number"
   output = int(expr.attrs["output"])
   expected = {0: carry.shape, 1: (), -1: (int(expr.attrs["max_iter"]) * carry.size,)}.get(output)
   if expr.shape != expected:

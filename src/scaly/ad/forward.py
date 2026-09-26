@@ -298,8 +298,13 @@ def _while_jvp_functions(cond: Function, body: Function) -> tuple[Function, Func
     (tangent,) = body_tangents(body, {0: dcarry})
     split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
     nxt = substitute(concat([body.outputs[0].reshape((cs,)), tangent.reshape((cs,))]), split)
+    # A step-number input stays an input of the tangent body.
     aug_body = Function._from_exprs(
-      f"{body.name}_whilefwd", [aug], [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(aug.name)], ["fwd:carry"]
+      f"{body.name}_whilefwd",
+      [aug, *body.inputs[1:]],
+      [body._inherit_lowering(simplify_cse_fixpoint(nxt))],
+      [str(aug.name), *body.input_names[1:]],
+      ["fwd:carry"],
     )
     go = substitute(cond.outputs[0], {cond.inputs[0]: aug[:cs].reshape(carry.shape)})
     aug_cond = Function._from_exprs(f"{cond.name}_whilefwd", [aug], [go], [str(aug.name)], ["go"])
@@ -651,7 +656,11 @@ def _while_jvp_many_functions(cond: Function, body: Function, nseed: int) -> tup
     split = {carry: aug[:cs].reshape(carry.shape)}
     nxt = substitute(concat([primal.reshape((cs,)), tangent.reshape((nseed * cs,))]), split)
     aug_body = Function._from_exprs(
-      f"{body.name}_whilefwd{nseed}", [aug], [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(aug.name)], ["fwd:carry"]
+      f"{body.name}_whilefwd{nseed}",
+      [aug, *body.inputs[1:]],
+      [body._inherit_lowering(simplify_cse_fixpoint(nxt))],
+      [str(aug.name), *body.input_names[1:]],
+      ["fwd:carry"],
     )
     go = substitute(cond.outputs[0], {cond.inputs[0]: aug[:cs].reshape(carry.shape)})
     aug_cond = Function._from_exprs(f"{cond.name}_whilefwd{nseed}", [aug], [go], [str(aug.name)], ["go"])

@@ -70,7 +70,12 @@ class _Frame:
         self.buffers[stmt.attrs["name"]] = ptr
       elif stmt.op == ProgramOp.STORE:
         ptr = self.pointer(stmt.args[0])
-        ptr.values[ptr.offset] = self.scalar(stmt.args[1], {})
+        value = self.scalar(stmt.args[1], {})
+        target = stmt.args[0].dtype
+        if value.dtype != target and not target.is_bool:
+          # The store converted (truncated, for an integer buffer); the substituted value must too.
+          value = fold_program(p.cast(value, target))
+        ptr.values[ptr.offset] = value
       elif stmt.op == ProgramOp.FOR:
         rng = stmt.args[0]
         start, stop, step = (self.scalar(a, {}).attrs["value"] for a in rng.args)

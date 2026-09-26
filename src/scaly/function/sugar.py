@@ -10,6 +10,8 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import numpy as np
+
 from ..ir.expr import Expr, ExprOp, as_expr, common_lowering
 from ..ir.types import TensorType, dtypes
 from .model import Function
@@ -91,7 +93,7 @@ def vmap(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
   )
 
 
-def scan(body: Any, init: Any, xs: Sequence[tuple[Any, int, int]] = (), *, length: int) -> tuple[Expr, ...]:
+def scan(body: Any, init: Any, xs: Sequence[tuple[Any, int, int]] = (), *, length: int, index: bool = False) -> tuple[Expr, ...]:
   """Run ``body`` ``length`` times in sequence, threading a carry: a loop in the generated C, not an unrolling.
 
   ``body`` is a ``Function`` whose first input is the carry and whose first output is the next
@@ -100,11 +102,18 @@ def scan(body: Any, init: Any, xs: Sequence[tuple[Any, int, int]] = (), *, lengt
   ``stride`` of zero passes the same slice at every step. Its other outputs are stacked flat, one
   slice per step. Returns ``(final_carry, *ys)``; ``final_carry`` is ``init`` when ``length`` is zero.
 
+  With ``index=True`` the body's second input is the step number, an ``int64`` scalar running
+  ``0, 1, ..., length - 1``, and the sliced inputs follow it. The generated loop passes its own
+  counter: no table of step numbers is stored. The index carries no derivative.
+
   The number of steps is fixed when the graph is built, which is what makes the code size and the
   derivative's workspace (reverse mode stores the carry at every step) known ahead of time.
   """
   if not isinstance(body, Function):
     raise TypeError(f"scan body must be an scaly Function, got {type(body).__name__}")
+  if index:
+    _check_index_input(body, "scan")
+    xs = ((step_numbers(length), 0, 1), *xs)
   if not body.inputs or not body.outputs:
     raise ValueError("scan body needs the carry as its first input and the next carry as its first output")
   init = as_expr(init)
@@ -115,7 +124,10 @@ def scan(body: Any, init: Any, xs: Sequence[tuple[Any, int, int]] = (), *, lengt
     raise ValueError(f"scan init {init.type.dtype}{init.shape} does not match the carry {carry.type.dtype}{carry.shape}")
   specs = tuple(xs)
   if len(specs) != len(body.inputs) - 1:
-    raise ValueError(f"scan body takes {len(body.inputs) - 1} sliced inputs after the carry, got {len(specs)}")
+    given = len(specs) - 1 if index else len(specs)
+    raise ValueError(
+      f"scan body takes {len(body.inputs) - 1 - int(index)} sliced inputs after the carry{' and the index' if index else ''}, got {given}"
+    )
   length = int(length)
   if length < 0:
     raise ValueError(f"scan length must be non-negative, got {length}")
@@ -123,6 +135,19 @@ def scan(body: Any, init: Any, xs: Sequence[tuple[Any, int, int]] = (), *, lengt
   starts = tuple(int(start) for _, start, _ in specs)
   strides = tuple(int(stride) for _, _, stride in specs)
   return tuple(_scan_node(body, init, outers, starts, strides, length, k) for k in range(len(body.outputs)))
+
+
+def step_numbers(length: int) -> Expr:
+  """The ``int64`` constant ``0, 1, ..., length - 1`` a scan slices one entry per step from to hand its
+  body the step number. Lowering recognizes an affine ``int64`` constant read one entry per step and
+  computes the entry from the loop counter, so the table itself is never stored."""
+  return Expr.const(np.arange(int(length), dtype=np.int64), dtype=dtypes.int64)
+
+
+def _check_index_input(body: Function, what: str) -> None:
+  if len(body.inputs) < 2 or body.inputs[1].shape != () or body.inputs[1].type.dtype != dtypes.int64:
+    got = f"{body.inputs[1].type.dtype}{body.inputs[1].shape}" if len(body.inputs) > 1 else "nothing"
+    raise ValueError(f"{what} with index=True needs an int64 scalar as the body's second input, got {got}")
 
 
 def _scan_node(
@@ -156,7 +181,7 @@ def _scan_node(
   )
 
 
-def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int) -> tuple[Expr, Expr]:
+def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int, index: bool = False) -> tuple[Expr, Expr]:
   """Apply ``body`` to the carry while ``cond`` holds, at most ``max_iter`` times.
 
   ``cond`` maps the carry to one ``bool``; ``body`` maps the carry to the next carry, with the same
@@ -168,12 +193,18 @@ def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int) -> tuple[Expr,
   treated as locally constant, which it is except where the input crosses a switching boundary.
   Reverse mode stores the carry at each of the at most ``max_iter`` steps. For a solver, attaching
   the implicit-function derivative with ``sc.custom_derivative`` avoids differentiating the steps.
+
+  With ``index=True`` the body takes the step number as a second input, an ``int64`` scalar
+  counting from zero; the condition still reads the carry only.
   """
   if not isinstance(cond, Function) or not isinstance(body, Function):
     raise TypeError("while_loop cond and body must be scaly Functions")
   init = as_expr(init)
-  if len(body.inputs) != 1 or len(body.outputs) != 1 or len(cond.inputs) != 1 or len(cond.outputs) != 1:
-    raise ValueError("while_loop cond and body take the carry as their only input and return one output")
+  if index:
+    _check_index_input(body, "while_loop")
+  if len(body.inputs) != 1 + int(index) or len(body.outputs) != 1 or len(cond.inputs) != 1 or len(cond.outputs) != 1:
+    extra = " and the step number" if index else ""
+    raise ValueError(f"while_loop cond takes the carry and body the carry{extra} as their only inputs, and each returns one output")
   carry = body.inputs[0]
   for label, e in (("init", init), ("body output", body.outputs[0]), ("cond input", cond.inputs[0])):
     if e.shape != carry.shape or e.type.dtype != carry.type.dtype:
@@ -190,7 +221,7 @@ def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int) -> tuple[Expr,
 def _while_node(cond: Function, body: Function, init: Expr, max_iter: int, output: int) -> Expr:
   """One output of a while loop: the carry (0), the step count (1), or with ``output=-1`` the carry
   entering each of the ``max_iter`` possible steps, stacked; slots past the last step taken hold the
-  final carry. Reverse mode reads the last one."""
+  final carry. Reverse mode reads the last one. A body with a second input receives the step number."""
   carry = body.inputs[0]
   if output == 0:
     type_ = TensorType(carry.shape, carry.type.dtype, diff=init.type.diff and body.outputs[0].type.diff)

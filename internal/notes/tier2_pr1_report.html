@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 2 PR 1 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 1 report</h1>
+<p class="sub">T2-1 · the step number as a loop-body input (C-101) · branch <code>claude/tier2-sparse</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> A <code>scan</code> or <code>while_loop</code> body can now take the step number as an <code>int64</code> scalar (<code>index=True</code>). The generated C computes it from the loop counter, so no table of step numbers is stored. This holds forwards, in forward-mode tangent loops and in the backward scan of reverse mode, where the number counts down.</p>
+<p>This is the first building block Tier 2 needs: the column loop of a sparse factorization has to know which column it is on to read its pattern tables.</p>
+<p><b>Changes that serve any loop</b></p>
+<ul>
+<li>A float table read one entry per step whose entries are all equal is now passed as the value. The table of ones in a summed output's cotangent is gone from every such gradient.</li>
+<li>Procedures holding <code>int64</code> values now expand to scalars. Before this, a body using the index ran <b>1.7×</b> slower than the table it replaces.</li>
+<li><code>sc.where</code> refuses a Python <code>bool</code>. That is what <code>k == 0</code> produces on an expression, and it silently selected one branch for good.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 1 086 passed and 88 skipped, plus the four tests that fail only in this VM (the Google Benchmark link and CasADi's libstdc++), unchanged. ruff and ty are clean. <b>Mutation checks:</b> 10 of 10 mutants were killed.</p>
+</div>
+
+<h2>1. What the capability is</h2>
+<pre>@sc.function(sc.G(sc.L("z", 2), sc.L("k", sc.TensorType((), sc.dtypes.int64)), sc.L("u", 1)), sc.L("znext", ...))
+def tv_step(inputs):
+    z, k, u = inputs
+    t = 0.1 * k.cast("float64")
+    return sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * (u[0] - t * z[0])])
+
+(z_final,) = sc.scan(tv_step, z0, [(us, 0, 1)], length=50, index=True)
+carry, n = sc.while_loop(go, damped_newton, x0, max_iter=40, index=True)   # body(carry, k)</pre>
+<p>The index has no derivative. Sparsity, forward mode (one seed or many), reverse mode, Hessians and in-place carries all work with an indexed body.</p>
+
+<h2>2. How it was done</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Change</th></tr>
+<tr><td><code>function/sugar.py</code></td><td>
+<ul>
+<li><code>scan(index=True)</code> prepends <code>(step_numbers(length), 0, 1)</code> to the sliced inputs. <code>step_numbers</code> is an <code>int64</code> constant 0…N−1, hash-consed.</li>
+<li>Consequence: every existing scan rule applies unchanged. Reverse mode walks the table with a negative stride, and multi-seed forward mode passes it through as a non-differentiable slice.</li>
+<li><code>while_loop(index=True)</code> takes a body <code>(carry, k)</code>. Validation is in <code>_check_index_input</code> and the WHILE spec rule.</li>
+</ul></td></tr>
+<tr><td><code>passes/lowering.py</code></td><td>
+<ul>
+<li><code>_constant_per_step</code> handles a constant table read one entry per step. If the table is an integer table, the entry becomes <code>ctx.index_at</code> of the entries along the walk: arithmetic where it is affine, with only a non-affine residual kept as a table. If it is a float table whose entries along the walk are equal, the entry becomes the value.</li>
+<li>The entry is stored into a one-element local each step and passed by pointer (<code>_scalar_arg</code>). A while body receives the loop counter itself.</li>
+<li>The unused table is dropped by the existing dead-buffer pruning.</li>
+</ul></td></tr>
+<tr><td><code>ad/forward.py</code>, <code>ad/reverse.py</code></td><td>
+<ul>
+<li>The while tangent bodies keep the index input.</li>
+<li>The masked backward step of a while loop substitutes the index with its own <code>step</code> input, cast to <code>int64</code>.</li>
+</ul></td></tr>
+<tr><td><code>ad/sparsity.py</code></td><td>Only a slice that brings in dependence counts as "moving". The index brings none, so a long indexed loop still stops its pattern walk at the first repeat: 200 000 steps take milliseconds rather than about 15 s.</td></tr>
+<tr><td><code>passes/program/scalarize.py</code>, <code>lowering.py</code></td><td>
+<ul>
+<li><code>int64</code> joins <code>_SCALARIZABLE</code>.</li>
+<li>Scalar expansion now keeps a store's conversion as an explicit cast wherever the stored value's type differs from the buffer's. This is the hazard that kept non-float procedures out.</li>
+<li><code>float32</code> and <code>int32</code> stay excluded.</li>
+</ul></td></tr>
+<tr><td><code>ir/expr.py</code></td><td><code>where</code> raises <code>TypeError</code> on a Python <code>bool</code> condition, pointing to <code>sc.equal</code>.</td></tr>
+<tr><td>Docs</td><td><code>docs/guide/functions.md</code> has an index example for <code>scan</code> and <code>while_loop</code>, and the <code>==</code> caveat. The example was run.</td></tr>
+</table></div>
+
+<h2>3. Tests</h2>
+<p>New file <code>tests/integration/test_loop_index.py</code> has 27 tests, and <code>tests/passes/test_scalarize.py</code> gains 3. Every derivative check runs with <code>SCALY_STRICT_JVP_MANY=1</code>.</p>
+<ul>
+<li><b>Scan values and derivatives.</b> The value matches NumPy. Jacobian, gradient and Hessian with respect to the initial state and the controls equal the explicit-table version to 1e−12 and match finite differences.</li>
+<li><b>Generated C.</b> No integer table appears in the C for the value, gradient or Hessian. The backward scan passes <code>(N−1 − k)</code>.</li>
+<li><b>Walk direction, lengths and tables.</b>
+<ul>
+<li>A slice walked backwards leaves the step number unchanged.</li>
+<li>A zero-length scan works.</li>
+<li>A non-affine integer table (3 1 4 1 5 9 2) is still read per step, and its gradient is correct.</li>
+<li>A varying float table stays a table.</li>
+</ul></li>
+<li><b>Sparsity.</b> The pattern equals the table version's, and a 200 000-step indexed loop finishes within the time bound.</li>
+<li><b>while_loop.</b>
+<ul>
+<li>A damped Newton iteration whose damping depends on <code>k</code> matches NumPy from three starts, in value and step count.</li>
+<li>Jacobian, gradient and Hessian match finite differences, and forward and reverse mode agree to 1e−12.</li>
+<li>The body receives the counter by pointer.</li>
+</ul></li>
+<li><b>Scalar expansion.</b>
+<ul>
+<li>A hand-built procedure storing a float into an <code>int64</code> slot keeps the cast.</li>
+<li><code>int64</code> procedures scalarize.</li>
+<li>A float→int cast inside one truncates toward zero, like C.</li>
+</ul></li>
+<li><b>Validation and the <code>==</code> trap.</b> An index of the wrong type, shape or position is rejected, and <code>where(k == 0, …)</code> raises.</li>
+</ul>
+<p><b>Changed expectation.</b> Two assertions that <code>int64</code> procedures are never scalarized now state the opposite (<code>test_lowering</code>, <code>test_scalarize</code>). The <code>float32</code> and <code>int32</code> cases still assert the old behavior.</p>
+<p><b>Mutation checks (10 of 10 killed):</b></p>
+<ul>
+<li>no table elision</li>
+<li>no uniform-value elision</li>
+<li>a constant instead of the counter</li>
+<li>a reversed table</li>
+<li>the counter plus one in <code>while</code></li>
+<li>no index substitution in the backward while step</li>
+<li>index input dropped from the while tangent body</li>
+<li>the old "moving" rule</li>
+<li>no store cast in scalar expansion</li>
+<li><code>int64</code> removed from <code>_SCALARIZABLE</code></li>
+</ul>
+
+<h2>4. Benchmark</h2>
+<p><code>perf_2026_09_26_tier2/pr1_index.py</code> times a cart-pendulum RK4 rollout tracking <code>r(t) = sin(0.3 t)</code>, written three ways:</p>
+<ul>
+<li><b>index:</b> the body takes <code>k</code>.</li>
+<li><b>table:</b> the times as a stored <code>float64</code> table, sliced per step.</li>
+<li><b>carry:</b> time as a fifth carry entry.</li>
+</ul>
+<p>All three agree to 1e−14. Timings are medians of JIT calls on the aarch64 VM, in µs; the "lines" column is the length of the generated C.</p>
+<div class="scroll"><table>
+<tr><th>Case</th><th class="r">N</th><th class="r">index, before int64 scalarization</th><th class="r">index</th><th class="r">table</th><th class="r">carry</th><th class="r">lines (index before → after / table)</th></tr>
+<tr><td>value</td><td class="r">50</td><td class="r">12.5</td><td class="r">10.1</td><td class="r">10.5</td><td class="r">10.3</td><td class="r">116 → 80 / 79</td></tr>
+<tr><td>gradient</td><td class="r">50</td><td class="r">16.9</td><td class="r">11.8</td><td class="r">11.9</td><td class="r">12.0</td><td class="r">259 → 133 / 131</td></tr>
+<tr><td>Hessian</td><td class="r">50</td><td class="r">61.0</td><td class="r">34.3</td><td class="r">34.4</td><td class="r">41.8</td><td class="r">1011 → 405 / 401</td></tr>
+<tr><td>value</td><td class="r">400</td><td class="r">46.5</td><td class="r">27.5</td><td class="r">27.2</td><td class="r">27.4</td><td class="r">116 → 80 / 79</td></tr>
+<tr><td>gradient</td><td class="r">400</td><td class="r">80.2</td><td class="r">43.1</td><td class="r">43.5</td><td class="r">50.1</td><td class="r">259 → 133 / 131</td></tr>
+<tr><td>Hessian</td><td class="r">400</td><td class="r">1 822</td><td class="r">1 382</td><td class="r">1 402</td><td class="r">1 858</td><td class="r">1009 → 403 / 399</td></tr>
+</table></div>
+<ul>
+<li>With <code>int64</code> scalarization, the index costs the same as a stored table and stores nothing: at N = 400 that is 3.2 kB of <code>static const</code> gone.</li>
+<li>The time-in-carry workaround is 25–35% slower for Hessians, because every tangent carries the extra entry.</li>
+<li>The gradient no longer holds the N-entry table of ones.</li>
+</ul>
+
+<h2>5. Open points</h2>
+<ul>
+<li><code>float32</code> and <code>int32</code> procedures still do not scalarize. A float32 value computed in double by C's promotion rules is the remaining hazard. This is not needed for Tier 2.</li>
+<li>A while loop's backward pass still runs all <code>max_iter</code> steps (C-92). Its step input remains a <code>float64</code> table, cast to <code>int64</code> for an indexed body.</li>
+<li><code>Expr == Expr</code> is still identity: expressions are dict keys throughout the compiler. Only <code>where</code> catches the mistake.</li>
+</ul>
+<p><b>Next:</b> T2-2, <code>take</code>/<code>put_add</code>/<code>put</code> with run-time <code>int64</code> indices and a per-lane dump slot.</p>
+</main></body></html>

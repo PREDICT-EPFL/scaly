@@ -547,7 +547,8 @@ def test_normalization_preserves_typed_identity_boundaries(dtype: str, value: ob
   proc = main_proc(lower_function(fn, observe_expr=lambda _name, normalized: observed.append(normalized)))
 
   assert observed[0].outputs[0].type.dtype == x.type.dtype
-  assert proc.attrs["scalarize_mode"] == "disabled"
+  # float32 arithmetic keeps its store boundaries; int64 values come only from explicit conversions.
+  assert proc.attrs["scalarize_mode"] == ("procedure" if dtype == "int64" else "disabled")
 
 
 @pytest.mark.skipif(not _HAVE_CC, reason="no C compiler available for JIT numeric check")
