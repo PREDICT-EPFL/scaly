@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PIQP in Scaly: Status and Plan</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1060px;margin:0 auto;padding:36px 16px 72px}h1{font-size:27px;margin:0 0 4px}h2{font-size:19px;margin:38px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}h3{font-size:16px;margin:22px 0 6px}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul,ol{padding-left:22px}li{margin:3px 0}
+.refs li{font-size:13.5px}
+</style></head><body><main>
+<h1>PIQP in Scaly: status and plan</h1>
+<p class="sub">Tier 1 delivered, the revised plan for Tiers 2–4, and what three review agents found · 26 Sep 2026 · supersedes the tier ordering in <code>piqp_in_scaly_2026_09_25.html</code> · living copy in the claude.ai project as <code>claude/piqp-plan.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>In one paragraph.</b> Tier 1 is finished on <code>claude/tier1-primitives</code>: 9 PRs, 1 057 tests. It gives Scaly the primitives a solver needs: comparisons and selects, reductions, accumulating scatters, <code>scan</code>, <code>while_loop</code>, in-place carries and custom derivatives. It also makes derivatives through loops fast: a single-shooting MPC Hessian runs in a fixed number of loops, 3.5× faster than before the work, and an RK4 Hessian 15× faster.</p>
+<p>Three agents then challenged the Tier 2+ plan, running experiments on the vendored PIQP sources and on MPC and Maros–Mészáros KKT patterns. Four things came out of that:</p>
+<ol>
+<li><b>The dense slice.</b> PIQP's dense mode is a <em>condensed Cholesky</em>, not an LDLᵀ. A masked dense LDLᵀ written in a scan runs 10–50× slower than LAPACK.</li>
+<li><b>MPC needs no runtime indexing.</b> MPC KKTs in stage order factor into an <em>exactly periodic</em> pattern, so a scan over stages with dense block kernels covers them using Tier 1 machinery only. It is the most accurate form measured, and it attacks the QP time that is 84–91% of closed-loop SQP time on the repo's benchmarks.</li>
+<li><b>The generic sparse LDLᵀ is expensive.</b> It needs runtime integer indexing, a per-scan in-place proof, left-looking rather than up-looking columns, and two further compiler features before it can come within 2× of QDLDL.</li>
+<li><b>About ten algorithmic details were missing or wrong</b> in items #19–#31.</li>
+</ol>
+<p style="margin-bottom:0"><b>The revised plan</b> therefore builds a NumPy reference PIQP first, then dense block kernels, then a dense-condensed PIQP, then the stage-periodic sparse solver for MPC and SQP. The generic sparse path is gated behind measurements, with explicit kill criteria.</p>
+</div>
+
+<h2>1. Tier 1: what was delivered</h2>
+<div class="scroll"><table>
+<tr><th>PR</th><th>todo</th><th>Capability</th><th>Headline result</th></tr>
+<tr><td>1</td><td>C-82</td><td>Comparisons and logic, <code>sc.where</code>, <code>isfinite</code>, <code>copysign</code>, <code>cast</code>; bool across the double ABI</td><td>A single <code>where</code> matches <code>fmax</code></td></tr>
+<tr><td>2</td><td>C-83</td><td><code>sc.options(nonsmooth=…)</code>; derivatives of max/min/abs; <code>reduce_max</code>/<code>reduce_min</code>, <code>norm_inf</code>/<code>norm_1</code></td><td>Tie-aware gradients</td></tr>
+<tr><td>3</td><td>C-84</td><td>Accumulating <code>scatter</code>; <code>segment_sum</code>/<code>segment_max</code>/<code>segment_min</code>; linear-time gather adjoint</td><td>SpMV within 1.7× of SciPy</td></tr>
+<tr><td>4</td><td>C-85</td><td><code>sc.scan</code>: one C loop, reverse mode through the stored carries</td><td>Builds about 270× faster than unrolling at N = 200</td></tr>
+<tr><td>5</td><td>C-86</td><td><code>sc.while_loop</code> with <code>max_iter</code>; differentiable</td><td>3.2× faster than a fixed scan for an early-exiting Newton solve</td></tr>
+<tr><td>6</td><td>C-87</td><td><code>index_add</code>/<code>index_set</code>; in-place carry donation</td><td>354× faster on a 100k-entry carry</td></tr>
+<tr><td>7</td><td>C-88</td><td><code>sc.custom_derivative</code> (implicit rules)</td><td>A solver gradient costs about one solve</td></tr>
+<tr><td>8</td><td>C-93</td><td>Multi-seed forward mode through loops</td><td>Hessian through a scan in a fixed number of loops</td></tr>
+<tr><td>9</td><td>review</td><td>Four-agent review: 9 bugs fixed; per-step Jacobian tangents; one backward scan per scan (C-91); division-free index maps; raw-address JIT</td><td>MPC Hessian (N = 100) 205 → 58 µs; RK4 Hessian 1 376 → 93 µs</td></tr>
+</table></div>
+<p><b>Limits that shape Tier 2:</b></p>
+<ul>
+<li>Index tables are fixed per operation: every scan step touches the same entries, and there is no runtime integer indexing.</li>
+<li>Loop bodies are either unrolled (compiles slowly past about 4k operations) or lowered as one loop per operation (memory traffic on every term).</li>
+<li>A Python call costs about 4.7 µs.</li>
+<li>Open Tier 1 items are C-89, C-90, C-92, C-94–C-100 (see <code>internal/todo.md</code>).</li>
+</ul>
+
+<h2>2. What the review of the Tier 2+ plan found</h2>
+<p>Three agents reviewed the draft independently, covering numerics, compiler feasibility and strategy/testing. All experiments ran in the Linux VM; the scripts are under <code>$HOME/review-agents/plan/</code> in the VM.</p>
+
+<h3>2.1 Numerics</h3>
+<ul>
+<li><b>Dense mode.</b> PIQP forms the condensed n×n matrix C = P + reg + AᵀA/δ + GᵀW⁻¹G and factors it with Eigen's LLT (<code>dense/kkt.hpp:73-84,140-160</code>). The multistage mode uses the same algebra blockwise (<code>sparse/multistage_kkt.hpp:424-431</code>). The planned no-pivot LDLᵀ could never reproduce PIQP's dense iterates.</li>
+<li><b>Sparse default.</b> PIQP uses the full KKT (n+p+m) ordered by Eigen's AMD and factored by Davis's up-looking LDL, with fused multiply-add suppressed. The only failure test is an exact zero pivot.</li>
+<li><b>Fill and ordering on MPC</b> (N = 100, nx = 12, nu = 4, 6 inequality rows per stage). The condensed form in stage order has 0.6× the work of full KKT + AMD, in 100 supernodes of about 16 columns:
+<div class="scroll"><table>
+<tr><th>Form and ordering</th><th>Dimension</th><th>nnz(L)</th><th>Multiply-adds per factorization</th><th>Supernodes (mean size)</th><th>Padding, one column scan</th></tr>
+<tr><td>Full KKT + AMD (PIQP default)</td><td class="r">3 430</td><td class="r">56 355</td><td class="r">531k</td><td class="r">1 528 (2.2)</td><td class="r">1.76×</td></tr>
+<tr><td>Condensed, stage order</td><td class="r">1 612</td><td class="r">31 266</td><td class="r"><b>337k</b></td><td class="r"><b>100 (16.1)</b></td><td class="r">1.09×</td></tr>
+</table></div>
+Level scheduling gains nothing on MPC, because the elimination tree is almost a path (height about 0.97 n).</li>
+<li><b>Numerical accuracy without pivoting, at late-iteration regularisation.</b> Ordering sets the forward error; backward error stays at about 1e-17 in every case, and no wrong-sign pivots appeared. At δ = 1e-10 the x-error is 5e2 in natural primal-first order, 1e-4 for full KKT + AMD, and <b>2e-14</b> for the condensed (duals-first) form.</li>
+<li><b>Iterate agreement.</b> PIQP's own dense and sparse runs differ by 1e-13 to 1e-8 relative per iterate. "Iterate-by-iterate" therefore means agreement within tolerance plus an identical trace of discrete decisions, not bitwise equality.</li>
+<li><b>Maros–Mészáros.</b> On these problems a single padded column scan wastes up to 47×, so contiguous segments chosen by dynamic programming are essential there. Up-looking LDL needs nested ragged padding of 3–50× and is rejected for Scaly; left-looking fits.</li>
+</ul>
+
+<h3>2.2 Compiler feasibility (prototyped with a monkeypatched runtime-index op)</h3>
+<div class="scroll"><table>
+<tr><th>Case</th><th>Scaly</th><th>Reference C</th></tr>
+<tr><td>Triangular solve, n = 1000, today's operations (one-hot)</td><td class="r">20 800 µs</td><td class="r">10.6 µs</td></tr>
+<tr><td>Same, runtime indices, carry copied every step</td><td class="r">282 µs</td><td></td></tr>
+<tr><td>Same, runtime indices, in place, one dump slot per lane</td><td class="r"><b>18.8 µs</b></td><td class="r">12.2 µs (padded)</td></tr>
+<tr><td>Left-looking LDL, MPC KKT with N = 40 (n = 1 144, nnz(L) = 16.4k)</td><td class="r">352 µs</td><td class="r">106 µs (QDLDL)</td></tr>
+<tr><td>Dense LDL with masks, n = 30 / 60 / 100</td><td class="r">19 / 109 / 566 µs</td><td class="r">2.8 / 16.6 / 86 µs</td></tr>
+<tr><td>Dense LDL fully unrolled, n = 30 / 45</td><td class="r">9 / 23 µs, but 14 s / <b>109 s</b> to build</td><td></td></tr>
+<tr><td>Sparsity analysis through a solver scan</td><td>grows as about n<sup>3.7</sup>: hours at n = 1000</td><td></td></tr>
+</table></div>
+<ul>
+<li><b>Runtime indexing is feasible.</b> The Program IR and C renderer need nothing new. The hard part is the in-place proof, which has to move from the callee to the scan node and use the constant tables.</li>
+<li><b>Where the 3.3× LDL gap comes from:</b> about 1.5× from the left-looking formulation, 1.43× from padding, and 1.5× from missing index-aware fusion. Closing it needs ragged inner loops and a minimal C-54.</li>
+<li><b>Missing capabilities:</b>
+  <ul>
+  <li>a scan step index as a body input;</li>
+  <li>a sparsity override on <code>custom_derivative</code>;</li>
+  <li>a guard on trajectory memory;</li>
+  <li>carries of several tensors or mixed dtypes;</li>
+  <li>workspace spill for int64 buffers;</li>
+  <li>native solver statistics for a <code>backend="scaly"</code> that is a plain Function, not a SOLVER_CALL.</li>
+  </ul></li>
+</ul>
+
+<h3>2.3 Strategy, testing and benchmarks</h3>
+<ul>
+<li><b>Where the value is</b> (<code>docs/results/index.md</code>, closed-loop SQP with vendored PIQP): the QP is 84% of the time on chain, 91% on race_cars, 52% on npmpc and 11% on unbumpercars. These QPs are sparse and stage-structured, with 0.3k–2.3k KKT rows. The dense slice does not touch them; the stage-periodic path does.</li>
+<li><b>Periodic structure.</b> With stage-interleaved ordering [u<sub>k</sub>, λ<sub>k</sub>, x<sub>k+1</sub>], the pattern of L is identical for every stage except the last, for (nx, nu) = (6, 2), (12, 4) and (27, 3). One stage costs about 0.8k, 6k and 66k flops.</li>
+<li><b>What a native PIQP buys:</b>
+  <ul>
+  <li>pure-Python distribution;</li>
+  <li>no LGPL code in the shipped solver;</li>
+  <li>static memory for embedded targets;</li>
+  <li>fusion with the QP-data oracle (today Ruiz is recomputed on every update);</li>
+  <li>settings folded at generation time, and sensitivities.</li>
+  </ul></li>
+<li><b>Test data already on disk:</b> 138 Maros–Mészáros problems (73 small), 29 infeasible LPs, and SQP/MPC <code>.mat</code> sets, all in the vendored PIQP test directory (Apache-2.0). Golden traces can come from the vendored headers, which an agent compiled into a Linux harness, and from <code>max_iter = k</code> reruns.</li>
+<li><b>Licensing:</b> do not port PIQP's <code>sparse/ldlt</code>, which is modified LGPL code. Write it fresh from QDLDL (Apache-2.0) or the textbook algorithm. Eigen's <code>Amd.h</code> is MPL2 if an exact AMD is ever needed.</li>
+</ul>
+
+<h2>3. The revised plan</h2>
+<p>The rule behind it: write the algorithm once, in general form. The symbolic analysis stays generic. How it is emitted is chosen at generation time from the measured pattern: scalarized when tiny, dense-condensed, stage-periodic, or generic sparse.</p>
+<div class="scroll"><table>
+<tr><th>Milestone</th><th>Content</th><th>Gate</th></tr>
+<tr><td><b>M0</b> Harness and data</td><td>
+  <ul>
+  <li>A PIQP trace harness built from the vendored headers, running in the VM, the Mac and CI.</li>
+  <li>Curate about 25 small Maros–Mészáros problems, infeasible cases and SQP/MPC sets into <code>tests/data</code> with their licence.</li>
+  <li>Dump about 50 QPs per episode from the four benchmark problems (on the Mac).</li>
+  <li>Measure vendored PIQP in dense, sparse and multistage modes.</li>
+  </ul></td><td>Golden traces reproducible; baseline table recorded</td></tr>
+<tr><td><b>M1</b> NumPy reference PIQP</td><td>Dense-condensed and SciPy-sparse KKT; Ruiz; proximal updates; retries and refinement; infeasibility. All the corrections in §4.</td><td>Identical decision trace to vendored PIQP on ≥ 90% of the small subset (kill criterion)</td></tr>
+<tr><td><b>M2</b> Foundations</td><td>
+  <ul>
+  <li>Dense block kernel operations: Cholesky, no-pivot LDLᵀ, trsv/trsm, syrk/gemm. Static shapes, lowered to plain triangular C loops.</li>
+  <li>A scan step index as a body input.</li>
+  <li>The <code>SparseMatrix</code> type: static CSC, SpMV/SpMᵀV, KKT assembly.</li>
+  <li>A sparsity override on <code>custom_derivative</code> and a guard on trajectory memory.</li>
+  <li>Multi-tensor carries, or a packing helper for them.</li>
+  </ul></td><td>Dense kernels ≤ 2× LAPACK at n = 32–64 (otherwise dense is limited to unrolled code at n ≤ 16)</td></tr>
+<tr><td><b>M3</b> Dense PIQP in Scaly</td><td>
+  <ul>
+  <li>The IPM machinery (#19–#29) written once against a KKT-solver interface.</li>
+  <li><code>while_loop</code> outer loop, settings folded to constants, status and <code>SolverStats</code> parity.</li>
+  <li>Drop-in <code>backend="scaly"</code> for small problems.</li>
+  </ul></td><td>Status parity on Maros–Mészáros with n ≤ 100; time per iteration ≤ 1.5× vendored dense for n ≤ 30</td></tr>
+<tr><td><b>M4</b> Stage-periodic sparse PIQP</td><td>
+  <ul>
+  <li>Symbolic analysis in NumPy: orderings (natural, stage, RCM, SuperLU MMD), etree, column counts, L pattern, <b>periodicity detection</b>.</li>
+  <li>A condensed KKT factored by a scan over stages, with dense block kernels inside the stage body (Riccati-like).</li>
+  <li>Solves and an implicit derivative.</li>
+  <li>Swap it into the closed-loop SQP.</li>
+  </ul></td><td>QP time at or below vendored sparse (target ≥ 1.5× faster) on the chain and race_cars corpora; within 1.5× of vendored multistage; code size independent of N; compile < 10 s</td></tr>
+<tr><td><b>M5</b> Generic sparse (gated)</td><td>
+  <ul>
+  <li><code>take</code>/<code>put_add</code> runtime-index operations, with a dump slot per lane.</li>
+  <li>An in-place proof at the scan node from the constant tables.</li>
+  <li>A left-looking column-scan LDLᵀ with contiguous segments chosen by dynamic programming.</li>
+  <li>Index-aware fusion (a minimal C-54) and ragged inner loops.</li>
+  <li>A minimum-degree/AMD ordering.</li>
+  </ul></td><td>Factorization ≤ 2× QDLDL-class C on the same permuted KKT; generation time linear in nnz(L)</td></tr>
+<tr><td><b>M6</b> Sensitivities and headline</td><td>
+  <ul>
+  <li>Implicit QP sensitivities that reuse the final factorization.</li>
+  <li>Reference-machine benchmark under <code>docs/results/fairness.md</code>, with native-flag builds on both sides.</li>
+  <li>Criteria for making Scaly the default.</li>
+  </ul></td><td>No status regressions; mean iteration increase < 10% on the SQP corpus</td></tr>
+</table></div>
+
+<h3>Tier 2 pull requests (M0–M2 and M4's linear algebra)</h3>
+<div class="scroll"><table>
+<tr><th>PR</th><th>Content</th><th>Size</th><th>Depends on</th><th>Key test</th></tr>
+<tr><td>T2-0</td><td>Trace harness from the vendored headers; <code>tests/data</code> curation; baseline study (Mac); QP corpus dump</td><td>S–M</td><td>—</td><td>Harness traces equal <code>max_iter = k</code> reruns</td></tr>
+<tr><td>T2-1</td><td>NumPy reference PIQP (dense-condensed and SciPy sparse)</td><td>M</td><td>T2-0</td><td>Decision traces and iterates within tolerance of vendored PIQP</td></tr>
+<tr><td>T2-2</td><td>Scan and while step index as an int64 body input</td><td>S</td><td>—</td><td>Equals the iota-table version; no table in the C</td></tr>
+<tr><td>T2-3</td><td>Dense block kernel operations and their C lowering; <code>custom_derivative</code> for the solve</td><td>M–L</td><td>—</td><td>Against LAPACK, and against finite differences; timing gate</td></tr>
+<tr><td>T2-4</td><td><code>SparseMatrix</code> type and integration with <code>qp.py</code></td><td>M</td><td>—</td><td>Against SciPy</td></tr>
+<tr><td>T2-5</td><td>Sparsity override and trajectory guard; multi-tensor carries</td><td>S–M</td><td>—</td><td><code>sparse_jacobian</code> through a solver finishes quickly; the guard raises</td></tr>
+<tr><td>T2-6</td><td>Symbolic analysis and periodicity detection</td><td>M</td><td>T2-4</td><td>Against SciPy and dense; periodic on the MPC families</td></tr>
+<tr><td>T2-7</td><td>Stage-periodic LDLᵀ/Cholesky and solves (scan over stages)</td><td>L</td><td>T2-2, T2-3, T2-6</td><td>Residual against SciPy at δ ∈ {1e-4, 1e-8, 1e-10, 1e-13}; timing against PIQP multistage</td></tr>
+<tr><td>T2-R</td><td>Review round and optimizations, run with agents as in PR 9</td><td>M</td><td>T2-7</td><td>—</td></tr>
+</table></div>
+<p>Tier 3 (T3-1 to T3-3) and Tier 4 (T4-1 to T4-4) follow the milestones above. The IPM is written against a KKT-solver interface, so the dense, periodic and generic backends plug into the same loop.</p>
+
+<h2>4. Corrections to the algorithm items (#19–#31)</h2>
+<p>From the vendored PIQP 0.6.2 sources (<code>third_party/piqp/include/piqp/</code>).</p>
+<ol>
+<li><b>Dense mode</b> is the condensed Cholesky described in §2.1. The multistage factorization always reports success, so its retry path never fires.</li>
+<li><b>KKT forms.</b> The sparse default is the full KKT, and there are 4 elimination modes plus multistage (<code>settings.hpp:18-26</code>), not the two forms the plan listed.</li>
+<li><b>Box bounds</b> never add KKT rows. They fold into the x diagonal, with their own Ruiz vector and bound scaling. The boundary shift adds ε to <em>all</em> box duals if any one of them is below ε.</li>
+<li><b>Two-sided inequalities</b> h<sub>l</sub> ≤ Gx ≤ h<sub>u</sub> keep two (s, z) pairs per row but contribute one KKT row, with W = [Σ 1/(s/z + δ)]⁻¹.
+  <ul>
+  <li>"Infinite" means |value| ≥ 1e30.</li>
+  <li>A row infinite on both sides is kept, with G zeroed and bounds set to ±1, and it still counts in μ. Dropping it at generation time changes the iterates.</li>
+  </ul></li>
+<li><b>Proximal centres</b> (ξ, λ, ν) move only when a residual falls by at least 5%. The ρ and δ update rules have <code>iter &lt; 5</code> and prox-infeasibility special cases, and a separate branch when there are no inequalities.</li>
+<li><b>Initial point.</b> Factor with ρ = 1e-6 and δ = 1e-4, solve once, shift by max(0, −min), and set μ = max(μ, 1e-10). Then project each pair onto the central path with z = (c + √(c² + 4μ))/2, s = z − c. There is no margin.</li>
+<li><b>Iteration order</b> (<code>solver.hpp:579-878</code>):
+  <ol>
+  <li>terminate on the previous residuals, with OR semantics on absolute and relative tolerance and the duality gap included;</li>
+  <li>infeasibility tests;</li>
+  <li>boundary shift;</li>
+  <li>fine-tune switch;</li>
+  <li>factor, inside the retry loop;</li>
+  <li>predictor;</li>
+  <li>σ = clip(·)³;</li>
+  <li>corrector;</li>
+  <li>separate primal and dual steps;</li>
+  <li>μ update;</li>
+  <li>ρ, δ and centre updates.</li>
+  </ol>
+  Each iteration costs one factorization and two solves.</li>
+<li><b>Retry and refinement.</b> The first failure only switches refinement on, permanently. Later failures multiply ρ and δ by 100, up to 10 times. In refinement mode the matrix is perturbed by 1e-8 + ε²·max|diag|. Below δ ≈ 1e-9, refinement effectively just swaps in δ ≈ 1e-8.</li>
+<li><b>Ruiz</b> exits early at max|1 − d| ≤ 1e-3. <code>limit_scaling</code> maps values below 1e-4 to 1 and caps values at 1e4. Cost scaling is off by default. Implement it as a <code>while_loop</code>, or as a scan that freezes after convergence.</li>
+<li><b>Warm start</b> does not exist in 0.6.2. <code>restore_dual</code> sets s = 1e30 where z = 0.</li>
+<li><b>Fraction to boundary</b> is τ·min(1, min over components with ds &lt; 0 of −s/ds), with no ε guard.</li>
+<li><b>1/z = ∞ on infinite-bound rows.</b> PIQP computes it and never reads it. In Scaly, masking by multiplication would produce NaN, so masks must use <code>where</code>.</li>
+<li><b>A non-finite solve result is ignored</b> by PIQP. Scaly will add an <code>isfinite</code> check that triggers a retry, as a documented deviation, and inject a zero pivot to test the retry path.</li>
+</ol>
+
+<h2>5. Benchmarks, gates and kill criteria</h2>
+<ul>
+<li><b>Metrics:</b>
+  <ul>
+  <li>native solver time from <code>SolverStats</code>, and Google Benchmark on the kernels (both without Python);</li>
+  <li>iterations, time per iteration, status and residuals;</li>
+  <li>build, render and compile time; C lines and <code>.text</code> size; workspace bytes; generation RSS.</li>
+  </ul></li>
+<li><b>Baselines:</b>
+  <ul>
+  <li>vendored PIQP in dense, sparse and multistage modes, rebuilt with native flags for the head-to-head;</li>
+  <li>PIQP's LDLt through a C++ driver, as a QDLDL stand-in;</li>
+  <li>LAPACK for the dense kernels;</li>
+  <li>OSQP, Clarabel and HPIPM as optional extras on the Mac.</li>
+  </ul></li>
+<li><b>Problem families:</b>
+  <ul>
+  <li>random dense QPs, n ∈ {5, 10, 20, 50, 100};</li>
+  <li>the small Maros–Mészáros subset;</li>
+  <li>linear MPC with nx ∈ {4, 12, 27} and N ∈ {10, 20, 40, 100};</li>
+  <li>the SQP QP corpora from chain, race_cars, npmpc and unbumpercars;</li>
+  <li>closed-loop episodes where only the QP backend is swapped.</li>
+  </ul></li>
+<li><b>Kill criteria:</b>
+  <ul>
+  <li><b>Dense kernels:</b> more than 2× slower than LAPACK at n = 32–64 → limit dense to unrolled code at n ≤ 16.</li>
+  <li><b>Reference:</b> identical decision traces on fewer than 90% of problems → stop and diagnose before any sparse work.</li>
+  <li><b>Periodic path:</b> more than 3× slower than PIQP's LDLt, or 2× slower than multistage, after one optimization round → rethink block lowering, or call BLASFEO through an external-procedure ABI.</li>
+  <li><b>Generation time:</b> growing faster than 2.2× per doubling of nnz(L), or over 10 s at 50k → stop.</li>
+  <li><b>Runtime indexing:</b> if it cannot land in one medium PR with AD, in-place and unchanged snapshots → drop the generic sparse path.</li>
+  <li><b>Value:</b> if vendored multistage alone halves closed-loop QP time and Scaly cannot beat it → re-scope to distribution, embedded targets and differentiability.</li>
+  <li><b>Default:</b> never make Scaly the default while there are status regressions.</li>
+  </ul></li>
+</ul>
+
+<h2>6. Decisions for Colin</h2>
+<ol>
+<li><b>Re-scope:</b> the stage-periodic MPC/SQP path first, with the generic sparse LDLᵀ gated behind M5. Recommended.</li>
+<li><b>Dense slice:</b> condensed Cholesky on new dense block kernels, matching PIQP's dense mode, rather than an LDLᵀ. Recommended.</li>
+<li><b>NumPy reference PIQP</b> as the oracle between vendored PIQP and Scaly, plus checking a curated Maros–Mészáros subset (Apache-2.0) into <code>tests/data</code>. Recommended.</li>
+<li><b>Ordering:</b> stage ordering and SciPy's SuperLU MMD now; port an AMD (Eigen's <code>Amd.h</code>, MPL2) only if M5 needs it.</li>
+<li><b>Parity semantics:</b> identical decision traces plus a tolerance on iterates, not bitwise; <code>-ffp-contract=off</code> only for parity tests.</li>
+<li><b>Work only possible on your Mac:</b> the baseline timings of vendored PIQP and the SQP QP corpus dump need the native plugin. I can prepare the scripts, or you can run them.</li>
+<li><b>Still open from Tier 1:</b> merge <code>segment_sum</code>, <code>segment_max</code> and <code>segment_min</code> into one <code>segment</code> operation with a combine function.</li>
+</ol>
+
+<h2>References</h2>
+<ol class="refs">
+<li>R. Schwan, Y. Jiang, D. Kuhn, C. N. Jones, "PIQP: A Proximal Interior-Point Quadratic Programming Solver," IEEE CDC, 2023. <a href="https://arxiv.org/abs/2304.00290">arXiv:2304.00290</a></li>
+<li>S. Mehrotra, "On the implementation of a primal-dual interior point method," SIAM J. Optim. 2(4):575–601, 1992. <a href="https://doi.org/10.1137/0802028">doi:10.1137/0802028</a></li>
+<li>D. Ruiz, "A scaling algorithm to equilibrate both rows and columns norms in matrices," Tech. Rep. RAL-TR-2001-034, Rutherford Appleton Laboratory, 2001.</li>
+<li>T. A. Davis, "Algorithm 849: A concise sparse Cholesky factorization package," ACM Trans. Math. Softw. 31(4):587–591, 2005. <a href="https://doi.org/10.1145/1114268.1114277">doi:10.1145/1114268.1114277</a></li>
+<li>P. R. Amestoy, T. A. Davis, I. S. Duff, "An approximate minimum degree ordering algorithm," SIAM J. Matrix Anal. Appl. 17(4):886–905, 1996. <a href="https://doi.org/10.1137/S0895479894278952">doi:10.1137/S0895479894278952</a></li>
+<li>B. Stellato et al., "OSQP: an operator splitting solver for quadratic programs," Math. Prog. Comp. 12:637–672, 2020 (QDLDL). <a href="https://doi.org/10.1007/s12532-020-00179-2">doi:10.1007/s12532-020-00179-2</a></li>
+<li>C. V. Rao, S. J. Wright, J. B. Rawlings, "Application of interior-point methods to model predictive control," J. Optim. Theory Appl. 99(3):723–757, 1998. <a href="https://doi.org/10.1023/A:1021711402723">doi:10.1023/A:1021711402723</a></li>
+<li>G. Frison, M. Diehl, "HPIPM: a high-performance quadratic programming framework for model predictive control," IFAC World Congress, 2020. <a href="https://arxiv.org/abs/2003.02547">arXiv:2003.02547</a></li>
+<li>G. Frison et al., "BLASFEO: basic linear algebra subroutines for embedded optimization," ACM Trans. Math. Softw. 44(4), 2018. <a href="https://doi.org/10.1145/3210754">doi:10.1145/3210754</a></li>
+<li>I. Maros, C. Mészáros, "A repository of convex quadratic programming problems," Optim. Methods Softw. 11(1–4):671–681, 1999. <a href="https://doi.org/10.1080/10556789908805768">doi:10.1080/10556789908805768</a></li>
+</ol>
+</main></body></html>
