@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 1 PR 8 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 1 · PR 8 report</h1>
+<p class="sub">Multi-seed forward mode through <code>scan</code> and <code>while_loop</code> · branch <code>claude/tier1-primitives</code>, commit <code>30cffba</code> · todo C-93 · 26 Sep 2026</p>
+
+<div class="box"><b>Status:</b> <span class="ok">done</span>.
+<ul>
+<li>Full suite: 959 passed, 88 skipped. Four tests fail only in this VM, and they fail the same way without the change: the three Google Benchmark driver tests fail to link, and one CasADi test needs a newer libstdc++.</li>
+<li>ruff and ty are clean on <code>src</code> and <code>tests</code>.</li>
+<li>All seven C snapshots are byte-identical.</li>
+<li>The docs build.</li>
+</ul></div>
+
+<h2>What was wrong</h2>
+<p><code>sc.hessian</code> is <code>jacobian(gradient)</code>. The Jacobian pushes the N identity seeds through batched forward mode (<code>jvp_many</code>), but <code>jvp_many</code> had no rule for <code>SCAN</code> or <code>WHILE</code>. It therefore fell back silently to one pass per seed. The Hessian of the single-shooting MPC cost became N near-identical blocks, each with its own forward tangent scan, two adjoint scans and several accumulation loops. At N = 10 that was 127 loops, and at N = 200 it was 2 407.</p>
+
+<h2>New capability</h2>
+<p>A loop's tangents for n seeds are now computed by <b>one</b> loop, whose carry is <code>[c, Dc]</code>. <code>Dc</code> holds the <code>(n, *c.shape)</code> tangents, seed-major. The body's own tangent is itself a multi-seed pass, so work that does not depend on the seed, such as <code>sin</code>/<code>cos</code> of the state, is computed once per step instead of n times. This is the Hessian of the MPC cost at N = 10 in full, and it is the same set of loops for any N:</p>
+<pre>for (k = 0; k &lt; N; ++k) m8_step_raw(...);                        // primal rollout, carries stored
+m8_shoot_raw(...);                                                // the call's own outputs (see C-95)
+for (k = 0; k &lt; N; ++k) m8_step_scanfwdN_0_raw(...);            // one tangent scan: carry [x, Ẋ ∈ ℝ^{2×N}]
+for (k = 0; k &lt; N; ++k) m8_step_scanadj1_..._scanfwdN_raw(...); // adjoint scan for the stacked states
+for (k = 0; k &lt; N; ++k) m8_step_scanadj2_..._scanfwdN_raw(...); // adjoint scan for the stage costs (see C-91)
+... 11 short elementwise loops: zeroing, scaling, scatter-add, the transposed store (see C-96)</pre>
+<p>The rules, all in <code>ad/forward.py</code>:</p>
+<ul>
+<li><b><code>SCAN</code>.</b>
+  <ul>
+  <li>Each active sliced input gets its per-step <code>(n, size)</code> tangent block.</li>
+  <li>The final carry, the stacked outputs and the stored carries (<code>output=-1</code>, which forward-over-reverse needs) are read back seed-major.</li>
+  <li>A broadcast input (stride 0) stays one block.</li>
+  <li>A backwards input (negative stride) becomes a block per step.</li>
+  </ul></li>
+<li><b><code>WHILE</code>.</b> The same carry layout. The condition reads only <code>c</code>, so the tangent loop takes exactly the primal's steps. The step count has zero derivative.</li>
+<li><b>Reading in place.</b> When a loop input is a strided view of another loop's stored carries, the loop reads that storage directly. <code>_strided_view</code> composes the gathers and reshapes and detects one contiguous block per step. This is what the adjoint scans of a Hessian do with the tangent trajectory, so it is not copied.</li>
+<li><b>Calls around a loop.</b> A <code>CALL</code> whose callee holds a loop is differentiated in place. Reverse mode already inlines such a body, so the tangent scan built here is the same hash-consed node as the one built for the gradient's stored carries, and it is computed once. Before this change, it was computed again inside a <code>shoot_fwd</code> helper.</li>
+<li><b>Helpers.</b> Multi-seed helpers for <code>VMAP</code> callees that hold a loop use the joint multi-seed pass instead of one tangent per seed.</li>
+</ul>
+<p><b>Also fixed (found while benchmarking):</b> the JIT built each call's workspace as a ctypes array and passed it through <code>ctypes.cast</code>. The cast puts the array in a reference cycle, so every workspace stayed alive until the next garbage collection. A loop of calls of the old N = 200 Hessian grew by about 1.6 MB per call until the VM killed it. The workspace is now a NumPy buffer, zero-filled as before.</p>
+
+<h2>What was changed</h2>
+<div class="scroll"><table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>ad/forward.py</code></td><td>
+<ul>
+<li>Loop rules in <code>_jvp_many_structural</code>: <code>_scan_jvp_many</code>, <code>_scan_jvp_many_body</code>, <code>_while_jvp_many</code> and <code>_while_jvp_many_functions</code>.</li>
+<li><code>_jvp_many_joint</code>: several inputs seeded at once, as slices of one joint vector.</li>
+<li><code>_strided_view</code>: in-place reads.</li>
+<li><code>_contains_loop</code>: inlining a call around a loop.</li>
+<li>Custom rules on a loop body still send that node to the per-seed path, which honors them.</li>
+</ul>
++196 lines.</td></tr>
+<tr><td><code>codegen/jit.py</code></td><td>The workspace is a NumPy buffer instead of <code>ctypes.cast</code> of a ctypes array.</td></tr>
+<tr><td>tests</td><td>Four tests in <code>integration/test_scan.py</code> and one in <code>codegen/test_jit.py</code>. The node-ID baseline gains these five IDs.</td></tr>
+<tr><td>docs, todo</td><td>
+<ul>
+<li>A paragraph in <code>guide/derivatives.md</code>.</li>
+<li>C-93 marked done.</li>
+<li>New items: C-94 (drop unused carry components), C-95 (share a call's primal with the loops its reverse mode inlines) and C-96 (fuse adjacent elementwise loops).</li>
+</ul></td></tr>
+<tr><td>benchmark</td><td><code>perf_2026_09_25_tier1/pr8_multiseed.py</code>, with a README row.</td></tr>
+</table></div>
+
+<h2>Test results</h2>
+<div class="scroll"><table>
+<tr><th>Test</th><th>What it checks</th><th>Result</th></tr>
+<tr><td><code>test_jacobian_of_a_scan_is_one_scan_carrying_every_seed</code></td><td>RK4 rollout, strict mode (<code>SCALY_STRICT_JVP_MANY=1</code>, so any per-seed fallback raises). Jacobians of the final state and of the stacked costs, with respect to the initial state and to the inputs, match finite differences. Each Jacobian graph contains exactly one loop, <code>rk4_step_scanfwd{n}_*</code>.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_multi_seed_tangents_of_broadcast_strided_and_backward_slices</code></td><td>A stride-0 input and an input read backwards every third entry, in strict mode. All six Jacobians match finite differences.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_hessian_through_a_scan_is_a_fixed_number_of_loops</code></td><td>Your MPC cost (scan inside a called Function), strict mode:
+<ul>
+<li>equals the analytic condensed Hessian 2Σ Γ<sub>k</sub>ᵀQ<sub>k</sub>Γ<sub>k</sub> + 0.2I to 1e-12 at N = 5 and 11;</li>
+<li>has exactly four loop bodies;</li>
+<li>copies no tangent trajectory before a scan reads it;</li>
+<li>has no <code>shoot_fwd</code> helper;</li>
+<li>generates the same loops and procedures at both N.</li>
+</ul></td><td class="ok">pass</td></tr>
+<tr><td><code>test_jacobian_of_a_while_loop_is_one_loop_carrying_every_seed</code></td><td>Newton cube roots, strict mode. The Jacobian equals 1/(3x²) at convergence and matches finite differences. There is one loop, <code>wm_step_whilefwd6</code>.</td><td class="ok">pass</td></tr>
+<tr><td><code>test_each_calls_workspace_is_released_without_a_garbage_collection</code></td><td>With GC disabled, 20 calls of a function whose workspace holds at least 96 kB grow traced memory by less than two workspaces.</td><td class="ok">pass</td></tr>
+<tr><td>Existing tests</td><td>The existing scan, while, custom-derivative and snapshot tests now go through the new rules (for example, the Jacobian and Hessian checks against the unrolled graph). Custom rules on a scan body still apply.</td><td class="ok">pass</td></tr>
+</table></div>
+<p><b>Mutation checks</b>, each reverted afterwards (counts are over the loop tests):</p>
+<ul>
+<li>Scan rule declines: 3 failures.</li>
+<li>While rule declines: 1 failure.</li>
+<li>In-place reads disabled: 1 failure. This needed a stronger assertion: the first version only looked one node deep and missed it.</li>
+<li>Call not inlined: 1 failure.</li>
+<li>Stacked outputs read step-major instead of seed-major: 5 failures.</li>
+<li>Workspace fix reverted: 1 failure.</li>
+<li>One mutant survives, and it is equivalent: treating a stride-0 input as <code>length</code> identical rows still yields a stride-0 in-place read.</li>
+</ul>
+
+<h2>Benchmarks</h2>
+<p>Script: <code>internal/notes/perf_2026_09_25_tier1/pr8_multiseed.py</code>, run on the aarch64 VM with a fresh cache.</p>
+<ul>
+<li>"Old" makes the new loop rules decline, which reproduces the previous per-seed path. It agrees with the true pre-change code to within 2% in lines and exactly in loops.</li>
+<li>"First call" is building the graph, lowering, compiling and loading.</li>
+<li>Times are the median µs per call, including about 10 µs of Python call overhead.</li>
+</ul>
+<p><b>Your single-shooting MPC cost</b> (scan inside a called Function, every state penalised):</p>
+<div class="scroll"><table>
+<tr><th>N</th><th>loops old → new</th><th>C lines old → new</th><th>first call ms old → new</th><th>µs/call old → new</th><th>speed-up</th></tr>
+<tr><td class="r">10</td><td class="r">127 → 17</td><td class="r">690 → 342</td><td class="r">394 → 222</td><td class="r">11.1 → 10.4</td><td class="r">call overhead</td></tr>
+<tr><td class="r">40</td><td class="r">487 → 17</td><td class="r">2 385 → 912</td><td class="r">1 598 → 691</td><td class="r">39.7 → 26.5</td><td class="r">1.5×</td></tr>
+<tr><td class="r">100</td><td class="r">1 207 → 17</td><td class="r">5 775 → 2 052</td><td class="r">5 766 → 2 048</td><td class="r">205 → 115</td><td class="r">1.8×</td></tr>
+<tr><td class="r">200</td><td class="r">2 407 → 17</td><td class="r">11 425 → 3 953</td><td class="r">13 549 → 4 873</td><td class="r">910 → 387</td><td class="r"><b>2.4×</b></td></tr>
+</table></div>
+<p><b>Nonlinear RK4 cart-pendulum rollout</b> (Hessian with respect to the inputs):</p>
+<div class="scroll"><table>
+<tr><th>N</th><th>loops old → new</th><th>first call ms old → new</th><th>µs/call old → new</th><th>speed-up</th></tr>
+<tr><td class="r">10</td><td class="r">137 → 17</td><td class="r warn">642 → 1 325</td><td class="r">23.3 → 14.4</td><td class="r">1.6×</td></tr>
+<tr><td class="r">40</td><td class="r">527 → 252</td><td class="r warn">1 935 → 2 732</td><td class="r">231 → 181</td><td class="r">1.3×</td></tr>
+<tr><td class="r">100</td><td class="r">1 307 → 459</td><td class="r">8 039 → 1 812</td><td class="r">1 376 → 1 066</td><td class="r">1.3×</td></tr>
+</table></div>
+<ul>
+<li>The loop count is now fixed for the linear body. It still grows for RK4, because above the scalarize budget the multi-seed body's operations over the seed axis become short loops <em>inside</em> the step procedure. The number of loops at the top level is fixed.</li>
+<li>The run time remains O(N²·step), as it must for a dense Hessian. For RK4 the saving comes from computing the seed-independent work (<code>sin</code>, <code>cos</code>, the primal step) once per step, so the speed-up is modest.</li>
+<li><span class="warn">Finding:</span> for RK4 at N ≤ 40, the first call is up to 2× slower. The multi-seed step bodies are scalarized into long straight-line procedures, and gcc takes longer on them: at N = 10, compiling takes 906 ms against 377 ms. The run time is better. This is the same scalarize-budget question noted in PR 7.</li>
+</ul>
+
+<h2>Deviations and notes</h2>
+<ul>
+<li>Three changes beyond the planned rule were needed for the Hessian you showed to collapse to a fixed set of loops: inlining calls around loops, in-place reads, and the joint multi-seed pass in <code>VMAP</code> helpers. Before calls around loops were inlined, the code shrank but a second forward tangent scan remained inside the call's helper, and the MPC case at N = 40 was <em>slower</em> than before (58.8 against 40.4 µs).</li>
+<li>Remaining waste, now filed:
+  <ul>
+  <li><b>C-91:</b> two adjoint scans, one per scan output.</li>
+  <li><b>C-94:</b> the gradient half of each adjoint carry is computed and thrown away.</li>
+  <li><b>C-95:</b> <code>m8_shoot_raw</code> repeats the primal rollout, because the gradient keeps the call for its outputs.</li>
+  <li><b>C-96:</b> 11 short elementwise loops are not fused.</li>
+  </ul>
+  Calling <code>scan</code> directly in the cost, rather than through a <code>shoot</code> Function, avoids C-95 today: at N = 100 that variant takes 75 µs against 115 µs.</li>
+<li>For this linear-quadratic problem the Hessian is a constant, but constant folding stops at <code>scan</code>, so it is still computed at run time.</li>
+<li>Commit author is "Colin Jones &lt;colin.cn.jones@gmail.com&gt;", set through environment variables. The VM used a separate Python environment outside the repository, so your <code>.venv</code> was not touched this time.</li>
+</ul>
+</main></body></html>
