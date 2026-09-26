@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 1 PR 9 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 1 · PR 9 report</h1>
+<p class="sub">Review, tests and optimization of C-93 · branch <code>claude/tier1-primitives</code>, commits <code>3a43a66</code>…<code>6fb9ce2</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Four agents reviewed C-93 in parallel: correctness by experiment, edge cases and the JIT, performance of the generated C, and an independent test suite. Every confirmed problem is fixed with a regression test, and each of those tests was shown to fail with its fix reverted. Four optimizations from the ranked list are implemented.</p>
+<p><b>Speed-ups against PR 8:</b></p>
+<ul>
+<li>The RK4 Hessian at N = 100 runs <b>11.6×</b> faster (1 079 → 93 µs) and its first call is 5× faster.</li>
+<li>Your MPC Hessian at N = 100 runs <b>1.9×</b> faster (109 → 58 µs). Against the per-seed code before PR 8 that is 3.5×.</li>
+<li>A trivial call runs 28% faster.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 1 057 passed and 88 skipped. Four tests fail only in this VM, and they fail identically without these changes: the Google Benchmark link and CasADi's libstdc++. ruff and ty are clean and the docs build. Three C snapshots changed deliberately (see below).</p>
+</div>
+
+<h2>1. Review findings and fixes</h2>
+<div class="scroll"><table>
+<tr><th>Severity</th><th>Finding</th><th>Origin</th><th>Fix and regression test</th></tr>
+<tr><td class="bad">high</td><td><b>Wrong Jacobian with no error.</b> A scan body with an input named <code>fwd:u</code> (size 3) next to one named <code>u</code>, with 3 seeds, was off by 1.0. The new tangent symbol <code>fwd:u</code> had the carry's name and shape, and symbols are interned by name and type, so it <em>was</em> the carry.</td><td>C-93</td><td><code>claim_name</code> gives every derivative helper fresh names for its new inputs and outputs, across all nine helper builders in <code>forward.py</code> and <code>reverse.py</code>. Test: <code>test_a_body_input_named_like_a_tangent_is_not_aliased_by_it</code>.</td></tr>
+<tr><td class="bad">high</td><td><b>Tangents mixed up between two inlined calls.</b> Found by a mutation check, not by a reviewer. <code>jvp_many</code> memoizes tangents by node id. An inlined callee graph is temporary, so once freed, the next inlined call could reuse its ids. The second call's rows then depended on the first call's variables.</td><td>C-93</td><td>The inlined graph is kept alive for as long as the memo. Test: <code>test_two_inlined_calls_keep_their_own_tangents</code>, which fails without the fix.</td></tr>
+<tr><td class="bad">high</td><td><b>Two different Functions with one name</b> produce silently wrong values: the C has one procedure per name, so both calls ran the first body.</td><td>older</td><td>Lowering refuses them with a clear error. Structurally identical twins are still accepted. Test: <code>test_two_different_functions_with_one_name_are_refused</code>.</td></tr>
+<tr><td class="bad">high</td><td><b><code>int64</code> inputs</b> passed to a call, <code>scan</code> or <code>vmap</code> were read as raw doubles (4.6e18 instead of 2).</td><td>older</td><td>The entry point converts every non-<code>float64</code> input once. Test: <code>test_integer_inputs_reach_callees_as_integers</code>.</td></tr>
+<tr><td class="warn">medium</td><td><b>Code grows like K²</b> for K calls of one loop-holding Function, as in multiple shooting. Inlining carried all 2K seeds through each call: 8 016 against 983 lines at K = 4.</td><td>C-93</td><td>Such a call is inlined only when its seeds cannot be pruned; otherwise the helper drops the zero seeds. Test: <code>test_calls_around_a_loop_carry_only_the_seeds_they_depend_on</code>.</td></tr>
+<tr><td class="warn">medium</td><td><b>Forward over forward through a scan crashed</b> with a duplicate-names error (a Jacobian of a Jacobian, or third order through a while loop).</td><td>older</td><td>Fixed by <code>claim_name</code>. Test: <code>test_forward_over_forward_through_a_loop</code> (4 cases).</td></tr>
+<tr><td class="warn">medium</td><td><b>Generated C depended on <code>PYTHONHASHSEED</code>,</b> so the JIT's on-disk cache missed in every new process. Workspace packing updated a buffer's producer set while iterating a set of writes.</td><td>older</td><td>The closure is taken before the update. Test: <code>test_generated_code_does_not_depend_on_the_hash_seed</code> (three subprocesses).</td></tr>
+<tr><td>low</td><td>Several smaller issues:
+  <ul>
+  <li><code>cast</code> had no multi-seed rule and silently fell back per seed.</li>
+  <li>Strict mode could be bypassed by a cached body built without it.</li>
+  <li>The while rule differentiated before checking for the step-count output.</li>
+  </ul></td><td>C-93</td><td>All fixed.
+  <ul>
+  <li>Tests: <code>test_jvp_many_through_a_cast_stays_structural</code> and <code>test_a_body_built_with_a_fallback_does_not_satisfy_a_later_strict_build</code>.</li>
+  <li>The reviewer found no problem with the workspace fix itself.</li>
+  </ul></td></tr>
+</table></div>
+<p>The test agent wrote <code>tests/integration/test_multiseed_loops.py</code>. With the additions below it holds 51 test functions (88 cases), each checked against finite differences and the per-seed columns in strict mode. They cover:</p>
+<ul>
+<li>unit tests of <code>_strided_view</code>, <code>_jvp_many_joint</code> and <code>_contains_loop</code>;</li>
+<li>carries of rank 0, 1 and 2; inactive, shared and double-bound inputs; stride 0, negative strides and offsets; lengths 0 and 1;</li>
+<li>every nesting of scan, while and vmap;</li>
+<li>while-loop edge counts; Hessians against the dense and sparse paths; forward over forward;</li>
+<li>custom rules, determinism, and loop counts that stay the same for any number of seeds.</li>
+</ul>
+
+<h2>2. Ranked optimizations</h2>
+<p>The performance agent timed the generated C directly from a C driver and measured each idea by hand-editing that C. Items 1–3 and the call-overhead change are implemented; the rest are filed in <code>internal/todo.md</code>.</p>
+<div class="scroll"><table>
+<tr><th>#</th><th>Optimization</th><th>Measured gain</th><th>Status</th></tr>
+<tr><td>1</td><td>Collapse the per-seed work in loop bodies. The agent proposed a loop over seeds with the seed-independent work hoisted out; I implemented the equivalent step-Jacobian form described below.</td><td>RK4 Hessian 6–8×; compile 0.05 s instead of 0.6–1.3 s</td><td class="ok">done</td></tr>
+<tr><td>2</td><td>One backward scan per scan (C-91)</td><td>gradient −29 to −42%, Hessian −15 to −26%</td><td class="ok">done</td></tr>
+<tr><td>3</td><td>Division-free index maps, and composing index permutations</td><td>MPC Hessian −28 to −37%, then a further −15 to −22%</td><td class="ok">done</td></tr>
+<tr><td>—</td><td>Call overhead: pass raw addresses</td><td>−37% of the ctypes part</td><td class="ok">done</td></tr>
+<tr><td>4</td><td>Read and write scan data in place: the adjoint reads Ẋ reversed, and the scan writes the result directly</td><td>MPC −16 to −26%, then −5 to −24%</td><td>C-97</td></tr>
+<tr><td>5</td><td>Use Hessian symmetry and identity seeds: compute one triangle</td><td>RK4 −38 to −43%, MPC −13 to −25%</td><td>C-98</td></tr>
+<tr><td>6</td><td>Remove dead scan outputs and the call's second rollout</td><td>−3 to −22%; MPC gradient compiles 12× faster</td><td>C-95</td></tr>
+<tr><td>7</td><td>No ping-pong buffer for small carries</td><td>MPC gradient −40%, but slower above about 32 doubles</td><td>C-99</td></tr>
+<tr><td>8</td><td>Add <code>-ftree-vectorize</code> on gcc older than 12</td><td>RK4 loop form −25%. No effect on clang, which is what your Mac uses.</td><td>not filed</td></tr>
+<tr><td>10</td><td>Drop λ in forward over reverse (C-94)</td><td>about 1%, and λ̇ reads λ for nonlinear bodies</td><td>C-94 corrected</td></tr>
+</table></div>
+
+<h3>What was implemented</h3>
+<ul>
+<li><b>Per-step Jacobian tangents</b> (<code>fef21de</code>, <code>_jvp_many_compressed</code>).
+  <ul>
+  <li>A step with <i>m</i> seeded input entries and more seeds than that forms its m-column Jacobian once per step. The seeds in that pass are constant unit vectors, so it folds to the nonzero partials. The tangents are then <code>seeds @ J</code>.</li>
+  <li>Above 256 multiply-adds per step, the primal and the varying Jacobians move to a straight-line callee (<code>*_stepjac*</code>). The product becomes a <code>block</code>-lowered map over the seeds of a small callee, so the body is one loop over the seeds with its accumulators in registers.</li>
+  <li>I chose this instead of the agent's hoisted seed loop. It reaches the same effect with Expr rewrites only, and the step's seed-independent work is done once per step by construction.</li>
+  </ul></li>
+<li><b>C-91</b> (<code>e2723bd</code>). Reverse mode groups the output nodes of one scan, and of one call, and differentiates them together when the last one is reached. The grouping had to include calls: your cost reads <code>X</code> and <code>costs</code> through <code>shoot</code>'s two outputs, and each output used to get its own sweep through the callee.</li>
+<li><b>Index maps</b> (<code>b418022</code>).
+  <ul>
+  <li>A new Program pass, <code>delinearize_loops</code>, splits a flat loop whose indices divide the loop variable into nested loops, along the finest factorization in which every index is affine.</li>
+  <li>Expr simplification composes <code>gather∘gather</code>, turns a scatter that writes every entry once into a gather, and folds a transpose into a gather.</li>
+  <li>The Hessian's final assembly is now one loop writing <code>res</code> directly:</li>
+  </ul>
+<pre>for (i0 = 0; i0 &lt; 40; ++i0) for (i1 = 0; i1 &lt; 40; ++i1)
+  res[0][40*i0 + i1] = s9[1560 - 40*i0 + i1];            // was: zero 1600, scatter with /40, transposed copy</pre></li>
+<li><b>JIT</b> (<code>7ccd81a</code>). The entry point takes <code>c_void_p</code> addresses, and the pointer-array types are built once. A call now leaves no reference cycles.</li>
+</ul>
+
+<h2>3. Benchmarks</h2>
+<p>Script: <code>internal/notes/perf_2026_09_25_tier1/pr9_review.py</code>, run with a fresh cache.</p>
+<ul>
+<li>"PR 8" is <code>git archive 1287945 src</code> put on <code>PYTHONPATH</code>.</li>
+<li>Times are median µs per Python call, including 4.7 µs (now) or 6.5 µs (PR 8) of call overhead.</li>
+<li>"First call" means build, render, compile and load.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>Workload</th><th>N</th><th>µs PR 8 → now</th><th>speed-up</th><th>first call ms</th><th>C lines</th></tr>
+<tr><td>MPC Hessian (your cost)</td><td class="r">10</td><td class="r">10.4 → 8.0</td><td class="r">1.3×</td><td class="r">204 → 187</td><td class="r">343 → 305</td></tr>
+<tr><td></td><td class="r">40</td><td class="r">25.7 → 18.6</td><td class="r">1.4×</td><td class="r">643 → 199</td><td class="r">913 → 422</td></tr>
+<tr><td></td><td class="r">100</td><td class="r">109 → 58.3</td><td class="r"><b>1.9×</b></td><td class="r">1 961 → 470</td><td class="r">2 053 → 692</td></tr>
+<tr><td>RK4 Hessian</td><td class="r">10</td><td class="r">14.5 → 9.5</td><td class="r">1.5×</td><td class="r">1 188 → 352</td><td class="r">1 301 → 421</td></tr>
+<tr><td></td><td class="r">40</td><td class="r">172 → 26.7</td><td class="r"><b>6.5×</b></td><td class="r">2 671 → 306</td><td class="r">2 134 → 392</td></tr>
+<tr><td></td><td class="r">100</td><td class="r">1 079 → 93.5</td><td class="r"><b>11.6×</b></td><td class="r">1 602 → 326</td><td class="r">1 964 → 392</td></tr>
+<tr><td>RK4 forward-mode gradient</td><td class="r">100</td><td class="r">236 → 47.5</td><td class="r">5.0×</td><td class="r">914 → 312</td><td class="r">976 → 535</td></tr>
+<tr><td>MPC gradient</td><td class="r">100</td><td class="r">10.8 → 8.6</td><td class="r">1.3×</td><td class="r">398 → 384</td><td class="r">556 → 533</td></tr>
+<tr><td>RK4 gradient</td><td class="r">100</td><td class="r">20.8 → 15.1</td><td class="r">1.4×</td><td class="r">126 → 85</td><td class="r">185 → 124</td></tr>
+<tr><td>Trivial call</td><td class="r">—</td><td class="r">6.46 → 4.67</td><td class="r">1.4×</td><td class="r"></td><td class="r"></td></tr>
+</table></div>
+<ul>
+<li>The C lines of the RK4 Hessian no longer grow with N, and the first call is 5× faster.</li>
+<li>The MPC Hessian's remaining time is the reversed, scaled copy of Ẋ that feeds the adjoint scan (C-97), plus the call's duplicate rollout (C-95). Together those are about 40% of the remaining time at N = 100.</li>
+</ul>
+
+<h2>4. Changed snapshots, and what to check on the Mac</h2>
+<ul>
+<li><code>jac.c</code>, <code>spjac.c</code> and <code>wide.c</code> changed deliberately. Their gathers and scatters now run as nested loops without <code>/</code> or <code>%</code>, and <code>wide</code>'s full-coverage scatter lost its zeroing loop. I reviewed the diffs.</li>
+<li>The other four snapshots are unchanged, including <code>solver.c</code>, which renders here but cannot be run here.</li>
+<li><b>Please run the suite on the Mac:</b> the solver tests, the CasADi tests and the three Google Benchmark driver tests cannot run in this VM.</li>
+<li>The node-ID baseline is the union of this VM's collection and the 29 IDs it cannot collect, as before.</li>
+<li>Commits are authored as you, through environment variables. The VM used its own Python environment outside your repository, so your <code>.venv</code> was not touched.</li>
+</ul>
+</main></body></html>
