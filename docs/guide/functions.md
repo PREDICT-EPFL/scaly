@@ -209,6 +209,15 @@ tables = [(sc.const(cols_table, dtype="int64"), 0, width), (sc.const(pos_table, 
 _, y = sc.scan(body, c0, [*tables, (x, 0, 0), (vals, 0, 0)], length=n_rows)
 ```
 
+A scan whose next carry is a chain of `put`/`put_add` (and `index_add`/`index_set`) updates can also
+run in place. Run-time indices are proven at the loop: when every index an update writes, and every
+index through which its values read the carry, is computed from constants, the step number and
+integer tables the scan slices, the loop evaluates them for all steps at generation time and checks
+that no value reads an entry an update of the same step has already written. The values may read
+the carry only through `take`, `gather` or a slice. A forward substitution with a sparse triangular
+matrix, which reads earlier entries of the solution and writes the current one, qualifies; a carry
+index read from the data does not, and keeps two slots.
+
 All three are differentiable in their floating-point operands. Because the pattern of a run-time
 index is unknown, their sparsity is conservative: an output entry may depend on every entry of its
 row. With repeated indices `put` keeps the last value, and its derivative assumes the indices are

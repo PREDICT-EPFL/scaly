@@ -98,8 +98,9 @@ def test_chained_updates_and_neighbouring_elementwise_code() -> None:
   iv = (np.array([1, 1, 6]), np.array([0, 7]), np.array([0, 1, 6, 7]))
   got = _fn("chain", [x, v, w, i1, i2, i3], [z, out])._flat_numerical_call(*pts, *(a.astype(float) for a in iv))
   z_np = _np_put(_np_put(2.0 * pts[0], iv[0], pts[1] * 3.0, add=True), iv[1], np.sin(pts[2]), add=False)
-  np.testing.assert_allclose(got[0], z_np, rtol=1e-15)
-  np.testing.assert_allclose(got[1], _np_take(z_np, iv[2]) * 2.0 + _np_take(pts[0] + 1.0, iv[2]), rtol=1e-15)
+  # A contracted multiply-add may round once where NumPy rounds twice.
+  np.testing.assert_allclose(got[0], z_np, rtol=1e-14, atol=1e-15)
+  np.testing.assert_allclose(got[1], _np_take(z_np, iv[2]) * 2.0 + _np_take(pts[0] + 1.0, iv[2]), rtol=1e-14, atol=1e-15)
 
 
 # --- derivatives ---------------------------------------------------------------------------------

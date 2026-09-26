@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 2 PR 3 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 3 report</h1>
+<p class="sub">T2-3 · in-place carries through run-time-index updates, proven at the loop (C-103) · branch <code>claude/tier2-sparse</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> A scan or while body whose next carry is a chain of <code>put</code>/<code>put_add</code> updates now overwrites a single carry slot. It no longer copies the carry into a second slot every step. Chains mixed with <code>index_add</code>/<code>index_set</code> qualify too.</p>
+<p><b>Why the proof lives at the loop.</b> The body cannot be proven safe on its own, because its indices are run-time values. The loop, however, knows the constant tables it slices and the step number, so it evaluates every index for all steps at once and checks that no read sees an entry already overwritten in the same step.</p>
+<p><b>What this unlocks.</b> The sparse factorization needs two patterns: reading earlier columns while writing the current one, and accumulating into a work vector. Both now run in place. A sparse forward substitution qualifies, and it matches SciPy.</p>
+<ul>
+<li><code>Aᵀy</code> by row accumulation at n = 2 000: <b>2 283 → 51 µs</b> (45×).</li>
+<li>At n = 20 000: 493 µs, and generation takes 0.6 s.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 1 124 passed, 88 skipped; the same four failures appear only in the VM. ruff, ty and the docs build are clean. <b>Mutation checks:</b> 10 of 10 killed, after two tests were added and one dead check was removed.</p>
+</div>
+
+<h2>1. The rule</h2>
+<p><code>in_place_steps(body, steps)</code> in <code>passes/lowering.py</code> decides whether the chain may run in place. <code>steps[p]</code> holds the value of body input <code>p</code> at every step. It is filled for inputs the loop slices from an <code>int64</code> constant, which includes the step number.</p>
+<ol>
+<li><b>Chain.</b> <code>update_chain</code> finds the chain <code>u₁ … u_m</code> rooted at the carry. This is structural only; the other steps decide safety.</li>
+<li><b>Write sets.</b> Each update's indices are evaluated for all steps by <code>_step_value</code>, a vectorized evaluator for integer expressions. It handles constants, sliced inputs, <code>+ − ×</code>, <code>min</code>/<code>max</code>, casts, reshape, slices, <code>gather</code>, <code>take</code>, <code>concat</code> and <code>stack</code>. An index it cannot evaluate, such as one read from the data, fails the rule. Write sets are flat positions, row by row, with dropped lanes marked −1.</li>
+<li><b>Read sets.</b> The values of update <code>i</code> may reach a link <code>u_j</code> only through <code>take</code>, <code>gather</code> or a slice, possibly of a reshape. Anything else that uses a link whole fails the rule, for example a sum or an elementwise op on the carry.</li>
+<li><b>No overlap.</b> At every step, the read set on <code>u_j</code> must be disjoint from the writes of updates <code>j+1 … i</code>. That includes update <code>i</code> itself: fusion may interleave a value's lanes with its update's lanes. The check is one sort-based intersection over (step, position) keys.</li>
+<li><b>Other outputs.</b> No other output of the body may read a link.</li>
+</ol>
+<p><b>How it combines with the old rule.</b> The body-only rule for fixed-index chains (<code>in_place_chain</code>) is unchanged and is tried first. The same <code>_inplace</code> procedure serves every loop that proves it, because only its validity depends on the tables.</p>
+<p><b>Scratch slots.</b> A padded lane of an in-place <code>put</code> writes to a scratch slot of its own after the carry's entries, so the loop allocates <code>cs + rows·lanes</code> for the carry.</p>
+<p><b>Reverse mode.</b> Reverse mode stores every carry, so a loop whose trajectory is needed keeps its per-step slots, exactly as before.</p>
+
+<h2>2. Tests</h2>
+<p><code>tests/integration/test_in_place_runtime.py</code> has 11 tests. Every case is built twice, with donation on and off; the results must be equal bit for bit, and the C must contain an <code>_inplace</code> procedure exactly when the rule should accept.</p>
+<ul>
+<li><b>Sparse forward substitution</b> <code>Lx = b</code> with padded row tables: it runs in place and matches <code>spsolve_triangular</code> to 1e−12. Its gradients with respect to the values and <code>b</code> match finite differences; that loop stores the trajectory and so correctly keeps its slots.</li>
+<li><b>Accumulation with reads and writes from tables</b>, in three variants: disjoint at every step (in place); reading the entries it writes (refused); overlapping at one step out of eight (refused). All three match NumPy.</li>
+<li><b>Reads of the entering carry after an earlier update.</b> Allowed while the later writes miss them, refused when an earlier update writes what is read.</li>
+<li><b>Cases that must keep two slots:</b>
+<ul>
+<li>a data-dependent index;</li>
+<li>another output reading the carry;</li>
+<li>a value reading the whole carry through a sum;</li>
+<li>a value reading a fixed entry of row 1 that a column write reaches.</li>
+</ul></li>
+<li><b>Batched carry.</b> An <code>index_add</code> then a padded <code>put_add</code> on a batched carry runs in place, with the scratch slots after all rows.</li>
+<li><b><code>while_loop(index=True)</code></b> with a <code>put</code> body runs in place.</li>
+<li><b>Helpers tested directly:</b> <code>update_chain</code> and <code>in_place_steps</code>, including unknown tables and padded lanes on both sides.</li>
+</ul>
+<p><b>Mutation checks (10 of 10 killed):</b></p>
+<ul>
+<li>no overlap check</li>
+<li>checking only the update's own writes</li>
+<li>no check on other outputs</li>
+<li>ignoring non-reader uses of a link</li>
+<li>scratch sized for one row</li>
+<li>flat positions without the row offset</li>
+<li>keys without the step</li>
+<li>integer arithmetic evaluated wrong</li>
+<li>the scan-level proof not used</li>
+<li>unknown indices treated as 0</li>
+</ul>
+<p>The first run left three mutants alive. One was dead code: the values of update <code>i</code> cannot read <code>u_i</code> or later, because the graph is acyclic, so that check was removed. The other two now have tests: whole-link reads, and row positions in a batched carry.</p>
+
+<h2>3. Benchmark</h2>
+<p>This is <code>pr2_take.py</code> again; the <code>scan-put</code> row is this PR's case. Timings are in µs on the aarch64 VM.</p>
+<div class="scroll"><table>
+<tr><th>Variant</th><th class="r">n = 200</th><th class="r">n = 2 000</th><th class="r">n = 20 000</th></tr>
+<tr><td><code>scan-put</code> (<code>Aᵀy</code>), PR 2: carry copied every step</td><td class="r">17.3</td><td class="r">2 283</td><td class="r">—</td></tr>
+<tr><td><code>scan-put</code>, in place</td><td class="r"><b>11.4</b></td><td class="r"><b>50.7</b></td><td class="r"><b>493</b></td></tr>
+<tr><td><code>scan-take</code> (<code>A x</code>, no carry update)</td><td class="r">13.7</td><td class="r">69.9</td><td class="r">695</td></tr>
+<tr><td><code>static</code> (<code>gather</code> + <code>segment_sum</code>)</td><td class="r">10.7</td><td class="r">36.0</td><td class="r">297</td></tr>
+<tr><td>SciPy <code>A @ x</code> / <code>A.T @ y</code></td><td class="r">1.9 / 7.7</td><td class="r">7.3 / 14.0</td><td class="r">98 / 136</td></tr>
+</table></div>
+<p><b>Where the time goes now.</b> The in-place transposed product is within 1.4–1.7× of the baked-in form and 3.6× of SciPy at n = 20 000. What remains is lane padding (16 lanes for an average of 6 entries), a bounds check per lane, and one loop per op. T2-8 addresses these: fusion, and bounds proven from the tables. The segment layout in T2-5 addresses the padding.</p>
+<p><b>Generation cost.</b> At n = 20 000 generation takes 0.6 s, most of it compiling the 320 000-entry index tables. The proof itself is a few vectorized NumPy passes.</p>
+
+<h2>4. Open points</h2>
+<ul>
+<li><b>Same-lane rule.</b> A value may not read what its own update writes, even in the same lane (for example <code>x[i] = 0.5·x[i]</code>). Relaxing this needs a guarantee on how lanes fuse; <code>put_add</code> covers the scaling case.</li>
+<li><b>Reverse mode.</b> Loops differentiated in reverse keep every carry. For factorizations the implicit derivative (T2-7, via <code>custom_derivative</code>) avoids that.</li>
+</ul>
+<p><b>Next:</b> T2-4, the <code>SparseMatrix</code> value.</p>
+</main></body></html>

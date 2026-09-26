@@ -240,9 +240,10 @@ def _lower_to_proc(
   fun = _normalize_function(fun)
   if observe_expr is not None:
     observe_expr("normalized", fun)
-  # The chain is found on exactly the graph being lowered, so its node ids are this graph's.
-  chain = in_place_chain(fun) if in_place else None
-  if in_place and chain is None:
+  # The chain is found on exactly the graph being lowered, so its node ids are this graph's. The
+  # caller has proven the updates safe, for the body alone or for the loop's own index tables.
+  chain = tuple(e.id for e in update_chain(fun) or ()) if in_place else None
+  if in_place and not chain:
     raise LoweringError(f"{fun.name!r} was lowered in place but its carry is not an update chain")
   ctx = LowerCtx(fun, callees, solver_fns, observe_expr, entry=entry, in_place=chain)
   ctx.emit_inputs()
@@ -807,20 +808,42 @@ def _lower_matmul(ctx: LowerCtx, node: Expr) -> None:
     raise LoweringError(f"matmul shapes {sa}@{sb} not lowered (batched / higher-rank deferred)")
 
 
-def _ensure_in_place_callee(ctx: LowerCtx, callee: Function) -> str | None:
+def _ensure_in_place_callee(ctx: LowerCtx, callee: Function, steps: dict[int, np.ndarray] | None = None) -> tuple[str, int] | None:
   """Lower an in-place variant of a loop body, named apart from the ordinary procedure (which other
-  call sites may use with separate buffers), and return its name; None when the body does not
-  qualify, or in-place updates are switched off."""
+  call sites may use with separate buffers), and return its name with the scratch slots its carry
+  needs past its entries; None when the body does not qualify, or in-place updates are switched off.
+
+  ``steps`` holds, per body input position, the value that input takes at every step when the loop
+  slices it from a constant table (the step number, index tables): with it, updates at run-time
+  indices are proven safe for exactly the indices this loop uses (``in_place_steps``). The procedure
+  is the same whichever loop proved it, so it is shared by name."""
   if not DONATE_CARRIES or callee.device.kind != ctx.fun.device.kind:
     return None
   normalized = _normalize_function(callee)
-  if in_place_chain(normalized) is None:
+  if in_place_chain(normalized) is None and (not steps or not in_place_steps(normalized, steps)):
     return None
   name = f"{callee.name}_inplace"
   if name not in ctx.callees:
     renamed = Function._from_exprs(name, normalized.inputs, normalized.outputs, normalized.input_names, normalized.output_names)
     ctx.callees[name] = _lower_to_proc(renamed, ctx.callees, ctx.solver_fns, observe_expr=ctx.observe_expr, in_place=True)
-  return name
+  return name, _put_scratch(update_chain(normalized) or [])
+
+
+def _put_scratch(chain: Iterable[Expr]) -> int:
+  """The scratch slots after the carry's entries that its run-time-index updates write padded lanes to."""
+  return max((e.size // e.shape[-1] * e.args[1].size for e in chain if e.op in (ExprOp.PUT_ADD, ExprOp.PUT) and e.shape[-1]), default=0)
+
+
+def _loop_steps(callee: Function, outers: Iterable[Expr], starts: Iterable[int], strides: Iterable[int], length: int) -> dict[int, np.ndarray]:
+  """The value of each body input a loop slices from an integer constant, at every step."""
+  steps: dict[int, np.ndarray] = {}
+  for pos, (outer, start, stride) in enumerate(zip(outers, starts, strides, strict=True), start=1):
+    formal = callee.inputs[pos]
+    if outer.op == ExprOp.CONST and outer.value is not None and outer.type.dtype == dtypes.int64:
+      flat = np.asarray(outer.value, dtype=np.int64).reshape(-1)
+      offsets = start + stride * np.arange(length)[:, None] + np.arange(formal.size)[None, :]
+      steps[pos] = flat[offsets].reshape((length, *formal.shape))
+  return steps
 
 
 def _ensure_callee(ctx: LowerCtx, callee: Function) -> None:
@@ -932,10 +955,11 @@ def _emit_scan(ctx: LowerCtx, node: Expr) -> dict[int, str]:
     bufs[0] = ctx.value_buffers[init.id]
     bufs[-1] = ctx.new_private(dtype, (0,)).attrs["name"]
     return bufs
-  in_place = None if trajectory else _ensure_in_place_callee(ctx, callee)
+  proof = None if trajectory else _ensure_in_place_callee(ctx, callee, _loop_steps(callee, outers, starts, strides, length))
+  in_place, scratch = proof if proof is not None else (None, 0)
   if in_place is None:
     _ensure_callee(ctx, callee)
-  store = ctx.new_private(dtype, ((length + 1 if trajectory else 1 if in_place else 2) * cs,))
+  store = ctx.new_private(dtype, ((length + 1 if trajectory else 1 if in_place else 2) * cs + scratch,))
   ctx.statements.append(_copy_loop(ctx.buf_of(init), store, (cs,)))
   name = f"k_{store.attrs['name']}"
   k = p.var(name)
@@ -1021,11 +1045,13 @@ def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int,
   carry = body.inputs[0]
   cs, dtype = carry.size, carry.type.dtype
   trajectory = any(n.op == ExprOp.WHILE and n.attrs["output"] == -1 and _while_key(n) == key for n in topo(ctx.fun.outputs))
-  in_place = None if trajectory else _ensure_in_place_callee(ctx, body)
+  steps = {1: np.arange(max_iter, dtype=np.int64)} if len(body.inputs) == 2 else {}
+  proof = None if trajectory else _ensure_in_place_callee(ctx, body, steps)
+  in_place, scratch = proof if proof is not None else (None, 0)
   if in_place is None:
     _ensure_callee(ctx, body)
   _ensure_callee(ctx, cond)
-  store = ctx.new_private(dtype, ((max_iter + 1 if trajectory else 1 if in_place else 2) * cs,))
+  store = ctx.new_private(dtype, ((max_iter + 1 if trajectory else 1 if in_place else 2) * cs + scratch,))
   flag = ctx.new_private(dtypes.bool_, (1,))
   ctx.statements.append(_copy_loop(ctx.buf_of(init), store, (cs,)))
   name = f"k_{store.attrs['name']}"
@@ -1185,10 +1211,15 @@ def _lower_put(ctx: LowerCtx, node: Expr) -> None:
   n, lanes = base.shape[-1], idx.size
   size = _size_of(node.shape)
   rows = size // n if n else 0
-  store = ctx.new_private(node.type.dtype, (size + rows * lanes,))
-  ctx.value_buffers[node.id] = store.attrs["name"]
-  if size:
-    ctx.statements.append(_copy_loop(ctx.buf_of(base), store, node.shape))
+  if ctx.in_place is not None and node.id in ctx.in_place:
+    # A link of a proven in-place chain: the carry itself, whose caller keeps the scratch slots.
+    store = ctx.buffers[ctx.fun.output_names[0]]
+    ctx.value_buffers[node.id] = store.attrs["name"]
+  else:
+    store = ctx.new_private(node.type.dtype, (size + rows * lanes,))
+    ctx.value_buffers[node.id] = store.attrs["name"]
+    if size:
+      ctx.statements.append(_copy_loop(ctx.buf_of(base), store, node.shape))
   if not rows or not lanes:
     return
 
@@ -1228,16 +1259,10 @@ def in_place_chain(fun: Function) -> tuple[int, ...] | None:
   from ..ad.sparsity import jacobian_sparsity
   from ..ir.expr import substitute
 
-  carry, node = fun.inputs[0], fun.outputs[0]
-  chain: list[Expr] = []
-  while node is not carry:
-    if node.op not in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET):
-      return None
-    chain.append(node)
-    node = node.args[0]
-  if not chain:
+  chain = update_chain(fun)
+  if chain is None or any(e.op not in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET) for e in chain):
     return None
-  chain.reverse()
+  carry = fun.inputs[0]
   links = [carry, *chain]
   link_ids = {e.id for e in links}
 
@@ -1279,6 +1304,182 @@ def in_place_chain(fun: Function) -> tuple[int, ...] | None:
       if read & set(update.attrs["indices"].tolist()):
         return None
   return tuple(e.id for e in chain)
+
+
+_UPDATE_OPS = (ExprOp.INDEX_ADD, ExprOp.INDEX_SET, ExprOp.PUT_ADD, ExprOp.PUT)
+
+
+def update_chain(fun: Function) -> list[Expr] | None:
+  """The next carry as a chain of updates rooted at the carry input, ``u_1 ... u_m`` in order, or
+  None when it is not one. Structure only: whether the chain may run in place is proven apart."""
+  carry, node = fun.inputs[0], fun.outputs[0]
+  chain: list[Expr] = []
+  while node is not carry:
+    if node.op not in _UPDATE_OPS:
+      return None
+    chain.append(node)
+    node = node.args[0]
+  return chain[::-1] or None
+
+
+def in_place_steps(fun: Function, steps: dict[int, np.ndarray]) -> bool:
+  """Whether a loop body's update chain may overwrite its carry in place, for the index values the
+  loop feeds it: ``steps[p]`` is input ``p`` at every step, for the inputs sliced from constants.
+
+  Every index of every update, and every index through which the values read a chain link, must be
+  computable from those inputs and constants alone; it is then computed for all steps at once. The
+  values of update ``i`` may read link ``u_j`` (``j < i``) only through ``take``, ``gather`` or a
+  slice, possibly of a reshape, and at every step the entries they read must be disjoint from the
+  entries updates ``j + 1 ... i`` write. No other output may read a link. Sufficient, not
+  necessary; the two-slot carry is kept otherwise.
+  """
+  chain = update_chain(fun)
+  if chain is None:
+    return False
+  length = next(iter(steps.values())).shape[0] if steps else 0
+  carry = fun.inputs[0]
+  links = [carry, *chain]
+  position = {e.id: j for j, e in enumerate(links)}
+  memo: dict[int, np.ndarray | None] = {}
+  inputs = {e.id: pos for pos, e in enumerate(fun.inputs)}
+
+  def value(e: Expr) -> np.ndarray | None:
+    return _step_value(e, steps, inputs, length, memo)
+
+  writes: list[np.ndarray] = []  # per update: (length, lanes) flat positions, -1 for a dropped lane
+  for update in chain:
+    if update.op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET):
+      w = np.broadcast_to(np.asarray(update.attrs["indices"], dtype=np.int64).reshape(1, -1), (length, update.attrs["indices"].size))
+    else:
+      idx = value(update.args[1])
+      if idx is None:
+        return False
+      w = _flat_positions(idx, update.shape)
+    writes.append(w)
+
+  def link_of(e: Expr) -> int | None:
+    while e.op == ExprOp.RESHAPE and e.id not in position:
+      e = e.args[0]
+    return position.get(e.id)
+
+  reads: list[tuple[int, int, np.ndarray]] = []  # (update i, link j, positions)
+  for i, update in enumerate(chain, start=1):
+    values = update.args[-1]
+    seen: set[int] = set()
+    pending = [values]
+    while pending:
+      node = pending.pop()
+      if node.id in seen:
+        continue
+      seen.add(node.id)
+      if link_of(node) is not None:
+        return False  # the values use a whole link (or are one) beyond what the rule can bound
+      for a_pos, arg in enumerate(node.args):
+        j = link_of(arg)
+        if j is None:
+          pending.append(arg)
+          continue
+        if node.op == ExprOp.TAKE and a_pos == 0:
+          idx = value(node.args[1])
+          if idx is None:
+            return False
+          positions = _flat_positions(idx, arg.shape)
+        elif node.op == ExprOp.GATHER:
+          positions = np.broadcast_to(np.asarray(node.attrs["indices"], dtype=np.int64).reshape(1, -1), (length, node.attrs["indices"].size))
+        elif node.op == ExprOp.SLICE:
+          flat = np.arange(arg.size).reshape(arg.shape)[node.attrs["index"]].reshape(1, -1)
+          positions = np.broadcast_to(flat, (length, flat.size))
+        else:
+          return False
+        reads.append((i, j, positions))
+        if node.op == ExprOp.TAKE:
+          pending.append(node.args[1])
+  for y in fun.outputs[1:]:
+    for node in topo([y]):
+      if any(link_of(a) is not None for a in node.args) or link_of(node) is not None:
+        return False
+  for i, j, positions in reads:
+    written = np.concatenate([writes[w - 1] for w in range(j + 1, i + 1)], axis=1)
+    if _overlap(positions, written):
+      return False
+  return True
+
+
+def _flat_positions(idx: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+  """The flat positions a run-time index addresses in an array of ``shape`` at each step: row ``b``
+  of the last axis at ``b * n + i``, and -1 for an index outside ``[0, n)``."""
+  n = shape[-1]
+  rows = int(np.prod(shape[:-1], dtype=np.int64))
+  idx = idx.reshape(idx.shape[0], -1)
+  inside = (idx >= 0) & (idx < n)
+  flat = np.arange(rows)[None, :, None] * n + idx[:, None, :]
+  return np.where(inside[:, None, :], flat, -1).reshape(idx.shape[0], -1)
+
+
+def _overlap(a: np.ndarray, b: np.ndarray) -> bool:
+  """Whether, at any step (row), a position >= 0 appears in both ``a`` and ``b``."""
+  if not a.size or not b.size:
+    return False
+  length = a.shape[0]
+  span = int(max(a.max(), b.max())) + 1
+  step_a = np.broadcast_to(np.arange(length)[:, None], a.shape)
+  step_b = np.broadcast_to(np.arange(length)[:, None], b.shape)
+  keys_a = np.unique((step_a * span + a)[a >= 0])
+  keys_b = np.unique((step_b * span + b)[b >= 0])
+  return np.intersect1d(keys_a, keys_b, assume_unique=True).size > 0
+
+
+def _step_value(e: Expr, steps: dict[int, np.ndarray], inputs: dict[int, int], length: int, memo: dict[int, np.ndarray | None]) -> np.ndarray | None:
+  """An integer expression's value at every step, shape ``(length, *e.shape)``, when it depends only
+  on constants and the inputs in ``steps``; None otherwise."""
+  if e.id in memo:
+    return memo[e.id]
+  memo[e.id] = None
+  if e.type.dtype != dtypes.int64:
+    return None
+  args = [_step_value(a, steps, inputs, length, memo) if a.type.dtype == dtypes.int64 else None for a in e.args]
+  out: np.ndarray | None = None
+  vals = [a for a in args if a is not None]
+  if e.op == ExprOp.CONST and e.value is not None:
+    out = np.broadcast_to(np.asarray(e.value, dtype=np.int64).reshape(1, *e.shape), (length, *e.shape))
+  elif e.op == ExprOp.INPUT and inputs.get(e.id) in steps:
+    out = steps[inputs[e.id]]
+  elif len(vals) != len(args) or not vals:
+    out = None  # a float operand (a cast from data) or an unknown input
+  elif e.op in (ExprOp.ADD, ExprOp.SUB, ExprOp.MUL, ExprOp.MINIMUM, ExprOp.MAXIMUM):
+    fn = {ExprOp.ADD: np.add, ExprOp.SUB: np.subtract, ExprOp.MUL: np.multiply, ExprOp.MINIMUM: np.minimum, ExprOp.MAXIMUM: np.maximum}[ExprOp(e.op)]
+    # Align each operand's own axes to the right of the step axis, as NumPy broadcasting would.
+    x, y = (a.reshape(length, *(1,) * (len(e.shape) - len(a_e.shape)), *a_e.shape) for a, a_e in zip(vals, e.args, strict=True))
+    out = fn(x, y)
+  elif e.op == ExprOp.NEG:
+    out = -vals[0]
+  elif e.op == ExprOp.CAST:
+    out = vals[0]
+  elif e.op == ExprOp.RESHAPE:
+    out = vals[0].reshape(length, *e.shape)
+  elif e.op == ExprOp.SLICE:
+    out = vals[0][(slice(None), *e.attrs["index"])]
+  elif e.op == ExprOp.GATHER:
+    out = vals[0].reshape(length, -1)[:, np.asarray(e.attrs["indices"]).reshape(-1)].reshape(length, *e.shape)
+  elif e.op == ExprOp.TAKE:
+    x, idx = vals
+    n = e.args[0].shape[-1]
+    fill = int(e.attrs["fill"])
+    if not n:
+      out = np.full((length, *e.shape), fill, dtype=np.int64)
+    else:
+      xr = x.reshape(length, -1, n)
+      inside = (idx >= 0) & (idx < n)
+      where = np.broadcast_to(np.where(inside, idx, 0)[:, None, :], (length, xr.shape[1], idx.shape[1]))
+      out = np.where(inside[:, None, :], np.take_along_axis(xr, where, axis=2), fill).reshape(length, *e.shape)
+  elif e.op in (ExprOp.CONCAT, ExprOp.STACK):
+    axis = int(e.attrs.get("axis", 0)) + 1
+    parts = [a.reshape(length, *a_e.shape) for a, a_e in zip(vals, e.args, strict=True)]
+    out = np.concatenate(parts, axis=axis) if e.op == ExprOp.CONCAT else np.stack(parts, axis=axis)
+  if out is not None and out.shape != (length, *e.shape):
+    out = None
+  memo[e.id] = out
+  return out
 
 
 # Operations whose structural sparsity pattern is exactly the set of entries they read, so the pattern

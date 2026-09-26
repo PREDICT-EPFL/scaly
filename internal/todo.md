@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 103**
+**Next id: 104**
 
 | Prefix | Section |
 |---|---|
@@ -151,6 +151,12 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       integer keep an integer expression integer. Procedures holding them do not scalarize. A
       `put_add` into a scan carry still copies the carry every step, which is T2-3
       (`notes/tier2_pr2_report.html`).
+- [x] **C-103. In-place carries through run-time-index updates, proven at the loop (T2-3).**
+      `in_place_steps` evaluates every update index and every `take`/`gather`/slice read of a chain
+      link for all steps at once from the constant tables the loop slices (and the step number),
+      and requires each read to miss the writes of the updates after its link. The carry keeps
+      the scratch slots of padded lanes after its entries. `A^T y` by row accumulation at
+      n = 2000: 2 283 → 51 µs (`notes/tier2_pr3_report.html`).
 
 ### Tier 1 primitives
 

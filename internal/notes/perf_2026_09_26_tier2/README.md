@@ -9,7 +9,7 @@ and no page under `docs/` cites them.
 | Script | Compares |
 | --- | --- |
 | `pr1_index.py` | a time-varying RK4 rollout with the step number as a body input (`index`) against a stored float time table (`table`) and time as an extra carry entry (`carry`): value, gradient, Hessian |
-| `pr2_take.py` | `A x` and `A^T y` with run-time column indices (`take`, a row scan with `take`, a row scan accumulating with `put_add`) against baked-in indices (`gather` + `segment_sum`) and SciPy |
+| `pr2_take.py` | `A x` and `A^T y` with run-time column indices (`take`, a row scan with `take`, a row scan accumulating with `put_add`) against baked-in indices (`gather` + `segment_sum`) and SciPy; `scan-put` is also the T2-3 in-place case |
 
 Run from this directory, with a fresh cache so first-call times include compilation:
 
