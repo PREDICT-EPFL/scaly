@@ -10,3 +10,4 @@ no page under `docs/` cites them.
 | `t3_0_piqp_baseline.py` | vendored PIQP 0.6.2 on the stored Maros–Mészáros subset and three MPC sizes, sparse and dense backends: status, iterations, PIQP's own setup and solve times (median of 5). The baseline for the Scaly IPM |
 | `t3_0b_reference_gate.py` | the NumPy PIQP reference against vendored PIQP per problem (MM subset, infeasible set, MPC, random QPs and LPs): iterations with each backend and the reference, decision-trace matches against each backend, whether the backends agree (rounding sensitivity), the reference's wall time |
 | `t3_1_while_params.py` | C-112: `SparseLDL` adaptive refinement (a `while_loop` whose factor, matrix and right-hand side became params) against the plain solve, on KKT systems of 75 to 1200 unknowns; run on two checkouts to compare |
+| `t3_2_ruiz.py` | T3-2: generated Ruiz equilibration against the NumPy reference and PIQP's setup time, with first-call (render and compile) time |

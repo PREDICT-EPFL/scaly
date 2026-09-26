@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 3 PR 2 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 3 · PR 2 report</h1>
+<p class="sub">T3-2 · Ruiz equilibration as generated code (C-126), and a codegen fix found on the way (C-125) · branch <code>claude/tier3-ipm</code> · 26 Sep 2026</p>
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b></p>
+<ul>
+<li><b>The first piece of the generated IPM.</b> <code>scaly.solvers.ipm</code> contains:
+<ul>
+<li><code>QPStructure</code>, the static patterns and bound finiteness;</li>
+<li><code>QPValues</code>, PIQP's preprocessing: free rows zeroed and bounded by ±1, finite box bounds packed;</li>
+<li><code>ruiz</code> and <code>scale</code>.</li>
+</ul>
+Ruiz is a <code>while_loop</code> (T3-1's params hold the data) that reproduces PIQP's passes, <code>limit_scaling</code>, the 1e-3 stopping test and cost scaling with its aliasing.</li>
+<li><b>Exact.</b> Scalings, scaled <code>P</code> and <code>c</code>, and the box scaling match the reference to 1e-13 on all 48 stored problems, with and without cost scaling, on the infeasible set and on MPC.</li>
+<li><b>C-125, a silent wrong-number bug in codegen.</b> An output named like an input, as in <code>examples/simple.py</code>, had its buffer replace the input's, so the input was read from the output buffer. Fixed in lowering and in the C entry, with 4 tests, and committed separately.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 1979 passed. <b>Mutation checks:</b> C-125 2 of 2 killed. T3-2 is checked by exact comparison: any change to a scaling rule moves a scaling on some of the 48 problems far beyond 1e-13.</p>
+</div>
+<h2>Benchmarks</h2>
+<p><code>perf_2026_09_26_tier3/t3_2_ruiz.py</code>, in µs. PIQP's setup time also includes its KKT symbolic analysis, so it is an upper bound for its Ruiz.</p>
+<div class="scroll"><table>
+<tr><th>problem</th><th>n+p+m</th><th>nnz</th><th>generated</th><th>NumPy ref.</th><th>PIQP setup</th><th>first call (s)</th></tr>
+<tr><td>HS21</td><td class="r">3</td><td class="r">4</td><td class="r">8.2</td><td class="r">4168</td><td class="r">14</td><td class="r">0.40</td></tr>
+<tr><td>QAFIRO</td><td class="r">57</td><td class="r">87</td><td class="r">14.3</td><td class="r">4473</td><td class="r">36</td><td class="r">0.82</td></tr>
+<tr><td>DUAL1</td><td class="r">86</td><td class="r">3643</td><td class="r">324</td><td class="r">5158</td><td class="r">183</td><td class="r">0.61</td></tr>
+<tr><td>CVXQP1_S</td><td class="r">150</td><td class="r">534</td><td class="r">63.7</td><td class="r">4390</td><td class="r">99</td><td class="r">0.71</td></tr>
+<tr><td>QPCBLEND</td><td class="r">155</td><td class="r">572</td><td class="r">54.6</td><td class="r">4533</td><td class="r">89</td><td class="r">0.72</td></tr>
+<tr><td>QSC205</td><td class="r">408</td><td class="r">572</td><td class="r">59.8</td><td class="r">4631</td><td class="r">105</td><td class="r">1.10</td></tr>
+<tr><td>PRIMAL1</td><td class="r">410</td><td class="r">6139</td><td class="r">61.2</td><td class="r">865</td><td class="r">631</td><td class="r">0.51</td></tr>
+<tr><td>QBORE3D</td><td class="r">549</td><td class="r">1508</td><td class="r">165</td><td class="r">4879</td><td class="r">265</td><td class="r">0.79</td></tr>
+<tr><td>QCAPRI</td><td class="r">640</td><td class="r">2677</td><td class="r">275</td><td class="r">5100</td><td class="r">366</td><td class="r">0.51</td></tr>
+</table></div>
+<p>A pass recomputes every scaled entry from the original values and the accumulated scaling (gathers and products), then takes segment maxima. On a dense <code>P</code> that costs more than PIQP's in-place rescaling; this is a candidate for T3-R.</p>
+<h2>Next</h2><p>T3-3: the KKT backends.</p>
+</main></body></html>

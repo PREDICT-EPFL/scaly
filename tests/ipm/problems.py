@@ -195,3 +195,23 @@ def random_qp(n: int, m: int, p: int, *, density: float = 0.15, seed: int = 0, l
   x_u = np.where(boxed, x0 + rng.uniform(0.0, 2.0, n), np.inf)
   c = rng.standard_normal(n)
   return _qp(f"random_{'lp' if lp else 'qp'}_{n}_{m}_{p}_{seed}", P, c, A=A, b=A @ x0, G=G, h_l=h_l, h_u=h_u, x_l=x_l, x_u=x_u)
+
+
+def ipm_inputs(qp: QP):
+  """A ``QPStructure`` for ``qp`` and its value vectors in the structure's entry order, by name."""
+  from scaly.solvers.ipm import QPStructure
+
+  s = QPStructure.from_patterns(qp.P, qp.A, qp.G, h_l=qp.h_l, h_u=qp.h_u, x_l=qp.x_l, x_u=qp.x_u)
+  dense = {k: getattr(qp, k).toarray() for k in ("P", "A", "G")}
+  values = {
+    "P": dense["P"][s.P_rows, s.P_cols],
+    "A": dense["A"][s.A_rows, s.A_cols],
+    "G": dense["G"][s.G_rows, s.G_cols],
+    "c": qp.c,
+    "b": qp.b,
+    "h_l": qp.h_l,
+    "h_u": qp.h_u,
+    "x_l": qp.x_l,
+    "x_u": qp.x_u,
+  }
+  return s, values

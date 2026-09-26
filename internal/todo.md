@@ -336,6 +336,14 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       wrong numbers, found building T3-2's tests). Such an output now gets a buffer of its own,
       output rules reach their buffer by position, and the C entry maps parameters to `arg[i]` and
       `res[i]` by position (the typed header already named them `y_in`/`y_out`).
+- [x] **C-126. Ruiz equilibration as generated code (T3-2).** `scaly.solvers.ipm`: `QPStructure`
+      (the patterns of `P`'s upper triangle, `A`, `G`, and which bounds are finite; rows free on
+      both sides stay as zero rows bounded by [-1, 1]), `QPValues.preprocess`, and `ruiz`/`scale`:
+      PIQP's equilibration as a `while_loop` whose params are the matrix values and `c` and whose
+      carry holds the scalings, cost scaling and its aliasing included. Scalings, scaled data and
+      box scaling match the reference to 1e-13 on all 48 stored problems with and without cost
+      scaling. 8-325 us per call, below PIQP's whole setup except on dense `P`
+      (`perf_2026_09_26_tier3/t3_2_ruiz.py`, `notes/tier3_pr2_report.html`).
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 
