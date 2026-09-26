@@ -87,7 +87,7 @@ def test_solves_built_from_factors(n: int) -> None:
   np.testing.assert_allclose(got_q[3], np.linalg.solve(q, bmv), rtol=1e-11)
   np.testing.assert_allclose(got_q[4] @ np.diag(got_q[5]) @ got_q[4].T, q, rtol=1e-12, atol=1e-12)
   with pytest.raises(ValueError, match="assume"):
-    solve(a, b, assume="lu")  # type: ignore[arg-type]
+    solve(a, b, assume="lu")  # ty: ignore[invalid-argument-type]
 
 
 def test_cholesky_of_an_indefinite_matrix_is_nan() -> None:

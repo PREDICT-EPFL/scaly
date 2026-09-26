@@ -237,3 +237,34 @@ def test_inputs_of_every_memory_kind() -> None:
     y, z = fn._flat_numerical_call(value, np.zeros(0))
     np.testing.assert_array_equal(y, [0.0, 2.0, 4.0])
     assert z.shape == (0,)
+
+
+def test_build_survives_its_cache_directory_vanishing(isolated_cache, monkeypatch) -> None:
+  """Another process's ``recompile()`` can remove the directory mid-build; the build starts over once."""
+  real_replace = Path.replace
+  removed: list[Path] = []
+
+  def replace_after_removal(self: Path, target):
+    if not removed and self.suffix == ".tmp":
+      removed.append(self.parent)
+      shutil.rmtree(self.parent)
+    return real_replace(self, target)
+
+  monkeypatch.setattr(Path, "replace", replace_after_removal)
+  fn = _simple_fn()
+  np.testing.assert_allclose(fn(np.array([0.1, -0.7, 2.5])), (np.sin([0.1, -0.7, 2.5]) + np.square([0.1, -0.7, 2.5])).sum())
+  assert removed and (removed[0] / "libsmoke_jit").with_suffix(jit.shared_lib_ext()).exists()
+
+
+def test_a_failing_compile_is_not_retried(isolated_cache, monkeypatch) -> None:
+  """Only a vanished cache directory earns a second build; a compiler error is reported at once."""
+  calls: list[list[str]] = []
+
+  def failing_run(cmd, **kwargs):
+    calls.append(cmd)
+    raise jit.subprocess.CalledProcessError(1, cmd, stderr="boom")
+
+  monkeypatch.setattr(jit.subprocess, "run", failing_run)
+  with pytest.raises(jit.JitError, match="boom"):
+    _simple_fn()(np.zeros(3))
+  assert len(calls) == 1

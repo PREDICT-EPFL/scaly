@@ -8,11 +8,22 @@ from typing import Any, TypeGuard, cast, overload
 import numpy as np
 
 from ..ir.expr import Expr, ExprOp
-from ..ir.types import TensorType, as_shape
+from ..ir.types import SparsityType, TensorType, as_shape
 
 
 type ShapeDecl = int | tuple[int, ...] | EllipsisType | TensorType
 type LeafDecl = TensorType | EllipsisType
+
+
+class SymbolicValue:
+  """Base for library values that stand in a tree for one ``Expr`` leaf, as ``SparseMatrix`` does for
+  its values: a call whose leaves are all ``Expr`` or ``SymbolicValue`` is symbolic."""
+
+  __slots__ = ()
+
+
+def _is_symbolic_leaf(leaf: Any) -> bool:
+  return isinstance(leaf, (Expr, SymbolicValue))
 
 
 def _leaves(value: Any) -> list[Any]:
@@ -72,6 +83,16 @@ class Tree[Symbolic, Numerical]:
         raise TypeError(f"{name!r} declared with type {decl}, traced type {actual}")
     return traced
 
+  def infer(self, value: Symbolic) -> Tree[Symbolic, Numerical]:
+    """Return this declaration with what it leaves to tracing, such as a sparse output's pattern,
+    taken from the traced ``value``. Shapes are resolved separately, by ``with_types``."""
+    return self
+
+  @property
+  def sparsities(self) -> tuple[SparsityType | None, ...]:
+    """The pattern each leaf's values are stored in, ``None`` for a dense leaf, in C-signature order."""
+    return (None,) * self.size
+
   def index(self, name: str) -> int:
     """Return the flat index for ``name``, or raise with the declared choices."""
     if name not in self.names:
@@ -79,23 +100,23 @@ class Tree[Symbolic, Numerical]:
     return self.names.index(name)
 
   def is_symbolic(self, value: Symbolic | Numerical, /) -> TypeGuard[Symbolic]:
-    """Whether ``value`` has at least one leaf and every leaf is an ``Expr``.
+    """Whether ``value`` has at least one leaf and every leaf is an ``Expr`` (or a ``SymbolicValue``).
 
     This is the leaf-kind half of ``Function.__call__``'s dispatch; it deliberately ignores
     structure so that a wrongly-shaped tree is reported by ``flatten_symbolic`` against the
     declared names instead of being rejected here as a kind mismatch.
     """
     leaves = _leaves(value)
-    return bool(leaves) and all(isinstance(leaf, Expr) for leaf in leaves)
+    return bool(leaves) and all(_is_symbolic_leaf(leaf) for leaf in leaves)
 
   def is_numerical(self, value: Symbolic | Numerical, /) -> TypeGuard[Numerical]:
-    """Whether no leaf of ``value`` is an ``Expr``.
+    """Whether no leaf of ``value`` is symbolic.
 
     The numerical side is the fallback: array-likes are coerced by ``flatten_numerical``, so a
     leaf only has to *not* be symbolic. Values with no leaves land here and are reported as a
     structure error rather than as a mixed call.
     """
-    return not any(isinstance(leaf, Expr) for leaf in _leaves(value))
+    return not any(_is_symbolic_leaf(leaf) for leaf in _leaves(value))
 
   def flatten_symbolic(self, value: Symbolic, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
     """Validate and flatten a symbolic value."""
@@ -195,6 +216,13 @@ class _G(Tree[Any, Any]):
       out.append(part.with_types(types[offset : offset + part.size]))
       offset += part.size
     return _G(tuple(out), public=False)
+
+  def infer(self, value: Any) -> _G:
+    return _G(tuple(part.infer(item) for part, item in zip(self.parts, value, strict=True)), public=False)
+
+  @property
+  def sparsities(self) -> tuple[SparsityType | None, ...]:
+    return tuple(sp for part in self.parts for sp in part.sparsities)
 
   def flatten_symbolic(self, value: Any, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
     if not isinstance(value, tuple) or len(value) != len(self.parts):

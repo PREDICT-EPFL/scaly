@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from scaly.linalg.symbolic import CostModel, Segment, analyze, ordering
+from scaly.linalg.symbolic import CostModel, Ordering, Segment, analyze, ordering
 
 RNG = np.random.default_rng(505)
 
@@ -41,7 +41,7 @@ def _coords(a: sparse.sparray, triangle: str = "lower") -> tuple[np.ndarray, np.
   return coo.row[keep].astype(np.int64), coo.col[keep].astype(np.int64), coo.data[keep]
 
 
-def _reference_pattern(a: sparse.sparray, perm: np.ndarray) -> np.ndarray:
+def _reference_pattern(a: sparse.csr_array, perm: np.ndarray) -> np.ndarray:
   """Strictly lower pattern of L by boolean elimination of the permuted pattern."""
   m = (a.toarray() != 0)[np.ix_(perm, perm)]
   m = m | m.T
@@ -64,7 +64,7 @@ MATRICES = {
 
 @pytest.mark.parametrize("method", ["natural", "rcm", "mmd"])
 @pytest.mark.parametrize("name", list(MATRICES))
-def test_pattern_tree_and_tables(name: str, method: str) -> None:
+def test_pattern_tree_and_tables(name: str, method: Ordering) -> None:
   a = MATRICES[name]()
   rows, cols, _ = _coords(a)
   s = analyze(a.shape, rows, cols, method)
@@ -165,7 +165,7 @@ def test_validation() -> None:
   with pytest.raises(ValueError, match="permutation"):
     analyze((2, 2), np.array([0, 1]), np.array([0, 1]), perm=np.array([0, 0]))
   with pytest.raises(ValueError, match="ordering"):
-    ordering(3, np.array([0]), np.array([0]), "amd")  # type: ignore[arg-type]
+    ordering(3, np.array([0]), np.array([0]), "amd")  # ty: ignore[invalid-argument-type]
   arrow = _arrow(40)
   with pytest.raises(ValueError, match="over the limit"):
     analyze(arrow.shape, *_coords(arrow)[:2], "natural", max_update_lanes=1000)

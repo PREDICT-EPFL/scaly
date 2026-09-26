@@ -261,7 +261,8 @@ def test_proof_helpers_directly() -> None:
   """``update_chain`` finds the chain structurally; ``in_place_steps`` needs the tables."""
   c, i, j = sc.sym("c", 4), sc.sym("i", 1, dtype="int64"), sc.sym("j", 1, dtype="int64")
   body = _normalize_function(sc.Function._from_exprs("ph", [c, i, j], [sc.put(c, i, sc.take(c, j))], ["c", "i", "j"], ["n"]))
-  assert [e.op for e in update_chain(body)] == [sc.ExprOp.PUT]
+  chain = update_chain(body)
+  assert chain is not None and [e.op for e in chain] == [sc.ExprOp.PUT]
   assert in_place_steps(body, {1: np.array([[0], [1]]), 2: np.array([[1], [2]])})
   assert not in_place_steps(body, {1: np.array([[0], [1]]), 2: np.array([[1], [1]])})
   assert not in_place_steps(body, {1: np.array([[0], [1]])})  # j unknown
@@ -330,4 +331,5 @@ def test_constant_index_updates_without_step_inputs(monkeypatch: pytest.MonkeyPa
     steps.append(c.copy())
   np.testing.assert_allclose(got[0], c, rtol=1e-14)
   assert got[1] == len(steps)
-  np.testing.assert_allclose(got[2], steps[6] if len(steps) > 6 else None, rtol=1e-14)
+  assert len(steps) > 6
+  np.testing.assert_allclose(got[2], steps[6], rtol=1e-14)

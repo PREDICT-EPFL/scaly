@@ -12,14 +12,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from types import EllipsisType
+from typing import Any, cast
 
 import numpy as np
 from scipy import sparse
 
 from ..ad.sparse import SparseJacobian
+from ..function.tree import SymbolicValue, Tree
 from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, segment_sum
-from ..ir.types import SparsityType
+from ..ir.types import SparsityType, TensorType
 
 
 def _pattern_arrays(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -51,7 +53,7 @@ def _pick(values: Expr, positions: np.ndarray) -> Expr:
 
 
 @dataclass(frozen=True, eq=False)
-class SparseMatrix:
+class SparseMatrix(SymbolicValue):
   """An ``m x n`` matrix with a static CSC pattern and an ``Expr`` of its ``nnz`` values.
 
   ``indptr`` (``n + 1``) and ``indices`` (``nnz``, sorted within each column) are NumPy arrays and
@@ -177,7 +179,7 @@ class SparseMatrix:
     return SparseMatrix(shape, np.zeros(shape[1] + 1, dtype=np.int64), np.zeros(0, dtype=np.int64), Expr.const(np.zeros(0)))
 
   @staticmethod
-  def block(blocks: Sequence[Sequence[SparseMatrix | Expr | None]]) -> SparseMatrix:
+  def block(blocks: Sequence[Sequence[SparseMatrix | Expr | np.ndarray | sparse.sparray | sparse.spmatrix | None]]) -> SparseMatrix:
     """Assemble a block matrix, such as a KKT matrix. Each entry is a ``SparseMatrix``, a dense rank-2
     block (as ``from_dense``: a constant stores its nonzeros, an expression every entry) or ``None``
     for a zero block. Every block row needs a block that fixes its height and every block column one
@@ -384,6 +386,135 @@ class SparseMatrix:
 
   def matvec(self, x: Any) -> Expr:
     return self @ x
+
+
+class S(Tree[SparseMatrix, sparse.sparray]):
+  """Declare one named sparse matrix: its pattern is part of the ``Function``'s signature.
+
+  ``pattern`` is anything ``SparseMatrix.symbol`` takes (a ``SparsityType``, a boolean mask, a SciPy
+  matrix) or a ``SparseMatrix`` whose pattern to copy; an output declared with ``...`` takes the
+  pattern the body returns. The body receives a ``SparseMatrix``. A symbolic call must pass a
+  ``SparseMatrix`` with exactly this pattern and an evaluation a SciPy sparse matrix with exactly
+  this pattern, explicit zeros included; anything else is refused. An output comes back as a
+  ``SparseMatrix`` from a symbolic call and a ``scipy.sparse.csc_array`` from an evaluation.
+
+  Only the ``(nnz,)`` values, in CSC order, cross the generated C signature, exactly as for
+  ``SparseMatrix.symbol``; the pattern is metadata fixed when the graph is built. An output's
+  pattern is also the output's sparsity metadata in the generated header.
+  """
+
+  pattern: SparsityType | None
+
+  def __init__(self, name: str, pattern: Any, /) -> None:
+    if not isinstance(name, str) or not name:
+      raise ValueError("S needs a non-empty name")
+    self.names = (name,)
+    if pattern is Ellipsis:
+      self.pattern, self.decls = None, (Ellipsis,)
+      return
+    if isinstance(pattern, SparseMatrix):
+      shape, indptr, indices = pattern.shape, pattern.indptr, pattern.indices
+    else:
+      rows, cols, shape = _coordinates(pattern)
+      indptr, indices, _ = _pattern_arrays(shape, rows, cols)
+    self._set_pattern(shape, indptr, indices)
+    self.decls = (TensorType((self._indices.size,)),)
+
+  def _set_pattern(self, shape: tuple[int, int], indptr: np.ndarray, indices: np.ndarray) -> None:
+    self._shape = (int(shape[0]), int(shape[1]))
+    self._indptr = np.asarray(indptr, dtype=np.int64)
+    self._indices = np.asarray(indices, dtype=np.int64)
+    self._scipy_index = np.int32 if max(self._indices.size, *self._shape) < np.iinfo(np.int32).max else np.int64
+    cols = np.repeat(np.arange(self._shape[1]), np.diff(self._indptr))
+    self.pattern = SparsityType(self._shape, tuple(int(r) for r in self._indices), tuple(int(c) for c in cols))
+
+  def _copy(self, name: str, decl: TensorType | EllipsisType) -> S:
+    out = S.__new__(S)
+    out.names, out.decls, out.pattern = (name,), (decl,), self.pattern
+    if self.pattern is not None:
+      out._shape, out._indptr, out._indices, out._scipy_index = self._shape, self._indptr, self._indices, self._scipy_index
+    return out
+
+  def _require_pattern(self) -> None:
+    if self.pattern is None:
+      raise TypeError(f"sparse leaf {self.names[0]!r} has an inferred pattern; resolve it by tracing first")
+
+  def _matrix(self, values: Expr) -> SparseMatrix:
+    self._require_pattern()
+    return SparseMatrix(self._shape, self._indptr, self._indices, values)
+
+  def _mismatch(self, shape: tuple[int, ...], indptr: np.ndarray, indices: np.ndarray) -> str | None:
+    """Why a pattern differs from the declared one, or None when it is the same."""
+    if tuple(shape) != self._shape:
+      return f"shape {tuple(shape)}, expected {self._shape}"
+    if np.array_equal(indptr, self._indptr) and np.array_equal(indices, self._indices):
+      return None
+    for j in range(self._shape[1]):
+      got, want = indices[indptr[j] : indptr[j + 1]], self._indices[self._indptr[j] : self._indptr[j + 1]]
+      if not np.array_equal(got, want):
+        return f"{indices.size} stored entries, expected {self._indices.size}; column {j} stores rows {got.tolist()}, expected {want.tolist()}"
+    raise AssertionError("patterns differ but no column does")
+
+  @property
+  def sparsities(self) -> tuple[SparsityType | None, ...]:
+    return (self.pattern,)
+
+  def symbols(self, *, diff: bool | None = None) -> SparseMatrix:
+    type_ = self.types[0]
+    if diff is not None:
+      type_ = TensorType(type_.shape, type_.dtype, type_.sparsity, diff)
+    return self._matrix(Expr(ExprOp.INPUT, type=type_, name=self.names[0]))
+
+  def relabel(self, prefix: str) -> S:
+    return self._copy(prefix + self.names[0], self.decls[0])
+
+  def with_types(self, types: tuple[TensorType, ...]) -> S:
+    if len(types) != 1:
+      raise ValueError(f"S expects one resolved type, got {len(types)}")
+    if self.pattern is not None and types[0].shape != (self._indices.size,):
+      raise ValueError(f"sparse leaf {self.names[0]!r} stores {self._indices.size} values, got type {types[0]}")
+    return self._copy(self.names[0], types[0])
+
+  def infer(self, value: SparseMatrix) -> S:
+    if self.pattern is not None:
+      return self
+    out = self._copy(self.names[0], self.decls[0])
+    out._set_pattern(value.shape, value.indptr, value.indices)
+    return out
+
+  def flatten_symbolic(self, value: SparseMatrix, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
+    if not isinstance(value, SparseMatrix):
+      raise ValueError(f"{what}: expected a SparseMatrix for {self.names[0]!r}, got {type(value).__name__}")
+    if self.pattern is not None and (why := self._mismatch(value.shape, value.indptr, value.indices)) is not None:
+      raise ValueError(f"{what}: {self.names[0]!r} has a different sparsity pattern than declared: {why}")
+    return (value.values,)
+
+  def flatten_numerical(self, value: sparse.sparray, what: str) -> tuple[np.ndarray, ...]:
+    if not isinstance(value, (sparse.sparray, sparse.spmatrix)):
+      raise ValueError(f"{what}: expected a SciPy sparse matrix for {self.names[0]!r}, got {type(value).__name__}")
+    # Float64 CSC, the form an evaluation returns, is used as it is: a conversion costs more than the
+    # call it feeds for small matrices. Canonicalizing below copies first.
+    is_csc = isinstance(value, (sparse.csc_array, sparse.csc_matrix)) and value.dtype == np.float64
+    csc = cast(sparse.csc_array, value) if is_csc else sparse.csc_array(value, dtype=np.float64)
+    if not csc.has_canonical_format:
+      csc = csc.copy()
+      csc.sum_duplicates()
+    if (why := self._mismatch(csc.shape, csc.indptr, csc.indices)) is not None:
+      raise ValueError(f"{what}: {self.names[0]!r} has a different sparsity pattern than declared: {why}")
+    return (np.require(csc.data, dtype=np.float64, requirements="C"),)
+
+  def unflatten(self, values: tuple[Any, ...]) -> Any:
+    if len(values) != 1:
+      raise ValueError(f"S expects one flat value, got {len(values)}")
+    (value,) = values
+    if isinstance(value, Expr):
+      return self._matrix(value)
+    self._require_pattern()
+    # Fresh index arrays per result: a caller may edit a returned matrix's structure in place.
+    index = self._scipy_index
+    return sparse.csc_array(
+      (np.asarray(value, dtype=np.float64).reshape(-1), self._indices.astype(index), self._indptr.astype(index)), shape=self._shape
+    )
 
 
 def _refuse_scalar(other: Any, what: str) -> None:

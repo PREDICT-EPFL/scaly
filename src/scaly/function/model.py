@@ -95,7 +95,8 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     except ValueError as exc:
       raise TypeError(str(exc)) from exc
     output_types = outputs.resolved(tuple(expr.type for expr in output_exprs))
-    self._init_graph(name, input_exprs, output_exprs, inputs, outputs.with_types(output_types), device=device)
+    output_tree = outputs.infer(symbolic_outputs).with_types(output_types)
+    self._init_graph(name, input_exprs, output_exprs, inputs, output_tree, output_tree.sparsities, device=device)
 
   @classmethod
   def _from_exprs(

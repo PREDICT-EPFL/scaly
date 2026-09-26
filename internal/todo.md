@@ -247,6 +247,22 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       `-O3` (decide with C-107). For small sparse solves: fold `y / D` into the backward sweep and
       write the final permutation straight into the output (5–9% on grid 30×30), and move large
       stack arrays (`double s0[n]`) into the workspace.
+- [x] **C-118. Tier 2 on the Mac.** The first macOS run (Apple clang 21): 1 575 passed, 2 failed.
+      Both failures were one race: `recompile()` removes `~/.cache/scaly/jit/<key>`, and a build
+      writing into that directory at the same moment lost its temp file. A build now starts over
+      once when its directory vanishes, and never retries a compiler error. `ty` found 30
+      diagnostics in the Tier 2 tests (mypy-style `# type: ignore[...]`, `str` where a `Literal`
+      is declared), and `SparseMatrix.block` was annotated narrower than it accepts.
+- [x] **C-119. Sparse matrices as `Function` arguments and results.** `sc.S(name, pattern)` puts
+      the pattern in the signature: the body gets a `SparseMatrix`, a symbolic call must pass one
+      with exactly that pattern, an evaluation a SciPy matrix with exactly that pattern (explicit
+      zeros count), and a result comes back as a `SparseMatrix` or a `csc_array`. `sc.S(name, ...)`
+      infers an output's pattern. Interface only: the C signature carries the values vector, and
+      the generated code is identical to a `Function` over it (a test pins this); an output's
+      pattern becomes its header sparsity metadata, as `output_sparsities` already did. Trees gained
+      `infer` and `sparsities`, and `SymbolicValue` marks a library value that stands for an `Expr`
+      leaf. A Python call costs about 10 µs more than the flat seam, mostly SciPy's constructor
+      (`perf_2026_09_26_tier2/followup_sparse_args.py`).
 
 ### Tier 1 primitives
 

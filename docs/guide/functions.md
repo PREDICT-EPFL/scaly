@@ -104,6 +104,33 @@ flat = sc.G(
 
 Choose the grouping that matches the object the caller passes.
 
+## Sparse matrices
+
+`sc.S(name, pattern)` declares a sparse matrix whose pattern is part of the signature. The body
+receives a [`SparseMatrix`](sparsity.md#sparse-matrices-as-values). A symbolic call must pass a
+`SparseMatrix` with exactly that pattern, and an evaluation a SciPy sparse matrix with exactly that
+pattern, where explicitly stored zeros count as stored. Any other pattern is refused. As an output,
+`sc.S(name, ...)` takes the pattern the body returns. A symbolic call then returns a `SparseMatrix`
+and an evaluation a `scipy.sparse.csc_array`.
+
+```python
+@sc.function(sc.G(sc.L("q", n), sc.S("A", a_pattern)), sc.S("K", ...))
+def kkt(inputs):
+    q, A = inputs
+    return sc.SparseMatrix.block([[sc.SparseMatrix.diag(q).add_diagonal(1e-6), None], [A, sc.SparseMatrix.identity(m) * -1e-3]])
+
+@sc.function(sc.G(sc.S("K", kkt.output_sparsities[0]), sc.L("b", n + m)), sc.L("x", ...))
+def solve(inputs):
+    K, b = inputs
+    return sc.linalg.SparseLDL(K).solve(b)
+
+x = solve((kkt((q, A)), b))   # SciPy matrices in and out, patterns checked at each call
+```
+
+This is interface only. The C signature carries the `(nnz,)` values vector in CSC order, and the
+generated code is the same as for a `Function` over that vector. An output's pattern also becomes
+the output's sparsity metadata in the generated header.
+
 ## Compose functions
 
 Calling a function with `Expr` leaves keeps the callee as a call in the graph:

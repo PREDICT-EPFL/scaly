@@ -3,12 +3,13 @@ built on them. Everything here is generated code built from ordinary expression 
 
 from .dense import cho_solve, cholesky, ldl, ldl_solve, ldl_unpack, solve, solve_triangular
 from .sparse_factor import SparseLDL, sparse_ldl
-from .sparse import SparseMatrix
+from .sparse import S, SparseMatrix
 from .symbolic import CostModel, Segment, SymbolicLDL, analyze, ordering
 
 __all__ = [
   "CostModel",
   "Segment",
+  "S",
   "SparseLDL",
   "SparseMatrix",
   "SymbolicLDL",

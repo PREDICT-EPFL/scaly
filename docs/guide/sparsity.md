@@ -179,11 +179,18 @@ Every result is again a `SparseMatrix` with a static pattern, and its values are
 expressions (static gathers, products and segment sums), so everything is differentiable through
 the values.
 
-Across a `Function` boundary a sparse matrix is its values vector. As an input, `symbol` gives
-exactly that vector. As an output, pass `values` with `sparsity` as the metadata, whose coordinate
-order is the values' order:
+Across a `Function` boundary a sparse matrix is its values vector, and `sc.S(name, pattern)`
+declares it with its pattern in the signature. The body then receives a `SparseMatrix`, and calls
+are refused unless the matrix passed has exactly the declared pattern. See
+[Sparse matrices](functions.md#sparse-matrices) in *Building functions*:
 
 ```python
-fn = sc.Function._from_exprs("kkt", [P.values, A.values, rho, delta], [K.values],
-                             output_sparsities=[K.sparsity])
+@sc.function(sc.G(sc.S("P", p_pattern), sc.S("A", a_pattern), sc.L("rho", ()), sc.L("delta", ())),
+             sc.S("K", ...))
+def kkt(inputs):
+    P, A, rho, delta = inputs
+    return sc.SparseMatrix.block([[P.add_diagonal(rho), A.T], [A, sc.SparseMatrix.identity(m) * (-delta)]])
 ```
+
+The C signature is unchanged by this: `symbol`'s values vector in, and the output's `values` out,
+with the output's `sparsity` as the header metadata.

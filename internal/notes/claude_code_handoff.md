@@ -15,7 +15,7 @@ holds what is to be done.
 - **Status summaries:** `tier1_implementation_status.md` and `tier2_implementation_status.md`.
   - Full reports: `tier1_pr*_report.html`, `tier1_summary_report.html`, `tier2_pr1..9_report.html` and `tier2_review_report.html` (the Tier 2 summary and hand-off).
   - Historical gap analysis: `programmatic_branch_analysis.md`.
-- **Open items:** `internal/todo.md`, next id C-118.
+- **Open items:** `internal/todo.md`, next id C-120.
   - Tier 1 leftovers: C-89 … C-100.
   - Tier 2 leftovers: C-107 (a decision for Colin: `-O3` by default), C-111, C-112, and C-114 … C-117.
   - Relevant to Tier 3: **C-112**, loop-invariant `while_loop` inputs for the IPM outer loop, and **C-114**, unpadded factor updates, since the factorization dominates IPM time.
@@ -36,11 +36,7 @@ holds what is to be done.
    - Style: copy the `<head>` and CSS of an existing report such as `tier2_pr9_report.html`.
    - Sections: summary box, what was built, tests and mutation checks, benchmarks, gates status, next.
    - Colin prefers HTML reports and brief, high-signal prose.
-5. **The node-ID baseline.** Update `tests/baseline/pytest_nodeids.txt` as the sorted union of the old file and the currently collected ids:
-   ```
-   uv run pytest --collect-only -q | grep '::' > /tmp/ids
-   cat tests/baseline/pytest_nodeids.txt /tmp/ids | LC_ALL=C sort -u
-   ```
+5. **The node-ID baseline.** Regenerate `tests/baseline/pytest_nodeids.txt` from the full collection with the recipe in `docs/dev/contributing.md`. The root `conftest.py` refuses extra ids as well as missing ones, so a union of old and new ids fails once a test is renamed.
 6. **One commit per PR** on the tier branch. Don't cite branch commit hashes anywhere (AGENTS.md).
 7. **Close each tier** with:
    - an agent review round: parallel reviewers for lowering/IR, AD, the library, performance, and docs/tests, then fixes and optimizations;

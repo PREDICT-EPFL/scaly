@@ -177,34 +177,47 @@ def _build_artifact(fun: Function) -> _Artifact:
 
   symbol = c_ident(fun.name)
   cache_dir = cache_root() / key
-  cache_dir.mkdir(parents=True, exist_ok=True)
   source_path = cache_dir / f"{symbol}.c"
   lib_path = cache_dir / f"lib{symbol}{shared_lib_ext()}"
-
-  if not lib_path.exists():
-    # Write to a process-unique temp file then rename, so concurrent builds neither read a
-    # half-written source nor race each other on the rename.
-    tmp_source = source_path.with_suffix(source_path.suffix + f".{os.getpid()}.tmp")
-    tmp_source.write_text(module.body)
-    tmp_source.replace(source_path)
-    # Compile to a process-unique temp lib then atomically rename, so concurrent builds of the same
-    # function (e.g. pytest-xdist workers on a cold cache) never observe a half-written .so.
-    tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.tmp")
-    # Link libraries (-l in extra_flags) MUST come after the source: ld defaults to --as-needed on
-    # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
-    # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
-    cmd = [cc, *flags, "-fPIC", shared_lib_flag(), str(source_path), *extra_flags, "-lm", "-o", str(tmp_lib)]
+  # Another process's ``recompile()`` (or someone clearing the cache) can remove the directory while
+  # this build writes into it; build again once rather than fail on the vanished temp file.
+  for attempt in range(2):
     try:
-      subprocess.run(cmd, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as exc:
-      tmp_lib.unlink(missing_ok=True)
-      raise JitError(f"failed to compile {fun.name!r}: {exc.stderr or exc.stdout}") from exc
-    tmp_lib.replace(lib_path)
+      _compile_into(cache_dir, source_path, lib_path, module.body, [cc, *flags, "-fPIC", shared_lib_flag()], extra_flags, fun.name)
+      break
+    except (FileNotFoundError, JitError):
+      if attempt or cache_dir.exists():
+        raise
 
   artifact = _Artifact(lib_path=lib_path, key=key, flags=extra_flags, workspace_size=module.workspace_size)
   with _artifact_lock:
     _artifact_cache[key] = artifact
   return artifact
+
+
+def _compile_into(cache_dir: Path, source_path: Path, lib_path: Path, body: str, cc_cmd: list[str], extra_flags: tuple[str, ...], name: str) -> None:
+  """Write ``body`` and compile it to ``lib_path`` inside ``cache_dir``, unless the library is there."""
+  cache_dir.mkdir(parents=True, exist_ok=True)
+  if lib_path.exists():
+    return
+  # Write to a process-unique temp file then rename, so concurrent builds neither read a
+  # half-written source nor race each other on the rename.
+  tmp_source = source_path.with_suffix(source_path.suffix + f".{os.getpid()}.tmp")
+  tmp_source.write_text(body)
+  tmp_source.replace(source_path)
+  # Compile to a process-unique temp lib then atomically rename, so concurrent builds of the same
+  # function (e.g. pytest-xdist workers on a cold cache) never observe a half-written .so.
+  tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.tmp")
+  # Link libraries (-l in extra_flags) MUST come after the source: ld defaults to --as-needed on
+  # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
+  # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
+  cmd = [*cc_cmd, str(source_path), *extra_flags, "-lm", "-o", str(tmp_lib)]
+  try:
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+  except subprocess.CalledProcessError as exc:
+    tmp_lib.unlink(missing_ok=True)
+    raise JitError(f"failed to compile {name!r}: {exc.stderr or exc.stdout}") from exc
+  tmp_lib.replace(lib_path)
 
 
 class CompiledFunction:

@@ -5,6 +5,7 @@ generated code."""
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import numpy as np
 import pytest
@@ -17,7 +18,8 @@ from scaly.ad.derivatives import gradient, hessian, jacobian
 from scaly.ad.forward import jvp
 from scaly.codegen import render_c_module
 from scaly.linalg import SparseLDL, SparseMatrix, sparse_ldl
-from scaly.linalg.sparse_factor import _call
+from scaly.linalg.sparse_factor import Schedule, _call
+from scaly.linalg.symbolic import Ordering
 
 RNG = np.random.default_rng(707)
 
@@ -67,7 +69,7 @@ def _values(mat: SparseMatrix, a: sparse.csc_array) -> np.ndarray:
 @pytest.mark.parametrize("which", ["lower", "upper", "full"])
 @pytest.mark.parametrize("ordering", ["natural", "rcm", "mmd", "auto"])
 @pytest.mark.parametrize("name", list(MATRICES))
-def test_factor_and_solve(name: str, ordering: str, which: str, schedule: str) -> None:
+def test_factor_and_solve(name: str, ordering: Ordering, which: str, schedule: Schedule) -> None:
   k = MATRICES[name]()
   t = _triangle(k, which)
   mat = SparseMatrix.symbol("K", t)
@@ -129,7 +131,7 @@ def test_every_loop_runs_in_place_and_one_factorization_serves_every_solve() -> 
 
 
 @pytest.mark.parametrize("schedule", ["scan", "unroll"])
-def test_implicit_derivatives(monkeypatch: pytest.MonkeyPatch, schedule: str) -> None:
+def test_implicit_derivatives(monkeypatch: pytest.MonkeyPatch, schedule: Schedule) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   k = _kkt(12, 5, 1e-2, 5)
   t = _triangle(k, "lower")
@@ -190,7 +192,7 @@ def test_validation() -> None:
 
 @pytest.mark.parametrize("name", list(MATRICES))
 @pytest.mark.parametrize("ordering", ["natural", "mmd"])
-def test_padded_groups_run_empty_ranges(name: str, ordering: str) -> None:
+def test_padded_groups_run_empty_ranges(name: str, ordering: Ordering) -> None:
   """A padded group of a column update is an empty range, so padding costs no multiply-adds."""
   k = MATRICES[name]()
   fact = SparseLDL(SparseMatrix.symbol("K", _triangle(k, "lower")), ordering=ordering, schedule="scan")
@@ -226,7 +228,7 @@ def test_auto_schedule_follows_the_option() -> None:
   with sc.options(sparse_unroll=work - 1):
     assert SparseLDL(mat).schedule == "scan"
   with pytest.raises(ValueError, match="schedule must be one of"):
-    SparseLDL(mat, schedule="loop")  # type: ignore[arg-type]
+    SparseLDL(mat, schedule="loop")  # ty: ignore[invalid-argument-type]
 
 
 def _full(t: sparse.csc_array) -> sparse.csr_array:
@@ -234,7 +236,7 @@ def _full(t: sparse.csc_array) -> sparse.csr_array:
 
 
 @pytest.mark.parametrize("schedule", ["scan", "unroll"])
-def test_refinement_fixed_and_adaptive(schedule: str) -> None:
+def test_refinement_fixed_and_adaptive(schedule: Schedule) -> None:
   """At a tiny regularization one solve leaves a residual far above rounding; refinement removes
   it."""
   k = _kkt(12, 6, 1e-11, 11)
@@ -258,7 +260,7 @@ def test_refinement_fixed_and_adaptive(schedule: str) -> None:
 
 
 @pytest.mark.parametrize("schedule", ["scan", "unroll"])
-def test_refinement_step_counts_with_an_inexact_factor(schedule: str) -> None:
+def test_refinement_step_counts_with_an_inexact_factor(schedule: Schedule) -> None:
   """Refining against ``K`` with the factor of ``1.2 K`` contracts the error by exactly 1/6 per
   step, so ``k`` steps give ``(1 - 6^{-(k+1)}) K^{-1} b`` and the adaptive loop's step count can be
   read off the result: it stops at the first residual ``6^{-(k+1)} ||b||`` below
@@ -291,7 +293,8 @@ def test_refined_solve_keeps_the_implicit_derivative() -> None:
   b = sc.sym("b", 14)
   kv, bv = _values(mat, t), RNG.standard_normal(14)
   grads = []
-  for opts in ({}, {"refine": 2}, {"refine": 2, "tol": 1e-14}):
+  options: list[dict[str, Any]] = [{}, {"refine": 2}, {"refine": 2, "tol": 1e-14}]
+  for opts in options:
     f = sc.sumsqr(fact.solve(b, **opts))
     grads.append(_fn(f"rg{len(grads)}", [mat.values, b], [gradient(f, mat.values), gradient(f, b)])._flat_numerical_call(kv, bv))
   for g in grads[1:]:
@@ -383,7 +386,7 @@ def test_solve_sparsity_is_per_connected_component() -> None:
 
 @pytest.mark.parametrize("schedule", ["scan", "unroll"])
 @pytest.mark.parametrize("which", ["lower", "upper"])
-def test_second_derivatives_in_the_matrix(monkeypatch: pytest.MonkeyPatch, schedule: str, which: str) -> None:
+def test_second_derivatives_in_the_matrix(monkeypatch: pytest.MonkeyPatch, schedule: Schedule, which: str) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   k = _kkt(7, 3, 1e-2, 5)
   t = _triangle(k, which)
@@ -401,7 +404,7 @@ def test_second_derivatives_in_the_matrix(monkeypatch: pytest.MonkeyPatch, sched
 
 
 @pytest.mark.parametrize("schedule", ["scan", "unroll"])
-def test_matrix_right_hand_side_derivatives(schedule: str) -> None:
+def test_matrix_right_hand_side_derivatives(schedule: Schedule) -> None:
   k = _kkt(7, 3, 1e-2, 6)
   t = _triangle(k, "lower")
   mat = SparseMatrix.symbol("K", t)
@@ -431,7 +434,7 @@ def test_third_derivatives_go_through_the_loops() -> None:
 
 
 @pytest.mark.parametrize("schedule", ["scan", "unroll"])
-def test_every_solve_variant_in_one_graph(schedule: str) -> None:
+def test_every_solve_variant_in_one_graph(schedule: Schedule) -> None:
   """Solves with and without refinement, fixed or adaptive at two tolerances, for a vector and a
   matrix right-hand side, and their gradients: every variant and rule has a name of its own."""
   k = _kkt(8, 3, 1e-6, 17)
@@ -439,7 +442,14 @@ def test_every_solve_variant_in_one_graph(schedule: str) -> None:
   mat = SparseMatrix.symbol("K", t)
   fact = SparseLDL(mat, schedule=schedule)
   b, bm = sc.sym("b", 11), sc.sym("B", (11, 2))
-  variants = [{}, {"refine": 1}, {"refine": 2}, {"refine": 3, "tol": 1e-1}, {"refine": 3, "tol": 1e-14}, {"refine": 0, "tol": 1e-3}]
+  variants: list[dict[str, Any]] = [
+    {},
+    {"refine": 1},
+    {"refine": 2},
+    {"refine": 3, "tol": 1e-1},
+    {"refine": 3, "tol": 1e-14},
+    {"refine": 0, "tol": 1e-3},
+  ]
   xs = [fact.solve(b, **v) for v in variants] + [fact.solve(bm, **v) for v in variants]
   grads = [gradient(sc.sumsqr(x), mat.values) for x in xs]
   kv = _values(mat, t)

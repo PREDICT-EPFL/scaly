@@ -115,13 +115,13 @@ def test_structural_helpers() -> None:
 
 def test_validation() -> None:
   with pytest.raises(ValueError, match="indptr"):
-    SparseMatrix((2, 2), [0, 2], [0, 1], sc.sym("v", 2))
+    SparseMatrix((2, 2), np.array([0, 2]), np.array([0, 1]), sc.sym("v", 2))
   with pytest.raises(ValueError, match="sorted and distinct"):
-    SparseMatrix((2, 1), [0, 2], [1, 0], sc.sym("v", 2))
+    SparseMatrix((2, 1), np.array([0, 2]), np.array([1, 0]), sc.sym("v", 2))
   with pytest.raises(ValueError, match="out of bounds"):
-    SparseMatrix((2, 1), [0, 1], [5], sc.sym("v", 1))
+    SparseMatrix((2, 1), np.array([0, 1]), np.array([5]), sc.sym("v", 1))
   with pytest.raises(ValueError, match="values must have shape"):
-    SparseMatrix((2, 1), [0, 1], [0], sc.sym("v", 2))
+    SparseMatrix((2, 1), np.array([0, 1]), np.array([0]), sc.sym("v", 2))
   with pytest.raises(ValueError, match="distinct"):
     SparseMatrix.from_pattern(sparse.coo_array((np.ones(3), ([0, 1, 0], [0, 0, 0])), shape=(2, 1)), sc.sym("w", 3))
   with pytest.raises(ValueError, match="must have shape"):
