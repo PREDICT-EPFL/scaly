@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 from scipy import sparse
 
-from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, PREDICATE_OPS, Expr, ExprOp
+from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, PREDICATE_OPS, Expr, ExprOp, independent
 from ..ir.types import SparsityType, broadcast_shape
 
 
@@ -30,6 +30,7 @@ def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityType:
   numerical values. It is conservative for nonsmooth elementwise ops and block ops, but exact
   for the structural/arithmetic subset currently implemented here.
   """
+  (expr,), (wrt,), _ = independent((expr,), (wrt,))
   return _mask_sparsity(_jac_mask(expr, wrt, {}))
 
 

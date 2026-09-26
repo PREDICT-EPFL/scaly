@@ -263,6 +263,16 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       `infer` and `sparsities`, and `SymbolicValue` marks a library value that stands for an `Expr`
       leaf. A Python call costs about 10 µs more than the flat seam, mostly SciPy's constructor
       (`perf_2026_09_26_tier2/followup_sparse_args.py`).
+- [x] **C-120. Derivatives with respect to an expression that is not an input.** Forward mode and
+      the sparsity analysis seeded only `INPUT` nodes, so `jacobian`, `hessian`, `jvp`,
+      `sparse_jacobian` and `sparse_hessian` in a slice of an input returned zeros without an
+      error (reverse mode was right). A `while_loop` body sees only its carry, so a Newton step there
+      differentiates in a slice of it: the hanging-chain example never converged. `independent`
+      (in `ir/expr.py`) now puts a stand-in input for such a `wrt`, and `jvp`, `jvp_many`, `vjp`,
+      `vjp_many`, `jacobian_sparsity` and the colored, reference and Hessian sparse paths map the
+      result back; the stand-in also keeps `simplify` from folding `x[:3][1]` past the `wrt`.
+- [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
+      `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 
 ### Tier 1 primitives
 

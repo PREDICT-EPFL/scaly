@@ -7,13 +7,13 @@ the structured VMAP decomposition that keeps a multistage Jacobian from material
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import numpy as np
 
 from ..function.sugar import vmap
-from ..ir.expr import Expr, ExprOp, concat, gather, scatter
+from ..ir.expr import Expr, ExprOp, concat, gather, independent, scatter, substitute
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .forward import _call_jvp_many_const_function, jvp_many
@@ -68,8 +68,21 @@ class SparseJacobian:
     return SparseJacobian(sparsity, values, self.coloring_width, source, recovery)
 
 
+def _at_inputs(fn, expr: Expr, wrt: Expr, *args, **kwargs) -> SparseJacobian | None:
+  """``fn(expr, wrt)`` with ``wrt`` made an input (see ``independent``), its values mapped back; None
+  when ``wrt`` already is one."""
+  if wrt.op == ExprOp.INPUT:
+    return None
+  (expr,), (at,), back = independent((expr,), (wrt,))
+  sj = fn(expr, at, *args, **kwargs)
+  compressed = None if sj._compressed is None else substitute(sj._compressed, back)
+  return replace(sj, values=substitute(sj.values, back), _compressed=compressed)
+
+
 def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> SparseJacobian:
   """Reference compact Jacobian path: build dense ``J`` and gather nonzeros."""
+  if (moved := _at_inputs(sparse_jacobian_reference, expr, wrt)) is not None:
+    return moved
 
   sparsity = jacobian_sparsity(expr, wrt)
   dense = jacobian(expr, wrt)
@@ -79,6 +92,8 @@ def sparse_jacobian_reference(expr: Expr, wrt: Expr) -> SparseJacobian:
 
 def sparse_jacobian_colored(expr: Expr, wrt: Expr) -> SparseJacobian:
   """Compact sparse Jacobian values from graph-colored compressed JVPs."""
+  if (moved := _at_inputs(sparse_jacobian_colored, expr, wrt)) is not None:
+    return moved
   expr = cse(expr)
   sparsity = jacobian_sparsity(expr, wrt)
   colors = column_coloring(sparsity)
@@ -328,6 +343,8 @@ def sparse_hessian(expr: Expr, wrt: Expr, *, triangle: Triangle = "full") -> Spa
   triangle = _validate_triangle(triangle)
   if expr.size != 1:
     raise ValueError("sparse_hessian expects a scalar expression")
+  if (moved := _at_inputs(sparse_hessian, expr, wrt, triangle=triangle)) is not None:
+    return moved
   gradient_expr = cse(simplify(gradient(expr, wrt).reshape((wrt.size,))))
   sparsity = _symmetrize_sparsity(jacobian_sparsity(gradient_expr, wrt))
   colors = star_coloring(sparsity)

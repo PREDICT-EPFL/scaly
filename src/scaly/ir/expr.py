@@ -1376,6 +1376,22 @@ def substitute(expr: Expr, replacements: Mapping[Expr, Expr]) -> Expr:
   return rebuilt[expr.id]
 
 
+def independent(exprs: Iterable[Expr], wrts: Iterable[Expr]) -> tuple[tuple[Expr, ...], tuple[Expr, ...], dict[Expr, Expr]]:
+  """Make every ``wrt`` an input before differentiating: ``(exprs, wrts, back)``.
+
+  A derivative treats each ``wrt`` as an independent variable. One that is not an input, such as a
+  slice of the carry in a loop body, is replaced in ``exprs`` by a stand-in input; ``substitute(d,
+  back)`` puts it back into a derivative ``d``. Differentiating at the original node instead would
+  lose every dependence that a pass folds past it (``x[:3][1]`` into ``x[1]``), silently.
+  """
+  exprs, wrts = tuple(exprs), tuple(wrts)
+  stand_ins = {w: Expr(ExprOp.INPUT, type=TensorType(w.shape, w.type.dtype, diff=True), name=f"wrt%{w.id}") for w in wrts if w.op != ExprOp.INPUT}
+  if not stand_ins:
+    return exprs, wrts, {}
+  rebuilt = tuple(substitute(e, stand_ins) for e in exprs)
+  return rebuilt, tuple(stand_ins.get(w, w) for w in wrts), {v: k for k, v in stand_ins.items()}
+
+
 def topo(outputs: Iterable[Expr]) -> list[Expr]:
   seen: set[int] = set()
   ret: list[Expr] = []

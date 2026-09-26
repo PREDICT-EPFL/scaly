@@ -38,6 +38,7 @@ from ..ir.expr import (
   segment_sum,
   solve_triangular,
   stack,
+  independent,
   substitute,
   take,
   topo,
@@ -92,7 +93,9 @@ def jvp(expr: Expr, wrt: Expr, seed: Expr) -> Expr:
 
   One pass per seed. For many seeds at once use ``jvp_many``, which shares the expensive work.
   """
-  return _jvp(expr, {wrt: seed}, {}, {})
+  (expr,), (at,), back = independent((expr,), (wrt,))
+  ret = _jvp(expr, {at: seed}, {}, {})
+  return substitute(ret, back) if back else ret
 
 
 def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: dict[tuple[int, int], bool]) -> Expr:
@@ -996,6 +999,9 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
   """
   if len(seeds.shape) < 1 or seeds.shape[1:] != wrt.shape:
     raise ValueError(f"multi-seed JVP expects seeds shape (nseed, *{wrt.shape}), got {seeds.shape}")
+  if wrt.op != ExprOp.INPUT:
+    (expr,), (at,), back = independent((expr,), (wrt,))
+    return substitute(jvp_many(expr, at, seeds), back)
   if seeds.shape[0] == 0:
     return Expr.const(np.zeros((0, *expr.shape), dtype=np.float64))
   strict = env_bool("SCALY_STRICT_JVP_MANY", False)

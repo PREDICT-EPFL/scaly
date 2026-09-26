@@ -13,6 +13,8 @@ from ..ir.expr import (
   PREDICATE_OPS,
   Expr,
   ExprOp,
+  independent,
+  substitute,
   as_expr,
   cast,
   concat,
@@ -325,6 +327,9 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
   """
   if len(outputs) != len(cotangents):
     raise ValueError(f"expected {len(outputs)} cotangents, got {len(cotangents)}")
+  if any(w.op != ExprOp.INPUT for w in wrts):
+    outputs, at, back = independent(outputs, wrts)
+    return tuple(substitute(adjoint, back) for adjoint in vjp(outputs, at, cotangents))
   adjoints: dict[int, Expr] = {}
   nodes = topo(outputs)
   expr_ids = {e.id for e in nodes}

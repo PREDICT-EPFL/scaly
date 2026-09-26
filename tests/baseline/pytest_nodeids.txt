@@ -220,6 +220,15 @@ tests/ad/test_vmap.py::test_forward_and_adjoint_of_vmap_match_unrolled_and_are_d
 tests/ad/test_vmap.py::test_grad_factory_over_vmap_matches_unrolled_and_finite_difference
 tests/ad/test_vmap.py::test_jacobian_of_vmap_matches_finite_differences
 tests/ad/test_vmap.py::test_jvp_many_of_vmap_matches_unrolled_jvp
+tests/ad/test_wrt_expressions.py::test_a_slice_and_an_input_together
+tests/ad/test_wrt_expressions.py::test_a_triangle_taken_later_reads_no_stand_in
+tests/ad/test_wrt_expressions.py::test_dense_forms
+tests/ad/test_wrt_expressions.py::test_forward_and_reverse_primitives
+tests/ad/test_wrt_expressions.py::test_newton_on_a_slice_of_a_while_loop_carry
+tests/ad/test_wrt_expressions.py::test_sparse_forms[full]
+tests/ad/test_wrt_expressions.py::test_sparse_forms[lower]
+tests/ad/test_wrt_expressions.py::test_sparse_forms[upper]
+tests/ad/test_wrt_expressions.py::test_the_structured_sparse_jacobian_of_a_map_over_a_slice
 tests/benchmarks/test_casadi_ipopt.py::test_compiled_nlpsol_coexists_with_wheel_ipopt[compiled-first]
 tests/benchmarks/test_casadi_ipopt.py::test_compiled_nlpsol_coexists_with_wheel_ipopt[wheel-first]
 tests/benchmarks/test_casadi_ipopt.py::test_compiled_nlpsol_supports_limited_memory
