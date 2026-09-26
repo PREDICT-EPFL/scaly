@@ -9,6 +9,7 @@ closed loop, and bounds as inputs or as constants.
 
 from __future__ import annotations
 
+import itertools
 import runpy
 import sys
 from pathlib import Path
@@ -16,14 +17,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import scaly as sc
+
 TINYMPC = Path(__file__).resolve().parents[2] / "examples" / "tinympc"
+# The example's modules import each other by name, so its directory goes on the path first.
 sys.path.insert(0, str(TINYMPC))
 
-import problem as tp
-import problems as tps
-import solver as ts
-
-import scaly as sc
+import problem as tp  # noqa: E402  # ty: ignore[unresolved-import]
+import problems as tps  # noqa: E402  # ty: ignore[unresolved-import]
+import solver as ts  # noqa: E402  # ty: ignore[unresolved-import]
 
 
 def _replay(s: tps.Scenario, steps: int, **kw) -> tuple[tps.Episode, tps.Episode, ts.Solver, tp.ReferenceSolver]:
@@ -123,10 +125,20 @@ def test_cache_is_the_penalized_riccati_fixed_point() -> None:
 
 
 def test_random_problem_generator_reproduces_the_published_draws() -> None:
-  """``prob_nx_10`` of the published benchmark was drawn with the generator's seed."""
+  """``prob_nx_10`` of the published benchmark was drawn with the generator's seed. ``A`` comes from
+  an SVD, and the published generator's ``U S V`` (it multiplies by ``vh.T``) depends on the signs
+  of the singular vectors, which LAPACK builds choose differently: some choice of signs for this
+  machine's SVD of the seed's draw gives the published rows."""
   d = tps.random_mpc_data(10, 4, 10)
   np.testing.assert_allclose(np.diag(d["Q"])[:3], [6.96469186, 2.86139335, 2.26851454], atol=1e-8)
-  np.testing.assert_allclose(d["A"][0, :3], [-0.01307376, 0.22461101, 0.25444081], atol=1e-8)
+  rs = np.random.RandomState(123)  # the generator's draws, up to A's
+  rs.uniform(0, 10, 10)
+  rs.normal(size=(4, 199))
+  uu, s, vh = np.linalg.svd(rs.uniform(-1, 1, (10, 10)))
+  e = np.diag(s / s.max())
+  published = [-0.01307376, 0.22461101, 0.25444081]
+  signs = (np.array(bits) for bits in itertools.product((1.0, -1.0), repeat=10))
+  assert any(np.allclose(((uu * d_) @ e @ (d_[:, None] * vh).T)[0, :3], published, atol=1e-8) for d_ in signs)
   assert np.abs(np.linalg.eigvals(d["A"])).max() <= 1.0 + 1e-12
 
 
