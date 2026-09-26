@@ -248,7 +248,7 @@ def test_while_index_validation() -> None:
   plain = sc.Function._from_exprs("wv_plain", [c], [c - 1.0], ["c"], ["n"])
   with pytest.raises(ValueError, match="int64 scalar"):
     sc.while_loop(cond, plain, sc.sym("x", 1), max_iter=3, index=True)
-  with pytest.raises(ValueError, match="only inputs"):
+  with pytest.raises(ValueError, match="body takes the carry and 0 params"):
     sc.while_loop(cond, indexed, sc.sym("x", 1), max_iter=3)
   fin, _ = sc.while_loop(cond, indexed, sc.sym("x", 1), max_iter=3, index=True)
   assert fin.op == ExprOp.WHILE and len(topo([fin])) == 2

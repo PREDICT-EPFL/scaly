@@ -214,12 +214,16 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       `fuse_elementwise`, `fold_arith`, `pack_workspace`), linearly in the size. It caps
       `sparse_unroll` and `dense_unroll`; halving it would let both double
       (`notes/tier2_pr9_report.html`).
-- [ ] **C-112. Loop-invariant inputs for `while_loop` (and T2.g).** Adaptive refinement packs the
-      factor, `K` and `b` into its carry because a loop body takes only the carry, which copies them
-      in once per solve (the steps then update the carry in place). A `params` input read by every step (as `scan`'s stride-0 inputs are) would
-      remove the copy and serve Tier 3's outer loops. Multi-tensor carries and an int64 carry spill
-      (T2.g) were assessed in T2-9 and are not needed: int tables are sliced constants, and an
-      integer in a carry is exact as a `float64` up to 2^53.
+- [x] **C-112. Loop-invariant inputs for `while_loop` (T3-1).** `sc.while_loop(..., params=...)`:
+      tensors every step reads unchanged, taken by the body after the carry (and the step number)
+      and by the condition after the carry, and passed to both calls by pointer. The node carries
+      them as arguments and an explicit `index` flag; forward mode passes their tangents as further
+      params, reverse mode sums their cotangents over the steps taken in the backward scan's carry,
+      and the sparsity rule brings their pattern in at every step. An `int64` constant param is a
+      table for the in-place proof. SparseLDL's adaptive refinement now carries `[x | r]` only:
+      its overhead over a plain solve falls 12-45% (`perf_2026_09_26_tier3/t3_1_while_params.py`,
+      `notes/tier3_pr1_report.html`). Multi-tensor carries and an int64 carry spill (T2.g) stay
+      unneeded: an integer in a carry is exact as a `float64` up to 2^53.
 - [x] **C-113. Tier 2 review round (T2-R).** Five review agents (lowering and in-place proofs, AD
       rules, `linalg`, performance, docs and tests). Fixed: generated names shadowing inputs,
       `-0.0` tables and literals, the vmap sparse Jacobian bypassing a forward rule, `put`'s reverse

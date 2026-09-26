@@ -8,7 +8,7 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 
 from ..function import Function
-from ..function.sugar import _scan_node, _while_node, vmap
+from ..function.sugar import _scan_node, _while_node, vmap, while_parts
 from ..ir.expr import (
   PREDICATE_OPS,
   Expr,
@@ -233,30 +233,45 @@ def _scan_vjp(expr: Expr, cots: dict[int, Expr], wrts: Sequence[Expr], dep_memo:
   return ret
 
 
-_WHILE_ADJ_CACHE: weakref.WeakKeyDictionary[Any, Any] = weakref.WeakKeyDictionary()
+_WHILE_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Any]] = weakref.WeakKeyDictionary()
 
 
-def _while_adj_function(body: Any) -> Any:
-  """One backward step of a while loop, masked: inputs ``lam``, the carry entering step ``k``, ``k``
-  and the step count ``n``; output the cotangent of the entering carry when ``k < n``, else ``lam``
-  unchanged, so steps the loop never took pass the cotangent through."""
-  if body not in _WHILE_ADJ_CACHE:
+def _while_adj_function(body: Any, index: bool, n_params: int, active: tuple[int, ...]) -> Any:
+  """One backward step of a while loop, masked. Inputs: ``lam`` (the carry's cotangent followed by
+  the running cotangents of the ``active`` params), the carry entering step ``k``, ``k``, the step
+  count ``n`` and the loop's params. Output: when ``k < n`` the entering carry's cotangent and the
+  params' cotangents plus this step's share; otherwise ``lam`` unchanged, so steps the loop never
+  took contribute nothing."""
+  cache = _WHILE_ADJ_CACHE.setdefault(body, {})
+  key = (index, n_params, active)
+  if key not in cache:
     carry = body.inputs[0]
+    cs = carry.size
+    first = 1 + int(index)
+    formals = body.inputs[first : first + n_params]
+    sizes = [formals[i].size for i in active]
     taken = {*body.input_names, *body.output_names}
-    lam = Expr.sym(claim_name(f"lam:{body.input_names[0]}", taken), carry.shape)
+    lam = Expr.sym(claim_name(f"lam:{body.input_names[0]}", taken), (cs + sum(sizes),))
     step, count = Expr.sym(claim_name("step", taken), (1,)), Expr.sym(claim_name("count", taken), (1,), diff=False)
-    (back,) = body_cotangents(body, {0: lam}, (0,))
-    if len(body.inputs) == 2:  # the body's step number is the backward step's ``step``
-      back = _substitute(back, {body.inputs[1].id: cast(step[0], "int64")})
-    out = where(step[0] < count[0], back, lam)
-    _WHILE_ADJ_CACHE[body] = Function._from_exprs(
-      f"{body.name}_whileadj",
-      [lam, carry, step, count],
-      [body._inherit_lowering(simplify_cse_fixpoint(out))],
-      [claim_name("lam", taken), body.input_names[0], str(step.name), str(count.name)],
-      [claim_name("adj:carry", taken)],
+    lam_c = lam[:cs].reshape(carry.shape)
+    backs = body_cotangents(body, {0: lam_c}, (0, *(first + i for i in active)))
+    if index:  # the body's step number is the backward step's ``step``
+      backs = tuple(_substitute(b, {body.inputs[1].id: cast(step[0], "int64")}) for b in backs)
+    took = step[0] < count[0]
+    parts = [where(took, backs[0], lam_c).reshape((cs,))]
+    offset = cs
+    for back, size in zip(backs[1:], sizes, strict=True):
+      parts.append(lam[offset : offset + size] + where(took, back.reshape((size,)), 0.0))
+      offset += size
+    out = concat(parts) if len(parts) > 1 else parts[0]
+    inputs = [lam, carry, step, count, *formals]
+    names = [claim_name("lam", taken), body.input_names[0], str(step.name), str(count.name), *body.input_names[first : first + n_params]]
+    # Each set of active params is its own Function, so it needs its own procedure name.
+    suffix = "".join(f"_p{i}" for i in active)
+    cache[key] = Function._from_exprs(
+      f"{body.name}_whileadj{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(out))], names, [claim_name("adj:carry", taken)]
     )
-  return _WHILE_ADJ_CACHE[body]
+  return cache[key]
 
 
 def _put_winners(base: Expr, idx: Expr, lane_cot: Expr, in_range: bool) -> Expr:
@@ -288,24 +303,34 @@ def _check_trajectory(body: Any, steps: int, carry_size: int) -> None:
 
 def _while_vjp(expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
   """Reverse mode through a while loop: a ``max_iter``-step scan backwards over the stored carries,
-  where steps at or beyond the step count leave the cotangent unchanged."""
+  where steps at or beyond the step count leave the cotangent unchanged. The params reach every
+  backward step unchanged (stride-0 inputs), and their cotangents accumulate in the scan's carry."""
   output = int(expr.attrs["output"])
   if output == 1:
     return []
   if output == -1:
     raise NotImplementedError("reverse mode through the stored carries of a while_loop (reverse over reverse) is not implemented")
-  cond, body, max_iter = expr.attrs["cond"], expr.attrs["callee"], int(expr.attrs["max_iter"])
-  init = expr.args[0]
+  cond, body, init, params, max_iter, index = while_parts(expr)
+  active = tuple(i for i, param in enumerate(params) if any(_depends_on(param, wrt, dep_memo) for wrt in wrts))
   if max_iter == 0:
     return [(init, cot)]
   cs = init.size
   _check_trajectory(body, max_iter, init.size)
-  carries = _while_node(cond, body, init, max_iter, -1)
-  count = _while_node(cond, body, init, max_iter, 1).reshape((1,))
+  carries = _while_node(cond, body, init, max_iter, -1, params, index)
+  count = _while_node(cond, body, init, max_iter, 1, params, index).reshape((1,))
   steps = Expr.const(np.arange(max_iter, dtype=np.float64))
-  specs = ((carries, steps, count), ((max_iter - 1) * cs, max_iter - 1, 0), (-cs, -1, 0))
-  (lam0,) = (_scan_node(_while_adj_function(body), cot, specs[0], specs[1], specs[2], max_iter, 0),)
-  return [(init, lam0)]
+  outers = (carries, steps, count, *(param.reshape((param.size,)) for param in params))
+  starts = ((max_iter - 1) * cs, max_iter - 1, 0, *(0 for _ in params))
+  strides = (-cs, -1, 0, *(0 for _ in params))
+  sizes = [params[i].size for i in active]
+  lam0 = concat([cot.reshape((cs,)), *(Expr.const(np.zeros(size)) for size in sizes)])
+  back = _scan_node(_while_adj_function(body, index, len(params), active), lam0, outers, starts, strides, max_iter, 0)
+  ret = [(init, back[:cs].reshape(init.shape))]
+  offset = cs
+  for i, size in zip(active, sizes, strict=True):
+    ret.append((params[i], back[offset : offset + size].reshape(params[i].shape)))
+    offset += size
+  return ret
 
 
 def body_cotangents(fn: Any, cots: dict[int, Expr], wrt: tuple[int, ...]) -> tuple[Expr, ...]:

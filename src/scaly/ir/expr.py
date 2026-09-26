@@ -256,7 +256,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, None),
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, None),
   ExprOp.SCAN: OpInfo(ExprOp.SCAN, None, None),
-  ExprOp.WHILE: OpInfo(ExprOp.WHILE, 1, None),
+  ExprOp.WHILE: OpInfo(ExprOp.WHILE, None, None),
   ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, None, differentiable=False),
 }
 
@@ -1347,7 +1347,9 @@ def format_expr(outputs: Expr | Iterable[Expr]) -> str:
       bindings = ", ".join([f"%{loc[e.args[0].id]}", *(f"%{loc[a.id]}[{s}::{st}]" for a, s, st in zip(e.args[1:], starts, strides, strict=True))])
       rhs = f"scan[{e.attrs['length']}] {callee.name}[{e.attrs['output']}]({bindings})"
     elif e.op == ExprOp.WHILE:
-      rhs = f"while[{e.attrs['max_iter']}] {e.attrs['cond'].name} {e.attrs['callee'].name}[{e.attrs['output']}](%{loc[e.args[0].id]})"
+      bindings = ", ".join(f"%{loc[a.id]}" for a in e.args)
+      index = " index" if e.attrs.get("index") else ""
+      rhs = f"while[{e.attrs['max_iter']}{index}] {e.attrs['cond'].name} {e.attrs['callee'].name}[{e.attrs['output']}]({bindings})"
     else:
       rhs = f"{ExprOp(e.op).value}({', '.join(f'%{loc[a.id]}' for a in e.args)})"
     lines.append(f"{lhs} = {rhs} : {e.type.dtype}{e.shape}")

@@ -76,7 +76,8 @@ Worked uses: `examples/sqp_newton_sparse.py`, `examples/kalman_update.py`, `test
 - **`==` on an `Expr` is identity** (hash-consing needs it). Use `sc.equal`. `sc.where` refuses a Python bool.
 - **`SparseLDL` needs every diagonal entry stored.** A zero block of `SparseMatrix.block` stores nothing; use `add_diagonal`, even with zeros.
 - **One `name=` per factorization in a graph.** Two different Functions sharing a name are refused at lowering.
-- **A `while_loop` body reads only its carry** (until C-112). Pack loop invariants into the carry. Write updates as a chain of `put`/`put_add` with constant indices where no update reads an entry it, or a later update, writes; then the loop updates the carry in place. `SparseLDL._refined_solve` is the pattern: `put_add` for `x`, then `put` for `r` reading the updated link.
+- **Loop invariants go in `while_loop(..., params=...)`** (C-112), not the carry. Write carry updates as a chain of `put`/`put_add` with constant indices where no update reads an entry it, or a later update, writes; then the loop updates the carry in place. `SparseLDL._refined_solve` is the pattern: the factor, K and b are params, `put_add` updates `x`, then `put` updates `r` reading the updated link.
+- **Derivatives in a slice of the carry** work since C-120 (they silently returned zero before).
 - **Reverse mode through a loop stores every carry.** `max_trajectory` refuses anything too large. Give solver-like loops an implicit rule with `sc.custom_derivative`, as `SparseLDL.solve` does, so the loops are never differentiated.
 - **Straight-line code costs about 1.2 ms of generation per scalar operation.** Keep unrolling for tiny kernels.
 - **For KKT systems whose `H` may be indefinite (SQP), check `inertia() == (n, m, 0)`,** not `health(signs=...)`. The per-row sign check is for quasi-definite matrices, which PIQP's regularized KKT systems are.

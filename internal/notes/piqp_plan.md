@@ -113,7 +113,7 @@ Draft PR sequence (agreed 2026-09-26):
 |---|---|---|
 | T3-0a | Harness: curated MM subset, infeasible LPs, small MPC/SQP QPs in `tests/data` (Apache-2.0 notice); a PIQP trace harness that parses the vendored solver's verbose per-iteration output | done (C-123): 48 MM problems (n + m ≤ 1000), generated infeasible and MPC problems, driver with exact per-iteration traces; PIQP solves all 51, backends differ in iterations on 4 |
 | T3-0b | NumPy reference: PIQP 0.6.2 in full, proximal updates included; gate ≥ 90% trace match on the small subset | done (C-124): gate met, 46/48 against the sparse backend (40/48 dense; the backends agree with each other on 35/48); every non-sensitive problem matches; full precision agrees to 1e-14 early and 1e-8 near convergence |
-| T3-1 | C-112: loop-invariant `while_loop` inputs, so the outer loop's carry holds only the iterate | |
+| T3-1 | C-112: loop-invariant `while_loop` inputs, so the outer loop's carry holds only the iterate | done (C-112): `while_loop(..., params=...)` through lowering, both AD modes and sparsity; SparseLDL refinement carries `[x \| r]` only |
 | T3-2 | Ruiz equilibration and unscaling (#19) | |
 | T3-3 | KKT-solver interface; dense condensed Cholesky and sparse full-KKT `SparseLDL` backends (#20) | |
 | T3-4 | One IPM iteration as a Function: residuals and termination, fraction to boundary, Mehrotra, initial point, infinite bounds, proximal updates, boundary shift, infeasibility checks (#21–#28), matched step by step against the reference | |

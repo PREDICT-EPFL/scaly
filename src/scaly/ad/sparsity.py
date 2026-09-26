@@ -374,19 +374,26 @@ def _scan_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
 
 
 def _while_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
-  """The carry after any number of steps up to ``max_iter``: the union of the step pattern's powers,
-  grown until it stops changing. Every stored carry gets the same union; the step count has none."""
+  """The carry after any number of steps up to ``max_iter``: the union of the step pattern's powers
+  applied to the initial carry, with the params' pattern brought in again at every step, grown until
+  it stops changing. Every stored carry gets the same union; the step count has none."""
   output, max_iter = int(expr.attrs["output"]), int(expr.attrs["max_iter"])
   if output == 1:
     return _empty((1, wrt.size))
   body = expr.attrs["callee"]
+  first = 1 + int(bool(expr.attrs.get("index", False)))
   reach = _jac_mask(expr.args[0], wrt, memo)
-  if not reach.nnz:
+  inject = _empty((reach.shape[0], wrt.size))
+  for i, param in enumerate(expr.args[1:]):
+    param_mask = _jac_mask(param, wrt, memo)
+    if param_mask.nnz:
+      inject = _or(inject, _compose(_callee_mask(body, 0, first + i), param_mask))
+  if not reach.nnz and not inject.nnz:
     return _empty((expr.size, wrt.size))
   step = _callee_mask(body, 0, 0)
   frontier = reach
   for _ in range(max_iter):
-    frontier = _compose(step, frontier)
+    frontier = _or(_compose(step, frontier), inject)
     grown = _or(reach, frontier)
     if grown.nnz == reach.nnz:
       break

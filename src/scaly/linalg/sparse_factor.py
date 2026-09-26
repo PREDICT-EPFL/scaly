@@ -328,21 +328,22 @@ class SparseLDL:
       for _ in range(refine):
         x = x + self._raw_solve(f, b - self._k_times(kv, x))
       return x
-    # The loop carries [f | K values | b | x | r | threshold]; the body updates x and r in place.
-    sizes = np.cumsum([0, self.w_offset, self.matrix.nnz, self.n, self.n, self.n, 1])
-    at = lambda i: Expr.const(np.arange(sizes[i], sizes[i + 1]), dtype="int64")  # noqa: E731
-    c = Expr.sym("c", (int(sizes[-1]),))
-    cf, ck, cb, _, cr, ct = (c[int(sizes[i]) : int(sizes[i + 1])] for i in range(6))
-    # x += K^{-1} r, then r = b - K x reading the updated x: each update reads only entries no
-    # later update writes, so the loop overwrites its carry in place.
-    u1 = put_add(c, at(3), self._raw_solve(cf, cr), in_range=True)
-    body_out = put(u1, at(4), cb - self._k_times(ck, u1[int(sizes[3]) : int(sizes[4])]), in_range=True)
-    body = Function._from_exprs(f"{self.name}{tag}_refine", [c], [body_out], ["c"], ["c_next"])
-    cond = Function._from_exprs(f"{self.name}{tag}_refining", [c], [norm_inf(cr) > ct[0]], ["c"], ["go"])
+    # The loop carries [x | r]; the factor, K's values, b and the threshold are its params, read in
+    # place every step. x += K^{-1} r, then r = b - K x reading the updated x: each update reads only
+    # entries no later update writes, so the loop overwrites its carry in place.
+    n = self.n
+    c = Expr.sym("c", (2 * n,))
+    pf, pk, pb, pt = Expr.sym("f", f.shape), Expr.sym("k", kv.shape), Expr.sym("b", b.shape), Expr.sym("threshold", (1,))
+    xs, rs = Expr.const(np.arange(n), dtype="int64"), Expr.const(np.arange(n, 2 * n), dtype="int64")
+    u1 = put_add(c, xs, self._raw_solve(pf, c[n:]), in_range=True)
+    body_out = put(u1, rs, pb - self._k_times(pk, u1[:n]), in_range=True)
+    params = [pf, pk, pb, pt]
+    names = ["c", "f", "k", "b", "threshold"]
+    body = Function._from_exprs(f"{self.name}{tag}_refine", [c, *params], [body_out], names, ["c_next"])
+    cond = Function._from_exprs(f"{self.name}{tag}_refining", [c, *params], [norm_inf(c[n:]) > pt[0]], names, ["go"])
     threshold = (tol * maximum(1.0, norm_inf(b))).reshape((1,))
-    init = concat([f, kv, b, x, b - self._k_times(kv, x), threshold])
-    out, _ = while_loop(cond, body, init, max_iter=refine)
-    return out[int(sizes[3]) : int(sizes[4])]
+    out, _ = while_loop(cond, body, concat([x, b - self._k_times(kv, x)]), max_iter=refine, params=(f, kv, b, threshold))
+    return out[:n]
 
   def _k_times(self, kv: Expr, x: Expr) -> Expr:
     """``K x`` for values ``kv`` in ``K``'s pattern, reading each mirrored pair once, as the

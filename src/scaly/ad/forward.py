@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 
 from ..function import Function
-from ..function.sugar import _scan_node, _while_node, vmap
+from ..function.sugar import _scan_node, _while_node, vmap, while_parts
 from ..ir.expr import (
   CALLEE_OPS,
   PREDICATE_OPS,
@@ -131,7 +131,7 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     memo[expr.id] = ret = _scan_jvp(expr, [_jvp(arg, seeds, memo, dep_memo) for arg in expr.args])
     return ret
   if expr.op == ExprOp.WHILE:
-    memo[expr.id] = ret = _while_jvp(expr, _jvp(expr.args[0], seeds, memo, dep_memo))
+    memo[expr.id] = ret = _while_jvp(expr, [_jvp(arg, seeds, memo, dep_memo) for arg in expr.args])
     return ret
   if expr.op == ExprOp.SOLVER_CALL:
     # Solver outputs are treated as non-differentiable today. Implicit
@@ -302,51 +302,69 @@ def _scan_jvp(expr: Expr, tangents: list[Expr]) -> Expr:
   return node(1 + n_ys + output - 1)
 
 
-_WHILE_JVP_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, tuple[Function, Function]]] = weakref.WeakKeyDictionary()
+_WHILE_JVP_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Function, Function]]]] = (
+  weakref.WeakKeyDictionary()
+)
 
 
-def _while_jvp_functions(cond: Function, body: Function) -> tuple[Function, Function]:
-  """The condition and body of the tangent loop, over the carry ``[c, dc]`` flat: the condition
-  reads ``c`` only, so the tangent loop takes exactly the primal's steps."""
-  cache = _WHILE_JVP_CACHE.setdefault(body, weakref.WeakKeyDictionary())
-  if cond not in cache:
+def _tangent_params(cond: Function, body: Function, index: bool, active: tuple[int, ...], taken: set[str], shape: Any) -> list[Expr]:
+  """Symbols for the tangents of the loop's params ``active`` (by position among the params), shaped
+  by ``shape(param)``; the tangent loop takes them as params after the primal ones."""
+  first = 1 + int(index)
+  return [Expr.sym(claim_name(f"fwd:{body.input_names[first + i]}", taken), shape(body.inputs[first + i])) for i in active]
+
+
+def _tangent_cond(cond: Function, aug: Expr, cs: int, dparams: Sequence[Expr], suffix: str) -> Function:
+  """The tangent loop's condition: the primal one on ``c`` and the params, ignoring the tangents."""
+  go = substitute(cond.outputs[0], {cond.inputs[0]: aug[:cs].reshape(cond.inputs[0].shape)})
+  inputs = [aug, *cond.inputs[1:], *dparams]
+  return Function._from_exprs(f"{cond.name}_whilefwd{suffix}", inputs, [go], [str(e.name) for e in inputs], ["go"])
+
+
+def _while_jvp_functions(cond: Function, body: Function, index: bool, active: tuple[int, ...]) -> tuple[Function, Function]:
+  """The condition and body of the tangent loop, over the carry ``[c, dc]`` flat and with the
+  tangents of the ``active`` params as extra params: the condition reads ``c`` and the params only,
+  so the tangent loop takes exactly the primal's steps."""
+  cache = _WHILE_JVP_CACHE.setdefault(body, weakref.WeakKeyDictionary()).setdefault(cond, {})
+  key = (index, active)
+  if key not in cache:
     carry = body.inputs[0]
     cs = carry.size
+    first = 1 + int(index)
     taken = {*body.input_names, *body.output_names, *cond.input_names, *cond.output_names}
     aug = Expr.sym(claim_name(f"fwd:{body.input_names[0]}", taken), (2 * cs,))
     dcarry = Expr.sym(claim_name(f"fwd:{body.input_names[0]}:dc", taken), carry.shape)
-    (tangent,) = body_tangents(body, {0: dcarry})
+    dparams = _tangent_params(cond, body, index, active, taken, lambda formal: formal.shape)
+    (tangent,) = body_tangents(body, {0: dcarry, **{first + i: d for i, d in zip(active, dparams, strict=True)}})
     split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
     nxt = substitute(concat([body.outputs[0].reshape((cs,)), tangent.reshape((cs,))]), split)
-    # A step-number input stays an input of the tangent body.
+    # The step number and the params stay inputs of the tangent body, the params' tangents follow.
+    inputs = [aug, *body.inputs[1:], *dparams]
+    suffix = "".join(f"_p{i}" for i in active)  # each set of active params is its own procedure
     aug_body = Function._from_exprs(
-      f"{body.name}_whilefwd",
-      [aug, *body.inputs[1:]],
-      [body._inherit_lowering(simplify_cse_fixpoint(nxt))],
-      [str(aug.name), *body.input_names[1:]],
-      ["fwd:carry"],
+      f"{body.name}_whilefwd{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(e.name) for e in inputs], ["fwd:carry"]
     )
-    go = substitute(cond.outputs[0], {cond.inputs[0]: aug[:cs].reshape(carry.shape)})
-    aug_cond = Function._from_exprs(f"{cond.name}_whilefwd", [aug], [go], [str(aug.name)], ["go"])
-    cache[cond] = (aug_cond, aug_body)
-  return cache[cond]
+    cache[key] = (_tangent_cond(cond, aug, cs, dparams, suffix), aug_body)
+  return cache[key]
 
 
-def _while_jvp(expr: Expr, tangent: Expr) -> Expr:
-  """A while loop's tangent is a while loop whose carry also carries the tangent. The step count is
-  piecewise constant in the input, so its derivative is zero."""
+def _while_jvp(expr: Expr, tangents: Sequence[Expr]) -> Expr:
+  """A while loop's tangent is a while loop whose carry also carries the tangent, with the params'
+  tangents as further params. The step count is piecewise constant in the input, so its derivative
+  is zero."""
   output = int(expr.attrs["output"])
-  if output == 1 or _is_zero_const(tangent):
+  cond, body, init, params, max_iter, index = while_parts(expr)
+  active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
+  if output == 1 or (_is_zero_const(tangents[0]) and not active):
     return zeros_like(expr)
-  cond, body, max_iter = expr.attrs["cond"], expr.attrs["callee"], int(expr.attrs["max_iter"])
-  init = expr.args[0]
   cs = init.size
-  aug_cond, aug_body = _while_jvp_functions(cond, body)
-  aug_init = concat([init.reshape((cs,)), tangent.reshape((cs,))])
+  aug_cond, aug_body = _while_jvp_functions(cond, body, index, active)
+  aug_init = concat([init.reshape((cs,)), tangents[0].reshape((cs,))])
+  aug_params = (*params, *(tangents[1 + i] for i in active))
   if output == 0:
-    return _while_node(aug_cond, aug_body, aug_init, max_iter, 0)[cs:].reshape(expr.shape)
+    return _while_node(aug_cond, aug_body, aug_init, max_iter, 0, aug_params, index)[cs:].reshape(expr.shape)
   picks = (np.arange(max_iter)[:, None] * 2 * cs + cs + np.arange(cs)[None, :]).reshape(-1)
-  return gather(_while_node(aug_cond, aug_body, aug_init, max_iter, -1), picks)
+  return gather(_while_node(aug_cond, aug_body, aug_init, max_iter, -1, aug_params, index), picks)
 
 
 def _tri_mask(n: int, lower: bool, unit: bool) -> Expr:
@@ -586,7 +604,7 @@ def _copysign_slope(x: Expr, s: Expr) -> Expr:
 # the step as well (C-93).
 
 _SCAN_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Function]] = weakref.WeakKeyDictionary()
-_WHILE_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[int, bool], tuple[Function, Function]]]] = (
+_WHILE_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Function, Function]]]] = (
   weakref.WeakKeyDictionary()
 )
 _CONTAINS_LOOP: weakref.WeakKeyDictionary[Any, bool] = weakref.WeakKeyDictionary()
@@ -811,50 +829,50 @@ def _scan_jvp_many(expr: Expr, tangents: list[Expr], nseed: int) -> Expr:
   return gather(node(n_ys + output), idx.reshape(-1)).reshape((nseed, length * size))
 
 
-def _while_jvp_many_functions(cond: Function, body: Function, nseed: int) -> tuple[Function, Function]:
-  """Condition and body of the multi-seed tangent loop over the carry ``[c, Dc]``; the condition
-  reads ``c`` only, so the loop takes exactly the primal's steps."""
+def _while_jvp_many_functions(cond: Function, body: Function, nseed: int, index: bool, active: tuple[int, ...]) -> tuple[Function, Function]:
+  """Condition and body of the multi-seed tangent loop over the carry ``[c, Dc]``, with the ``active``
+  params' seeded tangents (``(nseed, *shape)``) as extra params; the condition reads ``c`` and the
+  params only, so the loop takes exactly the primal's steps."""
   cache = _WHILE_JVP_MANY_CACHE.setdefault(body, weakref.WeakKeyDictionary()).setdefault(cond, {})
-  key = (nseed, env_bool("SCALY_STRICT_JVP_MANY", False))
+  key = (nseed, env_bool("SCALY_STRICT_JVP_MANY", False), index, active)
   if key not in cache:
     carry = body.inputs[0]
     cs = carry.size
+    first = 1 + int(index)
     taken = {*body.input_names, *body.output_names, *cond.input_names, *cond.output_names}
     aug = Expr.sym(claim_name(f"fwd:{body.input_names[0]}", taken), (cs * (1 + nseed),))
-    (primal,), (tangent,) = _jvp_many_compressed(
-      body.outputs, {carry: aug[cs:].reshape((nseed, *carry.shape))}, nseed, owner=body, name=f"{body.name}_stepjac{nseed}"
-    )
+    dparams = _tangent_params(cond, body, index, active, taken, lambda formal: (nseed, *formal.shape))
+    seeds = {carry: aug[cs:].reshape((nseed, *carry.shape))}
+    seeds.update({body.inputs[first + i]: d for i, d in zip(active, dparams, strict=True)})
+    (primal,), (tangent,) = _jvp_many_compressed(body.outputs, seeds, nseed, owner=body, name=f"{body.name}_stepjac{nseed}")
     split = {carry: aug[:cs].reshape(carry.shape)}
     nxt = substitute(concat([primal.reshape((cs,)), tangent.reshape((nseed * cs,))]), split)
+    inputs = [aug, *body.inputs[1:], *dparams]
+    suffix = f"{nseed}" + "".join(f"_p{i}" for i in active)
     aug_body = Function._from_exprs(
-      f"{body.name}_whilefwd{nseed}",
-      [aug, *body.inputs[1:]],
-      [body._inherit_lowering(simplify_cse_fixpoint(nxt))],
-      [str(aug.name), *body.input_names[1:]],
-      ["fwd:carry"],
+      f"{body.name}_whilefwd{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(e.name) for e in inputs], ["fwd:carry"]
     )
-    go = substitute(cond.outputs[0], {cond.inputs[0]: aug[:cs].reshape(carry.shape)})
-    aug_cond = Function._from_exprs(f"{cond.name}_whilefwd{nseed}", [aug], [go], [str(aug.name)], ["go"])
-    cache[key] = (aug_cond, aug_body)
+    cache[key] = (_tangent_cond(cond, aug, cs, dparams, suffix), aug_body)
   return cache[key]
 
 
-def _while_jvp_many(expr: Expr, tangent: Expr, nseed: int) -> Expr:
-  """A while loop's tangents for ``nseed`` seeds: one loop carrying all of them. The step count's
-  derivative is zero."""
+def _while_jvp_many(expr: Expr, tangents: Sequence[Expr], nseed: int) -> Expr:
+  """A while loop's tangents for ``nseed`` seeds: one loop carrying all of them, the params' seeded
+  tangents as further params. The step count's derivative is zero."""
   output = int(expr.attrs["output"])
-  if output == 1 or _is_zero_const(tangent):
+  cond, body, init, params, max_iter, index = while_parts(expr)
+  active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
+  if output == 1 or (_is_zero_const(tangents[0]) and not active):
     return Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
-  cond, body, max_iter = expr.attrs["cond"], expr.attrs["callee"], int(expr.attrs["max_iter"])
-  init = expr.args[0]
   cs = init.size
-  aug_cond, aug_body = _while_jvp_many_functions(cond, body, nseed)
-  aug_init = concat([init.reshape((cs,)), tangent.reshape((nseed * cs,))])
+  aug_cond, aug_body = _while_jvp_many_functions(cond, body, nseed, index, active)
+  aug_init = concat([init.reshape((cs,)), tangents[0].reshape((nseed * cs,))])
+  aug_params = (*params, *(tangents[1 + i] for i in active))
   if output == 0:
-    return _while_node(aug_cond, aug_body, aug_init, max_iter, 0)[cs:].reshape((nseed, *expr.shape))
+    return _while_node(aug_cond, aug_body, aug_init, max_iter, 0, aug_params, index)[cs:].reshape((nseed, *expr.shape))
   width = cs * (1 + nseed)
   idx = np.arange(max_iter)[None, :, None] * width + cs + np.arange(nseed)[:, None, None] * cs + np.arange(cs)[None, None, :]
-  return gather(_while_node(aug_cond, aug_body, aug_init, max_iter, -1), idx.reshape(-1)).reshape((nseed, max_iter * cs))
+  return gather(_while_node(aug_cond, aug_body, aug_init, max_iter, -1, aug_params, index), idx.reshape(-1)).reshape((nseed, max_iter * cs))
 
 
 def _call_jvp_many_function(
@@ -1153,8 +1171,8 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     if int(expr.attrs["output"]) == 1:  # the step count is piecewise constant
       memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
     else:
-      tangent = simplify_cse_fixpoint(_jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo))
-      memo[expr.id] = ret = _while_jvp_many(expr, tangent, nseed)
+      tangents = [simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo)) for arg in expr.args]
+      memo[expr.id] = ret = _while_jvp_many(expr, tangents, nseed)
     return ret
   if expr.op == ExprOp.VMAP:
     callee = expr.attrs["callee"]

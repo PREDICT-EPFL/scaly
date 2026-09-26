@@ -1218,7 +1218,14 @@ def _scalar_arg(ctx: LowerCtx, dtype: DType, value: ProgramNode, stores: list[Pr
 
 
 def _while_key(node: Expr) -> tuple[object, ...]:
-  return ("while", id(node.attrs["callee"]), id(node.attrs["cond"]), node.args[0].id, node.attrs["max_iter"])
+  return (
+    "while",
+    id(node.attrs["callee"]),
+    id(node.attrs["cond"]),
+    tuple(a.id for a in node.args),
+    node.attrs["max_iter"],
+    node.attrs.get("index", False),
+  )
 
 
 @lowers(ExprOp.WHILE)
@@ -1227,7 +1234,7 @@ def _lower_while(ctx: LowerCtx, node: Expr) -> None:
   false, and otherwise calls the body. The carry alternates between two slots as in ``scan``, or
   keeps every step when reverse mode reads them; the loop variable outlives the loop and is the
   step count. Because the last slot written is only known at run time, the final carry is copied
-  out once after the loop."""
+  out once after the loop. The loop's params are passed to both calls where they are, every step."""
   key = _while_key(node)
   if key not in ctx.scan_invocations:
     ctx.scan_invocations[key] = _emit_while(ctx, node, key)
@@ -1236,11 +1243,17 @@ def _lower_while(ctx: LowerCtx, node: Expr) -> None:
 
 def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int, str]:
   body, cond = node.attrs["callee"], node.attrs["cond"]
-  max_iter, init = int(node.attrs["max_iter"]), node.args[0]
+  max_iter, init, params = int(node.attrs["max_iter"]), node.args[0], node.args[1:]
+  index = bool(node.attrs.get("index", False))
   carry = body.inputs[0]
   cs, dtype = carry.size, carry.type.dtype
   trajectory = any(n.op == ExprOp.WHILE and n.attrs["output"] == -1 and _while_key(n) == key for n in topo(ctx.fun.outputs))
-  steps = {1: np.arange(max_iter, dtype=np.int64)} if len(body.inputs) == 2 else {}
+  steps = {1: np.arange(max_iter, dtype=np.int64)} if index else {}
+  first = 1 + int(index)
+  for i, param in enumerate(params):
+    # An integer constant param is a table the in-place proof can read: the same value every step.
+    if param.op == ExprOp.CONST and param.value is not None and param.type.dtype == dtypes.int64:
+      steps[first + i] = np.broadcast_to(np.asarray(param.value, dtype=np.int64), (max_iter, *param.shape))
   proof = None if trajectory else _ensure_in_place_callee(ctx, body, steps)
   in_place, scratch = proof if proof is not None else (None, 0)
   if in_place is None:
@@ -1258,15 +1271,16 @@ def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int,
     return p.mul(step if trajectory else p.mod(step, p.const_int(2)), p.const_int(cs))
 
   read = p.view(store, [slot(k)])
-  check = ProgramNode(ProgramOp.CALL, (read, flag), attrs={"callee": cond.name, "n_in": 1, "n_out": 1, "returns": ()})
+  views = [p.view(ctx.buf_of(param), [p.const_int(0)]) for param in params]
+  check = ProgramNode(ProgramOp.CALL, (read, *views, flag), attrs={"callee": cond.name, "n_in": 1 + len(views), "n_out": 1, "returns": ()})
   leave = p.break_if(ProgramNode(ProgramOp.NOT, (p.load(p.view(flag, [p.const_int(0)])),), dtype=dtypes.bool_))
   counters: list[ProgramNode] = []
   # A body that takes the step number gets the loop counter itself.
-  extra = [_scalar_arg(ctx, dtypes.int64, k, counters)] if len(body.inputs) == 2 else []
+  extra = [_scalar_arg(ctx, dtypes.int64, k, counters)] if index else []
   step = ProgramNode(
     ProgramOp.CALL,
-    (read, *extra, p.view(store, [slot(p.add(k, p.const_int(1)))])),
-    attrs={"callee": in_place or body.name, "n_in": 1 + len(extra), "n_out": 1, "returns": ()},
+    (read, *extra, *views, p.view(store, [slot(p.add(k, p.const_int(1)))])),
+    attrs={"callee": in_place or body.name, "n_in": 1 + len(extra) + len(views), "n_out": 1, "returns": ()},
   )
   ctx.statements.append(p.for_(p.range_(name, 0, max_iter, kind=RangeKind.SERIAL), [check, leave, *counters, step], exit_var=True))
   count = ctx.new_private(dtypes.float64, ())

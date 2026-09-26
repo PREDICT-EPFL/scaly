@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 3 PR 1 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 3 · PR 1 report</h1>
+<p class="sub">T3-1 · loop-invariant <code>while_loop</code> inputs (C-112) · branch <code>claude/tier3-ipm</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>sc.while_loop(cond, body, init, max_iter=…, params=(…))</code> passes tensors that every step reads unchanged to the body and the condition where they are, instead of copying them into the carry. The IPM's outer loop needs this: the problem data, scalings and factor inputs can stay out of its carry.</p>
+<ul>
+<li><b>IR.</b> The params are extra arguments of the <code>WHILE</code> node, and an explicit <code>index</code> attribute replaces inference from the body's input count. The spec rule checks every param against both functions.</li>
+<li><b>Lowering.</b> Both calls receive views of the params' buffers, and the params join the loop's identity key. An <code>int64</code> constant param is a table the in-place proof can read.</li>
+<li><b>AD.</b> In forward mode (single- and multi-seed), the tangent loop takes the params' tangents as further params. In reverse mode, the backward scan reads the params as stride-0 inputs and sums their cotangents in its carry over the steps actually taken. Sparsity brings the params' pattern in at every step.</li>
+<li><b>First user.</b> <code>SparseLDL</code>'s adaptive refinement carries <code>[x | r]</code> only, and still updates it in place. Its overhead over a plain solve falls by 12–45%.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> all tests pass. <b>Mutation checks:</b> 11 of 11 killed.</p>
+</div>
+
+<h2>1. Tests and mutation checks</h2>
+<p><code>tests/integration/test_while_params.py</code>, 11 tests:</p>
+<ul>
+<li>values, Jacobians, gradients, Hessians and jvp through the params, compared with the unrolled loop to 1e-12, with and without the step number;</li>
+<li>only params that depend on <code>wrt</code> get cotangents;</li>
+<li>sparsity;</li>
+<li>no buffer of a large param's size in the C;</li>
+<li>the in-place proof reading an integer constant param;</li>
+<li>the refinement loop's shape and its in-place procedure;</li>
+<li>two loops that differ only in their params, in one graph;</li>
+<li>a constant carry still differentiable through its params;</li>
+<li>validation, the verifier and the printer.</li>
+</ul>
+<p>Killed mutants: the loop key without params; no integer table for the proof; forward and multi-seed forward dropping the params' tangents; reverse accumulating untaken steps; reverse ignoring the params; sparsity without the params; the spec skipping param shapes; the output's diff flag from the initial carry only; the constructor skipping param checks; the printer dropping params.</p>
+
+<h2>2. Benchmarks</h2>
+<p><code>perf_2026_09_26_tier3/t3_1_while_params.py</code>, run on this commit and on the previous one. It times <code>solve(b, refine=5, tol=1e-14)</code>, factorization included, on random quasi-definite KKT systems at δ = 1e-10. Times are in µs, medians; the ranges come from two runs.</p>
+<div class="scroll"><table>
+<tr><th>n + m</th><th>nnz(K)</th><th>plain solve</th><th>refinement overhead before</th><th>refinement overhead after</th></tr>
+<tr><td class="r">75</td><td class="r">368</td><td class="r">8.3</td><td class="r">6.5–6.6</td><td class="r">4.7</td></tr>
+<tr><td class="r">300</td><td class="r">1 603</td><td class="r">127</td><td class="r">31–32</td><td class="r">28</td></tr>
+<tr><td class="r">1 200</td><td class="r">6 309</td><td class="r">5 810</td><td class="r">546–599</td><td class="r">323–530</td></tr>
+</table></div>
+
+<h2>3. Next</h2>
+<p>T3-2: Ruiz equilibration in Scaly: a <code>while_loop</code> whose params are the problem's values and whose carry holds the scalings.</p>
+</main></body></html>

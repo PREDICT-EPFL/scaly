@@ -181,7 +181,7 @@ def _scan_node(
   )
 
 
-def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int, index: bool = False) -> tuple[Expr, Expr]:
+def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int, index: bool = False, params: Sequence[Any] = ()) -> tuple[Expr, Expr]:
   """Apply ``body`` to the carry while ``cond`` holds, at most ``max_iter`` times.
 
   ``cond`` maps the carry to one ``bool``; ``body`` maps the carry to the next carry, with the same
@@ -189,48 +189,82 @@ def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int, index: bool = 
   ``float64`` scalar (exact for any count a loop can reach). The bound is fixed when the graph is
   built, so the generated code and the workspace of its derivative are known ahead of time.
 
+  ``params`` are tensors every step reads and none changes: a solver's problem data, a matrix
+  factor, tolerances. ``body`` takes them after the carry (and the step number), and ``cond`` after
+  the carry, in the order given. They are passed to each step as they are, not copied into the
+  carry, and reverse mode accumulates their cotangents over the steps taken.
+
   Both outputs are differentiable in the usual sense for an iteration: the number of steps is
   treated as locally constant, which it is except where the input crosses a switching boundary.
   Reverse mode stores the carry at each of the at most ``max_iter`` steps. For a solver, attaching
   the implicit-function derivative with ``sc.custom_derivative`` avoids differentiating the steps.
 
   With ``index=True`` the body takes the step number as a second input, an ``int64`` scalar
-  counting from zero; the condition still reads the carry only.
+  counting from zero; the condition does not.
   """
   if not isinstance(cond, Function) or not isinstance(body, Function):
     raise TypeError("while_loop cond and body must be scaly Functions")
   init = as_expr(init)
+  params = tuple(as_expr(param) for param in params)
   if index:
     _check_index_input(body, "while_loop")
-  if len(body.inputs) != 1 + int(index) or len(body.outputs) != 1 or len(cond.inputs) != 1 or len(cond.outputs) != 1:
+  first = 1 + int(index)
+  if len(body.inputs) != first + len(params) or len(body.outputs) != 1 or len(cond.inputs) != 1 + len(params) or len(cond.outputs) != 1:
     extra = " and the step number" if index else ""
-    raise ValueError(f"while_loop cond takes the carry and body the carry{extra} as their only inputs, and each returns one output")
+    raise ValueError(
+      f"while_loop body takes the carry{extra} and {len(params)} params, cond the carry and the params, and each returns one output; "
+      f"got a body of {len(body.inputs)} inputs and a cond of {len(cond.inputs)}"
+    )
   carry = body.inputs[0]
   for label, e in (("init", init), ("body output", body.outputs[0]), ("cond input", cond.inputs[0])):
     if e.shape != carry.shape or e.type.dtype != carry.type.dtype:
       raise ValueError(f"while_loop {label} {e.type.dtype}{e.shape} does not match the carry {carry.type.dtype}{carry.shape}")
+  for i, param in enumerate(params):
+    for label, formal in (("body", body.inputs[first + i]), ("cond", cond.inputs[1 + i])):
+      if formal.shape != param.shape or formal.type.dtype != param.type.dtype:
+        raise ValueError(f"while_loop param {i} is {param.type.dtype}{param.shape}, but {label} takes {formal.type.dtype}{formal.shape}")
   flag = cond.outputs[0]
   if flag.size != 1 or not flag.type.dtype.is_bool:
     raise ValueError(f"while_loop cond must return one bool, got {flag.type.dtype}{flag.shape}")
   max_iter = int(max_iter)
   if max_iter < 0:
     raise ValueError(f"while_loop max_iter must be non-negative, got {max_iter}")
-  return _while_node(cond, body, init, max_iter, 0), _while_node(cond, body, init, max_iter, 1)
+  return _while_node(cond, body, init, max_iter, 0, params, index), _while_node(cond, body, init, max_iter, 1, params, index)
 
 
-def _while_node(cond: Function, body: Function, init: Expr, max_iter: int, output: int) -> Expr:
+def _while_node(cond: Function, body: Function, init: Expr, max_iter: int, output: int, params: Sequence[Expr] = (), index: bool = False) -> Expr:
   """One output of a while loop: the carry (0), the step count (1), or with ``output=-1`` the carry
   entering each of the ``max_iter`` possible steps, stacked; slots past the last step taken hold the
-  final carry. Reverse mode reads the last one. A body with a second input receives the step number."""
+  final carry. Reverse mode reads the last one. With ``index`` the body's second input is the step
+  number; ``params`` follow it (and the carry, for ``cond``)."""
   carry = body.inputs[0]
+  params = tuple(params)
+  diff = (init.type.diff or any(p.type.diff for p in params)) and body.outputs[0].type.diff
   if output == 0:
-    type_ = TensorType(carry.shape, carry.type.dtype, diff=init.type.diff and body.outputs[0].type.diff)
+    type_ = TensorType(carry.shape, carry.type.dtype, diff=diff)
   elif output == 1:
     type_ = TensorType((), dtypes.float64, diff=False)
   else:
-    type_ = TensorType((max_iter * carry.size,), carry.type.dtype, diff=init.type.diff and body.outputs[0].type.diff)
+    type_ = TensorType((max_iter * carry.size,), carry.type.dtype, diff=diff)
+  args = (init, *params)
   return Expr(
-    ExprOp.WHILE, (init,), type_, attrs={"callee": body, "cond": cond, "max_iter": int(max_iter), "output": int(output)}, lowering=init.lowering
+    ExprOp.WHILE,
+    args,
+    type_,
+    attrs={"callee": body, "cond": cond, "max_iter": int(max_iter), "output": int(output), "index": bool(index)},
+    lowering=common_lowering(*args),
+  )
+
+
+def while_parts(expr: Expr) -> tuple[Function, Function, Expr, tuple[Expr, ...], int, bool]:
+  """``(cond, body, init, params, max_iter, index)`` of a while-loop node."""
+  return (
+    expr.attrs["cond"],
+    expr.attrs["callee"],
+    expr.args[0],
+    tuple(expr.args[1:]),
+    int(expr.attrs["max_iter"]),
+    bool(expr.attrs.get("index", False)),
   )
 
 

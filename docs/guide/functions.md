@@ -260,9 +260,22 @@ carry, n_iter = sc.while_loop(not_converged, newton_step, x0, max_iter=50)
 ```
 
 `n_iter` is the number of steps taken, as a `float64`. With `index=True`, `body` also takes the
-step number as a second `int64` input, as in `scan`; `cond` still reads only the carry. The loop lowers to one C loop that calls
+step number as a second `int64` input, as in `scan`; `cond` does not. The loop lowers to one C loop that calls
 the condition, leaves when it is false and otherwise calls the body, so the code size does not
 depend on `max_iter`.
+
+Data every step reads and none changes, such as a solver's problem data or a matrix factor, goes in
+`params` rather than in the carry. `body` takes them after the carry (and the step number), `cond`
+after the carry:
+
+```python
+def newton_step(x, P, q):   # carry, then the params
+    ...
+carry, n_iter = sc.while_loop(not_converged, newton_step, x0, max_iter=50, params=(P, q))
+```
+
+Params reach each step where they are, so they are never copied into the carry. Derivatives flow
+through them too; reverse mode sums their cotangents over the steps the loop took.
 
 A while loop is differentiable through the steps it took: the step count is treated as locally
 constant, which it is except where the input crosses a point where the count changes. Forward mode
