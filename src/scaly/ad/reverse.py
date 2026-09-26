@@ -98,35 +98,40 @@ def _vmap_vjp(vmap_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[t
   return ret
 
 
-_SCAN_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], Any]] = weakref.WeakKeyDictionary()
+_SCAN_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[tuple[int, ...], tuple[int, ...]], Any]] = weakref.WeakKeyDictionary()
 
 
-def _scan_adj_function(callee: Any, output: int, active: tuple[int, ...]) -> Any:
+def _scan_adj_function(callee: Any, extras: tuple[int, ...], active: tuple[int, ...]) -> Any:
   """One backward step of a scan: from the cotangent ``lam`` of the carry leaving step ``k``, the
-  carry entering it and step ``k``'s slices (and the cotangent of step ``k``'s stacked output or of
-  its entering carry, by ``output``), return the cotangent of the entering carry and of each
-  ``active`` slice."""
-  key = (output, active)
+  carry entering it, step ``k``'s slices, and step ``k``'s share of the cotangent of each output in
+  ``extras`` (a stacked output ``j > 0``, or ``-1`` for the stored entering carry), return the
+  cotangent of the entering carry and of each ``active`` slice. Every output of a scan that has a
+  cotangent goes through this one step, so a scan has one backward scan however many of its outputs
+  are used."""
+  key = (extras, active)
   cache = _SCAN_ADJ_CACHE.setdefault(callee, {})
   if key not in cache:
     carry, xs = callee.inputs[0], callee.inputs[1:]
     taken = {*callee.input_names, *callee.output_names}
     lam = Expr.sym(claim_name(f"lam:{callee.input_names[0]}", taken), carry.shape)
-    cots, extra = {0: lam}, []
-    if output > 0:
-      bar = Expr.sym(claim_name(f"lam:{callee.output_names[output]}", taken), callee.outputs[output].shape)
-      cots[output] = bar
+    cots: dict[int, Expr] = {0: lam}
+    extra: list[Expr] = []
+    for output in extras:
+      if output > 0:
+        bar = Expr.sym(claim_name(f"lam:{callee.output_names[output]}", taken), callee.outputs[output].shape)
+        cots[output] = bar
+      else:
+        bar = Expr.sym(claim_name(f"lam:{callee.input_names[0]}:t", taken), carry.shape)
       extra.append(bar)
     grads = body_cotangents(callee, cots, (0, *(i + 1 for i in active)))
     lam_in = grads[0]
-    if output == -1:
-      bar = Expr.sym(claim_name(f"lam:{callee.input_names[0]}:t", taken), carry.shape)
-      lam_in = lam_in + bar
-      extra.append(bar)
+    if -1 in extras:
+      lam_in = lam_in + extra[extras.index(-1)]
     inputs = [lam, carry, *xs, *extra]
-    names = [str(e.name) for e in (lam,)] + list(callee.input_names) + [str(e.name) for e in extra]
+    names = [str(lam.name), *callee.input_names, *(str(e.name) for e in extra)]
     body = [callee._inherit_lowering(simplify_cse_fixpoint(g)) for g in (lam_in, *grads[1:])]
-    suffix = f"{'t' if output < 0 else output}_" + ("_".join(str(i) for i in active) or "c")
+    tag = "_".join("t" if output < 0 else str(output) for output in extras) or "0"
+    suffix = f"{tag}_" + ("_".join(str(i) for i in active) or "c")
     cache[key] = Function._from_exprs(
       f"{callee.name}_scanadj{suffix}",
       inputs,
@@ -137,27 +142,61 @@ def _scan_adj_function(callee: Any, output: int, active: tuple[int, ...]) -> Any
   return cache[key]
 
 
-def _scan_vjp(expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
-  """A scan's adjoint is a scan over the reversed steps, reading the stored carries backwards; the
-  slices' cotangents come back stacked and accumulate into their outer tensors by ``scatter``."""
-  callee, length, output = expr.attrs["callee"], int(expr.attrs["length"]), int(expr.attrs["output"])
+def _group_key(expr: Expr) -> tuple[Any, ...] | None:
+  """The call or scan an output node belongs to, for nodes whose outputs are differentiated together:
+  the outputs of one call share its callee and arguments, those of one scan also its slicing."""
+  if expr.op == ExprOp.CALL:
+    return ("call", id(expr.attrs["callee"]), tuple(arg.id for arg in expr.args))
+  if expr.op == ExprOp.SCAN:
+    return ("scan", id(expr.attrs["callee"]), tuple(arg.id for arg in expr.args), expr.attrs["length"], expr.attrs["starts"], expr.attrs["strides"])
+  return None
+
+
+def _call_vjp(expr: Expr, cots: dict[int, Expr]) -> list[tuple[Expr, Expr]]:
+  """The adjoint of one call, given the cotangents of its used outputs: one reverse sweep through the
+  callee for all of them, so loops inside it get one backward pass each rather than one per output."""
+  callee, args = expr.attrs["callee"], expr.args
+  if callee.custom_vjp is not None:
+    return list(zip(args, custom_vjp_call(callee, args, cots), strict=True))
+  # Differentiate the callee body against fresh cotangent symbols, then graft the real cotangents in
+  # via the same substitution that maps formals to actuals. Passing them directly into the inner vjp
+  # would make them part of the substituted graph: if the caller reuses a callee formal symbol (the
+  # usual construction pattern), occurrences of that symbol *inside a cotangent* would be rewritten
+  # to this call's actuals, corrupting the adjoint.
+  taken = {*callee.input_names, *callee.output_names}
+  used = sorted(cots)
+  lams = [Expr.sym(claim_name(f"lam:{callee.output_names[k]}", taken), callee.outputs[k].shape) for k in used]
+  replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
+  for k, lam in zip(used, lams, strict=True):
+    replacements[lam.id] = cots[k]
+  grads = vjp(tuple(callee.outputs[k] for k in used), callee.inputs, tuple(lams))
+  return [(arg, _substitute(g, replacements)) for arg, g in zip(args, grads, strict=True)]
+
+
+def _scan_vjp(expr: Expr, cots: dict[int, Expr], wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
+  """The adjoint of one scan, given the cotangent of each of its used outputs (``cots``, by output
+  index): one scan over the reversed steps, reading the stored carries backwards and each stacked
+  cotangent backwards. The slices' cotangents come back stacked and accumulate into their outer
+  tensors by ``scatter``."""
+  callee, length = expr.attrs["callee"], int(expr.attrs["length"])
   init, outers = expr.args[0], expr.args[1:]
   starts, strides = expr.attrs["starts"], expr.attrs["strides"]
   if length == 0:
-    return [(init, cot)] if output == 0 else []
+    return [(init, cots[0])] if 0 in cots else []
   cs = init.size
   active = tuple(i for i, outer in enumerate(outers) if any(_depends_on(outer, wrt, dep_memo) for wrt in wrts))
-  fn = _scan_adj_function(callee, output, active)
+  extras = tuple(sorted(output for output in cots if output != 0))
+  fn = _scan_adj_function(callee, extras, active)
   carries = _scan_node(callee, init, tuple(outers), starts, strides, length, -1)
   rev_outers = [carries, *outers]
   rev_starts = [(length - 1) * cs, *(s + (length - 1) * st for s, st in zip(starts, strides, strict=True))]
   rev_strides = [-cs, *(-st for st in strides)]
-  if output != 0:
+  for output in extras:
     size = cs if output == -1 else callee.outputs[output].size
-    rev_outers.append(cot)
+    rev_outers.append(cots[output])
     rev_starts.append((length - 1) * size)
     rev_strides.append(-size)
-  lam0 = cot if output == 0 else zeros_like(init)
+  lam0 = cots.get(0, zeros_like(init))
   rev = [_scan_node(fn, lam0, tuple(rev_outers), tuple(rev_starts), tuple(rev_strides), length, k) for k in range(1 + len(active))]
   ret = [(init, rev[0])]
   for stacked, i in zip(rev[1:], active, strict=True):
@@ -245,12 +284,34 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       raise ValueError(f"cotangent for output shape {out.shape} has shape {cot.shape}")
     adjoints[out.id] = cot if out.id not in adjoints else adjoints[out.id] + cot
 
+  # The output nodes of one call or scan are differentiated together, when the last of them is
+  # reached: every node that reads their outputs comes later in ``nodes``, and their arguments earlier.
+  group_left: dict[tuple[Any, ...], int] = {}
+  for expr in nodes:
+    key = _group_key(expr)
+    if key is not None:
+      group_left[key] = group_left.get(key, 0) + 1
+  group_cots: dict[tuple[Any, ...], dict[int, Expr]] = {}
+
   for expr in reversed(nodes):
     cot = adjoints.get(expr.id)
+    key = _group_key(expr)
+    if key is not None:
+      group_left[key] -= 1
+      if cot is not None and needed(expr):
+        group_cots.setdefault(key, {})[int(expr.attrs["output"])] = cot
+      if group_left[key] or key not in group_cots:
+        continue
+      cots = group_cots.pop(key)
+      pairs = _scan_vjp(expr, cots, wrts, dep_memo) if expr.op == ExprOp.SCAN else _call_vjp(expr, cots)
+      for arg, arg_cot in pairs:
+        if arg.id in expr_ids:
+          adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
+      continue
     if cot is None or expr.op in {ExprOp.INPUT, ExprOp.CONST} or expr.op in PREDICATE_OPS or not needed(expr):
       continue
-    if expr.op in (ExprOp.VMAP, ExprOp.SCAN, ExprOp.WHILE):
-      rule = {ExprOp.VMAP: _vmap_vjp, ExprOp.SCAN: _scan_vjp, ExprOp.WHILE: _while_vjp}[ExprOp(expr.op)]
+    if expr.op in (ExprOp.VMAP, ExprOp.WHILE):
+      rule = _vmap_vjp if expr.op == ExprOp.VMAP else _while_vjp
       pairs = rule(expr, cot, wrts, dep_memo)
       for arg, arg_cot in pairs:
         if arg.id in expr_ids:
@@ -386,21 +447,6 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return _concat_vjp(cot, args, expr.attrs.get("axis", 0))
   if expr.op == ExprOp.MATMUL:
     return _matmul_vjp(args[0], args[1], cot)
-  if expr.op == ExprOp.CALL and expr.attrs["callee"].custom_vjp is not None:
-    return custom_vjp_call(expr.attrs["callee"], args, {expr.attrs["output"]: cot})
-  if expr.op == ExprOp.CALL:
-    callee = expr.attrs["callee"]
-    output_idx = expr.attrs["output"]
-    callee_out = callee.outputs[output_idx]
-    # Differentiate the callee body against a fresh cotangent symbol, then graft the real ``cot``
-    # in via the same substitution that maps formals to actuals. Passing ``cot`` directly into the
-    # inner vjp would make it part of the substituted graph: if the caller reuses a callee formal
-    # symbol (the usual construction pattern), occurrences of that symbol *inside the cotangent*
-    # would be rewritten to this call's actuals, corrupting the adjoint.
-    lam = Expr.sym(claim_name(f"lam:{callee.output_names[output_idx]}", {*callee.input_names, *callee.output_names}), callee_out.shape)
-    replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
-    replacements[lam.id] = cot
-    return tuple(_substitute(g, replacements) for g in vjp((callee_out,), callee.inputs, (lam,)))
   if expr.op == ExprOp.SOLVER_CALL:
     # Non-differentiable: every arg cotangent is zero. See the matching JVP rule.
     return tuple(zeros_like(arg) for arg in args)

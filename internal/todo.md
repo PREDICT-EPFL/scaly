@@ -140,9 +140,9 @@ the per-step reports sit beside it as `notes/tier1_pr*_report.html`.
 - [ ] **C-90. Rewrite `select(x > c, c, x)` and friends to `fmin`/`fmax`.** Nested ternaries on random data stay branches under gcc and run 9x slower (`notes/tier1_pr1_report.html`).
 - [x] **C-84. Accumulating `scatter`, segment reductions, linear-time `gather` VJP.** The index pattern picks a parallel store (distinct destinations) or a `REDUCE` accumulation; the `gather` adjoint is one scatter.
 - [x] **C-85. `scan` with ping-pong carry buffers and trajectory-storing reverse mode.** One SERIAL loop per scan; code size constant in the step count; forward and reverse derivatives are scans.
-- [ ] **C-91. One reverse scan per forward scan.** Reverse mode differentiates each used output of a
-      scan (final carry, each stacked output) with its own backward scan; by linearity they could
-      share one whose seed carries every cotangent at once.
+- [x] **C-91. One reverse scan per forward scan.** Reverse mode differentiates the used outputs of
+      one scan, and of one call, together when it reaches the last of them: one backward scan takes
+      the final carry's cotangent and every stacked output's (`_group_key` in `ad/reverse.py`).
 - [x] **C-86. Differentiable `while_loop` with a static `max_iter`.** A SERIAL loop with `BREAK_IF` and an `exit_var` trip count; forward mode is a while loop over `[c, dc]`, reverse mode a masked `max_iter`-step backward scan.
 - [ ] **C-92. Run the backward pass of a `while_loop` for the steps taken only.** It runs all
       `max_iter` masked steps and evaluates the adjoint body in each, so a Newton solve that stops

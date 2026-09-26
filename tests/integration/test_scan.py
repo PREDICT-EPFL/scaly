@@ -642,8 +642,8 @@ def _condensed_hessian(n: int) -> np.ndarray:
 
 
 def test_hessian_through_a_scan_is_a_fixed_number_of_loops(monkeypatch: pytest.MonkeyPatch) -> None:
-  """Forward over reverse through single shooting: one tangent scan forwards and the adjoint scans
-  backwards, each carrying every seed, however long the horizon. The adjoint scans read the stored
+  """Forward over reverse through single shooting: one tangent scan forwards and one adjoint scan
+  backwards (for both used outputs of the scan), each carrying every seed, however long the horizon. The adjoint scans read the stored
   tangent carries in place, and the call around the scan gets no separate tangent helper."""
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   from scaly.ir.expr import ExprOp
@@ -655,7 +655,7 @@ def test_hessian_through_a_scan_is_a_fixed_number_of_loops(monkeypatch: pytest.M
     point = (np.array([1.0, -0.5]), np.sin(np.arange(n)))
     np.testing.assert_allclose(hess(point), _condensed_hessian(n), rtol=1e-12, atol=1e-12)
     loops = _loop_nodes(list(hess.outputs))
-    assert len({n.attrs["callee"].name for n in loops}) == 4  # primal, tangent, and one adjoint per scan output
+    assert len({n.attrs["callee"].name for n in loops}) == 3  # primal, tangent, and one adjoint for both used outputs
     for node in loops:
       for outer in node.args[1:]:
         copied = False

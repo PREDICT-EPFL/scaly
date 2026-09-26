@@ -988,3 +988,49 @@ def test_a_while_loop_with_many_seeds_uses_its_step_jacobian(monkeypatch: pytest
   point = np.linspace(-0.2, 0.4, 300)
   got = _run("cw_jac", [p], [jac, _columns(final, p)], [point])
   np.testing.assert_allclose(got[0], got[1], rtol=1e-10, atol=1e-12)
+
+
+# --- One backward scan per scan (C-91) ------------------------------------------------------------
+
+
+def _adjoint_scans(exprs: Sequence[sc.Expr]) -> set[str]:
+  return {n.attrs["callee"].name for n in _loop_nodes(exprs) if "scanadj" in n.attrs["callee"].name}
+
+
+@pytest.mark.parametrize("through_call", [False, True])
+def test_every_used_output_of_a_scan_shares_one_backward_scan(through_call: bool) -> None:
+  """The final carry and both stacked outputs all carry cotangent, directly or through a call that
+  returns them separately: reverse mode builds one backward scan that takes all three, not one per
+  output."""
+  step = _pendulum_step("ob_step")
+  z, u = step.inputs
+  zn, c = step.outputs
+  body = sc.Function._from_exprs("ob_body", [z, u], [zn, c, zn * zn], ["z", "u"], ["zn", "c", "q"])
+  x0, us = sc.sym("ob_x0", 2), sc.sym("ob_us", 6)
+  fin, costs, squares = sc.scan(body, x0, [(us, 0, 1)], length=6)
+  if through_call:
+    roll = sc.Function._from_exprs("ob_roll", [x0, us], [fin, costs, squares], ["x0", "us"], ["fin", "costs", "q"])
+    fin, costs, squares = roll._flat_symbolic_call([x0, us])
+  cost = costs.sum() + sc.sumsqr(fin) + 0.5 * squares.sum()
+  (grad,) = sc.vjp((cost,), (us,), (sc.const(1.0),))
+  assert len(_adjoint_scans([grad])) == 1
+  point = [np.array([0.3, -0.2]), np.linspace(-0.5, 0.5, 6)]
+  got = _run(f"ob_grad{through_call}", [x0, us], [grad], point)[0]
+  value = _fn(f"ob_cost{through_call}", [x0, us], [cost])
+  np.testing.assert_allclose(got, finite_difference(lambda v: value._flat_numerical_call(point[0], v)[0], point[1]).reshape(-1), rtol=1e-6, atol=1e-8)
+
+
+def test_reverse_over_reverse_merges_the_stored_carries_cotangent() -> None:
+  """The gradient reads the scan's stored carries (output -1); differentiating the gradient again in
+  reverse gives that node a cotangent too, and it joins the other outputs' backward scan. The result
+  is the Hessian-vector product."""
+  step = _pendulum_step("rr_step")
+  x0, us = sc.sym("rr_x0", 2), sc.sym("rr_us", 5)
+  fin, costs = sc.scan(step, x0, [(us, 0, 1)], length=5)
+  cost = costs.sum() + sc.sumsqr(fin)
+  (grad,) = sc.vjp((cost,), (us,), (sc.const(1.0),))
+  v = np.linspace(1.0, -1.0, 5)
+  (hv,) = sc.vjp(((grad * sc.const(v)).sum(),), (us,), (sc.const(1.0),))
+  point = [np.array([0.3, -0.2]), np.linspace(-0.5, 0.5, 5)]
+  got_hv, hess = _run("rr", [x0, us], [hv, jacobian(grad, us)], point)
+  np.testing.assert_allclose(got_hv, hess @ v, rtol=1e-10, atol=1e-12)
