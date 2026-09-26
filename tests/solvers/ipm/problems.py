@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from scipy import sparse
 
-MM_DIR = Path(__file__).resolve().parents[1] / "data" / "maros_meszaros"
+MM_DIR = Path(__file__).resolve().parents[2] / "data" / "maros_meszaros"
 INFINITE = 1e19  # at or beyond this, a bound is absent: the set writes 1e20, sometimes rounded to 9.999999999999998e19
 
 

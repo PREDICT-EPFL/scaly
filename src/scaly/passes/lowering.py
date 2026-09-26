@@ -695,23 +695,45 @@ def _lower_sum(ctx: LowerCtx, node: Expr) -> None:
 
 @lowers(ExprOp.MAX, ExprOp.MIN)
 def _lower_extremum(ctx: LowerCtx, node: Expr) -> None:
-  """Start from the first element, then a REDUCE loop keeps the larger (smaller) value. A NaN element
-  replaces the accumulator and nothing replaces a NaN accumulator, so NaN propagates as ``np.max``
-  does; C's ``fmax`` would drop it."""
+  """A REDUCE loop keeping the larger (smaller) value. A NaN element replaces the accumulator and
+  nothing replaces a NaN accumulator, so NaN propagates as ``np.max`` does; C's ``fmax`` would drop
+  it. Past eight elements it keeps four accumulators, one per lane of four, combined in lane order:
+  one chain of compares and selects cannot overlap, four can. The result is the same value (only
+  the sign of a zero extremum could come from another element)."""
   src = node.args[0]
   acc = ctx.alloc_tmp(node)
-  z = p.const_int(0)
+  c = p.const_int
   src_buf = ctx.buf_of(src)
-  ctx.statements.append(p.store(p.view(acc, [z]), p.load(p.view(src_buf, [z]))))
-  if src.size == 1:
+  n = _size_of(src.shape)
+
+  def pick(cur: ProgramNode, value: ProgramNode) -> ProgramNode:
+    better = p.compare(ProgramOp.LT, cur, value) if node.op == ExprOp.MAX else p.compare(ProgramOp.LT, value, cur)
+    take = ProgramNode(ProgramOp.OR, (better, p.compare(ProgramOp.NE, value, value)), dtype=dtypes.bool_)
+    return p.select(take, value, cur)
+
+  def at(k: ProgramNode) -> ProgramNode:
+    return p.load(p.view(src_buf, [k]))
+
+  if n < 8:
+    slot = p.view(acc, [c(0)])
+    ctx.statements.append(p.store(slot, at(c(0))))
+    if n > 1:
+      name = f"i_{acc.attrs['name']}"
+      rng = p.range_(name, 1, n, kind=RangeKind.REDUCE)
+      ctx.statements.append(p.for_(rng, [p.store(slot, pick(p.load(slot), at(p.var(name))))]))
     return
-  name = f"i_{acc.attrs['name']}"
-  i = p.var(name)
-  cur, value = p.load(p.view(acc, [z])), p.load(p.view(src_buf, [i]))
-  better = p.compare(ProgramOp.LT, cur, value) if node.op == ExprOp.MAX else p.compare(ProgramOp.LT, value, cur)
-  take = ProgramNode(ProgramOp.OR, (better, p.compare(ProgramOp.NE, value, value)), dtype=dtypes.bool_)
-  rng = p.range_(name, 1, _size_of(src.shape), kind=RangeKind.REDUCE)
-  ctx.statements.append(p.for_(rng, [p.store(p.view(acc, [z]), p.select(take, value, cur))]))
+  slots = [p.view(ctx.new_private(node.type.dtype, ()), [c(0)]) for _ in range(4)]
+  ctx.statements.extend(p.store(s, at(c(q))) for q, s in enumerate(slots))
+  tail = n - (n - 4) % 4
+  kb, kt = f"kb_{acc.attrs['name']}", f"kt_{acc.attrs['name']}"
+  block = [p.store(s, pick(p.load(s), at(p.add(p.var(kb), c(q))))) for q, s in enumerate(slots)]
+  ctx.statements.append(p.for_(p.range_(kb, 4, tail, step=4, kind=RangeKind.REDUCE), block))
+  if tail < n:
+    ctx.statements.append(p.for_(p.range_(kt, tail, n, kind=RangeKind.REDUCE), [p.store(slots[0], pick(p.load(slots[0]), at(p.var(kt))))]))
+  total = p.load(slots[0])
+  for s in slots[1:]:
+    total = pick(total, p.load(s))
+  ctx.statements.append(p.store(p.view(acc, [c(0)]), total))
 
 
 @lowers(ExprOp.TRANSPOSE)
@@ -1262,8 +1284,11 @@ def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int,
   first = 1 + int(index)
   for i, param in enumerate(params):
     # An integer constant param is a table the in-place proof can read: the same value every step.
+    # Without the step number nothing else varies either, so one step stands for all of them (a
+    # table broadcast to every step made the proof's arithmetic cost max_iter times its size).
     if param.op == ExprOp.CONST and param.value is not None and param.type.dtype == dtypes.int64:
-      steps[first + i] = np.broadcast_to(np.asarray(param.value, dtype=np.int64), (max_iter, *param.shape))
+      value = np.asarray(param.value, dtype=np.int64).reshape(1, *param.shape)
+      steps[first + i] = np.broadcast_to(value, (max_iter, *param.shape)) if index else value
   proof = None if trajectory else _ensure_in_place_callee(ctx, body, steps)
   in_place, scratch = proof if proof is not None else (None, 0)
   if in_place is None:
@@ -1897,10 +1922,28 @@ def _lower_segment_extremum(ctx: LowerCtx, node: Expr) -> None:
   i = p.var(iname)
   dst = ctx.index_at(idx, i)
   cur, value = p.load(p.view(out, [dst])), p.load(p.view(ctx.buf_of(src), [i]))
-  better = p.compare(ProgramOp.LT, cur, value) if node.op == ExprOp.SEGMENT_MAX else p.compare(ProgramOp.LT, value, cur)
-  take = ProgramNode(ProgramOp.OR, (better, p.compare(ProgramOp.NE, value, value)), dtype=dtypes.bool_)
+  def pick(cur: ProgramNode, value: ProgramNode) -> ProgramNode:
+    better = p.compare(ProgramOp.LT, cur, value) if node.op == ExprOp.SEGMENT_MAX else p.compare(ProgramOp.LT, value, cur)
+    take = ProgramNode(ProgramOp.OR, (better, p.compare(ProgramOp.NE, value, value)), dtype=dtypes.bool_)
+    return p.select(take, value, cur)
+
+  starts = np.flatnonzero(np.r_[True, idx[1:] != idx[:-1]]) if idx.size else np.zeros(0, dtype=np.int64)
+  if idx.size and np.all(np.diff(idx) >= 0) and starts.size * 2 <= idx.size:
+    # Bins in runs (a CSC column order): each run reduces in a register and stores once, where
+    # one loop over the entries waited on the previous store whenever an entry's bin repeated.
+    # The same comparisons in the same order: the same result.
+    stops = np.r_[starts[1:], idx.size]
+    rname = f"r_{out.attrs['name']}"
+    r = p.var(rname)
+    run = p.view(ctx.new_private(node.type.dtype, ()), [p.const_int(0)])
+    first = p.store(run, p.load(p.view(out, [ctx.index_at(idx[starts], r)])))
+    step = p.store(run, pick(p.load(run), p.load(p.view(ctx.buf_of(src), [i]))))
+    inner = p.for_(p.range_(iname, ctx.index_at(starts, r), ctx.index_at(stops, r), kind=RangeKind.REDUCE), [step])
+    last = p.store(p.view(out, [ctx.index_at(idx[starts], r)]), p.load(run))
+    ctx.statements.append(p.for_(p.range_(rname, 0, starts.size, kind=RangeKind.GLOBAL), [first, inner, last]))
+    return
   kind = RangeKind.GLOBAL if scatter_is_unique(idx) else RangeKind.REDUCE
-  ctx.statements.append(p.for_(p.range_(iname, 0, len(idx), kind=kind), [p.store(p.view(out, [dst]), p.select(take, value, cur))]))
+  ctx.statements.append(p.for_(p.range_(iname, 0, len(idx), kind=kind), [p.store(p.view(out, [dst]), pick(cur, value))]))
 
 
 @lowers(ExprOp.STACK)

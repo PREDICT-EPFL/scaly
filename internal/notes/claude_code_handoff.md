@@ -5,23 +5,23 @@ here. Read this first, then the documents it points to. It holds how the work is
 holds what is to be done.
 
 ## Where things stand
-- **Plan:** `internal/notes/piqp_plan.md` (v4.7), the living plan: goal, principles, Tiers 1–6, gates, kill criteria, decisions, change log.
+- **Plan:** `internal/notes/piqp_plan.md` (v4.8), the living plan: goal, principles, Tiers 1–6, gates, kill criteria, decisions, change log.
   - Its twin, the claude.ai project doc `claude/piqp-plan.md`, can't be reached from Claude Code. From now on, the repo copy is authoritative.
 - **Branches and tags:**
   - Tier 1 is done: tag `tier1-complete`, branch `claude/tier1-primitives`.
   - Tier 2 is done: tag `tier2-complete`, branch `claude/tier2-sparse`.
-  - The chain is `main` → `t3code/plan-compiler-performance-passes` → `claude/tier1-primitives` → `claude/tier2-sparse`. None of it is merged, and `claude/tier2-sparse` is not pushed.
-  - Start Tier 3 on a new branch `claude/tier3-ipm` from `claude/tier2-sparse`.
-- **Status summaries:** `tier1_implementation_status.md` and `tier2_implementation_status.md`.
-  - Full reports: `tier1_pr*_report.html`, `tier1_summary_report.html`, `tier2_pr1..9_report.html` and `tier2_review_report.html` (the Tier 2 summary and hand-off).
+  - Tier 3 is done: tag `tier3-complete`, branch `claude/tier3-ipm` (from `claude/tier2-sparse`).
+  - The chain is `main` → `t3code/plan-compiler-performance-passes` → `claude/tier1-primitives` → `claude/tier2-sparse` → `claude/tier3-ipm`. None of it is merged or pushed.
+  - Start Tier 4 on a new branch from `claude/tier3-ipm`.
+- **Status summaries:** `tier1_implementation_status.md`, `tier2_implementation_status.md` and `tier3_implementation_status.md`.
+  - Full reports: `tier1_pr*_report.html`, `tier1_summary_report.html`, `tier2_pr1..9_report.html`, `tier2_review_report.html`, `tier3_pr0a..5_report.html` and `tier3_review_report.html` (the Tier 3 summary and hand-off).
   - Historical gap analysis: `programmatic_branch_analysis.md`.
-- **Open items:** `internal/todo.md`, next id C-133. Check the list for an id before taking it: a parallel session's entries once collided with this work's (C-125, C-126).
-  - Tier 1 leftovers: C-89 … C-100.
-  - Tier 2 leftovers: C-107 (a decision for Colin: `-O3` by default), C-111, C-112, and C-114 … C-117.
-  - Relevant to Tier 3: **C-112**, loop-invariant `while_loop` inputs for the IPM outer loop, and **C-114**, unpadded factor updates, since the factorization dominates IPM time.
-- **Suite:** 1 460 passed and 88 skipped in the Linux VM.
-  - Four failures there come only from the VM's environment: 3 in `tests/benchmarks/test_sweep.py`, and `plugins/scaly-sqp/tests/test_nlp_sqp.py::test_casadi_external_sqp_validates_oracle_and_bound_shapes`.
-  - **Tier 2 has never been run on the Mac. Run the whole suite there first** (`uv run pytest -n=auto`). Watch for Apple clang differences, e.g. `internal/notes/macos_clang_call_miscompile.md`.
+- **Open items:** `internal/todo.md`, next id C-135. Check the list for an id before taking it: a parallel session's entries once collided with this work's (C-125, C-126).
+  - Tier 1 and 2 leftovers: C-89 … C-99, C-111, C-114 … C-117, C-122.
+  - Relevant to Tier 4: **C-114** (unpadded factor updates: the factorization is 40–60% of a sparse IPM step), **C-117** (the dense Cholesky kernel, 80% of a dense step), **C-130** (QRECIPE's sparse iteration count), **C-131** and **C-134** (step overheads the T3-R review measured).
+  - C-126 (TinyMPC) is checked off in the committed list, but its files (`examples/tinympc/`, `tests/integration/test_tinympc.py`, `notes/tinympc_benchmark_report.html`) are Colin's and not committed.
+- **Suite:** 2 218 passed and 42 skipped on the Mac (Apple clang 21) at the end of Tier 3, with Colin's untracked test files left out (`--ignore` them, or the node-ID baseline check fails on their ids).
+  - The IPM tests also pass with `-ffp-contract=fast` and `off` (a `SCALY_CC` wrapper), which bracket what GCC does.
 
 ## How Colin wants each PR done
 1. **A todo item.** Each PR gets its id (`C-1xx`) in `internal/todo.md`, checked off with a one-paragraph summary when done.
@@ -50,12 +50,14 @@ holds what is to be done.
 - **Generic sparse before multistage/Riccati structure** (Tier 5).
 - **Tier 2 is general-purpose linear algebra.** PIQP-specific choices belong to Tiers 3–4.
 - **Loops stay loops.** Unrolling only below the `dense_unroll`/`sparse_unroll` thresholds.
+- **The JIT compiles at `-O2`,** adding `-ftree-vectorize` only for GCC before 12 (C-107; T3-R narrowed it).
+- **The generated IPM is held to PIQP's run of the same backend,** by decision trace, wherever PIQP's own two backends agree; the NumPy reference is the step-by-step oracle.
+- **The dense backend is a condensed Cholesky,** the sparse one `SparseLDL` on the whole KKT matrix.
 
-## Decisions to take with Colin at the start of Tier 3 (from the plan)
-1. **T3-0:** a NumPy reference IPM as the test oracle, plus a curated Maros–Mészáros subset (and infeasible LPs, SQP/MPC sets; Apache-2.0) in `tests/data`. Also a PIQP trace harness built from the vendored headers (`plugins/scaly-piqp`).
-   - Gate: the NumPy reference reproduces PIQP decision traces on ≥ 90% of the small MM subset.
-2. **The dense backend:** condensed Cholesky `C = P + reg + AᵀA/δ + GᵀW⁻¹G` on the Tier 2 dense kernels, next to the sparse backend (full KKT with `SparseLDL`).
-3. **The outer loop:** `while_loop` whose carry packs the IPM state, or C-112 first (loop-invariant inputs).
+## Decisions to take with Colin at the start of Tier 4 (from the plan)
+1. **Parity semantics:** decision traces plus tolerances, as Tier 3's gate uses; and whether the drop-in keeps PIQP's quirks (`piqp_plan.md`, Tier 3 notes) and the dense backend's noise-pivot rule.
+2. **Baselines:** Mac-only vendored baselines and the SQP corpus dump.
+3. **Speed levers:** C-114 before or after the drop-in; a blocked dense Cholesky (C-117).
 
 ## Tier 2 API to build on
 ```python

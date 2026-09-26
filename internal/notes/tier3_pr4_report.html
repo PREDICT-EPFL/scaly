@@ -57,7 +57,7 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute
 
 <h2>Tests</h2>
 <ul>
-<li><code>tests/ipm/test_scaly_ipm.py</code>, 172 tests:
+<li><code>tests/solvers/ipm/test_algorithm.py</code>, 172 tests:
   <ul>
   <li>decision traces against PIQP per backend on all 62 gate problems;</li>
   <li>PIQP's ×100 retry trajectories on two nonconvex QPs, where dense Cholesky breaks down: identical to 4–5 digits, 142 iterations on one of them;</li>
@@ -67,7 +67,7 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute
   <li>a zero pivot turning refinement on, a factorization that never succeeds (NUMERICS, δ = 1e-4·100¹⁰, floor 1e-8, as the reference), and a failure mid-run;</li>
   <li>the trace rows.</li>
   </ul></li>
-<li><code>tests/ipm/test_scaly_kkt.py</code> also covers:
+<li><code>tests/solvers/ipm/test_kkt.py</code> also covers:
   <ul>
   <li>solves with refinement on against the reference's;</li>
   <li>refinement that stops once it slows, with a static regularization ten times δ;</li>
@@ -134,7 +134,7 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute
 <li><b>QRECIPE</b> takes 34 iterations with the sparse backend against PIQP's 19: C-130.</li>
 </ul>
 <p><b>What the retry and refinement structure costs.</b> An interleaved A/B against T3-3's direct factorization (a worktree of the last commit, minima, Spotlight busy) puts one factorization and two solves at +5–23%: sparse QSC205 25.4 → 31.3 µs, QCAPRI 86.7 → 100.3 µs, dense QAFIRO 13.6 → 16.5 µs. The cause is the factor copied through the retry loop's carry, about five copies per factorization (C-131).</p>
-<p><b>Compile time.</b> A cold first call takes 0.7–3.5 s, against 0.05–0.13 s for T3-3's factor-and-solve functions; the whole loop with its nested loops is now compiled.</p>
+<p><b>Compile time.</b> A cold first call takes 0.7–5.2 s, against 0.05–0.13 s for T3-3's factor-and-solve functions; the whole loop with its nested loops is now compiled.</p>
 
 <h2>Gates</h2>
 <ul>

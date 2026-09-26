@@ -8,6 +8,7 @@ module reads it for the report and nothing else depends on that direction.
 from __future__ import annotations
 
 import functools
+import re
 import os
 import shutil
 import subprocess
@@ -58,6 +59,18 @@ def _version_banner(cc: str) -> str:
 
 def _is_gcc_banner(banner: str) -> bool:
   return "free software foundation" in banner.lower()  # GCC's copyright line; clang's banner has none
+
+
+def gcc_major(cc: str) -> int | None:
+  """GCC's major version from its ``--version`` banner, or None for another compiler."""
+  banner = _version_banner(cc)
+  return _gcc_major_of(banner) if _is_gcc_banner(banner) else None
+
+
+def _gcc_major_of(banner: str) -> int | None:
+  """The major version on a GCC banner's first line: its last ``x.y[.z]`` (``gcc (GCC) 11.4.0``)."""
+  found = re.findall(r"(\d+)\.\d+(?:\.\d+)?", banner.splitlines()[0] if banner else "")
+  return int(found[-1]) if found else None
 
 
 def _format_report() -> str:

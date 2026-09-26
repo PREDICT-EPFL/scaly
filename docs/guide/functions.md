@@ -269,8 +269,12 @@ Data every step reads and none changes, such as a solver's problem data or a mat
 after the carry:
 
 ```python
-def newton_step(x, P, q):   # carry, then the params
+@sc.function(sc.G(sc.L("x", n), sc.L("P", (n, n)), sc.L("q", n)), sc.L("x_next", n), name="newton_step")
+def newton_step(inputs):  # the carry, then the params
+    x, P, q = inputs
     ...
+
+# not_converged takes the same inputs and returns one bool
 carry, n_iter = sc.while_loop(not_converged, newton_step, x0, max_iter=50, params=(P, q))
 ```
 

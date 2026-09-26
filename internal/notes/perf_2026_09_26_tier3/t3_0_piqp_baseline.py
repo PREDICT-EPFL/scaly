@@ -15,8 +15,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from tests.ipm import piqp_trace  # noqa: E402
-from tests.ipm.problems import maros_meszaros, maros_meszaros_names, mpc_qp  # noqa: E402
+from tests.solvers.ipm import piqp_trace  # noqa: E402
+from tests.solvers.ipm.problems import maros_meszaros, maros_meszaros_names, mpc_qp  # noqa: E402
 
 
 def row(qp) -> str:

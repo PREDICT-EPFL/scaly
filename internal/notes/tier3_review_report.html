@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 3 Summary</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Tier 3 · summary and review round</h1>
+<p class="sub">The generic primal–dual IPM: PIQP 0.6.2 as generated code · branch <code>claude/tier3-ipm</code>, tag <code>tier3-complete</code> · 27 Sep 2026</p>
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>scaly.solvers.ipm.Solver</code> generates PIQP 0.6.2 for one sparsity structure, from Ruiz equilibration to the result. It has a dense backend (condensed Cholesky) and a sparse one (<code>SparseLDL</code> on the whole KKT matrix), with PIQP's retries and iterative refinement. <span class="ok">Every Tier 3 gate is met.</span></p>
+<ul>
+<li><b>Fidelity:</b> each backend takes the decisions of PIQP's run of the same backend.
+  <ul>
+  <li>Status parity on all 62 gate problems.</li>
+  <li>Decision traces match on 48/48 (sparse) and 47/48 (dense) of the problems where PIQP's own two backends agree.</li>
+  <li>The NumPy reference is matched step by step at full precision.</li>
+  </ul></li>
+<li><b>Speed:</b> the sparse backend runs at 1.26× PIQP's warmed-up solve time where PIQP takes at least 50 µs, and at 0.81× its setup plus solve. The dense backend runs at 2.24×; its Cholesky kernel is 80% of a step (C-117).</li>
+<li><b>Review round:</b> five agents; every confirmed finding is fixed and tested, and four exact speed-ups cut sparse solves by 11–25%.</li>
+<li><b>Suite:</b> 2 218 passed, 42 skipped on the Mac. The IPM tests also pass with FMA contraction off and fast, which bracket what GCC does.</li>
+</ul>
+</div>
+
+<h2>The Tier 3 PRs</h2>
+<div class="scroll"><table><tr><th>PR</th><th>todo</th><th>content</th><th>result</th></tr>
+<tr><td>T3-0a</td><td>C-123</td><td>48 Maros–Mészáros problems, infeasible and MPC sets, the PIQP trace driver</td><td>PIQP solves all 51 with both backends</td></tr>
+<tr><td>T3-0b</td><td>C-124</td><td>a NumPy port of PIQP 0.6.2, the test oracle</td><td>46/48 of PIQP's decision traces (gate: 90%)</td></tr>
+<tr><td>T3-1</td><td>C-112</td><td>loop-invariant <code>while_loop</code> params, through AD and sparsity</td><td>the outer loop carries only the state</td></tr>
+<tr><td>T3-2</td><td>C-128, C-125</td><td>Ruiz equilibration; outputs named like inputs</td><td>scalings to 1e-13</td></tr>
+<tr><td>T3-3</td><td>C-127</td><td>the KKT backends</td><td>solves to 1e-7</td></tr>
+<tr><td>T3-4/5</td><td>C-129</td><td>the solver: loop, retries, refinement (#29, moved from Tier 4)</td><td>the gate, per backend against PIQP</td></tr>
+<tr><td>T3-6</td><td>C-132, C-100</td><td>a fair benchmark protocol; carried residuals; a leaner call layer</td><td>sparse 1.49× PIQP above the call floor</td></tr>
+<tr><td>T3-R</td><td>C-133</td><td>the review round below</td><td>sparse 1.26×</td></tr>
+</table></div>
+
+<h2>Review round</h2>
+<p>Five reviewers worked read-only in parallel: fidelity to PIQP, IR/lowering/JIT, AD through while params, performance, and tests and docs. Each fix below has a regression test that fails on the old code, either shown by a mutant (10 of them, all killed) or by running the test against the reverted code.</p>
+<div class="scroll"><table><tr><th>area</th><th>finding</th><th>fix</th></tr>
+<tr><td>AD</td><td class="bad">crash: three derivative Functions of while loops collided by name (one body with two active sets, a condition shared by two bodies, the step-number flag)</td><td>names carry the active params, the body and the flag; the tangent body is built once per body</td></tr>
+<tr><td>AD</td><td>a reverse accumulator for params only the condition reads</td><td>a param gets a cotangent only when the body reads it</td></tr>
+<tr><td>JIT</td><td class="bad">crash: threads compiling one new Function raced on temporary files</td><td>per-thread temporary names</td></tr>
+<tr><td>JIT</td><td>a Function/handle cycle held workspaces until garbage collection</td><td>the handle keeps the name only</td></tr>
+<tr><td>JIT</td><td class="warn">fairness: <code>-ftree-vectorize</code> changed GCC 12+'s cost model, while the CasADi baseline did not get it</td><td>GCC before 12 only, from one helper both use</td></tr>
+<tr><td>lowering</td><td>the in-place proof broadcast int64 tables to every step (1.7 GB)</td><td>one step when the body takes no step number</td></tr>
+<tr><td>fidelity</td><td class="bad">dense cost scaling used the sparse backend's Ruiz quirk</td><td>the quirk only for sparse; checked against PIQP dense</td></tr>
+<tr><td>fidelity</td><td class="bad">a bound declared finite that arrived infinite gave NaN</td><td>status <code>INVALID_BOUNDS</code> (−11)</td></tr>
+<tr><td>fidelity</td><td class="bad">a failed first factorization returned garbage</td><td>PIQP's start, with no residuals</td></tr>
+<tr><td>fidelity</td><td>infeasibility and NUMERICS exits reported the previous pass</td><td>what PIQP had computed or changed when it stopped</td></tr>
+<tr><td>fidelity</td><td><code>max_iter=0</code> ran a step</td><td><code>Settings</code> requires at least 1, as PIQP does</td></tr>
+<tr><td>tests</td><td class="warn">step-by-step tolerances with 1.5–6× headroom failed under GCC's FMA contraction; the dense exemption was a name list for Apple clang</td><td>20× headroom; the exemption read from the run (a factorization failure must have occurred)</td></tr>
+<tr><td>tests</td><td>the trace harness leaked 510 MB of problem files and raced on its driver build</td><td>deleted after each run; per-process, per-thread build names</td></tr>
+<tr><td>tests</td><td>weaker than claimed: refinement-always at 90%, Ruiz checking P and c only, the random problems' properties unasserted</td><td>strict, every scaled array, properties asserted</td></tr>
+<tr><td>docs</td><td>stale notes; <code>while</code>'s arity and a guide example; tests outside the mirrored place</td><td>corrected; the tests moved to <code>tests/solvers/ipm/</code></td></tr>
+</table></div>
+
+<h2>Speed</h2>
+<p>The performance review found cost in the generated step that PIQP does not pay. Four exact fixes give the same numbers and the same iterations:</p>
+<ul>
+<li>max/min reductions in four interleaved lanes instead of one serial compare chain;</li>
+<li>sorted segment extrema (CSC column ids) reduced run by run in a register;</li>
+<li>Ruiz maxima taken per matrix;</li>
+<li>the refinement tolerance and the KKT data vector moved out of the step.</li>
+</ul>
+<p>An A/B on 8 problems cut sparse solves by 11–25% (DUALC8 −25%, QSC205 −19%) and dense ones by 1–38%. The final run of <code>perf_2026_09_26_tier3/t3_4_ipm.py</code> warms both sides up and takes minima of 50 samples each. Selected rows (ratio colours: ≤ 1.5 green, ≤ 3 amber):</p>
+<div class="scroll"><table><tr><th>problem</th><th>n / p / m</th><th>backend</th><th>iter Scaly / PIQP</th><th>Scaly (µs)</th><th>PIQP solve (µs)</th><th>Scaly / PIQP</th><th>per iteration (µs)</th></tr>
+<tr><td>HS21</td><td>2 / 0 / 1</td><td>sparse</td><td>9 / 9</td><td class="r">14</td><td class="r">11</td><td class="r ok">1.33</td><td>1.6 / 1.2</td></tr>
+<tr><td>HS21</td><td>2 / 0 / 1</td><td>dense</td><td>9 / 9</td><td class="r">14</td><td class="r">4</td><td class="r bad">3.48</td><td>1.6 / 0.5</td></tr>
+<tr><td>QAFIRO</td><td>32 / 8 / 17</td><td>sparse</td><td>13 / 13</td><td class="r">36</td><td class="r">41</td><td class="r ok">0.89</td><td>2.8 / 3.1</td></tr>
+<tr><td>QAFIRO</td><td>32 / 8 / 17</td><td>dense</td><td>13 / 13</td><td class="r">115</td><td class="r">76</td><td class="r warn">1.52</td><td>8.8 / 5.8</td></tr>
+<tr><td>CVXQP1_S</td><td>100 / 50 / 0</td><td>sparse</td><td>9 / 9</td><td class="r">225</td><td class="r">180</td><td class="r ok">1.25</td><td>25.0 / 20.0</td></tr>
+<tr><td>CVXQP1_S</td><td>100 / 50 / 0</td><td>dense</td><td>9 / 9</td><td class="r">764</td><td class="r">356</td><td class="r warn">2.15</td><td>84.9 / 39.6</td></tr>
+<tr><td>QPCBLEND</td><td>83 / 43 / 29</td><td>sparse</td><td>16 / 16</td><td class="r">296</td><td class="r">210</td><td class="r ok">1.41</td><td>18.5 / 13.1</td></tr>
+<tr><td>QPCBLEND</td><td>83 / 43 / 29</td><td>dense</td><td>16 / 16</td><td class="r">838</td><td class="r">580</td><td class="r ok">1.44</td><td>52.4 / 36.3</td></tr>
+<tr><td>DUAL1</td><td>85 / 1 / 0</td><td>sparse</td><td>12 / 12</td><td class="r">960</td><td class="r">805</td><td class="r ok">1.19</td><td>80.0 / 67.1</td></tr>
+<tr><td>DUAL1</td><td>85 / 1 / 0</td><td>dense</td><td>12 / 12</td><td class="r">831</td><td class="r">310</td><td class="r warn">2.68</td><td>69.2 / 25.8</td></tr>
+<tr><td>DUALC8</td><td>8 / 1 / 502</td><td>sparse</td><td>10 / 10</td><td class="r">738</td><td class="r">501</td><td class="r ok">1.47</td><td>73.8 / 50.1</td></tr>
+<tr><td>DUALC8</td><td>8 / 1 / 502</td><td>dense</td><td>10 / 10</td><td class="r">407</td><td class="r">206</td><td class="r warn">1.98</td><td>40.7 / 20.6</td></tr>
+<tr><td>QSC205</td><td>203 / 91 / 114</td><td>sparse</td><td>16 / 16</td><td class="r">451</td><td class="r">390</td><td class="r ok">1.16</td><td>28.2 / 24.4</td></tr>
+<tr><td>QSC205</td><td>203 / 91 / 114</td><td>dense</td><td>16 / 16</td><td class="r">9778</td><td class="r">6554</td><td class="r ok">1.49</td><td>611.1 / 409.6</td></tr>
+<tr><td>QRECIPE</td><td>180 / 91 / 24</td><td>sparse</td><td>34 / 19</td><td class="r">1270</td><td class="r">425</td><td class="r warn">2.99</td><td>37.4 / 22.3</td></tr>
+<tr><td>QRECIPE</td><td>180 / 91 / 24</td><td>dense</td><td>19 / 19</td><td class="r">6820</td><td class="r">3595</td><td class="r warn">1.90</td><td>358.9 / 189.2</td></tr>
+<tr><td>QBORE3D</td><td>315 / 215 / 19</td><td>sparse</td><td>19 / 19</td><td class="r">1141</td><td class="r">879</td><td class="r ok">1.30</td><td>60.1 / 46.3</td></tr>
+<tr><td>QBORE3D</td><td>315 / 215 / 19</td><td>dense</td><td>19 / 20</td><td class="r">27199</td><td class="r">10836</td><td class="r warn">2.51</td><td>1431.5 / 541.8</td></tr>
+<tr><td>QCAPRI</td><td>353 / 158 / 129</td><td>sparse</td><td>31 / 84</td><td class="r">3259</td><td class="r">7509</td><td class="r ok">0.43</td><td>105.1 / 89.4</td></tr>
+<tr><td>QCAPRI</td><td>353 / 158 / 129</td><td>dense</td><td>31 / 32</td><td class="r">65717</td><td class="r">34532</td><td class="r warn">1.90</td><td>2119.9 / 1079.1</td></tr>
+<tr><td>mpc_12x4_N20</td><td>332 / 252 / 0</td><td>sparse</td><td>7 / 7</td><td class="r">916</td><td class="r">777</td><td class="r ok">1.18</td><td>130.9 / 110.9</td></tr>
+<tr><td>mpc_12x4_N20</td><td>332 / 252 / 0</td><td>dense</td><td>7 / 7</td><td class="r">12921</td><td class="r">4091</td><td class="r bad">3.16</td><td>1845.9 / 584.4</td></tr>
+<tr><td>mpc_27x6_N30</td><td>1017 / 837 / 0</td><td>sparse</td><td>8 / 8</td><td class="r">7856</td><td class="r">7193</td><td class="r ok">1.09</td><td>982.0 / 899.1</td></tr>
+<tr><td>mpc_27x6_N30</td><td>1017 / 837 / 0</td><td>dense</td><td>8 / 8</td><td class="r">409433</td><td class="r">94596</td><td class="r bad">4.33</td><td>51179.2 / 11824.4</td></tr>
+</table></div>
+<p>Geometric means over 51 problems: sparse 1.85× PIQP's solve over all problems and 1.26× over the 35 where PIQP takes at least 50 µs (below that the ~12 µs Python call decides), 0.81× its setup plus solve; dense 2.77×, 2.24× and 1.58×. The review measured another 5–10% in loop-carry copies and step overheads (C-131, C-134).</p>
+
+<h2>Deviations from PIQP</h2>
+<ul>
+<li><b>Noise pivots.</b> The dense backend also fails a Cholesky pivot below ε times its diagonal entry while refinement is off. Such a pivot's sign is rounding noise: on the reference path LAPACK fails exactly where it comes out negative.</li>
+<li><b>Invalid bounds.</b> A bound declared finite that arrives unusable stops the solve with <code>INVALID_BOUNDS</code>.</li>
+<li><b>Nothing else.</b> PIQP's other quirks (signed box maxima, the cost-scaling aliasing, IEEE <code>0/0</code>) are reproduced.</li>
+</ul>
+
+<h2>Handed on to Tier 4</h2>
+<ul>
+<li><b>Decisions:</b>
+  <ul>
+  <li>parity semantics for the drop-in backend, and which quirks and deviations it keeps;</li>
+  <li>baselines and the SQP corpus;</li>
+  <li>when to take the speed levers.</li>
+  </ul></li>
+<li><b>Levers:</b>
+  <ul>
+  <li>C-114: unpadded factor updates; the factorization is 40–60% of a sparse step.</li>
+  <li>C-117: a blocked dense Cholesky.</li>
+  <li>C-131 and C-134: the remaining step overheads.</li>
+  </ul></li>
+<li><b>Open:</b> C-130, QRECIPE's sparse iteration count (34 against 19).</li>
+<li><b>Not ours to commit:</b> C-126 (TinyMPC) is checked off in the committed todo list, but its files are Colin's and uncommitted.</li>
+</ul>
+</main></body></html>

@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 127**
+**Next id: 135**
 
 | Prefix | Section |
 |---|---|
@@ -180,7 +180,9 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
 - [x] **C-107. Decide the JIT's default optimization level.** gcc before 12 does not vectorize at
       `-O2`, which costs dense kernels and `matmul` up to 3× on Linux (`notes/tier2_pr6_report.html`);
       clang vectorizes at `-O2`. Decided 2026-09-26: `-O2`, plus `-ftree-vectorize` when the
-      compiler is GCC (what GCC 12 does at `-O2` by itself). `-O3` was measured first and
+      compiler is GCC before 12 (T3-R: GCC 12 and later vectorize at `-O2` with the `very-cheap`
+      cost model, which the flag would replace, so they get nothing added; the CasADi benchmark
+      harness takes the same flag from `jit.vectorize_flags`). `-O3` was measured first and
       rejected: +7% compile time on ordinary functions but 1–5.8× (up to 376 s) on 385 kB
       straight-line ones, and a cold suite of 23 min instead of 7 on the Mac. Still to check on the
       Linux VM that GCC 11 with `-ftree-vectorize` recovers the 3× of `tier2_pr6_report.html`.
@@ -293,10 +295,10 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       `custom_derivative`). `tests/integration/test_examples.py` checks each against NumPy/SciPy.
 - [x] **C-123. Tier 3 harness (T3-0a).** `tests/data/maros_meszaros/`: the 48 Maros–Mészáros problems
       with n + m ≤ 1000 from `qpsolvers/maros_meszaros_qpbenchmark` (Apache-2.0, NOTICE with the
-      commit), stored as `.npz` as distributed (408 kB). `tests/ipm/problems.py` maps them to
+      commit), stored as `.npz` as distributed (408 kB). `tests/solvers/ipm/problems.py` maps them to
       PIQP's form (unit rows become bounds, `l == u` rows equalities, |value| ≥ 1e19 absent,
       since the set sometimes stores 1e20 as 9.999999999999998e19) and generates infeasible
-      problems and linear MPC QPs. `tests/ipm/piqp_trace.c` runs vendored PIQP with verbose output
+      problems and linear MPC QPs. `tests/solvers/ipm/piqp_trace.c` runs vendored PIQP with verbose output
       and prints its result at full precision; `exact_trace` reads every iteration at full
       precision from runs truncated at `max_iter = k`, which a test shows reproduce the full run.
       PIQP solves all 51 with both backends; the backends take different iteration counts on 4
@@ -304,12 +306,12 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       the infeasible set PIQP runs two primal-infeasible problems to the iteration limit and
       calls an unbounded one primal infeasible; the reference has to reproduce both
       (`perf_2026_09_26_tier3/t3_0_piqp_baseline.py`, `notes/tier3_pr0a_report.html`).
-- [x] **C-124. The NumPy PIQP reference (T3-0b).** `tests/ipm/reference.py` ports PIQP 0.6.2's
+- [x] **C-124. The NumPy PIQP reference (T3-0b).** `tests/solvers/ipm/reference.py` ports PIQP 0.6.2's
       solver loop, Ruiz equilibration, preprocessing and KKT system with iterative refinement line
       by line, solving the regularized KKT matrix with SuperLU. Decision traces (status, iterations,
       rho and delta to 1e-3) match PIQP's sparse backend on 46/48 of the stored subset (gate: 90%)
       and on every problem where PIQP's two backends follow the same path; full-precision values
-      agree to 1e-14 early and 1e-8 near convergence; refinement-always matches on 48/48. Found and
+      agree to 1e-14 early and 1e-8 to 1e-5 near convergence; refinement-always matches on 48/48. Found and
       reproduced: signed maxima for box residuals, cost scaling aliasing the Ruiz stopping test,
       IEEE `0/0` in the mu rate and sigma. 23 mutants of the decision rules, all killed
       (`perf_2026_09_26_tier3/t3_0b_reference_gate.py`, `notes/tier3_pr0b_report.html`).
@@ -348,7 +350,7 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       `SparseLDL`); `Iterate` holds variables in PIQP's layout. Both match the reference's solves to
       1e-7 on 10 stored problems, free rows, MPC and two-sided rows. One factorization and two
       solves take 1.3-1.8x PIQP's whole iteration (sparse) and 1.5-3x (dense); refinement and
-      factorization retries are Tier 4 (`perf_2026_09_26_tier3/t3_3_kkt.py`, `notes/tier3_pr3_report.html`).
+      factorization retries were left for Tier 4 (they moved into Tier 3 with C-129) (`perf_2026_09_26_tier3/t3_3_kkt.py`, `notes/tier3_pr3_report.html`).
 - [x] **C-129. The generated interior-point solver (T3-4, T3-5).** `scaly.solvers.ipm.Solver`: PIQP
       0.6.2 from Ruiz to `restore_dual`, its loop one `while_loop` whose carry holds the iterate, the
       proximal centres and PIQP's info (residuals and termination, initial point, Mehrotra
@@ -364,7 +366,8 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       48/48 (sparse) and 47/48 (dense, QADLITTL) where PIQP's own backends agree; the reference
       matched step by step to 1e-12 … 1e-5; PIQP's ×100 retries reproduced on nonconvex QPs.
       20 mutants, 19 killed (the survivor is equivalent up to rounding). Time: 1.96× PIQP's solve
-      (sparse) and 2.29× (dense), geometric means over 51 problems; 1–3.5 s cold first call
+      (sparse) and 2.29× (dense), geometric means over 51 problems (C-132 found these mostly
+      measurement); 0.7–5.2 s cold first call
       (`perf_2026_09_26_tier3/t3_4_ipm.py`, `notes/tier3_pr4_report.html`).
 - [ ] **C-130. QRECIPE's sparse path stalls.** 34 iterations against PIQP's 19 (both backends of
       PIQP agree on 19; the problem is rounding-sensitive). From iteration 7 the generated LDL^T's
@@ -376,7 +379,11 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       +5–23% on factor + two solves against T3-3's direct factorization (interleaved A/B). T3-6 took
       one copy out (one concatenation into the carry); what is left costs about 1.5 µs of a 32 µs
       sparse step (QSC205). The in-place carry proof does not apply: it counts a value reached
-      through a call, here the factorization, as reading every carry entry.
+      through a call, here the factorization, as reading every carry entry. The T3-R performance
+      review lists the rest, 2-7% sparse and 3-5% dense together: a dead private init used as the
+      loop's store (the factorization's three scans each copy the last one's buffer), the final
+      while carry returned as a pointer into the store, a call writing straight into the concat
+      slice it feeds, and the first attempt peeled out of the retry loop (no zero record).
 - [x] **C-132. The generated IPM's speed (T3-6).** A fair protocol first: both sides warmed up
       (the trace driver repeats PIQP's solve in-process, `SCALY_TRACE_REPEAT`; the first calls of
       a burst run up to 1.6x slower on Apple Silicon) and the minimum of equally many samples; the
@@ -392,6 +399,30 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       setup + solve; dense 2.45x / 2.96x / 1.67x (its Cholesky kernel, C-117). 7-12% of it from
       these changes (A/B on 12 problems). Next levers: C-114 (the factorization is 40-60% of a
       sparse step) and C-117 (`perf_2026_09_26_tier3/t3_4_ipm.py`, `notes/tier3_pr5_report.html`).
+- [x] **C-133. Tier 3 review round (T3-R).** Five agents (fidelity to PIQP, IR/lowering/JIT, AD
+      through while params, performance, tests and docs). Fixed, each with a regression test:
+      three derivative Functions of while loops that collided by name (a crash at lowering: one
+      body under two active sets, a condition shared by two bodies, the step-number flag); a
+      reverse accumulator for params only the condition reads; a cold-cache compile race between
+      threads; the in-place proof broadcasting int64 tables to `max_iter` rows (1.7 GB); a
+      Function/handle cycle holding workspaces until collection; `-ftree-vectorize` changing GCC
+      12+'s cost model (now GCC < 12 only, shared with the CasADi harness); dense cost scaling
+      using the sparse Ruiz quirk; bounds declared finite arriving infinite (`INVALID_BOUNDS`); a
+      failed first factorization returning garbage; infeasibility and NUMERICS exits reporting
+      stale state; `max_iter=0`. Tests: tolerances with 20x headroom (the IPM tests pass with FMA
+      contraction off and fast), the dense exemption read from the run, the trace harness's
+      file leak (510 MB) and build race, stricter reference tests, tests moved to the mirrored
+      `tests/solvers/ipm/`. Speed: extremum reductions in four lanes, sorted segment extrema run
+      by run, Ruiz maxima per matrix, the refinement tolerance and the data vector out of the
+      step: -11 to -25% sparse, identical iterations; sparse now 1.26x PIQP's warmed solve above the
+      call floor (1.85x over all 51, 0.81x its setup + solve), dense 2.24x. 10 mutants on the fixes,
+      all killed; the other fixes' tests were each run against the old code and fail there
+      (`notes/tier3_review_report.html`).
+- [ ] **C-134. IPM step overheads from the T3-R review.** Gate the second `regularized` pass on a
+      retry having changed rho and delta (a one-pass `while_loop`; 2-5%); pass the residuals'
+      data-only maxima (`c`, `b` and bound terms over their scalings) as loop params (1-3%); and
+      stop the scalarizer from unrolling a procedure made of one long reduction
+      (`ipm_ruiz_go`: `cc` 0.85 → 0.58 s). See also C-131.
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 

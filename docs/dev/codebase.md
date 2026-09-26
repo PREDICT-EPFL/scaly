@@ -86,6 +86,11 @@ src/scaly/
     stats.py             the versioned solver-statistics ABI and SolverStatus
     qp.py nlp.py         quadratic proof/extraction and NLP oracle construction
     _oracle.py           shared oracle-assembly helpers
+    ipm/                 PIQP's interior-point method written once as generated code
+      structure.py       QPStructure (the patterns and which bounds exist) and QPValues
+      ruiz.py            Ruiz equilibration of the problem data, as a while_loop
+      kkt.py             the KKT system: dense and sparse backends, retries, refinement
+      algorithm.py       Solver: the initial point, one iteration, the loop and the result
 
   viz/
     graph.py             graph JSON, colors and labels; presentation, not compiler text

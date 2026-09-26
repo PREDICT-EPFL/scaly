@@ -5,7 +5,7 @@ Every environment variable scaly reads is listed here and in `scaly.utils.env.sc
 | Variable | Effect |
 | --- | --- |
 | `SCALY_CC` | the C compiler to use (default: `cc` from `PATH`) |
-| `SCALY_CC_OPT` | the optimization flag the JIT passes to that compiler (default: `-O2`). Set it when a benchmark compiles a baseline at a different level, so both sides of a comparison get the same one. The JIT always adds `-march=native` (`-mcpu=native` on AArch64) and `-fno-math-errno`, since it compiles for the machine it runs on. At `-O2` it also passes `-ftree-vectorize` to GCC, which vectorizes at `-O2` by itself only from version 12 (clang always does). The whole flag set is part of the cache key, so switching flags does not reuse an artifact |
+| `SCALY_CC_OPT` | the optimization flag the JIT passes to that compiler (default: `-O2`). Set it when a benchmark compiles a baseline at a different level, so both sides of a comparison get the same one. The JIT always adds `-march=native` (`-mcpu=native` on AArch64) and `-fno-math-errno`, since it compiles for the machine it runs on. At `-O2` it also passes `-ftree-vectorize` to GCC before version 12, which does not vectorize at `-O2` by itself; GCC 12 and later and clang do, and the flag would change GCC's cost model there. The whole flag set is part of the cache key, so switching flags does not reuse an artifact |
 | `SCALY_CACHE_DIR` | where the just-in-time (JIT) path caches compiled artifacts, hence the `jit` in the default, `$XDG_CACHE_HOME/scaly/jit` or `~/.cache/scaly/jit`. Deleting it is always safe; see [Code generation](codegen.md) |
 | `SCALY_BUILD_SOLVERS` | `auto`, `skip` or `required`, how `uv sync` treats the vendored solver build |
 | `SCALY_VIZ_DIR` | where the visualizer writes recordings |

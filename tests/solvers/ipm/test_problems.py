@@ -6,7 +6,8 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from tests.ipm.problems import INFINITE, infeasible_problems, maros_meszaros, maros_meszaros_names, mpc_qp, raw
+from tests.solvers.ipm import reference as ref
+from tests.solvers.ipm.problems import INFINITE, gate_problems, infeasible_problems, maros_meszaros, maros_meszaros_names, mpc_qp, random_qp, raw
 
 NAMES = maros_meszaros_names()
 
@@ -92,3 +93,16 @@ def test_infeasible_problems_are_labelled() -> None:
   qp, _ = problems["unbounded_ray"]
   x = np.array([0.0, 1e6])  # feasible, and the objective falls without bound along x_2
   assert np.all(x >= qp.x_l) and qp.objective(x) < -1e5
+
+
+@pytest.mark.parametrize("args", [(40, 30, 10, 1), (20, 15, 5, 35), (40, 30, 10, 37)])
+def test_the_gate_lps_exercise_the_proximal_threshold(args: tuple[int, int, int, int]) -> None:
+  """``gate_problems`` includes these LPs because their primal residual falls by between 5% and
+  10% in some iteration, close to the 5% PIQP's proximal update asks for. A new random stream
+  must keep that, or the gate loses the case."""
+  n, m, p, seed = args
+  qp = random_qp(n, m, p, seed=seed, lp=True)
+  assert qp.name in gate_problems()
+  res = ref.solve(qp).trace[:, ref.TRACE_COLUMNS.index("primal_res")]
+  ratios = res[1:] / res[:-1]
+  assert np.any((0.90 <= ratios) & (ratios < 0.95)), ratios

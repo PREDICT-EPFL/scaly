@@ -80,14 +80,17 @@ class QPStructure:
 
   @property
   def h_u_idx(self) -> np.ndarray:
+    """Rows with an upper bound, free rows included (their bound is 1)."""
     return np.flatnonzero(self.h_u_given | self.free_rows)
 
   @property
   def x_l_idx(self) -> np.ndarray:
+    """Variables with a finite lower bound: the order of ``QPValues.x_l``."""
     return np.flatnonzero(self.x_l_given)
 
   @property
   def x_u_idx(self) -> np.ndarray:
+    """Variables with a finite upper bound: the order of ``QPValues.x_u``."""
     return np.flatnonzero(self.x_u_given)
 
   @property

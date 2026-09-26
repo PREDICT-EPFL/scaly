@@ -35,12 +35,12 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute
 <li>48 <code>.npz</code> files with the distributed fields (<code>P</code> in full, <code>q</code>, <code>r</code>, <code>A</code>, <code>l</code>, <code>u</code>), plus the Apache-2.0 LICENSE and a NOTICE naming the source commit (<code>c7d02f4f</code> of <code>qpsolvers/maros_meszaros_qpbenchmark</code>).</li>
 <li>Downloaded: the 85 smallest files, up to 1 MB. Kept: those with n + m ≤ 1000.</li>
 </ul></td></tr>
-<tr><td><code>tests/ipm/problems.py</code></td><td><ul>
+<tr><td><code>tests/solvers/ipm/problems.py</code></td><td><ul>
 <li><code>QP</code>: PIQP's form, <code>A x = b</code>, <code>h_l ≤ G x ≤ h_u</code>, <code>x_l ≤ x ≤ x_u</code>. A single-coefficient-1 row becomes a bound (bounds intersect), an <code>l == u</code> row an equality, and every other row an inequality, kept even when infinite on both sides (PIQP counts those in μ).</li>
 <li><code>infeasible_problems()</code>: three primal-infeasible problems and two unbounded ones, each labelled with the true cause.</li>
 <li><code>mpc_qp(nx, nu, N)</code>: simultaneous-form linear MPC with a random stable system, a fixed x₀ and boxes.</li>
 </ul></td></tr>
-<tr><td><code>tests/ipm/piqp_trace.c</code>, <code>piqp_trace.py</code></td><td><ul>
+<tr><td><code>tests/solvers/ipm/piqp_trace.c</code>, <code>piqp_trace.py</code></td><td><ul>
 <li>The driver reads a binary problem file, runs the sparse or dense backend with <code>verbose</code> and timings on, and prints the per-iteration table, then every <code>info</code> field and every result vector with <code>%.17g</code>.</li>
 <li>It is built once per source and toolchain with the JIT's flags and the plugin's include, lib and rpath flags.</li>
 <li><code>run</code> returns the parsed <code>Trace</code>. <code>exact_trace</code> returns ρ, δ, μ, σ and both step lengths for every iteration at full precision.</li>
@@ -50,8 +50,8 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute
 <h2>2. Tests and mutation checks</h2>
 <div class="scroll"><table>
 <tr><th>File</th><th>Tests</th><th>Mutants</th></tr>
-<tr><td><code>tests/ipm/test_problems.py</code></td><td>53: the subset is complete; for every problem, the split agrees with an independent vectorized reading; the rounded sentinel; known shapes (HS21, DPKLO1); MPC structure (a simulated trajectory satisfies the equalities exactly); the infeasible labels.</td><td class="r">7 / 7 (one after a test was added)</td></tr>
-<tr><td><code>tests/ipm/test_piqp_trace.py</code></td><td>62: HS21 reaches its known optimum −99.96; all 48 solve on both backends, with KKT residuals recomputed from the data; truncated runs match the table on 5 problems; the parser; PIQP's statuses on the infeasible set; MPC solves.</td><td class="r">5 / 5 (two after tests were added); a sixth exposed dead code</td></tr>
+<tr><td><code>tests/solvers/ipm/test_problems.py</code></td><td>53: the subset is complete; for every problem, the split agrees with an independent vectorized reading; the rounded sentinel; known shapes (HS21, DPKLO1); MPC structure (a simulated trajectory satisfies the equalities exactly); the infeasible labels.</td><td class="r">7 / 7 (one after a test was added)</td></tr>
+<tr><td><code>tests/solvers/ipm/test_piqp_trace.py</code></td><td>62: HS21 reaches its known optimum −99.96; all 48 solve on both backends, with KKT residuals recomputed from the data; truncated runs match the table on 5 problems; the parser; PIQP's statuses on the infeasible set; MPC solves.</td><td class="r">5 / 5 (two after tests were added); a sixth exposed dead code</td></tr>
 </table></div>
 
 <h2>3. Benchmarks: the PIQP baseline</h2>

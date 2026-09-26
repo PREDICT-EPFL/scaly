@@ -77,18 +77,22 @@ class Iterate:
   s_bu: Expr
 
   def fields(self) -> tuple[Expr, ...]:
+    """The ten vectors in PIQP's order."""
     return (self.x, self.y, self.z_l, self.z_u, self.z_bl, self.z_bu, self.s_l, self.s_u, self.s_bl, self.s_bu)
 
   @staticmethod
   def sizes(s: QPStructure) -> tuple[int, ...]:
+    """The lengths of ``fields`` for structure ``s``."""
     nl, nu = s.x_l_idx.size, s.x_u_idx.size
     return (s.n, s.p, s.m, s.m, nl, nu, s.m, s.m, nl, nu)
 
   def flat(self) -> Expr:
+    """The fields as one vector, in order."""
     return concat([f.reshape((f.size,)) for f in self.fields()])
 
   @staticmethod
   def unflat(s: QPStructure, v: Expr) -> Iterate:
+    """The iterate ``flat`` made, back from its vector."""
     offsets = np.cumsum([0, *Iterate.sizes(s)])
     return Iterate(*(v[int(a) : int(b)] for a, b in zip(offsets[:-1], offsets[1:], strict=True)))
 
@@ -126,6 +130,7 @@ class Matrices:
     return self.P @ x + self.P_lower @ x if self.P_lower is not None else self.P @ x
 
   def full_P(self) -> SparseMatrix:
+    """``P`` with both triangles stored."""
     return self.P + self.P_lower if self.P_lower is not None else self.P
 
 
@@ -156,9 +161,11 @@ class Kernels:
   # --- layouts -----------------------------------------------------------------------------------
 
   def data(self, q: ScaledQP) -> Expr:
+    """The problem data a kernel takes: ``[P | A | G | x_b]`` of a scaled problem."""
     return concat([e for e in (q.values.P, q.values.A, q.values.G, q.x_b) if e.size])
 
   def matrices(self, d: Expr) -> tuple[Matrices, Expr]:
+    """``P``, ``A`` and ``G`` over a data vector, and the box scaling ``x_b``."""
     P, A, G, x_b = _split(d, self.d_sizes)
     return Matrices(self.s, P, A, G), x_b
 
@@ -174,10 +181,12 @@ class Kernels:
 
   @property
   def record_sizes(self) -> tuple[int, ...]:
+    """The lengths of a factorization record's parts: ``delta``, ``delta_reg``, ``x_reg``, ``z_reg``, ``z_reg_ir``, the factor."""
     s = self.s
     return (1, 1, s.n, s.m, s.m, self._factorization[1])
 
   def record(self, rec: Expr) -> dict[str, Expr]:
+    """A factorization record's parts by name."""
     delta, delta_reg, x_reg, z_reg, z_reg_ir, factor = _split(rec, self.record_sizes)
     return {"delta": delta[0], "delta_reg": delta_reg[0], "x_reg": x_reg, "z_reg": z_reg, "z_reg_ir": z_reg_ir, "factor": factor}
 
@@ -354,12 +363,13 @@ class Kernels:
     on), then PIQP's refinement steps, each one solve and one product."""
     r, size = self.refinement, self.size
     rec, d, rhs = Expr.sym("rec", (sum(self.record_sizes),)), Expr.sym("D", (sum(self.d_sizes),)), Expr.sym("rhs", (size,))
-    first, l0 = Expr.sym("c", (size + 2,)), Expr.sym("l0", (size,))
+    # carry = [done, error, tol | residual]: the tolerance too is computed only with refinement on
+    first, l0 = Expr.sym("c", (size + 3,)), Expr.sym("l0", (size,))
     e0 = rhs - self._times(rec, d, l0)
+    tol0 = r.eps_abs + r.eps_rel * norm_inf(rhs)
     names = ["c", "rec", "D", "rhs", "l0"]
-    start = Function._from_exprs(
-      f"{self.name}_refine_start", [first, rec, d, rhs, l0], [concat([stack([Expr.const(1.0), norm_inf(e0)]), e0])], names, ["next"]
-    )
+    start_out = concat([stack([Expr.const(1.0), norm_inf(e0), tol0]), e0])
+    start = Function._from_exprs(f"{self.name}_refine_start", [first, rec, d, rhs, l0], [start_out], names, ["next"])
     start_go = Function._from_exprs(f"{self.name}_refine_start_go", [first, rec, d, rhs, l0], [first[0] < 0.5], names, ["go"])
     # carry = [stop, error | lhs | residual]
     c, tol = Expr.sym("c", (2 * size + 2,)), Expr.sym("tol", (1,))
@@ -385,13 +395,12 @@ class Kernels:
     r, size = self.refinement, self.size
     lhs = _call(self._solve, rec, d, rhs)
     start_go, start, step_go, step = self._refinement
-    init = concat([stack([where(ir, 0.0, 1.0), Expr.const(0.0)]), Expr.const(np.zeros(size))])
+    init = concat([stack([where(ir, 0.0, 1.0), Expr.const(0.0), Expr.const(0.0)]), Expr.const(np.zeros(size))])
     first, _ = while_loop(start_go, start, init, max_iter=1, params=(rec, d, rhs, lhs))
-    err0 = first[1]
-    tol = r.eps_abs + r.eps_rel * norm_inf(rhs)
+    err0, tol = first[1], first[2]
     # A residual that is not finite ends the solve, as PIQP's does.
     stop0 = where(logical_and(ir, err0 > tol), 0.0, 1.0)
-    out, _ = while_loop(step_go, step, concat([stack([stop0, err0]), lhs, first[2:]]), max_iter=r.max_iter, params=(rec, d, rhs, tol.reshape((1,))))
+    out, _ = while_loop(step_go, step, concat([stack([stop0, err0]), lhs, first[3:]]), max_iter=r.max_iter, params=(rec, d, rhs, tol.reshape((1,))))
     return out[2 : 2 + size]
 
 
@@ -405,24 +414,29 @@ class KKT:
 
   and the recovery of the inequality and box duals and slacks, through the shared ``Kernels``."""
 
-  def __init__(self, kernels: Kernels, q: ScaledQP):
+  def __init__(self, kernels: Kernels, q: ScaledQP, *, data: Expr | None = None):
+    """``data``, when given, is ``kernels.data(q)`` computed elsewhere (a loop's param)."""
     self.kernels, self.s, self.q = kernels, kernels.s, q
     self.mats = Matrices(kernels.s, q.values.P, q.values.A, q.values.G)
-    self.data = kernels.data(q)
+    self.data = kernels.data(q) if data is None else data
 
   @property
   def backend(self) -> Backend:
+    """Which KKT backend the kernels generate."""
     return self.kernels.backend
 
   @property
   def A(self) -> SparseMatrix:
+    """The equality constraint matrix."""
     return self.mats.A
 
   @property
   def G(self) -> SparseMatrix:
+    """The inequality constraint matrix."""
     return self.mats.G
 
   def P_times(self, x: Expr) -> Expr:
+    """``P x`` from the upper triangle."""
     return self.mats.P_times(x)
 
   def factor(self, rho: Expr | float, delta: Expr | float, it: Iterate, *, reg_limit: Expr | float = 0.0, ir: Expr | float | None = None) -> Factor:
@@ -452,10 +466,12 @@ class Factor:
 
   @property
   def rho(self) -> Expr:
+    """``rho`` after the retries."""
     return self.head["rho"]
 
   @property
   def delta(self) -> Expr:
+    """``delta`` after the retries."""
     return self.head["delta"]
 
   @property

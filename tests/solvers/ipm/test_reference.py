@@ -14,9 +14,9 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from tests.ipm import piqp_trace
-from tests.ipm import reference as ref
-from tests.ipm.problems import _qp, gate_problems, infeasible_problems, kkt_residuals, maros_meszaros, maros_meszaros_names, mpc_qp, random_qp
+from tests.solvers.ipm import piqp_trace
+from tests.solvers.ipm import reference as ref
+from tests.solvers.ipm.problems import _qp, gate_problems, infeasible_problems, kkt_residuals, maros_meszaros, maros_meszaros_names, mpc_qp, random_qp
 
 NAMES = maros_meszaros_names()
 GATE = 0.9
@@ -65,7 +65,7 @@ def test_iterative_refinement_always_on() -> None:
   """With refinement from the first factorization (PIQP turns it on after a failed one)."""
   settings = ref.Settings(iterative_refinement_always_enabled=True)
   misses = [n for n in NAMES if not _decisions_match(piqp_trace.run(maros_meszaros(n), refine_always=True), ref.solve(maros_meszaros(n), settings))]
-  assert len(NAMES) - len(misses) >= GATE * len(NAMES), f"traces differ on {misses}"
+  assert not misses, f"traces differ on {misses}"  # 48 of 48 (C-124): refinement leaves no rounding sensitivity
 
 
 @pytest.mark.solver("piqp")
@@ -108,7 +108,7 @@ def test_reference_solutions_satisfy_the_kkt_conditions(name: str) -> None:
   primal, dual = kkt_residuals(qp, x=r.x, y=r.y, z_l=r.z_l, z_u=r.z_u, z_bl=r.z_bl, z_bu=r.z_bu)
   scale = 1.0 + abs(qp.objective(r.x))
   assert primal <= 1e-6 * (1 + np.abs(r.x).max()) and dual <= 1e-5 * scale
-  # Complementarity: an active bound has a positive multiplier, an inactive one none.
+  # Complementarity on the lower box bounds: a bound away from x has no multiplier.
   finite_l = np.isfinite(qp.x_l)
   gap = np.abs(r.z_bl[finite_l] * (r.x[finite_l] - qp.x_l[finite_l]))
   assert gap.max(initial=0.0) <= 1e-5 * scale
@@ -181,12 +181,16 @@ def test_scaling_edge_cases_at_full_precision(name: str) -> None:
 
 
 @pytest.mark.solver("piqp")
-def test_the_inequality_dual_shift() -> None:
+def test_the_inequality_dual_shift(monkeypatch: pytest.MonkeyPatch) -> None:
   """An LP whose inequality duals reach machine epsilon by iteration 11: PIQP shifts them by eps,
-  and without that shift the reference is 20-40% off in the next two iterations."""
+  and without that shift the reference is 20-40% off in the next two iterations (checked too, so
+  that a change of random stream cannot leave the test without a shift to see)."""
   qp = random_qp(20, 15, 5, seed=7, lp=True)
   fields = ("rho", "delta", "mu", "sigma", "primal_step", "dual_step")
   for k in range(1, 13):
     pq = piqp_trace.run(qp, max_iter=k)
     r = ref.solve(qp, ref.Settings(max_iter=k))
     np.testing.assert_allclose([getattr(r.info, f) for f in fields], [pq.info[f] for f in fields], rtol=1e-9, err_msg=f"after {k}")
+  monkeypatch.setattr(ref, "EPS", 0.0)  # no dual is below zero: the shift never happens
+  unshifted = ref.solve(qp, ref.Settings(max_iter=12))
+  assert abs(unshifted.info.mu / pq.info["mu"] - 1.0) > 0.05

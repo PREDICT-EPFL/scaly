@@ -302,50 +302,64 @@ def _scan_jvp(expr: Expr, tangents: list[Expr]) -> Expr:
   return node(1 + n_ys + output - 1)
 
 
-_WHILE_JVP_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Function, Function]]]] = (
-  weakref.WeakKeyDictionary()
-)
+# The tangent body per body (whatever the condition), the tangent condition per (body, condition).
+_WHILE_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Function, Expr, list[Expr]]]] = weakref.WeakKeyDictionary()
+_WHILE_JVP_COND_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Function]]] = weakref.WeakKeyDictionary()
 
 
-def _tangent_params(cond: Function, body: Function, index: bool, active: tuple[int, ...], taken: set[str], shape: Any) -> list[Expr]:
+def _loop_suffix(index: bool, active: tuple[int, ...]) -> str:
+  """What sets a while loop's derivative Functions apart for one body: whether it takes the step
+  number, and which of its params are differentiated. Each combination is its own procedure."""
+  return ("_k" if index else "") + "".join(f"_p{i}" for i in active)
+
+
+def _tangent_params(body: Function, index: bool, active: tuple[int, ...], taken: set[str], shape: Any) -> list[Expr]:
   """Symbols for the tangents of the loop's params ``active`` (by position among the params), shaped
   by ``shape(param)``; the tangent loop takes them as params after the primal ones."""
   first = 1 + int(index)
   return [Expr.sym(claim_name(f"fwd:{body.input_names[first + i]}", taken), shape(body.inputs[first + i])) for i in active]
 
 
-def _tangent_cond(cond: Function, aug: Expr, cs: int, dparams: Sequence[Expr], suffix: str) -> Function:
-  """The tangent loop's condition: the primal one on ``c`` and the params, ignoring the tangents."""
+def _tangent_cond(cond: Function, body: Function, aug: Expr, cs: int, dparams: Sequence[Expr], suffix: str) -> Function:
+  """The tangent loop's condition: the primal one on ``c`` and the params, ignoring the tangents.
+  It takes the tangent body's inputs, so it is named after the body too: one condition shared by
+  two bodies gives two of them."""
   go = substitute(cond.outputs[0], {cond.inputs[0]: aug[:cs].reshape(cond.inputs[0].shape)})
   inputs = [aug, *cond.inputs[1:], *dparams]
-  return Function._from_exprs(f"{cond.name}_whilefwd{suffix}", inputs, [go], [str(e.name) for e in inputs], ["go"])
+  taken: set[str] = set()
+  names = [claim_name(n, taken) for n in (str(aug.name), *cond.input_names[1:], *(str(d.name) for d in dparams))]
+  return Function._from_exprs(f"{cond.name}_{body.name}_whilefwd{suffix}", inputs, [go], names, ["go"])
 
 
 def _while_jvp_functions(cond: Function, body: Function, index: bool, active: tuple[int, ...]) -> tuple[Function, Function]:
   """The condition and body of the tangent loop, over the carry ``[c, dc]`` flat and with the
   tangents of the ``active`` params as extra params: the condition reads ``c`` and the params only,
   so the tangent loop takes exactly the primal's steps."""
-  cache = _WHILE_JVP_CACHE.setdefault(body, weakref.WeakKeyDictionary()).setdefault(cond, {})
+  cache = _WHILE_JVP_CACHE.setdefault(body, {})
   key = (index, active)
+  suffix = _loop_suffix(index, active)
+  cs = body.inputs[0].size
   if key not in cache:
     carry = body.inputs[0]
-    cs = carry.size
     first = 1 + int(index)
-    taken = {*body.input_names, *body.output_names, *cond.input_names, *cond.output_names}
+    taken = {*body.input_names, *body.output_names}
     aug = Expr.sym(claim_name(f"fwd:{body.input_names[0]}", taken), (2 * cs,))
     dcarry = Expr.sym(claim_name(f"fwd:{body.input_names[0]}:dc", taken), carry.shape)
-    dparams = _tangent_params(cond, body, index, active, taken, lambda formal: formal.shape)
+    dparams = _tangent_params(body, index, active, taken, lambda formal: formal.shape)
     (tangent,) = body_tangents(body, {0: dcarry, **{first + i: d for i, d in zip(active, dparams, strict=True)}})
     split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
     nxt = substitute(concat([body.outputs[0].reshape((cs,)), tangent.reshape((cs,))]), split)
     # The step number and the params stay inputs of the tangent body, the params' tangents follow.
     inputs = [aug, *body.inputs[1:], *dparams]
-    suffix = "".join(f"_p{i}" for i in active)  # each set of active params is its own procedure
     aug_body = Function._from_exprs(
       f"{body.name}_whilefwd{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(e.name) for e in inputs], ["fwd:carry"]
     )
-    cache[key] = (_tangent_cond(cond, aug, cs, dparams, suffix), aug_body)
-  return cache[key]
+    cache[key] = (aug_body, aug, dparams)
+  aug_body, aug, dparams = cache[key]
+  conds = _WHILE_JVP_COND_CACHE.setdefault(body, weakref.WeakKeyDictionary()).setdefault(cond, {})
+  if key not in conds:
+    conds[key] = _tangent_cond(cond, body, aug, cs, dparams, suffix)
+  return conds[key], aug_body
 
 
 def _while_jvp(expr: Expr, tangents: Sequence[Expr]) -> Expr:
@@ -604,7 +618,8 @@ def _copysign_slope(x: Expr, s: Expr) -> Expr:
 # the step as well (C-93).
 
 _SCAN_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Function]] = weakref.WeakKeyDictionary()
-_WHILE_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Function, Function]]]] = (
+_WHILE_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Function, Expr, list[Expr]]]] = weakref.WeakKeyDictionary()
+_WHILE_JVP_MANY_COND_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Function]]] = (
   weakref.WeakKeyDictionary()
 )
 _CONTAINS_LOOP: weakref.WeakKeyDictionary[Any, bool] = weakref.WeakKeyDictionary()
@@ -833,27 +848,31 @@ def _while_jvp_many_functions(cond: Function, body: Function, nseed: int, index:
   """Condition and body of the multi-seed tangent loop over the carry ``[c, Dc]``, with the ``active``
   params' seeded tangents (``(nseed, *shape)``) as extra params; the condition reads ``c`` and the
   params only, so the loop takes exactly the primal's steps."""
-  cache = _WHILE_JVP_MANY_CACHE.setdefault(body, weakref.WeakKeyDictionary()).setdefault(cond, {})
+  cache = _WHILE_JVP_MANY_CACHE.setdefault(body, {})
   key = (nseed, env_bool("SCALY_STRICT_JVP_MANY", False), index, active)
+  suffix = f"{nseed}" + _loop_suffix(index, active)
+  cs = body.inputs[0].size
   if key not in cache:
     carry = body.inputs[0]
-    cs = carry.size
     first = 1 + int(index)
-    taken = {*body.input_names, *body.output_names, *cond.input_names, *cond.output_names}
+    taken = {*body.input_names, *body.output_names}
     aug = Expr.sym(claim_name(f"fwd:{body.input_names[0]}", taken), (cs * (1 + nseed),))
-    dparams = _tangent_params(cond, body, index, active, taken, lambda formal: (nseed, *formal.shape))
+    dparams = _tangent_params(body, index, active, taken, lambda formal: (nseed, *formal.shape))
     seeds = {carry: aug[cs:].reshape((nseed, *carry.shape))}
     seeds.update({body.inputs[first + i]: d for i, d in zip(active, dparams, strict=True)})
-    (primal,), (tangent,) = _jvp_many_compressed(body.outputs, seeds, nseed, owner=body, name=f"{body.name}_stepjac{nseed}")
+    (primal,), (tangent,) = _jvp_many_compressed(body.outputs, seeds, nseed, owner=body, name=f"{body.name}_stepjac{suffix}")
     split = {carry: aug[:cs].reshape(carry.shape)}
     nxt = substitute(concat([primal.reshape((cs,)), tangent.reshape((nseed * cs,))]), split)
     inputs = [aug, *body.inputs[1:], *dparams]
-    suffix = f"{nseed}" + "".join(f"_p{i}" for i in active)
     aug_body = Function._from_exprs(
       f"{body.name}_whilefwd{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(e.name) for e in inputs], ["fwd:carry"]
     )
-    cache[key] = (_tangent_cond(cond, aug, cs, dparams, suffix), aug_body)
-  return cache[key]
+    cache[key] = (aug_body, aug, dparams)
+  aug_body, aug, dparams = cache[key]
+  conds = _WHILE_JVP_MANY_COND_CACHE.setdefault(body, weakref.WeakKeyDictionary()).setdefault(cond, {})
+  if key not in conds:
+    conds[key] = _tangent_cond(cond, body, aug, cs, dparams, suffix)
+  return conds[key], aug_body
 
 
 def _while_jvp_many(expr: Expr, tangents: Sequence[Expr], nseed: int) -> Expr:

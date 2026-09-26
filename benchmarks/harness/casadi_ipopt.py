@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from scaly.codegen.jit import _load_library, opt_flag
+from scaly.codegen.jit import _load_library, opt_flag, vectorize_flags
 from scaly.codegen.toolchain import cache_root, find_c_compiler
 from scaly.solvers.paths import backend_compile_flags, solver_paths
 from scaly.solvers.stats import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, SolverStats, SolverStatus, stats_c_timing_defs
@@ -209,6 +209,7 @@ def _build(spec_path: Path) -> None:
   command = [
     spec["compiler"],
     spec["opt"],
+    *vectorize_flags(spec["opt"], spec["compiler"]),  # as the JIT compiles Scaly's side
     *NATIVE_CFLAGS,
     "-fPIC",
     shared_lib_flag(),
@@ -275,6 +276,7 @@ class CompiledCasadiIpopt:
       + solver_digest
       + compiler
       + opt
+      + " ".join(vectorize_flags(opt, compiler))
       + " ".join(NATIVE_CFLAGS)
       + " ".join(backend_compile_flags(("ipopt",)))  # the rpath baked into the library must match this checkout
     )

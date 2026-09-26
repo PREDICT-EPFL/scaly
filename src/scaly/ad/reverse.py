@@ -266,8 +266,8 @@ def _while_adj_function(body: Any, index: bool, n_params: int, active: tuple[int
     out = concat(parts) if len(parts) > 1 else parts[0]
     inputs = [lam, carry, step, count, *formals]
     names = [claim_name("lam", taken), body.input_names[0], str(step.name), str(count.name), *body.input_names[first : first + n_params]]
-    # Each set of active params is its own Function, so it needs its own procedure name.
-    suffix = "".join(f"_p{i}" for i in active)
+    # Each step-number flag and set of active params is its own Function, so it needs its own name.
+    suffix = ("_k" if index else "") + "".join(f"_p{i}" for i in active)
     cache[key] = Function._from_exprs(
       f"{body.name}_whileadj{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(out))], names, [claim_name("adj:carry", taken)]
     )
@@ -311,7 +311,13 @@ def _while_vjp(expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple
   if output == -1:
     raise NotImplementedError("reverse mode through the stored carries of a while_loop (reverse over reverse) is not implemented")
   cond, body, init, params, max_iter, index = while_parts(expr)
-  active = tuple(i for i, param in enumerate(params) if any(_depends_on(param, wrt, dep_memo) for wrt in wrts))
+  first = 1 + int(index)
+  # A param only the condition reads moves the step count, whose derivative is zero: no cotangent.
+  active = tuple(
+    i
+    for i, param in enumerate(params)
+    if any(_depends_on(param, wrt, dep_memo) for wrt in wrts) and _depends_on(body.outputs[0], body.inputs[first + i], dep_memo)
+  )
   if max_iter == 0:
     return [(init, cot)]
   cs = init.size

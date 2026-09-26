@@ -20,8 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "perf_2026_09_26_ti
 import scaly as sc  # noqa: E402
 from bench_common import median_us  # noqa: E402
 from scaly.solvers.ipm import KKT, Iterate, Kernels, QPValues, ScaledQP, Scaling  # noqa: E402
-from tests.ipm import piqp_trace  # noqa: E402
-from tests.ipm.problems import ipm_inputs, maros_meszaros, mpc_qp  # noqa: E402
+from tests.solvers.ipm import piqp_trace  # noqa: E402
+from tests.solvers.ipm.problems import ipm_inputs, maros_meszaros, mpc_qp  # noqa: E402
 
 ORDER = ("P", "c", "A", "b", "G", "h_l", "h_u", "x_l", "x_u")
 

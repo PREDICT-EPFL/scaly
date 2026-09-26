@@ -13,6 +13,7 @@ import hashlib
 import os
 import re
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from scipy import sparse
 from scaly.codegen.jit import compile_flags
 from scaly.codegen.toolchain import cache_root, find_c_compiler
 from scaly.solvers.paths import backend_compile_flags
-from tests.ipm.problems import QP
+from tests.solvers.ipm.problems import QP
 
 SOURCE = Path(__file__).with_name("piqp_trace.c")
 COLUMNS = ("iter", "primal_obj", "dual_obj", "duality_gap", "primal_res", "dual_res", "rho", "delta", "mu", "primal_step", "dual_step")
@@ -55,8 +56,11 @@ def driver() -> Path:
   exe = cache_root() / "piqp_trace" / key / "piqp_trace"
   if not exe.exists():
     exe.parent.mkdir(parents=True, exist_ok=True)
-    tmp = exe.with_suffix(f".{id(exe)}.tmp")
-    subprocess.run([compiler.cc, str(SOURCE), *flags, "-lm", "-o", str(tmp)], check=True, capture_output=True, text=True)
+    tmp = exe.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")  # unique across xdist workers
+    built = subprocess.run([compiler.cc, str(SOURCE), *flags, "-lm", "-o", str(tmp)], capture_output=True, text=True)
+    if built.returncode:
+      tmp.unlink(missing_ok=True)
+      raise RuntimeError(f"building the PIQP trace driver failed:\n{built.stderr or built.stdout}")
     tmp.replace(exe)
   return exe
 
@@ -112,10 +116,13 @@ def run(
   runs that many more times in the same process and ``info["solve_time_min"]`` is the fastest."""
   workdir = workdir or cache_root() / "piqp_trace" / "problems"
   workdir.mkdir(parents=True, exist_ok=True)
-  path = workdir / f"{qp.name}_{'dense' if dense else 'sparse'}_{max_iter}_{refine_always}_{scale_cost}_{os.getpid()}.bin"
+  path = workdir / f"{qp.name}_{'dense' if dense else 'sparse'}_{os.getpid()}_{threading.get_ident()}.bin"
   write_problem(qp, path, dense=dense, max_iter=max_iter, refine_always=refine_always, scale_cost=scale_cost)
   env = {**os.environ, "SCALY_TRACE_REPEAT": str(repeat)} if repeat else None
-  out = subprocess.run([str(driver()), str(path)], check=True, capture_output=True, text=True, env=env)
+  try:
+    out = subprocess.run([str(driver()), str(path)], check=True, capture_output=True, text=True, env=env)
+  finally:
+    path.unlink(missing_ok=True)  # one file per run otherwise piles up in the cache
   return parse(out.stdout)
 
 

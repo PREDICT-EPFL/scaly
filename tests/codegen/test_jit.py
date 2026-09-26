@@ -225,6 +225,52 @@ def test_threads_get_workspaces_of_their_own(isolated_cache) -> None:
     assert all(pool.map(work, range(8)))
 
 
+def test_threads_compiling_one_function_at_once(isolated_cache) -> None:
+  """Eight threads call a function none has compiled, on an empty cache: the build's temporary
+  files are per thread (they were per process, and seven threads failed on a vanished file)."""
+  import threading
+  from concurrent.futures import ThreadPoolExecutor
+
+  x = sc.sym("x", 64)
+  y = x
+  for i in range(40):
+    y = (y * (1.0 + 0.001 * i)).sin() + x
+  fn = sc.Function._from_exprs("cold_threads", [x], [y], ["x"], ["y"])
+  barrier = threading.Barrier(8)
+
+  def work(_: int) -> np.ndarray:
+    barrier.wait()
+    return fn(np.full(64, 0.1))
+
+  with ThreadPoolExecutor(max_workers=8) as pool:
+    results = list(pool.map(work, range(8)))
+  assert all(np.array_equal(r, results[0]) for r in results)
+
+
+def test_a_dropped_function_frees_its_workspace_at_once(isolated_cache) -> None:
+  """The compiled handle keeps the Function's name, not the Function: no reference cycle holds the
+  workspace until the next garbage collection."""
+  import gc
+  import tracemalloc
+
+  fns = [_large_workspace_function(f"drop_{i}", steps=20000) for i in range(3)]
+  point = (np.ones(4), np.zeros(20000))
+  gc.collect()
+  gc.disable()
+  tracemalloc.start()
+  try:
+    base = tracemalloc.get_traced_memory()[0]
+    for fn in fns:
+      fn(point)
+    workspaces = 3 * 8 * fns[0]._compiled._sz_w
+    assert tracemalloc.get_traced_memory()[0] - base >= workspaces
+    del fns, fn
+    assert tracemalloc.get_traced_memory()[0] - base < workspaces / 3
+  finally:
+    tracemalloc.stop()
+    gc.enable()
+
+
 def test_integer_inputs_reach_callees_as_integers(isolated_cache) -> None:
   """The entry point takes ``double`` arrays for every input. A callee, a scan or a map reads an
   ``int64`` input through an ``int64_t`` pointer, so the entry converts it once; passing the
@@ -310,10 +356,15 @@ def test_a_failing_compile_is_not_retried(isolated_cache, monkeypatch) -> None:
   assert len(calls) == 1
 
 
-@pytest.mark.parametrize("gcc, opt, vectorize", [(True, None, True), (False, None, False), (True, "-O3", False), (True, "-O2", True)])
-def test_gcc_gets_tree_vectorize_at_o2(monkeypatch, gcc: bool, opt: str | None, vectorize: bool) -> None:
-  """GCC vectorizes at ``-O2`` by itself only from version 12; clang always does."""
-  monkeypatch.setattr(jit, "is_gcc", lambda cc: gcc)
+@pytest.mark.parametrize(
+  "major, opt, vectorize",
+  [(11, None, True), (11, "-O2", True), (11, "-O3", False), (12, None, False), (13, "-O2", False), (None, None, False)],
+)
+def test_only_gcc_before_12_gets_tree_vectorize_at_o2(monkeypatch, major: int | None, opt: str | None, vectorize: bool) -> None:
+  """GCC vectorizes at ``-O2`` by itself from version 12 on, where the flag would replace its
+  cheapest cost model; clang (``major`` None) always does."""
+  monkeypatch.setattr(jit, "is_gcc", lambda cc: major is not None)
+  monkeypatch.setattr(jit, "gcc_major", lambda cc: major)
   if opt is None:
     monkeypatch.delenv("SCALY_CC_OPT", raising=False)
   else:
@@ -322,6 +373,22 @@ def test_gcc_gets_tree_vectorize_at_o2(monkeypatch, gcc: bool, opt: str | None, 
   assert flags[0] == (opt or "-O2")
   assert ("-ftree-vectorize" in flags) == vectorize
   assert flags[-len(jit.HOST_CFLAGS) :] == jit.HOST_CFLAGS
+  assert jit.vectorize_flags(opt or "-O2", "cc") == (("-ftree-vectorize",) if vectorize else ())
+
+
+@pytest.mark.parametrize(
+  "banner, major",
+  [
+    ("gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0\nCopyright (C) 2021 Free Software Foundation, Inc.\n", 11),
+    ("cc (GCC) 13.2.1 20231011 (Red Hat 13.2.1-4)\nCopyright (C) 2023 Free Software Foundation, Inc.\n", 13),
+    ("gcc-15 (Homebrew GCC 15.2.0) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\n", 15),
+    ("", None),
+  ],
+)
+def test_gccs_major_version_is_read_from_its_banner(banner: str, major: int | None) -> None:
+  from scaly.codegen import toolchain
+
+  assert toolchain._gcc_major_of(banner) == major
 
 
 @pytest.mark.parametrize(

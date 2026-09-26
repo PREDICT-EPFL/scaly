@@ -1,6 +1,6 @@
 /* Run the vendored PIQP on one problem with verbose output and print its result at full precision.
  *
- * Usage: piqp_trace <problem.bin>. The file, written by tests/ipm/piqp_trace.py, is little endian:
+ * Usage: piqp_trace <problem.bin>. The file, written by tests/solvers/ipm/piqp_trace.py, is little endian:
  * int64 header[10] = {n, p, m, nnz(P upper), nnz(A), nnz(G), dense, max_iter,
  * iterative_refinement_always_enabled, preconditioner_scale_cost} (a negative setting keeps PIQP's default),
  * then P, A and G each as CSC (int32 col_ptr[n + 1], int32 row_ind[nnz], double values[nnz]) with

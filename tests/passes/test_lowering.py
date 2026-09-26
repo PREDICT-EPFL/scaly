@@ -620,3 +620,48 @@ def test_hoisting_keeps_a_loop_count_with_its_loop() -> None:
       v, k = v * 0.5, k + 1
     expected.append(v + k + 5.0)
   np.testing.assert_allclose(got, expected)
+
+
+@pytest.mark.parametrize("n", [1, 5, 7, 8, 9, 12, 13, 64, 1001])
+def test_max_and_min_reductions_in_four_lanes(n: int) -> None:
+  """Past eight elements the extremum keeps four accumulators: the same value as NumPy's, whichever
+  lane or the tail holds it, and NaN in any lane propagates."""
+  from scaly.ir.expr import reduce_max, reduce_min
+
+  x = sc.sym("x", n)
+  fn = sc.Function._from_exprs(f"four_lanes_{n}", [x], [reduce_max(x), reduce_min(x)], ["x"], ["mx", "mn"])
+  rng = np.random.default_rng(n)
+  for where in range(n):
+    v = rng.standard_normal(n)
+    v[where] = 10.0  # the maximum in each position in turn
+    v[(where + 1) % n] = -10.0 if n > 1 else 10.0
+    mx, mn = fn(v)
+    assert (mx, mn) == (np.max(v), np.min(v))
+    v[where] = np.nan
+    mx, mn = fn(v)
+    assert np.isnan(mx) and np.isnan(mn)
+  if n >= 64:  # smaller functions become straight-line code
+    assert "kb_" in render_c_source(fn)
+
+
+@pytest.mark.parametrize("sort", [True, False])
+def test_segment_extrema_in_runs(sort: bool) -> None:
+  """Bins in runs (a sorted table, as CSC column ids are) reduce run by run in a register; other
+  tables keep one loop over the entries. Both give the entry-by-entry result, NaN included."""
+  from scaly.ir.expr import segment_max, segment_min
+
+  rng = np.random.default_rng(3)
+  idx = rng.integers(0, 40, 400)
+  idx = np.sort(idx) if sort else idx
+  x = sc.sym("x", 400)
+  fn = sc.Function._from_exprs(f"seg_runs_{int(sort)}", [x], [segment_max(x, idx, 41, fill=0.0), segment_min(x, idx, 41, fill=-1.0)], ["x"], ["a", "b"])
+  v = rng.standard_normal(400)
+  v[[7, 200]] = np.nan
+  want_a, want_b = np.zeros(41), np.full(41, -1.0)
+  for k, val in zip(idx, v, strict=True):
+    want_a[k] = val if (want_a[k] < val or val != val) else want_a[k]
+    want_b[k] = val if (val < want_b[k] or val != val) else want_b[k]
+  a, b = fn(v)
+  np.testing.assert_array_equal(a, want_a)
+  np.testing.assert_array_equal(b, want_b)
+  assert ("for (long long r_" in render_c_source(fn)) == sort

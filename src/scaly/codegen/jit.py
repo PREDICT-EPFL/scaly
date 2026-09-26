@@ -8,8 +8,9 @@ rendering decisions of its own.
 - ``SCALY_CC`` overrides the C compiler binary (default: ``cc`` from ``$PATH``).
 - ``SCALY_CC_OPT`` overrides the optimization flag (default: ``-O2``). Benchmark harnesses that
   compile a baseline at ``-O3`` should set it, so both sides of a comparison get the same level.
-  At ``-O2`` GCC also gets ``-ftree-vectorize``, which it applies at ``-O2`` by itself only from
-  version 12; clang vectorizes at ``-O2`` already.
+  At ``-O2`` GCC before version 12 also gets ``-ftree-vectorize``: from 12 on GCC vectorizes at
+  ``-O2`` by itself (with its cheapest cost model, which the flag would change), and clang always
+  has.
 
 The JIT compiles for the machine it runs on, so it also passes the host CPU target and
 ``-fno-math-errno``; the distributed solver plugin wheels stay at the portable baseline.
@@ -35,7 +36,7 @@ from .abi import C_API_SIGNATURE, c_ident
 from .aot import render_c_module
 from .solver import solver_stats_symbols
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
-from .toolchain import cache_root, find_c_compiler, is_gcc
+from .toolchain import cache_root, find_c_compiler, gcc_major, is_gcc
 from ..utils.env import shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
@@ -109,14 +110,22 @@ HOST_CFLAGS: tuple[str, ...] = (_NATIVE_CPU_FLAG, "-fno-math-errno")
 and friends inline). The benchmark harness compiles both providers with the same two flags."""
 
 
+def vectorize_flags(opt: str, cc: str) -> tuple[str, ...]:
+  """``-ftree-vectorize`` when GCC before version 12 compiles at ``-O2``, which it vectorizes only
+  from 12 on; nothing otherwise, since the flag also replaces the cost model GCC 12 and later use
+  at ``-O2``. A benchmark baseline compiled beside the JIT takes the same flags from here."""
+  if opt != "-O2" or not is_gcc(cc):
+    return ()
+  major = gcc_major(cc)
+  return ("-ftree-vectorize",) if major is not None and major < 12 else ()
+
+
 def compile_flags() -> tuple[str, ...]:
-  """Flags the JIT passes to every compile: the optimization level, ``-ftree-vectorize`` when GCC
-  compiles at ``-O2`` (GCC vectorizes at ``-O2`` only from version 12, clang always does), and
+  """Flags the JIT passes to every compile: the optimization level, ``vectorize_flags`` and
   ``HOST_CFLAGS``."""
   opt = opt_flag()
   compiler = find_c_compiler()
-  vectorize = ("-ftree-vectorize",) if opt == "-O2" and compiler is not None and is_gcc(compiler.cc) else ()
-  return (opt, *vectorize, *HOST_CFLAGS)
+  return (opt, *(vectorize_flags(opt, compiler.cc) if compiler is not None else ()), *HOST_CFLAGS)
 
 
 def _compute_cache_key(source: str, *, fun_name: str, compile_flags: tuple[str, ...] = ()) -> str:
@@ -207,14 +216,15 @@ def _compile_into(cache_dir: Path, source_path: Path, lib_path: Path, body: str,
   cache_dir.mkdir(parents=True, exist_ok=True)
   if lib_path.exists():
     return
-  # Write to a process-unique temp file then rename, so concurrent builds neither read a
+  # Write to a thread-unique temp file then rename, so concurrent builds neither read a
   # half-written source nor race each other on the rename.
-  tmp_source = source_path.with_suffix(source_path.suffix + f".{os.getpid()}.tmp")
+  unique = f".{os.getpid()}.{threading.get_ident()}.tmp"  # per thread: two threads may build one function
+  tmp_source = source_path.with_suffix(source_path.suffix + unique)
   tmp_source.write_text(body)
   tmp_source.replace(source_path)
-  # Compile to a process-unique temp lib then atomically rename, so concurrent builds of the same
+  # Compile to a thread-unique temp lib then atomically rename, so concurrent builds of the same
   # function (e.g. pytest-xdist workers on a cold cache) never observe a half-written .so.
-  tmp_lib = lib_path.with_suffix(lib_path.suffix + f".{os.getpid()}.tmp")
+  tmp_lib = lib_path.with_suffix(lib_path.suffix + unique)
   # Link libraries (-l in extra_flags) MUST come after the source: ld defaults to --as-needed on
   # Linux, so a -lpiqpc/-lipopt placed before the object that references it is dropped (no
   # DT_NEEDED -> "undefined symbol" at dlopen of solver functions).
@@ -236,7 +246,7 @@ class CompiledFunction:
   """
 
   __slots__ = (
-    "_fun",
+    "_name",
     "_artifact",
     "_lib",
     "_symbol",
@@ -257,7 +267,7 @@ class CompiledFunction:
   )
 
   def __init__(self, fun: Function):
-    self._fun = fun
+    self._name = fun.name  # not the Function, which holds this handle: no cycle keeps the workspaces
     self._artifact = _build_artifact(fun)
     self._lib = _load_library(self._artifact.lib_path, isolated=bool(self._artifact.flags))
     symbol = c_ident(fun.name)
@@ -369,7 +379,7 @@ class CompiledFunction:
     w_buf = self._workspace()
     status = self._entry(arg_array, res_array, None, None if w_buf is None else _address(w_buf), 0)
     if status != 0:
-      raise JitError(f"{self._fun.name} returned ABI status {status}")
+      raise JitError(f"{self._name} returned ABI status {status}")
 
     # A bool output crosses the ABI as 0.0 or 1.0 in its double array.
     return [(out != 0.0 if self._output_bool[i] else out).reshape(self._output_shapes[i]) for i, out in enumerate(outputs)]

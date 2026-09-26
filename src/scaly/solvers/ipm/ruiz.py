@@ -8,7 +8,7 @@ import numpy as np
 
 from ...function import Function
 from ...function.sugar import while_loop
-from ...ir.expr import Expr, concat, gather, maximum, minimum, norm_inf, segment_max, segment_sum, where
+from ...ir.expr import Expr, concat, gather, logical_or, maximum, minimum, norm_inf, not_equal, segment_max, segment_sum, where
 from .structure import QPStructure, QPValues
 
 MIN_SCALING, MAX_SCALING = 1e-4, 1e4
@@ -29,27 +29,43 @@ def _limit(d: Expr) -> Expr:
   return where(d < MIN_SCALING, 1.0, minimum(d, MAX_SCALING))
 
 
-def _p_entries(s: QPStructure, p: Expr) -> tuple[Expr, np.ndarray]:
-  """``|P|``'s upper entries, each off-diagonal one twice, with the column each counts for."""
-  off = s.P_rows != s.P_cols
-  vals = concat([p.abs(), gather(p.abs(), np.flatnonzero(off))]) if off.any() else p.abs()
-  return vals, np.concatenate([s.P_cols, s.P_rows[off]])
+def _larger(x: Expr, y: Expr) -> Expr:
+  """Entry by entry the larger, NaN winning as in ``segment_max`` (``maximum`` is C's ``fmax``,
+  which drops NaN)."""
+  return where(logical_or(x < y, not_equal(y, y)), y, x)
+
+
+def _col_max(s: QPStructure, parts: list[tuple[Expr, np.ndarray]]) -> Expr:
+  """Per column, the largest of the magnitudes ``parts`` give with their column ids: one segment
+  maximum per matrix (their ids come in runs, CSC order), combined, rather than one over them all."""
+  out = None
+  for vals, ids in parts:
+    if ids.size:
+      m = segment_max(vals.abs(), ids, s.n, fill=0.0)
+      out = m if out is None else _larger(out, m)
+  return out if out is not None else Expr.const(np.zeros(s.n))
+
+
+def _p_parts(s: QPStructure, p: Expr) -> list[tuple[Expr, np.ndarray]]:
+  """``P``'s upper entries by column, and its off-diagonal ones again by row: the full ``P``."""
+  off = np.flatnonzero(s.P_rows != s.P_cols)
+  return [(p, s.P_cols), (gather(p, off), s.P_rows[off])]
 
 
 def _abs_max_by_node(s: QPStructure, p: Expr, a: Expr, g: Expr) -> tuple[Expr, Expr]:
   """Per KKT node, the largest magnitude of the (scaled) matrices: ``(x columns, constraint rows)``."""
-  p_vals, p_ids = _p_entries(s, p)
-  cols = segment_max(concat([p_vals, a.abs(), g.abs()]), np.concatenate([p_ids, s.A_cols, s.G_cols]), s.n, fill=0.0)
-  rows = segment_max(concat([a.abs(), g.abs()]), np.concatenate([s.A_rows, s.p + s.G_rows]), s.p + s.m, fill=0.0)
-  return cols, rows
+  cols = _col_max(s, [*_p_parts(s, p), (a, s.A_cols), (g, s.G_cols)])
+  rows = [segment_max(e.abs(), ids, size, fill=0.0) for e, ids, size in ((a, s.A_rows, s.p), (g, s.G_rows, s.m)) if size]
+  return cols, concat(rows) if len(rows) > 1 else rows[0] if rows else Expr.const(np.zeros(0))
 
 
-def ruiz(s: QPStructure, v: QPValues, *, scale_cost: bool = False, max_iter: int = 10, epsilon: float = 1e-3) -> Scaling:
+def ruiz(s: QPStructure, v: QPValues, *, scale_cost: bool = False, max_iter: int = 10, epsilon: float = 1e-3, alias_cost: bool = True) -> Scaling:
   """PIQP's Ruiz equilibration of the KKT matrix ``[[P, A^T, G^T, D], [A], [G], [D]]`` (``D`` the box
   scaling): at most ``max_iter`` passes, each dividing every row and column by the square root of
   its largest magnitude, stopping once every factor is within ``epsilon`` of one. With
-  ``scale_cost`` the cost is also scaled towards unit size after each pass; PIQP then keeps the cost
-  maxima where its stopping test reads the box factors, and so does this.
+  ``scale_cost`` the cost is also scaled towards unit size after each pass; PIQP's sparse backend
+  then keeps the cost maxima where its stopping test reads the box factors, and so does this with
+  ``alias_cost`` (its dense backend keeps them apart: ``alias_cost=False``).
 
   A ``while_loop`` whose params are the matrix values and ``c``, and whose carry holds the scalings
   and the last pass's factors."""
@@ -76,11 +92,12 @@ def ruiz(s: QPStructure, v: QPValues, *, scale_cost: bool = False, max_iter: int
   if scale_cost:
     ndx = new_delta[:n]
     p_scaled = cost * gather(ndx, s.P_rows) * pv * gather(ndx, s.P_cols)
-    cost_cols = segment_max(*_p_entries(s, p_scaled), n, fill=0.0)
+    cost_cols = _col_max(s, _p_parts(s, p_scaled))
     gamma = _limit(segment_sum(cost_cols, np.zeros(n, dtype=np.int64), 1) / float(n))
     gamma = _limit(maximum(gamma, norm_inf(cost * ndx * cv).reshape((1,))))
     new_cost = new_cost / gamma
-    step_b = cost_cols  # PIQP's aliasing: the stopping test reads the cost maxima
+    if alias_cost:
+      step_b = cost_cols  # PIQP's sparse aliasing: the stopping test reads the cost maxima
   nxt = concat([new_delta, new_delta_b, step, step_b, new_cost])
   names = ["ruiz", "P", "A", "G", "c"]
   body = Function._from_exprs("ipm_ruiz_pass", [carry, pv, av, gv, cv], [nxt], names, ["next"])

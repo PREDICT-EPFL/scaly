@@ -57,3 +57,22 @@ def test_a_callee_and_a_loop_body_with_clashing_names() -> None:
 def test_the_typed_header_names_both_sides() -> None:
   header = render_c_module(_clash("nc_header")).header
   assert "y_in" in header and "y_out" in header
+
+
+def test_an_in_place_loop_body_whose_output_is_named_like_its_carry() -> None:
+  """The in-place procedure writes its result through the output's own buffer name as well."""
+  c = sc.sym("c", 6)
+  nxt = sc.put_add(c, sc.const(np.array([4, 5]), dtype="int64"), c[4:6] * 0.0 + 1.0)
+  nxt = sc.index_add(nxt, np.array([0]), c[2:3] * 0.5)
+  body = sc.Function._from_exprs("nc_ip_body", [c], [nxt], ["c"], ["c"])  # output named like the carry
+  cond = sc.Function._from_exprs("nc_ip_cond", [c], [sc.less(c[4], 3.0)], ["c"], ["go"])
+  x = sc.sym("x", 6)
+  out, _ = sc.while_loop(cond, body, x, max_iter=10)
+  fn = sc.Function._from_exprs("nc_ip", [x], [out], ["x"], ["out"])
+  assert "nc_ip_body_inplace" in str(render_c_module(fn).body)
+  xv = np.array([1.0, 2.0, 4.0, 0.0, 0.0, 0.0])
+  want = xv.copy()
+  while want[4] < 3.0:
+    want[4:6] += 1.0
+    want[0] += want[2] * 0.5
+  np.testing.assert_array_equal(fn(xv), want)

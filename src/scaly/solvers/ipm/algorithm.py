@@ -14,6 +14,7 @@ from ...ir.expr import (
   concat,
   equal,
   gather,
+  isfinite,
   logical_and,
   logical_not,
   logical_or,
@@ -33,6 +34,10 @@ from .structure import INF, QPStructure, QPValues
 
 RUNNING, SOLVED, MAX_ITER_REACHED, PRIMAL_INFEASIBLE, DUAL_INFEASIBLE, NUMERICS = 0, 1, -1, -2, -3, -8
 """PIQP's status codes (``RUNNING`` only inside the loop; a solve that ends there reports ``SOLVED``)."""
+INVALID_BOUNDS = -11
+"""Not PIQP's: a bound the ``QPStructure`` declares finite arrived infinite, NaN or at or beyond
+``INF``. The generated solver is specialised to which bounds exist, so it does not start; PIQP,
+which reads the bounds at run time, would drop that one."""
 TRACE_FIELDS = ("iter", "primal_obj", "dual_obj", "duality_gap", "primal_res", "dual_res", "rho", "delta", "mu", "primal_step", "dual_step", "sigma")
 """The columns of a trace row: PIQP's verbose table, and sigma."""
 SCALARS = (
@@ -65,6 +70,8 @@ SCALARS = (
   "no_dual_update",
   "ir",
 )
+INFO_FIELDS = SCALARS
+"""The entries of a solve's ``info`` vector, in order: PIQP's ``info`` fields the loop keeps."""
 
 
 @dataclass(frozen=True)
@@ -96,6 +103,10 @@ class Settings:
   iterative_refinement_static_regularization_rel: float = EPS * EPS
   max_factor_retires: int = 10
 
+  def __post_init__(self) -> None:
+    if self.max_iter < 1:
+      raise ValueError(f"max_iter must be at least 1, as PIQP requires, got {self.max_iter}")
+
   def refinement(self) -> Refinement:
     """The retry and refinement settings, as the KKT system takes them."""
     return Refinement(
@@ -118,6 +129,7 @@ class Layout:
   sizes: dict[str, int] = field(default_factory=dict)
 
   def offsets(self) -> dict[str, tuple[int, int]]:
+    """Each segment's ``(start, stop)`` in the vector."""
     out, at = {}, 0
     for name, size in self.sizes.items():
       out[name] = (at, at + size)
@@ -126,15 +138,18 @@ class Layout:
 
   @property
   def size(self) -> int:
+    """The vector's length."""
     return sum(self.sizes.values())
 
   def unpack(self, v: Expr) -> dict[str, Expr]:
+    """The segments of ``v`` by name, scalars as scalars."""
     out = {}
     for name, (a, b) in self.offsets().items():
       out[name] = v[a] if name in SCALARS else v[a:b]
     return out
 
   def pack(self, values: dict[str, Expr]) -> Expr:
+    """The vector holding ``values``, segment by segment."""
     return concat([values[name].reshape((size,)) for name, size in self.sizes.items()])
 
 
@@ -170,9 +185,9 @@ def _norm(*vs: Expr) -> Expr:
 class Iteration:
   """The pieces of PIQP's loop over one scaled problem, as expressions."""
 
-  def __init__(self, s: QPStructure, q: ScaledQP, kernels: Kernels, settings: Settings):
+  def __init__(self, s: QPStructure, q: ScaledQP, kernels: Kernels, settings: Settings, *, data: Expr | None = None):
     self.s, self.q, self.settings = s, q, settings
-    self.kkt = KKT(kernels, q)
+    self.kkt = KKT(kernels, q, data=data)
     sc_ = q.scaling
     n, p = s.n, s.p
     self.c_inv = 1.0 / sc_.c
@@ -183,12 +198,15 @@ class Iteration:
   # --- PIQP's scale maps ------------------------------------------------------------------------
 
   def unscale_cost(self, v: Expr) -> Expr:
+    """An objective value in the problem's own units."""
     return v * self.c_inv
 
   def unscale_dual_res(self, r: Expr) -> Expr:
+    """A dual residual in the problem's own units."""
     return r * self.c_inv / self.d_x
 
   def mu(self, v: Iterate) -> Expr:
+    """The complementarity measure: the mean of ``s z`` over every bound (zero with none)."""
     if not self.n_bounds:
       return Expr.const(0.0)
     total = (v.s_l * v.z_l).sum() + (v.s_u * v.z_u).sum() + (v.s_bl * v.z_bl).sum() + (v.s_bu * v.z_bu).sum()
@@ -274,6 +292,7 @@ class Iteration:
     return nr, info
 
   def primal_res(self, r: Iterate) -> Expr:
+    """The unscaled primal residual's infinity norm, with PIQP's signed maximum over the box terms."""
     inf = _norm(*(v for v in (r.y / self.d_eq if self.s.p else None, r.z_l / self.d_in, r.z_u / self.d_in) if v is not None))
     return _smax(inf, r.z_bl / self.d_bl, r.z_bu / self.d_bu)
 
@@ -399,7 +418,11 @@ class Solver:
 
   # --- the pieces of the loop ---------------------------------------------------------------
 
-  def initial_state(self, it: Iteration) -> dict[str, Expr]:
+  def initial_state(self, it: Iteration, invalid: Expr | None = None) -> dict[str, Expr]:
+    """PIQP's initial point: one solve at ``rho_init`` and ``delta_init``, shifted into the interior
+    and projected onto the central path, with its residuals. When the first factorization fails
+    (after every retry), or ``invalid`` says the bounds cannot be used, the state is the start PIQP
+    returns then: the ones point before any solve, with no residuals."""
     s, st = self.s, self.settings
     hl, hu = s.h_l_idx, s.h_u_idx
     nl, nu = s.x_l_idx.size, s.x_u_idx.size
@@ -468,21 +491,21 @@ class Solver:
     state.update({k: Expr.const(0.0) for k in SCALARS})
     state.update(info)
     _set_residuals(state, nr)
-    state.update(
-      {
-        "rho": factor.rho,
-        "delta": factor.delta,
-        "mu": mu,
-        "prev_primal_res": info["primal_res"],
-        "prev_dual_res": info["dual_res"],
-        "reg_limit": factor.head["reg_limit"],
-        "ir": factor.ir,
-        "status": where(factor.ok, float(RUNNING), float(NUMERICS)),
-      }
-    )
+    header = {"rho": factor.rho, "delta": factor.delta, "reg_limit": factor.head["reg_limit"], "ir": factor.ir}
+    state.update({**header, "mu": mu, "prev_primal_res": info["primal_res"], "prev_dual_res": info["dual_res"]})
+    start: dict[str, Expr] = {}
+    _set_iterate(start, one)
+    start.update({"xi": one.x, "lam": one.y, "nu_l": one.z_l, "nu_u": one.z_u, "nu_bl": one.z_bl, "nu_bu": one.z_bu})
+    start.update({k: state[k] * 0.0 for k in (*RESIDUALS, *SCALARS)})
+    start.update(header)
+    abort = logical_not(factor.ok) if invalid is None else logical_or(logical_not(factor.ok), invalid)
+    state = {k: where(abort, start[k], state[k]) for k in state}
+    status = where(factor.ok, float(RUNNING), float(NUMERICS))
+    state["status"] = status if invalid is None else where(invalid, float(INVALID_BOUNDS), status)
     return state
 
   def converged(self, st: dict[str, Expr]) -> Expr:
+    """PIQP's convergence test on a state: primal and dual residuals and, if checked, the duality gap, each absolute or relative."""
     t = self.settings
     primal = logical_or(st["primal_res"] < t.eps_abs, st["primal_res_rel"] < t.eps_rel)
     dual = logical_or(st["dual_res"] < t.eps_abs, st["dual_res_rel"] < t.eps_rel)
@@ -499,6 +522,7 @@ class Solver:
     nr = _residuals_of(st)
     info = {k: st[k] for k in ("primal_res", "primal_res_rel", "dual_res", "dual_res_rel")}
     res, reg = it.regularized(nr, v, prox, st["rho"], st["delta"], {**info})
+    reg_top = reg  # what an exit at this pass reports, as PIQP returns right after computing it
     primal_inf = logical_and(
       logical_and(st["no_dual_update"] > float(min(5, t.reg_finetune_dual_update_threshold)), reg["primal_prox_inf"] > t.infeasibility_threshold),
       logical_or(reg["primal_res_reg"] < t.eps_abs, reg["primal_res_reg_rel"] < t.eps_rel),
@@ -674,14 +698,20 @@ class Solver:
     )
     at_limit = new["iter"] >= float(t.max_iter)
     new["status"] = where(at_limit, float(MAX_ITER_REACHED), float(RUNNING))
-    # An infeasibility found at the top of the pass ends it there, and a factorization that fails
-    # every retry ends it just after the count: nothing else changes.
+    # An infeasibility found at the top of the pass ends it there, with the regularized residuals
+    # that found it. A factorization that fails every retry ends it later, after the count, the
+    # boundary shift, the fine-tuning switch and the retries' regularization: those stay too.
     infeasible = stop < 0.0
     failed = logical_and(logical_not(infeasible), logical_not(factor.ok))
     halted = logical_or(infeasible, failed)
     out = {key: where(halted, st[key], new[key]) for key in self.layout.sizes}
+    for key, value in reg_top.items():
+      out[key] = where(halted, value, new[key])
+    done = {"iter": new["iter"], "z_l": v.z_l, "z_u": v.z_u, "z_bl": v.z_bl, "z_bu": v.z_bu, "mu": mu}
+    done.update({"no_primal_update": no_primal, "no_dual_update": no_dual, "rho": rho, "delta": delta, "reg_limit": reg_limit, "ir": factor.ir})
+    for key, value in done.items():
+      out[key] = where(failed, value, out[key])
     out["status"] = where(infeasible, stop, where(failed, float(NUMERICS), new["status"]))
-    out["iter"] = where(infeasible, st["iter"], new["iter"])
     return out
 
   # --- the whole solve --------------------------------------------------------------------------
@@ -693,14 +723,17 @@ class Solver:
     ones PIQP prints, a row for every pass that reached the convergence test (all ``iter + 1``, but
     for a solve that ran out of iterations or failed to factor, whose last pass does not)."""
     s, t = self.s, self.settings
-    scaling = ruiz(s, values, scale_cost=t.preconditioner_scale_cost, max_iter=t.preconditioner_iter)
+    scaling = ruiz(s, values, scale_cost=t.preconditioner_scale_cost, max_iter=t.preconditioner_iter, alias_cost=self.backend == "sparse")
     q = scale(s, values, scaling)
     kernels = Kernels(s, self.backend, t.refinement(), name=self.name)
     outer = Iteration(s, q, kernels, t)
-    state0 = self.initial_state(outer)
+    state0 = self.initial_state(outer, self._invalid_bounds(values))
     params, q_sym = self._param_symbols()
+    # The KKT data vector is loop-invariant: built once, a param, not concatenated every step.
+    data = Expr.sym("q_data", (outer.kkt.data.size,))
+    params = [*params, data]
     carry = Expr.sym("ipm_state", (self.layout.size,))
-    inner = Iteration(s, q_sym, kernels, t)
+    inner = Iteration(s, q_sym, kernels, t, data=data)
     st = self.layout.unpack(carry)
     body = Function._from_exprs(
       f"{self.name}_step", [carry, *params], [self.layout.pack(self.step(inner, st))], ["state", *(str(e.name) for e in params)], ["next"]
@@ -708,7 +741,7 @@ class Solver:
     go = logical_and(equal(st["status"], float(RUNNING)), logical_not(self.converged(st)))
     cond = Function._from_exprs(f"{self.name}_go", [carry, *params], [go], ["state", *(str(e.name) for e in params)], ["go"])
     init = self.layout.pack(state0)
-    loop_params = self._param_values(q)
+    loop_params = [*self._param_values(q), outer.kkt.data]
     final, _ = while_loop(cond, body, init, max_iter=t.max_iter + 1, params=loop_params)
     fin = self.layout.unpack(final)
     status = where(equal(fin["status"], float(RUNNING)), float(SOLVED), fin["status"])
@@ -728,6 +761,18 @@ class Solver:
       short = logical_or(equal(status, float(MAX_ITER_REACHED)), equal(status, float(NUMERICS)))
       out["trace_rows"] = fin["iter"] + where(short, 0.0, 1.0)
     return out
+
+  def _invalid_bounds(self, values: QPValues) -> Expr | None:
+    """Whether a bound the structure declares finite is not (NaN, infinite, or at or beyond
+    ``INF``); None when the structure declares none."""
+    s = self.s
+    parts = [gather(vec, np.flatnonzero(given)) for vec, given in ((values.h_l, s.h_l_given), (values.h_u, s.h_u_given)) if given.any()]
+    parts += [vec for vec in (values.x_l, values.x_u) if vec.size]
+    if not parts:
+      return None
+    bounds = concat(parts)
+    usable = logical_and(isfinite(bounds), bounds.abs() < INF)
+    return where(usable, 0.0, 1.0).sum() > 0.5
 
   def _unscaled(self, fin: dict[str, Expr], q: ScaledQP) -> dict[str, Expr]:
     """``unscale_results`` and ``restore_dual``: box values move to their variables, absent bounds
