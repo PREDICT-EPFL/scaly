@@ -48,14 +48,20 @@ int shooting_spjac_eq_z(const double** arg, double** res, int* iw, double* w, in
   for (long long it_t1 = 0; it_t1 < 3; ++it_t1) {
     dynamics_fwd3c8e1b6ee2b3_znext_z_raw((arg[0] + (4 * it_t1)), (s0 + (it_t1 * 12)), NULL);
   }
-  for (long long i_t2 = 0; i_t2 < 12; ++i_t2) {
-    s1[i_t2] = s0[(((i_t2 / 4) * 12) + (i_t2 % 4))];
+  for (long long i_t2_0 = 0; i_t2_0 < 3; ++i_t2_0) {
+    for (long long i_t2_1 = 0; i_t2_1 < 4; ++i_t2_1) {
+      s1[((4 * i_t2_0) + i_t2_1)] = s0[((12 * i_t2_0) + i_t2_1)];
+    }
   }
-  for (long long i_t5 = 0; i_t5 < 12; ++i_t5) {
-    s2[i_t5] = s0[((((i_t5 / 4) * 12) + 4) + (i_t5 % 4))];
+  for (long long i_t5_0 = 0; i_t5_0 < 3; ++i_t5_0) {
+    for (long long i_t5_1 = 0; i_t5_1 < 4; ++i_t5_1) {
+      s2[((4 * i_t5_0) + i_t5_1)] = s0[((4 + (12 * i_t5_0)) + i_t5_1)];
+    }
   }
-  for (long long i_t9 = 0; i_t9 < 12; ++i_t9) {
-    s3[i_t9] = s0[((((i_t9 / 4) * 12) + 8) + (i_t9 % 4))];
+  for (long long i_t9_0 = 0; i_t9_0 < 3; ++i_t9_0) {
+    for (long long i_t9_1 = 0; i_t9_1 < 4; ++i_t9_1) {
+      s3[((4 * i_t9_0) + i_t9_1)] = s0[((8 + (12 * i_t9_0)) + i_t9_1)];
+    }
   }
   for (long long d0_t14 = 0; d0_t14 < 12; ++d0_t14) {
     for (long long d1_t14 = 0; d1_t14 < 4; ++d1_t14) {

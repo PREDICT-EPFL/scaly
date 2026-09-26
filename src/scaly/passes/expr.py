@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from ..ir.expr import Expr, ExprOp, OP_INFO, _attrs_key, matmul, stack, topo, zeros_like
+from ..ir.expr import Expr, ExprOp, OP_INFO, _attrs_key, gather, matmul, stack, topo, zeros_like
 from ..ir.types import dtypes
 from ..ir.match import Pattern, _replace_args, rewrite
 from .arith import ARITH_EXPR, fold
@@ -290,6 +290,49 @@ def _gather_identity(e: Expr) -> bool:
   return indices.size == e.args[0].size and bool(np.array_equal(indices.reshape(-1), np.arange(indices.size)))
 
 
+def _gathered(e: Expr) -> Expr:
+  """What a gather reads, looking through reshapes (which keep the flat order)."""
+  src = e.args[0]
+  while src.op == ExprOp.RESHAPE and not src.attrs.get("lowering_identity"):
+    src = src.args[0]
+  return src
+
+
+def _compose_gathers(e: Expr) -> Expr:
+  """``gather(gather(x, a), b) == gather(x, a[b])``: one index table, one loop, and one index
+  expression instead of two composed ones (each ``k // n`` of the inner map inside the outer's)."""
+  inner = _gathered(e)
+  return gather(inner.args[0], np.asarray(inner.attrs["indices"]).reshape(-1)[np.asarray(e.attrs["indices"])])
+
+
+def _source(e: Expr) -> Expr:
+  """``e`` looking through reshapes, which keep the flat order."""
+  while e.op == ExprOp.RESHAPE and not e.attrs.get("lowering_identity"):
+    e = e.args[0]
+  return e
+
+
+def _transpose_of_gather(e: Expr) -> Expr:
+  """A transpose of gathered values is one gather, with the index table transposed."""
+  inner = _source(e.args[0])
+  table = np.asarray(inner.attrs["indices"]).reshape(e.args[0].shape).transpose(e.attrs["axes"])
+  return gather(inner.args[0], np.ascontiguousarray(table))
+
+
+def _is_permutation(e: Expr) -> bool:
+  indices = np.asarray(e.attrs["indices"]).reshape(-1)
+  return indices.size == e.size and bool(np.array_equal(np.sort(indices), np.arange(e.size)))
+
+
+def _scatter_to_gather(e: Expr) -> Expr:
+  """A scatter that writes every entry once is a gather by the inverse permutation, which needs no
+  zeroing pass and composes with the gathers and transposes around it."""
+  indices = np.asarray(e.attrs["indices"]).reshape(-1)
+  inverse = np.empty_like(indices)
+  inverse[indices] = np.arange(indices.size)
+  return gather(e.args[0].reshape((e.args[0].size,)), inverse.reshape(e.shape))
+
+
 SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(None, _all_args_const, _constant_fold),
   *(Pattern(op, lambda e: not _all_args_const(e), _arith) for op in (ExprOp.ADD, ExprOp.SUB, ExprOp.MUL, ExprOp.DIV, ExprOp.NEG, ExprOp.POW)),
@@ -301,6 +344,9 @@ SIMPLIFY_PATTERNS: tuple[Pattern, ...] = (
   Pattern(ExprOp.SUM, lambda e: _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.GATHER, lambda e: _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.GATHER, _gather_identity, lambda e: e.args[0].reshape(e.shape)),
+  Pattern(ExprOp.GATHER, lambda e: _gathered(e).op == ExprOp.GATHER, _compose_gathers),
+  Pattern(ExprOp.SCATTER, lambda e: not _is_zero(e.args[0]) and _is_permutation(e), _scatter_to_gather),
+  Pattern(ExprOp.TRANSPOSE, lambda e: _source(e.args[0]).op == ExprOp.GATHER, _transpose_of_gather),
   Pattern(ExprOp.SCATTER, lambda e: _is_zero(e.args[0]), _zero_unary),
   Pattern(ExprOp.STACK, _all_args_zero, _zero_unary),
   Pattern(ExprOp.CONCAT, _all_args_zero, _zero_unary),

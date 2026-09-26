@@ -73,11 +73,10 @@ int wide(const double** arg, double** res, int* iw, double* w, int mem) {
       res[0][v13] = (res[0][v13] + (k0[((v13 * 40) + k_z)] * s2[k_z]));
     }
   }
-  for (long long z_tail = 0; z_tail < 4; ++z_tail) {
-    res[1][z_tail] = 0.0;
-  }
-  for (long long i_tail = 0; i_tail < 4; ++i_tail) {
-    res[1][((3 + ((i_tail / 2) * 3)) + (i_tail * -2))] = t51[i_tail];
+  for (long long i_tail_0 = 0; i_tail_0 < 2; ++i_tail_0) {
+    for (long long i_tail_1 = 0; i_tail_1 < 2; ++i_tail_1) {
+      res[1][((2 * i_tail_0) + i_tail_1)] = t51[((3 - i_tail_0) - (2 * i_tail_1))];
+    }
   }
   return SCALY_SUCCESS;
 }

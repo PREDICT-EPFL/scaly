@@ -9,6 +9,7 @@ from ...ir.program_spec import verify_program
 from ._common import prune_procedures
 from .coalesce_stores import coalesce_stores
 from .combine_scatter_sums import combine_scatter_sums
+from .delinearize_loops import delinearize_loops
 from .fold_arith import fold_arith
 from .fuse_elementwise import fuse_elementwise
 from .hoist_invariant import hoist_invariant
@@ -28,6 +29,7 @@ PASS_PIPELINE: tuple[tuple[str, PassFn], ...] = (
   ("fold_arith", fold_arith),
   ("unroll_unit_loops", unroll_unit_loops),
   ("fold_arith_after_unroll", fold_arith),
+  ("delinearize_loops", delinearize_loops),
   ("pack_workspace", pack_workspace),
   ("coalesce_stores", coalesce_stores),
   ("prepare_scalar", prepare_scalar_expressions),
@@ -50,6 +52,7 @@ __all__ = [
   "ProgramObserver",
   "coalesce_stores",
   "combine_scatter_sums",
+  "delinearize_loops",
   "fold_arith",
   "fuse_elementwise",
   "hoist_invariant",

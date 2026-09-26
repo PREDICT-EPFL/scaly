@@ -815,3 +815,52 @@ def test_generated_code_does_not_depend_on_the_hash_seed() -> None:
     proc = subprocess.run([sys.executable, "-c", _HASH_SEED_PROBE], check=True, capture_output=True, text=True, env=env)
     digests.add(proc.stdout.strip())
   assert len(digests) == 1
+
+
+def _index_divisions(src: str) -> int:
+  return len(re.findall(r"\[[^\]]*[/%][^\]]*\]", src))
+
+
+def test_gathers_and_scatters_with_affine_maps_run_without_divisions() -> None:
+  """A transpose-like gather, a reversed and strided scatter, and a gather of a gather each index
+  their flat loop variable with divisions; split into nested loops, every index is a sum of
+  coordinates times constants, and the values are unchanged."""
+  from scaly.codegen import render_c_source
+
+  x = sc.sym("dl_x", 24)
+  a = sc.gather(x, np.arange(24).reshape(4, 6).T.reshape(-1))
+  b = sc.scatter(x[:12] * 2.0, (np.arange(12).reshape(3, 4)[:, ::-1] * 2).reshape(-1), (24,))
+  c = sc.gather(sc.gather(x * x, np.arange(24)[::-1].copy()), np.arange(24).reshape(2, 3, 4).transpose(1, 0, 2).reshape(-1))
+  fn = sc.Function._from_exprs("dl_maps", [x], [a, b, c], ["x"], ["a", "b", "c"])
+  src = render_c_source(fn)
+  assert _index_divisions(src) == 0, src
+  xv = np.arange(24.0) - 5.0
+  got = fn(xv)
+  np.testing.assert_array_equal(got[0], xv.reshape(4, 6).T.reshape(-1))
+  expected_b = np.zeros(24)
+  expected_b[(np.arange(12).reshape(3, 4)[:, ::-1] * 2).reshape(-1)] = xv[:12] * 2.0
+  np.testing.assert_array_equal(got[1], expected_b)
+  np.testing.assert_array_equal(got[2], (xv * xv)[::-1].reshape(2, 3, 4).transpose(1, 0, 2).reshape(-1))
+
+
+def test_a_map_with_no_affine_factorization_keeps_its_table() -> None:
+  from scaly.codegen import render_c_source
+
+  perm = np.array([3, 0, 4, 1, 5, 2, 6])
+  x = sc.sym("dn_x", 7)
+  fn = sc.Function._from_exprs("dn_perm", [x], [sc.gather(x.sin(), perm)], ["x"], ["y"])
+  xv = np.linspace(0.0, 1.0, 7)
+  np.testing.assert_array_equal(fn(xv), np.sin(xv)[perm])
+  assert "static const" in render_c_source(fn)
+
+
+def test_index_evaluation_truncates_toward_zero_like_c() -> None:
+  from scaly.ir import program as p
+  from scaly.passes.program.delinearize_loops import _evaluate
+
+  k = np.arange(-5, 6, dtype=np.int64)
+  expr = p.add(p.div(p.var("k"), p.const_int(2)), p.mod(p.var("k"), p.const_int(3)))
+  got = _evaluate(expr, "k", k)
+  assert got is not None
+  expected = [int(v / 2) + (v - 3 * int(v / 3)) for v in range(-5, 6)]
+  assert got.tolist() == expected

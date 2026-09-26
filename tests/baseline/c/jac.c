@@ -76,13 +76,17 @@ int dynamics_jac_znext_z(const double** arg, double** res, int* iw, double* w, i
     s2[0] = (s2[0] + (v3 * v3));
   }
   s3[0] = (0.10000000000000001 * s2[0]);
-  for (long long j_t21_0 = 0; j_t21_0 < 8; ++j_t21_0) {
-    s2[(((j_t21_0 / 2) * 4) + (j_t21_0 % 2))] = k0[j_t21_0];
+  for (long long j_t21_0_0 = 0; j_t21_0_0 < 4; ++j_t21_0_0) {
+    for (long long j_t21_0_1 = 0; j_t21_0_1 < 2; ++j_t21_0_1) {
+      s2[((4 * j_t21_0_0) + j_t21_0_1)] = k0[((2 * j_t21_0_0) + j_t21_0_1)];
+    }
   }
-  for (long long j_t21_1 = 0; j_t21_1 < 8; ++j_t21_1) {
-    int64_t v4 = (j_t21_1 / 2);
-    double v5 = k1[j_t21_1];
-    s2[((v4 * 4) + (2 + (j_t21_1 % 2)))] = (v5 - (0.050000000000000003 * ((s1[v4] * s0[j_t21_1]) + (s3[0] * v5))));
+  for (long long j_t21_1_0 = 0; j_t21_1_0 < 4; ++j_t21_1_0) {
+    for (long long j_t21_1_1 = 0; j_t21_1_1 < 2; ++j_t21_1_1) {
+      int64_t v4 = ((2 * j_t21_1_0) + j_t21_1_1);
+      double v5 = k1[v4];
+      s2[((2 + (4 * j_t21_1_0)) + j_t21_1_1)] = (v5 - (0.050000000000000003 * ((s1[j_t21_1_0] * s0[v4]) + (s3[0] * v5))));
+    }
   }
   for (long long d0_jac_znext_z = 0; d0_jac_znext_z < 4; ++d0_jac_znext_z) {
     for (long long d1_jac_znext_z = 0; d1_jac_znext_z < 4; ++d1_jac_znext_z) {

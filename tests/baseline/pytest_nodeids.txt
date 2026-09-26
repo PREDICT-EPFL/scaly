@@ -754,6 +754,7 @@ tests/passes/test_arith.py::test_scalarized_procedure[zero_sub]
 tests/passes/test_expr.py::test_constant_mask_of_the_result_shape_folds_when_uniform
 tests/passes/test_expr.py::test_cse_merges_equivalent_subgraphs
 tests/passes/test_expr.py::test_gather_with_identity_indices_is_a_reshape
+tests/passes/test_expr.py::test_gathers_scatters_and_transposes_compose_into_one_gather
 tests/passes/test_expr.py::test_matmul_with_ones_vector_becomes_sums
 tests/passes/test_expr.py::test_simplify_constant_folds_erf
 tests/passes/test_expr.py::test_simplify_folds_matrix_transpose_into_matmul
@@ -847,6 +848,7 @@ tests/passes/test_lowering.py::test_stage_transcription_renders_and_matches[spar
 tests/passes/test_lowering.py::test_transpose_fold_is_bit_identical_to_the_transposed_product
 tests/passes/test_lowering.py::test_two_different_functions_with_one_name_are_refused
 tests/passes/test_lowering.py::test_uncovered_case_raises_loudly
+tests/passes/test_program.py::test_a_map_with_no_affine_factorization_keeps_its_table
 tests/passes/test_program.py::test_break_if_must_sit_in_a_serial_loop
 tests/passes/test_program.py::test_buffer_analysis_keeps_arguments_with_unspecified_access_modes[call]
 tests/passes/test_program.py::test_buffer_analysis_keeps_arguments_with_unspecified_access_modes[launch]
@@ -865,6 +867,7 @@ tests/passes/test_program.py::test_fusion_does_not_move_a_read_past_a_write
 tests/passes/test_program.py::test_fusion_does_not_move_reads_into_a_consumer_that_overwrites_them
 tests/passes/test_program.py::test_fusion_into_reduction
 tests/passes/test_program.py::test_fusion_skips_matmul_operand
+tests/passes/test_program.py::test_gathers_and_scatters_with_affine_maps_run_without_divisions
 tests/passes/test_program.py::test_generated_code_does_not_depend_on_the_hash_seed
 tests/passes/test_program.py::test_generated_name_reserves_raw_and_c_identifier_collisions
 tests/passes/test_program.py::test_generated_names_do_not_rescan_the_namespace
@@ -880,6 +883,7 @@ tests/passes/test_program.py::test_hoist_prunes_before_scalarization_and_preserv
 tests/passes/test_program.py::test_hoist_recognizes_generated_pure_callees_in_nested_maps
 tests/passes/test_program.py::test_hoist_refuses_a_buffer_read_between_two_invariant_writes
 tests/passes/test_program.py::test_hoist_reserves_exported_names_across_repeated_loop_variables
+tests/passes/test_program.py::test_index_evaluation_truncates_toward_zero_like_c
 tests/passes/test_program.py::test_no_spill_when_temps_small
 tests/passes/test_program.py::test_optimized_program_still_verifies
 tests/passes/test_program.py::test_packing_reuses_slots_and_spills
@@ -1047,6 +1051,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.lower
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program._common]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.coalesce_stores]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.combine_scatter_sums]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.delinearize_loops]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.fold_arith]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.fuse_elementwise]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.passes.program.hoist_invariant]

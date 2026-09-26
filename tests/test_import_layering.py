@@ -76,6 +76,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.passes.program": 6,
   "scaly.passes.program._common": 6,
   "scaly.passes.program.combine_scatter_sums": 6,
+  "scaly.passes.program.delinearize_loops": 6,
   "scaly.passes.program.fold_arith": 6,
   "scaly.passes.program.fuse_elementwise": 6,
   "scaly.passes.program.hoist_invariant": 6,

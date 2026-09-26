@@ -161,3 +161,27 @@ def test_simplify_preserves_isolated_opaque_spelling() -> None:
   x = sc.sym("x", 2)
 
   assert sc.simplify((x + 0.0).opaque()).lowering == "opaque"
+
+
+def test_gathers_scatters_and_transposes_compose_into_one_gather() -> None:
+  """``gather(gather(x))``, a scatter that writes every entry once, and a transpose of a gather each
+  simplify to a single gather of the source with the composed index table."""
+  from scaly.passes.expr import simplify
+
+  x = sc.sym("cg_x", 12)
+  twice = simplify(sc.gather(sc.gather(x, np.arange(12)[::-1].copy()).reshape((3, 4)), np.array([0, 5, 11])))
+  assert twice.op == sc.ExprOp.GATHER and twice.args[0] is x
+  assert twice.attrs["indices"].tolist() == [11, 6, 0]
+  perm = np.array([2, 0, 1, 5, 3, 4, 8, 6, 7, 11, 9, 10])
+  scattered = simplify(sc.scatter(x.sin(), perm, (12,)))
+  assert scattered.op == sc.ExprOp.GATHER
+  transposed = simplify(sc.gather(x, np.arange(12)[::-1].copy()).reshape((3, 4)).T)
+  assert transposed.op == sc.ExprOp.GATHER and transposed.args[0] is x
+  fn = sc.Function._from_exprs("cg", [x], [twice, scattered, transposed], ["x"], ["a", "b", "c"])
+  xv = np.arange(12.0) * 0.3
+  a, b, c = fn(xv)
+  np.testing.assert_array_equal(a, xv[::-1][[0, 5, 11]])
+  expected = np.zeros(12)
+  expected[perm] = np.sin(xv)
+  np.testing.assert_array_equal(b, expected)
+  np.testing.assert_array_equal(c, xv[::-1].reshape(3, 4).T)
