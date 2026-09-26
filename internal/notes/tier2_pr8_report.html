@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 2 PR 8 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 8 report</h1>
+<p class="sub">T2-8 · ragged loops and the second optimization round of the sparse LDLᵀ (C-109) · branch <code>claude/tier2-sparse</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Two new expression ops run loops whose length is set at run time over fixed index maps:</p>
+<ul>
+<li><code>ragged_add</code>: for each group and each <code>p</code> in <code>[lo, hi)</code>, <code>base[dst_map[p]] += src[src_map[p]] · scale[g]</code>.</li>
+<li><code>ragged_dot</code>: one dot product per range.</li>
+</ul>
+<p>The two ops are closed under differentiation: each one's derivatives in forward and reverse mode are again one of them.</p>
+<p><b>The factorization rewritten on them.</b> The sparse LDLᵀ update is now, for each column <code>k</code> in row <code>j</code>, one run over the contiguous part of column <code>k</code>, the same loop the C reference has. Both triangular sweeps are single-range ops, with no padding at all.</p>
+<p><b>What changed.</b></p>
+<ul>
+<li>Every test matrix now factors within <b>1.0–1.4×</b> of the C baseline; before, 1.3–2.6×. The random QPs are now inside the 2× gate.</li>
+<li>Solves run at 0.5–1.6×. On the QPs they are twice as fast as the C baseline.</li>
+<li>Tables are the size of <code>K</code> and <code>L</code>, not of the work.</li>
+<li>Generation at <code>nnz(L)</code> = 153 k with 25 M multiply-adds went from 17.9 s to <b>2.5 s</b>.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 1 365 passed, 88 skipped; the same four VM-only failures. ruff, ty and the docs build are clean. <b>Mutation checks:</b> 9 of 9 killed, one only after a test was added.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td>Ops</td><td>
+<ul>
+<li><code>ragged_add(base, src, lo, hi, scale, dst_map=, src_map=)</code> and <code>ragged_dot(a, b, lo, hi, a_map=, b_map=)</code> (internal, <code>ir/expr.py</code>).</li>
+<li>The maps are fixed <code>static const</code> tables; <code>None</code> is the identity.</li>
+<li>The ops are unchecked by contract: library code builds the ranges from its own tables.</li>
+</ul></td></tr>
+<tr><td>Lowering</td><td>
+<ul>
+<li><code>ragged_add</code>: an outer loop over groups and an inner loop with run-time bounds <code>[lo[g], hi[g])</code>. As a link of an in-place chain it writes the carry directly.</li>
+<li><code>ragged_dot</code>: four partial sums per range, as the dense dot products use.</li>
+</ul></td></tr>
+<tr><td>Derivatives</td><td>
+<ul>
+<li>Forward mode: the same op with one operand replaced by its tangent at a time.</li>
+<li>Reverse mode: <code>src̄</code> is a <code>ragged_add</code> with the maps swapped; <code>scalē</code> is a <code>ragged_dot</code>; <code>ā</code> and <code>b̄</code> are <code>ragged_add</code>s.</li>
+<li>Multi-seed forward mode stacks one tangent per seed (up to 64 seeds; beyond that it falls back to one seed at a time).</li>
+</ul></td></tr>
+<tr><td>In-place proof</td><td>
+<ul>
+<li>A <code>ragged_add</code> in the chain is an update whose write set is its mapped ranges. As a reader, its source (or a <code>ragged_dot</code>'s operands) contributes the mapped ranges read.</li>
+<li>Ranges stay ranges (<code>_Ragged</code>). Overlap is tested first on per-step intervals, using the range bounds or the map's extremes, and entry by entry only where the intervals meet.</li>
+<li>For the factorization, reads of <code>L</code> and writes to the work area never meet.</li>
+</ul></td></tr>
+<tr><td>Sparse LDLᵀ</td><td>
+<ul>
+<li>Factor step: <code>u2 = ragged_add(u1, carry, r_lo, r_hi, −D[k]·L[j,k], dst_map = w_off + l_rows)</code>.</li>
+<li>The column of <code>L</code> is a single-range <code>ragged_add</code> from the work area.</li>
+<li>Per step, the tables are the matrix column (<code>a</code>), the row of <code>L</code> (<code>g</code> groups; a padded group is an empty range) and the clear list (<code>c</code>).</li>
+<li>The segment DP prices exactly these widths.</li>
+<li>The sweeps are one <code>ragged_add</code> (forward) or one <code>ragged_dot</code> (backward) per column, on a carry of size <code>n</code>.</li>
+</ul></td></tr>
+<tr><td>Generation cost</td><td>
+<ul>
+<li>The symbolic analysis builds its update-lane tables lazily. Only the old padded path and statistics used them.</li>
+<li>The lane limit rises to 500 M, since the lanes no longer become tables.</li>
+<li><code>new_const_index</code> keeps one table per content in a procedure: the same <code>l_rows</code> map was being emitted twice.</li>
+</ul></td></tr>
+</table></div>
+<p><b>The generated factor step now reads like the reference:</b></p>
+<pre>for (g = 0; g &lt; 9; ++g)                                    /* each column k in row j */
+  for (p = r_lo[g]; p &lt; r_hi[g]; ++p)                       /* column k from row j down */
+    c[k6[p]] = c[k6[p]] + c[p] * s[g];                       /* w[l_rows[p]] -= L[p] D[k] L[j,k] */
+...
+for (p = col[0]; p &lt; col[1]; ++p) c[p] = c[p] + c[k6[p]] * inv;   /* L[:,j] = w[rows] / D[j] */</pre>
+
+<h2>2. Tests</h2>
+<p><code>tests/integration/test_ragged.py</code> has 15 tests; <code>test_sparse_ldl.py</code> gains 6 (45 → 51 with parametrization).</p>
+<ul>
+<li><b>Values.</b> Checked against NumPy with an empty group and overlapping groups, with maps and with identity maps.</li>
+<li><b>Derivatives.</b> With respect to base, source and scale:
+<ul>
+<li>gradient against finite differences;</li>
+<li>strict multi-seed Jacobian equal to the gradient;</li>
+<li>Hessian against finite differences of the gradient;</li>
+<li>single-seed <code>jvp</code> equal to gradient · direction.</li>
+</ul></li>
+<li><b>Sparsity and code shape.</b> The sparsity is conservative, and the inner loop has run-time bounds.</li>
+<li><b>Interval test.</b> It agrees with enumeration on six cases: adjacent ranges, overlapping ranges, meeting intervals with disjoint entries, a far mapped range, a near mapped range, and an empty range.</li>
+<li><b>In place.</b> A carry updated by ragged runs runs in place when the step reads <code>x</code> and writes <code>y</code>, keeps two slots when it reads what it writes, and matches both the two-slot loop and NumPy.</li>
+<li><b>Padding.</b> The padded groups of the factorization are empty ranges, and the real ranges sum exactly to the update work (3 matrices × 2 orderings).</li>
+<li><b>Existing tests.</b> The whole existing sparse LDLᵀ suite passes unchanged, including in-place-only code, gradients and Hessians.</li>
+</ul>
+<p><b>Mutation checks (9 of 9 killed):</b></p>
+<ul>
+<li>maps swapped in the lowering</li>
+<li>maps swapped in the scale cotangent</li>
+<li>map bounds from one entry</li>
+<li>update sign</li>
+<li>non-empty padded ranges</li>
+<li>backward sweep without its map</li>
+<li>forward sweep sign</li>
+<li>constant-table dedup by length</li>
+<li>ragged reads not recorded in the proof</li>
+</ul>
+<p>The padded-range mutant first survived because the padded groups did no harm (zero weight), only extra work; the new table test catches it.</p>
+
+<h2>3. Benchmark</h2>
+<p>Same harness as PR 7 (<code>pr7_sparse_ldl.py</code>, C baseline at <code>-O3</code>, Scaly at the default <code>-O2</code>). Two larger cases were added.</p>
+<div class="scroll"><table>
+<tr><th>Matrix</th><th class="r">nnz(L)</th><th class="r">update madds</th><th class="r">Gen.</th><th class="r">Factor</th><th class="r">C</th><th class="r">ratio (PR 7)</th><th class="r">Solve</th><th class="r">C</th><th class="r">ratio (PR 7)</th></tr>
+<tr><td>MPC N = 100</td><td class="r">4 591</td><td class="r">13 k</td><td class="r">0.1 s</td><td class="r">26.5 µs</td><td class="r">19.3</td><td class="r"><b>1.37</b> (1.70)</td><td class="r">13.1</td><td class="r">11.3</td><td class="r">1.16 (1.48)</td></tr>
+<tr><td>MPC N = 1000</td><td class="r">45 991</td><td class="r">134 k</td><td class="r">0.8 s</td><td class="r">244</td><td class="r">212</td><td class="r"><b>1.15</b> (1.58)</td><td class="r">126</td><td class="r">114</td><td class="r">1.10 (1.35)</td></tr>
+<tr><td>QP 200 + 100</td><td class="r">7 893</td><td class="r">244 k</td><td class="r">0.2 s</td><td class="r">123</td><td class="r">111</td><td class="r"><b>1.10</b> (2.62)</td><td class="r">9.0</td><td class="r">10.7</td><td class="r">0.84 (1.64)</td></tr>
+<tr><td>QP 500 + 250</td><td class="r">40 206</td><td class="r">3.1 M</td><td class="r">0.7 s</td><td class="r">1 448</td><td class="r">1 365</td><td class="r"><b>1.06</b> (2.45)</td><td class="r">31.3</td><td class="r">56.8</td><td class="r">0.55 (1.32)</td></tr>
+<tr><td>QP 1000 + 500</td><td class="r">153 349</td><td class="r">25 M</td><td class="r">2.5 s</td><td class="r">10 603</td><td class="r">10 229</td><td class="r"><b>1.04</b></td><td class="r">110</td><td class="r">222</td><td class="r">0.50</td></tr>
+<tr><td>grid 30×30</td><td class="r">2 772</td><td class="r">6 k</td><td class="r">0.1 s</td><td class="r">16.5</td><td class="r">12.3</td><td class="r"><b>1.34</b> (1.55)</td><td class="r">5.8</td><td class="r">2.7</td><td class="r">2.1 (2.97)</td></tr>
+<tr><td>grid 60×60</td><td class="r">11 304</td><td class="r">26 k</td><td class="r">0.3 s</td><td class="r">60.4</td><td class="r">51.7</td><td class="r"><b>1.17</b></td><td class="r">19.9</td><td class="r">11.7</td><td class="r">1.70</td></tr>
+</table></div>
+<ul>
+<li><b>Solves.</b> Scaly beats the baseline on the QPs because its backward sweep is a four-way dot product. The baseline's backward loop is a single dependent chain.</li>
+<li><b>Tiny grid solve.</b> The small-grid solve (5.8 µs) is dominated by two permutation gathers and three carry copies that the baseline does not do.</li>
+</ul>
+
+<h2>4. Tier 2 gates, as of this PR</h2>
+<ul>
+<li><b>Generated LDLᵀ at most 2× a QDLDL-class factorization:</b> met on every test matrix (1.04–1.37×).</li>
+<li><b>Generation time linear in nnz(L) and under 10 s at 50 k:</b> 0.7–0.8 s at 40–46 k, and 2.5 s at 153 k.</li>
+<li><b>Dense kernels at most 2× LAPACK:</b> met at <code>-O3</code>; depends on C-107 at gcc's <code>-O2</code>.</li>
+<li><b>Accuracy across δ:</b> met (PR 7).</li>
+<li><b>Two non-PIQP examples:</b> T2-9.</li>
+</ul>
+<p><b>Next:</b> T2-9, which covers the health check, iterative refinement, schedule and options, the T2.f/T2.g items, and the SQP-step and Kalman examples.</p>
+</main></body></html>

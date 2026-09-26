@@ -21,6 +21,8 @@ from ..ir.expr import (
   index_set,
   put,
   put_add,
+  ragged_add,
+  ragged_dot,
   scatter,
   solve_triangular,
   stack,
@@ -468,6 +470,18 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return (-(outer * _tri_mask(t.shape[0], lower, unit)), b_bar)
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
     return (_factor_cotangent(expr, cot),)
+  if expr.op == ExprOp.RAGGED_ADD:
+    base, src, lo, hi, scale = args
+    dmap, smap = expr.attrs["dst_map"], expr.attrs["src_map"]
+    src_bar = ragged_add(zeros_like(src), cot, lo, hi, scale, dst_map=smap, src_map=dmap)
+    scale_bar = ragged_dot(src, cot, lo, hi, a_map=smap, b_map=dmap)
+    return (cot, src_bar, zeros_like(lo), zeros_like(hi), scale_bar)
+  if expr.op == ExprOp.RAGGED_DOT:
+    a, b, lo, hi = args
+    amap, bmap = expr.attrs["a_map"], expr.attrs["b_map"]
+    a_bar = ragged_add(zeros_like(a), b, lo, hi, cot, dst_map=amap, src_map=bmap)
+    b_bar = ragged_add(zeros_like(b), a, lo, hi, cot, dst_map=bmap, src_map=amap)
+    return (a_bar, b_bar, zeros_like(lo), zeros_like(hi))
   if expr.op in (ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT):
     ok = bool(expr.attrs.get("in_range"))
     if expr.op == ExprOp.TAKE:

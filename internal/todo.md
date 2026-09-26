@@ -186,10 +186,14 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       (`custom_derivative`), multi-seed forward mode through a custom rule as one `vmap`. Reverse
       mode no longer walks back through a constant-zero cotangent. MPC/grid within 1.3–1.7× of an
       up-looking C LDL, random QPs 2.5× (below the 3× kill line) (`notes/tier2_pr7_report.html`).
-- [ ] **C-109. Ragged update loops for the sparse factorization.** Each update lane loads four index
+- [x] **C-109. Ragged update loops for the sparse factorization (T2-8).** Each update lane loads four index
       tables and three scattered values; the C baseline walks one contiguous column range per `k`.
       Group lanes by `k` into an inner loop of run-time length (T2-8), which also shrinks the tables
-      from O(flops) to O(nnz(L)) and generation time with them (10.8 s at 3.1 M lanes).
+      from O(flops) to O(nnz(L)) and generation time with them (10.8 s at 3.1 M lanes). Done:
+      `ragged_add`/`ragged_dot` (run-time ranges over fixed maps, closed under AD), the factor
+      and sweeps rewritten on them, lazy lane tables, interval-first in-place proof, one constant
+      table per content. Factor 1.0–1.4×, solve 0.5–1.6× the C baseline; 2.5 s to generate at
+      nnz(L) = 153 k (`notes/tier2_pr8_report.html`).
 
 ### Tier 1 primitives
 

@@ -115,11 +115,40 @@ class SymbolicLDL:
   r_cols: np.ndarray
   r_pos: np.ndarray
   u_ptr: np.ndarray
-  u_rows: np.ndarray
-  u_lik: np.ndarray
-  u_ljk: np.ndarray
-  u_k: np.ndarray
   _stats: dict[str, float] = field(default_factory=dict, repr=False)
+  _lanes: dict[str, np.ndarray] = field(default_factory=dict, repr=False)
+
+  def _lane_tables(self) -> dict[str, np.ndarray]:
+    """The update lanes, one entry per multiply-add: built on first use, since a factorization that
+    loops over the runs of each column never needs them."""
+    if not self._lanes:
+      counts = self.l_ptr[self.r_cols + 1] - self.r_pos
+      starts = np.repeat(self.r_pos, counts)
+      offsets = np.arange(starts.size) - np.repeat(np.cumsum(counts) - counts, counts)
+      lik = starts + offsets
+      self._lanes.update(u_lik=lik, u_rows=self.l_rows[lik], u_ljk=starts, u_k=np.repeat(self.r_cols, counts))
+    return self._lanes
+
+  @property
+  def u_rows(self) -> np.ndarray:
+    return self._lane_tables()["u_rows"]
+
+  @property
+  def u_lik(self) -> np.ndarray:
+    return self._lane_tables()["u_lik"]
+
+  @property
+  def u_ljk(self) -> np.ndarray:
+    return self._lane_tables()["u_ljk"]
+
+  @property
+  def u_k(self) -> np.ndarray:
+    return self._lane_tables()["u_k"]
+
+  @property
+  def update_lanes(self) -> int:
+    """Multiply-adds of the left-looking updates."""
+    return int(self.u_ptr[-1]) if self.u_ptr.size else 0
 
   @property
   def nnz_l(self) -> int:
@@ -147,8 +176,8 @@ class SymbolicLDL:
         nnz_a=int(self.a_rows.size),
         nnz_l=self.nnz_l,
         fill=self.nnz_l - (int(self.a_rows.size) - self.n),
-        flops=float(np.sum(counts.astype(np.float64) * (counts + 3)) / 2 + self.u_rows.size),
-        update_lanes=int(self.u_rows.size),
+        flops=float(np.sum(counts.astype(np.float64) * (counts + 3)) / 2 + self.update_lanes),
+        update_lanes=self.update_lanes,
         height=int(depth.max() + 1) if self.n else 0,
         supernodes=int(fundamental),
         max_col=int(counts.max()) if self.n else 0,
@@ -161,18 +190,19 @@ class SymbolicLDL:
     """Per column ``(a, u, c)``: matrix entries, update lanes and ``L`` entries."""
     return np.stack([np.diff(self.a_ptr), np.diff(self.u_ptr), np.diff(self.l_ptr)], axis=1)
 
-  def segments(self, cost: CostModel | None = None, *, max_chunks: int = 2048) -> list[Segment]:
+  def segments(self, cost: CostModel | None = None, *, max_chunks: int = 2048, widths: np.ndarray | None = None) -> list[Segment]:
     """Split the columns into consecutive segments minimizing padded work plus a price per segment.
 
     Dynamic programming over segment boundaries: ``best[b] = min over a < b of best[a] + cost of
     [a, b)``, where the cost of a segment is its length times the per-column price of its widest
     tables. Boundaries fall on chunks of ``ceil(n / max_chunks)`` columns, so the search is at most
-    ``max_chunks^2`` vectorized steps whatever ``n``."""
+    ``max_chunks^2`` vectorized steps whatever ``n``. ``widths`` replaces the per-column ``(a, u, c)``
+    table widths when a factorization pads other tables (the price of the middle one is ``cost.u``)."""
     cost = cost or CostModel()
     n = self.n
     if n == 0:
       return []
-    w = self.widths()
+    w = self.widths() if widths is None else np.asarray(widths, dtype=np.int64)
     size = -(-n // max_chunks)
     bounds = np.arange(0, n + size, size)
     bounds[-1] = n
@@ -207,8 +237,8 @@ class SymbolicLDL:
     return float(sum(s.length * (cost.step + cost.a * s.a + cost.u * s.u + cost.c * s.c) + cost.segment for s in segments))
 
 
-# Update lanes beyond which the tables would take gigabytes: the ordering is the problem then.
-MAX_UPDATE_LANES = 50_000_000
+# Multiply-adds beyond which an ordering is refused: its factorization is not worth generating.
+MAX_UPDATE_LANES = 500_000_000
 
 
 class TooMuchWork(ValueError):
@@ -245,7 +275,7 @@ def analyze(
         continue
     if not found:
       raise TooMuchWork(f"every ordering leaves more than {max_update_lanes} update multiply-adds")
-    best = min(found, key=lambda s: (s.u_rows.size, s.nnz_l))
+    best = min(found, key=lambda s: (s.update_lanes, s.nnz_l))
     object.__setattr__(best, "method", f"auto:{best.method}")
     return best
   rows, cols = np.asarray(rows, dtype=np.int64).reshape(-1), np.asarray(cols, dtype=np.int64).reshape(-1)
@@ -307,15 +337,7 @@ def analyze(
       "use a fill-reducing ordering or raise max_update_lanes"
     )
   u_ptr = np.concatenate([[0], np.cumsum(np.bincount(row_of, weights=counts, minlength=n))]).astype(np.int64)
-  starts = np.repeat(r_pos, counts)
-  offsets = np.arange(starts.size) - np.repeat(np.cumsum(counts) - counts, counts)
-  u_lik = starts + offsets
-  u_rows = l_rows[u_lik]
-  u_ljk = np.repeat(r_pos, counts)
-  u_k = np.repeat(r_cols, counts)
-  return SymbolicLDL(
-    n, name, perm, iperm, a_ptr, a_rows, a_source, parent, postorder, l_ptr, l_rows, r_ptr, r_cols, r_pos, u_ptr, u_rows, u_lik, u_ljk, u_k
-  )
+  return SymbolicLDL(n, name, perm, iperm, a_ptr, a_rows, a_source, parent, postorder, l_ptr, l_rows, r_ptr, r_cols, r_pos, u_ptr)
 
 
 def _etree(n: int, arow_ptr: np.ndarray, arow_cols: np.ndarray) -> np.ndarray:

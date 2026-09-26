@@ -127,6 +127,15 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     return _jac_mask(expr.args[0], wrt, memo)[order]
   if expr.op == ExprOp.GATHER:
     return _jac_mask(expr.args[0], wrt, memo)[expr.attrs["indices"].reshape(-1)]
+  if expr.op in {ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT}:
+    # Run-time ranges: any output entry may depend on any entry of the floating operands (and a
+    # ragged_add's entry on its own base entry).
+    floats = [expr.args[1], expr.args[4]] if expr.op == ExprOp.RAGGED_ADD else [expr.args[0], expr.args[1]]
+    mask = _jac_mask(expr.args[0], wrt, memo) if expr.op == ExprOp.RAGGED_ADD else _empty((expr.size, wrt.size))
+    for arg in floats:
+      dense = _incidence((expr.size, arg.size), np.repeat(np.arange(expr.size), arg.size), np.tile(np.arange(arg.size), expr.size))
+      mask = _or(mask, _compose(dense, _jac_mask(arg, wrt, memo)))
+    return mask
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
     # Every entry of the lower triangle of the factor may depend on every entry the factorization reads.
     a = expr.args[0]

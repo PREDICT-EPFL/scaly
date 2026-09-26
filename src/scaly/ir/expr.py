@@ -74,6 +74,8 @@ class ExprOp(StrEnum):
   TAKE = "take"
   PUT_ADD = "put_add"
   PUT = "put"
+  RAGGED_ADD = "ragged_add"
+  RAGGED_DOT = "ragged_dot"
   RESHAPE = "reshape"
   TRANSPOSE = "transpose"
   SLICE = "slice"
@@ -145,6 +147,8 @@ COMMON_STRUCTURAL = {
   ExprOp.TAKE,
   ExprOp.PUT_ADD,
   ExprOp.PUT,
+  ExprOp.RAGGED_ADD,
+  ExprOp.RAGGED_DOT,
   ExprOp.RESHAPE,
   ExprOp.TRANSPOSE,
   ExprOp.SLICE,
@@ -235,6 +239,8 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.TAKE: OpInfo(ExprOp.TAKE, 2, None),
   ExprOp.PUT_ADD: OpInfo(ExprOp.PUT_ADD, 3, None),
   ExprOp.PUT: OpInfo(ExprOp.PUT, 3, None),
+  ExprOp.RAGGED_ADD: OpInfo(ExprOp.RAGGED_ADD, 5, None),
+  ExprOp.RAGGED_DOT: OpInfo(ExprOp.RAGGED_DOT, 4, None),
   ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, np.reshape),
   ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, np.transpose),
   ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1, None),
@@ -1049,7 +1055,7 @@ def _index_update(op: ExprOp, base: Any, indices: Any, values: Any) -> Expr:
 
 
 # Ops that address memory through an index computed at run time.
-RUNTIME_INDEX_OPS = frozenset({ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT})
+RUNTIME_INDEX_OPS = frozenset({ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT, ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT})
 
 
 def _runtime_indices(indices: Any, op: str) -> Expr:
@@ -1123,6 +1129,69 @@ def _put(op: ExprOp, base: Any, indices: Any, values: Any, in_range: bool = Fals
     TensorType(base.shape, dtype=base.type.dtype, diff=diff_any(base, values)),
     attrs={"in_range": True} if in_range else {},
     lowering=common_lowering(base, idx, values),
+  )
+
+
+def _ragged_map(table: Any, what: str) -> np.ndarray | None:
+  if table is None:
+    return None
+  arr = np.asarray(table, dtype=np.int64).reshape(-1)
+  if arr.size and arr.min() < 0:
+    raise ValueError(f"{what} entries must be non-negative")
+  return arr
+
+
+def _ragged_bounds(lo: Any, hi: Any) -> tuple[Expr, Expr]:
+  lo, hi = as_expr(lo), as_expr(hi)
+  for e, what in ((lo, "lo"), (hi, "hi")):
+    if e.type.dtype != dtypes.int64 or len(e.shape) != 1:
+      raise TypeError(f"ragged {what} must be a rank-1 int64 vector, got {e.type.dtype}{e.shape}")
+  if lo.shape != hi.shape:
+    raise ValueError(f"ragged lo and hi must have one entry per group, got {lo.shape} and {hi.shape}")
+  return lo, hi
+
+
+def ragged_add(base: Any, src: Any, lo: Any, hi: Any, scale: Any, *, dst_map: Any = None, src_map: Any = None) -> Expr:
+  """``base`` plus, for every group ``g`` and every ``p`` with ``lo[g] <= p < hi[g]``,
+  ``src[src_map[p]] * scale[g]`` added at ``dst_map[p]`` (``None`` maps are the identity).
+
+  Ranges of run-time length: the inner loop of a sparse update such as a left-looking column
+  update (``w[rows[p]] -= L[p] * s_k`` over a contiguous run of a column). ``lo``/``hi`` are ``int64``
+  vectors, ``scale`` a float vector, all with one entry per group; a group with ``lo == hi`` does
+  nothing. The maps are fixed tables. Nothing is checked at run time: every ``p`` must lie inside
+  the maps and every mapped index inside ``base`` and ``src``. Library code builds the ranges from
+  its own tables.
+  """
+  base, src, scale = as_expr(base), as_expr(src), as_expr(scale)
+  lo, hi = _ragged_bounds(lo, hi)
+  if len(base.shape) != 1 or len(src.shape) != 1 or scale.shape != lo.shape:
+    raise ValueError(f"ragged_add needs vectors and one scale per group, got base {base.shape}, src {src.shape}, scale {scale.shape}")
+  promote_dtype(base, src, scale)
+  attrs = {"dst_map": _ragged_map(dst_map, "dst_map"), "src_map": _ragged_map(src_map, "src_map")}
+  return Expr(
+    ExprOp.RAGGED_ADD,
+    (base, src, lo, hi, scale),
+    TensorType(base.shape, dtype=base.type.dtype, diff=diff_any(base, src, scale)),
+    attrs=attrs,
+    lowering=common_lowering(base, src, lo, hi, scale),
+  )
+
+
+def ragged_dot(a: Any, b: Any, lo: Any, hi: Any, *, a_map: Any = None, b_map: Any = None) -> Expr:
+  """One dot product per group: ``out[g] = sum over lo[g] <= p < hi[g] of a[a_map[p]] * b[b_map[p]]``
+  (``None`` maps are the identity). The counterpart of ``ragged_add``, with the same unchecked
+  contract; ``ragged_add``'s derivative with respect to its scale is one of these."""
+  a, b = as_expr(a), as_expr(b)
+  lo, hi = _ragged_bounds(lo, hi)
+  if len(a.shape) != 1 or len(b.shape) != 1:
+    raise ValueError(f"ragged_dot needs vectors, got {a.shape} and {b.shape}")
+  dtype = promote_dtype(a, b)
+  return Expr(
+    ExprOp.RAGGED_DOT,
+    (a, b, lo, hi),
+    TensorType(lo.shape, dtype=dtype, diff=diff_any(a, b)),
+    attrs={"a_map": _ragged_map(a_map, "a_map"), "b_map": _ragged_map(b_map, "b_map")},
+    lowering=common_lowering(a, b, lo, hi),
   )
 
 

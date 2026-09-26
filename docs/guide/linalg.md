@@ -79,13 +79,15 @@ keeps its own order.
 
 **Generated code.**
 
-- The factorization is one `scan` per segment of columns. Each step is a left-looking column
-  update that reads the analysis tables by the step number.
+- The factorization is one `scan` per segment of columns. Each step is a left-looking column update
+  that reads the analysis tables by the step number.
+- The step's inner loop is a `ragged_add`: for each column `k` in row `j` of `L`, one loop of
+  run-time length over the contiguous part of column `k` below row `j`. This is the loop hand-written
+  sparse factorizations have, and it keeps the tables the size of `K` and `L`.
 - Updates go to a single carry vector, which the loop proves safe to overwrite in place, so no step
   copies anything.
-- Padded lanes point at a zero entry or at a scratch slot of their own, so the loops index without
-  bounds checks.
-- `solve` is a permutation, two triangular sweeps and a diagonal scaling.
+- The loops index without bounds checks.
+- `solve` is a permutation, two in-place triangular sweeps and a diagonal scaling.
 
 **Derivatives.** `fact.solve` carries the implicit derivative. In forward mode,
 `dx = K^{-1}(db - dK x)` is one more solve with the same factor. In reverse mode, `bbar =
@@ -93,12 +95,10 @@ K^{-1} xbar` and `Kbar = -bbar x^T` on the entries the factorization reads (a mi
 contributes through its lower entry). The factorization loops themselves are never differentiated.
 Second derivatives use the same rules, and multi-seed forward mode maps the rule over the seeds.
 
-**Speed.** Against an up-looking C factorization of the QDLDL kind on the same matrix and analysis
-(`internal/notes/tier2_pr7_report.html`):
+**Speed.** Against an up-looking C factorization of the QDLDL kind on the same matrix and analysis,
+MPC, random QP and grid systems factor within 1.0–1.4× and solve within 0.5–1.6×
+(`internal/notes/tier2_pr8_report.html`).
 
-- MPC and grid systems factor within 1.3–1.7×, and solves within 1.3–1.6×.
-- Random QP systems, whose many short updates are all padded to the widest, factor within 2.5×.
-
-**Generation cost.** The tables grow with the number of update multiply-adds, not with `nnz(L)`.
-A factorization with millions of them generates large sources; `analyze` refuses more than 50
-million.
+**Generation cost.** Generation grows with `nnz(L)`, not with the work of the factorization. The
+analysis and the in-place proof keep column runs as ranges instead of enumerating them. At
+`nnz(L)` = 153 k with 25 million multiply-adds, generating and compiling take 2.5 s.

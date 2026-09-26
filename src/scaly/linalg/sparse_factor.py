@@ -2,12 +2,14 @@
 
 ``SparseLDL(K)`` analyzes ``K``'s pattern at build time (``linalg.symbolic``) and factors its
 values with one ``scan`` per column segment. Every step is the left-looking column update, written
-with the run-time-index operations on a single carry vector ``[L values | D | work]``; the loop
-slices the analysis tables one padded row per step, so the carry is proven safe to update in place
-and nothing is copied between steps. ``solve`` runs the two triangular sweeps the same way. The
-factorization is separate from the solve, so one factorization serves several right-hand sides,
-and the solve carries the implicit derivative ``dx = K^{-1} (db - dK x)``: differentiating a solve
-never differentiates the factorization loops.
+with run-time-index operations on a single carry vector ``[L values | D | work | 0 | scratch]``:
+for each column ``k`` in row ``j`` of ``L``, one ``ragged_add`` run over the contiguous part of
+column ``k`` from row ``j`` down, the loop the C reference factorizations have. The loop slices the
+analysis tables one padded row per step, so the carry is proven safe to update in place and nothing
+is copied between steps; the tables are the size of ``K`` and ``L``, not of the factorization's
+work. ``solve`` runs the two triangular sweeps the same way. The factorization is separate from the
+solve, so one factorization serves several right-hand sides, and the solve carries the implicit
+derivative ``dx = K^{-1} (db - dK x)``: differentiating a solve never differentiates the loops.
 """
 
 from __future__ import annotations
@@ -19,15 +21,14 @@ import numpy as np
 
 from ..function.model import Function
 from ..function.sugar import custom_derivative, scan, vmap
-from ..ir.expr import Expr, as_expr, concat, gather, put, put_add, scatter, segment_sum, take
+from ..ir.expr import Expr, as_expr, concat, gather, put, put_add, ragged_add, ragged_dot, scatter, segment_sum, take
 from .sparse import SparseMatrix
 from .symbolic import CostModel, Ordering, Segment, SymbolicLDL, analyze
 
 _NAMES = itertools.count()
-DROP = -1  # an index a padded lane uses: outside every array, so it reads 0 and writes nowhere
 
 
-def _table(ptr: np.ndarray, data: np.ndarray, seg: Segment, width: int, *, offset: int = 0, pad: int | np.ndarray = DROP) -> np.ndarray:
+def _table(ptr: np.ndarray, data: np.ndarray, seg: Segment, width: int, *, offset: int = 0, pad: int | np.ndarray = -1) -> np.ndarray:
   """Columns ``seg.start ... seg.stop - 1`` of a ragged table, each padded to ``width``, flattened row
   by row; ``offset`` is added to every real entry. ``pad`` fills the padding: one index, or one per
   lane (a scratch slot each)."""
@@ -56,10 +57,10 @@ class SparseLDL:
   ``K`` must be quasi-definite (or definite): every pivot of the permuted matrix is then nonzero
   whatever the ordering. The pattern of ``K`` may hold its lower triangle, its upper triangle or
   both; a mirrored pair is read from its lower entry. ``values`` is the factor, laid out as
-  ``[L below the diagonal (CSC of the permuted matrix) | D | n work entries | 0]``; ``solve`` uses it.
+  ``[L below the diagonal (CSC of the permuted matrix) | D]``; ``solve`` uses it.
 
-  The loops index without bounds checks: a padded lane reads the zero entry or writes a scratch slot
-  of its own after it, so every index in the tables is in range by construction.
+  The loops index without bounds checks: every range comes from the analysis, and a padded lane
+  reads a zero entry, writes a scratch slot of its own or runs an empty range.
   """
 
   def __init__(
@@ -83,59 +84,65 @@ class SparseLDL:
     self.d_offset = s.nnz_l
     self.w_offset = s.nnz_l + s.n
     self.zero = s.nnz_l + 2 * s.n  # an entry that stays zero: padded reads land here
+    # Per column: matrix entries, columns in its row of L (one ragged run each), entries of its column.
+    widths = np.stack([np.diff(s.a_ptr), np.diff(s.r_ptr), np.diff(s.l_ptr)], axis=1)
     # Every loop copies its carry in once, so a segment costs at least the carry's size.
-    self.segments = s.segments(cost or CostModel(segment=256.0 + 0.5 * self.zero))
-    self.solve_segments = s.segments(CostModel(step=2.0, a=0.0, u=0.0, c=1.0, segment=256.0 + 0.5 * s.n))
-    lanes = max((max(seg.a, seg.u, seg.c, 1) for seg in self.segments), default=1)
+    self.segments = s.segments(cost or CostModel(step=8.0, a=1.0, u=3.0, c=1.0, segment=256.0 + 0.5 * self.zero), widths=widths)
+    lanes = max((max(seg.a, seg.c, 1) for seg in self.segments), default=1)
     self.dump = self.zero + 1  # one scratch slot per lane for padded writes
     self.size = self.dump + lanes
-    self.solve_lanes = max((max(seg.c, 1) for seg in self.solve_segments), default=1)
-    self.values = self._factor(matrix.values)[: self.zero + 1]
+    self.values = self._factor(matrix.values)[: self.w_offset]
     self._solver: Function | None = None
 
   # --- the factorization ----------------------------------------------------------------------
 
   def _factor_body(self, seg: Segment, k: int) -> Function:
-    a, u, c = max(seg.a, 1), max(seg.u, 1), max(seg.c, 1)
+    a, g, c = max(seg.a, 1), max(seg.u, 1), max(seg.c, 1)
+    s = self.symbolic
     carry = Expr.sym("c", (self.size,))
     j = Expr.sym("j", (), dtype="int64")
     a_idx, a_src = _int_sym("a_idx", a), _int_sym("a_src", a)
-    u_w, u_lik, u_ljk, u_dk = (_int_sym(nm, u) for nm in ("u_w", "u_lik", "u_ljk", "u_dk"))
-    c_pos, c_w, clear = _int_sym("c_pos", c), _int_sym("c_w", c), _int_sym("clear", c)
+    r_lo, r_hi, r_dk, r_jk = (_int_sym(nm, g) for nm in ("r_lo", "r_hi", "r_dk", "r_jk"))
+    col, clear = _int_sym("col", 2), _int_sym("clear", c)
     kv = Expr.sym("kv", (self.matrix.nnz,))
     ok = {"in_range": True}
     # w[rows of column j] = K[., j]
     u1 = put(carry, a_idx, take(kv, a_src, **ok), **ok)
-    # w[i] -= L[i, k] D[k] L[j, k] for every k in row j of L and i >= j in column k
-    u2 = put_add(u1, u_w, -(take(carry, u_lik, **ok) * take(carry, u_dk, **ok) * take(carry, u_ljk, **ok)), **ok)
+    # For each k in row j of L: w[i] -= L[i, k] * (D[k] L[j, k]) over column k from row j down.
+    weight = -(take(carry, r_dk, **ok) * take(carry, r_jk, **ok))
+    u2 = ragged_add(u1, carry, r_lo, r_hi, weight, dst_map=self.w_offset + s.l_rows)
+    # D[j] = w[j]; L[., j] = w[rows] / D[j]; then clear the work entries the column used.
     wj = take(u2, (j + self.w_offset).reshape((1,)), **ok)
-    # D[j] = w[j]; L[., j] = w[rows] / D[j]; then clear the work entries this column used
     u3 = put(u2, (j + self.d_offset).reshape((1,)), wj, **ok)
-    u4 = put(u3, c_pos, take(u2, c_w, **ok) * (1.0 / wj), **ok)
+    u4 = ragged_add(u3, u2, col[:1], col[1:], 1.0 / wj, src_map=self.w_offset + s.l_rows)
     u5 = put(u4, clear, Expr.const(np.zeros(c)), **ok)
-    inputs = [carry, j, a_idx, a_src, u_w, u_lik, u_ljk, u_dk, c_pos, c_w, clear, kv]
-    names = ["c", "j", "a_idx", "a_src", "u_w", "u_lik", "u_ljk", "u_dk", "c_pos", "c_w", "clear", "kv"]
+    inputs = [carry, j, a_idx, a_src, r_lo, r_hi, r_dk, r_jk, col, clear, kv]
+    names = ["c", "j", "a_idx", "a_src", "r_lo", "r_hi", "r_dk", "r_jk", "col", "clear", "kv"]
     return Function._from_exprs(f"{self.name}_f{k}", inputs, [u5], names, ["c_next"])
 
   def _factor_tables(self, seg: Segment) -> list[np.ndarray]:
     s = self.symbolic
-    a, u, c = max(seg.a, 1), max(seg.u, 1), max(seg.c, 1)
+    a, g, c = max(seg.a, 1), max(seg.u, 1), max(seg.c, 1)
     j = np.arange(seg.start, seg.stop, dtype=np.int64)
     dump = lambda width: self.dump + np.arange(width)  # noqa: E731
-    c_w = _table(s.l_ptr, s.l_rows, seg, c, offset=self.w_offset, pad=self.zero)
-    # The entries of w this column's rows used; w[j] itself is never read again, so it is left.
-    clear = _table(s.l_ptr, s.l_rows, seg, c, offset=self.w_offset, pad=dump(c))
+    row_k = _table(s.r_ptr, s.r_cols, seg, g, pad=0).reshape(seg.length, g)
+    real = _table(s.r_ptr, np.ones(s.r_cols.size, dtype=np.int64), seg, g, pad=0).reshape(seg.length, g) > 0
+    r_pos = _table(s.r_ptr, s.r_pos, seg, g, pad=0).reshape(seg.length, g)
+    r_lo = np.where(real, r_pos, 0)
+    r_hi = np.where(real, s.l_ptr[row_k + 1], 0)  # an empty range for a padded group
+    r_dk = np.where(real, self.d_offset + row_k, self.zero)
+    r_jk = np.where(real, r_pos, self.zero)
+    col = np.stack([s.l_ptr[j], s.l_ptr[j + 1]], axis=1)
     return [
       j,
       _table(s.a_ptr, s.a_rows, seg, a, offset=self.w_offset, pad=dump(a)),
       _table(s.a_ptr, s.a_source, seg, a, pad=0),
-      _table(s.u_ptr, s.u_rows, seg, u, offset=self.w_offset, pad=dump(u)),
-      _table(s.u_ptr, s.u_lik, seg, u, pad=self.zero),
-      _table(s.u_ptr, s.u_ljk, seg, u, pad=self.zero),
-      _table(s.u_ptr, s.u_k, seg, u, offset=self.d_offset, pad=self.zero),
-      _table(s.l_ptr, np.arange(s.nnz_l), seg, c, pad=dump(c)),
-      c_w,
-      clear,
+      r_lo.reshape(-1),
+      r_hi.reshape(-1),
+      r_dk.reshape(-1),
+      r_jk.reshape(-1),
+      col.reshape(-1),
+      _table(s.l_ptr, s.l_rows, seg, c, offset=self.w_offset, pad=dump(c)),
     ]
 
   def _factor(self, kv: Expr) -> Expr:
@@ -160,50 +167,35 @@ class SparseLDL:
 
   # --- the solves -----------------------------------------------------------------------------
 
-  def _sweep_body(self, seg: Segment, k: int, backward: bool) -> Function:
-    c = max(seg.c, 1)
-    ok = {"in_range": True}
-    y, j = Expr.sym("y", (self.n + 1 + self.solve_lanes,)), Expr.sym("j", (), dtype="int64")
-    rows, pos, f = _int_sym("rows", c), _int_sym("pos", c), Expr.sym("f", (self.zero + 1,))
-    lcol = take(f, pos, **ok)
+  def _sweep(self, f: Expr, y: Expr, backward: bool) -> Expr:
+    """The unit lower sweep (forward) or its transpose (backward), one column per step."""
+    s = self.symbolic
+    n = self.n
+    if n == 0:
+      return y
+    yy, j, col, ff = Expr.sym("y", (n,)), Expr.sym("j", (), dtype="int64"), _int_sym("col", 2), Expr.sym("f", (self.w_offset,))
     if backward:
-      # x[j] -= sum over i > j of L[i, j] x[i]: reads only entries below j, writes j
-      nxt = put_add(y, j.reshape((1,)), -((lcol * take(y, rows, **ok)).sum()).reshape((1,)), **ok)
+      # x[j] -= sum over the rows i > j of column j of L[i, j] x[i]
+      dot = ragged_dot(ff, yy, col[:1], col[1:], b_map=s.l_rows)
+      nxt = put_add(yy, j.reshape((1,)), -dot, in_range=True)
     else:
       # y[i] -= L[i, j] y[j] for the rows i > j of column j
-      nxt = put_add(y, rows, -(lcol * take(y, j.reshape((1,)), **ok)), **ok)
+      nxt = ragged_add(yy, ff, col[:1], col[1:], -take(yy, j.reshape((1,)), in_range=True), dst_map=s.l_rows)
     tag = "b" if backward else "f"
-    return Function._from_exprs(f"{self.name}_s{tag}{k}", [y, j, rows, pos, f], [nxt], ["y", "j", "rows", "pos", "f"], ["y_next"])
-
-  def _sweep(self, f: Expr, y: Expr, backward: bool) -> Expr:
-    s = self.symbolic
-    segments = self.solve_segments[::-1] if backward else self.solve_segments
-    for k, seg in enumerate(segments):
-      c = max(seg.c, 1)
-      j = np.arange(seg.start, seg.stop, dtype=np.int64)
-      # Padding: the forward sweep writes a scratch slot per lane after y's zero entry; the
-      # backward sweep reads that zero entry; both read the factor's zero entry for L.
-      row_pad = self.n if backward else self.n + 1 + np.arange(c)
-      rows = _table(s.l_ptr, s.l_rows, seg, c, pad=row_pad).reshape(seg.length, c)
-      pos = _table(s.l_ptr, np.arange(s.nnz_l), seg, c, pad=self.zero).reshape(seg.length, c)
-      if backward:
-        j, rows, pos = j[::-1], rows[::-1], pos[::-1]
-      xs = [
-        (Expr.const(j.copy(), dtype="int64"), 0, 1),
-        (Expr.const(rows.reshape(-1).copy(), dtype="int64"), 0, c),
-        (Expr.const(pos.reshape(-1).copy(), dtype="int64"), 0, c),
-        (f, 0, 0),
-      ]
-      (y,) = scan(self._sweep_body(seg, k, backward), y, xs, length=seg.length)
+    body = Function._from_exprs(f"{self.name}_s{tag}", [yy, j, col, ff], [nxt], ["y", "j", "col", "f"], ["y_next"])
+    steps = np.arange(n, dtype=np.int64)
+    if backward:
+      steps = steps[::-1].copy()
+    cols = np.stack([s.l_ptr[steps], s.l_ptr[steps + 1]], axis=1).reshape(-1)
+    xs = [(Expr.const(steps, dtype="int64"), 0, 1), (Expr.const(cols, dtype="int64"), 0, 2), (f, 0, 0)]
+    (y,) = scan(body, y, xs, length=n)
     return y
 
   def _raw_solve(self, f: Expr, b: Expr) -> Expr:
     """``K^{-1} b`` from the factor ``f``, differentiated (if at all) through its loops."""
     s = self.symbolic
-    extra = Expr.const(np.zeros(1 + self.solve_lanes))
-    y = self._sweep(f, concat([gather(b, s.perm), extra]), backward=False)
-    z = y[: self.n] / f[self.d_offset : self.d_offset + self.n]
-    x = self._sweep(f, concat([z, extra]), backward=True)
+    y = self._sweep(f, gather(b, s.perm), backward=False)
+    x = self._sweep(f, y / f[self.d_offset : self.d_offset + self.n], backward=True)
     return gather(x, s.iperm)
 
   def _k_times(self, kv: Expr, x: Expr) -> Expr:
@@ -230,7 +222,7 @@ class SparseLDL:
     derivatives are implicit too; only third derivatives would go through the loops."""
     if self._solver is not None:
       return self._solver
-    f, kv, b = Expr.sym("f", (self.zero + 1,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
+    f, kv, b = Expr.sym("f", (self.w_offset,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
     base = Function._from_exprs(f"{self.name}_solve", [f, kv, b], [self._raw_solve(f, b)], ["f", "kv", "b"], ["x"])
     inner = base
     for level in (1, 2):
@@ -239,15 +231,15 @@ class SparseLDL:
     return inner
 
   def _jvp_rule(self, inner: Function, level: int) -> Function:
-    f, kv, b = Expr.sym("f", (self.zero + 1,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
-    df, dkv, db = Expr.sym("df", (self.zero + 1,)), Expr.sym("dkv", (self.matrix.nnz,)), Expr.sym("db", (self.n,))
+    f, kv, b = Expr.sym("f", (self.w_offset,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
+    df, dkv, db = Expr.sym("df", (self.w_offset,)), Expr.sym("dkv", (self.matrix.nnz,)), Expr.sym("db", (self.n,))
     x = _call(inner, f, kv, b)
     dx = _call(inner, f, kv, db - self._k_times(dkv, x))
     names = ["f", "kv", "b", "df", "dkv", "db"]
     return Function._from_exprs(f"{self.name}_solve_jvp{level}", [f, kv, b, df, dkv, db], [dx], names, ["dx"])
 
   def _vjp_rule(self, inner: Function, level: int) -> Function:
-    f, kv, b = Expr.sym("f", (self.zero + 1,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
+    f, kv, b = Expr.sym("f", (self.w_offset,)), Expr.sym("kv", (self.matrix.nnz,)), Expr.sym("b", (self.n,))
     x, xbar = Expr.sym("xo", (self.n,)), Expr.sym("xbar", (self.n,))
     bbar = _call(inner, f, kv, xbar)
     rows, cols = self.matrix.coordinates()
@@ -258,7 +250,7 @@ class SparseLDL:
     if off.size:
       grad_used = grad_used - scatter(gather(bbar, c[off]) * gather(x, r[off]), off, (used.size,))
     kbar = scatter(grad_used, used, (self.matrix.nnz,))
-    outs = [Expr.const(np.zeros(self.zero + 1)), kbar, bbar]
+    outs = [Expr.const(np.zeros(self.w_offset)), kbar, bbar]
     return Function._from_exprs(f"{self.name}_solve_vjp{level}", [f, kv, b, x, xbar], outs, ["f", "kv", "b", "xo", "xbar"], ["fbar", "kvbar", "bbar"])
 
   def solve(self, b: Any) -> Expr:

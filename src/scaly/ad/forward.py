@@ -30,6 +30,8 @@ from ..ir.expr import (
   gather,
   put,
   put_add,
+  ragged_add,
+  ragged_dot,
   reduce_min,
   scatter,
   segment_min,
@@ -200,6 +202,8 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return save(Expr(expr.op, (d[0], d[1]), expr.type, attrs=dict(expr.attrs), lowering=expr.lowering))
   if expr.op == ExprOp.TAKE:  # linear in x; a fill is a constant
     return save(take(d[0], args[1], in_range=bool(expr.attrs.get("in_range"))))
+  if expr.op in {ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT}:
+    return save(ragged_tangent(expr, [None if _is_zero_const(t) else t for t in d]))
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
     return save(zeros_like(expr) if _is_zero_const(d[0]) else factor_tangent(expr, d[0]))
   if expr.op == ExprOp.TRISOLVE:
@@ -361,6 +365,26 @@ def _sandwich(t: Expr, s: Expr, *, unit: bool) -> Expr:
   """``L^{-1} S L^{-T}`` for a symmetric ``S`` and the lower triangle of ``t``."""
   z = solve_triangular(t, s, lower=True, unit_diagonal=unit)
   return solve_triangular(t, z.T, lower=True, unit_diagonal=unit).T
+
+
+def ragged_tangent(expr: Expr, d: list[Expr | None]) -> Expr:
+  """``ragged_add`` and ``ragged_dot`` are linear in each floating operand: the tangent is the same op
+  with one operand replaced by its tangent at a time (``None`` for a zero tangent)."""
+  if expr.op == ExprOp.RAGGED_ADD:
+    base, src, lo, hi, scale = expr.args
+    maps = {"dst_map": expr.attrs["dst_map"], "src_map": expr.attrs["src_map"]}
+    out = d[0] if d[0] is not None else zeros_like(expr)
+    if d[1] is not None:
+      out = ragged_add(out, d[1], lo, hi, scale, **maps)
+    if d[4] is not None:
+      out = ragged_add(out, src, lo, hi, d[4], **maps)
+    return out
+  a, b, lo, hi = expr.args
+  maps = {"a_map": expr.attrs["a_map"], "b_map": expr.attrs["b_map"]}
+  terms = [ragged_dot(d[0], b, lo, hi, **maps)] if d[0] is not None else []
+  if d[1] is not None:
+    terms.append(ragged_dot(a, d[1], lo, hi, **maps))
+  return (terms[0] + terms[1] if len(terms) == 2 else terms[0]) if terms else zeros_like(expr)
 
 
 def factor_tangent(expr: Expr, d: Expr) -> Expr:
@@ -1322,6 +1346,12 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL, ExprOp.TRISOLVE}:
     memo[expr.id] = ret = _jvp_many_dense(expr, d, nseed)
+    return ret
+  if expr.op in {ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT}:
+    if nseed > 64:
+      raise _JVPManyUnsupported(str(expr.op))  # one tangent op per seed would outgrow the per-seed fallback
+    rows = [ragged_tangent(expr, [None if _is_zero_const(t) else t[k] for t in d]) for k in range(nseed)]
+    memo[expr.id] = ret = stack(rows, axis=0)
     return ret
   if expr.op == ExprOp.TAKE:  # the seed axis leads and ``take`` indexes the last one
     memo[expr.id] = ret = take(d[0], args[1], in_range=bool(expr.attrs.get("in_range")))

@@ -292,6 +292,17 @@ def _trisolve_shapes(expr: Expr) -> str | None:
   return None
 
 
+def _ragged_shapes(expr: Expr) -> str | None:
+  lo, hi = expr.args[2], expr.args[3]
+  if lo.shape != hi.shape or len(lo.shape) != 1 or lo.type.dtype.name != "int64" or hi.type.dtype.name != "int64":
+    return f"{expr.op} needs int64 lo and hi vectors of one shape, got {lo.type.dtype}{lo.shape} and {hi.type.dtype}{hi.shape}"
+  if expr.op == ExprOp.RAGGED_ADD and (expr.args[4].shape != lo.shape or expr.shape != expr.args[0].shape):
+    return "RAGGED_ADD needs one scale per group and keeps its base's shape"
+  if expr.op == ExprOp.RAGGED_DOT and expr.shape != lo.shape:
+    return "RAGGED_DOT gives one value per group"
+  return None
+
+
 def _while_attrs(expr: Expr) -> str | None:
   body, cond = expr.attrs.get("callee"), expr.attrs.get("cond")
   if body is None or cond is None or "max_iter" not in expr.attrs or "output" not in expr.attrs:
@@ -475,6 +486,7 @@ spec_expr = Spec(
     Rule(ExprOp.TAKE, "take-shapes", _take_shapes),
     *(Rule(op, "factor-shape", _factor_shape) for op in (ExprOp.CHOLESKY, ExprOp.LDL)),
     Rule(ExprOp.TRISOLVE, "trisolve-shapes", _trisolve_shapes),
+    *(Rule(op, "ragged-shapes", _ragged_shapes) for op in (ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT)),
     *(Rule(op, "put-shapes", _put_shapes) for op in (ExprOp.PUT_ADD, ExprOp.PUT)),
     *(Rule(op, "segment-extremum", _segment_extremum) for op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)),
     Rule(ExprOp.STACK, "stack-shapes", _stack_shapes),

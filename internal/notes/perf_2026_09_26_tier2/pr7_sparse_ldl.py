@@ -75,7 +75,9 @@ def main() -> None:
     "mpc N=1000": sparse.csc_array(mpc_kkt(1000)),
     "qp 200+100": random_qp(200, 100, 1, 1e-4),
     "qp 500+250": random_qp(500, 250, 2, 1e-4),
+    "qp 1000+500": random_qp(1000, 500, 4, 1e-4),
     "grid 30x30": quasi_grid(30),
+    "grid 60x60": quasi_grid(60),
   }
   for name, k in cases.items():
     lower = sparse.csc_array(sparse.tril(k))

@@ -151,6 +151,7 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `index_add` `index_set` | 2 | the base with values added at (or stored to) fixed flat indices; a loop body whose carry changes only this way updates it in place |
 | `take` | 2 | `x[..., i]` for an `int64` index vector known at run time, on the last axis; an index outside `[0, n)` reads `fill` |
 | `put_add` `put` | 3 | the base with values added at (or stored to) run-time `int64` indices on the last axis; an index outside `[0, n)` drops its value into a scratch slot of its own lane |
+| `ragged_add` `ragged_dot` | 5 / 4 | loops of run-time length: for each group, a range `[lo, hi)` read through fixed index maps and added (scaled) into the base, or summed as a dot product; unchecked, built by library code from its own tables |
 | `stack` `concat` | n | along any axis |
 | `matmul` | 2 | rank at most 2 |
 | `cholesky` `ldl` | 1 | dense factorizations of a square matrix's lower triangle; `ldl` is packed (unit `L` below the diagonal, `D` on it), without pivoting |

@@ -321,6 +321,7 @@ class LowerCtx:
     self.call_invocations: dict[tuple[str, tuple[str, ...]], tuple[str, ...]] = {}
     # scan identity -> buffer name per output index (0 final carry, -1 carries, 1.. stacked outputs).
     self.scan_invocations: dict[tuple[object, ...], dict[int, str]] = {}
+    self._const_tables: dict[tuple[int, ...], ProgramNode] = {}
     self._tmp = 0
 
   # --- declarations ---------------------------------------------------------
@@ -431,12 +432,17 @@ class LowerCtx:
     return buf
 
   def new_const_index(self, idx: Iterable[int]) -> ProgramNode:
-    """A read-only int64 index table (for GATHER/SCATTER), declared ``static const``."""
+    """A read-only int64 index table (for GATHER/SCATTER), declared ``static const``; one table per
+    distinct content in a procedure."""
     values = [int(v) for v in idx]
+    key = tuple(values)
+    if key in self._const_tables:
+      return self._const_tables[key]
     buf = p.const_buffer(f"k{self._tmp}", dtypes.int64, (len(values),), values)
     self._tmp += 1
     self.buffers[buf.attrs["name"]] = buf
     self.statements.append(buf)
+    self._const_tables[key] = buf
     return buf
 
   def index_at(self, idx: np.ndarray, k: ProgramNode) -> ProgramNode:
@@ -1424,6 +1430,66 @@ def _lower_put(ctx: LowerCtx, node: Expr) -> None:
   _lane_loops(ctx, store.attrs["name"], rows, lanes, RangeKind.REDUCE, body)
 
 
+def _mapped(ctx: LowerCtx, table: np.ndarray | None, p_var: ProgramNode) -> ProgramNode:
+  """``table[p]`` from a ``static const`` table, or ``p`` itself for the identity map."""
+  if table is None:
+    return p_var
+  return p.load(p.view(ctx.new_const_index(table), [p_var]))
+
+
+@lowers(ExprOp.RAGGED_ADD)
+def _lower_ragged_add(ctx: LowerCtx, node: Expr) -> None:
+  """Copy the base (unless this is a link of a proven in-place chain), then for each group a loop of
+  run-time length ``hi[g] - lo[g]`` adding ``src[src_map[p]] * scale[g]`` at ``dst_map[p]``: the
+  inner loop of a sparse column update, one contiguous run of the source per group."""
+  base, src, lo, hi, scale = node.args
+  if ctx.in_place is not None and node.id in ctx.in_place:
+    out = ctx.buffers[ctx.fun.output_names[0]]
+    ctx.value_buffers[node.id] = out.attrs["name"]
+  else:
+    out = ctx.new_private(node.type.dtype, node.shape)
+    ctx.value_buffers[node.id] = out.attrs["name"]
+    ctx.statements.append(_copy_loop(ctx.buf_of(base), out, node.shape))
+  groups = lo.size
+  if not groups:
+    return
+  nm = f"{out.attrs['name']}_{ctx._tmp}"
+  ctx._tmp += 1
+  g, q = p.var(f"rg_{nm}"), p.var(f"rp_{nm}")
+  dst = _mapped(ctx, node.attrs["dst_map"], q)
+  src_i = _mapped(ctx, node.attrs["src_map"], q)
+  weight = p.load(p.view(ctx.buf_of(scale), [g]))
+  view = p.view(out, [dst])
+  update = p.store(view, p.add(p.load(view), p.mul(p.load(p.view(ctx.buf_of(src), [src_i])), weight)))
+  inner = p.for_(p.range_(q.attrs["name"], p.load(p.view(ctx.buf_of(lo), [g])), p.load(p.view(ctx.buf_of(hi), [g])), kind=RangeKind.REDUCE), [update])
+  ctx.statements.append(p.for_(p.range_(g.attrs["name"], 0, groups, kind=RangeKind.SERIAL), [inner]))
+
+
+@lowers(ExprOp.RAGGED_DOT)
+def _lower_ragged_dot(ctx: LowerCtx, node: Expr) -> None:
+  """One accumulation per group over its run: four partial sums, as for the dense dot products."""
+  a, b, lo, hi = node.args
+  out = ctx.alloc_tmp(node)
+  groups = lo.size
+  if not groups:
+    return
+  nm = f"{out.attrs['name']}_{ctx._tmp}"
+  ctx._tmp += 1
+  g = p.var(f"rg_{nm}")
+  a_map, b_map = node.attrs["a_map"], node.attrs["b_map"]
+  a_tab = None if a_map is None else ctx.new_const_index(a_map)
+  b_tab = None if b_map is None else ctx.new_const_index(b_map)
+
+  def term(q: ProgramNode) -> ProgramNode:
+    ai = q if a_tab is None else p.load(p.view(a_tab, [q]))
+    bi = q if b_tab is None else p.load(p.view(b_tab, [q]))
+    return p.mul(p.load(p.view(ctx.buf_of(a), [ai])), p.load(p.view(ctx.buf_of(b), [bi])))
+
+  sums, total = _blocked_sum(ctx, f"r_{nm}", p.load(p.view(ctx.buf_of(lo), [g])), p.load(p.view(ctx.buf_of(hi), [g])), term, node.type.dtype)
+  body = [*sums, p.store(p.view(out, [g]), total)]
+  ctx.statements.append(p.for_(p.range_(g.attrs["name"], 0, groups, kind=RangeKind.SERIAL), body))
+
+
 # Tests switch this off to compare every in-place loop with its two-slot version.
 DONATE_CARRIES = True
 
@@ -1495,7 +1561,7 @@ def in_place_chain(fun: Function) -> tuple[int, ...] | None:
   return tuple(e.id for e in chain)
 
 
-_UPDATE_OPS = (ExprOp.INDEX_ADD, ExprOp.INDEX_SET, ExprOp.PUT_ADD, ExprOp.PUT)
+_UPDATE_OPS = (ExprOp.INDEX_ADD, ExprOp.INDEX_SET, ExprOp.PUT_ADD, ExprOp.PUT, ExprOp.RAGGED_ADD)
 
 
 def update_chain(fun: Function) -> list[Expr] | None:
@@ -1535,10 +1601,22 @@ def in_place_steps(fun: Function, steps: dict[int, np.ndarray]) -> bool:
   def value(e: Expr) -> np.ndarray | None:
     return _step_value(e, steps, inputs, length, memo)
 
-  writes: list[np.ndarray] = []  # per update: (length, lanes) flat positions, -1 for a dropped lane
+  def ranges(node: Expr, table: np.ndarray | None) -> _Ragged | None:
+    """The mapped positions a ragged op visits at each step, kept as ranges until needed."""
+    lo, hi = value(node.args[2]), value(node.args[3])
+    if lo is None or hi is None:
+      return None
+    return _Ragged(lo.reshape(length, -1), hi.reshape(length, -1), table)
+
+  writes: list[np.ndarray | _Ragged] = []  # per update: (length, lanes) flat positions, -1 for a dropped lane
   for update in chain:
     if update.op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET):
       w = np.broadcast_to(np.asarray(update.attrs["indices"], dtype=np.int64).reshape(1, -1), (length, update.attrs["indices"].size))
+    elif update.op == ExprOp.RAGGED_ADD:
+      found = ranges(update, update.attrs["dst_map"])
+      if found is None:
+        return False
+      w = found
     else:
       idx = value(update.args[1])
       if idx is None:
@@ -1551,24 +1629,33 @@ def in_place_steps(fun: Function, steps: dict[int, np.ndarray]) -> bool:
       e = e.args[0]
     return position.get(e.id)
 
-  reads: list[tuple[int, int, np.ndarray]] = []  # (update i, link j, positions)
+  reads: list[tuple[int, int, np.ndarray | _Ragged]] = []  # (update i, link j, positions)
   for i, update in enumerate(chain, start=1):
-    values = update.args[-1]
-    seen: set[int] = set()
-    pending = [values]
+    # Everything the update reads but its base: its values, and for a ragged update its source.
+    seen: set[int] = {update.id}
+    pending = [update]
     while pending:
       node = pending.pop()
-      if node.id in seen:
-        continue
-      seen.add(node.id)
-      if link_of(node) is not None:
-        return False  # the values use a whole link (or are one) beyond what the rule can bound
+      if node is not update:
+        if node.id in seen:
+          continue
+        seen.add(node.id)
+        if link_of(node) is not None:
+          return False  # the values use a whole link (or are one) beyond what the rule can bound
       for a_pos, arg in enumerate(node.args):
+        if node is update and a_pos == 0:
+          continue  # the base the update writes into
         j = link_of(arg)
         if j is None:
           pending.append(arg)
           continue
-        if node.op == ExprOp.TAKE and a_pos == 0:
+        if node.op == ExprOp.RAGGED_ADD and a_pos == 1 or node.op == ExprOp.RAGGED_DOT and a_pos in (0, 1):
+          table = node.attrs["src_map"] if node.op == ExprOp.RAGGED_ADD else node.attrs["a_map" if a_pos == 0 else "b_map"]
+          found = ranges(node, table)
+          if found is None:
+            return False
+          positions = found
+        elif node.op == ExprOp.TAKE and a_pos == 0:
           idx = value(node.args[1])
           if idx is None:
             return False
@@ -1588,10 +1675,67 @@ def in_place_steps(fun: Function, steps: dict[int, np.ndarray]) -> bool:
       if any(link_of(a) is not None for a in node.args) or link_of(node) is not None:
         return False
   for i, j, positions in reads:
-    written = np.concatenate([writes[w - 1] for w in range(j + 1, i + 1)], axis=1)
-    if _overlap(positions, written):
-      return False
+    for w in range(j + 1, i + 1):
+      if _may_overlap(positions, writes[w - 1]):
+        return False
   return True
+
+
+class _Ragged:
+  """The positions a ragged op visits per step: ``table[p]`` (or ``p``) for ``p`` in the step's
+  ranges. Kept as ranges, since enumerating them costs as much as the factorization they describe;
+  bounds come from the ranges and the table's extremes."""
+
+  def __init__(self, lo: np.ndarray, hi: np.ndarray, table: np.ndarray | None) -> None:
+    self.lo, self.hi, self.table = lo, hi, table
+
+  def bounds(self) -> tuple[np.ndarray, np.ndarray]:
+    """Per step, an interval ``[low, high]`` holding every position (``low > high`` when none)."""
+    live = self.hi > self.lo
+    any_live = live.any(axis=1)
+    if self.table is None:
+      low = np.where(live, self.lo, np.iinfo(np.int64).max).min(axis=1)
+      high = np.where(live, self.hi - 1, -1).max(axis=1)
+    else:
+      low = np.full(self.lo.shape[0], int(self.table.min()) if self.table.size else 0)
+      high = np.full(self.lo.shape[0], int(self.table.max()) if self.table.size else -1)
+    return np.where(any_live, low, 1), np.where(any_live, high, 0)
+
+  def explicit(self) -> np.ndarray:
+    return _ragged_positions(self.lo, self.hi, self.table)
+
+
+def _bounds(x: np.ndarray | _Ragged) -> tuple[np.ndarray, np.ndarray]:
+  if isinstance(x, _Ragged):
+    return x.bounds()
+  valid = x >= 0
+  low = np.where(valid, x, np.iinfo(np.int64).max).min(axis=1) if x.size else np.ones(x.shape[0], dtype=np.int64)
+  high = np.where(valid, x, -1).max(axis=1) if x.size else np.zeros(x.shape[0], dtype=np.int64)
+  return low, high
+
+
+def _may_overlap(a: np.ndarray | _Ragged, b: np.ndarray | _Ragged) -> bool:
+  """Whether any step's positions in ``a`` and ``b`` share an entry: first by per-step intervals,
+  and only where those meet, entry by entry."""
+  (alo, ahi), (blo, bhi) = _bounds(a), _bounds(b)
+  meet = (alo <= ahi) & (blo <= bhi) & (alo <= bhi) & (blo <= ahi)
+  if not meet.any():
+    return False
+  ea = a.explicit() if isinstance(a, _Ragged) else a
+  eb = b.explicit() if isinstance(b, _Ragged) else b
+  return _overlap(ea, eb)
+
+
+def _ragged_positions(lo: np.ndarray, hi: np.ndarray, table: np.ndarray | None) -> np.ndarray:
+  """Per step, every ``table[p]`` (or ``p``) for ``p`` in the step's ranges ``[lo[g], hi[g])``, padded
+  with -1 to the widest step."""
+  length = lo.shape[0]
+  per_step = [np.concatenate([np.arange(a, b) for a, b in zip(lo[t], hi[t], strict=True)] or [np.zeros(0, np.int64)]) for t in range(length)]
+  width = max((x.size for x in per_step), default=0)
+  out = np.full((length, max(width, 1)), -1, dtype=np.int64)
+  for t, x in enumerate(per_step):
+    out[t, : x.size] = x if table is None else table[x]
+  return out
 
 
 def _flat_positions(idx: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:

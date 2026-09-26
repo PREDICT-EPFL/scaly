@@ -105,7 +105,7 @@ def test_accuracy_across_regularization(delta: float) -> None:
 
 def _scan_procs(src: str) -> tuple[list[str], list[str]]:
   names = set(re.findall(r"void (\w+?)_raw\(", src))
-  loops = sorted(n for n in names if re.search(r"_(f|sf|sb)\d+", n) and not n.endswith("_inplace"))
+  loops = sorted(n for n in names if re.search(r"_(f\d+|sf|sb)$", n))
   in_place = sorted(n for n in names if n.endswith("_inplace"))
   return loops, in_place
 
@@ -175,3 +175,19 @@ def test_validation() -> None:
   fact = SparseLDL(SparseMatrix.symbol("d", np.eye(3, dtype=bool)))
   with pytest.raises(ValueError, match="length 3"):
     fact.solve(sc.sym("b", 4))
+
+
+@pytest.mark.parametrize("name", list(MATRICES))
+@pytest.mark.parametrize("ordering", ["natural", "mmd"])
+def test_padded_groups_run_empty_ranges(name: str, ordering: str) -> None:
+  """A padded group of a column update is an empty range, so padding costs no multiply-adds."""
+  k = MATRICES[name]()
+  fact = SparseLDL(SparseMatrix.symbol("K", _triangle(k, "lower")), ordering=ordering)
+  s = fact.symbolic
+  for seg in fact.segments:
+    tables = fact._factor_tables(seg)
+    g = max(seg.u, 1)
+    lo, hi = tables[3].reshape(seg.length, g), tables[4].reshape(seg.length, g)
+    real = np.arange(g)[None, :] < np.diff(s.r_ptr)[seg.start : seg.stop, None]
+    assert np.all(hi[~real] == lo[~real]) and np.all(hi[real] > lo[real])
+    assert int((hi - lo).sum()) == int(s.u_ptr[seg.stop] - s.u_ptr[seg.start])
