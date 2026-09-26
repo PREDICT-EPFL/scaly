@@ -353,6 +353,7 @@ tests/codegen/test_cpp.py::test_headers_split_names_shared_by_an_input_and_an_ou
 tests/codegen/test_cpp.py::test_headers_survive_buffer_names_that_collide_with_the_wrapper
 tests/codegen/test_input_validation.py::test_jit_reports_input_errors
 tests/codegen/test_jit.py::test_call_uses_jit_and_matches_numpy
+tests/codegen/test_jit.py::test_calls_leave_no_reference_cycles
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[_h0]
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v0]
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v:0]

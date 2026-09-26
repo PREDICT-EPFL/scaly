@@ -44,8 +44,6 @@ if TYPE_CHECKING:
 # that previously cached `.so` files are not reused by a newer Scaly version.
 _JIT_CACHE_VERSION = "4"
 
-_C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
-_C_INT_P = ctypes.POINTER(ctypes.c_int)
 _LM_ID_NEWLM = -1
 _RTLD_DI_LMID = 1
 _SOLVER_NAMESPACE: int | None = None
@@ -233,6 +231,8 @@ class CompiledFunction:
     "_output_bool",
     "_n_args",
     "_n_res",
+    "_arg_array_type",
+    "_res_array_type",
   )
 
   def __init__(self, fun: Function):
@@ -242,13 +242,10 @@ class CompiledFunction:
     symbol = c_ident(fun.name)
     self._symbol = symbol
     entry = getattr(self._lib, symbol)
-    entry.argtypes = [
-      ctypes.POINTER(_C_DOUBLE_P),
-      ctypes.POINTER(_C_DOUBLE_P),
-      _C_INT_P,
-      _C_DOUBLE_P,
-      ctypes.c_int,
-    ]
+    # Raw addresses: building typed pointer objects per argument cost more than the C call itself
+    # for small functions, and numpy's ``data_as`` leaves a reference cycle per buffer for the
+    # garbage collector.
+    entry.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
     entry.restype = ctypes.c_int
     self._entry = entry
     self._stats_entries: dict[str, Any] = {}
@@ -269,6 +266,9 @@ class CompiledFunction:
     self._output_bool = tuple(e.type.dtype.is_bool for e in fun.outputs)
     self._n_args = len(fun.inputs)
     self._n_res = len(fun.outputs)
+    # Built once: a ctypes array type is a class, and making one per call leaves a cycle to collect.
+    self._arg_array_type = ctypes.c_void_p * max(self._n_args, 1)
+    self._res_array_type = ctypes.c_void_p * max(self._n_res, 1)
 
   @property
   def lib_path(self) -> Path:
@@ -310,7 +310,7 @@ class CompiledFunction:
     # ``arg_buffers`` and ``outputs`` keep the arrays alive until the C call returns: the pointer
     # arrays below hold raw addresses only.
     arg_buffers: list[np.ndarray] = []
-    arg_array = (_C_DOUBLE_P * max(self._n_args, 1))()
+    arg_array = self._arg_array_type()
     for i, value in enumerate(args):
       name = self._input_names[i]
       expected_shape = self._input_shapes[i]
@@ -320,26 +320,20 @@ class CompiledFunction:
       if not arr.flags["C_CONTIGUOUS"]:
         arr = np.ascontiguousarray(arr)
       arg_buffers.append(arr)
-      arg_array[i] = arr.ctypes.data_as(_C_DOUBLE_P)
+      arg_array[i] = arr.ctypes.data
 
     outputs: list[np.ndarray] = []
-    res_array = (_C_DOUBLE_P * max(self._n_res, 1))()
+    res_array = self._res_array_type()
     for i in range(self._n_res):
       out = np.empty(self._output_sizes[i], dtype=np.float64)
       outputs.append(out)
-      res_array[i] = out.ctypes.data_as(_C_DOUBLE_P)
+      res_array[i] = out.ctypes.data
 
-    if self._sz_w:
-      # A NumPy buffer, not ``ctypes.cast`` of a ctypes array: the cast ties the array into a reference
-      # cycle, so each call's workspace lived until the next garbage collection and a loop of calls on
-      # a large workspace grew without bound.
-      w_buf = np.zeros(self._sz_w, dtype=np.float64)
-      w_ptr = w_buf.ctypes.data_as(_C_DOUBLE_P)
-    else:
-      w_buf = None  # noqa: F841 -- keep lifetime explicit even when unused
-      w_ptr = _C_DOUBLE_P()
-
-    status = self._entry(arg_array, res_array, _C_INT_P(), w_ptr, 0)
+    # A NumPy buffer, not ``ctypes.cast`` of a ctypes array: the cast ties the array into a reference
+    # cycle, so each call's workspace lived until the next garbage collection and a loop of calls on a
+    # large workspace grew without bound. ``w_buf`` keeps it alive through the call.
+    w_buf = np.zeros(self._sz_w, dtype=np.float64) if self._sz_w else None
+    status = self._entry(arg_array, res_array, None, None if w_buf is None else w_buf.ctypes.data, 0)
     if status != 0:
       raise JitError(f"{self._fun.name} returned ABI status {status}")
 

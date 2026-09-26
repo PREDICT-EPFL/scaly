@@ -205,3 +205,22 @@ def test_integer_inputs_reach_callees_as_integers(isolated_cache) -> None:
   np.testing.assert_array_equal(got[0], [2.5])
   np.testing.assert_array_equal(got[1], [6.5])
   np.testing.assert_array_equal(got[2], [1.0, 2.0, 3.0])
+
+
+def test_calls_leave_no_reference_cycles(isolated_cache) -> None:
+  """A call passes raw addresses: typed pointers from ``data_as`` left a reference cycle per input,
+  output and workspace buffer, which only the garbage collector could free."""
+  import gc
+
+  xs = [sc.sym(f"rc{i}", 3) for i in range(4)]
+  fn = sc.Function._from_exprs("rc_fn", xs, [x * 2.0 for x in xs], [f"rc{i}" for i in range(4)], [f"y{i}" for i in range(4)])
+  point = tuple(np.ones(3) for _ in range(4))
+  fn(point)
+  gc.collect()
+  gc.disable()
+  try:
+    for _ in range(50):
+      fn(point)
+    assert gc.collect() == 0
+  finally:
+    gc.enable()

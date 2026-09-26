@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 97**
+**Next id: 101**
 
 | Prefix | Section |
 |---|---|
@@ -157,8 +157,9 @@ the per-step reports sit beside it as `notes/tier1_pr*_report.html`.
       fixed number of loops for any horizon (`notes/tier1_pr8_report.html`). Also fixed: the JIT
       kept each call's workspace alive until the next garbage collection.
 - [ ] **C-94. Drop unused carry components of a scan.** Forward over reverse carries `[λ, λ̇]`
-      through each adjoint scan but uses only `λ̇`; nothing removes a carry component no output
-      reads, so half the backward work of a Hessian is discarded.
+      through the adjoint scan and uses only `λ̇`. Low value now: with every seed in one carry, `λ`
+      is 2 of 2 + 2N entries, and for a nonlinear body `λ̇` reads `λ`, so it cannot go at all. What
+      is dead is the per-step `adj_u` store and single-slot stacked outputs no one reads.
 - [ ] **C-95. Share the primal of a `CALL` with the loops its reverse mode inlines.** The gradient
       through `f(shoot(x))` keeps the call for its outputs and inlines the body's scan for the
       stored carries, so the rollout runs twice (`notes/tier1_pr8_report.html`).
@@ -171,6 +172,19 @@ the per-step reports sit beside it as `notes/tier1_pr*_report.html`.
 Ordered by measured payoff. The numbers are the 2026-09-07 note's, on the reference machine at the
 protocol's compile flags.
 
+- [ ] **C-97. Read and write scan data in place.** The adjoint scan of a Hessian reads a reversed,
+      scaled copy of the tangent trajectory (`20 * Ẋ[N-1-k]`); reading `Ẋ` at a negative stride
+      with the scale folded into the body removes a pass over N² entries and its buffer, and a
+      scan could write its stacked outputs straight into the result. Measured −16 to −26% on the MPC
+      Hessian in hand-edited C (`notes/tier1_pr9_report.html`).
+- [ ] **C-98. Exploit Hessian symmetry and identity seeds.** With identity seeds on a scanned input,
+      seed `s` is zero before step `s` forwards and only rows `t ≥ s` are needed backwards; compute
+      one triangle and mirror it. Measured −38 to −43% (RK4) and −13 to −25% (MPC) by hand.
+- [ ] **C-99. No ping-pong buffer for small carries.** A carry of a few doubles can stay in
+      locals; −40% on the MPC gradient, but 12% slower above about 32 doubles, so gate it.
+- [ ] **C-100. Trim the Function-call layer.** A trivial JIT call costs 4.6 µs, 2.7 of them in
+      flattening and validating inputs before the ctypes call; a fast path for float64 C-contiguous
+      arrays of the right shape and cached leaf metadata should halve it.
 - [x] **C-43. Lower matmul by layout.** `_lower_matmul` emits every product as
       `for i { out[i] = 0; for k out[i] += A[i,k] v[k] }`, a serial add chain per output that the C
       compiler cannot break without reassociation; `casadi_mtimes_dense` has the same shape, which is
