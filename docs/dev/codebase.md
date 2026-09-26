@@ -61,6 +61,7 @@ src/scaly/
 
   linalg/                sparse and dense linear algebra as generated code
     sparse.py            SparseMatrix: a static CSC pattern with Expr values
+    symbolic.py          orderings, elimination tree, the pattern of L, left-looking tables, segments
 
   codegen/
     abi.py               the pointer ABI: signature, status codes, mangling

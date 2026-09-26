@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 105**
+**Next id: 106**
 
 | Prefix | Section |
 |---|---|
@@ -164,6 +164,12 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       diagonal, `to_dense`. Values cross the `Function` boundary compactly with `sparsity` as the
       output metadata. `Expr` operators defer to operands that set `__array_ufunc__ = None`
       (`notes/tier2_pr4_report.html`).
+- [x] **C-105. Symbolic `LDL^T` analysis (T2-5).** `scaly.linalg.symbolic.analyze`: natural, RCM,
+      SuperLU MMD and `auto` (least update work) orderings; the permuted lower triangle with a map
+      back to the input values; elimination tree, postorder, row and column patterns of `L`, the
+      left-looking update lanes, statistics, and consecutive segments chosen by a DP over a padded
+      work model. Refuses an ordering whose updates exceed 50 M multiply-adds. MMD fill equals
+      SuperLU's (`notes/tier2_pr5_report.html`).
 
 ### Tier 1 primitives
 

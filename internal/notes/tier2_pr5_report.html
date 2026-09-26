@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 2 PR 5 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 5 report</h1>
+<p class="sub">T2-5 · symbolic LDLᵀ analysis (C-105) · branch <code>claude/tier2-sparse</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>scaly.linalg.analyze</code> computes, in NumPy at generation time, everything the generated factorization in T2-7 will index:</p>
+<ul>
+<li>a fill-reducing ordering;</li>
+<li>the permuted lower triangle, with a map back to the input values;</li>
+<li>the elimination tree and a postorder;</li>
+<li>the row and column patterns of <code>L</code>;</li>
+<li>the left-looking update lanes;</li>
+<li>statistics;</li>
+<li>a split into consecutive column segments, chosen by dynamic programming over a padded-work model.</li>
+</ul>
+<p><b>Checks.</b> The tables were checked by running the exact left-looking algorithm T2-7 will generate, in NumPy, on quasi-definite matrices. The factors reproduce the permuted matrix to 1e−12, whichever triangle of the matrix is given.</p>
+<p><b>Numbers.</b> The MMD fill equals SuperLU's on every test matrix. Analysis of a 100×100 grid (<code>nnz(L)</code> = 176 k) takes 60 ms, well within the &lt;10 s at 50 k gate.</p>
+<p style="margin-bottom:0"><b>Suite:</b> 1 197 passed, 88 skipped; the same four VM-only failures. ruff, ty and the docs build are clean. <b>Mutation checks:</b> 8 of 8 killed, after two tests were added.</p>
+</div>
+
+<h2>1. What the analysis produces</h2>
+<div class="scroll"><table>
+<tr><th>Part</th><th>How</th></tr>
+<tr><td>Ordering: <code>natural</code>, <code>rcm</code>, <code>mmd</code>, <code>auto</code></td><td>
+<ul>
+<li>RCM comes from SciPy's csgraph.</li>
+<li>MMD is SuperLU's <code>MMD_AT_PLUS_A</code> column permutation, taken from an LU of a diagonally dominant matrix with the same pattern. <code>perm_c</code> maps old to new, so it is inverted; that inversion was found and fixed by the fill test.</li>
+<li><code>auto</code> analyzes all three and keeps the least update work. On stage-ordered MPC matrices this keeps the natural order: 4 600 vs MMD's 4 980 at N = 100.</li>
+</ul></td></tr>
+<tr><td>Permuted lower triangle</td><td>
+<ul>
+<li>Accepts one triangle, both or any mix; a mirrored pair is read from its lower entry.</li>
+<li><code>a_source</code> points each entry at the input values.</li>
+<li>A missing diagonal entry is an error, because there is no pivoting.</li>
+</ul></td></tr>
+<tr><td>Elimination tree, postorder</td><td>Liu's algorithm with path compression; an iterative DFS for the postorder.</td></tr>
+<tr><td>Pattern of <code>L</code></td><td>Row patterns by row-subtree traversal, linear in <code>nnz(L)</code>; column patterns by sorting. Also <code>r_pos</code>, the position of each <code>L[j,k]</code>.</td></tr>
+<tr><td>Left-looking update lanes</td><td>
+<ul>
+<li>For column <code>j</code>: one lane per <code>L[i,k]</code> with <code>i ≥ j</code>, for every <code>k</code> in row <code>j</code>, giving <code>w[i] −= L[i,k]·D[k]·L[j,k]</code>.</li>
+<li>Built vectorized from the row positions.</li>
+<li>The analysis refuses before allocating when an ordering exceeds <code>max_update_lanes</code> (50 M).</li>
+</ul></td></tr>
+<tr><td>Statistics</td><td><code>nnz(L)</code>, fill, flops, update lanes, tree height, fundamental supernodes, widest column, row and update.</td></tr>
+<tr><td>Segments</td><td>
+<ul>
+<li>Minimize Σ length × (step + a·max A + u·max U + c·max C) + price per segment.</li>
+<li>Exact DP over chunk boundaries, with at most 2 048 chunks and vectorized running maxima. Brute force over every partition agrees at four segment prices.</li>
+</ul></td></tr>
+</table></div>
+
+<h2>2. Tests</h2>
+<p><code>tests/linalg/test_symbolic.py</code> has 43 tests.</p>
+<ul>
+<li><b>Pattern.</b> Six matrix families (random, grid, arrow, tridiagonal, dense, block diagonal) × three orderings. The pattern of <code>L</code> equals a dense boolean elimination of the permuted pattern. The etree parent is the first subdiagonal row. The postorder puts children first. The row patterns and <code>r_pos</code> are consistent.</li>
+<li><b>Tables.</b> A NumPy run of the left-looking algorithm over the tables alone reproduces <code>P K Pᵀ = L D Lᵀ</code>. This covers four families and three triangle inputs, with every third diagonal negative (quasi-definite).</li>
+<li><b>Triangles and orderings.</b>
+<ul>
+<li>Lower, upper and full inputs give identical tables, and a mirrored pair reads the lower entry.</li>
+<li>MMD removes the arrow's full fill (780 → 39).</li>
+<li>RCM does not widen the band.</li>
+<li>A given permutation is honored.</li>
+<li><code>auto</code> picks the least work.</li>
+</ul></li>
+<li><b>Statistics.</b> Path, dense and block matrices give the expected fill, height and supernode counts.</li>
+<li><b>Segments.</b> Segments are optimal against brute force and cover the columns contiguously. The chunked DP never does worse than a single segment.</li>
+<li><b>Limits.</b> The lane limit refuses bad orderings. Analysis at <code>nnz(L)</code> &gt; 50 k finishes in under 10 s.</li>
+</ul>
+<p><b>Mutation checks (8 of 8 killed):</b></p>
+<ul>
+<li>MMD permutation not inverted</li>
+<li>depth</li>
+<li>supernode merge rule</li>
+<li>DP without running maxima</li>
+<li>mirrored-pair preference</li>
+<li>update count off by one</li>
+<li>unsorted rows</li>
+<li>missing-diagonal check</li>
+</ul>
+
+<h2>3. Benchmark</h2>
+<p><code>perf_2026_09_26_tier2/pr5_symbolic.py</code> reports <code>nnzL</code>, the update lanes (the left-looking multiply-adds) and <code>padded_u</code>, the update lanes after padding each segment to its widest column, divided by the unpadded lanes.</p>
+<div class="scroll"><table>
+<tr><th>Matrix</th><th>Ordering</th><th class="r">n</th><th class="r">nnz(L)</th><th class="r">update lanes</th><th class="r">height</th><th class="r">segments</th><th class="r">padded/actual</th><th class="r">analysis</th><th class="r">SuperLU nnz(L)</th></tr>
+<tr><td>grid 50×50</td><td>mmd</td><td class="r">2 500</td><td class="r">33 443</td><td class="r">0.53 M</td><td class="r">187</td><td class="r">165</td><td class="r">1.08</td><td class="r">10 ms</td><td class="r">33 443</td></tr>
+<tr><td>grid 100×100</td><td>natural</td><td class="r">10 000</td><td class="r">990 099</td><td class="r">49.8 M</td><td class="r">10 000</td><td class="r">28</td><td class="r">1.00</td><td class="r">272 ms</td><td></td></tr>
+<tr><td>grid 100×100</td><td>mmd</td><td class="r">10 000</td><td class="r">175 673</td><td class="r">4.8 M</td><td class="r">440</td><td class="r">315</td><td class="r">1.11</td><td class="r">59 ms</td><td class="r">173 182</td></tr>
+<tr><td>MPC N = 100 (stage order)</td><td>natural</td><td class="r">1 004</td><td class="r">4 600</td><td class="r">13 376</td><td class="r">801</td><td class="r">1</td><td class="r">1.80</td><td class="r">2 ms</td><td></td></tr>
+<tr><td>MPC N = 100</td><td>mmd</td><td class="r">1 004</td><td class="r">4 980</td><td class="r">15 300</td><td class="r">209</td><td class="r">6</td><td class="r">1.18</td><td class="r">2 ms</td><td class="r">4 980</td></tr>
+<tr><td>MPC N = 1 000</td><td>natural</td><td class="r">10 004</td><td class="r">46 000</td><td class="r">0.13 M</td><td class="r">8 001</td><td class="r">1</td><td class="r">1.79</td><td class="r">15 ms</td><td></td></tr>
+<tr><td>random n = 3 000, ~6 per row</td><td>all</td><td colspan="8">refused: 190 M or more update multiply-adds even with MMD (an expander graph; not a realistic KKT)</td></tr>
+</table></div>
+<ul>
+<li><b>Padding.</b> Segments keep padding to about 1.1× on meshes with MMD. The MPC case at 1.8× in a single segment is a choice: its columns are so small that the per-segment price outweighs the lanes. A lower price would split it.</li>
+<li><b>Nearly a path.</b> The natural-order MPC tree is nearly a path (height 801 of 1 004), as the review predicted. That is what makes the stage-by-stage kernels of Tier 5 attractive.</li>
+<li><b>SuperLU comparison.</b> Fill matches SuperLU exactly on the small matrices. On the 100×100 grid it is within 1.4%: SuperLU applies its own postordering and relaxation.</li>
+</ul>
+
+<h2>4. Next</h2>
+<p><b>T2-6</b>, generated dense kernels (Cholesky, LDLᵀ without pivoting, triangular solves, gemm/syrk), with a gate of at most 2× LAPACK at n = 32–64 or an unroll-only fallback. After it, <b>T2-7</b> turns these tables into the sparse factorization.</p>
+</main></body></html>

@@ -75,6 +75,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.solvers.model": 5,
   "scaly.linalg": 5,
   "scaly.linalg.sparse": 5,
+  "scaly.linalg.symbolic": 5,
   "scaly.passes.program": 6,
   "scaly.passes.program._common": 6,
   "scaly.passes.program.combine_scatter_sums": 6,
