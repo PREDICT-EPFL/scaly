@@ -189,6 +189,31 @@ sign counts as reading every entry), and no other output reads the carry, the bo
 in place: each step touches only the indexed entries. Otherwise the two slots are kept, with the
 same results. A loop differentiated in reverse mode stores every carry and does not update in place.
 
+### Indices known only at run time
+
+`sc.gather`, `sc.scatter` and `sc.index_add` take index tables fixed when the graph is built. When
+the index is itself a value, such as an entry of a table chosen by the step number or the result of
+a search, use `sc.take(x, idx)`, `sc.put_add(base, idx, values)` and `sc.put(base, idx, values)`
+with `idx` an `int64` vector. They index the last axis, and any leading axes are kept. An index
+outside `[0, n)` reads `fill` (`take`) or drops its value (`put_add`, `put`), so a ragged list of
+indices can be padded to a fixed width with `n`:
+
+```python
+# one row of a CSR matrix per step, padded to `width` entries with the index n
+body = sc.Function._from_exprs(
+    "row", [c, cols, pos, x, vals],
+    [c, sc.stack([(sc.take(vals, pos) * sc.take(x, cols)).sum()])],
+    ["c", "cols", "pos", "x", "vals"], ["n", "y"],
+)
+tables = [(sc.const(cols_table, dtype="int64"), 0, width), (sc.const(pos_table, dtype="int64"), 0, width)]
+_, y = sc.scan(body, c0, [*tables, (x, 0, 0), (vals, 0, 0)], length=n_rows)
+```
+
+All three are differentiable in their floating-point operands. Because the pattern of a run-time
+index is unknown, their sparsity is conservative: an output entry may depend on every entry of its
+row. With repeated indices `put` keeps the last value, and its derivative assumes the indices are
+distinct.
+
 ## Iteration until done: `while_loop`
 
 Use `sc.while_loop` for an iteration that stops on a condition, such as a Newton solve. `cond` maps

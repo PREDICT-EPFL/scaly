@@ -71,6 +71,9 @@ class ExprOp(StrEnum):
   SEGMENT_MIN = "segment_min"
   INDEX_ADD = "index_add"
   INDEX_SET = "index_set"
+  TAKE = "take"
+  PUT_ADD = "put_add"
+  PUT = "put"
   RESHAPE = "reshape"
   TRANSPOSE = "transpose"
   SLICE = "slice"
@@ -136,6 +139,9 @@ COMMON_STRUCTURAL = {
   ExprOp.SEGMENT_MIN,
   ExprOp.INDEX_ADD,
   ExprOp.INDEX_SET,
+  ExprOp.TAKE,
+  ExprOp.PUT_ADD,
+  ExprOp.PUT,
   ExprOp.RESHAPE,
   ExprOp.TRANSPOSE,
   ExprOp.SLICE,
@@ -220,6 +226,9 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.SEGMENT_MIN: OpInfo(ExprOp.SEGMENT_MIN, 1, None),
   ExprOp.INDEX_ADD: OpInfo(ExprOp.INDEX_ADD, 2, None),
   ExprOp.INDEX_SET: OpInfo(ExprOp.INDEX_SET, 2, None),
+  ExprOp.TAKE: OpInfo(ExprOp.TAKE, 2, None),
+  ExprOp.PUT_ADD: OpInfo(ExprOp.PUT_ADD, 3, None),
+  ExprOp.PUT: OpInfo(ExprOp.PUT, 3, None),
   ExprOp.RESHAPE: OpInfo(ExprOp.RESHAPE, 1, np.reshape),
   ExprOp.TRANSPOSE: OpInfo(ExprOp.TRANSPOSE, 1, np.transpose),
   ExprOp.SLICE: OpInfo(ExprOp.SLICE, 1, None),
@@ -556,23 +565,30 @@ class Expr:
   def __neg__(self) -> Expr:
     return unary(ExprOp.NEG, self)
 
+  def _operand(self, other: Any) -> Expr:
+    """``other`` as an operand of ``+``, ``-`` or ``*`` beside this expression: a Python integer next
+    to an integer expression is an integer constant, so index arithmetic needs no casts."""
+    if not isinstance(other, Expr) and self.type.dtype.is_integer and isinstance(other, (int, np.integer)) and not isinstance(other, bool):
+      return Expr.const(other, dtype=self.type.dtype)
+    return as_expr(other)
+
   def __add__(self, other: Any) -> Expr:
-    return binary(ExprOp.ADD, self, as_expr(other))
+    return binary(ExprOp.ADD, self, self._operand(other))
 
   def __radd__(self, other: Any) -> Expr:
-    return binary(ExprOp.ADD, as_expr(other), self)
+    return binary(ExprOp.ADD, self._operand(other), self)
 
   def __sub__(self, other: Any) -> Expr:
-    return binary(ExprOp.SUB, self, as_expr(other))
+    return binary(ExprOp.SUB, self, self._operand(other))
 
   def __rsub__(self, other: Any) -> Expr:
-    return binary(ExprOp.SUB, as_expr(other), self)
+    return binary(ExprOp.SUB, self._operand(other), self)
 
   def __mul__(self, other: Any) -> Expr:
-    return binary(ExprOp.MUL, self, as_expr(other))
+    return binary(ExprOp.MUL, self, self._operand(other))
 
   def __rmul__(self, other: Any) -> Expr:
-    return binary(ExprOp.MUL, as_expr(other), self)
+    return binary(ExprOp.MUL, self._operand(other), self)
 
   def __truediv__(self, other: Any) -> Expr:
     return binary(ExprOp.DIV, self, as_expr(other))
@@ -958,6 +974,78 @@ def _index_update(op: ExprOp, base: Any, indices: Any, values: Any) -> Expr:
     TensorType(base.shape, dtype=base.type.dtype, diff=diff_any(base, values)),
     attrs={"indices": idx},
     lowering=common_lowering(base, values),
+  )
+
+
+# Ops that address memory through an index computed at run time.
+RUNTIME_INDEX_OPS = frozenset({ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT})
+
+
+def _runtime_indices(indices: Any, op: str) -> Expr:
+  idx = as_expr(indices) if isinstance(indices, Expr) else Expr.const(np.asarray(indices, dtype=np.int64).reshape(-1), dtype=dtypes.int64)
+  if idx.type.dtype != dtypes.int64 or len(idx.shape) != 1:
+    raise TypeError(f"{op} needs a rank-1 int64 index vector, got {idx.type.dtype}{idx.shape}")
+  return idx
+
+
+def take(x: Any, indices: Any, *, fill: float = 0.0) -> Expr:
+  """``out[..., j] = x[..., indices[j]]``, with ``indices`` an ``int64`` vector known only at run time.
+
+  The last axis of ``x`` is indexed; leading axes are kept, so ``x`` of shape ``(..., n)`` and
+  ``L`` indices give shape ``(..., L)``. An index outside ``[0, n)`` reads ``fill``: padding a
+  ragged index list with ``n`` (or ``-1``) is the intended use, and no index reads out of bounds.
+  Differentiable in ``x``; the adjoint is ``put_add``. Unlike ``gather``, whose indices are fixed
+  when the graph is built, the indices here may be any ``int64`` expression: a slice of a table
+  selected by a loop's step number, typically.
+  """
+  x = as_expr(x)
+  idx = _runtime_indices(indices, "take")
+  if not x.shape:
+    raise ValueError("take needs an array to index, got a scalar")
+  shape = (*x.shape[:-1], idx.size)
+  return Expr(
+    ExprOp.TAKE,
+    (x, idx),
+    TensorType(shape, dtype=x.type.dtype, diff=x.type.diff),
+    attrs={"fill": float(fill)},
+    lowering=common_lowering(x, idx),
+  )
+
+
+def put_add(base: Any, indices: Any, values: Any) -> Expr:
+  """``base`` with ``values[..., j]`` added at ``[..., indices[j]]``; repeated indices accumulate.
+
+  The run-time-index counterpart of ``index_add``, on the last axis of ``base``: ``base`` has shape
+  ``(..., n)`` and ``values`` shape ``(..., L)`` for ``L`` indices. An index outside ``[0, n)``
+  drops its value (each such lane writes a scratch slot of its own, so padded lanes never form a
+  chain of updates to one address).
+  """
+  return _put(ExprOp.PUT_ADD, base, indices, values)
+
+
+def put(base: Any, indices: Any, values: Any) -> Expr:
+  """``base`` with the entries at ``[..., indices[j]]`` replaced by ``values[..., j]``.
+
+  Indices inside ``[0, n)`` should be distinct: with repeats the last write wins, and the derivative
+  assumes none. An index outside ``[0, n)`` drops its value.
+  """
+  return _put(ExprOp.PUT, base, indices, values)
+
+
+def _put(op: ExprOp, base: Any, indices: Any, values: Any) -> Expr:
+  base, values = _operands(base, values)
+  idx = _runtime_indices(indices, op.value)
+  if not base.shape:
+    raise ValueError(f"{op.value} needs an array to update, got a scalar")
+  expected = (*base.shape[:-1], idx.size)
+  if values.shape != expected:
+    raise ValueError(f"{op.value} into {base.shape} with {idx.size} indices needs values of shape {expected}, got {values.shape}")
+  promote_dtype(base, values)
+  return Expr(
+    op,
+    (base, idx, values),
+    TensorType(base.shape, dtype=base.type.dtype, diff=diff_any(base, values)),
+    lowering=common_lowering(base, idx, values),
   )
 
 

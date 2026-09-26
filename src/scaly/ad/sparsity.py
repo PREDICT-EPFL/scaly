@@ -78,6 +78,15 @@ def _incidence(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> sp
   return sparse.csr_array((np.ones(rows.size, dtype=bool), (rows, cols)), shape=shape)
 
 
+def _row_blocks(nrows: int, out_width: int, in_width: int) -> tuple[np.ndarray, np.ndarray]:
+  """Coordinates of a block-diagonal all-ones pattern: row ``b`` of ``out_width`` entries against
+  row ``b`` of ``in_width`` entries, for ``nrows`` rows."""
+  b = np.arange(nrows)[:, None, None]
+  r = b * out_width + np.arange(out_width)[None, :, None] + 0 * np.arange(in_width)[None, None, :]
+  c = b * in_width + np.arange(in_width)[None, None, :] + 0 * np.arange(out_width)[None, :, None]
+  return r.reshape(-1), c.reshape(-1)
+
+
 def _jac_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   if expr.id in memo:
     return memo[expr.id]
@@ -118,6 +127,19 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     return _jac_mask(expr.args[0], wrt, memo)[order]
   if expr.op == ExprOp.GATHER:
     return _jac_mask(expr.args[0], wrt, memo)[expr.attrs["indices"].reshape(-1)]
+  if expr.op == ExprOp.TAKE:
+    # The index is known at run time only: lane j of row b may read any entry of row b.
+    x = expr.args[0]
+    n, lanes = x.shape[-1], expr.args[1].size
+    rows, cols = _row_blocks(x.size // n if n else 0, lanes, n)
+    return _compose(_incidence((expr.size, x.size), rows, cols), _jac_mask(x, wrt, memo))
+  if expr.op in {ExprOp.PUT_ADD, ExprOp.PUT}:
+    # Every entry keeps its base entry (a put may replace it; the pattern stays conservative) and may
+    # receive any value of its row.
+    base, _, values = expr.args
+    n, lanes = base.shape[-1], values.shape[-1]
+    rows, cols = _row_blocks(base.size // n if n else 0, n, lanes)
+    return _or(_jac_mask(base, wrt, memo), _compose(_incidence((expr.size, values.size), rows, cols), _jac_mask(values, wrt, memo)))
   if expr.op in {ExprOp.INDEX_ADD, ExprOp.INDEX_SET}:
     base, values = expr.args
     indices = expr.attrs["indices"]

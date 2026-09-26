@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 2 PR 2 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 2 report</h1>
+<p class="sub">T2-2 · <code>take</code>, <code>put_add</code>, <code>put</code> with run-time <code>int64</code> indices (C-102) · branch <code>claude/tier2-sparse</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Three new expression ops index memory with an <code>int64</code> vector whose values are only known at run time, for example an entry of a pattern table chosen by a loop's step number. They are the addressing a sparse factorization needs, since its columns touch different rows at each step:</p>
+<ul>
+<li><code>take(x, idx, fill=0)</code></li>
+<li><code>put_add(base, idx, values)</code></li>
+<li><code>put(base, idx, values)</code></li>
+</ul>
+<p>The ops index the last axis, and leading axes are batch axes.</p>
+<p><b>Out-of-range indices.</b> An index outside <code>[0, n)</code> never touches memory outside the array. <code>take</code> reads <code>fill</code> instead, and a put writes into a scratch slot belonging to its own lane. So padding a ragged list with <code>n</code> is safe, and the writes stay unconditional.</p>
+<p><b>Derivatives.</b> All three ops are differentiable in forward mode (one seed or many), in reverse mode and to second order. Their sparsity is conservative but row-local.</p>
+<p><b>Speed.</b> A row scan that computes <code>A x</code> from padded CSR tables runs within 2.1× of baked-in indices, and the padding explains that gap. The transposed product, which accumulates into the carry, is O(n²) because each step copies the carry. The in-place proof in T2-3 removes that copy.</p>
+<p style="margin-bottom:0"><b>Suite:</b> 1 113 passed, 88 skipped; the same four failures appear only in the VM. ruff, ty and the docs build are clean. <b>Mutation checks:</b> 13 of 13 mutants were killed, 2 of them only after adding tests that the first run showed were missing.</p>
+</div>
+
+<h2>1. Semantics</h2>
+<div class="scroll"><table>
+<tr><th>Op</th><th>Shapes</th><th>Result</th><th>Derivative</th></tr>
+<tr><td><code>take(x, idx, fill)</code></td><td><code>x (..., n)</code>, <code>idx (L,)</code> → <code>(..., L)</code></td><td><code>x[..., i]</code> if <code>0 ≤ i &lt; n</code>, else <code>fill</code></td><td>tangent <code>take(dx, idx)</code>, whose padded lanes are 0; adjoint <code>put_add(0, idx, cot)</code></td></tr>
+<tr><td><code>put_add(base, idx, v)</code></td><td><code>base (..., n)</code>, <code>v (..., L)</code></td><td>adds lane values in order; repeats accumulate; out-of-range lanes are dropped</td><td>linear: adjoint <code>(cot, take(cot, idx))</code></td></tr>
+<tr><td><code>put(base, idx, v)</code></td><td>same as <code>put_add</code></td><td>stores in lane order, so with repeats the last write wins</td><td>adjoint <code>(put(cot, idx, 0), take(cot, idx))</code>; assumes distinct indices</td></tr>
+</table></div>
+<p><b>Index arithmetic.</b> <code>+</code>, <code>-</code> and <code>*</code> between an integer expression and a Python <code>int</code> now stay integer, so <code>k * width + arange</code> needs no casts. Before this change, the Python <code>int</code> became a <code>float64</code> constant and the operation raised a mixed-dtype error.</p>
+
+<h2>2. Generated code</h2>
+<pre>for (j = 0; j &lt; 4; ++j) {                      // put_add, n = 6, 4 lanes
+  int64_t i = idx[j];
+  int64_t d = ((0 &lt;= i) &amp;&amp; (i &lt; 6)) ? i : (6 + j);   // own scratch slot per lane
+  s[d] = s[d] + v[j];                           // s has 6 + 4 slots
+}
+for (j = 0; j &lt; 4; ++j) {                      // take
+  int64_t i = idx[j]; uint8_t in = (0 &lt;= i) &amp;&amp; (i &lt; 6);
+  out[j] = in ? x[in ? i : 0] : fill;           // the read address is clamped too
+}</pre>
+<p><b>Per-lane scratch slots.</b> If all padded lanes wrote one shared slot, each padded lane's read-modify-write would wait on the previous one through memory. The review of plan v3 measured that chain.</p>
+<p><b>Batched puts.</b> A batched put keeps its scratch slots after all rows, so the first <code>rows × n</code> entries keep their row-major layout. A put that is a Function output is copied out of its larger buffer.</p>
+<p><b>Scalar expansion.</b> Procedures that contain these ops are not scalar-expanded, because scalar expansion resolves every address at generation time.</p>
+
+<h2>3. Tests</h2>
+<p><code>tests/integration/test_runtime_index.py</code> has 27 tests:</p>
+<ul>
+<li><b>Values against NumPy.</b> Rank-1 and batched bases, with five index sets: plain, repeated, padded (<code>n</code>, <code>−1</code>, <code>1000</code>, <code>−7</code>), all out of range, and empty. Also a <code>take</code> from an empty axis.</li>
+<li><b>Graph-computed indices.</b> Indices built from integer arithmetic on an input and from a table read at run time.</li>
+<li><b>Fusion and hoisting.</b> A chain of <code>put_add</code> → <code>put</code> → <code>take</code> between elementwise code, so loop fusion and hoisting see it.</li>
+<li><b>Derivatives.</b>
+<ul>
+<li>A nonlinear function mixing all three ops, with a repeated and a padded lane: value, Jacobian, gradient and Hessian with respect to both inputs against finite differences, under <code>SCALY_STRICT_JVP_MANY=1</code>.</li>
+<li>Batched forward and reverse modes agree to 1e−12, and rows do not mix.</li>
+<li>A padded lane's tangent is 0 whatever the fill.</li>
+</ul></li>
+<li><b>Sparsity.</b> The pattern contains the true Jacobian with respect to both operands, at three index sets, and is block-diagonal by row.</li>
+<li><b>The typical use.</b> A row scan over a padded CSR table computes <code>A x</code> and <code>Aᵀy</code>; both match SciPy to 1e−13. Gradients with respect to the values and <code>x</code> match finite differences, the Hessian in <code>x</code> is exactly <code>2AᵀA</code>, and the Hessian in <code>y</code> equals the closed form.</li>
+<li><b>Generated C and validation.</b>
+<ul>
+<li>Each padded lane addresses its own slot, with no conditional in the loop.</li>
+<li>A <code>.scalar()</code> hint on a function that uses <code>take</code> leaves the function unscalarized, and its results are correct.</li>
+<li>Invalid index dtype, index rank, value shape and scalar bases are rejected.</li>
+</ul></li>
+</ul>
+<p><b>Mutation checks (13 of 13 killed):</b></p>
+<ul>
+<li>no lower-bound check</li>
+<li>a shared scratch slot</li>
+<li>no accumulation</li>
+<li>no fill</li>
+<li>no row offset in a batched <code>take</code></li>
+<li>scalar expansion allowed</li>
+<li><code>put</code>'s adjoint passing overwritten entries</li>
+<li><code>take</code>'s adjoint using <code>put</code></li>
+<li>the fill leaking into the single-seed tangent</li>
+<li><code>put</code>'s multi-seed tangent using <code>put_add</code></li>
+<li>sparsity without the values</li>
+<li>sparsity without row blocks</li>
+<li>Python ints not kept integer</li>
+</ul>
+<p>The first run left two mutants alive: the single-seed fill and the values' sparsity. Two tests were added for them.</p>
+
+<h2>4. Benchmark</h2>
+<p><code>perf_2026_09_26_tier2/pr2_take.py</code> uses a random <code>A</code> with about 6 entries per row plus the diagonal; the widest row has 14 entries. Timings are medians of JIT calls on the aarch64 VM, in µs, and include the ~5 µs call overhead.</p>
+<div class="scroll"><table>
+<tr><th>Variant</th><th class="r">n = 200 (nnz 1 194)</th><th class="r">n = 2 000 (nnz 11 994)</th><th>Comment</th></tr>
+<tr><td><code>static</code>: <code>gather</code> + <code>segment_sum</code>, indices baked in</td><td class="r">10.9</td><td class="r">33.6</td><td>Tier 1 form; the pattern is in the code</td></tr>
+<tr><td><code>take</code> by an index input, padded, then a row sum</td><td class="r">16.1</td><td class="r">120</td><td>2.3× more lanes than entries; the index crosses the <code>double</code> ABI</td></tr>
+<tr><td><code>scan-take</code>: row scan slicing padded tables</td><td class="r">13.4</td><td class="r">70.1</td><td>2.1× static; the lane count explains it</td></tr>
+<tr><td><code>scan-put</code>: <code>Aᵀy</code> accumulated into the carry</td><td class="r">17.3</td><td class="r"><span class="bad">2 283</span></td><td>the carry is copied every step: O(n²), fixed by T2-3</td></tr>
+<tr><td>SciPy <code>A @ x</code> (<code>A.T @ y</code>)</td><td class="r">2.0 (7.9)</td><td class="r">7.1 (13.9)</td><td>Python-side timing</td></tr>
+</table></div>
+<p><b>Missed optimizations in the generated body (T2-8).</b> Each row still runs one loop per op: the lane indices, the two <code>take</code>s and the product. Index-aware fusion would merge them.</p>
+<p><b>Bounds checks (T2-8).</b> Proving that indices read from a constant table are in range would remove most of the checks.</p>
+<p><b>Loop slicing.</b> A table sliced per step by the scan itself costs a pointer offset. Reading a table with <code>take</code> by <code>k * width + j</code> costs a checked load per lane, so the docs recommend slicing.</p>
+
+<h2>5. Open points</h2>
+<ul>
+<li><b>T2-3 (next).</b> Update the carry in place through <code>put</code>/<code>put_add</code> chains, proven at the scan node from the constant tables. The carry needs room for the lanes' scratch slots.</li>
+<li><b>T2-8.</b> Fuse lane loops and drop bounds checks that the tables prove unnecessary.</li>
+<li><b>Sparsity override.</b> The conservative row-local pattern makes a sparse Jacobian through a solver dense. <code>custom_derivative</code> needs a sparsity override (T2.f).</li>
+</ul>
+</main></body></html>

@@ -149,6 +149,8 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `gather` `scatter` | 1 | flat index tables fixed at build time; repeated `scatter` destinations accumulate (`segment_sum` is `scatter` into a vector) |
 | `segment_max` `segment_min` | 1 | per-bin extremum over fixed segment ids; `fill` where a bin is empty; NaN propagates within its bin |
 | `index_add` `index_set` | 2 | the base with values added at (or stored to) fixed flat indices; a loop body whose carry changes only this way updates it in place |
+| `take` | 2 | `x[..., i]` for an `int64` index vector known at run time, on the last axis; an index outside `[0, n)` reads `fill` |
+| `put_add` `put` | 3 | the base with values added at (or stored to) run-time `int64` indices on the last axis; an index outside `[0, n)` drops its value into a scratch slot of its own lane |
 | `stack` `concat` | n | along any axis |
 | `matmul` | 2 | rank at most 2 |
 

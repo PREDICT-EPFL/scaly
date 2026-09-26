@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 102**
+**Next id: 103**
 
 | Prefix | Section |
 |---|---|
@@ -144,6 +144,13 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       cotangent). Procedures holding `int64` values now scalarize, with a store's conversion kept
       as a cast; `where` refuses a Python `bool`, which is what `k == 0` yields
       (`notes/tier2_pr1_report.html`).
+- [x] **C-102. `take`, `put_add`, `put` with run-time `int64` indices (T2-2).** On the last axis,
+      leading axes kept; an index outside `[0, n)` reads `fill` or drops its value into a scratch
+      slot of its own lane, so writes are unconditional and no index reads out of bounds. Forward
+      (one and many seeds), reverse and conservative row-local sparsity; `+ - *` with a Python
+      integer keep an integer expression integer. Procedures holding them do not scalarize. A
+      `put_add` into a scan carry still copies the carry every step, which is T2-3
+      (`notes/tier2_pr2_report.html`).
 
 ### Tier 1 primitives
 

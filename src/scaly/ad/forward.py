@@ -28,12 +28,15 @@ from ..ir.expr import (
   equal,
   not_equal,
   gather,
+  put,
+  put_add,
   reduce_min,
   scatter,
   segment_min,
   segment_sum,
   stack,
   substitute,
+  take,
   topo,
   where,
   zeros_like,
@@ -194,6 +197,10 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return save(segment_sum(segment_weights(expr) * d[0], expr.attrs["indices"], expr.size))
   if expr.op in {ExprOp.INDEX_ADD, ExprOp.INDEX_SET}:
     return save(Expr(expr.op, (d[0], d[1]), expr.type, attrs=dict(expr.attrs), lowering=expr.lowering))
+  if expr.op == ExprOp.TAKE:  # linear in x; a fill is a constant
+    return save(take(d[0], args[1]))
+  if expr.op in {ExprOp.PUT_ADD, ExprOp.PUT}:
+    return save((put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2]))
   if expr.op == ExprOp.SELECT:
     return save(where(args[0], d[1], d[2]))
   if expr.op == ExprOp.COPYSIGN:
@@ -1170,6 +1177,12 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op == ExprOp.SINH:
     memo[expr.id] = ret = _seed_axis(args[0].cosh(), nseed) * d[0]
+    return ret
+  if expr.op == ExprOp.TAKE:  # the seed axis leads and ``take`` indexes the last one
+    memo[expr.id] = ret = take(d[0], args[1])
+    return ret
+  if expr.op in {ExprOp.PUT_ADD, ExprOp.PUT}:
+    memo[expr.id] = ret = (put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2])
     return ret
   if expr.op == ExprOp.MATMUL:
     if args[0] is args[1] and len(args[0].shape) == 1:

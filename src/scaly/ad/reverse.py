@@ -9,7 +9,25 @@ import numpy as np
 
 from ..function import Function
 from ..function.sugar import _scan_node, _while_node, vmap
-from ..ir.expr import PREDICATE_OPS, Expr, ExprOp, as_expr, cast, concat, copysign, gather, index_set, scatter, stack, topo, where, zeros_like
+from ..ir.expr import (
+  PREDICATE_OPS,
+  Expr,
+  ExprOp,
+  as_expr,
+  cast,
+  concat,
+  copysign,
+  gather,
+  index_set,
+  put,
+  put_add,
+  scatter,
+  stack,
+  take,
+  topo,
+  where,
+  zeros_like,
+)
 from ..passes.expr import simplify_cse_fixpoint
 from .forward import claim_name, custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
 from .sparsity import _depends_on
@@ -415,6 +433,12 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return (cot, gather(cot, expr.attrs["indices"]))
   if expr.op == ExprOp.INDEX_SET:
     return (index_set(cot, expr.attrs["indices"], np.zeros(args[1].size)), gather(cot, expr.attrs["indices"]))
+  if expr.op == ExprOp.TAKE:
+    return (put_add(zeros_like(args[0]), args[1], cot), zeros_like(args[1]))
+  if expr.op == ExprOp.PUT_ADD:
+    return (cot, zeros_like(args[1]), take(cot, args[1]))
+  if expr.op == ExprOp.PUT:  # the written entries of the base do not reach the output
+    return (put(cot, args[1], zeros_like(args[2])), zeros_like(args[1]), take(cot, args[1]))
   if expr.op == ExprOp.SELECT:
     cond, a, b = args
     zero = as_expr(0.0)

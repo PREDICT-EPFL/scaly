@@ -258,6 +258,24 @@ def _scan_attrs(expr: Expr) -> str | None:
   return None
 
 
+def _take_shapes(expr: Expr) -> str | None:
+  x, idx = expr.args
+  if idx.type.dtype.name != "int64" or len(idx.shape) != 1:
+    return f"TAKE indices must be a rank-1 int64 vector, got {idx.type.dtype}{idx.shape}"
+  if not x.shape or expr.shape != (*x.shape[:-1], idx.size) or expr.type.dtype != x.type.dtype:
+    return f"TAKE of {x.shape} by {idx.size} indices gives {(*x.shape[:-1], idx.size)}, got {expr.shape}"
+  return None
+
+
+def _put_shapes(expr: Expr) -> str | None:
+  base, idx, values = expr.args
+  if idx.type.dtype.name != "int64" or len(idx.shape) != 1:
+    return f"{expr.op} indices must be a rank-1 int64 vector, got {idx.type.dtype}{idx.shape}"
+  if not base.shape or values.shape != (*base.shape[:-1], idx.size) or expr.shape != base.shape:
+    return f"{expr.op} into {base.shape} with {idx.size} indices needs values {(*base.shape[:-1], idx.size)}, got {values.shape}"
+  return None
+
+
 def _while_attrs(expr: Expr) -> str | None:
   body, cond = expr.attrs.get("callee"), expr.attrs.get("cond")
   if body is None or cond is None or "max_iter" not in expr.attrs or "output" not in expr.attrs:
@@ -438,6 +456,8 @@ spec_expr = Spec(
     Rule(ExprOp.GATHER, "gather-indices", _gather_indices),
     Rule(ExprOp.SCATTER, "scatter-indices", _scatter_indices),
     *(Rule(op, "index-update", _index_update) for op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET)),
+    Rule(ExprOp.TAKE, "take-shapes", _take_shapes),
+    *(Rule(op, "put-shapes", _put_shapes) for op in (ExprOp.PUT_ADD, ExprOp.PUT)),
     *(Rule(op, "segment-extremum", _segment_extremum) for op in (ExprOp.SEGMENT_MAX, ExprOp.SEGMENT_MIN)),
     Rule(ExprOp.STACK, "stack-shapes", _stack_shapes),
     Rule(ExprOp.CONCAT, "concat-shapes", _concat_shapes),

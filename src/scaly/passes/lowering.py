@@ -23,12 +23,14 @@ GPU placement and the new ops tracked in the migration roadmap.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from typing import Any
 
 import numpy as np
 
 from ..ir import program as p
-from ..ir.expr import CALLEE_OPS, COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp, callees_of, topo
+from ..ir.expr import CALLEE_OPS, COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, RUNTIME_INDEX_OPS, Expr, ExprOp, callees_of, topo
 from ..function import Function
+from .arith import constant
 from .program import ProgramObserver, optimize_program
 from ..ir.program import ProgramNode, ProgramOp, RangeKind
 from ..ir.program_spec import verify_program
@@ -266,6 +268,8 @@ def _lower_to_proc(
       "scalarize_mode": "procedure"
       if not in_place
       and all(n.type.dtype in _SCALARIZABLE for n in (*fun.inputs, *nodes))
+      # Scalar expansion follows every address at generation time; a run-time index has none.
+      and not any(n.op in RUNTIME_INDEX_OPS for n in nodes)
       and (lowering == "scalar" or (lowering == "auto" and auto_scalarize))
       else "disabled",
       **({"in_place": True} if in_place else {}),
@@ -1123,6 +1127,81 @@ def _lower_index_update(ctx: LowerCtx, node: Expr) -> None:
     value = p.add(p.load(p.view(out, [dst])), value)
   kind = RangeKind.GLOBAL if scatter_is_unique(idx) else RangeKind.REDUCE
   ctx.statements.append(p.for_(p.range_(iname, 0, idx.size, kind=kind), [p.store(p.view(out, [dst]), value)]))
+
+
+def _runtime_index(ctx: LowerCtx, idx: Expr, j: ProgramNode, n: int) -> tuple[ProgramNode, ProgramNode]:
+  """The index at lane ``j`` and whether it addresses an entry, ``0 <= i < n``."""
+  i = p.load(p.view(ctx.buf_of(idx), [j]))
+  inside = ProgramNode(ProgramOp.AND, (p.compare(ProgramOp.LE, p.const_int(0), i), p.compare(ProgramOp.LT, i, p.const_int(n))), dtype=dtypes.bool_)
+  return i, inside
+
+
+def _lane_loops(ctx: LowerCtx, tag: str, rows: int, lanes: int, kind: RangeKind, body: Any) -> None:
+  """``for b < rows: for j < lanes: body(b, j)``, with the row loop left out for one row."""
+  jname = f"j_{tag}"
+  j = p.var(jname)
+  if rows == 1:
+    ctx.statements.append(p.for_(p.range_(jname, 0, lanes, kind=kind), body(p.const_int(0), j)))
+    return
+  bname = f"b_{tag}"
+  b = p.var(bname)
+  inner = p.for_(p.range_(jname, 0, lanes, kind=kind), body(b, j))
+  ctx.statements.append(p.for_(p.range_(bname, 0, rows, kind=RangeKind.GLOBAL), [inner]))
+
+
+@lowers(ExprOp.TAKE)
+def _lower_take(ctx: LowerCtx, node: Expr) -> None:
+  """``out[b, j] = x[b, i]`` for the run-time index ``i = indices[j]`` when ``0 <= i < n``, else the
+  fill. The read goes through a clamped index, so no lane reads outside ``x`` whatever it holds."""
+  x, idx = node.args
+  n, lanes = x.shape[-1], idx.size
+  rows = _size_of(node.shape) // lanes if lanes else 0
+  out = ctx.alloc_tmp(node)
+  if not rows or not lanes:
+    return
+  fill = constant(node.attrs["fill"], node.type.dtype)
+
+  def body(b: ProgramNode, j: ProgramNode) -> list[ProgramNode]:
+    if n == 0:
+      value = fill
+    else:
+      i, inside = _runtime_index(ctx, idx, j, n)
+      src = p.add(p.mul(b, p.const_int(n)), p.select(inside, i, p.const_int(0)))
+      value = p.select(inside, p.load(p.view(ctx.buf_of(x), [src])), fill)
+    return [p.store(p.view(out, [p.add(p.mul(b, p.const_int(lanes)), j)]), value)]
+
+  _lane_loops(ctx, out.attrs["name"], rows, lanes, RangeKind.GLOBAL, body)
+
+
+@lowers(ExprOp.PUT_ADD, ExprOp.PUT)
+def _lower_put(ctx: LowerCtx, node: Expr) -> None:
+  """Copy the base, then add (or store) lane ``j`` of row ``b`` at ``[b, i]`` for ``i = indices[j]``.
+
+  The result buffer has one scratch slot per lane after the ``rows * n`` entries, and a lane whose
+  index is outside ``[0, n)`` writes its own slot. The write is then unconditional, and padded
+  lanes never update one address in turn, which would chain every lane's read-modify-write through
+  memory. Lanes run in order: repeated indices accumulate (``put_add``) or keep the last value."""
+  base, idx, values = node.args
+  n, lanes = base.shape[-1], idx.size
+  size = _size_of(node.shape)
+  rows = size // n if n else 0
+  store = ctx.new_private(node.type.dtype, (size + rows * lanes,))
+  ctx.value_buffers[node.id] = store.attrs["name"]
+  if size:
+    ctx.statements.append(_copy_loop(ctx.buf_of(base), store, node.shape))
+  if not rows or not lanes:
+    return
+
+  def body(b: ProgramNode, j: ProgramNode) -> list[ProgramNode]:
+    i, inside = _runtime_index(ctx, idx, j, n)
+    scratch = p.add(p.const_int(size), p.add(p.mul(b, p.const_int(lanes)), j))
+    dst = p.view(store, [p.select(inside, p.add(p.mul(b, p.const_int(n)), i), scratch)])
+    value = p.cast(p.load(p.view(ctx.buf_of(values), [p.add(p.mul(b, p.const_int(lanes)), j)])), node.type.dtype)
+    if node.op == ExprOp.PUT_ADD:
+      value = p.add(p.load(dst), value)
+    return [p.store(dst, value)]
+
+  _lane_loops(ctx, store.attrs["name"], rows, lanes, RangeKind.REDUCE, body)
 
 
 # Tests switch this off to compare every in-place loop with its two-slot version.
