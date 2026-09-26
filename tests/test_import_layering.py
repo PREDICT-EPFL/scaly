@@ -123,6 +123,8 @@ def _modules() -> dict[str, Path]:
   for path in sorted(SRC.rglob("*.py")):
     rel = path.relative_to(SRC.parent).with_suffix("")
     parts = rel.parts[:-1] if rel.name == "__init__" else rel.parts
+    if not all(part.isidentifier() for part in parts):
+      continue  # not importable, such as an editor's checkpoint copy (.ipynb_checkpoints/c-checkpoint.py)
     out[".".join(parts)] = path
   return out
 
