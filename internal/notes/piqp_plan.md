@@ -1,6 +1,6 @@
 # PIQP in Scaly — living plan
 
-**Status:** Tier 1 done (git tag `tier1-complete`) · Tier 2 next, on branch `claude/tier2-sparse`, awaiting go-ahead on §8 · last updated 2026-09-26 (v4)
+**Status:** Tier 1 done (git tag `tier1-complete`) · Tier 2 next, on branch `claude/tier2-sparse`, no open decisions blocking it · last updated 2026-09-26 (v4.1)
 **Copies:** claude.ai project doc `claude/piqp-plan.md` and repo `internal/notes/piqp_plan.md` hold the same text; update both together. Background and review evidence: `internal/notes/piqp_plan_2026_09_26.html` (v3; superseded where they differ). Tier 1 detail: `claude/tier1-implementation-status.md`.
 
 ## Goal and principles
@@ -129,18 +129,21 @@ Gates:
 - Generated code only (external kernels move to Tier 6).
 - Tier 2 is general sparse linear algebra, not PIQP-private.
 
-**Pending:**
-1. Dense PIQP mode as condensed Cholesky on the generated dense kernels (recommended).
-2. NumPy reference and curated MM subset in `tests/data` (recommended).
-3. Ordering: MMD now, AMD port if fill demands it.
-4. Parity semantics: decision traces plus tolerances.
-5. Mac-only tasks: vendored baselines and the SQP corpus dump.
-6. The `segment` merge.
+**Deferred to the tier that needs them** (none blocks Tier 2):
+- *Tier 2 default, no decision needed:* ordering by SciPy's SuperLU MMD; an AMD port only if measured fill demands it. Tier 2 benchmark baselines (QDLDL-class LDLt) are built from the vendored headers in the VM, so no Mac is needed.
+- *Decide at the start of Tier 3:*
+  - a NumPy reference IPM plus a curated Maros–Mészáros subset in `tests/data` (Tier 2 may reuse MM KKT patterns as test matrices without this);
+  - the dense backend as condensed Cholesky on the Tier 2 dense kernels.
+- *Decide at the start of Tier 4:*
+  - parity semantics (decision traces plus tolerances);
+  - Mac-only vendored baselines and the SQP corpus dump.
+- *Independent Tier 1 carry-over:* the `segment` merge; it can be scheduled at any time.
 
 ## Change log
 - 2026-09-26 v3: plan revised after Tier 1 and a three-agent review.
 - 2026-09-26 v3.1: generic sparse early, multistage later.
 - 2026-09-26 v4: generated-only; plan re-organised into Tiers 1–6; Tier 2 made general-purpose sparse linear algebra; git tag `tier1-complete` marks the end of Tier 1.
+- 2026-09-26 v4.1: the PIQP-specific pending decisions moved to Tiers 3–4; nothing blocks Tier 2.
 
 ## References
 - Schwan, Jiang, Kuhn, Jones, PIQP, CDC 2023 — https://arxiv.org/abs/2304.00290
