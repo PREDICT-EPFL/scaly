@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "perf_2026_09_26_ti
 
 import scaly as sc  # noqa: E402
 from bench_common import median_us  # noqa: E402
-from scaly.solvers.ipm import KKT, Iterate, QPValues, ScaledQP, Scaling  # noqa: E402
+from scaly.solvers.ipm import KKT, Iterate, Kernels, QPValues, ScaledQP, Scaling  # noqa: E402
 from tests.ipm import piqp_trace  # noqa: E402
 from tests.ipm.problems import ipm_inputs, maros_meszaros, mpc_qp  # noqa: E402
 
@@ -35,18 +35,32 @@ def main() -> None:
     pq = {backend: piqp_trace.run(qp, dense=backend == "dense") for backend in ("dense", "sparse")}
     for backend in ("dense", "sparse"):
       # Scaled data as inputs, so that only the factorization and the solves are timed.
-      scaled_shapes = {"P": s.P_rows.size, "c": s.n, "A": s.A_rows.size, "b": s.p, "G": s.G_rows.size, "h_l": s.m, "h_u": s.m, "x_l": s.x_l_idx.size, "x_u": s.x_u_idx.size}
+      scaled_shapes = {
+        "P": s.P_rows.size,
+        "c": s.n,
+        "A": s.A_rows.size,
+        "b": s.p,
+        "G": s.G_rows.size,
+        "h_l": s.m,
+        "h_u": s.m,
+        "x_l": s.x_l_idx.size,
+        "x_u": s.x_u_idx.size,
+      }
       syms = {k: sc.sym(k, scaled_shapes[k]) for k in ORDER}
       xb = sc.sym("xb", s.n)
       unit = Scaling(sc.const(np.ones(s.n + s.p + s.m)), sc.const(np.ones(s.n)), sc.const(1.0))
-      kkt = KKT(s, ScaledQP(QPValues(**syms), xb, unit), backend, name=f"bk_{qp.name}")
+      kkt = KKT(Kernels(s, backend, name=f"bk_{qp.name}"), ScaledQP(QPValues(**syms), xb, unit))
       size = sum(Iterate.sizes(s))
       it, rhs = sc.sym("it", (size,)), sc.sym("rhs", (size,))
       f = kkt.factor(sc.const(1e-6), sc.const(1e-4), Iterate.unflat(s, it))
       one = f.solve(Iterate.unflat(s, rhs))
       two = f.solve(Iterate.unflat(s, rhs * 0.5 + one.flat() * 0.0 + 1.0))
-      fn = sc.Function._from_exprs(f"bk_{qp.name}_{backend}", [*(syms[k] for k in ORDER), xb, it, rhs], [one.flat(), two.flat()], [*ORDER, "xb", "it", "rhs"], ["a", "b"])
-      packed = dict(values, x_l=values["x_l"][s.x_l_idx], x_u=values["x_u"][s.x_u_idx], h_l=np.nan_to_num(values["h_l"]), h_u=np.nan_to_num(values["h_u"]))
+      fn = sc.Function._from_exprs(
+        f"bk_{qp.name}_{backend}", [*(syms[k] for k in ORDER), xb, it, rhs], [one.flat(), two.flat()], [*ORDER, "xb", "it", "rhs"], ["a", "b"]
+      )
+      packed = dict(
+        values, x_l=values["x_l"][s.x_l_idx], x_u=values["x_u"][s.x_u_idx], h_l=np.nan_to_num(values["h_l"]), h_u=np.nan_to_num(values["h_u"])
+      )
       args = [np.ascontiguousarray(packed[k], dtype=np.float64) for k in ORDER] + [np.ones(s.n), np.ones(size), np.linspace(-1, 1, size)]
       t0 = time.perf_counter()
       fn._flat_numerical_call(*args)

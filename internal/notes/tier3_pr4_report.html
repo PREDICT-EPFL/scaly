@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 3 PR 4 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Tier 3 · PR 4 report</h1>
+<p class="sub">T3-4 and T3-5 · the generated interior-point solver (C-129) · branch <code>claude/tier3-ipm</code> · 26 Sep 2026</p>
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>scaly.solvers.ipm.Solver</code> is PIQP 0.6.2 as generated code, from Ruiz equilibration to <code>restore_dual</code>, with the dense and the sparse KKT backends. <span class="ok">The tier gate is met.</span></p>
+<ul>
+<li><b>Status parity:</b> 62/62 problems, each backend against PIQP's run with the same backend (48 Maros–Mészáros, 5 infeasible, 2 MPC, 7 random).</li>
+<li><b>Decision traces:</b> sparse 48/48 and dense 47/48 on the problems where PIQP's own two backends agree. The other 14 are rounding-sensitive and are held to the status alone.</li>
+<li><b>Against the reference:</b> every iteration matches it at full precision, to 1e-12 … 1e-5, on eight well-conditioned problems.</li>
+<li><b>Plan change:</b> factorization retries and iterative refinement (#29) moved from Tier 4 into this PR. Without them, 9 of 55 problems ended as NUMERICS, because the condensed Cholesky fails along PIQP's path on 24 of the 48 stored problems.</li>
+<li><b>One deviation, documented:</b> the dense backend also fails a pivot that has no significant digit left, but only while refinement is off.</li>
+<li><b>Speed:</b> 1.96× PIQP's solve time with the sparse backend and 2.29× with the dense one (geometric means over 51 problems). That is T3-6's job.</li>
+</ul>
+<p style="margin-bottom:0"><b>Mutation checks:</b> 19 of 20 killed; the survivor is equivalent up to rounding. <b>Suite:</b> see the commit.</p>
+</div>
+
+<h2>What was built</h2>
+<ul>
+<li><b><code>Solver(structure, backend, settings).solve(values, trace=...)</code></b> builds the whole solve as expressions.
+  <ul>
+  <li>The loop is one <code>while_loop</code>. Its carry holds the iterate, the proximal centres and PIQP's info scalars; the scaled data are loop params (C-112).</li>
+  <li>The step implements everything from #21 to #28: residuals and termination, initial point, Mehrotra predictor–corrector, fraction to boundary, proximal ρ/δ and centre updates, boundary shift, fine-tune switch, infeasibility detection, and the branch without inequalities.</li>
+  <li>It returns PIQP's result layout, status and iteration count. With <code>trace</code> it also returns PIQP's per-iteration table plus σ, and <code>trace_rows</code>, the rows PIQP prints: at the iteration limit, or after a failed factorization, the last pass prints none.</li>
+  </ul></li>
+<li><b><code>Kernels</code></b> are the pieces the initial point and the loop share, each a <code>Function</code> built once per structure:
+  <ul>
+  <li>one factorization attempt inside PIQP's retry loop, a <code>while_loop</code> of at most 12 attempts;</li>
+  <li>the KKT solve;</li>
+  <li>PIQP's refinement: a first residual inside a one-pass loop, so nothing runs while refinement is off, then refinement steps that stop on tolerance or once the improvement rate drops below 5.</li>
+  </ul>
+  The factorization appears once in the generated C.</li>
+<li><b><code>SparseLDL.solve_with(factor, b)</code></b> solves with a factor carried out of a loop.</li>
+<li><b>Shared test helpers:</b> <code>problems.gate_problems()</code>, <code>piqp_trace.same_decisions</code> and <code>piqp_trace.backends_agree</code>, now also used by the reference's own tests.</li>
+</ul>
+
+<h2>Why retries and refinement had to come now</h2>
+<p>The first gate run had no retries: 9 of 55 problems ended as NUMERICS on the dense backend. Replaying the reference's path showed that LAPACK's Cholesky of the condensed matrix fails at some iteration on 24 of the 48 stored problems (DUALC8 from factorization 4 on). PIQP gets through these by turning refinement on. Doing the same here fixed every status.</p>
+<p>Late in a solve, a condensed Cholesky pivot is often rounding noise. On the reference's path, every LAPACK failure has a smallest relative pivot (pivot over diagonal entry) below 1.9e-16. The runs that LAPACK factored reach that level too: the 1% quantile is 2e-16.</p>
+<p>Our Crout kernel sums in another order, so its noise pivots come out positive where LAPACK's come out negative. It never asked for refinement, and DUALC8 took 22 iterations instead of 10. The fix, while refinement is off, treats a pivot at or below ε times its diagonal entry as a failure: that catches 160 of LAPACK's 162 failures and flags 4 of its 451 successes. Once refinement is on, only PIQP's own test counts, so a noisy but positive pivot never forces a ×100 retry. With this, DUALC8 takes 10 iterations.</p>
+<p>The dense backend's forward errors late in a solve match LAPACK's (1e-3 to 1e-1 relative, against SuperLU on the full KKT system). The remaining dense miss, QADLITTL, comes from a negative noise pivot on its last factorization with refinement on.</p>
+
+<h2>Tests</h2>
+<ul>
+<li><code>tests/ipm/test_scaly_ipm.py</code>, 172 tests:
+  <ul>
+  <li>decision traces against PIQP per backend on all 62 gate problems;</li>
+  <li>PIQP's ×100 retry trajectories on two nonconvex QPs, where dense Cholesky breaks down: identical to 4–5 digits, 142 iterations on one of them;</li>
+  <li>refinement always on against PIQP's <code>refine_always</code>;</li>
+  <li>every iteration against the reference at full precision;</li>
+  <li>the result layout and INF slacks;</li>
+  <li>a zero pivot turning refinement on, a factorization that never succeeds (NUMERICS, δ = 1e-4·100¹⁰, floor 1e-8, as the reference), and a failure mid-run;</li>
+  <li>the trace rows.</li>
+  </ul></li>
+<li><code>tests/ipm/test_scaly_kkt.py</code> also covers:
+  <ul>
+  <li>solves with refinement on against the reference's;</li>
+  <li>refinement that stops once it slows, with a static regularization ten times δ;</li>
+  <li>an exact ε pivot, which turns refinement on and nothing more.</li>
+  </ul></li>
+<li><code>tests/linalg/test_sparse_ldl.py</code>: <code>solve_with</code> on a factor carried through a loop.</li>
+</ul>
+<div class="scroll"><table><tr><th>mutant</th><th>result</th></tr>
+<tr><td>a failure never turns refinement on</td><td class="ok">killed</td></tr>
+<tr><td>retries scale by 10, not 100</td><td class="ok">killed</td></tr>
+<tr><td>the floor is not capped at eps_abs</td><td class="ok">killed</td></tr>
+<tr><td>one retry too many</td><td class="ok">killed (after adding the refinement-always case: the loop bound masked it otherwise)</td></tr>
+<tr><td>a retry is not flagged as a change</td><td class="ok">killed</td></tr>
+<tr><td>static regularization even with refinement off</td><td class="ok">killed</td></tr>
+<tr><td>refinement keeps every candidate</td><td class="warn">survived: equivalent up to rounding (each step contracts the error in exact arithmetic, so a rate ≤ 1 occurs only at rounding level)</td></tr>
+<tr><td>refinement never stops on slow progress</td><td class="ok">killed (after adding the slow-refinement test)</td></tr>
+<tr><td>solves never refined</td><td class="ok">killed</td></tr>
+<tr><td>refinement against the regularized δ</td><td class="ok">killed</td></tr>
+<tr><td>no noise-pivot test</td><td class="ok">killed</td></tr>
+<tr><td>noise-pivot test with refinement on</td><td class="ok">killed (after adding the ε-pivot test)</td></tr>
+<tr><td>dense y back-substitution sign</td><td class="ok">killed</td></tr>
+<tr><td>a sparse zero pivot never fails</td><td class="ok">killed</td></tr>
+<tr><td>the step keeps the pre-retry regularization</td><td class="ok">killed</td></tr>
+<tr><td>no residual update after a retry</td><td class="ok">killed</td></tr>
+<tr><td>the refinement flag is not kept</td><td class="ok">killed</td></tr>
+<tr><td>a failed pass is not counted</td><td class="ok">killed</td></tr>
+<tr><td>trace rows always iter + 1</td><td class="ok">killed</td></tr>
+<tr><td>the initial floor is not passed</td><td class="ok">killed</td></tr>
+</table></div>
+
+<h2>Benchmarks</h2>
+<p><code>perf_2026_09_26_tier3/t3_4_ipm.py</code> times the whole generated solve: Ruiz, initial point, loop and unscaling, through the JIT. It is compared with PIQP's own C timers for the same backend, median of 5. PIQP's setup includes the symbolic analysis that the generated code does at build time. First call means rendering and a cold compile.</p>
+<p>A selection of rows follows; the script prints all 51 problems. Ratio colours: ≤ 1.5 green, ≤ 3 amber.</p>
+<div class="scroll"><table><tr><th>problem</th><th>n / p / m</th><th>backend</th><th>iter Scaly / PIQP</th><th>Scaly (µs)</th><th>PIQP solve (µs)</th><th>PIQP setup + solve (µs)</th><th>Scaly / PIQP solve</th><th>per iteration (µs)</th><th>first call (s)</th></tr>
+<tr><td>HS21</td><td>2 / 0 / 1</td><td>sparse</td><td>9 / 9</td><td class="r">60</td><td class="r">43</td><td class="r">56</td><td class="r ok">1.39</td><td>6.6 / 4.8</td><td class="r">0.91</td></tr>
+<tr><td>HS21</td><td>2 / 0 / 1</td><td>dense</td><td>9 / 9</td><td class="r">60</td><td class="r">48</td><td class="r">53</td><td class="r ok">1.23</td><td>6.6 / 5.4</td><td class="r">0.87</td></tr>
+<tr><td>QAFIRO</td><td>32 / 8 / 17</td><td>sparse</td><td>13 / 13</td><td class="r">106</td><td class="r">94</td><td class="r">130</td><td class="r ok">1.13</td><td>8.2 / 7.2</td><td class="r">2.65</td></tr>
+<tr><td>QAFIRO</td><td>32 / 8 / 17</td><td>dense</td><td>13 / 13</td><td class="r">265</td><td class="r">156</td><td class="r">194</td><td class="r warn">1.70</td><td>20.4 / 12.0</td><td class="r">1.89</td></tr>
+<tr><td>DUAL1</td><td>85 / 1 / 0</td><td>sparse</td><td>12 / 12</td><td class="r">1990</td><td class="r">1160</td><td class="r">1418</td><td class="r warn">1.72</td><td>165.8 / 96.7</td><td class="r">1.81</td></tr>
+<tr><td>DUAL1</td><td>85 / 1 / 0</td><td>dense</td><td>12 / 12</td><td class="r">1878</td><td class="r">449</td><td class="r">525</td><td class="r bad">4.18</td><td>156.5 / 37.4</td><td class="r">1.83</td></tr>
+<tr><td>CVXQP1_S</td><td>100 / 50 / 0</td><td>sparse</td><td>9 / 9</td><td class="r">701</td><td class="r">284</td><td class="r">408</td><td class="r warn">2.46</td><td>77.9 / 31.6</td><td class="r">1.98</td></tr>
+<tr><td>CVXQP1_S</td><td>100 / 50 / 0</td><td>dense</td><td>9 / 9</td><td class="r">1538</td><td class="r">503</td><td class="r">694</td><td class="r bad">3.06</td><td>170.9 / 55.9</td><td class="r">2.17</td></tr>
+<tr><td>QPCBLEND</td><td>83 / 43 / 29</td><td>sparse</td><td>16 / 16</td><td class="r">742</td><td class="r">303</td><td class="r">409</td><td class="r warn">2.45</td><td>46.4 / 18.9</td><td class="r">2.51</td></tr>
+<tr><td>QPCBLEND</td><td>83 / 43 / 29</td><td>dense</td><td>16 / 16</td><td class="r">1811</td><td class="r">789</td><td class="r">967</td><td class="r warn">2.30</td><td>113.2 / 49.3</td><td class="r">2.64</td></tr>
+<tr><td>DUALC8</td><td>8 / 1 / 502</td><td>sparse</td><td>10 / 10</td><td class="r">1645</td><td class="r">534</td><td class="r">692</td><td class="r bad">3.08</td><td>164.5 / 53.4</td><td class="r">2.31</td></tr>
+<tr><td>DUALC8</td><td>8 / 1 / 502</td><td>dense</td><td>10 / 10</td><td class="r">974</td><td class="r">284</td><td class="r">364</td><td class="r bad">3.43</td><td>97.4 / 28.4</td><td class="r">2.81</td></tr>
+<tr><td>QSC205</td><td>203 / 91 / 114</td><td>sparse</td><td>16 / 16</td><td class="r">1246</td><td class="r">449</td><td class="r">553</td><td class="r warn">2.77</td><td>77.9 / 28.1</td><td class="r">2.13</td></tr>
+<tr><td>QSC205</td><td>203 / 91 / 114</td><td>dense</td><td>16 / 16</td><td class="r">10117</td><td class="r">7043</td><td class="r">7976</td><td class="r ok">1.44</td><td>632.3 / 440.2</td><td class="r">3.28</td></tr>
+<tr><td>QRECIPE</td><td>180 / 91 / 24</td><td>sparse</td><td>34 / 19</td><td class="r">2383</td><td class="r">470</td><td class="r">561</td><td class="r bad">5.07</td><td>70.1 / 24.7</td><td class="r">2.47</td></tr>
+<tr><td>QRECIPE</td><td>180 / 91 / 24</td><td>dense</td><td>19 / 19</td><td class="r">7565</td><td class="r">3813</td><td class="r">4387</td><td class="r warn">1.98</td><td>398.1 / 200.7</td><td class="r">3.41</td></tr>
+<tr><td>QBORE3D</td><td>315 / 215 / 19</td><td>sparse</td><td>19 / 19</td><td class="r">2248</td><td class="r">1053</td><td class="r">1346</td><td class="r warn">2.13</td><td>118.3 / 55.4</td><td class="r">2.52</td></tr>
+<tr><td>QBORE3D</td><td>315 / 215 / 19</td><td>dense</td><td>19 / 20</td><td class="r">27900</td><td class="r">11221</td><td class="r">13445</td><td class="r warn">2.49</td><td>1468.4 / 561.1</td><td class="r">2.32</td></tr>
+<tr><td>QCAPRI</td><td>353 / 158 / 129</td><td>sparse</td><td>31 / 84</td><td class="r">4790</td><td class="r">8452</td><td class="r">8845</td><td class="r ok">0.57</td><td>154.5 / 100.6</td><td class="r">2.26</td></tr>
+<tr><td>QCAPRI</td><td>353 / 158 / 129</td><td>dense</td><td>31 / 32</td><td class="r">66686</td><td class="r">35063</td><td class="r">37601</td><td class="r warn">1.90</td><td>2151.2 / 1095.7</td><td class="r">2.11</td></tr>
+<tr><td>mpc_12x4_N20</td><td>332 / 252 / 0</td><td>sparse</td><td>7 / 7</td><td class="r">1964</td><td class="r">802</td><td class="r">1055</td><td class="r warn">2.45</td><td>280.6 / 114.6</td><td class="r">1.75</td></tr>
+<tr><td>mpc_12x4_N20</td><td>332 / 252 / 0</td><td>dense</td><td>7 / 7</td><td class="r">14253</td><td class="r">4306</td><td class="r">6826</td><td class="r bad">3.31</td><td>2036.2 / 615.2</td><td class="r">1.69</td></tr>
+<tr><td>mpc_27x6_N30</td><td>1017 / 837 / 0</td><td>sparse</td><td>8 / 8</td><td class="r">9598</td><td class="r">7320</td><td class="r">8701</td><td class="r ok">1.31</td><td>1199.7 / 915.0</td><td class="r">2.96</td></tr>
+<tr><td>mpc_27x6_N30</td><td>1017 / 837 / 0</td><td>dense</td><td>8 / 8</td><td class="r">411991</td><td class="r">96380</td><td class="r">135295</td><td class="r bad">4.27</td><td>51498.9 / 12047.5</td><td class="r">5.17</td></tr>
+</table></div>
+<ul>
+<li><b>Geometric means over 51 problems:</b> sparse 1.96× PIQP's solve and 1.45× its setup + solve; dense 2.29× and 1.85×.</li>
+<li><b>Dense-P problems</b> (DUAL1–4, n = 75–111) run at 4× with the dense backend: PIQP's Eigen Cholesky is that much faster than our kernel (C-117).</li>
+<li><b>QCAPRI</b> finishes in 31 iterations where PIQP sparse needs 84, so it comes out faster overall.</li>
+<li><b>QRECIPE</b> takes 34 iterations with the sparse backend against PIQP's 19: C-130.</li>
+</ul>
+<p><b>What the retry and refinement structure costs.</b> An interleaved A/B against T3-3's direct factorization (a worktree of the last commit, minima, Spotlight busy) puts one factorization and two solves at +5–23%: sparse QSC205 25.4 → 31.3 µs, QCAPRI 86.7 → 100.3 µs, dense QAFIRO 13.6 → 16.5 µs. The cause is the factor copied through the retry loop's carry, about five copies per factorization (C-131).</p>
+<p><b>Compile time.</b> A cold first call takes 0.7–3.5 s, against 0.05–0.13 s for T3-3's factor-and-solve functions; the whole loop with its nested loops is now compiled.</p>
+
+<h2>Gates</h2>
+<ul>
+<li class="ok">Tier 3 gate: the Scaly IPM takes PIQP's decisions, per backend, wherever PIQP's own backends agree (48/48 sparse, 47/48 dense); status parity 62/62.</li>
+<li>Tier 4's status-parity gate (MM, n ≤ 100) is already met by both backends.</li>
+</ul>
+
+<h2>Next</h2>
+<p>T3-6 is revised in plan v4.6 into the performance PR. Profile an iteration, then take on C-131 (factor copies), C-114 (unpadded factor updates) and, for the dense backend, C-117 and hoisting AᵀA out of the loop. Target: sparse within 1.5× of PIQP's solve time. C-130 (QRECIPE) stays open. After that comes T3-R: the review round, the summary, and the <code>tier3-complete</code> tag.</p>
+</main></body></html>

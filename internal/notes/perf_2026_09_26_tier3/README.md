@@ -12,3 +12,4 @@ no page under `docs/` cites them.
 | `t3_1_while_params.py` | C-112: `SparseLDL` adaptive refinement (a `while_loop` whose factor, matrix and right-hand side became params) against the plain solve, on KKT systems of 75 to 1200 unknowns; run on two checkouts to compare |
 | `t3_2_ruiz.py` | T3-2: generated Ruiz equilibration against the NumPy reference and PIQP's setup time, with first-call (render and compile) time |
 | `t3_3_kkt.py` | T3-3: one generated factorization and two solves per backend against PIQP's time per iteration with the same backend, and first-call time |
+| `t3_4_ipm.py` | T3-4/T3-5: the generated solver end to end per problem and backend against vendored PIQP with the same backend: status, iterations, the generated solve's time against PIQP's solve and setup + solve times, time per iteration, graph-build and first-call (cold compile with an empty `SCALY_CACHE_DIR`) times; geometric means per backend |

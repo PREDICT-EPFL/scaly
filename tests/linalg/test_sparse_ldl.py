@@ -485,3 +485,27 @@ def test_a_given_analysis_must_match_the_pattern() -> None:
     SparseLDL(mat, symbolic=SparseLDL(diag).symbolic)
   with pytest.raises(ValueError, match="is for a"):
     SparseLDL(SparseMatrix.symbol("S", np.eye(3, dtype=bool)), symbolic=own)
+
+
+@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+def test_solve_with_a_factor_carried_out_of_a_loop(schedule: Schedule) -> None:
+  """A factor computed elsewhere, here carried through a loop that just passes it on, solves as the
+  handle's own does; a factor or right-hand side of the wrong length is refused."""
+  k = MATRICES["kkt"]()
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  fact = SparseLDL(mat, name=f"carried_{schedule}", schedule=schedule)
+  c = sc.sym("c", fact.values.shape)
+  keep = sc.Function._from_exprs(f"carried_{schedule}_keep", [c], [c * 1.0], ["c"], ["c_next"])
+  stop = sc.Function._from_exprs(f"carried_{schedule}_stop", [c], [c[0] > c[0]], ["c"], ["go"])
+  carried, _ = sc.while_loop(stop, keep, fact.values, max_iter=3)
+  b = sc.sym("b", k.shape[0])
+  fn = _fn(f"carried_{schedule}", [mat.values, b], [fact.solve_with(carried, b), fact.solve(b)])
+  bv = RNG.standard_normal(k.shape[0])
+  x, own = fn._flat_numerical_call(_values(mat, t), bv)
+  np.testing.assert_array_equal(x, own)
+  np.testing.assert_allclose(x, np.linalg.solve(k.toarray(), bv), rtol=1e-8, atol=1e-10)
+  with pytest.raises(ValueError, match="factor of length"):
+    fact.solve_with(carried[1:], b)
+  with pytest.raises(ValueError, match="right-hand side of length"):
+    fact.solve_with(carried, b[1:])

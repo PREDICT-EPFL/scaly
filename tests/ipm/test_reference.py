@@ -16,20 +16,15 @@ from scipy import sparse
 
 from tests.ipm import piqp_trace
 from tests.ipm import reference as ref
-from tests.ipm.problems import QP, _qp, infeasible_problems, kkt_residuals, maros_meszaros, maros_meszaros_names, mpc_qp, random_qp
+from tests.ipm.problems import _qp, gate_problems, infeasible_problems, kkt_residuals, maros_meszaros, maros_meszaros_names, mpc_qp, random_qp
 
 NAMES = maros_meszaros_names()
 GATE = 0.9
 
 
 def _decisions_match(pq: piqp_trace.Trace, r: ref.Result) -> bool:
-  if pq.status != r.status or int(pq.info["iter"]) != r.info.iter:
-    return False
-  for name in ("rho", "delta"):
-    a, b = pq.column(name), r.trace[:, ref.TRACE_COLUMNS.index(name)]
-    if a.shape != b.shape or np.any(np.abs(a - b) > 1e-3 * np.abs(a)):
-      return False
-  return True
+  column = r.trace[:, ref.TRACE_COLUMNS.index("rho")], r.trace[:, ref.TRACE_COLUMNS.index("delta")]
+  return piqp_trace.same_decisions(pq, r.status, r.info.iter, *column)
 
 
 def _exact_rows(r: ref.Result, fields: tuple[str, ...]) -> np.ndarray:
@@ -142,37 +137,13 @@ def test_the_no_inequality_branch_takes_full_steps() -> None:
   np.testing.assert_array_equal(r.trace[1:, ref.TRACE_COLUMNS.index("primal_step")], 1.0)
 
 
-def _all_problems() -> dict[str, QP]:
-  problems = {name: maros_meszaros(name) for name in NAMES}
-  problems.update({name: qp for name, (qp, _) in infeasible_problems().items()})
-  problems.update({qp.name: qp for qp in (mpc_qp(4, 2, 10), mpc_qp(12, 4, 20))})
-  # Random LPs whose primal residual falls by between 5% and 10% in some iteration, and a few QPs.
-  randoms = [random_qp(40, 30, 10, seed=1, lp=True), random_qp(20, 15, 5, seed=35, lp=True), random_qp(40, 30, 10, seed=37, lp=True)]
-  randoms += [random_qp(30, 20, 5, seed=seed) for seed in range(4)]
-  problems.update({qp.name: qp for qp in randoms})
-  return problems
-
-
-def _backends_agree(a: piqp_trace.Trace, b: piqp_trace.Trace) -> bool:
-  """Whether PIQP's two backends follow the same path to the table's precision: then the path is
-  not sensitive to rounding. Equal decisions alone are not enough (QSHARE2B's backends end on the
-  same iteration with mu 18% apart three rows earlier)."""
-  if a.status != b.status or a.table.shape != b.table.shape:
-    return False
-  for col in ("rho", "delta", "mu"):
-    x, y = a.column(col), b.column(col)
-    if np.any(np.abs(x - y) > 1e-3 * np.abs(x)):
-      return False
-  return all(np.all(np.abs(a.column(c) - b.column(c)) <= 1e-3) for c in ("primal_step", "dual_step"))
-
-
 @pytest.mark.solver("piqp")
-@pytest.mark.parametrize("name", sorted(_all_problems()))
+@pytest.mark.parametrize("name", sorted(gate_problems()))
 def test_decisions_match_wherever_piqps_backends_agree(name: str) -> None:
   """Where PIQP's own two backends follow the same path, the reference has to take the same decisions."""
-  qp = _all_problems()[name]
+  qp = gate_problems()[name]
   sparse_run = piqp_trace.run(qp)
-  if not _backends_agree(sparse_run, piqp_trace.run(qp, dense=True)):
+  if not piqp_trace.backends_agree(sparse_run, piqp_trace.run(qp, dense=True)):
     pytest.skip("PIQP's backends take different paths: the problem is sensitive to rounding")
   assert _decisions_match(sparse_run, ref.solve(qp))
 

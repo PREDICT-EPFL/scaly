@@ -120,3 +120,29 @@ def exact_trace(qp: QP, *, dense: bool = False, fields: tuple[str, ...] = ("rho"
   """``fields`` after each iteration ``1 .. iter`` of the full run, at full precision: one row per iteration."""
   full = run(qp, dense=dense)
   return np.array([[run(qp, dense=dense, max_iter=k).info[f] for f in fields] for k in range(1, int(full.info["iter"]) + 1)])
+
+
+def same_decisions(pq: Trace, status: int, iters: int, rho: np.ndarray, delta: np.ndarray) -> bool:
+  """Whether a run took PIQP's decisions: the same status and iteration count, and every printed
+  iteration's rho and delta, which PIQP's update rules decide, within 1e-3 relative (the table
+  prints four digits)."""
+  if pq.status != status or int(pq.info["iter"]) != iters:
+    return False
+  for name, mine in (("rho", rho), ("delta", delta)):
+    theirs = pq.column(name)
+    if theirs.shape != np.shape(mine) or np.any(np.abs(theirs - mine) > 1e-3 * np.abs(theirs)):
+      return False
+  return True
+
+
+def backends_agree(a: Trace, b: Trace) -> bool:
+  """Whether PIQP's two backends follow the same path to the table's precision: then the path is
+  not sensitive to rounding. Equal decisions alone are not enough (QSHARE2B's backends end on the
+  same iteration with mu 18% apart three rows earlier)."""
+  if a.status != b.status or a.table.shape != b.table.shape:
+    return False
+  for col in ("rho", "delta", "mu"):
+    x, y = a.column(col), b.column(col)
+    if np.any(np.abs(x - y) > 1e-3 * np.abs(x)):
+      return False
+  return all(np.all(np.abs(a.column(c) - b.column(c)) <= 1e-3) for c in ("primal_step", "dual_step"))

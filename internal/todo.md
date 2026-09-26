@@ -309,14 +309,13 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       reproduced: signed maxima for box residuals, cost scaling aliasing the Ruiz stopping test,
       IEEE `0/0` in the mu rate and sigma. 23 mutants of the decision rules, all killed
       (`perf_2026_09_26_tier3/t3_0b_reference_gate.py`, `notes/tier3_pr0b_report.html`).
-- [ ] **C-125. An output named like an input is read back from the output buffer.** Silent wrong
-      numbers: `LowerCtx.register_outputs` (`passes/lowering.py`) stores each output buffer in
-      `self.buffers[name]`, overwriting the input of the same name, and every read of that input
-      then goes to `res[k]`. Reproduction: `s = sc.sym("state", 4)`,
-      `sc.Function._from_exprs("f", [s], [s[1:3] * 2.0 + 1.0, s[0:1]], ["state"], ["state", "k"])`
-      renders `const double* t0 = res[0] + 1;` and `res[1][0] = res[0][0];`. The header already
-      renames shared names (`_in`/`_out`), so the fix is to key the lowering's buffers by a unique
-      internal name. Found by the TinyMPC example (C-126), which names its output `state_next`.
+- [x] **C-125. An output named like an input is read back from the output buffer.** Silent wrong
+      numbers: lowering keyed buffers by name, so an output's buffer replaced the input of the same
+      name and every read of that input went to `res[k]`. Found by the TinyMPC example (C-126),
+      which names its output `state_next`, and again by T3-2's tests (`examples/simple.py`:
+      `(x, y) -> (y, z)`). Fixed: such an output gets a buffer of its own, output rules reach their
+      buffer by position, and the C entry maps parameters to `arg[i]` and `res[i]` by position (the
+      typed header already named them `y_in`/`y_out`).
 - [x] **C-126. TinyMPC in Scaly (`examples/tinympc`).** TinyMPC's ADMM (the library's `solve`, box
       and second-order-cone constraints, affine dynamics, warm starts) written once in Python and
       generated per problem: a `while_loop` over ADMM iterations around two `scan`s (Riccati backward
@@ -330,13 +329,7 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       invariants) solves take 2-6 % less, a measure of what C-112 buys. Tests:
       `tests/integration/test_tinympc.py`, 12 mutants, 11 killed (the survivor is equivalent up to
       rounding). Report: `notes/tinympc_benchmark_report.html`.
-- [x] **C-125. Outputs named like inputs.** A Function may name an output like an input
-      (`examples/simple.py`: `(x, y) -> (y, z)`), but lowering keyed buffers by name, so the
-      output's buffer replaced the input's: the input was read from the output buffer (silently
-      wrong numbers, found building T3-2's tests). Such an output now gets a buffer of its own,
-      output rules reach their buffer by position, and the C entry maps parameters to `arg[i]` and
-      `res[i]` by position (the typed header already named them `y_in`/`y_out`).
-- [x] **C-126. Ruiz equilibration as generated code (T3-2).** `scaly.solvers.ipm`: `QPStructure`
+- [x] **C-128. Ruiz equilibration as generated code (T3-2).** `scaly.solvers.ipm`: `QPStructure`
       (the patterns of `P`'s upper triangle, `A`, `G`, and which bounds are finite; rows free on
       both sides stay as zero rows bounded by [-1, 1]), `QPValues.preprocess`, and `ruiz`/`scale`:
       PIQP's equilibration as a `while_loop` whose params are the matrix values and `c` and whose
@@ -352,6 +345,32 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       1e-7 on 10 stored problems, free rows, MPC and two-sided rows. One factorization and two
       solves take 1.3-1.8x PIQP's whole iteration (sparse) and 1.5-3x (dense); refinement and
       factorization retries are Tier 4 (`perf_2026_09_26_tier3/t3_3_kkt.py`, `notes/tier3_pr3_report.html`).
+- [x] **C-129. The generated interior-point solver (T3-4, T3-5).** `scaly.solvers.ipm.Solver`: PIQP
+      0.6.2 from Ruiz to `restore_dual`, its loop one `while_loop` whose carry holds the iterate, the
+      proximal centres and PIQP's info (residuals and termination, initial point, Mehrotra
+      predictor-corrector, fraction to boundary, proximal updates, boundary shift, fine-tune switch,
+      infeasibility detection), with a per-iteration trace. Factorization retries and iterative
+      refinement (#29) moved in from Tier 4: condensed Cholesky fails on half the stored problems
+      along PIQP's path. `Kernels` holds one factorization attempt inside PIQP's retry loop and the
+      solve with PIQP's refinement, as Functions the initial point and the loop share;
+      `SparseLDL.solve_with` solves with a factor carried out of a loop. Deviation: the dense
+      backend also fails a Cholesky pivot below eps times its diagonal entry while refinement is off
+      (its sign is noise; LAPACK fails exactly where such pivots come out negative). Gate, each
+      backend against PIQP's run of the same backend on 62 problems: status 62/62; decision traces
+      48/48 (sparse) and 47/48 (dense, QADLITTL) where PIQP's own backends agree; the reference
+      matched step by step to 1e-12 … 1e-5; PIQP's ×100 retries reproduced on nonconvex QPs.
+      20 mutants, 19 killed (the survivor is equivalent up to rounding). Time: 1.96× PIQP's solve
+      (sparse) and 2.29× (dense), geometric means over 51 problems; 1–3.5 s cold first call
+      (`perf_2026_09_26_tier3/t3_4_ipm.py`, `notes/tier3_pr4_report.html`).
+- [ ] **C-130. QRECIPE's sparse path stalls.** 34 iterations against PIQP's 19 (both backends of
+      PIQP agree on 19; the problem is rounding-sensitive). From iteration 7 the generated LDL^T's
+      rounding (MMD ordering) moves the path; at iterations 11–13 the steps shrink to 1e-21 until a
+      factorization with an exactly zero pivot retries. Candidates: a noise-pivot test for the sparse
+      backend (needs the sum of |L|^2 |D| per pivot), or PIQP's AMD ordering for KKT matrices.
+- [ ] **C-131. The retry loop copies the factor.** The factor travels through the retry loop's
+      carry: about five copies of `nnz(L) + n` values (sparse) or `n^2` (dense) per factorization,
+      +5–23% on factor + two solves against T3-3's direct factorization (interleaved A/B). Write
+      the factorization's result in place into the carry, or keep the factor out of the carry.
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 

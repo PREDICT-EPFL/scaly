@@ -434,6 +434,17 @@ class SparseLDL:
       f"{self.name}_solve{tag}_vjp{level}", [f, kv, b, x, xbar], outs, ["f", "kv", "b", "xo", "xbar"], ["fbar", "kvbar", "bbar"]
     )
 
+  def solve_with(self, factor: Any, b: Any) -> Expr:
+    """``K^{-1} b`` from ``factor``, a factorization in the layout of ``values`` computed elsewhere
+    for this analysis (carried out of a loop that retries it, say): the two sweeps alone, with
+    neither refinement nor derivative rules."""
+    f, b = as_expr(factor), as_expr(b)
+    if f.shape != (self.w_offset,):
+      raise ValueError(f"solve_with needs a factor of length {self.w_offset}, got {f.shape}")
+    if b.shape != (self.n,):
+      raise ValueError(f"solve_with needs a right-hand side of length {self.n}, got {b.shape}")
+    return self._raw_solve(f, b)
+
   def solve(self, b: Any, *, refine: int = 0, tol: float | None = None) -> Expr:
     """``K^{-1} b`` for a vector or a matrix of right-hand sides (``(n,)`` or ``(n, m)``).
 
