@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 93**
+**Next id: 97**
 
 | Prefix | Section |
 |---|---|
@@ -150,6 +150,21 @@ the per-step reports sit beside it as `notes/tier1_pr*_report.html`.
       loop at the step count, which needs a scan whose trip count is read at run time.
 - [x] **C-87. In-place carry updates under a conservative donation rule.** `index_add`/`index_set` chains rooted at the carry lower to an `_inplace` body over one aliased slot; the rule is `in_place_chain` in `passes/lowering.py`.
 - [x] **C-88. Custom derivatives on a `Function`.** `sc.custom_derivative(fn, jvp=, vjp=)`, honored through `CALL`, `VMAP` and multi-seed forward mode.
+- [x] **C-93. Multi-seed forward mode through `scan` and `while_loop`.** `jvp_many` carries every
+      seed in one tangent loop (carry `[c, Dc]`, `Dc` seed-major) instead of one loop per seed; a
+      `CALL` whose callee holds a loop is differentiated in place, and loop inputs that are a strided
+      view of another loop's stored carries are read in place. A dense Hessian through a scan is a
+      fixed number of loops for any horizon (`notes/tier1_pr8_report.html`). Also fixed: the JIT
+      kept each call's workspace alive until the next garbage collection.
+- [ ] **C-94. Drop unused carry components of a scan.** Forward over reverse carries `[λ, λ̇]`
+      through each adjoint scan but uses only `λ̇`; nothing removes a carry component no output
+      reads, so half the backward work of a Hessian is discarded.
+- [ ] **C-95. Share the primal of a `CALL` with the loops its reverse mode inlines.** The gradient
+      through `f(shoot(x))` keeps the call for its outputs and inlines the body's scan for the
+      stored carries, so the rollout runs twice (`notes/tier1_pr8_report.html`).
+- [ ] **C-96. Fuse adjacent elementwise loops.** Zeroing, copies, scaling, scatter-adds and the
+      final transpose each lower to their own loop; a Hessian at N = 10 spends most of its
+      non-scan time in them.
 
 ### Now
 

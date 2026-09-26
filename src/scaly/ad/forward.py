@@ -7,6 +7,7 @@ to unrolling ``jvp`` per seed unless ``SCALY_STRICT_JVP_MANY`` forbids it.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import weakref
 from collections.abc import Sequence
 from typing import Any
@@ -16,9 +17,11 @@ import numpy as np
 from ..function import Function
 from ..function.sugar import _scan_node, _while_node, vmap
 from ..ir.expr import (
+  CALLEE_OPS,
   PREDICATE_OPS,
   Expr,
   ExprOp,
+  callees_of,
   cast,
   concat,
   copysign,
@@ -31,6 +34,7 @@ from ..ir.expr import (
   segment_sum,
   stack,
   substitute,
+  topo,
   where,
   zeros_like,
 )
@@ -383,6 +387,171 @@ def _copysign_slope(x: Expr, s: Expr) -> Expr:
   return copysign(1.0, x) * copysign(1.0, s)
 
 
+# --- Multi-seed forward mode through loops ------------------------------------------------------
+# One loop whose carry holds the primal and all ``nseed`` tangents, instead of one tangent loop per
+# seed. The loop body's own tangent is again a multi-seed pass, so work is shared across seeds inside
+# the step as well (C-93).
+
+_SCAN_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Function]] = weakref.WeakKeyDictionary()
+_WHILE_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[int, tuple[Function, Function]]]] = (
+  weakref.WeakKeyDictionary()
+)
+_CONTAINS_LOOP: weakref.WeakKeyDictionary[Any, bool] = weakref.WeakKeyDictionary()
+_JOINT_IDS = itertools.count()
+
+
+def _contains_loop(fn: Any) -> bool:
+  """Whether a Function's graph holds a ``scan`` or ``while_loop``, directly or through a callee."""
+  if fn not in _CONTAINS_LOOP:
+    _CONTAINS_LOOP[fn] = any(
+      node.op in (ExprOp.SCAN, ExprOp.WHILE) or (node.op in CALLEE_OPS and any(_contains_loop(c) for c in callees_of(node)))
+      for node in topo(fn.outputs)
+    )
+  return _CONTAINS_LOOP[fn]
+
+
+def _jvp_many_joint(outs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int) -> list[Expr]:
+  """Multi-seed tangents of ``outs`` with respect to several inputs at once. ``seeds[w]`` has shape
+  ``(nseed, *w.shape)``. The inputs are viewed as slices of one joint vector, so a single
+  ``jvp_many`` pass covers all of them."""
+  wrts = list(seeds)
+  if len(wrts) == 1:
+    (w,) = wrts
+    return [jvp_many(out, w, seeds[w]) for out in outs]
+  total = sum(w.size for w in wrts)
+  joint = Expr.sym(f"fwd:joint{next(_JOINT_IDS)}", (total,))
+  view: dict[Expr, Expr] = {}
+  offset = 0
+  for w in wrts:
+    view[w] = joint[offset : offset + w.size].reshape(w.shape)
+    offset += w.size
+  seed = concat([seeds[w].reshape((nseed, w.size)) for w in wrts], axis=1)
+  back = {joint: concat([w.reshape((w.size,)) for w in wrts])}
+  return [substitute(jvp_many(substitute(out, view), joint, seed), back) for out in outs]
+
+
+def _strided_view(x: Expr, idx: np.ndarray, rows: int, width: int) -> tuple[Expr, int, int]:
+  """Arrange ``x.flat[idx]`` as ``rows`` consecutive blocks of ``width`` for a loop to slice.
+
+  When the index table, composed through any gathers and reshapes that produced ``x``, reads one
+  contiguous block per row at a constant stride, the loop reads the source in place and this returns
+  ``(source, start, stride)``. Otherwise the gather is materialized and read with stride ``width``
+  (or 0 for a single row, which every step reads)."""
+  src, table = x, idx.reshape(-1)
+  while src.op in (ExprOp.RESHAPE, ExprOp.GATHER):
+    if src.op == ExprOp.GATHER:
+      table = np.asarray(src.attrs["indices"]).reshape(-1)[table]
+    src = src.args[0]
+  if table.size:
+    blocks = table.reshape(rows, width)
+    firsts = blocks[:, 0]
+    step = int(firsts[1] - firsts[0]) if rows > 1 else 0
+    if np.array_equal(blocks, firsts[:, None] + np.arange(width)[None, :]) and np.array_equal(firsts, firsts[0] + step * np.arange(rows)):
+      return src.reshape((src.size,)), int(firsts[0]), step
+  return gather(x.reshape((x.size,)), idx.reshape(-1)), 0, (0 if rows == 1 else width)
+
+
+def _scan_jvp_many_body(callee: Function, active: tuple[int, ...], nseed: int) -> Function:
+  """The body of the multi-seed tangent scan. The carry is ``[c, Dc]`` flat, with ``Dc`` the
+  ``(nseed, *c.shape)`` tangents seed-major. The sliced inputs are the primal ones, then for each
+  ``active`` one its ``(nseed, *x.shape)`` tangents. The outputs are ``[c', Dc']``, the primal stacked
+  outputs, then their tangents, each flat and seed-major."""
+  key = (active, nseed)
+  cache = _SCAN_JVP_MANY_CACHE.setdefault(callee, {})
+  if key not in cache:
+    carry, xs = callee.inputs[0], callee.inputs[1:]
+    cs = carry.size
+    aug = Expr.sym(f"fwd:{callee.input_names[0]}", (cs * (1 + nseed),))
+    dxs = {i: Expr.sym(f"fwd:{callee.input_names[i + 1]}", (nseed * xs[i].size,)) for i in active}
+    seeds = {carry: aug[cs:].reshape((nseed, *carry.shape)), **{xs[i]: dx.reshape((nseed, *xs[i].shape)) for i, dx in dxs.items()}}
+    tangents = _jvp_many_joint(callee.outputs, seeds, nseed)
+    nxt = concat([callee.outputs[0].reshape((cs,)), tangents[0].reshape((nseed * cs,))])
+    flat = [t.reshape((t.size,)) for t in tangents[1:]]
+    split = {carry: aug[:cs].reshape(carry.shape)}
+    outputs = [substitute(e, split) for e in (nxt, *callee.outputs[1:], *flat)]
+    inputs = [aug, *xs, *dxs.values()]
+    names = [str(aug.name), *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
+    out_names = ["fwd:carry", *callee.output_names[1:], *(f"fwd:{n}" for n in callee.output_names[1:])]
+    suffix = "_".join(str(i) for i in active) or "c"
+    cache[key] = Function._from_exprs(
+      f"{callee.name}_scanfwd{nseed}_{suffix}", inputs, [callee._inherit_lowering(simplify_cse_fixpoint(o)) for o in outputs], names, out_names
+    )
+  return cache[key]
+
+
+def _scan_jvp_many(expr: Expr, tangents: list[Expr], nseed: int) -> Expr:
+  """A scan's tangents for ``nseed`` seeds: one scan whose carry also carries all of them."""
+  callee, length, output = expr.attrs["callee"], int(expr.attrs["length"]), int(expr.attrs["output"])
+  init, outers = expr.args[0], expr.args[1:]
+  cs, n_ys = init.size, len(callee.outputs) - 1
+  if length == 0:
+    return tangents[0].reshape((nseed, *expr.shape)) if output == 0 else Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+  starts, strides = expr.attrs["starts"], expr.attrs["strides"]
+  active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
+  fn = _scan_jvp_many_body(callee, active, nseed)
+  aug_init = concat([init.reshape((cs,)), tangents[0].reshape((nseed * cs,))])
+  views = []
+  for i in active:
+    size, outer_size = callee.inputs[i + 1].size, outers[i].size
+    rows = 1 if strides[i] == 0 else length
+    idx = starts[i] + np.arange(rows)[:, None, None] * strides[i] + np.arange(nseed)[None, :, None] * outer_size + np.arange(size)[None, None, :]
+    views.append(_strided_view(tangents[i + 1], idx, rows, nseed * size))
+  aug_outers = (*outers, *(v[0] for v in views))
+  aug_starts = (*starts, *(v[1] for v in views))
+  aug_strides = (*strides, *(v[2] for v in views))
+
+  def node(k: int) -> Expr:
+    return _scan_node(fn, aug_init, aug_outers, aug_starts, aug_strides, length, k)
+
+  if output == 0:
+    return node(0)[cs:].reshape((nseed, *expr.shape))
+  if output == -1:
+    width = cs * (1 + nseed)
+    idx = np.arange(length)[None, :, None] * width + cs + np.arange(nseed)[:, None, None] * cs + np.arange(cs)[None, None, :]
+    return gather(node(-1), idx.reshape(-1)).reshape((nseed, length * cs))
+  size = callee.outputs[output].size
+  idx = np.arange(length)[None, :, None] * (nseed * size) + np.arange(nseed)[:, None, None] * size + np.arange(size)[None, None, :]
+  return gather(node(n_ys + output), idx.reshape(-1)).reshape((nseed, length * size))
+
+
+def _while_jvp_many_functions(cond: Function, body: Function, nseed: int) -> tuple[Function, Function]:
+  """Condition and body of the multi-seed tangent loop over the carry ``[c, Dc]``; the condition
+  reads ``c`` only, so the loop takes exactly the primal's steps."""
+  cache = _WHILE_JVP_MANY_CACHE.setdefault(body, weakref.WeakKeyDictionary()).setdefault(cond, {})
+  if nseed not in cache:
+    carry = body.inputs[0]
+    cs = carry.size
+    aug = Expr.sym(f"fwd:{body.input_names[0]}", (cs * (1 + nseed),))
+    (tangent,) = _jvp_many_joint(body.outputs, {carry: aug[cs:].reshape((nseed, *carry.shape))}, nseed)
+    split = {carry: aug[:cs].reshape(carry.shape)}
+    nxt = substitute(concat([body.outputs[0].reshape((cs,)), tangent.reshape((nseed * cs,))]), split)
+    aug_body = Function._from_exprs(
+      f"{body.name}_whilefwd{nseed}", [aug], [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(aug.name)], ["fwd:carry"]
+    )
+    go = substitute(cond.outputs[0], {cond.inputs[0]: aug[:cs].reshape(carry.shape)})
+    aug_cond = Function._from_exprs(f"{cond.name}_whilefwd{nseed}", [aug], [go], [str(aug.name)], ["go"])
+    cache[nseed] = (aug_cond, aug_body)
+  return cache[nseed]
+
+
+def _while_jvp_many(expr: Expr, tangent: Expr, nseed: int) -> Expr:
+  """A while loop's tangents for ``nseed`` seeds: one loop carrying all of them. The step count's
+  derivative is zero."""
+  output = int(expr.attrs["output"])
+  if output == 1 or _is_zero_const(tangent):
+    return Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+  cond, body, max_iter = expr.attrs["cond"], expr.attrs["callee"], int(expr.attrs["max_iter"])
+  init = expr.args[0]
+  cs = init.size
+  aug_cond, aug_body = _while_jvp_many_functions(cond, body, nseed)
+  aug_init = concat([init.reshape((cs,)), tangent.reshape((nseed * cs,))])
+  if output == 0:
+    return _while_node(aug_cond, aug_body, aug_init, max_iter, 0)[cs:].reshape((nseed, *expr.shape))
+  width = cs * (1 + nseed)
+  idx = np.arange(max_iter)[None, :, None] * width + cs + np.arange(nseed)[:, None, None] * cs + np.arange(cs)[None, None, :]
+  return gather(_while_node(aug_cond, aug_body, aug_init, max_iter, -1), idx.reshape(-1)).reshape((nseed, max_iter * cs))
+
+
 def _call_jvp_many_function(
   callee: Any, output_index: int, formal_indices: tuple[int, ...], nseed: int, constants: tuple[np.ndarray | None, ...]
 ) -> tuple[Any, tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
@@ -398,7 +567,11 @@ def _call_jvp_many_function(
     }
     out = callee.outputs[output_index]
     single_constant = len(formal_indices) == 1 and constants[0] is not None
-    if single_constant:
+    if _contains_loop(callee):
+      # Per-seed tangents would put one copy of every loop in the helper per seed; one multi-seed
+      # pass keeps a single loop carrying all of them.
+      deriv = _jvp_many_joint([out], {callee.inputs[i]: seeds[i] for i in formal_indices}, len(active))[0]
+    elif single_constant:
       formal_index = formal_indices[0]
       deriv = _jvp_many_unrolled(out, callee.inputs[formal_index], seeds[formal_index])
     else:
@@ -620,8 +793,19 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     ones = Expr.const(np.ones(expr.args[0].size), dtype=d0.type.dtype)
     memo[expr.id] = ret = d0.reshape((nseed, expr.args[0].size)) @ ones
     return ret
-  if expr.op in (ExprOp.VMAP, ExprOp.CALL) and expr.attrs["callee"].custom_jvp is not None:
+  if expr.op in (ExprOp.VMAP, ExprOp.CALL, ExprOp.SCAN, ExprOp.WHILE) and expr.attrs["callee"].custom_jvp is not None:
     raise _JVPManyUnsupported("custom jvp")  # the per-seed fallback honors the rule through ``_call_jvp_function``
+  if expr.op == ExprOp.SCAN:
+    tangents = [simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo)) for arg in expr.args]
+    if all(_is_zero_const(t) for t in tangents):
+      memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+    else:
+      memo[expr.id] = ret = _scan_jvp_many(expr, tangents, nseed)
+    return ret
+  if expr.op == ExprOp.WHILE:
+    tangent = simplify_cse_fixpoint(_jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo))
+    memo[expr.id] = ret = _while_jvp_many(expr, tangent, nseed)
+    return ret
   if expr.op == ExprOp.VMAP:
     callee = expr.attrs["callee"]
     output_idx = expr.attrs["output"]
@@ -741,6 +925,14 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       ret = term if ret is None else ret + term
     ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64)) if ret is None else ret
     memo[expr.id] = ret = _pack_jvp_maps(callee, ret, maps)
+    return ret
+  if expr.op == ExprOp.CALL and _contains_loop(expr.attrs["callee"]):
+    # Differentiate the call's body in place. Reverse mode inlines such a body too, so the tangent
+    # loops built here are the same nodes as the ones built for the gradient's stored carries and
+    # are computed once, instead of again inside a helper.
+    callee = expr.attrs["callee"]
+    inlined = substitute(callee.outputs[expr.attrs["output"]], dict(zip(callee.inputs, expr.args, strict=True)))
+    memo[expr.id] = ret = _jvp_many_structural(inlined, wrt, seeds, memo, dep_memo)
     return ret
   if expr.op == ExprOp.CALL:
     tangents = [simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo)) for arg in expr.args]

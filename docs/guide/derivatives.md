@@ -146,6 +146,12 @@ A sparse expression derivative returns `SparseJacobian` with `values`, `sparsity
 `hessian` differentiates a gradient. Operations without a multi-seed rule fall back to one seed at a
 time unless `SCALY_STRICT_JVP_MANY=1` is set.
 
+Batched forward mode through `scan` and `while_loop` is one loop whose carry holds the primal and
+every seed's tangent, so the Jacobian or Hessian of a rollout is a fixed number of loops for any
+horizon. For a Hessian, that is one tangent scan forwards and the adjoint scans backwards, each
+carrying all the seeds; the work is still proportional to the number of seeds times the number of
+steps.
+
 Derivatives through `CALL` and `VMAP` keep those nodes instead of expanding them. See
 [How differentiation works](../how_it_works/autodiff.md).
 

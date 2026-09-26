@@ -15,6 +15,7 @@ and no page under `docs/` cites them.
 | `pr5_while.py` | a Newton solve as `while_loop` against a fixed-length `scan`, with and without gradient |
 | `pr6_inplace.py` | a scan updating 4 entries of a large carry in place against the two-slot carry |
 | `pr7_custom.py` | the gradient of a solve through its steps against an implicit rule from `sc.custom_derivative` |
+| `pr8_multiseed.py` | dense Hessians through a scan with one tangent loop for all seeds against one per seed (`mpc`/`rk4`, `new`/`old`, sizes) |
 
 Run from the repository root, with a fresh cache so first-call times include compilation:
 

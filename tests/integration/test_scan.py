@@ -7,6 +7,8 @@ unrolled graph. The generated code must not grow with the number of steps.
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 
@@ -558,3 +560,125 @@ def test_custom_derivative_copies_keep_their_own_derivatives() -> None:
   assert sc.jacobian(loop, "c", "c0")((np.array([0.5]), np.zeros(3)))[0, 0] == 125.0
   (g,) = sc.vjp((final,), (c0,), (sc.const(np.ones(1)),))
   assert sc.Function._from_exprs("cdn_loop_g", [c0, us], [g], ["c0", "us"], ["g"])((np.array([0.5]), np.zeros(3)))[0] == 125.0
+
+
+# --- Multi-seed forward mode through loops (C-93) -----------------------------------------------
+
+
+def _loop_nodes(exprs: list[sc.Expr]) -> list[sc.Expr]:
+  """Every ``scan`` and ``while_loop`` node in the graph of ``exprs``, callees included."""
+  from scaly.ir.expr import CALLEE_OPS, ExprOp, callees_of, topo
+
+  found, seen, todo = [], set(), list(exprs)
+  while todo:
+    for node in topo(todo):
+      if node.id in seen:
+        continue
+      seen.add(node.id)
+      if node.op in (ExprOp.SCAN, ExprOp.WHILE):
+        found.append(node)
+      if node.op in CALLEE_OPS:
+        todo.extend(out for fn in callees_of(node) for out in fn.outputs)
+    todo = [e for e in todo if e.id not in seen]
+  return found
+
+
+def test_jacobian_of_a_scan_is_one_scan_carrying_every_seed(monkeypatch: pytest.MonkeyPatch) -> None:
+  """``jacobian`` pushes all its seeds through one tangent scan instead of one scan per seed; strict
+  mode proves no per-seed fallback happens."""
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  length = 6
+  scanned = _rollout(length)
+  us = np.cos(np.arange(length) * 0.7) * 0.5
+  for i, out in enumerate(("zN", "costs")):
+    for j, wrt in enumerate(("z0", "us")):
+      js = sc.jacobian(scanned, out, wrt)((Z0, us))
+      fd = finite_difference(lambda v: scanned((v, us) if wrt == "z0" else (Z0, v))[i], Z0 if wrt == "z0" else us)
+      np.testing.assert_allclose(js, fd.reshape(js.shape), rtol=1e-6, atol=1e-7)
+      nseed = scanned.inputs[j].size
+      loops = _loop_nodes([sc.jacobian(scanned.outputs[i], scanned.inputs[j])])
+      assert {n.attrs["callee"].name for n in loops} == {f"rk4_step_scanfwd{nseed}_{'c' if wrt == 'z0' else '0'}"}
+
+
+def test_multi_seed_tangents_of_broadcast_strided_and_backward_slices(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  c, w, v = sc.sym("c", 2), sc.sym("w", 2), sc.sym("v", 1)
+  body = sc.Function._from_exprs("mixm_step", [c, w, v], [c * w + v[0] * c[::-1], sc.stack([c[0] * v[0]])], ["c", "w", "v"], ["n", "y"])
+  c0, w_all, v_all = sc.sym("c0", 2), sc.sym("w_all", 2), sc.sym("v_all", 9)
+  final, ys = sc.scan(body, c0, [(w_all, 0, 0), (v_all, 8, -3)], length=3)
+  f = sc.Function._from_exprs("mixm", [c0, w_all, v_all], [final, ys], ["c0", "w", "v"], ["final", "ys"])
+  point = (np.array([1.0, -1.0]), np.array([0.5, 2.0]), np.linspace(-1.0, 1.0, 9))
+  for k, wrt in enumerate(("c0", "w", "v")):
+    for i, out in enumerate(("final", "ys")):
+      jac = sc.jacobian(f, out, wrt)(point)
+
+      def at(x: np.ndarray, k: int = k, i: int = i) -> np.ndarray:
+        return f(tuple(x if m == k else p for m, p in enumerate(point)))[i]
+
+      np.testing.assert_allclose(jac, finite_difference(at, point[k]).reshape(jac.shape), rtol=1e-7, atol=1e-9)
+
+
+def _single_shooting_cost(n: int) -> sc.Function:
+  """The double-integrator MPC cost of the user example: states simulated by a scan inside a
+  Function that the cost calls, with every state and input penalised."""
+  a = np.array([[1.0, DT], [0.0, 1.0]])
+  b = np.array([[0.5 * DT**2], [DT]])
+  z, u = sc.sym("z", 2), sc.sym("u", 1)
+  zn = a @ z + b @ u
+  step = sc.Function._from_exprs(f"ss{n}_step", [z, u], [zn, zn, sc.stack([sc.sumsqr(z) + 0.1 * sc.sumsqr(u)])], ["z", "u"], ["zn", "zo", "c"])
+  x0, big_u = sc.sym("x0", 2), sc.sym("U", n)
+  _, xs, costs = sc.scan(step, x0, [(big_u, 0, 1)], length=n)
+  shoot = sc.Function._from_exprs(f"ss{n}_shoot", [x0, big_u], [xs, costs], ["x0", "U"], ["X", "costs"])
+  xs_c, costs_c = shoot._flat_symbolic_call([x0, big_u])
+  return sc.Function._from_exprs(f"ss{n}_cost", [x0, big_u], [costs_c.sum() + 10.0 * sc.sumsqr(xs_c)], ["x0", "U"], ["f"])
+
+
+def _condensed_hessian(n: int) -> np.ndarray:
+  a = np.array([[1.0, DT], [0.0, 1.0]])
+  b = np.array([[0.5 * DT**2], [DT]])
+  phi = [np.linalg.matrix_power(a, k) for k in range(n + 1)]
+  gam = [np.hstack([phi[k - 1 - j] @ b if j < k else np.zeros((2, 1)) for j in range(n)]) for k in range(n + 1)]
+  return sum(2 * g.T @ g for g in gam[:n]) + sum(20 * g.T @ g for g in gam[1:]) + 0.2 * np.eye(n)
+
+
+def test_hessian_through_a_scan_is_a_fixed_number_of_loops(monkeypatch: pytest.MonkeyPatch) -> None:
+  """Forward over reverse through single shooting: one tangent scan forwards and the adjoint scans
+  backwards, each carrying every seed, however long the horizon. The adjoint scans read the stored
+  tangent carries in place, and the call around the scan gets no separate tangent helper."""
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  from scaly.ir.expr import ExprOp
+
+  shapes = []
+  for n in (5, 11):
+    cost = _single_shooting_cost(n)
+    hess = sc.hessian(cost, "f", "U")
+    point = (np.array([1.0, -0.5]), np.sin(np.arange(n)))
+    np.testing.assert_allclose(hess(point), _condensed_hessian(n), rtol=1e-12, atol=1e-12)
+    loops = _loop_nodes(list(hess.outputs))
+    assert len({n.attrs["callee"].name for n in loops}) == 4  # primal, tangent, and one adjoint per scan output
+    for node in loops:
+      for outer in node.args[1:]:
+        copied = False
+        while outer.op in (ExprOp.RESHAPE, ExprOp.GATHER):
+          copied |= outer.op == ExprOp.GATHER
+          outer = outer.args[0]
+        assert not (copied and outer.op == ExprOp.SCAN), "a tangent trajectory is copied before a scan reads it"
+    src = render_c_source(hess)
+    assert f"ss{n}_shoot_fwd" not in src
+    shapes.append((src.count("for ("), sorted(p.replace(str(n), "N") for p in re.findall(r"void (\w+)_raw\(", src))))
+  assert shapes[0] == shapes[1]
+
+
+def test_jacobian_of_a_while_loop_is_one_loop_carrying_every_seed(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
+  cond, body = _newton(3, "wm")
+  c0 = sc.sym("c0", 6)
+  final, _ = sc.while_loop(cond, body, c0, max_iter=60)
+  f = sc.Function._from_exprs("wm_solve", [c0], [final[:3]], ["c0"], ["x"])
+  start = np.array([1.5, 1.5, 1.5, 8.0, 27.0, 2.0])
+  jac = sc.jacobian(f, "x", "c0")(start)
+  x = f(start)
+  np.testing.assert_allclose(jac[:, 3:], np.diag(1.0 / (3.0 * x * x)), rtol=1e-9, atol=1e-12)  # the implicit derivative at convergence
+  np.testing.assert_allclose(jac, finite_difference(f, start).reshape(jac.shape), rtol=1e-5, atol=1e-6)
+  loops = _loop_nodes([sc.jacobian(f.outputs[0], c0)])
+  assert {n.attrs["callee"].name for n in loops} == {"wm_step_whilefwd6"}

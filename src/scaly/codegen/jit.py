@@ -328,8 +328,11 @@ class CompiledFunction:
       res_array[i] = out.ctypes.data_as(_C_DOUBLE_P)
 
     if self._sz_w:
-      w_buf = (ctypes.c_double * self._sz_w)()
-      w_ptr = ctypes.cast(w_buf, _C_DOUBLE_P)
+      # A NumPy buffer, not ``ctypes.cast`` of a ctypes array: the cast ties the array into a reference
+      # cycle, so each call's workspace lived until the next garbage collection and a loop of calls on
+      # a large workspace grew without bound.
+      w_buf = np.zeros(self._sz_w, dtype=np.float64)
+      w_ptr = w_buf.ctypes.data_as(_C_DOUBLE_P)
     else:
       w_buf = None  # noqa: F841 -- keep lifetime explicit even when unused
       w_ptr = _C_DOUBLE_P()

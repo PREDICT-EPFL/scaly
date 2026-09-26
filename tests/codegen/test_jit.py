@@ -159,3 +159,32 @@ def test_deep_block_callee_temporaries_do_not_shadow_inputs(isolated_cache, inpu
   for _ in range(40):
     expected = np.sin(expected) + 0.1
   np.testing.assert_allclose(root(np.array([0.3])), expected)
+
+
+def test_each_calls_workspace_is_released_without_a_garbage_collection(isolated_cache) -> None:
+  """A call's workspace must be freed when the call returns. ``ctypes.cast`` of a ctypes array puts
+  the array in a reference cycle, which kept every workspace alive until the next collection."""
+  import gc
+  import tracemalloc
+
+  z0, us = sc.sym("z0", 4), sc.sym("us", 3000)
+  c, u = sc.sym("c", 4), sc.sym("u", 1)
+  step = sc.Function._from_exprs("ws_step", [c, u], [c * 0.99 + u[0]], ["c", "u"], ["cn"])
+  (final,) = sc.scan(step, z0, [(us, 0, 1)], length=3000)
+  (grad,) = sc.vjp((final,), (us,), (sc.const(np.ones(4)),))  # stores 3000 carries: a large workspace
+  fn = sc.Function._from_exprs("ws_grad", [z0, us], [grad], ["z0", "us"], ["g"])
+  point = (np.ones(4), np.zeros(3000))
+  fn(point)
+  workspace_bytes = 8 * fn._compiled._sz_w
+  assert workspace_bytes >= 8 * 4 * 3000
+  gc.disable()
+  tracemalloc.start()
+  try:
+    before = tracemalloc.get_traced_memory()[0]
+    for _ in range(20):
+      fn(point)
+    grown = tracemalloc.get_traced_memory()[0] - before
+  finally:
+    tracemalloc.stop()
+    gc.enable()
+  assert grown < 2 * workspace_bytes
