@@ -344,6 +344,14 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       box scaling match the reference to 1e-13 on all 48 stored problems with and without cost
       scaling. 8-325 us per call, below PIQP's whole setup except on dense `P`
       (`perf_2026_09_26_tier3/t3_2_ruiz.py`, `notes/tier3_pr2_report.html`).
+- [x] **C-127. The KKT backends (T3-3).** `scaly.solvers.ipm.KKT`: PIQP's `KKTSystem` (the box and
+      inequality barrier regularizations, the reduced right-hand sides, dual and slack recovery
+      for one- and two-sided rows) over a dense backend (the condensed matrix assembled from
+      sparse products, densified once, Cholesky) and a sparse one (the upper-triangle KKT matrix,
+      `SparseLDL`); `Iterate` holds variables in PIQP's layout. Both match the reference's solves to
+      1e-7 on 10 stored problems, free rows, MPC and two-sided rows. One factorization and two
+      solves take 1.3-1.8x PIQP's whole iteration (sparse) and 1.5-3x (dense); refinement and
+      factorization retries are Tier 4 (`perf_2026_09_26_tier3/t3_3_kkt.py`, `notes/tier3_pr3_report.html`).
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 3 PR 3 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 3 · PR 3 report</h1>
+<p class="sub">T3-3 · the KKT backends (C-127) · branch <code>claude/tier3-ipm</code> · 26 Sep 2026</p>
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>scaly.solvers.ipm.KKT</code> is PIQP's <code>KKTSystem</code> as generated code.</p>
+<ul>
+<li><b>Shared by both backends:</b> the box and inequality barrier regularizations, the reduced right-hand sides, and the recovery of duals and slacks for one- and two-sided rows.</li>
+<li><b>Dense backend:</b> the condensed matrix P + X + AᵀA/δ + Gᵀ Z⁻¹ G is assembled from sparse products, densified once and Cholesky-factored.</li>
+<li><b>Sparse backend:</b> the upper triangle of the whole KKT matrix, factored by <code>SparseLDL</code>.</li>
+<li><b>Exact.</b> Solves match the reference to 1e-7 for two regularization levels on 10 stored problems, a free-row problem, MPC and a problem with two-sided rows, on both backends. <code>Factor.ok</code> reports a failed factorization as a non-finite pivot.</li>
+<li><b>Left for Tier 4:</b> iterative refinement and factorization retries (#29), as planned.</li>
+</ul>
+<p style="margin-bottom:0"><b>Mutation checks:</b> 9 of 9 killed, one only after the two-sided case was added.</p>
+</div>
+<h2>Benchmarks</h2>
+<p><code>perf_2026_09_26_tier3/t3_3_kkt.py</code> times one factorization and two solves from equilibrated data. PIQP's figure is its average time per iteration with the same backend, which also covers residuals, step lengths and updates, so the comparison is conservative. Assembling the condensed matrix from sparse products instead of dense ones took the dense backend from 3–9× to 1.5–3×.</p>
+<div class="scroll"><table><tr><th>problem</th><th>n / p / m</th><th>backend</th><th>factor + 2 solves (µs)</th><th>PIQP per iteration (µs)</th><th>first call (s)</th></tr>
+<tr><td>HS21</td><td>2 / 0 / 1</td><td>dense</td><td class="r">9.0</td><td class="r">5.5</td><td class="r">0.04</td></tr>
+<tr><td>HS21</td><td>2 / 0 / 1</td><td>sparse</td><td class="r">9.0</td><td class="r">4.9</td><td class="r">0.04</td></tr>
+<tr><td>QAFIRO</td><td>32 / 8 / 17</td><td>dense</td><td class="r">14.1</td><td class="r">10.4</td><td class="r">0.07</td></tr>
+<tr><td>QAFIRO</td><td>32 / 8 / 17</td><td>sparse</td><td class="r">8.4</td><td class="r">7.6</td><td class="r">0.35</td></tr>
+<tr><td>CVXQP1_S</td><td>100 / 50 / 0</td><td>dense</td><td class="r">76.8</td><td class="r">51.6</td><td class="r">0.05</td></tr>
+<tr><td>CVXQP1_S</td><td>100 / 50 / 0</td><td>sparse</td><td class="r">27.9</td><td class="r">27.2</td><td class="r">0.07</td></tr>
+<tr><td>QPCBLEND</td><td>83 / 43 / 29</td><td>dense</td><td class="r">58.5</td><td class="r">47.1</td><td class="r">0.07</td></tr>
+<tr><td>QPCBLEND</td><td>83 / 43 / 29</td><td>sparse</td><td class="r">21.4</td><td class="r">16.6</td><td class="r">0.07</td></tr>
+<tr><td>QSC205</td><td>203 / 91 / 114</td><td>dense</td><td class="r">446.3</td><td class="r">410.6</td><td class="r">0.07</td></tr>
+<tr><td>QSC205</td><td>203 / 91 / 114</td><td>sparse</td><td class="r">26.0</td><td class="r">27.1</td><td class="r">0.07</td></tr>
+<tr><td>QBORE3D</td><td>315 / 215 / 19</td><td>dense</td><td class="r">1311.3</td><td class="r">536.4</td><td class="r">0.10</td></tr>
+<tr><td>QBORE3D</td><td>315 / 215 / 19</td><td>sparse</td><td class="r">52.2</td><td class="r">52.7</td><td class="r">0.11</td></tr>
+<tr><td>QCAPRI</td><td>353 / 158 / 129</td><td>dense</td><td class="r">1906.6</td><td class="r">1085.1</td><td class="r">0.10</td></tr>
+<tr><td>QCAPRI</td><td>353 / 158 / 129</td><td>sparse</td><td class="r">88.5</td><td class="r">101.3</td><td class="r">0.12</td></tr>
+<tr><td>mpc_12x4_N20</td><td>332 / 252 / 0</td><td>dense</td><td class="r">1576.8</td><td class="r">604.8</td><td class="r">0.10</td></tr>
+<tr><td>mpc_12x4_N20</td><td>332 / 252 / 0</td><td>sparse</td><td class="r">94.9</td><td class="r">114.9</td><td class="r">0.09</td></tr>
+</table></div>
+<p>The rest of the dense cost is the O(n³) Cholesky at n = 200–350, where PIQP uses Eigen's blocked kernels: C-117 (<code>double2</code> dot kernels) and a blocked Cholesky are the levers. For the sparse backend, C-114 (unpadded updates) is the lever. Both belong to T3-6 and T3-R.</p>
+<h2>Next</h2><p>T3-4: one IPM iteration as a Function, matched step by step against the reference.</p>
+</main></body></html>

@@ -11,3 +11,4 @@ no page under `docs/` cites them.
 | `t3_0b_reference_gate.py` | the NumPy PIQP reference against vendored PIQP per problem (MM subset, infeasible set, MPC, random QPs and LPs): iterations with each backend and the reference, decision-trace matches against each backend, whether the backends agree (rounding sensitivity), the reference's wall time |
 | `t3_1_while_params.py` | C-112: `SparseLDL` adaptive refinement (a `while_loop` whose factor, matrix and right-hand side became params) against the plain solve, on KKT systems of 75 to 1200 unknowns; run on two checkouts to compare |
 | `t3_2_ruiz.py` | T3-2: generated Ruiz equilibration against the NumPy reference and PIQP's setup time, with first-call (render and compile) time |
+| `t3_3_kkt.py` | T3-3: one generated factorization and two solves per backend against PIQP's time per iteration with the same backend, and first-call time |
