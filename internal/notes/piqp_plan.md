@@ -1,6 +1,6 @@
 # PIQP in Scaly — living plan
 
-**Status:** Tier 1 done (git tag `tier1-complete`) · Tier 2 in progress on `claude/tier2-sparse`: T2-1 … T2-5 done, T2-6 next · last updated 2026-09-26 (v4.2)
+**Status:** Tier 1 done (git tag `tier1-complete`) · Tier 2 done on `claude/tier2-sparse` (git tag `tier2-complete`) · Tier 3 next · last updated 2026-09-26 (v4.3)
 **Copies:** claude.ai project doc `claude/piqp-plan.md` and repo `internal/notes/piqp_plan.md` hold the same text; update both together. Background and review evidence: `internal/notes/piqp_plan_2026_09_26.html` (v3; superseded where they differ). Tier 1 detail: `claude/tier1-implementation-status.md`.
 
 ## Goal and principles
@@ -29,7 +29,7 @@ Implement the PIQP QP solver in Scaly, written once in Python and emitted as C s
 Results: MPC Hessian N=100 205 → 58 µs; RK4 Hessian 1376 → 93 µs; `scan` builds about 270× faster than unrolling. 1057 tests pass.
 Open Tier 1 items: C-89, C-90, C-92, C-94–C-100 in `internal/todo.md`; the `segment` merge question.
 
-## Tier 2 — sparse and dense linear algebra for Scaly (general purpose)
+## Tier 2 — sparse and dense linear algebra for Scaly (general purpose; done: C-101 … C-113, tag `tier2-complete`)
 Aim: sparse matrices and factorizations as first-class, reusable Scaly values, for Newton/SQP KKT steps, Kalman updates, implicit integrators, sparse Jacobian/Hessian workflows and PIQP. It builds on what exists: `SparsityType`, input sparsity declarations, compact outputs of `sparse_jacobian`/`sparse_hessian`.
 
 | # | Item | Content |
@@ -76,9 +76,17 @@ Draft PR sequence:
 | T2-7 | Sparse LDLᵀ and solves (#13–14) | L | done (C-108): `SparseLDL`, in-place column scans, implicit solve derivatives |
 | T2-8 | Index-aware fusion and ragged loops (T2.d–e) | M–L | done (C-109): `ragged_add`/`ragged_dot`; factor 1.04–1.37× the C baseline |
 | T2-9 | Health, refinement, schedule and options (#15, #16, #18); T2.f–g | M | done (C-110): unroll/scan schedules, fixed and adaptive refinement, `inertia`/`health`, `sc.options`, `custom_derivative(sparsity=)`, trajectory guard; T2.g assessed as not needed (C-112); SQP and Kalman examples |
-| T2-R | Agent review round | M | |
+| T2-R | Agent review round | M | done (C-113): 5 agents; 10 defects fixed (6 silent wrong-number), JIT call 4.2 → 3.2 µs, in-place adaptive refinement, C-114–C-117 recorded |
 
 Per-PR reports: `internal/notes/tier2_pr{1..}_report.html`; timings: `internal/notes/perf_2026_09_26_tier2/`.
+
+Results: `SparseLDL` factors within 1.04–1.5× of a QDLDL-class C factorization with loops, and 4–5× faster than it as straight-line code on small KKT systems (≤ 1000 operations). Solves run at 0.5–2.1× that baseline, with implicit derivatives to second order, refinement and inertia/health checks. Dense kernels are within 1.6× of OpenBLAS at `-O3`. Generation takes 1.2 s at nnz(L) = 46 k. The SQP Newton-step and Kalman-update examples pass. 1 460 tests pass. Summary: `internal/notes/tier2_review_report.html`.
+Open Tier 2 items:
+- C-107: the JIT default `-O3`, your decision.
+- C-111, C-115, C-116: generation and compile time of unrolled graphs.
+- C-112: loop-invariant `while_loop` inputs, needed by Tier 3.
+- C-114: unpadded factor updates, 1.6–1.7× in a prototype.
+- C-117: dense dot kernels and small solves.
 
 ## Tier 3 — generic primal–dual IPM machinery
 | # | Item | Notes (corrections from the PIQP 0.6.2 sources) |
@@ -147,6 +155,7 @@ Gates:
 - 2026-09-26 v4: generated-only; plan re-organised into Tiers 1–6; Tier 2 made general-purpose sparse linear algebra; git tag `tier1-complete` marks the end of Tier 1.
 - 2026-09-26 v4.1: the PIQP-specific pending decisions moved to Tiers 3–4; nothing blocks Tier 2.
 - 2026-09-26 v4.2: T2-1 … T2-5 landed (C-101 … C-105).
+- 2026-09-26 v4.3: T2-6 … T2-9 and the T2-R review round landed (C-106 … C-113); Tier 2 closed with tag `tier2-complete`.
 
 ## References
 - Schwan, Jiang, Kuhn, Jones, PIQP, CDC 2023 — https://arxiv.org/abs/2304.00290

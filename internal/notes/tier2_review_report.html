@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 2 Review Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · review round and summary</h1>
+<p class="sub">T2-R · agent review, fixes, optimizations (C-113) and the Tier 2 summary · branch <code>claude/tier2-sparse</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Tier 2 is complete.</b> Scaly now has sparse and dense linear algebra as generated code, and every gate in the plan is met, with one exception: the dense kernels at gcc <code>-O2</code>, which waits on your decision in C-107.</p>
+<ul>
+<li><b>Sparse matrices</b> are values: a fixed pattern with <code>Expr</code> values.</li>
+<li><b><code>SparseLDL</code></b> factors quasi-definite KKT systems.
+<ul>
+<li>Speed: within 1.0–1.5× of a QDLDL-class C factorization, and faster than it when unrolled on small systems.</li>
+<li>Solves carry implicit derivatives, to second order.</li>
+<li>Also available: refinement, inertia and health checks.</li>
+</ul></li>
+<li><b>Dense</b> Cholesky, <code>L D Lᵀ</code> and triangular solves are within 1.6× of OpenBLAS at <code>-O3</code>.</li>
+<li><b>Examples:</b> an SQP Newton step and a Kalman update show the pieces in use outside PIQP.</li>
+</ul>
+<p><b>Review round.</b> Five agents reviewed the whole Tier 2 diff:</p>
+<ul>
+<li>lowering and in-place proofs;</li>
+<li>AD rules;</li>
+<li><code>linalg</code>;</li>
+<li>performance;</li>
+<li>docs and tests.</li>
+</ul>
+<p>They found <b>10 correctness defects</b>, all fixed with regression tests:</p>
+<ul>
+<li>6 give wrong numbers silently;</li>
+<li>4 fail to build;</li>
+<li>2 of the 10 predate Tier 2.</li>
+</ul>
+<p>The round also produced:</p>
+<ul>
+<li><b>four optimizations:</b> JIT calls 4.2 → 3.2 µs, an in-place adaptive refinement loop, and two generation passes no longer quadratic;</li>
+<li><b>about twenty documentation corrections.</b></li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 1 460 passed, 88 skipped (1 421 before the round); the same four VM-only failures. ruff, ty and the strict docs build are clean. <b>Mutation checks:</b> 21 of 21 killed. Two needed a sharper mutant or an added test (details in §4).</p>
+</div>
+
+<h2>1. Tier 2 at a glance</h2>
+<div class="scroll"><table>
+<tr><th>PR</th><th>What it added</th><th>Key number</th></tr>
+<tr><td>T2-1 (C-101)</td><td>Step number as a loop-body input (<code>index=True</code>); int64 procedures scalarize</td><td>No step table stored</td></tr>
+<tr><td>T2-2 (C-102)</td><td><code>take</code>, <code>put_add</code>, <code>put</code> with run-time int64 indices and per-lane scratch</td><td>Differentiable to second order</td></tr>
+<tr><td>T2-3 (C-103)</td><td>In-place carries proven at the loop from its index tables</td><td>Aᵀy at n = 2 000: 2 283 → 51 µs</td></tr>
+<tr><td>T2-4 (C-104)</td><td><code>SparseMatrix</code>: static CSC pattern, <code>Expr</code> values, algebra, block assembly</td><td>KKT assembly 16× faster than SciPy <code>bmat</code></td></tr>
+<tr><td>T2-5 (C-105)</td><td>Symbolic LDLᵀ: orderings, etree, L pattern, tables, segment DP</td><td>MMD fill = SuperLU's</td></tr>
+<tr><td>T2-6 (C-106)</td><td>Dense <code>cholesky</code>, <code>ldl</code>, <code>solve_triangular</code> (+ solves)</td><td>≤ 1.6× OpenBLAS at <code>-O3</code></td></tr>
+<tr><td>T2-7 (C-108)</td><td><code>SparseLDL</code>: column scans, factor/solve split, implicit derivatives</td><td>1.3–2.5× C baseline (first round)</td></tr>
+<tr><td>T2-8 (C-109)</td><td><code>ragged_add</code>/<code>ragged_dot</code>; the factor rewritten on them</td><td>1.04–1.37× C; 2.5 s generation at nnz(L) = 153 k</td></tr>
+<tr><td>T2-9 (C-110)</td><td>Schedules (unroll/scan), refinement, inertia/health, <code>sc.options</code>, sparsity overrides, trajectory guard, examples</td><td>Unrolled: 4–5× faster than C on small KKT systems</td></tr>
+<tr><td>T2-R (C-113)</td><td>Review fixes and optimizations</td><td>10 defects fixed; JIT call −24%</td></tr>
+</table></div>
+<div class="scroll"><table>
+<tr><th>Gate (plan v4.2)</th><th>Status</th></tr>
+<tr><td>Residual and forward error against SciPy at δ ∈ {10⁻⁴, 10⁻⁸, 10⁻¹⁰, 10⁻¹³}; MPC KKTs</td><td><span class="ok">met</span> (backward error &lt; 10⁻¹³; refinement reaches rounding at δ = 10⁻¹⁰). The Maros–Mészáros subset arrives with the Tier 3 harness (T3-0).</td></tr>
+<tr><td>Generated LDLᵀ at most 2× QDLDL-class C</td><td><span class="ok">met</span>: 1.04–1.5× with loops; below 1× unrolled</td></tr>
+<tr><td>Generation linear in nnz(L), &lt; 10 s at 50 k</td><td><span class="ok">met</span>: 1.2 s at 46 k</td></tr>
+<tr><td>Dense kernels at most 2× LAPACK at n = 32–64</td><td><span class="ok">met at <code>-O3</code></span>; <span class="warn">3–3.5× at gcc <code>-O2</code></span> (C-107, your decision)</td></tr>
+<tr><td>Two non-PIQP examples</td><td><span class="ok">met</span>: SQP Newton step (quadratic convergence with inertia correction); Kalman update (equals the covariance form; its Jacobian is the gain)</td></tr>
+<tr><td>Kill criteria</td><td>Not triggered: the sparse factor ended at 1.04–1.5×, well under the 3× line.</td></tr>
+</table></div>
+
+<h2>2. Review findings and fixes</h2>
+<div class="scroll"><table>
+<tr><th>Finding (agent)</th><th>Effect</th><th>Fix</th><th>Test</th></tr>
+<tr><td>Generated names <code>t&lt;n&gt;</code>/<code>k&lt;n&gt;</code> could take an input's name (lowering)</td><td><span class="bad">wrong numbers</span>: an input <code>k2</code> read a constant table instead</td><td><code>LowerCtx._fresh</code> skips taken names; the CONST lowering uses it too</td><td>7 names, incl. the reported one</td></tr>
+<tr><td><code>-0.0</code> in a per-step table taken as constant; <code>-0.0</code> rendered <code>-0</code> (lowering)</td><td><span class="bad">wrong sign</span>: <code>1/z</code> gave +∞</td><td>Bit-pattern equality; <code>_c_float</code> emits <code>-0.0</code></td><td>Mixed and all-negative tables</td></tr>
+<tr><td>Structured sparse Jacobian of a <code>vmap</code> bypassed the callee's forward rule (AD)</td><td><span class="bad">wrong numbers</span> (body's derivative)</td><td>Fall back to coloring when the callee has a rule</td><td>With and without a declared pattern</td></tr>
+<tr><td><code>put</code>'s reverse rule with repeated indices (AD)</td><td><span class="bad">wrong gradient</span>; forward mode was right</td><td>Cotangent only to the surviving (last) lane, by a marker put/take; skipped for constant distinct indices</td><td>In range and with dropped lanes, against FD and forward mode</td></tr>
+<tr><td>Second derivative of <code>x**p</code> NaN at <code>x = 0</code> (AD, predates Tier 2)</td><td><span class="bad">NaN Hessians</span>, e.g. of <code>cholesky</code>'s zero triangle</td><td>Constant exponent folded (<code>_minus_one</code>) in forward, multi-seed and reverse rules</td><td>p = 2, 3 at a zero entry</td></tr>
+<tr><td><code>SparseLDL(symbolic=)</code> not checked (linalg, docs)</td><td><span class="bad">wrong solves</span> with another pattern's analysis</td><td><code>SymbolicLDL.check</code> on construction</td><td>Mismatched pattern and size</td></tr>
+<tr><td>Solve variants and their rules shared names (linalg)</td><td><span class="warn">build error</span> with two refinement settings in one graph</td><td>Tag per <code>(refine, tol)</code> in the solve, rule and loop names</td><td>6 variants × vector/matrix + gradients, both schedules</td></tr>
+<tr><td>Hoisting moved a while loop's count away from its loop (docs/tests)</td><td><span class="warn">build error</span>: matrix-RHS adaptive solve</td><td><code>hoist_invariant</code> keeps statements with free or exit variables in place</td><td>Minimal <code>vmap</code>-over-while case, plus the variants test</td></tr>
+<tr><td><code>jvp</code> of a solve formed the factorization's tangent (linalg)</td><td><span class="warn">wasted work</span>: a forward-mode copy of the factor loops</td><td><code>body_tangents</code> passes zeros for tangents the rule never reads</td><td>Only in-place primal factor loops in the C</td></tr>
+<tr><td>Inherited <code>sparsity=</code> kept after new rules (AD)</td><td><span class="warn">stale pattern</span></td><td>A copy given new rules without a pattern drops it</td><td>Assertion in the override test</td></tr>
+<tr><td>Missing-diagonal error named permuted columns (linalg)</td><td>Misleading message</td><td>Input numbering, with the <code>add_diagonal</code> hint</td><td>Arrow matrix under three orderings</td></tr>
+</table></div>
+<p><b>Checked and found sound by the agents:</b></p>
+<ul>
+<li><b>In-place proofs</b> (both fuzzers ran on in-place and two-slot loops, with no difference between them):
+<ul>
+<li>~1 000 random <code>put</code>/<code>put_add</code>/<code>index_add</code> chains;</li>
+<li>~1 400 random <code>ragged</code> chains.</li>
+</ul></li>
+<li><b>Scratch sizing, dense lowering</b> (n = 1–13, all flags, both paths) and <b>int64 scalarization</b>.</li>
+<li><b>All Tier 2 derivative rules</b>, first and second order, against finite differences.</li>
+<li><b>No non-conservative sparsity pattern.</b></li>
+<li><b><code>SparseMatrix</code></b> against SciPy on 16 shapes.</li>
+<li><b><code>analyze</code></b> on 60 random graphs × 3 storages × 4 orderings.</li>
+</ul>
+<p><b>Adopted from the agents' scratch tests:</b></p>
+<ul>
+<li>sparse Hessians in <code>K</code> and mixed <code>K</code>/<code>b</code>, in both storages and both schedules;</li>
+<li>matrix-RHS derivatives;</li>
+<li>third order;</li>
+<li>dense Hessians in the matrix against FD.</li>
+</ul>
+
+<h2>3. Optimizations</h2>
+<div class="scroll"><table>
+<tr><th>Change</th><th class="r">Before</th><th class="r">After</th></tr>
+<tr><td>JIT call: array addresses via the buffer protocol (<code>arr.ctypes.data</code> built a helper object per access, ~0.64 µs each)</td><td class="r">4.2 µs</td><td class="r"><b>3.2 µs</b></td></tr>
+<tr><td>Adaptive refinement: body written so each update reads only entries no later update writes. The in-place proof now also covers bodies with only constant indices (qp 200 + 100, δ = 10⁻¹⁰; overhead over fixed 2 steps)</td><td class="r">+40 µs</td><td class="r"><b>+13 µs</b></td></tr>
+<tr><td><code>fuse_elementwise</code>: writes between producer and consumer found by binary search, not a scan</td><td class="r" rowspan="2">2.14 / 2.62 s</td><td class="r" rowspan="2">2.04 / 2.42 s</td></tr>
+<tr><td><code>pack_workspace</code>: slots from heaps, same choice as the linear scan (property-tested); no dependency closures in call-free procedures. Generation of unrolled qp 40+20 / MPC N=20; the generated C is byte-identical on a six-function set</td></tr>
+</table></div>
+<ul>
+<li><b>Why the generation gain is small.</b> The remaining generation cost is spread across the whole pipeline: <code>match.rewrite</code>, node construction and walks at about 1.2 ms per scalar operation. That is C-111.</li>
+<li><b>The in-place extension</b> was fuzzed on 450 random constant-index loops (246 ran in place) against NumPy and the two-slot loop, with no difference.</li>
+<li><b>One existing test changed.</b> It expected a <code>select</code> body to keep two slots; the loop-level proof now correctly finds that it reads entry 0 and writes entry 3.</li>
+</ul>
+<p><b>Recorded for later, from the performance agent:</b></p>
+<ul>
+<li><b>C-114:</b> unpadded update groups. A hand-written prototype is 1.6–1.7× faster on grid and MPC systems and beats the C baseline. It needs a two-level ragged op with its own rules.</li>
+<li><b>C-115:</b> a JIT cache key taken before lowering. Warm runs currently repeat all Python generation.</li>
+<li><b>C-116:</b> straight-line stores straight into the result, which halves gcc time.</li>
+<li><b>C-117:</b> <code>double2</code> dense dot kernels and small-solve micro-fixes.</li>
+</ul>
+
+<h2>4. Tests and mutation checks</h2>
+<ul>
+<li><b>New regression tests</b> cover every fix (§2) and every optimization. That is 39 more test cases; the node-ID baseline is updated.</li>
+<li><b>Mutation checks on the fixes</b> (14 mutants, all killed): fresh names, bit equality, <code>-0.0</code> literal, vmap fallback, put winners, stale pattern, constant exponent, solve tag, rule tag, unread tangents, symbolic check, diagonal numbering, and hoisting (2).
+<ul>
+<li>The rule-tag mutant is killed only when both the jvp and the vjp names collide; gradients use the vjp.</li>
+<li>The first symbolic-check mutant was a syntax error; it was redone with <code>pass</code>, and that version is killed.</li>
+</ul></li>
+<li><b>Mutation checks on the optimizations</b> (7 mutants, all killed): address fallback, steps length, steps call, the fuse boundary, the pack boundary, dependency tracking, and scalar refusal.
+<ul>
+<li>The pack-boundary mutant (a slot reused one statement late) changed only memory use and first survived; the property test against a linear-scan reference now kills it.</li>
+</ul></li>
+</ul>
+<p>Scripts: <code>perf_2026_09_26_tier2/review_optimizations.py</code>, with re-runs of <code>pr7_sparse_ldl.py</code> and <code>pr9_schedule.py</code>.</p>
+
+<h2>5. Hand-off to Tier 3</h2>
+<p><b>Ready for the IPM</b>, all generated code:</p>
+<ul>
+<li>KKT assembly from sparse blocks;</li>
+<li>quasi-definite factorizations with inertia checks, refinement and implicit solve derivatives;</li>
+<li>dense Cholesky for the condensed backend;</li>
+<li><code>while_loop</code> with step indices and in-place carries.</li>
+</ul>
+<p><b>Open items that matter there:</b></p>
+<ul>
+<li><b>C-112:</b> loop-invariant <code>while_loop</code> inputs, for outer IPM loops and refinement.</li>
+<li><b>C-114:</b> unpadded factor updates, since the factorization dominates IPM time.</li>
+<li><b>C-107</b> (your decision): <code>-O3</code> by default.</li>
+<li><b>C-111 / C-115 / C-116:</b> generation and compile time of large unrolled graphs.</li>
+</ul>
+<p>The plan (<code>piqp_plan.md</code>, v4.3) is updated in the repo and in the project, and the branch is tagged <code>tier2-complete</code>.</p>
+</main></body></html>
