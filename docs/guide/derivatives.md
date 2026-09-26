@@ -148,9 +148,12 @@ time unless `SCALY_STRICT_JVP_MANY=1` is set.
 
 Batched forward mode through `scan` and `while_loop` is one loop whose carry holds the primal and
 every seed's tangent, so the Jacobian or Hessian of a rollout is a fixed number of loops for any
-horizon. For a Hessian, that is one tangent scan forwards and the adjoint scans backwards, each
-carrying all the seeds; the work is still proportional to the number of seeds times the number of
-steps.
+horizon. For a Hessian, that is one tangent scan forwards and one adjoint scan backwards (reverse
+mode differentiates every used output of a scan in one backward scan), each carrying all the
+seeds. When a step has fewer inputs than there are seeds, the step's own small Jacobian is formed
+once per step and the seeds are multiplied by it, so the work per step is a matrix product rather
+than the step's operations repeated per seed; it is still proportional to the number of seeds times
+the number of steps.
 
 Derivatives through `CALL` and `VMAP` keep those nodes instead of expanding them. See
 [How differentiation works](../how_it_works/autodiff.md).
