@@ -1,7 +1,8 @@
 /* Run the vendored PIQP on one problem with verbose output and print its result at full precision.
  *
  * Usage: piqp_trace <problem.bin>. The file, written by tests/ipm/piqp_trace.py, is little endian:
- * int64 header[8] = {n, p, m, nnz(P upper), nnz(A), nnz(G), dense, max_iter (< 0: PIQP's default)},
+ * int64 header[10] = {n, p, m, nnz(P upper), nnz(A), nnz(G), dense, max_iter,
+ * iterative_refinement_always_enabled, preconditioner_scale_cost} (a negative setting keeps PIQP's default),
  * then P, A and G each as CSC (int32 col_ptr[n + 1], int32 row_ind[nnz], double values[nnz]) with
  * the vectors after them: P, c[n], A, b[p], G, h_l[m], h_u[m], x_l[n], x_u[n]. An absent bound
  * is an IEEE infinity, which PIQP reads as absent (anything at or beyond PIQP_INF is).
@@ -59,8 +60,8 @@ int main(int argc, char **argv) {
     perror("piqp_trace");
     return 2;
   }
-  int64_t header[8];
-  if (fread(header, sizeof(int64_t), 8, f) != 8) {
+  int64_t header[10];
+  if (fread(header, sizeof(int64_t), 10, f) != 10) {
     fprintf(stderr, "piqp_trace: truncated header\n");
     return 2;
   }
@@ -83,6 +84,8 @@ int main(int argc, char **argv) {
   settings.verbose = 1;
   settings.compute_timings = 1;
   if (header[7] >= 0) settings.max_iter = (piqp_int)header[7];
+  if (header[8] >= 0) settings.iterative_refinement_always_enabled = (piqp_int)header[8];
+  if (header[9] >= 0) settings.preconditioner_scale_cost = (piqp_int)header[9];
 
   piqp_workspace *work = NULL;
   if (dense) {

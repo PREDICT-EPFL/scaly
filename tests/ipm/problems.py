@@ -161,3 +161,37 @@ def mpc_qp(nx: int, nu: int, horizon: int, *, seed: int = 0, name: str | None = 
     x_l=np.r_[np.full(nz, -2.0), np.full(nv, -0.5)],
     x_u=np.r_[np.full(nz, 2.0), np.full(nv, 0.5)],
   )
+
+
+def kkt_residuals(qp: QP, *, x, y, z_l, z_u, z_bl, z_bu, **_) -> tuple[float, float]:
+  """Primal and dual residuals (infinity norms) of a solution in PIQP's layout, from the problem data:
+  ``P x + c + A^T y + G^T (z_u - z_l) + z_bu - z_bl = 0`` and the constraints."""
+  primal = [np.abs(qp.A @ x - qp.b).max(initial=0.0)]
+  gx = qp.G @ x
+  primal += [np.maximum(qp.h_l - gx, 0.0).max(initial=0.0), np.maximum(gx - qp.h_u, 0.0).max(initial=0.0)]
+  primal += [np.maximum(qp.x_l - x, 0.0).max(initial=0.0), np.maximum(x - qp.x_u, 0.0).max(initial=0.0)]
+  grad = qp.P @ x + qp.c + qp.A.T @ y + qp.G.T @ (z_u - z_l) + z_bu - z_bl
+  return max(primal), float(np.abs(grad).max(initial=0.0))
+
+
+def random_qp(n: int, m: int, p: int, *, density: float = 0.15, seed: int = 0, lp: bool = False) -> QP:
+  """A random feasible QP (an LP with ``lp=True``): ``P = M^T M + 1e-2 I`` sparse, ``m`` two-sided or
+  one-sided inequalities and ``p`` equalities around a random point, and boxes on half the variables."""
+  rng = np.random.default_rng(seed)
+  if lp:
+    P = sparse.csc_array((n, n))
+  else:
+    M = sparse.random_array((n, n), density=density, rng=rng)
+    P = sparse.csc_array(M.T @ M + 1e-2 * sparse.eye_array(n))
+  A = sparse.random_array((p, n), density=max(density, 2.0 / n), rng=rng, data_sampler=rng.standard_normal)
+  G = sparse.random_array((m, n), density=max(density, 2.0 / n), rng=rng, data_sampler=rng.standard_normal)
+  x0 = rng.standard_normal(n)
+  gx = G @ x0
+  kind = rng.integers(0, 3, m)  # 0: lower only, 1: upper only, 2: both
+  h_l = np.where(kind != 1, gx - rng.uniform(0.0, 1.0, m), -np.inf)
+  h_u = np.where(kind != 0, gx + rng.uniform(0.0, 1.0, m), np.inf)
+  boxed = rng.random(n) < 0.5
+  x_l = np.where(boxed, x0 - rng.uniform(0.0, 2.0, n), -np.inf)
+  x_u = np.where(boxed, x0 + rng.uniform(0.0, 2.0, n), np.inf)
+  c = rng.standard_normal(n)
+  return _qp(f"random_{'lp' if lp else 'qp'}_{n}_{m}_{p}_{seed}", P, c, A=A, b=A @ x0, G=G, h_l=h_l, h_u=h_u, x_l=x_l, x_u=x_u)

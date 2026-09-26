@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tier 3 PR 0b Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 3 · PR 0b report</h1>
+<p class="sub">T3-0b · the NumPy reference of PIQP 0.6.2 (C-124) · branch <code>claude/tier3-ipm</code> · 26 Sep 2026</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> The Tier 3 oracle exists and passes its gate.</p>
+<ul>
+<li><b>A line-by-line port of PIQP 0.6.2</b> (<code>tests/ipm/reference.py</code>, NumPy and SciPy): the solver loop, Ruiz equilibration, preprocessing, and the KKT system with iterative refinement. It solves the same regularized KKT matrix as PIQP's sparse backend, with SuperLU instead of an unpivoted LDLᵀ.</li>
+<li><b>Gate met.</b> Decision traces (status, iteration count, and ρ and δ at every iteration to 1e-3) match PIQP's sparse backend on <b>46 of 48</b> stored problems; the threshold is 90%. They also match on every problem where PIQP's own two backends follow the same path. The two misses, QCAPRI and QSHARE2B, are rounding-sensitive: PIQP's backends drift apart on them as well.</li>
+<li><b>Full precision.</b> Iterates agree to 1e-13 after the first iteration on every problem. Traces agree to about 1e-14 early and 1e-8 to 1e-5 near convergence, where the KKT system is ill-conditioned. With iterative refinement always on, 48 of 48 match.</li>
+<li><b>PIQP quirks found and reproduced:</b>
+<ul>
+<li>The box terms of the primal residual and of the primal proximal infeasibility enter as a signed <code>max</code>, so a negative box residual never counts.</li>
+<li>Cost scaling computes its maxima in the memory that the Ruiz stopping test reads for the box scaling.</li>
+<li><code>0/0</code> in the μ-rate and in σ gives NaN, which <code>std::max</code> and <code>std::min</code> map to 0 and 1.</li>
+</ul>
+Each quirk is pinned by a test that fails without it.</li>
+<li><b>Plan revised (v4.5).</b> The proximal ρ/δ updates, the boundary shift and infeasibility detection move from Tier 4 into T3-4, because matching the reference needs them.</li>
+</ul>
+<p style="margin-bottom:0"><b>Mutation checks:</b> 23 mutants of the decision rules and the scaling, all killed. Nine were killed only after tests were added: a stability-filtered per-problem check, scaling edge cases, and two targeted problems for the boundary shifts.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>Data</code>, <code>setup_data</code></td><td>PIQP's preprocessing. Bounds at or beyond ±1e30 are absent. A row infinite on both sides keeps its place with its G row zeroed and bounds [−1, 1]. Finite box bounds are packed at the head, with their indices.</td></tr>
+<tr><td><code>Ruiz</code></td><td>PIQP's Ruiz equilibration: KKT column and row maxima including the box scaling, <code>limit_scaling</code>, the 1e-3 stopping test, cost scaling with its aliasing, and every scale and unscale map the solver uses.</td></tr>
+<tr><td><code>KKTSystem</code></td><td>The x and z barrier regularizations; static regularization and iterative refinement exactly as PIQP applies them (the refinement error uses the regularized x diagonal but the unregularized δ and z); dual recovery for one- and two-sided rows; box-dual recovery.</td></tr>
+<tr><td><code>Solver</code></td><td>The initial point (one solve, shift, μ ≥ 1e-10, central-path projection); termination; infeasibility detection; the boundary shift; the fine-tuning switch; factorization retries; Mehrotra predictor–corrector with σ = clip³; the proximal ρ/δ updates and the no-inequality branch; unscaling and <code>restore_dual</code>. One trace row per iteration in PIQP's table layout, plus σ.</td></tr>
+<tr><td><code>problems.random_qp</code></td><td>Random feasible QPs and LPs. Several of the LPs are unbounded, and some degenerate ones run PIQP to its iteration limit, which is useful for Tier 4.</td></tr>
+<tr><td>Driver</td><td>The header now also sets <code>iterative_refinement_always_enabled</code> and <code>preconditioner_scale_cost</code>, so both paths can be compared.</td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<p><code>tests/ipm/test_reference.py</code>, 133 cases, 14 of them skipped as rounding-sensitive:</p>
+<ul>
+<li>the gate;</li>
+<li>full precision on HS21, DUAL1, HS118 and TAME;</li>
+<li>agreement to rounding after one iteration on all 48;</li>
+<li>refinement always on;</li>
+<li>cost scaling, including the aliasing case;</li>
+<li>MPC traces;</li>
+<li>infeasible statuses;</li>
+<li>KKT and complementarity of every reference solution;</li>
+<li>free rows, the signed maxima and the no-inequality branch;</li>
+<li>decisions on every problem PIQP's backends agree on (MM, infeasible, MPC, random);</li>
+<li>scaling edge cases (tiny and huge coefficients, tiny rows) at full precision;</li>
+<li>the inequality-dual shift.</li>
+</ul>
+<p>Killed mutants: σ squared; τ missing from the predictor; the damped ρ factor; the early-iteration window; the 5% decrease test; box residuals by absolute value; the projection radius; no μ floor; each Ruiz limit; the Ruiz stopping tolerance; free rows bounded by 2; each boundary shift; no fine-tuning; no static regularization; infeasibility after one miss; no gap check; the centre never moving; no aliasing; the equality-only ρ factor; the box barrier missing from the x regularization; the sign in the two-sided dual recovery.</p>
+
+<h2>3. Benchmarks: the gate, problem by problem</h2>
+<p><code>perf_2026_09_26_tier3/t3_0b_reference_gate.py</code>. "= sparse" and "= dense" mean the reference takes the same decisions as that PIQP backend. "Backends agree" means PIQP's two backends follow the same path. Reference times are Python wall time.</p>
+<div class="scroll"><table>
+<tr><th>problem</th><th>status</th><th>PIQP sparse</th><th>PIQP dense</th><th>reference</th><th>= sparse</th><th>= dense</th><th>backends agree</th><th>ms</th></tr>
+<tr><td>CVXQP1_S</td><td class="r">1</td><td class="r">9</td><td class="r">9</td><td class="r">9</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">14</td></tr>
+<tr><td>CVXQP2_S</td><td class="r">1</td><td class="r">10</td><td class="r">10</td><td class="r">10</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">13</td></tr>
+<tr><td>CVXQP3_S</td><td class="r">1</td><td class="r">10</td><td class="r">10</td><td class="r">10</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">15</td></tr>
+<tr><td>DPKLO1</td><td class="r">1</td><td class="r">2</td><td class="r">2</td><td class="r">2</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">8</td></tr>
+<tr><td>DUAL1</td><td class="r">1</td><td class="r">12</td><td class="r">12</td><td class="r">12</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">16</td></tr>
+<tr><td>DUAL2</td><td class="r">1</td><td class="r">11</td><td class="r">11</td><td class="r">11</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">17</td></tr>
+<tr><td>DUAL3</td><td class="r">1</td><td class="r">12</td><td class="r">12</td><td class="r">12</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">19</td></tr>
+<tr><td>DUAL4</td><td class="r">1</td><td class="r">11</td><td class="r">11</td><td class="r">11</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">15</td></tr>
+<tr><td>DUALC1</td><td class="r">1</td><td class="r">10</td><td class="r">10</td><td class="r">10</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">15</td></tr>
+<tr><td>DUALC2</td><td class="r">1</td><td class="r">9</td><td class="r">9</td><td class="r">9</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">14</td></tr>
+<tr><td>DUALC5</td><td class="r">1</td><td class="r">9</td><td class="r">9</td><td class="r">9</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">15</td></tr>
+<tr><td>DUALC8</td><td class="r">1</td><td class="r">10</td><td class="r">10</td><td class="r">10</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">18</td></tr>
+<tr><td>GENHS28</td><td class="r">1</td><td class="r">1</td><td class="r">1</td><td class="r">1</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">6</td></tr>
+<tr><td>HS118</td><td class="r">1</td><td class="r">12</td><td class="r">12</td><td class="r">12</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">10</td></tr>
+<tr><td>HS21</td><td class="r">1</td><td class="r">9</td><td class="r">9</td><td class="r">9</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">11</td></tr>
+<tr><td>HS268</td><td class="r">1</td><td class="r">7</td><td class="r">7</td><td class="r">7</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">10</td></tr>
+<tr><td>HS35</td><td class="r">1</td><td class="r">5</td><td class="r">5</td><td class="r">5</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">9</td></tr>
+<tr><td>HS35MOD</td><td class="r">1</td><td class="r">9</td><td class="r">9</td><td class="r">9</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">12</td></tr>
+<tr><td>HS51</td><td class="r">1</td><td class="r">1</td><td class="r">1</td><td class="r">1</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">6</td></tr>
+<tr><td>HS52</td><td class="r">1</td><td class="r">2</td><td class="r">2</td><td class="r">2</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">7</td></tr>
+<tr><td>HS53</td><td class="r">1</td><td class="r">6</td><td class="r">6</td><td class="r">6</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">9</td></tr>
+<tr><td>HS76</td><td class="r">1</td><td class="r">6</td><td class="r">6</td><td class="r">6</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">9</td></tr>
+<tr><td>LOTSCHD</td><td class="r">1</td><td class="r">8</td><td class="r">8</td><td class="r">8</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">10</td></tr>
+<tr><td>PRIMAL1</td><td class="r">1</td><td class="r">8</td><td class="r">8</td><td class="r">8</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">24</td></tr>
+<tr><td>PRIMALC1</td><td class="r">1</td><td class="r">14</td><td class="r">14</td><td class="r">14</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">17</td></tr>
+<tr><td>PRIMALC2</td><td class="r">1</td><td class="r">12</td><td class="r">12</td><td class="r">12</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">15</td></tr>
+<tr><td>PRIMALC5</td><td class="r">1</td><td class="r">9</td><td class="r">9</td><td class="r">9</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">14</td></tr>
+<tr><td>QADLITTL</td><td class="r">1</td><td class="r">12</td><td class="r">12</td><td class="r">12</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">17</td></tr>
+<tr><td>QAFIRO</td><td class="r">1</td><td class="r">13</td><td class="r">13</td><td class="r">13</td><td class="r">yes</td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r">16</td></tr>
+<tr><td>QBEACONF</td><td class="r">1</td><td class="r">17</td><td class="r">23</td><td class="r">17</td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r"><span class="bad">no</span></td><td class="r">43</td></tr>
+<tr><td>QBORE3D</td><td class="r">1</td><td class="r">19</td><td class="r">20</td><td class="r">19</td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r"><span class="bad">no</span></td><td class="r">36</td></tr>
+<tr><td>QBRANDY</td><td class="r">1</td><td class="r">16</td><td class="r">16</td><td class="r">16</td><td class="r">yes</td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r">39</td></tr>
+<tr><td>QCAPRI</td><td class="r">1</td><td class="r">84</td><td class="r">32</td><td class="r">31</td><td class="r"><span class="bad">no</span></td><td class="r"><span class="bad">no</span></td><td class="r"><span class="bad">no</span></td><td class="r">72</td></tr>
+<tr><td>QE226</td><td class="r">1</td><td class="r">19</td><td class="r">19</td><td class="r">19</td><td class="r">yes</td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r">49</td></tr>
+<tr><td>QGROW7</td><td class="r">1</td><td class="r">24</td><td class="r">24</td><td class="r">24</td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r"><span class="bad">no</span></td><td class="r">69</td></tr>
+<tr><td>QISRAEL</td><td class="r">1</td><td class="r">23</td><td class="r">23</td><td class="r">23</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">50</td></tr>
+<tr><td>QPCBLEND</td><td class="r">1</td><td class="r">16</td><td class="r">16</td><td class="r">16</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">19</td></tr>
+<tr><td>QPCBOEI2</td><td class="r">1</td><td class="r">21</td><td class="r">21</td><td class="r">21</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">32</td></tr>
+<tr><td>QPTEST</td><td class="r">1</td><td class="r">8</td><td class="r">8</td><td class="r">8</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">10</td></tr>
+<tr><td>QRECIPE</td><td class="r">1</td><td class="r">19</td><td class="r">19</td><td class="r">19</td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r"><span class="bad">no</span></td><td class="r">23</td></tr>
+<tr><td>QSC205</td><td class="r">1</td><td class="r">16</td><td class="r">16</td><td class="r">16</td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r"><span class="bad">no</span></td><td class="r">20</td></tr>
+<tr><td>QSCAGR7</td><td class="r">1</td><td class="r">15</td><td class="r">15</td><td class="r">15</td><td class="r">yes</td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r">19</td></tr>
+<tr><td>QSHARE1B</td><td class="r">1</td><td class="r">24</td><td class="r">29</td><td class="r">24</td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r"><span class="bad">no</span></td><td class="r">31</td></tr>
+<tr><td>QSHARE2B</td><td class="r">1</td><td class="r">18</td><td class="r">18</td><td class="r">17</td><td class="r"><span class="bad">no</span></td><td class="r"><span class="bad">no</span></td><td class="r"><span class="bad">no</span></td><td class="r">21</td></tr>
+<tr><td>S268</td><td class="r">1</td><td class="r">7</td><td class="r">7</td><td class="r">7</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">9</td></tr>
+<tr><td>TAME</td><td class="r">1</td><td class="r">4</td><td class="r">4</td><td class="r">4</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">8</td></tr>
+<tr><td>VALUES</td><td class="r">1</td><td class="r">12</td><td class="r">12</td><td class="r">12</td><td class="r">yes</td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r">16</td></tr>
+<tr><td>ZECEVIC2</td><td class="r">1</td><td class="r">8</td><td class="r">8</td><td class="r">8</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">10</td></tr>
+<tr><td>box_contradiction</td><td class="r">-1</td><td class="r">250</td><td class="r">250</td><td class="r">250</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">149</td></tr>
+<tr><td>parallel_equalities</td><td class="r">-1</td><td class="r">250</td><td class="r">250</td><td class="r">250</td><td class="r"><span class="bad">no</span></td><td class="r">yes</td><td class="r"><span class="bad">no</span></td><td class="r">115</td></tr>
+<tr><td>empty_slab</td><td class="r">-2</td><td class="r">8</td><td class="r">8</td><td class="r">8</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">6</td></tr>
+<tr><td>unbounded_lp</td><td class="r">-3</td><td class="r">14</td><td class="r">14</td><td class="r">14</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">10</td></tr>
+<tr><td>unbounded_ray</td><td class="r">-2</td><td class="r">9</td><td class="r">9</td><td class="r">9</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">6</td></tr>
+<tr><td>mpc_4x2_N10</td><td class="r">1</td><td class="r">8</td><td class="r">8</td><td class="r">8</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">11</td></tr>
+<tr><td>mpc_12x4_N20</td><td class="r">1</td><td class="r">7</td><td class="r">7</td><td class="r">7</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">14</td></tr>
+<tr><td>mpc_27x6_N30</td><td class="r">1</td><td class="r">8</td><td class="r">8</td><td class="r">8</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">38</td></tr>
+<tr><td>random_qp_30_20_5_0</td><td class="r">1</td><td class="r">9</td><td class="r">9</td><td class="r">9</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">13</td></tr>
+<tr><td>random_qp_30_20_5_1</td><td class="r">1</td><td class="r">8</td><td class="r">8</td><td class="r">8</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">12</td></tr>
+<tr><td>random_qp_30_20_5_2</td><td class="r">1</td><td class="r">7</td><td class="r">7</td><td class="r">7</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">11</td></tr>
+<tr><td>random_qp_30_20_5_3</td><td class="r">1</td><td class="r">8</td><td class="r">8</td><td class="r">8</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">12</td></tr>
+<tr><td>random_lp_20_15_5_7</td><td class="r">-3</td><td class="r">13</td><td class="r">13</td><td class="r">13</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">15</td></tr>
+<tr><td>random_lp_20_15_5_35</td><td class="r">1</td><td class="r">12</td><td class="r">12</td><td class="r">12</td><td class="r">yes</td><td class="r">yes</td><td class="r">yes</td><td class="r">14</td></tr>
+</table></div>
+
+<h2>4. Gates</h2>
+<ul>
+<li>The reference reproduces PIQP's decision traces on ≥ 90% of the small subset: <span class="ok">met</span> (46/48 = 96%).</li>
+<li>The Scaly IPM with the dense backend matches the reference: that is T3-5.</li>
+</ul>
+
+<h2>5. Next</h2>
+<ul>
+<li>T3-1 = C-112: loop-invariant <code>while_loop</code> inputs.</li>
+<li>Then T3-2 (Ruiz in Scaly), T3-3 (the KKT backends) and T3-4 (one iteration, now including #26–#28).</li>
+</ul>
+</main></body></html>

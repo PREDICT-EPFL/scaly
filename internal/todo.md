@@ -296,6 +296,15 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       the infeasible set PIQP runs two primal-infeasible problems to the iteration limit and
       calls an unbounded one primal infeasible; the reference has to reproduce both
       (`perf_2026_09_26_tier3/t3_0_piqp_baseline.py`, `notes/tier3_pr0a_report.html`).
+- [x] **C-124. The NumPy PIQP reference (T3-0b).** `tests/ipm/reference.py` ports PIQP 0.6.2's
+      solver loop, Ruiz equilibration, preprocessing and KKT system with iterative refinement line
+      by line, solving the regularized KKT matrix with SuperLU. Decision traces (status, iterations,
+      rho and delta to 1e-3) match PIQP's sparse backend on 46/48 of the stored subset (gate: 90%)
+      and on every problem where PIQP's two backends follow the same path; full-precision values
+      agree to 1e-14 early and 1e-8 near convergence; refinement-always matches on 48/48. Found and
+      reproduced: signed maxima for box residuals, cost scaling aliasing the Ruiz stopping test,
+      IEEE `0/0` in the mu rate and sigma. 23 mutants of the decision rules, all killed
+      (`perf_2026_09_26_tier3/t3_0b_reference_gate.py`, `notes/tier3_pr0b_report.html`).
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 

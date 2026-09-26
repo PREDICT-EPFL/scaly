@@ -10,6 +10,7 @@ the step parameter ``sigma`` included, which the table leaves out.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -25,6 +26,10 @@ from tests.ipm.problems import QP
 
 SOURCE = Path(__file__).with_name("piqp_trace.c")
 COLUMNS = ("iter", "primal_obj", "dual_obj", "duality_gap", "primal_res", "dual_res", "rho", "delta", "mu", "primal_step", "dual_step")
+# PIQP 0.6.2's own statuses on ``problems.infeasible_problems()``, which the reference reproduces:
+# it runs two primal-infeasible problems to the iteration limit, and calls a problem that is
+# unbounded below primal infeasible.
+INFEASIBLE_STATUS = {"box_contradiction": -1, "parallel_equalities": -1, "empty_slab": -2, "unbounded_lp": -3, "unbounded_ray": -2}
 _ROW = re.compile(r"^\s*\d+(\s+[-+]?\d\.\d+(e[-+]\d+)?){10}\s*$")
 
 
@@ -63,11 +68,14 @@ def _csc(a: sparse.csc_array, rows: int, cols: int) -> list[np.ndarray]:
   return [a.indptr.astype(np.int32), a.indices.astype(np.int32), a.data.astype(np.float64)]
 
 
-def write_problem(qp: QP, path: Path, *, dense: bool = False, max_iter: int | None = None) -> None:
+def write_problem(
+  qp: QP, path: Path, *, dense: bool = False, max_iter: int | None = None, refine_always: bool | None = None, scale_cost: bool | None = None
+) -> None:
   n, p, m = qp.n, qp.A.shape[0], qp.G.shape[0]
   parts = [_csc(sparse.triu(qp.P, format="csc"), n, n), [qp.c], _csc(qp.A, p, n), [qp.b], _csc(qp.G, m, n), [qp.h_l, qp.h_u, qp.x_l, qp.x_u]]
   nnz = [parts[0][2].size, parts[2][2].size, parts[4][2].size]
-  header = np.array([n, p, m, *nnz, int(dense), -1 if max_iter is None else int(max_iter)], dtype=np.int64)
+  settings = [-1 if v is None else int(v) for v in (max_iter, refine_always, scale_cost)]
+  header = np.array([n, p, m, *nnz, int(dense), *settings], dtype=np.int64)
   with open(path, "wb") as f:
     f.write(header.tobytes())
     for group in parts:
@@ -90,11 +98,20 @@ def parse(output: str) -> Trace:
   return trace
 
 
-def run(qp: QP, *, dense: bool = False, max_iter: int | None = None, workdir: Path | None = None) -> Trace:
+def run(
+  qp: QP,
+  *,
+  dense: bool = False,
+  max_iter: int | None = None,
+  refine_always: bool | None = None,
+  scale_cost: bool | None = None,
+  workdir: Path | None = None,
+) -> Trace:
+  """Vendored PIQP on ``qp`` with default settings except those given."""
   workdir = workdir or cache_root() / "piqp_trace" / "problems"
   workdir.mkdir(parents=True, exist_ok=True)
-  path = workdir / f"{qp.name}_{'dense' if dense else 'sparse'}_{max_iter}.bin"
-  write_problem(qp, path, dense=dense, max_iter=max_iter)
+  path = workdir / f"{qp.name}_{'dense' if dense else 'sparse'}_{max_iter}_{refine_always}_{scale_cost}_{os.getpid()}.bin"
+  write_problem(qp, path, dense=dense, max_iter=max_iter, refine_always=refine_always, scale_cost=scale_cost)
   out = subprocess.run([str(driver()), str(path)], check=True, capture_output=True, text=True)
   return parse(out.stdout)
 

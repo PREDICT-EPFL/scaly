@@ -6,21 +6,10 @@ import numpy as np
 import pytest
 
 from tests.ipm import piqp_trace
-from tests.ipm.problems import infeasible_problems, maros_meszaros, maros_meszaros_names, mpc_qp
+from tests.ipm.problems import infeasible_problems, kkt_residuals, maros_meszaros, maros_meszaros_names, mpc_qp
 
 pytestmark = pytest.mark.solver("piqp")
 NAMES = maros_meszaros_names()
-
-
-def _kkt_residuals(qp, v) -> tuple[float, float]:
-  """Primal and dual residuals (inf-norm) of PIQP's result, recomputed from the problem data."""
-  x = v["x"]
-  primal = [np.abs(qp.A @ x - qp.b).max(initial=0.0)]
-  gx = qp.G @ x
-  primal += [np.maximum(qp.h_l - gx, 0.0).max(initial=0.0), np.maximum(gx - qp.h_u, 0.0).max(initial=0.0)]
-  primal += [np.maximum(qp.x_l - x, 0.0).max(initial=0.0), np.maximum(x - qp.x_u, 0.0).max(initial=0.0)]
-  grad = qp.P @ x + qp.c + qp.A.T @ v["y"] + qp.G.T @ (v["z_u"] - v["z_l"]) + v["z_bu"] - v["z_bl"]
-  return max(primal), float(np.abs(grad).max())
 
 
 def test_hs21_matches_its_known_optimum() -> None:
@@ -41,7 +30,7 @@ def test_every_problem_solves_the_same_with_both_backends(name: str) -> None:
   assert (sparse_run.backend, dense_run.backend) == ("sparse", "dense")
   scale = 1.0 + np.abs(sparse_run.info["primal_obj"])
   assert abs(sparse_run.info["primal_obj"] - dense_run.info["primal_obj"]) <= 1e-5 * scale
-  primal, dual = _kkt_residuals(qp, sparse_run.vectors)
+  primal, dual = kkt_residuals(qp, **sparse_run.vectors)
   assert primal <= 1e-6 * (1.0 + np.abs(sparse_run.vectors["x"]).max()) and dual <= 1e-5 * scale
 
 
@@ -78,16 +67,11 @@ def test_the_parser_reads_every_part() -> None:
   assert trace.vectors["y"].size == 0
 
 
-# PIQP 0.6.2's own answers, which the reference has to reproduce: it runs two primal-infeasible
-# problems to the iteration limit, and calls a problem that is unbounded below primal infeasible.
-PIQP_STATUS = {"box_contradiction": -1, "parallel_equalities": -1, "empty_slab": -2, "unbounded_lp": -3, "unbounded_ray": -2}
-
-
-@pytest.mark.parametrize("name", sorted(PIQP_STATUS))
+@pytest.mark.parametrize("name", sorted(piqp_trace.INFEASIBLE_STATUS))
 def test_piqp_statuses_on_the_infeasible_set(name: str) -> None:
   qp, _ = infeasible_problems()[name]
   for dense in (False, True):
-    assert piqp_trace.run(qp, dense=dense).status == PIQP_STATUS[name]
+    assert piqp_trace.run(qp, dense=dense).status == piqp_trace.INFEASIBLE_STATUS[name]
 
 
 @pytest.mark.parametrize("args", [(4, 2, 10), (12, 4, 20)])
@@ -95,6 +79,6 @@ def test_mpc_problems_solve(args) -> None:
   qp = mpc_qp(*args)
   trace = piqp_trace.run(qp)
   assert trace.status == 1 and trace.info["iter"] < 20
-  primal, _ = _kkt_residuals(qp, trace.vectors)
+  primal, _ = kkt_residuals(qp, **trace.vectors)
   assert primal < 1e-7
   assert trace.info["solve_time"] > 0.0
