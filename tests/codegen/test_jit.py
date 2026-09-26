@@ -268,3 +268,42 @@ def test_a_failing_compile_is_not_retried(isolated_cache, monkeypatch) -> None:
   with pytest.raises(jit.JitError, match="boom"):
     _simple_fn()(np.zeros(3))
   assert len(calls) == 1
+
+
+@pytest.mark.parametrize("gcc, opt, vectorize", [(True, None, True), (False, None, False), (True, "-O3", False), (True, "-O2", True)])
+def test_gcc_gets_tree_vectorize_at_o2(monkeypatch, gcc: bool, opt: str | None, vectorize: bool) -> None:
+  """GCC vectorizes at ``-O2`` by itself only from version 12; clang always does."""
+  monkeypatch.setattr(jit, "is_gcc", lambda cc: gcc)
+  if opt is None:
+    monkeypatch.delenv("SCALY_CC_OPT", raising=False)
+  else:
+    monkeypatch.setenv("SCALY_CC_OPT", opt)
+  flags = jit.compile_flags()
+  assert flags[0] == (opt or "-O2")
+  assert ("-ftree-vectorize" in flags) == vectorize
+  assert flags[-len(jit.HOST_CFLAGS) :] == jit.HOST_CFLAGS
+
+
+@pytest.mark.parametrize(
+  "banner, gcc",
+  [
+    ("gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0\nCopyright (C) 2021 Free Software Foundation, Inc.\n", True),
+    ("cc (GCC) 13.2.1 20231011 (Red Hat 13.2.1-4)\nCopyright (C) 2023 Free Software Foundation, Inc.\n", True),
+    ("Apple clang version 21.0.0 (clang-2100.1.1.101)\nTarget: arm64-apple-darwin25.6.0\n", False),
+    ("Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\n", False),
+    ("", False),
+  ],
+)
+def test_gcc_is_told_from_its_banner(banner: str, gcc: bool) -> None:
+  from scaly.codegen.toolchain import _is_gcc_banner
+
+  assert _is_gcc_banner(banner) is gcc
+
+
+def test_is_gcc_reads_the_compilers_banner(monkeypatch) -> None:
+  from scaly.codegen import toolchain
+
+  assert toolchain._version_banner("/definitely/not/a/compiler") == ""
+  gcc_banner = "gcc (GCC) 11.4.0\nCopyright (C) 2021 Free Software Foundation, Inc.\n"
+  monkeypatch.setattr(toolchain, "_version_banner", lambda cc: gcc_banner if cc == "gcc" else "clang version 18\n")
+  assert toolchain.is_gcc("gcc") and not toolchain.is_gcc("clang")

@@ -8,6 +8,8 @@ rendering decisions of its own.
 - ``SCALY_CC`` overrides the C compiler binary (default: ``cc`` from ``$PATH``).
 - ``SCALY_CC_OPT`` overrides the optimization flag (default: ``-O2``). Benchmark harnesses that
   compile a baseline at ``-O3`` should set it, so both sides of a comparison get the same level.
+  At ``-O2`` GCC also gets ``-ftree-vectorize``, which it applies at ``-O2`` by itself only from
+  version 12; clang vectorizes at ``-O2`` already.
 
 The JIT compiles for the machine it runs on, so it also passes the host CPU target and
 ``-fno-math-errno``; the distributed solver plugin wheels stay at the portable baseline.
@@ -33,7 +35,7 @@ from .abi import C_API_SIGNATURE, c_ident
 from .aot import render_c_module
 from .solver import solver_stats_symbols
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
-from .toolchain import cache_root, find_c_compiler
+from .toolchain import cache_root, find_c_compiler, is_gcc
 from ..utils.env import shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
@@ -108,8 +110,13 @@ and friends inline). The benchmark harness compiles both providers with the same
 
 
 def compile_flags() -> tuple[str, ...]:
-  """Flags the JIT passes to every compile: the optimization level plus ``HOST_CFLAGS``."""
-  return (opt_flag(), *HOST_CFLAGS)
+  """Flags the JIT passes to every compile: the optimization level, ``-ftree-vectorize`` when GCC
+  compiles at ``-O2`` (GCC vectorizes at ``-O2`` only from version 12, clang always does), and
+  ``HOST_CFLAGS``."""
+  opt = opt_flag()
+  compiler = find_c_compiler()
+  vectorize = ("-ftree-vectorize",) if opt == "-O2" and compiler is not None and is_gcc(compiler.cc) else ()
+  return (opt, *vectorize, *HOST_CFLAGS)
 
 
 def _compute_cache_key(source: str, *, fun_name: str, compile_flags: tuple[str, ...] = ()) -> str:

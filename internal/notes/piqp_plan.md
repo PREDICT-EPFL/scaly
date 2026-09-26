@@ -1,6 +1,6 @@
 # PIQP in Scaly — living plan
 
-**Status:** Tier 1 done (git tag `tier1-complete`) · Tier 2 done on `claude/tier2-sparse` (git tag `tier2-complete`) · Tier 3 next · last updated 2026-09-26 (v4.3)
+**Status:** Tier 1 done (git tag `tier1-complete`) · Tier 2 done on `claude/tier2-sparse` (git tag `tier2-complete`, follow-ups C-118 … C-121 after it) · Tier 3 started on `claude/tier3-ipm` · last updated 2026-09-26 (v4.4)
 **Copies:** repo `internal/notes/piqp_plan.md` is authoritative from Tier 3 on, since work continues in Claude Code; the claude.ai project doc `claude/piqp-plan.md` is a mirror. Background and review evidence: `internal/notes/piqp_plan_2026_09_26.html` (v3; superseded where they differ). Status summaries: `internal/notes/tier1_implementation_status.md`, `internal/notes/tier2_implementation_status.md`; working conventions for new sessions: `internal/notes/claude_code_handoff.md`.
 
 ## Goal and principles
@@ -82,7 +82,7 @@ Per-PR reports: `internal/notes/tier2_pr{1..}_report.html`; timings: `internal/n
 
 Results: `SparseLDL` factors within 1.04–1.5× of a QDLDL-class C factorization with loops, and 4–5× faster than it as straight-line code on small KKT systems (≤ 1000 operations). Solves run at 0.5–2.1× that baseline, with implicit derivatives to second order, refinement and inertia/health checks. Dense kernels are within 1.6× of OpenBLAS at `-O3`. Generation takes 1.2 s at nnz(L) = 46 k. The SQP Newton-step and Kalman-update examples pass. 1 460 tests pass. Summary: `internal/notes/tier2_review_report.html`.
 Open Tier 2 items:
-- C-107: the JIT default `-O3`, your decision.
+- C-107: decided at the start of Tier 3 (`-O2` plus `-ftree-vectorize` for GCC).
 - C-111, C-115, C-116: generation and compile time of unrolled graphs.
 - C-112: loop-invariant `while_loop` inputs, needed by Tier 3.
 - C-114: unpadded factor updates, 1.6–1.7× in a prototype.
@@ -101,6 +101,20 @@ Open Tier 2 items:
 | T3-0 | Harness and NumPy reference IPM | PIQP trace harness from the vendored headers; curated `tests/data` (small MM subset, infeasible LPs, SQP/MPC sets, Apache-2.0); a NumPy reference used as the test oracle. Can run in parallel with Tier 2 |
 
 Gate: the NumPy reference reproduces vendored PIQP decision traces on ≥ 90% of the small MM subset (otherwise stop and diagnose). The Scaly IPM with the dense backend matches the reference.
+
+Draft PR sequence (agreed 2026-09-26):
+
+| PR | Content | Status |
+|---|---|---|
+| T3-0a | Harness: curated MM subset, infeasible LPs, small MPC/SQP QPs in `tests/data` (Apache-2.0 notice); a PIQP trace harness that parses the vendored solver's verbose per-iteration output | |
+| T3-0b | NumPy reference: PIQP 0.6.2 in full, proximal updates included; gate ≥ 90% trace match on the small subset | |
+| T3-1 | C-112: loop-invariant `while_loop` inputs, so the outer loop's carry holds only the iterate | |
+| T3-2 | Ruiz equilibration and unscaling (#19) | |
+| T3-3 | KKT-solver interface; dense condensed Cholesky and sparse full-KKT `SparseLDL` backends (#20) | |
+| T3-4 | One IPM iteration as a Function: residuals and termination, fraction to boundary, Mehrotra, initial point, infinite bounds (#21–#25), matched step by step against the reference | |
+| T3-5 | Outer `while_loop`; dense backend end to end against the reference (the tier gate) | |
+| T3-6 | Sparse backend end to end, benchmarked against vendored PIQP; C-114 if the factorization dominates | |
+| T3-R | Review round, summary report, tag `tier3-complete` | |
 
 ## Tier 4 — PIQP-specific and delivery
 | # | Item | Notes |
@@ -141,9 +155,11 @@ Gates:
 
 **Deferred to the tier that needs them** (none blocks Tier 2):
 - *Tier 2 default, no decision needed:* ordering by SciPy's SuperLU MMD; an AMD port only if measured fill demands it. Tier 2 benchmark baselines (QDLDL-class LDLt) are built from the vendored headers in the VM, so no Mac is needed.
-- *Decide at the start of Tier 3:*
-  - a NumPy reference IPM plus a curated Maros–Mészáros subset in `tests/data` (Tier 2 may reuse MM KKT patterns as test matrices without this);
-  - the dense backend as condensed Cholesky on the Tier 2 dense kernels.
+- *Taken at the start of Tier 3 (2026-09-26):*
+  - the NumPy reference implements PIQP 0.6.2 in full, proximal updates included, so the trace gate is meaningful; a curated Maros–Mészáros subset (n + m up to about 1 000) is stored compressed in `tests/data`;
+  - the dense backend is condensed Cholesky on the Tier 2 dense kernels;
+  - C-112 (loop-invariant `while_loop` inputs) comes before the outer loop, which then carries only the iterate;
+  - C-107: the JIT stays at `-O2` and adds `-ftree-vectorize` for GCC; `-O3` cost up to 5.8× compile time on large straight-line functions.
 - *Decide at the start of Tier 4:*
   - parity semantics (decision traces plus tolerances);
   - Mac-only vendored baselines and the SQP corpus dump.
@@ -156,6 +172,7 @@ Gates:
 - 2026-09-26 v4.1: the PIQP-specific pending decisions moved to Tiers 3–4; nothing blocks Tier 2.
 - 2026-09-26 v4.2: T2-1 … T2-5 landed (C-101 … C-105).
 - 2026-09-26 v4.3: T2-6 … T2-9 and the T2-R review round landed (C-106 … C-113); Tier 2 closed with tag `tier2-complete`. Work moves to Claude Code: the repo copy of this plan becomes authoritative, and a handoff note is added.
+- 2026-09-26 v4.4: Tier 2 follow-ups after the tag (C-118 … C-121: the Mac run, `sc.S`, derivatives in non-input expressions, examples). The start-of-Tier-3 decisions are taken and the Tier 3 PR sequence is agreed; C-107 lands as `-O2` plus `-ftree-vectorize` for GCC.
 
 ## References
 - Schwan, Jiang, Kuhn, Jones, PIQP, CDC 2023 — https://arxiv.org/abs/2304.00290

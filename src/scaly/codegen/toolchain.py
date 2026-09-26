@@ -7,8 +7,10 @@ module reads it for the report and nothing else depends on that direction.
 
 from __future__ import annotations
 
+import functools
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +41,23 @@ def find_c_compiler() -> Compiler | None:
       return Compiler(found, key) if found is not None else None
   found = shutil.which("cc")
   return Compiler(found, "PATH") if found is not None else None
+
+
+def is_gcc(cc: str) -> bool:
+  """Whether ``cc`` is GCC, from its ``--version`` banner; ``cc`` is often GCC on Linux and clang on macOS."""
+  return _is_gcc_banner(_version_banner(cc))
+
+
+@functools.lru_cache(maxsize=8)
+def _version_banner(cc: str) -> str:
+  try:
+    return subprocess.run([cc, "--version"], capture_output=True, text=True, timeout=30).stdout
+  except (OSError, subprocess.SubprocessError):
+    return ""
+
+
+def _is_gcc_banner(banner: str) -> bool:
+  return "free software foundation" in banner.lower()  # GCC's copyright line; clang's banner has none
 
 
 def _format_report() -> str:

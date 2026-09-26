@@ -376,11 +376,21 @@ tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inpu
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v0]
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v:0]
 tests/codegen/test_jit.py::test_each_calls_workspace_is_released_without_a_garbage_collection
+tests/codegen/test_jit.py::test_gcc_gets_tree_vectorize_at_o2[False-None-False]
+tests/codegen/test_jit.py::test_gcc_gets_tree_vectorize_at_o2[True--O2-True]
+tests/codegen/test_jit.py::test_gcc_gets_tree_vectorize_at_o2[True--O3-False]
+tests/codegen/test_jit.py::test_gcc_gets_tree_vectorize_at_o2[True-None-True]
+tests/codegen/test_jit.py::test_gcc_is_told_from_its_banner[-False]
+tests/codegen/test_jit.py::test_gcc_is_told_from_its_banner[Apple clang version 21.0.0 (clang-2100.1.1.101)\nTarget: arm64-apple-darwin25.6.0\n-False]
+tests/codegen/test_jit.py::test_gcc_is_told_from_its_banner[Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\n-False]
+tests/codegen/test_jit.py::test_gcc_is_told_from_its_banner[cc (GCC) 13.2.1 20231011 (Red Hat 13.2.1-4)\nCopyright (C) 2023 Free Software Foundation, Inc.\n-True]
+tests/codegen/test_jit.py::test_gcc_is_told_from_its_banner[gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0\nCopyright (C) 2021 Free Software Foundation, Inc.\n-True]
 tests/codegen/test_jit.py::test_hoisted_solver_oracles_compile_and_run[False]
 tests/codegen/test_jit.py::test_hoisted_solver_oracles_compile_and_run[True]
 tests/codegen/test_jit.py::test_inputs_of_every_memory_kind
 tests/codegen/test_jit.py::test_integer_inputs_reach_callees_as_integers
 tests/codegen/test_jit.py::test_invalidate_cache_handles_missing_directory
+tests/codegen/test_jit.py::test_is_gcc_reads_the_compilers_banner
 tests/codegen/test_jit.py::test_jit_cache_key_stable_across_function_instances
 tests/codegen/test_jit.py::test_jit_compile_command_targets_host
 tests/codegen/test_jit.py::test_jit_handles_multi_output

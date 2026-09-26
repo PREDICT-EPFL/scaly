@@ -177,9 +177,13 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       conservative sparsity; `scaly.linalg` adds `cho_solve`, `ldl_solve`, `ldl_unpack`, `solve`.
       Gate met at `-O3` (≤ 1.6× OpenBLAS at n = 32–64, faster below); at gcc 11's `-O2` the
       multi-RHS solve and `matmul` stay 3× (`notes/tier2_pr6_report.html`).
-- [ ] **C-107. Decide the JIT's default optimization level.** gcc before 12 does not vectorize at
+- [x] **C-107. Decide the JIT's default optimization level.** gcc before 12 does not vectorize at
       `-O2`, which costs dense kernels and `matmul` up to 3× on Linux (`notes/tier2_pr6_report.html`);
-      clang vectorizes at `-O2`. Options: `-O3` by default, or `-O2 -ftree-vectorize` for gcc.
+      clang vectorizes at `-O2`. Decided 2026-09-26: `-O2`, plus `-ftree-vectorize` when the
+      compiler is GCC (what GCC 12 does at `-O2` by itself). `-O3` was measured first and
+      rejected: +7% compile time on ordinary functions but 1–5.8× (up to 376 s) on 385 kB
+      straight-line ones, and a cold suite of 23 min instead of 7 on the Mac. Still to check on the
+      Linux VM that GCC 11 with `-ftree-vectorize` recovers the 3× of `tier2_pr6_report.html`.
 - [x] **C-108. Generated sparse `L D L^T` and solves (T2-7).** `scaly.linalg.SparseLDL`: one
       in-place `scan` per column segment over a single carry `[L | D | work | 0 | scratch]`, tables
       padded in range (no bounds checks), factor/solve split, implicit derivatives two levels deep

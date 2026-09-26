@@ -57,8 +57,9 @@ become loops with triangular bounds that do not grow with the order:
 
 - At `-O3`, the Cholesky, `L D L^T`, triangular solve and matrix-product kernels are within 1.6×.
 - Below order 32 the generated code is faster, because it has no library call overhead.
-- At gcc's `-O2`, which does not vectorize before gcc 12, the multi-right-hand-side solve and the
-  matrix product fall to 3–3.5× (see `SCALY_CC_OPT` in [Environment variables](env_vars.md)).
+- At gcc 11's plain `-O2`, which does not vectorize, the multi-right-hand-side solve and the
+  matrix product fell to 3–3.5×. The JIT therefore adds `-ftree-vectorize` for GCC at `-O2` (see
+  `SCALY_CC_OPT` in [Environment variables](env_vars.md)).
 
 ## Sparse `L D L^T`
 
