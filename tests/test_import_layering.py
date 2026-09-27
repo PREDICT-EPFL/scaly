@@ -90,6 +90,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.integrators.model": 5,
   "scaly.integrators.polynomial": 5,
   "scaly.integrators.tableau": 5,
+  "scaly.integrators.transcription": 5,
   "scaly.passes.program": 6,
   "scaly.passes.program._common": 6,
   "scaly.passes.program.combine_scatter_sums": 6,

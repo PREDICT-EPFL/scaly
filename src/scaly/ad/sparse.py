@@ -8,7 +8,7 @@ the structured VMAP decomposition that keeps a multistage Jacobian from material
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 
@@ -16,7 +16,7 @@ from ..function.sugar import vmap
 from ..ir.expr import Expr, ExprOp, concat, gather, independent, scatter, substitute
 from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
-from .forward import _call_jvp_many_const_function, jvp_many
+from .forward import _call_jvp_many_function, jvp_many
 from .sparsity import _callee_mask, _depends_on, _mask_sparsity, _symmetrize_sparsity, column_coloring, jacobian_sparsity, star_coloring
 from ..ir.types import SparsityType
 
@@ -237,12 +237,29 @@ def _split_axis0_pieces(expr: Expr) -> list[tuple[Expr, int]] | None:
   return pieces
 
 
+def _window_offset(actual: Expr, wrt: Expr) -> int | None:
+  """Where ``actual`` starts in a vector ``wrt`` when it is ``wrt`` or a contiguous run of it (a slice
+  with step 1, possibly reshaped to a vector), else ``None``. An NLP's variable leaves are such runs
+  of its one variable vector, so a map over them keeps the structured path."""
+  if actual.id == wrt.id:
+    return 0
+  if actual.op == ExprOp.RESHAPE:  # a reshape keeps the flat order
+    return _window_offset(actual.args[0], wrt)
+  if actual.op != ExprOp.SLICE or actual.args[0].id != wrt.id or len(wrt.shape) != 1:
+    return None
+  (index,) = actual.attrs["index"]
+  if not isinstance(index, slice):
+    return None
+  start, _, step = index.indices(wrt.shape[0])
+  return start if step == 1 else None
+
+
 def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
   """Compute compact sparse Jacobian of a rank-1 ``ExprOp.VMAP`` w.r.t. ``wrt`` using per-formal
   local coloring and const-seed JVPs wrapped in VMAPs.
 
   Falls back to ``sparse_jacobian_colored`` if any formal's actual outer tensor depends on
-  ``wrt`` through computation rather than being ``wrt`` itself.
+  ``wrt`` through computation rather than being ``wrt`` itself or a contiguous run of it.
   """
 
   callee = vmap_expr.attrs["callee"]
@@ -260,13 +277,15 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     return SparseJacobian(global_sparsity, Expr.const(np.zeros((global_sparsity.nnz,), dtype=np.float64)), 0)
 
   dep_memo: dict[tuple[int, int], bool] = {}
-  direct_formals: list[int] = []
+  offsets: dict[int, int] = {}  # formal -> where its outer tensor starts in wrt
   for f_idx, actual in enumerate(vmap_expr.args):
-    if actual.id == wrt.id:
-      direct_formals.append(f_idx)
+    offset = _window_offset(actual, wrt)
+    if offset is not None:
+      offsets[f_idx] = offset
     elif _depends_on(actual, wrt, dep_memo):
       # Indirect dependency would require a chain-rule through actual_outer; fall back.
       return sparse_jacobian_colored(vmap_expr, wrt)
+  direct_formals = list(offsets)
 
   if not direct_formals:
     return SparseJacobian(global_sparsity, Expr.const(np.zeros((global_sparsity.nnz,), dtype=np.float64)), 0)
@@ -277,34 +296,39 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
   it_global = rows_arr // slice_size
   lr_global = rows_arr % slice_size
 
-  pieces: list[tuple[Expr, np.ndarray]] = []  # (gathered piece values, nnz slots they cover)
+  # Each formal's columns are colored on their own; all the colors become rows of one block seed,
+  # so a single mapped pass differentiates every formal and computes the primal once.
+  colored: list[tuple[int, Any, np.ndarray, int]] = []  # (formal, local mask, local colors, first seed row)
   coloring_width = 0
   for f_idx in direct_formals:
-    formal = callee.inputs[f_idx]
     local_mask = _callee_mask(callee, output_idx, f_idx)
     if not local_mask.nnz:
       continue
-    local_sparsity = _mask_sparsity(local_mask)
-    local_colors = column_coloring(local_sparsity)
+    local_colors = column_coloring(_mask_sparsity(local_mask))
     if not local_colors:
       continue
-    c_f = max(local_colors) + 1
-    coloring_width += c_f
-    seed_f = np.zeros((c_f, formal.size), dtype=np.float64)
-    for j, c in enumerate(local_colors):
-      seed_f[c, j] = 1.0
-    seed_f_shaped = seed_f.reshape((c_f, *formal.shape)) if formal.shape != (formal.size,) else seed_f
-    inner_fn, arg_indices, active = _call_jvp_many_const_function(callee, output_idx, f_idx, seed_f_shaped)
-    active_count = len(active)
-    if active_count == 0:
-      continue
-    primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
-    mapped_flat = vmap(inner_fn, length, primal_specs)
-    # Build a per-formal contribution map for each nnz.
-    formal_size = formal.size
-    start_f = starts[f_idx]
-    stride_f = strides[f_idx]
-    lc_arr = cols_arr - (start_f + it_global * stride_f)
+    colored.append((f_idx, local_mask, np.asarray(local_colors, dtype=np.int64), coloring_width))
+    coloring_width += max(local_colors) + 1
+  if not colored:
+    return SparseJacobian(global_sparsity, Expr.const(np.zeros((nnz,), dtype=np.float64)), coloring_width)
+  constants = []
+  for f_idx, _, local_colors, first in colored:
+    formal = callee.inputs[f_idx]
+    seed = np.zeros((coloring_width, formal.size), dtype=np.float64)
+    seed[first + local_colors, np.arange(formal.size)] = 1.0
+    constants.append(seed.reshape((coloring_width, *formal.shape)))
+  formals = tuple(f_idx for f_idx, *_ in colored)
+  inner_fn, arg_indices, seed_indices, active = _call_jvp_many_function(callee, output_idx, formals, coloring_width, tuple(constants))
+  assert not seed_indices
+  primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
+  mapped_flat = vmap(inner_fn, length, primal_specs)
+  active_to_pos = {c: i for i, c in enumerate(active)}
+  active_count = len(active)
+  pieces: list[tuple[Expr, np.ndarray]] = []  # (gathered piece values, nnz slots they cover)
+  for f_idx, local_mask, local_colors, first in colored:
+    # Which nnz this formal contributes, and where each sits in the mapped output.
+    formal_size = callee.inputs[f_idx].size
+    lc_arr = cols_arr - (offsets[f_idx] + starts[f_idx] + it_global * strides[f_idx])
     in_window = (lc_arr >= 0) & (lc_arr < formal_size)
     contributes = np.zeros(nnz, dtype=bool)
     if in_window.any():
@@ -313,10 +337,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     if not contributes.any():
       continue
     contrib_idx = np.flatnonzero(contributes)
-    active_to_pos = {c: i for i, c in enumerate(active)}
-    local_colors_arr = np.asarray(local_colors, dtype=np.int64)
-    color_at = local_colors_arr[lc_arr[contrib_idx]]
-    pos_at = np.asarray([active_to_pos[int(c)] for c in color_at], dtype=np.int64)
+    pos_at = np.asarray([active_to_pos[int(first + c)] for c in local_colors[lc_arr[contrib_idx]]], dtype=np.int64)
     flat_indices = it_global[contrib_idx] * (active_count * slice_size) + pos_at * slice_size + lr_global[contrib_idx]
     pieces.append((gather(mapped_flat, flat_indices), contrib_idx))
 

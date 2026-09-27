@@ -1,11 +1,11 @@
-"""Gauss, Radau and Lobatto nodes on ``[0, 1]`` and integrals of the Lagrange basis over them."""
+"""Gauss, Radau and Lobatto nodes on ``[0, 1]``, and the Lagrange basis over them: values, derivatives, integrals."""
 
 from __future__ import annotations
 
 import numpy as np
 from numpy.polynomial import legendre
 
-__all__ = ["gauss_nodes", "lagrange_integrals", "lobatto_nodes", "radau_nodes"]
+__all__ = ["differentiation_matrix", "gauss_nodes", "interpolation_matrix", "lagrange_integrals", "lobatto_nodes", "radau_nodes"]
 
 
 def _polished(coefficients: np.ndarray, roots: np.ndarray) -> np.ndarray:
@@ -56,3 +56,38 @@ def lagrange_integrals(nodes: np.ndarray, upper: np.ndarray) -> np.ndarray:
       basis = np.prod((t[:, None] - others) / (nodes[j] - others), axis=1)
       out[i, j] = weights @ basis
   return out
+
+
+def _barycentric_weights(nodes: np.ndarray) -> np.ndarray:
+  diff = nodes[:, None] - nodes[None, :]
+  np.fill_diagonal(diff, 1.0)
+  return 1.0 / np.prod(diff, axis=1)
+
+
+def interpolation_matrix(nodes: np.ndarray, at: np.ndarray) -> np.ndarray:
+  """``out[i, j] = l_j(at[i])``: the values at ``at`` of the polynomial through values at ``nodes``
+  are ``out @ values``. By the barycentric formula, exact at a point that is a node."""
+  nodes, at = np.asarray(nodes, dtype=np.float64), np.asarray(at, dtype=np.float64)
+  w = _barycentric_weights(nodes)
+  out = np.zeros((at.size, nodes.size))
+  for i, t in enumerate(at):
+    hit = np.flatnonzero(t == nodes)
+    if hit.size:
+      out[i, hit[0]] = 1.0
+      continue
+    terms = w / (t - nodes)
+    out[i] = terms / terms.sum()
+  return out
+
+
+def differentiation_matrix(nodes: np.ndarray) -> np.ndarray:
+  """``D[i, j] = l_j'(nodes[i])``: the derivative at the nodes of the polynomial through values at the
+  nodes is ``D @ values``; off the diagonal ``(w_j / w_i) / (x_i - x_j)``, each row summing to zero."""
+  nodes = np.asarray(nodes, dtype=np.float64)
+  w = _barycentric_weights(nodes)
+  diff = nodes[:, None] - nodes[None, :]
+  np.fill_diagonal(diff, 1.0)
+  d = (w[None, :] / w[:, None]) / diff
+  np.fill_diagonal(d, 0.0)
+  np.fill_diagonal(d, -d.sum(axis=1))
+  return d

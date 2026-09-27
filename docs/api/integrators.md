@@ -16,6 +16,18 @@
 
 ::: scaly.integrators.explicit.symplectic
 
+## Transcriptions
+
+::: scaly.integrators.transcription.MultipleShooting
+
+::: scaly.integrators.transcription.Collocation
+
+::: scaly.integrators.transcription.Pseudospectral
+
+::: scaly.integrators.transcription.Transcription
+
+::: scaly.integrators.transcription.Interval
+
 ## Linear systems
 
 ::: scaly.integrators.linear.zoh

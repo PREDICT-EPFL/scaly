@@ -92,9 +92,14 @@ def test_the_integrator_surface() -> None:
   integrators = importlib.import_module("scaly.integrators")
   assert sc.integrators is integrators
   assert integrators.__all__ == [
+    "Collocation",
     "FAMILIES",
+    "Interval",
+    "MultipleShooting",
+    "Pseudospectral",
     "TABLEAUS",
     "Tableau",
+    "Transcription",
     "UNROLL_STEPS",
     "adaptive",
     "explicit",

@@ -175,6 +175,7 @@ tests/ad/test_joint_jvp.py::test_self_products_keep_matrix_product_rule[False]
 tests/ad/test_joint_jvp.py::test_self_products_keep_matrix_product_rule[True]
 tests/ad/test_lowering_hints.py::test_derived_procs_inherit_stage_hint[block]
 tests/ad/test_lowering_hints.py::test_derived_procs_inherit_stage_hint[scalar]
+tests/ad/test_sparsity.py::test_a_map_over_runs_of_one_variable_is_differentiated_in_one_structured_pass
 tests/ad/test_sparsity.py::test_accumulating_scatter_and_segment_extrema_patterns
 tests/ad/test_sparsity.py::test_colored_sparse_jacobian_matches_dense_gather_reference
 tests/ad/test_sparsity.py::test_column_coloring_detects_exactly_256_shared_rows
@@ -217,6 +218,7 @@ tests/ad/test_sparsity.py::test_star_coloring_rejects_bicolored_four_vertex_path
 tests/ad/test_sparsity.py::test_star_coloring_rejects_non_square_and_symmetrizes_asymmetric_graphs
 tests/ad/test_sparsity.py::test_star_recovery_rejects_ambiguous_orientation
 tests/ad/test_sparsity.py::test_while_loop_pattern_is_the_closure_of_the_step
+tests/ad/test_sparsity.py::test_window_offset_recognizes_contiguous_runs_of_the_variable
 tests/ad/test_vmap.py::test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual
 tests/ad/test_vmap.py::test_grad_factory_over_vmap_matches_unrolled_and_finite_difference
 tests/ad/test_vmap.py::test_jacobian_of_vmap_matches_finite_differences
@@ -909,6 +911,15 @@ tests/integrators/test_model.py::test_the_generated_c_does_not_grow_with_looped_
 tests/integrators/test_model.py::test_the_output_must_be_the_state_derivative
 tests/integrators/test_model.py::test_the_state_must_be_one_vector[declaration0-must be a float vector]
 tests/integrators/test_model.py::test_the_state_must_be_one_vector[declaration1-first parameter must be the state]
+tests/integrators/test_polynomial.py::test_differentiation_and_interpolation_are_exact_on_polynomials[2-gauss_nodes]
+tests/integrators/test_polynomial.py::test_differentiation_and_interpolation_are_exact_on_polynomials[2-lobatto_nodes]
+tests/integrators/test_polynomial.py::test_differentiation_and_interpolation_are_exact_on_polynomials[2-radau_nodes]
+tests/integrators/test_polynomial.py::test_differentiation_and_interpolation_are_exact_on_polynomials[5-gauss_nodes]
+tests/integrators/test_polynomial.py::test_differentiation_and_interpolation_are_exact_on_polynomials[5-lobatto_nodes]
+tests/integrators/test_polynomial.py::test_differentiation_and_interpolation_are_exact_on_polynomials[5-radau_nodes]
+tests/integrators/test_polynomial.py::test_differentiation_and_interpolation_are_exact_on_polynomials[9-gauss_nodes]
+tests/integrators/test_polynomial.py::test_differentiation_and_interpolation_are_exact_on_polynomials[9-lobatto_nodes]
+tests/integrators/test_polynomial.py::test_differentiation_and_interpolation_are_exact_on_polynomials[9-radau_nodes]
 tests/integrators/test_polynomial.py::test_gauss_and_radau_nodes_reach_their_quadrature_degree[1]
 tests/integrators/test_polynomial.py::test_gauss_and_radau_nodes_reach_their_quadrature_degree[2]
 tests/integrators/test_polynomial.py::test_gauss_and_radau_nodes_reach_their_quadrature_degree[3]
@@ -973,6 +984,23 @@ tests/integrators/test_tableau.py::test_named_methods_have_exactly_their_order[s
 tests/integrators/test_tableau.py::test_named_methods_have_exactly_their_order[trapezoidal]
 tests/integrators/test_tableau.py::test_rooted_trees_are_counted_as_in_oeis_a000081
 tests/integrators/test_tableau.py::test_structure_of_the_families
+tests/integrators/test_transcription.py::test_a_horizon_of_intervals_differentiates
+tests/integrators/test_transcription.py::test_an_interval_length_input_equals_the_folded_one
+tests/integrators/test_transcription.py::test_collocation_is_the_implicit_method_of_its_nodes[2-legendre-gauss_legendre]
+tests/integrators/test_transcription.py::test_collocation_is_the_implicit_method_of_its_nodes[2-radau-radau_iia]
+tests/integrators/test_transcription.py::test_collocation_is_the_implicit_method_of_its_nodes[3-legendre-gauss_legendre]
+tests/integrators/test_transcription.py::test_collocation_is_the_implicit_method_of_its_nodes[3-radau-radau_iia]
+tests/integrators/test_transcription.py::test_collocation_is_the_implicit_method_of_its_nodes[4-legendre-gauss_legendre]
+tests/integrators/test_transcription.py::test_collocation_is_the_implicit_method_of_its_nodes[4-radau-radau_iia]
+tests/integrators/test_transcription.py::test_collocation_layouts[legendre-3-6-8]
+tests/integrators/test_transcription.py::test_collocation_layouts[radau-1-0-2]
+tests/integrators/test_transcription.py::test_collocation_layouts[radau-3-4-6]
+tests/integrators/test_transcription.py::test_each_pseudospectral_control_acts_at_its_node
+tests/integrators/test_transcription.py::test_global_pseudospectral_converges_spectrally
+tests/integrators/test_transcription.py::test_pseudospectral_layout
+tests/integrators/test_transcription.py::test_refusals
+tests/integrators/test_transcription.py::test_shooting_steps_and_integrates_its_cost_with_its_method
+tests/integrators/test_transcription.py::test_the_cost_quadrature_is_exact_where_the_nodes_allow
 tests/ir/test_expr.py::test_binary_nonlinear_method_helpers_eval
 tests/ir/test_expr.py::test_common_ops_contains_modeling_basics
 tests/ir/test_expr.py::test_debug_printing_uses_stable_topological_names
@@ -2485,6 +2513,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators.
 tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators.model]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators.polynomial]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators.tableau]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators.transcription]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ir.expr]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ir.expr_spec]

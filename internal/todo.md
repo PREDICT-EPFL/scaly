@@ -126,7 +126,20 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       of `2^(1/1024)` through an `int64` cast); RK45's accuracy at 20 to 140x less time per Python
       call. `si.symplectic`: Störmer-Verlet and symplectic Euler for `x = [q, v]`, energy bounded over
       1e5 pendulum steps where RK4 loses a third of it. Report: `notes/integrators_i4_report.html`.
-- [ ] **API-146. Collocation and pseudospectral transcriptions** (plan I5).
+- [x] **API-146. Collocation and pseudospectral transcriptions** (plan I5). `si.MultipleShooting`
+      (any integrator, the running cost integrated as one more state), `si.Collocation` (Radau or
+      Gauss points, equal to Radau IIA and Gauss-Legendre at a fixed control) and
+      `si.Pseudospectral` (Radau pseudospectral as GPOPS-II, controls at the nodes, spectral
+      convergence): each makes an `Interval` Function `(x, u, [z], xnext, *params, [dt]) ->
+      [residuals; cost]` for a horizon to map. Lobatto collocation and the LGL and LG pseudospectral
+      schemes were dropped from the plan: LGL collocates one condition more than its unknowns at a
+      fixed control, and LG has no node for the control a receding horizon applies. `ad/sparse.py`:
+      the structured VMAP Jacobian now accepts contiguous runs of the variable (an NLP's leaves are
+      slices of its one variable vector, so every multi-leaf OCP fell back to a whole-horizon
+      coloring assembled through dense masks) and differentiates all blocks in one block-seeded
+      pass. Horizon Jacobians: collocation 19.2 to 2.1 us, pseudospectral 71.9 to 4.4 us, shooting
+      6.9 to 4.8 us; CasADi SX 0.95 us for collocation (a fully expanded form, 70x the code).
+      32/32 mutants killed. Report: `notes/integrators_i5_report.html`.
 - [ ] **API-147. `scaly.mpc` core** (plan M1): OCP to `sc.problem`, every transcription, the control
       law with its warm start in generated code, closed-loop simulation.
 - [ ] **API-148. Linear MPC and linear terminal ingredients** (plan M2): LQR, polytopes, maximal

@@ -144,6 +144,45 @@ one matrix per input leaf; linearizing a model and then `zoh` gives the exact di
 linearization, and linearizing a map built by `explicit` or `implicit` gives the linearization of that
 discretization.
 
+## Transcriptions
+
+A transcription says how one interval of an optimal control horizon becomes variables, equality
+constraints and a cost. It is what an OCP builds its horizon from, one interval Function mapped over
+the intervals.
+
+```python
+interval = si.Collocation(3, "radau").interval(cartpole, running_cost, dt=0.05)
+interval.fn           # (x, u, z, xnext, *params) -> [residuals; cost]
+interval.n_internal   # the size of z: this interval's own variables
+interval.guess(x, u)  # a starting point for z
+```
+
+The model is `f(x, u, *params)`, the control its second input; the running cost `l(x, u, *params)`
+takes the same inputs and gives one value, integrated over the interval.
+
+| Transcription | Interval variables `z` | Residuals | Control |
+| --- | --- | --- | --- |
+| `si.MultipleShooting(si.rk4, steps=2)`, or any integrator and its options | none | `F(x, u) - xnext` | held |
+| `si.Collocation(degree, "radau")` | `degree - 1` states | `degree` collocation conditions | held |
+| `si.Collocation(degree, "legendre")` | `degree` states | `degree` conditions and continuity | held |
+| `si.Pseudospectral(nodes)` | `nodes - 1` states and `nodes - 1` controls | `nodes` conditions | at each node |
+
+- Multiple shooting integrates the running cost with the same method as one more state, so the step
+  and its cost are one call.
+- Collocation at Radau or Gauss points is, at a fixed control, the Radau IIA or Gauss-Legendre
+  step of the same degree; its cost is the matching quadrature.
+- `Pseudospectral` is Radau pseudospectral collocation, as in GPOPS-II: the states and the controls
+  at Legendre-Gauss-Radau points with 0 among them, the end an extra node. One interval over the
+  whole horizon is the global method, several are segments. For a smooth solution the accuracy grows
+  faster than any fixed order as `nodes` does. The node at 0 carries the control a receding horizon
+  applies; the Gauss and Lobatto schemes are not offered, because the first has no node there and the
+  second collocates at both ends, one condition more than its unknowns at a fixed control.
+- `dt=None` makes the interval length the last input, after the parameters.
+
+The derivatives of a horizon of intervals follow the stage structure: when the variables are
+slices of one vector, as an NLP's are, each interval's Jacobian is computed once per interval in one
+map, colored per variable block, never as a whole-horizon coloring.
+
 ## What the generated code does
 
 Every stage calls the model once, as a call node, so the model is built, generated and

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integrators I5 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 9 report</h1>
+<h1>Integrators · I5 report</h1>
+<p class="sub">API-146 · collocation and pseudospectral transcriptions · branch <code>claude/integrators-mpc</code> · 27 Sep 2026 · plan <code>integrators_mpc_plan_2026_09_27.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> The contract <code>scaly.mpc</code> builds horizons from. A transcription turns a model and a running cost into one interval Function, <code>(x, u, [z], xnext, *params, [dt]) → [residuals; cost]</code>, which a horizon maps over its intervals.</p>
+<ul>
+<li><b>Three transcriptions.</b>
+<ul>
+<li><code>MultipleShooting</code> wraps any integrator, and integrates the cost as one more state.</li>
+<li><code>Collocation</code>, at Radau or Gauss points, equals Radau IIA and Gauss-Legendre to 1e-12 at a fixed control.</li>
+<li><code>Pseudospectral</code> is Radau pseudospectral as in GPOPS-II, with controls at the nodes. Its error falls from 4 to 12 nodes faster than any fixed order.</li>
+</ul></li>
+<li><b>Found on the way, a slow core path.</b> Every NLP with more than one variable leaf fell off the structured sparse-Jacobian path. <code>ad/sparse.py</code> now accepts slices of the variable and differentiates all variable blocks in one pass. Horizon Jacobians:
+<ul>
+<li>Radau collocation: <b>19.2 → 2.1 µs</b>;</li>
+<li>pseudospectral: <b>71.9 → 4.4 µs</b>;</li>
+<li>shooting: <b>6.9 → 4.8 µs</b>, now 0.56× CasADi SX's time on I1's cart-pole horizon.</li>
+</ul></li>
+<li><b>Changed from the plan.</b> Lobatto collocation and the LGL and LG pseudospectral schemes were dropped (§4).</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 3 069 passed, 42 skipped, 52 xfailed. The one failure is Colin's uncommitted <code>tiny_qp</code> test. ruff and ty are clean on every path touched. <b>Mutation checks:</b> 32 of 32 killed. Two needed a test first: an equivalent-at-degree-≥2 mutant pinned at degree 1, and a parameter-order mutant.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>polynomial.py</code></td><td><code>interpolation_matrix(nodes, at)</code> (barycentric, exact at a node) and <code>differentiation_matrix(nodes)</code> (<code>(w_j/w_i)/(x_i − x_j)</code>, with rows summing to zero).</td></tr>
+<tr><td><code>transcription.py</code> (new)</td><td>
+<ul>
+<li><b><code>Interval</code></b> carries:
+<ul>
+<li><code>fn</code>;</li>
+<li><code>n_internal</code> and <code>n_residual</code>;</li>
+<li><code>state_times</code> and <code>control_times</code> (the fractions of the interval where <code>z</code>'s samples sit);</li>
+<li><code>has_cost</code>;</li>
+<li><code>guess(x, u)</code>.</li>
+</ul>
+The model is <code>f(x, u, *params)</code>, the control its second input, one vector; the cost <code>l</code> takes the same inputs and gives one value.</li>
+<li><b><code>MultipleShooting(integrator, **options)</code>.</b> With a cost, it integrates the model augmented by <code>q' = l</code>, so the step and its cost are one map call.</li>
+<li><b><code>_Polynomial</code></b> is the shared machinery for the two collocation kinds:
+<ul>
+<li>a polynomial through the states at <code>nodes</code>, collocated at <code>collocated</code>;</li>
+<li><code>xnext</code> is either a node or tied to the polynomial's value at 1 by a continuity residual;</li>
+<li>controls are held at <code>u</code>, or placed at each collocated node;</li>
+<li>the cost is the quadrature at the collocated nodes, times <code>h</code>.</li>
+</ul></li>
+<li><b><code>Collocation(degree, "radau"|"legendre")</code></b> and <b><code>Pseudospectral(nodes)</code></b> are two configurations of it.</li>
+</ul></td></tr>
+<tr><td><code>ad/sparse.py</code></td><td>
+<ul>
+<li><b>Runs of the variable.</b> <code>_window_offset</code> recognizes a mapped argument that is the variable itself, or a contiguous unit-stride run of it, through any reshape. <code>_sparse_jacobian_vmap</code> offsets that argument's columns instead of falling back.</li>
+<li><b>One pass.</b> Each argument's local colors become rows of one block seed. A single <code>_call_jvp_many_function</code> differentiates every argument in one mapped pass, computing the primal once. Before, there was one pass per argument.</li>
+</ul></td></tr>
+<tr><td>Docs</td><td>A transcriptions section in <code>docs/guide/integrators.md</code> (the table of the four kinds, their layouts, why LG/LGL are absent, the Jacobian structure), and the API entries.</td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<ul>
+<li><b>Polynomials.</b> The differentiation and interpolation matrices are exact on polynomials up to the node count, for three node sets and three sizes. Differentiation rows sum to zero, and interpolation at a node is exact.</li>
+<li><b>Collocation.</b>
+<ul>
+<li>Radau and Gauss collocation of degrees 2, 3 and 4, solved by SciPy, equal the implicit step of the same nodes to 1e-12.</li>
+<li>Layouts: the variable and residual counts, and the input names.</li>
+</ul></li>
+<li><b>Costs.</b>
+<ul>
+<li>Quadrature is exact for a quadratic cost on a linear trajectory, for every scheme.</li>
+<li>Degree-1 Radau is the right-endpoint rule.</li>
+<li>Shooting integrates its cost with RK4, against DOP853.</li>
+<li>The implicit shooting residual equals <code>si.implicit</code>'s.</li>
+</ul></li>
+<li><b>Pseudospectral.</b>
+<ul>
+<li>Spectral convergence: the error at 12 nodes is below 1e-7, and 8 nodes improve on 4 by more than 100×.</li>
+<li>Node controls act at their nodes: with a ramped control under <code>x' = u</code>, the end state and the node states are exact.</li>
+<li>The layout.</li>
+</ul></li>
+<li><b>Other.</b>
+<ul>
+<li>A <code>dt</code> input equals the folded interval, on a model with a parameter, so the order <code>params, dt</code> is pinned.</li>
+<li>A horizon of intervals: the sparse Jacobian equals the dense one on its pattern, and the dense one equals finite differences.</li>
+<li>The refusals.</li>
+</ul></li>
+<li><b>Structured path (<code>tests/ad/test_sparsity.py</code>).</b>
+<ul>
+<li>The <code>_window_offset</code> cases.</li>
+<li>A map over four runs of one variable gives exactly one derivative map, a coloring width equal to the sum of the local colors, and values equal to the dense Jacobian.</li>
+</ul></li>
+</ul>
+<div class="scroll"><table>
+<tr><th>#</th><th>Mutant</th><th>Result</th></tr>
+<tr><td>T1–T4</td><td>the differentiation diagonal's sign; node hits through the formula; collocation at the start; the continuity sign</td><td class="ok">killed</td></tr>
+<tr><td>T5</td><td>quadrature weights from the full node set</td><td class="warn">survived. It is equivalent from degree 2, since a d-point Radau or Gauss rule is exact beyond degree d, which gives the extra node zero weight. Killed at degree 1 (backward Euler), which a test now pins.</td></tr>
+<tr><td>T6–T9, T11, T12</td><td>the cost unscaled; node controls ignored; the cost state starting at 1; controls before states in <code>z</code>; right Radau for pseudospectral; the cost unchecked</td><td class="ok">killed</td></tr>
+<tr><td>T10</td><td><code>dt</code> taken from the front of the argument list</td><td class="warn">survived, since no test model had a parameter; killed after one was added</td></tr>
+<tr><td>T13–T17</td><td>the window offset ignored; strided slices accepted; block seed rows overlapping; offsets only for the variable itself; reshapes not looked through</td><td class="ok">killed</td></tr>
+</table></div>
+
+<h2>3. Benchmarks</h2>
+<p><code>perf_2026_09_27_integrators/bench_transcription.py</code> uses the cart-pole over N = 40 intervals of 0.05 s, all variables in one vector, as an NLP sees them. Timings are in C, the fastest over 7 rounds, on an Apple M3 Max, and are indicative. CasADi SX's mapped Radau collocation (its <code>direct_collocation</code> example's formulation) is the baseline.</p>
+<div class="scroll"><table>
+<tr><th>transcription</th><th>vars</th><th>residuals</th><th>Jacobian nnz</th><th>residuals ns</th><th>Jacobian ns</th><th>C lines r / J</th><th>render + cc s</th></tr>
+<tr><td>shooting RK4×2</td><td class="r">204</td><td class="r">160</td><td class="r">760</td><td class="r">2 258</td><td class="r">4 842</td><td class="r">98 / 338</td><td class="r">0.11 / 0.19</td></tr>
+<tr><td>collocation Radau 3</td><td class="r">524</td><td class="r">480</td><td class="r">2 760</td><td class="r ok">683</td><td class="r">2 129</td><td class="r">69 / 169</td><td class="r">0.08 / 0.11</td></tr>
+<tr><td>collocation Gauss 3</td><td class="r">684</td><td class="r">640</td><td class="r">3 560</td><td class="r">725</td><td class="r">3 462</td><td class="r">71 / 199</td><td class="r">0.08 / 0.12</td></tr>
+<tr><td>pseudospectral 4</td><td class="r">804</td><td class="r">640</td><td class="r">4 320</td><td class="r">929</td><td class="r">4 438</td><td class="r">78 / 228</td><td class="r">0.09 / 0.15</td></tr>
+<tr><td>CasADi SX Radau 3</td><td class="r">524</td><td class="r">480</td><td class="r">2 760</td><td class="r">892</td><td class="r">954</td><td class="r">8 096 / 11 785</td><td class="r">0.30 / 0.85</td></tr>
+</table></div>
+<p>The Jacobian columns, one change at a time, in ns:</p>
+<div class="scroll"><table>
+<tr><th>transcription</th><th>colored fallback</th><th>runs accepted</th><th>one block-seeded pass</th></tr>
+<tr><td>shooting RK4×2</td><td class="r">6 850</td><td class="r">7 325</td><td class="r ok">4 842</td></tr>
+<tr><td>collocation Radau 3</td><td class="r bad">19 233</td><td class="r">2 642</td><td class="r ok">2 129</td></tr>
+<tr><td>collocation Gauss 3</td><td class="r bad">15 542</td><td class="r">3 862</td><td class="r ok">3 462</td></tr>
+<tr><td>pseudospectral 4</td><td class="r bad">71 862</td><td class="r">4 483</td><td class="r ok">4 438</td></tr>
+</table></div>
+<ul>
+<li><b>The fallback.</b> A profile showed 95% of the time in dense mask products: a 5 280-entry constant per color, over the whole horizon.</li>
+<li><b>Accepting runs</b> brought collocation to the structured path. Shooting got slightly slower, because the structured path ran one pass per variable block, each recomputing the primal. The block seed fixed that.</li>
+<li><b>The remaining gap to CasADi SX</b> on collocation (2.1 against 0.95 µs) is its full expansion: 70× the code, exploiting every structural zero of the model's Jacobian.</li>
+<li><b>Build times.</b> An apparent jump to 2.3 s was macOS scanning each newly written library at its first <code>dlopen</code>, not scaly. The table times rendering and <code>cc</code> only.</li>
+</ul>
+
+<h2>4. Changed from the plan</h2>
+<ul>
+<li><b>Lobatto collocation is gone.</b> Lobatto points include the start. A polynomial through the states at the points is then one degree short of the collocation conditions, and the system is overdetermined. Lobatto IIIA remains available as an integrator, <code>si.implicit</code>.</li>
+<li><b>LGL pseudospectral is gone.</b> It collocates at both ends, one condition more than its unknowns at a fixed control; the known defect of the Legendre pseudospectral method.</li>
+<li><b>LG pseudospectral is gone.</b> It has no node at the interval's start, so no control there for a receding horizon to apply. Gauss points remain available as <code>Collocation(points="legendre")</code>.</li>
+<li><b>No Chebyshev nodes.</b> Nothing here needs them.</li>
+</ul>
+
+<h2>5. Gates</h2>
+<div class="scroll"><table>
+<tr><th>Gate (plan §7, I5)</th><th>Status</th></tr>
+<tr><td>Quadrature exact to 2n−1 (LG), 2n−2 (LGR) and 2n−3 (LGL)</td><td class="ok">met, the node tests of I3</td></tr>
+<tr><td>Differentiation matrices exact on polynomials</td><td class="ok">met</td></tr>
+<tr><td>Collocation(Radau, d) equals the Radau IIA(d) step to 1e-12</td><td class="ok">met, and Gauss equals Gauss-Legendre</td></tr>
+<tr><td>Spectral convergence on a smooth problem</td><td class="ok">met</td></tr>
+</table></div>
+
+<h2>6. Next</h2>
+<p>M1 (API-147), the <code>scaly.mpc</code> core:</p>
+<ul>
+<li>an OCP to an <code>sc.problem</code> over any transcription, or over a discrete-time map;</li>
+<li>bounds, path and soft constraints, a terminal equality, params and references;</li>
+<li>a <code>Solution</code>;</li>
+<li>the control law with its shifted warm start in generated code;</li>
+<li><code>simulate</code>.</li>
+</ul>
+</main></body></html>

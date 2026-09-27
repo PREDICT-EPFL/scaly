@@ -741,3 +741,34 @@ def test_loop_patterns_with_a_large_carry_and_no_dependence() -> None:
   np.testing.assert_array_equal(_mask(out, u), expected)
   other = sc.sym("other", 2)
   assert sc.jacobian_sparsity(out, other).shape == (300, 2) and sc.jacobian_sparsity(out, other).nnz == 0
+
+
+def test_window_offset_recognizes_contiguous_runs_of_the_variable() -> None:
+  from scaly.ad.sparse import _window_offset
+
+  w, other = sc.sym("w", 12), sc.sym("other", 12)
+  assert _window_offset(w, w) == 0 and _window_offset(w[3:9], w) == 3 and _window_offset(w[5:], w) == 5
+  assert _window_offset(w[2:10].reshape((2, 4)).reshape((8,)), w) == 2
+  assert _window_offset(w[::2], w) is None and _window_offset(other[1:4], w) is None and _window_offset(w * 2.0, w) is None
+
+
+def test_a_map_over_runs_of_one_variable_is_differentiated_in_one_structured_pass() -> None:
+  """An NLP's variable leaves are slices of its one variable vector. A map over several of them
+  (states, controls, internal states, the next states) keeps the structured path, and every formal's
+  colors are rows of one block seed: the values come from a single map of one derivative Function."""
+  x, u, z, xnext = sc.sym("x", 2), sc.sym("u", 1), sc.sym("z", 3), sc.sym("xnext", 2)
+  residual = sc.concat([x.sin() * u[0] + z[:2] - xnext, sc.stack([z[2] * x[0] - z[0] * z[1]])])
+  stage = sc.Function._from_exprs("runs_stage", [x, u, z, xnext], [residual], ["x", "u", "z", "xnext"], ["r"])
+  length, n = 6, 2
+  size = (length + 1) * n + length * (1 + 3)
+  w = sc.sym("w", size)
+  xs, us, zs = w[: (length + 1) * n], w[(length + 1) * n : (length + 1) * n + length], w[(length + 1) * n + length :]
+  mapped = sc.vmap(stage, length, [(xs, 0, n), (us, 0, 1), (zs, 0, 3), (xs, n, n)])
+  jac = sc.sparse_jacobian(mapped, w)
+  maps = [e for e in sc.ir.expr.topo([jac.values]) if e.op == sc.ExprOp.VMAP]
+  assert len(maps) == 1  # one derivative map for every formal, not one per formal, and no global coloring
+  assert jac.coloring_width == 1 + 1 + 3 + 1  # local colors side by side: x, u and xnext one each, z three (the last row reads all of it)
+  fn = sc.Function._from_exprs("runs_jac", [w], [jac.values, sc.jacobian(mapped, w)], ["w"], ["v", "dense"])
+  values, dense = fn._flat_numerical_call(np.random.default_rng(8).normal(size=size))
+  np.testing.assert_allclose(values, dense[jac.sparsity.rows, jac.sparsity.cols], rtol=1e-14, atol=1e-15)
+  assert np.count_nonzero(dense) == jac.sparsity.nnz
