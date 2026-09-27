@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import operator
 import weakref
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import numpy as np
@@ -95,6 +96,19 @@ def options_tag() -> str:
   Under the defaults the tag is empty and names are unchanged."""
   options = get_options()
   return "" if options == Options() else "_o" + hashlib.sha1(repr(options).encode()).hexdigest()[:8]
+
+
+def _bilinear_tangent(expr: Expr, d: Sequence[Expr], product: Callable[[Expr, Expr], Expr]) -> Expr:
+  """The tangent of a bilinear ``expr = product(x, y)``, ``product(dx, y) + product(x, dy)``, leaving
+  out the term of a zero constant tangent.
+
+  The term is left out, not multiplied by zero: ``_call_jvp_function`` does not simplify the helper
+  it builds, so ``0 * y`` would stay in its body and make it take ``y``. A derivative of a linear map
+  called through two levels of Functions (a QP's constraint Jacobian) would then read the variables.
+  """
+  x, y = expr.args
+  terms = ([] if _is_zero_const(d[0]) else [product(d[0], y)]) + ([] if _is_zero_const(d[1]) else [product(x, d[1])])
+  return zeros_like(expr) if not terms else terms[0] if len(terms) == 1 else terms[0] + terms[1]
 
 
 def claim_name(base: str, taken: set[str]) -> str:
@@ -194,9 +208,11 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
   if expr.op == ExprOp.SUB:
     return save(d[0] - d[1])
   if expr.op == ExprOp.MUL:
-    return save((2 * args[0]) * d[0] if args[0] is args[1] else d[0] * args[1] + args[0] * d[1])
-  if expr.op == ExprOp.DIV:
-    return save((d[0] - expr * d[1]) * (1.0 / args[1]))
+    return save((2 * args[0]) * d[0] if args[0] is args[1] else _bilinear_tangent(expr, d, operator.mul))
+  if expr.op == ExprOp.DIV:  # a zero tangent's term is left out, as in _bilinear_tangent
+    dx, dy = (None if _is_zero_const(t) else t for t in d)
+    num = dx if dy is None else -(expr * dy) if dx is None else dx - expr * dy
+    return save(zeros_like(expr) if num is None else num * (1.0 / args[1]))
   if expr.op == ExprOp.POW:
     if args[1].op == ExprOp.CONST:
       return save(args[1] * (args[0] ** _minus_one(args[1])) * d[0])
@@ -292,11 +308,7 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
   if expr.op == ExprOp.MATMUL:
     if args[0] is args[1] and len(args[0].shape) == 1:
       return save(2 * (args[0] @ d[0]))
-    # A constant factor's zero tangent is left out, not multiplied: the simplifier does not fold a
-    # product with a zero matrix, and the term would make the tangent read the other factor, which
-    # a derivative of a linear map (a QP's constraint Jacobian through a call) must not.
-    terms = [t for t, zero in ((d[0] @ args[1], _is_zero_const(d[0])), (args[0] @ d[1], _is_zero_const(d[1]))) if not zero]
-    return save(zeros_like(expr) if not terms else terms[0] if len(terms) == 1 else terms[0] + terms[1])
+    return save(_bilinear_tangent(expr, d, operator.matmul))
   raise NotImplementedError(f"JVP for op {expr.op!r} is not implemented")
 
 
@@ -1480,15 +1492,18 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     if args[0] is args[1]:
       memo[expr.id] = ret = _seed_axis(2 * args[0], nseed) * d[0]
       return ret
-    memo[expr.id] = ret = _broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], nseed, expr) + _seed_axis(
-      args[0], nseed, expr
-    ) * _broadcast_tangent(d[1], args[1], expr, nseed)
+    # A zero tangent's term is left out, as in _bilinear_tangent.
+    terms = [] if _is_zero_const(d[0]) else [_broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], nseed, expr)]
+    if not _is_zero_const(d[1]):
+      terms.append(_seed_axis(args[0], nseed, expr) * _broadcast_tangent(d[1], args[1], expr, nseed))
+    memo[expr.id] = ret = _zeros_many(expr, nseed) if not terms else terms[0] if len(terms) == 1 else terms[0] + terms[1]
     return ret
   if expr.op == ExprOp.DIV:
-    inv = _seed_axis(1.0 / args[1], nseed, expr)
-    memo[expr.id] = ret = (
-      _broadcast_tangent(d[0], args[0], expr, nseed) - _seed_axis(expr, nseed) * _broadcast_tangent(d[1], args[1], expr, nseed)
-    ) * inv
+    num = None if _is_zero_const(d[0]) else _broadcast_tangent(d[0], args[0], expr, nseed)
+    if not _is_zero_const(d[1]):
+      term = _seed_axis(expr, nseed) * _broadcast_tangent(d[1], args[1], expr, nseed)
+      num = -term if num is None else num - term
+    memo[expr.id] = ret = _zeros_many(expr, nseed) if num is None else num * _seed_axis(1.0 / args[1], nseed, expr)
     return ret
   if expr.op == ExprOp.POW:
     if args[1].op == ExprOp.CONST:
