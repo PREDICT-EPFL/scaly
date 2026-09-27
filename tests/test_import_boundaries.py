@@ -119,6 +119,13 @@ def test_the_integrator_surface() -> None:
   assert "integrators" not in sc.__all__ and not hasattr(sc, "rk4")
 
 
+def test_the_mpc_surface() -> None:
+  mpc = importlib.import_module("scaly.mpc")
+  assert sc.mpc is mpc
+  assert mpc.__all__ == ["MPC", "OCP", "ClosedLoop", "Path", "Quadratic", "Solution", "TerminalEquality", "simulate"]
+  assert "mpc" not in sc.__all__ and not hasattr(sc, "OCP")
+
+
 def test_both_dialects_use_the_shared_spec_types() -> None:
   assert isinstance(spec_expr, Spec)
   assert isinstance(spec_program_full, Spec)

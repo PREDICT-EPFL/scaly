@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MPC M1 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 9 report</h1>
+<h1>MPC · M1 report</h1>
+<p class="sub">API-147 · the <code>scaly.mpc</code> core · branch <code>claude/integrators-mpc</code> · 27 Sep 2026 · plan <code>integrators_mpc_plan_2026_09_27.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>scaly.mpc</code> exists.</p>
+<ul>
+<li><b>Problems.</b> An <code>OCP</code> combines:
+<ul>
+<li>a continuous model with any transcription, or a discrete map;</li>
+<li>Function or <code>Quadratic</code> costs, at the points or integrated;</li>
+<li>state and control bounds, and hard or soft path constraints;</li>
+<li>a terminal equality;</li>
+<li>parameters by name, some varying per stage.</li>
+</ul>
+From these it builds an <code>sc.problem</code>.</li>
+<li><b>Controllers.</b> <code>MPC</code> solves it with IPOPT, SQP or PIQP. Its <code>law</code> is one Function, the solver nested and the warm-start shift in its code, ready for <code>write_module</code>. <code>simulate</code> runs a closed loop.</li>
+<li><b>The gate.</b> The cart-pole built by <code>scaly.mpc</code> is the hand-written NLP: the same solution to 1e-9, the same 23 IPOPT iterations, 0.97–0.99× the time.</li>
+<li><b>Fixed on the way:</b> the forward rule for a matrix product kept a structural dependence through a zero tangent. That stopped PIQP from proving any QP whose dynamics go through a Function call.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 3 089 passed, 42 skipped, 52 xfailed. The one failure is Colin's uncommitted <code>tiny_qp</code> test. ruff and ty are clean on every path touched. <b>Mutation checks:</b> 18 of 18 killed; one after a test was added.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>mpc/ocp.py</code></td><td>
+<ul>
+<li><b><code>OCP(ode=|step=, horizon, dt, transcription, stage_cost, terminal_cost, x_bounds, u_bounds, constraints, terminal, varying, cost, name)</code>.</b></li>
+<li><b>Parameters.</b> They are the union, by name, of every Function's inputs after <code>(x, u)</code> (after <code>x</code> for a terminal cost), plus <code>Quadratic</code> and <code>TerminalEquality</code> references given as names. Shapes are checked to agree. Each Function is wrapped over the whole list (<code>_over</code>), so the transcription sees one signature.</li>
+<li><b>Variables.</b> <code>G(xs, us, [zs], [slack])</code>; stage-major, so every stage is one <code>vmap</code>. The problem's parameters are <code>(x0, p)</code>, with every named parameter packed into <code>p</code>.</li>
+<li><b>Costs.</b> <code>"points"</code> gives <code>dt Σ l(x_k, u_k)</code> for a model, <code>Σ l</code> for a map. <code>"integral"</code> gives the transcription's quadrature, and is the default for pseudospectral segments, whose inner controls the points would leave out of the cost.</li>
+<li><b>Constraints.</b>
+<ul>
+<li>Bounds cover every state but <code>x_0</code>, the transcription's internal states and controls included.</li>
+<li><code>Path</code> constraints hold at stages <code>0..N−1</code>, as in acados. A soft one gets two bounded groups and an exact l1 penalty.</li>
+<li><code>TerminalEquality</code>.</li>
+</ul></li>
+<li><b><code>_Layout</code></b> knows where every block sits, and which multiplier runs are per stage.</li>
+</ul></td></tr>
+<tr><td><code>mpc/controller.py</code></td><td>
+<ul>
+<li><b><code>MPC(ocp, solver, options, name)</code></b>: <code>solve</code> returns a <code>Solution</code> (states, controls, internal variables, slacks, times, cost, status, the primal-dual point); <code>__call__</code>; <code>initial_guess</code>; <code>reset</code>; <code>status</code>.</li>
+<li><b>The warm start</b> is one flat vector: <code>[primal, box multipliers, equality multipliers, inequality multipliers]</code>. <code>shift</code> moves each per-stage block up one stage and repeats the last. The initial state's and the terminal set's multipliers stay.</li>
+<li><b><code>law(x0, *params, guess) → (u, guess_next)</code></b> calls the solver symbolically and shifts in its own code. Python's <code>__call__</code> runs this same compiled law, so Python and C cannot disagree.</li>
+<li><b><code>simulate(controller, plant, x0, steps, **params)</code></b> returns a <code>ClosedLoop</code>. A parameter may be a function of the step.</li>
+</ul></td></tr>
+<tr><td><code>integrators/transcription.py</code></td><td><code>Interval.fn</code> now returns the residuals and the cost as two outputs. A map of the residuals is then a map, which keeps I5's stage-wise sparse Jacobian. A residual-plus-cost vector sliced apart would be a gather, and the Jacobian would fall back to whole-horizon coloring.</td></tr>
+<tr><td><code>ad/forward.py</code></td><td>The single-seed matrix-product rule adds <code>dA @ x</code> only when <code>dA</code> is not a zero constant, as the multi-seed rule already did. <code>zeros @ x</code> made a linear model's tangent read <code>x</code>, and the QP proof reads that as not affine, so PIQP refused every OCP with a model behind a call.</td></tr>
+<tr><td>Docs</td><td>A new guide page <code>docs/guide/mpc.md</code> (problems, costs, constraints, parameters, the controller and its law, a table of solvers) and an API page <code>docs/api/mpc.md</code>, with nav entries.</td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<p><code>tests/mpc/</code> has 16 tests.</p>
+<ul>
+<li><b>The gate.</b> The cart-pole (soft track limits, two RK4 substeps), written by hand without <code>scaly.mpc</code> or <code>scaly.integrators</code>, is the same NLP. States, controls and slacks agree to 1e-9.</li>
+<li><b>Transcriptions.</b> Shooting and Radau collocation agree to the integrators' errors. Pseudospectral does at least as well (its controls are free inside intervals) and within 5%.</li>
+<li><b>Problems.</b>
+<ul>
+<li>A varying reference is read stage by stage: zero-cost tracking, exact.</li>
+<li>Parameters are the union of what the Functions name, with the shapes checked.</li>
+<li>A discrete map's costs are summed, and its terminal equality holds.</li>
+<li>A soft constraint is zero when it can hold, and exactly the violations when it cannot.</li>
+<li>State bounds hold after <code>x_0</code>, which may lie outside them.</li>
+<li><code>u_ref</code> is honoured.</li>
+<li>Pseudospectral's inner controls reach both bounds.</li>
+<li>The refusals.</li>
+</ul></li>
+<li><b>Controller.</b>
+<ul>
+<li>The shift's layout, block by block, multipliers included.</li>
+<li>The law equals whole solves with their shifted warm starts, over four steps.</li>
+<li>A PIQP closed loop reaches the origin within its limits.</li>
+<li>A pendulum stabilized with an <code>si.adaptive</code> plant.</li>
+<li>A parameter changing with the step.</li>
+<li>The law renders as one C module with its solver.</li>
+<li>The initial guess.</li>
+</ul></li>
+</ul>
+<div class="scroll"><table>
+<tr><th>#</th><th>Mutant</th><th>Result</th></tr>
+<tr><td>P1–P8, P10–P13</td><td>the initial state's sign; the next state as this state; point costs not scaled by <code>dt</code>; varying parameters held; the terminal reading the first value; the soft sign; no penalty; <code>x_0</code> bounded; <code>u_ref</code> ignored; point costs for node controls; a shape clash accepted; the terminal equality at the origin</td><td class="ok">killed</td></tr>
+<tr><td>P9</td><td>pseudospectral inner controls unbounded below</td><td class="warn">survived (the test solution saturated only at +15); killed after a mirrored start was added</td></tr>
+<tr><td>L1–L5</td><td>the law applying the second control; the dynamics multipliers taken from the start; the shift dropping the last block; a callable parameter not called; the warm start not kept</td><td class="ok">killed</td></tr>
+</table></div>
+
+<h2>3. Benchmarks</h2>
+<p><code>perf_2026_09_27_mpc/bench_ocp.py</code> runs the test's cart-pole (N = 20) with IPOPT at <code>tol = 1e-8</code>, from one cold start. Each time is the fastest of 15 interleaved rounds. Apple M3 Max; indicative.</p>
+<div class="scroll"><table>
+<tr><th>variant</th><th>IPOPT iterations</th><th>IPOPT ms</th><th>call ms</th><th>vs hand</th></tr>
+<tr><td>hand-written</td><td class="r">23</td><td class="r">3.273</td><td class="r">3.305</td><td class="r">1.000</td></tr>
+<tr><td><code>scaly.mpc</code></td><td class="r">23</td><td class="r">3.190</td><td class="r">3.259</td><td class="r ok">0.974</td></tr>
+<tr><td><code>scaly.mpc</code>, Radau collocation 3</td><td class="r">23</td><td class="r">5.901</td><td class="r">6.013</td><td class="r">1.80</td></tr>
+<tr><td><code>scaly.mpc</code>, pseudospectral 4</td><td class="r">68</td><td class="r">31.528</td><td class="r">31.696</td><td class="r">9.63</td></tr>
+</table></div>
+<p>The collocation and pseudospectral rows are context. They carry more variables, and pseudospectral's inner controls can dodge a track limit that is imposed only at the grid points, so the soft penalty shapes its path differently.</p>
+
+<h2>4. Gates</h2>
+<div class="scroll"><table>
+<tr><th>Gate (plan §7, M1)</th><th>Status</th></tr>
+<tr><td>The library-built cart-pole matches the hand-written formulation to 1e-8 and solves within 3% A/B</td><td class="ok">met: 1e-9, same iterations, 0.97–0.99×. The hand-written reference lives in <code>tests/mpc/</code>, and the example is untouched (sign-off).</td></tr>
+<tr><td>Shooting, collocation and pseudospectral agree as the grid refines</td><td class="ok">met, as above: equal to the integrators' errors; pseudospectral within 5%, never worse</td></tr>
+<tr><td><code>law</code> through the JIT equals the Python loop step for step</td><td class="ok">met: equal to whole solves with their shift, 1e-9</td></tr>
+</table></div>
+
+<h2>5. Changed from the plan</h2>
+<ul>
+<li><b>A global pseudospectral horizon's warm start is deferred.</b> A single interval over the horizon, shifted by a sampling time shorter than itself, needs interpolation on the nodes. It is a new todo item, API-157. Segments shift by whole intervals today.</li>
+<li><b>The real-time iteration preset</b> (<code>rti=True</code>) stays in M4, as planned.</li>
+</ul>
+
+<h2>6. Next</h2>
+<p>M2 (API-148): linear MPC and its terminal ingredients:</p>
+<ul>
+<li><code>mpc.linear</code>, and the condensed form;</li>
+<li><code>lqr</code> (DARE);</li>
+<li><code>Polytope</code> with HiGHS LPs;</li>
+<li>the maximal positively invariant set (Gilbert-Tan);</li>
+<li>ellipsoids;</li>
+<li>polytope and ellipsoid terminal constraints.</li>
+</ul>
+<p>The gate: unconstrained MPC with the LQR terminal cost returns <code>u = Kx</code>.</p>
+</main></body></html>

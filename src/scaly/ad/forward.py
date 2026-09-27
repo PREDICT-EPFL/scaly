@@ -280,7 +280,11 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
   if expr.op == ExprOp.MATMUL:
     if args[0] is args[1] and len(args[0].shape) == 1:
       return save(2 * (args[0] @ d[0]))
-    return save(d[0] @ args[1] + args[0] @ d[1])
+    # A constant factor's zero tangent is left out, not multiplied: the simplifier does not fold a
+    # product with a zero matrix, and the term would make the tangent read the other factor, which
+    # a derivative of a linear map (a QP's constraint Jacobian through a call) must not.
+    terms = [t for t, zero in ((d[0] @ args[1], _is_zero_const(d[0])), (args[0] @ d[1], _is_zero_const(d[1]))) if not zero]
+    return save(zeros_like(expr) if not terms else terms[0] if len(terms) == 1 else terms[0] + terms[1])
   raise NotImplementedError(f"JVP for op {expr.op!r} is not implemented")
 
 

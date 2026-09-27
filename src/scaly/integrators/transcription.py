@@ -9,7 +9,7 @@ from typing import Any, Literal
 import numpy as np
 
 from ..function.model import ConcreteFunction, Function
-from ..function.tree import L, param_list
+from ..function.tree import G, L, param_list
 from ..ir.expr import Expr, concat
 from .explicit import rk4
 from .model import check_model, model_rhs
@@ -23,8 +23,10 @@ class Interval:
   """One interval of a transcribed horizon: a Function that a horizon maps over its intervals.
 
   Attributes:
-    fn: ``(x, u, [z], xnext, *params, [dt]) -> r``, the interval's ``n_residual`` equality residuals,
-      zero when the interval is consistent, followed by its cost when the transcription was given one.
+    fn: ``(x, u, [z], xnext, *params, [dt]) -> r`` or ``-> (r, cost)``: the interval's
+      ``n_residual`` equality residuals, zero when the interval is consistent, and its cost (one
+      value) when the transcription was given one. Two outputs rather than one, so that a map of
+      the residuals is a map a sparse Jacobian can take stage by stage.
       ``x`` and ``xnext`` are the states at the interval's ends, ``u`` the control at its start,
       ``z`` its own variables (present when ``n_internal > 0``), ``params`` the model's remaining
       inputs as flat leaves, and ``dt`` its length when that is an input.
@@ -33,7 +35,7 @@ class Interval:
     n_residual: how many residuals come before the cost.
     state_times: the times in ``[0, 1]``, as fractions of the interval, of the states in ``z``.
     control_times: the times of the controls in ``z``; the control ``u`` is at 0.
-    has_cost: whether the last entry of ``fn``'s output is the interval's cost.
+    has_cost: whether ``fn`` has the cost as its second output.
   """
 
   fn: ConcreteFunction[Any, Any, Any, Any]
@@ -99,19 +101,21 @@ def _leaves(model: ConcreteFunction[Any, Any, Any, Any], internal: int, dt: floa
 
 
 def _interval_fn(
-  name: str, model: ConcreteFunction[Any, Any, Any, Any], internal: int, dt: float | None, body: Callable[..., Expr]
+  name: str, model: ConcreteFunction[Any, Any, Any, Any], internal: int, dt: float | None, has_cost: bool, body: Callable[..., Any]
 ) -> ConcreteFunction[Any, Any, Any, Any]:
   """The interval Function over ``_leaves``; ``body(x, u, z, xnext, params, h)`` gets ``z = None``
-  without internal variables and ``h`` the length, a number or the ``dt`` input."""
+  without internal variables and ``h`` the length, a number or the ``dt`` input, and returns the
+  residuals, or ``(residuals, cost)`` when ``has_cost``."""
 
-  def fn(*args: Expr) -> Expr:
+  def fn(*args: Expr) -> Any:
     x, u, rest = args[0], args[1], list(args[2:])
     z = rest.pop(0) if internal else None
     xnext = rest.pop(0)
     h: Expr | float = rest.pop() if dt is None else float(dt)
     return body(x, u, z, xnext, tuple(rest), h)
 
-  return ConcreteFunction(name, fn, param_list(*_leaves(model, internal, dt)), L("r", ...))
+  output = G(L("r", ...), L("cost", (1,))) if has_cost else L("r", ...)
+  return ConcreteFunction(name, fn, param_list(*_leaves(model, internal, dt)), output)
 
 
 class MultipleShooting(Transcription):
@@ -132,12 +136,12 @@ class MultipleShooting(Transcription):
     target = model if cost is None else _augmented(model, cost, f"{name}_augmented")
     step = self.integrator(target, dt=dt, name=f"{name}_step", **self.options)
 
-    def body(x: Expr, u: Expr, _z: Any, xnext: Expr, params: tuple[Expr, ...], h: Expr | float) -> Expr:
+    def body(x: Expr, u: Expr, _z: Any, xnext: Expr, params: tuple[Expr, ...], h: Expr | float) -> Any:
       start = x if cost is None else concat([x, Expr.const(np.zeros(1))])
       end = step(*target.input_tree.unflatten((start, u, *params)), *([h] if dt is None else []))
-      return end - xnext if cost is None else concat([end[:n] - xnext, end[n:]])
+      return end - xnext if cost is None else (end[:n] - xnext, end[n:])
 
-    return Interval(_interval_fn(name, model, 0, dt, body), 0, n, np.zeros(0), np.zeros(0), cost is not None)
+    return Interval(_interval_fn(name, model, 0, dt, cost is not None, body), 0, n, np.zeros(0), np.zeros(0), cost is not None)
 
 
 def _augmented(
@@ -180,7 +184,7 @@ class _Polynomial(Transcription):
     moving = [int(i) for i in self.collocated if i != 0] if self.node_controls else []  # nodes whose controls are in z
     internal = len(inner) * n + len(moving) * nu
 
-    def body(x: Expr, u: Expr, z: Expr | None, xnext: Expr, params: tuple[Expr, ...], h: Expr | float) -> Expr:
+    def body(x: Expr, u: Expr, z: Expr | None, xnext: Expr, params: tuple[Expr, ...], h: Expr | float) -> Any:
       states = {0: x, **({self.nodes.size - 1: xnext} if self.end_is_node else {})}
       states.update({node: z[k * n : (k + 1) * n] for k, node in enumerate(inner)} if z is not None else {})
       offset = len(inner) * n
@@ -198,10 +202,10 @@ class _Polynomial(Transcription):
         residuals.append(xnext - sum((float(c) * values[j] for j, c in enumerate(self.end) if c != 0), Expr.const(np.zeros(n))))
       if cost is None:
         return concat(residuals)
-      return concat([*residuals, h * sum(costs[1:], costs[0])])
+      return concat(residuals), h * sum(costs[1:], costs[0])
 
     n_residual = self.collocated.size * n + (0 if self.end_is_node else n)
-    fn = _interval_fn(name, model, internal, dt, body)
+    fn = _interval_fn(name, model, internal, dt, cost is not None, body)
     return Interval(fn, internal, n_residual, self.nodes[inner], self.nodes[moving], cost is not None)
 
 

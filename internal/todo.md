@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 157**
+**Next id: 158**
 
 | Prefix | Section |
 |---|---|
@@ -140,8 +140,21 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       pass. Horizon Jacobians: collocation 19.2 to 2.1 us, pseudospectral 71.9 to 4.4 us, shooting
       6.9 to 4.8 us; CasADi SX 0.95 us for collocation (a fully expanded form, 70x the code).
       32/32 mutants killed. Report: `notes/integrators_i5_report.html`.
-- [ ] **API-147. `scaly.mpc` core** (plan M1): OCP to `sc.problem`, every transcription, the control
-      law with its warm start in generated code, closed-loop simulation.
+- [x] **API-147. `scaly.mpc` core** (plan M1). `mpc.OCP` over a continuous model and any transcription,
+      or a discrete map: `Quadratic` or Function costs at the points or integrated, state and control
+      bounds (the transcription's internal variables included), `Path` constraints hard or soft
+      (exact l1), `TerminalEquality`, parameters as the union of what the Functions name, some
+      varying per stage. `mpc.MPC` for ipopt, sqp or piqp: `solve` (a `Solution`), `__call__` with a
+      warm start shifted one interval, and `law`, one Function with the solver nested and the shift in
+      its code, for `write_module`; `mpc.simulate`. The cart-pole built by it is the hand-written NLP
+      (same solution to 1e-9, same 23 iterations, 0.99x the time). Transcription intervals now give
+      residuals and cost as two outputs, so the residual map keeps the stage-wise Jacobian.
+      `ad/forward.py`: a matmul's zero tangent is left out, so a linear map through a call proves
+      affine and a QP through an OCP reaches piqp. 18/18 mutants killed, one after a test was added.
+      Report: `notes/mpc_m1_report.html`.
+- [ ] **API-157. Warm starts for a global pseudospectral horizon:** a shift by a sampling time shorter
+      than the one interval, by interpolation on the nodes (plan §4.1); segments shift by whole
+      intervals today.
 - [ ] **API-148. Linear MPC and linear terminal ingredients** (plan M2): LQR, polytopes, maximal
       invariant sets, ellipsoids, the condensed form.
 - [ ] **API-149. Nonlinear terminal ingredients** (plan M3): quasi-infinite horizon, certification,
