@@ -28,11 +28,14 @@ schedule decisions is ``ir/text.py``.
 
 from __future__ import annotations
 
+import struct
 import weakref
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+
+import numpy as np
 
 from .types import DType, DeviceSpec, dtypes
 
@@ -213,16 +216,21 @@ DEVICE_ONLY_OPS: frozenset[ProgramOp] = frozenset({ProgramOp.BARRIER})
 _PROGRAM_NODE_CACHE: weakref.WeakValueDictionary[tuple[Any, ...], "ProgramNode"] = weakref.WeakValueDictionary()
 
 
+def _attr_key(v: Any) -> Any:
+  # A float keys by its bits: == would merge -0.0 with 0.0 and never match a NaN, whose sign C reads too.
+  if isinstance(v, float):
+    return (float, struct.pack("<d", v))
+  if isinstance(v, dict):
+    return tuple((k, _attr_key(x)) for k, x in sorted(v.items()))
+  if isinstance(v, (tuple, list)):
+    if v and all(isinstance(x, float) for x in v):  # a constant table packs at once: keying float by float is 15x slower
+      return (tuple, struct.pack(f"<{len(v)}d", *v))
+    return tuple(map(_attr_key, v))
+  return v
+
+
 def _attrs_key(attrs: dict[str, Any]) -> tuple[Any, ...]:
-  out: list[tuple[str, Any]] = []
-  for k, v in sorted(attrs.items()):
-    if isinstance(v, dict):
-      out.append((k, tuple(sorted(v.items()))))
-    elif isinstance(v, list):
-      out.append((k, tuple(v)))
-    else:
-      out.append((k, v))
-  return tuple(out)
+  return tuple((k, _attr_key(v)) for k, v in sorted(attrs.items()))
 
 
 @dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
@@ -287,6 +295,11 @@ def const_int(value: int) -> ProgramNode:
 
 
 def const_float(value: float, dtype: DType = dtypes.float64) -> ProgramNode:
+  """A floating constant holding a value of ``dtype``: a ``float32`` one is rounded to float32, as C
+  converts it, so that folding computes with the operand the generated C sees."""
+  if dtype == dtypes.float32:
+    with np.errstate(over="ignore"):  # beyond float32's range rounds to an infinity
+      value = float(np.float32(value))
   return ProgramNode(ProgramOp.CONST_FLOAT, (), attrs={"value": float(value)}, dtype=dtype)
 
 

@@ -78,13 +78,19 @@ and a `bool` input reads any nonzero value as true. See
 
 Mixed-dtype arithmetic is refused. There is no implicit widening: an expression combining
 `float32` and `float64` raises at construction, and `sc.cast` makes each conversion visible at the
-call site where it was made. A Python number beside an `Expr` takes that `Expr`'s dtype.
+call site where it was made. A Python number beside an `Expr` takes that `Expr`'s dtype. In
+arithmetic on an integer expression only a Python `int` does: a float, or any number under `/` or
+`**`, stays `float64` and is refused rather than truncated.
 
 Comparisons (`<`, `<=`, `>`, `>=`, `sc.equal`, `sc.not_equal`) and `sc.isfinite` give `bool`
 expressions, and `&`, `|` and `~` combine them. `==` on two expressions stays structural identity,
 which hash-consing relies on, and an `Expr` has no Python truth value: `if x < y:` raises instead of
 silently taking one branch for every input. The data-dependent choice is `sc.where(cond, a, b)`,
-which evaluates both branches and differentiates through the chosen one.
+which evaluates both branches and differentiates through the chosen one: an infinite or NaN
+derivative in the other branch, `sqrt` or `log` at 0 say, does not reach the result. Reverse mode
+keeps the unchosen entries at zero through elementwise operations. A branch that reaches such a
+derivative through a matrix product, a reduction or a broadcast operand can still pass NaN into a
+gradient, as in other reverse-mode systems; forward mode never does.
 
 `diff` marks whether a value depends differentiably on symbolic inputs. Constants are not
 differentiable; structural operations pass the flag through; arithmetic propagates it from its
@@ -121,7 +127,7 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `exp` `log` `sqrt` | 1 | yes | |
 | `abs` | 1 | yes | derivative 0 at 0; no multi-seed forward rule yet |
 | `floor` `ceil` | 1 | no | result is marked non-differentiable |
-| `minimum` `maximum` | 2 | yes | the derivative at a tie follows `sc.options(nonsmooth=...)` |
+| `minimum` `maximum` | 2 | yes | C's `fmin` and `fmax`, folded or not: a NaN beside a number gives the number; the derivative at a tie follows `sc.options(nonsmooth=...)` |
 | `copysign` | 2 | yes | magnitude of the first operand, sign of the second; no derivative through the sign |
 
 #### Comparison and choice

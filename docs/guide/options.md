@@ -43,6 +43,8 @@ three options take non-negative integers.
 An option is read when a graph is built, not when it is compiled. A derivative built inside a
 `with sc.options(...)` block keeps its convention after the block ends, because the convention is
 part of that graph, and a graph built under a different setting generates different C and gets its
-own JIT cache entry. `sc.options` changes the setting for the current thread or task only;
+own JIT cache entry. The derivative of a call, a map or a loop is built once per callee and per
+setting, so one Function differentiated under two settings gets two derivative bodies, named apart,
+which can sit in one graph. `sc.options` changes the setting for the current thread or task only;
 `sc.set_options` changes the default outside any block. An unknown option name or value raises at
 the call.

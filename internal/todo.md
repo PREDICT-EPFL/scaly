@@ -919,6 +919,37 @@ protocol's compile flags.
       Hessians never reach the factorization, which refuses a derivative in both modes. Against
       Accelerate's `dgesv`: 0.12x at order 4, 0.51x at 8, 0.94 to 1.05x from 12 to 40. 24/24 mutants
       killed, three after a test was added. Report: `notes/integrators_i2_report.html`.
+- [x] **C-158. Edge-case tests for the ops added since `main`, and the bugs they found.** 494 tests
+      in ten `*_edge_cases.py` files cover the 32 new expression ops: special values, ties, empty and
+      size-one shapes, out-of-range indices, the unroll thresholds, loops of zero and one steps,
+      folded against compiled, every derivative mode, and `verify_expr` on every op and its
+      derivatives. They pinned 52 failures, all fixed. The fixes:
+      - reverse mode keeps a `where` mask through elementwise ops;
+      - float32 tangents, cotangents and constants take their value's dtype;
+      - a Python number beside a float expression takes its dtype;
+      - tie weights never divide 0 by 0;
+      - derivative-helper caches are keyed by the options, and their names are tagged under non-default ones;
+      - non-float loop carries carry no tangent;
+      - the in-place proof handles empty step tables and empty groups;
+      - `ldl_unpack` works in float32 and `lu_solve` checks the rank first;
+      - program-IR constants are keyed by their bits;
+      - `maximum`/`minimum` fold as `fmax`/`fmin`;
+      - int64 constants are exact;
+      - float32 C narrows its constants and libm results.
+      26/26 mutants of the fixes were killed, three after a test was added. Report:
+      `notes/edge_case_fixes_report.html`.
+- [ ] **C-159. float32 through the packed vectors of loop derivatives.** Multi-seed forward mode joins
+      the tangents of several inputs in one vector, and a while loop's adjoint packs the carry's
+      cotangent with the params'. A float32 carry beside float64 slices or params cannot share one,
+      so both raise (strict xfails in `tests/integration/test_loop_edge_cases.py`).
+- [ ] **C-160. Multi-seed forward rules for `maximum`, `minimum`, `copysign`, the `max`/`min`
+      reductions, `segment_max`/`segment_min` and `index_add`/`index_set`.** They fall back to one pass
+      per seed, and `SCALY_STRICT_JVP_MANY=1` refuses them. The notes in `docs/how_it_works/ir.md` list
+      only `atan2`, `asin`/`acos`/`atan` and `abs`.
+- [ ] **C-161. Truncation and signed zeros left over from C-158.** `_operands` gives a Python float
+      beside an integer expression that expression's dtype, so `i64 < 0.5` compares with 0.
+      `_attrs_key` in `ir/expr.py` merges `take(..., fill=0.0)` with `fill=-0.0`. int64
+      `maximum`/`minimum` render as double `fmax`/`fmin`, which is inexact above 2**53.
 - [x] **C-170. A zero derivative for `floor` and `ceil`, and forward mode through integer index
       arithmetic** (interp plan SP0, `notes/interp_plan_2026_09_28.md`). `floor` and `ceil` are
       differentiable, with a zero derivative in forward and reverse mode, refused under

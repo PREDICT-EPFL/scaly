@@ -25,6 +25,7 @@ from ..function import ConcreteFunction, Function
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
 from ..ir.program import ProgramNode, ProgramOp
+from ..ir.types import dtypes
 
 # Scalar ProgramOp -> C spelling. Operators render inline; libm ops render as calls.
 _BIN_SYM = {ProgramOp.ADD: "+", ProgramOp.SUB: "-", ProgramOp.MUL: "*", ProgramOp.DIV: "/", ProgramOp.MOD: "%"}
@@ -314,12 +315,17 @@ def _emit_view(view: ProgramNode, ptr_expr: dict[str, str]) -> str:
 
 def _c_float(value: float) -> str:
   if math.isnan(value):
-    return "((double)NAN)"
+    return "(-(double)NAN)" if math.copysign(1.0, value) < 0 else "((double)NAN)"  # negation sets a NaN's sign bit
   if math.isinf(value):
     return "((double)(-INFINITY))" if value < 0 else "((double)INFINITY)"
   if value == 0.0 and math.copysign(1.0, value) < 0:
     return "-0.0"  # "-0" would be the integer 0, which converts to +0.0
   return f"{value:.17g}"
+
+
+def _narrow(call: str, node: ProgramNode) -> str:
+  """libm computes in double; a float32 result converts back, so the arithmetic around it stays in float."""
+  return f"((float){call})" if node.dtype == dtypes.float32 else call
 
 
 def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
@@ -343,6 +349,8 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
       s = _c_float(value)
       if math.isfinite(value) and "." not in s and "e" not in s:
         s += ".0"
+      if node.dtype == dtypes.float32:
+        s = f"((float){s})"  # exact: the value is a float32 one
     elif op == ProgramOp.VAR:
       s = c_ident(node.attrs["name"])
     elif op == ProgramOp.LOAD:
@@ -352,9 +360,9 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str]) -> str:
     elif op in _BIN_SYM:
       s = f"({args[0]} {_BIN_SYM[op]} {args[1]})"
     elif op in _UNARY_C:
-      s = f"{_UNARY_C[op]}({args[0]})"
+      s = _narrow(f"{_UNARY_C[op]}({args[0]})", node)
     elif op in _BINARY_C:
-      s = f"{_BINARY_C[op]}({args[0]}, {args[1]})"
+      s = _narrow(f"{_BINARY_C[op]}({args[0]}, {args[1]})", node)
     elif op in _PRED_SYM:
       s = f"({args[0]} {_PRED_SYM[op]} {args[1]})"
     elif op == ProgramOp.NOT:

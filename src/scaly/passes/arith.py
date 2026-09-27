@@ -149,6 +149,7 @@ _ARITHMETIC: dict[ProgramOp, Callable[..., Any]] = {
 }
 _MATH = {op: getattr(math, op.value) for op in (*p.UNARY_FN_OPS, ProgramOp.POW, ProgramOp.ATAN2, ProgramOp.COPYSIGN) if op != ProgramOp.ABS}
 _MATH[ProgramOp.ABS] = abs
+_EXTREMA: dict[ProgramOp, np.ufunc] = {ProgramOp.MINIMUM: np.fmin, ProgramOp.MAXIMUM: np.fmax}  # as C's: a NaN beside a number yields the number
 _PREDICATES: dict[ProgramOp, Callable[..., bool]] = {
   ProgramOp.LT: operator.lt,
   ProgramOp.LE: operator.le,
@@ -165,9 +166,7 @@ def constant(value: int | float, dtype: DType) -> ProgramNode:
   """A program constant of ``dtype``, truncating to int for integer dtypes; a bool is a 0/1 ``CONST_INT``."""
   if dtype.is_bool:
     return ProgramNode(ProgramOp.CONST_INT, attrs={"value": int(bool(value))}, dtype=dtype)
-  return ProgramNode(
-    ProgramOp.CONST_INT if dtype.is_integer else ProgramOp.CONST_FLOAT, attrs={"value": int(value) if dtype.is_integer else float(value)}, dtype=dtype
-  )
+  return ProgramNode(ProgramOp.CONST_INT, attrs={"value": int(value)}, dtype=dtype) if dtype.is_integer else p.const_float(value, dtype)
 
 
 def evaluate(op: ProgramOp, values: list[int | float], dtype: DType) -> int | float | None:
@@ -197,8 +196,8 @@ def _evaluate_scalar(op: ProgramOp, values: list[int | float], dtype: DType) -> 
       return cast(int | float, _ARITHMETIC[op](*values))
     if op in _MATH:
       return _MATH[op](*values)
-    if op in {ProgramOp.MINIMUM, ProgramOp.MAXIMUM} and all(math.isfinite(v) for v in values):
-      return (min if op == ProgramOp.MINIMUM else max)(values)
+    if op in _EXTREMA:
+      return _EXTREMA[op](*values).item()
   except (ValueError, OverflowError, ZeroDivisionError):
     return None
   return None

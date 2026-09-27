@@ -16,6 +16,7 @@ from ..function.model import ConcreteFunction
 from ..function.sugar import custom_derivative, vmap
 from ..ir.expr import Expr, as_expr, cast, cholesky, gather, ldl, lu, put, solve_triangular, take
 from ..ir.types import DType, dtypes
+from ..utils.options import Options, get_options
 
 __all__ = ["cho_solve", "cholesky", "ldl", "ldl_solve", "ldl_unpack", "lu", "lu_solve", "solve", "solve_triangular"]
 
@@ -23,8 +24,8 @@ __all__ = ["cho_solve", "cholesky", "ldl", "ldl_solve", "ldl_unpack", "lu", "lu_
 def ldl_unpack(f: Any) -> tuple[Expr, Expr]:
   """``(L, d)`` from a packed ``ldl`` factor: the unit lower ``L`` and the diagonal of ``D``."""
   f = as_expr(f)
-  n = f.shape[0]
-  unit_l = f * Expr.const(np.tril(np.ones((n, n)), -1)) + Expr.const(np.eye(n))
+  n, dtype = f.shape[0], f.type.dtype
+  unit_l = f * Expr.const(np.tril(np.ones((n, n)), -1), dtype=dtype) + Expr.const(np.eye(n), dtype=dtype)
   return unit_l, gather(f.reshape((n * n,)), np.arange(n) * (n + 1))
 
 
@@ -47,7 +48,7 @@ def lu_solve(f: Any, b: Any, *, trans: bool = False) -> Expr:
   right-hand sides. Differentiable in ``b``; in ``f`` only through the factorization, which has no
   derivative, so differentiate in ``A`` through ``solve(a, b, assume="gen")``."""
   f, b = as_expr(f), as_expr(b)
-  n = f.shape[1]
+  n = f.shape[1] if len(f.shape) == 2 else -1
   if f.shape != (n + 1, n):
     raise ValueError(f"lu_solve needs a factor from lu, shaped (n + 1, n), got {f.shape}")
   if len(b.shape) not in (1, 2) or b.shape[0] != n:
@@ -98,17 +99,23 @@ def _call(fn: ConcreteFunction, *args: Expr) -> Expr:
   return out[0] if isinstance(out, tuple) else out
 
 
-_GENERAL: dict[tuple[int, DType], tuple[ConcreteFunction, ConcreteFunction]] = {}
+_GENERAL: dict[tuple[int, DType, bool], tuple[ConcreteFunction, ConcreteFunction]] = {}
 
 
 def _general_solvers(n: int, dtype: DType) -> tuple[ConcreteFunction, ConcreteFunction]:
   """``(A, f, b) -> A^{-1} b`` and ``-> A^{-T} b`` with ``f = lu(A)`` computed outside, as Functions
   whose derivatives are implicit: the factor's own derivative is taken to be zero, and the rules
   solve with the same factor through the other Function. Two levels of rules, as ``SparseLDL``'s:
-  second derivatives are implicit too, and only a third would reach the factorization."""
-  key = (n, dtype)
+  second derivatives are implicit too, and only a third would reach the factorization.
+
+  The triangular solves inside are straight-line code or loops as ``sc.options(dense_unroll=...)``
+  decides when the solve is built, so each decision has its own pair, named apart from the default's."""
+  unroll = n <= get_options().dense_unroll
+  key = (n, dtype, unroll)
   if key not in _GENERAL:
     tag = f"lu_solve{n}" + ("" if dtype == dtypes.float64 else f"_{dtype.name}")
+    if unroll != (n <= Options().dense_unroll):
+      tag += "_unrolled" if unroll else "_looped"
 
     def syms(*names: str) -> list[Expr]:
       shapes = {"a": (n, n), "f": (n + 1, n)}

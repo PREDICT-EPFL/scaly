@@ -597,11 +597,20 @@ class Expr:
     return not isinstance(other, Expr) and getattr(type(other), "__array_ufunc__", False) is None
 
   def _operand(self, other: Any) -> Expr:
-    """``other`` as an operand of ``+``, ``-`` or ``*`` beside this expression: a Python integer next
-    to an integer expression is an integer constant, so index arithmetic needs no casts."""
-    if not isinstance(other, Expr) and self.type.dtype.is_integer and isinstance(other, (int, np.integer)) and not isinstance(other, bool):
-      return Expr.const(other, dtype=self.type.dtype)
+    """``other`` as an operand of ``+``, ``-`` or ``*`` beside this expression. A Python number takes
+    its dtype: any number beside a floating expression, and an integer beside an integer one, so
+    index arithmetic needs no casts. A float beside an integer expression stays a float64 constant,
+    which the mixed-dtype check refuses rather than truncating it."""
+    dtype = self.type.dtype
+    if _is_number(other) and (dtype.is_floating or dtype.is_integer and not isinstance(other, (float, np.floating))):
+      return Expr.const(other, dtype=dtype)
     return as_expr(other)
+
+  def _float_operand(self, other: Any) -> Expr:
+    """``other`` as an operand of ``/`` or ``**``: a Python number takes a floating expression's dtype.
+    Beside an integer expression it stays float64 and is refused, since integer division is not what
+    ``/`` means."""
+    return Expr.const(other, dtype=self.type.dtype) if _is_number(other) and self.type.dtype.is_floating else as_expr(other)
 
   def __add__(self, other: Any) -> Expr:
     if self._defers(other):
@@ -630,16 +639,16 @@ class Expr:
   def __truediv__(self, other: Any) -> Expr:
     if self._defers(other):
       return NotImplemented
-    return binary(ExprOp.DIV, self, as_expr(other))
+    return binary(ExprOp.DIV, self, self._float_operand(other))
 
   def __rtruediv__(self, other: Any) -> Expr:
-    return binary(ExprOp.DIV, as_expr(other), self)
+    return binary(ExprOp.DIV, self._float_operand(other), self)
 
   def __pow__(self, other: Any) -> Expr:
-    return binary(ExprOp.POW, self, as_expr(other))
+    return binary(ExprOp.POW, self, self._float_operand(other))
 
   def __rpow__(self, other: Any) -> Expr:
-    return binary(ExprOp.POW, as_expr(other), self)
+    return binary(ExprOp.POW, self._float_operand(other), self)
 
   def __matmul__(self, other: Any) -> Expr:
     if self._defers(other):
@@ -690,6 +699,10 @@ def as_expr(x: Any) -> Expr:
   return x if isinstance(x, Expr) else Expr.const(x)
 
 
+def _is_number(x: Any) -> bool:
+  return isinstance(x, (int, float, np.integer, np.floating)) and not isinstance(x, (bool, np.bool_))
+
+
 def common_lowering(*exprs: Expr) -> Lowering:
   explicit = {e.lowering for e in exprs if e.lowering != "auto"}
   if len(explicit) == 1:
@@ -732,7 +745,7 @@ def binary(op: ExprOp | str, x: Expr, y: Expr) -> Expr:
 
 def atan2(y: Any, x: Any) -> Expr:
   """Two-argument arctangent, elementwise: the angle of the point ``(x, y)``."""
-  return binary(ExprOp.ATAN2, as_expr(y), as_expr(x))
+  return binary(ExprOp.ATAN2, *_operands(y, x))
 
 
 def minimum(x: Any, y: Any) -> Expr:
@@ -774,7 +787,7 @@ def norm_1(x: Any) -> Expr:
 
 def copysign(x: Any, y: Any) -> Expr:
   """Elementwise magnitude of ``x`` with the sign of ``y``, as C's ``copysign``."""
-  return binary(ExprOp.COPYSIGN, as_expr(x), as_expr(y))
+  return binary(ExprOp.COPYSIGN, *_operands(x, y))
 
 
 def _as_bool(x: Any) -> Expr:
@@ -1471,8 +1484,15 @@ def vec(x: Any) -> Expr:
   return as_expr(x).vec()
 
 
+def tangent_dtype(x: Expr) -> DType:
+  """The dtype of ``x``'s tangents and cotangents: its own when floating, float64 otherwise (an
+  integer or bool value has no derivative, and its zero tangent is float64 as it always was)."""
+  return x.type.dtype if x.type.dtype.is_floating else dtypes.float64
+
+
 def zeros_like(x: Expr) -> Expr:
-  return Expr.const(np.zeros(x.shape, dtype=np.float64), lowering=x.lowering)
+  """Zeros shaped like ``x``, of its tangent dtype."""
+  return Expr.const(np.zeros(x.shape), dtype=tangent_dtype(x), lowering=x.lowering)
 
 
 def format_expr(outputs: Expr | Iterable[Expr]) -> str:

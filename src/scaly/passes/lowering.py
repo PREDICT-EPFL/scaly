@@ -615,9 +615,10 @@ def _lower_const(ctx: LowerCtx, node: Expr) -> None:
   assert value is not None
   # A constant of any size materializes as a read-only ``constant``-space buffer
   # (rendered ``static const``). Output-aliasing never applies to CONST, so
-  # emit_outputs inserts a copy when a CONST is itself an output.
+  # emit_outputs inserts a copy when a CONST is itself an output. ``tolist`` keeps an int64 exact,
+  # where ``float`` would round one above 2**53.
   name = ctx._fresh("k")
-  buf = p.const_buffer(name, node.type.dtype, _shape_or_scalar(node.shape), [float(v) for v in value.reshape(-1)])
+  buf = p.const_buffer(name, node.type.dtype, _shape_or_scalar(node.shape), value.reshape(-1).tolist())
   ctx.buffers[name] = buf
   ctx.value_buffers[node.id] = name
   ctx.statements.append(buf)
@@ -1988,6 +1989,8 @@ def in_place_steps(fun: ConcreteFunction, steps: dict[int, np.ndarray]) -> bool:
   # With no input sliced per step, every index comes from constants and is the same at every
   # step: one step stands for all of them.
   length = next(iter(steps.values())).shape[0] if steps else 1
+  if length == 0:
+    return True  # a loop of no steps never runs its body
   carry = fun.inputs[0]
   links = [carry, *chain]
   position = {e.id: j for j, e in enumerate(links)}
@@ -2090,8 +2093,8 @@ class _Ragged:
     live = self.hi > self.lo
     any_live = live.any(axis=1)
     if self.table is None:
-      low = np.where(live, self.lo, np.iinfo(np.int64).max).min(axis=1)
-      high = np.where(live, self.hi - 1, -1).max(axis=1)
+      low = np.where(live, self.lo, np.iinfo(np.int64).max).min(axis=1, initial=np.iinfo(np.int64).max)
+      high = np.where(live, self.hi - 1, -1).max(axis=1, initial=-1)
     else:
       low = np.full(self.lo.shape[0], int(self.table.min()) if self.table.size else 0)
       high = np.full(self.lo.shape[0], int(self.table.max()) if self.table.size else -1)

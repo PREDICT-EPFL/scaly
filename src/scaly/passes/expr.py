@@ -11,7 +11,6 @@ from typing import Any, Iterable
 import numpy as np
 
 from ..ir.expr import Expr, ExprOp, OP_INFO, _attrs_key, gather, matmul, stack, topo, zeros_like
-from ..ir.types import dtypes
 from ..ir.match import Pattern, _replace_args, rewrite
 from .arith import ARITH_EXPR, fold
 
@@ -274,7 +273,13 @@ def _select_folds(e: Expr) -> bool:
   uniform = value is not None and value.size > 0 and bool(np.all(value == value.reshape(-1)[0]))
   if uniform:
     return (a if value.reshape(-1)[0] else b).shape == e.shape  # type: ignore[union-attr]
-  return (a is b and a.shape == e.shape) or (_is_zero(a) and _is_zero(b) and e.type.dtype == dtypes.float64)
+  return (a is b and a.shape == e.shape) or _same_constant(a, b, e.shape)
+
+
+def _same_constant(a: Expr, b: Expr, shape: tuple[int, ...]) -> bool:
+  """Whether ``a`` and ``b`` are constants with the same bits once broadcast to ``shape``: ``-0.0`` is not ``0.0``."""
+  va, vb = _const_value(a), _const_value(b)
+  return va is not None and vb is not None and np.broadcast_to(va, shape).tobytes() == np.broadcast_to(vb, shape).tobytes()
 
 
 def _select_fold(e: Expr) -> Expr:
@@ -282,7 +287,10 @@ def _select_fold(e: Expr) -> Expr:
   value = _const_value(cond)
   if value is not None and value.size > 0:
     return a if value.reshape(-1)[0] else b
-  return a if a is b else zeros_like(e)
+  if a is b and a.shape == e.shape:
+    return a
+  assert a.value is not None
+  return Expr.const(np.broadcast_to(a.value, e.shape).copy(), dtype=e.type.dtype, lowering=e.lowering)
 
 
 def _gather_identity(e: Expr) -> bool:

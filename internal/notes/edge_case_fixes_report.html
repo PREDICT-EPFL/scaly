@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Edge-case fixes</title>
+<style>
+:root{--bg:#fff;--fg:#1d1d1f;--mut:#5f6368;--line:#e3e3e3;--ok:#1a7f37;--warn:#9a6700}
+@media (prefers-color-scheme:dark){:root{--bg:#161618;--fg:#ececec;--mut:#a0a0a0;--line:#333;--ok:#3fb950;--warn:#d29922}}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif;max-width:960px;margin:2rem auto;padding:0 16px}
+h1{font-size:1.5rem}h2{font-size:1.15rem;margin-top:2rem;border-bottom:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;font-size:14px}td,th{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+code{font-size:13px}.box{border:1px solid var(--line);border-radius:8px;padding:12px 16px}.ok{color:var(--ok)}.warn{color:var(--warn)}
+</style></head><body>
+<h1>Edge-case tests: fixes for every pinned bug</h1>
+<div class="box">
+<p><b class="ok">All 52 strict xfails from the edge-case tests are fixed.</b> Full suite on the branch: 3154 passed, 45 skipped (solver-marked), 0 failed, 2 xfailed. The 2 xfails are new pins for a float32 limit found while fixing, listed under "Left".</p>
+<p>One commit on <code>claude/edge-case-fixes</code> (worktree <code>.worktrees/edge-case-fixes</code>), rebased onto <code>claude/integrators-mpc</code> after "The scaly.mpc core (MPC M1)", so it lands as a fast-forward. It carries the fixes, the ten test files, the regenerated node-ID baseline, the docs and todo items C-158 to C-161. I did not land it: the main checkout has <code>claude/integrators-mpc</code> checked out with another session's uncommitted work, including the node-ID baseline.</p>
+</div>
+
+<h2>Fixes</h2>
+<table><tr><th>Bug</th><th>Root cause and fix</th></tr>
+<tr><td>Reverse-mode NaN through <code>where</code></td><td><code>ad/reverse.py</code>: a cotangent masked as <code>where(c, t, 0)</code> stays masked through elementwise ops (<code>_masked_local_vjp</code>). This covers nested <code>where</code>s and a sum of masked cotangents. A constant-zero adjoint stays constant, so reverse mode still never walks into a factorization.</td></tr>
+<tr><td>float32 derivatives (26 op/mode cases)</td><td>New <code>tangent_dtype</code> in <code>ir/expr.py</code>. <code>zeros_like</code>, the reverse-mode ones and the multi-seed zeros (<code>_zeros_many</code>) take the value's floating dtype.</td></tr>
+<tr><td>Python number beside float32 (<code>*</code>, <code>/</code>, <code>**</code>, <code>atan2</code>, <code>copysign</code>)</td><td><code>Expr._operand</code> and <code>_float_operand</code>, as <code>ir.md</code> promises. Beside an integer expression only an <code>int</code> joins; a float, <code>/</code> and <code>**</code> are refused rather than truncated.</td></tr>
+<tr><td><code>segment_max</code>/<code>segment_min</code> and <code>reduce_max</code>/<code>reduce_min</code> give NaN derivatives (0/0)</td><td>The tie count divides by <code>max(count, 1)</code>. A bin won by <code>fill</code>, or with a NaN result, gives no entry a share.</td></tr>
+<tr><td>Caches ignore <code>nonsmooth</code>, <code>max_trajectory</code>, <code>dense_unroll</code></td><td>All 13 derivative-helper caches key on <code>get_options()</code>. Helpers built under non-default options get an <code>_o&lt;hash&gt;</code> name suffix, so default C symbols are unchanged. <code>linalg.dense._general_solvers</code> keys on the unroll decision.</td></tr>
+<tr><td>Forward mode through an <code>int64</code> or <code>bool</code> loop carry</td><td>Such a carry carries no tangent (<code>_carries_tangent</code>) in scan and while, single- and multi-seed. Loop tangent and cotangent symbols take their value's dtype, which also makes float32 carries work in single-seed forward and in reverse mode.</td></tr>
+<tr><td>Lowering crashes: <code>while_loop(max_iter=0, index=True)</code>, zero-group <code>ragged_add</code></td><td><code>in_place_steps</code> returns early for zero steps; <code>_Ragged.bounds</code> uses <code>initial=</code> for empty groups.</td></tr>
+<tr><td><code>ldl_solve</code> float32, <code>lu_solve</code> rank-1 error</td><td>Typed masks in <code>ldl_unpack</code>; rank check before <code>shape[1]</code>.</td></tr>
+<tr><td>Signed zeros merged, negative NaN, <code>where(c,-0.0,0.0)</code></td><td>Program-IR interning and <code>fold_arith</code> key floats by their bits. <code>_select_fold</code> folds only bitwise-equal constants; this also fixes a narrower-than-result fold that returned garbage. C writes <code>(-(double)NAN)</code>.</td></tr>
+<tr><td>Folded <code>maximum</code>/<code>minimum</code> ≠ compiled</td><td>Both dialects fold with <code>np.fmax</code>/<code>np.fmin</code>, matching C.</td></tr>
+<tr><td>int64 constants above 2**53</td><td><code>_lower_const</code> keeps ints exact.</td></tr>
+<tr><td>float32 computed in double in the C</td><td>float32 constants render as <code>(float)</code> and float32 libm results are narrowed. <code>const_float</code> rounds float32 values.</td></tr>
+</table>
+
+<h2>Checks</h2>
+<ul>
+<li><b>Tests:</b> 52 xfail marks removed. New tests cover the fixes the pins didn't reach: nested and summed <code>where</code> masks, the zero-adjoint rule, NaN extrema in both modes, non-float while carries, float32 loop carries against float64, the integer operand rule, two unroll settings in one graph, and float32 libm calls (added by the codegen agent).</li>
+<li><b>Mutation checks:</b> 26 reverts of my fixes, all killed. Three first survived and got new tests. The codegen agent checked its own tests against HEAD's source.</li>
+<li><b>Lint and types:</b> <code>ruff format</code>, <code>ruff check</code> and <code>ty check --error-on-warning</code> are clean on every changed file.</li>
+<li><b>Snapshots:</b> the C snapshots are unchanged.</li>
+<li><b>Docs:</b> <code>ir.md</code> (fmax semantics, the <code>where</code> derivative and its limit, the integer operand rule) and <code>options.md</code> (per-setting derivative bodies).</li>
+</ul>
+
+<h2 class="warn">Left</h2>
+<ul>
+<li><b>Two float32 limits, pinned as strict xfails:</b> multi-seed forward mode through a float32 loop carry, and reverse mode through a while loop whose float32 carry sits beside float64 params. Both pack mixed dtypes into one vector.</li>
+<li><b><code>where</code> through non-elementwise ops:</b> the reverse mask stops at a matrix product, a reduction or a broadcast operand (documented).</li>
+<li><b>Not addressed:</b>
+  <ul>
+  <li>Comparisons still truncate a float beside an integer: <code>i64 &lt; 0.5</code> compares with 0.</li>
+  <li><code>ir/expr.py _attrs_key</code> merges <code>fill=0.0</code> with <code>fill=-0.0</code>.</li>
+  <li>int64 <code>maximum</code>/<code>minimum</code> run as double <code>fmax</code>/<code>fmin</code>.</li>
+  <li>The <code>ir.md</code> "no multi-seed forward rule" notes miss maximum, minimum, copysign, the reductions, segment extrema and index_add/index_set.</li>
+  </ul></li>
+<li><b>Recorded</b> in <code>internal/todo.md</code>: C-158 (this work, checked off), and open items C-159 (float32 in packed loop vectors), C-160 (multi-seed rules and their docs) and C-161 (truncation and signed zeros).</li>
+<li><b>To land:</b> the main checkout holds untracked copies of the ten test files from before the fixes; delete them there, then fast-forward <code>claude/integrators-mpc</code> to <code>claude/edge-case-fixes</code> once that checkout's baseline edits are committed.</li>
+</ul>
+</body></html>

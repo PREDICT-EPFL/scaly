@@ -10,11 +10,14 @@ import numpy as np
 from ..function import ConcreteFunction
 from ..function.sugar import _scan_node, _while_node, vmap, while_parts
 from ..ir.expr import (
+  COMMON_ELEMENTWISE_BINARY,
+  COMMON_ELEMENTWISE_UNARY,
   PREDICATE_OPS,
   Expr,
   ExprOp,
   independent,
   substitute,
+  tangent_dtype,
   as_expr,
   cast,
   concat,
@@ -47,6 +50,7 @@ from .forward import (
   custom_vjp_call,
   extremum_weight,
   floor_tangent,
+  options_tag,
   reduce_weights,
   segment_weights,
   sign,
@@ -54,9 +58,7 @@ from .forward import (
 from .sparsity import _depends_on
 
 
-_VMAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...], frozenset[int]]]] = (
-  weakref.WeakKeyDictionary()
-)
+_VMAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Any, tuple[int, ...], frozenset[int]]]] = weakref.WeakKeyDictionary()
 
 
 def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
@@ -78,13 +80,13 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
   """The adjoint of one map lane for the ``active_formals``, the inputs it reads, and the formals
   whose cotangent is a constant zero (an implicit rule's for a factor it treats as constant): the
   map's adjoint leaves those out, so reverse mode does not walk back into what produced them."""
-  key = (output_index, active_formals)
+  key = (output_index, active_formals, get_options())
   cache = _VMAP_ADJ_CACHE.setdefault(callee, {})
   if key not in cache:
     out = callee.outputs[output_index]
     taken = {*callee.input_names, *callee.output_names}
     lam_name = claim_name(f"lam:{callee.output_names[output_index]}", taken)
-    lam = Expr.sym(lam_name, out.shape)
+    lam = Expr.sym(lam_name, out.shape, dtype=tangent_dtype(out))
     grads = body_cotangents(callee, {output_index: lam}, active_formals)
     zero = frozenset(k for k, grad in zip(active_formals, grads, strict=True) if _is_zero_const(simplify_cse_fixpoint(grad)))
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads])))
@@ -94,7 +96,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     input_names = tuple(callee.input_names[i] for i in arg_indices) + (lam_name,)
     # Suffix by formal index, not name: joined names are not injective ({a_b} vs {a, b}) and
     # lowering dedupes callees by name, so a collision would silently reuse the wrong proc body.
-    name = f"{callee.name}_adj{output_index}_" + "_".join(str(i) for i in active_formals)
+    name = f"{callee.name}_adj{output_index}_" + "_".join(str(i) for i in active_formals) + options_tag()
     fn = ConcreteFunction._from_exprs(name, inputs, [adj], input_names, [claim_name(f"adj:{callee.output_names[output_index]}", taken)])
     cache[key] = (fn, arg_indices, zero)
   return cache[key]
@@ -146,7 +148,7 @@ def _vmap_vjp(vmap_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[t
   return ret
 
 
-_SCAN_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[tuple[int, ...], tuple[int, ...]], Any]] = weakref.WeakKeyDictionary()
+_SCAN_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Any]] = weakref.WeakKeyDictionary()
 
 
 def _scan_adj_function(callee: Any, extras: tuple[int, ...], active: tuple[int, ...]) -> Any:
@@ -156,20 +158,22 @@ def _scan_adj_function(callee: Any, extras: tuple[int, ...], active: tuple[int, 
   cotangent of the entering carry and of each ``active`` slice. Every output of a scan that has a
   cotangent goes through this one step, so a scan has one backward scan however many of its outputs
   are used."""
-  key = (extras, active)
+  key = (extras, active, get_options())
   cache = _SCAN_ADJ_CACHE.setdefault(callee, {})
   if key not in cache:
     carry, xs = callee.inputs[0], callee.inputs[1:]
     taken = {*callee.input_names, *callee.output_names}
-    lam = Expr.sym(claim_name(f"lam:{callee.input_names[0]}", taken), carry.shape)
+    lam = Expr.sym(claim_name(f"lam:{callee.input_names[0]}", taken), carry.shape, dtype=tangent_dtype(carry))
     cots: dict[int, Expr] = {0: lam}
     extra: list[Expr] = []
     for output in extras:
       if output > 0:
-        bar = Expr.sym(claim_name(f"lam:{callee.output_names[output]}", taken), callee.outputs[output].shape)
+        bar = Expr.sym(
+          claim_name(f"lam:{callee.output_names[output]}", taken), callee.outputs[output].shape, dtype=tangent_dtype(callee.outputs[output])
+        )
         cots[output] = bar
       else:
-        bar = Expr.sym(claim_name(f"lam:{callee.input_names[0]}:t", taken), carry.shape)
+        bar = Expr.sym(claim_name(f"lam:{callee.input_names[0]}:t", taken), carry.shape, dtype=tangent_dtype(carry))
       extra.append(bar)
     grads = body_cotangents(callee, cots, (0, *(i + 1 for i in active)))
     lam_in = grads[0]
@@ -179,7 +183,7 @@ def _scan_adj_function(callee: Any, extras: tuple[int, ...], active: tuple[int, 
     names = [str(lam.name), *callee.input_names, *(str(e.name) for e in extra)]
     body = [callee._inherit_lowering(simplify_cse_fixpoint(g)) for g in (lam_in, *grads[1:])]
     tag = "_".join("t" if output < 0 else str(output) for output in extras) or "0"
-    suffix = f"{tag}_" + ("_".join(str(i) for i in active) or "c")
+    suffix = f"{tag}_" + ("_".join(str(i) for i in active) or "c") + options_tag()
     cache[key] = ConcreteFunction._from_exprs(
       f"{callee.name}_scanadj{suffix}",
       inputs,
@@ -216,7 +220,7 @@ def _call_vjp(expr: Expr, cots: dict[int, Expr], wrts: Sequence[Expr], dep_memo:
   # to this call's actuals, corrupting the adjoint.
   taken = {*callee.input_names, *callee.output_names}
   used = sorted(cots)
-  lams = [Expr.sym(claim_name(f"lam:{callee.output_names[k]}", taken), callee.outputs[k].shape) for k in used]
+  lams = [Expr.sym(claim_name(f"lam:{callee.output_names[k]}", taken), callee.outputs[k].shape, dtype=tangent_dtype(callee.outputs[k])) for k in used]
   replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
   for k, lam in zip(used, lams, strict=True):
     replacements[lam.id] = cots[k]
@@ -269,7 +273,7 @@ def _while_adj_function(body: Any, index: bool, n_params: int, active: tuple[int
   params' cotangents plus this step's share; otherwise ``lam`` unchanged, so steps the loop never
   took contribute nothing."""
   cache = _WHILE_ADJ_CACHE.setdefault(body, {})
-  key = (index, n_params, active)
+  key = (index, n_params, active, get_options())
   if key not in cache:
     carry = body.inputs[0]
     cs = carry.size
@@ -277,7 +281,7 @@ def _while_adj_function(body: Any, index: bool, n_params: int, active: tuple[int
     formals = body.inputs[first : first + n_params]
     sizes = [formals[i].size for i in active]
     taken = {*body.input_names, *body.output_names}
-    lam = Expr.sym(claim_name(f"lam:{body.input_names[0]}", taken), (cs + sum(sizes),))
+    lam = Expr.sym(claim_name(f"lam:{body.input_names[0]}", taken), (cs + sum(sizes),), dtype=tangent_dtype(carry))
     step, count = Expr.sym(claim_name("step", taken), (1,)), Expr.sym(claim_name("count", taken), (1,), diff=False)
     lam_c = lam[:cs].reshape(carry.shape)
     backs = body_cotangents(body, {0: lam_c}, (0, *(first + i for i in active)))
@@ -293,7 +297,7 @@ def _while_adj_function(body: Any, index: bool, n_params: int, active: tuple[int
     inputs = [lam, carry, step, count, *formals]
     names = [claim_name("lam", taken), body.input_names[0], str(step.name), str(count.name), *body.input_names[first : first + n_params]]
     # Each step-number flag and set of active params is its own Function, so it needs its own name.
-    suffix = ("_k" if index else "") + "".join(f"_p{i}" for i in active)
+    suffix = ("_k" if index else "") + "".join(f"_p{i}" for i in active) + options_tag()
     cache[key] = ConcreteFunction._from_exprs(
       f"{body.name}_whileadj{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(out))], names, [claim_name("adj:carry", taken)]
     )
@@ -355,7 +359,7 @@ def _while_vjp(expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[tuple
   starts = ((max_iter - 1) * cs, max_iter - 1, 0, *(0 for _ in params))
   strides = (-cs, -1, 0, *(0 for _ in params))
   sizes = [params[i].size for i in active]
-  lam0 = concat([cot.reshape((cs,)), *(Expr.const(np.zeros(size)) for size in sizes)])
+  lam0 = concat([cot.reshape((cs,)), *(zeros_like(params[i]).reshape((params[i].size,)) for i in active)])
   back = _scan_node(_while_adj_function(body, index, len(params), active), lam0, outers, starts, strides, max_iter, 0)
   ret = [(init, back[:cs].reshape(init.shape))]
   offset = cs
@@ -443,10 +447,78 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
         raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
       accumulate(expr.args[1], sparse_ldl_solve(expr.args[0], cot, dict(expr.attrs)))
       continue
-    for arg, arg_cot in zip(expr.args, _local_vjp(expr, cot), strict=True):
+    for arg, arg_cot in zip(expr.args, _masked_local_vjp(expr, cot), strict=True):
       accumulate(arg, arg_cot)
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
+
+
+# Ops whose adjoint in each argument of the output's shape is the cotangent times a local
+# derivative, entry by entry.
+_MASKABLE = (COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_BINARY | {ExprOp.CAST}) - {ExprOp.FLOOR, ExprOp.CEIL}
+
+
+def _masked(cot: Expr) -> tuple[Expr, Expr, bool] | None:
+  """``(cond, inner, chosen)`` for a cotangent a ``where`` masked to one branch: ``where(cond, inner, 0)``
+  (``chosen``) or ``where(cond, 0, inner)``."""
+  if cot.op != ExprOp.SELECT:
+    return None
+  cond, a, b = cot.args
+  if _is_zero_const(b) and a.shape == cot.shape:
+    return cond, a, True
+  if _is_zero_const(a) and b.shape == cot.shape:
+    return cond, b, False
+  return None
+
+
+def _sum_terms(cot: Expr) -> list[Expr]:
+  """The terms of a cotangent accumulated as a sum of same-shaped parts, in order."""
+  terms: list[Expr] = []
+  stack = [cot]
+  while stack:
+    e = stack.pop()
+    if e.op == ExprOp.ADD and e.args[0].shape == e.args[1].shape == cot.shape:
+      stack.extend(reversed(e.args))
+    else:
+      terms.append(e)
+  return terms
+
+
+def _sum_adjoints(bars: Sequence[Expr]) -> Expr:
+  live = [bar for bar in bars if not _is_zero_const(bar)]
+  return _sum_exprs(live) if live else bars[0]
+
+
+def _masked_local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+  """``_local_vjp``, keeping a masked cotangent masked through an elementwise op:
+  ``where(c, t, 0) * f'(x)`` becomes ``where(c, t * f'(x), 0)``. An entry the ``where`` did not
+  choose then stays zero even where ``f'`` is infinite or NaN (``sqrt``, ``log`` or ``1 / x`` at 0),
+  so the derivative flows through the chosen branch only, as it does in forward mode. An argument
+  broadcast to the output's shape sums the cotangent over entries, and keeps the plain rule."""
+  if expr.op not in _MASKABLE:
+    return _local_vjp(expr, cot)
+  terms = _sum_terms(cot)
+  if len(terms) > 1 and any(_masked(t) is not None for t in terms):
+    # A node read under two ``where``s sums two masked cotangents. The adjoint is linear in the
+    # cotangent, so each term keeps its own mask through the op.
+    per_term = [_masked_local_vjp(expr, t) for t in terms]
+    return tuple(_sum_adjoints(bars) for bars in zip(*per_term, strict=True))
+  masked = _masked(cot)
+  if masked is None:
+    return _local_vjp(expr, cot)
+  cond, inner, chosen = masked
+  inner_bars = _masked_local_vjp(expr, inner)
+  plain: tuple[Expr, ...] | None = None
+  bars: list[Expr] = []
+  for i, (arg, bar) in enumerate(zip(expr.args, inner_bars, strict=True)):
+    if arg.shape != expr.shape:
+      plain = _local_vjp(expr, cot) if plain is None else plain
+      bars.append(plain[i])
+    elif _is_zero_const(bar):
+      bars.append(bar)
+    else:
+      bars.append(where(cond, bar, 0.0) if chosen else where(cond, 0.0, bar))
+  return tuple(bars)
 
 
 def vjp_many(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr]) -> tuple[Expr, ...]:
@@ -600,11 +672,10 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     )
   if expr.op == ExprOp.SELECT:
     cond, a, b = args
-    zero = as_expr(0.0)
     return (
       zeros_like(cond),
-      _unbroadcast(where(cond, cot, zero), a.shape, expr.shape),
-      _unbroadcast(where(cond, zero, cot), b.shape, expr.shape),
+      _unbroadcast(where(cond, cot, 0.0), a.shape, expr.shape),
+      _unbroadcast(where(cond, 0.0, cot), b.shape, expr.shape),
     )
   if expr.op == ExprOp.COPYSIGN:
     x, s = args
@@ -639,7 +710,7 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
 
 
 def _ones_like(expr: Expr) -> Expr:
-  return Expr.const(np.ones(expr.shape, dtype=np.float64), lowering=expr.lowering)
+  return Expr.const(np.ones(expr.shape), dtype=tangent_dtype(expr), lowering=expr.lowering)
 
 
 def _sum_exprs(exprs: Iterable[Expr]) -> Expr:

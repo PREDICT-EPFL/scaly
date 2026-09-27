@@ -28,6 +28,7 @@ from ..ir.expr import (
   equal,
   not_equal,
   gather,
+  maximum,
   put,
   put_add,
   ragged_add,
@@ -44,20 +45,19 @@ from ..ir.expr import (
   take,
   topo,
   where,
+  tangent_dtype,
   zeros_like,
 )
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.env import env_bool
-from ..utils.options import get_options
+from ..utils.options import Options, get_options
 from .sparsity import _depends_on, _jac_mask, _mask_sparsity, column_coloring
 
 
 # Cache derivative helper Functions per live callee object. Do not key by ``id(callee)``:
 # CPython may reuse ids after a short-lived Function is collected, which can splice a stale
 # call-JVP helper into a different graph under xdist/CI-sized test runs.
-_CALL_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...], tuple[int, ...]]]] = (
-  weakref.WeakKeyDictionary()
-)
+_CALL_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Any, tuple[int, ...], tuple[int, ...]]]] = weakref.WeakKeyDictionary()
 _CALL_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Any, tuple[int, ...], tuple[int, ...], tuple[int, ...]]]] = (
   weakref.WeakKeyDictionary()
 )
@@ -85,6 +85,16 @@ LU_NO_DERIVATIVE = (
 
 def _is_zero_const(expr: Expr) -> bool:
   return expr.op == ExprOp.CONST and expr.value is not None and bool(np.all(expr.value == 0))
+
+
+def options_tag() -> str:
+  """A name suffix for derivative helpers built under options other than the defaults. The options
+  in force shape a helper (``nonsmooth`` its tie rules, ``dense_unroll`` its factorizations,
+  ``max_trajectory`` the checks of its loops), so they are part of every helper cache's key, and
+  helpers built from one callee under two settings can meet in one graph only under two names.
+  Under the defaults the tag is empty and names are unchanged."""
+  options = get_options()
+  return "" if options == Options() else "_o" + hashlib.sha1(repr(options).encode()).hexdigest()[:8]
 
 
 def claim_name(base: str, taken: set[str]) -> str:
@@ -290,7 +300,7 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
   raise NotImplementedError(f"JVP for op {expr.op!r} is not implemented")
 
 
-_SCAN_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, ...], ConcreteFunction]] = weakref.WeakKeyDictionary()
+_SCAN_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], ConcreteFunction]] = weakref.WeakKeyDictionary()
 
 
 def _scan_jvp_body(callee: ConcreteFunction, active: tuple[int, ...]) -> ConcreteFunction:
@@ -298,38 +308,51 @@ def _scan_jvp_body(callee: ConcreteFunction, active: tuple[int, ...]) -> Concret
   ones then the tangents of the ``active`` ones, and the outputs are ``[c', dc']``, the primal
   stacked outputs, then their tangents."""
   cache = _SCAN_JVP_CACHE.setdefault(callee, {})
-  if active not in cache:
+  key = (active, get_options())
+  if key not in cache:
     carry, xs = callee.inputs[0], callee.inputs[1:]
     cs = carry.size
     taken = {*callee.input_names, *callee.output_names}
-    aug = Expr.sym(claim_name(f"fwd:{callee.input_names[0]}", taken), (2 * cs,))
-    dcarry = Expr.sym(claim_name(f"fwd:{callee.input_names[0]}:dc", taken), carry.shape)
-    dxs = {i: Expr.sym(claim_name(f"fwd:{callee.input_names[i + 1]}", taken), xs[i].shape) for i in active}
-    tangents = body_tangents(callee, {0: dcarry, **{i + 1: dx for i, dx in dxs.items()}})
-    split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
-    nxt = concat([callee.outputs[0].reshape((cs,)), tangents[0].reshape((cs,))])
+    dxs = {i: Expr.sym(claim_name(f"fwd:{callee.input_names[i + 1]}", taken), xs[i].shape, dtype=tangent_dtype(xs[i])) for i in active}
+    if _carries_tangent(carry):
+      aug = Expr.sym(claim_name(f"fwd:{callee.input_names[0]}", taken), (2 * cs,), dtype=carry.type.dtype)
+      dcarry = Expr.sym(claim_name(f"fwd:{callee.input_names[0]}:dc", taken), carry.shape, dtype=carry.type.dtype)
+      tangents = body_tangents(callee, {0: dcarry, **{i + 1: dx for i, dx in dxs.items()}})
+      split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
+      nxt = concat([callee.outputs[0].reshape((cs,)), tangents[0].reshape((cs,))])
+    else:
+      aug, split = carry, {}
+      tangents = body_tangents(callee, {i + 1: dx for i, dx in dxs.items()})
+      nxt = callee.outputs[0]
     outputs = [substitute(e, split) for e in (nxt, *callee.outputs[1:], *tangents[1:])]
     inputs = [aug, *xs, *dxs.values()]
-    names = [str(aug.name), *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
+    names = [str(aug.name) if split else callee.input_names[0], *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
     out_names = [claim_name("fwd:carry", taken), *callee.output_names[1:], *(claim_name(f"fwd:{n}", taken) for n in callee.output_names[1:])]
-    suffix = "_".join(str(i) for i in active) or "c"
-    cache[active] = ConcreteFunction._from_exprs(
+    suffix = ("_".join(str(i) for i in active) or "c") + options_tag()
+    cache[key] = ConcreteFunction._from_exprs(
       f"{callee.name}_scanfwd_{suffix}", inputs, [callee._inherit_lowering(simplify_cse_fixpoint(o)) for o in outputs], names, out_names
     )
-  return cache[active]
+  return cache[key]
+
+
+def _carries_tangent(carry: Expr) -> bool:
+  """Whether a loop's tangent loop carries the carry's tangent beside it: an integer or bool carry has
+  none, and its tangent loop carries the carry alone."""
+  return carry.type.dtype.is_floating
 
 
 def _scan_jvp(expr: Expr, tangents: list[Expr]) -> Expr:
   """A scan's tangent is another scan whose carry also carries the tangent."""
   callee, length, output = expr.attrs["callee"], expr.attrs["length"], expr.attrs["output"]
-  if all(_is_zero_const(t) for t in tangents):
-    return zeros_like(expr)
   init, outers = expr.args[0], expr.args[1:]
+  carried = _carries_tangent(init)
+  if all(_is_zero_const(t) for t in tangents) or not carried and output in (0, -1):
+    return zeros_like(expr)
   cs, n_ys = init.size, len(callee.outputs) - 1
   active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
   fn = _scan_jvp_body(callee, active)
   starts, strides = expr.attrs["starts"], expr.attrs["strides"]
-  aug_init = concat([init.reshape((cs,)), tangents[0].reshape((cs,))])
+  aug_init = concat([init.reshape((cs,)), tangents[0].reshape((cs,))]) if carried else init
   aug_outers = (*outers, *(tangents[i + 1] for i in active))
   aug_starts = (*starts, *(starts[i] for i in active))
   aug_strides = (*strides, *(strides[i] for i in active))
@@ -354,15 +377,19 @@ _WHILE_JVP_COND_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[
 
 def _loop_suffix(index: bool, active: tuple[int, ...]) -> str:
   """What sets a while loop's derivative Functions apart for one body: whether it takes the step
-  number, and which of its params are differentiated. Each combination is its own procedure."""
-  return ("_k" if index else "") + "".join(f"_p{i}" for i in active)
+  number, which of its params are differentiated, and the options it is built under. Each
+  combination is its own procedure."""
+  return ("_k" if index else "") + "".join(f"_p{i}" for i in active) + options_tag()
 
 
 def _tangent_params(body: ConcreteFunction, index: bool, active: tuple[int, ...], taken: set[str], shape: Any) -> list[Expr]:
   """Symbols for the tangents of the loop's params ``active`` (by position among the params), shaped
   by ``shape(param)``; the tangent loop takes them as params after the primal ones."""
   first = 1 + int(index)
-  return [Expr.sym(claim_name(f"fwd:{body.input_names[first + i]}", taken), shape(body.inputs[first + i])) for i in active]
+  params = [body.inputs[first + i] for i in active]
+  return [
+    Expr.sym(claim_name(f"fwd:{body.input_names[first + i]}", taken), shape(p), dtype=tangent_dtype(p)) for i, p in zip(active, params, strict=True)
+  ]
 
 
 def _tangent_cond(cond: ConcreteFunction, body: ConcreteFunction, aug: Expr, cs: int, dparams: Sequence[Expr], suffix: str) -> ConcreteFunction:
@@ -383,15 +410,15 @@ def _while_jvp_functions(
   tangents of the ``active`` params as extra params: the condition reads ``c`` and the params only,
   so the tangent loop takes exactly the primal's steps."""
   cache = _WHILE_JVP_CACHE.setdefault(body, {})
-  key = (index, active)
+  key = (index, active, get_options())
   suffix = _loop_suffix(index, active)
   cs = body.inputs[0].size
   if key not in cache:
     carry = body.inputs[0]
     first = 1 + int(index)
     taken = {*body.input_names, *body.output_names}
-    aug = Expr.sym(claim_name(f"fwd:{body.input_names[0]}", taken), (2 * cs,))
-    dcarry = Expr.sym(claim_name(f"fwd:{body.input_names[0]}:dc", taken), carry.shape)
+    aug = Expr.sym(claim_name(f"fwd:{body.input_names[0]}", taken), (2 * cs,), dtype=carry.type.dtype)
+    dcarry = Expr.sym(claim_name(f"fwd:{body.input_names[0]}:dc", taken), carry.shape, dtype=carry.type.dtype)
     dparams = _tangent_params(body, index, active, taken, lambda formal: formal.shape)
     (tangent,) = body_tangents(body, {0: dcarry, **{first + i: d for i, d in zip(active, dparams, strict=True)}})
     split = {carry: aug[:cs].reshape(carry.shape), dcarry: aug[cs:].reshape(carry.shape)}
@@ -416,7 +443,7 @@ def _while_jvp(expr: Expr, tangents: Sequence[Expr]) -> Expr:
   output = int(expr.attrs["output"])
   cond, body, init, params, max_iter, index = while_parts(expr)
   active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
-  if output == 1 or (_is_zero_const(tangents[0]) and not active):
+  if output == 1 or (_is_zero_const(tangents[0]) and not active) or not _carries_tangent(init):
     return zeros_like(expr)
   cs = init.size
   aug_cond, aug_body = _while_jvp_functions(cond, body, index, active)
@@ -544,10 +571,10 @@ def _jvp_many_dense(expr: Expr, d: list[Expr], nseed: int) -> Expr:
       term = (op.reshape((nseed * n, n)) @ x).reshape((nseed, *expr.shape))
       rhs = -term if rhs is None else rhs - term
     if rhs is None:
-      return Expr.const(np.zeros((nseed, *expr.shape)))
+      return _zeros_many(expr, nseed)
     return _seed_solve(t, rhs, lower=lower, trans=trans, unit_diagonal=unit)
   if _is_zero_const(d[0]):
-    return Expr.const(np.zeros((nseed, *expr.shape)))
+    return _zeros_many(expr, nseed)
   s = _lower_as_symmetric(d[0])
   unit = expr.op == ExprOp.LDL
   z = _seed_solve(expr, s, lower=True, unit_diagonal=unit)
@@ -604,7 +631,8 @@ def extremum_weight(expr: Expr) -> Expr:
 
 def reduce_weights(expr: Expr) -> Expr:
   """How the derivative of ``reduce_max(x)`` or ``reduce_min(x)`` spreads over ``x``: equally over the
-  tied entries under ``"split"``, all to the lowest tied index under ``"first"``."""
+  tied entries under ``"split"``, all to the lowest tied index under ``"first"``. No entry equals a
+  NaN result, and then no entry gets any: the count divides by at least one, never 0 / 0."""
   x = expr.args[0]
   mode = _nonsmooth_mode(expr.op)
   hit = equal(x, expr)
@@ -612,12 +640,13 @@ def reduce_weights(expr: Expr) -> Expr:
     index = Expr.const(np.arange(x.size, dtype=np.float64).reshape(x.shape))
     return cast(equal(index, reduce_min(where(hit, index, float(x.size)))), x.type.dtype)
   count = cast(hit, x.type.dtype)
-  return count / count.sum()
+  return count / maximum(count.sum(), 1.0)
 
 
 def segment_weights(expr: Expr) -> Expr:
   """``reduce_weights`` bin by bin for ``segment_max`` and ``segment_min``: the share of each bin's
-  derivative that each value receives."""
+  derivative that each value receives. A bin whose ``fill`` wins, or whose result is NaN, has no
+  value equal to it and gives none any share."""
   x, ids, n = expr.args[0], expr.attrs["indices"], expr.size
   mode = _nonsmooth_mode(expr.op)
   hit = equal(x, gather(expr, ids))
@@ -626,7 +655,7 @@ def segment_weights(expr: Expr) -> Expr:
     first = segment_min(where(hit, index, float(x.size)), ids, n, fill=float(x.size))
     return cast(equal(index, gather(first, ids)), x.type.dtype)
   count = cast(hit, x.type.dtype)
-  return count / gather(segment_sum(count, ids, n), ids)
+  return count / gather(maximum(segment_sum(count, ids, n), 1.0), ids)
 
 
 def body_tangents(fn: Any, seeds: dict[int, Expr]) -> list[Expr]:
@@ -790,7 +819,7 @@ def _jvp_many_compressed(
         continue
       term = seeds[w].reshape((nseed, size)) @ rows
       total = term if total is None else total + term
-    tangents.append(Expr.const(np.zeros((nseed, *out.shape), dtype=np.float64)) if total is None else total.reshape((nseed, *out.shape)))
+    tangents.append(_zeros_many(out, nseed) if total is None else total.reshape((nseed, *out.shape)))
   return primals, tangents
 
 
@@ -848,26 +877,29 @@ def _scan_jvp_many_body(callee: ConcreteFunction, active: tuple[int, ...], nseed
   outputs, then their tangents, each flat and seed-major."""
   # Strict mode is part of the key: a body built with a per-seed fallback inside must not satisfy a
   # later strict build, which would then skip the check it asked for.
-  key = (active, nseed, env_bool("SCALY_STRICT_JVP_MANY", False))
+  key = (active, nseed, env_bool("SCALY_STRICT_JVP_MANY", False), get_options())
   cache = _SCAN_JVP_MANY_CACHE.setdefault(callee, {})
   if key not in cache:
     carry, xs = callee.inputs[0], callee.inputs[1:]
     cs = carry.size
     taken = {*callee.input_names, *callee.output_names}
-    aug = Expr.sym(claim_name(f"fwd:{callee.input_names[0]}", taken), (cs * (1 + nseed),))
-    dxs = {i: Expr.sym(claim_name(f"fwd:{callee.input_names[i + 1]}", taken), (nseed * xs[i].size,)) for i in active}
-    seeds = {carry: aug[cs:].reshape((nseed, *carry.shape)), **{xs[i]: dx.reshape((nseed, *xs[i].shape)) for i, dx in dxs.items()}}
+    carried = _carries_tangent(carry)
+    aug = Expr.sym(claim_name(f"fwd:{callee.input_names[0]}", taken), (cs * (1 + nseed),), dtype=carry.type.dtype) if carried else carry
+    dxs = {i: Expr.sym(claim_name(f"fwd:{callee.input_names[i + 1]}", taken), (nseed * xs[i].size,), dtype=tangent_dtype(xs[i])) for i in active}
+    seeds = {xs[i]: dx.reshape((nseed, *xs[i].shape)) for i, dx in dxs.items()}
+    if carried:
+      seeds[carry] = aug[cs:].reshape((nseed, *carry.shape))
     primals, tangents = _jvp_many_compressed(
-      callee.outputs, seeds, nseed, owner=callee, name=f"{callee.name}_stepjac{nseed}_" + ("_".join(str(i) for i in active) or "c")
+      callee.outputs, seeds, nseed, owner=callee, name=f"{callee.name}_stepjac{nseed}_" + ("_".join(str(i) for i in active) or "c") + options_tag()
     )
-    nxt = concat([primals[0].reshape((cs,)), tangents[0].reshape((nseed * cs,))])
+    nxt = concat([primals[0].reshape((cs,)), tangents[0].reshape((nseed * cs,))]) if carried else primals[0]
     flat = [t.reshape((t.size,)) for t in tangents[1:]]
-    split = {carry: aug[:cs].reshape(carry.shape)}
+    split = {carry: aug[:cs].reshape(carry.shape)} if carried else {}
     outputs = [substitute(e, split) for e in (nxt, *primals[1:], *flat)]
     inputs = [aug, *xs, *dxs.values()]
-    names = [str(aug.name), *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
+    names = [str(aug.name) if carried else callee.input_names[0], *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
     out_names = [claim_name("fwd:carry", taken), *callee.output_names[1:], *(claim_name(f"fwd:{n}", taken) for n in callee.output_names[1:])]
-    suffix = "_".join(str(i) for i in active) or "c"
+    suffix = ("_".join(str(i) for i in active) or "c") + options_tag()
     cache[key] = ConcreteFunction._from_exprs(
       f"{callee.name}_scanfwd{nseed}_{suffix}", inputs, [callee._inherit_lowering(simplify_cse_fixpoint(o)) for o in outputs], names, out_names
     )
@@ -879,12 +911,13 @@ def _scan_jvp_many(expr: Expr, tangents: list[Expr], nseed: int) -> Expr:
   callee, length, output = expr.attrs["callee"], int(expr.attrs["length"]), int(expr.attrs["output"])
   init, outers = expr.args[0], expr.args[1:]
   cs, n_ys = init.size, len(callee.outputs) - 1
-  if length == 0:
-    return tangents[0].reshape((nseed, *expr.shape)) if output == 0 else Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+  carried = _carries_tangent(init)
+  if length == 0 or not carried and output in (0, -1):
+    return tangents[0].reshape((nseed, *expr.shape)) if output == 0 and carried else _zeros_many(expr, nseed)
   starts, strides = expr.attrs["starts"], expr.attrs["strides"]
   active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
   fn = _scan_jvp_many_body(callee, active, nseed)
-  aug_init = concat([init.reshape((cs,)), tangents[0].reshape((nseed * cs,))])
+  aug_init = concat([init.reshape((cs,)), tangents[0].reshape((nseed * cs,))]) if carried else init
   views = []
   for i in active:
     size, outer_size = callee.inputs[i + 1].size, outers[i].size
@@ -916,14 +949,14 @@ def _while_jvp_many_functions(
   params' seeded tangents (``(nseed, *shape)``) as extra params; the condition reads ``c`` and the
   params only, so the loop takes exactly the primal's steps."""
   cache = _WHILE_JVP_MANY_CACHE.setdefault(body, {})
-  key = (nseed, env_bool("SCALY_STRICT_JVP_MANY", False), index, active)
+  key = (nseed, env_bool("SCALY_STRICT_JVP_MANY", False), index, active, get_options())
   suffix = f"{nseed}" + _loop_suffix(index, active)
   cs = body.inputs[0].size
   if key not in cache:
     carry = body.inputs[0]
     first = 1 + int(index)
     taken = {*body.input_names, *body.output_names}
-    aug = Expr.sym(claim_name(f"fwd:{body.input_names[0]}", taken), (cs * (1 + nseed),))
+    aug = Expr.sym(claim_name(f"fwd:{body.input_names[0]}", taken), (cs * (1 + nseed),), dtype=carry.type.dtype)
     dparams = _tangent_params(body, index, active, taken, lambda formal: (nseed, *formal.shape))
     seeds = {carry: aug[cs:].reshape((nseed, *carry.shape))}
     seeds.update({body.inputs[first + i]: d for i, d in zip(active, dparams, strict=True)})
@@ -948,8 +981,8 @@ def _while_jvp_many(expr: Expr, tangents: Sequence[Expr], nseed: int) -> Expr:
   output = int(expr.attrs["output"])
   cond, body, init, params, max_iter, index = while_parts(expr)
   active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
-  if output == 1 or (_is_zero_const(tangents[0]) and not active):
-    return Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+  if output == 1 or (_is_zero_const(tangents[0]) and not active) or not _carries_tangent(init):
+    return _zeros_many(expr, nseed)
   cs = init.size
   aug_cond, aug_body = _while_jvp_many_functions(cond, body, nseed, index, active)
   aug_init = concat([init.reshape((cs,)), tangents[0].reshape((nseed * cs,))])
@@ -964,7 +997,8 @@ def _while_jvp_many(expr: Expr, tangents: Sequence[Expr], nseed: int) -> Expr:
 def _call_jvp_many_function(
   callee: Any, output_index: int, formal_indices: tuple[int, ...], nseed: int, constants: tuple[np.ndarray | None, ...]
 ) -> tuple[Any, tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
-  key = (output_index, formal_indices, nseed, tuple(None if value is None else value.tobytes() for value in constants))
+  seeded = (output_index, formal_indices, nseed, tuple(None if value is None else value.tobytes() for value in constants))
+  key = (*seeded, get_options())
   cache = _CALL_JVP_MANY_CACHE.setdefault(callee, {})
   if key not in cache:
     active = tuple(range(nseed))
@@ -998,11 +1032,11 @@ def _call_jvp_many_function(
     if single_constant:
       formal_index = formal_indices[0]
       seed_hash = hashlib.sha1(constants[0].tobytes()).hexdigest()[:10]  # type: ignore[union-attr]
-      name = f"{callee.name}_fwd{nseed}c{seed_hash}_{callee.output_names[output_index]}_{callee.input_names[formal_index]}"
+      name = f"{callee.name}_fwd{nseed}c{seed_hash}_{callee.output_names[output_index]}_{callee.input_names[formal_index]}{options_tag()}"
       output_name = claim_name(f"fwd:{callee.output_names[output_index]}:{callee.input_names[formal_index]}", taken)
     else:
-      seed_hash = hashlib.sha1(repr(key).encode()).hexdigest()[:10]
-      name = f"{callee.name}_fwd{nseed}j{seed_hash}_{output_index}_" + "_".join(str(i) for i in formal_indices)
+      seed_hash = hashlib.sha1(repr(seeded).encode()).hexdigest()[:10]
+      name = f"{callee.name}_fwd{nseed}j{seed_hash}_{output_index}_" + "_".join(str(i) for i in formal_indices) + options_tag()
       output_name = claim_name(f"fwd:{callee.output_names[output_index]}", taken)
     fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [output_name])
     cache[key] = (fn, arg_indices, seed_indices, active)
@@ -1019,7 +1053,7 @@ def _call_jvp_many_const_function(
 
 
 def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int, ...]) -> tuple[Any, tuple[int, ...], tuple[int, ...]]:
-  key = (output_index, formal_indices)
+  key = (output_index, formal_indices, get_options())
   cache = _CALL_JVP_CACHE.setdefault(callee, {})
   if key not in cache:
     taken = {*callee.input_names, *callee.output_names}
@@ -1030,7 +1064,7 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
     seed_indices = tuple(i for i, seed in seeds.items() if _depends_on(deriv, seed, dep_memo))
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(seeds[i].name for i in seed_indices)
-    name = f"{callee.name}_fwd{output_index}_" + "_".join(str(i) for i in formal_indices)
+    name = f"{callee.name}_fwd{output_index}_" + "_".join(str(i) for i in formal_indices) + options_tag()
     fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [claim_name(f"fwd:{callee.output_names[output_index]}", taken)])
     cache[key] = (fn, arg_indices, seed_indices)
   return cache[key]
@@ -1109,7 +1143,7 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
     (expr,), (at,), back = independent((expr,), (wrt,))
     return substitute(jvp_many(expr, at, seeds), back)
   if seeds.shape[0] == 0:
-    return Expr.const(np.zeros((0, *expr.shape), dtype=np.float64))
+    return _zeros_many(expr, 0)
   strict = env_bool("SCALY_STRICT_JVP_MANY", False)
   try:
     ret = _jvp_many_structural(expr, wrt, seeds, {}, {})
@@ -1143,7 +1177,7 @@ def _formable_tangent(expr: Expr, i: int, wrt: Expr, seeds: Expr, memo: dict[int
     active = tuple(k for k, a in enumerate(expr.args) if _depends_on(a, wrt, dep_memo))
     if i in _call_jvp_function(expr.attrs["callee"], expr.attrs["output"], active)[2]:
       raise
-    return Expr.const(np.zeros((seeds.shape[0], *expr.args[i].shape), dtype=np.float64))
+    return _zeros_many(expr.args[i], seeds.shape[0])
 
 
 def _prunable_call(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Expr], dep_memo: dict[tuple[int, int], bool]) -> bool:
@@ -1173,17 +1207,17 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return memo[expr.id]
   nseed = seeds.shape[0]
   if not expr.type.dtype.is_floating or _is_zero_const(seeds) or not _depends_on(expr, wrt, dep_memo):  # see ``_jvp``
-    memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+    memo[expr.id] = ret = _zeros_many(expr, nseed)
     return ret
   if expr.op in {ExprOp.FLOOR, ExprOp.CEIL}:
     floor_tangent(expr)
-    memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+    memo[expr.id] = ret = _zeros_many(expr, nseed)
     return ret
   if expr.op == ExprOp.INPUT:
-    memo[expr.id] = ret = seeds if expr.id == wrt.id else Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+    memo[expr.id] = ret = seeds if expr.id == wrt.id else _zeros_many(expr, nseed)
     return ret
   if expr.op == ExprOp.CONST or expr.op in PREDICATE_OPS:
-    memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+    memo[expr.id] = ret = _zeros_many(expr, nseed)
     return ret
   if expr.op == ExprOp.SELECT:
     cond, a, b = expr.args
@@ -1246,7 +1280,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op == ExprOp.CAST:
     if not expr.type.diff:
-      memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+      memo[expr.id] = ret = _zeros_many(expr, nseed)
     else:
       memo[expr.id] = ret = cast(_jvp_many_structural(expr.args[0], wrt, seeds, memo, dep_memo), expr.type.dtype)
     return ret
@@ -1264,7 +1298,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     read = [_depends_on(out, rule.inputs[len(expr.args) + i], rule_dep) for i in range(len(expr.args))]
     tangents = [_jvp_many_structural(arg, wrt, seeds, memo, dep_memo) if r else None for arg, r in zip(expr.args, read, strict=True)]
     if all(t is None or _is_zero_const(t) for t in tangents):
-      memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+      memo[expr.id] = ret = _zeros_many(expr, nseed)
       return ret
     specs = [(arg.reshape((arg.size,)), 0, 0) for arg in expr.args]
     specs += [
@@ -1278,13 +1312,13 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   if expr.op == ExprOp.SCAN:
     tangents = [simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo)) for arg in expr.args]
     if all(_is_zero_const(t) for t in tangents):
-      memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+      memo[expr.id] = ret = _zeros_many(expr, nseed)
     else:
       memo[expr.id] = ret = _scan_jvp_many(expr, tangents, nseed)
     return ret
   if expr.op == ExprOp.WHILE:
     if int(expr.attrs["output"]) == 1:  # the step count is piecewise constant
-      memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+      memo[expr.id] = ret = _zeros_many(expr, nseed)
     else:
       tangents = [simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo)) for arg in expr.args]
       memo[expr.id] = ret = _while_jvp_many(expr, tangents, nseed)
@@ -1406,7 +1440,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       mapped_flat = mapped_call(inner_fn, length, [*primal_specs, *seed_specs])
       term = mapped_flat.reshape((length, nseed, slice_size)).transpose((1, 0, 2)).reshape((nseed, length * slice_size))
       ret = term if ret is None else ret + term
-    ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64)) if ret is None else ret
+    ret = _zeros_many(expr, nseed) if ret is None else ret
     memo[expr.id] = ret = _pack_jvp_maps(callee, ret, maps)
     return ret
   if expr.op == ExprOp.CALL and _contains_loop(expr.attrs["callee"]) and not _prunable_call(expr, wrt, seeds, memo, dep_memo):
@@ -1428,7 +1462,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     tangents = [_formable_tangent(expr, i, wrt, seeds, memo, dep_memo) for i in range(len(expr.args))]
     formals = tuple(i for i, tangent in enumerate(tangents) if not _is_zero_const(tangent))
     if not formals:
-      memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64))
+      memo[expr.id] = ret = _zeros_many(expr, nseed)
       return ret
     constants = tuple(tangents[i].value if tangents[i].op == ExprOp.CONST else None for i in formals)
     fn, arg_indices, seed_indices, active = _call_jvp_many_function(expr.attrs["callee"], expr.attrs["output"], formals, nseed, constants)
@@ -1532,9 +1566,14 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     if not _is_zero_const(d[1]):
       term = _jvp_many_matmul_right(args[0], args[1], d[1], nseed)
       ret = term if ret is None else ret + term
-    memo[expr.id] = ret = Expr.const(np.zeros((nseed, *expr.shape), dtype=np.float64)) if ret is None else ret
+    memo[expr.id] = ret = _zeros_many(expr, nseed) if ret is None else ret
     return ret
   raise _JVPManyUnsupported(str(expr.op))
+
+
+def _zeros_many(expr: Expr, nseed: int) -> Expr:
+  """``nseed`` zero tangents of ``expr``, of its tangent dtype."""
+  return Expr.const(np.zeros((nseed, *expr.shape)), dtype=tangent_dtype(expr))
 
 
 def _seed_axis(expr: Expr, nseed: int, output: Expr | None = None) -> Expr:
