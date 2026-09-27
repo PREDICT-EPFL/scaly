@@ -87,6 +87,7 @@ class ExprOp(StrEnum):
   MATMUL = "matmul"
   CHOLESKY = "cholesky"
   LDL = "ldl"
+  SPARSE_LDL = "sparse_ldl"
   TRISOLVE = "trisolve"
   CALL = "call"
   VMAP = "vmap"
@@ -160,6 +161,7 @@ COMMON_STRUCTURAL = {
   ExprOp.MATMUL,
   ExprOp.CHOLESKY,
   ExprOp.LDL,
+  ExprOp.SPARSE_LDL,
   ExprOp.TRISOLVE,
   ExprOp.CALL,
   ExprOp.VMAP,
@@ -252,6 +254,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, np.matmul),
   ExprOp.CHOLESKY: OpInfo(ExprOp.CHOLESKY, 1, None),
   ExprOp.LDL: OpInfo(ExprOp.LDL, 1, None),
+  ExprOp.SPARSE_LDL: OpInfo(ExprOp.SPARSE_LDL, 1, None),
   ExprOp.TRISOLVE: OpInfo(ExprOp.TRISOLVE, 2, None),
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, None),
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, None),
@@ -957,6 +960,50 @@ def ldl(a: Any) -> Expr:
   return Expr(ExprOp.LDL, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), attrs=_unroll_attr(a.shape[0]), lowering=a.lowering)
 
 
+SPARSE_LDL_TABLES = ("a_ptr", "a_rows", "a_src", "l_ptr", "l_rows", "r_cols", "r_pos", "ck_ptr", "ck_q", "ck_width", "ck_len")
+"""The analysis tables a ``sparse_ldl_factor`` node carries, as ``linalg.symbolic`` names them (``a_src`` is
+its ``a_source``; the ``ck_*`` tables are ``SymbolicLDL.chunks``)."""
+
+SPARSE_LDL_MAX_WIDTH = 4
+"""The most columns one chunk of a ``sparse_ldl_factor`` update covers."""
+
+
+def sparse_ldl_factor(values: Any, tables: dict[str, Any]) -> Expr:
+  """The ``L D L^T`` factor of a symmetric matrix with a fixed sparsity pattern, without pivoting, as
+  one vector ``[L below the diagonal, CSC | D]`` of the permuted matrix.
+
+  ``values`` holds the matrix entries, and ``tables`` the analysis ``linalg.symbolic`` made of their
+  pattern (``SPARSE_LDL_TABLES``): column ``j`` of the permuted lower triangle is
+  ``values[a_src[p]]`` at rows ``a_rows[p]``, ``a_ptr[j] <= p < a_ptr[j + 1]``; column ``j`` of ``L``
+  has rows ``l_rows[l_ptr[j]:l_ptr[j + 1]]``; row ``j`` of ``L`` lists its columns ``r_cols`` and the
+  positions ``r_pos`` of its entries, cut into chunks of consecutive entries whose columns have the
+  same rows from ``j`` down (``ck_*``: per column a range of chunks, each its first entry, width and
+  number of rows). The generated code is a left-looking factorization that updates a work column
+  from each chunk in one pass, keeping the update order of one column at a time, so the result is
+  the same, bit for bit, as ``SparseLDL(schedule="scan")``. Nothing is checked at run time: a zero
+  pivot gives inf or NaN, as for ``ldl``. The derivative is not implemented: ``SparseLDL.solve``
+  differentiates implicitly and never needs it, and ``SparseLDL(schedule="scan")`` differentiates
+  the factorization through its loops."""
+  values = as_expr(values)
+  if len(values.shape) != 1 or not values.type.dtype.is_floating:
+    raise ValueError(f"sparse_ldl_factor needs a floating-point vector of matrix entries, got {values.type.dtype}{values.shape}")
+  missing = [k for k in SPARSE_LDL_TABLES if k not in tables]
+  if missing:
+    raise ValueError(f"sparse_ldl_factor needs the tables {missing}")
+  attrs = {k: np.ascontiguousarray(np.asarray(tables[k], dtype=np.int64).reshape(-1)) for k in SPARSE_LDL_TABLES}
+  n = attrs["a_ptr"].size - 1
+  if n < 0 or any(attrs[k].size != n + 1 for k in ("l_ptr", "ck_ptr")):
+    raise ValueError("sparse_ldl_factor tables disagree on the order of the matrix")
+  if attrs["a_src"].size and (attrs["a_src"].min() < 0 or attrs["a_src"].max() >= values.size):
+    raise ValueError(f"sparse_ldl_factor reads entries outside its {values.size} values")
+  if attrs["ck_width"].size and (attrs["ck_width"].min() < 1 or attrs["ck_width"].max() > SPARSE_LDL_MAX_WIDTH):
+    raise ValueError(f"sparse_ldl_factor chunks cover 1 to {SPARSE_LDL_MAX_WIDTH} columns")
+  size = attrs["l_rows"].size + n
+  return Expr(
+    ExprOp.SPARSE_LDL, (values,), TensorType((size,), dtype=values.type.dtype, diff=values.type.diff), attrs=attrs, lowering=values.lowering
+  )
+
+
 def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False, unit_diagonal: bool = False) -> Expr:
   """``X`` with ``op(T) X = B``, ``op(T) = T`` or ``T^T``, for a triangular ``T``; ``B`` a vector or a
   matrix of right-hand sides. Only the triangle named by ``lower`` is read, and its diagonal only
@@ -1062,7 +1109,7 @@ def _index_update(op: ExprOp, base: Any, indices: Any, values: Any) -> Expr:
 
 
 # Ops that address memory through an index computed at run time.
-RUNTIME_INDEX_OPS = frozenset({ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT, ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT})
+RUNTIME_INDEX_OPS = frozenset({ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT, ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT, ExprOp.SPARSE_LDL})
 
 
 def _runtime_indices(indices: Any, op: str) -> Expr:

@@ -155,6 +155,40 @@ class SymbolicLDL:
   def u_k(self) -> np.ndarray:
     return self._lane_tables()["u_k"]
 
+  def chunks(self, max_width: int = 4) -> dict[str, np.ndarray]:
+    """The left-looking updates of each column in chunks, as ``ir.expr.sparse_ldl_factor`` reads them.
+
+    A chunk is up to ``max_width`` consecutive entries of row ``j``'s list (``r_cols``, ``r_pos``)
+    whose columns have the same rows from ``j`` down, as the columns of a supernode do; one pass
+    over those rows then applies every column's update. ``ck_ptr[j] : ck_ptr[j + 1]`` are column
+    ``j``'s chunks, each with its first entry ``ck_q``, its ``ck_width`` entries and the ``ck_len``
+    rows they update (row ``j`` itself included)."""
+    key = f"ck_ptr{max_width}"
+    if key not in self._lanes:
+      ends = self.l_ptr[self.r_cols + 1]
+      lengths = ends - self.r_pos
+      ptr, first, width, rows = [0], [], [], []
+      r_ptr, l_rows, pos = self.r_ptr.tolist(), self.l_rows, self.r_pos.tolist()
+      lens, end = lengths.tolist(), ends.tolist()
+      for j in range(self.n):
+        q, stop = r_ptr[j], r_ptr[j + 1]
+        while q < stop:
+          w = 1
+          while (
+            w < max_width and q + w < stop and lens[q + w] == lens[q] and np.array_equal(l_rows[pos[q + w] : end[q + w]], l_rows[pos[q] : end[q]])
+          ):
+            w += 1
+          first.append(q)
+          width.append(w)
+          rows.append(lens[q])
+          q += w
+        ptr.append(len(first))
+      as_int = lambda v: np.asarray(v, dtype=np.int64)  # noqa: E731
+      self._lanes.update(
+        {key: as_int(ptr), f"ck_q{max_width}": as_int(first), f"ck_width{max_width}": as_int(width), f"ck_len{max_width}": as_int(rows)}
+      )
+    return {k: self._lanes[f"{k}{max_width}"] for k in ("ck_ptr", "ck_q", "ck_width", "ck_len")}
+
   @property
   def update_lanes(self) -> int:
     """Multiply-adds of the left-looking updates."""

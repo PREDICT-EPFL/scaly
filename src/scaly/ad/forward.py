@@ -69,6 +69,13 @@ class _JVPManyUnsupported(Exception):
     self.op = op
 
 
+SPARSE_LDL_NO_DERIVATIVE = (
+  "the derivative of a looped sparse LDL^T factorization is not implemented: SparseLDL.solve differentiates "
+  "implicitly without it, and SparseLDL(..., schedule='scan') differentiates the factorization through its loops"
+)
+"""Why a ``sparse_ldl_factor`` node refuses a nonzero tangent or cotangent."""
+
+
 def _is_zero_const(expr: Expr) -> bool:
   return expr.op == ExprOp.CONST and expr.value is not None and bool(np.all(expr.value == 0))
 
@@ -111,12 +118,19 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     memo[expr.id] = ret = zeros_like(expr)
     return ret
   if expr.op in (ExprOp.CALL, ExprOp.VMAP):
-    tangents = [_jvp(arg, seeds, memo, dep_memo) for arg in expr.args]
-    active = tuple(i for i, tangent in enumerate(tangents) if not _is_zero_const(tangent))
+    # Only the tangents the derivative reads are formed: a custom rule may ignore an argument's
+    # tangent (an implicit solve rule ignores its factor's), and forming it could differentiate
+    # what the rule exists to avoid.
+    callee, output = expr.attrs["callee"], expr.attrs["output"]
+    seeded = [wrt for wrt, seed in seeds.items() if not _is_zero_const(seed)]
+    candidates = tuple(i for i, arg in enumerate(expr.args) if any(_depends_on(arg, wrt, dep_memo) for wrt in seeded))
+    _, _, read = _call_jvp_function(callee, output, candidates) if candidates else (None, (), ())
+    tangents = [_jvp(arg, seeds, memo, dep_memo) if i in read else zeros_like(arg) for i, arg in enumerate(expr.args)]
+    active = tuple(i for i in candidates if i not in read or not _is_zero_const(tangents[i]))
     if not active:
       memo[expr.id] = ret = zeros_like(expr)
       return ret
-    fn, arg_indices, seed_indices = _call_jvp_function(expr.attrs["callee"], expr.attrs["output"], active)
+    fn, arg_indices, seed_indices = _call_jvp_function(callee, output, active)
     if expr.op == ExprOp.CALL:
       call_args = [expr.args[i] for i in arg_indices] + [tangents[i] for i in seed_indices]
       memo[expr.id] = ret = fn._flat_symbolic_call(call_args)[0]
@@ -209,6 +223,8 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return save(ragged_tangent(expr, [None if _is_zero_const(t) else t for t in d]))
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
     return save(zeros_like(expr) if _is_zero_const(d[0]) else factor_tangent(expr, d[0]))
+  if expr.op == ExprOp.SPARSE_LDL:  # reached only with a tangent: without one, the dependence check gave zero
+    raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
   if expr.op == ExprOp.TRISOLVE:
     dt, db = (None if _is_zero_const(t) else t for t in d)
     return save(zeros_like(expr) if dt is None and db is None else trisolve_tangent(expr, dt, db))
@@ -1065,10 +1081,20 @@ def _jvp_many_unrolled(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
 
 
 def _prunable_call(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Expr], dep_memo: dict[tuple[int, int], bool]) -> bool:
-  """Whether every argument tangent of a call is a constant and some seed is zero in all of them."""
-  tangents = [simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo)) for arg in expr.args]
-  if not all(t.op == ExprOp.CONST and t.value is not None for t in tangents):
-    return False
+  """Whether every argument tangent of a call is a constant and some seed is zero in all of them.
+
+  Stops at the first tangent that is not a constant. One that cannot be formed (a looped sparse
+  factor's) is not a constant either: the body, differentiated in place, forms only the tangents
+  it reads, and an implicit rule inside it does not read that one."""
+  tangents = []
+  for arg in expr.args:
+    try:
+      t = simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo))
+    except NotImplementedError:
+      return False
+    if t.op != ExprOp.CONST or t.value is None:
+      return False
+    tangents.append(t)
   nseed = seeds.shape[0]
   live = np.zeros(nseed, dtype=bool)
   for t in tangents:
@@ -1212,7 +1238,15 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     generic_seeds: dict[int, Expr] = {}
     ret: Expr | None = None
     for formal_idx, actual_outer in enumerate(expr.args):
-      actual_tan = simplify_cse_fixpoint(_jvp_many_structural(actual_outer, wrt, seeds, memo, dep_memo))
+      try:
+        actual_tan = simplify_cse_fixpoint(_jvp_many_structural(actual_outer, wrt, seeds, memo, dep_memo))
+      except NotImplementedError:
+        # A tangent that cannot be formed (a looped sparse factor's) is fine if the body's
+        # derivative never reads it, as an implicit solve rule never reads its factor's.
+        active = tuple(i for i, a in enumerate(expr.args) if _depends_on(a, wrt, dep_memo))
+        if formal_idx in _call_jvp_function(callee, output_idx, active)[2]:
+          raise
+        continue
       if _is_zero_const(actual_tan):
         continue
       formal = callee.inputs[formal_idx]
@@ -1403,6 +1437,8 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL, ExprOp.TRISOLVE}:
     memo[expr.id] = ret = _jvp_many_dense(expr, d, nseed)
     return ret
+  if expr.op == ExprOp.SPARSE_LDL:
+    raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
   if expr.op in {ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT}:
     if nseed > 64:
       raise _JVPManyUnsupported(str(expr.op))  # one tangent op per seed would outgrow the per-seed fallback

@@ -36,11 +36,22 @@ from ..ir.expr import (
 )
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.options import get_options
-from .forward import _is_zero_const, _minus_one, _tri_mask, claim_name, custom_vjp_call, extremum_weight, reduce_weights, segment_weights, sign
+from .forward import (
+  SPARSE_LDL_NO_DERIVATIVE,
+  _is_zero_const,
+  _minus_one,
+  _tri_mask,
+  claim_name,
+  custom_vjp_call,
+  extremum_weight,
+  reduce_weights,
+  segment_weights,
+  sign,
+)
 from .sparsity import _depends_on
 
 
-_VMAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...]]]] = weakref.WeakKeyDictionary()
+_VMAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...], frozenset[int]]]] = weakref.WeakKeyDictionary()
 
 
 def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
@@ -58,7 +69,10 @@ def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
   return memo[expr.id]
 
 
-def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int, ...]) -> tuple[Any, tuple[int, ...]]:
+def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int, ...]) -> tuple[Any, tuple[int, ...], frozenset[int]]:
+  """The adjoint of one map lane for the ``active_formals``, the inputs it reads, and the formals
+  whose cotangent is a constant zero (an implicit rule's for a factor it treats as constant): the
+  map's adjoint leaves those out, so reverse mode does not walk back into what produced them."""
   key = (output_index, active_formals)
   cache = _VMAP_ADJ_CACHE.setdefault(callee, {})
   if key not in cache:
@@ -67,6 +81,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     lam_name = claim_name(f"lam:{callee.output_names[output_index]}", taken)
     lam = Expr.sym(lam_name, out.shape)
     grads = body_cotangents(callee, {output_index: lam}, active_formals)
+    zero = frozenset(k for k, grad in zip(active_formals, grads, strict=True) if _is_zero_const(simplify_cse_fixpoint(grad)))
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads])))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
@@ -76,7 +91,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     # lowering dedupes callees by name, so a collision would silently reuse the wrong proc body.
     name = f"{callee.name}_adj{output_index}_" + "_".join(str(i) for i in active_formals)
     fn = Function._from_exprs(name, inputs, [adj], input_names, [claim_name(f"adj:{callee.output_names[output_index]}", taken)])
-    cache[key] = (fn, arg_indices)
+    cache[key] = (fn, arg_indices, zero)
   return cache[key]
 
 
@@ -93,7 +108,7 @@ def _vmap_vjp(vmap_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[t
   if not active_formals:
     return []
 
-  adj_fn, arg_indices = _vmap_adj_function(callee, output_idx, active_formals)
+  adj_fn, arg_indices, zero = _vmap_adj_function(callee, output_idx, active_formals)
   primal_specs = [(vmap_expr.args[i], starts[i], strides[i]) for i in arg_indices]
   mapped = vmap(adj_fn, length, [*primal_specs, (cot, 0, slice_size)])
   adj_size = sum(callee.inputs[k].size for k in active_formals)
@@ -102,6 +117,9 @@ def _vmap_vjp(vmap_expr: Expr, cot: Expr, wrts: Sequence[Expr], dep_memo: dict[t
   for k in active_formals:
     arg, start, stride = vmap_expr.args[k], starts[k], strides[k]
     formal_size = callee.inputs[k].size
+    if k in zero:
+      offset += formal_size
+      continue
     if stride == 0:
       indices = np.asarray([it * adj_size + offset + j for it in range(length) for j in range(formal_size)], dtype=np.int64)
       segments = gather(mapped, indices).reshape((length, formal_size))
@@ -537,6 +555,8 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return (-(outer * _tri_mask(t.shape[0], lower, unit)), b_bar)
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
     return (_factor_cotangent(expr, cot),)
+  if expr.op == ExprOp.SPARSE_LDL:
+    raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
   if expr.op == ExprOp.RAGGED_ADD:
     base, src, lo, hi, scale = args
     dmap, smap = expr.attrs["dst_map"], expr.attrs["src_map"]

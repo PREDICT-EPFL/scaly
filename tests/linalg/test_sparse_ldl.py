@@ -65,7 +65,7 @@ def _values(mat: SparseMatrix, a: sparse.csc_array) -> np.ndarray:
   return np.asarray(a.tocsr()[mat.coordinates()]).reshape(-1)
 
 
-@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+@pytest.mark.parametrize("schedule", ["loop", "scan", "unroll"])
 @pytest.mark.parametrize("which", ["lower", "upper", "full"])
 @pytest.mark.parametrize("ordering", ["natural", "rcm", "mmd", "auto"])
 @pytest.mark.parametrize("name", list(MATRICES))
@@ -130,7 +130,7 @@ def test_every_loop_runs_in_place_and_one_factorization_serves_every_solve() -> 
   assert sum(entry.count(f"{n}_raw(") for n in factor_loops) == len(fact.segments), "one factorization, however many solves"
 
 
-@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+@pytest.mark.parametrize("schedule", ["loop", "scan", "unroll"])
 def test_implicit_derivatives(monkeypatch: pytest.MonkeyPatch, schedule: Schedule) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
   k = _kkt(12, 5, 1e-2, 5)
@@ -226,16 +226,16 @@ def test_auto_schedule_follows_the_option() -> None:
   with sc.options(sparse_unroll=work):
     assert SparseLDL(mat).schedule == "unroll"
   with sc.options(sparse_unroll=work - 1):
-    assert SparseLDL(mat).schedule == "scan"
+    assert SparseLDL(mat).schedule == "loop"
   with pytest.raises(ValueError, match="schedule must be one of"):
-    SparseLDL(mat, schedule="loop")  # ty: ignore[invalid-argument-type]
+    SparseLDL(mat, schedule="blocked")  # ty: ignore[invalid-argument-type]
 
 
 def _full(t: sparse.csc_array) -> sparse.csr_array:
   return (t + sparse.tril(t, -1).T).tocsr()
 
 
-@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+@pytest.mark.parametrize("schedule", ["loop", "scan", "unroll"])
 def test_refinement_fixed_and_adaptive(schedule: Schedule) -> None:
   """At a tiny regularization one solve leaves a residual far above rounding; refinement removes
   it."""
@@ -259,7 +259,7 @@ def test_refinement_fixed_and_adaptive(schedule: Schedule) -> None:
     fact.solve(b, refine=2, tol=0.0)
 
 
-@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+@pytest.mark.parametrize("schedule", ["loop", "scan", "unroll"])
 def test_refinement_step_counts_with_an_inexact_factor(schedule: Schedule) -> None:
   """Refining against ``K`` with the factor of ``1.2 K`` contracts the error by exactly 1/6 per
   step, so ``k`` steps give ``(1 - 6^{-(k+1)}) K^{-1} b`` and the adaptive loop's step count can be
@@ -384,7 +384,7 @@ def test_solve_sparsity_is_per_connected_component() -> None:
 # --- review round (T2-R) -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+@pytest.mark.parametrize("schedule", ["loop", "scan", "unroll"])
 @pytest.mark.parametrize("which", ["lower", "upper"])
 def test_second_derivatives_in_the_matrix(monkeypatch: pytest.MonkeyPatch, schedule: Schedule, which: str) -> None:
   monkeypatch.setenv("SCALY_STRICT_JVP_MANY", "1")
@@ -403,7 +403,7 @@ def test_second_derivatives_in_the_matrix(monkeypatch: pytest.MonkeyPatch, sched
   np.testing.assert_allclose(hkb, fd_b, rtol=1e-4, atol=1e-5 * np.abs(hkb).max())
 
 
-@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+@pytest.mark.parametrize("schedule", ["loop", "scan", "unroll"])
 def test_matrix_right_hand_side_derivatives(schedule: Schedule) -> None:
   k = _kkt(7, 3, 1e-2, 6)
   t = _triangle(k, "lower")
@@ -433,7 +433,7 @@ def test_third_derivatives_go_through_the_loops() -> None:
   np.testing.assert_allclose(value, 0.0, atol=1e-8)
 
 
-@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+@pytest.mark.parametrize("schedule", ["loop", "scan", "unroll"])
 def test_every_solve_variant_in_one_graph(schedule: Schedule) -> None:
   """Solves with and without refinement, fixed or adaptive at two tolerances, for a vector and a
   matrix right-hand side, and their gradients: every variant and rule has a name of its own."""
@@ -487,7 +487,7 @@ def test_a_given_analysis_must_match_the_pattern() -> None:
     SparseLDL(SparseMatrix.symbol("S", np.eye(3, dtype=bool)), symbolic=own)
 
 
-@pytest.mark.parametrize("schedule", ["scan", "unroll"])
+@pytest.mark.parametrize("schedule", ["loop", "scan", "unroll"])
 def test_solve_with_a_factor_carried_out_of_a_loop(schedule: Schedule) -> None:
   """A factor computed elsewhere, here carried through a loop that just passes it on, solves as the
   handle's own does; a factor or right-hand side of the wrong length is refused."""
@@ -509,3 +509,159 @@ def test_solve_with_a_factor_carried_out_of_a_loop(schedule: Schedule) -> None:
     fact.solve_with(carried[1:], b)
   with pytest.raises(ValueError, match="right-hand side of length"):
     fact.solve_with(carried, b[1:])
+
+
+# --- the looped factorization (sparse_ldl_factor) ------------------------------------------------
+
+LOOP_MATRICES = {**MATRICES, "kkt_large": lambda: _kkt(120, 50, 1e-4, 3), "mpc_large": lambda: _mpc(25, 6, 2)}
+
+
+def test_loop_schedule_is_the_scan_bit_for_bit() -> None:
+  """The looped factorization applies each column's updates in the scan's order, so its factor is
+  the scan's to the last bit, on every matrix, triangle and ordering; between them the matrices
+  have chunks of every width."""
+  widths: set[int] = set()
+  for name, make in LOOP_MATRICES.items():
+    k = make()
+    for which in ("lower", "full"):
+      t = _triangle(k, which)
+      for ordering in ("natural", "rcm", "mmd"):
+        mat = SparseMatrix.symbol("K", t)
+        tag = f"{name}_{which}_{ordering}"
+        scan = SparseLDL(mat, schedule="scan", ordering=ordering, name=f"bits_s_{tag}")
+        loop = SparseLDL(mat, schedule="loop", ordering=ordering, name=f"bits_l_{tag}")
+        assert not loop.segments
+        b = sc.sym("b", k.shape[0])
+        fs, fl, xs, xl = _fn(f"bits_{tag}", [mat.values, b], [scan.values, loop.values, scan.solve(b), loop.solve(b)])._flat_numerical_call(
+          _values(mat, t), RNG.standard_normal(k.shape[0])
+        )
+        np.testing.assert_array_equal(fl, fs)
+        np.testing.assert_array_equal(xl, xs)
+        widths.update(np.unique(loop.symbolic.chunks()["ck_width"]).tolist())
+  assert widths == {1, 2, 3, 4}
+
+
+def test_loop_factorization_propagates_inf_and_nan_as_the_scan_does() -> None:
+  """An infinite pivot (a regularization at infinity) and a NaN entry give the scan's factor."""
+  k = MATRICES["kkt"]()
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  scan, loop = SparseLDL(mat, schedule="scan", name="naninf_s"), SparseLDL(mat, schedule="loop", name="naninf_l")
+  fn = _fn("naninf", [mat.values], [scan.values, loop.values])
+  base = _values(mat, t)
+  rows, cols = mat.coordinates()
+  for bad in (np.inf, -np.inf, np.nan):
+    kv = base.copy()
+    kv[np.flatnonzero(rows == cols)[3]] = bad
+    fs, fl = fn._flat_numerical_call(kv)
+    np.testing.assert_array_equal(fl, fs)
+
+
+def test_chunks_group_columns_with_the_same_rows() -> None:
+  """Every chunk of row ``j`` covers consecutive entries of the row, in order, whose columns have the
+  same rows from ``j`` down; the chunks cover the row exactly once."""
+  for make in LOOP_MATRICES.values():
+    s = SparseLDL(SparseMatrix.symbol("K", _triangle(make(), "lower")), ordering="mmd", schedule="loop").symbolic
+    ck = s.chunks()
+    assert ck["ck_ptr"].size == s.n + 1 and np.all(ck["ck_width"] >= 1) and np.all(ck["ck_width"] <= 4)
+    for j in range(s.n):
+      covered = []
+      for r in range(ck["ck_ptr"][j], ck["ck_ptr"][j + 1]):
+        q, w, length = (int(ck[key][r]) for key in ("ck_q", "ck_width", "ck_len"))
+        tails = [s.l_rows[s.r_pos[e] : s.l_ptr[s.r_cols[e] + 1]] for e in range(q, q + w)]
+        assert all(tail.size == length and np.array_equal(tail, tails[0]) for tail in tails)
+        assert tails[0][0] == j
+        covered.extend(range(q, q + w))
+      assert covered == list(range(s.r_ptr[j], s.r_ptr[j + 1]))
+    assert s.chunks(1)["ck_q"].size == s.r_cols.size  # width 1: one chunk per entry
+
+
+def test_loop_factorization_has_no_derivative_of_its_own() -> None:
+  """Differentiating the looped factor itself is refused, naming the scan schedule; the solve's
+  implicit derivatives never need it (``test_implicit_derivatives`` runs them on the loop)."""
+  k = MATRICES["kkt"]()
+  mat = SparseMatrix.symbol("K", _triangle(k, "lower"))
+  fact = SparseLDL(mat, schedule="loop", name="noderiv")
+  with pytest.raises(NotImplementedError, match="schedule='scan'"):
+    jvp(fact.values, mat.values, sc.const(np.ones(mat.nnz)))
+  with pytest.raises(NotImplementedError, match="schedule='scan'"):
+    gradient(sc.sumsqr(fact.values), mat.values)
+  b = sc.sym("b", k.shape[0])
+  assert jvp(fact.values, b, sc.const(np.ones(k.shape[0]))).op == sc.Expr.const(np.zeros(1)).op  # no dependence: a zero
+
+
+def test_loop_factor_sparsity_is_the_elimination_subtree() -> None:
+  """Column ``j`` of the factor depends on the matrix columns in ``j``'s elimination subtree: the
+  structural pattern contains every entry a finite difference moves, and a column's entries depend
+  on nothing outside its subtree."""
+  from scaly.ad.sparsity import jacobian_sparsity
+
+  k = MATRICES["mpc"]()
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  fact = SparseLDL(mat, schedule="loop", ordering="rcm", name="sp_loop")
+  pattern = jacobian_sparsity(fact.values, mat.values)
+  mask = np.zeros(pattern.shape, dtype=bool)
+  mask[np.asarray(pattern.rows), np.asarray(pattern.cols)] = True
+  fn = _fn("sp_loop_run", [mat.values], [fact.values])
+  kv = _values(mat, t)
+  base = fn._flat_numerical_call(kv)[0]
+  for e in range(kv.size):
+    bumped = kv.copy()
+    bumped[e] += 1e-3
+    moved = np.flatnonzero(fn._flat_numerical_call(bumped)[0] != base)
+    assert np.all(mask[moved, e]), e
+  s = fact.symbolic
+  leaves = [j for j in range(s.n) if not np.any(s.parent == j)]
+  j = leaves[0]
+  own = set(s.a_source[s.a_ptr[j] : s.a_ptr[j + 1]].tolist())
+  assert set(np.flatnonzero(mask[s.nnz_l + j]).tolist()) == own  # a leaf's pivot reads its own column only
+  assert mask[s.nnz_l + int(np.flatnonzero(s.parent < 0)[-1])].sum() > len(own)
+
+
+def test_sparse_ldl_factor_validates_its_tables() -> None:
+  from scaly.ir.expr import sparse_ldl_factor
+
+  fact = SparseLDL(SparseMatrix.symbol("K", _triangle(MATRICES["kkt"](), "lower")), schedule="loop")
+  tables = fact.tables()
+  kv = sc.sym("kv", fact.matrix.nnz)
+  with pytest.raises(ValueError, match="needs the tables"):
+    sparse_ldl_factor(kv, {k: v for k, v in tables.items() if k != "ck_len"})
+  with pytest.raises(ValueError, match="outside its"):
+    sparse_ldl_factor(sc.sym("kv_short", fact.matrix.nnz - 1), tables)
+  with pytest.raises(ValueError, match="chunks cover 1 to"):
+    sparse_ldl_factor(kv, {**tables, "ck_width": tables["ck_width"] + 4})
+  with pytest.raises(ValueError, match="disagree on the order"):
+    sparse_ldl_factor(kv, {**tables, "ck_ptr": tables["ck_ptr"][:-1]})
+  with pytest.raises(ValueError, match="floating-point vector"):
+    sparse_ldl_factor(sc.sym("kv_mat", (2, 3)), tables)
+
+
+def test_loop_factorization_inside_a_called_function() -> None:
+  """Called as a Function, as the IPM calls it, the looped factorization is a procedure of its own
+  that scalar expansion leaves alone (its addresses are known only at run time)."""
+  k = MATRICES["mpc"]()
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  scan, loop = SparseLDL(mat, schedule="scan", name="callee_s"), SparseLDL(mat, schedule="loop", name="callee_l")
+  inner = _fn("callee_factor", [mat.values], [loop.values])
+  kv2 = sc.sym("kv2", mat.nnz)
+  called = inner.symbolic_call(kv2 * 1.0)
+  outer = _fn("callee_run", [mat.values, kv2], [scan.values, called])
+  fs, fl = outer._flat_numerical_call(kv := _values(mat, t), kv)
+  np.testing.assert_array_equal(fl, fs)
+
+
+def test_a_derivative_that_needs_the_looped_factor_is_refused() -> None:
+  """Through a map whose body reads the factor itself (not through an implicit rule), the tangent
+  is needed, and forming it is refused rather than dropped."""
+  k = MATRICES["kkt"]()
+  mat = SparseMatrix.symbol("K", _triangle(k, "lower"))
+  fact = SparseLDL(mat, schedule="loop", name="needed")
+  f, b = sc.sym("f", fact.values.shape), sc.sym("bb", 2)
+  body = _fn("needed_body", [f, b], [sc.sumsqr(f) * b])
+  mapped = sc.vmap(body, 3, [(fact.values, 0, 0), (sc.sym("B", 6), 0, 2)])
+  with pytest.raises(NotImplementedError, match="schedule='scan'"):
+    jacobian(mapped, mat.values)
+  with pytest.raises(NotImplementedError, match="schedule='scan'"):
+    jvp(mapped, mat.values, sc.const(np.ones(mat.nnz)))

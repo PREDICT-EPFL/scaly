@@ -1,7 +1,10 @@
 """Sparse ``L D L^T`` of a symmetric quasi-definite matrix, generated as loops over its columns.
 
 ``SparseLDL(K)`` analyzes ``K``'s pattern at build time (``linalg.symbolic``) and factors its
-values with one ``scan`` per column segment. Every step is the left-looking column update, written
+values as straight-line code when that is small (``schedule="unroll"``) and otherwise as one loop
+nest, ``ir.expr.sparse_ldl_factor`` (``schedule="loop"``), which updates each column from chunks of
+columns that share their rows. ``schedule="scan"`` keeps the factorization differentiable through
+its loops: one ``scan`` per column segment, where every step is the left-looking column update, written
 with run-time-index operations on a single carry vector ``[L values | D | work | 0 | scratch]``:
 for each column ``k`` in row ``j`` of ``L``, one ``ragged_add`` run over the contiguous part of
 column ``k`` from row ``j`` down, the loop the C reference factorizations have. The loop slices the
@@ -24,6 +27,7 @@ from scipy.sparse.csgraph import connected_components
 from ..function.model import Function
 from ..function.sugar import custom_derivative, scan, vmap, while_loop
 from ..ir.expr import (
+  SPARSE_LDL_MAX_WIDTH,
   Expr,
   as_expr,
   concat,
@@ -38,6 +42,7 @@ from ..ir.expr import (
   ragged_dot,
   scatter,
   segment_sum,
+  sparse_ldl_factor,
   stack,
   take,
   where,
@@ -46,8 +51,8 @@ from ..utils.options import get_options
 from .sparse import SparseMatrix
 from .symbolic import CostModel, Ordering, Segment, SymbolicLDL, analyze
 
-Schedule = Literal["auto", "scan", "unroll"]
-SCHEDULES: tuple[Schedule, ...] = ("auto", "scan", "unroll")
+Schedule = Literal["auto", "loop", "scan", "unroll"]
+SCHEDULES: tuple[Schedule, ...] = ("auto", "loop", "scan", "unroll")
 
 _NAMES = itertools.count()
 
@@ -113,13 +118,16 @@ class SparseLDL:
     self.d_offset = s.nnz_l
     self.w_offset = s.nnz_l + s.n
     if schedule == "auto":
-      schedule = "unroll" if self.work <= get_options().sparse_unroll else "scan"
+      schedule = "unroll" if self.work <= get_options().sparse_unroll else "loop"
     self.schedule: Schedule = schedule
     self._sweeps: dict[bool, Function] = {}
     self._solvers: dict[tuple[int, float | None], Function] = {}
+    self.segments: list[Segment] = []
     if schedule == "unroll":
-      self.segments: list[Segment] = []
       self.values = self._factor_unrolled(matrix.values)
+      return
+    if schedule == "loop":
+      self.values = sparse_ldl_factor(matrix.values, self.tables())
       return
     self.zero = s.nnz_l + 2 * s.n  # an entry that stays zero: padded reads land here
     # Per column: matrix entries, columns in its row of L (one ragged run each), entries of its column.
@@ -130,6 +138,20 @@ class SparseLDL:
     self.dump = self.zero + 1  # one scratch slot per lane for padded writes
     self.size = self.dump + lanes
     self.values = self._factor(matrix.values)[: self.w_offset]
+
+  def tables(self) -> dict[str, np.ndarray]:
+    """The analysis as ``ir.expr.sparse_ldl_factor`` reads it."""
+    s = self.symbolic
+    return {
+      "a_ptr": s.a_ptr,
+      "a_rows": s.a_rows,
+      "a_src": s.a_source,
+      "l_ptr": s.l_ptr,
+      "l_rows": s.l_rows,
+      "r_cols": s.r_cols,
+      "r_pos": s.r_pos,
+      **s.chunks(SPARSE_LDL_MAX_WIDTH),
+    }
 
   @property
   def work(self) -> int:

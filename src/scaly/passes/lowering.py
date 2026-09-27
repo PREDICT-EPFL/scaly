@@ -28,7 +28,17 @@ from typing import Any
 import numpy as np
 
 from ..ir import program as p
-from ..ir.expr import CALLEE_OPS, COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, RUNTIME_INDEX_OPS, Expr, ExprOp, callees_of, topo
+from ..ir.expr import (
+  CALLEE_OPS,
+  COMMON_ELEMENTWISE_BINARY,
+  COMMON_ELEMENTWISE_UNARY,
+  RUNTIME_INDEX_OPS,
+  SPARSE_LDL_MAX_WIDTH,
+  Expr,
+  ExprOp,
+  callees_of,
+  topo,
+)
 from ..function import Function
 from .arith import constant
 from .program import ProgramObserver, optimize_program
@@ -932,6 +942,81 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
   zeros = p.for_(p.range_(z.attrs["name"], p.add(i, c(1)), n, kind=RangeKind.GLOBAL), [p.store(_entry(out, n, i, z), zero)])
   row = [p.for_(p.range_(j.attrs["name"], 0, i, kind=RangeKind.SERIAL), off), *diag, zeros]
   ctx.statements.append(p.for_(p.range_(i.attrs["name"], 0, n, kind=RangeKind.SERIAL), row))
+
+
+@lowers(ExprOp.SPARSE_LDL)
+def _lower_sparse_ldl(ctx: LowerCtx, node: Expr) -> None:
+  """Left-looking sparse ``L D L^T`` over the node's analysis tables, into ``[L | D]``.
+
+  Per column ``j``: the matrix column goes into a dense work column; each chunk of row ``j`` of
+  ``L`` (up to four columns ``k`` whose rows from ``j`` down are the same) updates it in one pass over
+  those rows, ``w[i] += L[i, k] * (-D[k] L[j, k])`` for its columns in order, the sum held in a
+  register; then ``D[j] = w[j]`` and ``L[i, j] = w[i] / D[j]``, clearing each ``w[i]`` read. Every
+  entry sees its updates in the order of one column at a time, so the rounding is that of the
+  column-by-column factorization. A chunk's width picks one of four loops, each run zero or one
+  times, so the widths need no branch statement."""
+  (kv,) = node.args
+  a = node.attrs
+  n, nnz_l = a["a_ptr"].size - 1, a["l_rows"].size
+  out, src, dt = ctx.alloc_tmp(node), ctx.buf_of(kv), node.type.dtype
+  if n == 0:
+    return
+  c = p.const_int
+  nm = out.attrs["name"]
+  tables = {
+    k: ctx.new_const_index(a[k]) for k in ("a_ptr", "a_rows", "a_src", "l_ptr", "l_rows", "r_cols", "r_pos", "ck_ptr", "ck_q", "ck_width", "ck_len")
+  }
+
+  def at(table: str, i: ProgramNode) -> ProgramNode:
+    return p.load(p.view(tables[table], [i]))
+
+  def scalar() -> ProgramNode:
+    return p.view(ctx.new_private(dt, ()), [c(0)])
+
+  work = ctx.new_private(dt, (n,))
+  zero = p.const_float(0.0, dtype=dt)
+  i0 = p.var(f"lz_{nm}")
+  ctx.statements.append(p.for_(p.range_(i0.attrs["name"], 0, n), [p.store(p.view(work, [i0]), zero)]))
+  j = p.var(f"lj_{nm}")
+  j1 = p.add(j, c(1))
+  pa = p.var(f"la_{nm}")
+  column = p.for_(
+    p.range_(pa.attrs["name"], at("a_ptr", j), at("a_ptr", j1)), [p.store(p.view(work, [at("a_rows", pa)]), p.load(p.view(src, [at("a_src", pa)])))]
+  )
+  r = p.var(f"lr_{nm}")
+  q = at("ck_q", r)
+  widths = []
+  for width in range(1, SPARSE_LDL_MAX_WIDTH + 1):
+    pos = [at("r_pos", p.add(q, c(k)) if k else q) for k in range(width)]
+    scales = [scalar() for _ in range(width)]
+    # -D[k] L[j, k] per column of the chunk, before the pass over its rows
+    head = [
+      p.store(s, p.neg(p.mul(p.load(p.view(out, [p.add(c(nnz_l), at("r_cols", p.add(q, c(k)) if k else q))])), p.load(p.view(out, [pos[k]])))))
+      for k, s in enumerate(scales)
+    ]
+    t = p.var(f"lt{width}_{nm}")
+    dst = p.view(work, [at("l_rows", p.add(pos[0], t))])
+    total = p.load(dst)
+    for k, s in enumerate(scales):
+      total = p.add(total, p.mul(p.load(p.view(out, [p.add(pos[k], t)])), p.load(s)))
+    rows = p.for_(p.range_(t.attrs["name"], 0, at("ck_len", r)), [p.store(dst, total)])
+    once = p.var(f"lw{width}_{nm}")
+    taken = p.select(p.compare(ProgramOp.EQ, at("ck_width", r), c(width)), c(1), c(0))
+    widths.append(p.for_(p.range_(once.attrs["name"], 0, taken), [*head, rows]))
+  updates = p.for_(p.range_(r.attrs["name"], at("ck_ptr", j), at("ck_ptr", j1)), widths)
+  pivot, inverse = scalar(), scalar()
+  pl = p.var(f"ll_{nm}")
+  entry = p.view(work, [at("l_rows", pl)])
+  finish = [
+    p.store(pivot, p.load(p.view(work, [j]))),
+    p.store(p.view(out, [p.add(c(nnz_l), j)]), p.load(pivot)),
+    p.store(inverse, p.div(p.const_float(1.0, dtype=dt), p.load(pivot))),
+    p.for_(
+      p.range_(pl.attrs["name"], at("l_ptr", j), at("l_ptr", j1)),
+      [p.store(p.view(out, [pl]), p.mul(p.load(entry), p.load(inverse))), p.store(entry, zero)],
+    ),
+  ]
+  ctx.statements.append(p.for_(p.range_(j.attrs["name"], 0, n), [column, updates, *finish]))
 
 
 @lowers(ExprOp.TRISOLVE)
@@ -1922,6 +2007,7 @@ def _lower_segment_extremum(ctx: LowerCtx, node: Expr) -> None:
   i = p.var(iname)
   dst = ctx.index_at(idx, i)
   cur, value = p.load(p.view(out, [dst])), p.load(p.view(ctx.buf_of(src), [i]))
+
   def pick(cur: ProgramNode, value: ProgramNode) -> ProgramNode:
     better = p.compare(ProgramOp.LT, cur, value) if node.op == ExprOp.SEGMENT_MAX else p.compare(ProgramOp.LT, value, cur)
     take = ProgramNode(ProgramOp.OR, (better, p.compare(ProgramOp.NE, value, value)), dtype=dtypes.bool_)

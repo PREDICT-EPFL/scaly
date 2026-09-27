@@ -90,6 +90,28 @@ def _row_blocks(nrows: int, out_width: int, in_width: int) -> tuple[np.ndarray, 
   return r.reshape(-1), c.reshape(-1)
 
 
+def _sparse_ldl_reads(expr: Expr) -> sparse.csr_array:
+  """Which matrix entries each entry of a ``sparse_ldl_factor`` result reads: column ``j`` of ``L`` and
+  ``D[j]`` come from the columns of the elimination subtree of ``j`` (``j`` and every column whose
+  path up the tree, parent = first row below the diagonal, passes through ``j``)."""
+  a = expr.attrs
+  n = a["a_ptr"].size - 1
+  l_ptr, l_rows = a["l_ptr"], a["l_rows"]
+  counts = np.diff(l_ptr)
+  parent = np.where(counts > 0, l_rows[np.minimum(l_ptr[:-1], max(l_rows.size - 1, 0))], -1)
+  anc_rows, anc_cols = [], []
+  for k in range(n):  # k lies in the subtree of each of its ancestors, itself included
+    j = k
+    while j >= 0:
+      anc_rows.append(j)
+      anc_cols.append(k)
+      j = int(parent[j])
+  subtree = _incidence((n, n), np.asarray(anc_rows, dtype=np.int64), np.asarray(anc_cols, dtype=np.int64))
+  reads = _incidence((n, expr.args[0].size), np.repeat(np.arange(n), np.diff(a["a_ptr"])), a["a_src"])
+  column = np.concatenate([np.repeat(np.arange(n), counts), np.arange(n)])  # the column of each factor entry
+  return _compose(_compose(_incidence((expr.size, n), np.arange(expr.size), column), subtree), reads)
+
+
 def _jac_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   if expr.id in memo:
     return memo[expr.id]
@@ -139,6 +161,8 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
       dense = _incidence((expr.size, arg.size), np.repeat(np.arange(expr.size), arg.size), np.tile(np.arange(arg.size), expr.size))
       mask = _or(mask, _compose(dense, _jac_mask(arg, wrt, memo)))
     return mask
+  if expr.op == ExprOp.SPARSE_LDL:
+    return _compose(_sparse_ldl_reads(expr), _jac_mask(expr.args[0], wrt, memo))
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
     # Every entry of the lower triangle of the factor may depend on every entry the factorization reads.
     a = expr.args[0]

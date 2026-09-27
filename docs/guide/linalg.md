@@ -90,10 +90,11 @@ elimination tree and the pattern of `L`. `ordering="auto"`, the default, keeps w
 reverse Cuthill–McKee or minimum degree needs the least work. A stage-ordered MPC matrix usually
 keeps its own order.
 
-**Generated code.** `schedule="scan"` generates loops and `schedule="unroll"` straight-line code.
-The default, `"auto"`, unrolls when the factorization takes at most `sc.options(sparse_unroll=...)`
-multiply-adds and divisions (1000 by default; `fact.work` has the count). Straight-line code has no
-loop overhead, which dominates small systems:
+**Generated code.** `schedule="loop"` generates the factorization as one loop nest,
+`schedule="scan"` as `scan`s over its columns, and `schedule="unroll"` as straight-line code. The
+default, `"auto"`, unrolls when the factorization takes at most `sc.options(sparse_unroll=...)`
+multiply-adds and divisions (1000 by default; `fact.work` has the count) and loops otherwise.
+Straight-line code has no loop overhead, which dominates small systems:
 
 | KKT system | n | work | loops: factor / solve | straight-line: factor / solve | generation (straight-line) |
 | --- | --- | --- | --- | --- | --- |
@@ -101,7 +102,19 @@ loop overhead, which dominates small systems:
 | random QP 20 + 10 | 30 | 836 | 1.45 / 0.44 µs | 0.24 / 0.23 µs | 1.1 s |
 | MPC, 10 stages | 104 | 1746 | 3.7 / 1.8 µs | 0.64 / 0.76 µs | 2.7 s |
 
-(aarch64 Linux, gcc, per factorization; `internal/notes/tier2_pr9_report.html`.) The loops:
+(aarch64 Linux, gcc, per factorization; `internal/notes/tier2_pr9_report.html`; the loops there are
+the `scan` schedule.) The loop nest of `schedule="loop"` (`ir.expr.sparse_ldl_factor`):
+
+- A left-looking factorization over a dense work column. The updates of column `j` come in chunks
+  of up to four columns whose rows from `j` down are the same, as a supernode's are; one pass over
+  those rows applies all of them, the sum held in a register, so the work column is read and
+  written once per chunk instead of once per column.
+- Each column's updates keep the order of one column at a time, so the factor is the `scan`
+  schedule's to the last bit, 1.5 to 2.2 times faster.
+- The factor has no derivative of its own: `solve` differentiates implicitly and never needs one,
+  and `schedule="scan"` differentiates the factorization through its loops.
+
+The `scan` schedule:
 
 - The factorization is one `scan` per segment of columns. Each step is a left-looking column update
   that reads the analysis tables by the step number.

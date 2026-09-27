@@ -24,7 +24,7 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from .expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, COMPARE_OPS, Expr, ExprOp, OP_INFO, topo
+from .expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, COMPARE_OPS, OP_INFO, SPARSE_LDL_TABLES, Expr, ExprOp, topo
 from .spec import Rule, Spec, VerifyError
 from .types import DType, broadcast_shape
 
@@ -283,6 +283,18 @@ def _factor_shape(expr: Expr) -> str | None:
   return None
 
 
+def _sparse_ldl_tables(expr: Expr) -> str | None:
+  missing = [k for k in SPARSE_LDL_TABLES if k not in expr.attrs]
+  if missing:
+    return f"SPARSE_LDL needs the tables {missing}"
+  n = expr.attrs["a_ptr"].size - 1
+  if expr.shape != (expr.attrs["l_rows"].size + n,) or len(expr.args[0].shape) != 1:
+    return f"SPARSE_LDL of {expr.args[0].shape} values gives [L | D], not {expr.shape}"
+  if any(expr.attrs[k].size != n + 1 for k in ("l_ptr", "ck_ptr")) or expr.attrs["r_cols"].size != expr.attrs["l_rows"].size:
+    return "SPARSE_LDL tables disagree on the order of the matrix or the entries of L"
+  return None
+
+
 def _trisolve_shapes(expr: Expr) -> str | None:
   t, b = expr.args
   if len(t.shape) != 2 or t.shape[0] != t.shape[1] or len(b.shape) not in (1, 2) or b.shape[0] != t.shape[0] or expr.shape != b.shape:
@@ -493,6 +505,7 @@ spec_expr = Spec(
     *(Rule(op, "index-update", _index_update) for op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET)),
     Rule(ExprOp.TAKE, "take-shapes", _take_shapes),
     *(Rule(op, "factor-shape", _factor_shape) for op in (ExprOp.CHOLESKY, ExprOp.LDL)),
+    Rule(ExprOp.SPARSE_LDL, "sparse-ldl-tables", _sparse_ldl_tables),
     Rule(ExprOp.TRISOLVE, "trisolve-shapes", _trisolve_shapes),
     *(Rule(op, "ragged-shapes", _ragged_shapes) for op in (ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT)),
     *(Rule(op, "put-shapes", _put_shapes) for op in (ExprOp.PUT_ADD, ExprOp.PUT)),

@@ -236,8 +236,8 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       longer quadratic, the JIT call reads array addresses through the buffer protocol (4.2 → 3.1
       µs for a trivial call; part of C-100), in-place proof for loops with constant indices only
       (the adaptive refinement loop). `notes/tier2_review_report.html`.
-- [ ] **C-114. Unpadded updates in the sparse factorization.** Each step runs the padded groups
-      of its segment: 22–65% of the group slots are real work. A group loop over the real entries
+- [x] **C-114. Unpadded updates in the sparse factorization.** Done by C-135, which goes further.
+      Each step runs the padded groups of its segment: 22–65% of the group slots are real work. A group loop over the real entries
       of row `j` (`r_ptr[j] .. r_ptr[j+1]`, each with its column's range and weight read from global
       tables) needs a two-level ragged op whose scale is `-D[k] L[j,k]` read from the carry. A
       hand-written C version runs grid 30×30 in 12.7 µs against 20.6 (and the C baseline's 18.0),
@@ -423,6 +423,21 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       data-only maxima (`c`, `b` and bound terms over their scalings) as loop params (1-3%); and
       stop the scalarizer from unrolling a procedure made of one long reduction
       (`ipm_ruiz_go`: `cc` 0.85 → 0.58 s). See also C-131.
+- [x] **C-135. The sparse factorization as one loop nest (supersedes C-114).** `ir.expr.sparse_ldl_factor`
+      (`ExprOp.SPARSE_LDL`), `SparseLDL(schedule="loop")`, the default above `sparse_unroll`: a
+      left-looking factorization whose column updates come in chunks of up to four columns with the
+      same rows from `j` down (`SymbolicLDL.chunks`), one pass over the work column per chunk with the
+      sum in a register, no padding, no per-step call, the work column cleared as it is read. The
+      update order per entry is the scan's, so the factor is the `scan` schedule's bit for bit (every
+      test matrix, triangle and ordering; inf and NaN too). Factorization 1.5-2.2x faster (C prototype
+      on 11 KKT patterns); the generated sparse IPM 0.81x its time (geometric mean over 18 problems,
+      identical iterations and solutions). The op has no derivative of its own (the solve's implicit
+      rules never need it; `schedule="scan"` stays differentiable): forward mode now forms only the
+      tangents a call's derivative reads, the multi-seed call pruning and map rule tolerate a tangent
+      they do not read, and the map reverse rule drops constant-zero cotangents. Structural sparsity:
+      a factor column depends on its elimination subtree. 16 mutants: 14 killed, 1 equivalent (the
+      op's run-time-index membership; scalar expansion already declines run-time loop bounds), 1 dead
+      branch removed (`perf_2026_09_27_ipm_speed/`, `notes/ipm_speed_report.html`).
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 
