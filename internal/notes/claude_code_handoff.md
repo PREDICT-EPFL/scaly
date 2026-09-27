@@ -5,7 +5,7 @@ here. Read this first, then the documents it points to. It holds how the work is
 holds what is to be done.
 
 ## Where things stand
-- **Plan:** `internal/notes/piqp_plan.md` (v4.8), the living plan: goal, principles, Tiers 1–6, gates, kill criteria, decisions, change log.
+- **Plan:** `internal/notes/piqp_plan.md` (v4.9), the living plan: goal, principles, Tiers 1–6, gates, kill criteria, decisions, change log.
   - Its twin, the claude.ai project doc `claude/piqp-plan.md`, can't be reached from Claude Code. From now on, the repo copy is authoritative.
 - **Branches and tags:**
   - Tier 1 is done: tag `tier1-complete`, branch `claude/tier1-primitives`.
@@ -18,7 +18,7 @@ holds what is to be done.
   - Historical gap analysis: `programmatic_branch_analysis.md`.
 - **Open items:** `internal/todo.md`, next id C-135. Check the list for an id before taking it: a parallel session's entries once collided with this work's (C-125, C-126).
   - Tier 1 and 2 leftovers: C-89 … C-99, C-111, C-114 … C-117, C-122.
-  - Relevant to Tier 4: **C-114** (unpadded factor updates: the factorization is 40–60% of a sparse IPM step), **C-117** (the dense Cholesky kernel, 80% of a dense step), **C-130** (QRECIPE's sparse iteration count), **C-131** and **C-134** (step overheads the T3-R review measured).
+  - Relevant to Tier 4: **C-130** (QRECIPE's sparse iteration count, now the one sparse problem far from PIQP), **C-117**'s rest (the dense Cholesky at SIMD width; small dense solves), **C-131**'s rest and **C-134** (step overheads). C-114 and C-117's Cholesky half were done by the speed pass on `claude/ipm-speed` (C-135 … C-141, `ipm_speed_report.html`): sparse 0.78x and dense 1.22x PIQP's warmed solve above 50 µs. Its harness, `perf_2026_09_27_ipm_speed/` (C-side timing against a base checkout and PIQP, a per-procedure profiler), is the one to reuse.
   - C-126 (TinyMPC) is checked off in the committed list, but its files (`examples/tinympc/`, `tests/integration/test_tinympc.py`, `notes/tinympc_benchmark_report.html`) are Colin's and not committed.
 - **Suite:** 2 218 passed and 42 skipped on the Mac (Apple clang 21) at the end of Tier 3, with Colin's untracked test files left out (`--ignore` them, or the node-ID baseline check fails on their ids).
   - The IPM tests also pass with `-ffp-contract=fast` and `off` (a `SCALY_CC` wrapper), which bracket what GCC does.
@@ -57,7 +57,7 @@ holds what is to be done.
 ## Decisions to take with Colin at the start of Tier 4 (from the plan)
 1. **Parity semantics:** decision traces plus tolerances, as Tier 3's gate uses; and whether the drop-in keeps PIQP's quirks (`piqp_plan.md`, Tier 3 notes) and the dense backend's noise-pivot rule.
 2. **Baselines:** Mac-only vendored baselines and the SQP corpus dump.
-3. **Speed levers:** C-114 before or after the drop-in; a blocked dense Cholesky (C-117).
+3. **Speed levers:** done before Tier 4 on `claude/ipm-speed` (C-135 … C-141); whether that branch lands before the drop-in.
 
 ## Tier 2 API to build on
 ```python

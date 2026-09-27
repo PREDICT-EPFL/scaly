@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generated PIQP Speed</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Speeding up the generated PIQP</h1>
+<p class="sub">Where the generated solvers spend their time, what changed in the generated code, and the result · branch <code>claude/ipm-speed</code> (on <code>claude/examples-tinympc-notebooks</code>), todo C-135 … C-141 · 27 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's <code>-O2 -mcpu=native -fno-math-errno</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Six changes to the code generator and the IPM, plus a review round, over the 55 problems of the Tier 3 benchmark (48 Maros–Mészáros, 3 MPC, the 4 <code>examples/qp_solvers</code> families). Every time is the generated solver called from C (no Python), the fastest of five interleaved rounds against the base commit.</p>
+<ul>
+<li><b>Sparse backend:</b> <span class="ok">1.37× faster</span> (geometric mean over 55; 1.51× over the 38 problems where PIQP's solve takes at least 50 µs). Against vendored PIQP 0.6.2's own warmed solve timer it goes from 1.19× to <span class="ok">0.78×</span> on those 38, and is now faster than PIQP on 36 of them; 0.58× PIQP's setup + solve. Iteration counts and solutions are identical to the base on all 55.</li>
+<li><b>Dense backend:</b> <span class="ok">1.53× faster</span> (1.76× above the 50 µs floor, up to 3.00×). Against PIQP's dense backend: 2.14× → <span class="warn">1.22×</span>. The new Cholesky rounds differently: 2 of 55 problems change iteration count (QBEACONF 23 → 17, QBORE3D 19 → 21; PIQP's dense backend takes 23 and 20).</li>
+<li><b>Side effects:</b> generated objects 29% (sparse) and 21% (dense) smaller, compile time 13% and 9% shorter (the padded factorization tables are gone); graph build and generation unchanged.</li>
+<li><b>Tests:</b> 2 348 passed, 42 skipped; the one failure is the uncommitted <code>tiny_qp</code> gallery test in the working tree (the example has no <code>main()</code> yet). 51 mutants across the changes: 48 killed (several after a new test), 2 equivalent, 1 dead branch removed.</li>
+</ul>
+</div>
+
+<h2>Where the time went</h2>
+<p>Self time per generated procedure on the base commit (<code>prof.py</code>: macOS <code>sample</code> on a build with every procedure but the per-step loop bodies kept out of line). The sparse KKT factorization was the largest single cost, then the IPM step's own vector work, the triangular solves, Ruiz equilibration, and loop-carry copies. The dense backend was almost entirely its Cholesky.</p>
+<div class="scroll"><table><tr><th>problem</th><th>backend</th><th class="r">KKT factor</th><th class="r">KKT solve</th><th class="r">IPM step</th><th class="r">Ruiz</th><th class="r">copies (memmove/memset)</th></tr>
+<tr><td>QSC205</td><td>sparse</td><td class="r">33%</td><td class="r">18%</td><td class="r">33%</td><td class="r">5%</td><td class="r">6%</td></tr>
+<tr><td>QBORE3D</td><td>sparse</td><td class="r">52%</td><td class="r">14%</td><td class="r">23%</td><td class="r">4%</td><td class="r">4%</td></tr>
+<tr><td>ex_mpc_N20</td><td>sparse</td><td class="r">45%</td><td class="r">23%</td><td class="r">18%</td><td class="r">6%</td><td class="r">4%</td></tr>
+<tr><td>mpc_27_6_30</td><td>sparse</td><td class="r">68%</td><td class="r">11%</td><td class="r">11%</td><td class="r">6%</td><td class="r">1%</td></tr>
+<tr><td>QE226</td><td>sparse</td><td class="r">71%</td><td class="r">10%</td><td class="r">12%</td><td class="r">2%</td><td class="r">1%</td></tr>
+<tr><td>DUAL3</td><td>sparse</td><td class="r">78%</td><td class="r">6%</td><td class="r">7%</td><td class="r">7%</td><td class="r">0%</td></tr>
+<tr><td>QAFIRO</td><td>sparse</td><td class="r">8%</td><td class="r">6%</td><td class="r">60%</td><td class="r">14%</td><td class="r">8%</td></tr>
+<tr><td>PRIMALC1</td><td>dense</td><td class="r">91%</td><td class="r">4%</td><td class="r">3%</td><td class="r">0%</td><td class="r">1%</td></tr>
+<tr><td>QGROW7</td><td>dense</td><td class="r">86%</td><td class="r">8%</td><td class="r">3%</td><td class="r">0%</td><td class="r">1%</td></tr>
+<tr><td>QSC205</td><td>dense</td><td class="r">86%</td><td class="r">7%</td><td class="r">3%</td><td class="r">0%</td><td class="r">1%</td></tr>
+</table></div>
+<p>A look at the generated C behind those numbers:</p>
+<ul>
+<li><b>Sparse factorization.</b> One <code>scan</code> step per column, each running every column's groups padded to the widest row of its segment (22–65% of the slots real work), one read-modify-write of the work column per contributing column, and a separate padded clear. The sums of a supernode's columns into one row were done one column at a time.</li>
+<li><b>Dense Cholesky.</b> Crout, one entry at a time: two loads per multiply-add, about 3.3 G multiply-adds a second, a quarter of Eigen's blocked LLT in PIQP.</li>
+<li><b>Step.</b> About 200 loops of 100–400 elements per iteration. Every <code>norm_inf</code>, residual maximum and step-length minimum stored its vector before reducing it: the four-lane max/min reduction read its input from six statements, and producer fusion only inlines into one.</li>
+<li><b>Loop carries.</b> Every while loop copied its carry into its ping-pong store and back out after the loop, even the refinement loops that ran zero times with refinement off (about 3 600 values per solve), and the retry loop copied the whole factor record in and out on each factorization.</li>
+</ul>
+
+<h2>The changes</h2>
+<div class="scroll"><table><tr><th>todo</th><th>change</th><th>measured</th><th>exactness</th></tr>
+<tr><td>C-135</td><td>The sparse factorization as one loop nest: a new IR op <code>sparse_ldl_factor</code>, <code>SparseLDL(schedule="loop")</code>, the default above <code>sparse_unroll</code>. Left-looking; each column's updates come in chunks of columns whose rows from <code>j</code> down are the same (<code>SymbolicLDL.chunks</code>), applied in one pass over the work column with the sum in a register; no padding, no per-step call, the work column cleared as it is read</td><td>factorization 1.5–2.2× (C prototype, 11 KKT patterns); sparse IPM 0.81×</td><td>the scan's factor, bit for bit but for zero/NaN signs</td></tr>
+<tr><td>C-136</td><td>The dense Cholesky by 4×4 register tiles: a tile's dot products over the columns to its left run together (16 multiply-adds per 8 loads), each in four partial sums over contiguous quarters</td><td>kernel 3.3× at n = 300 (12 GFMA/s); dense IPM 0.56×</td><td>rounding changes: 2 of 55 dense paths</td></tr>
+<tr><td>C-137</td><td>Max/min reductions read their input in one statement (a one-trip loop <code>unroll_unit_loops</code> removes after fusion), so elementwise producers fuse into them</td><td>sparse 0.975×, up to 0.89× where the step dominates</td><td>identical arithmetic</td></tr>
+<tr><td>C-138</td><td>Loop carries not copied: a while loop's final carry is its store's first slot, read in place (an odd trip count moves the second slot there first); the KKT refinement sits behind one gate whose carry is the solution alone; the first factorization attempt runs before the retry loop</td><td>sparse 0.957×, dense 0.963×</td><td>identical, but for 8e-15 on the one problem that refines</td></tr>
+<tr><td>C-139</td><td>Factorization chunks of up to eight columns</td><td>sparse 0.977× (DUAL3 0.90×, the 27-state MPC 0.93×)</td><td>bit for bit as C-135</td></tr>
+<tr><td>C-140</td><td>The sparse solve as one op, <code>sparse_ldl_solve</code>: the forward sweep by chains of up to eight columns (fundamental supernodes: each row below a chain updated once), the diagonal and the output permutation folded into the backward sweep</td><td>sparse 0.975×, every problem ≤ 1</td><td>the scan's solution, bit for bit but for zero/NaN signs</td></tr>
+<tr><td>C-141</td><td>Review round (below)</td><td>—</td><td>—</td></tr>
+</table></div>
+<p><b>What the new ops cost in derivatives.</b> Neither op differentiates in the factor: <code>SparseLDL.solve</code>'s implicit rules never need it (<code>dx = K⁻¹(db − dK x)</code>), and <code>schedule="scan"</code> stays available, differentiable through its loops. So that the rules can hold a factor that refuses a tangent, forward mode now forms a call argument's tangent only if the callee's derivative reads it (single- and multi-seed), the map reverse rule drops constant-zero cotangents, and a call is differentiated only in the formals that depend on the variables. The one behavior change: third derivatives in the matrix, which reach the factorization itself, now need <code>schedule="scan"</code> above <code>sparse_unroll</code>; the guide says so and a test pins it.</p>
+<p><b>Why the Cholesky keeps four partial sums.</b> One running sum per tile entry was 2–5% faster, but it rounds worse on long dot products, and late in an interior-point solve the condensed matrix's last pivots are rounding noise: with it QSHARE1B failed a factorization at iteration 18 and took 56 iterations instead of 27 (PIQP: 29). Four contiguous quarters keep the old kernel's accuracy class; over the 55 problems only QBEACONF and QBORE3D change path, both problems on which PIQP's own two backends disagree. The strengthened decision gate now fails the single-sum variant.</p>
+
+<h2>Results</h2>
+<p>From <code>timing.py --variants base,final --rounds 5 --piqp</code>: fastest single solve from C over five interleaved rounds; PIQP's column is its own solve timer, warmed, the fastest of as many in-process repeats (its setup, which includes Ruiz equilibration, is not in it; the generated solver's time includes Ruiz). Rows in grey: PIQP under 50 µs, where fixed per-call costs dominate. Sorted by n + p + m.</p>
+<div class="scroll"><table><tr><th></th><th class="r">now / base</th><th class="r">base / PIQP</th><th class="r">now / PIQP</th><th class="r">now / PIQP setup + solve</th><th>faster than PIQP</th></tr>
+<tr><td>sparse, all 55</td><td class="r ok">0.73</td><td class="r">0.97</td><td class="r ok">0.71</td><td class="r"></td><td></td></tr>
+<tr><td>sparse, PIQP ≥ 50 µs (38)</td><td class="r ok">0.66</td><td class="r warn">1.19</td><td class="r ok">0.78</td><td class="r ok">0.58</td><td>36 of 38</td></tr>
+<tr><td>dense, all 55</td><td class="r ok">0.65</td><td class="r warn">1.52</td><td class="r ok">0.99</td><td class="r"></td><td></td></tr>
+<tr><td>dense, PIQP ≥ 50 µs (40)</td><td class="r ok">0.57</td><td class="r bad">2.14</td><td class="r warn">1.22</td><td class="r ok">0.95</td><td>15 of 40</td></tr>
+</table></div>
+<p>The sparse problems still slower than PIQP: QRECIPE (2.1×: 34 iterations against PIQP's 19, C-130, unchanged by this work) and DUALC2 (1.02×). The dense backend's remaining gap is the Cholesky itself on dense <code>P</code> (DUAL1–4, PRIMALC1–5, VALUES: 1.5–2.3× PIQP, whose Eigen LLT is SIMD-blocked) and the DUALC problems (n ≤ 9, m up to 502), where the condensed <code>Gᵀ W G</code> assembly and the triangular solves dominate.</p>
+<h3>Sparse backend</h3>
+<div class="scroll"><table><tr><th>problem</th><th>n / p / m</th><th>iter base / now / PIQP</th><th class="r">base (µs)</th><th class="r">now (µs)</th><th class="r">now / base</th><th class="r">PIQP solve (µs)</th><th class="r">base / PIQP</th><th class="r">now / PIQP</th></tr>
+<tr style="color:var(--muted)"><td>HS21</td><td>2 / 0 / 1</td><td>9 / 9 / 9</td><td class="r">1.4</td><td class="r">1.2</td><td class="r ok">0.91</td><td class="r">3.0</td><td class="r ok">0.45</td><td class="r ok">0.41</td></tr>
+<tr style="color:var(--muted)"><td>TAME</td><td>2 / 1 / 0</td><td>4 / 4 / 4</td><td class="r">0.7</td><td class="r">0.6</td><td class="r ok">0.88</td><td class="r">1.2</td><td class="r ok">0.57</td><td class="r ok">0.50</td></tr>
+<tr style="color:var(--muted)"><td>HS35</td><td>3 / 0 / 1</td><td>5 / 5 / 5</td><td class="r">1.0</td><td class="r">1.0</td><td class="r ok">0.96</td><td class="r">2.0</td><td class="r ok">0.50</td><td class="r ok">0.48</td></tr>
+<tr style="color:var(--muted)"><td>QPTEST</td><td>2 / 0 / 2</td><td>8 / 8 / 8</td><td class="r">1.4</td><td class="r">1.3</td><td class="r ok">0.94</td><td class="r">3.2</td><td class="r ok">0.45</td><td class="r ok">0.42</td></tr>
+<tr style="color:var(--muted)"><td>ZECEVIC2</td><td>2 / 0 / 2</td><td>8 / 8 / 8</td><td class="r">1.4</td><td class="r">1.3</td><td class="r ok">0.91</td><td class="r">3.3</td><td class="r ok">0.42</td><td class="r ok">0.39</td></tr>
+<tr style="color:var(--muted)"><td>HS35MOD</td><td>3 / 1 / 1</td><td>9 / 9 / 9</td><td class="r">1.7</td><td class="r">1.6</td><td class="r ok">0.93</td><td class="r">3.2</td><td class="r ok">0.53</td><td class="r ok">0.49</td></tr>
+<tr style="color:var(--muted)"><td>HS76</td><td>4 / 0 / 3</td><td>6 / 6 / 6</td><td class="r">1.7</td><td class="r">1.7</td><td class="r ok">1.00</td><td class="r">3.3</td><td class="r ok">0.52</td><td class="r ok">0.52</td></tr>
+<tr style="color:var(--muted)"><td>HS51</td><td>5 / 3 / 0</td><td>1 / 1 / 1</td><td class="r">0.4</td><td class="r">0.4</td><td class="r ok">0.90</td><td class="r">0.6</td><td class="r ok">0.71</td><td class="r ok">0.64</td></tr>
+<tr style="color:var(--muted)"><td>HS52</td><td>5 / 3 / 0</td><td>2 / 2 / 2</td><td class="r">0.5</td><td class="r">0.5</td><td class="r ok">0.92</td><td class="r">0.8</td><td class="r ok">0.63</td><td class="r ok">0.58</td></tr>
+<tr style="color:var(--muted)"><td>HS53</td><td>5 / 3 / 0</td><td>6 / 6 / 6</td><td class="r">2.0</td><td class="r">1.9</td><td class="r ok">0.98</td><td class="r">3.5</td><td class="r ok">0.56</td><td class="r ok">0.55</td></tr>
+<tr style="color:var(--muted)"><td>HS268</td><td>5 / 0 / 5</td><td>7 / 7 / 7</td><td class="r">2.8</td><td class="r">2.7</td><td class="r ok">0.95</td><td class="r">5.0</td><td class="r ok">0.55</td><td class="r ok">0.53</td></tr>
+<tr style="color:var(--muted)"><td>S268</td><td>5 / 0 / 5</td><td>7 / 7 / 7</td><td class="r">2.8</td><td class="r">2.7</td><td class="r ok">0.94</td><td class="r">4.8</td><td class="r ok">0.59</td><td class="r ok">0.55</td></tr>
+<tr style="color:var(--muted)"><td>GENHS28</td><td>10 / 8 / 0</td><td>1 / 1 / 1</td><td class="r">1.7</td><td class="r">1.7</td><td class="r warn">1.00</td><td class="r">1.0</td><td class="r bad">1.74</td><td class="r bad">1.74</td></tr>
+<tr style="color:var(--muted)"><td>LOTSCHD</td><td>12 / 7 / 0</td><td>8 / 8 / 8</td><td class="r">6.7</td><td class="r">6.3</td><td class="r ok">0.94</td><td class="r">9.3</td><td class="r ok">0.72</td><td class="r ok">0.67</td></tr>
+<tr style="color:var(--muted)"><td>HS118</td><td>15 / 0 / 17</td><td>12 / 12 / 12</td><td class="r">16.2</td><td class="r">13.9</td><td class="r ok">0.86</td><td class="r">27.2</td><td class="r ok">0.60</td><td class="r ok">0.51</td></tr>
+<tr style="color:var(--muted)"><td>QAFIRO</td><td>32 / 8 / 17</td><td>13 / 13 / 13</td><td class="r">22.4</td><td class="r">19.1</td><td class="r ok">0.85</td><td class="r">37.4</td><td class="r ok">0.60</td><td class="r ok">0.51</td></tr>
+<tr style="color:var(--muted)"><td>ex_portfolio</td><td>65 / 6 / 0</td><td>7 / 7 / 7</td><td class="r">50.7</td><td class="r">36.0</td><td class="r ok">0.71</td><td class="r">43.1</td><td class="r warn">1.17</td><td class="r ok">0.84</td></tr>
+<tr><td>ex_dense</td><td>30 / 5 / 40</td><td>8 / 8 / 8</td><td class="r">207.2</td><td class="r">122.8</td><td class="r ok">0.59</td><td class="r">202.5</td><td class="r warn">1.02</td><td class="r ok">0.61</td></tr>
+<tr><td>DUAL4</td><td>75 / 1 / 0</td><td>11 / 11 / 11</td><td class="r">595.8</td><td class="r">335.6</td><td class="r ok">0.56</td><td class="r">538.8</td><td class="r warn">1.11</td><td class="r ok">0.62</td></tr>
+<tr><td>DUAL1</td><td>85 / 1 / 0</td><td>12 / 12 / 12</td><td class="r">903.0</td><td class="r">467.0</td><td class="r ok">0.52</td><td class="r">844.8</td><td class="r warn">1.07</td><td class="r ok">0.55</td></tr>
+<tr><td>DUAL2</td><td>96 / 1 / 0</td><td>11 / 11 / 11</td><td class="r">1053.9</td><td class="r">571.3</td><td class="r ok">0.54</td><td class="r">1046.3</td><td class="r warn">1.01</td><td class="r ok">0.55</td></tr>
+<tr><td>mpc_4_2_10</td><td>64 / 44 / 0</td><td>8 / 8 / 8</td><td class="r">69.5</td><td class="r">54.5</td><td class="r ok">0.78</td><td class="r">60.2</td><td class="r warn">1.16</td><td class="r ok">0.91</td></tr>
+<tr><td>DUAL3</td><td>111 / 1 / 0</td><td>12 / 12 / 12</td><td class="r">1723.8</td><td class="r">894.1</td><td class="r ok">0.52</td><td class="r">1686.0</td><td class="r warn">1.02</td><td class="r ok">0.53</td></tr>
+<tr><td>CVXQP2_S</td><td>100 / 25 / 0</td><td>10 / 10 / 10</td><td class="r">180.2</td><td class="r">124.6</td><td class="r ok">0.69</td><td class="r">173.3</td><td class="r warn">1.04</td><td class="r ok">0.72</td></tr>
+<tr><td>CVXQP1_S</td><td>100 / 50 / 0</td><td>9 / 9 / 9</td><td class="r">197.9</td><td class="r">136.4</td><td class="r ok">0.69</td><td class="r">176.8</td><td class="r warn">1.12</td><td class="r ok">0.77</td></tr>
+<tr><td>QADLITTL</td><td>97 / 15 / 39</td><td>12 / 12 / 12</td><td class="r">169.0</td><td class="r">122.2</td><td class="r ok">0.72</td><td class="r">122.6</td><td class="r warn">1.38</td><td class="r ok">1.00</td></tr>
+<tr><td>QPCBLEND</td><td>83 / 43 / 29</td><td>16 / 16 / 16</td><td class="r">253.5</td><td class="r">169.1</td><td class="r ok">0.67</td><td class="r">192.1</td><td class="r warn">1.32</td><td class="r ok">0.88</td></tr>
+<tr><td>QSHARE2B</td><td>79 / 13 / 80</td><td>18 / 18 / 18</td><td class="r">366.8</td><td class="r">236.1</td><td class="r ok">0.64</td><td class="r">305.6</td><td class="r warn">1.20</td><td class="r ok">0.77</td></tr>
+<tr><td>CVXQP3_S</td><td>100 / 75 / 0</td><td>10 / 10 / 10</td><td class="r">249.9</td><td class="r">172.2</td><td class="r ok">0.69</td><td class="r">238.4</td><td class="r warn">1.05</td><td class="r ok">0.72</td></tr>
+<tr><td>VALUES</td><td>202 / 1 / 0</td><td>12 / 12 / 12</td><td class="r">646.1</td><td class="r">565.2</td><td class="r ok">0.87</td><td class="r">597.6</td><td class="r warn">1.08</td><td class="r ok">0.95</td></tr>
+<tr><td>DPKLO1</td><td>133 / 77 / 0</td><td>2 / 2 / 2</td><td class="r">199.4</td><td class="r">126.8</td><td class="r ok">0.64</td><td class="r">167.8</td><td class="r warn">1.19</td><td class="r ok">0.76</td></tr>
+<tr><td>ex_svm</td><td>111 / 0 / 100</td><td>10 / 10 / 10</td><td class="r">209.6</td><td class="r">155.8</td><td class="r ok">0.74</td><td class="r">161.2</td><td class="r warn">1.30</td><td class="r ok">0.97</td></tr>
+<tr><td>DUALC1</td><td>9 / 1 / 214</td><td>10 / 10 / 10</td><td class="r">295.1</td><td class="r">207.8</td><td class="r ok">0.70</td><td class="r">231.0</td><td class="r warn">1.28</td><td class="r ok">0.90</td></tr>
+<tr><td>DUALC2</td><td>7 / 1 / 228</td><td>9 / 9 / 9</td><td class="r">241.9</td><td class="r">174.1</td><td class="r ok">0.72</td><td class="r">171.2</td><td class="r warn">1.41</td><td class="r warn">1.02</td></tr>
+<tr><td>QSCAGR7</td><td>140 / 84 / 13</td><td>15 / 15 / 15</td><td class="r">214.4</td><td class="r">167.1</td><td class="r ok">0.78</td><td class="r">168.5</td><td class="r warn">1.27</td><td class="r ok">0.99</td></tr>
+<tr><td>PRIMALC2</td><td>231 / 0 / 7</td><td>12 / 12 / 12</td><td class="r">284.5</td><td class="r">201.4</td><td class="r ok">0.71</td><td class="r">227.8</td><td class="r warn">1.25</td><td class="r ok">0.88</td></tr>
+<tr><td>PRIMALC1</td><td>230 / 0 / 9</td><td>14 / 14 / 14</td><td class="r">395.4</td><td class="r">275.9</td><td class="r ok">0.70</td><td class="r">317.3</td><td class="r warn">1.25</td><td class="r ok">0.87</td></tr>
+<tr><td>DUALC5</td><td>8 / 1 / 277</td><td>9 / 9 / 9</td><td class="r">293.4</td><td class="r">201.1</td><td class="r ok">0.69</td><td class="r">220.7</td><td class="r warn">1.33</td><td class="r ok">0.91</td></tr>
+<tr><td>PRIMALC5</td><td>287 / 0 / 8</td><td>9 / 9 / 9</td><td class="r">300.3</td><td class="r">209.1</td><td class="r ok">0.70</td><td class="r">241.5</td><td class="r warn">1.24</td><td class="r ok">0.87</td></tr>
+<tr><td>QRECIPE</td><td>180 / 91 / 24</td><td>34 / 34 / 19</td><td class="r">1197.8</td><td class="r">859.5</td><td class="r ok">0.72</td><td class="r">403.5</td><td class="r bad">2.97</td><td class="r bad">2.13</td></tr>
+<tr><td>QPCBOEI2</td><td>143 / 4 / 162</td><td>21 / 21 / 21</td><td class="r">931.6</td><td class="r">619.4</td><td class="r ok">0.66</td><td class="r">746.0</td><td class="r warn">1.25</td><td class="r ok">0.83</td></tr>
+<tr><td>QISRAEL</td><td>142 / 0 / 170</td><td>23 / 23 / 23</td><td class="r">1713.1</td><td class="r">1002.5</td><td class="r ok">0.59</td><td class="r">1382.3</td><td class="r warn">1.24</td><td class="r ok">0.73</td></tr>
+<tr><td>QSHARE1B</td><td>225 / 89 / 28</td><td>24 / 24 / 24</td><td class="r">912.4</td><td class="r">571.9</td><td class="r ok">0.63</td><td class="r">628.4</td><td class="r warn">1.45</td><td class="r ok">0.91</td></tr>
+<tr><td>ex_mpc_N20</td><td>220 / 160 / 0</td><td>9 / 9 / 9</td><td class="r">461.7</td><td class="r">328.2</td><td class="r ok">0.71</td><td class="r">388.6</td><td class="r warn">1.19</td><td class="r ok">0.84</td></tr>
+<tr><td>QSC205</td><td>203 / 91 / 114</td><td>16 / 16 / 16</td><td class="r">412.6</td><td class="r">328.5</td><td class="r ok">0.80</td><td class="r">353.7</td><td class="r warn">1.17</td><td class="r ok">0.93</td></tr>
+<tr><td>PRIMAL1</td><td>325 / 0 / 85</td><td>8 / 8 / 8</td><td class="r">1443.5</td><td class="r">1000.4</td><td class="r ok">0.69</td><td class="r">1338.9</td><td class="r warn">1.08</td><td class="r ok">0.75</td></tr>
+<tr><td>QBEACONF</td><td>262 / 140 / 33</td><td>20 / 20 / 17</td><td class="r">1829.8</td><td class="r">1084.2</td><td class="r ok">0.59</td><td class="r">1554.1</td><td class="r warn">1.18</td><td class="r ok">0.70</td></tr>
+<tr><td>QGROW7</td><td>301 / 140 / 0</td><td>24 / 24 / 24</td><td class="r">2128.5</td><td class="r">1610.1</td><td class="r ok">0.76</td><td class="r">2099.2</td><td class="r warn">1.01</td><td class="r ok">0.77</td></tr>
+<tr><td>QBRANDY</td><td>249 / 166 / 38</td><td>16 / 16 / 16</td><td class="r">1590.9</td><td class="r">900.3</td><td class="r ok">0.57</td><td class="r">1301.7</td><td class="r warn">1.22</td><td class="r ok">0.69</td></tr>
+<tr><td>QE226</td><td>282 / 33 / 151</td><td>19 / 19 / 19</td><td class="r">2840.5</td><td class="r">1476.8</td><td class="r ok">0.52</td><td class="r">2135.5</td><td class="r warn">1.33</td><td class="r ok">0.69</td></tr>
+<tr><td>DUALC8</td><td>8 / 1 / 502</td><td>10 / 10 / 10</td><td class="r">675.8</td><td class="r">476.8</td><td class="r ok">0.71</td><td class="r">503.0</td><td class="r warn">1.34</td><td class="r ok">0.95</td></tr>
+<tr><td>QBORE3D</td><td>315 / 215 / 19</td><td>19 / 19 / 19</td><td class="r">1078.7</td><td class="r">692.3</td><td class="r ok">0.64</td><td class="r">880.8</td><td class="r warn">1.22</td><td class="r ok">0.79</td></tr>
+<tr><td>mpc_12_4_20</td><td>332 / 252 / 0</td><td>7 / 7 / 7</td><td class="r">884.0</td><td class="r">582.5</td><td class="r ok">0.66</td><td class="r">766.9</td><td class="r warn">1.15</td><td class="r ok">0.76</td></tr>
+<tr><td>QCAPRI</td><td>353 / 158 / 129</td><td>31 / 31 / 84</td><td class="r">3198.1</td><td class="r">2000.0</td><td class="r ok">0.63</td><td class="r">7536.8</td><td class="r ok">0.42</td><td class="r ok">0.27</td></tr>
+<tr><td>mpc_27_6_30</td><td>1017 / 837 / 0</td><td>8 / 8 / 8</td><td class="r">7759.2</td><td class="r">4853.4</td><td class="r ok">0.63</td><td class="r">7211.6</td><td class="r warn">1.08</td><td class="r ok">0.67</td></tr>
+</table></div>
+<h3>Dense backend</h3>
+<div class="scroll"><table><tr><th>problem</th><th>n / p / m</th><th>iter base / now / PIQP</th><th class="r">base (µs)</th><th class="r">now (µs)</th><th class="r">now / base</th><th class="r">PIQP solve (µs)</th><th class="r">base / PIQP</th><th class="r">now / PIQP</th></tr>
+<tr style="color:var(--muted)"><td>HS21</td><td>2 / 0 / 1</td><td>9 / 9 / 9</td><td class="r">1.6</td><td class="r">1.6</td><td class="r ok">1.00</td><td class="r">4.1</td><td class="r ok">0.38</td><td class="r ok">0.38</td></tr>
+<tr style="color:var(--muted)"><td>TAME</td><td>2 / 1 / 0</td><td>4 / 4 / 4</td><td class="r">0.8</td><td class="r">0.7</td><td class="r ok">0.89</td><td class="r">1.4</td><td class="r ok">0.55</td><td class="r ok">0.48</td></tr>
+<tr style="color:var(--muted)"><td>HS35</td><td>3 / 0 / 1</td><td>5 / 5 / 5</td><td class="r">1.2</td><td class="r">1.2</td><td class="r ok">1.00</td><td class="r">2.7</td><td class="r ok">0.45</td><td class="r ok">0.45</td></tr>
+<tr style="color:var(--muted)"><td>QPTEST</td><td>2 / 0 / 2</td><td>8 / 8 / 8</td><td class="r">1.6</td><td class="r">1.5</td><td class="r ok">0.95</td><td class="r">3.8</td><td class="r ok">0.42</td><td class="r ok">0.40</td></tr>
+<tr style="color:var(--muted)"><td>ZECEVIC2</td><td>2 / 0 / 2</td><td>8 / 8 / 8</td><td class="r">1.5</td><td class="r">1.5</td><td class="r ok">0.95</td><td class="r">3.9</td><td class="r ok">0.39</td><td class="r ok">0.37</td></tr>
+<tr style="color:var(--muted)"><td>HS35MOD</td><td>3 / 1 / 1</td><td>9 / 9 / 9</td><td class="r">1.9</td><td class="r">1.8</td><td class="r ok">0.96</td><td class="r">4.5</td><td class="r ok">0.43</td><td class="r ok">0.41</td></tr>
+<tr style="color:var(--muted)"><td>HS76</td><td>4 / 0 / 3</td><td>6 / 6 / 6</td><td class="r">1.9</td><td class="r">1.8</td><td class="r ok">0.98</td><td class="r">3.7</td><td class="r ok">0.51</td><td class="r ok">0.50</td></tr>
+<tr style="color:var(--muted)"><td>HS51</td><td>5 / 3 / 0</td><td>1 / 1 / 1</td><td class="r">0.5</td><td class="r">0.4</td><td class="r ok">0.91</td><td class="r">0.7</td><td class="r ok">0.69</td><td class="r ok">0.62</td></tr>
+<tr style="color:var(--muted)"><td>HS52</td><td>5 / 3 / 0</td><td>2 / 2 / 2</td><td class="r">0.6</td><td class="r">0.5</td><td class="r ok">0.93</td><td class="r">1.0</td><td class="r ok">0.56</td><td class="r ok">0.52</td></tr>
+<tr style="color:var(--muted)"><td>HS53</td><td>5 / 3 / 0</td><td>6 / 6 / 6</td><td class="r">2.2</td><td class="r">2.2</td><td class="r ok">0.96</td><td class="r">4.2</td><td class="r ok">0.53</td><td class="r ok">0.51</td></tr>
+<tr style="color:var(--muted)"><td>HS268</td><td>5 / 0 / 5</td><td>7 / 7 / 7</td><td class="r">3.0</td><td class="r">2.9</td><td class="r ok">0.96</td><td class="r">5.0</td><td class="r ok">0.60</td><td class="r ok">0.57</td></tr>
+<tr style="color:var(--muted)"><td>S268</td><td>5 / 0 / 5</td><td>7 / 7 / 7</td><td class="r">3.0</td><td class="r">2.9</td><td class="r ok">0.95</td><td class="r">5.0</td><td class="r ok">0.60</td><td class="r ok">0.57</td></tr>
+<tr style="color:var(--muted)"><td>GENHS28</td><td>10 / 8 / 0</td><td>1 / 1 / 1</td><td class="r">2.4</td><td class="r">2.2</td><td class="r ok">0.91</td><td class="r">1.1</td><td class="r bad">2.15</td><td class="r bad">1.96</td></tr>
+<tr style="color:var(--muted)"><td>LOTSCHD</td><td>12 / 7 / 0</td><td>8 / 8 / 8</td><td class="r">14.8</td><td class="r">13.1</td><td class="r ok">0.88</td><td class="r">10.0</td><td class="r warn">1.48</td><td class="r warn">1.31</td></tr>
+<tr style="color:var(--muted)"><td>HS118</td><td>15 / 0 / 17</td><td>12 / 12 / 12</td><td class="r">29.5</td><td class="r">24.6</td><td class="r ok">0.83</td><td class="r">34.2</td><td class="r ok">0.86</td><td class="r ok">0.72</td></tr>
+<tr><td>QAFIRO</td><td>32 / 8 / 17</td><td>13 / 13 / 13</td><td class="r">89.8</td><td class="r">60.3</td><td class="r ok">0.67</td><td class="r">80.8</td><td class="r warn">1.11</td><td class="r ok">0.75</td></tr>
+<tr><td>ex_portfolio</td><td>65 / 6 / 0</td><td>7 / 7 / 7</td><td class="r">315.5</td><td class="r">236.5</td><td class="r ok">0.75</td><td class="r">114.7</td><td class="r bad">2.75</td><td class="r bad">2.06</td></tr>
+<tr><td>ex_dense</td><td>30 / 5 / 40</td><td>8 / 8 / 8</td><td class="r">133.0</td><td class="r">113.7</td><td class="r ok">0.85</td><td class="r">53.9</td><td class="r bad">2.47</td><td class="r bad">2.11</td></tr>
+<tr><td>DUAL4</td><td>75 / 1 / 0</td><td>11 / 11 / 11</td><td class="r">580.3</td><td class="r">398.8</td><td class="r ok">0.69</td><td class="r">242.9</td><td class="r bad">2.39</td><td class="r bad">1.64</td></tr>
+<tr><td>DUAL1</td><td>85 / 1 / 0</td><td>12 / 12 / 12</td><td class="r">768.0</td><td class="r">535.6</td><td class="r ok">0.70</td><td class="r">330.5</td><td class="r bad">2.32</td><td class="r bad">1.62</td></tr>
+<tr><td>DUAL2</td><td>96 / 1 / 0</td><td>11 / 11 / 11</td><td class="r">963.5</td><td class="r">645.2</td><td class="r ok">0.67</td><td class="r">362.8</td><td class="r bad">2.66</td><td class="r bad">1.78</td></tr>
+<tr><td>mpc_4_2_10</td><td>64 / 44 / 0</td><td>8 / 8 / 8</td><td class="r">222.0</td><td class="r">139.3</td><td class="r ok">0.63</td><td class="r">128.3</td><td class="r bad">1.73</td><td class="r warn">1.09</td></tr>
+<tr><td>DUAL3</td><td>111 / 1 / 0</td><td>12 / 12 / 12</td><td class="r">1478.1</td><td class="r">987.3</td><td class="r ok">0.67</td><td class="r">564.0</td><td class="r bad">2.62</td><td class="r bad">1.75</td></tr>
+<tr><td>CVXQP2_S</td><td>100 / 25 / 0</td><td>10 / 10 / 10</td><td class="r">762.0</td><td class="r">371.5</td><td class="r ok">0.49</td><td class="r">376.7</td><td class="r bad">2.02</td><td class="r ok">0.99</td></tr>
+<tr><td>CVXQP1_S</td><td>100 / 50 / 0</td><td>9 / 9 / 9</td><td class="r">697.8</td><td class="r">341.3</td><td class="r ok">0.49</td><td class="r">352.4</td><td class="r bad">1.98</td><td class="r ok">0.97</td></tr>
+<tr><td>QADLITTL</td><td>97 / 15 / 39</td><td>12 / 12 / 12</td><td class="r">918.4</td><td class="r">530.9</td><td class="r ok">0.58</td><td class="r">654.0</td><td class="r warn">1.40</td><td class="r ok">0.81</td></tr>
+<tr><td>QPCBLEND</td><td>83 / 43 / 29</td><td>16 / 16 / 16</td><td class="r">774.8</td><td class="r">492.4</td><td class="r ok">0.64</td><td class="r">579.1</td><td class="r warn">1.34</td><td class="r ok">0.85</td></tr>
+<tr><td>QSHARE2B</td><td>79 / 13 / 80</td><td>18 / 18 / 18</td><td class="r">1014.5</td><td class="r">612.2</td><td class="r ok">0.60</td><td class="r">879.0</td><td class="r warn">1.15</td><td class="r ok">0.70</td></tr>
+<tr><td>CVXQP3_S</td><td>100 / 75 / 0</td><td>10 / 10 / 10</td><td class="r">779.0</td><td class="r">386.7</td><td class="r ok">0.50</td><td class="r">403.5</td><td class="r bad">1.93</td><td class="r ok">0.96</td></tr>
+<tr><td>VALUES</td><td>202 / 1 / 0</td><td>12 / 12 / 12</td><td class="r">5252.5</td><td class="r">2704.2</td><td class="r ok">0.51</td><td class="r">1728.0</td><td class="r bad">3.04</td><td class="r bad">1.56</td></tr>
+<tr><td>DPKLO1</td><td>133 / 77 / 0</td><td>2 / 2 / 2</td><td class="r">498.1</td><td class="r">269.3</td><td class="r ok">0.54</td><td class="r">160.6</td><td class="r bad">3.10</td><td class="r bad">1.68</td></tr>
+<tr><td>ex_svm</td><td>111 / 0 / 100</td><td>10 / 10 / 10</td><td class="r">1140.9</td><td class="r">617.0</td><td class="r ok">0.54</td><td class="r">896.8</td><td class="r warn">1.27</td><td class="r ok">0.69</td></tr>
+<tr><td>DUALC1</td><td>9 / 1 / 214</td><td>10 / 10 / 10</td><td class="r">150.5</td><td class="r">136.4</td><td class="r ok">0.91</td><td class="r">92.0</td><td class="r bad">1.64</td><td class="r warn">1.48</td></tr>
+<tr><td>DUALC2</td><td>7 / 1 / 228</td><td>9 / 9 / 9</td><td class="r">131.3</td><td class="r">118.5</td><td class="r ok">0.90</td><td class="r">82.2</td><td class="r bad">1.60</td><td class="r warn">1.44</td></tr>
+<tr><td>QSCAGR7</td><td>140 / 84 / 13</td><td>15 / 15 / 15</td><td class="r">2594.6</td><td class="r">1161.8</td><td class="r ok">0.45</td><td class="r">1191.7</td><td class="r bad">2.18</td><td class="r ok">0.97</td></tr>
+<tr><td>PRIMALC2</td><td>231 / 0 / 7</td><td>12 / 12 / 12</td><td class="r">11062.3</td><td class="r">5255.8</td><td class="r ok">0.48</td><td class="r">2585.0</td><td class="r bad">4.28</td><td class="r bad">2.03</td></tr>
+<tr><td>PRIMALC1</td><td>230 / 0 / 9</td><td>14 / 14 / 14</td><td class="r">13231.6</td><td class="r">6513.8</td><td class="r ok">0.49</td><td class="r">2853.8</td><td class="r bad">4.64</td><td class="r bad">2.28</td></tr>
+<tr><td>DUALC5</td><td>8 / 1 / 277</td><td>9 / 9 / 9</td><td class="r">142.4</td><td class="r">128.2</td><td class="r ok">0.90</td><td class="r">92.9</td><td class="r bad">1.53</td><td class="r warn">1.38</td></tr>
+<tr><td>PRIMALC5</td><td>287 / 0 / 8</td><td>9 / 9 / 9</td><td class="r">15708.9</td><td class="r">6928.8</td><td class="r ok">0.44</td><td class="r">3442.5</td><td class="r bad">4.56</td><td class="r bad">2.01</td></tr>
+<tr><td>QRECIPE</td><td>180 / 91 / 24</td><td>19 / 19 / 19</td><td class="r">6660.9</td><td class="r">3560.1</td><td class="r ok">0.53</td><td class="r">3600.8</td><td class="r bad">1.85</td><td class="r ok">0.99</td></tr>
+<tr><td>QPCBOEI2</td><td>143 / 4 / 162</td><td>21 / 21 / 21</td><td class="r">4104.0</td><td class="r">2748.2</td><td class="r ok">0.67</td><td class="r">3866.9</td><td class="r warn">1.06</td><td class="r ok">0.71</td></tr>
+<tr><td>QISRAEL</td><td>142 / 0 / 170</td><td>23 / 23 / 23</td><td class="r">5352.8</td><td class="r">3778.7</td><td class="r ok">0.71</td><td class="r">4270.1</td><td class="r warn">1.25</td><td class="r ok">0.88</td></tr>
+<tr><td>QSHARE1B</td><td>225 / 89 / 28</td><td>27 / 27 / 29</td><td class="r">18150.6</td><td class="r">11064.4</td><td class="r ok">0.61</td><td class="r">9742.1</td><td class="r bad">1.86</td><td class="r warn">1.14</td></tr>
+<tr><td>ex_mpc_N20</td><td>220 / 160 / 0</td><td>9 / 9 / 9</td><td class="r">4850.2</td><td class="r">2472.9</td><td class="r ok">0.51</td><td class="r">1838.2</td><td class="r bad">2.64</td><td class="r warn">1.35</td></tr>
+<tr><td>QSC205</td><td>203 / 91 / 114</td><td>16 / 16 / 16</td><td class="r">9804.6</td><td class="r">4149.0</td><td class="r ok">0.42</td><td class="r">6565.8</td><td class="r warn">1.49</td><td class="r ok">0.63</td></tr>
+<tr><td>PRIMAL1</td><td>325 / 0 / 85</td><td>8 / 8 / 8</td><td class="r">16070.3</td><td class="r">8312.0</td><td class="r ok">0.52</td><td class="r">6148.5</td><td class="r bad">2.61</td><td class="r warn">1.35</td></tr>
+<tr><td>QBEACONF</td><td>262 / 140 / 33</td><td>23 / 17 / 23</td><td class="r">24607.4</td><td class="r">11121.6</td><td class="r ok">0.45</td><td class="r">9831.7</td><td class="r bad">2.50</td><td class="r warn">1.13</td></tr>
+<tr><td>QGROW7</td><td>301 / 140 / 0</td><td>24 / 24 / 24</td><td class="r">47240.6</td><td class="r">19279.7</td><td class="r ok">0.41</td><td class="r">14382.7</td><td class="r bad">3.28</td><td class="r warn">1.34</td></tr>
+<tr><td>QBRANDY</td><td>249 / 166 / 38</td><td>16 / 16 / 16</td><td class="r">14897.9</td><td class="r">7512.7</td><td class="r ok">0.50</td><td class="r">6249.3</td><td class="r bad">2.38</td><td class="r warn">1.20</td></tr>
+<tr><td>QE226</td><td>282 / 33 / 151</td><td>19 / 19 / 19</td><td class="r">22117.0</td><td class="r">11083.5</td><td class="r ok">0.50</td><td class="r">13175.6</td><td class="r bad">1.68</td><td class="r ok">0.84</td></tr>
+<tr><td>DUALC8</td><td>8 / 1 / 502</td><td>10 / 10 / 10</td><td class="r">369.6</td><td class="r">333.6</td><td class="r ok">0.90</td><td class="r">197.3</td><td class="r bad">1.87</td><td class="r bad">1.69</td></tr>
+<tr><td>QBORE3D</td><td>315 / 215 / 19</td><td>19 / 21 / 20</td><td class="r">27178.1</td><td class="r">13275.4</td><td class="r ok">0.49</td><td class="r">10870.9</td><td class="r bad">2.50</td><td class="r warn">1.22</td></tr>
+<tr><td>mpc_12_4_20</td><td>332 / 252 / 0</td><td>7 / 7 / 7</td><td class="r">12876.6</td><td class="r">5742.1</td><td class="r ok">0.45</td><td class="r">4095.1</td><td class="r bad">3.14</td><td class="r warn">1.40</td></tr>
+<tr><td>QCAPRI</td><td>353 / 158 / 129</td><td>31 / 31 / 32</td><td class="r">65591.9</td><td class="r">26499.7</td><td class="r ok">0.40</td><td class="r">34641.5</td><td class="r bad">1.89</td><td class="r ok">0.76</td></tr>
+<tr><td>mpc_27_6_30</td><td>1017 / 837 / 0</td><td>8 / 8 / 8</td><td class="r">409988.2</td><td class="r">136495.0</td><td class="r ok">0.33</td><td class="r">94638.7</td><td class="r bad">4.33</td><td class="r warn">1.44</td></tr>
+</table></div>
+
+<h2>Tried and not kept</h2>
+<ul>
+<li><b>Dense Cholesky variants.</b> One running sum per tile entry (QSHARE1B, above); two interleaved sums (2.2× the old kernel against 3.3×: register pressure); partial sums over 64-column blocks (as fast as quarters, but a new rounding to validate for no gain); a transposed copy of <code>L</code> so the tile's column operands are contiguous (no gain: clang did not pair them into NEON FMAs).</li>
+<li><b>32-bit index tables</b> for the factorization: 1–5% in the C prototype, not worth a second table type.</li>
+<li><b>Dropping the second <code>regularized</code> pass and the final state selects</b> of the step (C-134's suggestions): measured as 0–2%, within noise; the step's cost is spread over ~200 small loops, not in those.</li>
+<li><b>Unscaling residuals by stored inverses</b>, as PIQP does, instead of dividing each iteration: 0.99×, identical solutions; not worth two more loop params.</li>
+<li><b>An output alias through reshapes</b> (the dense factor written straight into the procedure's output): 4% faster below n = 111 but 7% slower on QSC205's dense backend; reverted.</li>
+<li><b><code>-O3</code></b> instead of the JIT's <code>-O2</code>: 0.99–1.02× with Apple clang, confirming C-107's choice here.</li>
+</ul>
+
+<h2>Review round</h2>
+<p>Three reviewers worked read-only in parallel: IR and lowering, AD, and the IPM with its tests and docs. Every confirmed finding is fixed (C-141), each with a test that fails without the fix.</p>
+<div class="scroll"><table><tr><th>area</th><th>finding</th><th>fix</th></tr>
+<tr><td>lowering</td><td class="bad">crash: <code>schedule="loop"</code> failed to compile with one entry in <code>L</code> or one column (a branch for an absent chunk width folded a table read past its end)</td><td><code>fold_arith</code> leaves an out-of-table constant read alone; the loop nests only have the widths present</td></tr>
+<tr><td>linalg</td><td><code>SymbolicLDL.chunks</code> hid the lane tables sharing its cache</td><td>the lane tables check their own key</td></tr>
+<tr><td>AD</td><td class="bad">crash: the subtree sparsity rule on a diagonal matrix</td><td>parents from the columns that have entries</td></tr>
+<tr><td>AD</td><td>reverse mode through a plain Function taking the factor asked it for a cotangent</td><td>a call is differentiated only in its active formals</td></tr>
+<tr><td>AD</td><td>forward mode through a call with a known-zero tangent argument regressed when the read-probe could not be built</td><td>falls back to forming every tangent (the pre-branch path)</td></tr>
+<tr><td>IR</td><td>builders accepted tables that index out of bounds or break the chain property</td><td>every indexed table checked</td></tr>
+<tr><td>claims</td><td>"bit for bit" failed on the sign of a zero (and NaN signs); guide statements stale</td><td>stated precisely; guide and IR table updated</td></tr>
+<tr><td>tests</td><td>a single-sum Cholesky and a refinement that always steps survived every test</td><td>the dense gate bounds rounding-sensitive iterations; a below-tolerance refinement test</td></tr>
+</table></div>
+
+<h2>Next levers</h2>
+<ul>
+<li><b>Dense Cholesky at SIMD width.</b> The tiles run scalar FMAs at 12 GFMA/s; explicit 2-wide NEON accumulators (the renderer already has <code>double2</code>) over a transposed panel should approach Eigen. This is the dense backend's remaining gap on dense <code>P</code>.</li>
+<li><b>The backward sweep by chains.</b> Only the forward sweep uses the chains; keeping the backward sweep's four partial sums per column bit for bit needs per-column lane alignment inside the shared loop.</li>
+<li><b>The step's small loops.</b> Two hundred loops of a few hundred elements; fusing producers read by two consumers (recomputing cheap ones) would take out a share of them.</li>
+<li><b>Writing a call's output into the concatenation that consumes it</b> (the factor into the retry record; the rest of C-131): 1–2% at n ≈ 100 dense.</li>
+<li><b>QRECIPE (C-130)</b> is now the one sparse problem far from PIQP, by iteration count, not speed.</li>
+</ul>
+
+<h2>Reproduce</h2>
+<pre>git worktree add --detach ../base e5d8019
+PYTHONPATH=../base/src uv run --no-sync internal/notes/perf_2026_09_27_ipm_speed/gen.py --variant base --problems all
+uv run internal/notes/perf_2026_09_27_ipm_speed/gen.py --variant final --problems all
+uv run internal/notes/perf_2026_09_27_ipm_speed/timing.py --variants base,final --rounds 5 --piqp
+uv run internal/notes/perf_2026_09_27_ipm_speed/prof.py internal/notes/perf_2026_09_27_ipm_speed/build/final/QSC205_sparse</pre>
+<p>The table this report shows is <code>perf_2026_09_27_ipm_speed/results_2026_09_27.md</code>.</p>
+</main></body></html>

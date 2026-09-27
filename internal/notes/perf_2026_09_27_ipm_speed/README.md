@@ -11,3 +11,4 @@ cites them.
 | `timing.py` | times the built solvers from C (`time_entry.c`, the universal entry in a loop, no Python), variants interleaved round by round, fastest solve per variant; `--piqp` adds vendored PIQP 0.6.2's own warmed solve timer. Prints a Markdown table, geometric means, and whether the variants' `x` agree |
 | `prof.py` | self samples per generated procedure (macOS `sample`), with every procedure but the per-step loop bodies kept out of line: where a solve spends its time |
 | `time_entry.c` | the C driver: `examples/qp_solvers/time_entry.c` with a nanosecond clock on macOS (`CLOCK_MONOTONIC` ticks in microseconds there) |
+| `results_2026_09_27.md` | the final table: the base commit (before C-135) against the branch after C-141, and vendored PIQP, all 55 problems, both backends |
