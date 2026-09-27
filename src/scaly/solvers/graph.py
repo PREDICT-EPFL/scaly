@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..ir.expr import ExprOp, callees_of, topo
-from ..function import Function
+from ..function import ConcreteFunction
 from .paths import backend_compile_flags
 from .model import ExternalOracle
 
@@ -19,34 +19,34 @@ if TYPE_CHECKING:
   from .model import SolverDescriptor
 
 
-def is_solver_function(fun: Function) -> bool:
+def is_solver_function(fun: ConcreteFunction) -> bool:
   desc = getattr(fun, "descriptor", None)
   return isinstance(getattr(desc, "backend", None), str)
 
 
-def solver_descriptor(fun: Function) -> SolverDescriptor:
+def solver_descriptor(fun: ConcreteFunction) -> SolverDescriptor:
   return fun.descriptor
 
 
-def solver_callees(fun: Function) -> list[Function]:
+def solver_callees(fun: ConcreteFunction) -> list[ConcreteFunction]:
   """Return the inner Functions a solver Function depends on at codegen time."""
   if not is_solver_function(fun):
     return []
   desc = solver_descriptor(fun)
-  out: list[Function] = []
+  out: list[ConcreteFunction] = []
   for cand in (desc.oracle, desc.base, desc.grad, desc.jac, desc.hess, desc.bounds):
-    if isinstance(cand, Function) and cand not in out:
+    if isinstance(cand, ConcreteFunction) and cand not in out:
       out.append(cand)
   return out
 
 
-def solver_backends_used(fun: Function) -> tuple[str, ...]:
+def solver_backends_used(fun: ConcreteFunction) -> tuple[str, ...]:
   """Sorted names of every solver backend reachable from ``fun`` (through
   CALL/VMAP callees, SOLVER_CALL nodes, and solver oracle Functions)."""
   found: set[str] = set()
   seen: set[int] = set()
 
-  def visit(fn: Function) -> None:
+  def visit(fn: ConcreteFunction) -> None:
     if id(fn) in seen:
       return
     seen.add(id(fn))
@@ -65,7 +65,7 @@ def solver_backends_used(fun: Function) -> tuple[str, ...]:
   return tuple(sorted(found))
 
 
-def external_oracles(fun: Function) -> tuple[ExternalOracle, ...]:
+def external_oracles(fun: ConcreteFunction) -> tuple[ExternalOracle, ...]:
   """External descriptor oracles in call order, deduplicated by identity."""
   if not is_solver_function(fun):
     return ()
@@ -77,7 +77,7 @@ def external_oracles(fun: Function) -> tuple[ExternalOracle, ...]:
   return tuple(out)
 
 
-def solver_compile_flags(fun: Function, *, rpath: bool = True) -> list[str]:
+def solver_compile_flags(fun: ConcreteFunction, *, rpath: bool = True) -> list[str]:
   """Compiler/linker flags an AOT consumer needs for ``fun``.
 
   Returns ``[]`` when ``fun`` does not transitively reach any solver.

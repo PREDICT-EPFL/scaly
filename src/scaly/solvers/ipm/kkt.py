@@ -8,7 +8,7 @@ from typing import Literal
 
 import numpy as np
 
-from ...function import Function
+from ...function import ConcreteFunction
 from ...function.sugar import while_loop
 from ...ir.expr import (
   Expr,
@@ -107,7 +107,7 @@ def _split(v: Expr, sizes: tuple[int, ...]) -> list[Expr]:
   return [v[int(a) : int(b)] for a, b in zip(offsets[:-1], offsets[1:], strict=True)]
 
 
-def _call(fn: Function, *args: Expr) -> Expr:
+def _call(fn: ConcreteFunction, *args: Expr) -> Expr:
   out = fn.symbolic_call(tuple(args))
   return out[0] if isinstance(out, tuple) else out
 
@@ -193,7 +193,7 @@ class Kernels:
   # --- the factorization -------------------------------------------------------------------------
 
   @cached_property
-  def _factorization(self) -> tuple[Function, int]:
+  def _factorization(self) -> tuple[ConcreteFunction, int]:
     """The factorization as a ``Function`` of ``(data, x_reg, delta_reg, z_reg_ir)`` returning the
     factor and two tests of it (1 or 0): PIQP's own, and one that also fails a factor that has
     lost every digit of a pivot (``_digits_left``); and the size of the factor."""
@@ -231,7 +231,7 @@ class Kernels:
       digits = ok
     names = ["D", "x_reg", "delta_reg", "z_reg_ir"]
     outs = [f, where(ok, 1.0, 0.0), where(digits, 1.0, 0.0)]
-    fn = Function._from_exprs(f"{self.name}_kkt_factor", [d, xr, dr, zr], outs, names, ["factor", "ok", "digits"])
+    fn = ConcreteFunction._from_exprs(f"{self.name}_kkt_factor", [d, xr, dr, zr], outs, names, ["factor", "ok", "digits"])
     return fn, int(f.size)
 
   @staticmethod
@@ -290,7 +290,7 @@ class Kernels:
     return concat([head, *rec])
 
   @cached_property
-  def _retry(self) -> tuple[Function, Function, Function]:
+  def _retry(self) -> tuple[ConcreteFunction, ConcreteFunction, ConcreteFunction]:
     """PIQP's loop around ``update_scalings_and_factor``: after a failure, turn refinement on; after
     one with refinement on, scale ``rho`` and ``delta`` by 100, up to ``max_factor_retires`` times.
     The first attempt runs before the loop, from the header alone (``first``): most factorizations
@@ -300,11 +300,11 @@ class Kernels:
     c, d, v = Expr.sym("c", (size,)), Expr.sym("D", (sum(self.d_sizes),)), Expr.sym("V", (sum(self.v_sizes),))
     head = Expr.sym("c", (len(HEADER),))
     names = ["c", "D", "V"]
-    body = Function._from_exprs(f"{self.name}_factor_try", [c, d, v], [self._try(c, d, v)], names, ["next"])
-    first = Function._from_exprs(f"{self.name}_factor_first", [head, d, v], [self._try(head, d, v)], names, ["next"])
+    body = ConcreteFunction._from_exprs(f"{self.name}_factor_try", [c, d, v], [self._try(c, d, v)], names, ["next"])
+    first = ConcreteFunction._from_exprs(f"{self.name}_factor_first", [head, d, v], [self._try(head, d, v)], names, ["next"])
     h = {k: c[i] for i, k in enumerate(HEADER)}
     go = logical_and(h["ok"] < 0.5, logical_or(h["ir"] < 0.5, h["retries"] < float(r.max_factor_retires)))
-    cond = Function._from_exprs(f"{self.name}_factor_go", [c, d, v], [go], names, ["go"])
+    cond = ConcreteFunction._from_exprs(f"{self.name}_factor_go", [c, d, v], [go], names, ["go"])
     return cond, body, first
 
   def factor(self, d: Expr, v: Expr, rho: Expr, delta: Expr, reg_limit: Expr, ir: Expr) -> tuple[dict[str, Expr], Expr]:
@@ -319,7 +319,7 @@ class Kernels:
   # --- the solve and its refinement -------------------------------------------------------------
 
   @cached_property
-  def _solve(self) -> Function:
+  def _solve(self) -> ConcreteFunction:
     """``K^{-1} r`` for the factor in a record, as ``(record, data, r)``."""
     s = self.s
     rec, d, rhs = Expr.sym("rec", (sum(self.record_sizes),)), Expr.sym("D", (sum(self.d_sizes),)), Expr.sym("r", (self.size,))
@@ -345,7 +345,7 @@ class Kernels:
     else:
       assert self._ldl is not None
       sol = self._ldl.solve_with(parts["factor"], rhs)
-    return Function._from_exprs(f"{self.name}_kkt_solve", [rec, d, rhs], [sol], ["rec", "D", "r"], ["l"])
+    return ConcreteFunction._from_exprs(f"{self.name}_kkt_solve", [rec, d, rhs], [sol], ["rec", "D", "r"], ["l"])
 
   def _times(self, rec: Expr, d: Expr, lhs: Expr) -> Expr:
     """PIQP's ``mul_condensed_kkt``: the KKT matrix times ``lhs``, with ``x_reg`` (static
@@ -366,7 +366,7 @@ class Kernels:
     return concat([rx, *out])
 
   @cached_property
-  def _refinement(self) -> tuple[Function, Function]:
+  def _refinement(self) -> tuple[ConcreteFunction, ConcreteFunction]:
     """PIQP's refinement steps as a loop, each one solve and one product: the condition and the step."""
     r, size = self.refinement, self.size
     rec, d, rhs = Expr.sym("rec", (sum(self.record_sizes),)), Expr.sym("D", (sum(self.d_sizes),)), Expr.sym("rhs", (size,))
@@ -383,12 +383,12 @@ class Kernels:
     stop = logical_or(logical_or(logical_not(finite), slow), logical_not(err_c > tol[0]))
     nxt = concat([stack([where(stop, 1.0, 0.0), err_c]), where(accept, cand, lhs), res_c])
     names = ["c", "rec", "D", "rhs", "tol"]
-    step = Function._from_exprs(f"{self.name}_refine_step", [c, rec, d, rhs, tol], [nxt], names, ["next"])
-    step_go = Function._from_exprs(f"{self.name}_refine_go", [c, rec, d, rhs, tol], [c[0] < 0.5], names, ["go"])
+    step = ConcreteFunction._from_exprs(f"{self.name}_refine_step", [c, rec, d, rhs, tol], [nxt], names, ["next"])
+    step_go = ConcreteFunction._from_exprs(f"{self.name}_refine_go", [c, rec, d, rhs, tol], [c[0] < 0.5], names, ["go"])
     return step_go, step
 
   @cached_property
-  def _refined(self) -> tuple[Function, Function]:
+  def _refined(self) -> tuple[ConcreteFunction, ConcreteFunction]:
     """The refinement behind one gate, a loop of at most one pass that opens when refinement is on:
     its carry is the solution alone, so a solve without refinement moves nothing else. Inside, the
     first residual and tolerance, then PIQP's refinement steps."""
@@ -407,8 +407,8 @@ class Kernels:
     stop0 = where(err0 > tol, 0.0, 1.0)
     out, _ = while_loop(step_go, step, concat([stack([stop0, err0]), x, e0]), max_iter=r.max_iter, params=(rec, d, rhs, tol.reshape((1,))))
     names = ["x", "rec", "D", "rhs", "on"]
-    gate = Function._from_exprs(f"{self.name}_refine", [x, rec, d, rhs, on], [out[2 : 2 + size]], names, ["x_next"])
-    opens = Function._from_exprs(f"{self.name}_refine_on", [x, rec, d, rhs, on], [on[0] > 0.5], names, ["go"])
+    gate = ConcreteFunction._from_exprs(f"{self.name}_refine", [x, rec, d, rhs, on], [out[2 : 2 + size]], names, ["x_next"])
+    opens = ConcreteFunction._from_exprs(f"{self.name}_refine_on", [x, rec, d, rhs, on], [on[0] > 0.5], names, ["go"])
     return opens, gate
 
   def solve(self, rec: Expr, d: Expr, rhs: Expr, ir: Expr) -> Expr:

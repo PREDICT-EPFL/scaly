@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .abi import c_ident
-from ..function import Function
+from ..function import ConcreteFunction
 from ..ir.types import SparsityType
 
 CASADI_QUERIES = (
@@ -57,7 +57,7 @@ def casadi_declarations(symbol: str) -> list[str]:
   ]
 
 
-def check_casadi_layout(fun: Function) -> None:
+def check_casadi_layout(fun: ConcreteFunction) -> None:
   """CasADi buffers are column-major and scaly's are row-major. Scalars, vectors and compact sparse
   outputs agree; a dense matrix with both dimensions above one would need a transpose, so the first
   version rejects it here rather than hand the caller a transposed matrix."""
@@ -97,7 +97,7 @@ def csc_ordered(sp: SparsityType) -> SparsityType:
   return SparsityType(sp.shape, tuple(sp.rows[i] for i in perm), tuple(sp.cols[i] for i in perm))
 
 
-def casadi_output_sparsities(fun: Function) -> tuple[SparsityType | None, ...]:
+def casadi_output_sparsities(fun: ConcreteFunction) -> tuple[SparsityType | None, ...]:
   return tuple(None if sp is None else csc_ordered(sp) for sp in fun.output_sparsities)
 
 
@@ -105,7 +105,7 @@ def _needs_gather(sp: SparsityType | None) -> bool:
   return sp is not None and sp.to_csc()[2] != tuple(range(sp.nnz))
 
 
-def casadi_scratch(fun: Function) -> int:
+def casadi_scratch(fun: ConcreteFunction) -> int:
   """Doubles added to ``SZ_W`` for the compressed-column gather: ``nnz`` per compact sparse output
   whose native order is not already compressed-column (the QP path's patterns are, so they add 0)."""
   return sum(sp.nnz for sp in fun.output_sparsities if _needs_gather(sp) and sp is not None)
@@ -122,7 +122,7 @@ class CasadiGather:
   epilogue: list[str]
 
 
-def casadi_gather(fun: Function, base_sz_w: int) -> CasadiGather:
+def casadi_gather(fun: ConcreteFunction, base_sz_w: int) -> CasadiGather:
   ptr: dict[str, str] = {}
   setup: list[str] = []
   epilogue: list[str] = []
@@ -157,7 +157,7 @@ def _c_string(text: str) -> str:
   return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render_casadi_queries(fun: Function, sz_w: int) -> list[str]:
+def render_casadi_queries(fun: ConcreteFunction, sz_w: int) -> list[str]:
   """Definitions of the query functions for the translation unit. ``sz_w`` is the total ``SZ_W``
   the header quotes, gather scratch included."""
   symbol = c_ident(fun.name)

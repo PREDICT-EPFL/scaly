@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Templates P1a Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Function templates P1a: <code>Function</code> becomes <code>ConcreteFunction</code></h1>
+<p class="sub">2026-09-27 · branch <code>claude/function-templates</code> · plan: <code>function_templates_plan_2026_09_27.md</code> (v2), step P1a</p>
+<div class="box"><b>Summary.</b> A mechanical rename with no behavior change. Every code reference to the class in <code>src/</code> and <code>plugins/*/src</code> now says <code>ConcreteFunction</code>, and <code>Function</code> stays as an alias until P2 gives the name to the template. Suite green, C snapshots unchanged, no new ty diagnostics.</div>
+<h2>What changed</h2>
+<ul>
+<li>309 identifiers in 40 files, renamed by a <code>tokenize</code> pass over NAME tokens only: docstrings, comments and error messages keep saying "Function", the user-facing word. CasADi's <code>ca.Function</code> is skipped.</li>
+<li>Three string spellings by hand: the quoted return annotation of <code>with_device</code>, the <code>cast</code> in <code>ir/text.py</code>, and <code>ir/text.py</code>'s class-name test for rendering a callee as <code>@name</code>, which is code, not prose.</li>
+<li>The alias lives in <code>function/model.py</code> (imported from there by <code>tests/test_import_boundaries.py</code>) and is re-exported by <code>scaly.function</code>, which also exports <code>ConcreteFunction</code>. <code>scaly</code>'s public surface is unchanged.</li>
+</ul>
+<h2>Gates</h2>
+<div class="scroll"><table><tr><th>Check</th><th>Result</th></tr>
+<tr><td><code>uv run pytest -n=auto</code></td><td class="ok">2348 passed, 42 skipped (as before)</td></tr>
+<tr><td>C snapshots (<code>tests/test_c_snapshot.py</code>)</td><td class="ok">unchanged</td></tr>
+<tr><td><code>uv run ty check --error-on-warning</code></td><td class="ok">the same 58 diagnostics as before the branch, none new</td></tr>
+<tr><td><code>ruff format</code>, <code>ruff check</code></td><td class="ok">clean</td></tr></table></div>
+<p>No timing: nothing on the call path changed. The JIT cache key hashes the function name and the rendered C, neither of which contains the class name, so the cache stays warm.</p>
+<h2>Next</h2>
+<p>P1b-i: the decorator signature <code>sc.function(*slots, output=, name=)</code>, one slot for now, and the codemod over the 306 decorator sites.</p>
+</main></body></html>

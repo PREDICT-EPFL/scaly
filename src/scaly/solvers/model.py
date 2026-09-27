@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..ir.expr import Expr, ExprOp
-from ..function import Function
+from ..function import ConcreteFunction
 from ..function.tree import Tree
 from ..function.tree import flat_tree
 from ..ir.types import SparsityType, TensorType
@@ -58,12 +58,12 @@ class SolverDescriptor:
   # Number of variable leaves at each end of the typed solver signature.
   n_var_blocks: int
   # Functions
-  oracle: Function | None = None  # QP only
-  base: Function | ExternalOracle | None = None  # NLP only
-  grad: Function | ExternalOracle | None = None
-  jac: Function | ExternalOracle | None = None
-  hess: Function | ExternalOracle | None = None
-  bounds: Function | ExternalOracle | None = None
+  oracle: ConcreteFunction | None = None  # QP only
+  base: ConcreteFunction | ExternalOracle | None = None  # NLP only
+  grad: ConcreteFunction | ExternalOracle | None = None
+  jac: ConcreteFunction | ExternalOracle | None = None
+  hess: ConcreteFunction | ExternalOracle | None = None
+  bounds: ConcreteFunction | ExternalOracle | None = None
   # Sparsity (NLP)
   jac_sparsity: SparsityType | None = None
   hess_sparsity: SparsityType | None = None
@@ -103,7 +103,7 @@ def descriptor_function(
   descriptor: SolverDescriptor,
   input_tree: Tree[Any, Any] | None = None,
   output_tree: Tree[Any, Any] | None = None,
-) -> Function[Any, Any, Any, Any]:
+) -> ConcreteFunction[Any, Any, Any, Any]:
   """Build the plain Function whose opaque outputs share ``descriptor``."""
   input_exprs = tuple(Expr.sym(name, shape if shape else (), diff=False) for name, shape in descriptor.input_signature)
   args = tuple(input_exprs)
@@ -118,7 +118,7 @@ def descriptor_function(
   )
   inputs = input_tree or flat_tree(tuple(name for name, _ in descriptor.input_signature), tuple(expr.type for expr in input_exprs))
   outputs = output_tree or flat_tree(tuple(name for name, _ in descriptor.output_signature), tuple(expr.type for expr in output_exprs))
-  function = Function._from_exprs(
+  function = ConcreteFunction._from_exprs(
     descriptor.name,
     input_exprs,
     output_exprs,

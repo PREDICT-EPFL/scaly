@@ -53,7 +53,7 @@ class DerivSpec:
     return outputs[name]
 
 
-class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
+class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
   """A named expression graph: named inputs, named outputs, and the computation between them.
 
   ``Function`` is the unit of three things at once. **Composition** — ``fn(inputs)`` with ``Expr``
@@ -109,7 +109,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     output_sparsities: Sequence[SparsityType | None] | None = None,
     device: DeviceSpec | str | None = None,
     output_coloring_widths: Sequence[int | None] | None = None,
-  ) -> Function[Any, Any, Any, Any]:
+  ) -> ConcreteFunction[Any, Any, Any, Any]:
     inputs = tuple(inputs)
     outputs = tuple(outputs)
     raw_input_names = tuple(input_names) if input_names is not None else tuple(expr.name for expr in inputs)
@@ -182,8 +182,8 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       raise ValueError(f"function {self.name!r} has undeclared symbolic inputs: {missing}")
     self._compiled: Any = None
     # Derivative rules that replace differentiating the body; set by ``sc.custom_derivative``.
-    self.custom_jvp: Function | None = None
-    self.custom_vjp: Function | None = None
+    self.custom_jvp: ConcreteFunction | None = None
+    self.custom_vjp: ConcreteFunction | None = None
     # ``(output index, input index) -> pattern``, set by ``sc.custom_derivative(sparsity=...)``.
     self.custom_sparsity: Any = None
 
@@ -191,7 +191,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     suffix = f" device={self.device}" if self.device.kind != "host" else ""
     return f"Function({self.name!r}, {self.input_names}->{self.output_names}{suffix})"
 
-  def with_device(self, device: DeviceSpec | str) -> "Function":
+  def with_device(self, device: DeviceSpec | str) -> "ConcreteFunction":
     """Return a copy of this Function placed on ``device``.
 
     This is a placement policy hint (see roadmap Phase 1 / Phase 9). Today
@@ -212,7 +212,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     )
     return instance
 
-  def _with_trees(self, input_tree: Tree[Any, Any], output_tree: Tree[Any, Any]) -> Function[Any, Any, Any, Any]:
+  def _with_trees(self, input_tree: Tree[Any, Any], output_tree: Tree[Any, Any]) -> ConcreteFunction[Any, Any, Any, Any]:
     if input_tree.names != self.input_names or input_tree.types != tuple(expr.type for expr in self.inputs):
       raise ValueError("replacement input tree does not match the Function graph")
     if output_tree.names != self.output_names or output_tree.types != tuple(expr.type for expr in self.outputs):
@@ -316,7 +316,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     policy = self._effective_lowering() if lowering is None else lowering
     return _apply_lowering(derived, policy)
 
-  def _with_outputs(self, outputs: Sequence[Expr]) -> Function[Any, Any, Any, Any]:
+  def _with_outputs(self, outputs: Sequence[Expr]) -> ConcreteFunction[Any, Any, Any, Any]:
     """Return a private graph copy with replacement outputs and preserved Function metadata."""
     instance = type(self).__new__(type(self))
     instance._init_graph(
@@ -355,7 +355,9 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       for i, out in enumerate(self.outputs)
     )
 
-  def factory(self, name: str, inputs: Sequence[str], outputs: Sequence[str | DerivSpec], aux: Mapping[str, Sequence[str]] | None = None) -> Function:
+  def factory(
+    self, name: str, inputs: Sequence[str], outputs: Sequence[str | DerivSpec], aux: Mapping[str, Sequence[str]] | None = None
+  ) -> ConcreteFunction:
     in_expr = self.input_map()
     out_expr = self.output_map()
     aux = aux or {}
@@ -400,4 +402,10 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       ret_output_names.append(output_name)
       ret_sparsities.append(sparsity)
       ret_coloring_widths.append(coloring_width)
-    return Function._from_exprs(name, ret_inputs, ret_outputs, inputs, ret_output_names, ret_sparsities, output_coloring_widths=ret_coloring_widths)
+    return ConcreteFunction._from_exprs(
+      name, ret_inputs, ret_outputs, inputs, ret_output_names, ret_sparsities, output_coloring_widths=ret_coloring_widths
+    )
+
+
+# The temporary alias while the tree migrates: the template takes the name `Function` in P2.
+Function = ConcreteFunction

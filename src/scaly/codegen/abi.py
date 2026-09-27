@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..function import Function
+from ..function import ConcreteFunction
 from ..ir.types import DType, as_dtype
 from ..utils.names import c_ident as c_ident
 
@@ -49,7 +49,7 @@ class BufferType:
     return f"struct {{ {self.dtype.c_type} {name}{dims}; }}"
 
 
-def buffer_idents(fun: Function) -> tuple[list[str], list[str]]:
+def buffer_idents(fun: ConcreteFunction) -> tuple[list[str], list[str]]:
   """The identifiers the typed wrappers use for ``fun``'s inputs and outputs. A name is ``c_ident``
   of itself, with ``_in``/``_out`` appended when the same name is both an input and an output (a
   solver Function's warm start and solution), and a trailing underscore when it would shadow the

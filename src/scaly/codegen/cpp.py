@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from .abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
 from .casadi import casadi_declarations, casadi_defines
 from .solver import solver_stats_symbols
-from ..function import Function
+from ..function import ConcreteFunction
 from ..solvers.stats import stats_c_defs
 
 if TYPE_CHECKING:
@@ -73,7 +73,9 @@ def _sparse_namespace(name: str, sp: SparsityType) -> list[str]:
   ]
 
 
-def render_cpp_header(fun: Function, backends: tuple[str, ...], sz_w: int, *, casadi: bool, sparsities: tuple[SparsityType | None, ...]) -> str:
+def render_cpp_header(
+  fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, *, casadi: bool, sparsities: tuple[SparsityType | None, ...]
+) -> str:
   """The ``.hpp`` for ``fun``. The kernel symbols are declared ``extern "C"`` inside the function's
   namespace, since a namespace and a function cannot share the global name; C linkage keeps the
   symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``."""

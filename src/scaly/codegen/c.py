@@ -21,7 +21,7 @@ import math
 
 from .abi import abi_status_defines, c_api_signature, c_ident
 from .casadi import casadi_defines, casadi_gather, casadi_scratch, render_casadi_queries
-from ..function import Function
+from ..function import ConcreteFunction
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
 from ..ir.program import ProgramNode, ProgramOp
@@ -51,7 +51,7 @@ _BINARY_C = {ProgramOp.POW: "pow", ProgramOp.ATAN2: "atan2", ProgramOp.MINIMUM: 
 _PRED_SYM = {ProgramOp.LT: "<", ProgramOp.LE: "<=", ProgramOp.EQ: "==", ProgramOp.NE: "!=", ProgramOp.AND: "&&", ProgramOp.OR: "||"}
 
 
-def can_render_program_c(fun: Function) -> bool:
+def can_render_program_c(fun: ConcreteFunction) -> bool:
   """True iff ``fun`` lowers and renders through the Program IR path. Diagnostic helper
   (e.g. for coverage probes); the hot path is ``aot._render_source`` calling ``render_program_c``."""
   if fun.device.kind != "host":
@@ -73,13 +73,13 @@ def _includes(extra: tuple[str, ...] = ()) -> list[str]:
 _VECTOR_TYPEDEF = "typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));"
 
 
-def render_program_c_source(fun: Function, observe: ProgramObserver | None = None) -> str:
+def render_program_c_source(fun: ConcreteFunction, observe: ProgramObserver | None = None) -> str:
   """Lower a non-solver host ``fun`` and render it. ``codegen/aot.py`` lowers once for the whole
   module and calls ``render_program_c`` directly; this is the standalone convenience."""
   return render_program_c(lower_function(fun, observe=observe), fun)
 
 
-def render_program_c(prog: ProgramNode, fun: Function, *, casadi: bool = False) -> str:
+def render_program_c(prog: ProgramNode, fun: ConcreteFunction, *, casadi: bool = False) -> str:
   """Render ``fun``'s lowered PROGRAM to a standalone pointer-ABI translation unit. ``casadi`` adds
   the CasADi query functions and the compressed-column gather (``codegen/casadi.py``)."""
   proc = main_proc(prog)
@@ -106,12 +106,12 @@ def render_program_c(prog: ProgramNode, fun: Function, *, casadi: bool = False) 
   return "\n".join(lines).rstrip() + "\n"
 
 
-def entry_workspace(fun: Function, sz_w: int, *, casadi: bool) -> int:
+def entry_workspace(fun: ConcreteFunction, sz_w: int, *, casadi: bool) -> int:
   """The ``SZ_W`` an entry needs: the packed spill size plus, under ``casadi``, the gather scratch."""
   return sz_w + (casadi_scratch(fun) if casadi else 0)
 
 
-def entry_prologue(fun: Function, sz_w: int) -> list[str]:
+def entry_prologue(fun: ConcreteFunction, sz_w: int) -> list[str]:
   """The opening of a pointer-ABI entry: the signature and the null checks behind the status codes.
   ``iw`` and ``mem`` are accepted and ignored; ``sz_w`` is the total workspace the entry reads."""
   symbol = c_ident(fun.name)
@@ -127,7 +127,7 @@ def entry_prologue(fun: Function, sz_w: int) -> list[str]:
   return lines
 
 
-def _render_entry(proc: ProgramNode, fun: Function, *, casadi: bool = False) -> list[str]:
+def _render_entry(proc: ProgramNode, fun: ConcreteFunction, *, casadi: bool = False) -> list[str]:
   """Emit the pointer-ABI entry ``<symbol>(arg,res,iw,w,mem)`` with ``fun``'s main PROC body
   inlined. ``codegen/aot.py`` reuses this for solver-bearing functions, so the top function's body
   lowers through Program IR exactly like any other host function."""

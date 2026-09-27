@@ -40,7 +40,7 @@ from .toolchain import cache_root, find_c_compiler, gcc_major, is_gcc
 from ..utils.env import shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
-  from ..function import Function
+  from ..function import ConcreteFunction
 
 
 # Bump when the ABI, codegen output, or JIT cache layout changes incompatibly so
@@ -162,7 +162,7 @@ _artifact_cache: dict[str, _Artifact] = {}
 _artifact_lock = threading.Lock()
 
 
-def _build_artifact(fun: Function) -> _Artifact:
+def _build_artifact(fun: ConcreteFunction) -> _Artifact:
   """Render, compile (if needed), and return a path to ``fun``'s cached shared object.
 
   Raises ``JitUnavailable`` if there is no usable compiler or codegen does not support
@@ -266,7 +266,7 @@ class CompiledFunction:
     "_workspaces",
   )
 
-  def __init__(self, fun: Function):
+  def __init__(self, fun: ConcreteFunction):
     self._name = fun.name  # not the Function, which holds this handle: no cycle keeps the workspaces
     self._artifact = _build_artifact(fun)
     self._lib = _load_library(self._artifact.lib_path, isolated=bool(self._artifact.flags))
@@ -398,12 +398,12 @@ def _address(arr: np.ndarray) -> int:
     return arr.ctypes.data
 
 
-def get_compiled(fun: Function) -> CompiledFunction:
+def get_compiled(fun: ConcreteFunction) -> CompiledFunction:
   """Compile ``fun`` (or reuse a cached `.so`) and return a `CompiledFunction` handle."""
   return CompiledFunction(fun)
 
 
-def invalidate_cache(fun: Function) -> None:
+def invalidate_cache(fun: ConcreteFunction) -> None:
   """Drop both the in-memory artifact entry and the on-disk cache directory for ``fun``.
 
   Safe to call when nothing is cached yet; codegen failures (``NotImplementedError``) are

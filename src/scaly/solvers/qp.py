@@ -10,7 +10,7 @@ import numpy as np
 from ..ad.derivatives import jacobian
 from ..ad.sparse import SparseJacobian, sparse_hessian, sparse_jacobian
 from ..ad.sparsity import _jac_mask
-from ..function import Function
+from ..function import ConcreteFunction
 from ..function.tree import G, L, Tree
 from ..ir.expr import Expr, ExprOp, callees_of, concat, substitute, topo
 from ..ir.types import SparsityType, TensorType
@@ -133,7 +133,7 @@ def _qp_data(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> tu
   replacements = {x: zero}
 
   hessian = cast(SparseJacobian, cached["qp_hessian"])
-  gradient = cast(Function, cached["grad"])
+  gradient = cast(ConcreteFunction, cached["grad"])
   P = simplify_cse_fixpoint(substitute(hessian.to_dense(), replacements))
   c = simplify_cse_fixpoint(substitute(gradient.outputs[0], replacements))
 
@@ -188,7 +188,7 @@ def build_qp[SV, NV, SP, NP](
   *,
   name: str,
   options: dict[str, Any] | None,
-) -> Function[
+) -> ConcreteFunction[
   tuple[SV, SV, Expr, Expr, SP],
   tuple[NV, NV, np.ndarray, np.ndarray, NP],
   tuple[SV, SV, Expr, Expr],
@@ -211,7 +211,7 @@ def build_qp[SV, NV, SP, NP](
   P_sp = A_sp = G_sp = None
   if sparse:
     matrices = (P, A, G_mat)
-    probe = Function._from_exprs(
+    probe = ConcreteFunction._from_exprs(
       f"{name}_pattern_probe",
       params,
       tuple(matrix.vec() for matrix in matrices),
@@ -237,7 +237,9 @@ def build_qp[SV, NV, SP, NP](
     oracle_names.extend(("G_ineq", "l_ineq", "u_ineq"))
   oracle_outputs.extend((x_lb, x_ub))
   oracle_names.extend(("x_lb", "x_ub"))
-  oracle = Function._from_exprs(f"{name}_oracle", params, oracle_outputs, problem.params.names, tuple(f"qp:{output}" for output in oracle_names))
+  oracle = ConcreteFunction._from_exprs(
+    f"{name}_oracle", params, oracle_outputs, problem.params.names, tuple(f"qp:{output}" for output in oracle_names)
+  )
 
   solver_vars = problem.vars.with_types(
     tuple(TensorType(expr.shape, expr.type.dtype, expr.type.sparsity, diff=False) for expr in problem._var_symbols)

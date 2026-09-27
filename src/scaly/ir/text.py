@@ -21,7 +21,7 @@ from .program import BINARY_FN_OPS, PREDICATE_OPS, SCALAR_OPS, UNARY_FN_OPS, Pro
 from .types import TensorType
 
 if TYPE_CHECKING:
-  from ..function import Function
+  from ..function import ConcreteFunction
 
 
 def type_asm(t: TensorType) -> str:
@@ -51,7 +51,7 @@ def _value_asm(v: Any) -> str:
     return "[" + ", ".join(_value_asm(x) for x in v) + "]"
   if isinstance(v, dict):
     return "{" + ", ".join(f"{k}={_value_asm(val)}" for k, val in sorted(v.items())) + "}"
-  if hasattr(v, "name") and v.__class__.__name__ == "Function":
+  if hasattr(v, "name") and v.__class__.__name__ == "ConcreteFunction":
     return "@" + v.name
   return str(v)
 
@@ -68,7 +68,7 @@ def _attrs_asm(attrs: dict[str, Any], *, skip: Set[str] = frozenset()) -> str:
 # ---------------------------------------------------------------------------
 
 
-def render_expr_assembly(obj: Function | Expr | Iterable[Expr], *, name: str | None = None) -> str:
+def render_expr_assembly(obj: ConcreteFunction | Expr | Iterable[Expr], *, name: str | None = None) -> str:
   """Render the expression ``Expr`` dialect as a compact SSA assembly listing.
 
   When given a ``Function``, the listing is a ``expr.module`` containing every transitive expression
@@ -79,7 +79,7 @@ def render_expr_assembly(obj: Function | Expr | Iterable[Expr], *, name: str | N
   # It is tested first so an object that is both a Function and iterable still renders as an
   # ``expr.module`` rather than a bare region.
   if all(hasattr(obj, attr) for attr in ("outputs", "name", "input_names", "output_names")):
-    return _render_function_module(cast("Function", obj))
+    return _render_function_module(cast("ConcreteFunction", obj))
   if isinstance(obj, Expr):
     return _render_expr_region((obj,), name=name)
   if isinstance(obj, Iterable):
@@ -87,11 +87,11 @@ def render_expr_assembly(obj: Function | Expr | Iterable[Expr], *, name: str | N
   raise TypeError(f"render_expr_assembly expects a Function, an Expr, or an iterable of Expr, got {type(obj).__name__}")
 
 
-def _expr_callees(fun: Function) -> list[Function]:
+def _expr_callees(fun: ConcreteFunction) -> list[ConcreteFunction]:
   seen: set[int] = set()
-  ordered: list[Function] = []
+  ordered: list[ConcreteFunction] = []
 
-  def visit(fn: Function) -> None:
+  def visit(fn: ConcreteFunction) -> None:
     if id(fn) in seen:
       return
     seen.add(id(fn))
@@ -104,7 +104,7 @@ def _expr_callees(fun: Function) -> list[Function]:
   return ordered
 
 
-def _render_function_module(fun: Function) -> str:
+def _render_function_module(fun: ConcreteFunction) -> str:
   lines = ["expr.module {"]
   for fn in _expr_callees(fun):
     body = _render_function_expr_assembly(fn).splitlines()
@@ -113,7 +113,7 @@ def _render_function_module(fun: Function) -> str:
   return "\n".join(lines)
 
 
-def _render_function_expr_assembly(fun: Function) -> str:
+def _render_function_expr_assembly(fun: ConcreteFunction) -> str:
   ins = ", ".join(f"%{n}: {type_asm(e.type)}" for n, e in zip(fun.input_names, fun.inputs, strict=True))
   outs = ", ".join(f"%{n}: {type_asm(e.type)}" for n, e in zip(fun.output_names, fun.outputs, strict=True))
   lines = [f"expr.func @{fun.name}({ins}) -> ({outs}) {{"]

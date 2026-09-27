@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from scaly.function import Function
+from scaly.function import ConcreteFunction
 from scaly.function.tree import G, L, flat_tree
 from scaly.ir.types import SparsityType, TensorType
 from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
@@ -23,7 +23,7 @@ def external_nlp(
   jac_sparsity: SparsityType,
   hess_sparsity: SparsityType,
   options: Mapping[str, str | int | float] | None = None,
-) -> Function:
+) -> ConcreteFunction:
   """Build the typed NLP solve interface around foreign flat-buffer oracles."""
   total_constraints = n_eq + n_ineq
   required = {"base", "grad", "hess", "bounds"} | ({"jac"} if total_constraints else set())

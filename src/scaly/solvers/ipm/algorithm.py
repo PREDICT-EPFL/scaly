@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ...function import Function
+from ...function import ConcreteFunction
 from ...function.sugar import _while_node, while_loop
 from ...ir.expr import (
   Expr,
@@ -735,11 +735,11 @@ class Solver:
     carry = Expr.sym("ipm_state", (self.layout.size,))
     inner = Iteration(s, q_sym, kernels, t, data=data)
     st = self.layout.unpack(carry)
-    body = Function._from_exprs(
+    body = ConcreteFunction._from_exprs(
       f"{self.name}_step", [carry, *params], [self.layout.pack(self.step(inner, st))], ["state", *(str(e.name) for e in params)], ["next"]
     )
     go = logical_and(equal(st["status"], float(RUNNING)), logical_not(self.converged(st)))
-    cond = Function._from_exprs(f"{self.name}_go", [carry, *params], [go], ["state", *(str(e.name) for e in params)], ["go"])
+    cond = ConcreteFunction._from_exprs(f"{self.name}_go", [carry, *params], [go], ["state", *(str(e.name) for e in params)], ["go"])
     init = self.layout.pack(state0)
     loop_params = [*self._param_values(q), outer.kkt.data]
     final, _ = while_loop(cond, body, init, max_iter=t.max_iter + 1, params=loop_params)

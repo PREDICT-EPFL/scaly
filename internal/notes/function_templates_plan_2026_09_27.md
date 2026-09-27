@@ -1,12 +1,10 @@
-# Function templates and multi-parameter functions: implementation plan (2026-09-27)
+# Function templates and multi-parameter functions: implementation plan (2026-09-27, v2)
 
-Status: **plan, not started**. Implements todo API-1 (and unblocks API-4, part of API-3). Supersedes the
-"Function templates" section of `refactorings.md` and the "Deferred: multi-parameter bodies" and
-"fold the outer group into the decorator" items of `typing_playground/README.md`; those two places keep
-the older reasoning, and this note says where it changed.
-
-Read first: `typing_playground/README.md` (section *Templates*), `typing_playground/templates.py`,
-`src/scaly/function/{model,tree,api}.py`, `docs/dev/codebase.md` (import layers, *Where to add things*).
+Status: **v2 after the review round, in progress.** Implements todo API-1 (and unblocks API-4, part of
+API-3). Supersedes the "Function templates" section of `refactorings.md` and the "Deferred:
+multi-parameter bodies" and "fold the outer group into the decorator" items of
+`typing_playground/README.md`. v1 was reviewed by five agents (typing, frontend semantics, compiler
+consumers, migration, user-facing API); §10 lists what changed and why. The step-by-step list is §5.
 
 ## 1. What we are building
 
@@ -23,431 +21,416 @@ f((A_np, B_np, x_np))
 Target:
 
 ```python
-@sc.function                               # nothing declared: every property bound at the call
+@sc.function                                   # nothing declared: every property bound at the call
 def f(A, B, x):
   ...
 
-@sc.function(sc.L((NX, NX)), sc.L((NX, None)), sc.L(NX), output=sc.L("y", NX))   # partial
+@sc.function((NX, NX), (NX, None), NX, output="y")   # partial: B's second dimension is a hole
 def f(A, B, x):
   ...
 
-@sc.function(sc.L((NX, NX)), sc.L((NX, NU)), sc.L(NX), output=sc.L("y", NX))      # fully declared
+@sc.function((NX, NX), (NX, NU), NX, output="y")     # fully declared: a ConcreteFunction, traced now
 def f(A, B, x):
   ...
 
-f(A_np, B_np, x_np)                        # numerical: instantiate (cached), compile, run
-f(A_sym, B_sym, x_sym)                     # symbolic, inside another trace: instantiate, CALL node
+f(A_np, B_np, x_np)                            # numerical: instantiate (cached), compile, run
+f(A_sym, B_sym, x_sym)                         # symbolic: instantiate, CALL node
 ```
 
-Decisions (settled with Colin on 2026-09-27):
+A slot is a *tree spec*: a `Tree` (`sc.L`, `sc.G`, `sc.S`), or shorthand for one leaf: a shape
+(`3`, `(NX, NU)`, `(NX, None)`, `...`, a `TensorType`) or a name (`"y"`, a leaf with a shape hole).
+`sc.L((NX, NX))` and `(NX, NX)` are the same slot.
+
+Decisions (settled with Colin on 2026-09-27, unchanged by the review):
 
 1. **One decorator, `sc.function`.** Every decorated function is a *template*. A declaration without
-   holes is instantiated eagerly at the decorator and reports `f.is_concrete == True`; `f.concrete` is
-   then its single concrete instance. There is no `sc.concrete_function` and no `sc.template`.
-2. **One body, many instances.** "Several functions under one name" means one Python body instantiated
-   per argument signature, cached on the template object (`f.instances`), each instance given a
-   deterministic unique name. Overload sets (several bodies dispatched on argument type) stay deferred,
-   for the reasons in the playground README.
-3. **One declaration slot per Python parameter**, `sc.function(slot_1, …, slot_n, output=…)`, and the
-   body takes `n` parameters. Leaf names default to the parameter names. The old single-tree
-   convention is exactly the one-slot case (`sc.function(sc.G(...), output=...)` with `def f(inputs)`),
-   so every existing function can be migrated without touching its body or its call sites.
+   input holes is instantiated eagerly at the decorator and reports `f.is_concrete == True`;
+   `f.concrete` is then its single concrete instance. There is no `sc.concrete_function` and no
+   `sc.template`.
+2. **One body, many instances.** One Python body instantiated per argument signature, cached on the
+   template, each instance given a deterministic unique name. Overload sets stay deferred.
+3. **One declaration slot per Python parameter**, `sc.function(slot_1, …, slot_n, output=…)`. Leaf
+   names default to the parameter names. The old single-tree convention is the one-slot case.
 4. Hard break, no deprecation shim: the whole tree is migrated in the PR that changes the signature.
 
-Defaults chosen here, overridable (see §9): holes cover whole shapes, per-dimension sizes and sparse
-patterns; dtype is not a hole in v1; an undeclared single output is named after the function.
+## 2. The multi-input format
 
-## 2. Answer to "does the multi-input format cause complexities?"
-
-It works, and it is cheaper than it looks, because **grouping was never part of the C signature**:
-the leaves are flattened in order, so `f(a, b)` and the old `f((a, b))` lower to byte-identical C.
-Lowering, AD, codegen and the JIT only ever see flat leaves (`Function.inputs`, `_flat_*_call`) and do
-not change. The complexities are all in the frontend:
+Grouping was never part of the C signature: leaves are flattened in order, so `f(a, b)` and the old
+`f((a, b))` lower to byte-identical C. Lowering, AD, codegen and the JIT see flat leaves and do not
+change. The complexities are in the frontend:
 
 | Issue | Resolution |
 | --- | --- |
-| **Static typing.** `Function[SI, NI, SO, NO]` types one tree argument. A variadic call needs the *symbolic* and *numerical* parameter lists as separate type variables; `TypeVarTuple` cannot be mapped, and a class may hold only one. | Make `Function` generic over **two ParamSpecs**: `Function[**PS, **PN, SO, NO]`, `__call__` overloaded on `PN` then `PS`. The decorator's width ladder (0..8 slots) fills them: slot `k` of type `Tree[Sk, Nk]` contributes `Sk` to `PS` and `Nk` to `PN`. **Probed with ty 0.0.84**: typed symbolic and numerical calls, wrong-arity and mixed-kind calls rejected, decorator/body arity mismatch rejected, `gradient` passing `PS, PN` through. Probe files are reproduced in §8.1. |
-| **Seeded derivatives append a parameter.** `Concatenate` only prepends. | `forward`, `adjoint`, `lagrangian_hessian`, `sparse_lagrangian_hessian` get an arity ladder (`Function[[SA],[NA],…] -> Function[[SA, Expr],[NA, ndarray],…]`, …). Probed: works in ty. |
-| **Derived call conventions change.** `fwd((inputs, seed))` becomes `fwd(*inputs, seed)`; the solver `solver((v0, lam_box0, lam_eq0, lam_ineq0, p))` becomes `solver(v0, lam_box0, lam_eq0, lam_ineq0, p)`. | Part of the migration PR. ~125 call sites of `sc.forward/adjoint/lagrangian_hessian/sparse_lagrangian_hessian/solver` plus the plugin tests' `symbolic_call((...))`. |
-| **Zero-argument functions.** `f()` has no leaf to dispatch on. | Symbolic if called while a body is being traced, numerical otherwise (a context variable set around the trace in `ConcreteFunction.__init__`). This also resolves the dispatch half of API-3 (§6.3). |
-| **The old two-positional form is silently reinterpreted** (`sc.function(IN, OUT)` would read `OUT` as a second input). | The decorator checks slot count against the body's positional parameters and raises with the migration hint: "`sc.function` takes one declaration per parameter and `output=`; did you mean `sc.function(<IN>, output=<OUT>)`?" |
-| **Keyword calls** `f(A=…, B=…)`. | Bound at run time through the body's `inspect.Signature`. The typed ladder gives positional-only parameter lists, so keywords are typed only in the bare mode (where `PS` is the body's own signature). Acceptable. |
-| **Bodies with defaults, `*args`, `**kwargs`, keyword-only parameters.** | Refused at decoration in v1. Defaults are reserved for *static arguments* (§9). |
-| **Grouped slots still exist.** A parameter may itself be a tuple (`def f(state, params)` with `state = (x, v)`). | Unchanged: a slot is any `Tree`; `sc.G(...)` in a slot means that parameter is a tuple. |
+| **Static typing.** A variadic call needs the symbolic and numerical parameter lists as separate type variables. | `Function[**PS, **PN, SO, NO]`, `__call__` overloaded numerical (`PN`) first, then symbolic (`PS`). A decorator width ladder (0..8 slots) fills them; more than 8 slots hits an untyped catch-all. **Verified on the pinned ty 0.0.77** (and identical on 0.0.75 and 0.0.84; no bump). |
+| **Shorthand slots** (`@sc.function(3, (NX, NU))`) have no static tree type. | Slot parameters are `Tree[SA, NA] \| Spec` with `SA`/`NA` `TypeVar`s defaulting to `Expr`/`ndarray` (`typing_extensions.TypeVar(..., default=...)` under `TYPE_CHECKING`; the project floor is 3.12). A shape or name slot is then typed as a leaf. Verified on ty 0.0.77. |
+| **Seeded derivatives append a parameter.** | `forward`, `adjoint`, `lagrangian_hessian`, `sparse_lagrangian_hessian` get an arity ladder. Verified. |
+| **Derived call conventions change.** `fwd((inputs, seed))` → `fwd(*inputs, seed)`; `solver((v0, lam_box0, lam_eq0, lam_ineq0, p))` → `solver(v0, lam_box0, lam_eq0, lam_ineq0, p)`. | Part of P1b-ii: 118 call sites (72 run by the suite, 46 only in docs, examples/casadi, benchmarks and `tests/typing`), one rule: strip one level of parentheses from a tuple literal, otherwise splat with `*`. |
+| **Calls built from a function's own tree** (`f(f.input_tree.unflatten(flat))`). | The input tree is now a parameter list and `unflatten` returns the argument tuple: `f(*f.input_tree.unflatten(flat))`. 10 sites plus 2 zero-input `fn(())` → `fn()`. |
+| **Zero-argument functions.** `f()` has no leaf to dispatch on. | `f()` is always numerical; `f.symbolic_call()` is the symbolic spelling. This matches the static types (a zero-argument call types as numerical) and needs no trace-depth context variable. |
+| **The old two-positional form is silently reinterpreted.** | The decorator checks slot count against the body's positional parameters and raises: "`sc.function` takes one declaration per parameter and `output=`; did you mean `sc.function(<IN>, output=<OUT>)`?" |
+| **Keyword calls** `f(A=…, B=…)`. | Bound at run time through the body's `inspect.Signature`, only when keywords are present (binding costs ~0.6-1 µs, a third of a trivial call). Statically, keywords are errors on declared functions (the ladder gives positional-only lists) and typed on a bare function's `symbolic_call`. Functions without a body (`_from_exprs`, derived, solvers) are positional-only. |
+| **Bodies with defaults, `*args`, `**kwargs`, keyword-only parameters.** | Refused at decoration in v1. Defaults are reserved for static arguments. |
 
 ## 3. Object model
 
-Two classes, one of them user-facing:
+**`ConcreteFunction` is a subclass of `Function`.** Both live in `function/model.py` (a
+`template.py` beside it would import `model.py` for `ConcreteFunction` while `model.py` imports it for
+the base class: a cycle).
 
-- **`ConcreteFunction`** — today's `Function`, renamed, with its input tree generalized to a
-  parameter list (§4.1). It is what the compiler consumes: CALL nodes, `factory`, AD, lowering,
-  codegen, the JIT, solvers. Never has holes. Keeps `_from_exprs`, `_flat_symbolic_call`,
-  `_flat_numerical_call`, `_with_trees`, `_with_outputs`, `custom_jvp/vjp/sparsity`.
-- **`Function`** — the new user-facing template (the playground's `FunctionTemplate`, renamed). Owns
-  the body, the per-slot declarations (possibly with holes), the output declaration (possibly
-  absent), `instances: dict[SpecKey, ConcreteFunction]`, the instance-name map, and for derived
-  templates a `(source, transform)` pair. `sc.Function` names this class.
+- **`Function[**PS, **PN, SO, NO]`**: the template. Owns the body (or, for a derived template, a
+  source and a transform), the per-slot declaration with holes (or none, in bare mode), the output
+  declaration (or none), the body signature, the device, a private `key -> ConcreteFunction` cache
+  and the public `instances: dict[str, ConcreteFunction]`. `sc.Function` names it.
+- **`ConcreteFunction(Function)`**: today's class. What the compiler consumes. `is_concrete` is
+  `True`, `concrete` is `self`, `instances` is `{name: self}`, `instantiate(...)` checks and returns
+  `self`.
 
-Common protocol on `Function`:
+A fully declared `@sc.function(...)` returns the `ConcreteFunction` itself, as do `_from_exprs`,
+`sc.solver`, and every derivative wrapper given a concrete source. So `isinstance(x, sc.Function)`,
+`.descriptor`, `._flat_*`, `.factory` and the 618 `sc.Function._from_exprs` lines outside `src/` keep
+working with no wrapper, no delegation table and no extra frame on the call path. `src/` never holds a
+template: everything it builds comes from concrete sources.
 
-| Member | Meaning |
-| --- | --- |
-| `name` | template name (the bare function name, or `name=`) |
-| `is_concrete` | declaration has no holes (then exactly one instance exists, built at the decorator) |
-| `concrete` | that instance; raises `NotConcrete` listing the holes otherwise |
-| `instantiate(*args, **kwargs)` | bind holes from example arguments — `Expr`, `SparseMatrix`, arrays, **or** `TensorType`/shape declarations — trace (cached), return the `ConcreteFunction`. The explicit AOT entry. |
-| `instances` | the cache; everything in it reaches C when used |
-| `__call__`, `symbolic_call`, `numerical_call` | as today, but variadic (§4.3) |
-| `input_names`, `output_names`, `inputs`, `outputs`, `input_shapes`, `output_shapes`, `factory`, `with_device`, `device`, `output_sparsities`, `solver_stats`, `recompile` | explicit delegating properties/methods to `concrete`, so a fully declared `Function` reads exactly like today's. `recompile` on a template recompiles every instance. |
+| Member | On a template | On a `ConcreteFunction` |
+| --- | --- | --- |
+| `name` | template name | instance name |
+| `is_concrete` | `False` | `True` |
+| `concrete` | raises `NotConcrete` listing the holes and the `instantiate` fix | `self` |
+| `instantiate(*specs)` | bind holes, trace (cached), return the instance | check the specs, return `self` |
+| `instances` | `{name: instance}` built so far | `{name: self}` |
+| `__call__`, `symbolic_call`, `numerical_call` | resolve the instance from the arguments, forward | today's, variadic |
 
-One helper, **`as_concrete(fn) -> ConcreteFunction`** in `function/template.py`, accepts either class
-and raises `NotConcrete` with the fix (`f.instantiate(...)`) for a template with holes. Every consumer
-that *inspects* a callee calls it: `sugar.{vmap,scan,while_loop,custom_derivative}`, the derivative
-wrappers for a concrete source, `codegen.aot.{render_c_module,write_module}` and its CLI target,
-`solvers` (problem oracles are built from `ConcreteFunction` already), `linalg/sparse_factor.py`,
-`solvers/ipm/kkt.py`. Consumers that only *call* a function need nothing: a symbolic call inside a
-traced body instantiates at trace time.
+`NotConcrete(TypeError)`: not an `AttributeError`, which `hasattr` duck typing would swallow.
 
-`Function._from_exprs(...)` stays available on the public class as a thin wrapper
-(`Function._wrap(ConcreteFunction._from_exprs(...))`), because 658 test/example lines use
-`sc.Function._from_exprs` and should not churn. `src/` uses `ConcreteFunction._from_exprs` directly.
-`_from_exprs` keeps today's tree shape: 0 inputs → no parameters, 1 → one `L` slot, n → one private
-group slot; so existing `fn((a, b))` calls on such functions are unchanged.
+**`instantiate` takes a declaration per slot**, as the decorator does: a tree spec (a shape, a
+`TensorType`, a hole-free `sc.L`/`sc.G`/`sc.S`), or an example value (`ndarray`, `Expr`,
+`SparseMatrix`). A tuple of ints is a shape; any other tuple is structure.
 
-Import layers: `function/template.py` (the `Function` class, `SpecKey`, mangling, `as_concrete`,
-`NotConcrete`, the `DerivedFunction` subclass taking a transform callable) at **layer 3** beside
-`model.py`, so `sugar` (4) and `api`/`solvers`/`linalg` (5) can import it. The lifted wrappers live in
-`api.py` (5) and pass transforms *down* to `DerivedFunction`, so no upward import is needed. Add the
-`IMPORT_LAYERS` entry and module docstring; `tests/test_import_boundaries.py` pins `sc.Function`,
-`sc.ConcreteFunction`, `sc.NotConcrete`.
+Public entry points that *inspect* a callee call `.concrete` after their type check: `vmap`, `scan`,
+`while_loop`, `custom_derivative` (the function and its rules), `lower_function`, the five
+`scaly.codegen.aot` renderers and the CLI, `render_program_c_source`, `render_expr_assembly` (layer
+1: duck-typed), and `viz`'s `expr_graph` and recording. A holed template there raises `NotConcrete`
+with the fix. `while_loop` instantiates holed `cond`/`body` itself: carry from `init`, the step index,
+then `params`, all determined. `scan` and `vmap` do not infer: a slice's size is not its stride.
+
+Import layers: unchanged. `function/model.py` stays at layer 3.
 
 ## 4. Semantics in detail
 
-### 4.1 Parameter-list trees
+### 4.1 Parameter lists
 
-A new private tree `_Params(parts, names)` in `function/tree.py`: structurally `_G(public=False)`
-(flat names/decls in order, `with_types`, `infer`, `sparsities`, `relabel`) with two differences:
-`symbols()` returns the tuple the body is *splatted* with, and it records the Python parameter names
-for keyword binding. `ConcreteFunction.input_tree` is always a `_Params` (possibly of width 0 or 1).
-`ConcreteFunction.__init__` calls `fn(*symbols)` instead of `fn(symbols)`. The flattened
-`input_names`/`inputs` and hence the C signature are unchanged.
+`ConcreteFunction.input_tree` is always a parameter list: `params(*slots) = _G(slots, public=False)`
+(no new class; `_G` already has width 0 and 1 with `public=False`). `__init__` calls
+`fn(*params.symbols())`. `unflatten` returns the argument tuple. The flat `input_names`, `inputs` and
+C signature are unchanged.
+
+- `_from_exprs` keeps today's convention: 0 inputs → no parameters, 1 → one leaf, n → one private
+  group slot. Existing `fn(x)` and `fn((a, b))` calls on such functions are unchanged; `fn(())` →
+  `fn()`.
+- NLP oracles rebuilt with `_with_trees` (`solvers/nlp.py`) keep one private group slot.
+- The solver has five slots, built once in `descriptor_function`.
+- `forward`/`adjoint`: `(*source slots, seed)`; `lagrangian_hessian` and the sparse one:
+  `(*source slots, lam)` with `lam` shaped as the output tree.
+
+**Call path.** `ConcreteFunction.__call__(*args, **kwargs)`: bind keywords only if present; dispatch
+on leaf kinds across all arguments (none → numerical; mixed → the existing error, which names
+`sc.const`); then one loop over `input_tree.parts` (not `_G.flatten_*`, which measured +0.4 µs). An
+arity mismatch raises `TypeError("f() takes 2 arguments (x, p), got 3")`. `_jit()` caches the module
+after its first import (0.32 µs per call today).
 
 ### 4.2 Declarations and holes
 
-`L` gets optional arguments; dispatch on the type of the first positional:
+`L(*args, dtype=None, diff=True)`, dispatching on the type of the first positional:
 
 | Spelling | Meaning |
 | --- | --- |
-| `sc.L()` | name from the parameter, shape a hole (any rank) |
-| `sc.L(3)`, `sc.L((NX, NX))` | name from the parameter, fixed shape |
+| `sc.L()`, `sc.L(...)` | unnamed, shape a hole (any rank) |
+| `sc.L(3)`, `sc.L((NX, NX))`, `sc.L(())` | unnamed, fixed shape (`()` is a scalar) |
 | `sc.L((NX, None))` | fixed rank 2, first dimension fixed, second a hole |
-| `sc.L("y")`, `sc.L("y", ...)` | explicit name, shape a hole (today's output spelling keeps working) |
+| `sc.L("y")`, `sc.L("y", ...)` | named, shape a hole |
 | `sc.L("y", (NX, NX))`, `sc.L("y", TensorType(...))` | today's forms |
-| `sc.L(..., dtype=sc.dtypes.int64)` | new keyword; convenience over passing a `TensorType` |
+| `sc.L(..., dtype="int64", diff=False)` | dtype and differentiability; `dtype=` with a `TensorType` is refused |
 
-`ShapeDecl` gains `None` entries; `Tree.decls` stores either a `TensorType` or a `ShapeHole(dims:
-tuple[int | None, ...] | None, dtype, diff)` in place of today's bare `Ellipsis` (keep accepting
-`...` as the whole-shape hole). `Tree.has_holes`, `Tree.bind(values) -> Tree` (resolve holes from
-actual leaves, checking fixed dims) are new; `resolved()`/`with_types()` keep their output-side role.
+`sc.L(None)` is refused (`as_shape(None)` would silently mean a scalar). A leaf declaration is a
+`TensorType` or a `Hole(dims: tuple[int | None, ...] | None, dtype: DType | None, diff: bool)`;
+`...` is `Hole(None, None, True)`. `TensorType` never gets `None` dims: it is the IR type.
 
-**Leaf naming.** An unnamed `L` in slot `k` takes the parameter name. Unnamed leaves inside a group
-slot for parameter `p` are named `p_0`, `p_1`, nested `p_0_1`. An explicit name always wins. Names
-must remain unique across all slots (checked by the existing `_check_unique`).
+**Input holes only.** `has_holes` and the name tokens look at the input declaration. Output holes
+(`L("y")`, 184 sites) are resolved by the trace as today; they do not make a function a template.
+On outputs a `Hole` with `dtype=None` takes the traced dtype. On inputs it takes the argument's
+dtype when the argument is an `Expr` and `float64` when it is numerical (numerical values are always
+coerced; a symbolic argument keeps its dtype, so an `int64` index reaches a bare helper).
 
-`S` gets the same treatment: `sc.S()` / `sc.S("P")` with no pattern is a **pattern hole** bound from a
-`SparseMatrix` (symbolic) or SciPy sparse array (numerical) argument. Phase 5.
+**Leaf naming.** Leaves may be unnamed until the decorator names them: an unnamed leaf in slot `p`
+takes the parameter name, unnamed leaves in a group slot take `p_0`, `p_1`, nested `p_0_1`. An
+explicit name wins. Unnamed output leaves take the template name the same way (`f`, `f_0`, …).
+Default names come from the *template* name, never the instance name, so `of`/`wrt` are the same for
+every instance. `_check_unique` runs after naming.
 
-**dtype** is not a hole in v1: a leaf's dtype is its declared one, default `float64`. Numerical
-arguments are coerced exactly as `L.flatten_numerical` does today. A symbolic argument whose dtype
-differs from the declared one is an error; add that check to `_flat_symbolic_call` too, which today
-compares shapes only (a latent bug independent of this work — give it its own test).
+**Binding** (`Tree.bind(value, what) -> Tree`): walks the declaration and the argument together,
+checking structure first (a group needs a tuple of its width), then fixed dimensions and declared
+dtypes (a `ValueError` in the call-site vocabulary), and returns the tree with every hole resolved to
+a `TensorType`. Differentiability comes from the declaration, never the argument.
+`_flat_symbolic_call` gains the dtype check it lacks today (its own test).
 
-**Differentiability** is taken from the declaration (default `diff=True`), never from the argument,
-and is not part of the key; `_flat_symbolic_call` already derives the call node's `diff` from the
-actuals.
+### 4.3 Bare mode
 
-### 4.3 Binding arguments, calling
+`@sc.function`, `@sc.function()`, `@sc.function(name=...)` and `@sc.function(output=...)` on a body
+with parameters: every slot is a whole hole and each argument's *structure* comes from the call.
 
-`Function.__call__(*args, **kwargs)`:
+- A tuple is structure. A tuple of Python numbers is refused ("pass a list or an array for a vector").
+- `Expr` is a leaf with its shape and dtype. A `SymbolicValue` supplies its own leaf declaration
+  through a hook (`SparseMatrix` gives `S(name, pattern)`), so `tree.py` does not import `linalg`.
+- `ndarray`, NumPy scalars, Python numbers and lists are numerical leaves coerced to `float64`
+  arrays; a float, an int, `np.float64` and a 0-d array share one instance. A list containing an
+  `Expr` is refused ("use sc.stack"). A SciPy sparse argument is refused in v1 ("declare the slot
+  with sc.S(pattern)"): pattern holes are P5.
+- A bare body with no parameters has no holes: it is traced at the decorator like any fully declared
+  function.
 
-1. Bind to the body signature (`inspect.Signature.bind`), giving one value per slot.
-2. Dispatch on leaf kind across all slots, as `Tree.is_symbolic`/`is_numerical` do now; mixed is the
-   existing error. Zero leaves: symbolic iff `_TRACING.get() > 0`.
-3. Resolve the instance: if `is_concrete`, the single instance directly (**no key computation on the
-   hot path**; C-100's 2.9 µs trivial call must not regress). Otherwise compute the `SpecKey` from the
-   hole leaves only and look it up; on a miss, bind the declaration, build a `ConcreteFunction`, store.
-4. Call the instance's `symbolic_call(*values)` / `numerical_call(*values)`.
-
-Structure is checked before shapes (the playground's order). Error vocabulary: a fixed dimension that
-does not match is a `ValueError` from the call site (today's `flatten_*` wording), not the
-`TypeError` of `resolved()`.
-
-**Bare mode** (`@sc.function` with no parentheses, or `@sc.function()`): every slot is `sc.L()`, except
-that the *structure* of each argument is read from the call: a `tuple` is structure, every other
-value is a leaf (`Expr`, `SymbolicValue`, `ndarray`, Python scalar, list → `np.asarray`). This
-deliberately relaxes the playground's refusal of array-likes: with one slot per parameter, the old
-`(a, b)`-is-two-leaves-or-a-vector ambiguity now only arises for tuples, and tuples are always
-structure. The output is inferred from the traced value by the same rule. Bare templates key on the
-nested skeleton plus leaf shapes, so different structures give different instances.
-
-**Trace once.** `ConcreteFunction.__init__` accepts `outputs=None`, meaning: build the output tree
-from the traced value (port `inferred_tree` and `skeleton` from `typing_playground/trees.py` into
-`function/tree.py`), with default names (§4.5). This removes the playground's
-double trace.
+**Outputs.** `output=` is optional everywhere. Omitted, the output tree is built from the traced value
+in the same trace (`ConcreteFunction(outputs=None)`): a tuple is structure, a leaf is `L`, a
+`SymbolicValue` uses its hook. A single leaf is named after the template, tuple leaves `{name}_0`,
+`{name}_1`, nested `{name}_0_1`. `output="y"` is shorthand for `sc.L("y")`.
 
 ### 4.4 Specialization key and instance names
 
-`SpecKey = tuple` over the *hole* leaves, in flat leaf order, of `(shape, dtype, pattern_digest|None)`,
-plus, in bare mode only, the nested skeleton. Anything that changes the concrete graph must be in the
-key; anything fixed by the declaration need not be.
+The key is the bound input declaration: its flat resolved types (shape, dtype, diff) and sparsity
+patterns, plus, in bare mode, the nested structure. Keying on resolved types rather than on the raw
+arguments means a symbolic and a numerical call that bind the same way share one instance.
 
-Instance name, deterministic and a valid C identifier (`utils/names.c_ident` must accept it unchanged):
+Instance names are deterministic valid C identifiers:
 
-- **No holes → the bare template name.** Every fully declared function keeps exactly today's C symbol,
-  so `tests/test_c_snapshot.py` and all benchmark/CasADi symbols are untouched.
-- Otherwise `"{name}__" + "_".join(tokens)` with one token per hole leaf: dims joined by `x` with
-  only the *hole* dims printed for a partial shape (`(NX, None)` bound to `(4, 7)` → `7`), `s` for a
-  scalar, `p{8 hex}` for a pattern hole (sha256 of shape, indptr, indices), and later a dtype suffix
-  if dtype holes arrive. Bare mode with any tuple argument appends `t{6 hex}` of the skeleton.
-- If the result exceeds 64 characters: `"{name}__h{12 hex}"` of the full key.
-- The template keeps `name -> key`; two keys producing one name raise (a bug in the scheme, not
-  something to paper over with counters). Creation-order suffixes (`f_1`, `f_2`) are forbidden: they
-  make C symbols and JIT cache entries depend on call order.
+- **No input holes → the template name.** Fully declared functions keep today's C symbols; the C
+  snapshots are the gate.
+- Otherwise `"{name}__" + "_".join(tokens)`, one token per hole leaf: the hole dimensions joined by
+  `x` (only the `None` dimensions of a partial shape: `(NX, None)` bound to `(4, 7)` gives `7`), `s`
+  for a scalar, then the dtype name when a dtype hole bound to something other than `float64`
+  (`sint64`). Bare mode appends `t{6 hex}` of the structure when any argument is a tuple. Tokens have
+  no `_`, so they cannot form `_grad_` and friends. No length fallback.
+- The template keeps `name -> key`; two keys giving one name raise. Creation-order suffixes are
+  forbidden.
+- Derived instances are named by the transform from the source instance (`cost__3_s_grad_f_x`);
+  with `name=` given, `{name}__{source tokens}`.
+- Digests use `hashlib` over canonical bytes (int64 `indptr`/`indices`), never `hash()`.
 
-Cross-template name clashes (two templates both called `f`) behave as today: lowering refuses two
-different Functions with one name in a graph; `name=` fixes it.
+`__` is reserved in C++; clang warns only under `-Wreserved-identifier`. Kept, documented.
+Lowering's name-clash refusal (`_check_function_names`) keys on `c_ident(name)`, since `f:_3` and
+`f__3` spell one C symbol today and die in the C compiler instead of with a clear error.
 
-### 4.5 Outputs
+### 4.5 Derivatives
 
-`output=` is optional. Omitted, the output is inferred: a single leaf is named **after the function**
-(so `sc.gradient(cost, wrt="x")` yields `grad_cost_x`), a tuple result names its leaves `out0, out1, …`
-(nested: `out0_1`). A declared output may have holes (`sc.L("y")`) as today; fixed output shapes are
-checked against the trace at instantiation (eagerly when the inputs are concrete). Verify with a test
-in `tests/codegen/test_name_clash.py` that an output named like its function is fine in both the C and
-the C++ header (`namespace f { … f … }`).
+- **Name arguments.** `sc.gradient(f, of, wrt)` stays. One positional string is `wrt`
+  (`sc.gradient(f, "x")`, mirroring the `Expr` form); `of` defaults when the function has one output,
+  `wrt` when it has one input leaf. Naming an output as `wrt` raises with both spellings.
+- **Over templates.** Given a concrete source, the wrappers build as today and return a
+  `ConcreteFunction`. Given a template, they return a derived template whose instance for a call is
+  `transform(source instance)`, keyed by the source instance: the seed and multiplier slots are
+  determined by the source instance and need no holes of their own. Name checks stay eager where the
+  names are declared; shape checks (scalar output for `gradient`) happen at instantiation. Nothing is
+  built until the derived template is called or instantiated.
+- **`custom_derivative`** lifts the same way; `jvp`/`vjp` rules may be templates and are instantiated
+  at the matching shapes.
 
-### 4.6 Transforms over templates (lifting)
+### 4.6 C and C++ names
 
-As in the playground: consumers that call need nothing; consumers that inspect need an instance.
+Parameter names become C names by default. `c_ident` reserves the C and C++ keywords (`new`,
+`default`, `this`, …) as it reserves the ABI's parameter names. A sparse output named like its
+function breaks the `.hpp` today (`_sparse_namespace` uses the raw name inside `namespace f`); it
+uses the output's buffer identifier instead. `tests/codegen/test_name_clash.py` covers a dense and a
+sparse self-named output in C and C++.
 
-- **Derivative wrappers** (`jacobian`, `gradient`, `hessian`, `sparse_jacobian`, `sparse_hessian`,
-  `forward`, `adjoint`, `lagrangian_hessian`, `sparse_lagrangian_hessian`): given a concrete source,
-  build as today and return `Function._wrap(result)`; given a template with holes, return a
-  `DerivedFunction` whose instances are `transform(source.instantiate(<source part of the key>))`.
-  Name checks (`of`/`wrt`) stay eager; shape-dependent checks (scalar output for `gradient`) move to
-  instantiation. Seed/multiplier slots are holes checked against the generated inputs (the
-  playground's `_Derived._build` check). Make `of` optional when the source has one output.
-- **`custom_derivative`**: lift the same way; `jvp`/`vjp` rules may themselves be templates and are
-  instantiated at the matching shapes.
-- **`vmap`, `scan`, `while_loop`**: `as_concrete(callee)`. A template with holes must be instantiated
-  explicitly (`f.instantiate(TensorType(...), ...)` or with example arguments). Inferring the callee's
-  shapes from `inputs`/`init`/`xs` is possible for `scan` and `while_loop` (carry shape = `init`
-  shape; params given) and is a follow-up, not v1. Typed `vmap` stays API-2.
-- **`sc.solver`** returns `Function._wrap(concrete)`, typed
-  `Function[[SV, SV, Expr, Expr, SP], [NV, NV, ndarray, ndarray, NP], tuple[...], tuple[...]]`.
-- **`sc.problem`** is out of scope; its body already takes `(vars, params)` as two parameters, so it
-  is consistent with the new convention. Templated problems are a later item.
+## 5. Phases and steps
 
-## 5. Phases (one PR each, in order)
+One commit per phase on `claude/function-templates`. Each phase:
 
-Each PR: `uv run pytest -n=auto`, `uv run ruff format`, `uv run ruff check`, `uv run ty check`,
-`uv run ty check --error-on-warning typing_playground`, a report in `internal/notes/` in the style of
-the tier reports, and the matching `todo.md` update. Never cite a branch commit hash.
+- `uv run pytest -n=auto`, `uv run ruff format`, `uv run ruff check`, `uv run ty check --error-on-warning`:
+  no new diagnostics against the 58 already there (49 in tracked notebooks and examples);
+- `uv run pytest typing_playground`;
+- the node-ID baseline regenerated whenever tests are added or renamed;
+- mutation checks on each new behavior (break it, see a test fail, restore);
+- the trivial-call timing A/B against the previous phase (`internal/notes/perf_2026_09_27_templates/`);
+- a short HTML report `internal/notes/templates_pN_report.html`, the API-1 entry in `todo.md` updated.
 
-### P0 — Prove the typing in the playground
+Never cite a branch commit hash. Colin's local `tiny_qp` example and its gallery test are left alone
+and deselected; after P1b-ii its solver call needs the five-argument form.
 
-- Port `typing_playground/{function,templates,trees}.py` to: `Function[**PS, **PN, SO, NO]`,
-  `function(*slots, output=)` with the 0..8 width ladder plus the bare overload
-  `function(fn: Callable[P, R]) -> Function[P, ..., R, Any]`, arity ladders for seeded transforms,
-  one template class with `is_concrete`/`concrete`.
-- `tests/test_typing.py`: `assert_type` for symbolic/numerical calls at arities 0, 1, 2, 8; expected
-  errors (`# ty: ignore[...]`) for wrong arity, mixed kinds, decorator/body arity mismatch, seed of the
-  wrong kind; `gradient`/`forward`/`lagrangian_hessian`/`solver` result types.
-- Run under the **pinned** ty (`uv run ty`, floor `ty>=0.0.75` in `pyproject.toml`); the probe in §8.1
-  passed on 0.0.84. If the floor fails, bump it in this PR.
-- Update the playground README: multi-parameter bodies are no longer deferred; say why (§2).
-- **Gate:** both playground checks green. Stop and report if ParamSpec pairs do not hold up; the
-  fallback is arity-specific classes `Function0..Function8`, which is uglier and must be discussed
-  before proceeding.
+### P1a: rename `Function` → `ConcreteFunction` (no behavior change)
 
-### P1a — Rename `Function` → `ConcreteFunction` (no behavior change)
+1. Word-boundary rename over tracked `src/` and `plugins/*/src` files; read the diff so prose meaning
+   "a function" and CasADi's `ca.Function` stay. Change the string at `ir/text.py:54`.
+2. `Function = ConcreteFunction` alias in `function/model.py`, `function/__init__.py`,
+   `scaly/__init__.py` (`test_import_boundaries.py` imports it from `model`).
+3. Gates: suite, C snapshots unchanged, import layering.
 
-- Rename the class in `function/model.py` and every `src/` and `plugins/*/src` reference (≈400 refs in
-  47 files; word-boundary rename, then read the diff: prose that means "a function" stays). Keep
-  `Function = ConcreteFunction` as a temporary alias in `function/__init__.py` and `scaly/__init__.py`
-  so tests are untouched in this PR.
-- **Gate:** suite green, C snapshots unchanged, import-layer test green.
+### P1b-i: the decorator signature, one slot
 
-### P1b — Parameter lists and the new decorator signature (still no holes on inputs)
+1. `function(*slots, output, name=None)`: exactly one slot for now; the arity check against the body's
+   positional parameters with the migration hint; refuse defaults, `*args`, `**kwargs`, keyword-only.
+2. Codemod (ast positions, UTF-8 byte offsets): `sc.function(IN, OUT, ...)` → `sc.function(IN,
+   output=OUT, ...)` over tracked `.py`, `.ipynb` code cells and `.md` python fences. 306 sites in 85
+   files. Kept in the report, not committed.
+3. Hand edits: the bash heredoc in `docs/guide/installation.md`, `def solve_with_ordering(K, m=m)` in
+   `sparse_fem_topology.ipynb`, the two direct `sc.Function(...)` constructions in
+   `examples/qp_solvers/generated_piqp.py`, the stale constructor in `docs/how_it_works/ir.md`.
+4. Tests: the arity refusal and its hint, refused parameter kinds. Typing: `output=` keyword.
 
-- `_Params` tree; `ConcreteFunction.__init__` splats; `__call__`/`symbolic_call`/`numerical_call`
-  variadic with keyword binding; `_TRACING` context variable and zero-argument dispatch.
-- `ConcreteFunction` generic over `[**PS, **PN, SO, NO]`; retype `api.py` wrappers (ladders for the
-  seeded ones), `solvers/{solver,qp,nlp,model}.py`.
-- `function(*slots, output=, name=)` in `api.py` with the arity check and migration hint (§2). In this
-  PR it still requires fully shaped input slots and returns the concrete object (the template arrives
-  in P2); unnamed `L` in a slot takes the parameter name.
-- Derived conventions: `forward`/`adjoint` → `[*source slots, seed]`; `lagrangian_hessian`/
-  `sparse_lagrangian_hessian` → `[*source slots, lam]` with `lam` shaped as the output tree; solver →
-  five slots. Update internal callers: `linalg/sparse_factor.py:70`, `solvers/ipm/kkt.py:{111,272}`,
-  `solvers/qp.py:222`, `solvers/nlp.py:{107,155,192}`, `solvers/model.py:127`.
-- **Codemod** (a throwaway script, kept in the PR report, not committed): with `ast` positions, rewrite
-  every `sc.function(IN, OUT, ...)`/`@function(IN, OUT, ...)` to `sc.function(IN, output=OUT, ...)`.
-  Bodies and call sites stay as they are (one group slot == old convention). Then fix the ≈125 derived
-  call sites by hand (`fwd(((x, p), seed))` → `fwd((x, p), seed)`, `solver((…))` → `solver(…)`),
-  including the plugin tests (`plugins/scaly-{ipopt,sqp,piqp}/tests`). Docs code blocks too (20 in
-  `docs/`, plus `README.md`, `examples/README.md`).
-- **Gates:** `tests/test_c_snapshot.py` byte-identical (the flat signature did not change); the full
-  suite; `tests/typing/test_arity.py` under `ty check --error-on-warning` extended with the arity-0/2/8
-  cases; the trivial-call timing within noise of C-100's.
+### P1b-ii: parameter lists
 
-### P2 — Templates: holes, instances, `is_concrete`
+1. `tree.py`: `params()`; unnamed leaves and `named(base)`; `as_tree(spec)` for shapes, names and
+   `TensorType`s in slots, `output=` and `G`.
+2. `model.py`: parameter-list input trees; splatting trace; `_from_exprs` convention (§4.1); variadic
+   `__call__`/`symbolic_call`/`numerical_call` with the fast path; keyword binding; zero-argument
+   calls numerical; `_jit` cached; `_with_trees` takes a parameter list.
+3. Typing: `ConcreteFunction[**PS, **PN, SO, NO]`; the 0..8 decorator ladder with spec slots and
+   `TypeVar` defaults plus the catch-all; `G` with spec parts; seeded-derivative ladders; solver
+   type with five parameters.
+4. `api.py`: seeded conventions (§4.1). `solvers/model.py`: five-slot `descriptor_function`, used by
+   `qp.py`, `nlp.py`, `plugins/scaly-sqp/src/scaly_sqp/external.py`. `solvers/qp.py`'s zero-parameter
+   probe calls `numerical_call` explicitly.
+5. `utils/names.py`: C and C++ keywords reserved.
+6. Migration: the 118 derived and solver call sites, the 12 tree-built and zero-input calls, the
+   four-argument `Function[...]` annotations (`tests/typing`, `benchmarks/problems/npmpc`), the message
+   test at `tests/solvers/test_codegen.py:34`, and the docs prose for the changed conventions
+   (`guide/derivatives.md`, `guide/solvers.md`, `guide/getting_started.md`, `how_it_works/solvers.md`,
+   `README.md`, `docs/index.md`).
+7. Tests: multi-slot bodies, width 0 and 8, keywords, arity errors, unnamed-leaf naming, spec slots,
+   seeded and solver conventions, reserved keywords. Typing: arities 0, 1, 2, 8; wrong arity; mixed
+   kinds; decorator/body mismatch; keywords refused statically; zero-argument `symbolic_call`;
+   `forward`/`lagrangian_hessian`/`solver` result types.
+8. Extra gates: `uv run benchmarks/run.py smoke`; the example scripts that pytest does not run.
 
-- `function/template.py`: `Function` (template), `SpecKey`, mangling, `as_concrete`, `NotConcrete`,
-  `DerivedFunction`. `sc.Function` now names the template; drop the P1a alias. `Function._from_exprs`
-  and `Function._wrap` as in §3.
-- `tree.py`: optional `L` arguments, `ShapeHole`, `None` dims, `has_holes`, `bind`.
-- Decorator returns a `Function` always; eager instantiation when no holes.
-- `as_concrete` in every inspecting consumer (§3 list; grep `isinstance(.*, Function)` — 13 sites in
-  `src/` — and review each: CALL-node callees are always `ConcreteFunction`).
-- `codegen/aot.py`: `render_c_module`/`write_module`/CLI accept a concrete `Function`; a template with
-  holes is refused with its instance list and the `instantiate` hint.
-- Tests (new `tests/function/test_template.py`, ported from `typing_playground/tests/test_templates.py`
-  but *compiling and running*): instantiate-and-cache; distinct shapes give distinct instances and
-  distinct C symbols; partial dims checked; fully declared is eager and keeps the bare name; symbolic
-  instantiation inside another trace (the playground's `caller`); cache reuse across calls does not
-  retrace (count body invocations); JIT cache hit on a second process for the same instance name;
-  `vmap`/`scan` refuse a holed template with the hint and accept `instantiate(...)`; `NotConcrete`
-  messages; name-collision guard (force two keys to one name with a monkeypatched mangler); dtype
-  mismatch on a symbolic call is refused (the `_flat_symbolic_call` fix); lowering of a graph calling
-  two instances of one template (two procedures, distinct names).
-- **Gates:** C snapshots unchanged; suite; ty.
+### P2: templates
 
-### P3 — Bare mode and inferred outputs
+1. `model.py`: `Function` base (template) and `ConcreteFunction(Function)`; `NotConcrete`;
+   `is_concrete`, `concrete`, `instances`, `instantiate`; the decorator returns a `ConcreteFunction`
+   when the inputs have no holes; drop the alias; export `sc.ConcreteFunction`, `sc.NotConcrete`.
+2. `tree.py`: `Hole`, `None` dimensions, `sc.L()`, `dtype=`/`diff=`, `has_holes`, `bind`.
+3. Keys, mangling and the collision guard (§4.4).
+4. Consumers (§3): `.concrete` at every inspecting entry; `while_loop` instantiation; the CLI treats
+   any `Function` attribute as a function (a `ConcreteFunction` is not a factory) and refuses a holed
+   template with the "export `f.instantiate(...)`" hint; `_check_function_names` on `c_ident`;
+   `_flat_symbolic_call` dtype check.
+5. `docs/dev/codebase.md` (package map line), `docs/api/core.md`, `test_import_boundaries.py` pins.
+6. Tests (`tests/function/test_template.py`): instantiate and cache; distinct shapes give distinct
+   instances and C symbols; partial dims checked; fully declared is concrete and keeps the bare name;
+   symbolic instantiation inside another trace; one trace per instance (count body calls);
+   `f(a) is f(a)` and identity hashing; JIT cache hit for the same instance in a fresh process;
+   `vmap`/`scan` refuse a holed template with the hint and accept `instantiate(...)`; `while_loop`
+   instantiates; `NotConcrete` messages; the collision guard (monkeypatched mangler); the dtype check;
+   two instances lower to two procedures; the CLI cases.
 
-- `@sc.function` / `@sc.function()`; skeleton-keyed instances; the leaf rules of §4.3; output
-  inference with default names (§4.5); single trace via `ConcreteFunction(outputs=None)`.
-- Tests: the user's example (`def f(A, B)` called with `(4,4)`/`(4,2)` and with `(3,3)`/`(3,1)`),
-  scalars and lists as leaves, tuple arguments as structure, tuple returns, body traced exactly once
-  per instance, differentiation of a bare template by parameter name (`sc.gradient(f, wrt="x")`), an
-  output named after its function in C and C++ (§4.5).
+### P3: bare mode and inferred outputs
 
-### P4 — Lifted transforms
+1. The bare forms (§4.3), including `output=` with zero slots.
+2. Structure inference from arguments, the `SymbolicValue` hook, the refusals, dtype from `Expr`.
+3. Output inference in one trace with default names; `output="y"`.
+4. The sparse namespace fix and `test_name_clash` cases (§4.6).
+5. Typing: bare overloads (`_Bare` protocol), output-omitted overloads per width (`_Inferred`
+   protocol, `NO = Any`).
+6. Tests: `def f(A, B)` called with `(4,4)/(4,2)` and `(3,3)/(3,1)`; scalar forms share an instance;
+   tuples as structure; tuple returns; traced once; the refusals; a `SparseMatrix` argument.
 
-- All wrappers in `api.py` accept templates via `DerivedFunction`; `of` optional for one output;
-  `custom_derivative` over templates.
-- Tests: the playground's `test_gradient_of_a_template_is_a_template`,
-  `test_seeded_transforms_extend_the_tree_with_holes`, `test_scalar_checks_move_to_instantiation`,
-  compiled and compared against the concrete-source result and a finite difference; instance names
-  (`cost__3_s_grad_cost_x`); deriving builds nothing until called.
+### P4: lifted transforms
 
-### P5 — Sparse pattern holes
+1. Derived templates (§4.5) for all nine wrappers; `of`/`wrt` defaults and the one-string form.
+2. `custom_derivative` over templates.
+3. Tests: gradient of a template is a template; seeded transforms append the right slot; scalar
+   checks at instantiation; compiled results against the concrete source and finite differences;
+   instance names with and without `name=`; nothing built until called; `sc.gradient(f, "x")` on a
+   bare template.
 
-- `sc.S()` without a pattern on inputs; pattern binding from `SparseMatrix`/SciPy arguments; `p{hex}`
-  token; the existing exact-pattern refusal applies after binding.
-- Tests: two patterns → two instances; same pattern with different explicit-zero layout is a
-  different pattern (as `S` already treats it); a structural-sparsity derivative over a pattern-hole
-  template.
+### P5: sparse pattern holes (deferred)
 
-### P6 — Documentation, examples, cleanup
+No test, example or benchmark needs a pattern-polymorphic input. `sc.S()` without a pattern, pattern
+binding from `SparseMatrix` and SciPy arguments and the `p{8 hex}` token become a todo item.
 
-- Rewrite `docs/guide/functions.md` (*Declare a function*, *Symbolic and numerical calls*, *A single
-  leaf is unpacked*, *Grouping and the C signature*, *Compose functions*) around the new decorator,
-  with a new *Templates and instances* section; update `getting_started.md`, `sparsity.md`,
-  `solvers.md`, `index.md`, `how_it_works/{architecture,ir}.md`, `README.md`, `docs/dev/codebase.md`
-  (package map, import-layer table, *Where to add things*).
-- Convert `examples/` to idiomatic multi-parameter bodies (bare mode where nothing needs declaring);
-  API-4 (npmpc `FunctionTemplate` example) can then be closed.
-- Remove the "Function templates" section of `refactorings.md`; tick API-1 in `todo.md`; update the
-  API-3 entry (dispatch solved; the AD zero-input inlining question remains); point the playground
-  README's open items here.
-- Optional follow-up: with `_from_exprs` results callable as `fn.symbolic_call(*args)` including zero
-  arguments, `ad/forward.py` no longer needs the sanctioned `_flat_symbolic_call` seam; retiring it
-  (and its entry in `test_flat_call_seams_stay_inside_their_sanctioned_modules`) is its own PR.
+### P6: documentation, examples, cleanup
+
+1. Rewrite `docs/guide/functions.md` from simplest to most declared: a first function (bare), symbolic
+   and numerical calls, one body many shapes, declaring shapes, partial declarations, names, structured
+   arguments and results, dtype and differentiability, sparse matrices, differentiating, composing,
+   loop callees, ahead of time, a declaration reference table.
+2. `getting_started.md`, `sparsity.md`, `solvers.md`, `index.md`, `installation.md`,
+   `how_it_works/{architecture,ir}.md`, `README.md`, `docs/dev/codebase.md`, `docs/api/*`,
+   `examples/README.md`.
+3. Examples to idiomatic multi-parameter bodies (shape slots; bare where nothing needs declaring),
+   keeping every name a CasADi comparison or benchmark depends on.
+4. Playground: the README records that multi-parameter bodies and templates landed and why (§2); its
+   sketches stay the record of the single-tree design.
+5. `refactorings.md` loses its "Function templates" section; `todo.md`: API-1 ticked, API-3 updated
+   (dispatch settled), API-4 unblocked, new items for P5, static arguments and `scan` inference.
 
 ## 6. Risks and how each is caught
 
-1. **Call overhead.** Template dispatch in front of every numerical call. Concrete fast path skips key
-   computation; measure the trivial call as C-100 did and record the number in the P1b/P2 reports.
-2. **C symbol drift.** Any change to fully declared names moves symbols in users' builds. Gate:
-   `tests/test_c_snapshot.py` byte-identical through P1a–P2.
-3. **Instance explosion.** Bare templates called with many shapes compile many libraries. Expose
-   `f.instances`; log (debug level) each new instantiation with its name; no cap in v1.
-4. **Zero-argument dispatch** now depends on a context variable. Test a zero-argument function called
-   inside a trace, outside, and inside a nested trace; test that an exception in a body resets the
-   depth (use a `ContextVar` token and `try/finally`).
-5. **ty regressions.** ParamSpec support in ty is recent; the P0 gate uses `--error-on-warning` so an
-   expected error that disappears fails the check.
-6. **Codemod misses.** After P1b, `rg "sc\.function\([^)]*\)\s*$"`-style checks are insufficient; the
-   decorator's arity check is the real net, since every miss fails at import.
+1. **Call overhead.** Fully declared functions are `ConcreteFunction`s: no template frame. Keywords
+   are bound only when present. A/B timing per phase.
+2. **C symbol drift.** `tests/test_c_snapshot.py` byte-identical through every phase.
+3. **Instance explosion.** `f.instances` is public; each instantiation logs its name at debug level.
+4. **A template leaking into the compiler.** Every inspecting entry calls `.concrete`; `src/` builds
+   only from concrete sources.
+5. **ty regressions.** `--error-on-warning` fails on an expected error that disappears.
+6. **Codemod misses.** The decorator's arity check fails every miss at import; the suite, the smoke
+   benchmark run and the unexercised example scripts cover the rest.
 
-## 7. Files touched (checklist)
+## 7. Files touched
 
-`src/scaly/function/{model,tree,api,sugar,factory,__init__}.py`, new `function/template.py`;
-`src/scaly/__init__.py`; `src/scaly/solvers/{solver,qp,nlp,model,_oracle}.py`;
-`src/scaly/linalg/sparse_factor.py`; `src/scaly/solvers/ipm/kkt.py`;
-`src/scaly/codegen/aot.py`; `tests/test_import_layering.py` (`IMPORT_LAYERS`),
-`tests/test_import_boundaries.py`, `tests/typing/test_arity.py`, `tests/function/*`,
-`tests/codegen/test_name_clash.py`; every `@sc.function` site in `tests/`, `examples/`, `benchmarks/`,
-`plugins/*/tests`, `typing_playground/tests/definitions.py`, `docs/`; `typing_playground/*`;
-`internal/{todo.md,notes/refactorings.md}`.
+`src/scaly/function/{model,tree,api,sugar,factory,__init__}.py`; `src/scaly/__init__.py`;
+`src/scaly/solvers/{solver,qp,nlp,model,problem}.py`; `src/scaly/linalg/{sparse,sparse_factor}.py`;
+`src/scaly/solvers/ipm/kkt.py`; `src/scaly/passes/lowering.py`; `src/scaly/codegen/{aot,c,cpp}.py`;
+`src/scaly/ir/text.py`; `src/scaly/viz/{graph,recording}.py`; `src/scaly/utils/names.py`;
+`plugins/*/src` (rename, `scaly_sqp/external.py`); `tests/test_import_boundaries.py`,
+`tests/typing/test_arity.py`, `tests/function/*`, `tests/codegen/test_name_clash.py`; every
+`sc.function` site in `tests/`, `examples/` (with notebooks), `benchmarks/`, `plugins/*/tests`,
+`docs/`; `typing_playground/README.md`; `internal/{todo.md,notes/refactorings.md}`.
 
 ## 8. Evidence
 
-### 8.1 ty probe (ty 0.0.84, `--python-version 3.12`)
+- **Typing** (probes under the session scratchpad, pinned ty 0.0.77, identical on 0.0.75 and 0.0.84):
+  typed and rejected calls at arities 0, 1, 2, 8; the decorator ladder with an arity mismatch
+  rejected on the decorator's first line; `output: Tree | None = None` does *not* work (SO/NO solve to
+  Unknown) and a separate output-omitted overload does; bare `@function`/`@function()` beside the
+  ladder; seeded ladders appending `Expr` or the source's output type; `gradient` passing `PS, PN`
+  through; `ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO])`; `TypeVar` defaults for
+  spec slots. Two `TypeVarTuple`s on one class are refused, as v1 claimed.
+- **Hot path** (M3 Max, Python 3.14): `f(x)` 2.95-3.07 µs (C-100: 2.9). `Signature.bind` on every
+  call +0.95 µs; bound only for keywords +0.03 µs. `_jit()`'s deferred import 0.32 µs per call.
+- **JIT key**: sha256 over the name, the rendered C and the flags. The rename touches neither;
+  deterministic instance names give cross-process hits.
+- **Lowering**: procedures keyed by name, invocations by `(name, args)`; two instances lower to two
+  procedures, one instance called twice to one. The template cache must return the same object:
+  CALL-node interning and AD's caches are identity-keyed.
+- **Migration**: 306 decorator sites, all two-positional, all bodies one parameter but one; the
+  codemod dry run made 306 insertions, re-parsed everything, and round-tripped every notebook.
 
-```python
-class Function[**PS, **PN, SO, NO]:
-  @overload
-  def __call__(self, *args: PN.args, **kwargs: PN.kwargs) -> NO: ...
-  @overload
-  def __call__(self, *args: PS.args, **kwargs: PS.kwargs) -> SO: ...
+## 9. Deferred
 
-@overload
-def function[SA, NA, SB, NB, SO, NO](a: Tree[SA, NA], b: Tree[SB, NB], /, *, output: Tree[SO, NO]
-) -> Callable[[Callable[[SA, SB], SO]], Function[[SA, SB], [NA, NB], SO, NO]]: ...
+- dtype holes on numerical arguments (float32 instances); static arguments (defaults as `static=`,
+  JAX's `static_argnums`); the keyword declaration form `@sc.function(A=(NX, NX))`; shape inference for
+  `scan`/`vmap` callees; templated `sc.problem`; sparse pattern holes (P5); a solver call defaulting
+  the multipliers to zero.
 
-@function(L(), L(), output=L())
-def f(x: Expr, y: Expr) -> Expr: ...
-assert_type(f(Buf(), Buf()), Buf)      # ok
-assert_type(f(Expr(), Expr()), Expr)   # ok
-f(Buf())                               # error: no matching overload   (expected)
-f(Expr(), Buf())                       # error: no matching overload   (expected)
+## 10. Review round (2026-09-27): what changed from v1
 
-@function(L(), L(), output=L())
-def g(x: Expr) -> Expr: ...            # error: argument is incorrect  (expected: arity)
-
-# append a seed: arity ladder works, Concatenate[Expr, PS] (prepend) works too
-@overload
-def fwd[SA, NA, SB, NB, SO, NO](fn: Function[[SA, SB], [NA, NB], SO, NO]
-) -> Function[[SA, SB, Expr], [NA, NB, Buf], Expr, Buf]: ...
-
-def gradient[**PS, **PN](fn: Function[PS, PN, Any, Any], wrt: str) -> Function[PS, PN, Expr, Buf]: ...
-# gradient(one)(Buf()) is Buf, (Expr()) is Expr, (Buf(), Buf()) rejected
-
-# zero slots: function(*, output=L()) -> Function[[], [], SO, NO]; zero() is Buf
-# bare: function(fn: Callable[P, R]) -> Function[P, ..., R, Any]; calls resolve to Any (numerical
-# overload first, PN = ...), i.e. untyped, as the playground's bare mode already accepts.
-```
-
-### 8.2 Why this is compatible with the existing design
-
-The playground established that grouping is not signature, that `Ellipsis` decls and `with_types`
-already carry output holes, and that templates are purely additive over concrete Functions. Of its
-deferred items this plan takes up exactly one, multi-parameter bodies, on the evidence of §8.1: its
-objection was that a second calling convention forks every call surface, and with the single-tree
-convention subsumed as the one-slot case there is only one convention.
-
-## 9. Open decisions (defaults above; change before P2 if wanted)
-
-- **dtype holes**: bind dtype from the argument (float32 → separate instance) instead of coercing.
-  Default: no. Adds a name token and a coercion-versus-specialization rule for Python scalars.
-- **Static arguments**: parameters with defaults (or a `static=` marker) taking Python values (a
-  horizon `N`, a callable, a flag) that select an instance and are part of the key, as JAX's
-  `static_argnums`. Natural next step; v1 refuses defaults so the syntax stays free.
-- **Keyword declaration form** `@sc.function(A=(NX, NX))`: declare only what is constrained, by
-  parameter name. Cannot be typed on the numerical side; could be added as untyped sugar later.
-- **Default output names** for tuple returns (`out0…` versus `{name}_0…`).
-- **Shape inference for `scan`/`while_loop` callees** from `init`/`xs`/`params` instead of explicit
-  `instantiate`.
-- **Templated `sc.problem`** (holes in `vars`/`params`).
+- **`ConcreteFunction` subclasses `Function`** (frontend, consumers, migration). v1's unrelated
+  classes needed `_wrap`, a delegation table missing a dozen attributes read outside `src/`
+  (`descriptor` ×55, `_flat_numerical_call` ×111, `_compiled` including a write), `as_concrete` at
+  sites v1 did not list, and an extra frame on every call. `template.py` is gone (cycle).
+- **No `_Params` class, no `SpecKey` type, no `DerivedFunction` subclass, no 64-character hash
+  fallback**: `_G(public=False)`, a resolved-type key, a transform on the template, readable names.
+- **Zero-argument calls are numerical**; no `_TRACING` context variable. It disagreed with the static
+  type and missed `sc.problem`'s traces.
+- **`is_concrete` means no *input* holes.** Output holes are ordinary (184 sites, both C snapshot
+  functions).
+- **Keyword binding only when keywords are present** (measured +0.95 µs otherwise).
+- **Tree specs** (shapes and names as slots, `output="y"`, `G("a", "b")`), **`wrt` as the one
+  positional string**, **`wrt`/`of` defaults**, **bare inputs with a declared `output=`**, **default
+  tuple output names `{name}_i`** (one naming rule with inputs), **dtype from `Expr` arguments** for
+  undeclared leaves, **`while_loop` instantiates its callees** (API review).
+- **P1b split in two** (P1b-i mechanical, P1b-ii the convention change); **P5 deferred**; **no P0
+  port**: the typing gate was run by the review on the pinned ty. Docs prose for the changed
+  conventions moves to P1b-ii.
+- **Missed sites added**: tree-built calls, zero-input `fn(())`, `forward`/`adjoint`/Lagrangian
+  wrappers (no `isinstance`, so v1's grep missed them), three more codegen entry points, viz, the CLI
+  factory rule, `nlp.py`'s derivative results, `sparse_factor.py`'s `custom_derivative`, the sqp
+  plugin's `external_nlp`, the sparse C++ namespace, C++ keywords in `c_ident`.

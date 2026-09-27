@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 
 if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
-  from scaly.function import Function
+  from scaly.function import ConcreteFunction
 
 SOLVER_PLUGIN_PROTOCOL_VERSION = 7
 ENTRY_POINT_GROUP = "scaly.solvers"
@@ -53,7 +53,7 @@ class SolverBackend(Protocol):
 
   def include_dir(self) -> Path: ...
 
-  def render_wrapper(self, fun: Function, ctx: SolverWrapperCtx) -> list[str]:
+  def render_wrapper(self, fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
     """Emit the C wrapper for one solver ``Function`` (see docs/dev/solver_plugins.md).
 
     Must define ``static void <ctx.raw_symbol>(...)`` with the descriptor's

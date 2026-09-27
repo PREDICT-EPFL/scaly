@@ -14,7 +14,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, common_lowering
 from ..ir.types import TensorType, dtypes
-from .model import Function
+from .model import ConcreteFunction
 
 
 def vmap(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
@@ -30,7 +30,7 @@ def vmap(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
   or rank-1); each iteration reads a flat slice of ``formal.size`` values and the produced node has
   shape ``(length * callee.outputs[output].size,)``, with iteration outputs concatenated flat.
   """
-  if not isinstance(callee, Function):
+  if not isinstance(callee, ConcreteFunction):
     raise TypeError(f"vmap callee must be an scaly Function, got {type(callee).__name__}")
   length = int(length)
   if length < 0:
@@ -109,7 +109,7 @@ def scan(body: Any, init: Any, xs: Sequence[tuple[Any, int, int]] = (), *, lengt
   The number of steps is fixed when the graph is built, which is what makes the code size and the
   derivative's workspace (reverse mode stores the carry at every step) known ahead of time.
   """
-  if not isinstance(body, Function):
+  if not isinstance(body, ConcreteFunction):
     raise TypeError(f"scan body must be an scaly Function, got {type(body).__name__}")
   if index:
     _check_index_input(body, "scan")
@@ -144,14 +144,14 @@ def step_numbers(length: int) -> Expr:
   return Expr.const(np.arange(int(length), dtype=np.int64), dtype=dtypes.int64)
 
 
-def _check_index_input(body: Function, what: str) -> None:
+def _check_index_input(body: ConcreteFunction, what: str) -> None:
   if len(body.inputs) < 2 or body.inputs[1].shape != () or body.inputs[1].type.dtype != dtypes.int64:
     got = f"{body.inputs[1].type.dtype}{body.inputs[1].shape}" if len(body.inputs) > 1 else "nothing"
     raise ValueError(f"{what} with index=True needs an int64 scalar as the body's second input, got {got}")
 
 
 def _scan_node(
-  body: Function, init: Expr, outers: tuple[Expr, ...], starts: tuple[int, ...], strides: tuple[int, ...], length: int, output: int
+  body: ConcreteFunction, init: Expr, outers: tuple[Expr, ...], starts: tuple[int, ...], strides: tuple[int, ...], length: int, output: int
 ) -> Expr:
   """One output of a scan: the final carry (0), a stacked output (1..), or with ``output=-1`` the carry
   entering every step, stacked, which reverse mode reads backwards. A negative stride walks backwards."""
@@ -202,7 +202,7 @@ def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int, index: bool = 
   With ``index=True`` the body takes the step number as a second input, an ``int64`` scalar
   counting from zero; the condition does not.
   """
-  if not isinstance(cond, Function) or not isinstance(body, Function):
+  if not isinstance(cond, ConcreteFunction) or not isinstance(body, ConcreteFunction):
     raise TypeError("while_loop cond and body must be scaly Functions")
   init = as_expr(init)
   params = tuple(as_expr(param) for param in params)
@@ -232,7 +232,9 @@ def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int, index: bool = 
   return _while_node(cond, body, init, max_iter, 0, params, index), _while_node(cond, body, init, max_iter, 1, params, index)
 
 
-def _while_node(cond: Function, body: Function, init: Expr, max_iter: int, output: int, params: Sequence[Expr] = (), index: bool = False) -> Expr:
+def _while_node(
+  cond: ConcreteFunction, body: ConcreteFunction, init: Expr, max_iter: int, output: int, params: Sequence[Expr] = (), index: bool = False
+) -> Expr:
   """One output of a while loop: the carry (0), the step count (1), or with ``output=-1`` the carry
   entering each of the ``max_iter`` possible steps, stacked; slots past the last step taken hold the
   final carry. Reverse mode reads the last one. With ``index`` the body's second input is the step
@@ -256,7 +258,7 @@ def _while_node(cond: Function, body: Function, init: Expr, max_iter: int, outpu
   )
 
 
-def while_parts(expr: Expr) -> tuple[Function, Function, Expr, tuple[Expr, ...], int, bool]:
+def while_parts(expr: Expr) -> tuple[ConcreteFunction, ConcreteFunction, Expr, tuple[Expr, ...], int, bool]:
   """``(cond, body, init, params, max_iter, index)`` of a while-loop node."""
   return (
     expr.attrs["cond"],
@@ -268,7 +270,7 @@ def while_parts(expr: Expr) -> tuple[Function, Function, Expr, tuple[Expr, ...],
   )
 
 
-def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: Any = None) -> Function:
+def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: Any = None) -> ConcreteFunction:
   """A copy of ``fn`` whose derivatives come from the given Functions instead of from its body.
 
   ``jvp`` takes ``(*inputs, *input_tangents)`` and returns one tangent per output. ``vjp`` takes
@@ -285,7 +287,7 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: An
   rule's author usually knows the real one. A copy keeps its source's pattern unless it is given
   new rules without one.
   """
-  if not isinstance(fn, Function):
+  if not isinstance(fn, ConcreteFunction):
     raise TypeError(f"custom_derivative needs a scaly Function, got {type(fn).__name__}")
   shapes_in = [e.shape for e in fn.inputs]
   shapes_out = [e.shape for e in fn.outputs]
@@ -295,7 +297,7 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: An
   ):
     if rule is None:
       continue
-    if not isinstance(rule, Function):
+    if not isinstance(rule, ConcreteFunction):
       raise TypeError(f"custom {label} must be a scaly Function")
     got_in, got_out = [e.shape for e in rule.inputs], [e.shape for e in rule.outputs]
     if got_in != takes or got_out != gives:

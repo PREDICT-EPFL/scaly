@@ -27,14 +27,14 @@ from typing import TYPE_CHECKING
 
 from scaly.codegen.abi import c_ident
 from scaly.ir.expr import callees_of, topo
-from scaly.function import Function
+from scaly.function import ConcreteFunction
 from scaly.solvers.graph import external_oracles, is_solver_function, solver_backends_used, solver_callees, solver_descriptor
 
 if TYPE_CHECKING:
   from scaly.solvers.model import ExternalOracle
 
 
-def _raw_symbol(fun: Function) -> str:
+def _raw_symbol(fun: ConcreteFunction) -> str:
   return f"{c_ident(fun.name)}_raw"
 
 
@@ -53,24 +53,24 @@ class SolverWrapperCtx:
   raw_symbol: str
   stats_symbol: str
 
-  def raw_symbol_of(self, fun: Function | ExternalOracle) -> str:
+  def raw_symbol_of(self, fun: ConcreteFunction | ExternalOracle) -> str:
     from scaly.solvers.model import ExternalOracle
 
     return fun.raw_symbol if isinstance(fun, ExternalOracle) else _raw_symbol(fun)
 
 
-def solver_includes(fun: Function) -> list[str]:
+def solver_includes(fun: ConcreteFunction) -> list[str]:
   from scaly.solvers.registry import get_backend
 
   return [f'#include "{get_backend(name).header}"' for name in solver_backends_used(fun)]
 
 
-def solver_stats_symbols(fun: Function) -> tuple[str, ...]:
+def solver_stats_symbols(fun: ConcreteFunction) -> tuple[str, ...]:
   """C identifiers for every solver wrapper reachable from ``fun``."""
-  found: dict[str, Function] = {}
+  found: dict[str, ConcreteFunction] = {}
   seen: set[int] = set()
 
-  def visit(fn: Function) -> None:
+  def visit(fn: ConcreteFunction) -> None:
     if id(fn) in seen:
       return
     seen.add(id(fn))
@@ -95,7 +95,7 @@ def solver_stats_symbols(fun: Function) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
-def render_solver_raw(fun: Function, *, include_external_sources: bool = True) -> list[str]:
+def render_solver_raw(fun: ConcreteFunction, *, include_external_sources: bool = True) -> list[str]:
   """Frame a plugin-rendered wrapper body with the scaly-owned stats storage
   and the exported ``<symbol>_stats`` accessor. The body itself comes from the
   backend's ``render_wrapper`` hook."""

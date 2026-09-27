@@ -7,7 +7,7 @@ from typing import Any, cast
 import numpy as np
 
 from ..ad.sparse import SparseJacobian, sparse_hessian
-from ..function import Function
+from ..function import ConcreteFunction
 from ..function.api import gradient, sparse_jacobian
 from ..function.tree import G, L, Tree
 from ..ir.expr import Expr, ExprOp, concat, substitute
@@ -98,7 +98,7 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
   else:
     base_output_tree = G(L("f", f.type), L("g", g.type))
     base_outputs = (f, g)
-  base = Function._from_exprs(
+  base = ConcreteFunction._from_exprs(
     f"{problem.name}_base",
     (x, *problem._param_symbols),
     base_outputs,
@@ -130,7 +130,7 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
     assert l_ineq is not None and u_ineq is not None
     bound_outputs = (x_lb, x_ub, l_ineq, u_ineq)
     bound_names = ("x_lb", "x_ub", "l_ineq", "u_ineq")
-  bounds = Function._from_exprs(
+  bounds = ConcreteFunction._from_exprs(
     f"{problem.name}_bounds",
     problem._param_symbols,
     bound_outputs,
@@ -165,7 +165,7 @@ def build_nlp[SV, NV, SP, NP](
   *,
   name: str,
   options: dict[str, str | int | float] | None,
-) -> Function[
+) -> ConcreteFunction[
   tuple[SV, SV, Expr, Expr, SP],
   tuple[NV, NV, np.ndarray, np.ndarray, NP],
   tuple[SV, SV, Expr, Expr],
@@ -176,12 +176,12 @@ def build_nlp[SV, NV, SP, NP](
   x = cast(Expr, cached["x"])
   triangle = backend.hess_triangle
   hess_key = f"hess:{triangle}"
-  hess_fn = cast(Function | None, problem._cache.get(hess_key))
+  hess_fn = cast(ConcreteFunction | None, problem._cache.get(hess_key))
   if hess_fn is None:
     hess_full = cast(SparseJacobian, cached["hess_full"])
     hess = hess_full.triangle(triangle)
     hess_name = f"sphess_gamma_{x.name}_{x.name}"
-    hess_fn = Function._from_exprs(
+    hess_fn = ConcreteFunction._from_exprs(
       f"{problem.name}_hess_{triangle}",
       cast(tuple[Expr, ...], cached["hess_inputs"]),
       (hess.values,),
@@ -226,11 +226,11 @@ def build_nlp[SV, NV, SP, NP](
     output_signature=output_signature,
     param_names=problem.params.names,
     n_var_blocks=problem.vars.size,
-    base=cast(Function, cached["base"]),
-    grad=cast(Function, cached["grad"]),
-    jac=cast(Function | None, cached["jac"]),
+    base=cast(ConcreteFunction, cached["base"]),
+    grad=cast(ConcreteFunction, cached["grad"]),
+    jac=cast(ConcreteFunction | None, cached["jac"]),
     hess=hess_fn,
-    bounds=cast(Function, cached["bounds"]),
+    bounds=cast(ConcreteFunction, cached["bounds"]),
     jac_sparsity=cast(SparsityType, cached["jac_sparsity"]),
     hess_sparsity=hess_sparsity,
     options=tuple(sorted(resolved_options.items())),

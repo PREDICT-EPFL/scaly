@@ -38,7 +38,7 @@ from ..ir.expr import (
   callees_of,
   topo,
 )
-from ..function import Function
+from ..function import ConcreteFunction
 from .arith import constant
 from .program import ProgramObserver, optimize_program
 from ..ir.program import ProgramNode, ProgramOp, RangeKind
@@ -109,10 +109,10 @@ def lowers(*ops: ExprOp) -> Callable[[LowerRule], LowerRule]:
   return deco
 
 
-ExprObserver = Callable[[str, Function], None]
+ExprObserver = Callable[[str, ConcreteFunction], None]
 
 
-def lower_function(fun: Function, observe: ProgramObserver | None = None, observe_expr: ExprObserver | None = None) -> ProgramNode:
+def lower_function(fun: ConcreteFunction, observe: ProgramObserver | None = None, observe_expr: ExprObserver | None = None) -> ProgramNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
 
   Host placement only for now: the returned PROGRAM holds every lowered callee
@@ -133,7 +133,7 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None, observ
 
   _check_function_names(fun, solver_callees)
   callees: dict[str, ProgramNode] = {}
-  solver_fns: dict[str, Function] = {}
+  solver_fns: dict[str, ConcreteFunction] = {}
 
   if is_solver_function(fun):
     solver_fns[fun.name] = fun
@@ -169,7 +169,7 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None, observ
   return prog
 
 
-def _same_function(a: Function, b: Function) -> bool:
+def _same_function(a: ConcreteFunction, b: ConcreteFunction) -> bool:
   """Two Function objects that would lower to the same procedure: interned Exprs make equal graphs
   the same objects, so identity of inputs and outputs is structural equality."""
   return a is b or (
@@ -181,11 +181,11 @@ def _same_function(a: Function, b: Function) -> bool:
   )
 
 
-def _check_function_names(fun: Function, solver_callees: Callable[[Function], Iterable[Function]]) -> None:
+def _check_function_names(fun: ConcreteFunction, solver_callees: Callable[[ConcreteFunction], Iterable[ConcreteFunction]]) -> None:
   """Refuse two different Functions with one name anywhere in ``fun``'s call tree.
 
   Procedures are emitted once per name, so the second would silently run the first one's body."""
-  owners: dict[str, Function] = {}
+  owners: dict[str, ConcreteFunction] = {}
   todo = [fun]
   while todo:
     f = todo.pop()
@@ -225,7 +225,7 @@ def _size_of(shape: tuple[int, ...]) -> int:
   return n
 
 
-def _normalize_function(fun: Function) -> Function:
+def _normalize_function(fun: ConcreteFunction) -> ConcreteFunction:
   outputs = fun.outputs
   for _ in range(4):
     normalized = cse_many(simplify(output) for output in outputs)
@@ -236,9 +236,9 @@ def _normalize_function(fun: Function) -> Function:
 
 
 def _lower_to_proc(
-  fun: Function,
+  fun: ConcreteFunction,
   callees: dict[str, ProgramNode],
-  solver_fns: dict[str, Function],
+  solver_fns: dict[str, ConcreteFunction],
   *,
   auto_scalarize: bool = True,
   observe_expr: ExprObserver | None = None,
@@ -305,9 +305,9 @@ class LowerCtx:
 
   def __init__(
     self,
-    fun: Function,
+    fun: ConcreteFunction,
     callees: dict[str, ProgramNode],
-    solver_fns: dict[str, Function],
+    solver_fns: dict[str, ConcreteFunction],
     observe_expr: ExprObserver | None = None,
     *,
     entry: bool = False,
@@ -1275,7 +1275,7 @@ def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
   ctx.statements.append(p.for_(p.range_(s.attrs["name"], 0, n, kind=RangeKind.SERIAL), body))
 
 
-def _ensure_in_place_callee(ctx: LowerCtx, callee: Function, steps: dict[int, np.ndarray] | None = None) -> tuple[str, int] | None:
+def _ensure_in_place_callee(ctx: LowerCtx, callee: ConcreteFunction, steps: dict[int, np.ndarray] | None = None) -> tuple[str, int] | None:
   """Lower an in-place variant of a loop body, named apart from the ordinary procedure (which other
   call sites may use with separate buffers), and return its name with the scratch slots its carry
   needs past its entries; None when the body does not qualify, or in-place updates are switched off.
@@ -1291,7 +1291,7 @@ def _ensure_in_place_callee(ctx: LowerCtx, callee: Function, steps: dict[int, np
     return None
   name = f"{callee.name}_inplace"
   if name not in ctx.callees:
-    renamed = Function._from_exprs(name, normalized.inputs, normalized.outputs, normalized.input_names, normalized.output_names)
+    renamed = ConcreteFunction._from_exprs(name, normalized.inputs, normalized.outputs, normalized.input_names, normalized.output_names)
     ctx.callees[name] = _lower_to_proc(renamed, ctx.callees, ctx.solver_fns, observe_expr=ctx.observe_expr, in_place=True)
   return name, _put_scratch(update_chain(normalized) or [])
 
@@ -1302,7 +1302,9 @@ def _put_scratch(chain: Iterable[Expr]) -> int:
   return max((e.size // e.shape[-1] * e.args[1].size for e in puts), default=0)
 
 
-def _loop_steps(callee: Function, outers: Iterable[Expr], starts: Iterable[int], strides: Iterable[int], length: int) -> dict[int, np.ndarray]:
+def _loop_steps(
+  callee: ConcreteFunction, outers: Iterable[Expr], starts: Iterable[int], strides: Iterable[int], length: int
+) -> dict[int, np.ndarray]:
   """The value of each body input a loop slices from an integer constant, at every step."""
   steps: dict[int, np.ndarray] = {}
   for pos, (outer, start, stride) in enumerate(zip(outers, starts, strides, strict=True), start=1):
@@ -1314,7 +1316,7 @@ def _loop_steps(callee: Function, outers: Iterable[Expr], starts: Iterable[int],
   return steps
 
 
-def _ensure_callee(ctx: LowerCtx, callee: Function) -> None:
+def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
   if callee.device.kind != ctx.fun.device.kind:
     raise LoweringError(f"mixed-device CALL ({ctx.fun.device} -> {callee.device}) is deferred to a later migration step")
   from ..solvers.graph import is_solver_function, solver_callees
@@ -1334,7 +1336,7 @@ def _ensure_callee(ctx: LowerCtx, callee: Function) -> None:
 def _lower_call(ctx: LowerCtx, node: Expr) -> None:
   """An expression CALL output: emit one Program-IR CALL writing all callee outputs into scratch
   buffers (deduped per unique invocation), then map this node to the selected output buffer."""
-  callee: Function = node.attrs["callee"]
+  callee: ConcreteFunction = node.attrs["callee"]
   out_idx = int(node.attrs["output"])
   arg_names = tuple(ctx.value_buffers[a.id] for a in node.args)
   key = (callee.name, arg_names)
@@ -1355,7 +1357,7 @@ def _lower_call(ctx: LowerCtx, node: Expr) -> None:
 def _lower_vmap(ctx: LowerCtx, node: Expr) -> None:
   """A ``length``-iteration loop calling the callee with pointer-offset VIEW args. Iteration ``it``
   reads ``outer_k[start_k + it·stride_k ...]`` and writes the selected output into ``out[it·slice_size ...]``."""
-  callee: Function = node.attrs["callee"]
+  callee: ConcreteFunction = node.attrs["callee"]
   out_idx = int(node.attrs["output"])
   length = int(node.attrs["length"])
   starts = tuple(int(s) for s in node.attrs["starts"])
@@ -1407,7 +1409,7 @@ def _lower_scan(ctx: LowerCtx, node: Expr) -> None:
 
 
 def _emit_scan(ctx: LowerCtx, node: Expr) -> dict[int, str]:
-  callee: Function = node.attrs["callee"]
+  callee: ConcreteFunction = node.attrs["callee"]
   length, starts, strides = int(node.attrs["length"]), node.attrs["starts"], node.attrs["strides"]
   init, outers = node.args[0], node.args[1:]
   carry = callee.inputs[0]
@@ -1804,7 +1806,7 @@ def _lower_ragged_dot(ctx: LowerCtx, node: Expr) -> None:
 DONATE_CARRIES = True
 
 
-def in_place_chain(fun: Function) -> tuple[int, ...] | None:
+def in_place_chain(fun: ConcreteFunction) -> tuple[int, ...] | None:
   """The update nodes (by id) through which ``fun`` may overwrite its carry in place, or None.
 
   ``fun`` takes the carry first and returns the next carry first. The next carry must be a chain
@@ -1874,7 +1876,7 @@ def in_place_chain(fun: Function) -> tuple[int, ...] | None:
 _UPDATE_OPS = (ExprOp.INDEX_ADD, ExprOp.INDEX_SET, ExprOp.PUT_ADD, ExprOp.PUT, ExprOp.RAGGED_ADD)
 
 
-def update_chain(fun: Function) -> list[Expr] | None:
+def update_chain(fun: ConcreteFunction) -> list[Expr] | None:
   """The next carry as a chain of updates rooted at the carry input, ``u_1 ... u_m`` in order, or
   None when it is not one. Structure only: whether the chain may run in place is proven apart."""
   carry, node = fun.inputs[0], fun.outputs[0]
@@ -1887,7 +1889,7 @@ def update_chain(fun: Function) -> list[Expr] | None:
   return chain[::-1] or None
 
 
-def in_place_steps(fun: Function, steps: dict[int, np.ndarray]) -> bool:
+def in_place_steps(fun: ConcreteFunction, steps: dict[int, np.ndarray]) -> bool:
   """Whether a loop body's update chain may overwrite its carry in place, for the index values the
   loop feeds it: ``steps[p]`` is input ``p`` at every step, for the inputs sliced from constants
   (none: every index is a constant, the same at every step).

@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from ..function import Function
+from ..function import ConcreteFunction
 from ..function.sugar import _scan_node, _while_node, vmap, while_parts
 from ..ir.expr import (
   CALLEE_OPS,
@@ -276,10 +276,10 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
   raise NotImplementedError(f"JVP for op {expr.op!r} is not implemented")
 
 
-_SCAN_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, ...], Function]] = weakref.WeakKeyDictionary()
+_SCAN_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, ...], ConcreteFunction]] = weakref.WeakKeyDictionary()
 
 
-def _scan_jvp_body(callee: Function, active: tuple[int, ...]) -> Function:
+def _scan_jvp_body(callee: ConcreteFunction, active: tuple[int, ...]) -> ConcreteFunction:
   """The body of the tangent scan: the carry is ``[c, dc]`` flat, the sliced inputs are the primal
   ones then the tangents of the ``active`` ones, and the outputs are ``[c', dc']``, the primal
   stacked outputs, then their tangents."""
@@ -299,7 +299,7 @@ def _scan_jvp_body(callee: Function, active: tuple[int, ...]) -> Function:
     names = [str(aug.name), *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
     out_names = [claim_name("fwd:carry", taken), *callee.output_names[1:], *(claim_name(f"fwd:{n}", taken) for n in callee.output_names[1:])]
     suffix = "_".join(str(i) for i in active) or "c"
-    cache[active] = Function._from_exprs(
+    cache[active] = ConcreteFunction._from_exprs(
       f"{callee.name}_scanfwd_{suffix}", inputs, [callee._inherit_lowering(simplify_cse_fixpoint(o)) for o in outputs], names, out_names
     )
   return cache[active]
@@ -332,8 +332,10 @@ def _scan_jvp(expr: Expr, tangents: list[Expr]) -> Expr:
 
 
 # The tangent body per body (whatever the condition), the tangent condition per (body, condition).
-_WHILE_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Function, Expr, list[Expr]]]] = weakref.WeakKeyDictionary()
-_WHILE_JVP_COND_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Function]]] = weakref.WeakKeyDictionary()
+_WHILE_JVP_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[ConcreteFunction, Expr, list[Expr]]]] = weakref.WeakKeyDictionary()
+_WHILE_JVP_COND_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], ConcreteFunction]]] = (
+  weakref.WeakKeyDictionary()
+)
 
 
 def _loop_suffix(index: bool, active: tuple[int, ...]) -> str:
@@ -342,14 +344,14 @@ def _loop_suffix(index: bool, active: tuple[int, ...]) -> str:
   return ("_k" if index else "") + "".join(f"_p{i}" for i in active)
 
 
-def _tangent_params(body: Function, index: bool, active: tuple[int, ...], taken: set[str], shape: Any) -> list[Expr]:
+def _tangent_params(body: ConcreteFunction, index: bool, active: tuple[int, ...], taken: set[str], shape: Any) -> list[Expr]:
   """Symbols for the tangents of the loop's params ``active`` (by position among the params), shaped
   by ``shape(param)``; the tangent loop takes them as params after the primal ones."""
   first = 1 + int(index)
   return [Expr.sym(claim_name(f"fwd:{body.input_names[first + i]}", taken), shape(body.inputs[first + i])) for i in active]
 
 
-def _tangent_cond(cond: Function, body: Function, aug: Expr, cs: int, dparams: Sequence[Expr], suffix: str) -> Function:
+def _tangent_cond(cond: ConcreteFunction, body: ConcreteFunction, aug: Expr, cs: int, dparams: Sequence[Expr], suffix: str) -> ConcreteFunction:
   """The tangent loop's condition: the primal one on ``c`` and the params, ignoring the tangents.
   It takes the tangent body's inputs, so it is named after the body too: one condition shared by
   two bodies gives two of them."""
@@ -357,10 +359,12 @@ def _tangent_cond(cond: Function, body: Function, aug: Expr, cs: int, dparams: S
   inputs = [aug, *cond.inputs[1:], *dparams]
   taken: set[str] = set()
   names = [claim_name(n, taken) for n in (str(aug.name), *cond.input_names[1:], *(str(d.name) for d in dparams))]
-  return Function._from_exprs(f"{cond.name}_{body.name}_whilefwd{suffix}", inputs, [go], names, ["go"])
+  return ConcreteFunction._from_exprs(f"{cond.name}_{body.name}_whilefwd{suffix}", inputs, [go], names, ["go"])
 
 
-def _while_jvp_functions(cond: Function, body: Function, index: bool, active: tuple[int, ...]) -> tuple[Function, Function]:
+def _while_jvp_functions(
+  cond: ConcreteFunction, body: ConcreteFunction, index: bool, active: tuple[int, ...]
+) -> tuple[ConcreteFunction, ConcreteFunction]:
   """The condition and body of the tangent loop, over the carry ``[c, dc]`` flat and with the
   tangents of the ``active`` params as extra params: the condition reads ``c`` and the params only,
   so the tangent loop takes exactly the primal's steps."""
@@ -380,7 +384,7 @@ def _while_jvp_functions(cond: Function, body: Function, index: bool, active: tu
     nxt = substitute(concat([body.outputs[0].reshape((cs,)), tangent.reshape((cs,))]), split)
     # The step number and the params stay inputs of the tangent body, the params' tangents follow.
     inputs = [aug, *body.inputs[1:], *dparams]
-    aug_body = Function._from_exprs(
+    aug_body = ConcreteFunction._from_exprs(
       f"{body.name}_whilefwd{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(e.name) for e in inputs], ["fwd:carry"]
     )
     cache[key] = (aug_body, aug, dparams)
@@ -646,9 +650,9 @@ def _copysign_slope(x: Expr, s: Expr) -> Expr:
 # seed. The loop body's own tangent is again a multi-seed pass, so work is shared across seeds inside
 # the step as well (C-93).
 
-_SCAN_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Function]] = weakref.WeakKeyDictionary()
-_WHILE_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[Function, Expr, list[Expr]]]] = weakref.WeakKeyDictionary()
-_WHILE_JVP_MANY_COND_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Function]]] = (
+_SCAN_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], ConcreteFunction]] = weakref.WeakKeyDictionary()
+_WHILE_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple[ConcreteFunction, Expr, list[Expr]]]] = weakref.WeakKeyDictionary()
+_WHILE_JVP_MANY_COND_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], ConcreteFunction]]] = (
   weakref.WeakKeyDictionary()
 )
 _CONTAINS_LOOP: weakref.WeakKeyDictionary[Any, bool] = weakref.WeakKeyDictionary()
@@ -694,7 +698,7 @@ SEED_PRODUCT_UNROLL_LIMIT = 256
 
 
 def _jvp_many_compressed(
-  outs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, *, owner: Function | None = None, name: str = ""
+  outs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int, *, owner: ConcreteFunction | None = None, name: str = ""
 ) -> tuple[list[Expr], list[Expr]]:
   """Multi-seed tangents of a loop body's ``outs``, formed once per step as a small Jacobian.
 
@@ -731,7 +735,7 @@ def _jvp_many_compressed(
     assert owner is not None
     varying = [k for k, j in enumerate(jacobians) if j.op != ExprOp.CONST]
     exprs = [*(o.reshape((o.size,)) for o in outs), *(jacobians[k].reshape((jacobians[k].size,)) for k in varying)]
-    step = Function._from_exprs(
+    step = ConcreteFunction._from_exprs(
       name,
       list(owner.inputs),
       [owner._inherit_lowering(simplify_cse_fixpoint(e)) for e in exprs],
@@ -776,7 +780,7 @@ def _seed_product_map(name: str, jac: Expr, seeds: dict[Expr, Expr], sizes: dict
   if total is None:
     return Expr.const(np.zeros(nseed * width, dtype=np.float64))
   inputs = [*rows.values(), *([] if constant else [jsym])]
-  product = Function._from_exprs(name, inputs, [simplify_cse_fixpoint(total)], [str(e.name) for e in inputs], ["tangent"])
+  product = ConcreteFunction._from_exprs(name, inputs, [simplify_cse_fixpoint(total)], [str(e.name) for e in inputs], ["tangent"])
   specs = [(seeds[w].reshape((nseed * size,)), 0, size) for w, size in sizes.items()]
   if not constant:
     specs.append((jac.reshape((m * width,)), 0, 0))
@@ -805,7 +809,7 @@ def _strided_view(x: Expr, idx: np.ndarray, rows: int, width: int) -> tuple[Expr
   return gather(x.reshape((x.size,)), idx.reshape(-1)), 0, (0 if rows == 1 else width)
 
 
-def _scan_jvp_many_body(callee: Function, active: tuple[int, ...], nseed: int) -> Function:
+def _scan_jvp_many_body(callee: ConcreteFunction, active: tuple[int, ...], nseed: int) -> ConcreteFunction:
   """The body of the multi-seed tangent scan. The carry is ``[c, Dc]`` flat, with ``Dc`` the
   ``(nseed, *c.shape)`` tangents seed-major. The sliced inputs are the primal ones, then for each
   ``active`` one its ``(nseed, *x.shape)`` tangents. The outputs are ``[c', Dc']``, the primal stacked
@@ -832,7 +836,7 @@ def _scan_jvp_many_body(callee: Function, active: tuple[int, ...], nseed: int) -
     names = [str(aug.name), *callee.input_names[1:], *(str(dx.name) for dx in dxs.values())]
     out_names = [claim_name("fwd:carry", taken), *callee.output_names[1:], *(claim_name(f"fwd:{n}", taken) for n in callee.output_names[1:])]
     suffix = "_".join(str(i) for i in active) or "c"
-    cache[key] = Function._from_exprs(
+    cache[key] = ConcreteFunction._from_exprs(
       f"{callee.name}_scanfwd{nseed}_{suffix}", inputs, [callee._inherit_lowering(simplify_cse_fixpoint(o)) for o in outputs], names, out_names
     )
   return cache[key]
@@ -873,7 +877,9 @@ def _scan_jvp_many(expr: Expr, tangents: list[Expr], nseed: int) -> Expr:
   return gather(node(n_ys + output), idx.reshape(-1)).reshape((nseed, length * size))
 
 
-def _while_jvp_many_functions(cond: Function, body: Function, nseed: int, index: bool, active: tuple[int, ...]) -> tuple[Function, Function]:
+def _while_jvp_many_functions(
+  cond: ConcreteFunction, body: ConcreteFunction, nseed: int, index: bool, active: tuple[int, ...]
+) -> tuple[ConcreteFunction, ConcreteFunction]:
   """Condition and body of the multi-seed tangent loop over the carry ``[c, Dc]``, with the ``active``
   params' seeded tangents (``(nseed, *shape)``) as extra params; the condition reads ``c`` and the
   params only, so the loop takes exactly the primal's steps."""
@@ -893,7 +899,7 @@ def _while_jvp_many_functions(cond: Function, body: Function, nseed: int, index:
     split = {carry: aug[:cs].reshape(carry.shape)}
     nxt = substitute(concat([primal.reshape((cs,)), tangent.reshape((nseed * cs,))]), split)
     inputs = [aug, *body.inputs[1:], *dparams]
-    aug_body = Function._from_exprs(
+    aug_body = ConcreteFunction._from_exprs(
       f"{body.name}_whilefwd{suffix}", inputs, [body._inherit_lowering(simplify_cse_fixpoint(nxt))], [str(e.name) for e in inputs], ["fwd:carry"]
     )
     cache[key] = (aug_body, aug, dparams)
@@ -964,7 +970,7 @@ def _call_jvp_many_function(
       seed_hash = hashlib.sha1(repr(key).encode()).hexdigest()[:10]
       name = f"{callee.name}_fwd{nseed}j{seed_hash}_{output_index}_" + "_".join(str(i) for i in formal_indices)
       output_name = claim_name(f"fwd:{callee.output_names[output_index]}", taken)
-    fn = Function._from_exprs(name, inputs, [deriv], input_names, [output_name])
+    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [output_name])
     cache[key] = (fn, arg_indices, seed_indices, active)
   return cache[key]
 
@@ -991,7 +997,7 @@ def _call_jvp_function(callee: Any, output_index: int, formal_indices: tuple[int
     inputs = tuple(callee.inputs[i] for i in arg_indices) + tuple(seeds[i] for i in seed_indices)
     input_names = tuple(callee.input_names[i] for i in arg_indices) + tuple(seeds[i].name for i in seed_indices)
     name = f"{callee.name}_fwd{output_index}_" + "_".join(str(i) for i in formal_indices)
-    fn = Function._from_exprs(name, inputs, [deriv], input_names, [claim_name(f"fwd:{callee.output_names[output_index]}", taken)])
+    fn = ConcreteFunction._from_exprs(name, inputs, [deriv], input_names, [claim_name(f"fwd:{callee.output_names[output_index]}", taken)])
     cache[key] = (fn, arg_indices, seed_indices)
   return cache[key]
 
@@ -1022,7 +1028,7 @@ def _pack_jvp_maps(callee: Any, result: Expr, maps: list[Expr]) -> Expr:
       packed = callee._inherit_lowering(simplify_cse_fixpoint(concat(outputs)))
       name_hash = hashlib.sha1(";".join(fn.name for fn in functions).encode()).hexdigest()[:10]
       names = {inp: name for fn in functions for inp, name in zip(fn.inputs, fn.input_names, strict=True)}
-      cache[key] = Function._from_exprs(f"{callee.name}_fwd_pack_{name_hash}", inputs, [packed], [names[inp] for inp in inputs], ["fwd"])
+      cache[key] = ConcreteFunction._from_exprs(f"{callee.name}_fwd_pack_{name_hash}", inputs, [packed], [names[inp] for inp in inputs], ["fwd"])
     fn = cache[key]
     mapped = vmap(fn, length, list(bindings.values()))
     width = fn.outputs[0].size

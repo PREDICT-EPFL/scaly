@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from ..function import Function
+from ..function import ConcreteFunction
 from ..ir.expr import Expr
 from .nlp import build_nlp
 from .qp import build_qp
@@ -21,7 +21,7 @@ def solver[SV, NV, SP, NP](
   *,
   name: str | None = None,
   options: dict[str, Any] | None = None,
-) -> Function[
+) -> ConcreteFunction[
   tuple[SV, SV, Expr, Expr, SP],
   tuple[NV, NV, np.ndarray, np.ndarray, NP],
   tuple[SV, SV, Expr, Expr],
