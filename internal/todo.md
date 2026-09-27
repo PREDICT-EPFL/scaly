@@ -75,6 +75,7 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       the seeded and solver conventions and the migration (`notes/templates_p1b_ii_report.html`).
       P2, `Function` as the template with holes and cached, deterministically named instances,
       `ConcreteFunction` its subclass (`notes/templates_p2_report.html`).
+      P3, bare `@sc.function` and outputs inferred in one trace (`notes/templates_p3_report.html`).
 - [ ] **API-2. Preserve declared trees through `vmap` and Function-level differentiation.** Settle
       the mapped input convention and retain runtime and static acceptance tests. Rationale:
       refactorings.md "`vmap` and the AD entry points erase the callee's declared trees".

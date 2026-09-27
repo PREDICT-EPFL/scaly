@@ -46,6 +46,10 @@ class SymbolicValue:
 
   __slots__ = ()
 
+  def leaf_tree(self, name: str) -> Tree[Any, Any]:
+    """The declaration of a leaf holding this value, named ``name``: how a template reads it off a call."""
+    raise NotImplementedError
+
 
 def _is_symbolic_leaf(leaf: Any) -> bool:
   return isinstance(leaf, (Expr, SymbolicValue))
@@ -96,6 +100,33 @@ class Hole:
 
 
 type LeafDecl = TensorType | Hole
+
+
+def inferred_tree(value: Any, name: str, what: str, *, argument: bool = False) -> Tree[Any, Any]:
+  """A declaration read off a traced output or, with ``argument``, a call's argument: a tuple is a group
+  whose parts are named ``name_0``, ``name_1``, ...; an ``Expr`` is a leaf, of its type for an argument
+  and left to the trace for an output; a ``SymbolicValue`` declares itself. An argument may also be
+  numerical, an array-like read as a ``float64`` array of its shape."""
+  if isinstance(value, tuple):
+    if argument and value and all(isinstance(item, (int, float, np.number)) and not isinstance(item, bool) for item in value):
+      raise TypeError(f"{what}: {name!r} is a tuple of numbers, which is structure: {len(value)} scalars; pass a list or an array for a vector")
+    return _G(tuple(inferred_tree(item, f"{name}_{i}", what, argument=argument) for i, item in enumerate(value)), public=False)
+  if isinstance(value, SymbolicValue):
+    return value.leaf_tree(name)
+  if isinstance(value, Expr):
+    return L(name, TensorType(value.shape, value.type.dtype)) if argument else L(name)
+  if not argument:
+    raise TypeError(f"{what}: the body returned a {type(value).__name__}; return an Expr, or a tuple of them for several outputs")
+  if type(value).__module__.startswith("scipy.sparse"):
+    raise TypeError(f"{what}: {name!r} is a SciPy sparse matrix; declare its pattern, as in sc.function(sc.S(pattern), ...)")
+  if isinstance(value, list) and any(_is_symbolic_leaf(leaf) for leaf in np.ravel(np.asarray(value, dtype=object))):
+    raise TypeError(f"{what}: {name!r} is a list holding expressions; build one with sc.stack")
+  return L(name, TensorType(np.shape(value)))
+
+
+def skeleton(value: Any) -> Any:
+  """The nesting of ``value``: its tuples, with every leaf ``None``."""
+  return tuple(skeleton(item) for item in value) if isinstance(value, tuple) else None
 
 
 class Tree[Symbolic, Numerical]:

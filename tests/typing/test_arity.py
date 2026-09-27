@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, assert_type
+from typing import TYPE_CHECKING, Any, assert_type
 
 import numpy as np
 
@@ -65,6 +65,26 @@ def wide(a: sc.Expr, b: sc.Expr, c: sc.Expr, d: sc.Expr, e: sc.Expr, f: sc.Expr,
 @sc.function(sc.L(), output="y")
 def doubled(x: sc.Expr) -> sc.Expr:
   return 2.0 * x
+
+
+@sc.function
+def bare(x: sc.Expr, y: sc.Expr) -> sc.Expr:
+  return x * y
+
+
+@sc.function(name="bare_named")
+def bare_parens(x: sc.Expr) -> sc.Expr:
+  return x
+
+
+@sc.function(output="y")
+def output_only(x: sc.Expr) -> sc.Expr:
+  return x
+
+
+@sc.function(3)
+def inferred(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+  return x, x
 
 
 @sc.problem(vars=sc.L("x", 3), params=sc.L("scale", ()))
@@ -134,7 +154,7 @@ if TYPE_CHECKING:
   sc.function(sc.L("x", 3), output=sc.G(sc.L("a", ...), sc.L("b", ...)))(lambda x: x)  # ty: ignore[invalid-argument-type]
   sc.function(3, 3, output="z")(lambda x: x)  # ty: ignore[invalid-argument-type]
   sc.function(3, output="z")(lambda x, y: x)  # ty: ignore[invalid-argument-type]
-  sc.function(sc.L("x", 3), sc.L("y", ...))  # ty: ignore[no-matching-overload]
+  sc.function(sc.L("x", 3), sc.L("y", ...))(lambda x: x)  # ty: ignore[invalid-argument-type]
 
   # One argument per parameter; shape and name specs type as leaves.
   assert_type(cost2, sc.Function[[sc.Expr, sc.Expr], [np.ndarray, np.ndarray], sc.Expr, np.ndarray])
@@ -172,6 +192,17 @@ if TYPE_CHECKING:
   assert_type(doubled.is_concrete, bool)
   assert_type(doubled.input_names, tuple[str, ...])
   as_template: sc.Function[[sc.Expr, sc.Expr], [np.ndarray, np.ndarray], sc.Expr, np.ndarray] = cost2
+
+  # Bare: the body's own signature types the symbolic side; the numerical side is untyped.
+  assert_type(bare.symbolic_call(sc.sym("a", 2), sc.sym("b", 2)), sc.Expr)
+  assert_type(bare(np.zeros(2), np.zeros(2)), Any)
+  bare.symbolic_call(sc.sym("a", 2))  # ty: ignore[missing-argument]
+  assert_type(bare_parens.symbolic_call(sc.sym("a", 2)), sc.Expr)
+  assert_type(output_only.symbolic_call(sc.sym("a", 2)), sc.Expr)
+  assert_type(output_only(np.zeros(2)), np.ndarray)
+  assert_type(inferred, sc.Function[[sc.Expr], [np.ndarray], tuple[sc.Expr, sc.Expr], Any])
+  assert_type(inferred.symbolic_call(sc.sym("a", 3)), tuple[sc.Expr, sc.Expr])
+  sc.function(3)(lambda x, y: x)  # ty: ignore[invalid-argument-type]
   as_instance: sc.ConcreteFunction[[sc.Expr], [np.ndarray], sc.Expr, np.ndarray] = doubled  # ty: ignore[invalid-assignment]
 
   assert_type(multiply.symbolic_call(duplicate.symbolic_call(sc.sym("x", 3))), sc.Expr)

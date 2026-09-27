@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, Protocol, overload
 
 import numpy as np
 
@@ -22,55 +22,104 @@ from .factory import Adj, Fwd, Grad, Hess, Jac, SpHess, SpJac
 from .model import ConcreteFunction, Function
 
 
+class _Bare(Protocol):
+  """``@sc.function`` with nothing declared: typed by the body's own signature on the symbolic side."""
+
+  def __call__[**P, R](self, fn: Callable[P, R], /) -> Function[P, ..., R, Any]: ...
+
+
+class _OutputOnly[SO, NO](Protocol):
+  """``@sc.function(output=...)``: no inputs, or inputs bound at each call."""
+
+  @overload
+  def __call__(self, fn: Callable[[], SO], /) -> Function[[], [], SO, NO]: ...
+
+  @overload
+  def __call__[**P](self, fn: Callable[P, SO], /) -> Function[P, ..., SO, NO]: ...
+
+
+class _Inferred[**PS, **PN](Protocol):
+  """Declared inputs and no ``output=``: the body's return type is the symbolic output."""
+
+  def __call__[R](self, fn: Callable[PS, R], /) -> Function[PS, PN, R, Any]: ...
+
+
 # fmt: off
 @overload
-def function(*, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[], SO]], Function[[], [], SO, NO]]: ...
+def function[**P, R](fn: Callable[P, R], /) -> Function[P, ..., R, Any]: ...
+@overload
+def function(*, name: str | None = None) -> _Bare: ...
+@overload
+def function(*, output: Tree[SO, NO] | Spec, name: str | None = None) -> _OutputOnly[SO, NO]: ...
 @overload
 def function(a: Tree[SA, NA] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA], SO]], Function[[SA], [NA], SO, NO]]: ...
 @overload
+def function(a: Tree[SA, NA] | Spec, /, *, name: str | None = None) -> _Inferred[[SA], [NA]]: ...
+@overload
 def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB], SO]], Function[[SA, SB], [NA, NB], SO, NO]]: ...
+@overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, /, *, name: str | None = None) -> _Inferred[[SA, SB], [NA, NB]]: ...
 @overload
 def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC], SO]], Function[[SA, SB, SC], [NA, NB, NC], SO, NO]]: ...
 @overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, /, *, name: str | None = None) -> _Inferred[[SA, SB, SC], [NA, NB, NC]]: ...
+@overload
 def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC, SD], SO]], Function[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO]]: ...
+@overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, /, *, name: str | None = None) -> _Inferred[[SA, SB, SC, SD], [NA, NB, NC, ND]]: ...
 @overload
 def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC, SD, SE], SO]], Function[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO]]: ...
 @overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, /, *, name: str | None = None) -> _Inferred[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE]]: ...
+@overload
 def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, f: Tree[SF, NF] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC, SD, SE, SF], SO]], Function[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO]]: ...
+@overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, f: Tree[SF, NF] | Spec, /, *, name: str | None = None) -> _Inferred[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF]]: ...
 @overload
 def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, f: Tree[SF, NF] | Spec, g: Tree[SG, NG] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC, SD, SE, SF, SG], SO]], Function[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO]]: ...
 @overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, f: Tree[SF, NF] | Spec, g: Tree[SG, NG] | Spec, /, *, name: str | None = None) -> _Inferred[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG]]: ...
+@overload
 def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, f: Tree[SF, NF] | Spec, g: Tree[SG, NG] | Spec, h: Tree[SH, NH] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC, SD, SE, SF, SG, SH], SO]], Function[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO]]: ...
 @overload
-def function(*slots: Tree[Any, Any] | Spec, output: Tree[Any, Any] | Spec, name: str | None = None) -> Callable[[Callable[..., Any]], Function[..., ..., Any, Any]]: ...
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, f: Tree[SF, NF] | Spec, g: Tree[SG, NG] | Spec, h: Tree[SH, NH] | Spec, /, *, name: str | None = None) -> _Inferred[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH]]: ...
+@overload
+def function(*slots: Tree[Any, Any] | Spec, output: Tree[Any, Any] | Spec | None = None, name: str | None = None) -> Callable[[Callable[..., Any]], Function[..., ..., Any, Any]]: ...
 # fmt: on
-def function(*slots: Tree[Any, Any] | Spec, output: Tree[Any, Any] | Spec | None = None, name: str | None = None) -> Any:
+def function(*slots: Any, output: Tree[Any, Any] | Spec | None = None, name: str | None = None) -> Any:
   """Trace a Python body into a named ``Function``: one declaration per parameter, and the ``output``.
 
   Each slot is a tree spec: ``sc.L``, ``sc.G`` or ``sc.S``, or shorthand for one leaf, a shape
   (``3``, ``(n, m)``, a ``TensorType``) or a name (a leaf whose shape the trace decides). Unnamed
   leaves take the parameter's name (``p``, or ``p_0``, ``p_1`` inside a group); unnamed outputs take
   the function's. The names become the generated C signature and the ``of``/``wrt`` of derivatives.
+  ``output`` may be omitted: the output tree is then read off the trace, a single leaf named after the
+  function and a tuple's leaves ``f_0``, ``f_1``, ...
 
   With every input shape declared, the body is traced now and the result is a ``ConcreteFunction``.
-  An input shape left open (``sc.L()``, ``(n, None)``) makes a template: each call binds the holes
-  and traces one instance per distinct binding; see ``Function``.
+  An input shape left open (``sc.L()``, ``(n, None)``) makes a template: each call binds the holes and
+  traces one instance per distinct binding; see ``Function``. With no slots at all (``@sc.function``,
+  with or without parentheses), a body with parameters is a template whose calls bind everything: a
+  tuple argument is structure, an ``Expr`` a leaf of its shape and dtype, an array-like a ``float64``
+  leaf of its shape.
   """
+  if len(slots) == 1 and callable(slots[0]) and not isinstance(slots[0], Tree) and output is None and name is None:
+    return function()(slots[0])  # @sc.function, without parentheses
 
   def decorate(fn: Callable[..., Any]) -> Function[..., ..., Any, Any]:
     fn_name = name or getattr(fn, "__name__", "fn")
     names = _parameters(fn, fn_name)
-    if output is None:
-      if len(slots) == len(names) + 1:
+    outputs = None if output is None else as_tree(output).named(fn_name)
+    if not slots:
+      return Function(fn_name, fn, None, outputs) if names else ConcreteFunction(fn_name, fn, param_list(), outputs)
+    if len(slots) != len(names):
+      if output is None and len(slots) == len(names) + 1:
         raise TypeError(
           f"{fn_name}: sc.function takes one declaration per parameter and the output as output=; "
           "did you mean sc.function(<inputs>, output=<outputs>)?"
         )
-      raise TypeError(f"{fn_name}: declare the output tree with output=")
-    if len(slots) != len(names):
       raise TypeError(f"{fn_name}: declared {len(slots)} parameters, the body takes {len(names)} ({', '.join(names)})")
     inputs = param_list(*(as_tree(slot).named(param) for slot, param in zip(slots, names, strict=True)))
-    outputs = as_tree(output).named(fn_name)
     if inputs.has_holes:
       return Function(fn_name, fn, inputs, outputs)
     return ConcreteFunction(fn_name, fn, inputs, outputs)

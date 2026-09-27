@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import logging
 from dataclasses import dataclass
@@ -12,7 +13,7 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp, as_expr, linear_combination, topo
 from ..ir.match import _apply_lowering
 from ..ir.types import DeviceSpec, Lowering, SparsityType, TensorType, as_shape, backend_supports, dtypes
-from .tree import Hole, LeafDecl, SymbolicValue, Tree, _G, _leaves, flat_tree, is_symbolic_call, param_list
+from .tree import Hole, LeafDecl, SymbolicValue, Tree, _G, _leaves, flat_tree, inferred_tree, is_symbolic_call, param_list, skeleton
 
 if TYPE_CHECKING:
   from ..solvers.stats import SolverStats
@@ -125,15 +126,18 @@ class Function[**PS, **PN, SO, NO]:
   descriptor: Any
   _signature: inspect.Signature | None
 
-  def __init__(self, name: str, fn: Callable[PS, SO], slots: _G, output: Tree[SO, NO], *, device: DeviceSpec | str | None = None) -> None:
-    """A template over ``slots``, a named parameter list with holes; see ``scaly.function``."""
+  def __init__(
+    self, name: str, fn: Callable[PS, SO], slots: _G | None, output: Tree[SO, NO] | None, *, device: DeviceSpec | str | None = None
+  ) -> None:
+    """A template over ``slots``, a named parameter list with holes, or with ``None`` every argument's
+    structure, shape and dtype bound at the call; an ``output`` of ``None`` is read off the trace."""
     self.name = name
     self._fn = fn
     self._slots = slots
     self._output = output
     self._device = device
     self._signature = inspect.signature(fn)
-    self._cache: dict[tuple[TensorType, ...], ConcreteFunction[PS, PN, SO, NO]] = {}
+    self._cache: dict[tuple[Any, ...], ConcreteFunction[PS, PN, SO, NO]] = {}
     self._instances: dict[str, ConcreteFunction[PS, PN, SO, NO]] = {}
     # The same instances by the arguments' flat shapes and dtypes, which decide the binding when the
     # arguments bind at all: a hit skips building the bound declaration, and the instance's own call
@@ -141,8 +145,12 @@ class Function[**PS, **PN, SO, NO]:
     self._by_arguments: dict[tuple[Any, ...], ConcreteFunction[PS, PN, SO, NO]] = {}
 
   def __repr__(self) -> str:
-    slots = ", ".join(f"{name}: {decl.shape if isinstance(decl, TensorType) else decl}" for name, decl in zip(self._slots.names, self._slots.decls))
-    return f"Function({self.name!r}, ({slots}) -> {self._output.names}, instances={list(self._instances)})"
+    if self._slots is None:
+      slots = ", ".join(inspect.signature(self._fn).parameters)
+    else:
+      slots = ", ".join(f"{name}: {decl.shape if isinstance(decl, TensorType) else decl}" for name, decl in zip(self._slots.names, self._slots.decls))
+    outputs = "inferred" if self._output is None else self._output.names
+    return f"Function({self.name!r}, ({slots}) -> {outputs}, instances={list(self._instances)})"
 
   def __getattr__(self, name: str) -> Any:
     # Reached only for an attribute the object lacks: on a template, a graph attribute is its instance's.
@@ -158,7 +166,10 @@ class Function[**PS, **PN, SO, NO]:
   @property
   def concrete(self) -> ConcreteFunction[PS, PN, SO, NO]:
     """The one instance of a fully declared Function; a template with holes raises ``NotConcrete``."""
-    holes = ", ".join(f"{name}: {decl}" for name, decl in zip(self._slots.names, self._slots.decls) if isinstance(decl, Hole))
+    if self._slots is None:
+      holes = "every parameter's structure and shape"
+    else:
+      holes = ", ".join(f"{name}: {decl}" for name, decl in zip(self._slots.names, self._slots.decls) if isinstance(decl, Hole))
     raise NotConcrete(
       f"{self.name} leaves {holes} to its calls; build an instance with {self.name}.instantiate(...), "
       "one shape, TensorType or example per parameter, or declare the shapes in @sc.function"
@@ -209,18 +220,27 @@ class Function[**PS, **PN, SO, NO]:
     arguments = _argument_key(args)
     if arguments is not None and (hit := self._by_arguments.get(arguments)) is not None:
       return hit
-    slots = self._slots.parts
-    if len(args) != len(slots):
-      raise self._arity_error(len(args))
-    bound = param_list(*(slot.bind(arg, what) for slot, arg in zip(slots, args, strict=True)))
-    key = bound.types
+    if self._slots is None:
+      # Bare: the arguments declare themselves, nesting included, so the nesting is part of the key.
+      names = list(inspect.signature(self._fn).parameters)
+      if len(args) != len(names):
+        raise self._arity_error(len(args))
+      bound = param_list(*(inferred_tree(arg, param, what, argument=True) for arg, param in zip(args, names, strict=True)))
+      structure = skeleton(args) if any(isinstance(arg, tuple) for arg in args) else None
+      decls: Sequence[LeafDecl] = (Hole(),) * bound.size
+    else:
+      if len(args) != len(self._slots.parts):
+        raise self._arity_error(len(args))
+      bound = param_list(*(slot.bind(arg, what) for slot, arg in zip(self._slots.parts, args, strict=True)))
+      structure, decls = None, self._slots.decls
+    key = (bound.types, bound.sparsities, structure)
     instance = self._cache.get(key)
     if instance is None:
-      name = instance_name(self.name, self._slots.decls, key)
+      name = instance_name(self.name, decls, bound.types, bound.sparsities, structure)
       if name in self._instances:
         raise RuntimeError(f"{self.name}: two argument signatures would share the instance name {name!r}")
       _log.debug("instantiating %s", name)
-      instance = ConcreteFunction(name, self._fn, bound, self._output, device=self._device)
+      instance = ConcreteFunction(name, self._fn, bound, self._output, device=self._device, output_name=self.name)
       self._cache[key] = self._instances[name] = instance
     if arguments is not None:
       self._by_arguments[arguments] = instance
@@ -313,27 +333,49 @@ class Function[**PS, **PN, SO, NO]:
     return instance
 
 
-def instance_name(name: str, decls: Sequence[LeafDecl], types: Sequence[TensorType]) -> str:
+def instance_name(
+  name: str,
+  decls: Sequence[LeafDecl],
+  types: Sequence[TensorType],
+  sparsities: Sequence[SparsityType | None] = (),
+  structure: Any = None,
+) -> str:
   """The deterministic name of a template's instance: the template's name, ``__``, then one token per
-  hole: its bound dimensions joined by ``x`` (only the ``None`` ones of a partial shape), ``s`` for
-  a scalar, and the dtype's name when the hole left the dtype open and it is not ``float64``."""
+  hole: its bound dimensions joined by ``x`` (only the ``None`` ones of a partial shape), ``s`` for a
+  scalar, and the dtype's name when the hole left the dtype open and it is not ``float64``; a sparse
+  leaf's token is ``p`` and a digest of its pattern. A bare template called with tuples appends ``t``
+  and a digest of the nesting."""
   tokens = []
-  for decl, type_ in zip(decls, types, strict=True):
-    if isinstance(decl, Hole):
-      dims = type_.shape if decl.dims is None else tuple(n for d, n in zip(decl.dims, type_.shape) if d is None)
-      token = "x".join(map(str, dims)) if dims else "s"
-      tokens.append(token + (type_.dtype.name if decl.dtype is None and type_.dtype != dtypes.float64 else ""))
+  for decl, type_, sparsity in zip(decls, types, sparsities or (None,) * len(types), strict=True):
+    if not isinstance(decl, Hole):
+      continue
+    if sparsity is not None:
+      tokens.append("p" + _digest(np.asarray(sparsity.shape), np.asarray(sparsity.rows), np.asarray(sparsity.cols))[:8])
+      continue
+    dims = type_.shape if decl.dims is None else tuple(n for d, n in zip(decl.dims, type_.shape) if d is None)
+    token = "x".join(map(str, dims)) if dims else "s"
+    tokens.append(token + (type_.dtype.name if decl.dtype is None and type_.dtype != dtypes.float64 else ""))
+  if structure is not None:
+    tokens.append("t" + hashlib.sha256(repr(structure).encode()).hexdigest()[:6])
   return f"{name}__{'_'.join(tokens)}"
 
 
+def _digest(*arrays: np.ndarray) -> str:
+  """A hex digest of integer arrays, independent of their dtype and of Python's hash seed."""
+  sha = hashlib.sha256()
+  for array in arrays:
+    sha.update(np.ascontiguousarray(array, dtype=np.int64).tobytes() + b"|")
+  return sha.hexdigest()
+
+
 def _argument_key(args: tuple[Any, ...]) -> tuple[Any, ...] | None:
-  """The count, flat shapes and ``Expr`` dtypes of a call's arguments, or ``None`` when a leaf is a
-  ``SymbolicValue``, whose pattern may matter too."""
-  key: list[Any] = [len(args)]
+  """The nesting, flat shapes and ``Expr`` dtypes of a call's arguments, or ``None`` when a leaf is a
+  ``SymbolicValue``, whose pattern may matter too, or a list, which may hold expressions."""
+  key: list[Any] = [skeleton(args)]
   for leaf in _leaves(args):
     if isinstance(leaf, Expr):
       key.append((leaf.shape, leaf.type.dtype))
-    elif isinstance(leaf, SymbolicValue):
+    elif isinstance(leaf, (SymbolicValue, list)):
       return None
     else:
       key.append(np.shape(leaf))
@@ -385,14 +427,19 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
     name: str,
     fn: Callable[PS, SO],
     inputs: _G,
-    outputs: Tree[SO, NO],
+    outputs: Tree[SO, NO] | None = None,
     *,
     device: DeviceSpec | str | None = None,
+    output_name: str | None = None,
   ) -> None:
-    """Trace ``fn`` over ``inputs``, a parameter list from ``tree.params``: the body gets one argument per slot."""
+    """Trace ``fn`` over ``inputs``, a parameter list from ``tree.param_list``: the body gets one
+    argument per slot. Without ``outputs`` the output tree is read off the traced value, its leaves
+    named after ``output_name`` (default ``name``): ``y``, or ``y_0``, ``y_1``, ... for a tuple."""
     symbolic_inputs = inputs.symbols()
     input_exprs = inputs.flatten_symbolic(symbolic_inputs, f"{name} inputs")
     symbolic_outputs = cast(Callable[..., Any], fn)(*symbolic_inputs)
+    if outputs is None:
+      outputs = cast(Tree[SO, NO], inferred_tree(symbolic_outputs, output_name or name, f"{name} outputs"))
     try:
       output_exprs = outputs.flatten_symbolic(symbolic_outputs, f"{name} outputs")
     except ValueError as exc:

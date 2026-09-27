@@ -53,11 +53,11 @@ def _std_array(name: str, values: tuple[int, ...], size: str) -> str:
   return f"constexpr std::array<int, {size}> {name} = {{{', '.join(str(v) for v in values)}}};"
 
 
-def _sparse_namespace(name: str, sp: SparsityType) -> list[str]:
+def _sparse_namespace(ident: str, sp: SparsityType) -> list[str]:
   row_ptr, col_ind, csr_perm = sp.to_csr()
   col_ptr, row_ind, csc_perm = sp.to_csc()
   return [
-    f"namespace {c_ident(name)} {{",
+    f"namespace {ident} {{",
     f"constexpr int nrow = {sp.shape[0]};",
     f"constexpr int ncol = {sp.shape[1]};",
     f"constexpr int nnz = {sp.nnz};",
@@ -122,8 +122,9 @@ def render_cpp_header(
     f"  return {symbol}(arg, res, nullptr, sz_w ? workspace.ptr() : nullptr, 0);",
     "}",
   ]
-  for name, sp in zip(fun.output_names, sparsities, strict=True):
+  # Named by the output's buffer identifier, which never repeats the function's own symbol.
+  for ident, sp in zip(outputs, sparsities, strict=True):
     if sp is not None:
-      lines += ["", *_sparse_namespace(name, sp)]
+      lines += ["", *_sparse_namespace(ident, sp)]
   lines += [f"}}  // namespace {symbol}"]
   return "\n".join(lines) + "\n"

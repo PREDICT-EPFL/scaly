@@ -386,6 +386,9 @@ class SparseMatrix(SymbolicValue):
   def matvec(self, x: Any) -> Expr:
     return self @ x
 
+  def leaf_tree(self, name: str) -> S:
+    return S(name, self)
+
 
 class S(Tree[SparseMatrix, sparse.sparray]):
   """Declare one named sparse matrix: its pattern is part of the ``Function``'s signature.

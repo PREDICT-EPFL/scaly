@@ -43,14 +43,14 @@ def test_scoped_function_decorator_outputs_default_names() -> None:
 
 def test_the_old_two_positional_decorator_is_refused_with_the_migration_hint() -> None:
   with pytest.raises(TypeError, match=r"one declaration per parameter.*did you mean sc.function\(<inputs>, output=<outputs>\)"):
-    sc.function(sc.L("x", 2), sc.L("y", ...))(lambda x: x)  # ty: ignore[no-matching-overload]
+    sc.function(sc.L("x", 2), sc.L("y", ...))(lambda x: x)  # ty: ignore[invalid-argument-type]
 
 
 def test_decorator_slots_must_match_the_body_parameters() -> None:
   with pytest.raises(TypeError, match=r"declared 1 parameters, the body takes 2 \(x, p\)"):
     sc.function(sc.L("x", 2), output=sc.L("y", ...))(lambda x, p: x)  # ty: ignore[invalid-argument-type]
-  with pytest.raises(TypeError, match="declare the output tree with output="):
-    sc.function(sc.L("x", 2))(lambda x: x)  # ty: ignore[no-matching-overload]
+  with pytest.raises(TypeError, match=r"declared 3 parameters, the body takes 1 \(x\)"):
+    sc.function(2, 2, 2)(lambda x: x)  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize(

@@ -182,7 +182,7 @@ def test_a_dtype_left_open_binds_from_an_expr_and_spells_itself() -> None:
 
 def test_two_bindings_may_never_share_a_name(monkeypatch) -> None:
   double, _ = _counted()
-  monkeypatch.setattr(model, "instance_name", lambda name, decls, types: f"{name}__same")
+  monkeypatch.setattr(model, "instance_name", lambda name, *binding: f"{name}__same")
   double(np.ones(2))
   with pytest.raises(RuntimeError, match="two argument signatures would share the instance name 'double__same'"):
     double(np.ones(3))
@@ -288,5 +288,5 @@ def test_a_repeated_call_skips_binding_but_not_checking(monkeypatch) -> None:
   assert nested((one, (one, one))) == 6.0
   assert nested((one, (one, one))) == 6.0
   assert len(binds) == 3  # three leaves, bound once
-  with pytest.raises(ValueError, match=r"nested__2_2_2.numerical_call: expected shape \(2,\) for 'p_0', got \(2, 2\)"):
+  with pytest.raises(ValueError, match=r"nested: value does not have the declared structure of \('p_1_0', 'p_1_1'\)"):
     nested(((one, one), one))  # ty: ignore[no-matching-overload]  (the same flat shapes, the wrong nesting)

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Templates P3 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Function templates P3: bare mode and inferred outputs</h1>
+<p class="sub">2026-09-27 · branch <code>claude/function-templates</code> · plan v2, step P3</p>
+<div class="box"><b>Summary.</b> <code>@sc.function</code> on its own is enough: <code>def product(A, B): return A @ B</code> called with <code>(4, 4)</code> and <code>(4, 2)</code> arrays builds <code>product__4x4_4x2</code>, and with <code>(3, 3)</code>/<code>(3, 1)</code> builds <code>product__3x3_3x1</code>. <code>output=</code> is optional everywhere: the output tree is read off the same trace, named after the function. A sparse output named like its function no longer breaks the C++ header.</div>
+<h2>What changed</h2>
+<ul>
+<li><b>Decorator forms.</b>
+  <ul>
+  <li><code>@sc.function</code>, <code>@sc.function()</code>, <code>@sc.function(name=...)</code> and <code>@sc.function(output=...)</code> on a body with parameters make a bare template.</li>
+  <li>On a body with no parameters they make a concrete zero-input function.</li>
+  <li>Declared slots without <code>output=</code> infer the output.</li>
+  <li>The old two-positional spelling still gets the migration hint.</li>
+  </ul></li>
+<li><b>Bare binding</b> (<code>tree.inferred_tree</code>).
+  <ul>
+  <li>A tuple argument is structure; its leaves are named <code>p_0</code>, <code>p_1</code>, ...</li>
+  <li>An <code>Expr</code> is a leaf of its shape and dtype, so an <code>int64</code> index reaches a bare helper (<code>pick__5_sint64</code>).</li>
+  <li>A <code>SymbolicValue</code> declares itself through <code>leaf_tree</code>: a <code>SparseMatrix</code> is <code>S(name, pattern)</code>, and its instance token is <code>p</code> plus a digest of the pattern.</li>
+  <li>An array-like is a <code>float64</code> leaf of its shape; a float, an int, a NumPy scalar and a 0-d array share one instance.</li>
+  <li>Refused, each with the fix: a tuple of numbers ("pass a list or an array for a vector"), a list holding expressions ("build one with sc.stack"), a SciPy sparse matrix ("declare its pattern").</li>
+  <li>The nesting is part of the key and, when any argument is a tuple, of the name (<code>t</code> plus six hex digits). Two calls with the same flat shapes nested differently are two instances.</li>
+  </ul></li>
+<li><b>Inferred outputs in one trace.</b> <code>ConcreteFunction(outputs=None)</code> builds the output tree from the traced value. A leaf is named after the template, never after the instance, so <code>of=</code> is the same for every instance. Tuple leaves are <code>f_0</code>, <code>f_1</code>, nested <code>f_0_1</code>: the input rule applied to outputs. A body returning anything else is refused.</li>
+<li><b>C++ header.</b> A sparse output's namespace is named by its buffer identifier, which already avoids the function's own symbol. A sparse output named like its function used to redeclare the function inside its own namespace.</li>
+<li><b>Typing.</b>
+  <ul>
+  <li><code>@sc.function</code>: <code>Function[P, ..., R, Any]</code>, the body's own signature on the symbolic side.</li>
+  <li><code>@sc.function()</code>: a <code>_Bare</code> protocol.</li>
+  <li><code>output=</code> alone: an overloaded <code>_OutputOnly</code> protocol, <code>Function[[], [], SO, NO]</code> for a zero-parameter body.</li>
+  <li>Declared slots without <code>output=</code>: an <code>_Inferred</code> protocol per width, the body's return type as the symbolic output and <code>Any</code> as the numerical one.</li>
+  </ul></li>
+<li>The argument-keyed fast path now keys on the nesting too, and skips lists, which may hold expressions.</li>
+</ul>
+<h2>Tests and mutation checks</h2>
+<p><code>tests/function/test_bare.py</code> (8 tests) covers:</p>
+<ul>
+<li>many shapes, one trace each, and a symbolic call reusing a numerical call's instance;</li>
+<li>numbers and lists as leaves, and the three refusals;</li>
+<li>tuples as structure, and nesting in the key and name;</li>
+<li><code>Expr</code> dtypes, and sparse patterns;</li>
+<li>inferred outputs (declared inputs, zero parameters, <code>output=</code> alone, a list returned);</li>
+<li>output names following the template, arity errors, and the repr.</li>
+</ul>
+<p><code>test_name_clash.py</code> compiles the C and C++ headers of a dense and a sparse output named like its function. The typing tests cover the four new decorator forms.</p>
+<div class="scroll"><table><tr><th>Mutant</th><th>Result</th></tr>
+<tr><td>no parenthesis-free decorator</td><td class="ok">killed (7)</td></tr>
+<tr><td>no nesting in bare keys</td><td class="ok">killed</td></tr>
+<tr><td>tuples of numbers, lists of expressions, SciPy matrices accepted (three mutants)</td><td class="ok">each killed</td></tr>
+<tr><td>outputs named after the instance</td><td class="ok">killed (3)</td></tr>
+<tr><td>tuple outputs not suffixed</td><td class="ok">killed (2)</td></tr>
+<tr><td>sparse namespace by raw name</td><td class="ok">killed (the C++ compile)</td></tr>
+<tr><td>no pattern token</td><td class="ok">killed</td></tr>
+<tr><td>bare arity unchecked</td><td class="ok">killed</td></tr>
+<tr><td>lists on the fast path</td><td class="ok">killed</td></tr>
+<tr><td>outputs never inferred</td><td class="ok">killed (9)</td></tr></table></div>
+<h2>Timing</h2>
+<p>One leaf 2.45 µs, one group of 4 5.07, 4 parameters 4.48, a template with one hole 3.20; within noise of P2.</p>
+<h2>Gates</h2>
+<div class="scroll"><table><tr><th>Check</th><th>Result</th></tr>
+<tr><td><code>uv run pytest -n=auto</code></td><td class="ok">2394 passed, 42 skipped</td></tr>
+<tr><td>C snapshots</td><td class="ok">unchanged</td></tr>
+<tr><td><code>uv run ty check --error-on-warning</code></td><td class="ok">no new diagnostics</td></tr>
+<tr><td>smoke benchmarks, <code>typing_playground</code>, ruff</td><td class="ok">green</td></tr></table></div>
+<h2>Next</h2>
+<p>P4: derivative wrappers over templates, with <code>of</code> and <code>wrt</code> defaults and the one-string form <code>sc.gradient(f, "x")</code>; <code>custom_derivative</code> over templates.</p>
+</main></body></html>

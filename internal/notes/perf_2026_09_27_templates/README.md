@@ -13,3 +13,4 @@ results.
 | P1b-i (base) | 2.83 | 5.81 | n/a | n/a |
 | P1b-ii | 2.44 | 5.01 | 4.44 | n/a |
 | P2 | 2.47 | 5.06 | 4.52 | 3.02 (5.21 before the argument-keyed lookup) |
+| P3 | 2.45 | 5.07 | 4.48 | 3.20 |
