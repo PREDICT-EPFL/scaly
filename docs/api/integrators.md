@@ -10,6 +10,20 @@
 
 ::: scaly.integrators.implicit.implicit
 
+## Adaptive and symplectic methods
+
+::: scaly.integrators.explicit.adaptive
+
+::: scaly.integrators.explicit.symplectic
+
+## Linear systems
+
+::: scaly.integrators.linear.zoh
+
+::: scaly.integrators.linear.foh
+
+::: scaly.integrators.linear.linearize
+
 ## Tableaus
 
 ::: scaly.integrators.tableau.Tableau

@@ -96,15 +96,20 @@ def test_the_integrator_surface() -> None:
     "TABLEAUS",
     "Tableau",
     "UNROLL_STEPS",
+    "adaptive",
     "explicit",
+    "foh",
     "gauss_legendre",
     "implicit",
+    "linearize",
     "lobatto_iiia",
     "lobatto_iiic",
     "order_conditions",
     "radau_iia",
     "rk4",
+    "symplectic",
     "tableau",
+    "zoh",
   ]
   assert "integrators" not in sc.__all__ and not hasattr(sc, "rk4")
 

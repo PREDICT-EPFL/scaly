@@ -119,8 +119,13 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       the seeds and its shared work hoisted (it was applied once per seed). Radau IIA(3) on the
       cart-pole: step 0.62x and step Jacobians 0.94x CasADi SX's time, with a fifth of the code.
       24/24 mutants killed, three after a test was added. Report: `notes/integrators_i3_report.html`.
-- [ ] **API-145. Exact, adaptive and symplectic integrators** (plan I4): ZOH/FOH, linearization,
-      embedded-pair adaptive simulation, Störmer-Verlet.
+- [x] **API-145. Exact, adaptive and symplectic integrators** (plan I4). `si.zoh`, `si.foh` (one
+      `expm` each) and `si.linearize` (one Jacobian per input leaf, as generated code).
+      `si.adaptive`: DOPRI5 or BS32 with RMS error control in a `while_loop`, NaN when `max_steps`
+      runs out, derivatives with the step sequence held (the controller's factor rounded to a power
+      of `2^(1/1024)` through an `int64` cast); RK45's accuracy at 20 to 140x less time per Python
+      call. `si.symplectic`: Störmer-Verlet and symplectic Euler for `x = [q, v]`, energy bounded over
+      1e5 pendulum steps where RK4 loses a third of it. Report: `notes/integrators_i4_report.html`.
 - [ ] **API-146. Collocation and pseudospectral transcriptions** (plan I5).
 - [ ] **API-147. `scaly.mpc` core** (plan M1): OCP to `sc.problem`, every transcription, the control
       law with its warm start in generated code, closed-loop simulation.

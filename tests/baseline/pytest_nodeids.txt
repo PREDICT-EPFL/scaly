@@ -817,6 +817,12 @@ tests/integration/test_while_params.py::test_validation_and_the_verifier
 tests/integration/test_while_params.py::test_values_and_every_derivative_match_the_unrolled_loop[False]
 tests/integration/test_while_params.py::test_values_and_every_derivative_match_the_unrolled_loop[True]
 tests/integrators/test_explicit.py::test_a_dt_input_equals_the_folded_interval
+tests/integrators/test_explicit.py::test_a_step_grows_at_most_fivefold
+tests/integrators/test_explicit.py::test_adaptive_derivatives_hold_the_step_sequence
+tests/integrators/test_explicit.py::test_adaptive_error_follows_the_tolerance[bs32]
+tests/integrators/test_explicit.py::test_adaptive_error_follows_the_tolerance[dopri5]
+tests/integrators/test_explicit.py::test_adaptive_refusals
+tests/integrators/test_explicit.py::test_adaptive_runs_out_of_steps_into_nan_and_a_folded_interval
 tests/integrators/test_explicit.py::test_each_stage_is_one_call_of_the_model
 tests/integrators/test_explicit.py::test_jacobians_match_differences[2]
 tests/integrators/test_explicit.py::test_jacobians_match_differences[6]
@@ -839,6 +845,12 @@ tests/integrators/test_explicit.py::test_names_and_templates
 tests/integrators/test_explicit.py::test_refusals
 tests/integrators/test_explicit.py::test_reverse_mode_matches_forward_mode
 tests/integrators/test_explicit.py::test_rk4_generates_the_code_of_a_hand_written_rk4
+tests/integrators/test_explicit.py::test_stormer_verlet_keeps_the_energy_where_rk4_loses_it
+tests/integrators/test_explicit.py::test_symplectic_methods_converge_at_their_order[stormer_verlet-2]
+tests/integrators/test_explicit.py::test_symplectic_methods_converge_at_their_order[symplectic_euler-1]
+tests/integrators/test_explicit.py::test_symplectic_refusals
+tests/integrators/test_explicit.py::test_the_controller_factor_is_rounded_and_carries_no_derivative
+tests/integrators/test_explicit.py::test_the_controller_law
 tests/integrators/test_explicit.py::test_van_der_pol_converges_at_the_method_order[dopri5]
 tests/integrators/test_explicit.py::test_van_der_pol_converges_at_the_method_order[heun]
 tests/integrators/test_explicit.py::test_van_der_pol_converges_at_the_method_order[rk38]
@@ -885,6 +897,11 @@ tests/integrators/test_implicit.py::test_the_stage_coefficients_split_into_real_
 tests/integrators/test_implicit.py::test_the_stage_coefficients_split_into_real_blocks[lobatto_iiic-4-kinds5]
 tests/integrators/test_implicit.py::test_the_stage_coefficients_split_into_real_blocks[radau_iia-3-kinds2]
 tests/integrators/test_implicit.py::test_the_stage_coefficients_split_into_real_blocks[radau_iia-5-kinds3]
+tests/integrators/test_linear.py::test_a_scalar_system_and_the_refusals
+tests/integrators/test_linear.py::test_foh_is_the_exact_flow_with_the_input_ramped
+tests/integrators/test_linear.py::test_linearize_gives_one_jacobian_per_leaf
+tests/integrators/test_linear.py::test_linearizing_a_map_and_a_template
+tests/integrators/test_linear.py::test_zoh_is_the_exact_flow_with_the_input_held
 tests/integrators/test_model.py::test_a_dt_input_needs_a_free_name
 tests/integrators/test_model.py::test_state_named_z_gives_znext
 tests/integrators/test_model.py::test_substeps_unroll_up_to_the_threshold_then_loop
@@ -2464,6 +2481,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.function.tre
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators.explicit]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators.implicit]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators.linear]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators.model]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators.polynomial]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.integrators.tableau]

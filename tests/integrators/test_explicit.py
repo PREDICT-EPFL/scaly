@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import numpy as np
 import pytest
 from scipy.integrate import solve_ivp
@@ -9,6 +11,7 @@ from scipy.linalg import expm
 
 import scaly as sc
 from scaly import integrators as si
+from scaly.integrators.explicit import _controller, _power_of_two
 from scaly.ir.expr import ExprOp, topo
 
 A = np.array([[0.0, 1.0], [-4.0, -0.3]])
@@ -215,3 +218,143 @@ def test_rk4_generates_the_code_of_a_hand_written_rk4() -> None:
     return render_c_module(fn).body
 
   assert horizon(library) == horizon(lambda x, u: rk4(rk4(x, u, 0.05), u, 0.05))
+
+
+def vdp_np(t, x, u=0.3, mu=3.0):
+  return [x[1], mu * (1 - x[0] ** 2) * x[1] - x[0] + u]
+
+
+@sc.function(2, 1, output="xdot")
+def stiffish(x, u):
+  return sc.stack([x[1], 3.0 * (1 - x[0] * x[0]) * x[1] - x[0] + u[0]])
+
+
+@pytest.mark.parametrize("pair", ["dopri5", "bs32"])
+def test_adaptive_error_follows_the_tolerance(pair: str) -> None:
+  x0, u, T = np.array([2.0, 0.0]), np.array([0.3]), 2.0
+  exact = solve_ivp(vdp_np, (0, T), x0, method="DOP853", rtol=1e-13, atol=1e-14).y[:, -1]
+  errors = []
+  for tol in (1e-4, 1e-6, 1e-8):
+    step = si.adaptive(stiffish, pair, rtol=tol, atol=tol * 1e-2, name=f"{pair}_{int(-np.log10(tol))}")
+    errors.append(float(np.abs(step(x0, u, np.array(T)) - exact).max()))
+  bound = 0.5 if pair == "dopri5" else 5.0  # DOPRI5 keeps its fifth-order solution, well inside the fourth-order estimate
+  assert all(e < bound * tol for e, tol in zip(errors, (1e-4, 1e-6, 1e-8), strict=True)), errors
+  assert errors[0] > errors[1] > errors[2]
+  # A first step the length of the whole interval must be rejected, and the result is as accurate.
+  whole = si.adaptive(stiffish, pair, rtol=1e-8, atol=1e-10, h0=T, name=f"{pair}_whole")
+  assert np.abs(whole(x0, u, np.array(T)) - exact).max() < bound * 1e-8
+
+
+def test_adaptive_runs_out_of_steps_into_nan_and_a_folded_interval() -> None:
+  x0, u = np.array([2.0, 0.0]), np.array([0.3])
+  assert np.isnan(si.adaptive(stiffish, max_steps=3, name="short")(x0, u, np.array(2.0))).all()
+  folded = si.adaptive(stiffish, dt=0.5, rtol=1e-10, atol=1e-12, name="folded")
+  free = si.adaptive(stiffish, rtol=1e-10, atol=1e-12, name="free")
+  assert folded.input_names == ("x", "u") and free.input_names == ("x", "u", "dt")
+  np.testing.assert_allclose(folded(x0, u), free(x0, u, np.array(0.5)), rtol=1e-14)
+  np.testing.assert_allclose(free(x0, u, np.array(0.0)), x0)  # no time to go: no step taken
+  given = si.adaptive(stiffish, rtol=1e-10, atol=1e-12, h0=1e-3, name="given_h0")
+  np.testing.assert_allclose(given(x0, u, np.array(0.5)), free(x0, u, np.array(0.5)), rtol=1e-8)
+  assert ExprOp.WHILE in {e.op for e in topo(free.outputs)}
+
+
+def test_adaptive_derivatives_hold_the_step_sequence() -> None:
+  step = si.adaptive(stiffish, rtol=1e-9, atol=1e-11, name="adaptive_d")
+  x0, u, T = np.array([1.2, -0.4]), np.array([0.3]), np.array(1.3)
+  np.testing.assert_allclose(sc.jacobian(step, "x")(x0, u, T), _fd_jacobian(step, [x0, u, T], 0), rtol=1e-5, atol=1e-7)
+  np.testing.assert_allclose(sc.jacobian(step, "u")(x0, u, T), _fd_jacobian(step, [x0, u, T], 1), rtol=1e-5, atol=1e-7)
+  end = step(x0, u, T)
+  # Only the last step moves with dt, and its derivative in its length is f(x(T)) to the step's accuracy.
+  np.testing.assert_allclose(sc.jacobian(step, "dt")(x0, u, T).ravel(), stiffish(end, u), rtol=1e-7)
+
+  @sc.function(2, 1, (), output="c", name="adaptive_cost")
+  def cost(x, u, t):
+    y = step(x, u, t)
+    return (y * y).sum()
+
+  np.testing.assert_allclose(sc.gradient(cost, "x")(x0, u, T), 2 * sc.jacobian(step, "x")(x0, u, T).T @ end, rtol=1e-11)
+
+
+def test_a_step_grows_at_most_fivefold() -> None:
+  """With a constant derivative both solutions of the pair are exact, the error is zero, and every
+  step is five times the last: from 2^-20, the tenth step is the first to reach t = 1."""
+
+  @sc.function(1, output="xdot")
+  def drift(x):
+    return 0.0 * x + 1.0
+
+  steps_needed = next(k for k in range(1, 40) if 2.0**-20 * (5**k - 1) / 4 >= 1.0)
+  assert steps_needed == 10
+  for budget, reaches in ((steps_needed - 1, False), (steps_needed, True)):
+    step = si.adaptive(drift, h0=2.0**-20, max_steps=budget, name=f"drift_{budget}")
+    np.testing.assert_allclose(step(np.zeros(1), np.array(1.0)), [1.0] if reaches else [np.nan])
+
+
+def test_adaptive_refusals() -> None:
+  with pytest.raises(ValueError, match="explicit embedded pair"):
+    si.adaptive(stiffish, "rk4")
+  with pytest.raises(ValueError, match="rtol and atol must be positive"):
+    si.adaptive(stiffish, rtol=0.0)
+  with pytest.raises(ValueError, match="max_steps a positive integer"):
+    si.adaptive(stiffish, max_steps=0)
+
+
+@sc.function(2, output="xdot")
+def pendulum(x):
+  return sc.stack([x[1], -x[0].sin()])
+
+
+def _energy(x: np.ndarray) -> float:
+  return 0.5 * x[1] ** 2 - np.cos(x[0])
+
+
+def test_stormer_verlet_keeps_the_energy_where_rk4_loses_it() -> None:
+  h, chunk, chunks = 0.3, 1000, 100
+  verlet = si.symplectic(pendulum, split=1, dt=h * chunk, steps=chunk)
+  euler = si.symplectic(pendulum, "symplectic_euler", split=1, dt=h * chunk, steps=chunk)
+  rk4 = si.rk4(pendulum, dt=h * chunk, steps=chunk)
+  x0 = np.array([1.5, 0.0])
+  e0 = _energy(x0)
+  xv, xe, xr, worst, worst_euler = x0, x0, x0, 0.0, 0.0
+  for _ in range(chunks):
+    xv, xe, xr = verlet(xv), euler(xe), rk4(xr)
+    worst, worst_euler = max(worst, abs(_energy(xv) - e0)), max(worst_euler, abs(_energy(xe) - e0))
+  assert worst < 0.03  # bounded over 1e5 steps (the potential spans 2)
+  assert worst_euler < 0.3  # first order, so larger, but bounded too: explicit Euler would diverge
+  assert abs(_energy(xr) - e0) > 0.3  # RK4's dissipation accumulates
+
+
+@pytest.mark.parametrize(("method", "order"), [("stormer_verlet", 2), ("symplectic_euler", 1)])
+def test_symplectic_methods_converge_at_their_order(method: Literal["stormer_verlet", "symplectic_euler"], order: int) -> None:
+  x0, T = np.array([1.2, 0.3]), 2.0
+  exact = solve_ivp(lambda t, x: [x[1], -np.sin(x[0])], (0, T), x0, method="DOP853", rtol=1e-13, atol=1e-14).y[:, -1]
+  errors = [float(np.abs(si.symplectic(pendulum, method, split=1, dt=T, steps=n)(x0) - exact).max()) for n in (200, 400)]
+  assert abs(np.log2(errors[0] / errors[1]) - order) < 0.1, errors
+  step = si.symplectic(pendulum, method, split=1, dt=0.1)
+  np.testing.assert_allclose(sc.jacobian(step, "x")(x0), _fd_jacobian(step, [x0], 0), rtol=1e-7, atol=1e-9)
+
+
+def test_symplectic_refusals() -> None:
+  with pytest.raises(ValueError, match="split must count the positions"):
+    si.symplectic(pendulum, split=2, dt=0.1)
+  with pytest.raises(ValueError, match="stormer_verlet"):
+    si.symplectic(pendulum, "leapfrog", split=1, dt=0.1)  # ty: ignore[invalid-argument-type]
+
+
+def test_the_controller_law() -> None:
+  err = sc.sym("err", 5)
+  fn = sc.Function._from_exprs("law", [err], [_controller(err, -0.2)], ["err"], ["factor"])
+  (factor,) = fn._flat_numerical_call(np.array([0.0, 1e-12, 1.0, 32.0, 1e30]))
+  expected = np.array([5.0, 5.0, 0.9, 0.9 * 32.0**-0.2, 0.2])
+  assert np.all(np.abs(np.log2(factor / expected)) < 1 / 1024)  # capped growth, the law, floored shrinkage
+
+
+def test_the_controller_factor_is_rounded_and_carries_no_derivative() -> None:
+  v = sc.sym("v", 3)
+  rounded = _power_of_two(v, 1024)
+  fn = sc.Function._from_exprs("rounded", [v], [rounded, sc.jacobian(rounded * v, v)], ["v"], ["r", "j"])
+  values = np.array([0.37, 1.0, 4.2])
+  r, j = fn._flat_numerical_call(values)
+  assert np.all(np.abs(np.log2(r / values)) < 1 / 1024)  # within one step of 2^(1/1024)
+  np.testing.assert_allclose(j, np.diag(r))  # d(r v)/dv = r: r itself contributes nothing
+  np.testing.assert_allclose(np.log2(r) * 1024, np.round(np.log2(r) * 1024), atol=1e-9)

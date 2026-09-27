@@ -101,6 +101,49 @@ each column is one solve. Reverse mode is one transposed solve. Second derivativ
 too, so a solver's Lagrangian Hessian through the map is exact at the stages found. A third
 derivative would reach the iterations, and the factorization there refuses it.
 
+## Adaptive steps
+
+`si.adaptive(f, pair="dopri5", dt=None, rtol=1e-6, atol=1e-9, max_steps=10000, h0=None)` chooses
+its steps as it integrates, as `solve_ivp` does, with the Dormand-Prince 5(4) or Bogacki-Shampine
+3(2) pair. It is the map for a plant model in closed-loop simulation, where the accuracy should not
+depend on the sampling time.
+
+```python
+plant = si.adaptive(cartpole, rtol=1e-10, atol=1e-12)     # plant(x, u, dt) -> x after dt
+x = plant(x, u, np.array(0.05))
+```
+
+- A step is accepted when the difference between the pair's two solutions, divided by
+  `atol + rtol * max(|x|, |x_next|)` entry by entry, has a root mean square of at most 1. The next
+  step is `0.9 err^(-1/(q+1))` times the last, within `[0.2, 5]`.
+- The loop is a `while_loop` of at most `max_steps` accepted and rejected steps. When it ends before
+  the interval does, the result is NaN rather than a state short of the end.
+- Derivatives take the steps as they were chosen: the controller's factor goes through an integer,
+  which carries no derivative, so a derivative is that of a fixed-step method on the same steps, and
+  the derivative in `dt` is the last step's.
+
+## Symplectic methods
+
+`si.symplectic(f, "stormer_verlet", split=nq, dt=..., steps=1)` integrates a model whose state is
+positions then velocities, `x = [q, v]` with `q = x[:nq]`. Störmer-Verlet (order 2) is a half kick, a
+drift and a half kick; `"symplectic_euler"` (order 1) is a kick and a drift. When `q'` depends only on
+the velocities and `v'` only on the positions and the held inputs, both are symplectic: over long
+simulations the energy error stays bounded where a Runge-Kutta method's accumulates.
+
+## Linear systems
+
+```python
+Ad, Bd = si.zoh(A, B, dt)            # exact for x' = A x + B u with u held over the interval
+Ad, B0, B1 = si.foh(A, B, dt)        # exact with u ramped from u_k to u_{k+1}
+A, B = si.linearize(cartpole, x_eq, u_eq)      # Jacobians of a model (or a map) at a point
+```
+
+`zoh` and `foh` read their matrices off one matrix exponential (SciPy's `expm`), so they take numbers,
+not expressions. `linearize` evaluates the Jacobians of any Function's one output as generated code,
+one matrix per input leaf; linearizing a model and then `zoh` gives the exact discretization of the
+linearization, and linearizing a map built by `explicit` or `implicit` gives the linearization of that
+discretization.
+
 ## What the generated code does
 
 Every stage calls the model once, as a call node, so the model is built, generated and

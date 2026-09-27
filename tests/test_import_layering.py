@@ -86,6 +86,7 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.integrators": 5,
   "scaly.integrators.explicit": 5,
   "scaly.integrators.implicit": 5,
+  "scaly.integrators.linear": 5,
   "scaly.integrators.model": 5,
   "scaly.integrators.polynomial": 5,
   "scaly.integrators.tableau": 5,

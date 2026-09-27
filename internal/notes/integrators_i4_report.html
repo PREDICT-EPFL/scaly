@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integrators I4 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 9 report</h1>
+<h1>Integrators · I4 report</h1>
+<p class="sub">API-145 · exact, adaptive and symplectic integrators · branch <code>claude/integrators-mpc</code> · 27 Sep 2026 · plan <code>integrators_mpc_plan_2026_09_27.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> The rest of the integrator catalogue:</p>
+<ul>
+<li><b>Exact discretization of linear systems.</b> <code>si.zoh</code> and <code>si.foh</code> each read their matrices off one matrix exponential, and match the exact flow to 1e-11.</li>
+<li><b>Linearization.</b> <code>si.linearize</code> gives one Jacobian per input leaf of any model or map, as generated code.</li>
+<li><b>Adaptive simulation for plant models.</b> <code>si.adaptive</code> uses Dormand-Prince 5(4) or Bogacki-Shampine 3(2), with error control inside the generated code.
+<ul>
+<li>It reaches <code>solve_ivp</code>'s RK45 accuracy at every tolerance from 1e-4 to 1e-10, <b>20–140× faster per Python call</b>.</li>
+<li>It returns NaN rather than a short result when the step budget runs out.</li>
+<li>Its derivatives hold the step sequence.</li>
+</ul></li>
+<li><b>Symplectic methods.</b> <code>si.symplectic</code> offers Störmer-Verlet and symplectic Euler. Over 10⁵ pendulum steps their energy error stays bounded, where RK4 loses 0.44 of a potential spanning 2.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 841 passed, 42 skipped. The failures are Colin's uncommitted <code>tiny_qp</code> test and three tests in another session's in-progress <code>*_edge_cases.py</code> files, which this PR does not touch. ruff and ty are clean on every path this PR touches. <b>Mutation checks:</b> 18 of 18 killed. Four needed a test first; a fifth mutant was untestable, so the code it guarded went.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>integrators/linear.py</code> (new)</td><td>
+<ul>
+<li><b><code>zoh(A, B, dt)</code></b> reads <code>expm([[A, B], [0, 0]] dt)</code>.</li>
+<li><b><code>foh(A, B, dt)</code></b> reads <code>expm([[A, B, 0], [0, 0, I/dt], [0, 0, 0]] dt)</code> and returns <code>(Ad, B0, B1)</code> for <code>x⁺ = Ad x + B0 u + B1 u⁺</code>.</li>
+<li><b><code>linearize(f, *point)</code></b> gives <code>sc.jacobian</code> per input leaf, evaluated at the point. It takes templates, and grouped parameters as one argument each.</li>
+</ul></td></tr>
+<tr><td><code>si.adaptive</code> (<code>explicit.py</code>)</td><td>
+<ul>
+<li><b>The loop.</b> A <code>while_loop</code> whose carry is <code>[x, t, h]</code>:
+<ul>
+<li>each iteration attempts <code>min(h, dt − t)</code>;</li>
+<li>the error is the RMS of <code>(x_high − x_low) / (atol + rtol max(|x|, |x_high|))</code>;</li>
+<li>a step is accepted when that error is at most 1.</li>
+</ul></li>
+<li><b><code>_controller</code>.</b> The next factor is <code>0.9 err^(−1/(q+1))</code> within [0.2, 5], rounded to a power of 2^(1/1024) by casting its exponent to <code>int64</code>. The cast carries no derivative, which is how the step sequence is held for derivatives without a stop-gradient op in the IR.</li>
+<li><b>NaN at the step bound.</b> <code>max_steps</code> bounds accepted and rejected steps together. If it is reached before <code>dt</code>, the result is NaN.</li>
+<li><b>The interval.</b> <code>dt</code> is folded in or taken as an input, as elsewhere.</li>
+</ul></td></tr>
+<tr><td><code>si.symplectic</code> (<code>explicit.py</code>)</td><td>
+<ul>
+<li>For <code>x = [q, v]</code>, <code>split = len(q)</code>.</li>
+<li><b>Störmer-Verlet:</b> a half kick, a drift and a half kick.</li>
+<li><b>Symplectic Euler:</b> a kick and a drift.</li>
+<li>Each half is read from one call of the model at the state it needs.</li>
+</ul></td></tr>
+<tr><td>Docs</td><td>Sections on adaptive steps, symplectic methods and linear systems in <code>docs/guide/integrators.md</code>, and the API entries.</td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<ul>
+<li><b>Linear systems.</b>
+<ul>
+<li>ZOH and FOH against a DOP853 solve at 1e-13 of the held or ramped input, to 1e-11.</li>
+<li><code>Bd = A⁻¹(Ad − I)B</code>, and FOH reduces to ZOH for a constant input.</li>
+<li>Scalar systems; the refusals.</li>
+</ul></li>
+<li><b><code>linearize</code>.</b> Analytic Jacobians of a grouped-parameter model; a map against finite differences; a template.</li>
+<li><b>Adaptive accuracy.</b> Both pairs are checked at three tolerances, the error decreasing with the tolerance: DOPRI5's error below 0.5× the tolerance, BS32's below 5×. A first step as long as the whole interval must be rejected, and the result is as accurate.</li>
+<li><b>Adaptive behaviour.</b>
+<ul>
+<li>NaN when the steps run out.</li>
+<li>A folded <code>dt</code> equals an input one.</li>
+<li><code>dt = 0</code> returns <code>x</code>.</li>
+<li>An explicit <code>h0</code>.</li>
+<li>Growth capped at 5×: with a constant derivative the error is zero, so from 2⁻²⁰ exactly ten steps reach <code>t = 1</code>. Nine fail and ten succeed.</li>
+<li>The controller law at err = 0, 1e-12, 1, 32 and 1e30.</li>
+<li>The rounded factor has a zero derivative.</li>
+</ul></li>
+<li><b>Adaptive derivatives.</b> Jacobians in <code>x</code> and <code>u</code> against finite differences; <code>d/d dt</code> = <code>f(x(T))</code> to the step's accuracy; reverse mode equals forward mode.</li>
+<li><b>Symplectic.</b>
+<ul>
+<li>Energy bounded over 10⁵ steps for both methods, where RK4 dissipates.</li>
+<li>Orders 2 and 1 against DOP853.</li>
+<li>Jacobians; the refusals.</li>
+</ul></li>
+</ul>
+<div class="scroll"><table>
+<tr><th>#</th><th>Mutant</th><th>Result</th></tr>
+<tr><td>A1–A4</td><td>the ZOH block scaled; FOH without the ramp correction; the ramp not over <code>dt</code>; <code>linearize</code> only in the state</td><td class="ok">killed</td></tr>
+<tr><td>A5</td><td>every step accepted</td><td class="warn">survived → killed, by the whole-interval first step</td></tr>
+<tr><td>A6, A7, A9–A12</td><td>controller exponent sign; growth cap 50; time advancing on rejection; rejected state kept; no NaN at the bound; controller with a derivative</td><td class="ok">killed</td></tr>
+<tr><td>A8, A18</td><td>shrink floor 0.001; safety factor 0.99</td><td class="warn">A8 survived → killed, by the controller-law test (A18 was checked against it)</td></tr>
+<tr><td>A13</td><td>the pair's two solutions swapped</td><td class="warn">survived → killed, by tightening DOPRI5's bound to 0.5× the tolerance (its error was 0.09×)</td></tr>
+<tr><td>A14–A16</td><td>Verlet's second kick at the old position; symplectic Euler drifting with the old velocity; the split bound</td><td class="ok">killed</td></tr>
+<tr><td>A17</td><td>the first step not rounded to a power of two</td><td class="warn">survived. Its effect on a derivative is at local-error level, and no practical test sees it, so the rounding went: the first step is <code>dt/100</code>. The factors between steps stay frozen.</td></tr>
+</table></div>
+
+<h2>3. Benchmarks</h2>
+<p><code>perf_2026_09_27_integrators/bench_adaptive.py</code> integrates Van der Pol (μ = 3, u = 0.3) over 2 s with <code>atol = rtol/100</code>. Errors are against DOP853 at 1e-13. Each time is the fastest Python call: of 50 for ours, and 10 for SciPy. This is how a closed-loop simulation calls its plant model. Apple M3 Max; indicative only.</p>
+<div class="scroll"><table>
+<tr><th>rtol</th><th>si dopri5 err</th><th>µs</th><th>si bs32 err</th><th>µs</th><th>RK45 err</th><th>µs</th><th>nfev</th><th>DOP853 err</th><th>µs</th></tr>
+<tr><td>1e-4</td><td class="r">5.4e-06</td><td class="r ok">12.9</td><td class="r">6.6e-05</td><td class="r">6.7</td><td class="r">1.2e-05</td><td class="r">257</td><td class="r">86</td><td class="r">1.2e-07</td><td class="r">258</td></tr>
+<tr><td>1e-6</td><td class="r">7.5e-08</td><td class="r ok">7.3</td><td class="r">1.0e-06</td><td class="r">24.3</td><td class="r">7.9e-08</td><td class="r">525</td><td class="r">176</td><td class="r">1.5e-09</td><td class="r">376</td></tr>
+<tr><td>1e-8</td><td class="r">9.0e-10</td><td class="r ok">10.8</td><td class="r">1.3e-08</td><td class="r">46.6</td><td class="r">8.2e-10</td><td class="r">1 119</td><td class="r">386</td><td class="r">3.3e-11</td><td class="r">559</td></tr>
+<tr><td>1e-10</td><td class="r">8.3e-12</td><td class="r ok">19.6</td><td class="r">1.4e-10</td><td class="r">197.4</td><td class="r">8.3e-12</td><td class="r">2 669</td><td class="r">926</td><td class="r">2.8e-13</td><td class="r">977</td></tr>
+</table></div>
+<p>The generated DOPRI5 reaches RK45's accuracy (the same pair, a similar controller) at 20–140× less time. SciPy's cost is its Python stepping loop, so this compares what a user can call, not two compiled kernels.</p>
+
+<h2>4. Gates</h2>
+<div class="scroll"><table>
+<tr><th>Gate (plan §7, I4)</th><th>Status</th></tr>
+<tr><td>ZOH against a fine reference and the <code>expm</code> block formula</td><td class="ok">met: 1e-11 against DOP853, and <code>A⁻¹(Ad − I)B</code></td></tr>
+<tr><td>Adaptive global error tracks <code>rtol</code> over 1e-4 to 1e-10</td><td class="ok">met: the tests cover 1e-4 to 1e-8 and the benchmark reaches 1e-10</td></tr>
+<tr><td>Störmer-Verlet's energy drift bounded over 1e5 steps where RK4's grows</td><td class="ok">met: 0.018 against RK4's 0.44</td></tr>
+</table></div>
+
+<h2>5. Next</h2>
+<p>I5 (API-146):</p>
+<ul>
+<li><code>polynomial.py</code> grows differentiation and interpolation matrices and pseudospectral nodes on [−1, 1];</li>
+<li><code>transcription.py</code> adds <code>MultipleShooting</code>, <code>Collocation</code> and <code>Pseudospectral</code>, the contract <code>scaly.mpc</code> builds horizons from.</li>
+</ul>
+</main></body></html>
