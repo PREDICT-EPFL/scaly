@@ -163,6 +163,13 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     return mask
   if expr.op == ExprOp.SPARSE_LDL:
     return _compose(_sparse_ldl_reads(expr), _jac_mask(expr.args[0], wrt, memo))
+  if expr.op == ExprOp.SPARSE_LDL_SOLVE:
+    # Every unknown may depend on every entry of the factor and of the right-hand side.
+    mask = _empty((expr.size, wrt.size))
+    for arg in expr.args:
+      dense = _incidence((expr.size, arg.size), np.repeat(np.arange(expr.size), arg.size), np.tile(np.arange(arg.size), expr.size))
+      mask = _or(mask, _compose(dense, _jac_mask(arg, wrt, memo)))
+    return mask
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
     # Every entry of the lower triangle of the factor may depend on every entry the factorization reads.
     a = expr.args[0]

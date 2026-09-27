@@ -88,6 +88,7 @@ class ExprOp(StrEnum):
   CHOLESKY = "cholesky"
   LDL = "ldl"
   SPARSE_LDL = "sparse_ldl"
+  SPARSE_LDL_SOLVE = "sparse_ldl_solve"
   TRISOLVE = "trisolve"
   CALL = "call"
   VMAP = "vmap"
@@ -162,6 +163,7 @@ COMMON_STRUCTURAL = {
   ExprOp.CHOLESKY,
   ExprOp.LDL,
   ExprOp.SPARSE_LDL,
+  ExprOp.SPARSE_LDL_SOLVE,
   ExprOp.TRISOLVE,
   ExprOp.CALL,
   ExprOp.VMAP,
@@ -255,6 +257,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.CHOLESKY: OpInfo(ExprOp.CHOLESKY, 1, None),
   ExprOp.LDL: OpInfo(ExprOp.LDL, 1, None),
   ExprOp.SPARSE_LDL: OpInfo(ExprOp.SPARSE_LDL, 1, None),
+  ExprOp.SPARSE_LDL_SOLVE: OpInfo(ExprOp.SPARSE_LDL_SOLVE, 2, None),
   ExprOp.TRISOLVE: OpInfo(ExprOp.TRISOLVE, 2, None),
   ExprOp.CALL: OpInfo(ExprOp.CALL, None, None),
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, None),
@@ -1004,6 +1007,47 @@ def sparse_ldl_factor(values: Any, tables: dict[str, Any]) -> Expr:
   )
 
 
+SPARSE_LDL_SOLVE_TABLES = ("perm", "l_ptr", "l_rows", "sn_first", "sn_width")
+"""The tables a ``sparse_ldl_solve`` node carries: the ordering (``perm[new] = old``), the pattern of
+``L`` and its chunks of columns (``SymbolicLDL.solve_chunks``)."""
+
+
+def sparse_ldl_solve(factor: Any, b: Any, tables: dict[str, Any]) -> Expr:
+  """``K^{-1} b`` from the ``[L | D]`` of ``sparse_ldl_factor`` (or of ``SparseLDL``), for the
+  analysis in ``tables`` (``SPARSE_LDL_SOLVE_TABLES``).
+
+  ``b`` permuted, the unit lower sweep, then the diagonal and the transposed sweep, and the result
+  permuted back as each unknown is found. The forward sweep takes consecutive columns that form a
+  chain, each column's rows the next column followed by that column's rows (a supernode), in chunks
+  of up to ``SPARSE_LDL_MAX_WIDTH`` (``sn_first``, ``sn_width``): the chain's own rows column by
+  column, then each shared row once for the whole chunk, the sum in a register. Every entry sees
+  its updates in the order of one column at a time, and the transposed sweep sums as the ``scan``
+  schedule does, so the result is that schedule's bit for bit. Linear in ``b``, with that
+  derivative; the derivative in the factor is not implemented (``SparseLDL.solve`` differentiates
+  implicitly and never needs it)."""
+  factor, b = as_expr(factor), as_expr(b)
+  missing = [k for k in SPARSE_LDL_SOLVE_TABLES if k not in tables]
+  if missing:
+    raise ValueError(f"sparse_ldl_solve needs the tables {missing}")
+  attrs = {k: np.ascontiguousarray(np.asarray(tables[k], dtype=np.int64).reshape(-1)) for k in SPARSE_LDL_SOLVE_TABLES}
+  n = attrs["perm"].size
+  if attrs["l_ptr"].size != n + 1 or factor.shape != (attrs["l_rows"].size + n,) or b.shape != (n,):
+    raise ValueError(
+      f"sparse_ldl_solve of order {n} needs a factor of {attrs['l_rows'].size + n} and a right-hand side of {n}, got {factor.shape} and {b.shape}"
+    )
+  if attrs["sn_width"].size != attrs["sn_first"].size or int(attrs["sn_width"].sum()) != n:
+    raise ValueError("sparse_ldl_solve chunks must cover every column once")
+  if attrs["sn_width"].size and (attrs["sn_width"].min() < 1 or attrs["sn_width"].max() > SPARSE_LDL_MAX_WIDTH):
+    raise ValueError(f"sparse_ldl_solve chunks cover 1 to {SPARSE_LDL_MAX_WIDTH} columns")
+  return Expr(
+    ExprOp.SPARSE_LDL_SOLVE,
+    (factor, b),
+    TensorType((n,), dtype=promote_dtype(factor, b), diff=diff_any(factor, b)),
+    attrs=attrs,
+    lowering=common_lowering(factor, b),
+  )
+
+
 def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False, unit_diagonal: bool = False) -> Expr:
   """``X`` with ``op(T) X = B``, ``op(T) = T`` or ``T^T``, for a triangular ``T``; ``B`` a vector or a
   matrix of right-hand sides. Only the triangle named by ``lower`` is read, and its diagonal only
@@ -1109,7 +1153,9 @@ def _index_update(op: ExprOp, base: Any, indices: Any, values: Any) -> Expr:
 
 
 # Ops that address memory through an index computed at run time.
-RUNTIME_INDEX_OPS = frozenset({ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT, ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT, ExprOp.SPARSE_LDL})
+RUNTIME_INDEX_OPS = frozenset(
+  {ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT, ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT, ExprOp.SPARSE_LDL, ExprOp.SPARSE_LDL_SOLVE}
+)
 
 
 def _runtime_indices(indices: Any, op: str) -> Expr:

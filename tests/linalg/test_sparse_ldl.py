@@ -518,10 +518,11 @@ LOOP_MATRICES = {**MATRICES, "kkt_large": lambda: _kkt(120, 50, 1e-4, 3), "mpc_l
 
 
 def test_loop_schedule_is_the_scan_bit_for_bit() -> None:
-  """The looped factorization applies each column's updates in the scan's order, so its factor is
-  the scan's to the last bit, on every matrix, triangle and ordering; between them the matrices
-  have chunks of every width."""
+  """The looped factorization and solve apply each entry's updates in the scan's order, so the
+  factor and the solution are the scan's to the last bit, on every matrix, triangle and ordering;
+  between them the matrices have factorization and solve chunks of every width."""
   widths: set[int] = set()
+  solve_widths: set[int] = set()
   for name, make in LOOP_MATRICES.items():
     k = make()
     for which in ("lower", "full"):
@@ -539,7 +540,8 @@ def test_loop_schedule_is_the_scan_bit_for_bit() -> None:
         np.testing.assert_array_equal(fl, fs)
         np.testing.assert_array_equal(xl, xs)
         widths.update(np.unique(loop.tables()["ck_width"]).tolist())
-  assert widths == set(range(1, SPARSE_LDL_MAX_WIDTH + 1))
+        solve_widths.update(np.unique(loop.solve_tables()["sn_width"]).tolist())
+  assert widths == solve_widths == set(range(1, SPARSE_LDL_MAX_WIDTH + 1))
 
 
 def test_loop_factorization_propagates_inf_and_nan_as_the_scan_does() -> None:
@@ -666,3 +668,67 @@ def test_a_derivative_that_needs_the_looped_factor_is_refused() -> None:
     jacobian(mapped, mat.values)
   with pytest.raises(NotImplementedError, match="schedule='scan'"):
     jvp(mapped, mat.values, sc.const(np.ones(mat.nnz)))
+
+
+def test_solve_chunks_are_chains_of_columns() -> None:
+  """Each solve chunk is consecutive columns, each column's rows the next column and then the next
+  column's rows; the chunks cover the columns once, in order."""
+  for make in LOOP_MATRICES.values():
+    s = SparseLDL(SparseMatrix.symbol("K", _triangle(make(), "lower")), ordering="mmd", schedule="loop").symbolic
+    ck = s.solve_chunks(SPARSE_LDL_MAX_WIDTH)
+    assert np.array_equal(np.concatenate([np.arange(f, f + w) for f, w in zip(ck["sn_first"], ck["sn_width"], strict=True)]), np.arange(s.n))
+    for f, w in zip(ck["sn_first"], ck["sn_width"], strict=True):
+      for c in range(f, f + w - 1):
+        rows = s.l_rows[s.l_ptr[c] : s.l_ptr[c + 1]]
+        assert rows[0] == c + 1 and np.array_equal(rows[1:], s.l_rows[s.l_ptr[c + 1] : s.l_ptr[c + 2]])
+
+
+def test_the_looped_solve_is_linear_in_the_right_hand_side() -> None:
+  """Its tangent in ``b`` is one more solve, in forward mode for one seed and for many, and so is
+  its cotangent; a derivative in the factor is refused."""
+  k = MATRICES["kkt"]()
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  fact = SparseLDL(mat, schedule="loop", name="solve_lin")
+  n = k.shape[0]
+  b, db = sc.sym("b", n), sc.sym("db", n)
+  x = fact.solve_with(fact.values, b)
+  fn = _fn("solve_lin_run", [mat.values, b, db], [jvp(x, b, db), jacobian(x, b), gradient(sc.sumsqr(x), b)])
+  kv, bv, dbv = _values(mat, t), RNG.standard_normal(n), RNG.standard_normal(n)
+  tangent, jac, grad = fn._flat_numerical_call(kv, bv, dbv)
+  kinv = np.linalg.inv(k.toarray())
+  np.testing.assert_allclose(tangent, kinv @ dbv, rtol=1e-9, atol=1e-12)
+  np.testing.assert_allclose(jac, kinv, rtol=1e-9, atol=1e-12)
+  np.testing.assert_allclose(grad, 2 * kinv.T @ (kinv @ bv), rtol=1e-9, atol=1e-12)
+  with pytest.raises(NotImplementedError, match="schedule='scan'"):
+    jvp(fact.solve_with(fact.values, b), mat.values, sc.const(np.ones(mat.nnz)))
+  with pytest.raises(NotImplementedError, match="schedule='scan'"):
+    gradient(sc.sumsqr(fact.solve_with(fact.values, b)), mat.values)
+  given = sc.sym("given", fact.values.shape)  # a factor from elsewhere: the solve's own rules refuse it
+  with pytest.raises(NotImplementedError, match="schedule='scan'"):
+    jvp(fact.solve_with(given, b), given, sc.const(np.ones(given.size)))
+  with pytest.raises(NotImplementedError, match="schedule='scan'"):
+    jacobian(fact.solve_with(given, b), given)
+  small = SparseLDL(SparseMatrix.symbol("Kd", _triangle(MATRICES["diag"](), "lower")), schedule="loop", name="solve_lin_d")
+  few = sc.sym("few", small.values.shape)  # few seeds: the multi-seed rule itself refuses
+  with pytest.raises(NotImplementedError, match="schedule='scan'"):
+    jacobian(small.solve_with(few, sc.sym("bd", small.n)), few)
+  pattern = sc.jacobian_sparsity(x, b)
+  assert len(pattern.rows) == n * n  # every unknown depends on every entry of b
+
+
+def test_sparse_ldl_solve_validates_its_tables() -> None:
+  from scaly.ir.expr import sparse_ldl_solve
+
+  fact = SparseLDL(SparseMatrix.symbol("K", _triangle(MATRICES["kkt"](), "lower")), schedule="loop")
+  tables = fact.solve_tables()
+  f, b = sc.sym("f", fact.values.shape), sc.sym("b", fact.n)
+  with pytest.raises(ValueError, match="needs the tables"):
+    sparse_ldl_solve(f, b, {k: v for k, v in tables.items() if k != "sn_width"})
+  with pytest.raises(ValueError, match="right-hand side of"):
+    sparse_ldl_solve(f, sc.sym("b_short", fact.n - 1), tables)
+  with pytest.raises(ValueError, match="every column once"):
+    sparse_ldl_solve(f, b, {**tables, "sn_width": tables["sn_width"][:-1], "sn_first": tables["sn_first"][:-1]})
+  wide = {"sn_first": np.array([0]), "sn_width": np.array([fact.n])}
+  with pytest.raises(ValueError, match="chunks cover 1 to"):
+    sparse_ldl_solve(f, b, {**tables, **wide})

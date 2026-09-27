@@ -1101,6 +1101,82 @@ def _lower_sparse_ldl(ctx: LowerCtx, node: Expr) -> None:
   ctx.statements.append(p.for_(p.range_(j.attrs["name"], 0, n), [column, updates, *finish]))
 
 
+@lowers(ExprOp.SPARSE_LDL_SOLVE)
+def _lower_sparse_ldl_solve(ctx: LowerCtx, node: Expr) -> None:
+  """``K^{-1} b`` from ``[L | D]``: ``b`` permuted into a work vector, the unit lower sweep by
+  chunks of chained columns, then the transposed sweep, which divides by ``D``, subtracts its
+  blocked dot product and writes each unknown to its place in the output as it is found.
+
+  A chunk of ``w`` chained columns ``j .. j + w - 1`` (each column's rows the next column followed
+  by that column's rows) first updates its own rows column by column, then every row below it once
+  with all ``w`` terms, the sum in a register: each entry takes its updates in column order, as the
+  column-by-column sweep gives them. A chunk's width picks one loop per width, run zero or one
+  times."""
+  factor, b = node.args
+  a = node.attrs
+  n, nnz_l = a["perm"].size, a["l_rows"].size
+  out, fb, dt = ctx.alloc_tmp(node), ctx.buf_of(factor), node.type.dtype
+  if n == 0:
+    return
+  c = p.const_int
+  nm = out.attrs["name"]
+  tables = {k: ctx.new_const_index(a[k]) for k in ("perm", "l_ptr", "l_rows", "sn_first", "sn_width")}
+
+  def at(table: str, i: ProgramNode) -> ProgramNode:
+    return p.load(p.view(tables[table], [i]))
+
+  def scalar() -> ProgramNode:
+    return p.view(ctx.new_private(dt, ()), [c(0)])
+
+  def entry(k: ProgramNode) -> ProgramNode:
+    return p.load(p.view(fb, [k]))
+
+  y = ctx.new_private(dt, (n,))
+  i0 = p.var(f"sp_{nm}")
+  ctx.statements.append(p.for_(p.range_(i0.attrs["name"], 0, n), [p.store(p.view(y, [i0]), p.load(p.view(ctx.buf_of(b), [at("perm", i0)])))]))
+  r = p.var(f"sr_{nm}")
+  j = at("sn_first", r)
+  widths = []
+  for width in range(1, SPARSE_LDL_MAX_WIDTH + 1):
+    col = [p.add(j, c(k)) if k else j for k in range(width)]
+    body: list[ProgramNode] = []
+    for k in range(width - 1):  # the chain's own rows, column by column
+      s = scalar()
+      body.append(p.store(s, p.neg(p.load(p.view(y, [col[k]])))))
+      start = at("l_ptr", col[k])
+      for k2 in range(k + 1, width):
+        dst = p.view(y, [col[k2]])
+        body.append(p.store(dst, p.add(p.load(dst), p.mul(entry(p.add(start, c(k2 - k - 1)) if k2 > k + 1 else start), p.load(s)))))
+    scales = [scalar() for _ in range(width)]
+    body += [p.store(s, p.neg(p.load(p.view(y, [col[k]])))) for k, s in enumerate(scales)]
+    below = at("l_ptr", col[-1])  # the rows under the chunk, shared by its columns
+    t = p.var(f"st{width}_{nm}")
+    dst = p.view(y, [at("l_rows", p.add(below, t))])
+    total = p.load(dst)
+    for k, s in enumerate(scales):
+      offset = width - 1 - k
+      first = at("l_ptr", col[k])
+      total = p.add(total, p.mul(entry(p.add(p.add(first, c(offset)) if offset else first, t)), p.load(s)))
+    body.append(p.for_(p.range_(t.attrs["name"], 0, p.sub(at("l_ptr", p.add(col[-1], c(1))), below)), [p.store(dst, total)]))
+    once = p.var(f"sw{width}_{nm}")
+    taken = p.select(p.compare(ProgramOp.EQ, at("sn_width", r), c(width)), c(1), c(0))
+    widths.append(p.for_(p.range_(once.attrs["name"], 0, taken), body))
+  ctx.statements.append(p.for_(p.range_(r.attrs["name"], 0, a["sn_first"].size), widths))
+  step = p.var(f"sb_{nm}")
+  jb = p.sub(c(n - 1), step)
+  sums, total = _blocked_sum(
+    ctx, f"sd_{nm}", at("l_ptr", jb), at("l_ptr", p.add(jb, c(1))), lambda q: p.mul(entry(q), p.load(p.view(y, [at("l_rows", q)]))), dt
+  )
+  unknown = scalar()
+  back = [
+    *sums,
+    p.store(unknown, p.sub(p.div(p.load(p.view(y, [jb])), entry(p.add(c(nnz_l), jb))), total)),
+    p.store(p.view(y, [jb]), p.load(unknown)),
+    p.store(p.view(out, [at("perm", jb)]), p.load(unknown)),
+  ]
+  ctx.statements.append(p.for_(p.range_(step.attrs["name"], 0, n), back))
+
+
 @lowers(ExprOp.TRISOLVE)
 def _lower_trisolve(ctx: LowerCtx, node: Expr) -> None:
   """Substitution reading the triangle by rows. ``T X = B`` takes each unknown as its right-hand side

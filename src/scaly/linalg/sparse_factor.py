@@ -43,6 +43,7 @@ from ..ir.expr import (
   scatter,
   segment_sum,
   sparse_ldl_factor,
+  sparse_ldl_solve,
   stack,
   take,
   where,
@@ -152,6 +153,11 @@ class SparseLDL:
       "r_pos": s.r_pos,
       **s.chunks(SPARSE_LDL_MAX_WIDTH),
     }
+
+  def solve_tables(self) -> dict[str, np.ndarray]:
+    """The analysis as ``ir.expr.sparse_ldl_solve`` reads it."""
+    s = self.symbolic
+    return {"perm": s.perm, "l_ptr": s.l_ptr, "l_rows": s.l_rows, **s.solve_chunks(SPARSE_LDL_MAX_WIDTH)}
 
   @property
   def work(self) -> int:
@@ -318,6 +324,8 @@ class SparseLDL:
     """``K^{-1} b`` from the factor ``f``, differentiated (if at all) through its loops."""
     if self.schedule == "unroll":
       return self._unrolled_solve(f, b)
+    if self.schedule == "loop":
+      return sparse_ldl_solve(f, b, self.solve_tables())
     s = self.symbolic
     y = self._sweep(f, gather(b, s.perm), backward=False)
     x = self._sweep(f, y / f[self.d_offset : self.d_offset + self.n], backward=True)

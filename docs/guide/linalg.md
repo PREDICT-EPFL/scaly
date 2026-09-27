@@ -111,8 +111,13 @@ the `scan` schedule.) The loop nest of `schedule="loop"` (`ir.expr.sparse_ldl_fa
   written once per chunk instead of once per column.
 - Each column's updates keep the order of one column at a time, so the factor is the `scan`
   schedule's to the last bit, 1.5 to 2.4 times faster.
+- The solve (`ir.expr.sparse_ldl_solve`) takes the forward sweep by chains of columns (a
+  supernode's): each row below a chain is updated once for the whole chain, and the diagonal and
+  the output permutation fold into the backward sweep. It too is the `scan` schedule's to the last
+  bit.
 - The factor has no derivative of its own: `solve` differentiates implicitly and never needs one,
-  and `schedule="scan"` differentiates the factorization through its loops.
+  and `schedule="scan"` differentiates the factorization through its loops. The looped solve is
+  differentiable in its right-hand side.
 
 The `scan` schedule:
 

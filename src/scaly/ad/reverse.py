@@ -28,6 +28,7 @@ from ..ir.expr import (
   ragged_dot,
   scatter,
   solve_triangular,
+  sparse_ldl_solve,
   stack,
   take,
   topo,
@@ -430,6 +431,12 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       pairs = rule(expr, cot, wrts, dep_memo)
       for arg, arg_cot in pairs:
         accumulate(arg, arg_cot)
+      continue
+    if expr.op == ExprOp.SPARSE_LDL_SOLVE:
+      # K is symmetric: b's cotangent is one more solve. The factor's is not implemented.
+      if any(_depends_on(expr.args[0], wrt, dep_memo) for wrt in wrts):
+        raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
+      accumulate(expr.args[1], sparse_ldl_solve(expr.args[0], cot, dict(expr.attrs)))
       continue
     for arg, arg_cot in zip(expr.args, _local_vjp(expr, cot), strict=True):
       accumulate(arg, arg_cot)

@@ -189,6 +189,23 @@ class SymbolicLDL:
       )
     return {k: self._lanes[f"{k}{max_width}"] for k in ("ck_ptr", "ck_q", "ck_width", "ck_len")}
 
+  def solve_chunks(self, max_width: int = 8) -> dict[str, np.ndarray]:
+    """The columns in chunks for the forward sweep, as ``ir.expr.sparse_ldl_solve`` reads them:
+    runs of up to ``max_width`` consecutive columns, each column's rows the next column followed by
+    the next column's rows (the columns of a fundamental supernode), with their first column
+    ``sn_first`` and ``sn_width``."""
+    counts = self.col_counts
+    j = np.arange(max(self.n - 1, 0))
+    chained = (self.parent[j] == j + 1) & (counts[j] == counts[j + 1] + 1)
+    first, width = [], []
+    start = 0
+    for k in range(self.n):
+      if k + 1 == self.n or not chained[k] or k + 1 - start == max_width:
+        first.append(start)
+        width.append(k + 1 - start)
+        start = k + 1
+    return {"sn_first": np.asarray(first, dtype=np.int64), "sn_width": np.asarray(width, dtype=np.int64)}
+
   @property
   def update_lanes(self) -> int:
     """Multiply-adds of the left-looking updates."""

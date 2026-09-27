@@ -474,6 +474,17 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       0.977x (23 problems; DUAL3 0.90x, mpc 27x6x30 0.93x, QE226 0.94x). 32-bit index tables were
       tried in the C prototype and gained 1-5%, not enough for a second table type. 2 mutants,
       both killed.
+- [x] **C-140. The sparse solve as one op (the solve half of C-117's small-solve items).**
+      `ir.expr.sparse_ldl_solve` for `schedule="loop"`: `b` permuted into a work vector, the forward
+      sweep by chains of up to eight columns (`SymbolicLDL.solve_chunks`, fundamental supernodes:
+      each row below a chain updated once with the sum in a register), then the backward sweep with
+      the division by `D` and the output permutation folded in. The solution is the scan's bit for
+      bit. Linear in `b` with that derivative (forward, multi-seed and reverse); a derivative in the
+      factor is refused. The multi-seed forward mode now also forms a call argument's tangent only
+      when the callee's derivative reads it (the implicit rules take the factor as an argument).
+      Sparse IPM 0.975x (23 problems, every one faster or equal, solutions identical). Chunking the
+      backward sweep too would need four partial sums per column aligned per column to stay bit for
+      bit; not done. 10 mutants: all killed, two after a new test (a factor given as an input).
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 

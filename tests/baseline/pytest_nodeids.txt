@@ -1119,11 +1119,14 @@ tests/linalg/test_sparse_ldl.py::test_second_derivatives_in_the_matrix[lower-unr
 tests/linalg/test_sparse_ldl.py::test_second_derivatives_in_the_matrix[upper-loop]
 tests/linalg/test_sparse_ldl.py::test_second_derivatives_in_the_matrix[upper-scan]
 tests/linalg/test_sparse_ldl.py::test_second_derivatives_in_the_matrix[upper-unroll]
+tests/linalg/test_sparse_ldl.py::test_solve_chunks_are_chains_of_columns
 tests/linalg/test_sparse_ldl.py::test_solve_sparsity_is_per_connected_component
 tests/linalg/test_sparse_ldl.py::test_solve_with_a_factor_carried_out_of_a_loop[loop]
 tests/linalg/test_sparse_ldl.py::test_solve_with_a_factor_carried_out_of_a_loop[scan]
 tests/linalg/test_sparse_ldl.py::test_solve_with_a_factor_carried_out_of_a_loop[unroll]
 tests/linalg/test_sparse_ldl.py::test_sparse_ldl_factor_validates_its_tables
+tests/linalg/test_sparse_ldl.py::test_sparse_ldl_solve_validates_its_tables
+tests/linalg/test_sparse_ldl.py::test_the_looped_solve_is_linear_in_the_right_hand_side
 tests/linalg/test_sparse_ldl.py::test_third_derivatives_go_through_the_loops
 tests/linalg/test_sparse_ldl.py::test_unrolled_schedule_is_straight_line_code
 tests/linalg/test_sparse_ldl.py::test_validation
