@@ -85,7 +85,7 @@ def nominal(state: sc.Expr) -> sc.Expr:
   return sc.minimum(sc.maximum(u, sc.const(-U_MAX)), sc.const(U_MAX))
 
 
-@sc.function(sc.L("state", 3), sc.G(sc.L("u", 2), sc.L("u_nom", 2), sc.L("h", len(OBSTACLES))))
+@sc.function(sc.L("state", 3), output=sc.G(sc.L("u", 2), sc.L("u_nom", 2), sc.L("h", len(OBSTACLES))))
 def controller(state: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   u_nom = nominal(state)
   zeros = sc.const(np.zeros(2))

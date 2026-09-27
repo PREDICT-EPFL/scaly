@@ -92,7 +92,7 @@ def _implicit_vjp() -> sc.Function:
 equilibrium = sc.custom_derivative(_equilibrium(), vjp=_implicit_vjp())
 
 
-@sc.function(sc.G(sc.L("theta", 2), sc.L("photos", (2, len(OBSERVED), 2))), sc.G(sc.L("loss", ()), sc.L("gradient", 2)))
+@sc.function(sc.G(sc.L("theta", 2), sc.L("photos", (2, len(OBSERVED), 2))), output=sc.G(sc.L("loss", ()), sc.L("gradient", 2)))
 def misfit(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
   theta, photos = inputs
   loss = sc.const(0.0)

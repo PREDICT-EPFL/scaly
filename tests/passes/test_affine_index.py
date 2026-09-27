@@ -108,7 +108,7 @@ def test_a_gather_reads_exactly_the_elements_numpy_would(case: int) -> None:
 # --- the VMAP derivative rules, which are where the tables came from -------------
 
 
-@sc.function(sc.L("x", 2), sc.L("y", ...), name="affine_stage")
+@sc.function(sc.L("x", 2), output=sc.L("y", ...), name="affine_stage")
 def _stage(x):
   return sc.stack([x[0].sin() * x[1], x[0] * x[1] * x[1]])
 

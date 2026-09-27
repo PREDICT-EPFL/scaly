@@ -61,7 +61,7 @@ INT64 = sc.dtypes.int64
     sc.L("free", sc.TensorType((NF,), INT64)),
     sc.L("load", NDOF),
   ),
-  sc.G(sc.L("compliance", ()), sc.L("gradient", NB), sc.L("lengths", NB)),
+  output=sc.G(sc.L("compliance", ()), sc.L("gradient", NB), sc.L("lengths", NB)),
 )
 def analyse(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   areas, coords, bars, free, load = inputs

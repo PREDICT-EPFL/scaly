@@ -56,7 +56,7 @@ def omega_matrix(w: sc.Expr) -> sc.Expr:
 
 @sc.function(
   sc.G(sc.L("q", 4), sc.L("bias", 3), sc.L("gyro", 3), sc.L("dt", ())),
-  sc.L("q_next", ...),
+  output=sc.L("q_next", ...),
 )
 def propagate(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   q, bias, gyro, dt = inputs

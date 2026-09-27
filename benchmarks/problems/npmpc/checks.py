@@ -286,7 +286,7 @@ def check_constraint_rows_and_bounds() -> None:
 
   @sc.function(
     sc.G(sc.L("z", n_dec(horizon)), sc.L("xstart", sc.TensorType((NX,), diff=False))),
-    sc.L("g", ...),
+    output=sc.L("g", ...),
     name="npmpc_ineq_check",
   )
   def constraints(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:

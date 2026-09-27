@@ -49,7 +49,7 @@ import scaly as sc
 import numpy as np
 
 
-@sc.function(sc.L("x", 2), sc.L("f", ...))
+@sc.function(sc.L("x", 2), output=sc.L("f", ...))
 def rosenbrock(x: sc.Expr) -> sc.Expr:
   return (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
 

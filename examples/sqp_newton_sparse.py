@@ -54,7 +54,7 @@ def cost(w: sc.Expr) -> sc.Expr:
 
 @sc.function(
   sc.G(sc.L("w", NW), sc.L("lam", NC), sc.L("z0", 2), sc.L("rho", ())),
-  sc.G(sc.L("w_next", NW), sc.L("lam_next", NC), sc.L("kkt_residual", ...), sc.L("inertia", 3), sc.L("healthy", ...)),
+  output=sc.G(sc.L("w_next", NW), sc.L("lam_next", NC), sc.L("kkt_residual", ...), sc.L("inertia", 3), sc.L("healthy", ...)),
 )
 def newton_step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
   w, lam, z0, rho = inputs

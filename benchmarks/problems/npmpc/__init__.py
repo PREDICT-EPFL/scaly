@@ -324,7 +324,7 @@ def stage_function(decoder: Decoder = Decoder()) -> StageFunction:
 
   @sc.function(
     sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU), sc.L("pw", decoder.n_pw), sc.L("dt", ())),
-    sc.L("eq", ...),
+    output=sc.L("eq", ...),
     name=name,
   )
   def stage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -351,7 +351,7 @@ def npmpc_eq_function(horizon: int, decoder: Decoder = Decoder()) -> NpmpcFuncti
   """
   pw_slice, dt_slice, _, _ = _param_slices(decoder)
 
-  @sc.function(sc.G(sc.L("z", n_dec(horizon)), sc.L("p", n_param(decoder))), sc.L("eq", ...), name=f"npmpc_eq_N{horizon}")
+  @sc.function(sc.G(sc.L("z", n_dec(horizon)), sc.L("p", n_param(decoder))), output=sc.L("eq", ...), name=f"npmpc_eq_N{horizon}")
   def equality(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, p = inputs
     return sc.vmap(
@@ -516,7 +516,7 @@ def riccati_residual(P: np.ndarray, A: np.ndarray, B: np.ndarray, weights: CostW
 
 @sc.function(
   sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU), sc.L("cost_weights", N_COST_WEIGHTS)),
-  sc.L("cost", ...),
+  output=sc.L("cost", ...),
   name="npmpc_stage_cost",
 )
 def stage_cost_function(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -693,7 +693,7 @@ def npmpc_lag_function(horizon: int, decoder: Decoder = Decoder()) -> NpmpcLagFu
 
   @sc.function(
     sc.G(sc.L("z", n_dec(horizon)), sc.L("p", n_param(decoder))),
-    sc.G(sc.L("cost", ...), sc.L("eq", ...)),
+    output=sc.G(sc.L("cost", ...), sc.L("eq", ...)),
     name=f"npmpc_lag_N{horizon}",
   )
   def lagrangian_inputs(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:

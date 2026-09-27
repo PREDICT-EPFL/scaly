@@ -16,7 +16,7 @@ from _common import scaly_ipopt_options, show
 N = 100  # control intervals
 
 
-@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2), sc.L("T", 1)), sc.L("defect", ...))
+@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2), sc.L("T", 1)), output=sc.L("defect", ...))
 def defect(inputs):
   z, u, znext, T = inputs
   dt = T[0] / N

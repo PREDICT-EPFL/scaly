@@ -12,7 +12,7 @@ import pytest
 import scaly as sc
 
 
-@sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
+@sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), output=sc.L("y", ...), name="scale_add")
 def scale_add(inputs):
   x, p = inputs
   return 2.0 * x + p
@@ -216,12 +216,12 @@ def _rk4_bicycle_eq_vmap(horizon: int) -> sc.Function:
     k4 = ode(x + dt * k3, u, params)
     return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @sc.function(sc.G(sc.L("z", RK4_NZ), sc.L("p", RK4_NX)), sc.L("eq", ...), name="rk4_bicycle_initial")
+  @sc.function(sc.G(sc.L("z", RK4_NZ), sc.L("p", RK4_NX)), output=sc.L("eq", ...), name="rk4_bicycle_initial")
   def eq_initial(inputs):
     z, p = inputs
     return z[:RK4_NX] - p[:RK4_NX]
 
-  @sc.function(sc.G(sc.L("z", RK4_NZ), sc.L("znext", RK4_NZ), sc.L("params", RK4_N_PARAMS)), sc.L("eq", ...), name="rk4_bicycle_interstage")
+  @sc.function(sc.G(sc.L("z", RK4_NZ), sc.L("znext", RK4_NZ), sc.L("params", RK4_N_PARAMS)), output=sc.L("eq", ...), name="rk4_bicycle_interstage")
   def eq_interstage(inputs):
     z, znext, params = inputs
     return rk4(z[:RK4_NX], z[RK4_NX : RK4_NX + RK4_NU], params) - znext[:RK4_NX]
@@ -312,11 +312,11 @@ def test_simple_banded_vmap_spjac_has_constant_loc() -> None:
 
   NX, NZ = 4, 6
 
-  @sc.function(sc.L("z", NZ), sc.L("eq", ...), name="eq_initial_t")
+  @sc.function(sc.L("z", NZ), output=sc.L("eq", ...), name="eq_initial_t")
   def eq_initial(z):
     return z[:NX] * 2.0
 
-  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ)), sc.L("eq", ...), name="eq_interstage_t")
+  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ)), output=sc.L("eq", ...), name="eq_interstage_t")
   def eq_interstage(inputs):
     z, znext = inputs
     return z[:NX] * 1.5 - znext[:NX]

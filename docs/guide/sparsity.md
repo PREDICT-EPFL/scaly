@@ -131,7 +131,7 @@ A `TensorType` can carry a pattern, which the decorator accepts:
 ```python
 @sc.function(
     sc.L("J", sc.TensorType((3, 4), sc.dtypes.float64, sparsity=sp)),
-    sc.L("out", ...),
+    output=sc.L("out", ...),
 )
 def f(J: sc.Expr) -> sc.Expr:
     ...
@@ -186,7 +186,7 @@ are refused unless the matrix passed has exactly the declared pattern. See
 
 ```python
 @sc.function(sc.G(sc.S("P", p_pattern), sc.S("A", a_pattern), sc.L("rho", ()), sc.L("delta", ())),
-             sc.S("K", ...))
+             output=sc.S("K", ...))
 def kkt(inputs):
     P, A, rho, delta = inputs
     return sc.SparseMatrix.block([[P.add_diagonal(rho), A.T], [A, sc.SparseMatrix.identity(m) * (-delta)]])

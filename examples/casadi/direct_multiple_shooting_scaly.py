@@ -24,14 +24,14 @@ W0 = np.zeros(NW)
 W0[:2] = [0.0, 1.0]
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), sc.G(sc.L("xdot", ...), sc.L("L", ...)))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), output=sc.G(sc.L("xdot", ...), sc.L("L", ...)))
 def f(inputs):
   x, u = inputs
   x1, x2 = x[0], x[1]
   return sc.stack([(1 - x2**2) * x1 - x2 + u[0], x1]), sc.stack([x1**2 + x2**2 + u[0] ** 2])
 
 
-@sc.function(sc.G(sc.L("x0", 2), sc.L("p", 1)), sc.G(sc.L("xf", ...), sc.L("qf", ...)))
+@sc.function(sc.G(sc.L("x0", 2), sc.L("p", 1)), output=sc.G(sc.L("xf", ...), sc.L("qf", ...)))
 def F(inputs):
   X, U = inputs
   dt = T / N / M
@@ -46,7 +46,7 @@ def F(inputs):
   return X, Q
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("xnext", 2)), sc.L("gap_and_q", ...))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("xnext", 2)), output=sc.L("gap_and_q", ...))
 def interval(inputs):
   x, u, xnext = inputs
   xf, qf = F((x, u))

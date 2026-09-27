@@ -51,7 +51,7 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
 
-  @sc.function(sc.L("mu", (2,)), sc.G(sc.L("x", ...), sc.L("lam_box", ...), sc.L("lam_eq", ...)), name="multi_out")
+  @sc.function(sc.L("mu", (2,)), output=sc.G(sc.L("x", ...), sc.L("lam_box", ...), sc.L("lam_eq", ...)), name="multi_out")
   def multi_out(mu):
     out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
     return (out[0], out[1], out[2])

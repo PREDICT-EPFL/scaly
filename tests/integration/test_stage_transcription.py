@@ -59,13 +59,13 @@ def _rk4(x, u, params):
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="bicycle_stage_initial")
+@sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), output=sc.L("eq", ...), name="bicycle_stage_initial")
 def stage_initial(inputs):
   z, p = inputs
   return z[:NX] - p[:NX]
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("params", N_PARAMS)), sc.L("eq", ...), name="bicycle_stage_interstage")
+@sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("params", N_PARAMS)), output=sc.L("eq", ...), name="bicycle_stage_interstage")
 def stage_interstage(inputs):
   z, znext, params = inputs
   return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]

@@ -142,7 +142,7 @@ def test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero() -> None:
 
 @pytest.mark.solver("piqp")
 def test_nested_sparse_qp_in_scaly_function() -> None:
-  @sc.function(sc.L("t", (2,)), sc.L("x", ...), name="shifted_sparse_qp")
+  @sc.function(sc.L("t", (2,)), output=sc.L("x", ...), name="shifted_sparse_qp")
   def solve_shifted(t):
     qp = build_qp(
       P=np.diag([2.0, 4.0]),

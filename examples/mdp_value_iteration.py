@@ -92,7 +92,7 @@ sweep = sc.Function._from_exprs("vi_sweep", [_carry], [sc.concat([_v_new, sc.nor
 not_converged = sc.Function._from_exprs("vi_not_converged", [_carry], [sc.greater(_change, TOL)], ["carry"], ["go_on"])
 
 
-@sc.function(sc.G(sc.L("slip", ()), sc.L("puddle", ())), sc.G(sc.L("value", S), sc.L("policy", ...), sc.L("sweeps", ...)))
+@sc.function(sc.G(sc.L("slip", ()), sc.L("puddle", ())), output=sc.G(sc.L("value", S), sc.L("policy", ...), sc.L("sweeps", ...)))
 def solve(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   slip, puddle = inputs
   init = sc.concat([sc.const(np.zeros(S)), sc.const(np.ones(1)), slip.reshape((1,)), puddle.reshape((1,))])

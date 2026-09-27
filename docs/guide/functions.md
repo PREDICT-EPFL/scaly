@@ -18,7 +18,7 @@ import numpy as np
 
 @sc.function(
     sc.G(sc.L("x", 3), sc.L("A", (2, 3))),
-    sc.G(sc.L("sum", ...), sc.L("projection", 2)),
+    output=sc.G(sc.L("sum", ...), sc.L("projection", 2)),
 )
 def features(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     x, A = inputs
@@ -64,7 +64,7 @@ Only `sc.G` introduces a tuple. A tree of one `sc.L` is that leaf, so a one-leaf
 tensor itself and a one-leaf output returns the tensor itself:
 
 ```python
-@sc.function(sc.L("x", 3), sc.L("scaled", ...))
+@sc.function(sc.L("x", 3), output=sc.L("scaled", ...))
 def scale(x: sc.Expr) -> sc.Expr:
     return 2.0 * x
 
@@ -114,12 +114,12 @@ pattern, where explicitly stored zeros count as stored. Any other pattern is ref
 and an evaluation a `scipy.sparse.csc_array`.
 
 ```python
-@sc.function(sc.G(sc.L("q", n), sc.S("A", a_pattern)), sc.S("K", ...))
+@sc.function(sc.G(sc.L("q", n), sc.S("A", a_pattern)), output=sc.S("K", ...))
 def kkt(inputs):
     q, A = inputs
     return sc.SparseMatrix.block([[sc.SparseMatrix.diag(q).add_diagonal(1e-6), None], [A, sc.SparseMatrix.identity(m) * -1e-3]])
 
-@sc.function(sc.G(sc.S("K", kkt.output_sparsities[0]), sc.L("b", n + m)), sc.L("x", ...))
+@sc.function(sc.G(sc.S("K", kkt.output_sparsities[0]), sc.L("b", n + m)), output=sc.L("x", ...))
 def solve(inputs):
     K, b = inputs
     return sc.linalg.SparseLDL(K).solve(b)
@@ -136,11 +136,11 @@ the output's sparsity metadata in the generated header.
 Calling a function with `Expr` leaves keeps the callee as a call in the graph:
 
 ```python
-@sc.function(sc.L("x", 3), sc.L("square", ...))
+@sc.function(sc.L("x", 3), output=sc.L("square", ...))
 def square(x: sc.Expr) -> sc.Expr:
     return x * x
 
-@sc.function(sc.L("x", 3), sc.L("energy", ...))
+@sc.function(sc.L("x", 3), output=sc.L("energy", ...))
 def energy(x: sc.Expr) -> sc.Expr:
     return square(x).sum()
 ```
@@ -154,7 +154,7 @@ Use `sc.vmap` when every iteration applies the same function to a different slic
 stays one node through differentiation and lowers to a C loop.
 
 ```python
-@sc.function(sc.L("x", 3), sc.L("sum", ...))
+@sc.function(sc.L("x", 3), output=sc.L("sum", ...))
 def reduce3(x: sc.Expr) -> sc.Expr:
     return x.sum().reshape((1,))
 
@@ -175,7 +175,7 @@ same shape; its other inputs are sliced from outer tensors exactly as `vmap` sli
 other outputs are stacked one slice per step.
 
 ```python
-@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1)), sc.G(sc.L("znext", ...), sc.L("cost", ...)))
+@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1)), output=sc.G(sc.L("znext", ...), sc.L("cost", ...)))
 def step(inputs):
     z, u = inputs
     znext = sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * u[0]])
@@ -195,7 +195,7 @@ A step that needs to know which step it is takes the step number: with `index=Tr
 second input is an `int64` scalar counting from zero, and the sliced inputs follow it.
 
 ```python
-@sc.function(sc.G(sc.L("z", 2), sc.L("k", sc.TensorType((), sc.dtypes.int64)), sc.L("u", 1)), sc.L("znext", ...))
+@sc.function(sc.G(sc.L("z", 2), sc.L("k", sc.TensorType((), sc.dtypes.int64)), sc.L("u", 1)), output=sc.L("znext", ...))
 def tv_step(inputs):
     z, k, u = inputs
     t = 0.1 * k.cast("float64")  # the time at the start of step k
@@ -269,7 +269,7 @@ Data every step reads and none changes, such as a solver's problem data or a mat
 after the carry:
 
 ```python
-@sc.function(sc.G(sc.L("x", n), sc.L("P", (n, n)), sc.L("q", n)), sc.L("x_next", n), name="newton_step")
+@sc.function(sc.G(sc.L("x", n), sc.L("P", (n, n)), sc.L("q", n)), output=sc.L("x_next", n), name="newton_step")
 def newton_step(inputs):  # the carry, then the params
     x, P, q = inputs
     ...

@@ -21,7 +21,7 @@ def _matrix(mask: np.ndarray = MASK) -> sparse.csc_array:
 
 
 def _matvec(name: str) -> sc.Function:
-  @sc.function(sc.G(S("A", MASK), sc.L("x", 4)), sc.L("y", ...), name=name)
+  @sc.function(sc.G(S("A", MASK), sc.L("x", 4)), output=sc.L("y", ...), name=name)
   def f(inputs):
     a, x = inputs
     return a @ x
@@ -100,7 +100,7 @@ def test_symbolic_calls_check_the_pattern() -> None:
 def _kkt_builder(name: str, declared) -> sc.Function:
   """``K = [[diag(q) + rho I, A^T], [A, -delta I]]``, the lower triangle stored."""
 
-  @sc.function(sc.G(sc.L("q", 4), S("A", MASK[:2])), S("K", declared), name=name)
+  @sc.function(sc.G(sc.L("q", 4), S("A", MASK[:2])), output=S("K", declared), name=name)
   def build(inputs):
     q, a = inputs
     k = SparseMatrix.block([[SparseMatrix.diag(q).add_diagonal(1e-6), None], [a, SparseMatrix.identity(2) * -1e-3]])
@@ -131,12 +131,12 @@ def test_one_function_builds_a_matrix_another_consumes() -> None:
   build = _kkt_builder("sg_chain_build", ...)
   pattern = build.output_tree.sparsities[0]
 
-  @sc.function(sc.G(S("K", pattern), sc.L("b", 6)), sc.L("x", ...), name="sg_chain_solve")
+  @sc.function(sc.G(S("K", pattern), sc.L("b", 6)), output=sc.L("x", ...), name="sg_chain_solve")
   def solve(inputs):
     k, b = inputs
     return sc.linalg.SparseLDL(k, name="sg_chain").solve(b)
 
-  @sc.function(sc.G(sc.L("q", 4), S("A", MASK[:2]), sc.L("b", 6)), sc.L("x", ...), name="sg_chain_both")
+  @sc.function(sc.G(sc.L("q", 4), S("A", MASK[:2]), sc.L("b", 6)), output=sc.L("x", ...), name="sg_chain_both")
   def both(inputs):
     q, a, b = inputs
     k = build((q, a))
@@ -169,7 +169,7 @@ def test_generated_code_is_that_of_the_values_vector() -> None:
 def test_derivatives_keep_the_sparse_signature() -> None:
   """Derived Functions take the same tree; a gradient in a sparse input is one entry per stored value."""
 
-  @sc.function(sc.G(S("A", MASK), sc.L("x", 4)), sc.L("f", ...), name="sg_quad")
+  @sc.function(sc.G(S("A", MASK), sc.L("x", 4)), output=sc.L("f", ...), name="sg_quad")
   def quad(inputs):
     a, x = inputs
     return x @ (a @ x)
@@ -188,7 +188,7 @@ def test_derivatives_keep_the_sparse_signature() -> None:
 def test_multipliers_of_a_sparse_output_are_sparse_too() -> None:
   """``lagrangian_hessian`` relabels the output tree, so the weight of a sparse output is a matrix of its pattern."""
 
-  @sc.function(sc.L("x", 3), sc.G(sc.L("s", ...), S("M", np.eye(3, dtype=bool))), name="sg_lag")
+  @sc.function(sc.L("x", 3), output=sc.G(sc.L("s", ...), S("M", np.eye(3, dtype=bool))), name="sg_lag")
   def f(x):
     return (x * x).sum(), SparseMatrix.diag(x * x * x)
 
@@ -212,7 +212,7 @@ def test_declaration_errors() -> None:
 
 
 def test_patterns_are_inferred_inside_groups() -> None:
-  @sc.function(sc.L("x", 3), sc.G(sc.L("s", ...), S("M", ...)), name="sg_group_infer")
+  @sc.function(sc.L("x", 3), output=sc.G(sc.L("s", ...), S("M", ...)), name="sg_group_infer")
   def f(x):
     return x.sum(), SparseMatrix.diag(x)
 

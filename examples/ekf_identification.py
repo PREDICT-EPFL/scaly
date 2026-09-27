@@ -50,7 +50,7 @@ def rk4(x: sc.Expr, u: sc.Expr, c: sc.Expr, k3: sc.Expr) -> sc.Expr:
   return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3_ + k4)
 
 
-@sc.function(sc.G(sc.L("belief", 6), sc.L("yu", 2), sc.L("theta", 4)), sc.G(sc.L("belief_next", 6), sc.L("nll", 1), sc.L("innovation", 1)))
+@sc.function(sc.G(sc.L("belief", 6), sc.L("yu", 2), sc.L("theta", 4)), output=sc.G(sc.L("belief_next", 6), sc.L("nll", 1), sc.L("innovation", 1)))
 def ekf_step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   belief, yu, theta = inputs
   x, p = belief[:2], belief[2:].reshape((2, 2))
@@ -73,7 +73,7 @@ def ekf_step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr
 
 @sc.function(
   sc.G(sc.L("theta", 4), sc.L("y", T), sc.L("u", T)),
-  sc.G(sc.L("nll", ()), sc.L("grad", 4), sc.L("innovations", T)),
+  output=sc.G(sc.L("nll", ()), sc.L("grad", 4), sc.L("innovations", T)),
 )
 def likelihood(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   theta, y, u = inputs

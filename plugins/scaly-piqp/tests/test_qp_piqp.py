@@ -131,7 +131,7 @@ def test_nested_qp_in_scaly_function() -> None:
   """The safety-filter assembly pattern: build QP data symbolically and wrap
   the solve as a node inside a larger ``Function``."""
 
-  @sc.function(sc.L("mu", (2,)), sc.G(sc.L("x", ...), sc.L("cost", ...)), name="track_qp")
+  @sc.function(sc.L("mu", (2,)), output=sc.G(sc.L("x", ...), sc.L("cost", ...)), name="track_qp")
   def track_qp(mu):
     # min 0.5 |x - mu|^2  -> solution is mu itself
     qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
@@ -149,7 +149,7 @@ def test_nested_qp_in_scaly_function() -> None:
 def test_nested_qp_postprocessed() -> None:
   """Combine solver output with downstream symbolic math."""
 
-  @sc.function(sc.L("mu", (2,)), sc.L("y", ...), name="squared_norm_via_qp")
+  @sc.function(sc.L("mu", (2,)), output=sc.L("y", ...), name="squared_norm_via_qp")
   def sq_norm(mu):
     qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
     out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
@@ -165,7 +165,7 @@ def test_nested_qp_postprocessed() -> None:
 def test_nested_qp_with_general_inequality() -> None:
   """Two-sided general inequality inside a nested QP."""
 
-  @sc.function(sc.L("u_ref", (2,)), sc.L("u", ...), name="constrained_filter")
+  @sc.function(sc.L("u_ref", (2,)), output=sc.L("u", ...), name="constrained_filter")
   def filter_fn(u_ref):
     G = sc.const(np.array([[1.0, 1.0]]))
     l_ineq = sc.const(np.array([-0.5]))
@@ -186,7 +186,7 @@ def test_nested_qp_with_general_inequality() -> None:
 def test_nested_qp_jit_compiles_through_piqp() -> None:
   """JIT path: render C that links against libpiqpc and drives the solve."""
 
-  @sc.function(sc.G(sc.L("x", (2,)), sc.L("u_ref", (2,))), sc.L("u", ...), name="safety_filter")
+  @sc.function(sc.G(sc.L("x", (2,)), sc.L("u_ref", (2,))), output=sc.L("u", ...), name="safety_filter")
   def safety_filter(inputs):
     x, u_ref = inputs
     P = sc.const(np.eye(2))

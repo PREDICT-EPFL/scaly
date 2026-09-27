@@ -165,7 +165,7 @@ Call the solver with `Expr` leaves, in the same declared structure, to embed a s
 ```python
 @sc.function(
     sc.G(sc.L("target", 2), sc.L("bias", 1)),
-    sc.L("u", ...),
+    output=sc.L("u", ...),
 )
 def filtered_control(params: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     target, bias = params

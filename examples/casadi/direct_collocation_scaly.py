@@ -51,14 +51,14 @@ LBW, UBW = bounds()
 W0 = np.r_[0.0, 1.0, np.zeros(NW - 2)]
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), sc.G(sc.L("xdot", ...), sc.L("L", ...)))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), output=sc.G(sc.L("xdot", ...), sc.L("L", ...)))
 def f(inputs):
   x, u = inputs
   x1, x2 = x[0], x[1]
   return sc.stack([(1 - x2**2) * x1 - x2 + u[0], x1]), x1**2 + x2**2 + u[0] ** 2
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("xc", 2 * D_DEG), sc.L("xnext", 2)), sc.L("g_and_q", ...))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("xc", 2 * D_DEG), sc.L("xnext", 2)), output=sc.L("g_and_q", ...))
 def interval(inputs):
   xk, uk, xc, xnext = inputs
   X = [xk] + [xc[2 * j : 2 * j + 2] for j in range(D_DEG)]

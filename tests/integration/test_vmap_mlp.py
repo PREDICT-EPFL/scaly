@@ -42,7 +42,7 @@ def step_np(pw: np.ndarray, x: np.ndarray, u: np.ndarray) -> np.ndarray:
 def stage_function() -> sc.Function:
   scale, w0, w1, bias = _slices()
 
-  @sc.function(sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU), sc.L("pw", N_PW)), sc.L("eq", ...), name="vmap_mlp_stage")
+  @sc.function(sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU), sc.L("pw", N_PW)), output=sc.L("eq", ...), name="vmap_mlp_stage")
   def stage(inputs):  # type: ignore[no-untyped-def]
     x, xnext, u, pw = inputs
     h = sc.concat([x, u]) * pw[scale]
@@ -58,7 +58,7 @@ def n_dec(stages: int) -> int:
 
 
 def _cost_stage() -> sc.Function:
-  @sc.function(sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU)), sc.L("cost", ...), name="vmap_mlp_stage_cost")
+  @sc.function(sc.G(sc.L("x", NX), sc.L("xnext", NX), sc.L("u", NU)), output=sc.L("cost", ...), name="vmap_mlp_stage_cost")
   def cost(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     x, xnext, u = inputs
     difference = xnext - x

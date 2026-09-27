@@ -54,7 +54,7 @@ H_CONST = measurement_matrix()
 
 @sc.function(
   sc.G(sc.L("lam", LAM_PATTERN.nnz), sc.L("xbar", N), sc.L("z", M), sc.L("r", M)),
-  sc.L("x", N),
+  output=sc.L("x", N),
 )
 def kalman_update(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   lam_values, xbar, z, r = inputs
@@ -68,7 +68,7 @@ def kalman_update(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
 
 @sc.function(
   sc.G(sc.L("lam", LAM_PATTERN.nnz), sc.L("xbar", N), sc.L("z", M), sc.L("r", M)),
-  sc.G(sc.L("gain", (N, M)), sc.L("dx_dr", (N, M))),
+  output=sc.G(sc.L("gain", (N, M)), sc.L("dx_dr", (N, M))),
 )
 def sensitivities(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
   """The Kalman gain ``dx/dz`` and the sensitivity of the update to the noise variances."""

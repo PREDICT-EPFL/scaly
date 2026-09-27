@@ -6,7 +6,7 @@ import scaly as sc
 from scaly.ad import finite_difference
 
 
-@sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
+@sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), output=sc.L("y", ...), name="scale_add")
 def scale_add(inputs):
   x, p = inputs
   return 2.0 * x + p
@@ -50,12 +50,12 @@ def test_race_car_eq_primal_source_is_constant_in_horizon() -> None:
     k4 = cont(x + DT * k3, u)
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_initial")
+  @sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), output=sc.L("eq", ...), name="race_car_eq_initial")
   def eq_initial(inputs):
     z, p = inputs
     return z[:NX] - p[:NX]
 
-  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_interstage")
+  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), output=sc.L("eq", ...), name="race_car_eq_interstage")
   def eq_interstage(inputs):
     z, znext, p = inputs
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
@@ -122,12 +122,12 @@ def test_sparse_jacobian_of_race_car_vmap_matches_unrolled_concat() -> None:
     k4 = cont(x + DT * k3, u)
     return x + DT / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-  @sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_initial2")
+  @sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), output=sc.L("eq", ...), name="race_car_eq_initial2")
   def eq_initial(inputs):
     z, p = inputs
     return z[:NX] - p[:NX]
 
-  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_interstage2")
+  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), output=sc.L("eq", ...), name="race_car_eq_interstage2")
   def eq_interstage(inputs):
     z, znext, p = inputs
     return rk4(z[:NX], z[NX : NX + NU]) - znext[:NX]
@@ -179,13 +179,15 @@ NB, NS, NU = 3, 3, 2
 PAIRS = [(i, j) for i in range(NB) for j in range(i + 1, NB)]
 
 
-@sc.function(sc.G(sc.L("s", NS), sc.L("u", NU)), sc.L("next", ...), name="pairs_step")
+@sc.function(sc.G(sc.L("s", NS), sc.L("u", NU)), output=sc.L("next", ...), name="pairs_step")
 def pairs_step(inputs):
   s, u = inputs
   return sc.stack([s[0] + 0.1 * s[2].cos() * u[0], s[1] + 0.1 * s[2].sin() * u[1], s[2] + 0.1 * (u[0] - u[1])])
 
 
-@sc.function(sc.G(sc.L("prev_i", NS), sc.L("prev_j", NS), sc.L("si", NS), sc.L("sj", NS), sc.L("slack", 1)), sc.L("h", ...), name="pairs_barrier")
+@sc.function(
+  sc.G(sc.L("prev_i", NS), sc.L("prev_j", NS), sc.L("si", NS), sc.L("sj", NS), sc.L("slack", 1)), output=sc.L("h", ...), name="pairs_barrier"
+)
 def pairs_barrier(inputs):
   # The trailing p-norm term mirrors the smooth-max a velocity-margin barrier uses; it is what
   # brings integer POW, a *non-integer* POW (the shape of such a barrier's braking envelope,
@@ -198,7 +200,7 @@ def pairs_barrier(inputs):
   return sc.stack([(sc.dot(d, d).sqrt() - 0.5 * (1.0 + sc.dot(dprev, dprev)).log() + soft_max + slack[0])])
 
 
-@sc.function(sc.G(sc.L("s", NS), sc.L("snext", NS), sc.L("slack", 1)), sc.L("h", ...), name="pairs_wall")
+@sc.function(sc.G(sc.L("s", NS), sc.L("snext", NS), sc.L("slack", 1)), output=sc.L("h", ...), name="pairs_wall")
 def pairs_wall(inputs):
   s, snext, slack = inputs
   return sc.stack([(snext[0] - 0.5 * s[0] + slack[0]), (1.0 - snext[1].exp() + slack[0])])
@@ -288,7 +290,7 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
   w = np.array([[0.4, -0.2, 0.7], [0.1, 0.9, -0.3]])
   b = np.array([0.05, -0.15])
 
-  @sc.function(sc.L("s", 3), sc.L("y", ...), name="vmap_dense_layer")
+  @sc.function(sc.L("s", 3), output=sc.L("y", ...), name="vmap_dense_layer")
   def layer(s):
     phi = sc.stack([s[0], s[1], s[2]])
     h = sc.const(w) @ phi + sc.const(b)
@@ -307,7 +309,7 @@ def test_matmul_inside_vmap_callee_differentiates() -> None:
 
 
 def test_weighted_mapped_residual_cost_matches_unrolled_derivatives() -> None:
-  @sc.function(sc.G(sc.L("x", 2), sc.L("ref", 2), sc.L("scale", 1)), sc.L("r", ...))
+  @sc.function(sc.G(sc.L("x", 2), sc.L("ref", 2), sc.L("scale", 1)), output=sc.L("r", ...))
   def residual(inputs):
     x, ref, scale = inputs
     return sc.stack([x[0] - ref[0], ref[1].cos() * x[1] - scale[0].tanh()])

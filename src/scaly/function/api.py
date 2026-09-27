@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from typing import Any, cast, overload
 
@@ -19,14 +20,39 @@ from .model import ConcreteFunction
 
 
 def function[SI, NI, SO, NO](
-  inputs: Tree[SI, NI], outputs: Tree[SO, NO], /, *, name: str | None = None
+  inputs: Tree[SI, NI], /, *extra: Tree[Any, Any], output: Tree[SO, NO] | None = None, name: str | None = None
 ) -> Callable[[Callable[[SI], SO]], ConcreteFunction[SI, NI, SO, NO]]:
-  """Trace a callable over declared input and output pytrees."""
+  """Trace a callable over one declaration per parameter and a declared ``output`` tree."""
 
   def decorate(fn: Callable[[SI], SO]) -> ConcreteFunction[SI, NI, SO, NO]:
-    return ConcreteFunction(name or getattr(fn, "__name__", "fn"), fn, inputs, outputs)
+    fn_name = name or getattr(fn, "__name__", "fn")
+    params = _parameters(fn, fn_name)
+    if output is None and len(extra) == 1 and len(params) == 1:
+      raise TypeError(
+        f"{fn_name}: sc.function takes one declaration per parameter and the output as output=; did you mean sc.function(<inputs>, output=<outputs>)?"
+      )
+    if extra or len(params) != 1:
+      raise TypeError(f"{fn_name}: declared {1 + len(extra)} parameters, the body takes {len(params)} ({', '.join(params)})")
+    if output is None:
+      raise TypeError(f"{fn_name}: declare the output tree with output=")
+    return ConcreteFunction(fn_name, fn, inputs, output)
 
   return decorate
+
+
+def _parameters(fn: Callable[..., Any], name: str) -> tuple[str, ...]:
+  """The body's parameter names; each is one declaration slot, so only plain positional parameters are allowed."""
+  try:
+    signature = inspect.signature(fn)
+  except (TypeError, ValueError):
+    raise TypeError(f"{name}: sc.function needs a Python callable with a signature, got {type(fn).__name__}") from None
+  plain = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+  refused = [p.name for p in signature.parameters.values() if p.kind not in plain or p.default is not p.empty]
+  if refused:
+    raise TypeError(
+      f"{name}: parameters {refused} have defaults or are variadic or keyword-only; a body takes plain positional parameters, one per declaration"
+    )
+  return tuple(signature.parameters)
 
 
 def _expr_wrt(

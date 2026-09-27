@@ -55,7 +55,7 @@ def nll(theta: sc.Expr, x: sc.Expr, y: sc.Expr) -> sc.Expr:
 
 @sc.function(
   sc.G(sc.L("theta", 3), sc.L("x", N_TRAIN), sc.L("y", N_TRAIN)),
-  sc.G(sc.L("nll", ()), sc.L("grad", 3), sc.L("hess", (3, 3))),
+  output=sc.G(sc.L("nll", ()), sc.L("grad", 3), sc.L("hess", (3, 3))),
 )
 def marginal_likelihood(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   theta, x, y = inputs
@@ -65,7 +65,7 @@ def marginal_likelihood(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Ex
 
 @sc.function(
   sc.G(sc.L("theta", 3), sc.L("x", N_TRAIN), sc.L("y", N_TRAIN), sc.L("x_test", N_TEST)),
-  sc.G(sc.L("mean", N_TEST), sc.L("var", N_TEST)),
+  output=sc.G(sc.L("mean", N_TEST), sc.L("var", N_TEST)),
 )
 def predict(inputs: tuple[sc.Expr, ...]) -> tuple[sc.Expr, sc.Expr]:
   theta, x, y, x_test = inputs

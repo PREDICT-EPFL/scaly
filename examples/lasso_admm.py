@@ -70,7 +70,7 @@ not_converged = sc.Function._from_exprs(
 
 @sc.function(
   sc.G(sc.L("b", M), sc.L("lam", ()), sc.L("rho", ())),
-  sc.G(sc.L("x", N), sc.L("iterations", ...), sc.L("support", ...)),
+  output=sc.G(sc.L("x", N), sc.L("iterations", ...), sc.L("support", ...)),
 )
 def lasso(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   b, lam, rho = inputs

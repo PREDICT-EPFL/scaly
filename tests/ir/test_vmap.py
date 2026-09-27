@@ -6,7 +6,7 @@ import pytest
 import scaly as sc
 
 
-@sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
+@sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), output=sc.L("y", ...), name="scale_add")
 def scale_add(inputs):
   x, p = inputs
   return 2.0 * x + p
@@ -35,7 +35,7 @@ def test_vmap_overlapping_strided_slices_match_unrolled() -> None:
   NX = 4
   N = 3
 
-  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), sc.L("eq", ...), name="step")
+  @sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("p", NX)), output=sc.L("eq", ...), name="step")
   def step(inputs):
     z, znext, p = inputs
     return (z[:NX] - znext[:NX]) + p

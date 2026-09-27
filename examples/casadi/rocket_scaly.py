@@ -15,14 +15,14 @@ NU = 50  # control intervals
 DT = 0.01  # Euler step, 20 per interval
 
 
-@sc.function(sc.G(sc.L("x", 3), sc.L("u", 1)), sc.L("xdot", ...))
+@sc.function(sc.G(sc.L("x", 3), sc.L("u", 1)), output=sc.L("xdot", ...))
 def f(inputs):
   x, u = inputs
   v, m = x[1], x[2]  # x = (position, speed, mass)
   return sc.stack([v, (u[0] - 0.05 * v * v) / m, -0.1 * u[0] * u[0]])
 
 
-@sc.function(sc.G(sc.L("x", 3), sc.L("u", 1)), sc.L("xnext", ...))
+@sc.function(sc.G(sc.L("x", 3), sc.L("u", 1)), output=sc.L("xnext", ...))
 def F(inputs):
   x, u = inputs
   for _ in range(20):

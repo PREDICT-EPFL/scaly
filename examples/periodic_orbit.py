@@ -42,7 +42,7 @@ def vector_field(z: sc.Expr, mu: sc.Expr) -> sc.Expr:
   return sc.stack([x2, mu * (1 - x1 * x1) * x2 - x1, mu * (1 - x1 * x1)])  # the third state integrates div f
 
 
-@sc.function(sc.G(sc.L("z", 3), sc.L("mu_dt", 2)), sc.L("z_next", 3))
+@sc.function(sc.G(sc.L("z", 3), sc.L("mu_dt", 2)), output=sc.L("z_next", 3))
 def rk4(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   z, mu_dt = inputs
   mu, dt = mu_dt[0], mu_dt[1]
@@ -60,7 +60,7 @@ def flow(x0: sc.Expr, period: sc.Expr, mu: sc.Expr) -> sc.Expr:
   return sc.scan(rk4, z0, [(mu_dt, 0, 0)], length=K)[0]
 
 
-@sc.function(sc.G(sc.L("unknowns", 2), sc.L("mu", ())), sc.G(sc.L("F", 2), sc.L("dF", (2, 2))))
+@sc.function(sc.G(sc.L("unknowns", 2), sc.L("mu", ())), output=sc.G(sc.L("F", 2), sc.L("dF", (2, 2))))
 def shooting(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
   y, mu = inputs  # y = (a, T)
   x0 = sc.stack([y[0], sc.const(0.0)])
@@ -68,7 +68,7 @@ def shooting(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
   return f, sc.jacobian(f, y)
 
 
-@sc.function(sc.G(sc.L("carry", 3), sc.L("mu", ())), sc.L("carry_next", 3))
+@sc.function(sc.G(sc.L("carry", 3), sc.L("mu", ())), output=sc.L("carry_next", 3))
 def newton_step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   carry, mu = inputs
   y = carry[:2]
@@ -80,14 +80,14 @@ def newton_step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   return sc.concat([y_next, sc.norm_inf(f_next).reshape((1,))])
 
 
-@sc.function(sc.G(sc.L("carry", 3), sc.L("mu", ())), sc.L("go_on", ...))
+@sc.function(sc.G(sc.L("carry", 3), sc.L("mu", ())), output=sc.L("go_on", ...))
 def not_converged(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   return sc.greater(inputs[0][2], TOL)
 
 
 @sc.function(
   sc.G(sc.L("guess", 2), sc.L("mu", ())),
-  sc.G(sc.L("amplitude", ()), sc.L("period", ()), sc.L("monodromy", (2, 2)), sc.L("liouville", ()), sc.L("iterations", ())),
+  output=sc.G(sc.L("amplitude", ()), sc.L("period", ()), sc.L("monodromy", (2, 2)), sc.L("liouville", ()), sc.L("iterations", ())),
 )
 def limit_cycle(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
   guess, mu = inputs

@@ -12,7 +12,7 @@ from scaly.ad.sparse import SparseJacobian
 
 
 def test_scoped_function_decorator_builds_fresh_named_function() -> None:
-  @sc.function(sc.G(sc.L("x", 3), sc.L("p", sc.TensorType((3,), diff=False))), sc.L("y", ...), name="scoped")
+  @sc.function(sc.G(sc.L("x", 3), sc.L("p", sc.TensorType((3,), diff=False))), output=sc.L("y", ...), name="scoped")
   def scoped(inputs):
     x, p = inputs
     return (x + p).sin()
@@ -30,7 +30,7 @@ def test_scoped_function_decorator_builds_fresh_named_function() -> None:
 
 
 def test_scoped_function_decorator_outputs_default_names() -> None:
-  @sc.function(sc.L("x", 2), sc.G(sc.L("out0", ...), sc.L("out1", ...)), name="pair")
+  @sc.function(sc.L("x", 2), output=sc.G(sc.L("out0", ...), sc.L("out1", ...)), name="pair")
   def pair(x):
     return x, x.sum()
 
@@ -38,6 +38,28 @@ def test_scoped_function_decorator_outputs_default_names() -> None:
   y, s = pair(np.array([2.0, 3.0]))
   np.testing.assert_allclose(y, np.array([2.0, 3.0]))
   np.testing.assert_allclose(s, 5.0)
+
+
+def test_the_old_two_positional_decorator_is_refused_with_the_migration_hint() -> None:
+  with pytest.raises(TypeError, match=r"one declaration per parameter.*did you mean sc.function\(<inputs>, output=<outputs>\)"):
+    sc.function(sc.L("x", 2), sc.L("y", ...))(lambda x: x)
+
+
+def test_decorator_slots_must_match_the_body_parameters() -> None:
+  with pytest.raises(TypeError, match=r"declared 1 parameters, the body takes 2 \(x, p\)"):
+    sc.function(sc.L("x", 2), output=sc.L("y", ...))(lambda x, p: x)  # ty: ignore[invalid-argument-type]
+  with pytest.raises(TypeError, match="declare the output tree with output="):
+    sc.function(sc.L("x", 2))(lambda x: x)
+
+
+@pytest.mark.parametrize(
+  "body",
+  [lambda x=1.0: x, lambda *xs: xs[0], lambda x, **kw: x, lambda *, x: x],
+  ids=["default", "var_positional", "var_keyword", "keyword_only"],
+)
+def test_decorator_refuses_parameters_that_are_not_plain_positional(body: Any) -> None:
+  with pytest.raises(TypeError, match="plain positional parameters"):
+    sc.function(sc.L("x", 2), output=sc.L("y", ...))(body)
 
 
 def test_derivative_names_dispatch_for_expression_and_function_inputs() -> None:

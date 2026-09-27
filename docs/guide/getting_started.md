@@ -34,7 +34,7 @@ numerical calls.
 ```python
 @sc.function(
     sc.G(sc.L("z", 2), sc.L("u", 1)),
-    sc.L("znext", ...),
+    output=sc.L("znext", ...),
 )
 def step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, u = inputs
@@ -65,7 +65,7 @@ N = 20
 
 @sc.function(
     sc.G(sc.L("z0", 2), sc.L("us", N)),
-    sc.G(sc.L("zN", ...), sc.L("cost", ...)),
+    output=sc.G(sc.L("zN", ...), sc.L("cost", ...)),
 )
 def rollout(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     z, us = inputs
@@ -187,7 +187,7 @@ represents the repetition as one node and lowers it to a C loop.
 ```python
 @sc.function(
     sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2)),
-    sc.L("defect", ...),
+    output=sc.L("defect", ...),
 )
 def defect(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, u, znext = inputs

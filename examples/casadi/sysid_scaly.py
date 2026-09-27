@@ -35,7 +35,7 @@ def ode(x: sc.Expr, u: sc.Expr, p: sc.Expr) -> sc.Expr:
   return sc.stack([dy, (u[0] - k_NL * y**3 - k * y - c * dy) / M])
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("p", 4)), sc.L("xnext", ...))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("p", 4)), output=sc.L("xnext", ...))
 def one_step(inputs):
   x, u, p = inputs
   k1 = ode(x, u, p)
@@ -45,20 +45,20 @@ def one_step(inputs):
   return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("p", 4)), sc.L("xnext", ...))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("p", 4)), output=sc.L("xnext", ...))
 def one_sample(inputs):
   x, u, p = inputs
   (x,) = sc.scan(one_step, x, [(u, 0, 0), (p, 0, 0)], length=STEPS_PER_SAMPLE)
   return x
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("p", 4)), sc.G(sc.L("xnext", ...), sc.L("y", ...)))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("p", 4)), output=sc.G(sc.L("xnext", ...), sc.L("y", ...)))
 def sample_and_output(inputs):
   xnext = one_sample(inputs)
   return xnext, xnext[0:1]
 
 
-@sc.function(sc.G(sc.L("u", N), sc.L("p", 4)), sc.L("y", ...))
+@sc.function(sc.G(sc.L("u", N), sc.L("p", 4)), output=sc.L("y", ...))
 def all_samples(inputs):
   u, p = inputs
   _, y = sc.scan(sample_and_output, sc.const(np.zeros(2)), [(u, 0, 1), (p, 0, 0)], length=N)

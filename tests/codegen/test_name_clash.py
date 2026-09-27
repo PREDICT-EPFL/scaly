@@ -9,7 +9,7 @@ from scaly.codegen import render_c_module
 
 
 def _clash(name: str) -> sc.Function:
-  @sc.function(sc.G(sc.L("x", 2), sc.L("y", 2)), sc.G(sc.L("y", 2), sc.L("z", 2)), name=name)
+  @sc.function(sc.G(sc.L("x", 2), sc.L("y", 2)), output=sc.G(sc.L("y", 2), sc.L("z", 2)), name=name)
   def f(inputs):
     x, y = inputs
     return x * 3.0, y + x  # z reads the input y after the output y is written
@@ -25,7 +25,7 @@ def test_an_output_named_like_an_input_is_its_own_buffer() -> None:
 
 
 def test_an_input_passed_straight_through_under_its_own_name() -> None:
-  @sc.function(sc.G(sc.L("x", 2), sc.L("y", 2)), sc.G(sc.L("y", 2), sc.L("z", 2)), name="nc_passthrough")
+  @sc.function(sc.G(sc.L("x", 2), sc.L("y", 2)), output=sc.G(sc.L("y", 2), sc.L("z", 2)), name="nc_passthrough")
   def f(inputs):
     x, y = inputs
     return y, 2.0 * x

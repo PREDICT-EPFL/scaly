@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Templates P1b-i Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Function templates P1b-i: <code>sc.function(inputs, output=...)</code></h1>
+<p class="sub">2026-09-27 · branch <code>claude/function-templates</code> · plan v2, step P1b-i</p>
+<div class="box"><b>Summary.</b> The decorator takes its output as <code>output=</code>, the first half of the new signature <code>sc.function(*slots, output=, name=)</code>. Still one slot: a body with several parameters arrives in P1b-ii. The old two-positional spelling is refused at decoration with the fix spelled out, so a site the codemod missed cannot run silently. A codemod rewrote all 306 sites; four needed hand edits.</div>
+<h2>What changed</h2>
+<ul>
+<li><code>function/api.py</code>: <code>function(inputs, /, *extra, output=None, name=None)</code>. At decoration it compares the declared slots with the body's positional parameters. <code>sc.function(IN, OUT)</code> on a one-parameter body raises "sc.function takes one declaration per parameter and the output as output=; did you mean sc.function(&lt;inputs&gt;, output=&lt;outputs&gt;)?". Other mismatches name both counts and the parameters. Parameters with defaults, <code>*args</code>, <code>**kwargs</code> and keyword-only parameters are refused; defaults stay free for static arguments.</li>
+<li>The codemod inserted <code>output=</code> before the second positional argument of every <code>sc.function</code>/<code>scaly.function</code> call: 306 sites in 85 tracked files (tests 104, examples 88 in <code>.py</code> and 58 in notebooks, benchmarks 29, docs 19, plugin tests 7, README 1). It uses <code>ast</code> positions with UTF-8 byte offsets; notebooks round-trip byte for byte; every edited file and cell re-parses. The script is at the end of this report.</li>
+<li>Hand edits:
+  <ul>
+  <li>the bash heredoc in <code>docs/guide/installation.md</code>;</li>
+  <li><code>def solve_with_ordering(K, m=m)</code> in <code>sparse_fem_topology.ipynb</code>: the default is dropped. The trace is eager, so the loop variable is read at decoration as before.</li>
+  <li>the two direct <code>sc.Function(name, body, inputs, outputs)</code> constructions in <code>examples/qp_solvers/generated_piqp.py</code>, now the decorator called as a function;</li>
+  <li>the stale <code>sc.Function("f", [x], [y], ...)</code> and <code>f.call</code> in <code>docs/how_it_works/ir.md</code>.</li>
+  </ul></li>
+</ul>
+<h2>Tests and mutation checks</h2>
+<div class="scroll"><table><tr><th>Test</th><th>Mutant</th><th>Result</th></tr>
+<tr><td><code>test_the_old_two_positional_decorator_is_refused_with_the_migration_hint</code></td><td>hint branch removed</td><td class="ok">killed</td></tr>
+<tr><td><code>test_decorator_slots_must_match_the_body_parameters</code></td><td>arity check removed</td><td class="ok">killed</td></tr>
+<tr><td><code>test_decorator_refuses_parameters_that_are_not_plain_positional</code> (4 cases)</td><td>defaults accepted; parameter kinds accepted</td><td class="ok">killed (1 and 3 failures)</td></tr></table></div>
+<h2>Gates</h2>
+<div class="scroll"><table><tr><th>Check</th><th>Result</th></tr>
+<tr><td><code>uv run pytest -n=auto</code></td><td class="ok">2354 passed, 42 skipped</td></tr>
+<tr><td>C snapshots</td><td class="ok">unchanged</td></tr>
+<tr><td><code>uv run ty check --error-on-warning</code></td><td class="ok">no new diagnostics against the 58 before the branch (the one the direct constructor removal exposed is fixed)</td></tr>
+<tr><td><code>ruff format</code>, <code>ruff check</code></td><td class="ok">clean</td></tr>
+<tr><td>node-ID baseline</td><td class="ok">regenerated, +6 ids</td></tr></table></div>
+<p>The contributing.md recipe for the node-ID baseline produces a corrupted last line whenever the baseline is stale: the conftest error is printed without a leading newline and lands on the last node ID. This run strips it.</p>
+<h2>Next</h2>
+<p>P1b-ii: parameter lists. One slot per parameter, splatted bodies, variadic calls, the seeded-derivative and solver conventions, and the ParamSpec typing.</p>
+<h2>The codemod</h2>
+<pre>&quot;&quot;&quot;Dry-run codemod: sc.function(IN, OUT, ...) -&gt; sc.function(IN, output=OUT, ...) over a tree copy.
+
+Usage: uv run codemod.py &lt;root&gt;. Rewrites .py, .ipynb (code cells) and .md (python fences) in place
+under &lt;root&gt;; prints per-file counts and anything it refused.
+&quot;&quot;&quot;
+
+from __future__ import annotations
+
+import ast
+import json
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(&quot;/Users/cnjones/git/projects/alloy&quot;)
+SKIP = (&quot;internal/&quot;, &quot;typing_playground/&quot;, &quot;.venv/&quot;, &quot;third_party/&quot;)
+MODS = {&quot;sc&quot;, &quot;scaly&quot;}
+
+
+def targets(src: str) -&gt; tuple[list[tuple[int, int]], list[str]]:
+  &quot;&quot;&quot;(line, byte col) insertion points for &#x27;output=&#x27; and refusals.&quot;&quot;&quot;
+  tree = ast.parse(src)
+  bare = {a.asname or a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module == &quot;scaly&quot; for a in n.names if a.name == &quot;function&quot;}
+  out, refused = [], []
+  for node in ast.walk(tree):
+    if not isinstance(node, ast.Call):
+      continue
+    f = node.func
+    hit = (isinstance(f, ast.Attribute) and f.attr == &quot;function&quot; and isinstance(f.value, ast.Name) and f.value.id in MODS) or (
+      isinstance(f, ast.Name) and f.id in bare
+    )
+    if not hit:
+      continue
+    if any(k.arg == &quot;output&quot; for k in node.keywords):
+      continue  # already migrated: idempotent
+    if len(node.args) != 2 or any(isinstance(a, ast.Starred) for a in node.args):
+      refused.append(f&quot;line {node.lineno}: {ast.unparse(node)[:80]}&quot;)
+      continue
+    out.append((node.args[1].lineno, node.args[1].col_offset))
+  return out, refused
+
+
+def apply(lines: list[bytes], edits: list[tuple[int, int]]) -&gt; None:
+  for line, col in sorted(edits, reverse=True):
+    b = lines[line - 1]
+    lines[line - 1] = b[:col] + b&quot;output=&quot; + b[col:]
+
+
+def do_py(path: Path) -&gt; int:
+  src = path.read_bytes()
+  edits, refused = targets(src.decode())
+  for r in refused:
+    print(f&quot;  REFUSED {path}: {r}&quot;)
+  if edits:
+    lines = src.splitlines(keepends=True)
+    apply(lines, edits)
+    new = b&quot;&quot;.join(lines)
+    ast.parse(new.decode())
+    path.write_bytes(new)
+  return len(edits)
+
+
+def do_ipynb(path: Path) -&gt; int:
+  raw = path.read_text(encoding=&quot;utf-8&quot;)
+  nb = json.loads(raw)
+  assert json.dumps(nb, indent=1, ensure_ascii=False) + &quot;\n&quot; == raw, f&quot;{path}: JSON would not round-trip&quot;
+  n = 0
+  for cell in nb[&quot;cells&quot;]:
+    if cell[&quot;cell_type&quot;] != &quot;code&quot;:
+      continue
+    src_lines = cell[&quot;source&quot;]
+    src = &quot;&quot;.join(src_lines)
+    masked = &quot;\n&quot;.join((&quot;pass&quot; if l.lstrip().startswith((&quot;%&quot;, &quot;!&quot;)) else l) for l in src.split(&quot;\n&quot;))
+    edits, refused = targets(masked)
+    for r in refused:
+      print(f&quot;  REFUSED {path}: {r}&quot;)
+    if not edits:
+      continue
+    blines = [l.encode() for l in src.splitlines(keepends=True)]
+    apply(blines, edits)
+    new = b&quot;&quot;.join(blines).decode()
+    ast.parse(new)
+    cell[&quot;source&quot;] = new.splitlines(keepends=True)
+    n += len(edits)
+  if n:
+    path.write_text(json.dumps(nb, indent=1, ensure_ascii=False) + &quot;\n&quot;, encoding=&quot;utf-8&quot;)
+  return n
+
+
+FENCE = re.compile(r&quot;^(\s*)```(python|py)\s*$&quot;)
+
+
+def do_md(path: Path) -&gt; int:
+  lines = path.read_bytes().splitlines(keepends=True)
+  n = 0
+  i = 0
+  while i &lt; len(lines):
+    m = FENCE.match(lines[i].decode())
+    if not m:
+      i += 1
+      continue
+    indent = len(m.group(1).encode())
+    j = i + 1
+    while j &lt; len(lines) and not re.match(rb&quot;^\s*```\s*$&quot;, lines[j]):
+      j += 1
+    body = b&quot;&quot;.join(l[indent:] if l[:indent].isspace() or indent == 0 else l for l in lines[i + 1 : j]).decode()
+    try:
+      edits, refused = targets(body)
+    except SyntaxError as exc:
+      if &quot;function(&quot; in body:
+        print(f&quot;  UNPARSED {path}:{i + 1}: {exc.msg}&quot;)
+      i = j + 1
+      continue
+    for r in refused:
+      print(f&quot;  REFUSED {path}:{i + 1}: {r}&quot;)
+    apply(lines, [(i + 1 + line, indent + col) for line, col in edits])
+    n += len(edits)
+    i = j + 1
+  if n:
+    path.write_bytes(b&quot;&quot;.join(lines))
+  return n
+
+
+total = {}
+import subprocess
+TRACKED = subprocess.run([&quot;git&quot;, &quot;ls-files&quot;], cwd=ROOT, capture_output=True, text=True).stdout.split(&quot;\n&quot;)
+for path in sorted(ROOT / t for t in TRACKED if t):
+  rel = path.relative_to(ROOT).as_posix()
+  if not path.is_file() or rel.startswith(SKIP):
+    continue
+  if path.suffix == &quot;.py&quot;:
+    k = do_py(path)
+  elif path.suffix == &quot;.ipynb&quot;:
+    k = do_ipynb(path)
+  elif path.suffix == &quot;.md&quot;:
+    k = do_md(path)
+  else:
+    continue
+  if k:
+    total[rel] = k
+print(&quot;files&quot;, len(total), &quot;sites&quot;, sum(total.values()))
+by = {}
+for rel, k in total.items():
+  top = rel.split(&quot;/&quot;)[0] if not rel.startswith(&quot;plugins&quot;) else &quot;/&quot;.join(rel.split(&quot;/&quot;)[:3])
+  by[top] = by.get(top, 0) + k
+print(by)</pre>
+</main></body></html>

@@ -182,14 +182,16 @@ A `Function` is a named graph boundary: named inputs, named outputs, and optiona
 per output.
 
 ```python
-f = sc.Function("f", [x], [y], ["x"], ["y"])
+@sc.function(sc.L("x", 3), output=sc.L("y"))
+def f(x):
+    return x.sin()
 ```
 
-It is the unit of composition (`f.call(...)` puts a `call` node in a bigger graph), of
-differentiation (`f.factory(...)` derives a new `Function`), and of compilation (calling it
-produces C).
+It is the unit of composition (calling it with `Expr` arguments puts a `call` node in a bigger
+graph), of differentiation (`f.factory(...)` derives a new `Function`), and of compilation (calling
+it with arrays produces C).
 
-`Function.call` normalizes constant-like arguments to `Expr` and checks every argument shape
+A symbolic call checks every argument shape
 against the corresponding formal. Because a call is a node and not an inlining, the callee's
 structure survives into the generated C as a C function, which keeps generated code small when
 the same block appears a hundred times.
@@ -400,7 +402,7 @@ caught at the boundary that produced it and not as strange C much later.
 import scaly as sc
 from scaly.passes.lowering import lower_function
 
-@sc.function(sc.L("x", 3), sc.L("y", ...))
+@sc.function(sc.L("x", 3), output=sc.L("y", ...))
 def f(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x * x).sum()
 

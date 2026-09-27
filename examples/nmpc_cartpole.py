@@ -60,13 +60,13 @@ def rk4(x: sc.Expr, u: sc.Expr, h: float) -> sc.Expr:
   return x + h / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@sc.function(sc.G(sc.L("x", NX), sc.L("u", NU), sc.L("x_next", NX)), sc.L("defect", NX))
+@sc.function(sc.G(sc.L("x", NX), sc.L("u", NU), sc.L("x_next", NX)), output=sc.L("defect", NX))
 def defect(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   x, u, x_next = inputs
   return rk4(rk4(x, u, DT / 2), u, DT / 2) - x_next
 
 
-@sc.function(sc.G(sc.L("x", NX), sc.L("u", NU)), sc.L("cost", 1))
+@sc.function(sc.G(sc.L("x", NX), sc.L("u", NU)), output=sc.L("cost", 1))
 def stage_cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, u = inputs
   e = sc.stack([x[0], 1.0 - x[1].cos(), x[2], x[3]])

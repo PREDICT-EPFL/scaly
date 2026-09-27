@@ -75,7 +75,7 @@ def assemble(kappa: sc.Expr) -> linalg.SparseMatrix:
   return linalg.SparseMatrix.from_coo(rows, cols, sc.concat([diagonal, -k_face]), (NODES, NODES))
 
 
-@sc.function(sc.L("kappa", NODES), sc.S("K", ...))
+@sc.function(sc.L("kappa", NODES), output=sc.S("K", ...))
 def system(kappa: sc.Expr) -> linalg.SparseMatrix:
   return assemble(kappa)
 
@@ -83,7 +83,7 @@ def system(kappa: sc.Expr) -> linalg.SparseMatrix:
 K_PATTERN = system.output_sparsities[0]
 
 
-@sc.function(sc.G(sc.S("K", K_PATTERN), sc.L("U", (STEPS, N_HEATERS))), sc.L("T_final", NODES))
+@sc.function(sc.G(sc.S("K", K_PATTERN), sc.L("U", (STEPS, N_HEATERS))), output=sc.L("T_final", NODES))
 def simulate(inputs: tuple[linalg.SparseMatrix, sc.Expr]) -> sc.Expr:
   k, u = inputs
   fact = linalg.SparseLDL(k, name="heat")
@@ -94,7 +94,7 @@ def simulate(inputs: tuple[linalg.SparseMatrix, sc.Expr]) -> sc.Expr:
   return t
 
 
-@sc.function(sc.G(sc.L("kappa", NODES), sc.L("U", (STEPS, N_HEATERS))), sc.G(sc.L("cost", ()), sc.L("gradient", (STEPS, N_HEATERS))))
+@sc.function(sc.G(sc.L("kappa", NODES), sc.L("U", (STEPS, N_HEATERS))), output=sc.G(sc.L("cost", ()), sc.L("gradient", (STEPS, N_HEATERS))))
 def objective(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
   kappa, u = inputs
   t_final = simulate((system(kappa), u))

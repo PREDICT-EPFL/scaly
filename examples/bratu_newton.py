@@ -52,7 +52,7 @@ def residual(u: sc.Expr, lam: sc.Expr, n: int) -> sc.Expr:
 def newton_functions(n: int) -> tuple[sc.Function, sc.Function]:
   nn = n * n
 
-  @sc.function(sc.G(sc.L("u", nn), sc.L("lam", ())), sc.G(sc.L("u_next", nn), sc.L("inertia", 3)))
+  @sc.function(sc.G(sc.L("u", nn), sc.L("lam", ())), output=sc.G(sc.L("u_next", nn), sc.L("inertia", 3)))
   def newton_step(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     u, lam = inputs
     f = residual(u, lam, n)
@@ -60,18 +60,18 @@ def newton_functions(n: int) -> tuple[sc.Function, sc.Function]:
     fact = linalg.SparseLDL(jac, name="bratu")
     return u - fact.solve(f), fact.inertia()
 
-  @sc.function(sc.G(sc.L("carry", nn + 1), sc.L("lam", ())), sc.L("carry_next", nn + 1))
+  @sc.function(sc.G(sc.L("carry", nn + 1), sc.L("lam", ())), output=sc.L("carry_next", nn + 1))
   def body(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     carry, lam = inputs
     u_next, _ = newton_step((carry[:nn], lam))
     return sc.concat([u_next, sc.norm_inf(residual(u_next, lam, n)).reshape((1,))])
 
-  @sc.function(sc.G(sc.L("carry", nn + 1), sc.L("lam", ())), sc.L("go_on", ...))
+  @sc.function(sc.G(sc.L("carry", nn + 1), sc.L("lam", ())), output=sc.L("go_on", ...))
   def not_converged(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     carry, _ = inputs
     return sc.greater(carry[nn], TOL)
 
-  @sc.function(sc.G(sc.L("u0", nn), sc.L("lam", ())), sc.G(sc.L("u", nn), sc.L("residual", ()), sc.L("iterations", ()), sc.L("inertia", 3)))
+  @sc.function(sc.G(sc.L("u0", nn), sc.L("lam", ())), output=sc.G(sc.L("u", nn), sc.L("residual", ()), sc.L("iterations", ()), sc.L("inertia", 3)))
   def bratu_solve(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
     u0, lam = inputs
     start = sc.concat([u0, sc.norm_inf(residual(u0, lam, n)).reshape((1,))])

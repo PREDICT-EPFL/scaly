@@ -55,7 +55,7 @@ def n_param(n_masses: int) -> int:
   return n_state(n_masses) + N_PARAMS
 
 
-@sc.function(sc.G(sc.L("dist", 3), sc.L("mass", 1), sc.L("spring_d", 1), sc.L("rest_len", 1)), sc.L("accel", ...), name="chain_link_accel")
+@sc.function(sc.G(sc.L("dist", 3), sc.L("mass", 1), sc.L("spring_d", 1), sc.L("rest_len", 1)), output=sc.L("accel", ...), name="chain_link_accel")
 def chain_link_accel_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   dist, mass, spring_d, rest_len = inputs
   return (spring_d[0] / mass[0]) * (1.0 - rest_len[0] / sc.norm_2(dist)) * dist
@@ -63,7 +63,7 @@ def chain_link_accel_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc
 
 @sc.function(
   sc.G(sc.L("left", 3), sc.L("pos", 3), sc.L("right", 3), sc.L("mass", 1), sc.L("spring_d", 1), sc.L("rest_len", 1), sc.L("gravity", 1)),
-  sc.L("accel", ...),
+  output=sc.L("accel", ...),
   name="chain_mass_accel",
 )
 def chain_mass_accel_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -81,7 +81,7 @@ def chain_ode_fn(n_masses: int) -> sc.Function:
 
   @sc.function(
     sc.G(sc.L("x", nx), sc.L("u", NU), *(sc.L(name, constant) for name in ("mass", "spring_d", "rest_len", "gravity"))),
-    sc.L("xdot", ...),
+    output=sc.L("xdot", ...),
     name=f"chain_ode_M{n_masses}",
   )
   def ode(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -114,7 +114,7 @@ def chain_step_fn(n_masses: int) -> sc.Function:
 
   @sc.function(
     sc.G(sc.L("x", nx), sc.L("u", NU), *(sc.L(name, constant) for name in ("mass", "spring_d", "rest_len", "gravity", "dt"))),
-    sc.L("next", ...),
+    output=sc.L("next", ...),
     name=f"chain_step_M{n_masses}",
   )
   def step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -138,7 +138,7 @@ def _eq_stage_fn(n_masses: int) -> sc.Function:
 
   @sc.function(
     sc.G(sc.L("z", nz), sc.L("xnext", nx), sc.L("params", sc.TensorType((N_PARAMS,), diff=False))),
-    sc.L("eq", ...),
+    output=sc.L("eq", ...),
     name=f"chain_eq_stage_M{n_masses}",
   )
   def equality(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -160,7 +160,7 @@ def chain_eq_function(n_masses: int, horizon: int) -> sc.Function:
 
   @sc.function(
     sc.G(sc.L("z", n_dec(n_masses, horizon)), sc.L("p", sc.TensorType((n_param(n_masses),), diff=False))),
-    sc.L("eq", ...),
+    output=sc.L("eq", ...),
     name=f"chain_eq_vmap_M{n_masses}_N{horizon}",
   )
   def equality(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -176,7 +176,7 @@ def chain_eq_function_unrolled(n_masses: int, horizon: int) -> sc.Function:
 
   @sc.function(
     sc.G(sc.L("z", n_dec(n_masses, horizon)), sc.L("p", sc.TensorType((n_param(n_masses),), diff=False))),
-    sc.L("eq", ...),
+    output=sc.L("eq", ...),
     name=f"chain_eq_M{n_masses}_N{horizon}",
   )
   def equality(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
@@ -286,7 +286,7 @@ def _objective(z: sc.Expr, n_masses: int, horizon: int) -> sc.Expr:
 def chain_objective_fn(n_masses: int, horizon: int) -> sc.Function:
   """The transcribed objective on its own, so its stationary points can be checked directly."""
 
-  @sc.function(sc.L("z", n_dec(n_masses, horizon)), sc.L("f", ...), name=f"chain_obj_M{n_masses}_N{horizon}")
+  @sc.function(sc.L("z", n_dec(n_masses, horizon)), output=sc.L("f", ...), name=f"chain_obj_M{n_masses}_N{horizon}")
   def objective(z: sc.Expr) -> sc.Expr:
     return _objective(z, n_masses, horizon)
 

@@ -74,7 +74,7 @@ def terminal_cost(x: sc.Expr, goal: sc.Expr) -> sc.Expr:
 
 
 # Rollout under the nominal inputs: states x_0 ... x_{N-1} stacked, costs per step.
-@sc.function(sc.G(sc.L("x", NX), sc.L("u", NU), sc.L("goal", NX)), sc.G(sc.L("x_next", NX), sc.L("x_k", NX), sc.L("cost", 1)))
+@sc.function(sc.G(sc.L("x", NX), sc.L("u", NU), sc.L("goal", NX)), output=sc.G(sc.L("x_next", NX), sc.L("x_k", NX), sc.L("cost", 1)))
 def rollout_step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   x, u, goal = inputs
   return step(x, u), x, stage_cost(x, u, goal).reshape((1,))
@@ -89,7 +89,7 @@ def rollout(x0: sc.Expr, us: sc.Expr, goal: sc.Expr) -> tuple[sc.Expr, sc.Expr, 
 # Backward pass. Carry: V_x and V_xx. Sliced (backwards): x_k, u_k. Broadcast: goal and mu.
 @sc.function(
   sc.G(sc.L("value", NX + NX * NX), sc.L("x", NX), sc.L("u", NU), sc.L("goal_mu", NX + 1)),
-  sc.G(sc.L("value_prev", NX + NX * NX), sc.L("gains", NU + NU * NX), sc.L("dv", 2)),
+  output=sc.G(sc.L("value_prev", NX + NX * NX), sc.L("gains", NU + NU * NX), sc.L("dv", 2)),
 )
 def backward_step(inputs: tuple[sc.Expr, ...]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   value, x, u, goal_mu = inputs
@@ -116,7 +116,7 @@ def backward_step(inputs: tuple[sc.Expr, ...]) -> tuple[sc.Expr, sc.Expr, sc.Exp
 # Forward pass under the policy. Carry: x. Sliced: x_k, u_k, gains (read in reverse). Broadcast: alpha, goal.
 @sc.function(
   sc.G(sc.L("x", NX), sc.L("x_nom", NX), sc.L("u_nom", NU), sc.L("gains", NU + NU * NX), sc.L("alpha_goal", 1 + NX)),
-  sc.G(sc.L("x_next", NX), sc.L("u", NU), sc.L("cost", 1)),
+  output=sc.G(sc.L("x_next", NX), sc.L("u", NU), sc.L("cost", 1)),
 )
 def policy_step(inputs: tuple[sc.Expr, ...]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   x, x_nom, u_nom, gains, alpha_goal = inputs
@@ -129,7 +129,7 @@ LS = N * NU + 3  # line-search carry: (accepted, cost, alpha, inputs)
 PARAMS = sc.G(sc.L("x0", NX), sc.L("goal", NX), sc.L("xs", N * NX), sc.L("us", N * NU), sc.L("gains", N * (NU + NU * NX)), sc.L("j_dv", 3))
 
 
-@sc.function(sc.G(sc.L("carry", LS), sc.L("trial", sc.TensorType((), sc.dtypes.int64)), PARAMS), sc.L("carry_next", LS))
+@sc.function(sc.G(sc.L("carry", LS), sc.L("trial", sc.TensorType((), sc.dtypes.int64)), PARAMS), output=sc.L("carry_next", LS))
 def line_search_step(inputs: tuple) -> sc.Expr:
   _, trial, (x0, goal, xs, us, gains, j_dv) = inputs
   alpha = sc.const(0.5) ** trial.cast("float64")
@@ -143,7 +143,7 @@ def line_search_step(inputs: tuple) -> sc.Expr:
   return sc.concat([sc.cast(accepted, "float64").reshape((1,)), cost.reshape((1,)), alpha.reshape((1,)), u_new])
 
 
-@sc.function(sc.G(sc.L("carry", LS), PARAMS), sc.L("go_on", ...))
+@sc.function(sc.G(sc.L("carry", LS), PARAMS), output=sc.L("go_on", ...))
 def not_accepted(inputs: tuple) -> sc.Expr:
   return sc.less(inputs[0][0], 0.5)
 
@@ -151,7 +151,7 @@ def not_accepted(inputs: tuple) -> sc.Expr:
 OUTER = N * NU + 3  # (inputs, cost, mu, done)
 
 
-@sc.function(sc.G(sc.L("carry", OUTER), sc.L("x0", NX), sc.L("goal", NX)), sc.L("carry_next", OUTER))
+@sc.function(sc.G(sc.L("carry", OUTER), sc.L("x0", NX), sc.L("goal", NX)), output=sc.L("carry_next", OUTER))
 def ilqr_iteration(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   carry, x0, goal = inputs
   us, mu = carry[: N * NU], carry[N * NU + 1]
@@ -171,14 +171,14 @@ def ilqr_iteration(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   return sc.concat([us_next, cost_next.reshape((1,)), mu_next.reshape((1,)), sc.cast(done, "float64").reshape((1,))])
 
 
-@sc.function(sc.G(sc.L("carry", OUTER), sc.L("x0", NX), sc.L("goal", NX)), sc.L("go_on", ...))
+@sc.function(sc.G(sc.L("carry", OUTER), sc.L("x0", NX), sc.L("goal", NX)), output=sc.L("go_on", ...))
 def not_done(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   return sc.less(inputs[0][N * NU + 2], 0.5)
 
 
 @sc.function(
   sc.G(sc.L("x0", NX), sc.L("goal", NX)),
-  sc.G(sc.L("us", (N, NU)), sc.L("xs", (N + 1, NX)), sc.L("cost", ()), sc.L("iterations", ()), sc.L("mu", ())),
+  output=sc.G(sc.L("us", (N, NU)), sc.L("xs", (N + 1, NX)), sc.L("cost", ()), sc.L("iterations", ()), sc.L("mu", ())),
 )
 def ilqr(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
   x0, goal = inputs
@@ -189,7 +189,7 @@ def ilqr(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc
   return us.reshape((N, NU)), sc.concat([xs, x_final]).reshape((N + 1, NX)), cost, n_iter, carry[N * NU + 1]
 
 
-@sc.function(sc.G(sc.L("us", N * NU), sc.L("x0", NX), sc.L("goal", NX)), sc.G(sc.L("cost", ()), sc.L("grad", N * NU)))
+@sc.function(sc.G(sc.L("us", N * NU), sc.L("x0", NX), sc.L("goal", NX)), output=sc.G(sc.L("cost", ()), sc.L("grad", N * NU)))
 def shooting_cost(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
   us, x0, goal = inputs
   cost = rollout(x0, us, goal)[2]

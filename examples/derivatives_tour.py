@@ -46,13 +46,13 @@ def _pair_vectors(x: sc.Expr) -> sc.Expr:
   return sc.gather(x, 3 * PAIRS[:, :1] + xyz) - sc.gather(x, 3 * PAIRS[:, 1:] + xyz)
 
 
-@sc.function(sc.L("x", 3 * N), sc.L("len2", P))
+@sc.function(sc.L("x", 3 * N), output=sc.L("len2", P))
 def squared_lengths(x: sc.Expr) -> sc.Expr:
   d = _pair_vectors(x)
   return (d * d) @ sc.const(np.ones(3))
 
 
-@sc.function(sc.L("x", 3 * N), sc.L("E", ()))
+@sc.function(sc.L("x", 3 * N), output=sc.L("E", ()))
 def energy(x: sc.Expr) -> sc.Expr:
   s3 = (1.0 / squared_lengths(x)) ** 3
   return (4.0 * (s3 * s3 - s3)).sum()

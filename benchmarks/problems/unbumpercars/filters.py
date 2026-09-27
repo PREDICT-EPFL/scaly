@@ -493,7 +493,9 @@ def _world_vel_expr(state: sc.Expr, physics: sc.Expr) -> tuple[sc.Expr, sc.Expr,
   return vx_b * theta.cos() - vy_b * theta.sin(), vx_b * theta.sin() + vy_b * theta.cos(), omega
 
 
-@sc.function(sc.G(sc.L("state", NSTATE), sc.L("u", NCTRL), sc.L("pw", N_PW), sc.L("physics", N_PHYSICS)), sc.L("xdot", ...), name="ctdt_ctfull_ode")
+@sc.function(
+  sc.G(sc.L("state", NSTATE), sc.L("u", NCTRL), sc.L("pw", N_PW), sc.L("physics", N_PHYSICS)), output=sc.L("xdot", ...), name="ctdt_ctfull_ode"
+)
 def scaly_ctfull_ode_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   state, u, pw, physics = inputs
   max_delta, steering_time_constant = physics[2], physics[3]
@@ -510,7 +512,7 @@ def scaly_ctfull_ode_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc
 
 @sc.function(
   sc.G(sc.L("state", NSTATE), sc.L("u", NCTRL), sc.L("pw", N_PW), sc.L("physics", N_PHYSICS), sc.L("dt", 1)),
-  sc.L("next", ...),
+  output=sc.L("next", ...),
   name="ctdt_ctfull_rk4",
 )
 def scaly_ctfull_rk4_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -539,7 +541,7 @@ def _unpack_pw_dt_expr(pw: sc.Expr) -> tuple[sc.Expr, ...]:
   )
 
 
-@sc.function(sc.G(sc.L("state", NSTATE), sc.L("physics", N_PHYSICS)), sc.L("posedot", ...), name="ctdt_pose_dot")
+@sc.function(sc.G(sc.L("state", NSTATE), sc.L("physics", N_PHYSICS)), output=sc.L("posedot", ...), name="ctdt_pose_dot")
 def scaly_pose_dot_fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   state, physics = inputs
   x_dot, y_dot, omega = _world_vel_expr(state, physics)
@@ -549,7 +551,7 @@ def scaly_pose_dot_fn(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 @sc.function(
   sc.G(sc.L("state", NSTATE), sc.L("u", NCTRL), sc.L("pw", N_PW_DT), sc.L("physics", N_PHYSICS), sc.L("dt", 1)),
-  sc.L("next", ...),
+  output=sc.L("next", ...),
   name="ctdt_dt_mlp_step",
 )
 def scaly_dt_mlp_step_fn(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -591,7 +593,7 @@ def build_scaly_oracle(loop_cfg: ClosedLoopConfig, filt_cfg: FilterConfig) -> sc
       sc.L("physics", constant(N_PHYSICS)),
       sc.L("dt", constant(1)),
     ),
-    sc.G(sc.L("cost", ...), sc.L("g", ...)),
+    output=sc.G(sc.L("cost", ...), sc.L("g", ...)),
     name=f"ctdt_scaly_oracle_N{ncars}_{'walls' if loop_cfg.arena_avoidance else 'pairs'}",
   )
   def oracle(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
@@ -648,7 +650,7 @@ def _scaly_oracle_outputs(
 
   @sc.function(
     sc.G(sc.L("xi", NSTATE), sc.L("xj", NSTATE), sc.L("xi_next", NSTATE), sc.L("xj_next", NSTATE), sc.L("physics", N_PHYSICS)),
-    sc.L("g", 1),
+    output=sc.L("g", 1),
     name="pair_hcbf",
   )
   def pair_hcbf(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -657,7 +659,7 @@ def _scaly_oracle_outputs(
 
   @sc.function(
     sc.G(sc.L("state", NSTATE), sc.L("state_next", NSTATE), sc.L("physics", N_PHYSICS)),
-    sc.L("g", 4),
+    output=sc.L("g", 4),
     name="wall_hcbf",
   )
   def wall_hcbf(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:

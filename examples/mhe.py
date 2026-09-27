@@ -46,7 +46,7 @@ def rk4(x: sc.Expr, b: sc.Expr) -> sc.Expr:
   return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("w", 1), sc.L("b", 1), sc.L("x_next", 2)), sc.L("defect", 2))
+@sc.function(sc.G(sc.L("x", 2), sc.L("w", 1), sc.L("b", 1), sc.L("x_next", 2)), output=sc.L("defect", 2))
 def defect(inputs: tuple[sc.Expr, ...]) -> sc.Expr:
   x, w, b, x_next = inputs
   return rk4(x, b[0]) + sc.stack([sc.const(0.0), DT * w[0]]) - x_next

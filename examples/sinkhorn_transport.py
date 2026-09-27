@@ -49,7 +49,7 @@ def cost_matrix(x: sc.Expr, y: sc.Expr) -> sc.Expr:
   return d * d  # flat, (N * M,)
 
 
-@sc.function(sc.G(sc.L("fg", N + M + 1), sc.L("a", N), sc.L("b", M), sc.L("C", N * M)), sc.L("fg_next", N + M + 1))
+@sc.function(sc.G(sc.L("fg", N + M + 1), sc.L("a", N), sc.L("b", M), sc.L("C", N * M)), output=sc.L("fg_next", N + M + 1))
 def sinkhorn_step(inputs: tuple[sc.Expr, ...]) -> sc.Expr:
   fg, a, b, c = inputs
   g = fg[N : N + M]
@@ -60,7 +60,7 @@ def sinkhorn_step(inputs: tuple[sc.Expr, ...]) -> sc.Expr:
   return sc.concat([f, g, row_error.reshape((1,))])
 
 
-@sc.function(sc.G(sc.L("fg", N + M + 1), sc.L("a", N), sc.L("b", M), sc.L("C", N * M)), sc.L("go_on", ...))
+@sc.function(sc.G(sc.L("fg", N + M + 1), sc.L("a", N), sc.L("b", M), sc.L("C", N * M)), output=sc.L("go_on", ...))
 def not_converged(inputs: tuple[sc.Expr, ...]) -> sc.Expr:
   return sc.greater(inputs[0][N + M], TOL)
 
@@ -76,7 +76,7 @@ def entropic_cost(a: sc.Expr, b: sc.Expr, x: sc.Expr, y: sc.Expr) -> tuple[sc.Ex
 
 @sc.function(
   sc.G(sc.L("a", N), sc.L("b", M), sc.L("x", N), sc.L("y", M)),
-  sc.G(sc.L("W", ()), sc.L("plan_cost", ()), sc.L("f", N), sc.L("dW_da", N), sc.L("iterations", ())),
+  output=sc.G(sc.L("W", ()), sc.L("plan_cost", ()), sc.L("f", N), sc.L("dW_da", N), sc.L("iterations", ())),
 )
 def transport(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
   a, b, x, y = inputs

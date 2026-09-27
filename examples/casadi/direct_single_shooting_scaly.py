@@ -21,14 +21,14 @@ M = 4  # RK4 steps per interval
 X_START = np.array([0.0, 1.0])
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), sc.G(sc.L("xdot", ...), sc.L("L", ...)))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), output=sc.G(sc.L("xdot", ...), sc.L("L", ...)))
 def f(inputs):
   x, u = inputs
   x1, x2 = x[0], x[1]
   return sc.stack([(1 - x2**2) * x1 - x2 + u[0], x1]), sc.stack([x1**2 + x2**2 + u[0] ** 2])
 
 
-@sc.function(sc.G(sc.L("x0", 2), sc.L("p", 1)), sc.G(sc.L("xf", ...), sc.L("qf", ...)))
+@sc.function(sc.G(sc.L("x0", 2), sc.L("p", 1)), output=sc.G(sc.L("xf", ...), sc.L("qf", ...)))
 def F(inputs):
   X, U = inputs
   dt = T / N / M
@@ -43,13 +43,13 @@ def F(inputs):
   return X, Q
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), sc.G(sc.L("xnext", ...), sc.L("x_and_q", ...)))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), output=sc.G(sc.L("xnext", ...), sc.L("x_and_q", ...)))
 def interval(inputs):
   xf, qf = F(inputs)
   return xf, sc.concat([xf, qf])
 
 
-@sc.function(sc.L("u", N), sc.L("x_and_q", ...))
+@sc.function(sc.L("u", N), output=sc.L("x_and_q", ...))
 def rollout(u):
   _, x_and_q = sc.scan(interval, sc.const(X_START), [(u, 0, 1)], length=N)
   return x_and_q.reshape((N, 3))

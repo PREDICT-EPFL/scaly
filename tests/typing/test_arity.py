@@ -10,23 +10,23 @@ import scaly as sc
 from scaly.function import Tree
 
 
-@sc.function(sc.L("x", 3), sc.G(sc.L("first", ...), sc.L("second", 3)))
+@sc.function(sc.L("x", 3), output=sc.G(sc.L("first", ...), sc.L("second", 3)))
 def duplicate(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return x, x
 
 
-@sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("prod", ...))
+@sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), output=sc.L("prod", ...))
 def multiply(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, y = inputs
   return x * y
 
 
-@sc.function(sc.L("x", 3), sc.L("square", ...))
+@sc.function(sc.L("x", 3), output=sc.L("square", ...))
 def square(x: sc.Expr) -> sc.Expr:
   return multiply.symbolic_call(duplicate.symbolic_call(x))
 
 
-@sc.function(sc.G(sc.L("x", 3), sc.L("p", ())), sc.L("f", ...))
+@sc.function(sc.G(sc.L("x", 3), sc.L("p", ())), output=sc.L("f", ...))
 def cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   x, p = inputs
   return (x * x).sum() * p
@@ -34,14 +34,14 @@ def cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 @sc.function(
   sc.G(sc.G(sc.L("state", 4), sc.L("u", 2)), sc.G(sc.L("pw", 10), sc.L("physics", 3), sc.L("dt", ()))),
-  sc.L("next", ...),
+  output=sc.L("next", ...),
 )
 def step(inputs: tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr, sc.Expr]]) -> sc.Expr:
   (state, _u), (_pw, _physics, _dt) = inputs
   return state
 
 
-@sc.function(sc.G(sc.L("state", 4), sc.L("u", 2), sc.L("pw", 10), sc.L("physics", 3), sc.L("dt", ())), sc.L("next", ...))
+@sc.function(sc.G(sc.L("state", 4), sc.L("u", 2), sc.L("pw", 10), sc.L("physics", 3), sc.L("dt", ())), output=sc.L("next", ...))
 def step_flat(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   state, _u, _pw, _physics, _dt = inputs
   return state
@@ -108,8 +108,8 @@ if TYPE_CHECKING:
   step.numerical_call((np.zeros(4), np.zeros(2), np.zeros(10), np.zeros(3), np.zeros(())))  # ty: ignore[invalid-argument-type]
   step_flat.numerical_call(((np.zeros(4), np.zeros(2)), (np.zeros(10), np.zeros(3), np.zeros(()))))  # ty: ignore[invalid-argument-type]
 
-  sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), sc.L("z", ...))(lambda x: x)  # ty: ignore[invalid-argument-type]
-  sc.function(sc.L("x", 3), sc.G(sc.L("a", ...), sc.L("b", ...)))(lambda x: x)  # ty: ignore[invalid-argument-type]
+  sc.function(sc.G(sc.L("x", 3), sc.L("y", 3)), output=sc.L("z", ...))(lambda x: x)  # ty: ignore[invalid-argument-type]
+  sc.function(sc.L("x", 3), output=sc.G(sc.L("a", ...), sc.L("b", ...)))(lambda x: x)  # ty: ignore[invalid-argument-type]
 
   assert_type(multiply.symbolic_call(duplicate.symbolic_call(sc.sym("x", 3))), sc.Expr)
   multiply.symbolic_call(square.symbolic_call(sc.sym("x", 3)))  # ty: ignore[invalid-argument-type]

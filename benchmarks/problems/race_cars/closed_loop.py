@@ -151,7 +151,7 @@ def steady_throttle(v: float, params: RaceCarParams = RaceCarParams()) -> float:
   return float(np.tanh(10.0 * v) * (params.c_r0 + params.c_r1 * v + params.c_r2 * v * v) / params.c_m0)
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("ref", NX)), sc.L("corridor", ...), name="race_car_corridor_stage")
+@sc.function(sc.G(sc.L("z", NZ), sc.L("ref", NX)), output=sc.L("corridor", ...), name="race_car_corridor_stage")
 def _corridor_stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   z, ref = inputs
   cos_ref, sin_ref = ref[2].cos(), ref[2].sin()
@@ -163,7 +163,7 @@ def _corridor_stage(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   return sc.stack([reach + half_width, reach - half_width])
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("ref", NX), sc.L("params", N_PARAMS)), sc.L("residuals", ...), name="race_car_cost_stage")
+@sc.function(sc.G(sc.L("z", NZ), sc.L("ref", NX), sc.L("params", N_PARAMS)), output=sc.L("residuals", ...), name="race_car_cost_stage")
 def _cost_stage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   z, ref, params = inputs
   c_m0, c_r0, c_r1, c_r2 = params[3], params[4], params[5], params[6]

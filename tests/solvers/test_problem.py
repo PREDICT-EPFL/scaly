@@ -152,7 +152,7 @@ def test_nlp_solver_is_plain_typed_function_and_reuses_problem_oracles() -> None
   assert all(row <= col for row, col in zip(sqp.descriptor.hess_sparsity.rows, sqp.descriptor.hess_sparsity.cols, strict=True))
 
 
-@sc.function(sc.L("stage", 2), sc.L("row", ...), name="single_block_stage")
+@sc.function(sc.L("stage", 2), output=sc.L("row", ...), name="single_block_stage")
 def single_block_stage(stage: sc.Expr) -> sc.Expr:
   return stage.sin()
 

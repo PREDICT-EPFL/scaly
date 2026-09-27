@@ -82,7 +82,7 @@ def solver(
     "x_u": x_ub,
   }
 
-  def solve(inputs: Any) -> tuple[sc.Expr, ...]:
+  def solve(inputs: Any) -> Any:
     # The data above are expressions of the problem's parameter symbols; the Function has its own.
     swap = dict(zip(params, problem.params.flatten_symbolic(inputs, name), strict=True))
     out = Solver(s, backend, settings, name=name).solve(QPValues.preprocess(s, **{k: substitute(v, swap) for k, v in data.items()}))
@@ -90,7 +90,7 @@ def solver(
     return out["x"], out["y"], out["z_l"], out["z_u"], out["status"], out["iter"], obj
 
   shapes = {"x": n, "y": p, "z_l": m, "z_u": m, "status": (), "iter": (), "obj": ()}
-  return sc.Function(name, solve, problem.params, sc.G(*(sc.L(k, shapes[k]) for k in OUTPUTS)))
+  return sc.function(problem.params, output=sc.G(*(sc.L(k, shapes[k]) for k in OUTPUTS)), name=name)(solve)
 
 
 def structure_summary(problem: sc.Problem) -> dict[str, Any]:
@@ -129,7 +129,7 @@ def qp_data(problem: sc.Problem) -> sc.Function:
     return (P, c), (A, b), (G, g_lb, g_ub), (x_lb, x_ub), f
 
   tree = sc.G(sc.G(*leaves[:2]), sc.G(*leaves[2:4]), sc.G(*leaves[4:7]), sc.G(*leaves[7:9]), leaves[9])
-  return sc.Function(f"{problem.name}_qp_data", nested, problem.params, tree)
+  return sc.function(problem.params, output=tree, name=f"{problem.name}_qp_data")(nested)
 
 
 __all__ = ["INF", "OUTPUTS", "qp_data", "solver", "structure_summary"]

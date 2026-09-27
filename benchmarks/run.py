@@ -60,7 +60,7 @@ SAFETY_MARGIN, ALPHA = 0.5, 1.0
 def _qp_filter() -> sc.Function:
   obstacles = np.array([[1.0, 1.0], [-1.0, 1.5], [0.0, -2.0]], dtype=np.float64)
 
-  @sc.function(sc.G(sc.L("x", (NX,)), sc.L("u_ref", (NU,))), sc.L("u", ...), name="smoke_safety_filter_qp")
+  @sc.function(sc.G(sc.L("x", (NX,)), sc.L("u_ref", (NU,))), output=sc.L("u", ...), name="smoke_safety_filter_qp")
   def safety_filter_qp(inputs):
     x, u_ref = inputs
     cars = sc.stack([sc.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
@@ -89,7 +89,7 @@ def _qp_filter() -> sc.Function:
 def _nlp_filter() -> sc.Function:
   obstacles = np.array([[1.0, 1.0], [-1.0, 1.5], [0.0, -2.0]], dtype=np.float64)
 
-  @sc.function(sc.G(sc.L("x", (NX,)), sc.L("u_ref", (NU,))), sc.L("u", ...), name="smoke_safety_filter_nlp")
+  @sc.function(sc.G(sc.L("x", (NX,)), sc.L("u_ref", (NU,))), output=sc.L("u", ...), name="smoke_safety_filter_nlp")
   def safety_filter_nlp(inputs):
     x, u_ref = inputs
     u = sc.sym("u", NU)

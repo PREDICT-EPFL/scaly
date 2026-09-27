@@ -54,7 +54,7 @@ def model(masses: np.ndarray, lengths: np.ndarray) -> dict[str, sc.Function]:
     potential = G * (sc.const(masses) * y).sum()
     return kinetic - potential, kinetic + potential
 
-  @sc.function(sc.G(sc.L("q", n), sc.L("qd", n), sc.L("tau", n)), sc.G(sc.L("qdd", n), sc.L("M", (n, n))))
+  @sc.function(sc.G(sc.L("q", n), sc.L("qd", n), sc.L("tau", n)), output=sc.G(sc.L("qdd", n), sc.L("M", (n, n))))
   def forward_dynamics(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     q, qd, tau = inputs
     lag, _ = lagrangian(q, qd)
@@ -64,7 +64,7 @@ def model(masses: np.ndarray, lengths: np.ndarray) -> dict[str, sc.Function]:
     rhs = tau + sc.gradient(lag, q) - coupling @ qd
     return linalg.cho_solve(linalg.cholesky(mass), rhs), mass
 
-  @sc.function(sc.G(sc.L("q", n), sc.L("qd", n)), sc.L("E", ()))
+  @sc.function(sc.G(sc.L("q", n), sc.L("qd", n)), output=sc.L("E", ()))
   def energy(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     return lagrangian(*inputs)[1]
 
@@ -73,7 +73,7 @@ def model(masses: np.ndarray, lengths: np.ndarray) -> dict[str, sc.Function]:
   def f(x: sc.Expr) -> sc.Expr:
     return sc.concat([x[n:], forward_dynamics((x[:n], x[n:], zero))[0]])
 
-  @sc.function(sc.L("x", 2 * n), sc.G(sc.L("x_next", 2 * n), sc.L("E", 1)))
+  @sc.function(sc.L("x", 2 * n), output=sc.G(sc.L("x_next", 2 * n), sc.L("E", 1)))
   def rk4_step(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     k1 = f(x)
     k2 = f(x + 0.5 * DT * k1)
@@ -81,7 +81,7 @@ def model(masses: np.ndarray, lengths: np.ndarray) -> dict[str, sc.Function]:
     k4 = f(x + DT * k3)
     return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4), energy((x[:n], x[n:])).reshape((1,))
 
-  @sc.function(sc.L("x0", 2 * n), sc.G(sc.L("x_final", 2 * n), sc.L("energies", STEPS), sc.L("sensitivity", (2 * n, 2 * n))))
+  @sc.function(sc.L("x0", 2 * n), output=sc.G(sc.L("x_final", 2 * n), sc.L("energies", STEPS), sc.L("sensitivity", (2 * n, 2 * n))))
   def simulate(x0: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     x_final, energies = sc.scan(rk4_step, x0, [], length=STEPS)
     return x_final, energies, sc.jacobian(x_final, x0)

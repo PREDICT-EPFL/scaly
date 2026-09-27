@@ -22,13 +22,13 @@ N_SIM = 1000
 M, K, C = 1.0, 1.0, 0.5  # mass, spring constant, damping
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("w", 1)), sc.L("xdot", ...))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("w", 1)), output=sc.L("xdot", ...))
 def f(inputs):
   x, u, w = inputs
   return sc.stack([x[1], (-K * x[0] - C * x[1] + u[0]) / M + w[0]])
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("d", 1)), sc.L("x1", ...))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("d", 1)), output=sc.L("x1", ...))
 def phi(inputs):
   x, u, d = inputs
   k1 = f((x, u, d))
@@ -38,7 +38,7 @@ def phi(inputs):
   return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@sc.function(sc.L("x", 2), sc.L("y", ...))
+@sc.function(sc.L("x", 2), output=sc.L("y", ...))
 def h(x):
   return x[0:1]
 
@@ -47,7 +47,7 @@ PHI = sc.jacobian(phi, "x1", "x")
 H = sc.jacobian(h, "y", "x")
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("w", 1), sc.L("xnext", 2)), sc.L("gap", ...))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("w", 1), sc.L("xnext", 2)), output=sc.L("gap", ...))
 def gap(inputs):
   x, u, w, xnext = inputs
   return xnext - phi((x, u, w))

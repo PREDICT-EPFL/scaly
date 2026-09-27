@@ -307,7 +307,7 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
 
   @sc.function(
     sc.G(sc.L("z", nz), sc.L("xnext", nx), sc.L("params", sc.TensorType((N_PARAMS,), diff=False))),
-    sc.L("eq", ...),
+    output=sc.L("eq", ...),
     name=stage.name,
   )
   def hinted(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
@@ -319,7 +319,7 @@ def check_hinted_stage_selects_hessian_procedure() -> None:
       sc.L("p", sc.TensorType((n_param(n_masses),), diff=False)),
       sc.L("lam", sc.TensorType((nx * (HORIZON + 1),), diff=False)),
     ),
-    sc.L("h", ...),
+    output=sc.L("h", ...),
     name="chain_hess_hinted",
   )
   def hessian_values(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:

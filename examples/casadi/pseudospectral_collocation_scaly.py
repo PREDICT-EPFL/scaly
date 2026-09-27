@@ -25,7 +25,7 @@ def analytical(t: np.ndarray) -> np.ndarray:
   return np.column_stack([-64 / (5 * (2 + t) ** 5) + 2 / 5, 4 / ((2 + t) ** 2), -8 / ((2 + t) ** 3), 4 * t**0, 64 / ((2 + t) ** 3)])
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), sc.L("xd", ...))
+@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), output=sc.L("xd", ...))
 def xd(inputs):
   x, u = inputs
   return sc.stack([x[1] ** 3, u[0]])

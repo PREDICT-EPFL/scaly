@@ -327,7 +327,7 @@ def test_nlp_rosenbrock_equality_constrained() -> None:
 def test_nested_nlp_in_scaly_function() -> None:
   """NLP solver embedded in a larger Function."""
 
-  @sc.function(sc.L("target", (2,)), sc.L("x_proj", ...), name="min_dist_to_unit_circle")
+  @sc.function(sc.L("target", (2,)), output=sc.L("x_proj", ...), name="min_dist_to_unit_circle")
   def proj(target):
     x = sc.sym("x_inner", 2)
     f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2
@@ -347,7 +347,7 @@ def test_nested_nlp_in_scaly_function() -> None:
 def test_nested_nlp_jit_compiles_through_ipopt() -> None:
   """JIT path for an NLP: projects (target) onto the unit circle."""
 
-  @sc.function(sc.L("target", (2,)), sc.L("x_proj", ...), name="proj_circle")
+  @sc.function(sc.L("target", (2,)), output=sc.L("x_proj", ...), name="proj_circle")
   def proj(target):
     x = sc.sym("x_inner", 2)
     f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2

@@ -109,13 +109,13 @@ def _rk4(x, u, params):
   return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), sc.L("eq", ...), name="race_car_eq_initial")
+@sc.function(sc.G(sc.L("z", NZ), sc.L("p", NX)), output=sc.L("eq", ...), name="race_car_eq_initial")
 def eq_initial(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
   z, p = inputs
   return z[:NX] - p[:NX]
 
 
-@sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("params", N_PARAMS)), sc.L("eq", ...), name="race_car_eq_interstage")
+@sc.function(sc.G(sc.L("z", NZ), sc.L("znext", NZ), sc.L("params", N_PARAMS)), output=sc.L("eq", ...), name="race_car_eq_interstage")
 def eq_interstage(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
   z, znext, params = inputs
   return _rk4(z[:NX], z[NX : NX + NU], params) - znext[:NX]
@@ -127,7 +127,7 @@ def race_car_eq_function(horizon: int) -> sc.Function:
 
   @sc.function(
     sc.G(sc.L("z", NZ * (horizon + 1)), sc.L("p", sc.TensorType((n_param(horizon),), diff=False))),
-    sc.L("eq", ...),
+    output=sc.L("eq", ...),
     name=f"race_car_eq_N{horizon}",
   )
   def equality(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:

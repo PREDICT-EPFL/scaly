@@ -34,7 +34,7 @@ WEIGHTS = (np.arange(40 * 40, dtype=np.float64).reshape(40, 40) % 7 - 3.0) / 11.
 def _dynamics() -> sc.Function:
   """Elementwise math, slicing, a reduction and a concat."""
 
-  @sc.function(sc.G(sc.L("z", 4), sc.L("u", 2)), sc.L("znext", ...), name="dynamics")
+  @sc.function(sc.G(sc.L("z", 4), sc.L("u", 2)), output=sc.L("znext", ...), name="dynamics")
   def dynamics(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, u = inputs
     pos, vel = z[:2], z[2:]
@@ -55,7 +55,7 @@ def _shooting() -> sc.Function:
 def _wide() -> sc.Function:
   """Two outputs, a 40x40 matmul either way round, the transcendental surface, and a scatter."""
 
-  @sc.function(sc.G(sc.L("x", 40), sc.L("y", 40)), sc.G(sc.L("z", ...), sc.L("tail", ...)), name="wide")
+  @sc.function(sc.G(sc.L("x", 40), sc.L("y", 40)), output=sc.G(sc.L("z", ...), sc.L("tail", ...)), name="wide")
   def wide(inputs):
     x, y = inputs
     h = sc.const(WEIGHTS) @ x
