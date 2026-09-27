@@ -964,7 +964,7 @@ SPARSE_LDL_TABLES = ("a_ptr", "a_rows", "a_src", "l_ptr", "l_rows", "r_cols", "r
 """The analysis tables a ``sparse_ldl_factor`` node carries, as ``linalg.symbolic`` names them (``a_src`` is
 its ``a_source``; the ``ck_*`` tables are ``SymbolicLDL.chunks``)."""
 
-SPARSE_LDL_MAX_WIDTH = 4
+SPARSE_LDL_MAX_WIDTH = 8
 """The most columns one chunk of a ``sparse_ldl_factor`` update covers."""
 
 

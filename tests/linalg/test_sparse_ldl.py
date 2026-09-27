@@ -17,6 +17,7 @@ from scaly.ad import finite_difference
 from scaly.ad.derivatives import gradient, hessian, jacobian
 from scaly.ad.forward import jvp
 from scaly.codegen import render_c_module
+from scaly.ir.expr import SPARSE_LDL_MAX_WIDTH
 from scaly.linalg import SparseLDL, SparseMatrix, sparse_ldl
 from scaly.linalg.sparse_factor import Schedule, _call
 from scaly.linalg.symbolic import Ordering
@@ -537,8 +538,8 @@ def test_loop_schedule_is_the_scan_bit_for_bit() -> None:
         )
         np.testing.assert_array_equal(fl, fs)
         np.testing.assert_array_equal(xl, xs)
-        widths.update(np.unique(loop.symbolic.chunks()["ck_width"]).tolist())
-  assert widths == {1, 2, 3, 4}
+        widths.update(np.unique(loop.tables()["ck_width"]).tolist())
+  assert widths == set(range(1, SPARSE_LDL_MAX_WIDTH + 1))
 
 
 def test_loop_factorization_propagates_inf_and_nan_as_the_scan_does() -> None:
@@ -562,8 +563,8 @@ def test_chunks_group_columns_with_the_same_rows() -> None:
   same rows from ``j`` down; the chunks cover the row exactly once."""
   for make in LOOP_MATRICES.values():
     s = SparseLDL(SparseMatrix.symbol("K", _triangle(make(), "lower")), ordering="mmd", schedule="loop").symbolic
-    ck = s.chunks()
-    assert ck["ck_ptr"].size == s.n + 1 and np.all(ck["ck_width"] >= 1) and np.all(ck["ck_width"] <= 4)
+    ck = s.chunks(SPARSE_LDL_MAX_WIDTH)
+    assert ck["ck_ptr"].size == s.n + 1 and np.all(ck["ck_width"] >= 1) and np.all(ck["ck_width"] <= SPARSE_LDL_MAX_WIDTH)
     for j in range(s.n):
       covered = []
       for r in range(ck["ck_ptr"][j], ck["ck_ptr"][j + 1]):
@@ -630,7 +631,7 @@ def test_sparse_ldl_factor_validates_its_tables() -> None:
   with pytest.raises(ValueError, match="outside its"):
     sparse_ldl_factor(sc.sym("kv_short", fact.matrix.nnz - 1), tables)
   with pytest.raises(ValueError, match="chunks cover 1 to"):
-    sparse_ldl_factor(kv, {**tables, "ck_width": tables["ck_width"] + 4})
+    sparse_ldl_factor(kv, {**tables, "ck_width": tables["ck_width"] + SPARSE_LDL_MAX_WIDTH})
   with pytest.raises(ValueError, match="disagree on the order"):
     sparse_ldl_factor(kv, {**tables, "ck_ptr": tables["ck_ptr"][:-1]})
   with pytest.raises(ValueError, match="floating-point vector"):

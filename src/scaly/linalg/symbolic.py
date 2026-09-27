@@ -155,7 +155,7 @@ class SymbolicLDL:
   def u_k(self) -> np.ndarray:
     return self._lane_tables()["u_k"]
 
-  def chunks(self, max_width: int = 4) -> dict[str, np.ndarray]:
+  def chunks(self, max_width: int = 8) -> dict[str, np.ndarray]:
     """The left-looking updates of each column in chunks, as ``ir.expr.sparse_ldl_factor`` reads them.
 
     A chunk is up to ``max_width`` consecutive entries of row ``j``'s list (``r_cols``, ``r_pos``)

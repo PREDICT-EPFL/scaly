@@ -1031,12 +1031,12 @@ def _lower_sparse_ldl(ctx: LowerCtx, node: Expr) -> None:
   """Left-looking sparse ``L D L^T`` over the node's analysis tables, into ``[L | D]``.
 
   Per column ``j``: the matrix column goes into a dense work column; each chunk of row ``j`` of
-  ``L`` (up to four columns ``k`` whose rows from ``j`` down are the same) updates it in one pass over
-  those rows, ``w[i] += L[i, k] * (-D[k] L[j, k])`` for its columns in order, the sum held in a
-  register; then ``D[j] = w[j]`` and ``L[i, j] = w[i] / D[j]``, clearing each ``w[i]`` read. Every
-  entry sees its updates in the order of one column at a time, so the rounding is that of the
-  column-by-column factorization. A chunk's width picks one of four loops, each run zero or one
-  times, so the widths need no branch statement."""
+  ``L`` (up to ``SPARSE_LDL_MAX_WIDTH`` columns ``k`` whose rows from ``j`` down are the same)
+  updates it in one pass over those rows, ``w[i] += L[i, k] * (-D[k] L[j, k])`` for its columns in
+  order, the sum held in a register; then ``D[j] = w[j]`` and ``L[i, j] = w[i] / D[j]``, clearing
+  each ``w[i]`` read. Every entry sees its updates in the order of one column at a time, so the
+  rounding is that of the column-by-column factorization. A chunk's width picks one loop per width,
+  each run zero or one times, so the widths need no branch statement."""
   (kv,) = node.args
   a = node.attrs
   n, nnz_l = a["a_ptr"].size - 1, a["l_rows"].size

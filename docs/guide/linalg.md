@@ -106,11 +106,11 @@ Straight-line code has no loop overhead, which dominates small systems:
 the `scan` schedule.) The loop nest of `schedule="loop"` (`ir.expr.sparse_ldl_factor`):
 
 - A left-looking factorization over a dense work column. The updates of column `j` come in chunks
-  of up to four columns whose rows from `j` down are the same, as a supernode's are; one pass over
+  of up to eight columns whose rows from `j` down are the same, as a supernode's are; one pass over
   those rows applies all of them, the sum held in a register, so the work column is read and
   written once per chunk instead of once per column.
 - Each column's updates keep the order of one column at a time, so the factor is the `scan`
-  schedule's to the last bit, 1.5 to 2.2 times faster.
+  schedule's to the last bit, 1.5 to 2.4 times faster.
 - The factor has no derivative of its own: `solve` differentiates implicitly and never needs one,
   and `schedule="scan"` differentiates the factorization through its loops.
 

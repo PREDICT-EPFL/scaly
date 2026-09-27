@@ -468,6 +468,12 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       identical iterations; solutions identical but for 8e-15 on the one problem that refines).
       7 mutants: all killed, two by new tests (a refinement-off solve is the plain solve bit for bit;
       with no retries allowed a failure still turns refinement on).
+- [x] **C-139. Sparse factorization chunks of up to eight columns.** `SPARSE_LDL_MAX_WIDTH` 4 -> 8,
+      one loop per width: a supernode wider than four columns updates the work column in half the
+      passes. Still the scan's factor bit for bit (the tests now cover every width 1-8). Sparse IPM
+      0.977x (23 problems; DUAL3 0.90x, mpc 27x6x30 0.93x, QE226 0.94x). 32-bit index tables were
+      tried in the C prototype and gained 1-5%, not enough for a second table type. 2 mutants,
+      both killed.
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 
