@@ -1746,6 +1746,8 @@ tests/solvers/ipm/test_algorithm.py::test_the_result_matches_the_reference[unbou
 tests/solvers/ipm/test_algorithm.py::test_the_result_matches_the_reference[unbounded_lp-sparse]
 tests/solvers/ipm/test_algorithm.py::test_trace_rows_are_the_rows_piqp_prints
 tests/solvers/ipm/test_kkt.py::test_a_noise_pivot_turns_refinement_on_and_nothing_more
+tests/solvers/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[dense]
+tests/solvers/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[sparse]
 tests/solvers/ipm/test_kkt.py::test_free_rows_and_mpc[dense]
 tests/solvers/ipm/test_kkt.py::test_free_rows_and_mpc[sparse]
 tests/solvers/ipm/test_kkt.py::test_refinement_stops_when_it_slows[CVXQP1_S-dense]

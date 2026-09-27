@@ -101,7 +101,7 @@ def test_refinement_stops_when_it_slows(name: str, backend: Backend) -> None:
   _check(maros_meszaros(name), backend, f"slow_{name}", static_eps=1e-3, cases=((1e-6, 1e-4, True),))
 
 
-def _noise_pivot(p22: float, ir: float) -> dict[str, float]:
+def _noise_pivot(p22: float, ir: float, retries: int = 10) -> dict[str, float]:
   """The dense factorization's retry loop on P = [[4, 2], [2, p22]] alone, rho = 0 and no static
   regularization: a condensed matrix whose second Cholesky pivot is p22 - 1, exactly."""
   P = np.array([[4.0, 2.0], [2.0, p22]])
@@ -113,12 +113,13 @@ def _noise_pivot(p22: float, ir: float) -> dict[str, float]:
   values = QPValues(P=pv, c=sc.const(np.zeros(2)), A=empty, b=empty, G=empty, h_l=empty, h_u=empty, x_l=empty, x_u=empty)
   unit = Scaling(sc.const(np.ones(2)), sc.const(np.ones(2)), sc.const(1.0))
   kkt = KKT(
-    Kernels(s, "dense", Refinement(static_eps=0.0, static_rel=0.0), name=f"noise_{int(ir)}_{p22 > 1}"), ScaledQP(values, sc.const(np.ones(2)), unit)
+    Kernels(s, "dense", Refinement(static_eps=0.0, static_rel=0.0, max_factor_retires=retries), name=f"noise_{int(ir)}_{p22 > 1}_{retries}"),
+    ScaledQP(values, sc.const(np.ones(2)), unit),
   )
   it = Iterate.unflat(s, sc.const(np.zeros(sum(Iterate.sizes(s)))))
   factor = kkt.factor(0.0, 1e-4, it, ir=ir)
   keys = ["ok", "ir", "delta", "retries"]
-  fn = sc.Function._from_exprs(f"noise_{int(ir)}_{p22 > 1}", [pv], [factor.head[k] for k in keys], ["pv"], keys)
+  fn = sc.Function._from_exprs(f"noise_{int(ir)}_{p22 > 1}_{retries}", [pv], [factor.head[k] for k in keys], ["pv"], keys)
   return dict(zip(keys, (float(v) for v in fn(P[s.P_rows, s.P_cols])), strict=True))
 
 
@@ -132,3 +133,35 @@ def test_a_noise_pivot_turns_refinement_on_and_nothing_more() -> None:
   assert _noise_pivot(1.0 + eps, 1.0) == {"ok": 1.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0}
   zero = _noise_pivot(1.0, 0.0)
   assert zero["ok"] == 0.0 and zero["retries"] == 10.0
+
+  # With no retries allowed, a failure still turns refinement on once, as PIQP's loop does.
+  assert _noise_pivot(1.0, 0.0, retries=0) == {"ok": 0.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0}
+
+
+@pytest.mark.parametrize("backend", ["dense", "sparse"])
+def test_a_solve_without_refinement_is_the_plain_solve(backend: Backend) -> None:
+  """Refinement off, the solve is the kernel's solve to the last bit: its gate stays shut even where
+  refinement would change the answer (tolerance zero: every residual is above it)."""
+  qp = maros_meszaros("QAFIRO")
+  s, values = ipm_inputs(qp)
+  syms = {k: sc.sym(k, np.shape(values[k])) for k in ORDER}
+  v = QPValues.preprocess(s, **syms)
+  q = scale(s, v, ruiz(s, v))
+  kern = Kernels(s, backend, Refinement(eps_abs=0.0, eps_rel=0.0), name=f"plain_{backend}")
+  kkt = KKT(kern, q)
+  sizes = Iterate.sizes(s)
+  it_sym, rhs_sym, ir = sc.sym("it", (sum(sizes),)), sc.sym("r", (kern.size,)), sc.sym("ir", ())
+  factor = kkt.factor(1e-6, 1e-4, Iterate.unflat(s, it_sym), ir=0.0)
+  plain = kern._solve.symbolic_call((factor.record, kkt.data, rhs_sym))
+  gated = kern.solve(factor.record, kkt.data, rhs_sym, ir > 0.5)
+  fn = sc.Function._from_exprs(
+    f"plain_{backend}", [*(syms[k] for k in ORDER), it_sym, rhs_sym, ir], [plain, gated], [*ORDER, "it", "r", "ir"], ["plain", "gated"]
+  )
+  d = ref.Solver(qp, ref.Settings()).data
+  it, _ = _random_state(d, np.random.default_rng(1))
+  args = (*(values[k] for k in ORDER), np.concatenate(_compact(d, it)), np.random.default_rng(2).standard_normal(kern.size))
+  off, off_gated = fn((*args, np.array(0.0)))
+  np.testing.assert_array_equal(off_gated, off)
+  on, on_gated = fn((*args, np.array(1.0)))
+  np.testing.assert_array_equal(on, off)
+  assert not np.array_equal(on_gated, on)  # refined: the gate does open

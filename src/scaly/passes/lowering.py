@@ -1487,6 +1487,16 @@ def _emit_while(ctx: LowerCtx, node: Expr, key: tuple[object, ...]) -> dict[int,
   ctx.statements.append(p.for_(p.range_(name, 0, max_iter, kind=RangeKind.SERIAL), [check, leave, *counters, step], exit_var=True))
   count = ctx.new_private(dtypes.float64, ())
   ctx.statements.append(p.store(p.view(count, [p.const_int(0)]), p.cast(k, dtypes.float64)))
+  if not trajectory:
+    # The final carry is the first slot, read in place: an in-place loop only has that one, and a
+    # loop that stopped on an odd step moves its second slot there first (a loop of zero trips, a
+    # gate that did not open, copies nothing).
+    if in_place is None:
+      c = p.var(f"c_{store.attrs['name']}")
+      moved = p.store(p.view(store, [c]), p.load(p.view(store, [p.add(p.const_int(cs), c)])))
+      ctx.statements.append(p.for_(p.range_(c.attrs["name"], 0, p.mul(p.mod(k, p.const_int(2)), p.const_int(cs)), kind=RangeKind.GLOBAL), [moved]))
+    final = ctx.new_alias(dtype, carry.shape, store.attrs["name"], 0)
+    return {0: final.attrs["name"], 1: count.attrs["name"]}
   final = ctx.new_private(dtype, carry.shape)
   c = p.var(f"c_{final.attrs['name']}")
   source = p.load(p.view(store, [p.add(slot(k), c)]))

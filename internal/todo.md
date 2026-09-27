@@ -374,7 +374,8 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       rounding (MMD ordering) moves the path; at iterations 11–13 the steps shrink to 1e-21 until a
       factorization with an exactly zero pivot retries. Candidates: a noise-pivot test for the sparse
       backend (needs the sum of |L|^2 |D| per pivot), or PIQP's AMD ordering for KKT matrices.
-- [ ] **C-131. The retry loop copies the factor.** The factor travels through the retry loop's
+- [ ] **C-131. The retry loop copies the factor.** C-138 removed most of it; what remains is the
+      init's copy into a loop's store (a dead private init used as the store). The factor travels through the retry loop's
       carry: about five copies of `nnz(L) + n` values (sparse) or `n^2` (dense) per factorization,
       +5–23% on factor + two solves against T3-3's direct factorization (interleaved A/B). T3-6 took
       one copy out (one concatenation into the carry); what is left costs about 1.5 µs of a 32 µs
@@ -457,6 +458,16 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       now sit in one loop run once, which `unroll_unit_loops` removes after fusion: the same
       arithmetic, no vector temporary. 0.975x on the sparse IPM (geometric mean, 18 problems; up to
       0.89x where the step dominates). 2 mutants, both killed.
+- [x] **C-138. Loop carries that are not copied (most of C-131).** Three copies per loop left:
+      a while loop's final carry is now its store's first slot read in place (a loop that stopped on
+      an odd step moves the second slot there first; one of zero trips copies nothing); the KKT
+      solve's refinement sits behind one gate whose carry is the solution alone (with refinement
+      off, which is most solves, it moved about 3 600 values per solve through two carries); and the
+      first factorization attempt runs before the retry loop, which then usually takes no step
+      (no zero record, no copy of the factor out). Sparse 0.957x, dense 0.963x (18 problems,
+      identical iterations; solutions identical but for 8e-15 on the one problem that refines).
+      7 mutants: all killed, two by new tests (a refinement-off solve is the plain solve bit for bit;
+      with no retries allowed a failure still turns refinement on).
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 

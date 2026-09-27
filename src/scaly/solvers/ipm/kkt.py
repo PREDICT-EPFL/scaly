@@ -272,13 +272,9 @@ class Kernels:
     f, ok, digits = fn.symbolic_call((d, x_reg, delta_reg, z_reg_ir))
     return [stack([delta, delta_reg]), x_reg, z_reg, z_reg_ir, f], where(ir, ok, digits) > 0.5
 
-  @cached_property
-  def _retry(self) -> tuple[Function, Function]:
-    """PIQP's loop around ``update_scalings_and_factor``: after a failure, turn refinement on; after
-    one with refinement on, scale ``rho`` and ``delta`` by 100, up to ``max_factor_retires`` times."""
+  def _try(self, c: Expr, d: Expr, v: Expr) -> Expr:
+    """One pass of the retry loop from the header at the start of ``c``: the next header and record."""
     r = self.refinement
-    size = len(HEADER) + sum(self.record_sizes)
-    c, d, v = Expr.sym("c", (size,)), Expr.sym("D", (sum(self.d_sizes),)), Expr.sym("V", (sum(self.v_sizes),))
     h = {k: c[i] for i, k in enumerate(HEADER)}
     failed = logical_and(h["tried"] > 0.5, h["ok"] < 0.5)
     retry = logical_and(failed, h["ir"] > 0.5)
@@ -290,22 +286,34 @@ class Kernels:
     head = stack(
       [rho, delta, reg_limit, ir, h["retries"] + where(retry, 1.0, 0.0), Expr.const(1.0), where(ok, 1.0, 0.0), where(retry, 1.0, h["changed"])]
     )
-    names = ["c", "D", "V"]
     # One concatenation, so the factor goes from the factorization's result into the carry once.
-    body = Function._from_exprs(f"{self.name}_factor_try", [c, d, v], [concat([head, *rec])], names, ["next"])
-    again = logical_and(h["ok"] < 0.5, logical_or(h["ir"] < 0.5, h["retries"] < float(r.max_factor_retires)))
-    go = logical_or(h["tried"] < 0.5, again)
+    return concat([head, *rec])
+
+  @cached_property
+  def _retry(self) -> tuple[Function, Function, Function]:
+    """PIQP's loop around ``update_scalings_and_factor``: after a failure, turn refinement on; after
+    one with refinement on, scale ``rho`` and ``delta`` by 100, up to ``max_factor_retires`` times.
+    The first attempt runs before the loop, from the header alone (``first``): most factorizations
+    succeed at once, and the loop then takes no step and copies no record."""
+    r = self.refinement
+    size = len(HEADER) + sum(self.record_sizes)
+    c, d, v = Expr.sym("c", (size,)), Expr.sym("D", (sum(self.d_sizes),)), Expr.sym("V", (sum(self.v_sizes),))
+    head = Expr.sym("c", (len(HEADER),))
+    names = ["c", "D", "V"]
+    body = Function._from_exprs(f"{self.name}_factor_try", [c, d, v], [self._try(c, d, v)], names, ["next"])
+    first = Function._from_exprs(f"{self.name}_factor_first", [head, d, v], [self._try(head, d, v)], names, ["next"])
+    h = {k: c[i] for i, k in enumerate(HEADER)}
+    go = logical_and(h["ok"] < 0.5, logical_or(h["ir"] < 0.5, h["retries"] < float(r.max_factor_retires)))
     cond = Function._from_exprs(f"{self.name}_factor_go", [c, d, v], [go], names, ["go"])
-    return cond, body
+    return cond, body, first
 
   def factor(self, d: Expr, v: Expr, rho: Expr, delta: Expr, reg_limit: Expr, ir: Expr) -> tuple[dict[str, Expr], Expr]:
     """The retry loop from ``rho``, ``delta``, ``reg_limit`` and the refinement flag ``ir`` (0 or 1):
     the header it ends with (``HEADER``) and the last attempt's record."""
-    cond, body = self._retry
+    cond, body, first = self._retry
     zero = Expr.const(0.0)
     head = stack([as_expr(rho), as_expr(delta), as_expr(reg_limit), as_expr(ir), zero, zero, zero, zero])
-    init = concat([head, Expr.const(np.zeros(sum(self.record_sizes)))])
-    out, _ = while_loop(cond, body, init, max_iter=self.refinement.max_factor_retires + 2, params=(d, v))
+    out, _ = while_loop(cond, body, _call(first, head, d, v), max_iter=self.refinement.max_factor_retires + 1, params=(d, v))
     return {k: out[i] for i, k in enumerate(HEADER)}, out[len(HEADER) :]
 
   # --- the solve and its refinement -------------------------------------------------------------
@@ -358,19 +366,10 @@ class Kernels:
     return concat([rx, *out])
 
   @cached_property
-  def _refinement(self) -> tuple[Function, Function, Function, Function]:
-    """Two loops: the first residual (at most one pass, so that it is computed only with refinement
-    on), then PIQP's refinement steps, each one solve and one product."""
+  def _refinement(self) -> tuple[Function, Function]:
+    """PIQP's refinement steps as a loop, each one solve and one product: the condition and the step."""
     r, size = self.refinement, self.size
     rec, d, rhs = Expr.sym("rec", (sum(self.record_sizes),)), Expr.sym("D", (sum(self.d_sizes),)), Expr.sym("rhs", (size,))
-    # carry = [done, error, tol | residual]: the tolerance too is computed only with refinement on
-    first, l0 = Expr.sym("c", (size + 3,)), Expr.sym("l0", (size,))
-    e0 = rhs - self._times(rec, d, l0)
-    tol0 = r.eps_abs + r.eps_rel * norm_inf(rhs)
-    names = ["c", "rec", "D", "rhs", "l0"]
-    start_out = concat([stack([Expr.const(1.0), norm_inf(e0), tol0]), e0])
-    start = Function._from_exprs(f"{self.name}_refine_start", [first, rec, d, rhs, l0], [start_out], names, ["next"])
-    start_go = Function._from_exprs(f"{self.name}_refine_start_go", [first, rec, d, rhs, l0], [first[0] < 0.5], names, ["go"])
     # carry = [stop, error | lhs | residual]
     c, tol = Expr.sym("c", (2 * size + 2,)), Expr.sym("tol", (1,))
     err, lhs, res = c[1], c[2 : 2 + size], c[2 + size :]
@@ -386,22 +385,40 @@ class Kernels:
     names = ["c", "rec", "D", "rhs", "tol"]
     step = Function._from_exprs(f"{self.name}_refine_step", [c, rec, d, rhs, tol], [nxt], names, ["next"])
     step_go = Function._from_exprs(f"{self.name}_refine_go", [c, rec, d, rhs, tol], [c[0] < 0.5], names, ["go"])
-    return start_go, start, step_go, step
+    return step_go, step
+
+  @cached_property
+  def _refined(self) -> tuple[Function, Function]:
+    """The refinement behind one gate, a loop of at most one pass that opens when refinement is on:
+    its carry is the solution alone, so a solve without refinement moves nothing else. Inside, the
+    first residual and tolerance, then PIQP's refinement steps."""
+    r, size = self.refinement, self.size
+    step_go, step = self._refinement
+    x, rec, d, rhs, on = (
+      Expr.sym("x", (size,)),
+      Expr.sym("rec", (sum(self.record_sizes),)),
+      Expr.sym("D", (sum(self.d_sizes),)),
+      Expr.sym("rhs", (size,)),
+      Expr.sym("on", (1,)),
+    )
+    e0 = rhs - self._times(rec, d, x)
+    err0, tol = norm_inf(e0), r.eps_abs + r.eps_rel * norm_inf(rhs)
+    # A residual that is not finite ends the solve, as PIQP's does.
+    stop0 = where(err0 > tol, 0.0, 1.0)
+    out, _ = while_loop(step_go, step, concat([stack([stop0, err0]), x, e0]), max_iter=r.max_iter, params=(rec, d, rhs, tol.reshape((1,))))
+    names = ["x", "rec", "D", "rhs", "on"]
+    gate = Function._from_exprs(f"{self.name}_refine", [x, rec, d, rhs, on], [out[2 : 2 + size]], names, ["x_next"])
+    opens = Function._from_exprs(f"{self.name}_refine_on", [x, rec, d, rhs, on], [on[0] > 0.5], names, ["go"])
+    return opens, gate
 
   def solve(self, rec: Expr, d: Expr, rhs: Expr, ir: Expr) -> Expr:
     """``kkt_solver->solve`` for ``rhs`` and, with refinement on (``ir``, a bool), PIQP's refinement:
     while the residual exceeds ``eps_abs + eps_rel * |rhs|``, one more solve of it, kept if it
     improved the residual and stopping once the improvement falls below ``min_improvement_rate``."""
-    r, size = self.refinement, self.size
     lhs = _call(self._solve, rec, d, rhs)
-    start_go, start, step_go, step = self._refinement
-    init = concat([stack([where(ir, 0.0, 1.0), Expr.const(0.0), Expr.const(0.0)]), Expr.const(np.zeros(size))])
-    first, _ = while_loop(start_go, start, init, max_iter=1, params=(rec, d, rhs, lhs))
-    err0, tol = first[1], first[2]
-    # A residual that is not finite ends the solve, as PIQP's does.
-    stop0 = where(logical_and(ir, err0 > tol), 0.0, 1.0)
-    out, _ = while_loop(step_go, step, concat([stack([stop0, err0]), lhs, first[3:]]), max_iter=r.max_iter, params=(rec, d, rhs, tol.reshape((1,))))
-    return out[2 : 2 + size]
+    opens, gate = self._refined
+    out, _ = while_loop(opens, gate, lhs, max_iter=1, params=(rec, d, rhs, where(ir, 1.0, 0.0).reshape((1,))))
+    return out
 
 
 class KKT:
