@@ -933,6 +933,9 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
         ctx.statements.extend(finish(c(i), c(j), value, i == j))
       ctx.statements.extend(p.store(_entry(out, n, c(i), c(z)), zero) for z in range(i + 1, n))
     return
+  if chol:
+    _cholesky_tiles(ctx, src, out, n, dt)
+    return
   nm = out.attrs["name"]
   i, j, z = (p.var(f"{v}_{nm}") for v in ("fi", "fj", "fz"))
   off_sum, off_total = _blocked_sum(ctx, f"o_{nm}", c(0), j, lambda kk: term(i, j, kk), dt)
@@ -942,6 +945,78 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
   zeros = p.for_(p.range_(z.attrs["name"], p.add(i, c(1)), n, kind=RangeKind.GLOBAL), [p.store(_entry(out, n, i, z), zero)])
   row = [p.for_(p.range_(j.attrs["name"], 0, i, kind=RangeKind.SERIAL), off), *diag, zeros]
   ctx.statements.append(p.for_(p.range_(i.attrs["name"], 0, n, kind=RangeKind.SERIAL), row))
+
+
+CHOLESKY_TILE = 4
+"""The side of the register tiles of the looped dense Cholesky."""
+
+
+def _cholesky_tiles(ctx: LowerCtx, src: ProgramNode, out: ProgramNode, n: int, dt: DType) -> None:
+  """Crout ``L L^T`` by square tiles of ``CHOLESKY_TILE`` rows and columns of ``L``, in row-major
+  order: a tile's dot products over the columns left of it run together, each row and column
+  entry loaded once for the whole tile and the sums kept in registers (16 multiply-adds for 8
+  loads, where one entry at a time takes two loads each); then the terms inside the tile, column
+  by column. A tile needs the rows above it and the tiles left of it, which the order provides.
+  The last rows and columns form narrower tiles when ``n`` is not a multiple of the side.
+
+  Each dot product is four partial sums over contiguous quarters of its columns, added pairwise,
+  as accurate as the four interleaved sums of the entry-at-a-time kernel. One running sum per
+  entry is faster still, but late in an interior-point solve the condensed matrix's last pivots
+  are rounding noise, and its larger error let one Maros-Meszaros problem (QSHARE1B) fail a
+  factorization and double its iterations."""
+  c = p.const_int
+  nm = out.attrs["name"]
+  side = CHOLESKY_TILE
+  full, rest = divmod(n, side)
+  zero = p.const_float(0.0, dtype=dt)
+
+  def scalars() -> list[list[ProgramNode]]:
+    return [[p.view(ctx.new_private(dt, ()), [c(0)]) for _ in range(side)] for _ in range(side)]
+
+  sums, parts = scalars(), [scalars() for _ in range(side)]
+
+  def tile(bi: ProgramNode, bj: ProgramNode, rows: int, cols: int, diagonal: bool) -> list[ProgramNode]:
+    """The tile at block row ``bi`` and block column ``bj``: rows ``side * bi`` on, columns ``side * bj`` on."""
+    i0, j0 = p.mul(bi, c(side)), p.mul(bj, c(side))
+    pairs = [(a, b) for a in range(rows) for b in range(cols) if not diagonal or a >= b]
+    stmts: list[ProgramNode] = []
+    for quarter in range(side):  # the dot products over columns [quarter * bj, (quarter + 1) * bj)
+      k = p.var(f"tk{ctx._tmp}_{nm}")
+      ctx._tmp += 1
+      dots = [
+        p.store(sums[a][b], p.add(p.load(sums[a][b]), p.mul(p.load(_entry(out, n, p.add(i0, c(a)), k)), p.load(_entry(out, n, p.add(j0, c(b)), k)))))
+        for a, b in pairs
+      ]
+      stmts += [p.store(sums[a][b], zero) for a, b in pairs]
+      stmts.append(p.for_(p.range_(k.attrs["name"], p.mul(bj, c(quarter)), p.mul(bj, c(quarter + 1))), dots))
+      stmts += [p.store(parts[quarter][a][b], p.load(sums[a][b])) for a, b in pairs]
+    for b in range(cols):
+      j = p.add(j0, c(b))
+      for a in range(rows):
+        if diagonal and a < b:
+          continue
+        i = p.add(i0, c(a))
+        dot = p.add(p.add(p.load(parts[0][a][b]), p.load(parts[1][a][b])), p.add(p.load(parts[2][a][b]), p.load(parts[3][a][b])))
+        value = p.sub(p.load(_entry(src, n, i, j)), dot)
+        for inner in range(b):
+          value = p.sub(value, p.mul(p.load(_entry(out, n, i, p.add(j0, c(inner)))), p.load(_entry(out, n, j, p.add(j0, c(inner))))))
+        if diagonal and a == b:
+          stmts.append(p.store(_entry(out, n, i, i), _unary_node(ProgramOp.SQRT, value)))
+        else:
+          stmts.append(p.store(_entry(out, n, i, j), p.div(value, p.load(_entry(out, n, j, j)))))
+    return stmts
+
+  bi, bj = p.var(f"tbi_{nm}"), p.var(f"tbj_{nm}")
+  if full:
+    left = p.for_(p.range_(bj.attrs["name"], 0, bi), tile(bi, bj, side, side, False))
+    ctx.statements.append(p.for_(p.range_(bi.attrs["name"], 0, full), [left, *tile(bi, bi, side, side, True)]))
+  if rest:
+    if full:
+      ctx.statements.append(p.for_(p.range_(bj.attrs["name"], 0, full), tile(c(full), bj, rest, side, False)))
+    ctx.statements.extend(tile(c(full), c(full), rest, rest, True))
+  zi, zj = p.var(f"tzi_{nm}"), p.var(f"tzj_{nm}")
+  upper = p.for_(p.range_(zj.attrs["name"], p.add(zi, c(1)), n, kind=RangeKind.GLOBAL), [p.store(_entry(out, n, zi, zj), zero)])
+  ctx.statements.append(p.for_(p.range_(zi.attrs["name"], 0, n, kind=RangeKind.SERIAL), [upper]))
 
 
 @lowers(ExprOp.SPARSE_LDL)

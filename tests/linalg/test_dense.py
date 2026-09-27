@@ -4,6 +4,8 @@ and structural sparsity against the Jacobian."""
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 
@@ -90,10 +92,35 @@ def test_solves_built_from_factors(n: int) -> None:
     solve(a, b, assume="lu")  # ty: ignore[invalid-argument-type]
 
 
+@pytest.mark.parametrize("n", [10, 11, 12, 14, 15, 37, 42, 64])
+def test_tiled_cholesky_matches_numpy(n: int) -> None:
+  """Above the unrolling threshold the Cholesky runs by register tiles; every remainder of the tile
+  side (``n % 4``) takes its own edge tiles, and a larger order splits the dot products in quarters."""
+  a = sc.sym("a", (n, n))
+  s = _spd(n)
+  (chol,) = _fn(f"tiled{n}", [a], [cholesky(a)])._flat_numerical_call(s + np.triu(RNG.standard_normal((n, n)), 1))
+  np.testing.assert_allclose(chol, np.linalg.cholesky(s), rtol=1e-12, atol=1e-12)
+  assert np.all(np.triu(chol, 1) == 0)
+  assert np.abs(chol @ chol.T - s).max() <= 64 * np.finfo(float).eps * np.abs(s).max()
+
+
+def test_cholesky_runs_by_tiles_and_ldl_by_entries() -> None:
+  """The looped Cholesky is the tiled kernel (block loops, then dot products per tile); the looped
+  ``ldl`` keeps the entry-at-a-time Crout loops."""
+  a = sc.sym("a", (20, 20))
+  chol = str(render_c_module(_fn("tiles_chol", [a], [cholesky(a)])).body)
+  packed = str(render_c_module(_fn("tiles_ldl", [a], [ldl(a)])).body)
+  assert re.search(r"for \(long long tbi_\w+ = 0; tbi_\w+ < 5;", chol) and "fi_" not in chol
+  assert "tbi_" not in packed and "fi_" in packed
+
+
 def test_cholesky_of_an_indefinite_matrix_is_nan() -> None:
   a = sc.sym("a", (3, 3))
   (out,) = _fn("chol_nan", [a], [cholesky(a)])._flat_numerical_call(np.diag([1.0, -1.0, 1.0]))
   assert np.isnan(out[1, 1])
+  b = sc.sym("b", (11, 11))  # tiled: the NaN pivot's row and every row after it
+  (tiled,) = _fn("chol_nan_tiled", [b], [cholesky(b)])._flat_numerical_call(np.diag([1.0] * 5 + [-1.0] + [1.0] * 5))
+  assert np.all(np.isfinite(tiled[:5, :5])) and np.isnan(tiled[5, 5]) and np.isnan(tiled[6:, 5]).all()
 
 
 # --- derivatives --------------------------------------------------------------------------------

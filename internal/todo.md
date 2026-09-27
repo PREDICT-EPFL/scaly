@@ -438,6 +438,18 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       a factor column depends on its elimination subtree. 16 mutants: 14 killed, 1 equivalent (the
       op's run-time-index membership; scalar expansion already declines run-time loop bounds), 1 dead
       branch removed (`perf_2026_09_27_ipm_speed/`, `notes/ipm_speed_report.html`).
+- [x] **C-136. The dense Cholesky by register tiles (the Cholesky half of C-117).** Above
+      `dense_unroll`, `cholesky` lowers to Crout by 4x4 tiles of `L`: a tile's dot products over the
+      columns left of it run together (16 multiply-adds per 8 loads instead of 2 loads each), then the
+      terms inside the tile. 3.3x the old kernel at n = 300 (12 GFMA/s on the M3), 2-2.5x at
+      n = 111-230; the generated dense IPM 0.56x its time (geometric mean over 16 problems). Each dot
+      product is four partial sums over contiguous quarters, as accurate as the old kernel's four
+      interleaved ones: one running sum per entry was 2% faster but let QSHARE1B fail a late
+      factorization (pivots there are rounding noise) and take 56 iterations instead of 27. Over the
+      55 stored problems two dense paths change: QBEACONF 23 -> 17 iterations, QBORE3D 19 -> 21
+      (PIQP's dense backend takes 23 and 20); the decision-trace gate holds. `ldl` keeps the
+      entry-at-a-time Crout loops. 7 mutants, all killed (`perf_2026_09_27_ipm_speed/`,
+      `notes/ipm_speed_report.html`).
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 

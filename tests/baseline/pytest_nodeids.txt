@@ -848,6 +848,7 @@ tests/ir/test_vmap.py::test_vmap_rejects_bad_input_specs
 tests/ir/test_vmap.py::test_vmap_structural_key_matches_for_equal_constructions
 tests/ir/test_vmap.py::test_vmap_zero_length_returns_empty
 tests/linalg/test_dense.py::test_cholesky_of_an_indefinite_matrix_is_nan
+tests/linalg/test_dense.py::test_cholesky_runs_by_tiles_and_ldl_by_entries
 tests/linalg/test_dense.py::test_derivatives[cholesky-10]
 tests/linalg/test_dense.py::test_derivatives[cholesky-4]
 tests/linalg/test_dense.py::test_derivatives[ldl-10]
@@ -898,6 +899,14 @@ tests/linalg/test_dense.py::test_small_orders_are_straight_line_and_large_ones_l
 tests/linalg/test_dense.py::test_solves_built_from_factors[12]
 tests/linalg/test_dense.py::test_solves_built_from_factors[3]
 tests/linalg/test_dense.py::test_sparsity_is_conservative_and_structural
+tests/linalg/test_dense.py::test_tiled_cholesky_matches_numpy[10]
+tests/linalg/test_dense.py::test_tiled_cholesky_matches_numpy[11]
+tests/linalg/test_dense.py::test_tiled_cholesky_matches_numpy[12]
+tests/linalg/test_dense.py::test_tiled_cholesky_matches_numpy[14]
+tests/linalg/test_dense.py::test_tiled_cholesky_matches_numpy[15]
+tests/linalg/test_dense.py::test_tiled_cholesky_matches_numpy[37]
+tests/linalg/test_dense.py::test_tiled_cholesky_matches_numpy[42]
+tests/linalg/test_dense.py::test_tiled_cholesky_matches_numpy[64]
 tests/linalg/test_dense.py::test_triangular_solves_match_numpy[False-False-False-13]
 tests/linalg/test_dense.py::test_triangular_solves_match_numpy[False-False-False-1]
 tests/linalg/test_dense.py::test_triangular_solves_match_numpy[False-False-False-20]
@@ -957,6 +966,7 @@ tests/linalg/test_dense.py::test_triangular_solves_match_numpy[True-True-True-9]
 tests/linalg/test_dense.py::test_validation_and_vmap
 tests/linalg/test_examples.py::test_kalman_update_matches_the_covariance_form
 tests/linalg/test_examples.py::test_sqp_newton_step_converges_quadratically
+tests/linalg/test_sparse_ldl.py::test_a_derivative_that_needs_the_looped_factor_is_refused
 tests/linalg/test_sparse_ldl.py::test_a_given_analysis_must_match_the_pattern
 tests/linalg/test_sparse_ldl.py::test_accuracy_across_regularization[0.0001]
 tests/linalg/test_sparse_ldl.py::test_accuracy_across_regularization[1e-08]
@@ -1084,6 +1094,7 @@ tests/linalg/test_sparse_ldl.py::test_implicit_derivatives[unroll]
 tests/linalg/test_sparse_ldl.py::test_inertia_and_health
 tests/linalg/test_sparse_ldl.py::test_loop_factor_sparsity_is_the_elimination_subtree
 tests/linalg/test_sparse_ldl.py::test_loop_factorization_has_no_derivative_of_its_own
+tests/linalg/test_sparse_ldl.py::test_loop_factorization_inside_a_called_function
 tests/linalg/test_sparse_ldl.py::test_loop_factorization_propagates_inf_and_nan_as_the_scan_does
 tests/linalg/test_sparse_ldl.py::test_loop_schedule_is_the_scan_bit_for_bit
 tests/linalg/test_sparse_ldl.py::test_matrix_right_hand_side_derivatives[loop]

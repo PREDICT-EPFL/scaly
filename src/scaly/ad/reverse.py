@@ -51,7 +51,9 @@ from .forward import (
 from .sparsity import _depends_on
 
 
-_VMAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...], frozenset[int]]]] = weakref.WeakKeyDictionary()
+_VMAP_ADJ_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[int, tuple[int, ...]], tuple[Any, tuple[int, ...], frozenset[int]]]] = (
+  weakref.WeakKeyDictionary()
+)
 
 
 def _substitute(expr: Expr, replacements: dict[int, Expr]) -> Expr:
