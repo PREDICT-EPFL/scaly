@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, overload
 
 import numpy as np
 
@@ -274,7 +274,19 @@ def while_parts(expr: Expr) -> tuple[ConcreteFunction, ConcreteFunction, Expr, t
   )
 
 
-def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: Any = None) -> ConcreteFunction:
+@overload
+def custom_derivative[**PS, **PN, SO, NO](
+  fn: ConcreteFunction[PS, PN, SO, NO], *, jvp: Any = None, vjp: Any = None, sparsity: Any = None
+) -> ConcreteFunction[PS, PN, SO, NO]: ...
+
+
+@overload
+def custom_derivative[**PS, **PN, SO, NO](
+  fn: Function[PS, PN, SO, NO], *, jvp: Any = None, vjp: Any = None, sparsity: Any = None
+) -> Function[PS, PN, SO, NO]: ...
+
+
+def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: Any = None) -> Any:
   """A copy of ``fn`` whose derivatives come from the given Functions instead of from its body.
 
   ``jvp`` takes ``(*inputs, *input_tangents)`` and returns one tangent per output. ``vjp`` takes
@@ -293,6 +305,15 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: An
   """
   if not isinstance(fn, Function):
     raise TypeError(f"custom_derivative needs a scaly Function, got {type(fn).__name__}")
+  for label, rule in (("jvp", jvp), ("vjp", vjp)):
+    if rule is not None and not isinstance(rule, Function):
+      raise TypeError(f"custom {label} must be a scaly Function")
+  if not fn.is_concrete:
+    return fn._lift(lambda instance: custom_derivative(instance, jvp=jvp, vjp=vjp, sparsity=sparsity), f"{fn.name}_cd")
+  # A template rule is instantiated at the leaves it takes: one parameter per leaf, flat.
+  types_in, types_out = [e.type for e in fn.inputs], [e.type for e in fn.outputs]
+  jvp = jvp if jvp is None or jvp.is_concrete else jvp.instantiate(*types_in, *types_in)
+  vjp = vjp if vjp is None or vjp.is_concrete else vjp.instantiate(*types_in, *types_out, *types_out)
   shapes_in = [e.shape for e in fn.inputs]
   shapes_out = [e.shape for e in fn.outputs]
   for label, rule, takes, gives in (
@@ -301,8 +322,6 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: An
   ):
     if rule is None:
       continue
-    if not isinstance(rule, Function):
-      raise TypeError(f"custom {label} must be a scaly Function")
     got_in, got_out = [e.shape for e in rule.inputs], [e.shape for e in rule.outputs]
     if got_in != takes or got_out != gives:
       raise ValueError(f"custom {label} for {fn.name!r} must map shapes {takes} -> {gives}, got {got_in} -> {got_out}")

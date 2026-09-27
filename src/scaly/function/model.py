@@ -137,14 +137,32 @@ class Function[**PS, **PN, SO, NO]:
     self._output = output
     self._device = device
     self._signature = inspect.signature(fn)
-    self._cache: dict[tuple[Any, ...], ConcreteFunction[PS, PN, SO, NO]] = {}
+    self._cache: dict[Any, ConcreteFunction[PS, PN, SO, NO]] = {}
     self._instances: dict[str, ConcreteFunction[PS, PN, SO, NO]] = {}
     # The same instances by the arguments' flat shapes and dtypes, which decide the binding when the
     # arguments bind at all: a hit skips building the bound declaration, and the instance's own call
     # still checks structure and fixed shapes.
     self._by_arguments: dict[tuple[Any, ...], ConcreteFunction[PS, PN, SO, NO]] = {}
+    # A derived template's instance is ``transform`` of its source's; see ``_lift``.
+    self._source: Function[Any, Any, Any, Any] | None = None
+    self._transform: Callable[[ConcreteFunction[Any, Any, Any, Any]], ConcreteFunction[PS, PN, SO, NO]] | None = None
+    self._extra: tuple[str, ...] = ()
+
+  def _lift(
+    self, transform: Callable[[ConcreteFunction[Any, Any, Any, Any]], ConcreteFunction[Any, Any, Any, Any]], name: str, extra: tuple[str, ...] = ()
+  ) -> Function[Any, Any, Any, Any]:
+    """A template whose instance for a call is ``transform`` of this one's instance for the call's
+    leading arguments. ``extra`` names the parameters the transform appends (a seed, multipliers):
+    this template's instance determines their shapes, so they need no holes of their own."""
+    lifted: Function[Any, Any, Any, Any] = Function(name, self._fn, self._slots, None, device=self._device)
+    lifted._source, lifted._transform, lifted._extra = self, transform, extra
+    names = [*cast(inspect.Signature, self._signature).parameters, *extra]
+    lifted._signature = inspect.Signature([inspect.Parameter(n, inspect.Parameter.POSITIONAL_ONLY) for n in names])
+    return lifted
 
   def __repr__(self) -> str:
+    if self._source is not None:
+      return f"Function({self.name!r}, derived from {self._source.name!r}, instances={list(self._instances)})"
     if self._slots is None:
       slots = ", ".join(inspect.signature(self._fn).parameters)
     else:
@@ -166,7 +184,9 @@ class Function[**PS, **PN, SO, NO]:
   @property
   def concrete(self) -> ConcreteFunction[PS, PN, SO, NO]:
     """The one instance of a fully declared Function; a template with holes raises ``NotConcrete``."""
-    if self._slots is None:
+    if self._source is not None:
+      holes = f"the shapes of {self._source.name}'s parameters"
+    elif self._slots is None:
       holes = "every parameter's structure and shape"
     else:
       holes = ", ".join(f"{name}: {decl}" for name, decl in zip(self._slots.names, self._slots.decls) if isinstance(decl, Hole))
@@ -220,6 +240,8 @@ class Function[**PS, **PN, SO, NO]:
     arguments = _argument_key(args)
     if arguments is not None and (hit := self._by_arguments.get(arguments)) is not None:
       return hit
+    if self._source is not None:
+      return self._derived_instance(args, arguments, what)
     if self._slots is None:
       # Bare: the arguments declare themselves, nesting included, so the nesting is part of the key.
       names = list(inspect.signature(self._fn).parameters)
@@ -236,12 +258,30 @@ class Function[**PS, **PN, SO, NO]:
     key = (bound.types, bound.sparsities, structure)
     instance = self._cache.get(key)
     if instance is None:
-      name = instance_name(self.name, decls, bound.types, bound.sparsities, structure)
+      tokens = instance_tokens(decls, bound.types, bound.sparsities, structure)
+      name = f"{self.name}__{tokens}"
       if name in self._instances:
         raise RuntimeError(f"{self.name}: two argument signatures would share the instance name {name!r}")
       _log.debug("instantiating %s", name)
       instance = ConcreteFunction(name, self._fn, bound, self._output, device=self._device, output_name=self.name)
+      instance._tokens = tokens
       self._cache[key] = self._instances[name] = instance
+    if arguments is not None:
+      self._by_arguments[arguments] = instance
+    return instance
+
+  def _derived_instance(self, args: tuple[Any, ...], arguments: tuple[Any, ...] | None, what: str) -> ConcreteFunction[PS, PN, SO, NO]:
+    assert self._source is not None and self._transform is not None
+    if len(args) != len(cast(inspect.Signature, self._signature).parameters):
+      raise self._arity_error(len(args))
+    source = self._source._instance(args[: len(args) - len(self._extra)], what)
+    instance = self._cache.get(source)
+    if instance is None:
+      instance = self._transform(source)
+      if instance.name in self._instances:
+        raise RuntimeError(f"{self.name}: two argument signatures would share the instance name {instance.name!r}")
+      instance._tokens = source._tokens
+      self._cache[source] = self._instances[instance.name] = instance
     if arguments is not None:
       self._by_arguments[arguments] = instance
     return instance
@@ -285,6 +325,8 @@ class Function[**PS, **PN, SO, NO]:
 
   def with_device(self, device: DeviceSpec | str) -> Function[PS, PN, SO, NO]:
     """The same template, its instances placed on ``device``."""
+    if self._source is not None and self._transform is not None:
+      return self._source.with_device(device)._lift(self._transform, self.name, self._extra)
     return Function(self.name, self._fn, self._slots, self._output, device=device)
 
   def recompile(self) -> None:
@@ -333,18 +375,17 @@ class Function[**PS, **PN, SO, NO]:
     return instance
 
 
-def instance_name(
-  name: str,
+def instance_tokens(
   decls: Sequence[LeafDecl],
   types: Sequence[TensorType],
   sparsities: Sequence[SparsityType | None] = (),
   structure: Any = None,
 ) -> str:
-  """The deterministic name of a template's instance: the template's name, ``__``, then one token per
-  hole: its bound dimensions joined by ``x`` (only the ``None`` ones of a partial shape), ``s`` for a
-  scalar, and the dtype's name when the hole left the dtype open and it is not ``float64``; a sparse
-  leaf's token is ``p`` and a digest of its pattern. A bare template called with tuples appends ``t``
-  and a digest of the nesting."""
+  """What a template's instance adds to the template's name, after ``__``: one token per hole, its
+  bound dimensions joined by ``x`` (only the ``None`` ones of a partial shape), ``s`` for a scalar,
+  and the dtype's name when the hole left the dtype open and it is not ``float64``; a sparse leaf's
+  token is ``p`` and a digest of its pattern. A bare template called with tuples appends ``t`` and a
+  digest of the nesting. The tokens hold no ``_``, so ``f__3_4`` cannot be read two ways."""
   tokens = []
   for decl, type_, sparsity in zip(decls, types, sparsities or (None,) * len(types), strict=True):
     if not isinstance(decl, Hole):
@@ -357,7 +398,7 @@ def instance_name(
     tokens.append(token + (type_.dtype.name if decl.dtype is None and type_.dtype != dtypes.float64 else ""))
   if structure is not None:
     tokens.append("t" + hashlib.sha256(repr(structure).encode()).hexdigest()[:6])
-  return f"{name}__{'_'.join(tokens)}"
+  return "_".join(tokens)
 
 
 def _digest(*arrays: np.ndarray) -> str:
@@ -421,6 +462,9 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
 
   Use ``@scaly.function(...)`` to build one from a Python body.
   """
+
+  # On a template's instance: what it adds to the template's name, which its derivatives reuse.
+  _tokens: str
 
   def __init__(  # no super().__init__(): an instance keeps no template state
     self,

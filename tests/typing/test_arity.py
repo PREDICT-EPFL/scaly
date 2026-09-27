@@ -203,6 +203,18 @@ if TYPE_CHECKING:
   assert_type(inferred, sc.Function[[sc.Expr], [np.ndarray], tuple[sc.Expr, sc.Expr], Any])
   assert_type(inferred.symbolic_call(sc.sym("a", 3)), tuple[sc.Expr, sc.Expr])
   sc.function(3)(lambda x, y: x)  # ty: ignore[invalid-argument-type]
+
+  # Derivatives name wrt alone, or nothing when the Function has one input and one output.
+  assert_type(sc.gradient(cost2, "x"), sc.Function[[sc.Expr, sc.Expr], [np.ndarray, np.ndarray], sc.Expr, np.ndarray])
+  assert_type(sc.gradient(doubled), sc.Function[[sc.Expr], [np.ndarray], sc.Expr, np.ndarray])
+  assert_type(sc.forward(cost2, "x"), sc.Function[[sc.Expr, sc.Expr, sc.Expr], [np.ndarray, np.ndarray, np.ndarray], sc.Expr, np.ndarray])
+  assert_type(
+    sc.lagrangian_hessian(duplicate),
+    sc.Function[[sc.Expr, tuple[sc.Expr, sc.Expr]], [np.ndarray, tuple[np.ndarray, np.ndarray]], sc.Expr, np.ndarray],
+  )
+  assert_type(sc.custom_derivative(cost2), sc.Function[[sc.Expr, sc.Expr], [np.ndarray, np.ndarray], sc.Expr, np.ndarray])
+  assert_type(sc.custom_derivative(doubled.instantiate(3)), sc.ConcreteFunction[[sc.Expr], [np.ndarray], sc.Expr, np.ndarray])
+  sc.gradient(cost2, 3)  # ty: ignore[no-matching-overload]
   as_instance: sc.ConcreteFunction[[sc.Expr], [np.ndarray], sc.Expr, np.ndarray] = doubled  # ty: ignore[invalid-assignment]
 
   assert_type(multiply.symbolic_call(duplicate.symbolic_call(sc.sym("x", 3))), sc.Expr)

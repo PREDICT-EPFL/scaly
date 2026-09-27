@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Protocol, overload
+from typing import TYPE_CHECKING, Any, Protocol, cast, overload
 
 import numpy as np
 
@@ -159,23 +159,83 @@ def _expr_wrt(
   return candidate
 
 
-def _function_names(operation: str, args: tuple[Expr | str, ...], wrt: Expr | str | None, of: str | None) -> tuple[str, str]:
-  if len(args) == 2 and wrt is None and of is None:
-    function_of, function_wrt = args
-  elif len(args) == 1 and wrt is not None and of is None:
-    function_of, function_wrt = args[0], wrt
-  elif not args:
-    function_of, function_wrt = of, wrt
-  else:
-    raise TypeError(f"the Function form is {operation}(fn, of, wrt)")
-  if not isinstance(function_of, str) or not isinstance(function_wrt, str):
-    raise TypeError(f"the Function form is {operation}(fn, of, wrt)")
-  return function_of, function_wrt
+def _function_names(operation: str, args: tuple[Expr | str, ...], wrt: Expr | str | None, of: str | None) -> tuple[str | None, str | None]:
+  """``(of, wrt)`` from a Function-form call: two strings are both, one string is ``wrt`` (or ``of``
+  when ``wrt=`` is given), and a name left out is the Function's only output or only input."""
+  if len(args) > 2 or not all(isinstance(arg, str) for arg in args) or not isinstance(wrt, (str, type(None))):
+    raise TypeError(f"the Function form is {operation}(fn, of, wrt), or {operation}(fn, wrt) for a Function with one output")
+  if len(args) == 2 and of is None and wrt is None:
+    return cast(str, args[0]), cast(str, args[1])
+  if len(args) == 1 and wrt is None:
+    return of, cast(str, args[0])
+  if len(args) == 1 and of is None:
+    return cast(str, args[0]), wrt
+  if not args:
+    return of, wrt
+  raise TypeError(f"{operation}: of and wrt are given twice")
 
 
-def _checked_names(source: ConcreteFunction[Any, Any, Any, Any], of: str, wrt: str) -> None:
-  source.output_tree.index(of)
-  source.input_tree.index(wrt)
+def _resolved_names(
+  operation: str, owner: str, inputs: tuple[str, ...] | None, outputs: tuple[str, ...] | None, of: str | None, wrt: str | None, weighted: bool
+) -> tuple[str | None, str | None]:
+  """``of`` and ``wrt`` checked against the names ``owner`` declares (``None`` when not known yet), a name
+  left out defaulting to the only output or input. A ``weighted`` derivative (the Lagrangian Hessians)
+  takes every output and no ``of``."""
+  if weighted:
+    of = ""
+  elif of is None and outputs is not None:
+    if len(outputs) != 1:
+      raise TypeError(f"{operation}: {owner} has outputs {outputs}; say which with of=")
+    of = outputs[0]
+  if wrt is None and inputs is not None:
+    if len(inputs) != 1:
+      raise TypeError(f"{operation}: {owner} has inputs {inputs}; say which with wrt=")
+    wrt = inputs[0]
+  if wrt is not None and inputs is not None and wrt not in inputs and outputs is not None and wrt in outputs:
+    raise ValueError(
+      f"{operation}: {wrt!r} is an output of {owner}, not an input; one name is wrt, as in "
+      f"sc.{operation}(f, 'x'), and two are of and wrt, as in sc.{operation}(f, {wrt!r}, 'x')"
+    )
+  if wrt is not None and inputs is not None and wrt not in inputs:
+    raise ValueError(f"unknown name {wrt!r}; declared {inputs}")
+  if of and outputs is not None and of not in outputs:
+    raise ValueError(f"unknown name {of!r}; declared {outputs}")
+  return of, wrt
+
+
+def _derived(
+  operation: str,
+  source: Function[Any, Any, Any, Any],
+  of: str | None,
+  wrt: str | None,
+  name: str | None,
+  default: Callable[[str, str, str], str],
+  build: Callable[[ConcreteFunction[Any, Any, Any, Any], str, str, str], Any],
+  extra: tuple[str, ...] = (),
+  *,
+  weighted: bool = False,
+) -> Any:
+  """A derivative of ``source``: built now from a concrete one, per instance from a template.
+
+  ``default(source name, of, wrt)`` names a derivative; with ``name`` given, a template's instances
+  are ``{name}__{tokens}``, the tokens of the source instance they derive from. Names the template
+  declares are checked now; anything that needs shapes waits for the instance."""
+  if not isinstance(source, Function):
+    raise TypeError(f"{operation} source must be an Expr or Function")
+
+  def derive(instance: ConcreteFunction[Any, Any, Any, Any]) -> Any:
+    of_, wrt_ = cast(tuple[str, str], _resolved_names(operation, instance.name, instance.input_names, instance.output_names, of, wrt, weighted))
+    derived_name = default(instance.name, of_, wrt_) if name is None else (name if instance is source else f"{name}__{instance._tokens}")
+    return build(instance, derived_name, of_, wrt_)
+
+  if source.is_concrete:
+    return derive(source.concrete)
+  # A template's declared names are checked now, and settle defaults; the rest waits for an instance.
+  declared_inputs = source._slots.names if source._slots is not None and source._source is None else None
+  declared_outputs = source._output.names if source._output is not None else None
+  known_of, known_wrt = _resolved_names(operation, source.name, declared_inputs, declared_outputs, of, wrt, weighted)
+  label = default(source.name, known_of, known_wrt) if known_of is not None and known_wrt is not None else f"{source.name}_{operation}"
+  return source._lift(derive, name or label, extra)
 
 
 def _typed_result(result: ConcreteFunction[Any, Any, Any, Any], input_tree: _G) -> Any:
@@ -189,7 +249,6 @@ def _factory_input_tree(result: ConcreteFunction[Any, Any, Any, Any], tree: Tree
 
 
 def _unseeded(source: ConcreteFunction[Any, Any, Any, Any], name: str, of: str, wrt: str, spec: Jac | Grad | Hess | SpJac | SpHess) -> Any:
-  _checked_names(source, of, wrt)
   return _typed_result(source.factory(name, list(source.input_names), [spec]), source.input_tree)
 
 
@@ -198,7 +257,9 @@ def jacobian(source: Expr, wrt: Expr) -> Expr: ...
 
 
 @overload
-def jacobian[**PS, **PN](source: Function[PS, PN, Any, Any], of: str, wrt: str, *, name: str | None = None) -> Function[PS, PN, Expr, np.ndarray]: ...
+def jacobian[**PS, **PN](
+  source: Function[PS, PN, Any, Any], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None
+) -> Function[PS, PN, Expr, np.ndarray]: ...
 
 
 def jacobian(
@@ -211,11 +272,15 @@ def jacobian(
   """Build a dense Jacobian for an Expr or a named Function output."""
   if isinstance(source, Expr):
     return _jacobian_expr(source, _expr_wrt("jacobian", args, wrt, of, name))
-  if not isinstance(source, Function):
-    raise TypeError("jacobian source must be an Expr or Function")
   function_of, function_wrt = _function_names("jacobian", args, wrt, of)
-  return _unseeded(
-    source.concrete, name or f"{source.name}_jac_{function_of}_{function_wrt}", function_of, function_wrt, Jac(function_of, function_wrt)
+  return _derived(
+    "jacobian",
+    source,
+    function_of,
+    function_wrt,
+    name,
+    lambda s, o, w: f"{s}_jac_{o}_{w}",
+    lambda src, derived_name, of, wrt: _unseeded(src, derived_name, of, wrt, Jac(of, wrt)),
   )
 
 
@@ -224,7 +289,9 @@ def gradient(source: Expr, wrt: Expr) -> Expr: ...
 
 
 @overload
-def gradient[**PS, **PN](source: Function[PS, PN, Any, Any], of: str, wrt: str, *, name: str | None = None) -> Function[PS, PN, Expr, np.ndarray]: ...
+def gradient[**PS, **PN](
+  source: Function[PS, PN, Any, Any], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None
+) -> Function[PS, PN, Expr, np.ndarray]: ...
 
 
 def gradient(
@@ -237,11 +304,15 @@ def gradient(
   """Build a gradient for an Expr or a named Function output."""
   if isinstance(source, Expr):
     return _gradient_expr(source, _expr_wrt("gradient", args, wrt, of, name))
-  if not isinstance(source, Function):
-    raise TypeError("gradient source must be an Expr or Function")
   function_of, function_wrt = _function_names("gradient", args, wrt, of)
-  return _unseeded(
-    source.concrete, name or f"{source.name}_grad_{function_of}_{function_wrt}", function_of, function_wrt, Grad(function_of, function_wrt)
+  return _derived(
+    "gradient",
+    source,
+    function_of,
+    function_wrt,
+    name,
+    lambda s, o, w: f"{s}_grad_{o}_{w}",
+    lambda src, derived_name, of, wrt: _unseeded(src, derived_name, of, wrt, Grad(of, wrt)),
   )
 
 
@@ -250,7 +321,9 @@ def hessian(source: Expr, wrt: Expr) -> Expr: ...
 
 
 @overload
-def hessian[**PS, **PN](source: Function[PS, PN, Any, Any], of: str, wrt: str, *, name: str | None = None) -> Function[PS, PN, Expr, np.ndarray]: ...
+def hessian[**PS, **PN](
+  source: Function[PS, PN, Any, Any], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None
+) -> Function[PS, PN, Expr, np.ndarray]: ...
 
 
 def hessian(
@@ -263,15 +336,15 @@ def hessian(
   """Build a Hessian for an Expr or a named Function output."""
   if isinstance(source, Expr):
     return _hessian_expr(source, _expr_wrt("hessian", args, wrt, of, name))
-  if not isinstance(source, Function):
-    raise TypeError("hessian source must be an Expr or Function")
   function_of, function_wrt = _function_names("hessian", args, wrt, of)
-  return _unseeded(
-    source.concrete,
-    name or f"{source.name}_hess_{function_of}_{function_wrt}_{function_wrt}",
+  return _derived(
+    "hessian",
+    source,
     function_of,
     function_wrt,
-    Hess(function_of, function_wrt),
+    name,
+    lambda s, o, w: f"{s}_hess_{o}_{w}_{w}",
+    lambda src, derived_name, of, wrt: _unseeded(src, derived_name, of, wrt, Hess(of, wrt)),
   )
 
 
@@ -281,7 +354,7 @@ def sparse_jacobian(source: Expr, wrt: Expr) -> SparseJacobian: ...
 
 @overload
 def sparse_jacobian[**PS, **PN](
-  source: Function[PS, PN, Any, Any], of: str, wrt: str, *, name: str | None = None
+  source: Function[PS, PN, Any, Any], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None
 ) -> Function[PS, PN, Expr, np.ndarray]: ...
 
 
@@ -295,11 +368,15 @@ def sparse_jacobian(
   """Build compact nonzero Jacobian values for an Expr or a named Function output."""
   if isinstance(source, Expr):
     return _expr_sparse_jacobian(source, _expr_wrt("sparse_jacobian", args, wrt, of, name))
-  if not isinstance(source, Function):
-    raise TypeError("sparse_jacobian source must be an Expr or Function")
   function_of, function_wrt = _function_names("sparse_jacobian", args, wrt, of)
-  return _unseeded(
-    source.concrete, name or f"{source.name}_spjac_{function_of}_{function_wrt}", function_of, function_wrt, SpJac(function_of, function_wrt)
+  return _derived(
+    "sparse_jacobian",
+    source,
+    function_of,
+    function_wrt,
+    name,
+    lambda s, o, w: f"{s}_spjac_{o}_{w}",
+    lambda src, derived_name, of, wrt: _unseeded(src, derived_name, of, wrt, SpJac(of, wrt)),
   )
 
 
@@ -310,9 +387,10 @@ def sparse_hessian(source: Expr, wrt: Expr, *, triangle: Triangle = "full") -> S
 @overload
 def sparse_hessian[**PS, **PN](
   source: Function[PS, PN, Any, Any],
-  of: str,
-  wrt: str,
-  *,
+  /,
+  *names: str,
+  of: str | None = None,
+  wrt: str | None = None,
   name: str | None = None,
   triangle: Triangle = "full",
 ) -> Function[PS, PN, Expr, np.ndarray]: ...
@@ -333,153 +411,164 @@ def sparse_hessian(
   """
   if isinstance(source, Expr):
     return _expr_sparse_hessian(source, _expr_wrt("sparse_hessian", args, wrt, of, name), triangle=triangle)
-  if not isinstance(source, Function):
-    raise TypeError("sparse_hessian source must be an Expr or Function")
   function_of, function_wrt = _function_names("sparse_hessian", args, wrt, of)
-  return _unseeded(
-    source.concrete,
-    name or f"{source.name}_sphess_{function_of}_{function_wrt}_{function_wrt}",
+  return _derived(
+    "sparse_hessian",
+    source,
     function_of,
     function_wrt,
-    SpHess(function_of, function_wrt, triangle=triangle),
+    name,
+    lambda s, o, w: f"{s}_sphess_{o}_{w}_{w}",
+    lambda src, derived_name, of, wrt: _unseeded(src, derived_name, of, wrt, SpHess(of, wrt, triangle=triangle)),
   )
 
 
 # fmt: off
 @overload
-def forward(fn: Function[[], [], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[Expr], [np.ndarray], Expr, np.ndarray]: ...
+def forward(fn: Function[[], [], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[Expr], [np.ndarray], Expr, np.ndarray]: ...
 @overload
-def forward(fn: Function[[SA], [NA], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, Expr], [NA, np.ndarray], Expr, np.ndarray]: ...
+def forward(fn: Function[[SA], [NA], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, Expr], [NA, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def forward(fn: Function[[SA, SB], [NA, NB], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, Expr], [NA, NB, np.ndarray], Expr, np.ndarray]: ...
+def forward(fn: Function[[SA, SB], [NA, NB], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, Expr], [NA, NB, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def forward(fn: Function[[SA, SB, SC], [NA, NB, NC], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, Expr], [NA, NB, NC, np.ndarray], Expr, np.ndarray]: ...
+def forward(fn: Function[[SA, SB, SC], [NA, NB, NC], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, Expr], [NA, NB, NC, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def forward(fn: Function[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, SD, Expr], [NA, NB, NC, ND, np.ndarray], Expr, np.ndarray]: ...
+def forward(fn: Function[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, SD, Expr], [NA, NB, NC, ND, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def forward(fn: Function[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, Expr], [NA, NB, NC, ND, NE, np.ndarray], Expr, np.ndarray]: ...
+def forward(fn: Function[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, Expr], [NA, NB, NC, ND, NE, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def forward(fn: Function[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, Expr], [NA, NB, NC, ND, NE, NF, np.ndarray], Expr, np.ndarray]: ...
+def forward(fn: Function[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, Expr], [NA, NB, NC, ND, NE, NF, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def forward(fn: Function[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, SG, Expr], [NA, NB, NC, ND, NE, NF, NG, np.ndarray], Expr, np.ndarray]: ...
+def forward(fn: Function[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, SG, Expr], [NA, NB, NC, ND, NE, NF, NG, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def forward(fn: Function[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, SG, SH, Expr], [NA, NB, NC, ND, NE, NF, NG, NH, np.ndarray], Expr, np.ndarray]: ...
+def forward(fn: Function[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, SG, SH, Expr], [NA, NB, NC, ND, NE, NF, NG, NH, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def forward(fn: Function[..., ..., Any, Any], of: str, wrt: str, *, name: str | None = None) -> Function[..., ..., Expr, np.ndarray]: ...
+def forward(fn: Function[..., ..., Any, Any], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[..., ..., Expr, np.ndarray]: ...
 # fmt: on
-def forward(fn: Function[Any, Any, Any, Any], of: str, wrt: str, *, name: str | None = None) -> Any:
+def forward(fn: Function[Any, Any, Any, Any], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Any:
   """Create a seeded forward-mode Function computing ``J(of, wrt) @ seed``, called as ``f(*inputs, seed)``."""
-  fn = fn.concrete
-  _checked_names(fn, of, wrt)
+  of, wrt = _function_names("forward", names, wrt, of)
+  return _derived("forward", fn, of, wrt, name, lambda s, o, w: f"{s}_fwd_{o}_{w}", _forward, ("seed",))
+
+
+def _forward(fn: ConcreteFunction[Any, Any, Any, Any], name: str, of: str, wrt: str) -> Any:
   seed = L(f"fwd:{wrt}", fn.inputs[fn.input_tree.index(wrt)].type)
-  result = fn.factory(name or f"{fn.name}_fwd_{of}_{wrt}", [*fn.input_names, f"fwd:{wrt}"], [Fwd(of, wrt)])
+  result = fn.factory(name, [*fn.input_names, f"fwd:{wrt}"], [Fwd(of, wrt)])
   return _typed_result(result, param_list(*fn.input_tree.parts, _factory_input_tree(result, seed)))
 
 
 # fmt: off
 @overload
-def adjoint(fn: Function[[], [], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[Expr], [np.ndarray], Expr, np.ndarray]: ...
+def adjoint(fn: Function[[], [], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[Expr], [np.ndarray], Expr, np.ndarray]: ...
 @overload
-def adjoint(fn: Function[[SA], [NA], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, Expr], [NA, np.ndarray], Expr, np.ndarray]: ...
+def adjoint(fn: Function[[SA], [NA], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, Expr], [NA, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def adjoint(fn: Function[[SA, SB], [NA, NB], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, Expr], [NA, NB, np.ndarray], Expr, np.ndarray]: ...
+def adjoint(fn: Function[[SA, SB], [NA, NB], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, Expr], [NA, NB, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def adjoint(fn: Function[[SA, SB, SC], [NA, NB, NC], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, Expr], [NA, NB, NC, np.ndarray], Expr, np.ndarray]: ...
+def adjoint(fn: Function[[SA, SB, SC], [NA, NB, NC], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, Expr], [NA, NB, NC, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def adjoint(fn: Function[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, SD, Expr], [NA, NB, NC, ND, np.ndarray], Expr, np.ndarray]: ...
+def adjoint(fn: Function[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, SD, Expr], [NA, NB, NC, ND, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def adjoint(fn: Function[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, Expr], [NA, NB, NC, ND, NE, np.ndarray], Expr, np.ndarray]: ...
+def adjoint(fn: Function[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, Expr], [NA, NB, NC, ND, NE, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def adjoint(fn: Function[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, Expr], [NA, NB, NC, ND, NE, NF, np.ndarray], Expr, np.ndarray]: ...
+def adjoint(fn: Function[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, Expr], [NA, NB, NC, ND, NE, NF, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def adjoint(fn: Function[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, SG, Expr], [NA, NB, NC, ND, NE, NF, NG, np.ndarray], Expr, np.ndarray]: ...
+def adjoint(fn: Function[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, SG, Expr], [NA, NB, NC, ND, NE, NF, NG, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def adjoint(fn: Function[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], of: str, wrt: str, *, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, SG, SH, Expr], [NA, NB, NC, ND, NE, NF, NG, NH, np.ndarray], Expr, np.ndarray]: ...
+def adjoint(fn: Function[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[[SA, SB, SC, SD, SE, SF, SG, SH, Expr], [NA, NB, NC, ND, NE, NF, NG, NH, np.ndarray], Expr, np.ndarray]: ...
 @overload
-def adjoint(fn: Function[..., ..., Any, Any], of: str, wrt: str, *, name: str | None = None) -> Function[..., ..., Expr, np.ndarray]: ...
+def adjoint(fn: Function[..., ..., Any, Any], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Function[..., ..., Expr, np.ndarray]: ...
 # fmt: on
-def adjoint(fn: Function[Any, Any, Any, Any], of: str, wrt: str, *, name: str | None = None) -> Any:
+def adjoint(fn: Function[Any, Any, Any, Any], /, *names: str, of: str | None = None, wrt: str | None = None, name: str | None = None) -> Any:
   """Create a seeded reverse-mode Function computing ``J(of, wrt).T @ lam``, called as ``f(*inputs, lam)``."""
-  fn = fn.concrete
-  _checked_names(fn, of, wrt)
+  of, wrt = _function_names("adjoint", names, wrt, of)
+  return _derived("adjoint", fn, of, wrt, name, lambda s, o, w: f"{s}_adj_{o}_{w}", _adjoint, ("lam",))
+
+
+def _adjoint(fn: ConcreteFunction[Any, Any, Any, Any], name: str, of: str, wrt: str) -> Any:
   seed = L(f"lam:{of}", fn.outputs[fn.output_tree.index(of)].type)
-  result = fn.factory(name or f"{fn.name}_adj_{of}_{wrt}", [*fn.input_names, f"lam:{of}"], [Adj(of, wrt)])
+  result = fn.factory(name, [*fn.input_names, f"lam:{of}"], [Adj(of, wrt)])
   return _typed_result(result, param_list(*fn.input_tree.parts, _factory_input_tree(result, seed)))
 
 
 # fmt: off
 @overload
-def lagrangian_hessian(fn: Function[[], [], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SO], [NO], Expr, np.ndarray]: ...
+def lagrangian_hessian(fn: Function[[], [], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SO], [NO], Expr, np.ndarray]: ...
 @overload
-def lagrangian_hessian(fn: Function[[SA], [NA], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SO], [NA, NO], Expr, np.ndarray]: ...
+def lagrangian_hessian(fn: Function[[SA], [NA], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SO], [NA, NO], Expr, np.ndarray]: ...
 @overload
-def lagrangian_hessian(fn: Function[[SA, SB], [NA, NB], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SO], [NA, NB, NO], Expr, np.ndarray]: ...
+def lagrangian_hessian(fn: Function[[SA, SB], [NA, NB], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SO], [NA, NB, NO], Expr, np.ndarray]: ...
 @overload
-def lagrangian_hessian(fn: Function[[SA, SB, SC], [NA, NB, NC], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SO], [NA, NB, NC, NO], Expr, np.ndarray]: ...
+def lagrangian_hessian(fn: Function[[SA, SB, SC], [NA, NB, NC], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SO], [NA, NB, NC, NO], Expr, np.ndarray]: ...
 @overload
-def lagrangian_hessian(fn: Function[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SD, SO], [NA, NB, NC, ND, NO], Expr, np.ndarray]: ...
+def lagrangian_hessian(fn: Function[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SD, SO], [NA, NB, NC, ND, NO], Expr, np.ndarray]: ...
 @overload
-def lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SD, SE, SO], [NA, NB, NC, ND, NE, NO], Expr, np.ndarray]: ...
+def lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SD, SE, SO], [NA, NB, NC, ND, NE, NO], Expr, np.ndarray]: ...
 @overload
-def lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SD, SE, SF, SO], [NA, NB, NC, ND, NE, NF, NO], Expr, np.ndarray]: ...
+def lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SD, SE, SF, SO], [NA, NB, NC, ND, NE, NF, NO], Expr, np.ndarray]: ...
 @overload
-def lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SD, SE, SF, SG, SO], [NA, NB, NC, ND, NE, NF, NG, NO], Expr, np.ndarray]: ...
+def lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SD, SE, SF, SG, SO], [NA, NB, NC, ND, NE, NF, NG, NO], Expr, np.ndarray]: ...
 @overload
-def lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SD, SE, SF, SG, SH, SO], [NA, NB, NC, ND, NE, NF, NG, NH, NO], Expr, np.ndarray]: ...
+def lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma") -> Function[[SA, SB, SC, SD, SE, SF, SG, SH, SO], [NA, NB, NC, ND, NE, NF, NG, NH, NO], Expr, np.ndarray]: ...
 @overload
-def lagrangian_hessian(fn: Function[..., ..., Any, Any], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Function[..., ..., Expr, np.ndarray]: ...
+def lagrangian_hessian(fn: Function[..., ..., Any, Any], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma") -> Function[..., ..., Expr, np.ndarray]: ...
 # fmt: on
-def lagrangian_hessian(fn: Function[Any, Any, Any, Any], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Any:
+def lagrangian_hessian(fn: Function[Any, Any, Any, Any], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma") -> Any:
   """Create the dense Hessian of all outputs weighted by multipliers shaped as the output tree, called as ``f(*inputs, lam)``."""
-  fn = fn.concrete
-  fn.input_tree.index(wrt)
-  output_names = list(fn.output_names)
-  inputs = [*fn.input_names, *(f"lam:{out}" for out in output_names)]
-  result = fn.factory(
-    name or f"{fn.name}_hess_{aux_name}_{wrt}_{wrt}",
-    inputs,
-    [Hess(aux_name, wrt)],
-    aux={aux_name: output_names},
+  return _derived(
+    "lagrangian_hessian",
+    fn,
+    None,
+    wrt,
+    name,
+    lambda s, o, w: f"{s}_hess_{aux_name}_{w}_{w}",
+    lambda src, derived_name, of, wrt: _weighted(src, derived_name, wrt, Hess(aux_name, wrt), aux_name),
+    ("lam",),
+    weighted=True,
   )
+
+
+def _weighted(fn: ConcreteFunction[Any, Any, Any, Any], name: str, wrt: str, spec: Hess | SpHess, aux_name: str) -> Any:
+  output_names = list(fn.output_names)
+  result = fn.factory(name, [*fn.input_names, *(f"lam:{out}" for out in output_names)], [spec], aux={aux_name: output_names})
   seed_tree = _factory_input_tree(result, fn.output_tree.relabel("lam:"))
   return _typed_result(result, param_list(*fn.input_tree.parts, seed_tree))
 
 
 # fmt: off
 @overload
-def sparse_lagrangian_hessian(fn: Function[[], [], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SO], [NO], Expr, np.ndarray]: ...
+def sparse_lagrangian_hessian(fn: Function[[], [], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SO], [NO], Expr, np.ndarray]: ...
 @overload
-def sparse_lagrangian_hessian(fn: Function[[SA], [NA], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SO], [NA, NO], Expr, np.ndarray]: ...
+def sparse_lagrangian_hessian(fn: Function[[SA], [NA], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SO], [NA, NO], Expr, np.ndarray]: ...
 @overload
-def sparse_lagrangian_hessian(fn: Function[[SA, SB], [NA, NB], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SO], [NA, NB, NO], Expr, np.ndarray]: ...
+def sparse_lagrangian_hessian(fn: Function[[SA, SB], [NA, NB], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SO], [NA, NB, NO], Expr, np.ndarray]: ...
 @overload
-def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC], [NA, NB, NC], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SO], [NA, NB, NC, NO], Expr, np.ndarray]: ...
+def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC], [NA, NB, NC], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SO], [NA, NB, NC, NO], Expr, np.ndarray]: ...
 @overload
-def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SD, SO], [NA, NB, NC, ND, NO], Expr, np.ndarray]: ...
+def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SD, SO], [NA, NB, NC, ND, NO], Expr, np.ndarray]: ...
 @overload
-def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SD, SE, SO], [NA, NB, NC, ND, NE, NO], Expr, np.ndarray]: ...
+def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SD, SE, SO], [NA, NB, NC, ND, NE, NO], Expr, np.ndarray]: ...
 @overload
-def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SD, SE, SF, SO], [NA, NB, NC, ND, NE, NF, NO], Expr, np.ndarray]: ...
+def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SD, SE, SF, SO], [NA, NB, NC, ND, NE, NF, NO], Expr, np.ndarray]: ...
 @overload
-def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SD, SE, SF, SG, SO], [NA, NB, NC, ND, NE, NF, NG, NO], Expr, np.ndarray]: ...
+def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SD, SE, SF, SG, SO], [NA, NB, NC, ND, NE, NF, NG, NO], Expr, np.ndarray]: ...
 @overload
-def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SD, SE, SF, SG, SH, SO], [NA, NB, NC, ND, NE, NF, NG, NH, NO], Expr, np.ndarray]: ...
+def sparse_lagrangian_hessian(fn: Function[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[[SA, SB, SC, SD, SE, SF, SG, SH, SO], [NA, NB, NC, ND, NE, NF, NG, NH, NO], Expr, np.ndarray]: ...
 @overload
-def sparse_lagrangian_hessian(fn: Function[..., ..., Any, Any], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[..., ..., Expr, np.ndarray]: ...
+def sparse_lagrangian_hessian(fn: Function[..., ..., Any, Any], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> Function[..., ..., Expr, np.ndarray]: ...
 # fmt: on
 def sparse_lagrangian_hessian(
-  fn: Function[Any, Any, Any, Any], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full"
+  fn: Function[Any, Any, Any, Any], /, wrt: str | None = None, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full"
 ) -> Any:
   """Create compact values for the weighted Hessian of all declared outputs, called as ``f(*inputs, lam)``."""
-  fn = fn.concrete
-  fn.input_tree.index(wrt)
-  output_names = list(fn.output_names)
-  inputs = [*fn.input_names, *(f"lam:{out}" for out in output_names)]
-  result = fn.factory(
-    name or f"{fn.name}_sphess_{aux_name}_{wrt}_{wrt}",
-    inputs,
-    [SpHess(aux_name, wrt, triangle=triangle)],
-    aux={aux_name: output_names},
+  return _derived(
+    "sparse_lagrangian_hessian",
+    fn,
+    None,
+    wrt,
+    name,
+    lambda s, o, w: f"{s}_sphess_{aux_name}_{w}_{w}",
+    lambda src, derived_name, of, wrt: _weighted(src, derived_name, wrt, SpHess(aux_name, wrt, triangle=triangle), aux_name),
+    ("lam",),
+    weighted=True,
   )
-  seed_tree = _factory_input_tree(result, fn.output_tree.relabel("lam:"))
-  return _typed_result(result, param_list(*fn.input_tree.parts, seed_tree))

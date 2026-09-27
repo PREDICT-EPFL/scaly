@@ -182,7 +182,7 @@ def test_a_dtype_left_open_binds_from_an_expr_and_spells_itself() -> None:
 
 def test_two_bindings_may_never_share_a_name(monkeypatch) -> None:
   double, _ = _counted()
-  monkeypatch.setattr(model, "instance_name", lambda name, *binding: f"{name}__same")
+  monkeypatch.setattr(model, "instance_tokens", lambda *binding: "same")
   double(np.ones(2))
   with pytest.raises(RuntimeError, match="two argument signatures would share the instance name 'double__same'"):
     double(np.ones(3))
@@ -262,14 +262,9 @@ def test_every_inspecting_entry_point_refuses_a_template_with_holes() -> None:
   def square(x):
     return x * x
 
-  for inspect in (render_c_source, lower_function, sc.render_expr_assembly, lambda f: sc.custom_derivative(f)):
+  for inspect in (render_c_source, lower_function, sc.render_expr_assembly):
     with pytest.raises(sc.NotConcrete, match="double.instantiate"):
       inspect(double)
-  with pytest.raises(sc.NotConcrete, match="double.instantiate"):
-    sc.custom_derivative(square, jvp=double)
-  for derive in (sc.gradient, sc.jacobian, sc.forward, sc.adjoint):
-    with pytest.raises(sc.NotConcrete, match="double.instantiate"):
-      derive(double, "y", "x")
   assert "@square" in sc.render_expr_assembly(square)
 
 

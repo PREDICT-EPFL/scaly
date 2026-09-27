@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Templates P4 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Function templates P4: derivatives of templates</h1>
+<p class="sub">2026-09-27 · branch <code>claude/function-templates</code> · plan v2, step P4</p>
+<div class="box"><b>Summary.</b> Every derivative wrapper and <code>custom_derivative</code> accept a template. The result is a derived template: its instance for a call is the derivative of the source's instance, built on first use and cached. Names can be left out: one name is <code>wrt</code> (<code>sc.gradient(f, "x")</code>, as in the <code>Expr</code> form), and a name left out is the Function's only output or input (<code>sc.gradient(energy)</code>). Concrete sources give exactly what they gave before.</div>
+<h2>What changed</h2>
+<ul>
+<li><b>Lifting.</b> <code>Function._lift(transform, name, extra)</code> makes a template whose instance for a call is <code>transform</code> of the source's instance for the call's leading arguments. <code>extra</code> names the arguments a seeded derivative appends (<code>seed</code>, <code>lam</code>); the source instance fixes their shapes, so they need no holes. The derived instance is cached per source instance. Its arity errors name the source's parameters plus <code>seed</code>/<code>lam</code>, through a synthesized positional-only signature.</li>
+<li><b>The nine wrappers</b> (<code>jacobian</code>, <code>gradient</code>, <code>hessian</code>, <code>sparse_jacobian</code>, <code>sparse_hessian</code>, <code>forward</code>, <code>adjoint</code>, <code>lagrangian_hessian</code>, <code>sparse_lagrangian_hessian</code>) go through one <code>_derived</code> helper.
+  <ul>
+  <li>A concrete source is derived at once.</li>
+  <li>For a template, the names it declares are checked at once. The checks include "<code>'f'</code> is an output of cost, not an input" with both spellings, and the defaults that follow from a single declared input or output.</li>
+  <li>Shape checks, such as a gradient needing a scalar output, happen per instance.</li>
+  </ul></li>
+<li><b>Names.</b> A derived instance is named by the derivative from its source instance: <code>cost__3_grad_f_x</code>. With <code>name=</code>, the derived template takes that name and its instances are <code>{name}__{tokens}</code>, reusing the source instance's tokens, which derivatives of derivatives carry through (<code>curvature__2</code>).</li>
+<li><b><code>custom_derivative</code></b> lifts a template source. <code>jvp</code>/<code>vjp</code> rules may be templates: they are instantiated at the leaves they take, one per parameter, for the matching instance. For a concrete source this happens at once. Overloads keep a concrete source's result typed <code>ConcreteFunction</code>.</li>
+<li><code>forward</code> and <code>adjoint</code> take their names like the unseeded wrappers (<code>*names</code>, <code>of=</code>, <code>wrt=</code>). The Lagrangian Hessians' <code>wrt</code> is optional.</li>
+</ul>
+<h2>Tests and mutation checks</h2>
+<p><code>tests/function/test_lifted.py</code> (8 tests) covers:</p>
+<ul>
+<li>the gradient of a template compiled at two shapes, against the closed form, finite differences and the concrete source's own derivative;</li>
+<li>nothing built until a call;</li>
+<li>every spelling of the names, and the defaults on declared and bare templates;</li>
+<li>eager name checks, and shape checks at the call;</li>
+<li><code>forward</code>/<code>adjoint</code> appending their seed, and the dense and sparse Lagrangian Hessians over a template;</li>
+<li><code>name=</code>, and derivatives of derivatives;</li>
+<li><code>custom_derivative</code> with template rules;</li>
+<li>one derived instance for a numerical and a symbolic call at one shape.</li>
+</ul>
+<p>The typing tests cover the one-name and no-name forms and the <code>custom_derivative</code> overloads.</p>
+<div class="scroll"><table><tr><th>Mutant</th><th>Result</th></tr>
+<tr><td>templates not lifted</td><td class="ok">killed (6)</td></tr>
+<tr><td>no derived-instance cache</td><td class="ok">killed after a new test (it first survived: the argument-keyed lookup hid it)</td></tr>
+<tr><td>one name read as <code>of</code></td><td class="ok">killed (2)</td></tr>
+<tr><td>no output-as-wrt message</td><td class="ok">killed</td></tr>
+<tr><td>no eager name check</td><td class="ok">killed (2)</td></tr>
+<tr><td><code>name=</code> ignores the tokens</td><td class="ok">killed</td></tr>
+<tr><td>the seed not split off</td><td class="ok">killed</td></tr>
+<tr><td>no default <code>of</code></td><td class="ok">killed (3)</td></tr>
+<tr><td>template rules not instantiated</td><td class="ok">killed</td></tr>
+<tr><td><code>custom_derivative</code> not lifted</td><td class="ok">killed</td></tr>
+<tr><td>derived tokens not inherited</td><td class="ok">killed after a new test</td></tr></table></div>
+<h2>Gates</h2>
+<div class="scroll"><table><tr><th>Check</th><th>Result</th></tr>
+<tr><td><code>uv run pytest -n=auto</code></td><td class="ok">2402 passed, 42 skipped</td></tr>
+<tr><td>C snapshots</td><td class="ok">unchanged</td></tr>
+<tr><td><code>uv run ty check --error-on-warning</code></td><td class="ok">no new diagnostics</td></tr>
+<tr><td>smoke benchmarks, <code>typing_playground</code>, ruff</td><td class="ok">green</td></tr></table></div>
+<p>No timing: the call path of concrete and template functions is unchanged, and a derived instance is looked up like any other.</p>
+<h2>Next</h2>
+<p>P5 (sparse pattern holes) is deferred to a todo item. P6: the documentation, the examples in the new style, and the cleanup.</p>
+</main></body></html>
