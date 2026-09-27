@@ -78,6 +78,11 @@ def test_decisions_match_piqp(name: str, backend: Backend) -> None:
   got = solve(qp, backend)
   assert int(got["status"]) == mine.status
   if not piqp_trace.backends_agree(mine, other):
+    if backend == "dense":
+      # Rounding decides the path here, but not how long it is: the dense backend stays within a
+      # few iterations of one of PIQP's runs (a Cholesky that sums less accurately took QSHARE1B
+      # from 27 to 56 iterations, where PIQP takes 29 and 24).
+      assert min(abs(int(got["iter"]) - int(r.info["iter"])) for r in (mine, other)) <= 3
     pytest.skip("PIQP's backends take different paths: the problem is sensitive to rounding")
   if _matches(mine, got):
     return

@@ -198,12 +198,15 @@ def _group_key(expr: Expr) -> tuple[Any, ...] | None:
   return None
 
 
-def _call_vjp(expr: Expr, cots: dict[int, Expr]) -> list[tuple[Expr, Expr]]:
+def _call_vjp(expr: Expr, cots: dict[int, Expr], wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
   """The adjoint of one call, given the cotangents of its used outputs: one reverse sweep through the
-  callee for all of them, so loops inside it get one backward pass each rather than one per output."""
+  callee for all of them, so loops inside it get one backward pass each rather than one per output.
+  Only the arguments that depend on ``wrts`` are differentiated, as for maps and loops: a callee
+  input that has no derivative (a looped sparse factor) is never asked for one it does not need."""
   callee, args = expr.attrs["callee"], expr.args
   if callee.custom_vjp is not None:
     return list(zip(args, custom_vjp_call(callee, args, cots), strict=True))
+  active = [i for i, arg in enumerate(args) if any(_depends_on(arg, wrt, dep_memo) for wrt in wrts)]
   # Differentiate the callee body against fresh cotangent symbols, then graft the real cotangents in
   # via the same substitution that maps formals to actuals. Passing them directly into the inner vjp
   # would make them part of the substituted graph: if the caller reuses a callee formal symbol (the
@@ -215,8 +218,8 @@ def _call_vjp(expr: Expr, cots: dict[int, Expr]) -> list[tuple[Expr, Expr]]:
   replacements = dict(zip((inp.id for inp in callee.inputs), args, strict=True))
   for k, lam in zip(used, lams, strict=True):
     replacements[lam.id] = cots[k]
-  grads = vjp(tuple(callee.outputs[k] for k in used), callee.inputs, tuple(lams))
-  return [(arg, _substitute(g, replacements)) for arg, g in zip(args, grads, strict=True)]
+  grads = vjp(tuple(callee.outputs[k] for k in used), tuple(callee.inputs[i] for i in active), tuple(lams))
+  return [(args[i], _substitute(g, replacements)) for i, g in zip(active, grads, strict=True)]
 
 
 def _scan_vjp(expr: Expr, cots: dict[int, Expr], wrts: Sequence[Expr], dep_memo: dict[tuple[int, int], bool]) -> list[tuple[Expr, Expr]]:
@@ -420,7 +423,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       if group_left[key] or key not in group_cots:
         continue
       cots = group_cots.pop(key)
-      pairs = _scan_vjp(expr, cots, wrts, dep_memo) if expr.op == ExprOp.SCAN else _call_vjp(expr, cots)
+      pairs = _scan_vjp(expr, cots, wrts, dep_memo) if expr.op == ExprOp.SCAN else _call_vjp(expr, cots, wrts, dep_memo)
       for arg, arg_cot in pairs:
         accumulate(arg, arg_cot)
       continue

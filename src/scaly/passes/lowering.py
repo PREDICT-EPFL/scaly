@@ -33,7 +33,6 @@ from ..ir.expr import (
   COMMON_ELEMENTWISE_BINARY,
   COMMON_ELEMENTWISE_UNARY,
   RUNTIME_INDEX_OPS,
-  SPARSE_LDL_MAX_WIDTH,
   Expr,
   ExprOp,
   callees_of,
@@ -1035,8 +1034,9 @@ def _lower_sparse_ldl(ctx: LowerCtx, node: Expr) -> None:
   updates it in one pass over those rows, ``w[i] += L[i, k] * (-D[k] L[j, k])`` for its columns in
   order, the sum held in a register; then ``D[j] = w[j]`` and ``L[i, j] = w[i] / D[j]``, clearing
   each ``w[i]`` read. Every entry sees its updates in the order of one column at a time, so the
-  rounding is that of the column-by-column factorization. A chunk's width picks one loop per width,
-  each run zero or one times, so the widths need no branch statement."""
+  rounding is that of the column-by-column factorization. A chunk's width picks one of the loops
+  for the widths the analysis has, each run zero or one times, so the widths need no branch
+  statement."""
   (kv,) = node.args
   a = node.attrs
   n, nnz_l = a["a_ptr"].size - 1, a["l_rows"].size
@@ -1068,7 +1068,7 @@ def _lower_sparse_ldl(ctx: LowerCtx, node: Expr) -> None:
   r = p.var(f"lr_{nm}")
   q = at("ck_q", r)
   widths = []
-  for width in range(1, SPARSE_LDL_MAX_WIDTH + 1):
+  for width in sorted(set(a["ck_width"].tolist())):  # a loop for each width the analysis has
     pos = [at("r_pos", p.add(q, c(k)) if k else q) for k in range(width)]
     scales = [scalar() for _ in range(width)]
     # -D[k] L[j, k] per column of the chunk, before the pass over its rows
@@ -1110,8 +1110,8 @@ def _lower_sparse_ldl_solve(ctx: LowerCtx, node: Expr) -> None:
   A chunk of ``w`` chained columns ``j .. j + w - 1`` (each column's rows the next column followed
   by that column's rows) first updates its own rows column by column, then every row below it once
   with all ``w`` terms, the sum in a register: each entry takes its updates in column order, as the
-  column-by-column sweep gives them. A chunk's width picks one loop per width, run zero or one
-  times."""
+  column-by-column sweep gives them. A chunk's width picks one of the loops for the widths the
+  analysis has, run zero or one times."""
   factor, b = node.args
   a = node.attrs
   n, nnz_l = a["perm"].size, a["l_rows"].size
@@ -1137,7 +1137,7 @@ def _lower_sparse_ldl_solve(ctx: LowerCtx, node: Expr) -> None:
   r = p.var(f"sr_{nm}")
   j = at("sn_first", r)
   widths = []
-  for width in range(1, SPARSE_LDL_MAX_WIDTH + 1):
+  for width in sorted(set(a["sn_width"].tolist())):  # a loop for each width the analysis has
     col = [p.add(j, c(k)) if k else j for k in range(width)]
     body: list[ProgramNode] = []
     for k in range(width - 1):  # the chain's own rows, column by column

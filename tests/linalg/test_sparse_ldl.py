@@ -519,8 +519,9 @@ LOOP_MATRICES = {**MATRICES, "kkt_large": lambda: _kkt(120, 50, 1e-4, 3), "mpc_l
 
 def test_loop_schedule_is_the_scan_bit_for_bit() -> None:
   """The looped factorization and solve apply each entry's updates in the scan's order, so the
-  factor and the solution are the scan's to the last bit, on every matrix, triangle and ordering;
-  between them the matrices have factorization and solve chunks of every width."""
+  factor and the solution are the scan's values to the last bit (``assert_array_equal`` takes -0.0
+  for 0.0 and one NaN for another, whose signs the two may differ in), on every matrix, triangle and
+  ordering; between them the matrices have factorization and solve chunks of every width."""
   widths: set[int] = set()
   solve_widths: set[int] = set()
   for name, make in LOOP_MATRICES.items():
@@ -550,14 +551,17 @@ def test_loop_factorization_propagates_inf_and_nan_as_the_scan_does() -> None:
   t = _triangle(k, "lower")
   mat = SparseMatrix.symbol("K", t)
   scan, loop = SparseLDL(mat, schedule="scan", name="naninf_s"), SparseLDL(mat, schedule="loop", name="naninf_l")
-  fn = _fn("naninf", [mat.values], [scan.values, loop.values])
+  b = sc.sym("b", k.shape[0])
+  fn = _fn("naninf", [mat.values, b], [scan.values, loop.values, scan.solve(b), loop.solve(b)])
   base = _values(mat, t)
   rows, cols = mat.coordinates()
+  bv = RNG.standard_normal(k.shape[0])
   for bad in (np.inf, -np.inf, np.nan):
     kv = base.copy()
     kv[np.flatnonzero(rows == cols)[3]] = bad
-    fs, fl = fn._flat_numerical_call(kv)
+    fs, fl, xs, xl = fn._flat_numerical_call(kv, bv)
     np.testing.assert_array_equal(fl, fs)
+    np.testing.assert_array_equal(xl, xs)
 
 
 def test_chunks_group_columns_with_the_same_rows() -> None:
@@ -577,6 +581,7 @@ def test_chunks_group_columns_with_the_same_rows() -> None:
         covered.extend(range(q, q + w))
       assert covered == list(range(s.r_ptr[j], s.r_ptr[j + 1]))
     assert s.chunks(1)["ck_q"].size == s.r_cols.size  # width 1: one chunk per entry
+    assert s.u_rows.size == s.update_lanes  # the lane tables share the cache with the chunks
 
 
 def test_loop_factorization_has_no_derivative_of_its_own() -> None:
@@ -590,7 +595,8 @@ def test_loop_factorization_has_no_derivative_of_its_own() -> None:
   with pytest.raises(NotImplementedError, match="schedule='scan'"):
     gradient(sc.sumsqr(fact.values), mat.values)
   b = sc.sym("b", k.shape[0])
-  assert jvp(fact.values, b, sc.const(np.ones(k.shape[0]))).op == sc.Expr.const(np.zeros(1)).op  # no dependence: a zero
+  zero = jvp(fact.values, b, sc.const(np.ones(k.shape[0])))  # no dependence: a constant zero
+  assert zero.op == sc.Expr.const(np.zeros(1)).op and zero.shape == fact.values.shape and not np.any(zero.value)
 
 
 def test_loop_factor_sparsity_is_the_elimination_subtree() -> None:
@@ -638,6 +644,14 @@ def test_sparse_ldl_factor_validates_its_tables() -> None:
     sparse_ldl_factor(kv, {**tables, "ck_ptr": tables["ck_ptr"][:-1]})
   with pytest.raises(ValueError, match="floating-point vector"):
     sparse_ldl_factor(sc.sym("kv_mat", (2, 3)), tables)
+  with pytest.raises(ValueError, match="columns of the matrix"):
+    sparse_ldl_factor(kv, {**tables, "a_rows": tables["a_rows"] + 100})
+  with pytest.raises(ValueError, match="rows run past"):
+    sparse_ldl_factor(kv, {**tables, "ck_len": tables["ck_len"] + 1000})
+  with pytest.raises(ValueError, match="rows below the diagonal"):
+    sparse_ldl_factor(kv, {**tables, "l_rows": np.zeros_like(tables["l_rows"])})
+  with pytest.raises(ValueError, match="one entry per entry of L"):
+    sparse_ldl_factor(kv, {**tables, "r_pos": tables["r_pos"][:-1]})
 
 
 def test_loop_factorization_inside_a_called_function() -> None:
@@ -729,6 +743,83 @@ def test_sparse_ldl_solve_validates_its_tables() -> None:
     sparse_ldl_solve(f, sc.sym("b_short", fact.n - 1), tables)
   with pytest.raises(ValueError, match="every column once"):
     sparse_ldl_solve(f, b, {**tables, "sn_width": tables["sn_width"][:-1], "sn_first": tables["sn_first"][:-1]})
+  with pytest.raises(ValueError, match="every column once"):
+    sparse_ldl_solve(f, b, {**tables, "sn_first": np.zeros_like(tables["sn_first"])})
+  with pytest.raises(ValueError, match="not a chain"):
+    sparse_ldl_solve(f, b, {**tables, "sn_first": np.arange(0, fact.n, 2), "sn_width": np.full(fact.n // 2, 2)})
+  with pytest.raises(ValueError, match="permutation"):
+    sparse_ldl_solve(f, b, {**tables, "perm": np.zeros(fact.n, dtype=np.int64)})
   wide = {"sn_first": np.array([0]), "sn_width": np.array([fact.n])}
   with pytest.raises(ValueError, match="chunks cover 1 to"):
     sparse_ldl_solve(f, b, {**tables, **wide})
+
+
+@pytest.mark.parametrize(
+  "pattern",
+  [np.ones((1, 1)), np.ones((2, 2)), np.eye(2), np.eye(10) + np.eye(10, k=3) + np.eye(10, k=-3), np.eye(3) + np.eye(3, k=1) + np.eye(3, k=-1)],
+  ids=["n1", "dense2", "diag2", "one_offdiag", "tridiag3"],
+)
+def test_loop_schedule_on_the_smallest_patterns(pattern: np.ndarray) -> None:
+  """One column, one entry in ``L``, a diagonal: the loop nests keep only the chunk widths the
+  analysis has, and give the scan's factor and solve (this once broke compilation)."""
+  n = pattern.shape[0]
+  k = sparse.csc_array(np.where(pattern != 0, RNG.uniform(0.5, 1.0, (n, n)), 0.0) + n * np.eye(n))
+  k = sparse.csc_array((k + k.T) / 2)
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  tag = f"small{n}_{int(pattern.sum())}"
+  scan, loop = SparseLDL(mat, schedule="scan", name=f"{tag}_s"), SparseLDL(mat, schedule="loop", name=f"{tag}_l")
+  b = sc.sym("b", n)
+  fs, fl, xs, xl = _fn(tag, [mat.values, b], [scan.values, loop.values, scan.solve(b), loop.solve(b)])._flat_numerical_call(
+    _values(mat, t), bv := RNG.standard_normal(n)
+  )
+  np.testing.assert_array_equal(fl, fs)
+  np.testing.assert_array_equal(xl, xs)
+  np.testing.assert_allclose(xl, np.linalg.solve(k.toarray(), bv), rtol=1e-12)
+
+
+def test_derivatives_through_a_function_that_solves_with_a_given_factor() -> None:
+  """A plain Function taking the factor and the right-hand side (the IPM's own shape): gradients in
+  the right-hand side do not ask the factor argument for a cotangent, and a jvp through a matrix
+  scaled by a comparison's value (a zero tangent that depends on the variable) is the solve's."""
+  k = MATRICES["kkt"]()
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  n = k.shape[0]
+  fact = SparseLDL(mat, schedule="loop", name="given_f")
+  ff, bb = sc.sym("ff", fact.values.shape), sc.sym("bb", n)
+  g = _fn("given_solve", [ff, bb], [fact.solve_with(ff, bb)])
+  b = sc.sym("b", n)
+  x = g.symbolic_call((fact.values, b))
+  kinv = np.linalg.inv(k.toarray())
+  kv, bv = _values(mat, t), RNG.standard_normal(n)
+  (grad,) = _fn("given_grad", [mat.values, b], [gradient(sc.sumsqr(x), b)])._flat_numerical_call(kv, bv)
+  np.testing.assert_allclose(grad, 2 * kinv.T @ (kinv @ bv), rtol=1e-9, atol=1e-12)
+  p, kv2, on = sc.sym("p", ()), sc.sym("kv2", mat.nnz), sc.sym("on", ())
+  scaled = SparseLDL(SparseMatrix.from_coo(*mat.coordinates(), kv2 * on, mat.shape), schedule="loop", name="given_scaled")
+  h = _fn("given_scaled_solve", [kv2, on, bb], [scaled.solve_with(scaled.values, bb)])
+  y = h.symbolic_call((mat.values, sc.cast(p > 0.0, "float64"), b * p))
+  (tangent,) = _fn("given_scaled_jvp", [mat.values, b, p], [jvp(y, p, sc.const(1.0))])._flat_numerical_call(kv, bv, np.array(1.0))
+  np.testing.assert_allclose(tangent, kinv @ bv, rtol=1e-9, atol=1e-12)
+
+
+def test_factor_sparsity_of_a_diagonal_matrix() -> None:
+  """No entries below the diagonal: each pivot depends on its own entry."""
+  from scaly.ad.sparsity import jacobian_sparsity
+
+  mat = SparseMatrix.symbol("Kd", _triangle(MATRICES["diag"](), "lower"))
+  fact = SparseLDL(mat, schedule="loop", name="diag_sp")
+  pattern = jacobian_sparsity(fact.values, mat.values)
+  assert sorted(zip(pattern.rows, pattern.cols)) == [(i, int(fact.symbolic.a_source[i])) for i in range(5)]
+
+
+def test_third_derivatives_in_the_matrix_need_the_scan_schedule() -> None:
+  """The default looped schedule refuses a derivative of the factor itself, which a third
+  derivative in the matrix reaches; the scan schedule differentiates it through its loops."""
+  k = _kkt(5, 2, 1e-2, 9)
+  t = _triangle(k, "lower")
+  mat = SparseMatrix.symbol("K", t)
+  b = sc.sym("b", 7)
+  loop = sc.sumsqr(SparseLDL(mat, schedule="loop", name="third_l").solve(b))
+  with pytest.raises(NotImplementedError, match="schedule='scan'"):
+    jacobian(hessian(loop, mat.values).reshape((mat.nnz * mat.nnz,)), mat.values)

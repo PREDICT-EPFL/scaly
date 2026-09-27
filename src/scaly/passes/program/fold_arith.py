@@ -52,7 +52,9 @@ def _fold_body(body: list[ProgramNode]) -> list[ProgramNode]:
     if not values or len(view.args) != 1:
       return False
     index = view.args[0]
-    return (index.op == ProgramOp.CONST_INT and 0 <= index.attrs["value"] < len(values)) or all(v == values[0] for v in values)
+    if index.op == ProgramOp.CONST_INT:  # a constant index outside the table (in code that never runs) stays a load
+      return 0 <= index.attrs["value"] < len(values)
+    return all(v == values[0] for v in values)
 
   def read(n: ProgramNode) -> ProgramNode:
     index = n.args[0].args[0]

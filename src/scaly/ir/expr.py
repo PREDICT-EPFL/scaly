@@ -971,6 +971,25 @@ SPARSE_LDL_MAX_WIDTH = 8
 """The most columns one chunk of a ``sparse_ldl_factor`` update covers."""
 
 
+def _pointers_ok(ptr: np.ndarray, size: int) -> bool:
+  """``ptr`` a pointer array into ``size`` entries: from 0, not decreasing, ending at ``size``."""
+  return bool(ptr.size and ptr[0] == 0 and ptr[-1] == size and np.all(np.diff(ptr) >= 0))
+
+
+def _in_range(values: np.ndarray, stop: int) -> bool:
+  return bool(values.size == 0 or (values.min() >= 0 and values.max() < stop))
+
+
+def _check_l_pattern(a: dict[str, np.ndarray], n: int, what: str) -> None:
+  """The pattern of ``L``: every row inside the matrix and every column's rows below it, sorted."""
+  l_ptr, l_rows = a["l_ptr"], a["l_rows"]
+  if not _pointers_ok(l_ptr, l_rows.size) or not _in_range(l_rows, n):
+    raise ValueError(f"{what}: l_ptr and l_rows do not describe the columns of an order-{n} L")
+  col = np.repeat(np.arange(n), np.diff(l_ptr))
+  if np.any(l_rows <= col) or np.any((np.diff(l_rows) <= 0) & (col[1:] == col[:-1])):
+    raise ValueError(f"{what}: each column of L needs its rows below the diagonal, sorted")
+
+
 def sparse_ldl_factor(values: Any, tables: dict[str, Any]) -> Expr:
   """The ``L D L^T`` factor of a symmetric matrix with a fixed sparsity pattern, without pivoting, as
   one vector ``[L below the diagonal, CSC | D]`` of the permuted matrix.
@@ -983,7 +1002,8 @@ def sparse_ldl_factor(values: Any, tables: dict[str, Any]) -> Expr:
   same rows from ``j`` down (``ck_*``: per column a range of chunks, each its first entry, width and
   number of rows). The generated code is a left-looking factorization that updates a work column
   from each chunk in one pass, keeping the update order of one column at a time, so the result is
-  the same, bit for bit, as ``SparseLDL(schedule="scan")``. Nothing is checked at run time: a zero
+  the same as ``SparseLDL(schedule="scan")``'s, bit for bit but for the sign of a zero or a NaN.
+  The builder checks every table the generated code indexes; nothing is checked at run time: a zero
   pivot gives inf or NaN, as for ``ldl``. The derivative is not implemented: ``SparseLDL.solve``
   differentiates implicitly and never needs it, and ``SparseLDL(schedule="scan")`` differentiates
   the factorization through its loops."""
@@ -1001,6 +1021,23 @@ def sparse_ldl_factor(values: Any, tables: dict[str, Any]) -> Expr:
     raise ValueError(f"sparse_ldl_factor reads entries outside its {values.size} values")
   if attrs["ck_width"].size and (attrs["ck_width"].min() < 1 or attrs["ck_width"].max() > SPARSE_LDL_MAX_WIDTH):
     raise ValueError(f"sparse_ldl_factor chunks cover 1 to {SPARSE_LDL_MAX_WIDTH} columns")
+  # Everything the generated code indexes stays inside its table: nothing is checked at run time.
+  nnz_l, a = attrs["l_rows"].size, attrs
+  if not _pointers_ok(a["a_ptr"], a["a_rows"].size) or a["a_src"].size != a["a_rows"].size or not _in_range(a["a_rows"], n):
+    raise ValueError("sparse_ldl_factor: a_ptr, a_rows and a_src do not describe the columns of the matrix")
+  _check_l_pattern(a, n, "sparse_ldl_factor")
+  if a["r_cols"].size != nnz_l or a["r_pos"].size != nnz_l or not _in_range(a["r_cols"], n) or not _in_range(a["r_pos"], nnz_l):
+    raise ValueError("sparse_ldl_factor: r_cols and r_pos need one entry per entry of L")
+  chunks = a["ck_q"].size
+  if not _pointers_ok(a["ck_ptr"], chunks) or a["ck_width"].size != chunks or a["ck_len"].size != chunks or not _in_range(a["ck_q"], nnz_l):
+    raise ValueError("sparse_ldl_factor: the chunk tables disagree")
+  last = a["ck_q"] + a["ck_width"]
+  if np.any(last > nnz_l) or np.any(a["ck_len"] < 0):
+    raise ValueError("sparse_ldl_factor: a chunk runs past the entries of L")
+  for k in range(SPARSE_LDL_MAX_WIDTH):
+    live = a["ck_width"] > k
+    if np.any(a["r_pos"][a["ck_q"][live] + k] + a["ck_len"][live] > nnz_l):
+      raise ValueError("sparse_ldl_factor: a chunk's rows run past the entries of L")
   size = attrs["l_rows"].size + n
   return Expr(
     ExprOp.SPARSE_LDL, (values,), TensorType((size,), dtype=values.type.dtype, diff=values.type.diff), attrs=attrs, lowering=values.lowering
@@ -1022,9 +1059,9 @@ def sparse_ldl_solve(factor: Any, b: Any, tables: dict[str, Any]) -> Expr:
   of up to ``SPARSE_LDL_MAX_WIDTH`` (``sn_first``, ``sn_width``): the chain's own rows column by
   column, then each shared row once for the whole chunk, the sum in a register. Every entry sees
   its updates in the order of one column at a time, and the transposed sweep sums as the ``scan``
-  schedule does, so the result is that schedule's bit for bit. Linear in ``b``, with that
-  derivative; the derivative in the factor is not implemented (``SparseLDL.solve`` differentiates
-  implicitly and never needs it)."""
+  schedule does, so the result is that schedule's, bit for bit but for the sign of a zero or a NaN.
+  Linear in ``b``, with that derivative; the derivative in the factor is not implemented
+  (``SparseLDL.solve`` differentiates implicitly and never needs it)."""
   factor, b = as_expr(factor), as_expr(b)
   missing = [k for k in SPARSE_LDL_SOLVE_TABLES if k not in tables]
   if missing:
@@ -1035,10 +1072,20 @@ def sparse_ldl_solve(factor: Any, b: Any, tables: dict[str, Any]) -> Expr:
     raise ValueError(
       f"sparse_ldl_solve of order {n} needs a factor of {attrs['l_rows'].size + n} and a right-hand side of {n}, got {factor.shape} and {b.shape}"
     )
-  if attrs["sn_width"].size != attrs["sn_first"].size or int(attrs["sn_width"].sum()) != n:
-    raise ValueError("sparse_ldl_solve chunks must cover every column once")
-  if attrs["sn_width"].size and (attrs["sn_width"].min() < 1 or attrs["sn_width"].max() > SPARSE_LDL_MAX_WIDTH):
+  first, width = attrs["sn_first"], attrs["sn_width"]
+  if width.size != first.size or int(width.sum()) != n or not np.array_equal(first, np.cumsum(width) - width):
+    raise ValueError("sparse_ldl_solve chunks must cover every column once, in order")
+  if width.size and (width.min() < 1 or width.max() > SPARSE_LDL_MAX_WIDTH):
     raise ValueError(f"sparse_ldl_solve chunks cover 1 to {SPARSE_LDL_MAX_WIDTH} columns")
+  if not np.array_equal(np.sort(attrs["perm"]), np.arange(n)):
+    raise ValueError("sparse_ldl_solve: perm must be a permutation of the columns")
+  _check_l_pattern(attrs, n, "sparse_ldl_solve")
+  l_ptr, l_rows = attrs["l_ptr"], attrs["l_rows"]
+  for f, w in zip(first.tolist(), width.tolist(), strict=True):
+    for c in range(f, f + w - 1):  # a chain: each column's rows the next column, then that column's rows
+      rows = l_rows[l_ptr[c] : l_ptr[c + 1]]
+      if rows.size == 0 or rows[0] != c + 1 or not np.array_equal(rows[1:], l_rows[l_ptr[c + 1] : l_ptr[c + 2]]):
+        raise ValueError(f"sparse_ldl_solve: columns {f}..{f + w - 1} are not a chain")
   return Expr(
     ExprOp.SPARSE_LDL_SOLVE,
     (factor, b),

@@ -974,6 +974,7 @@ tests/linalg/test_sparse_ldl.py::test_accuracy_across_regularization[1e-10]
 tests/linalg/test_sparse_ldl.py::test_accuracy_across_regularization[1e-13]
 tests/linalg/test_sparse_ldl.py::test_auto_schedule_follows_the_option
 tests/linalg/test_sparse_ldl.py::test_chunks_group_columns_with_the_same_rows
+tests/linalg/test_sparse_ldl.py::test_derivatives_through_a_function_that_solves_with_a_given_factor
 tests/linalg/test_sparse_ldl.py::test_every_loop_runs_in_place_and_one_factorization_serves_every_solve
 tests/linalg/test_sparse_ldl.py::test_every_solve_variant_in_one_graph[loop]
 tests/linalg/test_sparse_ldl.py::test_every_solve_variant_in_one_graph[scan]
@@ -1086,6 +1087,7 @@ tests/linalg/test_sparse_ldl.py::test_factor_and_solve[mpc-rcm-lower-unroll]
 tests/linalg/test_sparse_ldl.py::test_factor_and_solve[mpc-rcm-upper-loop]
 tests/linalg/test_sparse_ldl.py::test_factor_and_solve[mpc-rcm-upper-scan]
 tests/linalg/test_sparse_ldl.py::test_factor_and_solve[mpc-rcm-upper-unroll]
+tests/linalg/test_sparse_ldl.py::test_factor_sparsity_of_a_diagonal_matrix
 tests/linalg/test_sparse_ldl.py::test_forward_mode_never_differentiates_the_factorization
 tests/linalg/test_sparse_ldl.py::test_full_pattern_derivative_reads_the_lower_entry
 tests/linalg/test_sparse_ldl.py::test_implicit_derivatives[loop]
@@ -1097,6 +1099,11 @@ tests/linalg/test_sparse_ldl.py::test_loop_factorization_has_no_derivative_of_it
 tests/linalg/test_sparse_ldl.py::test_loop_factorization_inside_a_called_function
 tests/linalg/test_sparse_ldl.py::test_loop_factorization_propagates_inf_and_nan_as_the_scan_does
 tests/linalg/test_sparse_ldl.py::test_loop_schedule_is_the_scan_bit_for_bit
+tests/linalg/test_sparse_ldl.py::test_loop_schedule_on_the_smallest_patterns[dense2]
+tests/linalg/test_sparse_ldl.py::test_loop_schedule_on_the_smallest_patterns[diag2]
+tests/linalg/test_sparse_ldl.py::test_loop_schedule_on_the_smallest_patterns[n1]
+tests/linalg/test_sparse_ldl.py::test_loop_schedule_on_the_smallest_patterns[one_offdiag]
+tests/linalg/test_sparse_ldl.py::test_loop_schedule_on_the_smallest_patterns[tridiag3]
 tests/linalg/test_sparse_ldl.py::test_matrix_right_hand_side_derivatives[loop]
 tests/linalg/test_sparse_ldl.py::test_matrix_right_hand_side_derivatives[scan]
 tests/linalg/test_sparse_ldl.py::test_matrix_right_hand_side_derivatives[unroll]
@@ -1128,6 +1135,7 @@ tests/linalg/test_sparse_ldl.py::test_sparse_ldl_factor_validates_its_tables
 tests/linalg/test_sparse_ldl.py::test_sparse_ldl_solve_validates_its_tables
 tests/linalg/test_sparse_ldl.py::test_the_looped_solve_is_linear_in_the_right_hand_side
 tests/linalg/test_sparse_ldl.py::test_third_derivatives_go_through_the_loops
+tests/linalg/test_sparse_ldl.py::test_third_derivatives_in_the_matrix_need_the_scan_schedule
 tests/linalg/test_sparse_ldl.py::test_unrolled_schedule_is_straight_line_code
 tests/linalg/test_sparse_ldl.py::test_validation
 tests/linalg/test_sparse_matrix.py::test_compact_values_cross_the_function_boundary
@@ -1464,6 +1472,7 @@ tests/passes/test_program.py::test_deep_scalar_fold_through_scalarize_runs
 tests/passes/test_program.py::test_early_exit_loops_survive_every_program_pass
 tests/passes/test_program.py::test_flat_per_stage_fold_at_a_hundred_stages_runs
 tests/passes/test_program.py::test_fold_after_unit_unroll_reads_nonuniform_constant_table
+tests/passes/test_program.py::test_fold_leaves_a_constant_read_past_its_table
 tests/passes/test_program.py::test_fusion_collapses_elementwise_chain
 tests/passes/test_program.py::test_fusion_counts_expensive_work_through_producer_chains
 tests/passes/test_program.py::test_fusion_does_not_move_a_read_past_a_write
@@ -1749,8 +1758,10 @@ tests/solvers/ipm/test_algorithm.py::test_the_result_matches_the_reference[unbou
 tests/solvers/ipm/test_algorithm.py::test_the_result_matches_the_reference[unbounded_lp-sparse]
 tests/solvers/ipm/test_algorithm.py::test_trace_rows_are_the_rows_piqp_prints
 tests/solvers/ipm/test_kkt.py::test_a_noise_pivot_turns_refinement_on_and_nothing_more
-tests/solvers/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[dense]
-tests/solvers/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[sparse]
+tests/solvers/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[dense-0.0]
+tests/solvers/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[dense-100.0]
+tests/solvers/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[sparse-0.0]
+tests/solvers/ipm/test_kkt.py::test_a_solve_without_refinement_is_the_plain_solve[sparse-100.0]
 tests/solvers/ipm/test_kkt.py::test_free_rows_and_mpc[dense]
 tests/solvers/ipm/test_kkt.py::test_free_rows_and_mpc[sparse]
 tests/solvers/ipm/test_kkt.py::test_refinement_stops_when_it_slows[CVXQP1_S-dense]

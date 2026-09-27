@@ -134,20 +134,24 @@ def test_a_noise_pivot_turns_refinement_on_and_nothing_more() -> None:
   zero = _noise_pivot(1.0, 0.0)
   assert zero["ok"] == 0.0 and zero["retries"] == 10.0
 
-  # With no retries allowed, a failure still turns refinement on once, as PIQP's loop does.
+  # With no retries allowed a failure still turns refinement on once, as PIQP's loop would (its
+  # settings refuse 0 retries, the generated solver takes it); with refinement already on, nothing.
   assert _noise_pivot(1.0, 0.0, retries=0) == {"ok": 0.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0}
+  assert _noise_pivot(1.0, 1.0, retries=0) == {"ok": 0.0, "ir": 1.0, "delta": 1e-4, "retries": 0.0}
 
 
+@pytest.mark.parametrize("tolerance", [0.0, 1e2])
 @pytest.mark.parametrize("backend", ["dense", "sparse"])
-def test_a_solve_without_refinement_is_the_plain_solve(backend: Backend) -> None:
+def test_a_solve_without_refinement_is_the_plain_solve(backend: Backend, tolerance: float) -> None:
   """Refinement off, the solve is the kernel's solve to the last bit: its gate stays shut even where
-  refinement would change the answer (tolerance zero: every residual is above it)."""
+  refinement would change the answer (tolerance zero: every residual is above it). Refinement on,
+  a residual already below the tolerance takes no step: the plain solve again."""
   qp = maros_meszaros("QAFIRO")
   s, values = ipm_inputs(qp)
   syms = {k: sc.sym(k, np.shape(values[k])) for k in ORDER}
   v = QPValues.preprocess(s, **syms)
   q = scale(s, v, ruiz(s, v))
-  kern = Kernels(s, backend, Refinement(eps_abs=0.0, eps_rel=0.0), name=f"plain_{backend}")
+  kern = Kernels(s, backend, Refinement(eps_abs=tolerance, eps_rel=0.0), name=f"plain_{backend}_{int(tolerance)}")
   kkt = KKT(kern, q)
   sizes = Iterate.sizes(s)
   it_sym, rhs_sym, ir = sc.sym("it", (sum(sizes),)), sc.sym("r", (kern.size,)), sc.sym("ir", ())
@@ -155,7 +159,11 @@ def test_a_solve_without_refinement_is_the_plain_solve(backend: Backend) -> None
   plain = kern._solve.symbolic_call((factor.record, kkt.data, rhs_sym))
   gated = kern.solve(factor.record, kkt.data, rhs_sym, ir > 0.5)
   fn = sc.Function._from_exprs(
-    f"plain_{backend}", [*(syms[k] for k in ORDER), it_sym, rhs_sym, ir], [plain, gated], [*ORDER, "it", "r", "ir"], ["plain", "gated"]
+    f"plain_{backend}_{int(tolerance)}",
+    [*(syms[k] for k in ORDER), it_sym, rhs_sym, ir],
+    [plain, gated],
+    [*ORDER, "it", "r", "ir"],
+    ["plain", "gated"],
   )
   d = ref.Solver(qp, ref.Settings()).data
   it, _ = _random_state(d, np.random.default_rng(1))
@@ -164,4 +172,7 @@ def test_a_solve_without_refinement_is_the_plain_solve(backend: Backend) -> None
   np.testing.assert_array_equal(off_gated, off)
   on, on_gated = fn((*args, np.array(1.0)))
   np.testing.assert_array_equal(on, off)
-  assert not np.array_equal(on_gated, on)  # refined: the gate does open
+  if tolerance:
+    np.testing.assert_array_equal(on_gated, on)  # the gate opens, and no step is taken
+  else:
+    assert not np.array_equal(on_gated, on)  # refined: the gate does open

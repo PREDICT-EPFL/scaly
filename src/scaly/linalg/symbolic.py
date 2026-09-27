@@ -131,7 +131,7 @@ class SymbolicLDL:
   def _lane_tables(self) -> dict[str, np.ndarray]:
     """The update lanes, one entry per multiply-add: built on first use, since a factorization that
     loops over the runs of each column never needs them."""
-    if not self._lanes:
+    if "u_rows" not in self._lanes:  # the cache also holds the chunk tables
       counts = self.l_ptr[self.r_cols + 1] - self.r_pos
       starts = np.repeat(self.r_pos, counts)
       offsets = np.arange(starts.size) - np.repeat(np.cumsum(counts) - counts, counts)

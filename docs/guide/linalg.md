@@ -47,8 +47,11 @@ mode and to second order.
 op is built) become straight-line code, which scalar expansion keeps in registers. Larger orders
 become loops with triangular bounds that do not grow with the order:
 
-- The factorizations run row by row, taking dot products of contiguous rows.
-- Dot products use four interleaved partial sums.
+- `cholesky` runs by 4×4 tiles of `L`: a tile's dot products over the columns to its left run
+  together, each row entry loaded once for the whole tile and the sums kept in registers, each dot
+  product in four partial sums over contiguous quarters of its columns. About 12 G multiply-adds a
+  second at order 300 on an Apple M3, three times the row-by-row kernel it replaced.
+- `ldl` runs row by row, taking dot products of contiguous rows in four interleaved partial sums.
 - A solve with the matrix transposed sweeps rows of the triangle, which are contiguous.
 - Several right-hand sides are handled a row of `X` at a time, four rows of the triangle per pass.
 
@@ -80,7 +83,7 @@ stored, even where its value is zero: a zero block of `SparseMatrix.block` store
 
 - `symbolic` reuses an analysis (`linalg.analyze`, or another factorization's `.symbolic`); it is
   checked against the matrix's pattern.
-- `cost` is the `CostModel` that chooses the loop segments.
+- `cost` is the `CostModel` that chooses the loop segments of the `scan` schedule.
 - `name` prefixes the generated procedures, and must differ between factorizations in one graph.
 - `fact.l_values` and `fact.d` are `L` below the diagonal (CSC of the permuted matrix) and `D`, in
   the order of `fact.symbolic.perm`.
@@ -110,11 +113,11 @@ the `scan` schedule.) The loop nest of `schedule="loop"` (`ir.expr.sparse_ldl_fa
   those rows applies all of them, the sum held in a register, so the work column is read and
   written once per chunk instead of once per column.
 - Each column's updates keep the order of one column at a time, so the factor is the `scan`
-  schedule's to the last bit, 1.5 to 2.4 times faster.
+  schedule's (to the last bit, but for the sign of a zero or of a NaN), 1.5 to 2.4 times faster
+  (chunks of up to eight columns; `internal/notes/ipm_speed_report.html`).
 - The solve (`ir.expr.sparse_ldl_solve`) takes the forward sweep by chains of columns (a
   supernode's): each row below a chain is updated once for the whole chain, and the diagonal and
-  the output permutation fold into the backward sweep. It too is the `scan` schedule's to the last
-  bit.
+  the output permutation fold into the backward sweep. It too gives the `scan` schedule's values.
 - The factor has no derivative of its own: `solve` differentiates implicitly and never needs one,
   and `schedule="scan"` differentiates the factorization through its loops. The looped solve is
   differentiable in its right-hand side.
@@ -136,13 +139,15 @@ The `scan` schedule:
 K^{-1} xbar` and `Kbar = -bbar x^T` on the entries the factorization reads (a mirrored pair
 contributes through its lower entry). The factorization loops themselves are never differentiated
 to first or second order: second derivatives use the same rules, one level deeper. Third
-derivatives do go through the loops, and on a large system can exceed
-`sc.options(max_trajectory=...)` ([Options](options.md)). Multi-seed forward mode maps the rule over
+derivatives in the matrix reach the factorization itself: the `loop` schedule (the default above
+`sparse_unroll`) refuses them, and `schedule="scan"` takes them through its loops, where on a large
+system they can exceed `sc.options(max_trajectory=...)` ([Options](options.md)). Multi-seed forward mode maps the rule over
 the seeds for a vector right-hand side; with a matrix of right-hand sides it runs one seed at a time.
 
 **Speed.** Against an up-looking C factorization of the QDLDL kind on the same matrix and analysis,
-MPC, random QP and grid systems factor within 1.0–1.5× and solve within 0.5–2.1×
-(`internal/notes/tier2_pr8_report.html`, `tier2_review_report.html`). The slowest solves are the
+the `scan` schedule factors MPC, random QP and grid systems within 1.0–1.5× and solves within
+0.5–2.1× (`internal/notes/tier2_pr8_report.html`, `tier2_review_report.html`); the `loop` schedule
+factors 1.5 to 2.4 times faster than the `scan` schedule. The slowest solves are the
 smallest, where two permutation gathers and the diagonal scaling are a large share of the work.
 
 **Generation cost.** Generation grows with `nnz(L)`, not with the work of the factorization. The

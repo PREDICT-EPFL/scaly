@@ -273,6 +273,25 @@ def test_fold_after_unit_unroll_reads_nonuniform_constant_table() -> None:
   assert stores[0].args[1].attrs["value"] == 7.0
 
 
+def test_fold_leaves_a_constant_read_past_its_table() -> None:
+  """A read of a uniform table folds to its value wherever it lands, but a constant index past the
+  table's end (in code that never runs, a branch for a width no chunk has) stays a load: folding it
+  read past the Python tuple."""
+  table = ProgramNode(
+    ProgramOp.BUFFER,
+    (),
+    {"name": "table", "shape": (1,), "address_space": "constant", "values": (4.0,)},
+    dtypes.float64,
+  )
+  y = buffer("y", dtypes.float64, (2,))
+  inside = store(view(y, [const_int(0)]), load(view(table, [const_int(0)])))
+  past = store(view(y, [const_int(1)]), load(view(table, [const_int(3)])))
+  result = fold_arith(program([proc_("past_end", [y], [table, inside, past])])).args[0]
+  stores = [node for node in result.args if node.op == ProgramOp.STORE]
+  assert stores[0].args[1].op == ProgramOp.CONST_FLOAT and stores[0].args[1].attrs["value"] == 4.0
+  assert stores[1].args[1].op == ProgramOp.LOAD
+
+
 def test_procedure_pruning_keeps_entry_calls_and_solver_oracles_in_order() -> None:
   leaf = proc_("leaf", [], [])
   dead = proc_("dead", [], [])

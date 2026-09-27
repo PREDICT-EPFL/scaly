@@ -125,18 +125,26 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     callee, output = expr.attrs["callee"], expr.attrs["output"]
     seeded = [wrt for wrt, seed in seeds.items() if not _is_zero_const(seed)]
     candidates = tuple(i for i, arg in enumerate(expr.args) if any(_depends_on(arg, wrt, dep_memo) for wrt in seeded))
-    _, _, read = _call_jvp_function(callee, output, candidates) if candidates else (None, (), ())
+    try:
+      _, _, read = _call_jvp_function(callee, output, candidates) if candidates else (None, (), ())
+    except NotImplementedError:
+      # The callee cannot be differentiated in every argument that depends on the seeds (one enters
+      # through a comparison, say): form every tangent and keep the nonzero ones, as it is done
+      # without the probe.
+      read = tuple(range(len(expr.args)))
+      candidates = tuple(i for i in candidates if not _is_zero_const(_jvp(expr.args[i], seeds, memo, dep_memo)))
     tangents = [_jvp(arg, seeds, memo, dep_memo) if i in read else zeros_like(arg) for i, arg in enumerate(expr.args)]
     active = tuple(i for i in candidates if i not in read or not _is_zero_const(tangents[i]))
     if not active:
       memo[expr.id] = ret = zeros_like(expr)
       return ret
     fn, arg_indices, seed_indices = _call_jvp_function(callee, output, active)
+    if not seed_indices:  # the derivative reads no tangent: it is zero
+      memo[expr.id] = ret = zeros_like(expr)
+      return ret
     if expr.op == ExprOp.CALL:
       call_args = [expr.args[i] for i in arg_indices] + [tangents[i] for i in seed_indices]
       memo[expr.id] = ret = fn._flat_symbolic_call(call_args)[0]
-    elif not seed_indices:
-      memo[expr.id] = ret = zeros_like(expr)
     else:
       starts, strides = expr.attrs["starts"], expr.attrs["strides"]
       specs = [(expr.args[i], starts[i], strides[i]) for i in arg_indices] + [(tangents[i], starts[i], strides[i]) for i in seed_indices]

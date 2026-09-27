@@ -98,7 +98,8 @@ def _sparse_ldl_reads(expr: Expr) -> sparse.csr_array:
   n = a["a_ptr"].size - 1
   l_ptr, l_rows = a["l_ptr"], a["l_rows"]
   counts = np.diff(l_ptr)
-  parent = np.where(counts > 0, l_rows[np.minimum(l_ptr[:-1], max(l_rows.size - 1, 0))], -1)
+  parent = np.full(n, -1, dtype=np.int64)
+  parent[counts > 0] = l_rows[l_ptr[:-1][counts > 0]]
   anc_rows, anc_cols = [], []
   for k in range(n):  # k lies in the subtree of each of its ancestors, itself included
     j = k

@@ -429,8 +429,9 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       left-looking factorization whose column updates come in chunks of up to four columns with the
       same rows from `j` down (`SymbolicLDL.chunks`), one pass over the work column per chunk with the
       sum in a register, no padding, no per-step call, the work column cleared as it is read. The
-      update order per entry is the scan's, so the factor is the `scan` schedule's bit for bit (every
-      test matrix, triangle and ordering; inf and NaN too). Factorization 1.5-2.2x faster (C prototype
+      update order per entry is the scan's, so the factor is the `scan` schedule's bit for bit but for
+      the sign of a zero or a NaN (every test matrix, triangle and ordering; inf and NaN too; the
+      review found the zero signs). Chunks of up to four columns, eight since C-139. Factorization 1.5-2.2x faster (C prototype
       on 11 KKT patterns); the generated sparse IPM 0.81x its time (geometric mean over 18 problems,
       identical iterations and solutions). The op has no derivative of its own (the solve's implicit
       rules never need it; `schedule="scan"` stays differentiable): forward mode now forms only the
@@ -485,6 +486,23 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       Sparse IPM 0.975x (23 problems, every one faster or equal, solutions identical). Chunking the
       backward sweep too would need four partial sums per column aligned per column to stay bit for
       bit; not done. 10 mutants: all killed, two after a new test (a factor given as an input).
+- [x] **C-141. Review round for C-135 ... C-140.** Three agents (IR/lowering, AD, IPM and tests).
+      Fixed, each with a test that fails without the fix: `schedule="loop"` failed to compile with
+      one entry in `L` or one column (a branch for a chunk width the analysis does not have folded a
+      table read past its end: `fold_arith` now leaves a constant index outside its table alone,
+      and the loop nests have loops only for the widths present); `SymbolicLDL.chunks` hid the lane
+      tables it shares a cache with; the elimination-subtree sparsity rule crashed on a diagonal
+      matrix; reverse mode through a plain Function taking the factor asked the factor for a
+      cotangent (a call is now differentiated only in the formals that depend on the variables, as
+      maps and loops are); forward mode through a call with an argument whose tangent is a known zero
+      regressed when the probe of which tangents are read could not be built (it falls back to
+      forming them all); the builders now check every table they index. Claims corrected: the loop
+      schedules equal the scan's bit for bit but for zero and NaN signs; third derivatives in the
+      matrix need `schedule="scan"`. Gaps closed: the dense gate now bounds the iterations of a
+      rounding-sensitive problem (within 3 of one of PIQP's runs, which kills a less accurate
+      Cholesky: QSHARE1B 56 against 27); refinement takes no step when the residual is already
+      small; zero retries with refinement on. 7 mutants on the fixes, 6 killed, 1 equivalent (loops
+      for every width again: the `fold_arith` fix alone makes them harmless).
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 
