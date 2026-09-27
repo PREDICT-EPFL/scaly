@@ -11,6 +11,8 @@ Step 1 coverage: elementwise unary/binary (identical shapes), RESHAPE, small CON
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 
@@ -644,6 +646,26 @@ def test_max_and_min_reductions_in_four_lanes(n: int) -> None:
     assert "kb_" in render_c_source(fn)
 
 
+@pytest.mark.parametrize("n", [7, 64, 203])
+def test_elementwise_producers_fuse_into_extremum_reductions(n: int) -> None:
+  """Every read of the reduced vector sits in one statement, so an elementwise producer is inlined
+  into the reduction rather than stored first: ``norm_inf(x - 2 y)`` and a guarded ratio's minimum
+  keep no vector of their own, and give NumPy's values, NaN included."""
+  from scaly.ir.expr import norm_inf, reduce_min
+
+  x, y = sc.sym("x", n), sc.sym("y", n)
+  fn = sc.Function._from_exprs(f"fused_ext_{n}", [x, y], [norm_inf(x - 2.0 * y), reduce_min(sc.where(y < 0.0, -x / y, 1e30))], ["x", "y"], ["a", "b"])
+  body = render_c_source(fn).split(f"int fused_ext_{n}(")[1]
+  assert not re.search(rf"double \w+\[{n}\]", body) and "w + " not in body, "a vector temporary survived"
+  rng = np.random.default_rng(n)
+  xv, yv = rng.standard_normal(n), rng.standard_normal(n)
+  a, b = fn((xv, yv))
+  assert a == np.abs(xv - 2 * yv).max() and b == np.min(np.where(yv < 0, -xv / yv, 1e30))
+  xv[n // 2] = np.nan
+  a, _ = fn((xv, yv))
+  assert np.isnan(a)
+
+
 @pytest.mark.parametrize("sort", [True, False])
 def test_segment_extrema_in_runs(sort: bool) -> None:
   """Bins in runs (a sorted table, as CSC column ids are) reduce run by run in a register; other
@@ -654,7 +676,9 @@ def test_segment_extrema_in_runs(sort: bool) -> None:
   idx = rng.integers(0, 40, 400)
   idx = np.sort(idx) if sort else idx
   x = sc.sym("x", 400)
-  fn = sc.Function._from_exprs(f"seg_runs_{int(sort)}", [x], [segment_max(x, idx, 41, fill=0.0), segment_min(x, idx, 41, fill=-1.0)], ["x"], ["a", "b"])
+  fn = sc.Function._from_exprs(
+    f"seg_runs_{int(sort)}", [x], [segment_max(x, idx, 41, fill=0.0), segment_min(x, idx, 41, fill=-1.0)], ["x"], ["a", "b"]
+  )
   v = rng.standard_normal(400)
   v[[7, 200]] = np.nan
   want_a, want_b = np.zeros(41), np.full(41, -1.0)

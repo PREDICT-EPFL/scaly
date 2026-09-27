@@ -1373,6 +1373,9 @@ tests/passes/test_lowering.py::test_covered_function_renders_through_program_ir[
 tests/passes/test_lowering.py::test_covered_function_renders_through_program_ir[_trig_chain]
 tests/passes/test_lowering.py::test_covered_function_renders_through_program_ir[_vecmat]
 tests/passes/test_lowering.py::test_covered_function_renders_through_program_ir[_vmap]
+tests/passes/test_lowering.py::test_elementwise_producers_fuse_into_extremum_reductions[203]
+tests/passes/test_lowering.py::test_elementwise_producers_fuse_into_extremum_reductions[64]
+tests/passes/test_lowering.py::test_elementwise_producers_fuse_into_extremum_reductions[7]
 tests/passes/test_lowering.py::test_empty_reduction_and_output_leave_adjacent_memory_untouched
 tests/passes/test_lowering.py::test_gather_fed_chained_vmaps_render_through_program_ir
 tests/passes/test_lowering.py::test_hoisting_keeps_a_loop_count_with_its_loop

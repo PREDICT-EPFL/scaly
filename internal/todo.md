@@ -450,6 +450,13 @@ Reports: `notes/tier2_pr*_report.html`; timings: `notes/perf_2026_09_26_tier2/`.
       (PIQP's dense backend takes 23 and 20); the decision-trace gate holds. `ldl` keeps the
       entry-at-a-time Crout loops. 7 mutants, all killed (`perf_2026_09_27_ipm_speed/`,
       `notes/ipm_speed_report.html`).
+- [x] **C-137. Elementwise producers fuse into max/min reductions (part of C-89).** The four-lane
+      extremum read its vector in up to six statements (four lane starts, the blocked loop, the
+      tail), and `fuse_elementwise` inlines a producer only into one consumer statement: every
+      `norm_inf(x - y)`, residual maximum and step-length minimum stored its vector first. The reads
+      now sit in one loop run once, which `unroll_unit_loops` removes after fusion: the same
+      arithmetic, no vector temporary. 0.975x on the sparse IPM (geometric mean, 18 problems; up to
+      0.89x where the step dominates). 2 mutants, both killed.
 - [ ] **C-122. `Expr` indexing papercuts.** `x[np.int64(2)]` is refused (a Python `int` works), and
       `x[np.array([0, 2])]` fails with NumPy's truth-value error instead of pointing to `sc.gather`.
 

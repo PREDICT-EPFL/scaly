@@ -724,22 +724,29 @@ def _lower_extremum(ctx: LowerCtx, node: Expr) -> None:
   def at(k: ProgramNode) -> ProgramNode:
     return p.load(p.view(src_buf, [k]))
 
+  def reads(stmts: list[ProgramNode]) -> None:
+    # Every read of the source in one statement, a loop run once, so that ``fuse_elementwise`` can
+    # inline an elementwise producer into the reduction; ``unroll_unit_loops`` then removes the loop.
+    ctx.statements.append(p.for_(p.range_(f"ko_{acc.attrs['name']}", 0, 1), stmts))
+
   if n < 8:
     slot = p.view(acc, [c(0)])
-    ctx.statements.append(p.store(slot, at(c(0))))
+    first = [p.store(slot, at(c(0)))]
     if n > 1:
       name = f"i_{acc.attrs['name']}"
       rng = p.range_(name, 1, n, kind=RangeKind.REDUCE)
-      ctx.statements.append(p.for_(rng, [p.store(slot, pick(p.load(slot), at(p.var(name))))]))
+      first.append(p.for_(rng, [p.store(slot, pick(p.load(slot), at(p.var(name))))]))
+    reads(first)
     return
   slots = [p.view(ctx.new_private(node.type.dtype, ()), [c(0)]) for _ in range(4)]
-  ctx.statements.extend(p.store(s, at(c(q))) for q, s in enumerate(slots))
+  stmts = [p.store(s, at(c(q))) for q, s in enumerate(slots)]
   tail = n - (n - 4) % 4
   kb, kt = f"kb_{acc.attrs['name']}", f"kt_{acc.attrs['name']}"
   block = [p.store(s, pick(p.load(s), at(p.add(p.var(kb), c(q))))) for q, s in enumerate(slots)]
-  ctx.statements.append(p.for_(p.range_(kb, 4, tail, step=4, kind=RangeKind.REDUCE), block))
+  stmts.append(p.for_(p.range_(kb, 4, tail, step=4, kind=RangeKind.REDUCE), block))
   if tail < n:
-    ctx.statements.append(p.for_(p.range_(kt, tail, n, kind=RangeKind.REDUCE), [p.store(slots[0], pick(p.load(slots[0]), at(p.var(kt))))]))
+    stmts.append(p.for_(p.range_(kt, tail, n, kind=RangeKind.REDUCE), [p.store(slots[0], pick(p.load(slots[0]), at(p.var(kt))))]))
+  reads(stmts)
   total = p.load(slots[0])
   for s in slots[1:]:
     total = pick(total, p.load(s))
