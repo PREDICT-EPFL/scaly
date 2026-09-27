@@ -66,7 +66,7 @@ def build(verbose: bool = False):
 
   def run():
     xf_test, qf_test = F((np.array([0.2, 0.3]), np.array([0.4])))  # the original's check of one interval
-    u, *_ = solve((np.zeros(N), np.zeros(N), np.zeros(0), np.zeros(N), ()))
+    u, *_ = solve(np.zeros(N), np.zeros(N), np.zeros(0), np.zeros(N), ())
     stats = solve.solver_stats()
     x = np.vstack([X_START, rollout(u)[:, :2]])
     return {"xf_test": xf_test, "qf_test": qf_test, "f": np.array([stats.obj]), "u": u, "x1": x[:, 0], "x2": x[:, 1], "iter": np.array([stats.iter])}

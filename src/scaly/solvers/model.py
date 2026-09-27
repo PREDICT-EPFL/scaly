@@ -7,8 +7,7 @@ from typing import Any
 
 from ..ir.expr import Expr, ExprOp
 from ..function import ConcreteFunction
-from ..function.tree import Tree
-from ..function.tree import flat_tree
+from ..function.tree import Tree, _G, flat_tree, param_list
 from ..ir.types import SparsityType, TensorType
 
 
@@ -101,10 +100,14 @@ class SolverDescriptor:
 
 def descriptor_function(
   descriptor: SolverDescriptor,
-  input_tree: Tree[Any, Any] | None = None,
+  input_tree: _G | None = None,
   output_tree: Tree[Any, Any] | None = None,
 ) -> ConcreteFunction[Any, Any, Any, Any]:
-  """Build the plain Function whose opaque outputs share ``descriptor``."""
+  """Build the plain Function whose opaque outputs share ``descriptor``.
+
+  ``input_tree`` is its parameter list: for a solver, the five slots of the warm start, the
+  multipliers and the parameters. Without one the inputs are a single group, as for ``_from_exprs``.
+  """
   input_exprs = tuple(Expr.sym(name, shape if shape else (), diff=False) for name, shape in descriptor.input_signature)
   args = tuple(input_exprs)
   output_exprs = tuple(
@@ -116,7 +119,7 @@ def descriptor_function(
     )
     for i, (name, shape) in enumerate(descriptor.output_signature)
   )
-  inputs = input_tree or flat_tree(tuple(name for name, _ in descriptor.input_signature), tuple(expr.type for expr in input_exprs))
+  inputs = input_tree or param_list(flat_tree(tuple(name for name, _ in descriptor.input_signature), tuple(expr.type for expr in input_exprs)))
   outputs = output_tree or flat_tree(tuple(name for name, _ in descriptor.output_signature), tuple(expr.type for expr in output_exprs))
   function = ConcreteFunction._from_exprs(
     descriptor.name,

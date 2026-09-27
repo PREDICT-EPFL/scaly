@@ -367,6 +367,7 @@ tests/codegen/test_cpp.py::test_cpp_header_compiles_and_runs
 tests/codegen/test_cpp.py::test_cpp_header_declares_namespace_buffers_and_constexpr_tables
 tests/codegen/test_cpp.py::test_headers_split_names_shared_by_an_input_and_an_output
 tests/codegen/test_cpp.py::test_headers_survive_buffer_names_that_collide_with_the_wrapper
+tests/codegen/test_cpp.py::test_parameters_named_like_keywords_compile_from_c_and_cpp
 tests/codegen/test_input_validation.py::test_jit_reports_input_errors
 tests/codegen/test_jit.py::test_a_dropped_function_frees_its_workspace_at_once
 tests/codegen/test_jit.py::test_a_failing_compile_is_not_retried
@@ -426,7 +427,10 @@ tests/codegen/test_vmap.py::test_vmap_c_source_loop_size_is_independent_of_lengt
 tests/codegen/test_vmap.py::test_vmap_compiled_c_matches_unrolled_concat
 tests/codegen/test_vmap.py::test_vmap_jit_matches_unrolled_numpy
 tests/codegen/test_vmap.py::test_vmap_sparse_hessian_c_source_is_constant_in_length
+tests/function/test_api.py::test_a_body_takes_one_argument_per_declared_parameter
 tests/function/test_api.py::test_adjoint_convenience_api_matches_factory
+tests/function/test_api.py::test_an_unnamed_leaf_outside_a_decorator_is_refused
+tests/function/test_api.py::test_arity_and_keyword_errors_name_the_parameters
 tests/function/test_api.py::test_decorator_refuses_parameters_that_are_not_plain_positional[default]
 tests/function/test_api.py::test_decorator_refuses_parameters_that_are_not_plain_positional[keyword_only]
 tests/function/test_api.py::test_decorator_refuses_parameters_that_are_not_plain_positional[var_keyword]
@@ -440,8 +444,11 @@ tests/function/test_api.py::test_gradient_convenience_api_matches_factory
 tests/function/test_api.py::test_lagrangian_hessian_convenience_api
 tests/function/test_api.py::test_scoped_function_decorator_builds_fresh_named_function
 tests/function/test_api.py::test_scoped_function_decorator_outputs_default_names
+tests/function/test_api.py::test_seeded_derivatives_append_one_parameter
 tests/function/test_api.py::test_seeded_factory_outputs_require_seed_inputs
 tests/function/test_api.py::test_the_old_two_positional_decorator_is_refused_with_the_migration_hint
+tests/function/test_api.py::test_unnamed_leaves_take_their_parameter_names
+tests/function/test_api.py::test_zero_and_eight_parameters
 tests/function/test_factory.py::test_adjoint_matches_casadi_sx
 tests/function/test_factory.py::test_forward_matches_casadi_sx
 tests/function/test_factory.py::test_gradient_matches_casadi_sx
@@ -451,12 +458,14 @@ tests/function/test_factory.py::test_jacobian_through_call_node_matches_casadi_m
 tests/function/test_model.py::test_function_call_node_eval
 tests/function/test_model.py::test_function_call_normalizes_raw_constant_args
 tests/function/test_model.py::test_function_signature_and_call_shape_errors
-tests/function/test_tree.py::test_call_dispatch_predicates_ignore_structure
+tests/function/test_tree.py::test_call_dispatch_ignores_structure
 tests/function/test_tree.py::test_call_dispatches_on_leaf_kind
 tests/function/test_tree.py::test_derivatives_preserve_source_trees
 tests/function/test_tree.py::test_function_call_validation_uses_declared_tree
 tests/function/test_tree.py::test_function_declarations_own_names_shapes_and_structure
+tests/function/test_tree.py::test_groups_and_parameter_lists_take_tree_specs
 tests/function/test_tree.py::test_lagrangian_hessians_accept_constant_output_leaves
+tests/function/test_tree.py::test_leaf_declarations_take_a_name_a_shape_or_both
 tests/function/test_tree.py::test_leaf_shapes_and_group_widths
 tests/function/test_tree.py::test_seeded_derivatives_accept_nondifferentiable_leaves
 tests/function/test_tree.py::test_tree_names_are_unique_and_symbols_follow_structure
@@ -1174,6 +1183,7 @@ tests/linalg/test_sparse_matrix.py::test_scalars_and_misfit_selections_are_refus
 tests/linalg/test_sparse_matrix.py::test_structural_helpers
 tests/linalg/test_sparse_matrix.py::test_validation
 tests/linalg/test_sparse_signature.py::test_a_returned_matrix_shares_no_structure_with_the_declaration
+tests/linalg/test_sparse_signature.py::test_an_unnamed_sparse_slot_takes_its_parameter_name
 tests/linalg/test_sparse_signature.py::test_declaration_errors
 tests/linalg/test_sparse_signature.py::test_derivatives_keep_the_sparse_signature
 tests/linalg/test_sparse_signature.py::test_duplicates_are_summed_without_touching_the_callers_matrix
@@ -2311,7 +2321,11 @@ tests/test_import_layering.py::test_tolerated_violations_are_still_violations
 tests/utils/test_names.py::test_c_identifier_spelling[1value-_1value]
 tests/utils/test_names.py::test_c_identifier_spelling[_h0-_h0]
 tests/utils/test_names.py::test_c_identifier_spelling[arg-arg_]
+tests/utils/test_names.py::test_c_identifier_spelling[default-default_]
 tests/utils/test_names.py::test_c_identifier_spelling[fwd:eq:z-fwd_eq_z]
+tests/utils/test_names.py::test_c_identifier_spelling[int-int_]
+tests/utils/test_names.py::test_c_identifier_spelling[new-new_]
+tests/utils/test_names.py::test_c_identifier_spelling[newer-newer]
 tests/utils/test_names.py::test_c_identifier_spelling[w-w_]
 tests/utils/test_options.py::test_a_block_is_local_to_its_thread
 tests/utils/test_options.py::test_default_nesting_and_restoration_after_an_exception

@@ -95,9 +95,9 @@ def build(verbose: bool = False):
   X0 = np.stack([Y_DATA, np.r_[yd, yd[-1]]], axis=1).reshape(-1)
 
   def run():
-    p_single, *_ = single((PARAM_GUESS, np.zeros(4), np.zeros(0), np.zeros(0), (U_DATA, Y_DATA)))
+    p_single, *_ = single(PARAM_GUESS, np.zeros(4), np.zeros(0), np.zeros(0), (U_DATA, Y_DATA))
     it_single = single.solver_stats().iter
-    (p_multiple, _), *_ = multiple(((PARAM_GUESS, X0), (np.zeros(4), np.zeros(2 * N)), np.zeros(2 * (N - 1)), np.zeros(0), (U_DATA, Y_DATA)))
+    (p_multiple, _), *_ = multiple((PARAM_GUESS, X0), (np.zeros(4), np.zeros(2 * N)), np.zeros(2 * (N - 1)), np.zeros(0), (U_DATA, Y_DATA))
     it_multiple = multiple.solver_stats().iter
     return {
       "params_single": p_single * SCALE,

@@ -1,8 +1,8 @@
 # Derivatives
 
 Derivative wrappers operate on either expressions or typed functions. Expression forms return an
-`Expr` or `SparseJacobian`. Function forms return another typed `Function` that keeps the source's
-complete input tree.
+`Expr` or `SparseJacobian`. Function forms return another typed `Function` that keeps every
+parameter of the source.
 
 ## Expression and function forms
 
@@ -26,8 +26,8 @@ Function forms take the declared output name `of` and input name `wrt`. An unkno
 the derivative is built and reports the declared choices. Pass `name=` to set the derived
 function's artifact name.
 
-Unseeded derivatives keep the source's input tree. If `fn` takes `(x, p)`, then
-`sc.gradient(fn, "f", "x")` also takes `(x, p)`:
+Unseeded derivatives take the same arguments as the source. If `fn` takes the group `(x, p)` as
+its one argument, so does `sc.gradient(fn, "f", "x")`:
 
 ```python
 grad = sc.gradient(fn, "f", "x")
@@ -43,29 +43,29 @@ full pattern's order.
 
 ## Seeded modes
 
-Forward and adjoint wrappers pair the source input tree with one seed leaf:
+Forward and adjoint wrappers take the source's arguments followed by one seed leaf:
 
 ```text
-forward inputs = (source_inputs, fwd:<wrt>)
-adjoint inputs = (source_inputs, lam:<of>)
+forward arguments = *source_arguments, fwd:<wrt>
+adjoint arguments = *source_arguments, lam:<of>
 ```
 
-For example:
+For the `fn` above, whose one argument is the group `(x, p)`:
 
 ```python
 fwd = sc.forward(fn, "y", "x")
-dy = fwd(((x_value, p_value), x_tangent))
+dy = fwd((x_value, p_value), x_tangent)
 
 adj = sc.adjoint(fn, "y", "x")
-dx = adj(((x_value, p_value), y_cotangent))
+dx = adj((x_value, p_value), y_cotangent)
 ```
 
 The seed shape is the shape of the named input or output.
 
 ## Lagrangian Hessians
 
-A Lagrangian wrapper weights every leaf in the source output tree. Its inputs pair the source input
-tree with a multiplier tree that has the source output structure:
+A Lagrangian wrapper weights every leaf in the source output tree. It takes the source's arguments
+followed by one multiplier argument that has the source output structure:
 
 ```python
 lag_hess = sc.lagrangian_hessian(fn, "x")
@@ -75,7 +75,7 @@ sparse_lag_hess = sc.sparse_lagrangian_hessian(
     triangle="lower",
 )
 
-dense = lag_hess(((x_value, p_value), (lam_f, lam_g)))
+dense = lag_hess((x_value, p_value), (lam_f, lam_g))
 ```
 
 The wrappers build an auxiliary scalar named `gamma` from the declared output order; pass

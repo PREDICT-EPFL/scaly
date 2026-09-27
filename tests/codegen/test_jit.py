@@ -133,7 +133,7 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
   solver = build_nlp(x=x, f=cost, p=param, name="hoisted_oracle_solver")
   if nested:
     inputs = (sc.const(np.zeros(3)), sc.const(np.zeros(3)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), param)
-    fun = sc.Function._from_exprs("hoisted_oracle_host", [param], [solver.symbolic_call(inputs)[0]], ["param"], ["solution"])
+    fun = sc.Function._from_exprs("hoisted_oracle_host", [param], [solver.symbolic_call(*inputs)[0]], ["param"], ["solution"])
   else:
     fun = solver
   module = render_c_module(fun)
@@ -142,7 +142,7 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
   names = {proc.attrs["name"] for proc in procs}
   assert all(name in names for oracles in module.program.attrs["solver_oracles"].values() for name in oracles)
   pv = np.array([0.2])
-  result = fun(pv) if nested else fun((np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0), pv))[0]
+  result = fun(pv) if nested else fun(np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0), pv)[0]
   np.testing.assert_allclose(result, np.full(3, np.exp(pv[0])), atol=1e-7)
 
 

@@ -74,29 +74,28 @@ IPOPT and scaly-sqp accept nonlinear problems.
 A problem caches its common objective, gradient, constraint Jacobian, and bounds oracles. Solvers
 that need different Hessian triangles share the common oracles and cache one Hessian per triangle.
 
-## Solver input and output structure
+## Solver arguments and results
 
-Every solver has the same five input groups and four output groups:
+Every solver takes the same five arguments and returns the same four results:
 
 ```text
-inputs  = (vars_init, lam_box0, lam_eq0, lam_ineq0, params)
-outputs = (vars,      lam_box,  lam_eq,  lam_ineq)
+arguments = vars_init, lam_box0, lam_eq0, lam_ineq0, params
+results   = vars,      lam_box,  lam_eq,  lam_ineq
 ```
 
-The variable and box-multiplier groups have the declared variable tree. The parameter group has the
-declared parameter tree. Equality and inequality multipliers are flat arrays whose lengths are
-`problem.n_eq` and `problem.n_ineq`. An absent category is still present as an array of length
-zero.
+The arguments are the warm start, the box multipliers, the equality multipliers, the inequality
+multipliers and the parameters. The warm start, the box multipliers and their results have the
+declared variable tree. The parameters have the declared parameter tree. Equality and inequality
+multipliers are flat arrays whose lengths are `problem.n_eq` and `problem.n_ineq`. An absent
+category is still passed, as an array of length zero.
 
 ```python
 result = solve(
-    (
-        (np.zeros(2), np.zeros(1)),
-        (np.zeros(2), np.zeros(1)),
-        np.zeros(1),
-        np.zeros(2),
-        (np.array([0.25, -0.75]), np.array([0.1])),
-    )
+    (np.zeros(2), np.zeros(1)),
+    (np.zeros(2), np.zeros(1)),
+    np.zeros(1),
+    np.zeros(2),
+    (np.array([0.25, -0.75]), np.array([0.1])),
 )
 (variables, lam_box, lam_eq, lam_ineq) = result
 u, slack = variables
@@ -119,8 +118,8 @@ subject to A x = b
            g_lb <= G x <= g_ub
 ```
 
-Its parameter structure is `((P, c), (A, b), (G, g_lb, g_ub))`. Use zero-sized arrays for absent
-constraint blocks:
+Its parameter structure is `((P, c), (A, b), (G, g_lb, g_ub))`, passed as the solver's fifth
+argument. Use zero-sized arrays for absent constraint blocks:
 
 ```python
 problem = sc.qp_problem(2, 0, 0)
@@ -131,9 +130,7 @@ data = (
     (np.zeros((0, 2)), np.zeros(0)),
     (np.zeros((0, 2)), np.zeros(0), np.zeros(0)),
 )
-x, lam_box, lam_eq, lam_ineq = solve_qp(
-    (np.zeros(2), np.zeros(2), np.zeros(0), np.zeros(0), data)
-)
+x, lam_box, lam_eq, lam_ineq = solve_qp(np.zeros(2), np.zeros(2), np.zeros(0), np.zeros(0), data)
 ```
 
 This helper goes through the same quadratic proof and extraction as any other `Problem`. Bounds on
@@ -160,7 +157,7 @@ adapters translate those values to the backend's native convention before solvin
 
 ## Nesting a solver in a graph
 
-Call the solver with `Expr` leaves, in the same declared structure, to embed a solve:
+Call the solver with the same five arguments, built from `Expr` leaves, to embed a solve:
 
 ```python
 @sc.function(
@@ -171,13 +168,11 @@ def filtered_control(params: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     target, bias = params
     nested = sc.solver(tracking_problem, "sqp", name="nested_tracking")
     result = nested(
-        (
-            (sc.const(np.zeros(2)), sc.const(np.zeros(1))),
-            (sc.const(np.zeros(2)), sc.const(np.zeros(1))),
-            sc.const(np.zeros(1)),
-            sc.const(np.zeros(2)),
-            (target, bias),
-        )
+        (sc.const(np.zeros(2)), sc.const(np.zeros(1))),
+        (sc.const(np.zeros(2)), sc.const(np.zeros(1))),
+        sc.const(np.zeros(1)),
+        sc.const(np.zeros(2)),
+        (target, bias),
     )
     return result[0][0]
 ```

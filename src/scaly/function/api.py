@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from typing import Any, cast, overload
+from typing import TYPE_CHECKING, Any, overload
 
 import numpy as np
 
@@ -14,28 +14,59 @@ from ..ad.derivatives import jacobian as _jacobian_expr
 from ..ad.sparse import SparseJacobian, Triangle, sparse_hessian as _expr_sparse_hessian
 from ..ad.sparse import sparse_jacobian as _expr_sparse_jacobian
 from ..ir.expr import Expr
-from .tree import G, L, Tree
+from .tree import L, Spec, Tree, _G, as_tree, param_list
+
+if TYPE_CHECKING:
+  from .tree import NA, NB, NC, ND, NE, NF, NG, NH, NO, SA, SB, SC, SD, SE, SF, SG, SH, SO
 from .factory import Adj, Fwd, Grad, Hess, Jac, SpHess, SpJac
 from .model import ConcreteFunction
 
 
-def function[SI, NI, SO, NO](
-  inputs: Tree[SI, NI], /, *extra: Tree[Any, Any], output: Tree[SO, NO] | None = None, name: str | None = None
-) -> Callable[[Callable[[SI], SO]], ConcreteFunction[SI, NI, SO, NO]]:
-  """Trace a callable over one declaration per parameter and a declared ``output`` tree."""
+# fmt: off
+@overload
+def function(*, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[], SO]], ConcreteFunction[[], [], SO, NO]]: ...
+@overload
+def function(a: Tree[SA, NA] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA], SO]], ConcreteFunction[[SA], [NA], SO, NO]]: ...
+@overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB], SO]], ConcreteFunction[[SA, SB], [NA, NB], SO, NO]]: ...
+@overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC], SO]], ConcreteFunction[[SA, SB, SC], [NA, NB, NC], SO, NO]]: ...
+@overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC, SD], SO]], ConcreteFunction[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO]]: ...
+@overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC, SD, SE], SO]], ConcreteFunction[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO]]: ...
+@overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, f: Tree[SF, NF] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC, SD, SE, SF], SO]], ConcreteFunction[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO]]: ...
+@overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, f: Tree[SF, NF] | Spec, g: Tree[SG, NG] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC, SD, SE, SF, SG], SO]], ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO]]: ...
+@overload
+def function(a: Tree[SA, NA] | Spec, b: Tree[SB, NB] | Spec, c: Tree[SC, NC] | Spec, d: Tree[SD, ND] | Spec, e: Tree[SE, NE] | Spec, f: Tree[SF, NF] | Spec, g: Tree[SG, NG] | Spec, h: Tree[SH, NH] | Spec, /, *, output: Tree[SO, NO] | Spec, name: str | None = None) -> Callable[[Callable[[SA, SB, SC, SD, SE, SF, SG, SH], SO]], ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO]]: ...
+@overload
+def function(*slots: Tree[Any, Any] | Spec, output: Tree[Any, Any] | Spec, name: str | None = None) -> Callable[[Callable[..., Any]], ConcreteFunction[..., ..., Any, Any]]: ...
+# fmt: on
+def function(*slots: Tree[Any, Any] | Spec, output: Tree[Any, Any] | Spec | None = None, name: str | None = None) -> Any:
+  """Trace a Python body into a named ``Function``: one declaration per parameter, and the ``output``.
 
-  def decorate(fn: Callable[[SI], SO]) -> ConcreteFunction[SI, NI, SO, NO]:
+  Each slot is a tree spec: ``sc.L``, ``sc.G`` or ``sc.S``, or shorthand for one leaf, a shape
+  (``3``, ``(n, m)``, a ``TensorType``) or a name (a leaf whose shape the trace decides). Unnamed
+  leaves take the parameter's name (``p``, or ``p_0``, ``p_1`` inside a group); unnamed outputs take
+  the function's. The names become the generated C signature and the ``of``/``wrt`` of derivatives.
+  """
+
+  def decorate(fn: Callable[..., Any]) -> ConcreteFunction[..., ..., Any, Any]:
     fn_name = name or getattr(fn, "__name__", "fn")
-    params = _parameters(fn, fn_name)
-    if output is None and len(extra) == 1 and len(params) == 1:
-      raise TypeError(
-        f"{fn_name}: sc.function takes one declaration per parameter and the output as output=; did you mean sc.function(<inputs>, output=<outputs>)?"
-      )
-    if extra or len(params) != 1:
-      raise TypeError(f"{fn_name}: declared {1 + len(extra)} parameters, the body takes {len(params)} ({', '.join(params)})")
+    names = _parameters(fn, fn_name)
     if output is None:
+      if len(slots) == len(names) + 1:
+        raise TypeError(
+          f"{fn_name}: sc.function takes one declaration per parameter and the output as output=; "
+          "did you mean sc.function(<inputs>, output=<outputs>)?"
+        )
       raise TypeError(f"{fn_name}: declare the output tree with output=")
-    return ConcreteFunction(fn_name, fn, inputs, output)
+    if len(slots) != len(names):
+      raise TypeError(f"{fn_name}: declared {len(slots)} parameters, the body takes {len(names)} ({', '.join(names)})")
+    inputs = param_list(*(as_tree(slot).named(param) for slot, param in zip(slots, names, strict=True)))
+    return ConcreteFunction(fn_name, fn, inputs, as_tree(output).named(fn_name))
 
   return decorate
 
@@ -91,19 +122,17 @@ def _checked_names(source: ConcreteFunction[Any, Any, Any, Any], of: str, wrt: s
   source.input_tree.index(wrt)
 
 
-def _typed_result[SI, NI](result: ConcreteFunction[Any, Any, Any, Any], input_tree: Tree[SI, NI]) -> ConcreteFunction[SI, NI, Expr, np.ndarray]:
+def _typed_result(result: ConcreteFunction[Any, Any, Any, Any], input_tree: _G) -> Any:
   output_tree = L(result.output_names[0], result.outputs[0].type)
-  return cast(ConcreteFunction[SI, NI, Expr, np.ndarray], result._with_trees(input_tree, output_tree))
+  return result._with_trees(input_tree, output_tree)
 
 
-def _factory_input_tree[SI, NI](result: ConcreteFunction[Any, Any, Any, Any], tree: Tree[SI, NI]) -> Tree[SI, NI]:
+def _factory_input_tree(result: ConcreteFunction[Any, Any, Any, Any], tree: Tree[Any, Any]) -> Tree[Any, Any]:
   input_map = result.input_map()
   return tree.with_types(tuple(input_map[name].type for name in tree.names))
 
 
-def _unseeded[SI, NI](
-  source: ConcreteFunction[SI, NI, Any, Any], name: str, of: str, wrt: str, spec: Jac | Grad | Hess | SpJac | SpHess
-) -> ConcreteFunction[SI, NI, Expr, np.ndarray]:
+def _unseeded(source: ConcreteFunction[Any, Any, Any, Any], name: str, of: str, wrt: str, spec: Jac | Grad | Hess | SpJac | SpHess) -> Any:
   _checked_names(source, of, wrt)
   return _typed_result(source.factory(name, list(source.input_names), [spec]), source.input_tree)
 
@@ -113,9 +142,9 @@ def jacobian(source: Expr, wrt: Expr) -> Expr: ...
 
 
 @overload
-def jacobian[SI, NI, SO, NO](
-  source: ConcreteFunction[SI, NI, SO, NO], of: str, wrt: str, *, name: str | None = None
-) -> ConcreteFunction[SI, NI, Expr, np.ndarray]: ...
+def jacobian[**PS, **PN](
+  source: ConcreteFunction[PS, PN, Any, Any], of: str, wrt: str, *, name: str | None = None
+) -> ConcreteFunction[PS, PN, Expr, np.ndarray]: ...
 
 
 def jacobian(
@@ -139,9 +168,9 @@ def gradient(source: Expr, wrt: Expr) -> Expr: ...
 
 
 @overload
-def gradient[SI, NI, SO, NO](
-  source: ConcreteFunction[SI, NI, SO, NO], of: str, wrt: str, *, name: str | None = None
-) -> ConcreteFunction[SI, NI, Expr, np.ndarray]: ...
+def gradient[**PS, **PN](
+  source: ConcreteFunction[PS, PN, Any, Any], of: str, wrt: str, *, name: str | None = None
+) -> ConcreteFunction[PS, PN, Expr, np.ndarray]: ...
 
 
 def gradient(
@@ -165,9 +194,9 @@ def hessian(source: Expr, wrt: Expr) -> Expr: ...
 
 
 @overload
-def hessian[SI, NI, SO, NO](
-  source: ConcreteFunction[SI, NI, SO, NO], of: str, wrt: str, *, name: str | None = None
-) -> ConcreteFunction[SI, NI, Expr, np.ndarray]: ...
+def hessian[**PS, **PN](
+  source: ConcreteFunction[PS, PN, Any, Any], of: str, wrt: str, *, name: str | None = None
+) -> ConcreteFunction[PS, PN, Expr, np.ndarray]: ...
 
 
 def hessian(
@@ -193,9 +222,9 @@ def sparse_jacobian(source: Expr, wrt: Expr) -> SparseJacobian: ...
 
 
 @overload
-def sparse_jacobian[SI, NI, SO, NO](
-  source: ConcreteFunction[SI, NI, SO, NO], of: str, wrt: str, *, name: str | None = None
-) -> ConcreteFunction[SI, NI, Expr, np.ndarray]: ...
+def sparse_jacobian[**PS, **PN](
+  source: ConcreteFunction[PS, PN, Any, Any], of: str, wrt: str, *, name: str | None = None
+) -> ConcreteFunction[PS, PN, Expr, np.ndarray]: ...
 
 
 def sparse_jacobian(
@@ -219,14 +248,14 @@ def sparse_hessian(source: Expr, wrt: Expr, *, triangle: Triangle = "full") -> S
 
 
 @overload
-def sparse_hessian[SI, NI, SO, NO](
-  source: ConcreteFunction[SI, NI, SO, NO],
+def sparse_hessian[**PS, **PN](
+  source: ConcreteFunction[PS, PN, Any, Any],
   of: str,
   wrt: str,
   *,
   name: str | None = None,
   triangle: Triangle = "full",
-) -> ConcreteFunction[SI, NI, Expr, np.ndarray]: ...
+) -> ConcreteFunction[PS, PN, Expr, np.ndarray]: ...
 
 
 def sparse_hessian(
@@ -256,42 +285,90 @@ def sparse_hessian(
   )
 
 
-def forward[SI, NI, SO, NO](
-  fn: ConcreteFunction[SI, NI, SO, NO],
-  of: str,
-  wrt: str,
-  *,
-  name: str | None = None,
-) -> ConcreteFunction[tuple[SI, Expr], tuple[NI, np.ndarray], Expr, np.ndarray]:
-  """Create a seeded forward-mode Function computing J(of, wrt) @ fwd:wrt."""
+# fmt: off
+@overload
+def forward(fn: ConcreteFunction[[], [], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[Expr], [np.ndarray], Expr, np.ndarray]: ...
+@overload
+def forward(fn: ConcreteFunction[[SA], [NA], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, Expr], [NA, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def forward(fn: ConcreteFunction[[SA, SB], [NA, NB], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, Expr], [NA, NB, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def forward(fn: ConcreteFunction[[SA, SB, SC], [NA, NB, NC], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, Expr], [NA, NB, NC, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def forward(fn: ConcreteFunction[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, SD, Expr], [NA, NB, NC, ND, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def forward(fn: ConcreteFunction[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, SD, SE, Expr], [NA, NB, NC, ND, NE, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def forward(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, Expr], [NA, NB, NC, ND, NE, NF, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def forward(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, Expr], [NA, NB, NC, ND, NE, NF, NG, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def forward(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, SH, Expr], [NA, NB, NC, ND, NE, NF, NG, NH, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def forward(fn: ConcreteFunction[..., ..., Any, Any], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[..., ..., Expr, np.ndarray]: ...
+# fmt: on
+def forward(fn: ConcreteFunction[Any, Any, Any, Any], of: str, wrt: str, *, name: str | None = None) -> Any:
+  """Create a seeded forward-mode Function computing ``J(of, wrt) @ seed``, called as ``f(*inputs, seed)``."""
   _checked_names(fn, of, wrt)
   seed = L(f"fwd:{wrt}", fn.inputs[fn.input_tree.index(wrt)].type)
   result = fn.factory(name or f"{fn.name}_fwd_{of}_{wrt}", [*fn.input_names, f"fwd:{wrt}"], [Fwd(of, wrt)])
-  return _typed_result(result, G(fn.input_tree, _factory_input_tree(result, seed)))
+  return _typed_result(result, param_list(*fn.input_tree.parts, _factory_input_tree(result, seed)))
 
 
-def adjoint[SI, NI, SO, NO](
-  fn: ConcreteFunction[SI, NI, SO, NO],
-  of: str,
-  wrt: str,
-  *,
-  name: str | None = None,
-) -> ConcreteFunction[tuple[SI, Expr], tuple[NI, np.ndarray], Expr, np.ndarray]:
-  """Create a seeded reverse-mode Function computing J(of, wrt).T @ lam:of."""
+# fmt: off
+@overload
+def adjoint(fn: ConcreteFunction[[], [], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[Expr], [np.ndarray], Expr, np.ndarray]: ...
+@overload
+def adjoint(fn: ConcreteFunction[[SA], [NA], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, Expr], [NA, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def adjoint(fn: ConcreteFunction[[SA, SB], [NA, NB], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, Expr], [NA, NB, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def adjoint(fn: ConcreteFunction[[SA, SB, SC], [NA, NB, NC], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, Expr], [NA, NB, NC, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def adjoint(fn: ConcreteFunction[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, SD, Expr], [NA, NB, NC, ND, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def adjoint(fn: ConcreteFunction[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, SD, SE, Expr], [NA, NB, NC, ND, NE, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def adjoint(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, Expr], [NA, NB, NC, ND, NE, NF, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def adjoint(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, Expr], [NA, NB, NC, ND, NE, NF, NG, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def adjoint(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, SH, Expr], [NA, NB, NC, ND, NE, NF, NG, NH, np.ndarray], Expr, np.ndarray]: ...
+@overload
+def adjoint(fn: ConcreteFunction[..., ..., Any, Any], of: str, wrt: str, *, name: str | None = None) -> ConcreteFunction[..., ..., Expr, np.ndarray]: ...
+# fmt: on
+def adjoint(fn: ConcreteFunction[Any, Any, Any, Any], of: str, wrt: str, *, name: str | None = None) -> Any:
+  """Create a seeded reverse-mode Function computing ``J(of, wrt).T @ lam``, called as ``f(*inputs, lam)``."""
   _checked_names(fn, of, wrt)
   seed = L(f"lam:{of}", fn.outputs[fn.output_tree.index(of)].type)
   result = fn.factory(name or f"{fn.name}_adj_{of}_{wrt}", [*fn.input_names, f"lam:{of}"], [Adj(of, wrt)])
-  return _typed_result(result, G(fn.input_tree, _factory_input_tree(result, seed)))
+  return _typed_result(result, param_list(*fn.input_tree.parts, _factory_input_tree(result, seed)))
 
 
-def lagrangian_hessian[SI, NI, SO, NO](
-  fn: ConcreteFunction[SI, NI, SO, NO],
-  wrt: str,
-  *,
-  name: str | None = None,
-  aux_name: str = "gamma",
-) -> ConcreteFunction[tuple[SI, SO], tuple[NI, NO], Expr, np.ndarray]:
-  """Create the dense Hessian of all outputs weighted by the declared output tree."""
+# fmt: off
+@overload
+def lagrangian_hessian(fn: ConcreteFunction[[], [], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> ConcreteFunction[[SO], [NO], Expr, np.ndarray]: ...
+@overload
+def lagrangian_hessian(fn: ConcreteFunction[[SA], [NA], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> ConcreteFunction[[SA, SO], [NA, NO], Expr, np.ndarray]: ...
+@overload
+def lagrangian_hessian(fn: ConcreteFunction[[SA, SB], [NA, NB], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> ConcreteFunction[[SA, SB, SO], [NA, NB, NO], Expr, np.ndarray]: ...
+@overload
+def lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC], [NA, NB, NC], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> ConcreteFunction[[SA, SB, SC, SO], [NA, NB, NC, NO], Expr, np.ndarray]: ...
+@overload
+def lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> ConcreteFunction[[SA, SB, SC, SD, SO], [NA, NB, NC, ND, NO], Expr, np.ndarray]: ...
+@overload
+def lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> ConcreteFunction[[SA, SB, SC, SD, SE, SO], [NA, NB, NC, ND, NE, NO], Expr, np.ndarray]: ...
+@overload
+def lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, SO], [NA, NB, NC, ND, NE, NF, NO], Expr, np.ndarray]: ...
+@overload
+def lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, SO], [NA, NB, NC, ND, NE, NF, NG, NO], Expr, np.ndarray]: ...
+@overload
+def lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, SH, SO], [NA, NB, NC, ND, NE, NF, NG, NH, NO], Expr, np.ndarray]: ...
+@overload
+def lagrangian_hessian(fn: ConcreteFunction[..., ..., Any, Any], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> ConcreteFunction[..., ..., Expr, np.ndarray]: ...
+# fmt: on
+def lagrangian_hessian(fn: ConcreteFunction[Any, Any, Any, Any], wrt: str, *, name: str | None = None, aux_name: str = "gamma") -> Any:
+  """Create the dense Hessian of all outputs weighted by multipliers shaped as the output tree, called as ``f(*inputs, lam)``."""
   fn.input_tree.index(wrt)
   output_names = list(fn.output_names)
   inputs = [*fn.input_names, *(f"lam:{out}" for out in output_names)]
@@ -302,18 +379,35 @@ def lagrangian_hessian[SI, NI, SO, NO](
     aux={aux_name: output_names},
   )
   seed_tree = _factory_input_tree(result, fn.output_tree.relabel("lam:"))
-  return _typed_result(result, G(fn.input_tree, seed_tree))
+  return _typed_result(result, param_list(*fn.input_tree.parts, seed_tree))
 
 
-def sparse_lagrangian_hessian[SI, NI, SO, NO](
-  fn: ConcreteFunction[SI, NI, SO, NO],
-  wrt: str,
-  *,
-  name: str | None = None,
-  aux_name: str = "gamma",
-  triangle: Triangle = "full",
-) -> ConcreteFunction[tuple[SI, SO], tuple[NI, NO], Expr, np.ndarray]:
-  """Create compact values for the weighted Hessian of all declared outputs."""
+# fmt: off
+@overload
+def sparse_lagrangian_hessian(fn: ConcreteFunction[[], [], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> ConcreteFunction[[SO], [NO], Expr, np.ndarray]: ...
+@overload
+def sparse_lagrangian_hessian(fn: ConcreteFunction[[SA], [NA], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> ConcreteFunction[[SA, SO], [NA, NO], Expr, np.ndarray]: ...
+@overload
+def sparse_lagrangian_hessian(fn: ConcreteFunction[[SA, SB], [NA, NB], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> ConcreteFunction[[SA, SB, SO], [NA, NB, NO], Expr, np.ndarray]: ...
+@overload
+def sparse_lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC], [NA, NB, NC], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> ConcreteFunction[[SA, SB, SC, SO], [NA, NB, NC, NO], Expr, np.ndarray]: ...
+@overload
+def sparse_lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC, SD], [NA, NB, NC, ND], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> ConcreteFunction[[SA, SB, SC, SD, SO], [NA, NB, NC, ND, NO], Expr, np.ndarray]: ...
+@overload
+def sparse_lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC, SD, SE], [NA, NB, NC, ND, NE], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> ConcreteFunction[[SA, SB, SC, SD, SE, SO], [NA, NB, NC, ND, NE, NO], Expr, np.ndarray]: ...
+@overload
+def sparse_lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF], [NA, NB, NC, ND, NE, NF], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, SO], [NA, NB, NC, ND, NE, NF, NO], Expr, np.ndarray]: ...
+@overload
+def sparse_lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG], [NA, NB, NC, ND, NE, NF, NG], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, SO], [NA, NB, NC, ND, NE, NF, NG, NO], Expr, np.ndarray]: ...
+@overload
+def sparse_lagrangian_hessian(fn: ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, SH], [NA, NB, NC, ND, NE, NF, NG, NH], SO, NO], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> ConcreteFunction[[SA, SB, SC, SD, SE, SF, SG, SH, SO], [NA, NB, NC, ND, NE, NF, NG, NH, NO], Expr, np.ndarray]: ...
+@overload
+def sparse_lagrangian_hessian(fn: ConcreteFunction[..., ..., Any, Any], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full") -> ConcreteFunction[..., ..., Expr, np.ndarray]: ...
+# fmt: on
+def sparse_lagrangian_hessian(
+  fn: ConcreteFunction[Any, Any, Any, Any], wrt: str, *, name: str | None = None, aux_name: str = "gamma", triangle: Triangle = "full"
+) -> Any:
+  """Create compact values for the weighted Hessian of all declared outputs, called as ``f(*inputs, lam)``."""
   fn.input_tree.index(wrt)
   output_names = list(fn.output_names)
   inputs = [*fn.input_names, *(f"lam:{out}" for out in output_names)]
@@ -324,4 +418,4 @@ def sparse_lagrangian_hessian[SI, NI, SO, NO](
     aux={aux_name: output_names},
   )
   seed_tree = _factory_input_tree(result, fn.output_tree.relabel("lam:"))
-  return _typed_result(result, G(fn.input_tree, seed_tree))
+  return _typed_result(result, param_list(*fn.input_tree.parts, seed_tree))

@@ -47,7 +47,7 @@ def make_ocp(N: int, verbose: bool):
   n_eq = 2 * (N + 1) + 2
 
   def solve():
-    (X, U), _, lam_eq, _ = solver(((X0, np.ones(N + 1)), (np.zeros(2 * (N + 1)), np.zeros(N + 1)), np.zeros(n_eq), np.zeros(0), ()))
+    (X, U), _, lam_eq, _ = solver((X0, np.ones(N + 1)), (np.zeros(2 * (N + 1)), np.zeros(N + 1)), np.zeros(n_eq), np.zeros(0), ())
     adjoint = -lam_eq[: 2 * (N + 1)].reshape(N + 1, 2) / wi[:, None]
     numerical = np.hstack([X.reshape(N + 1, 2), U[:, None], adjoint])
     ts = (TF - T0) / 2 * lgl_nodes(N) + 0.5 * (TF + T0)

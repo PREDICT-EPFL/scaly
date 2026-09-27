@@ -23,7 +23,7 @@ def build(verbose: bool = False):
   data = ((np.zeros((2, 2)), g), (np.zeros((0, 2)), np.zeros(0)), (a, lba, uba))
 
   def run():
-    x, _, _, lam_a = solve((np.zeros(2), np.zeros(2), np.zeros(0), np.zeros(3), data))
+    x, _, _, lam_a = solve(np.zeros(2), np.zeros(2), np.zeros(0), np.zeros(3), data)
     return {"f": np.array([g @ x]), "x": x, "lam_a": lam_a}
 
   return run

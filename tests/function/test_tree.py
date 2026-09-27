@@ -10,6 +10,7 @@ import pytest
 import scaly as sc
 from scaly.codegen import render_c_api_header
 from scaly.function import Tree
+from scaly.function.tree import is_symbolic_call, param_list
 
 
 @sc.function(sc.L("x", 3), output=sc.G(sc.L("first", ...), sc.L("second", 3)))
@@ -152,7 +153,7 @@ def test_derivatives_preserve_source_trees() -> None:
   assert hess_l.output_shapes == ((3, 3),)
 
   np.testing.assert_allclose(
-    fwd.numerical_call(((np.arange(3.0), np.array(2.0)), np.ones(3))),
+    fwd.numerical_call((np.arange(3.0), np.array(2.0)), np.ones(3)),
     12.0,
   )
 
@@ -181,8 +182,8 @@ def test_seeded_derivatives_accept_nondifferentiable_leaves() -> None:
 
   assert fwd.input_tree.types[-1].diff
   assert adj.input_tree.types[-1].diff
-  np.testing.assert_array_equal(fwd((x, np.ones(2))), 2.0 * x)
-  np.testing.assert_array_equal(adj((x, np.ones(2))), 2.0 * x)
+  np.testing.assert_array_equal(fwd(x, np.ones(2)), 2.0 * x)
+  np.testing.assert_array_equal(adj(x, np.ones(2)), 2.0 * x)
 
 
 def test_lagrangian_hessians_accept_constant_output_leaves() -> None:
@@ -196,8 +197,8 @@ def test_lagrangian_hessians_accept_constant_output_leaves() -> None:
 
   assert dense.input_tree.types[-1].diff
   assert sparse.input_tree.types[-1].diff
-  np.testing.assert_array_equal(dense(inputs), 3.0 * np.eye(2))
-  np.testing.assert_array_equal(sparse(inputs), np.array([3.0, 3.0]))
+  np.testing.assert_array_equal(dense(*inputs), 3.0 * np.eye(2))
+  np.testing.assert_array_equal(sparse(*inputs), np.array([3.0, 3.0]))
 
 
 def test_call_dispatches_on_leaf_kind() -> None:
@@ -220,14 +221,47 @@ def test_call_dispatches_on_leaf_kind() -> None:
   assert multiply((sc.const(xv), sc.sym("b", 3))).op == sc.ExprOp.CALL
 
 
-def test_call_dispatch_predicates_ignore_structure() -> None:
-  """A wrongly-shaped tree is reported against the declared names, not as a kind mismatch."""
-  tree = sc.G(sc.L("x", 3), sc.L("y", 3))
-  assert tree.is_symbolic((sc.sym("a", 3), sc.sym("b", 3)))
-  assert not tree.is_numerical((sc.sym("a", 3), sc.sym("b", 3)))
-  assert tree.is_numerical((np.zeros(3), np.zeros(3)))
-  assert not tree.is_symbolic((np.zeros(3), np.zeros(3)))
-  # Neither predicate consults the structure, so the flattener owns that message.
-  assert tree.is_symbolic(cast(Any, (sc.sym("a", 3),)))
+def test_call_dispatch_ignores_structure() -> None:
+  """A wrongly-shaped argument is reported against the declared names, not as a kind mismatch."""
+  assert is_symbolic_call(((sc.sym("a", 3), sc.sym("b", 3)),), "f")
+  assert not is_symbolic_call(((np.zeros(3), np.zeros(3)),), "f")
+  assert not is_symbolic_call((), "f")
+  with pytest.raises(TypeError, match="mix Expr and numerical leaves"):
+    is_symbolic_call((sc.sym("a", 3), np.zeros(3)), "f")
+  # The predicate does not consult the structure, so the flattener owns that message.
+  assert is_symbolic_call(((sc.sym("a", 3),),), "f")
   with pytest.raises(ValueError, match="does not have the declared structure"):
     multiply(cast(Any, (np.zeros(3),)))
+
+
+def test_leaf_declarations_take_a_name_a_shape_or_both() -> None:
+  f64, i64 = sc.TensorType((3,)), sc.TensorType((2, 2), sc.dtypes.int64, diff=False)
+  assert (sc.L().names, sc.L().decls) == (("",), (...,))
+  assert (sc.L("y").names, sc.L("y").decls) == (("y",), (...,))
+  assert (sc.L(3).names, sc.L(3).decls) == (("",), (f64,))
+  assert sc.L(np.int64(3)).decls == (f64,)
+  assert sc.L((2, 2), dtype="int64", diff=False).decls == (i64,)
+  assert sc.L("k", (), dtype=sc.dtypes.int64).decls == (sc.TensorType((), sc.dtypes.int64),)
+  assert sc.L(3).named("x").names == ("x",) and sc.L("y", 3).named("x").names == ("y",)
+  with pytest.raises(TypeError, match="use \\(\\) for a scalar"):
+    sc.L(cast(Any, None))
+  with pytest.raises(TypeError, match="a leaf shape is"):
+    sc.L(cast(Any, 1.5))
+  with pytest.raises(TypeError, match="a name and a shape, or a shape alone"):
+    sc.L(3, cast(Any, 4))  # ty: ignore[invalid-argument-type]
+  with pytest.raises(TypeError, match="carries its own dtype"):
+    sc.L(f64, dtype="int64")
+  with pytest.raises(ValueError, match="non-empty name"):
+    sc.L("", 3)
+
+
+def test_groups_and_parameter_lists_take_tree_specs() -> None:
+  group = sc.G(3, "y", sc.L("z", ()))
+  assert group.names == ("", "y", "z")
+  assert group.named("p").names == ("p_0", "y", "z")
+  assert group.decls[1] is Ellipsis
+  params = param_list(sc.L(2).named("x"), sc.G(1, 1).named("p"))
+  assert params.names == ("x", "p_0", "p_1")
+  assert params.symbols()[1][0].name == "p_0"
+  with pytest.raises(ValueError, match="unnamed leaf"):
+    sc.G(3, 4).symbols()

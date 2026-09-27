@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Mapping, Sequence, cast, overload
 
@@ -10,10 +11,13 @@ import numpy as np
 from ..ir.expr import Expr, ExprOp, as_expr, linear_combination, topo
 from ..ir.match import _apply_lowering
 from ..ir.types import DeviceSpec, Lowering, SparsityType, TensorType, backend_supports
-from .tree import Tree, flat_tree
+from .tree import Tree, _G, flat_tree, is_symbolic_call, param_list
 
 if TYPE_CHECKING:
   from ..solvers.stats import SolverStats
+
+
+_JIT: Any = None
 
 
 def _jit():
@@ -21,10 +25,14 @@ def _jit():
 
   Deferred so the frontend does not import the backend at module scope (see the import-layer table
   in ``docs/how_it_works/architecture.md``); every other use of the backend from here goes through it.
+  The module is kept after the first call: the import statement costs a third of a trivial call.
   """
-  from ..codegen import jit
+  global _JIT
+  if _JIT is None:
+    from ..codegen import jit
 
-  return jit
+    _JIT = jit
+  return _JIT
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +61,7 @@ class DerivSpec:
     return outputs[name]
 
 
-class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
+class ConcreteFunction[**PS, **PN, SO, NO]:
   """A named expression graph: named inputs, named outputs, and the computation between them.
 
   ``Function`` is the unit of three things at once. **Composition** — ``fn(inputs)`` with ``Expr``
@@ -63,10 +71,11 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
   with array leaves lowers it, renders C, compiles and caches a shared library, and dispatches
   through the universal ABI.
 
-  ``__call__`` takes the whole declared input tree as one argument and dispatches on its leaves to
-  ``symbolic_call`` or ``numerical_call``; call those directly when the distinction is the point.
-  A one-leaf tree is the bare value on both sides — see ``scaly.L`` — so a single-output result
-  must not be destructured.
+  ``__call__`` takes one argument per parameter, each shaped as that parameter's declared tree, and
+  dispatches on the leaves to ``symbolic_call`` or ``numerical_call``; call those directly when the
+  distinction is the point. A one-leaf tree is the bare value on both sides — see ``scaly.L`` — so
+  a single-output result must not be destructured. The type parameters are the symbolic and the
+  numerical parameter lists and the symbolic and numerical output trees.
 
   Names are load-bearing: input and output names are how derivatives are requested and what the
   generated C symbols are built from.
@@ -75,21 +84,22 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
   """
 
   descriptor: Any
-  input_tree: Tree[SymbolicInputs, NumericalInputs]
-  output_tree: Tree[SymbolicOutputs, NumericalOutputs]
+  input_tree: _G
+  output_tree: Tree[SO, NO]
 
   def __init__(
     self,
     name: str,
-    fn: Callable[[SymbolicInputs], SymbolicOutputs],
-    inputs: Tree[SymbolicInputs, NumericalInputs],
-    outputs: Tree[SymbolicOutputs, NumericalOutputs],
+    fn: Callable[PS, SO],
+    inputs: _G,
+    outputs: Tree[SO, NO],
     *,
     device: DeviceSpec | str | None = None,
   ) -> None:
+    """Trace ``fn`` over ``inputs``, a parameter list from ``tree.params``: the body gets one argument per slot."""
     symbolic_inputs = inputs.symbols()
     input_exprs = inputs.flatten_symbolic(symbolic_inputs, f"{name} inputs")
-    symbolic_outputs = fn(symbolic_inputs)
+    symbolic_outputs = cast(Callable[..., Any], fn)(*symbolic_inputs)
     try:
       output_exprs = outputs.flatten_symbolic(symbolic_outputs, f"{name} outputs")
     except ValueError as exc:
@@ -97,6 +107,10 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     output_types = outputs.resolved(tuple(expr.type for expr in output_exprs))
     output_tree = outputs.infer(symbolic_outputs).with_types(output_types)
     self._init_graph(name, input_exprs, output_exprs, inputs, output_tree, output_tree.sparsities, device=device)
+    try:
+      self._signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+      pass
 
   @classmethod
   def _from_exprs(
@@ -126,7 +140,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       name,
       inputs,
       outputs,
-      flat_tree(resolved_input_names, tuple(expr.type for expr in inputs)),
+      param_list(flat_tree(resolved_input_names, tuple(expr.type for expr in inputs))) if inputs else param_list(),
       flat_tree(resolved_output_names, tuple(expr.type for expr in outputs)),
       output_sparsities,
       device,
@@ -139,13 +153,15 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     name: str,
     inputs: Sequence[Expr],
     outputs: Sequence[Expr],
-    input_tree: Tree[Any, Any],
+    input_tree: _G,
     output_tree: Tree[Any, Any],
     output_sparsities: Sequence[SparsityType | None] | None = None,
     device: DeviceSpec | str | None = None,
     output_coloring_widths: Sequence[int | None] | None = None,
   ) -> None:
     self.name = name
+    # The body's signature binds keyword arguments; a Function with no body takes positional ones only.
+    self._signature: inspect.Signature | None = None
     self.inputs = tuple(inputs)
     self.outputs = tuple(outputs)
     self.input_tree = input_tree
@@ -210,9 +226,11 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       device,
       self.output_coloring_widths,
     )
+    instance._signature = self._signature
     return instance
 
-  def _with_trees(self, input_tree: Tree[Any, Any], output_tree: Tree[Any, Any]) -> ConcreteFunction[Any, Any, Any, Any]:
+  def _with_trees(self, input_tree: _G, output_tree: Tree[Any, Any]) -> ConcreteFunction[Any, Any, Any, Any]:
+    """Replace the declared trees of a graph built from expressions; ``input_tree`` is a parameter list."""
     if input_tree.names != self.input_names or input_tree.types != tuple(expr.type for expr in self.inputs):
       raise ValueError("replacement input tree does not match the Function graph")
     if output_tree.names != self.output_names or output_tree.types != tuple(expr.type for expr in self.outputs):
@@ -241,40 +259,60 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
     return tuple(expr.shape for expr in self.outputs)
 
   # The numerical overload comes first on purpose: a Function built from bare expressions has
-  # ``Any`` trees, both overloads then match, and the first one wins. Evaluation is the reading
-  # that untyped code wants, and a typed symbolic call still resolves exactly because ``Expr`` is
-  # not assignable to the numerical leaf type.
+  # ``Any`` parameter lists, both overloads then match, and the first one wins. Evaluation is the
+  # reading that untyped code wants, and a typed symbolic call still resolves exactly because
+  # ``Expr`` is not assignable to the numerical leaf type.
   @overload
-  def __call__(self, inputs: NumericalInputs, /) -> NumericalOutputs: ...
+  def __call__(self, *args: PN.args, **kwargs: PN.kwargs) -> NO: ...
 
   @overload
-  def __call__(self, inputs: SymbolicInputs, /) -> SymbolicOutputs: ...
+  def __call__(self, *args: PS.args, **kwargs: PS.kwargs) -> SO: ...
 
-  def __call__(self, inputs: SymbolicInputs | NumericalInputs, /) -> SymbolicOutputs | NumericalOutputs:
-    """Call with the declared input tree, dispatching on its leaves.
+  def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    """Call with one argument per parameter, dispatching on the leaves.
 
-    ``Expr`` leaves take the symbolic path and build a call node; anything else takes the
-    numerical path and runs the compiled artifact. A tree mixing the two is an error: wrap the
-    numerical leaves in ``scaly.const`` to make a symbolic call explicit.
+    All-``Expr`` leaves take the symbolic path and build a call node; anything else takes the
+    numerical path and runs the compiled artifact, as does a call with no arguments (inside a traced
+    body, write ``f.symbolic_call()``). A call mixing the two is an error: wrap the numerical leaves
+    in ``scaly.const`` to make a symbolic call explicit. Keywords bind by the body's parameter names.
     """
-    if self.input_tree.is_symbolic(inputs):
-      return self.symbolic_call(inputs)
-    if self.input_tree.is_numerical(inputs):
-      return self.numerical_call(inputs)
-    raise TypeError(
-      f"{self.name}: inputs mix Expr and numerical leaves; pass all-Expr leaves for a symbolic call "
-      f"or all-numerical leaves for an evaluation, wrapping constants in scaly.const if needed"
-    )
+    if kwargs:
+      args = self._bind(args, kwargs)
+    if is_symbolic_call(args, self.name):
+      return self.symbolic_call(*args)
+    return self.numerical_call(*args)
 
-  def symbolic_call(self, inputs: SymbolicInputs, /) -> SymbolicOutputs:
-    """Embed a call node using the declared symbolic input and output structures."""
-    actuals = self.input_tree.flatten_symbolic(inputs, f"{self.name}.symbolic_call")
-    return cast(SymbolicOutputs, self.output_tree.unflatten(self._flat_symbolic_call(actuals)))
+  def symbolic_call(self, *args: PS.args, **kwargs: PS.kwargs) -> SO:
+    """Embed a call node; each argument has its parameter's declared symbolic structure."""
+    values = self._bind(args, kwargs) if kwargs else args
+    slots = self.input_tree.parts
+    if len(values) != len(slots):
+      raise self._arity_error(len(values))
+    what = f"{self.name}.symbolic_call"
+    actuals = [expr for slot, arg in zip(slots, values) for expr in slot.flatten_symbolic(arg, what)]
+    return cast(SO, self.output_tree.unflatten(self._flat_symbolic_call(actuals)))
 
-  def numerical_call(self, inputs: NumericalInputs, /) -> NumericalOutputs:
-    """Compile and evaluate using the declared numerical input and output structures."""
-    actuals = self.input_tree.flatten_numerical(inputs, f"{self.name}.numerical_call")
-    return cast(NumericalOutputs, self.output_tree.unflatten(self._flat_numerical_call(*actuals)))
+  def numerical_call(self, *args: PN.args, **kwargs: PN.kwargs) -> NO:
+    """Compile and evaluate; each argument has its parameter's declared numerical structure."""
+    values = self._bind(args, kwargs) if kwargs else args
+    slots = self.input_tree.parts
+    if len(values) != len(slots):
+      raise self._arity_error(len(values))
+    what = f"{self.name}.numerical_call"
+    actuals = [array for slot, arg in zip(slots, values) for array in slot.flatten_numerical(arg, what)]
+    return cast(NO, self.output_tree.unflatten(self._flat_numerical_call(*actuals)))
+
+  def _bind(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[Any, ...]:
+    if self._signature is None:
+      raise TypeError(f"{self.name}() takes positional arguments only, got {', '.join(kwargs)}")
+    return self._signature.bind(*args, **kwargs).args
+
+  def _arity_error(self, got: int) -> TypeError:
+    if self._signature is not None:
+      labels = list(self._signature.parameters)
+    else:
+      labels = [slot.names[0] if slot.size == 1 else f"({', '.join(slot.names)})" for slot in self.input_tree.parts]
+    return TypeError(f"{self.name}() takes {len(labels)} argument{'' if len(labels) == 1 else 's'} ({', '.join(labels)}), got {got}")
 
   def _compile(self) -> Any:
     """Lazily JIT-compile this function and cache the handle."""
@@ -329,6 +367,7 @@ class ConcreteFunction[SymbolicInputs, NumericalInputs, SymbolicOutputs, Numeric
       self.device,
       self.output_coloring_widths,
     )
+    instance._signature = self._signature
     return instance
 
   def _flat_symbolic_call(self, args: Sequence[Any], /) -> tuple[Expr, ...]:

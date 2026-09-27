@@ -182,3 +182,22 @@ def test_headers_split_names_shared_by_an_input_and_an_output(tmp_path) -> None:
     [cxx, "-std=c++17", "-pedantic", "-Wall", "-Wextra", "-Werror", "-c", str(tmp_path / "use.cpp"), "-o", str(tmp_path / "use_cpp.o")], check=True
   )
   subprocess.run([cc, "-c", str(tmp_path / c.source_name), "-o", str(tmp_path / "solve.o")], check=True)
+
+
+def test_parameters_named_like_keywords_compile_from_c_and_cpp(tmp_path) -> None:
+  """Parameter names become C names by default; a C or C++ keyword gets a trailing underscore."""
+  cxx = shutil.which("c++")
+  if cxx is None:
+    pytest.skip("c++ is required to compile the generated headers")
+
+  @sc.function(2, 2, output="delete")
+  def keywords(new, this):
+    return new * this
+
+  for lang in ("c", "cpp"):
+    module = render_c_module(keywords, lang=lang)
+    (tmp_path / module.header_name).write_text(module.header)
+    main = tmp_path / f"main_{lang}.cpp"
+    main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
+    subprocess.run([cxx, "-std=c++17", "-fsyntax-only", str(main)], check=True, cwd=tmp_path)
+  assert "new_" in render_c_module(keywords, lang="cpp").header

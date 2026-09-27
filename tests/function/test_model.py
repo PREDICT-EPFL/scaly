@@ -23,7 +23,7 @@ def test_function_call_normalizes_raw_constant_args() -> None:
   inner_const = inner(sc.const([1.0, 2.0]))
   outer = sc.Function._from_exprs("outer", [], [inner_const], [], ["out"])
 
-  np.testing.assert_allclose(outer(()), np.array([2.0, 3.0]))
+  np.testing.assert_allclose(outer(), np.array([2.0, 3.0]))
   assert not inner_const.type.diff
 
 

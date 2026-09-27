@@ -89,7 +89,7 @@ def nominal(state: sc.Expr) -> sc.Expr:
 def controller(state: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   u_nom = nominal(state)
   zeros = sc.const(np.zeros(2))
-  u, *_ = filter_qp((zeros, zeros, sc.const(np.zeros(0)), sc.const(np.zeros(len(OBSTACLES))), (state, u_nom)))
+  u, *_ = filter_qp(zeros, zeros, sc.const(np.zeros(0)), sc.const(np.zeros(len(OBSTACLES))), (state, u_nom))
   return u, u_nom, barriers(lookahead(state))
 
 

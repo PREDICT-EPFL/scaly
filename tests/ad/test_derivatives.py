@@ -24,7 +24,7 @@ def _assert_vmap_vjp_matches_unrolled_and_fd(
   unrolled = sc.concat(
     [
       callee(
-        callee.input_tree.unflatten(
+        *callee.input_tree.unflatten(
           tuple(
             outer[start + it * stride : start + it * stride + formal.size]
             for formal, (outer, start, stride) in zip(callee.inputs, specs, strict=True)

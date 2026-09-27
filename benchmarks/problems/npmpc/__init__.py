@@ -15,38 +15,38 @@ import scaly as sc
 from scaly.utils import load_torch_state_dict
 
 type StageFunction = sc.Function[
-  tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
-  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+  [tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]],
+  [tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
   sc.Expr,
   np.ndarray,
 ]
 type StageJacFunction = sc.Function[
-  tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
-  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+  [tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]],
+  [tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
   tuple[sc.Expr, sc.Expr, sc.Expr],
   tuple[np.ndarray, np.ndarray, np.ndarray],
 ]
 type StageCostFunction = sc.Function[
-  tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr],
-  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+  [tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]],
+  [tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
   sc.Expr,
   np.ndarray,
 ]
 type NpmpcFunction = sc.Function[
-  tuple[sc.Expr, sc.Expr],
-  tuple[np.ndarray, np.ndarray],
+  [tuple[sc.Expr, sc.Expr]],
+  [tuple[np.ndarray, np.ndarray]],
   sc.Expr,
   np.ndarray,
 ]
 type NpmpcLagFunction = sc.Function[
-  tuple[sc.Expr, sc.Expr],
-  tuple[np.ndarray, np.ndarray],
+  [tuple[sc.Expr, sc.Expr]],
+  [tuple[np.ndarray, np.ndarray]],
   tuple[sc.Expr, sc.Expr],
   tuple[np.ndarray, np.ndarray],
 ]
 type NpmpcSolver = sc.Function[
-  tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
-  tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+  [sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
+  [np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
   tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr],
   tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
 ]

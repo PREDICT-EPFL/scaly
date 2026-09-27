@@ -11,7 +11,7 @@ from ..ad.derivatives import jacobian
 from ..ad.sparse import SparseJacobian, sparse_hessian, sparse_jacobian
 from ..ad.sparsity import _jac_mask
 from ..function import ConcreteFunction
-from ..function.tree import G, L, Tree
+from ..function.tree import G, L, Tree, param_list
 from ..ir.expr import Expr, ExprOp, callees_of, concat, substitute, topo
 from ..ir.types import SparsityType, TensorType
 from ..passes.expr import simplify_cse_fixpoint
@@ -189,8 +189,8 @@ def build_qp[SV, NV, SP, NP](
   name: str,
   options: dict[str, Any] | None,
 ) -> ConcreteFunction[
-  tuple[SV, SV, Expr, Expr, SP],
-  tuple[NV, NV, np.ndarray, np.ndarray, NP],
+  [SV, SV, Expr, Expr, SP],
+  [NV, NV, np.ndarray, np.ndarray, NP],
   tuple[SV, SV, Expr, Expr],
   tuple[NV, NV, np.ndarray, np.ndarray],
 ]:
@@ -220,7 +220,7 @@ def build_qp[SV, NV, SP, NP](
     )
     rng = np.random.default_rng(0)
     sample = probe.input_tree.unflatten(tuple(rng.standard_normal(param.shape) for param in params))
-    values = probe(sample)
+    values = probe.numerical_call(*sample)
     P_sp = _qp_matrix_sparsity(P, params, values[0], triu=True)
     if n_eq:
       A_sp = _qp_matrix_sparsity(A, params, values[1])
@@ -244,7 +244,7 @@ def build_qp[SV, NV, SP, NP](
   solver_vars = problem.vars.with_types(
     tuple(TensorType(expr.shape, expr.type.dtype, expr.type.sparsity, diff=False) for expr in problem._var_symbols)
   )
-  input_tree = G(
+  input_tree = param_list(
     solver_vars,
     solver_vars.relabel("lam:"),
     L("lam_eq", TensorType((n_eq,), diff=False)),

@@ -93,7 +93,7 @@ def _qp_host() -> sc.Function:
   """A host function whose graph reaches a solver through a nested call."""
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="corpus_qp")
-  x = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))[0]
+  x = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)[0]
   return sc.Function._from_exprs("qp_host", [mu], [sc.sumsqr(x)], ["mu"], ["cost"])
 
 

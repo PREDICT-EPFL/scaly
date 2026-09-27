@@ -22,8 +22,8 @@ def solver[SV, NV, SP, NP](
   name: str | None = None,
   options: dict[str, Any] | None = None,
 ) -> ConcreteFunction[
-  tuple[SV, SV, Expr, Expr, SP],
-  tuple[NV, NV, np.ndarray, np.ndarray, NP],
+  [SV, SV, Expr, Expr, SP],
+  [NV, NV, np.ndarray, np.ndarray, NP],
   tuple[SV, SV, Expr, Expr],
   tuple[NV, NV, np.ndarray, np.ndarray],
 ]:

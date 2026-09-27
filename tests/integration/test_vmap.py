@@ -281,7 +281,7 @@ def test_gather_fed_chained_vmaps_spjac_and_sphess_match_dense() -> None:
   # entry shared by both forms cannot hide behind their agreement. Entries are below 0.2 and the
   # barrier is smooth at this sample, so central differences at 1e-6 land within 1e-9 of them.
   grad_l = sc.adjoint(fn, "h", "u")
-  fd_hess = finite_difference(lambda value: np.asarray(grad_l(((value, pv), lam))), uv)
+  fd_hess = finite_difference(lambda value: np.asarray(grad_l((value, pv), lam)), uv)
   np.testing.assert_allclose(dense_hess["vmap"], fd_hess, rtol=1e-7, atol=1e-7)
 
 

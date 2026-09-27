@@ -111,7 +111,7 @@ def main() -> dict:
   estimates, b_hist, iterations = [], [], []
   for k in range(M, T):
     window = ys[k - M : k + 1]
-    (xs, ws, b), lam_box, lam_eq, _ = mhe_sqp(((xs, ws, b), lam_box, lam_eq, np.zeros(0), (window, xbar, bbar)))
+    (xs, ws, b), lam_box, lam_eq, _ = mhe_sqp((xs, ws, b), lam_box, lam_eq, np.zeros(0), (window, xbar, bbar))
     iterations.append(mhe_sqp.solver_stats().iter)
     estimates.append(xs[-2:])
     b_hist.append(float(b[0]))
@@ -127,8 +127,8 @@ def main() -> dict:
   mhe_ipopt = sc.solver(estimation, "ipopt", name="mhe_ipopt", options={"tol": 1e-10})
   params = (ys[T - M - 1 :], xbar, bbar)
   zeros = ((np.zeros(2 * (M + 1)), np.zeros(M), np.zeros(1)), (np.zeros(2 * (M + 1)), np.zeros(M), np.zeros(1)), np.zeros(n_eq), np.zeros(0))
-  (x_s, _, b_s), *_ = mhe_sqp(((window_guess(params[0]), np.zeros(M), bbar), *zeros[1:], params))
-  (x_i, _, b_i), *_ = mhe_ipopt(((window_guess(params[0]), np.zeros(M), bbar), *zeros[1:], params))
+  (x_s, _, b_s), *_ = mhe_sqp((window_guess(params[0]), np.zeros(M), bbar), *zeros[1:], params)
+  (x_i, _, b_i), *_ = mhe_ipopt((window_guess(params[0]), np.zeros(M), bbar), *zeros[1:], params)
   return {
     "b": np.array(b_hist),
     "rate_rmse": float(np.sqrt(np.mean(rate_error[20:] ** 2))),

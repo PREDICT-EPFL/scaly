@@ -21,7 +21,7 @@ def build(verbose: bool = False):
   solve = sc.solver(rosenbrock, "ipopt", options=scaly_ipopt_options(verbose))
 
   def run():
-    w, lam_w, lam_eq, _ = solve((np.array([2.5, 3.0, 0.75]), np.zeros(3), np.zeros(1), np.zeros(0), ()))
+    w, lam_w, lam_eq, _ = solve(np.array([2.5, 3.0, 0.75]), np.zeros(3), np.zeros(1), np.zeros(0), ())
     stats = solve.solver_stats()
     return {"f": np.array([stats.obj]), "x": w, "lam_x": lam_w, "lam_g": lam_eq, "iter": np.array([stats.iter])}
 

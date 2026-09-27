@@ -283,7 +283,7 @@ def test_nlp_mapped_constraints_exact_hessian_matches_unrolled(monkeypatch: pyte
     sp = shf.output_sparsities[0]
     assert sp is not None
     dense = np.zeros(sp.shape)
-    dense[np.asarray(sp.rows), np.asarray(sp.cols)] = np.asarray(shf((xv, (np.array(1.0), lam))))
+    dense[np.asarray(sp.rows), np.asarray(sp.cols)] = np.asarray(shf(xv, (np.array(1.0), lam)))
     return dense
 
   lam = np.array([0.8, -1.7])
@@ -333,7 +333,7 @@ def test_nested_nlp_in_scaly_function() -> None:
     f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2
     h_eq = sc.stack([x[0] ** 2 + x[1] ** 2 - 1.0], axis=0)
     nlp = build_nlp(x=x, f=f, p=target, h_eq=h_eq)
-    out = nlp.symbolic_call((sc.const(np.array([1.0, 0.0])), sc.const(np.zeros(2)), sc.const(np.zeros(1)), sc.const(np.zeros(0)), target))
+    out = nlp.symbolic_call(sc.const(np.array([1.0, 0.0])), sc.const(np.zeros(2)), sc.const(np.zeros(1)), sc.const(np.zeros(0)), target)
     return out[0]
 
   # Projection of (2, 0) onto the unit circle = (1, 0).
@@ -353,7 +353,7 @@ def test_nested_nlp_jit_compiles_through_ipopt() -> None:
     f = (x[0] - target[0]) ** 2 + (x[1] - target[1]) ** 2
     h_eq = sc.stack([x[0] ** 2 + x[1] ** 2 - 1.0], axis=0)
     nlp = build_nlp(x=x, f=f, p=target, h_eq=h_eq)
-    out = nlp.symbolic_call((sc.const(np.array([1.0, 0.0])), sc.const(np.zeros(2)), sc.const(np.zeros(1)), sc.const(np.zeros(0)), target))
+    out = nlp.symbolic_call(sc.const(np.array([1.0, 0.0])), sc.const(np.zeros(2)), sc.const(np.zeros(1)), sc.const(np.zeros(0)), target)
     return out[0]
 
   np.testing.assert_allclose(proj(np.array([2.0, 0.0])), [1.0, 0.0], atol=1e-5)

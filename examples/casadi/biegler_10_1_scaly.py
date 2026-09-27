@@ -63,7 +63,7 @@ def build(verbose: bool = False):
     out = {}
     for N, solve in solvers:
       n, m = N * (K + 1), N * (K + 1) - 1
-      out[f"z_N{N}"] = solve((np.zeros(n), np.zeros(n), np.zeros(m), np.zeros(0), ()))[0]
+      out[f"z_N{N}"] = solve(np.zeros(n), np.zeros(n), np.zeros(m), np.zeros(0), ())[0]
     return out
 
   return run

@@ -26,7 +26,7 @@ def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[sc.Fun
   calls = []
   for it in range(length):
     args = [z[2 * it : 2 * (it + 1)], *((z[2 * length : 2 * length + 1],) if shared else ())]
-    calls.append(piece(piece.input_tree.unflatten(tuple(args))))
+    calls.append(piece(*piece.input_tree.unflatten(tuple(args))))
   unrolled = sc.concat(calls)
   f = (z * z).sum()
   return (
@@ -202,7 +202,7 @@ def test_sparse_lagrangian_hessian_uses_aux_output() -> None:
   assert shf.output_sparsities[0] is not None
   assert shf.output_sparsities[0].rows == (0, 0, 1, 1)
   assert shf.output_sparsities[0].cols == (0, 1, 0, 1)
-  np.testing.assert_allclose(shf((np.array([2.0, 3.0]), (np.array(1.5), np.array([0.25, -0.5])))), np.array([3.0, 0.25, 0.25, -1.0]))
+  np.testing.assert_allclose(shf(np.array([2.0, 3.0]), (np.array(1.5), np.array([0.25, -0.5]))), np.array([3.0, 0.25, 0.25, -1.0]))
 
 
 def test_sparse_lagrangian_hessian_through_vmap_matches_unrolled_dense_and_fd(monkeypatch: pytest.MonkeyPatch) -> None:

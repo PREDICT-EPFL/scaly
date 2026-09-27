@@ -40,7 +40,7 @@ def build(verbose: bool = False):
   solve = sc.solver(rocket, "ipopt", options=scaly_ipopt_options(verbose, tol=1e-10))
 
   def run():
-    U, lam_U, lam_g, _ = solve((np.full(NU, 0.4), np.zeros(NU), np.zeros(2), np.zeros(0), ()))
+    U, lam_U, lam_g, _ = solve(np.full(NU, 0.4), np.zeros(NU), np.zeros(2), np.zeros(0), ())
     stats = solve.solver_stats()
     return {"f": np.array([stats.obj]), "u": U, "lam_u": lam_U, "lam_g": lam_g, "iter": np.array([stats.iter])}
 

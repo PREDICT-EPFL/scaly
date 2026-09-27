@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Templates P1b-ii Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Function templates P1b-ii: one argument per parameter</h1>
+<p class="sub">2026-09-27 · branch <code>claude/function-templates</code> · plan v2, step P1b-ii</p>
+<div class="box"><b>Summary.</b> A body takes one argument per declared parameter: <code>@sc.function(3, (), output="f") def cost(x, p)</code>, called <code>cost(x, p)</code>. Slots may be shorthand: a shape or a name. Unnamed leaves take the parameter's name. Seeded derivatives append their seed, <code>fwd(x, p, v)</code>, and solvers take five arguments. The whole tree is migrated: 130 call sites in tests, plugins, examples, notebooks, benchmarks and docs. The generated C is unchanged and the Python call path got faster (2.83 to 2.44 µs for one leaf).</div>
+<h2>What changed</h2>
+<ul>
+<li><b>Parameter lists.</b> <code>ConcreteFunction.input_tree</code> is always <code>tree.param_list(*slots)</code>, a private group whose parts are the parameters. The trace calls <code>fn(*symbols)</code>. <code>__call__</code>, <code>symbolic_call</code> and <code>numerical_call</code> are variadic, with one dispatch pass over all leaves (<code>tree.is_symbolic_call</code> replaces <code>Tree.is_symbolic</code>/<code>is_numerical</code>). A call with no arguments is numerical; <code>f.symbolic_call()</code> is the symbolic spelling. A wrong count raises <code>cost() takes 2 arguments (x, p), got 1</code>.</li>
+<li><b>Keywords</b> bind through the body's <code>inspect.Signature</code>, only when keywords are passed; binding on every call would cost about 1 µs. Functions with no body (<code>_from_exprs</code>, derivatives, solvers) are positional-only. Statically, keywords are refused on declared functions: the width ladder gives positional-only parameter lists.</li>
+<li><b>Decorator.</b> <code>sc.function(*slots, output=, name=)</code> with a typed ladder for widths 0 to 8 plus an untyped catch-all. A slot or output is a tree spec: a <code>Tree</code>, a shape (<code>3</code>, <code>(n, m)</code>, a <code>TensorType</code>) or a name (a leaf with a shape hole). Shorthand types as a leaf through <code>TypeVar</code> defaults (<code>typing_extensions</code>, under <code>TYPE_CHECKING</code>). <code>sc.G</code> takes specs too.</li>
+<li><b>Names.</b> <code>sc.L</code> and <code>sc.S</code> may be unnamed (<code>sc.L(3)</code>, <code>sc.L()</code>, <code>sc.S(pattern)</code>). The decorator names each slot after its parameter (<code>p</code>, or <code>p_0</code>, <code>p_1</code>, nested <code>p_0_1</code> inside a group) and unnamed outputs after the function (<code>f</code>, or <code>f_0</code>, ...). An unnamed leaf traced anywhere else (<code>sc.problem</code>, say) is refused with the fix. <code>sc.L</code> gained <code>dtype=</code> and <code>diff=</code>; <code>sc.L(None)</code> is refused rather than meaning a scalar.</li>
+<li><b>Conventions.</b> <code>forward</code>/<code>adjoint</code>: <code>(*source parameters, seed)</code>. <code>lagrangian_hessian</code> and the sparse one: <code>(*source parameters, lam)</code>, where <code>lam</code> has the output tree's shape. Solvers: five slots, built by <code>param_list</code> in <code>qp.py</code>, <code>nlp.py</code> and the sqp plugin's <code>external.py</code>. Solver results are typed <code>ConcreteFunction[[SV, SV, Expr, Expr, SP], [NV, NV, ndarray, ndarray, NP], ...]</code>. <code>_from_exprs</code> keeps a single group slot, and so do the NLP oracles, so their many call sites are unchanged.</li>
+<li><b>C names.</b> Parameter names now become C names by default, so <code>c_ident</code> reserves the C and C++ keywords (<code>new</code> becomes <code>new_</code>). A test compiles the headers of <code>def keywords(new, this)</code> as C++.</li>
+<li><b>JIT seam.</b> <code>_jit()</code> keeps the module after the first import: the import statement cost 0.32 µs per call.</li>
+</ul>
+<h2>Migration</h2>
+<p>Three agents, disjoint files, one rule: a single tuple-literal argument loses one level of parentheses, anything else is splatted.</p>
+<div class="scroll"><table><tr><th>Where</th><th>Sites</th></tr>
+<tr><td><code>tests/</code> (solvers, ad, linalg, lowering, codegen, snapshot, vmap)</td><td class="r">33</td></tr>
+<tr><td><code>plugins/*/tests</code></td><td class="r">10</td></tr>
+<tr><td><code>examples/*.py</code>, <code>examples/casadi</code>, notebooks</td><td class="r">40</td></tr>
+<tr><td><code>benchmarks/</code> (with the <code>npmpc</code> type aliases)</td><td class="r">6 + 6 aliases</td></tr>
+<tr><td><code>tests/function</code>, <code>tests/typing</code></td><td class="r">rewritten by hand</td></tr>
+<tr><td>docs prose: <code>guide/derivatives.md</code>, <code>guide/solvers.md</code>, <code>guide/getting_started.md</code>, <code>how_it_works/solvers.md</code>, <code>README.md</code>, <code>docs/index.md</code>, two lines of <code>guide/functions.md</code></td><td class="r">6 pages</td></tr></table></div>
+<p>Also found on the way:</p>
+<ul>
+<li>The smoke benchmark's <code>solver_call</code> case failed before this branch: a host function and its solver were both named <code>smoke_safety_filter_qp</code>, which lowering refuses. The solvers are renamed <code>..._qp_piqp</code> and <code>..._nlp_ipopt</code>.</li>
+<li><code>sc.S</code> needed <code>named</code>; the sparse signature tests caught it.</li>
+<li>Colin's untracked <code>examples/tiny_qp.py</code> calls its solver with one tuple. It needs <code>solve(np.zeros(2), np.zeros(2), np.zeros(1), np.zeros(0), np.array(0.5))</code>; the file is left untouched and its gallery test deselected in these runs.</li>
+</ul>
+<h2>Tests and mutation checks</h2>
+<div class="scroll"><table><tr><th>Mutant</th><th>Result</th></tr>
+<tr><td>keywords ignored by <code>_bind</code></td><td class="ok">killed (2)</td></tr>
+<tr><td>no arity check in <code>numerical_call</code></td><td class="ok">killed (2)</td></tr>
+<tr><td><code>L.named</code> never names</td><td class="ok">killed (import error)</td></tr>
+<tr><td>outputs left unnamed</td><td class="ok">killed (1)</td></tr>
+<tr><td>C/C++ keywords not reserved</td><td class="ok">killed (4, including the C++ compile)</td></tr>
+<tr><td>forward's seed nested in the source group</td><td class="ok">killed (4)</td></tr>
+<tr><td>mixed leaves not refused</td><td class="ok">killed (3)</td></tr>
+<tr><td>zero-argument call symbolic</td><td class="ok">killed (3)</td></tr>
+<tr><td>NumPy integer shapes not converted</td><td class="ok">killed (1)</td></tr>
+<tr><td><code>S.named</code> never names</td><td class="ok">killed (1)</td></tr>
+<tr><td>group parts not suffixed <code>_i</code></td><td class="ok">killed (2)</td></tr></table></div>
+<p>New tests: multi-parameter bodies (and the byte-identical C of the grouped form), arity and keyword errors, unnamed-leaf naming including nested groups, widths 0 and 8, seeded derivatives on two-parameter sources, leaf declaration forms, specs in <code>G</code>, the unnamed sparse slot, reserved keywords. The typing tests cover arities 0, 1, 2 and 8, wrong arity and kinds, keywords refused, the decorator against the body, <code>G</code> with specs, and the <code>forward</code>/<code>gradient</code>/Lagrangian/solver result types. A deliberately wrong <code>assert_type</code> was checked to fail.</p>
+<h2>Timing</h2>
+<p><code>perf_2026_09_27_templates/trivial_call.py</code>, three interleaved runs per checkout, minima, µs per call.</p>
+<div class="scroll"><table><tr><th>Checkout</th><th>One leaf</th><th>One group of 4</th><th>4 parameters</th></tr>
+<tr><td>P1b-i</td><td class="r">2.83</td><td class="r">5.81</td><td class="r">n/a</td></tr>
+<tr><td>P1b-ii</td><td class="r">2.44</td><td class="r">5.01</td><td class="r">4.44</td></tr></table></div>
+<h2>Gates</h2>
+<div class="scroll"><table><tr><th>Check</th><th>Result</th></tr>
+<tr><td><code>uv run pytest -n=auto</code></td><td class="ok">2368 passed, 42 skipped</td></tr>
+<tr><td>C snapshots</td><td class="ok">unchanged</td></tr>
+<tr><td><code>uv run ty check --error-on-warning</code></td><td class="ok">no new diagnostics; one pre-existing notebook message reworded</td></tr>
+<tr><td><code>uv run pytest typing_playground</code></td><td class="ok">42 passed</td></tr>
+<tr><td><code>uv run benchmarks/run.py smoke</code></td><td class="ok">green after the rename above</td></tr>
+<tr><td>examples the suite does not run: <code>examples/casadi/compare.py</code> (17 pairs agree), <code>multiple_shooting.py</code>, <code>qp_solvers/compare.py --cases mpc_N5</code></td><td class="ok">run</td></tr>
+<tr><td><code>ruff format</code>, <code>ruff check</code></td><td class="ok">clean</td></tr></table></div>
+<h2>Next</h2>
+<p>P2: <code>Function</code> becomes the template, and <code>ConcreteFunction</code> a subclass of it. Holes (<code>sc.L()</code>, <code>(n, None)</code>) bind per call, with cached instances and deterministic names.</p>
+</main></body></html>

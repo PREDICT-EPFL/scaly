@@ -18,6 +18,6 @@ def multiple_shooting(w, z0):
     return sc.ProblemSpec(minimize=sc.sumsqr(zs) + 0.1 * sc.sumsqr(us), eq=(zs[:2] - z0, defects))
 
 solve = sc.solver(multiple_shooting, "ipopt")
-w_opt, *_ = solve((np.zeros(3 * N + 2), np.zeros(3 * N + 2), np.zeros(2 * N + 2), np.zeros(0), np.array([1.0, 0.0])))
+w_opt, *_ = solve(np.zeros(3 * N + 2), np.zeros(3 * N + 2), np.zeros(2 * N + 2), np.zeros(0), np.array([1.0, 0.0]))
 
 write_module(solve, Path(__file__).resolve().parent / "generated" / "multiple_shooting")  # the solver as C, next to this file

@@ -94,16 +94,16 @@ def build(case: Any, key: str) -> Any:
   raise KeyError(key)
 
 
-def call_args(fun: Any, case: Any, key: str) -> tuple[Any, list[np.ndarray]]:
-  """The call's argument tree and its flat arrays, in the order of the entry's inputs."""
+def call_args(fun: Any, case: Any, key: str) -> tuple[tuple[Any, ...], list[np.ndarray]]:
+  """The call's arguments, one per parameter, and their flat arrays, in the order of the entry's inputs."""
   params = case.params()
   if key.startswith("scaly_"):
     flat = [np.asarray(a, dtype=float) for a in case.problem.params.flatten_numerical(params, "parameters")]
     return fun.input_tree.unflatten(tuple(flat)), flat
   p = case.problem
   zeros = p.vars.unflatten(tuple(np.zeros(s) for s in p.vars.shapes))
-  tree = (zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
-  return tree, [np.asarray(a, dtype=float) for a in fun.input_tree.flatten_numerical(tree, "solver inputs")]
+  args = (zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
+  return args, [np.asarray(a, dtype=float) for a in fun.input_tree.flatten_numerical(args, "solver inputs")]
 
 
 def flat_x(out: Any, key: str, problem: Any) -> np.ndarray:
@@ -195,8 +195,8 @@ def measure(case_name: str, key: str, budget: float) -> dict[str, Any]:
   row["object_bytes"] = object_size(lib)
   row["library_bytes"] = plugin_libraries(lib)
 
-  tree, flat = call_args(fun, case, key)
-  out = fun(tree)  # JIT: compiles once more, into this process's empty cache
+  args, flat = call_args(fun, case, key)
+  out = fun(*args)  # JIT: compiles once more, into this process's empty cache
   x = flat_x(out, key, case.problem)
   if key.startswith("scaly_"):
     status, iters = int(out[4]), int(out[5])
@@ -211,13 +211,13 @@ def measure(case_name: str, key: str, budget: float) -> dict[str, Any]:
 
   # Solve time, through Python and from C.
   t = time.perf_counter()
-  fun(tree)
+  fun(*args)
   once = max(time.perf_counter() - t, 1e-7)
   reps = int(min(2000, max(5, budget / once)))
   py = []
   for _ in range(reps):
     t = time.perf_counter()
-    fun(tree)
+    fun(*args)
     py.append(time.perf_counter() - t)
   row["python_best_s"], row["python_median_s"] = min(py), statistics.median(py)
   if not key.startswith("scaly_"):

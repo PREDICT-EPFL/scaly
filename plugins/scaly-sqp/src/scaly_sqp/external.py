@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from scaly.function import ConcreteFunction
-from scaly.function.tree import G, L, flat_tree
+from scaly.function.tree import G, L, flat_tree, param_list
 from scaly.ir.types import SparsityType, TensorType
 from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
 
@@ -52,7 +52,7 @@ def external_nlp(
   bounds = oracle("bounds", param_signature, bounds_outputs)
 
   param_tree = flat_tree(param_names, tuple(TensorType(shape, diff=False) for _, shape in param_signature))
-  input_tree = G(
+  input_tree = param_list(
     L("x", TensorType((n,), diff=False)),
     L("lam:x", TensorType((n,), diff=False)),
     L("lam_eq", TensorType((n_eq,), diff=False)),

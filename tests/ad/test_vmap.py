@@ -108,8 +108,8 @@ def test_forward_and_adjoint_of_vmap_match_unrolled_and_are_dual() -> None:
   zv, qv = rng.normal(size=3 * N), rng.normal(size=2 * N)
   v, w = rng.normal(size=3 * N), rng.normal(size=2 * N)
   # Inputs are unit normal and the callee holds exp and products of three, so |y|, |J| stay around 1.
-  fwd = {name: np.asarray(sc.forward(fn, "y", "z")(((zv, qv), v))) for name, fn in (("vmap", fn_vmap), ("unroll", fn_unroll))}
-  adj = {name: np.asarray(sc.adjoint(fn, "y", "z")(((zv, qv), w))) for name, fn in (("vmap", fn_vmap), ("unroll", fn_unroll))}
+  fwd = {name: np.asarray(sc.forward(fn, "y", "z")((zv, qv), v)) for name, fn in (("vmap", fn_vmap), ("unroll", fn_unroll))}
+  adj = {name: np.asarray(sc.adjoint(fn, "y", "z")((zv, qv), w)) for name, fn in (("vmap", fn_vmap), ("unroll", fn_unroll))}
   jac = np.asarray(sc.jacobian(fn_unroll, "y", "z")((zv, qv)))
   np.testing.assert_allclose(fwd["vmap"], fwd["unroll"], rtol=1e-12, atol=1e-12)
   np.testing.assert_allclose(adj["vmap"], adj["unroll"], rtol=1e-12, atol=1e-12)

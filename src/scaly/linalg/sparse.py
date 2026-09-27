@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from types import EllipsisType
-from typing import Any, cast
+from typing import Any, cast, overload
 
 import numpy as np
 from scipy import sparse
@@ -405,9 +405,19 @@ class S(Tree[SparseMatrix, sparse.sparray]):
 
   pattern: SparsityType | None
 
-  def __init__(self, name: str, pattern: Any, /) -> None:
-    if not isinstance(name, str) or not name:
+  @overload
+  def __init__(self, name: str, pattern: Any, /) -> None: ...
+
+  @overload
+  def __init__(self, pattern: Any, /) -> None: ...
+
+  def __init__(self, name: Any, pattern: Any = None, /) -> None:
+    if not isinstance(name, str):
+      name, pattern = "", name  # unnamed: sc.function names it after its parameter
+    elif not name:
       raise ValueError("S needs a non-empty name")
+    elif pattern is None:
+      raise TypeError("S takes a name and a pattern, or a pattern alone; write S(name, ...) for an output pattern the body decides")
     self.names = (name,)
     if pattern is Ellipsis:
       self.pattern, self.decls = None, (Ellipsis,)
@@ -460,10 +470,15 @@ class S(Tree[SparseMatrix, sparse.sparray]):
     return (self.pattern,)
 
   def symbols(self, *, diff: bool | None = None) -> SparseMatrix:
+    if not self.names[0]:
+      raise ValueError("an unnamed leaf takes its name from sc.function's parameter; name it here, as in sc.S('A', pattern)")
     type_ = self.types[0]
     if diff is not None:
       type_ = TensorType(type_.shape, type_.dtype, type_.sparsity, diff)
     return self._matrix(Expr(ExprOp.INPUT, type=type_, name=self.names[0]))
+
+  def named(self, base: str) -> S:
+    return self if self.names[0] else self._copy(base, self.decls[0])
 
   def relabel(self, prefix: str) -> S:
     return self._copy(prefix + self.names[0], self.decls[0])

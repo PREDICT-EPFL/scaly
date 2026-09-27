@@ -114,7 +114,7 @@ def mismatch(theta: np.ndarray, v: np.ndarray, pg: np.ndarray, qg: np.ndarray) -
 def main() -> dict:
   start = (np.zeros(N_BUS), np.ones(N_BUS), 0.5 * (P_MIN + P_MAX), np.zeros(3))
   zeros = (np.zeros(N_BUS), np.zeros(N_BUS), np.zeros(3), np.zeros(3))
-  (theta, v, pg, qg), lam_box, lam_eq, lam_ineq = solve_opf((start, zeros, np.zeros(opf.n_eq), np.zeros(opf.n_ineq), ()))
+  (theta, v, pg, qg), lam_box, lam_eq, lam_ineq = solve_opf(start, zeros, np.zeros(opf.n_eq), np.zeros(opf.n_ineq), ())
   stats = solve_opf.solver_stats()
   y = Y_SERIES
   vf, vt = v[FROM] * np.exp(1j * theta[FROM]), v[TO] * np.exp(1j * theta[TO])

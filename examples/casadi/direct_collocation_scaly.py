@@ -82,7 +82,7 @@ def build(verbose: bool = False):
   solve = sc.solver(collocation, "ipopt", options=scaly_ipopt_options(verbose))
 
   def run():
-    w, *_ = solve((W0, np.zeros(NW), np.zeros(N * (2 * D_DEG + 2)), np.zeros(0), ()))
+    w, *_ = solve(W0, np.zeros(NW), np.zeros(N * (2 * D_DEG + 2)), np.zeros(0), ())
     stats = solve.solver_stats()
     x = np.vstack([w[0:2], w[2:].reshape(N, 9)[:, 7:9]])
     return {"f": np.array([stats.obj]), "x1": x[:, 0], "x2": x[:, 1], "u": w[2::9], "iter": np.array([stats.iter])}

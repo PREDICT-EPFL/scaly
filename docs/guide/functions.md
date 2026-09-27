@@ -36,7 +36,8 @@ must be unique within its tree.
 
 ## Symbolic and numerical calls
 
-Call a `Function` with its declared input tree. The leaves decide what the call means:
+Call a `Function` with one argument per parameter, each shaped as that parameter's declared tree.
+The leaves decide what the call means:
 
 ```python
 symbolic = features((sc.sym("x0", 3), sc.sym("A0", (2, 3))))
@@ -50,7 +51,7 @@ numeric_sum, numeric_projection = numeric
 use, cache the shared library and reconstruct the declared output tree.
 
 `__call__` dispatches to two methods you can also call directly when the distinction matters:
-`fn.symbolic_call(tree)` always builds a call node and `fn.numerical_call(tree)` always evaluates.
+`fn.symbolic_call(...)` always builds a call node and `fn.numerical_call(...)` always evaluates.
 
 A tree that mixes `Expr` and numerical leaves is an error. Wrap the constants in `sc.const` to make
 the symbolic reading explicit.

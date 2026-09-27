@@ -147,24 +147,23 @@ cost quadratic, the constraints affine and the bounds independent of the variabl
 
 ## Call the solver
 
-All solver functions have the same five input groups and four output groups:
+A solver takes five arguments and returns four results. The arguments are the warm start, the box
+multipliers, the equality multipliers, the inequality multipliers and the parameters:
 
 ```text
-inputs  = (vars_init, lam_box0, lam_eq0, lam_ineq0, params)
-outputs = (vars,      lam_box,  lam_eq,  lam_ineq)
+arguments = vars_init, lam_box0, lam_eq0, lam_ineq0, params
+results   = vars,      lam_box,  lam_eq,  lam_ineq
 ```
 
 For this problem, the variable and parameter trees each have one leaf:
 
 ```python
 us_opt, lam_box, lam_eq, lam_ineq = solve(
-    (
-        np.zeros(N),
-        np.zeros(N),
-        np.zeros(2),
-        np.zeros(0),
-        np.array([1.0, 0.0]),
-    )
+    np.zeros(N),
+    np.zeros(N),
+    np.zeros(2),
+    np.zeros(0),
+    np.array([1.0, 0.0]),
 )
 
 stats = solve.solver_stats()

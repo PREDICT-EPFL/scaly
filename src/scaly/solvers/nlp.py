@@ -9,7 +9,7 @@ import numpy as np
 from ..ad.sparse import SparseJacobian, sparse_hessian
 from ..function import ConcreteFunction
 from ..function.api import gradient, sparse_jacobian
-from ..function.tree import G, L, Tree
+from ..function.tree import G, L, Tree, param_list
 from ..ir.expr import Expr, ExprOp, concat, substitute
 from ..ir.types import SparsityType, TensorType
 from .model import SolverDescriptor, descriptor_function
@@ -104,7 +104,7 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
     base_outputs,
     base_input_tree.names,
     base_output_tree.names,
-  )._with_trees(base_input_tree, base_output_tree)
+  )._with_trees(param_list(base_input_tree), base_output_tree)
 
   grad = gradient(base, "f", x_name, name=f"{problem.name}_grad")
   if g is None:
@@ -152,7 +152,7 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
     "jac_sparsity": jac_sparsity,
     "hess_full": hess_full,
     "hess_inputs": (x, *problem._param_symbols, *multiplier_exprs),
-    "hess_input_tree": G(base.input_tree, multiplier_tree),
+    "hess_input_tree": G(base_input_tree, multiplier_tree),
     "bounds": bounds,
   }
   problem._cache["nlp"] = cached
@@ -166,8 +166,8 @@ def build_nlp[SV, NV, SP, NP](
   name: str,
   options: dict[str, str | int | float] | None,
 ) -> ConcreteFunction[
-  tuple[SV, SV, Expr, Expr, SP],
-  tuple[NV, NV, np.ndarray, np.ndarray, NP],
+  [SV, SV, Expr, Expr, SP],
+  [NV, NV, np.ndarray, np.ndarray, NP],
   tuple[SV, SV, Expr, Expr],
   tuple[NV, NV, np.ndarray, np.ndarray],
 ]:
@@ -189,7 +189,7 @@ def build_nlp[SV, NV, SP, NP](
       (hess_name,),
       (hess.sparsity,),
       output_coloring_widths=(hess.coloring_width,),
-    )._with_trees(cast(Tree[Any, Any], cached["hess_input_tree"]), L(hess_name, hess.values.type))
+    )._with_trees(param_list(cast(Tree[Any, Any], cached["hess_input_tree"])), L(hess_name, hess.values.type))
     problem._cache[hess_key] = hess_fn
   hess_sparsity = hess_fn.output_sparsities[0]
   assert hess_sparsity is not None
@@ -197,7 +197,7 @@ def build_nlp[SV, NV, SP, NP](
   solver_vars = problem.vars.with_types(
     tuple(TensorType(expr.shape, expr.type.dtype, expr.type.sparsity, diff=False) for expr in problem._var_symbols)
   )
-  input_tree = G(
+  input_tree = param_list(
     solver_vars,
     solver_vars.relabel("lam:"),
     L("lam_eq", TensorType((problem.n_eq,), diff=False)),

@@ -879,8 +879,8 @@ def _samples(
   sample_values = {name: sample_value(name) for name, _ in info["inputs"]}
   args = list(sample_values.values())
   kernel = info["callable"]
-  # CasADi takes flat positional leaves; an scaly Function takes its declared tree, so rebuild it.
-  result = kernel(*args) if info["backend"].startswith("casadi") else kernel(kernel.input_tree.unflatten(tuple(args)))
+  # CasADi takes flat positional leaves; a Scaly Function takes one tree per parameter, so rebuild them.
+  result = kernel(*args) if info["backend"].startswith("casadi") else kernel(*kernel.input_tree.unflatten(tuple(args)))
   if info["backend"].startswith("casadi"):
     outputs = result if isinstance(result, (tuple, list)) else (result,)
     selected = outputs[int(info["output_index"])]

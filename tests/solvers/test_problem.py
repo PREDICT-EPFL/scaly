@@ -220,7 +220,7 @@ def test_two_solvers_from_one_problem_render_one_translation_unit() -> None:
     sc.const(np.zeros(3)),
     (sc.const(np.zeros(4)), sc.const(np.zeros(2))),
   )
-  outputs = (left.symbolic_call(warm)[0][0], right.symbolic_call(warm)[0][0], ipopt.symbolic_call(warm)[0][0])
+  outputs = (left.symbolic_call(*warm)[0][0], right.symbolic_call(*warm)[0][0], ipopt.symbolic_call(*warm)[0][0])
   host = sc.Function._from_exprs("shared_problem_host", (), outputs, (), ("left", "right", "third"))
   source = render_c_source(host)
   assert source.count("static inline void filter_problem_hess_upper_raw(") == 1
@@ -230,7 +230,7 @@ def test_two_solvers_from_one_problem_render_one_translation_unit() -> None:
 @pytest.mark.solver("sqp")
 def test_sqp_numerical_call_preserves_multiple_variable_blocks() -> None:
   solve = sc.solver(two_block_quadratic, "sqp", name="two_block_sqp")
-  result = solve.numerical_call(_two_block_inputs())
+  result = solve.numerical_call(*_two_block_inputs())
   np.testing.assert_allclose(result[0][0], [0.25, -0.75], atol=2e-6)
   np.testing.assert_allclose(result[0][1], [0.4], atol=2e-6)
   assert result[1][0].shape == (2,)
@@ -240,7 +240,7 @@ def test_sqp_numerical_call_preserves_multiple_variable_blocks() -> None:
 @pytest.mark.solver("ipopt")
 def test_ipopt_numerical_call_preserves_multiple_variable_blocks() -> None:
   solve = sc.solver(two_block_quadratic, "ipopt", name="two_block_ipopt")
-  result = solve.numerical_call(_two_block_inputs())
+  result = solve.numerical_call(*_two_block_inputs())
   np.testing.assert_allclose(result[0][0], [0.25, -0.75], atol=2e-6)
   np.testing.assert_allclose(result[0][1], [0.4], atol=2e-6)
   assert result[1][0].shape == (2,)
@@ -250,7 +250,7 @@ def test_ipopt_numerical_call_preserves_multiple_variable_blocks() -> None:
 @pytest.mark.solver("piqp")
 def test_piqp_numerical_call_preserves_multiple_variable_blocks() -> None:
   solve = sc.solver(two_block_quadratic, "piqp", name="two_block_piqp")
-  result = solve.numerical_call(_two_block_inputs())
+  result = solve.numerical_call(*_two_block_inputs())
   np.testing.assert_allclose(result[0][0], [0.25, -0.75], atol=2e-6)
   np.testing.assert_allclose(result[0][1], [0.4], atol=2e-6)
   assert result[1][0].shape == (2,)
@@ -332,13 +332,11 @@ def test_qp_backend_proves_quadratic_cost_and_affine_constraints() -> None:
   @sc.problem(vars=sc.L("outer", 3), params=sc.L("p", ()))
   def nested_solver_cost(outer: sc.Expr, p: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     nested = inner.symbolic_call(
-      (
-        sc.const(np.zeros(3)),
-        sc.const(np.zeros(3)),
-        sc.const(np.zeros(0)),
-        sc.const(np.zeros(0)),
-        outer[0],
-      )
+      sc.const(np.zeros(3)),
+      sc.const(np.zeros(3)),
+      sc.const(np.zeros(0)),
+      sc.const(np.zeros(0)),
+      outer[0],
     )[0]
     return sc.ProblemSpec(minimize=((outer - nested) * (outer - nested)).sum() + p)
 
@@ -375,7 +373,7 @@ def _zero_group_inputs(n_eq: int, n_ineq: int) -> tuple[Any, ...]:
 @pytest.mark.parametrize(("n_eq", "n_ineq"), ((0, 0), (1, 0), (0, 1)))
 def test_ipopt_compiles_present_zero_length_constraint_groups(n_eq: int, n_ineq: int) -> None:
   solve = sc.solver(sc.qp_problem(2, n_eq, n_ineq), "ipopt", name=f"empty_ipopt_{n_eq}_{n_ineq}")
-  result = solve.numerical_call(_zero_group_inputs(n_eq, n_ineq))
+  result = solve.numerical_call(*_zero_group_inputs(n_eq, n_ineq))
   np.testing.assert_allclose(result[0], np.zeros(2), atol=1e-7)
 
 
@@ -383,7 +381,7 @@ def test_ipopt_compiles_present_zero_length_constraint_groups(n_eq: int, n_ineq:
 @pytest.mark.parametrize(("n_eq", "n_ineq"), ((0, 0), (1, 0), (0, 1)))
 def test_sqp_compiles_present_zero_length_constraint_groups(n_eq: int, n_ineq: int) -> None:
   solve = sc.solver(sc.qp_problem(2, n_eq, n_ineq), "sqp", name=f"empty_sqp_{n_eq}_{n_ineq}")
-  result = solve.numerical_call(_zero_group_inputs(n_eq, n_ineq))
+  result = solve.numerical_call(*_zero_group_inputs(n_eq, n_ineq))
   np.testing.assert_allclose(result[0], np.zeros(2), atol=1e-7)
 
 
@@ -403,13 +401,11 @@ def test_nlp_solver_symbolic_call_preserves_variable_blocks() -> None:
   solve = sc.solver(filter_problem, "sqp", name="filter_nested")
   u0, s0 = sc.sym("u0", 2), sc.sym("s0", 1)
   result = solve.symbolic_call(
-    (
-      (u0, s0),
-      (sc.const(np.zeros(2)), sc.const(np.zeros(1))),
-      sc.const(np.zeros(1)),
-      sc.const(np.zeros(3)),
-      (sc.const(np.zeros(4)), sc.const(np.zeros(2))),
-    )
+    (u0, s0),
+    (sc.const(np.zeros(2)), sc.const(np.zeros(1))),
+    sc.const(np.zeros(1)),
+    sc.const(np.zeros(3)),
+    (sc.const(np.zeros(4)), sc.const(np.zeros(2))),
   )
   assert isinstance(result[0], tuple)
   assert result[0][0].shape == (2,)

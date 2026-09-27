@@ -463,7 +463,7 @@ def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> No
 def test_sqp_nested_in_host_function() -> None:
   solver = _problem()
   target = sc.sym("target", 2, diff=False)
-  x = solver.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(1)), sc.const(np.zeros(1)), target))[0]
+  x = solver.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(1)), sc.const(np.zeros(1)), target)[0]
   host = sc.Function._from_exprs("nested_sqp_host", [target], [sc.dot(x, x)], ["target"], ["norm"])
   np.testing.assert_allclose(host(np.array([0.2, 0.8])), 0.625, atol=3e-6)
 

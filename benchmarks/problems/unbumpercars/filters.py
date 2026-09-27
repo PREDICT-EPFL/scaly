@@ -862,7 +862,7 @@ class ScalyDTCBFSafetyFilter:
         variables0, box0 = z0, lam_box0
       param_values = params[0] if self._packed_params else params
       started = time.perf_counter()
-      variables, box, lam_eq, lam_ineq = active_nlp.numerical_call((variables0, box0, np.zeros(0), lam_g0, param_values))
+      variables, box, lam_eq, lam_ineq = active_nlp.numerical_call(variables0, box0, np.zeros(0), lam_g0, param_values)
       self.last_solve_wall_ms += (time.perf_counter() - started) * 1000.0
       if descriptor.n_var_blocks == 2:
         z_sol = np.concatenate(variables)

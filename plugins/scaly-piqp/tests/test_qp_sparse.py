@@ -152,7 +152,7 @@ def test_nested_sparse_qp_in_scaly_function() -> None:
       sparse=True,
       name="nested_sparse_qp",
     )
-    out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), t))
+    out = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), t)
     return out[0]
 
   tv = np.array([1.0, -2.0])

@@ -195,9 +195,9 @@ def test_multipliers_of_a_sparse_output_are_sparse_too() -> None:
   h = sc.lagrangian_hessian(f, "x")
   x = np.array([0.5, -1.0, 2.0])
   lam_m = sparse.csc_array(np.diag([1.0, 2.0, 3.0]))
-  np.testing.assert_allclose(h((x, (np.array(1.0), lam_m))), 2 * np.eye(3) + np.diag(6 * x * [1.0, 2.0, 3.0]), rtol=1e-14)
+  np.testing.assert_allclose(h(x, (np.array(1.0), lam_m)), 2 * np.eye(3) + np.diag(6 * x * [1.0, 2.0, 3.0]), rtol=1e-14)
   with pytest.raises(ValueError, match="expected a SciPy sparse matrix"):
-    h((x, (np.array(1.0), np.ones(3))))  # ty: ignore[no-matching-overload]
+    h(x, (np.array(1.0), np.ones(3)))  # ty: ignore[no-matching-overload]
 
 
 def test_declaration_errors() -> None:
@@ -237,3 +237,17 @@ def test_a_returned_matrix_shares_no_structure_with_the_declaration() -> None:
   first.indptr[:] = 0
   np.testing.assert_array_equal(build((q, a)).toarray(), want)
   assert build.output_tree.sparsities[0] == _kkt_builder("sg_fresh_ref", ...).output_tree.sparsities[0]
+
+
+def test_an_unnamed_sparse_slot_takes_its_parameter_name() -> None:
+  @sc.function(S(MASK), 4, output="y")
+  def matvec(A, x):
+    return A @ x
+
+  assert matvec.input_names == ("A", "x") and matvec.output_names == ("y",)
+  a, xv = _matrix(), RNG.standard_normal(4)
+  np.testing.assert_allclose(matvec(a, xv), a @ xv)
+  with pytest.raises(ValueError, match="unnamed leaf"):
+    S(MASK).symbols()
+  with pytest.raises(TypeError, match="a name and a pattern, or a pattern alone"):
+    S("A")

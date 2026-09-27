@@ -43,7 +43,7 @@ def solve_problem(solver, x0, lam_eq, lam_ineq, lam_box, params):
   if not isinstance(solver, sc.Function):
     return solver(x0, lam_eq, lam_ineq, lam_box, params)
 
-  x, lam_box, lam_eq, lam_ineq = solver.numerical_call((x0, lam_box, lam_eq, lam_ineq, params))
+  x, lam_box, lam_eq, lam_ineq = solver.numerical_call(x0, lam_box, lam_eq, lam_ineq, params)
   descriptor = solver.descriptor
   base = descriptor.base
   if isinstance(base, sc.Function):

@@ -69,17 +69,17 @@ With `options={"sparse": True}`, core derives fixed compressed sparse column (CS
 
 ## One fixed solver signature
 
-Every backend receives the same flattened five-group call:
+Every solver `Function` takes the same five arguments and returns four results:
 
 ```text
-inputs  = variables, box multipliers, equality multipliers, inequality multipliers, parameters
-outputs = variables, box multipliers, equality multipliers, inequality multipliers
+arguments = variables, box multipliers, equality multipliers, inequality multipliers, parameters
+results   = variables, box multipliers, equality multipliers, inequality multipliers
 ```
 
-The descriptor records `n_var_blocks` so a plugin can find the fixed groups and scatter its native
-flat solution into variable leaves. Empty multiplier categories remain zero-sized arrays. The
-objective and detailed status are reported through `SolverStats`, not through extra function
-outputs.
+The backend receives them flattened, in that order. The descriptor records `n_var_blocks` so a
+plugin can find the fixed groups and scatter its native flat solution into variable leaves. Empty
+multiplier categories remain zero-sized arrays. The objective and detailed status are reported
+through `SolverStats`, not through extra function outputs.
 
 `descriptor_function` creates one `ExprOp.SOLVER_CALL` node per output leaf. All nodes share the
 descriptor identity, so lowering emits one wrapper call and distributes its outputs.

@@ -67,7 +67,7 @@ def market(seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def solve(mu: np.ndarray, f: np.ndarray, d: np.ndarray, gamma: float) -> np.ndarray:
   n_eq = N_FACTORS + 1
   (x, _), *_ = solve_factored(
-    ((np.zeros(N_ASSETS), np.zeros(N_FACTORS)), (np.zeros(N_ASSETS), np.zeros(N_FACTORS)), np.zeros(n_eq), np.zeros(0), (mu, f, d, np.array(gamma)))
+    (np.zeros(N_ASSETS), np.zeros(N_FACTORS)), (np.zeros(N_ASSETS), np.zeros(N_FACTORS)), np.zeros(n_eq), np.zeros(0), (mu, f, d, np.array(gamma))
   )
   return x
 
@@ -78,7 +78,7 @@ def dense_reference(mu: np.ndarray, f: np.ndarray, d: np.ndarray, gamma: float) 
   solve_dense = sc.solver(qp, "piqp", name="markowitz_dense", options=TIGHT)
   sigma = f @ f.T + np.diag(d)
   data = ((2 * gamma * sigma, -mu), (np.ones((1, N_ASSETS)), np.ones(1)), (np.eye(N_ASSETS), np.zeros(N_ASSETS), np.full(N_ASSETS, X_MAX)))
-  x, *_ = solve_dense((np.zeros(N_ASSETS), np.zeros(N_ASSETS), np.zeros(1), np.zeros(N_ASSETS), data))
+  x, *_ = solve_dense(np.zeros(N_ASSETS), np.zeros(N_ASSETS), np.zeros(1), np.zeros(N_ASSETS), data)
   return x
 
 

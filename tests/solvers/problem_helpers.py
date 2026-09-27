@@ -136,7 +136,7 @@ def solve_qp(
   if params and named_params:
     raise TypeError("pass positional or named QP parameters, not both")
   values = params or tuple(named_params[name] for name in descriptor.param_names)
-  outputs = solver(solver.input_tree.unflatten((x0, np.zeros_like(x0), lam_eq0, lam_ineq0, *values)))
+  outputs = solver(*solver.input_tree.unflatten((x0, np.zeros_like(x0), lam_eq0, lam_ineq0, *values)))
   result = dict(zip(solver.output_names, outputs, strict=True))
   result["x"] = outputs[0]
   result["lam_box"] = outputs[1]
@@ -157,7 +157,7 @@ def solve_nlp(
   if len(params) != len(descriptor.param_names):
     raise ValueError(f"expected {len(descriptor.param_names)} parameters, got {len(params)}")
   param_values: Any = () if not params else params[0] if len(params) == 1 else params
-  x, lam_box, lam_eq, lam_ineq = solver.numerical_call((x0, lam_box, lam_eq, lam_ineq, param_values))
+  x, lam_box, lam_eq, lam_ineq = solver.numerical_call(x0, lam_box, lam_eq, lam_ineq, param_values)
   base = descriptor.base
   if isinstance(base, sc.Function):
     values = base.numerical_call((np.asarray(x).reshape(-1), param_values))

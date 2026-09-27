@@ -135,7 +135,7 @@ def test_nested_qp_in_scaly_function() -> None:
   def track_qp(mu):
     # min 0.5 |x - mu|^2  -> solution is mu itself
     qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
-    out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
+    out = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)
     return (out[0], 0.5 * sc.dot(out[0], out[0]) - sc.dot(mu, out[0]))
 
   for mu_val in [np.array([0.5, -1.2]), np.zeros(2), np.array([3.0, 2.0])]:
@@ -152,7 +152,7 @@ def test_nested_qp_postprocessed() -> None:
   @sc.function(sc.L("mu", (2,)), output=sc.L("y", ...), name="squared_norm_via_qp")
   def sq_norm(mu):
     qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
-    out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
+    out = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)
     x_star = out[0]
     return sc.dot(x_star, x_star)
 
@@ -171,7 +171,7 @@ def test_nested_qp_with_general_inequality() -> None:
     l_ineq = sc.const(np.array([-0.5]))
     u_ineq = sc.const(np.array([0.5]))
     qp = build_qp(P=sc.const(np.eye(2)), c=-u_ref, G_ineq=G, l_ineq=l_ineq, u_ineq=u_ineq)
-    out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(1)), u_ref))
+    out = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(1)), u_ref)
     return out[0]
 
   # u_ref = (1, 1) is infeasible -> the QP projects onto the band.
@@ -195,7 +195,7 @@ def test_nested_qp_jit_compiles_through_piqp() -> None:
     l_ineq = sc.stack([sc.const(-1.0)], axis=0)
     u_ineq = sc.stack([sc.const(1.0)], axis=0)
     qp = build_qp(P=P, c=c, G_ineq=G, l_ineq=l_ineq, u_ineq=u_ineq)
-    u, *_ = qp((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(1)), (u_ref, x)))
+    u, *_ = qp(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(1)), (u_ref, x))
     return u
 
   u = safety_filter((np.array([1.0, 1.0]), np.array([0.5, 0.5])))
@@ -214,7 +214,7 @@ def test_nested_qp_call_uses_the_declared_tree() -> None:
   u_ref = sc.sym("u_ref", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-u_ref)
   assert qp.input_names == ("decision", "lam:decision", "lam_eq", "lam_ineq", "u_ref")
-  out_exprs = qp((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), u_ref))
+  out_exprs = qp(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), u_ref)
   assert len(out_exprs) == len(qp.output_names)
   wrapped = sc.Function._from_exprs("wrapped", [u_ref], [out_exprs[0]], ["u_ref"], ["u"])
   result = wrapped(np.array([1.5, -0.3]))

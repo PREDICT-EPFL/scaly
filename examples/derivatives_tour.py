@@ -95,11 +95,11 @@ def main() -> dict:
   checks = {
     "gradient": np.abs(gradient(x0) - central_difference(energy_numpy, x0)).max(),
     "hessian": np.abs(hessian(x0) - central_difference(lambda y: gradient(y), x0)).max(),
-    "hvp": np.abs(hvp((x0, v)) - hessian(x0) @ v).max(),
+    "hvp": np.abs(hvp(x0, v) - hessian(x0) @ v).max(),
     "sparse = dense rigidity": np.abs(rigidity_sparse(x0).reshape(-1) - rigidity(x0)[pattern.rows, pattern.cols]).max(),
   }
   t = rng.standard_normal(P)
-  checks["adjoint = R^T t"] = np.abs(bar_forces((x0, t)) - rigidity(x0).T @ t).max()
+  checks["adjoint = R^T t"] = np.abs(bar_forces(x0, t) - rigidity(x0).T @ t).max()
 
   result = optimize.minimize(
     lambda x: newton_oracle(x)[0],

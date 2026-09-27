@@ -337,7 +337,7 @@ def test_program_ir_jit_executes(builder, inputs) -> None:
   # Gate first so a coverage gap errors here loudly (there is no fallback).
   render_program_c_source(fn)
   fn.recompile()
-  got = np.asarray(fn(fn.input_tree.unflatten(tuple(inputs)))).reshape(-1)
+  got = np.asarray(fn(*fn.input_tree.unflatten(tuple(inputs)))).reshape(-1)
   assert got.size == fn.outputs[0].size
   assert np.all(np.isfinite(got))
 
@@ -440,7 +440,7 @@ def test_stage_transcription_renders_and_matches(kind) -> None:
   inputs = [np.random.default_rng(0).standard_normal(e.size).reshape(e.shape) for e in fn.inputs]
   fn.recompile()
   assert len(fn.outputs) == 1
-  got = np.asarray(fn(fn.input_tree.unflatten(tuple(inputs)))).reshape(-1)
+  got = np.asarray(fn(*fn.input_tree.unflatten(tuple(inputs)))).reshape(-1)
   assert got.size == fn.outputs[0].size
   assert np.all(np.isfinite(got))
 

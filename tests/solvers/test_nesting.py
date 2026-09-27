@@ -19,7 +19,7 @@ pytestmark = pytest.mark.skipif(
 def test_solver_call_returns_expressions() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
-  out_exprs = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
+  out_exprs = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)
   assert len(out_exprs) == len(qp.output_names)
   # call() inherits from Function and wraps each output in an ExprOp.CALL node
   # whose callee is the solver function — the inner SOLVER_CALL nodes live in
@@ -53,7 +53,7 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
 
   @sc.function(sc.L("mu", (2,)), output=sc.G(sc.L("x", ...), sc.L("lam_box", ...), sc.L("lam_eq", ...)), name="multi_out")
   def multi_out(mu):
-    out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
+    out = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)
     return (out[0], out[1], out[2])
 
   from scaly.passes.lowering import lower_function, main_proc
@@ -68,7 +68,7 @@ def test_solver_outputs_share_one_program_ir_call() -> None:
 def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu, name="nested_stats_qp")
-  out = qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu))
+  out = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)
   host = sc.Function._from_exprs("nested_stats_host", [mu], [out[0]], ["mu"], ["x"])
   np.testing.assert_allclose(host(np.array([0.5, -0.25])), [0.5, -0.25], atol=1e-8)
   stats = host.solver_stats("nested_stats_qp")
@@ -80,7 +80,7 @@ def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
 def test_duplicate_nested_solver_names_fail_before_c_compilation() -> None:
   mu = sc.sym("mu", 2)
   qps = [build_qp(P=np.eye(2), c=-mu) for _ in range(2)]
-  outs = [qp.symbolic_call((sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)) for qp in qps]
+  outs = [qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu) for qp in qps]
   host = sc.Function._from_exprs("duplicate_solver_host", [mu], [outs[0][0], outs[1][0]], ["mu"], ["x0", "x1"])
   with pytest.raises(ValueError, match="duplicate solver symbol 'problem_body_piqp'"):
     render_c_source(host)

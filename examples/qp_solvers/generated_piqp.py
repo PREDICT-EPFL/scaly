@@ -61,7 +61,7 @@ def solver(
   probe = sc.Function._from_exprs(f"{name}_probe", params, probe_outputs, problem.params.names, ("P", "A", "G", "g_lb", "g_ub", "x_lb", "x_ub"))
   rng = np.random.default_rng(0)
   sample = probe.input_tree.unflatten(tuple(rng.standard_normal(e.shape) for e in params))
-  p_val, a_val, g_val, *bounds = probe(sample)
+  p_val, a_val, g_val, *bounds = probe(*sample)
   P_sp = _qp_matrix_sparsity(P, params, p_val, triu=True)
   A_sp = _qp_matrix_sparsity(A, params, a_val) if p else None
   G_sp = _qp_matrix_sparsity(G, params, g_val) if m else None
@@ -101,7 +101,7 @@ def structure_summary(problem: sc.Problem) -> dict[str, Any]:
   params = list(problem._param_symbols)
   probe = sc.Function._from_exprs(f"{problem.name}_nnz_probe", params, [P.vec(), A.vec(), G.vec()], problem.params.names, ("P", "A", "G"))
   rng = np.random.default_rng(0)
-  vals = probe(probe.input_tree.unflatten(tuple(rng.standard_normal(e.shape) for e in params)))
+  vals = probe(*probe.input_tree.unflatten(tuple(rng.standard_normal(e.shape) for e in params)))
   n, p, m = P.shape[0], A.shape[0], G.shape[0]
   nnz = [len(_qp_matrix_sparsity(M, params, v, triu=k == 0).rows) if M.shape[0] else 0 for k, (M, v) in enumerate(zip((P, A, G), vals))]
   return {"n": n, "p": p, "m": m, "nnz_P_upper": nnz[0], "nnz_A": nnz[1], "nnz_G": nnz[2]}
