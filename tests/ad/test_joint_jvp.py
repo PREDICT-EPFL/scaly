@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly.ad.forward import _call_jvp_function
-from scaly.ir.expr import ExprOp, topo
+from scaly.ad.forward import _call_jvp_function, _reaches_custom_jvp
+from scaly.ir.expr import CALLEE_OPS, ExprOp, callees_of, topo
 from scaly.ir.program import ProgramOp
 from scaly.passes.lowering import lower_function
 from scaly.passes.program._common import _walk
@@ -142,3 +142,29 @@ def test_call_combines_constant_and_runtime_tangents() -> None:
   expected = seeds * (np.cos(zv * (np.sin(zv) + 2)) * (np.sin(zv) + 2 + zv * np.cos(zv)))
   np.testing.assert_allclose(fn(zv), expected, atol=1e-12, rtol=1e-12)
   assert sum(node.op == ExprOp.CALL for node in topo([derivative])) == 1
+
+
+def test_a_call_reaching_a_custom_rule_maps_the_rule_over_the_seeds() -> None:
+  """A constant seed through a call is otherwise taken one seed at a time, which applies a forward
+  rule once per seed and redoes per seed what the rule shares across seeds (an implicit rule's
+  factorization); the joint pass maps the rule over the seeds instead, as one ``vmap``."""
+  a = sc.sym("a", 3)
+  solve = sc.Function._from_exprs("rj_solve", [a], [a * a], ["a"], ["y"])
+  da = sc.sym("da", 3)
+  rule = sc.Function._from_exprs("rj_rule", [a, da], [2.0 * a * da], ["a", "da"], ["dy"])
+  ruled = sc.custom_derivative(solve, jvp=rule)
+  x = sc.sym("x", 3)
+  outer = sc.Function._from_exprs("rj_outer", [x], [ruled._flat_symbolic_call([x.sin()])[0] * 2.0], ["x"], ["z"])
+  assert _reaches_custom_jvp(outer) and not _reaches_custom_jvp(solve)
+  above = sc.Function._from_exprs("rj_above", [x], [outer._flat_symbolic_call([x])[0]], ["x"], ["z"])
+  assert _reaches_custom_jvp(above)
+  jac = sc.jacobian(above, "x")
+  reached, todo = [], [jac]
+  while todo:
+    fn = todo.pop()
+    if fn not in reached:
+      reached.append(fn)
+      todo += [c for e in topo(fn.outputs) if e.op in CALLEE_OPS for c in callees_of(e)]
+  assert any(e.op == ExprOp.VMAP and e.attrs["callee"] is rule for fn in reached for e in topo(fn.outputs))
+  point = np.array([0.3, -1.1, 0.7])
+  np.testing.assert_allclose(jac(point), np.diag(4 * np.sin(point) * np.cos(point)), rtol=1e-14, atol=1e-15)

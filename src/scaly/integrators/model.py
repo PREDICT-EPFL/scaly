@@ -17,8 +17,18 @@ UNROLL_STEPS = 4
 type Rhs = Callable[[Expr], Expr]
 """The model's right-hand side at a state, every other argument held fixed over the step."""
 
-type Step = Callable[[Rhs, Expr, Expr | float], Expr]
-"""One step of a method: ``(rhs, x, h) -> x_next``."""
+type Step = Callable[[Expr, tuple[Expr, ...], Expr | float], Expr]
+"""One step of a method: ``(x, others, h) -> x_next``, ``others`` the model's other leaves, flat."""
+
+type Method = Callable[[ConcreteFunction[Any, Any, Any, Any], str, float | None], Step]
+"""A method prepared for one model instance: ``(model, name, h) -> step``, ``h`` the substep size,
+or ``None`` when it is an input and reaches the step as an ``Expr``. What a method builds once per
+map (a stage Function and its derivative rules) it builds here, named from ``name``."""
+
+
+def model_rhs(model: ConcreteFunction[Any, Any, Any, Any], others: tuple[Expr, ...]) -> Rhs:
+  """The model called at a state, its other leaves ``others``: one call node per evaluation."""
+  return lambda xs: model(*model.input_tree.unflatten((xs, *others)))
 
 
 def check_model(f: ConcreteFunction[Any, Any, Any, Any], what: str) -> None:
@@ -41,8 +51,8 @@ def parameter_names(f: ConcreteFunction[Any, Any, Any, Any]) -> list[str]:
   return [part.names[0] if len(part.names) == 1 else f"arg{i}" for i, part in enumerate(f.input_tree.parts)]
 
 
-def discrete_map(f: Function[Any, Any, Any, Any], label: str, dt: float | None, steps: int, name: str | None, step: Step) -> Any:
-  """``F(x, ...) -> xnext``: ``steps`` applications of ``step`` over an interval ``dt``, with the
+def discrete_map(f: Function[Any, Any, Any, Any], label: str, dt: float | None, steps: int, name: str | None, method: Method) -> Any:
+  """``F(x, ...) -> xnext``: ``steps`` applications of ``method``'s step over an interval ``dt``, with the
   model's own parameters, every one after the state held fixed over the interval, and a trailing
   ``dt`` parameter when ``dt`` is ``None``. A template model gives a template, one map per instance.
 
@@ -60,9 +70,7 @@ def discrete_map(f: Function[Any, Any, Any, Any], label: str, dt: float | None, 
       raise ValueError(f"{fname}: the model already has an input named 'dt'; give the interval as a number, or rename the input")
     tree = model.input_tree
     state = model.inputs[0]
-
-    def rhs_at(others: tuple[Expr, ...]) -> Rhs:
-      return lambda xs: model(*tree.unflatten((xs, *others)))
+    step = method(model, fname, None if dt is None else float(dt) / steps)
 
     def body(*args: Any) -> Expr:
       *model_args, h = args if dt is None else (*args, float(dt))
@@ -70,10 +78,10 @@ def discrete_map(f: Function[Any, Any, Any, Any], label: str, dt: float | None, 
       h = h / steps
       if steps <= UNROLL_STEPS:
         for _ in range(steps):
-          x = step(rhs_at(tuple(others)), x, h)
+          x = step(x, tuple(others), h)
         return x
       leaves = [*others, *([h] if isinstance(h, Expr) else [])]
-      sub = _substep(f"{fname}_substep", state, model.inputs[1:], isinstance(h, Expr), lambda xs, o, hs: step(rhs_at(o), xs, hs), h)
+      sub = _substep(f"{fname}_substep", state, model.inputs[1:], isinstance(h, Expr), step, h)
       return scan(sub, x, [(leaf.reshape((leaf.size,)), 0, 0) for leaf in leaves], length=steps)[0]
 
     names = parameter_names(model) + (["dt"] if dt is None else [])
@@ -89,9 +97,7 @@ def discrete_map(f: Function[Any, Any, Any, Any], label: str, dt: float | None, 
   )
 
 
-def _substep(
-  name: str, state: Expr, others: tuple[Expr, ...], runtime_h: bool, step: Callable[[Expr, tuple[Expr, ...], Expr | float], Expr], h: Expr | float
-) -> ConcreteFunction[Any, Any, Any, Any]:
+def _substep(name: str, state: Expr, others: tuple[Expr, ...], runtime_h: bool, step: Step, h: Expr | float) -> ConcreteFunction[Any, Any, Any, Any]:
   """One substep as a Function over flat leaves, the carry first, for ``scan``."""
   leaves = [L("x", state.type), *(L(f"a{i}", o.type) for i, o in enumerate(others)), *([L("h", ())] if runtime_h else [])]
 

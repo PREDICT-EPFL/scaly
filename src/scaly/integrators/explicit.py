@@ -6,7 +6,7 @@ from typing import Any
 
 from ..function.model import Function
 from ..ir.expr import Expr
-from .model import Rhs, discrete_map
+from .model import Rhs, discrete_map, model_rhs
 from .tableau import Tableau, tableau
 
 __all__ = ["explicit", "rk4"]
@@ -32,7 +32,7 @@ def explicit(f: Function[Any, Any, Any, Any], method: str | Tableau = "rk4", *, 
   tab = tableau(method)
   if not tab.explicit:
     raise ValueError(f"{tab.name} is an implicit method; use sc.integrators.implicit")
-  return discrete_map(f, tab.name, dt, steps, name, lambda rhs, x, h: rk_step(tab, rhs, x, h))
+  return discrete_map(f, tab.name, dt, steps, name, lambda model, _name, _h: lambda x, others, h: rk_step(tab, model_rhs(model, others), x, h))
 
 
 def rk4(f: Function[Any, Any, Any, Any], *, dt: float | None, steps: int = 1, name: str | None = None) -> Any:

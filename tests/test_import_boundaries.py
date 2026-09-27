@@ -91,7 +91,21 @@ def test_public_exports_are_canonical() -> None:
 def test_the_integrator_surface() -> None:
   integrators = importlib.import_module("scaly.integrators")
   assert sc.integrators is integrators
-  assert integrators.__all__ == ["TABLEAUS", "Tableau", "UNROLL_STEPS", "explicit", "order_conditions", "rk4", "tableau"]
+  assert integrators.__all__ == [
+    "FAMILIES",
+    "TABLEAUS",
+    "Tableau",
+    "UNROLL_STEPS",
+    "explicit",
+    "gauss_legendre",
+    "implicit",
+    "lobatto_iiia",
+    "lobatto_iiic",
+    "order_conditions",
+    "radau_iia",
+    "rk4",
+    "tableau",
+  ]
   assert "integrators" not in sc.__all__ and not hasattr(sc, "rk4")
 
 

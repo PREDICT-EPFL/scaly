@@ -49,7 +49,10 @@ def _order(errors: list[float]) -> float:
   return float(np.log2(errors[0] / errors[1]))
 
 
-@pytest.mark.parametrize("method", sorted(si.TABLEAUS))
+EXPLICIT = sorted(name for name, tab in si.TABLEAUS.items() if tab.explicit)
+
+
+@pytest.mark.parametrize("method", EXPLICIT)
 def test_linear_system_converges_at_the_method_order(method: str) -> None:
   tab = si.TABLEAUS[method]
   step = si.explicit(damped, method, dt=None)

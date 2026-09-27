@@ -107,9 +107,18 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       by hand, so a shooting defect generates byte-identical C to `examples/nmpc_cartpole.py`'s RK4 and
       runs 13 to 23% faster than CasADi's fastest encoding (`perf_2026_09_27_integrators/`). 20/20
       mutants killed. Report: `notes/integrators_i1_report.html`.
-- [ ] **API-144. Implicit Runge-Kutta integrators** (plan I3): Gauss-Legendre, Radau IIA, Lobatto
-      IIIA/IIIC and SDIRK, Newton on the stage equations, derivatives by the implicit function theorem.
-      Needs C-143.
+- [x] **API-144. Implicit Runge-Kutta integrators** (plan I3). `si.implicit`: Gauss-Legendre, Radau
+      IIA and Lobatto IIIA/IIIC tableaus built from their nodes for any number of stages, backward
+      Euler, implicit midpoint, trapezoidal, Alexander's SDIRK2/3, each checked against the order
+      conditions. Newton from `f(x)`, fixed iterations or to a tolerance in a `while_loop`, simplified
+      or full; simplified Newton on a coupled method splits `I - h A (x) J` by the eigenvalues of `A`
+      (RADAU5's transformation), a diagonally implicit one solves stage by stage. The derivative is
+      the implicit function theorem's at the stages found, two levels of rules, so Hessians and
+      forward-over-forward are exact and never reach the iterations. `ad/forward.py`: a call that
+      reaches a custom forward rule now takes the joint multi-seed pass, so the rule is mapped over
+      the seeds and its shared work hoisted (it was applied once per seed). Radau IIA(3) on the
+      cart-pole: step 0.62x and step Jacobians 0.94x CasADi SX's time, with a fifth of the code.
+      24/24 mutants killed, three after a test was added. Report: `notes/integrators_i3_report.html`.
 - [ ] **API-145. Exact, adaptive and symplectic integrators** (plan I4): ZOH/FOH, linearization,
       embedded-pair adaptive simulation, Störmer-Verlet.
 - [ ] **API-146. Collocation and pseudospectral transcriptions** (plan I5).

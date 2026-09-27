@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integrators I3 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 9 report</h1>
+<h1>Integrators · I3 report</h1>
+<p class="sub">API-144 · implicit Runge-Kutta integrators · branch <code>claude/integrators-mpc</code> · 27 Sep 2026 · plan <code>integrators_mpc_plan_2026_09_27.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>si.implicit</code> discretizes stiff models with collocation-grade accuracy.</p>
+<ul>
+<li><b>Methods.</b>
+<ul>
+<li>Four families for any number of stages: Gauss-Legendre, Radau IIA, Lobatto IIIA and IIIC.</li>
+<li>Five named methods: backward Euler, implicit midpoint, trapezoidal, SDIRK2 and SDIRK3.</li>
+<li>Every tableau is checked against the order conditions. Each has exactly its textbook order, and its textbook A- and L-stability.</li>
+</ul></li>
+<li><b>Newton inside the generated code.</b> Iterations are fixed or run to a tolerance, simplified or full. Simplified Newton on a coupled method uses RADAU5's split of <code>I − h A⊗J</code> by the eigenvalues of <code>A</code>, and a diagonally implicit method solves stage by stage.</li>
+<li><b>Derivatives by the implicit function theorem.</b> They are exact in every mode and to second order, including forward over forward, and never go through the iterations.</li>
+<li><b>Against CasADi SX</b> (the same Radau IIA(3) step, written out so it can be code-generated), on the cart-pole:
+<ul>
+<li>the step takes <b>0.62×</b> the time and the step Jacobians <b>0.94×</b>;</li>
+<li>the generated code is a fifth of CasADi's for the step and an eighteenth for the Jacobians.</li>
+</ul></li>
+<li><b>An AD change on the way.</b> A call that reaches a custom forward rule now takes the joint multi-seed pass. The rule used to run once per seed, redoing its factorization each time. That change alone cut the step Jacobian from 3.76 to 2.58 µs.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 578 passed, 42 skipped. The one failure is Colin's uncommitted <code>tiny_qp</code> gallery test. ruff and ty are clean. <b>Mutation checks:</b> 24 of 24 killed; three only after a test was added, and one redundant check was deleted.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>integrators/polynomial.py</code> (new)</td><td>
+<ul>
+<li>Gauss, right Radau and Lobatto nodes on [0, 1]. Each starts from Legendre series roots, refined by Newton to rounding.</li>
+<li><code>lagrange_integrals</code>, the integrals of the Lagrange basis by a Gauss rule exact for its degree.</li>
+<li>I5 extends this module with differentiation and interpolation matrices.</li>
+</ul></td></tr>
+<tr><td><code>integrators/tableau.py</code></td><td>
+<ul>
+<li><b>Collocation families from their nodes.</b> <code>gauss_legendre(s)</code>, <code>radau_iia(s)</code> and <code>lobatto_iiia(s)</code> take <code>a_ij = ∫₀^{c_i} ℓ_j</code> and <code>b_j = ∫₀¹ ℓ_j</code>.</li>
+<li><b>Lobatto IIIC</b> uses Chipman's construction: <code>a_i1 = b_1</code>, plus C(s−1).</li>
+<li><b>Alexander's SDIRK2 and SDIRK3.</b> For SDIRK3, γ is the root of the cubic.</li>
+<li><b>Lookup.</b> <code>FAMILIES</code> and <code>tableau(name, stages)</code>. The property <code>diagonally_implicit</code> selects stage-by-stage Newton.</li>
+<li><b>Order checks.</b> Tree generation takes 2 ms up to order 11, so every tableau up to Gauss(5), order 10, is checked in full.</li>
+</ul></td></tr>
+<tr><td><code>integrators/implicit.py</code> (new)</td><td>
+<ul>
+<li><b><code>_Newton</code>.</b> Fixed iterations are unrolled. With a tolerance, the iterations are a <code>while_loop</code> whose carry holds the iterate and its residual, so each iteration evaluates the residual once. The factors are loop parameters.</li>
+<li><b><code>_Linear</code> / <code>_EigenSplit</code>.</b> <code>A = T L T⁻¹</code> is computed once in NumPy, with <code>L</code> in real block form. The Newton system then decouples:
+<ul>
+<li><code>I − hγJ</code> for each real eigenvalue <code>γ</code>;</li>
+<li>a <code>2n×2n</code> real block for each complex pair;</li>
+<li>nothing for a zero eigenvalue (Lobatto IIIA's explicit stage).</li>
+</ul>
+Radau IIA(3) factors a 4×4 and an 8×8 system instead of one 12×12. It falls back to the whole system when <code>cond(T) &gt; 1e6</code>: the families stay below 3·10³ up to seven stages, while a Jordan block reads 3·10⁸.</li>
+<li><b>Stage-by-stage solving</b> for diagonally implicit methods. Simplified SDIRK factors one <code>I − hγJ(x)</code> shared by every stage.</li>
+<li><b>The stage Function</b> <code>(x, others…, [h], K*) → K</code> is the identity on <code>K*</code>, carrying <code>custom_derivative</code> rules:
+<ul>
+<li>forward, <code>dK = −solve(G_K, G_x dx + …)</code>, with <code>G</code>'s partial derivatives taken at a free <code>K</code> and then substituted;</li>
+<li>reverse, one transposed solve and a <code>vjp</code> of <code>G</code>;</li>
+<li><code>K*</code>'s tangent is never read and its cotangent is zero, so the iterations are never differentiated.</li>
+</ul></li>
+<li><b>Two levels of forward rules</b>, as in <code>SparseLDL.solve</code>. <code>G_K</code> is built from one model Jacobian per stage.</li>
+</ul></td></tr>
+<tr><td><code>integrators/model.py</code></td><td>The method contract is now <code>(model, name, h) → step</code>, with <code>h</code> the substep length or <code>None</code>. A method builds its Functions (the stage Function, its rules) once per map, and the step receives the model's other leaves explicitly.</td></tr>
+<tr><td><code>ad/forward.py</code></td><td><code>_reaches_custom_jvp</code>. A call whose callee reaches a custom forward rule, directly or through callees, is differentiated in the joint multi-seed pass, as a loop-bearing callee already was. The rule is then a <code>vmap</code> over the seeds, and <code>hoist_invariant</code> moves what the seeds share out of it (the stage Jacobians and the factorization of <code>G_K</code>). Before, a constant seed took the per-seed path, which applied the rule once per seed.</td></tr>
+<tr><td>Docs</td><td>An implicit-methods section in <code>docs/guide/integrators.md</code> (methods, Newton, derivatives), and the API page entries.</td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<p>There are 90 new tests across <code>test_polynomial.py</code>, <code>test_tableau.py</code>, <code>test_implicit.py</code> and <code>tests/ad/test_joint_jvp.py</code>.</p>
+<ul>
+<li><b>Nodes.</b> Quadrature degree <code>2s−1</code>, <code>2s−2</code> and <code>2s−3</code> for s up to 8; the Lobatto nodes are symmetric.</li>
+<li><b>Tableaus.</b>
+<ul>
+<li>Every family and stage count from 1 to 5 has exactly its order.</li>
+<li>Stability: <code>|R(iy)| ≤ 1</code> and <code>|R(−x)| ≤ 1</code> over nine decades, with <code>R(−∞) = 0</code> exactly for the L-stable methods.</li>
+<li>Stiff accuracy; Gauss's symplecticity condition; the known Radau IIA(2) and Lobatto IIIC(2) tableaus; the aliases.</li>
+</ul></li>
+<li><b>Convergence.</b>
+<ul>
+<li>Twelve methods converge at their order on a linear system with <code>expm</code> as the reference. One Newton iteration is exact there.</li>
+<li>Radau IIA(3) on Van der Pol agrees with DOP853 at 1e-13, as does <code>solve_ivp(Radau)</code>.</li>
+</ul></li>
+<li><b>Stiffness.</b> On Prothero-Robinson with <code>hλ = −2·10⁴</code>, the L-stable methods track the smooth solution to 1e-7 or better. RK4 overflows within three steps.</li>
+<li><b>Derivatives.</b> Eight Newton variants: coupled, full, Lobatto, SDIRK, SDIRK full, tolerance loops and looped substeps. Each is checked for:
+<ul>
+<li>Jacobians in <code>x</code>, <code>u</code> and <code>dt</code>;</li>
+<li>gradients;</li>
+<li>Hessians against finite differences of the gradient;</li>
+<li>forward over forward.</li>
+</ul>
+Also: a fixed <code>dt</code> with substeps; and the implicit derivative equals AD through eight hand-written full Newton iterations, to 1e-10.</li>
+<li><b>Structure.</b>
+<ul>
+<li>The LU orders are {2, 4} for the split Radau IIA(3), {6} with full Newton, {2} for SDIRK, and one LU for all SDIRK stages.</li>
+<li>The eigen-split reconstructs <code>A</code> for six tableaus and refuses a Jordan block, whose method then factors the whole system.</li>
+<li>Split and whole-system Newton take the same iterate.</li>
+</ul></li>
+<li><b>AD.</b> A call reaching a custom rule maps the rule over the seeds as one <code>vmap</code>, and <code>_reaches_custom_jvp</code> looks through callees.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>#</th><th>Mutant</th><th>Result</th></tr>
+<tr><td>R1–R5</td><td>left Radau nodes; Lobatto without its right end; quadrature weights doubled; Lobatto IIIC's first-column condition; an SDIRK3 weight sign</td><td class="ok">killed (the order check at construction)</td></tr>
+<tr><td>R6–R10</td><td>the diagonal-implicit test ignoring the diagonal; full Newton inverted; the tolerance loop stopping at once or stepping the wrong way; a pair block's sign</td><td class="ok">killed</td></tr>
+<tr><td>R11, R12</td><td>either guard of the eigen-split removed: the condition number, or the reconstruction</td><td class="warn">both survived: each covers the other. The reconstruction check was deleted and the condition bound tightened to 1e6, now killed by loosening it (R11b)</td></tr>
+<tr><td>R13–R15, R17</td><td>partials through <code>k</code> (the first-draft bug); vjp without the transpose; vjp sign; jvp sign</td><td class="ok">killed</td></tr>
+<tr><td>R16</td><td>one level of rules</td><td class="warn">survived → killed, by a forward-over-forward test. Forward over reverse never differentiates the forward rule.</td></tr>
+<tr><td>R18–R20</td><td>SDIRK's earlier stages misaligned; the rules built at the whole interval, not the substep; the stage matrix's sign</td><td class="ok">killed (R19 by a new test with a fixed <code>dt</code> and substeps)</td></tr>
+<tr><td>R21</td><td>simplified SDIRK taking <code>J</code> at the stage state</td><td class="warn">survived → killed, by a test that simplified SDIRK has one factorization</td></tr>
+<tr><td>R22–R23</td><td>the joint pass not taken for custom rules; only one level of callees searched</td><td class="ok">killed</td></tr>
+<tr><td>R24</td><td>a zero eigenvalue factored anyway</td><td class="ok">killed (a singular LU)</td></tr>
+</table></div>
+<p>Found by the mutation plan rather than by a mutant: SDIRK started each stage from the previous stage's value while the docstring said <code>f(x)</code>. No test could tell the two apart, so the code now does what the docstring says.</p>
+
+<h2>3. Benchmarks</h2>
+<p><code>perf_2026_09_27_integrators/bench_implicit.py</code> uses the cart-pole with one interval of 0.05 s. Every implicit variant runs three Newton iterations from <code>f(x)</code>. Timings are the fastest sample over 7 interleaved rounds, on an Apple M3 Max with Apple clang 21, and are indicative only.</p>
+<ul>
+<li><b>CasADi.</b> CasADi's implicit integrators go through its Newton rootfinder, which cannot be code-generated (it warns and produces uncompilable C). The CasADi row is the same step written out in SX, with <code>ca.solve</code> on the symbolic matrix, differentiated through its iterations.</li>
+<li><b><code>hand_radau3</code></b> is that same written-out form in scaly: what the implicit derivative replaces.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>variant</th><th>step ns</th><th>Jacobians ns</th><th>C lines step / jac</th><th>error vs converged</th><th>error vs exact flow</th></tr>
+<tr><td>lib_radau3</td><td class="r ok">371</td><td class="r ok">2 580</td><td class="r">1 383 / 2 987</td><td class="r">1.9e-10</td><td class="r">2.9e-08</td></tr>
+<tr><td>lib_radau3_full</td><td class="r">1 695</td><td class="r">5 333</td><td class="r">687 / 1 596</td><td class="r">0</td><td class="r">2.9e-08</td></tr>
+<tr><td>lib_radau2</td><td class="r">340</td><td class="r">1 471</td><td class="r">1 172 / 3 219</td><td class="r">6.0e-05</td><td class="r">6.0e-05</td></tr>
+<tr><td>lib_gauss2</td><td class="r">339</td><td class="r">1 471</td><td class="r">1 172 / 3 219</td><td class="r">4.5e-07</td><td class="r">4.2e-07</td></tr>
+<tr><td>lib_sdirk3</td><td class="r">373</td><td class="r">2 668</td><td class="r">464 / 1 147</td><td class="r">3.3e-05</td><td class="r">3.3e-05</td></tr>
+<tr><td>lib_rk4 (2 substeps)</td><td class="r">75</td><td class="r">203</td><td class="r">83 / 420</td><td class="r">1.3e-06</td><td class="r">1.3e-06</td></tr>
+<tr><td>hand_radau3</td><td class="r">884</td><td class="r">5 539</td><td class="r">342 / 1 318</td><td class="r">1.9e-10</td><td class="r">2.9e-08</td></tr>
+<tr><td>casadi_sx_radau3</td><td class="r">595</td><td class="r">2 755</td><td class="r">7 705 / 52 434</td><td class="r">1.9e-10</td><td class="r">2.9e-08</td></tr>
+</table></div>
+<p>How the Radau IIA(3) row got there, step / Jacobians in ns:</p>
+<ol>
+<li><b>First version: 882 / 4 805.</b> One 12×12 system, factored in loops.</li>
+<li><b>Eigen-split: 371 / 3 761.</b> A 4×4 and an 8×8 system, both straight-line code.</li>
+<li><b>Unrolling the rule's 12×12 LU: 371 / 3 756.</b> This showed the factorization was not the cost, and the change was not kept.</li>
+<li><b>A profile</b> showed 60% of the time in the forward rule, called once per seed with everything recomputed.</li>
+<li><b>The joint pass: 371 / 2 580.</b> The rule is mapped over the seeds and its shared work hoisted.</li>
+</ol>
+<p>What remains in the Jacobian is the hoisted prologue (30%), the per-seed 12×12 solves (12%) and the model's tangents.</p>
+
+<h2>4. Gates</h2>
+<div class="scroll"><table>
+<tr><th>Gate (plan §7, I3)</th><th>Status</th></tr>
+<tr><td>Orders 2s, 2s−1 and 2s−2 observed</td><td class="ok">met: the order conditions, and convergence for twelve methods</td></tr>
+<tr><td>A stiff test stable at <code>dt·λ = 1e4</code> for the L-stable methods</td><td class="ok">met at 2·10⁴, with an error below 1e-7</td></tr>
+<tr><td>Derivatives agree with AD through the unrolled Newton to 1e-10 and with finite differences to 1e-6</td><td class="ok">met</td></tr>
+<tr><td>Radau IIA(3) against <code>solve_ivp(method="Radau")</code></td><td class="ok">met: both within 1e-8 of DOP853 at 1e-13</td></tr>
+</table></div>
+
+<h2>5. Next</h2>
+<p>I4 (API-145):</p>
+<ul>
+<li>exact ZOH/FOH and linearization;</li>
+<li>the embedded pairs as adaptive simulation (<code>si.adaptive</code>), which MPC closed loops will use as their plant;</li>
+<li>Störmer-Verlet and symplectic Euler.</li>
+</ul>
+</main></body></html>

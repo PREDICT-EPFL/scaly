@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
 from functools import cache
 
 import numpy as np
 
-__all__ = ["TABLEAUS", "Tableau", "order_conditions", "tableau"]
+from .polynomial import gauss_nodes, lagrange_integrals, lobatto_nodes, radau_nodes
+
+__all__ = ["FAMILIES", "TABLEAUS", "Tableau", "gauss_legendre", "lobatto_iiia", "lobatto_iiic", "order_conditions", "radau_iia", "tableau"]
 
 
 @dataclass(frozen=True, eq=False)
@@ -61,6 +64,12 @@ class Tableau:
   def explicit(self) -> bool:
     """Whether every stage reads only earlier ones: ``a`` strictly lower triangular."""
     return not np.triu(self.a).any()
+
+  @property
+  def diagonally_implicit(self) -> bool:
+    """Whether each stage is implicit in itself alone: ``a`` lower triangular with a nonzero
+    diagonal, so the stages solve one after another, each a system of the state's size."""
+    return not np.triu(self.a, 1).any() and bool(np.all(np.diag(self.a) != 0))
 
   def __repr__(self) -> str:
     return f"Tableau({self.name!r}, stages={self.stages}, order={self.order})"
@@ -167,14 +176,106 @@ TABLEAUS: dict[str, Tableau] = {
     ),
   )
 }
-"""The named explicit methods, by the name ``tableau`` and the integrators take."""
+"""The named methods, explicit and implicit, by the name ``tableau`` and the integrators take."""
 
 
-def tableau(method: str | Tableau) -> Tableau:
-  """The tableau a method name spells, or ``method`` itself when it is already one."""
+def _collocation(name: str, nodes: np.ndarray, order: int) -> Tableau:
+  """The collocation method at ``nodes``: ``a_ij`` and ``b_j`` integrate the Lagrange basis from 0 to
+  ``c_i`` and to 1, so the stages are the derivative of the polynomial through them."""
+  integrals = lagrange_integrals(nodes, np.append(nodes, 1.0))
+  return Tableau(integrals[:-1], integrals[-1], nodes, order, name)
+
+
+def _stages(family: str, s: int, least: int = 1) -> int:
+  if int(s) != s or s < least:
+    raise ValueError(f"{family} needs at least {least} stage{'s' if least > 1 else ''}, got {s}")
+  return int(s)
+
+
+def gauss_legendre(s: int) -> Tableau:
+  """The ``s``-stage Gauss-Legendre method: collocation at the Gauss nodes, order ``2s``, A-stable
+  and symplectic. One stage is the implicit midpoint rule."""
+  s = _stages("gauss_legendre", s)
+  return _collocation(f"gauss_legendre{s}", gauss_nodes(s), 2 * s)
+
+
+def radau_iia(s: int) -> Tableau:
+  """The ``s``-stage Radau IIA method: collocation at the right Radau nodes, order ``2s - 1``,
+  L-stable and stiffly accurate (the step is the last stage). One stage is backward Euler."""
+  s = _stages("radau_iia", s)
+  return _collocation(f"radau_iia{s}", radau_nodes(s), 2 * s - 1)
+
+
+def lobatto_iiia(s: int) -> Tableau:
+  """The ``s``-stage Lobatto IIIA method: collocation at the Lobatto nodes, order ``2s - 2``,
+  A-stable and stiffly accurate, its first stage explicit. Two stages are the trapezoidal rule."""
+  s = _stages("lobatto_iiia", s, 2)
+  return _collocation(f"lobatto_iiia{s}", lobatto_nodes(s), 2 * s - 2)
+
+
+def lobatto_iiic(s: int) -> Tableau:
+  """The ``s``-stage Lobatto IIIC method: order ``2s - 2``, L-stable and stiffly accurate. At the
+  Lobatto nodes, each row of ``a`` has ``a_i1 = b_1`` and integrates polynomials of degree up to
+  ``s - 2`` exactly (Chipman's construction)."""
+  s = _stages("lobatto_iiic", s, 2)
+  c = lobatto_nodes(s)
+  b = lagrange_integrals(c, np.ones(1))[0]
+  powers = np.arange(1, s)  # the conditions sum_j a_ij c_j^(k-1) = c_i^k / k, k = 1 .. s - 1
+  system = np.vstack([np.eye(s)[0], c[None, :] ** (powers[:, None] - 1)])
+  a = np.stack([np.linalg.solve(system, np.concatenate([[b[0]], c[i] ** powers / powers])) for i in range(s)])
+  return Tableau(a, b, c, 2 * s - 2, f"lobatto_iiic{s}")
+
+
+def _sdirk3() -> Tableau:
+  """Alexander's three-stage SDIRK: order 3, L-stable, stiffly accurate, ``gamma`` the root of
+  ``6 g^3 - 18 g^2 + 9 g - 1`` in ``(1/6, 1/2)``."""
+  g = next(r.real for r in np.roots([6.0, -18.0, 9.0, -1.0]) if abs(r.imag) < 1e-12 and 1 / 6 < r.real < 1 / 2)
+  tau = (1 + g) / 2
+  b1, b2 = -(6 * g * g - 16 * g + 1) / 4, (6 * g * g - 20 * g + 5) / 4
+  a = np.array([[g, 0, 0], [tau - g, g, 0], [b1, b2, g]])
+  return Tableau(a, a[-1], a.sum(axis=1), 3, "sdirk3")
+
+
+def _sdirk2() -> Tableau:
+  """Alexander's two-stage SDIRK: order 2, L-stable, stiffly accurate, ``gamma = 1 - 1/sqrt(2)``."""
+  g = 1 - 1 / np.sqrt(2)
+  a = np.array([[g, 0], [1 - g, g]])
+  return Tableau(a, a[-1], a.sum(axis=1), 2, "sdirk2")
+
+
+FAMILIES: dict[str, Callable[[int], Tableau]] = {
+  "gauss_legendre": gauss_legendre,
+  "radau_iia": radau_iia,
+  "lobatto_iiia": lobatto_iiia,
+  "lobatto_iiic": lobatto_iiic,
+}
+"""The implicit families whose member ``tableau`` builds from a number of stages."""
+
+TABLEAUS.update(
+  {
+    "backward_euler": Tableau(np.ones((1, 1)), np.ones(1), np.ones(1), 1, "backward_euler"),
+    "implicit_midpoint": Tableau(np.full((1, 1), 0.5), np.ones(1), np.full(1, 0.5), 2, "implicit_midpoint"),
+    "trapezoidal": Tableau(np.array([[0.0, 0.0], [0.5, 0.5]]), np.full(2, 0.5), np.array([0.0, 1.0]), 2, "trapezoidal"),
+    "sdirk2": _sdirk2(),
+    "sdirk3": _sdirk3(),
+  }
+)
+
+
+def tableau(method: str | Tableau, stages: int | None = None) -> Tableau:
+  """The tableau a method name spells, a member of a family (``FAMILIES``) given its number of
+  ``stages``, or ``method`` itself when it is already one."""
   if isinstance(method, Tableau):
+    if stages is not None:
+      raise ValueError("stages goes with a family name, not with a Tableau")
     return method
+  if method in FAMILIES:
+    if stages is None:
+      raise ValueError(f"{method} is a family: say how many stages, as in stages=3")
+    return FAMILIES[method](stages)
   found = TABLEAUS.get(method)
   if found is None:
-    raise ValueError(f"unknown Runge-Kutta method {method!r}; known methods: {sorted(TABLEAUS)}")
+    raise ValueError(f"unknown Runge-Kutta method {method!r}; known methods: {sorted(TABLEAUS)}, and the families {sorted(FAMILIES)}")
+  if stages is not None:
+    raise ValueError(f"{method} has a fixed number of stages; stages goes with a family name, one of {sorted(FAMILIES)}")
   return found

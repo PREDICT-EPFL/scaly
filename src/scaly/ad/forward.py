@@ -664,6 +664,7 @@ _WHILE_JVP_MANY_COND_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictio
   weakref.WeakKeyDictionary()
 )
 _CONTAINS_LOOP: weakref.WeakKeyDictionary[Any, bool] = weakref.WeakKeyDictionary()
+_REACHES_CUSTOM_JVP: weakref.WeakKeyDictionary[Any, bool] = weakref.WeakKeyDictionary()
 # ``Expr.sym`` interns by name and type, so each joint vector needs its own name: two nested joints
 # of one size with a shared name would be one node.
 _JOINT_IDS = itertools.count()
@@ -677,6 +678,16 @@ def _contains_loop(fn: Any) -> bool:
       for node in topo(fn.outputs)
     )
   return _CONTAINS_LOOP[fn]
+
+
+def _reaches_custom_jvp(fn: Any) -> bool:
+  """Whether a Function's graph applies a forward rule of its own (``custom_derivative``), directly or
+  through a callee."""
+  if fn not in _REACHES_CUSTOM_JVP:
+    _REACHES_CUSTOM_JVP[fn] = any(
+      node.op in CALLEE_OPS and any(c.custom_jvp is not None or _reaches_custom_jvp(c) for c in callees_of(node)) for node in topo(fn.outputs)
+    )
+  return _REACHES_CUSTOM_JVP[fn]
 
 
 def _jvp_many_joint(outs: Sequence[Expr], seeds: dict[Expr, Expr], nseed: int) -> list[Expr]:
@@ -954,9 +965,11 @@ def _call_jvp_many_function(
     }
     out = callee.outputs[output_index]
     single_constant = len(formal_indices) == 1 and constants[0] is not None
-    if _contains_loop(callee):
-      # Per-seed tangents would put one copy of every loop in the helper per seed; one multi-seed
-      # pass keeps a single loop carrying all of them.
+    if _contains_loop(callee) or _reaches_custom_jvp(callee):
+      # Per-seed tangents would put one copy of every loop in the helper per seed, and apply a
+      # forward rule once per seed, redoing what it shares across seeds (an implicit rule's
+      # factorization). One multi-seed pass keeps a single loop carrying all of them, and maps each
+      # rule over the seeds, whose shared work lowering hoists out of the map.
       deriv = _jvp_many_joint([out], {callee.inputs[i]: seeds[i] for i in formal_indices}, len(active))[0]
     elif single_constant:
       formal_index = formal_indices[0]

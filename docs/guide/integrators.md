@@ -55,6 +55,52 @@ whose declared order is checked against the order conditions when it is built.
 - The default name is `{model}_{method}` (`cartpole_rk4`). Two maps of one model with different
   settings in one graph need distinct names, given with `name=`.
 
+## Implicit Runge-Kutta methods
+
+`si.implicit(f, method, stages=None, dt=..., steps=1, newton_iters=3, tol=None, max_iter=20,
+newton="simplified", name=None)` builds the map of an implicit method, for stiff models and for the
+accuracy per stage that collocation methods give.
+
+| `method` | Stages | Order | Stability |
+| --- | --- | --- | --- |
+| `"gauss_legendre"`, with `stages=s` | s | 2s | A-stable, symplectic |
+| `"radau_iia"`, with `stages=s` | s | 2s - 1 | L-stable, stiffly accurate |
+| `"lobatto_iiia"`, with `stages=s >= 2` | s | 2s - 2 | A-stable, stiffly accurate, first stage explicit |
+| `"lobatto_iiic"`, with `stages=s >= 2` | s | 2s - 2 | L-stable, stiffly accurate |
+| `"backward_euler"`, `"implicit_midpoint"`, `"trapezoidal"` | 1, 1, 2 | 1, 2, 2 | L, A, A |
+| `"sdirk2"`, `"sdirk3"` (Alexander) | 2, 3 | 2, 3 | L-stable, diagonally implicit |
+
+The four families are built from their nodes (`si.radau_iia(3)` is the tableau), and every one is
+checked against the order conditions when it is built.
+
+```python
+step = si.implicit(cartpole, "radau_iia", stages=3, dt=0.05)            # three Newton iterations
+step = si.implicit(cartpole, "sdirk3", dt=0.05, tol=1e-12, max_iter=20)  # to a tolerance
+```
+
+**Newton.** The stage equations `G(K) = K - f(x + h (A ⊗ I) K) = 0` are solved from `f(x)` at every
+stage.
+
+- `newton_iters` fixes the number of iterations, the choice for control, where every call should
+  take the same time.
+- `tol` iterates in a `while_loop` until the residual is below `tol * (1 + |K|)`, at most `max_iter`
+  times.
+- `newton="simplified"` factors `I - h A ⊗ J` once per step, `J` the model's Jacobian at the start
+  of the step. For the coupled families it splits that matrix by the eigenvalues of `A` into one
+  system of the state's size per real eigenvalue and one of twice it per complex pair, as RADAU5
+  does. Radau IIA with three stages then factors one system of order `n` and one of `2n`, not one
+  of `3n`.
+- `newton="full"` refactors the exact stage Jacobian at every iteration.
+- A diagonally implicit method solves its stages one after another, each a system of the state's
+  size, and simplified Newton factors one matrix for all of them.
+
+**Derivatives.** The derivative of the map does not go through the iterations. At the stages the
+step found, the implicit function theorem gives `dK = -G_K^{-1} (G_x dx + G_u du + ...)`, with one
+factorization of `G_K` shared by every direction; in a Jacobian, the factorization runs once and
+each column is one solve. Reverse mode is one transposed solve. Second derivatives are implicit
+too, so a solver's Lagrangian Hessian through the map is exact at the stages found. A third
+derivative would reach the iterations, and the factorization there refuses it.
+
 ## What the generated code does
 
 Every stage calls the model once, as a call node, so the model is built, generated and
