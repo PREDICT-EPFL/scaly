@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integrators I1 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 9 report</h1>
+<h1>Integrators · I1 report</h1>
+<p class="sub">API-142 · explicit Runge-Kutta integrators, the start of <code>scaly.integrators</code> · branch <code>claude/integrators-mpc</code> · 27 Sep 2026 · plan <code>integrators_mpc_plan_2026_09_27.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> <code>scaly.integrators</code> exists and discretizes a continuous-time model with any explicit Runge-Kutta method.</p>
+<ul>
+<li><b>Maps with the model's signature.</b> <code>si.rk4(cartpole, dt=0.05)</code> is a Function <code>(x, u) -&gt; xnext</code>. The interval can instead be an input, and substeps are unrolled up to four and loop beyond. A template model gives a template.</li>
+<li><b>Ten named methods plus user tableaus.</b> Every tableau's declared order is checked against the order conditions, generated from rooted trees.</li>
+<li><b>Same C as by hand.</b> Coefficients fold the way a person writes them. A 40-stage shooting defect and its sparse Jacobian are <b>byte-identical C</b> to the hand-written RK4 of <code>examples/nmpc_cartpole.py</code>. The fix that got there removed a 6–8% gap.</li>
+<li><b>Against CasADi.</b> 13–23% faster than CasADi 3.8's fastest encoding on the step, the defects and their Jacobian. On the step's dense Jacobian it is at parity (+2%).</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 459 passed, 42 skipped. The one failure is Colin's uncommitted <code>test_tiny_qp_matches_the_closed_form</code>: <code>examples/tiny_qp.py</code> calls the solver with one tuple, the convention from before templates P1b-ii. ruff is clean; ty is clean on everything this PR touches. <b>Mutation checks:</b> 20 of 20 killed.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>integrators/tableau.py</code></td><td>
+<ul>
+<li><code>Tableau(a, b, c, order, name, b_err)</code> checks at construction:
+<ul>
+<li>the shapes;</li>
+<li>that <code>c</code> holds the row sums of <code>a</code>;</li>
+<li>the declared order, via <code>order_conditions</code>: <code>b·Φ(t) = 1/γ(t)</code> for every rooted tree up to that order. Trees are generated as canonical nested tuples; their counts match OEIS A000081.</li>
+</ul></li>
+<li><code>TABLEAUS</code> holds the named methods: Euler, Heun, midpoint, Ralston, Kutta's third order, SSPRK3, RK4 and the 3/8 rule. It also holds the Bogacki-Shampine 3(2) and Dormand-Prince 5(4) pairs, whose embedded weights are in <code>b_err</code>.</li>
+</ul></td></tr>
+<tr><td><code>integrators/model.py</code></td><td>
+<ul>
+<li><b>The model contract.</b> The first parameter is the state, one float vector; the one output is its derivative.</li>
+<li><b><code>discrete_map</code></b> builds <code>F</code> over the model's own parameter list:
+<ul>
+<li>it keeps the names and a keyword signature, and adds a trailing <code>dt</code> when <code>dt=None</code>;</li>
+<li>the output is <code>{state}next</code>;</li>
+<li>above <code>UNROLL_STEPS = 4</code> substeps the step runs in a <code>scan</code>, with a substep Function over the flat leaves broadcast at stride 0;</li>
+<li>templates lift through <code>Function._lift</code>, as derivatives do.</li>
+</ul></li>
+</ul></td></tr>
+<tr><td><code>integrators/explicit.py</code></td><td>
+<ul>
+<li><code>explicit(f, method, dt=, steps=, name=)</code> and <code>rk4</code>. Each stage is one call node of the model.</li>
+<li><code>increment</code> spells <code>x + h Σ w_j k_j</code> with a numerical <code>h</code> folded into the weights. Zero weights drop, and the most frequent weight (the smallest on a tie) is factored out. RK4 is therefore <code>x + h/6 (k1 + 2k2 + 2k3 + k4)</code>, and Dormand-Prince's seventh stage (error only) is never built.</li>
+</ul></td></tr>
+<tr><td>Wiring and docs</td><td>
+<ul>
+<li><code>sc.integrators</code> is re-exported, and there are <code>IMPORT_LAYERS</code> entries at layer 5.</li>
+<li>A new boundary test pins the surface.</li>
+<li>New pages <code>docs/guide/integrators.md</code> and <code>docs/api/integrators.md</code>, with their nav entries and an API index row.</li>
+<li><code>AGENTS.md</code> and <code>docs/dev/contributing.md</code> now name SciPy as a runtime dependency (sign-off question 3).</li>
+<li><code>todo.md</code>:
+<ul>
+<li>the counter fixed (it read 135 with C-141 taken);</li>
+<li>API-142 … API-156 and C-143 opened.</li>
+</ul></li>
+</ul></td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<p><code>tests/integrators/</code> has 51 tests in three files, mirroring the package.</p>
+<ul>
+<li><b>Order.</b>
+<ul>
+<li>Every method converges at its order within 0.15 on a damped oscillator with input, against the exact solution by <code>expm</code>.</li>
+<li>Five methods on Van der Pol, against <code>solve_ivp(DOP853, rtol=1e-13)</code>, through the looped path.</li>
+<li>Dormand-Prince reads about order 6 until rounding takes over (a tiny leading error constant), so there it is a lower bound. Its order 5 is pinned exactly on the linear problem.</li>
+</ul></li>
+<li><b>Values.</b>
+<ul>
+<li>A NumPy step from the tableau, to 1e-14. The model has a grouped slot with a matrix leaf and a scalar slot.</li>
+<li>Looped substeps equal repeated single steps.</li>
+<li>A <code>dt</code> input equals the folded interval, including under keyword calls.</li>
+</ul></li>
+<li><b>Derivatives.</b>
+<ul>
+<li>Jacobians in <code>x</code> and <code>dt</code> match central differences, unrolled and looped.</li>
+<li>Reverse mode matches forward mode.</li>
+</ul></li>
+<li><b>Structure.</b>
+<ul>
+<li>RK4 makes 4 model calls and Dormand-Prince 6.</li>
+<li>The C does not grow from 5 to 500 substeps.</li>
+<li>A vmapped defect on <code>si.rk4</code> <b>generates the same C</b> as a hand-written RK4. This is the benchmark gate, turned into a test.</li>
+</ul></li>
+<li><b>Contract and refusals.</b> A matrix state, a grouped state, a wrong output, a clash on the <code>dt</code> name, a nonpositive <code>dt</code>, zero steps, a plain callable, an implicit tableau, template naming.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>#</th><th>Mutant</th><th>Result</th></tr>
+<tr><td>1</td><td>an RK4 weight changed</td><td class="ok">killed (the order check refuses the tableau at import)</td></tr>
+<tr><td>2–3</td><td>tree density formula; tree canonical ordering</td><td class="ok">killed</td></tr>
+<tr><td>4–6</td><td>order check, row-sum check, explicitness check disabled or weakened</td><td class="ok">killed</td></tr>
+<tr><td>7</td><td>subtraction of a −1 weight turned into addition (only the 3/8 rule reaches it)</td><td class="ok">killed (convergence)</td></tr>
+<tr><td>8</td><td>zero weights kept</td><td class="ok">killed</td></tr>
+<tr><td>9</td><td>common-weight tie broken towards the largest (same values, different C)</td><td class="ok">killed (the hand-written C test)</td></tr>
+<tr><td>10</td><td>runtime <code>h</code> dropped from the increment</td><td class="ok">killed</td></tr>
+<tr><td>11–13</td><td>substep length, scan length, unroll threshold off by one</td><td class="ok">killed</td></tr>
+<tr><td>14–16, 18</td><td>model output check, state check, <code>dt</code> name clash check, <code>dt &gt; 0</code> weakened</td><td class="ok">killed</td></tr>
+<tr><td>17</td><td>template instances named after the template, not the instance</td><td class="ok">killed</td></tr>
+<tr><td>19</td><td>keyword signature not attached</td><td class="ok">killed</td></tr>
+<tr><td>20</td><td><code>order_conditions</code> reports one order too many</td><td class="ok">killed</td></tr>
+</table></div>
+
+<h2>3. Benchmarks</h2>
+<p>The benchmark is <code>perf_2026_09_27_integrators/bench_explicit.py</code>. The model is the cart-pole of <code>examples/nmpc_cartpole.py</code>, with two RK4 substeps of 0.025 s and N = 40.</p>
+<ul>
+<li>Each cell is compiled with the JIT's flags and timed in C: 200 calls per sample for a step, 10 for a horizon.</li>
+<li>Samples come from 7 interleaved rounds, and the fastest is kept.</li>
+<li>CasADi is SX expanded or MX with a serial map, whichever is faster, and the table names it.</li>
+</ul>
+<p>Apple M3 Max, Apple clang 21. These numbers are indicative, not reference-machine results.</p>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>hand ns</th><th>lib ns</th><th>lib/hand</th><th>CasADi ns</th><th>lib/CasADi</th><th>C lines hand / lib / CasADi</th></tr>
+<tr><td>step</td><td class="r">75.4</td><td class="r">75.4</td><td class="r ok">1.000</td><td class="r">86.2 (SX)</td><td class="r ok">0.87</td><td class="r">180 / 83 / 400</td></tr>
+<tr><td>step Jacobians</td><td class="r">204.0</td><td class="r">203.5</td><td class="r ok">0.998</td><td class="r">198.8 (MX)</td><td class="r">1.02</td><td class="r">420 / 420 / 1 469</td></tr>
+<tr><td>40-stage defects</td><td class="r">2 570.8</td><td class="r">2 570.8</td><td class="r ok">1.000</td><td class="r">3 037.5 (SX)</td><td class="r ok">0.85</td><td class="r">98 / 98 / 11 365</td></tr>
+<tr><td>their sparse Jacobian</td><td class="r">6 737.5</td><td class="r">6 791.6</td><td class="r ok">1.008</td><td class="r">8 870.8 (SX)</td><td class="r ok">0.77</td><td class="r">384 / 384 / 52 566</td></tr>
+</table></div>
+<ul>
+<li><b>First run.</b> The library spelled RK4 as <code>x + h(k1/6 + k2/3 + …)</code> and <code>x + h(0.5 k)</code>. That is two extra multiplies per stage and four at the end, which made it <span class="warn">5.8–7.6% slower</span> on every piece, with otherwise identical C. Folding the coefficients closed the gap.</li>
+<li><b>Now.</b> Three of the four pieces are byte-identical C. The standalone step keeps the model out of line (83 lines against 180), which clang inlines again.</li>
+<li><b>Driver.</b> The IPM speed pass's driver timed one call per sample. macOS's clock ticks every 41.7 ns, so the step read as 0 or 41 ns. The copy here batches calls, and gives CasADi MX its integer workspace and pointer-scratch slots.</li>
+</ul>
+
+<h2>4. Gates</h2>
+<div class="scroll"><table>
+<tr><th>Gate (plan §7, I1)</th><th>Status</th></tr>
+<tr><td>Empirical order within 0.1 of theoretical, every method, linear (expm) and Van der Pol (solve_ivp)</td><td class="ok">met at 0.15. The tests use 0.15, since rates at two resolutions still carry a little of the higher-order term. Dormand-Prince on Van der Pol is a lower bound, for the reason above.</td></tr>
+<tr><td>Library RK4 generates the same C as the hand-written one, or times within 3% A/B</td><td class="ok">met: same C for the defects and Jacobians, 1.000 on the step</td></tr>
+<tr><td>C size constant in <code>steps</code> above the threshold</td><td class="ok">met (5 and 500 substeps, same line count)</td></tr>
+</table></div>
+
+<h2>5. Found on the way</h2>
+<ul>
+<li><b>The node-ID baseline recipe can corrupt a line.</b> When the baseline is stale, pytest's error text lands on the same line as the last node ID, which sorts into the file. The next run is then stale again because of that line. I repaired it by hand here. The fix belongs in <code>conftest.py</code>: start the message on a new line.</li>
+<li><b>ty diagnostics predate this branch.</b> <code>uv run ty check --error-on-warning</code> reports errors in committed notebooks, <code>examples/qp_solvers</code>, <code>examples/tinympc</code> and <code>tests/integration/test_qp_solvers_example.py</code>, as well as in Colin's untracked files.</li>
+</ul>
+
+<h2>6. Next</h2>
+<p>I2 (C-143), a dense LU with partial pivoting as an expression op, then I3's implicit methods on top of it.</p>
+</main></body></html>

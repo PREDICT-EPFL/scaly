@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import importlib
 import importlib.util
 from pathlib import Path
 from typing import Sequence, get_type_hints
@@ -85,6 +86,13 @@ def test_public_exports_are_canonical() -> None:
   assert {"vmap", "scan"} <= set(sc.__all__)
   assert "map_" not in sc.__all__
   assert {"Ops", "VerifyRule", "spec_semantic", "spec_semantic_shared"}.isdisjoint(sc.__all__)
+
+
+def test_the_integrator_surface() -> None:
+  integrators = importlib.import_module("scaly.integrators")
+  assert sc.integrators is integrators
+  assert integrators.__all__ == ["TABLEAUS", "Tableau", "UNROLL_STEPS", "explicit", "order_conditions", "rk4", "tableau"]
+  assert "integrators" not in sc.__all__ and not hasattr(sc, "rk4")
 
 
 def test_both_dialects_use_the_shared_spec_types() -> None:

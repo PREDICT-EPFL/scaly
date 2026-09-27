@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 135**
+**Next id: 157**
 
 | Prefix | Section |
 |---|---|
@@ -98,6 +98,31 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       fixture compared against the unrolled form with a forward/reverse duality check, and a
       finite-difference check of the Lagrangian gradient in the pairwise-map sparse-Hessian test.
       Lives in `tests/ad/test_vmap.py` (duality) and `tests/integration/test_vmap.py` (pairwise Hessian).
+- [x] **API-142. Explicit Runge-Kutta integrators** (integrators/MPC plan I1,
+      `notes/integrators_mpc_plan_2026_09_27.md`). `scaly.integrators`: Butcher tableaus with the
+      order conditions checked by B-series over rooted trees, ten named explicit methods (Euler to
+      RK4 and the 3/8 rule, the Bogacki-Shampine and Dormand-Prince pairs), and `si.explicit` /
+      `si.rk4`, maps with the model's own signature, `dt` folded or an input, substeps unrolled up to
+      four and a `scan` beyond. Each stage is one call of the model. The coefficients fold as written
+      by hand, so a shooting defect generates byte-identical C to `examples/nmpc_cartpole.py`'s RK4 and
+      runs 13 to 23% faster than CasADi's fastest encoding (`perf_2026_09_27_integrators/`). 20/20
+      mutants killed. Report: `notes/integrators_i1_report.html`.
+- [ ] **API-144. Implicit Runge-Kutta integrators** (plan I3): Gauss-Legendre, Radau IIA, Lobatto
+      IIIA/IIIC and SDIRK, Newton on the stage equations, derivatives by the implicit function theorem.
+      Needs C-143.
+- [ ] **API-145. Exact, adaptive and symplectic integrators** (plan I4): ZOH/FOH, linearization,
+      embedded-pair adaptive simulation, Störmer-Verlet.
+- [ ] **API-146. Collocation and pseudospectral transcriptions** (plan I5).
+- [ ] **API-147. `scaly.mpc` core** (plan M1): OCP to `sc.problem`, every transcription, the control
+      law with its warm start in generated code, closed-loop simulation.
+- [ ] **API-148. Linear MPC and linear terminal ingredients** (plan M2): LQR, polytopes, maximal
+      invariant sets, ellipsoids, the condensed form.
+- [ ] **API-149. Nonlinear terminal ingredients** (plan M3): quasi-infinite horizon, certification,
+      steady-state targets.
+- [ ] **API-150. Real-time iteration, deployment example, docs** (plan M4).
+- [ ] **API-151. Integrators/MPC review round** (plan R).
+- [ ] **API-152. Indirect methods** (plan X): Pontryagin's boundary value problem by indirect
+      multiple shooting.
 
 ### Deferred
 
@@ -136,6 +161,12 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
   still wrap scalars in `np.array(...)`.
 - **API-81. Templates for `sc.problem`:** holes in `vars`/`params`, and the decorator's shorthand
   (`vars=3`, names from the body's parameters).
+- **API-153. DAEs in implicit integrators and collocation:** semi-explicit index 1, algebraic
+  states at the stage points (integrators/MPC plan §7).
+- **API-154. Control-invariant and robust (tube) terminal sets** (plan §7).
+- **API-155. The generated IPM as an MPC backend,** once Tier 4 #30 (`backend="scaly"`) lands.
+- **API-156. Migrate the benchmark problems' hand-written integrators and NumPy plants** onto
+  `scaly.integrators`, keeping their `checks.py` gates and CasADi parity.
 
 ## Compiler internals
 
@@ -704,6 +735,10 @@ protocol's compile flags.
       form they lower to one loop per row and lose the fused producer, slower than the matmul. They
       wait for an axis reduction in the IR, which is C-8's accumulator lowering.
 - [x] **C-12. One matcher and iterative rewrite driver for both dialects.** Implemented 2026-09-08: `ir/match.py` is generic over both node types with an iterative driver (`fixpoint`, `revisit`, `max_steps`), `rebuild_program` in `passes/program/_common.py` is the program adapter, and `_transform` is gone. No nested patterns or captures: no call site needed them. C-13 closed with it. [Updated design](notes/refactorings.md#shared-compiler-rewrites).
+- [ ] **C-143. A general dense solve: LU with partial pivoting** (integrators/MPC plan I2). An
+      `ExprOp.LU` (packed factor and row permutation) with loop and unrolled lowering, verify rule and
+      sparsity; `linalg.lu`, `linalg.lu_solve`, `linalg.solve(a, b, assume="gen")` with the implicit
+      derivative. Newton on implicit Runge-Kutta stages needs it (API-144).
 
 ### Deferred
 

@@ -132,8 +132,8 @@ narrowest relevant check, then widen. Match the style you find; see [Conventions
 Anything touching the IR, differentiation or code generation runs the full suite. Those paths break
 subtly and are expensive to debug later.
 
-Do not import `torch` or other libraries at run time. Scaly depends on NumPy and nothing else, and
-a small local implementation is preferred, as with `scaly.utils.load_torch_state_dict`.
+Do not import `torch` or other libraries at run time. Scaly depends on NumPy and SciPy and nothing
+else, and a small local implementation is preferred, as with `scaly.utils.load_torch_state_dict`.
 
 ## Adding a solver backend
 

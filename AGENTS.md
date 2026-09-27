@@ -73,8 +73,8 @@ Identifier spellings, several of which reach the generated C:
   commit messages. Branches land squashed through `wt merge`, so such a hash stops existing the
   moment the work merges. Name the file, function or change instead. Hashes already on `main` are
   safe to cite.
-- **No `tinygrad` or `torch` imports.** NumPy is the only runtime dependency and that is worth
-  defending; for PyTorch checkpoints use `scaly.utils.load_torch_state_dict`.
+- **No `tinygrad` or `torch` imports.** NumPy and SciPy are the only runtime dependencies and that is
+  worth defending; for PyTorch checkpoints use `scaly.utils.load_torch_state_dict`.
 - **A new module needs an `IMPORT_LAYERS` entry in `tests/test_import_layering.py`** and a one-line docstring
   saying what it owns. Imports go down import layers, never up. A new public name needs a docstring too:
   the API reference is generated from them and `tests/test_import_boundaries.py` pins the surface.

@@ -16,6 +16,7 @@ For prose explanations, start with the [User Guide](../guide/getting_started.md)
 | [Building functions](functions.md) | the `@function` decorator, derivative specs, and the named derivative wrappers |
 | [Differentiation](ad.md) | forward and reverse mode, whole derivatives, sparsity and coloring |
 | [Code generation](codegen.md) | rendering C, the ABI, the toolchain |
+| [Integrators](integrators.md) | explicit Runge-Kutta maps of a continuous-time model, and Butcher tableaus |
 | [Solvers](solvers.md) | typed problems, solver selection, quadratic proof, and solve statistics |
 | [Visualization](viz.md) | recording a compile and serving it |
 
