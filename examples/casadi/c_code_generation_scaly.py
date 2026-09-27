@@ -47,7 +47,7 @@ def det(a: sc.Expr) -> sc.Expr:
 def build(verbose: bool = False, opt: str = "-O3"):
   os.environ["SCALY_CC_OPT"] = opt
 
-  @sc.function(sc.L("x", (N, N)), output=sc.L("gd", ...))
+  @sc.function((N, N), output="gd")
   def grad_det(x):
     return sc.gradient(det(x), x)
 

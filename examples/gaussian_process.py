@@ -53,22 +53,14 @@ def nll(theta: sc.Expr, x: sc.Expr, y: sc.Expr) -> sc.Expr:
   return 0.5 * sc.sumsqr(white) + log_det + 0.5 * N_TRAIN * np.log(2 * np.pi)
 
 
-@sc.function(
-  sc.G(sc.L("theta", 3), sc.L("x", N_TRAIN), sc.L("y", N_TRAIN)),
-  output=sc.G(sc.L("nll", ()), sc.L("grad", 3), sc.L("hess", (3, 3))),
-)
-def marginal_likelihood(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
-  theta, x, y = inputs
+@sc.function(3, N_TRAIN, N_TRAIN, output=sc.G("nll", "grad", "hess"))
+def marginal_likelihood(theta: sc.Expr, x: sc.Expr, y: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   value = nll(theta, x, y)
   return value, sc.gradient(value, theta), sc.hessian(value, theta)
 
 
-@sc.function(
-  sc.G(sc.L("theta", 3), sc.L("x", N_TRAIN), sc.L("y", N_TRAIN), sc.L("x_test", N_TEST)),
-  output=sc.G(sc.L("mean", N_TEST), sc.L("var", N_TEST)),
-)
-def predict(inputs: tuple[sc.Expr, ...]) -> tuple[sc.Expr, sc.Expr]:
-  theta, x, y, x_test = inputs
+@sc.function(3, N_TRAIN, N_TRAIN, N_TEST, output=sc.G("mean", "var"))
+def predict(theta: sc.Expr, x: sc.Expr, y: sc.Expr, x_test: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   length, scale = theta[0].exp(), theta[1].exp()
   chol = factor(theta, x)
   alpha = linalg.cho_solve(chol, y)
@@ -101,18 +93,18 @@ def reference(theta: np.ndarray, x: np.ndarray, y: np.ndarray) -> tuple[float, n
 def main() -> dict:
   x, y = data()
   theta0 = np.log([1.0, 1.0, 0.5])
-  value, grad, hess = marginal_likelihood((theta0, x, y))
+  value, grad, hess = marginal_likelihood(theta0, x, y)
   ref_value, ref_grad = reference(theta0, x, y)
   eps = 1e-6
   hess_fd = np.stack(
-    [(marginal_likelihood((theta0 + eps * e, x, y))[1] - marginal_likelihood((theta0 - eps * e, x, y))[1]) / (2 * eps) for e in np.eye(3)]
+    [(marginal_likelihood(theta0 + eps * e, x, y)[1] - marginal_likelihood(theta0 - eps * e, x, y)[1]) / (2 * eps) for e in np.eye(3)]
   )
 
-  fit = optimize.minimize(lambda t: marginal_likelihood((t, x, y))[:2], theta0, jac=True, method="L-BFGS-B")
-  _, grad_opt, hess_opt = marginal_likelihood((fit.x, x, y))
+  fit = optimize.minimize(lambda t: marginal_likelihood(t, x, y)[:2], theta0, jac=True, method="L-BFGS-B")
+  _, grad_opt, hess_opt = marginal_likelihood(fit.x, x, y)
   covariance = np.linalg.inv(hess_opt)
   x_test = np.linspace(-5, 5, N_TEST)
-  mean, var = predict((fit.x, x, y, x_test))
+  mean, var = predict(fit.x, x, y, x_test)
   truth = np.sin(1.5 * x_test) + 0.3 * np.cos(4 * x_test)
   inside = np.abs(x_test) < 4
   return {

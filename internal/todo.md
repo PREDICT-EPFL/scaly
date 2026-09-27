@@ -66,27 +66,31 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 
 ### Now
 
-- [ ] **API-1. Implement `FunctionTemplate` over concrete Functions**, including specialization,
-      deterministic C names, one trace per instance, and lifted derivatives. Plan:
-      `notes/function_templates_plan_2026_09_27.md` (v2, phases P1a–P6), on `claude/function-templates`.
-      Done: P1a, the class renamed `ConcreteFunction` with a temporary `Function` alias
-      (`notes/templates_p1a_report.html`); P1b-i, `sc.function(inputs, output=...)` and the codemod over
-      306 sites (`notes/templates_p1b_i_report.html`); P1b-ii, one argument per parameter, shorthand slots,
-      the seeded and solver conventions and the migration (`notes/templates_p1b_ii_report.html`).
-      P2, `Function` as the template with holes and cached, deterministically named instances,
-      `ConcreteFunction` its subclass (`notes/templates_p2_report.html`).
-      P3, bare `@sc.function` and outputs inferred in one trace (`notes/templates_p3_report.html`).
-      P4, derivatives and `custom_derivative` over templates, `wrt`/`of` defaults
-      (`notes/templates_p4_report.html`).
+- [x] **API-1. Function templates and multi-parameter functions.** Done 2026-09-27 on
+      `claude/function-templates` (plan `notes/function_templates_plan_2026_09_27.md` v2, after a
+      five-agent review; phases P1a to P4 and P6, P5 deferred as API-77). A body takes one argument per
+      parameter; declarations are shapes, names or trees, one per parameter, with `output=` optional;
+      a shape left open (`sc.L()`, `(n, None)`, or nothing declared at all) makes `sc.Function` a
+      template that traces one `ConcreteFunction` per argument signature under a deterministic C name
+      (`f__3x4`), while a fully declared body keeps its exact C symbol. Derivatives and
+      `custom_derivative` lift over templates; one name is `wrt` and names default when unique.
+      Seeded derivatives take the source's arguments then the seed, and solvers five arguments. The
+      whole tree is migrated; C snapshots unchanged; concrete calls faster. Reports:
+      `notes/templates_p1a_report.html` to `templates_p6_report.html`, summary
+      `notes/templates_summary_report.html`.
 - [ ] **API-2. Preserve declared trees through `vmap` and Function-level differentiation.** Settle
       the mapped input convention and retain runtime and static acceptance tests. Rationale:
       refactorings.md "`vmap` and the AD entry points erase the callee's declared trees".
 - [ ] **API-3. Decide the zero-input Function contract and reduce the private flat call path.**
-      Preserve legitimate parameterless solver oracles. Rationale: refactorings.md
-      "Zero-input `Function`s, and the flat call seam that survives because of them".
-- [ ] **API-4. Finish the npmpc `FunctionTemplate` example** after API-1. The public
+      Preserve legitimate parameterless solver oracles. The dispatch half is settled by API-1: `f()`
+      evaluates and `f.symbolic_call()` is the symbolic spelling. What remains is whether AD inlines
+      zero-input constant callees, and retiring `ad/forward.py`'s `_flat_symbolic_call` seam.
+      Rationale: refactorings.md "Zero-input `Function`s, and the flat call seam that survives
+      because of them".
+- [ ] **API-4. Finish the npmpc template example**, unblocked now that API-1 has landed. The public
       typed decorators, exact `Function` annotations, and shared Scaly/CasADi runtime parameters
-      landed first. Replace the remaining decoder-architecture builders with `FunctionTemplate`.
+      landed first. Replace the remaining decoder-architecture builders with `sc.function`
+      templates (a declaration with holes, or bare).
       This benchmark may use the packed parameter length as its specialization key because it does
       not add more MLP layouts; a general template must distinguish individual layer shapes because
       equal parameter counts do not prove equal architectures.
@@ -115,6 +119,23 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 - **API-7. Specialized OCP problem/solver tier** in scaly (structured staged OCP lowering to general
   form), then **fatrop** as its consumer plus a casadi-fatrop baseline. osqp / proxqp / acados as
   claims demand.
+- **API-77. Sparse pattern holes on template inputs** (the templates plan's deferred P5): `sc.S()`
+  with no pattern, bound from a `SparseMatrix` or SciPy argument, with the `p{hex}` instance token
+  bare templates already use for `SparseMatrix` arguments. No test, example or benchmark needs one
+  yet. Plan: `notes/function_templates_plan_2026_09_27.md` §5 (P5).
+- **API-78. Static arguments for templates.** Parameters that take Python values (a horizon, a
+  callable, a flag), select an instance and are part of its key, as JAX's `static_argnums`. v1
+  refuses body parameters with defaults to keep that syntax free.
+- **API-79. Shape inference for `scan` callees** where only the carry is a hole (its shape is
+  `init`'s), as `while_loop` already does for its callees. Sliced inputs stay declared: a slice's
+  size is not its stride.
+- **API-80. More template holes and spellings:** dtype holes bound from numerical arguments
+  (`float32` instances), and the keyword declaration form `@sc.function(A=(n, n))`, which could not
+  be typed on the numerical side. Also the numerical leaf type: ty refuses a Python float, a list or
+  `np.float64` where a leaf takes `np.ndarray`, though the runtime coerces them all, so examples
+  still wrap scalars in `np.array(...)`.
+- **API-81. Templates for `sc.problem`:** holes in `vars`/`params`, and the decorator's shorthand
+  (`vars=3`, names from the body's parameters).
 
 ## Compiler internals
 

@@ -24,7 +24,7 @@ def test_sqp_newton_step_converges_quadratically() -> None:
   n, nc, n_steps = ns["NW"], ns["NC"], ns["N"]
   w, lam = out["w"], out["lam"]
   z0 = np.zeros(2)
-  w1, lam1, _, inertia, healthy = ns["newton_step"]((w, lam, z0, np.array(1e-3)))
+  w1, lam1, _, inertia, healthy = ns["newton_step"](w, lam, z0, np.array(1e-3))
   assert healthy and tuple(inertia) == (n, nc, 0)
   assert np.abs(w1 - w).max() < 1e-8 and np.abs(lam1 - lam).max() < 1e-6
   assert n == 3 * n_steps + 2

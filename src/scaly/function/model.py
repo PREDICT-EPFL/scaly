@@ -484,12 +484,13 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
     symbolic_outputs = cast(Callable[..., Any], fn)(*symbolic_inputs)
     if outputs is None:
       outputs = cast(Tree[SO, NO], inferred_tree(symbolic_outputs, output_name or name, f"{name} outputs"))
+    outputs = outputs.infer(symbolic_outputs)
     try:
       output_exprs = outputs.flatten_symbolic(symbolic_outputs, f"{name} outputs")
     except ValueError as exc:
       raise TypeError(str(exc)) from exc
     output_types = outputs.resolved(tuple(expr.type for expr in output_exprs))
-    output_tree = outputs.infer(symbolic_outputs).with_types(output_types)
+    output_tree = outputs.with_types(output_types)
     self._init_graph(name, input_exprs, output_exprs, inputs, output_tree, output_tree.sparsities, device=device)
     try:
       self._signature = inspect.signature(fn)

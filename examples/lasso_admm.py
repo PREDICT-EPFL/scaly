@@ -68,12 +68,8 @@ not_converged = sc.Function._from_exprs(
 )
 
 
-@sc.function(
-  sc.G(sc.L("b", M), sc.L("lam", ()), sc.L("rho", ())),
-  output=sc.G(sc.L("x", N), sc.L("iterations", ...), sc.L("support", ...)),
-)
-def lasso(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
-  b, lam, rho = inputs
+@sc.function(M, (), (), output=sc.G("x", "iterations", "support"))
+def lasso(b: sc.Expr, lam: sc.Expr, rho: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   a = sc.const(A_CONST)
   l_factor = linalg.cholesky(a @ a.T + rho * sc.const(np.eye(M)))
   start = sc.concat([
@@ -99,7 +95,7 @@ def problem(seed: int = 0, noise: float = 0.01) -> tuple[np.ndarray, np.ndarray]
 
 def main(seed: int = 0, lam: float = 0.02, rho: float = 1.0) -> dict[str, np.ndarray]:
   truth, b = problem(seed)
-  x, iterations, support = lasso((b, np.array(lam), np.array(rho)))
+  x, iterations, support = lasso(b, np.array(lam), np.array(rho))
   return {"truth": truth, "b": b, "lam": np.array(lam), "x": x, "iterations": iterations, "support": support}
 
 

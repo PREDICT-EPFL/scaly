@@ -143,3 +143,14 @@ def test_arity_errors_name_the_body_parameters() -> None:
   with pytest.raises(sc.NotConcrete, match="f leaves every parameter's structure and shape to its calls"):
     f.concrete
   assert repr(f) == "Function('f', (a, b) -> inferred, instances=['f__2_2'])"
+
+
+def test_a_named_output_takes_the_kind_of_leaf_the_body_returns() -> None:
+  @sc.function(3, output=sc.G("K", "y"))
+  def stiffness(x):
+    return sc.SparseMatrix.diag(x), 2.0 * x
+
+  K, y = cast(Any, stiffness(np.arange(1.0, 4.0)))  # the sparse leaf comes back as a scipy.sparse.csc_array
+  assert stiffness.output_names == ("K", "y") and stiffness.output_sparsities[0] is not None
+  np.testing.assert_allclose(K.toarray(), np.diag([1.0, 2.0, 3.0]))
+  np.testing.assert_allclose(y, [2.0, 4.0, 6.0])

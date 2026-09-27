@@ -45,7 +45,7 @@ uv run python -c "
 import numpy as np
 import scaly as sc
 
-@sc.function(sc.L('x', 3), output=sc.L('y', ...))
+@sc.function(3)
 def f(x):
     return (x.sin() + x * x).sum()
 

@@ -89,8 +89,7 @@ def solver(
     obj = substitute(cached["f"], {**swap, cached["x"]: out["x"]})  # the problem's own objective, constants included
     return out["x"], out["y"], out["z_l"], out["z_u"], out["status"], out["iter"], obj
 
-  shapes = {"x": n, "y": p, "z_l": m, "z_u": m, "status": (), "iter": (), "obj": ()}
-  return sc.function(problem.params, output=sc.G(*(sc.L(k, shapes[k]) for k in OUTPUTS)), name=name)(solve)
+  return sc.function(problem.params, output=sc.G(*OUTPUTS), name=name)(solve)
 
 
 def structure_summary(problem: sc.Problem) -> dict[str, Any]:
@@ -115,20 +114,17 @@ def qp_data(problem: sc.Problem) -> sc.Function:
   _prove_quadratic(problem, cached)
   data = _qp_data(problem, cached)
   f0 = substitute(cached["f"], {cached["x"]: sc.const(np.zeros(cached["x"].shape))})
-  names = ("P", "c", "A", "b", "G", "g_lb", "g_ub", "x_lb", "x_ub", "f0")
   params = list(problem._param_symbols)
 
   def evaluate(inputs: Any) -> tuple[sc.Expr, ...]:
     swap = dict(zip(params, problem.params.flatten_symbolic(inputs, "qp_data"), strict=True))
     return tuple(substitute(e, swap) for e in (*data, f0))
 
-  leaves = [sc.L(k, tuple(e.shape)) for k, e in zip(names, (*data, f0), strict=True)]
-
   def nested(inputs: Any) -> Any:
     P, c, A, b, G, g_lb, g_ub, x_lb, x_ub, f = evaluate(inputs)
     return (P, c), (A, b), (G, g_lb, g_ub), (x_lb, x_ub), f
 
-  tree = sc.G(sc.G(*leaves[:2]), sc.G(*leaves[2:4]), sc.G(*leaves[4:7]), sc.G(*leaves[7:9]), leaves[9])
+  tree = sc.G(sc.G("P", "c"), sc.G("A", "b"), sc.G("G", "g_lb", "g_ub"), sc.G("x_lb", "x_ub"), "f0")
   return sc.function(problem.params, output=tree, name=f"{problem.name}_qp_data")(nested)
 
 

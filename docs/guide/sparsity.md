@@ -129,11 +129,8 @@ the color count constant when a formal is shared across every iteration of a `VM
 A `TensorType` can carry a pattern, which the decorator accepts:
 
 ```python
-@sc.function(
-    sc.L("J", sc.TensorType((3, 4), sc.dtypes.float64, sparsity=sp)),
-    output=sc.L("out", ...),
-)
-def f(J: sc.Expr) -> sc.Expr:
+@sc.function(sc.TensorType((3, 4), sc.dtypes.float64, sparsity=sp))
+def f(J):
     ...
 ```
 
@@ -179,18 +176,18 @@ Every result is again a `SparseMatrix` with a static pattern, and its values are
 expressions (static gathers, products and segment sums), so everything is differentiable through
 the values.
 
-Across a `Function` boundary a sparse matrix is its values vector, and `sc.S(name, pattern)`
-declares it with its pattern in the signature. The body then receives a `SparseMatrix`, and calls
+Across a `Function` boundary a sparse matrix is its values vector, and `sc.S(pattern)` declares
+it with its pattern in the signature. The body then receives a `SparseMatrix`, and calls
 are refused unless the matrix passed has exactly the declared pattern. See
 [Sparse matrices](functions.md#sparse-matrices) in *Building functions*:
 
 ```python
-@sc.function(sc.G(sc.S("P", p_pattern), sc.S("A", a_pattern), sc.L("rho", ()), sc.L("delta", ())),
-             output=sc.S("K", ...))
-def kkt(inputs):
-    P, A, rho, delta = inputs
+@sc.function(sc.S(p_pattern), sc.S(a_pattern), (), ())
+def kkt(P, A, rho, delta):
     return sc.SparseMatrix.block([[P.add_diagonal(rho), A.T], [A, sc.SparseMatrix.identity(m) * (-delta)]])
 ```
+
+The result is a `SparseMatrix`, so the output is sparse too, with the pattern the body built.
 
 The C signature is unchanged by this: `symbol`'s values vector in, and the output's `values` out,
 with the output's `sparsity` as the header metadata.

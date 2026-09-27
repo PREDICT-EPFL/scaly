@@ -50,9 +50,8 @@ def rk4(x: sc.Expr, u: sc.Expr, c: sc.Expr, k3: sc.Expr) -> sc.Expr:
   return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3_ + k4)
 
 
-@sc.function(sc.G(sc.L("belief", 6), sc.L("yu", 2), sc.L("theta", 4)), output=sc.G(sc.L("belief_next", 6), sc.L("nll", 1), sc.L("innovation", 1)))
-def ekf_step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
-  belief, yu, theta = inputs
+@sc.function(6, 2, 4)
+def ekf_step(belief: sc.Expr, yu: sc.Expr, theta: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   x, p = belief[:2], belief[2:].reshape((2, 2))
   y, u = yu[0], yu[1]
   c, k3, q, r = theta[0].exp(), theta[1].exp(), theta[2].exp(), theta[3].exp()
@@ -71,12 +70,8 @@ def ekf_step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr
   return sc.concat([x_next, p_next.reshape((4,))]), nll.reshape((1,)), e.reshape((1,))
 
 
-@sc.function(
-  sc.G(sc.L("theta", 4), sc.L("y", T), sc.L("u", T)),
-  output=sc.G(sc.L("nll", ()), sc.L("grad", 4), sc.L("innovations", T)),
-)
-def likelihood(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
-  theta, y, u = inputs
+@sc.function(4, T, T, output=sc.G("nll", "grad", "innovations"))
+def likelihood(theta: sc.Expr, y: sc.Expr, u: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   yu = sc.stack([y, u], axis=1).reshape((2 * T,))
   belief0 = sc.const(np.array([0.0, 0.0, 1.0, 0.0, 0.0, 1.0]))
   _, nlls, innovations = sc.scan(ekf_step, belief0, [(yu, 0, 2), (theta, 0, 0)], length=T)
@@ -108,18 +103,18 @@ def simulate(theta: np.ndarray, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
 def main() -> dict:
   y, u = simulate(THETA_TRUE)
   theta0 = np.log([1.0, 0.1, 0.1, 0.1])
-  value, grad, _ = likelihood((theta0, y, u))
+  value, grad, _ = likelihood(theta0, y, u)
   eps = 1e-6
-  fd = np.array([(likelihood((theta0 + eps * e, y, u))[0] - likelihood((theta0 - eps * e, y, u))[0]) / (2 * eps) for e in np.eye(4)])
-  fit = optimize.minimize(lambda t: likelihood((t, y, u))[:2], theta0, jac=True, method="L-BFGS-B")
-  _, _, innovations = likelihood((fit.x, y, u))
-  _, _, innovations0 = likelihood((theta0, y, u))
+  fd = np.array([(likelihood(theta0 + eps * e, y, u)[0] - likelihood(theta0 - eps * e, y, u)[0]) / (2 * eps) for e in np.eye(4)])
+  fit = optimize.minimize(lambda t: likelihood(t, y, u)[:2], theta0, jac=True, method="L-BFGS-B")
+  _, _, innovations = likelihood(fit.x, y, u)
+  _, _, innovations0 = likelihood(theta0, y, u)
   return {
     "grad_error": np.abs(grad - fd).max() / np.abs(fd).max(),
     "theta": fit.x,
     "nll_start": float(value),
     "nll_fit": float(fit.fun),
-    "nll_true": float(likelihood((THETA_TRUE, y, u))[0]),
+    "nll_true": float(likelihood(THETA_TRUE, y, u)[0]),
     "evaluations": int(fit.nfev),
     "innovation_rms": (float(np.sqrt(np.mean(innovations0**2))), float(np.sqrt(np.mean(innovations**2)))),
   }

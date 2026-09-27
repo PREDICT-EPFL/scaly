@@ -166,8 +166,8 @@ upward import. The second is no import at all.
 
 ### One dependency the table cannot see
 
-`ir/text.py` renders a `Function`. It reads `.name`, `.inputs`, `.outputs`, `.input_names` and
-`.output_names` through a `TYPE_CHECKING`-only import. The static edge is gone; the structural
+`ir/text.py` renders a `Function`. It reads `.concrete`, `.name`, `.inputs`, `.outputs`,
+`.input_names` and `.output_names` through a `TYPE_CHECKING`-only import. The static edge is gone; the structural
 dependency is not. Import layer 1 is therefore not free of the frontend contract, and changing
 those attributes means changing `ir/text.py` with them. `tests/viz/test_assembly.py` would fail if
 the rendering broke, but nothing enforces the direction; only this paragraph records that import

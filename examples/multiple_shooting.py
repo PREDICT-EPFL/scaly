@@ -6,9 +6,8 @@ from scaly.codegen import write_module
 
 N = 20  # the decision vector w stacks N + 1 states of size 2, then N controls
 
-@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2)), output=sc.L("defect", ...))
-def defect(inputs):
-    z, u, znext = inputs
+@sc.function(2, 1, 2)
+def defect(z, u, znext):
     return z + 0.1 * sc.concat([z[1:], u]) - znext
 
 @sc.problem(vars=sc.L("w", 3 * N + 2), params=sc.L("z0", 2))

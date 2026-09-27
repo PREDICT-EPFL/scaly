@@ -160,12 +160,8 @@ adapters translate those values to the backend's native convention before solvin
 Call the solver with the same five arguments, built from `Expr` leaves, to embed a solve:
 
 ```python
-@sc.function(
-    sc.G(sc.L("target", 2), sc.L("bias", 1)),
-    output=sc.L("u", ...),
-)
-def filtered_control(params: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    target, bias = params
+@sc.function(2, 1, output="u")
+def filtered_control(target, bias):
     nested = sc.solver(tracking_problem, "sqp", name="nested_tracking")
     result = nested(
         (sc.const(np.zeros(2)), sc.const(np.zeros(1))),

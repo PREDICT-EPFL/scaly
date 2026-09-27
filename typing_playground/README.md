@@ -6,6 +6,13 @@ instantiate them per shape, derivative wrappers, problems and solvers. Nothing h
 exists to prove a design at type-check time and at run time before it is implemented in
 `src/scaly`, and to keep the reasoning after it lands.
 
+The sketches here are the single-tree design, with one declared input tree and one argument. `src/scaly`
+has moved past it. Templates, multi-parameter bodies (`def cost(x, p)`, one declaration per
+parameter) and the bare `@sc.function` are implemented there, typed by a pair of `ParamSpec`s, with
+the single tree as the one-parameter case; `internal/notes/function_templates_plan_2026_09_27.md`
+records the design and the review that shaped it, and "Multi-parameter bodies" below says what
+changed the answer.
+
 Two checks, and both must stay green:
 
 ```sh
@@ -153,8 +160,12 @@ typing rules. Its rules:
 - *Parameterized constraints on holes*, such as "a matrix with 5 rows" or a predicate over shapes.
   They belong in the leaf declaration, where `ShapeDecl` would grow a constraint form; nothing
   here blocks them.
-- *Multi-parameter bodies* (`def cost(x, y)`). The single-tree calling convention is what makes the
-  twin symbolic/numerical typing work; a second convention forks every call surface.
+- *Multi-parameter bodies* (`def cost(x, y)`), deferred here because the single-tree calling
+  convention made the twin symbolic/numerical typing work and a second convention would fork every
+  call surface. Both objections fell: `Function[**PS, **PN, SO, NO]` types the symbolic and the
+  numerical parameter lists as two `ParamSpec`s, which ty checks (a width ladder on the decorator
+  fills them), and the single tree is the one-parameter case of the new convention rather than a
+  second one. `src/scaly` now takes one declaration per parameter.
 
 ## Mapping to `src/scaly`
 
@@ -183,25 +194,15 @@ swapped:
 
 ## Open items
 
-The Function and solver API over declared trees is implemented in `src/scaly`. Templates and the typed
-`vmap` candidate remain sketches. Follow-up work is tracked as D3.1 to D3.3 in
-[`internal/todo.md`](../internal/todo.md), with production constraints in
-[`internal/notes/refactorings.md`](../internal/notes/refactorings.md).
+The Function and solver API, templates and multi-parameter bodies are implemented in `src/scaly`:
+the outer group folded into `function(*slots, output=...)`, a defaulted output named after the
+function, nesting in instance names, dtypes bound from `Expr` arguments, one trace per instance and
+the call-site `ValueError` vocabulary. What remains, tracked in
+[`internal/todo.md`](../internal/todo.md):
 
 - **Names for `L` and `G`.** They carry no meaning to a reader who did not design them; `leaf` and
-  `group` are the honest pytree words. Verbosity is a separate complaint and is not fixed by
-  renaming: fold the outer group into `function(*inputs, outputs=...)` by moving the width ladder
-  onto the decorator, and default the output declaration to one traced leaf named after the
-  function.
-- **Mangling flattens structure.** Two nestings with the same flat shapes would collide in C symbol
-  names; the real scheme must encode the nesting.
-- **Tensor metadata is absent from specialization.** Define how dtype and differentiability bind
-  when a shape is inferred. Cache keys and C names must distinguish metadata that changes the
-  concrete graph, and lifted seed trees must match the generated Function inputs.
-- **The bare mode traces twice**, once to learn the output structure and once in `Function`. Trace
-  once.
-- **Error vocabulary.** Instantiation-time shape mismatches surface as `TypeError` from `resolved`;
-  the real one should use the call-site `ValueError` vocabulary.
+  `group` are the honest pytree words. Shapes and names as declarations (`@sc.function(3, (2, 2),
+  output="y")`) made them rarer to write, not clearer to read.
 - **`vmap` typed by its callee's trees** is one of the two open problems in
   `internal/notes/refactorings.md`. `function.py`'s `vmap` is a candidate answer, every leaf
   gaining a leading axis with the structure preserved, not the real slicing semantics.

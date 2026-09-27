@@ -46,24 +46,25 @@ def _pair_vectors(x: sc.Expr) -> sc.Expr:
   return sc.gather(x, 3 * PAIRS[:, :1] + xyz) - sc.gather(x, 3 * PAIRS[:, 1:] + xyz)
 
 
-@sc.function(sc.L("x", 3 * N), output=sc.L("len2", P))
+@sc.function(3 * N, output="len2")
 def squared_lengths(x: sc.Expr) -> sc.Expr:
   d = _pair_vectors(x)
   return (d * d) @ sc.const(np.ones(3))
 
 
-@sc.function(sc.L("x", 3 * N), output=sc.L("E", ()))
+@sc.function(3 * N, output="E")
 def energy(x: sc.Expr) -> sc.Expr:
   s3 = (1.0 / squared_lengths(x)) ** 3
   return (4.0 * (s3 * s3 - s3)).sum()
 
 
-gradient = sc.gradient(energy, "E", "x")  # (x) -> grad_E_x
-hessian = sc.hessian(energy, "E", "x")  # (x) -> hess_E_x_x
-hvp = sc.forward(gradient, "grad_E_x", "x")  # (x, fwd:x) -> H v
-rigidity = sc.jacobian(squared_lengths, "len2", "x")  # dense (P, 3N)
-rigidity_sparse = sc.sparse_jacobian(squared_lengths, "len2", "x")  # compact values + pattern
-bar_forces = sc.adjoint(squared_lengths, "len2", "x")  # (x, lam:len2) -> R^T t
+# One output and one input each, so the derivatives need not name them.
+gradient = sc.gradient(energy)  # (x) -> grad_E_x
+hessian = sc.hessian(energy)  # (x) -> hess_E_x_x
+hvp = sc.forward(gradient)  # (x, fwd:x) -> H v
+rigidity = sc.jacobian(squared_lengths)  # dense (P, 3N)
+rigidity_sparse = sc.sparse_jacobian(squared_lengths)  # compact values + pattern
+bar_forces = sc.adjoint(squared_lengths)  # (x, lam:len2) -> R^T t
 newton_oracle = energy.factory("lj_newton", ["x"], ["E", sc.factory.Grad("E", "x"), sc.factory.Hess("E", "x")])
 
 

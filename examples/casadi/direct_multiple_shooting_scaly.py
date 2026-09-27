@@ -24,32 +24,29 @@ W0 = np.zeros(NW)
 W0[:2] = [0.0, 1.0]
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), output=sc.G(sc.L("xdot", ...), sc.L("L", ...)))
-def f(inputs):
-  x, u = inputs
+@sc.function(2, 1, output=sc.G("xdot", "L"))
+def f(x, u):
   x1, x2 = x[0], x[1]
   return sc.stack([(1 - x2**2) * x1 - x2 + u[0], x1]), sc.stack([x1**2 + x2**2 + u[0] ** 2])
 
 
-@sc.function(sc.G(sc.L("x0", 2), sc.L("p", 1)), output=sc.G(sc.L("xf", ...), sc.L("qf", ...)))
-def F(inputs):
-  X, U = inputs
+@sc.function(sc.L("x0", 2), sc.L("p", 1), output=sc.G("xf", "qf"))
+def F(X, U):
   dt = T / N / M
   Q = sc.const(np.zeros(1))
   for _ in range(M):
-    k1, k1_q = f((X, U))
-    k2, k2_q = f((X + dt / 2 * k1, U))
-    k3, k3_q = f((X + dt / 2 * k2, U))
-    k4, k4_q = f((X + dt * k3, U))
+    k1, k1_q = f(X, U)
+    k2, k2_q = f(X + dt / 2 * k1, U)
+    k3, k3_q = f(X + dt / 2 * k2, U)
+    k4, k4_q = f(X + dt * k3, U)
     X = X + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
     Q = Q + dt / 6 * (k1_q + 2 * k2_q + 2 * k3_q + k4_q)
   return X, Q
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("xnext", 2)), output=sc.L("gap_and_q", ...))
-def interval(inputs):
-  x, u, xnext = inputs
-  xf, qf = F((x, u))
+@sc.function(2, 1, 2, output="gap_and_q")
+def interval(x, u, xnext):
+  xf, qf = F(x, u)
   return sc.concat([xf - xnext, qf])
 
 

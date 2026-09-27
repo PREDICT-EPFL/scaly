@@ -49,7 +49,7 @@ import scaly as sc
 import numpy as np
 
 
-@sc.function(sc.L("x", 2), output=sc.L("f", ...))
+@sc.function(2, output="f")
 def rosenbrock(x: sc.Expr) -> sc.Expr:
   return (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
 
@@ -60,7 +60,7 @@ grad(np.array([1.0, 2.0]))
 
 | # | What happens | Where |
 | --- | --- | --- |
-| 1 | The decorator makes fresh input symbols, runs the body, and wraps the returned exprs in a `Function`. | `function/api.py`, `function/model.py` |
+| 1 | Every shape is declared, so the decorator makes fresh input symbols now, runs the body, and wraps the returned exprs in a `ConcreteFunction`. | `function/api.py`, `function/model.py` |
 | 2 | `sc.factory.Grad("f", "x")` is a typed request object. `Function.factory` resolves the named input and output and calls the spec's `build`. | `function/model.py` (`factory`), `function/factory.py` (the specs) |
 | 3 | `sc.factory.Grad`'s `build` is one reverse sweep over the expression DAG. Other kinds dispatch elsewhere: `sc.factory.Jac` batches forward mode over the identity, and `sc.factory.SpJac` colors a structural pattern first. | `ad/derivatives.py`, `ad/reverse.py` |
 | 4 | The result is another `Function`, in the same dialect as the first. Nothing has been compiled yet. | `function/model.py` |
@@ -103,9 +103,14 @@ are written against them. `lower_function` verifies its output before it returns
 
 ### Building: `function/`
 
-`function/model.py` owns `Function`: names, shapes, sparsity metadata, the undeclared-input check,
-call composition, and `factory`. It also owns the dependency-light `DerivSpec` base at import
-layer 3. `function/api.py` is the ergonomic layer, the `@sc.function` decorator and the overloaded
+`function/model.py` owns the two function classes. `ConcreteFunction` is one named graph: names,
+shapes, sparsity metadata, the undeclared-input check, call composition, and `factory`; it is what
+the rest of the compiler consumes. `Function`, its base class, is the template a decorated body
+becomes when a shape is left to its calls. It binds each call's argument shapes, traces the body
+once per binding and caches the instance under a name that spells them. A fully declared body is
+its one instance, a `ConcreteFunction`, from the start. Compiler entry points take any `Function`
+and use its one instance, which a template with holes refuses with `NotConcrete`. The module also
+owns the dependency-light `DerivSpec` base at import layer 3. `function/api.py` is the ergonomic layer, the `@sc.function` decorator and the overloaded
 wrappers (`sc.jacobian`, `sc.gradient`, `sc.sparse_hessian`, ...) that most user code calls.
 
 `Function.factory(name, inputs, outputs)` is the derivative request API. Outputs are typed spec

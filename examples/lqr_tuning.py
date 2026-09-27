@@ -97,7 +97,7 @@ def closed_loop_cost(weights: sc.Expr) -> sc.Expr:
   return costs.sum() + 10.0 * sc.sumsqr(x_final.reshape((NX, NS))[0:2])
 
 
-@sc.function(sc.L("weights", NX + 1), output=sc.G(sc.L("cost", ()), sc.L("gradient", NX + 1)))
+@sc.function(NX + 1, output=sc.G("cost", "gradient"))
 def tuning_objective(weights: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   cost = closed_loop_cost(weights)
   return cost, sc.gradient(cost, weights)

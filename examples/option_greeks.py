@@ -48,7 +48,7 @@ def call_price(p: sc.Expr) -> sc.Expr:
   return s * phi(d1) - k * (-r * t).exp() * phi(d2)
 
 
-@sc.function(sc.L("p", 5), output=sc.L("C", 1))
+@sc.function(5, output="C")
 def option(p: sc.Expr) -> sc.Expr:
   return call_price(p).reshape((1,))
 
@@ -57,44 +57,41 @@ def option(p: sc.Expr) -> sc.Expr:
 option_greeks = option.factory("option_greeks", ["p"], ["C", sc.factory.Grad("C", "p"), sc.factory.Hess("C", "p")])
 
 
-@sc.function(sc.L("book", 5 * M), output=sc.G(sc.L("price", M), sc.L("grad", 5 * M), sc.L("hess", 25 * M)))
+@sc.function(5 * M, output=sc.G("price", "grad", "hess"))
 def book_greeks(book: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   price, grad, hess = (sc.vmap(option_greeks, M, [(book, 0, 5)], output=k) for k in range(3))
   return price, grad, hess
 
 
-@sc.function(sc.L("book", 5 * M), output=sc.G(sc.L("value", ()), sc.L("sensitivities", 5 * M)))
+@sc.function(5 * M, output=sc.G("value", "sensitivities"))
 def book_value(book: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   value = sc.vmap(option, M, [(book, 0, 5)]).sum()
   return value, sc.gradient(value, book)
 
 
 # Implied volatility. The quote is (S, K, T, r, C_market); the price error and the vega at a trial sigma:
-@sc.function(sc.G(sc.L("sigma", ()), sc.L("quote", 5)), output=sc.G(sc.L("residual", ()), sc.L("vega", ())))
-def iv_residual(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-  sigma, quote = inputs
+@sc.function
+def iv_residual(sigma: sc.Expr, quote: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   price = call_price(sc.stack([quote[0], quote[1], quote[2], sigma, quote[3]]))
   return price - quote[4], sc.gradient(price, sigma)
 
 
 # The Newton carry is (sigma, price error); the quote is a loop parameter.
-@sc.function(sc.G(sc.L("carry", 2), sc.L("quote", 5)), output=sc.L("next", 2))
-def newton_step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-  carry, quote = inputs
-  residual, vega = iv_residual((carry[0], quote))
+@sc.function
+def newton_step(carry: sc.Expr, quote: sc.Expr) -> sc.Expr:
+  residual, vega = iv_residual(carry[0], quote)
   step = residual / sc.maximum(vega, 1e-8)
   sigma_next = sc.minimum(sc.maximum(carry[0] - step, 0.5 * carry[0]), 2.0 * carry[0])  # at most halve or double
-  residual_next, _ = iv_residual((sigma_next, quote))
+  residual_next, _ = iv_residual(sigma_next, quote)
   return sc.stack([sigma_next, residual_next])
 
 
-@sc.function(sc.G(sc.L("carry", 2), sc.L("quote", 5)), output=sc.L("go_on", ...))
-def not_converged(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-  carry, quote = inputs
+@sc.function
+def not_converged(carry: sc.Expr, quote: sc.Expr) -> sc.Expr:
   return sc.greater(carry[1].abs(), 1e-12 * quote[0])
 
 
-@sc.function(sc.L("quote", 5), output=sc.G(sc.L("sigma", 1), sc.L("iterations", 1)))
+@sc.function(5, output=sc.G("sigma", "iterations"))
 def implied_vol(quote: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   guess = (2 * np.pi / quote[2]).sqrt() * quote[4] / quote[0]  # Brenner-Subrahmanyam
   guess = sc.minimum(sc.maximum(guess, 0.05), 2.0)
@@ -103,7 +100,7 @@ def implied_vol(quote: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return carry[0].reshape((1,)), n_iter.reshape((1,))
 
 
-@sc.function(sc.L("quotes", 5 * M), output=sc.G(sc.L("sigma", M), sc.L("iterations", M)))
+@sc.function(5 * M, output=sc.G("sigma", "iterations"))
 def book_implied_vol(quotes: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return sc.vmap(implied_vol, M, [(quotes, 0, 5)], output=0), sc.vmap(implied_vol, M, [(quotes, 0, 5)], output=1)
 

@@ -182,7 +182,7 @@ A `Function` is a named graph boundary: named inputs, named outputs, and optiona
 per output.
 
 ```python
-@sc.function(sc.L("x", 3), output=sc.L("y"))
+@sc.function(3, output="y")
 def f(x):
     return x.sin()
 ```
@@ -402,7 +402,7 @@ caught at the boundary that produced it and not as strange C much later.
 import scaly as sc
 from scaly.passes.lowering import lower_function
 
-@sc.function(sc.L("x", 3), output=sc.L("y", ...))
+@sc.function(3, output="y")
 def f(x: sc.Expr) -> sc.Expr:
     return (x.sin() + x * x).sum()
 

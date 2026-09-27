@@ -450,6 +450,7 @@ tests/function/test_api.py::test_seeded_factory_outputs_require_seed_inputs
 tests/function/test_api.py::test_the_old_two_positional_decorator_is_refused_with_the_migration_hint
 tests/function/test_api.py::test_unnamed_leaves_take_their_parameter_names
 tests/function/test_api.py::test_zero_and_eight_parameters
+tests/function/test_bare.py::test_a_named_output_takes_the_kind_of_leaf_the_body_returns
 tests/function/test_bare.py::test_a_sparse_matrix_argument_declares_its_pattern
 tests/function/test_bare.py::test_an_expr_argument_brings_its_dtype
 tests/function/test_bare.py::test_arity_errors_name_the_body_parameters

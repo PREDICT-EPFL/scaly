@@ -52,31 +52,27 @@ def residual(u: sc.Expr, lam: sc.Expr, n: int) -> sc.Expr:
 def newton_functions(n: int) -> tuple[sc.Function, sc.Function]:
   nn = n * n
 
-  @sc.function(sc.G(sc.L("u", nn), sc.L("lam", ())), output=sc.G(sc.L("u_next", nn), sc.L("inertia", 3)))
-  def newton_step(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-    u, lam = inputs
+  @sc.function
+  def newton_step(u: sc.Expr, lam: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     f = residual(u, lam, n)
     jac = linalg.SparseMatrix.from_sparse_jacobian(sc.sparse_jacobian(f, u))
     fact = linalg.SparseLDL(jac, name="bratu")
     return u - fact.solve(f), fact.inertia()
 
-  @sc.function(sc.G(sc.L("carry", nn + 1), sc.L("lam", ())), output=sc.L("carry_next", nn + 1))
-  def body(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    carry, lam = inputs
-    u_next, _ = newton_step((carry[:nn], lam))
+  @sc.function
+  def body(carry: sc.Expr, lam: sc.Expr) -> sc.Expr:
+    u_next, _ = newton_step(carry[:nn], lam)
     return sc.concat([u_next, sc.norm_inf(residual(u_next, lam, n)).reshape((1,))])
 
-  @sc.function(sc.G(sc.L("carry", nn + 1), sc.L("lam", ())), output=sc.L("go_on", ...))
-  def not_converged(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    carry, _ = inputs
+  @sc.function
+  def not_converged(carry: sc.Expr, lam: sc.Expr) -> sc.Expr:
     return sc.greater(carry[nn], TOL)
 
-  @sc.function(sc.G(sc.L("u0", nn), sc.L("lam", ())), output=sc.G(sc.L("u", nn), sc.L("residual", ()), sc.L("iterations", ()), sc.L("inertia", 3)))
-  def bratu_solve(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
-    u0, lam = inputs
+  @sc.function(nn, (), output=sc.G("u", "residual", "iterations", "inertia"))
+  def bratu_solve(u0: sc.Expr, lam: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
     start = sc.concat([u0, sc.norm_inf(residual(u0, lam, n)).reshape((1,))])
     carry, n_iter = sc.while_loop(not_converged, body, start, max_iter=MAX_NEWTON, params=(lam,))
-    _, inertia = newton_step((carry[:nn], lam))
+    _, inertia = newton_step(carry[:nn], lam)
     return carry[:nn], carry[nn], n_iter, inertia
 
   return newton_step, bratu_solve
@@ -111,10 +107,10 @@ def main() -> dict:
   u = np.zeros(N_GRID * N_GRID)
   rows = []
   for lam in LAMBDAS:
-    u, res, iterations, inertia = bratu_solve((u, np.array(lam)))
+    u, res, iterations, inertia = bratu_solve(u, np.array(lam))
     rows.append((lam, float(u.max()), float(res), int(iterations), tuple(int(v) for v in inertia)))
   u_ref = reference_solve(6.0)
-  u6, *_ = bratu_solve((np.zeros(N_GRID * N_GRID), np.array(6.0)))
+  u6, *_ = bratu_solve(np.zeros(N_GRID * N_GRID), np.array(6.0))
   return {"continuation": rows, "reference_error": np.abs(u6 - u_ref).max(), "coloring": coloring_table(), "solver": bratu_solve}
 
 

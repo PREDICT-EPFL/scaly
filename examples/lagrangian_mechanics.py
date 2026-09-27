@@ -54,9 +54,8 @@ def model(masses: np.ndarray, lengths: np.ndarray) -> dict[str, sc.Function]:
     potential = G * (sc.const(masses) * y).sum()
     return kinetic - potential, kinetic + potential
 
-  @sc.function(sc.G(sc.L("q", n), sc.L("qd", n), sc.L("tau", n)), output=sc.G(sc.L("qdd", n), sc.L("M", (n, n))))
-  def forward_dynamics(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-    q, qd, tau = inputs
+  @sc.function(n, n, n, output=sc.G("qdd", "M"))
+  def forward_dynamics(q: sc.Expr, qd: sc.Expr, tau: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     lag, _ = lagrangian(q, qd)
     p = sc.gradient(lag, qd)  # the generalized momenta
     mass = sc.jacobian(p, qd)  # = hessian(lag, qd)
@@ -64,24 +63,24 @@ def model(masses: np.ndarray, lengths: np.ndarray) -> dict[str, sc.Function]:
     rhs = tau + sc.gradient(lag, q) - coupling @ qd
     return linalg.cho_solve(linalg.cholesky(mass), rhs), mass
 
-  @sc.function(sc.G(sc.L("q", n), sc.L("qd", n)), output=sc.L("E", ()))
-  def energy(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    return lagrangian(*inputs)[1]
+  @sc.function
+  def energy(q: sc.Expr, qd: sc.Expr) -> sc.Expr:
+    return lagrangian(q, qd)[1]
 
   zero = sc.const(np.zeros(n))
 
   def f(x: sc.Expr) -> sc.Expr:
-    return sc.concat([x[n:], forward_dynamics((x[:n], x[n:], zero))[0]])
+    return sc.concat([x[n:], forward_dynamics(x[:n], x[n:], zero)[0]])
 
-  @sc.function(sc.L("x", 2 * n), output=sc.G(sc.L("x_next", 2 * n), sc.L("E", 1)))
+  @sc.function(2 * n, output=sc.G("x_next", "E"))
   def rk4_step(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
     k1 = f(x)
     k2 = f(x + 0.5 * DT * k1)
     k3 = f(x + 0.5 * DT * k2)
     k4 = f(x + DT * k3)
-    return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4), energy((x[:n], x[n:])).reshape((1,))
+    return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4), energy(x[:n], x[n:]).reshape((1,))
 
-  @sc.function(sc.L("x0", 2 * n), output=sc.G(sc.L("x_final", 2 * n), sc.L("energies", STEPS), sc.L("sensitivity", (2 * n, 2 * n))))
+  @sc.function(2 * n, output=sc.G("x_final", "energies", "sensitivity"))
   def simulate(x0: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
     x_final, energies = sc.scan(rk4_step, x0, [], length=STEPS)
     return x_final, energies, sc.jacobian(x_final, x0)
@@ -106,7 +105,7 @@ def main() -> dict:
   m2, l2 = np.array([1.0, 0.5]), np.array([1.0, 0.7])
   double = model(m2, l2)
   q, qd = rng.uniform(-2, 2, 2), rng.uniform(-1, 1, 2)
-  qdd, _ = double["forward_dynamics"]((q, qd, np.zeros(2)))
+  qdd, _ = double["forward_dynamics"](q, qd, np.zeros(2))
   textbook_error = np.abs(qdd - double_pendulum_textbook(q, qd, m2, l2)).max()
 
   triple = model(np.array([1.0, 1.0, 1.0]), np.array([1.0, 1.0, 1.0]))

@@ -19,19 +19,19 @@ DEPTH = 100_000
 POINTS = np.linspace(0.0, 2.0 * np.pi, N)
 
 
-@sc.function(sc.L("y", 1), output=sc.L("sin_y", ...))
+@sc.function(1, output="sin_y")
 def sin_step(y):
   return y.sin()
 
 
-@sc.function(sc.L("x", 1), output=sc.L("y", ...))
+@sc.function(1, output="y")
 def f0(x):
   (y,) = sc.scan(sin_step, x, [], length=DEPTH)
   return y
 
 
 def build(verbose: bool = False):
-  @sc.function(sc.L("x", N), output=sc.L("y", ...))
+  @sc.function(N, output="y")
   def f_map(x):
     return sc.vmap(f0, N, [(x, 0, 1)])
 

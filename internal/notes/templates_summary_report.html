@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Templates Summary Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Function templates and multi-parameter functions: summary</h1>
+<p class="sub">2026-09-27 · branch <code>claude/function-templates</code> (from <code>claude/ipm-speed</code>) · todo API-1 · plan <code>function_templates_plan_2026_09_27.md</code> (v2)</p>
+<div class="box"><b>Summary.</b> A decorated body now takes one argument per parameter, declares shapes by value or not at all, and is instantiated once per argument signature under a deterministic C name. Derivatives work over templates too. The whole tree moved to the new convention: tests, plugins, examples, notebooks, benchmarks and docs. The C snapshots are byte-identical, and concrete calls are faster than before (2.83 to 2.45 µs for one leaf). The suite grew from 2348 to 2403 tests, all passing.</div>
+<h2>What a user writes</h2>
+<div class="scroll"><table><tr><th>Before</th><th>After</th></tr>
+<tr><td><pre>@sc.function(
+    sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2)),
+    sc.L("defect", ...),
+)
+def defect(inputs):
+    z, u, znext = inputs
+    ...
+defect((z, u, znext))</pre></td><td><pre>@sc.function(2, 1, 2)
+def defect(z, u, znext):
+    ...
+defect(z, u, znext)</pre></td></tr>
+<tr><td>(not possible)</td><td><pre>@sc.function
+def product(A, B):
+    return A @ B
+
+product(a44, b42)   # product__4x4_4x2
+product(c33, d31)   # product__3x3_3x1</pre></td></tr>
+<tr><td><pre>sc.gradient(energy, "energy", "x")
+fwd(((x, p), v))
+solve((v0, lb0, le0, li0, p))</pre></td><td><pre>sc.gradient(energy)          # one output, one input
+fwd(x, p, v)
+solve(v0, lb0, le0, li0, p)</pre></td></tr></table></div>
+<h2>How it was done</h2>
+<p>Five review agents read the plan against the code: typing under the pinned ty, frontend semantics, compiler consumers, migration, and the user's view. The plan's settled decisions stood, and the review changed the design under them:</p>
+<ul>
+<li><code>ConcreteFunction</code> subclasses <code>Function</code>, so there is no wrapper, no delegation table and no extra call frame;</li>
+<li>zero-argument calls evaluate, with no trace-depth context variable;</li>
+<li>keywords are bound only when passed;</li>
+<li>shapes and names are declarations;</li>
+<li><code>wrt</code> and <code>of</code> have defaults;</li>
+<li>P1b was split in two, and P5 deferred.</li>
+</ul>
+<p>Plan §10 lists all of it. Each phase is one commit with its own report, mutation checks and gates.</p>
+<div class="scroll"><table><tr><th>Phase</th><th>Commit</th><th>Report</th></tr>
+<tr><td>P1a</td><td>Rename <code>Function</code> to <code>ConcreteFunction</code></td><td><code>templates_p1a_report.html</code></td></tr>
+<tr><td>P1b-i</td><td><code>sc.function</code> takes its output as <code>output=</code>; a codemod over 306 sites</td><td><code>templates_p1b_i_report.html</code></td></tr>
+<tr><td>P1b-ii</td><td>One argument per parameter; about 130 call sites migrated</td><td><code>templates_p1b_ii_report.html</code></td></tr>
+<tr><td>P2</td><td>Templates with shape holes</td><td><code>templates_p2_report.html</code></td></tr>
+<tr><td>P3</td><td>Bare templates and inferred outputs</td><td><code>templates_p3_report.html</code></td></tr>
+<tr><td>P4</td><td>Derivatives of templates</td><td><code>templates_p4_report.html</code></td></tr>
+<tr><td>P5</td><td>Deferred: sparse pattern holes (API-77)</td><td></td></tr>
+<tr><td>P6</td><td>Documentation, examples, cleanup</td><td><code>templates_p6_report.html</code></td></tr></table></div>
+<h2>Numbers</h2>
+<ul>
+<li>Tests: 2348 to 2403 passing, 42 skipped throughout. New files: <code>tests/function/test_template.py</code>, <code>test_bare.py</code> and <code>test_lifted.py</code>, plus the typing checks.</li>
+<li>Mutation checks: 56 mutants across the phases. 53 are killed, two of them only after a new test. Of the other three, two exposed dead code, which is removed, and one is equivalent: a <code>.concrete</code> call that only narrows the static type.</li>
+<li>Call overhead (<code>perf_2026_09_27_templates/</code>, µs per call): one leaf 2.83 → 2.45; a group of four 5.81 → 5.07; four parameters 4.48; a template with one hole 3.20.</li>
+<li>ty: the same diagnostics as before the branch, none new. The C snapshots, the smoke benchmarks, the CasADi comparisons (17 of 17) and the notebooks are unchanged.</li>
+</ul>
+<h2>For Colin</h2>
+<ul>
+<li><b>Your <code>examples/tiny_qp.py</code></b> (untracked, not touched) calls its solver with one tuple. It needs <code>solve(np.zeros(2), np.zeros(2), np.zeros(1), np.zeros(0), np.array(0.5))</code>. Its gallery test was deselected in every run here, and its <code>examples/gen/</code> output reappeared whenever a run imported it.</li>
+<li>The smoke benchmark's <code>solver_call</code> case failed before this branch: a host function and its solver shared a name. The solvers are renamed in <code>benchmarks/run.py</code>.</li>
+<li>Instance names use <code>__</code>, which C++ reserves; clang warns only under <code>-Wreserved-identifier</code>. It is kept as the plan chose. Bare <code>while_loop</code> callees in the notebooks now have shape-spelling C names.</li>
+<li>Keywords bind at run time but are refused by ty on declared functions. ty also refuses Python floats where a leaf takes <code>np.ndarray</code>, as it did before (API-80).</li>
+<li>The node-ID baseline recipe in <code>contributing.md</code> corrupts the last line when the baseline is stale: the conftest error is printed without a newline.</li>
+<li>Deferred: API-77 to API-81. API-4 (the npmpc template example) is unblocked.</li>
+</ul>
+</main></body></html>

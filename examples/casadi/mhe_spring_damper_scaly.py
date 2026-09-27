@@ -22,35 +22,32 @@ N_SIM = 1000
 M, K, C = 1.0, 1.0, 0.5  # mass, spring constant, damping
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("w", 1)), output=sc.L("xdot", ...))
-def f(inputs):
-  x, u, w = inputs
+@sc.function
+def f(x, u, w):
   return sc.stack([x[1], (-K * x[0] - C * x[1] + u[0]) / M + w[0]])
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("d", 1)), output=sc.L("x1", ...))
-def phi(inputs):
-  x, u, d = inputs
-  k1 = f((x, u, d))
-  k2 = f((x + DT / 2.0 * k1, u, d))
-  k3 = f((x + DT / 2.0 * k2, u, d))
-  k4 = f((x + DT * k3, u, d))
+@sc.function(2, 1, 1, output="x1")
+def phi(x, u, d):
+  k1 = f(x, u, d)
+  k2 = f(x + DT / 2.0 * k1, u, d)
+  k3 = f(x + DT / 2.0 * k2, u, d)
+  k4 = f(x + DT * k3, u, d)
   return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@sc.function(sc.L("x", 2), output=sc.L("y", ...))
+@sc.function(2, output="y")
 def h(x):
   return x[0:1]
 
 
-PHI = sc.jacobian(phi, "x1", "x")
-H = sc.jacobian(h, "y", "x")
+PHI = sc.jacobian(phi, "x")
+H = sc.jacobian(h, "x")
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("w", 1), sc.L("xnext", 2)), output=sc.L("gap", ...))
-def gap(inputs):
-  x, u, w, xnext = inputs
-  return xnext - phi((x, u, w))
+@sc.function(2, 1, 1, 2)
+def gap(x, u, w, xnext):
+  return xnext - phi(x, u, w)
 
 
 @sc.problem(
@@ -78,7 +75,7 @@ def build(verbose: bool = False):
   sim_U[int(N_SIM / 2) :] = 0.0
   sim_W = SIGMA_W * np.random.randn(N_SIM - 1)
   for i in range(N_SIM - 1):
-    sim_X[i + 1] = phi((sim_X[i], sim_U[i : i + 1], sim_W[i : i + 1]))
+    sim_X[i + 1] = phi(sim_X[i], sim_U[i : i + 1], sim_W[i : i + 1])
   sim_Y = sim_X[:, 0] + SIGMA_P * np.random.randn(N_SIM)
   P0 = 0.01**2 * np.eye(2)
   x0_guess = sim_X[0] + 0.01 * np.random.randn(2)
@@ -99,14 +96,14 @@ def build(verbose: bool = False):
       Kk = P @ H0.T @ linalg.inv(H0 @ P @ H0.T + R)
       P = (np.eye(2) - Kk @ H0) @ P
       x0 = x0 + Kk @ (Y[0:1] - h(X[0]) - H0 @ (x0 - X[0]))
-      x0 = phi((x0, U[0:1], W[0:1]))
-      Fk = PHI((X[0], U[0:1], W[0:1]))
+      x0 = phi(x0, U[0:1], W[0:1])
+      Fk = PHI(X[0], U[0:1], W[0:1])
       P = Fk @ P @ Fk.T + 1 / Q
       # shift the window and warm start from the previous estimate
       U, Y = sim_U[i : i + N - 1], sim_Y[i : i + N]
       init_W[0 : N - 2], init_W[N - 2] = est_W[i : i + N - 2], 0.0
       init_X[0 : N - 1] = est_X[i : i + N - 1]
-      init_X[N - 1] = phi((init_X[N - 1], U[-1:], init_W[-1:]))
+      init_X[N - 1] = phi(init_X[N - 1], U[-1:], init_W[-1:])
       (X, W), *_ = solve((init_X.reshape(-1), init_W), *zeros, (U, Y, linalg.inv(P), x0))
       X = X.reshape(N, 2)
       est_X[N - 1 + i], est_W[N - 2 + i] = X[N - 1], W[N - 2]

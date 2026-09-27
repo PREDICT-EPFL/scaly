@@ -50,21 +50,10 @@ def ground_structure() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 COORDS, BARS, FREE, LOAD = ground_structure()
 NN, NB, NF = len(COORDS), len(BARS), len(FREE)
 NDOF = 2 * NN
-INT64 = sc.dtypes.int64
 
 
-@sc.function(
-  sc.G(
-    sc.L("areas", NB),
-    sc.L("coords", 2 * NN),
-    sc.L("bars", sc.TensorType((NB, 2), INT64)),
-    sc.L("free", sc.TensorType((NF,), INT64)),
-    sc.L("load", NDOF),
-  ),
-  output=sc.G(sc.L("compliance", ()), sc.L("gradient", NB), sc.L("lengths", NB)),
-)
-def analyse(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
-  areas, coords, bars, free, load = inputs
+@sc.function(NB, 2 * NN, sc.L((NB, 2), dtype="int64"), sc.L(NF, dtype="int64"), NDOF, output=sc.G("compliance", "gradient", "lengths"))
+def analyse(areas: sc.Expr, coords: sc.Expr, bars: sc.Expr, free: sc.Expr, load: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   start, end = bars[:, 0], bars[:, 1]
   dx = sc.take(coords, 2 * end) - sc.take(coords, 2 * start)
   dy = sc.take(coords, 2 * end + 1) - sc.take(coords, 2 * start + 1)
@@ -101,12 +90,12 @@ def reference(areas: np.ndarray) -> tuple[float, np.ndarray]:
 
 def optimality_criteria(mean_area: float = 0.1, iterations: int = 80, move: float = 0.3) -> dict[str, np.ndarray]:
   structure = (COORDS.reshape(-1), BARS, FREE, LOAD)
-  _, _, lengths = analyse((np.full(NB, A_MAX), *structure))
+  _, _, lengths = analyse(np.full(NB, A_MAX), *structure)
   volume = mean_area * lengths.sum()
   areas = np.full(NB, volume / lengths.sum())
   history = []
   for _ in range(iterations):
-    compliance, grad, _ = analyse((areas, *structure))
+    compliance, grad, _ = analyse(areas, *structure)
     history.append(float(compliance))
     lo, hi = 1e-12, 1e12
     while hi / lo > 1 + 1e-10:  # bisection on the volume multiplier

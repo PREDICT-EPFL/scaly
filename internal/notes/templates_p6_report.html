@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Templates P6 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Function templates P6: documentation, examples, cleanup</h1>
+<p class="sub">2026-09-27 · branch <code>claude/function-templates</code> · plan v2, step P6</p>
+<div class="box"><b>Summary.</b> The functions guide is rewritten from the shortest declaration (<code>@sc.function</code>) to the most specific, and every code block on it runs. The other pages that taught the old convention now use the new one. 49 example files (scripts, the CasADi comparisons and notebooks) are in the new style, and their printed results and the CasADi agreement are unchanged. The conversions surfaced one API gap, now closed: a name-only output (<code>output="K"</code>) takes a <code>SparseMatrix</code> result.</div>
+<h2>Documentation</h2>
+<ul>
+<li><code>docs/guide/functions.md</code>, rewritten. It covers a first function, then symbolic and numerical calls, one body many shapes, and declaring shapes (full and partial). Then names, structured arguments and results, dtypes, and sparse matrices. Then differentiating, composing, the three loop builders (their code updated), ahead of time, a declaration table, and inspection. A harness ran all 16 runnable blocks in order, and a second script checked the stated instance names, refusals and C symbols.</li>
+<li><code>getting_started.md</code> (functions, derivatives and <code>vmap</code> sections; runs end to end with the IPOPT solve), <code>derivatives.md</code> (one name is <code>wrt</code>, defaults, derivatives of templates), <code>codegen.md</code> (instances as AOT targets, the CLI), <code>sparsity.md</code>, <code>solvers.md</code>, <code>installation.md</code>, <code>how_it_works/architecture.md</code> (the two classes), <code>how_it_works/ir.md</code>, <code>docs/dev/codebase.md</code>, and the README and <code>docs/index.md</code> quickstart: <code>@sc.function(2, 1, 2) def defect(z, u, znext)</code>.</li>
+<li><code>typing_playground/README.md</code> says the sketches are the single-tree design and why multi-parameter bodies are no longer deferred; its open items shrink to what remains.</li>
+<li><code>refactorings.md</code> loses its "Function templates" section; its zero-input section records the settled dispatch.</li>
+<li>The docs site builds with no issues.</li>
+</ul>
+<h2>Examples</h2>
+<div class="scroll"><table><tr><th>Where</th><th>Converted</th><th>Checked by</th></tr>
+<tr><td><code>examples/*.py</code>, <code>examples/qp_solvers</code></td><td class="r">25 files, 65 functions (18 bare)</td><td>each script's printed output against the previous version; the integration tests, 32 passed</td></tr>
+<tr><td><code>examples/casadi/*_scaly.py</code></td><td class="r">10 files, 25 functions (2 bare)</td><td><code>compare.py</code>: all 17 pairs agree, the same worst differences and iteration counts</td></tr>
+<tr><td><code>examples/notebooks</code></td><td class="r">14 notebooks, 64 functions</td><td>each notebook run before and after, stdout and every Function's assembly compared; <code>test_notebooks.py</code> 16 passed; outputs untouched</td></tr></table></div>
+<p>What stayed declared, deliberately:</p>
+<ul>
+<li>every <code>vmap</code>/<code>scan</code> callee;</li>
+<li>every function compiled at a fixed shape or written to C;</li>
+<li>names that the CasADi counterparts or printed text depend on.</li>
+</ul>
+<p>Bare <code>@sc.function</code> went to symbolic helpers and <code>while_loop</code> callees. Those callees' C names now spell their shapes (<code>line_search_step__123_sint64_4_4_240_120_600_3</code> in the iLQR notebook); the exported names are unchanged. Some private <code>_from_exprs</code> builders in notebooks became decorated functions.</p>
+<h2>Found on the way</h2>
+<ul>
+<li><b>A name-only output could not be sparse.</b> <code>output="K"</code> is a leaf whose shape the trace decides, but a body returning a <code>SparseMatrix</code> was refused. Now <code>L.infer</code> lets a whole-hole leaf take the kind the body returns, through the <code>leaf_tree</code> hook. There is a new test and two killed mutants.</li>
+<li><code>tests/linalg/test_examples.py</code> called a converted example with one tuple; fixed.</li>
+<li>ty refuses a Python float or <code>np.float64</code> where a leaf's numerical type is <code>np.ndarray</code>, though the runtime coerces them. This predates the templates. Examples keep <code>np.array(...)</code> around scalars; it is recorded in API-80.</li>
+</ul>
+<h2>Cleanup</h2>
+<p><code>todo.md</code>: API-1 ticked; API-3 updated (the dispatch half is settled); API-4 unblocked. New deferred items: API-77 (sparse pattern holes, the plan's P5), API-78 (static arguments), API-79 (<code>scan</code> carry inference), API-80 (more holes and spellings, the scalar typing gap), API-81 (templated problems).</p>
+<h2>Gates</h2>
+<div class="scroll"><table><tr><th>Check</th><th>Result</th></tr>
+<tr><td><code>uv run pytest -n=auto</code></td><td class="ok">2403 passed, 42 skipped</td></tr>
+<tr><td>C snapshots</td><td class="ok">unchanged</td></tr>
+<tr><td><code>uv run ty check --error-on-warning</code></td><td class="ok">no new diagnostics</td></tr>
+<tr><td>smoke benchmarks, <code>typing_playground</code>, ruff, <code>zensical build</code></td><td class="ok">green</td></tr></table></div>
+</main></body></html>

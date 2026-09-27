@@ -60,7 +60,7 @@ def test_truss_analysis_and_design() -> None:
   ns = _load("truss_sizing")
   structure = (ns["COORDS"].reshape(-1), ns["BARS"], ns["FREE"], ns["LOAD"])
   areas = np.random.default_rng(0).uniform(0.1, 1.0, ns["NB"])
-  compliance, grad, lengths = ns["analyse"]((areas, *structure))
+  compliance, grad, lengths = ns["analyse"](areas, *structure)
   ref_c, ref_g = ns["reference"](areas)
   np.testing.assert_allclose(compliance, ref_c, rtol=1e-12)
   np.testing.assert_allclose(grad, ref_g, rtol=1e-10, atol=1e-12)
@@ -70,7 +70,7 @@ def test_truss_analysis_and_design() -> None:
   # The same compiled analysis takes another truss of the same size: move a node and reverse the bars.
   moved = ns["COORDS"].copy()
   moved[-1] += [0.1, -0.2]
-  c_moved, _, _ = ns["analyse"]((areas, moved.reshape(-1), ns["BARS"][:, ::-1].copy(), ns["FREE"], ns["LOAD"]))
+  c_moved, _, _ = ns["analyse"](areas, moved.reshape(-1), ns["BARS"][:, ::-1].copy(), ns["FREE"], ns["LOAD"])
   ns["COORDS"][:] = moved
   np.testing.assert_allclose(c_moved, ns["reference"](areas)[0], rtol=1e-12)
 
@@ -81,18 +81,18 @@ def test_heat_control_simulation_gradient_and_sparse_signature() -> None:
   kappa = ns["KAPPA"]
   k = ns["system"](kappa)
   assert isinstance(k, sparse.csc_array) and k.nnz == ns["NODES"] + len(ns["FACE_P"])
-  np.testing.assert_allclose(ns["simulate"]((k, u)), ns["reference_final"](kappa, u), rtol=1e-11, atol=1e-13)
+  np.testing.assert_allclose(ns["simulate"](k, u), ns["reference_final"](kappa, u), rtol=1e-11, atol=1e-13)
 
   def cost(flat: np.ndarray) -> float:
     t = ns["reference_final"](kappa, flat.reshape(u.shape))
     return 0.5 * np.sum((ns["WEIGHT"] * (t - ns["TARGET"])) ** 2) + 0.5 * ns["ALPHA"] * np.sum(flat**2)
 
-  _, grad = ns["objective"]((kappa, u))
+  _, grad = ns["objective"](kappa, u)
   picks = [0, 17, 50, u.size - 1]
   fd = [(cost(u.reshape(-1) + 1e-5 * e) - cost(u.reshape(-1) - 1e-5 * e)) / 2e-5 for e in np.eye(u.size)[picks]]
   np.testing.assert_allclose(grad.reshape(-1)[picks], fd, rtol=1e-6, atol=1e-9)
   with pytest.raises(ValueError, match="different sparsity pattern"):
-    ns["simulate"]((k + k.T, u))  # the full symmetric matrix is not the declared lower triangle
+    ns["simulate"](k + k.T, u)  # the full symmetric matrix is not the declared lower triangle
   out = ns["main"](max_iter=40)
   assert out["cost"] < 0.5 * out["initial_cost"]
 
@@ -108,7 +108,7 @@ def test_chain_equilibrium_gradient_and_fit() -> None:
     assert np.abs(grad_fn((ns["equilibrium"](params_v), params_v))).max() < 1e-9
   photos = np.stack([ns["shape"](np.log([60.0, 0.03]), w)[ns["OBSERVED"]] for w in (0.0, ns["WEIGHT"])]) + 0.01
   theta = np.log([20.0, 0.1])
-  _, grad = ns["misfit"]((theta, photos))
+  _, grad = ns["misfit"](theta, photos)
 
   def loss(t: np.ndarray) -> float:
     return sum(0.5 * np.sum((ns["shape"](t, w)[ns["OBSERVED"]] - photos[i]) ** 2) for i, w in enumerate((0.0, ns["WEIGHT"])))

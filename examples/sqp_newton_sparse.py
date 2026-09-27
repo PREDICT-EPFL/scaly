@@ -52,12 +52,8 @@ def cost(w: sc.Expr) -> sc.Expr:
   return 10.0 * sc.sumsqr(z[-1] - target) + 0.1 * sc.sumsqr(z[:, 1]) + 0.01 * sc.sumsqr(u)
 
 
-@sc.function(
-  sc.G(sc.L("w", NW), sc.L("lam", NC), sc.L("z0", 2), sc.L("rho", ())),
-  output=sc.G(sc.L("w_next", NW), sc.L("lam_next", NC), sc.L("kkt_residual", ...), sc.L("inertia", 3), sc.L("healthy", ...)),
-)
-def newton_step(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
-  w, lam, z0, rho = inputs
+@sc.function(NW, NC, 2, (), output=sc.G("w_next", "lam_next", "kkt_residual", "inertia", "healthy"))
+def newton_step(w: sc.Expr, lam: sc.Expr, z0: sc.Expr, rho: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
   c = dynamics(w, z0)
   lagrangian = cost(w) + (lam * c).sum()
   grad = sc.gradient(lagrangian, w)
@@ -80,7 +76,7 @@ def main(iterations: int = 20) -> dict[str, np.ndarray]:
     # Inertia correction: the smallest rho in 0, 1e-4, 1e-3, ... that gives the expected signs.
     rho = 0.0 if rho < 1e-3 else rho / 10.0
     while True:
-      w_next, lam_next, residual, inertia, healthy = newton_step((w, lam, z0, np.array(rho)))
+      w_next, lam_next, residual, inertia, healthy = newton_step(w, lam, z0, np.array(rho))
       if healthy and tuple(inertia) == (NW, NC, 0):
         break
       rho = 1e-4 if rho == 0.0 else 10.0 * rho

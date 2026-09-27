@@ -54,12 +54,8 @@ def omega_matrix(w: sc.Expr) -> sc.Expr:
   )
 
 
-@sc.function(
-  sc.G(sc.L("q", 4), sc.L("bias", 3), sc.L("gyro", 3), sc.L("dt", ())),
-  output=sc.L("q_next", ...),
-)
-def propagate(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-  q, bias, gyro, dt = inputs
+@sc.function(4, 3, 3, (), output="q_next")
+def propagate(q: sc.Expr, bias: sc.Expr, gyro: sc.Expr, dt: sc.Expr) -> sc.Expr:
   theta = (gyro - bias) * dt
   angle = (sc.sumsqr(theta) + 1e-30).sqrt()  # never exactly zero, so sin(a/2)/a stays finite
   rotation = sc.const(np.eye(4)) * (0.5 * angle).cos() + omega_matrix(theta) * ((0.5 * angle).sin() / angle)

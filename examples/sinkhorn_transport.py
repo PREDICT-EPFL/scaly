@@ -49,9 +49,8 @@ def cost_matrix(x: sc.Expr, y: sc.Expr) -> sc.Expr:
   return d * d  # flat, (N * M,)
 
 
-@sc.function(sc.G(sc.L("fg", N + M + 1), sc.L("a", N), sc.L("b", M), sc.L("C", N * M)), output=sc.L("fg_next", N + M + 1))
-def sinkhorn_step(inputs: tuple[sc.Expr, ...]) -> sc.Expr:
-  fg, a, b, c = inputs
+@sc.function
+def sinkhorn_step(fg: sc.Expr, a: sc.Expr, b: sc.Expr, c: sc.Expr) -> sc.Expr:
   g = fg[N : N + M]
   f = EPS * a.log() - EPS * lse((sc.gather(g, COL) - c) / EPS, ROW, N)
   g = EPS * b.log() - EPS * lse((sc.gather(f, ROW) - c) / EPS, COL, M)
@@ -60,9 +59,9 @@ def sinkhorn_step(inputs: tuple[sc.Expr, ...]) -> sc.Expr:
   return sc.concat([f, g, row_error.reshape((1,))])
 
 
-@sc.function(sc.G(sc.L("fg", N + M + 1), sc.L("a", N), sc.L("b", M), sc.L("C", N * M)), output=sc.L("go_on", ...))
-def not_converged(inputs: tuple[sc.Expr, ...]) -> sc.Expr:
-  return sc.greater(inputs[0][N + M], TOL)
+@sc.function
+def not_converged(fg: sc.Expr, a: sc.Expr, b: sc.Expr, c: sc.Expr) -> sc.Expr:
+  return sc.greater(fg[N + M], TOL)
 
 
 def entropic_cost(a: sc.Expr, b: sc.Expr, x: sc.Expr, y: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
@@ -74,12 +73,8 @@ def entropic_cost(a: sc.Expr, b: sc.Expr, x: sc.Expr, y: sc.Expr) -> tuple[sc.Ex
   return (f * a).sum() + (g * b).sum(), (plan * c).sum(), f, n_iter
 
 
-@sc.function(
-  sc.G(sc.L("a", N), sc.L("b", M), sc.L("x", N), sc.L("y", M)),
-  output=sc.G(sc.L("W", ()), sc.L("plan_cost", ()), sc.L("f", N), sc.L("dW_da", N), sc.L("iterations", ())),
-)
-def transport(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
-  a, b, x, y = inputs
+@sc.function(N, M, N, M, output=sc.G("W", "plan_cost", "f", "dW_da", "iterations"))
+def transport(a: sc.Expr, b: sc.Expr, x: sc.Expr, y: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
   w, plan_cost, f, n_iter = entropic_cost(a, b, x, y)
   return w, plan_cost, f, sc.gradient(w, a), n_iter
 
@@ -102,12 +97,12 @@ def main() -> dict:
   x, y = np.linspace(0, 1, N), np.linspace(0, 1, M)
   a = mixture(x, [0.2, 0.6], [0.05, 0.1], [1.0, 0.5])
   b = mixture(y, [0.45, 0.8], [0.08, 0.04], [0.7, 1.0])
-  w, plan_cost, f, grad, iterations = transport((a, b, x, y))
+  w, plan_cost, f, grad, iterations = transport(a, b, x, y)
   center = lambda v: v - v.mean()  # noqa: E731 - gradients on the simplex are defined up to a constant
   rng = np.random.default_rng(0)
   direction = center(rng.standard_normal(N))
   h = 1e-6
-  fd = (transport((a + h * direction, b, x, y))[0] - transport((a - h * direction, b, x, y))[0]) / (2 * h)
+  fd = (transport(a + h * direction, b, x, y)[0] - transport(a - h * direction, b, x, y)[0]) / (2 * h)
   return {
     "W": float(w),
     "plan_cost": float(plan_cost),

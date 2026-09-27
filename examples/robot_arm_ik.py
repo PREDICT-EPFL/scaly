@@ -47,9 +47,8 @@ DAMPING, TOL, MAX_IK = 1e-3, 1e-10, 200
 BATCH = 500
 
 
-@sc.function(sc.G(sc.L("pose", (3, 4)), sc.L("link", 4)), output=sc.L("pose_next", (3, 4)))
-def link_step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-  pose, link = inputs
+@sc.function((3, 4), 4)
+def link_step(pose: sc.Expr, link: sc.Expr) -> sc.Expr:
   q, a, d, alpha = link[0], link[1], link[2], link[3]
   cq, sq, ca, sa = q.cos(), q.sin(), alpha.cos(), alpha.sin()
   zero, one = sc.const(0.0), sc.const(1.0)
@@ -71,36 +70,34 @@ def flange_pose(q: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   return pose[:, 3] + D_FLANGE * pose[:, 2], pose[:, :3]
 
 
-@sc.function(sc.L("q", NJ), output=sc.G(sc.L("p", 3), sc.L("R", (3, 3)), sc.L("J", (3, NJ))))
+@sc.function(NJ, output=sc.G("p", "R", "J"))
 def kinematics(q: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   p, rot = flange_pose(q)
   return p, rot, sc.jacobian(p, q)
 
 
-@sc.function(sc.G(sc.L("q", NJ), sc.L("target", 3)), output=sc.L("q_next", NJ))
-def dls_step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-  q, target = inputs
+@sc.function
+def dls_step(q: sc.Expr, target: sc.Expr) -> sc.Expr:
   p, _, jac = kinematics(q)
   gram = jac @ jac.T + sc.const(DAMPING**2 * np.eye(3))
   dq = jac.T @ linalg.cho_solve(linalg.cholesky(gram), target - p)
   return sc.minimum(sc.maximum(q + dq, sc.const(Q_MIN)), sc.const(Q_MAX))
 
 
-@sc.function(sc.G(sc.L("q", NJ), sc.L("target", 3)), output=sc.L("go_on", ...))
-def far(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-  q, target = inputs
+@sc.function
+def far(q: sc.Expr, target: sc.Expr) -> sc.Expr:
   p, _, _ = kinematics(q)
   return sc.greater(sc.norm_inf(target - p), TOL)
 
 
-@sc.function(sc.L("target", 3), output=sc.G(sc.L("q", NJ), sc.L("error", 1), sc.L("iterations", 1)))
+@sc.function(3, output=sc.G("q", "error", "iterations"))
 def inverse_kinematics(target: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   q, n_iter = sc.while_loop(far, dls_step, sc.const(Q_REST), max_iter=MAX_IK, params=(target,))
   p, _, _ = kinematics(q)
   return q, sc.norm_2(target - p).reshape((1,)), n_iter.reshape((1,))
 
 
-@sc.function(sc.L("targets", 3 * BATCH), output=sc.G(sc.L("q", NJ * BATCH), sc.L("error", BATCH), sc.L("iterations", BATCH)))
+@sc.function(3 * BATCH, output=sc.G("q", "error", "iterations"))
 def batch_ik(targets: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   q, error, iterations = (sc.vmap(inverse_kinematics, BATCH, [(targets, 0, 3)], output=k) for k in range(3))
   return q, error, iterations

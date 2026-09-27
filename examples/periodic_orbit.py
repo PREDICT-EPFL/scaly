@@ -42,9 +42,8 @@ def vector_field(z: sc.Expr, mu: sc.Expr) -> sc.Expr:
   return sc.stack([x2, mu * (1 - x1 * x1) * x2 - x1, mu * (1 - x1 * x1)])  # the third state integrates div f
 
 
-@sc.function(sc.G(sc.L("z", 3), sc.L("mu_dt", 2)), output=sc.L("z_next", 3))
-def rk4(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-  z, mu_dt = inputs
+@sc.function(3, 2)
+def rk4(z: sc.Expr, mu_dt: sc.Expr) -> sc.Expr:
   mu, dt = mu_dt[0], mu_dt[1]
   k1 = vector_field(z, mu)
   k2 = vector_field(z + 0.5 * dt * k1, mu)
@@ -60,37 +59,31 @@ def flow(x0: sc.Expr, period: sc.Expr, mu: sc.Expr) -> sc.Expr:
   return sc.scan(rk4, z0, [(mu_dt, 0, 0)], length=K)[0]
 
 
-@sc.function(sc.G(sc.L("unknowns", 2), sc.L("mu", ())), output=sc.G(sc.L("F", 2), sc.L("dF", (2, 2))))
-def shooting(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-  y, mu = inputs  # y = (a, T)
+@sc.function
+def shooting(y: sc.Expr, mu: sc.Expr) -> tuple[sc.Expr, sc.Expr]:  # y = (a, T)
   x0 = sc.stack([y[0], sc.const(0.0)])
   f = flow(x0, y[1], mu)[:2] - x0
   return f, sc.jacobian(f, y)
 
 
-@sc.function(sc.G(sc.L("carry", 3), sc.L("mu", ())), output=sc.L("carry_next", 3))
-def newton_step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-  carry, mu = inputs
+@sc.function
+def newton_step(carry: sc.Expr, mu: sc.Expr) -> sc.Expr:
   y = carry[:2]
-  f, j = shooting((y, mu))
+  f, j = shooting(y, mu)
   det = j[0, 0] * j[1, 1] - j[0, 1] * j[1, 0]
   step = sc.stack([j[1, 1] * f[0] - j[0, 1] * f[1], j[0, 0] * f[1] - j[1, 0] * f[0]]) / det  # the 2 x 2 inverse
   y_next = y - step * sc.minimum(1.0, MAX_STEP / sc.norm_inf(step))  # a damped step far from the orbit
-  f_next, _ = shooting((y_next, mu))
+  f_next, _ = shooting(y_next, mu)
   return sc.concat([y_next, sc.norm_inf(f_next).reshape((1,))])
 
 
-@sc.function(sc.G(sc.L("carry", 3), sc.L("mu", ())), output=sc.L("go_on", ...))
-def not_converged(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-  return sc.greater(inputs[0][2], TOL)
+@sc.function
+def not_converged(carry: sc.Expr, mu: sc.Expr) -> sc.Expr:
+  return sc.greater(carry[2], TOL)
 
 
-@sc.function(
-  sc.G(sc.L("guess", 2), sc.L("mu", ())),
-  output=sc.G(sc.L("amplitude", ()), sc.L("period", ()), sc.L("monodromy", (2, 2)), sc.L("liouville", ()), sc.L("iterations", ())),
-)
-def limit_cycle(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
-  guess, mu = inputs
+@sc.function(2, (), output=sc.G("amplitude", "period", "monodromy", "liouville", "iterations"))
+def limit_cycle(guess: sc.Expr, mu: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr]:
   carry, n_iter = sc.while_loop(not_converged, newton_step, sc.concat([guess, sc.const(np.ones(1))]), max_iter=MAX_NEWTON, params=(mu,))
   x0 = sc.stack([carry[0], sc.const(0.0)])
   z_final = flow(x0, carry[1], mu)
@@ -99,12 +92,12 @@ def limit_cycle(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.E
 
 
 def main() -> dict:
-  amplitude, period, monodromy, liouville, iterations = limit_cycle((np.array([2.0, 6.0]), np.array(1.0)))
+  amplitude, period, monodromy, liouville, iterations = limit_cycle(np.array([2.0, 6.0]), np.array(1.0))
   multipliers = np.sort(np.abs(np.linalg.eigvals(monodromy)))
   sweep = []
   guess = np.array([float(amplitude), float(period)])
   for mu in np.arange(1.0, 4.01, 0.25):
-    a, t, _, liou, it = limit_cycle((guess, np.array(mu)))
+    a, t, _, liou, it = limit_cycle(guess, np.array(mu))
     guess = np.array([float(a), float(t)])
     sweep.append((float(mu), float(a), float(t), float(liou), int(it)))
   return {

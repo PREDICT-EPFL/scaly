@@ -1,38 +1,6 @@
 > Planned work, not a frozen record. One `#` section per refactoring; add new ones alongside
 > rather than editing settled ones, and remove a section once it has landed.
 
-# Function templates
-
-Todo API-1, following the solver API that landed on dev. **Implementation plan: [`function_templates_plan_2026_09_27.md`](function_templates_plan_2026_09_27.md)**, which
-supersedes the open points below (one decorator, multi-parameter bodies, holes bound per call). The interface sketch and its design
-rationale live in [the typing playground](../../typing_playground/README.md#templates). The sketch
-does not lower, compile, or evaluate expressions; its tests prove the proposed interface only.
-
-`FunctionTemplate` owns a declaration with shape holes and produces concrete `Function` instances.
-The compiler continues to consume concrete Functions. This keeps unresolved shapes out of the
-expression graph and lets the existing call, differentiation, and compilation machinery remain
-responsible for each instance.
-
-The production implementation still needs decisions and verification in these places:
-
-- Specialization keys and generated C names must distinguish every input property that changes
-  the graph, including nested structure and relevant `TensorType` metadata. The sketch only
-  mangles flat shapes. Decide how holes obtain dtype and differentiability before copying it.
-- Trace each instance once, including the bare mode that infers declarations from a call.
-  The sketch currently traces bare bodies twice.
-- Lift the existing derivative wrappers over concrete instances. Seed and multiplier declarations
-  must use the generated input types while preserving the source tree structure; a constant
-  output's differentiability flag is not the multiplier's flag.
-- Keep symbolic and numerical calls typed, preserve eager checks for fully declared templates,
-  and cover actual compilation, cache reuse, and composition in addition to static assertions.
-- Settle typed `vmap` separately. The sketch adds a leading axis to each leaf, while the real
-  builder uses flattened slices, starts, and strides. Calling a template inside a traced body
-  can instantiate it there; a consumer that inspects a callee needs a concrete instance.
-
-The existing implementation is in `src/scaly/function/{tree,model,api}.py`; the template sketch
-is `typing_playground/templates.py`. Naming and declaration shorthand remain the playground's
-open questions. Overload sets and constraints on shape holes remain deferred.
-
 # Shared compiler rewrites
 
 The 2026-09-08 [investigation](algebraic_simplification_2026_09_08.md) updates C-12's proposed scope
@@ -127,7 +95,9 @@ the suite break. Two independent producers, both legitimate:
 Both lower to real C procedures taking no arguments, so neither is a mistake to delete.
 
 What we are living with. `Function.__call__` dispatches on leaf kind, and an empty tree has no
-`Expr` leaf, so it cannot be routed symbolically — it reads as an evaluation. That is the reason
+`Expr` leaf, so it cannot be routed symbolically — it reads as an evaluation. The function templates
+work settled the public side: `f()` evaluates, and `f.symbolic_call()` is the symbolic spelling,
+which the types agree with. That is the reason
 `ad/forward.py` is the one module outside `function/` permitted to use `_flat_symbolic_call`,
 pinned by `test_flat_call_seams_stay_inside_their_sanctioned_modules` in `tests/test_import_layering.py`.
 

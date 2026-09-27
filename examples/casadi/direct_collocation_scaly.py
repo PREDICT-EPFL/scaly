@@ -51,21 +51,19 @@ LBW, UBW = bounds()
 W0 = np.r_[0.0, 1.0, np.zeros(NW - 2)]
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1)), output=sc.G(sc.L("xdot", ...), sc.L("L", ...)))
-def f(inputs):
-  x, u = inputs
+@sc.function(2, 1, output=sc.G("xdot", "L"))
+def f(x, u):
   x1, x2 = x[0], x[1]
   return sc.stack([(1 - x2**2) * x1 - x2 + u[0], x1]), x1**2 + x2**2 + u[0] ** 2
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("xc", 2 * D_DEG), sc.L("xnext", 2)), output=sc.L("g_and_q", ...))
-def interval(inputs):
-  xk, uk, xc, xnext = inputs
-  X = [xk] + [xc[2 * j : 2 * j + 2] for j in range(D_DEG)]
+@sc.function(2, 1, 2 * D_DEG, 2, output="g_and_q")
+def interval(x, u, xc, xnext):
+  X = [x] + [xc[2 * j : 2 * j + 2] for j in range(D_DEG)]
   g, q = [], sc.const(0.0)
   for j in range(1, D_DEG + 1):
     xp = sum((C[r, j] * X[r] for r in range(1, D_DEG + 1)), start=C[0, j] * X[0])
-    fj, qj = f((X[j], uk))
+    fj, qj = f(X[j], u)
     g.append(H * fj - xp)
     q = q + B[j] * qj * H
   x_end = sum((D[j] * X[j] for j in range(1, D_DEG + 1)), start=D[0] * X[0])

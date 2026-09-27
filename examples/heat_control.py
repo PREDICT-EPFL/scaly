@@ -15,7 +15,7 @@ The work is split in two generated ``Function``s that pass a sparse matrix betwe
 
 - ``system(kappa)`` assembles ``K = I + dt L(kappa)`` and returns it as ``sc.S("K", ...)``: a
   ``SparseMatrix`` in a symbolic call, a SciPy matrix in an evaluation.
-- ``simulate((K, U))`` declares its input ``sc.S("K", pattern)``, so only a matrix with exactly that
+- ``simulate(K, U)`` declares its input ``sc.S(pattern)``, so only a matrix with exactly that
   pattern is accepted. It factors ``K`` once with the generated sparse ``L D L^T`` and solves once per
   step.
 
@@ -75,7 +75,7 @@ def assemble(kappa: sc.Expr) -> linalg.SparseMatrix:
   return linalg.SparseMatrix.from_coo(rows, cols, sc.concat([diagonal, -k_face]), (NODES, NODES))
 
 
-@sc.function(sc.L("kappa", NODES), output=sc.S("K", ...))
+@sc.function(NODES, output=sc.S("K", ...))
 def system(kappa: sc.Expr) -> linalg.SparseMatrix:
   return assemble(kappa)
 
@@ -83,23 +83,21 @@ def system(kappa: sc.Expr) -> linalg.SparseMatrix:
 K_PATTERN = system.output_sparsities[0]
 
 
-@sc.function(sc.G(sc.S("K", K_PATTERN), sc.L("U", (STEPS, N_HEATERS))), output=sc.L("T_final", NODES))
-def simulate(inputs: tuple[linalg.SparseMatrix, sc.Expr]) -> sc.Expr:
-  k, u = inputs
-  fact = linalg.SparseLDL(k, name="heat")
+@sc.function(sc.S(K_PATTERN), (STEPS, N_HEATERS), output="T_final")
+def simulate(K: linalg.SparseMatrix, U: sc.Expr) -> sc.Expr:
+  fact = linalg.SparseLDL(K, name="heat")
   b = sc.const(HEATERS * DT)
   t = sc.const(np.zeros(NODES))
   for step in range(STEPS):
-    t = fact.solve(t + b @ u[step])
+    t = fact.solve(t + b @ U[step])
   return t
 
 
-@sc.function(sc.G(sc.L("kappa", NODES), sc.L("U", (STEPS, N_HEATERS))), output=sc.G(sc.L("cost", ()), sc.L("gradient", (STEPS, N_HEATERS))))
-def objective(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-  kappa, u = inputs
-  t_final = simulate((system(kappa), u))
-  cost = 0.5 * sc.sumsqr(sc.const(WEIGHT) * (t_final - sc.const(TARGET))) + 0.5 * ALPHA * sc.sumsqr(u)
-  return cost, sc.gradient(cost, u)
+@sc.function(NODES, (STEPS, N_HEATERS), output=sc.G("cost", "gradient"))
+def objective(kappa: sc.Expr, U: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+  t_final = simulate(system(kappa), U)
+  cost = 0.5 * sc.sumsqr(sc.const(WEIGHT) * (t_final - sc.const(TARGET))) + 0.5 * ALPHA * sc.sumsqr(U)
+  return cost, sc.gradient(cost, U)
 
 
 def reference_final(kappa: np.ndarray, u: np.ndarray) -> np.ndarray:
@@ -116,7 +114,7 @@ def reference_final(kappa: np.ndarray, u: np.ndarray) -> np.ndarray:
 
 def main(max_iter: int = 200) -> dict[str, Any]:
   def fun(flat: np.ndarray) -> tuple[float, np.ndarray]:
-    cost, grad = objective((KAPPA, flat.reshape(STEPS, N_HEATERS)))
+    cost, grad = objective(KAPPA, flat.reshape(STEPS, N_HEATERS))
     return float(cost), grad.reshape(-1)
 
   zero = np.zeros(STEPS * N_HEATERS)
@@ -124,7 +122,7 @@ def main(max_iter: int = 200) -> dict[str, Any]:
   u = result.x.reshape(STEPS, N_HEATERS)
   # The two Functions also compose numerically: the SciPy matrix ``system`` returns is what ``simulate`` takes.
   k = system(KAPPA)
-  t_final = simulate((k, u))
+  t_final = simulate(k, u)
   return {"u": u, "t_final": t_final, "k": k, "initial_cost": np.array(fun(zero)[0]), "cost": np.array(result.fun), "iterations": np.array(result.nit)}
 
 

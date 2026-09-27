@@ -300,6 +300,12 @@ class L(Tree[Expr, np.ndarray]):
   def named(self, base: str) -> L:
     return self if self.names[0] else L(base, self.decls[0])
 
+  def infer(self, value: Any) -> Tree[Any, Any]:
+    # A name alone (``output="K"``) leaves the kind of leaf to the trace too: a SparseMatrix declares itself.
+    if self.decls[0] == Hole() and isinstance(value, SymbolicValue):
+      return value.leaf_tree(self.names[0])
+    return self
+
   def relabel(self, prefix: str) -> L:
     return L(prefix + self.names[0], self.decls[0])
 
@@ -382,6 +388,8 @@ class _G(Tree[Any, Any]):
     return _G(tuple(out), public=False)
 
   def infer(self, value: Any) -> _G:
+    if not isinstance(value, tuple) or len(value) != len(self.parts):
+      return self  # the wrong structure; flattening reports it against the declared names
     return _G(tuple(part.infer(item) for part, item in zip(self.parts, value, strict=True)), public=False)
 
   @property

@@ -35,9 +35,8 @@ def ode(x: sc.Expr, u: sc.Expr, p: sc.Expr) -> sc.Expr:
   return sc.stack([dy, (u[0] - k_NL * y**3 - k * y - c * dy) / M])
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("p", 4)), output=sc.L("xnext", ...))
-def one_step(inputs):
-  x, u, p = inputs
+@sc.function(2, 1, 4, output="xnext")
+def one_step(x, u, p):
   k1 = ode(x, u, p)
   k2 = ode(x + DT / 2.0 * k1, u, p)
   k3 = ode(x + DT / 2.0 * k2, u, p)
@@ -45,22 +44,20 @@ def one_step(inputs):
   return x + DT / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("p", 4)), output=sc.L("xnext", ...))
-def one_sample(inputs):
-  x, u, p = inputs
+@sc.function(2, 1, 4, output="xnext")
+def one_sample(x, u, p):
   (x,) = sc.scan(one_step, x, [(u, 0, 0), (p, 0, 0)], length=STEPS_PER_SAMPLE)
   return x
 
 
-@sc.function(sc.G(sc.L("x", 2), sc.L("u", 1), sc.L("p", 4)), output=sc.G(sc.L("xnext", ...), sc.L("y", ...)))
-def sample_and_output(inputs):
-  xnext = one_sample(inputs)
+@sc.function(2, 1, 4, output=sc.G("xnext", "y"))
+def sample_and_output(x, u, p):
+  xnext = one_sample(x, u, p)
   return xnext, xnext[0:1]
 
 
-@sc.function(sc.G(sc.L("u", N), sc.L("p", 4)), output=sc.L("y", ...))
-def all_samples(inputs):
-  u, p = inputs
+@sc.function(N, 4, output="y")
+def all_samples(u, p):
   _, y = sc.scan(sample_and_output, sc.const(np.zeros(2)), [(u, 0, 1), (p, 0, 0)], length=N)
   return y
 
@@ -68,13 +65,13 @@ def all_samples(inputs):
 # The measured data: a simulation with the true parameters.
 np.random.seed(0)
 U_DATA = 0.1 * np.random.random(N)
-Y_DATA = all_samples((U_DATA, PARAM_TRUTH))
+Y_DATA = all_samples(U_DATA, PARAM_TRUTH)
 
 
 @sc.problem(vars=sc.L("params", 4), params=sc.G(sc.L("u", N), sc.L("y", N)))
 def single_shooting(params, data):
   u, y = data
-  e = y - all_samples((u, params * SCALE))
+  e = y - all_samples(u, params * SCALE)
   return sc.ProblemSpec(minimize=0.5 * sc.dot(e, e))
 
 

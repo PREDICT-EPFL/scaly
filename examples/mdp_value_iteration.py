@@ -92,9 +92,8 @@ sweep = sc.Function._from_exprs("vi_sweep", [_carry], [sc.concat([_v_new, sc.nor
 not_converged = sc.Function._from_exprs("vi_not_converged", [_carry], [sc.greater(_change, TOL)], ["carry"], ["go_on"])
 
 
-@sc.function(sc.G(sc.L("slip", ()), sc.L("puddle", ())), output=sc.G(sc.L("value", S), sc.L("policy", ...), sc.L("sweeps", ...)))
-def solve(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
-  slip, puddle = inputs
+@sc.function((), (), output=sc.G("value", "policy", "sweeps"))
+def solve(slip: sc.Expr, puddle: sc.Expr) -> tuple[sc.Expr, sc.Expr, sc.Expr]:
   init = sc.concat([sc.const(np.zeros(S)), sc.const(np.ones(1)), slip.reshape((1,)), puddle.reshape((1,))])
   carry, sweeps = sc.while_loop(not_converged, sweep, init, max_iter=MAX_SWEEPS)
   v = carry[:S]
@@ -130,7 +129,7 @@ def render(policy: np.ndarray) -> str:
 
 
 def main(slip: float = 0.1, puddle: float = 6.0) -> dict[str, np.ndarray]:
-  v, policy, sweeps = solve((np.array(slip), np.array(puddle)))
+  v, policy, sweeps = solve(np.array(slip), np.array(puddle))
   return {"value": v, "policy": policy, "sweeps": sweeps}
 
 

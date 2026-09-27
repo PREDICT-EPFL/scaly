@@ -92,9 +92,8 @@ def _implicit_vjp() -> sc.Function:
 equilibrium = sc.custom_derivative(_equilibrium(), vjp=_implicit_vjp())
 
 
-@sc.function(sc.G(sc.L("theta", 2), sc.L("photos", (2, len(OBSERVED), 2))), output=sc.G(sc.L("loss", ()), sc.L("gradient", 2)))
-def misfit(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-  theta, photos = inputs
+@sc.function(2, (2, len(OBSERVED), 2), output=sc.G("loss", "gradient"))
+def misfit(theta: sc.Expr, photos: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   loss = sc.const(0.0)
   for photo, weight in enumerate((0.0, WEIGHT)):
     p = equilibrium(sc.concat([theta, sc.const(np.array([weight]))])).reshape((FREE, 2))
@@ -113,7 +112,7 @@ def main(seed: int = 0, noise: float = 2e-3) -> dict[str, np.ndarray]:
   rng = np.random.default_rng(seed)
   photo = np.stack([shape(truth, w)[OBSERVED] for w in (0.0, WEIGHT)]) + noise * rng.standard_normal((2, len(OBSERVED), 2))
   start = np.log([10.0, 0.2])
-  result = optimize.minimize(lambda th: tuple(misfit((th, photo))), start, jac=True, method="L-BFGS-B")
+  result = optimize.minimize(lambda th: tuple(misfit(th, photo)), start, jac=True, method="L-BFGS-B")
   return {"truth": truth, "photo": photo, "start": start, "theta": result.x, "loss": np.array(result.fun), "evaluations": np.array(result.nfev)}
 
 

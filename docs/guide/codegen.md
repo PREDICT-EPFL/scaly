@@ -65,7 +65,14 @@ From a shell:
 uv run scaly_codegen mymodule:my_function -o generated/ --lang cpp --casadi
 ```
 
-The argument is `<module>:<attribute>`, an importable module and the name of a `Function` in it.
+The argument is `<module>:<attribute>`, an importable module and the name of a `Function` in it
+with every shape declared, or of a zero-argument factory returning one.
+
+A function whose shapes are bound at each call (a template, see
+[Building functions](functions.md#one-body-many-shapes)) has one C symbol per instance, so render an
+instance: `write_module(f.instantiate(3, 3), out_dir)` writes `f__3_3.h` and `f__3_3.c`, and a module
+attribute `f_3 = f.instantiate(3, 3)` gives the command line the same. The command refuses a
+template with holes and says what to export instead.
 `--lang c` (the default) writes a C header with a struct per buffer, `--lang cpp` a C++ header with
 `Buffer` types in a namespace; `--casadi` adds the symbols acados and `casadi.external` look for;
 `--no-typed-buffers` strips the C header down to the pointer signature and the sparsity tables.

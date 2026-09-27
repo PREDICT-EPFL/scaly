@@ -52,28 +52,20 @@ LAM_PATTERN.sort_indices()
 H_CONST = measurement_matrix()
 
 
-@sc.function(
-  sc.G(sc.L("lam", LAM_PATTERN.nnz), sc.L("xbar", N), sc.L("z", M), sc.L("r", M)),
-  output=sc.L("x", N),
-)
-def kalman_update(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-  lam_values, xbar, z, r = inputs
-  lam = linalg.SparseMatrix.from_pattern(LAM_PATTERN, lam_values)  # the lower triangle of Lam, in its CSC order
+@sc.function(LAM_PATTERN.nnz, N, M, M, output="x")
+def kalman_update(lam: sc.Expr, xbar: sc.Expr, z: sc.Expr, r: sc.Expr) -> sc.Expr:
+  lam_matrix = linalg.SparseMatrix.from_pattern(LAM_PATTERN, lam)  # the lower triangle of Lam, in its CSC order
   h = linalg.SparseMatrix.from_scipy(H_CONST)
-  kkt = linalg.SparseMatrix.block([[lam, None], [h, linalg.SparseMatrix.diag(-r)]])
+  kkt = linalg.SparseMatrix.block([[lam_matrix, None], [h, linalg.SparseMatrix.diag(-r)]])
   innovation = z - h @ xbar
   step = linalg.SparseLDL(kkt).solve(sc.concat([sc.const(np.zeros(N)), innovation]))
   return xbar + step[:N]
 
 
-@sc.function(
-  sc.G(sc.L("lam", LAM_PATTERN.nnz), sc.L("xbar", N), sc.L("z", M), sc.L("r", M)),
-  output=sc.G(sc.L("gain", (N, M)), sc.L("dx_dr", (N, M))),
-)
-def sensitivities(inputs: tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
+@sc.function(LAM_PATTERN.nnz, N, M, M, output=sc.G("gain", "dx_dr"))
+def sensitivities(lam: sc.Expr, xbar: sc.Expr, z: sc.Expr, r: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
   """The Kalman gain ``dx/dz`` and the sensitivity of the update to the noise variances."""
-  lam_values, xbar, z, r = inputs
-  x = kalman_update((lam_values, xbar, z, r))
+  x = kalman_update(lam, xbar, z, r)
   return sc.jacobian(x, z), sc.jacobian(x, r)
 
 
@@ -88,8 +80,8 @@ def main(seed: int = 0) -> dict[str, np.ndarray]:
   r = np.full(M, 0.05**2)
   z = H_CONST @ truth + rng.normal(0.0, 0.05, M)
   xbar = np.zeros(N)
-  x = kalman_update((lam_values(), xbar, z, r))
-  gain, dx_dr = sensitivities((lam_values(), xbar, z, r))
+  x = kalman_update(lam_values(), xbar, z, r)
+  gain, dx_dr = sensitivities(lam_values(), xbar, z, r)
   return {"truth": truth, "z": z, "r": r, "xbar": xbar, "x": x, "gain": gain, "dx_dr": dx_dr}
 
 

@@ -22,17 +22,25 @@ sc.forward(fn, "y", "x")
 sc.adjoint(fn, "y", "x")
 ```
 
-Function forms take the declared output name `of` and input name `wrt`. An unknown name fails when
+Function forms take the output name `of` and the input name `wrt`. One name is `wrt`, as in the
+expression form: `sc.gradient(fn, "x")` differentiates the only output. A name left out is the
+function's only output or only input, so `sc.gradient(fn)` needs no names at all for a function of
+one input and one output. Names can also be passed as `of=` and `wrt=`. An unknown name fails when
 the derivative is built and reports the declared choices. Pass `name=` to set the derived
 function's artifact name.
 
-Unseeded derivatives take the same arguments as the source. If `fn` takes the group `(x, p)` as
-its one argument, so does `sc.gradient(fn, "f", "x")`:
+Unseeded derivatives take the same arguments as the source. For a source `fn(x, p)`:
 
 ```python
 grad = sc.gradient(fn, "f", "x")
-value = grad((x_value, p_value))
+value = grad(x_value, p_value)
 ```
+
+The derivative of a template (a function whose shapes are bound at each call) is a template too.
+Nothing is built until it is called; each instance is the derivative of the source's instance at
+the same shapes, named after it (`fn__3_grad_f_x`), or `{name}__3` with `name=` given. Names the
+template declares are checked when the derivative is built; a check that needs shapes, such as a
+gradient needing a scalar output, happens at the call.
 
 There is no `extra_inputs` option. Parameters and other source inputs remain available because
 dropping them would leave the derived expression incomplete and break the source's typed call
@@ -50,14 +58,14 @@ forward arguments = *source_arguments, fwd:<wrt>
 adjoint arguments = *source_arguments, lam:<of>
 ```
 
-For the `fn` above, whose one argument is the group `(x, p)`:
+For the `fn(x, p)` above:
 
 ```python
 fwd = sc.forward(fn, "y", "x")
-dy = fwd((x_value, p_value), x_tangent)
+dy = fwd(x_value, p_value, x_tangent)
 
 adj = sc.adjoint(fn, "y", "x")
-dx = adj((x_value, p_value), y_cotangent)
+dx = adj(x_value, p_value, y_cotangent)
 ```
 
 The seed shape is the shape of the named input or output.
@@ -75,7 +83,7 @@ sparse_lag_hess = sc.sparse_lagrangian_hessian(
     triangle="lower",
 )
 
-dense = lag_hess((x_value, p_value), (lam_f, lam_g))
+dense = lag_hess(x_value, p_value, (lam_f, lam_g))
 ```
 
 The wrappers build an auxiliary scalar named `gamma` from the declared output order; pass

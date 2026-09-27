@@ -26,74 +26,67 @@ print(sc.format_expr(znext))
 
 See [the expression dialect](../how_it_works/ir.md#operations) for the full operation set.
 
-## Declare a typed function
+## Declare a function
 
-A `Function` gives a graph a named boundary. Its input and output trees describe both symbolic and
-numerical calls.
+A `Function` gives a graph a named boundary. Decorate a Python body and declare the shape of each
+parameter, in order:
 
 ```python
-@sc.function(
-    sc.G(sc.L("z", 2), sc.L("u", 1)),
-    output=sc.L("znext", ...),
-)
-def step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
-    z, u = inputs
+@sc.function(2, 1)
+def step(z, u):
     return z + 0.1 * sc.concat([z[1:], u])
 ```
 
-`sc.L` declares one tensor and `sc.G` groups trees. The body takes one value with the input
-structure and returns one value with the output structure. `...` infers the output shape during
-tracing.
+The body is traced once, with an `Expr` per parameter, and the output shape comes from the trace.
+The inputs are named after the parameters and the output after the function, and those names are
+what derivatives refer to and what the generated C calls the buffers. The shapes may also be left
+out entirely, `@sc.function` on its own, and then each call binds them; see
+[Building functions](functions.md).
 
 Call it with arrays to run it:
 
 ```python
-z1 = step((np.array([1.0, 2.0]), np.array([0.5])))
+z1 = step(np.array([1.0, 2.0]), np.array([0.5]))
 # array([1.2, 2.05])
 ```
 
-The input tree is an `sc.G` of two leaves, so the call takes a 2-tuple. The output tree is a single
-`sc.L`, so the result is the array itself, see
-[a single leaf is unpacked](functions.md#a-single-leaf-is-unpacked). The first call lowers the
-graph, renders C, compiles a shared library and stores it in the just-in-time (JIT) cache. Later
-calls reuse it.
+The first call lowers the graph, renders C, compiles a shared library and stores it in the
+just-in-time (JIT) cache. Later calls reuse it. A single output is the array itself, not a
+one-element tuple.
 
-Call it with `Expr` leaves to compose it symbolically:
+Call it with `Expr` arguments to compose it symbolically:
 
 ```python
 N = 20
 
-@sc.function(
-    sc.G(sc.L("z0", 2), sc.L("us", N)),
-    output=sc.G(sc.L("zN", ...), sc.L("cost", ...)),
-)
-def rollout(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
-    z, us = inputs
+@sc.function(2, N, output=sc.G("zN", "cost"))
+def rollout(z, us):
     cost = sc.const(0.0)
     for k in range(N):
         u = us[k : k + 1]
         cost = cost + sc.sumsqr(z) + 0.1 * sc.sumsqr(u)
-        z = step((z, u))
+        z = step(z, u)
     return z, cost + 10.0 * sc.sumsqr(z)
 ```
 
-`step(...)` dispatches on the leaves it is given: `numerical_call` for arrays, `symbolic_call` for
-expressions. The symbolic call adds a `CALL` node, so the generated C contains one `step`
-procedure and calls it from `rollout`. See [Building functions](functions.md) for nested trees,
-inferred outputs, the two named call methods and `vmap`.
+`step(...)` dispatches on the arguments it is given: `numerical_call` for arrays, `symbolic_call`
+for expressions. The symbolic call adds a `CALL` node, so the generated C contains one `step`
+procedure and calls it from `rollout`. `output=` names the two results; without it they would be
+`rollout_0` and `rollout_1`.
 
 ## Differentiate the function
 
-Derivative wrappers return typed functions.
+Derivative wrappers take a function and the names of an output and an input, and return a function
+of the same parameters:
 
 ```python
 grad = sc.gradient(rollout, "cost", "us")
 
-gradient_value = grad((np.array([1.0, 0.0]), np.zeros(N)))
+gradient_value = grad(np.array([1.0, 0.0]), np.zeros(N))
 ```
 
-The derivative keeps `rollout`'s complete input tree, `(z0, us)`. There is no separate parameter
-list to maintain.
+There is no separate parameter list to maintain. For a function with one output, the input alone
+names the derivative, as in `sc.gradient(f, "x")`.
 
 The common wrappers are:
 
@@ -103,8 +96,8 @@ sc.jacobian(fn, "y", "x")
 sc.hessian(fn, "f", "x")
 sc.sparse_jacobian(fn, "y", "x")
 sc.sparse_hessian(fn, "f", "x")
-sc.forward(fn, "y", "x")
-sc.adjoint(fn, "y", "x")
+sc.forward(fn, "y", "x")   # called with fn's arguments, then the tangent seed
+sc.adjoint(fn, "y", "x")   # called with fn's arguments, then the cotangent seed
 ```
 
 Differentiation is graph-to-graph. The result compiles, nests and renders like any other
@@ -120,7 +113,7 @@ A `Problem` separates the model from the solver backend.
     params=sc.L("z0", 2),
 )
 def shooting_problem(us: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
-    zN, cost = rollout((z0, us))
+    zN, cost = rollout(z0, us)
     return sc.ProblemSpec(
         minimize=cost,
         eq=(zN,),
@@ -184,13 +177,9 @@ The Python loop in `rollout` creates `N` call sites. When iterations are indepen
 represents the repetition as one node and lowers it to a C loop.
 
 ```python
-@sc.function(
-    sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2)),
-    output=sc.L("defect", ...),
-)
-def defect(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
-    z, u, znext = inputs
-    return step((z, u)) - znext
+@sc.function(2, 1, 2)
+def defect(z, u, znext):
+    return step(z, u) - znext
 
 decision = sc.sym("decision", 2 * (N + 1) + N)
 states = decision[: 2 * (N + 1)]
@@ -208,7 +197,8 @@ defects = sc.vmap(
 ```
 
 Each mapping tuple is `(outer, start, stride)`; iteration `i` reads a slice beginning at
-`start + i * stride`. A derivative of a vmapped function is another vmapped function, so source
+`start + i * stride`. The callee's declared shapes are what `vmap` slices by, which is why `defect`
+declares them. A derivative of a vmapped function is another vmapped function, so source
 size and derivative construction scale with one stage, not with the horizon.
 
 ## Render C ahead of time

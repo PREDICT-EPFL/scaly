@@ -1,6 +1,7 @@
 # Function templates and multi-parameter functions: implementation plan (2026-09-27, v2)
 
-Status: **v2 after the review round, in progress.** Implements todo API-1 (and unblocks API-4, part of
+Status: **done** on `claude/function-templates`: P1a to P4 and P6, P5 deferred as todo API-77.
+Summary: `templates_summary_report.html`; one report per phase beside it. Implements todo API-1 (and unblocks API-4, part of
 API-3). Supersedes the "Function templates" section of `refactorings.md` and the "Deferred:
 multi-parameter bodies" and "fold the outer group into the decorator" items of
 `typing_playground/README.md`. v1 was reviewed by five agents (typing, frontend semantics, compiler
