@@ -12,14 +12,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from types import EllipsisType
 from typing import Any, cast, overload
 
 import numpy as np
 from scipy import sparse
 
 from ..ad.sparse import SparseJacobian
-from ..function.tree import SymbolicValue, Tree
+from ..function.tree import Hole, SymbolicValue, Tree
 from ..ir.expr import Expr, ExprOp, as_expr, concat, gather, scatter, segment_sum
 from ..ir.types import SparsityType, TensorType
 
@@ -420,7 +419,7 @@ class S(Tree[SparseMatrix, sparse.sparray]):
       raise TypeError("S takes a name and a pattern, or a pattern alone; write S(name, ...) for an output pattern the body decides")
     self.names = (name,)
     if pattern is Ellipsis:
-      self.pattern, self.decls = None, (Ellipsis,)
+      self.pattern, self.decls = None, (Hole(),)
       return
     if isinstance(pattern, SparseMatrix):
       shape, indptr, indices = pattern.shape, pattern.indptr, pattern.indices
@@ -438,7 +437,7 @@ class S(Tree[SparseMatrix, sparse.sparray]):
     cols = np.repeat(np.arange(self._shape[1]), np.diff(self._indptr))
     self.pattern = SparsityType(self._shape, tuple(int(r) for r in self._indices), tuple(int(c) for c in cols))
 
-  def _copy(self, name: str, decl: TensorType | EllipsisType) -> S:
+  def _copy(self, name: str, decl: TensorType | Hole) -> S:
     out = S.__new__(S)
     out.names, out.decls, out.pattern = (name,), (decl,), self.pattern
     if self.pattern is not None:
@@ -517,6 +516,11 @@ class S(Tree[SparseMatrix, sparse.sparray]):
     if (why := self._mismatch(csc.shape, csc.indptr, csc.indices)) is not None:
       raise ValueError(f"{what}: {self.names[0]!r} has a different sparsity pattern than declared: {why}")
     return (np.require(csc.data, dtype=np.float64, requirements="C"),)
+
+  def bind(self, value: Any, what: str) -> S:
+    if self.pattern is None:
+      raise TypeError(f"{what}: sparse input {self.names[0]!r} needs its pattern declared; pattern holes on inputs are not supported yet")
+    return self
 
   def unflatten(self, values: tuple[Any, ...]) -> Any:
     if len(values) != 1:

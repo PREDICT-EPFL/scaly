@@ -31,6 +31,10 @@ The expression graph and the types on it.
 
 ::: scaly.function.model.Function
 
+::: scaly.function.model.ConcreteFunction
+
+::: scaly.function.model.NotConcrete
+
 
 ## Types
 

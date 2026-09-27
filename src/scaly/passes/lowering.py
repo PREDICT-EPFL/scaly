@@ -38,7 +38,7 @@ from ..ir.expr import (
   callees_of,
   topo,
 )
-from ..function import ConcreteFunction
+from ..function import ConcreteFunction, Function
 from .arith import constant
 from .program import ProgramObserver, optimize_program
 from ..ir.program import ProgramNode, ProgramOp, RangeKind
@@ -46,6 +46,7 @@ from ..ir.program_spec import verify_program
 from ..ir.types import DeviceSpec, DType, dtypes
 from .affine import affine_index_map
 from .expr import cse_many, simplify
+from ..utils.names import c_ident
 
 
 class LoweringError(NotImplementedError):
@@ -112,7 +113,7 @@ def lowers(*ops: ExprOp) -> Callable[[LowerRule], LowerRule]:
 ExprObserver = Callable[[str, ConcreteFunction], None]
 
 
-def lower_function(fun: ConcreteFunction, observe: ProgramObserver | None = None, observe_expr: ExprObserver | None = None) -> ProgramNode:
+def lower_function(fun: Function, observe: ProgramObserver | None = None, observe_expr: ExprObserver | None = None) -> ProgramNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
 
   Host placement only for now: the returned PROGRAM holds every lowered callee
@@ -127,6 +128,7 @@ def lower_function(fun: ConcreteFunction, observe: ProgramObserver | None = None
   PROGRAM (``solver_oracles`` attr) so ``pack_workspace`` can size the caller's
   ``w[]`` to fit the oracle and the CALL-to-solver gets ``callee_needs_w`` right.
   """
+  fun = fun.concrete
   if fun.device.kind != "host":
     raise LoweringError(f"non-host placement {fun.device} is not lowered yet (GPU backends are deferred to a later migration step)")
   from ..solvers.graph import is_solver_function, solver_callees
@@ -189,15 +191,16 @@ def _check_function_names(fun: ConcreteFunction, solver_callees: Callable[[Concr
   todo = [fun]
   while todo:
     f = todo.pop()
-    seen = owners.get(f.name)
+    # Keyed by the C spelling: ``f:_3`` and ``f__3`` are two names but one C symbol.
+    seen = owners.get(c_ident(f.name))
     if seen is not None:
       if not _same_function(seen, f):
+        named = f"named {f.name!r}" if seen.name == f.name else f"named {seen.name!r} and {f.name!r}, both {c_ident(f.name)!r} in C,"
         raise LoweringError(
-          f"two different Functions are named {f.name!r} in the graph of {fun.name!r}; generated code has one procedure "
-          "per name, so give them distinct names"
+          f"two different Functions are {named} in the graph of {fun.name!r}; generated code has one procedure per name, so give them distinct names"
         )
       continue
-    owners[f.name] = f
+    owners[c_ident(f.name)] = f
     todo.extend(solver_callees(f))
     for node in topo(f.outputs):
       if node.op in CALLEE_OPS:

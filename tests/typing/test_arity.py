@@ -62,6 +62,11 @@ def wide(a: sc.Expr, b: sc.Expr, c: sc.Expr, d: sc.Expr, e: sc.Expr, f: sc.Expr,
   return a + b + c + d + e + f + g + h
 
 
+@sc.function(sc.L(), output="y")
+def doubled(x: sc.Expr) -> sc.Expr:
+  return 2.0 * x
+
+
 @sc.problem(vars=sc.L("x", 3), params=sc.L("scale", ()))
 def quadratic(x: sc.Expr, scale: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
   return sc.ProblemSpec(minimize=(x * x).sum() * scale, lb=sc.const(-1.0), ub=sc.const(1.0))
@@ -158,6 +163,17 @@ if TYPE_CHECKING:
   fwd2((np.zeros(3), np.zeros(())), np.ones(3))  # ty: ignore[no-matching-overload]
   assert_type(grad2, sc.Function[[sc.Expr, sc.Expr], [np.ndarray, np.ndarray], sc.Expr, np.ndarray])
 
+  # A template is typed like the Function it instantiates; an instance is a ConcreteFunction.
+  assert_type(doubled, sc.Function[[sc.Expr], [np.ndarray], sc.Expr, np.ndarray])
+  assert_type(doubled(np.zeros(3)), np.ndarray)
+  assert_type(doubled.instantiate(3), sc.ConcreteFunction[[sc.Expr], [np.ndarray], sc.Expr, np.ndarray])
+  assert_type(doubled.concrete, sc.ConcreteFunction[[sc.Expr], [np.ndarray], sc.Expr, np.ndarray])
+  assert_type(doubled.instances, dict[str, sc.ConcreteFunction[[sc.Expr], [np.ndarray], sc.Expr, np.ndarray]])
+  assert_type(doubled.is_concrete, bool)
+  assert_type(doubled.input_names, tuple[str, ...])
+  as_template: sc.Function[[sc.Expr, sc.Expr], [np.ndarray, np.ndarray], sc.Expr, np.ndarray] = cost2
+  as_instance: sc.ConcreteFunction[[sc.Expr], [np.ndarray], sc.Expr, np.ndarray] = doubled  # ty: ignore[invalid-assignment]
+
   assert_type(multiply.symbolic_call(duplicate.symbolic_call(sc.sym("x", 3))), sc.Expr)
   multiply.symbolic_call(square.symbolic_call(sc.sym("x", 3)))  # ty: ignore[invalid-argument-type]
 
@@ -206,7 +222,7 @@ if TYPE_CHECKING:
 
   assert_type(
     quadratic_ipopt,
-    sc.Function[
+    sc.ConcreteFunction[
       [sc.Expr, sc.Expr, sc.Expr, sc.Expr, sc.Expr],
       [np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
       tuple[sc.Expr, sc.Expr, sc.Expr, sc.Expr],
@@ -215,7 +231,7 @@ if TYPE_CHECKING:
   )
   assert_type(
     filter_sqp,
-    sc.Function[
+    sc.ConcreteFunction[
       [tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr, tuple[sc.Expr, sc.Expr]],
       [tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray]],
       tuple[tuple[sc.Expr, sc.Expr], tuple[sc.Expr, sc.Expr], sc.Expr, sc.Expr],

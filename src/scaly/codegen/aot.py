@@ -33,7 +33,7 @@ from scaly.codegen.casadi import (
 from scaly.codegen.cpp import render_cpp_header
 from scaly.codegen.solver import render_solver_raw, solver_includes, solver_stats_symbols
 from scaly.ir.expr import callees_of, topo
-from scaly.function import ConcreteFunction
+from scaly.function import ConcreteFunction, Function
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program import ProgramObserver
 from scaly.solvers.graph import external_oracles, is_solver_function, solver_backends_used, solver_callees
@@ -371,12 +371,13 @@ def _render_observed(fun: ConcreteFunction, *, casadi: bool) -> tuple[_RenderCtx
   return ctx, source
 
 
-def render_c_source(fun: ConcreteFunction, *, casadi: bool = False) -> str:
+def render_c_source(fun: Function, *, casadi: bool = False) -> str:
   """Render a standalone pointer-ABI C implementation of ``fun`` and its callees. ``casadi`` adds
   the CasADi 3.8 compatible symbols.
 
   A ``LoweringError`` (e.g. a still-deferred mixed-device CALL) propagates — there is no fallback.
   """
+  fun = fun.concrete
   return _render_observed(fun, casadi=casadi)[1]
 
 
@@ -385,10 +386,11 @@ def _check_lang(lang: str) -> None:
     raise ValueError(f"lang must be 'c' or 'cpp', got {lang!r}")
 
 
-def render_c_api_header(fun: ConcreteFunction, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> str:
+def render_c_api_header(fun: Function, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> str:
   """Render the public header for ``fun``: the ABI declarations, ``SZ_*`` constants, the typed
   buffers of the chosen ``lang`` (``typed_buffers=False`` omits them from the C header), the
   sparse-output tables, and with ``casadi`` the CasADi query prototypes."""
+  fun = fun.concrete
   _check_lang(lang)
   if casadi:
     check_casadi_layout(fun)
@@ -399,7 +401,7 @@ def render_c_api_header(fun: ConcreteFunction, *, typed_buffers: bool = True, la
 
 
 def render_c_module(
-  fun: ConcreteFunction,
+  fun: Function,
   *,
   header_name: str | None = None,
   source_name: str | None = None,
@@ -410,6 +412,7 @@ def render_c_module(
   """Render ``fun`` into its header / ``.c`` pair from a single lowering. The kernel is always C;
   ``lang`` picks the header a caller includes (``f.h`` or ``f.hpp``) and ``casadi`` adds the
   CasADi 3.8 compatible symbols to both."""
+  fun = fun.concrete
   _check_lang(lang)
   ctx, body = _render_observed(fun, casadi=casadi)
   symbol = c_ident(fun.name)
@@ -427,15 +430,17 @@ def render_c_module(
   )
 
 
-def workspace_size(fun: ConcreteFunction, *, casadi: bool = False) -> int:
+def workspace_size(fun: Function, *, casadi: bool = False) -> int:
   """Doubles of scratch ``fun`` needs in ``w[]`` — the value its header's ``SZ_W`` quotes.
   ``CModule.workspace_size`` is the same number without a second lowering, so prefer it when the
   module is already in hand."""
+  fun = fun.concrete
   return entry_workspace(fun, _lower(fun).workspace_size, casadi=casadi)
 
 
-def write_module(fun: ConcreteFunction, out_dir: Path, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> CModule:
+def write_module(fun: Function, out_dir: Path, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> CModule:
   """Write ``fun``'s header / ``.c`` into ``out_dir`` and return the module."""
+  fun = fun.concrete
   module = render_c_module(fun, typed_buffers=typed_buffers, lang=lang, casadi=casadi)
   out_dir.mkdir(parents=True, exist_ok=True)
   (out_dir / module.header_name).write_text(module.header)
@@ -445,7 +450,7 @@ def write_module(fun: ConcreteFunction, out_dir: Path, *, typed_buffers: bool = 
 
 def main(argv: list[str] | None = None) -> None:
   parser = argparse.ArgumentParser(prog="scaly_codegen", description="Render a Function to a header/source pair: a C kernel and a C or C++ header.")
-  parser.add_argument("target", help="module:attribute naming a Function or a zero-argument factory returning one")
+  parser.add_argument("target", help="module:attribute naming a Function with every shape declared, or a zero-argument factory returning one")
   parser.add_argument("-o", "--out-dir", type=Path, default=Path(), help="directory to write into (default: cwd)")
   parser.add_argument(
     "--lang", choices=("c", "cpp"), default="c", help="header language: C structs and f_call (f.h), or C++ Buffer types in a namespace (f.hpp)"
@@ -461,8 +466,13 @@ def main(argv: list[str] | None = None) -> None:
   if not attr:
     parser.error(f"target {args.target!r} is not module:attribute")
   fun = getattr(importlib.import_module(module_name), attr)
-  if not isinstance(fun, ConcreteFunction):
+  if not isinstance(fun, Function):
     fun = fun()
+  if not fun.is_concrete:
+    parser.error(
+      f"{args.target} has shape holes; export a concrete instance instead, such as `{attr}_3 = {attr}.instantiate(...)`, "
+      f"or a zero-argument factory returning one ({', '.join(fun.instances) or 'no instances are built at import'})"
+    )
   module = write_module(fun, args.out_dir, typed_buffers=not args.no_typed_buffers, lang=args.lang, casadi=args.casadi)
   print(args.out_dir / module.header_name)
   print(args.out_dir / module.source_name)

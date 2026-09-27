@@ -62,7 +62,7 @@ from .ir.expr import (
   vec,
   where,
 )
-from .function import Function, G, L, factory
+from .function import ConcreteFunction, Function, G, L, NotConcrete, factory
 from .linalg import S, SparseMatrix
 from .utils.options import Options, get_options, options, set_options
 from .ir.match import Pattern, PatternMatcher, rewrite
@@ -118,11 +118,13 @@ __all__ = [
   "DeviceSpec",
   "OP_INFO",
   "Expr",
+  "ConcreteFunction",
   "Function",
   "G",
   "L",
   "NO_LB",
   "NO_UB",
+  "NotConcrete",
   "NotQuadratic",
   "ExprOp",
   "Pattern",

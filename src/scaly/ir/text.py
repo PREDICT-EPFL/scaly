@@ -21,7 +21,7 @@ from .program import BINARY_FN_OPS, PREDICATE_OPS, SCALAR_OPS, UNARY_FN_OPS, Pro
 from .types import TensorType
 
 if TYPE_CHECKING:
-  from ..function import ConcreteFunction
+  from ..function import ConcreteFunction, Function
 
 
 def type_asm(t: TensorType) -> str:
@@ -68,7 +68,7 @@ def _attrs_asm(attrs: dict[str, Any], *, skip: Set[str] = frozenset()) -> str:
 # ---------------------------------------------------------------------------
 
 
-def render_expr_assembly(obj: ConcreteFunction | Expr | Iterable[Expr], *, name: str | None = None) -> str:
+def render_expr_assembly(obj: Function | Expr | Iterable[Expr], *, name: str | None = None) -> str:
   """Render the expression ``Expr`` dialect as a compact SSA assembly listing.
 
   When given a ``Function``, the listing is a ``expr.module`` containing every transitive expression
@@ -78,6 +78,7 @@ def render_expr_assembly(obj: ConcreteFunction | Expr | Iterable[Expr], *, name:
   # ``ir`` is below ``function`` in the import-layer order, so it cannot import ``Function`` at runtime.
   # It is tested first so an object that is both a Function and iterable still renders as an
   # ``expr.module`` rather than a bare region.
+  obj = getattr(obj, "concrete", obj)  # a Function's one instance; a template with holes raises NotConcrete
   if all(hasattr(obj, attr) for attr in ("outputs", "name", "input_names", "output_names")):
     return _render_function_module(cast("ConcreteFunction", obj))
   if isinstance(obj, Expr):

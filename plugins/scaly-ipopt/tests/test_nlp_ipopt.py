@@ -12,7 +12,7 @@ from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_fun
 from tests.solvers.problem_helpers import build_nlp, solve_nlp
 
 
-def _wrapper_fixture(rows: tuple[int, ...], cols: tuple[int, ...]) -> sc.Function:
+def _wrapper_fixture(rows: tuple[int, ...], cols: tuple[int, ...]) -> sc.ConcreteFunction:
   """Build a descriptor small enough to inspect the IPOPT wrapper without compiling it."""
   base = ExternalOracle("base", "foreign_base_raw", "", (("x", (2,)),), (("f", ()),))
   grad = ExternalOracle("grad", "foreign_grad_raw", "", (("x", (2,)),), (("grad_f", (2,)),))

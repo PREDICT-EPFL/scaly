@@ -33,6 +33,11 @@ def cases() -> dict[str, tuple[object, tuple[object, ...]]]:
     out["4 parameters"] = (four, (v, v, v, v))
   except TypeError:
     pass  # a checkout before parameter lists
+  try:
+    template = sc.function(sc.L(), output=sc.L("y", ...))(lambda x: x + 1.0)
+    out["template, one leaf"] = (template, (v,))
+  except TypeError:
+    pass  # a checkout before templates
   return out
 
 

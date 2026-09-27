@@ -90,7 +90,7 @@ def _callee_names(exprs: Sequence[sc.Expr]) -> set[str]:
   return names
 
 
-def _mix_body(name: str) -> sc.Function:
+def _mix_body(name: str) -> sc.ConcreteFunction:
   """A carry of two, two sliced inputs of sizes two and one, and two stacked outputs of different sizes."""
   c, a, b = sc.sym("c", 2), sc.sym("a", 2), sc.sym("b", 1)
   nxt = sc.stack([c[0] * a[0] + (c[1] * b[0]).sin(), c[1] - 0.3 * c[0] * a[1] + b[0] * b[0]])

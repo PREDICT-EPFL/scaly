@@ -52,7 +52,7 @@ class _FakeBackend:
     ]
 
 
-def _fake_solver_function(backend: str = "fake") -> sc.Function:
+def _fake_solver_function(backend: str = "fake") -> sc.ConcreteFunction:
   desc = SolverDescriptor(
     name="fake_qp",
     backend=backend,
@@ -244,7 +244,7 @@ def test_external_oracle_workspace_is_part_of_solver_workspace(monkeypatch: pyte
   assert "#define external_workspace_SZ_W 7" in header
 
 
-def _external_solver(name: str, oracle: ExternalOracle) -> sc.Function:
+def _external_solver(name: str, oracle: ExternalOracle) -> sc.ConcreteFunction:
   return descriptor_function(
     SolverDescriptor(
       name=name,

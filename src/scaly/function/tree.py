@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import EllipsisType
 from typing import TYPE_CHECKING, Any, cast, overload
 
@@ -34,8 +35,7 @@ if TYPE_CHECKING:
   NO = TypeVar("NO", default=np.ndarray)
 
 
-type ShapeDecl = int | np.integer | tuple[int, ...] | EllipsisType | TensorType
-type LeafDecl = TensorType | EllipsisType
+type ShapeDecl = int | np.integer | tuple[int | None, ...] | EllipsisType | TensorType | Hole
 type Spec = ShapeDecl | str
 """A tree spec that is not a ``Tree``: a shape (an unnamed leaf) or a name (a named leaf with a shape hole)."""
 
@@ -78,6 +78,26 @@ def is_symbolic_call(args: tuple[Any, ...], what: str) -> bool:
   return symbolic
 
 
+@dataclass(frozen=True, slots=True)
+class Hole:
+  """A leaf declaration the call or the trace completes: the whole shape when ``dims`` is ``None``,
+  otherwise the ``None`` entries of ``dims``, and the dtype when ``dtype`` is ``None``."""
+
+  dims: tuple[int | None, ...] | None = None
+  dtype: DType | None = None
+  diff: bool = True
+
+  def admits(self, shape: tuple[int, ...]) -> bool:
+    return self.dims is None or (len(shape) == len(self.dims) and all(d is None or d == n for d, n in zip(self.dims, shape)))
+
+  def __str__(self) -> str:
+    dims = "any shape" if self.dims is None else "(" + ", ".join(map(str, self.dims)) + ("," if len(self.dims) == 1 else "") + ")"
+    return dims if self.dtype is None else f"{dims} {self.dtype.name}"
+
+
+type LeafDecl = TensorType | Hole
+
+
 class Tree[Symbolic, Numerical]:
   """A pytree declaration whose leaves are ``Expr`` symbolically and NumPy arrays numerically.
 
@@ -91,16 +111,19 @@ class Tree[Symbolic, Numerical]:
   @property
   def shapes(self) -> tuple[tuple[int, ...], ...]:
     """The leaf shapes in C-signature order."""
-    if any(decl is Ellipsis for decl in self.decls):
-      raise TypeError(f"tree {self.names} has inferred shapes; resolve them by tracing first")
-    return tuple(cast(TensorType, decl).shape for decl in self.decls)
+    return tuple(type_.shape for type_ in self.types)
 
   @property
   def types(self) -> tuple[TensorType, ...]:
     """The leaf tensor types in C-signature order."""
-    if any(decl is Ellipsis for decl in self.decls):
+    if self.has_holes:
       raise TypeError(f"tree {self.names} has inferred shapes; resolve them by tracing first")
     return cast(tuple[TensorType, ...], self.decls)
+
+  @property
+  def has_holes(self) -> bool:
+    """Whether a leaf leaves its shape or dtype to a call or a trace."""
+    return any(isinstance(decl, Hole) for decl in self.decls)
 
   @property
   def size(self) -> int:
@@ -128,9 +151,17 @@ class Tree[Symbolic, Numerical]:
     if len(traced) != self.size:
       raise TypeError(f"declared {self.size} outputs {self.names}, body returned {len(traced)}")
     for name, decl, actual in zip(self.names, self.decls, traced, strict=True):
-      if decl is not Ellipsis and (decl.shape != actual.shape or decl.dtype != actual.dtype):
+      if isinstance(decl, Hole):
+        if not decl.admits(actual.shape) or (decl.dtype is not None and decl.dtype != actual.dtype):
+          raise TypeError(f"{name!r} declared as {decl}, traced type {actual}")
+      elif decl.shape != actual.shape or decl.dtype != actual.dtype:
         raise TypeError(f"{name!r} declared with type {decl}, traced type {actual}")
     return traced
+
+  def bind(self, value: Any, what: str) -> Tree[Symbolic, Numerical]:
+    """This declaration completed by a call's argument: structure checked first, then fixed dimensions and
+    dtypes, and every hole resolved to the argument's shape (and, for an ``Expr``, its dtype)."""
+    raise NotImplementedError
 
   def infer(self, value: Symbolic) -> Tree[Symbolic, Numerical]:
     """Return this declaration with what it leaves to tracing, such as a sparse output's pattern,
@@ -171,19 +202,30 @@ def _unnamed(name: str) -> ValueError:
 
 
 def _leaf_decl(shape: Any, dtype: DType | str | None, diff: bool | None) -> LeafDecl:
-  if isinstance(shape, TensorType):
+  if isinstance(shape, (TensorType, Hole)):
     if dtype is not None or diff is not None:
       raise TypeError("a TensorType carries its own dtype and diff; pass them to it instead")
     return shape
+  resolved_dtype, resolved_diff = as_dtype(dtype) if dtype is not None else None, True if diff is None else diff
   if shape is Ellipsis:
-    if dtype is not None or diff is not None:
-      raise TypeError("dtype= and diff= need a shape")
-    return Ellipsis
-  if isinstance(shape, np.integer):
-    shape = int(shape)
-  if isinstance(shape, bool) or not isinstance(shape, (int, tuple)):
-    raise TypeError(f"a leaf shape is an int, a tuple of ints, ... or a TensorType, got {shape!r}; use () for a scalar")
-  return TensorType(as_shape(shape), as_dtype(dtype) if dtype is not None else dtypes.float64, diff=True if diff is None else diff)
+    return Hole(None, resolved_dtype, resolved_diff)
+  if isinstance(shape, (int, np.integer)) and not isinstance(shape, bool):
+    shape = (int(shape),)
+  if not isinstance(shape, tuple) or any(d is not None and (isinstance(d, bool) or not isinstance(d, (int, np.integer))) for d in shape):
+    raise TypeError(f"a leaf shape is an int, a tuple of ints and Nones, ... or a TensorType, got {shape!r}; use () for a scalar")
+  dims = tuple(None if d is None else int(d) for d in shape)
+  if None in dims:
+    return Hole(dims, resolved_dtype, resolved_diff)
+  return TensorType(as_shape(cast(tuple[int, ...], dims)), resolved_dtype or dtypes.float64, diff=resolved_diff)
+
+
+def _argument_type(value: Any, name: str, what: str) -> tuple[tuple[int, ...], DType | None]:
+  """The shape of an argument for one leaf, and its dtype if it is an ``Expr`` (a numerical value is coerced)."""
+  if isinstance(value, Expr):
+    return value.shape, value.type.dtype
+  if isinstance(value, SymbolicValue):
+    raise ValueError(f"{what}: expected an Expr for {name!r}, got {type(value).__name__}")
+  return np.shape(value), None
 
 
 class L(Tree[Expr, np.ndarray]):
@@ -239,7 +281,7 @@ class L(Tree[Expr, np.ndarray]):
     if not isinstance(value, Expr):
       raise ValueError(f"{what}: expected an Expr for {self.names[0]!r}, got {type(value).__name__}")
     decl = self.decls[0]
-    if decl is not Ellipsis and value.shape != decl.shape and not (allow_scalar and value.shape == ()):
+    if isinstance(decl, TensorType) and value.shape != decl.shape and not (allow_scalar and value.shape == ()):
       raise ValueError(f"{what}: expected shape {decl.shape} for {self.names[0]!r}, got {value.shape}")
     return (value,)
 
@@ -248,7 +290,7 @@ class L(Tree[Expr, np.ndarray]):
     # The common case, an array already of the declared shape, dtype and layout, as is.
     if (
       type(value) is np.ndarray
-      and decl is not Ellipsis
+      and isinstance(decl, TensorType)
       and value.shape == decl.shape
       and value.dtype == decl.dtype.numpy()
       and value.flags.c_contiguous
@@ -265,6 +307,21 @@ class L(Tree[Expr, np.ndarray]):
     if len(values) != 1:
       raise ValueError(f"L expects one flat value, got {len(values)}")
     return values[0]
+
+  def bind(self, value: Any, what: str) -> L:
+    name, decl = self.names[0], self.decls[0]
+    shape, dtype = _argument_type(value, name, what)
+    if isinstance(decl, TensorType):
+      if shape != decl.shape:
+        raise ValueError(f"{what}: expected shape {decl.shape} for {name!r}, got {shape}")
+      if dtype is not None and dtype != decl.dtype:
+        raise ValueError(f"{what}: expected dtype {decl.dtype.name} for {name!r}, got {dtype.name}")
+      return self
+    if not decl.admits(shape):
+      raise ValueError(f"{what}: expected shape {decl} for {name!r}, got {shape}")
+    if dtype is not None and decl.dtype is not None and dtype != decl.dtype:
+      raise ValueError(f"{what}: expected dtype {decl.dtype.name} for {name!r}, got {dtype.name}")
+    return L(name, TensorType(shape, decl.dtype or dtype or dtypes.float64, diff=decl.diff))
 
 
 class _G(Tree[Any, Any]):
@@ -309,6 +366,11 @@ class _G(Tree[Any, Any]):
     if not isinstance(value, tuple) or len(value) != len(self.parts):
       raise ValueError(f"{what}: value does not have the declared structure of {self.names}")
     return tuple(array for part, item in zip(self.parts, value, strict=True) for array in part.flatten_numerical(item, what))
+
+  def bind(self, value: Any, what: str) -> _G:
+    if not isinstance(value, tuple) or len(value) != len(self.parts):
+      raise ValueError(f"{what}: value does not have the declared structure of {self.names}")
+    return _G(tuple(part.bind(item, what) for part, item in zip(self.parts, value, strict=True)), public=False)
 
   def unflatten(self, values: tuple[Any, ...]) -> tuple[Any, ...]:
     out: list[Any] = []

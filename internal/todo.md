@@ -73,6 +73,8 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       (`notes/templates_p1a_report.html`); P1b-i, `sc.function(inputs, output=...)` and the codemod over
       306 sites (`notes/templates_p1b_i_report.html`); P1b-ii, one argument per parameter, shorthand slots,
       the seeded and solver conventions and the migration (`notes/templates_p1b_ii_report.html`).
+      P2, `Function` as the template with holes and cached, deterministically named instances,
+      `ConcreteFunction` its subclass (`notes/templates_p2_report.html`).
 - [ ] **API-2. Preserve declared trees through `vmap` and Function-level differentiation.** Settle
       the mapped input convention and retain runtime and static acceptance tests. Rationale:
       refactorings.md "`vmap` and the AD entry points erase the callee's declared trees".

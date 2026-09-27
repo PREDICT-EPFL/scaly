@@ -9,7 +9,7 @@ import scaly as sc
 import scaly.codegen as codegen
 from scaly.codegen import aot
 from scaly.function.factory import Adj, DerivSpec, Fwd, Grad, Hess, Jac, SpHess, SpJac
-from scaly.function.model import Function
+from scaly.function.model import ConcreteFunction, Function, NotConcrete
 from scaly.function.tree import G, L, Tree
 from scaly.ir.expr import Expr, ExprOp
 from scaly.ir.expr_spec import spec_expr
@@ -25,6 +25,8 @@ def test_public_exports_are_canonical() -> None:
   assert sc.Expr is Expr
   assert sc.ExprOp is ExprOp
   assert sc.Function is Function
+  assert sc.ConcreteFunction is ConcreteFunction and issubclass(ConcreteFunction, Function)
+  assert sc.NotConcrete is NotConcrete and issubclass(NotConcrete, TypeError)
   assert sc.L is L
   assert sc.G is G
   assert sc.Bounded is Bounded
@@ -52,10 +54,10 @@ def test_public_exports_are_canonical() -> None:
   assert not hasattr(Function, "call")
   assert not hasattr(Function, "eval_list")
   assert all(callable(getattr(Function, name)) for name in ("__call__", "symbolic_call", "numerical_call"))
-  assert all(callable(getattr(Function, name)) for name in ("_flat_symbolic_call", "_flat_numerical_call"))
-  factory_hints = get_type_hints(Function.factory)
+  assert all(callable(getattr(ConcreteFunction, name)) for name in ("_flat_symbolic_call", "_flat_numerical_call"))
+  factory_hints = get_type_hints(ConcreteFunction.factory)
   assert factory_hints["outputs"] == Sequence[str | DerivSpec]
-  assert factory_hints["return"] is Function
+  assert factory_hints["return"] is ConcreteFunction
   assert not hasattr(sc, "Port")
   assert sc.factory.DerivSpec is DerivSpec
   assert sc.factory.Jac is Jac

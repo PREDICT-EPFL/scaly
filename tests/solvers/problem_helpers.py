@@ -28,7 +28,7 @@ def build_nlp(
   solver: str = "ipopt",
   name: str | None = None,
   options: dict[str, Any] | None = None,
-) -> sc.Function:
+) -> sc.ConcreteFunction:
   """Express an old flat NLP test fixture through ProblemSpec."""
   if x.name is None:
     raise ValueError("test decision variable needs a name")
@@ -96,7 +96,7 @@ def build_qp(
   name: str | None = None,
   options: dict[str, Any] | None = None,
   sparse: bool = False,
-) -> sc.Function:
+) -> sc.ConcreteFunction:
   """Express an old matrix-form QP test fixture through ProblemSpec."""
   P_expr, c_expr = as_expr(P), as_expr(c)
   if len(P_expr.shape) != 2 or P_expr.shape[0] != P_expr.shape[1]:

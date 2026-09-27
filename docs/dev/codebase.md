@@ -46,8 +46,8 @@ src/scaly/
       prepare_scalar.py      statement-local depth bounds before rendering
 
   function/              the frontend
-    model.py             Function, call composition, graph validation
-    tree.py              the typed pytree declarations (Tree, L, G)
+    model.py             Function (a body instantiated per argument signature) and ConcreteFunction, call composition, graph validation
+    tree.py              the typed pytree declarations (Tree, L, G), holes and parameter lists
     factory.py           the typed derivative specs and the AD each dispatches to
     api.py               the @function decorator and the convenience derivative wrappers
     sugar.py             expression builders that need a Function: vmap, scan, while_loop, custom_derivative

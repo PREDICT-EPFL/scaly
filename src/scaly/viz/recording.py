@@ -18,7 +18,7 @@ from scaly.ir.program import ProgramNode
 from scaly.viz.graph import expr_graph, program_graph
 
 if TYPE_CHECKING:
-  from scaly.function import ConcreteFunction
+  from scaly.function import ConcreteFunction, Function
 
 _RECORDING_LOCK = threading.Lock()
 _VIZ_TARGETS: dict[int, str | None] = {}
@@ -38,25 +38,28 @@ def recording_path() -> Path:
   return recording_dir() / "recordings.json"
 
 
-def visualize_function(fun: ConcreteFunction, *, label: str | None = None) -> ConcreteFunction:
+def visualize_function(fun: Function, *, label: str | None = None) -> ConcreteFunction:
   """Mark ``fun`` for visualization on future AOT/JIT renders.
 
   Capturing is exact-object opt-in: no Function is recorded unless it was passed
   here (or to ``capture``). The function itself is returned so callers can write
   ``f = visualize_function(f)``.
   """
+  fun = fun.concrete
   with _RECORDING_LOCK:
     _VIZ_TARGETS[id(fun)] = label
   return fun
 
 
-def unvisualize_function(fun: ConcreteFunction) -> None:
+def unvisualize_function(fun: Function) -> None:
+  fun = fun.concrete
   with _RECORDING_LOCK:
     _VIZ_TARGETS.pop(id(fun), None)
 
 
 @contextmanager
-def capture(fun: ConcreteFunction, *, label: str | None = None) -> Iterator[ConcreteFunction]:
+def capture(fun: Function, *, label: str | None = None) -> Iterator[ConcreteFunction]:
+  fun = fun.concrete
   visualize_function(fun, label=label)
   try:
     yield fun
@@ -64,7 +67,8 @@ def capture(fun: ConcreteFunction, *, label: str | None = None) -> Iterator[Conc
     unvisualize_function(fun)
 
 
-def is_visualized(fun: ConcreteFunction) -> bool:
+def is_visualized(fun: Function) -> bool:
+  fun = fun.concrete
   with _RECORDING_LOCK:
     return id(fun) in _VIZ_TARGETS
 

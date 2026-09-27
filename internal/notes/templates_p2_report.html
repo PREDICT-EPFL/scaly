@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Templates P2 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style>
+</head><body><main>
+<h1>Function templates P2: holes, instances, <code>is_concrete</code></h1>
+<p class="sub">2026-09-27 · branch <code>claude/function-templates</code> · plan v2, step P2</p>
+<div class="box"><b>Summary.</b> <code>sc.Function</code> is now the template, and <code>sc.ConcreteFunction</code> is a subclass of it. A declaration may leave shapes open (<code>sc.L()</code>, <code>(2, None)</code>, <code>sc.L(..., dtype="int64")</code>). Each call binds the holes, traces the body once per distinct binding, and caches the instance under a deterministic name that is also its C symbol (<code>double__3</code>, <code>rows__5</code>, <code>ident__3int64</code>). A fully declared function is still traced at the decorator, is its own single instance and keeps its exact C symbol. The C snapshots are unchanged, and concrete calls cost what they did.</div>
+<h2>What changed</h2>
+<ul>
+<li><b>Object model.</b> <code>Function[**PS, **PN, SO, NO]</code> (template) and <code>ConcreteFunction(Function)</code>, both in <code>function/model.py</code>. A separate module would form an import cycle. The decorator returns a <code>ConcreteFunction</code> when no input leaf has a hole, and a <code>Function</code> otherwise. Output holes (<code>output="y"</code>) are resolved by the trace as before and do not make a template.</li>
+<li><b>Protocol.</b>
+  <ul>
+  <li><code>is_concrete</code>;</li>
+  <li><code>concrete</code>: itself, or <code>NotConcrete</code> (a <code>TypeError</code>) naming the holes and the fix;</li>
+  <li><code>instances</code>: <code>{name: ConcreteFunction}</code>;</li>
+  <li><code>instantiate(*specs)</code>: one declaration per parameter, as in the decorator. That is a shape, a <code>TensorType</code>, a tree, or an example array or <code>Expr</code>; a tuple of ints is a shape, any other tuple a group's parts.</li>
+  </ul>
+  Graph attributes (<code>input_names</code>, <code>inputs</code>, <code>factory</code>, ...) are declared on the base class for typing. On a template they forward to the one instance, so a holed template raises <code>NotConcrete</code> wherever a compiler entry inspects it, including entries nobody listed.</li>
+<li><b>Holes.</b> <code>tree.Hole(dims, dtype, diff)</code> replaces the bare <code>Ellipsis</code> as a leaf declaration. <code>None</code> dimensions are partial holes. An open dtype binds from an <code>Expr</code> argument (numerical arguments are coerced, to <code>float64</code> by default). <code>Tree.bind</code> checks structure, then fixed dimensions and dtypes, in the call site's <code>ValueError</code> wording.</li>
+<li><b>Keys and names.</b> The key is the bound declaration's resolved types, so a symbolic and a numerical call that bind alike share one instance. Instance names are <code>{name}__{tokens}</code>, one token per hole: the bound dimensions joined by <code>x</code> (only the open ones of a partial shape), <code>s</code> for a scalar, and the dtype when an open dtype bound to something other than <code>float64</code>. Two bindings producing one name raise; creation-order suffixes are never used.</li>
+<li><b>Call path.</b> A second cache keyed on the arguments' flat shapes and <code>Expr</code> dtypes skips rebuilding the bound declaration on a repeat call; the instance's own call still checks structure and shapes. A template call costs 3.02 µs against a concrete one's 2.47.</li>
+<li><b>Consumers.</b>
+  <ul>
+  <li><code>while_loop</code> instantiates a holed <code>cond</code>/<code>body</code> from <code>init</code>, the step index and <code>params</code>. <code>vmap</code> and <code>scan</code> refuse a holed callee with the <code>instantiate</code> hint, because a slice's size is not its stride.</li>
+  <li><code>lower_function</code>, the five <code>scaly.codegen</code> renderers, <code>render_program_c_source</code>, <code>render_expr_assembly</code> and the viz entry points accept any <code>Function</code> and take its one instance.</li>
+  <li>The CLI treats any <code>Function</code> attribute as a function, not a factory: a zero-argument <code>ConcreteFunction</code> used to be called. It refuses a template with the export hint.</li>
+  <li>Lowering's name-clash refusal keys on the C spelling: <code>f:_3</code> and <code>f__3</code> used to reach the C compiler as a redefinition. The refusal now names both.</li>
+  <li><code>_flat_symbolic_call</code> checks dtypes, not only shapes.</li>
+  </ul></li>
+<li><b>Public names.</b> <code>sc.ConcreteFunction</code> and <code>sc.NotConcrete</code>, pinned in <code>test_import_boundaries.py</code>. The P1a alias is gone. <code>docs/api/core.md</code> and the package map are updated.</li>
+</ul>
+<h2>Tests and mutation checks</h2>
+<p><code>tests/function/test_template.py</code> (16 tests) covers:</p>
+<ul>
+<li>per-shape instances and one trace each, with a float, an int, a NumPy scalar and a 0-d array sharing one instance;</li>
+<li>symbolic instantiation inside another trace, where <code>f(a) is f(a)</code>;</li>
+<li>two instances lowering to two procedures, and partial shapes;</li>
+<li>a fully declared function being its own instance, and <code>instantiate</code> in all its forms;</li>
+<li>the <code>NotConcrete</code> messages, the loop builders and <code>while_loop</code> binding its own callees;</li>
+<li>open dtypes, and the collision guard (with a monkeypatched namer);</li>
+<li><code>with_device</code>, <code>recompile</code>, and the CLI (instance, zero-argument function, template);</li>
+<li>a JIT cache hit from a fresh process, every inspecting entry refusing a template, and the fast path.</li>
+</ul>
+<p>Also: <code>test_two_names_with_one_c_spelling_are_refused</code> in lowering, and typing checks for templates (<code>instantiate</code>, <code>concrete</code>, <code>instances</code> typed as <code>ConcreteFunction</code>; a <code>ConcreteFunction</code> assignable to <code>Function</code> and not the reverse).</p>
+<div class="scroll"><table><tr><th>Mutant</th><th>Result</th></tr>
+<tr><td>no instance cache</td><td class="ok">killed (4)</td></tr>
+<tr><td>names print fixed dimensions too</td><td class="ok">killed</td></tr>
+<tr><td>no dtype token</td><td class="ok">killed</td></tr>
+<tr><td>decorator always returns a template</td><td class="ok">killed (80)</td></tr>
+<tr><td>no graph-attribute forwarding</td><td class="ok">killed</td></tr>
+<tr><td><code>while_loop</code> keeps templates</td><td class="ok">killed</td></tr>
+<tr><td>no dtype check on call nodes</td><td class="ok">killed</td></tr>
+<tr><td>open-dtype hole unchecked</td><td class="ok">killed</td></tr>
+<tr><td>holes admit any shape</td><td class="ok">killed</td></tr>
+<tr><td>CLI treats instances as factories</td><td class="ok">killed</td></tr>
+<tr><td>clash keyed on raw names</td><td class="ok">killed</td></tr>
+<tr><td>structure unchecked in <code>bind</code></td><td class="ok">killed</td></tr>
+<tr><td>no argument-keyed lookup</td><td class="ok">killed</td></tr>
+<tr><td><code>.concrete</code> in <code>vmap</code>, <code>scan</code>, <code>custom_derivative</code></td><td class="warn">survived: forwarding already raised <code>NotConcrete</code>. The calls were dead and are removed.</td></tr>
+<tr><td><code>.concrete</code> at <code>lower_function</code> (and the other typed entries)</td><td class="warn">equivalent: it narrows the static type; at run time forwarding gives the same error</td></tr></table></div>
+<h2>Timing</h2>
+<div class="scroll"><table><tr><th>Checkout</th><th>One leaf</th><th>One group of 4</th><th>4 parameters</th><th>Template, one leaf</th></tr>
+<tr><td>P1b-ii</td><td class="r">2.47</td><td class="r">5.07</td><td class="r">4.49</td><td class="r">n/a</td></tr>
+<tr><td>P2</td><td class="r">2.47</td><td class="r">5.06</td><td class="r">4.52</td><td class="r">3.02 (5.21 without the argument-keyed lookup)</td></tr></table></div>
+<h2>Gates</h2>
+<div class="scroll"><table><tr><th>Check</th><th>Result</th></tr>
+<tr><td><code>uv run pytest -n=auto</code></td><td class="ok">2385 passed, 42 skipped</td></tr>
+<tr><td>C snapshots</td><td class="ok">unchanged</td></tr>
+<tr><td><code>uv run ty check --error-on-warning</code></td><td class="ok">no new diagnostics</td></tr>
+<tr><td><code>uv run benchmarks/run.py smoke</code>, <code>typing_playground</code></td><td class="ok">green</td></tr>
+<tr><td><code>ruff format</code>, <code>ruff check</code></td><td class="ok">clean</td></tr></table></div>
+<h2>Next</h2>
+<p>P3: bare mode (<code>@sc.function</code> with nothing declared, structure read from the call), inferred outputs in a single trace, and the sparse C++ namespace fix.</p>
+</main></body></html>

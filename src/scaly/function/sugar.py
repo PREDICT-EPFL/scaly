@@ -14,7 +14,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, common_lowering
 from ..ir.types import TensorType, dtypes
-from .model import ConcreteFunction
+from .model import ConcreteFunction, Function
 
 
 def vmap(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
@@ -30,7 +30,7 @@ def vmap(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
   or rank-1); each iteration reads a flat slice of ``formal.size`` values and the produced node has
   shape ``(length * callee.outputs[output].size,)``, with iteration outputs concatenated flat.
   """
-  if not isinstance(callee, ConcreteFunction):
+  if not isinstance(callee, Function):
     raise TypeError(f"vmap callee must be an scaly Function, got {type(callee).__name__}")
   length = int(length)
   if length < 0:
@@ -109,7 +109,7 @@ def scan(body: Any, init: Any, xs: Sequence[tuple[Any, int, int]] = (), *, lengt
   The number of steps is fixed when the graph is built, which is what makes the code size and the
   derivative's workspace (reverse mode stores the carry at every step) known ahead of time.
   """
-  if not isinstance(body, ConcreteFunction):
+  if not isinstance(body, Function):
     raise TypeError(f"scan body must be an scaly Function, got {type(body).__name__}")
   if index:
     _check_index_input(body, "scan")
@@ -202,10 +202,14 @@ def while_loop(cond: Any, body: Any, init: Any, *, max_iter: int, index: bool = 
   With ``index=True`` the body takes the step number as a second input, an ``int64`` scalar
   counting from zero; the condition does not.
   """
-  if not isinstance(cond, ConcreteFunction) or not isinstance(body, ConcreteFunction):
+  if not isinstance(cond, Function) or not isinstance(body, Function):
     raise TypeError("while_loop cond and body must be scaly Functions")
   init = as_expr(init)
   params = tuple(as_expr(param) for param in params)
+  # Every shape a template leaves open is determined here: the carry is init's, then the step number and the params.
+  step = (TensorType((), dtypes.int64),) if index else ()
+  cond = cond if cond.is_concrete else cond.instantiate(init, *params)
+  body = body if body.is_concrete else body.instantiate(init, *step, *params)
   if index:
     _check_index_input(body, "while_loop")
   first = 1 + int(index)
@@ -287,7 +291,7 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: An
   rule's author usually knows the real one. A copy keeps its source's pattern unless it is given
   new rules without one.
   """
-  if not isinstance(fn, ConcreteFunction):
+  if not isinstance(fn, Function):
     raise TypeError(f"custom_derivative needs a scaly Function, got {type(fn).__name__}")
   shapes_in = [e.shape for e in fn.inputs]
   shapes_out = [e.shape for e in fn.outputs]
@@ -297,7 +301,7 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: An
   ):
     if rule is None:
       continue
-    if not isinstance(rule, ConcreteFunction):
+    if not isinstance(rule, Function):
       raise TypeError(f"custom {label} must be a scaly Function")
     got_in, got_out = [e.shape for e in rule.inputs], [e.shape for e in rule.outputs]
     if got_in != takes or got_out != gives:

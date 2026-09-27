@@ -462,7 +462,7 @@ def test_empty_reduction_and_output_leave_adjacent_memory_untouched() -> None:
   def fn(x):
     return x[:2].sum() + 1000.0 * x[2:2].sum(), sc.const(np.zeros(0))
 
-  compiled = get_compiled(fn)
+  compiled = get_compiled(fn.concrete)
   values = np.array([2.0, 3.0, 17.0])
   cost = np.array([-1.0])
   untouched = np.array([23.0])
@@ -689,3 +689,15 @@ def test_segment_extrema_in_runs(sort: bool) -> None:
   np.testing.assert_array_equal(a, want_a)
   np.testing.assert_array_equal(b, want_b)
   assert ("for (long long r_" in render_c_source(fn)) == sort
+
+
+def test_two_names_with_one_c_spelling_are_refused() -> None:
+  """``f:_3`` and ``f__3`` are two names but one C symbol, so they clash like one name."""
+  c, u = sc.sym("c", 2), sc.sym("u", 1)
+  first = sc.Function._from_exprs("step:_3", [c, u], [c * u[0]], ["c", "u"], ["cn"])
+  second = sc.Function._from_exprs("step__3", [c, u], [c.sin() * u[0]], ["c", "u"], ["cn"])
+  c0, us = sc.sym("c0", 2), sc.sym("us", 3)
+  (a,) = sc.scan(first, c0, [(us, 0, 1)], length=3)
+  (b,) = sc.scan(second, c0, [(us, 0, 1)], length=3)
+  with pytest.raises(LoweringError, match="two different Functions are named 'step.*' and 'step.*', both 'step__3' in C"):
+    lower_function(sc.Function._from_exprs("c_spelling_host", [c0, us], [a + b], ["c0", "us"], ["y"]))

@@ -10,7 +10,7 @@ import pytest
 import scaly as sc
 from scaly.codegen import render_c_api_header
 from scaly.function import Tree
-from scaly.function.tree import is_symbolic_call, param_list
+from scaly.function.tree import Hole, is_symbolic_call, param_list
 
 
 @sc.function(sc.L("x", 3), output=sc.G(sc.L("first", ...), sc.L("second", 3)))
@@ -236,8 +236,10 @@ def test_call_dispatch_ignores_structure() -> None:
 
 def test_leaf_declarations_take_a_name_a_shape_or_both() -> None:
   f64, i64 = sc.TensorType((3,)), sc.TensorType((2, 2), sc.dtypes.int64, diff=False)
-  assert (sc.L().names, sc.L().decls) == (("",), (...,))
-  assert (sc.L("y").names, sc.L("y").decls) == (("y",), (...,))
+  assert (sc.L().names, sc.L().decls) == (("",), (Hole(),))
+  assert (sc.L("y").names, sc.L("y").decls) == (("y",), (Hole(),))
+  assert sc.L((3, None)).decls == (Hole((3, None)),) and sc.L(..., dtype="int64").decls == (Hole(None, sc.dtypes.int64),)
+  assert str(Hole((3, None))) == "(3, None)" and str(Hole()) == "any shape" and str(Hole((None,), sc.dtypes.int64)) == "(None,) int64"
   assert (sc.L(3).names, sc.L(3).decls) == (("",), (f64,))
   assert sc.L(np.int64(3)).decls == (f64,)
   assert sc.L((2, 2), dtype="int64", diff=False).decls == (i64,)
@@ -259,7 +261,7 @@ def test_groups_and_parameter_lists_take_tree_specs() -> None:
   group = sc.G(3, "y", sc.L("z", ()))
   assert group.names == ("", "y", "z")
   assert group.named("p").names == ("p_0", "y", "z")
-  assert group.decls[1] is Ellipsis
+  assert group.decls[1] == Hole() and group.has_holes and not sc.G(3, 4).has_holes
   params = param_list(sc.L(2).named("x"), sc.G(1, 1).named("p"))
   assert params.names == ("x", "p_0", "p_1")
   assert params.symbols()[1][0].name == "p_0"

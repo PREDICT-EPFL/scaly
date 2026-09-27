@@ -1,8 +1,9 @@
-"""Function and the dependency-light DerivSpec base for named expression-dialect graphs."""
+"""Function (a body instantiated per argument signature), ConcreteFunction (one named graph), and DerivSpec."""
 
 from __future__ import annotations
 
 import inspect
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Mapping, Sequence, cast, overload
 
@@ -10,13 +11,14 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, linear_combination, topo
 from ..ir.match import _apply_lowering
-from ..ir.types import DeviceSpec, Lowering, SparsityType, TensorType, backend_supports
-from .tree import Tree, _G, flat_tree, is_symbolic_call, param_list
+from ..ir.types import DeviceSpec, Lowering, SparsityType, TensorType, as_shape, backend_supports, dtypes
+from .tree import Hole, LeafDecl, SymbolicValue, Tree, _G, _leaves, flat_tree, is_symbolic_call, param_list
 
 if TYPE_CHECKING:
   from ..solvers.stats import SolverStats
 
 
+_log = logging.getLogger(__name__)
 _JIT: Any = None
 
 
@@ -61,10 +63,305 @@ class DerivSpec:
     return outputs[name]
 
 
-class ConcreteFunction[**PS, **PN, SO, NO]:
+class NotConcrete(TypeError):
+  """A Function with shape holes was used where one concrete instance is needed; ``instantiate`` it first."""
+
+
+# The graph attributes of an instance. On a template they are its one instance's, so asking a template
+# with holes for one raises NotConcrete, which names the fix, instead of an AttributeError.
+_GRAPH_ATTRIBUTES = frozenset(
+  {
+    "input_tree",
+    "output_tree",
+    "input_names",
+    "output_names",
+    "inputs",
+    "outputs",
+    "device",
+    "output_sparsities",
+    "output_coloring_widths",
+    "descriptor",
+    "custom_jvp",
+    "custom_vjp",
+    "custom_sparsity",
+    "_compiled",
+    "_compile",
+    "_flat_numerical_call",
+    "_flat_symbolic_call",
+    "_with_trees",
+    "_with_outputs",
+    "_effective_lowering",
+    "_inherit_lowering",
+  }
+)
+
+
+class Function[**PS, **PN, SO, NO]:
+  """A Python body over declared parameters, traced into one concrete instance per argument signature.
+
+  ``@scaly.function`` builds one. Where every parameter's shape is declared, the body is traced at
+  the decorator and the result is that instance, a ``ConcreteFunction``: ``is_concrete`` holds and
+  ``concrete`` is the function itself. Where a declaration leaves holes (``sc.L()``, ``(n, None)``),
+  each call binds them to its arguments' shapes, traces the body once per distinct binding, and
+  caches the instance under a name that spells the bound shapes (``f__3x4``), which is also its C
+  symbol. ``instances`` holds what has been built; ``instantiate`` builds one ahead of time.
+
+  A call dispatches as a ``ConcreteFunction``'s does: ``Expr`` arguments build a call node, arrays
+  run the compiled instance. The graph attributes (``input_names``, ``inputs``, ...) belong to an
+  instance, so on a template with holes they raise ``NotConcrete``. The type parameters are the
+  symbolic and numerical parameter lists and the symbolic and numerical output trees.
+  """
+
+  name: str
+  input_tree: _G
+  output_tree: Tree[SO, NO]
+  input_names: tuple[str, ...]
+  output_names: tuple[str, ...]
+  inputs: tuple[Expr, ...]
+  outputs: tuple[Expr, ...]
+  device: DeviceSpec
+  output_sparsities: tuple[SparsityType | None, ...]
+  output_coloring_widths: tuple[int | None, ...]
+  descriptor: Any
+  _signature: inspect.Signature | None
+
+  def __init__(self, name: str, fn: Callable[PS, SO], slots: _G, output: Tree[SO, NO], *, device: DeviceSpec | str | None = None) -> None:
+    """A template over ``slots``, a named parameter list with holes; see ``scaly.function``."""
+    self.name = name
+    self._fn = fn
+    self._slots = slots
+    self._output = output
+    self._device = device
+    self._signature = inspect.signature(fn)
+    self._cache: dict[tuple[TensorType, ...], ConcreteFunction[PS, PN, SO, NO]] = {}
+    self._instances: dict[str, ConcreteFunction[PS, PN, SO, NO]] = {}
+    # The same instances by the arguments' flat shapes and dtypes, which decide the binding when the
+    # arguments bind at all: a hit skips building the bound declaration, and the instance's own call
+    # still checks structure and fixed shapes.
+    self._by_arguments: dict[tuple[Any, ...], ConcreteFunction[PS, PN, SO, NO]] = {}
+
+  def __repr__(self) -> str:
+    slots = ", ".join(f"{name}: {decl.shape if isinstance(decl, TensorType) else decl}" for name, decl in zip(self._slots.names, self._slots.decls))
+    return f"Function({self.name!r}, ({slots}) -> {self._output.names}, instances={list(self._instances)})"
+
+  def __getattr__(self, name: str) -> Any:
+    # Reached only for an attribute the object lacks: on a template, a graph attribute is its instance's.
+    if name in _GRAPH_ATTRIBUTES and not self.is_concrete:
+      return getattr(self.concrete, name)
+    raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+
+  @property
+  def is_concrete(self) -> bool:
+    """Whether every parameter's shape is declared, so that this Function is its one instance."""
+    return False
+
+  @property
+  def concrete(self) -> ConcreteFunction[PS, PN, SO, NO]:
+    """The one instance of a fully declared Function; a template with holes raises ``NotConcrete``."""
+    holes = ", ".join(f"{name}: {decl}" for name, decl in zip(self._slots.names, self._slots.decls) if isinstance(decl, Hole))
+    raise NotConcrete(
+      f"{self.name} leaves {holes} to its calls; build an instance with {self.name}.instantiate(...), "
+      "one shape, TensorType or example per parameter, or declare the shapes in @sc.function"
+    )
+
+  @property
+  def instances(self) -> dict[str, ConcreteFunction[PS, PN, SO, NO]]:
+    """The instances built so far, by name; each one's name is its C symbol."""
+    return dict(self._instances)
+
+  def instantiate(self, *specs: Any, **kwargs: Any) -> ConcreteFunction[PS, PN, SO, NO]:
+    """Bind the holes ahead of time and return the instance, cached as a call's would be.
+
+    One declaration per parameter, as in the decorator: a shape (``3``, ``(n, m)``), a
+    ``TensorType``, a tree without holes, or an example ``ndarray``, ``Expr`` or ``SparseMatrix``.
+    A tuple of ints is a shape; any other tuple is a group's parts.
+    """
+    values = self._bind(specs, kwargs) if kwargs else specs
+    return self._instance(tuple(_example(spec) for spec in values), f"{self.name}.instantiate")
+
+  # The numerical overload comes first on purpose: a Function built from bare expressions has
+  # ``Any`` parameter lists, both overloads then match, and the first one wins. Evaluation is the
+  # reading that untyped code wants, and a typed symbolic call still resolves exactly because
+  # ``Expr`` is not assignable to the numerical leaf type.
+  @overload
+  def __call__(self, *args: PN.args, **kwargs: PN.kwargs) -> NO: ...
+
+  @overload
+  def __call__(self, *args: PS.args, **kwargs: PS.kwargs) -> SO: ...
+
+  def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    """Call the instance the arguments bind; see ``ConcreteFunction.__call__``."""
+    values = self._bind(args, kwargs) if kwargs else args
+    return self._instance(values, self.name)(*values)
+
+  def symbolic_call(self, *args: PS.args, **kwargs: PS.kwargs) -> SO:
+    """Embed a call node to the instance the arguments bind, building it if needed."""
+    values: Any = self._bind(args, kwargs) if kwargs else args
+    return self._instance(values, f"{self.name}.symbolic_call").symbolic_call(*values)
+
+  def numerical_call(self, *args: PN.args, **kwargs: PN.kwargs) -> NO:
+    """Evaluate the instance the arguments bind, building and compiling it if needed."""
+    values: Any = self._bind(args, kwargs) if kwargs else args
+    return self._instance(values, f"{self.name}.numerical_call").numerical_call(*values)
+
+  def _instance(self, args: tuple[Any, ...], what: str) -> ConcreteFunction[PS, PN, SO, NO]:
+    """The instance for these arguments: the holes bound to their shapes, traced on first use."""
+    arguments = _argument_key(args)
+    if arguments is not None and (hit := self._by_arguments.get(arguments)) is not None:
+      return hit
+    slots = self._slots.parts
+    if len(args) != len(slots):
+      raise self._arity_error(len(args))
+    bound = param_list(*(slot.bind(arg, what) for slot, arg in zip(slots, args, strict=True)))
+    key = bound.types
+    instance = self._cache.get(key)
+    if instance is None:
+      name = instance_name(self.name, self._slots.decls, key)
+      if name in self._instances:
+        raise RuntimeError(f"{self.name}: two argument signatures would share the instance name {name!r}")
+      _log.debug("instantiating %s", name)
+      instance = ConcreteFunction(name, self._fn, bound, self._output, device=self._device)
+      self._cache[key] = self._instances[name] = instance
+    if arguments is not None:
+      self._by_arguments[arguments] = instance
+    return instance
+
+  def _bind(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[Any, ...]:
+    if self._signature is None:
+      raise TypeError(f"{self.name}() takes positional arguments only, got {', '.join(kwargs)}")
+    return self._signature.bind(*args, **kwargs).args
+
+  def _arity_error(self, got: int) -> TypeError:
+    if self._signature is not None:
+      labels = list(self._signature.parameters)
+    else:
+      labels = [slot.names[0] if slot.size == 1 else f"({', '.join(slot.names)})" for slot in self.input_tree.parts]
+    return TypeError(f"{self.name}() takes {len(labels)} argument{'' if len(labels) == 1 else 's'} ({', '.join(labels)}), got {got}")
+
+  @property
+  def input_shapes(self) -> tuple[tuple[int, ...], ...]:
+    """The input leaf shapes in C-signature order."""
+    return self.concrete.input_shapes
+
+  @property
+  def output_shapes(self) -> tuple[tuple[int, ...], ...]:
+    """The output leaf shapes in C-signature order."""
+    return self.concrete.output_shapes
+
+  def input_map(self) -> dict[str, Expr]:
+    return self.concrete.input_map()
+
+  def output_map(self) -> dict[str, Expr]:
+    return self.concrete.output_map()
+
+  def output_sparsity_map(self) -> dict[str, SparsityType | None]:
+    return self.concrete.output_sparsity_map()
+
+  def factory(
+    self, name: str, inputs: Sequence[str], outputs: Sequence[str | DerivSpec], aux: Mapping[str, Sequence[str]] | None = None
+  ) -> ConcreteFunction:
+    """Derive a Function carrying the requested outputs and derivatives; see ``ConcreteFunction.factory``."""
+    return self.concrete.factory(name, inputs, outputs, aux)
+
+  def with_device(self, device: DeviceSpec | str) -> Function[PS, PN, SO, NO]:
+    """The same template, its instances placed on ``device``."""
+    return Function(self.name, self._fn, self._slots, self._output, device=device)
+
+  def recompile(self) -> None:
+    """Drop every instance's compiled handle and on-disk cache entry."""
+    for instance in self._instances.values():
+      instance.recompile()
+
+  def solver_stats(self, name: str | None = None) -> SolverStats:
+    """The latest stats for a solver reached by the one instance; see ``ConcreteFunction.solver_stats``."""
+    return self.concrete.solver_stats(name)
+
+  @staticmethod
+  def _from_exprs(
+    name: str,
+    inputs: Sequence[Expr],
+    outputs: Sequence[Expr],
+    input_names: Sequence[str] | None = None,
+    output_names: Sequence[str] | None = None,
+    output_sparsities: Sequence[SparsityType | None] | None = None,
+    device: DeviceSpec | str | None = None,
+    output_coloring_widths: Sequence[int | None] | None = None,
+  ) -> ConcreteFunction[Any, Any, Any, Any]:
+    """A ConcreteFunction over expressions already built: no inputs take no argument, one input one leaf, more one group."""
+    inputs = tuple(inputs)
+    outputs = tuple(outputs)
+    raw_input_names = tuple(input_names) if input_names is not None else tuple(expr.name for expr in inputs)
+    if any(name is None for name in raw_input_names):
+      raise ValueError("all inputs must have names")
+    resolved_input_names = cast(tuple[str, ...], raw_input_names)
+    resolved_output_names = tuple(output_names) if output_names is not None else tuple(expr.name or f"out{i}" for i, expr in enumerate(outputs))
+    if len(resolved_input_names) != len(inputs):
+      raise ValueError(f"expected {len(inputs)} input names, got {len(resolved_input_names)}")
+    if len(resolved_output_names) != len(outputs):
+      raise ValueError(f"expected {len(outputs)} output names, got {len(resolved_output_names)}")
+    instance = ConcreteFunction.__new__(ConcreteFunction)
+    instance._init_graph(
+      name,
+      inputs,
+      outputs,
+      param_list(flat_tree(resolved_input_names, tuple(expr.type for expr in inputs))) if inputs else param_list(),
+      flat_tree(resolved_output_names, tuple(expr.type for expr in outputs)),
+      output_sparsities,
+      device,
+      output_coloring_widths,
+    )
+    return instance
+
+
+def instance_name(name: str, decls: Sequence[LeafDecl], types: Sequence[TensorType]) -> str:
+  """The deterministic name of a template's instance: the template's name, ``__``, then one token per
+  hole: its bound dimensions joined by ``x`` (only the ``None`` ones of a partial shape), ``s`` for
+  a scalar, and the dtype's name when the hole left the dtype open and it is not ``float64``."""
+  tokens = []
+  for decl, type_ in zip(decls, types, strict=True):
+    if isinstance(decl, Hole):
+      dims = type_.shape if decl.dims is None else tuple(n for d, n in zip(decl.dims, type_.shape) if d is None)
+      token = "x".join(map(str, dims)) if dims else "s"
+      tokens.append(token + (type_.dtype.name if decl.dtype is None and type_.dtype != dtypes.float64 else ""))
+  return f"{name}__{'_'.join(tokens)}"
+
+
+def _argument_key(args: tuple[Any, ...]) -> tuple[Any, ...] | None:
+  """The count, flat shapes and ``Expr`` dtypes of a call's arguments, or ``None`` when a leaf is a
+  ``SymbolicValue``, whose pattern may matter too."""
+  key: list[Any] = [len(args)]
+  for leaf in _leaves(args):
+    if isinstance(leaf, Expr):
+      key.append((leaf.shape, leaf.type.dtype))
+    elif isinstance(leaf, SymbolicValue):
+      return None
+    else:
+      key.append(np.shape(leaf))
+  return tuple(key)
+
+
+def _example(spec: Any) -> Any:
+  """A value standing for one parameter's declaration in ``instantiate``: arrays and symbolic values as
+  they are, a shape or ``TensorType`` as a symbol of it, a tree as its symbols, another tuple as parts."""
+  if isinstance(spec, (Expr, SymbolicValue, np.ndarray)):
+    return spec
+  if isinstance(spec, Tree):
+    return spec.named("_").symbols()
+  if isinstance(spec, TensorType):
+    return Expr.sym("_", spec.shape, dtype=spec.dtype)
+  shape_like = (int, np.integer)
+  if isinstance(spec, shape_like) or (isinstance(spec, tuple) and all(isinstance(d, shape_like) for d in spec)):
+    return Expr.sym("_", as_shape(tuple(int(d) for d in spec) if isinstance(spec, tuple) else int(spec)))
+  if isinstance(spec, tuple):
+    return tuple(_example(item) for item in spec)
+  raise TypeError(f"instantiate takes a shape, a TensorType, a tree or an example array per parameter, got {spec!r}")
+
+
+class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
   """A named expression graph: named inputs, named outputs, and the computation between them.
 
-  ``Function`` is the unit of three things at once. **Composition** — ``fn(inputs)`` with ``Expr``
+  The one instance of a fully declared ``Function``, or one of a template's. It is the unit of three
+  things at once. **Composition** — ``fn(inputs)`` with ``Expr``
   leaves puts a first-class call node in a larger graph. Lowering may inline small pure callees
   when it scalarizes a procedure. **Differentiation** — ``fn.factory(...)``
   derives a new ``Function`` carrying the requested derivatives. **Compilation** — ``fn(inputs)``
@@ -83,11 +380,7 @@ class ConcreteFunction[**PS, **PN, SO, NO]:
   Use ``@scaly.function(...)`` to build one from a Python body.
   """
 
-  descriptor: Any
-  input_tree: _G
-  output_tree: Tree[SO, NO]
-
-  def __init__(
+  def __init__(  # no super().__init__(): an instance keeps no template state
     self,
     name: str,
     fn: Callable[PS, SO],
@@ -111,42 +404,6 @@ class ConcreteFunction[**PS, **PN, SO, NO]:
       self._signature = inspect.signature(fn)
     except (TypeError, ValueError):
       pass
-
-  @classmethod
-  def _from_exprs(
-    cls,
-    name: str,
-    inputs: Sequence[Expr],
-    outputs: Sequence[Expr],
-    input_names: Sequence[str] | None = None,
-    output_names: Sequence[str] | None = None,
-    output_sparsities: Sequence[SparsityType | None] | None = None,
-    device: DeviceSpec | str | None = None,
-    output_coloring_widths: Sequence[int | None] | None = None,
-  ) -> ConcreteFunction[Any, Any, Any, Any]:
-    inputs = tuple(inputs)
-    outputs = tuple(outputs)
-    raw_input_names = tuple(input_names) if input_names is not None else tuple(expr.name for expr in inputs)
-    if any(name is None for name in raw_input_names):
-      raise ValueError("all inputs must have names")
-    resolved_input_names = cast(tuple[str, ...], raw_input_names)
-    resolved_output_names = tuple(output_names) if output_names is not None else tuple(expr.name or f"out{i}" for i, expr in enumerate(outputs))
-    if len(resolved_input_names) != len(inputs):
-      raise ValueError(f"expected {len(inputs)} input names, got {len(resolved_input_names)}")
-    if len(resolved_output_names) != len(outputs):
-      raise ValueError(f"expected {len(outputs)} output names, got {len(resolved_output_names)}")
-    instance = cls.__new__(cls)
-    instance._init_graph(
-      name,
-      inputs,
-      outputs,
-      param_list(flat_tree(resolved_input_names, tuple(expr.type for expr in inputs))) if inputs else param_list(),
-      flat_tree(resolved_output_names, tuple(expr.type for expr in outputs)),
-      output_sparsities,
-      device,
-      output_coloring_widths,
-    )
-    return instance
 
   def _init_graph(
     self,
@@ -205,9 +462,30 @@ class ConcreteFunction[**PS, **PN, SO, NO]:
 
   def __repr__(self) -> str:
     suffix = f" device={self.device}" if self.device.kind != "host" else ""
-    return f"Function({self.name!r}, {self.input_names}->{self.output_names}{suffix})"
+    return f"ConcreteFunction({self.name!r}, {self.input_names}->{self.output_names}{suffix})"
 
-  def with_device(self, device: DeviceSpec | str) -> "ConcreteFunction":
+  @property
+  def is_concrete(self) -> bool:
+    return True
+
+  @property
+  def concrete(self) -> ConcreteFunction[PS, PN, SO, NO]:
+    return self
+
+  @property
+  def instances(self) -> dict[str, ConcreteFunction[PS, PN, SO, NO]]:
+    return {self.name: self}
+
+  def instantiate(self, *specs: Any, **kwargs: Any) -> ConcreteFunction[PS, PN, SO, NO]:
+    """Check the declarations against this Function's and return it; see ``Function.instantiate``."""
+    values = self._bind(specs, kwargs) if kwargs else specs
+    if len(values) != len(self.input_tree.parts):
+      raise self._arity_error(len(values))
+    for slot, spec in zip(self.input_tree.parts, values, strict=True):
+      slot.bind(_example(spec), f"{self.name}.instantiate")
+    return self
+
+  def with_device(self, device: DeviceSpec | str) -> ConcreteFunction[PS, PN, SO, NO]:
     """Return a copy of this Function placed on ``device``.
 
     This is a placement policy hint (see roadmap Phase 1 / Phase 9). Today
@@ -302,18 +580,6 @@ class ConcreteFunction[**PS, **PN, SO, NO]:
     actuals = [array for slot, arg in zip(slots, values) for array in slot.flatten_numerical(arg, what)]
     return cast(NO, self.output_tree.unflatten(self._flat_numerical_call(*actuals)))
 
-  def _bind(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[Any, ...]:
-    if self._signature is None:
-      raise TypeError(f"{self.name}() takes positional arguments only, got {', '.join(kwargs)}")
-    return self._signature.bind(*args, **kwargs).args
-
-  def _arity_error(self, got: int) -> TypeError:
-    if self._signature is not None:
-      labels = list(self._signature.parameters)
-    else:
-      labels = [slot.names[0] if slot.size == 1 else f"({', '.join(slot.names)})" for slot in self.input_tree.parts]
-    return TypeError(f"{self.name}() takes {len(labels)} argument{'' if len(labels) == 1 else 's'} ({', '.join(labels)}), got {got}")
-
   def _compile(self) -> Any:
     """Lazily JIT-compile this function and cache the handle."""
     if self._compiled is None:
@@ -383,6 +649,8 @@ class ConcreteFunction[**PS, **PN, SO, NO]:
     for name, expected, actual in zip(self.input_names, self.inputs, actuals, strict=True):
       if expected.shape != actual.shape:
         raise ValueError(f"call argument {name!r} has shape {actual.shape}, expected {expected.shape}")
+      if expected.type.dtype != actual.type.dtype:
+        raise ValueError(f"call argument {name!r} has dtype {actual.type.dtype.name}, expected {expected.type.dtype.name}")
     actual_diff = any(arg.type.diff for arg in actuals)
     return tuple(
       Expr(
@@ -444,7 +712,3 @@ class ConcreteFunction[**PS, **PN, SO, NO]:
     return ConcreteFunction._from_exprs(
       name, ret_inputs, ret_outputs, inputs, ret_output_names, ret_sparsities, output_coloring_widths=ret_coloring_widths
     )
-
-
-# The temporary alias while the tree migrates: the template takes the name `Function` in P2.
-Function = ConcreteFunction
