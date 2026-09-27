@@ -1,20 +1,22 @@
-<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Generated PIQP Speed</title>
+<meta charset="utf-8">
+<title>Generated PIQP Speed Pass</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <style>
 :root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
-@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
-main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
-.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
-pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding-inline:16px;padding-block:36px 72px}
+h1,h2,h3{text-wrap:balance}h1{font-size:26px;line-height:1.2;margin:0 0 6px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}h3{font-size:15px;margin:22px 0 6px;letter-spacing:.02em}
+p,li{max-width:78ch}.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}pre code{overflow-wrap:normal}
 .box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
 .scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
 table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
-th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}th.r{text-align:right}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
 .ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
 </style>
-</head><body><main>
+<main>
 <h1>Speeding up the generated PIQP</h1>
 <p class="sub">Where the generated solvers spend their time, what changed in the generated code, and the result · branch <code>claude/ipm-speed</code> (on <code>claude/examples-tinympc-notebooks</code>), todo C-135 … C-141 · 27 Sep 2026 · Apple M3 Max, Apple clang 21, the JIT's <code>-O2 -mcpu=native -fno-math-errno</code></p>
 
@@ -228,4 +230,4 @@ uv run internal/notes/perf_2026_09_27_ipm_speed/gen.py --variant final --problem
 uv run internal/notes/perf_2026_09_27_ipm_speed/timing.py --variants base,final --rounds 5 --piqp
 uv run internal/notes/perf_2026_09_27_ipm_speed/prof.py internal/notes/perf_2026_09_27_ipm_speed/build/final/QSC205_sparse</pre>
 <p>The table this report shows is <code>perf_2026_09_27_ipm_speed/results_2026_09_27.md</code>.</p>
-</main></body></html>
+</main>

@@ -1,6 +1,6 @@
 # Speeding up the generated PIQP, 2026-09-27
 
-Studies behind `../ipm_speed_report.html` (todo C-135 onward). Run each from the repository root.
+Studies behind `../ipm_speed_report.html` (todo C-135 onward; published, private, at https://claude.ai/artifact/GRnWSk5YoF8fV3QYyLivk3). Run each from the repository root.
 Timings come from an Apple M3 Max with Apple clang 21 at the JIT's flags (`-O2 -mcpu=native
 -fno-math-errno`); they are indicative, not reference-machine results, and no page under `docs/`
 cites them.
