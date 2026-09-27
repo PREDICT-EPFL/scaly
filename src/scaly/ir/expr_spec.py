@@ -293,6 +293,13 @@ def _factor_shape(expr: Expr) -> str | None:
   return None
 
 
+def _lu_shape(expr: Expr) -> str | None:
+  a = expr.args[0]
+  if len(a.shape) != 2 or a.shape[0] != a.shape[1] or expr.shape != (a.shape[0] + 1, a.shape[0]):
+    return f"lu needs a square matrix and gives the factors and the permutation, (n + 1, n); got {a.shape} -> {expr.shape}"
+  return None
+
+
 def _sparse_ldl_tables(expr: Expr) -> str | None:
   missing = [k for k in SPARSE_LDL_TABLES if k not in expr.attrs]
   if missing:
@@ -526,6 +533,7 @@ spec_expr = Spec(
     *(Rule(op, "index-update", _index_update) for op in (ExprOp.INDEX_ADD, ExprOp.INDEX_SET)),
     Rule(ExprOp.TAKE, "take-shapes", _take_shapes),
     *(Rule(op, "factor-shape", _factor_shape) for op in (ExprOp.CHOLESKY, ExprOp.LDL)),
+    Rule(ExprOp.LU, "lu-shape", _lu_shape),
     Rule(ExprOp.SPARSE_LDL, "sparse-ldl-tables", _sparse_ldl_tables),
     Rule(ExprOp.SPARSE_LDL_SOLVE, "sparse-ldl-solve-tables", _sparse_ldl_solve_tables),
     Rule(ExprOp.TRISOLVE, "trisolve-shapes", _trisolve_shapes),

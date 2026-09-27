@@ -87,6 +87,7 @@ class ExprOp(StrEnum):
   MATMUL = "matmul"
   CHOLESKY = "cholesky"
   LDL = "ldl"
+  LU = "lu"
   SPARSE_LDL = "sparse_ldl"
   SPARSE_LDL_SOLVE = "sparse_ldl_solve"
   TRISOLVE = "trisolve"
@@ -162,6 +163,7 @@ COMMON_STRUCTURAL = {
   ExprOp.MATMUL,
   ExprOp.CHOLESKY,
   ExprOp.LDL,
+  ExprOp.LU,
   ExprOp.SPARSE_LDL,
   ExprOp.SPARSE_LDL_SOLVE,
   ExprOp.TRISOLVE,
@@ -256,6 +258,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.MATMUL: OpInfo(ExprOp.MATMUL, 2, np.matmul),
   ExprOp.CHOLESKY: OpInfo(ExprOp.CHOLESKY, 1, None),
   ExprOp.LDL: OpInfo(ExprOp.LDL, 1, None),
+  ExprOp.LU: OpInfo(ExprOp.LU, 1, None),
   ExprOp.SPARSE_LDL: OpInfo(ExprOp.SPARSE_LDL, 1, None),
   ExprOp.SPARSE_LDL_SOLVE: OpInfo(ExprOp.SPARSE_LDL_SOLVE, 2, None),
   ExprOp.TRISOLVE: OpInfo(ExprOp.TRISOLVE, 2, None),
@@ -961,6 +964,19 @@ def ldl(a: Any) -> Expr:
   triangle of ``a`` is read."""
   a = _square(a, "ldl")
   return Expr(ExprOp.LDL, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), attrs=_unroll_attr(a.shape[0]), lowering=a.lowering)
+
+
+def lu(a: Any) -> Expr:
+  """``P A = L U`` with partial pivoting (the row of largest magnitude in each column), packed in one
+  ``(n + 1, n)`` array: rows ``0 .. n-1`` hold ``L`` (unit lower) below the diagonal and ``U`` on and
+  above it, and row ``n`` holds the permutation, ``perm[i]`` the row of ``A`` that became row ``i``,
+  as a float. A singular matrix gives a zero pivot, and inf or NaN in what follows it.
+
+  The factorization has no derivative of its own: ``linalg.solve(a, b, assume="gen")`` solves with
+  it and differentiates implicitly, as ``SparseLDL.solve`` does."""
+  a = _square(a, "lu")
+  n = a.shape[0]
+  return Expr(ExprOp.LU, (a,), TensorType((n + 1, n), dtype=a.type.dtype, diff=a.type.diff), attrs=_unroll_attr(n), lowering=a.lowering)
 
 
 SPARSE_LDL_TABLES = ("a_ptr", "a_rows", "a_src", "l_ptr", "l_rows", "r_cols", "r_pos", "ck_ptr", "ck_q", "ck_width", "ck_len")

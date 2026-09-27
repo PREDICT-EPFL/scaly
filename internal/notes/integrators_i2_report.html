@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integrators I2 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Tier 2 · PR 9 report</h1>
+<h1>Integrators · I2 report</h1>
+<p class="sub">C-143 · a general dense solve: LU with partial pivoting · branch <code>claude/integrators-mpc</code> · 27 Sep 2026 · plan <code>integrators_mpc_plan_2026_09_27.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Scaly can now solve with any nonsingular dense matrix. The implicit integrators of I3 needed this: their Newton matrix <code>I − h A⊗J</code> is not symmetric.</p>
+<ul>
+<li><b><code>linalg.lu(A)</code></b> is a new expression op, <code>P A = L U</code> with LAPACK's pivot choice. Its factors and permutation equal SciPy's to 1e-12, including the pivot sequence.</li>
+<li><b><code>linalg.solve(A, b, assume="gen")</code></b> differentiates implicitly with two levels of rules, as <code>SparseLDL.solve</code> does. Jacobians match their closed forms to 1e-11, and Hessians and reverse-over-reverse derivatives work without the factorization ever being differentiated.</li>
+<li><b>Against LAPACK <code>dgesv</code></b> (Accelerate), the generated solve takes <b>0.12×</b> the time at order 4, <b>0.51×</b> at order 8, and <b>0.94–1.05×</b> from order 12 to 40. The kill criterion (above 3× at order 12 or less) is far away.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 488 passed, 42 skipped. The one failure is still Colin's uncommitted <code>tiny_qp</code> gallery test. ruff and ty are clean on <code>src/</code> and the new tests. <b>Mutation checks:</b> 24 of 24 killed; three only after a test was added.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>ExprOp.LU</code> (<code>ir/expr.py</code>)</td><td>
+<ul>
+<li>The output is <code>(n + 1, n)</code>. Rows <code>0..n-1</code> hold <code>L</code> (unit lower) below the diagonal and <code>U</code> on and above it. Row <code>n</code> holds the permutation as floats, so <code>L U = A[perm]</code>.</li>
+<li>The permutation is a row rather than a column so that the factors are a contiguous prefix. The triangular solves read <code>F[:n]</code> directly.</li>
+<li>Carries the <code>unroll</code> attribute like the other dense factorizations. There is a verify rule (<code>lu-shape</code>) and a structural sparsity rule that is dense: pivoting moves any row anywhere.</li>
+</ul></td></tr>
+<tr><td>Lowering (<code>passes/lowering.py</code>)</td><td>
+<ul>
+<li><b>The algorithm.</b> Right-looking elimination in place in the result. Per column:
+<ul>
+<li>the pivot search keeps a strict <code>&lt;</code>, so the first row wins a tie, as LAPACK's <code>idamax</code>;</li>
+<li>a full-row swap, the permutation included;</li>
+<li>a divide down the column;</li>
+<li>the trailing update.</li>
+</ul></li>
+<li><b>Straight-line form</b> (order ≤ <code>dense_unroll</code>). Every access is at a constant address. The swap is <code>select</code>s on the run-time pivot: <code>n − k</code> per entry of row <code>k</code>, and one per entry below it. That keeps the code open to scalar expansion.</li>
+<li><b>Looped form.</b> Swaps through loads and stores at <code>pivot·n + j</code>. The C does not grow with the order: 123 lines at 12, 24 and 40.</li>
+<li><b>No new program op</b> was needed: loads at computed addresses, <code>select</code>, compare, <code>abs</code> and casts were all there.</li>
+</ul></td></tr>
+<tr><td>AD (<code>ad/forward.py</code>, <code>ad/reverse.py</code>)</td><td><code>lu</code> refuses a tangent or a cotangent in all three places a derivative can reach it (<code>LU_NO_DERIVATIVE</code>): single seed, multiple seeds and reverse. This follows the looped sparse factorization's precedent. A dependence check that finds no tangent never gets there.</td></tr>
+<tr><td><code>linalg/dense.py</code></td><td>
+<ul>
+<li><b><code>lu_solve(F, b, trans=False)</code></b> is built from existing ops. It forms <code>take</code> of <code>b</code> at the permutation, then two <code>solve_triangular</code>s. With <code>trans</code>, it runs two transposed sweeps and then <code>put</code>s at the permutation.</li>
+<li><b><code>solve(assume="gen")</code></b> calls a Function <code>(A, F, b) → x</code> with <code>F = lu(A)</code> computed outside. It has a transposed twin. Both carry <code>custom_derivative</code> rules:
+<ul>
+<li><code>dx = A⁻¹(db − dA x)</code>;</li>
+<li>in reverse, <code>b̄ = A⁻ᵀ x̄</code> and <code>Ā = −b̄ xᵀ</code>, with the twin's formulas mirrored;</li>
+<li>the factor's cotangent is a constant zero, so reverse mode never reaches <code>lu</code>.</li>
+</ul></li>
+<li><b>Two levels of rules.</b> Each level's rules call the other Function at the level below, so second derivatives are implicit too.</li>
+<li><b>Matrix right-hand sides</b> go through one <code>vmap</code> over the columns.</li>
+</ul></td></tr>
+<tr><td>Docs</td><td>A new section of <code>docs/guide/linalg.md</code> covers the op, the solves, derivatives, generated code and speed. The package map in <code>docs/dev/codebase.md</code> is updated.</td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<p><code>tests/linalg/test_lu.py</code> has 29 tests.</p>
+<ul>
+<li><b>Factors.</b> Orders 1, 2, 3, 8, 9, 13, 24 and 40 are checked on three kinds of matrix: one that needs pivoting (a zero corner and a large off-diagonal entry), a random one, and a permutation matrix. For each:
+<ul>
+<li><code>L U = A[perm]</code>;</li>
+<li>the permutation equals SciPy's;</li>
+<li><code>L</code> and <code>U</code> equal SciPy's.</li>
+</ul></li>
+<li><b>Ties.</b> A tie picks the first row, and every multiplier is at most 1.</li>
+<li><b>Solves.</b>
+<ul>
+<li>Vector, matrix, transposed and transposed-matrix solves against NumPy.</li>
+<li>Backward stability at cond 10¹⁰: relative residual below 1e-14.</li>
+<li>A singular matrix gives non-finite values.</li>
+</ul></li>
+<li><b>Derivatives.</b>
+<ul>
+<li>The Jacobians in <code>A</code> and <code>b</code> and the adjoints are checked against their closed forms.</li>
+<li>Reverse over reverse through the adjoint.</li>
+<li>Hessians in <code>A</code> against finite differences of the gradient, in an objective that also solves with <code>Aᵀ</code>.</li>
+<li>The factorization refuses in forward, multi-seed and reverse mode.</li>
+</ul></li>
+<li><b>Code.</b> Straight-line up to <code>dense_unroll</code>, loops above it with a size that does not grow. <code>dense_unroll=0</code> forces the loops and gives identical factors.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>#</th><th>Mutant</th><th>Result</th></tr>
+<tr><td>L1–L2</td><td>ties pick the last row; pivot by signed value</td><td class="ok">killed (the SciPy pivot comparison, the tie test)</td></tr>
+<tr><td>L3–L5</td><td>straight-line swap: writes back the chosen row, skips the permutation, swaps only trailing columns</td><td class="ok">killed</td></tr>
+<tr><td>L6–L10</td><td>looped form: permutation unswapped, update from column <code>k</code>, stops a column early, multiplier multiplied, search skips a row</td><td class="ok">killed</td></tr>
+<tr><td>L11–L13</td><td>solve without the permutation; transposed solve with the unit flags swapped; without the inverse permutation</td><td class="ok">killed</td></tr>
+<tr><td>L14–L16, L18</td><td>jvp sign; transposed jvp without the transpose; plain vjp outer product transposed; vjp solving untransposed</td><td class="ok">killed</td></tr>
+<tr><td>L17</td><td>transposed Function's vjp outer product transposed</td><td class="warn">survived → killed</td></tr>
+<tr><td>L19</td><td>one level of rules only</td><td class="ok">killed (the Hessian reaches the factorization)</td></tr>
+<tr><td>L20, L23</td><td>sparsity rule not dense; verify rule accepting any shape</td><td class="ok">killed</td></tr>
+<tr><td>L21</td><td>single-seed forward refusal removed</td><td class="warn">survived → killed</td></tr>
+<tr><td>L22</td><td>reverse refusal removed</td><td class="ok">killed</td></tr>
+<tr><td>L24</td><td>the <code>unroll</code> attribute ignored</td><td class="warn">survived → killed</td></tr>
+</table></div>
+<p>What the three survivors needed:</p>
+<ul>
+<li><b>L17.</b> A reverse-over-reverse test. The transposed rule is only reached by differentiating the adjoint in reverse mode.</li>
+<li><b>L21.</b> A single-seed <code>jvp</code>. <code>sc.jacobian</code> takes the multi-seed path.</li>
+<li><b>L24.</b> A check that forced loops are loops in the C. The values agree either way.</li>
+</ul>
+<p>Removed on the way: a <code>sparsity=</code> override on the general solve. It changed nothing, because the body's own pattern is dense and cheap, and an option with no effect is a defect by the codebase rules.</p>
+
+<h2>3. Benchmarks</h2>
+<p><code>perf_2026_09_27_integrators/bench_lu.py</code> times <code>solve(a, b, assume="gen")</code> against a shim that copies the matrix and calls <code>dgesv_</code> from Accelerate.</p>
+<ul>
+<li>The shim is handed the matrix column-major, so neither side transposes.</li>
+<li>Both run through the same C driver. There are 5 interleaved rounds, and the fastest sample is kept.</li>
+<li>Solutions are checked before timing.</li>
+</ul>
+<p>Apple M3 Max, Apple clang 21; indicative.</p>
+<div class="scroll"><table>
+<tr><th>n</th><th>form</th><th>scaly ns</th><th>dgesv ns</th><th>scaly / LAPACK</th><th>C lines</th></tr>
+<tr><td class="r">4</td><td>straight-line</td><td class="r">14.4</td><td class="r">118.0</td><td class="r ok">0.12</td><td class="r">182</td></tr>
+<tr><td class="r">8</td><td>straight-line</td><td class="r">144.8</td><td class="r">283.0</td><td class="r ok">0.51</td><td class="r">822</td></tr>
+<tr><td class="r">12</td><td>loops</td><td class="r">500.0</td><td class="r">518.4</td><td class="r ok">0.96</td><td class="r">123</td></tr>
+<tr><td class="r">24</td><td>loops</td><td class="r">1 674.0</td><td class="r">1 587.0</td><td class="r">1.05</td><td class="r">123</td></tr>
+<tr><td class="r">40</td><td>loops</td><td class="r">5 243.1</td><td class="r">5 569.4</td><td class="r ok">0.94</td><td class="r">123</td></tr>
+</table></div>
+<p>At small orders, LAPACK's call overhead (argument checks, choosing the unblocked kernel) is most of its time. From order 12 on, both run the same right-looking algorithm.</p>
+
+<h2>4. Gates</h2>
+<div class="scroll"><table>
+<tr><th>Gate (plan §7, I2)</th><th>Status</th></tr>
+<tr><td>Matches NumPy to 1e-12 relative on random, pivoting and ill-conditioned matrices, orders 1 to 40</td><td class="ok">met. Factors to 1e-12 against SciPy. At cond 10¹⁰ the gate is backward error: the relative residual is below 1e-14, since the forward error of any solver scales with the conditioning.</td></tr>
+<tr><td>Derivatives match finite differences</td><td class="ok">met, and the closed forms to 1e-11</td></tr>
+<tr><td>Full suite</td><td class="ok">met</td></tr>
+<tr><td>Timed against LAPACK dgesv; kill if over 3× at n ≤ 12</td><td class="ok">0.12–0.96× at n ≤ 12</td></tr>
+</table></div>
+
+<h2>5. Next</h2>
+<p>I3 (API-144): the implicit Runge-Kutta families. Gauss-Legendre, Radau IIA and Lobatto tableaus come from their nodes. Newton on the stage equations uses this LU. The derivative is by the implicit function theorem, through <code>custom_derivative</code>.</p>
+</main></body></html>

@@ -956,6 +956,84 @@ def _lower_factor(ctx: LowerCtx, node: Expr) -> None:
   ctx.statements.append(p.for_(p.range_(i.attrs["name"], 0, n, kind=RangeKind.SERIAL), row))
 
 
+@lowers(ExprOp.LU)
+def _lower_lu(ctx: LowerCtx, node: Expr) -> None:
+  """Right-looking ``P A = L U`` with partial pivoting, in place in the ``(n + 1, n)`` result: rows
+  ``0 .. n-1`` start as ``A`` and row ``n`` as the identity permutation; column ``k`` finds the row
+  of largest magnitude at or below the diagonal (the first on a tie, as LAPACK), swaps it with row
+  ``k`` across every column and the permutation, divides the column below the pivot by it, and
+  updates the trailing block.
+
+  Small orders are straight-line code with every index a constant: the pivot row is a run-time
+  value, so the swap reads and writes through selects on it (``n - k`` per entry of row ``k``, one
+  per entry below it), which keeps every access at a fixed address for scalar expansion. Larger
+  orders loop, and swap through loads and stores at the pivot row's run-time address."""
+  a = node.args[0]
+  n = a.shape[0]
+  src, out, dt = ctx.buf_of(a), ctx.alloc_tmp(node), node.type.dtype
+  c = p.const_int
+  pivot, largest, keep = (p.view(ctx.new_private(t, ()), [c(0)]) for t in (dtypes.int64, dt, dt))
+
+  def at(i: ProgramNode, j: ProgramNode) -> ProgramNode:
+    return _entry(out, n, i, j)
+
+  def magnitude(i: ProgramNode, k: ProgramNode) -> ProgramNode:
+    return _unary_node(ProgramOp.ABS, p.load(at(i, k)))
+
+  def search(k: ProgramNode, i: ProgramNode) -> list[ProgramNode]:
+    """Row ``i`` becomes column ``k``'s pivot when strictly larger than the best so far."""
+    value = magnitude(i, k)
+    better = p.compare(ProgramOp.LT, p.load(largest), value)
+    return [p.store(pivot, p.select(better, i, p.load(pivot))), p.store(largest, p.select(better, value, p.load(largest)))]
+
+  def eliminate(k: ProgramNode, i: ProgramNode, j: ProgramNode) -> ProgramNode:
+    return p.store(at(i, j), p.sub(p.load(at(i, j)), p.mul(p.load(at(i, k)), p.load(at(k, j)))))
+
+  def scale(k: ProgramNode, i: ProgramNode) -> ProgramNode:
+    return p.store(at(i, k), p.div(p.load(at(i, k)), p.load(at(k, k))))
+
+  if node.attrs.get("unroll", n <= DENSE_UNROLL):
+    for i in range(n):
+      ctx.statements.extend(p.store(at(c(i), c(j)), p.load(_entry(src, n, c(i), c(j)))) for j in range(n))
+    ctx.statements.extend(p.store(at(c(n), c(j)), p.const_float(float(j), dtype=dt)) for j in range(n))
+    for k in range(n - 1):
+      ctx.statements += [p.store(pivot, c(k)), p.store(largest, magnitude(c(k), c(k)))]
+      for i in range(k + 1, n):
+        ctx.statements.extend(search(c(k), c(i)))
+      is_pivot = {i: p.compare(ProgramOp.EQ, p.load(pivot), c(i)) for i in range(k + 1, n)}
+      for j in range(n + 1):  # every column, then (j = n) the permutation, entry i of row n
+        cells = {i: at(c(i), c(j)) if j < n else p.view(out, [c(n * n + i)]) for i in range(k, n)}
+        chosen = p.load(cells[k])
+        for i in range(k + 1, n):
+          chosen = p.select(is_pivot[i], p.load(cells[i]), chosen)
+        ctx.statements += [p.store(keep, p.load(cells[k])), p.store(cells[k], chosen)]
+        ctx.statements.extend(p.store(cells[i], p.select(is_pivot[i], p.load(keep), p.load(cells[i]))) for i in range(k + 1, n))
+      for i in range(k + 1, n):
+        ctx.statements.append(scale(c(k), c(i)))
+        ctx.statements.extend(eliminate(c(k), c(i), c(j)) for j in range(k + 1, n))
+    return
+  nm = out.attrs["name"]
+  i, j, k = (p.var(f"{v}_{nm}") for v in ("ui", "uj", "uk"))
+  copy = p.for_(p.range_(j.attrs["name"], 0, n, kind=RangeKind.GLOBAL), [p.store(at(i, j), p.load(_entry(src, n, i, j)))])
+  ctx.statements.append(p.for_(p.range_(i.attrs["name"], 0, n, kind=RangeKind.GLOBAL), [copy]))
+  ctx.statements.append(p.for_(p.range_(j.attrs["name"], 0, n, kind=RangeKind.GLOBAL), [p.store(at(c(n), j), p.cast(j, dt))]))
+
+  def swap(cell_k: ProgramNode, cell_p: ProgramNode) -> list[ProgramNode]:
+    return [p.store(keep, p.load(cell_k)), p.store(cell_k, p.load(cell_p)), p.store(cell_p, p.load(keep))]
+
+  row = p.load(pivot)
+  update = p.for_(p.range_(j.attrs["name"], p.add(k, c(1)), n, kind=RangeKind.GLOBAL), [eliminate(k, i, j)])
+  column = [
+    p.store(pivot, k),
+    p.store(largest, magnitude(k, k)),
+    p.for_(p.range_(i.attrs["name"], p.add(k, c(1)), n), search(k, i)),
+    p.for_(p.range_(j.attrs["name"], 0, n), swap(at(k, j), at(row, j))),
+    *swap(at(c(n), k), at(c(n), row)),
+    p.for_(p.range_(i.attrs["name"], p.add(k, c(1)), n, kind=RangeKind.GLOBAL), [scale(k, i), update]),
+  ]
+  ctx.statements.append(p.for_(p.range_(k.attrs["name"], 0, n - 1), column))
+
+
 CHOLESKY_TILE = 4
 """The side of the register tiles of the looped dense Cholesky."""
 

@@ -38,6 +38,7 @@ from ..ir.expr import (
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.options import get_options
 from .forward import (
+  LU_NO_DERIVATIVE,
   SPARSE_LDL_NO_DERIVATIVE,
   _is_zero_const,
   _minus_one,
@@ -569,6 +570,8 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return (_factor_cotangent(expr, cot),)
   if expr.op == ExprOp.SPARSE_LDL:
     raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
+  if expr.op == ExprOp.LU:
+    raise NotImplementedError(LU_NO_DERIVATIVE)
   if expr.op == ExprOp.RAGGED_ADD:
     base, src, lo, hi, scale = args
     dmap, smap = expr.attrs["dst_map"], expr.attrs["src_map"]

@@ -164,6 +164,11 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     return mask
   if expr.op == ExprOp.SPARSE_LDL:
     return _compose(_sparse_ldl_reads(expr), _jac_mask(expr.args[0], wrt, memo))
+  if expr.op == ExprOp.LU:
+    # Pivoting moves any row anywhere: every entry of the factors and the permutation may depend on every entry.
+    a = expr.args[0]
+    dense = _incidence((expr.size, a.size), np.repeat(np.arange(expr.size), a.size), np.tile(np.arange(a.size), expr.size))
+    return _compose(dense, _jac_mask(a, wrt, memo))
   if expr.op == ExprOp.SPARSE_LDL_SOLVE:
     # Every unknown may depend on every entry of the factor and of the right-hand side.
     mask = _empty((expr.size, wrt.size))

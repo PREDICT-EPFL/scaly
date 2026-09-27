@@ -18,7 +18,7 @@ y = linalg.solve_triangular(L, B, trans=True)  # L^T Y = B, B a matrix of right-
 linalg.cho_solve(L, b)                       # A^{-1} b from the Cholesky factor
 linalg.ldl_solve(F, b)                       # K^{-1} b from the packed LDL^T factor
 unit_l, d = linalg.ldl_unpack(F)
-linalg.solve(A, b)                           # Cholesky; assume="sym" uses LDL^T
+linalg.solve(A, b)                           # Cholesky; assume="sym" uses LDL^T, assume="gen" LU
 ```
 
 **Which triangle is read.** `cholesky` and `ldl` read only the lower triangle of their argument.
@@ -64,6 +64,33 @@ become loops with triangular bounds that do not grow with the order:
   matrix product fell to 3–3.5×. The JIT therefore adds `-ftree-vectorize` at `-O2` for GCC before
   version 12, which vectorizes at `-O2` by itself from 12 on (see `SCALY_CC_OPT` in
   [Environment variables](env_vars.md)).
+
+## Dense LU with partial pivoting
+
+```python
+F = linalg.lu(A)                      # P A = L U, packed with the permutation in an (n + 1, n) array
+x = linalg.lu_solve(F, b)             # A^{-1} b; b a vector or a matrix of right-hand sides
+y = linalg.lu_solve(F, c, trans=True) # A^{-T} c, with the same factor
+linalg.solve(A, b, assume="gen")      # any nonsingular A, differentiable in A and b
+```
+
+`lu` factors any square matrix, choosing in each column the row of largest magnitude at or below
+the diagonal, the first one on a tie, as LAPACK does. The packed result holds `L` (unit lower)
+below the diagonal of its first `n` rows and `U` on and above it. Its last row holds the
+permutation as floats, `perm[i]` being the row of `A` that became row `i`, so `L U = A[perm]`. A
+singular matrix gives a zero pivot, and inf or NaN in what follows it.
+
+**Derivatives.** The factorization has none, and differentiating through it raises.
+`solve(A, b, assume="gen")` is the differentiable form. Its derivative is implicit,
+`dx = A^{-1} (db - dA x)`, and in reverse mode it is one transposed solve and an outer product,
+all with the one factorization. Its second derivatives are implicit too. `lu_solve` is
+differentiable in `b`.
+
+**Generated code.** Up to `sc.options(dense_unroll=...)` the factorization is straight-line code
+with every access at a fixed address, and the row swap selects on the run-time pivot. Larger
+orders loop, swapping through the pivot row's run-time address. Against LAPACK's `dgesv` from
+Apple's Accelerate, the generated solve takes 0.12 of its time at order 4, 0.51 at order 8 and
+about the same from order 12 to 40 (Apple M3 Max, `internal/notes/integrators_i2_report.html`).
 
 ## Sparse `L D L^T`
 

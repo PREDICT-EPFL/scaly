@@ -735,10 +735,15 @@ protocol's compile flags.
       form they lower to one loop per row and lose the fused producer, slower than the matmul. They
       wait for an axis reduction in the IR, which is C-8's accumulator lowering.
 - [x] **C-12. One matcher and iterative rewrite driver for both dialects.** Implemented 2026-09-08: `ir/match.py` is generic over both node types with an iterative driver (`fixpoint`, `revisit`, `max_steps`), `rebuild_program` in `passes/program/_common.py` is the program adapter, and `_transform` is gone. No nested patterns or captures: no call site needed them. C-13 closed with it. [Updated design](notes/refactorings.md#shared-compiler-rewrites).
-- [ ] **C-143. A general dense solve: LU with partial pivoting** (integrators/MPC plan I2). An
-      `ExprOp.LU` (packed factor and row permutation) with loop and unrolled lowering, verify rule and
-      sparsity; `linalg.lu`, `linalg.lu_solve`, `linalg.solve(a, b, assume="gen")` with the implicit
-      derivative. Newton on implicit Runge-Kutta stages needs it (API-144).
+- [x] **C-143. A general dense solve: LU with partial pivoting** (integrators/MPC plan I2).
+      `ExprOp.LU` gives `P A = L U` packed with the permutation in an `(n + 1, n)` array, the pivot
+      LAPACK's (largest magnitude, first on a tie). Up to `dense_unroll` it is straight-line code with
+      every access at a fixed address, the row swap selecting on the run-time pivot; above, loops that
+      swap through the pivot row's run-time address. `linalg.lu_solve` (and `trans=True`) and
+      `linalg.solve(a, b, assume="gen")`, whose derivative is implicit with two levels of rules, so
+      Hessians never reach the factorization, which refuses a derivative in both modes. Against
+      Accelerate's `dgesv`: 0.12x at order 4, 0.51x at 8, 0.94 to 1.05x from 12 to 40. 24/24 mutants
+      killed, three after a test was added. Report: `notes/integrators_i2_report.html`.
 
 ### Deferred
 

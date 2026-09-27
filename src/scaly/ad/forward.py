@@ -76,6 +76,12 @@ SPARSE_LDL_NO_DERIVATIVE = (
 )
 """Why a ``sparse_ldl_factor`` node refuses a nonzero tangent or cotangent."""
 
+LU_NO_DERIVATIVE = (
+  "the dense LU factorization has no derivative: linalg.solve(a, b, assume='gen') solves with it and "
+  "differentiates implicitly, so its derivative never reaches the factorization"
+)
+"""Why an ``lu`` node refuses a nonzero tangent or cotangent."""
+
 
 def _is_zero_const(expr: Expr) -> bool:
   return expr.op == ExprOp.CONST and expr.value is not None and bool(np.all(expr.value == 0))
@@ -234,6 +240,8 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return save(zeros_like(expr) if _is_zero_const(d[0]) else factor_tangent(expr, d[0]))
   if expr.op == ExprOp.SPARSE_LDL:  # reached only with a tangent: without one, the dependence check gave zero
     raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
+  if expr.op == ExprOp.LU:
+    raise NotImplementedError(LU_NO_DERIVATIVE)
   if expr.op == ExprOp.SPARSE_LDL_SOLVE:  # linear in b; in the factor, not implemented
     if not _is_zero_const(d[0]):
       raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
@@ -1463,6 +1471,8 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op == ExprOp.SPARSE_LDL:
     raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
+  if expr.op == ExprOp.LU:
+    raise NotImplementedError(LU_NO_DERIVATIVE)
   if expr.op == ExprOp.SPARSE_LDL_SOLVE:
     if not _is_zero_const(d[0]):
       raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
