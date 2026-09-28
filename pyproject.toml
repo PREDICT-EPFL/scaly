@@ -49,7 +49,7 @@ build-backend = "hatchling.build"
 packages = ["src/scaly"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/"]
+include = ["/src/scaly/"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

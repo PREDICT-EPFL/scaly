@@ -14,109 +14,75 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  vendored-solvers:
-    name: vendored solvers / ${{ matrix.os }}
+  # A plugin wheel depends only on its own directory, the cibuildwheel release (which pins the
+  # manylinux image) and the platform, so a cached wheel stays valid across runner images: it
+  # bundles its runtime. Artifacts are kept for the longest period the organization allows, since
+  # `release.yml` publishes the files a successful run on `main` built.
+  wheels:
+    name: ${{ matrix.package }} wheel / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        package: [scaly-piqp, scaly-ipopt]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
     steps:
       - uses: actions/checkout@v4
 
-      # A cached build must not outlive the toolchain it was linked against, so the runner
-      # image identity joins the key.
-      - name: Toolchain identity
-        id: toolchain
-        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
-
-      # Beyond that the key depends only on the native build recipe. GitHub Actions
-      # automatically falls back to caches from the default branch, so feature branches reuse
-      # main's validated solver build when the plugin hatch hooks are unchanged.
-      - name: Restore third_party + built libs
-        id: cache-vendored
-        uses: actions/cache/restore@v4
+      - name: Restore the wheel
+        id: cache
+        uses: actions/cache@v4
         with:
-          path: |
-            plugins/scaly-piqp/third_party
-            plugins/scaly-piqp/src/scaly_piqp/lib
-            plugins/scaly-piqp/src/scaly_piqp/include
-            plugins/scaly-piqp/src/scaly_piqp/licenses
-            plugins/scaly-ipopt/third_party
-            plugins/scaly-ipopt/src/scaly_ipopt/lib
-            plugins/scaly-ipopt/src/scaly_ipopt/include
-            plugins/scaly-ipopt/src/scaly_ipopt/licenses
-          key: ${{ runner.os }}-${{ runner.arch }}-vendored-${{ steps.toolchain.outputs.id }}-${{ hashFiles('plugins/scaly-piqp/hatch_build.py', 'plugins/scaly-ipopt/hatch_build.py', 'plugins/*/src/*/build_config.json') }}
+          path: wheelhouse
+          key: wheel-${{ matrix.package }}-${{ matrix.os }}-cibuildwheel-4.2.1-${{ hashFiles(format('plugins/{0}/**', matrix.package), format('!plugins/{0}/tests/**', matrix.package)) }}
 
-      - name: Report cache state
-        run: |
-          echo "cache-hit=${{ steps.cache-vendored.outputs.cache-hit }}"
-          echo "cache-primary-key=${{ steps.cache-vendored.outputs.cache-primary-key }}"
-          ls -lh plugins/scaly-piqp/src/scaly_piqp/lib plugins/scaly-ipopt/src/scaly_ipopt/lib 2>/dev/null || echo "plugin libs not present — will cold-build"
+      - name: Install gfortran (macOS)
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS' && matrix.package == 'scaly-ipopt'
+        run: brew install gcc
 
-      - name: Install system toolchain (Linux)
-        if: runner.os == 'Linux' && steps.cache-vendored.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gfortran cmake build-essential
+      # The plugins load their solvers through ctypes, so the hooks tag every wheel
+      # `py3-none-<platform>` and one interpreter builds the wheel that serves them all. The
+      # IPOPT wheel bundles Homebrew's Fortran runtime, which is built for the runner's macOS,
+      # so its wheel cannot claim an older deployment target than that.
+      - uses: pypa/cibuildwheel@v4.2.1
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          package-dir: plugins/${{ matrix.package }}
+          output-dir: wheelhouse
+        env:
+          CIBW_BUILD: cp312-*
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_ENVIRONMENT: SCALY_BUILD_SOLVERS=required
+          CIBW_ENVIRONMENT_MACOS: >-
+            SCALY_BUILD_SOLVERS=required
+            ${{ matrix.package == 'scaly-ipopt' && 'MACOSX_DEPLOYMENT_TARGET=15.0' || '' }}
 
-      - name: Install system toolchain (macOS)
-        if: runner.os == 'macOS' && steps.cache-vendored.outputs.cache-hit != 'true'
-        run: |
-          brew install gcc cmake
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.package }}-${{ matrix.os }}
+          path: wheelhouse/*.whl
+          retention-days: 90
+
+  pure:
+    name: sdists + pure wheels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v6
-        if: steps.cache-vendored.outputs.cache-hit != 'true'
-        with:
-          enable-cache: true
 
-      - name: Set up Python
-        if: steps.cache-vendored.outputs.cache-hit != 'true'
-        run: uv python install
-
-      - name: uv sync (builds PIQP + IPOPT on cache miss)
-        if: steps.cache-vendored.outputs.cache-hit != 'true'
-        env:
-          SCALY_BUILD_SOLVERS: required
-        run: uv sync --frozen
-
-      - name: Save third_party + built libs
-        if: steps.cache-vendored.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            plugins/scaly-piqp/third_party
-            plugins/scaly-piqp/src/scaly_piqp/lib
-            plugins/scaly-piqp/src/scaly_piqp/include
-            plugins/scaly-piqp/src/scaly_piqp/licenses
-            plugins/scaly-ipopt/third_party
-            plugins/scaly-ipopt/src/scaly_ipopt/lib
-            plugins/scaly-ipopt/src/scaly_ipopt/include
-            plugins/scaly-ipopt/src/scaly_ipopt/licenses
-          key: ${{ steps.cache-vendored.outputs.cache-primary-key }}
-
-      - name: Inspect vendored libs
+      - name: Build
         run: |
-          ls -lh plugins/scaly-piqp/src/scaly_piqp/lib plugins/scaly-ipopt/src/scaly_ipopt/lib
-          if [ "$RUNNER_OS" = "macOS" ]; then otool -L plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.dylib; fi
-          if [ "$RUNNER_OS" = "Linux" ]; then ldd plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.so; fi
+          uv build -o dist .
+          uv build -o dist plugins/scaly-sqp
+          uv build -o dist --sdist plugins/scaly-piqp
+          uv build -o dist --sdist plugins/scaly-ipopt
 
-      # Only the built libraries, their headers and the generated notices — `third_party` is build
-      # scratch the consumer never reads, since the hooks skip once lib, header and notices are present. Every
-      # path here sits under `plugins/`, so that is the artifact root and `solver tests`
-      # must download with `path: plugins` to land them back where the hooks look.
-      - name: Upload vendored solver artifact for this workflow run
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: vendored-solvers-${{ runner.os }}-${{ runner.arch }}
-          path: |
-            plugins/scaly-piqp/src/scaly_piqp/lib
-            plugins/scaly-piqp/src/scaly_piqp/include
-            plugins/scaly-piqp/src/scaly_piqp/licenses
-            plugins/scaly-ipopt/src/scaly_ipopt/lib
-            plugins/scaly-ipopt/src/scaly_ipopt/include
-            plugins/scaly-ipopt/src/scaly_ipopt/licenses
-          retention-days: 3
+          name: dist-pure
+          path: dist/*
+          retention-days: 90
 
   lint-type:
     name: lint + type / ${{ matrix.os }}
@@ -188,22 +154,30 @@ jobs:
       - name: Benchmark smoke
         run: uv run python benchmarks/run.py smoke --skip solver_call
 
+  # The solver tests run against the plugin wheels, not an editable build, so they check the
+  # binaries users install. `UV_NO_SYNC` keeps every `uv run` from swapping the wheels back for the
+  # editable plugins; if something syncs anyway, the plugins return without their libraries and
+  # `SCALY_REQUIRE_SOLVERS` fails the run instead of skipping.
   tests-solvers:
     name: solver tests / ${{ matrix.os }}
-    needs: [vendored-solvers]
+    needs: [wheels]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-15]
+    env:
+      UV_NO_SYNC: "1"
+      SCALY_BUILD_SOLVERS: skip
+      SCALY_REQUIRE_SOLVERS: "1"
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download vendored solver artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: vendored-solvers-${{ runner.os }}-${{ runner.arch }}
-          path: plugins
+          pattern: dist-scaly-*-${{ matrix.os }}
+          merge-multiple: true
+          path: dist
 
       - uses: astral-sh/setup-uv@v6
         with:
@@ -212,19 +186,14 @@ jobs:
       - name: Set up Python
         run: uv python install
 
-      - name: uv sync (uses restored vendored solvers)
-        env:
-          SCALY_BUILD_SOLVERS: required
-        run: uv sync --frozen
+      - name: Install the plugin wheels
+        run: |
+          uv sync --frozen --no-install-package scaly-piqp --no-install-package scaly-ipopt
+          uv pip install --no-deps dist/*.whl
+          uv run python -c "import scaly_piqp, scaly_ipopt; assert all('site-packages' in m.__file__ for m in (scaly_piqp, scaly_ipopt))"
 
       - name: Native solver report
         run: uv run scaly_toolchain
-
-      - name: Inspect vendored libs
-        run: |
-          ls -lh plugins/scaly-piqp/src/scaly_piqp/lib plugins/scaly-ipopt/src/scaly_ipopt/lib
-          if [ "$RUNNER_OS" = "macOS" ]; then otool -L plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.dylib; fi
-          if [ "$RUNNER_OS" = "Linux" ]; then ldd plugins/scaly-ipopt/src/scaly_ipopt/lib/libipopt.so; fi
 
       - name: Pytest solver suite
         env:
@@ -257,6 +226,49 @@ jobs:
       - name: Repeated benchmark commands
         run: |
           uv run benchmarks/run.py sweep --workloads race_cars --sizes 1 --backends scaly,casadi_map_sx --repetitions 2 --benchmark-min-time 0.01s --out benchmarks/results/smoke/repeated/sweep.csv
-          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle both --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
+          uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle scaly,casadi --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
           uv run benchmarks/run.py closed-loop --problem race_cars --solver ipopt --oracle casadi --casadi-interpreted --smoke --repetitions 2 --out-dir benchmarks/results/smoke/repeated/episodes
           uv run benchmarks/run.py modes benchmarks/results/smoke/repeated/episodes --out benchmarks/results/smoke/repeated/modes.csv
+
+  install:
+    name: install / ${{ matrix.os }}${{ matrix.container && format(' / {0}', matrix.container) || '' }}
+    needs: [pure, wheels]
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Slim images carry no Fortran runtime, so these prove the IPOPT wheel brings its own.
+          - { os: ubuntu-latest, container: "python:3.12-slim" }
+          - { os: ubuntu-latest, container: "python:3.14-slim" }
+          - { os: ubuntu-24.04-arm, container: "python:3.13-slim" }
+          - { os: macos-15, python: "3.13" }
+          - { os: macos-15-intel, python: "3.12" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Install a C compiler for the JIT (Linux)
+        if: matrix.container
+        run: apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev
+
+      - uses: astral-sh/setup-uv@v6
+        if: ${{ !matrix.container }}
+
+      - name: Install the wheels
+        env:
+          PY: ${{ matrix.python }}
+        run: |
+          if [ -n "$PY" ]; then uv venv --seed -p "$PY" /tmp/env; else python -m venv /tmp/env; fi
+          # pin every package to the version this run built, so a release on PyPI never wins
+          pins=$(ls dist | sed -nE 's/^(scaly(_[a-z]+)?)-([^-]+)(-py3|\.tar\.gz).*/\1==\3/p' | tr _ - | sort -u)
+          /tmp/env/bin/pip install --only-binary :all: --find-links dist "scaly[solvers]" $pins
+
+      - name: Solve with every backend
+        run: /tmp/env/bin/python .github/scripts/solve_smoke.py

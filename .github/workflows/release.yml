@@ -1,0 +1,227 @@
+name: Release
+
+# Publishes what a successful CI run on `main` built, without rebuilding. A package is released
+# when its version has no `<name>-v<version>` tag yet, so bumping the version is how a release is
+# requested and unchanged packages are left alone. `testpypi` stops after installing from
+# TestPyPI; `pypi` continues to PyPI, then tags each released package and creates its GitHub
+# Release. Every step skips what an earlier attempt already did, so a failed run can be rerun.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: How far to publish
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      ci-run: ${{ steps.checks.outputs.ci-run }}
+      packages: ${{ steps.packages.outputs.packages }}
+      pins: ${{ steps.packages.outputs.pins }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Require green CI and Docs runs for this commit
+        id: checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for workflow in ci.yml docs.yml; do
+            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$GITHUB_SHA" --event push \
+              --json databaseId,status,conclusion --jq '.[0] // empty')
+            if [ -z "$run" ] || [ "$(jq -r '.status + "/" + .conclusion' <<<"$run")" != "completed/success" ]; then
+              echo "::error::$workflow has no successful push run for $GITHUB_SHA: ${run:-none}"
+              exit 1
+            fi
+            [ "$workflow" = ci.yml ] && echo "ci-run=$(jq -r .databaseId <<<"$run")" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Choose the packages to release
+        id: packages
+        run: |
+          python3 - <<'EOF'
+          import json, os, subprocess, tomllib
+
+          SOURCES = {
+            "scaly": ["pyproject.toml", "README.md", "src"],
+            "scaly-sqp": ["plugins/scaly-sqp"],
+            "scaly-piqp": ["plugins/scaly-piqp"],
+            "scaly-ipopt": ["plugins/scaly-ipopt"],
+          }
+          packages = []
+          for name, paths in SOURCES.items():
+            with open(os.path.join(paths[0] if name != "scaly" else ".", "pyproject.toml"), "rb") as f:
+              version = tomllib.load(f)["project"]["version"]
+            tag = f"{name}-v{version}"
+            if subprocess.run(["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag}"], capture_output=True).returncode == 0:
+              if subprocess.run(["git", "diff", "--quiet", tag, "HEAD", "--", *paths]).returncode != 0:
+                print(f"::warning::{name} changed since {tag} but its version was not bumped, so it is not released")
+              continue
+            packages.append({"name": name, "version": version, "tag": tag, "prefix": f"{name.replace('-', '_')}-{version}"})
+          if not packages:
+            raise SystemExit("::error::every package version already has its tag; bump a version to release it")
+          print("Releasing:", ", ".join(p["tag"] for p in packages))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+            out.write(f"packages={json.dumps(packages)}\n")
+            out.write(f"pins={' '.join(p['name'] + '==' + p['version'] for p in packages)}\n")
+          EOF
+
+  collect:
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ needs.plan.outputs.ci-run }}
+          github-token: ${{ github.token }}
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Keep the files of the released packages
+        env:
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: |
+          mkdir release
+          for prefix in $(jq -r '.[].prefix' <<<"$PACKAGES"); do
+            mv dist/"$prefix".tar.gz dist/"$prefix"-*.whl release/
+          done
+          ls -l release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-dist
+          path: release/*
+
+  testpypi:
+    needs: collect
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: release
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: release
+          skip-existing: true
+
+  # Installs the released packages from TestPyPI and everything else, dependencies and the
+  # packages not released this time, from PyPI, the way a user would get them.
+  verify:
+    name: verify / ${{ matrix.os }}${{ matrix.container && format(' / {0}', matrix.container) || '' }}
+    needs: [plan, testpypi]
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, container: "python:3.12-slim" }
+          - { os: ubuntu-latest, container: "python:3.14-slim" }
+          - { os: ubuntu-24.04-arm, container: "python:3.13-slim" }
+          - { os: macos-15, python: "3.13" }
+          - { os: macos-15-intel, python: "3.12" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install a C compiler for the JIT (Linux)
+        if: matrix.container
+        run: apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev
+
+      - uses: astral-sh/setup-uv@v6
+        if: ${{ !matrix.container }}
+
+      - name: Install from TestPyPI
+        env:
+          PY: ${{ matrix.python }}
+          PINS: ${{ needs.plan.outputs.pins }}
+        run: |
+          if [ -n "$PY" ]; then uv venv --seed -p "$PY" /tmp/env; else python -m venv /tmp/env; fi
+          # a new upload can take a few minutes to reach the TestPyPI index
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            /tmp/env/bin/pip install --no-deps --only-binary :all: --index-url https://test.pypi.org/simple/ $PINS && break
+            [ "$attempt" = 10 ] && exit 1
+            sleep 30
+          done
+          /tmp/env/bin/pip install --only-binary :all: "scaly[solvers]" $PINS
+
+      - name: Solve with every backend
+        run: /tmp/env/bin/python .github/scripts/solve_smoke.py
+
+  pypi:
+    if: inputs.target == 'pypi'
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: release
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: release
+          skip-existing: true
+
+  # Tags created with the workflow token start no other workflow, so anything that must follow a
+  # release belongs in this workflow rather than behind a tag trigger.
+  github-release:
+    needs: [plan, pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: release
+
+      - name: Tag and create one GitHub Release per package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: |
+          jq -c '.[]' <<<"$PACKAGES" | while read -r package; do
+            name=$(jq -r .name <<<"$package"); version=$(jq -r .version <<<"$package")
+            tag=$(jq -r .tag <<<"$package"); prefix=$(jq -r .prefix <<<"$package")
+            if gh release view "$tag" >/dev/null 2>&1; then echo "$tag already released"; continue; fi
+            flags=(--target "$GITHUB_SHA" --title "$name $version" --generate-notes)
+            previous=$(git tag --list "$name-v*" --sort=-v:refname | head -n 1)
+            [ -n "$previous" ] && flags+=(--notes-start-tag "$previous")
+            [[ "$version" =~ [a-z] ]] && flags+=(--prerelease)
+            [ "$name" != scaly ] && flags+=(--latest=false)
+            gh release create "$tag" "${flags[@]}" release/"$prefix".tar.gz release/"$prefix"-*.whl
+          done

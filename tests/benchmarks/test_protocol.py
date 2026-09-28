@@ -1,6 +1,7 @@
 """Frequency-policy gates and aggregation of independent timing processes."""
 
 import csv
+import os
 from pathlib import Path
 
 import pytest
@@ -37,7 +38,8 @@ def test_vector_math_policy_rejects_unequal_clang_jit_flags(monkeypatch):
   monkeypatch.setattr(harness, "find_c_compiler", lambda: Compiler("clang", "SCALY_CC"))
   monkeypatch.setattr(harness, "native_recipe", lambda compiler: BuildRecipe(vector_libm="glibc"))
   monkeypatch.setattr(harness, "compiler_version", lambda compiler: "clang version 20")
-  monkeypatch.delenv("SCALY_VECTOR_LIBM", raising=False)
+  # configure_math_policy writes os.environ directly, which monkeypatch would not undo
+  monkeypatch.setattr(os, "environ", {k: v for k, v in os.environ.items() if k != "SCALY_VECTOR_LIBM"})
   with pytest.raises(ValueError, match="Scaly JIT does not pass"):
     harness.configure_math_policy()
   harness.configure_math_policy(measured_jit=False)
