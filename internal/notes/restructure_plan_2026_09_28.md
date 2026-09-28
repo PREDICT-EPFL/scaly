@@ -31,7 +31,7 @@
 | Step | Title | Status |
 |---|---|---|
 | 0.1 | Housekeeping | ☑ |
-| 0.2 | Extern calls raise on derivatives | ☐ |
+| 0.2 | Extern calls raise on derivatives | ☑ |
 | 1.1 | `EXTERN_CALL` and the extern-callee protocol | ☐ |
 | 1.2 | Output-adapter registry (C++, CasADi) | ☐ |
 | 1.3 | Core stops importing solvers | ☐ |
@@ -405,6 +405,9 @@ Changes: in `ad/forward.py`, `ad/reverse.py`, a seeded `SOLVER_CALL` raises
 an empty one. Tests: differentiating through a solver raises; `sparse_jacobian` of a graph
 containing a solver has the dense pattern in the solver's outputs.
 Gate: common gate; `tests/ad/test_zero_tangent_products.py` updated deliberately, not weakened.
+Log: done 2026-09-28. `jvp`, `jvp_many` and `vjp` raise at a seeded `SOLVER_CALL`; its mask is dense in the
+columns its arguments read. The QP builder now refuses a nested solver before building oracles.
+`test_zero_tangent_products.py` needed no change. Smoke medians within noise.
 
 ### Phase 1: invert the solver and adapter edges (still one distribution)
 

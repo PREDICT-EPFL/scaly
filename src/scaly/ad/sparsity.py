@@ -172,13 +172,10 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     a = expr.args[0]
     dense = _incidence((expr.size, a.size), np.repeat(np.arange(expr.size), a.size), np.tile(np.arange(a.size), expr.size))
     return _compose(dense, _jac_mask(a, wrt, memo))
-  if expr.op == ExprOp.SPARSE_LDL_SOLVE:
-    # Every unknown may depend on every entry of the factor and of the right-hand side.
-    mask = _empty((expr.size, wrt.size))
-    for arg in expr.args:
-      dense = _incidence((expr.size, arg.size), np.repeat(np.arange(expr.size), arg.size), np.tile(np.arange(arg.size), expr.size))
-      mask = _or(mask, _compose(dense, _jac_mask(arg, wrt, memo)))
-    return mask
+  if expr.op in {ExprOp.SPARSE_LDL_SOLVE, ExprOp.SOLVER_CALL}:
+    # Every unknown of a solve may depend on every entry of the factor and of the right-hand side,
+    # and every output of an opaque solver on every entry of every argument.
+    return _dense_in_args(expr, wrt, memo)
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
     # Every entry of the lower triangle of the factor may depend on every entry the factorization reads.
     a = expr.args[0]
@@ -242,9 +239,13 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     return _scan_mask(expr, wrt, memo)
   if expr.op == ExprOp.WHILE:
     return _while_mask(expr, wrt, memo)
-  if expr.op == ExprOp.SOLVER_CALL:
-    return _empty((expr.size, wrt.size))
   raise NotImplementedError(f"jacobian sparsity for op {expr.op!r} is not implemented")
+
+
+def _dense_in_args(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
+  """Every entry of ``expr`` against every column of ``wrt`` that any argument depends on."""
+  cols = np.unique(np.concatenate([np.empty(0, dtype=np.int64), *(_jac_mask(arg, wrt, memo).indices for arg in expr.args)]))
+  return _incidence((expr.size, wrt.size), np.repeat(np.arange(expr.size), cols.size), np.tile(cols, expr.size))
 
 
 def _broadcast_mask(mask: sparse.csr_array, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> sparse.csr_array:

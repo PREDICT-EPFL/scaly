@@ -173,7 +173,7 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `VMAP` | n | yes | one callee applied across slices of its arguments |
 | `scan` | n | yes | one callee applied in sequence, threading a carry; `output` selects the final carry (0), a stacked output (1..) or the carries entering each step (-1) |
 | `while` | 1 + n | yes | a body applied to the carry (the first argument) while a condition callee holds, at most `max_iter` times; the other arguments are params every step reads unchanged, `index` passes the step number to the body, and `output` selects the carry (0), the step count (1) or the stored carries (-1) |
-| `solver_call` | n | no | an opaque solve; see [Solvers](solvers.md) |
+| `solver_call` | n | no | an opaque solve; a derivative reaching it raises; see [Solvers](solvers.md) |
 
 `dot`, `sumsqr`, `norm_2` and `vec` are not operations. They are builders that expand into the
 ops above; `vec` emits a `reshape` to rank 1.

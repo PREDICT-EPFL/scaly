@@ -174,7 +174,9 @@ def filtered_control(target, bias):
 ```
 
 The call lowers to one generated solver wrapper in the same shared library as the host function and
-its oracles. `SOLVER_CALL` is not differentiable, so derivatives through a solve are zero.
+its oracles. A solve has no derivative rule of its own: a derivative that reaches one raises
+`NotImplementedError`, and [`sc.custom_derivative`](derivatives.md#custom-derivatives) gives the solver `Function` one.
+A solve whose arguments do not depend on what is being differentiated is a constant and needs none.
 
 ## Statistics
 

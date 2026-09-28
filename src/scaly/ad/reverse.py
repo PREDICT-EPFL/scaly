@@ -54,6 +54,7 @@ from .forward import (
   reduce_weights,
   segment_weights,
   sign,
+  solver_no_derivative,
 )
 from .sparsity import _depends_on
 
@@ -704,8 +705,7 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   if expr.op == ExprOp.MATMUL:
     return _matmul_vjp(args[0], args[1], cot)
   if expr.op == ExprOp.SOLVER_CALL:
-    # Non-differentiable: every arg cotangent is zero. See the matching JVP rule.
-    return tuple(zeros_like(arg) for arg in args)
+    raise NotImplementedError(solver_no_derivative(expr))  # see the matching JVP rule
   raise NotImplementedError(f"VJP for op {expr.op!r} is not implemented")
 
 

@@ -77,6 +77,17 @@ SPARSE_LDL_NO_DERIVATIVE = (
 )
 """Why a ``sparse_ldl_factor`` node refuses a nonzero tangent or cotangent."""
 
+
+def solver_no_derivative(expr: Expr) -> str:
+  """Why a ``SOLVER_CALL`` node refuses a nonzero tangent or cotangent."""
+  solver = expr.attrs["solver"]
+  return (
+    f"differentiating through the solver {solver.name!r} ({solver.backend}) is not implemented: its solution has no derivative "
+    "rule yet. Give the solver Function one with sc.custom_derivative, or keep the solver's arguments independent of what "
+    "is being differentiated"
+  )
+
+
 LU_NO_DERIVATIVE = (
   "the dense LU factorization has no derivative: linalg.solve(a, b, assume='gen') solves with it and "
   "differentiates implicitly, so its derivative never reaches the factorization"
@@ -189,11 +200,8 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     memo[expr.id] = ret = _while_jvp(expr, [_jvp(arg, seeds, memo, dep_memo) for arg in expr.args])
     return ret
   if expr.op == ExprOp.SOLVER_CALL:
-    # Solver outputs are treated as non-differentiable today. Implicit
-    # function theorem AD (e.g. cyipopt-style adjoint through KKT residuals)
-    # is future work; for now any JVP through a solver returns zero.
-    memo[expr.id] = ret = zeros_like(expr)
-    return ret
+    # A seeded solve: a zero tangent here would be silently wrong, since the solution does move.
+    raise NotImplementedError(solver_no_derivative(expr))
 
   def save(ret: Expr) -> Expr:
     memo[expr.id] = ret
@@ -1225,6 +1233,8 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     floor_tangent(expr)
     memo[expr.id] = ret = _zeros_many(expr, nseed)
     return ret
+  if expr.op == ExprOp.SOLVER_CALL:
+    raise NotImplementedError(solver_no_derivative(expr))
   if expr.op == ExprOp.INPUT:
     memo[expr.id] = ret = seeds if expr.id == wrt.id else _zeros_many(expr, nseed)
     return ret

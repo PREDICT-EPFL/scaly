@@ -87,12 +87,15 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
           raise NotQuadratic(f"{problem.name}: ineq {label} {side} depends on the variables")
 
 
+def _refuse_nested_solvers(problem: Problem[Any, Any, Any, Any]) -> None:
+  """Refuse a cost or constraint that reaches a solver, before its oracles differentiate through it."""
+  if _reaches_solver_call((problem.spec.minimize, *problem.spec.eq, *(group.expr for group in problem.spec.ineq))):
+    raise NotQuadratic(f"{problem.name}: cannot prove QP structure through a nested solver")
+
+
 def _prove_quadratic(problem: Problem[Any, Any, Any, Any], cached: dict[str, Any]) -> None:
   """Prove that the cost is quadratic and every constraint is affine in the variables."""
   x = cast(Expr, cached["x"])
-  proof_targets = (cast(Expr, cached["f"]), *cast(tuple[Expr, ...], cached["equalities"]), *cast(tuple[Expr, ...], cached["inequalities"]))
-  if _reaches_solver_call(proof_targets):
-    raise NotQuadratic(f"{problem.name}: cannot prove QP structure through a nested solver")
   hessian = sparse_hessian(simplify_cse_fixpoint(cast(Expr, cached["f"])), x)
   cached["qp_hessian"] = hessian
   if _jac_mask(hessian.values, x, {}).nnz:
@@ -196,6 +199,7 @@ def build_qp[SV, NV, SP, NP](
 ]:
   """Build a typed QP solver after proving and extracting the problem's matrix data."""
   _prove_variable_independent_bounds(problem)
+  _refuse_nested_solvers(problem)
   cached = _lowered(problem)
   _prove_quadratic(problem, cached)
   P, c, A, b, G_mat, g_lb, g_ub, x_lb, x_ub = _qp_data(problem, cached)
