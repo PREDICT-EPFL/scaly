@@ -29,18 +29,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
-import time
 from math import factorial
-from pathlib import Path
 
 import numpy as np
 
-HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[2]
-BUILD = HERE / "build" / "spike"
-DRIVER_SRC = HERE.parent / "perf_2026_09_27_integrators" / "time_entry.c"
+from _harness import BUILD as ROOT_BUILD
+from _harness import ROOT, build_casadi, build_scaly, time_cell
+
+BUILD = ROOT_BUILD / "spike"
 
 
 def clustered_knots(n: int) -> np.ndarray:
@@ -139,69 +136,6 @@ def casadi_cell(name: str, method: str, grid: list[np.ndarray], values: np.ndarr
   return ca.Function(name, [x], outs)
 
 
-def blob(flat: list[np.ndarray], out_sizes: list[int], workspace: int) -> bytes:
-  head = np.array([len(flat), len(out_sizes), workspace, *(a.size for a in flat), *out_sizes], dtype="<i8").tobytes()
-  return head + b"".join(np.ascontiguousarray(a, dtype="<f8").tobytes() for a in flat)
-
-
-def build_scaly(fn, point: np.ndarray, out: Path) -> dict:
-  from scaly.codegen import render_c_module
-  from scaly.codegen.abi import c_ident
-  from scaly.codegen.jit import compile_flags
-  from scaly.codegen.toolchain import find_c_compiler
-
-  t0 = time.perf_counter()
-  module = render_c_module(fn)
-  generate = time.perf_counter() - t0
-  out.mkdir(parents=True, exist_ok=True)
-  (out / "f.c").write_text(module.body)
-  t0 = time.perf_counter()
-  subprocess.run([find_c_compiler().cc, *compile_flags(), "-fPIC", "-shared", str(out / "f.c"), "-lm", "-o", str(out / "lib.so")], check=True)
-  compile_s = time.perf_counter() - t0
-  values = fn(point.reshape(fn.inputs[0].shape))
-  values = values if isinstance(values, tuple) else (values,)
-  (out / "inputs.bin").write_bytes(blob([point], [np.size(v) for v in values], int(module.workspace_size)))
-  body = module.body
-  return {"symbol": c_ident(fn.name), "generate_s": generate, "compile_s": compile_s, "c_lines": sum(1 for line in body.splitlines() if line.strip()), "c_bytes": len(body)}
-
-
-def build_casadi(fn, point: np.ndarray, out: Path) -> dict:
-  import casadi as ca
-
-  from scaly.codegen.jit import compile_flags
-  from scaly.codegen.toolchain import find_c_compiler
-
-  out.mkdir(parents=True, exist_ok=True)
-  t0 = time.perf_counter()
-  gen = ca.CodeGenerator("f.c", {"casadi_int": "long long", "casadi_real": "double"})
-  gen.add(fn)
-  gen.generate(str(out) + "/")
-  generate = time.perf_counter() - t0
-  t0 = time.perf_counter()
-  subprocess.run([find_c_compiler().cc, *compile_flags(), "-fPIC", "-shared", str(out / "f.c"), "-lm", "-o", str(out / "lib.so")], check=True)
-  compile_s = time.perf_counter() - t0
-  sizes = [fn.nnz_out(i) for i in range(fn.n_out())] + [0] * (fn.sz_res() - fn.n_out())
-  padded = [point, *(np.zeros(0) for _ in range(fn.sz_arg() - fn.n_in()))]
-  assert fn.sz_iw() <= 1 << 16, fn.sz_iw()
-  (out / "inputs.bin").write_bytes(blob(padded, sizes, fn.sz_w()))
-  body = (out / "f.c").read_text()
-  return {"symbol": fn.name(), "generate_s": generate, "compile_s": compile_s, "c_lines": sum(1 for line in body.splitlines() if line.strip()), "c_bytes": len(body)}
-
-
-def driver() -> Path:
-  exe = BUILD / "time_entry"
-  if not exe.exists() or exe.stat().st_mtime < DRIVER_SRC.stat().st_mtime:
-    BUILD.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["cc", "-O2", "-o", str(exe), str(DRIVER_SRC)], check=True)
-  return exe
-
-
-def time_cell(cell: Path, meta: dict, reps: int, inner: int) -> tuple[float, np.ndarray]:
-  cmd = [str(driver()), str(cell / "lib.so"), meta["symbol"], str(cell / "inputs.bin"), str(reps), str(cell / "outputs.bin"), str(inner)]
-  out = subprocess.run(cmd, capture_output=True, text=True, check=True)
-  return float(out.stdout.split()[0]), np.fromfile(cell / "outputs.bin", dtype="<f8")
-
-
 def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
   parser.add_argument("--rounds", type=int, default=7)
@@ -221,9 +155,9 @@ def main() -> None:
   metas: dict[tuple[str, str], dict] = {}
   sides: dict[str, list[str]] = {}
   for name, ((fn, ref), (method, grid, values, modes, grad), point) in cells.items():
-    metas[name, "scaly"] = build_scaly(fn, point, BUILD / name / "scaly")
+    metas[name, "scaly"] = build_scaly(fn, [point], BUILD / name / "scaly")
     for mode in modes:
-      metas[name, mode] = build_casadi(casadi_cell(f"ca_{name}_{mode}", method, grid, values, mode, grad), point, BUILD / name / mode)
+      metas[name, mode] = build_casadi(casadi_cell(f"ca_{name}_{mode}", method, grid, values, mode, grad), [point], BUILD / name / mode)
     sides[name] = ["scaly", *modes]
     metas[name, "ref"] = {"values": np.ravel(ref(point)).tolist()}
   best: dict[tuple[str, str], float] = {}

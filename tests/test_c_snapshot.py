@@ -97,6 +97,11 @@ def _qp_host() -> sc.Function:
   return sc.Function._from_exprs("qp_host", [mu], [sc.sumsqr(x)], ["mu"], ["cost"])
 
 
+def _table() -> sc.Function:
+  """A 1-D linear lookup table of five points: the uniform search, one take, the linear extrapolation."""
+  return sc.interp.interpolant(np.arange(5.0), np.array([0.0, 1.0, 0.5, -0.25, 2.0]), kind="linear").function("table")
+
+
 CORPUS = {
   "forward": _dynamics,
   "jac": lambda: sc.jacobian(_dynamics(), "znext", "z"),
@@ -105,6 +110,7 @@ CORPUS = {
   "wide": _wide,
   "workspace": _workspace,
   "control": _control,
+  "table": _table,
 }
 SOLVER_CORPUS = {"solver": _qp_host}
 

@@ -65,6 +65,7 @@ from .ir.expr import (
 from .function import ConcreteFunction, Function, G, L, NotConcrete, factory
 from .linalg import S, SparseMatrix
 from . import integrators as integrators
+from . import interp as interp
 from . import mpc as mpc
 from .utils.options import Options, get_options, options, set_options
 from .ir.match import Pattern, PatternMatcher, rewrite

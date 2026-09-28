@@ -126,6 +126,13 @@ def test_the_mpc_surface() -> None:
   assert "mpc" not in sc.__all__ and not hasattr(sc, "OCP")
 
 
+def test_the_interp_surface() -> None:
+  interp = importlib.import_module("scaly.interp")
+  assert sc.interp is interp
+  assert interp.__all__ == ["BOUNDARIES", "KINDS", "PP_BUDGET", "Axis", "BSpline", "Index", "interpolant"]
+  assert "interp" not in sc.__all__ and not hasattr(sc, "interpolant")
+
+
 def test_both_dialects_use_the_shared_spec_types() -> None:
   assert isinstance(spec_expr, Spec)
   assert isinstance(spec_program_full, Spec)

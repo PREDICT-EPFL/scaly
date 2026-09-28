@@ -163,11 +163,20 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 - [ ] **API-151. Integrators/MPC review round** (plan R).
 - [ ] **API-152. Indirect methods** (plan X): Pontryagin's boundary value problem by indirect
       multiple shooting.
-- [ ] **API-171. `scaly.interp`: tables and interpolating splines** (interp plan SP1,
-      `notes/interp_plan_2026_09_28.md`): the tensor-product B-spline, the `uniform`, `count` and
-      `binary` searches, the `pp` and `basis` strategies, batches and vector outputs, the five
-      extrapolation modes; `nearest`, `zoh`, `linear`, `cubic` and `spline` fits of NumPy data in 1-D
-      to 4-D, against SciPy and CasADi.
+- [x] **API-171. `scaly.interp`: tables and interpolating splines** (interp plan SP1,
+      `notes/interp_plan_2026_09_28.md`). Every interpolant is an `interp.BSpline`, a tensor-product
+      B-spline evaluated from existing ops: the `uniform` (floor, clamp, one-step correction),
+      `binary` (NaN-padded halvings) and `count` searches, each equal to `searchsorted` on 1e6
+      adversarial points; per-cell polynomials (`pp`) or local bases (`basis`), expanded at cell
+      midpoints; batches as one `vmap` of the point's Function (a vectorized graph grew with the batch
+      under reverse mode); five extrapolation modes, NaN in giving NaN out; `index=` sharing one search;
+      `function()` interned by content. `interp.interpolant`: `nearest`, `zoh`, `linear`, `cubic` (four
+      boundary conditions) and `spline` k = 1 to 5, per axis, 1-D to 4-D, vector outputs; SciPy to
+      1e-13, derivatives to 1e-11 in both modes. CasADi: `linear` and the `bspline` evaluation to
+      1e-13; its fitted `bspline` misses its own data by up to 1.6e-10, so the fit agrees within that.
+      0.04x to 0.29x CasADi's generated `interpolant` time per point (`perf_2026_09_28_interp/`); the
+      count search never won, so `auto` is uniform or binary. 21/22 mutants killed, the survivor dead
+      code now removed. Report: `notes/interp_sp1_report.html`.
 - [ ] **API-172. Shape-preserving kinds, smoothing splines and spline calculus** (interp plan SP2):
       `pchip`, `akima`, `makima`, `steffen`, `smooth_linear`, `interp.smoothing`, `derivative`,
       `antiderivative`, `integrate`, `inverse`.

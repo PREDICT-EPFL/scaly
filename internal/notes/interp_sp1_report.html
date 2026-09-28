@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interp SP1 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Interpolation · SP1 report</h1>
+<p class="sub">API-171 · <code>scaly.interp</code>: tables and interpolating splines · branch <code>claude/interp</code> · 28 Sep 2026 · plan <code>interp_plan_2026_09_28.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> A new sub-package, <code>scaly.interp</code>, at import layer 5. Every interpolant is one object, a tensor-product B-spline (<code>interp.BSpline</code>), evaluated as generated code built from existing ops (<code>floor</code>, <code>cast</code>, <code>take</code>, <code>where</code>, arithmetic). No new IR op.</p>
+<ul>
+<li><b><code>interp.interpolant(grid, values, kind=...)</code></b>: <code>nearest</code>, <code>zoh</code>, <code>linear</code>, <code>cubic</code> (not-a-knot, natural, clamped, periodic) and <code>spline</code> of degree 1 to 5, per axis, in 1-D to 4-D, with vector and matrix outputs. Values equal SciPy's to 1e-13 relative, first and second derivatives (forward and reverse) to 1e-11.</li>
+<li><b>Five extrapolation modes</b> and NaN in, NaN out in every mode. <b>Three searches</b>, each equal to <code>searchsorted</code> on more than 10⁶ adversarial points. <b>Two strategies</b>: per-cell polynomials (<code>pp</code>) or local bases (<code>basis</code>).</li>
+<li><b>Against CasADi's generated <code>interpolant</code></b>, one point per call: 0.04× to 0.15× its time in 1-D and 2-D and 0.29× on a 3-D trilinear table, with a sixth to a tenth of the C.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 769 passed, 45 skipped (SP0: 2 652). ruff clean; ty clean on <code>src/</code> and the new tests. <b>Mutation checks:</b> 21 of 22 killed; the survivor was dead code, now removed.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>interp/grid.py</code></td><td>
+<ul>
+<li><code>Axis</code>: knot vector, degree, a <b>search partition</b> (every distinct knot of the base interval, refinable by a fit's data sites so a uniform data grid stays uniform when not-a-knot drops two knots), cell continuity (right, or left for <code>nearest</code>'s midpoints), extrapolation.</li>
+<li>Searches as expressions: <code>uniform</code> (floor, clamp before the cast, a one-step correction against the cell's own two edges), <code>binary</code> (branch-free halvings on edges padded with NaN, which every compare fails, so <code>x = +inf</code> cannot run past the last cell), <code>count</code>. <code>auto</code> takes uniform when every edge is within a quarter cell of uniform, else binary.</li>
+<li>The per-axis B-spline tables, by de Boor differencing on sparse design matrices: the local polynomial of every non-zero basis function (<code>local</code>), the first basis function per cell (<code>offsets</code>), and the piecewise-polynomial form of coefficients (<code>taylor</code>). Local expansions are centred on the cell midpoints, which halves the cancellation of a left-edge expansion: a 2-D cubic missed 1e-13 with left edges and meets it centred.</li>
+</ul></td></tr>
+<tr><td><code>interp/spline.py</code></td><td>
+<ul>
+<li><code>BSpline(knots, coeffs, degree, extrap=, fill=, search=, strategy=, name=)</code>. A point is evaluated inline; a batch <code>(N,)</code> or <code>(N, D)</code> is one <code>vmap</code> of the point's Function. The first version evaluated batches as one vectorized graph, and reverse mode through its middle-axis slices grew with N (8 424 C lines for a 49-point Hessian, 45 s to build); the map is 399 lines at any N, and <code>sparse_jacobian</code> takes its structured path.</li>
+<li><code>pp</code>: the cell's <code>prod(k_d+1)</code> Taylor coefficients by one <code>take</code>, nested Horner. <code>basis</code>: per axis the local matrix by one <code>take</code> and Horner, the <code>prod(k_d+1)</code> B-coefficients by one <code>take</code>, a matvec per axis. <code>auto</code>: <code>pp</code> while its table fits 1 MB.</li>
+<li>Extrapolation: <code>linear</code> (default from degree 2; in n-D the product of the axes' linear continuations, which is C¹, where the plan's plain Taylor formula is not across the lines a point leaves a second axis), <code>extend</code> (what <code>linear</code> is at degree 1), <code>clamp</code> (the default at degree 0), <code>periodic</code>, <code>fill</code>. The clamp uses <code>where</code>, so NaN reaches the output; degree-0 axes, which never read their coordinate, pass NaN on explicitly.</li>
+<li><code>index(x)</code> and <code>f(x, index=)</code> share one search (for a batch, a map of a search Function). <code>function()</code> is interned by a content digest, so identical splines share one Function and never collide at lowering. <code>to_scipy()</code>.</li>
+</ul></td></tr>
+<tr><td><code>interp/fit.py</code></td><td><code>interpolant</code>: per axis the knot vector, partition and a linear map from data to coefficients (identity for <code>nearest</code>, <code>zoh</code>, <code>linear</code>; <code>make_interp_spline</code> for <code>cubic</code> and <code>spline</code>), applied axis by axis. Periodic axes check that their data close up. <code>zoh</code> holds its last value for one more spacing, or to <code>period</code>.</td></tr>
+<tr><td>Wiring</td><td><code>sc.interp</code> (no flat re-exports), <code>IMPORT_LAYERS</code>, the pinned surface in <code>test_import_boundaries.py</code>, a <code>table</code> entry in the C snapshot corpus (a 5-point linear table: 57 lines).</td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<p><code>tests/interp/</code> (98 tests, 21 s in parallel), plus <code>tests/integration/test_interp_ocp.py</code> and <code>tests/codegen/test_constant_tables.py</code>:</p>
+<ul>
+<li><code>test_grid.py</code>: every search against <code>searchsorted</code> on 10⁶ points per search and side (5 × 10⁵ for <code>uniform</code>, which skips the non-uniform partitions): each edge, <code>nextafter</code> on both sides, ±10³ widths, NaN, ±inf, ±1e300, random, over six partitions; uniformity on 60 <code>linspace</code> grids; the correction on edges off by 0.45 cell; the de Boor tables against SciPy, knot multiplicities included.</li>
+<li><code>test_spline.py</code>: degrees 0 to 5 in 1-D and five degree mixes in 2-D to 4-D against SciPy's <code>BSpline</code>/<code>NdBSpline</code>, both strategies, values and first and second derivatives in forward and reverse mode; each extrapolation mode against its formula (the 2-D tensor continuation included); NaN and ±inf per mode and degree; the shared search (one <code>floor</code> in the C of value, gradient and Hessian); batches as one map with a block-diagonal sparse Jacobian.</li>
+<li><code>test_fit.py</code>: <code>np.interp</code>, <code>CubicSpline</code> for all four boundary conditions (periodic extrapolation included), <code>make_interp_spline</code> k = 1 to 5, RGI <code>nearest</code> away from midpoints and the lower site at a float midpoint, <code>searchsorted</code> for <code>zoh</code>, 2-D and 3-D tensor fits, a 4-D mixed table interpolating its data, validation.</li>
+<li><code>test_casadi_parity.py</code>: linear inside and extended, 1-D to 3-D, to 1e-13; <code>bspline</code> evaluation through CasADi's <code>bspline</code> node with our knots and coefficients, k = 1, 3, 5, 1-D to 3-D, to 1e-13; CasADi's quirks pinned (zero outside, zero data derivative unless inlined, degrees 2 and 4 refused).</li>
+<li>An IPOPT OCP whose dynamics contain a bicubic table solves as the same OCP with the table written out as comparisons and polynomials, to 1e-8. Constant tables reach the C bit for bit.</li>
+</ul>
+<p><b>CasADi's fit is the less accurate one.</b> Its <code>bspline</code> interpolant misses its own data by up to 1.6e-10 (3-D, degree 5) where SciPy's per-axis solves miss by 4e-14, so the fitted interpolants agree to 1e-13 or to ten times CasADi's miss, and the test asserts ours is the smaller. The plan's "1e-13 in 3-D" holds for the evaluation, not for CasADi's fit.</p>
+<div class="scroll"><table>
+<tr><th>Mutant</th><th>Result</th><th>Mutant</th><th>Result</th></tr>
+<tr><td>tie side right → left</td><td class="ok">killed</td><td>tie side left → right</td><td class="ok">killed</td></tr>
+<tr><td>index clamp bound + 1</td><td class="ok">killed</td><td>no uniform correction</td><td class="ok">killed</td></tr>
+<tr><td>no upward correction</td><td class="ok">killed</td><td>uniform check skipped</td><td class="warn">survived → removed</td></tr>
+<tr><td>binary padding +inf</td><td class="ok">killed</td><td>count off by one</td><td class="ok">killed</td></tr>
+<tr><td>periodic offset</td><td class="ok">killed</td><td>de Boor factor k + 1</td><td class="ok">killed</td></tr>
+<tr><td>span side</td><td class="ok">killed</td><td>linear not mapped to extend</td><td class="ok">killed</td></tr>
+<tr><td>no NaN guard at degree 0</td><td class="ok">killed</td><td>clamp swallows NaN</td><td class="ok">killed</td></tr>
+<tr><td>fill value</td><td class="ok">killed</td><td>left edge instead of center</td><td class="ok">killed</td></tr>
+<tr><td>pp tensor stride</td><td class="ok">killed</td><td>basis tensor stride</td><td class="ok">killed</td></tr>
+<tr><td>transposed local basis</td><td class="ok">killed</td><td>Horner slope factor</td><td class="ok">killed</td></tr>
+<tr><td>linear without slope</td><td class="ok">killed</td><td>natural as clamped</td><td class="ok">killed</td></tr>
+</table></div>
+<p>The survivor was the build-time check that the uniform estimate lands within one cell. The quarter-cell filter before it already guarantees that (an edge off by less than a cell moves the quotient by less than one), so the check went and a test pins the filter's boundary instead.</p>
+
+<h2>3. Benchmarks</h2>
+<p><code>perf_2026_09_28_interp/bench_eval.py</code>: one point per call, value and derivative, every variant and CasADi at each lookup mode (fastest kept), 7 rounds.</p>
+<div class="scroll"><table>
+<tr><th>Configuration</th><th>Scaly auto ns</th><th>CasADi ns (lookup)</th><th>Ratio</th><th>C lines</th></tr>
+<tr><td>1-D linear, 32 uniform</td><td class="r">1.9</td><td class="r">22.9 (exact)</td><td class="r">0.08</td><td class="r">54 / 322</td></tr>
+<tr><td>1-D linear, 1 024 clustered</td><td class="r">5.4</td><td class="r">35.2 (binary)</td><td class="r">0.15</td><td class="r">71 / 570</td></tr>
+<tr><td>1-D cubic, 32 uniform</td><td class="r">2.9</td><td class="r">67.3 (linear)</td><td class="r">0.04</td><td class="r">81 / 338</td></tr>
+<tr><td>1-D cubic, 1 024 clustered</td><td class="r">6.2</td><td class="r">74.2 (binary)</td><td class="r">0.08</td><td class="r">98 / 832</td></tr>
+<tr><td>2-D bicubic, 64²</td><td class="r">11.7</td><td class="r">264.2 (binary)</td><td class="r">0.04</td><td class="r">192 / 1 999</td></tr>
+<tr><td>3-D trilinear, 20³ (value)</td><td class="r">4.2</td><td class="r">14.6 (exact)</td><td class="r">0.29</td><td class="r">102 / 1 273</td></tr>
+</table></div>
+<ul>
+<li><code>auto</code> matches the best fixed choice everywhere (within the noise between two builds of the same variant); the full table is in <code>results_2026_09_28.md</code>.</li>
+<li><b>The count search never wins:</b> binary is as fast at 2 cells and 4× faster at 32. <code>auto</code> no longer uses it; it stays as an explicit choice, and SP4 measures it across batches.</li>
+<li><b>The default extrapolation has a price:</b> on the bicubic, <code>linear</code> takes 11.9 ns against 6.5 for <code>extend</code>, as each axis's slope is evaluated alongside its value. At degree 1 <code>linear</code> is <code>extend</code> and costs nothing. SP4 looks for a cheaper form.</li>
+</ul>
+
+<h2>4. Gates</h2>
+<div class="scroll"><table>
+<tr><th>Gate</th><th>Status</th></tr>
+<tr><td>Values against SciPy to 1e-13 relative; gradient and Hessian to 1e-11; random grids, knots, ±1 ulp, outside, NaN/±inf</td><td class="ok">met</td></tr>
+<tr><td>Every search equals <code>searchsorted</code> on 10⁶ adversarial points</td><td class="ok">met</td></tr>
+<tr><td>CasADi parity for <code>linear</code> (inside and extended), 1-D to 3-D, to 1e-13</td><td class="ok">met</td></tr>
+<tr><td>CasADi parity for <code>bspline</code> k = 1, 3, 5 (inside), 1-D to 3-D, to 1e-13</td><td class="ok">met for the evaluation</td> </tr>
+<tr><td>… for CasADi's fitted interpolant</td><td class="warn">within CasADi's own fit error (up to 1.6e-10), which is larger than ours</td></tr>
+<tr><td>One search node shared by value, gradient and Hessian</td><td class="ok">met (one <code>floor</code> in the C)</td></tr>
+</table></div>
+
+<h2>5. Next</h2>
+<p>SP2 (API-172): the shape-preserving kinds (<code>pchip</code>, <code>akima</code>, <code>makima</code>, <code>steffen</code>) as C¹ cubics on doubled knots; <code>smooth_linear</code>, whose algorithm is now known from CasADi's source (knots at ±<code>frac</code>·smallest gap around each site, coefficients the linear interpolant at the Greville points); P-splines with GCV; derivative, antiderivative, integral and inverse.</p>
+</main></body></html>
