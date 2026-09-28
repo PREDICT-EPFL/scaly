@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scaly compiler pipeline</title>
+<style>
+:root{
+  --bg:#fbfaf7; --panel:#ffffff; --ink:#1d1f23; --muted:#5d6470; --line:#d9d6ce; --code:#f3f1ec;
+  --a:#2f5d8a; --a-soft:#e3ecf5; --b:#7a4f9a; --b-soft:#efe6f5; --c:#2e7d5b; --c-soft:#e2f2ea;
+  --d:#a8612a; --d-soft:#f8ebdf; --e:#8a2f3d; --e-soft:#f6e3e6; --grey-soft:#eeece7;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#16181c; --panel:#1e2126; --ink:#e7e5e0; --muted:#a2a8b3; --line:#343841; --code:#23262c;
+    --a:#8fb8e3; --a-soft:#223244; --b:#c7a2e3; --b-soft:#33273e; --c:#86d1ad; --c-soft:#1f3a2e;
+    --d:#e7ad7b; --d-soft:#3d2c1d; --e:#eb97a3; --e-soft:#3f2429; --grey-soft:#2a2d33;
+  }
+}
+:root[data-theme="dark"]{
+    --bg:#16181c; --panel:#1e2126; --ink:#e7e5e0; --muted:#a2a8b3; --line:#343841; --code:#23262c;
+    --a:#8fb8e3; --a-soft:#223244; --b:#c7a2e3; --b-soft:#33273e; --c:#86d1ad; --c-soft:#1f3a2e;
+    --d:#e7ad7b; --d-soft:#3d2c1d; --e:#eb97a3; --e-soft:#3f2429; --grey-soft:#2a2d33;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif}
+main{max-width:1060px;margin:0 auto;padding:40px 20px 80px}
+h1,h2,h3,h4{font-family:ui-sans-serif,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;line-height:1.25}
+h1{font-size:2rem;margin:0 0 .3em}
+h2{font-size:1.4rem;margin:2.4em 0 .6em;padding-top:.6em;border-top:1px solid var(--line)}
+h3{font-size:1.1rem;margin:1.8em 0 .5em}
+h4{font-size:.98rem;margin:1.3em 0 .3em}
+p,li{max-width:78ch}
+.lede{color:var(--muted);font-size:1.05rem}
+code,pre{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.82rem}
+p code,li code,td code{background:var(--code);padding:.05em .3em;border-radius:3px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:6px;padding:12px 14px;overflow:auto;line-height:1.45;max-height:520px}
+.small{font-size:.88rem;color:var(--muted)}
+figure{margin:1.4em 0}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:.4em}
+svg{max-width:100%;height:auto;display:block}
+svg text{font-family:ui-sans-serif,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:var(--ink)}
+svg .t-muted{fill:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+table{border-collapse:collapse;width:100%;font-size:.9rem;margin:.6em 0 1em}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{font-family:ui-sans-serif,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-weight:600;font-size:.82rem;color:var(--muted)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.scroll{overflow-x:auto}
+.passes{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:1em 0}
+.phase{border-radius:8px;padding:10px 12px;border:1px solid var(--line)}
+.phase h4{margin:0 0 .4em;font-size:.8rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.phase ol{margin:0;padding-left:1.2em;font-size:.88rem}
+.phase li{margin:.2em 0}
+.p1{background:var(--a-soft)} .p2{background:var(--b-soft)} .p3{background:var(--c-soft)} .p4{background:var(--d-soft)} .p5{background:var(--grey-soft)}
+.tag{display:inline-block;font-family:ui-sans-serif,-apple-system,sans-serif;font-size:.72rem;font-weight:600;padding:.1em .5em;border-radius:99px;vertical-align:middle}
+.tag.new{background:var(--c-soft);color:var(--c)}
+.tag.road{background:var(--a-soft);color:var(--a)}
+.tag.neg{background:var(--e-soft);color:var(--e)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:760px){.two{grid-template-columns:1fr} main{padding:24px 16px 60px}}
+.prop{border-left:3px solid var(--c);padding:.2em 0 .2em 14px;margin:1.4em 0}
+.prop.road{border-left-color:var(--a)}
+.prop h4{margin-top:0}
+.kv{font-size:.88rem;color:var(--muted)}
+.kv b{color:var(--ink);font-weight:600}
+ol.refs li{font-size:.9rem;margin:.35em 0}
+.toc{columns:2;font-size:.92rem}
+@media (max-width:760px){.toc{columns:1}}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Scaly: from expression graph to C</h1>
+<p class="lede">An analysis of the compiler pipeline in <code>alloy/</code> (package <code>scaly</code>) as of the <code>main</code> commit “Re-run the race-car Hessian variants on the x86 reference machine (C-81)”, 22 September 2026, with a worked trace through every pass and a ranked list of optimizations for the generated code.</p>
+
+<div class="card toc">
+<ol>
+<li><a href="#overview">The pipeline at a glance</a></li>
+<li><a href="#dialects">The two dialects</a></li>
+<li><a href="#lowering">Lowering: Expr → Program</a></li>
+<li><a href="#passes">The optimization pipeline</a></li>
+<li><a href="#trace">A worked trace</a></li>
+<li><a href="#render">Rendering, ABI, JIT/AOT</a></li>
+<li><a href="#time">Where the time goes today</a></li>
+<li><a href="#proposals">Proposed optimizations</a></li>
+<li><a href="#neg">Things measured that do not help</a></li>
+<li><a href="#refs">References</a></li>
+</ol>
+</div>
+
+<h2 id="overview">1. The pipeline at a glance</h2>
+<p>Scaly has one direction of travel: a Python-traced, hash-consed expression DAG (the <em>expression dialect</em>), transformed in place by AD and simplification, is lowered once into an explicit loop/buffer IR (the <em>program dialect</em>), optimized by a fixed sequence of eleven passes, verified and rendered to a single C translation unit. There is no interpreter; Python calls, tests and AOT output all run through the same C.</p>
+
+<figure>
+<svg viewBox="0 0 980 760" role="img" aria-label="Scaly pipeline diagram">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker>
+  </defs>
+  <!-- column labels -->
+  <text x="20" y="22" class="t-muted" font-size="12" font-weight="600">WHAT TO COMPUTE — expression dialect (ir/expr.py)</text>
+  <rect x="10" y="30" width="600" height="250" rx="10" fill="var(--a-soft)" stroke="var(--line)"/>
+  <rect x="10" y="324" width="600" height="250" rx="10" fill="var(--c-soft)" stroke="var(--line)"/>
+  <text x="20" y="610" class="t-muted" font-size="12" font-weight="600">C — codegen/</text>
+  <rect x="10" y="618" width="600" height="132" rx="10" fill="var(--d-soft)" stroke="var(--line)"/>
+
+  <text x="20" y="564" class="t-muted" font-size="12" font-weight="600">HOW TO COMPUTE — program dialect (ir/program.py)</text>
+  <!-- expression boxes -->
+  <rect x="40" y="48" width="240" height="56" rx="7" fill="var(--panel)" stroke="var(--a)"/>
+  <text x="160" y="71" text-anchor="middle" font-size="14" font-weight="600">Python model</text>
+  <text x="160" y="91" text-anchor="middle" font-size="11" class="t-muted">@sc.function · sc.vmap · sc.problem</text>
+
+  <rect x="340" y="48" width="240" height="56" rx="7" fill="var(--panel)" stroke="var(--a)"/>
+  <text x="460" y="71" text-anchor="middle" font-size="14" font-weight="600">Function</text>
+  <text x="460" y="91" text-anchor="middle" font-size="11" class="t-muted">named DAG of interned Expr nodes</text>
+  <line x1="280" y1="76" x2="336" y2="76" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <rect x="40" y="136" width="240" height="64" rx="7" fill="var(--panel)" stroke="var(--b)"/>
+  <text x="160" y="158" text-anchor="middle" font-size="14" font-weight="600">ad/  derivative requests</text>
+  <text x="160" y="176" text-anchor="middle" font-size="11" class="t-muted">Grad · Jac · SpJac · SpHess (star colouring)</text>
+  <text x="160" y="191" text-anchor="middle" font-size="11" class="t-muted">call/VMAP differentiated without inlining</text>
+  <rect x="340" y="136" width="240" height="64" rx="7" fill="var(--panel)" stroke="var(--b)"/>
+  <text x="460" y="158" text-anchor="middle" font-size="14" font-weight="600">solvers/  sc.solver</text>
+  <text x="460" y="176" text-anchor="middle" font-size="11" class="t-muted">SOLVER_CALL (opaque) + oracle Functions</text>
+  <text x="460" y="191" text-anchor="middle" font-size="11" class="t-muted">base · grad · jac · hess · bounds</text>
+  <path d="M345 100 C 300 112, 250 116, 205 132" fill="none" stroke="var(--b)" stroke-width="1.5" marker-end="url(#ar)"/>
+  <line x1="460" y1="104" x2="460" y2="132" stroke="var(--b)" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="300" y="130" font-size="10.5" fill="var(--b)">derive → new Function</text>
+
+  <rect x="160" y="220" width="310" height="48" rx="7" fill="var(--panel)" stroke="var(--a)"/>
+  <text x="315" y="241" text-anchor="middle" font-size="13.5" font-weight="600">normalize (simplify + cse, ≤ 4 rounds)</text>
+  <text x="315" y="258" text-anchor="middle" font-size="11" class="t-muted">each reached Function · passes/expr.py, arith.py</text>
+  <path d="M160 200 L240 216" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ar)"/>
+  <path d="M460 200 L390 216" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- lowering -->
+  <rect x="140" y="292" width="350" height="44" rx="7" fill="var(--panel)" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="315" y="312" text-anchor="middle" font-size="14" font-weight="700">lower_function  (passes/lowering.py)</text>
+  <text x="315" y="328" text-anchor="middle" font-size="11" class="t-muted">topo walk · one @lowers rule per ExprOp · one PROC per Function</text>
+  <line x1="315" y1="268" x2="315" y2="288" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <rect x="40" y="356" width="540" height="56" rx="7" fill="var(--panel)" stroke="var(--c)"/>
+  <text x="310" y="378" text-anchor="middle" font-size="14" font-weight="600">PROGRAM { PROC callee₁ … PROC entry }</text>
+  <text x="310" y="398" text-anchor="middle" font-size="11" class="t-muted">buffer (global/private/constant, aliases) · view · for/range(kind) · store · assign · call</text>
+  <line x1="315" y1="336" x2="315" y2="352" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <rect x="40" y="432" width="540" height="72" rx="7" fill="var(--panel)" stroke="var(--c)"/>
+  <text x="310" y="453" text-anchor="middle" font-size="14" font-weight="600">optimize_program — PASS_PIPELINE (11 passes)</text>
+  <text x="310" y="472" text-anchor="middle" font-size="11" class="t-muted">hoist_invariant → scalarize → prune → combine_scatter_sums → fuse_elementwise →</text>
+  <text x="310" y="488" text-anchor="middle" font-size="11" class="t-muted">fold_arith → unroll_unit_loops → fold_arith → pack_workspace → coalesce_stores → prepare_scalar</text>
+  <line x1="310" y1="412" x2="310" y2="428" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <rect x="200" y="516" width="220" height="34" rx="7" fill="var(--panel)" stroke="var(--c)"/>
+  <text x="310" y="538" text-anchor="middle" font-size="13" font-weight="600">verify_program</text>
+  <line x1="310" y1="504" x2="310" y2="512" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- C -->
+  <rect x="40" y="634" width="260" height="60" rx="7" fill="var(--panel)" stroke="var(--d)"/>
+  <text x="170" y="656" text-anchor="middle" font-size="13.5" font-weight="600">render_program_c  (c.py)</text>
+  <text x="170" y="674" text-anchor="middle" font-size="11" class="t-muted">static inline *_raw callees + ABI entry</text>
+  <text x="170" y="688" text-anchor="middle" font-size="11" class="t-muted">solver wrapper spliced by solver.py</text>
+  <path d="M310 550 L310 600 L170 600 L170 630" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <rect x="330" y="634" width="250" height="60" rx="7" fill="var(--panel)" stroke="var(--d)"/>
+  <text x="455" y="656" text-anchor="middle" font-size="13.5" font-weight="600">CModule  (aot.py)</text>
+  <text x="455" y="674" text-anchor="middle" font-size="11" class="t-muted">.h + .c · SZ_W · sparsity tables</text>
+  <text x="455" y="688" text-anchor="middle" font-size="11" class="t-muted">C / C++ / CasADi-compatible layers</text>
+  <line x1="300" y1="664" x2="326" y2="664" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <rect x="40" y="708" width="260" height="34" rx="7" fill="var(--panel)" stroke="var(--d)"/>
+  <text x="170" y="730" text-anchor="middle" font-size="12">AOT: files on disk · scaly_codegen</text>
+  <rect x="330" y="708" width="250" height="34" rx="7" fill="var(--panel)" stroke="var(--d)"/>
+  <text x="455" y="730" text-anchor="middle" font-size="12">JIT: SHA-256 key → cc → dlopen → ctypes</text>
+  <path d="M400 694 L300 712" fill="none" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#ar)"/>
+  <line x1="455" y1="694" x2="455" y2="704" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <!-- right column: annotations -->
+  <rect x="640" y="30" width="330" height="720" rx="10" fill="none" stroke="var(--line)" stroke-dasharray="4 4"/>
+  <text x="656" y="54" font-size="12" font-weight="600" class="t-muted">viz/ observer taps (opt-in)</text>
+  <g font-size="12">
+    <text x="656" y="84">• expression graph + normalized outputs</text>
+    <text x="656" y="104">• “lowered” program</text>
+    <text x="656" y="124">• program after each of the 11 passes</text>
+    <text x="656" y="144">• generated C</text>
+  </g>
+  <text x="656" y="190" font-size="12" font-weight="600" class="t-muted">Invariants that shape the design</text>
+  <g font-size="11.5">
+    <text x="656" y="214">Nodes are interned ⇒ identity = structure,</text>
+    <text x="668" y="230">CSE happens at construction.</text>
+    <text x="656" y="254">Shapes are static; float64 at the ABI.</text>
+    <text x="656" y="278">Call/VMAP boundaries survive into C:</text>
+    <text x="668" y="294">a horizon of N stages is one loop body.</text>
+    <text x="656" y="318">No fallback: unsupported op ⇒ LoweringError.</text>
+    <text x="656" y="342">Every rewrite goes through ir/match.rewrite</text>
+    <text x="668" y="358">(iterative, memoized; depth ≠ Python stack).</text>
+    <text x="656" y="382">Arithmetic rules are not IEEE-preserving</text>
+    <text x="668" y="398">(x/x→1, 0/x→0), but no -ffast-math.</text>
+  </g>
+  <text x="656" y="446" font-size="12" font-weight="600" class="t-muted">Program forms inside one PROGRAM</text>
+  <g font-size="11.5">
+    <text x="656" y="470">loop form: buffers + loops (entry point,</text>
+    <text x="668" y="486">large or .block() procedures)</text>
+    <text x="656" y="510">scalar form: SSA values, expression trees</text>
+    <text x="668" y="526">(small float64 stage bodies, .scalar())</text>
+  </g>
+  <text x="656" y="574" font-size="12" font-weight="600" class="t-muted">JIT flags</text>
+  <g font-size="11.5">
+    <text x="656" y="598">cc -O2 (SCALY_CC_OPT) -march/-mcpu=native</text>
+    <text x="668" y="614">-fno-math-errno -fPIC -shared</text>
+    <text x="656" y="638">cache: $XDG_CACHE_HOME/scaly/jit</text>
+    <text x="656" y="662">solver artefacts loaded in an isolated</text>
+    <text x="668" y="678">linker namespace (Linux)</text>
+  </g>
+</svg>
+<figcaption>Figure 1. Stages, owning modules and the data passed between them. Blue: expression dialect; green: program dialect; orange: C.</figcaption>
+</figure>
+
+<h2 id="dialects">2. The two dialects</h2>
+<div class="scroll"><table>
+<tr><th></th><th>Expression dialect (<code>Expr</code>)</th><th>Program dialect (<code>ProgramNode</code>)</th></tr>
+<tr><td>Question answered</td><td>what value</td><td>which loops, buffers, procedures</td></tr>
+<tr><td>Node</td><td>frozen, interned; <code>op, args, type(shape,dtype,sparsity,diff), attrs, lowering hint</code></td><td>frozen, interned; one class for statements, declarations and scalar expressions</td></tr>
+<tr><td>Ops</td><td>39: elementwise math, <code>sum, reshape, transpose, slice, gather, scatter, stack, concat, matmul</code>, boundaries <code>call, VMAP, solver_call</code></td><td>structure: <code>program, proc, kernel, buffer, view, for, range, store, store_pair, assign, call, launch, barrier</code>; scalars: <code>load, var, const, + − × ÷ mod</code>, libm</td></tr>
+<tr><td>Differentiable</td><td>yes (graph → graph)</td><td>no</td></tr>
+<tr><td>Rewrites</td><td><code>simplify</code>, <code>cse</code>, <code>passes/arith.py</code> rules</td><td>the 11 passes, same arith rules through an adapter</td></tr>
+<tr><td>Verification</td><td><code>verify_expr</code> (spec_expr)</td><td><code>verify_program</code> (host/kernel specs)</td></tr>
+<tr><td>Printed as</td><td><code>expr.*</code> assembly</td><td><code>prog.*</code> assembly</td></tr>
+</table></div>
+<p>The loop <code>range</code> carries a <code>RangeKind</code> (<code>serial, vector, global, reduce, unroll, …</code>, borrowed from tinygrad’s axis types). Today the lowerer produces only <code>global</code> and <code>reduce</code>; <code>vector</code> is declared but unused, which is the hook C-79 plans to exploit.</p>
+
+<h2 id="lowering">3. Lowering: Expr → Program</h2>
+<p><code>lower_function(fun)</code> produces a <code>PROGRAM</code> whose last <code>PROC</code> is the entry point. For each <code>Function</code> reached (the root, every <code>call</code>/<code>VMAP</code> callee, every solver oracle) <code>_lower_to_proc</code>:</p>
+<ol>
+<li>captures the effective lowering hint (<code>auto | scalar | block | opaque</code>), then <strong>normalizes a private copy</strong> of the outputs by alternating <code>simplify</code> and <code>cse</code> to a fixed point (at most four rounds), so the user’s graph and the AD graph are untouched;</li>
+<li>declares one <code>global</code> buffer per input and per output, and <strong>aliases each computed output expression to its output buffer</strong>, so the producing rule writes in place (no final copy);</li>
+<li>walks the DAG in topological order and dispatches each node to its <code>@lowers</code> rule, which appends statements and records the buffer holding the node’s value (<code>value_buffers[expr.id]</code>);</li>
+<li>tags the <code>PROC</code> with <code>scalarize_mode</code>: <code>procedure</code> if every value is float64 and the hint is <code>scalar</code> or <code>auto</code> (never for the entry point under <code>auto</code>), otherwise <code>disabled</code>.</li>
+</ol>
+
+<h3>The rules</h3>
+<div class="scroll"><table>
+<tr><th>Expr op</th><th>Program emitted</th><th>Notes</th></tr>
+<tr><td>unary / binary elementwise</td><td>one private buffer + one <code>for i in [0,size)</code> with one store</td><td>shared rule driven by <code>_UNARY/_BINARY</code> maps; broadcasting by flat→coord (<code>/</code>, <code>%</code>)→flat index arithmetic</td></tr>
+<tr><td><code>reshape</code></td><td>nothing</td><td>value maps to the source buffer</td></tr>
+<tr><td>contiguous <code>slice</code></td><td>zero-copy alias buffer (<code>const double* t = src + off</code>)</td><td>alias extends the source’s lifetime in <code>pack_workspace</code></td></tr>
+<tr><td>general <code>slice</code>, <code>transpose</code>, <code>stack</code>, <code>concat</code></td><td>copy loop(s) with affine index arithmetic</td><td>transpose ≤ rank 4, one loop per output axis</td></tr>
+<tr><td><code>const</code></td><td><code>static const</code> buffer</td><td>any size; <code>fold_arith</code> later turns loads of it into literals</td></tr>
+<tr><td><code>gather</code> / <code>scatter</code></td><td>loop; index via <code>index_at</code></td><td><code>affine_index_map</code> factors the index table into affine ranges plus a residual, so an affine gather emits no table (C-9); scatter zero-fills first</td></tr>
+<tr><td><code>sum</code></td><td>zero store + <code>reduce</code> loop</td><td>preserves left-to-right order</td></tr>
+<tr><td><code>matmul</code></td><td>layout-specific: <code>A@v</code> as 4 unrolled row accumulators; <code>v@A</code>, <code>A@B</code> with the reduction loop outermost</td><td>C-43; bit-identical to the naïve dot order</td></tr>
+<tr><td><code>call</code></td><td><code>CALL</code> into private output buffers</td><td>deduplicated per (callee, argument buffers); callee lowered once</td></tr>
+<tr><td><code>VMAP</code></td><td><code>for it in [0,N) kind=global { CALL callee(view(x, start+stride·it), …, view(out, it·slice)) }</code></td><td>the horizon stays a loop around a call; non-selected outputs go to one reused scratch</td></tr>
+<tr><td><code>solver_call</code></td><td>not lowered</td><td>solver callee stays opaque; its oracles become PROCs and <code>codegen/solver.py</code> renders the wrapper</td></tr>
+</table></div>
+<p>Two features of the initial program matter for everything downstream. First, lowering is <em>one buffer and one loop per expression node</em>: it is deliberately naïve and leaves fusion, scalarization and storage to the passes. Second, the <code>VMAP</code> rule produces <code>FOR { CALL }</code>, and every pass stops at a <code>CALL</code>; this single fact explains most of the remaining performance gap (Section 7).</p>
+
+<h2 id="passes">4. The optimization pipeline</h2>
+<p><code>PASS_PIPELINE</code> in <code>passes/program/__init__.py</code> is an explicit tuple; <code>optimize_program</code> runs it once, in order, then <code>verify_program</code> checks the result. Grouped by what they act on:</p>
+<div class="passes">
+  <div class="phase p1"><h4>1 · Structure</h4><ol>
+    <li><b>hoist_invariant</b>: a <code>VMAP</code> callee with broadcast (stride-0) arguments is split into a <code>_hoist_&lt;pos&gt;</code> prologue called once and a <code>_hoisted_&lt;pos&gt;</code> body taking the prologue’s buffers as extra inputs.</li></ol></div>
+  <div class="phase p2"><h4>2 · Expansion</h4><ol start="2">
+    <li><b>scalarize</b>: selected float64 PROCs (and eligible pure callees) are fully expanded to scalar SSA: constant loop indices substituted, per-element value tracking, constant folding, zero/one identities, sharing into typed temporaries, trees elsewhere (temporary at depth 32). Budgets under <code>auto</code>: 4 096 arithmetic ops per PROC, 16 384 program-wide, 65 536 work units.</li>
+    <li><b>prune_procedures</b>: drop PROCs made unreachable by expansion.</li></ol></div>
+  <div class="phase p3"><h4>3 · Loop cleanup</h4><ol start="4">
+    <li><b>combine_scatter_sums</b>: Σ of single-use zero-filled scatters → one zero-fill + scatter-adds (slice adjoints).</li>
+    <li><b>fuse_elementwise</b>: substitute a single-store, single-use producer loop into its consumer’s load; delete the buffer. Refuses to duplicate libm calls under broadcast.</li>
+    <li><b>fold_arith</b>: constant-buffer loads → literals; shared arith identities; constant-fill loops → constant buffers.</li>
+    <li><b>unroll_unit_loops</b>: erase empty loops, inline one-trip loops.</li>
+    <li><b>fold_arith</b> (again): fold what substitution exposed; drop unused buffers.</li></ol></div>
+  <div class="phase p4"><h4>4 · Storage</h4><ol start="9">
+    <li><b>pack_workspace</b>: lifetime-pack private buffers into shared slots; slots ≥ 1024 doubles spill into caller <code>w[]</code> (→ <code>SZ_W</code>).</li>
+    <li><b>coalesce_stores</b>: adjacent float64 stores → <code>STORE_PAIR</code> (a <code>double2</code> vector store), alias-safe.</li></ol></div>
+  <div class="phase p5"><h4>5 · Render prep</h4><ol start="11">
+    <li><b>prepare_scalar</b>: bound expression depth with typed temporaries (Clang’s bracket limit), sharing only within a statement.</li></ol></div>
+</div>
+<p>The ordering is deliberate: hoisting must see the loop-shaped callee; scalarization runs before any fusion or slot reuse so that it sees clean buffers; fusion needs canonical loop-shaped producers, so <code>unroll_unit_loops</code> comes after it; store pairing needs the physical aliases that only exist after packing.</p>
+
+<h2 id="trace">5. A worked trace</h2>
+<p>A pendulum-like multiple-shooting defect, <code>N = 4</code>, run through <code>lower_function</code> with an observer on every pass (every stage below is <code>render_program_assembly</code> of the program handed to the observer of <code>lower_function(f, observe=…)</code>).</p>
+<pre><code>@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1), sc.L("znext", 2)), sc.L("defect", ...))
+def defect(inputs):
+    z, u, znext = inputs
+    dz = sc.concat([z[1:], -(z[:1].sin()) + u])
+    return z + 0.1 * dz - znext
+
+@sc.function(sc.L("w", 3*N + 2), sc.L("g", ...))
+def cons(w):
+    zs, us = w[:2*N + 2], w[2*N + 2:]
+    return sc.vmap(defect, N, [(zs, 0, 2), (us, 0, 1), (zs, 2, 2)])</code></pre>
+
+<h3>5.1 Expression dialect (after tracing)</h3>
+<pre>expr.module {
+  expr.func @defect(%z: tensor&lt;2xfloat64 diff&gt;, %u: tensor&lt;1xfloat64 diff&gt;, %znext: tensor&lt;2xfloat64 diff&gt;) -&gt; (%defect: tensor&lt;2xfloat64 diff&gt;) {
+    %0 = expr.input {lowering=&quot;auto&quot;, name=&quot;z&quot;} : tensor&lt;2xfloat64 diff&gt;
+    %1 = expr.const {lowering=&quot;auto&quot;, value=0.1} : tensor&lt;float64&gt;
+    %2 = expr.slice(%0) {index=[slice(1, None, None)]} : tensor&lt;1xfloat64 diff&gt;
+    %3 = expr.slice(%0) {index=[slice(None, 1, None)]} : tensor&lt;1xfloat64 diff&gt;
+    %4 = expr.sin(%3) : tensor&lt;1xfloat64 diff&gt;
+    %5 = expr.neg(%4) : tensor&lt;1xfloat64 diff&gt;
+    %6 = expr.input {lowering=&quot;auto&quot;, name=&quot;u&quot;} : tensor&lt;1xfloat64 diff&gt;
+    %7 = expr.add(%5, %6) : tensor&lt;1xfloat64 diff&gt;
+    %8 = expr.concat(%2, %7) {axis=0} : tensor&lt;2xfloat64 diff&gt;
+    %9 = expr.mul(%1, %8) : tensor&lt;2xfloat64 diff&gt;
+    %10 = expr.add(%0, %9) : tensor&lt;2xfloat64 diff&gt;
+    %11 = expr.input {lowering=&quot;auto&quot;, name=&quot;znext&quot;} : tensor&lt;2xfloat64 diff&gt;
+    %12 = expr.sub(%10, %11) : tensor&lt;2xfloat64 diff&gt;
+    expr.return %12
+  }
+  expr.func @cons(%w: tensor&lt;14xfloat64 diff&gt;) -&gt; (%g: tensor&lt;8xfloat64 diff&gt;) {
+    %0 = expr.input {lowering=&quot;auto&quot;, name=&quot;w&quot;} : tensor&lt;14xfloat64 diff&gt;
+    %1 = expr.slice(%0) {index=[slice(None, 10, None)]} : tensor&lt;10xfloat64 diff&gt;
+    %2 = expr.slice(%0) {index=[slice(10, None, None)]} : tensor&lt;4xfloat64 diff&gt;
+    %3 = expr.vmap(%1, %2, %1) {callee=&quot;defect&quot;, length=4, output=0, slice_size=2, starts=[0, 0, 2], strides=[2, 1, 2]} : tensor&lt;8xfloat64 diff&gt;
+    expr.return %3
+  }
+}</pre>
+
+<h3>5.2 Immediately after lowering: one loop and one buffer per node</h3>
+<p>The stage callee as the rules emit it. Note the two contiguous slices became pointer aliases, the constant became a <code>constant</code>-space buffer, and every elementwise op got its own private buffer and single-store loop. The entry point (not shown) is <code>for it_g in [0,4) { call @defect(view(w, 2·it), view(w, 10+it), view(w, 2+2·it), view(g, 2·it)) }</code>.</p>
+<pre>prog.module {
+  prog.proc @defect(%z: memref&lt;2xfloat64&gt;, %u: memref&lt;1xfloat64&gt;, %znext: memref&lt;2xfloat64&gt;, %defect: memref&lt;2xfloat64&gt;) {device=host, input_count=3,  …
+    %k0 = prog.buffer : memref&lt;1xfloat64, constant&gt; = dense&lt;[0.1]&gt;
+    %t1 = prog.buffer : memref&lt;1xfloat64, private&gt; = prog.alias %z offset 1
+    %t2 = prog.buffer : memref&lt;1xfloat64, private&gt; = prog.alias %z offset 0
+    %t3 = prog.buffer : memref&lt;1xfloat64, private&gt;
+    prog.for %i_t3 = 0 to 1 step 1 {kind=global} {
+      prog.store prog.sin(prog.load %t2[%i_t3]), %t3[%i_t3] : float64
+    }
+    %t4 = prog.buffer : memref&lt;1xfloat64, private&gt;
+    prog.for %i_t4 = 0 to 1 step 1 {kind=global} {
+      prog.store prog.sub(prog.load %u[%i_t4], prog.load %t3[%i_t4]), %t4[%i_t4] : float64
+    }
+    %t5 = prog.buffer : memref&lt;2xfloat64, private&gt;
+    prog.for %j_t5_0 = 0 to 1 step 1 {kind=global} {
+      prog.store prog.load %t1[%j_t5_0], %t5[%j_t5_0] : float64
+    }
+    prog.for %j_t5_1 = 0 to 1 step 1 {kind=global} {
+      prog.store prog.load %t4[%j_t5_1], %t5[prog.add(1, %j_t5_1)] : float64
+    }
+    %t6 = prog.buffer : memref&lt;2xfloat64, private&gt;
+    prog.for %i_t6 = 0 to 2 step 1 {kind=global} {
+      prog.store prog.mul(prog.load %k0[0], prog.load %t5[%i_t6]), %t6[%i_t6] : float64
+    }
+    %t7 = prog.buffer : memref&lt;2xfloat64, private&gt;
+    prog.for %i_t7 = 0 to 2 step 1 {kind=global} {
+      prog.store prog.add(prog.load %z[%i_t7], prog.load %t6[%i_t7]), %t7[%i_t7] : float64
+    }
+    prog.for %i_defect = 0 to 2 step 1 {kind=global} {
+      prog.store prog.sub(prog.load %t7[%i_defect], prog.load %znext[%i_defect]), %defect[%i_defect] : float64
+    }
+  }</pre>
+
+<h3>5.3 After <code>scalarize</code>: the stage collapses to two stores</h3>
+<p>The callee qualifies for automatic expansion (float64, small). Constant indices are substituted, <code>0.1</code> is folded into the tree, and <code>-sin(z₀) + u</code> is normalized to <code>u − sin(z₀)</code>. The seven buffers are gone.</p>
+<pre>prog.module {
+  prog.proc @defect(%z: memref&lt;2xfloat64&gt;, %u: memref&lt;1xfloat64&gt;, %znext: memref&lt;2xfloat64&gt;, %defect: memref&lt;2xfloat64&gt;) {device=host, input_count=3,  …
+    %v0 = prog.assign prog.load %z[0] : float64 {declare=True}
+    %v1 = prog.assign prog.load %z[1] : float64 {declare=True}
+    prog.store prog.sub(prog.add(%v0, prog.mul(0.1, %v1)), prog.load %znext[0]), %defect[0] : float64
+    prog.store prog.sub(prog.add(%v1, prog.mul(0.1, prog.sub(prog.load %u[0], prog.sin(%v0)))), prog.load %znext[1]), %defect[1] : float64
+  }</pre>
+
+<h3>5.4 Final C</h3>
+<p><code>coalesce_stores</code> turned the two adjacent stores into one <code>STORE_PAIR</code>, rendered as a <code>double2</code> store; <code>prepare_scalar</code> introduced the shared <code>2·it_g</code> index temporary in the entry.</p>
+<pre>static inline void defect_raw(const double* z, const double* u, const double* znext, double* defect, double* w) {
+  (void)w;
+  double v0 = z[0];
+  double v1 = z[1];
+  *(double2*)(defect) = (double2){((v0 + (0.10000000000000001 * v1)) - znext[0]), ((v1 + (0.10000000000000001 * (u[0] - sin(v0)))) - znext[1])};
+}
+
+int cons(const double** arg, double** res, int* iw, double* w, int mem) {
+  (void)iw;
+  (void)mem;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  (void)w;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  const double* t0 = arg[0];
+  const double* t1 = arg[0] + 10;
+  for (long long it_g = 0; it_g &lt; 4; ++it_g) {
+    int64_t v0 = (2 * it_g);
+    defect_raw((t0 + v0), (t1 + it_g), (t0 + (2 + v0)), (res[0] + (it_g * 2)), NULL);
+  }
+  return SCALY_SUCCESS;
+}</pre>
+
+<h3>5.5 The same model’s sparse Jacobian: what the pipeline does not yet do</h3>
+<p><code>sc.sparse_jacobian(cons, "g", "w")</code> (28 non-zeros). AD produces a colored <code>jvp_many</code> over the mapped callee, with the constant-tangent bake of C-45 creating one callee per residue class, a constant-output “pack” callee, and a gather/transpose/mask assembly. The pipeline shrinks it from 43 loops and 45 buffers to 18 loops and 10 buffers, and the stage bodies are perfectly scalarized, but the result still makes a dozen array passes to place 28 numbers:</p>
+<pre>int cons_spjac_g_w(const double** arg, double** res, int* iw, double* w, int mem) {
+  (void)iw;
+  (void)mem;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  (void)w;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  const double* t0 = arg[0];
+  double s0[32];
+  double s1[32];
+  double s2[16];
+  static const double k11[32] = {0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  const double* t14 = s2;
+  static const double k17[32] = {0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0};
+  double s3[8];
+  const double* t19 = s3;
+  static const int64_t k23[28] = {0, 1, 2, 4, 5, 7, 6, 10, 11, 8, 14, 15, 13, 12, 16, 17, 18, 20, 21, 23, 22, 26, 27, 24, 30, 31, 28, 29};
+  for (long long it_t1 = 0; it_t1 &lt; 2; ++it_t1) {
+    defect_fwd4c2da2f712d3_defect_z_raw((t0 + (4 * it_t1)), (s0 + (it_t1 * 4)), NULL);
+  }
+  for (long long j_t5_0 = 0; j_t5_0 &lt; 4; ++j_t5_0) {
+    int64_t v0 = (j_t5_0 / 2);
+    int64_t v1 = (j_t5_0 % 2);
+    s1[((v0 * 2) + v1)] = s0[((v0 * 4) + v1)];
+  }
+  for (long long j_t5_1 = 0; j_t5_1 &lt; 4; ++j_t5_1) {
+    int64_t v2 = (j_t5_1 / 2);
+    int64_t v3 = (j_t5_1 % 2);
+    s1[((4 + (v2 * 2)) + v3)] = s0[(((v2 * 4) + 2) + v3)];
+  }
+  for (long long j_t5_2 = 0; j_t5_2 &lt; 4; ++j_t5_2) {
+    s1[((8 + ((j_t5_2 / 2) * 2)) + (j_t5_2 % 2))] = 0.0;
+  }
+  for (long long j_t5_3 = 0; j_t5_3 &lt; 4; ++j_t5_3) {
+    s1[((12 + ((j_t5_3 / 2) * 2)) + (j_t5_3 % 2))] = 0.0;
+  }
+  for (long long it_t6 = 0; it_t6 &lt; 2; ++it_t6) {
+    defect_fwd4c1d75b3ce53_defect_z_raw((t0 + (2 + (4 * it_t6))), (s0 + (it_t6 * 4)), NULL);
+  }
+  for (long long j_t9_0 = 0; j_t9_0 &lt; 4; ++j_t9_0) {
+    s2[(((j_t9_0 / 2) * 2) + (j_t9_0 % 2))] = 0.0;
+  }
+  for (long long j_t9_1 = 0; j_t9_1 &lt; 4; ++j_t9_1) {
+    s2[((4 + ((j_t9_1 / 2) * 2)) + (j_t9_1 % 2))] = 0.0;
+  }
+  for (long long j_t9_2 = 0; j_t9_2 &lt; 4; ++j_t9_2) {
+    int64_t v4 = (j_t9_2 / 2);
+    int64_t v5 = (j_t9_2 % 2);
+    s2[((8 + (v4 * 2)) + v5)] = s0[((v4 * 4) + v5)];
+  }
+  for (long long j_t9_3 = 0; j_t9_3 &lt; 4; ++j_t9_3) {
+    int64_t v6 = (j_t9_3 / 2);
+    int64_t v7 = (j_t9_3 % 2);
+    s2[((12 + (v6 * 2)) + v7)] = s0[(((v6 * 4) + 2) + v7)];
+  }
+  for (long long j_t10_0 = 0; j_t10_0 &lt; 16; ++j_t10_0) {
+    s0[((((j_t10_0 / 4) * 8) + (((j_t10_0 / 2) % 2) * 4)) + (j_t10_0 % 2))] = s1[j_t10_0];
+  }
+  for (long long j_t10_1 = 0; j_t10_1 &lt; 16; ++j_t10_1) {
+    s0[(((((j_t10_1 / 4) * 8) + (((j_t10_1 / 2) % 2) * 4)) + 2) + (j_t10_1 % 2))] = s2[j_t10_1];
+  }
+  for (long long it_t12 = 0; it_t12 &lt; 4; ++it_t12) {
+    defect_fwd_pack_21d71fdc53_raw((s1 + (it_t12 * 4)), NULL);
+  }
+  for (long long i_t13 = 0; i_t13 &lt; 8; ++i_t13) {
+    s2[i_t13] = s1[(((i_t13 / 2) * 2) + i_t13)];
+  }
+  for (long long i_t18 = 0; i_t18 &lt; 8; ++i_t18) {
+    s3[i_t18] = s1[((2 + ((i_t18 / 2) * 2)) + i_t18)];
+  }
+  for (long long d0_t22 = 0; d0_t22 &lt; 8; ++d0_t22) {
+    for (long long d1_t22 = 0; d1_t22 &lt; 4; ++d1_t22) {
+      int64_t v8 = (d0_t22 + (d1_t22 * 8));
+      int64_t v9 = ((((v8 / 2) % 4) * 2) + (v8 % 2));
+      s1[((d0_t22 * 4) + d1_t22)] = ((s0[v8] + (k11[v8] * t14[v9])) + (k17[v8] * t19[v9]));
+    }
+  }
+  for (long long i_spjac_g_w = 0; i_spjac_g_w &lt; 28; ++i_spjac_g_w) {
+    res[0][i_spjac_g_w] = s1[k23[i_spjac_g_w]];
+  }
+  return SCALY_SUCCESS;
+}</pre>
+<p>Four things are visible here, and each maps onto a proposal in Section 8:</p>
+<ul>
+<li>the two <code>defect_fwd…_defect_z_raw</code> callees have <strong>identical bodies</strong> under different hashed names (proposal N4);</li>
+<li><code>defect_fwd_pack_…_raw</code> has <strong>no inputs</strong> and writes only constants, yet is called four times in a loop and read through 0/1 mask tables <code>k11</code>, <code>k17</code> (proposals N3, C-78);</li>
+<li>index arithmetic is <strong>flattened then de-linearized</strong> with <code>/</code> and <code>%</code> in four-trip loops (proposal N5);</li>
+<li>the <strong>assembly</strong> (copy into <code>s1</code>/<code>s2</code>, transpose into <code>s0</code>, masked combine, final permutation gather <code>k23</code>) sits outside the mapped loop because nothing fuses across <code>CALL</code> (C-77).</li>
+</ul>
+
+<h2 id="render">6. Rendering, ABI, JIT and AOT</h2>
+<ul>
+<li><strong>Renderer</strong> (<code>codegen/c.py</code>) makes no decisions: callees are <code>static inline void name_raw(const double* in…, double* out…, double* w)</code>, except forward-AD helpers (<code>"_fwd"</code> in the name), which are <code>noinline</code> to dodge an Apple clang 17 miscompile; the entry is the universal pointer ABI <code>int f(const double** arg, double** res, int* iw, double* w, int mem)</code>, close to CasADi’s. Local buffers are C arrays; spilled slots are <code>w + offset</code>; aliases are <code>const double* t = arg[k] + off</code>.</li>
+<li><strong>Vectors</strong>: only <code>STORE_PAIR</code> reaches C as a vector (<code>vector_size(16)</code>, <code>aligned(8)</code>, <code>may_alias</code>); arithmetic is scalar expression trees, left to the C compiler to contract (FMA) and SLP-vectorize.</li>
+<li><strong>CModule</strong> (<code>codegen/aot.py</code>) is lowered once and read by both consumers, so <code>SZ_W</code> in the header and the spill size in the source cannot disagree. Solver-bearing modules splice the plugin’s <code>render_wrapper</code> body with Scaly-owned stats storage.</li>
+<li><strong>JIT</strong> (<code>codegen/jit.py</code>): SHA-256 over cache version, ABI signature, name, source and flags; <code>cc -O2 -march=native -fno-math-errno -fPIC -shared … -lm</code>; <code>dlopen</code> and a <code>ctypes</code> call through the ABI.</li>
+</ul>
+
+<h2 id="time">7. Where the time goes today</h2>
+<p>From the project’s own study (<code>docs/results/index.md</code>), Scaly beats the best completed CasADi encoding on npmpc, unbumpercars and chain M=9, and loses on <strong>race-car</strong> (1.09–1.23× slower than SX) and <strong>chain M≤5</strong> (2.46× slower than SX at M=5). The 22 September hand-optimization study (<code>internal/notes/perf_2026_09_22</code>) decomposes the race-car N=200 Hessian: the derivative assembly outside the mapped loop is 35 % (M4) to 45 % (Zen 4, gcc) of the kernel; fusing it lets 6 of 16 stage-block entries die; after that, per-lane libm trig dominates on x86.</p>
+<p>I reproduced the shape of that on a different machine to anchor the proposals. Race-car constraint-Lagrangian Hessian, lower triangle, N = 40 (246 variables, 400 non-zeros), generated by the current tree, timed with a minimal harness (best of 7 × 20 000 calls; cloud Xeon at 2.1 GHz, 2 vCPU, not the reference machine, so read ratios rather than absolutes):</p>
+<div class="scroll"><table>
+<tr><th>Variant</th><th class="num">gcc 13.3, µs</th><th class="num">clang 18.1, µs</th></tr>
+<tr><td>Generated, <code>-O2 -march=native -fno-math-errno</code> (JIT default)</td><td class="num">21.1</td><td class="num">16.7</td></tr>
+<tr><td>Generated, <code>-O3</code></td><td class="num">20.2</td><td class="num">16.8</td></tr>
+<tr><td>Stage kernels only (assembly removed)</td><td class="num">17.1</td><td class="num">14.4</td></tr>
+<tr><td><code>noinline</code> removed from <code>_fwd</code> callees</td><td class="num">20.5</td><td class="num">16.9</td></tr>
+<tr><td>All 14 divisions by loop-invariant divisors → multiply by the (already hoisted) reciprocal; paired baseline in the same run 20.7 / 17.1</td><td class="num">20.4</td><td class="num">16.1</td></tr>
+</table></div>
+<p class="small">The stage body per trip: 5 <code>sin</code>, 5 <code>cos</code> (merged by both compilers into 5 <code>sincos</code> calls), 4 <code>tanh</code>, 14 divisions, 258 scalar temporaries. The hoisted prologue already computes <code>1/params[2]</code> and <code>1/(0.5·wheelbase)</code>, but the body still divides by the original values, because the primal <code>x/y</code> and the AD-generated <code>y⁻¹</code> are different nodes.</p>
+
+<h2 id="proposals">8. Proposed optimizations</h2>
+<p>Ordered by my estimate of payoff per unit of effort. <span class="tag road">roadmap</span> marks items already in <code>internal/todo.md</code>, where I add an assessment or a refinement; <span class="tag new">new</span> marks items I could not find there.</p>
+
+<div class="scroll"><table>
+<tr><th>#</th><th>Proposal</th><th>Target</th><th>Expected gain</th><th>Effort</th></tr>
+<tr><td>1</td><td>Fuse scalarized callees into the mapped loop and the derivative assembly into them <span class="tag road">C-77</span></td><td>race-car, every sparse derivative of a VMAP</td><td>15–45 % of the kernel, more with dead entries</td><td>medium–high</td></tr>
+<tr><td>2</td><td>Prefer clang in the JIT; align <code>-O</code> with the harness <span class="tag new">N1</span></td><td>all JIT users on Linux</td><td>17–40 % on x86 Linux</td><td>trivial</td></tr>
+<tr><td>3</td><td>One fused NLP oracle per iterate, cached on <code>new_x</code> <span class="tag new">N2</span></td><td>closed-loop IPOPT/SQP</td><td>up to the primal share of 4 oracles</td><td>low–medium</td></tr>
+<tr><td>4</td><td>Explicit lanes on mapped ranges <span class="tag road">C-79</span></td><td>x86 (AVX2/512)</td><td>≈ 2× after #1 on Zen 4</td><td>high</td></tr>
+<tr><td>5</td><td>Compile-time evaluation of input-free procedures and value-aware <code>CONST</code> lowering <span class="tag new">N3</span></td><td>constant tangents, masks (C-57 tables)</td><td>small time, clears the way for <code>fold_arith</code></td><td>low</td></tr>
+<tr><td>6</td><td>Keep multi-dimensional iteration as loop nests (no flat <code>/</code>,<code>%</code>); unroll tiny loops in loop-form PROCs <span class="tag new">N5</span></td><td>assembly, broadcast, transpose loops</td><td>small; prerequisite for affine lanes</td><td>low</td></tr>
+<tr><td>7</td><td>Invariant-divisor reciprocals, constant-tile folding, terminal-trip peeling <span class="tag road">C-78</span></td><td>race-car stage body</td><td>2–6 %</td><td>low</td></tr>
+<tr><td>8</td><td>Symmetric second-order sweep on the scalarized stage (edge pushing) <span class="tag road">C-11 refined</span></td><td>chain M ≤ 5</td><td>up to ≈ 2× on dense stage Hessians</td><td>high</td></tr>
+<tr><td>9</td><td><code>restrict</code> and alignment assertions on internal callees <span class="tag new">N6</span></td><td>loop-form callees</td><td>unmeasured, likely small</td><td>trivial</td></tr>
+<tr><td>10</td><td>Structural deduplication of PROCs <span class="tag new">N4</span></td><td>code size, I-cache, compile time</td><td>small runtime</td><td>trivial</td></tr>
+<tr><td>11</td><td>Parameter-only oracle prologue <span class="tag road">C-80</span></td><td>SQP/IPOPT cost blocks</td><td>problem dependent</td><td>medium</td></tr>
+</table></div>
+
+<h3>8.1 Fusion across the mapped call <span class="tag road">C-77 / C-8 step 0–1</span></h3>
+<figure>
+<svg viewBox="0 0 960 250" role="img" aria-label="Before and after fusion of the Hessian assembly">
+  <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+  <text x="10" y="18" font-size="12" font-weight="600" class="t-muted">TODAY (race-car Hessian entry point, N = 40)</text>
+  <g font-size="11.5">
+    <rect x="10" y="30" width="170" height="62" rx="6" fill="var(--c-soft)" stroke="var(--c)"/>
+    <text x="95" y="52" text-anchor="middle" font-weight="600">for it &lt; N:</text>
+    <text x="95" y="70" text-anchor="middle">call stage_fwd_adj</text>
+    <text x="95" y="85" text-anchor="middle" class="t-muted">→ w[48·it … +48]</text>
+    <rect x="200" y="30" width="110" height="62" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="255" y="58" text-anchor="middle">transpose</text><text x="255" y="76" text-anchor="middle" class="t-muted">1920</text>
+    <rect x="330" y="30" width="110" height="62" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="385" y="58" text-anchor="middle">zero-fill</text><text x="385" y="76" text-anchor="middle" class="t-muted">984</text>
+    <rect x="460" y="30" width="130" height="62" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="525" y="58" text-anchor="middle">2 × scatter-add</text><text x="525" y="76" text-anchor="middle" class="t-muted">2 × 960</text>
+    <rect x="610" y="30" width="110" height="62" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="665" y="58" text-anchor="middle">transpose</text><text x="665" y="76" text-anchor="middle" class="t-muted">984</text>
+    <rect x="740" y="30" width="110" height="62" rx="6" fill="var(--panel)" stroke="var(--line)"/>
+    <text x="795" y="58" text-anchor="middle">gather → res</text><text x="795" y="76" text-anchor="middle" class="t-muted">400</text>
+    <line x1="180" y1="61" x2="196" y2="61" stroke="var(--muted)" marker-end="url(#ar2)"/>
+    <line x1="310" y1="61" x2="326" y2="61" stroke="var(--muted)" marker-end="url(#ar2)"/>
+    <line x1="440" y1="61" x2="456" y2="61" stroke="var(--muted)" marker-end="url(#ar2)"/>
+    <line x1="590" y1="61" x2="606" y2="61" stroke="var(--muted)" marker-end="url(#ar2)"/>
+    <line x1="720" y1="61" x2="736" y2="61" stroke="var(--muted)" marker-end="url(#ar2)"/>
+    <text x="870" y="56" class="t-muted">48 values/stage</text><text x="870" y="72" class="t-muted">written, 10 used</text>
+  </g>
+  <text x="10" y="138" font-size="12" font-weight="600" class="t-muted">AFTER (one range body, consumers’ index maps pulled into the producer)</text>
+  <g font-size="11.5">
+    <rect x="10" y="150" width="590" height="80" rx="6" fill="var(--c-soft)" stroke="var(--c)"/>
+    <text x="24" y="172" font-weight="600">for it &lt; N:</text>
+    <text x="44" y="192">inlined scalar stage body (SSA, shared with the primal and adjoint)</text>
+    <text x="44" y="212">res[10·it + j] = h_j   for the 10 lower-triangle entries that are actually needed</text>
+    <text x="620" y="176" class="t-muted">• no workspace growing with N</text>
+    <text x="620" y="196" class="t-muted">• dead block entries eliminated by the C compiler</text>
+    <text x="620" y="216" class="t-muted">• the loop is now a candidate for lanes (C-79)</text>
+  </g>
+</svg>
+<figcaption>Figure 2. The assembly chain in the current race-car Hessian entry point (element counts from the generated C), and the single range body C-77 aims for.</figcaption>
+</figure>
+<p>I agree with the ordering in the 22 September note: this is the first step on both machines, and nothing else in the list compounds as well with it. Two implementation remarks from reading the code:</p>
+<ul>
+<li>The cheapest first cut does not need the full range machinery: after <code>scalarize</code>, a callee with <code>scalarized=True</code> reached only through a <code>FOR{CALL}</code> can be spliced into the loop body with its parameter views rewritten as <code>base + start + stride·it</code> (the <code>VMAP</code> rule already builds exactly those offsets). Then extend <code>fuse_elementwise</code> from “single-store producer loop” to “producer loop whose store index is an injective affine function of its loop variables”; the transpose and gather in Figure 2 are then consumers with index maps that compose into the producer’s store. The final <code>gather → res</code> is a permutation, so it inverts into a store in the producer rather than a load in the consumer (“sink the scatter”).</li>
+<li>The <code>combine_scatter_sums</code> accumulation (zero-fill + two scatter-adds with overlapping stage windows) is the one place where a stage writes into its neighbour’s rows. For a multiple-shooting Hessian the overlap is the shared state block; peeling it as <code>res[block_k] = H_k^{own} + H_{k−1}^{next}</code> keeps the loop parallel (and lane-able), whereas a naïve fused scatter-add would introduce a loop-carried dependence.</li>
+</ul>
+
+<h3>8.2 JIT toolchain <span class="tag new">N1</span></h3>
+<p>The JIT invokes <code>cc</code>, which is gcc on most Linux systems. On this Xeon clang 18 is 17 % faster than gcc 13 on the generated race-car Hessian at identical flags; the project’s own Zen 4 measurement (C-81, point 7) found 40 %. The cause is gcc’s refusal to vectorize a loop containing a call without a SIMD clone and a weaker SLP on long scalar trees. Proposal: probe for <code>clang</code> (then <code>zig cc</code>, then <code>cc</code>) at first use, record the choice in the cache key (already done for flags), and allow <code>SCALY_CC</code> to override. Also align the default <code>-O2</code> with the <code>-O3</code> the benchmark harness passes through <code>SCALY_CC_OPT</code> (worth 5 % on gcc here, nothing on clang), so that users see the published numbers.</p>
+
+<h3>8.3 One oracle per iterate, cached on <code>new_x</code> <span class="tag new">N2</span></h3>
+<p><code>solvers/nlp.py</code> builds <code>base</code> (f, g), <code>grad</code> (∇f), <code>jac</code> (sparse ∂g/∂x) and <code>hess</code> (sparse ∇²L) as four separate Functions, and the IPOPT wrapper (<code>scaly_ipopt/codegen.py</code>) ignores the <code>new_x</code> flag in every callback. At each iterate the primal of every stage is therefore evaluated up to four times, and the forward tangents of the Jacobian again inside the Hessian’s forward-over-reverse sweep. Because nodes are interned, simply building <em>one</em> multi-output Function <code>{f, g, ∇f, J}</code> makes lowering share every common subexpression automatically, including inside the scalarized stage bodies. The wrapper evaluates it when <code>new_x</code> is true and serves <code>eval_f/eval_g/eval_grad_f/eval_jac_g</code> from the cache; SQP, which always needs all four, calls it directly. The Hessian stays separate (it depends on λ and is not requested at every trial point). This is the one closed-loop line where Scaly currently loses (race-car IPOPT, function evaluation 0.484 ms against 0.376 ms for CasADi) and it is orthogonal to all the kernel work. Keep the separate oracles for the C API and CasADi compatibility layer.</p>
+
+<h3>8.4 Explicit lanes <span class="tag road">C-79</span></h3>
+<p>The design in the todo (tinygrad’s <code>shift_to</code> on the mapped axis, W from preprocessor target macros, one <code>always_inline</code> body plus a clamped remainder call, <code>gnu</code> and <code>c</code> render modes) is sound and I have nothing to add to its structure. Two remarks. The measured result that per-lane libm leaves the widened kernel at 2.1× the hand-written one on Zen 4 means the payoff on x86 is capped by the decision not to use a vector libm; keeping that decision, it may be worth letting C-79 emit the <code>__attribute__((simd("notinbranch")))</code> declaration block behind an opt-in macro (<code>SCALY_VECTOR_LIBM</code>), since the note shows it reaches the hand kernel on gcc from scalar source without changing the generated arithmetic. Second, lanes need affine-in-lane indices, which is why N5 below matters.</p>
+
+<h3>8.5 Input-free procedures and value-aware constants <span class="tag new">N3</span></h3>
+<p>In the Jacobian trace a <code>PROC</code> with <code>input_count = 0</code> is mapped with no arguments (<code>starts=[]</code>) and called four times to write the same four constants; its output is then multiplied by 0/1 mask tables. Two small passes remove this class of code:</p>
+<ol>
+<li><strong>Interprocedural constant propagation</strong>: a scalarized PROC with no inputs whose stores are all literals is replaced at every call site by a <code>constant</code> buffer (tiled for a <code>VMAP</code>), after which <code>fold_arith</code> already turns the loads into literals.</li>
+<li><strong>Value-aware <code>CONST</code> lowering</strong>, a generalization of C-78’s tile folding: a constant whose entries are all equal is a scalar; one with period P is <code>k[i mod P]</code>; a 0/1 mask multiplying a value in an elementwise op is lowered as a loop over the mask’s support (a gather) rather than a dense multiply. This is also the likely identity of the three N-growing <code>double</code> tables in C-57 (<code>k0</code> is 4 800 ones at N = 50).</li>
+</ol>
+
+<h3>8.6 Keep loop nests; unroll tiny loops <span class="tag new">N5</span></h3>
+<p>Elementwise, stack, concat and broadcast rules iterate over a <em>flat</em> index and recover coordinates with <code>/</code> and <code>%</code> (<code>_coord_p</code>, <code>_broadcast_index_p</code>), which is why the trace contains <code>s1[((v0*2)+v1)] = s0[((v0*4)+v1)]</code> with <code>v0 = j/2, v1 = j%2</code>. Emit a nest of ranges from the shape instead (one range per non-trivial axis, as <code>_lower_transpose</code> already does), so every index is affine in the loop variables. That removes the integer divisions, makes <code>fuse_elementwise</code>’s index substitution simpler, and is what C-79 and C-8 need, because <code>j mod 2</code> is not affine in a lane variable. Independently, loop-form PROCs (the entry point is never scalarized under <code>auto</code>) should fully unroll loops with a static trip count ≤ 8 before the second <code>fold_arith</code>; the four-trip copies of zeros in the trace then disappear.</p>
+
+<h3>8.7 Reciprocals, tiles, peeling <span class="tag road">C-78</span></h3>
+<p>Confirmed on x86: replacing all 14 invariant divisions in the race-car stage body by multiplications with the reciprocal that <code>hoist_invariant</code> already computes gives 6 % on clang and 1.5 % on gcc. The rewrite should happen at expression level before AD so primal and adjoint share one reciprocal node (today the prologue computes <code>1/params[2]</code> and the body still divides by <code>params[2]</code>). It changes the last bit, so the policy-flag caveat in the todo stands.</p>
+
+<h3>8.8 Chain: exploit symmetry, not colouring <span class="tag road">C-11 refined</span></h3>
+<p>I checked whether a better vertex ordering for the star colouring could reduce the number of forward-over-reverse sweeps. It cannot: on the chain Lagrangian (N = 10) the greedy colouring in column order, largest-first and smallest-last orderings all give 12 colours at M = 3 and 24 at M = 5, equal to the maximum degree + 1, i.e. the size of the dense per-stage Hessian block, which is a lower bound for any colouring. Race-car gives 4 = 4. The colouring is therefore optimal, and the 2.46× gap to SX at M = 5 is the price of computing each dense b × b stage block as b Hessian-vector products. The remaining lever is symmetry: a second-order reverse sweep over the scalarized stage SSA (edge pushing, or its live-variable variant) computes only the n(n+1)/2 lower-triangle entries and exploits the sparsity of nonlinear interactions inside the stage, which is effectively what SX’s symbolic Hessian does. Because the stage body is already scalar SSA after C-44, this can be a program-dialect transform on a single callee, with the <code>VMAP</code> structure untouched; the chain’s partially separable Lagrangian (a sum of stage terms) means the per-stage results simply scatter-add into the global pattern.</p>
+
+<h3>8.9 Small, cheap items <span class="tag new">N4, N6</span></h3>
+<ul>
+<li><strong>Structural PROC deduplication (N4).</strong> Callees are deduplicated by name only (<code>callee.name not in ctx.callees</code>). The residue-class bake of C-45 produces different names for bodies that lower to identical code (both <code>defect_fwd…_defect_z</code> in the trace). Since program nodes are interned, two PROCs are equal iff their parameter lists and body tuples are identical up to the PROC name; hash that tuple after <code>scalarize</code>, merge, and rewrite call sites. Mainly code size and compile time, which matter for the compile-cap cells.</li>
+<li><strong><code>restrict</code> on internal callees (N6).</strong> The lowering knows that a callee’s output buffers are private scratch or disjoint output views, and inputs are <code>const</code>. Emitting <code>double* restrict</code> for outputs (and <code>__builtin_assume_aligned(p, 8)</code> is already implied) lets the compiler keep loaded values in registers across stores in loop-form callees such as the scatter-add loops; the ABI entry must stay unqualified. Emit it only where the pass pipeline has proved disjointness (the same facts <code>coalesce_stores</code> uses).</li>
+</ul>
+
+<h3>8.10 Parameter-only prologue <span class="tag road">C-80</span></h3>
+<p>Natural companion to N2: once the NLP oracle is one Function, the part of it that depends only on <code>p</code> can be split off with the same machinery <code>hoist_invariant</code> uses, and the solver wrapper runs it once per solve.</p>
+
+<h2 id="neg">9. Things measured that do not help <span class="tag neg">negative results</span></h2>
+<ul>
+<li><strong>Colouring order</strong> (natural, largest-first, smallest-last): identical colour counts, all at the clique lower bound (Section 8.8).</li>
+<li><strong>Removing <code>noinline</code></strong> from the forward helpers: no change (20.2→20.5 µs gcc, 16.8→16.9 µs clang), consistent with the M4 and Zen 4 notes; inlining pays only once consumers are fused.</li>
+<li><strong><code>sincos</code></strong>: both gcc and clang already merge each <code>sin</code>/<code>cos</code> pair into one <code>sincos</code> call under <code>-fno-math-errno</code>; nothing to do in the renderer.</li>
+<li><strong>Extra gcc flags</strong>: <code>-fno-stack-protector</code> (Ubuntu enables the protector by default) changes nothing; adding <code>-ffp-contract=fast -fno-semantic-interposition</code> was 9 % slower.</li>
+</ul>
+
+<h2 id="refs">10. References</h2>
+<ol class="refs">
+<li>Scaly repository, <code>docs/how_it_works/{architecture,ir,lowering}.md</code>, <code>internal/todo.md</code> (C-8, C-11, C-43–C-81), <code>internal/notes/perf_2026_09_22/README.md</code>, <code>docs/results/index.md</code> (local).</li>
+<li>G. Hotz et al., <em>tinygrad</em> (UOp IR, rangeify, <code>shift_to</code>). <a href="https://github.com/tinygrad/tinygrad">github.com/tinygrad/tinygrad</a></li>
+<li>MLIR, <em>Affine dialect</em> documentation. <a href="https://mlir.llvm.org/docs/Dialects/Affine/">mlir.llvm.org/docs/Dialects/Affine</a></li>
+<li>J. A. E. Andersson, J. Gillis, G. Horn, J. B. Rawlings, M. Diehl, “CasADi: a software framework for nonlinear optimization and optimal control,” <em>Mathematical Programming Computation</em> 11:1–36, 2019. <a href="https://doi.org/10.1007/s12532-018-0139-4">doi:10.1007/s12532-018-0139-4</a></li>
+<li>A. H. Gebremedhin, F. Manne, A. Pothen, “What color is your Jacobian? Graph coloring for computing derivatives,” <em>SIAM Review</em> 47(4):629–705, 2005. <a href="https://doi.org/10.1137/S0036144504444711">doi:10.1137/S0036144504444711</a></li>
+<li>A. H. Gebremedhin, A. Tarafdar, F. Manne, A. Pothen, “New acyclic and star coloring algorithms with application to computing Hessians,” <em>SIAM J. Sci. Comput.</em> 29(3):1042–1072, 2007. <a href="https://doi.org/10.1137/050639879">doi:10.1137/050639879</a></li>
+<li>R. M. Gower, M. P. Mello, “A new framework for the computation of Hessians,” <em>Optimization Methods and Software</em> 27(2), 2012. <a href="https://doi.org/10.1080/10556788.2011.580098">doi:10.1080/10556788.2011.580098</a></li>
+<li>M. Wang, A. H. Gebremedhin, A. Pothen, “Capitalizing on live variables: new algorithms for efficient Hessian computation via automatic differentiation,” <em>Mathematical Programming Computation</em> 8(4), 2016. <a href="https://doi.org/10.1007/s12532-016-0100-3">doi:10.1007/s12532-016-0100-3</a></li>
+<li>A. Griewank, A. Walther, <em>Evaluating Derivatives: Principles and Techniques of Algorithmic Differentiation</em>, 2nd ed., SIAM, 2008. <a href="https://doi.org/10.1137/1.9780898717761">doi:10.1137/1.9780898717761</a></li>
+<li>A. Wächter, L. T. Biegler, “On the implementation of an interior-point filter line-search algorithm for large-scale nonlinear programming,” <em>Mathematical Programming</em> 106(1):25–57, 2006. <a href="https://doi.org/10.1007/s10107-004-0559-y">doi:10.1007/s10107-004-0559-y</a></li>
+</ol>
+<p class="small">Measurements in Sections 7 and 9 were taken on 22 September 2026 in a Linux cloud container (Intel Xeon 2.1 GHz, gcc 13.3.0, clang 18.1.3, <code>-O3 -march=native -fno-math-errno</code> unless stated), against the source tree as staged from <code>alloy/src</code>; all variants produced identical checksums except where noted.</p>
+
+</main>
+</body>
+</html>

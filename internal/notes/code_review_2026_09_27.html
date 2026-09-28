@@ -1,0 +1,481 @@
+<meta charset="utf-8">
+<title>Scaly Branch Review</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8;--badbg:#f6e7ea;--warnbg:#f5ecdf;--lowbg:#eceae5}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;--badbg:#3a2328;--warnbg:#382c1c;--lowbg:#2a2d31;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d;--badbg:#3a2328;--warnbg:#382c1c;--lowbg:#2a2d31;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding-inline:16px;padding-block:36px 72px}
+h1,h2,h3{text-wrap:balance}h1{font-size:26px;line-height:1.2;margin:0 0 6px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}h3{font-size:15px;margin:22px 0 6px;letter-spacing:.02em}
+p,li{max-width:78ch}.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px;overflow-wrap:anywhere}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}pre code{overflow-wrap:normal}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.n{font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+.sev{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:1px 6px;border-radius:4px;white-space:nowrap}
+.sev.h{color:var(--bad);background:var(--badbg)}.sev.m{color:var(--warn);background:var(--warnbg)}.sev.l{color:var(--muted);background:var(--lowbg)}
+.how{font-size:12px;font-weight:600;white-space:nowrap}.how.run{color:var(--ok)}.how.read{color:var(--muted)}
+td.w{white-space:nowrap}td.w code{overflow-wrap:normal}
+details{border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+summary{cursor:pointer;padding:10px 14px;font-weight:600;list-style-position:inside}summary:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+summary .cnt{font-weight:400;color:var(--muted);font-size:13px;margin-left:6px}
+details .scroll{border:none;border-top:1px solid var(--rule);border-radius:0 0 8px 8px;margin:0}
+details>p{margin:10px 14px}
+.theme{display:grid;gap:4px;margin:0 0 18px}.theme h3{margin:14px 0 2px}
+</style>
+<main>
+<h1>Scaly branch review</h1>
+<p class="sub">Everything on <code>claude/function-templates</code> beyond <code>main</code>: 161 commits, ~90k lines added, reviewed at the templates P1b-i commit (the uncommitted P1b-ii edits are not included) · 27 Sep 2026 · eleven parallel reviewers, one per subsystem, each working from AGENTS.md, codebase.md and conventions.md; correctness claims re-run by me against a clean checkout of HEAD</p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> The pieces are careful. Almost every compiler path is checked against an independent reference (NumPy, finite differences, unrolled twins, a NumPy PIQP validated against vendored PIQP), import layering is enforced, and rule 7 mostly holds. The debt is structural, and it is concentrated.</p>
+<ul>
+<li>I reproduced <b>thirteen bugs at HEAD</b>, one of them in the docs. Six give wrong results with no error. The worst is that <code>sc.solver(..., "piqp")</code> accepts <code>|x|</code> in an objective as quadratic and solves the problem without it.</li>
+<li>Five modules have outgrown their one-line ownership: <code>passes/lowering.py</code>, <code>ad/forward.py</code>, <code>codegen/aot.py</code>, <code>ConcreteFunction</code> in <code>function/model.py</code>, and <code>Solver.step</code> in the IPM.</li>
+<li>Several concepts have two or three homes that already disagree: the per-op derivative rules (three copies), the sparse LDL<sup>T</sup> (three implementations with different rounding), the C translation unit (two assemblers), name reservation (four allocators, plus suffixes like <code>_fwd</code> and <code>_inplace</code> that carry meaning).</li>
+<li>Hand-rolled caches and generated names miss part of their context: 13 AD caches ignore <code>sc.options</code>, the JIT key ignores the compiler, SparseLDL names come from a process-global counter.</li>
+<li>Recursion on the Python stack is back in three places (<code>delinearize_loops</code>, the forward traversals, <code>_depends_on</code>). A 200-step elementwise chain on an 8-vector no longer compiles.</li>
+</ul>
+<p style="margin-bottom:0">Suggested order: fix the silent-result bugs, then the crashes, then tidy <code>ConcreteFunction</code> <i>before</i> templates P2 adds instances and caches to it. The per-subsystem lists at the end hold every finding (about 250) as a work list.</p>
+</div>
+
+<h2>Bugs reproduced at HEAD</h2>
+<p>Each row ran against a clean checkout of HEAD with the project's venv. <span class="how run">ran</span> means I reproduced it; <span class="how read">read</span> means I confirmed the code path by reading but did not build a reproduction.</p>
+
+<h3>Wrong results, no error</h3>
+<div class="scroll"><table>
+<tr><th>#</th><th>What happens</th><th>Where</th><th>Fix</th><th></th></tr>
+<tr><td class="n">1</td><td>A nonsmooth objective passes the QP proof and loses its nonsmooth term. <code>minimize = sumsqr(x - p) + x.abs().sum()</code> with <code>p = (2, 0.2)</code> returns <code>(2, 0.2)</code> through PIQP; the answer is <code>(1.5, 0)</code>. <code>_jac_mask</code> ignores predicates and <code>where</code> conditions, and <code>_qp_data</code> evaluates at <code>x = 0</code> where <code>sign</code> is 0. Hinge penalties (<code>maximum(x - x_max, 0)</code>) and "affine" constraints built from <code>maximum</code> pass the same way.</td><td class="w"><code>solvers/qp.py:90-109</code></td><td>Reject <code>x</code> reaching a predicate, a <code>where</code> condition, <code>abs</code>, <code>maximum</code>/<code>minimum</code>, max/min reductions, <code>floor</code>/<code>ceil</code> before the derivative test.</td><td><span class="how run">ran</span></td></tr>
+<tr><td class="n">2</td><td>A float literal against an int expression is truncated. With <code>k</code> int64, <code>k &lt; 5 / 2</code> builds <code>k &lt; 2</code>. Operators and functions coerce Python scalars by two different rules (<code>_operand</code> and <code>_operands</code>); <code>where</code>, <code>index_add</code> and <code>put</code> truncate the same way.</td><td class="w"><code>ir/expr.py:596-639, 797-803</code></td><td>One coercion helper. An int literal takes the operand dtype, a float literal does only for float operands, anything else raises.</td><td><span class="how run">ran</span></td></tr>
+<tr><td class="n">3</td><td>Building a node mutates an existing one. <code>p.const_float(-0.0)</code> returns the interned <code>const_float(0.0)</code> node and rewrites its value to <code>-0.0</code>, so every 0.0 constant in the program renders as <code>-0.0</code> (visible through <code>copysign</code>). The dataclass <code>__init__</code> reruns on every intern hit, and the key treats 0.0 and -0.0 as equal. <code>Expr</code> has the same re-init.</td><td class="w"><code>ir/program.py:216-269</code><br><code>ir/expr.py:301-353</code></td><td><code>init=False</code> and assign once in <code>__new__</code>; key floats by value and sign; add a test that an equal-keyed build leaves the existing node untouched.</td><td><span class="how run">ran</span></td></tr>
+<tr><td class="n">4</td><td><code>sc.const(A)</code> keeps the caller's array. Mutating <code>A</code> afterwards changes the constant that compiles on first call, while its intern key still describes the old value. Index tables and the sparse LDL tables alias the same way.</td><td class="w"><code>ir/expr.py:270-272, 1142-1146</code></td><td>Copy on entry and <code>setflags(write=False)</code>.</td><td><span class="how run">ran</span></td></tr>
+<tr><td class="n">5</td><td><code>SparseMatrix.from_scipy</code> changes the caller's matrix. A float32 CSC with unsorted row indices has its indices sorted in place and its data left alone, so the caller now holds a different matrix. Reached through <code>block</code>, <code>+</code> and <code>-</code> too.</td><td class="w"><code>linalg/sparse.py:136-141</code></td><td><code>sparse.csc_array(a, dtype=np.float64, copy=True)</code>, and the same test <code>S.flatten_numerical</code> already has.</td><td><span class="how run">ran</span></td></tr>
+<tr><td class="n">6</td><td><code>sc.options</code> is ignored for derivatives through a call. A JVP through a Function call built under the default <code>"split"</code> is reused unchanged inside <code>sc.options(nonsmooth="error")</code>, which then does not raise (the same expression without the call does raise). The 13 per-callee caches key on indices only; <code>SCALY_STRICT_JVP_MANY</code> is in two of the keys and missing from the rest.</td><td class="w"><code>ad/forward.py:58-64, 932-1002</code><br><code>ad/reverse.py:55-98, 147-298</code></td><td>One cache helper owning all 13 dictionaries, keyed on <code>(kind, get_options(), strict, *key)</code>; put the mode into the helper's name too, or <code>_check_function_names</code> rejects two same-named bodies.</td><td><span class="how run">ran</span></td></tr>
+</table></div>
+
+<h3>Crashes or refusals on valid input</h3>
+<div class="scroll"><table>
+<tr><th>#</th><th>What happens</th><th>Where</th><th>Fix</th><th></th></tr>
+<tr><td class="n">7</td><td><code>delinearize_loops</code> walks fused loop bodies recursively and without a seen-set. <code>y = sin(1.0001*y + 0.1)</code> 200 times on an 8-vector fails <code>render_c_module</code> with <code>RecursionError</code>. On shared DAGs the walk is exponential: <code>y = y*y</code> 20 times makes 4.2M <code>_views</code> calls, 24 times takes 17 s, doubling per level. The pass also ignores the range step and is missing from every doc.</td><td class="w"><code>passes/program/delinearize_loops.py:84-99, 129-141, 163-167</code></td><td>Id-deduped explicit stacks for <code>_views</code>/<code>_uses_var</code>, <code>rewrite</code> for the rebuild, refuse <code>step != 1</code>, and a vector-shaped deep-chain test.</td><td><span class="how run">ran</span></td></tr>
+<tr><td class="n">8</td><td>Forward and reverse AD recurse per level of graph depth. 800 unrolled Euler steps on a scalar raise <code>RecursionError</code> in both <code>sc.jvp</code> and <code>sc.gradient</code>; 400 pass. <code>vjp</code> itself is iterative but calls the recursive <code>_depends_on</code>.</td><td class="w"><code>ad/forward.py:109, 1137</code><br><code>ad/sparsity.py:19-23, 116-121</code></td><td>Drive the memos in <code>topo</code> order, as <code>vjp</code>'s adjoint pass already does.</td><td><span class="how run">ran</span></td></tr>
+<tr><td class="n">9</td><td>float32 derivatives of a product fail. With float32 <code>x</code>, <code>p</code>: <code>sc.jvp(x*p, x, s)</code> and <code>sc.gradient((x*p).sum(), x)</code> raise "mixed-dtype operation" because zero and one tangents are always float64. The only float32 test uses <code>sum</code>.</td><td class="w"><code>ad/forward.py:113-119, 179</code><br><code>ad/reverse.py:637</code>, <code>ir/expr.py:1455</code></td><td>Build zeros and ones in the operand's dtype.</td><td><span class="how run">ran</span></td></tr>
+<tr><td class="n">10</td><td>A periodic constant seed with an all-zero tile crashes. <code>sc.jvp_many(sc.vmap(stage, 4, [(z, 0, 1)]), z, const([[1, 0, 1, 0]]))</code> raises "stack requires at least one expression"; the caller's <code>if not active</code> branch is unreachable.</td><td class="w"><code>ad/forward.py:938-957, 1287-1299</code></td><td>Return an empty-helper sentinel when <code>active</code> is empty; add a zero-tile case.</td><td><span class="how run">ran</span></td></tr>
+<tr><td class="n">11</td><td>A Function named <code>log</code> fails to compile ("conflicting types"). <code>c_ident</code> reserves only the ABI parameter names, so libm names, C/C++ keywords, names that sanitize to the same identifier and lowering's loop variables (<code>i_{buf}</code>, so an input called <code>i_y</code>) all collide.</td><td class="w"><code>utils/names.py:8-13</code><br><code>passes/lowering.py:410-417</code></td><td>One name authority (see theme 3).</td><td><span class="how run">ran</span></td></tr>
+<tr><td class="n">12</td><td>The decorator contradicts itself. <code>sc.function(sc.L("x", 2), sc.L("p", ()), output=...)(lambda x, p: ...)</code> raises "declared 2 parameters, the body takes 2 (x, p)", and the previous message steers users to exactly that form.</td><td class="w"><code>function/api.py:30-37</code></td><td>A separate "one input declaration for now, group with <code>sc.G</code>" error for extra slots.</td><td><span class="how run">ran</span></td></tr>
+<tr><td class="n">13</td><td>The published snippet <code>@sc.function(sc.L("x", 3), output=sc.L("y"))</code> raises <code>TypeError</code> (L needs a shape). <code>zensical.toml</code> still links <code>dev/fuzzing.md</code>, which moved to <code>internal/notes/</code>; the docs job fails on warnings.</td><td class="w"><code>docs/how_it_works/ir.md:185</code><br><code>zensical.toml:49</code></td><td><code>sc.L("y", ...)</code>; drop the nav entry.</td><td><span class="how run">ran</span></td></tr>
+</table></div>
+
+<h3>Likely real, confirmed by reading</h3>
+<div class="scroll"><table>
+<tr><th>What</th><th>Where</th><th></th></tr>
+<tr><td>The JIT cache key hashes source, name and flags but not the compiler. clang and gcc 12+ produce the same flags, so switching <code>SCALY_CC</code> reuses the other compiler's library, which breaks fairness.md's "same compiler" rule outside the benchmark runner. The host CPU (a shared cache with <code>-march=native</code>) and plugin versions are missing too.</td><td class="w"><code>codegen/jit.py:123-150</code></td><td><span class="how read">read</span></td></tr>
+<tr><td>The generated <code>{callee}_inplace</code> name is not reserved. A user Function named <code>step_inplace</code> lowered first answers the in-place call site of <code>step</code>.</td><td class="w"><code>passes/lowering.py:1292-1295</code></td><td><span class="how read">read</span></td></tr>
+<tr><td>The torch checkpoint unpickler passes every name in <code>builtins</code> and <code>numpy</code> through <code>find_class</code>, so an untrusted checkpoint can reach <code>builtins.eval</code>. The docstring says unsupported globals fail loudly. <code>as_strided</code> also trusts the file's offsets. (Predates the branch.)</td><td class="w"><code>utils/torch_state_dict.py:63-100</code></td><td><span class="how read">read</span></td></tr>
+<tr><td>The sparse QP pattern keeps an entry if the dependency mask is nonzero or one random probe is. An entry switched by a parameter through a <code>where</code> condition is dropped when the probe lands on the other branch. The probe also compiles C inside <code>sc.solver</code>, while the docs call the pattern structural.</td><td class="w"><code>solvers/qp.py:30-44, 212-228</code></td><td><span class="how read">read</span></td></tr>
+<tr><td>Ruiz always names its loop Functions <code>ipm_ruiz_pass</code> and <code>ipm_ruiz_go</code>, so two generated-IPM solves over different structures in one host fail the name check.</td><td class="w"><code>solvers/ipm/ruiz.py:103-105</code></td><td><span class="how read">read</span></td></tr>
+<tr><td>Solver wrappers keep context, scratch and stats in <code>static</code>s, but nothing on the Python side stops two threads calling the same solver Function.</td><td class="w"><code>codegen/jit.py:344-385</code></td><td><span class="how read">read</span></td></tr>
+<tr><td><code>_cholesky_tiles</code> fills <code>side</code> partial sums and always adds <code>parts[0..3]</code>. Any <code>CHOLESKY_TILE</code> other than 4 silently drops terms or raises.</td><td class="w"><code>passes/lowering.py:956-1005</code></td><td><span class="how read">read</span></td></tr>
+<tr><td>viz rewrites the whole recordings file on every render through one shared temp name; a torn read resets the history to empty without a word.</td><td class="w"><code>viz/recording.py:91-103</code></td><td><span class="how read">read</span></td></tr>
+</table></div>
+<p>I also checked the derivative rules of <code>asin</code>, <code>acos</code>, <code>atan</code>, <code>sinh</code>, <code>cosh</code> and <code>tan</code> against finite differences, because no test evaluates them. They are correct today, so that one is a coverage gap (theme 2), not a bug.</p>
+
+<h2>Structural themes</h2>
+<div class="theme">
+<h3>1. Five modules have outgrown their ownership line</h3>
+<ul>
+<li><code>passes/lowering.py</code> (2245 lines) holds the driver, about 30 rules, three factorization kernels, loop lowering and a 360-line in-place alias analysis that emits no program IR. Split it into a <code>passes/lowering/</code> package (driver and registry, elementwise, structural, linalg, sparse, control, indexing), move the alias analysis to its own module with one prover instead of two, and have <code>lowers()</code> reject a second registration for an op.</li>
+<li><code>ad/forward.py</code> (1531 lines) holds two forward traversals with different seed APIs, four near-duplicate single/multi-seed loop builders that have already diverged (only one handles <code>length == 0</code>), the VMAP seed strategies, and ten helpers that <code>reverse.py</code> imports, which contradicts autodiff.md's "share no dispatch". A split into rules, loops, mapped and the traversals follows the existing seams.</li>
+<li><code>codegen/aot.py</code> (511 lines) is the CModule, the observer protocol, the C header, a second translation-unit assembler, the public API, the CLI and a graph walk.</li>
+<li><code>Solver.step</code> is 200 lines over nine PIQP phases. One method per phase, named after PIQP's routine, would make it checkable line by line against upstream. Name the bare constants too; <code>0.666</code> looks like a typo someone will "fix" to 2/3.</li>
+</ul>
+
+<h3>2. Each op's derivative is written three times</h3>
+<p><code>_jvp</code>, <code>_jvp_many_structural</code> and <code>_local_vjp</code> each spell every partial derivative; the ERF factor appears three times. The multi-seed table already lacks abs, asin, acos, atan, atan2, min, max, the max/min reductions, segment extrema, <code>index_add</code>/<code>index_set</code> and copysign. A missing rule makes <code>jvp_many</code> rerun the whole expression once per seed, and a rule returning the wrong shape also falls back instead of raising. The suite only notices in the 69 tests that monkeypatch <code>SCALY_STRICT_JVP_MANY</code>. One table of partials per elementwise op, from which all three modes follow, removes the drift; an autouse strict-mode fixture makes the next gap fail loudly. codebase.md's "a scalar math op touches seven files" also undercounts by one.</p>
+
+<h3>3. Caches and names that miss part of their context</h3>
+<ul>
+<li>13 AD caches without the options (bug 6), a JIT key without the compiler, and SparseLDL default names from a global counter (<code>sldl{n}</code>) that reach C symbols and the cache key, so the same graph rebuilt in one process renders different C and recompiles. Naming by a digest of the tables fixes the last one and retires the "names must differ" workaround in examples.</li>
+<li>Name reservation has no owner. Four allocators in <code>passes/program</code> use different rules, <code>delinearize_loops</code> reserves nothing, lowering spells loop variables ad hoc, <code>_inplace</code> and <code>_fwd</code> suffixes carry meaning, and the <code>lam:</code>/<code>fwd:</code> input protocol is spelled 46 times with no collision check (nesting <code>sc.forward</code> collides). One program-wide authority seeded with every user name and every C/libm reserved word would close bugs 11 and the <code>_inplace</code> row together.</li>
+</ul>
+
+<h3>4. The renderer decides things (rule 4), and entry points lower twice (rule 5)</h3>
+<ul>
+<li><code>_force_noinline_raw</code> returns <code>"_fwd" in proc_name</code>. It is a workaround for Apple clang 17 on every compiler, it also matches user names like <code>car_fwd</code>, and its pointer <code>docs/macos_clang_call_miscompile.md</code> is broken (the note is in <code>internal/notes/</code>). A PROC attribute set where AD names the helper, gated or given an expiry in todo.md, fixes all three.</li>
+<li>The CasADi gather is emitted at render time, invisible to <code>pack_workspace</code> and to viz. The entry's <code>SZ_W</code> is assembled in eight places.</li>
+<li>Two translation-unit assemblers (<code>render_program_c</code> and <code>_render_solver_bearing_source</code>) share private helpers and find the main PROC differently. <code>render_c_source</code>, <code>render_c_api_header</code> and <code>workspace_size</code> each lower on their own, and <code>test_c_snapshot.py</code> lowers twice for one pair.</li>
+<li><code>DENSE_UNROLL = 8</code> in lowering is a second home for <code>Options.dense_unroll</code>, used as a fallback when the attribute is missing.</li>
+</ul>
+
+<h3>5. <code>ConcreteFunction</code> is a state bag, right before P2 adds more</h3>
+<ul>
+<li>Other modules attach <code>descriptor</code>, <code>custom_jvp</code>, <code>custom_vjp</code> and <code>custom_sparsity</code> after construction. <code>descriptor</code> has no default, so <code>solvers/graph.py</code> detects a solver by duck typing.</li>
+<li>Four copy paths each re-list the eight <code>_init_graph</code> arguments and decide what survives; <code>with_device</code> drops the custom rules and the descriptor. <code>_with_trees</code> mutates <code>self</code> while every other <code>with_*</code> copies.</li>
+<li><code>_from_exprs</code> is the real low-level constructor: 589 test lines, 23 example sites, two guide pages. It cannot take trees, so callers patch the result with <code>_with_trees</code>.</li>
+<li>Output sparsity lives in <code>output_sparsities</code> and in <code>output_tree.sparsities</code>; <code>output_coloring_widths</code> is threaded through five paths for one benchmark reader.</li>
+<li>The five derivative wrappers in <code>api.py</code> share one body and re-spell <code>{kind}_{of}_{wrt}</code> nine times, plus <code>nlp.py</code> hand-writes <code>sphess_gamma_...</code>. These names are C symbols.</li>
+</ul>
+<p>Before P2: one <code>_replace(**changes)</code> copy path, <code>descriptor = None</code> by default, a public constructor that takes trees, and one <code>_derive</code> behind the wrapper overloads. P2 multiplies whatever state handling exists when it lands.</p>
+
+<h3>6. The solver layer's seams</h3>
+<ul>
+<li>QP and NLP share a 15-key string dict from <code>nlp._lowered</code> (a misleading name here), which <code>qp.py</code> mutates (<code>cached["qp_hessian"]</code>) for a later reader. A frozen dataclass in <code>_oracle.py</code> would give the proof's Hessian an explicit field and a home for the duplicated <code>_bound</code> and concat helpers. The QP path also builds and discards the whole NLP oracle set.</li>
+<li>The host seeds every NLP descriptor with IPOPT's <code>print_level</code> and <code>sb</code> and every QP descriptor with PIQP's <code>verbose</code>; scaly-sqp silently drops them, so <code>options={"print_level": 5}</code> on SQP is ignored. solver_plugins.md says <code>desc.options</code> is the user's dict.</li>
+<li>Each plugin re-derives the core-owned typed signature (offsets, <code>2*nv+1</code> group indices), fills the stats struct field by field (four blocks) and normalizes infinite bounds its own way (three idioms, three NaN policies, and IPOPT's threshold of 2e19 against its own 1e19 option).</li>
+<li>The generated IPM has no front door. <code>examples/qp_solvers/generated_piqp.py</code> imports six private helpers from <code>qp.py</code>. A public <code>extract_qp</code> seam is needed before Tier 4's <code>backend="scaly"</code>, which cannot satisfy <code>SolverBackend</code> as it stands.</li>
+<li>The PIQP dense path's "column-major staging" copies do nothing; PIQP's C interface is row-major, so these are three O(n<sup>2</sup>) copies per solve. The two build hooks share about 90 identical lines and judge "already built" by path existence, so a pin bump goes stale locally.</li>
+</ul>
+
+<h3>7. One sparse LDL<sup>T</sup>, three implementations</h3>
+<p><code>schedule="unroll"</code> builds one Expr per multiply-add, <code>"loop"</code> emits the <code>SPARSE_LDL</code> op pair that <code>lowering.py</code> spells again, and <code>"scan"</code> is a third version. They round differently (unroll divides by <code>d</code>, the others multiply by <code>1/d</code> and use blocked sums), so the factor's bits change when <code>work</code> crosses <code>sparse_unroll</code>. <code>"auto"</code> never picks scan; it survives as the differentiable fallback and keeps <code>Segment</code>, <code>CostModel</code> and the segment DP alive in <code>symbolic.py</code>. One op pair with an <code>unroll</code> attribute and its own derivative rule, as the dense ops already do, would let scan go.</p>
+
+<h3>8. Speculative and dead surface</h3>
+<p>The house rules call each of these a defect: the GPU scaffolding (cuda/opencl/metal <code>DeviceSpec</code>s, <code>KERNEL</code>/<code>LAUNCH</code>/<code>BARRIER</code>, six unused <code>RangeKind</code>s, <code>sc.BACKEND_SUPPORT</code>) that exists only to raise "deferred"; the <code>structural_key</code> API; <code>format_expr</code> beside <code>render_expr_assembly</code>; five unreachable zero-fold patterns; the <code>lowering</code> hint in the intern key with three merge policies, where <code>opaque</code> behaves as <code>block</code>; <code>render_solver_raw(include_external_sources=...)</code>, <code>SolverDescriptor.runtime</code>, <code>BufferType</code>, <code>SolverStatus</code>, the <code>paths.py</code> migration fallback, the <code>codegen/__main__.py</code> shim, <code>can_render_program_c</code>, scaly-sqp's dense QP mode (one caller, a test), and 13 names in <code>sc.__all__</code> that nothing uses.</p>
+
+<h3>9. Tests: strong oracles, drifting structure</h3>
+<ul>
+<li><code>tests/</code> no longer mirrors <code>src/</code>. <code>integration/</code> is the largest directory and holds unit tests of <code>sugar.py</code> and <code>forward.py</code> internals; there is no <code>test_sugar.py</code>, <code>test_forward.py</code> or <code>test_reverse.py</code>; twelve program passes share one 921-line file; <code>tests/viz/test_recording.py</code> tests <code>benchmarks.harness</code>.</li>
+<li>Some gates are weaker than they read. The "Program IR migration harness" compiles 32 functions and checks only that outputs are finite. <code>test_import_boundaries.py</code> checks about 25 of 123 public names. The PIQP decision gate skips cases at run time whenever PIQP's own backends disagree, a set that depends on the compiler.</li>
+<li>The node-ID baseline changed in 75 of the 161 commits and aborts a local run before any test executes; CI already enforces it. Nine files draw from a module-level RNG, so under xdist a test's inputs depend on what ran before it. Three tests assert wall-clock time. There is no <code>--strict-markers</code>, and the suite writes into the developer's real JIT cache.</li>
+</ul>
+
+<h3>10. Docs and repository</h3>
+<ul>
+<li><code>delinearize_loops</code> appears in no doc (architecture.md step 8 and pass list, lowering.md, the codebase.md map; visualization.md says eleven passes). <code>utils/options.py</code> is missing from the map.</li>
+<li>AGENTS.md, contributing.md and architecture.md say NumPy is the only runtime dependency. pyproject and README say NumPy and SciPy, and six modules import SciPy at load time.</li>
+<li>The API reference says anything it does not list is internal, and it omits about 34 public names, including <code>scan</code>, <code>while_loop</code>, <code>custom_derivative</code>, <code>SparseMatrix</code>, <code>sc.options</code> and all of <code>scaly.linalg</code>.</li>
+<li><code>docs/guide/linalg.md</code> carries timings from non-reference machines and cites unpublished <code>internal/notes</code> reports. <code>docs/.DS_Store</code> and <code>docs/.obsidian/*.json</code> were committed on this branch in the Tier 2 review round.</li>
+<li><code>examples/</code> is outside ruff's include list; <code>examples/casadi</code>, <code>simple.py</code> and <code>multiple_shooting.py</code> are never run; four examples still teach the pre-<code>params=</code> while-loop pattern. No published snippet is executed, which is how bug 13 shipped.</li>
+<li>Benchmarks: <code>run_checks</code> is copied into four problems, <code>closed_loop.py</code> hard-codes every problem, the harness writes <code>function._compiled</code>, and three more measurement harnesses live in <code>examples/</code> (the <code>qp_solvers</code> C timer lacks the macOS <code>CLOCK_UPTIME_RAW</code> fix). CI and the benchmarks README use <code>uv run python ...</code>, which AGENTS.md rules out.</li>
+<li><code>internal/todo.md</code> is 1122 lines with 97 checked and 38 open items. As "the single actionable list" it now reads mostly as a changelog.</li>
+</ul>
+</div>
+
+<h2>Suggested order</h2>
+<ol>
+<li>Bugs 1 to 6, each with a test that fails first. They are small patches.</li>
+<li>Bugs 7 to 12: iterative walkers in <code>delinearize_loops</code> and the forward traversals, dtype-aware zero tangents, the zero tile, and one name authority.</li>
+<li>Theme 5 before templates P2.</li>
+<li>The lowering package split, one partials table for AD with strict mode as the test default, one translation-unit assembler.</li>
+<li>Theme 6 before Tier 4: <code>extract_qp</code>, the normalized-problem dataclass, plugin-owned option defaults, core helpers for the signature, stats and bounds.</li>
+<li>The deletions in theme 8 and the docs fixes in theme 10, as one sweep.</li>
+</ol>
+
+<h2>Worth keeping</h2>
+<ul>
+<li>The differential oracles: the NumPy port of PIQP validated against vendored PIQP through a trace driver, and finite-difference and unrolled-twin checks across AD, linalg and loops. <code>tests/codegen/test_control.py</code> (table-driven, a NumPy reference per op, signed zeros, infinities, NaN, both lowering modes) is the pattern to copy for the missing op coverage.</li>
+<li>Import layering enforced statically and by fresh-interpreter imports, the single <code>_jit()</code> seam, and the viz observer inversion.</li>
+<li><code>ad/sparsity.py</code> and <code>passes/affine.py</code> are model modules: AD-free, well bounded, exact, with why-comments.</li>
+<li>Builders fail at construction with specific messages, and unsupported lowerings raise instead of degrading.</li>
+<li>The IPM's docstrings name the PIQP routine each piece mirrors and state each deviation with its reason; <code>Settings</code> mirrors PIQP's names and defaults one to one.</li>
+<li>The vendored-build tricks are explained beside the code, and the pins live in one <code>build_config.json</code> read by the hook, provenance and the CI cache key.</li>
+</ul>
+
+<h2>All findings by subsystem</h2>
+<p>Condensed from the eleven reviews. Paths are under <code>src/scaly/</code> unless shown otherwise; bugs above are referenced by number.</p>
+
+<details><summary>IR and expression passes<span class="cnt">21</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>ir/expr.py:301</code></td><td>Intern hits re-run <code>__init__</code>; 0.0 and -0.0 share a key (bug 3).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>ir/expr.py:596</code></td><td>Two scalar-coercion rules; float literals truncated against ints (bug 2).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>ir/expr.py:270</code></td><td>Constants and index tables alias caller arrays (bug 4).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>ir/expr.py:309</code></td><td>The <code>lowering</code> hint is part of node identity with three merge policies, yet is consumed per Function; forces the <code>lowering_identity</code> RESHAPE and special cases in <code>rewrite</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ir/types.py:99</code></td><td>GPU and device scaffolding with no backend (theme 8).</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ir/expr_spec.py:63</code></td><td><code>verify_expr</code> never runs in the pipeline; three shared rules cannot fail; SLICE and SOLVER_CALL have no rule; no exhaustiveness test over <code>ExprOp</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ir/program.py:398</code></td><td><code>p.call</code> omits <code>n_in</code>/<code>n_out</code> that <code>c.py</code> requires; lowering builds CALLs by hand five times; scalar ops have no arity or dtype rule.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ir/expr.py:393</code></td><td><code>structural_key</code> predates hash-consing; CSE mostly repeats interning; its docstring describes interning's work.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/expr.py:344</code></td><td>Five zero-fold patterns can never fire; <code>zeros_like</code> and <code>_matmul_zero</code> hard-code float64.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/arith.py:1</code></td><td>"Shared" constant evaluation is per dialect; NOT and SELECT folds written twice outside <code>simplify_arith</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ir/match.py:87</code></td><td>Four copies of rebuild-with-new-args; private names imported across modules; <code>rewrite</code> defaults to the Expr adapter though five of six callers are program passes.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ir/text.py:155</code></td><td>Two printers per dialect; each new statement op needs two branches.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ir/expr.py:663</code></td><td>Three duck-typed "is this a Function" tests in layer 1, one by class-name string that breaks on the next rename.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ir/types.py:281</code></td><td><code>TensorType.sparsity</code> is inert; a declared pattern is silently ignored.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ir/expr.py:966</code></td><td>130 lines of sparse LDL table validation in the IR builders, rerun per derivative seed.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ir/spec.py:24</code></td><td><code>Spec</code> duplicates <code>PatternMatcher</code>; <code>Spec.merge</code> unused while callers merge by hand.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ir/expr.py:100</code></td><td>Unused names: <code>ScalarType</code>, <code>COMMON_OPS</code> (all ops), <code>OpInfo.name</code>, <code>spec_expr_shared</code>, <code>linear_combination</code>.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ir/__init__.py:3</code></td><td>Wrong rationale for rule 3; stale "Phase N" roadmap references; <code>DType.__eq__</code> string shim.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>docs/dev/codebase.md:22</code></td><td>Package map omits <code>options.py</code> and <code>delinearize_loops</code>; "one text.py branch" is two.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ir/expr.py:463</code></td><td>Indexing allocates a full array to compute a shape; NumPy integers rejected as indices.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/expr.py:209</code></td><td><code>_slice_of_slice</code> crashes on a reversed inner slice (<code>x[5:2][0:0]</code>).</td></tr>
+</table></div></details>
+
+<details><summary>Automatic differentiation<span class="cnt">24</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>ad/forward.py:58</code></td><td>Callee caches ignore <code>sc.options</code> and strict mode (bug 6).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>ad/forward.py:938</code></td><td>Zero residue tile crashes the periodic seed path (bug 10).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>ad/forward.py:170</code></td><td>Per-op math written three times; multi-seed table missing about 13 ops (theme 2).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>ad/forward.py</code></td><td>Outgrown its ownership; <code>reverse.py</code> imports ten names from it; <code>_jvp_many_structural</code> is 360 lines (theme 1).</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/forward.py:282</code></td><td>Single-seed loop builders copy the multi-seed ones and have diverged; <code>reverse.py:294</code> re-spells <code>_loop_suffix</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/forward.py:1079</code></td><td>Any unsupported op reruns the whole expression per seed; a wrong-shaped rule also falls back instead of raising; autodiff.md's list of unsupported ops is incomplete.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/forward.py:659</code></td><td>Two traversals with different seed APIs; <code>_jvp_many_joint</code> bridges them with two full-graph rewrites and a global counter.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/forward.py:80</code></td><td>The seed's zero test scans the n&times;n identity at every node: O(nodes&middot;n<sup>2</sup>).</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/reverse.py:648</code></td><td><code>_unbroadcast</code> emits one gather and sum per element; cotangents built for constants nobody reads.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/reverse.py:60</code></td><td><code>_substitute</code> duplicates <code>ir.expr.substitute</code> without the shape check.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/reverse.py:201</code></td><td>autodiff.md says call inlining is not re-walked per occurrence; there is no cache.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/forward.py:1514</code></td><td>Multi-seed matmul rules unroll per seed and repeat branches.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/sparse.py:284</code></td><td>Coloring-to-seed-matrix code written three times; a no-op conditional reshape.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/forward.py:113</code></td><td>float64 zero tangents break float32 graphs (bug 9).</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/sparsity.py:19</code></td><td>Recursive traversals hit the recursion limit (bug 8).</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>ad/forward.py:1383</code></td><td>Memos keyed by <code>id()</code> need a keep-alive hack (<code>memo[~inlined.id]</code>); key by <code>Expr</code> instead.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ad/forward.py:948</code></td><td><code>single_constant</code> branch repeats the general branch.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ad/__init__.py:3</code></td><td>A compatibility re-export and private test helpers in <code>__all__</code>; <code>basis</code> and <code>finite_difference</code> belong in tests.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ad/sparse.py:175</code></td><td>Self-contradicting docstring; <code>_ = total_rows</code> dead code labelled as documentation.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ad/sparsity.py:302</code></td><td>The callee's pattern is recomputed at every call site.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ad/forward.py:128</code></td><td>Exceptions used as probes; an unexplained <code>nseed &gt; 64</code>.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ad/forward.py:967</code></td><td>Helper names are not injective (<code>a_b</code>/<code>c</code> against <code>a</code>/<code>b_c</code>); private helpers used across modules.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ad/forward.py:99</code></td><td><code>jvp</code> does not validate its seed's shape; <code>(n, 1)</code> broadcasts into an <code>(n, n)</code> tangent.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ad/reverse.py:450</code></td><td><code>vjp_many</code> says batched but loops; a TODO in code; non-differentiable ops handled three ways.</td></tr>
+</table></div></details>
+
+<details><summary>Lowering<span class="cnt">24</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>passes/lowering.py</code></td><td>2245 lines, five concerns; split into a package (theme 1).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>passes/lowering.py:1292</code></td><td>Generated <code>_inplace</code> names are not reserved.</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>passes/lowering.py:1805</code></td><td>The in-place alias analysis is not lowering and has two provers; <code>DONATE_CARRIES</code> is a mutable global for monkeypatching.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/lowering.py:410</code></td><td>Rules bump <code>ctx._tmp</code> and read <code>ctx._output_alias</code>; loop variables are minted ad hoc and unchecked.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/lowering.py:956</code></td><td><code>CHOLESKY_TILE</code> presented as tunable; the kernel hard-codes four partial sums.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/lowering.py:870</code></td><td><code>DENSE_UNROLL</code> duplicates the option as a silent fallback.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/lowering.py:1356</code></td><td>VMAP lowers each selected output as its own full loop; AD packs outputs to work around it.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/lowering.py:150</code></td><td>Re-enumerates descriptor oracles instead of <code>solvers.graph.external_oracles</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/lowering.py:718</code></td><td>Four-lane accumulation reimplemented five times with bare numbers; <code>pick</code> copied verbatim.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/lowering.py:1049</code></td><td>Sparse LDL table names copied from <code>ir/expr.py</code>; the loop-as-if trick written twice.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/lowering.py:1</code></td><td>Stale history, broken cross-references ("rule 6", <code>_contiguous_slice_offset</code>), names that no longer exist.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>docs/how_it_works/lowering.md:24</code></td><td>Does not describe in-place carries, the factor kernels, or which lowerings reassociate sums.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/lowering.py:726</code></td><td>Rules shape output for downstream pass patterns; the contract is unwritten and mostly unpinned.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>codegen/c.py:161</code></td><td><code>noinline</code> by name substring (theme 4).</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/lowering.py:228</code></td><td><code>_normalize_function</code> duplicates <code>simplify_cse_fixpoint</code>; the in-place path normalizes two or three times.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/lowering.py:238</code></td><td>The scalarize decision is buried in a dict literal; <code>auto_scalarize</code> is always <code>not entry</code>.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/lowering.py:1639</code></td><td>Three update rules re-implement "in place, else copy the base".</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/lowering.py:51</code></td><td><code>LoweringError</code> raised for a user naming error and an internal invariant; surfaces as <code>JitUnavailable</code>.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/lowering.py:132</code></td><td>Function-local imports with no cycle to avoid.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/lowering.py:617</code></td><td>CONST lowering passes int64 through <code>float()</code>; <code>2**53 + 1</code> loses precision.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/lowering.py:2080</code></td><td><code>_step_value</code> recurses and duplicates the <code>OP_INFO</code> NumPy map.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/lowering.py:1214</code></td><td>Trisolve bounds computed three times; a one-value lambda.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/lowering.py:761</code></td><td>TRANSPOSE refuses rank above 4 for no reason.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/passes/test_lowering.py:1</code></td><td>Stale migration docstring; no tests for name collisions, multi-output VMAP or loop-variable shadowing.</td></tr>
+</table></div></details>
+
+<details><summary>Program passes<span class="cnt">19</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>passes/program/delinearize_loops.py:84</code></td><td>Recursive, unmemoized walkers (bug 7).</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/program/delinearize_loops.py:129</code></td><td><code>_split</code> ignores the range step.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/program/__init__.py:32</code></td><td>In the pipeline, in no doc; its ordering preconditions are written nowhere.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/program/delinearize_loops.py:102</code></td><td><code>_factor</code> re-implements <code>affine_index_map</code> with an O(n) divisor scan.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/program/_common.py:189</code></td><td>Three integer-index evaluators with different division semantics.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/program/_common.py</code></td><td>A grab-bag: <code>_walk</code> duplicated in <code>program_spec</code>, a whole pass (<code>prune_procedures</code>) inside it, single-caller helpers, double spellings through import aliases.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/program/fuse_elementwise.py:109</code></td><td>The buffer read/write census is re-derived six times with different alias policies.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/passes/test_program.py:843</code></td><td>No refusal tests for <code>delinearize_loops</code> or <code>_constant_fills</code>; twelve passes in one file.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/program/pack_workspace.py:108</code></td><td>Four fresh-name allocators with different collision rules.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>passes/program/coalesce_stores.py:43</code></td><td>Per-procedure and per-FOR traversal hand-rolled four ways; unreachable KERNEL paths.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>ir/program.py:384</code></td><td><code>FOR.attrs["body_len"]</code> is never read, goes stale, and is part of the hash key.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/program/unroll_unit_loops.py:59</code></td><td>Stale "Pass 3" banner.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/program/fold_arith.py:38</code></td><td><code>zip(strict=True)</code> survives only because <code>all()</code> short-circuits.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/program/coalesce_stores.py:10</code></td><td>Checks the value's dtype, not the target's.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/program/hoist_invariant.py:74</code></td><td>CALL argument lookup and construction hand-rolled.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/program/__init__.py:23</code></td><td>Pipeline names, function names and exports disagree; public passes without docstrings.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/program/pack_workspace.py:176</code></td><td>Defensive cycle guards for states that cannot happen.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/program/scalarize.py:153</code></td><td>Frozensets rebuilt per node; uniform-table scan per LOAD.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/program/_common.py:111</code></td><td>Two <code>_size_of</code> helpers disagree on zero-size shapes.</td></tr>
+</table></div></details>
+
+<details><summary>Frontend and public API<span class="cnt">22</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>utils/options.py:1</code></td><td>Options not in any derivative cache key (bug 6).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>function/model.py:77</code></td><td>State copied by hand in four places; attributes attached from outside (theme 5).</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>function/model.py:101</code></td><td><code>_from_exprs</code> is the de facto public constructor and cannot take trees.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>function/model.py:162</code></td><td>Output sparsity in two places; <code>output_coloring_widths</code> serves one benchmark.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>function/api.py:111</code></td><td>Five identical wrappers; <code>{kind}_{of}_{wrt}</code> re-spelled nine times.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>function/model.py:365</code></td><td><code>lam:</code>/<code>fwd:</code> protocol spelled 46 times; nested <code>sc.forward</code> collides.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>function/api.py:30</code></td><td>Self-contradicting error (bug 12); the signature lets ty accept extra slots and a missing <code>output=</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>docs/guide/functions.md:9</code></td><td>Says the runtime <code>G</code> accepts any count; it rejects anything outside 2 to 8.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>utils/env.py:1</code></td><td>Not the single source it claims: defaults never read, <code>env()</code> dead, <code>CC</code> and others read around it.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>utils/torch_state_dict.py:99</code></td><td>Unpickler allows all of <code>builtins</code> and <code>numpy</code>; <code>as_strided</code> trusts offsets.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>typing_playground/</code></td><td>Duplicates <code>tests/typing</code>, uses the refused two-positional form, contradicts the committed plan, cites todo ids that no longer exist.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>function/model.py:341</code></td><td>dtype is checked at no call boundary (CALL, vmap, scan); only <code>while_loop</code> checks.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>function/model.py:230</code></td><td>Dead members and parameters: <code>output_sparsity_map</code>, <code>input_shapes</code>, <code>aux_name=</code>, <code>_inherit_lowering(lowering=)</code>.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>function/tree.py:121</code></td><td><code>allow_scalar</code> threaded through every flatten for one caller.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>function/model.py:22</code></td><td>Stale references ("roadmap Phase 9"); public <code>factory</code>, <code>input_map</code>, <code>output_map</code> lack docstrings.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>__init__.py:108</code></td><td>13 unused names in <code>__all__</code>; <code>sc.factory</code> module shares a name with the method; <code>from scaly import *</code> arms viz.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>function/api.py:259</code></td><td>Derivative family conventions are inconsistent (Expr or Function; seeds for sparse outputs).</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>function/sugar.py:57</code></td><td><code>vmap</code> and <code>scan</code> validate slices twice with different rules.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>function/sugar.py:153</code></td><td><code>_scan_node</code>/<code>_while_node</code> are private but imported by ad and the IPM; the flat call seams have different shapes.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>function/tree.py:49</code></td><td>Misleading errors at the declaration boundary (input holes, tuple parts in <code>G</code>).</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>utils/names.py:10</code></td><td><code>c_ident</code>'s Unicode <code>\W</code> lets <code>&theta;</code> into C identifiers.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/function/test_model.py:30</code></td><td><code>try/except/else</code> instead of <code>pytest.raises</code>; no <code>test_sugar.py</code>.</td></tr>
+</table></div></details>
+
+<details><summary>Code generation and viz<span class="cnt">25</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>codegen/jit.py:123</code></td><td>Cache key omits compiler, CPU and plugin versions.</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>codegen/c.py:82</code></td><td>Two translation-unit assemblers joined through private imports.</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>codegen/c.py:161</code></td><td><code>noinline</code> chosen by name substring; broken note path.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>codegen/jit.py:344</code></td><td>Concurrent calls to a solver Function race on wrapper statics.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>codegen/aot.py:374</code></td><td>Four entry points each lower on their own (rule 5).</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>codegen/aot.py:138</code></td><td>The entry's <code>SZ_W</code> is decided in eight places.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>codegen/casadi.py:104</code></td><td>The CasADi gather is a lowering decision made at render time.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>codegen/aot.py:474</code></td><td>The Function call-graph walk is written three times.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>codegen/cpp.py:47</code></td><td>C and C++ headers render the same content separately; <code>typed_buffers</code> ignored for C++.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>codegen/aot.py:346</code></td><td>A viz failure aborts the compile it observes; viz's topo is recursive.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>utils/names.py:8</code></td><td>Sanitization reserves only ABI names (bug 11).</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>codegen/toolchain.py:37</code></td><td>Env vars read around the registry; <code>CC="ccache gcc"</code> fails with a misleading message.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>viz/recording.py:91</code></td><td>Recordings rewritten in full per render; not safe across processes.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>codegen/abi.py:29</code></td><td>Dead code: <code>BufferType</code>, <code>include_external_sources</code>, the <code>external</code> CALL branch, unread <code>CompiledFunction</code> fields, unused viz routes.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>codegen/jit.py:94</code></td><td>Test-only helpers and a third copy of the CasADi query names in production modules.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>codegen/__main__.py:1</code></td><td>The shim's docstring contradicts the <code>__main__</code> guard kept in <code>aot.py</code>.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>codegen/jit.py:406</code></td><td><code>recompile()</code> lowers again to find a key it discards.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>codegen/jit.py:57</code></td><td>The isolated linker namespace does not say which conflict it prevents; <code>dlerror()</code> is dropped.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>codegen/jit.py:86</code></td><td><code>JitUnavailable</code> says "the caller should fall back"; public names without docstrings.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/viz/test_recording.py:12</code></td><td>Tests the benchmark harness; <code>viz/serve.py</code> has no tests.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>viz/serve.py:17</code></td><td>A 240-line browser app in Python strings; the <code>--host</code> help invites 0.0.0.0; no Host check against DNS rebinding.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>viz/recording.py:24</code></td><td>Marked functions keyed by <code>id()</code>; a recycled id records the wrong function.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>codegen/c.py:257</code></td><td>VIEW-to-pointer spelled three times with different multi-index rules.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>codegen/aot.py:196</code></td><td>An empty sparse output emits a zero-length array (not ISO C).</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>codegen/solver.py:57</code></td><td>Deferred imports with no cycle; a literal status code 1.</td></tr>
+</table></div></details>
+
+<details><summary>Linear algebra<span class="cnt">19</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>linalg/sparse_factor.py:121</code></td><td>One LDL<sup>T</sup> implemented three times, rounding differently (theme 7).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>linalg/sparse.py:136</code></td><td><code>from_scipy</code> rewrites the caller's matrix (bug 5).</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>linalg/sparse_factor.py:58</code></td><td>Default names from a global counter reach C symbols and the cache key.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>linalg/sparse_factor.py:467</code></td><td><code>SparseLDL</code> binds analysis, one factorization and the solves; the IPM works around it.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>linalg/sparse.py:391</code></td><td><code>S</code> (a pytree declaration) lives in linalg; <code>SymbolicValue</code> is a one-subclass base to support that.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>linalg/dense.py:20</code></td><td>LDL unpacking and the Cholesky &Phi; mask spelled four times because all of linalg sits at layer 5.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>linalg/symbolic.py:131</code></td><td>Test-only surface: <code>postorder</code>, <code>stats()</code>, <code>widths()</code>, the lane tables.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>linalg/sparse_factor.py:135</code></td><td><code>CostModel</code> defaults are never what <code>SparseLDL</code> uses; <code>Segment.u</code> changes meaning.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>linalg/symbolic.py:328</code></td><td><code>ordering="auto"</code> builds L's pattern three times in Python before the work check.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>docs/guide/linalg.md:50</code></td><td>Performance numbers and unpublished citations in a guide page.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>linalg/sparse.py:290</code></td><td>Pattern-key helpers duplicated inside the module.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>linalg/sparse.py:74</code></td><td>Aliases and test helpers on <code>SparseMatrix</code>; the pattern is revalidated on every internal op.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>linalg/symbolic.py:4</code></td><td>Stale docstrings; the row-subtree method is unsourced.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>passes/lowering.py:870</code></td><td><code>DENSE_UNROLL</code> duplicates the option.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>linalg/sparse_factor.py:143</code></td><td>Table contract is string-keyed; <code>a_src</code> against <code>a_source</code>; <code>w_offset</code> misnamed.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>linalg/symbolic.py:301</code></td><td><code>TooMuchWork</code> names a parameter <code>SparseLDL</code> lacks; ordering defaults inconsistent.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/linalg/test_sparse_matrix.py</code></td><td>Empty-input branches untested; one wall-clock bound cannot show linearity.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>plugins/scaly-sqp/.../codegen.py:92</code></td><td>A second symbolic LDL analysis in the SQP plugin.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>AGENTS.md:76</code></td><td>"NumPy is the only runtime dependency" is false.</td></tr>
+</table></div></details>
+
+<details><summary>Solvers and the generated IPM<span class="cnt">25</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>solvers/qp.py:90</code></td><td>The QP proof accepts nonsmooth problems (bug 1).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>solvers/qp.py:30</code></td><td>Parameter-switched entries dropped by a one-sample probe; the probe compiles C.</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>examples/qp_solvers/generated_piqp.py:24</code></td><td>The generated IPM has no front door; <code>qp.py</code> has no extraction seam.</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>solvers/nlp.py:37</code></td><td>QP and NLP share a mutated string-keyed dict; helpers duplicated; <code>_oracle.py</code> holds none of them.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/ipm/ruiz.py:103</code></td><td>Fixed Ruiz Function names.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/nlp.py:215</code></td><td>Core injects IPOPT and PIQP option defaults.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/nlp.py:109</code></td><td>The QP path builds and discards the NLP oracle set.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/qp.py:244</code></td><td>The five-group solver signature is built in three places.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/nlp.py:64</code></td><td>No check that NLP bounds are independent of the variables; <code>lo</code>/<code>hi</code> shapes unchecked.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/ipm/algorithm.py:517</code></td><td><code>Solver.step</code> is 200 lines over nine phases.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/ipm/algorithm.py:637</code></td><td>PIQP's hard-coded constants as bare literals.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/ipm/kkt.py:195</code></td><td>Dense and sparse KKT split by branches plus a side effect that depends on evaluation order.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/ipm/algorithm.py:125</code></td><td>Flat-vector packing implemented six ways.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/ipm/kkt.py:152</code></td><td>Bound masks and barrier weights have several spellings.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/registry.py:81</code></td><td>Protocol validation incomplete; <code>link_flags = "-lfoo"</code> becomes five one-character flags.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/paths.py:106</code></td><td>Test-only paths and a migration fallback to directories nothing creates.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/paths.py:152</code></td><td>Discovery recomputed per query, with a subprocess per check on Linux; a bad <code>SCALY_&lt;NAME&gt;_LIB</code> is silently ignored.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/stats.py:59</code></td><td><code>SolverStatus</code> is a redundant second status type.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>docs/guide/solvers.md:155</code></td><td>Says the dense path accepts data computed by another solver; it does not.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>solvers/model.py:82</code></td><td>Dead <code>runtime</code> field, stale comments, a hand-made identity equality.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>solvers/model.py:37</code></td><td>One descriptor class holds the QP and NLP families, told apart by None fields.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>solvers/graph.py:22</code></td><td><code>is_solver_function</code> duck-types a patched attribute.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>solvers/ipm/algorithm.py:745</code></td><td>Private <code>_while_node</code> with positional magic; <code>max_iter + 1</code> unexplained.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>solvers/nlp.py:183</code></td><td>Hand-built <code>sphess_gamma_...</code> C symbol name.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/solvers/</code></td><td>No tests for the behaviours above; no mirrored <code>test_{paths,graph,stats,qp,nlp}.py</code>.</td></tr>
+</table></div></details>
+
+<details><summary>Solver plugins<span class="cnt">24</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>plugins/scaly-sqp/.../codegen.py:33</code></td><td>SQP silently discards the IPOPT option names the host injects.</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>plugins/*/codegen.py</code></td><td>Every plugin re-derives the core-owned typed signature.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/*/codegen.py</code></td><td>The stats struct filled field by field in four blocks; PIQP writes <code>t_qp</code> and zeroes <code>t_solver</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/scaly-piqp/.../codegen.py:95</code></td><td>"Column-major" staging does no work; docs say the opposite of PIQP's layout.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/*/codegen.py</code></td><td>Three idioms and three NaN policies for one infinite-bound rule.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/scaly-piqp/.../codegen.py:144</code></td><td>Unvalidated PIQP option keys become C; non-finite floats render as invalid C; IPOPT ints go through the Int API.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/*/hatch_build.py</code></td><td>About 90 identical lines across the build hooks.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/*/hatch_build.py</code></td><td>"Built" and "cloned" judged by path existence; a failed fetch leaves an empty clone.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/scaly-piqp/hatch_build.py:15</code></td><td>BLASFEO's Haswell target ties x86_64 wheels to AVX2 (confidence medium).</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>codegen/solver.py:98</code></td><td>A dead default path in <code>render_solver_raw</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>solvers/model.py:70</code></td><td>Descriptor fields no plugin reads.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/scaly-sqp/.../external.py:14</code></td><td><code>external_nlp</code> is backend-neutral core code stranded in the SQP plugin.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/scaly-sqp/.../casadi.py:88</code></td><td>A benchmark adapter in a published plugin, with a private attribute contract and <code>os.chdir</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/scaly-sqp/.../sqp.c.jinja:2</code></td><td>The dense QP mode's only caller is a test.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/scaly-ipopt/.../codegen.py:114</code></td><td>Two C-assembly styles; <code>chr(123)</code> brace hacks.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>plugins/*/tests</code></td><td>Plugin suites re-test the host and duplicate tests; render-only PIQP tests need a built solver.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>plugins/scaly-sqp/.../sqp.c.jinja:182</code></td><td>400-column lines, duplicated logic, unnamed constants.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>plugins/scaly-sqp/.../codegen.py:79</code></td><td><code>_csc</code> and <code>_ldl_symbolic</code> reimplement core.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>plugins/scaly-piqp/pyproject.toml:4</code></td><td>Stale packaging entries from the deleted Python solve path.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>plugins/*/__init__.py</code></td><td>Backend boilerplate; <code>build_config</code> is an undeclared protocol member.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>codegen/solver.py:111</code></td><td>The hook's result is splatted unchecked.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>plugins/scaly-ipopt/hatch_build.py:359</code></td><td><code>codesign</code> failure swallowed; the self-containment check is weaker than documented.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>plugins/*/hatch_build.py</code></td><td>Build-hook polish: misleading missing-tool message, redundant gfortran list, METIS strip not asserted.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>plugins/*/tests</code></td><td>Tombstone assertions that a rename passes.</td></tr>
+</table></div></details>
+
+<details><summary>Test suite<span class="cnt">23</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>tests/test_c_snapshot.py:64</code></td><td>asin, acos, atan, sinh, cosh, tan and ceil are never evaluated or differentiated (correct today; checked).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>tests/passes/test_lowering.py:1</code></td><td>The migration harness compiles 32 functions and checks no values; one assertion is a tautology.</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>tests/test_import_boundaries.py:23</code></td><td>The public surface is not pinned; docstrings on public names not enforced.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>conftest.py:9</code></td><td>The node-ID baseline costs more than it catches locally.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/solvers/ipm/test_algorithm.py:73</code></td><td>The PIQP decision gate chooses at run time which cases it gates.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/integration/test_multiseed_loops.py:242</code></td><td>The suite runs on the silent <code>jvp_many</code> fallback outside 69 tests.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/integration/</code></td><td>Unit tests in <code>integration/</code> while mirrored files are missing.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/viz/test_recording.py:1</code></td><td>Tests the benchmark harness, not <code>scaly.viz</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/integration/test_loop_index.py:26</code></td><td><code>_from_exprs</code> on 589 lines; the same wrapper defined in seven files.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/solvers/test_nesting.py:14</code></td><td>A hand-rolled "is PIQP installed" skip, against AGENTS.md.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/solvers/problem_helpers.py:17</code></td><td>A shim for retired test APIs, imported by every plugin suite.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/linalg/test_sparse_ldl.py:25</code></td><td>Module-level RNGs in nine files make inputs depend on test order.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/ad/test_sparsity.py:661</code></td><td>Wall-clock assertions on shared runners.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/codegen/test_vmap.py:189</code></td><td>The race-car RK4 written four times; one test imports other test modules through <code>sys.path</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>tests/linalg/test_sparse_ldl.py:71</code></td><td>Full cross products where each case compiles C; no <code>slow</code> marker.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/codegen/test_c.py:71</code></td><td>C-compiler detection spelled five ways; compile boilerplate copied seven times.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/linalg/test_examples.py:1</code></td><td>Some examples never run; example tests split across five files.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/integration/test_tinympc.py:24</code></td><td>A permanent <code>sys.path</code> insert registers bare module names.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/test_c_snapshot.py:10</code></td><td>Regeneration documented only in a docstring; the 64 KB <code>wide.c</code> diff is unreviewable.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/integration/test_notebooks.py:50</code></td><td>Seven notebooks repeat gallery examples and only check that they run.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/test_import_layering.py:31</code></td><td>Stale migration wording in permanent tests.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>tests/function/test_model.py:30</code></td><td>26 hand-rolled <code>try/except/else</code> blocks.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>pyproject.toml:120</code></td><td>No <code>--strict-markers</code>; the suite writes into the real JIT cache.</td></tr>
+</table></div></details>
+
+<details><summary>Docs, examples and benchmarks<span class="cnt">25</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>docs/how_it_works/ir.md:185</code></td><td>Published snippet raises (bug 13).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>docs/how_it_works/architecture.md:70</code></td><td><code>delinearize_loops</code> missing from every pipeline description.</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>zensical.toml:49</code></td><td>Nav points at a deleted page (bug 13).</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>docs/.DS_Store</code></td><td>Finder and Obsidian state committed under the published tree.</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>docs/dev/contributing.md:135</code></td><td>Says NumPy is the only dependency; SciPy is required.</td></tr>
+<tr><td><span class="sev h">high</span></td><td class="w"><code>docs/api/index.md:22</code></td><td>About 34 public names called internal by omission.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>docs/guide/linalg.md:24</code></td><td>Numbers, internal citations, 16 bold-label paragraphs, en dashes.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>docs/how_it_works/ir.md:326</code></td><td>12 of 66 program ops missing from the vocabulary tables.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>examples/hanging_chain.py:62</code></td><td>Four examples teach the pre-<code>params=</code> loop pattern.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>docs/guide/derivatives.md:175</code></td><td>Guides and examples rely on <code>_from_exprs</code>; one example imports six private helpers.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>docs/index.md:13</code></td><td>No published snippet is executed; the landing snippet exists three times.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>pyproject.toml:93</code></td><td><code>examples/</code> not linted, formatted or fully run.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>benchmarks/problems/chain/checks.py:362</code></td><td><code>run_checks</code> copied four times.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>benchmarks/harness/closed_loop.py:46</code></td><td>The generic harness hard-codes every problem; the <code>solver_call</code> smoke belongs in <code>tests/</code>.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>benchmarks/harness/timing.py:14</code></td><td>The harness writes private attributes on Scaly objects.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>examples/qp_solvers/time_entry.c:1</code></td><td>Three more measurement harnesses in <code>examples/</code>; the macOS clock fix is missing from one.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>benchmarks/README.md:26</code></td><td>Inconsistent commands, stale lists, restated conventions, misfiled race-car sections.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>docs/results/fairness.md:42</code></td><td>Results pages repeat each other; heading levels slip; a replaced timer described in the present tense.</td></tr>
+<tr><td><span class="sev m">med</span></td><td class="w"><code>benchmarks/problems/unbumpercars/README.md:660</code></td><td>Retired API names; history and a task list in a problem README.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>docs/dev/solver_plugins.md:7</code></td><td>Cites unpublished notes.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>internal/README.md:18</code></td><td>Notes index lists 7 of 61 entries; logos duplicated from <code>docs/assets</code>.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>examples/README.md:122</code></td><td>A task list outside <code>todo.md</code>; plan jargon in a user-facing README.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>docs/api/core.md:32</code></td><td>Documents the transitional <code>Function</code> alias rather than <code>ConcreteFunction</code>.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>zensical.toml:7</code></td><td>MathJax loaded on every page; no page uses math.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>README.md:72</code></td><td>Small polish: a broken uv link, filler, incomplete tag examples, a 15-line shell ritual in contributing.md.</td></tr>
+</table></div></details>
+
+<details><summary>Repository-level<span class="cnt">4</span></summary><div class="scroll"><table>
+<tr><th>Sev</th><th>Where</th><th>Finding</th></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>AGENTS.md:67</code></td><td>"NumPy is the only runtime dependency" contradicts pyproject and README.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>.github/workflows/ci.yml:186</code></td><td>CI runs <code>uv run python benchmarks/run.py</code>, the spelling AGENTS.md rules out; the vendored path list is repeated three times.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>internal/todo.md</code></td><td>1122 lines, 97 checked and 38 open; the actionable list is mostly a changelog.</td></tr>
+<tr><td><span class="sev l">low</span></td><td class="w"><code>pyproject.toml:81</code></td><td>scipy listed in both runtime dependencies and the dev group.</td></tr>
+</table></div></details>
+</main>
