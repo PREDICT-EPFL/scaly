@@ -11,7 +11,7 @@ from ..function import Function
 from ..function.api import gradient, sparse_jacobian
 from ..function.tree import G, L, Tree
 from ..ir.expr import Expr, ExprOp, concat, substitute
-from ..ir.types import SparsityType, TensorType
+from ..ir.types import SparsityPattern, TensorType
 from .model import SolverDescriptor, descriptor_function
 from .problem import Problem
 from .registry import NlpSolverBackend
@@ -109,7 +109,7 @@ def _lowered(problem: Problem[Any, Any, Any, Any]) -> dict[str, Any]:
   grad = gradient(base, "f", x_name, name=f"{problem.name}_grad")
   if g is None:
     jac = None
-    jac_sparsity = SparsityType.empty((0, n))
+    jac_sparsity = SparsityPattern.empty((0, n))
   else:
     jac = sparse_jacobian(base, "g", x_name, name=f"{problem.name}_jac")
     jac_sparsity = jac.output_sparsities[0]
@@ -194,9 +194,7 @@ def build_nlp[SV, NV, SP, NP](
   hess_sparsity = hess_fn.output_sparsities[0]
   assert hess_sparsity is not None
 
-  solver_vars = problem.vars.with_types(
-    tuple(TensorType(expr.shape, expr.type.dtype, expr.type.sparsity, diff=False) for expr in problem._var_symbols)
-  )
+  solver_vars = problem.vars.with_types(tuple(TensorType(expr.shape, expr.type.dtype, diff=False) for expr in problem._var_symbols))
   input_tree = G(
     solver_vars,
     solver_vars.relabel("lam:"),
@@ -212,7 +210,7 @@ def build_nlp[SV, NV, SP, NP](
   )
   input_signature = tuple(zip(input_tree.names, input_tree.shapes, strict=True))
   output_signature = tuple(zip(output_tree.names, output_tree.shapes, strict=True))
-  resolved_options: dict[str, str | int | float] = {"print_level": 0, "sb": "yes"}
+  resolved_options: dict[str, str | int | float] = {"print_level": 0}
   if options:
     resolved_options.update(options)
 
@@ -231,7 +229,7 @@ def build_nlp[SV, NV, SP, NP](
     jac=cast(Function | None, cached["jac"]),
     hess=hess_fn,
     bounds=cast(Function, cached["bounds"]),
-    jac_sparsity=cast(SparsityType, cached["jac_sparsity"]),
+    jac_sparsity=cast(SparsityPattern, cached["jac_sparsity"]),
     hess_sparsity=hess_sparsity,
     options=tuple(sorted(resolved_options.items())),
   )

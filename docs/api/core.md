@@ -1,6 +1,11 @@
 # Core
 
-The expression graph and the types on it.
+`Expr` represents a calculation whose inputs are not yet known. `Function` gives that calculation
+named inputs and outputs so that you can evaluate it, differentiate it, or generate C code.
+The [functions guide](../guide/functions.md) shows how to use both.
+
+The first sections cover modelling. Verification, rewriting, and text rendering are lower-level
+interfaces for inspecting or extending the compiler.
 
 ## Expressions
 
@@ -9,7 +14,7 @@ The expression graph and the types on it.
       show_source: false
       filters:
         - "!^_"
-        - "!^(lowering|with_lowering|scalar|block|opaque|sym|const)$"
+        - "!^(lowering|with_lowering|opaque|sym|const)$"
 
 ::: scaly.ir.expr.Expr.sym
     options:
@@ -30,6 +35,11 @@ The expression graph and the types on it.
 ## Functions
 
 ::: scaly.function.model.Function
+    options:
+      show_source: false
+      filters:
+        - "!^_"
+        - "!^with_device$"
 
 
 ## Types
@@ -39,18 +49,15 @@ The expression graph and the types on it.
 ::: scaly.ir.types.DType
 
 ::: scaly.ir.types.dtypes
+    options:
+      show_source: false
+      filters:
+        - "!^_"
+        - "!^float32$"
 
-::: scaly.ir.types.ScalarType
-
-::: scaly.ir.types.SparsityType
-
-::: scaly.ir.types.DeviceSpec
-
-::: scaly.ir.types.BackendSupport
+::: scaly.ir.types.SparsityPattern
 
 ::: scaly.ir.types.as_dtype
-
-::: scaly.ir.types.backend_supports
 
 ## Builders
 
@@ -89,6 +96,10 @@ The expression graph and the types on it.
 ::: scaly.function.sugar.vmap
     options:
       show_source: false
+
+## PyTorch weights
+
+::: scaly.utils.torch_state_dict.load_torch_state_dict
 
 ## Verification and rewriting
 

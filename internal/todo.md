@@ -2,7 +2,7 @@
 
 The single actionable list. Rationale lives elsewhere and is linked, never restated:
 
-- **Why a number is or is not admissible** — [`docs/results/fairness.md`](../docs/results/fairness.md):
+- **Why a number is or is not admissible** — [`internal/notes/benchmark_protocol.md`](notes/benchmark_protocol.md):
   what the comparisons hold constant, the measurement protocol, the reference machine.
 - **How the suite got here** — [`internal/notes/benchmark-buildout.md`](notes/benchmark-buildout.md):
   the completed B-track and L-track, formulation history, retired workloads.
@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 84**
+**Next id: 86**
 
 | Prefix | Section |
 |---|---|
@@ -119,7 +119,7 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 
 ## Compiler internals
 
-The [completed study](../docs/results/index.md) supplies the current measurements, and §8 of
+The [completed study](../docs/benchmarks/index.md) supplies the current measurements, and §8 of
 The 2026-09-07 investigation under
 [`notes/perf_2026_09_07/`](notes/perf_2026_09_07/README.md) remains the rationale and validation
 record for the completed compiler tasks below.
@@ -174,7 +174,7 @@ protocol's compile flags.
       GCC/Clang compilation and runtime checks; the full benchmark rerun follows more Track C work.
       Automatic seed specialization remains C-45.
       Design: [arithmetic policy](notes/algebraic_simplification_2026_09_08.md#proposed-scaly-arithmetic-policy);
-      rationale: [measurement protocol](../docs/results/fairness.md#measurement-protocol).
+      rationale: [measurement protocol](notes/benchmark_protocol.md#measurement-protocol).
 - [x] **C-52. Split program passes into an explicitly ordered package.** Implemented in `scaly.passes.program`, with shared helpers and an explicit pipeline in place of registration side effects; pass order, observer events, and behavior are preserved. [Design](notes/algebraic_simplification_2026_09_08.md#the-architectural-decision).
 - [x] **C-55. Preserve intended lowering hints through derivative Function construction.** Implemented 2026-09-08: every derived `Function` built in `ad/` takes the primal callee's effective hint (`block`/`opaque` -> `block`, `scalar` -> `scalar`, `auto` inherits nothing) on its output root, through `Function._effective_lowering`; the chain check `hinted_stage_hessian` and `tests/ad/test_lowering_hints.py` pin selection. The chain benchmark stage now carries `.scalar()` (decided 2026-09-08: the comparison is against each side's best formulation, and this is ours); the M=5 Hessian kernel runs at 835 µs against 1769 µs without. Race-car gets nothing from the hint because the automatic policy already selects its stage ([timing](notes/perf_2026_09_07/README.md#track-c-follow-up-2026-09-08)). [Observed hint loss](notes/perf_2026_09_07/README.md#c-44-closeout).
 - [x] **C-53. Share arithmetic simplification across both dialects and program forms.** Implemented 2026-09-08 in `passes/arith.py` (one adapter per dialect, rules for neutral elements, zero annihilation, self-cancellation, negation normalization, bounded constant powers, dtype-checked constant evaluation) and applied through `passes/expr.py`, `scalarize`, and the new `fold_arith` loop-body pass after fusion; `tests/passes/test_arith.py` runs the same cases in all three forms. Left open: `_h{n}` renderer temporaries have no collision guard and deep index expressions are not hoisted, both unobserved in practice. [Design and validation](notes/algebraic_simplification_2026_09_08.md#a-small-common-implementation).
@@ -348,7 +348,7 @@ C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
       `.c` and `.h` with the exact build line, the CPU baseline and the libc requirement.
       Distributable AOT output requires an explicit CPU baseline; `native` is for host-local
       builds. The complete vector-math study finished on 2026-09-23 under the
-      [shared policy](../docs/results/fairness.md#vector-math-study-policy). Retain the scalar-libm
+      [shared policy](notes/benchmark_protocol.md#vector-math-study-policy). Retain the scalar-libm
       comparison separately. Merge approved with the performance follow-up deferred to a new
       branch. Keep C-79 open until the
       [remaining regressions](notes/benchmark_comparison_history.md#remaining-regressions-and-limits) are resolved. Gates: compile matrix gcc × clang × W ∈ {1, 2, 4, 8} × `vector_libm` on and
@@ -474,6 +474,18 @@ C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
   with running more forward sweeps than a row-coloured or reverse pass would need. Prize is bounded
   and knowable, roughly 0.85 -> 1.1 at the shipped decoder width, and it does not change the
   width-axis result Scaly already wins.
+- [x] **C-84. Remove the unused `TensorType.sparsity` field.** Done, together with the unused
+      `ProgramOp.PARAM`. No expression constructor sets it,
+      and lowering, codegen and AD never read it. Real patterns live on `Function.output_sparsities`.
+      Drop the field and its `__post_init__` check in `ir/types.py`, the `sparsity-shape-matches`
+      rule in `ir/expr_spec.py`, the ` sparse` suffix in `ir/text.py`, and the positional copies in
+      `function/model.py`, `function/tree.py`, `solvers/problem.py`, `solvers/nlp.py`,
+      `solvers/qp.py` and `tests/solvers/problem_helpers.py`. Delete the test in
+      `tests/ir/test_types.py` and the `sparsity` line in `tests/ir/test_verifier.py`.
+- [ ] **C-85. Put the compiler's identity in the JIT cache key.** `_compute_cache_key` in
+      `codegen/jit.py` hashes the flags but not the compiler, so pointing `SCALY_CC` at another
+      compiler with the same flags reuses artifacts built by the first. Hash the resolved compiler
+      path and its `--version` output, and bump the cache version.
 
 ## Solvers
 
@@ -483,7 +495,7 @@ C-8 is resumed, fold C-77 and C-79 into its step list and close them there.
 
 - **S-16. Separate the IPOPT gap into version against build configuration.** Rebuild 3.14.11 with
   our hook's flags, or 3.14.19 against the wheel's OpenBLAS. "We ship a better-tuned linear algebra
-  stack" is defensible; "our IPOPT is newer" is not. Rationale: [fairness](../docs/results/fairness.md).
+  stack" is defensible; "our IPOPT is newer" is not. Rationale: [protocol](notes/benchmark_protocol.md).
 - **S-17. Make the compiled CasADi IPOPT cache survive worktree removal.** Include the library
   search paths in the cache identity or make cached artifacts independent of them. Rationale:
   refactorings.md "Compiled CasADi artifacts across worktrees".
@@ -734,7 +746,7 @@ These steps make the tree public and permanent, and each is cheap to do once and
 
 - [x] **C-59. Complete the approved optimization cleanup.** Follow the
       [review and plan](notes/optimization_cleanup_2026_09_10.md), preserving the arithmetic and
-      measurement contracts in [fairness](../docs/results/fairness.md).
+      measurement contracts in [protocol](notes/benchmark_protocol.md).
   - [x] Pin regressions and capture the baseline.
   - [x] Centralize Program analyses, names, and procedure reachability.
   - [x] Normalize compilation expressions and consolidate derivative helpers.
@@ -789,7 +801,7 @@ merge into dev and prioritize documentation.
       the one-time prologue. Disabling the identity lookup makes the regression fail.
 
 - [x] **BH-20. Complete the closeout study.** Completed 2026-09-11
-      in `benchmarks/results/study-2026-09-10`. The [results overview](../docs/results/index.md)
-      and [scalability tables](../docs/results/scalability.md) contain the completed study.
+      in `benchmarks/results/study-2026-09-10`. The [results overview](../docs/benchmarks/index.md)
+      and [scalability tables](../docs/benchmarks/scalability.md) contain the completed study.
       The interrupted 2026-09-09 attempt
       remains preserved in its original result directory and frozen investigation note.

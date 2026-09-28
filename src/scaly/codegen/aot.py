@@ -20,7 +20,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from scaly.codegen.toolchain import BuildRecipe, CPU_LEVELS
+from scaly.codegen.toolchain import BuildRecipe, CPU_LEVELS, CDialect, CpuLevel, LaneCount, VectorLibm
 from scaly.codegen.abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
 from scaly.codegen.c import _c_reserved_names, _includes, _render_entry, _render_raw_callee, entry_prologue, entry_workspace, render_program_c
 from scaly.codegen.casadi import (
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
   from collections.abc import Callable
 
   from scaly.ir.program import ProgramNode
-  from scaly.ir.types import SparsityType
+  from scaly.ir.types import SparsityPattern
 
 
 @dataclass(frozen=True)
@@ -55,11 +55,10 @@ class CModule:
   compile and call them. ``body`` is the translation unit. ``program`` is the optimized Program IR
   that produced it. ``workspace_size`` is the entry's ``w[]`` length, and ``backends`` lists the
   solver plugins that the function calls. ``lang`` picks the header language (``"c"`` or
-  ``"cpp"``); ``casadi`` adds the CasADi-compatible symbols; ``typed_buffers`` toggles the C
-  header's structs and ``_call`` wrapper.
+  ``"cpp"``), and ``casadi`` adds the CasADi-compatible symbols.
 
   ``header``, ``source`` and ``link_flags`` are rendered on first access. The JIT compiles ``body``
-  and asks for none of them; for a big sparse function the header alone is larger than the source.
+  and asks for none of them. For a big sparse function the header alone is larger than the source.
   """
 
   fun: Function
@@ -69,16 +68,13 @@ class CModule:
   program: ProgramNode
   workspace_size: int
   backends: tuple[str, ...]
-  typed_buffers: bool
   lang: str = "c"
   casadi: bool = False
   recipe: BuildRecipe = BuildRecipe()
 
   @cached_property
   def header(self) -> str:
-    return self.recipe.comment(self.source_name) + _render_header(
-      self.fun, self.backends, self.workspace_size, typed_buffers=self.typed_buffers, lang=self.lang, casadi=self.casadi
-    )
+    return self.recipe.comment(self.source_name) + _render_header(self.fun, self.backends, self.workspace_size, lang=self.lang, casadi=self.casadi)
 
   @cached_property
   def source(self) -> str:
@@ -92,7 +88,7 @@ class CModule:
 
   @cached_property
   def link_flags(self) -> tuple[str, ...]:
-    """Compiler/linker flags for ``backends`` — include, lib, rpath and ``-l`` flags, plus libraries required by the math recipe. Resolved on demand because ``solvers.paths`` raises ``SolverLibraryError`` when a
+    """Compiler and linker flags for ``backends``: include, lib, rpath and ``-l`` flags, plus libraries required by the math recipe. Resolved on demand because ``solvers.paths`` raises ``SolverLibraryError`` when a
     backend's library or header is missing: rendering has to stay possible on a machine without the
     vendored solver stack, and against a backend that has no library at all (the fake backends in
     ``tests/solvers/test_registry.py``)."""
@@ -205,7 +201,7 @@ def _typed_buffers(fun: Function, symbol: str) -> list[str]:
   ]
 
 
-def _sparse_tables(fun: Function, symbol: str, sparsities: tuple[SparsityType | None, ...]) -> list[str]:
+def _sparse_tables(fun: Function, symbol: str, sparsities: tuple[SparsityPattern | None, ...]) -> list[str]:
   lines: list[str] = []
   for name, sp in zip(fun.output_names, sparsities, strict=True):
     if sp is None:
@@ -231,13 +227,13 @@ def _sparse_tables(fun: Function, symbol: str, sparsities: tuple[SparsityType | 
   return ["", "// Sparse output metadata for compact derivative buffers.", *lines] if lines else []
 
 
-def header_sparsities(fun: Function, *, casadi: bool) -> tuple[SparsityType | None, ...]:
+def header_sparsities(fun: Function, *, casadi: bool) -> tuple[SparsityPattern | None, ...]:
   """The patterns a header describes: the native order, or under ``casadi`` the compressed-column
   order the entry gathers into."""
   return casadi_output_sparsities(fun) if casadi else tuple(fun.output_sparsities)
 
 
-def _render_header(fun: Function, backends: tuple[str, ...], sz_w: int, *, typed_buffers: bool, lang: str, casadi: bool) -> str:
+def _render_header(fun: Function, backends: tuple[str, ...], sz_w: int, *, lang: str, casadi: bool) -> str:
   if lang == "cpp":
     return render_cpp_header(fun, backends, sz_w, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
   symbol = c_ident(fun.name)
@@ -249,7 +245,8 @@ def _render_header(fun: Function, backends: tuple[str, ...], sz_w: int, *, typed
     "",
     *abi_status_defines(guarded=True),
     *(["", *casadi_defines()] if casadi else []),
-    *(["", *_ALIGNAS] if typed_buffers else []),
+    "",
+    *_ALIGNAS,
     "",
     f"#define {symbol}_SZ_ARG {len(fun.inputs)}",
     f"#define {symbol}_SZ_RES {len(fun.outputs)}",
@@ -267,8 +264,7 @@ def _render_header(fun: Function, backends: tuple[str, ...], sz_w: int, *, typed
     "}",
     "#endif",
   ]
-  if typed_buffers:
-    lines += _typed_buffers(fun, symbol)
+  lines += _typed_buffers(fun, symbol)
   lines += _sparse_tables(fun, symbol, header_sparsities(fun, casadi=casadi))
   return "\n".join(lines) + "\n"
 
@@ -392,16 +388,16 @@ def render_c_source(
   fun: Function,
   *,
   casadi: bool = False,
-  lanes: int | str = "auto",
-  dialect: str = "gnu",
-  vector_libm: str = "none",
+  lanes: LaneCount = "auto",
+  dialect: CDialect = "gnu",
+  vector_libm: VectorLibm = "none",
   reciprocal: bool = False,
-  cpu: str = "generic",
+  cpu: CpuLevel = "generic",
 ) -> str:
   """Render a standalone pointer-ABI C implementation of ``fun`` and its callees. ``casadi`` adds
   the CasADi 3.8 compatible symbols.
 
-  A ``LoweringError`` (e.g. a still-deferred mixed-device CALL) propagates — there is no fallback.
+  A ``LoweringError`` for a function that cannot be lowered propagates. There is no fallback.
   """
   recipe = BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal)
   return _render_observed(fun, casadi=casadi, recipe=recipe)[1]
@@ -415,24 +411,23 @@ def _check_lang(lang: str) -> None:
 def render_c_api_header(
   fun: Function,
   *,
-  typed_buffers: bool = True,
   lang: str = "c",
   casadi: bool = False,
-  lanes: int | str = "auto",
-  dialect: str = "gnu",
-  vector_libm: str = "none",
+  lanes: LaneCount = "auto",
+  dialect: CDialect = "gnu",
+  vector_libm: VectorLibm = "none",
   reciprocal: bool = False,
-  cpu: str = "generic",
+  cpu: CpuLevel = "generic",
 ) -> str:
   """Render the public header for ``fun``: the ABI declarations, ``SZ_*`` constants, the typed
-  buffers of the chosen ``lang`` (``typed_buffers=False`` omits them from the C header), the
+  buffers of the chosen ``lang``, the
   sparse-output tables, and with ``casadi`` the CasADi query prototypes."""
   _check_lang(lang)
   if casadi:
     check_casadi_layout(fun)
   ctx = _lower(fun, recipe=BuildRecipe(cpu=cpu, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal))
   return ctx.recipe.comment(f"{c_ident(fun.name)}.c") + _render_header(
-    ctx.fun, ctx.backends, entry_workspace(fun, ctx.workspace_size, casadi=casadi), typed_buffers=typed_buffers, lang=lang, casadi=casadi
+    ctx.fun, ctx.backends, entry_workspace(fun, ctx.workspace_size, casadi=casadi), lang=lang, casadi=casadi
   )
 
 
@@ -441,16 +436,15 @@ def render_c_module(
   *,
   header_name: str | None = None,
   source_name: str | None = None,
-  typed_buffers: bool = True,
   lang: str = "c",
   casadi: bool = False,
-  lanes: int | str = "auto",
-  dialect: str = "gnu",
-  vector_libm: str = "none",
+  lanes: LaneCount = "auto",
+  dialect: CDialect = "gnu",
+  vector_libm: VectorLibm = "none",
   reciprocal: bool = False,
-  cpu: str = "generic",
+  cpu: CpuLevel = "generic",
 ) -> CModule:
-  """Render ``fun`` into its header / ``.c`` pair from a single lowering. The kernel is always C;
+  """Render ``fun`` into its header / ``.c`` pair from a single lowering. The kernel is always C.
   ``lang`` picks the header a caller includes (``f.h`` or ``f.hpp``) and ``casadi`` adds the
   CasADi 3.8 compatible symbols to both."""
   _check_lang(lang)
@@ -469,7 +463,6 @@ def render_c_module(
     program=ctx.prog,
     workspace_size=entry_workspace(fun, ctx.workspace_size, casadi=casadi),
     backends=ctx.backends,
-    typed_buffers=typed_buffers,
     lang=lang,
     casadi=casadi,
     recipe=ctx.recipe,
@@ -480,13 +473,13 @@ def workspace_size(
   fun: Function,
   *,
   casadi: bool = False,
-  lanes: int | str = "auto",
-  dialect: str = "gnu",
-  vector_libm: str = "none",
+  lanes: LaneCount = "auto",
+  dialect: CDialect = "gnu",
+  vector_libm: VectorLibm = "none",
   reciprocal: bool = False,
-  cpu: str = "generic",
+  cpu: CpuLevel = "generic",
 ) -> int:
-  """Doubles of scratch ``fun`` needs in ``w[]`` — the value its header's ``SZ_W`` quotes.
+  """Doubles of scratch ``fun`` needs in ``w[]``, the value its header's ``SZ_W`` quotes.
   ``CModule.workspace_size`` is the same number without a second lowering, so prefer it when the
   module is already in hand."""
   return entry_workspace(
@@ -500,21 +493,18 @@ def write_module(
   fun: Function | Solver,
   out_dir: Path,
   *,
-  typed_buffers: bool = True,
   lang: str = "c",
   casadi: bool = False,
-  lanes: int | str = "auto",
-  dialect: str = "gnu",
-  vector_libm: str = "none",
+  lanes: LaneCount = "auto",
+  dialect: CDialect = "gnu",
+  vector_libm: VectorLibm = "none",
   reciprocal: bool = False,
-  cpu: str = "generic",
+  cpu: CpuLevel = "generic",
 ) -> CModule:
-  """Write ``fun``'s header / ``.c`` into ``out_dir`` and return the module; a ``Solver`` renders its ``function``."""
+  """Write ``fun``'s header / ``.c`` into ``out_dir`` and return the module. A ``Solver`` renders its ``function``."""
   if isinstance(fun, Solver):
     fun = fun.function
-  module = render_c_module(
-    fun, typed_buffers=typed_buffers, lang=lang, casadi=casadi, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, cpu=cpu
-  )
+  module = render_c_module(fun, lang=lang, casadi=casadi, lanes=lanes, dialect=dialect, vector_libm=vector_libm, reciprocal=reciprocal, cpu=cpu)
   out_dir.mkdir(parents=True, exist_ok=True)
   (out_dir / module.header_name).write_text(module.header)
   (out_dir / module.source_name).write_text(module.source)
@@ -533,7 +523,6 @@ def main(argv: list[str] | None = None) -> None:
     action="store_true",
     help="also export the CasADi 3.8 compatible symbols (f_n_in, f_sparsity_out, f_work, ...) and hand sparse outputs over in compressed-column order",
   )
-  parser.add_argument("--no-typed-buffers", action="store_true", help="C header only: omit the typed buffer structs and the f_call wrapper")
   parser.add_argument("--cpu", choices=CPU_LEVELS, default="generic", help="CPU baseline; native is host-local")
   parser.add_argument("--lanes", choices=("auto", "1", "2", "4", "8"), default="auto")
   parser.add_argument("--dialect", choices=("gnu", "c"), default="gnu")
@@ -549,11 +538,10 @@ def main(argv: list[str] | None = None) -> None:
   module = write_module(
     fun,
     args.out_dir,
-    typed_buffers=not args.no_typed_buffers,
     lang=args.lang,
     casadi=args.casadi,
     cpu=args.cpu,
-    lanes="auto" if args.lanes == "auto" else int(args.lanes),
+    lanes="auto" if args.lanes == "auto" else int(args.lanes),  # ty: ignore[invalid-argument-type]
     dialect=args.dialect,
     vector_libm=args.vector_libm,
     reciprocal=args.reciprocal,

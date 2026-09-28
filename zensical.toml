@@ -5,8 +5,12 @@ repo_url = "https://github.com/PREDICT-EPFL/scaly"
 repo_name = "PREDICT-EPFL/scaly"
 extra_css = ["stylesheets/extra.css"]
 extra_javascript = [
-    "docs/javascripts/mathjax.js",
+    "javascripts/mathjax.js",
     "https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js",
+    "https://cdn.jsdelivr.net/npm/vega@6",
+    "https://cdn.jsdelivr.net/npm/vega-lite@6",
+    "https://cdn.jsdelivr.net/npm/vega-embed@7",
+    "javascripts/charts.js",
 ]
 # Zensical publishes everything under docs/ and has no exclusion mechanism, so the todo list and
 # the frozen design notes live in internal/ at the repository root instead.
@@ -21,7 +25,6 @@ nav = [
         { "Solvers" = "guide/solvers.md" },
         { "Solver backends" = "guide/solver_backends.md" },
         { "Code generation" = "guide/codegen.md" },
-        { "Visualization" = "guide/visualization.md" },
         { "Environment variables" = "guide/env_vars.md" },
     ] },
     { "How it works" = [
@@ -29,14 +32,15 @@ nav = [
         { "The intermediate representations" = "how_it_works/ir.md" },
         { "Lowering and optimization" = "how_it_works/lowering.md" },
         { "Differentiation" = "how_it_works/autodiff.md" },
-        { "The generated interface" = "how_it_works/generated_interface.md" },
+        { "Generated code and compilation" = "how_it_works/generated_interface.md" },
         { "Solvers" = "how_it_works/solvers.md" },
         { "Influences" = "how_it_works/influences.md" },
     ] },
-    { "Benchmark results" = [
-        { "Overview" = "results/index.md" },
-        { "Scalability sweep" = "results/scalability.md" },
-        { "Are the comparisons fair?" = "results/fairness.md" },
+    { "Benchmarks" = [
+        { "Overview" = "benchmarks/index.md" },
+        { "Scalability" = "benchmarks/scalability.md" },
+        { "Closed-loop control" = "benchmarks/closed_loop.md" },
+        { "Are the comparisons fair?" = "benchmarks/fairness.md" },
     ] },
     { "Developer guide" = [
         { "Contributing" = "dev/contributing.md" },
@@ -44,7 +48,6 @@ nav = [
         { "The codebase" = "dev/codebase.md" },
         { "Solver plugins" = "dev/solver_plugins.md" },
         { "Versioning" = "dev/versioning.md" },
-        { "Fuzzing" = "dev/fuzzing.md" },
     ] },
     { "API reference" = [
         { "Overview" = "api/index.md" },
@@ -112,6 +115,7 @@ filters = ["!^_"]
 
 [project.markdown_extensions.admonition]
 [project.markdown_extensions.attr_list]
+[project.markdown_extensions.footnotes]
 [project.markdown_extensions.md_in_html]
 [project.markdown_extensions.pymdownx.details]
 [project.markdown_extensions.pymdownx.superfences]

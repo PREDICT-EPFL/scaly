@@ -141,6 +141,3 @@ def _combine_scatter_sums_proc(proc: ProgramNode) -> ProgramNode:
     return proc
   new_body = [s for i, stmt in enumerate(body) for s in (replacements[i] if i in replacements else [] if i in removed else [stmt])]
   return prune_dead_buffers(_rebuild_proc(proc, params, new_body))
-
-
-__all__ = ["combine_scatter_sums"]

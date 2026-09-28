@@ -19,12 +19,26 @@ Everything under `docs/` is published to the documentation site, all of it, beca
 exclusion mechanism. Anything unpublished lives in `internal/`:
 
 - `internal/todo.md` is the single actionable list. Each item links its rationale to
-  `docs/results/fairness.md` instead of restating it.
+  `internal/notes/benchmark_protocol.md` instead of restating it.
 - `internal/notes/` holds frozen design and migration notes, including the completed benchmark and
   solver-plugin build-out.
 
-The published `docs/results/fairness.md` owns what comparisons hold constant, the measurement
-protocol, the reference machine and the evidence behind each rule. Put rationale in `fairness.md` and put the corresponding one-line task in `todo.md`. Do not repeat the same prose.
+`internal/notes/benchmark_protocol.md` owns what comparisons hold constant, the measurement
+protocol, the reference machine and the evidence behind each rule. Put rationale there and put the
+corresponding one-line task in `todo.md`. Do not repeat the same prose.
+
+`docs/` is written for people reading the site, not as a record between sessions. Keep a page to
+what a reader needs to understand the topic: the main results, the decisions that shape them, the
+limits. Every implementation decision, full result tables and study bookkeeping do not belong on a
+page. If something really must be kept, put it in `internal/notes/`. Prefer a figure to a large
+table of results.
+
+Publish only features finished enough for a user to rely on. Anything experimental, partly
+implemented, only reachable through a debugging switch, or still open in `internal/todo.md` stays
+out of the user guide, *How it works*, the benchmark pages and the API reference. Filter its names
+out of the API page (as `docs/api/core.md` does for `Expr.opaque` and `Function.with_device`) and
+keep roadmap or migration wording out of any docstring that renders. A known limitation of a
+finished feature is different: document it next to the behaviour it affects.
 
 ## Commands
 
@@ -73,8 +87,8 @@ Identifier spellings, several of which reach the generated C:
   commit messages. Branches land squashed through `wt merge`, so such a hash stops existing the
   moment the work merges. Name the file, function or change instead. Hashes already on `main` are
   safe to cite.
-- **No `tinygrad` or `torch` imports.** NumPy is the only runtime dependency and that is worth
-  defending; for PyTorch checkpoints use `scaly.utils.load_torch_state_dict`.
+- **No `tinygrad` or `torch` imports.** NumPy and SciPy are the only runtime
+  dependencies and that is worth defending; for PyTorch checkpoints use `scaly.utils.load_torch_state_dict`.
 - **A new module needs an `IMPORT_LAYERS` entry in `tests/test_import_layering.py`** and a one-line docstring
   saying what it owns. Imports go down import layers, never up. A new public name needs a docstring too:
   the API reference is generated from them and `tests/test_import_boundaries.py` pins the surface.

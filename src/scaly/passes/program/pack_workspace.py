@@ -197,6 +197,3 @@ def _apply_pack(proc: ProgramNode, plan: _PackPlan, sz_w: dict[str, int]) -> Pro
     new_body.append(rewritten)
 
   return _rebuild_proc(proc, params, new_body, sz_w=sz_w.get(name, 0), w_self=plan.own_spill)
-
-
-__all__ = ["WORKSPACE_SPILL_THRESHOLD", "pack_workspace"]

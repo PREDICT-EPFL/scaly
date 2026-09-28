@@ -21,7 +21,6 @@ if str(ROOT) not in sys.path:
 import numpy as np
 
 import scaly as sc
-from scaly.ir.expr import substitute
 from scaly.codegen.aot import render_c_module
 from scaly.solvers.graph import solver_compile_flags
 from scaly.solvers.paths import solver_loadable
@@ -100,22 +99,21 @@ def _nlp_filter() -> sc.Function:
   @sc.function(sc.G(sc.L("x", (NX,)), sc.L("u_ref", (NU,))), sc.L("u", ...), name="smoke_safety_filter_nlp")
   def safety_filter_nlp(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     x, u_ref = inputs
-    u = sc.sym("u", NU)
     cars = sc.stack([sc.stack([x[2 * i], x[2 * i + 1]], axis=0) for i in range(2)], axis=0)
-    rows = []
-    for car in range(2):
-      for obstacle in obstacles:
-        diff = cars[car] - sc.const(obstacle)
-        grad = 2.0 * diff
-        rows.append(grad[0] * u[2 * car] + grad[1] * u[2 * car + 1] + ALPHA * (sc.dot(diff, diff) - sc.const(SAFETY_MARGIN**2)))
 
     @sc.problem(vars=sc.L("u", (NU,)), name="smoke_safety_filter_problem")
-    def problem(variable: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    def problem(u: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+      rows = []
+      for car in range(2):
+        for obstacle in obstacles:
+          diff = cars[car] - sc.const(obstacle)
+          grad = 2.0 * diff
+          rows.append(grad[0] * u[2 * car] + grad[1] * u[2 * car + 1] + ALPHA * (sc.dot(diff, diff) - sc.const(SAFETY_MARGIN**2)))
       return sc.ProblemSpec(
-        minimize=0.5 * sc.dot(variable - u_ref, variable - u_ref),
+        minimize=0.5 * sc.dot(u - u_ref, u - u_ref),
         ineq=(
           sc.bounded(
-            sc.stack([substitute(row, {u: variable}) for row in rows], axis=0),
+            sc.stack(rows, axis=0),
             lo=sc.const(np.zeros(len(rows))),
             hi=sc.const(np.full(len(rows), 1e30)),
             name="obstacles",
@@ -139,7 +137,7 @@ def _solver_call_smoke(required: bool) -> str | None:
   functions = [_qp_filter(), _nlp_filter()]
   sources, flags = [], []
   for fun in functions:
-    module = render_c_module(fun, typed_buffers=False)
+    module = render_c_module(fun)
     (out_dir / module.header_name).write_text(module.header)
     (out_dir / module.source_name).write_text(module.source)
     sources.append(module.source_name)

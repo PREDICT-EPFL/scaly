@@ -8,7 +8,6 @@ import pytest
 import scaly as sc
 from tests.solvers.problem_helpers import build_qp, solve_qp
 from scaly.codegen import render_c_source
-from scaly.solvers.qp import _qp_matrix_sparsity
 
 
 def _sparse_problem(sparse: bool, name: str) -> sc.Solver:
@@ -127,17 +126,6 @@ def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
   out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))
   assert qp.stats() is not None and qp.stats().status == sc.ScalySolveStatus.OK
   np.testing.assert_allclose(out["x"], [-1.0, 1.0], atol=1e-6)
-
-
-@pytest.mark.solver("piqp")
-def test_sparse_qp_dependency_mask_keeps_entries_that_probe_to_zero() -> None:
-  """A parameter-dependent entry whose value happens to be zero at the probe
-  draw must stay in the pattern (the dependency mask, not the probe, keeps it)."""
-  t = sc.sym("t", 1)
-  zero = sc.const(0.0)
-  P = sc.stack([sc.stack([sc.const(2.0), t[0] - t[0]]), sc.stack([zero, sc.const(2.0)])], axis=0)
-  sparsity = _qp_matrix_sparsity(P, (t,), np.diag([2.0, 2.0]), triu=True)
-  assert set(zip(sparsity.rows, sparsity.cols)) == {(0, 0), (0, 1), (1, 1)}
 
 
 @pytest.mark.solver("piqp")

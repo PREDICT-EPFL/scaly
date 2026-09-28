@@ -250,12 +250,3 @@ spec_program_full = Spec(
     Rule(ProgramOp.KERNEL, "kernel-no-host-only", _kernel_no_host_only),
   ]
 )
-
-
-__all__ = [
-  "spec_host_program",
-  "spec_kernel_program",
-  "spec_program_full",
-  "spec_program_shared",
-  "verify_program",
-]

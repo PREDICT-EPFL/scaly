@@ -11,7 +11,7 @@ microbenchmark. Commit each accepted compiler milestone. Do not mark a task comp
 alone. Preserve scalar arithmetic by default and measure reciprocal and vector-libm policies separately.
 
 Sources: `docs/how_it_works/architecture.md`, `docs/dev/codebase.md`, `docs/dev/conventions.md`,
-`docs/dev/contributing.md`, `docs/results/fairness.md`, `internal/notes/perf_2026_09_22/`,
+`docs/dev/contributing.md`, `docs/benchmarks/fairness.md`, `internal/notes/perf_2026_09_22/`,
 `internal/notes/perf_2026_09_07/tinygrad_rangeify.md`, and the existing Program pass pipeline.
 
 ## Sequence
@@ -129,7 +129,7 @@ protocol with scalar libm, performance governor, and boost disabled. Keep `study
 ## Next study policy, user decision on 2026-09-23
 
 The user requests the fastest validated tested configuration for each provider. The decision is
-recorded in `docs/results/fairness.md`, under "Next study policy". Do not alter code, compiler
+recorded in `docs/benchmarks/fairness.md`, under "Next study policy". Do not alter code, compiler
 flags, environment, or the running scalar-libm study before its runner has actually exited.
 Afterward, enable Scaly AOT/JIT glibc vector math, apply the supported compiler libmvec option
 and link requirements to both Scaly and CasADi, retain numerical/reduction policy checks, and

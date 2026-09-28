@@ -43,7 +43,7 @@ def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[sc.Fun
   return mapped_fn, unrolled_fn
 
 
-def _scatter_sparse(values: np.ndarray, sparsity: sc.SparsityType) -> np.ndarray:
+def _scatter_sparse(values: np.ndarray, sparsity: sc.SparsityPattern) -> np.ndarray:
   dense = np.zeros(sparsity.shape)
   dense[np.asarray(sparsity.rows), np.asarray(sparsity.cols)] = values
   return dense
@@ -51,21 +51,21 @@ def _scatter_sparse(values: np.ndarray, sparsity: sc.SparsityType) -> np.ndarray
 
 def test_sparsity_type_roundtrip_and_bounds() -> None:
   mask = np.array([[True, False, True], [False, True, False]])
-  sp = sc.SparsityType.from_mask(mask)
+  sp = sc.SparsityPattern.from_mask(mask)
 
   assert sp.shape == (2, 3)
   assert sp.nnz == 3
   np.testing.assert_array_equal(sp.to_mask(), mask)
 
   try:
-    _ = sc.SparsityType((2, 2), (0, 2), (0, 1))
+    _ = sc.SparsityPattern((2, 2), (0, 2), (0, 1))
   except ValueError as e:
     assert "out of bounds" in str(e)
   else:  # pragma: no cover
     raise AssertionError("invalid sparsity should fail")
 
   try:
-    _ = sc.SparsityType((2, 2), (0, 0), (1, 1))
+    _ = sc.SparsityPattern((2, 2), (0, 0), (1, 1))
   except ValueError as e:
     assert "sparsity indices must be unique" in str(e)
   else:  # pragma: no cover
@@ -73,7 +73,7 @@ def test_sparsity_type_roundtrip_and_bounds() -> None:
 
 
 def test_sparsity_type_csr_csc_conversions() -> None:
-  sp = sc.SparsityType((3, 4), (2, 0, 1, 1), (3, 2, 0, 3))
+  sp = sc.SparsityPattern((3, 4), (2, 0, 1, 1), (3, 2, 0, 3))
 
   row_ptr, col_ind, csr_perm = sp.to_csr()
   assert row_ptr == (0, 1, 3, 4)
@@ -81,33 +81,33 @@ def test_sparsity_type_csr_csc_conversions() -> None:
   # val_perm maps CSR slot -> COO position: sorted (row, col) order of the COO pattern above.
   assert csr_perm == (1, 2, 3, 0)
   assert tuple((sp.rows[i], sp.cols[i]) for i in csr_perm) == ((0, 2), (1, 0), (1, 3), (2, 3))
-  np.testing.assert_array_equal(sc.SparsityType.from_csr(sp.shape, row_ptr, col_ind).to_mask(), sp.to_mask())
+  np.testing.assert_array_equal(sc.SparsityPattern.from_csr(sp.shape, row_ptr, col_ind).to_mask(), sp.to_mask())
 
   col_ptr, row_ind, csc_perm = sp.to_csc()
   assert col_ptr == (0, 1, 1, 2, 4)
   assert row_ind == (1, 0, 1, 2)
   assert csc_perm == (2, 1, 3, 0)
   assert tuple((sp.cols[i], sp.rows[i]) for i in csc_perm) == ((0, 1), (2, 0), (3, 1), (3, 2))
-  np.testing.assert_array_equal(sc.SparsityType.from_csc(sp.shape, col_ptr, row_ind).to_mask(), sp.to_mask())
+  np.testing.assert_array_equal(sc.SparsityPattern.from_csc(sp.shape, col_ptr, row_ind).to_mask(), sp.to_mask())
 
 
 def test_sparsity_type_compressed_format_errors() -> None:
   try:
-    _ = sc.SparsityType.from_csr((2, 3), (0, 1), (0,))
+    _ = sc.SparsityPattern.from_csr((2, 3), (0, 1), (0,))
   except ValueError as e:
     assert "row_ptr must have length 3" in str(e)
   else:  # pragma: no cover
     raise AssertionError("short CSR row pointer should fail")
 
   try:
-    _ = sc.SparsityType.from_csc((2, 3), (0, 2, 1, 1), (0,))
+    _ = sc.SparsityPattern.from_csc((2, 3), (0, 2, 1, 1), (0,))
   except ValueError as e:
     assert "col_ptr must be nondecreasing" in str(e)
   else:  # pragma: no cover
     raise AssertionError("invalid CSC column pointer should fail")
 
   try:
-    _ = sc.SparsityType.from_csr((2, 3), (0, 1, 1), (3,))
+    _ = sc.SparsityPattern.from_csr((2, 3), (0, 1, 1), (3,))
   except ValueError as e:
     assert "CSR column indices out of bounds" in str(e)
   else:  # pragma: no cover
@@ -357,7 +357,7 @@ def test_spjac_factory_returns_compact_values_with_sparsity_metadata() -> None:
 def test_function_rejects_sparse_output_metadata_size_mismatch() -> None:
   x = sc.sym("x", 2)
   try:
-    _ = sc.Function._from_exprs("bad", [x], [x], ["x"], ["sp"], output_sparsities=[sc.SparsityType.dense((2, 2))])
+    _ = sc.Function._from_exprs("bad", [x], [x], ["x"], ["sp"], output_sparsities=[sc.SparsityPattern.dense((2, 2))])
   except ValueError as e:
     assert "sparse output metadata for 'sp' has 4 nonzeros" in str(e)
     assert "output shape (2,) has 2 entries" in str(e)
@@ -435,7 +435,7 @@ def test_sparse_jacobian_values_round_trip_to_dense() -> None:
 
 
 def test_column_coloring_groups_nonoverlapping_columns() -> None:
-  sp = sc.SparsityType.from_mask(
+  sp = sc.SparsityPattern.from_mask(
     np.array(
       [
         [True, False, True, False],
@@ -495,7 +495,7 @@ def test_dependency_composition_keeps_exactly_256_shared_paths() -> None:
 
 
 def test_column_coloring_detects_exactly_256_shared_rows() -> None:
-  sparsity = sc.SparsityType.from_mask(np.ones((256, 2), dtype=bool))
+  sparsity = sc.SparsityPattern.from_mask(np.ones((256, 2), dtype=bool))
 
   assert sc.column_coloring(sparsity) == (0, 1)
 
@@ -520,7 +520,7 @@ def test_mapped_sparsity_storage_grows_with_nonzeros_not_global_mask() -> None:
 
 
 def test_star_coloring_is_not_distance_two_coloring() -> None:
-  sparsity = sc.SparsityType.from_mask(
+  sparsity = sc.SparsityPattern.from_mask(
     np.array(
       [
         [True, False, True],
@@ -537,7 +537,7 @@ def test_star_coloring_is_not_distance_two_coloring() -> None:
 
 
 def test_star_coloring_rejects_bicolored_four_vertex_path() -> None:
-  path = sc.SparsityType.from_mask(
+  path = sc.SparsityPattern.from_mask(
     np.array(
       [
         [True, True, False, False],
@@ -559,11 +559,11 @@ def test_star_coloring_rejects_bicolored_four_vertex_path() -> None:
 
 def test_star_coloring_rejects_non_square_and_symmetrizes_asymmetric_graphs() -> None:
   with pytest.raises(ValueError, match="square"):
-    sc.star_coloring(sc.SparsityType.from_mask(np.ones((2, 3), dtype=bool)))
+    sc.star_coloring(sc.SparsityPattern.from_mask(np.ones((2, 3), dtype=bool)))
 
   from scaly.ad.sparsity import _symmetrize_sparsity
 
-  asymmetric = sc.SparsityType.from_mask(
+  asymmetric = sc.SparsityPattern.from_mask(
     np.array(
       [
         [True, True, False],
@@ -590,7 +590,7 @@ def test_star_coloring_rejects_non_square_and_symmetrizes_asymmetric_graphs() ->
 def test_star_recovery_rejects_ambiguous_orientation() -> None:
   from scaly.ad.sparse import _star_recovery_indices
 
-  sparsity = sc.SparsityType.from_mask(np.ones((3, 3), dtype=bool))
+  sparsity = sc.SparsityPattern.from_mask(np.ones((3, 3), dtype=bool))
   with pytest.raises(ValueError, match="cannot recover Hessian entry"):
     _star_recovery_indices(sparsity, (0, 0, 0))
 

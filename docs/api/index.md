@@ -1,22 +1,27 @@
 # API reference
 
-The public API, grouped by what it is for and generated from the source docstrings.
+Use this reference to look up signatures, arguments, return values, and errors. If you are building
+your first model, start with [Getting started](../guide/getting_started.md). The reference assumes
+that you already know which operation you need.
 
-These pages are the public API. `scaly.__all__` is the subset re-exported in the `scaly` namespace;
-a few of its members (`BACKEND_SUPPORT`, `COMMON_OPS`, `OP_INFO`,
-`SCALY_SOLVER_STATS_VERSION`, `factory`, `spec_expr`, `spec_expr_shared`, `C_API_SIGNATURE`) have
-no docstring of their own and are not listed here. `sc.sym` and `sc.const` are `Expr.sym` and
-`Expr.const`, documented under [Core](core.md).
+Most modelling code uses `import scaly as sc`. For example, `sc.sym` creates an unknown quantity,
+`sc.function` defines a function, and `sc.gradient` constructs its derivative. The reference shows
+the module where each object is defined. `sc.sym` and `sc.const` are the same methods as
+`Expr.sym` and `Expr.const`.
 
-For prose explanations, start with the [User Guide](../guide/getting_started.md).
-
-| Page | Contains |
+| Page | What to look up |
 | --- | --- |
-| [Core](core.md) | `Expr`, `Function`, the type vocabulary, and the expression builders |
-| [Building functions](functions.md) | the `@function` decorator, derivative specs, and the named derivative wrappers |
-| [Differentiation](ad.md) | forward and reverse mode, whole derivatives, sparsity and coloring |
-| [Code generation](codegen.md) | rendering C, the ABI, the toolchain |
-| [Solvers](solvers.md) | typed problems, solver selection, quadratic proof, and solve statistics |
-| [Visualization](viz.md) | recording a compile and serving it |
+| [Core](core.md) | Symbolic expressions, array operations, `Function`, and data types |
+| [Building functions](functions.md) | Input and output declarations, the decorator, and derivatives of named functions |
+| [Differentiation](ad.md) | Derivatives of expressions and the lower-level sparsity algorithms |
+| [Code generation](codegen.md) | Writing C files, the generated calling convention, compilation, and caching |
+| [Solvers](solvers.md) | Optimization problems, solver selection, solve statistics, and plugin interfaces |
+| [Visualization](viz.md) | Recording what the compiler does to a function and browsing the recordings |
 
-Anything not on these pages is internal and may move without notice.
+These pages are generated from source docstrings. They also include lower-level interfaces for
+compiler extensions and integrations, which most models do not need. Names outside these pages
+are internal and may move without notice.
+
+`scaly.__all__` lists the names available directly under `scaly`. A few constants and module
+aliases have no separate generated entry: `COMMON_OPS`, `OP_INFO`,
+`SCALY_SOLVER_STATS_VERSION`, `factory`, `spec_expr`, `spec_expr_shared`, and `C_API_SIGNATURE`.

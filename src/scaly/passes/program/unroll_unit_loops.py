@@ -57,6 +57,3 @@ def _unroll_unit_loop_stmt(stmt: ProgramNode) -> list[ProgramNode]:
 # ---------------------------------------------------------------------------
 # Pass 3: workspace lifetime packing + spilling.
 # ---------------------------------------------------------------------------
-
-
-__all__ = ["unroll_unit_loops"]

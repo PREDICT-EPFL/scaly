@@ -9,7 +9,7 @@ import numpy as np
 
 from ..ir.expr import Expr, ExprOp, as_expr, linear_combination, topo
 from ..ir.match import _apply_lowering
-from ..ir.types import DeviceSpec, Lowering, SparsityType, TensorType, backend_supports
+from ..ir.types import DeviceSpec, Lowering, SparsityPattern, TensorType, backend_supports
 from .tree import Tree, flat_tree
 
 if TYPE_CHECKING:
@@ -39,7 +39,7 @@ class DerivSpec:
   def output_name(self) -> str:
     return f"{self.kind}_{self.of}_{self.wrt}"
 
-  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityType | None, int | None]:
+  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityPattern | None, int | None]:
     raise NotImplementedError
 
   def _in(self, inputs: Mapping[str, Expr], name: str) -> Expr:
@@ -56,20 +56,20 @@ class DerivSpec:
 class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutputs]:
   """A named expression graph: named inputs, named outputs, and the computation between them.
 
-  ``Function`` is the unit of three things at once. **Composition** — ``fn(inputs)`` with ``Expr``
-  leaves puts a first-class call node in a larger graph. Lowering may inline small pure callees
-  when it scalarizes a procedure. **Differentiation** — ``fn.factory(...)``
-  derives a new ``Function`` carrying the requested derivatives. **Compilation** — ``fn(inputs)``
-  with array leaves lowers it, renders C, compiles and caches a shared library, and dispatches
-  through the universal ABI.
+  ``Function`` is the unit of composition, differentiation and compilation. Calling ``fn(inputs)``
+  with ``Expr`` leaves puts one call node in a larger graph. Lowering may still inline a small
+  callee when it expands a procedure into scalar code. ``fn.factory(...)`` derives a new
+  ``Function`` carrying the requested derivatives. Calling ``fn(inputs)`` with array leaves lowers
+  it, renders C, compiles and caches a shared library, and calls it through the pointer entry that
+  every generated function shares.
 
   ``__call__`` takes the whole declared input tree as one argument and dispatches on its leaves to
-  ``symbolic_call`` or ``numerical_call``; call those directly when the distinction is the point.
-  A one-leaf tree is the bare value on both sides — see ``scaly.L`` — so a single-output result
-  must not be destructured.
+  ``symbolic_call`` or ``numerical_call``. Call those directly when the distinction matters. A
+  one-leaf tree is the bare value on both sides, as described for ``scaly.L``, so a single-output
+  result must not be destructured.
 
-  Names are load-bearing: input and output names are how derivatives are requested and what the
-  generated C symbols are built from.
+  Input and output names matter beyond display. Derivatives are requested by name, and the
+  generated C symbols are built from them.
 
   Use ``@scaly.function(...)`` to build one from a Python body.
   """
@@ -105,7 +105,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     outputs: Sequence[Expr],
     input_names: Sequence[str] | None = None,
     output_names: Sequence[str] | None = None,
-    output_sparsities: Sequence[SparsityType | None] | None = None,
+    output_sparsities: Sequence[SparsityPattern | None] | None = None,
     device: DeviceSpec | str | None = None,
     output_coloring_widths: Sequence[int | None] | None = None,
   ) -> Function[Any, Any, Any, Any]:
@@ -140,7 +140,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     outputs: Sequence[Expr],
     input_tree: Tree[Any, Any],
     output_tree: Tree[Any, Any],
-    output_sparsities: Sequence[SparsityType | None] | None = None,
+    output_sparsities: Sequence[SparsityPattern | None] | None = None,
     device: DeviceSpec | str | None = None,
     output_coloring_widths: Sequence[int | None] | None = None,
   ) -> None:
@@ -188,10 +188,8 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
   def with_device(self, device: DeviceSpec | str) -> "Function":
     """Return a copy of this Function placed on ``device``.
 
-    This is a placement policy hint (see roadmap Phase 1 / Phase 9). Today
-    only ``host`` actually lowers; non-host devices are accepted and tracked
-    so debug output and verifier diagnostics can see them, but compilation
-    only succeeds for placements with a registered backend.
+    Only ``host`` lowers. Other devices are recorded so debug output and verifier diagnostics can
+    see them, but compilation only succeeds for placements with a registered backend.
     """
     instance = type(self).__new__(type(self))
     instance._init_graph(
@@ -216,12 +214,14 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     return self
 
   def input_map(self) -> dict[str, Expr]:
+    """The symbolic input leaves keyed by their declared names, in declaration order."""
     return dict(zip(self.input_names, self.inputs, strict=True))
 
   def output_map(self) -> dict[str, Expr]:
+    """The output expressions keyed by their declared names, in declaration order."""
     return dict(zip(self.output_names, self.outputs, strict=True))
 
-  def output_sparsity_map(self) -> dict[str, SparsityType | None]:
+  def output_sparsity_map(self) -> dict[str, SparsityPattern | None]:
     return dict(zip(self.output_names, self.output_sparsities, strict=True))
 
   @property
@@ -347,13 +347,33 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
       Expr(
         ExprOp.CALL,
         actuals,
-        TensorType(out.shape, out.type.dtype, out.type.sparsity, diff=out.type.diff and actual_diff),
+        TensorType(out.shape, out.type.dtype, diff=out.type.diff and actual_diff),
         attrs={"callee": self, "output": i},
       )
       for i, out in enumerate(self.outputs)
     )
 
   def factory(self, name: str, inputs: Sequence[str], outputs: Sequence[str | DerivSpec], aux: Mapping[str, Sequence[str]] | None = None) -> Function:
+    """Build a new ``Function`` whose outputs mix this function's outputs and derivatives of them.
+
+    Args:
+      name: the new function's name, which also names its generated C symbols.
+      inputs: the input names, in order. Besides the declared inputs, ``"fwd:<input>"`` names the
+        seed of a forward derivative and ``"lam:<output>"`` the weight of an adjoint or of an
+        ``aux`` combination.
+      outputs: output names and ``DerivSpec`` requests such as ``Grad("cost", "x")``. A request's
+        output is named ``{kind}_{of}_{wrt}``.
+      aux: extra outputs usable by name in ``outputs`` and in requests. Each maps a new name to a
+        list of output names and stands for their sum weighted by the matching ``"lam:<output>"``
+        inputs, as in a Lagrangian.
+
+    Returns:
+      A ``Function`` with the selected inputs and the requested outputs.
+
+    Raises:
+      ValueError: if a name in ``inputs``, ``outputs`` or ``aux`` is unknown, or an ``aux`` name
+        shadows an output.
+    """
     in_expr = self.input_map()
     out_expr = self.output_map()
     aux = aux or {}
@@ -383,7 +403,7 @@ class Function[SymbolicInputs, NumericalInputs, SymbolicOutputs, NumericalOutput
     ret_inputs = [all_inputs[s] for s in inputs]
     ret_outputs: list[Expr] = []
     ret_output_names: list[str] = []
-    ret_sparsities: list[SparsityType | None] = []
+    ret_sparsities: list[SparsityPattern | None] = []
     ret_coloring_widths: list[int | None] = []
     for spec in outputs:
       if isinstance(spec, str):

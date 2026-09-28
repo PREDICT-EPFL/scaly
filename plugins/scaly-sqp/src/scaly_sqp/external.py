@@ -7,7 +7,7 @@ from typing import Any
 
 from scaly.function import Function
 from scaly.function.tree import G, L, flat_tree
-from scaly.ir.types import SparsityType, TensorType
+from scaly.ir.types import SparsityPattern, TensorType
 from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
 
 
@@ -20,8 +20,8 @@ def external_nlp(
   params: Sequence[tuple[str, tuple[int, ...]]],
   source: str,
   raw_symbols: Mapping[str, str],
-  jac_sparsity: SparsityType,
-  hess_sparsity: SparsityType,
+  jac_sparsity: SparsityPattern,
+  hess_sparsity: SparsityPattern,
   options: Mapping[str, str | int | float] | None = None,
 ) -> Function:
   """Build the typed NLP solve interface around foreign flat-buffer oracles."""

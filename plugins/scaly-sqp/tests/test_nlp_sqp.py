@@ -7,7 +7,7 @@ import pytest
 
 import scaly as sc
 from scaly.codegen.aot import render_c_source
-from scaly.ir.types import SparsityType
+from scaly.ir.types import SparsityPattern
 from tests.solvers.problem_helpers import build_nlp, solve_nlp
 
 
@@ -181,7 +181,7 @@ def test_sqp_descriptor_hessian_is_the_backend_selected_upper_triangle() -> None
 def test_external_nlp_uses_the_supplied_pattern_as_the_hessian_layout() -> None:
   from scaly_sqp.external import external_nlp
 
-  hess_sparsity = SparsityType((2, 2), (0, 0, 1), (0, 1, 1))
+  hess_sparsity = SparsityPattern((2, 2), (0, 0, 1), (0, 1, 1))
   solver = external_nlp(
     name="external_layout",
     n=2,
@@ -190,7 +190,7 @@ def test_external_nlp_uses_the_supplied_pattern_as_the_hessian_layout() -> None:
     params=(),
     source="",
     raw_symbols={"base": "base", "grad": "grad", "hess": "hess", "bounds": "bounds"},
-    jac_sparsity=SparsityType.empty((0, 2)),
+    jac_sparsity=SparsityPattern.empty((0, 2)),
     hess_sparsity=hess_sparsity,
   )
   assert solver.descriptor.hess_sparsity == hess_sparsity
@@ -208,8 +208,8 @@ def _external_sqp_hessian_pattern(name: str, rows: tuple[int, ...], cols: tuple[
     params=(),
     source="",
     raw_symbols={"base": f"{name}_base", "grad": f"{name}_grad", "hess": f"{name}_hess", "bounds": f"{name}_bounds"},
-    jac_sparsity=SparsityType.empty((0, 3)),
-    hess_sparsity=SparsityType((3, 3), rows, cols),
+    jac_sparsity=SparsityPattern.empty((0, 3)),
+    hess_sparsity=SparsityPattern((3, 3), rows, cols),
   )
 
 

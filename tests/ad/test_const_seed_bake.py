@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly.ad.forward import _jvp_many_unrolled
+from scaly.ad.forward import _jvp_many_unrolled  # per-seed jvp calls, the reference structural jvp_many must match
 from scaly.ir.expr import ExprOp, topo
 from scaly.ir.program import ProgramNode
 from scaly.passes.lowering import lower_function

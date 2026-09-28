@@ -11,7 +11,7 @@ import numpy as np
 from scipy import sparse
 
 from ..ir.expr import COMMON_ELEMENTWISE_BINARY, COMMON_ELEMENTWISE_UNARY, Expr, ExprOp
-from ..ir.types import SparsityType, broadcast_shape
+from ..ir.types import SparsityPattern, broadcast_shape
 
 
 def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool]) -> bool:
@@ -21,7 +21,7 @@ def _depends_on(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], bool]) -> boo
   return memo[key]
 
 
-def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityType:
+def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityPattern:
   """Estimate structural sparsity of ``d vec(expr) / d vec(wrt)``.
 
   This is purely symbolic: it tracks element dependencies through the graph without using
@@ -31,7 +31,7 @@ def jacobian_sparsity(expr: Expr, wrt: Expr) -> SparsityType:
   return _mask_sparsity(_jac_mask(expr, wrt, {}))
 
 
-def column_coloring(sparsity: SparsityType) -> tuple[int, ...]:
+def column_coloring(sparsity: SparsityPattern) -> tuple[int, ...]:
   """Assign each column a color, greedily, so no two columns sharing a row get the same one.
 
   Columns of one color can be recovered from a single forward pass, so the number of colors is
@@ -60,10 +60,10 @@ def _empty(shape: tuple[int, int]) -> sparse.csr_array:
   return sparse.csr_array(shape, dtype=bool)
 
 
-def _mask_sparsity(mask: sparse.csr_array) -> SparsityType:
+def _mask_sparsity(mask: sparse.csr_array) -> SparsityPattern:
   mask.sort_indices()
   coo = mask.tocoo()
-  return SparsityType(mask.shape, tuple(int(x) for x in coo.row), tuple(int(x) for x in coo.col))
+  return SparsityPattern(mask.shape, tuple(int(x) for x in coo.row), tuple(int(x) for x in coo.col))
 
 
 def _or(x: sparse.csr_array, y: sparse.csr_array) -> sparse.csr_array:
@@ -222,12 +222,12 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[tuple[int, int], sparse.csr_arr
   return ret
 
 
-def star_coloring(sparsity: SparsityType) -> tuple[int, ...]:
+def star_coloring(sparsity: SparsityPattern) -> tuple[int, ...]:
   """Greedily star-color a square sparsity pattern in column order.
 
   The pattern is treated as an undirected graph. A valid coloring is proper, and no simple path
   of three edges has only two colors. This is the coloring needed to recover a symmetric Hessian
-  from compressed forward products; it is deliberately not distance-2 coloring.
+  from compressed forward products. It is deliberately not distance-2 coloring.
   """
   rows, cols = sparsity.shape
   if rows != cols:
@@ -281,7 +281,7 @@ def _star_color_conflicts(vertex: int, color: int, colors: list[int], neighbors:
   return False
 
 
-def _symmetrize_sparsity(sparsity: SparsityType) -> SparsityType:
+def _symmetrize_sparsity(sparsity: SparsityPattern) -> SparsityPattern:
   """Return the undirected union of a square structural pattern and its transpose."""
   if sparsity.shape[0] != sparsity.shape[1]:
     raise ValueError(f"symmetric sparsity requires a square pattern, got {sparsity.shape}")

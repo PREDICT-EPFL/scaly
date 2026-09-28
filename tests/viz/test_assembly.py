@@ -83,3 +83,10 @@ def test_recording_keeps_original_and_normalized_expressions(tmp_path, monkeypat
   assert original["name"] == "expression" and "expr.transpose" in original["assembly"]
   assert normalized["name"] == "normalized:normalized_matmul" and "expr.transpose" not in normalized["assembly"]
   assert fun.outputs[0] is output
+
+
+def test_viz_serve_is_not_shadowed_by_its_submodule():
+  import scaly.viz
+  from scaly.viz.serve import serve
+
+  assert scaly.viz.serve is serve

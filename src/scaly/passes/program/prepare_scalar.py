@@ -67,6 +67,3 @@ def prepare_scalar_expressions(prog: ProgramNode) -> ProgramNode:
       node = ProgramNode(node.op, (*node.args[:pc], *rewrite_body(node.args[pc:], names)), node.attrs, node.dtype)
     args.append(node)
   return ProgramNode(prog.op, tuple(args), prog.attrs, prog.dtype)
-
-
-__all__ = ["prepare_scalar_expressions"]

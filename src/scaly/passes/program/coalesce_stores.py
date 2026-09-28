@@ -47,6 +47,3 @@ def coalesce_stores(prog: ProgramNode) -> ProgramNode:
       node = ProgramNode(node.op, (*node.args[:pc], *rewrite_body(node.args[pc:], {})), node.attrs, node.dtype)
     args.append(node)
   return ProgramNode(prog.op, tuple(args), prog.attrs, prog.dtype)
-
-
-__all__ = ["coalesce_stores"]

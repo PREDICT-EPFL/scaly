@@ -24,6 +24,8 @@ class _HasOpArgs(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class Pattern[Node: _HasOpArgs]:
+  """One rewrite: nodes with op ``op`` (any op when ``None``) that satisfy ``predicate`` become ``replacement(node)``."""
+
   op: Hashable | None
   predicate: Callable[[Node], bool]
   replacement: Callable[[Node], Node]
@@ -103,7 +105,7 @@ def rewrite[Node: _HasOpArgs](
 
   Iterative over an explicit stack, so depth in the graph never becomes depth on the Python
   stack. Each node is visited once with its already-rewritten children memoized by identity, so
-  shared subgraphs stay shared. ``fixpoint`` retries the matcher on a node until nothing fires;
+  shared subgraphs stay shared. ``fixpoint`` retries the matcher on a node until nothing fires.
   ``revisit`` instead walks into a replacement's subgraph so nested rewrites collapse in one
   pass. ``max_steps`` bounds the total number of replacements. ``rebuild`` defaults to the
   expression adapter ``rebuild_expr``. Program adapters may reuse ``memo`` across roots with

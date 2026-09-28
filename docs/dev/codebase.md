@@ -1,23 +1,21 @@
 # The codebase
 
-The reference tables for changing scaly: which module owns what, which modules may import which,
-what a given kind of change touches, and the rules that keep the tree in this shape. Read
-[Architecture](../how_it_works/architecture.md) first for what the pieces do; this page is about
-where they are and how they may depend on each other. Agents and contributors alike are expected
-to follow it, and two tests enforce most of it.
+Use this page to find the files involved in a compiler change and check their allowed dependencies.
+The [architecture guide](../how_it_works/architecture.md) explains the compilation process, and
+[contributing](contributing.md) covers setup and validation.
 
 ## Package map
 
 One line of ownership per module. Every module states the same thing in its own docstring, at more
-length; if the two disagree, the docstring wins. The `__init__.py` files are not listed; each
-one's docstring says what its package owns.
+length. If the two disagree, the docstring wins. The `__init__.py` files are not listed, and
+each one's docstring says what its package owns.
 
 ```
 src/scaly/
   __init__.py            curated public re-exports, and nothing else
 
   ir/                    dialect definitions, verification, text, pass infrastructure
-    types.py             DType, DeviceSpec, TensorType, SparsityType, ScalarType, backend support
+    types.py             DType, DeviceSpec, TensorType, SparsityPattern, backend support
     expr.py              ExprOp, OP_INFO, Expr, interning, builders, topo, format_expr
     expr_spec.py         expression-dialect verify rules, verify_expr
     program.py           ProgramOp, RangeKind, ProgramNode, interning, builders
@@ -59,7 +57,7 @@ src/scaly/
   ad/                    derivative construction, all of it inside the expression dialect
     forward.py           jvp, jvp_many
     reverse.py           vjp, vjp_many, and the per-op local adjoint rules
-    derivatives.py       jacobian, gradient, hessian, basis, finite_difference
+    derivatives.py       jacobian, gradient, hessian, finite_difference
     sparsity.py          structural sparsity patterns and greedy coloring; no AD in it
     sparse.py            sparse_jacobian, sparse_hessian: AD driven by a structural pattern
 
@@ -77,7 +75,7 @@ src/scaly/
   solvers/
     model.py             SolverDescriptor and its opaque plain Function
     problem.py           typed backend-free Problem declarations
-    solver.py            backend selection
+    solver.py            backend selection and the parameter-based Solver call
     graph.py             the solver queries over a Function graph
     registry.py          plugin discovery and protocol validation
     paths.py             vendored solver library and header discovery
@@ -97,7 +95,7 @@ src/scaly/
 ```
 
 Solver backends are not in this tree. Each is a separate distribution under `plugins/`
-(`scaly-piqp`, `scaly-ipopt`, `scaly-sqp`) discovered through an entry point; see
+(`scaly-piqp`, `scaly-ipopt`, `scaly-sqp`) discovered through an entry point. See
 [Solver plugins](solver_plugins.md). `tests/` mirrors this layout directory for directory.
 
 ## Import layers
@@ -124,47 +122,36 @@ this is legal. Package `__init__` files carry their own entry, set by what they 
 `scaly.function` re-exports names from import layer 3 and is import layer 3, while `scaly.passes`
 re-exports nothing and sits at import layer 1, below both of its modules.
 
-`tests/test_import_layering.py` holds this table and reads imports with `ast`, function-local ones
-included, since a deferred import inside a function is how the old cycles stayed alive. It also
-checks that the graph is acyclic outside the recorded exceptions; that `IMPORT_LAYERS` names
-exactly the modules that exist, so a new file cannot slip in unplaced; that every recorded
-exception is still a real edge and still a real violation; and that each module imports cleanly
-first in a fresh interpreter. That last check catches what a static check cannot: moving a file
-can leave a package `__init__` deadlocking on a half-initialized module while every individual
-import still looks fine.
+`tests/test_import_layering.py` checks this table against every Python module. It checks imports
+inside functions as well as module-level imports, rejects cycles outside the recorded exceptions,
+and verifies that each exception is still needed. It also imports each module first in a fresh
+interpreter to catch failures caused by partially initialized packages.
 
-The test skips `if TYPE_CHECKING:` imports and does not model dynamic loading (`EntryPoint.load`
-in `solvers/registry.py`). Both are ways a dependency can exist without the test knowing;
-[one of them](#one-dependency-the-table-cannot-see) matters and is written down below.
+The test excludes `if TYPE_CHECKING:` imports and dynamic plugin loading through `EntryPoint.load`.
+These can still create dependencies, as the [text renderer example](#one-dependency-the-table-cannot-see) shows.
 
 ### The two sanctioned exceptions
 
-Two places where the call graph and the import-layer order disagree. The first is a recorded
-upward import. The second is no import at all.
+Numerical calls and visualization need connections that do not fit a simple import hierarchy.
+They use the following arrangements:
 
-1. Calling a `Function` compiles it. `function/model.py` (import layer 3) reaches `codegen/jit`
-   (import layer 7) through a single deferred import in `_jit()`. Every backend use in the frontend
-   (`_flat_numerical_call`, `recompile`, `solver_stats`) goes through that one function. This is the
-   only entry in `SEAM`, and `test_import_layering.py` asserts it stays one import statement.
+1. `function/model.py`, at layer 3, imports `codegen/jit`, at layer 7, inside `_jit()`.
+   Explicit compilation, numerical evaluation, recompilation, and solver statistics all use this helper. It is the only
+   upward import recorded in `SEAM`, and the import-layer test checks that it remains one statement.
+2. Visualization registers a hook with code generation. `codegen/aot.py` defines `RenderObserver`
+   and `register_render_observer`, and `viz/recording.py` registers its observer when imported.
+   This allows code generation to notify the visualizer without importing it. The import still
+   runs from layer 8 to layer 7, so it needs no `SEAM` entry.
 
-2. `viz` observes; `codegen` does not know it exists. The naive wiring would be a `codegen -> viz`
-   import, downhill in the call graph and uphill in the import-layer order. Instead
-   `codegen/aot.py` owns a `RenderObserver` protocol and `register_render_observer`, and
-   `viz/recording.py` registers itself at import time. The only import is `viz -> codegen`, which
-   is downward and legal, so nothing needs recording in `SEAM`. Importing `scaly.viz` is what arms
-   recording, and marking a target already requires it. For the same reason `scaly/__init__.py`
-   re-exports `expr_graph` and `program_graph` lazily through a module `__getattr__`: an eager
-   re-export would run `viz/__init__.py` on every `import scaly` and arm the observer for users who
-   never asked.
+`scaly/__init__.py` does not import `scaly.viz`. An ordinary `import scaly` must not enable
+recording for an application that never uses visualization.
 
 ### One dependency the table cannot see
 
-`ir/text.py` renders a `Function`. It reads `.name`, `.inputs`, `.outputs`, `.input_names` and
-`.output_names` through a `TYPE_CHECKING`-only import. The static edge is gone; the structural
-dependency is not. Import layer 1 is therefore not free of the frontend contract, and changing
-those attributes means changing `ir/text.py` with them. `tests/viz/test_assembly.py` would fail if
-the rendering broke, but nothing enforces the direction; only this paragraph records that import
-layer 1 knows what a `Function` looks like.
+`ir/text.py` renders a `Function` by reading its `name`, `inputs`, `outputs`, `input_names`, and
+`output_names` attributes. Its import exists only under `TYPE_CHECKING`, so the import-layer test
+does not see this dependency. If you change those attributes, update the renderer and run
+`tests/viz/test_assembly.py` too.
 
 ## Where to add things
 
@@ -180,34 +167,26 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 | A program op | `ProgramOp`, its builder, and the right op-category set (`SCALAR_OPS`, `UNARY_FN_OPS`, ...) in `ir/program.py`; a rule in `ir/program_spec.py`; a branch in `ir/text.py` for a statement op (scalars need none); the C spelling in `codegen/c.py` |
 | A derivative kind | a frozen `DerivSpec` subclass in `function/factory.py`, plus a wrapper in `function/api.py` |
 | A solver backend | a distribution under `plugins/`, an entry point, and a `render_wrapper` hook; see [Solver plugins](solver_plugins.md) |
-| A public name | the re-export and `__all__` entry in `scaly/__init__.py` |
+| A public name | the re-export and `__all__` entry in `scaly/__init__.py`, or a subpackage's `__init__.py` for a lower-level name, and a `:::` entry on an [API page](../api/index.md). Only package `__init__.py` files and `function/factory.py`, which is `sc.factory`, define `__all__` |
 | A module | an entry in `IMPORT_LAYERS` in `tests/test_import_layering.py`, a one-line ownership docstring, and a test file in the mirrored place under `tests/` |
 
 ## The rules that keep it this way
 
-1. Imports go down. The import-layer table above is enforced by `tests/test_import_layering.py`.
-   A new upward edge is a design decision: a permanent one goes in `SEAM` with the reason, and one
-   being carried across a migration goes in `TOLERATED`, which is currently empty and meant to be
-   emptied again whenever it fills.
-2. One home per concept, named in its docstring. Directory names do not stop a package from going
-   heterogeneous; the one-line ownership statement at the top of each module makes drift visible.
-3. Never load an IR class under two module paths. Both node types are hash-consed through a weakref
-   intern table keyed by op, args and attrs. Two copies of the class means two tables, and the
-   structural identity that AD, CSE and the pass pipeline rely on silently stops holding. This is
-   why the restructure shipped no compatibility shim modules for `ir/` types.
-4. Decide in one place, spell in another. `passes/lowering.py` chooses the implementation;
-   `codegen/c.py` only writes it down. Anything the renderer decides for itself is invisible to the
-   pass pipeline and to the visualizer.
-5. One lowering per render. Header, source, workspace size and link flags all come off the same
-   `_RenderCtx`; two lowerings is how they drift apart.
-6. `viz` observes, never participates. The dependency runs backend-to-frontend through a registered
-   hook, and importing `scaly.viz` is the only thing that arms it.
-7. No silent fallbacks. Unsupported ops, missing compilers and unlowerable cases raise. There is no
-   interpreter to fall back to, so generated C is the only semantics.
-8. Pre-1.0, breaks are unshimmed. When a name moves it moves; see
-   [Versioning](versioning.md).
+1. Keep imports within the allowed layers. Record a justified permanent exception in `SEAM`.
+   Temporary migration exceptions go in `TOLERATED` and must be removed when the migration ends.
+2. Give each concept one owning module. State that responsibility in the module docstring.
+3. Do not load an intermediate-representation class under two module paths. Each node class shares
+   structurally identical nodes through its own intern table. Loading a second copy creates a second
+   table and breaks the identity assumptions used by differentiation and expression reuse.
+4. Choose implementations in `passes/lowering.py`. `codegen/c.py` renders those choices as C.
+   An optimization implemented only in the renderer cannot be inspected or reused by compiler passes.
+5. Lower once per render. The header, source, workspace size, and link flags must come from the
+   same `_RenderCtx` so that all generated artifacts agree.
+6. Keep visualization optional. Register the observer when `scaly.viz` is imported.
+7. Raise for unsupported operations or a missing compiler. Scaly has no interpreter fallback.
+8. Follow the [versioning policy](versioning.md) when changing public names or generated interfaces.
 
 Two tests carry most of this. `tests/test_import_layering.py` holds the import-layer table and the
-exceptions; `tests/test_import_boundaries.py` pins the public names (`sc.Expr is ir.expr.Expr`,
+exceptions, and `tests/test_import_boundaries.py` pins the public names (`sc.Expr is ir.expr.Expr`,
 both dialects verify through the same `Spec` type, retired module paths and vocabulary stay gone).
 

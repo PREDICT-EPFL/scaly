@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from collections import Counter
 
 from ...ir import program as p
@@ -48,7 +50,7 @@ def _peak_live(body: list[ProgramNode]) -> int:
   return max(1, peak)
 
 
-def widen_ranges(prog: ProgramNode, *, lanes: int | str = "auto") -> ProgramNode:
+def widen_ranges(prog: ProgramNode, *, lanes: Literal["auto"] | Literal[1, 2, 4, 8] = "auto") -> ProgramNode:
   """Widen independent mapped or contiguous elementwise ranges with a fixed or target-selected width."""
   if lanes not in ("auto", 1, 2, 4, 8):
     raise ValueError("lanes must be 'auto', 1, 2, 4 or 8")

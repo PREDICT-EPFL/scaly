@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 
 def is_solver_function(fun: Function) -> bool:
+  """Return whether ``fun`` is a solver's own function, the one ``Solver.function`` exposes."""
   desc = getattr(fun, "descriptor", None)
   return isinstance(getattr(desc, "backend", None), str)
 

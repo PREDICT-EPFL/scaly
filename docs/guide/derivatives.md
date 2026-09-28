@@ -1,150 +1,217 @@
 # Derivatives
 
-Derivative wrappers operate on either expressions or typed functions. Expression forms return an
-`Expr` or `SparseJacobian`. Function forms return another typed `Function` that keeps the source's
-complete input tree.
+Scaly differentiates the recorded expression graph. A derivative of a `Function`
+is another `Function`, which you can evaluate, compose, and export as C. Named
+derivative requests select which output to differentiate and with respect to
+which input, while retaining the other inputs as parameters.
 
-## Expression and function forms
+The examples assume basic multivariable calculus and familiarity with
+[building a Function](functions.md). No experience with automatic differentiation
+is needed.
 
-```python
-sc.gradient(expr, x)
-sc.jacobian(expr, x)
-sc.hessian(expr, x)
-sc.sparse_jacobian(expr, x)
-sc.sparse_hessian(expr, x, triangle="upper")
+## Gradients and Hessians
 
-sc.gradient(fn, "f", "x")
-sc.jacobian(fn, "y", "x")
-sc.hessian(fn, "f", "x")
-sc.sparse_jacobian(fn, "y", "x")
-sc.sparse_hessian(fn, "f", "x", triangle="lower")
-sc.forward(fn, "y", "x")
-sc.adjoint(fn, "y", "x")
-```
+For a scalar cost, the gradient gives its rate of change with each input
+component. The Hessian is the matrix of second derivatives and describes local
+curvature. For a squared tracking cost,
 
-Function forms take the declared output name `of` and input name `wrt`. An unknown name fails when
-the derivative is built and reports the declared choices. Pass `name=` to set the derived
-function's artifact name.
+\[
+f(x,t)=\lVert x-t\rVert^2, \qquad
+\nabla_x f(x,t)=2(x-t), \qquad
+\nabla_x^2 f(x,t)=2I.
+\]
 
-Unseeded derivatives keep the source's input tree. If `fn` takes `(x, p)`, then
-`sc.gradient(fn, "f", "x")` also takes `(x, p)`:
+The declarations below name the output `cost` and the target input `target`:
 
 ```python
-grad = sc.gradient(fn, "f", "x")
-value = grad((x_value, p_value))
+import numpy as np
+import scaly as sc
+
+@sc.function(sc.G(sc.L("x", 2), sc.L("target", 2)), sc.L("cost", ...))
+def tracking_cost(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    x, target = inputs
+    return sc.sumsqr(x - target)
+
+grad = sc.gradient(tracking_cost, "cost", "x")
+hess = sc.hessian(tracking_cost, "cost", "x")
+data = (np.array([3.0, 5.0]), np.array([1.0, 2.0]))
+print(grad(data))  # [4. 6.]
+print(hess(data))  # [[2. 0.]
+                   #  [0. 2.]]
 ```
 
-There is no `extra_inputs` option. Parameters and other source inputs remain available because
-dropping them would leave the derived expression incomplete and break the source's typed call
-structure.
+The names `"cost"` and `"x"` select the declared output and input. The gradient
+is taken with respect to `x`, holding `target` fixed. Both derivative functions
+still take `(x, target)`, because their calculations may need both values.
 
-Sparse Hessians accept `triangle="full"`, `"lower"` or `"upper"`. The selected triangle keeps the
-full pattern's order.
+The gradient has the input's shape. The Hessian has shape `(x.size, x.size)`.
+Gradient and Hessian requests require a scalar output. Use a Jacobian for a
+vector output.
 
-## Seeded modes
+The standalone [quadratic example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/quadratic.py)
+evaluates this cost and its derivatives, then exports their generated C.
 
-Forward and adjoint wrappers pair the source input tree with one seed leaf:
+## Jacobians and flattened dimensions
 
-```text
-forward inputs = (source_inputs, fwd:<wrt>)
-adjoint inputs = (source_inputs, lam:<of>)
-```
+A Jacobian contains all first derivatives of a vector-valued function. Entry
+`J[i, j]` is the derivative of output component `i` with respect to input
+component `j`. For the following measurement model,
 
-For example:
+\[
+y(x)=\begin{bmatrix}x_0x_1 \\ x_0+2x_1\end{bmatrix}, \qquad
+J(x)=\frac{\partial y}{\partial x}
+=\begin{bmatrix}x_1 & x_0 \\ 1 & 2\end{bmatrix}.
+\]
 
 ```python
-fwd = sc.forward(fn, "y", "x")
-dy = fwd(((x_value, p_value), x_tangent))
+@sc.function(sc.L("x", 2), sc.L("y", ...))
+def measurements(x: sc.Expr) -> sc.Expr:
+    return sc.stack([x[0] * x[1], x[0] + 2.0 * x[1]])
 
-adj = sc.adjoint(fn, "y", "x")
-dx = adj(((x_value, p_value), y_cotangent))
+jac = sc.jacobian(measurements, "y", "x")
+x_value = np.array([3.0, 4.0])
+print(jac(x_value))  # [[4. 3.]
+                     #  [1. 2.]]
 ```
 
-The seed shape is the shape of the named input or output.
+The Jacobian shape is `(output.size, input.size)`. Matrix-valued inputs and
+outputs are flattened in row-major order for these two axes.
 
-## Lagrangian Hessians
+The fixed row-major order matters when comparing with a NumPy calculation.
+For a matrix input `X`, column `j` of the Jacobian corresponds to
+`X.reshape(-1)[j]`, not to a column of `X`.
 
-A Lagrangian wrapper weights every leaf in the source output tree. Its inputs pair the source input
-tree with a multiplier tree that has the source output structure:
+For large problems with many known zeros, use `sc.sparse_jacobian` or
+`sc.sparse_hessian`. These return only the potentially nonzero entries. See
+[Sparsity](sparsity.md) for retrieving their locations and reconstructing a
+matrix. Sparse Hessians accept `triangle="full"`, `"lower"`, or `"upper"`.
+
+## Products with a Jacobian
+
+If you only need `J @ direction`, use `sc.forward`. The direction, also called a
+seed, has the input's shape. For the `measurements` function above,
+
+\[
+y(x+\varepsilon d)=y(x)+\varepsilon J(x)d+O(\varepsilon^2).
+\]
+
+`sc.forward` constructs the function for \(J(x)d\):
 
 ```python
-lag_hess = sc.lagrangian_hessian(fn, "x")
-sparse_lag_hess = sc.sparse_lagrangian_hessian(
-    fn,
-    "x",
-    triangle="lower",
+fwd = sc.forward(measurements, "y", "x")
+print(fwd((x_value, np.array([1.0, 0.0]))))  # [4. 1.]
+```
+
+`sc.adjoint` constructs \(J(x)^T w\), the gradient of the scalar weighted
+output \(w^T y(x)\). The weights have the output's shape:
+
+```python
+adj = sc.adjoint(measurements, "y", "x")
+print(adj((x_value, np.array([1.0, 2.0]))))  # [6. 7.]
+```
+
+Both functions take `(original_inputs, seed)`. If the original function takes
+`(x, target)`, the derivative call takes `((x, target), seed)`.
+
+## Lagrangian Hessians and multiplier structure
+
+Constrained optimization uses derivatives of both the cost and constraints.
+For a scalar cost `f(x)` and constraints `g(x)`, the Lagrangian is the weighted
+sum
+
+\[
+\mathcal{L}(x,\sigma,\lambda)=\sigma f(x)+\lambda^T g(x), \qquad
+\nabla_x^2\mathcal{L}=\sigma\nabla_x^2 f+\sum_i\lambda_i\nabla_x^2 g_i.
+\]
+
+Scaly's solver interfaces construct this derivative automatically. A direct
+request uses every output of a function as one term in that weighted sum:
+
+```python
+@sc.function(sc.L("x", 2), sc.G(sc.L("cost", ...), sc.L("constraint", ...)))
+def model(x: sc.Expr) -> tuple[sc.Expr, sc.Expr]:
+    return sc.sumsqr(x), sc.stack([x[0] * x[1]])
+
+lag_hess = sc.lagrangian_hessian(model, "x")
+weights = (np.array(1.0), np.array([3.0]))
+point = np.array([3.0, 4.0])
+print(lag_hess((point, weights)))  # [[2. 3.]
+                                    #  [3. 2.]]
+```
+
+The multiplier structure matches the complete output structure. Every output
+participates in the weighted sum. `sc.sparse_lagrangian_hessian` returns compact
+values and accepts the same triangle choices as `sc.sparse_hessian`.
+
+## Values and derivatives in one function
+
+For the `tracking_cost` function above, `Function.factory` can combine the value
+and several derivatives into one call:
+
+```python
+combined = tracking_cost.factory(
+    "tracking_all",
+    ["x", "target"],
+    ["cost", sc.factory.Grad("cost", "x"), sc.factory.Hess("cost", "x")],
 )
-
-dense = lag_hess(((x_value, p_value), (lam_f, lam_g)))
+cost, gradient, hessian = combined(data)
+print(combined.output_names)
+# ('cost', 'grad_cost_x', 'hess_cost_x_x')
 ```
 
-The wrappers build an auxiliary scalar named `gamma` from the declared output order; pass
-`aux_name=` to change it. The derived output is `hess_gamma_x_x` or `sphess_gamma_x_x`. The doubled
-`wrt` name is part of the generated C symbol and sparsity-table prefix.
+The input list selects the declared inputs, and the output list mixes output
+names with derivative requests. The [function API reference](../api/functions.md)
+lists the request types, including sparse and seeded derivatives.
 
-Solver construction uses the same mechanism. Each backend selects its Hessian triangle, while the
-`Problem` cache shares the full derivative construction.
+A factory request for a forward derivative also needs `fwd:<wrt>` in the input
+list. An adjoint request needs `lam:<of>`. The `sc.forward` and `sc.adjoint`
+wrappers construct those inputs for a single derivative request.
 
-## Build several outputs together
+## Derivatives of expressions
 
-`Function.factory` builds one function containing selected source outputs and derivative requests:
+You can also differentiate before wrapping expressions in a function:
 
 ```python
-combined = fn.factory(
-    "fn_all",
-    ["x", "p"],
-    [
-        "f",
-        sc.factory.Grad("f", "x"),
-        sc.factory.SpJac("g", "x"),
-    ],
-)
-combined.output_names
-# ('f', 'grad_f_x', 'spjac_g_x')
+x = sc.sym("x", 2)
+y = sc.stack([x[0] * x[1], x[0] + 2.0 * x[1]])
+J = sc.jacobian(y, x)
+
+seed = sc.sym("seed", 2)
+directional = sc.jvp(y, x, seed)
+weights = sc.sym("weights", 2)
+(transposed,) = sc.vjp((y,), (x,), (weights,))
 ```
 
-A request is a frozen value naming `of` and `wrt`:
+`jvp` means Jacobian-vector product and `vjp` means vector-Jacobian product.
+`sc.jvp_many(y, x, seeds)` handles several directions, with the seed number as
+the first axis. Expression forms of sparse derivatives return a
+`SparseJacobian` containing `.values`, `.sparsity`, and `.to_dense()`.
 
-| Request | Produces | Derived output name |
-| --- | --- | --- |
-| `sc.factory.Jac(of, wrt)` | dense Jacobian | `jac_<of>_<wrt>` |
-| `sc.factory.Grad(of, wrt)` | scalar-output gradient | `grad_<of>_<wrt>` |
-| `sc.factory.Hess(of, wrt)` | scalar-output Hessian | `hess_<of>_<wrt>_<wrt>` |
-| `sc.factory.SpJac(of, wrt)` | compact Jacobian values and pattern | `spjac_<of>_<wrt>` |
-| `sc.factory.SpHess(of, wrt, triangle=...)` | compact Hessian values and pattern | `sphess_<of>_<wrt>_<wrt>` |
-| `sc.factory.Fwd(of, wrt)` | `J(of, wrt) @ fwd:<wrt>` | `fwd_<of>_<wrt>` |
-| `sc.factory.Adj(of, wrt)` | `J(of, wrt).T @ lam:<of>` | `adj_<of>_<wrt>` |
+## Current limitations
 
-Include `fwd:<wrt>` or `lam:<of>` in the factory input list for a seeded request.
-`sc.factory.DerivSpec` is the common request base class.
+Derivatives work through ordinary function calls and `vmap`. Ordinary calls may
+expand during differentiation or compilation. Mapped repetition remains
+represented as a loop. Differentiation through an optimization solve is not supported.
+A function containing a solve can return zero derivatives through that call,
+while a derivative requested directly from the solver can fail. Do not use
+these results as sensitivities of the optimized solution.
 
-## Work directly on expressions
-
-Use expression forms inside a graph that does not need function metadata. `sc.jvp` takes a seed
-shaped like `wrt`; `sc.vjp` takes a cotangent shaped like the output:
+Differentiation through `minimum`, `maximum`, `floor`, and `ceil`
+raises `NotImplementedError`, even at points where the mathematical derivative
+exists:
 
 ```python
-seed = sc.sym("seed", x.shape)
-tangent = sc.jvp(y, x, seed)
-
-cot = sc.sym("cot", y.shape)
-(vjp_x,) = sc.vjp((y,), (x,), (cot,))
-
-seeds = sc.sym("seeds", (4, *x.shape))
-batched = sc.jvp_many(y, x, seeds)
-
-dense_jac = sc.jacobian(y, x)
-sparse_jac = sc.sparse_jacobian(y, x)
+x_clip = sc.sym("x_clip", ())
+clipped = x_clip.maximum(0.0)
+try:
+    sc.gradient(clipped, x_clip)
+except NotImplementedError as error:
+    print(type(error).__name__)
+# NotImplementedError
 ```
 
-A sparse expression derivative returns `SparseJacobian` with `values`, `sparsity` and
-`to_dense()`.
+Clipping a control with minimum and maximum operations therefore prevents
+differentiation of that expression. For an
+optimization problem, express control limits as variable bounds instead.
 
-## Cost and preserved structure
-
-`gradient` uses one reverse sweep. `jacobian` pushes identity columns through batched forward mode.
-`hessian` differentiates a gradient. Operations without a multi-seed rule fall back to one seed at a
-time unless `SCALY_STRICT_JVP_MANY=1` is set.
-
-Derivatives through `CALL` and `VMAP` keep those nodes instead of expanding them. See
-[How differentiation works](../how_it_works/autodiff.md).
+See [How differentiation works](../how_it_works/autodiff.md) for the algorithms.

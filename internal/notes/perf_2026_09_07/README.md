@@ -609,8 +609,8 @@ its later termination, not an established diagnosis. No study restart was made. 
 that the session close with the partial results recorded and committed.
 
 The interrupted artifacts remain in their original study directory. The current
-[results overview](../../../docs/results/index.md) and
-[scalability tables](../../../docs/results/scalability.md) report only the completed replacement
+[results overview](../../../docs/benchmarks/index.md) and
+[scalability tables](../../../docs/benchmarks/scalability.md) report only the completed replacement
 study. BH-20 closed when that study finished.
 
 All pre-run source-file checksums matched before the write-up. The source archive SHA-256 is

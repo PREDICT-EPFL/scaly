@@ -1,8 +1,6 @@
 """The curated public surface: re-exports only, no definitions of its own (``docs/dev/codebase.md``)."""
 
-from typing import Any
-
-from .codegen.abi import C_API_SIGNATURE, BufferType, c_api_signature
+from .codegen.abi import C_API_SIGNATURE, c_api_signature
 from .ad import jvp, jvp_many, vjp, vjp_many
 from .function.sugar import vmap
 from .function.api import (
@@ -51,6 +49,7 @@ from .solvers import (
   ProblemSpec,
   QPData,
   Solver,
+  SolverLibraryError,
   SolverStats,
   SolverStatus,
   bounded,
@@ -62,21 +61,10 @@ from .ir.expr_spec import spec_expr, spec_expr_shared, verify_expr
 from .ir.spec import Rule, Spec, VerifyError
 from .ad.sparse import SparseJacobian, sparse_jacobian_colored, sparse_jacobian_reference
 from .ad.sparsity import color_groups, column_coloring, jacobian_sparsity, star_coloring
-from .ir.types import BACKEND_SUPPORT, BackendSupport, DeviceSpec, DType, ScalarType, SparsityType, TensorType, as_dtype, backend_supports, dtypes
+from .ir.types import BACKEND_SUPPORT, BackendSupport, DeviceSpec, DType, SparsityPattern, TensorType, as_dtype, backend_supports, dtypes
 
 sym = Expr.sym
 const = Expr.const
-
-
-def __getattr__(name: str) -> Any:
-  # Graph JSON is viz, and reaching it runs ``scaly/viz/__init__.py``, which pulls in the whole
-  # backend and arms the render observer. Deferring that to the first use of these two names
-  # keeps a plain ``import scaly`` free of it.
-  if name in ("expr_graph", "program_graph"):
-    from .viz import graph
-
-    return getattr(graph, name)
-  raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
@@ -85,7 +73,6 @@ __all__ = [
   "ScalySolveStatus",
   "BackendSupport",
   "Bounded",
-  "BufferType",
   "C_API_SIGNATURE",
   "COMMON_OPS",
   "DType",
@@ -101,16 +88,16 @@ __all__ = [
   "ExprOp",
   "Pattern",
   "PatternMatcher",
-  "ScalarType",
   "Problem",
   "ProblemSpec",
   "QPData",
   "Solver",
+  "SolverLibraryError",
   "SolverStats",
   "SolverStatus",
   "Spec",
   "SparseJacobian",
-  "SparsityType",
+  "SparsityPattern",
   "TensorType",
   "VerifyError",
   "Rule",
@@ -129,7 +116,6 @@ __all__ = [
   "cse",
   "cse_many",
   "dot",
-  "expr_graph",
   "format_expr",
   "forward",
   "factory",
@@ -150,7 +136,6 @@ __all__ = [
   "problem",
   "qp_problem",
   "norm_2",
-  "program_graph",
   "solver",
   "render_expr_assembly",
   "render_program_assembly",

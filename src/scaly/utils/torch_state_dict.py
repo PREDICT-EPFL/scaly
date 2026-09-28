@@ -54,7 +54,7 @@ def load_torch_state_dict(path: str | Path) -> dict[str, np.ndarray]:
 
   Supports the modern ``torch.save(state_dict, ...)`` zip layout: ``data.pkl``
   stores tensor metadata and ``data/<n>`` stores raw CPU storage bytes. This is
-  intentionally narrow; unsupported pickle globals fail loudly instead of being
+  intentionally narrow. Unsupported pickle globals fail loudly instead of being
   materialized.
   """
   p = Path(path)
@@ -114,6 +114,3 @@ def load_torch_state_dict(path: str | Path) -> dict[str, np.ndarray]:
   if not isinstance(state, dict):
     raise TypeError(f"expected a state_dict in {p}, got {type(state).__name__}")
   return {k: v.tensor if isinstance(v, Parameter) else v for k, v in state.items()}
-
-
-__all__ = ["load_torch_state_dict"]

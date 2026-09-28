@@ -21,7 +21,6 @@ from scaly.codegen.abi import c_ident
 from scaly.codegen.aot import render_c_module
 from scaly.ir.expr import ExprOp, topo
 from scaly.ir.program import walk_program, ProgramNode, ProgramOp
-from scaly.passes.program._common import _resolve_alias
 from benchmarks.harness import ROOT, RESULTS, gbench, vector_libm
 from benchmarks.harness.correctness import check_dense_reference, write_samples
 from benchmarks.harness.provenance import collect, write, require_headline_settings
@@ -185,6 +184,12 @@ def _static_trip_count(rng: ProgramNode) -> int | None:
   return max(0, -(-span // int(step.attrs["value"])))
 
 
+def _storage_owner(name: str, aliases: dict[str, str]) -> str:
+  while name in aliases:
+    name = aliases[name]
+  return name
+
+
 def _dispatch_metrics(fun: sc.Function, prog: ProgramNode) -> tuple[int | str, int | str, int | str]:
   """Return the retained mapped range trip count, workspace, and arithmetic per iteration.
 
@@ -269,7 +274,7 @@ def _dispatch_metrics(fun: sc.Function, prog: ProgramNode) -> tuple[int | str, i
         try:
           fused[count] = fused.get(count, 0) + sum(arithmetic(child) for child in body)
           owners = {
-            _resolve_alias(node.attrs["buffer"], aliases) for node in walk_program(stmt) if node.op == ProgramOp.VIEW and node.attrs.get("lane_local")
+            _storage_owner(node.attrs["buffer"], aliases) for node in walk_program(stmt) if node.op == ProgramOp.VIEW and node.attrs.get("lane_local")
           }
           scratch = sum(
             int(np.prod(declarations[name].attrs["shape"]))
@@ -354,7 +359,7 @@ def _module_info(
 
 def _render_scaly(fun: sc.Function, name: str, out_dir: Path):
   started = time.perf_counter()
-  module = render_c_module(fun, header_name=f"{name}.h", source_name=f"{name}.c", typed_buffers=False, vector_libm=vector_libm())
+  module = render_c_module(fun, header_name=f"{name}.h", source_name=f"{name}.c", vector_libm=vector_libm())
   (out_dir / module.header_name).write_text(module.header)
   (out_dir / module.source_name).write_text(module.source)
   return module, (time.perf_counter() - started) * 1000
@@ -1016,7 +1021,7 @@ def summarize_runs(rows: list[dict], out: Path) -> None:
   groups = {}
   for result in rows:
     groups.setdefault((result["workload"], result["size"], result["backend"]), []).append(result)
-  metrics = ("runtime_ns", "build_ms", "render_ms", "kernel_compile_ms", "wrapper_compile_ms", "link_ms")
+  metrics = ("runtime_ns", "build_ms", "render_ms", "kernel_compile_ms", "wrapper_compile_ms", "link_ms", "executable_bytes")
   fields = [
     "workload",
     "size",

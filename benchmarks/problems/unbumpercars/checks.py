@@ -111,7 +111,7 @@ def check_pair_jac_codegen_growth() -> None:
       [sc.factory.SpHess("gamma", "z")],
       aux={"gamma": ["cost", "g"]},
     )
-    program = render_c_module(hess, typed_buffers=False).program
+    program = render_c_module(hess).program
     procs = {proc.attrs["name"]: proc for proc in program.args[: int(program.attrs["proc_count"])]}
 
     def walk(nodes):
@@ -611,7 +611,7 @@ def check_typed_problem_keeps_hessian_in_place() -> None:
   from benchmarks.problems.unbumpercars.filters import build_scaly_nlp
 
   hessian = build_scaly_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).function.descriptor.hess
-  module = render_c_module(hessian, typed_buffers=False, lanes=1)
+  module = render_c_module(hessian, lanes=1)
 
   # Scalar lowering isolates CALL boundaries from vector helper code and lane staging.
   # These budgets catch a CALL boundary materializing batched-JVP seed tables.

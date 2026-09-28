@@ -168,6 +168,3 @@ def _proc(
   origin: ProgramNode, name: str, inputs: list[ProgramNode], outputs: list[ProgramNode], body: list[ProgramNode], **attrs: object
 ) -> ProgramNode:
   return prune_dead_buffers(_rebuild_proc(origin, [*inputs, *outputs], body, name=name, input_count=len(inputs), **attrs))
-
-
-__all__ = ["hoist_invariant"]

@@ -1,15 +1,12 @@
 # Solver plugins
 
-How a solver integration plugs into scaly. Read this when writing a new solver plugin. Everything
-solver-specific lives in the plugin package; nothing is added to the scaly codebase. CasADi's
-`Conic`/`Nlpsol` plugins must be written inside the CasADi tree against its internal C++ headers,
-whereas a scaly solver plugin is an ordinary pip-installable Python package. (Decision record:
-`internal/notes/benchmark-buildout.md` §3.5.)
+A solver plugin connects Scaly models to an optimization solver. It is a separate Python package
+that generates a C wrapper around the solver's native interface. Read this page when implementing
+a backend. The [solver guide](../guide/solvers.md) covers using an existing solver.
 
-There is exactly one solve path (`internal/notes/benchmark-buildout.md` §3.4): a generated C
-wrapper, emitted alongside the oracle kernels into a single translation unit, calling the solver's
-C API directly. Plugins ship no Python solve code. They ship a vendored native library, C headers,
-packaging metadata, and a Python function that renders the C wrapper.
+Scaly generates the problem's objective, constraints, and derivatives as C functions, called
+oracles. The plugin's wrapper calls these functions and passes their results to the native solver.
+The wrapper and oracles compile together, so a numerical solve does not call back into Python.
 
 ## Anatomy of a plugin
 
@@ -20,7 +17,7 @@ A plugin is a Python package that:
 3. when it wraps its own native solver, bundles the vendored shared library under `<pkg>/lib/` and
    its C headers under `<pkg>/include/`, built by a hatch build hook (`plugins/scaly-piqp` and
    `plugins/scaly-ipopt` are the two reference implementations). `plugins/scaly-sqp` has no
-   library of its own; it generates C against `scaly-piqp`'s.
+   library of its own and generates C against `scaly-piqp`'s.
 
 ```toml
 # pyproject.toml
@@ -34,7 +31,9 @@ The entry-point name is the backend string users pass as the second argument to
 ## The backend protocol
 
 `BACKEND` must satisfy `scaly.solvers.registry.SolverBackend`, which defines the common backend
-metadata and the codegen hook:
+metadata and the code generation hook. A backend accepts either quadratic programs, abbreviated
+QP, or nonlinear programs, abbreviated NLP. Scaly's just-in-time compiler, abbreviated JIT,
+uses the library and header paths when it builds the generated code.
 
 | member | meaning |
 |---|---|
@@ -62,22 +61,23 @@ exact-path override env var `SCALY_MYSOLVER_LIB`.
 def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]: ...
 ```
 
-`fun` is the plain typed `Function` being rendered; `fun.descriptor` (a `SolverDescriptor`,
+`fun` is the plain typed `Function` being rendered. `fun.descriptor` (a `SolverDescriptor`,
 `src/scaly/solvers/model.py`) carries the problem dimensions, input/output signatures,
-oracle/derivative `Function`s, sparsity patterns, and user options. `ctx` is the codegen kit
-(`scaly.codegen.solver.SolverWrapperCtx`):
+oracle `Function`s, sparsity patterns, and user options. `ctx` supplies the C names and helpers
+needed by the wrapper through `scaly.codegen.solver.SolverWrapperCtx`:
 
 - `ctx.symbol` is the solver's mangled C identifier. Prefix every static the template declares with
   it, since multiple solvers can share one translation unit.
 - `ctx.raw_symbol` is the name of the function the template must define.
 - `ctx.stats_symbol` is the `scaly_solver_stats` static the template must fill on every call. Core
-  declares it and exports the `<symbol>_stats(...)` accessor; the plugin only writes the fields.
+  declares it and exports the `<symbol>_stats(...)` accessor, and the plugin only writes the fields.
 - `ctx.raw_symbol_of(fn)` gives the C symbol of an oracle/derivative `Function` or `ExternalOracle`
-  from the descriptor. Scaly Functions are rendered into the same translation unit by Program IR; an
-  external oracle contributes its declared source and raw symbol directly before the wrapper.
+  from the descriptor. Scaly renders ordinary functions into the same translation unit.
+  An external oracle contributes its declared source and raw symbol directly before the wrapper.
 
 The returned lines are C source, emitted verbatim into the translation unit between the oracle
-kernels and the universal-ABI entry point.
+kernels and the public entry point. The entry point follows Scaly's application binary interface,
+or ABI.
 
 ### Required signature
 
@@ -89,8 +89,8 @@ static void <ctx.raw_symbol>(const double* in0, ..., const double* in{I-1},
                              double* w) { ... }
 ```
 
-`w` is the caller's packed scratch workspace. Pass it through as the last argument of every oracle
-`_raw` call; the kernels need it and crash on NULL at any nontrivial size. Do not use it for the
+`w` is the caller's scratch workspace. Pass it as the last argument of every oracle `_raw` call.
+An oracle that needs workspace cannot accept `NULL`. Do not use it for the
 wrapper's own storage. Solver workspaces and O(n²) buffers belong in `static` locals, since the
 wrapper is non-reentrant by contract (see [the generated interface](../how_it_works/generated_interface.md)).
 
@@ -100,40 +100,45 @@ Every descriptor `Function` renders as
 `static void <name>_raw(const double* <in0>, ..., double* <out0>, ..., double* w)` with inputs and
 outputs in the Function's declared order.
 
-### Stats
+### Statistics
 
-Fill every field of `ctx.stats_symbol` on every call, including early-error returns:
-`version = SCALY_SOLVER_STATS_VERSION`, `status` (one of the `SCALY_SOLVE_*` macros, the
-backend-neutral enum in `src/scaly/solvers/stats.py`), `native_status` (the solver's own code, cast
-to `int32_t`), `iter`, `obj`, the `t_total`/`t_fe`/`t_solver`/`t_qp`/`t_globalization`/`t_glue`
-timing split, the five `n_eval_*` counters, `_pad0 = 0`, and the stats-v3 diagnostics tail:
-`primal_viol` (constraint violation at the returned `x`, inf norm), `step_inf` (inf norm of the last
-computed step), `alpha` (last accepted line-search step length; `0.0` if no step was accepted),
-`merit_penalty` (final merit penalty parameter, or zero for a globalization such as a filter that
-has no merit penalty), `backtracks` (total rejected line-search trial points), and `qp_iter` (QP
-iteration count accumulated across outer iterations). Fill diagnostics the backend has no concept
-of with zero.
+Fill every field of `ctx.stats_symbol` on every call, including early returns after an error.
+The fields have the following meanings:
 
-Time with `scaly_clock_s()`, which core emits into every solver-bearing unit, and maintain
+| Fields | Required values |
+|---|---|
+| `version`, `_pad0` | `SCALY_SOLVER_STATS_VERSION` and zero |
+| `status` | A `SCALY_SOLVE_*` status from `src/scaly/solvers/stats.py` |
+| `native_status` | The solver's status code, cast to `int32_t` |
+| `iter`, `obj` | Iteration count and objective value |
+| `t_total`, `t_fe`, `t_solver`, `t_qp`, `t_globalization`, `t_glue` | Total time and the function-evaluation, solver, QP, globalization, and wrapper portions |
+| The five `n_eval_*` fields | Oracle evaluation counts |
+| `primal_viol` | Infinity norm of constraint violation at the returned solution |
+| `step_inf` | Infinity norm of the last computed step |
+| `alpha` | Last accepted line-search step length, or zero if no step was accepted |
+| `merit_penalty` | Final merit penalty, or zero if the method does not use one |
+| `backtracks` | Total number of rejected line-search trial points |
+| `qp_iter` | QP iterations accumulated across outer iterations |
+
+Set diagnostics that the backend cannot provide to zero. Time operations with `scaly_clock_s()`,
+which Scaly emits into every generated unit that contains a solver. Maintain
 `t_total ≈ t_fe + t_solver + t_qp + t_globalization + t_glue`. A direct QP backend reports its solve
-in `t_qp`; an NLP backend that cannot expose its internal split reports it in `t_solver`.
+in `t_qp`. An NLP backend that cannot separate its internal work reports it in `t_solver`.
 
-Map native statuses through the vendored header's enum constants, never integer literals, so an
-upstream rename or renumbering breaks at compile time instead of silently. This is what removes the
-drift problem of hand-written bindings (`internal/notes/benchmark-buildout.md` §3.4).
+Map native statuses through the solver header's enum constants rather than integer literals.
+An upstream rename or renumbering then causes a compile error instead of an incorrect status.
 
 ### Options
 
 `desc.options` is the user's `options={...}` dict as a tuple of pairs. Lower each option into the
 generated C (settings-struct assignments, `AddIpopt*Option` calls, ...) and raise
-`NotImplementedError` for values that cannot be lowered. Options are baked as constants; the JIT
-cache key covers them through the source hash, so option sweeps recompile per point (accepted, see
-`internal/notes/benchmark-buildout.md` §3.4).
+`NotImplementedError` for values that cannot be lowered. Options are baked as constants. The JIT
+cache key includes the source hash, so each distinct set of options requires compilation.
 
 ## Descriptor families
 
 Core normalizes every `Problem` into one `SolverDescriptor`. Plugins consume flat buffers and static
-metadata; they do not inspect `Expr` nodes or reconstruct the user's trees.
+metadata. They do not inspect `Expr` nodes or reconstruct the user's trees.
 
 Every typed solver uses the same flattened leaf order:
 
@@ -153,21 +158,21 @@ Core oracles use IEEE negative infinity for an absent lower bound and IEEE posit
 absent upper bound, for variable and inequality bounds in both descriptor families. A plugin must
 translate those values after evaluating the oracle and before calling a solver that uses a finite
 sentinel. The PIQP adapter maps them to `-PIQP_INF` and `PIQP_INF`, the macro from the vendored
-header; the IPOPT adapter maps them to `-2e19` and `2e19`. Apply the same translation on initial
+header, and the IPOPT adapter maps them to `-2e19` and `2e19`. Apply the same translation on initial
 setup and on every update path. Do not make a wrapper depend on the identity of `sc.NO_LB` or
-`sc.NO_UB`; substitution and code generation preserve their values, not Python object identity.
+`sc.NO_UB`. Substitution and code generation preserve their values, not Python object identity.
 
-### QP
+### Quadratic programs
 
 `kind == "qp"`, selected by `sc.solver(problem, "piqp")`.
 
 - The problem shape is `min 0.5 x' P x + c' x` subject to `A x = b`, `l <= G x <= u`, and box bounds.
 - `desc.oracle` takes parameter leaves and emits `P, c, [A_eq, b_eq], [G_ineq, l_ineq, u_ineq], x_lb, x_ub`. Empty constraint blocks are omitted from the oracle but remain size-zero multiplier groups in the solver signature.
 - Dense matrices are row-major. When `desc.sparse` is true, the oracle emits compact compressed sparse column values in the baked `P_sparsity`, `A_sparsity`, and `G_sparsity` order. `P_sparsity` contains the upper triangle.
-- The oracle emits IEEE infinities for absent bounds; the wrapper converts them to the QP solver's native convention.
-- A QP plugin is a standalone solver only. scaly-sqp does not consume this contract for its subproblems; its wrapper is written against PIQP's C API and links `scaly-piqp`'s library. See the [user guide](../guide/solver_backends.md#scaly-sqp).
+- The oracle emits IEEE infinities for absent bounds, and the wrapper converts them to the QP solver's native convention.
+- A QP plugin is a standalone solver only. scaly-sqp does not consume this contract for its subproblems. Its wrapper is written against PIQP's C API and links `scaly-piqp`'s library. See the [user guide](../guide/solver_backends.md#scaly-sqp).
 
-### NLP
+### Nonlinear programs
 
 `kind == "nlp"`, selected by `sc.solver(problem, "ipopt")` or `"sqp"`.
 
@@ -176,16 +181,16 @@ setup and on every update path. Do not make a wrapper depend on the identity of 
 - `desc.grad` has the same inputs and returns the dense objective gradient. `desc.jac` returns the compact sparse Jacobian of `g` in `desc.jac_sparsity` order.
 - `desc.hess` takes `(x, *params, lam:f[, lam:g])` and returns the compact Lagrangian Hessian in `desc.hess_sparsity` order.
 - `desc.bounds` takes only parameter leaves and returns `x_lb, x_ub[, l_ineq, u_ineq]`.
-- Core asks the backend for `hess_triangle` and hands the wrapper an oracle and pattern already cut to that layout. IPOPT selects lower; scaly-sqp selects upper.
+- Core asks the backend for `hess_triangle` and hands the wrapper an oracle and pattern already cut to that layout. IPOPT selects lower, and scaly-sqp selects upper.
 - Any NLP oracle may instead be an `ExternalOracle` with the same signature. Its source defines `raw_symbol` using the flat-buffer convention, and `workspace_size` contributes to root and nested workspace packing.
-- The bounds oracle emits IEEE infinities for absent bounds; the wrapper converts them to the NLP solver's native convention.
+- The bounds oracle emits IEEE infinities for absent bounds, and the wrapper converts them to the NLP solver's native convention.
 
 ## Versioning
 
 `SOLVER_PLUGIN_PROTOCOL_VERSION` (`src/scaly/solvers/registry.py`) covers the whole contract above:
 descriptor semantics and oracle output orderings, the `SolverWrapperCtx` fields, the `_raw` calling
 convention, and the `scaly_solver_stats` layout (`SCALY_SOLVER_STATS_VERSION` tracks the struct ABI
-itself; a stats change bumps both). Any breaking change to any of these bumps the protocol version,
+itself, and a stats change bumps both). Any breaking change to any of these bumps the protocol version,
 and `get_backend` refuses plugins declaring a different version.
 
 History:
@@ -194,12 +199,12 @@ History:
 - v2: plugin-owned codegen via `render_wrapper`.
 - v3: external NLP oracles and the stats-v2 QP/globalization timing fields.
 - v4: the stats-v3 per-solve diagnostics tail (`primal_viol`, `step_inf`, `alpha`, `merit_penalty`,
-  `backtracks`, `qp_iter`), appended after `_pad0`; the struct grows from 96 to 136 bytes.
+  `backtracks`, `qp_iter`), appended after `_pad0`. The struct grows from 96 to 136 bytes.
 - v5: backend-selected NLP Hessian triangles and the compact oracle output convention that the
   descriptor pattern is the handed layout.
 - v6: typed `Problem`/`Function` solver signatures, variable-block metadata, and the fixed
   warm-start and result order.
-- v7: IEEE-infinity semantics for absent bounds in core QP and NLP oracles; plugins normalize them
+- v7: IEEE-infinity semantics for absent bounds in core QP and NLP oracles. Plugins normalize them
   to native solver sentinels.
 
 ## What core owns
@@ -216,15 +221,14 @@ Plugins must not duplicate any of this:
 
 ## Checklist for a new plugin
 
-1. Package skeleton and, for a solver with its own C API, a hatch build hook vendoring the library
-   and headers (copy `plugins/scaly-piqp`).
-2. `BACKEND` object with the metadata fields and `render_wrapper`, exposed through the
+1. Create the package. If the solver has its own C API, add a hatch build hook that bundles the
+   library and headers. Use `plugins/scaly-piqp` as a reference.
+2. Define `BACKEND` with the metadata fields and `render_wrapper`. Expose it through the
    `scaly.solvers` entry point.
-3. The wrapper template: drive the solver's C API from the oracle kernels, map statuses through enum
-   constants, fill the stats struct, keep all state in `ctx.symbol`-prefixed statics. Normalize IEEE
-   infinite bounds before every native setup or update call.
-4. Tests under `plugins/scaly-<name>/tests/`: correctness against analytic or reference solutions, a
-   nested-solve JIT test, and a stats sanity check (see the piqp and ipopt test suites for the
-   pattern).
+3. Implement the wrapper. Call the oracles, normalize infinite bounds, and drive the solver's C API.
+   Use native enum constants for statuses and fill the statistics on every return path.
+   Prefix static state with `ctx.symbol`.
+4. Add tests under `plugins/scaly-<name>/tests/`. Compare with analytic or reference solutions,
+   compile a nested solver call, and check the statistics. The PIQP and IPOPT suites provide examples.
 5. Nothing in `src/scaly/` should need to change. If it does, the protocol is missing something.
    Raise it as a core issue instead of forking core.

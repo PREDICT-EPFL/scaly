@@ -6,7 +6,8 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly.ad import _jvp_many_structural, _jvp_many_unrolled, finite_difference
+from scaly.ad import finite_difference
+from scaly.ad.forward import _jvp_many_structural, _jvp_many_unrolled  # jvp_many's two paths, checked against each other
 from scaly.ir.expr import topo
 
 
@@ -300,7 +301,6 @@ def test_float32_reduction_derivative_paths(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_jvp_many_structural_rank_mismatch_corner_cases() -> None:
   # every rule of the structural batched JVP must return tangents shaped (nseed, *expr.shape), also under rank-mismatched broadcasts
-  from scaly.ad import _jvp_many_structural
 
   rng = np.random.default_rng(3)
   xv, sv = rng.normal(size=9), rng.normal(size=(4, 9))

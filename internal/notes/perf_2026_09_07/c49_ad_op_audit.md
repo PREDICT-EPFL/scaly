@@ -158,7 +158,7 @@ differentiating (unroll a short `VMAP`, substitute a `CALL`), which turns the re
 inlined build: 28,682 to 16,826 with no rule change, 14,771 with them. C-44 scalarizes after AD and
 cannot recover this. The model-level one is to write the chain as a map over links followed by a
 difference over masses, which computes each link once by construction; that is a benchmark change
-and `docs/results/fairness.md` decides whether it is admissible.
+and `docs/benchmarks/fairness.md` decides whether it is admissible.
 
 ## Rule quality, one rule at a time
 

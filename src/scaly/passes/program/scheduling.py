@@ -63,6 +63,3 @@ def schedule_values(
       value, d = p.var(name, node.dtype), 0
     values[node], depth[node] = value, d
   return declarations, tuple(values[root] for root in roots)
-
-
-__all__ = ["MAX_SCALAR_DEPTH", "ScalarNameAllocator", "schedule_values"]

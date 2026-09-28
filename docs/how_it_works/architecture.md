@@ -1,278 +1,218 @@
-# Scaly architecture
+# Compiler architecture
 
-Scaly turns symbolic models written in Python into compiled C. This page is the map of how that
-happens: the pipeline at low resolution, one call followed through it, why there are two dialects,
-and what each stage owns. The vocabulary of the dialects and of the C ABI (application binary
-interface) have their own pages. The package map, the import layers and the rules for changing the
-tree are developer concerns and live in [The codebase](../dev/codebase.md).
+This overview assumes you have read the ["Getting started"
+guide](../guide/getting_started.md). The other pages in this section cover
+individual parts in detail.
 
-## The short version
+Scaly is a compiler rather than a translator from expressions to C. Its
+passes exploit the mathematical structure of a model, such as sparsity and
+repeated stages, and they decide low-level properties of the generated code,
+such as loops and memory layout. Like
+[Triton](https://triton-lang.org/main/index.html) and
+[Warp](https://nvidia.github.io/warp/stable/), it compiles an embedded
+domain-specific language (eDSL). Here the language is the `Expr` values written
+inside a function decorated with `@sc.function`. Tracing the function captures
+an intermediate representation (IR), a series of optimization passes transforms
+it, and a final stage renders it as C code.
 
-Scaly has two intermediate representations and one direction of travel.
+The diagram below summarizes this pipeline. The tools, libraries and compilers
+that influenced the design are described on [a separate page](influences.md).
 
-- The expression dialect (`ir/expr.py`) says what to compute: an immutable DAG of `Expr` nodes
-  carrying shape, dtype and sparsity, hash-consed so that building the same node twice returns the
-  same object. A `Function` names a graph and is the unit of composition, differentiation and
-  compilation.
-- The program dialect (`ir/program.py`) says how to compute it: `ProgramNode`s that spell out
-  loops, buffers, loads, stores, calls and kernel launches.
-- `passes/` holds every transformation: expression rewrites, the lowering from one dialect to the
-  other, and program-dialect optimizations.
-- `codegen/` renders the program dialect to C, then either writes it to disk (the ahead-of-time
-  path, AOT) or compiles, caches and dispatches it in-process (the just-in-time path, JIT). There is
-  no interpreter. Python calls, tests and generated C all take the same path, and gaps raise.
-  The target is C rather than LLVM IR or an MLIR dialect because a `.c` file compiles with any
-  toolchain, including the vendor compilers of embedded platforms, drops into the C and C++
-  applications that consume it without a runtime, and keeps NumPy the only dependency; the
-  vectorization that other compilers get from LLVM vector types comes from the GNU vector
-  extension gcc, clang and `zig cc` share, with plain C as the opt-in fallback.
-- Everything else hangs off that spine. `ad/` builds derivative graphs inside the expression
-  dialect. `function/` is the user-facing frontend. `solvers/` wraps vendored QP and NLP (quadratic
-  and nonlinear programming) backends as opaque `Function`s. `viz/` watches the pipeline without
-  being part of it.
+![Python code is traced into the expression dialect, lowered to the program dialect and rendered to C. Each dialect has its own passes.](../assets/architecture-light.svg#only-light)
+![Python code is traced into the expression dialect, lowered to the program dialect and rendered to C. Each dialect has its own passes.](../assets/architecture-dark.svg#only-dark)
 
-```mermaid
-flowchart TB
-  py["Python<br/>@sc.function, Expr"] --> fn["Function<br/>expression dialect"]
-  fn -->|"ad/ + function/factory"| fn
-  fn -->|"passes/lowering"| prog["ProgramNode<br/>program dialect"]
-  prog -->|"passes/program"| prog
-  prog -->|"codegen/c, packaged by codegen/aot"| cmod["CModule<br/>one .h + one .c"]
-  cmod -->|"codegen/aot"| files["files on disk"]
-  cmod -->|"codegen/jit"| so["cached shared library<br/>ctypes dispatch"]
-```
+## Tracing
 
-## Following one call
+The `@sc.function` decorator runs your Python body once, with symbolic inputs.
+Each operation on an `Expr` builds a node of a graph instead of computing a
+number. When the body returns, the graph it built is all that remains of it.
+This is also why shapes are fixed: every shape is known when the graph is built.
+
+The other way to compile an eDSL is source transformation, which reads the
+function's Python source and translates its syntax, loops included. Scaly does
+not do this. A Python `for` loop runs during tracing, so the graph contains it
+unrolled, one copy of the body per iteration. The single-shooting rollout in
+[Getting started](../guide/getting_started.md#composing-a-trajectory-model) is
+an example.
+
+Calling a `Function` symbolically adds a single call node rather than copying
+the callee's graph, and `sc.vmap` adds a single mapped-call node. These are how
+a repeated calculation stays one node in the graph instead of many.
+
+## What an IR is
+
+An intermediate representation, or IR, is a data structure that stores a
+computation in a form a compiler can analyze and transform. It is independent of
+the language the user wrote and of the code the compiler will emit. Python
+syntax is gone by the time the IR exists, and C syntax does not exist yet.
+
+Scaly's IR is the graph that tracing builds, and its nodes are the `Expr` values
+you already use. Each node is one operation. An `Expr` stores the operation tag
+in `op`, its operands in `args`, its shape and data type in `type`, and
+operation-specific data, such as the indices of a gather, in `attrs`. After
+lowering, the nodes are `ProgramNode`s instead, with the same `op`, `args` and
+`attrs` fields and a `dtype`. The [next section](#why-two-dialects) explains why
+there are two kinds of node.
+
+Here is a small graph built by hand:
 
 ```python
 import scaly as sc
-import numpy as np
 
+x = sc.sym("x", 3)
+y = (x.sin() + x * x).sum()
 
-@sc.function(sc.L("x", 2), sc.L("f", ...))
-def rosenbrock(x: sc.Expr) -> sc.Expr:
-  return (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
-
-
-grad = sc.gradient(rosenbrock, "f", "x")
-grad(np.array([1.0, 2.0]))
+y.op                        # ExprOp.SUM
+y.type.shape                # ()
+s = y.args[0]
+s.op                        # ExprOp.ADD
+[a.op for a in s.args]      # [ExprOp.SIN, ExprOp.MUL]
+s.args[1].args[0] is x      # True
 ```
 
-| # | What happens | Where |
-| --- | --- | --- |
-| 1 | The decorator makes fresh input symbols, runs the body, and wraps the returned exprs in a `Function`. | `function/api.py`, `function/model.py` |
-| 2 | `sc.factory.Grad("f", "x")` is a typed request object. `Function.factory` resolves the named input and output and calls the spec's `build`. | `function/model.py` (`factory`), `function/factory.py` (the specs) |
-| 3 | `sc.factory.Grad`'s `build` is one reverse sweep over the expression DAG. Other kinds dispatch elsewhere: `sc.factory.Jac` batches forward mode over the identity, and `sc.factory.SpJac` colors a structural pattern first. | `ad/derivatives.py`, `ad/reverse.py` |
-| 4 | The result is another `Function`, in the same dialect as the first. Nothing has been compiled yet. | `function/model.py` |
-| 5 | Calling it with array leaves runs `__call__`, `numerical_call`, `_flat_numerical_call` and `_compile`, which reaches the backend through `_jit()`. That is the one place in the frontend that imports the backend, and the first of the [two sanctioned exceptions](../dev/codebase.md#the-two-sanctioned-exceptions) to import layering. | `function/model.py` |
-| 6 | `CompiledFunction` asks `_build_artifact` for a shared library, which calls `render_c_module`. That lowers the function once into a render context every artifact reads from. | `codegen/jit.py`, `codegen/aot.py` |
-| 7 | `lower_function` normalizes a private copy of each ordinary Function's outputs, then walks the expr DAG topologically; each `ExprOp` has one registered rule that emits program-dialect nodes. Callees become separate procedures; a Function carrying a solver descriptor stays opaque. | `passes/lowering.py` |
-| 8 | `optimize_program` runs the ordered pipeline: `hoist_invariant`, `scalarize`, `fold_tiles`, `fuse_ranges`, `prune_procedures`, `combine_scatter_sums`, `fuse_elementwise`, `fold_arith`, `unroll_unit_loops`, `fold_arith_after_unroll`, optional `hoist_reciprocals`, optional `prepare_scalar` and `widen_ranges`, `pack_workspace`, `coalesce_stores`. Without widening, `prepare_scalar` runs last. | `passes/program/` |
-| 9 | `verify_program` checks the result before anything renders it. | `ir/program_spec.py` |
-| 10 | `render_program_c` emits the translation unit: the callee bodies, then the one entry point exported through the universal ABI, the single pointer-array C signature every generated function shares. | `codegen/c.py` |
-| 11 | Header, source, workspace size and solver link flags are packaged as a `CModule`. | `codegen/aot.py` |
-| 12 | A SHA-256 over (cache version, ABI signature, function name, source text, compile flags) keys the artifact. On a miss, `cc` builds a shared library; then `dlopen` and a ctypes call through that ABI. The library is cached under `$XDG_CACHE_HOME/scaly/jit` (or `SCALY_CACHE_DIR`) and reused by every function with the same key. | `codegen/jit.py` |
+The output `y` is the root, and following `args` downward reaches every node
+down to the input `x`. Both operands of `x * x` are the node `x` itself, so the
+structure is a directed acyclic graph rather than a tree. Wrapping the same
+computation in a `Function` and printing it with `sc.render_expr_assembly` lists
+one node per line, operands before their users:
 
-AOT stops at step 11 and writes the pair to disk (`uv run scaly_codegen <module>:<attr> -o <dir>`).
-Both consumers read the same `CModule`, so the header's `SZ_W`, the source's spill size and the
-scratch array a caller has to allocate cannot disagree.
+```
+expr.func @f(%x: tensor<3xfloat64 diff>) -> (%y: tensor<float64 diff>) {
+  %0 = expr.input {name="x"} : tensor<3xfloat64 diff>
+  %1 = expr.sin(%0) : tensor<3xfloat64 diff>
+  %2 = expr.mul(%0, %0) : tensor<3xfloat64 diff>
+  %3 = expr.add(%1, %2) : tensor<3xfloat64 diff>
+  %4 = expr.sum(%3) : tensor<float64 diff>
+  expr.return %4
+}
+```
 
-## The two dialects
+!!! info "Assembly is only a textual form"
+    "Assembly" here means the IR's textual form, not machine assembly language.
+    The syntax is modelled on MLIR's textual format, but Scaly does not use MLIR
+    and these listings are not valid MLIR.
+    [Influences](influences.md#mlir) says what Scaly took from
+    it.
 
-Two IRs exist because the questions are different. `Expr` preserves mathematical meaning, so it
-can be differentiated, simplified and compared structurally. `ProgramNode` has already chosen an
-implementation (which loops run, which buffer holds which value, which device), so it can be
-rendered but no longer differentiated.
+Scaly transforms the IR progressively through _passes_. Passes simplify it,
+differentiate it, lower it, optimize it and finally render it as C.
 
-They share as much machinery as they usefully can. Both are frozen, hash-consed node classes with
-a `StrEnum` op tag and everything else encoded in args and attrs, in the tinygrad `UOp` style.
-Both verify against the same `Rule` / `Spec` tables from `ir/spec.py` and raise the same
-`VerifyError`. Both assembly listings live in `ir/text.py`. The one printer that does not is
-`format_expr`, which `Expr.debug` calls and so has to stay in `ir/expr.py`.
+## Why two dialects
 
-Names follow the dialect. Expression things are `Expr*` (`ExprOp`, `verify_expr`, `spec_expr`) and
-print with an `expr.*` prefix; program things are `Program*` (`ProgramOp`, `ProgramNode`,
-`verify_program`) and print with `prog.*`. There is no third vocabulary; "semantic IR" and the old
-`P`-prefixed names are gone, without aliases.
+A _dialect_ is a set of operations with its own types and rules. Scaly's IR has
+two, one for mathematics and one for execution, and a program moves from the
+first to the second exactly once.
 
-Verification is opt-in and explicit. Construction-time checks in `ir/expr.py` keep the common path
-fast; a pass runs `verify_expr` / `verify_program` after a non-trivial rewrite, and negative tests
-are written against them. `lower_function` verifies its output before it returns.
+The expression dialect records what each value means. `sc.sumsqr(x)` is a
+multiplication and a sum over whole arrays. Nothing is said about loops, memory
+or evaluation order. This is the level where mathematics is easy. The derivative
+of a sum is a rule of one line. `x - x` is visibly zero. A mapped call is
+visibly the same stage function applied at every step of the horizon, so its
+derivative can be one stage derivative applied at every step.
 
-## Stage by stage
+The program dialect records how to compute each value. Buffers, loops, loads,
+stores and procedure calls are explicit. Lowering the function above gives a
+store of zero into the output, a loop over `x` and an accumulating store in its
+body, as printed by `sc.render_program_assembly` with some attributes trimmed:
 
-### Building: `function/`
+```
+prog.proc @f(%x: memref<3xfloat64>, %y: memref<1xfloat64>) {
+  prog.store 0, %y[0] : float64
+  prog.for %i_y = 0 to 3 step 1 {kind=reduce} {
+    %v0 = prog.assign prog.load %x[%i_y] : float64 {declare=True}
+    prog.store prog.add(prog.load %y[0], prog.add(prog.sin(%v0), prog.mul(%v0, %v0))), %y[0] : float64
+  }
+}
+```
 
-`function/model.py` owns `Function`: names, shapes, sparsity metadata, the undeclared-input check,
-call composition, and `factory`. It also owns the dependency-light `DerivSpec` base at import
-layer 3. `function/api.py` is the ergonomic layer, the `@sc.function` decorator and the overloaded
-wrappers (`sc.jacobian`, `sc.gradient`, `sc.sparse_hessian`, ...) that most user code calls.
+This is the level where code is easy to improve: merging two loops, expanding a
+small loop into scalar statements, reusing a temporary buffer once its value is
+dead.
 
-`Function.factory(name, inputs, outputs)` is the derivative request API. Outputs are typed spec
-objects (`sc.factory.Jac("eq", "z")`, `sc.factory.Grad("f", "x")`, `sc.factory.SpHess(...)`), one
-frozen dataclass per kind in `function/factory.py`, each with its own `build`. There is no string
-grammar to parse. Input names remain strings, including the `lam:<output>` and `fwd:<input>`
-conventions `factory` creates for you; [Derivatives](../guide/derivatives.md) lists the kinds and
-what each returns. A spec also owns its derived output's name, `{kind}_{of}_{wrt}`, and
-`{kind}_{of}_{wrt}_{wrt}` for the two Hessian kinds. The generated C symbols are keyed on these
-names, so a rename there moves symbols. Hess and SpHess always use the same input twice, so the
-doubled `{wrt}` stays in those names.
+Each level is hard to reach from the other. Recovering "this is a sum" from an
+accumulator loop means rediscovering what the user already said, and deciding
+where a temporary lives means nothing while the graph is still made of whole
+arrays. So Scaly does all the mathematical work first, in the expression
+dialect, and only then commits to loops and memory. Lowering is the one step
+between them, and nothing flows back up.
 
-`function/factory.py` owns the concrete derivative request classes and publicly re-exports the
-base through `sc.factory`. The concrete requests import `ad`, so they stay at import layer 5.
-`factory` stays a method; the request-to-AD dispatch is the part users can also reach through
-`sc.factory`.
+## Properties of the IR
 
-### Differentiating: `ad/`
+**Nodes are values, defined once.** An expression node is an immutable value with a fixed type,
+and nothing can reassign it. The expression dialect is therefore in static single assignment
+(SSA) form, which the listing shows directly: each `%n` appears on the left of exactly one line.
 
-Forward and reverse mode are independent implementations (`ad/forward.py`, `ad/reverse.py`);
-`ad/derivatives.py` assembles whole Jacobians, gradients and Hessians from them. Everything
-produces expression-dialect graphs; AD (automatic differentiation) is a graph-to-graph
-transformation.
+The program dialect is different where it has to be. Buffers are memory, and a store writes to
+memory, so statements inside a block run in order and a later store can overwrite an earlier one.
+The nodes themselves are still immutable, and the scalar arithmetic inside a statement is still a
+graph of values.
 
-`ad/sparsity.py` contains no AD: structural patterns and greedy coloring, computed from graph shape
-alone. `ad/sparse.py` is the half that needs AD, building compact nonzero-value expressions over a
-colored pattern. Keeping the two apart lets `sparsity` sit at import layer 2 and be reused from
-below.
+**Equal nodes are the same node.** Both dialects _intern_ their nodes. Building a node whose
+operation, operands, type and attributes match an existing node returns the existing node. So
+writing `x.sin()` twice gives one sine, and `x.sin() is x.sin()` is true. This common
+subexpression elimination (CSE) happens as the graph is built, with no pass to run, and it holds
+across all the graphs alive in a process. It is why the gradient of `x * x` computes `x` times the
+seed once and adds that node to itself. The intern tables hold weak references, so unused nodes
+are still garbage-collected. An explicit `sc.cse` pass remains for the cases interning cannot see.
 
-Call and `VMAP` nodes are differentiated without expanding the callee, but differently in the two
-modes. Forward mode builds a cached derivative `Function` for a callee output, propagates all
-active formals together, then emits a call to it. Reverse mode inlines the callee's adjoint graph
-for an ordinary call and caches one mapped adjoint `Function` for a `VMAP`. Either way, repeated
-named structure, such as an RK4 stage inside a horizon constraint, is not re-walked once per
-stage.
+**Every node has a static type.** An expression node's `TensorType` holds a fixed shape, a data
+type and a differentiability flag. Program buffers have fixed shapes too. Nothing in the generated
+code allocates memory or checks a shape at run time, because no shape can change after tracing.
 
-### Lowering: `passes/lowering.py`
+**Each dialect has a verifier.** A table of rules states which operands, types and attributes each
+operation accepts. Construction checks common mistakes as nodes are built, and `sc.verify_expr` and
+`verify_program` check a whole graph. Lowering verifies its result, so a malformed program fails
+before any C exists.
 
-Dispatch is a registry keyed by `ExprOp`: each op's lowering is a self-contained rule registered
-with `@lowers(...)`. The elementwise family shares one rule driven by the `_UNARY` / `_BINARY` op
-maps, so adding a scalar math op is a map entry and adding a structural op is a rule.
-`lower_function` normalizes private copies of the outputs while preserving Function policy and
-metadata, walks the DAG topologically, emits one procedure per reached `Function`, deduplicates
-callees, runs the optimization pipeline, and verifies.
+## Everything is a pass
 
-An op or case outside the lowered subset raises `LoweringError`. There is no fallback, which is
-what keeps generated C and Python agreeing.
+A pass reads a graph and either returns a new graph or reports a fact about it. Scaly's stages are
+all passes of this kind, sorted by what they consume and produce:
 
-### Optimizing: `passes/program/`
+| Pass                   | From             | To                 |
+| ---------------------- | ---------------- | ------------------ |
+| Simplification and CSE | Expression graph | Expression graph   |
+| Sparsity analysis      | Expression graph | A sparsity pattern |
+| Differentiation        | Expression graph | Expression graph   |
+| Lowering               | Expression graph | Program            |
+| Program optimization   | Program          | Program            |
+| Rendering              | Program          | C source           |
 
-`PASS_PIPELINE` is an explicit tuple in `passes/program/__init__.py`; `optimize_program` runs it
-at the tail of lowering. Before `pack_workspace`, it inserts `hoist_reciprocals` when
-`reciprocal=True`, then scalar preparation and `widen_ranges` when `lanes != 1`. With widening,
-it skips the final scalar preparation pass. Imports do not determine execution order.
+A pass never modifies a graph. It traverses the graph and builds a new one, and the old graph stays
+valid. Scaly relies on this when it simplifies a private copy of a graph before lowering while
+keeping the original for differentiation and inspection. Interning keeps this cheap. A part of the
+graph that a pass leaves unchanged comes back as the very same nodes.
 
-- `hoist_invariant` splits a mapped callee whose arguments are partly the same at every trip into
-  a prologue called once before the loop and a body that receives the prologue's buffers as extra
-  inputs, so work derived only from broadcast arguments runs once per call instead of once per trip.
-- `scalarize` expands selected small float64 procedures and eligible pure callees into shared
-  scalar values, folds constants and identities, and schedules declarations and expression trees.
-  Expression lowering hints control selection; automatic expansion preserves the entry point.
-- `fold_tiles` shrinks repeated, load-only constant tables and replaces their indices with modulo
-  expressions. Pointer-visible tables retain their storage.
-- `fuse_ranges` expands scalar mapped callees and propagates their ranges through static assembly
-  views. Matching consumers share scalar expressions, unused derivative stores disappear, and
-  differing boundary demands become separate range intervals. Unsupported dependencies retain storage.
-- `prune_procedures` removes unreachable procedures while retaining solver-oracle roots.
-- `combine_scatter_sums` replaces sums of single-use zero-filled scatters with one zero-fill
-  and one scatter-add per term.
-- `fuse_elementwise` inlines a single-use elementwise, slice or gather producer into its one
-  consumer, collapsing chains into one loop and deleting the intermediate buffer round-trip.
-- `fold_arith` turns reads of constant buffers into constants, applies the arithmetic identities
-  shared with the expression dialect (`passes/arith.py`) inside loop bodies, and makes a loop that
-  fills a private buffer with one constant into a constant buffer.
-- `unroll_unit_loops` erases statically empty loops and inlines ordinary single-iteration loops.
-  Mapped ranges retain their scheduling boundary even when they contain one trip.
-- `fold_arith_after_unroll` resolves arithmetic and constant reads exposed by loop substitution
-  and prunes unused buffer declarations.
-- `hoist_reciprocals` replaces division by a loop-invariant divisor with multiplication by a
-  reciprocal computed before the loop. It requires explicit opt-in because rounding, overflow,
-  and underflow can change. Mutable or aliased divisors and possibly empty loops retain division.
-- `widen_ranges` splits eligible mapped or independent output ranges into chunks with explicit
-  vector lanes. It inlines eligible mapped callees, stages private storage by lane, and caps width
-  using peak scalar liveness. Tail loads clamp their indices and stores guard inactive lanes.
-  Reductions retain their original accumulation order. Scalar preparation runs before widening,
-  and workspace packing accounts for the expanded private storage.
-- `pack_workspace` lifetime-packs private buffers into shared slots and spills the large ones to
-  the caller's `w[]`, which is what `f_SZ_W` reports. Without it the largest benchmark cells
-  overflow the C stack.
-- `coalesce_stores` pairs adjacent stores after physical aliases are known.
-- `prepare_scalar` bounds statement expression depth using the scalarizer's shared scheduler.
+A sparse Jacobian shows how passes compose. Asking for one runs, in order:
 
-Each pass that rebuilds an expression tree goes through `scaly.ir.match.rewrite`, the iterative
-driver shared with the expression dialect (`passes/program/_common.py` holds the `rebuild_program`
-adapter), so expression depth never becomes Python stack depth; see
-[Lowering and optimization](lowering.md#deep-expressions).
+1. **Sparsity analysis.** Walks the expression graph and tracks which input elements each output
+   element can depend on. No numbers and no derivatives are involved, and the result is the
+   structural pattern of the Jacobian.
+2. **Coloring.** Groups the pattern's columns so that each group can share one forward-mode
+   direction. This works on the pattern alone.
+3. **Differentiation.** Applies the chain rule node by node for each direction, building new
+   expression nodes, then gathers the compressed results into an array of nonzero values. The
+   result is a new `Function` whose output carries the pattern.
 
-### Rendering: `codegen/c.py`, `codegen/abi.py`
+Nothing in that sequence knows the derivative will become C. The new `Function` is an expression
+graph like any other. You can differentiate it again to get a second derivative, call it inside a
+larger graph, or evaluate it. Evaluating it sends it down the same path as the original:
+simplification, lowering, program optimization and rendering. A numerical call then compiles the C
+and loads it.
 
-The renderer makes no lowering decisions. It walks the optimized program and spells each op in C
-through compact per-op maps, honoring the `sz_w` and workspace offsets the packer set. The output
-is one translation unit: `static` raw callee bodies (inline, or noinline for the clang
-workaround in `_force_noinline_raw`), then the exported universal-ABI entry, so only the root is
-exported and nested calls are direct.
+This is the model to keep in mind when reading the rest of Scaly. A new feature is usually a new
+pass or a new rule inside an existing pass. The question to ask is which dialect has the
+information the feature needs. Mathematical facts are in the expression dialect, and memory and
+loop facts are in the program dialect.
 
-`codegen/abi.py` owns the ABI itself: the entry signature, the status codes and symbol mangling.
-The typed layers on top are an API, not the ABI: the C header's structs render in `codegen/aot.py`,
-the C++ `Buffer` and namespace in `codegen/cpp.py`, and the CasADi 3.8 compatible symbols in
-`codegen/casadi.py`. The signature follows CasADi's and everything is specified in
-[The generated interface](generated_interface.md).
+## Where each part lives
 
-### Compiling: `codegen/aot.py`, `codegen/jit.py`
+| Part                                                | Location              |
+| --------------------------------------------------- | --------------------- |
+| Both dialects, their verifiers, the rewrite driver  | `src/scaly/ir/`       |
+| Tracing and the `Function` boundary                 | `src/scaly/function/` |
+| Differentiation and sparsity analysis               | `src/scaly/ad/`       |
+| Expression rewrites, lowering, program optimization | `src/scaly/passes/`   |
+| Rendering, compiling and loading                    | `src/scaly/codegen/`  |
 
-`codegen/aot.py` lowers once into a render context, and `CModule` reads everything off it: `body`
-eagerly, then `header`, `source` and `link_flags` as cached properties. `link_flags` must stay
-lazy; otherwise rendering a solver-bearing module requires the vendored libraries to be present
-just to produce text.
-
-`codegen/jit.py` consumes that same `CModule` and adds nothing to it. It keys the cache on a
-SHA-256 over the cache version, the ABI signature, the function name, the source text and the
-compile flags, so two functions sharing a source skeleton but not a symbol still get distinct
-artifacts. `_JIT_CACHE_VERSION` is bumped when generated output changes incompatibly. On Linux,
-solver-bearing artifacts load into an isolated linker namespace to keep vendored dependencies out
-of the host process.
-
-The CLI is `scaly_codegen`. `codegen/__init__.py` imports `.aot`, so running
-`python -m scaly.codegen.aot` directly would execute it a second time as `__main__` and leave two
-copies of the observer registry, letting a CLI render escape a recorder that was armed elsewhere.
-The `python -m scaly.codegen` shim remains available for compatibility.
-
-### Solvers: `solvers/`, `plugins/`
-
-`sc.problem(...)` declares a typed backend-free problem. `sc.solver(...)` returns a `Solver`
-wrapping a plain `Function` whose body is `ExprOp.SOLVER_CALL` nodes sharing a `SolverDescriptor`;
-the wrapper only fills in zero initial points and multipliers. Calling it with `Expr` leaves
-returns the declared expression tree, so a solver nests directly inside a larger graph. `SOLVER_CALL` is non-differentiable.
-
-The solver wrapper is the one sanctioned render path outside the program dialect.
-`codegen/solver.py` frames a body produced by the plugin's `render_wrapper` hook with scaly-owned
-stats storage and accessors; the plugin drives the vendored C API directly. Everything else in a
-solver-bearing graph, the oracle functions the wrapper calls and the host function that calls the
-solver, lowers through the program dialect like anything else, and `codegen/aot.py` orders the
-single translation unit.
-
-Backends ship as separate distributions under `plugins/`, discovered by entry point in
-`solvers/registry.py`. `solvers/paths.py` finds their vendored libraries and headers;
-`solvers/graph.py` answers the queries the backend asks about a graph (is this a solver, what does
-it reach, which flags does it need). The plugin contract is
-[Solver plugins](../dev/solver_plugins.md); the user-facing interface is
-[Solvers](../guide/solvers.md).
-
-### Observing: `viz/`
-
-`viz/recording.py` registers a factory into `codegen/aot.py`'s observer hook. When a function has
-been marked with `visualize(...)`, a render produces an observer that captures the expression
-graph, each Function's normalized outputs, the lowered program, each pass result, and the
-generated C. Nothing is recorded otherwise. `viz/graph.py` owns presentation (graph JSON, colors,
-labels), while the stable, diffable assembly text stays in `ir/text.py`, where the compiler owns
-it.
-
-## Where the rest is written down
-
-- [The intermediate representations](ir.md): the two dialects, their operations, types and verifiers
-- [Lowering and optimization](lowering.md): the rule registry, the passes, the known limits
-- [Differentiation](autodiff.md): how AD crosses calls and mapped structure
-- [The generated interface](generated_interface.md): the pointer ABI, then the C, C++ and CasADi layers on top of it
-- [Solvers](solvers.md): what typed problem and solver construction assemble underneath
-- [Influences](influences.md): what scaly took from CasADi, tinygrad, MLIR and JAX
-- [The codebase](../dev/codebase.md): the package map, import layers and where to add things
-- [Solver plugins](../dev/solver_plugins.md): the plugin protocol and the `render_wrapper` contract
+[The codebase](../dev/codebase.md) has the module-level map.

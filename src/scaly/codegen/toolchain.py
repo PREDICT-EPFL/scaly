@@ -15,6 +15,7 @@ from functools import lru_cache
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from ..solvers.paths import SolverLibraryError, backend_compile_flags, solver_discoverable, solver_loadable, solver_paths
 from ..utils.env import env_path
@@ -27,16 +28,20 @@ class Compiler:
 
 
 CPU_LEVELS = ("generic", "native", "x86-64-v3", "x86-64-v4", "apple-m4")
+type CpuLevel = Literal["generic", "native", "x86-64-v3", "x86-64-v4", "apple-m4"]
+type LaneCount = Literal["auto"] | Literal[1, 2, 4, 8]
+type CDialect = Literal["gnu", "c"]
+type VectorLibm = Literal["none", "glibc"]
 
 
 @dataclass(frozen=True, slots=True)
 class BuildRecipe:
   """CPU baseline, render policy, and compiler flags for one generated module."""
 
-  cpu: str = "generic"
-  lanes: int | str = "auto"
-  dialect: str = "gnu"
-  vector_libm: str = "none"
+  cpu: CpuLevel = "generic"
+  lanes: LaneCount = "auto"
+  dialect: CDialect = "gnu"
+  vector_libm: VectorLibm = "none"
   reciprocal: bool = False
 
   def __post_init__(self) -> None:
@@ -109,6 +114,7 @@ def native_recipe(compiler: str) -> BuildRecipe:
 
 
 def cache_root() -> Path:
+  """Return the JIT cache directory: ``SCALY_CACHE_DIR``, else ``$XDG_CACHE_HOME/scaly/jit``, else ``~/.cache/scaly/jit``."""
   override = env_path("SCALY_CACHE_DIR")
   if override is not None:
     return override
@@ -118,6 +124,10 @@ def cache_root() -> Path:
 
 
 def find_c_compiler() -> Compiler | None:
+  """Find the C compiler the JIT uses: ``SCALY_CC``, else ``CC``, else ``cc`` on ``PATH``.
+
+  Returns the compiler path and which of those three supplied it, or ``None`` if nothing is found.
+  """
   for key in ("SCALY_CC", "CC"):
     override = os.environ.get(key)
     if override:

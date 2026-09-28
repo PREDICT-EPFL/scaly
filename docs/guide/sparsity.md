@@ -1,141 +1,272 @@
 # Sparsity
 
-A constraint Jacobian in optimal control is mostly zeros, and the zeros have structure. Computing
-and storing the dense matrix wastes time and space, and the waste grows with the horizon. Scaly
-works out where the nonzeros can be, colors them and generates code that computes only those.
+Sparse derivative functions evaluate a compact vector of potentially nonzero
+entries, accompanied by a fixed matrix pattern. This is useful for multistage
+optimal control models, where each dynamics constraint depends on only a small
+part of the decision vector. The pattern comes from symbolic dependencies, not
+from numerical values observed during evaluation.
 
-## Where the nonzeros are
+## Structural and numerical zeros
+
+Consider a function from a four-element vector to a three-element vector:
+
+```python
+import numpy as np
+import scaly as sc
+
+@sc.function(sc.L("x", 4), sc.L("y", ...))
+def model(x: sc.Expr) -> sc.Expr:
+    return sc.stack([x[0] * x[1], x[2], x[3] * x[3]])
+
+sparse_jac = sc.sparse_jacobian(model, "y", "x")
+pattern = sparse_jac.output_sparsities[0]
+assert pattern is not None
+print(pattern.shape)  # (3, 4)
+print(pattern.nnz)    # 4
+print(pattern.rows)   # (0, 0, 1, 2)
+print(pattern.cols)   # (0, 1, 2, 3)
+```
+
+`output_sparsities` contains one entry per output. Ordinary dense outputs have
+`None` there, while sparse derivative outputs carry a `SparsityPattern` pattern.
+The assertion makes that distinction explicit to a type checker.
+
+The pattern uses coordinate format, abbreviated COO. The paired `rows` and
+`cols` arrays give the zero-based coordinates of each stored value, together
+with the full matrix `shape`.
+
+The full Jacobian is
+
+\[
+J(x)=\begin{bmatrix}
+x_1 & x_0 & 0 & 0 \\
+0 & 0 & 1 & 0 \\
+0 & 0 & 0 & 2x_3
+\end{bmatrix}.
+\]
+
+`nnz` is the number of entries that may be nonzero. Scaly determines the pattern
+from the calculation, before you provide input values. An entry remains in the
+pattern even if it happens to evaluate to zero at a particular input. Some
+operations produce a conservative pattern containing additional possible
+nonzeros.
+
+```python
+print(sparse_jac(np.zeros(4)))  # [0. 0. 1. 0.]
+print(pattern.nnz)             # 4
+```
+
+Three stored entries happen to be zero here. They are still present because
+other inputs make them nonzero. The pattern therefore stays valid across calls.
+Dropping entries based on one numerical evaluation would lose that property.
+
+## Compact values and matrix reconstruction
+
+A sparse derivative function returns a one-dimensional array of values. The
+pattern tells you where those values belong:
+
+```python
+values = sparse_jac(np.array([2.0, 3.0, 4.0, 5.0]))
+print(values)  # [ 3.  2.  1. 10.]
+
+J = np.zeros(pattern.shape)
+J[np.asarray(pattern.rows), np.asarray(pattern.cols)] = values
+print(J)
+# [[ 3.  2.  0.  0.]
+#  [ 0.  0.  1.  0.]
+#  [ 0.  0.  0. 10.]]
+```
+
+Keep the pattern alongside the values when passing them to another library.
+The [generated C header](codegen.md#sparse-output-patterns) contains the same
+index tables, so a C caller can reconstruct the matrix without Python.
+
+For direct expression construction, the sparse result bundles the two parts:
 
 ```python
 x = sc.sym("x", 4)
-y = sc.stack([x[0] * x[1], x[2], x[3] * x[3]])
-
-sp = sc.jacobian_sparsity(y, x)
-sp.shape      # (3, 4)
-sp.nnz        # 4
-sp.rows       # (0, 0, 1, 2)
-sp.cols       # (0, 1, 2, 3)
-```
-
-`jacobian_sparsity` is symbolic and value-independent. It answers where a nonzero can appear from
-the shape of the graph alone, so a structural zero is one that no input can make nonzero.
-
-It covers the structural and arithmetic operations exactly, `matmul` conservatively, and a `call`
-by chain rule through the callee. Propagation uses compressed sparse row (CSR) Boolean arrays
-internally, so horizon-shaped analysis stores dependencies instead of a dense output-by-input mask.
-Public patterns are `SparsityType` coordinate lists.
-
-This sparsity is used to construct and evaluate compact Jacobians and Hessians. It is not a general
-sparse tensor algebra: ordinary expression operations such as `matmul` and `dot` lower as dense
-arithmetic even when an operand carries a pattern. A conservative local `matmul` pattern can add
-possible nonzeros, but keeping each stage as a `vmap` callee keeps the assembled optimal-control
-derivative block sparse. Solver wrappers consume those compact patterns without densifying them.
-
-`SparsityType` holds the pattern as coordinates plus a shape, and converts:
-
-```python
-sp.to_mask()   # a dense boolean array, for inspection
-sp.to_csr()    # (row_ptr, col_ind, val_perm)
-sp.to_csc()    # (col_ptr, row_ind, val_perm)
-```
-
-The third element of `to_csr` and `to_csc` is a permutation, explained under
-[the ordering rule](#the-ordering-rule).
-
-## Compact values
-
-```python
+y = model(x)
 sj = sc.sparse_jacobian(y, x)
-sj.sparsity        # the pattern
-sj.values          # an Expr of shape (nnz,) holding only the nonzeros
-sj.to_dense()      # scatter them back into a dense matrix expression
+compact_expression = sj.values
+matrix_expression = sj.to_dense()
+pattern = sj.sparsity
 ```
 
-At the function level the pattern travels with the result:
-
-```python
-spj = sc.sparse_jacobian(fn, "y", "x")
-spj.output_sparsities[0].nnz
-```
-
-The pattern also reaches the generated C as static index tables in the header. See
-[the generated interface](../how_it_works/generated_interface.md#sparse-outputs).
+`sc.jacobian_sparsity(y, x)` obtains only the pattern. `pattern.to_mask()` returns
+a dense Boolean array for inspection.
 
 ## The ordering rule
 
-The compact value buffer is in `(rows, cols)` order, and that order is not necessarily sorted.
-The structured path emits nonzeros one `VMAP` piece at a time, so the coordinate list, not
-row-major order, says which value belongs where.
+Entry `values[k]` belongs at `(pattern.rows[k], pattern.cols[k])`. Do not assume
+the coordinates are sorted. Mapped functions can produce entries in stage order
+rather than matrix row order.
 
-To pair values with a sorted structure, use the permutation:
-
-```python
-row_ptr, col_ind, val_perm = sp.to_csr()
-values_csr = [values[k] for k in val_perm]
-```
-
-The C header carries the same tables (`_csr_val_perm`, `_csc_val_perm`), so Python and C agree by
-construction. Comparing two backends' compact buffers element by element without going through the
-pattern gives a false mismatch when the values are right and the orders differ.
-
-## How it stays cheap
-
-A dense Jacobian pushes the whole identity through forward mode, either as one batched pass
-carrying `x.size` seeds or as one pass per seed for the few operations that have no multi-seed
-rule. Either way the work scales with the number of inputs. A colored Jacobian scales with the
-number of colors: two columns share a color if no row has a nonzero in both, so their contributions
-cannot collide and one seed recovers both.
+Compressed sparse row and column formats, abbreviated CSR and CSC, require a
+specific ordering. Scaly returns the required permutation with the index arrays:
 
 ```python
-colors = sc.column_coloring(sp)   # one color per column
-groups = sc.color_groups(colors)  # the column indices belonging to each color
+row_ptr, col_ind, permutation = pattern.to_csr()
+values_csr = values[np.asarray(permutation, dtype=int)]
+
+col_ptr, row_ind, permutation = pattern.to_csc()
+values_csc = values[np.asarray(permutation, dtype=int)]
 ```
 
-For a square symmetric pattern, `sc.star_coloring(sp)` uses the symmetry needed to recover a
-Hessian from compressed forward products. It is a proper coloring with no two-colored path of
-three edges. It is not a distance-2 coloring, so leaves around a shared variable can reuse a color.
-
-The default path does better than coloring the global pattern when it can. If the output is a
-`VMAP` node, or a concatenation of them, over exactly the input, each piece is handled on the
-callee: compute the small local pattern, color it, push a constant seed matrix through one
-derivative of the callee and wrap the result back in a `VMAP`. The work is proportional to the
-callee, not to the number of iterations, so a hundred-stage constraint costs about what a
-one-stage constraint costs.
-
-This is why keeping repetition as [`vmap`](functions.md#regular-repetition-vmap) instead of a
-Python loop matters for anything horizon-shaped, and most of why scaly's generated sources stay
-small as problems grow. See [the numbers](../results/scalability.md).
-
-Anything that is not a `VMAP` piece falls back to coloring the global pattern, which is still far
-cheaper than dense. `sc.sparse_jacobian_reference` computes the dense Jacobian and gathers from it.
-It is slow and obviously correct, and it is what small tests check the fast paths against.
-
-## Hessians
-
-The same machinery gives compact Hessians, including Lagrangian ones:
+The `values` and `pattern` above can be converted to a SciPy matrix without
+forming a dense intermediate:
 
 ```python
-sc.sparse_hessian(fn, "f", "x")
-sc.sparse_lagrangian_hessian(fn, "x")
+from scipy.sparse import csr_matrix
+
+matrix = csr_matrix((values_csr, col_ind, row_ptr), shape=pattern.shape)
 ```
 
-The Hessian path symmetrizes its structural pattern and uses one global star coloring. This keeps
-the color count constant when a formal is shared across every iteration of a `VMAP` with stride 0
-(a global parameter), even though the Hessian then has a dense row and column. The structured
-`VMAP` Jacobian path stays one-sided and colors each local tile with `column_coloring`.
+The permutation may be trivial for a small example, but a caller must apply
+it for general patterns. Generated headers
+expose the corresponding
+`_csr_val_perm` and `_csc_val_perm` tables. See
+[generated sparse-output patterns](codegen.md#sparse-output-patterns).
 
-## Declaring sparsity on an input
+## Sparse Hessians
 
-A `TensorType` can carry a pattern, which the decorator accepts:
+Hessians are symmetric. If a solver needs only one triangle, request that
+triangle when constructing the derivative:
 
 ```python
-@sc.function(
-    sc.L("J", sc.TensorType((3, 4), sc.dtypes.float64, sparsity=sp)),
-    sc.L("out", ...),
-)
-def f(J: sc.Expr) -> sc.Expr:
-    ...
+@sc.function(sc.L("x", 4), sc.L("cost", ...))
+def cost(x: sc.Expr) -> sc.Expr:
+    return sc.sumsqr(x) + x[0] * x[1]
+
+sparse_hess = sc.sparse_hessian(cost, "cost", "x", triangle="lower")
+hess_values = sparse_hess(np.ones(4))
+hess_pattern = sparse_hess.output_sparsities[0]
+assert hess_pattern is not None
+lower = np.zeros(hess_pattern.shape)
+lower[np.asarray(hess_pattern.rows), np.asarray(hess_pattern.cols)] = hess_values
+H = lower + lower.T - np.diag(np.diag(lower))
+print(H)
+# [[2. 1. 0. 0.]
+#  [1. 2. 0. 0.]
+#  [0. 0. 2. 0.]
+#  [0. 0. 0. 2.]]
 ```
 
-The pattern's shape must match the tensor's exactly. This tells the graph about structure it could
-not otherwise infer, most usefully that a matrix coming in from outside is sparse.
+The choices are `"full"`, `"lower"`, and `"upper"`. The pattern still has the
+full matrix shape, but only contains entries in the selected triangle. To
+reconstruct a full symmetric matrix from one triangle, reflect off-diagonal
+entries and keep diagonal entries once.
+
+Adding `lower + lower.T` alone would double the diagonal. A matrix built from
+the compact lower triangle is not yet the full symmetric Hessian.
+
+`sc.sparse_lagrangian_hessian` supports the same choices. Built-in solver
+interfaces select the triangle their solver needs.
+
+## Sparse derivatives and mapped structure
+
+For independent stage calculations \(r_k=f(z_k)\), stacking the inputs and
+outputs gives a block-diagonal Jacobian:
+
+\[
+R(Z)=\begin{bmatrix}f(z_0)\\ f(z_1)\\ \vdots\\ f(z_{N-1})\end{bmatrix},
+\qquad
+\frac{\partial R}{\partial Z}=
+\begin{bmatrix}
+J_f(z_0)&0&\cdots&0\\
+0&J_f(z_1)&\cdots&0\\
+\vdots&\vdots&\ddots&\vdots\\
+0&0&\cdots&J_f(z_{N-1})
+\end{bmatrix}.
+\]
+
+[`vmap`](functions.md#regular-repetition-vmap) can be used to express this repetition directly:
+
+```python
+N = 4
+
+@sc.function(sc.L("z", 2), sc.L("residual", ...))
+def stage(z: sc.Expr) -> sc.Expr:
+    return sc.stack([z[0].sin() * z[1], z[0] + z[1] ** 2])
+
+@sc.function(sc.L("zs", 2 * N), sc.L("residuals", ...))
+def stages(zs: sc.Expr) -> sc.Expr:
+    return sc.vmap(stage, N, [zs])
+
+stage_jac = sc.sparse_jacobian(stages, "residuals", "zs")
+stage_pattern = stage_jac.output_sparsities[0]
+assert stage_pattern is not None
+print(stage_pattern.shape)  # (8, 8)
+print(stage_pattern.nnz)    # 16: four 2-by-2 blocks
+```
+
+Scaly constructs the stage derivative and evaluates it in a mapped loop. It
+stores the entries of those blocks without filling the zero blocks between
+them. The [mapped derivative example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/mapped_derivatives.py)
+also exports the function and Jacobian so you can inspect their generated C.
+
+Multiple-shooting constraints couple adjacent stages. For a defect
+\(d_k(z_k,z_{k+1})\), let \(A_k=\partial d_k/\partial z_k\) and
+\(B_k=\partial d_k/\partial z_{k+1}\). Their stacked Jacobian has the form
+
+\[
+\frac{\partial D}{\partial Z}=
+\begin{bmatrix}
+A_0&B_0&0&\cdots&0\\
+0&A_1&B_1&\cdots&0\\
+\vdots&&\ddots&\ddots&\vdots\\
+0&\cdots&0&A_{N-1}&B_{N-1}
+\end{bmatrix}.
+\]
+
+Overlapping input slices in `vmap` express these neighboring dependencies, as in
+the [multiple-shooting example](getting_started.md#bonus-repeated-stages-with-vmap).
+Each defect can be evaluated independently at the candidate states, even though
+the constraints couple them. Shared parameters can add columns spanning all
+stages, so a mapped calculation does not always have a block-diagonal Jacobian.
+
+The repeated derivative formula can remain in one loop body as the horizon
+grows. Evaluation work, stored values, and the
+[generated sparsity tables](codegen.md#sparse-output-patterns) still grow with
+that horizon. [Scalability results](../benchmarks/scalability.md) measure these
+costs separately.
+
+## No sparse arithmetic
+
+Compact derivatives and sparse solver matrices do not provide general sparse
+arithmetic inside an `Expr` graph. A `SparseJacobian` holds a pattern and an
+expression for its values. It does not support matrix multiplication directly.
+Converting it with `to_dense()` creates a dense matrix expression:
+
+```python
+def chain(x: sc.Expr) -> sc.Expr:
+    return x[:-1].sin() * x[1:]
+
+@sc.function(sc.G(sc.L("x", 6), sc.L("v", 6)), sc.L("jv", ...))
+def via_matrix(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    x, v = inputs
+    return sc.sparse_jacobian(chain(x), x).to_dense() @ v
+
+@sc.function(sc.G(sc.L("x", 6), sc.L("v", 6)), sc.L("jv", ...))
+def via_product(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    x, v = inputs
+    return sc.jvp(chain(x), x, v)
+
+data = (np.linspace(0.1, 0.6, 6), np.arange(1.0, 7.0))
+np.testing.assert_allclose(via_matrix(data), via_product(data))
+```
+
+Both compute \(J(x)v\). The second requests a Jacobian-vector product directly,
+without constructing the matrix. The
+[sparse JVP example](https://github.com/PREDICT-EPFL/scaly/blob/main/examples/sparse_jvp.py)
+exports both versions for comparison. Compiler simplification can remove some
+intermediates, but `to_dense() @ v` is not a sparse matrix multiplication API.
+
+!!! warning "Sparse constants"
+
+    `sc.const` does not accept SciPy sparse matrices. A sparse matrix accepted
+    by a numerical solver call cannot automatically be embedded in a symbolic
+    call. The [fixed-matrix control example](solvers.md#fixed-sparse-matrices-without-sparse-constants)
+    shows how to express such a problem without sparse constants.
+
+Scaly has no general sparse arithmetic. Sparse derivative construction and the
+solver interfaces still support complete optimal control workflows, including the [benchmark problems](../benchmarks/index.md).

@@ -5,10 +5,6 @@ Importing this package is what arms recording: ``recording.py`` registers into t
 imports ``viz`` (``docs/dev/codebase.md``).
 """
 
-from __future__ import annotations
-
-from typing import Any
-
 from .recording import (
   capture,
   clear_recordings,
@@ -19,14 +15,9 @@ from .recording import (
   unvisualize_function,
   visualize_function,
 )
+from .serve import serve
 
 visualize = visualize_function
-
-
-def serve(*args: Any, **kwargs: Any) -> None:
-  from .serve import serve as _serve
-
-  _serve(*args, **kwargs)
 
 
 __all__ = [

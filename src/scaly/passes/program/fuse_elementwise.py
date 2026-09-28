@@ -175,6 +175,3 @@ def _fuse_proc(proc: ProgramNode) -> ProgramNode:
     new_body.append(_expand_inlinables(stmt, inlinable))
 
   return prune_dead_buffers(_rebuild_proc(proc, params, new_body))
-
-
-__all__ = ["fuse_elementwise"]

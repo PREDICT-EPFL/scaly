@@ -30,7 +30,11 @@ if TYPE_CHECKING:
 
 
 class SolverLibraryError(ToolchainError):
-  """Raised when a requested solver shared library cannot be located or loaded."""
+  """Raised when a solver's shared library or C headers cannot be located or loaded.
+
+  Compiling or calling a function that reaches the solver raises it. The message lists the
+  locations searched, as ``scaly_toolchain`` reports them.
+  """
 
 
 @dataclass(frozen=True, slots=True)

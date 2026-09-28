@@ -10,7 +10,7 @@ from ..ad.forward import jvp
 from ..ad.reverse import vjp
 from ..ad.sparse import Triangle, _validate_triangle, sparse_hessian, sparse_jacobian
 from ..ir.expr import Expr
-from ..ir.types import SparsityType
+from ..ir.types import SparsityPattern
 from .model import DerivSpec
 
 
@@ -20,7 +20,7 @@ class Jac(DerivSpec):
 
   kind = "jac"
 
-  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityType | None, int | None]:
+  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityPattern | None, int | None]:
     return jacobian(self._out(outputs, self.of), self._in(inputs, self.wrt)), None, None
 
 
@@ -30,7 +30,7 @@ class Grad(DerivSpec):
 
   kind = "grad"
 
-  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityType | None, int | None]:
+  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityPattern | None, int | None]:
     return gradient(self._out(outputs, self.of), self._in(inputs, self.wrt)), None, None
 
 
@@ -40,7 +40,7 @@ class Fwd(DerivSpec):
 
   kind = "fwd"
 
-  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityType | None, int | None]:
+  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityPattern | None, int | None]:
     return jvp(self._out(outputs, self.of), self._in(inputs, self.wrt), self._in(inputs, f"fwd:{self.wrt}")), None, None
 
 
@@ -50,7 +50,7 @@ class Adj(DerivSpec):
 
   kind = "adj"
 
-  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityType | None, int | None]:
+  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityPattern | None, int | None]:
     return vjp((self._out(outputs, self.of),), (self._in(inputs, self.wrt),), (self._in(inputs, f"lam:{self.of}"),))[0], None, None
 
 
@@ -60,7 +60,7 @@ class SpJac(DerivSpec):
 
   kind = "spjac"
 
-  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityType | None, int | None]:
+  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityPattern | None, int | None]:
     sj = sparse_jacobian(self._out(outputs, self.of), self._in(inputs, self.wrt))
     return sj.values, sj.sparsity, sj.coloring_width
 
@@ -75,7 +75,7 @@ class Hess(DerivSpec):
   def output_name(self) -> str:
     return f"{self.kind}_{self.of}_{self.wrt}_{self.wrt}"
 
-  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityType | None, int | None]:
+  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityPattern | None, int | None]:
     y = self._out(outputs, self.of)
     x0 = self._in(inputs, self.wrt)
     return hessian(y, x0), None, None
@@ -95,7 +95,7 @@ class SpHess(DerivSpec):
   def output_name(self) -> str:
     return f"{self.kind}_{self.of}_{self.wrt}_{self.wrt}"
 
-  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityType | None, int | None]:
+  def build(self, inputs: Mapping[str, Expr], outputs: Mapping[str, Expr]) -> tuple[Expr, SparsityPattern | None, int | None]:
     y = self._out(outputs, self.of)
     x0 = self._in(inputs, self.wrt)
     sh = sparse_hessian(y, x0, triangle=self.triangle)

@@ -1,0 +1,173 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "closed_loop.summary.csv"
+  },
+  "transform": [
+    {
+      "calculate": "datum.problem === 'race_cars' ? 'Race-car' : datum.problem === 'npmpc' ? 'Neural-process MPC' : datum.problem === 'chain' ? 'Chain' : datum.problem === 'unbumpercars' ? 'Unbumpercars' : ''",
+      "as": "name"
+    },
+    {
+      "calculate": "datum.problem === 'race_cars' ? '0' : datum.problem === 'npmpc' ? '1' : datum.problem === 'chain' ? '2' : datum.problem === 'unbumpercars' ? '3' : ''",
+      "as": "order"
+    },
+    {
+      "calculate": "datum.problem === 'race_cars' ? 'Race-car MPC, horizon N' : datum.problem === 'npmpc' ? 'Neural-process MPC, horizon N' : datum.problem === 'chain' ? 'Chain of masses, M masses' : datum.problem === 'unbumpercars' ? 'Unbumpercars filter, C cars' : ''",
+      "as": "problem"
+    },
+    {
+      "calculate": "datum.solver === 'sqp' ? 'SQP' : 'IPOPT'",
+      "as": "solver_name"
+    },
+    {
+      "calculate": "datum.oracle === 'scaly' ? 'Scaly' : 'CasADi'",
+      "as": "provider"
+    },
+    {
+      "calculate": "datum.solver_time_ms_mean - datum.fe_time_ms_mean",
+      "as": "rest"
+    },
+    {
+      "fold": [
+        "fe_time_ms_mean",
+        "rest"
+      ],
+      "as": [
+        "part",
+        "ms"
+      ]
+    },
+    {
+      "calculate": "datum.part === 'fe_time_ms_mean' ? 'Function evaluation' : datum.part === 'rest' ? 'Rest of the solver' : ''",
+      "as": "part_name"
+    },
+    {
+      "calculate": "datum.part === 'rest' ? 1 : 0",
+      "as": "part_order"
+    },
+    {
+      "calculate": "datum.solver_name + ', ' + datum.provider",
+      "as": "config"
+    },
+    {
+      "calculate": "4 * datum.order + (datum.solver === 'sqp' ? 0 : 2) + (datum.oracle === 'scaly' ? 0 : 1)",
+      "as": "rank"
+    }
+  ],
+  "facet": {
+    "row": {
+      "field": "name",
+      "type": "nominal",
+      "title": null,
+      "sort": {
+        "field": "order",
+        "op": "min"
+      },
+      "header": {
+        "labelAngle": 0,
+        "labelAlign": "left",
+        "labelAnchor": "start",
+        "labelOrient": "top"
+      }
+    }
+  },
+  "resolve": {
+    "scale": {
+      "x": "independent",
+      "y": "independent"
+    }
+  },
+  "spec": {
+    "width": 480,
+    "height": {
+      "step": 22
+    },
+    "mark": {
+      "type": "bar",
+      "height": 16,
+      "cornerRadiusEnd": 0,
+      "stroke": "#ffffff",
+      "strokeWidth": 1
+    },
+    "encoding": {
+      "y": {
+        "field": "config",
+        "type": "nominal",
+        "title": null,
+        "sort": {
+          "field": "rank",
+          "op": "min"
+        }
+      },
+      "x": {
+        "field": "ms",
+        "type": "quantitative",
+        "stack": "zero",
+        "title": "Mean solver time per step, ms"
+      },
+      "color": {
+        "field": "provider",
+        "title": "Provider",
+        "scale": {
+          "domain": [
+            "Scaly",
+            "CasADi"
+          ],
+          "range": [
+            "#1baf7a",
+            "#e34948"
+          ]
+        }
+      },
+      "opacity": {
+        "field": "part_name",
+        "title": "Part",
+        "sort": [
+          "Function evaluation",
+          "Rest of the solver"
+        ],
+        "scale": {
+          "domain": [
+            "Function evaluation",
+            "Rest of the solver"
+          ],
+          "range": [
+            1,
+            0.35
+          ]
+        },
+        "legend": {
+          "symbolFillColor": "#52514e"
+        }
+      },
+      "order": {
+        "field": "part_order"
+      },
+      "tooltip": [
+        {
+          "field": "name",
+          "title": "Problem"
+        },
+        {
+          "field": "config",
+          "title": "Controller"
+        },
+        {
+          "field": "part_name",
+          "title": "Part"
+        },
+        {
+          "field": "ms",
+          "title": "ms",
+          "format": ".3f"
+        },
+        {
+          "field": "solver_time_ms_mean",
+          "title": "Total, ms",
+          "format": ".3f"
+        }
+      ]
+    }
+  }
+}

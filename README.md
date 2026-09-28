@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scaly-wordmark-dark.svg">
-    <img alt="scaly" src="docs/assets/scaly-wordmark.svg" width="320">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/PREDICT-EPFL/scaly/main/docs/assets/scaly-wordmark-dark.svg">
+    <img alt="scaly" src="https://raw.githubusercontent.com/PREDICT-EPFL/scaly/main/docs/assets/scaly-wordmark.svg" width="320">
   </picture>
 </p>
 
@@ -51,8 +51,7 @@ uv run scaly_codegen mymodule:solve -o generated/
 ## Features
 
 - Wrap symbolic expressions in functions that you can compose freely.
-  Differentiating (e.g. with `sc.gradient`) or batching (e.g. with `sc.vmap`) a
-  function creates another function.
+  Differentiating a function (e.g. with `sc.gradient`) creates another function.
 - The input-output dependencies of a function are analyzed statically to
   generate efficient code for sparse Jacobians and Hessians.
 - Repeated structure (from `sc.vmap`) stays a loop. A horizon of identical
@@ -69,8 +68,8 @@ uv run scaly_codegen mymodule:solve -o generated/
 
 ## Installation
 
-Scaly requires with Python 3.12 or newer, on Linux and macOS, and only requires
-a C compiler to be pre-installed. Using [uv](docs.astral.sh/uv):
+Scaly requires Python 3.12 or newer, on Linux and macOS, and only requires
+a C compiler to be pre-installed. Using [uv](https://docs.astral.sh/uv/):
 ```bash
 # install just the core library
 uv add scaly    
@@ -81,15 +80,15 @@ uv add "scaly[solvers]"
 ```
 You can of course also use pip by replacing `uv add` with `pip install`.
 
-See [Installation](docs/guide/installation.md) for more details.
+See [Installation](https://github.com/PREDICT-EPFL/scaly/blob/main/docs/guide/installation.md) for more details.
 
 ## Documentation
 
-The [documentation](docs/index.md) has a user guide, a description of how the
+The [documentation](https://github.com/PREDICT-EPFL/scaly/blob/main/docs/index.md) has a user guide, a description of how the
 compiler works, benchmark results against CasADi, and the API reference.
 
 Scaly is still in development and the public API can still change between minor
-versions. See [versioning policy](docs/dev/versioning.md) for more details.
+versions. See [versioning policy](https://github.com/PREDICT-EPFL/scaly/blob/main/docs/dev/versioning.md) for more details.
 
 ## Acknowledgements 
 
@@ -106,4 +105,4 @@ responsible for the result.
 
 ## License
 
-BSD-2-Clause. See [LICENSE.md](LICENSE.md).
+BSD-2-Clause. See [LICENSE.md](https://github.com/PREDICT-EPFL/scaly/blob/main/LICENSE.md).

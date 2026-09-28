@@ -7,7 +7,7 @@ import tempfile
 import numpy as np
 
 from scaly import Solver
-from scaly.ir.types import SparsityType
+from scaly.ir.types import SparsityPattern
 from .external import external_nlp
 
 
@@ -110,8 +110,8 @@ def build_casadi_external_sqp(
     params=(("p", (np_,)),),
     source=source,
     raw_symbols=raw_symbols,
-    jac_sparsity=SparsityType((n_eq + n_ineq, n), tuple(int(v) for v in jac_rows), tuple(int(v) for v in jac_cols)),
-    hess_sparsity=SparsityType((n, n), tuple(int(v) for v in hess_rows), tuple(int(v) for v in hess_cols)),
+    jac_sparsity=SparsityPattern((n_eq + n_ineq, n), tuple(int(v) for v in jac_rows), tuple(int(v) for v in jac_cols)),
+    hess_sparsity=SparsityPattern((n, n), tuple(int(v) for v in hess_rows), tuple(int(v) for v in hess_cols)),
     options=options,
   )
   setattr(solver, "_benchmark_base", base)

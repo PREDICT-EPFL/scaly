@@ -32,7 +32,7 @@ def _zeros(tree: Any, symbolic: bool) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class Solver[SV, NV, SP, NP]:
-  """A compiled solver called with its parameters; the initial point and multipliers default to zero.
+  """A compiled solver called with its parameters. The initial point and multipliers default to zero.
 
   ``function`` is the plain ``Function`` with the full five-group signature, for code generation,
   ``input_names`` and anything else that takes a ``Function``. Its four outputs are its first four

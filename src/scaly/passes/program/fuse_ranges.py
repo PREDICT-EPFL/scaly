@@ -220,7 +220,7 @@ def _fuse(proc: ProgramNode, procs: dict[str, ProgramNode]) -> ProgramNode:
       return proc
   if any((ref.reads | ref.writes) & produced for i, ref in enumerate(refs) if first <= i <= last and i not in region):
     return proc
-  declarations = {n.attrs["name"]: n for n in (*params, *body) if n.op in {ProgramOp.PARAM, ProgramOp.BUFFER}}
+  declarations = {n.attrs["name"]: n for n in (*params, *body) if n.op == ProgramOp.BUFFER}
   constant_values = {name: n.attrs["values"] for name, n in declarations.items() if "values" in n.attrs}
   constants = {
     name: np.asarray(n.attrs["values"], dtype=np.int64) for name, n in declarations.items() if "values" in n.attrs and n.dtype == p.dtypes.int64

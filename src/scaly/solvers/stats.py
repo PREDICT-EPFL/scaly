@@ -58,6 +58,8 @@ class ScalySolveStatus(enum.IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class SolverStatus:
+  """A short solve summary from ``SolverStats.to_solver_status()``: the status, iterations and oracle evaluation counts."""
+
   code: int
   name: str
   iter: int = 0
@@ -79,6 +81,13 @@ class CSolverStats(ctypes.Structure):
 
 @dataclass(frozen=True, slots=True)
 class SolverStats:
+  """The statistics of one numerical solve, as returned by ``Solver.stats()``.
+
+  The fields mirror the generated ``scaly_solver_stats`` struct, whose layout and meaning are
+  described on the generated-interface page of *How it works*. Diagnostics
+  a backend does not report are zero.
+  """
+
   version: int
   status: ScalySolveStatus
   native_status: int
@@ -108,6 +117,7 @@ class SolverStats:
     return cls(**{name: ScalySolveStatus(raw) if name == "status" else raw for name, _ in STATS_FIELDS if (raw := getattr(value, name)) is not None})
 
   def to_solver_status(self) -> SolverStatus:
+    """Summarize these statistics. ``ok`` holds for ``OK`` and ``ACCEPTABLE``."""
     counts = {name: getattr(self, name) for name, _ in STATS_FIELDS if name.startswith("n_eval_")}
     return SolverStatus(
       code=int(self.status),

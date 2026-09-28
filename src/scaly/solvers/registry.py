@@ -39,7 +39,7 @@ class SolverPluginError(RuntimeError):
 
 class SolverBackend(Protocol):
   """The full solver plugin protocol: packaging metadata plus the C wrapper
-  template. Solves always run through the generated C wrapper — plugins ship
+  template. Solves always run through the generated C wrapper, and plugins ship
   no Python solve path."""
 
   name: str

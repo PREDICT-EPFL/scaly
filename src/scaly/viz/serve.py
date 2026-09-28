@@ -383,6 +383,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(*, host: str = "127.0.0.1", port: int = 8000, path: str | Path | None = None, open_browser: bool = False) -> None:
+  """Serve the recordings at ``path``, by default ``recording_path()``, until interrupted. The ``scaly_viz`` command runs this."""
   recording_file = Path(path) if path is not None else recording_path()
   server = VizServer((host, port), recording_file)
   url = f"http://{host}:{port}"

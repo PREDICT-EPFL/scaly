@@ -429,7 +429,7 @@ measurements behind each one are the reason the change was scoped the way it was
 4. **Oracle cost.** The DT network is `6 -> 256 -> 128 -> 3`, with 35,075 weights against
    the CT model's 4,803. The oracle evaluates the one-step DT model once, while the CT path
    evaluates its smaller network four times for RK4. That is 34,688 versus 18,688
-   multiply-accumulates per car per step. The [current results](../../../docs/results/index.md)
+   multiply-accumulates per car per step. The [current results](../../../docs/benchmarks/index.md)
    own the measured solver and function-evaluation costs.
 
 ### The envelope refit: the constant does double duty
@@ -688,8 +688,8 @@ Instrumentation recorded per step (from the `scaly_solver_stats` struct):
 Both IPOPT providers use the same library, nonlinear program, options, warm starts, and compiled C
 boundary. The SQP providers likewise share one solver implementation and differ only in their
 generated oracles. This README does not retain copied timing tables. See the
-[current closed-loop results](../../../docs/results/index.md) and the
-[current Hessian sweep](../../../docs/results/scalability.md).
+[current closed-loop results](../../../docs/benchmarks/index.md) and the
+[current Hessian sweep](../../../docs/benchmarks/scalability.md).
 
 ## Scaly features closed by this prototype
 

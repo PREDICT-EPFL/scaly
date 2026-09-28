@@ -28,8 +28,7 @@ def type_asm(t: TensorType) -> str:
   shape = "x".join(str(d) for d in t.shape)
   dims = f"{shape}x" if shape else ""
   diff = " diff" if t.diff else ""
-  sparse = " sparse" if t.sparsity is not None else ""
-  return f"tensor<{dims}{t.dtype.name}{diff}{sparse}>"
+  return f"tensor<{dims}{t.dtype.name}{diff}>"
 
 
 def _memref_asm(n: ProgramNode) -> str:
@@ -371,6 +370,3 @@ def _format_scalar_or_view(n: ProgramNode) -> str:
   if n.op == ProgramOp.VIEW:
     return _format_view(n)
   return _format_scalar(n)
-
-
-__all__ = ["format_program", "render_expr_assembly", "render_program_assembly", "type_asm"]

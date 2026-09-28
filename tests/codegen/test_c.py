@@ -48,9 +48,6 @@ def test_c_api_header_exposes_pointer_abi_and_typed_buffers() -> None:
   assert "static inline int f_call(const f_x_t* x, f_y_t* y, f_workspace_t* workspace)" in header
   assert "casadi" not in header
 
-  bare = render_c_api_header(f, typed_buffers=False)
-  assert "f_x_t" not in bare and "f_call" not in bare and "SCALY_ALIGNAS" not in bare
-
 
 def test_c_api_header_exposes_sparse_output_metadata() -> None:
   @sc.function(sc.L("x", 3), sc.L("y", ...), name="f")

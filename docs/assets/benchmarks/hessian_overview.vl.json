@@ -1,0 +1,227 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "sweep.summary.csv"
+  },
+  "transform": [
+    {
+      "filter": "datum.successful > 0"
+    },
+    {
+      "calculate": "datum.workload === 'race_cars' ? '0' : datum.workload === 'npmpc' ? '1' : datum.workload === 'chain' ? '2' : datum.workload === 'unbumpercars' ? '3' : ''",
+      "as": "order"
+    },
+    {
+      "calculate": "datum.workload === 'race_cars' ? 'Race-car MPC, horizon N' : datum.workload === 'npmpc' ? 'Neural-process MPC, horizon N' : datum.workload === 'chain' ? 'Chain of masses, M masses' : datum.workload === 'unbumpercars' ? 'Unbumpercars filter, C cars' : ''",
+      "as": "problem"
+    },
+    {
+      "calculate": "datum.backend === 'scaly' ? 'Scaly' : datum.backend === 'casadi_sx' ? 'CasADi SX' : datum.backend === 'casadi_mx' ? 'CasADi MX' : datum.backend === 'casadi_call_mx' ? 'CasADi MX with calls' : datum.backend === 'casadi_map_sx' ? 'CasADi mapped SX' : datum.backend === 'casadi_mx_gemm' ? 'CasADi MX with GEMM' : '' || datum.backend",
+      "as": "encoding"
+    },
+    {
+      "calculate": "datum.runtime_ns_mean / 1000",
+      "as": "value"
+    },
+    {
+      "calculate": "datum.backend === 'scaly' ? 'Scaly' : 'CasADi, fastest encoding'",
+      "as": "provider"
+    },
+    {
+      "aggregate": [
+        {
+          "op": "min",
+          "field": "value",
+          "as": "value"
+        },
+        {
+          "op": "argmin",
+          "field": "value",
+          "as": "best"
+        }
+      ],
+      "groupby": [
+        "problem",
+        "order",
+        "size",
+        "provider"
+      ]
+    },
+    {
+      "calculate": "datum.best.encoding",
+      "as": "encoding"
+    },
+    {
+      "calculate": "datum.best.runtime_ns_cv",
+      "as": "runtime_ns_cv"
+    }
+  ],
+  "facet": {
+    "field": "problem",
+    "type": "nominal",
+    "title": null,
+    "sort": {
+      "field": "order",
+      "op": "min"
+    }
+  },
+  "columns": 2,
+  "resolve": {
+    "scale": {
+      "x": "independent",
+      "y": "independent"
+    }
+  },
+  "spec": {
+    "width": 300,
+    "height": 190,
+    "layer": [
+      {
+        "mark": "line",
+        "encoding": {
+          "x": {
+            "field": "size",
+            "type": "quantitative",
+            "title": "Size",
+            "scale": {
+              "type": "log",
+              "nice": false
+            },
+            "axis": {
+              "format": "~g",
+              "grid": false,
+              "tickCount": 6
+            }
+          },
+          "y": {
+            "field": "value",
+            "type": "quantitative",
+            "title": "Hessian evaluation, µs",
+            "scale": {
+              "type": "log"
+            },
+            "axis": {
+              "format": "~g",
+              "labelExpr": "abs(log(datum.value) / LN10 - round(log(datum.value) / LN10)) < 1e-6 ? datum.label : ''",
+              "gridOpacity": {
+                "condition": {
+                  "test": "abs(log(datum.value) / LN10 - round(log(datum.value) / LN10)) < 1e-6",
+                  "value": 1
+                },
+                "value": 0
+              }
+            }
+          },
+          "color": {
+            "field": "provider",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "CasADi, fastest encoding"
+              ],
+              "range": [
+                "#1baf7a",
+                "#e34948"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "mark": {
+          "type": "point",
+          "stroke": "#ffffff",
+          "strokeWidth": 1.5
+        },
+        "encoding": {
+          "x": {
+            "field": "size",
+            "type": "quantitative",
+            "title": "Size",
+            "scale": {
+              "type": "log",
+              "nice": false
+            },
+            "axis": {
+              "format": "~g",
+              "grid": false,
+              "tickCount": 6
+            }
+          },
+          "y": {
+            "field": "value",
+            "type": "quantitative",
+            "title": "Hessian evaluation, µs",
+            "scale": {
+              "type": "log"
+            },
+            "axis": {
+              "format": "~g",
+              "labelExpr": "abs(log(datum.value) / LN10 - round(log(datum.value) / LN10)) < 1e-6 ? datum.label : ''",
+              "gridOpacity": {
+                "condition": {
+                  "test": "abs(log(datum.value) / LN10 - round(log(datum.value) / LN10)) < 1e-6",
+                  "value": 1
+                },
+                "value": 0
+              }
+            }
+          },
+          "color": {
+            "field": "provider",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "CasADi, fastest encoding"
+              ],
+              "range": [
+                "#1baf7a",
+                "#e34948"
+              ]
+            }
+          },
+          "shape": {
+            "field": "provider",
+            "title": null,
+            "scale": {
+              "domain": [
+                "Scaly",
+                "CasADi, fastest encoding"
+              ],
+              "range": [
+                "circle",
+                "square"
+              ]
+            }
+          },
+          "tooltip": [
+            {
+              "field": "provider",
+              "title": "Provider"
+            },
+            {
+              "field": "encoding",
+              "title": "Encoding"
+            },
+            {
+              "field": "size",
+              "title": "Size"
+            },
+            {
+              "field": "value",
+              "title": "Hessian evaluation, µs",
+              "format": ",.4~r"
+            },
+            {
+              "field": "runtime_ns_cv",
+              "title": "Coefficient of variation",
+              "format": ".1%"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

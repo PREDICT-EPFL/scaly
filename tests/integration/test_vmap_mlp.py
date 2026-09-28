@@ -15,6 +15,7 @@ import pytest
 
 import scaly as sc
 from scaly.codegen import render_c_source
+from scaly.codegen.toolchain import LaneCount
 
 # Two positions, two velocities and one input, so the stage closes its position rows by trapezoidal
 # integration exactly as a second-order mechanical system does.
@@ -224,7 +225,7 @@ def test_lagrangian_hessian_through_the_vmap_matches_finite_differences() -> Non
 
 
 @pytest.mark.parametrize("lanes", [1, "auto"])
-def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows(lanes: int | str) -> None:
+def test_vmapped_source_is_constant_in_the_horizon_where_the_unrolled_twin_grows(lanes: LaneCount) -> None:
   """Both kernels stay one loop nest however many stages there are, and the twin shows it matters.
 
   The Hessian is the one that pins the *cost* to its VMAP form: written as a Python reduction over

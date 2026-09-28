@@ -13,7 +13,7 @@ from ..ad.sparsity import _jac_mask
 from ..function import Function
 from ..function.tree import G, L, Tree
 from ..ir.expr import Expr, ExprOp, concat, substitute, topo
-from ..ir.types import SparsityType, TensorType
+from ..ir.types import SparsityPattern, TensorType
 from ..passes.expr import simplify_cse_fixpoint
 from .model import SolverDescriptor, descriptor_function
 from .nlp import _lowered
@@ -27,7 +27,7 @@ class NotQuadratic(ValueError):
   """A problem rejected because a QP oracle depends nonlinearly on its variables."""
 
 
-def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *, triu: bool = False) -> SparsityType:
+def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *, triu: bool = False) -> SparsityPattern:
   """Return the structural matrix pattern in compressed sparse column order."""
   nrow, ncol = mat.shape
   vec = mat.vec()
@@ -41,10 +41,10 @@ def _qp_matrix_sparsity(mat: Expr, params: Sequence[Expr], probe: np.ndarray, *,
   if rows.size == 0:
     rows, cols = np.array([0]), np.array([0])
   order = np.lexsort((rows, cols))
-  return SparsityType((nrow, ncol), tuple(int(row) for row in rows[order]), tuple(int(col) for col in cols[order]))
+  return SparsityPattern((nrow, ncol), tuple(int(row) for row in rows[order]), tuple(int(col) for col in cols[order]))
 
 
-def _gathered(mat: Expr, sparsity: SparsityType) -> Expr:
+def _gathered(mat: Expr, sparsity: SparsityPattern) -> Expr:
   """Return compact matrix values in the pattern's compressed sparse column order."""
   flat = np.asarray(sparsity.rows, dtype=np.int64) * mat.shape[1] + np.asarray(sparsity.cols, dtype=np.int64)
   return mat.vec().gather(flat)
@@ -240,9 +240,7 @@ def build_qp[SV, NV, SP, NP](
   oracle_names.extend(("x_lb", "x_ub"))
   oracle = Function._from_exprs(f"{name}_oracle", params, oracle_outputs, problem.params.names, tuple(f"qp:{output}" for output in oracle_names))
 
-  solver_vars = problem.vars.with_types(
-    tuple(TensorType(expr.shape, expr.type.dtype, expr.type.sparsity, diff=False) for expr in problem._var_symbols)
-  )
+  solver_vars = problem.vars.with_types(tuple(TensorType(expr.shape, expr.type.dtype, diff=False) for expr in problem._var_symbols))
   input_tree = G(
     solver_vars,
     solver_vars.relabel("lam:"),

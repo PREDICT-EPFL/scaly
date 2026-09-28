@@ -827,7 +827,7 @@ class ScalyDTCBFSafetyFilter:
   def dump_c(self, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     nlp = self.nlp.function
-    module = render_c_module(nlp, header_name=f"{nlp.name}.h", source_name=f"{nlp.name}.c", typed_buffers=False)
+    module = render_c_module(nlp, header_name=f"{nlp.name}.h", source_name=f"{nlp.name}.c")
     (out_dir / module.header_name).write_text(module.header)
     (out_dir / module.source_name).write_text(module.source)
     (out_dir / "solver.txt").write_text(f"{module.source_name}: {module.source.count(chr(10)) + 1} lines\n")

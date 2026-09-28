@@ -337,7 +337,7 @@ which is what decides whether the `__builtin_elementwise_*` option earns its lin
 
 ## 5. The x86 reference machine, 2026-09-22 (C-81)
 
-Same variants on the reference machine of `docs/results/fairness.md` (Ryzen 9 7940HS, Zen 4 with
+Same variants on the reference machine of `docs/benchmarks/fairness.md` (Ryzen 9 7940HS, Zen 4 with
 AVX-512, glibc 2.39, `performance` governor, boost off, pinned to one core), protocol flags
 `-O3 -march=native -fno-math-errno`, gcc 13.3 (the JIT's compiler), clang 20.1 and a native
 `zig cc` (zig 0.16, clang 21). Best of 5 × 20000 calls; every number repeated within 3% except the `-ffast-math` rows, which vary by 10%. All

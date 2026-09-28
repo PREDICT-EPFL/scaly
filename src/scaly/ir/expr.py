@@ -123,6 +123,9 @@ COMMON_OPS = COMMON_STRUCTURAL | COMMON_ELEMENTWISE_UNARY | COMMON_ELEMENTWISE_B
 
 @dataclass(frozen=True, slots=True)
 class OpInfo:
+  """What the compiler knows about one ``ExprOp``: its arity (``None`` for variadic), its NumPy
+  evaluation where it has one, and whether it has derivative rules. ``OP_INFO`` holds one per op."""
+
   op: ExprOp
   arity: int | None
   numpy: Callable[..., np.ndarray | np.generic] | None = None
@@ -210,6 +213,13 @@ def _intern_key(
 
 @dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
 class Expr:
+  """One node of the expression graph: an op, its argument nodes and the resulting ``TensorType``.
+
+  Nodes are immutable and interned, so building the same expression twice returns the same
+  object. Create leaves with ``sym`` and ``const``, then combine them with the operators, methods
+  and builders below.
+  """
+
   op: ExprOp | str
   args: tuple[Expr, ...] = ()
   type: TensorType = field(default_factory=TensorType)
@@ -271,12 +281,12 @@ class Expr:
     diff: bool = True,
     lowering: Lowering = "auto",
   ) -> Expr:
-    """Create a named symbolic input — the leaf every graph is built from.
+    """Create a named symbolic input, the leaf every graph is built from.
 
     Args:
       name: the input's name, which becomes its name on any ``Function`` declaring it.
       shape: an ``int`` for a rank-1 shape, a tuple as given, or ``None`` for a scalar.
-      dtype: the element type; ``float64`` unless you say otherwise.
+      dtype: the element type, ``float64`` unless you say otherwise.
       diff: whether derivatives with respect to this input are meaningful. Setting it to
         ``False`` tells AD the input is a constant parameter, so terms through it vanish.
     """
@@ -332,11 +342,20 @@ class Expr:
     return Expr(self.op, self.args, self.type, self.name, self.value, self.attrs, lowering)
 
   def scalar(self) -> Expr:
-    """Request scalarized code: expand eligible float64 procedures into scalar calculations, overriding automatic size limits."""
+    """Return this expression with a hint to expand its procedure into straight-line scalar code.
+
+    The hint overrides the automatic size limits and applies to the entry point too. Only
+    procedures whose values are all ``float64`` expand, and a ``block`` hint in the same function
+    wins. See the lowering page of *How it works* for the policy.
+    """
     return self.with_lowering("scalar")
 
   def block(self) -> Expr:
-    """Keep the containing procedure in loopy form, retaining buffers and loops during scalarization."""
+    """Return this expression with a hint to keep its procedure as loops over buffers.
+
+    The procedure is not expanded into scalar code and survives as its own C procedure. Every other
+    optimization still runs on it.
+    """
     return self.with_lowering("block")
 
   def opaque(self) -> Expr:
@@ -542,7 +561,7 @@ def promote_dtype(*exprs: Expr) -> DType:
   first = exprs[0].type.dtype
   for e in exprs[1:]:
     if e.type.dtype != first:
-      raise TypeError(f"mixed-dtype operation not yet supported: {first} vs {e.type.dtype}; insert an explicit cast")
+      raise TypeError(f"mixed-dtype operation not supported: {first} vs {e.type.dtype}; give all operands the same dtype")
   return first
 
 

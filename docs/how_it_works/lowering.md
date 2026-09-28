@@ -1,294 +1,510 @@
 # Lowering and optimization
 
-Lowering turns a `Function`, a graph of values, into a program: loops, buffers, loads and stores.
-It is the only path from the expression dialect to generated code. There is no second renderer
-and no interpreter behind it, so anything lowering cannot express raises.
+Lowering is the one step from the expression dialect to the program dialect,
+described in the [architecture overview](architecture.md#why-two-dialects). This
+page shows what the first program looks like and what each optimization pass
+then does to it. Every listing is real output. The listings trim the attributes
+of `prog.proc` lines, and trim more where they say so.
 
-## The rule registry
+## One loop per operation
 
-`passes/lowering.py` dispatches on `ExprOp` through a registry. Each rule is registered with
-`@lowers(...)` and is responsible for one operation:
-
-```python
-@lowers(ExprOp.RESHAPE)
-def _lower_reshape(ctx: LowerCtx, node: Expr) -> None:
-    ...
-```
-
-The elementwise family is the exception: every unary op shares a single rule driven by the
-`_UNARY` map from `ExprOp` to `ProgramOp`, and every binary op shares another. Adding `asinh` is
-therefore a map entry; adding a new structural operation is a rule.
-
-`lower_function` walks the graph in topological order, emits one procedure per reached `Function`,
-deduplicates callees so a block used a hundred times is lowered once, runs the optimization
-pipeline, and verifies the result before returning it.
-
-Before allocating buffers, lowering normalizes a private copy of each ordinary Function's outputs
-with the expression rewrite rules. The copy keeps the declared inputs and output metadata.
-Lowering captures the Function's effective hint before rewriting and applies it to the procedure
-without copying shared output expressions. The user's graph and the graph used by differentiation
-stay intact.
-
-Covered today: elementwise unary and binary with NumPy broadcasting; `reshape` as an alias;
-`const` of any size through a constant buffer; general `slice` including integer,
-multi-dimensional and strided forms; `sum`; `matmul` up to rank 2; `transpose` up to rank 4;
-`gather` and `scatter` of any size through a `static const` index table; `stack` and `concat` on
-any axis; `call` across multiple procedures; and `VMAP`. Solver calls use `ExprOp.SOLVER_CALL` and
-a callee carrying a solver descriptor. The solver callee stays opaque and its wrapper is rendered
-separately, while its oracle functions lower normally.
-
-Not covered: device placement other than the host, and the operations listed as absent in
-[the expression dialect](ir.md#operations). Both raise `LoweringError`.
-
-## Program forms
-
-Loopy code, or loop form, keeps buffers and loops. Scalarized code, or scalar form, expands
-eligible procedures into scalar calculations. Both are forms of the program dialect, and one
-program can contain procedures in both forms. Loopy code can still contain scalar calculations
-and undergo optimization. The `.block()` hint requests loopy form; it does not mean matrix tiling
-or disabling optimization.
-
-## The optimization pipeline
-
-`optimize_program` runs the explicit `PASS_PIPELINE` sequence in `passes/program/__init__.py`
-at the tail of lowering, between the initial program and the verifier. Each pass has its own
-module. Adding an optimization means adding its function to this sequence at the required
-position. Imports do not determine execution order.
-
-The sequence starts with hoisting and scalar expansion, then cleans up loops and storage.
-Optional reciprocal hoisting and lane widening run before workspace packing. Scalar expressions
-are prepared before widening, or at the end of the pipeline when widening is disabled.
-
-### `hoist_invariant`
-
-Runs first, on the loop-shaped program. A `VMAP` that broadcasts an argument (stride 0) lowers to
-a loop whose call passes the same pointer at every trip, but the callee cannot know that and
-recomputes everything derived from it. The pass finds, inside the callee, the private buffers
-written only by statements that read invariant inputs, constant buffers and other invariant
-buffers, and splits the callee: a `_hoist_<positions>` prologue computes those buffers once before
-the loop, and a `_hoisted_<positions>` body takes them as extra inputs. The suffix names the
-invariant argument positions, so one callee mapped two ways gets two distinct splits. A buffer
-that any per-trip statement also writes, such as a zero-filled accumulator, stays in the body.
-Call sites whose arguments all vary keep the original callee, which is dropped once nothing calls
-it.
-
-Under `auto` the prologue has `scalarize_mode="inline"`: `scalarize` inlines it into an expanding
-caller but never expands it on its own, since code that runs once per call gains nothing from
-expansion and would grow the source with the invariant argument's size. Other selection modes are
-`disabled` and `procedure`; the separate lowering hint controls automatic budgets. Generated
-procedure names reserve existing names and separate argument positions unambiguously. Opaque and
-solver-bearing calls stay in place.
-
-### `scalarize`
-
-Expands selected float64 procedures before any buffer fusion or workspace reuse. It substitutes
-constant loop indices, tracks the current scalar value of each buffer element, and expands
-eligible pure callees. Views become scalar references, repeated expressions share one value, and
-constant arithmetic and zero/one identities fold per element. Reductions keep their original
-accumulation order. Shared values become typed scalar declarations. Single-use arithmetic stays
-in expression trees, with a temporary inserted at depth 32 to bound rendering depth and C parser
-nesting.
-
-The `Expr.lowering` hint selects the containing procedure:
-
-- `expr.scalar()` requests expansion even at the entry point and overrides its automatic size limits.
-- `expr.block()` or `expr.opaque()` prevents expansion of the containing procedure. These hints
-  take precedence if a body contains conflicting hints.
-- `auto` admits at most 4,096 distinct scalar arithmetic operations per procedure after folding
-  and sharing. Constants, variable references and loads do not count as arithmetic. A separate
-  program-wide limit of 16,384 counts arithmetic operations plus scalar declarations and output
-  stores, so large copies also consume the budget. Earlier explicit scalarizations consume this
-  capacity for later automatic candidates, but explicit requests always bypass the automatic limits.
-- Before attempting automatic expansion, the pass limits work to 65,536 units per procedure:
-  parameter elements, local buffer elements, executed stores, and nested call work. This avoids
-  a large allocation or loop expansion only to discover that the result exceeds the code budget.
-  These limits are compiler heuristics, not API guarantees.
-- Derivative Functions that AD (automatic differentiation) builds for a `call` or `vmap` callee
-  (its tangent, adjoint and adjoint-tangent bodies) inherit the callee's effective hint: `block`
-  or `opaque` anywhere in the callee makes the derived body `block`, otherwise `scalar` anywhere
-  makes it `scalar`, and `auto` inherits nothing. A `.scalar()` on a stage output therefore selects
-  the stage's Hessian procedures too.
-
-Automatic expansion leaves the entry point's mapped horizon intact. A procedure expands only if
-all of its callees are eligible too. Solver calls keep their call boundaries. Float32 and integer
-procedures keep their store boundaries because those stores can round or truncate values.
-Constant tangents already inside a body fold during expansion. Specializing a mapped callee for
-constant arguments is a separate transformation.
-
-### Periodic constants and mapped range fusion
-
-`fold_tiles` replaces a complete repeated constant table with one copy of its shortest tile.
-Loads use the original index modulo the tile length. Scalar-safe uniform tables become constants.
-The comparison uses the declared dtype's bits. Tables exposed through aliases or calls retain
-storage, as do tables that have writes.
-
-`fuse_ranges` expands scalarized mapped callees into shared scalar expressions, then propagates
-consumer indices through static assembly loops. Consumers that use the same mapped stage share
-its expressions. Only demanded outputs are scheduled, so unused compressed derivative entries
-lose both their stores and their arithmetic. Different boundary demands produce separate ranges.
-
-The pass retains storage for unsupported cross-stage dependencies, interfering writes, pointer
-escapes, or index maps that would need new tables. It also bounds generated expression groups and
-keeps upstream broadcast work from being repeated at every stage. The derivative graph and its
-coloring remain unchanged.
-
-### `prune_procedures`
-
-Removes procedures made unreachable by call expansion. It keeps the entry point, solver oracles
-and callees of retained kernels, follows their calls, and preserves callee-before-caller order.
-Hoisting uses the same reachability analysis after splitting callees.
-
-### Arithmetic semantics
-
-Scaly applies algebraic simplifications without a math-mode option. Expression simplification
-and scalar expansion can remove neutral elements, multiply by zero, cancel equal symbolic terms,
-and simplify constant powers. For example, expression simplification can replace `x / x` with
-one, and scalar expansion can replace `0 / x` with zero. The available rules and known constants
-differ by compilation stage; a lowering hint does not select an IEEE 754 compliance mode.
-
-These rules do not preserve NaN or infinity propagation, signed zero, or floating-point exception
-behavior. They can also change intermediate rounding, overflow, or underflow. In particular,
-symbolic `0 / x` can become zero even when the runtime value of `x` is zero or NaN. Do not rely
-on an invalid operation surviving graph simplification to detect invalid model inputs.
-
-When scalar expansion knows all operands, it evaluates constant arithmetic before applying
-symbolic identities. Known `inf * 0` produces NaN. An invalid constant operation that the folder
-cannot evaluate, such as `0 / 0` or `sqrt(-1)`, remains a runtime operation. Integer index division
-keeps C's truncation toward zero; floating algebraic rules do not relax index semantics or permit
-removal of dtype rounding boundaries.
-
-Scalarization and lane widening keep reduction accumulation order. Widened reductions apply
-lane contributions in the original scalar sequence, so the lane transformation preserves the
-scalar result bit for bit under the same compiler flags and math policy. This does not promise
-bit-identical results across other transformations or different compiler flags. Scaly does not
-enable `-ffast-math` by default.
-
-`reciprocal=True` separately permits an invariant `x / y` to become `x * (1 / y)`. Computing the
-reciprocal first changes rounding and can change the representable range. For example,
-`1e-310 / 1e-310` is finite, while computing `1 / 1e-310` first can overflow. This option is
-independent of lane widening and does not enable other compiler fast-math flags.
-
-### Loopy-code optimizations
-
-`combine_scatter_sums` replaces a left-associated sum of single-use zero-filled scatters with one
-zero-fill and one scatter-add per term. Slice adjoints produce these scatters. Combining them
-removes the full-length temporary buffer for each slice, including when slices overlap. Shared
-buffers and aliases keep their storage. The pass leaves a sum unchanged if moving a scatter would
-read a source after it changes.
-
-`fuse_elementwise` inlines a single-use producer into its one consumer. A producer here is a loop
-with a single store whose index is the loop variable, the shape every elementwise, slice and
-gather lowering produces. The pass substitutes the producer's right-hand side at the consumer's
-load site and deletes both the producer loop and its buffer. Chains collapse into one loop and the
-intermediate round-trips through memory disappear.
-
-It checks the fully expanded producer chain, including source writes and aliases. Operations that
-lower to a libm call (the transcendentals, `pow`, `atan2`) are not duplicated into a consumer that
-would evaluate them more than once, which happens when the consumer's iteration domain is larger
-than the producer's (a broadcast) or when there is more than one read. Cheap arithmetic can be
-duplicated only when moving its source reads is safe.
-
-`fold_arith` runs the arithmetic identities shared with the expression dialect
-(`passes/arith.py`) over every loop body after fusion, where index substitution exposes `x * 1`,
-`x + 0` and constant index arithmetic, and evaluates all-constant scalars with the operation's
-dtype. A loop that fills a private, otherwise unwritten buffer with one constant becomes a constant
-buffer so its readers fold on the next round. Invalid constants such as `0 / 0` stay runtime
-operations.
-
-`unroll_unit_loops` erases loops that are statically empty and inlines ordinary loops that run exactly
-once, substituting the loop variable with its only value. It runs after fusion so that fusion sees
-canonical loop-shaped producers first, and it removes the resulting single-iteration noise before
-anything renders. Mapped ranges retain their provenance, including single-trip boundary ranges.
-
-A second arithmetic cleanup, recorded as `fold_arith_after_unroll`, resolves constant indices and
-identities exposed by loop substitution, then removes unused buffer declarations.
-
-### Reciprocal hoisting and lane widening
-
-`hoist_reciprocals` runs only when `reciprocal=True`. It moves `1 / y` before a statically
-nonempty loop and replaces eligible floating divisions with multiplication. Shared divisors
-share a reciprocal. Integer division remains unchanged.
-
-A divisor is invariant only if its inputs remain unchanged throughout the loop. The pass resolves
-scalar definitions transitively when each has one declaring assignment that dominates its use.
-Reassignments, loop variables, local buffers, and buffers that calls or stores can change block
-hoisting. Definitions inside a nested scope do not escape that scope. Empty or potentially empty
-loops do not evaluate a new reciprocal outside the loop.
-
-`widen_ranges` splits an eligible range into chunks and explicit `RangeKind.VECTOR` lanes.
-It first handles mapped ranges, then independent contiguous output ranges and supported ordered
-reductions. Mapped callees can expand into the range while their local buffers gain separate
-storage for each lane. Opaque calls and dependencies that the pass cannot prove safe keep their
-scalar form.
-
-The pass records contiguous, strided, or gathered access layouts in Program IR. The renderer
-spells these as vector accesses, staging copies, or per-lane accesses. External arrays keep their
-original layout. Staging storage reserves eight lanes but packs active elements at the effective
-helper width. Private aliases become offsets into their owning buffer before that layout change.
-Partial chunks clamp input indices and guard output stores. One helper body handles full and
-partial chunks with the same private stride.
-
-Lane width comes from the render option and a per-range register-pressure cap. The cap limits
-the product of peak live scalar values and lane width to four times the estimated register
-capacity. This is a compiler heuristic. The [code-generation reference](../api/codegen.md#render-options)
-lists target selection, fixed widths, the two C dialects, and math-library choices.
-
-### Workspace and final scheduling
-
-`pack_workspace` decides where temporaries live. It lifetime-packs the private buffers of each
-procedure into shared slots (buffers whose lifetimes do not overlap reuse a slot), then spills
-slots of 1024 doubles or more into the caller-provided `w[]` array while smaller ones stay as local
-C arrays. The spilled total is what the generated header reports as `f_SZ_W`.
-
-This pass is what lets large workloads compile at all. Without it the biggest benchmark cells
-declare every temporary as a C local and overflow the platform's default thread stack (8 MB on
-the reference machine). Zero-copy alias buffers are handled explicitly: they own no slot but
-extend the lifetime of whatever they point into.
-
-`coalesce_stores` replaces eligible adjacent float64 stores with an explicit `STORE_PAIR`
-statement after workspace packing. The two values are evaluated before either lane is written.
-Pair selection accounts for physical buffer aliases and refuses a pair when the second value
-reads the first destination. Odd tails stay scalar.
-
-`prepare_scalar` inserts typed temporaries to bound expression depth before C rendering. It
-shares the scheduler used by scalar expansion, but limits sharing to a statement so loads keep
-their timing across writes and calls. Generated names reserve existing C identifier spellings.
-
-## Deep expressions
-
-Depth in your expression does not become depth on the Python stack. The program-dialect passes
-and the C renderer walk node graphs iteratively: rewrites go through the shared driver
-`scaly.ir.match.rewrite`, which uses an explicit stack and one identity-keyed memo, and the
-remaining traversals (`_max_load_executions`, `_count_buf_loads`, the scalarizer's value
-substitution, `_emit_scalar`) keep their own explicit stacks. A left fold of several thousand
-chained scalar operations lowers, renders, compiles and runs; `tests/passes/test_program.py` pins
-folds at 400 and 3000 and a flat per-stage reduction at 100 stages.
-
-The generated C stays bounded too. Clang caps bracket nesting at 256, so `prepare_scalar` splits a
-fused chain deeper than `MAX_SCALAR_DEPTH` (32, shared with the scalarizer's temporary scheduling)
-into scalar temporaries. Store values, indices and call offsets use the same depth bound. Range
-expressions stay unchanged so start, stop and step keep their evaluation frequency; the depth
-bound does not apply to hand-built deep range expressions. Depth is still cheaper to avoid than to
-render: a wide flat reduction (`sc.dot(sc.const(weights), sc.stack(residuals) ** 2)`) or a pairwise
-sum reads better in the generated source than a long fold, but neither is required for
-correctness.
-
-What still recurses is proportional to statement nesting, not expression depth: `FOR` bodies in
-`unroll_unit_loops`, the scalarizer's `run` and the renderer's `_emit_statement`, and `CALL`
-chains in the scalarizer. Loop nests are a few levels deep.
-
-## Watching it happen
-
-Every step above is observable. Mark a function, call it, and the recorder captures the expression
-graph, the normalized outputs of each reached Function, the lowered program, the result of each
-pass, and the generated C:
+Lowering emits each expression operation on its own, with a buffer for its
+result and a loop that fills it. For this function
 
 ```python
-from scaly.viz import visualize, serve
+import scaly as sc
 
-visualize(f)
-f(x_value)
-serve()
+@sc.function(sc.G(sc.L("x", 8), sc.L("y", 8)), sc.L("out", ...))
+def f(inputs):
+    x, y = inputs
+    return (x.sin() + y) * y
 ```
 
-See [Visualization](../guide/visualization.md).
+the program straight after lowering, before any optimization pass, is:
+
+```
+prog.module {
+  prog.proc @f(%x: memref<8xfloat64>, %y: memref<8xfloat64>, %out: memref<8xfloat64>) {
+    %t0 = prog.buffer : memref<8xfloat64, private>
+    prog.for %i_t0 = 0 to 8 step 1 {kind=global} {
+      prog.store prog.sin(prog.load %x[%i_t0]), %t0[%i_t0] : float64
+    }
+    %t1 = prog.buffer : memref<8xfloat64, private>
+    prog.for %i_t1 = 0 to 8 step 1 {kind=global} {
+      prog.store prog.add(prog.load %t0[%i_t1], prog.load %y[%i_t1]), %t1[%i_t1] : float64
+    }
+    prog.for %i_out = 0 to 8 step 1 {kind=global} {
+      prog.store prog.mul(prog.load %t1[%i_out], prog.load %y[%i_out]), %out[%i_out] : float64
+    }
+  }
+}
+```
+
+This form is easy to produce and to verify, one rule per operation, but it
+writes two temporaries that nobody needs. Removing them is the passes' job,
+shown [below](#elementwise-fusion). The last operation writes straight into the
+output buffer, and a contiguous slice or a reshape becomes a view into existing
+storage rather than a copy. A called function becomes its own procedure and a
+`prog.call`, and `sc.vmap` becomes a loop around that call.
+
+A few limits come from lowering rather than from the expression dialect. Matrix
+multiplication takes operands of rank at most two, transpose works up to rank
+four. An unsupported case raises
+`LoweringError`. A solver call is not lowered at all. Its plugin renders the
+wrapper, and only the oracles it calls go through this page's pipeline.
+
+## Loops or scalar code
+
+A small stage function is usually faster as straight-line scalar code than as a
+set of three-iteration loops. With the default `auto` policy, a small stage
+mapped over a horizon is expanded and then merged into the horizon loop:
+
+```python
+@sc.function(sc.L("x", 3), sc.L("y", ...))
+def stage(x):
+    return x.sin() * x
+
+@sc.function(sc.L("xs", 15), sc.L("ys", ...))
+def horizon(xs):
+    return sc.vmap(stage, 5, [xs])
+```
+
+```
+prog.module {
+  prog.proc @horizon(%xs: memref<15xfloat64>, %ys: memref<15xfloat64>) {
+    prog.for %v0 = 0 to 5 step 1 {kind=global} {
+      %v1 = prog.assign prog.mul(3, %v0) : int64 {declare=True}
+      %v2 = prog.assign prog.load %xs[%v1] : float64 {declare=True}
+      %v3 = prog.assign %v1 : int64 {declare=True}
+      %v4 = prog.assign prog.load %xs[prog.add(%v3, 1)] : float64 {declare=True}
+      %v5 = prog.assign prog.load %xs[prog.add(%v3, 2)] : float64 {declare=True}
+      prog.store prog.mul(prog.sin(%v2), %v2), %ys[prog.mul(3, %v0)] : float64
+      prog.store prog.mul(prog.sin(%v4), %v4), %ys[prog.add(1, prog.mul(3, %v0))] : float64
+      prog.store prog.mul(prog.sin(%v5), %v5), %ys[prog.add(2, prog.mul(3, %v0))] : float64
+    }
+  }
+}
+```
+
+The horizon loop survives, and the stage body inside it is three scalar
+statements. Ending the stage with `return (x.sin() * x).block()` keeps the
+stage as a procedure with its own loop:
+
+```
+prog.module {
+  prog.proc @stage(%x: memref<3xfloat64>, %y: memref<3xfloat64>) {
+    prog.for %i_y = 0 to 3 step 1 {kind=global} {
+      %v0 = prog.assign prog.load %x[%i_y] : float64 {declare=True}
+      prog.store prog.mul(prog.sin(%v0), %v0), %y[%i_y] : float64
+    }
+  }
+  prog.proc @horizon(%xs: memref<15xfloat64>, %ys: memref<15xfloat64>) {
+    prog.for %it_ys = 0 to 5 step 1 {kind=global} {
+      prog.call @stage(%xs[prog.mul(3, %it_ys)], %ys[prog.mul(%it_ys, 3)]) {callee_needs_w=False, n_in=1, n_out=1, w_self=0}
+    }
+  }
+}
+```
+
+The expansion is done by the `scalarize` pass. It runs the procedure's loops
+at compile time with symbolic values, folding arithmetic as it goes, so a
+multiplication by a known zero disappears instead of becoming a statement. This
+is partial evaluation[^pe] with every loop bound known.
+
+The choice is driven by `Expr.lowering`, a field every expression node carries.
+It is `"auto"` unless you set it with `.scalar()` or `.block()`, and it
+propagates to the nodes built from the hinted one. The hints of a function's
+nodes combine into the policy for its procedure:
+
+| Hint | Effect on the containing procedure |
+| --- | --- |
+| none | `auto`: expand if the procedure is small and not the entry point |
+| `.scalar()` | Expand, ignoring the size limits, including the entry point |
+| `.block()` | Keep loops and buffers |
+
+A `block` hint anywhere in a function wins over `.scalar()`. Under
+`auto`, the size limits in `passes/program/scalarize.py` include 4096 scalar
+operations per procedure and 16,384 across the program. Only procedures whose values
+are all `float64` expand, because an integer store truncates and expansion
+would drop that. A solver call also blocks expansion of its caller. A
+derivative built from a hinted function inherits the hint, so a scalar stage model gets scalar derivative procedures too.
+
+A hint only chooses between loops and scalar code. Every other pass still runs
+on a `.block()` procedure.
+
+## The pass pipeline
+
+The passes run in the order of `PASS_PIPELINE` in
+`src/scaly/passes/program/__init__.py`:
+
+| Pass | What it does |
+| --- | --- |
+| `hoist_invariant` | Moves work that depends only on broadcast inputs out of a mapped loop |
+| `scalarize` | Expands selected procedures into scalar statements |
+| `fold_tiles` | Shrinks a constant table made of one repeated tile to that tile |
+| `fuse_ranges` | Merges expanded stages into their mapped loop and drops unused outputs |
+| `prune_procedures` | Removes procedures that nothing calls any more |
+| `combine_scatter_sums` | Accumulates a sum of zero-padded scatters into one buffer |
+| `fuse_elementwise` | Substitutes an elementwise producer into its consumer's loop |
+| `fold_arith` | Replaces reads of constant buffers with constants and applies identities |
+| `unroll_unit_loops` | Removes empty loops and inlines one-iteration loops |
+| `fold_arith_after_unroll` | Runs `fold_arith` again on what unrolling exposed |
+| `pack_workspace` | Shares storage between temporaries whose lifetimes do not overlap |
+| `coalesce_stores` | Pairs stores to adjacent `float64` elements |
+| `prepare_scalar` | Splits deeply nested scalar expressions into bounded statements |
+
+The `reciprocal` and `lanes` options add two passes before `pack_workspace`.
+`optimize_program` in the same file shows where. Each pass returns a new
+program, and lowering verifies the result before rendering C.
+
+## Work shared across stages
+
+A stage often reads a parameter that is the same at every stage, such as a
+weight matrix. The stage function cannot know that, so each call recomputes
+everything derived from it:
+
+```python
+@sc.function(sc.G(sc.L("x", 3), sc.L("w", 9)), sc.L("y", ...))
+def stage(inputs):
+    x, w = inputs
+    return (w.reshape((3, 3)).exp() @ x).sin()
+
+@sc.function(sc.G(sc.L("xs", 15), sc.L("w", 9)), sc.L("ys", ...))
+def horizon(inputs):
+    xs, w = inputs
+    return sc.vmap(stage, 5, [xs, w])
+```
+
+Here `w` has one chunk, so `vmap` passes the same nine values to all five
+calls. Lowered, the loop calls `@stage` five times, and `@stage` evaluates
+`exp` on all nine entries of `w` each time. `hoist_invariant` splits the stage
+in two. The part that reads only `w` becomes a procedure called once before
+the loop, and its result is passed to the rest of the stage as an extra input
+(listing after `hoist_invariant`, trimmed to the horizon procedure):
+
+```
+prog.proc @horizon(%xs: memref<15xfloat64>, %w: memref<9xfloat64>, %ys: memref<15xfloat64>) {
+  %it_ys_t0 = prog.buffer : memref<3x3xfloat64, private>
+  prog.call @stage_hoist_1(%w[0], %it_ys_t0) {n_in=1, n_out=1}
+  prog.for %it_ys = 0 to 5 step 1 {kind=global} {
+    prog.call @stage_hoisted_1(%xs[prog.add(0, prog.mul(3, %it_ys))], %w[0], %it_ys_t0, %ys[prog.mul(%it_ys, 3)]) {n_in=3, n_out=1}
+  }
+}
+```
+
+Loop-invariant code motion is a standard compiler optimization[^dragon]. What
+is particular here is that the invariance is found across a call boundary: the
+mapped call says which arguments are broadcast, and the pass rewrites the
+callee accordingly. After the later passes, the exponentials run once before
+the loop and each iteration does only the matrix-vector product and the sine.
+
+## Mapped stages and their consumers
+
+When the caller uses only part of a mapped result, `fuse_ranges` propagates
+that use into the loop. Taking the first element of each stage output:
+
+```python
+@sc.function(sc.L("x", 3), sc.L("y", ...))
+def stage(x):
+    return x.sin() * x
+
+@sc.function(sc.L("xs", 15), sc.L("firsts", ...))
+def firsts(xs):
+    return sc.vmap(stage, 5, [xs])[::3]
+```
+
+```
+prog.module {
+  prog.proc @firsts(%xs: memref<15xfloat64>, %firsts: memref<5xfloat64>) {
+    prog.for %v0 = 0 to 5 step 1 {kind=global} {
+      %v1 = prog.assign prog.load %xs[prog.mul(3, %v0)] : float64 {declare=True}
+      prog.store prog.mul(prog.sin(%v1), %v1), %firsts[%v0] : float64
+    }
+  }
+}
+```
+
+The 15-element intermediate result is gone, and so is the work for the two
+outputs per stage that nothing reads. The loop writes straight into `firsts`.
+The pass does this only for stages that `scalarize` has already expanded, and it
+leaves a buffer in place wherever a dependency, an overlapping write or a
+pointer escaping into a call makes the substitution unsafe.
+
+## Elementwise fusion
+
+`fuse_elementwise` substitutes the expression that fills a buffer into the loop
+that reads it, then deletes the buffer and its loop. The program from the first
+section ends as one loop:
+
+```
+prog.module {
+  prog.proc @f(%x: memref<8xfloat64>, %y: memref<8xfloat64>, %out: memref<8xfloat64>) {
+    prog.for %i_out = 0 to 8 step 1 {kind=global} {
+      %v0 = prog.assign prog.load %y[%i_out] : float64 {declare=True}
+      prog.store prog.mul(prog.add(prog.sin(prog.load %x[%i_out]), %v0), %v0), %out[%i_out] : float64
+    }
+  }
+}
+```
+
+Fusion trades memory traffic for recomputation when the consumer reads each
+produced value more than once[^halide]. Broadcasting is the common case. Here
+three sines feed twelve products:
+
+```python
+@sc.function(sc.G(sc.L("x", 3), sc.L("y", (4, 3))), sc.L("out", ...))
+def f(inputs):
+    x, y = inputs
+    return x.sin() * y
+```
+
+```
+prog.module {
+  prog.proc @f(%x: memref<3xfloat64>, %y: memref<4x3xfloat64>, %out: memref<4x3xfloat64>) {
+    %s0 = prog.buffer : memref<3xfloat64, private>
+    prog.for %i_t0 = 0 to 3 step 1 {kind=global} {
+      prog.store prog.sin(prog.load %x[%i_t0]), %s0[%i_t0] : float64
+    }
+    prog.for %i_out = 0 to 12 step 1 {kind=global} {
+      prog.store prog.mul(prog.load %s0[prog.mod(%i_out, 3)], prog.load %y[%i_out]), %out[%i_out] : float64
+    }
+  }
+}
+```
+
+Fusing would call `sin` twelve times instead of three, so the pass keeps the
+buffer. It fuses freely when the producer is cheap arithmetic, and counts
+expensive calls such as `sin`, `exp` or `pow` through chains of producers. It
+also refuses to move a read past a write to the same buffer.
+
+## Sums of scattered pieces
+
+The gradient of a function of overlapping slices adds one zero-padded
+contribution per slice. Lowered naively, each contribution is a full-size
+temporary filled with zeros and then summed:
+
+```python
+@sc.function(sc.L("x", 6), sc.L("c", ...))
+def cost(x):
+    return (x[0:4].sin()).sum() + (x[2:6].cos()).sum()
+```
+
+```
+prog.module {
+  prog.proc @cost_grad_c_x(%x: memref<6xfloat64>, %grad_c_x: memref<6xfloat64>) {
+    %t0 = prog.buffer : memref<4xfloat64, private> = prog.alias %x offset 2
+    %t4 = prog.buffer : memref<4xfloat64, private> = prog.alias %x offset 0
+    prog.for %z_t3 = 0 to 6 step 1 {kind=global} {
+      prog.store 0, %grad_c_x[%z_t3] : float64
+    }
+    prog.for %i_t3 = 0 to 4 step 1 {kind=global} {
+      %v0 = prog.assign prog.add(2, %i_t3) : int64 {declare=True}
+      prog.store prog.sub(prog.load %grad_c_x[%v0], prog.sin(prog.load %t0[%i_t3])), %grad_c_x[%v0] : float64
+    }
+    prog.for %i_t6 = 0 to 4 step 1 {kind=global} {
+      prog.store prog.add(prog.load %grad_c_x[%i_t6], prog.cos(prog.load %t4[%i_t6])), %grad_c_x[%i_t6] : float64
+    }
+  }
+}
+```
+
+`combine_scatter_sums` zeroes the output once and has each contribution add
+into its own window of it, so the two six-element temporaries never exist. The
+`prog.alias` lines are the slices of `x`, which are views rather than copies.
+
+## Repeated constant tables
+
+A constant array that repeats one tile is stored as that tile and indexed
+modulo its length:
+
+```python
+import numpy as np
+
+@sc.function(sc.L("x", 12), sc.L("y", ...))
+def scaled(x):
+    return x * sc.const(np.tile([1.0, 2.0, 3.0], 4))
+```
+
+Before `fold_tiles`:
+
+```
+%k0 = prog.buffer : memref<12xfloat64, constant> = dense<[1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0]>
+prog.for %i_y = 0 to 12 step 1 {kind=global} {
+  prog.store prog.mul(prog.load %x[%i_y], prog.load %k0[%i_y]), %y[%i_y] : float64
+}
+```
+
+After:
+
+```
+%k0 = prog.buffer : memref<3xfloat64, constant> = dense<[1.0, 2.0, 3.0]>
+prog.for %i_y = 0 to 12 step 1 {kind=global} {
+  prog.store prog.mul(prog.load %x[%i_y], prog.load %k0[prog.mod(%i_y, 3)]), %y[%i_y] : float64
+}
+```
+
+The pass compares values bit for bit, so `-0.0` and `0.0` or two NaN payloads
+are different values. It leaves a table alone if it is aliased by a view,
+passed to a call or written, since other code could then depend on its full
+length.
+
+## Vector lanes
+
+With the `lanes` option, the passes group independent loop iterations so the C
+compiler can map them onto vector instructions. The
+[code generation guide](../guide/codegen.md#cpu-targets-vector-lanes-and-math-libraries)
+covers the options. This is the C for the fused loop of the first section, with
+ten elements and `render_c_source(f, lanes=4, dialect="c")`, trimmed to the
+lane helper and its caller:
+
+```c
+static inline void f_lanes_1(long long i_out_chunk, long long f_lanes_1_valid, double* out, const double* x, const double* y) {
+  for (long long i_out_lane = 0; i_out_lane < f_lanes_1_valid; ++i_out_lane) {
+    double v0 = y[(0 + (((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) < 9 ? ((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) : 9))];
+    out[(0 + (((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) < 9 ? ((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) : 9))] = ((sin(x[(0 + (((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) < 9 ? ((i_out_chunk * SCALY_WIDTH_f_lanes_1) + i_out_lane) : 9))]) + v0) * v0);
+  }
+}
+int f(const double** arg, double** res, int* iw, double* w, int mem) {
+  ...
+  for (long long i_out_chunk = 0; i_out_chunk < 10 / SCALY_WIDTH_f_lanes_1; ++i_out_chunk) {
+    f_lanes_1(i_out_chunk, SCALY_WIDTH_f_lanes_1, res[0], arg[0], arg[1]);
+  }
+#if (10 % SCALY_WIDTH_f_lanes_1) != 0
+  f_lanes_1(10 / SCALY_WIDTH_f_lanes_1, 10 % SCALY_WIDTH_f_lanes_1, res[0], arg[0], arg[1]);
+#endif
+  return SCALY_SUCCESS;
+}
+```
+
+The full groups and the final partial group call the same helper. The partial
+group passes the number of valid lanes, and every index is clamped to the last
+element, 9, so no lane reads past the end of an input. Only valid lanes are
+stored. The arrays therefore need no padding, and their layout does not depend
+on the width.
+
+`SCALY_WIDTH_f_lanes_1` is a preprocessor macro, so the width is fixed when the
+C is compiled. It is the requested width, capped for each loop by an estimate
+of how many values the loop body keeps live against the number of vector
+registers on the target, so a large body gets fewer lanes. It is also capped
+at the smallest power of two not below the loop's iteration count. In the default
+`gnu` dialect the helper uses a vector type, loading and storing whole groups
+when all lanes are valid and falling back to a per-lane loop for the partial
+group. A mapped loop is widened after its stage has been inlined. A loop stays
+scalar if it touches integer values, still contains a call, or
+carries a dependency between iterations other than an ordered sum.
+
+## Temporary storage
+
+`pack_workspace` lets temporaries share memory when their lifetimes do not
+overlap. In this function, the product `A @ B` is dead once its sum is taken,
+before `B @ A` is computed:
+
+```python
+@sc.function(sc.G(sc.L("A", (40, 40)), sc.L("B", (40, 40))), sc.L("out", ...))
+def f(inputs):
+    A, B = inputs
+    return (A @ B).sum() + (B @ A).sum()
+```
+
+| Temporary | Elements | Holds | Live from | Until | Slot |
+| --- | --- | --- | --- | --- | --- |
+| `t0` | 1600 | `A @ B` | first product | first sum | `s0` |
+| `t1` | 1 | first sum | first sum | final addition | `s1` |
+| `t2` | 1600 | `B @ A` | second product | second sum | `s0` |
+| `t3` | 1 | second sum | second sum | final addition | `s2` |
+
+The two products share slot `s0`. The two sums cannot share, because `t1` is
+still live when `t3` is written. The pass walks the temporaries in the order
+they are first written and gives each the first free slot of the same data type,
+a greedy interval assignment like linear-scan register allocation[^linscan].
+A view such as a slice keeps the buffer it points into live until the view's
+last use.
+
+A slot of 1024 or more elements moves to the caller's workspace `w`, and
+smaller ones stay local arrays:
+
+```c
+double* s0 = w + 0;
+double s1[1];
+double s2[1];
+```
+
+The header reports `#define f_SZ_W 1600`, where 3200 would be needed without
+sharing. A procedure's requirement is its own slots plus the largest
+requirement among the procedures it calls, which reuse the space after the
+caller's own slots. [Working memory](../guide/codegen.md#working-memory) in the
+guide shows how to read the number.
+
+## Arithmetic semantics
+
+Scaly simplifies expressions as algebra over real numbers, not as IEEE 754
+floating-point arithmetic[^goldberg]. The two disagree at invalid and
+exceptional inputs:
+
+```python
+import numpy as np
+
+@sc.function(sc.L("x", 4), sc.L("y", ...))
+def f(x):
+    return 0 / x + x / x
+
+print(f(np.array([0.0, np.nan, np.inf, 2.0])))  # [1. 1. 1. 1.]
+```
+
+| `x` | `0.0` | `nan` | `inf` | `2.0` |
+| --- | --- | --- | --- | --- |
+| NumPy, `0 / x + x / x` | `nan` | `nan` | `nan` | `1.0` |
+| Scaly | `1.0` | `1.0` | `1.0` | `1.0` |
+
+`0 / x` became zero and `x / x` became one before any C existed. In general,
+simplification can change how NaN and infinity propagate, the sign of zero,
+overflow, underflow and intermediate rounding. Do not use an invalid operation
+in a model to detect invalid input.
+
+The same holds for constants. The identities apply to a constant operand like
+any other, and they can apply before the constants are evaluated. So
+`sc.const(np.inf) * 0` becomes `0`, because `x * 0 = 0` applies first, and it
+never reaches the NaN that IEEE 754 gives. This is intended: simplification
+treats every operand as a real number. To put a NaN in a model, write
+`sc.const(np.nan)`, which is kept as is.
+
+Scalar expansion and lane widening keep the order in which a reduction adds its
+terms. Scalar and loop forms of the same function are still not promised to
+give bit-identical results, because the expression trees differ and the C
+compiler rounds each one its own way. Neither the JIT nor the recipe for
+exported code enables `-ffast-math`. Both pass `-fno-math-errno`, and the
+lowering hints do not change these flags.
+
+`reciprocal=True` allows one further change. A division `x / y` whose divisor
+does not change inside a loop becomes a multiplication by `1 / y` computed
+before the loop. For `x / s`, with `x` of four elements and `s` a scalar input,
+the `reciprocal=True` render option gives, trimmed to the procedure body:
+
+```
+%inv = prog.assign prog.div(1, prog.load %s[0]) : float64 {declare=True}
+prog.for %i_y = 0 to 4 step 1 {kind=global} {
+  prog.store prog.mul(prog.load %x[%i_y], %inv), %y[%i_y] : float64
+}
+```
+
+This changes rounding and can overflow where the division does not:
+`1e-310 / 1e-310` is `1.0`, but `1 / 1e-310` is already `inf`. Vector math
+libraries can also round differently from scalar math calls. Neither option
+enables any other fast-math behaviour.
+
+[^pe]: Neil D. Jones, Carsten K. Gomard and Peter Sestoft, *Partial Evaluation
+    and Automatic Program Generation*, Prentice Hall, 1993.
+    [Online edition](https://raspi.itu.dk/people/sestoft/pebook/).
+[^dragon]: Alfred V. Aho, Monica S. Lam, Ravi Sethi and Jeffrey D. Ullman,
+    *Compilers: Principles, Techniques, and Tools*, 2nd edition,
+    Addison-Wesley, 2006, chapter 9.
+[^halide]: Jonathan Ragan-Kelley et al., "Halide: a language and compiler for
+    optimizing parallelism, locality, and recomputation in image processing
+    pipelines", PLDI 2013.
+    [doi:10.1145/2491956.2462176](https://doi.org/10.1145/2491956.2462176).
+[^linscan]: Massimiliano Poletto and Vivek Sarkar, "Linear scan register
+    allocation", ACM Transactions on Programming Languages and Systems 21(5),
+    1999. [doi:10.1145/330249.330250](https://doi.org/10.1145/330249.330250).
+[^goldberg]: David Goldberg, "What every computer scientist should know about
+    floating-point arithmetic", ACM Computing Surveys 23(1), 1991.
+    [doi:10.1145/103162.103163](https://doi.org/10.1145/103162.103163).

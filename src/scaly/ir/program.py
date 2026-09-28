@@ -46,7 +46,6 @@ class ProgramOp(StrEnum):
   KERNEL = "kernel"
   BUFFER = "buffer"
   VIEW = "view"
-  PARAM = "param"
 
   # Statement-level
   BLOCK = "block"
@@ -453,42 +452,3 @@ def neg(x: ProgramNode) -> ProgramNode:
   if x.op not in SCALAR_OPS:
     raise TypeError(f"neg requires a scalar ProgramNode, got {x.op}")
   return ProgramNode(ProgramOp.NEG, (x,), dtype=x.dtype)
-
-
-__all__ = [
-  "ADDRESS_SPACES",
-  "BINARY_FN_OPS",
-  "DEVICE_ONLY_OPS",
-  "HOST_ONLY_OPS",
-  "UNARY_FN_OPS",
-  "ProgramNode",
-  "ProgramOp",
-  "RangeKind",
-  "SCALAR_OPS",
-  "add",
-  "assign",
-  "barrier",
-  "block",
-  "buffer",
-  "call",
-  "const_buffer",
-  "const_float",
-  "const_int",
-  "div",
-  "for_",
-  "kernel",
-  "launch",
-  "load",
-  "mod",
-  "mul",
-  "neg",
-  "proc",
-  "program",
-  "range_",
-  "store",
-  "store_pair",
-  "sub",
-  "var",
-  "view",
-  "walk_program",
-]

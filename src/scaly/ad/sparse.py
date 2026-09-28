@@ -18,7 +18,7 @@ from ..passes.expr import cse, simplify, simplify_cse_fixpoint
 from .derivatives import gradient, jacobian
 from .forward import _call_jvp_many_const_function, jvp_many
 from .sparsity import _depends_on, _jac_mask, _mask_sparsity, _symmetrize_sparsity, column_coloring, jacobian_sparsity, star_coloring
-from ..ir.types import SparsityType
+from ..ir.types import SparsityPattern
 
 
 Triangle = Literal["full", "lower", "upper"]
@@ -34,7 +34,13 @@ def _validate_triangle(triangle: object) -> Triangle:
 
 @dataclass(frozen=True, slots=True)
 class SparseJacobian:
-  sparsity: SparsityType
+  """A sparse derivative: the structural ``sparsity`` and the ``values`` of its entries, in the same order.
+
+  ``coloring_width`` is the number of forward-mode directions the values were computed from, or
+  ``None`` when they did not come from a coloring.
+  """
+
+  sparsity: SparsityPattern
   values: Expr
   coloring_width: int | None = None
   _compressed: Expr | None = field(default=None, compare=False, repr=False)
@@ -42,9 +48,11 @@ class SparseJacobian:
 
   @property
   def flat_indices(self) -> np.ndarray:
+    """Row-major positions of the entries in the dense matrix."""
     return np.asarray(self.sparsity.rows, dtype=np.int64) * self.sparsity.shape[1] + np.asarray(self.sparsity.cols, dtype=np.int64)
 
   def to_dense(self) -> Expr:
+    """Scatter the values into a dense matrix expression."""
     return scatter(self.values, self.flat_indices, self.sparsity.shape)
 
   def triangle(self, triangle: Triangle) -> SparseJacobian:
@@ -57,7 +65,7 @@ class SparseJacobian:
     rows = np.asarray(self.sparsity.rows, dtype=np.int64)
     cols = np.asarray(self.sparsity.cols, dtype=np.int64)
     keep = rows >= cols if triangle == "lower" else rows <= cols
-    sparsity = SparsityType(
+    sparsity = SparsityPattern(
       self.sparsity.shape,
       tuple(int(row) for row in rows[keep]),
       tuple(int(col) for col in cols[keep]),
@@ -88,7 +96,7 @@ def sparse_jacobian_colored(expr: Expr, wrt: Expr) -> SparseJacobian:
 def _sparse_jacobian_colored(
   expr: Expr,
   wrt: Expr,
-  sparsity: SparsityType,
+  sparsity: SparsityPattern,
   colors: tuple[int, ...],
   recovery_indices: np.ndarray | None = None,
 ) -> SparseJacobian:
@@ -112,7 +120,7 @@ def _sparse_jacobian_colored(
   )
 
 
-def _star_recovery_indices(sparsity: SparsityType, colors: tuple[int, ...]) -> np.ndarray:
+def _star_recovery_indices(sparsity: SparsityPattern, colors: tuple[int, ...]) -> np.ndarray:
   """Build constant compressed-row indices for recovering a symmetric pattern by star coloring."""
   if sparsity.shape[0] != sparsity.shape[1]:
     raise ValueError(f"star recovery requires a square sparsity pattern, got {sparsity.shape}")
@@ -188,7 +196,7 @@ def _sparse_jacobian_structured(expr: Expr, wrt: Expr) -> SparseJacobian | None:
     global_cols.extend(sj.sparsity.cols)
     global_values.append(sj.values)
   total_rows = int(expr.shape[0]) if expr.shape else expr.size
-  sparsity = SparsityType((expr.size, wrt.size), tuple(global_rows), tuple(global_cols))
+  sparsity = SparsityPattern((expr.size, wrt.size), tuple(global_rows), tuple(global_cols))
   if sparsity.nnz == 0:
     return SparseJacobian(sparsity, Expr.const(np.zeros((0,), dtype=np.float64)), coloring_width)
   # Flatten piece values that are themselves axis-0 CONCATs so their producers write straight
@@ -311,7 +319,7 @@ def _sparse_jacobian_vmap(vmap_expr: Expr, wrt: Expr) -> SparseJacobian:
     # instead of scattering each piece into a full-nnz buffer and summing, emit the gathered
     # values back to back and permute the pattern to match — no full-nnz temporaries at all.
     values = pieces[0][0] if len(pieces) == 1 else concat([g for g, _ in pieces], axis=0)
-    permuted = SparsityType(global_sparsity.shape, tuple(int(r) for r in rows_arr[perm]), tuple(int(c) for c in cols_arr[perm]))
+    permuted = SparsityPattern(global_sparsity.shape, tuple(int(r) for r in rows_arr[perm]), tuple(int(c) for c in cols_arr[perm]))
     return SparseJacobian(permuted, values, coloring_width)
   values = None
   for gathered, contrib_idx in pieces:

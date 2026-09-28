@@ -54,7 +54,7 @@ _SOLVER_NAMESPACE_LOCK = threading.Lock()
 
 
 def load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
-  """Load a shared library; ``isolated`` keeps Linux solver dependencies out of the host process linker namespace."""
+  """Load a shared library. ``isolated`` keeps Linux solver dependencies out of the host process linker namespace."""
   global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR
   if not isolated or sys.platform != "linux":
     return ctypes.CDLL(str(path))
@@ -226,7 +226,7 @@ class CompiledFunction:
 
   Holds the ``ctypes.CDLL`` for the cached shared object, the resolved entry point with
   ``argtypes``/``restype`` set up for the pointer ABI, and the workspace size the rendered module
-  reported (the header's ``SZ_W``; the library exports no size query of its own).
+  reported. That is the header's ``SZ_W``, since the library exports no size query of its own.
   """
 
   __slots__ = (
@@ -359,8 +359,8 @@ def get_compiled(fun: Function) -> CompiledFunction:
 def invalidate_cache(fun: Function) -> None:
   """Drop both the in-memory artifact entry and the on-disk cache directory for ``fun``.
 
-  Safe to call when nothing is cached yet; codegen failures (``NotImplementedError``) are
-  swallowed since there cannot be a corresponding cache entry to remove.
+  Safe to call when nothing is cached yet. Codegen failures (``NotImplementedError``) are
+  swallowed, since there cannot be a corresponding cache entry to remove.
   """
   compiler = find_c_compiler()
   if compiler is None:

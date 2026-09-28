@@ -7,7 +7,7 @@ import pytest
 
 import scaly as sc
 from scaly.codegen.solver import SolverWrapperCtx
-from scaly.ir.types import SparsityType
+from scaly.ir.types import SparsityPattern
 from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
 from tests.solvers.problem_helpers import build_nlp, solve_nlp
 
@@ -38,8 +38,8 @@ def _wrapper_fixture(rows: tuple[int, ...], cols: tuple[int, ...]) -> sc.Functio
     grad=grad,
     hess=hess,
     bounds=bounds,
-    jac_sparsity=SparsityType.empty((0, 2)),
-    hess_sparsity=SparsityType((2, 2), rows, cols),
+    jac_sparsity=SparsityPattern.empty((0, 2)),
+    hess_sparsity=SparsityPattern((2, 2), rows, cols),
   )
   return descriptor_function(descriptor)
 

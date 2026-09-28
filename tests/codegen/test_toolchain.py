@@ -95,11 +95,11 @@ def test_build_recipe_validates_render_controls() -> None:
   from scaly.codegen.toolchain import BuildRecipe
 
   for build in (
-    lambda: BuildRecipe(cpu="avx"),
-    lambda: BuildRecipe(lanes=3),
-    lambda: BuildRecipe(lanes=True),
-    lambda: BuildRecipe(dialect="cpp"),
-    lambda: BuildRecipe(vector_libm="sleef"),
+    lambda: BuildRecipe(cpu="avx"),  # ty: ignore[invalid-argument-type]
+    lambda: BuildRecipe(lanes=3),  # ty: ignore[invalid-argument-type]
+    lambda: BuildRecipe(lanes=True),  # ty: ignore[invalid-argument-type]
+    lambda: BuildRecipe(dialect="cpp"),  # ty: ignore[invalid-argument-type]
+    lambda: BuildRecipe(vector_libm="sleef"),  # ty: ignore[invalid-argument-type]
     lambda: BuildRecipe(dialect="c", vector_libm="glibc"),
   ):
     with pytest.raises(ValueError):

@@ -16,12 +16,6 @@ from .forward import jvp_many
 from .reverse import _ones_like, vjp
 
 
-def basis(shape: tuple[int, ...], index: int) -> Expr:
-  arr = np.zeros(shape, dtype=np.float64).reshape(-1)
-  arr[index] = 1.0
-  return Expr.const(arr.reshape(shape))
-
-
 def jacobian(expr: Expr, wrt: Expr) -> Expr:
   """Dense Jacobian ``d expr / d wrt``, shape ``(expr.size, wrt.size)``.
 
@@ -52,6 +46,10 @@ def hessian(expr: Expr, wrt: Expr) -> Expr:
 
 
 def finite_difference(fun: Any, x: np.ndarray, eps: float = 1e-6) -> np.ndarray:
+  """Approximate the Jacobian of the numerical ``fun`` at ``x`` by central differences.
+
+  Returns shape ``(output size, x.size)``. Useful as an independent check of a symbolic derivative.
+  """
   x = np.asarray(x, dtype=np.float64)
   y0 = np.asarray(fun(x), dtype=np.float64).reshape(-1)
   jac = np.empty((y0.size, x.size), dtype=np.float64)

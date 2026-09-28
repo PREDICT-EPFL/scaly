@@ -489,7 +489,7 @@ def test_lowering_normalizes_a_private_function_and_preserves_metadata() -> None
   matrix = sc.sym("matrix", (3, 2))
   vector = sc.sym("vector", 3)
   output = (matrix.T @ vector).block()
-  sparsity = sc.SparsityType((2, 1), (0, 1), (0, 0))
+  sparsity = sc.SparsityPattern((2, 1), (0, 1), (0, 0))
   fn = sc.Function._from_exprs(
     "normalized_metadata",
     [matrix, vector],

@@ -52,7 +52,7 @@ def test_peak_liveness_uses_last_use_not_total_definitions():
 
 def test_invalid_lane_option_rejected():
   with pytest.raises(ValueError, match="lanes"):
-    widen_ranges(_program(), lanes=3)
+    widen_ranges(_program(), lanes=3)  # ty: ignore[invalid-argument-type]
 
 
 def test_overlapping_contiguous_stores_are_not_independent():

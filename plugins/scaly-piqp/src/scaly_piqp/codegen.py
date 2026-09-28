@@ -16,10 +16,10 @@ if TYPE_CHECKING:
   from scaly.codegen.solver import SolverWrapperCtx
   from scaly.function import Function
   from scaly.solvers.model import SolverDescriptor
-  from scaly.ir.types import SparsityType
+  from scaly.ir.types import SparsityPattern
 
 
-def _csc_tables(name: str, sp: SparsityType | None) -> list[str]:
+def _csc_tables(name: str, sp: SparsityPattern | None) -> list[str]:
   """Static CSC pattern tables for one QP matrix. The pattern is constructed
   in CSC order by ``qp._qp_matrix_sparsity`` so the compact value buffer needs
   no runtime permutation — enforced here."""

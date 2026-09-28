@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
+from scaly.codegen.toolchain import LaneCount
 
 
 @sc.function(sc.G(sc.L("x", 3), sc.L("p", 3)), sc.L("y", ...), name="scale_add")
@@ -19,7 +20,7 @@ def scale_add(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
 
 
 @pytest.mark.parametrize("lanes", [1, "auto"])
-def test_vmap_c_source_loop_size_is_independent_of_length(lanes: int | str) -> None:
+def test_vmap_c_source_loop_size_is_independent_of_length(lanes: LaneCount) -> None:
   from scaly.codegen import render_c_source
 
   def render(N: int) -> str:
@@ -42,7 +43,7 @@ def test_vmap_c_source_loop_size_is_independent_of_length(lanes: int | str) -> N
 
 
 @pytest.mark.parametrize("lanes", [1, "auto"])
-def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.MonkeyPatch, lanes: int | str) -> None:
+def test_vmap_sparse_hessian_c_source_is_constant_in_length(monkeypatch: pytest.MonkeyPatch, lanes: LaneCount) -> None:
   from scaly.codegen import render_c_source
   from scaly.ir.expr import topo
 
@@ -269,7 +270,7 @@ def test_csr_csc_header_tables_carry_value_perm_for_non_row_major_coo() -> None:
   coo = list(zip(sp.rows, sp.cols))
   assert coo != sorted(coo), "test needs a non-row-major COO ordering to be meaningful"
 
-  module = render_c_module(spjf, header_name="t.h", source_name="t.c", typed_buffers=False)
+  module = render_c_module(spjf, header_name="t.h", source_name="t.c")
 
   def table(name: str) -> np.ndarray:
     m = re.search(rf"_{name}\[\d+\] = \{{([^}}]*)\}};", module.header)

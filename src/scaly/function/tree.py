@@ -81,7 +81,7 @@ class Tree[Symbolic, Numerical]:
   def is_symbolic(self, value: Symbolic | Numerical, /) -> TypeGuard[Symbolic]:
     """Whether ``value`` has at least one leaf and every leaf is an ``Expr``.
 
-    This is the leaf-kind half of ``Function.__call__``'s dispatch; it deliberately ignores
+    This is the leaf-kind half of ``Function.__call__``'s dispatch. It deliberately ignores
     structure so that a wrongly-shaped tree is reported by ``flatten_symbolic`` against the
     declared names instead of being rejected here as a kind mismatch.
     """
@@ -140,7 +140,7 @@ class L(Tree[Expr, np.ndarray]):
   def symbols(self, *, diff: bool | None = None) -> Expr:
     type_ = self.types[0]
     if diff is not None:
-      type_ = TensorType(type_.shape, type_.dtype, type_.sparsity, diff)
+      type_ = TensorType(type_.shape, type_.dtype, diff)
     return Expr(ExprOp.INPUT, type=type_, name=self.names[0])
 
   def relabel(self, prefix: str) -> L:
@@ -269,7 +269,7 @@ def G[SA, NA, SB, NB, SC, NC, SD, ND, SE, NE, SF, NF, SG, NG, SH, NH](
 
 
 def G(*parts: Tree[Any, Any]) -> Tree[Any, Any]:
-  """Group two to eight trees side by side; nest groups for greater widths."""
+  """Group two to eight trees side by side. Nest groups for greater widths."""
   return _G(parts)
 
 

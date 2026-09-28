@@ -1,67 +1,156 @@
 # Getting started
 
-This tutorial builds a model, differentiates it, turns it into an optimization problem and calls a
-generated solver. Every numerical result comes from compiled C.
+This guide introduces scaly's modelling workflow through a double-integrator
+control problem: symbolic expressions, functions, derivatives, optimization,
+and generated C. It assumes familiarity with Python, NumPy, and basic optimal
+control, but no experience with symbolic modelling libraries such as CasADi.
 
-## Build expressions
+The examples use scaly with the IPOPT plugin and a C compiler, as described in
+[Installation](installation.md).
 
-`sc.sym` creates a named symbolic input and `sc.const` creates a constant.
+## Symbolic variables and expressions
+
+Consider the discrete-time model
+
+\[
+z_k = \begin{bmatrix}p_k \\ v_k\end{bmatrix}, \qquad
+z_{k+1} = f(z_k, u_k)
+= \begin{bmatrix}p_k + 0.1 v_k \\ v_k + 0.1 u_k\end{bmatrix}.
+\]
+
+A symbolic variable represents an input whose numerical value is not yet
+specified. In scaly, it has a name and a fixed shape. For this model, `z`
+represents a two-element state vector and `u` a one-element control vector:
 
 ```python
-import scaly as sc
 import numpy as np
+import scaly as sc
 
 z = sc.sym("z", 2)
 u = sc.sym("u", 1)
 znext = z + 0.1 * sc.concat([z[1:], u])
 ```
 
-Operations on an `Expr` build graph nodes; they do not evaluate anything. Shapes and dtypes are
-static and arithmetic follows NumPy broadcasting.
+All three objects are instances of `sc.Expr`. `z` and `u` are input expressions and
+`znext` describes a calculation using them. Unlike an operation on NumPy arrays,
+this addition does not calculate a numerical result. It creates an expression
+node that records the addition and its operands.
+
+Together, the inputs and operations form an **expression graph**. Its nodes
+represent values, and its edges record which values an operation needs.
+For `znext`, the graph records the velocity slice, its concatenation with `u`,
+the multiplication by `0.1`, and the addition to `z`. Scaly uses this graph to
+calculate derivatives and generate code. Assigning a new value to the Python
+name `z` later does not change the recorded graph.
+
+Shapes, indexing, broadcasting, and arithmetic follow NumPy conventions.
+Here, `z[1:]` has shape `(1,)`, so concatenating it with `u` produces a vector
+of shape `(2,)`. `*` is elementwise multiplication and `@` is matrix
+multiplication. The [expression reference](../api/core.md#expressions) lists
+`Expr` methods, and [array builders](../api/core.md#builders) include operations
+such as `sc.concat`, `sc.stack`, and `sc.sumsqr`.
+
+## From expressions to a Function
+
+An `sc.Expr` describes a value. An `sc.Function` gives a calculation named
+inputs and outputs so that it can be evaluated, composed with other functions,
+differentiated, or exported as C. `Function` is the unit of composition in scaly.
+
+The `@sc.function` decorator constructs one by running a Python body with
+symbolic inputs:
 
 ```python
-print(znext.shape)       # (2,)
-print(sc.format_expr(znext))
-```
-
-See [the expression dialect](../how_it_works/ir.md#operations) for the full operation set.
-
-## Declare a typed function
-
-A `Function` gives a graph a named boundary. Its input and output trees describe both symbolic and
-numerical calls.
-
-```python
-@sc.function(
-    sc.G(sc.L("z", 2), sc.L("u", 1)),
-    sc.L("znext", ...),
-)
-def step(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+@sc.function(sc.G(sc.L("z", 2), sc.L("u", 1)), sc.L("znext", ...))
+def model(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
     z, u = inputs
     return z + 0.1 * sc.concat([z[1:], u])
 ```
 
-`sc.L` declares one tensor and `sc.G` groups trees. The body takes one value with the input
-structure and returns one value with the output structure. `...` infers the output shape during
-tracing.
+`L` stands for *leaf* and declares one named array, `G` stands for *group* and
+combines leaves or other groups into a tree of inputs or outputs. Here, the
+input group is a tuple containing `z` and `u`. The output is one leaf named
+`znext`, whose shape is inferred from the returned expression because its
+declaration uses `...`.
 
-Call it with arrays to run it:
+The decorator creates the symbols, runs the body once, and records the returned
+expression. After decoration, `model` is an `sc.Function` object, rather than
+the original Python function. It remains callable:
 
 ```python
-z1 = step((np.array([1.0, 2.0]), np.array([0.5])))
-# array([1.2, 2.05])
+z1 = model((np.array([1.0, 2.0]), np.array([0.5])))
+print(z1)
+# [1.2  2.05]
 ```
 
-The input tree is an `sc.G` of two leaves, so the call takes a 2-tuple. The output tree is a single
-`sc.L`, so the result is the array itself, see
-[a single leaf is unpacked](functions.md#a-single-leaf-is-unpacked). The first call lowers the
-graph, renders C, compiles a shared library and stores it in the just-in-time (JIT) cache. Later
-calls reuse it.
+A call with numerical arrays evaluates the graph. The first numerical call
+generates and compiles C. Subsequent calls reuse the compiled code. The Python
+body does not run again. A call with symbolic expressions instead includes
+the function in a larger graph, as the trajectory example below demonstrates.
 
-Call it with `Expr` leaves to compose it symbolically:
+The input tree determines the call structure: `sc.G` introduces a tuple,
+whereas a single `sc.L` takes or returns an array directly. Shape `()` denotes
+a scalar, and shape `(1,)` denotes a one-element vector. These are distinct.
+The [functions guide](functions.md) covers nested groups and other declarations.
+
+### Optional type annotations
+
+The annotations on `model` describe the symbolic Python body: a tuple of two
+`Expr` inputs and one `Expr` output. They do not change tracing or numerical
+evaluation. The example also works without them.
+
+Scaly's typing is designed to give you more checking as you provide more type
+information. With annotations, an IDE's type checker can check the body's
+argument and return types against the decorator's declared structure. For
+example, returning a tuple where the decorator declares one leaf is a type
+error. The decorated `Function` also carries symbolic and numerical input and
+output types, so calls with the wrong tuple structure can be flagged before
+execution. Array dimensions are checked at runtime as Python annotations
+cannot encode shapes.
+
+## Derivatives are Functions too
+
+For the model above,
+
+\[
+\frac{\partial f}{\partial z}
+= \begin{bmatrix} 1 & 0.1 \\ 0 & 1 \end{bmatrix}.
+\]
+
+`sc.jacobian` constructs an `sc.Function` for this derivative:
+
+```python
+model_jac = sc.jacobian(model, "znext", "z")
+print(model_jac((np.array([1.0, 2.0]), np.array([0.5]))))
+# [[1.  0.1]
+#  [0.  1. ]]
+```
+
+The strings select the output and input by their declared names. `model_jac`
+keeps the input structure of `model`, even though this particular Jacobian is
+constant. For a nonlinear model, the supplied values determine where the
+Jacobian is evaluated.
+
+Scaly applies differentiation rules to the expression graph, producing another
+graph. It does not approximate derivatives by perturbing numerical inputs.
+The resulting function can be composed and exported like any other function.
+The [derivatives guide](derivatives.md) covers gradients, Hessians, and
+products with derivative matrices. The [sparsity guide](sparsity.md) covers
+calculating only entries that may be nonzero.
+
+## Composing a trajectory model
+
+A function can reuse `model` to compute a trajectory and its cost:
+
+\[
+z_{k+1} = f(z_k,u_k), \qquad
+J(z_0, U) = \sum_{k=0}^{N-1}\left(\lVert z_k\rVert^2 + 0.1 u_k^2\right)
+    + 10\lVert z_N\rVert^2,
+\qquad U=(u_0,\ldots,u_{N-1}), \quad N=20.
+\]
 
 ```python
 N = 20
+
 
 @sc.function(
     sc.G(sc.L("z0", 2), sc.L("us", N)),
@@ -73,104 +162,142 @@ def rollout(inputs: tuple[sc.Expr, sc.Expr]) -> tuple[sc.Expr, sc.Expr]:
     for k in range(N):
         u = us[k : k + 1]
         cost = cost + sc.sumsqr(z) + 0.1 * sc.sumsqr(u)
-        z = step((z, u))
+        z = model((z, u))
     return z, cost + 10.0 * sc.sumsqr(z)
+
+
+z0 = np.array([1.0, 0.0])
+us0 = np.zeros(N)
+zN, cost = rollout((z0, us0))
+print(zN, float(cost))
+# [1. 0.] 30.0
 ```
 
-`step(...)` dispatches on the leaves it is given: `numerical_call` for arrays, `symbolic_call` for
-expressions. The symbolic call adds a `CALL` node, so the generated C contains one `step`
-procedure and calls it from `rollout`. See [Building functions](functions.md) for nested trees,
-inferred outputs, the two named call methods and `vmap`.
+`sc.const(0.0)` creates a constant expression, and `sc.sumsqr(z)` expresses
+\(\lVert z\rVert^2\). The symbolic call `model((z, u))` records a call to the
+existing `Function` inside `rollout`. The two output leaves give the numerical
+result its tuple structure.
 
-## Differentiate the function
+Python runs while the decorator builds the graph. Consequently, this `for`
+loop creates `N` successive calls to `model`. It does not record a loop.
+The horizon is fixed when `rollout` is defined, while `z0` and `us` can change
+on every evaluation. This distinction between Python execution and recorded
+operations also matters for repeated independent calculations, covered in
+the [bonus section on `vmap`](#bonus-repeated-stages-with-vmap).
 
-Derivative wrappers return typed functions.
+## Optimization problems and solvers
 
-```python
-grad = sc.gradient(rollout, "cost", "us")
+The trajectory model gives a single-shooting formulation with controls as
+decision variables and the measured initial state \(\bar z\) as a parameter:
 
-gradient_value = grad((np.array([1.0, 0.0]), np.zeros(N)))
-```
+\[
+\begin{aligned}
+\min_U \quad & J(\bar z,U) \\
+\text{subject to}\quad
+& z_0 = \bar z, \\
+& z_{k+1}=f(z_k,u_k), && k=0,\ldots,N-1, \\
+& z_N=0, \\
+& -2 \le u_k \le 2, && k=0,\ldots,N-1.
+\end{aligned}
+\]
 
-The derivative keeps `rollout`'s complete input tree, `(z0, us)`. There is no separate parameter
-list to maintain.
-
-The common wrappers are:
-
-```python
-sc.gradient(fn, "f", "x")
-sc.jacobian(fn, "y", "x")
-sc.hessian(fn, "f", "x")
-sc.sparse_jacobian(fn, "y", "x")
-sc.sparse_hessian(fn, "f", "x")
-sc.forward(fn, "y", "x")
-sc.adjoint(fn, "y", "x")
-```
-
-Differentiation is graph-to-graph. The result compiles, nests and renders like any other
-`Function`. See [Derivatives](derivatives.md) and [Sparsity](sparsity.md).
-
-## Declare an optimization problem
-
-A `Problem` separates the model from the solver backend.
+The recurrence is already built into `rollout`. `sc.problem` adds the objective,
+terminal equality, and control bounds:
 
 ```python
-@sc.problem(
-    vars=sc.L("us", N),
-    params=sc.L("z0", 2),
-)
-def shooting_problem(us: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+@sc.problem(vars=sc.L("us", N), params=sc.L("z0", 2))
+def control_problem(us: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
     zN, cost = rollout((z0, us))
     return sc.ProblemSpec(
         minimize=cost,
         eq=(zN,),
-        lb=sc.const(np.full(N, -2.0)),
-        ub=sc.const(np.full(N, 2.0)),
+        lb=sc.const(-2.0),
+        ub=sc.const(2.0),
     )
+
+
+solve = sc.solver(control_problem, "ipopt", options={"print_level": 0})
 ```
 
-The objective is scalar and equality groups are constrained to zero. Use `sc.bounded` for one- or
-two-sided inequality groups. Variable bounds have the declared variable structure.
+Inside `control_problem`, `us` and `z0` are symbolic `sc.Expr` inputs. The cost,
+constraint expressions, and bounds returned in `sc.ProblemSpec` are also
+`sc.Expr` objects. The builder records their dependence on variables and
+parameters without evaluating them numerically.
 
-Choose a backend:
+The decorator creates an `sc.Problem`, which describes the optimization problem
+independently of the solver. `vars` declares what the solver may change, and
+`params` declares what stays fixed during each solve. Expressions in `eq` are
+constrained to zero. The scalar `lb` and `ub` bounds apply to every control.
+
+`sc.solver` selects a backend and returns an `sc.Solver`. Scaly constructs
+the objective, constraint, and derivative functions that backend needs.
+The numerical call takes the problem parameters:
 
 ```python
-solve = sc.solver(
-    shooting_problem,
-    "ipopt",
-    options={"print_level": 0},
-)
+us_opt, lam_box, lam_eq, lam_ineq = solve(z0)
+status = solve.stats().to_solver_status()
+print(status.name)
+assert status.ok
+
+zN_opt, cost_opt = rollout((z0, us_opt))
+print(np.round(zN_opt, 6))
+# Approximately [0. 0.]
 ```
 
-IPOPT, PIQP and scaly-sqp are discovered as plugins. PIQP is accepted only when scaly can prove the
-cost quadratic, the constraints affine and the bounds independent of the variables.
+The result contains the controls and multipliers for variable bounds, equality
+constraints, and inequality constraints. `lam_ineq` is empty here because the
+problem has only variable bounds and equalities. Solver status is separate
+from these arrays and indicates whether the solve succeeded.
 
-## Call the solver
+Initial variables and multipliers default to zero. `solve(z0, x0=us0)` supplies
+an initial control sequence, and `warm=` accepts a previous result for a warm
+start. The [solver guide](solvers.md) describes backend-specific warm-start
+behavior and the underlying `solve.function`, an `sc.Function` with explicit
+inputs for the initial variables and multipliers.
 
-A solver takes its parameters and returns the variables and the three multiplier groups:
+## Generated C for deployment
+
+The same model can be used from Python during development and exported for
+integration into a C or C++ application. For example, a ROS node can evaluate
+the dynamics or run an optimization solver without calling Python. Standalone
+model code can also be compiled with the toolchain used by an embedded target.
 
 ```python
-us_opt, lam_box, lam_eq, lam_ineq = solve(np.array([1.0, 0.0]))
+from pathlib import Path
+from scaly.codegen import write_module
 
-stats = solve.stats()
-print(stats.obj, stats.iter, stats.to_solver_status())
+write_module(model, Path("generated"))
 ```
 
-The variables and multipliers start at zero. Pass `x0=` for an initial guess in the variable tree,
-or `warm=` with a previous result to warm-start the next solve from it. Box and inequality
-multipliers are signed: positive means the upper side is active, negative the lower side.
+This writes `generated/model.c` and `generated/model.h`. Passing `solve` instead
+exports the solver and its model calculations. That code also needs the native
+IPOPT libraries. Exporting files ahead of the application build is the
+ahead-of-time (AOT) path, in contrast to just-in-time (JIT) compilation on the first Python call.
 
-`solve.function` is the plain `Function` behind the solver, with the five input groups
-`(vars_init, lam_box0, lam_eq0, lam_ineq0, params)` that the generated C takes. Call `solve` with
-`Expr` leaves to put it inside another graph; the host, oracles and native wrapper then compile
-into one shared library. See [Solvers](solvers.md) for
-multi-block variables, bounded groups, `qp_problem`, sparse PIQP data, nesting and statistics, and
-[Solver backends](solver_backends.md) for backend options and warm-start behavior.
+The [code generation guide](codegen.md) describes export options, compilation,
+and the generated C and C++ APIs, including argument buffers, working memory,
+and [sparse output layouts](codegen.md#sparse-output-patterns).
 
-## Preserve regular repetition
+## Bonus: repeated stages with `vmap`
 
-The Python loop in `rollout` creates `N` call sites. When iterations are independent, `sc.vmap`
-represents the repetition as one node and lowers it to a C loop.
+`sc.vmap` records repeated independent calls to a function as one mapped
+operation. The compiler can then emit a loop instead of a separate call site
+for every stage. A multiple-shooting formulation makes this useful for the
+same control problem by including states among the decision variables:
+
+\[
+\begin{aligned}
+\min_{Z,U}\quad & \sum_{k=0}^{N-1}\left(\lVert z_k\rVert^2+0.1u_k^2\right)
+                  + 10\lVert z_N\rVert^2 \\
+\text{subject to}\quad
+& z_0=\bar z, \qquad z_N=0, \\
+& f(z_k,u_k)-z_{k+1}=0, && k=0,\ldots,N-1, \\
+& -2\le u_k\le2, && k=0,\ldots,N-1.
+\end{aligned}
+\]
+
+Each dynamics residual, or *defect*, now takes candidate states as inputs.
+Its evaluation does not depend on the result of another defect evaluation:
 
 ```python
 @sc.function(
@@ -179,36 +306,54 @@ represents the repetition as one node and lowers it to a C loop.
 )
 def defect(inputs: tuple[sc.Expr, sc.Expr, sc.Expr]) -> sc.Expr:
     z, u, znext = inputs
-    return step((z, u)) - znext
+    return model((z, u)) - znext
 
-decision = sc.sym("decision", 2 * (N + 1) + N)
-states = decision[: 2 * (N + 1)]
-controls = decision[2 * (N + 1) :]
 
-defects = sc.vmap(defect, N, {"z": states[:-2], "u": controls, "znext": states[2:]})
+@sc.problem(vars=sc.L("w", 3 * N + 2), params=sc.L("z0", 2))
+def multiple_shooting(w: sc.Expr, z0: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+    states = w[: 2 * (N + 1)]
+    controls = w[2 * (N + 1) :]
+    defects = sc.vmap(defect, N, {
+        "z": states[:-2],
+        "u": controls,
+        "znext": states[2:],
+    })
+    return sc.ProblemSpec(
+        minimize=sc.sumsqr(states[:-2]) + 0.1 * sc.sumsqr(controls)
+                 + 10.0 * sc.sumsqr(states[-2:]),
+        eq=(states[:2] - z0, defects, states[-2:]),
+        ineq=(sc.bounded(controls, lo=-2.0, hi=2.0),),
+    )
 ```
 
-Each outer tensor is cut into `N` contiguous chunks of its formal's size, so iteration `i` reads
-states `i` and `i + 1` and control `i`. A derivative of a vmapped function is another vmapped function, so source
-size and derivative construction scale with one stage, not with the horizon.
+`w` stacks `N + 1` two-element states followed by `N` controls. The mapping keys
+are the input names of `defect`. Scaly splits each supplied expression into
+`N` chunks of the corresponding input size: two elements for each state and
+one for each control. `states[:-2]` supplies stages `0` through `N - 1`, and
+`states[2:]` supplies stages `1` through `N`. `sc.bounded` expresses the control
+limits as inequalities within the larger decision vector.
 
-## Render C ahead of time
+The difference in generated structure is roughly as follows. These are sketches
+with simplified signatures, before any inlining or other compiler optimization:
 
-The ahead-of-time (AOT) command uses the same lowering and renderer as the numerical call.
-
-```bash
-uv run scaly_codegen mymodule:solve -o generated/
+```c
+// Single shooting: the Python loop creates N call sites.
+model(z0, u0, z1);
+model(z1, u1, z2);
+/* ... */
+model(z19, u19, z20);
 ```
 
-It writes one C source file and one header, C or C++, exposing the pointer ABI and typed buffers.
-Solver-bearing modules include their backend link flags. See [Code generation](codegen.md) and
-[the generated interface](../how_it_works/generated_interface.md).
+```c
+// Multiple shooting: vmap keeps one loop body.
+for (int k = 0; k < N; ++k) {
+    defect(states[k], controls[k], states[k + 1], defects[k]);
+}
+```
 
-## Next steps
-
-- [Building functions](functions.md)
-- [Derivatives](derivatives.md)
-- [Sparsity](sparsity.md)
-- [Solvers](solvers.md)
-- [Code generation](codegen.md)
-- [Architecture](../how_it_works/architecture.md)
+The mapped stage code stays one loop body as the horizon grows, including in
+its derivatives. Numerical work and storage still grow with `N`, as can
+[sparsity tables in the generated header](codegen.md#sparse-output-patterns). `vmap` cannot replace the sequential
+recurrence in `rollout`: it applies when the calls can be evaluated independently.
+The [functions guide](functions.md#regular-repetition-vmap) covers shared inputs
+and explicit slice mappings.

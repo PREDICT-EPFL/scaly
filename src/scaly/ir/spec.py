@@ -23,6 +23,11 @@ class VerifyError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Rule(Generic[Node, Op]):
+  """One verifier check: ``check`` returns an error message for a bad node, or ``None``.
+
+  The rule applies to nodes whose op is ``op``, or to every node when ``op`` is ``None``.
+  """
+
   op: Op | None
   description: str
   check: Callable[[Node], str | None]
@@ -66,6 +71,3 @@ class Spec(Generic[Node, Op]):
       for op_rules in other.by_op.values():
         rules.extend(op_rules)
     return Spec(rules)
-
-
-__all__ = ["Rule", "Spec", "VerifyError"]

@@ -193,7 +193,7 @@ def problem(
       raise ValueError(f"problem {problem_name!r} has unnamed inferred parameters")
     inferred_params = flat_tree(
       cast(tuple[str, ...], tuple(expr.name for expr in free)),
-      tuple(TensorType(expr.shape, expr.type.dtype, expr.type.sparsity, diff=False) for expr in free),
+      tuple(TensorType(expr.shape, expr.type.dtype, diff=False) for expr in free),
     )
     param_exprs = inferred_params.flatten_symbolic(inferred_params.symbols(diff=False), f"{problem_name} parameters")
     replacements = dict(zip(free, param_exprs, strict=True))

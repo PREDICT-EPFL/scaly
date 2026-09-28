@@ -117,6 +117,13 @@ def closed_loop_summary(root: Path) -> dict:
   return dict(runs=runs, groups=groups, oracle_comparisons=comparisons)
 
 
+def _flat(group: dict) -> dict:
+  row = {}
+  for key, value in group.items():
+    row.update({f"{key}_{stat}": x for stat, x in value.items()} if isinstance(value, dict) else {key: value})
+  return row
+
+
 def closed_loop_tables(summary: dict) -> str:
   """The timing table and the episode-agreement table on the results index."""
   lines = [
@@ -164,6 +171,11 @@ def report(study_dir: Path) -> Path:
     summary = closed_loop_summary(closed_loop)
     if summary["runs"]:
       (closed_loop / "closed_loop.summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+      groups = [_flat(group) for group in summary["groups"]]
+      with (closed_loop / "closed_loop.summary.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(groups[0]))
+        writer.writeheader()
+        writer.writerows(groups)
       sections.append(f"## Closed loop\n\n{closed_loop_tables(summary)}")
   out = study_dir / "report.md"
   out.write_text(f"# Study report: {study_dir.name}\n\n" + "\n".join(sections))

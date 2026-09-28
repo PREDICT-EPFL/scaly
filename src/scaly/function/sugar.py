@@ -26,7 +26,7 @@ def vmap(callee: Any, length: int, inputs: Any, output: int = 0) -> Expr:
   and ``stride=0`` broadcasts the same slice every iteration.
 
   Only the outer tensors must be rank-1. Callee formals and outputs may be rank-2 (as well as scalar
-  or rank-1); each iteration reads a flat slice of ``formal.size`` values and the produced node has
+  or rank-1). Each iteration reads a flat slice of ``formal.size`` values and the produced node has
   shape ``(length * callee.outputs[output].size,)``, with iteration outputs concatenated flat.
   """
   if not isinstance(callee, Function):

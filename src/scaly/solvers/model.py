@@ -9,7 +9,7 @@ from ..ir.expr import Expr, ExprOp
 from ..function import Function
 from ..function.tree import Tree
 from ..function.tree import flat_tree
-from ..ir.types import SparsityType, TensorType
+from ..ir.types import SparsityPattern, TensorType
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,15 +65,15 @@ class SolverDescriptor:
   hess: Function | ExternalOracle | None = None
   bounds: Function | ExternalOracle | None = None
   # Sparsity (NLP)
-  jac_sparsity: SparsityType | None = None
-  hess_sparsity: SparsityType | None = None
+  jac_sparsity: SparsityPattern | None = None
+  hess_sparsity: SparsityPattern | None = None
   # Sparse QP (PIQP sparse interface): structural CSC patterns of P (upper
   # triangle), A_eq, G_ineq, baked into the generated wrapper as static
   # tables; the oracle emits compact CSC-ordered value buffers. None => dense.
   sparse: bool = False
-  P_sparsity: SparsityType | None = None
-  A_sparsity: SparsityType | None = None
-  G_sparsity: SparsityType | None = None
+  P_sparsity: SparsityPattern | None = None
+  A_sparsity: SparsityPattern | None = None
+  G_sparsity: SparsityPattern | None = None
   # Solver-specific options
   options: tuple[tuple[str, Any], ...] = ()
   # Oracle output naming (QP); the order in which the oracle's outputs encode

@@ -70,7 +70,6 @@ def _forge_negative_shape(expr: Expr, shape: tuple[int, ...]) -> Expr:
   bad_type = TensorType.__new__(TensorType)
   object.__setattr__(bad_type, "shape", shape)
   object.__setattr__(bad_type, "dtype", expr.type.dtype)
-  object.__setattr__(bad_type, "sparsity", None)
   object.__setattr__(bad_type, "diff", expr.type.diff)
   object.__setattr__(expr, "type", bad_type)
   return expr

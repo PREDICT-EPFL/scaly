@@ -1,4 +1,4 @@
-"""The type vocabulary both dialects share: dtypes, device placement, tensor and sparsity types."""
+"""The type vocabulary both dialects share: dtypes, device placement, tensor types and sparsity patterns."""
 
 from __future__ import annotations
 
@@ -17,10 +17,8 @@ Lowering = Literal["auto", "scalar", "block", "opaque"]
 class DType:
   """Interned dtype descriptor.
 
-  See ``dtypes`` for the canonical instances. ``DType`` instances compare equal
-  to their string ``name`` (e.g. ``DType("float64", ...) == "float64"``) so older
-  call sites that round-trip the dtype through ``str`` keep working through the
-  Phase 1 migration.
+  See ``dtypes`` for the canonical instances. A ``DType`` compares equal to its string ``name``,
+  so ``dtypes.float64 == "float64"`` holds.
   """
 
   name: str
@@ -129,6 +127,8 @@ class DeviceSpec:
 
 @dataclass(frozen=True, slots=True)
 class BackendSupport:
+  """The dtypes one device backend can compute in. ``BACKEND_SUPPORT`` holds one per device kind."""
+
   name: str
   dtypes: frozenset[DType] = field(default_factory=frozenset)
 
@@ -163,17 +163,13 @@ def _check_shape(name: str, shape: tuple[int, ...]) -> None:
 
 
 @dataclass(frozen=True, slots=True)
-class ScalarType:
-  dtype: DType = dtypes.float64
-  diff: bool = True
+class SparsityPattern:
+  """The structurally nonzero entries of a matrix, as coordinate lists ``rows`` and ``cols``.
 
-  def __post_init__(self) -> None:
-    if not isinstance(self.dtype, DType):
-      object.__setattr__(self, "dtype", as_dtype(self.dtype))
+  The entry order is the order of the values stored alongside the pattern. It is not necessarily
+  row- or column-major. ``to_csr`` and ``to_csc`` return the permutation into either order.
+  """
 
-
-@dataclass(frozen=True, slots=True)
-class SparsityType:
   shape: tuple[int, int]
   rows: tuple[int, ...]
   cols: tuple[int, ...]
@@ -194,42 +190,42 @@ class SparsityType:
     return len(self.rows)
 
   @staticmethod
-  def empty(shape: tuple[int, int]) -> SparsityType:
-    return SparsityType(shape, (), ())
+  def empty(shape: tuple[int, int]) -> SparsityPattern:
+    return SparsityPattern(shape, (), ())
 
   @staticmethod
-  def dense(shape: tuple[int, int]) -> SparsityType:
+  def dense(shape: tuple[int, int]) -> SparsityPattern:
     rows, cols = np.nonzero(np.ones(shape, dtype=bool))
-    return SparsityType(shape, tuple(int(x) for x in rows), tuple(int(x) for x in cols))
+    return SparsityPattern(shape, tuple(int(x) for x in rows), tuple(int(x) for x in cols))
 
   @staticmethod
-  def from_mask(mask: np.ndarray) -> SparsityType:
+  def from_mask(mask: np.ndarray) -> SparsityPattern:
     mask = np.asarray(mask, dtype=bool)
     if mask.ndim != 2:
       raise ValueError(f"sparsity mask must be rank-2, got {mask.shape}")
     rows, cols = np.nonzero(mask)
     shape = (int(mask.shape[0]), int(mask.shape[1]))
-    return SparsityType(shape, tuple(int(x) for x in rows), tuple(int(x) for x in cols))
+    return SparsityPattern(shape, tuple(int(x) for x in rows), tuple(int(x) for x in cols))
 
   @staticmethod
-  def from_csr(shape: tuple[int, int], row_ptr: Sequence[int], col_ind: Sequence[int]) -> SparsityType:
+  def from_csr(shape: tuple[int, int], row_ptr: Sequence[int], col_ind: Sequence[int]) -> SparsityPattern:
     row_ptr = tuple(int(x) for x in row_ptr)
     col_ind = tuple(int(x) for x in col_ind)
     _check_compressed_ptr("row_ptr", row_ptr, shape[0], len(col_ind))
     if any(c < 0 or c >= shape[1] for c in col_ind):
       raise ValueError(f"CSR column indices out of bounds for shape {shape}")
     rows = tuple(r for r in range(shape[0]) for _ in range(row_ptr[r + 1] - row_ptr[r]))
-    return SparsityType(shape, rows, col_ind)
+    return SparsityPattern(shape, rows, col_ind)
 
   @staticmethod
-  def from_csc(shape: tuple[int, int], col_ptr: Sequence[int], row_ind: Sequence[int]) -> SparsityType:
+  def from_csc(shape: tuple[int, int], col_ptr: Sequence[int], row_ind: Sequence[int]) -> SparsityPattern:
     col_ptr = tuple(int(x) for x in col_ptr)
     row_ind = tuple(int(x) for x in row_ind)
     _check_compressed_ptr("col_ptr", col_ptr, shape[1], len(row_ind))
     if any(r < 0 or r >= shape[0] for r in row_ind):
       raise ValueError(f"CSC row indices out of bounds for shape {shape}")
     cols = tuple(c for c in range(shape[1]) for _ in range(col_ptr[c + 1] - col_ptr[c]))
-    return SparsityType(shape, row_ind, cols)
+    return SparsityPattern(shape, row_ind, cols)
 
   def to_mask(self) -> np.ndarray:
     mask = np.zeros(self.shape, dtype=bool)
@@ -239,7 +235,7 @@ class SparsityType:
   def to_csr(self) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
     """``(row_ptr, col_ind, val_perm)``: ``val_perm[k]`` is the COO position of CSR slot ``k``, so
     ``values_csr[k] = values[val_perm[k]]`` pairs a compact COO-ordered value buffer with the CSR
-    indices (the COO nnz order is arbitrary — e.g. piece-ordered on the structured VMAP spjac path)."""
+    indices. The COO order is arbitrary, for example piece by piece for a mapped sparse Jacobian."""
     order = sorted(range(self.nnz), key=lambda i: (self.rows[i], self.cols[i]))
     row_ptr = [0] * (self.shape[0] + 1)
     for i in order:
@@ -249,7 +245,7 @@ class SparsityType:
     return tuple(row_ptr), tuple(self.cols[i] for i in order), tuple(order)
 
   def to_csc(self) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
-    """``(col_ptr, row_ind, val_perm)`` — see ``to_csr``."""
+    """``(col_ptr, row_ind, val_perm)``, the compressed-column counterpart of ``to_csr``."""
     order = sorted(range(self.nnz), key=lambda i: (self.cols[i], self.rows[i]))
     col_ptr = [0] * (self.shape[1] + 1)
     for i in order:
@@ -270,17 +266,16 @@ def _check_compressed_ptr(name: str, ptr: tuple[int, ...], n_outer: int, nnz: in
 
 @dataclass(frozen=True, slots=True)
 class TensorType:
+  """The shape and dtype of an expression, and whether it is differentiable (``diff``)."""
+
   shape: tuple[int, ...] = ()
   dtype: DType = dtypes.float64
-  sparsity: SparsityType | None = None
   diff: bool = True
 
   def __post_init__(self) -> None:
     _check_shape("tensor", self.shape)
     if not isinstance(self.dtype, DType):
       object.__setattr__(self, "dtype", as_dtype(self.dtype))
-    if self.sparsity is not None and self.shape != self.sparsity.shape:
-      raise ValueError(f"tensor shape {self.shape} does not match sparsity shape {self.sparsity.shape}")
 
   @property
   def ndim(self) -> int:

@@ -1,5 +1,10 @@
 # Building functions
 
+Declare the shape and structure of a function with `L`, `G`, and `@function`. The derivative
+wrappers, such as `gradient`, then create functions from that declaration. See the
+[functions guide](../guide/functions.md) for examples and the
+[derivatives guide](../guide/derivatives.md) for choosing a derivative.
+
 ## Declared trees
 
 ::: scaly.function.tree.Tree
@@ -14,7 +19,8 @@
 
 ## Derivative requests
 
-Typed requests passed to `Function.factory`.
+Pass these request objects to `Function.factory` when you need several outputs or derivatives in
+one function. For a single derivative, the named wrappers below are usually more convenient.
 
 ::: scaly.function.factory.DerivSpec
 

@@ -1,7 +1,7 @@
 # Contributing
 
-How to set up a checkout, which checks a change must pass, where tests live and what to read before
-changing the compiler.
+To contribute a change, set up a checkout and run the checks below. You do not need to build the
+optional solvers to work on expressions, derivatives, or most compiler tests.
 
 ## Setup
 
@@ -11,13 +11,12 @@ cd scaly
 uv sync
 ```
 
-Use `uv run` for everything, for example `uv run pytest` or `uv run benchmarks/run.py`. `uv run`
-takes a script path directly, so the `python` in `uv run python script.py` is redundant. Do not
-activate the virtual environment by hand.
+Run commands through `uv run` so they use the project's pinned environment. For example, use
+`uv run pytest` for tests and `uv run benchmarks/run.py` for the benchmark script.
 
 Scaly itself is pure Python, but the `scaly-piqp` and `scaly-ipopt` plugins vendor their solvers
-and build them from source on the first sync. CMake comes from PyPI as a build requirement; a C++
-compiler and a Fortran compiler have to be installed system-wide:
+and build them from source on the first sync. CMake comes from PyPI as a build requirement, but a
+C++ compiler and a Fortran compiler have to be installed system-wide:
 
 ```bash
 # macOS
@@ -33,9 +32,9 @@ Then:
 SCALY_BUILD_SOLVERS=required uv sync
 ```
 
-A cold build takes 5 to 8 minutes; later syncs reuse the cached artifacts. Without
+A cold build takes 5 to 8 minutes, and later syncs reuse the cached artifacts. Without
 `SCALY_BUILD_SOLVERS=required`, a missing native toolchain makes `uv sync` skip the solver
-libraries instead of failing, and the solver tests skip with them; everything else works. See
+libraries instead of failing. The solver tests then skip, and everything else works. See
 [Environment variables](../guide/env_vars.md).
 
 To force a clean rebuild, delete the plugin's `src/*/lib`, `src/*/include` and `third_party`
@@ -47,7 +46,7 @@ in `src/scaly_*/build_config.json`, which pins its version, and a row in the
 into the wheel. The `test_*_notices.py` test in each of those plugins fails when a pinned dependency
 has no license directory.
 
-## The checks
+## Run the checks
 
 ```bash
 uv run pytest -n=auto              # the suite, in parallel
@@ -92,9 +91,14 @@ def test_something(): ...
 The root `conftest.py` skips those when the library is absent, and CI splits the suite on
 `-m solver` against `-m "not solver"`. Never hand-roll a "is the solver loadable" skip condition.
 
-An xdist worker occasionally dies inside the isolated library load in the vendored-solver plugin
-tests. It reproduces on unmodified checkouts, so a lone worker crash there is probably not yours.
-Rerun before reading it as a failure.
+The vendored-solver plugin tests occasionally crash an xdist worker during an isolated library
+load, including on unmodified checkouts. If that happens, rerun the affected test and compare with
+the base revision before attributing the failure to your change.
+
+Scaly can calculate several forward derivative directions together. When an operation has no rule
+for such a batch, it silently processes the directions one at a time, which gives the same
+derivative but a larger graph. `SCALY_STRICT_JVP_MANY=1` turns that fallback into an error, which
+identifies the operation that prevents batching.
 
 ## Where things live
 
@@ -102,38 +106,40 @@ Rerun before reading it as a failure.
 has its tests in `tests/passes/test_lowering.py`. Outside the mirror:
 
 - `tests/integration/` holds workload-shaped end-to-end checks.
-- `tests/benchmarks/` tests the benchmark harness. The benchmark problems keep their own gates; see
-  [Conventions](conventions.md#tests-against-benchmarks) for which side a check belongs on.
+- `tests/benchmarks/` tests the benchmark harness. The benchmark problems keep their own gates.
+  [Conventions](conventions.md#tests-against-benchmarks) explains which side a check belongs on.
 - `tests/typing/` holds the expected-error assertions that `ty check` covers.
 - `tests/baseline/` holds `pytest_nodeids.txt` and the generated-C snapshots under `c/`, checked by
   the root-level `tests/test_c_snapshot.py`.
 
 Two root-level tests are structural and permanent. `tests/test_import_layering.py` holds the
-import-layer table, the two sanctioned exceptions and the acyclicity check; a new module needs an
+import-layer table, the two sanctioned exceptions and the acyclicity check. A new module needs an
 entry in `IMPORT_LAYERS`. `tests/test_import_boundaries.py` pins the public names: that `sc.Expr` is
 `scaly.ir.expr.Expr`, that both dialects verify through the same types, and that retired module
 paths stay retired.
 
-Some compiler paths are exercised only by workload-shaped fixtures, mainly the RK4 stage-transcription
-Jacobian in `tests/integration/test_stage_transcription.py` and the chained-VMAP fixtures in
-`tests/integration/test_vmap.py`. They build a mapped and a fully unrolled version of the same graph
-and compare values, Jacobians and Hessians, so a coloring bug cannot hide behind a false structural
-zero. Keep them working.
+The integration tests include fourth-order Runge-Kutta stage derivatives in
+`tests/integration/test_stage_transcription.py` and chained mapped functions in
+`tests/integration/test_vmap.py`. They compare mapped and unrolled versions of the same calculation,
+including values, Jacobians, and Hessians. These comparisons detect errors that would otherwise
+appear as missing nonzero derivative entries.
 
 ## Making a change
 
 Read [the architecture](../how_it_works/architecture.md) first, then [The codebase](codebase.md).
 [Where to add things](codebase.md#where-to-add-things) lists, for each kind of change, every
-file it touches; adding a scalar operation touches seven.
+file it touches. Adding a scalar operation touches seven.
 
 Then read the surrounding code, follow what is already there, make a focused change, run the
-narrowest relevant check, then widen. Match the style you find; see [Conventions](conventions.md).
+narrowest relevant check, then widen. Match the style you find, as described in
+[Conventions](conventions.md).
 
 Anything touching the IR, differentiation or code generation runs the full suite. Those paths break
 subtly and are expensive to debug later.
 
-Do not import `torch` or other libraries at run time. Scaly depends on NumPy and nothing else, and
-a small local implementation is preferred, as with `scaly.utils.load_torch_state_dict`.
+NumPy and SciPy are Scaly's only runtime dependencies. Do not import `torch`, `tinygrad`, or
+another library at run time. Prefer a small local implementation, as with
+`scaly.utils.load_torch_state_dict`.
 
 ## Adding a solver backend
 

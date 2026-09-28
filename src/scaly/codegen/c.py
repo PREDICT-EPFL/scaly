@@ -26,6 +26,7 @@ from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
 from ..ir.program import walk_program, ProgramNode, ProgramOp
 from ..passes.program._common import allocated_name, buffer_refs
+from .toolchain import CDialect, VectorLibm
 
 # Scalar ProgramOp -> C spelling. Operators render inline; libm ops render as calls.
 _BIN_SYM = {ProgramOp.ADD: "+", ProgramOp.SUB: "-", ProgramOp.MUL: "*", ProgramOp.DIV: "/", ProgramOp.MOD: "%"}
@@ -62,7 +63,9 @@ def can_render_program_c(fun: Function) -> bool:
   return True
 
 
-def _includes(extra: tuple[str, ...] = (), *, dialect: str = "gnu", prog: ProgramNode | None = None, vector_libm: str = "none") -> list[str]:
+def _includes(
+  extra: tuple[str, ...] = (), *, dialect: CDialect = "gnu", prog: ProgramNode | None = None, vector_libm: VectorLibm = "none"
+) -> list[str]:
   # Vector types for coalesced stores (``_emit_body``): ``aligned(8)`` because the ABI only
   # promises double alignment, ``may_alias`` because they access plain double storage.
   return [
@@ -85,7 +88,7 @@ def render_program_c_source(fun: Function, observe: ProgramObserver | None = Non
   return render_program_c(lower_function(fun, observe=observe), fun)
 
 
-def render_program_c(prog: ProgramNode, fun: Function, *, casadi: bool = False, dialect: str = "gnu", vector_libm: str = "none") -> str:
+def render_program_c(prog: ProgramNode, fun: Function, *, casadi: bool = False, dialect: CDialect = "gnu", vector_libm: VectorLibm = "none") -> str:
   """Render ``fun``'s lowered PROGRAM to a standalone pointer-ABI translation unit. ``casadi`` adds
   the CasADi query functions and the compressed-column gather (``codegen/casadi.py``)."""
   proc = main_proc(prog)
@@ -134,7 +137,9 @@ def entry_prologue(fun: Function, sz_w: int) -> list[str]:
   return lines
 
 
-def _render_entry(proc: ProgramNode, fun: Function, *, casadi: bool = False, dialect: str = "gnu", vector_libm: str = "none") -> list[str]:
+def _render_entry(
+  proc: ProgramNode, fun: Function, *, casadi: bool = False, dialect: CDialect = "gnu", vector_libm: VectorLibm = "none"
+) -> list[str]:
   """Emit the pointer-ABI entry ``<symbol>(arg,res,iw,w,mem)`` with ``fun``'s main PROC body
   inlined. ``codegen/aot.py`` reuses this for solver-bearing functions, so the top function's body
   lowers through Program IR exactly like any other host function."""
@@ -165,7 +170,7 @@ def _render_entry(proc: ProgramNode, fun: Function, *, casadi: bool = False, dia
 def _force_noinline_raw(proc_name: str) -> bool:
   # Apple clang 17 (Xcode 16.4 / macOS 15 arm64 CI) miscompiles inlined forward-AD helper callees
   # for CALL-node Jacobians. Keep normal user callees inline, but make generated forward helpers
-  # real call frames until the compiler issue disappears. See docs/macos_clang_call_miscompile.md.
+  # real call frames until the compiler issue disappears. See internal/notes/macos_clang_call_miscompile.md.
   return "_fwd" in proc_name
 
 
@@ -177,7 +182,9 @@ def _c_reserved_names(prog: ProgramNode) -> set[str]:
   return names
 
 
-def _render_raw_callee(proc: ProgramNode, *, dialect: str = "gnu", vector_libm: str = "none", reserved_names: set[str] | None = None) -> list[str]:
+def _render_raw_callee(
+  proc: ProgramNode, *, dialect: CDialect = "gnu", vector_libm: VectorLibm = "none", reserved_names: set[str] | None = None
+) -> list[str]:
   """A callee renders as ``static inline void <name>_raw(const <dtype>* p0, ..., double* w)`` — a
   pointer per param plus the workspace tail (spilled slots index into ``w``; ``call`` sites pass
   the caller's ``w`` advanced past its own spill window). The leading ``input_count`` params are
@@ -185,7 +192,7 @@ def _render_raw_callee(proc: ProgramNode, *, dialect: str = "gnu", vector_libm: 
   its ``const double*`` arguments without discarding qualifiers. No ABI wrapper.
 
   Normal user callees stay inline. Forward-AD helper callees are selectively noinline on purpose;
-  see ``_force_noinline_raw`` and docs/macos_clang_call_miscompile.md.
+  see ``_force_noinline_raw`` and internal/notes/macos_clang_call_miscompile.md.
   """
   param_count = int(proc.attrs["param_count"])
   input_count = int(proc.attrs.get("input_count", 0))
@@ -248,7 +255,7 @@ def _emit_local_buffers(body: list[ProgramNode], lines: list[str], ptr_expr: dic
       lines.append(f"{pad}{stmt.dtype.c_type} {name}[{size}];")
 
 
-def _emit_body(body: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int, *, dialect: str = "gnu") -> None:
+def _emit_body(body: list[ProgramNode], ptr_expr: dict[str, str], lines: list[str], indent: int, *, dialect: CDialect = "gnu") -> None:
   """Render Program statements in order."""
   for stmt in body:
     if stmt.op == ProgramOp.BUFFER:
@@ -256,7 +263,7 @@ def _emit_body(body: list[ProgramNode], ptr_expr: dict[str, str], lines: list[st
     _emit_statement(stmt, ptr_expr, lines, indent, dialect=dialect)
 
 
-def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int, *, dialect: str = "gnu") -> None:
+def _emit_statement(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[str], indent: int, *, dialect: CDialect = "gnu") -> None:
   pad = " " * indent
   if stmt.op == ProgramOp.FOR and "vector_helper" in stmt.attrs:
     _emit_vector_calls(stmt, ptr_expr, lines, indent)
@@ -381,13 +388,6 @@ def _emit_scalar(n: ProgramNode, ptr_expr: dict[str, str], var_expr: dict[str, s
   return text[id(n)]
 
 
-__all__ = [
-  "can_render_program_c",
-  "render_program_c",
-  "render_program_c_source",
-]
-
-
 def _lane_defines(prog: ProgramNode | None) -> list[str]:
   if prog is None:
     return []
@@ -468,7 +468,7 @@ def _emit_vector_calls(stmt: ProgramNode, ptr_expr: dict[str, str], lines: list[
   ]
 
 
-def _render_vector_helpers(proc: ProgramNode, *, dialect: str, vector_libm: str) -> list[str]:
+def _render_vector_helpers(proc: ProgramNode, *, dialect: CDialect, vector_libm: VectorLibm) -> list[str]:
   lines: list[str] = []
   for stmt in reversed(list(walk_program(proc))):
     if stmt.op != ProgramOp.FOR or "vector_helper" not in stmt.attrs:
@@ -504,7 +504,7 @@ def _render_vector_helpers(proc: ProgramNode, *, dialect: str, vector_libm: str)
   return lines
 
 
-def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: str) -> list[str]:
+def _vector_math(helper: str, vec: str, width: str, op: ProgramOp, vector_libm: VectorLibm) -> list[str]:
   function = _UNARY_C.get(op, _BINARY_C.get(op, ""))
   binary = op in _BINARY_C
   params = f"{vec} x, {vec} y" if binary else f"{vec} x"

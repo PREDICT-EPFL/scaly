@@ -1,0 +1,218 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "closed_loop.summary.csv"
+  },
+  "transform": [
+    {
+      "fold": [
+        "solver_time_ms_mean",
+        "fe_time_ms_mean"
+      ],
+      "as": [
+        "metric",
+        "ms"
+      ]
+    },
+    {
+      "pivot": "oracle",
+      "value": "ms",
+      "groupby": [
+        "problem",
+        "solver",
+        "metric"
+      ]
+    },
+    {
+      "filter": "isValid(datum.casadi) && isValid(datum.scaly)"
+    },
+    {
+      "calculate": "datum.problem === 'race_cars' ? 'Race-car' : datum.problem === 'npmpc' ? 'Neural-process MPC' : datum.problem === 'chain' ? 'Chain' : datum.problem === 'unbumpercars' ? 'Unbumpercars' : ''",
+      "as": "name"
+    },
+    {
+      "calculate": "datum.problem === 'race_cars' ? '0' : datum.problem === 'npmpc' ? '1' : datum.problem === 'chain' ? '2' : datum.problem === 'unbumpercars' ? '3' : ''",
+      "as": "order"
+    },
+    {
+      "calculate": "datum.problem === 'race_cars' ? 'Race-car MPC, horizon N' : datum.problem === 'npmpc' ? 'Neural-process MPC, horizon N' : datum.problem === 'chain' ? 'Chain of masses, M masses' : datum.problem === 'unbumpercars' ? 'Unbumpercars filter, C cars' : ''",
+      "as": "problem"
+    },
+    {
+      "calculate": "datum.solver === 'sqp' ? 'SQP' : 'IPOPT'",
+      "as": "solver_name"
+    },
+    {
+      "calculate": "datum.name + ', ' + datum.solver_name",
+      "as": "pair"
+    },
+    {
+      "calculate": "2 * datum.order + (datum.solver === 'sqp' ? 0 : 1)",
+      "as": "rank"
+    },
+    {
+      "calculate": "datum.casadi / datum.scaly",
+      "as": "speedup"
+    },
+    {
+      "calculate": "datum.metric === 'solver_time_ms_mean' ? 'Total solve time' : datum.metric === 'fe_time_ms_mean' ? 'Function evaluation' : ''",
+      "as": "measure"
+    }
+  ],
+  "width": 560,
+  "height": {
+    "step": 34
+  },
+  "layer": [
+    {
+      "mark": {
+        "type": "rule",
+        "strokeWidth": 1
+      },
+      "encoding": {
+        "x": {
+          "datum": 1
+        }
+      }
+    },
+    {
+      "mark": {
+        "type": "line",
+        "strokeWidth": 2,
+        "color": "#c3c2b7"
+      },
+      "encoding": {
+        "x": {
+          "field": "speedup",
+          "type": "quantitative",
+          "title": "Speedup over CasADi (CasADi time ÷ Scaly time)",
+          "scale": {
+            "type": "log",
+            "domain": [
+              0.8,
+              80
+            ]
+          },
+          "axis": {
+            "format": "~r",
+            "values": [
+              1,
+              2,
+              5,
+              10,
+              20,
+              50
+            ]
+          }
+        },
+        "y": {
+          "field": "pair",
+          "type": "nominal",
+          "title": null,
+          "sort": {
+            "field": "rank",
+            "op": "min"
+          }
+        },
+        "detail": {
+          "field": "pair"
+        }
+      }
+    },
+    {
+      "mark": {
+        "type": "point",
+        "size": 90,
+        "stroke": "#ffffff",
+        "strokeWidth": 1.5
+      },
+      "encoding": {
+        "x": {
+          "field": "speedup",
+          "type": "quantitative",
+          "title": "Speedup over CasADi (CasADi time ÷ Scaly time)",
+          "scale": {
+            "type": "log",
+            "domain": [
+              0.8,
+              80
+            ]
+          },
+          "axis": {
+            "format": "~r",
+            "values": [
+              1,
+              2,
+              5,
+              10,
+              20,
+              50
+            ]
+          }
+        },
+        "y": {
+          "field": "pair",
+          "type": "nominal",
+          "title": null,
+          "sort": {
+            "field": "rank",
+            "op": "min"
+          }
+        },
+        "color": {
+          "field": "measure",
+          "title": null,
+          "scale": {
+            "domain": [
+              "Total solve time",
+              "Function evaluation"
+            ],
+            "range": [
+              "#0b0b0b",
+              "#898781"
+            ]
+          }
+        },
+        "shape": {
+          "field": "measure",
+          "title": null,
+          "scale": {
+            "domain": [
+              "Total solve time",
+              "Function evaluation"
+            ],
+            "range": [
+              "circle",
+              "diamond"
+            ]
+          }
+        },
+        "tooltip": [
+          {
+            "field": "pair",
+            "title": "Controller"
+          },
+          {
+            "field": "measure",
+            "title": "Measure"
+          },
+          {
+            "field": "scaly",
+            "title": "Scaly, ms",
+            "format": ".3f"
+          },
+          {
+            "field": "casadi",
+            "title": "CasADi, ms",
+            "format": ".3f"
+          },
+          {
+            "field": "speedup",
+            "title": "Speedup",
+            "format": ".2f"
+          }
+        ]
+      }
+    }
+  ]
+}

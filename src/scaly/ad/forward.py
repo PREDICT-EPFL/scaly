@@ -295,9 +295,9 @@ def _local_seed_colors(callee_out: Expr, formal: Expr, nseed: int) -> tuple[Any,
 def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
   """Forward mode over several seeds in one pass. ``seeds`` has shape ``(n, *wrt.shape)``.
 
-  Structural rules share work across seeds — one ``cos`` serves every column of a ``sin``'s
-  derivative — so this is much cheaper than ``n`` separate ``jvp`` calls. Ops without a
-  multi-seed rule fall back to per-seed evaluation; set ``SCALY_STRICT_JVP_MANY=1`` to raise
+  Structural rules share work across seeds. One ``cos`` serves every column of a ``sin``'s
+  derivative, so this is much cheaper than ``n`` separate ``jvp`` calls. Ops without a
+  multi-seed rule fall back to per-seed evaluation. Set ``SCALY_STRICT_JVP_MANY=1`` to raise
   instead of falling back. Returns shape ``(n, *expr.shape)``.
   """
   if len(seeds.shape) < 1 or seeds.shape[1:] != wrt.shape:

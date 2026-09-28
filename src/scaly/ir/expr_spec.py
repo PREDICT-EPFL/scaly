@@ -32,7 +32,7 @@ from .types import DType, broadcast_shape
 def verify_expr(root: Expr | Iterable[Expr], spec: "Spec | None" = None) -> None:
   """Topologically walk the DAG below ``root`` and raise on the first violation.
 
-  ``spec`` defaults to ``spec_expr`` — the full expression-dialect contract.
+  ``spec`` defaults to ``spec_expr``, the full expression-dialect contract.
   """
   if spec is None:
     spec = spec_expr
@@ -71,23 +71,11 @@ def _arity_matches(expr: Expr) -> str | None:
   return None
 
 
-def _sparsity_shape_matches(expr: Expr) -> str | None:
-  sp = expr.type.sparsity
-  if sp is None:
-    return None
-  if expr.type.shape != sp.shape:
-    return f"sparsity shape {sp.shape} disagrees with tensor shape {expr.type.shape}"
-  if sp.nnz != len(sp.rows) or sp.nnz != len(sp.cols):
-    return f"sparsity has inconsistent nnz={sp.nnz} rows={len(sp.rows)} cols={len(sp.cols)}"
-  return None
-
-
 spec_expr_shared = Spec(
   [
     Rule(None, "shape-nonnegative", _shape_nonneg),
     Rule(None, "dtype-is-DType", _dtype_is_dtype),
     Rule(None, "arity-matches-op", _arity_matches),
-    Rule(None, "sparsity-shape-matches", _sparsity_shape_matches),
   ]
 )
 
@@ -311,10 +299,3 @@ spec_expr = Spec(
     Rule(ExprOp.CONCAT, "concat-shapes", _concat_shapes),
   ]
 )
-
-
-__all__ = [
-  "spec_expr",
-  "spec_expr_shared",
-  "verify_expr",
-]

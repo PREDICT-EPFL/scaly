@@ -4,10 +4,7 @@ the symbol mangling (``docs/how_it_works/generated_interface.md``). The typed st
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from ..function import Function
-from ..ir.types import DType, as_dtype
 from ..utils.names import c_ident as c_ident
 
 # ``mem`` follows CasADi 3.8: an ``int`` memory handle a stateful function would index a pool with.
@@ -24,29 +21,6 @@ def abi_status_defines(*, guarded: bool = False) -> list[str]:
   if not guarded:
     return [f"#define {name} {code}" for name, code in ABI_STATUS.items()]
   return [line for name, code in ABI_STATUS.items() for line in (f"#ifndef {name}", f"#define {name} {code}", "#endif")]
-
-
-@dataclass(frozen=True, slots=True)
-class BufferType:
-  dtype: DType
-  shape: tuple[int, ...]
-  name: str | None = None
-
-  def __post_init__(self) -> None:
-    if not isinstance(self.dtype, DType):
-      object.__setattr__(self, "dtype", as_dtype(self.dtype))
-
-  @property
-  def size(self) -> int:
-    n = 1
-    for d in self.shape:
-      n *= d
-    return n
-
-  def c_type(self) -> str:
-    dims = "".join(f"[{d}]" for d in self.shape)
-    name = "data" if self.name is None else self.name
-    return f"struct {{ {self.dtype.c_type} {name}{dims}; }}"
 
 
 def buffer_idents(fun: Function) -> tuple[list[str], list[str]]:

@@ -115,6 +115,3 @@ def program_graph(root: ProgramNode) -> dict[str, Any]:
     for pos, arg in enumerate(n.args):
       edges.append({"from": loc[id(arg)], "to": loc[id(n)], "label": str(pos)})
   return {"nodes": graph_nodes, "edges": edges, "outputs": [loc[id(root)]]}
-
-
-__all__ = ["expr_graph", "program_graph"]

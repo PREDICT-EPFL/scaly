@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from .abi import c_ident
 from ..function import Function
-from ..ir.types import SparsityType
+from ..ir.types import SparsityPattern
 
 CASADI_QUERIES = (
   "n_in",
@@ -59,8 +59,8 @@ def casadi_declarations(symbol: str) -> list[str]:
 
 def check_casadi_layout(fun: Function) -> None:
   """CasADi buffers are column-major and scaly's are row-major. Scalars, vectors and compact sparse
-  outputs agree; a dense matrix with both dimensions above one would need a transpose, so the first
-  version rejects it here rather than hand the caller a transposed matrix."""
+  outputs agree. A dense matrix with both dimensions above one would need a transpose, so it is
+  rejected here rather than hand the caller a transposed matrix."""
   for kind, names, exprs, sparsities in (
     ("input", fun.input_names, fun.inputs, (None,) * len(fun.inputs)),
     ("output", fun.output_names, fun.outputs, fun.output_sparsities),
@@ -80,7 +80,7 @@ def _dense_dims(shape: tuple[int, ...]) -> tuple[int, int]:
   return (shape[0], shape[1])
 
 
-def casadi_sparsity(shape: tuple[int, ...], sp: SparsityType | None) -> tuple[int, ...]:
+def casadi_sparsity(shape: tuple[int, ...], sp: SparsityPattern | None) -> tuple[int, ...]:
   """CasADi's compressed encoding: ``{nrow, ncol, 1}`` for dense, ``{nrow, ncol, colind..., row...}``
   for sparse. ``check_casadi_layout`` has already ruled out dense matrices."""
   if sp is None:
@@ -89,19 +89,19 @@ def casadi_sparsity(shape: tuple[int, ...], sp: SparsityType | None) -> tuple[in
   return (*sp.shape, *col_ptr, *row_ind)
 
 
-def csc_ordered(sp: SparsityType) -> SparsityType:
+def csc_ordered(sp: SparsityPattern) -> SparsityPattern:
   """``sp`` with its nonzeros listed in compressed-column order, which is the order a CasADi caller
   reads the value buffer in under ``casadi=True``. The header's tables are rendered from this
   pattern so they describe the buffer actually written; its ``csc_val_perm`` is the identity."""
   _, _, perm = sp.to_csc()
-  return SparsityType(sp.shape, tuple(sp.rows[i] for i in perm), tuple(sp.cols[i] for i in perm))
+  return SparsityPattern(sp.shape, tuple(sp.rows[i] for i in perm), tuple(sp.cols[i] for i in perm))
 
 
-def casadi_output_sparsities(fun: Function) -> tuple[SparsityType | None, ...]:
+def casadi_output_sparsities(fun: Function) -> tuple[SparsityPattern | None, ...]:
   return tuple(None if sp is None else csc_ordered(sp) for sp in fun.output_sparsities)
 
 
-def _needs_gather(sp: SparsityType | None) -> bool:
+def _needs_gather(sp: SparsityPattern | None) -> bool:
   return sp is not None and sp.to_csc()[2] != tuple(range(sp.nnz))
 
 

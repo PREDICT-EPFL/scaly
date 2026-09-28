@@ -26,6 +26,7 @@ _RECORDINGS: list[dict[str, Any]] = []
 
 
 def recording_dir() -> Path:
+  """Return the directory recordings are written to: ``SCALY_VIZ_DIR``, else ``$XDG_CACHE_HOME/scaly/viz``, else ``~/.cache/scaly/viz``."""
   override = os.environ.get("SCALY_VIZ_DIR")
   if override:
     return Path(override).expanduser()
@@ -35,6 +36,7 @@ def recording_dir() -> Path:
 
 
 def recording_path() -> Path:
+  """Return the JSON file that every finished recording is appended to."""
   return recording_dir() / "recordings.json"
 
 
@@ -51,12 +53,14 @@ def visualize_function(fun: Function, *, label: str | None = None) -> Function:
 
 
 def unvisualize_function(fun: Function) -> None:
+  """Stop recording renders of ``fun``. Does nothing if it was not marked."""
   with _RECORDING_LOCK:
     _VIZ_TARGETS.pop(id(fun), None)
 
 
 @contextmanager
 def capture(fun: Function, *, label: str | None = None) -> Iterator[Function]:
+  """Record renders of ``fun`` only inside a ``with`` block, which yields ``fun``."""
   visualize_function(fun, label=label)
   try:
     yield fun
@@ -64,12 +68,8 @@ def capture(fun: Function, *, label: str | None = None) -> Iterator[Function]:
     unvisualize_function(fun)
 
 
-def is_visualized(fun: Function) -> bool:
-  with _RECORDING_LOCK:
-    return id(fun) in _VIZ_TARGETS
-
-
 def clear_recordings(*, disk: bool = False) -> None:
+  """Forget the recordings made in this process, and with ``disk=True`` delete the recording file too."""
   with _RECORDING_LOCK:
     _RECORDINGS.clear()
   if disk:
@@ -77,11 +77,17 @@ def clear_recordings(*, disk: bool = False) -> None:
 
 
 def recordings() -> list[dict[str, Any]]:
+  """Return the recordings made in this process, oldest first.
+
+  Each is a JSON-ready dict with the display ``name``, the ``function`` name, any render ``error``
+  and the ``steps``: the expression graph, each program-dialect pass and the generated C.
+  """
   with _RECORDING_LOCK:
     return list(_RECORDINGS)
 
 
 def load_recordings(path: str | os.PathLike[str] | None = None) -> list[dict[str, Any]]:
+  """Read the recordings saved at ``path``, by default ``recording_path()``, including those from other processes."""
   p = Path(path) if path is not None else recording_path()
   if not p.exists():
     return []
@@ -173,18 +179,3 @@ def begin_recording(fun: Function) -> VisualizationRecording | None:
 
 # Importing scaly.viz is what arms recording: codegen owns the hook and knows nothing about us.
 register_render_observer(begin_recording)
-
-
-__all__ = [
-  "VisualizationRecording",
-  "begin_recording",
-  "capture",
-  "clear_recordings",
-  "is_visualized",
-  "load_recordings",
-  "recording_dir",
-  "recording_path",
-  "recordings",
-  "unvisualize_function",
-  "visualize_function",
-]

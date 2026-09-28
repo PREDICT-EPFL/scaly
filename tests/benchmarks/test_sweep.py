@@ -246,7 +246,7 @@ def test_module_info_records_constructed_local_coloring_width() -> None:
   assert coloring_width == 2
   assert max(sc.column_coloring(sparsity), default=-1) + 1 == 1
 
-  module = render_c_module(built, header_name="module_info_spjac.h", source_name="module_info_spjac.c", typed_buffers=False)
+  module = render_c_module(built, header_name="module_info_spjac.h", source_name="module_info_spjac.c")
   info = _module_info(
     built.name,
     "scaly",
@@ -569,7 +569,7 @@ def test_compiled_driver_runs_a_rendered_scaly_kernel_with_sanitized_inputs(tmp_
     x, lam_f, lam_g = inputs
     return x + lam_f + 2.0 * lam_g
 
-  module = render_c_module(kernel, header_name="rendered_driver_kernel.h", source_name="rendered_driver_kernel.c", typed_buffers=False)
+  module = render_c_module(kernel, header_name="rendered_driver_kernel.h", source_name="rendered_driver_kernel.c")
   info = {
     "name": "wrong_construction_label",
     "backend": "scaly",

@@ -112,7 +112,7 @@ commands.
 
 The experiments below isolate configuration variables that the complete study holds fixed. Their
 absolute timings are audit measurements, not current benchmark headlines. The current study results
-remain on the [overview](../../docs/results/index.md) and [scalability page](../../docs/results/scalability.md).
+remain on the [overview](../../docs/benchmarks/index.md) and [scalability page](../../docs/benchmarks/scalability.md).
 
 ## The IPOPT build is a first-order confound
 

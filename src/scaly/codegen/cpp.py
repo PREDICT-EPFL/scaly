@@ -14,7 +14,7 @@ from ..function import Function
 from ..solvers.stats import stats_c_defs
 
 if TYPE_CHECKING:
-  from ..ir.types import SparsityType
+  from ..ir.types import SparsityPattern
 
 BUFFER_TEMPLATE = """#ifndef SCALY_BUFFER_HPP
 #define SCALY_BUFFER_HPP
@@ -53,7 +53,7 @@ def _std_array(name: str, values: tuple[int, ...], size: str) -> str:
   return f"constexpr std::array<int, {size}> {name} = {{{', '.join(str(v) for v in values)}}};"
 
 
-def _sparse_namespace(name: str, sp: SparsityType) -> list[str]:
+def _sparse_namespace(name: str, sp: SparsityPattern) -> list[str]:
   row_ptr, col_ind, csr_perm = sp.to_csr()
   col_ptr, row_ind, csc_perm = sp.to_csc()
   return [
@@ -73,9 +73,9 @@ def _sparse_namespace(name: str, sp: SparsityType) -> list[str]:
   ]
 
 
-def render_cpp_header(fun: Function, backends: tuple[str, ...], sz_w: int, *, casadi: bool, sparsities: tuple[SparsityType | None, ...]) -> str:
+def render_cpp_header(fun: Function, backends: tuple[str, ...], sz_w: int, *, casadi: bool, sparsities: tuple[SparsityPattern | None, ...]) -> str:
   """The ``.hpp`` for ``fun``. The kernel symbols are declared ``extern "C"`` inside the function's
-  namespace, since a namespace and a function cannot share the global name; C linkage keeps the
+  namespace, since a namespace and a function cannot share the global name. C linkage keeps the
   symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``."""
   symbol = c_ident(fun.name)
   inputs, outputs = buffer_idents(fun)

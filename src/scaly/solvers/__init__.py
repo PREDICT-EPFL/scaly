@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 from .model import ExternalOracle, SolverDescriptor, descriptor_function
+from .paths import SolverLibraryError
 from .problem import NO_LB, NO_UB, Bounded, Problem, ProblemSpec, bounded, problem
 from .qp import NotQuadratic, QPData, qp_problem
 from .solver import Solver, solver
-from .stats import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, CSolverStats, SolverStats, SolverStatus
+from .stats import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, SolverStats, SolverStatus
 
 __all__ = [
   "SCALY_SOLVER_STATS_VERSION",
   "ScalySolveStatus",
   "Bounded",
-  "CSolverStats",
   "ExternalOracle",
   "NO_LB",
   "NO_UB",
@@ -22,6 +22,7 @@ __all__ = [
   "QPData",
   "Solver",
   "SolverDescriptor",
+  "SolverLibraryError",
   "SolverStats",
   "SolverStatus",
   "bounded",

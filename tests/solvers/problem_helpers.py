@@ -69,7 +69,7 @@ def build_nlp(
   else:
     param_tree: Tree[Any, Any] = flat_tree(
       cast(tuple[str, ...], tuple(param.name for param in declared_params)),
-      tuple(TensorType(param.shape, param.type.dtype, param.type.sparsity, diff=False) for param in declared_params),
+      tuple(TensorType(param.shape, param.type.dtype, diff=False) for param in declared_params),
     )
 
     @sc.problem(vars=variables, params=param_tree, name=name)

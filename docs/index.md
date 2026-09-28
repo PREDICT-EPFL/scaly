@@ -64,15 +64,16 @@ uv run scaly_codegen mymodule:solve -o generated/
 - **How it works**
 
     Start with the [Compiler architecture](how_it_works/architecture.md), then dive deeper into the
-    [IR](how_it_works/ir.md), the [Lowering & Optimization passes](how_it_works/lowering.md), the [generated
-    interface](how_it_works/generated_interface.md), or check the other [projects that have
+    [intermediate representations](how_it_works/ir.md), [lowering and optimization](how_it_works/lowering.md),
+    [differentiation](how_it_works/autodiff.md), the [generated code](how_it_works/generated_interface.md)
+    and the [solvers](how_it_works/solvers.md), or check the other [projects that have
     influenced scaly](how_it_works/influences.md).
 
 - **Benchmarks**
 
     To see how the generated code compares with CasADi's, read the [headline
-    results](results/index.md) on scalability microbenchmarks and full
-    closed-loop controllers benchmarks on actual systems.
+    results](benchmarks/index.md) on scalability microbenchmarks and full
+    closed-loop controller benchmarks on actual systems.
 
 - **Developer guide and API reference**
 

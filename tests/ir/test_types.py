@@ -5,7 +5,7 @@ Covers:
 - ``DeviceSpec.parse`` / ``Function.with_device`` placement policy and its
   diagnostics (loud failure on unsupported placement).
 - dtype propagation through expression construction and the rejection of
-  mixed-dtype binary ops without an explicit cast.
+  mixed-dtype binary ops.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def test_dtype_propagation_through_unary_and_binary() -> None:
   assert y.type.dtype == dtypes.float32
   z = sc.sym("z", 3)  # defaults to float64
   with pytest.raises(TypeError):
-    _ = x + z  # mixed dtype refused without an explicit cast
+    _ = x + z  # mixed dtype refused
 
 
 def test_const_dtype_round_trip() -> None:
@@ -99,15 +99,8 @@ def test_type_shapes_reject_negative_dimensions_and_mismatched_sparsity() -> Non
       raise AssertionError("negative shape should fail")
 
   try:
-    _ = sc.SparsityType((-1, 2), (), ())
+    _ = sc.SparsityPattern((-1, 2), (), ())
   except ValueError as e:
     assert "negative dimensions" in str(e)
   else:  # pragma: no cover
     raise AssertionError("negative sparsity shape should fail")
-
-  try:
-    _ = sc.TensorType((2, 2), sparsity=sc.SparsityType.dense((2, 3)))
-  except ValueError as e:
-    assert "does not match sparsity shape" in str(e)
-  else:  # pragma: no cover
-    raise AssertionError("mismatched tensor sparsity shape should fail")

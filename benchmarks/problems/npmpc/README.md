@@ -184,8 +184,8 @@ for system 3 and establishes that this re-implementation of their decoder is fai
 ## Benchmark results
 
 This README owns the formulation, reference data, and correctness gates. It does not copy timing
-tables. The [current benchmark results](../../../docs/results/index.md) contain the canonical
-closed-loop comparison, and the [scalability tables](../../../docs/results/scalability.md) contain
+tables. The [current benchmark results](../../../docs/benchmarks/index.md) contain the canonical
+closed-loop comparison, and the [scalability tables](../../../docs/benchmarks/scalability.md) contain
 every horizon cell from the latest study.
 
 ## Gates

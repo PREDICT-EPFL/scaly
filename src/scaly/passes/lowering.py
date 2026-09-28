@@ -22,6 +22,8 @@ GPU placement and the new ops tracked in the migration roadmap.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from collections.abc import Callable, Iterable
 
 import numpy as np
@@ -92,7 +94,12 @@ ExprObserver = Callable[[str, Function], None]
 
 
 def lower_function(
-  fun: Function, observe: ProgramObserver | None = None, observe_expr: ExprObserver | None = None, *, reciprocal: bool = False, lanes: int | str = 1
+  fun: Function,
+  observe: ProgramObserver | None = None,
+  observe_expr: ExprObserver | None = None,
+  *,
+  reciprocal: bool = False,
+  lanes: Literal["auto"] | Literal[1, 2, 4, 8] = 1,
 ) -> ProgramNode:
   """Lower ``fun`` into a Program IR ``PROGRAM`` node (verified before return).
 
@@ -827,6 +834,3 @@ def _lower_concat(ctx: LowerCtx, node: Expr) -> None:
     dst = _flat_index_p(coords, out_shape)
     ctx.statements.append(p.for_(rng, [p.store(p.view(out, [dst]), p.load(p.view(ctx.buf_of(src), [j])))]))
     offset += int(src_shape[axis])
-
-
-__all__ = ["LoweringError", "LowerCtx", "lower_function", "lowers", "main_proc"]

@@ -1,0 +1,42 @@
+{
+  "background": null,
+  "font": "Inter, system-ui, sans-serif",
+  "padding": 4,
+  "view": {"stroke": null, "continuousWidth": 300, "continuousHeight": 200},
+  "axis": {
+    "labelFontSize": 13,
+    "titleFontSize": 14,
+    "titleFontWeight": "normal",
+    "labelColor": "#52514e",
+    "titleColor": "#0b0b0b",
+    "gridColor": "#e1e0d9",
+    "domainColor": "#c3c2b7",
+    "tickColor": "#c3c2b7",
+    "labelFlush": false
+  },
+  "header": {
+    "labelFontSize": 14,
+    "labelColor": "#0b0b0b",
+    "titleFontSize": 14,
+    "titleColor": "#0b0b0b"
+  },
+  "legend": {
+    "labelFontSize": 13,
+    "titleFontSize": 13,
+    "titleFontWeight": "normal",
+    "labelColor": "#0b0b0b",
+    "titleColor": "#52514e",
+    "orient": "bottom",
+    "direction": "horizontal",
+    "columns": 3,
+    "symbolStrokeWidth": 2,
+    "labelLimit": 260
+  },
+  "text": {"fontSize": 13, "color": "#52514e"},
+  "line": {"strokeWidth": 2, "strokeCap": "round", "strokeJoin": "round"},
+  "point": {"size": 70, "filled": true},
+  "bar": {"cornerRadiusEnd": 3},
+  "rule": {"color": "#898781"},
+  "facet": {"spacing": 28},
+  "concat": {"spacing": 28}
+}

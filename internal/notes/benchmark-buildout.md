@@ -5,14 +5,14 @@ when the three live concerns it had accumulated were split out:
 
 - the backlog and every open task moved to [`internal/todo.md`](../todo.md);
 - the fairness rationale and measurement protocol live in
-  [`docs/results/fairness.md`](../../docs/results/fairness.md).
+  [`docs/benchmarks/fairness.md`](../../docs/benchmarks/fairness.md).
 
 What remains here is history worth keeping: why each problem was admitted, how the formulations
 arrived at their current shape, the solver-plugin architecture and its decided doctrine, and the
 completed L-track and B-track. Section numbering is unchanged so that older citations of the form
 "§3.4" still resolve. **Nothing here is a task.** Where a section describes a defect, the live item is
 in `internal/todo.md`; where it quotes a number, that number predates the fairness audit and the
-reference-machine protocol, and `docs/results/fairness.md` supersedes it.
+reference-machine protocol, and `docs/benchmarks/fairness.md` supersedes it.
 
 It in turn superseded everything that lived in `fast_benchmarks/` (the FastBench prototype,
 `BENCHMARK_SUITE_PLAN.md`, `REAL_BENCHMARK_CANDIDATES.md`, `STRATEGY_NOTES.md`), and was called
@@ -236,7 +236,7 @@ against the continuous-time model ask for it explicitly (`FilterConfig(model="ct
 riding the default, so they keep measuring what they were validated against;
 `oracle_matches_casadi` covers both models and `dt_filter_model_matches_numpy` covers the new
 prediction path. Per-solve numbers for both models are in
-[`docs/results/scalability.md`](../../docs/results/scalability.md#discrete-time-hcbf-safety-filter-unbumpercars).
+[`docs/benchmarks/scalability.md`](../../docs/benchmarks/scalability.md).
 
 #### The road there (plant first, filter second)
 
@@ -318,7 +318,7 @@ conditional-neural-process decoder (`9 → 32 → 32 → 2`, sigmoid, weights an
 parameter tail) is the one-step dynamics model inside a 12-step Furuta-pendulum swing-up MPC with 65
 decision variables. Formulation, vendored data, deliberate departures from the reference
 implementation, and every gate's provenance are in `benchmarks/problems/npmpc/README.md`; the sweep
-tables are in `docs/results/scalability.md`. What belongs here is why it earns its place and what it
+tables are in `docs/benchmarks/scalability.md`. What belongs here is why it earns its place and what it
 established.
 
 **Why it earns its place.** The other three problems cover analytic dynamics over a horizon

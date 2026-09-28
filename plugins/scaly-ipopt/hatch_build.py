@@ -406,6 +406,8 @@ def _bundle_linux_runtime(hook: "BuildHook", lib_dir: Path, lib_name: str) -> No
     if src is None:
       raise RuntimeError(f"cannot vendor {soname!r} needed by {lib_dir / lib_name}: ldd could not resolve it")
     dst = lib_dir / soname
+    if Path(src).resolve() == dst.resolve():
+      continue  # a stale copy from an earlier run already sits where `$ORIGIN` finds it
     hook.app.display_info(f"Bundling {src} -> {dst}")
     shutil.copy2(src, dst)
     dst.chmod(0o755)

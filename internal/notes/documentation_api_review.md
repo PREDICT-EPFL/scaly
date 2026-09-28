@@ -1,0 +1,93 @@
+# API findings from the documentation rewrite
+
+These findings came from writing and executing examples for new users. They describe current
+behavior; no implementation changes accompany this review. The solver-call and `vmap` changes tracked as API-69 and API-70 in `internal/todo.md`
+are now implemented: solvers accept parameters with optional initial guesses, and `vmap`
+infers contiguous slices or broadcasting from input sizes.
+
+## Python truth tests silently accept symbolic expressions
+
+`Expr` has no `__bool__` implementation, so Python treats an expression object as true. This can
+record the wrong model without an error:
+
+```python
+import numpy as np
+import scaly as sc
+
+@sc.function(sc.L("x", ()), sc.L("y", ...))
+def branch(x):
+    return x if x else sc.const(10.0)
+
+print(branch(np.array(0.0)))  # 0.0, although the intended false branch returns 10
+```
+
+The branch is chosen while the decorator traces the body. Numerical input values never revisit
+that choice. Symbolic comparisons such as `x > 0` currently raise `TypeError`, and there is no
+symbolic `where` operation. The silent truth test is a separate problem from the absence of
+value-dependent control flow.
+
+Evidence: the [`Expr` class](../../src/scaly/ir/expr.py) and the executed example above.
+The functions guide now explains this limitation.
+
+## Common clipping expressions cannot be differentiated
+
+`sc.minimum`, `sc.maximum`, `.floor()`, and `.ceil()` can appear in an evaluated model, but
+requesting their gradient or Jacobian raises `NotImplementedError`. For example:
+
+```python
+x = sc.sym("x", 2)
+sc.gradient(sc.maximum(x, 0.0).sum(), x)
+```
+
+This matters for models with saturation or piecewise costs. A reader familiar with numerical
+libraries may expect an active-branch derivative away from a kink. The current implementation
+has no such rule, even though the expression type marks these operations as non-differentiable.
+The previous documentation incorrectly described zero derivatives for these operations.
+
+Evidence: [`ExprOp` metadata](../../src/scaly/ir/expr.py),
+[forward differentiation](../../src/scaly/ad/forward.py), and
+[reverse differentiation](../../src/scaly/ad/reverse.py). Both derivative modes were exercised
+for all four operations. The public derivative and IR pages now describe the errors.
+
+## Array reductions have no axis argument
+
+`Expr.sum()` reduces the entire array to a scalar. `x.sum(axis=0)` raises `TypeError`, including
+for a two-dimensional input. There is no `keepdims` argument either.
+
+A model that represents stages or batches along an array axis therefore needs explicit slicing
+and assembly to express ordinary row or column reductions. This is an API coverage gap relative
+to the NumPy-like arithmetic used elsewhere in the library.
+
+Evidence: [`Expr.sum`](../../src/scaly/ir/expr.py). The axis call was executed and the error
+confirmed. The operation reference states the current whole-array behavior.
+
+## PIQP option errors reach C compilation
+
+PIQP numeric and Boolean options are inserted directly as settings-struct member assignments.
+An unknown setting name is accepted during Python solver construction and becomes an invalid
+member access in generated C. A typo therefore produces a compiler error instead of a Python
+error identifying supported settings. String-valued PIQP settings raise during rendering.
+
+Evidence: the option loop in
+[`scaly_piqp.codegen.render_wrapper`](../../plugins/scaly-piqp/src/scaly_piqp/codegen.py).
+The solver-backend guide now identifies this behavior.
+
+## Solver sensitivity has inconsistent failure behavior
+
+Differentiation through a solver is already an unsupported feature. The documentation review
+also found that different ways of asking for it fail differently.
+
+For the problem `minimize ||x - p||²`, a function wrapping the solve returns `x = p`. Its
+Jacobian with respect to `p` evaluates to zero, while a central finite difference gives one.
+Requesting `sc.jacobian(solve.function, "x", "p")` on the underlying function instead raises
+`ValueError: replacement input tree does not match the Function graph`.
+
+The zero result can be mistaken for a real sensitivity, and the direct-call error does not
+explain the unsupported operation. Neither behavior supplies the derivative of the optimizer's
+solution. The public guide now makes that limitation explicit.
+
+Evidence: the `SOLVER_CALL` rules in
+[forward](../../src/scaly/ad/forward.py) and [reverse](../../src/scaly/ad/reverse.py)
+differentiation, [`_unseeded`](../../src/scaly/function/api.py), and
+[`Function._with_trees`](../../src/scaly/function/model.py). Both the nested and direct requests
+were reproduced using IPOPT.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from collections.abc import Callable
 
 from ...ir.program import ProgramNode
@@ -15,7 +17,7 @@ from .fuse_elementwise import fuse_elementwise
 from .fuse_ranges import fuse_ranges
 from .hoist_invariant import hoist_invariant
 from .hoist_reciprocals import hoist_reciprocals
-from .pack_workspace import WORKSPACE_SPILL_THRESHOLD, pack_workspace
+from .pack_workspace import pack_workspace
 from .prepare_scalar import prepare_scalar_expressions
 from .scalarize import scalarize_program
 from .unroll_unit_loops import unroll_unit_loops
@@ -40,7 +42,9 @@ PASS_PIPELINE: tuple[tuple[str, PassFn], ...] = (
 )
 
 
-def optimize_program(prog: ProgramNode, observe: ProgramObserver | None = None, *, reciprocal: bool = False, lanes: int | str = 1) -> ProgramNode:
+def optimize_program(
+  prog: ProgramNode, observe: ProgramObserver | None = None, *, reciprocal: bool = False, lanes: Literal["auto"] | Literal[1, 2, 4, 8] = 1
+) -> ProgramNode:
   """Run the Program IR optimization pipeline in its declared order."""
   verify_program(prog)
   for name, fn in PASS_PIPELINE:
@@ -62,18 +66,4 @@ def optimize_program(prog: ProgramNode, observe: ProgramObserver | None = None, 
   return prog
 
 
-__all__ = [
-  "PASS_PIPELINE",
-  "WORKSPACE_SPILL_THRESHOLD",
-  "ProgramObserver",
-  "coalesce_stores",
-  "combine_scatter_sums",
-  "fold_arith",
-  "fuse_elementwise",
-  "hoist_invariant",
-  "optimize_program",
-  "pack_workspace",
-  "prepare_scalar_expressions",
-  "prune_procedures",
-  "unroll_unit_loops",
-]
+__all__ = ["PASS_PIPELINE", "ProgramObserver", "optimize_program"]

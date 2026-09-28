@@ -200,8 +200,10 @@ each as its own `run.py` invocation with five fresh processes, seed 0, and the h
 with boost off unless told otherwise. It writes `sweep/<problem>/<problem>.csv` and
 `closed-loop/<problem>/` under the output directory, refuses a directory that already has content,
 and records every command and its exit status with the usual provenance in `study.json`. It ends
-by running `report`, which renders `sweep/<problem>/table.md`, `closed-loop/closed_loop.summary.json`
-and a combined `report.md`; the tables on the results pages are pasted from there. `report` can
+by running `report`, which renders `sweep/<problem>/table.md`, `closed-loop/closed_loop.summary.json`,
+`closed-loop/closed_loop.summary.csv` and a combined `report.md`. The figures on the benchmark pages
+read `docs/assets/benchmarks/closed_loop.summary.csv` and `sweep.summary.csv`, the four
+`sweep/<problem>/<problem>.summary.csv` files concatenated. `report` can
 be rerun on any study directory, including one whose runs were launched by hand. Every episode
 writes a per-step `telemetry.csv` beside its MCAP, which is what `report` reads.
 
@@ -429,7 +431,7 @@ globalization time.
 `ca_npmpc_pieces` the sweep kernels use and reading its bounds from the same two
 functions as the Scaly formulation. The harness code-generates the complete
 `nlpsol` with `expand=False` and links it to the same IPOPT library as the
-Scaly column. The [current results](../docs/results/index.md) report the controlled comparison.
+Scaly column. The [current results](../docs/benchmarks/index.md) report the controlled comparison.
 
 `problems/race_cars/reference.py` fits a minimum-curvature closed cubic spline to
 the center line, samples it uniformly in arc length, and reads a constant-speed

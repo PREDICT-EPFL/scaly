@@ -37,3 +37,14 @@
   --md-accent-fg-color--transparent: #a9c9b71a;
   --md-typeset-a-color: #7fa992;
 }
+
+/* Benchmark charts keep their drawn size on wide pages and shrink to fit narrow ones. */
+.vega-chart {
+  margin: 1.5em 0;
+  overflow-x: auto;
+}
+
+.vega-chart svg {
+  max-width: 100%;
+  height: auto;
+}

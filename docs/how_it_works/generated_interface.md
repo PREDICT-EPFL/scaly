@@ -1,299 +1,396 @@
-# The generated interface
+# Generated code and compilation
 
-Every function scaly generates is one C kernel behind one pointer signature:
+This page opens up the C file that Scaly writes and follows it through the
+compiler and the Python cache. The [code generation
+guide](../guide/codegen.md) covers how to export, build and call a module,
+including the typed headers, the sparse coordinate tables and the CasADi
+queries. This page explains what is inside the files and why they are built
+the way they are.
 
-```c
-int f(const double** arg, double** res, int* iw, double* w, int mem);
-```
+## An annotated module
 
-That signature, the status codes and the symbol names are the application binary interface (ABI):
-what lets separately compiled artifacts interoperate through `dlopen` without sharing a header. It
-is how a generated solver drives generated oracles, how acados and CasADi's `external` load a
-library, and it is the part that stays stable.
-
-On top of it sit three source-level layers, each an application programming interface (API) a
-caller includes rather than a binary contract: a C header with a struct per buffer, a C++ header
-with a `Buffer` type per buffer in a namespace per function, and an optional set of CasADi 3.8
-compatible symbols. Both header languages compile the same kernel. The header language changes what
-a caller writes, not what runs.
+Here is a stage function mapped over a ten-step horizon. The `.block()` hint
+keeps `euler` in loop form, so it survives lowering as its own procedure
+instead of being expanded into its caller (see
+[lowering](lowering.md) for the hints):
 
 ```python
+import scaly as sc
 from scaly.codegen import render_c_module
 
-render_c_module(fn)                          # f.h + f.c
-render_c_module(fn, lang="cpp")              # f.hpp + f.c, the same f.c
-render_c_module(fn, casadi=True)             # either header, plus the CasADi symbols
-render_c_module(fn, typed_buffers=False)     # C header with the pointer ABI and tables only
+@sc.function(sc.G(sc.L("z", 2), sc.L("u", ())), sc.L("znext", ...))
+def euler(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    z, u = inputs
+    return sc.stack([z[0] + 0.1 * z[1], z[1] + 0.1 * u.sin()]).block()
+
+@sc.function(sc.G(sc.L("zs", 20), sc.L("us", 10)), sc.L("zn", ...))
+def rollout(inputs: tuple[sc.Expr, sc.Expr]) -> sc.Expr:
+    zs, us = inputs
+    return sc.vmap(euler, 10, [zs, us])
+
+print(render_c_module(rollout, lanes=1).source)
 ```
+
+`lanes=1` turns off vector widening so the listing stays short. This is the
+printed `rollout.c`:
+
+```c
+/* Scaly build recipe
+ * CPU baseline: generic
+ * lanes=1, dialect=gnu, vector_libm=none, reciprocal=False
+ * Math library: scalar libm
+ * gcc -O3 -fno-math-errno -c rollout.c
+ * clang -O3 -fno-math-errno -c rollout.c
+ * Link with: -lm
+ */
+#include "rollout.h"
+
+#include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+typedef double double2 __attribute__((vector_size(16), aligned(8), may_alias));
+
+#define SCALY_SUCCESS 0
+#define SCALY_ERR_NULL_ABI 1
+#define SCALY_ERR_NULL_WORK 2
+#define SCALY_ERR_NULL_RESULT 3
+#define SCALY_ERR_NULL_INPUT 4
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+static inline void euler_raw(const double* z, const double* u, double* znext, double* w) {
+  (void)w;
+  const double* t0 = z;
+  const double* t2 = z + 1;
+  double v0 = t2[0];
+  *(double2*)(znext) = (double2){(t0[0] + (0.10000000000000001 * v0)), (v0 + (0.10000000000000001 * sin(u[0])))};
+}
+
+int rollout(const double** arg, double** res, int* iw, double* w, int mem) {
+  (void)iw;
+  (void)mem;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  (void)w;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!arg[1]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  for (long long it_zn = 0; it_zn < 10; ++it_zn) {
+    euler_raw((arg[0] + (2 * it_zn)), (arg[1] + it_zn), (res[0] + (it_zn * 2)), NULL);
+  }
+  return SCALY_SUCCESS;
+}
+
+#ifdef __cplusplus
+}
+#endif
+```
+
+The sections below take this file apart from top to bottom.
+
+## Build recipe
+
+The comment at the top is the `BuildRecipe` the module was rendered for. It
+names the CPU baseline, the lane width, the C dialect, the math library and the
+reciprocal policy, and it gives a GCC and a Clang command that build the file
+the way Scaly expects. The same comment opens the header.
+
+The recipe is not advice. Rendering made decisions that only hold under its
+flags. With `lanes="auto"`, the lane width is chosen by the preprocessor from
+the target macros the compiler defines, so building without the recipe's
+`-march` flag silently gives narrower vectors. With glibc vector math the
+generated guards refuse to build at all. For a 64-element `sin` rendered with
+`cpu="x86-64-v4", lanes=8, vector_libm="glibc"`:
+
+```console
+$ cc -O3 -fno-math-errno -c waves.c
+waves.c:45:2: error: #error "vector_libm=glibc width 8 requires __AVX512F__ and -lmvec"
+$ cc -O3 -march=x86-64-v4 -fno-math-errno -c waves.c
+```
+
+The second command, with the recipe's flags, compiles. `-fno-math-errno` lets
+the compiler inline and vectorize calls such as `sqrt`, because they no longer
+have to set `errno`. Scaly never enables general fast-math flags. The
+[guide](../guide/codegen.md#cpu-targets-vector-lanes-and-math-libraries)
+lists the recipe options and their values.
+
+## Module layout
+
+Every module is one C source and one header. The source contains, in order:
+
+1. The recipe comment and, for a C header, `#include` of that header.
+2. System includes, vector typedefs and lane macros, and the status codes.
+3. One `static inline void <callee>_raw(...)` per retained callee.
+4. For a module that reaches a solver, the solver wrappers.
+5. The exported entry, named after the root function.
+
+A `_raw` procedure takes one pointer per input, `const`-qualified, one pointer
+per output and a trailing workspace pointer. It has no null checks and no
+status code, so the entry pays for those once rather than at every stage. A
+callee that lowering expanded into its caller has no `_raw` at all. Without
+`.block()`, `euler` is expanded into the loop in `rollout` and `euler_raw`
+disappears, so function boundaries in Python do not promise C procedures.
+
+`euler_raw` is called with `w = NULL` because it spills nothing to the
+workspace. When a callee does spill, the caller passes its own `w` advanced
+past its own spill window.
+
+A solver-bearing module adds the solver wrapper and a statistics accessor. The
+top-level definitions of the SQP solver for a two-variable problem, printed
+from its source with long signatures cut:
+
+```c
+#include "circle_sqp.h"
+#include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <time.h>
+#include "piqp/piqp.h"
+static double scaly_clock_s(void) {
+static inline void circle_base_raw(const double* x, const double* p, double* f, double* g, doubl ...
+static inline void circle_grad_raw(const double* x, const double* p, double* grad_f_x, double* w) {
+static inline void circle_jac_raw(const double* x, const double* p, double* spjac_g_x, double* w) {
+static inline void circle_hess_upper_raw(const double* x, const double* p, const double* lam_f,  ...
+static inline void circle_bounds_raw(const double* p, double* x_lb, double* x_ub, double* w) {
+static scaly_solver_stats circle_sqp_stats_data;
+static void circle_sqp_raw(const double* in0, const double* in1, const double* in2, const double ...
+int circle_sqp_stats(scaly_solver_stats* out) {
+int circle_sqp(const double** arg, double** res, int* iw, double* w, int mem) {
+```
+
+The oracles are ordinary `_raw` procedures lowered like any other function.
+Only `circle_sqp_raw` comes from a template in the solver plugin, and it is
+placed after the oracles it calls. [Solvers](solvers.md) describes what that
+wrapper does.
 
 ## The pointer ABI
 
-The caller owns all storage. Nothing is allocated inside.
+The entry has the same five-argument signature for every function, and the
+[guide](../guide/codegen.md#the-pointer-entry) explains each argument. Every
+input and output buffer is an array of `double`, whatever the data type of the
+matching value in the graph. An `int64` or `bool` input is read from `double`
+values, and an integer or Boolean output is written as `double` values, so a
+numerical call from Python returns `float64` arrays for them too. The body
+starts with null checks that return one of five codes:
 
-| Argument | Contract |
-| --- | --- |
-| `arg` | array of `f_SZ_ARG` input pointers. Each `arg[i]` points to a contiguous row-major `double` buffer of the statically known flattened input size. Every input is required. There are no defaults, so no `arg[i]` may be null. |
-| `res` | array of `f_SZ_RES` output pointers, each to caller-owned contiguous row-major storage of the statically known flattened output size. Every output is required. |
-| `iw` | integer workspace. Currently unused (`f_SZ_IW` is always 0); pass null. |
-| `w` | floating workspace of at least `f_SZ_W` doubles. May be null only when `f_SZ_W == 0`. |
-| `mem` | a memory handle, following CasADi 3.8. Every scaly function is stateless and ignores it; pass `0`. |
+| Code                    | Value | Returned when                                         |
+| ----------------------- | ----- | ----------------------------------------------------- |
+| `SCALY_SUCCESS`         | 0     | evaluation finished                                   |
+| `SCALY_ERR_NULL_ABI`    | 1     | `arg` or `res` is null                                |
+| `SCALY_ERR_NULL_WORK`   | 2     | `w` is null and the header's `SZ_W` is not zero       |
+| `SCALY_ERR_NULL_RESULT` | 3     | an output pointer is null                             |
+| `SCALY_ERR_NULL_INPUT`  | 4     | an input pointer is null                              |
 
-Buffers are assumed to have ordinary C `double` and `int` alignment. The typed layers below align
-their buffers to 16 bytes, which the kernel does not yet rely on.
+`rollout` has no workspace, so its entry casts `w` away and the
+`SCALY_ERR_NULL_WORK` check is absent. The checks cannot tell whether a
+non-null pointer refers to a buffer that is large enough. A solver that fails
+to converge still returns `SCALY_SUCCESS`. Convergence is reported in the
+statistics described [below](#solver-statistics).
 
-The header carries the sizes as compile-time macros, and nothing else:
+### Alignment
 
-```c
-#define f_SZ_ARG 1
-#define f_SZ_RES 1
-#define f_SZ_IW  0
-#define f_SZ_W   0
-```
+The pointer interface needs only the natural alignment of `double`. Stores of
+several values at once go through vector types declared `aligned(8)` and
+`may_alias`, like the `double2` store in `euler_raw`, so the compiler never
+assumes 16-byte alignment of a caller's buffer. The typed structs in the header
+request 16 bytes regardless.
 
-`f_SZ_W` is the packed spill size decided by the workspace packer, not the total temporary
-footprint. Small temporaries stay as C locals inside the function and never appear here, so small
-functions routinely report `0`. There is no run-time size query in the native interface; a caller
-that reaches the module through `dlopen` and needs one turns on the [CasADi layer](#the-casadi-layer),
-whose `f_work` is that query.
+### C++ linkage
 
-### Status codes
+The source wraps everything in `extern "C"` when compiled as C++, so the file
+builds with either compiler and exports the same symbol. The C++ header
+declares the entry `extern "C"` inside a namespace of the same name, so
+`rollout::rollout` is the symbol a C caller reaches as `rollout`. With
+`lang="cpp"` the source does not include the header, because a C++ header
+cannot be included from C.
 
-| Code | Value | Meaning |
-| --- | --- | --- |
-| `SCALY_SUCCESS` | 0 | Evaluation succeeded. |
-| `SCALY_ERR_NULL_ABI` | 1 | The `arg` or `res` array itself is null. |
-| `SCALY_ERR_NULL_WORK` | 2 | The function needs floating workspace and `w` is null. |
-| `SCALY_ERR_NULL_RESULT` | 3 | A required `res[i]` is null. |
-| `SCALY_ERR_NULL_INPUT` | 4 | A required `arg[i]` is null. |
+## Sparse outputs
 
-Headers guard these defines with `#ifndef`, so several generated modules can be included into one
-translation unit without colliding.
-
-### What a translation unit contains
-
-One rendered module is one `.c` file and one header. Inside the `.c`:
-
-1. `static` bodies for every callee reached from the root, named `<callee>_raw`. They are `static
-   inline`, or `static __attribute__((noinline))` for the forward-AD helpers covered by the clang
-   workaround in `codegen/c.py`;
-2. any solver wrappers, in dependency order after the oracle bodies they drive;
-3. the exported ABI entry for the root function;
-4. with `casadi=True`, the query functions and their sparsity tables.
-
-Only the root is exported. Nested calls become direct C calls to the `_raw` bodies, which is why
-generated code stays small when the same block appears many times. The block is one C function.
-
-The `.c` compiles on its own. With a C header it includes that header, so the pair builds as an
-ordinary translation unit; with a C++ header it includes nothing, because C cannot include C++, and
-the header is compiled only by the callers that include it.
-
-## The C header (`lang="c"`)
-
-The pointer ABI, the macros, and for each input and output a fixed-size struct so a C caller gets
-a type per buffer:
-
-```c
-typedef struct { SCALY_ALIGNAS(16) double data[3]; } f_x_t;
-typedef struct { SCALY_ALIGNAS(16) double data[1]; } f_y_t;
-typedef struct { SCALY_ALIGNAS(16) double data[f_SZ_W > 0 ? f_SZ_W : 1]; } f_workspace_t;
-
-static inline int f_call(const f_x_t* x, f_y_t* y, f_workspace_t* workspace);
-```
-
-`SCALY_ALIGNAS` is `_Alignas` in C and `alignas` in C++, so the same header compiles under both.
-The struct is `f_<name>_t`. Only when the same name is both an input and an output, as a solver
-Function's warm start and solution are, does it split into `f_<name>_in_t` and `f_<name>_out_t`,
-and the C++ aliases and `call` parameters follow (`w_in`, `w_out`). An empty buffer gets a
-one-element array so the struct stays valid C.
-The workspace is a struct the caller places where it likes: on the stack, in a `static`, on the
-heap. `f_call` builds the pointer arrays and passes `workspace->data`; for a function with
-`f_SZ_W == 0` it accepts `NULL`.
-
-```c
-#include "f.h"
-
-static f_workspace_t workspace;
-f_x_t x = {{1.0, 2.0, 3.0}};
-f_y_t y;
-int rc = f_call(&x, &y, &workspace);
-```
-
-`typed_buffers=False` leaves the structs and `f_call` out; the benchmark kernels use it because
-their driver goes through the pointer ABI.
-
-### Sparse outputs
-
-A compact derivative output carries its pattern into the header as static tables:
-
-```c
-#define f_spjac_y_x_NNZ  4
-#define f_spjac_y_x_NROW 3
-#define f_spjac_y_x_NCOL 4
-static const int f_spjac_y_x_rows[4] = {0, 1, 1, 2};
-static const int f_spjac_y_x_cols[4] = {0, 2, 3, 1};
-static const int f_spjac_y_x_csr_row_ptr[4]  = {0, 1, 3, 4};
-static const int f_spjac_y_x_csr_col_ind[4]  = {0, 2, 3, 1};
-static const int f_spjac_y_x_csr_val_perm[4] = {0, 1, 2, 3};
-static const int f_spjac_y_x_csc_col_ptr[5]  = {0, 1, 2, 3, 4};
-static const int f_spjac_y_x_csc_row_ind[4]  = {0, 2, 1, 1};
-static const int f_spjac_y_x_csc_val_perm[4] = {0, 3, 1, 2};
-```
-
-The value buffer the function writes is in `(rows, cols)` order, and that order is not necessarily
-sorted. The structured path through `VMAP` emits nonzeros piece by piece, so the coordinate list is
-the authority on which value belongs where.
-
-The `_val_perm` tables pair the values with a sorted compressed sparse row (CSR) or compressed
-sparse column (CSC) structure: `values_csr[k] = values[csr_val_perm[k]]`, and likewise for CSC.
-`SparsityType.to_csr()` and `to_csc()` return the same permutation as their third element, so
-Python and C agree by construction.
-
-## The C++ header (`lang="cpp"`)
-
-A namespace per function and nothing above it. Every header carries the same guarded template, so
-several generated headers share one translation unit:
-
-```cpp
-template <typename T, std::size_t... Ns>
-struct alignas(16) Buffer {
-  static constexpr std::size_t ndim = sizeof...(Ns);
-  static constexpr std::array<std::size_t, ndim> shape = {Ns...};
-  static constexpr std::size_t size = (Ns * ... * std::size_t{1});
-  T data[size > 0 ? size : 1];
-  T* ptr();
-  const T* ptr() const;
-  T& operator()(I... idx);   // row-major, one index per dimension, bounds-asserted in debug builds
-};
-```
-
-Storage is inline, so a `Buffer` is an aggregate: `f::x_t x = {{0.25, -0.75}};` on the stack, or
-`static`, or `std::make_unique<f::x_t>()`. `shape` is the `Expr` shape, so a `(N, nx)` stage
-trajectory keeps its two dimensions and is indexed `traj(k, i)` instead of `data[k * nx + i]`.
-Wrapping memory someone else already owns is what the pointer entry is for.
-
-```cpp
-namespace f {
-extern "C" int f(const double** arg, double** res, int* iw, double* w, int mem);
-
-using x_t = Buffer<double, 3>;
-using y_t = Buffer<double>;            // a scalar: ndim 0, size 1
-using workspace_t = Buffer<double, f_SZ_W>;
-constexpr int sz_arg = 1, sz_res = 1, sz_iw = 0, sz_w = f_SZ_W;
-
-inline int call(const x_t& x, y_t& y, workspace_t& workspace);
-
-namespace spjac_y_x {
-constexpr int nrow = 3, ncol = 4, nnz = 4;
-constexpr std::array<int, nnz> rows = {...}, cols = {...}, csr_col_ind = {...}, csr_val_perm = {...};
-constexpr std::array<int, nrow + 1> csr_row_ptr = {...};
-constexpr std::array<int, ncol + 1> csc_col_ptr = {...};
-constexpr std::array<int, nnz> csc_row_ind = {...}, csc_val_perm = {...};
-}
-}
-```
-
-The kernel symbols are declared `extern "C"` inside the namespace: a namespace and a function
-cannot share the global name `f`, and C linkage ignores the namespace, so `f::f` is the same symbol
-a C caller reaches as `f`. A C++ caller that wants the pointer ABI calls it directly. Sparse
-metadata is `constexpr`, so a consumer can size its own arrays from `nnz` at compile time. The
-header needs C++17.
+A sparse derivative output is written as compact values in the coordinate
+order that lowering produced. That order is not sorted and can change when
+coloring or `vmap` lowering changes, which is why the header carries
+`_csr_val_perm` and `_csc_val_perm` tables rather than promising an order. The
+[guide](../guide/codegen.md#sparse-output-patterns) shows the tables for a
+concrete Jacobian, and [versioning](../dev/versioning.md) says what a release
+promises about them.
 
 ## The CasADi layer
 
-`casadi=True` adds the symbols CasADi 3.8 exports from its own code generator, with either header
-language:
+CasADi expects sparse values in compressed-column order. With `casadi=True`,
+an output whose native order differs is written to extra workspace and then
+permuted into `res`. For the three-by-three Jacobian from the guide, the plain
+module needs no workspace and the CasADi module needs five doubles, one per
+nonzero. Its entry, with the body of the computation trimmed:
 
 ```c
-casadi_int f_n_in(void);
-casadi_int f_n_out(void);
-const char* f_name_in(casadi_int i);
-const char* f_name_out(casadi_int i);
-casadi_real f_default_in(casadi_int i);            /* always 0 */
-const casadi_int* f_sparsity_in(casadi_int i);
-const casadi_int* f_sparsity_out(casadi_int i);
-int f_work(casadi_int* sz_arg, casadi_int* sz_res, casadi_int* sz_iw, casadi_int* sz_w);
-int f_work_bytes(casadi_int* sz_arg, casadi_int* sz_res, casadi_int* sz_iw, casadi_int* sz_w);
-int f_checkout(void);                              /* returns 0 */
-void f_release(int mem);
-void f_incref(void);
-void f_decref(void);
+int measurements_jac(const double** arg, double** res, int* iw, double* w, int mem) {
+  (void)iw;
+  (void)mem;
+  if (!arg || !res) return SCALY_ERR_NULL_ABI;
+  if (!w) return SCALY_ERR_NULL_WORK;
+  if (!arg[0]) return SCALY_ERR_NULL_INPUT;
+  if (!res[0]) return SCALY_ERR_NULL_RESULT;
+  double* spjac_y_x_native = w + 0;
+  /* ... computation trimmed, writing into spjac_y_x_native ... */
+  static const int spjac_y_x_csc_val_perm[5] = {0, 3, 2, 1, 4};
+  for (int k = 0; k < 5; ++k) res[0][k] = spjac_y_x_native[spjac_y_x_csc_val_perm[k]];
+  return SCALY_SUCCESS;
+}
 ```
 
-acados resolves six of these: the entry, `f_work`, `f_sparsity_in`, `f_sparsity_out`, `f_n_in` and
-`f_n_out`. The rest cost a line each and make `casadi.external("f", "libf.so")` load the library.
-Sparsity uses CasADi's compressed encoding: `{nrow, ncol, 1}` for a dense buffer, and
-`{nrow, ncol, colind[0..ncol], row[0..nnz)}` for a compact sparse output.
+The scratch starts after the function's own packed workspace, and the header's
+`SZ_W` and the `_work` query both include it. Outputs already in column order,
+such as the matrices extracted for a quadratic program, need no copy. The
+header's sparsity tables describe the order actually written.
 
-Three facts make this more than aliases:
+## Solver statistics
 
-- **`casadi_int` and `casadi_real` are guarded macros**, as in CasADi's own output, defaulting to
-  `long long int` and `double`. CasADi's `external` reads the queries as `long long`; acados reads
-  them as `int`. The two disagree, so one binary cannot serve both. The default serves CasADi; an
-  acados build compiles the same `.c` with `-Dcasadi_int=int`, which is what acados-generated
-  CasADi code hard-codes.
-- **Compact sparse outputs are handed over in compressed-column order.** A CasADi consumer reads a
-  sparse value buffer in CSC order, while scaly's native order is the coordinate list above. Under
-  `casadi=True` the entry evaluates such an output into `w` past the packed workspace and gathers it
-  into `res[i]` through `csc_val_perm`, adding `nnz` per gathered output to `f_SZ_W`. An output
-  whose native order is already CSC, as the QP path's patterns are, is written straight to
-  `res[i]` and adds nothing. The header's tables describe the buffer as written, so their
-  `csc_val_perm` is the identity. Native CSC emission, which would remove the copy, is a separate
-  later optimisation.
-- **Dense matrices are rejected.** Scaly buffers are row-major and CasADi's are column-major.
-  Scalars, vectors and compact sparse outputs agree; a dense input or output with both dimensions
-  above one would need a transpose, and `render_c_module` refuses it with a clear error instead.
-  acados only ever passes vectors and reads Jacobians through their sparsity, so this rarely bites.
+A module that reaches a solver defines a fixed-width statistics struct in its
+header and exports one `<solver>_stats` accessor per wrapper, which copies the
+latest statistics of that wrapper into the caller's struct. The struct as it
+appears in the header:
 
-Null handling stays scaly's: every `arg[i]` and `res[i]` is required. CasADi treats a null input
-as zeros and skips a null output; acados does neither.
+```c
+#define SCALY_SOLVER_STATS_VERSION 3
+#define SCALY_SOLVE_OK 0
+#define SCALY_SOLVE_ACCEPTABLE 1
+#define SCALY_SOLVE_MAX_ITER 2
+#define SCALY_SOLVE_PRIMAL_INFEASIBLE 3
+#define SCALY_SOLVE_DUAL_INFEASIBLE 4
+#define SCALY_SOLVE_NUMERICS 5
+#define SCALY_SOLVE_USER_STOP 6
+#define SCALY_SOLVE_ERROR 7
+typedef struct {
+  int32_t version;
+  int32_t status;
+  int32_t native_status;
+  int32_t iter;
+  double obj;
+  double t_total;
+  double t_fe;
+  double t_solver;
+  double t_qp;
+  double t_globalization;
+  double t_glue;
+  int32_t n_eval_f;
+  int32_t n_eval_grad_f;
+  int32_t n_eval_g;
+  int32_t n_eval_jac_g;
+  int32_t n_eval_h;
+  int32_t _pad0;
+  double primal_viol;
+  double step_inf;
+  double alpha;
+  double merit_penalty;
+  int32_t backtracks;
+  int32_t qp_iter;
+} scaly_solver_stats;
+```
 
-## Solver-bearing modules
+The layout is 136 bytes, and new fields are only ever appended with a version
+bump. `version` is zero until the wrapper has run once. Fields a backend has no
+use for stay zero.
 
-A module containing a solver additionally defines the versioned, fixed-width `scaly_solver_stats`
-struct and exports `int <solver_symbol>_stats(scaly_solver_stats* out)` for each wrapper in the
-translation unit. The query copies the wrapper's latest process-local statistics. It adds no
-symbolic output and does not change the entry signature.
+Times are in seconds from a monotonic clock. `t_fe` is function evaluation,
+and the wrapper sets `t_glue` so that
+`t_total = t_fe + t_solver + t_qp + t_globalization + t_glue`. PIQP puts its
+time in `t_qp`, IPOPT puts the time spent outside oracle calls in `t_solver`,
+and Scaly SQP splits `t_qp` from the line search in `t_globalization`.
 
-Version 3 is a 136-byte layout: version, scaly status, native status and iteration count; then the
-objective and the total, function-evaluation, solver, QP, globalization and glue times in seconds;
-five evaluation counters with explicit padding; then primal violation, last step norm, accepted step
-length, merit penalty, backtrack count and accumulated QP iterations.
+The statistics live in a `static` variable next to the wrapper's native
+workspace, which is why a wrapper
+[must not be called concurrently](../guide/solvers.md#solvers-in-generated-c).
 
-Scaly status codes are backend-neutral: `OK=0`, `ACCEPTABLE=1`, `MAX_ITER=2`, `PRIMAL_INFEASIBLE=3`,
-`DUAL_INFEASIBLE=4`, `NUMERICS=5`, `USER_STOP=6`, `ERROR=7`.
+## Compilation and caching
 
-Timing is instrumented unconditionally with a monotonic clock, and the split adds up. `t_fe` covers
-generated oracle work, `t_glue` is the remainder, and
-`t_total = t_fe + t_solver + t_qp + t_globalization + t_glue` to within floating-point rounding.
-Each backend fills the middle terms differently. PIQP reports setup, update and solve in `t_qp`;
-IPOPT reports solve time outside callbacks in `t_solver`; the SQP plugin separates its PIQP
-subproblems in `t_qp` from its line-search work in `t_globalization`.
-
-Wrapper state, including the latest statistics and the solver workspace, lives in translation-unit
-statics. Generated solver wrappers are not reentrant.
-
-## Producing a module
+A numerical call such as `energy(x)` reaches the same `render_c_module` as an
+export, with a recipe for the host machine. The first call on a fresh cache
+compiles a shared library, and later processes reuse it. Timing
+`energy.compile()` for the `energy` function from the guide, with
+`SCALY_CACHE_DIR=/tmp/scaly-cache`:
 
 ```python
-from scaly.codegen import render_c_module, workspace_size, write_module
+import time
 
-module = render_c_module(fn, lang="c", casadi=False)
-module.header          # the header text, f.h or f.hpp
-module.source          # the .c text
-module.workspace_size  # the f_SZ_W the header declares, gather scratch included
-module.link_flags      # flags for any solver plugins reached (empty without a solver)
-
-workspace_size(fn)     # the same number, without rendering the rest
-write_module(fn, out_dir, lang="cpp")
+start = time.perf_counter()
+energy.compile()
+print(f"compile() took {1e3 * (time.perf_counter() - start):.0f} ms")
 ```
 
-From the command line:
+On a fresh cache the first process prints 42 ms and a second process 9 ms.
+Running it again with `SCALY_CC_OPT=-O3` prints 41 ms, because the new flag
+gives a new cache key and a new compilation. The cache root then holds one
+directory per key, each with `energy.c` and `libenergy.so`.
 
-```bash
-uv run scaly_codegen mymodule:my_function -o generated/ --lang cpp --casadi
+### The host recipe
+
+The JIT probes the compiler once per process with `cc -march=native -dM -E`
+and reads the target macros. The widest supported vector width becomes a
+fixed lane count, 8 with AVX-512, and glibc vector math is selected on x86-64
+with glibc 2.35 or newer. On such a machine the rendered recipe reads:
+
+```c
+/* Scaly build recipe
+ * CPU baseline: host-local native CPU
+ * lanes=8, dialect=gnu, vector_libm=glibc, reciprocal=False
+ * Math library: glibc x86-64; tanh requires glibc >= 2.35
+ * gcc -O3 -march=native -fno-math-errno -c energy.c
+ * clang -O3 -march=native -fno-math-errno -c energy.c
+ * Link with: -lmvec -lm
+ */
 ```
 
-The just-in-time (JIT) path consumes exactly this object with the defaults. It compiles
-`module.body`, keys its cache on that text, and takes the workspace size from the module rather
-than from the library, so what you ship ahead of time and what runs when you call the function from
-Python are the same translation unit. See [Code generation](../guide/codegen.md) for the usage side.
+The compiler commands in the recipe are for building an exported module
+ahead of time. The JIT itself compiles with `-O2 -march=native -fno-math-errno`, or with
+`SCALY_CC_OPT` in place of `-O2`, followed by `-fPIC -shared`, the solver
+include, library and `rpath` flags, `-lmvec` when selected, and `-lm`.
+
+### The cache key
+
+The key is a SHA-256 hash over, in order:
+
+- a cache version string in `src/scaly/codegen/jit.py`, raised whenever
+  generated code or the cache layout changes
+- the pointer ABI signature
+- the function's name
+- the rendered translation unit, which includes the recipe comment
+- the optimization, CPU and `-fno-math-errno` flags, and the link flags
+  (solver paths, `-lmvec`). The fixed `-fPIC -shared` and `-lm` are left out.
+
+Changing the optimization level therefore gives a new key, as the `-O3` run
+shows. The compiler binary is not part of the key, so pointing `SCALY_CC` at a
+different compiler with the same flags reuses artifacts built by the old one.
+Numerical inputs never enter the key.
+
+### Where artifacts live
+
+Each key gets a directory under the cache root holding the exact source that
+was compiled, as `<name>.c`, and `lib<name>.so` (`.dylib` on macOS). Both are
+written to a file named after the process ID and then renamed into place, so
+parallel test workers building the same function on a cold cache never see a
+half-written library.
+
+### What a new process reuses
+
+Nothing about tracing or rendering is cached on disk. A new process runs the
+Python body again when the decorator executes, lowers and renders the C again,
+and hashes it. Only the C compiler call is skipped when the library exists.
+That is the difference between the 42 ms and 9 ms runs above. Within a process,
+a second `Function` with the same generated source finds the artifact in an
+in-memory table and does not touch the compiler either.
+
+`compile()` does all of this and loads the library without evaluating. It
+opens the library with `ctypes`, resolves the entry and any `_stats`
+accessors, and keeps the handle on the `Function`. On Linux a library that
+reaches a solver is opened with `dlmopen` into a separate linker namespace,
+shared by all solver libraries, so the solvers' own dependencies cannot
+collide with libraries already loaded by Python packages.
+
+`recompile()` renders the source once more to recompute the key, drops the
+handle and the in-memory entry, and deletes that key's directory. It does not
+compile. The next call or `compile()` does. A library that is already loaded,
+by this or any other `Function`, stays usable after its files are deleted.
+
+The module map in [the codebase](../dev/codebase.md) points to the files
+behind each stage.
