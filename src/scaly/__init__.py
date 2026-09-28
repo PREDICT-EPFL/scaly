@@ -1,6 +1,7 @@
 """The curated public surface: re-exports only, no definitions of its own (``docs/dev/codebase.md``)."""
 
-from typing import Any
+import importlib
+from typing import TYPE_CHECKING, Any
 
 from .codegen.abi import C_API_SIGNATURE, BufferType, c_api_signature
 from .ad import jvp, jvp_many, vjp, vjp_many
@@ -62,10 +63,6 @@ from .ir.expr import (
   where,
 )
 from .function import ConcreteFunction, Function, G, L, NotConcrete, factory
-from .linalg import S, SparseMatrix
-from . import integrators as integrators
-from . import interp as interp
-from . import mpc as mpc
 from .utils.options import Options, get_options, options, set_options
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
@@ -97,7 +94,20 @@ sym = Expr.sym
 const = Expr.const
 
 
+# The packages built on the compiler load on first use, so ``import scaly`` is the compiler alone:
+# ``sc.linalg`` imports ``scaly.linalg`` the first time it is read.
+_PACKAGES = ("integrators", "interp", "linalg", "mpc")
+
+if TYPE_CHECKING:
+  from . import integrators as integrators
+  from . import interp as interp
+  from . import linalg as linalg
+  from . import mpc as mpc
+
+
 def __getattr__(name: str) -> Any:
+  if name in _PACKAGES:
+    return importlib.import_module(f"{__name__}.{name}")
   # Graph JSON is viz, and reaching it runs ``scaly/viz/__init__.py``, which pulls in the whole
   # backend and arms the render observer. Deferring that to the first use of these two names
   # keeps a plain ``import scaly`` free of it.
@@ -137,10 +147,8 @@ __all__ = [
   "QPData",
   "SolverStats",
   "SolverStatus",
-  "S",
   "Spec",
   "SparseJacobian",
-  "SparseMatrix",
   "SparsityType",
   "TensorType",
   "VerifyError",

@@ -2,7 +2,7 @@
 
 ``SparseLDL(K)`` analyzes ``K``'s pattern at build time (``linalg.symbolic``) and factors its
 values as straight-line code when that is small (``schedule="unroll"``) and otherwise as one loop
-nest, ``ir.expr.sparse_ldl_factor`` (``schedule="loop"``), which updates each column from chunks of
+nest, ``linalg.ops.sparse_ldl_factor`` (``schedule="loop"``), which updates each column from chunks of
 columns that share their rows. ``schedule="scan"`` keeps the factorization differentiable through
 its loops: one ``scan`` per column segment, where every step is the left-looking column update, written
 with run-time-index operations on a single carry vector ``[L values | D | work | 0 | scratch]``:
@@ -27,7 +27,6 @@ from scipy.sparse.csgraph import connected_components
 from ..function.model import ConcreteFunction
 from ..function.sugar import custom_derivative, scan, vmap, while_loop
 from ..ir.expr import (
-  SPARSE_LDL_MAX_WIDTH,
   Expr,
   as_expr,
   concat,
@@ -38,17 +37,14 @@ from ..ir.expr import (
   norm_inf,
   put,
   put_add,
-  ragged_add,
-  ragged_dot,
   scatter,
   segment_sum,
-  sparse_ldl_factor,
-  sparse_ldl_solve,
   stack,
   take,
   where,
 )
 from ..utils.options import get_options
+from .ops import SPARSE_LDL_MAX_WIDTH, ragged_add, ragged_dot, sparse_ldl_factor, sparse_ldl_solve
 from .sparse import SparseMatrix
 from .symbolic import CostModel, Ordering, Segment, SymbolicLDL, analyze
 
@@ -141,7 +137,7 @@ class SparseLDL:
     self.values = self._factor(matrix.values)[: self.w_offset]
 
   def tables(self) -> dict[str, np.ndarray]:
-    """The analysis as ``ir.expr.sparse_ldl_factor`` reads it."""
+    """The analysis as ``linalg.ops.sparse_ldl_factor`` reads it."""
     s = self.symbolic
     return {
       "a_ptr": s.a_ptr,
@@ -155,7 +151,7 @@ class SparseLDL:
     }
 
   def solve_tables(self) -> dict[str, np.ndarray]:
-    """The analysis as ``ir.expr.sparse_ldl_solve`` reads it."""
+    """The analysis as ``linalg.ops.sparse_ldl_solve`` reads it."""
     s = self.symbolic
     return {"perm": s.perm, "l_ptr": s.l_ptr, "l_rows": s.l_rows, **s.solve_chunks(SPARSE_LDL_MAX_WIDTH)}
 

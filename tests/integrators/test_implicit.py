@@ -15,6 +15,7 @@ from scaly import integrators as si
 from scaly import linalg
 from scaly.integrators.implicit import eigen_split
 from scaly.ir.expr import ExprOp, topo
+from scaly.linalg.ops.dense import LU
 
 A = np.array([[0.0, 1.0], [-4.0, -0.3]])
 B = np.array([[0.0], [1.0]])
@@ -184,14 +185,14 @@ def test_fixed_iterations_and_a_tolerance_find_the_same_stages() -> None:
 
 
 def _lu_orders(fn) -> list[int]:
-  return sorted({e.shape[1] for e in topo(fn.outputs) if e.op == ExprOp.LU})
+  return sorted({e.shape[1] for e in topo(fn.outputs) if e.op == LU})
 
 
 def test_structure_of_the_generated_graph() -> None:
   radau = si.implicit(van_der_pol, "radau_iia", stages=3, dt=0.1)
   sdirk = si.implicit(van_der_pol, "sdirk3", dt=0.1)
   assert _lu_orders(radau) == [2, 4] and _lu_orders(sdirk) == [2]  # split by the eigenvalues of A, or a system per stage
-  assert sum(e.op == ExprOp.LU for e in topo(sdirk.outputs)) == 1  # simplified: every stage shares I - h g J(x)
+  assert sum(e.op == LU for e in topo(sdirk.outputs)) == 1  # simplified: every stage shares I - h g J(x)
   assert _lu_orders(si.implicit(van_der_pol, "radau_iia", stages=3, dt=0.1, newton="full")) == [6]
   assert ExprOp.WHILE not in {e.op for e in topo(radau.outputs)}
   looped = si.implicit(van_der_pol, "radau_iia", stages=2, dt=0.1, tol=1e-10)

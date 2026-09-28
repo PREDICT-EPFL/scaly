@@ -62,7 +62,8 @@ def color_groups(colors: tuple[int, ...]) -> tuple[tuple[int, ...], ...]:
   return tuple(tuple(i for i, c in enumerate(colors) if c == color) for color in range(max(colors) + 1))
 
 
-def _empty(shape: tuple[int, int]) -> sparse.csr_array:
+def empty_mask(shape: tuple[int, int]) -> sparse.csr_array:
+  """A Jacobian pattern with no entries: nothing depends on anything."""
   return sparse.csr_array(shape, dtype=bool)
 
 
@@ -72,15 +73,19 @@ def _mask_sparsity(mask: sparse.csr_array) -> SparsityType:
   return SparsityType(mask.shape, tuple(int(x) for x in coo.row), tuple(int(x) for x in coo.col))
 
 
-def _or(x: sparse.csr_array, y: sparse.csr_array) -> sparse.csr_array:
+def mask_or(x: sparse.csr_array, y: sparse.csr_array) -> sparse.csr_array:
+  """The union of two patterns of one shape: an entry depends on a column when either says so."""
   return sparse.csr_array(x + y, dtype=bool)
 
 
-def _compose(outer: sparse.csr_array, inner: sparse.csr_array) -> sparse.csr_array:
+def mask_compose(outer: sparse.csr_array, inner: sparse.csr_array) -> sparse.csr_array:
+  """The chain rule for patterns: ``outer`` (what reads what) after ``inner`` (an argument's pattern)."""
   return sparse.csr_array(outer @ inner, dtype=bool)
 
 
-def _incidence(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> sparse.csr_array:
+def incidence(shape: tuple[int, int], rows: np.ndarray, cols: np.ndarray) -> sparse.csr_array:
+  """The pattern of ``shape`` with an entry at each ``(rows[k], cols[k])``: which argument entries each
+  output entry reads, for ``mask_compose`` with the argument's pattern."""
   return sparse.csr_array((np.ones(rows.size, dtype=bool), (rows, cols)), shape=shape)
 
 
@@ -93,29 +98,6 @@ def _row_blocks(nrows: int, out_width: int, in_width: int) -> tuple[np.ndarray, 
   return r.reshape(-1), c.reshape(-1)
 
 
-def _sparse_ldl_reads(expr: Expr) -> sparse.csr_array:
-  """Which matrix entries each entry of a ``sparse_ldl_factor`` result reads: column ``j`` of ``L`` and
-  ``D[j]`` come from the columns of the elimination subtree of ``j`` (``j`` and every column whose
-  path up the tree, parent = first row below the diagonal, passes through ``j``)."""
-  a = expr.attrs
-  n = a["a_ptr"].size - 1
-  l_ptr, l_rows = a["l_ptr"], a["l_rows"]
-  counts = np.diff(l_ptr)
-  parent = np.full(n, -1, dtype=np.int64)
-  parent[counts > 0] = l_rows[l_ptr[:-1][counts > 0]]
-  anc_rows, anc_cols = [], []
-  for k in range(n):  # k lies in the subtree of each of its ancestors, itself included
-    j = k
-    while j >= 0:
-      anc_rows.append(j)
-      anc_cols.append(k)
-      j = int(parent[j])
-  subtree = _incidence((n, n), np.asarray(anc_rows, dtype=np.int64), np.asarray(anc_cols, dtype=np.int64))
-  reads = _incidence((n, expr.args[0].size), np.repeat(np.arange(n), np.diff(a["a_ptr"])), a["a_src"])
-  column = np.concatenate([np.repeat(np.arange(n), counts), np.arange(n)])  # the column of each factor entry
-  return _compose(_compose(_incidence((expr.size, n), np.arange(expr.size), column), subtree), reads)
-
-
 def _jac_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   if expr.id in memo:
     return memo[expr.id]
@@ -126,11 +108,11 @@ def _jac_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spars
 
 def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   if expr.op == ExprOp.INPUT:
-    return sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else _empty((expr.size, wrt.size))
+    return sparse.eye_array(wrt.size, format="csr", dtype=bool) if expr.id == wrt.id else empty_mask((expr.size, wrt.size))
   # floor and ceil have a zero derivative, except under nonsmooth="error", where the dependence is
   # kept so that differentiating it reaches the rule that refuses.
   if expr.op == ExprOp.CONST or expr.op in PREDICATE_OPS or (expr.op in {ExprOp.FLOOR, ExprOp.CEIL} and get_options().nonsmooth != "error"):
-    return _empty((expr.size, wrt.size))
+    return empty_mask((expr.size, wrt.size))
   if expr.op == ExprOp.CALL:
     return _call_mask(expr, wrt, memo)
   if expr.op == ExprOp.VMAP:
@@ -155,11 +137,11 @@ def _sparsity_copysign(expr: Expr, mask: Callable[[Expr], sparse.csr_array], nco
 
 def _sparsity_select(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
   _, a, b = expr.args
-  return _or(_broadcast_mask(mask(a), a.shape, expr.shape), _broadcast_mask(mask(b), b.shape, expr.shape))
+  return mask_or(_broadcast_mask(mask(a), a.shape, expr.shape), _broadcast_mask(mask(b), b.shape, expr.shape))
 
 
 def _sparsity_cast(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
-  return mask(expr.args[0]) if expr.type.diff else _empty((expr.size, ncols))
+  return mask(expr.args[0]) if expr.type.diff else empty_mask((expr.size, ncols))
 
 
 def _sparsity_unary(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
@@ -168,13 +150,13 @@ def _sparsity_unary(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols:
 
 def _sparsity_binary(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
   x, y = expr.args
-  return _or(_broadcast_mask(mask(x), x.shape, expr.shape), _broadcast_mask(mask(y), y.shape, expr.shape))
+  return mask_or(_broadcast_mask(mask(x), x.shape, expr.shape), _broadcast_mask(mask(y), y.shape, expr.shape))
 
 
 def _sparsity_sum_max_min(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
   child = mask(expr.args[0])
-  incidence = _incidence((1, child.shape[0]), np.zeros(child.shape[0], dtype=np.int64), np.arange(child.shape[0]))
-  return _compose(incidence, child)
+  total = incidence((1, child.shape[0]), np.zeros(child.shape[0], dtype=np.int64), np.arange(child.shape[0]))
+  return mask_compose(total, child)
 
 
 def _sparsity_reshape(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
@@ -195,66 +177,12 @@ def _sparsity_gather(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols
   return mask(expr.args[0])[expr.attrs["indices"].reshape(-1)]
 
 
-def _sparsity_ragged_add_ragged_dot(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
-  # Run-time ranges: any output entry may depend on any entry of the floating operands (and a
-  # ragged_add's entry on its own base entry).
-  floats = [expr.args[1], expr.args[4]] if expr.op == ExprOp.RAGGED_ADD else [expr.args[0], expr.args[1]]
-  out = mask(expr.args[0]) if expr.op == ExprOp.RAGGED_ADD else _empty((expr.size, ncols))
-  for arg in floats:
-    dense = _incidence((expr.size, arg.size), np.repeat(np.arange(expr.size), arg.size), np.tile(np.arange(arg.size), expr.size))
-    out = _or(out, _compose(dense, mask(arg)))
-  return out
-
-
-def _sparsity_sparse_ldl(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
-  return _compose(_sparse_ldl_reads(expr), mask(expr.args[0]))
-
-
-def _sparsity_lu(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
-  # Pivoting moves any row anywhere: every entry of the factors and the permutation may depend on every entry.
-  a = expr.args[0]
-  dense = _incidence((expr.size, a.size), np.repeat(np.arange(expr.size), a.size), np.tile(np.arange(a.size), expr.size))
-  return _compose(dense, mask(a))
-
-
-def _sparsity_sparse_ldl_solve_extern_call(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
-  # Every unknown of a solve may depend on every entry of the factor and of the right-hand side,
-  # and every output of an extern callee on every entry of every argument.
-  return _dense_in_args(expr, mask, ncols)
-
-
-def _sparsity_cholesky_ldl(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
-  # Every entry of the lower triangle of the factor may depend on every entry the factorization reads.
-  a = expr.args[0]
-  n = a.shape[0]
-  lower = np.flatnonzero(np.tril(np.ones((n, n), dtype=bool)).reshape(-1))
-  rows, cols = np.repeat(lower, lower.size), np.tile(lower, lower.size)
-  return _compose(_incidence((expr.size, a.size), rows, cols), mask(a))
-
-
-def _sparsity_trisolve(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
-  # Column c of the solution may depend on all of column c of the right-hand side and on every
-  # entry of the triangle the solve reads.
-  t, b = expr.args
-  n = t.shape[0]
-  m = 1 if len(b.shape) == 1 else b.shape[1]
-  tri = np.tril(np.ones((n, n), dtype=bool)) if expr.attrs["lower"] else np.triu(np.ones((n, n), dtype=bool))
-  if expr.attrs["unit"]:
-    np.fill_diagonal(tri, False)
-  read = np.flatnonzero(tri.reshape(-1))
-  t_rows, t_cols = np.repeat(np.arange(expr.size), read.size), np.tile(read, expr.size)
-  r, r2, col = np.meshgrid(np.arange(n), np.arange(n), np.arange(m), indexing="ij")
-  b_rows, b_cols = (r * m + col).reshape(-1), (r2 * m + col).reshape(-1)
-  from_t = _compose(_incidence((expr.size, t.size), t_rows, t_cols), mask(t))
-  return _or(from_t, _compose(_incidence((expr.size, b.size), b_rows, b_cols), mask(b)))
-
-
 def _sparsity_take(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
   # The index is known at run time only: lane j of row b may read any entry of row b.
   x = expr.args[0]
   n, lanes = x.shape[-1], expr.args[1].size
   rows, cols = _row_blocks(x.size // n if n else 0, lanes, n)
-  return _compose(_incidence((expr.size, x.size), rows, cols), mask(x))
+  return mask_compose(incidence((expr.size, x.size), rows, cols), mask(x))
 
 
 def _sparsity_put_add_put(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
@@ -263,7 +191,7 @@ def _sparsity_put_add_put(expr: Expr, mask: Callable[[Expr], sparse.csr_array], 
   base, _, values = expr.args
   n, lanes = base.shape[-1], values.shape[-1]
   rows, cols = _row_blocks(base.size // n if n else 0, n, lanes)
-  return _or(mask(base), _compose(_incidence((expr.size, values.size), rows, cols), mask(values)))
+  return mask_or(mask(base), mask_compose(incidence((expr.size, values.size), rows, cols), mask(values)))
 
 
 def _sparsity_index_add_index_set(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
@@ -273,15 +201,15 @@ def _sparsity_index_add_index_set(expr: Expr, mask: Callable[[Expr], sparse.csr_
   if expr.op == ExprOp.INDEX_SET:
     keep = np.ones(expr.size, dtype=bool)
     keep[indices] = False
-    kept = _compose(_incidence((expr.size, expr.size), np.flatnonzero(keep), np.flatnonzero(keep)), kept)
+    kept = mask_compose(incidence((expr.size, expr.size), np.flatnonzero(keep), np.flatnonzero(keep)), kept)
   child = mask(values)
-  return _or(kept, _compose(_incidence((expr.size, values.size), indices, np.arange(values.size)), child))
+  return mask_or(kept, mask_compose(incidence((expr.size, values.size), indices, np.arange(values.size)), child))
 
 
 def _sparsity_scatter_segment_max_segment_min(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
   child = mask(expr.args[0])
   indices = expr.attrs["indices"].reshape(-1)
-  return _compose(_incidence((expr.size, child.shape[0]), indices, np.arange(child.shape[0])), child)
+  return mask_compose(incidence((expr.size, child.shape[0]), indices, np.arange(child.shape[0])), child)
 
 
 def _sparsity_stack(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: int) -> sparse.csr_array:
@@ -332,15 +260,6 @@ _SPARSITY_RULES = {
   ExprOp.TRANSPOSE: _sparsity_transpose,
   ExprOp.SLICE: _sparsity_slice,
   ExprOp.GATHER: _sparsity_gather,
-  ExprOp.RAGGED_ADD: _sparsity_ragged_add_ragged_dot,
-  ExprOp.RAGGED_DOT: _sparsity_ragged_add_ragged_dot,
-  ExprOp.SPARSE_LDL: _sparsity_sparse_ldl,
-  ExprOp.LU: _sparsity_lu,
-  ExprOp.SPARSE_LDL_SOLVE: _sparsity_sparse_ldl_solve_extern_call,
-  ExprOp.EXTERN_CALL: _sparsity_sparse_ldl_solve_extern_call,
-  ExprOp.CHOLESKY: _sparsity_cholesky_ldl,
-  ExprOp.LDL: _sparsity_cholesky_ldl,
-  ExprOp.TRISOLVE: _sparsity_trisolve,
   ExprOp.TAKE: _sparsity_take,
   ExprOp.PUT_ADD: _sparsity_put_add_put,
   ExprOp.PUT: _sparsity_put_add_put,
@@ -361,7 +280,7 @@ def _dense_in_args(expr: Expr, mask: Callable[[Expr], sparse.csr_array], ncols: 
   """Every entry of ``expr`` against every one of the ``ncols`` columns any argument depends on: the
   pattern of an op that says nothing more precise (``OpDef.sparsity`` unset)."""
   cols = np.unique(np.concatenate([np.empty(0, dtype=np.int64), *(mask(arg).indices for arg in expr.args)]))
-  return _incidence((expr.size, ncols), np.repeat(np.arange(expr.size), cols.size), np.tile(cols, expr.size))
+  return incidence((expr.size, ncols), np.repeat(np.arange(expr.size), cols.size), np.tile(cols, expr.size))
 
 
 def _broadcast_mask(mask: sparse.csr_array, in_shape: tuple[int, ...], out_shape: tuple[int, ...]) -> sparse.csr_array:
@@ -407,18 +326,18 @@ def _matmul_mask(expr: Expr, mask: Callable[[Expr], sparse.csr_array]) -> sparse
   n = y.shape[1] if len(y.shape) == 2 else 1
   ones = lambda rows, cols: sparse.csr_array(np.ones((rows, cols), dtype=bool))
   eye = lambda size: sparse.eye_array(size, dtype=bool, format="csr")
-  rows_of_x = _compose(sparse.kron(eye(m), ones(1, k), format="csr"), mask(x))  # (m, wrt)
-  cols_of_y = _compose(sparse.kron(ones(1, k), eye(n), format="csr"), mask(y))  # (n, wrt)
-  return _or(sparse.kron(rows_of_x, ones(n, 1), format="csr"), sparse.kron(ones(m, 1), cols_of_y, format="csr"))
+  rows_of_x = mask_compose(sparse.kron(eye(m), ones(1, k), format="csr"), mask(x))  # (m, wrt)
+  cols_of_y = mask_compose(sparse.kron(ones(1, k), eye(n), format="csr"), mask(y))  # (n, wrt)
+  return mask_or(sparse.kron(rows_of_x, ones(n, 1), format="csr"), sparse.kron(ones(m, 1), cols_of_y, format="csr"))
 
 
 def _call_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
   callee, output = expr.attrs["callee"], int(expr.attrs["output"])
-  ret = _empty((expr.size, wrt.size))
+  ret = empty_mask((expr.size, wrt.size))
   for k, actual in enumerate(expr.args):
     outer = _jac_mask(actual, wrt, memo)
     if outer.nnz:  # an argument that does not depend on ``wrt`` needs no pattern of the callee
-      ret = _or(ret, _compose(_callee_mask(callee, output, k), outer))
+      ret = mask_or(ret, mask_compose(_callee_mask(callee, output, k), outer))
   return ret
 
 
@@ -435,9 +354,9 @@ def _callee_mask(callee: Any, output: int, k: int) -> sparse.csr_array:
 def _override_mask(pattern: Any, shape: tuple[int, int]) -> sparse.csr_array:
   """A pattern given by ``custom_derivative(sparsity=...)`` as a boolean CSR array of ``shape``."""
   if pattern is None:
-    return _empty(shape)
+    return empty_mask(shape)
   if isinstance(pattern, SparsityType):
-    mask = _incidence(pattern.shape, np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64))
+    mask = incidence(pattern.shape, np.asarray(pattern.rows, dtype=np.int64), np.asarray(pattern.cols, dtype=np.int64))
   elif sparse.issparse(pattern):
     mask = sparse.csr_array(pattern, dtype=bool)
   else:
@@ -452,7 +371,7 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
   length = expr.attrs["length"]
   starts = expr.attrs["starts"]
   strides = expr.attrs["strides"]
-  ret = _empty((expr.size, wrt.size))
+  ret = empty_mask((expr.size, wrt.size))
   if not length:
     return ret
   for formal_idx, actual_outer in enumerate(expr.args):
@@ -463,9 +382,9 @@ def _vmap_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
     callee_dep = _callee_mask(callee, output, formal_idx)
     start, stride = starts[formal_idx], strides[formal_idx]
     window_cols = np.repeat(start + np.arange(length) * stride, formal.size) + np.tile(np.arange(formal.size), length)
-    windows = _incidence((length * formal.size, actual_outer.size), np.arange(length * formal.size), window_cols)
+    windows = incidence((length * formal.size, actual_outer.size), np.arange(length * formal.size), window_cols)
     tiled = sparse.kron(sparse.eye_array(length, dtype=bool), callee_dep, format="csr")
-    ret = _or(ret, _compose(tiled, _compose(windows, outer_dep)))
+    ret = mask_or(ret, mask_compose(tiled, mask_compose(windows, outer_dep)))
   return ret
 
 
@@ -482,7 +401,7 @@ def _scan_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
   outer_masks = [_jac_mask(outer, wrt, memo) for outer in outers]
   if not reach.nnz and not any(m.nnz for m in outer_masks):
     # Nothing the loop reads depends on ``wrt``: skip walking its steps.
-    return _empty((expr.size, wrt.size))
+    return empty_mask((expr.size, wrt.size))
   step = _callee_mask(callee, 0, 0)
   from_xs = [_callee_mask(callee, 0, i + 1) for i in range(len(xs))]
   y_carry = _callee_mask(callee, output, 0) if output > 0 else None
@@ -505,17 +424,17 @@ def _scan_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spar
     if output == -1:
       rows.append(reach)
     elif y_carry is not None:
-      y = _compose(y_carry, reach)
+      y = mask_compose(y_carry, reach)
       for dep, sl in zip(y_xs, slices, strict=True):
-        y = _or(y, _compose(dep, sl))
+        y = mask_or(y, mask_compose(dep, sl))
       rows.append(y)
-    nxt = _compose(step, reach)
+    nxt = mask_compose(step, reach)
     for dep, sl in zip(from_xs, slices, strict=True):
-      nxt = _or(nxt, _compose(dep, sl))
+      nxt = mask_or(nxt, mask_compose(dep, sl))
     reach = sparse.csr_array(nxt, dtype=bool)
   if output == 0:
     return reach
-  return sparse.vstack(rows, format="csr") if rows else _empty((0, wrt.size))
+  return sparse.vstack(rows, format="csr") if rows else empty_mask((0, wrt.size))
 
 
 def _while_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> sparse.csr_array:
@@ -524,26 +443,26 @@ def _while_mask(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array]) -> spa
   it stops changing. Every stored carry gets the same union; the step count has none."""
   output, max_iter = int(expr.attrs["output"]), int(expr.attrs["max_iter"])
   if output == 1:
-    return _empty((1, wrt.size))
+    return empty_mask((1, wrt.size))
   body = expr.attrs["callee"]
   first = 1 + int(bool(expr.attrs.get("index", False)))
   reach = _jac_mask(expr.args[0], wrt, memo)
-  inject = _empty((reach.shape[0], wrt.size))
+  inject = empty_mask((reach.shape[0], wrt.size))
   for i, param in enumerate(expr.args[1:]):
     param_mask = _jac_mask(param, wrt, memo)
     if param_mask.nnz:
-      inject = _or(inject, _compose(_callee_mask(body, 0, first + i), param_mask))
+      inject = mask_or(inject, mask_compose(_callee_mask(body, 0, first + i), param_mask))
   if not reach.nnz and not inject.nnz:
-    return _empty((expr.size, wrt.size))
+    return empty_mask((expr.size, wrt.size))
   step = _callee_mask(body, 0, 0)
   frontier = reach
   for _ in range(max_iter):
-    frontier = _or(_compose(step, frontier), inject)
-    grown = _or(reach, frontier)
+    frontier = mask_or(mask_compose(step, frontier), inject)
+    grown = mask_or(reach, frontier)
     if grown.nnz == reach.nnz:
       break
     reach = grown
-  return reach if output == 0 else sparse.vstack([reach] * max_iter, format="csr") if max_iter else _empty((0, wrt.size))
+  return reach if output == 0 else sparse.vstack([reach] * max_iter, format="csr") if max_iter else empty_mask((0, wrt.size))
 
 
 def star_coloring(sparsity: SparsityType) -> tuple[int, ...]:

@@ -139,18 +139,18 @@ not otherwise infer, most usefully that a matrix coming in from outside is spars
 
 ## Sparse matrices as values
 
-`sc.SparseMatrix` is a matrix whose pattern is fixed when the graph is built and whose values are an
+`sc.linalg.SparseMatrix` is a matrix whose pattern is fixed when the graph is built and whose values are an
 expression. The pattern is compressed sparse column (CSC) with sorted row indices; `values` has one
 entry per stored element, in that order.
 
 ```python
-P = sc.SparseMatrix.symbol("P", p_pattern)   # values are the input "P", shape (nnz,)
-A = sc.SparseMatrix.symbol("A", a_pattern)
+P = sc.linalg.SparseMatrix.symbol("P", p_pattern)   # values are the input "P", shape (nnz,)
+A = sc.linalg.SparseMatrix.symbol("A", a_pattern)
 rho, delta = sc.sym("rho", ()), sc.sym("delta", ())
 
-K = sc.SparseMatrix.block([[P.add_diagonal(rho), A.T], [A, sc.SparseMatrix.identity(m) * (-delta)]])
+K = sc.linalg.SparseMatrix.block([[P.add_diagonal(rho), A.T], [A, sc.linalg.SparseMatrix.identity(m) * (-delta)]])
 r = K @ z                                    # a dense vector expression
-H = sc.SparseMatrix.from_sparse_jacobian(sc.sparse_hessian(f, x))
+H = sc.linalg.SparseMatrix.from_sparse_jacobian(sc.sparse_hessian(f, x))
 ```
 
 A pattern can be a `SparsityType`, a boolean mask or a SciPy sparse matrix. The constructors are:
@@ -176,15 +176,15 @@ Every result is again a `SparseMatrix` with a static pattern, and its values are
 expressions (static gathers, products and segment sums), so everything is differentiable through
 the values.
 
-Across a `Function` boundary a sparse matrix is its values vector, and `sc.S(pattern)` declares
+Across a `Function` boundary a sparse matrix is its values vector, and `sc.linalg.S(pattern)` declares
 it with its pattern in the signature. The body then receives a `SparseMatrix`, and calls
 are refused unless the matrix passed has exactly the declared pattern. See
 [Sparse matrices](functions.md#sparse-matrices) in *Building functions*:
 
 ```python
-@sc.function(sc.S(p_pattern), sc.S(a_pattern), (), ())
+@sc.function(sc.linalg.S(p_pattern), sc.linalg.S(a_pattern), (), ())
 def kkt(P, A, rho, delta):
-    return sc.SparseMatrix.block([[P.add_diagonal(rho), A.T], [A, sc.SparseMatrix.identity(m) * (-delta)]])
+    return sc.linalg.SparseMatrix.block([[P.add_diagonal(rho), A.T], [A, sc.linalg.SparseMatrix.identity(m) * (-delta)]])
 ```
 
 The result is a `SparseMatrix`, so the output is sparse too, with the pattern the body built.

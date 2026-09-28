@@ -15,7 +15,7 @@ from scaly.ad.derivatives import gradient, hessian, jacobian
 from scaly.ad.forward import jvp
 from scaly.codegen import render_c_module
 from scaly.linalg import cho_solve, cholesky, ldl, ldl_solve, ldl_unpack, solve, solve_triangular
-from scaly.passes.lowering import DENSE_UNROLL
+from scaly.linalg.ops import DENSE_UNROLL
 
 RNG = np.random.default_rng(606)
 SIZES = [1, 2, 3, DENSE_UNROLL, DENSE_UNROLL + 1, 13, 20]

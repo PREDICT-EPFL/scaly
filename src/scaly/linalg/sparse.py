@@ -473,7 +473,7 @@ class S(Tree[SparseMatrix, sparse.sparray]):
 
   def symbols(self, *, diff: bool | None = None) -> SparseMatrix:
     if not self.names[0]:
-      raise ValueError("an unnamed leaf takes its name from sc.function's parameter; name it here, as in sc.S('A', pattern)")
+      raise ValueError("an unnamed leaf takes its name from sc.function's parameter; name it here, as in sc.linalg.S('A', pattern)")
     type_ = self.types[0]
     if diff is not None:
       type_ = TensorType(type_.shape, type_.dtype, type_.sparsity, diff)

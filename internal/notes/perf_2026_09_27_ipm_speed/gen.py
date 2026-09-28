@@ -106,7 +106,7 @@ def one(name: str, backend: str, out: Path) -> dict:
   syms = {k: sc.sym(k, np.shape(values[k])) for k in ORDER}
   res = Solver(s, backend, name=f"g_{c_ident(name)}").solve(QPValues.preprocess(s, **syms))
   keys = ["x", "status", "iter"]
-  fn = sc.Function._from_exprs(f"g_{c_ident(name)}_{backend}", [syms[k] for k in ORDER], [res[k] for k in keys], list(ORDER), keys)
+  fn = sc.Function.from_exprs(f"g_{c_ident(name)}_{backend}", [syms[k] for k in ORDER], [res[k] for k in keys], list(ORDER), keys)
   build = time.perf_counter() - t0
   t0 = time.perf_counter()
   module = render_c_module(fn)

@@ -18,7 +18,7 @@ from scaly.ad import finite_difference
 from scaly.ad.derivatives import gradient, hessian, jacobian
 from scaly.ad.forward import jvp
 from scaly.codegen import render_c_module
-from scaly.ir.expr import SPARSE_LDL_MAX_WIDTH, sparse_ldl_factor, sparse_ldl_solve
+from scaly.linalg.ops import SPARSE_LDL_MAX_WIDTH, sparse_ldl_factor, sparse_ldl_solve
 from scaly.linalg import SparseLDL, SparseMatrix
 from scaly.linalg.sparse_factor import Schedule, _call
 from scaly.linalg.symbolic import Ordering

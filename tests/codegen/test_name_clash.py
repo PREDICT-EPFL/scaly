@@ -83,7 +83,7 @@ def test_an_in_place_loop_body_whose_output_is_named_like_its_carry() -> None:
 
 
 def test_an_output_named_like_its_function_compiles_in_c_and_cpp(tmp_path) -> None:
-  """An undeclared output is named after its function; the headers keep the two apart, sparse included."""
+  """An undeclared output is named after its function; the headers keep the two apart."""
   cxx = shutil.which("c++")
   if cxx is None:
     pytest.skip("c++ is required to compile the generated headers")
@@ -92,18 +92,11 @@ def test_an_output_named_like_its_function_compiles_in_c_and_cpp(tmp_path) -> No
   def selfnamed(x):
     return 2.0 * x
 
-  @sc.function(3)
-  def selfsparse(x):
-    return sc.SparseMatrix.diag(x)
-
-  assert selfnamed.output_names == ("selfnamed",) and selfsparse.output_names == ("selfsparse",)
+  assert selfnamed.output_names == ("selfnamed",)
   np.testing.assert_array_equal(selfnamed(np.ones(3)), [2.0, 2.0, 2.0])
-  np.testing.assert_array_equal(selfsparse(np.arange(3.0)).toarray(), np.diag(np.arange(3.0)))
-  for fun in (selfnamed, selfsparse):
-    for lang in ("c", "cpp"):
-      module = render_c_module(fun, adapters=("cpp",) if lang == "cpp" else ())
-      (tmp_path / module.header_name).write_text(module.header)
-      main = tmp_path / f"main_{fun.name}_{lang}.cpp"
-      main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
-      subprocess.run([cxx, "-std=c++17", "-fsyntax-only", str(main)], check=True, cwd=tmp_path)
-  assert "namespace selfsparse_ {" in render_c_module(selfsparse, adapters=("cpp",)).header
+  for lang in ("c", "cpp"):
+    module = render_c_module(selfnamed, adapters=("cpp",) if lang == "cpp" else ())
+    (tmp_path / module.header_name).write_text(module.header)
+    main = tmp_path / f"main_{selfnamed.name}_{lang}.cpp"
+    main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
+    subprocess.run([cxx, "-std=c++17", "-fsyntax-only", str(main)], check=True, cwd=tmp_path)

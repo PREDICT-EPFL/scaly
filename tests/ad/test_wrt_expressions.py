@@ -94,11 +94,12 @@ def test_sparse_forms(triangle) -> None:
 
 def test_newton_on_a_slice_of_a_while_loop_carry() -> None:
   """The use that exposed the gap: a loop body sees only its carry, so its Newton step
-  differentiates with respect to a slice of it. With zero Hessians the loop never converged."""
+  differentiates with respect to a slice of it. With zero Hessians the loop never converged. The
+  energy is separable, so the Newton step divides by the Hessian's diagonal."""
   carry = sc.sym("carry", 4)
   x, a = carry[:3], carry[3]
   energy = sc.sumsqr(x * x - a) + 0.1 * sc.sumsqr(x)
-  step = -sc.linalg.solve(sc.hessian(energy, x), sc.gradient(energy, x))
+  step = -sc.gradient(energy, x) / sc.gather(sc.hessian(energy, x).reshape((9,)), [0, 4, 8])
   body = sc.Function.from_exprs("wrt_newton", [carry], [sc.concat([x + step, a.reshape((1,))])], ["c"], ["n"])
   cond = sc.Function.from_exprs("wrt_newton_go", [carry], [sc.greater(sc.norm_inf(sc.gradient(energy, x)), 1e-12)], ["c"], ["g"])
   start = sc.sym("start", 4)

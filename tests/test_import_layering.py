@@ -82,6 +82,12 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.solvers.ipm.kkt": 5,
   "scaly.solvers.ipm.algorithm": 5,
   "scaly.linalg": 5,
+  "scaly.linalg.options": 5,
+  "scaly.linalg.ops": 5,
+  "scaly.linalg.ops.dense": 5,
+  "scaly.linalg.ops.ragged": 5,
+  "scaly.linalg.ops.sparse_ldl": 5,
+  "scaly.linalg.ops.trisolve": 5,
   "scaly.linalg.dense": 5,
   "scaly.linalg.sparse_factor": 5,
   "scaly.linalg.sparse": 5,
@@ -233,6 +239,16 @@ def test_module_imports_standalone(module: str) -> None:
   assert proc.returncode == 0, f"importing {module} first fails:\n{proc.stderr}"
 
 
+# The packages built on the compiler, which ``import scaly`` leaves unloaded (``sc.<name>`` loads one).
+BUILT_ON_THE_CORE = ("scaly.integrators", "scaly.interp", "scaly.linalg", "scaly.mpc")
+
+
+def test_import_scaly_is_the_compiler_alone() -> None:
+  code = f"import sys, scaly; print(sorted(m for m in sys.modules if m.startswith({BUILT_ON_THE_CORE!r})))"
+  proc = subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, text=True)
+  assert proc.stdout.strip() == "[]", f"import scaly loads {proc.stdout.strip()}"
+
+
 def test_import_layer_table_covers_every_module() -> None:
   missing = sorted(set(_modules()) - set(IMPORT_LAYERS))
   extra = sorted(set(IMPORT_LAYERS) - set(_modules()))
@@ -294,10 +310,11 @@ def test_flat_call_seams_stay_inside_their_sanctioned_modules() -> None:
 
 
 # The compiler's packages, and what none of them may name: solvers reach the compiler only through the
-# extern-callee protocol (``function/extern.py``) and output adapters only through their registry
-# (``codegen/adapter.py``). The adapters themselves still live under ``codegen/`` and are exempt.
+# extern-callee protocol (``function/extern.py``), output adapters only through their registry
+# (``codegen/adapter.py``), and the packages built on the compiler (``linalg`` and its ops) through
+# the op registry. The adapters themselves still live under ``codegen/`` and are exempt.
 CORE_PACKAGES = ("scaly.ir", "scaly.ad", "scaly.function", "scaly.passes", "scaly.codegen", "scaly.utils")
-NOT_FROM_CORE = ("scaly.solvers", "scaly.codegen.cpp", "scaly.codegen.casadi")
+NOT_FROM_CORE = ("scaly.solvers", "scaly.codegen.cpp", "scaly.codegen.casadi", *BUILT_ON_THE_CORE)
 
 
 def _named_modules(name: str, path: Path, stmt: ast.Import | ast.ImportFrom) -> list[str]:
@@ -307,9 +324,10 @@ def _named_modules(name: str, path: Path, stmt: ast.Import | ast.ImportFrom) -> 
   return [base or "", *(f"{base}.{alias.name}" for alias in stmt.names)]
 
 
-def test_core_names_no_solver_or_adapter() -> None:
+def test_core_names_no_solver_adapter_or_package_built_on_it() -> None:
   """Every import statement counts here, inside a function or under ``TYPE_CHECKING`` too: a core
-  distribution must build and type-check without the solver package or the adapters installed."""
+  distribution must build and type-check without the solver package, the adapters or ``linalg``
+  installed."""
   bad = []
   for name, path in _modules().items():
     if not any(name == pkg or name.startswith(f"{pkg}.") for pkg in CORE_PACKAGES) or name in NOT_FROM_CORE:
@@ -319,4 +337,4 @@ def test_core_names_no_solver_or_adapter() -> None:
         for target in _named_modules(name, path, stmt):
           if any(target == forbidden or target.startswith(f"{forbidden}.") for forbidden in NOT_FROM_CORE):
             bad.append(f"{name}:{stmt.lineno} imports {target}")
-  assert not bad, "core modules name a solver or an output adapter:\n  " + "\n  ".join(sorted(set(bad)))
+  assert not bad, "core modules name a solver, an output adapter or a package built on the core:\n  " + "\n  ".join(sorted(set(bad)))

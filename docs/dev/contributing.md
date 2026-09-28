@@ -93,6 +93,17 @@ def test_something(): ...
 The root `conftest.py` skips those when the library is absent, and CI splits the suite on
 `-m solver` against `-m "not solver"`. Never hand-roll a "is the solver loadable" skip condition.
 
+The compiler's own tests pass without `scaly.linalg`, which registers its ops from outside the
+compiler. The root `conftest.py` blocks the packages named in `SCALY_BLOCK_IMPORTS`, so importing
+one fails as it would if it were not installed:
+
+```bash
+SCALY_BLOCK_IMPORTS=scaly.linalg uv run pytest -n=auto tests/ad tests/codegen tests/function tests/ir tests/passes tests/utils tests/viz tests/typing tests/test_c_snapshot.py tests/test_import_boundaries.py tests/test_import_layering.py
+```
+
+Run it after a change to the op registry, the rules or `LowerCtx`: a core test that reaches for
+`sc.linalg` belongs in `tests/linalg/`.
+
 An xdist worker occasionally dies inside the isolated library load in the vendored-solver plugin
 tests. It reproduces on unmodified checkouts, so a lone worker crash there is probably not yours.
 Rerun before reading it as a failure.

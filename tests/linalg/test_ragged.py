@@ -12,9 +12,10 @@ from scaly.ad import finite_difference
 from scaly.ad.derivatives import gradient, hessian, jacobian
 from scaly.ad.forward import jvp
 from scaly.codegen import render_c_module
-from scaly.ir.expr import ragged_add, ragged_dot
+from scaly.linalg.ops import ragged_add, ragged_dot
+from scaly.linalg.ops.ragged import _Ragged
 from scaly.passes import lowering
-from scaly.passes.lowering import _may_overlap, _Ragged
+from scaly.passes.lowering import _may_overlap
 
 RNG = np.random.default_rng(808)
 DST = np.array([5, 0, 3, 3, 1, 2, 6, 6])
@@ -169,3 +170,15 @@ def test_validation() -> None:
     ragged_add(v, v, lo, lo, sc.sym("s3", 3))
   with pytest.raises(ValueError, match="non-negative"):
     ragged_add(v, v, lo, lo, sc.sym("s", 2), dst_map=[-1, 0])
+
+
+@pytest.mark.parametrize("name", ["k0", "k1", "k2", "k3", "t0", "t2", "t5"])
+def test_input_names_that_look_generated(name: str) -> None:
+  """A ragged op's maps are constant tables (``k<n>``) and its result a temporary (``t<n>``): a
+  generated name never takes an input's."""
+  x, idx = sc.sym("x", 5), sc.sym(name, 1, dtype="int64")
+  lo, hi = sc.const(np.array([0]), dtype="int64"), sc.const(np.array([3]), dtype="int64")
+  y = sc.put_add(ragged_add(x, x * 1.0, lo, hi, sc.const([2.0]), dst_map=np.array([4, 3, 2])), idx, sc.const([10.0]))
+  fn = sc.Function.from_exprs(f"gen_name_{name}", [x, idx], [y], ["x", name], ["o"])
+  (got,) = fn._flat_numerical_call(np.arange(5.0), np.array([0]))
+  np.testing.assert_array_equal(got, [10.0, 1.0, 6.0, 5.0, 4.0])

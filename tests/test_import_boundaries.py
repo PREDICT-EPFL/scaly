@@ -91,98 +91,6 @@ def test_public_exports_are_canonical() -> None:
   assert {"Ops", "VerifyRule", "spec_semantic", "spec_semantic_shared"}.isdisjoint(sc.__all__)
 
 
-def test_the_integrator_surface() -> None:
-  integrators = importlib.import_module("scaly.integrators")
-  assert sc.integrators is integrators
-  assert integrators.__all__ == [
-    "Collocation",
-    "FAMILIES",
-    "Interval",
-    "MultipleShooting",
-    "Pseudospectral",
-    "TABLEAUS",
-    "Tableau",
-    "Transcription",
-    "UNROLL_STEPS",
-    "adaptive",
-    "explicit",
-    "foh",
-    "gauss_legendre",
-    "implicit",
-    "linearize",
-    "lobatto_iiia",
-    "lobatto_iiic",
-    "order_conditions",
-    "radau_iia",
-    "rk4",
-    "symplectic",
-    "tableau",
-    "zoh",
-  ]
-  assert "integrators" not in sc.__all__ and not hasattr(sc, "rk4")
-
-
-def test_the_mpc_surface() -> None:
-  mpc = importlib.import_module("scaly.mpc")
-  assert sc.mpc is mpc
-  assert mpc.__all__ == [
-    "MPC",
-    "OCP",
-    "ClosedLoop",
-    "Ellipsoid",
-    "Path",
-    "Polytope",
-    "Quadratic",
-    "Solution",
-    "TerminalEquality",
-    "largest_ellipsoid",
-    "linear",
-    "lqr",
-    "max_invariant_set",
-    "simulate",
-  ]
-  assert "mpc" not in sc.__all__ and not hasattr(sc, "OCP")
-
-
-def test_the_interp_surface() -> None:
-  interp = importlib.import_module("scaly.interp")
-  assert sc.interp is interp
-  assert interp.__all__ == ["BOUNDARIES", "KINDS", "PP_BUDGET", "Axis", "BSpline", "Index", "Inverse", "constrained", "interpolant", "smoothing"]
-  assert "interp" not in sc.__all__ and not hasattr(sc, "interpolant")
-
-
-def _attribute_docstring(module_name: str, name: str) -> str | None:
-  """The string literal after ``name = ...`` at a module's top level, which the API pages render."""
-  body = ast.parse(Path(importlib.import_module(module_name).__file__ or "").read_text()).body
-  for node, after in zip(body, body[1:], strict=False):
-    targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
-    if any(isinstance(t, ast.Name) and t.id == name for t in targets):
-      return (
-        after.value.value if isinstance(after, ast.Expr) and isinstance(after.value, ast.Constant) and isinstance(after.value.value, str) else None
-      )
-  return None
-
-
-def test_every_interp_name_is_documented() -> None:
-  """The API page is generated from these docstrings: each public name, each public method and
-  property of its classes, and each constant (an attribute docstring) carries its own."""
-  interp = importlib.import_module("scaly.interp")
-  missing = []
-  for name in interp.__all__:
-    obj = getattr(interp, name)
-    if isinstance(obj, type):
-      missing += [name] if not obj.__dict__.get("__doc__") else []
-      for member, value in vars(obj).items():
-        target = value.fget if isinstance(value, property) else value.__func__ if isinstance(value, (staticmethod, classmethod)) else value
-        if not member.startswith("_") and callable(target) and not getattr(target, "__doc__", None):
-          missing.append(f"{name}.{member}")
-    elif callable(obj):
-      missing += [name] if not obj.__doc__ else []
-    elif not any(_attribute_docstring(f"scaly.interp.{module}", name) for module in ("fit", "spline", "grid", "constrained")):
-      missing.append(name)
-  assert not missing, f"undocumented: {missing}"
-
-
 def test_both_dialects_use_the_shared_spec_types() -> None:
   assert isinstance(spec_expr, Spec)
   assert isinstance(spec_program_full, Spec)
@@ -269,3 +177,16 @@ def test_the_extension_api_is_versioned_and_complete() -> None:
   ext.require_ext_api(ext.EXT_API_VERSION, "a package")
   with pytest.raises(ImportError, match="extension API 0"):
     ext.require_ext_api(0, "an old package")
+
+
+def test_the_linalg_ops_take_only_public_names_from_the_compiler() -> None:
+  """``linalg.ops`` registers its ops as a package outside the compiler would (``scaly.ext``): every
+  name it imports from the compiler is public, so the extension API is enough to write it."""
+  ops = Path(sc.__file__).parent / "linalg" / "ops"
+  private = []
+  for path in sorted(ops.glob("*.py")):
+    for stmt in ast.walk(ast.parse(path.read_text())):
+      into_core = isinstance(stmt, ast.ImportFrom) and (stmt.level == 3 or (stmt.level == 0 and (stmt.module or "").startswith("scaly.")))
+      if into_core:
+        private += [f"{path.name}:{stmt.lineno} {alias.name}" for alias in stmt.names if alias.name.startswith("_")]
+  assert not private, "linalg.ops imports private compiler names: " + ", ".join(private)

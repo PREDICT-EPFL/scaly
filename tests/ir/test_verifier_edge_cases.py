@@ -1,4 +1,4 @@
-"""``verify_expr`` on the ops added with the control, indexing, factorization and loop work.
+"""``verify_expr`` on the ops added with the control, indexing and loop work.
 
 Every graph the builders make verifies, and so does every derivative AD builds from it (forward,
 multi-seed forward, reverse, Jacobian, Hessian) and every rewrite of it, callee bodies included:
@@ -15,15 +15,13 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly import linalg
 from scaly.ad.derivatives import hessian, jacobian
 from scaly.ad.forward import jvp, jvp_many
 from scaly.ad.reverse import vjp
-from scaly.ir.expr import Expr, ExprOp, callees_of, ragged_add, ragged_dot, sparse_ldl_factor, sparse_ldl_solve, topo
+from scaly.ir.expr import Expr, ExprOp, callees_of, topo
 from scaly.ir.expr_spec import spec_expr, verify_expr
 from scaly.ir.spec import VerifyError
 from scaly.ir.types import TensorType, dtypes
-from scaly.linalg import SparseLDL, SparseMatrix
 
 NEW_OPS = frozenset(
   {
@@ -48,14 +46,6 @@ NEW_OPS = frozenset(
     ExprOp.TAKE,
     ExprOp.PUT_ADD,
     ExprOp.PUT,
-    ExprOp.RAGGED_ADD,
-    ExprOp.RAGGED_DOT,
-    ExprOp.CHOLESKY,
-    ExprOp.LDL,
-    ExprOp.LU,
-    ExprOp.SPARSE_LDL,
-    ExprOp.SPARSE_LDL_SOLVE,
-    ExprOp.TRISOLVE,
     ExprOp.VMAP,
     ExprOp.SCAN,
     ExprOp.WHILE,
@@ -69,11 +59,6 @@ def _fn(name: str, inputs: list[Expr], outputs: list[Expr]) -> sc.ConcreteFuncti
 
 def _i64(values: Any) -> Expr:
   return sc.const(np.asarray(values, dtype=np.int64), dtype="int64")
-
-
-def _spd(x: Expr, n: int) -> Expr:
-  a = x.reshape((n, n))
-  return a @ a.T + sc.const(float(n) * np.eye(n))
 
 
 def _elementwise() -> tuple[Expr, Expr]:
@@ -105,52 +90,6 @@ def _runtime_updates() -> tuple[Expr, Expr]:
   return x, sc.put(y, into, sc.take(y, into).cos())
 
 
-def _ragged() -> tuple[Expr, Expr]:
-  x = sc.sym("x", 6)
-  lo, hi = _i64([0, 2, 2, 1]), _i64([2, 2, 5, 3])
-  y = ragged_add(x, x * x, lo, hi, x[:4], dst_map=[5, 0, 3, 3, 1], src_map=[4, 3, 2, 1, 0])
-  return x, sc.concat([y, ragged_dot(x, y, lo, hi)])
-
-
-def _dense() -> tuple[Expr, Expr]:
-  x = sc.sym("x", 9)
-  a, b = _spd(x, 3), x[:3]
-  chol = linalg.cho_solve(linalg.cholesky(a), b)
-  sym = linalg.ldl_solve(linalg.ldl(a), b)
-  tri = linalg.solve_triangular(a, x.reshape((3, 3)), lower=False, trans=True, unit_diagonal=True)
-  return x, sc.concat([chol, sym, linalg.solve(a, b, assume="gen"), tri.reshape((9,))])
-
-
-def _dense_looped() -> tuple[Expr, Expr]:
-  with sc.options(linalg=dict(dense_unroll=0)):
-    return _dense()
-
-
-def _lu_factor() -> tuple[Expr, Expr]:
-  # The factorization refuses a derivative of its own (``linalg.solve`` differentiates implicitly),
-  # so this graph only checks the value side.
-  x = sc.sym("x", 9)
-  f = linalg.lu(x.reshape((3, 3)))
-  return x, linalg.lu_solve(f, x[:3], trans=True)
-
-
-PATTERN = np.array([[4.0, 0, 0, 0], [1.0, 5.0, 0, 0], [0, 1.0, 6.0, 0], [1.0, 0, 1.0, 7.0]])
-
-
-def _sparse() -> tuple[Expr, Expr]:
-  mat = SparseMatrix.symbol("kv", PATTERN)
-  fact = SparseLDL(mat, schedule="loop", name="ve_sldl")
-  b = sc.sym("b", 4)
-  return mat.values, fact.solve(b * mat.values[:4])
-
-
-def _sparse_primitives() -> tuple[Expr, Expr]:
-  mat = SparseMatrix.symbol("kp", PATTERN)
-  fact = SparseLDL(mat, schedule="loop", name="ve_prim")
-  factor = sparse_ldl_factor(mat.values, fact.tables())
-  return mat.values, sc.concat([sparse_ldl_solve(factor, mat.values[:4], fact.solve_tables()), fact.values])
-
-
 def _loops() -> tuple[Expr, Expr]:
   x = sc.sym("x", 6)
   c, u, k = sc.sym("c", 2), sc.sym("u", 2), sc.sym("k", (), dtype="int64")
@@ -170,27 +109,20 @@ CORPUS: dict[str, Callable[[], tuple[Expr, Expr]]] = {
   "reductions": _reductions,
   "static_updates": _static_updates,
   "runtime_updates": _runtime_updates,
-  "ragged": _ragged,
-  "dense": _dense,
-  "dense_looped": _dense_looped,
-  "lu_factor": _lu_factor,
-  "sparse": _sparse,
-  "sparse_primitives": _sparse_primitives,
   "loops": _loops,
 }
-VALUE_ONLY = {"lu_factor", "sparse_primitives"}
 
 
-def _verify_deep(outputs: list[Expr]) -> set[ExprOp]:
+def _verify_deep(outputs: list[Expr]) -> set[str]:
   """Verify ``outputs`` and every callee body they run, transitively; return the ops seen."""
-  ops: set[ExprOp] = set()
+  ops: set[str] = set()
   seen: set[int] = set()
   pending = [tuple(outputs)]
   while pending:
     outs = pending.pop()
     verify_expr(outs)
     for node in topo(outs):
-      ops.add(ExprOp(node.op))
+      ops.add(node.op)
       for callee in callees_of(node):
         if id(callee) not in seen:
           seen.add(id(callee))
@@ -213,7 +145,7 @@ def test_graphs_and_rewrites_verify(name: str) -> None:
   _verify_deep(list(sc.cse_many([y, y * 2.0])))
 
 
-@pytest.mark.parametrize("name", sorted(set(CORPUS) - VALUE_ONLY))
+@pytest.mark.parametrize("name", sorted(CORPUS))
 def test_every_derivative_verifies(name: str) -> None:
   x, y = CORPUS[name]()
   _verify_deep(_derivatives(x, y))
@@ -228,15 +160,15 @@ def test_tie_conventions_build_verified_derivatives(nonsmooth: str) -> None:
 
 def test_the_corpus_reaches_every_new_op() -> None:
   """A new op must join the corpus above, or its builders and AD rules go unverified here."""
-  seen: set[ExprOp] = set()
-  for name, build in CORPUS.items():
+  seen: set[str] = set()
+  for build in CORPUS.values():
     x, y = build()
-    seen |= _verify_deep([y] if name in VALUE_ONLY else [y, *_derivatives(x, y)])
-  assert NEW_OPS <= seen, sorted(op.name for op in NEW_OPS - seen)
+    seen |= _verify_deep([y, *_derivatives(x, y)])
+  assert NEW_OPS <= seen, sorted(NEW_OPS - seen)
 
 
 def test_every_op_has_a_rule_of_its_own() -> None:
-  """``docs/dev/codebase.md``: adding an op includes a verify rule in ``ir/expr_spec.py``."""
+  """``docs/dev/codebase.md``: adding an op includes a verify rule (``OpDef.verify``)."""
   unchecked = {ExprOp.SLICE, ExprOp.EXTERN_CALL}
   assert {op for op in ExprOp if op not in spec_expr.op_rules()} == unchecked
 
@@ -282,13 +214,6 @@ def _loop_parts() -> dict[str, Any]:
   }
 
 
-def _sparse_parts() -> tuple[Expr, Expr]:
-  mat = SparseMatrix.symbol("kf", PATTERN)
-  fact = SparseLDL(mat, schedule="loop", name="vf_sldl")
-  factor = sparse_ldl_factor(mat.values, fact.tables())
-  return factor, sparse_ldl_solve(factor, sc.sym("b", 4), fact.solve_tables())
-
-
 def _forged() -> dict[str, list[Expr]]:
   x, v = sc.sym("x", 5), sc.sym("v", 3)
   x2 = sc.sym("x2", (2, 5))
@@ -297,11 +222,6 @@ def _forged() -> dict[str, list[Expr]]:
   take = sc.take(x2, _i64([0, 4, 9]))
   put = sc.put_add(x2, _i64([0, 4, 9]), sc.sym("pv", (2, 3)))
   added = sc.index_add(x, [0, 0, 4], v)
-  a = sc.sym("a", (3, 3))
-  chol, lu, tri = linalg.cholesky(a), linalg.lu(a), linalg.solve_triangular(a, sc.sym("b", 3))
-  factor, solved = _sparse_parts()
-  lo, hi = _i64([0, 2]), _i64([2, 3])
-  radd, rdot = ragged_add(x, x, lo, hi, sc.sym("s", 2)), ragged_dot(x, x, lo, hi)
   seg = sc.segment_max(x, [0, 1, 0, 1, 2], 3)
   loops = _loop_parts()
   final, carry, mapped = loops["final"], loops["carry"], loops["mapped"]
@@ -341,33 +261,6 @@ def _forged() -> dict[str, list[Expr]]:
       _forge(put, args=(x2, put.args[1], sc.sym("pv", (2, 4)))),
       _forge(put, args=(x2, sc.sym("fi", 3), put.args[2])),
       _forge(put, shape=(2, 6)),
-    ],
-    "factor-shape": [_forge(chol, shape=(3, 4)), _forge(linalg.ldl(a), args=(sc.sym("r", (3, 4)),))],
-    "lu-shape": [_forge(lu, shape=(3, 3)), _forge(lu, args=(sc.sym("r", (4, 3)),))],
-    "trisolve-shapes": [
-      _forge(tri, drop=("unit",)),
-      _forge(tri, args=(a, sc.sym("b", 4)), shape=(4,)),
-      _forge(tri, args=(a, sc.sym("b", (3, 2, 1))), shape=(3, 2, 1)),
-      _forge(tri, shape=(4,)),
-    ],
-    "sparse-ldl-tables": [
-      _forge(factor, drop=("ck_len",)),
-      _forge(factor, shape=(factor.size + 1,)),
-      _forge(factor, attrs={"l_ptr": factor.attrs["l_ptr"][:-1]}),
-      _forge(factor, attrs={"r_cols": factor.attrs["r_cols"][:-1]}),
-    ],
-    "sparse-ldl-solve-tables": [
-      _forge(solved, drop=("perm",)),
-      _forge(solved, args=(factor, sc.sym("b", 5))),
-      _forge(solved, args=(sc.sym("f", factor.size + 1), sc.sym("b", 4))),
-      _forge(solved, attrs={"l_ptr": solved.attrs["l_ptr"][:-1]}),
-    ],
-    "ragged-shapes": [
-      _forge(radd, args=(x, x, sc.sym("lo", 2), hi, sc.sym("s", 2))),
-      _forge(radd, args=(x, x, lo, _i64([2, 3, 4]), sc.sym("s", 2))),
-      _forge(radd, args=(x, x, lo, hi, sc.sym("s", 3))),
-      _forge(radd, shape=(4,)),
-      _forge(rdot, shape=(3,)),
     ],
     "vmap-attrs": [
       _forge(mapped, drop=("strides",)),
@@ -412,23 +305,13 @@ def test_forged_nodes_fail_their_own_rule(rule: str) -> None:
 def test_forged_nodes_are_forged_from_verified_ones() -> None:
   """Each forged node differs from a valid one in one respect: without the change it verifies."""
   x2 = sc.sym("x2", (2, 5))
-  a = sc.sym("a", (3, 3))
-  factor, solved = _sparse_parts()
   loops = _loop_parts()
-  lo, hi = _i64([0, 2]), _i64([2, 3])
   x = sc.sym("x", 5)
   verify_expr(
     [
       sc.take(x2, _i64([0, 4, 9])),
       sc.put_add(x2, _i64([0, 4, 9]), sc.sym("pv", (2, 3))),
       sc.index_add(x, [0, 0, 4], sc.sym("v", 3)),
-      linalg.cholesky(a),
-      linalg.lu(a),
-      linalg.solve_triangular(a, sc.sym("b", 3)),
-      factor,
-      solved,
-      ragged_add(x, x, lo, hi, sc.sym("s", 2)),
-      ragged_dot(x, x, lo, hi),
       sc.segment_max(x, [0, 1, 0, 1, 2], 3),
       loops["final"],
       loops["count"],

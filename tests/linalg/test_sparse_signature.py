@@ -1,6 +1,10 @@
-"""Sparse matrices as ``Function`` arguments and results: ``sc.S`` puts the pattern in the signature."""
+"""Sparse matrices as ``Function`` arguments and results: ``sc.linalg.S`` puts the pattern in the signature."""
 
 from __future__ import annotations
+
+import shutil
+import subprocess
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -251,3 +255,62 @@ def test_an_unnamed_sparse_slot_takes_its_parameter_name() -> None:
     S(MASK).symbols()
   with pytest.raises(TypeError, match="a name and a pattern, or a pattern alone"):
     S("A")
+
+
+def test_a_sparse_matrix_argument_declares_its_pattern() -> None:
+  """A shape-free ``sc.function`` instantiates once per pattern, as it does once per shape."""
+
+  @sc.function
+  def apply(A, x):
+    return A @ x
+
+  eye, tri = np.eye(3, dtype=bool), np.tril(np.ones((3, 3), dtype=bool))
+  y1 = apply(SparseMatrix.symbol("A", eye), sc.sym("x", 3))
+  y2 = apply(SparseMatrix.symbol("B", tri), sc.sym("x", 3))
+  names = list(apply.instances)
+  assert len(names) == 2 and all(name.startswith("apply__p") and name.endswith("_3") for name in names)
+  assert y1.attrs["callee"] is not y2.attrs["callee"]
+  rows, cols = np.nonzero(tri)
+  csc = sparse.csc_array((np.arange(1.0, 7.0), (rows, cols)), shape=(3, 3))
+  np.testing.assert_allclose(apply.instances[names[1]](csc, np.ones(3)), csc @ np.ones(3))
+
+
+def test_a_named_output_takes_the_kind_of_leaf_the_body_returns() -> None:
+  @sc.function(3, output=sc.G("K", "y"))
+  def stiffness(x):
+    return SparseMatrix.diag(x), 2.0 * x
+
+  K, y = cast(Any, stiffness(np.arange(1.0, 4.0)))  # the sparse leaf comes back as a scipy.sparse.csc_array
+  assert stiffness.output_names == ("K", "y") and stiffness.output_sparsities[0] is not None
+  np.testing.assert_allclose(K.toarray(), np.diag([1.0, 2.0, 3.0]))
+  np.testing.assert_allclose(y, [2.0, 4.0, 6.0])
+
+
+def test_a_template_refuses_a_sparse_matrix_for_an_expr_leaf() -> None:
+  @sc.function(sc.L(), output="y")
+  def double(x):
+    return 2.0 * x
+
+  with pytest.raises(ValueError, match="expected an Expr for 'x', got SparseMatrix"):
+    cast(Any, double)(SparseMatrix.symbol("A", np.eye(2, dtype=bool)))  # the wrong kind of leaf, on purpose
+
+
+def test_a_sparse_output_named_like_its_function_compiles_in_c_and_cpp(tmp_path) -> None:
+  """An undeclared sparse output is named after its function; the headers keep the two apart."""
+  cxx = shutil.which("c++")
+  if cxx is None:
+    pytest.skip("c++ is required to compile the generated headers")
+
+  @sc.function(3)
+  def selfsparse(x):
+    return SparseMatrix.diag(x)
+
+  assert selfsparse.output_names == ("selfsparse",)
+  np.testing.assert_array_equal(selfsparse(np.arange(3.0)).toarray(), np.diag(np.arange(3.0)))
+  for lang in ("c", "cpp"):
+    module = render_c_module(selfsparse, adapters=("cpp",) if lang == "cpp" else ())
+    (tmp_path / module.header_name).write_text(module.header)
+    main = tmp_path / f"main_{selfsparse.name}_{lang}.cpp"
+    main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
+    subprocess.run([cxx, "-std=c++17", "-fsyntax-only", str(main)], check=True, cwd=tmp_path)
+  assert "namespace selfsparse_ {" in render_c_module(selfsparse, adapters=("cpp",)).header

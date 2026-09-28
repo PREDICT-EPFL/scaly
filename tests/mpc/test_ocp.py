@@ -287,3 +287,31 @@ def test_control_bounds_reach_every_pseudospectral_control() -> None:
     controls = solution.zs[:, ocp.interval.state_times.size * NX :]  # ty: ignore[not-subscriptable]
     assert np.abs(controls).max() <= U_MAX + 1e-6
     assert np.abs(controls - side).min() < 1e-3  # they reach the bound and stop there
+
+
+# The tangent of a product or quotient with a constant leaves the constant's zero term out
+# (``tests/ad/test_zero_tangent_products.py``), so the model stays provably affine to PIQP.
+@sc.function(1, 1, output="xnext")
+def _times_step(x, u):
+  return x + 0.1 * u
+
+
+@sc.function(1, 1, output="xnext")
+def _over_step(x, u):
+  return x + u / 10.0
+
+
+@pytest.mark.solver("piqp")
+@pytest.mark.parametrize("step", [_times_step, _over_step], ids=["times", "over"])
+def test_mpc_takes_a_model_that_scales_its_control(step: sc.Function) -> None:
+  # OCP wraps the model in one more Function, so the scaling sits two calls below the constraint.
+  ocp = mpc.OCP(
+    step=step,
+    horizon=4,
+    stage_cost=mpc.Quadratic(np.zeros((1, 1)), np.eye(1)),
+    terminal=mpc.TerminalEquality(np.array([2.0])),
+    name=f"scaled_{step.name}",
+  )
+  solution = mpc.MPC(ocp, "piqp", options={"eps_abs": 1e-10, "eps_rel": 1e-10}).solve(np.array([0.0]))
+  np.testing.assert_allclose(solution.us.ravel(), 5.0, atol=1e-6)  # the cheapest way to 2 in 4 steps of 0.1 u
+  np.testing.assert_allclose(solution.cost, 100.0, atol=1e-5)

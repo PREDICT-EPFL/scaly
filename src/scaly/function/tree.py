@@ -118,7 +118,7 @@ def inferred_tree(value: Any, name: str, what: str, *, argument: bool = False) -
   if not argument:
     raise TypeError(f"{what}: the body returned a {type(value).__name__}; return an Expr, or a tuple of them for several outputs")
   if type(value).__module__.startswith("scipy.sparse"):
-    raise TypeError(f"{what}: {name!r} is a SciPy sparse matrix; declare its pattern, as in sc.function(sc.S(pattern), ...)")
+    raise TypeError(f"{what}: {name!r} is a SciPy sparse matrix; declare its pattern, as in sc.function(sc.linalg.S(pattern), ...)")
   if isinstance(value, list) and any(_is_symbolic_leaf(leaf) for leaf in np.ravel(np.asarray(value, dtype=object))):
     raise TypeError(f"{what}: {name!r} is a list holding expressions; build one with sc.stack")
   return L(name, TensorType(np.shape(value)))

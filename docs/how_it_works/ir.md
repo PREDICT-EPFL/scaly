@@ -157,13 +157,8 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `index_add` `index_set` | 2 | the base with values added at (or stored to) fixed flat indices; a loop body whose carry changes only this way updates it in place |
 | `take` | 2 | `x[..., i]` for an `int64` index vector known at run time, on the last axis; an index outside `[0, n)` reads `fill` |
 | `put_add` `put` | 3 | the base with values added at (or stored to) run-time `int64` indices on the last axis; an index outside `[0, n)` drops its value into a scratch slot of its own lane |
-| `ragged_add` `ragged_dot` | 5 / 4 | loops of run-time length: for each group, a range `[lo, hi)` read through fixed index maps and added (scaled) into the base, or summed as a dot product; unchecked, built by library code from its own tables |
 | `stack` `concat` | n | along any axis |
 | `matmul` | 2 | rank at most 2 |
-| `cholesky` `ldl` | 1 | dense factorizations of a square matrix's lower triangle; `ldl` is packed (unit `L` below the diagonal, `D` on it), without pivoting; attr `unroll` (straight-line code or loops, from `sc.options(linalg=dict(dense_unroll=...))`) |
-| `sparse_ldl` | 1 | the sparse `L D L^T` of a symmetric matrix's values as `[L | D]`, over the analysis tables of `linalg.symbolic` (attrs); a left-looking loop nest updating each column from chunks of columns that share their rows; no derivative of its own |
-| `sparse_ldl_solve` | 2 | `K^{-1} b` from a `sparse_ldl` factor and `b`, over the ordering, the pattern of `L` and its chains of columns (attrs); linear in `b` |
-| `trisolve` | 2 | `op(T) X = B` for a triangular `T` and a vector or matrix `B`; attrs `lower`, `trans`, `unit`, `unroll` |
 
 #### Boundaries
 
@@ -174,6 +169,20 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `scan` | n | yes | one callee applied in sequence, threading a carry; `output` selects the final carry (0), a stacked output (1..) or the carries entering each step (-1) |
 | `while` | 1 + n | yes | a body applied to the carry (the first argument) while a condition callee holds, at most `max_iter` times; the other arguments are params every step reads unchanged, `index` passes the step number to the body, and `output` selects the carry (0), the step count (1) or the stored carries (-1) |
 | `extern_call` | n | no | one output of a Function whose body is C from elsewhere (a solver); a derivative reaching it raises; see [Solvers](solvers.md) |
+
+#### Registered by `scaly.linalg`
+
+These are not the compiler's own: `scaly.linalg.ops` registers them with every rule through the
+extension API (`scaly.ext`), when `scaly.linalg` is imported, so the compiler neither names nor
+imports them.
+
+| Op | Arity | Notes |
+| --- | --- | --- |
+| `ragged_add` `ragged_dot` | 5 / 4 | loops of run-time length: for each group, a range `[lo, hi)` read through fixed index maps and added (scaled) into the base, or summed as a dot product; unchecked, built by library code from its own tables |
+| `cholesky` `ldl` `lu` | 1 | dense factorizations of a square matrix's lower triangle; `ldl` is packed (unit `L` below the diagonal, `D` on it), without pivoting; `lu` is `P A = L U` with partial pivoting, packed in `(n + 1, n)` with the permutation, and has no derivative of its own; attr `unroll` (straight-line code or loops, from `sc.options(linalg=dict(dense_unroll=...))`) |
+| `sparse_ldl` | 1 | the sparse `L D L^T` of a symmetric matrix's values as `[L | D]`, over the analysis tables of `linalg.symbolic` (attrs); a left-looking loop nest updating each column from chunks of columns that share their rows; no derivative of its own |
+| `sparse_ldl_solve` | 2 | `K^{-1} b` from a `sparse_ldl` factor and `b`, over the ordering, the pattern of `L` and its chains of columns (attrs); linear in `b` |
+| `trisolve` | 2 | `op(T) X = B` for a triangular `T` and a vector or matrix `B`; attrs `lower`, `trans`, `unit`, `unroll` |
 
 `dot`, `sumsqr`, `norm_2` and `vec` are not operations. They are builders that expand into the
 ops above; `vec` emits a `reshape` to rank 1.

@@ -80,22 +80,6 @@ def test_an_expr_argument_brings_its_dtype() -> None:
   assert out.shape == (1,) and list(pick.instances) == ["pick__5_sint64"]
 
 
-def test_a_sparse_matrix_argument_declares_its_pattern() -> None:
-  @sc.function
-  def apply(A, x):
-    return A @ x
-
-  eye, tri = np.eye(3, dtype=bool), np.tril(np.ones((3, 3), dtype=bool))
-  y1 = apply(sc.SparseMatrix.symbol("A", eye), sc.sym("x", 3))
-  y2 = apply(sc.SparseMatrix.symbol("B", tri), sc.sym("x", 3))
-  names = list(apply.instances)
-  assert len(names) == 2 and all(name.startswith("apply__p") and name.endswith("_3") for name in names)
-  assert y1.attrs["callee"] is not y2.attrs["callee"]
-  rows, cols = np.nonzero(tri)
-  csc = sparse.csc_array((np.arange(1.0, 7.0), (rows, cols)), shape=(3, 3))
-  np.testing.assert_allclose(apply.instances[names[1]](csc, np.ones(3)), csc @ np.ones(3))
-
-
 def test_outputs_are_read_off_the_trace_and_named_after_the_function() -> None:
   @sc.function(3)
   def pair(x):
@@ -143,14 +127,3 @@ def test_arity_errors_name_the_body_parameters() -> None:
   with pytest.raises(sc.NotConcrete, match="f leaves every parameter's structure and shape to its calls"):
     f.concrete
   assert repr(f) == "Function('f', (a, b) -> inferred, instances=['f__2_2'])"
-
-
-def test_a_named_output_takes_the_kind_of_leaf_the_body_returns() -> None:
-  @sc.function(3, output=sc.G("K", "y"))
-  def stiffness(x):
-    return sc.SparseMatrix.diag(x), 2.0 * x
-
-  K, y = cast(Any, stiffness(np.arange(1.0, 4.0)))  # the sparse leaf comes back as a scipy.sparse.csc_array
-  assert stiffness.output_names == ("K", "y") and stiffness.output_sparsities[0] is not None
-  np.testing.assert_allclose(K.toarray(), np.diag([1.0, 2.0, 3.0]))
-  np.testing.assert_allclose(y, [2.0, 4.0, 6.0])

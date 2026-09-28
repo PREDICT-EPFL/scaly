@@ -39,7 +39,7 @@
 | 2.2 | Table-driven AD, sparsity, folding, verification | ☑ |
 | 2.3 | Public lowering context, op traits, option namespaces, pass slots | ☑ |
 | 2.4 | `scaly.ext`: library-author Function API, extension versions in the JIT cache key | ☑ |
-| 3.1 | Linear-algebra ops move into `scaly.linalg` | ☐ |
+| 3.1 | Linear-algebra ops move into `scaly.linalg` | ☑ |
 | 3.2 | `linalg.banded` and `linalg.stagewise` | ☐ |
 | 4.1 | Method registry and the common `Info`/`Status` | ☐ |
 | 4.2 | `scaly.opt`: problems, `solver()`, external methods | ☐ |
@@ -518,6 +518,25 @@ naming `linalg.solve`/`SparseLDL` move with them; `tests/linalg` absorbs
 Gate: byte-identical snapshots with `scaly.linalg` imported; the core test directory passes in a
 process where importing `scaly.linalg` is blocked (a conftest fixture); IPM speed benchmark
 unchanged.
+Log: done 2026-09-28. `linalg/ops/{dense,trisolve,sparse_ldl,ragged}.py` register the eight ops
+under their old names with every rule, trait and verify rule; `ExprOp`, the rule tables and
+`passes/lowering.py` no longer name them, and `linalg/options.py` declares the `linalg` namespace,
+which `sc.options(linalg=...)` now loads on first use. The op modules take only public compiler
+names (test), so `scaly.ext` gained what their rules share: `is_zero_const`, `zeros_many`,
+`JVPManyUnsupported`, the mask helpers (`incidence`, `mask_compose`, `mask_or`, `empty_mask`) and
+`NoAdjoint`, a `vjp` rule's answer for an argument it cannot differentiate, which replaces the
+reverse sweep's `sparse_ldl_solve` special case. `import scaly` no longer loads `linalg`,
+`integrators`, `interp` or `mpc` (`sc.<name>` loads one; test), `sc.S`/`sc.SparseMatrix` became
+`sc.linalg.S`/`sc.linalg.SparseMatrix`, and the core-naming guard (renamed
+`test_core_names_no_solver_adapter_or_package_built_on_it`) now covers those packages. The root
+conftest blocks the packages in `SCALY_BLOCK_IMPORTS`; the core directories pass with
+`scaly.linalg` blocked (command in `contributing.md`) once their few linalg uses moved to
+`tests/linalg` (verifier corpus, options, sparse leaves, ragged) or became core-only (a Newton step,
+a refusing producer, a generated-name clash). `test_sparsity` had no linalg part. Generated C for 192
+linalg functions and derivatives and for the IPM harness's quick set (36 solvers) is byte-identical
+to 2.4's, so the IPM's speed is unchanged by construction; the harness's `gen.py` had missed 2.4's
+rename and was fixed. Smoke matched 2.4's medians and
+line counts.
 
 **3.2 `linalg.banded` and `linalg.stagewise`.**
 Changes: move the Thomas and cyclic sweeps out of `interp/fit.py`; add a stage-wise (Riccati)

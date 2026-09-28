@@ -63,7 +63,13 @@ src/scaly/
     sparse.py            sparse_jacobian, sparse_hessian: AD driven by a structural pattern
 
   linalg/                sparse and dense linear algebra as generated code
-    dense.py             the solves built from cholesky, ldl, lu and solve_triangular (ops in ir/expr.py)
+    ops/                 the expression ops linalg registers, each with all its rules (scaly.ext)
+      dense.py           cholesky, ldl, lu
+      trisolve.py        solve_triangular, and what the dense factorizations share with it
+      sparse_ldl.py      sparse_ldl_factor and sparse_ldl_solve over linalg.symbolic's tables
+      ragged.py          ragged_add and ragged_dot, the run-time ranges of a sparse column update
+    options.py           the linalg option namespace (dense_unroll, sparse_unroll)
+    dense.py             the solves built from cholesky, ldl, lu and solve_triangular
     sparse.py            SparseMatrix: a static CSC pattern with Expr values
     symbolic.py          orderings, elimination tree, the pattern of L, left-looking tables, segments
     sparse_factor.py     SparseLDL: the generated left-looking factorization, its solves, implicit derivatives
@@ -209,6 +215,7 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 | A scalar math op | an `ExprOp` name and a `_BUILTIN_OPS` row (the op's registration) in `ir/expr.py`, with its traits there: `elementwise` naming the `ProgramOp` it computes (which is its lowering), and `expensive` if that is a libm call; its rules, each a row in the table of the module that owns the kind: a verify rule in `_BUILTIN_RULES` in `ir/expr_spec.py`, `jvp` and `jvp_many` in `ad/forward.py`, `vjp` in `ad/reverse.py`, a pattern in `ad/sparsity.py`; a matching `ProgramOp` in `ir/program.py` and its category set; and the C spelling in `codegen/c.py` |
 | A structural expression op | the same, minus the `elementwise` trait, plus its own `@lowers` rule in `passes/lowering.py` and the traits that fit (`runtime_index`, `exact_reads`, `update`, `reads`) |
 | An op outside the compiler (a library's) | `register_op(name, arity=..., jvp=..., vjp=..., sparsity=..., verify=..., lower=...)` in the module that provides its builder; `OpDef` in `ir/expr.py` gives each rule's signature and its default. Nothing in the compiler changes |
+| A linear-algebra op | the same, in a module of `linalg/ops/`, which takes only public names from the compiler (`tests/test_import_boundaries.py`) |
 | An expression rewrite | a pattern in `passes/expr.py` |
 | An arithmetic identity | a rule in `simplify_arith` in `passes/arith.py`; it reaches expression graphs, scalarized code and loop bodies through their adapters |
 | A program-dialect optimization | a module in `passes/program/` and an explicit entry in its `__init__.py` pipeline |

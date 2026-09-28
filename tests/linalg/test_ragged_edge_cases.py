@@ -18,7 +18,9 @@ import scaly as sc
 from scaly.ad import finite_difference
 from scaly.ad.derivatives import gradient, hessian, jacobian
 from scaly.codegen import render_c_module
-from scaly.ir.expr import Expr, ExprOp, ragged_add, ragged_dot
+from scaly.ir.expr import Expr
+from scaly.linalg.ops import ragged_add, ragged_dot
+from scaly.linalg.ops.ragged import RAGGED_ADD, RAGGED_DOT
 from scaly.ir.types import TensorType
 from scaly.passes import lowering
 
@@ -165,9 +167,9 @@ def test_refusals() -> None:
     ragged_dot(sc.sym("f", 4, dtype="float32"), v, lo, lo)
   maps = {"dst_map": None, "src_map": None}
   for node, message in (
-    (Expr(ExprOp.RAGGED_DOT, (v, v, lo, lo), TensorType((4,)), attrs={"a_map": None, "b_map": None}), "one value per group"),
-    (Expr(ExprOp.RAGGED_ADD, (v, v, lo, lo, sc.sym("s3", 3)), TensorType((4,)), attrs=maps), "one scale per group"),
-    (Expr(ExprOp.RAGGED_ADD, (v, v, sc.sym("flo", 2), lo, s), TensorType((4,)), attrs=maps), "int64 lo and hi"),
+    (Expr(RAGGED_DOT, (v, v, lo, lo), TensorType((4,)), attrs={"a_map": None, "b_map": None}), "one value per group"),
+    (Expr(RAGGED_ADD, (v, v, lo, lo, sc.sym("s3", 3)), TensorType((4,)), attrs=maps), "one scale per group"),
+    (Expr(RAGGED_ADD, (v, v, sc.sym("flo", 2), lo, s), TensorType((4,)), attrs=maps), "int64 lo and hi"),
   ):
     with pytest.raises(sc.VerifyError, match=message):
       sc.verify_expr(node)

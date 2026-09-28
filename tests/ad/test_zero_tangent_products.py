@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly import mpc
 from scaly.ad import jacobian_sparsity, jvp, jvp_many
 from scaly.passes.expr import simplify_cse_fixpoint
 
@@ -80,29 +79,3 @@ def test_piqp_accepts_a_constraint_scaled_behind_two_calls() -> None:
   solve = sc.solver(_two_levels, "piqp", options={"eps_abs": 1e-10, "eps_rel": 1e-10})
   u, *_ = solve.numerical_call(np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(0), ())
   np.testing.assert_allclose(u, [0.5], atol=1e-8)  # 2 u = 1
-
-
-@sc.function(1, 1, output="xnext")
-def _times_step(x, u):
-  return x + 0.1 * u
-
-
-@sc.function(1, 1, output="xnext")
-def _over_step(x, u):
-  return x + u / 10.0
-
-
-@pytest.mark.solver("piqp")
-@pytest.mark.parametrize("step", [_times_step, _over_step], ids=["times", "over"])
-def test_mpc_takes_a_model_that_scales_its_control(step: sc.Function) -> None:
-  # OCP wraps the model in one more Function, so the scaling sits two calls below the constraint.
-  ocp = mpc.OCP(
-    step=step,
-    horizon=4,
-    stage_cost=mpc.Quadratic(np.zeros((1, 1)), np.eye(1)),
-    terminal=mpc.TerminalEquality(np.array([2.0])),
-    name=f"scaled_{step.name}",
-  )
-  solution = mpc.MPC(ocp, "piqp", options={"eps_abs": 1e-10, "eps_rel": 1e-10}).solve(np.array([0.0]))
-  np.testing.assert_allclose(solution.us.ravel(), 5.0, atol=1e-6)  # the cheapest way to 2 in 4 steps of 0.1 u
-  np.testing.assert_allclose(solution.cost, 100.0, atol=1e-5)

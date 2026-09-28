@@ -95,7 +95,7 @@ about the same from order 12 to 40 (Apple M3 Max, `internal/notes/integrators_i2
 ## Sparse `L D L^T`
 
 ```python
-K = sc.SparseMatrix.symbol("K", kkt_pattern)   # lower triangle, upper, or both
+K = sc.linalg.SparseMatrix.symbol("K", kkt_pattern)   # lower triangle, upper, or both
 fact = linalg.SparseLDL(K)                     # analysis now, factorization loops in the graph
 x = fact.solve(b)                              # b a vector or a matrix of right-hand sides
 y = fact.solve(c)                              # the same factorization, reused
@@ -133,7 +133,7 @@ Straight-line code has no loop overhead, which dominates small systems:
 | MPC, 10 stages | 104 | 1746 | 3.7 / 1.8 µs | 0.64 / 0.76 µs | 2.7 s |
 
 (aarch64 Linux, gcc, per factorization; `internal/notes/tier2_pr9_report.html`; the loops there are
-the `scan` schedule.) The loop nest of `schedule="loop"` (`ir.expr.sparse_ldl_factor`):
+the `scan` schedule.) The loop nest of `schedule="loop"` (`linalg.ops.sparse_ldl_factor`):
 
 - A left-looking factorization over a dense work column. The updates of column `j` come in chunks
   of up to eight columns whose rows from `j` down are the same, as a supernode's are; one pass over
@@ -142,7 +142,7 @@ the `scan` schedule.) The loop nest of `schedule="loop"` (`ir.expr.sparse_ldl_fa
 - Each column's updates keep the order of one column at a time, so the factor is the `scan`
   schedule's (to the last bit, but for the sign of a zero or of a NaN), 1.5 to 2.4 times faster
   (chunks of up to eight columns; `internal/notes/ipm_speed_report.html`).
-- The solve (`ir.expr.sparse_ldl_solve`) takes the forward sweep by chains of columns (a
+- The solve (`linalg.ops.sparse_ldl_solve`) takes the forward sweep by chains of columns (a
   supernode's): each row below a chain is updated once for the whole chain, and the diagonal and
   the output permutation fold into the backward sweep. It too gives the `scan` schedule's values.
 - The factor has no derivative of its own: `solve` differentiates implicitly and never needs one,

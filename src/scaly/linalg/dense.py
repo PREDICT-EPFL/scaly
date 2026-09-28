@@ -1,6 +1,6 @@
 """Dense factorizations and triangular solves as expression ops, lowered to plain loops.
 
-``cholesky``, ``ldl``, ``lu`` and ``solve_triangular`` are expression ops (``ir/expr.py``) with their
+``cholesky``, ``ldl``, ``lu`` and ``solve_triangular`` are expression ops (``linalg/ops``) with their
 own loop lowering and structural sparsity, and all but ``lu`` with derivatives in both modes; this
 module adds the solves built from them. Orders up to ``DENSE_UNROLL`` become straight-line code.
 Nothing calls an external library: the loops are generated C like everything else.
@@ -14,9 +14,11 @@ import numpy as np
 
 from ..function.model import ConcreteFunction
 from ..function.sugar import custom_derivative, vmap
-from ..ir.expr import Expr, as_expr, cast, cholesky, gather, ldl, lu, put, solve_triangular, take
+from ..ir.expr import Expr, as_expr, cast, gather, put, take
 from ..ir.types import DType, dtypes
-from ..utils.options import LinalgOptions, get_options
+from ..utils.options import get_options
+from .ops import cholesky, ldl, lu, solve_triangular
+from .options import LinalgOptions
 
 __all__ = ["cho_solve", "cholesky", "ldl", "ldl_solve", "ldl_unpack", "lu", "lu_solve", "solve", "solve_triangular"]
 

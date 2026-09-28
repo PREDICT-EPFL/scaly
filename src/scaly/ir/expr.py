@@ -16,7 +16,6 @@ from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
 
-from ..utils.options import get_options
 from .program import ProgramOp
 from .types import DType, Lowering, TensorType, as_dtype, as_shape, broadcast_shape, dtypes
 
@@ -78,8 +77,6 @@ class ExprOp(StrEnum):
   TAKE = "take"
   PUT_ADD = "put_add"
   PUT = "put"
-  RAGGED_ADD = "ragged_add"
-  RAGGED_DOT = "ragged_dot"
   RESHAPE = "reshape"
   TRANSPOSE = "transpose"
   SLICE = "slice"
@@ -88,12 +85,6 @@ class ExprOp(StrEnum):
   STACK = "stack"
   CONCAT = "concat"
   MATMUL = "matmul"
-  CHOLESKY = "cholesky"
-  LDL = "ldl"
-  LU = "lu"
-  SPARSE_LDL = "sparse_ldl"
-  SPARSE_LDL_SOLVE = "sparse_ldl_solve"
-  TRISOLVE = "trisolve"
   CALL = "call"
   VMAP = "vmap"
   SCAN = "scan"
@@ -154,8 +145,6 @@ COMMON_STRUCTURAL = {
   ExprOp.TAKE,
   ExprOp.PUT_ADD,
   ExprOp.PUT,
-  ExprOp.RAGGED_ADD,
-  ExprOp.RAGGED_DOT,
   ExprOp.RESHAPE,
   ExprOp.TRANSPOSE,
   ExprOp.SLICE,
@@ -164,12 +153,6 @@ COMMON_STRUCTURAL = {
   ExprOp.STACK,
   ExprOp.CONCAT,
   ExprOp.MATMUL,
-  ExprOp.CHOLESKY,
-  ExprOp.LDL,
-  ExprOp.LU,
-  ExprOp.SPARSE_LDL,
-  ExprOp.SPARSE_LDL_SOLVE,
-  ExprOp.TRISOLVE,
   ExprOp.CALL,
   ExprOp.VMAP,
   ExprOp.SCAN,
@@ -382,8 +365,6 @@ _BUILTIN_OPS: tuple[tuple[Any, ...], ...] = (
   (ExprOp.TAKE, 2, None),
   (ExprOp.PUT_ADD, 3, None),
   (ExprOp.PUT, 3, None),
-  (ExprOp.RAGGED_ADD, 5, None),
-  (ExprOp.RAGGED_DOT, 4, None),
   (ExprOp.RESHAPE, 1, np.reshape),
   (ExprOp.TRANSPOSE, 1, np.transpose),
   (ExprOp.SLICE, 1, None),
@@ -392,12 +373,6 @@ _BUILTIN_OPS: tuple[tuple[Any, ...], ...] = (
   (ExprOp.STACK, None, np.stack),
   (ExprOp.CONCAT, None, np.concatenate),
   (ExprOp.MATMUL, 2, np.matmul),
-  (ExprOp.CHOLESKY, 1, None),
-  (ExprOp.LDL, 1, None),
-  (ExprOp.LU, 1, None),
-  (ExprOp.SPARSE_LDL, 1, None),
-  (ExprOp.SPARSE_LDL_SOLVE, 2, None),
-  (ExprOp.TRISOLVE, 2, None),
   (ExprOp.CALL, None, None),
   (ExprOp.VMAP, None, None),
   (ExprOp.SCAN, None, None),
@@ -454,7 +429,7 @@ for _op in (ExprOp.SIN, ExprOp.COS, ExprOp.TAN, ExprOp.ASIN, ExprOp.ACOS, ExprOp
   define_traits(_op, expensive=True)
 for _op in (ExprOp.ERF, ExprOp.EXP, ExprOp.LOG, ExprOp.SQRT, ExprOp.POW, ExprOp.ATAN2):
   define_traits(_op, expensive=True)
-for _op in (ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT, ExprOp.RAGGED_ADD, ExprOp.RAGGED_DOT, ExprOp.SPARSE_LDL, ExprOp.SPARSE_LDL_SOLVE):
+for _op in (ExprOp.TAKE, ExprOp.PUT_ADD, ExprOp.PUT):
   define_traits(_op, runtime_index=True)
 # Ops whose structural pattern is exactly the entries they read, so the pattern can stand in for a
 # read set. Everything else (predicates, ``select``'s condition, ``copysign``'s sign, casts, calls,
@@ -1158,206 +1133,6 @@ def matmul(x: Expr, y: Expr) -> Expr:
   return Expr(ExprOp.MATMUL, (x, y), TensorType(shape, dtype=promote_dtype(x, y), diff=diff_any(x, y)), lowering=common_lowering(x, y))
 
 
-def _square(a: Any, what: str) -> Expr:
-  a = as_expr(a)
-  if len(a.shape) != 2 or a.shape[0] != a.shape[1]:
-    raise ValueError(f"{what} needs a square matrix, got shape {a.shape}")
-  if not a.type.dtype.is_floating:
-    raise TypeError(f"{what} needs a floating-point matrix, got {a.type.dtype}")
-  return a
-
-
-def _unroll_attr(n: int, unroll: bool | None = None) -> dict[str, bool]:
-  """Whether a dense factorization or solve of order ``n`` becomes straight-line code, decided when
-  the graph is built (``sc.options(linalg=dict(dense_unroll=...))``), so the choice is part of the
-  graph. A derivative passes ``unroll``, the choice of the node it differentiates, so that no option
-  in force when it is built changes it."""
-  return {"unroll": n <= get_options().namespace("linalg").dense_unroll if unroll is None else bool(unroll)}
-
-
-def cholesky(a: Any) -> Expr:
-  """The lower Cholesky factor ``L`` of a symmetric positive definite matrix, ``A = L L^T``.
-
-  Only the lower triangle of ``a`` is read; the upper triangle of the result is zero. No check is
-  made: a matrix that is not positive definite gives NaN (a square root of a negative number).
-  Differentiable, reading the derivative of the lower triangle as that of a symmetric matrix.
-  """
-  a = _square(a, "cholesky")
-  return Expr(ExprOp.CHOLESKY, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), attrs=_unroll_attr(a.shape[0]), lowering=a.lowering)
-
-
-def ldl(a: Any) -> Expr:
-  """``A = L D L^T`` without pivoting, packed in one matrix: ``L`` (unit lower) below the diagonal,
-  ``D`` on it, zeros above. For quasi-definite matrices (positive and negative definite diagonal
-  blocks), where every leading pivot is nonzero; a zero pivot gives inf or NaN. Only the lower
-  triangle of ``a`` is read."""
-  a = _square(a, "ldl")
-  return Expr(ExprOp.LDL, (a,), TensorType(a.shape, dtype=a.type.dtype, diff=a.type.diff), attrs=_unroll_attr(a.shape[0]), lowering=a.lowering)
-
-
-def lu(a: Any) -> Expr:
-  """``P A = L U`` with partial pivoting (the row of largest magnitude in each column), packed in one
-  ``(n + 1, n)`` array: rows ``0 .. n-1`` hold ``L`` (unit lower) below the diagonal and ``U`` on and
-  above it, and row ``n`` holds the permutation, ``perm[i]`` the row of ``A`` that became row ``i``,
-  as a float. A singular matrix gives a zero pivot, and inf or NaN in what follows it.
-
-  The factorization has no derivative of its own: ``linalg.solve(a, b, assume="gen")`` solves with
-  it and differentiates implicitly, as ``SparseLDL.solve`` does."""
-  a = _square(a, "lu")
-  n = a.shape[0]
-  return Expr(ExprOp.LU, (a,), TensorType((n + 1, n), dtype=a.type.dtype, diff=a.type.diff), attrs=_unroll_attr(n), lowering=a.lowering)
-
-
-SPARSE_LDL_TABLES = ("a_ptr", "a_rows", "a_src", "l_ptr", "l_rows", "r_cols", "r_pos", "ck_ptr", "ck_q", "ck_width", "ck_len")
-"""The analysis tables a ``sparse_ldl_factor`` node carries, as ``linalg.symbolic`` names them (``a_src`` is
-its ``a_source``; the ``ck_*`` tables are ``SymbolicLDL.chunks``)."""
-
-SPARSE_LDL_MAX_WIDTH = 8
-"""The most columns one chunk of a ``sparse_ldl_factor`` update covers."""
-
-
-def _pointers_ok(ptr: np.ndarray, size: int) -> bool:
-  """``ptr`` a pointer array into ``size`` entries: from 0, not decreasing, ending at ``size``."""
-  return bool(ptr.size and ptr[0] == 0 and ptr[-1] == size and np.all(np.diff(ptr) >= 0))
-
-
-def _in_range(values: np.ndarray, stop: int) -> bool:
-  return bool(values.size == 0 or (values.min() >= 0 and values.max() < stop))
-
-
-def _check_l_pattern(a: dict[str, np.ndarray], n: int, what: str) -> None:
-  """The pattern of ``L``: every row inside the matrix and every column's rows below it, sorted."""
-  l_ptr, l_rows = a["l_ptr"], a["l_rows"]
-  if not _pointers_ok(l_ptr, l_rows.size) or not _in_range(l_rows, n):
-    raise ValueError(f"{what}: l_ptr and l_rows do not describe the columns of an order-{n} L")
-  col = np.repeat(np.arange(n), np.diff(l_ptr))
-  if np.any(l_rows <= col) or np.any((np.diff(l_rows) <= 0) & (col[1:] == col[:-1])):
-    raise ValueError(f"{what}: each column of L needs its rows below the diagonal, sorted")
-
-
-def sparse_ldl_factor(values: Any, tables: dict[str, Any]) -> Expr:
-  """The ``L D L^T`` factor of a symmetric matrix with a fixed sparsity pattern, without pivoting, as
-  one vector ``[L below the diagonal, CSC | D]`` of the permuted matrix.
-
-  ``values`` holds the matrix entries, and ``tables`` the analysis ``linalg.symbolic`` made of their
-  pattern (``SPARSE_LDL_TABLES``): column ``j`` of the permuted lower triangle is
-  ``values[a_src[p]]`` at rows ``a_rows[p]``, ``a_ptr[j] <= p < a_ptr[j + 1]``; column ``j`` of ``L``
-  has rows ``l_rows[l_ptr[j]:l_ptr[j + 1]]``; row ``j`` of ``L`` lists its columns ``r_cols`` and the
-  positions ``r_pos`` of its entries, cut into chunks of consecutive entries whose columns have the
-  same rows from ``j`` down (``ck_*``: per column a range of chunks, each its first entry, width and
-  number of rows). The generated code is a left-looking factorization that updates a work column
-  from each chunk in one pass, keeping the update order of one column at a time, so the result is
-  the same as ``SparseLDL(schedule="scan")``'s, bit for bit but for the sign of a zero or a NaN.
-  The builder checks every table the generated code indexes; nothing is checked at run time: a zero
-  pivot gives inf or NaN, as for ``ldl``. The derivative is not implemented: ``SparseLDL.solve``
-  differentiates implicitly and never needs it, and ``SparseLDL(schedule="scan")`` differentiates
-  the factorization through its loops."""
-  values = as_expr(values)
-  if len(values.shape) != 1 or not values.type.dtype.is_floating:
-    raise ValueError(f"sparse_ldl_factor needs a floating-point vector of matrix entries, got {values.type.dtype}{values.shape}")
-  missing = [k for k in SPARSE_LDL_TABLES if k not in tables]
-  if missing:
-    raise ValueError(f"sparse_ldl_factor needs the tables {missing}")
-  attrs = {k: np.ascontiguousarray(np.asarray(tables[k], dtype=np.int64).reshape(-1)) for k in SPARSE_LDL_TABLES}
-  n = attrs["a_ptr"].size - 1
-  if n < 0 or any(attrs[k].size != n + 1 for k in ("l_ptr", "ck_ptr")):
-    raise ValueError("sparse_ldl_factor tables disagree on the order of the matrix")
-  if attrs["a_src"].size and (attrs["a_src"].min() < 0 or attrs["a_src"].max() >= values.size):
-    raise ValueError(f"sparse_ldl_factor reads entries outside its {values.size} values")
-  if attrs["ck_width"].size and (attrs["ck_width"].min() < 1 or attrs["ck_width"].max() > SPARSE_LDL_MAX_WIDTH):
-    raise ValueError(f"sparse_ldl_factor chunks cover 1 to {SPARSE_LDL_MAX_WIDTH} columns")
-  # Everything the generated code indexes stays inside its table: nothing is checked at run time.
-  nnz_l, a = attrs["l_rows"].size, attrs
-  if not _pointers_ok(a["a_ptr"], a["a_rows"].size) or a["a_src"].size != a["a_rows"].size or not _in_range(a["a_rows"], n):
-    raise ValueError("sparse_ldl_factor: a_ptr, a_rows and a_src do not describe the columns of the matrix")
-  _check_l_pattern(a, n, "sparse_ldl_factor")
-  if a["r_cols"].size != nnz_l or a["r_pos"].size != nnz_l or not _in_range(a["r_cols"], n) or not _in_range(a["r_pos"], nnz_l):
-    raise ValueError("sparse_ldl_factor: r_cols and r_pos need one entry per entry of L")
-  chunks = a["ck_q"].size
-  if not _pointers_ok(a["ck_ptr"], chunks) or a["ck_width"].size != chunks or a["ck_len"].size != chunks or not _in_range(a["ck_q"], nnz_l):
-    raise ValueError("sparse_ldl_factor: the chunk tables disagree")
-  last = a["ck_q"] + a["ck_width"]
-  if np.any(last > nnz_l) or np.any(a["ck_len"] < 0):
-    raise ValueError("sparse_ldl_factor: a chunk runs past the entries of L")
-  for k in range(SPARSE_LDL_MAX_WIDTH):
-    live = a["ck_width"] > k
-    if np.any(a["r_pos"][a["ck_q"][live] + k] + a["ck_len"][live] > nnz_l):
-      raise ValueError("sparse_ldl_factor: a chunk's rows run past the entries of L")
-  size = attrs["l_rows"].size + n
-  return Expr(
-    ExprOp.SPARSE_LDL, (values,), TensorType((size,), dtype=values.type.dtype, diff=values.type.diff), attrs=attrs, lowering=values.lowering
-  )
-
-
-SPARSE_LDL_SOLVE_TABLES = ("perm", "l_ptr", "l_rows", "sn_first", "sn_width")
-"""The tables a ``sparse_ldl_solve`` node carries: the ordering (``perm[new] = old``), the pattern of
-``L`` and its chunks of columns (``SymbolicLDL.solve_chunks``)."""
-
-
-def sparse_ldl_solve(factor: Any, b: Any, tables: dict[str, Any]) -> Expr:
-  """``K^{-1} b`` from the ``[L | D]`` of ``sparse_ldl_factor`` (or of ``SparseLDL``), for the
-  analysis in ``tables`` (``SPARSE_LDL_SOLVE_TABLES``).
-
-  ``b`` permuted, the unit lower sweep, then the diagonal and the transposed sweep, and the result
-  permuted back as each unknown is found. The forward sweep takes consecutive columns that form a
-  chain, each column's rows the next column followed by that column's rows (a supernode), in chunks
-  of up to ``SPARSE_LDL_MAX_WIDTH`` (``sn_first``, ``sn_width``): the chain's own rows column by
-  column, then each shared row once for the whole chunk, the sum in a register. Every entry sees
-  its updates in the order of one column at a time, and the transposed sweep sums as the ``scan``
-  schedule does, so the result is that schedule's, bit for bit but for the sign of a zero or a NaN.
-  Linear in ``b``, with that derivative; the derivative in the factor is not implemented
-  (``SparseLDL.solve`` differentiates implicitly and never needs it)."""
-  factor, b = as_expr(factor), as_expr(b)
-  missing = [k for k in SPARSE_LDL_SOLVE_TABLES if k not in tables]
-  if missing:
-    raise ValueError(f"sparse_ldl_solve needs the tables {missing}")
-  attrs = {k: np.ascontiguousarray(np.asarray(tables[k], dtype=np.int64).reshape(-1)) for k in SPARSE_LDL_SOLVE_TABLES}
-  n = attrs["perm"].size
-  if attrs["l_ptr"].size != n + 1 or factor.shape != (attrs["l_rows"].size + n,) or b.shape != (n,):
-    raise ValueError(
-      f"sparse_ldl_solve of order {n} needs a factor of {attrs['l_rows'].size + n} and a right-hand side of {n}, got {factor.shape} and {b.shape}"
-    )
-  first, width = attrs["sn_first"], attrs["sn_width"]
-  if width.size != first.size or int(width.sum()) != n or not np.array_equal(first, np.cumsum(width) - width):
-    raise ValueError("sparse_ldl_solve chunks must cover every column once, in order")
-  if width.size and (width.min() < 1 or width.max() > SPARSE_LDL_MAX_WIDTH):
-    raise ValueError(f"sparse_ldl_solve chunks cover 1 to {SPARSE_LDL_MAX_WIDTH} columns")
-  if not np.array_equal(np.sort(attrs["perm"]), np.arange(n)):
-    raise ValueError("sparse_ldl_solve: perm must be a permutation of the columns")
-  _check_l_pattern(attrs, n, "sparse_ldl_solve")
-  l_ptr, l_rows = attrs["l_ptr"], attrs["l_rows"]
-  for f, w in zip(first.tolist(), width.tolist(), strict=True):
-    for c in range(f, f + w - 1):  # a chain: each column's rows the next column, then that column's rows
-      rows = l_rows[l_ptr[c] : l_ptr[c + 1]]
-      if rows.size == 0 or rows[0] != c + 1 or not np.array_equal(rows[1:], l_rows[l_ptr[c + 1] : l_ptr[c + 2]]):
-        raise ValueError(f"sparse_ldl_solve: columns {f}..{f + w - 1} are not a chain")
-  return Expr(
-    ExprOp.SPARSE_LDL_SOLVE,
-    (factor, b),
-    TensorType((n,), dtype=promote_dtype(factor, b), diff=diff_any(factor, b)),
-    attrs=attrs,
-    lowering=common_lowering(factor, b),
-  )
-
-
-def solve_triangular(t: Any, b: Any, *, lower: bool = True, trans: bool = False, unit_diagonal: bool = False, unroll: bool | None = None) -> Expr:
-  """``X`` with ``op(T) X = B``, ``op(T) = T`` or ``T^T``, for a triangular ``T``; ``B`` a vector or a
-  matrix of right-hand sides. Only the triangle named by ``lower`` is read, and its diagonal only
-  when ``unit_diagonal`` is false. ``unroll`` overrides the ``linalg`` option's choice between
-  straight-line code and loops, as a derivative does to keep its factorization's."""
-  t = _square(t, "solve_triangular")
-  b = as_expr(b)
-  if len(b.shape) not in (1, 2) or b.shape[0] != t.shape[0]:
-    raise ValueError(f"solve_triangular with a {t.shape} matrix needs a right-hand side of {t.shape[0]} rows, got shape {b.shape}")
-  return Expr(
-    ExprOp.TRISOLVE,
-    (t, b),
-    TensorType(b.shape, dtype=promote_dtype(t, b), diff=diff_any(t, b)),
-    attrs={"lower": bool(lower), "trans": bool(trans), "unit": bool(unit_diagonal), **_unroll_attr(t.shape[0], unroll)},
-    lowering=common_lowering(t, b),
-  )
-
-
 def dot(x: Any, y: Any) -> Expr:
   """Scalar product of two expressions with the same number of entries, whatever their shapes."""
   x, y = as_expr(x), as_expr(y)
@@ -1516,69 +1291,6 @@ def _put(op: ExprOp, base: Any, indices: Any, values: Any, in_range: bool = Fals
     TensorType(base.shape, dtype=base.type.dtype, diff=diff_any(base, values)),
     attrs={"in_range": True} if in_range else {},
     lowering=common_lowering(base, idx, values),
-  )
-
-
-def _ragged_map(table: Any, what: str) -> np.ndarray | None:
-  if table is None:
-    return None
-  arr = np.asarray(table, dtype=np.int64).reshape(-1)
-  if arr.size and arr.min() < 0:
-    raise ValueError(f"{what} entries must be non-negative")
-  return arr
-
-
-def _ragged_bounds(lo: Any, hi: Any) -> tuple[Expr, Expr]:
-  lo, hi = as_expr(lo), as_expr(hi)
-  for e, what in ((lo, "lo"), (hi, "hi")):
-    if e.type.dtype != dtypes.int64 or len(e.shape) != 1:
-      raise TypeError(f"ragged {what} must be a rank-1 int64 vector, got {e.type.dtype}{e.shape}")
-  if lo.shape != hi.shape:
-    raise ValueError(f"ragged lo and hi must have one entry per group, got {lo.shape} and {hi.shape}")
-  return lo, hi
-
-
-def ragged_add(base: Any, src: Any, lo: Any, hi: Any, scale: Any, *, dst_map: Any = None, src_map: Any = None) -> Expr:
-  """``base`` plus, for every group ``g`` and every ``p`` with ``lo[g] <= p < hi[g]``,
-  ``src[src_map[p]] * scale[g]`` added at ``dst_map[p]`` (``None`` maps are the identity).
-
-  Ranges of run-time length: the inner loop of a sparse update such as a left-looking column
-  update (``w[rows[p]] -= L[p] * s_k`` over a contiguous run of a column). ``lo``/``hi`` are ``int64``
-  vectors, ``scale`` a float vector, all with one entry per group; a group with ``lo == hi`` does
-  nothing. The maps are fixed tables. Nothing is checked at run time: every ``p`` must lie inside
-  the maps and every mapped index inside ``base`` and ``src``. Library code builds the ranges from
-  its own tables.
-  """
-  base, src, scale = as_expr(base), as_expr(src), as_expr(scale)
-  lo, hi = _ragged_bounds(lo, hi)
-  if len(base.shape) != 1 or len(src.shape) != 1 or scale.shape != lo.shape:
-    raise ValueError(f"ragged_add needs vectors and one scale per group, got base {base.shape}, src {src.shape}, scale {scale.shape}")
-  promote_dtype(base, src, scale)
-  attrs = {"dst_map": _ragged_map(dst_map, "dst_map"), "src_map": _ragged_map(src_map, "src_map")}
-  return Expr(
-    ExprOp.RAGGED_ADD,
-    (base, src, lo, hi, scale),
-    TensorType(base.shape, dtype=base.type.dtype, diff=diff_any(base, src, scale)),
-    attrs=attrs,
-    lowering=common_lowering(base, src, lo, hi, scale),
-  )
-
-
-def ragged_dot(a: Any, b: Any, lo: Any, hi: Any, *, a_map: Any = None, b_map: Any = None) -> Expr:
-  """One dot product per group: ``out[g] = sum over lo[g] <= p < hi[g] of a[a_map[p]] * b[b_map[p]]``
-  (``None`` maps are the identity). The counterpart of ``ragged_add``, with the same unchecked
-  contract; ``ragged_add``'s derivative with respect to its scale is one of these."""
-  a, b = as_expr(a), as_expr(b)
-  lo, hi = _ragged_bounds(lo, hi)
-  if len(a.shape) != 1 or len(b.shape) != 1:
-    raise ValueError(f"ragged_dot needs vectors, got {a.shape} and {b.shape}")
-  dtype = promote_dtype(a, b)
-  return Expr(
-    ExprOp.RAGGED_DOT,
-    (a, b, lo, hi),
-    TensorType(lo.shape, dtype=dtype, diff=diff_any(a, b)),
-    attrs={"a_map": _ragged_map(a_map, "a_map"), "b_map": _ragged_map(b_map, "b_map")},
-    lowering=common_lowering(a, b, lo, hi),
   )
 
 

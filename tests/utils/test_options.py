@@ -14,13 +14,32 @@ from scaly.codegen import render_c_source
 from scaly.utils.options import register_option_namespace
 
 
+def _count(value: object) -> bool:
+  return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+@dataclasses.dataclass(frozen=True)
+class _Shaping:
+  level: int = 0
+
+
+@dataclasses.dataclass(frozen=True)
+class _Layout:
+  width: int = 8
+
+
+# Namespaces as packages declare them, once per process: one a derivative depends on, one it does not.
+register_option_namespace("test_shaping", _Shaping(), affects_derivatives=True, checks={"level": _count})
+register_option_namespace("test_layout", _Layout(), affects_derivatives=False)
+
+
 @pytest.fixture(autouse=True)
 def _restore_default():
   yield
   defaults = sc.Options()
   sc.set_options(
     **{f.name: getattr(defaults, f.name) for f in dataclasses.fields(sc.Options) if f.name != "changed"},
-    linalg=dataclasses.asdict(defaults.namespace("linalg")),
+    **{name: dataclasses.asdict(defaults.namespace(name)) for name, _ in sc.get_options().changed},
   )
 
 
@@ -51,18 +70,21 @@ def test_unknown_names_and_values_raise_at_the_call() -> None:
   for bad in (-1, 2.5, True, "8"):
     with pytest.raises(ValueError, match="non-negative integer"):
       sc.set_options(max_trajectory=bad)
-    for name in ("dense_unroll", "sparse_unroll"):
-      with pytest.raises(ValueError, match="non-negative integer"):
-        sc.set_options(linalg={name: bad})
+    with pytest.raises(ValueError, match="non-negative integer"):
+      sc.set_options(test_shaping={"level": bad})
   with sc.options(max_trajectory=0) as inside:
     assert inside.max_trajectory == 0
-  for name in ("dense_unroll", "sparse_unroll"):
-    with sc.options(linalg={name: 0}) as inside:
-      assert getattr(inside.namespace("linalg"), name) == 0
-  with pytest.raises(TypeError, match=r"unknown option linalg.'unroll'"):
-    sc.set_options(linalg={"unroll": 3})
+  with sc.options(test_shaping={"level": 0}, test_layout={"width": 3}) as inside:
+    assert inside.namespace("test_shaping").level == 0 and inside.namespace("test_layout").width == 3
+  with pytest.raises(TypeError, match=r"unknown option test_shaping.'unroll'"):
+    sc.set_options(test_shaping={"unroll": 3})
   with pytest.raises(TypeError, match="takes a dict"):
-    sc.set_options(linalg=3)
+    sc.set_options(test_shaping=3)
+  # A name is looked up as a package that declares it; one that declares none is still unknown.
+  with pytest.raises(TypeError, match="unknown scaly option 'ext'"):
+    sc.set_options(ext={})
+  with pytest.raises(KeyError, match="unknown option namespace 'tie'"):
+    sc.get_options().namespace("tie")
   assert sc.get_options() == sc.Options()
 
 
@@ -103,25 +125,6 @@ def test_the_convention_is_part_of_the_graph_and_the_generated_code() -> None:
     sc.vjp((cost,), (x,), (sc.const(1.0),))
 
 
-def test_dense_unroll_is_decided_when_the_node_is_built() -> None:
-  a, b = sc.sym("a", (4, 4)), sc.sym("b", 4)
-  with sc.options(linalg=dict(dense_unroll=0)):
-    looped = [sc.linalg.cholesky(a), sc.linalg.ldl(a), sc.linalg.solve_triangular(a, b)]
-  unrolled = [sc.linalg.cholesky(a), sc.linalg.ldl(a), sc.linalg.solve_triangular(a, b)]
-  assert all(not e.attrs["unroll"] for e in looped) and all(e.attrs["unroll"] for e in unrolled)
-  fns = {tag: sc.Function.from_exprs(f"du_{tag}", [a, b], outs, ["a", "b"], ["l", "d", "x"]) for tag, outs in (("loop", looped), ("flat", unrolled))}
-  for k, (loop_op, flat_op) in enumerate(zip(looped, unrolled, strict=True)):
-    for tag, op, has_loop in (("loop", loop_op, True), ("flat", flat_op, False)):
-      src = render_c_source(sc.Function.from_exprs(f"du_{tag}{k}", [a, b], [op], ["a", "b"], ["o"]))
-      assert ("for (" in src.split(f"int du_{tag}{k}")[1]) == has_loop
-  m = np.random.default_rng(3).standard_normal((4, 4))
-  av, bv = m @ m.T + 4 * np.eye(4), np.arange(4.0)
-  for got, ref in zip(fns["loop"]._flat_numerical_call(av, bv), fns["flat"]._flat_numerical_call(av, bv), strict=True):
-    np.testing.assert_allclose(got, ref, rtol=1e-13, atol=1e-14)
-  with sc.options(linalg=dict(dense_unroll=16)):
-    assert sc.linalg.cholesky(sc.sym("big", (12, 12))).attrs["unroll"]
-
-
 def test_max_trajectory_refuses_a_reverse_pass_that_stores_too_much() -> None:
   c = sc.sym("c", 50)
   body = sc.Function.from_exprs("traj_step", [c], [c.sin()], ["c"], ["cn"])
@@ -137,18 +140,9 @@ def test_max_trajectory_refuses_a_reverse_pass_that_stores_too_much() -> None:
       sc.vjp((out.sum(),), (x,), (sc.const(1.0),))
 
 
-@dataclasses.dataclass(frozen=True)
-class _Shaping:
-  level: int = 0
-
-
-# A namespace a derivative depends on, declared once per process as a package would.
-register_option_namespace("test_shaping", _Shaping(), affects_derivatives=True)
-
-
 def test_only_namespaces_that_affect_derivatives_name_helpers_apart() -> None:
   assert options_tag() == ""
-  with sc.options(linalg=dict(dense_unroll=0, sparse_unroll=3)):
+  with sc.options(test_layout=dict(width=3)):
     assert options_tag() == ""
   with sc.options(test_shaping=dict(level=2)) as inside:
     assert inside.namespace("test_shaping") == _Shaping(2)
@@ -156,4 +150,4 @@ def test_only_namespaces_that_affect_derivatives_name_helpers_apart() -> None:
   with sc.options(test_shaping=dict(level=0)) as inside:
     assert inside.changed == () and options_tag() == ""
   with pytest.raises(ValueError, match="already declared"):
-    register_option_namespace("linalg", _Shaping(), affects_derivatives=False)
+    register_option_namespace("test_shaping", _Shaping(), affects_derivatives=False)

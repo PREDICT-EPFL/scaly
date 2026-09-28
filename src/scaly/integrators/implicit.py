@@ -12,9 +12,9 @@ from ..ad.forward import jvp
 from ..ad.reverse import vjp
 from ..function.model import ConcreteFunction, Function
 from ..function.sugar import custom_derivative, while_loop
-from ..ir.expr import Expr, concat, lu, norm_inf, stack, substitute
+from ..ir.expr import Expr, concat, norm_inf, stack, substitute
 from ..ir.types import dtypes
-from ..linalg.dense import lu_solve, solve
+from ..linalg.dense import lu, lu_solve, solve
 from .explicit import increment
 from .model import discrete_map, model_rhs
 from .tableau import Tableau, tableau

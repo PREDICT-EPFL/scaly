@@ -7,6 +7,7 @@ cache key with no global state involved at render time.
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -30,6 +31,18 @@ class OptionNamespace:
 
 
 _NAMESPACES: dict[str, OptionNamespace] = {}
+
+
+def _declared(name: str) -> OptionNamespace | None:
+  """The namespace ``name``, importing ``scaly.<name>`` first when it is not declared yet: a
+  package declares its namespace when imported, and ``sc.options(<name>=...)`` may come first."""
+  if name not in _NAMESPACES and name.isidentifier():
+    try:
+      importlib.import_module(f"scaly.{name}")
+    except ModuleNotFoundError as error:
+      if error.name != f"scaly.{name}":
+        raise  # the package is there and fails to import: that is not an unknown option
+  return _NAMESPACES.get(name)
 
 
 def register_option_namespace(name: str, defaults: Any, *, affects_derivatives: bool, checks: dict[str, Any] | None = None) -> OptionNamespace:
@@ -69,9 +82,10 @@ class Options:
     for key, values in self.changed:
       if key == name:
         return values
-    if name not in _NAMESPACES:
+    namespace = _declared(name)
+    if namespace is None:
       raise KeyError(f"unknown option namespace {name!r}; declared: {sorted(_NAMESPACES)}")
-    return _NAMESPACES[name].defaults
+    return namespace.defaults
 
   def derivative_key(self) -> tuple[Any, ...]:
     """What a derivative built under these options depends on: the compiler's own and the
@@ -103,8 +117,7 @@ def _updated(base: Options, changes: dict[str, Any]) -> Options:
     if name in core:
       _check(name, value, _CHOICES[name])
       plain[name] = value
-    elif name in _NAMESPACES:
-      namespace = _NAMESPACES[name]
+    elif (namespace := _declared(name)) is not None:
       if not isinstance(value, dict):
         raise TypeError(f"option namespace {name!r} takes a dict of its options, got {value!r}")
       known = {f.name for f in fields(namespace.defaults)}
@@ -147,26 +160,4 @@ def options(**changes: Any) -> Iterator[Options]:
     _current.reset(token)
 
 
-@dataclass(frozen=True, slots=True)
-class LinalgOptions:
-  """The ``linalg`` namespace. It shapes generated code, never a derivative: a derivative takes each
-  factorization's choice from the node it differentiates.
-
-  Attributes:
-    dense_unroll: the largest order at which ``cholesky``, ``ldl`` and ``solve_triangular`` become
-      straight-line code instead of loops.
-    sparse_unroll: the most multiply-adds and divisions a sparse ``L D L^T`` may take and still be
-      generated as straight-line code instead of loops over its columns
-      (``SparseLDL(schedule="auto")``). Straight-line code runs several times faster but costs
-      about a millisecond of generation per operation.
-  """
-
-  dense_unroll: int = 8
-  sparse_unroll: int = 1000
-
-
-# Declared here while the factorizations are builtin ops; it moves to ``scaly.linalg`` with them.
-register_option_namespace("linalg", LinalgOptions(), affects_derivatives=False, checks={"dense_unroll": _count, "sparse_unroll": _count})
-
-
-__all__ = ["LinalgOptions", "OptionNamespace", "Options", "get_options", "options", "register_option_namespace", "set_options"]
+__all__ = ["OptionNamespace", "Options", "get_options", "options", "register_option_namespace", "set_options"]

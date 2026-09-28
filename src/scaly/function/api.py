@@ -89,7 +89,7 @@ def function(*slots: Tree[Any, Any] | Spec, output: Tree[Any, Any] | Spec | None
 def function(*slots: Any, output: Tree[Any, Any] | Spec | None = None, name: str | None = None) -> Any:
   """Trace a Python body into a named ``Function``: one declaration per parameter, and the ``output``.
 
-  Each slot is a tree spec: ``sc.L``, ``sc.G`` or ``sc.S``, or shorthand for one leaf, a shape
+  Each slot is a tree spec: ``sc.L``, ``sc.G`` or ``sc.linalg.S``, or shorthand for one leaf, a shape
   (``3``, ``(n, m)``, a ``TensorType``) or a name (a leaf whose shape the trace decides). Unnamed
   leaves take the parameter's name (``p``, or ``p_0``, ``p_1`` inside a group); unnamed outputs take
   the function's. The names become the generated C signature and the ``of``/``wrt`` of derivatives.

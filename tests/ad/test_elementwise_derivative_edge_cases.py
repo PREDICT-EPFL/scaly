@@ -208,12 +208,13 @@ def test_reverse_mode_keeps_a_nested_mask_through_a_chain_of_elementwise_ops() -
 
 def test_a_masked_cotangent_keeps_a_constant_zero_adjoint_constant() -> None:
   """``copysign``'s sign operand has a constant zero adjoint. Under a ``where`` it must stay that constant,
-  not become ``where(c, 0, 0)``, or reverse mode walks back into the sign's producer: here an ``lu``
-  factor, which refuses a derivative."""
+  not become ``where(c, 0, 0)``, or reverse mode walks back into the sign's producer: here a ``floor``
+  under ``nonsmooth="error"``, which refuses a derivative."""
   x = sc.sym("x", 2)
-  sign = sc.linalg.lu(sc.stack([x, x[::-1] * 2.0]) + sc.const(np.eye(2)))[0]
-  cost = sc.where(x > 0.0, sc.copysign(x, sign), 0.0).sum()
-  grad = _fn("eed_where_zero_adjoint", [x], [sc.gradient(cost, x)])(np.array([0.5, -0.25]))
+  with sc.options(nonsmooth="error"):
+    sign = (x * 2.0 - x[::-1]).floor()
+    cost = sc.where(x > 0.0, sc.copysign(x, sign), 0.0).sum()
+    grad = _fn("eed_where_zero_adjoint", [x], [sc.gradient(cost, x)])(np.array([0.5, -0.25]))
   np.testing.assert_array_equal(grad, [1.0, 0.0])
 
 

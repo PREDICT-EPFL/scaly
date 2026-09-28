@@ -42,7 +42,9 @@ options take non-negative integers.
 
 The unroll thresholds belong to the `linalg` namespace: `sc.options(linalg=dict(dense_unroll=4))`.
 A package declares its own namespace with `scaly.utils.options.register_option_namespace` and says
-whether its options can change a derivative. The `linalg` ones cannot: a derivative takes each
+whether its options can change a derivative. `scaly.linalg` declares `linalg` when it is imported,
+and a namespace named after a package of `scaly` loads that package the first time `sc.options`
+sees it, so the block can come before anything else touches `sc.linalg`. The `linalg` ones cannot: a derivative takes each
 factorization's choice from the node it differentiates, so a gradient built under
 `dense_unroll=0` is the default one, node for node.
 

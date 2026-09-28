@@ -68,7 +68,7 @@ def dynamics(x, u):
 ```
 
 A declaration is a *tree spec*: a shape (`4`, `(3, 3)`, `()` for a scalar), a name, an `sc.L`,
-`sc.G` or `sc.S` tree, or a `TensorType`. With every shape declared, the body is traced at the
+`sc.G` or `sc.linalg.S` tree, or a `TensorType`. With every shape declared, the body is traced at the
 decorator, errors in it surface there, and the result is the one instance itself, named after the
 function: `dynamics.is_concrete` holds and `dynamics.concrete is dynamics`.
 
@@ -152,7 +152,7 @@ dtype.
 
 ## Sparse matrices
 
-`sc.S(pattern)` declares a sparse matrix whose pattern is part of the signature. The body receives
+`sc.linalg.S(pattern)` declares a sparse matrix whose pattern is part of the signature. The body receives
 a [`SparseMatrix`](sparsity.md#sparse-matrices-as-values). A symbolic call must pass a
 `SparseMatrix` with exactly that pattern, and an evaluation a SciPy sparse matrix with exactly that
 pattern, where explicitly stored zeros count as stored. A result that is a `SparseMatrix` comes back
@@ -162,11 +162,11 @@ as one from a symbolic call and as a `scipy.sparse.csc_array` from an evaluation
 n, m = 3, 2
 a_pattern = np.array([[1, 1, 0], [0, 1, 1]], dtype=bool)
 
-@sc.function(n, sc.S(a_pattern))
+@sc.function(n, sc.linalg.S(a_pattern))
 def kkt(q, A):
-    return sc.SparseMatrix.block([[sc.SparseMatrix.diag(q).add_diagonal(1e-6), None], [A, sc.SparseMatrix.identity(m) * -1e-3]])
+    return sc.linalg.SparseMatrix.block([[sc.linalg.SparseMatrix.diag(q).add_diagonal(1e-6), None], [A, sc.linalg.SparseMatrix.identity(m) * -1e-3]])
 
-@sc.function(sc.S(kkt.output_sparsities[0]), n + m)
+@sc.function(sc.linalg.S(kkt.output_sparsities[0]), n + m)
 def solve(K, b):
     return sc.linalg.SparseLDL(K).solve(b)
 ```
@@ -174,7 +174,7 @@ def solve(K, b):
 The C signature carries the `(nnz,)` values in compressed-column order; the pattern is fixed when
 the graph is built. A bare template reads a `SparseMatrix` argument's pattern into the instance, so
 two patterns are two instances. It does not yet read a pattern off a SciPy argument, so declare
-that parameter with `sc.S`.
+that parameter with `sc.linalg.S`.
 
 ## Differentiating
 
@@ -366,7 +366,7 @@ with holes and says what to export instead. See [Code generation](codegen.md).
 | `"y"` | a leaf named `y`, its shape bound at the call or by the trace |
 | `sc.L("y", 3)`, `sc.L("k", (), dtype="int64", diff=False)` | a named leaf with shape, dtype and differentiability |
 | `sc.G(a, b, ...)` | a tuple of two to eight trees; parts named `p_0`, `p_1`, ... unless named |
-| `sc.S(pattern)`, `sc.S("A", pattern)` | a sparse matrix with that pattern |
+| `sc.linalg.S(pattern)`, `sc.linalg.S("A", pattern)` | a sparse matrix with that pattern |
 | `output=...` | the same specs, for the result; leave it out to read it off the trace |
 | `name="f"` | the function's name, and so its C symbol |
 

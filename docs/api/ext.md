@@ -32,6 +32,28 @@ compiler asks for; `OpDef` lists each one's signature and default.
 
 ::: scaly.ir.expr.has_trait
 
+## Derivative and sparsity rules
+
+A rule skips what a zero tangent or cotangent contributes, gives a ``NoAdjoint`` for an argument
+it has no cotangent for, and builds a Jacobian pattern from its arguments' with the mask helpers.
+``scaly.linalg.ops`` registers its factorizations, solves and ragged runs with nothing more.
+
+::: scaly.ad.forward.is_zero_const
+
+::: scaly.ad.forward.zeros_many
+
+::: scaly.ad.forward.JVPManyUnsupported
+
+::: scaly.ad.reverse.NoAdjoint
+
+::: scaly.ad.sparsity.incidence
+
+::: scaly.ad.sparsity.mask_compose
+
+::: scaly.ad.sparsity.mask_or
+
+::: scaly.ad.sparsity.empty_mask
+
 ## Lowering
 
 ::: scaly.passes.lowering.LowerCtx
@@ -40,6 +62,7 @@ compiler asks for; `OpDef` lists each one's signature and default.
         - buf_of
         - alloc_tmp
         - bind
+        - output_buffer
         - new_private
         - new_alias
         - new_const_index

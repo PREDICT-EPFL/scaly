@@ -35,14 +35,10 @@ from ..ir.expr import (
   maximum,
   put,
   put_add,
-  ragged_add,
-  sparse_ldl_solve,
-  ragged_dot,
   reduce_min,
   scatter,
   segment_min,
   segment_sum,
-  solve_triangular,
   stack,
   independent,
   substitute,
@@ -68,17 +64,13 @@ _CALL_JVP_MANY_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], tuple
 _CALL_JVP_PACK_CACHE: weakref.WeakKeyDictionary[Any, dict[tuple[Any, ...], Any]] = weakref.WeakKeyDictionary()
 
 
-class _JVPManyUnsupported(Exception):
+class JVPManyUnsupported(Exception):
+  """Raised by a ``jvp_many`` rule that cannot take these seeds together (too many for a per-seed
+  expansion, say): the whole ``jvp_many`` then falls back to one ``jvp`` per seed."""
+
   def __init__(self, op: str):
     super().__init__(op)
     self.op = op
-
-
-SPARSE_LDL_NO_DERIVATIVE = (
-  "the derivative of a looped sparse LDL^T factorization is not implemented: SparseLDL.solve differentiates "
-  "implicitly without it, and SparseLDL(..., schedule='scan') differentiates the factorization through its loops"
-)
-"""Why a ``sparse_ldl_factor`` node refuses a nonzero tangent or cotangent."""
 
 
 def extern_no_derivative(expr: Expr) -> str:
@@ -90,14 +82,9 @@ def extern_no_derivative(expr: Expr) -> str:
   )
 
 
-LU_NO_DERIVATIVE = (
-  "the dense LU factorization has no derivative: linalg.solve(a, b, assume='gen') solves with it and "
-  "differentiates implicitly, so its derivative never reaches the factorization"
-)
-"""Why an ``lu`` node refuses a nonzero tangent or cotangent."""
-
-
-def _is_zero_const(expr: Expr) -> bool:
+def is_zero_const(expr: Expr) -> bool:
+  """Whether ``expr`` is a constant of zeros: the tangent or cotangent of what does not depend on
+  what is being differentiated, which a rule may skip."""
   return expr.op == ExprOp.CONST and expr.value is not None and bool(np.all(expr.value == 0))
 
 
@@ -121,7 +108,7 @@ def _bilinear_tangent(expr: Expr, d: Sequence[Expr], product: Callable[[Expr, Ex
   called through two levels of Functions (a QP's constraint Jacobian) would then read the variables.
   """
   x, y = expr.args
-  terms = ([] if _is_zero_const(d[0]) else [product(d[0], y)]) + ([] if _is_zero_const(d[1]) else [product(x, d[1])])
+  terms = ([] if is_zero_const(d[0]) else [product(d[0], y)]) + ([] if is_zero_const(d[1]) else [product(x, d[1])])
   return zeros_like(expr) if not terms else terms[0] if len(terms) == 1 else terms[0] + terms[1]
 
 
@@ -155,7 +142,7 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     return memo[expr.id]
   # An integer or bool value (an index built from a cast) carries no derivative: stop here rather
   # than form a float tangent the integer arithmetic above it could not combine with.
-  if not expr.type.dtype.is_floating or not any(not _is_zero_const(seed) and _depends_on(expr, wrt, dep_memo) for wrt, seed in seeds.items()):
+  if not expr.type.dtype.is_floating or not any(not is_zero_const(seed) and _depends_on(expr, wrt, dep_memo) for wrt, seed in seeds.items()):
     memo[expr.id] = ret = zeros_like(expr)
     return ret
   if expr.op == ExprOp.INPUT:
@@ -169,7 +156,7 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
     # tangent (an implicit solve rule ignores its factor's), and forming it could differentiate
     # what the rule exists to avoid.
     callee, output = expr.attrs["callee"], expr.attrs["output"]
-    seeded = [wrt for wrt, seed in seeds.items() if not _is_zero_const(seed)]
+    seeded = [wrt for wrt, seed in seeds.items() if not is_zero_const(seed)]
     candidates = tuple(i for i, arg in enumerate(expr.args) if any(_depends_on(arg, wrt, dep_memo) for wrt in seeded))
     try:
       _, _, read = _call_jvp_function(callee, output, candidates) if candidates else (None, (), ())
@@ -178,9 +165,9 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
       # through a comparison, say): form every tangent and keep the nonzero ones, as it is done
       # without the probe.
       read = tuple(range(len(expr.args)))
-      candidates = tuple(i for i in candidates if not _is_zero_const(_jvp(expr.args[i], seeds, memo, dep_memo)))
+      candidates = tuple(i for i in candidates if not is_zero_const(_jvp(expr.args[i], seeds, memo, dep_memo)))
     tangents = [_jvp(arg, seeds, memo, dep_memo) if i in read else zeros_like(arg) for i, arg in enumerate(expr.args)]
-    active = tuple(i for i in candidates if i not in read or not _is_zero_const(tangents[i]))
+    active = tuple(i for i in candidates if i not in read or not is_zero_const(tangents[i]))
     if not active:
       memo[expr.id] = ret = zeros_like(expr)
       return ret
@@ -241,7 +228,7 @@ def _jvp_mul(expr: Expr, d: list[Expr]) -> Expr:
 def _jvp_div(expr: Expr, d: list[Expr]) -> Expr:
   # a zero tangent's term is left out, as in _bilinear_tangent
   args = expr.args
-  dx, dy = (None if _is_zero_const(t) else t for t in d)
+  dx, dy = (None if is_zero_const(t) else t for t in d)
   num = dx if dy is None else -(expr * dy) if dx is None else dx - expr * dy
   return zeros_like(expr) if num is None else num * (1.0 / args[1])
 
@@ -354,36 +341,6 @@ def _jvp_take(expr: Expr, d: list[Expr]) -> Expr:
   return take(d[0], args[1], in_range=bool(expr.attrs.get("in_range")))
 
 
-def _jvp_ragged_add_ragged_dot(expr: Expr, d: list[Expr]) -> Expr:
-  return ragged_tangent(expr, [None if _is_zero_const(t) else t for t in d])
-
-
-def _jvp_cholesky_ldl(expr: Expr, d: list[Expr]) -> Expr:
-  return zeros_like(expr) if _is_zero_const(d[0]) else factor_tangent(expr, d[0])
-
-
-def _jvp_sparse_ldl(expr: Expr, d: list[Expr]) -> Expr:
-  # reached only with a tangent: without one, the dependence check gave zero
-  raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
-
-
-def _jvp_lu(expr: Expr, d: list[Expr]) -> Expr:
-  raise NotImplementedError(LU_NO_DERIVATIVE)
-
-
-def _jvp_sparse_ldl_solve(expr: Expr, d: list[Expr]) -> Expr:
-  # linear in b; in the factor, not implemented
-  args = expr.args
-  if not _is_zero_const(d[0]):
-    raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
-  return sparse_ldl_solve(args[0], d[1], dict(expr.attrs))
-
-
-def _jvp_trisolve(expr: Expr, d: list[Expr]) -> Expr:
-  dt, db = (None if _is_zero_const(t) else t for t in d)
-  return zeros_like(expr) if dt is None and db is None else trisolve_tangent(expr, dt, db)
-
-
 def _jvp_put_add_put(expr: Expr, d: list[Expr]) -> Expr:
   args = expr.args
   return (put_add if expr.op == ExprOp.PUT_ADD else put)(d[0], args[1], d[2], in_range=bool(expr.attrs.get("in_range")))
@@ -479,14 +436,6 @@ _JVP_RULES = {
   ExprOp.INDEX_ADD: _jvp_index_add_index_set,
   ExprOp.INDEX_SET: _jvp_index_add_index_set,
   ExprOp.TAKE: _jvp_take,
-  ExprOp.RAGGED_ADD: _jvp_ragged_add_ragged_dot,
-  ExprOp.RAGGED_DOT: _jvp_ragged_add_ragged_dot,
-  ExprOp.CHOLESKY: _jvp_cholesky_ldl,
-  ExprOp.LDL: _jvp_cholesky_ldl,
-  ExprOp.SPARSE_LDL: _jvp_sparse_ldl,
-  ExprOp.LU: _jvp_lu,
-  ExprOp.SPARSE_LDL_SOLVE: _jvp_sparse_ldl_solve,
-  ExprOp.TRISOLVE: _jvp_trisolve,
   ExprOp.PUT_ADD: _jvp_put_add_put,
   ExprOp.PUT: _jvp_put_add_put,
   ExprOp.SELECT: _jvp_select,
@@ -552,10 +501,10 @@ def _scan_jvp(expr: Expr, tangents: list[Expr]) -> Expr:
   callee, length, output = expr.attrs["callee"], expr.attrs["length"], expr.attrs["output"]
   init, outers = expr.args[0], expr.args[1:]
   carried = _carries_tangent(init)
-  if all(_is_zero_const(t) for t in tangents) or not carried and output in (0, -1):
+  if all(is_zero_const(t) for t in tangents) or not carried and output in (0, -1):
     return zeros_like(expr)
   cs, n_ys = init.size, len(callee.outputs) - 1
-  active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
+  active = tuple(i for i, t in enumerate(tangents[1:]) if not is_zero_const(t))
   fn = _scan_jvp_body(callee, active)
   starts, strides = expr.attrs["starts"], expr.attrs["strides"]
   aug_init = concat([init.reshape((cs,)), tangents[0].reshape((cs,))]) if carried else init
@@ -648,8 +597,8 @@ def _while_jvp(expr: Expr, tangents: Sequence[Expr]) -> Expr:
   is zero."""
   output = int(expr.attrs["output"])
   cond, body, init, params, max_iter, index = while_parts(expr)
-  active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
-  if output == 1 or (_is_zero_const(tangents[0]) and not active) or not _carries_tangent(init):
+  active = tuple(i for i, t in enumerate(tangents[1:]) if not is_zero_const(t))
+  if output == 1 or (is_zero_const(tangents[0]) and not active) or not _carries_tangent(init):
     return zeros_like(expr)
   cs = init.size
   aug_cond, aug_body = _while_jvp_functions(cond, body, index, active)
@@ -659,142 +608,6 @@ def _while_jvp(expr: Expr, tangents: Sequence[Expr]) -> Expr:
     return _while_node(aug_cond, aug_body, aug_init, max_iter, 0, aug_params, index)[cs:].reshape(expr.shape)
   picks = (np.arange(max_iter)[:, None] * 2 * cs + cs + np.arange(cs)[None, :]).reshape(-1)
   return gather(_while_node(aug_cond, aug_body, aug_init, max_iter, -1, aug_params, index), picks)
-
-
-def _tri_mask(n: int, lower: bool, unit: bool) -> Expr:
-  """Ones on the triangle a triangular solve reads (its diagonal too unless unit), zeros elsewhere."""
-  mask = np.tril(np.ones((n, n))) if lower else np.triu(np.ones((n, n)))
-  if unit:
-    np.fill_diagonal(mask, 0.0)
-  return Expr.const(mask)
-
-
-def _lower_as_symmetric(d: Expr) -> Expr:
-  """The symmetric matrix whose lower triangle is that of ``d``: what a factorization reads."""
-  n, nd = d.shape[-1], len(d.shape)
-  strict = d * Expr.const(np.tril(np.ones((n, n)), -1))
-  return d * Expr.const(np.tril(np.ones((n, n)))) + strict.transpose((*range(nd - 2), nd - 1, nd - 2))
-
-
-def _sandwich(t: Expr, s: Expr, *, unit: bool) -> Expr:
-  """``L^{-1} S L^{-T}`` for a symmetric ``S`` and the lower triangle of ``t``, a factorization's
-  result, whose choice between straight-line code and loops the solves keep."""
-  unroll = bool(t.attrs["unroll"])
-  z = solve_triangular(t, s, lower=True, unit_diagonal=unit, unroll=unroll)
-  return solve_triangular(t, z.T, lower=True, unit_diagonal=unit, unroll=unroll).T
-
-
-def ragged_tangent(expr: Expr, d: list[Expr | None]) -> Expr:
-  """``ragged_add`` and ``ragged_dot`` are linear in each floating operand: the tangent is the same op
-  with one operand replaced by its tangent at a time (``None`` for a zero tangent)."""
-  if expr.op == ExprOp.RAGGED_ADD:
-    base, src, lo, hi, scale = expr.args
-    maps = {"dst_map": expr.attrs["dst_map"], "src_map": expr.attrs["src_map"]}
-    out = d[0] if d[0] is not None else zeros_like(expr)
-    if d[1] is not None:
-      out = ragged_add(out, d[1], lo, hi, scale, **maps)
-    if d[4] is not None:
-      out = ragged_add(out, src, lo, hi, d[4], **maps)
-    return out
-  a, b, lo, hi = expr.args
-  maps = {"a_map": expr.attrs["a_map"], "b_map": expr.attrs["b_map"]}
-  terms = [ragged_dot(d[0], b, lo, hi, **maps)] if d[0] is not None else []
-  if d[1] is not None:
-    terms.append(ragged_dot(a, d[1], lo, hi, **maps))
-  return (terms[0] + terms[1] if len(terms) == 2 else terms[0]) if terms else zeros_like(expr)
-
-
-def factor_tangent(expr: Expr, d: Expr) -> Expr:
-  """The tangent of ``cholesky`` or ``ldl`` along a tangent ``d`` of the matrix.
-
-  ``A = L L^T``: with ``X = L^{-1} S L^{-T}``, ``dL = L (tril(X) - diag(X) / 2)``.
-  ``A = L D L^T`` (packed ``F``): ``dD = diag(X)`` and ``dL = L stril(X) D^{-1}`` for the unit ``L``.
-  ``S`` is the symmetric matrix whose lower triangle is that of ``d``."""
-  n = expr.shape[0]
-  s = _lower_as_symmetric(d)
-  if expr.op == ExprOp.CHOLESKY:
-    phi = np.tril(np.ones((n, n)))
-    np.fill_diagonal(phi, 0.5)
-    return expr @ (_sandwich(expr, s, unit=False) * Expr.const(phi))
-  x = _sandwich(expr, s, unit=True)
-  unit_l = expr * Expr.const(np.tril(np.ones((n, n)), -1)) + Expr.const(np.eye(n))
-  inv_d = 1.0 / gather(expr.reshape((n * n,)), np.arange(n) * (n + 1))
-  return (unit_l @ (x * Expr.const(np.tril(np.ones((n, n)), -1)))) * inv_d.reshape((1, n)) + x * Expr.const(np.eye(n))
-
-
-def trisolve_tangent(expr: Expr, dt: Expr | None, db: Expr | None) -> Expr:
-  """``op(T) dX = dB - op(dT) X`` with ``dT`` restricted to the triangle the solve reads."""
-  t, _ = expr.args
-  lower, trans, unit = (bool(expr.attrs[k]) for k in ("lower", "trans", "unit"))
-  rhs = db
-  if dt is not None:
-    masked = dt * _tri_mask(t.shape[0], lower, unit)
-    term = (masked.T if trans else masked) @ expr
-    rhs = -term if rhs is None else rhs - term
-  assert rhs is not None
-  return solve_triangular(t, rhs, lower=lower, trans=trans, unit_diagonal=unit, unroll=bool(expr.attrs["unroll"]))
-
-
-def _seeds_as_columns(x: Expr) -> tuple[Expr, tuple[int, ...]]:
-  """A seeded matrix operand ``(nseed, n[, m])`` as one matrix ``(n, nseed * m)``, with what undoes it."""
-  nseed, n = x.shape[0], x.shape[1]
-  m = 1 if len(x.shape) == 2 else x.shape[2]
-  cols = x.reshape((nseed, n, m)).transpose((1, 0, 2)).reshape((n, nseed * m))
-  return cols, (nseed, n, m)
-
-
-def _columns_as_seeds(cols: Expr, layout: tuple[int, ...], shape: tuple[int, ...]) -> Expr:
-  nseed, n, m = layout
-  return cols.reshape((n, nseed, m)).transpose((1, 0, 2)).reshape(shape)
-
-
-def _seed_solve(t: Expr, rhs: Expr, **flags: bool) -> Expr:
-  """One triangular solve for every seed: the seeds become right-hand-side columns."""
-  cols, layout = _seeds_as_columns(rhs)
-  return _columns_as_seeds(solve_triangular(t, cols, **flags), layout, rhs.shape)
-
-
-def _seed_left(m: Expr, x: Expr) -> Expr:
-  """``m @ x_s`` for every seed of a seeded matrix ``x``."""
-  cols, layout = _seeds_as_columns(x)
-  return _columns_as_seeds(m @ cols, layout, x.shape)
-
-
-def _seed_transpose(x: Expr) -> Expr:
-  return x.transpose((0, 2, 1))
-
-
-def _jvp_many_dense(expr: Expr, d: list[Expr], nseed: int) -> Expr:
-  """Multi-seed tangents of ``cholesky``, ``ldl`` and ``solve_triangular``: the single-seed rules
-  with every seed a column of one solve or product."""
-  n = expr.shape[0]
-  if expr.op == ExprOp.TRISOLVE:
-    t, _ = expr.args
-    lower, trans, unit = (bool(expr.attrs[k]) for k in ("lower", "trans", "unit"))
-    rhs = None if _is_zero_const(d[1]) else d[1]
-    if not _is_zero_const(d[0]):
-      masked = d[0] * _tri_mask(n, lower, unit)
-      op = _seed_transpose(masked) if trans else masked
-      x = expr if len(expr.shape) == 2 else expr.reshape((n, 1))
-      term = (op.reshape((nseed * n, n)) @ x).reshape((nseed, *expr.shape))
-      rhs = -term if rhs is None else rhs - term
-    if rhs is None:
-      return _zeros_many(expr, nseed)
-    return _seed_solve(t, rhs, lower=lower, trans=trans, unit_diagonal=unit, unroll=bool(expr.attrs["unroll"]))
-  if _is_zero_const(d[0]):
-    return _zeros_many(expr, nseed)
-  s = _lower_as_symmetric(d[0])
-  unit = expr.op == ExprOp.LDL
-  unroll = bool(expr.attrs["unroll"])
-  z = _seed_solve(expr, s, lower=True, unit_diagonal=unit, unroll=unroll)
-  x = _seed_transpose(_seed_solve(expr, _seed_transpose(z), lower=True, unit_diagonal=unit, unroll=unroll))
-  if expr.op == ExprOp.CHOLESKY:
-    phi = np.tril(np.ones((n, n)))
-    np.fill_diagonal(phi, 0.5)
-    return _seed_left(expr, x * Expr.const(phi))
-  unit_l = expr * Expr.const(np.tril(np.ones((n, n)), -1)) + Expr.const(np.eye(n))
-  inv_d = 1.0 / gather(expr.reshape((n * n,)), np.arange(n) * (n + 1))
-  return _seed_left(unit_l, x * Expr.const(np.tril(np.ones((n, n)), -1))) * inv_d.reshape((1, 1, n)) + x * Expr.const(np.eye(n))
 
 
 def _minus_one(exponent: Expr) -> Expr:
@@ -895,7 +708,7 @@ def custom_vjp_call(callee: Any, args: Sequence[Expr], cots: dict[int, Expr]) ->
   # A rule that returns a constant zero for an input says that input receives nothing: hand back the
   # constant itself, so reverse mode can see it and does not differentiate what produced the input.
   return tuple(
-    g if not _is_zero_const(r) else Expr.const(np.zeros(r.shape), dtype=r.type.dtype) for g, r in zip(grads, callee.custom_vjp.outputs, strict=True)
+    g if not is_zero_const(r) else Expr.const(np.zeros(r.shape), dtype=r.type.dtype) for g, r in zip(grads, callee.custom_vjp.outputs, strict=True)
   )
 
 
@@ -1024,11 +837,11 @@ def _jvp_many_compressed(
     total: Expr | None = None
     for w, size in sizes.items():
       rows = flat[offsets[w] : offsets[w] + size]
-      if _is_zero_const(simplify_cse_fixpoint(rows)):
+      if is_zero_const(simplify_cse_fixpoint(rows)):
         continue
       term = seeds[w].reshape((nseed, size)) @ rows
       total = term if total is None else total + term
-    tangents.append(_zeros_many(out, nseed) if total is None else total.reshape((nseed, *out.shape)))
+    tangents.append(zeros_many(out, nseed) if total is None else total.reshape((nseed, *out.shape)))
   return primals, tangents
 
 
@@ -1043,7 +856,7 @@ def _seed_product_map(name: str, jac: Expr, seeds: dict[Expr, Expr], sizes: dict
   total: Expr | None = None
   for w, size in sizes.items():
     block = matrix[offsets[w] : offsets[w] + size]
-    if constant and _is_zero_const(simplify_cse_fixpoint(block)):
+    if constant and is_zero_const(simplify_cse_fixpoint(block)):
       continue
     term = rows[w] @ block
     total = term if total is None else total + term
@@ -1122,9 +935,9 @@ def _scan_jvp_many(expr: Expr, tangents: list[Expr], nseed: int) -> Expr:
   cs, n_ys = init.size, len(callee.outputs) - 1
   carried = _carries_tangent(init)
   if length == 0 or not carried and output in (0, -1):
-    return tangents[0].reshape((nseed, *expr.shape)) if output == 0 and carried else _zeros_many(expr, nseed)
+    return tangents[0].reshape((nseed, *expr.shape)) if output == 0 and carried else zeros_many(expr, nseed)
   starts, strides = expr.attrs["starts"], expr.attrs["strides"]
-  active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
+  active = tuple(i for i, t in enumerate(tangents[1:]) if not is_zero_const(t))
   fn = _scan_jvp_many_body(callee, active, nseed)
   aug_init = concat([init.reshape((cs,)), tangents[0].reshape((nseed * cs,))]) if carried else init
   views = []
@@ -1189,9 +1002,9 @@ def _while_jvp_many(expr: Expr, tangents: Sequence[Expr], nseed: int) -> Expr:
   tangents as further params. The step count's derivative is zero."""
   output = int(expr.attrs["output"])
   cond, body, init, params, max_iter, index = while_parts(expr)
-  active = tuple(i for i, t in enumerate(tangents[1:]) if not _is_zero_const(t))
-  if output == 1 or (_is_zero_const(tangents[0]) and not active) or not _carries_tangent(init):
-    return _zeros_many(expr, nseed)
+  active = tuple(i for i, t in enumerate(tangents[1:]) if not is_zero_const(t))
+  if output == 1 or (is_zero_const(tangents[0]) and not active) or not _carries_tangent(init):
+    return zeros_many(expr, nseed)
   cs = init.size
   aug_cond, aug_body = _while_jvp_many_functions(cond, body, nseed, index, active)
   aug_init = concat([init.reshape((cs,)), tangents[0].reshape((nseed * cs,))])
@@ -1352,11 +1165,11 @@ def jvp_many(expr: Expr, wrt: Expr, seeds: Expr) -> Expr:
     (expr,), (at,), back = independent((expr,), (wrt,))
     return substitute(jvp_many(expr, at, seeds), back)
   if seeds.shape[0] == 0:
-    return _zeros_many(expr, 0)
+    return zeros_many(expr, 0)
   strict = env_bool("SCALY_STRICT_JVP_MANY", False)
   try:
     ret = _jvp_many_structural(expr, wrt, seeds, {}, {})
-  except _JVPManyUnsupported as unsupported:
+  except JVPManyUnsupported as unsupported:
     if strict:
       raise NotImplementedError(
         f"structural jvp_many does not support {unsupported.op!r}; SCALY_STRICT_JVP_MANY=1 forbids the unrolled fallback"
@@ -1386,7 +1199,7 @@ def _formable_tangent(expr: Expr, i: int, wrt: Expr, seeds: Expr, memo: dict[int
     active = tuple(k for k, a in enumerate(expr.args) if _depends_on(a, wrt, dep_memo))
     if i in _call_jvp_function(expr.attrs["callee"], expr.attrs["output"], active)[2]:
       raise
-    return _zeros_many(expr.args[i], seeds.shape[0])
+    return zeros_many(expr.args[i], seeds.shape[0])
 
 
 def _prunable_call(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Expr], dep_memo: dict[tuple[int, int], bool]) -> bool:
@@ -1415,20 +1228,20 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
   if expr.id in memo:
     return memo[expr.id]
   nseed = seeds.shape[0]
-  if not expr.type.dtype.is_floating or _is_zero_const(seeds) or not _depends_on(expr, wrt, dep_memo):  # see ``_jvp``
-    memo[expr.id] = ret = _zeros_many(expr, nseed)
+  if not expr.type.dtype.is_floating or is_zero_const(seeds) or not _depends_on(expr, wrt, dep_memo):  # see ``_jvp``
+    memo[expr.id] = ret = zeros_many(expr, nseed)
     return ret
   if expr.op in {ExprOp.FLOOR, ExprOp.CEIL}:
     floor_tangent(expr)
-    memo[expr.id] = ret = _zeros_many(expr, nseed)
+    memo[expr.id] = ret = zeros_many(expr, nseed)
     return ret
   if expr.op == ExprOp.EXTERN_CALL:
     raise NotImplementedError(extern_no_derivative(expr))
   if expr.op == ExprOp.INPUT:
-    memo[expr.id] = ret = seeds if expr.id == wrt.id else _zeros_many(expr, nseed)
+    memo[expr.id] = ret = seeds if expr.id == wrt.id else zeros_many(expr, nseed)
     return ret
   if expr.op == ExprOp.CONST or expr.op in PREDICATE_OPS:
-    memo[expr.id] = ret = _zeros_many(expr, nseed)
+    memo[expr.id] = ret = zeros_many(expr, nseed)
     return ret
   if expr.op == ExprOp.CALL and expr.attrs["callee"].custom_jvp is not None:
     # The rule once per seed, as one map: primal arguments broadcast, tangents sliced by seed.
@@ -1438,8 +1251,8 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     out = rule.outputs[int(expr.attrs["output"])]
     read = [_depends_on(out, rule.inputs[len(expr.args) + i], rule_dep) for i in range(len(expr.args))]
     tangents = [_jvp_many_structural(arg, wrt, seeds, memo, dep_memo) if r else None for arg, r in zip(expr.args, read, strict=True)]
-    if all(t is None or _is_zero_const(t) for t in tangents):
-      memo[expr.id] = ret = _zeros_many(expr, nseed)
+    if all(t is None or is_zero_const(t) for t in tangents):
+      memo[expr.id] = ret = zeros_many(expr, nseed)
       return ret
     specs = [(arg.reshape((arg.size,)), 0, 0) for arg in expr.args]
     specs += [
@@ -1449,17 +1262,17 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     memo[expr.id] = ret = vmap(rule, nseed, specs, output=int(expr.attrs["output"])).reshape((nseed, *expr.shape))
     return ret
   if expr.op in (ExprOp.VMAP, ExprOp.SCAN, ExprOp.WHILE) and expr.attrs["callee"].custom_jvp is not None:
-    raise _JVPManyUnsupported("custom jvp")  # the per-seed fallback honors the rule through ``_call_jvp_function``
+    raise JVPManyUnsupported("custom jvp")  # the per-seed fallback honors the rule through ``_call_jvp_function``
   if expr.op == ExprOp.SCAN:
     tangents = [simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo)) for arg in expr.args]
-    if all(_is_zero_const(t) for t in tangents):
-      memo[expr.id] = ret = _zeros_many(expr, nseed)
+    if all(is_zero_const(t) for t in tangents):
+      memo[expr.id] = ret = zeros_many(expr, nseed)
     else:
       memo[expr.id] = ret = _scan_jvp_many(expr, tangents, nseed)
     return ret
   if expr.op == ExprOp.WHILE:
     if int(expr.attrs["output"]) == 1:  # the step count is piecewise constant
-      memo[expr.id] = ret = _zeros_many(expr, nseed)
+      memo[expr.id] = ret = zeros_many(expr, nseed)
     else:
       tangents = [simplify_cse_fixpoint(_jvp_many_structural(arg, wrt, seeds, memo, dep_memo)) for arg in expr.args]
       memo[expr.id] = ret = _while_jvp_many(expr, tangents, nseed)
@@ -1484,7 +1297,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     ret: Expr | None = None
     for formal_idx, actual_outer in enumerate(expr.args):
       actual_tan = _formable_tangent(expr, formal_idx, wrt, seeds, memo, dep_memo)
-      if _is_zero_const(actual_tan):
+      if is_zero_const(actual_tan):
         continue
       formal = callee.inputs[formal_idx]
       formal_size = formal.size
@@ -1517,7 +1330,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
           else:
             active_pos = {row: i for i, row in enumerate(active)}
             parts.append(stack([mapped_3d[:, active_pos[row], :] if row in active_pos else zero_rows for row in range(nseed)], axis=0))
-        if all(_is_zero_const(part) for part in parts):
+        if all(is_zero_const(part) for part in parts):
           continue
         term = (parts[0] if period == 1 else stack(parts, axis=2)).reshape((nseed, length * slice_size))
         ret = term if ret is None else ret + term
@@ -1581,7 +1394,7 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
       mapped_flat = mapped_call(inner_fn, length, [*primal_specs, *seed_specs])
       term = mapped_flat.reshape((length, nseed, slice_size)).transpose((1, 0, 2)).reshape((nseed, length * slice_size))
       ret = term if ret is None else ret + term
-    ret = _zeros_many(expr, nseed) if ret is None else ret
+    ret = zeros_many(expr, nseed) if ret is None else ret
     memo[expr.id] = ret = _pack_jvp_maps(callee, ret, maps)
     return ret
   if expr.op == ExprOp.CALL and _contains_loop(expr.attrs["callee"]) and not _prunable_call(expr, wrt, seeds, memo, dep_memo):
@@ -1601,9 +1414,9 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     return ret
   if expr.op == ExprOp.CALL:
     tangents = [_formable_tangent(expr, i, wrt, seeds, memo, dep_memo) for i in range(len(expr.args))]
-    formals = tuple(i for i, tangent in enumerate(tangents) if not _is_zero_const(tangent))
+    formals = tuple(i for i, tangent in enumerate(tangents) if not is_zero_const(tangent))
     if not formals:
-      memo[expr.id] = ret = _zeros_many(expr, nseed)
+      memo[expr.id] = ret = zeros_many(expr, nseed)
       return ret
     constants = tuple(tangents[i].value if tangents[i].op == ExprOp.CONST else None for i in formals)
     fn, arg_indices, seed_indices, active = _call_jvp_many_function(expr.attrs["callee"], expr.attrs["output"], formals, nseed, constants)
@@ -1642,7 +1455,7 @@ def _jvp_many_reshape(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Ex
 
 def _jvp_many_transpose(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
   if len(expr.shape) > 3:
-    raise _JVPManyUnsupported(str(expr.op))  # seed axis would make a rank-5 TRANSPOSE, beyond the rank-4 lowering limit
+    raise JVPManyUnsupported(str(expr.op))  # seed axis would make a rank-5 TRANSPOSE, beyond the rank-4 lowering limit
   d0 = tan(expr.args[0])
   return d0.transpose((0, *(axis + 1 for axis in expr.attrs["axes"])))
 
@@ -1650,9 +1463,9 @@ def _jvp_many_transpose(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> 
 def _jvp_many_add(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
   d0 = tan(expr.args[0])
   d1 = tan(expr.args[1])
-  if _is_zero_const(d0) and expr.args[1].shape == expr.shape:
+  if is_zero_const(d0) and expr.args[1].shape == expr.shape:
     ret = d1
-  elif _is_zero_const(d1) and expr.args[0].shape == expr.shape:
+  elif is_zero_const(d1) and expr.args[0].shape == expr.shape:
     ret = d0
   else:
     ret = _broadcast_tangent(d0, expr.args[0], expr, nseed) + _broadcast_tangent(d1, expr.args[1], expr, nseed)
@@ -1662,9 +1475,9 @@ def _jvp_many_add(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
 def _jvp_many_sub(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
   d0 = tan(expr.args[0])
   d1 = tan(expr.args[1])
-  if _is_zero_const(d0) and expr.args[1].shape == expr.shape:
+  if is_zero_const(d0) and expr.args[1].shape == expr.shape:
     ret = -d1
-  elif _is_zero_const(d1) and expr.args[0].shape == expr.shape:
+  elif is_zero_const(d1) and expr.args[0].shape == expr.shape:
     ret = d0
   else:
     ret = _broadcast_tangent(d0, expr.args[0], expr, nseed) - _broadcast_tangent(d1, expr.args[1], expr, nseed)
@@ -1699,7 +1512,7 @@ def _jvp_many_scatter(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Ex
 
 def _jvp_many_cast(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
   if not expr.type.diff:
-    ret = _zeros_many(expr, nseed)
+    ret = zeros_many(expr, nseed)
   else:
     ret = cast(tan(expr.args[0]), expr.type.dtype)
   return ret
@@ -1717,20 +1530,20 @@ def _jvp_many_mul(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
   if args[0] is args[1]:
     return _seed_axis(2 * args[0], nseed) * d[0]
   # A zero tangent's term is left out, as in _bilinear_tangent.
-  terms = [] if _is_zero_const(d[0]) else [_broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], nseed, expr)]
-  if not _is_zero_const(d[1]):
+  terms = [] if is_zero_const(d[0]) else [_broadcast_tangent(d[0], args[0], expr, nseed) * _seed_axis(args[1], nseed, expr)]
+  if not is_zero_const(d[1]):
     terms.append(_seed_axis(args[0], nseed, expr) * _broadcast_tangent(d[1], args[1], expr, nseed))
-  return _zeros_many(expr, nseed) if not terms else terms[0] if len(terms) == 1 else terms[0] + terms[1]
+  return zeros_many(expr, nseed) if not terms else terms[0] if len(terms) == 1 else terms[0] + terms[1]
 
 
 def _jvp_many_div(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
   args = expr.args
   d = [tan(arg) for arg in args]
-  num = None if _is_zero_const(d[0]) else _broadcast_tangent(d[0], args[0], expr, nseed)
-  if not _is_zero_const(d[1]):
+  num = None if is_zero_const(d[0]) else _broadcast_tangent(d[0], args[0], expr, nseed)
+  if not is_zero_const(d[1]):
     term = _seed_axis(expr, nseed) * _broadcast_tangent(d[1], args[1], expr, nseed)
     num = -term if num is None else num - term
-  return _zeros_many(expr, nseed) if num is None else num * _seed_axis(1.0 / args[1], nseed, expr)
+  return zeros_many(expr, nseed) if num is None else num * _seed_axis(1.0 / args[1], nseed, expr)
 
 
 def _jvp_many_pow(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
@@ -1807,39 +1620,6 @@ def _jvp_many_sinh(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
   return _seed_axis(args[0].cosh(), nseed) * d[0]
 
 
-def _jvp_many_cholesky_ldl_trisolve(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
-  args = expr.args
-  d = [tan(arg) for arg in args]
-  return _jvp_many_dense(expr, d, nseed)
-
-
-def _jvp_many_sparse_ldl(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
-  raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
-
-
-def _jvp_many_lu(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
-  raise NotImplementedError(LU_NO_DERIVATIVE)
-
-
-def _jvp_many_sparse_ldl_solve(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
-  args = expr.args
-  d = [tan(arg) for arg in args]
-  if not _is_zero_const(d[0]):
-    raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
-  if nseed > 64:
-    raise _JVPManyUnsupported(str(expr.op))  # one solve per seed would outgrow the per-seed fallback
-  return stack([sparse_ldl_solve(args[0], d[1][k], dict(expr.attrs)) for k in range(nseed)], axis=0)
-
-
-def _jvp_many_ragged_add_ragged_dot(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
-  args = expr.args
-  d = [tan(arg) for arg in args]
-  if nseed > 64:
-    raise _JVPManyUnsupported(str(expr.op))  # one tangent op per seed would outgrow the per-seed fallback
-  rows = [ragged_tangent(expr, [None if _is_zero_const(t) else t[k] for t in d]) for k in range(nseed)]
-  return stack(rows, axis=0)
-
-
 def _jvp_many_take(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
   # the seed axis leads and ``take`` indexes the last one
   args = expr.args
@@ -1859,12 +1639,12 @@ def _jvp_many_matmul(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Exp
   if args[0] is args[1] and len(args[0].shape) == 1:
     return 2 * (d[0] @ args[0])
   ret: Expr | None = None
-  if not _is_zero_const(d[0]):
+  if not is_zero_const(d[0]):
     ret = _jvp_many_matmul_left(args[0], args[1], d[0], nseed)
-  if not _is_zero_const(d[1]):
+  if not is_zero_const(d[1]):
     term = _jvp_many_matmul_right(args[0], args[1], d[1], nseed)
     ret = term if ret is None else ret + term
-  return _zeros_many(expr, nseed) if ret is None else ret
+  return zeros_many(expr, nseed) if ret is None else ret
 
 
 _JVP_MANY_RULES = {
@@ -1894,14 +1674,6 @@ _JVP_MANY_RULES = {
   ExprOp.ERF: _jvp_many_erf,
   ExprOp.COSH: _jvp_many_cosh,
   ExprOp.SINH: _jvp_many_sinh,
-  ExprOp.CHOLESKY: _jvp_many_cholesky_ldl_trisolve,
-  ExprOp.LDL: _jvp_many_cholesky_ldl_trisolve,
-  ExprOp.TRISOLVE: _jvp_many_cholesky_ldl_trisolve,
-  ExprOp.SPARSE_LDL: _jvp_many_sparse_ldl,
-  ExprOp.LU: _jvp_many_lu,
-  ExprOp.SPARSE_LDL_SOLVE: _jvp_many_sparse_ldl_solve,
-  ExprOp.RAGGED_ADD: _jvp_many_ragged_add_ragged_dot,
-  ExprOp.RAGGED_DOT: _jvp_many_ragged_add_ragged_dot,
   ExprOp.TAKE: _jvp_many_take,
   ExprOp.PUT_ADD: _jvp_many_put_add_put,
   ExprOp.PUT: _jvp_many_put_add_put,
@@ -1911,14 +1683,14 @@ _JVP_MANY_RULES = {
 
 def _jvp_many_unsupported(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
   """A builtin with no multi-seed rule: the whole ``jvp_many`` falls back to one ``jvp`` per seed."""
-  raise _JVPManyUnsupported(str(expr.op))
+  raise JVPManyUnsupported(str(expr.op))
 
 
 def _jvp_many_per_seed(expr: Expr, tan: Callable[[Expr], Expr], nseed: int) -> Expr:
   """The default for an op with a tangent rule and no multi-seed one: the rule once per seed, stacked."""
   rule = op_def(expr.op).jvp
   if rule is None:
-    raise _JVPManyUnsupported(str(expr.op))
+    raise JVPManyUnsupported(str(expr.op))
   d = [tan(arg) for arg in expr.args]
   return stack([rule(expr, [t[k] for t in d]) for k in range(nseed)], axis=0)
 
@@ -1931,7 +1703,7 @@ for _op in ExprOp:
     define_rules(_op, jvp_many=_jvp_many_unsupported)
 
 
-def _zeros_many(expr: Expr, nseed: int) -> Expr:
+def zeros_many(expr: Expr, nseed: int) -> Expr:
   """``nseed`` zero tangents of ``expr``, of its tangent dtype."""
   return Expr.const(np.zeros((nseed, *expr.shape)), dtype=tangent_dtype(expr))
 

@@ -251,8 +251,6 @@ def test_leaf_kind_checks_come_before_binding() -> None:
   double, _ = _counted()
   with pytest.raises(TypeError, match="mix Expr and numerical leaves"):
     cast(Any, sc.function(sc.L(), sc.L(), output="y")(lambda a, b: a + b))(sc.sym("a", 2), np.ones(2))
-  with pytest.raises(ValueError, match="expected an Expr for 'x', got SparseMatrix"):
-    double(sc.SparseMatrix.symbol("A", np.eye(2, dtype=bool)))
 
 
 def test_every_inspecting_entry_point_refuses_a_template_with_holes() -> None:

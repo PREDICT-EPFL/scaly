@@ -156,7 +156,7 @@ class SymbolicLDL:
     return self._lane_tables()["u_k"]
 
   def chunks(self, max_width: int = 8) -> dict[str, np.ndarray]:
-    """The left-looking updates of each column in chunks, as ``ir.expr.sparse_ldl_factor`` reads them.
+    """The left-looking updates of each column in chunks, as ``linalg.ops.sparse_ldl_factor`` reads them.
 
     A chunk is up to ``max_width`` consecutive entries of row ``j``'s list (``r_cols``, ``r_pos``)
     whose columns have the same rows from ``j`` down, as the columns of a supernode do; one pass
@@ -190,7 +190,7 @@ class SymbolicLDL:
     return {k: self._lanes[f"{k}{max_width}"] for k in ("ck_ptr", "ck_q", "ck_width", "ck_len")}
 
   def solve_chunks(self, max_width: int = 8) -> dict[str, np.ndarray]:
-    """The columns in chunks for the forward sweep, as ``ir.expr.sparse_ldl_solve`` reads them:
+    """The columns in chunks for the forward sweep, as ``linalg.ops.sparse_ldl_solve`` reads them:
     runs of up to ``max_width`` consecutive columns, each column's rows the next column followed by
     the next column's rows (the columns of a fundamental supernode), with their first column
     ``sn_first`` and ``sn_width``."""

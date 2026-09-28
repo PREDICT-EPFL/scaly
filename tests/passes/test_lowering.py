@@ -587,18 +587,16 @@ def test_two_different_functions_with_one_name_are_refused() -> None:
   np.testing.assert_array_equal(y, z)
 
 
-@pytest.mark.parametrize("name", ["k0", "k1", "k2", "k3", "t0", "t2", "t5"])
+@pytest.mark.parametrize("name", ["k0", "k2", "k3", "t0", "t8", "t9"])
 def test_input_names_that_look_generated(name: str) -> None:
   """Generated buffers (``t<n>``, constant tables ``k<n>``) share a namespace with the inputs: a
-  generated name never takes an input's."""
-  from scaly.ir.expr import ragged_add
-
+  generated name never takes an input's. The gather's index is a table, and the second update's
+  base a temporary; the names are the ones this graph generates."""
   x, idx = sc.sym("x", 5), sc.sym(name, 1, dtype="int64")
-  lo, hi = sc.const(np.array([0]), dtype="int64"), sc.const(np.array([3]), dtype="int64")
-  y = sc.put_add(ragged_add(x, x * 1.0, lo, hi, sc.const([2.0]), dst_map=np.array([4, 3, 2])), idx, sc.const([10.0]))
-  fn = sc.Function.from_exprs(f"gen_name_{name}", [x, idx], [y], ["x", name], ["o"])
+  y = sc.put_add(sc.gather(x, [4, 0, 3, 1, 2]) * 2.0, idx, sc.const([10.0]))
+  fn = sc.Function.from_exprs(f"gen_name_{name}", [x, idx], [sc.put_add(y, idx, y[::-1][:1])], ["x", name], ["o"])
   (got,) = fn._flat_numerical_call(np.arange(5.0), np.array([0]))
-  np.testing.assert_array_equal(got, [10.0, 1.0, 6.0, 5.0, 4.0])
+  np.testing.assert_array_equal(got, [22.0, 0.0, 6.0, 2.0, 4.0])
 
 
 def test_hoisting_keeps_a_loop_count_with_its_loop() -> None:

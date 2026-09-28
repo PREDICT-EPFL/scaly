@@ -17,7 +17,7 @@ from scaly.ad import finite_difference
 from scaly.ad.derivatives import gradient, hessian, jacobian
 from scaly.ad.forward import jvp
 from scaly.codegen import render_c_module
-from scaly.ir.expr import SPARSE_LDL_MAX_WIDTH
+from scaly.linalg.ops import SPARSE_LDL_MAX_WIDTH
 from scaly.linalg import SparseLDL, SparseMatrix, sparse_ldl
 from scaly.linalg.sparse_factor import Schedule, _call
 from scaly.linalg.symbolic import Ordering
@@ -629,7 +629,7 @@ def test_loop_factor_sparsity_is_the_elimination_subtree() -> None:
 
 
 def test_sparse_ldl_factor_validates_its_tables() -> None:
-  from scaly.ir.expr import sparse_ldl_factor
+  from scaly.linalg.ops import sparse_ldl_factor
 
   fact = SparseLDL(SparseMatrix.symbol("K", _triangle(MATRICES["kkt"](), "lower")), schedule="loop")
   tables = fact.tables()
@@ -732,7 +732,7 @@ def test_the_looped_solve_is_linear_in_the_right_hand_side() -> None:
 
 
 def test_sparse_ldl_solve_validates_its_tables() -> None:
-  from scaly.ir.expr import sparse_ldl_solve
+  from scaly.linalg.ops import sparse_ldl_solve
 
   fact = SparseLDL(SparseMatrix.symbol("K", _triangle(MATRICES["kkt"](), "lower")), schedule="loop")
   tables = fact.solve_tables()

@@ -23,7 +23,9 @@ from scaly.ir.expr_spec import verify_expr
 from scaly.ir.spec import VerifyError
 from scaly.ir.types import TensorType, dtypes
 from scaly.linalg import cho_solve, cholesky, ldl, ldl_solve, ldl_unpack, lu, lu_solve, solve, solve_triangular
-from scaly.passes.lowering import CHOLESKY_TILE, DENSE_UNROLL
+from scaly.linalg.ops import CHOLESKY_TILE, DENSE_UNROLL
+from scaly.linalg.ops.dense import CHOLESKY, LDL
+from scaly.linalg.ops.trisolve import TRISOLVE
 
 FLAGS = [(lower, trans, unit) for lower in (True, False) for trans in (False, True) for unit in (False, True)]
 # One below, at and one above the default unrolling threshold and the tile side, and past two tiles.
@@ -492,11 +494,11 @@ def test_verify_rejects_malformed_dense_nodes() -> None:
   a, b = sc.sym("a", (3, 3)), sc.sym("b", 3)
   flags = {"lower": True, "trans": False, "unit": False}
   bad = [
-    (Expr(ExprOp.CHOLESKY, (a,), TensorType((3, 4))), "needs a square matrix and keeps its shape"),
-    (Expr(ExprOp.LDL, (sc.sym("r", (3, 4)),), TensorType((3, 4))), "needs a square matrix and keeps its shape"),
-    (Expr(ExprOp.TRISOLVE, (a, b), TensorType((3,)), attrs={"lower": True, "trans": False}), "needs 'lower', 'trans' and 'unit' attrs"),
-    (Expr(ExprOp.TRISOLVE, (a, sc.sym("b4", 4)), TensorType((4,)), attrs=flags), "is inconsistent"),
-    (Expr(ExprOp.TRISOLVE, (a, b), TensorType((3, 1)), attrs=flags), "is inconsistent"),
+    (Expr(CHOLESKY, (a,), TensorType((3, 4))), "needs a square matrix and keeps its shape"),
+    (Expr(LDL, (sc.sym("r", (3, 4)),), TensorType((3, 4))), "needs a square matrix and keeps its shape"),
+    (Expr(TRISOLVE, (a, b), TensorType((3,)), attrs={"lower": True, "trans": False}), "needs 'lower', 'trans' and 'unit' attrs"),
+    (Expr(TRISOLVE, (a, sc.sym("b4", 4)), TensorType((4,)), attrs=flags), "is inconsistent"),
+    (Expr(TRISOLVE, (a, b), TensorType((3, 1)), attrs=flags), "is inconsistent"),
   ]
   for expr, match in bad:
     with pytest.raises(VerifyError, match=match):
@@ -511,7 +513,7 @@ def _trisolve_unroll_flags(expr: Expr) -> set[bool]:
     if e.id in seen:
       continue
     seen.add(e.id)
-    if e.op == ExprOp.TRISOLVE:
+    if e.op == TRISOLVE:
       flags.add(bool(e.attrs["unroll"]))
     if e.op == ExprOp.CALL:
       stack.extend(e.attrs["callee"].outputs)
@@ -634,7 +636,7 @@ def test_derivatives_read_the_lower_triangle_of_the_direction_as_a_symmetric_mat
   weights = [rng.standard_normal(op.shape) for op in ops]
   outs = []
   for op, w in zip(ops, weights, strict=True):
-    wrt = a if op.op != ExprOp.TRISOLVE else tt
+    wrt = a if op.op != TRISOLVE else tt
     outs += [jvp(op, wrt, sc.const(d)), jvp(op, wrt, sc.const(np.tril(d))), jvp(op, wrt, sc.const(sym_d)), gradient((op * sc.const(w)).sum(), wrt)]
   got = _fn(f"de_convention{n}", [a, tt, b], outs)._flat_numerical_call(s, t, bv)
   keys = [(True, False)] * 2 + [(lower, unit) for lower, _, unit in FLAGS]

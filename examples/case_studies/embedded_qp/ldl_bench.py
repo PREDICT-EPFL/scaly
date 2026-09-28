@@ -178,7 +178,7 @@ def run_scaly(k_up: sparse.csc_array, perm: np.ndarray | None, work: Path, sched
   t0 = time.perf_counter()
   sym = analyze(k_up.shape, np.asarray(rows), np.asarray(cols), "auto", perm=perm)
 
-  @sc.function(sc.S(pattern.toarray() != 0), name="kkt_ldl")
+  @sc.function(sc.linalg.S(pattern.toarray() != 0), name="kkt_ldl")
   def factor(k):
     return SparseLDL(k, symbolic=sym, schedule=schedule, name="kkt").values
 

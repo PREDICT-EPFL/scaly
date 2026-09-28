@@ -1,3 +1,4 @@
+import importlib.abc
 import os
 import sys
 from pathlib import Path
@@ -5,6 +6,24 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+
+class _BlockedImports(importlib.abc.MetaPathFinder):
+  """``SCALY_BLOCK_IMPORTS=scaly.linalg pytest tests/ir ...`` runs tests as if the named packages
+  were not installed: importing one, or anything under it, raises ``ModuleNotFoundError`` the way a
+  missing distribution does. It is installed before anything imports ``scaly``."""
+
+  def __init__(self, names: list[str]) -> None:
+    self.names = names
+
+  def find_spec(self, fullname, path, target=None):
+    if any(fullname == name or fullname.startswith(f"{name}.") for name in self.names):
+      raise ModuleNotFoundError(f"No module named {fullname!r} (SCALY_BLOCK_IMPORTS)", name=fullname)
+    return None
+
+
+if _blocked := [name for name in os.environ.get("SCALY_BLOCK_IMPORTS", "").split(",") if name]:
+  sys.meta_path.insert(0, _BlockedImports(_blocked))
 
 NODEID_BASELINE = Path(__file__).resolve().parent / "tests" / "baseline" / "pytest_nodeids.txt"
 _XDIST_NODEID_CHECKED = False

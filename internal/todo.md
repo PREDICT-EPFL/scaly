@@ -326,7 +326,7 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 - **API-7. Specialized OCP problem/solver tier** in scaly (structured staged OCP lowering to general
   form), then **fatrop** as its consumer plus a casadi-fatrop baseline. osqp / proxqp / acados as
   claims demand.
-- **API-77. Sparse pattern holes on template inputs** (the templates plan's deferred P5): `sc.S()`
+- **API-77. Sparse pattern holes on template inputs** (the templates plan's deferred P5): `sc.linalg.S()`
   with no pattern, bound from a `SparseMatrix` or SciPy argument, with the `p{hex}` instance token
   bare templates already use for `SparseMatrix` arguments. No test, example or benchmark needs one
   yet. Plan: `notes/function_templates_plan_2026_09_27.md` §5 (P5).

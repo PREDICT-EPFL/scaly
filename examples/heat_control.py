@@ -13,9 +13,9 @@ sparse symmetric positive definite solve per step with the same matrix.
 
 The work is split in two generated ``Function``s that pass a sparse matrix between them:
 
-- ``system(kappa)`` assembles ``K = I + dt L(kappa)`` and returns it as ``sc.S("K", ...)``: a
+- ``system(kappa)`` assembles ``K = I + dt L(kappa)`` and returns it as ``sc.linalg.S("K", ...)``: a
   ``SparseMatrix`` in a symbolic call, a SciPy matrix in an evaluation.
-- ``simulate(K, U)`` declares its input ``sc.S(pattern)``, so only a matrix with exactly that
+- ``simulate(K, U)`` declares its input ``sc.linalg.S(pattern)``, so only a matrix with exactly that
   pattern is accepted. It factors ``K`` once with the generated sparse ``L D L^T`` and solves once per
   step.
 
@@ -75,7 +75,7 @@ def assemble(kappa: sc.Expr) -> linalg.SparseMatrix:
   return linalg.SparseMatrix.from_coo(rows, cols, sc.concat([diagonal, -k_face]), (NODES, NODES))
 
 
-@sc.function(NODES, output=sc.S("K", ...))
+@sc.function(NODES, output=sc.linalg.S("K", ...))
 def system(kappa: sc.Expr) -> linalg.SparseMatrix:
   return assemble(kappa)
 
@@ -83,7 +83,7 @@ def system(kappa: sc.Expr) -> linalg.SparseMatrix:
 K_PATTERN = system.output_sparsities[0]
 
 
-@sc.function(sc.S(K_PATTERN), (STEPS, N_HEATERS), output="T_final")
+@sc.function(sc.linalg.S(K_PATTERN), (STEPS, N_HEATERS), output="T_final")
 def simulate(K: linalg.SparseMatrix, U: sc.Expr) -> sc.Expr:
   fact = linalg.SparseLDL(K, name="heat")
   b = sc.const(HEATERS * DT)

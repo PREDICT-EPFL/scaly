@@ -27,11 +27,7 @@ from ..ir.expr import (
   op_def,
   put,
   put_add,
-  ragged_add,
-  ragged_dot,
   scatter,
-  solve_triangular,
-  sparse_ldl_solve,
   stack,
   take,
   topo,
@@ -41,11 +37,8 @@ from ..ir.expr import (
 from ..passes.expr import simplify_cse_fixpoint
 from ..utils.options import get_options
 from .forward import (
-  LU_NO_DERIVATIVE,
-  SPARSE_LDL_NO_DERIVATIVE,
-  _is_zero_const,
+  is_zero_const,
   _minus_one,
-  _tri_mask,
   claim_name,
   custom_vjp_call,
   extern_no_derivative,
@@ -89,7 +82,7 @@ def _vmap_adj_function(callee: Any, output_index: int, active_formals: tuple[int
     lam_name = claim_name(f"lam:{callee.output_names[output_index]}", taken)
     lam = Expr.sym(lam_name, out.shape, dtype=tangent_dtype(out))
     grads = body_cotangents(callee, {output_index: lam}, active_formals)
-    zero = frozenset(k for k, grad in zip(active_formals, grads, strict=True) if _is_zero_const(simplify_cse_fixpoint(grad)))
+    zero = frozenset(k for k, grad in zip(active_formals, grads, strict=True) if is_zero_const(simplify_cse_fixpoint(grad)))
     adj = callee._inherit_lowering(simplify_cse_fixpoint(concat([grad.reshape((grad.size,)) for grad in grads])))
     dep_memo: dict[tuple[int, int], bool] = {}
     arg_indices = tuple(i for i, inp in enumerate(callee.inputs) if _depends_on(adj, inp, dep_memo))
@@ -381,6 +374,20 @@ def body_cotangents(fn: Any, cots: dict[int, Expr], wrt: tuple[int, ...]) -> tup
   return vjp(outs, tuple(fn.inputs[i] for i in wrt), tuple(cots.values()))
 
 
+class NoAdjoint:
+  """What a ``vjp`` rule gives for an argument it has no cotangent rule for: reverse mode raises
+  ``NotImplementedError(reason)`` when that argument depends on what is being differentiated, and
+  otherwise passes it by, so an op can be linear in one argument and refuse the other."""
+
+  __slots__ = ("reason",)
+
+  def __init__(self, reason: str) -> None:
+    self.reason = reason
+
+
+type Adjoint = Expr | NoAdjoint
+
+
 def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr]) -> tuple[Expr, ...]:
   """Reverse-mode derivative: one adjoint per entry of ``wrts``, seeded by ``cotangents``.
 
@@ -408,7 +415,7 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
   def accumulate(arg: Expr, arg_cot: Expr) -> None:
     # A constant zero contributes nothing, and leaving it out keeps reverse mode from walking back
     # through whatever produced ``arg`` (a factorization an implicit rule does not differentiate).
-    if arg.id in expr_ids and not _is_zero_const(arg_cot):
+    if arg.id in expr_ids and not is_zero_const(arg_cot):
       adjoints[arg.id] = arg_cot if arg.id not in adjoints else adjoints[arg.id] + arg_cot
 
   # The output nodes of one call or scan are differentiated together, when the last of them is
@@ -442,13 +449,11 @@ def vjp(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence[Expr
       for arg, arg_cot in pairs:
         accumulate(arg, arg_cot)
       continue
-    if expr.op == ExprOp.SPARSE_LDL_SOLVE:
-      # K is symmetric: b's cotangent is one more solve. The factor's is not implemented.
-      if any(_depends_on(expr.args[0], wrt, dep_memo) for wrt in wrts):
-        raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
-      accumulate(expr.args[1], sparse_ldl_solve(expr.args[0], cot, dict(expr.attrs)))
-      continue
     for arg, arg_cot in zip(expr.args, _masked_local_vjp(expr, cot), strict=True):
+      if isinstance(arg_cot, NoAdjoint):
+        if needed(arg):
+          raise NotImplementedError(arg_cot.reason)
+        continue
       accumulate(arg, arg_cot)
 
   return tuple(adjoints.get(wrt.id, zeros_like(wrt)) for wrt in wrts)
@@ -468,9 +473,9 @@ def _masked(cot: Expr) -> tuple[Expr, Expr, bool] | None:
   if cot.op != ExprOp.SELECT:
     return None
   cond, a, b = cot.args
-  if _is_zero_const(b) and a.shape == cot.shape:
+  if is_zero_const(b) and a.shape == cot.shape:
     return cond, a, True
-  if _is_zero_const(a) and b.shape == cot.shape:
+  if is_zero_const(a) and b.shape == cot.shape:
     return cond, b, False
   return None
 
@@ -488,12 +493,15 @@ def _sum_terms(cot: Expr) -> list[Expr]:
   return terms
 
 
-def _sum_adjoints(bars: Sequence[Expr]) -> Expr:
-  live = [bar for bar in bars if not _is_zero_const(bar)]
+def _sum_adjoints(bars: Sequence[Adjoint]) -> Adjoint:
+  missing = [bar for bar in bars if isinstance(bar, NoAdjoint)]
+  if missing:
+    return missing[0]
+  live = [bar for bar in bars if isinstance(bar, Expr) and not is_zero_const(bar)]
   return _sum_exprs(live) if live else bars[0]
 
 
-def _masked_local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+def _masked_local_vjp(expr: Expr, cot: Expr) -> tuple[Adjoint, ...]:
   """``_local_vjp``, keeping a masked cotangent masked through an elementwise op:
   ``where(c, t, 0) * f'(x)`` becomes ``where(c, t * f'(x), 0)``. An entry the ``where`` did not
   choose then stays zero even where ``f'`` is infinite or NaN (``sqrt``, ``log`` or ``1 / x`` at 0),
@@ -512,13 +520,13 @@ def _masked_local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return _local_vjp(expr, cot)
   cond, inner, chosen = masked
   inner_bars = _masked_local_vjp(expr, inner)
-  plain: tuple[Expr, ...] | None = None
-  bars: list[Expr] = []
+  plain: tuple[Adjoint, ...] | None = None
+  bars: list[Adjoint] = []
   for i, (arg, bar) in enumerate(zip(expr.args, inner_bars, strict=True)):
     if arg.shape != expr.shape:
       plain = _local_vjp(expr, cot) if plain is None else plain
       bars.append(plain[i])
-    elif _is_zero_const(bar):
+    elif isinstance(bar, NoAdjoint) or is_zero_const(bar):
       bars.append(bar)
     else:
       bars.append(where(cond, bar, 0.0) if chosen else where(cond, 0.0, bar))
@@ -549,38 +557,15 @@ def vjp_many(outputs: Sequence[Expr], wrts: Sequence[Expr], cotangents: Sequence
   return tuple(stack([seed_grads[i] for seed_grads in per_seed], axis=0) for i in range(len(wrts)))
 
 
-def _factor_cotangent(expr: Expr, cot: Expr) -> Expr:
-  """The cotangent of the matrix under ``cholesky`` or ``ldl`` (which read its lower triangle).
-
-  With ``G = L^{-T} P L^{-1}``, the cotangent is ``tril(G) + stril(G^T)``, where
-  ``P = Phi(L^T Lbar)`` (``tril`` with the diagonal halved) for ``L L^T``, and for ``L D L^T``
-  ``P = stril(L^T stril(Fbar) D^{-1}) + diag(Fbar)`` with the unit ``L`` of the packed factor."""
-  n = expr.shape[0]
-  tril, stril, eye = np.tril(np.ones((n, n))), np.tril(np.ones((n, n)), -1), np.eye(n)
-  if expr.op == ExprOp.CHOLESKY:
-    phi = tril.copy()
-    np.fill_diagonal(phi, 0.5)
-    inner, unit = (expr.T @ cot) * Expr.const(phi), False
-  else:
-    unit_l = expr * Expr.const(stril) + Expr.const(eye)
-    inv_d = 1.0 / gather(expr.reshape((n * n,)), np.arange(n) * (n + 1))
-    inner = (unit_l.T @ ((cot * Expr.const(stril)) * inv_d.reshape((1, n)))) * Expr.const(stril) + cot * Expr.const(eye)
-    unit = True
-  unroll = bool(expr.attrs["unroll"])
-  w = solve_triangular(expr, inner, lower=True, trans=True, unit_diagonal=unit, unroll=unroll)
-  g = solve_triangular(expr, w.T, lower=True, trans=True, unit_diagonal=unit, unroll=unroll).T
-  return g * Expr.const(tril) + (g * Expr.const(stril.T)).T
-
-
-def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
+def _local_vjp(expr: Expr, cot: Expr) -> tuple[Adjoint, ...]:
   rule = op_def(expr.op).vjp
   if rule is None:
     raise NotImplementedError(f"VJP for op {expr.op!r} is not implemented")
   return rule(expr, cot)
 
 
-# The adjoint rules of the builtin ops, each ``(expr, cot) -> one cotangent per argument``
-# (``OpDef.vjp``).
+# The adjoint rules of the builtin ops, each ``(expr, cot) -> one cotangent per argument``, or a
+# ``NoAdjoint`` for one it cannot give (``OpDef.vjp``).
 
 
 def _vjp_neg(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
@@ -719,46 +704,6 @@ def _vjp_index_set(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   return (index_set(cot, expr.attrs["indices"], np.zeros(args[1].size)), gather(cot, expr.attrs["indices"]))
 
 
-def _vjp_trisolve(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
-  args = expr.args
-  t, b = args
-  lower, trans, unit = (bool(expr.attrs[k]) for k in ("lower", "trans", "unit"))
-  b_bar = solve_triangular(t, cot, lower=lower, trans=not trans, unit_diagonal=unit, unroll=bool(expr.attrs["unroll"]))
-  x2, bb2 = (expr.reshape((expr.size, 1)), b_bar.reshape((b_bar.size, 1))) if len(expr.shape) == 1 else (expr, b_bar)
-  outer = x2 @ bb2.T if trans else bb2 @ x2.T
-  return (-(outer * _tri_mask(t.shape[0], lower, unit)), b_bar)
-
-
-def _vjp_cholesky_ldl(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
-  return (_factor_cotangent(expr, cot),)
-
-
-def _vjp_sparse_ldl(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
-  raise NotImplementedError(SPARSE_LDL_NO_DERIVATIVE)
-
-
-def _vjp_lu(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
-  raise NotImplementedError(LU_NO_DERIVATIVE)
-
-
-def _vjp_ragged_add(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
-  args = expr.args
-  base, src, lo, hi, scale = args
-  dmap, smap = expr.attrs["dst_map"], expr.attrs["src_map"]
-  src_bar = ragged_add(zeros_like(src), cot, lo, hi, scale, dst_map=smap, src_map=dmap)
-  scale_bar = ragged_dot(src, cot, lo, hi, a_map=smap, b_map=dmap)
-  return (cot, src_bar, zeros_like(lo), zeros_like(hi), scale_bar)
-
-
-def _vjp_ragged_dot(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
-  args = expr.args
-  a, b, lo, hi = args
-  amap, bmap = expr.attrs["a_map"], expr.attrs["b_map"]
-  a_bar = ragged_add(zeros_like(a), b, lo, hi, cot, dst_map=amap, src_map=bmap)
-  b_bar = ragged_add(zeros_like(b), a, lo, hi, cot, dst_map=bmap, src_map=amap)
-  return (a_bar, b_bar, zeros_like(lo), zeros_like(hi))
-
-
 def _vjp_take_put_add_put(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
   args = expr.args
   ok = bool(expr.attrs.get("in_range"))
@@ -878,13 +823,6 @@ _VJP_RULES = {
   ExprOp.SEGMENT_MIN: _vjp_segment_max_segment_min,
   ExprOp.INDEX_ADD: _vjp_index_add,
   ExprOp.INDEX_SET: _vjp_index_set,
-  ExprOp.TRISOLVE: _vjp_trisolve,
-  ExprOp.CHOLESKY: _vjp_cholesky_ldl,
-  ExprOp.LDL: _vjp_cholesky_ldl,
-  ExprOp.SPARSE_LDL: _vjp_sparse_ldl,
-  ExprOp.LU: _vjp_lu,
-  ExprOp.RAGGED_ADD: _vjp_ragged_add,
-  ExprOp.RAGGED_DOT: _vjp_ragged_dot,
   ExprOp.TAKE: _vjp_take_put_add_put,
   ExprOp.PUT_ADD: _vjp_take_put_add_put,
   ExprOp.PUT: _vjp_take_put_add_put,

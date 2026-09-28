@@ -9,15 +9,16 @@ import pytest
 import scipy.linalg as sl
 
 import scaly as sc
-from scaly.ad.forward import LU_NO_DERIVATIVE, jvp
+from scaly.ad.forward import jvp
 from scaly.ad.sparsity import jacobian_sparsity
 from scaly.codegen import render_c_module
-from scaly.ir.expr import Expr, ExprOp
+from scaly.ir.expr import Expr
 from scaly.ir.expr_spec import verify_expr
 from scaly.ir.spec import VerifyError
 from scaly.ir.types import TensorType
 from scaly.linalg import lu, lu_solve, solve
-from scaly.passes.lowering import DENSE_UNROLL
+from scaly.linalg.ops import DENSE_UNROLL, LU_NO_DERIVATIVE
+from scaly.linalg.ops.dense import LU
 
 RNG = np.random.default_rng(707)
 SIZES = [1, 2, 3, DENSE_UNROLL, DENSE_UNROLL + 1, 13, 24, 40]
@@ -203,7 +204,7 @@ def test_validation() -> None:
   with pytest.raises(ValueError, match="'pos', 'sym' or 'gen'"):
     solve(sc.sym("a", (2, 2)), sc.sym("b", 2), assume="lu")  # ty: ignore[invalid-argument-type]
   a = sc.sym("a", (3, 3))
-  bad = Expr(ExprOp.LU, (a,), TensorType((3, 3)))
+  bad = Expr(LU, (a,), TensorType((3, 3)))
   with pytest.raises(VerifyError, match="lu needs a square matrix"):
     verify_expr([bad])
   assert sc.linalg.lu is lu and sc.linalg.lu_solve is lu_solve
