@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case Study E5 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+h3{font-size:16px;margin:22px 0 6px}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Case study E5 · Differentiable MPC in a learning loop (DiffMPC)</h1>
+<p class="sub">Plan <code>case_studies_plan_2026_09_27.html</code>, E5 · branch <code>claude/case-studies</code> · 27 Sep 2026 · code in <code>examples/case_studies/diffmpc/</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> DiffMPC's CPU benchmark (Table 3), run with the authors' own scripts for mpc.pytorch, DiffMPC and trajax, against Scaly generating the whole episode and its gradient as one C function.</p>
+<ul>
+<li><b>Six problems, one thread each.</b> Batches of 16 to 256 run 50-step episodes. At every step each batch element solves an LQ MPC problem (8 or 16 states), and the gradient is taken with respect to the MPC's state weights.</li>
+<li><b>nx = 8 (Problems 1–4): 9.9 to 12.1× faster forward, 5.0 to 5.6× faster gradient</b> than the fastest baseline. That is the plan's 5× criterion, met, barely at Problem 4's gradient.</li>
+<li><b>nx = 16 (Problems 5, 6): 4.0 to 4.2× forward, 2.1 to 2.2× gradient.</b> The criterion is <span class="bad">not met</span>. Once arithmetic dominates, XLA's operations across the batch win against Scaly's element-by-element <code>vmap</code> (CS-9).</li>
+<li><b>The benchmark's gradients differ.</b> mpc.pytorch returns the episode cost's gradient: it agrees with Scaly's to 1e-12. DiffMPC and trajax drop <code>du<sub>0</sub>/dx<sub>0</sub></code>. Their "gradient" is 50 to 200× the true one, with different signs, and descends less than a fifth as far.
+<ul>
+<li>Scaly reproduces trajax's to 1e-12 and DiffMPC's to 2e-5, which is DiffMPC's own accuracy.</li>
+<li>The paper compares backward times for different quantities.</li>
+</ul></li>
+<li><b>Scaly hoists the benchmark's MPC.</b> As written, the Riccati recursion depends only on broadcast data. Scaly's <code>scan</code> lifts it out of the episode, and the forward pass drops to 0.19 ms.
+<ul>
+<li>That is a correct compilation, but it doesn't measure solving.</li>
+<li>The comparison uses a per-solve variant that makes every element solve every step, as the baselines do.</li>
+</ul></li>
+<li><b>The implicit rule (L5) works through the existing API.</b> <code>sc.custom_derivative</code> takes the LQ problem's adjoint as the MPC's reverse rule.
+<ul>
+<li>It matches AD for all six inputs to 1e-15.</li>
+<li>It is 1.3 to 1.4× faster than AD through the recursion.</li>
+<li>No change to <code>src/</code> was needed; the plan expected a new public API.</li>
+</ul></li>
+</ul>
+<p style="margin-bottom:0"><b>Against the plan's success criteria:</b>
+"both forward and backward at least 5× faster than the best CPU baseline at every batch size" is <span class="ok">met at nx = 8</span> and <span class="bad">not met at nx = 16</span>.
+"Identical learning curves" is <span class="warn">met in pairs</span>. Scaly equals mpc.pytorch (to 3e-14) and, with the truncated rule, DiffMPC (to 2e-9). The two pairs differ from each other, because the baselines disagree on what the gradient is.</p>
+</div>
+
+<h2>1. The benchmark and the reproduction</h2>
+<ul>
+<li><b>Upstream.</b>
+<ul>
+<li>ToyotaResearchInstitute/diffmpc at <code>146be51</code> (2025-10-07): <code>benchmarking/reinforcement-learning/benchmark_{mpcpytorch,diffmpc,trajax}.py</code>.</li>
+<li>Its mpc.pytorch fork at <code>b78ae88</code>, which adds a batched LU.</li>
+<li>google/trajax at <code>c94a637</code>, the commit DiffMPC's trajax environment pins.</li>
+</ul></li>
+<li><b>Environments.</b> Python 3.13. PyTorch 2.14 with NumPy &lt; 2 (mpc.pytorch's requirement). JAX 0.5.3, which is new enough for DiffMPC's <code>jnp.matvec</code> and old enough for trajax's <code>jax.tree_map</code>. Theseus ships only manylinux x86_64 wheels and was not run.</li>
+<li><b>Changes to the scripts, all in <code>run_baselines.py</code>.</b> The upstream checkouts stay pristine.
+<ul>
+<li>The problem's dimensions go into <code>utils.py</code>.</li>
+<li>Five seeds instead of ten.</li>
+<li>Each script saves its timed gradient.</li>
+<li>trajax's <code>.device()</code> becomes <code>.devices()</code> (removed in JAX 0.4.27).</li>
+</ul></li>
+<li><b>The problems</b> are the paper's Table 2 (Table 3 times all six). The paper states that "all methods compute gradients via implicit differentiation"; section 3.1 shows they don't compute the same one.
+<ul>
+<li>All six are unconstrained, with zero references, so one solver iteration is exact.</li>
+<li>trajax's script poses one more stage than the others: its <code>U</code> has <code>T</code> rows.</li>
+</ul></li>
+<li><b>Three facts about the benchmark</b>, none of them visible in the paper:
+<ul>
+<li>"Backward" is a full <code>grad</code> call, so it includes a forward pass.</li>
+<li>The JAX scripts recompile for every seed, because the matrices are closure constants.</li>
+<li>With <code>R = I</code> the MPC's objective is the episode's own cost, and 40 knots are close to an infinite horizon. So <code>Q = I</code> is nearly optimal and the true gradient there is 4e-5 of the cost: there is nothing to learn from where the benchmark starts.</li>
+</ul></li>
+<li><b>Paper numbers are context only.</b> Table 3's CPU column is a 64-core Threadripper with no thread settings. Here, Problem 1 on one M3 Max core: DiffMPC 0.52 / 1.06 s against the paper's 1.33 / 2.70 s; trajax 0.44 / 0.88 against 0.93 / 1.90. For scale only: the paper's DiffMPC on an RTX 3090 takes 0.22 / 0.32 s for Problem 1, and Scaly's generated C takes 0.039 / 0.161 s on one CPU core.</li>
+</ul>
+
+<h2>2. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>What it does</th></tr>
+<tr><td><code>scaly_impl.py</code></td><td>The benchmark's data, drawn with the same generator calls. The MPC is a Riccati <code>scan</code> with <code>Q_uu</code> factored by the generated Cholesky, returning <code>u<sub>0</sub> = K<sub>0</sub>x<sub>0</sub> + k<sub>0</sub></code>.
+<ul>
+<li><code>implicit_rule</code>: the LQ problem's reverse derivative by the implicit-function theorem. The adjoint problem has the same Riccati gains and one linear term, so the rule is a <code>scan</code> over the recursion's stacked gains, read backwards, rolling out the solution and its adjoint and summing products for every input's cotangent. <code>R</code>'s cotangent sits on the lower triangle, the one the generated Cholesky reads.</li>
+<li>The episode <code>vmap</code>s the MPC over the batch inside a <code>scan</code> over the 50 steps, in two variants: <code>hoist=True</code> (the benchmark's code) and per solve (each element carries its weights).</li>
+<li><code>learning_curve</code>: projected, normalized descent on the weights.</li>
+</ul></td></tr>
+<tr><td><code>baseline/</code></td><td><code>setup.sh</code> pins the three checkouts. <code>run_baselines.py</code> runs each script in a fresh process, on one thread or with default thread pools, behind the quiet-machine gate. <code>learning_curve.py</code> runs mpc.pytorch's and DiffMPC's rollouts under the same descent.</td></tr>
+<tr><td><code>run_scaly.py</code>, <code>compare.py</code>, <code>learning_curves.py</code></td><td>The same protocol on Scaly's side, one fresh process per problem; the grid and the gradient cross-checks; the four learning curves.</td></tr>
+<tr><td><code>diffmpc.ipynb</code></td><td>The study as a notebook. It checks the MPC against a dense KKT solve and the rule against AD, shows the hoisting in the generated C, times the variants, and walks through the gradient question against finite differences. It plots the recorded grid and learning curves.</td></tr>
+</table></div>
+
+<h2>3. Results</h2>
+<p>Apple M3 Max, one thread for every library (Scaly's C is single-threaded), <code>-O2 -mcpu=native -fno-math-errno</code>. Each figure is the median over five seeds of one call, after a warm-up, as the scripts time them. The load at process start was 2.5 to 5.9. Scaly is the per-solve variant with the implicit rule.</p>
+<div class="scroll"><table>
+<tr><th>Problem</th><th>nx, nu, T, batch</th><th>mpc.pytorch fwd / bwd, ms</th><th>DiffMPC</th><th>trajax</th><th>Scaly</th><th>vs fastest, fwd</th><th>bwd</th></tr>
+<tr><td class="r">1</td><td>8, 4, 40, 64</td><td class="r">612 / 1341</td><td class="r">518 / 1056</td><td class="r">444 / 884</td><td class="r"><b>38.7 / 161</b></td><td class="r ok">11.5×</td><td class="r ok">5.5×</td></tr>
+<tr><td class="r">2</td><td>8, 4, 30, 16</td><td class="r">267 / 598</td><td class="r">91 / 181</td><td class="r">87 / 170</td><td class="r"><b>7.2 / 30.1</b></td><td class="r ok">12.1×</td><td class="r ok">5.6×</td></tr>
+<tr><td class="r">3</td><td>8, 4, 30, 64</td><td class="r">461 / 1019</td><td class="r">338 / 681</td><td class="r">329 / 665</td><td class="r"><b>29.3 / 121</b></td><td class="r ok">11.2×</td><td class="r ok">5.5×</td></tr>
+<tr><td class="r">4</td><td>8, 4, 30, 256</td><td class="r">1334 / 2894</td><td class="r">1167 / 2426</td><td class="r">1333 / 2705</td><td class="r"><b>118 / 483</b></td><td class="r ok">9.9×</td><td class="r ok">5.0×</td></tr>
+<tr><td class="r">5</td><td>16, 8, 30, 16</td><td class="r">448 / 1003</td><td class="r">352 / 710</td><td class="r">246 / 505</td><td class="r"><b>61.0 / 235</b></td><td class="r warn">4.0×</td><td class="r bad">2.1×</td></tr>
+<tr><td class="r">6</td><td>16, 8, 30, 64</td><td class="r">1210 / 2750</td><td class="r">1382 / 2825</td><td class="r">1022 / 2053</td><td class="r"><b>245 / 937</b></td><td class="r warn">4.2×</td><td class="r bad">2.2×</td></tr>
+</table></div>
+<ul>
+<li><b>Other Scaly variants.</b>
+<ul>
+<li>AD through the recursion: the same forward, and a gradient 1.3 to 1.4× slower (227 against 161 ms on Problem 1).</li>
+<li>The benchmark's code as written, hoisted: forward 0.06 to 0.53 ms (120 to 520× the per-solve forward), gradient 15.8 to 528 ms (about 1.9× faster).</li>
+</ul></li>
+<li><b>Default thread pools</b> (<code>results/baselines.json</code>, <code>threads = default</code>): no baseline gets faster. DiffMPC's times stay within 3%; mpc.pytorch's grow 1.2 to 1.5x and trajax's 1.1 to 1.5x (Problem 1: 765 / 1652, 525 / 1058, 641 / 1294 ms). At these sizes the thread pools add overhead and no parallel work, so the one-thread columns above are each baseline's best.</li>
+<li><b>Spread.</b> Across seeds Scaly's times vary by 2% or less. DiffMPC's forward varies by 37 to 59%, because its PCG iteration count depends on the seed's matrices. The medians absorb that.</li>
+<li><b>Compile.</b> Scaly builds and compiles once per problem, in 2.0 to 6.3 s. The JAX processes took 11 to 53 s for five seeds, mpc.pytorch's 10 to 44 s.</li>
+</ul>
+
+<h3>3.1 Whose gradient</h3>
+<p>Largest difference relative to the reference's largest entry, every seed:</p>
+<div class="scroll"><table>
+<tr><th>Baseline</th><th>vs Scaly's full gradient</th><th>vs Scaly's truncated gradient (no path through the MPC's state)</th></tr>
+<tr><td>mpc.pytorch</td><td class="r ok">1e-12 to 6e-12</td><td class="r">a different quantity (relative difference about 1)</td></tr>
+<tr><td>trajax</td><td class="r">a different quantity (50 to 200)</td><td class="r ok">5e-14 to 1e-12, against the truncated gradient of its one-stage-longer problem</td></tr>
+<tr><td>DiffMPC</td><td class="r">a different quantity (50 to 200)</td><td class="r warn">2e-5 to 6e-5</td></tr>
+</table></div>
+<ul>
+<li><b>Scaly's gradients are the references.</b> The full one matches central differences of a NumPy rollout to 3e-9; the truncated one matches a NumPy reverse sweep with the policy's state path cut to 1e-9. For Problem 1, seed 0: full <code>[-0.80, -0.10, 0.10, -0.58, 0.27, -0.09, 0.09, 1.11]</code>, truncated <code>[-12.5, 75.6, -117.9, 9.5, 6.3, -67.3, 73.0, 31.5]</code>.</li>
+<li><b>DiffMPC's gradient.</b> Its error of 2e-5 is likely its PCG solves, which use an absolute tolerance of 1e-12 on <code>r'Φ⁻¹r</code>. The plan's "validate against DiffMPC to 1e-8" is therefore impossible on DiffMPC's side.</li>
+<li><b>A trap in any NumPy reference.</b> An unsymmetrized Riccati recursion drifts by 1e-7 over 39 steps of these nearly unstable <code>A</code> (eigenvalues up to 0.99). That is enough to make finite differences meaningless: I first got a reference that disagreed with everything. Scaly symmetrizes <code>P</code> at every step.</li>
+</ul>
+
+<h3>3.2 Learning curves</h3>
+<p>Problem 1, seed 0, from <code>Q = 3I</code>: 20 steps of <code>qd ← max(qd − 0.1 g/|g|<sub>∞</sub>, 0.01)</code>, each implementation with its own gradient.</p>
+<div class="scroll"><table>
+<tr><th>Curve</th><th>Start</th><th>After 20 steps</th><th>Agreement</th></tr>
+<tr><td>Scaly, full</td><td class="r">27293.14</td><td class="r">27227.82</td><td></td></tr>
+<tr><td>mpc.pytorch</td><td class="r">27293.14</td><td class="r">27227.82</td><td>with Scaly's full: costs to 3e-14, weights to 2e-11</td></tr>
+<tr><td>Scaly, truncated</td><td class="r">27293.14</td><td class="r">27281.37</td><td></td></tr>
+<tr><td>DiffMPC</td><td class="r">27293.14</td><td class="r">27281.37</td><td>with Scaly's truncated: costs to 2e-9, weights to 4e-6</td></tr>
+</table></div>
+
+<h2>4. What the numbers say about Scaly</h2>
+<ul>
+<li><b>L3, one C function for the batch and the episode, holds where overhead dominates.</b> At nx = 8 the baselines' time is mostly per-call dispatch.
+<ul>
+<li>From Problem 2 to Problem 5 the work grows 8×. trajax's time grows 2.8×, Scaly's 8.4×.</li>
+<li>So Scaly's lead is 10 to 12× forward at nx = 8, and 4× at nx = 16 where the arithmetic counts.</li>
+</ul></li>
+<li><b>At nx = 16, vectorization across the batch decides.</b> XLA runs each operation over all 16 or 64 elements at once; Scaly's <code>vmap</code> runs the 16 × 16 products element by element. This is CS-9 again, now with evidence from a second study, and the item is extended in <code>todo.md</code>.</li>
+<li><b>L5, the implicit rule: correct, and faster than AD, but less than it could be.</b> The gradient costs 3.8 to 4.2× the forward pass.
+<ul>
+<li>The reverse sweep recomputes the MPC's output to hand it to the rule (CS-10, extended).</li>
+<li>The rule recomputes the Riccati recursion from its inputs: a rule sees inputs and outputs only.</li>
+<li>With the cost returned beside the gradient, the whole episode's forward runs twice: 200 against 161 ms.</li>
+</ul>
+A rule able to receive saved intermediates, or a primal shared with its derivative, would bring the gradient near 2× the forward, and the gradient columns to about 10×.</li>
+<li><b>Hoisting stops at the rule (CS-14).</b> The forward <code>scan</code> hoists the invariant Riccati recursion: 0.19 ms for 3 200 solves. The reverse sweep's rule recomputes it for every element and step, so the hoisted gradient (84 ms) is only 1.9× faster than per solve.</li>
+<li><b>API gaps (CS-15).</b> There is no <code>sc.diag</code> and no <code>sc.stop_gradient</code>. The truncated gradient needed a whole custom rule where <code>stop_gradient</code> would have been one call.</li>
+</ul>
+
+<h2>5. Tests and checks</h2>
+<ul>
+<li><b>New tests</b> in <code>tests/integration/test_case_study_diffmpc.py</code>, self-contained, on a 3-state, 2-input, 6-knot MPC with a batch of 4 and 5 steps:
+<ul>
+<li>The implicit rule against AD through the recursion, for all six inputs, to 1e-10.</li>
+<li>The episode's gradient, with and without the rule, hoisted and per solve, against central differences of a NumPy rollout (1e-6).</li>
+<li>Hoisted and per-solve costs agree to 1e-14.</li>
+</ul></li>
+<li><b>Mutation checks: 6 of 6 killed.</b>
+<ul>
+<li>Dropping the state's cotangent (DiffMPC's truncation).</li>
+<li>Reading the stacked gains forward.</li>
+<li>The weight cotangent from the wrong state.</li>
+<li>A sign in <code>A</code>'s cotangent.</li>
+<li>A sign in the adjoint.</li>
+<li>A symmetric instead of lower-triangular <code>R</code> cotangent.</li>
+</ul></li>
+<li><b>Study gates</b>, recorded in <code>results/</code>:
+<ul>
+<li>the MPC against a dense KKT solve (2e-14);</li>
+<li>every seed's aggregate cost equal to the baselines' printed four decimals;</li>
+<li>the gradient cross-checks of 3.1.</li>
+</ul></li>
+<li><b>Suite.</b> The node-ID baseline is regenerated (+2). The case-study tests pass. Nothing under <code>src/</code> changed.</li>
+</ul>
+
+<h2>6. Fairness notes and what was not done</h2>
+<ul>
+<li><b>Machine.</b> Not the reference machine. The E3 grid's QOCOGEN compiles ran on one other core during these measurements.</li>
+<li><b>Same protocol, one difference.</b> One call per seed after a warm-up, on both sides. The JAX baselines recompile per seed, untimed; Scaly compiles once per problem and passes each seed's data as inputs.</li>
+<li><b>The per-solve variant is the fair one, and it is a choice.</b> It changes how the weights reach the MPC, not what is computed. The hoisted numbers are reported beside it rather than as the headline.</li>
+<li><b>Not done.</b>
+<ul>
+<li>Theseus: no macOS wheels.</li>
+<li>GPU columns: out of scope for single-threaded C.</li>
+<li>The paper's full ten seeds: five here. Across seeds Scaly varies by 2% or less; DiffMPC's forward varies by up to 59%, which the median absorbs.</li>
+</ul></li>
+</ul>
+
+<h2>7. Next</h2>
+<ul>
+<li>CS-9: vectorize a <code>vmap</code> across its batch. It decides the nx = 16 rows here and E2's large networks.</li>
+<li>CS-10 and CS-14: share the primal with the rule, and hoist into rules. Together they would roughly halve every gradient column.</li>
+<li>CS-15: <code>sc.stop_gradient</code>, <code>sc.diag</code>.</li>
+</ul>
+</main></body></html>

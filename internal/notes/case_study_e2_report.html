@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case Study E2 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+h3{font-size:16px;margin:22px 0 6px}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Case study E2 · Real-time Neural MPC</h1>
+<p class="sub">Plan <code>case_studies_plan_2026_09_27.html</code>, E2 · branch <code>claude/case-studies</code> · 27 Sep 2026 · code in <code>examples/case_studies/neural_mpc/</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> The control-frequency table of Real-time Neural MPC (RA-L 2023, Table II), run with the authors' scripts on current acados. Scaly then generates the network's code in two places: inside acados, as the exact model's sensitivities, and in place of PyTorch, as RTN-MPC's Taylor surrogate.</p>
+<ul>
+<li><b>The reproduction holds, with one correction.</b> Table II is a 1D double integrator with an untrained MLP residual, not the paper's quadrotor.
+<ul>
+<li>The authors zero the network's output layer. With CasADi 3.8 that lets the expanded model drop the whole network: acados' generated sensitivities contain no <code>tanh</code>, and the naive column runs at a flat 12 kHz.</li>
+<li>With output weights of 1e-6 instead, the network is evaluated again and the paper's pattern returns. The naive column wins on width-16 networks and collapses from width 128 (5 × 128: 134 Hz against RTN-MPC's 2.8 kHz here, 31 against 784 Hz in the paper).</li>
+</ul></li>
+<li><b>The acados drop-in works.</b> acados' generic external path accepts Scaly's <code>casadi=True</code> output, which was the plan's "check early" item. Two adjustments were needed: acados' <code>casadi_int</code> width, and the sensitivity matrix passed as a flat column-major vector, because Scaly's CasADi layer refuses dense matrices.
+<ul>
+<li>The exact model's sensitivities are <b>1.7 to 5.7× faster</b> than CasADi's per call.</li>
+<li>acados' linearization is <b>1.9 to 5.5× faster</b> (5 × 128: 1.33 against 7.35 ms), with the same closed loop to 5e-13.</li>
+</ul></li>
+<li><b>Against RTN-MPC</b>, the exact model in acados beats PyTorch's surrogate for width-16 networks (10.3 against 3.6 kHz at 2 × 16) and loses from width 32 up (694 against 2812 Hz at 5 × 128).</li>
+<li><b>Scaly's surrogate.</b> In place of PyTorch, Scaly's surrogate is 29 to 38× faster than PyTorch's on width-16 networks and 5.4× on 12 × 32. It is 0.6× on 5 × 128 and <b>0.05× on 12 × 512</b>, where PyTorch multiplies each layer by all ten points at once and Scaly does it point by point (CS-9).</li>
+<li><b>Two more Scaly findings</b>, both now in <code>todo.md</code>:
+<ul>
+<li>A model called as a <code>Function</code> has its forward pass computed twice when its value and derivative are both needed. That doubles the drop-in kernel (CS-10).</li>
+<li>The CasADi layer's refusal of dense matrices is what forced the flat <code>Sx</code> (CS-11).</li>
+</ul></li>
+</ul>
+<p style="margin-bottom:0"><b>Against the plan's success criteria:</b>
+"the drop-in at or above RTN-MPC for every width ≤ 128 with the exact model" is <span class="warn">met at width 16 only</span>.
+"The surrogate in C at least equal to RTN-MPC at 12 × 512" is <span class="bad">not met</span> (36 against 945 Hz).
+The full-stack variant (Scaly SQP-RTI) was <span class="bad">not done</span> (section 6).</p>
+</div>
+
+<h2>1. The benchmark and the reproduction</h2>
+<ul>
+<li><b>The problem.</b> Table II: <code>x = (s, ṡ)</code>, <code>u = s̈</code> with <code>|u| ≤ 10</code>, plus <code>f<sub>D</sub>(x)</code>, an MLP with 2 inputs, 2 outputs and tanh.
+<ul>
+<li>The paper's layer counts and widths match <code>MultiLayerPerceptron(2, width, 2, layers)</code>: 2 × 16 has exactly the tabulated 354 parameters. Its "182K" and "500K" are typos for 2.9M and 5.0M.</li>
+<li>acados SQP-RTI: N = 10 over 1 s, ERK (RK4, one step), Gauss-Newton, full condensing HPIPM.</li>
+<li>50 timed control steps. Frequency is 1 / mean step time.</li>
+</ul></li>
+<li><b>Upstream.</b> ml-casadi's two example scripts at <code>44ec47f</code> (the naive one was added after the paper), ported to current acados (<code>00947dd</code>, September 2026) with the network size as a flag. Nothing else needed changing.</li>
+<li><b>The zeroed output layer.</b> Kept as published, CasADi 3.8 constant-folds the network away. acados' <code>wr_expl_vde_forw.c</code> then has no <code>tanh</code>, and its linearization takes 5 µs at 2 × 128 and at 5 × 128.
+<ul>
+<li>The paper's naive numbers fall with network size, so its CasADi still evaluated the network.</li>
+<li>Output weights of <code>10⁻⁶ N(0,1)/√width</code> keep the dynamics nominal to about 1e-6 and make every column evaluate every layer. <code>--out-scale 0</code> restores the published protocol.</li>
+</ul></li>
+<li><b>Reproduced shape.</b> On both machines the naive column beats RTN-MPC for 2 × 16 and 5 × 16 and loses from 2 × 128 and 12 × 32 on. The absolute frequencies here are 1.6 to 4.4× the paper's i7, and 7× for the naive 12 × 32. The exception is the naive 12 × 512, which is slower here (1.9 against 11 Hz); I did not track down why.</li>
+</ul>
+
+<h2>2. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>What it does</th></tr>
+<tr><td><code>baseline/run_acados.py</code>, <code>setup.sh</code></td><td>The paper's two columns on current acados. It pins ml-casadi and builds acados; acados' Python interface fetches its template renderer (<code>t_renderer</code> v0.2.1, from the acados organization on GitHub) into the acados tree.</td></tr>
+<tr><td><code>scaly_impl.py</code></td><td>The network read from the PyTorch state dict by <code>scaly.utils.load_torch_state_dict</code>, so no torch import.
+<ul>
+<li>acados' <code>expl_ode_fun</code>, <code>expl_vde_forw</code> and <code>expl_vde_adj</code> as Scaly Functions under acados' names, and <code>install_dropin</code>, which swaps them into acados' generated tree.</li>
+<li>RTN-MPC's surrogate at the ten nodes as one <code>vmap</code>, in ml-casadi's parameter layout (Jacobian column-major).</li>
+</ul></td></tr>
+<tr><td><code>run_scaly.py</code>, <code>compare.py</code></td><td>The two Scaly columns reuse the baseline's OCP and control loop unchanged. The grid runs three fresh processes per cell and keeps the fastest, with the quiet-machine gate of <code>_common.py</code>.</td></tr>
+<tr><td><code>kernel_bench.py</code></td><td>The two kernels that differ between columns, timed alone:
+<ul>
+<li>acados' CasADi-generated <code>expl_vde_forw</code> (taken from its code directory) against Scaly's, from C;</li>
+<li>the surrogate in PyTorch float32 (what ml-casadi runs), PyTorch float64, and Scaly.</li>
+</ul></td></tr>
+</table></div>
+
+<h2>3. Results</h2>
+<p>Apple M3 Max, one PyTorch thread, Apple clang 21 at <code>-O2 -mcpu=native -fno-math-errno</code>. Linearization is acados' <code>time_lin</code> per RTI: 40 calls of <code>expl_vde_forw</code>.</p>
+<div class="scroll"><table>
+<tr><th>Network</th><th>Parameters</th><th>Paper naive, Hz</th><th>Paper RTN, Hz</th><th>Naive (CasADi), Hz</th><th>RTN (PyTorch), Hz</th><th>Scaly in acados, Hz</th><th>Scaly surrogate, Hz</th><th>Linearization naive / Scaly, µs</th></tr>
+<tr><td>none</td><td class="r">0</td><td class="r">4262</td><td class="r">4262</td><td class="r">7047</td><td class="r">–</td><td class="r">–</td><td class="r">–</td><td class="r">9 / –</td></tr>
+<tr><td>2 × 16</td><td class="r">354</td><td class="r">2228</td><td class="r">1096</td><td class="r">6974</td><td class="r">3553</td><td class="r"><b>10274</b></td><td class="r">6188</td><td class="r">27 / 14</td></tr>
+<tr><td>5 × 16</td><td class="r">1,170</td><td class="r">1139</td><td class="r">885</td><td class="r">4582</td><td class="r">3048</td><td class="r"><b>9364</b></td><td class="r">4735</td><td class="r">81 / 27</td></tr>
+<tr><td>12 × 32</td><td class="r">11,778</td><td class="r">168</td><td class="r">588</td><td class="r">1201</td><td class="r">2398</td><td class="r">1678</td><td class="r"><b>5022</b></td><td class="r">745 / 214</td></tr>
+<tr><td>2 × 128</td><td class="r">17,154</td><td class="r">116</td><td class="r">1071</td><td class="r">513</td><td class="r"><b>3289</b></td><td class="r">2249</td><td class="r">2812</td><td class="r">1861 / 359</td></tr>
+<tr><td>5 × 128</td><td class="r">66,690</td><td class="r">31</td><td class="r">784</td><td class="r">134</td><td class="r"><b>2812</b></td><td class="r">694</td><td class="r">2103</td><td class="r">7355 / 1328</td></tr>
+<tr><td>12 × 512</td><td class="r">2,891,778</td><td class="r">11</td><td class="r">507</td><td class="r">1.9</td><td class="r"><b>945</b></td><td class="r">9.2</td><td class="r">36</td><td class="r">518565 / 106498</td></tr>
+<tr><td>2 × 128, zeroed output (published)</td><td class="r">17,154</td><td></td><td></td><td class="r">11915</td><td></td><td></td><td></td><td class="r">5 / –</td></tr>
+<tr><td>5 × 128, zeroed output (published)</td><td class="r">66,690</td><td></td><td></td><td class="r">11984</td><td></td><td></td><td></td><td class="r">5 / –</td></tr>
+</table></div>
+<ul>
+<li><b>Agreement.</b> Every closed loop agrees with the naive column's: the drop-in to 5e-13, the two surrogates to 6e-8 (a Taylor model, and PyTorch in float32).</li>
+<li><b>Small networks are noisy.</b> At 2 × 16 and 5 × 16 the step time is mostly acados' Python interface (setting references, reading ten states); acados' own linearization and QP take about 20 µs of the 100 to 300 µs. The spread across the three processes there reaches ±50%. The kernel table below is the reliable comparison at those sizes.</li>
+</ul>
+
+<h3>3.1 The two kernels alone</h3>
+<p>C timings take the best batch of calls, PyTorch the best of 200 calls in Python.</p>
+<div class="scroll"><table>
+<tr><th>Network</th><th><code>expl_vde_forw</code> CasADi, µs</th><th>Scaly, µs</th><th>Ratio</th><th>Surrogate PyTorch f32, µs</th><th>PyTorch f64, µs</th><th>Scaly (C), µs</th><th>Scaly vs f32</th></tr>
+<tr><td>2 × 16</td><td class="r">0.33</td><td class="r">0.20</td><td class="r">1.7×</td><td class="r">106</td><td class="r">102</td><td class="r">2.8</td><td class="r ok">38×</td></tr>
+<tr><td>5 × 16</td><td class="r">1.0</td><td class="r">0.52</td><td class="r">1.9×</td><td class="r">147</td><td class="r">148</td><td class="r">5.0</td><td class="r ok">29×</td></tr>
+<tr><td>12 × 32</td><td class="r">17.3</td><td class="r">4.9</td><td class="r">3.5×</td><td class="r">274</td><td class="r">299</td><td class="r">51</td><td class="r ok">5.4×</td></tr>
+<tr><td>2 × 128</td><td class="r">45.7</td><td class="r">8.5</td><td class="r">5.4×</td><td class="r">126</td><td class="r">125</td><td class="r">91</td><td class="r ok">1.4×</td></tr>
+<tr><td>5 × 128</td><td class="r">181</td><td class="r">31.7</td><td class="r">5.7×</td><td class="r">196</td><td class="r">222</td><td class="r">319</td><td class="r warn">0.61×</td></tr>
+<tr><td>12 × 512</td><td class="r">12797</td><td class="r">3904</td><td class="r">3.3×</td><td class="r">1212</td><td class="r">2658</td><td class="r">26412</td><td class="r bad">0.046×</td></tr>
+</table></div>
+<p>The two <code>expl_vde_forw</code> implementations agree to 1e-16 on every network.</p>
+
+<h2>4. What the numbers say about Scaly</h2>
+<ul>
+<li><b>Exact sensitivities: Scaly is ahead at every size.</b> This is the L1 lever working. The network stays dense loops, differentiated through those loops, and the kernel is 1.7 to 5.7× CasADi's expanded model. That is enough to beat RTN-MPC only where the network is small: RTN-MPC evaluates the network 10 times per RTI, the exact model 40 times with three tangent directions.</li>
+<li><b>Batched dense layers: Scaly is far behind at scale (CS-9).</b> The generated surrogate runs, for each of the ten points:
+<ul>
+<li>a matrix-vector product per layer for the value;</li>
+<li>a two-column product per layer for the Jacobian.</li>
+</ul>
+The 23 MB of float64 weights at 12 × 512 are read 20 times per call and stored twice, once per layout, which is 131 MB of C source against CasADi's 72 MB. PyTorch multiplies each layer by all points and directions in one product. Float32 against float64 accounts for 2.2× of the 22×; the rest is the missing batching. A <code>vmap</code> whose body multiplies by a constant matrix should become one matrix product over the mapped axis.</li>
+<li><b>Call nodes recompute the forward pass (CS-10).</b> Written as a model <code>Function</code> called in the sensitivity function, the Jacobians recompute the network beside the call's value: 60 against 31 µs at 5 × 128. The study writes the network inline; the documented way to write a model (a <code>Function</code>, as <code>sc.integrators</code> expects) pays the 2×.</li>
+<li><b>The CasADi layer and acados (CS-11).</b> acados is a real consumer of <code>casadi=True</code>, and it needs dense matrix arguments. The workaround (flat column-major vectors, which acados copies identically) is in <code>scaly_impl.py</code>. A transpose in the layer would remove it.</li>
+<li><b>Deployment footprint.</b> The RTN-MPC column needs PyTorch at run time; Scaly's surrogate is one C file with no dependency. .text and flash sizes were not measured here.</li>
+</ul>
+
+<h2>5. Tests and checks</h2>
+<ul>
+<li><b>New test.</b> <code>tests/integration/test_case_study_neural_mpc.py</code> builds an acados-shaped <code>expl_vde_forw</code> for a tiny network. It renders the function with <code>casadi=True</code>, compiles it with <code>casadi_int</code> as <code>int</code>, and checks the CasADi query functions, including a zero-length input. It then calls the entry point from C with a column-major <code>Sx</code> and compares the value and both sensitivities against NumPy.</li>
+<li><b>Mutation checks: 3 of 3 killed.</b>
+<ul>
+<li>Reading <code>Sx</code> row-major.</li>
+<li>Compiling without the <code>casadi_int</code> definition.</li>
+<li>Dropping the input sensitivity <code>∂f/∂u</code>.</li>
+</ul></li>
+<li><b>Study gates</b>, results recorded here:
+<ul>
+<li>The Scaly surrogate against ml-casadi's parameters, to 7e-14 in float64.</li>
+<li>The drop-in closed loop against the naive one, to 5e-13.</li>
+<li><code>expl_vde_forw</code> CasADi against Scaly, to 1e-16.</li>
+</ul></li>
+<li><b>Suite.</b> 2 580 passed, 45 skipped. No source file under <code>src/</code> changed.</li>
+</ul>
+
+<h2>6. Fairness notes and what was not done</h2>
+<ul>
+<li><b>Machine.</b> Not the reference machine. Every grid cell ran with the one-minute load between 2.4 and 3.9.</li>
+<li><b>PyTorch runs in float32.</b> That is the paper's configuration, and ml-casadi casts the points itself. The float64 column is there so the implementation gap can be told apart from the precision gap.</li>
+<li><b>Warm-up.</b> Both columns get 20 warm-up steps before the timed 50; the authors warm up only RTN-MPC's network.</li>
+<li><b>Not done: Variant C, Scaly's SQP in RTI mode.</b> The plan routes it through <code>sc.mpc</code>, which has not landed; it would also compete with acados' HPIPM on a 10-stage QP where the QP takes 5 µs.</li>
+<li><b>Not done: tracking error.</b> Exact model against surrogate is not informative with an untrained network whose output is 1e-6. The paper's quadrotor experiments (Table III) need trained checkpoints, which the authors do not ship.</li>
+</ul>
+
+<h2>7. Next</h2>
+<ul>
+<li>CS-9: batch a <code>vmap</code> of constant-matrix products into one matrix product. This is the change that decides whether generated C can replace PyTorch for large networks.</li>
+<li>CS-10: share a call's forward pass with its derivative.</li>
+<li>CS-11: dense matrices in the CasADi layer.</li>
+</ul>
+</main></body></html>

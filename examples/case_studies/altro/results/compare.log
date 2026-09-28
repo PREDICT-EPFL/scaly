@@ -1,0 +1,38 @@
+parallel_park altro_al 0 0.989 ms 18 0.03572541 5.08e-07
+parallel_park scaly_al 0 0.115 ms 18 0.03572539 5.08e-07
+parallel_park altro_pn 0 1.013 ms 18 0.03572626 9.64e-10
+parallel_park scaly_pn 0 0.128 ms 18 0.03572626 9.64e-10
+parallel_park altro_al 1 1.011 ms 18 0.03572541 5.08e-07
+waiting for the load average (7.6) to drop below 6.0
+parallel_park scaly_al 1 0.115 ms 18 0.03572539 5.08e-07
+parallel_park altro_pn 1 1.029 ms 18 0.03572626 9.64e-10
+parallel_park scaly_pn 1 0.128 ms 18 0.03572626 9.64e-10
+parallel_park altro_al 2 1.002 ms 18 0.03572541 5.08e-07
+parallel_park scaly_al 2 0.115 ms 18 0.03572539 5.08e-07
+parallel_park altro_pn 2 1.009 ms 18 0.03572626 9.64e-10
+parallel_park scaly_pn 2 0.130 ms 18 0.03572626 9.64e-10
+cartpole altro_al 0 14.591 ms 112 1.49709252 7.47e-09
+cartpole scaly_al 0 3.510 ms 112 1.49709252 7.47e-09
+cartpole altro_pn 0 11.026 ms 93 1.49730870 4.45e-10
+cartpole scaly_pn 0 2.311 ms 93 1.49730870 4.45e-10
+cartpole altro_al 1 14.545 ms 112 1.49709252 7.47e-09
+waiting for the load average (7.6) to drop below 6.0
+cartpole scaly_al 1 3.509 ms 112 1.49709252 7.47e-09
+waiting for the load average (6.2) to drop below 6.0
+cartpole altro_pn 1 10.972 ms 93 1.49730870 4.45e-10
+cartpole scaly_pn 1 2.310 ms 93 1.49730870 4.45e-10
+cartpole altro_al 2 14.815 ms 112 1.49709252 7.47e-09
+waiting for the load average (6.3) to drop below 6.0
+cartpole scaly_al 2 3.509 ms 112 1.49709252 7.47e-09
+cartpole altro_pn 2 10.874 ms 93 1.49730870 4.45e-10
+cartpole scaly_pn 2 2.269 ms 93 1.49730870 4.45e-10
+| Problem | Algorithm | Implementation | Iterations | Cost | Max violation | Max \|Δx\| vs Altro.jl | Solve (best) | Speed-up | First solve |
+|---|---|---|---|---|---|---|---|---|---|
+| parallel_park | AL-iLQR | Altro.jl | 18 | 0.03572541 | 5.1e-07 | 0e+00 | 0.989 ms | 1.0x | 20.0 s |
+| parallel_park | AL-iLQR | Scaly, generated C | 18 | 0.03572539 | 5.1e-07 | 1e-14 | 0.115 ms | 8.6x | 0.6 s |
+| parallel_park | ALTRO | Altro.jl | 18 | 0.03572626 | 9.6e-10 | 0e+00 | 1.009 ms | 1.0x | 19.9 s |
+| parallel_park | ALTRO | Scaly, generated C | 18 | 0.03572626 | 9.6e-10 | 8e-11 | 0.128 ms | 7.9x | 1.1 s |
+| cartpole | AL-iLQR | Altro.jl | 112 | 1.49709252 | 7.5e-09 | 0e+00 | 14.545 ms | 1.0x | 19.1 s |
+| cartpole | AL-iLQR | Scaly, generated C | 112 | 1.49709252 | 7.5e-09 | 4e-11 | 3.509 ms | 4.1x | 0.8 s |
+| cartpole | ALTRO | Altro.jl | 93 | 1.49730870 | 4.5e-10 | 0e+00 | 10.874 ms | 1.0x | 19.1 s |
+| cartpole | ALTRO | Scaly, generated C | 93 | 1.49730870 | 4.5e-10 | 1e-12 | 2.269 ms | 4.8x | 1.5 s |

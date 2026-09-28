@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case Study E3 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+h3{font-size:16px;margin:22px 0 6px}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Case study E3 · Embedded convex MPC QPs (QOCO / QOCOGEN)</h1>
+<p class="sub">Plan <code>case_studies_plan_2026_09_27.html</code>, E3 · branch <code>claude/case-studies</code> · 27 Sep 2026 · code in <code>examples/case_studies/embedded_qp/</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> QOCOGEN (Chari and Açıkmeşe, 2026) is the closest prior work to Scaly's generated PIQP: a generated interior-point solver specialized to one KKT pattern. Its LDLᵀ microbenchmark and its oscillating-masses MPC family were run with every solver, past the horizon where QOCOGEN stops, and compiled for a Cortex-M7.</p>
+<ul>
+<li><b>The factorization.</b>
+<ul>
+<li>Scaly's straight-line <code>L D L'</code> beats QOCOGEN's at T = 5 and 15.</li>
+<li>Its looped one matches QOCOGEN from T = 50, with <b>2 kB of machine code and a 0.1 s build</b>. QOCOGEN's whole solver needs 1.2 MB and 176 s.</li>
+<li>Both Scaly schedules beat QDLDL throughout: the loops by 1.9 to 2.1×, straight-line code by up to 5.9×.</li>
+</ul></li>
+<li><b>The whole solver: Scaly's generated PIQP is the fastest of seven at every horizon, 8 to 200.</b>
+<ul>
+<li>1.4 to 1.8× QOCOGEN.</li>
+<li>1.2 to 1.3× the PIQP library it is generated from, with the same iterations.</li>
+<li>1.4 to 1.7× QOCO and 3.7 to 4.9× Clarabel.</li>
+<li>Only OSQP at its loose 1e-3 tolerance comes close, with objectives off by up to 1e-3.</li>
+</ul></li>
+<li><b>Generation scales for Scaly and not for QOCOGEN.</b>
+<ul>
+<li>QOCOGEN's generate plus compile grows from 15 s at T = 8 to 453 s at T = 56 (2 MB of machine code), and passes 40 minutes at T = 76, where the grid stops it.</li>
+<li>Scaly builds the T = 200 solver in 5.4 s, with 54 kB of machine code, about what it needs at T = 8.</li>
+</ul></li>
+<li><b>Embedded (Cortex-M7, sizes only).</b> Scaly's flash is a fifth to a third of QOCOGEN's. Its RAM is 2.4 to 7.7× QOCOGEN's and grows quadratically, because it builds the Hessian dense from the parameters (CS-12). At T = 8 QOCOGEN fits an STM32F4 and Scaly doesn't.</li>
+</ul>
+<p style="margin-bottom:0"><b>Against the plan's success criteria:</b>
+"faster than QOCOGEN at every horizon it can generate, and a solver at horizons it cannot" is <span class="ok">met</span>.
+The embedded leg is <span class="warn">half met</span>: sizes are measured but there is no board, and Scaly's RAM needs CS-12 fixed before it fits a small MCU.
+The CVXPYgen quadcopter was <span class="bad">not reproducible</span> (section 1).</p>
+</div>
+
+<h2>1. The benchmarks and what changed from the plan</h2>
+<ul>
+<li><b>Upstream.</b>
+<ul>
+<li>qoco-benchmarks at <code>d7e00f5</code>: the oscillating-masses family and its QOCO/QOCOGEN conversion and C timing harness.</li>
+<li>qoco at <code>0198625</code>, for its vendored QDLDL.</li>
+<li>From PyPI: QOCO 0.3.2, QOCOGEN 0.1.9, Clarabel 0.11.1, OSQP 1.1.3, CVXPY 1.9.3.</li>
+<li>QOCOGEN is compiled with the flags Scaly's JIT uses, <code>-O2 -mcpu=native -fno-math-errno</code>.</li>
+</ul></li>
+<li><b>The CVXPYgen quadcopter is not reproducible.</b> Its script and its data (A, B, weights, limits) were never published, and the paper reports times only in a figure. The oscillating masses, the QOCO paper's QP family, are public and fully specified, so they replace it.</li>
+<li><b>CVXPYgen itself is left out.</b> Importing it imports <code>pdaqp</code>, whose <code>juliacall</code> downloads Julia and writes <code>~/.julia</code> on first import. OSQP and Clarabel are timed as libraries.</li>
+<li><b>The LDLᵀ microbenchmark is rebuilt from the paper's description.</b> QOCO's Appendix B script is not public. The LQR KKT matrix uses random <code>A</code>, <code>B</code> of the stated sizes and an unstated <code>eps</code>, taken here as 1e-7. QDLDL reproduces the paper's times to within 10% at every horizon, which suggests the matrix is right.</li>
+<li><b>CS-6 (QP build time) did not need fixing first.</b> The generated PIQP builds in under 6 s at every horizon up to 200.</li>
+</ul>
+
+<h2>2. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>What it does</th></tr>
+<tr><td><code>problem.py</code></td><td>The family as a Scaly <code>sc.problem</code> with <code>Q</code>, <code>R</code>, <code>x0</code> as parameters. The benchmark's random instances are replayed in its own draw order, so instance <code>(T, i)</code> is the one qoco-benchmarks solves.</td></tr>
+<tr><td><code>baseline/run_qoco.py</code></td><td>QOCO, Clarabel, OSQP (1e-7 and 1e-3) and QOCOGEN, through qoco-benchmarks' own problem conversion and C harness. <code>gurobipy</code>, which the conversion module imports but never uses here, is stubbed.</td></tr>
+<tr><td><code>run_scaly.py</code>, <code>compare.py</code></td><td>The generated PIQP (Tier 4's <code>backend="scaly"</code>) and the PIQP library, timed from C with <code>time_entry.c</code>. Every solver runs at every horizon in fresh processes behind the quiet-machine gate. QOCOGEN is regenerated per horizon until one attempt exceeds its budget.</td></tr>
+<tr><td><code>ldl_bench.py</code></td><td>The microbenchmark: QOCOGEN's <code>ldl()</code>, QOCO's QDLDL, and Scaly's <code>SparseLDL</code> looped (own and AMD ordering) and straight-line.</td></tr>
+<tr><td><code>embedded_size.py</code></td><td>Both solvers built for <code>thumbv7em-none-eabihf -mcpu=cortex-m7 -Os</code>, measuring flash, static RAM and run-time workspace. Stub <code>math.h</code>/<code>stdio.h</code> stand in for a board's libc.</td></tr>
+<tr><td><code>embedded_qp.ipynb</code></td><td>The study as a notebook. It solves an instance live, shows the KKT pattern and its factor, times Scaly's two factorization schedules, and plots the recorded tables.</td></tr>
+</table></div>
+
+<h2>3. Results</h2>
+<p>Apple M3 Max, Apple clang 21. Homebrew clang 21 does the Cortex-M7 build. C timings are the best 1 ms batch, best of three processes; the grid is the median of five instances. The paper's machine (Ryzen 9 7950X3D) is context only.</p>
+
+<h3>3.1 The LDLᵀ microbenchmark</h3>
+<div class="scroll"><table>
+<tr><th>T</th><th>Order</th><th>QDLDL, µs</th><th>QOCOGEN, µs</th><th>Scaly looped (AMD), µs</th><th>Scaly straight-line, µs</th><th>QOCOGEN generate + compile, s</th><th>Scaly looped build, s</th><th>QOCOGEN / Scaly looped machine code, kB</th></tr>
+<tr><td class="r">5</td><td class="r">72</td><td class="r">1.99</td><td class="r">0.36</td><td class="r">0.98</td><td class="r"><b>0.34</b></td><td class="r">1.0</td><td class="r">0.08</td><td class="r">66 / 2.1</td></tr>
+<tr><td class="r">15</td><td class="r">222</td><td class="r">7.01</td><td class="r">1.48</td><td class="r">3.36</td><td class="r"><b>1.25</b></td><td class="r">6.2</td><td class="r">0.10</td><td class="r">184 / 2.1</td></tr>
+<tr><td class="r">50</td><td class="r">747</td><td class="r">24.73</td><td class="r"><b>12.83</b></td><td class="r">12.99</td><td class="r">16.22</td><td class="r">53.5</td><td class="r">0.12</td><td class="r">619 / 2.1</td></tr>
+<tr><td class="r">75</td><td class="r">1122</td><td class="r">38.08</td><td class="r">20.35</td><td class="r"><b>20.26</b></td><td class="r">29.11</td><td class="r">93.2</td><td class="r">0.13</td><td class="r">929 / 2.0</td></tr>
+<tr><td class="r">100</td><td class="r">1497</td><td class="r">51.95</td><td class="r">28.24</td><td class="r"><b>27.76</b></td><td class="r">39.35</td><td class="r">176.2</td><td class="r">0.16</td><td class="r">1240 / 2.0</td></tr>
+</table></div>
+<ul>
+<li><b>Against the paper.</b> QDLDL is within 10% of the paper's times throughout. QOCOGEN is 17 to 20% faster than the paper's at T = 5 and 15 but 2.1 to 2.4× slower from T = 50. Its straight-line code reaches 1.2 MB of machine code, which the paper's 96 MB of cache and <code>-O3</code> may serve better.</li>
+<li><b>When straight-line code stops paying.</b> Past T = 15, Scaly's straight-line factorization is slower than its own loops. The default schedule picks the loops there.</li>
+</ul>
+
+<h3>3.2 The oscillating-masses grid</h3>
+<div class="scroll"><table>
+<tr><th>T</th><th>n</th><th>QOCOGEN</th><th>Scaly PIQP (generated)</th><th>PIQP library</th><th>QOCO</th><th>Clarabel</th><th>OSQP 1e-7</th><th>OSQP 1e-3</th></tr>
+<tr><td class="r">8</td><td class="r">104</td><td class="r">225</td><td class="r"><b>126</b></td><td class="r">163</td><td class="r">211</td><td class="r">614</td><td class="r">380</td><td class="r">129</td></tr>
+<tr><td class="r">20</td><td class="r">248</td><td class="r">487</td><td class="r"><b>329</b></td><td class="r">438</td><td class="r">504</td><td class="r">1419</td><td class="r">1009</td><td class="r">343</td></tr>
+<tr><td class="r">32</td><td class="r">392</td><td class="r">756</td><td class="r"><b>537</b></td><td class="r">711</td><td class="r">814</td><td class="r">2294</td><td class="r">1627</td><td class="r">553</td></tr>
+<tr><td class="r">44</td><td class="r">536</td><td class="r">1015</td><td class="r"><b>710</b></td><td class="r">901</td><td class="r">1121</td><td class="r">3099</td><td class="r">1533</td><td class="r">1501</td></tr>
+<tr><td class="r">56</td><td class="r">680</td><td class="r">1627</td><td class="r"><b>984</b></td><td class="r">1226</td><td class="r">1693</td><td class="r">4526</td><td class="r">2961</td><td class="r">1958</td></tr>
+<tr><td class="r">76</td><td class="r">920</td><td class="r">–</td><td class="r"><b>1344</b></td><td class="r">1711</td><td class="r">1980</td><td class="r">5329</td><td class="r">2637</td><td class="r">2619</td></tr>
+<tr><td class="r">116</td><td class="r">1400</td><td class="r">–</td><td class="r"><b>2070</b></td><td class="r">2579</td><td class="r">2958</td><td class="r">7796</td><td class="r">7853</td><td class="r">3920</td></tr>
+<tr><td class="r">156</td><td class="r">1880</td><td class="r">–</td><td class="r">2873</td><td class="r">3542</td><td class="r">4689</td><td class="r">12054</td><td class="r">8093</td><td class="r"><b>2789</b></td></tr>
+<tr><td class="r">200</td><td class="r">2408</td><td class="r">–</td><td class="r"><b>3636</b></td><td class="r">4622</td><td class="r">5755</td><td class="r">13371</td><td class="r">6825</td><td class="r">6785</td></tr>
+</table></div>
+<p>Solve times in µs, median of five instances; T = 96 and 136 are in the README. Build times:</p>
+<ul>
+<li><b>QOCOGEN</b>, generate + compile: 4 + 11 s at T = 8, 27 + 51 at T = 20, 139 + 226 at T = 44, 237 + 216 at T = 56. At T = 76 it was over 2 400 s in all and was stopped. The machine code grows from 293 kB to 2.0 MB.</li>
+<li><b>Scaly</b>, build + generate + compile: 1.9 s at T = 8 and 5.4 s at T = 200, with 46 to 59 kB of machine code throughout.</li>
+<li><b>Agreement.</b> Every solver at 1e-7 matches Clarabel's objective to 2e-7 or better on every instance; the interior-point solvers match to 2e-9. OSQP at 1e-3 is off by 1e-4 to 1e-3. PIQP, library and generated, takes the same 6 to 8 iterations; QOCOGEN takes 5 to 7.</li>
+</ul>
+
+<h3>3.3 Embedded sizes (Cortex-M7, <code>-Os</code>)</h3>
+<div class="scroll"><table>
+<tr><th>T</th><th>Scaly flash, kB (code + tables)</th><th>Scaly workspace, kB</th><th>QOCOGEN flash, kB</th><th>QOCOGEN workspace, kB</th></tr>
+<tr><td class="r">8</td><td class="r">198 (66 + 132)</td><td class="r bad">233</td><td class="r">602</td><td class="r">96</td></tr>
+<tr><td class="r">20</td><td class="r">411 (81 + 330)</td><td class="r bad">911</td><td class="r">1568</td><td class="r">235</td></tr>
+<tr><td class="r">32</td><td class="r">585 (56 + 528)</td><td class="r bad">1942</td><td class="r bad">2541</td><td class="r">373</td></tr>
+<tr><td class="r">56</td><td class="r">981 (56 + 924)</td><td class="r bad">4990</td><td class="r bad">4503</td><td class="r">651</td></tr>
+</table></div>
+<p>Neither solver has static RAM. The workspace is what the caller allocates.</p>
+
+<h2>4. What the numbers say about Scaly</h2>
+<ul>
+<li><b>Loops beat unrolling once the problem stops fitting in cache</b>, and they keep generation cheap. QOCOGEN writes the factorization out entry by entry. That wins at T = 5 but costs minutes of generation, megabytes of code and, from T = 50, speed. Scaly's schedule choice (<code>sparse_unroll</code>) picks straight-line code only where it pays. The same choice makes the whole solver the fastest here at every size.</li>
+<li><b>The generated PIQP beats the library it is generated from, by 1.2 to 1.3×, with identical iterations.</b> That is the gain from specializing to one KKT pattern and removing the library's dispatch, the Tier 4 claim.</li>
+<li><b>The embedded blocker is CS-12, and it is a clear fix.</b> With <code>Q</code>, <code>R</code> as parameters, the generated solver zero-fills a dense <code>n × n</code> array every solve to build <code>P</code>, then reads its nonzeros back: about 1.6 n² doubles of workspace in all.
+<ul>
+<li>Without it the workspace would be an estimated 95 kB at T = 8, level with QOCOGEN's.</li>
+<li>Scaly would then fit an STM32F4 wherever QOCOGEN does, and at T = 20, where QOCOGEN's flash no longer fits.</li>
+</ul></li>
+<li><b>Scaly's C source grows with the horizon</b>, 0.3 to 5.2 MB, because the KKT pattern's index tables are written as data. The machine code does not grow; the tables go into flash as <code>.rodata</code> (132 to 924 kB here).</li>
+</ul>
+
+<h2>5. Tests and checks</h2>
+<ul>
+<li><b>Existing tests.</b> The paths this study exercises already had tests:
+<ul>
+<li><code>SparseLDL</code> with a given ordering and in both schedules: <code>tests/linalg/test_sparse_ldl.py</code>, <code>test_symbolic.py</code>;</li>
+<li>the generated PIQP against the library: <code>tests/integration/test_qp_solvers_example.py</code>.</li>
+</ul></li>
+<li><b>New test</b>, <code>tests/integration/test_case_study_embedded_qp.py</code>, for what they did not cover: the generated PIQP on a QP whose Hessian weights are parameters (the path behind CS-12). It runs against the PIQP library, iteration for iteration, on two weightings.</li>
+<li><b>Mutation checks: 2 of 2 killed</b>: perturbed <code>q</code> weights, and permuted <code>r</code> weights, reaching the generated solver.</li>
+<li><b>Study gates.</b> Every instance's objective is checked against Clarabel's, and the generated solver's iterations against the library's; section 3.2 records both.</li>
+<li><b>Suite.</b> The node-ID baseline is regenerated (+1). Nothing under <code>src/</code> changed.</li>
+</ul>
+
+<h2>6. Fairness notes and what was not done</h2>
+<ul>
+<li><b>Machine.</b> Not the reference machine. The grid ran over several hours on a shared workstation. Every timed cell waited for a one-minute load under 6; the other studies' compiles ran on other cores meanwhile.</li>
+<li><b>Same compiler and flags for every generated solver.</b> QOCOGEN is not built at its own <code>-O3</code>, so its T ≥ 50 numbers may understate it relative to the paper.</li>
+<li><b>QOCOGEN's machine code is the whole solver</b>, while Scaly's LDL-only numbers in 3.1 are the factorization alone. The whole-solver comparison is 3.2 and 3.3.</li>
+<li><b>Not done.</b>
+<ul>
+<li>A board: no cycle counts, only sizes.</li>
+<li>CVXPYgen and its quadcopter (section 1).</li>
+<li>The second-order-cone problems of QOCO's paper: Scaly's IPM is QP-only (CS-8).</li>
+</ul></li>
+</ul>
+
+<h2>7. Next</h2>
+<ul>
+<li>CS-12: extract a parametric <code>P</code> sparse. It is the one change between Scaly and a small MCU.</li>
+<li>CS-8: second-order cones in the IPM, for QOCO's SOCP family.</li>
+<li>A board run (Teensy 4.1 or STM32H7) once CS-12 lands.</li>
+</ul>
+</main></body></html>

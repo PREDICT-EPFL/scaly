@@ -1,0 +1,24 @@
+
+
+Generating qoco_custom.
+
+QOCOGEN Generation Time: 04.275 secs
+8 {'scaly': {'flash_bytes': 197824, 'static_ram_bytes': 0, 'workspace_bytes': 232528, 'source_bytes': 334205}, 'qocogen': {'flash_bytes': 601750, 'static_ram_bytes': 0, 'printer_bytes': 548, 'workspace_bytes': 95824, 'source_bytes': 1105024, 't_generate': 4.27478350000456}}
+
+
+Generating qoco_custom.
+
+QOCOGEN Generation Time: 25.587 secs
+20 {'scaly': {'flash_bytes': 410944, 'static_ram_bytes': 0, 'workspace_bytes': 910992, 'source_bytes': 650392}, 'qocogen': {'flash_bytes': 1567678, 'static_ram_bytes': 0, 'printer_bytes': 548, 'workspace_bytes': 234640, 'source_bytes': 2818578, 't_generate': 25.587187541881576}}
+
+
+Generating qoco_custom.
+
+QOCOGEN Generation Time: 001 mins 06.803 secs
+32 {'scaly': {'flash_bytes': 584552, 'static_ram_bytes': 0, 'workspace_bytes': 1942040, 'source_bytes': 856738}, 'qocogen': {'flash_bytes': 2541420, 'static_ram_bytes': 0, 'printer_bytes': 548, 'workspace_bytes': 373456, 'source_bytes': 4523282, 't_generate': 66.80437070899643}}
+
+
+Generating qoco_custom.
+
+QOCOGEN Generation Time: 003 mins 34.168 secs
+56 {'scaly': {'flash_bytes': 980776, 'static_ram_bytes': 0, 'workspace_bytes': 4989592, 'source_bytes': 1415879}, 'qocogen': {'flash_bytes': 4503318, 'static_ram_bytes': 0, 'printer_bytes': 548, 'workspace_bytes': 651088, 'source_bytes': 7993475, 't_generate': 214.1708036251366}}

@@ -1,0 +1,242 @@
+[
+ {
+  "horizon": 5,
+  "order": 72,
+  "nnz_kkt_upper": 318,
+  "paper_us": [
+   2.103,
+   0.435
+  ],
+  "load": 2.9052734375,
+  "qdldl": {
+   "factor_ns": 1994.012,
+   "nnz_l": 396
+  },
+  "scaly_own": {
+   "factor_ns": 983.4,
+   "nnz_l": 396,
+   "work": 1952,
+   "t_generate": 0.014992584008723497,
+   "t_compile": 0.06997466692700982,
+   "source_bytes": 19750,
+   "text_bytes": 2052
+  },
+  "scaly_amd": {
+   "factor_ns": 976.4000000000001,
+   "nnz_l": 396,
+   "work": 1952,
+   "t_generate": 0.01769741694442928,
+   "t_compile": 0.07505495892837644,
+   "source_bytes": 21026,
+   "text_bytes": 2296
+  },
+  "scaly_unroll": {
+   "factor_ns": 337.8,
+   "nnz_l": 396,
+   "work": 1952,
+   "t_generate": 0.8433449170552194,
+   "t_compile": 0.5354731250554323,
+   "source_bytes": 95943,
+   "text_bytes": 22016
+  },
+  "qocogen": {
+   "t_generate": 0.08349024993367493,
+   "t_compile": 0.8867510419804603,
+   "factor_ns": 359.684,
+   "ldl_source_bytes": 143228,
+   "text_bytes": 65932
+  }
+ },
+ {
+  "horizon": 15,
+  "order": 222,
+  "nnz_kkt_upper": 1068,
+  "paper_us": [
+   7.507,
+   1.777
+  ],
+  "load": 2.77197265625,
+  "qdldl": {
+   "factor_ns": 7014.706,
+   "nnz_l": 1446
+  },
+  "scaly_own": {
+   "factor_ns": 3580.3,
+   "nnz_l": 1446,
+   "work": 7402,
+   "t_generate": 0.01911779190413654,
+   "t_compile": 0.07917404198087752,
+   "source_bytes": 50640,
+   "text_bytes": 2056
+  },
+  "scaly_amd": {
+   "factor_ns": 3358.0000000000005,
+   "nnz_l": 1446,
+   "work": 7402,
+   "t_generate": 0.018564374884590507,
+   "t_compile": 0.07843887503258884,
+   "source_bytes": 51375,
+   "text_bytes": 2300
+  },
+  "scaly_unroll": {
+   "factor_ns": 1253.4,
+   "nnz_l": 1446,
+   "work": 7402,
+   "t_generate": 3.381270583020523,
+   "t_compile": 2.6490215840749443,
+   "source_bytes": 363847,
+   "text_bytes": 82092
+  },
+  "qocogen": {
+   "t_generate": 0.744939458090812,
+   "t_compile": 5.489557416876778,
+   "factor_ns": 1479.228,
+   "ldl_source_bytes": 533736,
+   "text_bytes": 183936
+  }
+ },
+ {
+  "horizon": 50,
+  "order": 747,
+  "nnz_kkt_upper": 3693,
+  "paper_us": [
+   27.077,
+   6.117
+  ],
+  "load": 2.8828125,
+  "qdldl": {
+   "factor_ns": 24725.0,
+   "nnz_l": 5121
+  },
+  "scaly_own": {
+   "factor_ns": 13597.2,
+   "nnz_l": 5121,
+   "work": 26477,
+   "t_generate": 0.030140083050355315,
+   "t_compile": 0.08544937497936189,
+   "source_bytes": 167476,
+   "text_bytes": 2080
+  },
+  "scaly_amd": {
+   "factor_ns": 12986.3,
+   "nnz_l": 5121,
+   "work": 26477,
+   "t_generate": 0.02640562504529953,
+   "t_compile": 0.0816432919818908,
+   "source_bytes": 165631,
+   "text_bytes": 2404
+  },
+  "scaly_unroll": {
+   "factor_ns": 16222.200000000003,
+   "nnz_l": 5121,
+   "work": 26477,
+   "t_generate": 12.592373291961849,
+   "t_compile": 11.615874458802864,
+   "source_bytes": 1334817,
+   "text_bytes": 401720
+  },
+  "qocogen": {
+   "t_generate": 8.964405542006716,
+   "t_compile": 44.48761266586371,
+   "factor_ns": 12831.169,
+   "ldl_source_bytes": 1936102,
+   "text_bytes": 618784
+  }
+ },
+ {
+  "horizon": 75,
+  "order": 1122,
+  "nnz_kkt_upper": 5568,
+  "paper_us": [
+   38.848,
+   8.485
+  ],
+  "load": 3.98291015625,
+  "qdldl": {
+   "factor_ns": 38076.923,
+   "nnz_l": 7746
+  },
+  "scaly_own": {
+   "factor_ns": 21085.1,
+   "nnz_l": 7746,
+   "work": 40102,
+   "t_generate": 0.038147374987602234,
+   "t_compile": 0.08780387486331165,
+   "source_bytes": 253244,
+   "text_bytes": 1972
+  },
+  "scaly_amd": {
+   "factor_ns": 20260.9,
+   "nnz_l": 7746,
+   "work": 40102,
+   "t_generate": 0.033164165914058685,
+   "t_compile": 0.08912620809860528,
+   "source_bytes": 249749,
+   "text_bytes": 2268
+  },
+  "scaly_unroll": {
+   "factor_ns": 29114.3,
+   "nnz_l": 7746,
+   "work": 40102,
+   "t_generate": 19.865997874876484,
+   "t_compile": 20.543557582888752,
+   "source_bytes": 2028733,
+   "text_bytes": 672408
+  },
+  "qocogen": {
+   "t_generate": 20.1124381669797,
+   "t_compile": 73.13602145807818,
+   "factor_ns": 20347.826,
+   "ldl_source_bytes": 2945247,
+   "text_bytes": 928792
+  }
+ },
+ {
+  "horizon": 100,
+  "order": 1497,
+  "nnz_kkt_upper": 7443,
+  "paper_us": [
+   49.577,
+   12.894
+  ],
+  "load": 4.64501953125,
+  "qdldl": {
+   "factor_ns": 51947.368,
+   "nnz_l": 10371
+  },
+  "scaly_own": {
+   "factor_ns": 28323.5,
+   "nnz_l": 10371,
+   "work": 53727,
+   "t_generate": 0.050797499949112535,
+   "t_compile": 0.10599049995653331,
+   "source_bytes": 344518,
+   "text_bytes": 1972
+  },
+  "scaly_amd": {
+   "factor_ns": 27764.7,
+   "nnz_l": 10371,
+   "work": 53727,
+   "t_generate": 0.04349387506954372,
+   "t_compile": 0.10481016687117517,
+   "source_bytes": 339196,
+   "text_bytes": 2268
+  },
+  "scaly_unroll": {
+   "factor_ns": 39352.9,
+   "nnz_l": 10371,
+   "work": 53727,
+   "t_generate": 26.67449279082939,
+   "t_compile": 30.179990166099742,
+   "source_bytes": 2747248,
+   "text_bytes": 951536
+  },
+  "qocogen": {
+   "t_generate": 35.461675457889214,
+   "t_compile": 140.70650087483227,
+   "factor_ns": 28235.294,
+   "ldl_source_bytes": 3974903,
+   "text_bytes": 1240228
+  }
+ }
+]

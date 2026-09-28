@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case Study E8 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+h3{font-size:16px;margin:22px 0 6px}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Case study E8 · 6-DoF powered descent by successive convexification (OpenSCvx)</h1>
+<p class="sub">Plan <code>case_studies_plan_2026_09_27.html</code>, E8 · branch <code>claude/case-studies</code> · 28 Sep 2026 · code in <code>examples/case_studies/scvx/</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> This study takes OpenSCvx's 6-DoF rocket landing, solved by its penalized trust region (PTR) method in JAX with CVXPY and QOCO. Against it, the same PTR is written in Scaly as one generated C function: the discretization, the convex subproblem solved by Scaly's generated PIQP, and the loop.</p>
+<ul>
+<li><b>The same iterates.</b> Both sides take 5 PTR iterations to a final mass of 1.4171783 and a final time of 8.485601 s. Scaly's discretization matches OpenSCvx's matrices to 5e-13. The trajectories agree to QOCO's tolerance.</li>
+<li><b>The solve is 21× faster:</b> <b>2.13 ms against 43.8 ms</b>.
+<ul>
+<li>The two QP solvers are close: PIQP takes 0.35 ms per iteration and QOCO 0.56 ms.</li>
+<li>The difference is everything around the solver. OpenSCvx discretizes twice per iteration in JAX, dispatched from Python, and passes through CVXPY every time: 2.9 ms per iteration outside the solver.</li>
+<li>Scaly's iteration is one 46 µs discretization and one QP solve, inside the same C function.</li>
+</ul></li>
+<li><b>End to end, from the first import to the first solution:</b>
+<ul>
+<li>cold, the two are level: <b>5.06 s against 4.61 s</b>;</li>
+<li>warm, Scaly is <b>2.5× faster: 1.83 s against 4.64 s</b>;</li>
+<li>OpenSCvx's compilation cache gives it no speed-up.</li>
+<li>1.4 s of Scaly's warm start is rendering C only to look up the cached library.</li>
+</ul></li>
+<li><b>This is the plan's Phase C on a QP.</b> OpenSCvx's example keeps every nonconvex and conic constraint in a penalty state, so its subproblem has no cones.</li>
+</ul>
+<p style="margin-bottom:0"><b>Against the plan's success criteria:</b>
+"Phase A at least 10× faster than OpenSCvx end to end, setup included" is <span class="bad">not met</span>: 0.9× cold and 2.5× warm. The solve alone is 21×.
+"Phase C inside Reynolds et al.'s ~100 ms class for the same node count on one core" is <span class="warn">met on a smaller problem</span>: 2.1 ms, but at five nodes and with a QP where they solve an SOCP. The comparison with cones needs second-order cones in the generated IPM, which is Phase B.</p>
+</div>
+
+<h2>1. The benchmark and the reproduction</h2>
+<ul>
+<li><b>Upstream.</b> OpenSCvx at <code>9f23a62</code> (2026-09-21), run as openscvx 0.5.3.dev57, the PyPI build of that commit. The rest of its stack is pinned to the versions the study ran: JAX 0.11.2, CVXPY 1.9.3, QOCO 0.3.2, diffrax 0.7.2, Python 3.12. <code>setup.sh</code> installs this into a venv.</li>
+<li><b>The example.</b> <code>examples/rocket/6DoF_pdg.py</code> is executed as it stands. Its <code>__main__</code> block, which starts viser servers, is not run.
+<ul>
+<li>The rocket has 14 states and a body-frame thrust, free final time, and five nodes.</li>
+<li>OpenSCvx appends the time and a penalty state. The penalty's rate is the squared violation of every continuous-time constraint: the boxes, the glide slope, the tilt, the gimbal and the thrust bounds.</li>
+<li>Everything is written in normalized time with a time dilation as a control.</li>
+</ul></li>
+<li><b>One PTR iteration</b> has three steps:
+<ol>
+<li>Discretize about the reference, with two fixed Tsit5 steps per interval and the thrust as a first-order hold. <code>A_d</code>, <code>B_d</code> and <code>C_d</code> come from forward-mode JVPs through diffrax.</li>
+<li>Solve the convex subproblem:
+<ul>
+<li>the linearized dynamics with virtual control;</li>
+<li>the boundary conditions and the boxes;</li>
+<li>a quadratic trust region;</li>
+<li>an l1 penalty on the virtual control;</li>
+<li>maximal final mass.</li>
+</ul>
+It is a QP, which CVXPY canonicalizes for QOCO.</li>
+<li>Accept the solution as the next reference. Stop when <code>J_tr &lt; 5e-3</code> and <code>J_vc &lt; 1e-6</code>.</li>
+</ol></li>
+<li><b>A reference dump.</b> <code>results/reference_6dof.json</code> is one instrumented OpenSCvx run. For every iteration it holds the reference, the discretization matrices, the subproblem's solution and the timings of the step, CVXPY and QOCO. Scaly was built against it, piece by piece.</li>
+<li><b>Two quirks kept.</b>
+<ul>
+<li><code>J_vc</code> divides the already-scaled virtual control by <code>S_x</code> a second time.</li>
+<li>OpenSCvx's iteration counter includes the warm-up iteration that <code>initialize()</code> runs. The table reports PTR iterations.</li>
+</ul></li>
+</ul>
+
+<h2>2. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>What it does</th></tr>
+<tr><td><code>model.py</code></td><td>The example's rates and the 20 path constraints, written exactly as the example writes them, and the Tsit5 tableau with diffrax's coefficients.</td></tr>
+<tr><td><code>scaly_impl.py</code></td><td>
+<ul style="margin:0">
+<li><b>Discretization.</b> The two Tsit5 steps are written out. The tangent <code>d x / d(x_k, u_k, u_{k+1})</code> is carried through every stage by the variational equation, which for an explicit Runge–Kutta step is the step's forward-mode derivative, stage for stage. Each stage makes one call to a Function returning the rates and their Jacobians, and the intervals run in a <code>vmap</code>.</li>
+<li><b>The subproblem</b> is an <code>sc.problem</code>, with the l1 term split into nonnegative parts. It is solved by Scaly's generated PIQP (<code>eps_abs</code> 1e-9), called as a Function inside the loop body.</li>
+<li><b>The PTR</b> is a <code>while_loop</code>. <code>ptr(X0, U0)</code> returns the trajectory, the iteration count and the <code>J_tr</code> and <code>J_vc</code> traces.</li>
+<li><b>For checking:</b> <code>interval_ad</code> computes the same by <code>sc.jacobian</code> through the steps; <code>discretize_function</code> and <code>qp_function</code> expose the two parts on their own.</li>
+</ul></td></tr>
+<tr><td><code>run_scaly.py</code>, <code>compare.py</code></td><td>
+<ul style="margin:0">
+<li><code>compare.py</code> runs five rounds of fresh processes behind the quiet-machine gate. Each round runs OpenSCvx with an empty compilation cache and then warm, and Scaly with an empty JIT cache and then warm.</li>
+<li>Both sides time imports, build, first call or <code>initialize()</code>, and the solve.</li>
+<li>Scaly's solve and its two parts are timed from C (<code>fatrop_chain/time_kernel.c</code>).</li>
+<li><code>parts</code> sets the per-iteration split beside OpenSCvx's.</li>
+</ul></td></tr>
+<tr><td><code>baseline/</code></td><td><code>setup.sh</code> (the pins) and <code>run_openscvx.py</code>, which times OpenSCvx's phases. OpenSCvx's cache directory is pointed into the run's own work directory.</td></tr>
+<tr><td><code>scvx.ipynb</code></td><td>
+<ul style="margin:0">
+<li>Explains the problem and the method.</li>
+<li>Checks the discretization against OpenSCvx's matrices at iterations 1, 3 and 5.</li>
+<li>Builds and runs the whole PTR live, without OpenSCvx, and prints <code>J_tr</code> and <code>J_vc</code> beside OpenSCvx's.</li>
+<li>Plots the trajectory, the thrust and the trust-region measure, then the recorded comparison.</li>
+</ul></td></tr>
+</table></div>
+
+<h2>3. Results</h2>
+<p>Apple M3 Max, macOS 26, Apple clang 21 at <code>-O2 -mcpu=native -fno-math-errno</code>. Five rounds, with a one-minute load of 2.6 to 3.6 at each process start. Each row is the fastest round.</p>
+<div class="scroll"><table>
+<tr><th>Stack</th><th>Start</th><th>Imports, s</th><th>Build, s</th><th>Compile and first solve, s</th><th>End to end, s</th><th>Solve, ms</th><th>PTR iterations</th><th>Final mass</th></tr>
+<tr><td>OpenSCvx</td><td>cold</td><td class="r">1.08</td><td class="r">0.37</td><td class="r">3.12</td><td class="r">4.61</td><td class="r">43.8</td><td class="r">5</td><td class="r">1.4171783</td></tr>
+<tr><td>OpenSCvx</td><td>warm</td><td class="r">1.07</td><td class="r">0.37</td><td class="r">3.16</td><td class="r">4.64</td><td class="r">45.3</td><td class="r">5</td><td class="r">1.4171783</td></tr>
+<tr><td>Scaly</td><td>cold</td><td class="r">0.12</td><td class="r">0.81</td><td class="r">4.13</td><td class="r">5.06</td><td class="r"><b>2.13</b></td><td class="r">5</td><td class="r">1.4171783</td></tr>
+<tr><td>Scaly</td><td>warm</td><td class="r">0.13</td><td class="r">0.32</td><td class="r">1.38</td><td class="r"><b>1.83</b></td><td class="r"><b>2.13</b></td><td class="r">5</td><td class="r">1.4171783</td></tr>
+</table></div>
+<ul>
+<li><b>Compile and first solve.</b>
+<ul>
+<li>For OpenSCvx this is <code>initialize()</code>: tracing, XLA compilation, CVXPY canonicalization and one warm-up iteration.</li>
+<li>For Scaly it is the first call: C generation, then compilation (cold) or loading the cached library (warm), then the first solve.</li>
+</ul></li>
+<li><b>Not counted.</b> OpenSCvx's <code>post_process()</code>, 0.83 s, is left out. Scaly's process wall time is also left out, because it includes the study's own C timing.</li>
+</ul>
+
+<h3>3.1 Where one PTR iteration goes</h3>
+<div class="scroll"><table>
+<tr><th>Milliseconds per iteration</th><th>OpenSCvx</th><th>Scaly</th></tr>
+<tr><td>Whole iteration</td><td class="r">5.11</td><td class="r"><b>0.425</b></td></tr>
+<tr><td>QP solve</td><td class="r">0.558 (QOCO), inside CVXPY's 2.19</td><td class="r"><b>0.346</b> (generated PIQP)</td></tr>
+<tr><td>Discretization and everything else</td><td class="r">2.92 (two discretizations)</td><td class="r"><b>0.046</b> (one)</td></tr>
+</table></div>
+<p>OpenSCvx's figures are from its instrumented run: the best of its iterations 2 to 5. Its first iteration after <code>initialize()</code> took 27 ms of that run's 48 ms solve. Scaly's parts are timed alone from C, the QP at OpenSCvx's first iteration.</p>
+<ul>
+<li><b>Two discretizations.</b> OpenSCvx discretizes both the iterate and the candidate. <code>openscvx/algorithms/scvx/iteration.py</code> says this trades "roughly 2× discretization work" for not carrying a discretization in its state.</li>
+<li><b>The QP solvers are not where the gap is.</b> The generated PIQP is 1.6× faster than QOCO's own solve, at a tighter tolerance. CVXPY's parameter update and QOCO's interface cost 1.6 ms more per iteration than QOCO's solve itself.</li>
+</ul>
+
+<h3>3.2 Agreement</h3>
+<ul>
+<li><b>Discretization.</b> <code>x_prop</code>, <code>A_d</code>, <code>B_d</code> and <code>C_d</code> equal OpenSCvx's to 5e-13 at every iteration. <code>interval_ad</code> (AD through the steps) agrees with the variational form.</li>
+<li><b>The iterates.</b> <code>J_tr</code> agrees at every iteration: 7 to 9 digits, and 5 at the last, where it is 2e-4.</li>
+<li><b>The final trajectory.</b> It agrees to 1.2e-7 in the states and 4.5e-7 in the controls. That is the tolerance of the example's QOCO settings (<code>abstol</code> 1e-6, <code>reltol</code> 1e-9).</li>
+<li><b>The last <code>J_vc</code></b> is 8e-11 for OpenSCvx and 4e-15 for Scaly's tighter PIQP. Both pass the 1e-6 test at the same iteration.</li>
+</ul>
+
+<h3>3.3 Where Scaly's setup goes</h3>
+<ul>
+<li><b>Cold</b>, the first call is 4.1 s. C generation is 1.4 s and the C compiler about 2.7 s. The C is 702 kB, with a workspace of 74 063 doubles.</li>
+<li><b>Warm</b>, the first call is 1.38 s, and it is almost all C generation. The JIT cache is keyed on the rendered C (<code>codegen/jit.py</code>), so a cache hit renders it anyway.
+<ul>
+<li>Keyed on the Function instead, the warm start would be about 0.5 s, 9× faster than OpenSCvx's.</li>
+<li>This is CS-16 in <code>internal/todo.md</code>. It affects every Scaly user, not just this study.</li>
+</ul></li>
+<li><b>How the setup came down.</b> These are approximate development-time figures, not recorded runs.
+<ul>
+<li>The first working version inlined the rates into each of the 12 stages per interval and took <code>sc.jacobian</code> through the steps: about 44 s from build to first solution.</li>
+<li>Making the rates a call node, whose derivative calls its derivative, brought it to about 11.5 s.</li>
+<li>Carrying the tangent by the variational equation, with one <code>rates_jac</code> call per stage, brought it to the table's 4.9 s.</li>
+<li>The same algorithm, written the most direct way, cost 9× more to set up. How the derivative of a stepped integrator is expressed matters as much as the solver.</li>
+</ul></li>
+</ul>
+
+<h2>4. What the numbers say about Scaly</h2>
+<ul>
+<li><b>L3 (the whole algorithm as one C function) delivers the solve.</b> Scaly's 21× does not come from a faster QP solver. It comes from removing the Python and JAX dispatch, the second discretization and the modelling layer around each iteration. This is exactly the plan's argument.</li>
+<li><b>Setup is now the story, and it is a Scaly problem.</b> The plan expected "no JIT, no modelling layer" to win end to end. Cold, C generation plus the compiler cost as much as XLA plus CVXPY, and warm, the cache lookup wastes 1.4 s. CS-16 fixes the warm half.</li>
+<li><b>Derivatives through integrators need care.</b> AD through inlined Runge–Kutta stages works, but builds a large graph. The variational form built by hand from <code>rates_jac</code> calls was 9× cheaper to set up, and it is exact.
+<ul>
+<li><code>sc.integrators</code> could offer it directly: a step with its sensitivity carried stage by stage.</li>
+<li>This is worth doing before the plan's larger node counts.</li>
+</ul></li>
+<li><b>A generated solver inside a loop body works as a plain Function.</b> The generated PIQP is called inside the <code>while_loop</code> with the discretization's outputs as its parameters. No new feature was needed.</li>
+</ul>
+
+<h2>5. Tests and checks</h2>
+<ul>
+<li><b>New test.</b> <code>tests/integration/test_case_study_scvx.py</code> works on a two-state pendulum with RK4, a first-order-hold input and a zero-order-hold gain. It has two parts:
+<ul>
+<li>The variational tangent carried through hand-written stages is checked against <code>sc.jacobian</code> through the same steps (1e-12) and against central differences (1e-8).</li>
+<li>A generated QP solver called inside a <code>while_loop</code> is checked against the same solver called from a Python loop (1e-12), with the constraints verified.</li>
+</ul></li>
+<li><b>Mutation checks: 6 of 6 killed.</b>
+<ul>
+<li>A stage's tangent increment dropped.</li>
+<li>The input sensitivity without the hold fraction.</li>
+<li>The tangent's quadrature weights shifted. RK4's weights are symmetric, so a reversal would go unnoticed; the shift is not.</li>
+<li>The input Jacobian dropped from the tangent.</li>
+<li>The loop's QP reading a stale reference.</li>
+<li>One loop iteration fewer.</li>
+</ul></li>
+<li><b>Study gates.</b> The discretization and the iterates are compared against OpenSCvx's dump, in the notebook and in every <code>run_scaly.py</code> row (<code>max_dX_vs_openscvx</code>, <code>max_dU_vs_openscvx</code>).</li>
+<li><b>Suite.</b> The node-ID baseline is regenerated (+2). Nothing under <code>src/</code> changed for this study.</li>
+</ul>
+
+<h2>6. Fairness notes and what was not done</h2>
+<ul>
+<li><b>Machine.</b> Not the reference machine. Both sides run on one core; JAX runs on the CPU.</li>
+<li><b>Tolerances.</b> The example's QOCO settings are looser than the PIQP settings used here. Loosening PIQP to match would make Scaly faster, so the comparison is conservative on that side.</li>
+<li><b>OpenSCvx's split</b> comes from one instrumented run and is not repeated. Its <code>solve()</code> totals are from the five rounds.</li>
+<li><b>Not done.</b>
+<ul>
+<li>Phase A as the plan wrote it, IPOPT with the cones as smooth constraints. It is not needed here because the example's subproblem has no cones.</li>
+<li>OpenSCvx with QOCOGEN, which generates the QP solver's C. The CVXPY interface would go, but the JAX discretization and the Python loop would stay.</li>
+<li>The node-count sweep against Reynolds et al.</li>
+<li>Szmuk's formulation, with cones in the subproblem. This is CS-17, and it needs cones in the generated IPM first.</li>
+</ul></li>
+</ul>
+
+<h2>7. Next</h2>
+<ul>
+<li>CS-16: key the JIT cache on the Function, not its rendered C. This takes E8's warm start from 1.8 s to about 0.5 s and helps every user.</li>
+<li>Second-order cones in the generated IPM (the plan's Phase B), then CS-17: a subproblem with cones, and the node-count sweep.</li>
+<li>A sensitivity-carrying explicit Runge–Kutta step in <code>sc.integrators</code>, so the fast discretization is not hand-written.</li>
+</ul>
+</main></body></html>

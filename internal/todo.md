@@ -33,6 +33,7 @@ number comes from one counter shared by the whole file, which only ever grows.
 | L | Licensing |
 | D | Documentation |
 | R | Release |
+| CS | Case studies |
 
 The Track C closeout at the end groups active tasks across sections without changing their identifiers.
 
@@ -1187,6 +1188,77 @@ The generated C, C++ and CasADi-compatible interface. [Design](notes/generated_i
   Also worth telling them their released episode's reported cost metric cannot be reproduced from
   the trajectory it ships with.
 - **BP-27. Diffusion- and GP-based problems; hovercraft MBD/DIAL workload.**
+
+## Case studies
+
+The reproductions of published benchmarks in `examples/case_studies/`, planned in
+`notes/case_studies_plan_2026_09_27.html`. Each study's report is `notes/case_study_eN_report.html`.
+
+### Now
+
+- [ ] **CS-1. E1's acados leg.** Port the Fatrop chain to `AcadosOcp` (rockit 0.6.7's acados driver no
+      longer compiles against current acados) and swap acados' generated `expl_vde_*`/`expl_ode_hess`
+      for Scaly's `--casadi` output. Report: `notes/case_study_e1_report.html`, section 6.
+- [ ] **CS-2. IPOPT's oracles without the dense seed contraction.** For a mapped multiple-shooting gap
+      the descriptor Jacobian (and Hessian) contract every stage's tangents with constant 0/1 seed
+      matrices over the whole horizon, then transpose and gather: 3.3x the stagewise Jacobian at 3
+      masses, and the reason Scaly's IPOPT oracles are 1.7 to 1.9x CasADi SX's on the chain. Scatter
+      the per-stage values straight into the nonzeros. E1 report, section 4.
+- [ ] **CS-3. Star-coloured stage Hessians** for stagewise oracles (the Fatrop drop-in): the dense
+      `sc.hessian` over a 42-variable 3D chain stage is 1.14x CasADi SX, which drops the structural zeros.
+- [ ] **CS-4. Rerun E1 on the reference machine** (`compare.py`, `sweep.py`); every number so far is from an M3 Max.
+- [ ] **CS-5. Local derivatives for repeated patterns** (E6). Colouring itself scaled (case13659 builds),
+      but the colour width does not stay small: the OPF Lagrangian Hessian needs 12 directions at
+      case118, 28 at case2869, 74 at case9241 (the Jacobian 15 to 48), tracking the largest bus degree.
+      Evaluation and generated C both grow as n x width: the Hessian is 5.6x ExaModels' at case9241
+      (1.28 against 0.23 s per solve) and the C is 277 MB (12 s to render, 22 s to compile). ExaModels
+      forms each constraint pattern's small local Hessian and scatters it, which grows as nnz. Colour
+      one `vmap` body (or one gather pattern) and replicate it. E6 report.
+- [ ] **CS-6. `sc.solver(sc.qp_problem(n, ...), "piqp")` build-time growth** (E3): 0.23 s at n=50, 14.4 s at n=200.
+- [ ] **CS-7. Reverse mode through `SparseLDL.solve` with a matrix right-hand side** (E5), about 100x slower than per-column solves.
+- [ ] **CS-8. Second-order cones in the generated IPM** (E3, E8), Nesterov-Todd scaling on the fixed KKT pattern.
+- [ ] **CS-9. A `vmap` of matrix-vector products with one constant matrix as a matrix product.** RTN-MPC's
+      surrogate at 10 nodes: Scaly runs, per node, a matvec for the value and a two-column product for
+      the Jacobian, reading each layer's weights 20 times per call and storing them twice (one copy per
+      layout); PyTorch runs one product per layer for all nodes. Scaly is 29 to 38x faster at width 16,
+      0.6x at 5 x 128 and 0.05x at 12 x 512 (float32 accounts for 2.2x of that). E2 report.
+      The same shape in E5: 64 independent LQ solves per step, each a chain of 8 x 8 or 16 x 16 products,
+      run element by element; at 16 states Scaly's lead over XLA's batched kernels falls from 10x to 4x
+      (forward) and from 5.5x to 2.1x (gradient). Vectorize a `vmap` across its batch. E5 report.
+- [ ] **CS-10. A call node's value and its derivative compute the callee's forward pass twice.** In
+      acados' `expl_vde_forw` for a 5 x 128 MLP model written as a `Function`, the Jacobians recompute
+      the network beside the call's own value: 60 µs against 31 µs with the network written inline.
+      Share the primal between a call and its derivative (or return it from the derivative). E2 report.
+      E5: the reverse sweep of an episode calls a `custom_derivative` MPC whose rule needs its output, and
+      the output is recomputed for it; with `cost` and `grad` from one Function the whole episode's forward
+      also runs twice (200 against 161 ms). E5 report.
+- [ ] **CS-11. Dense matrices in the CasADi layer.** `casadi=True` refuses a dense matrix argument
+      (Scaly row-major, CasADi column-major), so acados' `Sx` has to travel as a flat column-major
+      vector. Transposing in the layer would make any acados signature a drop-in. E2 report.
+- [ ] **CS-12. A parameter-dependent QP Hessian is materialized dense before its nonzeros are gathered.**
+      The oscillating-masses MPC with `Q`, `R` as parameters: the generated PIQP zero-fills an `n x n`
+      array every solve, writes the diagonal and reads it back (40 000 doubles at horizon 16, about
+      1.6 n^2 of workspace in all: 29k doubles at n = 104, 243k at n = 392). Extract `P` sparse. E3 report.
+- [ ] **CS-13. The rest of E4's problem set.** Parallel park and cartpole are done. Still open:
+      escape (Altro.jl's infeasible start, slack controls on the dynamics), the quadrotor maze
+      (a quaternion state, so iLQR in the error state as RobotDynamics does), the Kuka arm (RNEA as a
+      `scan` over links), and the DIRCOL column: Scaly's IPOPT on a Hermite-Simpson transcription of the
+      same problems against Ipopt DIRCOL from Julia. E4 report.
+- [ ] **CS-14. Loop-invariant hoisting stops at a custom rule.** E5's episode, written as the benchmark
+      writes it, has a Riccati recursion that depends only on broadcast data: the forward `scan` hoists
+      it (0.19 ms for 3200 MPC solves), but in the reverse sweep each element's rule recomputes it
+      (84 ms). Hoist the invariant part of a rule's body as the forward does. E5 report.
+- [ ] **CS-15. `sc.diag` and `sc.stop_gradient`.** A diagonal matrix from a vector is written
+      `v.reshape((n, 1)) * I`; DiffMPC's and trajax's truncated gradients (no cotangent through the MPC's
+      state) needed a custom rule, where `stop_gradient` would express it directly. E5 report.
+- [ ] **CS-16. A JIT cache hit still renders the C.** `jit.py` hashes the rendered source to find the
+      compiled library, so a warm start pays the whole rendering: 1.4 s of the SCvx study's 1.8 s warm
+      start, against a 2 ms solve. Key the cache on the Function's structure (its IR hash and the
+      compile flags) and render only on a miss. E8 report.
+- [ ] **CS-17. E8 with the cones in the subproblem.** OpenSCvx's 6-DoF landing keeps every nonconvex and
+      conic constraint in its penalty state, so its subproblem is a QP and E8 ran Phase C directly. An
+      example whose subproblem keeps second-order cones (the plan's Szmuk and Reynolds formulations) needs
+      CS-8 first; the node-count sweep against the ~100 ms class of Reynolds et al. goes with it. E8 report.
 
 ## Licensing
 

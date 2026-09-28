@@ -1,0 +1,13 @@
+diff --git a/benchmark_tools.py b/benchmark_tools.py
+index 2f224d3..f59c223 100644
+--- a/benchmark_tools.py
++++ b/benchmark_tools.py
+@@ -25,7 +25,7 @@ def SimulateOneStep(stage:rockit.Stage, x0, u0, M, dt, intg):
+     intg = SamplingMethod(M=M, intg = intg).discrete_system(stage)
+     # ret = Function('F', [X0, U, T, t0, P], [X[-1], hcat(X), hcat(poly_coeffs), quad, Zs[-1], hcat(Zs), hcat(poly_coeffs_z)],
+     #                ['x0', 'u', 'T', 't0', 'p'], ['xf', 'Xi', 'poly_coeff', 'qf', 'zf', 'Zi', 'poly_coeff_z'])
+-    X_res[:] = cs.evalf(intg(x0, u0, dt, 0, np.array([]))[0]).T
++    X_res[:] = cs.evalf(intg(x0, u0, dt, 0, np.array([]), np.array([]))[0]).T
+     return X_res
+ 
+ 

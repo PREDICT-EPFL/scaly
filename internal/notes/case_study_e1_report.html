@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case Study E1 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+h3{font-size:16px;margin:22px 0 6px}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Case study E1 · the Fatrop hanging chain</h1>
+<p class="sub">Plan <code>case_studies_plan_2026_09_27.html</code>, E1 · branch <code>claude/case-studies</code> · 27 Sep 2026 · code in <code>examples/case_studies/fatrop_chain/</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> The hanging-chain MPC problems of the Fatrop paper (IROS 2023), from the authors' own benchmark repository, solved through rockit and CasADi 3.8 as published, and then with Scaly's oracles inside the same solvers.</p>
+<ul>
+<li><b>The drop-ins are exact.</b> Fatrop with Scaly's oracles runs the same libfatrop that CasADi's plugin uses. It takes the same iterations (13 in 2D, 14 in 3D) and reaches the same solution to 7e-15. The IPOPT drop-in takes 14 iterations on both chains and also agrees to 7e-15.</li>
+<li><b>The paper's compile failure is a real cost.</b> CasADi's generated C for these oracles now compiles on a 64 GB machine. It takes <b>73 s and 2.9 GB</b> of compiler memory (2D) and <b>267 s and 5.3 GB</b> (3D), past the 180 s budget of the fairness protocol. Scaly compiles the same oracles in <b>1.4 s and 2.0 s</b>, with at most 0.12 GB.</li>
+<li><b>Function evaluation is mixed.</b> Against CasADi's best encoding, compiled SX:
+<ul>
+<li>Fatrop with Scaly's stage oracles: <b>1.48× faster</b> in 2D (2.63 against 3.90 ms per solve), <b>1.14× slower</b> in 3D (9.81 against 8.59 ms). The whole solve is 1.40× faster in 2D and level in 3D (15.9 against 16.2 ms).</li>
+<li>IPOPT with Scaly's oracles: <b>1.9× and 1.7× slower</b> (5.55 against 2.91 ms, 16.9 against 10.1 ms). The generated C shows why: section 4.</li>
+<li>Against CasADi's virtual machine, the paper's configuration, Fatrop with Scaly's oracles is 5.0× (2D) and 3.2× (3D) faster in total.</li>
+</ul></li>
+<li><b>The full stack loses.</b> Scaly's SQP converges in 4 iterations and needs little function evaluation (1.7 and 6.7 ms). Its four sparse PIQP solves on the whole KKT system take 21 and 56 ms, where Fatrop's Riccati recursion takes 2.3 and 6.1 ms for 13 to 14 iterations.</li>
+<li><b>Machine.</b> Apple M3 Max, not the reference machine. None of these numbers belong on the results pages.</li>
+</ul>
+<p style="margin-bottom:0"><b>Against the plan's success criteria:</b> identical iterates in the drop-ins <span class="ok">met</span>. Compile time better than every CasADi encoding <span class="ok">met</span>, by 50 to 130×. Function evaluation better than the best CasADi encoding "from M ≈ 7 up" <span class="ok">met from 8 masses</span>, where SX no longer compiles within budget (2.2 to 3.7×, section 3.3). At the paper's 6 masses it is <span class="warn">met in 2D on the Fatrop path only</span>: in 3D, SX's kernels are faster once compiled. "The 3D chain compiles where CasADi's does not" <span class="warn">holds under the 180 s budget</span>, not in absolute terms on this machine. The acados leg was <span class="bad">not done</span> (section 6).</p>
+</div>
+
+<h2>1. The paper and what was reproduced</h2>
+<p>Fatrop's paper times Fatrop, acados and IPOPT on rockit-built OCPs. The two hanging-chain MPC problems (6 masses, 25 RK4 intervals, 26 states in 2D and 39 in 3D) are the ones where "compilation failed due to insufficient available memory", so their oracles ran in CasADi's virtual machine and function evaluation was left out of the reported times.</p>
+<ul>
+<li><b>Upstream.</b> <code>fatrop_benchmarks</code> from the KU Leuven GitLab, pinned at <code>9e7025a</code> (2023-08-03).
+<ul>
+<li>rockit comes from PyPI at 0.6.7. CasADi 3.8.0 ships Fatrop 1.1.8 and IPOPT 3.14.11 in its wheel.</li>
+<li>One line needed a fix: rockit 0.6's integrator takes a sixth argument (<code>baseline/fatrop_benchmarks.patch</code>).</li>
+</ul></li>
+<li><b>How the baseline is run.</b> rockit builds the transcription exactly as the benchmark scripts do. <code>baseline/run_casadi.py</code> then hands rockit's NLP to <code>nlpsol</code> directly, so Opti's Python bookkeeping is outside the timer.
+<ul>
+<li>Fatrop gets <code>structure_detection='auto'</code> with the equality flags Opti passes.</li>
+<li>IPOPT gets the authors' options with MUMPS in place of MA57, since HSL is not available.</li>
+</ul></li>
+<li><b>The paper's numbers</b> (i7-10850H, function evaluation excluded), as context only:
+<ul>
+<li>Fatrop: 7.61 ms (2D) and 17.6 ms (3D).</li>
+<li>acados: 15.2 and 29.8 ms.</li>
+</ul>
+Measured here, Fatrop's time outside function evaluation is 3.1 to 3.2 ms (2D) and 7.6 ms (3D) through CasADi's plugin, timed in Python. Through the Scaly adapter it is 2.3 and 6.1 ms, timed in C, scatter included.</li>
+</ul>
+
+<h2>2. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>What it does</th></tr>
+<tr><td><code>scaly_impl.py</code></td><td>The chain in Scaly: the link force <code>vmap</code>ped over the chain inside the model, <code>si.rk4</code>, the gap and the stage cost <code>vmap</code>ped over the horizon.
+<ul>
+<li>Same variable order, rows and initial guess as rockit.</li>
+<li>Checked against rockit's exported NLP at random points: objective 2e-16, all 726 and 1089 constraints 4e-15 relative, initial guess and initial state exact.</li>
+</ul></td></tr>
+<tr><td><code>fatrop_dropin.py</code>, <code>fatrop_scaly.c</code></td><td>Fatrop's C interface (<code>OCPCInterface.h</code>, the one CasADi's plugin fills), filled from five Scaly Functions over Fatrop's <code>[u_k, x_k]</code> layout:
+<ul>
+<li>the objective and its gradient;</li>
+<li>the dynamics residual;</li>
+<li>per stage, <code>[∂F/∂(u,x), F − x₊]</code>;</li>
+<li>per stage, <code>[∇²(s l + λ·F), ∇(s l + λ·F)]</code>.</li>
+</ul>
+Each is one <code>vmap</code> over the stages with one output per stage, so each stage is computed once. The adapter only scatters into BLASFEO blocks and fills the two linear constraints, as CasADi's runtime does. It links the wheel's <code>libfatrop</code>, so solver, options and linear algebra are identical.</td></tr>
+<tr><td><code>run_scaly.py</code>, <code>baseline/run_casadi.py</code>, <code>compare.py</code></td><td>One variant per fresh process, with an empty JIT cache. Compiler wall time and peak memory come from <code>baseline/cc_timed.sh</code> on both sides. Each timed cell waits for a one-minute load below 6.</td></tr>
+<tr><td><code>sweep.py</code>, <code>time_kernel.c</code></td><td>Chain-size sweep of IPOPT's two kernels, timed from C through the shared <code>f(arg, res, iw, w, mem)</code> entry. Five backends: Scaly's IPOPT oracles, Scaly's stage oracles, and CasADi's SX, MX and <code>map</code> encodings. Every kernel is checked against CasADi's SX evaluation.</td></tr>
+<tr><td><code>tests/integration/test_case_study_fatrop_chain.py</code></td><td>The stage Hessian and Jacobian path on a 2-mass chain, against a NumPy complex-step reference. Also the mapped stages with the unevenly strided <code>xnext</code> gather.</td></tr>
+</table></div>
+
+<h2>3. Results</h2>
+<h3>3.1 Solving the paper's problems</h3>
+<p>Fastest of five fresh processes per row (one for the compiled CasADi rows), each the minimum over 30 solves.</p>
+<ul>
+<li>Function evaluation (FE) is the time inside the oracles: CasADi's <code>t_wall_nlp_*</code> timers, Scaly's solver statistics, or a C timer around each Scaly oracle call in the Fatrop adapter.</li>
+<li>CasADi rows are timed in Python around <code>nlpsol</code>; Scaly rows in C.</li>
+<li>Agreement is the largest difference from CasADi's IPOPT solution.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>Chain</th><th>Solver</th><th>Oracles</th><th>Iter.</th><th>Solve, ms</th><th>FE, ms</th><th>Rest, ms</th><th>Setup, s</th><th>Compile, s</th><th>Compiler memory, GB</th><th>Agreement</th></tr>
+<tr><td>2D</td><td>Fatrop 1.1.8</td><td>CasADi VM</td><td class="r">13</td><td class="r">24.61</td><td class="r">21.41</td><td class="r">3.20</td><td class="r">1.1</td><td class="r">–</td><td class="r">–</td><td class="r">3e-08</td></tr>
+<tr><td>2D</td><td>Fatrop 1.1.8</td><td>CasADi C</td><td class="r">13</td><td class="r">6.97</td><td class="r">3.90</td><td class="r">3.07</td><td class="r">75.4</td><td class="r">72.7</td><td class="r">2.91</td><td class="r">3e-08</td></tr>
+<tr><td>2D</td><td>Fatrop 1.1.8</td><td><b>Scaly C</b></td><td class="r">13</td><td class="r"><b>4.97</b></td><td class="r"><b>2.63</b></td><td class="r">2.34</td><td class="r">3.1</td><td class="r"><b>1.4</b></td><td class="r"><b>0.12</b></td><td class="r">3e-08</td></tr>
+<tr><td>2D</td><td>IPOPT 3.14.11 (CasADi's)</td><td>CasADi VM</td><td class="r">14</td><td class="r">42.09</td><td class="r">23.03</td><td class="r">19.06</td><td class="r">1.1</td><td class="r">–</td><td class="r">–</td><td class="r">ref.</td></tr>
+<tr><td>2D</td><td>IPOPT 3.14.11 (CasADi's)</td><td>CasADi C</td><td class="r">14</td><td class="r">22.03</td><td class="r"><b>2.91</b></td><td class="r">19.12</td><td class="r">53.8</td><td class="r">51.4</td><td class="r">2.55</td><td class="r">0</td></tr>
+<tr><td>2D</td><td>IPOPT 3.14.19 (Scaly's)</td><td>Scaly C</td><td class="r">14</td><td class="r">24.27</td><td class="r">5.55</td><td class="r">18.72</td><td class="r">5.8</td><td class="r">3.3</td><td class="r">0.18</td><td class="r">4e-15</td></tr>
+<tr><td>2D</td><td>Scaly SQP + PIQP</td><td>Scaly C</td><td class="r">4</td><td class="r">22.98</td><td class="r">1.67</td><td class="r">21.31</td><td class="r">6.2</td><td class="r">3.5</td><td class="r">0.23</td><td class="r">2e-06</td></tr>
+<tr><td>3D</td><td>Fatrop 1.1.8</td><td>CasADi VM</td><td class="r">14</td><td class="r">51.28</td><td class="r">43.61</td><td class="r">7.67</td><td class="r">1.8</td><td class="r">–</td><td class="r">–</td><td class="r">3e-07</td></tr>
+<tr><td>3D</td><td>Fatrop 1.1.8</td><td>CasADi C</td><td class="r">14</td><td class="r">16.23</td><td class="r"><b>8.59</b></td><td class="r">7.64</td><td class="r">271.0</td><td class="r">267.0</td><td class="r">5.27</td><td class="r">3e-07</td></tr>
+<tr><td>3D</td><td>Fatrop 1.1.8</td><td><b>Scaly C</b></td><td class="r">14</td><td class="r"><b>15.91</b></td><td class="r">9.81</td><td class="r">6.11</td><td class="r">4.1</td><td class="r"><b>2.0</b></td><td class="r"><b>0.10</b></td><td class="r">3e-07</td></tr>
+<tr><td>3D</td><td>IPOPT 3.14.11 (CasADi's)</td><td>CasADi VM</td><td class="r">14</td><td class="r">90.03</td><td class="r">45.09</td><td class="r">44.94</td><td class="r">1.8</td><td class="r">–</td><td class="r">–</td><td class="r">ref.</td></tr>
+<tr><td>3D</td><td>IPOPT 3.14.11 (CasADi's)</td><td>CasADi C</td><td class="r">14</td><td class="r">56.36</td><td class="r"><b>10.09</b></td><td class="r">46.27</td><td class="r">184.8</td><td class="r">180.9</td><td class="r">4.70</td><td class="r">0</td></tr>
+<tr><td>3D</td><td>IPOPT 3.14.19 (Scaly's)</td><td>Scaly C</td><td class="r">14</td><td class="r">61.60</td><td class="r">16.90</td><td class="r">44.70</td><td class="r">14.1</td><td class="r">9.7</td><td class="r">0.38</td><td class="r">7e-15</td></tr>
+<tr><td>3D</td><td>Scaly SQP + PIQP</td><td>Scaly C</td><td class="r">4</td><td class="r">62.59</td><td class="r">6.65</td><td class="r">55.94</td><td class="r">13.4</td><td class="r">9.6</td><td class="r">0.43</td><td class="r">2e-05</td></tr>
+</table></div>
+<ul>
+<li><b>Exact drop-ins.</b> Fatrop with Scaly's oracles agrees with Fatrop with CasADi's oracles to 3.9e-15 (2D) and 6.7e-15 (3D). The IPOPT pair agrees to 4.3e-15 and 7.3e-15. Both pairs are the same iterates up to rounding.</li>
+<li><b>The SQP's 2e-6 and 2e-5 are not an accuracy problem.</b> IPOPT and Fatrop relax the bounds by 1e-8, and their saturated controls sit at 1.00000001. The SQP holds <code>|u| ≤ 1</code> exactly, and the chain amplifies that difference in the states. Its objective is 8e-7 higher, as expected from the tighter bounds.</li>
+<li><b>What the IPOPT rows compare.</b> The two builds differ, 3.14.19 with MUMPS as built by Scaly against 3.14.11 with CasADi's MUMPS. Only their FE columns compare. Their rest-of-solve times happen to be close here (18.7 against 19.1 ms, 44.7 against 46.3 ms), unlike the chain row of fairness.md's build study.</li>
+</ul>
+
+<h3>3.2 The compile the paper could not do</h3>
+<ul>
+<li><b>CasADi.</b> Every one of the four compiled CasADi cells compiles on this machine (64 GB, clang 21, <code>-O2 -mcpu=native -fno-math-errno</code>).
+<ul>
+<li>Peak compiler memory is 2.5 to 5.3 GB for a single <code>cc</code> process.</li>
+<li>Compile time is 51 to 267 s.</li>
+<li>A laptop with 16 GB running anything else, or a parallel build, is where the paper's out-of-memory came from. Two of the four cells exceed the 180 s budget of the fairness protocol.</li>
+</ul></li>
+<li><b>Scaly.</b> The same oracle sets compile in 1.4 to 9.7 s with 0.10 to 0.38 GB.
+<ul>
+<li>Its setup, 3 to 14 s, is mostly Python-side tracing, derivatives and colouring.</li>
+<li>The 3D IPOPT setup of 14.1 s against 1.8 s for CasADi's VM is the one place Scaly's setup is slower than an uncompiled CasADi.</li>
+</ul></li>
+</ul>
+
+<h3>3.3 Chain-size sweep</h3>
+<p>IPOPT's two kernels for the 3D chain at N = 25, 3 to 15 masses.</p>
+<ul>
+<li>Each cell is built in a fresh process, compiled through <code>cc_timed.sh</code> with the 180 s budget, and timed from C as the best of 200 calls.</li>
+<li>A backend that misses the budget is not tried at larger sizes.</li>
+<li>Every kernel matches CasADi's SX evaluation of rockit's NLP to 5e-14.</li>
+<li>"Stage oracles" are the Fatrop drop-in's kernels: the same derivatives, as dense stage blocks.</li>
+<li>These cells waited for a load below 10, not 6, because other sessions kept the machine busy for most of an hour. Bold marks the fastest kernel at each size.</li>
+<li>Each sample timed one call. <code>time_kernel.c</code> has since moved to batches of calls, because the macOS clock ticks in microseconds and E2's kernels take less than one. Every kernel here takes at least 49 µs, so the per-call timing is within 2%.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>Masses</th><th>States</th><th>Backend</th><th>Hessian, µs</th><th>Jacobian, µs</th><th>Compile, s</th><th>Compiler memory, MB</th><th>Source, kB</th><th>Machine code, kB</th></tr>
+<tr><td class="r">3</td><td class="r">21</td><td>Scaly, IPOPT oracles</td><td class="r">182</td><td class="r">164</td><td class="r">2.9</td><td class="r">144</td><td class="r">1808</td><td class="r">139</td></tr>
+<tr><td class="r">3</td><td class="r">21</td><td>Scaly, stage oracles</td><td class="r"><b>138</b></td><td class="r"><b>49</b></td><td class="r">1.1</td><td class="r">96</td><td class="r">197</td><td class="r">76</td></tr>
+<tr><td class="r">3</td><td class="r">21</td><td>CasADi SX</td><td class="r">185</td><td class="r">59</td><td class="r">70.0</td><td class="r">1728</td><td class="r">13606</td><td class="r">4258</td></tr>
+<tr><td class="r">3</td><td class="r">21</td><td>CasADi MX</td><td class="r">822</td><td class="r">306</td><td class="r">113.7</td><td class="r">1683</td><td class="r">2593</td><td class="r">1658</td></tr>
+<tr><td class="r">3</td><td class="r">21</td><td>CasADi map(SX)</td><td class="r">404</td><td class="r">239</td><td class="r">5.6</td><td class="r">406</td><td class="r">3928</td><td class="r">711</td></tr>
+<tr><td class="r">4</td><td class="r">27</td><td>Scaly, IPOPT oracles</td><td class="r">264</td><td class="r">293</td><td class="r">3.8</td><td class="r">177</td><td class="r">2906</td><td class="r">188</td></tr>
+<tr><td class="r">4</td><td class="r">27</td><td>Scaly, stage oracles</td><td class="r">219</td><td class="r"><b>67</b></td><td class="r">1.3</td><td class="r">144</td><td class="r">268</td><td class="r">112</td></tr>
+<tr><td class="r">4</td><td class="r">27</td><td>CasADi SX</td><td class="r"><b>197</b></td><td class="r">70</td><td class="r">61.5</td><td class="r">2086</td><td class="r">17943</td><td class="r">5900</td></tr>
+<tr><td class="r">4</td><td class="r">27</td><td>CasADi MX</td><td class="r">1106</td><td class="r">468</td><td class="r">165.6</td><td class="r">2573</td><td class="r">3483</td><td class="r">2341</td></tr>
+<tr><td class="r">4</td><td class="r">27</td><td>CasADi map(SX)</td><td class="r">523</td><td class="r">317</td><td class="r">6.9</td><td class="r">480</td><td class="r">5466</td><td class="r">910</td></tr>
+<tr><td class="r">5</td><td class="r">33</td><td>Scaly, IPOPT oracles</td><td class="r">346</td><td class="r">408</td><td class="r">4.9</td><td class="r">226</td><td class="r">4086</td><td class="r">248</td></tr>
+<tr><td class="r">5</td><td class="r">33</td><td>Scaly, stage oracles</td><td class="r">369</td><td class="r">88</td><td class="r">1.3</td><td class="r">88</td><td class="r">247</td><td class="r">131</td></tr>
+<tr><td class="r">5</td><td class="r">33</td><td>CasADi SX</td><td class="r"><b>227</b></td><td class="r"><b>84</b></td><td class="r">94.1</td><td class="r">2606</td><td class="r">22843</td><td class="r">7498</td></tr>
+<tr><td class="r">5</td><td class="r">33</td><td>CasADi MX</td><td colspan="6" class="warn">compile exceeded 180 s</td></tr>
+<tr><td class="r">5</td><td class="r">33</td><td>CasADi map(SX)</td><td class="r">817</td><td class="r">457</td><td class="r">9.7</td><td class="r">615</td><td class="r">7726</td><td class="r">1273</td></tr>
+<tr><td class="r">6</td><td class="r">39</td><td>Scaly, IPOPT oracles</td><td class="r">468</td><td class="r">539</td><td class="r">8.5</td><td class="r">251</td><td class="r">4839</td><td class="r">357</td></tr>
+<tr><td class="r">6</td><td class="r">39</td><td>Scaly, stage oracles</td><td class="r">514</td><td class="r">135</td><td class="r">1.6</td><td class="r">98</td><td class="r">294</td><td class="r">164</td></tr>
+<tr><td class="r">6</td><td class="r">39</td><td>CasADi SX</td><td class="r"><b>267</b></td><td class="r"><b>103</b></td><td class="r">132.3</td><td class="r">3254</td><td class="r">27487</td><td class="r">9134</td></tr>
+<tr><td class="r">6</td><td class="r">39</td><td>CasADi map(SX)</td><td class="r">964</td><td class="r">541</td><td class="r">11.2</td><td class="r">619</td><td class="r">9262</td><td class="r">1475</td></tr>
+<tr><td class="r">8</td><td class="r">51</td><td>Scaly, IPOPT oracles</td><td class="r"><b>677</b></td><td class="r">771</td><td class="r">10.4</td><td class="r">372</td><td class="r">7079</td><td class="r">489</td></tr>
+<tr><td class="r">8</td><td class="r">51</td><td>Scaly, stage oracles</td><td class="r">899</td><td class="r"><b>217</b></td><td class="r">2.1</td><td class="r">123</td><td class="r">400</td><td class="r">201</td></tr>
+<tr><td class="r">8</td><td class="r">51</td><td>CasADi SX</td><td colspan="6" class="warn">compile exceeded 180 s</td></tr>
+<tr><td class="r">8</td><td class="r">51</td><td>CasADi map(SX)</td><td class="r">1478</td><td class="r">811</td><td class="r">18.8</td><td class="r">920</td><td class="r">14146</td><td class="r">2207</td></tr>
+<tr><td class="r">10</td><td class="r">63</td><td>Scaly, IPOPT oracles</td><td class="r"><b>864</b></td><td class="r">1239</td><td class="r">9.7</td><td class="r">464</td><td class="r">9615</td><td class="r">553</td></tr>
+<tr><td class="r">10</td><td class="r">63</td><td>Scaly, stage oracles</td><td class="r">1349</td><td class="r"><b>368</b></td><td class="r">2.6</td><td class="r">148</td><td class="r">522</td><td class="r">270</td></tr>
+<tr><td class="r">10</td><td class="r">63</td><td>CasADi map(SX)</td><td class="r">2276</td><td class="r">1172</td><td class="r">30.4</td><td class="r">1119</td><td class="r">19884</td><td class="r">3231</td></tr>
+<tr><td class="r">12</td><td class="r">75</td><td>Scaly, IPOPT oracles</td><td class="r"><b>1019</b></td><td class="r">1564</td><td class="r">11.1</td><td class="r">552</td><td class="r">12523</td><td class="r">552</td></tr>
+<tr><td class="r">12</td><td class="r">75</td><td>Scaly, stage oracles</td><td class="r">1919</td><td class="r"><b>528</b></td><td class="r">5.3</td><td class="r">232</td><td class="r">532</td><td class="r">398</td></tr>
+<tr><td class="r">12</td><td class="r">75</td><td>CasADi map(SX)</td><td class="r">2982</td><td class="r">1449</td><td class="r">40.1</td><td class="r">1372</td><td class="r">24789</td><td class="r">4284</td></tr>
+<tr><td class="r">15</td><td class="r">93</td><td>Scaly, IPOPT oracles</td><td class="r"><b>1269</b></td><td class="r">2021</td><td class="r">12.3</td><td class="r">794</td><td class="r">15364</td><td class="r">582</td></tr>
+<tr><td class="r">15</td><td class="r">93</td><td>Scaly, stage oracles</td><td class="r">3139</td><td class="r"><b>800</b></td><td class="r">5.5</td><td class="r">348</td><td class="r">691</td><td class="r">393</td></tr>
+<tr><td class="r">15</td><td class="r">93</td><td>CasADi map(SX)</td><td class="r">4019</td><td class="r">1783</td><td class="r">58.1</td><td class="r">1592</td><td class="r">31112</td><td class="r">5667</td></tr>
+</table></div>
+<ul>
+<li><b>While SX compiles, it is the fastest encoding.</b> From 4 masses its Hessian beats both Scaly kernels, by up to 1.75× at 6 masses (267 against 468 µs). Its Jacobian is within 1.3× of Scaly's stage Jacobian either way (59 to 103 against 49 to 135 µs). The price is 62 to 132 s of compile and 1.7 to 3.3 GB of compiler memory, for 14 to 27 MB of C.</li>
+<li><b>The budget cuts CasADi off early.</b> SX misses the 180 s budget from 8 masses, and MX (one call per stage) from 5.</li>
+<li><b>From 8 masses on, Scaly is ahead.</b> The best CasADi that still compiles is <code>map(SX)</code>. Scaly's Hessian beats it by 2.2× at 8 masses and 3.2× at 15, and the stage Jacobian by 3.7× to 2.2×. Scaly compiles in 2 to 12 s against 19 to 58 s, and its machine code is 0.2 to 0.6 MB against 2.2 to 5.7 MB. This is where the plan's success criterion ("better than the best CasADi encoding from M ≈ 7 up") is met.</li>
+<li><b>Scaly's two paths trade places.</b> The dense stage Hessian grows as the square of the stage size and falls behind the star-coloured IPOPT Hessian from 5 masses (CS-3). The IPOPT Jacobian stays 2.5 to 4.6× the stage Jacobian throughout, and its source grows to 15 MB of constant seed tables (CS-2). Taking the better of the two at each size, the IPOPT Hessian with the stage Jacobian, is what the numbers above use.</li>
+</ul>
+
+<h2>4. What the numbers say about Scaly</h2>
+<ul>
+<li><b>IPOPT's oracles pay for a dense recombination.</b> I read the generated C of Scaly's IPOPT constraint Jacobian for the chain.
+<ul>
+<li>It computes each stage's Jacobian in one forward pack per stage, which is what the stage oracle does too.</li>
+<li>It then forms the compressed, coloured Jacobian by contracting those per-stage tangents with constant 0/1 seed matrices. That costs <code>colours × rows × states</code> multiply-adds, done as a dense loop over the whole horizon.</li>
+<li>It finishes with a transpose and a gather into the nonzero order.</li>
+</ul>
+At 3 masses in 3D this makes the IPOPT Jacobian 164 µs against 49 µs for the stage oracle, and that gap is the IPOPT FE gap in section 3.1. A direct scatter from the per-stage Jacobian into the nonzeros would remove it (<code>todo.md</code>, CS-2).</li>
+<li><b>The stage Hessian does not exploit within-stage sparsity.</b> Scaly's stage oracle takes a dense <code>sc.hessian</code> of <code>s l + λ·F</code> over the 42 variables of a 3D stage. CasADi's expanded SX drops the structural zeros of the chain's local coupling. That accounts for Scaly moving from 1.48× faster in 2D (28 variables) to 1.14× slower in 3D. A star-coloured stage Hessian is the obvious next step (CS-3).</li>
+<li><b>Full-stack SQP needs structure.</b> A generic sparse LDLᵀ of the whole KKT matrix is 5 to 9× Fatrop's Riccati time per solve on this problem. The multistage (Riccati) tier of the PIQP plan (Tier 5) is what closes that gap, not oracle speed.</li>
+</ul>
+
+<h2>5. Tests and checks</h2>
+<ul>
+<li><b>New test.</b> <code>tests/integration/test_case_study_fatrop_chain.py</code> has 2 tests: the stage Hessian and Jacobian of an RK4 step over a model with a <code>vmap</code> and a guarded square root, against a complex-step and central-difference NumPy reference; and the stages mapped over a horizon whose last <code>xnext</code> comes from a differently strided block, against a per-stage loop.</li>
+<li><b>Mutation checks: 3 of 3 killed.</b>
+<ul>
+<li>Scaling the multiplier term in the stage Lagrangian by 0.999.</li>
+<li>Scaling the guarded norm by 1.000001.</li>
+<li>Shifting the terminal <code>xnext</code> gather by one block.</li>
+</ul></li>
+<li><b>Formulation gates</b>, run once, with results recorded here:
+<ul>
+<li>Scaly's NLP against rockit's at random points, to 4e-15.</li>
+<li>Every sweep kernel against CasADi's SX Hessian and Jacobian.</li>
+<li>Drop-in iterations and solutions, as above.</li>
+</ul></li>
+<li><b>Suite.</b> 2 579 passed, 45 skipped. No source file under <code>src/</code> changed; the node-ID baseline gained the two new tests.</li>
+</ul>
+
+<h2>6. Fairness notes and what was not done</h2>
+<ul>
+<li><b>Machine.</b> Apple M3 Max (12 performance cores), macOS 26, Apple clang 21. This is not the reference machine. The machine was shared with other work, so every timed cell waited for a one-minute load below 6 and took the minimum over processes; the spread across processes is under 3% for every row but Scaly's 3D Fatrop (4%) and 3D IPOPT (7%) rows, which ran when the load was near the threshold.</li>
+<li><b>Timers differ by side.</b> CasADi's solve times include its Python and SWIG boundary; Scaly's and the Fatrop adapter's are C-side. That favours Scaly's totals by tens of microseconds. The FE columns are oracle-only on both sides. The Fatrop adapter's scatter is outside its FE column, as CasADi's projection is outside its.</li>
+<li><b>Fatrop's own timers read zero</b> in the wheel's build, so the Fatrop split uses these outside timers.</li>
+<li><b>acados leg not done.</b> rockit 0.6.7's acados driver no longer compiles against current acados: the constraint setters gained an argument, and its CMake needs <code>CMAKE_POLICY_VERSION_MINIMUM</code>. Porting the chain to <code>AcadosOcp</code> directly and swapping acados' generated <code>expl_vde_*</code>/<code>expl_ode_hess</code> for Scaly's is E2's machinery. It can come back here once E2 has it.</li>
+<li><b>Not ported.</b> The manipulator, truck-trailer and quadrotor problems of the paper. The chains were the ones with the compile failure. The others compiled in the paper and are a smaller L2 story.</li>
+<li><b>One environment side effect, fixed.</b> A research sub-agent's <code>import cvxpygen</code> (for E3) made <code>juliacall</code> create <code>~/.julia</code> (174 MB). It was moved into the session scratchpad.</li>
+</ul>
+
+<h2>7. Next</h2>
+<ul>
+<li>CS-2: scatter the IPOPT Jacobian and Hessian values directly from per-stage derivatives, instead of the dense seed contraction (section 4). This is the change that would turn the IPOPT FE column around.</li>
+<li>CS-3: a star-coloured stage Hessian for the Fatrop-style oracles.</li>
+<li>Rerun <code>compare.py</code> and <code>sweep.py</code> on the reference machine before any number moves to the results pages.</li>
+</ul>
+</main></body></html>

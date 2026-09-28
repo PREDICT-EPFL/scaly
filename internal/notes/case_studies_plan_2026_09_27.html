@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scaly Case Studies Plan</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+:root[data-theme="dark"]{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1080px;margin:0 auto;padding:36px 16px 72px}
+h1{font-size:26px;margin:0 0 4px}
+h2{font-size:20px;margin:40px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+h3{font-size:16px;margin:20px 0 6px}
+.sub{color:var(--muted);margin:0 0 18px}
+a{color:var(--acc)}
+code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+tr:last-child td{border-bottom:none}
+td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tag{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:10px;border:1px solid var(--rule);color:var(--muted);margin-right:4px;white-space:nowrap}
+.win{color:var(--ok)} .risk{color:var(--warn)} .no{color:var(--bad)}
+.ex{background:var(--card);border:1px solid var(--rule);border-left:4px solid var(--acc);border-radius:8px;padding:6px 20px 14px;margin:22px 0}
+.ex h2{border:none;margin-top:14px}
+ol,ul{padding-left:22px} li{margin:3px 0}
+.refs li{margin:6px 0;font-size:14px}
+sup a{text-decoration:none}
+</style>
+</head>
+<body>
+<main>
+<h1>Scaly case studies: eight published benchmarks to reproduce</h1>
+<p class="sub">Plan · 27 Sep 2026 · survey of 2016–2026 papers whose results hinge on fast computation, with a reproduction plan for each</p>
+
+<div class="box">
+<p><b>Goal.</b> Reproduce 5–10 published case studies twice: once with the tool the authors used, and once with Scaly. Each should show one of Scaly's advantages on a problem someone else chose. That rules out benchmarks built to flatter Scaly.</p>
+<p><b>Selection rule.</b> Each study had to meet three conditions:</p>
+<ol>
+<li>The code is public, so the baseline can be rerun on the reference machine.</li>
+<li>The paper reports timings that separate the computation Scaly changes.</li>
+<li>The bottleneck is something Scaly can plausibly change. One of the eight, E8, needs a feature Scaly does not have yet, and is flagged as such.</li>
+</ol>
+<p>Five are in control and robotics (E1–E5). Three are outside control: power systems (E6), vision and robotic state estimation (E7), and aerospace guidance (E8).</p>
+</div>
+
+<h2>Where Scaly can win</h2>
+<p>Every expected gain below is one of these six levers. Each example names the levers it relies on.</p>
+<div class="scroll"><table>
+<tr><th>Lever</th><th>Mechanism</th><th>Existing evidence in the repo</th></tr>
+<tr><td><b>L1</b> Derivative time</td><td>Exact sparse Jacobians and Hessians from static sparsity analysis. Repeated structure stays a loop.</td><td>Unbumpercars Hessian 12.5× faster than MX. Neural-process MPC 8.5× faster at N=200. Chain M=9 4.5× faster than mapped SX.</td></tr>
+<tr><td><b>L2</b> Compile time and code size</td><td><code>vmap</code> stages compile to one loop body, so the C does not grow with the horizon or the number of agents.</td><td>CasADi SX and MX hit the 180 s compile limit where Scaly completes (chain M=9, unbumpercars C≥16).</td></tr>
+<tr><td><b>L3</b> One C function per algorithm</td><td>The whole algorithm (iLQR, ADMM, LM, SQP, IPM) is emitted as one function, with no interpreter, allocation or library-call glue.</td><td>TinyMPC reproduced at 1.4–2.8× the library's speed. iLQR and LM already exist as single functions.</td></tr>
+<tr><td><b>L4</b> Sparsity-specialised factorisation</td><td>The LDLᵀ is generated for the one fixed KKT pattern, and the parameter-to-KKT map is fused into it.</td><td>Generated PIQP matches the library's iterations. The dense kernels are within 1.6× of OpenBLAS at orders 32–64 and faster below order 32.</td></tr>
+<tr><td><b>L5</b> Differentiating through algorithms</td><td>Forward and reverse AD run through <code>scan</code> and <code>while_loop</code>. Implicit rules on solves differentiate without unrolling the factorisation.</td><td><code>heat_control</code>, <code>conductivity_inversion</code>, and <code>linalg.solve</code> with two levels of implicit rules.</td></tr>
+<tr><td><b>L6</b> Embedded footprint</td><td>Self-contained C with static memory and no BLAS, libtorch or runtime.</td><td>TinyMPC: 4–63 KiB of <code>.text</code> against the library's 200 KiB.</td></tr>
+</table></div>
+
+<h2>The eight proposed case studies</h2>
+<div class="scroll"><table>
+<tr><th>#</th><th>Case study (paper)</th><th>Baseline tool</th><th>Key computation</th><th>Levers</th><th>Expected outcome</th><th>Needs</th><th>Effort</th></tr>
+<tr><td>E1</td><td>Hanging chain and manipulator NMPC (Fatrop, IROS'23<sup><a href="#r1">1</a></sup>; acados<sup><a href="#r2">2</a></sup>)</td><td>rockit/CasADi → Fatrop, acados, IPOPT</td><td>RK4 sensitivities and the exact Lagrangian Hessian of a large-state OCP</td><td>L1 L2</td><td class="win">Function evaluation several times faster, and it compiles where CasADi's C ran out of memory</td><td>existing</td><td>M</td></tr>
+<tr><td>E2</td><td>Neural-residual quadrotor MPC (Real-time Neural MPC, RA-L'23<sup><a href="#r3">3</a></sup>; L4CasADi<sup><a href="#r4">4</a></sup>)</td><td>acados RTI with a CasADi MLP or a PyTorch Taylor surrogate</td><td>MLP value and Jacobian inside RK4 over N=10</td><td>L1 L3 L6</td><td class="win">Exact model at or above the surrogate's rate for widths ≤128</td><td>existing; RTI from <code>sc.mpc</code></td><td>M</td></tr>
+<tr><td>E3</td><td>Embedded convex MPC QPs (CVXPYgen, L-CSS'22<sup><a href="#r5">5</a></sup>; QOCOGEN, MPC'26<sup><a href="#r6">6</a></sup>; Conic-TinyMPC<sup><a href="#r8">8</a></sup>)</td><td>CVXPYgen generating OSQP, QOCOGEN or Clarabel; CVXGEN</td><td>KKT LDLᵀ for a fixed pattern, plus the parameter-to-KKT update</td><td>L4 L2 L6</td><td class="win">Wins at horizons where CVXGEN and QOCOGEN stop scaling; parity at small H</td><td>generated PIQP (Tier 4)</td><td>M</td></tr>
+<tr><td>E4</td><td>Constrained trajectory optimisation suite (ALTRO, IROS'19<sup><a href="#r9">9</a></sup>)</td><td>ALTRO.jl; Ipopt with DIRCOL</td><td>AL-iLQR: rollouts, expansions and Riccati inside an augmented-Lagrangian loop</td><td>L3 L1</td><td class="win">The whole solver in one C function; large gain over Julia</td><td>AL-iLQR (extend <code>ilqr</code>)</td><td>M/L</td></tr>
+<tr><td>E5</td><td>Differentiable MPC in a learning loop (DiffMPC, 2025<sup><a href="#r12">12</a></sup>; mpc.pytorch<sup><a href="#r11">11</a></sup>)</td><td>mpc.pytorch, trajax, Theseus, DiffMPC (CPU)</td><td>Batched constrained MPC solves and their adjoint</td><td>L5 L3</td><td class="win">Order-of-magnitude CPU forward and backward (hypothesis)</td><td>implicit rule on a solver's output</td><td>M</td></tr>
+<tr><td>E6</td><td>AC-OPF on PGLib-OPF (ExaModels, EPSR'24<sup><a href="#r13">13</a></sup>; PowerModels<sup><a href="#r14">14</a></sup>)</td><td>JuMP, AMPL or ExaModels with Ipopt; MadNLP</td><td>Sparse Jacobian and Hessian of the power-flow equations over branches and buses</td><td>L1 L2</td><td class="win">Derivatives at ExaModels' level; 40–60% less total time than JuMP; batched multi-period</td><td>faster star colouring</td><td>M</td></tr>
+<tr><td>E7</td><td>Factor-graph least squares (SymForce, RSS'22<sup><a href="#r16">16</a></sup>; BAL<sup><a href="#r17">17</a></sup>)</td><td>SymForce, GTSAM, Ceres</td><td>Linearise, form JᵀJ, sparse Cholesky, then an LM step</td><td>L3 L4</td><td class="risk">Modest (1–2×) at the paper's size; larger as the graph grows</td><td>existing LM</td><td>M</td></tr>
+<tr><td>E8</td><td>6-DoF powered-descent SCvx (Szmuk et al., JGCD'20<sup><a href="#r18">18</a></sup>; Reynolds et al., SciTech'20<sup><a href="#r19">19</a></sup>; OpenSCvx<sup><a href="#r21">21</a></sup>)</td><td>OpenSCvx (JAX with CVXPY or QOCOGEN); C++ with BSOCP</td><td>Discretisation (flow map and state-transition matrix) and the SOCP subproblem</td><td>L3 L1 L4</td><td class="win">Large gain over JAX and Julia; the C++ target needs a conic IPM</td><td class="risk">SOC in the generated IPM</td><td>L</td></tr>
+</table></div>
+
+<h2>Common protocol</h2>
+<ul>
+<li><b>Layout.</b> Each study lives in <code>examples/case_studies/&lt;name&gt;/</code>, with the pieces below. This follows the pattern of <code>examples/casadi/compare.py</code> and <code>examples/tinympc/benchmark</code>.
+  <ul>
+  <li><code>baseline/</code>: the upstream repository pinned by commit, plus a setup script.</li>
+  <li><code>scaly_impl.py</code>.</li>
+  <li><code>compare.py</code>: runs each variant in a fresh process with an empty JIT cache.</li>
+  <li><code>README.md</code> with the results table.</li>
+  <li>A notebook with plots and a generated-C cell.</li>
+  </ul></li>
+<li><b>Two levels of comparison where possible.</b>
+  <ul>
+  <li><i>Drop-in:</i> the paper's own solver (acados, IPOPT, Fatrop) with only the oracles replaced by Scaly's. This isolates L1 and L2, and the iteration counts must match exactly.</li>
+  <li><i>Full stack:</i> Scaly's own generated algorithm. This shows L3 and L4.</li>
+  </ul></li>
+<li><b>Fairness.</b> <code>docs/results/fairness.md</code> governs every run: reference machine, five fresh processes, the same compiler and flags, the same solver build and linear solver on both sides, and every failed attempt kept.
+  <ul>
+  <li>Published numbers appear only as context, in a separate "paper reports" table. They are never mixed with our measurements.</li>
+  <li>Every pair gets an agreement check: solution difference, iterations, and objective against the paper's value.</li>
+  </ul></li>
+<li><b>What is always reported.</b>
+  <ul>
+  <li>Setup time: generation, compilation, and JIT for JAX or Julia.</li>
+  <li>Runtime: function evaluation separately from the linear solve.</li>
+  <li>Generated source size and <code>.text</code> size.</li>
+  <li>Peak compiler memory.</li>
+  </ul></li>
+<li><b>Tests.</b> A small instance of each study goes into <code>tests/integration/</code>, compared against a NumPy reference, so that no benchmark is the only thing exercising an IR, AD or codegen path.</li>
+</ul>
+
+<!-- E1 -->
+<div class="ex" id="e1">
+<h2>E1 · Hanging chain and manipulator NMPC (Fatrop / acados)</h2>
+<p><span class="tag">robotics / NMPC</span><span class="tag">L1 L2</span><span class="tag">effort M</span></p>
+<h3>Paper and key computation</h3>
+<p>Fatrop<sup><a href="#r1">1</a></sup> benchmarks Fatrop, acados and IPOPT on OCPs written in rockit/CasADi SX with RK4. The problems are:</p>
+<ul>
+<li>minimum-time problems: manipulator, truck with two trailers, quadrotor with obstacles;</li>
+<li>MPC problems: hanging chain in 2D and 3D, quadrotor, cart pendulum.</li>
+</ul>
+<p>The paper's horizons are K = 25–100 and its state dimensions are up to 39. The computation that matters is the RK4 sensitivities and the exact Hessian of the Lagrangian at every stage.</p>
+<h3>What the paper reports (i7-10850H)</h3>
+<div class="scroll"><table>
+<tr><th>Problem</th><th>Fatrop, ms</th><th>acados, ms</th><th>IPOPT, ms</th></tr>
+<tr><td>Hanging chain 2D (MPC)</td><td class="n">7.61</td><td class="n">5.22</td><td class="n">60.48</td></tr>
+<tr><td>Hanging chain 3D (MPC)</td><td class="n">17.62</td><td class="n">9.76</td><td class="n">83.96</td></tr>
+<tr><td>Robot manipulator (min-time)</td><td class="n">35.51</td><td class="n">–</td><td class="n">136.65</td></tr>
+<tr><td>Truck with two trailers (min-time)</td><td class="n">30.32</td><td class="n">–</td><td class="n">135.63</td></tr>
+</table></div>
+<p>For the hanging chains, "compilation failed due to insufficient available memory". The CasADi virtual machine was used instead, and function-evaluation time was excluded from the totals<sup><a href="#r1">1</a></sup>. The acados paper's chain benchmark (M=5, N=40, SQP-RTI) reports a median of 1.05 ms per iteration, but it does not split derivatives from the QP<sup><a href="#r2">2</a></sup>.</p>
+<h3>Why Scaly should do better</h3>
+<ul>
+<li class="win">This is the problem family where the repo's own benchmark shows the crossover. SX hits the compile limit at chain M=9, where Scaly is 4.46× faster than mapped SX. Scaly's closed-loop SQP spends 55% less total time than CasADi on the chain.</li>
+<li class="win">A chain that CasADi cannot compile, and runs only in the virtual machine, is the clearest possible L2 demonstration.</li>
+<li class="risk">For small chains (M ≤ 5), SX is currently 2.5× <i>faster</i> than Scaly. The sweep has to show the crossover honestly.</li>
+<li class="risk">Gauss–Newton acados needs only first-order sensitivities, so the L1 gain shrinks there.</li>
+</ul>
+<h3>Implementation plan</h3>
+<ol>
+<li>Pin <code>fatrop_benchmarks</code> and rockit, then reproduce Tables III–IV on the reference machine. Record whether the chain compiles, and its compile time and peak RSS.</li>
+<li>Port the chain (2D and 3D), manipulator, truck–trailer and quadrotor-obstacle OCPs to Scaly.
+  <ul>
+  <li>Use <code>sc.integrators</code> RK4, with stage functions as templates and <code>vmap</code> over stages and masses.</li>
+  <li>Check that the dynamics match rockit's numerically to 1e-12 at random points.</li>
+  </ul></li>
+<li><b>Drop-in, IPOPT.</b> Run the Scaly IPOPT plugin against rockit's IPOPT with the same build, linear solver and tolerances. Require identical iteration counts, then compare function-evaluation time.</li>
+<li><b>Drop-in, acados.</b> Export the dynamics, their sensitivities and the exact Hessian with <code>scaly_codegen --casadi</code> as acados <i>generic</i> external functions, keeping HPIPM and partial condensing the same. Compare acados' <code>time_lin</code> and <code>time_sim</code>. Check early that acados' generic path accepts Scaly's CasADi-layer symbols.</li>
+<li><b>Drop-in, Fatrop.</b> Feed Scaly stage functions through Fatrop's C++ OCP interface, or as <code>casadi.external</code> nodes inside rockit. Whichever is less invasive, prototype it on the cart pendulum first.</li>
+<li><b>Full stack.</b> Run scaly-sqp with PIQP now, and with the generated IPM once Tier 4 lands.</li>
+<li>Sweep chain size M = 3…15 and plot, for CasADi SX, mapped SX, MX and Scaly: function-evaluation time, compile time, source size and peak compiler memory.</li>
+</ol>
+<p><b>Success:</b> identical iterates in the drop-in runs, and function-evaluation time and compile time better than the best CasADi encoding from M ≈ 7 up. The 3D chain should compile to C where CasADi's C does not.</p>
+</div>
+
+<!-- E2 -->
+<div class="ex" id="e2">
+<h2>E2 · Neural-residual quadrotor MPC (Real-time Neural MPC / L4CasADi)</h2>
+<p><span class="tag">learning-based control</span><span class="tag">L1 L3 L6</span><span class="tag">effort M</span></p>
+<h3>Paper and key computation</h3>
+<p>The paper<sup><a href="#r3">3</a></sup> models a quadrotor with 13 states (position, quaternion, velocity, angular velocity) and 4 rotor thrusts, plus a learned MLP residual. It is controlled by acados SQP-RTI with N=10 and RK4. There are two ways to include the network:</p>
+<ul>
+<li><i>Naive:</i> the MLP is expanded symbolically in CasADi.</li>
+<li><i>RTN-MPC:</i> PyTorch evaluates the network and its Jacobian at the shooting nodes, and passes a first-order Taylor surrogate to acados as parameters.</li>
+</ul>
+<p>The key computation is the network's value and Jacobian inside the RK4 stages.</p>
+<h3>What the paper reports (Table II, i7 CPU, control frequency in Hz)</h3>
+<div class="scroll"><table>
+<tr><th>MLP</th><th>Naive CasADi</th><th>RTN-MPC (Taylor surrogate)</th></tr>
+<tr><td>no network</td><td class="n">4262</td><td class="n">4262</td></tr>
+<tr><td>2 layers × 16</td><td class="n">2228</td><td class="n">1096</td></tr>
+<tr><td>5 × 16</td><td class="n">1139</td><td class="n">885</td></tr>
+<tr><td>2 × 128</td><td class="n">116</td><td class="n">1071</td></tr>
+<tr><td>5 × 128</td><td class="n">31</td><td class="n">784</td></tr>
+<tr><td>12 × 32</td><td class="n">168</td><td class="n">588</td></tr>
+<tr><td>12 × 512</td><td class="n">11</td><td class="n">507</td></tr>
+</table></div>
+<h3>Why Scaly should do better</h3>
+<ul>
+<li class="win">The naive path collapses because CasADi expands every weight into the scalar graph. Scaly keeps the layers as dense loops, differentiates them exactly through those loops, and loads the same PyTorch weights (<code>scaly.utils.load_torch_state_dict</code>). The repo's neural-process MPC benchmark is already 8.5× faster than MX on this pattern.</li>
+<li class="win">RTN-MPC gives up model exactness and needs libtorch at runtime. It also loses to naive CasADi on small networks: 1096 against 2228 Hz, which is the call overhead. Scaly should beat both columns for widths up to about 128, and do so with the exact model.</li>
+<li class="win">Deployment footprint (L6): self-contained C in place of libtorch, which is hundreds of MB.</li>
+<li class="risk">12 × 512 is bounded by floating-point work. Exact Jacobians at every RK stage cost tens of ms whatever the tool. There, the fair comparison is Scaly running the same Taylor surrogate in C, and the expected result is parity to a modest gain, not a large one.</li>
+</ul>
+<h3>Implementation plan</h3>
+<ol>
+<li>Clone <code>TUM-AAS/neural-mpc</code> and <code>ml-casadi</code>, and reproduce Table II on the reference machine with torch pinned to one CPU thread. Include the trained checkpoints, or retrain from their data if they are not shipped.</li>
+<li>Write the Scaly model: quaternion rigid-body dynamics plus an MLP residual, loaded from the same state dict. Check that the residual matches PyTorch to 1e-12.</li>
+<li><b>Variant A, drop-in:</b> export the exact dynamics and Jacobians to acados as generic external functions, with the same RTI and HPIPM.</li>
+<li><b>Variant B, surrogate in C:</b> the network's value and Jacobian at the N nodes as one <code>vmap</code>ped Function. This is the same algorithm as RTN-MPC with torch removed.</li>
+<li><b>Variant C, full stack:</b> scaly-sqp in RTI mode with PIQP, through <code>sc.mpc</code> once it lands.</li>
+<li>Replay the paper's closed-loop tracking scenarios. Report frequency per network size, the share of time in function evaluation, tracking RMSE (exact against surrogate), and binary size.</li>
+</ol>
+<p><b>Success:</b> Variant A at or above the RTN-MPC column for every width ≤ 128 while using the exact model, and Variant B at least equal to RTN-MPC at 12 × 512.</p>
+</div>
+
+<!-- E3 -->
+<div class="ex" id="e3">
+<h2>E3 · Embedded convex MPC QPs (CVXPYgen / QOCOGEN / Conic-TinyMPC)</h2>
+<p><span class="tag">embedded optimisation</span><span class="tag">L4 L2 L6</span><span class="tag">effort M</span></p>
+<h3>Papers and key computation</h3>
+<p><b>CVXPYgen</b><sup><a href="#r5">5</a></sup> generates C for parametrised convex problems. Its benchmarks are a quadcopter MPC (6 states, 3 inputs, H ∈ {6, 12, 18, 30, 60}) and a portfolio back-test. The paper reports:</p>
+<ul>
+<li>CVXGEN cannot generate code beyond H = 18.</li>
+<li>Canonicalisation costs about two orders of magnitude less than the solve.</li>
+<li>Absolute times appear only in figures.</li>
+</ul>
+<p><b>QOCOGEN</b><sup><a href="#r6">6</a></sup> is the closest prior work to Scaly's generated PIQP. It fixes the sparsity pattern, runs AMD at generation time, and emits an LDLᵀ with only the necessary operations, using static memory. Its appendix compares that LDLᵀ with QDLDL on an LQR KKT matrix (6 states, 3 inputs):</p>
+<div class="scroll"><table>
+<tr><th>Horizon T</th><th class="n">5</th><th class="n">15</th><th class="n">50</th><th class="n">75</th><th class="n">100</th></tr>
+<tr><td>QOCOGEN unrolled LDL, µs</td><td class="n">0.44</td><td class="n">1.78</td><td class="n">6.12</td><td class="n">8.49</td><td class="n">12.9</td></tr>
+<tr><td>QDLDL, µs</td><td class="n">2.10</td><td class="n">7.51</td><td class="n">27.1</td><td class="n">38.8</td><td class="n">49.6</td></tr>
+</table></div>
+<p>The authors state that generated code size grows with the problem, so the custom solver was tested only on small instances.</p>
+<p><b>Conic-TinyMPC</b><sup><a href="#r8">8</a></sup> reports that OSQP runs out of memory on an STM32F405 at N ≥ 32.</p>
+<h3>Why Scaly should do better</h3>
+<ul>
+<li class="win">The same specialisation as QOCOGEN, but stages from <code>vmap</code> stay loops, so the code does not grow with H. That attacks QOCOGEN's and CVXGEN's stated limit directly.</li>
+<li class="win">The parameter-to-KKT update is fused into the same function. The gain is small, given the roughly 1% canonicalisation share.</li>
+<li class="win">PIQP's proximal IPM stays reliable at high accuracy, where OSQP needs many iterations.</li>
+<li class="risk">At small H, expect parity with QOCOGEN and CVXGEN. A warm-started OSQP at low accuracy in closed loop may win.</li>
+<li class="no">The SOCP instances are excluded until E8's conic extension exists.</li>
+</ul>
+<h3>Implementation plan</h3>
+<ol>
+<li>Reproduce CVXPYgen's quadcopter MPC and QOCO's oscillating-masses and MPC families from <code>qoco-benchmarks</code>. Generate the OSQP, QOCOGEN and Clarabel variants through CVXPYgen, and time them from C with a harness like <code>examples/qp_solvers/time_entry.c</code>.</li>
+<li>Write the same families as parametric <code>sc.problem</code>s. Solve them with the generated PIQP (<code>examples/qp_solvers/generated_piqp.py</code>, and <code>backend="scaly"</code> once Tier 4 lands) as well as the PIQP library.</li>
+<li><b>LDL microbenchmark:</b> Scaly's generated sparse LDLᵀ on the identical LQR KKT, T = 5…100, against QDLDL and QOCOGEN's emitted code. This reproduces the table above.</li>
+<li>Sweep H up to 200 at matched tolerances (1e-3 and 1e-6). Report solve µs, iterations, source and <code>.text</code> size, and generation-plus-compile time. Record where each competitor stops generating.</li>
+<li><b>Embedded leg:</b> cross-compile the Conic-TinyMPC predictive safety-filter QP for a Cortex-M7 (Teensy 4.1) and an STM32F4. Report flash, RAM and µs against OSQP and TinyMPC.</li>
+<li>Fix the known build-time growth of <code>sc.solver(sc.qp_problem(n, …), "piqp")</code> (0.23 s at n=50, 14.4 s at n=200) before the sweep. Otherwise setup time will dominate the story.</li>
+</ol>
+<p><b>Success:</b> the LDL within 1.5× of QOCOGEN's unrolled code at small T and faster than QDLDL throughout. The whole solve faster than every CVXPYgen backend for H ≥ 30. The largest H compiles where CVXGEN and QOCOGEN are not attempted.</p>
+</div>
+
+<!-- E4 -->
+<div class="ex" id="e4">
+<h2>E4 · Constrained trajectory optimisation suite (ALTRO)</h2>
+<p><span class="tag">robotics / trajectory optimisation</span><span class="tag">L3 L1</span><span class="tag">effort M/L</span></p>
+<h3>Paper and key computation</h3>
+<p>ALTRO<sup><a href="#r9">9</a></sup> is an augmented-Lagrangian iLQR followed by an active-set projection, written in Julia. It was compared with DIRCOL solved by Ipopt and SNOPT. The key computation is dynamics rollouts and derivative expansions inside nested loops: the outer AL loop, iLQR iterations, a backward Riccati pass and a forward line search.</p>
+<h3>What the paper reports (Table I, i7-6500U)</h3>
+<div class="scroll"><table>
+<tr><th>Problem</th><th>ALTRO, s</th><th>DIRCOL (Ipopt), s</th></tr>
+<tr><td>Parallel park, N=51</td><td class="n">0.117</td><td class="n">0.100</td></tr>
+<tr><td>Escape</td><td class="n">2.83</td><td class="n">9.08</td></tr>
+<tr><td>Quadrotor maze, N=101</td><td class="n">23.0</td><td class="n">559+</td></tr>
+<tr><td>Kuka arm with obstacles</td><td class="n">14.3</td><td class="n">313*</td></tr>
+</table></div>
+<p>The authors call this a "preliminary implementation". The current Altro.jl is much faster, so it is the baseline that counts.</p>
+<h3>Why Scaly should do better</h3>
+<ul>
+<li class="win">The whole AL-iLQR, projection included, becomes one allocation-free C function (L3). <code>examples/ilqr.py</code> already does this for unconstrained iLQR.</li>
+<li class="win">The same OCP is given to Scaly with IPOPT on a collocation transcription, which reproduces the DIRCOL column with exact sparse Hessians.</li>
+<li class="risk">Current Altro.jl, with ForwardDiff and StaticArrays, is fast for small state dimensions. The expected gain over it is a few ×, not orders of magnitude.</li>
+<li class="risk">The Kuka problem needs rigid-body dynamics, written in Scaly as RNEA as a <code>scan</code> over links. It is optional.</li>
+</ul>
+<h3>Implementation plan</h3>
+<ol>
+<li>Extend <code>ilqr.py</code> into an AL-iLQR:
+  <ul>
+  <li>penalty and multiplier updates in an outer <code>while_loop</code>;</li>
+  <li>constraint Jacobians per stage through <code>vmap</code>;</li>
+  <li>the active-set projection step with <code>linalg.ldl</code>.</li>
+  </ul></li>
+<li>Port parallel park, escape, quadrotor maze and cart-pole from TrajectoryOptimization.jl and ALTRO's problem set, with the same discretisation and tolerances.</li>
+<li>Establish the baselines: current Altro.jl, and, if a maintained C++ ALTRO exists at the pinned date, that too. Also run Ipopt DIRCOL from Julia against Scaly with IPOPT on the same collocation.</li>
+<li>Report time to solution, iterations, final constraint violation and cost. Add the Kuka arm last, with RNEA, if time allows.</li>
+</ol>
+<p><b>Success:</b> the same local optimum (cost within 1e-6 relative) in less wall time than current Altro.jl on every problem. Scaly with IPOPT should beat Julia DIRCOL on the maze.</p>
+</div>
+
+<!-- E5 -->
+<div class="ex" id="e5">
+<h2>E5 · Differentiable MPC in a learning loop (DiffMPC / mpc.pytorch)</h2>
+<p><span class="tag">learning / differentiable optimisation</span><span class="tag">L5 L3</span><span class="tag">effort M</span></p>
+<h3>Papers and key computation</h3>
+<p>Differentiable MPC<sup><a href="#r11">11</a></sup> differentiates through the MPC's fixed point by reusing the LQR factorisations. DiffMPC<sup><a href="#r12">12</a></sup> benchmarks four implementations on the same problems:</p>
+<ul>
+<li>the implementations: mpc.pytorch, trajax, Theseus and DiffMPC, each on CPU and on GPU;</li>
+<li>the problems: batched MPC within an RL loop, with n<sub>x</sub> 8–16, n<sub>u</sub> 4–8, T 30–40 and batch sizes 16–256, each timed over a 50-step episode.</li>
+</ul>
+<p>The key computation is batched constrained LQR or MPC solves and the adjoint of their solution with respect to cost and dynamics parameters.</p>
+<h3>What the paper reports (Table 3, CPU, Threadripper 3990X; thread count not stated)</h3>
+<div class="scroll"><table>
+<tr><th>Problem 1, per episode</th><th>Forward, s</th><th>Backward, s</th></tr>
+<tr><td>mpc.pytorch</td><td class="n">1.44</td><td class="n">3.37</td></tr>
+<tr><td>trajax</td><td class="n">0.93</td><td class="n">1.90</td></tr>
+<tr><td>DiffMPC (CPU)</td><td class="n">1.33</td><td class="n">2.70</td></tr>
+</table></div>
+<h3>Why Scaly should do better</h3>
+<ul>
+<li class="win">At these sizes the time goes into Python and JIT dispatch and small dense kernels, not arithmetic. A batch <code>vmap</code>ped into one C function removes that overhead (L3).</li>
+<li class="win">The backward pass is one adjoint Riccati sweep on the active set, attached as an implicit rule to the solver's output (L5). It does not differentiate the iterations.</li>
+<li class="risk">GPU DiffMPC (0.22 s) at large batches is out of scope, so only the CPU comparison is claimed.</li>
+<li class="risk">Scaly is single-threaded. Parallelise across batch chunks only if the baselines use multiple threads.</li>
+</ul>
+<h3>Implementation plan</h3>
+<ol>
+<li>Reproduce the DiffMPC benchmark scripts on CPU, with the thread count fixed and stated for every baseline.</li>
+<li>Implement the same solver class DiffMPC uses (read from its repository) as a <code>while_loop</code>. Attach the adjoint as an implicit rule on the solution through the existing custom-rule mechanism (<code>docs/guide/derivatives.md</code>, implicit rule).
+  <ul>
+  <li>This needs a small public API for "implicit rule on a composite Function". Today it exists only as <code>_from_exprs</code>.</li>
+  </ul></li>
+<li><code>vmap</code> over the batch. Validate gradients against finite differences and against DiffMPC to 1e-8.</li>
+<li>Avoid the known slow path: reverse through <code>SparseLDL.solve</code> with a matrix right-hand side is about 100× slower. Use per-column solves or fix that path first.</li>
+<li>Report forward and backward seconds per episode for each batch size, single- and multi-threaded, plus the end-to-end learning curve to show that the gradients are the same.</li>
+</ol>
+<p><b>Success:</b> both forward and backward at least 5× faster than the best CPU baseline at every batch size, with identical learning curves.</p>
+</div>
+
+<!-- E6 -->
+<div class="ex" id="e6">
+<h2>E6 · AC optimal power flow on PGLib-OPF (ExaModels / JuMP / PowerModels)</h2>
+<p><span class="tag">power systems (outside control)</span><span class="tag">L1 L2</span><span class="tag">effort M</span></p>
+<h3>Papers and key computation</h3>
+<p>ExaModels<sup><a href="#r13">13</a></sup> introduced a "SIMD abstraction": repeated constraint patterns are evaluated as one kernel. That is the same idea as Scaly's <code>vmap</code>. Its benchmark covers 25 PGLib cases<sup><a href="#r15">15</a></sup>, and compares four stacks: ExaModels with MadNLP, Ipopt with AMPL, Ipopt with JuMP (the PowerModels<sup><a href="#r14">14</a></sup> stack), and a GPU run. The key computation is the sparse Jacobian and Lagrangian Hessian of the polar power-flow equations, which are gathers over branch→bus incidence.</p>
+<h3>What the paper reports (Xeon Gold 6140, MA27, tolerance 1e-4; derivative time / total, s)</h3>
+<div class="scroll"><table>
+<tr><th>Case</th><th>ExaModels CPU</th><th>AMPL</th><th>JuMP</th></tr>
+<tr><td>1354_pegase</td><td class="n">0.06 / 0.70</td><td class="n">0.94 / 1.48</td><td class="n">2.40 / 3.04</td></tr>
+<tr><td>10000_goc</td><td class="n">0.76 / 13.30</td><td class="n">14.56 / 24.85</td><td class="n">24.71 / 36.00</td></tr>
+<tr><td>13659_pegase</td><td class="n">0.92 / 16.94</td><td class="n">19.90 / 35.79</td><td class="n">35.97 / 53.02</td></tr>
+</table></div>
+<p>Derivatives are 45–70% of the total with JuMP or AMPL, and about 5% with ExaModels. The ExaModels timings are wall time and the AMPL and JuMP ones are Ipopt CPU time, which a reproduction should harmonise.</p>
+<h3>Why Scaly should do better</h3>
+<ul>
+<li class="win">Against JuMP, AMPL and PowerModels, Scaly should remove most of the derivative time, which means 40–60% less total time at the same Ipopt and linear solver.</li>
+<li class="win">Setup latency is a clear win: no Julia JIT. The same holds for batched, multi-period or N-1 problems generated as one <code>vmap</code>ped model (as <code>opf_day_ahead</code> does), and for small cases, where one C function beats the modelling-layer overhead.</li>
+<li class="risk">Against ExaModels on CPU, parity is the realistic ceiling: its time is 75–85% linear solver. Beating it needs a faster KKT solve, which is outside this study.</li>
+</ul>
+<h3>Implementation plan</h3>
+<ol>
+<li><b>Prerequisite:</b> the star colouring of the Hessian must scale. On <code>sysid</code> (4004 variables) it takes 12.6 of 13.5 s of <code>sc.solver</code>. Colour one <code>vmap</code> body and replicate it, or make <code>star_coloring</code> near-linear, before attempting 10k-bus cases.</li>
+<li>Extend the MATPOWER reader in <code>optimal_power_flow.py</code> to the PGLib-OPF v23.07 files.
+  <ul>
+  <li>Write the rosetta-opf/ExaModels polar formulation exactly: angle-difference limits, thermal limits on both ends, and shunts.</li>
+  <li><code>vmap</code> over branches, buses and generators with index gathers.</li>
+  </ul></li>
+<li>Match the PGLib reference objective values to 1e-6 relative on every case.</li>
+<li>Run the baselines: ExaModels with Ipopt and MadNLP on CPU, and JuMP with Ipopt (rosetta-opf), all on the same Ipopt build. Use MUMPS on both sides, and MA27 on both if HSL is available. Use tolerances 1e-4 (the paper's) and 1e-8.</li>
+<li>Sweep case14 up to case13659, and case30000 if colouring allows. Take the derivative and linear-solver split from Ipopt's timing statistics on both sides.</li>
+<li>Extension: a 24-period OPF with ramping coupling as one problem, against the equivalent ExaModels and JuMP models.</li>
+</ol>
+<p><b>Success:</b> derivative time within 1.5× of ExaModels on CPU and at least 10× below JuMP; setup below 5 s up to 10k buses; identical Ipopt iterations against JuMP.</p>
+</div>
+
+<!-- E7 -->
+<div class="ex" id="e7">
+<h2>E7 · Factor-graph nonlinear least squares (SymForce, with BAL as a stretch)</h2>
+<p><span class="tag">robotics / vision (outside control)</span><span class="tag">L3 L4</span><span class="tag">effort M</span></p>
+<h3>Paper and key computation</h3>
+<p>SymForce<sup><a href="#r16">16</a></sup> is the most direct code-generation competitor. It flattens factor linearisations into straight-line C++, and in "fixed" mode also fixes the sparsity. Its robot 3D localisation benchmark has 5 poses and 20 landmarks. The key computation per LM iteration is: linearise the factors on SE(3), form JᵀJ, factor it with sparse Cholesky, and take the damped step.</p>
+<h3>What the paper reports (Table IV, i7-9700K, µs)</h3>
+<div class="scroll"><table>
+<tr><th>Tool</th><th>Linearise</th><th>Full iteration</th></tr>
+<tr><td>Ceres</td><td class="n">42.6</td><td class="n">108.6</td></tr>
+<tr><td>GTSAM</td><td class="n">30.0</td><td class="n">155.4</td></tr>
+<tr><td>SymForce, dynamic</td><td class="n">15.1</td><td class="n">47.0</td></tr>
+<tr><td>SymForce, fixed</td><td class="n">5.4</td><td class="n">25.6</td></tr>
+</table></div>
+<h3>Why Scaly should do better</h3>
+<ul>
+<li class="win">SymForce fixes the linearisation, but the step still goes through a general sparse solver. Scaly puts linearisation, JᵀJ, the generated LDLᵀ for the fixed pattern and the LM damping logic into one function (L3, L4). <code>pose_graph_slam</code> already matches MINPACK LM to 1e-9.</li>
+<li class="win">As the graph grows, flattened code grows with it. Scaly's <code>vmap</code> over factors of one type keeps the code proportional to the number of factor <i>types</i>, not factors.</li>
+<li class="risk">At 5 poses everything is cache-resident and SymForce fixed is already strong. Expect 1–2× here. The scaling sweep is where the story is.</li>
+</ul>
+<h3>Implementation plan</h3>
+<ol>
+<li>Reproduce SymForce's localisation benchmark with GTSAM and Ceres on the reference machine.</li>
+<li>Write SE(3) and SO(3) helpers as Scaly templates: compose, inverse, and the log/exp retraction. The factor residuals should be identical to SymForce's.</li>
+<li>Write LM as a <code>while_loop</code> with the generated sparse LDLᵀ. Check that the iterates match SymForce to 1e-9.</li>
+<li>Scaling sweep: synthetic trajectories from 5 to 1000 poses. Report linearisation µs, iteration µs, source size and compile time against SymForce fixed and dynamic.</li>
+<li>Stretch: a small BAL instance<sup><a href="#r17">17</a></sup> (Ladybug-49) against Ceres with the Schur complement. Check whether AMD on the generated pattern recovers a Schur-like elimination order.</li>
+</ol>
+<p><b>Success:</b> a full iteration below SymForce fixed's time at 5 poses, and a gap that widens with graph size, with no compile blow-up.</p>
+</div>
+
+<!-- E8 -->
+<div class="ex" id="e8">
+<h2>E8 · 6-DoF powered-descent guidance by successive convexification</h2>
+<p><span class="tag">aerospace (outside control)</span><span class="tag">L3 L1 L4</span><span class="tag">effort L</span><span class="tag">needs conic IPM</span></p>
+<h3>Papers and key computation</h3>
+<p>Each SCvx or PTR iteration has three steps:</p>
+<ol>
+<li>discretise the nonlinear dynamics, which means integrating the flow map and its state-transition and input sensitivities;</li>
+<li>solve a convex SOCP (thrust bounds, pointing, glide slope, trust region);</li>
+<li>update.</li>
+</ol>
+<p>The baselines are:</p>
+<ul>
+<li>Szmuk et al.<sup><a href="#r18">18</a></sup>: ECOS through CVX with C++ propagation. Median 0.16–0.65 s per solve; propagation at most about 10 ms.</li>
+<li>Reynolds et al.<sup><a href="#r19">19</a></sup>: C++ with the custom BSOCP IPM. About 100 ms on one core, with only about 2% of the time outside the solver. The STM is integrated by RK4 as a flat augmented ODE of size n<sub>x</sub>(n<sub>x</sub>+2n<sub>u</sub>+3).</li>
+<li>Malyuta et al.<sup><a href="#r20">20</a></sup>: Julia with ECOS. Roughly 10–15 s cumulative for the 6-DoF free-flyer.</li>
+<li>OpenSCvx<sup><a href="#r21">21</a></sup>: JAX with CVXPY, Clarabel or QOCOGEN. It reports 1.6–2.1 s of initialisation (JIT), which "dominates the overall runtime", plus 0.05–0.13 s of solve.</li>
+</ul>
+<h3>Why Scaly should do better</h3>
+<ul>
+<li class="win">The whole PTR loop becomes one generated C function (L3). The discretisation is the forward-mode Jacobian of an RK <code>scan</code> (L1), not an augmented ODE. The subproblem is a generated IPM on the fixed conic KKT pattern (L4).</li>
+<li class="win">Against OpenSCvx and the Julia/ECOS code, the gain should be large: no JIT, no modelling layer, no generic conic solver.</li>
+<li class="risk">Against the C++/BSOCP baseline, which is bound by its solver, a win requires Scaly's generated IPM to handle second-order cones about as well as BSOCP or QOCOGEN.</li>
+<li class="no">Approximating the cones by polyhedra and passing them to PIQP changes the problem, and does not count as the comparison.</li>
+</ul>
+<h3>Implementation plan</h3>
+<ol>
+<li><b>Phase A (no new features):</b> reproduce an OpenSCvx 6-DoF landing or rocket example. Implement the same PTR in Scaly, with the subproblem solved by IPOPT treating each cone as a smooth convex constraint (‖·‖² ≤ r²).
+  <ul>
+  <li>Compare discretisation time directly: forward-mode through a <code>scan</code> against JAX with Diffrax.</li>
+  <li>Report setup time and total time.</li>
+  </ul></li>
+<li><b>Phase B (feature):</b> add second-order cones to the generated IPM. Nesterov–Todd scaling gives a KKT with a fixed block pattern, which the generated LDLᵀ handles unchanged. This belongs in the PIQP plan as its own tier, and it also unlocks the SOCP halves of E3 and of Conic-TinyMPC.</li>
+<li><b>Phase C:</b> the full PTR as one C function. Compare it with OpenSCvx using CVXPYgen/QOCOGEN (the reproducible baseline) and with the published C++/BSOCP timings as context. The BSOCP code is not public.</li>
+</ol>
+<p><b>Success:</b> Phase A at least 10× faster than OpenSCvx end to end, setup included. Phase C inside Reynolds et al.'s ~100 ms class for the same node count on one core.</p>
+</div>
+
+<h2>Considered and not selected</h2>
+<div class="scroll"><table>
+<tr><th>Candidate</th><th>Why not now</th></tr>
+<tr><td>PANOC / OpEn obstacle avoidance<sup><a href="#r22">22</a></sup></td><td>n<sub>x</sub> = 3–4, so derivatives are cheap. Every published timing is read off a figure. It would make a nice "PANOC in one C function" demo, but a weak comparison.</td></tr>
+<tr><td>Crocoddyl<sup><a href="#r23">23</a></sup></td><td>Derivatives dominate, but they are Pinocchio's analytical rigid-body derivatives, which are hard to beat without a Scaly rigid-body library.</td></tr>
+<tr><td>AMICI and the Benchmark Collection<sup><a href="#r24">24</a>,<a href="#r25">25</a></sup></td><td>The models are stiff: non-stiff solvers fail on 22–31% of them, and adaptive BDF is effectively required. Revisit after implicit integrators (I3) and step-size control land.</td></tr>
+<tr><td>OptNet / cvxpylayers<sup><a href="#r26">26</a>,<a href="#r27">27</a></sup></td><td>Covered by E3 and E5. The strong baseline is CVXPYgen's own differentiation<sup><a href="#r28">28</a></sup>, which could be added to E3 as an extra column.</td></tr>
+<tr><td>Theseus<sup><a href="#r29">29</a></sup></td><td>GPU-first. On CPU at small batch sizes it loses to Ceres, so beating it proves little. E7 covers the problem class.</td></tr>
+<tr><td>Optimistix<sup><a href="#r30">30</a></sup></td><td>An easy runtime win on its 104 small problems, but JAX compile time is comparable to gcc's, so the story is thin. A good quick side example.</td></tr>
+<tr><td>TinyMPC</td><td>Already done (1.4–2.8×). The E3 embedded leg extends it to MCUs.</td></tr>
+</table></div>
+
+<h2>Sequencing</h2>
+<ol>
+<li><b>Wave 1, existing features only:</b>
+  <ul>
+  <li>E1 (reuses the chain benchmark).</li>
+  <li>E2 (reuses the neural-process MPC machinery).</li>
+  <li>E6, once star colouring scales.</li>
+  </ul>
+  These three show L1 and L2 on others' benchmarks with the drop-in protocol, which is the hardest result to dispute.</li>
+<li><b>Wave 2, generated algorithms:</b>
+  <ul>
+  <li>E3, gated on Tier 4 <code>backend="scaly"</code>.</li>
+  <li>E7 (LM exists).</li>
+  <li>E4 (AL-iLQR).</li>
+  </ul></li>
+<li><b>Wave 3, new features:</b>
+  <ul>
+  <li>E5 (a public implicit-rule API for solver outputs).</li>
+  <li>E8 (second-order cones in the generated IPM; Phase A can start in Wave 1).</li>
+  </ul></li>
+</ol>
+<p>Items for <code>internal/todo.md</code>:</p>
+<ul>
+<li>scalable star colouring (E6);</li>
+<li><code>sc.solver</code> QP build-time growth (E3);</li>
+<li>reverse mode through <code>SparseLDL.solve</code> with a matrix right-hand side (E5);</li>
+<li>verify acados' generic external path against <code>--casadi</code> output (E1, E2);</li>
+<li>second-order cones in the generated IPM (E3, E8).</li>
+</ul>
+
+<h2>Caveats on the numbers above</h2>
+<ul>
+<li>Every figure in the "what the paper reports" tables comes from the paper's own hardware, and is context only.</li>
+<li>Two tables were re-checked against the papers directly: Fatrop Tables III–IV, and Real-time Neural MPC Table II. The rest were extracted in a research pass and should be re-checked against the PDFs when each study starts. That applies in particular to:
+  <ul>
+  <li>the QOCO appendix table (the page could not be re-opened because of rate limiting);</li>
+  <li>DiffMPC Table 3;</li>
+  <li>the ExaModels tables.</li>
+  </ul></li>
+<li>The "expected outcome" and "success" lines are hypotheses to test, not claims.</li>
+</ul>
+
+<h2>References</h2>
+<ol class="refs">
+<li id="r1">L. Vanroye, A. Sathya, J. De Schutter, W. Decré, "FATROP: A fast constrained optimal control problem solver for robot trajectory optimization and control," IEEE/RSJ IROS, 2023. <a href="https://arxiv.org/abs/2303.16746">arXiv:2303.16746</a> · code <a href="https://github.com/meco-group/fatrop">github.com/meco-group/fatrop</a></li>
+<li id="r2">R. Verschueren, G. Frison, D. Kouzoupis, J. Frey, N. van Duijkeren, A. Zanelli, B. Novoselnik, T. Albin, R. Quirynen, M. Diehl, "acados—a modular open-source framework for fast embedded optimal control," <i>Math. Prog. Comp.</i> 14:147–183, 2022. <a href="https://doi.org/10.1007/s12532-021-00208-8">doi:10.1007/s12532-021-00208-8</a> · code <a href="https://github.com/acados/acados">github.com/acados/acados</a></li>
+<li id="r3">T. Salzmann, E. Kaufmann, J. Arrizabalaga, M. Pavone, D. Scaramuzza, M. Ryll, "Real-time neural MPC: Deep learning model predictive control for quadrotors and agile robotic platforms," <i>IEEE RA-L</i> 8(4):2397–2404, 2023. <a href="https://doi.org/10.1109/LRA.2023.3246839">doi:10.1109/LRA.2023.3246839</a> · <a href="https://arxiv.org/abs/2203.07747">arXiv:2203.07747</a> · code <a href="https://github.com/TUM-AAS/neural-mpc">github.com/TUM-AAS/neural-mpc</a></li>
+<li id="r4">T. Salzmann et al., "Learning for CasADi: Data-driven models in numerical optimization," L4DC, PMLR 242:541–553, 2024. <a href="https://proceedings.mlr.press/v242/salzmann24a.html">proceedings.mlr.press/v242/salzmann24a</a> · code <a href="https://github.com/Tim-Salzmann/l4casadi">github.com/Tim-Salzmann/l4casadi</a></li>
+<li id="r5">M. Schaller, G. Banjac, S. Diamond, A. Agrawal, B. Stellato, S. Boyd, "Embedded code generation with CVXPY," <i>IEEE Control Systems Letters</i> 6:2653–2658, 2022. <a href="https://doi.org/10.1109/LCSYS.2022.3173209">doi:10.1109/LCSYS.2022.3173209</a> · code <a href="https://github.com/cvxgrp/cvxpygen">github.com/cvxgrp/cvxpygen</a></li>
+<li id="r6">G. Chari, B. Açıkmeşe, "QOCO: A quadratic objective conic optimizer with custom solver generation," <i>Math. Prog. Comp.</i>, 2026. <a href="https://doi.org/10.1007/s12532-026-00311-8">doi:10.1007/s12532-026-00311-8</a> · <a href="https://arxiv.org/abs/2503.12658">arXiv:2503.12658</a> · code <a href="https://github.com/qoco-org">github.com/qoco-org</a></li>
+<li id="r7">G. Banjac, B. Stellato, N. Moehle, P. Goulart, A. Bemporad, S. Boyd, "Embedded code generation using the OSQP solver," IEEE CDC, 2017. <a href="https://doi.org/10.1109/CDC.2017.8263928">doi:10.1109/CDC.2017.8263928</a></li>
+<li id="r8">I. Mahajan, K. Nguyen, S. Schoedel, E. Nedumaran, M. Mata, B. Plancher, Z. Manchester, "Code generation and conic constraints for model-predictive control on microcontrollers with Conic-TinyMPC," 2024. <a href="https://arxiv.org/abs/2403.18149">arXiv:2403.18149</a></li>
+<li id="r9">T. A. Howell, B. E. Jackson, Z. Manchester, "ALTRO: A fast solver for constrained trajectory optimization," IEEE/RSJ IROS, pp. 7674–7679, 2019. <a href="https://doi.org/10.1109/IROS40897.2019.8967788">doi:10.1109/IROS40897.2019.8967788</a> · code <a href="https://github.com/RoboticExplorationLab/TrajectoryOptimization.jl">TrajectoryOptimization.jl</a></li>
+<li id="r10">B. E. Jackson et al., "ALTRO-C: A fast solver for conic model-predictive control," IEEE ICRA, 2021. <a href="https://bjack205.github.io/papers/ALTRO_MPC.pdf">PDF</a></li>
+<li id="r11">B. Amos, I. D. J. Rodriguez, J. Sacks, B. Boots, J. Z. Kolter, "Differentiable MPC for end-to-end planning and control," NeurIPS, 2018. <a href="https://arxiv.org/abs/1810.13400">arXiv:1810.13400</a> · code <a href="https://github.com/locuslab/mpc.pytorch">github.com/locuslab/mpc.pytorch</a></li>
+<li id="r12">E. Adabag et al., "Differentiable model predictive control on the GPU," 2025. <a href="https://arxiv.org/abs/2510.06179">arXiv:2510.06179</a> · code <a href="https://github.com/ToyotaResearchInstitute/diffmpc">github.com/ToyotaResearchInstitute/diffmpc</a></li>
+<li id="r13">S. Shin, F. Pacaud, M. Anitescu, "Accelerating optimal power flow with GPUs: SIMD abstraction of nonlinear programs and condensed-space interior-point methods," <i>Electric Power Systems Research</i> 236:110651, 2024. <a href="https://doi.org/10.1016/j.epsr.2024.110651">doi:10.1016/j.epsr.2024.110651</a> · <a href="https://arxiv.org/abs/2307.16830">arXiv:2307.16830</a> · code <a href="https://github.com/sshin23/opf-on-gpu">github.com/sshin23/opf-on-gpu</a></li>
+<li id="r14">C. Coffrin, R. Bent, K. Sundar, Y. Ng, M. Lubin, "PowerModels.jl: An open-source framework for exploring power flow formulations," PSCC, 2018. <a href="https://arxiv.org/abs/1711.01728">arXiv:1711.01728</a> · rosetta-opf <a href="https://github.com/lanl-ansi/rosetta-opf">github.com/lanl-ansi/rosetta-opf</a></li>
+<li id="r15">S. Babaeinejadsarookolaee et al., "The power grid library for benchmarking AC optimal power flow algorithms," 2019. <a href="https://arxiv.org/abs/1908.02788">arXiv:1908.02788</a> · <a href="https://github.com/power-grid-lib/pglib-opf">github.com/power-grid-lib/pglib-opf</a></li>
+<li id="r16">H. Martiros et al., "SymForce: Symbolic computation and code generation for robotics," RSS, 2022. <a href="https://arxiv.org/abs/2204.07889">arXiv:2204.07889</a> · code <a href="https://github.com/symforce-org/symforce">github.com/symforce-org/symforce</a></li>
+<li id="r17">S. Agarwal, N. Snavely, S. M. Seitz, R. Szeliski, "Bundle adjustment in the large," ECCV, 2010 (dataset only; predates the survey window). <a href="https://grail.cs.washington.edu/projects/bal/">grail.cs.washington.edu/projects/bal</a></li>
+<li id="r18">M. Szmuk, T. P. Reynolds, B. Açıkmeşe, "Successive convexification for real-time six-degree-of-freedom powered descent guidance with state-triggered constraints," <i>J. Guid. Control Dyn.</i> 43(8), 2020. <a href="https://doi.org/10.2514/1.G004549">doi:10.2514/1.G004549</a> · <a href="https://arxiv.org/abs/1811.10803">arXiv:1811.10803</a></li>
+<li id="r19">T. P. Reynolds et al., "A real-time algorithm for non-convex powered descent guidance," AIAA SciTech, 2020. <a href="https://depts.washington.edu/uwrainlab/wordpress/wp-content/uploads/2020/01/AIAA_SciTech_2020.pdf">PDF</a></li>
+<li id="r20">D. Malyuta, T. P. Reynolds, M. Szmuk, T. Lew, R. Bonalli, M. Pavone, B. Açıkmeşe, "Convex optimization for trajectory generation: A tutorial on generating dynamically feasible trajectories reliably and efficiently," <i>IEEE Control Systems Magazine</i> 42(5):40–113, 2022. <a href="https://doi.org/10.1109/MCS.2022.3187542">doi:10.1109/MCS.2022.3187542</a> · <a href="https://arxiv.org/abs/2106.09125">arXiv:2106.09125</a></li>
+<li id="r21">C. Hayner et al., "OpenSCvx: An open-source modular and extensible nonlinear trajectory planning package," 2026. <a href="https://arxiv.org/abs/2608.21631">arXiv:2608.21631</a> · code <a href="https://github.com/OpenSCvx/OpenSCvx">github.com/OpenSCvx/OpenSCvx</a></li>
+<li id="r22">A. Sathya, P. Sopasakis, R. Van Parys, A. Themelis, G. Pipeleers, P. Patrinos, "Embedded nonlinear model predictive control for obstacle avoidance using PANOC," ECC, 2018. <a href="https://arxiv.org/abs/1904.10546">arXiv:1904.10546</a>; P. Sopasakis, E. Fresk, P. Patrinos, "OpEn: Code generation for embedded nonconvex optimization," IFAC WC, 2020. <a href="https://arxiv.org/abs/2003.00292">arXiv:2003.00292</a></li>
+<li id="r23">C. Mastalli et al., "Crocoddyl: An efficient and versatile framework for multi-contact optimal control," IEEE ICRA, 2020. <a href="https://arxiv.org/abs/1909.04947">arXiv:1909.04947</a></li>
+<li id="r24">F. Fröhlich et al., "AMICI: High-performance sensitivity analysis for large ordinary differential equation models," <i>Bioinformatics</i> 37(20):3676–3677, 2021. <a href="https://arxiv.org/abs/2012.09122">arXiv:2012.09122</a></li>
+<li id="r25">H. Hass et al., "Benchmark problems for dynamic modeling of intracellular processes," <i>Bioinformatics</i> 35(17):3073–3082, 2019. <a href="https://academic.oup.com/bioinformatics/article/35/17/3073/5280731">academic.oup.com</a></li>
+<li id="r26">B. Amos, J. Z. Kolter, "OptNet: Differentiable optimization as a layer in neural networks," ICML, 2017. <a href="https://arxiv.org/abs/1703.00443">arXiv:1703.00443</a></li>
+<li id="r27">A. Agrawal, B. Amos, S. Barratt, S. Boyd, S. Diamond, J. Z. Kolter, "Differentiable convex optimization layers," NeurIPS, 2019. <a href="https://arxiv.org/abs/1910.12430">arXiv:1910.12430</a></li>
+<li id="r28">M. Schaller, S. Boyd, "Code generation for solving and differentiating through convex optimization problems," <i>Optimization and Engineering</i> 27:1425–1449, 2026. <a href="https://arxiv.org/abs/2504.14099">arXiv:2504.14099</a></li>
+<li id="r29">L. Pineda et al., "Theseus: A library for differentiable nonlinear optimization," NeurIPS, 2022. <a href="https://arxiv.org/abs/2207.09442">arXiv:2207.09442</a></li>
+<li id="r30">J. Rader, T. Lyons, P. Kidger, "Optimistix: modular optimisation in JAX and Equinox," 2024. <a href="https://arxiv.org/abs/2402.09983">arXiv:2402.09983</a></li>
+</ol>
+</main>
+</body>
+</html>

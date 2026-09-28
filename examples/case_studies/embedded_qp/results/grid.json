@@ -1,0 +1,3377 @@
+{
+ "8": {
+  "horizon": 8,
+  "qoco_side": {
+   "build": {
+    "t_generate": 4.4211995410732925,
+    "source_bytes": 1105024,
+    "sources": [
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-6j52xi1n/qocogen/T8/qoco_custom/cone.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-6j52xi1n/qocogen/T8/qoco_custom/kkt.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-6j52xi1n/qocogen/T8/qoco_custom/ldl.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-6j52xi1n/qocogen/T8/qoco_custom/qoco_custom.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-6j52xi1n/qocogen/T8/qoco_custom/utils.c"
+    ]
+   },
+   "rows": [
+    {
+     "horizon": 8,
+     "instance": 0,
+     "qoco": {
+      "size": 1344,
+      "status": "QOCO_SOLVED",
+      "setup_time": 7.9791e-05,
+      "solve_time": 0.000203916,
+      "run_time": 0.000283707,
+      "obj": 447.2992917192034,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 1344,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.000614584,
+      "run_time": 0.000614584,
+      "obj": 447.2992917191574,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.000389875,
+      "obj": 447.29929105069664
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.000131541,
+      "obj": 447.00631004841307
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 447.2992917191573,
+      "solve_s": 0.000224,
+      "t_compile": 11.013146582990885,
+      "text_bytes": 293384
+     }
+    },
+    {
+     "horizon": 8,
+     "instance": 1,
+     "qoco": {
+      "size": 1344,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000116666,
+      "solve_time": 0.000211416,
+      "run_time": 0.000328082,
+      "obj": 283.77803476326716,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 1344,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.000614125,
+      "run_time": 0.000614125,
+      "obj": 283.7780347633713,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.000255708,
+      "obj": 283.77803036492713
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.000128666,
+      "obj": 283.758368955702
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 283.7780347632047,
+      "solve_s": 0.000247,
+      "t_compile": 10.811358334030956,
+      "text_bytes": 293372
+     }
+    },
+    {
+     "horizon": 8,
+     "instance": 2,
+     "qoco": {
+      "size": 1344,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000114916,
+      "solve_time": 0.000217041,
+      "run_time": 0.000331957,
+      "obj": 429.36856857062725,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 1344,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.000614085,
+      "run_time": 0.000614085,
+      "obj": 429.36856857090436,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.000380333,
+      "obj": 429.36856847210686
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.000128,
+      "obj": 429.17433463242645
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 429.3685685705628,
+      "solve_s": 0.000225,
+      "t_compile": 11.072045790962875,
+      "text_bytes": 293372
+     }
+    },
+    {
+     "horizon": 8,
+     "instance": 3,
+     "qoco": {
+      "size": 1344,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000130125,
+      "solve_time": 0.000211291,
+      "run_time": 0.000341416,
+      "obj": 143.0350197237625,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 1344,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.000613543,
+      "run_time": 0.000613543,
+      "obj": 143.03501972376512,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.000238708,
+      "obj": 143.03501929445878
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.000122541,
+      "obj": 143.03020003887136
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 143.03501972375417,
+      "solve_s": 0.000146,
+      "t_compile": 10.996299374848604,
+      "text_bytes": 293372
+     }
+    },
+    {
+     "horizon": 8,
+     "instance": 4,
+     "qoco": {
+      "size": 1344,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000139,
+      "solve_time": 0.000194416,
+      "run_time": 0.000333416,
+      "obj": 350.3333545872346,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 1344,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.000625792,
+      "run_time": 0.000625792,
+      "obj": 350.33335455903654,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 125,
+      "solve_time": 0.000649375,
+      "obj": 350.3333548230007
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.000258,
+      "obj": 350.33486242460503
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 350.3333545718597,
+      "solve_s": 0.000226,
+      "t_compile": 10.673519582953304,
+      "text_bytes": 293372
+     }
+    }
+   ]
+  },
+  "qoco_side_wall": 62.300660457927734,
+  "qocogen_ok": true,
+  "scaly_sparse": {
+   "horizon": 8,
+   "solver": "scaly_sparse",
+   "t_build": 0.47163308411836624,
+   "t_generate": 0.7583609998691827,
+   "t_compile": 0.5650566248223186,
+   "c_bytes": 334477,
+   "object_bytes": 196608,
+   "text_bytes": 55940,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 447.2992917192329,
+     "solve_s": 0.000171,
+     "solve_median_s": 0.00022300000000000003
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 6,
+     "obj": 283.77803476412765,
+     "solve_s": 0.00012100000000000001,
+     "solve_median_s": 0.000131
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 429.3685685705955,
+     "solve_s": 0.000126,
+     "solve_median_s": 0.00013000000000000002
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 143.03501972375835,
+     "solve_s": 0.000126,
+     "solve_median_s": 0.00012800000000000002
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 350.33335454099205,
+     "solve_s": 0.000126,
+     "solve_median_s": 0.00012800000000000002
+    }
+   ]
+  },
+  "piqp_sparse": {
+   "horizon": 8,
+   "solver": "piqp_sparse",
+   "t_build": 0.41188395908102393,
+   "t_generate": 0.13016266701743007,
+   "t_compile": 0.13553362502716482,
+   "c_bytes": 61138,
+   "object_bytes": 32768,
+   "text_bytes": 4744,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 447.2992917192327,
+     "solve_s": 0.000209,
+     "solve_median_s": 0.000257
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 6,
+     "obj": 283.7780347641276,
+     "solve_s": 0.00014700000000000002,
+     "solve_median_s": 0.00015800000000000002
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 429.36856857059564,
+     "solve_s": 0.000164,
+     "solve_median_s": 0.000165
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 143.03501972375844,
+     "solve_s": 0.000163,
+     "solve_median_s": 0.000165
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 350.3333545409921,
+     "solve_s": 0.000163,
+     "solve_median_s": 0.000165
+    }
+   ]
+  }
+ },
+ "20": {
+  "horizon": 20,
+  "qoco_side": {
+   "build": {
+    "t_generate": 26.642416625050828,
+    "source_bytes": 2818576,
+    "sources": [
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-xd9792jb/qocogen/T20/qoco_custom/cone.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-xd9792jb/qocogen/T20/qoco_custom/kkt.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-xd9792jb/qocogen/T20/qoco_custom/ldl.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-xd9792jb/qocogen/T20/qoco_custom/qoco_custom.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-xd9792jb/qocogen/T20/qoco_custom/utils.c"
+    ]
+   },
+   "rows": [
+    {
+     "horizon": 20,
+     "instance": 0,
+     "qoco": {
+      "size": 3312,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000149833,
+      "solve_time": 0.000506625,
+      "run_time": 0.000656458,
+      "obj": 338.798820319909,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 3312,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.001384755,
+      "run_time": 0.001384755,
+      "obj": 338.7988203200185,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.001028083,
+      "obj": 338.79880349284946
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.00034325,
+      "obj": 338.384375697708
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 338.7988203198557,
+      "solve_s": 0.000487,
+      "t_compile": 50.97298087505624,
+      "text_bytes": 728528
+     }
+    },
+    {
+     "horizon": 20,
+     "instance": 1,
+     "qoco": {
+      "size": 3312,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000173791,
+      "solve_time": 0.000679375,
+      "run_time": 0.0008531659999999999,
+      "obj": 840.3993869471733,
+      "iters": 7
+     },
+     "clarabel": {
+      "size": 3312,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.001922498,
+      "run_time": 0.001922498,
+      "obj": 840.399387797521,
+      "iters": 7
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 375,
+      "solve_time": 0.00498775,
+      "obj": 840.3993828191656
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.001000541,
+      "obj": 840.3566205023631
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 7,
+      "obj": 840.3993869434139,
+      "solve_s": 0.00063,
+      "t_compile": 50.69037966709584,
+      "text_bytes": 728528
+     }
+    },
+    {
+     "horizon": 20,
+     "instance": 2,
+     "qoco": {
+      "size": 3312,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000179125,
+      "solve_time": 0.000494166,
+      "run_time": 0.000673291,
+      "obj": 269.12184191958846,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 3312,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.001439004,
+      "run_time": 0.001439004,
+      "obj": 269.1218419195627,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.0010085,
+      "obj": 269.12183835878614
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.000337041,
+      "obj": 268.73247593030226
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 269.12184191943584,
+      "solve_s": 0.000448,
+      "t_compile": 50.339815916959196,
+      "text_bytes": 728528
+     }
+    },
+    {
+     "horizon": 20,
+     "instance": 3,
+     "qoco": {
+      "size": 3312,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.00017025,
+      "solve_time": 0.000504083,
+      "run_time": 0.000674333,
+      "obj": 387.5498429372036,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 3312,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.001418586,
+      "run_time": 0.001418586,
+      "obj": 387.5498429373867,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.000670291,
+      "obj": 387.54984293324407
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.000660958,
+      "obj": 387.48713046760156
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 387.5498429371661,
+      "solve_s": 0.000448,
+      "t_compile": 51.51333750016056,
+      "text_bytes": 728528
+     }
+    },
+    {
+     "horizon": 20,
+     "instance": 4,
+     "qoco": {
+      "size": 3312,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000173333,
+      "solve_time": 0.0004765,
+      "run_time": 0.0006498329999999999,
+      "obj": 94.33876911776139,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 3312,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.001369795,
+      "run_time": 0.001369795,
+      "obj": 94.33876911774473,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.001004166,
+      "obj": 94.33876790638
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.000335375,
+      "obj": 94.24491552170917
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 94.33876911772181,
+      "solve_s": 0.000505,
+      "t_compile": 51.530579541111365,
+      "text_bytes": 728528
+     }
+    }
+   ]
+  },
+  "qoco_side_wall": 287.6657695409376,
+  "qocogen_ok": true,
+  "scaly_sparse": {
+   "horizon": 20,
+   "solver": "scaly_sparse",
+   "t_build": 0.48986537498421967,
+   "t_generate": 0.9935599160380661,
+   "t_compile": 0.6981680418830365,
+   "c_bytes": 650664,
+   "object_bytes": 393216,
+   "text_bytes": 59208,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 338.79882031992315,
+     "solve_s": 0.00032900000000000003,
+     "solve_median_s": 0.00039600000000000003
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 840.3993866803202,
+     "solve_s": 0.00032900000000000003,
+     "solve_median_s": 0.00034500000000000004
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 269.12184191951775,
+     "solve_s": 0.000328,
+     "solve_median_s": 0.00033200000000000005
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 387.549842937187,
+     "solve_s": 0.000328,
+     "solve_median_s": 0.000331
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 94.33876911772914,
+     "solve_s": 0.00032900000000000003,
+     "solve_median_s": 0.00033200000000000005
+    }
+   ]
+  },
+  "piqp_sparse": {
+   "horizon": 20,
+   "solver": "piqp_sparse",
+   "t_build": 0.4411736251786351,
+   "t_generate": 0.009383332915604115,
+   "t_compile": 0.11007591709494591,
+   "c_bytes": 70326,
+   "object_bytes": 81920,
+   "text_bytes": 3400,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 338.79882031992304,
+     "solve_s": 0.00043900000000000005,
+     "solve_median_s": 0.00044300000000000003
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 840.3993866803194,
+     "solve_s": 0.000444,
+     "solve_median_s": 0.000451
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 269.12184191951775,
+     "solve_s": 0.000438,
+     "solve_median_s": 0.000447
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 387.54984293718724,
+     "solve_s": 0.00043000000000000004,
+     "solve_median_s": 0.000442
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 94.33876911772913,
+     "solve_s": 0.00043200000000000004,
+     "solve_median_s": 0.000444
+    }
+   ]
+  }
+ },
+ "32": {
+  "horizon": 32,
+  "qoco_side": {
+   "build": {
+    "t_generate": 67.31638745800592,
+    "source_bytes": 4523263,
+    "sources": [
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-9pp2ycdm/qocogen/T32/qoco_custom/cone.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-9pp2ycdm/qocogen/T32/qoco_custom/kkt.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-9pp2ycdm/qocogen/T32/qoco_custom/ldl.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-9pp2ycdm/qocogen/T32/qoco_custom/qoco_custom.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-9pp2ycdm/qocogen/T32/qoco_custom/utils.c"
+    ]
+   },
+   "rows": [
+    {
+     "horizon": 32,
+     "instance": 0,
+     "qoco": {
+      "size": 5280,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000231375,
+      "solve_time": 0.000804041,
+      "run_time": 0.001035416,
+      "obj": 97.65160285426317,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 5280,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.002213917,
+      "run_time": 0.002213917,
+      "obj": 97.65160285427262,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.002165875,
+      "obj": 97.6516026365141
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001077125,
+      "obj": 97.64910139333826
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 97.6516028542537,
+      "solve_s": 0.000758,
+      "t_compile": 88.63695562491193,
+      "text_bytes": 1167168
+     }
+    },
+    {
+     "horizon": 32,
+     "instance": 1,
+     "qoco": {
+      "size": 5280,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000247541,
+      "solve_time": 0.000811375,
+      "run_time": 0.001058916,
+      "obj": 105.91575583367522,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 5280,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.002210334,
+      "run_time": 0.002210334,
+      "obj": 105.91575583364141,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.001618125,
+      "obj": 105.91575547129801
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.000542625,
+      "obj": 105.82996487064597
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 105.91575583362257,
+      "solve_s": 0.000744,
+      "t_compile": 83.89756570919417,
+      "text_bytes": 1167168
+     }
+    },
+    {
+     "horizon": 32,
+     "instance": 2,
+     "qoco": {
+      "size": 5280,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000235,
+      "solve_time": 0.000814416,
+      "run_time": 0.001049416,
+      "obj": 224.23151322793774,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 5280,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.002298,
+      "run_time": 0.002298,
+      "obj": 224.23151322696788,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.001620416,
+      "obj": 224.2315126886046
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.00054275,
+      "obj": 224.09789268435838
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 224.23151322696782,
+      "solve_s": 0.00078,
+      "t_compile": 100.497297457885,
+      "text_bytes": 1167168
+     }
+    },
+    {
+     "horizon": 32,
+     "instance": 3,
+     "qoco": {
+      "size": 5280,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000255875,
+      "solve_time": 0.000838,
+      "run_time": 0.001093875,
+      "obj": 78.14253633798471,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 5280,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.002359001,
+      "run_time": 0.002359001,
+      "obj": 78.1425363379112,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.001626541,
+      "obj": 78.14253624898237
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.000552791,
+      "obj": 78.07719841902666
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 78.14253633787939,
+      "solve_s": 0.000742,
+      "t_compile": 91.69453929108568,
+      "text_bytes": 1167168
+     }
+    },
+    {
+     "horizon": 32,
+     "instance": 4,
+     "qoco": {
+      "size": 5280,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000286125,
+      "solve_time": 0.000816458,
+      "run_time": 0.001102583,
+      "obj": 317.7246308549508,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 5280,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.002293834,
+      "run_time": 0.002293834,
+      "obj": 317.72463085500993,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.001654416,
+      "obj": 317.7246064345257
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001095708,
+      "obj": 317.720282495781
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 317.7246308548841,
+      "solve_s": 0.000756,
+      "t_compile": 90.62296558404341,
+      "text_bytes": 1167168
+     }
+    }
+   ]
+  },
+  "qoco_side_wall": 528.981146333972,
+  "qocogen_ok": true,
+  "scaly_sparse": {
+   "horizon": 32,
+   "solver": "scaly_sparse",
+   "t_build": 0.5615047088358551,
+   "t_generate": 1.1479352919850498,
+   "t_compile": 0.5432236660271883,
+   "c_bytes": 857010,
+   "object_bytes": 589824,
+   "text_bytes": 46716,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 97.65160285427186,
+     "solve_s": 0.000537,
+     "solve_median_s": 0.0005790000000000001
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 105.9157558336298,
+     "solve_s": 0.000544,
+     "solve_median_s": 0.0005650000000000001
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 224.2315132269939,
+     "solve_s": 0.000564,
+     "solve_median_s": 0.000566
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 78.14253633793076,
+     "solve_s": 0.000532,
+     "solve_median_s": 0.0005650000000000001
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 317.72463085494235,
+     "solve_s": 0.000533,
+     "solve_median_s": 0.000537
+    }
+   ]
+  },
+  "piqp_sparse": {
+   "horizon": 32,
+   "solver": "piqp_sparse",
+   "t_build": 0.6389044590760022,
+   "t_generate": 0.015893833013251424,
+   "t_compile": 0.09795008390210569,
+   "c_bytes": 107361,
+   "object_bytes": 114688,
+   "text_bytes": 2616,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 97.65160285427189,
+     "solve_s": 0.000702,
+     "solve_median_s": 0.0007310000000000001
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 105.91575583362979,
+     "solve_s": 0.000711,
+     "solve_median_s": 0.000723
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 224.2315132269941,
+     "solve_s": 0.0007120000000000001,
+     "solve_median_s": 0.000723
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 78.14253633793076,
+     "solve_s": 0.000709,
+     "solve_median_s": 0.000719
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 317.7246308549421,
+     "solve_s": 0.0007210000000000001,
+     "solve_median_s": 0.000742
+    }
+   ]
+  }
+ },
+ "44": {
+  "horizon": 44,
+  "qoco_side": {
+   "build": {
+    "t_generate": 138.598052874906,
+    "source_bytes": 6235027,
+    "sources": [
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-ygpgs9v0/qocogen/T44/qoco_custom/cone.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-ygpgs9v0/qocogen/T44/qoco_custom/kkt.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-ygpgs9v0/qocogen/T44/qoco_custom/ldl.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-ygpgs9v0/qocogen/T44/qoco_custom/qoco_custom.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-ygpgs9v0/qocogen/T44/qoco_custom/utils.c"
+    ]
+   },
+   "rows": [
+    {
+     "horizon": 44,
+     "instance": 0,
+     "qoco": {
+      "size": 7248,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000376875,
+      "solve_time": 0.001193083,
+      "run_time": 0.001569958,
+      "obj": 294.69145961425494,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 7248,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.003458871,
+      "run_time": 0.003458871,
+      "obj": 294.69145961433605,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.003226666,
+      "obj": 294.6914578529205
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001591708,
+      "obj": 294.68209347023384
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 294.69145961407463,
+      "solve_s": 0.001055,
+      "t_compile": 225.6070852498524,
+      "text_bytes": 1605800
+     }
+    },
+    {
+     "horizon": 44,
+     "instance": 1,
+     "qoco": {
+      "size": 7248,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000348875,
+      "solve_time": 0.001121333,
+      "run_time": 0.001470208,
+      "obj": 418.3034878312456,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 7248,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.003099252,
+      "run_time": 0.003099252,
+      "obj": 418.3034878318834,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.00153325,
+      "obj": 418.30348782978604
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001535083,
+      "obj": 417.8873877223245
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 418.3034878311289,
+      "solve_s": 0.00106,
+      "t_compile": 223.21467458410189,
+      "text_bytes": 1605800
+     }
+    },
+    {
+     "horizon": 44,
+     "instance": 2,
+     "qoco": {
+      "size": 7248,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000374791,
+      "solve_time": 0.001122125,
+      "run_time": 0.001496916,
+      "obj": 238.97819762389892,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 7248,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.003237332,
+      "run_time": 0.003237332,
+      "obj": 238.97819762389645,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001531708,
+      "obj": 238.9781976220901
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001501333,
+      "obj": 238.92789373534913
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 238.97819762386084,
+      "solve_s": 0.001015,
+      "t_compile": 202.09884279221296,
+      "text_bytes": 1605800
+     }
+    },
+    {
+     "horizon": 44,
+     "instance": 3,
+     "qoco": {
+      "size": 7248,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000310583,
+      "solve_time": 0.001099708,
+      "run_time": 0.0014102910000000001,
+      "obj": 490.52109516758736,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 7248,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.003015376,
+      "run_time": 0.003015376,
+      "obj": 490.5210951677396,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001503708,
+      "obj": 490.5210951652154
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001492708,
+      "obj": 490.4849665618234
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 490.52109516748015,
+      "solve_s": 0.000994,
+      "t_compile": 145.97803233284503,
+      "text_bytes": 1605800
+     }
+    },
+    {
+     "horizon": 44,
+     "instance": 4,
+     "qoco": {
+      "size": 7248,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000316625,
+      "solve_time": 0.001101416,
+      "run_time": 0.001418041,
+      "obj": 457.685612362633,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 7248,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.003057416,
+      "run_time": 0.003057416,
+      "obj": 457.68561236202805,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.002938375,
+      "obj": 457.68561011652105
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001479583,
+      "obj": 457.6682131668483
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 457.6856123612554,
+      "solve_s": 0.000986,
+      "t_compile": 140.82503770804033,
+      "text_bytes": 1605800
+     }
+    }
+   ]
+  },
+  "qoco_side_wall": 1085.9022290420253,
+  "qocogen_ok": true,
+  "scaly_sparse": {
+   "horizon": 44,
+   "solver": "scaly_sparse",
+   "t_build": 0.6758258331101388,
+   "t_generate": 1.2943545409943908,
+   "t_compile": 0.5628806250169873,
+   "c_bytes": 1133787,
+   "object_bytes": 786432,
+   "text_bytes": 49076,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 294.6914596141156,
+     "solve_s": 0.000702,
+     "solve_median_s": 0.000791
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 418.3034878311729,
+     "solve_s": 0.00075,
+     "solve_median_s": 0.0007570000000000001
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 238.97819762388582,
+     "solve_s": 0.00071,
+     "solve_median_s": 0.0007570000000000001
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 490.52109516757594,
+     "solve_s": 0.000747,
+     "solve_median_s": 0.0007530000000000001
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 457.68561236132484,
+     "solve_s": 0.000697,
+     "solve_median_s": 0.000754
+    }
+   ]
+  },
+  "piqp_sparse": {
+   "horizon": 44,
+   "solver": "piqp_sparse",
+   "t_build": 0.6124208329711109,
+   "t_generate": 0.01781599991954863,
+   "t_compile": 0.10411016689613461,
+   "c_bytes": 144393,
+   "object_bytes": 147456,
+   "text_bytes": 2416,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 294.6914596141157,
+     "solve_s": 0.0009630000000000001,
+     "solve_median_s": 0.0010010000000000002
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 418.30348783117273,
+     "solve_s": 0.0009010000000000001,
+     "solve_median_s": 0.000998
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 238.97819762388565,
+     "solve_s": 0.000894,
+     "solve_median_s": 0.000995
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 490.5210951675757,
+     "solve_s": 0.0009630000000000001,
+     "solve_median_s": 0.000987
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 457.68561236132473,
+     "solve_s": 0.000898,
+     "solve_median_s": 0.001013
+    }
+   ]
+  }
+ },
+ "56": {
+  "horizon": 56,
+  "qoco_side": {
+   "build": {
+    "t_generate": 237.07418333389796,
+    "source_bytes": 7993475,
+    "sources": [
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-60lhohnt/qocogen/T56/qoco_custom/cone.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-60lhohnt/qocogen/T56/qoco_custom/kkt.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-60lhohnt/qocogen/T56/qoco_custom/ldl.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-60lhohnt/qocogen/T56/qoco_custom/qoco_custom.c",
+     "/var/folders/mc/38r0ggmx49l2jwwk6k9nc63h0000gn/T/embedded-qp-60lhohnt/qocogen/T56/qoco_custom/utils.c"
+    ]
+   },
+   "rows": [
+    {
+     "horizon": 56,
+     "instance": 0,
+     "qoco": {
+      "size": 9216,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000384875,
+      "solve_time": 0.001446041,
+      "run_time": 0.001830916,
+      "obj": 564.2365140949877,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 9216,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.003883456,
+      "run_time": 0.003883456,
+      "obj": 564.2365140955186,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.00295275,
+      "obj": 564.2365138127731
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.000988583,
+      "obj": 563.7624576018665
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 564.2365140947776,
+      "solve_s": 0.001355,
+      "t_compile": 216.2546170828864,
+      "text_bytes": 2041020
+     }
+    },
+    {
+     "horizon": 56,
+     "instance": 1,
+     "qoco": {
+      "size": 9216,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000396166,
+      "solve_time": 0.001410916,
+      "run_time": 0.0018070819999999998,
+      "obj": 313.6765760962155,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 9216,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.004057375,
+      "run_time": 0.004057375,
+      "obj": 313.6765760961016,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.002887166,
+      "obj": 313.67657609524247
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001925166,
+      "obj": 313.60172793718635
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 5,
+      "obj": 313.6765760961022,
+      "solve_s": 0.001371,
+      "t_compile": 221.52642929181457,
+      "text_bytes": 2041020
+     }
+    },
+    {
+     "horizon": 56,
+     "instance": 2,
+     "qoco": {
+      "size": 9216,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000391541,
+      "solve_time": 0.001692458,
+      "run_time": 0.002083999,
+      "obj": 152.00597607082366,
+      "iters": 6
+     },
+     "clarabel": {
+      "size": 9216,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.00452625,
+      "run_time": 0.00452625,
+      "obj": 152.00597607079158,
+      "iters": 6
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.002960916,
+      "obj": 152.0059469020117
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001957625,
+      "obj": 152.00189135013397
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 6,
+      "obj": 152.00597607077665,
+      "solve_s": 0.001627,
+      "t_compile": 239.63123791711405,
+      "text_bytes": 2041020
+     }
+    },
+    {
+     "horizon": 56,
+     "instance": 3,
+     "qoco": {
+      "size": 9216,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.00039025,
+      "solve_time": 0.001930291,
+      "run_time": 0.002320541,
+      "obj": 467.9539878456607,
+      "iters": 7
+     },
+     "clarabel": {
+      "size": 9216,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.005114045,
+      "run_time": 0.005114045,
+      "obj": 467.95398782828227,
+      "iters": 7
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 125,
+      "solve_time": 0.004919375,
+      "obj": 467.9539825117568
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.001961833,
+      "obj": 467.8313306372344
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 7,
+      "obj": 467.9539878267133,
+      "solve_s": 0.001837,
+      "t_compile": 214.05084095802158,
+      "text_bytes": 2041020
+     }
+    },
+    {
+     "horizon": 56,
+     "instance": 4,
+     "qoco": {
+      "size": 9216,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000377416,
+      "solve_time": 0.00197975,
+      "run_time": 0.002357166,
+      "obj": 669.9544365603454,
+      "iters": 7
+     },
+     "clarabel": {
+      "size": 9216,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.005260086,
+      "run_time": 0.005260086,
+      "obj": 669.9544372405926,
+      "iters": 7
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 450,
+      "solve_time": 0.017395583,
+      "obj": 669.9544271595511
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.00384975,
+      "obj": 669.8432457721719
+     },
+     "qocogen": {
+      "status": "solved",
+      "iterations": 7,
+      "obj": 669.9544365530372,
+      "solve_s": 0.001833,
+      "t_compile": 201.42213245807216,
+      "text_bytes": 2041020
+     }
+    }
+   ]
+  },
+  "qoco_side_wall": 1342.8964678752236,
+  "qocogen_ok": true,
+  "scaly_sparse": {
+   "horizon": 56,
+   "solver": "scaly_sparse",
+   "t_build": 0.7947009999770671,
+   "t_generate": 1.520251207984984,
+   "t_compile": 0.6048017081338912,
+   "c_bytes": 1416151,
+   "object_bytes": 983040,
+   "text_bytes": 49476,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 564.2365140948058,
+     "solve_s": 0.000984,
+     "solve_median_s": 0.0010220000000000001
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 313.67657609615804,
+     "solve_s": 0.0009680000000000001,
+     "solve_median_s": 0.00102
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 152.00597607080047,
+     "solve_s": 0.000964,
+     "solve_median_s": 0.00101
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 467.95398782661323,
+     "solve_s": 0.0010890000000000001,
+     "solve_median_s": 0.001098
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 669.9544357676842,
+     "solve_s": 0.000985,
+     "solve_median_s": 0.000993
+    }
+   ]
+  },
+  "piqp_sparse": {
+   "horizon": 56,
+   "solver": "piqp_sparse",
+   "t_build": 0.7223093330394477,
+   "t_generate": 0.01315187499858439,
+   "t_compile": 0.09310337505303323,
+   "c_bytes": 181425,
+   "object_bytes": 180224,
+   "text_bytes": 2416,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 564.2365140948057,
+     "solve_s": 0.001252,
+     "solve_median_s": 0.001296
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 313.67657609615844,
+     "solve_s": 0.001219,
+     "solve_median_s": 0.0012560000000000002
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 152.00597607080087,
+     "solve_s": 0.001224,
+     "solve_median_s": 0.001235
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 467.95398782661294,
+     "solve_s": 0.001358,
+     "solve_median_s": 0.0013700000000000001
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 669.9544357676837,
+     "solve_s": 0.001226,
+     "solve_median_s": 0.00125
+    }
+   ]
+  }
+ },
+ "76": {
+  "horizon": 76,
+  "qocogen_failed": "exceeded 2400 s (load 2.7)",
+  "qoco_side": {
+   "build": null,
+   "rows": [
+    {
+     "horizon": 76,
+     "instance": 0,
+     "qoco": {
+      "size": 12496,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000510416,
+      "solve_time": 0.001935083,
+      "run_time": 0.002445499,
+      "obj": 332.2345194296358,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 12496,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.00532875,
+      "run_time": 0.00532875,
+      "obj": 332.2345194297107,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.005241041,
+      "obj": 332.23451368081766
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.002617,
+      "obj": 332.2092896604214
+     }
+    },
+    {
+     "horizon": 76,
+     "instance": 1,
+     "qoco": {
+      "size": 12496,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000450416,
+      "solve_time": 0.001981208,
+      "run_time": 0.002431624,
+      "obj": 260.6412444207658,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 12496,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.005442292,
+      "run_time": 0.005442292,
+      "obj": 260.64124442087524,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.003946791,
+      "obj": 260.6412410789393
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.002612666,
+      "obj": 260.6399220066265
+     }
+    },
+    {
+     "horizon": 76,
+     "instance": 2,
+     "qoco": {
+      "size": 12496,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000439833,
+      "solve_time": 0.001980916,
+      "run_time": 0.0024207490000000003,
+      "obj": 414.22999027392524,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 12496,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.005270168,
+      "run_time": 0.005270168,
+      "obj": 414.22999027398663,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.002631708,
+      "obj": 414.2299902691945
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.002627333,
+      "obj": 414.01969241022834
+     }
+    },
+    {
+     "horizon": 76,
+     "instance": 3,
+     "qoco": {
+      "size": 12496,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000448,
+      "solve_time": 0.001979541,
+      "run_time": 0.002427541,
+      "obj": 425.9218873744325,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 12496,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.005333874,
+      "run_time": 0.005333874,
+      "obj": 425.9218873754453,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.002620958,
+      "obj": 425.9218873742108
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.0026185,
+      "obj": 425.7983101477965
+     }
+    },
+    {
+     "horizon": 76,
+     "instance": 4,
+     "qoco": {
+      "size": 12496,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000454583,
+      "solve_time": 0.001979333,
+      "run_time": 0.002433916,
+      "obj": 250.86900440364926,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 12496,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.005160791,
+      "run_time": 0.005160791,
+      "obj": 250.8690044036679,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.0026365,
+      "obj": 250.86900440145595
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.002624833,
+      "obj": 250.67028054906427
+     }
+    }
+   ]
+  },
+  "qoco_side_wall": 2409.64381045918,
+  "qocogen_ok": false,
+  "scaly_sparse": {
+   "horizon": 76,
+   "solver": "scaly_sparse",
+   "t_build": 0.9885375839658082,
+   "t_generate": 1.9286932090763003,
+   "t_compile": 0.6252014581114054,
+   "c_bytes": 1898065,
+   "object_bytes": 1310720,
+   "text_bytes": 49800,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 332.23451942967165,
+     "solve_s": 0.001343,
+     "solve_median_s": 0.001358
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 260.64124442072466,
+     "solve_s": 0.0013460000000000002,
+     "solve_median_s": 0.0013570000000000001
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 414.2299902739176,
+     "solve_s": 0.001348,
+     "solve_median_s": 0.001358
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 425.92188737429797,
+     "solve_s": 0.0013410000000000002,
+     "solve_median_s": 0.001355
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 250.86900440364045,
+     "solve_s": 0.0013440000000000001,
+     "solve_median_s": 0.001353
+    }
+   ]
+  },
+  "piqp_sparse": {
+   "horizon": 76,
+   "solver": "piqp_sparse",
+   "t_build": 0.9433973748236895,
+   "t_generate": 0.01753033301793039,
+   "t_compile": 0.10958541603758931,
+   "c_bytes": 243145,
+   "object_bytes": 245760,
+   "text_bytes": 2424,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 332.2345194296718,
+     "solve_s": 0.0016990000000000002,
+     "solve_median_s": 0.0017150000000000002
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 260.64124442072523,
+     "solve_s": 0.0017120000000000002,
+     "solve_median_s": 0.001724
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 414.2299902739179,
+     "solve_s": 0.001709,
+     "solve_median_s": 0.0017230000000000001
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 425.9218873742979,
+     "solve_s": 0.001711,
+     "solve_median_s": 0.001722
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 250.86900440364064,
+     "solve_s": 0.0017120000000000002,
+     "solve_median_s": 0.0017230000000000001
+    }
+   ]
+  }
+ },
+ "96": {
+  "horizon": 96,
+  "qoco_side": {
+   "build": null,
+   "rows": [
+    {
+     "horizon": 96,
+     "instance": 0,
+     "qoco": {
+      "size": 15776,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.00065125,
+      "solve_time": 0.002476875,
+      "run_time": 0.003128125,
+      "obj": 302.0655860027457,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 15776,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.006466165,
+      "run_time": 0.006466165,
+      "obj": 302.0655860028326,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 125,
+      "solve_time": 0.008486625,
+      "obj": 302.06555463448547
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.003338291,
+      "obj": 301.7382956197219
+     }
+    },
+    {
+     "horizon": 96,
+     "instance": 1,
+     "qoco": {
+      "size": 15776,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000553041,
+      "solve_time": 0.002523,
+      "run_time": 0.003076041,
+      "obj": 262.81397281781517,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 15776,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.006701709,
+      "run_time": 0.006701709,
+      "obj": 262.81397281771353,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.00327875,
+      "obj": 262.8139728164445
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.003329875,
+      "obj": 262.79066401681115
+     }
+    },
+    {
+     "horizon": 96,
+     "instance": 2,
+     "qoco": {
+      "size": 15776,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000551,
+      "solve_time": 0.002488333,
+      "run_time": 0.003039333,
+      "obj": 337.55827224044134,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 15776,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.006502583,
+      "run_time": 0.006502583,
+      "obj": 337.55827224127876,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.00666225,
+      "obj": 337.5582656922709
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.003314375,
+      "obj": 337.533330858466
+     }
+    },
+    {
+     "horizon": 96,
+     "instance": 3,
+     "qoco": {
+      "size": 15776,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000556625,
+      "solve_time": 0.002435541,
+      "run_time": 0.002992166,
+      "obj": 217.51840510860254,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 15776,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.006384957,
+      "run_time": 0.006384957,
+      "obj": 217.51840510859114,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.006718041,
+      "obj": 217.51840447693422
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.003328041,
+      "obj": 217.5134404216805
+     }
+    },
+    {
+     "horizon": 96,
+     "instance": 4,
+     "qoco": {
+      "size": 15776,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000571875,
+      "solve_time": 0.002546583,
+      "run_time": 0.0031184579999999997,
+      "obj": 259.557167165308,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 15776,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.006551592,
+      "run_time": 0.006551592,
+      "obj": 259.55716716532515,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.006650916,
+      "obj": 259.557165573349
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.00332525,
+      "obj": 259.54529694076825
+     }
+    }
+   ]
+  },
+  "qoco_side_wall": 12.891723416978493,
+  "qocogen_ok": false,
+  "scaly_sparse": {
+   "horizon": 96,
+   "solver": "scaly_sparse",
+   "t_build": 1.310702749993652,
+   "t_generate": 2.3306259580422193,
+   "t_compile": 0.6909139580093324,
+   "c_bytes": 2397275,
+   "object_bytes": 1638400,
+   "text_bytes": 52044,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 302.06558600265487,
+     "solve_s": 0.0017130000000000001,
+     "solve_median_s": 0.0017250000000000002
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 262.8139728177432,
+     "solve_s": 0.0017120000000000002,
+     "solve_median_s": 0.0017280000000000002
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 337.5582722399041,
+     "solve_s": 0.0017180000000000001,
+     "solve_median_s": 0.001732
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 217.5184051085958,
+     "solve_s": 0.0017170000000000002,
+     "solve_median_s": 0.0017330000000000002
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 259.55716716529923,
+     "solve_s": 0.0017100000000000001,
+     "solve_median_s": 0.0017230000000000001
+    }
+   ]
+  },
+  "piqp_sparse": {
+   "horizon": 96,
+   "solver": "piqp_sparse",
+   "t_build": 1.2454744579736143,
+   "t_generate": 0.02271995786577463,
+   "t_compile": 0.09614912490360439,
+   "c_bytes": 305230,
+   "object_bytes": 294912,
+   "text_bytes": 2552,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 302.0655860026552,
+     "solve_s": 0.002118,
+     "solve_median_s": 0.002143
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 262.8139728177434,
+     "solve_s": 0.0021260000000000003,
+     "solve_median_s": 0.0021420000000000002
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 337.5582722399041,
+     "solve_s": 0.002127,
+     "solve_median_s": 0.0021420000000000002
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 217.51840510859574,
+     "solve_s": 0.002122,
+     "solve_median_s": 0.002135
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 259.5571671652992,
+     "solve_s": 0.002311,
+     "solve_median_s": 0.0023610000000000003
+    }
+   ]
+  }
+ },
+ "116": {
+  "horizon": 116,
+  "qoco_side": {
+   "build": null,
+   "rows": [
+    {
+     "horizon": 116,
+     "instance": 0,
+     "qoco": {
+      "size": 19056,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000730583,
+      "solve_time": 0.002954458,
+      "run_time": 0.003685041,
+      "obj": 383.90845992439426,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 19056,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.007891501,
+      "run_time": 0.007891501,
+      "obj": 383.90845992442183,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.007872916,
+      "obj": 383.908457838918
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.003928833,
+      "obj": 383.8859286832566
+     }
+    },
+    {
+     "horizon": 116,
+     "instance": 1,
+     "qoco": {
+      "size": 19056,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000628583,
+      "solve_time": 0.002913958,
+      "run_time": 0.0035425409999999997,
+      "obj": 193.61811754942005,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 19056,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.007674708,
+      "run_time": 0.007674708,
+      "obj": 193.61811754940365,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.00782125,
+      "obj": 193.61811425903204
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.00391425,
+      "obj": 193.59900572955374
+     }
+    },
+    {
+     "horizon": 116,
+     "instance": 2,
+     "qoco": {
+      "size": 19056,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000638875,
+      "solve_time": 0.00295775,
+      "run_time": 0.003596625,
+      "obj": 537.0887239576646,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 19056,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.0078675,
+      "run_time": 0.0078675,
+      "obj": 537.0887239571784,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.005915333,
+      "obj": 537.088710393978
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.003918333,
+      "obj": 537.0839632899826
+     }
+    },
+    {
+     "horizon": 116,
+     "instance": 3,
+     "qoco": {
+      "size": 19056,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000667125,
+      "solve_time": 0.002962666,
+      "run_time": 0.0036297910000000003,
+      "obj": 169.04404008304792,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 19056,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.007778334,
+      "run_time": 0.007778334,
+      "obj": 169.04404008302456,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.007853333,
+      "obj": 169.0440395373336
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.003926583,
+      "obj": 169.0353970364906
+     }
+    },
+    {
+     "horizon": 116,
+     "instance": 4,
+     "qoco": {
+      "size": 19056,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000629291,
+      "solve_time": 0.002958375,
+      "run_time": 0.003587666,
+      "obj": 471.37488933850835,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 19056,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.007795666,
+      "run_time": 0.007795666,
+      "obj": 471.3748893387306,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.007857041,
+      "obj": 471.37488269661736
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.003919583,
+      "obj": 471.3455983130009
+     }
+    }
+   ]
+  },
+  "qoco_side_wall": 14.85376387485303,
+  "qocogen_ok": false,
+  "scaly_sparse": {
+   "horizon": 116,
+   "solver": "scaly_sparse",
+   "t_build": 1.6397228329442441,
+   "t_generate": 2.471171041019261,
+   "t_compile": 0.7079227911308408,
+   "c_bytes": 2914844,
+   "object_bytes": 1982464,
+   "text_bytes": 52388,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 383.9084599243475,
+     "solve_s": 0.002069,
+     "solve_median_s": 0.002091
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 193.6181175493888,
+     "solve_s": 0.002073,
+     "solve_median_s": 0.0020930000000000002
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 537.0887239572726,
+     "solve_s": 0.002071,
+     "solve_median_s": 0.002085
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 169.04404008299267,
+     "solve_s": 0.002066,
+     "solve_median_s": 0.002082
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 471.37488933843895,
+     "solve_s": 0.0020700000000000002,
+     "solve_median_s": 0.0020870000000000003
+    }
+   ]
+  },
+  "piqp_sparse": {
+   "horizon": 116,
+   "solver": "piqp_sparse",
+   "t_build": 1.6237349160946906,
+   "t_generate": 0.019686999963596463,
+   "t_compile": 0.09789883298799396,
+   "c_bytes": 367720,
+   "object_bytes": 360448,
+   "text_bytes": 2552,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 383.90845992434754,
+     "solve_s": 0.0025840000000000004,
+     "solve_median_s": 0.0026030000000000003
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 193.61811754938884,
+     "solve_s": 0.002579,
+     "solve_median_s": 0.002594
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 537.0887239572726,
+     "solve_s": 0.0025830000000000002,
+     "solve_median_s": 0.002599
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 169.04404008299267,
+     "solve_s": 0.002579,
+     "solve_median_s": 0.002595
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 471.3748893384387,
+     "solve_s": 0.0025770000000000003,
+     "solve_median_s": 0.002592
+    }
+   ]
+  }
+ },
+ "136": {
+  "horizon": 136,
+  "qoco_side": {
+   "build": null,
+   "rows": [
+    {
+     "horizon": 136,
+     "instance": 0,
+     "qoco": {
+      "size": 22336,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000865666,
+      "solve_time": 0.003505833,
+      "run_time": 0.004371499,
+      "obj": 300.00687360860263,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 22336,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.009161709,
+      "run_time": 0.009161709,
+      "obj": 300.00687360928526,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.009214166,
+      "obj": 300.00683068330767
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.004593958,
+      "obj": 299.91366669054594
+     }
+    },
+    {
+     "horizon": 136,
+     "instance": 1,
+     "qoco": {
+      "size": 22336,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000748041,
+      "solve_time": 0.003509791,
+      "run_time": 0.004257832,
+      "obj": 326.1060894507623,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 22336,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.009013455,
+      "run_time": 0.009013455,
+      "obj": 326.1060894509582,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.009204833,
+      "obj": 326.1060865454164
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.0045885,
+      "obj": 326.08797230534265
+     }
+    },
+    {
+     "horizon": 136,
+     "instance": 2,
+     "qoco": {
+      "size": 22336,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000784625,
+      "solve_time": 0.003510916,
+      "run_time": 0.004295541,
+      "obj": 185.7656048029233,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 22336,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.009126334,
+      "run_time": 0.009126334,
+      "obj": 185.76560480296303,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.004599125,
+      "obj": 185.76560479962401
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.004587625,
+      "obj": 185.70722907295416
+     }
+    },
+    {
+     "horizon": 136,
+     "instance": 3,
+     "qoco": {
+      "size": 22336,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000744791,
+      "solve_time": 0.004012,
+      "run_time": 0.004756791,
+      "obj": 83.58502700591401,
+      "iters": 6
+     },
+     "clarabel": {
+      "size": 22336,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.010289081,
+      "run_time": 0.010289081,
+      "obj": 83.58502699509476,
+      "iters": 6
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.004622625,
+      "obj": 83.5850193986099
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.002316833,
+      "obj": 83.56637000599194
+     }
+    },
+    {
+     "horizon": 136,
+     "instance": 4,
+     "qoco": {
+      "size": 22336,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.0007615,
+      "solve_time": 0.005620625,
+      "run_time": 0.006382125,
+      "obj": 967.7113480570356,
+      "iters": 8
+     },
+     "clarabel": {
+      "size": 22336,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.015049415,
+      "run_time": 0.015049415,
+      "obj": 967.7113479351608,
+      "iters": 9
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 750,
+      "solve_time": 0.069150125,
+      "obj": 967.711334188547
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.009186625,
+      "obj": 967.550425267367
+     }
+    }
+   ]
+  },
+  "qoco_side_wall": 23.93504320899956,
+  "qocogen_ok": false,
+  "scaly_sparse": {
+   "horizon": 136,
+   "solver": "scaly_sparse",
+   "t_build": 2.081332542002201,
+   "t_generate": 2.4426309999544173,
+   "t_compile": 0.7623726250603795,
+   "c_bytes": 3444103,
+   "object_bytes": 2310144,
+   "text_bytes": 53656,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 300.00687360849145,
+     "solve_s": 0.0024300000000000003,
+     "solve_median_s": 0.002471
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 326.1060894507399,
+     "solve_s": 0.002425,
+     "solve_median_s": 0.002464
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 185.7656048029333,
+     "solve_s": 0.002429,
+     "solve_median_s": 0.002533
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 83.58502699503566,
+     "solve_s": 0.002684,
+     "solve_median_s": 0.0027340000000000003
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 967.7113480105859,
+     "solve_s": 0.0027370000000000003,
+     "solve_median_s": 0.002768
+    }
+   ]
+  },
+  "piqp_sparse": {
+   "horizon": 136,
+   "solver": "piqp_sparse",
+   "t_build": 3.7258163748774678,
+   "t_generate": 0.021044458029791713,
+   "t_compile": 0.10398412495851517,
+   "c_bytes": 431409,
+   "object_bytes": 409600,
+   "text_bytes": 2596,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 300.0068736084919,
+     "solve_s": 0.0030570000000000003,
+     "solve_median_s": 0.00315
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 326.1060894507399,
+     "solve_s": 0.0030440000000000003,
+     "solve_median_s": 0.0031200000000000004
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 185.76560480293307,
+     "solve_s": 0.003052,
+     "solve_median_s": 0.003184
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 83.58502699503569,
+     "solve_s": 0.0034200000000000003,
+     "solve_median_s": 0.003506
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 967.7113480105861,
+     "solve_s": 0.003422,
+     "solve_median_s": 0.003516
+    }
+   ]
+  }
+ },
+ "156": {
+  "horizon": 156,
+  "qoco_side": {
+   "build": null,
+   "rows": [
+    {
+     "horizon": 156,
+     "instance": 0,
+     "qoco": {
+      "size": 25616,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.001002625,
+      "solve_time": 0.004082958,
+      "run_time": 0.005085583,
+      "obj": 327.601985446695,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 25616,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.010536667,
+      "run_time": 0.010536667,
+      "obj": 327.60198544686097,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.005408416,
+      "obj": 327.6019361637716
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.002708791,
+      "obj": 327.5282533521658
+     }
+    },
+    {
+     "horizon": 156,
+     "instance": 1,
+     "qoco": {
+      "size": 25616,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000858541,
+      "solve_time": 0.004756375,
+      "run_time": 0.005614916,
+      "obj": 164.35086936062456,
+      "iters": 6
+     },
+     "clarabel": {
+      "size": 25616,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.012064459,
+      "run_time": 0.012064459,
+      "obj": 164.35086936061074,
+      "iters": 6
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.008092875,
+      "obj": 164.3508688863447
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.002713708,
+      "obj": 164.24655700183976
+     }
+    },
+    {
+     "horizon": 156,
+     "instance": 2,
+     "qoco": {
+      "size": 25616,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000867291,
+      "solve_time": 0.004689041,
+      "run_time": 0.005556332,
+      "obj": 315.0740440518572,
+      "iters": 6
+     },
+     "clarabel": {
+      "size": 25616,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.012299042,
+      "run_time": 0.012299042,
+      "obj": 315.0740440585273,
+      "iters": 6
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 175,
+      "solve_time": 0.018446625,
+      "obj": 315.0740405972746
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.007944833,
+      "obj": 315.08212504110753
+     }
+    },
+    {
+     "horizon": 156,
+     "instance": 3,
+     "qoco": {
+      "size": 25616,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000899208,
+      "solve_time": 0.003995,
+      "run_time": 0.004894208000000001,
+      "obj": 266.9401029226455,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 25616,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.010979876,
+      "run_time": 0.010979876,
+      "obj": 266.94010292259924,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.007881583,
+      "obj": 266.94007263204605
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.005246416,
+      "obj": 266.93485992016633
+     }
+    },
+    {
+     "horizon": 156,
+     "instance": 4,
+     "qoco": {
+      "size": 25616,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.000917833,
+      "solve_time": 0.004883541,
+      "run_time": 0.005801374,
+      "obj": 102.06393612869743,
+      "iters": 6
+     },
+     "clarabel": {
+      "size": 25616,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.012054251,
+      "run_time": 0.012054251,
+      "obj": 102.06393612869775,
+      "iters": 6
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 75,
+      "solve_time": 0.008341583,
+      "obj": 102.06393194146104
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.00278925,
+      "obj": 101.96071159611743
+     }
+    }
+   ]
+  },
+  "qoco_side_wall": 20.910286499885842,
+  "qocogen_ok": false,
+  "scaly_sparse": {
+   "horizon": 156,
+   "solver": "scaly_sparse",
+   "t_build": 2.685342416865751,
+   "t_generate": 2.980103207984939,
+   "t_compile": 0.8079709999728948,
+   "c_bytes": 3980740,
+   "object_bytes": 2637824,
+   "text_bytes": 53936,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 327.60198544666474,
+     "solve_s": 0.002873,
+     "solve_median_s": 0.0029000000000000002
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 164.35086936059875,
+     "solve_s": 0.003174,
+     "solve_median_s": 0.0032040000000000003
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 315.0740440303382,
+     "solve_s": 0.0031060000000000003,
+     "solve_median_s": 0.0033380000000000003
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 266.94010292256746,
+     "solve_s": 0.0028060000000000003,
+     "solve_median_s": 0.003003
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 102.06393612872222,
+     "solve_s": 0.002807,
+     "solve_median_s": 0.0029690000000000003
+    }
+   ]
+  },
+  "piqp_sparse": {
+   "horizon": 156,
+   "solver": "piqp_sparse",
+   "t_build": 2.4286757910158485,
+   "t_generate": 0.022971958154812455,
+   "t_compile": 0.10344945802353323,
+   "c_bytes": 495920,
+   "object_bytes": 475136,
+   "text_bytes": 2596,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 327.60198544666474,
+     "solve_s": 0.003542,
+     "solve_median_s": 0.0035710000000000004
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 164.35086936059886,
+     "solve_s": 0.003905,
+     "solve_median_s": 0.003941
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 315.07404403033826,
+     "solve_s": 0.003922,
+     "solve_median_s": 0.00395
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 266.9401029225677,
+     "solve_s": 0.0035410000000000003,
+     "solve_median_s": 0.003569
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 102.06393612872209,
+     "solve_s": 0.0035320000000000004,
+     "solve_median_s": 0.0036060000000000003
+    }
+   ]
+  }
+ },
+ "200": {
+  "horizon": 200,
+  "qoco_side": {
+   "build": null,
+   "rows": [
+    {
+     "horizon": 200,
+     "instance": 0,
+     "qoco": {
+      "size": 32832,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.001282833,
+      "solve_time": 0.006038875,
+      "run_time": 0.007321708,
+      "obj": 206.37481529006266,
+      "iters": 6
+     },
+     "clarabel": {
+      "size": 32832,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.015170665,
+      "run_time": 0.015170665,
+      "obj": 206.3748152948334,
+      "iters": 6
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.006825208,
+      "obj": 206.3748152885135
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.003432291,
+      "obj": 206.37308355360713
+     }
+    },
+    {
+     "horizon": 200,
+     "instance": 1,
+     "qoco": {
+      "size": 32832,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.0010705,
+      "solve_time": 0.005923166,
+      "run_time": 0.006993666,
+      "obj": 235.26459856442438,
+      "iters": 6
+     },
+     "clarabel": {
+      "size": 32832,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.013177039,
+      "run_time": 0.013177039,
+      "obj": 235.2645985645219,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.013647416,
+      "obj": 235.26458990274537
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.006787541,
+      "obj": 235.24150639381952
+     }
+    },
+    {
+     "horizon": 200,
+     "instance": 2,
+     "qoco": {
+      "size": 32832,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.001076375,
+      "solve_time": 0.004973666,
+      "run_time": 0.006050041,
+      "obj": 69.99866134379991,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 32832,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.012820123,
+      "run_time": 0.012820123,
+      "obj": 69.99866134379798,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 100,
+      "solve_time": 0.013613583,
+      "obj": 69.99865987145671
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.006784625,
+      "obj": 69.99434260972235
+     }
+    },
+    {
+     "horizon": 200,
+     "instance": 3,
+     "qoco": {
+      "size": 32832,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.001084166,
+      "solve_time": 0.00517325,
+      "run_time": 0.006257416,
+      "obj": 351.47690960396125,
+      "iters": 5
+     },
+     "clarabel": {
+      "size": 32832,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.013370793,
+      "run_time": 0.013370793,
+      "obj": 351.4769096041942,
+      "iters": 5
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.0068125,
+      "obj": 351.47690960129745
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.006814166,
+      "obj": 351.3613993464772
+     }
+    },
+    {
+     "horizon": 200,
+     "instance": 4,
+     "qoco": {
+      "size": 32832,
+      "status": "QOCO_SOLVED",
+      "setup_time": 0.001095416,
+      "solve_time": 0.00575475,
+      "run_time": 0.006850166,
+      "obj": 67.16277758728698,
+      "iters": 6
+     },
+     "clarabel": {
+      "size": 32832,
+      "status": "optimal",
+      "setup_time": 0.0,
+      "solve_time": 0.015154999,
+      "run_time": 0.015154999,
+      "obj": 67.16277758728486,
+      "iters": 6
+     },
+     "osqp": {
+      "status": "solved",
+      "iters": 50,
+      "solve_time": 0.006824541,
+      "obj": 67.16277757065605
+     },
+     "osqp_1e-3": {
+      "status": "solved",
+      "iters": 25,
+      "solve_time": 0.003430166,
+      "obj": 67.16248787448235
+     }
+    }
+   ]
+  },
+  "qoco_side_wall": 23.72024608287029,
+  "qocogen_ok": false,
+  "scaly_sparse": {
+   "horizon": 200,
+   "solver": "scaly_sparse",
+   "t_build": 3.7852550419047475,
+   "t_generate": 0.8080319170840085,
+   "t_compile": 0.8320716249290854,
+   "c_bytes": 5161455,
+   "object_bytes": 3358720,
+   "text_bytes": 54312,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 206.37481528809894,
+     "solve_s": 0.0040030000000000005,
+     "solve_median_s": 0.004053
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 235.264598564506,
+     "solve_s": 0.0036330000000000004,
+     "solve_median_s": 0.0036790000000000004
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 69.99866134379661,
+     "solve_s": 0.0036360000000000003,
+     "solve_median_s": 0.003684
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 351.4769096039115,
+     "solve_s": 0.003638,
+     "solve_median_s": 0.0036720000000000004
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 67.16277758728621,
+     "solve_s": 0.0036260000000000003,
+     "solve_median_s": 0.0036720000000000004
+    }
+   ]
+  },
+  "piqp_sparse": {
+   "horizon": 200,
+   "solver": "piqp_sparse",
+   "t_build": 3.6599652911536396,
+   "t_generate": 0.030156374908983707,
+   "t_compile": 0.11063691694289446,
+   "c_bytes": 637845,
+   "object_bytes": 589824,
+   "text_bytes": 2608,
+   "instances": [
+    {
+     "instance": 0,
+     "status": "solved",
+     "iterations": 8,
+     "obj": 206.37481528809874,
+     "solve_s": 0.0050290000000000005,
+     "solve_median_s": 0.005145
+    },
+    {
+     "instance": 1,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 235.26459856450577,
+     "solve_s": 0.004548,
+     "solve_median_s": 0.00464
+    },
+    {
+     "instance": 2,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 69.99866134379657,
+     "solve_s": 0.004632000000000001,
+     "solve_median_s": 0.004664000000000001
+    },
+    {
+     "instance": 3,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 351.47690960391157,
+     "solve_s": 0.004588,
+     "solve_median_s": 0.004654
+    },
+    {
+     "instance": 4,
+     "status": "solved",
+     "iterations": 7,
+     "obj": 67.16277758728624,
+     "solve_s": 0.004622,
+     "solve_median_s": 0.004645000000000001
+    }
+   ]
+  }
+ }
+}

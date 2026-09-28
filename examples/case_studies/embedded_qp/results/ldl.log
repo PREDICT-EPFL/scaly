@@ -1,0 +1,30 @@
+
+
+Generating qoco_custom.
+
+QOCOGEN Generation Time: 00.083 secs
+5 {'horizon': 5, 'order': 72, 'nnz_kkt_upper': 318, 'paper_us': (2.103, 0.435), 'load': 2.9052734375, 'qdldl': 1994.012, 'scaly_own': 983.4, 'scaly_amd': 976.4000000000001, 'scaly_unroll': 337.8, 'qocogen': 359.684}
+
+
+Generating qoco_custom.
+
+QOCOGEN Generation Time: 00.744 secs
+15 {'horizon': 15, 'order': 222, 'nnz_kkt_upper': 1068, 'paper_us': (7.507, 1.777), 'load': 2.77197265625, 'qdldl': 7014.706, 'scaly_own': 3580.3, 'scaly_amd': 3358.0000000000005, 'scaly_unroll': 1253.4, 'qocogen': 1479.228}
+
+
+Generating qoco_custom.
+
+QOCOGEN Generation Time: 08.961 secs
+50 {'horizon': 50, 'order': 747, 'nnz_kkt_upper': 3693, 'paper_us': (27.077, 6.117), 'load': 2.8828125, 'qdldl': 24725.0, 'scaly_own': 13597.2, 'scaly_amd': 12986.3, 'scaly_unroll': 16222.200000000003, 'qocogen': 12831.169}
+
+
+Generating qoco_custom.
+
+QOCOGEN Generation Time: 20.112 secs
+75 {'horizon': 75, 'order': 1122, 'nnz_kkt_upper': 5568, 'paper_us': (38.848, 8.485), 'load': 3.98291015625, 'qdldl': 38076.923, 'scaly_own': 21085.1, 'scaly_amd': 20260.9, 'scaly_unroll': 29114.3, 'qocogen': 20347.826}
+
+
+Generating qoco_custom.
+
+QOCOGEN Generation Time: 35.461 secs
+100 {'horizon': 100, 'order': 1497, 'nnz_kkt_upper': 7443, 'paper_us': (49.577, 12.894), 'load': 4.64501953125, 'qdldl': 51947.368, 'scaly_own': 28323.5, 'scaly_amd': 27764.7, 'scaly_unroll': 39352.9, 'qocogen': 28235.294}

@@ -1,0 +1,9 @@
+n=    5 SymForce fixed      65.7 us (gen 2.5 s, 0.5 MB), dynamic     126.3 us; Scaly      51.8 us (C 132 kB); iterations 11
+n=   10 SymForce fixed     228.7 us (gen 8.0 s, 1.1 MB), dynamic     305.3 us; Scaly     124.0 us (C 160 kB); iterations 13
+n=   20 SymForce fixed     616.2 us (gen 32.5 s, 2.2 MB), dynamic     618.0 us; Scaly     242.7 us (C 220 kB); iterations 13
+n=   50 SymForce fixed    1809.2 us (gen 312.2 s, 5.9 MB), dynamic    1626.0 us; Scaly     639.0 us (C 409 kB); iterations 13
+n=  100 SymForce fixed       nan us (gen 0.6 s, 0.0 MB), dynamic    4439.9 us; Scaly    1739.0 us (C 725 kB); iterations 18
+n=  200 SymForce fixed       nan us (gen 0.9 s, 0.0 MB), dynamic    7977.4 us; Scaly    3099.0 us (C 1384 kB); iterations 16
+n=  500 SymForce fixed       nan us (gen 2.1 s, 0.0 MB), dynamic   20014.8 us; Scaly    7794.0 us (C 3476 kB); iterations 16
+n= 1000 SymForce fixed       nan us (gen 4.0 s, 0.0 MB), dynamic   42763.0 us; Scaly   16529.0 us (C 6964 kB); iterations 17
+{"iterations_equal": true, "lambda_equal": true, "accepted_equal": true, "max_rel_error_diff": 6.981605924583277e-14, "max_pose_diff": 2.858824288409778e-15}

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case Study E7 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+h3{font-size:16px;margin:22px 0 6px}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Case study E7 · Factor-graph least squares (SymForce)</h1>
+<p class="sub">Plan <code>case_studies_plan_2026_09_27.html</code>, E7 · branch <code>claude/case-studies</code> · 28 Sep 2026 · code in <code>examples/case_studies/symforce/</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> SymForce's robot 3D localization benchmark (RSS 2022, Table IV), run with SymForce's own C++ optimizer and generated code in both its variants. Against it, Scaly generates the same problem and SymForce's own Levenberg–Marquardt as one C function. A sweep then grows the graph from 5 to 1000 poses, regenerating SymForce's code at every size.</p>
+<ul>
+<li><b>The same iterates.</b> At every size Scaly's solver takes SymForce's iterations with the same lambda and the same accepted steps. Errors agree to 1e-12 relative and poses to 1e-14.</li>
+<li><b>At Table IV's size (5 poses)</b>, against SymForce fixed with its timers off:
+<ul>
+<li>the whole solve takes <b>51.9 µs against 64.5 µs</b> (1.24×);</li>
+<li>one iteration takes <b>7.85 µs against 8.94 µs</b> (1.14×);</li>
+<li>linearizing alone is slower, <b>3.40 µs against 2.29 µs</b>. The flattened function shares subexpressions across the whole problem.</li>
+</ul></li>
+<li><b>The gap widens with the graph.</b> Scaly is 2.8× SymForce fixed at 50 poses. From 20 to 1000 poses it is 2.5 to 2.6× SymForce dynamic, the faster variant there.</li>
+<li><b>No compile blow-up.</b> Scaly generates and compiles every size in 1.6 to 2.1 s. SymForce's fixed variant takes 312 s to generate at 50 poses and more than 20 minutes at 100.</li>
+</ul>
+<p style="margin-bottom:0"><b>Against the plan's success criteria:</b>
+"a full iteration below SymForce fixed's time at 5 poses" is <span class="ok">met</span> (7.85 against 8.94 µs).
+"Modest (1–2×) at the paper's size; larger as the graph grows" is <span class="ok">met</span>: 1.24× on the solve at 5 poses, 2.5 to 2.8× from 20 poses on.</p>
+</div>
+
+<h2>1. The benchmark and the reproduction</h2>
+<ul>
+<li><b>Upstream.</b>
+<ul>
+<li>SymForce at <code>6582930</code> (2026-08-27), built from source against Homebrew's Eigen 3.5.0.</li>
+<li>Its generator runs in a venv, with <code>SYMFORCE_PYTHON_OVERRIDE</code> so the C++ build uses it.</li>
+</ul></li>
+<li><b>The problem.</b>
+<ul>
+<li>Five poses in SO(3) × R³, from identity.</li>
+<li>100 matching factors: every pose measures every one of 20 landmarks, with sigma 0.1.</li>
+<li>4 odometry factors, with sigmas 0.05 rad and 0.2 m.</li>
+<li>That makes 324 residuals and 30 unknowns.</li>
+<li>The data are SymForce's own <code>gen/measurements.cc</code>, drawn by its example with seed 42. They are stored in <code>results/robot_3d_localization.json</code>.</li>
+</ul></li>
+<li><b>SymForce's two variants.</b>
+<ul>
+<li><i>Dynamic</i>: one generated function per factor type, assembled at run time by <code>sym::Optimizer</code>.</li>
+<li><i>Fixed</i>: the whole problem's linearization as one flattened generated function, sparsity included. At 5 poses it is 19 558 operations and 528 kB of C++.</li>
+</ul></li>
+<li><b>SymForce's calls.</b> <code>baseline/bench_symforce.cc</code> times what its benchmark (<code>symforce/benchmarks/robot_3d_localization</code>) times, with the same calls. Beside them it times the whole solve from the initial values.
+<ul>
+<li>Linearize is <code>Linearizer::Relinearize</code>.</li>
+<li>Iterate is <code>Optimize(values, 1)</code>, repeated on the values its earlier calls update.</li>
+</ul></li>
+<li><b>Two SymForce builds.</b> Both use its Release flags (<code>-O3</code>) with <code>-mcpu=native</code>.
+<ul>
+<li>As released, with its internal timers (<code>SYM_TIME_SCOPE</code>) on, as its benchmark runs.</li>
+<li>With the timers compiled out. This is the comparison the table uses.</li>
+</ul></li>
+<li><b>Sizes.</b> For the sweep, SymForce's own generator (<code>gen_symforce.py</code>, the example's <code>generate()</code> with the pose count changed) regenerates the problem, data included, at each size. The same data go to Scaly. The fixed variant is generated only while one generation fits in 20 minutes.</li>
+</ul>
+
+<h2>2. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>What it does</th></tr>
+<tr><td><code>scaly_impl.py</code></td><td>
+<ul style="margin:0">
+<li><b>SymForce's conventions.</b> Quaternions are <code>[x, y, z, w]</code>, the retraction is <code>R ← R Exp(δR)</code>, <code>t ← t + δt</code>, and <code>Exp</code> and <code>Log</code> use SymForce's epsilon.</li>
+<li><b>Factor Jacobians.</b> Each is <code>sc.jacobian</code> of the residual in a zero tangent offset, inside a <code>vmap</code> body.</li>
+<li><b>Assembly.</b> <code>J'J</code> and <code>J'r</code> are built on the Hessian's fixed sparsity. <code>SparseMatrix.from_coo</code> sums the factors' blocks.</li>
+<li><b>The solver.</b> SymForce's <code>LevenbergMarquardtSolver</code>, with the example's parameters, as a <code>while_loop</code>:
+<ul>
+<li>lambda starts at 1e4, halves on an accepted step, quadruples on a refused one, and is clamped at 1e6;</li>
+<li>damping is unit;</li>
+<li>each step is solved by the generated sparse <code>L D L'</code>;</li>
+<li>the loop stops when the relative reduction falls in (−1e-7, 1e-6), or after 50 iterations.</li>
+</ul></li>
+<li><b>Two layouts.</b> <i>Grouped</i>, the default, evaluates a pose's 20 matching factors in one body, so the pose's rotation is formed once. <i>Per factor</i> uses one body per factor, as SymForce's dynamic variant does.</li>
+</ul></td></tr>
+<tr><td><code>run_scaly.py</code>, <code>compare.py</code></td><td>
+<ul style="margin:0">
+<li><code>run_scaly.py</code> runs one size and times the solve, one iteration and the linearization from C, in 1 ms batches (<code>fatrop_chain/time_kernel.c</code>).</li>
+<li><code>compare.py</code> runs the paper row with both SymForce builds, then the sweep, each in a fresh process behind the quiet-machine gate.</li>
+</ul></td></tr>
+<tr><td><code>baseline/</code></td><td><code>setup.sh</code> pins SymForce, builds it twice, and makes the generator's venv. <code>bench_symforce.cc</code> and <code>gen_symforce.py</code> are the benchmark calls and the generator.</td></tr>
+<tr><td><code>symforce.ipynb</code></td><td>
+<ul style="margin:0">
+<li>Explains the problem and the solver.</li>
+<li>Builds and runs Scaly's LM live, without SymForce, and prints every iteration's lambda and error beside SymForce's.</li>
+<li>Shows the generated C's size, the recorded Table IV and the sweep, with plots of solve time, generated source and build time.</li>
+</ul></td></tr>
+</table></div>
+
+<h2>3. Results at Table IV's size</h2>
+<p>Apple M3 Max, macOS 26, Apple clang 21. Scaly at its JIT flags (<code>-O2 -mcpu=native -fno-math-errno</code>). Each figure is the best of 20 loops of 1000 calls, or of 100 for the solve. Times in microseconds.</p>
+<div class="scroll"><table>
+<tr><th></th><th>Linearize</th><th>Iterate</th><th>Whole solve (11 iterations)</th></tr>
+<tr><td>SymForce dynamic, as released</td><td class="r">7.08</td><td class="r">20.74</td><td class="r">140.1</td></tr>
+<tr><td>SymForce fixed, as released</td><td class="r">2.42</td><td class="r">10.50</td><td class="r">75.1</td></tr>
+<tr><td>SymForce dynamic, timers off</td><td class="r">6.93</td><td class="r">18.95</td><td class="r">126.8</td></tr>
+<tr><td>SymForce fixed, timers off</td><td class="r"><b>2.29</b></td><td class="r">8.94</td><td class="r">64.5</td></tr>
+<tr><td>Scaly, factors grouped by pose</td><td class="r">3.40</td><td class="r"><b>7.85</b></td><td class="r"><b>51.9</b></td></tr>
+<tr><td>Scaly, one body per factor</td><td class="r">4.27</td><td class="r">12.15</td><td class="r">77.2</td></tr>
+<tr><td><i>Paper (i7-9700K), SymForce dynamic / fixed; context only</i></td><td class="r"><i>15.1 / 5.4</i></td><td class="r"><i>47.0 / 25.6</i></td><td></td></tr>
+</table></div>
+<ul>
+<li><b>Agreement.</b> Both sides take 11 iterations to an error of 132.35731922346, with the same lambda and acceptance at every step. Errors agree to 7e-14 relative and poses to 3e-15.</li>
+<li><b>SymForce's own timers</b> cost it 2 to 17%, most on the iteration and the solve. That cost is in its published numbers.</li>
+<li><b>Why Scaly is slower on linearize.</b> The flattened function shares every common subexpression across all 104 factors. Scaly's grouped body shares them within a pose.</li>
+<li><b>Why Scaly is faster on the iteration.</b> The advantage is in the rest of the iteration. The damping, the factorization on a fixed pattern and the step are one generated function, where SymForce's optimizer runs its general sparse machinery.</li>
+<li><b>Grouping matters.</b> The per-factor layout, which is the closest analogue of SymForce dynamic, is 1.5× slower than the grouped one, and still 1.6× faster than SymForce dynamic on the solve.</li>
+</ul>
+
+<h2>4. Growing the graph: 5 to 1000 poses</h2>
+<p>Every pose sees 20 landmarks, so the problem has <code>20n + n − 1</code> factors. SymForce's timers are off. Each cell gives the whole solve / linearize / one iteration, in microseconds.</p>
+<div class="scroll"><table>
+<tr><th>Poses</th><th>SymForce fixed</th><th>SymForce dynamic</th><th>Scaly</th><th>Scaly vs the faster SymForce, solve</th><th>Iterations (both sides)</th></tr>
+<tr><td class="r">5</td><td class="r">66 / 2.3 / 8.9</td><td class="r">126 / 6.9 / 19.0</td><td class="r"><b>52 / 3.4 / 7.8</b></td><td class="r">1.27×</td><td class="r">11</td></tr>
+<tr><td class="r">10</td><td class="r">229 / 8.1 / 27.7</td><td class="r">305 / 14.3 / 38.3</td><td class="r"><b>124 / 6.8 / 16.2</b></td><td class="r">1.85×</td><td class="r">13</td></tr>
+<tr><td class="r">20</td><td class="r">616 / 29.3 / 78.4</td><td class="r">618 / 29.3 / 77.3</td><td class="r"><b>243 / 13.7 / 32.8</b></td><td class="r">2.5×</td><td class="r">13</td></tr>
+<tr><td class="r">50</td><td class="r">1809 / 92.5 / 234</td><td class="r">1626 / 71.0 / 198</td><td class="r"><b>639 / 35.2 / 83.2</b></td><td class="r">2.5×</td><td class="r">13</td></tr>
+<tr><td class="r">100</td><td class="r bad">generation over 20 min</td><td class="r">4440 / 145 / 404</td><td class="r"><b>1739 / 70.6 / 167</b></td><td class="r">2.6×</td><td class="r">18</td></tr>
+<tr><td class="r">200</td><td></td><td class="r">7977 / 287 / 812</td><td class="r"><b>3099 / 141 / 335</b></td><td class="r">2.6×</td><td class="r">16</td></tr>
+<tr><td class="r">500</td><td></td><td class="r">20015 / 714 / 2023</td><td class="r"><b>7794 / 355 / 837</b></td><td class="r">2.6×</td><td class="r">16</td></tr>
+<tr><td class="r">1000</td><td></td><td class="r">42763 / 1445 / 4107</td><td class="r"><b>16529 / 711 / 1672</b></td><td class="r">2.6×</td><td class="r">17</td></tr>
+</table></div>
+
+<h3>4.1 What it takes to build each</h3>
+<div class="scroll"><table>
+<tr><th>Poses</th><th>SymForce fixed: generate, s</th><th>its <code>linearization.h</code></th><th>C++ compile of the harness, s</th><th>Scaly: generate + compile, s</th><th>Scaly's C</th></tr>
+<tr><td class="r">5</td><td class="r">2.5</td><td class="r">0.53 MB</td><td class="r">12.0</td><td class="r">1.6</td><td class="r">131 kB</td></tr>
+<tr><td class="r">10</td><td class="r">8.0</td><td class="r">1.08 MB</td><td class="r">16.4</td><td class="r">1.6</td><td class="r">160 kB</td></tr>
+<tr><td class="r">20</td><td class="r">32.5</td><td class="r">2.24 MB</td><td class="r">27.8</td><td class="r">1.7</td><td class="r">219 kB</td></tr>
+<tr><td class="r">50</td><td class="r">312</td><td class="r">5.85 MB</td><td class="r">83.0</td><td class="r">1.6</td><td class="r">409 kB</td></tr>
+<tr><td class="r">100</td><td class="r bad">over 1200</td><td></td><td></td><td class="r">1.6</td><td class="r">725 kB</td></tr>
+<tr><td class="r">1000</td><td></td><td></td><td></td><td class="r">2.0</td><td class="r">6963 kB</td></tr>
+</table></div>
+<ul>
+<li><b>SymForce fixed stops paying at 20 poses.</b> There it is level with dynamic, and from 50 poses it loses, with 5.9 MB of straight-line code. Its generation grows about as n².</li>
+<li><b>Scaly's C grows linearly, but not its code.</b> What grows is the index tables of the fixed sparsity: the gathers, the summed coordinates and the factorization's analysis. At 200 poses, 93% of the C is constant tables, and they compile in the same 2 s.</li>
+<li><b>Linearizing alone, Scaly is ahead from 10 poses on.</b></li>
+<li><b>The workspace also grows linearly</b>, to 840 753 doubles (6.7 MB) at 1000 poses. Every factor's blocks and the factor of the 6000 × 6000 Hessian are held at once.</li>
+</ul>
+
+<h2>5. What the numbers say about Scaly</h2>
+<ul>
+<li><b>L3 (the generated algorithm) is where the gain comes from.</b> The linearization alone is at best level with SymForce's. The iteration wins because the damping, the fixed-pattern <code>L D L'</code> and the step are one generated function with no run-time sparse bookkeeping.</li>
+<li><b>L4 (structure preserved) is what keeps it scaling.</b> One <code>vmap</code> body per factor type keeps the code constant as the graph grows. SymForce has to choose between flattened code, which is fast at small sizes but whose generation explodes, and run-time assembly, which scales but is slow.</li>
+<li><b>Writing SymForce's solver took no new features.</b> This was the plan's expectation for a Wave 2 study with an existing LM.
+<ul>
+<li>A tangent offset passed as an input gives the manifold Jacobian.</li>
+<li><code>from_coo</code> sums the blocks.</li>
+<li><code>with_values</code> and <code>add_diagonal</code> damp the Hessian.</li>
+<li><code>SparseLDL</code> runs inside the <code>while_loop</code>.</li>
+</ul></li>
+<li><b>Cross-factor sharing is the one thing flattening buys.</b> At 5 poses it makes SymForce's linearize 1.5× faster than Scaly's grouped body. Grouping factors by the pose they share recovers less than half of the per-factor gap: 4.27 → 3.40 µs, against 2.29. A general version, which would group a <code>vmap</code>'s instances by a shared gathered input, is not worth building for this gap alone.</li>
+</ul>
+
+<h2>6. Tests and checks</h2>
+<ul>
+<li><b>New test.</b> <code>tests/integration/test_case_study_symforce.py</code> works on a planar pose graph with 3 poses and 4 landmarks. It covers the same paths:
+<ul>
+<li>factor Jacobians in a <code>vmap</code>, and the assembled gradient and Hessian, against finite differences of the stacked residual;</li>
+<li>LM with <code>SparseLDL</code> inside a <code>while_loop</code>, whose optimum is compared with SciPy's <code>least_squares</code>;</li>
+<li>the SO(3) <code>Exp</code> and <code>Log</code> against SymForce's conventions.</li>
+</ul></li>
+<li><b>Mutation checks: 8 of 8 killed.</b>
+<ul>
+<li>The rotation sign in the matching residual.</li>
+<li>The tangent offset scaled inside the matching factor.</li>
+<li>The odometry gradient read from the wrong slots.</li>
+<li>The odometry Hessian blocks placed on the wrong poses.</li>
+<li>The LM step's sign.</li>
+<li>The damping dropped.</li>
+<li>The logarithm's hemisphere sign dropped.</li>
+<li>The exponential's half angle.</li>
+</ul>
+The first run left the damping mutation alive. Undamped Gauss–Newton reaches the same optimum on this problem, and the test checked only the optimum. The test now also checks the loop's first damped step against NumPy's solve, to 1e-12, which kills it.</li>
+<li><b>Study gates.</b> The per-iteration comparison with SymForce's trace, at every size, is in <code>results/sweep.json</code> (<code>vs_symforce</code>). The notebook prints it again from a live build.</li>
+<li><b>Suite.</b> The node-ID baseline is regenerated (+3). Nothing under <code>src/</code> changed for this study.</li>
+</ul>
+
+<h2>7. Fairness notes and what was not done</h2>
+<ul>
+<li><b>Machine.</b> Not the reference machine. Both sides are single-threaded.</li>
+<li><b>Flags.</b> SymForce is at its own Release flags plus <code>-mcpu=native</code>, and Scaly is at its JIT flags. Neither side was tuned further.</li>
+<li><b>The timers-off build is ours.</b> SymForce's published numbers include its timers. The table shows both builds, and the comparison uses the faster one.</li>
+<li><b>Not done.</b>
+<ul>
+<li>GTSAM and Ceres, which SymForce's benchmark also runs. The plan's criterion is SymForce fixed.</li>
+<li>BAL bundle adjustment, which the plan cited as a second, larger benchmark.</li>
+<li>Peak compiler memory for SymForce fixed at 50 poses.</li>
+</ul></li>
+</ul>
+
+<h2>8. Next</h2>
+<ul>
+<li>BAL is the natural next size: thousands of cameras, and a Schur complement that SymForce does not do and Ceres does.</li>
+<li>The index tables are 93% of the C at 200 poses. Emitting arithmetic-progression tables as loops would keep the source flat, but it compiles in 2 s already, so this is not urgent.</li>
+</ul>
+</main></body></html>

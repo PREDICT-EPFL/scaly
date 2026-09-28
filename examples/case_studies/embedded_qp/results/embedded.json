@@ -1,0 +1,134 @@
+[
+ {
+  "horizon": 8,
+  "scaly": {
+   "sections": {
+    "text": 65576,
+    "ARM": 127,
+    "rodata": 132248,
+    "comment": 31,
+    "note": 0,
+    "llvm_addrsig": 2
+   },
+   "flash_bytes": 197824,
+   "static_ram_bytes": 0,
+   "workspace_bytes": 232528,
+   "source_bytes": 334205
+  },
+  "qocogen": {
+   "sections": {
+    "text": 600790,
+    "ARM": 779,
+    "comment": 155,
+    "note": 0,
+    "llvm_addrsig": 0,
+    "rodata": 1508
+   },
+   "flash_bytes": 601750,
+   "static_ram_bytes": 0,
+   "printer_bytes": 548,
+   "workspace_bytes": 95824,
+   "source_bytes": 1105024,
+   "t_generate": 4.27478350000456
+  }
+ },
+ {
+  "horizon": 20,
+  "scaly": {
+   "sections": {
+    "text": 80648,
+    "ARM": 135,
+    "rodata": 330296,
+    "comment": 31,
+    "note": 0,
+    "llvm_addrsig": 2
+   },
+   "flash_bytes": 410944,
+   "static_ram_bytes": 0,
+   "workspace_bytes": 910992,
+   "source_bytes": 650392
+  },
+  "qocogen": {
+   "sections": {
+    "text": 1566718,
+    "ARM": 779,
+    "comment": 155,
+    "note": 0,
+    "llvm_addrsig": 0,
+    "rodata": 1508
+   },
+   "flash_bytes": 1567678,
+   "static_ram_bytes": 0,
+   "printer_bytes": 548,
+   "workspace_bytes": 234640,
+   "source_bytes": 2818578,
+   "t_generate": 25.587187541881576
+  }
+ },
+ {
+  "horizon": 32,
+  "scaly": {
+   "sections": {
+    "text": 56208,
+    "ARM": 127,
+    "rodata": 528344,
+    "comment": 31,
+    "note": 0,
+    "llvm_addrsig": 2
+   },
+   "flash_bytes": 584552,
+   "static_ram_bytes": 0,
+   "workspace_bytes": 1942040,
+   "source_bytes": 856738
+  },
+  "qocogen": {
+   "sections": {
+    "text": 2540460,
+    "ARM": 779,
+    "comment": 155,
+    "note": 0,
+    "llvm_addrsig": 0,
+    "rodata": 1508
+   },
+   "flash_bytes": 2541420,
+   "static_ram_bytes": 0,
+   "printer_bytes": 548,
+   "workspace_bytes": 373456,
+   "source_bytes": 4523282,
+   "t_generate": 66.80437070899643
+  }
+ },
+ {
+  "horizon": 56,
+  "scaly": {
+   "sections": {
+    "text": 56336,
+    "ARM": 127,
+    "rodata": 924440,
+    "comment": 31,
+    "note": 0,
+    "llvm_addrsig": 2
+   },
+   "flash_bytes": 980776,
+   "static_ram_bytes": 0,
+   "workspace_bytes": 4989592,
+   "source_bytes": 1415879
+  },
+  "qocogen": {
+   "sections": {
+    "text": 4502358,
+    "ARM": 779,
+    "comment": 155,
+    "note": 0,
+    "llvm_addrsig": 0,
+    "rodata": 1508
+   },
+   "flash_bytes": 4503318,
+   "static_ram_bytes": 0,
+   "printer_bytes": 548,
+   "workspace_bytes": 651088,
+   "source_bytes": 7993475,
+   "t_generate": 214.1708036251366
+  }
+ }
+]

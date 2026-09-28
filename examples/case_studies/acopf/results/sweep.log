@@ -1,0 +1,92 @@
+case14_ieee        tol=1e-08 jump      iterations 15, objective 2178.080411, Ipopt 0.004 s, function evaluations 0.001 s, process 5.2 s
+case14_ieee        tol=1e-08 examodels iterations 15, objective 2178.080411, Ipopt 0.004 s, function evaluations 0.000 s, process 10.6 s
+case14_ieee        tol=1e-08 scaly     iterations 15, objective 2178.080411, Ipopt 0.005 s, function evaluations 0.000 s, process 1.6 s
+case118_ieee       tol=1e-08 jump      iterations 29, objective 97213.606939, Ipopt 0.051 s, function evaluations 0.017 s, process 5.4 s
+case118_ieee       tol=1e-08 examodels iterations 29, objective 97213.606940, Ipopt 0.035 s, function evaluations 0.002 s, process 10.4 s
+case118_ieee       tol=1e-08 scaly     iterations 29, objective 97213.606939, Ipopt 0.036 s, function evaluations 0.003 s, process 2.5 s
+case300_ieee       tol=1e-08 jump      iterations 33, objective 565219.971865, Ipopt 0.134 s, function evaluations 0.048 s, process 5.8 s
+case300_ieee       tol=1e-08 examodels iterations 33, objective 565219.972403, Ipopt 0.098 s, function evaluations 0.006 s, process 10.7 s
+case300_ieee       tol=1e-08 scaly     iterations 33, objective 565219.971865, Ipopt 0.088 s, function evaluations 0.006 s, process 3.1 s
+case1354_pegase    tol=1e-08 jump      iterations 49, objective 1258843.985101, Ipopt 1.250 s, function evaluations 0.588 s, process 9.3 s
+case1354_pegase    tol=1e-08 examodels iterations 49, objective 1258843.986594, Ipopt 0.700 s, function evaluations 0.042 s, process 12.4 s
+case1354_pegase    tol=1e-08 scaly     iterations 49, objective 1258843.985101, Ipopt 0.635 s, function evaluations 0.055 s, process 5.1 s
+case2869_pegase    tol=1e-08 jump      iterations 59, objective 2462790.432482, Ipopt 4.086 s, function evaluations 2.001 s, process 16.6 s
+case2869_pegase    tol=1e-08 examodels iterations 59, objective 2462790.433380, Ipopt 2.449 s, function evaluations 0.114 s, process 16.5 s
+case2869_pegase    tol=1e-08 scaly     iterations 59, objective 2462790.432482, Ipopt 2.146 s, function evaluations 0.189 s, process 11.1 s
+case9241_pegase    tol=1e-08 jump      iterations 73, objective 6243090.383619, Ipopt 22.150 s, function evaluations 8.837 s, process 59.7 s
+case9241_pegase    tol=1e-08 examodels iterations 73, objective 6243090.384681, Ipopt 12.210 s, function evaluations 0.484 s, process 37.7 s
+case9241_pegase    tol=1e-08 scaly     iterations 73, objective 6243090.383619, Ipopt 12.907 s, function evaluations 2.112 s, process 65.7 s
+case13659_pegase   tol=1e-08 jump      iterations 65, objective 8948048.917266, Ipopt 26.186 s, function evaluations 10.476 s, process 71.8 s
+case13659_pegase   tol=1e-08 examodels iterations 66, objective 8948048.917602, Ipopt 16.482 s, function evaluations 0.590 s, process 47.8 s
+case13659_pegase   tol=1e-08 scaly     iterations 66, objective 8948048.917266, Ipopt 15.006 s, function evaluations 2.567 s, process 81.3 s
+case14_ieee        tol=0.0001 jump      iterations 13, objective 2178.080455, Ipopt 0.004 s, function evaluations 0.001 s, process 5.8 s
+case14_ieee        tol=0.0001 examodels iterations 13, objective 2178.080455, Ipopt 0.003 s, function evaluations 0.000 s, process 10.8 s
+case14_ieee        tol=0.0001 scaly     iterations 13, objective 2178.080455, Ipopt 0.006 s, function evaluations 0.000 s, process 1.7 s
+case118_ieee       tol=0.0001 jump      iterations 27, objective 97213.607394, Ipopt 0.055 s, function evaluations 0.020 s, process 5.6 s
+case118_ieee       tol=0.0001 examodels iterations 27, objective 97213.607396, Ipopt 0.034 s, function evaluations 0.002 s, process 10.9 s
+case118_ieee       tol=0.0001 scaly     iterations 27, objective 97213.607394, Ipopt 0.032 s, function evaluations 0.002 s, process 2.5 s
+case300_ieee       tol=0.0001 jump      iterations 33, objective 565219.972842, Ipopt 0.134 s, function evaluations 0.047 s, process 5.9 s
+case300_ieee       tol=0.0001 examodels iterations 33, objective 565219.973380, Ipopt 0.092 s, function evaluations 0.006 s, process 10.9 s
+case300_ieee       tol=0.0001 scaly     iterations 33, objective 565219.972842, Ipopt 0.088 s, function evaluations 0.006 s, process 3.0 s
+case1354_pegase    tol=0.0001 jump      iterations 46, objective 1258843.988539, Ipopt 1.169 s, function evaluations 0.548 s, process 8.9 s
+case1354_pegase    tol=0.0001 examodels iterations 46, objective 1258843.990039, Ipopt 0.638 s, function evaluations 0.038 s, process 12.2 s
+case1354_pegase    tol=0.0001 scaly     iterations 46, objective 1258843.988539, Ipopt 0.600 s, function evaluations 0.052 s, process 5.4 s
+case2869_pegase    tol=0.0001 jump      iterations 56, objective 2462790.439199, Ipopt 3.845 s, function evaluations 1.910 s, process 16.0 s
+case2869_pegase    tol=0.0001 examodels iterations 56, objective 2462790.440097, Ipopt 2.114 s, function evaluations 0.106 s, process 15.6 s
+case2869_pegase    tol=0.0001 scaly     iterations 56, objective 2462790.439199, Ipopt 1.957 s, function evaluations 0.175 s, process 10.6 s
+case9241_pegase    tol=0.0001 jump      iterations 70, objective 6243090.402929, Ipopt 21.530 s, function evaluations 8.541 s, process 58.0 s
+case9241_pegase    tol=0.0001 examodels iterations 70, objective 6243090.403991, Ipopt 12.028 s, function evaluations 0.465 s, process 36.9 s
+case9241_pegase    tol=0.0001 scaly     iterations 70, objective 6243090.402929, Ipopt 12.260 s, function evaluations 1.998 s, process 63.9 s
+case13659_pegase   tol=0.0001 jump      iterations 62, objective 8948048.970171, Ipopt 25.012 s, function evaluations 9.944 s, process 69.6 s
+case13659_pegase   tol=0.0001 examodels iterations 63, objective 8948048.970508, Ipopt 15.105 s, function evaluations 0.556 s, process 44.7 s
+case13659_pegase   tol=0.0001 scaly     iterations 63, objective 8948048.970171, Ipopt 14.739 s, function evaluations 2.486 s, process 81.4 s
+
+tol 1e-08
+| Case | Buses | Stack | Iterations | Objective | Ipopt total, s | Function evaluations, s | Linear solver, s | First solve, s |
+|---|---|---|---|---|---|---|---|---|
+| case14_ieee | 14 | jump | 15 | 2178.080411 | 0.004 | 0.001 | 0.002 | 4.7 |
+| case14_ieee | 14 | examodels | 15 | 2178.080411 | 0.004 | 0.000 | 0.002 | 9.8 |
+| case14_ieee | 14 | scaly | 15 | 2178.080411 | 0.005 | 0.000 | 0.003 | 1.5 |
+| case118_ieee | 118 | jump | 29 | 97213.606939 | 0.051 | 0.017 | 0.028 | 4.8 |
+| case118_ieee | 118 | examodels | 29 | 97213.606940 | 0.035 | 0.002 | 0.027 | 9.7 |
+| case118_ieee | 118 | scaly | 29 | 97213.606939 | 0.036 | 0.003 | 0.027 | 2.4 |
+| case300_ieee | 300 | jump | 33 | 565219.971865 | 0.134 | 0.048 | 0.073 | 4.9 |
+| case300_ieee | 300 | examodels | 33 | 565219.972403 | 0.098 | 0.006 | 0.078 | 9.9 |
+| case300_ieee | 300 | scaly | 33 | 565219.971865 | 0.088 | 0.006 | 0.069 | 2.9 |
+| case1354_pegase | 1354 | jump | 49 | 1258843.985101 | 1.250 | 0.588 | 0.585 | 6.8 |
+| case1354_pegase | 1354 | examodels | 49 | 1258843.986594 | 0.700 | 0.042 | 0.588 | 10.8 |
+| case1354_pegase | 1354 | scaly | 49 | 1258843.985101 | 0.635 | 0.055 | 0.512 | 4.4 |
+| case2869_pegase | 2869 | jump | 59 | 2462790.432482 | 4.086 | 2.001 | 1.899 | 10.5 |
+| case2869_pegase | 2869 | examodels | 59 | 2462790.433380 | 2.449 | 0.114 | 2.159 | 13.0 |
+| case2869_pegase | 2869 | scaly | 59 | 2462790.432482 | 2.146 | 0.189 | 1.790 | 8.9 |
+| case9241_pegase | 9241 | jump | 73 | 6243090.383619 | 22.150 | 8.837 | 11.937 | 32.2 |
+| case9241_pegase | 9241 | examodels | 73 | 6243090.384681 | 12.210 | 0.484 | 10.381 | 23.6 |
+| case9241_pegase | 9241 | scaly | 73 | 6243090.383619 | 12.907 | 2.112 | 9.531 | 52.6 |
+| case13659_pegase | 13659 | jump | 65 | 8948048.917266 | 26.186 | 10.476 | 13.906 | 38.1 |
+| case13659_pegase | 13659 | examodels | 66 | 8948048.917602 | 16.482 | 0.590 | 14.165 | 28.6 |
+| case13659_pegase | 13659 | scaly | 66 | 8948048.917266 | 15.006 | 2.567 | 10.788 | 66.0 |
+
+tol 0.0001
+| Case | Buses | Stack | Iterations | Objective | Ipopt total, s | Function evaluations, s | Linear solver, s | First solve, s |
+|---|---|---|---|---|---|---|---|---|
+| case14_ieee | 14 | jump | 13 | 2178.080455 | 0.004 | 0.001 | 0.002 | 4.8 |
+| case14_ieee | 14 | examodels | 13 | 2178.080455 | 0.003 | 0.000 | 0.002 | 9.9 |
+| case14_ieee | 14 | scaly | 13 | 2178.080455 | 0.006 | 0.000 | 0.003 | 1.6 |
+| case118_ieee | 118 | jump | 27 | 97213.607394 | 0.055 | 0.020 | 0.029 | 4.9 |
+| case118_ieee | 118 | examodels | 27 | 97213.607396 | 0.034 | 0.002 | 0.026 | 10.0 |
+| case118_ieee | 118 | scaly | 27 | 97213.607394 | 0.032 | 0.002 | 0.024 | 2.4 |
+| case300_ieee | 300 | jump | 33 | 565219.972842 | 0.134 | 0.047 | 0.073 | 5.0 |
+| case300_ieee | 300 | examodels | 33 | 565219.973380 | 0.092 | 0.006 | 0.073 | 10.2 |
+| case300_ieee | 300 | scaly | 33 | 565219.972842 | 0.088 | 0.006 | 0.069 | 2.8 |
+| case1354_pegase | 1354 | jump | 46 | 1258843.988539 | 1.169 | 0.548 | 0.546 | 6.6 |
+| case1354_pegase | 1354 | examodels | 46 | 1258843.990039 | 0.638 | 0.038 | 0.533 | 10.7 |
+| case1354_pegase | 1354 | scaly | 46 | 1258843.988539 | 0.600 | 0.052 | 0.482 | 4.7 |
+| case2869_pegase | 2869 | jump | 56 | 2462790.439199 | 3.845 | 1.910 | 1.755 | 10.1 |
+| case2869_pegase | 2869 | examodels | 56 | 2462790.440097 | 2.114 | 0.106 | 1.842 | 12.5 |
+| case2869_pegase | 2869 | scaly | 56 | 2462790.439199 | 1.957 | 0.175 | 1.622 | 8.5 |
+| case9241_pegase | 9241 | jump | 70 | 6243090.402929 | 21.530 | 8.541 | 11.634 | 31.1 |
+| case9241_pegase | 9241 | examodels | 70 | 6243090.403991 | 12.028 | 0.465 | 10.239 | 23.0 |
+| case9241_pegase | 9241 | scaly | 70 | 6243090.402929 | 12.260 | 1.998 | 9.019 | 51.4 |
+| case13659_pegase | 13659 | jump | 62 | 8948048.970171 | 25.012 | 9.944 | 13.321 | 37.0 |
+| case13659_pegase | 13659 | examodels | 63 | 8948048.970508 | 15.105 | 0.556 | 12.861 | 27.0 |
+| case13659_pegase | 13659 | scaly | 63 | 8948048.970171 | 14.739 | 2.486 | 10.613 | 66.4 |
