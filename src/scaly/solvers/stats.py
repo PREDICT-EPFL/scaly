@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import ctypes
-import enum
 from dataclasses import dataclass, fields
+
+from ..function.method import Status
 
 SCALY_SOLVER_STATS_VERSION = 3
 
@@ -39,23 +40,6 @@ STATS_FIELDS = (
 )
 
 
-class ScalySolveStatus(enum.IntEnum):
-  """Backend-neutral solve outcome, as reported in the generated statistics struct.
-
-  Each backend maps its own native status onto these, so calling code does not have to know
-  which solver ran. ``OK`` and ``ACCEPTABLE`` are the successful ones.
-  """
-
-  OK = 0
-  ACCEPTABLE = 1
-  MAX_ITER = 2
-  PRIMAL_INFEASIBLE = 3
-  DUAL_INFEASIBLE = 4
-  NUMERICS = 5
-  USER_STOP = 6
-  ERROR = 7
-
-
 @dataclass(frozen=True, slots=True)
 class SolverStatus:
   code: int
@@ -80,7 +64,7 @@ class CSolverStats(ctypes.Structure):
 @dataclass(frozen=True, slots=True)
 class SolverStats:
   version: int
-  status: ScalySolveStatus
+  status: Status
   native_status: int
   iter: int
   obj: float
@@ -105,7 +89,7 @@ class SolverStats:
 
   @classmethod
   def from_c(cls, value: CSolverStats) -> SolverStats:
-    return cls(**{name: ScalySolveStatus(raw) if name == "status" else raw for name, _ in STATS_FIELDS if (raw := getattr(value, name)) is not None})
+    return cls(**{name: Status(raw) if name == "status" else raw for name, _ in STATS_FIELDS if (raw := getattr(value, name)) is not None})
 
   def to_solver_status(self) -> SolverStatus:
     counts = {name: getattr(self, name) for name, _ in STATS_FIELDS if name.startswith("n_eval_")}
@@ -114,7 +98,7 @@ class SolverStats:
       name=self.status.name,
       iter=self.iter,
       stats=counts,
-      _ok=self.status in (ScalySolveStatus.OK, ScalySolveStatus.ACCEPTABLE),
+      _ok=self.status in (Status.OK, Status.ACCEPTABLE),
     )
 
 
@@ -128,7 +112,7 @@ def stats_c_defs() -> list[str]:
     "#define SCALY_SOLVER_STATS_DEFINED",
     f"#define SCALY_SOLVER_STATS_VERSION {SCALY_SOLVER_STATS_VERSION}",
   ]
-  lines += [f"#define SCALY_SOLVE_{status.name} {int(status)}" for status in ScalySolveStatus]
+  lines += [f"#define SCALY_SOLVE_{status.name} {int(status)}" for status in Status]
   lines += ["typedef struct {"]
   lines += [f"  {c_type} {name};" for name, c_type in STATS_FIELDS]
   lines += ["} scaly_solver_stats;", "#endif"]

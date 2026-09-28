@@ -40,7 +40,7 @@
 
 ::: scaly.solvers.stats.SolverStatus
 
-::: scaly.solvers.stats.ScalySolveStatus
+::: scaly.function.method.Status
 
 ## Graph queries
 

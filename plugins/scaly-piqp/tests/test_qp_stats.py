@@ -30,7 +30,7 @@ def test_qp_stats_success_and_timing_split() -> None:
   stats = sc.solver_stats(qp)
   assert stats is not None
   assert stats.version == sc.SCALY_SOLVER_STATS_VERSION
-  assert stats.status == sc.ScalySolveStatus.OK
+  assert stats.status == sc.Status.OK
   assert stats.iter > 0
   assert stats.obj == pytest.approx(float(out["cost"]), rel=1e-12, abs=1e-12)
   assert stats.n_eval_f == 1
@@ -49,7 +49,7 @@ def test_qp_stats_maps_max_iter_status() -> None:
   qp = _problem(max_iter=1)
   solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(2))
   assert sc.solver_stats(qp) is not None
-  assert sc.solver_stats(qp).status == sc.ScalySolveStatus.MAX_ITER
+  assert sc.solver_stats(qp).status == sc.Status.MAX_ITER
   assert sc.solver_stats(qp).native_status == -1
   assert sc.solver_stats(qp).iter == 1
   assert sc.solver_stats(qp).to_solver_status() is not None and not sc.solver_stats(qp).to_solver_status().ok
@@ -60,4 +60,4 @@ def test_qp_reserved_name_compiles_solves_and_exposes_stats() -> None:
   qp = build_qp(P=np.eye(2), c=np.array([-0.25, 0.5]), name="w")
   out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))
   np.testing.assert_allclose(out["x"], [0.25, -0.5], atol=1e-8)
-  assert sc.solver_stats(qp, "w").status == sc.ScalySolveStatus.OK
+  assert sc.solver_stats(qp, "w").status == sc.Status.OK

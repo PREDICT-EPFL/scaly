@@ -97,7 +97,7 @@ def test_nlp_generated_stats_and_timing_split() -> None:
   stats = sc.solver_stats(nlp)
   assert stats is not None
   assert stats.version == sc.SCALY_SOLVER_STATS_VERSION
-  assert stats.status == sc.ScalySolveStatus.OK
+  assert stats.status == sc.Status.OK
   assert stats.iter > 0
   assert stats.obj == pytest.approx(float(out["f"]), rel=1e-12, abs=1e-12)
   assert stats.n_eval_f > 0 and stats.n_eval_grad_f > 0 and stats.n_eval_g > 0
@@ -144,9 +144,9 @@ def test_nlp_generated_warm_start_reduces_iterations() -> None:
   cold = build("nlp_ws_cold", warm=False)
   warm = build("nlp_ws_warm", warm=True)
   cold_out = solve_nlp(cold, np.array([-1.2, 2.2]), np.zeros(1), np.zeros(0), np.zeros(2))
-  assert sc.solver_stats(cold) is not None and sc.solver_stats(cold).status == sc.ScalySolveStatus.OK
+  assert sc.solver_stats(cold) is not None and sc.solver_stats(cold).status == sc.Status.OK
   solve_nlp(warm, cold_out["x"], cold_out["lam_eq"], np.zeros(0), cold_out["lam_box"])
-  assert sc.solver_stats(warm) is not None and sc.solver_stats(warm).status == sc.ScalySolveStatus.OK
+  assert sc.solver_stats(warm) is not None and sc.solver_stats(warm).status == sc.Status.OK
   assert sc.solver_stats(cold).iter >= 1
   assert sc.solver_stats(warm).iter < sc.solver_stats(cold).iter
 
@@ -158,7 +158,7 @@ def test_nlp_generated_status_max_iter() -> None:
   nlp = build_nlp(x=x, f=f, h_eq=sc.stack([x[0] + x[1] - 1.0]), name="nlp_max_iter", options={"max_iter": 1})
   solve_nlp(nlp, np.array([-1.2, 2.2]), np.zeros(1), np.zeros(0), np.zeros(2))
   assert sc.solver_stats(nlp) is not None
-  assert sc.solver_stats(nlp).status == sc.ScalySolveStatus.MAX_ITER
+  assert sc.solver_stats(nlp).status == sc.Status.MAX_ITER
   assert sc.solver_stats(nlp).native_status == -1
   assert sc.solver_stats(nlp).iter == 1
   assert sc.solver_stats(nlp).to_solver_status() is not None and not sc.solver_stats(nlp).to_solver_status().ok
@@ -176,7 +176,7 @@ def test_nlp_generated_rejected_option_reports_error_status() -> None:
   x0 = np.array([0.5, -0.5])
   out = solve_nlp(nlp, x0, np.zeros(1), np.zeros(0), np.zeros(2))
   assert sc.solver_stats(nlp) is not None
-  assert sc.solver_stats(nlp).status == sc.ScalySolveStatus.ERROR
+  assert sc.solver_stats(nlp).status == sc.Status.ERROR
   assert sc.solver_stats(nlp).native_status == -12
   assert sc.solver_stats(nlp).iter == 0
   np.testing.assert_allclose(out["x"], x0)

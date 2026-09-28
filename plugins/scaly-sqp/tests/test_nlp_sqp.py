@@ -61,7 +61,7 @@ def test_sqp_stats_split_is_additive() -> None:
   solver = _problem()
   solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
   stats = sc.solver_stats(solver)
-  assert stats is not None and stats.status == sc.ScalySolveStatus.OK
+  assert stats is not None and stats.status == sc.Status.OK
   assert stats.t_fe >= 0.0 and stats.t_qp > 0.0 and stats.t_globalization >= 0.0
   assert stats.t_solver == 0.0
   assert stats.t_total == pytest.approx(stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rel=1e-10, abs=1e-12)
@@ -73,7 +73,7 @@ def test_sqp_diagnostics_stats_fields() -> None:
   solver = _problem()
   solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
   stats = sc.solver_stats(solver)
-  assert stats is not None and stats.status == sc.ScalySolveStatus.OK
+  assert stats is not None and stats.status == sc.Status.OK
   assert stats.version == sc.SCALY_SOLVER_STATS_VERSION
   assert stats.qp_iter > 0 and stats.backtracks >= 0
   assert 0.0 <= stats.primal_viol <= 1e-7  # converged: violation within tol
@@ -90,7 +90,7 @@ def test_sqp_rejects_nonfinite_warm_starts_before_the_kkt_check() -> None:
     args = [value.copy() for value in valid]
     args[slot].reshape(-1)[0] = np.nan
     solve_nlp(solver, *args)
-    assert sc.solver_stats(solver) is not None and sc.solver_stats(solver).status == sc.ScalySolveStatus.NUMERICS
+    assert sc.solver_stats(solver) is not None and sc.solver_stats(solver).status == sc.Status.NUMERICS
 
 
 def test_sqp_trace_is_off_by_default() -> None:
@@ -375,7 +375,7 @@ def test_sqp_globalizations_backtrack_before_accepting(globalization: str) -> No
   )
   out = solve_nlp(solver, np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
   stats = sc.solver_stats(solver)
-  assert stats is not None and stats.status == sc.ScalySolveStatus.OK
+  assert stats is not None and stats.status == sc.Status.OK
   assert stats.backtracks > 0 and 0.0 < stats.alpha <= 1.0
   np.testing.assert_allclose(np.abs(out["x"]), 1.0, atol=2e-5)
   if globalization == "l1":
@@ -394,7 +394,7 @@ def test_sqp_fails_when_filter_has_no_acceptable_trial() -> None:
   )
   solve_nlp(solver, np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
   stats = sc.solver_stats(solver)
-  assert stats is not None and stats.status == sc.ScalySolveStatus.NUMERICS
+  assert stats is not None and stats.status == sc.Status.NUMERICS
   assert stats.alpha == 0.0 and stats.backtracks == 1
 
 
@@ -410,7 +410,7 @@ def test_sqp_watchdog_falls_back_to_checkpoint_line_search() -> None:
   )
   out = solve_nlp(solver, np.array([0.5]), np.zeros(0), np.zeros(0), np.zeros(1))
   stats = sc.solver_stats(solver)
-  assert stats is not None and stats.status == sc.ScalySolveStatus.OK
+  assert stats is not None and stats.status == sc.Status.OK
   assert stats.backtracks > 0 and 0.0 < stats.alpha <= 1.0
   np.testing.assert_allclose(np.abs(out["x"]), 1.0, atol=2e-5)
 
@@ -423,7 +423,7 @@ def test_sqp_kkt_terminates_at_initial_bound_optima_with_signed_multipliers() ->
   for solver, x0, lam in ((upper, 1.0, 1.0), (lower, 0.0, -1.0)):
     solve_nlp(solver, np.array([x0]), np.zeros(0), np.zeros(0), np.array([lam]))
     stats = sc.solver_stats(solver)
-    assert stats is not None and stats.status == sc.ScalySolveStatus.OK
+    assert stats is not None and stats.status == sc.Status.OK
     assert stats.iter == 0 and stats.qp_iter == 0 and stats.alpha == 0.0
 
 
@@ -458,7 +458,7 @@ def test_sqp_inequality_complementarity_uses_signed_two_sided_multiplier() -> No
   )
   solve_nlp(solver, np.array([1.0]), np.zeros(0), np.array([1.0]), np.zeros(1))
   stats = sc.solver_stats(solver)
-  assert stats is not None and stats.status == sc.ScalySolveStatus.OK and stats.iter == 0
+  assert stats is not None and stats.status == sc.Status.OK and stats.iter == 0
 
 
 @pytest.mark.solver("sqp")
@@ -477,7 +477,7 @@ def test_sqp_continues_with_best_iterate_after_qp_max_iter() -> None:
   solver = _problem(qp_max_iter=4)
   out = solve_nlp(solver, np.zeros(2), np.zeros(1), np.zeros(1), np.zeros(2), np.array([0.2, 0.8]))
   stats = sc.solver_stats(solver)
-  assert stats is not None and stats.status == sc.ScalySolveStatus.OK
+  assert stats is not None and stats.status == sc.Status.OK
   assert stats.native_status == -1  # PIQP_MAX_ITER_REACHED on the last QP
   np.testing.assert_allclose(out["x"], [0.25, 0.75], atol=2e-6)
 
@@ -494,7 +494,7 @@ def test_sqp_max_iter_status() -> None:
     options={"max_iter": 1, "tol": 1e-12},
   )
   solve_nlp(solver, np.array([0.5]), np.zeros(1), np.zeros(0), np.zeros(1))
-  assert sc.solver_stats(solver) is not None and sc.solver_stats(solver).status == sc.ScalySolveStatus.MAX_ITER
+  assert sc.solver_stats(solver) is not None and sc.solver_stats(solver).status == sc.Status.MAX_ITER
 
 
 @pytest.mark.solver("sqp")
@@ -534,7 +534,7 @@ def test_sqp_does_not_accept_unconverged_unconstrained_iterate() -> None:
   x = sc.sym("x", 1)
   solver = build_nlp(x=x, f=(x[0] - 2.0) ** 4, solver="sqp", name="sqp_unconverged", options={"max_iter": 1, "tol": 1e-12})
   solve_nlp(solver, np.array([0.0]), np.zeros(0), np.zeros(0), np.zeros(1))
-  assert sc.solver_stats(solver) is not None and sc.solver_stats(solver).status == sc.ScalySolveStatus.MAX_ITER
+  assert sc.solver_stats(solver) is not None and sc.solver_stats(solver).status == sc.Status.MAX_ITER
 
 
 @pytest.mark.parametrize(

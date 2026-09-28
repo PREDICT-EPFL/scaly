@@ -375,7 +375,7 @@ class CasadiDTCBFSafetyFilter:
     stats = self.solver.last_stats
     assert stats is not None
     solver_ms = stats.t_total * 1000.0
-    raw_success = stats.status in (sc.ScalySolveStatus.OK, sc.ScalySolveStatus.ACCEPTABLE)
+    raw_success = stats.status in (sc.Status.OK, sc.Status.ACCEPTABLE)
     z_sol, f_sol, g_sol, lam_x, lam_g, _ = sol
     feasible = bool(np.all(np.isfinite(z_sol)) and (not g_sol.size or np.min(g_sol) >= -1e-6))
     success = raw_success and feasible
@@ -886,12 +886,12 @@ class ScalyDTCBFSafetyFilter:
     active_nlp = self.nlp
     out, stats = solve(active_nlp)
     attempt_stats = [stats]
-    if stats.status not in (sc.ScalySolveStatus.OK, sc.ScalySolveStatus.ACCEPTABLE) and self.fallback_nlp is not None:
+    if stats.status not in (sc.Status.OK, sc.Status.ACCEPTABLE) and self.fallback_nlp is not None:
       active_nlp = self.fallback_nlp
       out, stats = solve(active_nlp)
       attempt_stats.append(stats)
     g_val = np.asarray(out["g_ineq"], dtype=np.float64).reshape(-1)
-    raw_success = stats.status in (sc.ScalySolveStatus.OK, sc.ScalySolveStatus.ACCEPTABLE)
+    raw_success = stats.status in (sc.Status.OK, sc.Status.ACCEPTABLE)
     feasible = bool(np.all(np.isfinite(out["x"])) and (not g_val.size or np.min(g_val) >= -1e-6))
     success = raw_success and feasible
     if success:

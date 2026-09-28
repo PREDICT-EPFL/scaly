@@ -2,7 +2,7 @@
 
 `scaly.ext` is what a package outside the compiler builds on: new expression ops and their rules,
 lowerings, program passes, option namespaces, Functions whose body is C from elsewhere, output
-adapters, and Functions built from expressions. A package checks the version it was written against
+adapters, Functions built from expressions, and the methods of a problem class. A package checks the version it was written against
 when it is imported:
 
 ```python
@@ -88,6 +88,29 @@ it has no cotangent for, and builds a Jacobian pattern from its arguments' with 
 ::: scaly.utils.options.register_option_namespace
 
 ::: scaly.utils.options.OptionNamespace
+
+## Methods
+
+A numerical domain is a problem class, any number of methods and a `solver(problem, method)`. A
+method is a frozen dataclass of its options, declared in the `scaly.methods` entry-point group as
+`<domain>.<name> = "module:Class"`; the domain's registry finds it there and loads it when it is
+first asked for. Every built solver reports an `Info` beside its solution.
+
+::: scaly.function.method.Method
+
+::: scaly.function.method.Support
+
+::: scaly.function.method.MethodRegistry
+
+::: scaly.function.method.MethodHint
+
+::: scaly.function.method.registry
+
+::: scaly.function.method.Status
+
+::: scaly.function.method.Info
+
+::: scaly.function.tree.Record
 
 ## Building Functions
 

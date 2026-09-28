@@ -63,12 +63,12 @@ from .ir.expr import (
   where,
 )
 from .function import ConcreteFunction, Function, G, L, NotConcrete, factory
+from .function.method import Status
 from .utils.options import Options, get_options, options, set_options
 from .ir.match import Pattern, PatternMatcher, rewrite
 from .passes.expr import cse, cse_many, simplify
 from .solvers import (
   SCALY_SOLVER_STATS_VERSION,
-  ScalySolveStatus,
   Bounded,
   NO_LB,
   NO_UB,
@@ -121,7 +121,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
   "BACKEND_SUPPORT",
   "SCALY_SOLVER_STATS_VERSION",
-  "ScalySolveStatus",
+  "Status",
   "BackendSupport",
   "Bounded",
   "BufferType",

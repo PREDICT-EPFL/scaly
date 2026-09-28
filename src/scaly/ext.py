@@ -1,6 +1,7 @@
 """The extension API: what a package outside the compiler uses to add expression ops and their rules
 (with the derivative and sparsity helpers those rules share), lowerings, program passes, option
-namespaces, Functions with extern bodies, output adapters, and Functions built from expressions.
+namespaces, Functions with extern bodies, output adapters, Functions built from expressions, and the
+methods of a problem class with the ``Status`` and ``Info`` they report.
 
 Everything here is defined elsewhere in ``scaly`` and collected for extension authors. A package
 checks the version it was written against at import: ``require_ext_api(1, "my-package")``.
@@ -14,8 +15,9 @@ from .ad.sparsity import empty_mask, incidence, mask_compose, mask_or
 from .codegen.adapter import Adapter, EntryHook, HeaderSpec, available_adapters, get_adapter, register_adapter
 from .codegen.jit import load_library
 from .function.extern import BuildRequirements, ExternCallee, ExternRenderCtx, ExternSource, ExternState, extern_function, extern_functions
+from .function.method import METHOD_ENTRY_POINTS, Info, Method, MethodError, MethodHint, MethodRegistry, Status, Support, method_names, registry
 from .function.model import ConcreteFunction, Function
-from .function.tree import SymbolicValue
+from .function.tree import Record, SymbolicValue
 from .ir import program
 from .ir.expr import Expr, ExprOp, OpDef, define_rules, define_traits, has_trait, op_def, register_op, registered_ops, registry_version
 from .ir.spec import Rule
@@ -29,6 +31,7 @@ from_exprs = Function.from_exprs
 
 __all__ = [
   "EXT_API_VERSION",
+  "METHOD_ENTRY_POINTS",
   "Adapter",
   "BuildRequirements",
   "ConcreteFunction",
@@ -41,15 +44,23 @@ __all__ = [
   "ExternState",
   "Function",
   "HeaderSpec",
+  "Info",
   "JVPManyUnsupported",
   "LowerCtx",
   "LoweringError",
+  "Method",
+  "MethodError",
+  "MethodHint",
+  "MethodRegistry",
   "NoAdjoint",
   "OpDef",
   "OptionNamespace",
   "PositionRanges",
   "Positions",
+  "Record",
   "Rule",
+  "Status",
+  "Support",
   "SymbolicValue",
   "available_adapters",
   "define_rules",
@@ -66,6 +77,7 @@ __all__ = [
   "is_zero_const",
   "load_library",
   "lowers",
+  "method_names",
   "mask_compose",
   "mask_or",
   "op_def",
@@ -75,6 +87,7 @@ __all__ = [
   "register_op",
   "register_option_namespace",
   "registered_ops",
+  "registry",
   "registry_version",
   "require_ext_api",
   "zeros_many",

@@ -22,7 +22,8 @@ import numpy as np
 from scaly.codegen.jit import load_library, opt_flag, vectorize_flags
 from scaly.codegen.toolchain import cache_root, find_c_compiler
 from scaly.solvers.paths import backend_compile_flags, solver_paths
-from scaly.solvers.stats import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, SolverStats, SolverStatus, stats_c_timing_defs
+from scaly import Status
+from scaly.solvers.stats import SCALY_SOLVER_STATS_VERSION, SolverStats, SolverStatus, stats_c_timing_defs
 from scaly.utils.env import shared_lib_ext, shared_lib_flag
 from benchmarks.harness import NATIVE_CFLAGS
 
@@ -364,7 +365,7 @@ class CompiledCasadiIpopt:
     fe = float(self._dll.scaly_bench_fe())
     ipopt = float(self._dll.scaly_bench_ipopt())
     native = int(self._dll.scaly_bench_native_status(self._mem))
-    status = ScalySolveStatus(int(self._dll.scaly_bench_status(self._mem)))
+    status = Status(int(self._dll.scaly_bench_status(self._mem)))
     counts = [int(self._dll.scaly_bench_eval_count(index)) for index in range(len(_ORACLE_NAMES))]
     self.last_stats = SolverStats(
       version=SCALY_SOLVER_STATS_VERSION,
@@ -413,27 +414,27 @@ class InterpretedCasadiIpopt:
     raw = self.solver.stats()
     native = str(raw["return_status"])
     status, native_code = {
-      "Solve_Succeeded": (ScalySolveStatus.OK, 0),
-      "Solved_To_Acceptable_Level": (ScalySolveStatus.ACCEPTABLE, 1),
-      "Feasible_Point_Found": (ScalySolveStatus.ACCEPTABLE, 6),
-      "Maximum_Iterations_Exceeded": (ScalySolveStatus.MAX_ITER, -1),
-      "Maximum_CpuTime_Exceeded": (ScalySolveStatus.MAX_ITER, -4),
-      "Maximum_WallTime_Exceeded": (ScalySolveStatus.MAX_ITER, -5),
-      "Infeasible_Problem_Detected": (ScalySolveStatus.PRIMAL_INFEASIBLE, 2),
-      "Diverging_Iterates": (ScalySolveStatus.NUMERICS, 4),
-      "Search_Direction_Becomes_Too_Small": (ScalySolveStatus.NUMERICS, 3),
-      "Restoration_Failed": (ScalySolveStatus.NUMERICS, -2),
-      "Error_In_Step_Computation": (ScalySolveStatus.NUMERICS, -3),
-      "Invalid_Number_Detected": (ScalySolveStatus.NUMERICS, -13),
-      "User_Requested_Stop": (ScalySolveStatus.USER_STOP, 5),
-      "Not_Enough_Degrees_Of_Freedom": (ScalySolveStatus.ERROR, -10),
-      "Invalid_Problem_Definition": (ScalySolveStatus.ERROR, -11),
-      "Invalid_Option": (ScalySolveStatus.ERROR, -12),
-      "Unrecoverable_Exception": (ScalySolveStatus.ERROR, -100),
-      "NonIpopt_Exception_Thrown": (ScalySolveStatus.ERROR, -101),
-      "Insufficient_Memory": (ScalySolveStatus.ERROR, -102),
-      "Internal_Error": (ScalySolveStatus.ERROR, -199),
-    }.get(native, (ScalySolveStatus.ERROR, -199))
+      "Solve_Succeeded": (Status.OK, 0),
+      "Solved_To_Acceptable_Level": (Status.ACCEPTABLE, 1),
+      "Feasible_Point_Found": (Status.ACCEPTABLE, 6),
+      "Maximum_Iterations_Exceeded": (Status.MAX_ITER, -1),
+      "Maximum_CpuTime_Exceeded": (Status.MAX_ITER, -4),
+      "Maximum_WallTime_Exceeded": (Status.MAX_ITER, -5),
+      "Infeasible_Problem_Detected": (Status.PRIMAL_INFEASIBLE, 2),
+      "Diverging_Iterates": (Status.NUMERICS, 4),
+      "Search_Direction_Becomes_Too_Small": (Status.NUMERICS, 3),
+      "Restoration_Failed": (Status.NUMERICS, -2),
+      "Error_In_Step_Computation": (Status.NUMERICS, -3),
+      "Invalid_Number_Detected": (Status.NUMERICS, -13),
+      "User_Requested_Stop": (Status.USER_STOP, 5),
+      "Not_Enough_Degrees_Of_Freedom": (Status.ERROR, -10),
+      "Invalid_Problem_Definition": (Status.ERROR, -11),
+      "Invalid_Option": (Status.ERROR, -12),
+      "Unrecoverable_Exception": (Status.ERROR, -100),
+      "NonIpopt_Exception_Thrown": (Status.ERROR, -101),
+      "Insufficient_Memory": (Status.ERROR, -102),
+      "Internal_Error": (Status.ERROR, -199),
+    }.get(native, (Status.ERROR, -199))
     fe = sum(float(raw.get(f"t_wall_nlp_{name}", 0.0)) for name in _ORACLE_NAMES)
     self.last_stats = SolverStats(
       version=SCALY_SOLVER_STATS_VERSION,

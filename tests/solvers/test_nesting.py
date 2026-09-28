@@ -74,7 +74,7 @@ def test_nested_solver_stats_query_uses_compiled_host_handle() -> None:
   np.testing.assert_allclose(host(np.array([0.5, -0.25])), [0.5, -0.25], atol=1e-8)
   stats = sc.solver_stats(host, "nested_stats_qp")
   assert stats.version == sc.SCALY_SOLVER_STATS_VERSION
-  assert stats.status == sc.ScalySolveStatus.OK
+  assert stats.status == sc.Status.OK
   assert stats.n_eval_f == 1
 
 

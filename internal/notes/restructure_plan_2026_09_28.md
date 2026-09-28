@@ -41,7 +41,7 @@
 | 2.4 | `scaly.ext`: library-author Function API, extension versions in the JIT cache key | ☑ |
 | 3.1 | Linear-algebra ops move into `scaly.linalg` | ☑ |
 | 3.2 | `linalg.banded` and `linalg.stagewise` | ☑ |
-| 4.1 | Method registry and the common `Info`/`Status` | ☐ |
+| 4.1 | Method registry and the common `Info`/`Status` | ☑ |
 | 4.2 | `scaly.opt`: problems, `solver()`, external methods | ☐ |
 | 4.3 | IPM as the method `opt.ipm` | ☐ |
 | 4.4 | `scaly.roots` | ☐ |
@@ -563,6 +563,19 @@ solvers are byte-identical.
 **4.1 Method registry, `Info`, `Status`.** `scaly.ext.Method`, `MethodRegistry`, `Support`,
 `Status`, `Info`; entry-point group `scaly.methods`; lazy method classes on namespaces.
 Gate: registry unit tests with fake methods; missing-method errors name the distribution to install.
+Log: done 2026-09-28. `function/method.py` (collected in `scaly.ext`): the `Method` protocol,
+`Support`, `MethodRegistry` over the `scaly.methods` group (entries `<domain>.<name>`, loaded and
+checked on first use: the entry name, and `api` against the problem class's `method_api`; `auto`
+tries `preference` first and skips a broken install with a warning; `resolve` takes an instance, a
+name or `"auto"`), `registry(domain, hints=, preference=)`, and `attribute(module)`, the lazy
+`__getattr__` a domain installs for `sc.<domain>.<Class>`. The core names no domain or method: a
+domain passes `MethodHint(name, cls, distribution)`s, which is how a missing method names what to
+install. `Status` replaces `ScalySolveStatus` (same codes, the stats ABI; `sc.Status`), and
+`solvers.stats` moved to layer 5, since nothing below imports it since 1.3. **Decided (Open items):
+one `Info` base, `status` and `iter`, with a subclass per domain for its residuals**, so conformance
+suites and tooling read `info.status` whatever the domain; it is a Function output through the new
+`Record` tree (a dataclass, rebuilt on both sides of a call). A numerical call returns `Info`'s
+`int64` fields as `float64`, as the C entry returns every output.
 
 **4.2 `scaly.opt`.**
 Changes: `solvers/` becomes `opt/` (§3.5); `sc.problem`/`sc.solver`/`qp_problem` become
@@ -675,8 +688,6 @@ indices. Snapshots may change only where these ops appear; differential tests ag
   API 1 is fixed.
 - Derivatives for `opt` problems with degenerate complementarity: behaviour to define (raise, or a
   generalized derivative).
-- Whether `roots`, `opt` and `ocp` share one `Info` base with domain subclasses, or one `Info` per
-  domain (decide in step 4.1).
 - **`ty check` was red on `devrush` before step 0.1** (258 diagnostics, none in `src/` or
   `plugins/`). Step 0.1 fixed the five in `tests/` and the eight in plain example scripts, and
   excluded `examples/case_studies/*/baseline/**` (they run in the baselines' own environments). The

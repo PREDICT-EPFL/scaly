@@ -420,18 +420,19 @@ def check_failure_closes_incremental_mcap_and_writes_partial_artifacts() -> None
   from unittest.mock import patch
 
   from benchmarks.harness.closed_loop import run_race_cars
-  from scaly.solvers import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, SolverStats
+  from scaly import Status
+  from scaly.solvers import SCALY_SOLVER_STATS_VERSION, SolverStats
   from benchmarks.problems.race_cars import NX, NU
   from benchmarks.problems.race_cars import closed_loop
   from benchmarks.problems.race_cars.closed_loop import StepRecord, StepTelemetry
 
-  def stats(status: ScalySolveStatus, native: int) -> SolverStats:
+  def stats(status: Status, native: int) -> SolverStats:
     return SolverStats(SCALY_SOLVER_STATS_VERSION, status, native, 2, 1.0, 0.01, 0.002, 0.0, 0.006, 0.001, 0.001, 2, 2, 2, 2, 2)
 
   def fail(config, *, solver, oracle, record_step, **_kwargs):
     reference = np.zeros((config.horizon + 1, NX))
     prediction = reference.copy()
-    good_stats = stats(ScalySolveStatus.OK, 1)
+    good_stats = stats(Status.OK, 1)
     telemetry = StepTelemetry(good_stats, 0.1, 0, 0.0, 0.0, 0.0)
     record_step(
       StepRecord(
@@ -446,7 +447,7 @@ def check_failure_closes_incremental_mcap_and_writes_partial_artifacts() -> None
         telemetry,
       )
     )
-    failed_stats = stats(ScalySolveStatus.MAX_ITER, -1)
+    failed_stats = stats(Status.MAX_ITER, -1)
     record_step(StepRecord(1, np.ones(NX), np.ones(NX), None, None, reference, {"z": np.ones(1), "p": np.ones(1)}, failed_stats, None))
     raise RuntimeError(f"synthetic {solver}+{oracle} failure")
 

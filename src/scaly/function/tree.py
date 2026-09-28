@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from types import EllipsisType
 from typing import TYPE_CHECKING, Any, cast, overload
@@ -418,6 +419,70 @@ class _G(Tree[Any, Any]):
       out.append(part.unflatten(values[offset : offset + part.size]))
       offset += part.size
     return tuple(out)
+
+
+class Record(Tree[Any, Any]):
+  """A dataclass as a tree: one tree per field, in field order, and the dataclass itself on both sides
+  of a call, its fields ``Expr`` symbolically and arrays numerically. A method's ``Info`` is one,
+  so a Function's statistics come back as named fields: ``Record(Info, status=L("status", (),
+  dtype="int64"), iter=...)``. An unnamed field's leaves take the field's name."""
+
+  def __init__(self, cls: type, /, **parts: Tree[Any, Any] | Spec) -> None:
+    if not dataclasses.is_dataclass(cls):
+      raise TypeError(f"Record needs a dataclass, got {cls!r}")
+    fields = tuple(f.name for f in dataclasses.fields(cls))
+    if set(parts) != set(fields):
+      raise TypeError(f"Record({cls.__name__}) needs one tree per field {fields}, got {tuple(parts)}")
+    self._set(cls, fields, _G(tuple(as_tree(parts[f]).named(f) for f in fields), public=False))
+
+  def _set(self, cls: type, fields: tuple[str, ...], group: _G) -> None:
+    self.cls, self.fields, self._group = cls, fields, group
+    self.names, self.decls = group.names, group.decls
+    self._check_unique()
+
+  def _with(self, group: _G) -> Record:
+    out = object.__new__(Record)
+    out._set(self.cls, self.fields, group)
+    return out
+
+  def _parts(self, value: Any, what: str) -> tuple[Any, ...]:
+    if not isinstance(value, self.cls):
+      raise ValueError(f"{what}: expected a {self.cls.__name__} for {self.names}, got {type(value).__name__}")
+    return tuple(getattr(value, f) for f in self.fields)
+
+  def _build(self, values: tuple[Any, ...]) -> Any:
+    return self.cls(**dict(zip(self.fields, values, strict=True)))
+
+  def symbols(self, *, diff: bool | None = None) -> Any:
+    return self._build(self._group.symbols(diff=diff))
+
+  def named(self, base: str) -> Record:
+    return self._with(_G(tuple(part.named(f"{base}_{f}") for f, part in zip(self.fields, self._group.parts, strict=True)), public=False))
+
+  def relabel(self, prefix: str) -> Record:
+    return self._with(self._group.relabel(prefix))
+
+  def with_types(self, types: tuple[TensorType, ...]) -> Record:
+    return self._with(self._group.with_types(types))
+
+  def infer(self, value: Any) -> Record:
+    return self._with(self._group.infer(self._parts(value, "infer"))) if isinstance(value, self.cls) else self
+
+  @property
+  def sparsities(self) -> tuple[SparsityType | None, ...]:
+    return self._group.sparsities
+
+  def flatten_symbolic(self, value: Any, what: str, *, allow_scalar: bool = False) -> tuple[Expr, ...]:
+    return self._group.flatten_symbolic(self._parts(value, what), what, allow_scalar=allow_scalar)
+
+  def flatten_numerical(self, value: Any, what: str) -> tuple[np.ndarray, ...]:
+    return self._group.flatten_numerical(self._parts(value, what), what)
+
+  def bind(self, value: Any, what: str) -> Record:
+    return self._with(self._group.bind(self._parts(value, what), what))
+
+  def unflatten(self, values: tuple[Any, ...]) -> Any:
+    return self._build(self._group.unflatten(values))
 
 
 # fmt: off

@@ -13,7 +13,7 @@ from ..function.model import ConcreteFunction
 from ..ir.types import DType
 from ..solvers.qp import qp_problem
 from ..solvers.solver import solver
-from ..solvers.stats import ScalySolveStatus
+from ..function.method import Status
 from ..solvers.wrapper import solver_stats
 from .grid import Extrap, Search, basis_derivatives, check_sites, derivative_matrix
 from .spline import BSpline, Strategy, _per_axis, design_matrix
@@ -172,7 +172,7 @@ def constrained(
   params = ((hessian, linear), (A, np.array(eq_rhs)), (G, g_lb, g_ub))
   result = solve.numerical_call(np.zeros(n), np.zeros(n), np.zeros(A.shape[0]), np.zeros(G.shape[0]), params)
   status = solver_stats(solve).status
-  if status not in (ScalySolveStatus.OK, ScalySolveStatus.ACCEPTABLE):
+  if status not in (Status.OK, Status.ACCEPTABLE):
     raise ValueError(f"the constrained fit failed: {status.name.lower()} (infeasible constraints?)")
   coeffs = sigma * _polish(M, rhs, A, np.array(eq_rhs), G, g_lb, g_ub, np.asarray(result[0]), np.asarray(result[3])).reshape(sizes)
   return BSpline(

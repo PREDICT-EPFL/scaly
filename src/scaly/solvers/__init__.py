@@ -6,12 +6,11 @@ from .model import ExternalOracle, SolverDescriptor, descriptor_function
 from .problem import NO_LB, NO_UB, Bounded, Problem, ProblemSpec, bounded, problem
 from .qp import NotQuadratic, QPData, qp_problem
 from .solver import solver
-from .stats import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, CSolverStats, SolverStats, SolverStatus
+from .stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats, SolverStatus
 from .wrapper import solver_stats
 
 __all__ = [
   "SCALY_SOLVER_STATS_VERSION",
-  "ScalySolveStatus",
   "Bounded",
   "CSolverStats",
   "ExternalOracle",

@@ -49,11 +49,12 @@ src/scaly/
 
   function/              the frontend
     model.py             Function (a body instantiated per argument signature) and ConcreteFunction, call composition, graph validation
-    tree.py              the typed pytree declarations (Tree, L, G), holes and parameter lists
+    tree.py              the typed pytree declarations (Tree, L, G, Record), holes and parameter lists
     factory.py           the typed derivative specs and the AD each dispatches to
     api.py               the @function decorator and the convenience derivative wrappers
     sugar.py             expression builders that need a Function: vmap, scan, while_loop, custom_derivative
     extern.py            the extern-callee protocol: a Function whose C body comes from elsewhere
+    method.py            the method interface: Method, MethodRegistry over the scaly.methods entry points, Status, Info
 
   ad/                    derivative construction, all of it inside the expression dialect
     forward.py           jvp, jvp_many
@@ -224,6 +225,7 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 | A program-dialect pass from outside the compiler | `insert_after(anchor, name, fn)` or `insert_before` in `passes/program/__init__.py` |
 | A program op | `ProgramOp`, its builder, and the right op-category set (`SCALAR_OPS`, `UNARY_FN_OPS`, ...) in `ir/program.py`; a rule in `ir/program_spec.py`; a branch in `ir/text.py` for a statement op (scalars need none); the C spelling in `codegen/c.py` |
 | A derivative kind | a frozen `DerivSpec` subclass in `function/factory.py`, plus a wrapper in `function/api.py` |
+| A method of a problem class | a frozen dataclass of its options with `name`, `problem`, `api`, `supports` and `build` (`Method` in `function/method.py`), and an entry point `<domain>.<name>` in the `scaly.methods` group of its distribution's manifest; nothing in the domain changes |
 | A solver backend | a distribution under `plugins/`, an entry point, and a `render_wrapper` hook; see [Solver plugins](solver_plugins.md) |
 | A Function with a hand-written C body | an object implementing `ExternCallee` in `function/extern.py`, passed to `extern_function`; nothing in the compiler changes |
 | A public name | the re-export and `__all__` entry in `scaly/__init__.py` |

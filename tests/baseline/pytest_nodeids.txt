@@ -709,6 +709,15 @@ tests/function/test_lifted.py::test_derivatives_compose_on_templates
 tests/function/test_lifted.py::test_one_name_is_wrt_and_a_name_left_out_is_the_only_one
 tests/function/test_lifted.py::test_seeded_derivatives_of_a_template_append_their_argument
 tests/function/test_lifted.py::test_the_gradient_of_a_template_is_a_template_built_per_instance
+tests/function/test_method.py::test_a_domain_has_one_registry
+tests/function/test_method.py::test_a_method_that_does_not_fit_its_entry_point_or_api_is_refused
+tests/function/test_method.py::test_a_missing_method_names_the_distribution_to_install
+tests/function/test_method.py::test_a_namespace_resolves_method_classes_lazily
+tests/function/test_method.py::test_auto_takes_the_first_method_that_supports_the_problem
+tests/function/test_method.py::test_info_is_a_record_of_named_outputs
+tests/function/test_method.py::test_methods_are_found_by_domain_and_loaded_on_first_use
+tests/function/test_method.py::test_resolve_takes_an_instance_a_name_or_auto
+tests/function/test_method.py::test_status_codes_are_stable
 tests/function/test_model.py::test_function_call_node_eval
 tests/function/test_model.py::test_function_call_normalizes_raw_constant_args
 tests/function/test_model.py::test_function_signature_and_call_shape_errors
@@ -3532,6 +3541,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.ext]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.api]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.extern]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.factory]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.function.method]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.model]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.sugar]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.tree]
