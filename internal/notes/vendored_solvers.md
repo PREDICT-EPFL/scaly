@@ -57,9 +57,9 @@ Editable installs use `SCALY_BUILD_SOLVERS=auto` by default: if the native toolc
 
 **Still required before distribution:** a correct tag is necessary but not sufficient; PyPI rejects raw `linux_*` and the wheel may still pull in host-specific shared libs.
 
-- **Linux:** run `auditwheel repair` on the wheel. It rewrites `linux_x86_64` → the lowest manylinux baseline that the binary actually satisfies (target: `manylinux_2_28_x86_64`) and bundles / patchelfs any non-allowlisted shared libs. The Fortran runtime it would otherwise vendor is already a sibling under `lib/` with an `$ORIGIN` rpath (issue #1), so what remains to be established is whether auditwheel leaves that arrangement alone rather than relocating it into `.libs/` and re-patching the rpath. Untested.
-- **macOS:** `delocate-wheel` does the same job the build hook already does — copy dylib dependencies in, rewrite install names against `@loader_path`. Since `_bundle_macos_runtime` has already vendored and re-signed the closure (issue #1), delocate should find nothing left to move; confirm that, and that it does not break the ad-hoc signatures, before adding it to the wheel pipeline.
-- **Matrix:** arm64 / x86_64 on each OS are separate wheels; build each on its native runner (or via `cibuildwheel` in the eventual `wheels.yml`) and upload the full set.
+- **Linux:** cibuildwheel's `auditwheel repair` produces `manylinux_2_24` (PIQP) and `manylinux_2_27` (IPOPT) wheels and leaves the `$ORIGIN` siblings under `lib/` alone. It still grafts a second `libquadmath` into `scaly_ipopt.libs/`, and `libipopt.so` ships twice (also as `libipopt.so.3`): about 28 MB of duplicates in the IPOPT wheel, open.
+- **macOS:** `delocate-wheel` finds nothing left to move after `_bundle_macos_runtime`, and the installed wheels load and solve on arm64 and x86_64. The IPOPT wheel requires macOS 15, the minimum of the bundled Homebrew runtime.
+- **Matrix:** `ci.yml` builds one wheel per OS and architecture on its native runner with cibuildwheel.
 
 **Renaming is not a substitute.** The wheel's `*.dist-info/WHEEL` file records a `Tag:` line that installers cross-check against the filename. A wheel renamed from `py3-none-any.whl` to `py3-none-macosx_14_0_arm64.whl` still claims `any` internally and fails strict validation. Independently, PyPI refuses uploads with raw `linux_*` tags — only `manylinux_*` / `musllinux_*` are accepted, and those tags are contracts about glibc baseline and bundled deps, not free-form labels.
 

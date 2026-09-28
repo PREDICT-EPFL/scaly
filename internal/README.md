@@ -27,6 +27,6 @@ For how scaly works now, see [`docs/how_it_works/architecture.md`](../docs/how_i
 | `macos_clang_call_miscompile.md` | the Apple-clang miscompile of inlined callee bodies, and the fix |
 | `fuzzing.md` | notes and ideas on fuzz testing of the compiler core |
 | `compiler_maintenance_context.md` | implementation details moved out of the public compiler explanations |
-| `release_workflow_design.md` | the unimplemented release workflow, separated from the current versioning policy |
+| `release_workflow_design.md` | how `ci.yml` builds release artifacts and `release.yml` publishes them |
 | `documentation_api_review.md` | API gaps reproduced while rewriting the user documentation |
 | `user_guide_writing.md` | maintained writing principles agreed during the user-guide review |
