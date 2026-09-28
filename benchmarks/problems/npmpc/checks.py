@@ -22,6 +22,7 @@ import numpy as np
 
 import scaly as sc
 from scaly.solvers.paths import solver_loadable, solver_paths
+from scaly.solvers.graph import solver_descriptor
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.npmpc import (
   DT,
@@ -380,8 +381,8 @@ def check_nlp_uses_an_exact_hessian() -> None:
   pw = pack_params(config.decoder, load_decoder_weights(config.decoder))
   P = terminal_P(config.decoder, pw, config.weights, config.dt)
   controller = build_solver(config, "ipopt", "scaly")
-  assert controller.descriptor.hess is not None
-  requested = dict(controller.descriptor.options).get("hessian_approximation")
+  assert solver_descriptor(controller).hess is not None
+  requested = dict(solver_descriptor(controller).options).get("hessian_approximation")
   assert requested is None, f"the IPOPT column asks for hessian_approximation={requested!r}"
 
   n_eq, n_ineq = constraint_counts(config.horizon)

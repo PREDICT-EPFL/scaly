@@ -26,10 +26,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 
 if TYPE_CHECKING:
-  from scaly.codegen.solver import SolverWrapperCtx
+  from scaly.solvers.wrapper import SolverWrapperCtx
   from scaly.function import ConcreteFunction
 
-SOLVER_PLUGIN_PROTOCOL_VERSION = 7
+SOLVER_PLUGIN_PROTOCOL_VERSION = 8
 ENTRY_POINT_GROUP = "scaly.solvers"
 
 

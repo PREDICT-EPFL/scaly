@@ -7,7 +7,7 @@ from scaly_piqp import include_dir, lib_dir
 from .external import external_nlp
 
 if TYPE_CHECKING:
-  from scaly.codegen.solver import SolverWrapperCtx
+  from scaly.solvers.wrapper import SolverWrapperCtx
   from scaly.function import ConcreteFunction
 
 
@@ -15,7 +15,7 @@ class _Backend:
   name = "sqp"
   kind = "nlp"
   hess_triangle = "upper"
-  protocol_version = 7
+  protocol_version = 8
   lib_stem = "piqpc"
   link_flags = ("-lpiqpc",)
   header = "piqp/piqp.h"

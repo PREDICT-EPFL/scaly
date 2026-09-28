@@ -10,6 +10,7 @@ from tests.solvers.problem_helpers import build_qp
 from scaly.solvers.registry import available_backends
 from scaly.ir.expr import ExprOp, topo
 from scaly.codegen import render_c_source
+from scaly.solvers.graph import solver_descriptor
 
 pytestmark = pytest.mark.skipif(
   "piqp" not in available_backends(), reason="structural tests build the private QP differential fixture and need the scaly-piqp plugin installed"
@@ -22,13 +23,13 @@ def test_solver_call_returns_expressions() -> None:
   out_exprs = qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu)
   assert len(out_exprs) == len(qp.output_names)
   # call() inherits from Function and wraps each output in an ExprOp.CALL node
-  # whose callee is the solver function — the inner SOLVER_CALL nodes live in
+  # whose callee is the solver function — the inner EXTERN_CALL nodes live in
   # the callee's own expression graph.
   for e in out_exprs:
     assert e.op == ExprOp.CALL
     assert e.attrs["callee"] is qp
   # Shapes line up with the descriptor's output signature.
-  expected_shapes = tuple(s for _, s in qp.descriptor.output_signature)
+  expected_shapes = tuple(s for _, s in solver_descriptor(qp).output_signature)
   for e, expected in zip(out_exprs, expected_shapes, strict=True):
     assert e.shape == expected
 
@@ -36,11 +37,11 @@ def test_solver_call_returns_expressions() -> None:
 def test_solver_descriptor_present_in_inner_graph() -> None:
   mu = sc.sym("mu", 2)
   qp = build_qp(P=sc.const(np.eye(2)), c=-mu)
-  solver_calls = [node for node in topo(qp.outputs) if node.op == ExprOp.SOLVER_CALL]
+  solver_calls = [node for node in topo(qp.outputs) if node.op == ExprOp.EXTERN_CALL]
   assert len(solver_calls) == len(qp.output_names)
-  descriptors = {id(node.attrs["solver"]) for node in solver_calls}
+  descriptors = {id(node.attrs["extern"]) for node in solver_calls}
   assert len(descriptors) == 1  # all outputs share one descriptor
-  desc = solver_calls[0].attrs["solver"]
+  desc = solver_calls[0].attrs["extern"]
   assert desc.backend == "piqp"
   assert desc.n == 2
 
@@ -82,5 +83,5 @@ def test_duplicate_nested_solver_names_fail_before_c_compilation() -> None:
   qps = [build_qp(P=np.eye(2), c=-mu) for _ in range(2)]
   outs = [qp.symbolic_call(sc.const(np.zeros(2)), sc.const(np.zeros(2)), sc.const(np.zeros(0)), sc.const(np.zeros(0)), mu) for qp in qps]
   host = sc.Function._from_exprs("duplicate_solver_host", [mu], [outs[0][0], outs[1][0]], ["mu"], ["x0", "x1"])
-  with pytest.raises(ValueError, match="duplicate solver symbol 'problem_body_piqp'"):
+  with pytest.raises(ValueError, match="duplicate extern symbol 'problem_body_piqp'"):
     render_c_source(host)

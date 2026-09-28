@@ -95,7 +95,7 @@ class ExprOp(StrEnum):
   VMAP = "vmap"
   SCAN = "scan"
   WHILE = "while"
-  SOLVER_CALL = "solver_call"
+  EXTERN_CALL = "extern_call"
 
 
 COMMON_ELEMENTWISE_UNARY = {
@@ -171,7 +171,7 @@ COMMON_STRUCTURAL = {
   ExprOp.VMAP,
   ExprOp.SCAN,
   ExprOp.WHILE,
-  ExprOp.SOLVER_CALL,
+  ExprOp.EXTERN_CALL,
 }
 
 # Ops whose ``callee`` attr names a ``Function`` the graph runs (a ``while`` also runs its ``cond``);
@@ -266,7 +266,7 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.VMAP: OpInfo(ExprOp.VMAP, None, None),
   ExprOp.SCAN: OpInfo(ExprOp.SCAN, None, None),
   ExprOp.WHILE: OpInfo(ExprOp.WHILE, None, None),
-  ExprOp.SOLVER_CALL: OpInfo(ExprOp.SOLVER_CALL, None, None, differentiable=False),
+  ExprOp.EXTERN_CALL: OpInfo(ExprOp.EXTERN_CALL, None, None, differentiable=False),
 }
 
 

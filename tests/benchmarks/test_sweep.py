@@ -184,7 +184,7 @@ def test_descriptor_kernel_exposes_carried_hessian_coloring_width() -> None:
   primal = sc.Function._from_exprs("sweep_width_fixture", [x], [y], ["x"], ["y"])
   hessian = sc.sparse_hessian(primal, "y", "x")
   descriptor = SimpleNamespace(name="sweep_width_fixture", hess=hessian, hess_sparsity=hessian.output_sparsities[0])
-  solver = cast(sc.Function, SimpleNamespace(descriptor=descriptor))
+  solver = cast(sc.Function, SimpleNamespace(extern=descriptor))
 
   _, sparsity, coloring_width = _descriptor_kernel(solver, "hess")
 

@@ -94,7 +94,7 @@ gradient, as in other reverse-mode systems; forward mode never does.
 
 `diff` marks whether a value depends differentiably on symbolic inputs. Constants are not
 differentiable; structural operations pass the flag through; arithmetic propagates it from its
-operands; and `floor`, `ceil`, the predicates and `solver_call` clear it. AD (automatic
+operands; and `floor`, `ceil`, the predicates and `extern_call` clear it. AD (automatic
 differentiation) reads this flag to decide where a derivative is zero by construction.
 
 `minimum`, `maximum`, `max`, `min` and `abs` are differentiable everywhere except at ties (or zero),
@@ -173,7 +173,7 @@ variadic. `diff` is whether AD can pass through the op at all.
 | `VMAP` | n | yes | one callee applied across slices of its arguments |
 | `scan` | n | yes | one callee applied in sequence, threading a carry; `output` selects the final carry (0), a stacked output (1..) or the carries entering each step (-1) |
 | `while` | 1 + n | yes | a body applied to the carry (the first argument) while a condition callee holds, at most `max_iter` times; the other arguments are params every step reads unchanged, `index` passes the step number to the body, and `output` selects the carry (0), the step count (1) or the stored carries (-1) |
-| `solver_call` | n | no | an opaque solve; a derivative reaching it raises; see [Solvers](solvers.md) |
+| `extern_call` | n | no | one output of a Function whose body is C from elsewhere (a solver); a derivative reaching it raises; see [Solvers](solvers.md) |
 
 `dot`, `sumsqr`, `norm_2` and `vec` are not operations. They are builders that expand into the
 ops above; `vec` emits a `reshape` to rank 1.

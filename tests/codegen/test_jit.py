@@ -199,7 +199,7 @@ def test_hoisted_solver_oracles_compile_and_run(isolated_cache, nested: bool) ->
   procs = module.program.args[: module.program.attrs["proc_count"]]
   assert any(proc.attrs.get("hoisted_from") == stage.name for proc in procs)
   names = {proc.attrs["name"] for proc in procs}
-  assert all(name in names for oracles in module.program.attrs["solver_oracles"].values() for name in oracles)
+  assert all(name in names for oracles in module.program.attrs["extern_deps"].values() for name in oracles)
   pv = np.array([0.2])
   result = fun(pv) if nested else fun(np.zeros(3), np.zeros(3), np.zeros(0), np.zeros(0), pv)[0]
   np.testing.assert_allclose(result, np.full(3, np.exp(pv[0])), atol=1e-7)

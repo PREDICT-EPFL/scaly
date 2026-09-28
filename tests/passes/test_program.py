@@ -304,7 +304,7 @@ def test_procedure_pruning_keeps_entry_calls_and_solver_oracles_in_order() -> No
   prog = ProgramNode(
     ProgramOp.PROGRAM,
     (leaf, dead, oracle, kernel_proc, entry, kernel),
-    {"proc_count": 5, "kernel_count": 1, "solver_oracles": {"solver": ("oracle",)}},
+    {"proc_count": 5, "kernel_count": 1, "extern_deps": {"solver": ("oracle",)}},
   )
   result = prune_procedures(prog)
   assert [proc.attrs["name"] for proc in result.args] == ["leaf", "oracle", "kernel_proc", "entry", "kernel"]

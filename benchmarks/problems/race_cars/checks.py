@@ -24,6 +24,7 @@ import numpy as np
 
 import scaly as sc
 from scaly.solvers.paths import solver_loadable, solver_paths
+from scaly.solvers.graph import solver_descriptor
 from benchmarks.harness import problem_stats, solve_problem
 from benchmarks.problems.race_cars import (
   CAR_LENGTH,
@@ -153,7 +154,7 @@ def check_default_constants() -> None:
   """Regression pin on the full-size Formula Student defaults; any constant edit changes these."""
   horizon = 1
   solver = _race_car_nlp(EpisodeConfig(horizon=horizon))
-  fn, sparsity = solver.descriptor.jac, solver.descriptor.jac_sparsity
+  fn, sparsity = solver_descriptor(solver).jac, solver_descriptor(solver).jac_sparsity
   assert isinstance(fn, sc.Function) and sparsity is not None
   rng = np.random.default_rng(0)
   zv = rng.normal(size=NZ * (horizon + 1))
@@ -198,7 +199,7 @@ def check_mapped_cost_matches_casadi() -> None:
   rng = np.random.default_rng(19)
   for horizon in (1, 4):
     config = EpisodeConfig(horizon=horizon)
-    descriptor = _race_car_nlp(config).descriptor
+    descriptor = solver_descriptor(_race_car_nlp(config))
     pieces = build_casadi_race_car_nlp(config)
     z, p, cost = pieces["z"], pieces["p"], pieces["f"]
     reference = ca.Function("cost_reference", [z, p], [cost, ca.gradient(cost, z), ca.hessian(cost, z)[0]])
@@ -220,10 +221,10 @@ def check_mapped_cost_matches_casadi() -> None:
 def check_exact_hessian_default() -> None:
   """The canonical solver asks every provider for exact Lagrangian Hessians."""
   solver = _race_car_nlp(EpisodeConfig.smoke())
-  assert solver.descriptor.hess is not None
-  assert dict(solver.descriptor.options).get("hessian_approximation") != "limited-memory"
+  assert solver_descriptor(solver).hess is not None
+  assert dict(solver_descriptor(solver).options).get("hessian_approximation") != "limited-memory"
   sqp = _race_car_nlp(EpisodeConfig.smoke(), solver="sqp")
-  assert dict(sqp.descriptor.options).get("hessian", "exact") == "exact"
+  assert dict(solver_descriptor(sqp).options).get("hessian", "exact") == "exact"
 
 
 def check_casadi_ipopt_is_compiled() -> None:

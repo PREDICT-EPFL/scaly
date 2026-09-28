@@ -9,6 +9,7 @@ import numpy as np
 
 import scaly as sc
 from scaly.codegen import render_c_module
+from scaly.solvers.graph import solver_descriptor
 from benchmarks.harness.casadi_ipopt import make_casadi_ipopt
 from .common import (
   ClosedLoopConfig,
@@ -806,9 +807,9 @@ class ScalyDTCBFSafetyFilter:
         self.fallback_nlp = build_scaly_nlp(loop_cfg, filt_cfg, solver="sqp", options=fallback_options, oracle=base)
       else:
         self.fallback_nlp = build_casadi_sqp(loop_cfg, filt_cfg, weights, sqp_options={"globalization": "l1", "watchdog": 5})
-    self.jac_sparsity = self.nlp.descriptor.jac_sparsity
-    self.hess_fn = self.nlp.descriptor.hess
-    hess_sp = self.nlp.descriptor.hess_sparsity
+    self.jac_sparsity = solver_descriptor(self.nlp).jac_sparsity
+    self.hess_fn = solver_descriptor(self.nlp).hess
+    hess_sp = solver_descriptor(self.nlp).hess_sparsity
     assert self.jac_sparsity is not None and hess_sp is not None
     self.hess_rows = np.asarray(hess_sp.rows, dtype=np.int32)
     self.hess_cols = np.asarray(hess_sp.cols, dtype=np.int32)
@@ -854,7 +855,7 @@ class ScalyDTCBFSafetyFilter:
     self.last_solve_wall_ms = 0.0
 
     def solve(active_nlp: sc.Function):
-      descriptor = active_nlp.descriptor
+      descriptor = solver_descriptor(active_nlp)
       if descriptor.n_var_blocks == 2:
         variables0 = (z0[: self.n_u], z0[self.n_u :])
         box0 = (lam_box0[: self.n_u], lam_box0[self.n_u :])

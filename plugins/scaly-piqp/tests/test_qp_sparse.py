@@ -9,6 +9,7 @@ import scaly as sc
 from tests.solvers.problem_helpers import build_qp, solve_qp
 from scaly.codegen import render_c_source
 from scaly.solvers.qp import _qp_matrix_sparsity
+from scaly.solvers.graph import solver_descriptor
 
 
 def _sparse_problem(sparse: bool, name: str) -> sc.Function:
@@ -37,7 +38,7 @@ def _sparse_problem(sparse: bool, name: str) -> sc.Function:
 @pytest.mark.solver("piqp")
 def test_sparse_qp_patterns_exclude_structural_zeros() -> None:
   qp = _sparse_problem(sparse=True, name="sparse_pattern_qp")
-  desc = qp.descriptor
+  desc = solver_descriptor(qp)
   assert desc.P_sparsity is not None and desc.A_sparsity is not None and desc.G_sparsity is not None
   # P: upper triangle of {(0,0),(0,1),(1,1),(2,2),(3,3)}; dense triu would be 10.
   assert set(zip(desc.P_sparsity.rows, desc.P_sparsity.cols)) == {(0, 0), (0, 1), (1, 1), (2, 2), (3, 3)}
@@ -84,7 +85,8 @@ def test_sparse_qp_constant_data_and_stats() -> None:
     sparse=True,
     name="sparse_const_qp",
   )
-  assert qp.descriptor.P_sparsity is not None and qp.descriptor.P_sparsity.nnz == 3
+  P_sparsity = solver_descriptor(qp).P_sparsity
+  assert P_sparsity is not None and P_sparsity.nnz == 3
   out = solve_qp(qp, np.zeros(3), np.zeros(0), np.zeros(0))
   np.testing.assert_allclose(out["x"], [0.5, -0.5, 0.0], atol=1e-7)
   stats = qp.solver_stats()
@@ -100,8 +102,9 @@ def test_sparse_qp_bakes_exactly_the_upper_triangle() -> None:
   triangle. Compare against a dense solve of that symmetrized matrix."""
   kwargs: dict = {"c": np.array([-1.0, -1.0]), "x_lb": np.full(2, -3.0), "x_ub": np.full(2, 3.0)}
   sparse_qp = build_qp(P=np.array([[4.0, 1.0], [3.0, 4.0]]), sparse=True, name="asym_sparse", **kwargs)
-  assert sparse_qp.descriptor.P_sparsity is not None
-  assert set(zip(sparse_qp.descriptor.P_sparsity.rows, sparse_qp.descriptor.P_sparsity.cols)) == {(0, 0), (0, 1), (1, 1)}
+  P_sparsity = solver_descriptor(sparse_qp).P_sparsity
+  assert P_sparsity is not None
+  assert set(zip(P_sparsity.rows, P_sparsity.cols)) == {(0, 0), (0, 1), (1, 1)}
   dense_qp = build_qp(P=np.array([[4.0, 2.0], [2.0, 4.0]]), sparse=False, name="sym_dense", **kwargs)
   sparse_out = solve_qp(sparse_qp, np.zeros(2), np.zeros(0), np.zeros(0))
   dense_out = solve_qp(dense_qp, np.zeros(2), np.zeros(0), np.zeros(0))
@@ -122,8 +125,9 @@ def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
     sparse=True,
     name="sparse_zero_P_lp",
   )
-  assert qp.descriptor.P_sparsity is not None
-  assert list(zip(qp.descriptor.P_sparsity.rows, qp.descriptor.P_sparsity.cols)) == [(0, 0)]
+  P_sparsity = solver_descriptor(qp).P_sparsity
+  assert P_sparsity is not None
+  assert list(zip(P_sparsity.rows, P_sparsity.cols)) == [(0, 0)]
   out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))
   assert qp.solver_stats() is not None and qp.solver_stats().status == sc.ScalySolveStatus.OK
   np.testing.assert_allclose(out["x"], [-1.0, 1.0], atol=1e-6)

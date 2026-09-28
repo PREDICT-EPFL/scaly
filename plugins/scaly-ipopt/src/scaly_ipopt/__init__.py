@@ -6,7 +6,7 @@ import platform
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-  from scaly.codegen.solver import SolverWrapperCtx
+  from scaly.solvers.wrapper import SolverWrapperCtx
   from scaly.function import ConcreteFunction
 
 _RAW_BUILD_CONFIG = json.loads((Path(__file__).resolve().parent / "build_config.json").read_text())
@@ -29,7 +29,7 @@ class _Backend:
   name = "ipopt"
   kind = "nlp"
   hess_triangle = "lower"
-  protocol_version = 7
+  protocol_version = 8
   lib_stem = "ipopt"
   link_flags = ("-lipopt",)
   header = "coin-or/IpStdCInterface.h"

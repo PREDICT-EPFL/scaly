@@ -4,11 +4,12 @@ file-writing driver here and ``codegen/jit.py`` consume.
 ``_lower`` is the single render context. It lowers ``fun`` exactly once and holds everything the
 artifacts read off that lowering, so the header's ``SZ_W``, the entry's null check and a consumer's
 workspace allocation cannot disagree. The header comes in two languages (``lang="c"`` here,
-``lang="cpp"`` in ``codegen/cpp.py``) and either can carry the CasADi layer (``codegen/casadi.py``). A function with no solver in its call graph renders entirely
-through ``codegen/c``. A **solver-bearing** graph is orchestrated here: every non-solver Function
-(oracle, host caller, intermediate) is a Program-IR ``_raw`` and each ``solver Function`` is the
-``codegen/solver`` wrapper template that drives its (Program-IR) oracles — the one sanctioned
-non-Program-IR path (see ``docs/how_it_works/solvers.md``).
+``lang="cpp"`` in ``codegen/cpp.py``) and either can carry the CasADi layer (``codegen/casadi.py``). A function with no extern callee in its call graph renders entirely
+through ``codegen/c``. An **extern-bearing** graph is orchestrated here: every other Function
+(dependency, host caller, intermediate) is a Program-IR ``_raw``, and each Function with an extern
+body (``function/extern.py``; a solver, say) is the C its callee renders, calling those ``_raw``s,
+the one sanctioned non-Program-IR path. What the callees need beyond that (includes, type
+definitions, prototypes, link flags) comes off their ``build_requirements``, merged here once.
 """
 
 from __future__ import annotations
@@ -31,14 +32,11 @@ from scaly.codegen.casadi import (
   render_casadi_queries,
 )
 from scaly.codegen.cpp import render_cpp_header
-from scaly.codegen.solver import render_solver_raw, solver_includes, solver_stats_symbols
-from scaly.ir.expr import callees_of, topo
 from scaly.function import ConcreteFunction, Function
+from scaly.function.extern import BuildRequirements, ExternRenderCtx, LinkResolver, extern_functions
+from scaly.ir.expr import callees_of, topo
 from scaly.passes.lowering import lower_function, main_proc
 from scaly.passes.program import ProgramObserver
-from scaly.solvers.graph import external_oracles, is_solver_function, solver_backends_used, solver_callees
-from scaly.solvers.paths import backend_compile_flags
-from scaly.solvers.stats import stats_c_defs, stats_c_timing_defs
 
 if TYPE_CHECKING:
   from collections.abc import Callable
@@ -47,14 +45,57 @@ if TYPE_CHECKING:
   from scaly.ir.types import SparsityType
 
 
+@dataclass(frozen=True, slots=True)
+class Requirements:
+  """The ``build_requirements`` of every extern callee in one translation unit, merged.
+
+  Includes are deduplicated and sorted, system headers first. A block of type definitions or of
+  source definitions appears once however many callees ask for it, in the order first asked, and
+  prototypes keep the callees' order. Callees sharing a link resolver are resolved together, once,
+  with the sorted union of their library names; ``link_flags`` does that on demand, because a
+  resolver raises when a library is missing and rendering has to work without one."""
+
+  includes: tuple[str, ...] = ()
+  header_types: tuple[str, ...] = ()
+  source_blocks: tuple[tuple[str, ...], ...] = ()
+  declarations: tuple[str, ...] = ()
+  links: tuple[tuple[LinkResolver, tuple[str, ...]], ...] = ()
+  isolated: bool = False
+
+  @staticmethod
+  def merge(requirements: tuple[BuildRequirements, ...]) -> Requirements:
+    includes = sorted({line for req in requirements for line in req.includes}, key=lambda line: (not line.startswith("#include <"), line))
+    header_types = tuple(dict.fromkeys(block for req in requirements for block in req.header_types))
+    links: dict[LinkResolver, set[str]] = {}
+    for req in requirements:
+      if req.link_flags is not None:
+        links.setdefault(req.link_flags, set()).update(req.libraries)
+    return Requirements(
+      includes=tuple(includes),
+      header_types=tuple(line for block in header_types for line in block),
+      source_blocks=tuple(dict.fromkeys(block for req in requirements for block in req.source_blocks)),
+      declarations=tuple(line for req in requirements for line in req.declarations),
+      links=tuple((resolver, tuple(sorted(libraries))) for resolver, libraries in links.items()),
+      isolated=any(req.isolated for req in requirements),
+    )
+
+  def link_flags(self) -> tuple[str, ...]:
+    return tuple(flag for resolver, libraries in self.links for flag in resolver(libraries))
+
+
+def requirements(externs: tuple[ConcreteFunction, ...]) -> Requirements:
+  """The merged requirements of the Functions with extern bodies in one translation unit."""
+  return Requirements.merge(tuple(fn.extern.build_requirements(fn) for fn in externs if fn.extern is not None))
+
+
 @dataclass(frozen=True)
 class CModule:
   """One rendered function: the header and the ``.c`` to write, plus what a consumer needs to
   compile and call them. ``body`` is the translation unit. ``program`` is the optimized Program IR
-  that produced it. ``workspace_size`` is the entry's ``w[]`` length, and ``backends`` lists the
-  solver plugins that the function calls. ``lang`` picks the header language (``"c"`` or
-  ``"cpp"``); ``casadi`` adds the CasADi-compatible symbols; ``typed_buffers`` toggles the C
-  header's structs and ``_call`` wrapper.
+  that produced it. ``workspace_size`` is the entry's ``w[]`` length, and ``externs`` lists the
+  Functions with extern bodies (solvers, say) that the function reaches. ``lang`` picks the header
+  language (``"c"`` or ``"cpp"``); ``casadi`` adds the CasADi-compatible symbols; ``typed_buffers``
+  toggles the C header's structs and ``_call`` wrapper.
 
   ``header``, ``source`` and ``link_flags`` are rendered on first access. The JIT compiles ``body``
   and asks for none of them; for a big sparse function the header alone is larger than the source.
@@ -66,14 +107,18 @@ class CModule:
   body: str
   program: ProgramNode
   workspace_size: int
-  backends: tuple[str, ...]
+  externs: tuple[ConcreteFunction, ...]
   typed_buffers: bool
   lang: str = "c"
   casadi: bool = False
 
   @cached_property
+  def requirements(self) -> Requirements:
+    return requirements(self.externs)
+
+  @cached_property
   def header(self) -> str:
-    return _render_header(self.fun, self.backends, self.workspace_size, typed_buffers=self.typed_buffers, lang=self.lang, casadi=self.casadi)
+    return _render_header(self.fun, self.requirements, self.workspace_size, typed_buffers=self.typed_buffers, lang=self.lang, casadi=self.casadi)
 
   @cached_property
   def source(self) -> str:
@@ -86,12 +131,12 @@ class CModule:
 
   @cached_property
   def link_flags(self) -> tuple[str, ...]:
-    """Compiler/linker flags for ``backends`` — include, lib, rpath and ``-l`` flags. Empty without
-    a solver. Resolved on demand because ``solvers.paths`` raises ``SolverLibraryError`` when a
-    backend's library or header is missing: rendering has to stay possible on a machine without the
+    """Compiler/linker flags the extern callees need: include, lib, rpath and ``-l`` flags. Empty
+    without one. Resolved on demand because a resolver raises when a library or header is missing
+    (a solver's ``SolverLibraryError``): rendering has to stay possible on a machine without the
     vendored solver stack, and against a backend that has no library at all (the fake backends in
     ``tests/solvers/test_registry.py``)."""
-    return tuple(backend_compile_flags(self.backends))
+    return self.requirements.link_flags()
 
 
 class RenderObserver(Protocol):
@@ -121,7 +166,7 @@ class _RenderCtx:
 
   fun: ConcreteFunction
   prog: ProgramNode
-  backends: tuple[str, ...]
+  externs: tuple[ConcreteFunction, ...]
   workspace_size: int
 
 
@@ -129,23 +174,21 @@ def _lower(
   fun: ConcreteFunction, observe: ProgramObserver | None = None, observe_expr: Callable[[str, ConcreteFunction], None] | None = None
 ) -> _RenderCtx:
   """Lower ``fun`` once. ``workspace_size`` is the doubles of scratch it needs in ``w[]`` — the
-  packed ``sz_w`` from ``passes.pack_workspace``, which also accounts for a solver wrapper passing
-  its ``w`` straight to the oracle."""
-  backends = solver_backends_used(fun)
-  if backends:
-    solver_stats_symbols(fun)  # validate duplicate solver symbols before lowering or compilation
+  packed ``sz_w`` from ``passes.pack_workspace``, which also accounts for an extern callee passing
+  its ``w`` straight to its dependencies."""
+  externs = extern_functions(fun)  # refuses two extern Functions with one C symbol, before lowering
   prog = lower_function(fun, observe=observe, observe_expr=observe_expr)
-  sz_w = _solver_root_workspace(prog, fun.name) if is_solver_function(fun) else int(main_proc(prog).attrs.get("sz_w", 0))
-  return _RenderCtx(fun, prog, backends, sz_w)
+  sz_w = _extern_root_workspace(prog, fun.name) if fun.extern is not None else int(main_proc(prog).attrs.get("sz_w", 0))
+  return _RenderCtx(fun, prog, externs, sz_w)
 
 
-def _solver_root_workspace(prog: ProgramNode, name: str) -> int:
+def _extern_root_workspace(prog: ProgramNode, name: str) -> int:
   pc = int(prog.attrs.get("proc_count", 0))
-  oracle_names = set(prog.attrs.get("solver_oracles", {}).get(name, ()))
+  dependencies = set(prog.attrs.get("extern_deps", {}).get(name, ()))
   return max(
     (
-      int(prog.attrs.get("solver_external_workspace", {}).get(name, 0)),
-      *(int(pr.attrs.get("sz_w", 0)) for pr in prog.args[:pc] if pr.attrs["name"] in oracle_names),
+      int(prog.attrs.get("extern_workspace", {}).get(name, 0)),
+      *(int(pr.attrs.get("sz_w", 0)) for pr in prog.args[:pc] if pr.attrs["name"] in dependencies),
     )
   )
 
@@ -227,15 +270,15 @@ def header_sparsities(fun: ConcreteFunction, *, casadi: bool) -> tuple[SparsityT
   return casadi_output_sparsities(fun) if casadi else tuple(fun.output_sparsities)
 
 
-def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, *, typed_buffers: bool, lang: str, casadi: bool) -> str:
+def _render_header(fun: ConcreteFunction, req: Requirements, sz_w: int, *, typed_buffers: bool, lang: str, casadi: bool) -> str:
   if lang == "cpp":
-    return render_cpp_header(fun, backends, sz_w, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
+    return render_cpp_header(fun, req.header_types, req.declarations, sz_w, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
   symbol = c_ident(fun.name)
   lines = [
     "#pragma once",
     "",
     "#include <stddef.h>",
-    *(["#include <stdint.h>", "", *stats_c_defs()] if backends else []),
+    *(["#include <stdint.h>", "", *req.header_types] if req.header_types else []),
     "",
     *abi_status_defines(guarded=True),
     *(["", *casadi_defines()] if casadi else []),
@@ -251,7 +294,7 @@ def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, 
     'extern "C" {',
     "#endif",
     c_api_signature(symbol) + ";",
-    *(f"int {solver_symbol}_stats(scaly_solver_stats* out);" for solver_symbol in solver_stats_symbols(fun)),
+    *req.declarations,
     *(casadi_declarations(symbol) if casadi else []),
     "#ifdef __cplusplus",
     "}",
@@ -264,27 +307,33 @@ def _render_header(fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, 
 
 
 def _render_source(ctx: _RenderCtx, *, casadi: bool) -> str:
-  return _render_solver_bearing_source(ctx, casadi=casadi) if ctx.backends else render_program_c(ctx.prog, ctx.fun, casadi=casadi)
+  return _render_extern_bearing_source(ctx, casadi=casadi) if ctx.externs else render_program_c(ctx.prog, ctx.fun, casadi=casadi)
 
 
-def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
-  """One translation unit for a solver-bearing graph. The non-solver Functions (oracles, the host
-  caller, any intermediates) are Program-IR ``_raw`` callees; each ``solver Function`` is the
-  ``solver`` wrapper driving them. ``_function_order`` is topological — a solver sits after its
-  oracle PROCs and before the function that calls it — so emitting each wrapper after the PROCs up
-  to its oracles never forward-references a ``_raw``."""
-  fun, prog = ctx.fun, ctx.prog  # solver callees opaque; oracles + host fns are PROCs (see passes/lowering.py)
+def _render_extern(fn: ConcreteFunction) -> list[str]:
+  """The C its callee renders for a Function with an extern body."""
+  assert fn.extern is not None
+  symbol = c_ident(fn.name)
+  return fn.extern.render(fn, ExternRenderCtx(symbol=symbol, raw_symbol=f"{symbol}_raw"))
+
+
+def _render_extern_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
+  """One translation unit for a graph that reaches extern callees. The other Functions (their
+  dependencies, the host caller, any intermediates) are Program-IR ``_raw`` callees; each Function
+  with an extern body is the C its callee renders, calling them. ``_function_order`` is
+  topological — an extern Function sits after its dependencies' PROCs and before the function that
+  calls it — so emitting each one after the PROCs up to its dependencies never forward-references
+  a ``_raw``."""
+  fun, prog = ctx.fun, ctx.prog  # extern Functions opaque; their dependencies and host fns are PROCs (see passes/lowering.py)
   pc = int(prog.attrs.get("proc_count", 1))
   procs = {pr.attrs["name"]: pr for pr in prog.args[:pc]}
+  req = requirements(ctx.externs)
   lines: list[str] = [
-    *_includes(("#include <time.h>", *solver_includes(fun))),
+    *_includes(req.includes),
     "",
     *abi_status_defines(),
     "",
-    *stats_c_defs(),
-    "",
-    *stats_c_timing_defs(),
-    "",
+    *(line for block in req.source_blocks for line in (*block, "")),
     *(casadi_defines() + [""] if casadi else []),
     "#ifdef __cplusplus",
     'extern "C" {',
@@ -295,12 +344,12 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   external_sources: list[str] = []
   raw_definitions: dict[str, str] = {}
   for fn in order:
-    for oracle in external_oracles(fn):
-      previous = raw_definitions.setdefault(oracle.raw_symbol, oracle.source)
-      if previous != oracle.source:
-        raise ValueError(f"external oracle symbol {oracle.raw_symbol!r} has conflicting source definitions")
-      if oracle.source and oracle.source not in external_sources:
-        external_sources.append(oracle.source)
+    for source in fn.extern.extern_sources() if fn.extern is not None else ():
+      previous = raw_definitions.setdefault(source.raw_symbol, source.source)
+      if previous != source.source:
+        raise ValueError(f"extern source symbol {source.raw_symbol!r} has conflicting source definitions")
+      if source.source and source.source not in external_sources:
+        external_sources.append(source.source)
   for source in external_sources:
     lines += [*source.splitlines(), ""]
   # Program order also puts a callee before its callers, and it is the only order that knows the
@@ -314,14 +363,14 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
       lines.extend((*_render_raw_callee(pr), ""))
     del pending[:count]
 
-  for fn in order if is_solver_function(fun) else order[:-1]:
-    if is_solver_function(fn):
-      lines.extend((*render_solver_raw(fn, include_external_sources=False), ""))
+  for fn in order if fun.extern is not None else order[:-1]:
+    if fn.extern is not None:
+      lines.extend((*_render_extern(fn), ""))
     else:
       flush(fn.name)
   flush(None)
-  if is_solver_function(fun):
-    lines += _render_solver_entry(fun, ctx.workspace_size, casadi=casadi)
+  if fun.extern is not None:
+    lines += _render_extern_entry(fun, ctx.workspace_size, casadi=casadi)
   else:
     lines += _render_entry(procs[fun.name], fun, casadi=casadi)
   if casadi:
@@ -330,8 +379,8 @@ def _render_solver_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
   return "\n".join(lines).rstrip() + "\n"
 
 
-def _render_solver_entry(fun: ConcreteFunction, sz_w: int, *, casadi: bool) -> list[str]:
-  """The entry of a root ``solver Function``: the null checks, then one call into its wrapper."""
+def _render_extern_entry(fun: ConcreteFunction, sz_w: int, *, casadi: bool) -> list[str]:
+  """The entry of a root Function with an extern body: the null checks, then one call into it."""
   symbol = c_ident(fun.name)
   res = {name: f"res[{i}]" for i, name in enumerate(fun.output_names)}
   lines = entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi))
@@ -398,7 +447,7 @@ def render_c_api_header(fun: Function, *, typed_buffers: bool = True, lang: str 
     check_casadi_layout(fun)
   ctx = _lower(fun)
   return _render_header(
-    ctx.fun, ctx.backends, entry_workspace(fun, ctx.workspace_size, casadi=casadi), typed_buffers=typed_buffers, lang=lang, casadi=casadi
+    ctx.fun, requirements(ctx.externs), entry_workspace(fun, ctx.workspace_size, casadi=casadi), typed_buffers=typed_buffers, lang=lang, casadi=casadi
   )
 
 
@@ -425,7 +474,7 @@ def render_c_module(
     body=body,
     program=ctx.prog,
     workspace_size=entry_workspace(fun, ctx.workspace_size, casadi=casadi),
-    backends=ctx.backends,
+    externs=ctx.externs,
     typed_buffers=typed_buffers,
     lang=lang,
     casadi=casadi,
@@ -479,7 +528,7 @@ def main(argv: list[str] | None = None) -> None:
   print(args.out_dir / module.header_name)
   print(args.out_dir / module.source_name)
   print(f"sz_w: {module.workspace_size}")
-  if module.backends:
+  if module.externs:
     print("link flags: " + " ".join(module.link_flags))
 
 
@@ -502,11 +551,10 @@ def _function_order(fun: ConcreteFunction) -> list[ConcreteFunction]:
 def _callees(fun: ConcreteFunction) -> list[ConcreteFunction]:
   ret: list[ConcreteFunction] = []
   seen: set[int] = set()
-  if is_solver_function(fun):
-    # solver Functions render via a custom template that calls the oracle (and for NLP, the
-    # derivative Functions) — these aren't reachable through the solver's own output graph (it
-    # only contains SOLVER_CALL nodes), so surface them explicitly here.
-    for callee in solver_callees(fun):
+  if fun.extern is not None:
+    # An extern body calls Functions its own output graph does not reach (it holds only EXTERN_CALL
+    # nodes), so surface them explicitly here.
+    for callee in fun.extern.dependencies():
       if id(callee) not in seen:
         seen.add(id(callee))
         ret.append(callee)

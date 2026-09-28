@@ -62,10 +62,12 @@ exact-path override env var `SCALY_MYSOLVER_LIB`.
 def render_wrapper(fun: Function, ctx: SolverWrapperCtx) -> list[str]: ...
 ```
 
-`fun` is the plain typed `Function` being rendered; `fun.descriptor` (a `SolverDescriptor`,
-`src/scaly/solvers/model.py`) carries the problem dimensions, input/output signatures,
-oracle/derivative `Function`s, sparsity patterns, and user options. `ctx` is the codegen kit
-(`scaly.codegen.solver.SolverWrapperCtx`):
+`fun` is the plain typed `Function` being rendered; `solver_descriptor(fun)`
+(`scaly.solvers.graph`) returns its `SolverDescriptor` (`src/scaly/solvers/model.py`), which carries
+the problem dimensions, input/output signatures, oracle/derivative `Function`s, sparsity patterns,
+and user options. The descriptor is also `fun.extern`: it is the Function's extern callee
+(`scaly.function.extern`), which is how the compiler reaches the wrapper at all. `ctx` is the
+codegen kit (`scaly.solvers.wrapper.SolverWrapperCtx`):
 
 - `ctx.symbol` is the solver's mangled C identifier. Prefix every static the template declares with
   it, since multiple solvers can share one translation unit.
@@ -201,6 +203,8 @@ History:
   warm-start and result order.
 - v7: IEEE-infinity semantics for absent bounds in core QP and NLP oracles; plugins normalize them
   to native solver sentinels.
+- v8: the descriptor is the solver Function's extern callee, read with `solver_descriptor(fun)`
+  (`fun.descriptor` is gone), and `SolverWrapperCtx` moved to `scaly.solvers.wrapper`.
 
 ## What core owns
 

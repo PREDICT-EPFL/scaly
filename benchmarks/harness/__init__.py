@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from scaly.codegen.jit import HOST_CFLAGS
+from scaly.solvers.graph import solver_descriptor
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "benchmarks" / "results"
@@ -44,7 +45,7 @@ def solve_problem(solver, x0, lam_eq, lam_ineq, lam_box, params):
     return solver(x0, lam_eq, lam_ineq, lam_box, params)
 
   x, lam_box, lam_eq, lam_ineq = solver.numerical_call(x0, lam_box, lam_eq, lam_ineq, params)
-  descriptor = solver.descriptor
+  descriptor = solver_descriptor(solver)
   base = descriptor.base
   if isinstance(base, sc.Function):
     values = base.numerical_call((np.asarray(x).reshape(-1), params))

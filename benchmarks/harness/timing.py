@@ -3,6 +3,7 @@
 from time import perf_counter
 
 import numpy as np
+from scaly.solvers.graph import solver_descriptor
 
 
 def prepare_solver(controller) -> None:
@@ -11,7 +12,7 @@ def prepare_solver(controller) -> None:
   from scaly.codegen.jit import CompiledFunction
 
   if isinstance(controller, sc.Function):
-    for function in (controller, controller.descriptor.base, getattr(controller, "_benchmark_base", None)):
+    for function in (controller, solver_descriptor(controller).base, getattr(controller, "_benchmark_base", None)):
       if isinstance(function, sc.Function) and function._compiled is None:
         function._compiled = CompiledFunction(function)
 

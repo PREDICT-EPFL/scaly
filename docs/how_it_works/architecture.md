@@ -231,17 +231,20 @@ The `python -m scaly.codegen` shim remains available for compatibility.
 ### Solvers: `solvers/`, `plugins/`
 
 `sc.problem(...)` declares a typed backend-free problem. `sc.solver(...)` returns a plain
-`Function` whose body is `ExprOp.SOLVER_CALL` nodes sharing a `SolverDescriptor`. Calling it with
+`Function` whose body is `ExprOp.EXTERN_CALL` nodes sharing a `SolverDescriptor`. Calling it with
 `Expr` leaves returns the declared expression tree, so a solver nests directly inside a larger
-graph. `SOLVER_CALL` has no derivative rule: a derivative that reaches one raises, its structural
+graph. `EXTERN_CALL` has no derivative rule: a derivative that reaches one raises, its structural
 sparsity is dense in every argument, and `custom_derivative` supplies a rule.
 
-The solver wrapper is the one sanctioned render path outside the program dialect.
-`codegen/solver.py` frames a body produced by the plugin's `render_wrapper` hook with scaly-owned
-stats storage and accessors; the plugin drives the vendored C API directly. Everything else in a
-solver-bearing graph, the oracle functions the wrapper calls and the host function that calls the
-solver, lowers through the program dialect like anything else, and `codegen/aot.py` orders the
-single translation unit.
+A Function with an extern body is the one sanctioned render path outside the program dialect. The
+compiler knows it only through the extern-callee protocol in `function/extern.py`: the Functions
+its C calls, the hand-written C sources it adds, the C that defines it, and what compiling and
+loading the translation unit needs (includes, type definitions, prototypes, link flags, a state
+accessor). A `SolverDescriptor` implements the protocol in `solvers/wrapper.py`, which frames a
+body produced by the plugin's `render_wrapper` hook with the stats storage and accessor; the
+plugin drives the vendored C API directly. Everything else in such a graph, the oracle functions
+the wrapper calls and the host function that calls the solver, lowers through the program dialect
+like anything else, and `codegen/aot.py` orders the single translation unit.
 
 Backends ship as separate distributions under `plugins/`, discovered by entry point in
 `solvers/registry.py`. `solvers/paths.py` finds their vendored libraries and headers;

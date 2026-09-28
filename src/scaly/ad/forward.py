@@ -78,13 +78,12 @@ SPARSE_LDL_NO_DERIVATIVE = (
 """Why a ``sparse_ldl_factor`` node refuses a nonzero tangent or cotangent."""
 
 
-def solver_no_derivative(expr: Expr) -> str:
-  """Why a ``SOLVER_CALL`` node refuses a nonzero tangent or cotangent."""
-  solver = expr.attrs["solver"]
+def extern_no_derivative(expr: Expr) -> str:
+  """Why an ``EXTERN_CALL`` node refuses a nonzero tangent or cotangent."""
   return (
-    f"differentiating through the solver {solver.name!r} ({solver.backend}) is not implemented: its solution has no derivative "
-    "rule yet. Give the solver Function one with sc.custom_derivative, or keep the solver's arguments independent of what "
-    "is being differentiated"
+    f"differentiating through {expr.attrs['name']!r} is not implemented: its body is C from elsewhere (a solver, say) with no "
+    "derivative rule. Give its Function one with sc.custom_derivative, or keep its arguments independent of what is being "
+    "differentiated"
   )
 
 
@@ -199,9 +198,9 @@ def _jvp(expr: Expr, seeds: dict[Expr, Expr], memo: dict[int, Expr], dep_memo: d
   if expr.op == ExprOp.WHILE:
     memo[expr.id] = ret = _while_jvp(expr, [_jvp(arg, seeds, memo, dep_memo) for arg in expr.args])
     return ret
-  if expr.op == ExprOp.SOLVER_CALL:
-    # A seeded solve: a zero tangent here would be silently wrong, since the solution does move.
-    raise NotImplementedError(solver_no_derivative(expr))
+  if expr.op == ExprOp.EXTERN_CALL:
+    # Seeded: a zero tangent here would be silently wrong, since the outputs do move.
+    raise NotImplementedError(extern_no_derivative(expr))
 
   def save(ret: Expr) -> Expr:
     memo[expr.id] = ret
@@ -1233,8 +1232,8 @@ def _jvp_many_structural(expr: Expr, wrt: Expr, seeds: Expr, memo: dict[int, Exp
     floor_tangent(expr)
     memo[expr.id] = ret = _zeros_many(expr, nseed)
     return ret
-  if expr.op == ExprOp.SOLVER_CALL:
-    raise NotImplementedError(solver_no_derivative(expr))
+  if expr.op == ExprOp.EXTERN_CALL:
+    raise NotImplementedError(extern_no_derivative(expr))
   if expr.op == ExprOp.INPUT:
     memo[expr.id] = ret = seeds if expr.id == wrt.id else _zeros_many(expr, nseed)
     return ret

@@ -333,7 +333,7 @@ def _render_scaly(fun: sc.Function, name: str, out_dir: Path):
 
 
 def _descriptor_kernel(solver: sc.Function, kind: str):
-  descriptor = solver.descriptor
+  descriptor = solver.extern  # a SolverDescriptor, or a stand-in with the same fields
   function = getattr(descriptor, kind)
   sparsity = getattr(descriptor, f"{kind}_sparsity")
   if not isinstance(function, sc.Function) or sparsity is None:

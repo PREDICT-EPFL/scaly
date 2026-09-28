@@ -16,7 +16,7 @@ from ..ir.types import DeviceSpec, Lowering, SparsityType, TensorType, as_shape,
 from .tree import Hole, LeafDecl, SymbolicValue, Tree, _G, _leaves, flat_tree, inferred_tree, is_symbolic_call, param_list, skeleton
 
 if TYPE_CHECKING:
-  from ..solvers.stats import SolverStats
+  from .extern import ExternCallee
 
 
 _log = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ _GRAPH_ATTRIBUTES = frozenset(
     "device",
     "output_sparsities",
     "output_coloring_widths",
-    "descriptor",
+    "extern",
     "custom_jvp",
     "custom_vjp",
     "custom_sparsity",
@@ -123,7 +123,7 @@ class Function[**PS, **PN, SO, NO]:
   device: DeviceSpec
   output_sparsities: tuple[SparsityType | None, ...]
   output_coloring_widths: tuple[int | None, ...]
-  descriptor: Any
+  extern: ExternCallee | None
   _signature: inspect.Signature | None
 
   def __init__(
@@ -334,7 +334,7 @@ class Function[**PS, **PN, SO, NO]:
     for instance in self._instances.values():
       instance.recompile()
 
-  def solver_stats(self, name: str | None = None) -> SolverStats:
+  def solver_stats(self, name: str | None = None) -> Any:
     """The latest stats for a solver reached by the one instance; see ``ConcreteFunction.solver_stats``."""
     return self.concrete.solver_stats(name)
 
@@ -546,6 +546,8 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
     if missing:
       raise ValueError(f"function {self.name!r} has undeclared symbolic inputs: {missing}")
     self._compiled: Any = None
+    # The C body of a Function the compiler does not generate (``function/extern.py``).
+    self.extern: ExternCallee | None = None
     # Derivative rules that replace differentiating the body; set by ``sc.custom_derivative``.
     self.custom_jvp: ConcreteFunction | None = None
     self.custom_vjp: ConcreteFunction | None = None
@@ -695,7 +697,7 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
     self._compiled = None
     jit.invalidate_cache(self)
 
-  def solver_stats(self, name: str | None = None) -> SolverStats:
+  def solver_stats(self, name: str | None = None) -> Any:
     """Return the latest stats for a solver reached by this compiled function."""
     jit = _jit()
     if self._compiled is None:

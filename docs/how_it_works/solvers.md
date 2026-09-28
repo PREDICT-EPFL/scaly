@@ -1,6 +1,6 @@
 # How solvers work
 
-A solver in Scaly is a plain typed `Function` whose outputs are opaque `SOLVER_CALL` nodes sharing
+A solver in Scaly is a plain typed `Function` whose outputs are opaque `EXTERN_CALL` nodes sharing
 one `SolverDescriptor`. Its data comes from ordinary generated functions, and a plugin-owned C
 wrapper drives the native solver. Python is not part of a solve.
 
@@ -81,8 +81,10 @@ plugin can find the fixed groups and scatter its native flat solution into varia
 multiplier categories remain zero-sized arrays. The objective and detailed status are reported
 through `SolverStats`, not through extra function outputs.
 
-`descriptor_function` creates one `ExprOp.SOLVER_CALL` node per output leaf. All nodes share the
-descriptor identity, so lowering emits one wrapper call and distributes its outputs.
+`descriptor_function` creates one `ExprOp.EXTERN_CALL` node per output leaf. All nodes share the
+descriptor identity, so lowering emits one wrapper call and distributes its outputs. The
+descriptor is the node's and the Function's `extern` attribute: the compiler reaches a solver only
+through the extern-callee protocol (`function/extern.py`), and `solvers/wrapper.py` implements it.
 
 ## One solve path
 
@@ -103,12 +105,12 @@ ships no Python numerical solver.
 | `solvers/nlp.py` | shared NLP oracle construction |
 | `solvers/qp.py` | quadratic proof, extraction, sparse patterns, and `qp_problem` |
 | `solvers/solver.py` | backend selection |
-| `solvers/model.py` | `SolverDescriptor` and its plain `Function` |
+| `solvers/model.py` | `SolverDescriptor`, the extern callee of its plain `Function` |
 | `solvers/registry.py` | entry-point discovery and protocol validation |
 | `solvers/graph.py` | solver reachability and link-flag queries |
 | `solvers/paths.py` | vendored library and header discovery |
 | `solvers/stats.py` | the versioned statistics layout and statuses |
-| `codegen/solver.py` | Scaly-owned wrapper framing and statistics accessors |
+| `solvers/wrapper.py` | the wrapper framing, statistics accessor and build requirements behind that callee |
 | `plugins/scaly-{piqp,ipopt,sqp}` | backend metadata and C wrapper generators (a Jinja template for scaly-sqp; PIQP and IPOPT emit C from Python strings) |
 
 ## What the generated wrapper contains
@@ -144,5 +146,5 @@ are independent, but one compiled solver is not reentrant. See
 ## Open work
 
 - Warm-start handover into PIQP; its C API does not expose one.
-- Differentiation through `SOLVER_CALL` by the implicit function theorem.
+- Differentiation through `EXTERN_CALL` by the implicit function theorem.
 - Deduplicating separate solver call sites with identical arguments.

@@ -146,14 +146,16 @@ def worker(backend: str, dim: int, masses: int, horizon: int, repeats: int, work
   if backend in ("scaly", "scaly_stage"):
     import scaly as sc
     from scaly.codegen import write_module
+    from scaly.solvers.graph import solver_descriptor
     from scaly_impl import build, sizes
 
     nx, nu = sizes(dim, masses)
     sources = []
     if backend == "scaly":
       b = build(dim, masses, horizon)
-      desc = sc.solver(b["problem"], "ipopt", name=f"sweep_{dim}d_M{masses}").descriptor
+      desc = solver_descriptor(sc.solver(b["problem"], "ipopt", name=f"sweep_{dim}d_M{masses}"))
       for kind, fn, sp in (("hess", desc.hess, desc.hess_sparsity), ("jac", desc.jac, desc.jac_sparsity)):
+        assert isinstance(fn, sc.Function) and sp is not None
         module = write_module(fn, work)
         sources.append(work / module.source_name)
         args = [z, x0, np.array([1.0]), lam_scaly] if kind == "hess" else [z, x0]

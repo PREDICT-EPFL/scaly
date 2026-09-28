@@ -48,13 +48,13 @@ from .forward import (
   _tri_mask,
   claim_name,
   custom_vjp_call,
+  extern_no_derivative,
   extremum_weight,
   floor_tangent,
   options_tag,
   reduce_weights,
   segment_weights,
   sign,
-  solver_no_derivative,
 )
 from .sparsity import _depends_on
 
@@ -704,8 +704,8 @@ def _local_vjp(expr: Expr, cot: Expr) -> tuple[Expr, ...]:
     return _concat_vjp(cot, args, expr.attrs.get("axis", 0))
   if expr.op == ExprOp.MATMUL:
     return _matmul_vjp(args[0], args[1], cot)
-  if expr.op == ExprOp.SOLVER_CALL:
-    raise NotImplementedError(solver_no_derivative(expr))  # see the matching JVP rule
+  if expr.op == ExprOp.EXTERN_CALL:
+    raise NotImplementedError(extern_no_derivative(expr))  # see the matching JVP rule
   raise NotImplementedError(f"VJP for op {expr.op!r} is not implemented")
 
 

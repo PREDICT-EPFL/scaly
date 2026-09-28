@@ -692,6 +692,9 @@ tests/function/test_bare.py::test_one_body_many_shapes
 tests/function/test_bare.py::test_output_default_names_follow_the_template_not_the_instance
 tests/function/test_bare.py::test_outputs_are_read_off_the_trace_and_named_after_the_function
 tests/function/test_bare.py::test_tuples_are_structure_and_the_nesting_is_part_of_the_instance
+tests/function/test_extern.py::test_a_derivative_through_an_extern_callee_raises
+tests/function/test_extern.py::test_an_extern_callee_compiles_links_its_source_and_runs
+tests/function/test_extern.py::test_an_extern_callee_nests_in_a_generated_function
 tests/function/test_factory.py::test_adjoint_matches_casadi_sx
 tests/function/test_factory.py::test_forward_matches_casadi_sx
 tests/function/test_factory.py::test_gradient_matches_casadi_sx
@@ -3416,7 +3419,7 @@ tests/solvers/test_registry.py::test_nlp_backend_must_declare_a_hessian_triangle
 tests/solvers/test_registry.py::test_nlp_descriptor_uses_backend_hessian_triangle[lower]
 tests/solvers/test_registry.py::test_nlp_descriptor_uses_backend_hessian_triangle[upper]
 tests/solvers/test_registry.py::test_protocol_version_mismatch_is_rejected
-tests/solvers/test_registry.py::test_render_solver_raw_dispatches_to_plugin_and_frames_stats
+tests/solvers/test_registry.py::test_render_solver_dispatches_to_plugin_and_frames_stats
 tests/solvers/test_registry.py::test_solver_backends_used_and_includes
 tests/solvers/test_registry.py::test_stats_abi_v3_layout_is_additive
 tests/test_c_snapshot.py::test_baseline_holds_exactly_the_corpus
@@ -3453,10 +3456,10 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.c]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.casadi]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.cpp]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.jit]
-tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.solver]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.toolchain]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.api]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.function.extern]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.factory]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.model]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.function.sugar]
@@ -3527,6 +3530,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.qp]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.registry]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.solver]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.stats]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers.wrapper]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.solvers]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.utils.env]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.utils.names]

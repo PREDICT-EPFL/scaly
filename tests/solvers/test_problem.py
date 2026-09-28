@@ -10,6 +10,7 @@ import scaly as sc
 from scaly.codegen import render_c_source
 from scaly.ir.expr import topo
 from scaly.solvers.registry import SolverPluginError
+from scaly.solvers.graph import solver_descriptor
 
 
 @sc.problem(vars=sc.L("x", 3), params=sc.L("scale", ()))
@@ -78,7 +79,7 @@ def test_box_bound_leaves_broadcast_and_keep_ieee_infinity_in_core_oracle() -> N
   assert isinstance(quadratic.spec.ub, sc.Expr) and quadratic.spec.ub.shape == (3,)
 
   solve = sc.solver(filter_problem, "sqp", name="filter_bound_oracle")
-  bounds = solve.descriptor.bounds
+  bounds = solver_descriptor(solve).bounds
   assert isinstance(bounds, sc.Function)
   x_lb, x_ub, l_ineq, u_ineq = bounds((np.zeros(4), np.zeros(2)))
   np.testing.assert_array_equal(x_lb, [-np.inf, -np.inf, 0.0])
@@ -133,23 +134,26 @@ def test_nlp_solver_is_plain_typed_function_and_reuses_problem_oracles() -> None
   another_sqp = sc.solver(filter_problem, "sqp", name="filter_sqp_again")
 
   assert isinstance(ipopt, sc.Function)
-  assert not hasattr(sc, "SolverFunction")
   assert ipopt.input_names == ("u", "s", "lam:u", "lam:s", "lam_eq", "lam_ineq", "x", "u_ref")
   assert ipopt.output_names == ("u", "s", "lam:u", "lam:s", "lam_eq", "lam_ineq")
   assert ipopt.input_shapes == ((2,), (1,), (2,), (1,), (1,), (3,), (4,), (2,))
   assert ipopt.output_shapes == ((2,), (1,), (2,), (1,), (1,), (3,))
-  assert ipopt.descriptor.base is sqp.descriptor.base
-  assert ipopt.descriptor.grad is sqp.descriptor.grad
-  assert ipopt.descriptor.jac is sqp.descriptor.jac
-  assert ipopt.descriptor.hess is not sqp.descriptor.hess
-  assert sqp.descriptor.hess is another_sqp.descriptor.hess
-  assert sqp.descriptor.hess.output_names == ("sphess_gamma_u_s_u_s",)
-  assert sqp.descriptor.hess.input_names == ("u_s", "x", "u_ref", "lam:f", "lam:g")
+  ipopt_desc, sqp_desc = solver_descriptor(ipopt), solver_descriptor(sqp)
+  sqp_hess = sqp_desc.hess
+  assert isinstance(sqp_hess, sc.Function)
+  assert sqp_hess.output_names == ("sphess_gamma_u_s_u_s",)
+  assert sqp_hess.input_names == ("u_s", "x", "u_ref", "lam:f", "lam:g")
+  assert ipopt_desc.base is sqp_desc.base
+  assert ipopt_desc.grad is sqp_desc.grad
+  assert ipopt_desc.jac is sqp_desc.jac
+  assert ipopt_desc.hess is not sqp_desc.hess
+  assert sqp_desc.hess is solver_descriptor(another_sqp).hess
   assert sc.Function.__doc__ is not None
-  assert ipopt.descriptor.hess_sparsity is not None
-  assert sqp.descriptor.hess_sparsity is not None
-  assert all(row >= col for row, col in zip(ipopt.descriptor.hess_sparsity.rows, ipopt.descriptor.hess_sparsity.cols, strict=True))
-  assert all(row <= col for row, col in zip(sqp.descriptor.hess_sparsity.rows, sqp.descriptor.hess_sparsity.cols, strict=True))
+  assert ipopt_desc.hess_sparsity is not None
+  assert sqp_desc.hess_sparsity is not None
+  assert all(row >= col for row, col in zip(ipopt_desc.hess_sparsity.rows, ipopt_desc.hess_sparsity.cols, strict=True))
+  assert all(row <= col for row, col in zip(sqp_desc.hess_sparsity.rows, sqp_desc.hess_sparsity.cols, strict=True))
+  assert not hasattr(sc, "SolverFunction")
 
 
 @sc.function(sc.L("stage", 2), output=sc.L("row", ...), name="single_block_stage")
@@ -167,7 +171,7 @@ def test_descriptor_lagrangian_hessian_matches_dense_reference() -> None:
     return sc.ProblemSpec(minimize=objective, eq=(equality,), ineq=(sc.bounded(inequality, hi=3.0),))
 
   solve = sc.solver(nonlinear_hessian, "sqp", name="descriptor_hessian_sqp")
-  hess = solve.descriptor.hess
+  hess = solver_descriptor(solve).hess
   assert isinstance(hess, sc.Function)
   sparsity = hess.output_sparsities[0]
   assert sparsity is not None
@@ -195,11 +199,13 @@ def test_single_block_problem_preserves_vmap_decision_input() -> None:
     return sc.ProblemSpec(minimize=(z * z).sum() + p, eq=(rows,))
 
   solve = sc.solver(mapped_problem, "sqp", name="single_block_vmap_sqp")
-  mapped = next(node for node in topo(solve.descriptor.base.outputs) if node.op == sc.ExprOp.VMAP)
-  assert mapped.args[0] is solve.descriptor.base.inputs[0]
+  desc = solver_descriptor(solve)
+  assert isinstance(desc.base, sc.Function)
+  mapped = next(node for node in topo(desc.base.outputs) if node.op == sc.ExprOp.VMAP)
+  assert mapped.args[0] is desc.base.inputs[0]
 
-  hess = solve.descriptor.hess
-  assert hess is not None
+  hess = desc.hess
+  assert isinstance(hess, sc.Function)
   sparsity = hess.output_sparsities[0]
   assert sparsity is not None
   z, p = np.linspace(-0.7, 0.9, 6), np.array(0.3)

@@ -13,11 +13,12 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly.codegen import solver
+from scaly.function.extern import ExternRenderCtx
 from scaly.solvers import graph as solver_graph
-from scaly.solvers import registry
+from scaly.solvers import registry, wrapper
 from scaly.solvers.registry import SOLVER_PLUGIN_PROTOCOL_VERSION, SolverPluginError
 from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
+from scaly.solvers.graph import solver_descriptor
 
 
 class _FakeEntryPoint:
@@ -43,8 +44,8 @@ class _FakeBackend:
     return Path("/nonexistent/lib")
 
   def render_wrapper(self, fun, ctx):  # noqa: ANN001, ANN201 - protocol mirror
-    inputs = ", ".join(f"const double* in{i}" for i in range(len(fun.descriptor.input_signature)))
-    outputs = ", ".join(f"double* out{i}" for i in range(len(fun.descriptor.output_signature)))
+    inputs = ", ".join(f"const double* in{i}" for i in range(len(solver_descriptor(fun).input_signature)))
+    outputs = ", ".join(f"double* out{i}" for i in range(len(solver_descriptor(fun).output_signature)))
     return [
       f"static void {ctx.raw_symbol}({inputs}, {outputs}, double* w) {{",
       f"  {ctx.stats_symbol}.version = SCALY_SOLVER_STATS_VERSION;",
@@ -150,10 +151,10 @@ def test_nlp_descriptor_uses_backend_hessian_triangle(monkeypatch: pytest.Monkey
     return sc.ProblemSpec(minimize=x[0] * x[1])
 
   nlp = sc.solver(problem, "fake", name=f"layout_{triangle}")
-  sparsity = nlp.descriptor.hess_sparsity
+  sparsity = solver_descriptor(nlp).hess_sparsity
   assert sparsity is not None
   assert all(row >= col if triangle == "lower" else row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
-  assert not hasattr(nlp.descriptor, "hess_lower_mask")
+  assert not hasattr(solver_descriptor(nlp), "hess_lower_mask")
 
 
 def test_nlp_backend_must_declare_a_hessian_triangle(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,10 +173,10 @@ def test_missing_backend_error_lists_installed(monkeypatch: pytest.MonkeyPatch) 
     registry.get_backend("nope")
 
 
-def test_render_solver_raw_dispatches_to_plugin_and_frames_stats(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_render_solver_dispatches_to_plugin_and_frames_stats(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
   fun = _fake_solver_function()
-  lines = solver.render_solver_raw(fun)
+  lines = wrapper.render_solver(fun, solver_descriptor(fun), ExternRenderCtx("fake_qp", "fake_qp_raw"))
   # Core-owned framing: stats storage before the plugin body, accessor after.
   assert lines[0] == "static scaly_solver_stats fake_qp_stats_data;"
   assert "static void fake_qp_raw(const double* in0, const double* in1, const double* in2, double* out0, double* w) {" in lines
@@ -207,12 +208,12 @@ def test_external_oracle_source_and_symbol_cross_the_plugin_boundary(monkeypatch
 
   class _ExternalBackend(_FakeBackend):
     def render_wrapper(self, fun, ctx):  # noqa: ANN001, ANN201
-      assert ctx.raw_symbol_of(fun.descriptor.base) == "foreign_base_raw"
+      assert ctx.raw_symbol_of(solver_descriptor(fun).base) == "foreign_base_raw"
       return super().render_wrapper(fun, ctx)
 
   monkeypatch.setattr(registry, "get_backend", lambda name: _ExternalBackend())
-  source = "\n".join(solver.render_solver_raw(descriptor_function(desc)))
-  assert oracle.source in source
+  source = sc.codegen.render_c_source(descriptor_function(desc))
+  assert source.count(oracle.source) == 1
   assert source.index(oracle.source) < source.index("static scaly_solver_stats external_qp_stats_data;")
 
 
@@ -311,4 +312,4 @@ def test_solver_backends_used_and_includes(monkeypatch: pytest.MonkeyPatch) -> N
   monkeypatch.setattr(registry, "get_backend", lambda name: _FakeBackend())
   fun = _fake_solver_function()
   assert solver_graph.solver_backends_used(fun) == ("fake",)
-  assert solver.solver_includes(fun) == ['#include "fake/fake.h"']
+  assert wrapper.solver_requirements("fake_qp", solver_descriptor(fun)).includes == ("#include <time.h>", '#include "fake/fake.h"')

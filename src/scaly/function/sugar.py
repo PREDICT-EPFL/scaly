@@ -326,8 +326,7 @@ def custom_derivative(fn: Any, *, jvp: Any = None, vjp: Any = None, sparsity: An
     if got_in != takes or got_out != gives:
       raise ValueError(f"custom {label} for {fn.name!r} must map shapes {takes} -> {gives}, got {got_in} -> {got_out}")
   copy = fn._with_outputs(fn.outputs)
-  if hasattr(fn, "descriptor"):
-    copy.descriptor = fn.descriptor
+  copy.extern = fn.extern
   copy.custom_jvp = jvp if jvp is not None else fn.custom_jvp
   copy.custom_vjp = vjp if vjp is not None else fn.custom_vjp
   # A declared pattern describes the rules it came with: new rules without a pattern drop it.

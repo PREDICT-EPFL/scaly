@@ -1,14 +1,16 @@
-"""Solver descriptors and their opaque plain-Function expression graphs."""
+"""Solver descriptors: the extern callee of a solver Function, and the Function they build."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..ir.expr import Expr, ExprOp
 from ..function import ConcreteFunction
-from ..function.tree import Tree, _G, flat_tree, param_list
-from ..ir.types import SparsityType, TensorType
+from ..function.extern import BuildRequirements, ExternRenderCtx, ExternSource, ExternState, extern_function
+from ..function.tree import Tree, _G
+from ..ir.types import SparsityType
+from ..utils.names import c_ident
+from . import wrapper
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,10 +37,11 @@ class ExternalOracle:
 
 @dataclass(frozen=True)
 class SolverDescriptor:
-  """Everything a solver plugin's generated C wrapper needs to drive a solve.
+  """Everything a solver plugin's generated C wrapper needs to drive a solve, and the extern callee
+  (``scaly.function.extern``) of the solver Function it builds.
 
-  Stored as a single attr on every ``ExprOp.SOLVER_CALL`` node so that nodes for
-  different outputs of the same solve share one identity. Frozen + identity
+  Stored as the ``extern`` attr on every ``ExprOp.EXTERN_CALL`` node, and as ``Function.extern``,
+  so that nodes for different outputs of the same solve share one identity. Frozen + identity
   hash (via ``id``) so it can live inside ``Expr.attrs`` without surprising
   structural equality.
   """
@@ -94,8 +97,36 @@ class SolverDescriptor:
     return self is other
 
   def structural_key(self) -> tuple[Any, ...]:
-    """Stable per-instance key used by ``Expr.structural_key`` for SOLVER_CALL nodes."""
+    """Stable per-instance key used by ``Expr.structural_key`` for EXTERN_CALL nodes."""
     return ("SolverDescriptor", self._key, self.name, self.backend, self.n, self.n_eq, self.n_ineq)
+
+  def dependencies(self) -> tuple[ConcreteFunction, ...]:
+    """The oracle and derivative Functions the wrapper calls, deduplicated, in descriptor order."""
+    out: list[ConcreteFunction] = []
+    for candidate in (self.oracle, self.base, self.grad, self.jac, self.hess, self.bounds):
+      if isinstance(candidate, ConcreteFunction) and candidate not in out:
+        out.append(candidate)
+    return tuple(out)
+
+  def external_oracles(self) -> tuple[ExternalOracle, ...]:
+    """The oracles supplied as C instead of as Functions, deduplicated by identity."""
+    out: list[ExternalOracle] = []
+    for oracle in (self.base, self.grad, self.jac, self.hess, self.bounds):
+      if isinstance(oracle, ExternalOracle) and oracle not in out:
+        out.append(oracle)
+    return tuple(out)
+
+  def extern_sources(self) -> tuple[ExternSource, ...]:
+    return tuple(ExternSource(o.raw_symbol, o.source, o.workspace_size) for o in self.external_oracles())
+
+  def render(self, fun: ConcreteFunction, ctx: ExternRenderCtx) -> list[str]:
+    return wrapper.render_solver(fun, self, ctx)
+
+  def build_requirements(self, fun: ConcreteFunction) -> BuildRequirements:
+    return wrapper.solver_requirements(c_ident(fun.name), self)
+
+  def state(self, fun: ConcreteFunction) -> ExternState:
+    return wrapper.solver_state(c_ident(fun.name), fun.name)
 
 
 def descriptor_function(
@@ -108,25 +139,6 @@ def descriptor_function(
   ``input_tree`` is its parameter list: for a solver, the five slots of the warm start, the
   multipliers and the parameters. Without one the inputs are a single group, as for ``_from_exprs``.
   """
-  input_exprs = tuple(Expr.sym(name, shape if shape else (), diff=False) for name, shape in descriptor.input_signature)
-  args = tuple(input_exprs)
-  output_exprs = tuple(
-    Expr(
-      ExprOp.SOLVER_CALL,
-      args,
-      TensorType(shape, diff=False),
-      attrs={"solver": descriptor, "output": i, "output_name": name},
-    )
-    for i, (name, shape) in enumerate(descriptor.output_signature)
+  return extern_function(
+    descriptor.name, descriptor, descriptor.input_signature, descriptor.output_signature, input_tree=input_tree, output_tree=output_tree
   )
-  inputs = input_tree or param_list(flat_tree(tuple(name for name, _ in descriptor.input_signature), tuple(expr.type for expr in input_exprs)))
-  outputs = output_tree or flat_tree(tuple(name for name, _ in descriptor.output_signature), tuple(expr.type for expr in output_exprs))
-  function = ConcreteFunction._from_exprs(
-    descriptor.name,
-    input_exprs,
-    output_exprs,
-    tuple(name for name, _ in descriptor.input_signature),
-    tuple(name for name, _ in descriptor.output_signature),
-  )._with_trees(inputs, outputs)
-  function.descriptor = descriptor
-  return function

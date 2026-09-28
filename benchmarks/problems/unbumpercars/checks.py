@@ -19,6 +19,7 @@ from itertools import product
 from typing import cast
 
 import scaly as sc
+from scaly.solvers.graph import solver_descriptor
 import numpy as np
 
 from benchmarks.problems.unbumpercars.common import (
@@ -610,7 +611,7 @@ def check_typed_problem_keeps_hessian_in_place() -> None:
   from benchmarks.problems.unbumpercars.common import ClosedLoopConfig, FilterConfig
   from benchmarks.problems.unbumpercars.filters import build_scaly_nlp
 
-  hessian = build_scaly_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt")).descriptor.hess
+  hessian = solver_descriptor(build_scaly_nlp(ClosedLoopConfig(ncars=2), FilterConfig(model="dt"))).hess
   module = render_c_module(hessian, typed_buffers=False)
 
   # Baselines are about 86 KB and 34k doubles. Headroom catches a CALL boundary materializing

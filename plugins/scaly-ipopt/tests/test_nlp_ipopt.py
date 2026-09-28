@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly.codegen.solver import SolverWrapperCtx
+from scaly.solvers.wrapper import SolverWrapperCtx
 from scaly.ir.types import SparsityType
 from scaly.solvers.model import ExternalOracle, SolverDescriptor, descriptor_function
 from tests.solvers.problem_helpers import build_nlp, solve_nlp

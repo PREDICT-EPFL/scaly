@@ -32,7 +32,7 @@
 |---|---|---|
 | 0.1 | Housekeeping | ☑ |
 | 0.2 | Extern calls raise on derivatives | ☑ |
-| 1.1 | `EXTERN_CALL` and the extern-callee protocol | ☐ |
+| 1.1 | `EXTERN_CALL` and the extern-callee protocol | ☑ |
 | 1.2 | Output-adapter registry (C++, CasADi) | ☐ |
 | 1.3 | Core stops importing solvers | ☐ |
 | 2.1 | Op registry, builtins registered through it | ☐ |
@@ -421,6 +421,13 @@ generically instead of `.descriptor`; `function/model.py` drops the `SolverStats
 solver package implements the protocol for its descriptors.
 Gate: C snapshots byte-identical; solver-marked tests pass; a test with a fake extern callee in
 `tests/core/` compiles, links an extra C source and runs.
+Log: done 2026-09-28. Protocol in `function/extern.py` (`ExternCallee`, `extern_function`,
+`extern_functions`, `BuildRequirements` with a shared link resolver so flags stay identical);
+`SolverDescriptor` implements it via `solvers/wrapper.py`, which replaces `codegen/solver.py`.
+`fun.descriptor` is now `fun.extern` (read with `solver_descriptor`); plugin protocol v8. aot and
+the JIT's stats read went through the protocol here already, leaving 1.3 the toolchain, env and
+import-guard parts. The fake-callee test is `tests/function/test_extern.py` (tests mirror `src/`
+until 7.1).
 
 **1.2 Output-adapter registry.**
 Changes: `register_adapter` in `codegen/aot.py`; `codegen/cpp.py` and `codegen/casadi.py` register

@@ -196,6 +196,7 @@ def test_obsolete_module_paths_and_vocabulary_are_absent() -> None:
     "scaly.api",
     "scaly.assembly",
     "scaly.codegen.program_c",
+    "scaly.codegen.solver",
     "scaly.codegen.solver_c",
     "scaly.expr",
     "scaly.jit",
@@ -213,6 +214,7 @@ def test_obsolete_module_paths_and_vocabulary_are_absent() -> None:
   assert all(importlib.util.find_spec(module) is None for module in obsolete_modules)
   assert not hasattr(sc, "Ops")
   assert not hasattr(sc, "VerifyRule")
+  assert not hasattr(sc.ExprOp, "SOLVER_CALL")
   program = __import__("scaly.ir.program", fromlist=["ProgramNode"])
   assert not hasattr(program, "PNode")
   assert not hasattr(program, "POps")

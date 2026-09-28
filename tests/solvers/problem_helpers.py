@@ -11,7 +11,7 @@ import scaly as sc
 from scaly.function.tree import Tree, flat_tree
 from scaly.ir.expr import Expr, as_expr, substitute
 from scaly.ir.types import TensorType
-from scaly.solvers.model import SolverDescriptor
+from scaly.solvers.graph import solver_descriptor
 
 
 def build_nlp(
@@ -132,7 +132,7 @@ def solve_qp(
   **named_params: np.ndarray,
 ) -> dict[str, np.ndarray]:
   """Run a typed one-block QP and expose the retired matrix-builder result names."""
-  descriptor = cast(SolverDescriptor, solver.descriptor)
+  descriptor = solver_descriptor(solver)
   if params and named_params:
     raise TypeError("pass positional or named QP parameters, not both")
   values = params or tuple(named_params[name] for name in descriptor.param_names)
@@ -153,7 +153,7 @@ def solve_nlp(
   *params: np.ndarray,
 ) -> dict[str, np.ndarray]:
   """Run a typed one-block solver and expose oracle values for old assertions."""
-  descriptor = cast(SolverDescriptor, solver.descriptor)
+  descriptor = solver_descriptor(solver)
   if len(params) != len(descriptor.param_names):
     raise ValueError(f"expected {len(descriptor.param_names)} parameters, got {len(params)}")
   param_values: Any = () if not params else params[0] if len(params) == 1 else params

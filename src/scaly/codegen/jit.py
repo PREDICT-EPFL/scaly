@@ -35,8 +35,7 @@ import numpy as np
 
 from .abi import C_API_SIGNATURE, c_ident
 from .aot import render_c_module
-from .solver import solver_stats_symbols
-from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
+from ..function.extern import ExternState, extern_functions
 from .toolchain import cache_root, compiler_identity, find_c_compiler, gcc_major, is_gcc
 from ..utils.env import shared_lib_ext, shared_lib_flag
 
@@ -56,7 +55,8 @@ _SOLVER_NAMESPACE_LOCK = threading.Lock()
 
 
 def _load_library(path: Path, *, isolated: bool) -> ctypes.CDLL:
-  """Keep Linux solver dependencies out of the host process linker namespace."""
+  """Keep the native dependencies of extern callees (solver libraries) out of the host process
+  linker namespace on Linux."""
   global _SOLVER_NAMESPACE, _SOLVER_NAMESPACE_ANCHOR
   if not isolated or sys.platform != "linux":
     return ctypes.CDLL(str(path))
@@ -158,6 +158,7 @@ class _Artifact:
   key: str
   flags: tuple[str, ...]
   workspace_size: int
+  isolated: bool
 
 
 _artifact_cache: dict[str, _Artifact] = {}
@@ -207,7 +208,7 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
       if attempt or cache_dir.exists():
         raise
 
-  artifact = _Artifact(lib_path=lib_path, key=key, flags=extra_flags, workspace_size=module.workspace_size)
+  artifact = _Artifact(lib_path=lib_path, key=key, flags=extra_flags, workspace_size=module.workspace_size, isolated=module.requirements.isolated)
   with _artifact_lock:
     _artifact_cache[key] = artifact
   return artifact
@@ -253,7 +254,7 @@ class CompiledFunction:
     "_lib",
     "_symbol",
     "_entry",
-    "_stats_entries",
+    "_state_entries",
     "_sz_w",
     "_input_sizes",
     "_input_shapes",
@@ -271,7 +272,7 @@ class CompiledFunction:
   def __init__(self, fun: ConcreteFunction):
     self._name = fun.name  # not the Function, which holds this handle: no cycle keeps the workspaces
     self._artifact = _build_artifact(fun)
-    self._lib = _load_library(self._artifact.lib_path, isolated=bool(self._artifact.flags))
+    self._lib = _load_library(self._artifact.lib_path, isolated=self._artifact.isolated)
     symbol = c_ident(fun.name)
     self._symbol = symbol
     entry = getattr(self._lib, symbol)
@@ -281,15 +282,19 @@ class CompiledFunction:
     entry.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
     entry.restype = ctypes.c_int
     self._entry = entry
-    self._stats_entries: dict[str, Any] = {}
-    for stats_symbol in solver_stats_symbols(fun):
+    # The state each extern callee exposes (a solver's statistics), keyed by its C symbol.
+    self._state_entries: dict[str, tuple[Any, ExternState]] = {}
+    for callee in extern_functions(fun):
+      state = callee.extern.state(callee) if callee.extern is not None else None
+      if state is None:
+        continue
       try:
-        stats_entry = getattr(self._lib, f"{stats_symbol}_stats")
+        accessor = getattr(self._lib, state.accessor)
       except AttributeError as exc:
-        raise JitError(f"compiled artifact is missing solver stats symbol {stats_symbol}_stats") from exc
-      stats_entry.argtypes = [ctypes.POINTER(CSolverStats)]
-      stats_entry.restype = ctypes.c_int
-      self._stats_entries[stats_symbol] = stats_entry
+        raise JitError(f"compiled artifact is missing the state accessor {state.accessor}") from exc
+      accessor.argtypes = [ctypes.POINTER(state.ctype)]
+      accessor.restype = ctypes.c_int
+      self._state_entries[c_ident(callee.name)] = (accessor, state)
     self._sz_w = self._artifact.workspace_size
     self._input_names = tuple(fun.input_names)
     self._input_shapes = tuple(e.shape for e in fun.inputs)
@@ -312,23 +317,26 @@ class CompiledFunction:
   def cache_key(self) -> str:
     return self._artifact.key
 
-  def solver_stats(self, name: str | None = None) -> SolverStats:
+  def solver_stats(self, name: str | None = None) -> Any:
+    """The state the extern callee ``name`` exposes after the latest call; ``name`` may be left out
+    when the library holds one. A decoder that finds the state invalid (never run, another layout)
+    raises ``ValueError``, reported as a ``JitError``."""
     if name is None:
-      if len(self._stats_entries) != 1:
-        raise JitError(f"solver name is required when an artifact has {len(self._stats_entries)} solver stats entries")
-      name = next(iter(self._stats_entries))
+      if len(self._state_entries) != 1:
+        raise JitError(f"solver name is required when an artifact has {len(self._state_entries)} solver stats entries")
+      name = next(iter(self._state_entries))
     symbol = c_ident(name)
-    if symbol not in self._stats_entries:
+    if symbol not in self._state_entries:
       raise JitError(f"no solver stats entry for {name!r}")
-    raw = CSolverStats()
-    status = self._stats_entries[symbol](ctypes.byref(raw))
+    accessor, state = self._state_entries[symbol]
+    raw = state.ctype()
+    status = accessor(ctypes.byref(raw))
     if status != 0:
-      raise JitError(f"{symbol}_stats returned status {status}")
-    if raw.version == 0:
-      raise JitError(f"solver {name!r} has not run yet (stats version is 0)")
-    if raw.version != SCALY_SOLVER_STATS_VERSION:
-      raise JitError(f"solver stats ABI mismatch for {name!r}: artifact version {raw.version}, expected {SCALY_SOLVER_STATS_VERSION}")
-    return SolverStats.from_c(raw)
+      raise JitError(f"{state.accessor} returned status {status}")
+    try:
+      return state.decode(raw)
+    except ValueError as exc:
+      raise JitError(str(exc)) from exc
 
   def _workspace(self) -> np.ndarray | None:
     """This thread's workspace: allocated on its first call and reused, not zeroed. The kernel

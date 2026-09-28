@@ -33,9 +33,9 @@ Covered today: elementwise unary and binary with NumPy broadcasting; `reshape` a
 `const` of any size through a constant buffer; general `slice` including integer,
 multi-dimensional and strided forms; `sum`; `matmul` up to rank 2; `transpose` up to rank 4;
 `gather` and `scatter` of any size through a `static const` index table; `stack` and `concat` on
-any axis; `call` across multiple procedures; and `VMAP`. Solver calls use `ExprOp.SOLVER_CALL` and
-a callee carrying a solver descriptor. The solver callee stays opaque and its wrapper is rendered
-separately, while its oracle functions lower normally.
+any axis; `call` across multiple procedures; and `VMAP`. A call to a Function with an extern body
+(`ExprOp.EXTERN_CALL`, a solver for instance) stays opaque: its callee renders its C separately,
+while the Functions that C calls lower normally.
 
 Not covered: device placement other than the host, and the operations listed as absent in
 [the expression dialect](ir.md#operations). Both raise `LoweringError`.

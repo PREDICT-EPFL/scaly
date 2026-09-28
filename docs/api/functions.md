@@ -54,3 +54,22 @@ name, and an input name.
 ::: scaly.function.api.lagrangian_hessian
 
 ::: scaly.function.api.sparse_lagrangian_hessian
+
+## Functions with an extern body
+
+A Function whose C is written by someone other than the compiler, a solver for instance, reaches
+lowering, code generation and the JIT only through this protocol.
+
+::: scaly.function.extern.extern_function
+
+::: scaly.function.extern.ExternCallee
+
+::: scaly.function.extern.ExternSource
+
+::: scaly.function.extern.ExternRenderCtx
+
+::: scaly.function.extern.BuildRequirements
+
+::: scaly.function.extern.ExternState
+
+::: scaly.function.extern.extern_functions

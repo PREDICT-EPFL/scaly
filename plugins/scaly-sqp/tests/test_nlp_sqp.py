@@ -8,6 +8,7 @@ import pytest
 import scaly as sc
 from scaly.codegen.aot import render_c_source
 from scaly.ir.types import SparsityType
+from scaly.solvers.graph import solver_descriptor
 from tests.solvers.problem_helpers import build_nlp, solve_nlp
 
 
@@ -171,11 +172,12 @@ def _coupled_problem(name: str, *, solver: str = "sqp", **options) -> sc.Functio
 
 def test_sqp_descriptor_hessian_is_the_backend_selected_upper_triangle() -> None:
   solver = _coupled_problem("sqp_upper_descriptor")
-  sparsity = solver.descriptor.hess_sparsity
+  sparsity = solver_descriptor(solver).hess_sparsity
   assert sparsity is not None
   assert all(row <= col for row, col in zip(sparsity.rows, sparsity.cols, strict=True))
-  assert isinstance(solver.descriptor.hess, sc.Function)
-  assert solver.descriptor.hess.output_sparsities[0] == sparsity
+  hess = solver_descriptor(solver).hess
+  assert isinstance(hess, sc.Function)
+  assert hess.output_sparsities[0] == sparsity
 
 
 def test_external_nlp_uses_the_supplied_pattern_as_the_hessian_layout() -> None:
@@ -193,8 +195,8 @@ def test_external_nlp_uses_the_supplied_pattern_as_the_hessian_layout() -> None:
     jac_sparsity=SparsityType.empty((0, 2)),
     hess_sparsity=hess_sparsity,
   )
-  assert solver.descriptor.hess_sparsity == hess_sparsity
-  assert not hasattr(solver.descriptor, "hess_lower_mask")
+  assert solver_descriptor(solver).hess_sparsity == hess_sparsity
+  assert not hasattr(solver_descriptor(solver), "hess_lower_mask")
 
 
 def _external_sqp_hessian_pattern(name: str, rows: tuple[int, ...], cols: tuple[int, ...]) -> sc.Function:
@@ -232,7 +234,7 @@ def test_sqp_maps_lower_and_full_hessian_patterns_to_first_canonical_sources(
 
 def test_sqp_bakes_csc_patterns_from_the_descriptor_sparsity() -> None:
   solver = _coupled_problem("sqp_csc_pattern")
-  desc = solver.descriptor
+  desc = solver_descriptor(solver)
   assert desc.jac_sparsity is not None and desc.hess_sparsity is not None
   jac_sparsity, hess_sparsity = desc.jac_sparsity, desc.hess_sparsity
   source = render_c_source(solver)
@@ -602,7 +604,7 @@ def test_same_sqp_wrapper_accepts_casadi_codegen_oracles(monkeypatch: pytest.Mon
   assert set(transformed) == {fn.name() for fn in (base, grad, jac, hess)} | {"external_fixture_sqp_bounds"}
   for fn in (base, grad, jac):
     assert captured[fn.name()].serialize() == transform(fn, {}).serialize()
-  pattern = solver.descriptor.hess_sparsity
+  pattern = solver_descriptor(solver).hess_sparsity
   assert pattern is not None and pattern.nnz == 3
   assert all(r <= c for r, c in zip(pattern.rows, pattern.cols))
   values = (np.array([0.3, 0.7]), np.array([0.2, 0.8]), 1.7, np.array([0.4]))

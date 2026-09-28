@@ -2,8 +2,9 @@
 
 This module + ``codegen/c.py`` are the **sole** CPU path to C (see
 ``docs/how_it_works/lowering.md``); the legacy tape-based scalar renderer is gone.
-The one sanctioned non-Program-IR escape is the ``codegen/solver`` wrapper for a
-``solver Function`` — and even there the oracle Functions it drives lower through here.
+The one sanctioned non-Program-IR escape is a Function with an extern body
+(``function/extern.py``), a solver for instance: its C comes from the callee, and even
+there the Functions that C calls lower through here.
 
 Dispatch is a **registry** keyed by expression ``ExprOp``: each op's lowering is a
 self-contained rule registered with ``@lowers(...)``. Adding/deepening an op (or,
@@ -14,8 +15,8 @@ Covered: elementwise unary/binary (with numpy broadcasting), ``RESHAPE`` (alias)
 strided), ``SUM``, ``MATMUL`` (rank <= 2), ``TRANSPOSE`` (rank <= 4), ``GATHER`` /
 ``SCATTER`` (any size, affine indices as arithmetic on the trip index and
 whatever is left as a ``static const`` table), ``STACK`` / ``CONCAT`` (any axis),
-``CALL`` (multi-PROC, deduped) and ``VMAP``; a ``solver Function`` ``CALL`` is opaque
-(see ``lower_function``). The tracking and unbumpercars workloads (forward + ``jac`` +
+``CALL`` (multi-PROC, deduped) and ``VMAP``; a ``CALL`` to a Function with an extern body is
+opaque (see ``lower_function``). The tracking and unbumpercars workloads (forward + ``jac`` +
 ``spjac``) render and match generated-code / external numeric references. Deferred (re-land from the reference branch):
 GPU placement and the new ops tracked in the migration roadmap.
 """
@@ -121,49 +122,35 @@ def lower_function(fun: Function, observe: ProgramObserver | None = None, observ
   placement raises ``LoweringError`` — GPU backends re-land from the reference
   branch after CPU parity (see ``internal/notes/program_ir_migration.md``).
 
-  A ``solver Function`` callee is **opaque**: its ``ExprOp.SOLVER_CALL`` body is not
-  lowered — the solver wrapper is rendered by the sanctioned ``codegen/solver``
-  path (rule 6) — but its oracle Functions *are* lowered to PROCs (the wrapper
-  calls them as ``<oracle>_raw``). The solver→oracle-name map is recorded on the
-  PROGRAM (``solver_oracles`` attr) so ``pack_workspace`` can size the caller's
-  ``w[]`` to fit the oracle and the CALL-to-solver gets ``callee_needs_w`` right.
+  A Function with an extern body (``Function.extern``, a solver for instance) is **opaque**: its
+  ``ExprOp.EXTERN_CALL`` body is not lowered, since the callee renders its own C (rule 6), but the
+  Functions that C calls, its ``dependencies()``, *are* lowered to PROCs and called as
+  ``<name>_raw``. The extern-to-dependency map is recorded on the PROGRAM (``extern_deps``), with
+  the workspace its hand-written sources declare (``extern_workspace``), so ``pack_workspace`` can
+  size the caller's ``w[]`` to fit them and the CALL into the extern gets ``callee_needs_w`` right.
   """
   fun = fun.concrete
   if fun.device.kind != "host":
     raise LoweringError(f"non-host placement {fun.device} is not lowered yet (GPU backends are deferred to a later migration step)")
-  from ..solvers.graph import is_solver_function, solver_callees
-
-  _check_function_names(fun, solver_callees)
+  _check_function_names(fun)
   callees: dict[str, ProgramNode] = {}
-  solver_fns: dict[str, ConcreteFunction] = {}
+  extern_fns: dict[str, ConcreteFunction] = {}
 
-  if is_solver_function(fun):
-    solver_fns[fun.name] = fun
-    for oracle in solver_callees(fun):
-      if oracle.name not in callees:
-        callees[oracle.name] = _lower_to_proc(oracle, callees, solver_fns, observe_expr=observe_expr)
+  if fun.extern is not None:
+    extern_fns[fun.name] = fun
+    for dependency in fun.extern.dependencies():
+      if dependency.name not in callees:
+        callees[dependency.name] = _lower_to_proc(dependency, callees, extern_fns, observe_expr=observe_expr)
     prog = p.program([*callees.values()])
-    prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "solver_root": fun.name}, prog.dtype)
+    prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "extern_root": fun.name}, prog.dtype)
   else:
-    root = _lower_to_proc(fun, callees, solver_fns, auto_scalarize=False, observe_expr=observe_expr, entry=True)
+    root = _lower_to_proc(fun, callees, extern_fns, auto_scalarize=False, observe_expr=observe_expr, entry=True)
     prog = p.program([*callees.values(), root])
-  if solver_fns:
-    solver_oracles = {name: tuple(o.name for o in solver_callees(sf)) for name, sf in solver_fns.items()}
-    from ..solvers.model import ExternalOracle
-
-    solver_external_workspace = {}
-    for name, sf in solver_fns.items():
-      desc = getattr(sf, "descriptor")
-      solver_external_workspace[name] = max(
-        (oracle.workspace_size for oracle in (desc.base, desc.grad, desc.jac, desc.hess, desc.bounds) if isinstance(oracle, ExternalOracle)),
-        default=0,
-      )
-    prog = ProgramNode(
-      ProgramOp.PROGRAM,
-      prog.args,
-      {**prog.attrs, "solver_oracles": solver_oracles, "solver_external_workspace": solver_external_workspace},
-      prog.dtype,
-    )
+  if extern_fns:
+    externs = {name: ef.extern for name, ef in extern_fns.items() if ef.extern is not None}
+    extern_deps = {name: tuple(d.name for d in extern.dependencies()) for name, extern in externs.items()}
+    extern_workspace = {name: max((s.workspace_size for s in extern.extern_sources()), default=0) for name, extern in externs.items()}
+    prog = ProgramNode(ProgramOp.PROGRAM, prog.args, {**prog.attrs, "extern_deps": extern_deps, "extern_workspace": extern_workspace}, prog.dtype)
   if observe is not None:
     observe("lowered", prog)
   prog = optimize_program(prog, observe=observe)
@@ -183,7 +170,7 @@ def _same_function(a: ConcreteFunction, b: ConcreteFunction) -> bool:
   )
 
 
-def _check_function_names(fun: ConcreteFunction, solver_callees: Callable[[ConcreteFunction], Iterable[ConcreteFunction]]) -> None:
+def _check_function_names(fun: ConcreteFunction) -> None:
   """Refuse two different Functions with one name anywhere in ``fun``'s call tree.
 
   Procedures are emitted once per name, so the second would silently run the first one's body."""
@@ -201,7 +188,8 @@ def _check_function_names(fun: ConcreteFunction, solver_callees: Callable[[Concr
         )
       continue
     owners[c_ident(f.name)] = f
-    todo.extend(solver_callees(f))
+    if f.extern is not None:
+      todo.extend(f.extern.dependencies())
     for node in topo(f.outputs):
       if node.op in CALLEE_OPS:
         todo.extend(callees_of(node))
@@ -241,7 +229,7 @@ def _normalize_function(fun: ConcreteFunction) -> ConcreteFunction:
 def _lower_to_proc(
   fun: ConcreteFunction,
   callees: dict[str, ProgramNode],
-  solver_fns: dict[str, ConcreteFunction],
+  extern_fns: dict[str, ConcreteFunction],
   *,
   auto_scalarize: bool = True,
   observe_expr: ExprObserver | None = None,
@@ -257,7 +245,7 @@ def _lower_to_proc(
   chain = tuple(e.id for e in update_chain(fun) or ()) if in_place else None
   if in_place and not chain:
     raise LoweringError(f"{fun.name!r} was lowered in place but its carry is not an update chain")
-  ctx = LowerCtx(fun, callees, solver_fns, observe_expr, entry=entry, in_place=chain)
+  ctx = LowerCtx(fun, callees, extern_fns, observe_expr, entry=entry, in_place=chain)
   ctx.emit_inputs()
   ctx.register_outputs()
   ctx.emit_body()
@@ -310,7 +298,7 @@ class LowerCtx:
     self,
     fun: ConcreteFunction,
     callees: dict[str, ProgramNode],
-    solver_fns: dict[str, ConcreteFunction],
+    extern_fns: dict[str, ConcreteFunction],
     observe_expr: ExprObserver | None = None,
     *,
     entry: bool = False,
@@ -320,7 +308,7 @@ class LowerCtx:
     self.entry = entry
     self.in_place = in_place
     self.callees = callees
-    self.solver_fns = solver_fns  # name -> solver Function (opaque callees; rendered by codegen/solver)
+    self.extern_fns = extern_fns  # name -> Function with an extern body (opaque; the callee renders its C)
     self.observe_expr = observe_expr
     self.params: list[ProgramNode] = []
     self.statements: list[ProgramNode] = []
@@ -1374,7 +1362,7 @@ def _ensure_in_place_callee(ctx: LowerCtx, callee: ConcreteFunction, steps: dict
   name = f"{callee.name}_inplace"
   if name not in ctx.callees:
     renamed = ConcreteFunction._from_exprs(name, normalized.inputs, normalized.outputs, normalized.input_names, normalized.output_names)
-    ctx.callees[name] = _lower_to_proc(renamed, ctx.callees, ctx.solver_fns, observe_expr=ctx.observe_expr, in_place=True)
+    ctx.callees[name] = _lower_to_proc(renamed, ctx.callees, ctx.extern_fns, observe_expr=ctx.observe_expr, in_place=True)
   return name, _put_scratch(update_chain(normalized) or [])
 
 
@@ -1401,17 +1389,15 @@ def _loop_steps(
 def _ensure_callee(ctx: LowerCtx, callee: ConcreteFunction) -> None:
   if callee.device.kind != ctx.fun.device.kind:
     raise LoweringError(f"mixed-device CALL ({ctx.fun.device} -> {callee.device}) is deferred to a later migration step")
-  from ..solvers.graph import is_solver_function, solver_callees
-
-  if is_solver_function(callee):
-    # Opaque: the solver wrapper is rendered by codegen/solver (rule 6), not lowered. Its body is
-    # SOLVER_CALL (no lowering rule). We still lower the oracle Functions the wrapper drives.
-    ctx.solver_fns[callee.name] = callee
-    for oracle in solver_callees(callee):
-      _ensure_callee(ctx, oracle)
+  if callee.extern is not None:
+    # Opaque: the callee renders its own C (rule 6); its body is EXTERN_CALL, which has no lowering
+    # rule. The Functions that C calls are lowered as usual.
+    ctx.extern_fns[callee.name] = callee
+    for dependency in callee.extern.dependencies():
+      _ensure_callee(ctx, dependency)
     return
   if callee.name not in ctx.callees:
-    ctx.callees[callee.name] = _lower_to_proc(callee, ctx.callees, ctx.solver_fns, observe_expr=ctx.observe_expr)
+    ctx.callees[callee.name] = _lower_to_proc(callee, ctx.callees, ctx.extern_fns, observe_expr=ctx.observe_expr)
 
 
 @lowers(ExprOp.CALL)

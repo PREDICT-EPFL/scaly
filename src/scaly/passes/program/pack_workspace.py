@@ -160,12 +160,12 @@ def pack_workspace(prog: ProgramNode) -> ProgramNode:
   procs, kernels = _procs(prog)
   plans = {pr.attrs["name"]: _plan_pack(pr) for pr in procs}
 
-  # A solver wrapper (rendered by codegen/solver, so it has no PROC here) is an opaque callee: it owns
-  # no spill of its own but passes its ``w`` straight through to its oracle Functions, so its
-  # workspace is the max over those oracle PROCs. The lowerer records solver -> oracle names on
-  # the PROGRAM; we seed those names into the sz_w recursion below.
-  solver_oracles: dict[str, tuple[str, ...]] = prog.attrs.get("solver_oracles", {})
-  solver_external_workspace: dict[str, int] = prog.attrs.get("solver_external_workspace", {})
+  # An extern callee (it renders its own C, so it has no PROC here) is opaque: it owns no spill of
+  # its own but passes its ``w`` straight through to its dependencies and hand-written sources, so
+  # its workspace is the max over those. The lowerer records extern -> dependency names and the
+  # sources' workspace on the PROGRAM; we seed them into the sz_w recursion below.
+  extern_deps: dict[str, tuple[str, ...]] = prog.attrs.get("extern_deps", {})
+  extern_workspace: dict[str, int] = prog.attrs.get("extern_workspace", {})
 
   # sz_w(proc) = own spill + max callee workspace (callees share the post-own-spill window).
   sz_w: dict[str, int] = {}
@@ -173,12 +173,12 @@ def pack_workspace(prog: ProgramNode) -> ProgramNode:
   def total(name: str) -> int:
     if name in sz_w:
       return sz_w[name]
-    if name in solver_oracles:
-      sz_w[name] = 0  # break cycles defensively; a solver owns no spill itself
-      sz_w[name] = max((solver_external_workspace.get(name, 0), *(total(o) for o in solver_oracles[name] if o in plans)))
+    if name in extern_deps:
+      sz_w[name] = 0  # break cycles defensively; an extern callee owns no spill itself
+      sz_w[name] = max((extern_workspace.get(name, 0), *(total(d) for d in extern_deps[name] if d in plans)))
       return sz_w[name]
     sz_w[name] = plans[name].own_spill  # break cycles defensively
-    callee_max = max((total(c) for c in plans[name].callees if c in plans or c in solver_oracles), default=0)
+    callee_max = max((total(c) for c in plans[name].callees if c in plans or c in extern_deps), default=0)
     sz_w[name] = plans[name].own_spill + callee_max
     return sz_w[name]
 

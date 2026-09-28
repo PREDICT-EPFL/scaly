@@ -50,13 +50,13 @@ def _gathered(mat: Expr, sparsity: SparsityType) -> Expr:
   return mat.vec().gather(flat)
 
 
-def _reaches_solver_call(exprs: Sequence[Expr]) -> bool:
+def _reaches_extern_call(exprs: Sequence[Expr]) -> bool:
   """Return whether an expression reaches a solver, including through Function calls."""
   seen: set[int] = set()
 
   def visit(targets: Sequence[Expr]) -> bool:
     for node in topo(targets):
-      if node.op == ExprOp.SOLVER_CALL:
+      if node.op == ExprOp.EXTERN_CALL:
         return True
       for callee in callees_of(node):
         if id(callee) not in seen:
@@ -73,7 +73,7 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
     if bound is None:
       continue
     for name, expr in zip(problem.vars.names, problem.vars.flatten_symbolic(bound, f"{problem.name} {side}"), strict=True):
-      if _reaches_solver_call((expr,)):
+      if _reaches_extern_call((expr,)):
         raise NotQuadratic(f"{problem.name}: cannot prove {side} for {name!r} independent through a nested solver")
       if any(_jac_mask(expr, variable, {}).nnz for variable in problem._var_symbols):
         raise NotQuadratic(f"{problem.name}: {side} for {name!r} depends on the variables")
@@ -81,7 +81,7 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
     label = group.name or str(index)
     for side, bound in (("lower bound", group.lo), ("upper bound", group.hi)):
       if bound is not None:
-        if _reaches_solver_call((bound,)):
+        if _reaches_extern_call((bound,)):
           raise NotQuadratic(f"{problem.name}: cannot prove ineq {label} {side} independent through a nested solver")
         if any(_jac_mask(bound, variable, {}).nnz for variable in problem._var_symbols):
           raise NotQuadratic(f"{problem.name}: ineq {label} {side} depends on the variables")
@@ -89,7 +89,7 @@ def _prove_variable_independent_bounds(problem: Problem[Any, Any, Any, Any]) -> 
 
 def _refuse_nested_solvers(problem: Problem[Any, Any, Any, Any]) -> None:
   """Refuse a cost or constraint that reaches a solver, before its oracles differentiate through it."""
-  if _reaches_solver_call((problem.spec.minimize, *problem.spec.eq, *(group.expr for group in problem.spec.ineq))):
+  if _reaches_extern_call((problem.spec.minimize, *problem.spec.eq, *(group.expr for group in problem.spec.ineq))):
     raise NotQuadratic(f"{problem.name}: cannot prove QP structure through a nested solver")
 
 

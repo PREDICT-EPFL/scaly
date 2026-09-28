@@ -71,7 +71,8 @@ def test_solver_stats_reject_uninitialized_and_mismatched_versions() -> None:
     ctypes.cast(out, ctypes.POINTER(CSolverStats)).contents.version = sc.SCALY_SOLVER_STATS_VERSION + 1
     return 0
 
-  compiled._stats_entries["stats_version_qp"] = mismatched_stats
+  _, state = compiled._state_entries["stats_version_qp"]
+  compiled._state_entries["stats_version_qp"] = (mismatched_stats, state)
   with pytest.raises(JitError, match="ABI mismatch.*artifact version 4, expected 3"):
     compiled.solver_stats()
 

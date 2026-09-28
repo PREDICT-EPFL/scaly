@@ -12,6 +12,7 @@ import pytest
 import scaly as sc
 from scaly import mpc
 from scaly.solvers.qp import NotQuadratic
+from scaly.solvers.graph import solver_descriptor
 
 A = np.array([[1.0, 0.1], [0.0, 1.0]])
 B = np.array([[0.005], [0.1]])
@@ -158,7 +159,7 @@ def test_piqp_runs_its_sparse_backend_on_a_horizon() -> None:
   sparse = mpc.MPC(_constrained("backend_sparse", horizon=5), "piqp")
   dense = mpc.MPC(_constrained("backend_dense", horizon=5, condensed=True), "piqp")
   chosen = mpc.MPC(_constrained("backend_chosen", horizon=5), "piqp", options={"sparse": False})
-  assert sparse.solver.descriptor.sparse and not dense.solver.descriptor.sparse and not chosen.solver.descriptor.sparse
+  assert solver_descriptor(sparse.solver).sparse and not solver_descriptor(dense.solver).sparse and not solver_descriptor(chosen.solver).sparse
 
 
 @pytest.mark.solver("piqp")

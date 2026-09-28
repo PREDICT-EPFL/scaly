@@ -15,10 +15,11 @@ from typing import TYPE_CHECKING, Any
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
+from scaly.solvers.graph import solver_descriptor
+
 if TYPE_CHECKING:
-  from scaly.codegen.solver import SolverWrapperCtx
+  from scaly.solvers.wrapper import SolverWrapperCtx
   from scaly.function import ConcreteFunction
-  from scaly.solvers.model import SolverDescriptor
 
 
 _TEMPLATE = Environment(
@@ -110,7 +111,7 @@ def _ldl_symbolic(n: int, col_ptr: list[int], rows: list[int]) -> tuple[list[int
 
 
 def render_wrapper(fun: ConcreteFunction, ctx: SolverWrapperCtx) -> list[str]:
-  desc: SolverDescriptor = fun.descriptor
+  desc = solver_descriptor(fun)
   base, grad, jac, hess, bounds = desc.base, desc.grad, desc.jac, desc.hess, desc.bounds
   assert base is not None and grad is not None and hess is not None and bounds is not None
   assert jac is not None or not (desc.n_eq + desc.n_ineq)

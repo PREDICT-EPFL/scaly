@@ -48,7 +48,7 @@ Two things only the sparse path does:
 - It needs a C compiler when the solver is built, not only at the first solve, because deriving the
   pattern JIT-compiles and evaluates a small probe function.
 - It refuses matrices computed from another solver's output. `P`, `A_eq` and `G_ineq` are the ones
-  whose pattern has to be derived, and a `solver_call` output is opaque to the dependency analysis,
+  whose pattern has to be derived, and a `extern_call` output is opaque to the dependency analysis,
   so that raises `NotImplementedError`. The vectors `c`, the bounds and the right-hand sides are
   unaffected, since no pattern is derived for them. The dense path has no such restriction, which
   is why the [nesting example](solvers.md#nesting-a-solver-in-a-graph) works.

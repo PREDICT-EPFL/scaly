@@ -172,9 +172,9 @@ def _jac_mask_uncached(expr: Expr, wrt: Expr, memo: dict[int, sparse.csr_array])
     a = expr.args[0]
     dense = _incidence((expr.size, a.size), np.repeat(np.arange(expr.size), a.size), np.tile(np.arange(a.size), expr.size))
     return _compose(dense, _jac_mask(a, wrt, memo))
-  if expr.op in {ExprOp.SPARSE_LDL_SOLVE, ExprOp.SOLVER_CALL}:
+  if expr.op in {ExprOp.SPARSE_LDL_SOLVE, ExprOp.EXTERN_CALL}:
     # Every unknown of a solve may depend on every entry of the factor and of the right-hand side,
-    # and every output of an opaque solver on every entry of every argument.
+    # and every output of an extern callee on every entry of every argument.
     return _dense_in_args(expr, wrt, memo)
   if expr.op in {ExprOp.CHOLESKY, ExprOp.LDL}:
     # Every entry of the lower triangle of the factor may depend on every entry the factorization reads.

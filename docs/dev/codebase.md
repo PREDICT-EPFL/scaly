@@ -52,6 +52,7 @@ src/scaly/
     factory.py           the typed derivative specs and the AD each dispatches to
     api.py               the @function decorator and the convenience derivative wrappers
     sugar.py             expression builders that need a Function: vmap, scan, while_loop, custom_derivative
+    extern.py            the extern-callee protocol: a Function whose C body comes from elsewhere
 
   ad/                    derivative construction, all of it inside the expression dialect
     forward.py           jvp, jvp_many
@@ -93,13 +94,13 @@ src/scaly/
     cpp.py               the C++ header: the Buffer template and a namespace per function
     casadi.py            the CasADi 3.8 layer: query functions, CSC encoding, the gather
     __main__.py          compatibility shim for `python -m scaly.codegen`
-    solver.py            solver-wrapper framing around a plugin-rendered body
-    aot.py               one lowering -> CModule, the C header, the file-writing driver, the CLI
+    aot.py               one lowering -> CModule, the extern callees' requirements merged, the C header, the file-writing driver, the CLI
     jit.py               CModule -> compile, cache, dlopen, ctypes dispatch
     toolchain.py         C compiler discovery, cache root, the diagnostics report
 
   solvers/
-    model.py             SolverDescriptor and its opaque plain Function
+    model.py             SolverDescriptor, the extern callee of its opaque plain Function
+    wrapper.py           that callee's C: the plugin-rendered wrapper, its stats accessor, its build requirements
     problem.py           typed backend-free Problem declarations
     solver.py            backend selection
     graph.py             the solver queries over a Function graph
@@ -140,10 +141,10 @@ one, never a higher one.
 | 0 | `utils/*` | Leaves. Environment, identifier spelling and file parsing; no scaly concepts. |
 | 1 | `ir/*` | The vocabulary. Both dialects, their verifiers, their text, and the machinery for defining passes. |
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR). Nothing here knows what a `Function` is. |
-| 3 | `function/{model,tree}` | `Function` itself, a named graph boundary over import layer 1, and the pytree declarations. |
+| 3 | `function/{model,tree,extern}` | `Function` itself, a named graph boundary over import layer 1, the pytree declarations, and the protocol a Function with an extern body implements. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the builders that do too (`vmap`, `scan`, `while_loop`, `custom_derivative`). |
 | 5 | `function/{factory,api}`, the rest of `solvers/`, `linalg/*`, `interp/*`, `integrators/*`, `mpc/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, splines, integrators and MPC. |
-| 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |
+| 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including the Functions extern callees call, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |
 | 9 | `scaly/__init__` | The public names sit above everything they re-export. |
@@ -210,6 +211,7 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 | A program op | `ProgramOp`, its builder, and the right op-category set (`SCALAR_OPS`, `UNARY_FN_OPS`, ...) in `ir/program.py`; a rule in `ir/program_spec.py`; a branch in `ir/text.py` for a statement op (scalars need none); the C spelling in `codegen/c.py` |
 | A derivative kind | a frozen `DerivSpec` subclass in `function/factory.py`, plus a wrapper in `function/api.py` |
 | A solver backend | a distribution under `plugins/`, an entry point, and a `render_wrapper` hook; see [Solver plugins](solver_plugins.md) |
+| A Function with a hand-written C body | an object implementing `ExternCallee` in `function/extern.py`, passed to `extern_function`; nothing in the compiler changes |
 | A public name | the re-export and `__all__` entry in `scaly/__init__.py` |
 | A module | an entry in `IMPORT_LAYERS` in `tests/test_import_layering.py`, a one-line ownership docstring, and a test file in the mirrored place under `tests/` |
 

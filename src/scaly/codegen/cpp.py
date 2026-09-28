@@ -9,9 +9,7 @@ from typing import TYPE_CHECKING
 
 from .abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
 from .casadi import casadi_declarations, casadi_defines
-from .solver import solver_stats_symbols
 from ..function import ConcreteFunction
-from ..solvers.stats import stats_c_defs
 
 if TYPE_CHECKING:
   from ..ir.types import SparsityType
@@ -74,11 +72,18 @@ def _sparse_namespace(ident: str, sp: SparsityType) -> list[str]:
 
 
 def render_cpp_header(
-  fun: ConcreteFunction, backends: tuple[str, ...], sz_w: int, *, casadi: bool, sparsities: tuple[SparsityType | None, ...]
+  fun: ConcreteFunction,
+  header_types: tuple[str, ...],
+  declarations: tuple[str, ...],
+  sz_w: int,
+  *,
+  casadi: bool,
+  sparsities: tuple[SparsityType | None, ...],
 ) -> str:
   """The ``.hpp`` for ``fun``. The kernel symbols are declared ``extern "C"`` inside the function's
   namespace, since a namespace and a function cannot share the global name; C linkage keeps the
-  symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``."""
+  symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``. ``header_types`` and
+  ``declarations`` are what the extern callees ``fun`` reaches add (``codegen/aot.py``)."""
   symbol = c_ident(fun.name)
   inputs, outputs = buffer_idents(fun)
   params = [f"const {i}_t& {i}" for i in inputs] + [f"{o}_t& {o}" for o in outputs] + ["workspace_t& workspace"]
@@ -90,7 +95,7 @@ def render_cpp_header(
     "#include <array>",
     "#include <cassert>",
     "#include <cstddef>",
-    *(["#include <cstdint>", "", *stats_c_defs()] if backends else []),
+    *(["#include <cstdint>", "", *header_types] if header_types else []),
     "",
     *abi_status_defines(guarded=True),
     *(["", *casadi_defines()] if casadi else []),
@@ -105,7 +110,7 @@ def render_cpp_header(
     f"namespace {symbol} {{",
     f"// The pointer ABI for {fun.name}; the same C symbols the C header declares.",
     'extern "C" ' + c_api_signature(symbol) + ";",
-    *(f'extern "C" int {s}_stats(scaly_solver_stats* out);' for s in solver_stats_symbols(fun)),
+    *(f'extern "C" {decl}' for decl in declarations),
     *(f'extern "C" {decl}' for decl in (casadi_declarations(symbol) if casadi else [])),
     "",
     *(_buffer_alias(i, e.shape) for i, e in zip(inputs, fun.inputs, strict=True)),
