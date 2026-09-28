@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 from typing import cast
 from pathlib import Path
@@ -253,6 +254,7 @@ def test_vector_math_environment_variable_is_registered():
   assert setting.default is None
 
 
+@pytest.mark.skipif(platform.libc_ver()[0] != "glibc" or platform.machine().lower() not in ("x86_64", "amd64"), reason="links libmvec")
 def test_math_library_does_not_use_solver_namespace(isolated_cache, monkeypatch):
   from scaly.codegen.toolchain import BuildRecipe
 
