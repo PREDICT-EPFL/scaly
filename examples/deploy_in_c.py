@@ -17,7 +17,7 @@ The example then walks the ahead-of-time path end to end:
    prints the result, and is compiled with ``cc`` and run;
 3. its output is compared with the same function called from Python (the JIT path), which compiles
    the very same translation unit;
-4. if CasADi is importable, the CasADi-compatible symbols (``casadi=True``) are compiled into a
+4. if CasADi is importable, the CasADi-compatible symbols (the ``casadi`` adapter) are compiled into a
    shared library and loaded with ``casadi.external``, the route acados and CasADi users take. CasADi
    stores matrices column-major, so that build returns the Jacobians as compact sparse outputs
    (``sc.factory.SpJac``), which CasADi receives with their patterns.
@@ -147,7 +147,7 @@ def run_in_casadi(q: np.ndarray, bias: np.ndarray, gyro: np.ndarray) -> list[np.
   if cc is None:
     return None
   out = GENERATED / "casadi"
-  write_module(attitude_step_casadi, out, casadi=True)
+  write_module(attitude_step_casadi, out, adapters=("casadi",))
   lib = out / "attitude_step_casadi.so"
   subprocess.run([cc, "-O2", "-shared", "-fPIC", "-o", str(lib), str(out / "attitude_step_casadi.c"), "-lm"], check=True)
   ext = casadi.external("attitude_step_casadi", str(lib))
@@ -176,7 +176,7 @@ if __name__ == "__main__":
   print(
     f"against NumPy: {np.abs(out['q'] - out['q_ref']).max():.1e}; dq+/db against central differences: {np.abs(out['jac_last'] - out['jac_bias_fd']).max():.1e}"
   )
-  write_module(attitude_step, GENERATED / "cpp", lang="cpp")
+  write_module(attitude_step, GENERATED / "cpp", adapters=("cpp",))
   c_out = run_in_c(out["gyro"], out["bias"])
   if c_out is not None:
     print(

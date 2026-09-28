@@ -1,4 +1,4 @@
-"""The C++ header (``lang="cpp"``): a ``Buffer`` per input and output with the ``Expr`` shape, a
+"""The C++ header (the ``cpp`` adapter): a ``Buffer`` per input and output with the ``Expr`` shape, a
 namespace per function, ``constexpr`` sparsity tables, and ``call`` against a caller-owned
 workspace, all compiled against the same C kernel the C header declares."""
 
@@ -23,7 +23,7 @@ def _spjac() -> sc.Function:
 def test_cpp_header_declares_namespace_buffers_and_constexpr_tables() -> None:
   traj = sc.sym("traj", (3, 2))
   f = sc.Function._from_exprs("roll", [traj], [traj.sin()], ["traj"], ["out"])
-  module = render_c_module(f, lang="cpp")
+  module = render_c_module(f, adapters=("cpp",))
   assert module.header_name == "roll.hpp" and module.source_name == "roll.c"
   assert "#include" not in module.source.replace(module.body, "")
   header = module.header
@@ -36,7 +36,7 @@ def test_cpp_header_declares_namespace_buffers_and_constexpr_tables() -> None:
   assert "inline int call(const traj_t& traj, out_t& out, workspace_t& workspace)" in header
   assert "typedef struct" not in header and "roll_call" not in header
 
-  spjac = render_c_module(_spjac(), lang="cpp").header
+  spjac = render_c_module(_spjac(), adapters=("cpp",)).header
   assert "namespace spjac_y_x {" in spjac
   assert "constexpr int nnz = 5;" in spjac
   assert "constexpr std::array<int, nnz> csc_val_perm = {0, 3, 1, 2, 4};" in spjac
@@ -51,8 +51,8 @@ def test_cpp_header_compiles_and_runs(tmp_path) -> None:
     pytest.skip("cc and c++ are required for the generated C++ header smoke test")
 
   traj = sc.sym("traj", (3, 2))
-  roll = render_c_module(sc.Function._from_exprs("roll", [traj], [traj.sin()], ["traj"], ["out"]), lang="cpp")
-  spjac = render_c_module(_spjac(), lang="cpp")
+  roll = render_c_module(sc.Function._from_exprs("roll", [traj], [traj.sin()], ["traj"], ["out"]), adapters=("cpp",))
+  spjac = render_c_module(_spjac(), adapters=("cpp",))
   for module in (roll, spjac):
     (tmp_path / module.header_name).write_text(module.header)
     (tmp_path / module.source_name).write_text(module.source)
@@ -111,9 +111,11 @@ int main() {
 def test_cpp_header_and_c_header_compile_the_same_kernel() -> None:
   x = sc.sym("x", 2)
   f = sc.Function._from_exprs("same", [x], [x * 2.0], ["x"], ["y"])
-  assert render_c_module(f, lang="c").body == render_c_module(f, lang="cpp").body
-  with pytest.raises(ValueError, match="lang"):
-    render_c_module(f, lang="rust")
+  assert render_c_module(f, adapters=()).body == render_c_module(f, adapters=("cpp",)).body
+  with pytest.raises(ValueError, match="unknown output adapter 'rust'; available: casadi, cpp"):
+    render_c_module(f, adapters=("rust",))
+  with pytest.raises(TypeError, match="sequence of names"):
+    render_c_module(f, adapters="cpp")
   np.testing.assert_allclose(f(np.array([1.0, 2.0])), [2.0, 4.0])
 
 
@@ -126,7 +128,7 @@ def test_headers_survive_buffer_names_that_collide_with_the_wrapper(tmp_path) ->
   f, workspace, arg = sc.sym("f", 2), sc.sym("workspace", 2), sc.sym("arg", 2)
   fun = sc.Function._from_exprs("f", [f, workspace, arg], [f + workspace + arg], ["f", "workspace", "arg"], ["res"])
   c = render_c_module(fun)
-  cpp = render_c_module(fun, lang="cpp")
+  cpp = render_c_module(fun, adapters=("cpp",))
   assert (
     "static inline int f_call(const f_f__t* f_, const f_workspace__t* workspace_, const f_arg__t* arg_, f_res__t* res_, f_workspace_t* workspace)"
     in c.header
@@ -156,7 +158,7 @@ def test_headers_split_names_shared_by_an_input_and_an_output(tmp_path) -> None:
   w, lam, z0 = sc.sym("w", 3), sc.sym("lam", 0), sc.sym("z0", 2)
   fun = sc.Function._from_exprs("solve", [w, lam, z0], [w + z0[0], lam], ["w", "lam", "z0"], ["w", "lam"])
   c = render_c_module(fun)
-  cpp = render_c_module(fun, lang="cpp")
+  cpp = render_c_module(fun, adapters=("cpp",))
   assert "typedef struct { SCALY_ALIGNAS(16) double data[1]; } solve_lam_in_t;" in c.header
   assert (
     "static inline int solve_call(const solve_w_in_t* w_in, const solve_lam_in_t* lam_in, const solve_z0_t* z0, solve_w_out_t* w_out, solve_lam_out_t* lam_out, solve_workspace_t* workspace)"
@@ -195,9 +197,9 @@ def test_parameters_named_like_keywords_compile_from_c_and_cpp(tmp_path) -> None
     return new * this
 
   for lang in ("c", "cpp"):
-    module = render_c_module(keywords, lang=lang)
+    module = render_c_module(keywords, adapters=("cpp",) if lang == "cpp" else ())
     (tmp_path / module.header_name).write_text(module.header)
     main = tmp_path / f"main_{lang}.cpp"
     main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
     subprocess.run([cxx, "-std=c++17", "-fsyntax-only", str(main)], check=True, cwd=tmp_path)
-  assert "new_" in render_c_module(keywords, lang="cpp").header
+  assert "new_" in render_c_module(keywords, adapters=("cpp",)).header

@@ -33,7 +33,7 @@
 | 0.1 | Housekeeping | ☑ |
 | 0.2 | Extern calls raise on derivatives | ☑ |
 | 1.1 | `EXTERN_CALL` and the extern-callee protocol | ☑ |
-| 1.2 | Output-adapter registry (C++, CasADi) | ☐ |
+| 1.2 | Output-adapter registry (C++, CasADi) | ☑ |
 | 1.3 | Core stops importing solvers | ☐ |
 | 2.1 | Op registry, builtins registered through it | ☐ |
 | 2.2 | Table-driven AD, sparsity, folding, verification | ☐ |
@@ -435,6 +435,11 @@ themselves; remove `lang`/`casadi` fields and branches from `CModule`, `_render_
 `_render_source`, `_render_solver_entry`; `codegen/c.py` no longer imports `casadi` (entry-prologue
 hook); CLI `--lang`/`--casadi` become `--adapter NAME` (update docs and examples).
 Gate: C, C++ and CasADi snapshots byte-identical; `tests/interp/test_casadi_parity.py` passes.
+Log: done 2026-09-28. Registry and hooks in `codegen/adapter.py`, names resolved through a
+`scaly.adapters` entry-point group so `aot` and `c` import neither adapter. API `adapters=("cpp",
+"casadi")`, CLI `--adapter NAME` (repeatable: a C++ header with the CasADi layer is a real
+combination). There were no C++ or CasADi snapshots; four adapter variants joined the corpus,
+rendered from the pre-1.2 code, and match. 1.1's smoke medians were within noise.
 
 **1.3 Core stops importing solvers.**
 Changes: `codegen/aot.py`, `jit.py`, `toolchain.py` aggregate build requirements and state blobs

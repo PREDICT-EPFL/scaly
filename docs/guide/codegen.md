@@ -44,9 +44,9 @@ that `LoweringError` as its cause when you call the function from Python.
 ```python
 from scaly.codegen import render_c_module
 
-module = render_c_module(fn)                 # f.h and f.c
-module = render_c_module(fn, lang="cpp")     # f.hpp and the same f.c
-module = render_c_module(fn, casadi=True)    # plus the CasADi 3.8 compatible symbols
+module = render_c_module(fn)                          # f.h and f.c
+module = render_c_module(fn, adapters=("cpp",))       # f.hpp and the same f.c
+module = render_c_module(fn, adapters=("casadi",))    # plus the CasADi 3.8 compatible symbols
 module.header           # the header text
 module.source           # the .c text
 module.header_name      # the filename it expects
@@ -59,13 +59,13 @@ Or write the pair directly:
 
 ```python
 from scaly.codegen import write_module
-write_module(fn, out_dir, lang="cpp")
+write_module(fn, out_dir, adapters=("cpp",))
 ```
 
 From a shell:
 
 ```bash
-uv run scaly_codegen mymodule:my_function -o generated/ --lang cpp --casadi
+uv run scaly_codegen mymodule:my_function -o generated/ --adapter cpp --adapter casadi
 ```
 
 The argument is `<module>:<attribute>`, an importable module and the name of a `Function` in it
@@ -76,9 +76,12 @@ A function whose shapes are bound at each call (a template, see
 instance: `write_module(f.instantiate(3, 3), out_dir)` writes `f__3_3.h` and `f__3_3.c`, and a module
 attribute `f_3 = f.instantiate(3, 3)` gives the command line the same. The command refuses a
 template with holes and says what to export instead.
-`--lang c` (the default) writes a C header with a struct per buffer, `--lang cpp` a C++ header with
-`Buffer` types in a namespace; `--casadi` adds the symbols acados and `casadi.external` look for;
+Without an adapter the command writes a C header with a struct per buffer. Output adapters change
+that: `--adapter cpp` writes a C++ header with `Buffer` types in a namespace instead, and
+`--adapter casadi` adds the symbols acados and `casadi.external` look for, to either header;
 `--no-typed-buffers` strips the C header down to the pointer signature and the sparsity tables.
+Adapters are found by name through the `scaly.adapters` entry points, so a package can add its own
+with `scaly.codegen.adapter.register_adapter`.
 
 The AOT output and the JIT read the same `CModule`, produced from a single lowering. The header's
 `SZ_W` and the source's scratch use cannot drift apart, because there is only one number.

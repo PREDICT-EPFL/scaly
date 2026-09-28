@@ -3,7 +3,8 @@
 A refactor of the IR, the passes or the renderer must leave the generated C identical, so this
 pins it byte for byte. Each corpus entry covers one lowering path — a forward function, a dense
 Jacobian, a compact sparse Jacobian, a VMAP workload, a wide function using most of the math surface, a workspace spill, and a solver-bearing graph — and every run re-renders and diffs
-against the recorded source and header. A diff means something semantic moved with the code. Byte
+against the recorded source and header. A few entries are also pinned under output adapters: the
+C++ header, and the CasADi layer in source and header, alone and over the C++ header. A diff means something semantic moved with the code. Byte
 equality also keeps the JIT cache key stable: it hashes the source, and the header pins the ABI
 signature that goes in with it.
 
@@ -113,29 +114,58 @@ CORPUS = {
   "table": _table,
 }
 SOLVER_CORPUS = {"solver": _qp_host}
+ADAPTED: dict[str, tuple[tuple[str, ...], ...]] = {"forward": (("cpp",),), "spjac": (("casadi",), ("cpp", "casadi"))}
+SOLVER_ADAPTED: dict[str, tuple[tuple[str, ...], ...]] = {"solver": (("cpp", "casadi"),)}
+"""Corpus entries pinned under adapters too. The C++ adapter changes only the header; the CasADi
+adapter changes both files, and its source is the same under either header."""
 
 
 def _rendered(fun: sc.Function) -> dict[str, str]:
   return {".c": render_c_source(fun), ".h": render_c_api_header(fun)}
 
 
+def _adapted(fun: sc.Function, adapters: tuple[str, ...]) -> dict[str, str]:
+  tag = "+".join(adapters)
+  out = {f".{tag}.{'hpp' if 'cpp' in adapters else 'h'}": render_c_api_header(fun, adapters=adapters)}
+  if "cpp" not in adapters:
+    out[f".{tag}.c"] = render_c_source(fun, adapters=adapters)
+  return out
+
+
+def _all_rendered(name: str, fun: sc.Function) -> dict[str, str]:
+  out = _rendered(fun)
+  for adapters in {**ADAPTED, **SOLVER_ADAPTED}.get(name, ()):
+    out |= _adapted(fun, adapters)
+  return out
+
+
 @pytest.mark.parametrize("name", sorted(CORPUS))
 def test_generated_c_matches_snapshot(name: str) -> None:
-  for suffix, text in _rendered(CORPUS[name]()).items():
+  for suffix, text in _all_rendered(name, CORPUS[name]()).items():
     assert text == (BASELINE / f"{name}{suffix}").read_text(), f"{name}{suffix} moved"
 
 
 @pytest.mark.solver("piqp")
 @pytest.mark.parametrize("name", sorted(SOLVER_CORPUS))
 def test_generated_solver_c_matches_snapshot(name: str) -> None:
-  for suffix, text in _rendered(SOLVER_CORPUS[name]()).items():
+  for suffix, text in _all_rendered(name, SOLVER_CORPUS[name]()).items():
     assert text == (BASELINE / f"{name}{suffix}").read_text(), f"{name}{suffix} moved"
+
+
+def _expected_files() -> set[str]:
+  names = {f"{name}{suffix}" for name in (*CORPUS, *SOLVER_CORPUS) for suffix in (".c", ".h")}
+  for name, combos in {**ADAPTED, **SOLVER_ADAPTED}.items():
+    for adapters in combos:
+      tag = "+".join(adapters)
+      names.add(f"{name}.{tag}.{'hpp' if 'cpp' in adapters else 'h'}")
+      if "cpp" not in adapters:
+        names.add(f"{name}.{tag}.c")
+  return names
 
 
 def test_baseline_holds_exactly_the_corpus() -> None:
   """A dropped corpus entry is a silently narrower gate, and an orphan baseline is never read."""
-  expected = {f"{name}{suffix}" for name in (*CORPUS, *SOLVER_CORPUS) for suffix in (".c", ".h")}
-  assert {p.name for p in BASELINE.iterdir()} == expected
+  assert {p.name for p in BASELINE.iterdir()} == _expected_files()
 
 
 def main() -> int:
@@ -147,13 +177,13 @@ def main() -> int:
     print("skipping the solver entry: the scaly-piqp plugin is not installed")
   for name, build in sorted(builders.items()):
     fun = build()
-    for suffix, text in _rendered(fun).items():
+    for suffix, text in _all_rendered(name, fun).items():
       path = BASELINE / f"{name}{suffix}"
       changed = not path.exists() or path.read_text() != text
       path.write_text(text)
       print(f"{'CHANGED' if changed else 'unchanged'}: {path.name} ({len(text.splitlines())} lines)")
   for path in sorted(BASELINE.iterdir()):
-    if path.stem not in (*CORPUS, *SOLVER_CORPUS):
+    if path.name not in _expected_files():
       path.unlink()
       print(f"removed orphan: {path.name}")
   print("\nA CHANGED line during phases 1-6 of the restructure is a bug in the refactor, not an update.")

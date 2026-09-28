@@ -71,6 +71,10 @@ dev = [
 ]
 docs = ["zensical>=0.0.28", "mkdocstrings-python>=2.0.3"]
 
+[project.entry-points."scaly.adapters"]
+cpp = "scaly.codegen.cpp"
+casadi = "scaly.codegen.casadi"
+
 [project.scripts]
 scaly_codegen = "scaly.codegen.aot:main"
 scaly_viz = "scaly.viz.serve:main"

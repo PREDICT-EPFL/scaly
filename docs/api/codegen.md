@@ -20,6 +20,20 @@
 
 ::: scaly.codegen.abi.BufferType
 
+## Output adapters
+
+::: scaly.codegen.adapter.register_adapter
+
+::: scaly.codegen.adapter.Adapter
+
+::: scaly.codegen.adapter.HeaderSpec
+
+::: scaly.codegen.adapter.EntryHook
+
+::: scaly.codegen.adapter.get_adapter
+
+::: scaly.codegen.adapter.available_adapters
+
 ## The C++ header
 
 ::: scaly.codegen.cpp.render_cpp_header

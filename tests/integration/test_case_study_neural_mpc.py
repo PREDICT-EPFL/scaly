@@ -1,7 +1,7 @@
 """The neural MPC case study's acados drop-in, on a tiny network, as acados builds and calls it.
 
 `examples/case_studies/neural_mpc` replaces acados' generated `expl_vde_forw` by Scaly's: rendered with
-`casadi=True`, compiled with `casadi_int` defined as `int` (acados' width), with a zero-length parameter
+the `casadi` adapter, compiled with `casadi_int` defined as `int` (acados' width), with a zero-length parameter
 input (acados' empty `p`) and the sensitivity matrix passed as a flat column-major vector. This checks
 that path through the C entry point and the CasADi query functions, against NumPy, so the study is not
 the only thing exercising it.
@@ -48,7 +48,7 @@ def vde_forw(x, Sx, Sp, u, p):
 
 @pytest.mark.skipif(shutil.which("cc") is None, reason="needs a C compiler on PATH")
 def test_vde_forw_through_the_casadi_layer_as_acados_builds_it(tmp_path: Path) -> None:
-  module = write_module(vde_forw, tmp_path, casadi=True)
+  module = write_module(vde_forw, tmp_path, adapters=("casadi",))
   lib = tmp_path / "vde.so"
   subprocess.run(["cc", "-O2", "-Dcasadi_int=int", "-shared", "-fPIC", "-o", str(lib), str(tmp_path / module.source_name)], check=True)
   so = ctypes.CDLL(str(lib))

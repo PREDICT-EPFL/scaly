@@ -15,15 +15,17 @@ On top of it sit three source-level layers, each an application programming inte
 caller includes rather than a binary contract: a C header with a struct per buffer, a C++ header
 with a `Buffer` type per buffer in a namespace per function, and an optional set of CasADi 3.8
 compatible symbols. Both header languages compile the same kernel. The header language changes what
-a caller writes, not what runs.
+a caller writes, not what runs. The C header is the default; the other two are output adapters
+(`codegen/adapter.py`), named layers found through the `scaly.adapters` entry points.
 
 ```python
 from scaly.codegen import render_c_module
 
-render_c_module(fn)                          # f.h + f.c
-render_c_module(fn, lang="cpp")              # f.hpp + f.c, the same f.c
-render_c_module(fn, casadi=True)             # either header, plus the CasADi symbols
-render_c_module(fn, typed_buffers=False)     # C header with the pointer ABI and tables only
+render_c_module(fn)                                  # f.h + f.c
+render_c_module(fn, adapters=("cpp",))               # f.hpp + f.c, the same f.c
+render_c_module(fn, adapters=("casadi",))            # plus the CasADi symbols
+render_c_module(fn, adapters=("cpp", "casadi"))      # the C++ header, plus the CasADi symbols
+render_c_module(fn, typed_buffers=False)             # C header with the pointer ABI and tables only
 ```
 
 ## The pointer ABI
@@ -78,7 +80,7 @@ One rendered module is one `.c` file and one header. Inside the `.c`:
    workaround in `codegen/c.py`;
 2. any solver wrappers, in dependency order after the oracle bodies they drive;
 3. the exported ABI entry for the root function;
-4. with `casadi=True`, the query functions and their sparsity tables.
+4. with the `casadi` adapter, the query functions and their sparsity tables.
 
 Only the root is exported. Nested calls become direct C calls to the `_raw` bodies, which is why
 generated code stays small when the same block appears many times. The block is one C function.
@@ -87,7 +89,7 @@ The `.c` compiles on its own. With a C header it includes that header, so the pa
 ordinary translation unit; with a C++ header it includes nothing, because C cannot include C++, and
 the header is compiled only by the callers that include it.
 
-## The C header (`lang="c"`)
+## The C header
 
 The pointer ABI, the macros, and for each input and output a fixed-size struct so a C caller gets
 a type per buffer:
@@ -149,7 +151,7 @@ sparse column (CSC) structure: `values_csr[k] = values[csr_val_perm[k]]`, and li
 `SparsityType.to_csr()` and `to_csc()` return the same permutation as their third element, so
 Python and C agree by construction.
 
-## The C++ header (`lang="cpp"`)
+## The C++ header (the `cpp` adapter)
 
 A namespace per function and nothing above it. Every header carries the same guarded template, so
 several generated headers share one translation unit:
@@ -201,8 +203,8 @@ header needs C++17.
 
 ## The CasADi layer
 
-`casadi=True` adds the symbols CasADi 3.8 exports from its own code generator, with either header
-language:
+The `casadi` adapter adds the symbols CasADi 3.8 exports from its own code generator, with either
+header language:
 
 ```c
 casadi_int f_n_in(void);
@@ -234,7 +236,7 @@ Three facts make this more than aliases:
   CasADi code hard-codes.
 - **Compact sparse outputs are handed over in compressed-column order.** A CasADi consumer reads a
   sparse value buffer in CSC order, while scaly's native order is the coordinate list above. Under
-  `casadi=True` the entry evaluates such an output into `w` past the packed workspace and gathers it
+  the `casadi` adapter the entry evaluates such an output into `w` past the packed workspace and gathers it
   into `res[i]` through `csc_val_perm`, adding `nnz` per gathered output to `f_SZ_W`. An output
   whose native order is already CSC, as the QP path's patterns are, is written straight to
   `res[i]` and adds nothing. The header's tables describe the buffer as written, so their
@@ -278,20 +280,20 @@ statics. Generated solver wrappers are not reentrant.
 ```python
 from scaly.codegen import render_c_module, workspace_size, write_module
 
-module = render_c_module(fn, lang="c", casadi=False)
+module = render_c_module(fn, adapters=())
 module.header          # the header text, f.h or f.hpp
 module.source          # the .c text
 module.workspace_size  # the f_SZ_W the header declares, gather scratch included
 module.link_flags      # flags for any solver plugins reached (empty without a solver)
 
 workspace_size(fn)     # the same number, without rendering the rest
-write_module(fn, out_dir, lang="cpp")
+write_module(fn, out_dir, adapters=("cpp",))
 ```
 
 From the command line:
 
 ```bash
-uv run scaly_codegen mymodule:my_function -o generated/ --lang cpp --casadi
+uv run scaly_codegen mymodule:my_function -o generated/ --adapter cpp --adapter casadi
 ```
 
 The just-in-time (JIT) path consumes exactly this object with the defaults. It compiles

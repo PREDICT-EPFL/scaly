@@ -91,8 +91,9 @@ src/scaly/
   codegen/
     abi.py               the pointer ABI: signature, status codes, mangling
     c.py                 ProgramNode -> standalone scalar C; no lowering policy of its own
-    cpp.py               the C++ header: the Buffer template and a namespace per function
-    casadi.py            the CasADi 3.8 layer: query functions, CSC encoding, the gather
+    adapter.py           output adapters: named layers over a rendered module, their hooks and registry
+    cpp.py               the cpp adapter: the C++ header, the Buffer template and a namespace per function
+    casadi.py            the casadi adapter: CasADi 3.8 query functions, CSC encoding, the gather
     __main__.py          compatibility shim for `python -m scaly.codegen`
     aot.py               one lowering -> CModule, the extern callees' requirements merged, the C header, the file-writing driver, the CLI
     jit.py               CModule -> compile, cache, dlopen, ctypes dispatch
@@ -213,6 +214,7 @@ A scalar math op touches seven files, plus `fuse_elementwise.py` when the op is 
 | A solver backend | a distribution under `plugins/`, an entry point, and a `render_wrapper` hook; see [Solver plugins](solver_plugins.md) |
 | A Function with a hand-written C body | an object implementing `ExternCallee` in `function/extern.py`, passed to `extern_function`; nothing in the compiler changes |
 | A public name | the re-export and `__all__` entry in `scaly/__init__.py` |
+| An output adapter (another header language, another consumer's symbols) | a module calling `register_adapter` in `codegen/adapter.py`, and an entry point under `scaly.adapters` naming it |
 | A module | an entry in `IMPORT_LAYERS` in `tests/test_import_layering.py`, a one-line ownership docstring, and a test file in the mirrored place under `tests/` |
 
 ## The rules that keep it this way

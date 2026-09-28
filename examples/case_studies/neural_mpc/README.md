@@ -47,7 +47,7 @@ restores the authors' zeroed layer.
 | `baseline/setup.sh` | pins ml-casadi and acados, builds acados |
 | `baseline/run_acados.py` | the paper's two columns, ported to current acados |
 | `scaly_impl.py` | the network in Scaly, read from the PyTorch state dict with `load_torch_state_dict`; acados' `expl_ode_fun`, `expl_vde_forw` and `expl_vde_adj` as Scaly Functions; RTN-MPC's surrogate at the 10 nodes as one `vmap` |
-| `run_scaly.py` | the two Scaly columns, reusing the baseline's OCP and loop: `dropin` generates acados' code, swaps its model sources for Scaly's `casadi=True` output and builds; `taylor` replaces PyTorch's `approx_params` |
+| `run_scaly.py` | the two Scaly columns, reusing the baseline's OCP and loop: `dropin` generates acados' code, swaps its model sources for Scaly's `casadi` adapter output and builds; `taylor` replaces PyTorch's `approx_params` |
 | `compare.py` | the grid, three fresh processes per cell, the fastest kept |
 | `kernel_bench.py` | the two kernels that differ between columns, timed alone from C |
 | `neural_mpc.ipynb` | the study as a notebook: explanation, the Scaly kernels live (checked and timed), the recorded grid and kernel results plotted |
@@ -57,7 +57,7 @@ as `int`, a zero-length parameter, column-major `Sx`) against NumPy.
 
 ## The drop-in, and what it needed
 
-acados' generic external path accepts Scaly's `casadi=True` output with two adjustments, both in
+acados' generic external path accepts Scaly's `casadi` adapter output with two adjustments, both in
 `scaly_impl.py`. Scaly's CasADi layer refuses dense matrices, since Scaly is row-major and CasADi
 column-major, so the sensitivity `Sx` travels as a flat column-major vector. acados copies a dense
 argument as contiguous values either way. And acados compiles with `casadi_int` as `int`, so each

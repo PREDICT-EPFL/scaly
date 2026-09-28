@@ -1,13 +1,12 @@
-"""The CasADi 3.8 compatible layer (``casadi=True``): the ``casadi_int``/``casadi_real`` defines, the
-query functions CasADi's ``external`` and acados resolve, the compressed-column sparsity encoding,
-the render-time layout check, and the gather that hands a compact sparse output to the caller in
-compressed-column order (``docs/how_it_works/generated_interface.md``)."""
+"""The CasADi 3.8 compatible layer, the ``casadi`` output adapter: the ``casadi_int``/``casadi_real``
+defines, the query functions CasADi's ``external`` and acados resolve, the compressed-column
+sparsity encoding, the render-time layout check, and the gather that hands a compact sparse output
+to the caller in compressed-column order (``docs/how_it_works/generated_interface.md``)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from .abi import c_ident
+from .adapter import EntryHook, register_adapter
 from ..function import ConcreteFunction
 from ..ir.types import SparsityType
 
@@ -26,7 +25,7 @@ CASADI_QUERIES = (
   "incref",
   "decref",
 )
-"""The suffixes ``casadi=True`` exports under ``<symbol>_``. acados needs the entry plus ``work``,
+"""The suffixes the ``casadi`` adapter exports under ``<symbol>_``. acados needs the entry plus ``work``,
 ``sparsity_in``, ``sparsity_out``, ``n_in`` and ``n_out``; the rest make ``casadi.external`` work."""
 
 
@@ -68,7 +67,7 @@ def check_casadi_layout(fun: ConcreteFunction) -> None:
     for name, expr, sp in zip(names, exprs, sparsities, strict=True):
       if sp is None and (len(expr.shape) > 2 or (len(expr.shape) == 2 and min(expr.shape) > 1)):
         raise ValueError(
-          f"casadi=True: {kind} {name!r} of {fun.name!r} has dense matrix shape {expr.shape}; CasADi is column-major, so only scalars, vectors and compact sparse outputs are supported"
+          f"the casadi adapter: {kind} {name!r} of {fun.name!r} has dense matrix shape {expr.shape}; CasADi is column-major, so only scalars, vectors and compact sparse outputs are supported"
         )
 
 
@@ -91,7 +90,7 @@ def casadi_sparsity(shape: tuple[int, ...], sp: SparsityType | None) -> tuple[in
 
 def csc_ordered(sp: SparsityType) -> SparsityType:
   """``sp`` with its nonzeros listed in compressed-column order, which is the order a CasADi caller
-  reads the value buffer in under ``casadi=True``. The header's tables are rendered from this
+  reads the value buffer in under the ``casadi`` adapter. The header's tables are rendered from this
   pattern so they describe the buffer actually written; its ``csc_val_perm`` is the identity."""
   _, _, perm = sp.to_csc()
   return SparsityType(sp.shape, tuple(sp.rows[i] for i in perm), tuple(sp.cols[i] for i in perm))
@@ -111,18 +110,10 @@ def casadi_scratch(fun: ConcreteFunction) -> int:
   return sum(sp.nnz for sp in fun.output_sparsities if _needs_gather(sp) and sp is not None)
 
 
-@dataclass(frozen=True, slots=True)
-class CasadiGather:
-  """How an entry hands compact sparse outputs over in compressed-column order: ``ptr`` redirects
-  the body's writes for those outputs into ``w`` past the packed workspace, ``setup`` declares
-  the scratch pointers, and ``epilogue`` permutes each into ``res[i]`` through ``csc_val_perm``."""
-
-  ptr: dict[str, str]
-  setup: list[str]
-  epilogue: list[str]
-
-
-def casadi_gather(fun: ConcreteFunction, base_sz_w: int) -> CasadiGather:
+def casadi_gather(fun: ConcreteFunction, base_sz_w: int) -> EntryHook:
+  """How an entry hands compact sparse outputs over in compressed-column order: the body's writes
+  for those outputs go into ``w`` from ``base_sz_w`` on, and the epilogue permutes each into
+  ``res[i]`` through ``csc_val_perm``."""
   ptr: dict[str, str] = {}
   setup: list[str] = []
   epilogue: list[str] = []
@@ -139,7 +130,7 @@ def casadi_gather(fun: ConcreteFunction, base_sz_w: int) -> CasadiGather:
       f"  for (int k = 0; k < {sp.nnz}; ++k) res[{i}][k] = {ident}_native[{ident}_csc_val_perm[k]];",
     ]
     offset += sp.nnz
-  return CasadiGather(ptr, setup, epilogue)
+  return EntryHook(ptr, tuple(setup), tuple(epilogue))
 
 
 def _switch(symbol: str, ret: str, name: str, cases: list[str], default: str) -> list[str]:
@@ -202,3 +193,15 @@ def render_casadi_queries(fun: ConcreteFunction, sz_w: int) -> list[str]:
     f"void {symbol}_incref(void) {{}}",
     f"void {symbol}_decref(void) {{}}",
   ]
+
+
+register_adapter(
+  "casadi",
+  defines=casadi_defines(),
+  declarations=casadi_declarations,
+  sparsities=casadi_output_sparsities,
+  check=check_casadi_layout,
+  extra_workspace=casadi_scratch,
+  entry_prologue=casadi_gather,
+  extra_source=render_casadi_queries,
+)

@@ -17,7 +17,7 @@ a rough guide: **S** is a first read, **L** a complete application.
 | Example | Size | Problem | What it shows |
 | --- | --- | --- | --- |
 | `simple.py`, `multiple_shooting.py` | S | Small introductions to `Function`s, derivatives and a solver | |
-| `deploy_in_c.py` | S | An attitude propagator with its Jacobians for an EKF, shipped to C | `Function.factory` bundling a value and two Jacobians; `write_module` in C and C++; a C `main` compiled with `cc` against the typed-buffer header (`_call`) and checked against the JIT; the CasADi layer (`casadi=True`) loaded by `casadi.external`, with compact sparse Jacobians (`SpJac`) |
+| `deploy_in_c.py` | S | An attitude propagator with its Jacobians for an EKF, shipped to C | `Function.factory` bundling a value and two Jacobians; `write_module` in C and C++; a C `main` compiled with `cc` against the typed-buffer header (`_call`) and checked against the JIT; the CasADi layer (the `casadi` adapter) loaded by `casadi.external`, with compact sparse Jacobians (`SpJac`) |
 
 ## Derivatives
 

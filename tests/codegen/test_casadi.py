@@ -1,4 +1,4 @@
-"""The CasADi 3.8 compatible layer (``casadi=True``): ``casadi.external`` loads the library and
+"""The CasADi 3.8 compatible layer (the ``casadi`` adapter): ``casadi.external`` loads the library and
 agrees with the JIT, the six symbols acados resolves are exported, ``_sparsity_out``
 decodes to the pattern, compact sparse outputs arrive in compressed-column order, and a dense
 matrix input or output is rejected at render time."""
@@ -29,11 +29,11 @@ def _spjac() -> sc.Function:
   return sc.sparse_jacobian(sc.Function._from_exprs("f", [x, p], [y], ["x", "p"], ["y"]), "y", "x", name="f_spjac")
 
 
-def _build(tmp_path, fun: sc.Function, **kwargs):
+def _build(tmp_path, fun: sc.Function, adapters: tuple[str, ...] = ()):
   cc = shutil.which("cc")
   if cc is None:
     pytest.skip("cc is required for the CasADi compatibility smoke test")
-  module = render_c_module(fun, casadi=True, **kwargs)
+  module = render_c_module(fun, adapters=(*adapters, "casadi"))
   (tmp_path / module.header_name).write_text(module.header)
   source = tmp_path / module.source_name
   source.write_text(module.source)
@@ -56,7 +56,7 @@ def _build(tmp_path, fun: sc.Function, **kwargs):
 
 def test_casadi_header_declares_the_query_set() -> None:
   fun = _spjac()
-  header = render_c_api_header(fun, casadi=True)
+  header = render_c_api_header(fun, adapters=("casadi",))
   assert "#ifndef casadi_int\n#define casadi_int long long int\n#endif" in header
   for suffix in CASADI_QUERIES:
     assert f" f_spjac_{suffix}(" in header, suffix
@@ -65,16 +65,16 @@ def test_casadi_header_declares_the_query_set() -> None:
   sp = fun.output_sparsities[0]
   assert sp is not None and sp.to_csc()[2] != tuple(range(sp.nnz)), "the fixture must need a gather to be meaningful"
   assert f"static const int f_spjac_spjac_y_x_csc_val_perm[{sp.nnz}] = {{{', '.join(str(k) for k in range(sp.nnz))}}};" in header
-  assert workspace_size(fun, casadi=True) == workspace_size(fun) + sp.nnz
+  assert workspace_size(fun, adapters=("casadi",)) == workspace_size(fun) + sp.nnz
   assert "casadi_int" not in render_c_api_header(fun)
 
-  cpp = render_c_api_header(fun, lang="cpp", casadi=True)
+  cpp = render_c_api_header(fun, adapters=("cpp", "casadi"))
   assert 'extern "C" casadi_int f_spjac_n_in(void);' in cpp
   assert "constexpr std::array<int, nnz> csc_val_perm = {0, 1, 2, 3, 4};" in cpp
 
 
 def test_casadi_source_gathers_into_compressed_column_order() -> None:
-  source = render_c_source(_spjac(), casadi=True)
+  source = render_c_source(_spjac(), adapters=("casadi",))
   assert "double* spjac_y_x_native = w + 0;" in source
   assert "res[0][k] = spjac_y_x_native[spjac_y_x_csc_val_perm[k]];" in source
   assert "casadi_int f_spjac_n_in(void) { return 2; }" in source
@@ -136,7 +136,7 @@ def test_casadi_external_loads_and_matches_the_jit(tmp_path) -> None:
 def test_casadi_external_dense_vector_function_without_gather(tmp_path) -> None:
   x = sc.sym("x", 3)
   fun = sc.Function._from_exprs("g", [x], [x.sin(), x.sum()], ["x"], ["y", "s"])
-  module, lib_path = _build(tmp_path, fun, lang="cpp")
+  module, lib_path = _build(tmp_path, fun, adapters=("cpp",))
   assert module.header_name == "g.hpp" and module.workspace_size == workspace_size(fun)
   ext = casadi.external("g", str(lib_path))
   xv = np.array([0.25, -0.75, 1.5])
@@ -150,8 +150,8 @@ def test_casadi_rejects_dense_matrix_buffers() -> None:
   m = sc.sym("m", (2, 3))
   fun = sc.Function._from_exprs("dense", [m], [m * 2.0], ["m"], ["n"])
   with pytest.raises(ValueError, match="column-major"):
-    render_c_module(fun, casadi=True)
+    render_c_module(fun, adapters=("casadi",))
   with pytest.raises(ValueError, match="input 'm'"):
-    render_c_api_header(fun, casadi=True)
+    render_c_api_header(fun, adapters=("casadi",))
   row = sc.sym("row", (1, 3))
-  render_c_module(sc.Function._from_exprs("row_ok", [row], [row * 2.0], ["row"], ["n"]), casadi=True)
+  render_c_module(sc.Function._from_exprs("row_ok", [row], [row * 2.0], ["row"], ["n"]), adapters=("casadi",))

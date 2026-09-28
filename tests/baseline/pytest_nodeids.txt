@@ -430,6 +430,10 @@ tests/benchmarks/test_timing.py::test_modes_derive_startup_and_exclude_first_ste
 tests/benchmarks/test_timing.py::test_one_step_has_no_steady_state_sample
 tests/benchmarks/test_timing.py::test_prepared_solver_never_compiles_during_first_solve
 tests/benchmarks/test_timing.py::test_repeated_modes_report_dispersion_and_missing_samples
+tests/codegen/test_adapter.py::test_a_header_adapter_replaces_the_c_header
+tests/codegen/test_adapter.py::test_adapters_leave_the_kernel_alone
+tests/codegen/test_adapter.py::test_every_hook_reaches_its_place
+tests/codegen/test_adapter.py::test_names_resolve_through_entry_points_and_are_checked
 tests/codegen/test_c.py::test_c_api_header_exposes_pointer_abi_and_typed_buffers
 tests/codegen/test_c.py::test_c_api_header_exposes_sparse_output_metadata
 tests/codegen/test_c.py::test_c_header_typed_buffers_compile_and_run_from_c
@@ -3451,6 +3455,7 @@ tests/test_import_layering.py::test_module_imports_standalone[scaly.ad.sparsity]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.ad]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.__main__]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.abi]
+tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.adapter]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.aot]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.c]
 tests/test_import_layering.py::test_module_imports_standalone[scaly.codegen.casadi]

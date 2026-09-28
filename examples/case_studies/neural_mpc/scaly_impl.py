@@ -97,7 +97,7 @@ def install_dropin(params, code_dir: Path, n_p: int = 0) -> list[Path]:
   file is prefixed with the definition."""
   written = []
   for name, fn in acados_functions(params, n_p).items():
-    module = write_module(fn, code_dir / "wr_model" / "scaly", casadi=True)
+    module = write_module(fn, code_dir / "wr_model" / "scaly", adapters=("casadi",))
     target = code_dir / "wr_model" / f"{name}.c"
     header = (code_dir / "wr_model" / "scaly" / module.header_name).read_text()
     source = (code_dir / "wr_model" / "scaly" / module.source_name).read_text().replace(f'#include "{module.header_name}"', header)

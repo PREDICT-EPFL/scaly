@@ -106,7 +106,7 @@ def bench(layers: int, width: int, work: Path) -> dict:
   row["casadi_vde_compile"] = compile_so(c_src, c_lib, [])
   row["casadi_vde_source_bytes"] = c_src.stat().st_size
   fn = scaly_impl.acados_functions(params)["wr_expl_vde_forw"]
-  module = write_module(fn, work / "scaly_vde", casadi=True)
+  module = write_module(fn, work / "scaly_vde", adapters=("casadi",))
   s_lib = work / "scaly_vde.so"
   row["scaly_vde_compile"] = compile_so(work / "scaly_vde" / module.source_name, s_lib, ["-Dcasadi_int=int"])
   row["scaly_vde_source_bytes"] = (work / "scaly_vde" / module.source_name).stat().st_size

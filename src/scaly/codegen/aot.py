@@ -3,8 +3,9 @@ file-writing driver here and ``codegen/jit.py`` consume.
 
 ``_lower`` is the single render context. It lowers ``fun`` exactly once and holds everything the
 artifacts read off that lowering, so the header's ``SZ_W``, the entry's null check and a consumer's
-workspace allocation cannot disagree. The header comes in two languages (``lang="c"`` here,
-``lang="cpp"`` in ``codegen/cpp.py``) and either can carry the CasADi layer (``codegen/casadi.py``). A function with no extern callee in its call graph renders entirely
+workspace allocation cannot disagree. The C header is rendered here; output adapters
+(``codegen/adapter.py``) may replace it (the C++ one, ``codegen/cpp.py``) or add a layer to either
+(CasADi's, ``codegen/casadi.py``), and are found by name. A function with no extern callee in its call graph renders entirely
 through ``codegen/c``. An **extern-bearing** graph is orchestrated here: every other Function
 (dependency, host caller, intermediate) is a Program-IR ``_raw``, and each Function with an extern
 body (``function/extern.py``; a solver, say) is the C its callee renders, calling those ``_raw``s,
@@ -16,22 +17,24 @@ from __future__ import annotations
 
 import argparse
 import importlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from scaly.codegen.abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
-from scaly.codegen.c import _includes, _render_entry, _render_raw_callee, entry_prologue, entry_workspace, render_program_c
-from scaly.codegen.casadi import (
-  casadi_declarations,
-  casadi_defines,
-  casadi_gather,
-  casadi_output_sparsities,
-  check_casadi_layout,
-  render_casadi_queries,
+from scaly.codegen.adapter import Adapter, HeaderSpec, available_adapters, entry_workspace, resolve_adapters
+from scaly.codegen.c import (
+  _includes,
+  _render_entry,
+  _render_raw_callee,
+  adapter_defines,
+  adapter_sources,
+  entry_prologue,
+  render_program_c,
+  wrap_entry,
 )
-from scaly.codegen.cpp import render_cpp_header
 from scaly.function import ConcreteFunction, Function
 from scaly.function.extern import BuildRequirements, ExternRenderCtx, LinkResolver, extern_functions
 from scaly.ir.expr import callees_of, topo
@@ -93,9 +96,9 @@ class CModule:
   """One rendered function: the header and the ``.c`` to write, plus what a consumer needs to
   compile and call them. ``body`` is the translation unit. ``program`` is the optimized Program IR
   that produced it. ``workspace_size`` is the entry's ``w[]`` length, and ``externs`` lists the
-  Functions with extern bodies (solvers, say) that the function reaches. ``lang`` picks the header
-  language (``"c"`` or ``"cpp"``); ``casadi`` adds the CasADi-compatible symbols; ``typed_buffers``
-  toggles the C header's structs and ``_call`` wrapper.
+  Functions with extern bodies (solvers, say) that the function reaches. ``adapters`` names the
+  output adapters applied (``"cpp"`` for the C++ header, ``"casadi"`` for the CasADi-compatible
+  symbols); ``typed_buffers`` toggles the C header's structs and ``_call`` wrapper.
 
   ``header``, ``source`` and ``link_flags`` are rendered on first access. The JIT compiles ``body``
   and asks for none of them; for a big sparse function the header alone is larger than the source.
@@ -109,8 +112,7 @@ class CModule:
   workspace_size: int
   externs: tuple[ConcreteFunction, ...]
   typed_buffers: bool
-  lang: str = "c"
-  casadi: bool = False
+  adapters: tuple[str, ...] = ()
 
   @cached_property
   def requirements(self) -> Requirements:
@@ -118,13 +120,15 @@ class CModule:
 
   @cached_property
   def header(self) -> str:
-    return _render_header(self.fun, self.requirements, self.workspace_size, typed_buffers=self.typed_buffers, lang=self.lang, casadi=self.casadi)
+    return _render_header(
+      self.fun, self.requirements, self.workspace_size, typed_buffers=self.typed_buffers, adapters=resolve_adapters(self.adapters)
+    )
 
   @cached_property
   def source(self) -> str:
-    """The ``.c`` as written: ``body`` behind an include of the paired C header. A C++ header
-    cannot be included from C, so under ``lang="cpp"`` the kernel is ``body`` alone."""
-    if self.lang == "cpp":
+    """The ``.c`` as written: ``body`` behind an include of the paired header, unless an adapter's
+    header cannot be included from C (the C++ one), and then ``body`` alone."""
+    if not all(a.source_includes_header for a in resolve_adapters(self.adapters)):
       return self.body
     include = self.header_name.replace("\\", "\\\\").replace('"', '\\"')
     return f'#include "{include}"\n\n{self.body}'
@@ -264,24 +268,49 @@ def _sparse_tables(fun: ConcreteFunction, symbol: str, sparsities: tuple[Sparsit
   return ["", "// Sparse output metadata for compact derivative buffers.", *lines] if lines else []
 
 
-def header_sparsities(fun: ConcreteFunction, *, casadi: bool) -> tuple[SparsityType | None, ...]:
-  """The patterns a header describes: the native order, or under ``casadi`` the compressed-column
-  order the entry gathers into."""
-  return casadi_output_sparsities(fun) if casadi else tuple(fun.output_sparsities)
+def header_sparsities(fun: ConcreteFunction, adapters: Sequence[Adapter]) -> tuple[SparsityType | None, ...]:
+  """The patterns a header describes: the native order, or the one an adapter hands the outputs
+  over in (CasADi's compressed-column order)."""
+  for a in adapters:
+    if a.sparsities is not None:
+      return a.sparsities(fun)
+  return tuple(fun.output_sparsities)
 
 
-def _render_header(fun: ConcreteFunction, req: Requirements, sz_w: int, *, typed_buffers: bool, lang: str, casadi: bool) -> str:
-  if lang == "cpp":
-    return render_cpp_header(fun, req.header_types, req.declarations, sz_w, casadi=casadi, sparsities=header_sparsities(fun, casadi=casadi))
+def _header_spec(fun: ConcreteFunction, req: Requirements, sz_w: int, *, typed_buffers: bool, adapters: Sequence[Adapter]) -> HeaderSpec:
+  symbol = c_ident(fun.name)
+  return HeaderSpec(
+    fun=fun,
+    sz_w=sz_w,
+    typed_buffers=typed_buffers,
+    types=req.header_types,
+    defines=tuple(line for a in adapters for line in a.defines),
+    declarations=(*req.declarations, *(line for a in adapters if a.declarations is not None for line in a.declarations(symbol))),
+    sparsities=header_sparsities(fun, adapters),
+  )
+
+
+def _render_header(fun: ConcreteFunction, req: Requirements, sz_w: int, *, typed_buffers: bool, adapters: Sequence[Adapter]) -> str:
+  spec = _header_spec(fun, req, sz_w, typed_buffers=typed_buffers, adapters=adapters)
+  for a in adapters:
+    if a.header is not None:
+      return a.header(spec)
+  return render_c_header(spec)
+
+
+def render_c_header(spec: HeaderSpec) -> str:
+  """The C header: ABI declarations, ``SZ_*`` constants, the typed buffers unless
+  ``spec.typed_buffers`` is off, and the sparse-output tables."""
+  fun, sz_w, typed_buffers = spec.fun, spec.sz_w, spec.typed_buffers
   symbol = c_ident(fun.name)
   lines = [
     "#pragma once",
     "",
     "#include <stddef.h>",
-    *(["#include <stdint.h>", "", *req.header_types] if req.header_types else []),
+    *(["#include <stdint.h>", "", *spec.types] if spec.types else []),
     "",
     *abi_status_defines(guarded=True),
-    *(["", *casadi_defines()] if casadi else []),
+    *(["", *spec.defines] if spec.defines else []),
     *(["", *_ALIGNAS] if typed_buffers else []),
     "",
     f"#define {symbol}_SZ_ARG {len(fun.inputs)}",
@@ -294,20 +323,19 @@ def _render_header(fun: ConcreteFunction, req: Requirements, sz_w: int, *, typed
     'extern "C" {',
     "#endif",
     c_api_signature(symbol) + ";",
-    *req.declarations,
-    *(casadi_declarations(symbol) if casadi else []),
+    *spec.declarations,
     "#ifdef __cplusplus",
     "}",
     "#endif",
   ]
   if typed_buffers:
     lines += _typed_buffers(fun, symbol)
-  lines += _sparse_tables(fun, symbol, header_sparsities(fun, casadi=casadi))
+  lines += _sparse_tables(fun, symbol, spec.sparsities)
   return "\n".join(lines) + "\n"
 
 
-def _render_source(ctx: _RenderCtx, *, casadi: bool) -> str:
-  return _render_extern_bearing_source(ctx, casadi=casadi) if ctx.externs else render_program_c(ctx.prog, ctx.fun, casadi=casadi)
+def _render_source(ctx: _RenderCtx, adapters: tuple[Adapter, ...]) -> str:
+  return _render_extern_bearing_source(ctx, adapters) if ctx.externs else render_program_c(ctx.prog, ctx.fun, adapters)
 
 
 def _render_extern(fn: ConcreteFunction) -> list[str]:
@@ -317,7 +345,7 @@ def _render_extern(fn: ConcreteFunction) -> list[str]:
   return fn.extern.render(fn, ExternRenderCtx(symbol=symbol, raw_symbol=f"{symbol}_raw"))
 
 
-def _render_extern_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
+def _render_extern_bearing_source(ctx: _RenderCtx, adapters: tuple[Adapter, ...]) -> str:
   """One translation unit for a graph that reaches extern callees. The other Functions (their
   dependencies, the host caller, any intermediates) are Program-IR ``_raw`` callees; each Function
   with an extern body is the C its callee renders, calling them. ``_function_order`` is
@@ -334,7 +362,7 @@ def _render_extern_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
     *abi_status_defines(),
     "",
     *(line for block in req.source_blocks for line in (*block, "")),
-    *(casadi_defines() + [""] if casadi else []),
+    *adapter_defines(adapters),
     "#ifdef __cplusplus",
     'extern "C" {',
     "#endif",
@@ -370,31 +398,26 @@ def _render_extern_bearing_source(ctx: _RenderCtx, *, casadi: bool) -> str:
       flush(fn.name)
   flush(None)
   if fun.extern is not None:
-    lines += _render_extern_entry(fun, ctx.workspace_size, casadi=casadi)
+    lines += _render_extern_entry(fun, ctx.workspace_size, adapters)
   else:
-    lines += _render_entry(procs[fun.name], fun, casadi=casadi)
-  if casadi:
-    lines += ["", *render_casadi_queries(fun, entry_workspace(fun, ctx.workspace_size, casadi=True))]
+    lines += _render_entry(procs[fun.name], fun, adapters)
+  lines += adapter_sources(fun, entry_workspace(fun, ctx.workspace_size, adapters), adapters)
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
   return "\n".join(lines).rstrip() + "\n"
 
 
-def _render_extern_entry(fun: ConcreteFunction, sz_w: int, *, casadi: bool) -> list[str]:
+def _render_extern_entry(fun: ConcreteFunction, sz_w: int, adapters: tuple[Adapter, ...]) -> list[str]:
   """The entry of a root Function with an extern body: the null checks, then one call into it."""
   symbol = c_ident(fun.name)
   res = {name: f"res[{i}]" for i, name in enumerate(fun.output_names)}
-  lines = entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi))
-  epilogue: list[str] = []
-  if casadi:
-    gather = casadi_gather(fun, sz_w)
-    res.update(gather.ptr)
-    lines += gather.setup
-    epilogue = gather.epilogue
+  lines = entry_prologue(fun, entry_workspace(fun, sz_w, adapters))
+  setup, epilogue = wrap_entry(fun, sz_w, adapters, res)
+  lines += setup
   args = [*(f"arg[{i}]" for i in range(len(fun.inputs))), *res.values(), "w"]
   return [*lines, f"  {symbol}_raw({', '.join(args)});", *epilogue, "  return SCALY_SUCCESS;", "}"]
 
 
-def _render_observed(fun: ConcreteFunction, *, casadi: bool) -> tuple[_RenderCtx, str]:
+def _render_observed(fun: ConcreteFunction, adapters: tuple[Adapter, ...]) -> tuple[_RenderCtx, str]:
   """Lower and render ``fun`` under the registered observers: one lowering, one source, and the
   expression, Program, code, and outcome sequence ``scaly.viz`` records."""
   observers = [obs for begin in _RENDER_OBSERVERS if (obs := begin(fun)) is not None]
@@ -408,10 +431,9 @@ def _render_observed(fun: ConcreteFunction, *, casadi: bool) -> tuple[_RenderCtx
       obs.add_normalized_expr(name, normalized)
 
   try:
-    if casadi:
-      check_casadi_layout(fun)
+    _check_layout(fun, adapters)
     ctx = _lower(fun, observe if observers else None, observe_expr if observers else None)
-    source = _render_source(ctx, casadi=casadi)
+    source = _render_source(ctx, adapters)
   except Exception as exc:
     for obs in observers:
       obs.finish(error=repr(exc))
@@ -422,32 +444,33 @@ def _render_observed(fun: ConcreteFunction, *, casadi: bool) -> tuple[_RenderCtx
   return ctx, source
 
 
-def render_c_source(fun: Function, *, casadi: bool = False) -> str:
-  """Render a standalone pointer-ABI C implementation of ``fun`` and its callees. ``casadi`` adds
-  the CasADi 3.8 compatible symbols.
+def _check_layout(fun: ConcreteFunction, adapters: tuple[Adapter, ...]) -> None:
+  for a in adapters:
+    if a.check is not None:
+      a.check(fun)
+
+
+def render_c_source(fun: Function, *, adapters: Sequence[str] = ()) -> str:
+  """Render a standalone pointer-ABI C implementation of ``fun`` and its callees, with what the
+  named output ``adapters`` add to the source (``"casadi"``: the CasADi 3.8 compatible symbols).
 
   A ``LoweringError`` (e.g. a still-deferred mixed-device CALL) propagates — there is no fallback.
   """
   fun = fun.concrete
-  return _render_observed(fun, casadi=casadi)[1]
+  return _render_observed(fun, resolve_adapters(adapters))[1]
 
 
-def _check_lang(lang: str) -> None:
-  if lang not in ("c", "cpp"):
-    raise ValueError(f"lang must be 'c' or 'cpp', got {lang!r}")
-
-
-def render_c_api_header(fun: Function, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> str:
+def render_c_api_header(fun: Function, *, typed_buffers: bool = True, adapters: Sequence[str] = ()) -> str:
   """Render the public header for ``fun``: the ABI declarations, ``SZ_*`` constants, the typed
-  buffers of the chosen ``lang`` (``typed_buffers=False`` omits them from the C header), the
-  sparse-output tables, and with ``casadi`` the CasADi query prototypes."""
+  buffers (``typed_buffers=False`` omits them from the C header), the sparse-output tables, and
+  what the named output ``adapters`` add (``"cpp"`` renders the C++ header instead, ``"casadi"``
+  adds the CasADi query prototypes)."""
   fun = fun.concrete
-  _check_lang(lang)
-  if casadi:
-    check_casadi_layout(fun)
+  resolved = resolve_adapters(adapters)
+  _check_layout(fun, resolved)
   ctx = _lower(fun)
   return _render_header(
-    ctx.fun, requirements(ctx.externs), entry_workspace(fun, ctx.workspace_size, casadi=casadi), typed_buffers=typed_buffers, lang=lang, casadi=casadi
+    ctx.fun, requirements(ctx.externs), entry_workspace(fun, ctx.workspace_size, resolved), typed_buffers=typed_buffers, adapters=resolved
   )
 
 
@@ -457,42 +480,41 @@ def render_c_module(
   header_name: str | None = None,
   source_name: str | None = None,
   typed_buffers: bool = True,
-  lang: str = "c",
-  casadi: bool = False,
+  adapters: Sequence[str] = (),
 ) -> CModule:
-  """Render ``fun`` into its header / ``.c`` pair from a single lowering. The kernel is always C;
-  ``lang`` picks the header a caller includes (``f.h`` or ``f.hpp``) and ``casadi`` adds the
-  CasADi 3.8 compatible symbols to both."""
+  """Render ``fun`` into its header / ``.c`` pair from a single lowering. The kernel is always C.
+  The named output ``adapters`` may replace the header (``"cpp"``: ``f.hpp``) or add a layer to
+  both files (``"casadi"``: the CasADi 3.8 compatible symbols)."""
   fun = fun.concrete
-  _check_lang(lang)
-  ctx, body = _render_observed(fun, casadi=casadi)
+  resolved = resolve_adapters(adapters)
+  ctx, body = _render_observed(fun, resolved)
   symbol = c_ident(fun.name)
+  suffix = next((a.header_suffix for a in resolved if a.header is not None), "h")
   return CModule(
     fun=fun,
-    header_name=f"{symbol}.{'hpp' if lang == 'cpp' else 'h'}" if header_name is None else header_name,
+    header_name=f"{symbol}.{suffix}" if header_name is None else header_name,
     source_name=f"{symbol}.c" if source_name is None else source_name,
     body=body,
     program=ctx.prog,
-    workspace_size=entry_workspace(fun, ctx.workspace_size, casadi=casadi),
+    workspace_size=entry_workspace(fun, ctx.workspace_size, resolved),
     externs=ctx.externs,
     typed_buffers=typed_buffers,
-    lang=lang,
-    casadi=casadi,
+    adapters=tuple(a.name for a in resolved),
   )
 
 
-def workspace_size(fun: Function, *, casadi: bool = False) -> int:
+def workspace_size(fun: Function, *, adapters: Sequence[str] = ()) -> int:
   """Doubles of scratch ``fun`` needs in ``w[]`` — the value its header's ``SZ_W`` quotes.
   ``CModule.workspace_size`` is the same number without a second lowering, so prefer it when the
   module is already in hand."""
   fun = fun.concrete
-  return entry_workspace(fun, _lower(fun).workspace_size, casadi=casadi)
+  return entry_workspace(fun, _lower(fun).workspace_size, resolve_adapters(adapters))
 
 
-def write_module(fun: Function, out_dir: Path, *, typed_buffers: bool = True, lang: str = "c", casadi: bool = False) -> CModule:
+def write_module(fun: Function, out_dir: Path, *, typed_buffers: bool = True, adapters: Sequence[str] = ()) -> CModule:
   """Write ``fun``'s header / ``.c`` into ``out_dir`` and return the module."""
   fun = fun.concrete
-  module = render_c_module(fun, typed_buffers=typed_buffers, lang=lang, casadi=casadi)
+  module = render_c_module(fun, typed_buffers=typed_buffers, adapters=adapters)
   out_dir.mkdir(parents=True, exist_ok=True)
   (out_dir / module.header_name).write_text(module.header)
   (out_dir / module.source_name).write_text(module.source)
@@ -504,12 +526,15 @@ def main(argv: list[str] | None = None) -> None:
   parser.add_argument("target", help="module:attribute naming a Function with every shape declared, or a zero-argument factory returning one")
   parser.add_argument("-o", "--out-dir", type=Path, default=Path(), help="directory to write into (default: cwd)")
   parser.add_argument(
-    "--lang", choices=("c", "cpp"), default="c", help="header language: C structs and f_call (f.h), or C++ Buffer types in a namespace (f.hpp)"
-  )
-  parser.add_argument(
-    "--casadi",
-    action="store_true",
-    help="also export the CasADi 3.8 compatible symbols (f_n_in, f_sparsity_out, f_work, ...) and hand sparse outputs over in compressed-column order",
+    "--adapter",
+    action="append",
+    default=[],
+    metavar="NAME",
+    help=(
+      "apply an output adapter; repeat for several. cpp: a C++ header with Buffer types in a namespace (f.hpp) instead of the C one; "
+      "casadi: the CasADi 3.8 compatible symbols (f_n_in, f_sparsity_out, f_work, ...), sparse outputs in compressed-column order. "
+      "Installed: " + ", ".join(available_adapters())
+    ),
   )
   parser.add_argument("--no-typed-buffers", action="store_true", help="C header only: omit the typed buffer structs and the f_call wrapper")
   args = parser.parse_args(argv)
@@ -524,7 +549,7 @@ def main(argv: list[str] | None = None) -> None:
       f"{args.target} has shape holes; export a concrete instance instead, such as `{attr}_3 = {attr}.instantiate(...)`, "
       f"or a zero-argument factory returning one ({', '.join(fun.instances) or 'no instances are built at import'})"
     )
-  module = write_module(fun, args.out_dir, typed_buffers=not args.no_typed_buffers, lang=args.lang, casadi=args.casadi)
+  module = write_module(fun, args.out_dir, typed_buffers=not args.no_typed_buffers, adapters=args.adapter)
   print(args.out_dir / module.header_name)
   print(args.out_dir / module.source_name)
   print(f"sz_w: {module.workspace_size}")

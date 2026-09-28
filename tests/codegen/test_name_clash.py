@@ -101,9 +101,9 @@ def test_an_output_named_like_its_function_compiles_in_c_and_cpp(tmp_path) -> No
   np.testing.assert_array_equal(selfsparse(np.arange(3.0)).toarray(), np.diag(np.arange(3.0)))
   for fun in (selfnamed, selfsparse):
     for lang in ("c", "cpp"):
-      module = render_c_module(fun, lang=lang)
+      module = render_c_module(fun, adapters=("cpp",) if lang == "cpp" else ())
       (tmp_path / module.header_name).write_text(module.header)
       main = tmp_path / f"main_{fun.name}_{lang}.cpp"
       main.write_text(f'#include "{module.header_name}"\nint main() {{ return 0; }}\n')
       subprocess.run([cxx, "-std=c++17", "-fsyntax-only", str(main)], check=True, cwd=tmp_path)
-  assert "namespace selfsparse_ {" in render_c_module(selfsparse, lang="cpp").header
+  assert "namespace selfsparse_ {" in render_c_module(selfsparse, adapters=("cpp",)).header

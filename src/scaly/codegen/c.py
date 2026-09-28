@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 
 from .abi import abi_status_defines, c_api_signature, c_ident
-from .casadi import casadi_defines, casadi_gather, casadi_scratch, render_casadi_queries
+from .adapter import Adapter, entry_hooks, entry_workspace
 from ..function import ConcreteFunction, Function
 from ..passes.lowering import LoweringError, lower_function, main_proc
 from ..passes.program import ProgramObserver
@@ -81,9 +81,9 @@ def render_program_c_source(fun: Function, observe: ProgramObserver | None = Non
   return render_program_c(lower_function(fun, observe=observe), fun)
 
 
-def render_program_c(prog: ProgramNode, fun: ConcreteFunction, *, casadi: bool = False) -> str:
-  """Render ``fun``'s lowered PROGRAM to a standalone pointer-ABI translation unit. ``casadi`` adds
-  the CasADi query functions and the compressed-column gather (``codegen/casadi.py``)."""
+def render_program_c(prog: ProgramNode, fun: ConcreteFunction, adapters: tuple[Adapter, ...] = ()) -> str:
+  """Render ``fun``'s lowered PROGRAM to a standalone pointer-ABI translation unit, with what the
+  output ``adapters`` add (``codegen/adapter.py``)."""
   proc = main_proc(prog)
   pc = int(prog.attrs.get("proc_count", 1))
   callees = list(prog.args[: pc - 1])
@@ -92,7 +92,7 @@ def render_program_c(prog: ProgramNode, fun: ConcreteFunction, *, casadi: bool =
     "",
     *abi_status_defines(),
     "",
-    *(casadi_defines() + [""] if casadi else []),
+    *adapter_defines(adapters),
     "#ifdef __cplusplus",
     'extern "C" {',
     "#endif",
@@ -101,16 +101,32 @@ def render_program_c(prog: ProgramNode, fun: ConcreteFunction, *, casadi: bool =
   for callee in callees:
     lines += _render_raw_callee(callee)
     lines.append("")
-  lines += _render_entry(proc, fun, casadi=casadi)
-  if casadi:
-    lines += ["", *render_casadi_queries(fun, entry_workspace(fun, int(proc.attrs.get("sz_w", 0)), casadi=True))]
+  lines += _render_entry(proc, fun, adapters)
+  lines += adapter_sources(fun, entry_workspace(fun, int(proc.attrs.get("sz_w", 0)), adapters), adapters)
   lines += ["", "#ifdef __cplusplus", "}", "#endif"]
   return "\n".join(lines).rstrip() + "\n"
 
 
-def entry_workspace(fun: ConcreteFunction, sz_w: int, *, casadi: bool) -> int:
-  """The ``SZ_W`` an entry needs: the packed spill size plus, under ``casadi``, the gather scratch."""
-  return sz_w + (casadi_scratch(fun) if casadi else 0)
+def adapter_defines(adapters: tuple[Adapter, ...]) -> list[str]:
+  """The adapters' definitions for the top of a source, each block followed by a blank line."""
+  return [line for a in adapters if a.defines for line in (*a.defines, "")]
+
+
+def adapter_sources(fun: ConcreteFunction, sz_w: int, adapters: tuple[Adapter, ...]) -> list[str]:
+  """What the adapters append after the entry; ``sz_w`` is the entry's total workspace."""
+  return [line for a in adapters if a.extra_source is not None for line in ("", *a.extra_source(fun, sz_w))]
+
+
+def wrap_entry(fun: ConcreteFunction, sz_w: int, adapters: tuple[Adapter, ...], res: dict[str, str]) -> tuple[list[str], list[str]]:
+  """Apply the adapters' entry hooks: redirect outputs in ``res`` (output name to pointer) and
+  return the setup and epilogue lines. ``sz_w`` is the packed workspace, before adapter shares."""
+  setup: list[str] = []
+  epilogue: list[str] = []
+  for hook in entry_hooks(fun, sz_w, adapters):
+    res.update(hook.ptr)
+    setup += hook.setup
+    epilogue += hook.epilogue
+  return setup, epilogue
 
 
 def entry_prologue(fun: ConcreteFunction, sz_w: int) -> list[str]:
@@ -129,7 +145,7 @@ def entry_prologue(fun: ConcreteFunction, sz_w: int) -> list[str]:
   return lines
 
 
-def _render_entry(proc: ProgramNode, fun: ConcreteFunction, *, casadi: bool = False) -> list[str]:
+def _render_entry(proc: ProgramNode, fun: ConcreteFunction, adapters: tuple[Adapter, ...] = ()) -> list[str]:
   """Emit the pointer-ABI entry ``<symbol>(arg,res,iw,w,mem)`` with ``fun``'s main PROC body
   inlined. ``codegen/aot.py`` reuses this for solver-bearing functions, so the top function's body
   lowers through Program IR exactly like any other host function."""
@@ -146,14 +162,12 @@ def _render_entry(proc: ProgramNode, fun: ConcreteFunction, *, casadi: bool = Fa
   out_buffers = params[n_in:]
   ptr_expr.update({name: f"res[{i}]" for i, name in enumerate(out_buffers)})
 
-  lines = entry_prologue(fun, entry_workspace(fun, sz_w, casadi=casadi))
-  epilogue: list[str] = []
-  if casadi:
-    gather = casadi_gather(fun, sz_w)
-    by_output = dict(zip(fun.output_names, out_buffers, strict=True))
-    ptr_expr.update({by_output[name]: ptr for name, ptr in gather.ptr.items()})
-    lines += gather.setup
-    epilogue = gather.epilogue
+  lines = entry_prologue(fun, entry_workspace(fun, sz_w, adapters))
+  redirected: dict[str, str] = {}
+  setup, epilogue = wrap_entry(fun, sz_w, adapters, redirected)
+  by_output = dict(zip(fun.output_names, out_buffers, strict=True))
+  ptr_expr.update({by_output[name]: ptr for name, ptr in redirected.items()})
+  lines += setup
   _emit_local_buffers(body, lines, ptr_expr, indent=2)
   _emit_body(body, ptr_expr, lines, indent=2)
   lines += [*epilogue, "  return SCALY_SUCCESS;", "}"]

@@ -1,15 +1,14 @@
-"""The C++ header (``lang="cpp"``): the guarded ``Buffer<T, Ns...>`` template with inline aligned
-storage and a ``constexpr`` shape, and one namespace per function holding the buffer aliases,
-``constexpr`` sizes and sparsity tables, and ``call``. It declares the same C kernel the C header
-does (``docs/how_it_works/generated_interface.md``)."""
+"""The C++ header, the ``cpp`` output adapter: the guarded ``Buffer<T, Ns...>`` template with inline
+aligned storage and a ``constexpr`` shape, and one namespace per function holding the buffer
+aliases, ``constexpr`` sizes and sparsity tables, and ``call``. It declares the same C kernel the C
+header does (``docs/how_it_works/generated_interface.md``)."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from .abi import abi_status_defines, buffer_idents, c_api_signature, c_ident
-from .casadi import casadi_declarations, casadi_defines
-from ..function import ConcreteFunction
+from .adapter import HeaderSpec, register_adapter
 
 if TYPE_CHECKING:
   from ..ir.types import SparsityType
@@ -71,19 +70,11 @@ def _sparse_namespace(ident: str, sp: SparsityType) -> list[str]:
   ]
 
 
-def render_cpp_header(
-  fun: ConcreteFunction,
-  header_types: tuple[str, ...],
-  declarations: tuple[str, ...],
-  sz_w: int,
-  *,
-  casadi: bool,
-  sparsities: tuple[SparsityType | None, ...],
-) -> str:
-  """The ``.hpp`` for ``fun``. The kernel symbols are declared ``extern "C"`` inside the function's
-  namespace, since a namespace and a function cannot share the global name; C linkage keeps the
-  symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``. ``header_types`` and
-  ``declarations`` are what the extern callees ``fun`` reaches add (``codegen/aot.py``)."""
+def render_cpp_header(spec: HeaderSpec) -> str:
+  """The ``.hpp`` for ``spec.fun``. The kernel symbols are declared ``extern "C"`` inside the
+  function's namespace, since a namespace and a function cannot share the global name; C linkage
+  keeps the symbol unmangled, so ``f::f`` is the same entry a C caller reaches as ``f``."""
+  fun, sz_w = spec.fun, spec.sz_w
   symbol = c_ident(fun.name)
   inputs, outputs = buffer_idents(fun)
   params = [f"const {i}_t& {i}" for i in inputs] + [f"{o}_t& {o}" for o in outputs] + ["workspace_t& workspace"]
@@ -95,10 +86,10 @@ def render_cpp_header(
     "#include <array>",
     "#include <cassert>",
     "#include <cstddef>",
-    *(["#include <cstdint>", "", *header_types] if header_types else []),
+    *(["#include <cstdint>", "", *spec.types] if spec.types else []),
     "",
     *abi_status_defines(guarded=True),
-    *(["", *casadi_defines()] if casadi else []),
+    *(["", *spec.defines] if spec.defines else []),
     "",
     f"#define {symbol}_SZ_ARG {len(fun.inputs)}",
     f"#define {symbol}_SZ_RES {len(fun.outputs)}",
@@ -110,8 +101,7 @@ def render_cpp_header(
     f"namespace {symbol} {{",
     f"// The pointer ABI for {fun.name}; the same C symbols the C header declares.",
     'extern "C" ' + c_api_signature(symbol) + ";",
-    *(f'extern "C" {decl}' for decl in declarations),
-    *(f'extern "C" {decl}' for decl in (casadi_declarations(symbol) if casadi else [])),
+    *(f'extern "C" {decl}' for decl in spec.declarations),
     "",
     *(_buffer_alias(i, e.shape) for i, e in zip(inputs, fun.inputs, strict=True)),
     *(_buffer_alias(o, e.shape) for o, e in zip(outputs, fun.outputs, strict=True)),
@@ -128,8 +118,11 @@ def render_cpp_header(
     "}",
   ]
   # Named by the output's buffer identifier, which never repeats the function's own symbol.
-  for ident, sp in zip(outputs, sparsities, strict=True):
+  for ident, sp in zip(outputs, spec.sparsities, strict=True):
     if sp is not None:
       lines += ["", *_sparse_namespace(ident, sp)]
   lines += [f"}}  // namespace {symbol}"]
   return "\n".join(lines) + "\n"
+
+
+register_adapter("cpp", header=render_cpp_header, header_suffix="hpp", source_includes_header=False)
