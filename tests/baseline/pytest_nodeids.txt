@@ -561,6 +561,7 @@ tests/codegen/test_jit.py::test_a_loop_of_calls_does_not_grow_memory
 tests/codegen/test_jit.py::test_build_survives_its_cache_directory_vanishing
 tests/codegen/test_jit.py::test_call_uses_jit_and_matches_numpy
 tests/codegen/test_jit.py::test_calls_leave_no_reference_cycles
+tests/codegen/test_jit.py::test_compiler_identity_reads_the_banner_once
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[_h0]
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v0]
 tests/codegen/test_jit.py::test_deep_block_callee_temporaries_do_not_shadow_inputs[v:0]
@@ -579,6 +580,10 @@ tests/codegen/test_jit.py::test_inputs_of_every_memory_kind
 tests/codegen/test_jit.py::test_integer_inputs_reach_callees_as_integers
 tests/codegen/test_jit.py::test_invalidate_cache_handles_missing_directory
 tests/codegen/test_jit.py::test_is_gcc_reads_the_compilers_banner
+tests/codegen/test_jit.py::test_jit_cache_key_is_stable_for_one_compiler
+tests/codegen/test_jit.py::test_jit_cache_key_names_the_compiler[other-compiler]
+tests/codegen/test_jit.py::test_jit_cache_key_names_the_compiler[other-install]
+tests/codegen/test_jit.py::test_jit_cache_key_names_the_compiler[upgraded-in-place]
 tests/codegen/test_jit.py::test_jit_cache_key_stable_across_function_instances
 tests/codegen/test_jit.py::test_jit_compile_command_targets_host
 tests/codegen/test_jit.py::test_jit_handles_multi_output

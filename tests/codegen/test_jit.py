@@ -26,7 +26,15 @@ def isolated_cache(tmp_path, monkeypatch):
   yield tmp_path
 
 
-def _simple_fn() -> sc.Function:
+def _read_banner() -> None:
+  """Read the compiler's ``--version`` banner, which the JIT reads once per process, before a test
+  records the subprocesses a build runs: otherwise the first build in a process runs two."""
+  compiler = jit.find_c_compiler()
+  assert compiler is not None
+  jit.compiler_identity(compiler.cc)
+
+
+def _simple_fn() -> sc.ConcreteFunction:
   x = sc.sym("x", 3)
   y = (x.sin() + x * x).sum()
   return sc.Function._from_exprs("smoke_jit", [x], [y], ["x"], ["y"])
@@ -48,6 +56,56 @@ def test_jit_cache_key_stable_across_function_instances(isolated_cache) -> None:
   a(np.zeros(3))
   b(np.zeros(3))
   assert a._compiled.cache_key == b._compiled.cache_key
+
+
+_APPLE_CLANG = ("/usr/bin/cc", "Apple clang version 21.0.0 (clang-2100.1.1.101)\nTarget: arm64-apple-darwin25.6.0\n")
+_GCC_15_1 = ("/opt/homebrew/bin/gcc-15", "gcc-15 (Homebrew GCC 15.1.0) 15.1.0\nCopyright (C) 2025 Free Software Foundation, Inc.\n")
+_GCC_15_2 = ("/opt/homebrew/bin/gcc-15", "gcc-15 (Homebrew GCC 15.2.0_1) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\n")
+_GCC_15_2_ELSEWHERE = ("/opt/gcc-15/bin/gcc-15", _GCC_15_2[1])
+
+
+@pytest.fixture
+def fake_compiler(isolated_cache, monkeypatch):
+  """Resolve the compiler to a stated path and ``--version`` banner, and "compile" by touching the
+  library, so cache keys can be compared across compilers the machine need not have. Returns the
+  function that switches compilers."""
+  from scaly.codegen import toolchain
+
+  def use(compiler: tuple[str, str]) -> None:
+    cc, banner = compiler
+    monkeypatch.setattr(jit, "find_c_compiler", lambda: toolchain.Compiler(cc, "SCALY_CC"))
+    monkeypatch.setattr(toolchain, "_version_banner", lambda _: banner)
+
+  monkeypatch.setattr(jit, "_compile_into", lambda cache_dir, source, lib, *_: cache_dir.mkdir(parents=True, exist_ok=True) or lib.touch())
+  return use
+
+
+@pytest.mark.parametrize(
+  "first, second",
+  [(_APPLE_CLANG, _GCC_15_2), (_GCC_15_1, _GCC_15_2), (_GCC_15_2_ELSEWHERE, _GCC_15_2)],
+  ids=["other-compiler", "upgraded-in-place", "other-install"],
+)
+def test_jit_cache_key_names_the_compiler(fake_compiler, first, second) -> None:
+  """Clang and GCC 12 or later get the same flags, an upgrade keeps the path and two installs can
+  share a version: the key tells them apart by the compiler's path and version line. Both key sites
+  do, or ``recompile`` would miss."""
+  fake_compiler(first)
+  flags = jit.compile_flags()
+  before = jit._build_artifact(_simple_fn())
+  fake_compiler(second)
+  assert jit.compile_flags() == flags
+  after = jit._build_artifact(_simple_fn())
+  assert after.key != before.key
+  assert after.lib_path.parent != before.lib_path.parent and before.lib_path.exists()
+  jit.invalidate_cache(_simple_fn())
+  assert not after.lib_path.parent.exists() and before.lib_path.exists()
+
+
+def test_jit_cache_key_is_stable_for_one_compiler(fake_compiler) -> None:
+  fake_compiler(_GCC_15_2)
+  first = jit._build_artifact(_simple_fn())
+  jit._artifact_cache.clear()
+  assert jit._build_artifact(_simple_fn()).key == first.key
 
 
 def test_recompile_clears_cache_and_recompiles(isolated_cache) -> None:
@@ -106,6 +164,7 @@ def test_invalidate_cache_handles_missing_directory(isolated_cache) -> None:
 def test_jit_compile_command_targets_host(isolated_cache, monkeypatch) -> None:
   commands: list[list[str]] = []
   real_run = jit.subprocess.run
+  _read_banner()
   monkeypatch.setattr(jit.subprocess, "run", lambda cmd, **kwargs: commands.append(cmd) or real_run(cmd, **kwargs))
   _simple_fn()(np.zeros(3))
   (cmd,) = commands
@@ -349,7 +408,7 @@ def test_a_failing_compile_is_not_retried(isolated_cache, monkeypatch) -> None:
     calls.append(cmd)
     raise jit.subprocess.CalledProcessError(1, cmd, stderr="boom")
 
-  jit.compile_flags()  # asks the compiler for its banner once per process; not a compile
+  _read_banner()
   monkeypatch.setattr(jit.subprocess, "run", failing_run)
   with pytest.raises(jit.JitError, match="boom"):
     _simple_fn()(np.zeros(3))
@@ -414,3 +473,14 @@ def test_is_gcc_reads_the_compilers_banner(monkeypatch) -> None:
   gcc_banner = "gcc (GCC) 11.4.0\nCopyright (C) 2021 Free Software Foundation, Inc.\n"
   monkeypatch.setattr(toolchain, "_version_banner", lambda cc: gcc_banner if cc == "gcc" else "clang version 18\n")
   assert toolchain.is_gcc("gcc") and not toolchain.is_gcc("clang")
+
+
+def test_compiler_identity_reads_the_banner_once(tmp_path, monkeypatch) -> None:
+  """The key costs one ``--version`` per process per compiler, and keeps the banner's first line."""
+  from scaly.codegen import toolchain
+
+  cc, banner = str(tmp_path / "gcc-15"), _GCC_15_2[1]
+  runs: list[list[str]] = []
+  monkeypatch.setattr(toolchain.subprocess, "run", lambda cmd, **_: runs.append(cmd) or jit.subprocess.CompletedProcess(cmd, 0, stdout=banner))
+  assert toolchain.compiler_identity(cc) == toolchain.compiler_identity(cc) == (cc, "gcc-15 (Homebrew GCC 15.2.0_1) 15.2.0")
+  assert runs == [[cc, "--version"]]

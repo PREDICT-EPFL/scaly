@@ -211,7 +211,7 @@ Plugins must not duplicate any of this:
 - The universal C ABI entry point, workspace packing, and the `_raw` kernel rendering (Program IR).
 - The `scaly_solver_stats` struct, the `SCALY_SOLVE_*` status enum, and `scaly_clock_s`. Plugins
   fill and use them, never redefine them.
-- JIT compilation, caching (keyed on source and flags), and library/header discovery.
+- JIT compilation, caching (keyed on source, compiler and flags), and library/header discovery.
 - The typed `Function` call interface and `Function.solver_stats()`.
 
 ## Checklist for a new plugin

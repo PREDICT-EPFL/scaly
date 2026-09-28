@@ -5,7 +5,8 @@ rendering decisions of its own.
 
 - ``SCALY_CACHE_DIR`` overrides the on-disk cache root (default: ``$XDG_CACHE_HOME/scaly/jit``
   or ``~/.cache/scaly/jit``).
-- ``SCALY_CC`` overrides the C compiler binary (default: ``cc`` from ``$PATH``).
+- ``SCALY_CC`` overrides the C compiler binary (default: ``cc`` from ``$PATH``). Its path and
+  version are part of the cache key, so switching compilers never reuses the other's library.
 - ``SCALY_CC_OPT`` overrides the optimization flag (default: ``-O2``). Benchmark harnesses that
   compile a baseline at ``-O3`` should set it, so both sides of a comparison get the same level.
   At ``-O2`` GCC before version 12 also gets ``-ftree-vectorize``: from 12 on GCC vectorizes at
@@ -36,7 +37,7 @@ from .abi import C_API_SIGNATURE, c_ident
 from .aot import render_c_module
 from .solver import solver_stats_symbols
 from ..solvers.stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats
-from .toolchain import cache_root, find_c_compiler, gcc_major, is_gcc
+from .toolchain import cache_root, compiler_identity, find_c_compiler, gcc_major, is_gcc
 from ..utils.env import shared_lib_ext, shared_lib_flag
 
 if TYPE_CHECKING:
@@ -128,13 +129,14 @@ def compile_flags() -> tuple[str, ...]:
   return (opt, *(vectorize_flags(opt, compiler.cc) if compiler is not None else ()), *HOST_CFLAGS)
 
 
-def _compute_cache_key(source: str, *, fun_name: str, compile_flags: tuple[str, ...] = ()) -> str:
+def _compute_cache_key(source: str, *, fun_name: str, compiler: tuple[str, ...], compile_flags: tuple[str, ...] = ()) -> str:
   """SHA-256 over the rendered C source plus the cache-version and ABI signature.
 
   Any change to the codegen output, the ABI surface, or `_JIT_CACHE_VERSION` invalidates
   previously cached artifacts. Function names and compile/link flags are included so two
   functions that happen to share a source skeleton (different symbols or solver rpaths) still
-  get distinct entries.
+  get distinct entries. ``compiler`` is ``toolchain.compiler_identity``, since the flags alone do
+  not tell clang from GCC 12 or later.
   """
   h = hashlib.sha256()
   h.update(_JIT_CACHE_VERSION.encode())
@@ -144,9 +146,9 @@ def _compute_cache_key(source: str, *, fun_name: str, compile_flags: tuple[str, 
   h.update(fun_name.encode())
   h.update(b"\0")
   h.update(source.encode())
-  for flag in compile_flags:
+  for part in (*compiler, *compile_flags):
     h.update(b"\0")
-    h.update(flag.encode())
+    h.update(part.encode())
   return h.hexdigest()
 
 
@@ -182,10 +184,10 @@ def _build_artifact(fun: ConcreteFunction) -> _Artifact:
   extra_flags = module.link_flags
   # The cache compiles ``body`` — the translation unit without the header include a written-out
   # ``.c`` carries — so the key is a hash of exactly the text handed to the compiler.
-  # The compile flags are part of the key: two flag sets produce different machine code from the
-  # same source, so they must not share a cache entry.
+  # The compiler and the compile flags are part of the key: changing either changes the machine
+  # code built from the same source, so the two builds must not share a cache entry.
   flags = compile_flags()
-  key = _compute_cache_key(module.body, fun_name=fun.name, compile_flags=(*flags, *extra_flags))
+  key = _compute_cache_key(module.body, fun_name=fun.name, compiler=compiler_identity(cc), compile_flags=(*flags, *extra_flags))
   with _artifact_lock:
     cached = _artifact_cache.get(key)
   if cached is not None and cached.lib_path.exists():
@@ -407,13 +409,19 @@ def invalidate_cache(fun: ConcreteFunction) -> None:
   """Drop both the in-memory artifact entry and the on-disk cache directory for ``fun``.
 
   Safe to call when nothing is cached yet; codegen failures (``NotImplementedError``) are
-  swallowed since there cannot be a corresponding cache entry to remove.
+  swallowed since there cannot be a corresponding cache entry to remove. Only the current
+  compiler's entry goes; libraries other compilers built for ``fun`` stay.
   """
+  compiler = find_c_compiler()
+  if compiler is None:
+    return  # nothing can have been built without one
   try:
     module = render_c_module(fun)
   except NotImplementedError:
     return
-  key = _compute_cache_key(module.body, fun_name=fun.name, compile_flags=(*compile_flags(), *module.link_flags))
+  key = _compute_cache_key(
+    module.body, fun_name=fun.name, compiler=compiler_identity(compiler.cc), compile_flags=(*compile_flags(), *module.link_flags)
+  )
   with _artifact_lock:
     _artifact_cache.pop(key, None)
   cache_dir = cache_root() / key

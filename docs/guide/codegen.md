@@ -21,8 +21,11 @@ later call in this process reuses the loaded handle. Every later call in any pro
 cached library, because the cache lives on disk.
 
 The cache key is a SHA-256 over the cache format version, the ABI signature, the function name, the
-generated source text and the compile flags. Two functions that render to the same source but have
-different names or different flags get different entries; two that are identical share one.
+generated source text, the compiler and the compile flags. The compiler is its path and the first
+line of its `--version` output, read once per process. Two functions that render to the same source
+but have different names or different flags get different entries; two that are identical share one.
+Switching `SCALY_CC`, or upgrading the compiler in place, builds a new entry rather than loading one
+another compiler built.
 
 ```python
 fn.recompile()    # drop the in-process handle and the on-disk entry for this function

@@ -71,7 +71,7 @@ grad(np.array([1.0, 2.0]))
 | 9 | `verify_program` checks the result before anything renders it. | `ir/program_spec.py` |
 | 10 | `render_program_c` emits the translation unit: the callee bodies, then the one entry point exported through the universal ABI, the single pointer-array C signature every generated function shares. | `codegen/c.py` |
 | 11 | Header, source, workspace size and solver link flags are packaged as a `CModule`. | `codegen/aot.py` |
-| 12 | A SHA-256 over (cache version, ABI signature, function name, source text, compile flags) keys the artifact. On a miss, `cc` builds a shared library; then `dlopen` and a ctypes call through that ABI. The library is cached under `$XDG_CACHE_HOME/scaly/jit` (or `SCALY_CACHE_DIR`) and reused by every function with the same key. | `codegen/jit.py` |
+| 12 | A SHA-256 over (cache version, ABI signature, function name, source text, compiler path and version, compile flags) keys the artifact. On a miss, `cc` builds a shared library; then `dlopen` and a ctypes call through that ABI. The library is cached under `$XDG_CACHE_HOME/scaly/jit` (or `SCALY_CACHE_DIR`) and reused by every function with the same key. | `codegen/jit.py` |
 
 AOT stops at step 11 and writes the pair to disk (`uv run scaly_codegen <module>:<attr> -o <dir>`).
 Both consumers read the same `CModule`, so the header's `SZ_W`, the source's spill size and the
@@ -215,9 +215,11 @@ lazy; otherwise rendering a solver-bearing module requires the vendored librarie
 just to produce text.
 
 `codegen/jit.py` consumes that same `CModule` and adds nothing to it. It keys the cache on a
-SHA-256 over the cache version, the ABI signature, the function name, the source text and the
-compile flags, so two functions sharing a source skeleton but not a symbol still get distinct
-artifacts. `_JIT_CACHE_VERSION` is bumped when generated output changes incompatibly. On Linux,
+SHA-256 over the cache version, the ABI signature, the function name, the source text, the
+compiler and the compile flags, so two functions sharing a source skeleton but not a symbol still
+get distinct artifacts. The compiler is `toolchain.compiler_identity`, its path and the first line
+of its `--version` output, since clang and GCC 12 or later get the same flags.
+`_JIT_CACHE_VERSION` is bumped when generated output changes incompatibly. On Linux,
 solver-bearing artifacts load into an isolated linker namespace to keep vendored dependencies out
 of the host process.
 

@@ -44,6 +44,15 @@ def find_c_compiler() -> Compiler | None:
   return Compiler(found, "PATH") if found is not None else None
 
 
+def compiler_identity(cc: str) -> tuple[str, str]:
+  """``cc``'s path and the first line of its ``--version`` banner, which names the compiler and its
+  version (``Apple clang version 21.0.0 (clang-2100.1.1.101)``, ``gcc-15 (Homebrew GCC 15.2.0)
+  15.2.0``). The JIT keys its cache on both, since clang and GCC 12 or later get the same flags and
+  a compiler upgraded in place keeps its path. The banner is read once per process per compiler."""
+  banner = _version_banner(cc)
+  return cc, banner.splitlines()[0] if banner else ""
+
+
 def is_gcc(cc: str) -> bool:
   """Whether ``cc`` is GCC, from its ``--version`` banner; ``cc`` is often GCC on Linux and clang on macOS."""
   return _is_gcc_banner(_version_banner(cc))
