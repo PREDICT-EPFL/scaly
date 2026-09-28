@@ -2,6 +2,7 @@
 
     uv run examples/casadi/compare.py                 # every pair, 3 fresh processes per variant
     uv run examples/casadi/compare.py rocket race_car --processes 5
+    uv run examples/casadi/compare.py --dir examples/interp/pairs   # the pairs in another directory
 
 There are up to three variants per pair: the CasADi file as written (oracles evaluated by CasADi's
 virtual machine, unless the original compiles them), the same file with ``CASADI_JIT=1`` when it
@@ -39,13 +40,14 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
+PAIRS = HERE  # where the pairs are: this directory, or --dir
 RTOL = 1e-6  # agreement: max |casadi - scaly| <= RTOL * max(max |casadi|, FLOOR), per array
 FLOOR = 1e-2  # arrays smaller than this (multipliers of inactive constraints, a zero optimum) compare absolutely
 JIT_CALL = re.compile(r"casadi_jit\((expand=False)?\)")
 
 
 def pairs() -> list[str]:
-  return sorted(p.name.removesuffix("_casadi.py") for p in HERE.glob("*_casadi.py") if (HERE / p.name.replace("_casadi", "_scaly")).exists())
+  return sorted(p.name.removesuffix("_casadi.py") for p in PAIRS.glob("*_casadi.py") if (PAIRS / p.name.replace("_casadi", "_scaly")).exists())
 
 
 def code_lines(path: Path) -> int:
@@ -64,7 +66,7 @@ def code_lines(path: Path) -> int:
 
 
 def variants(name: str) -> list[str]:
-  jit = JIT_CALL.search((HERE / f"{name}_casadi.py").read_text()) is not None
+  jit = JIT_CALL.search((PAIRS / f"{name}_casadi.py").read_text()) is not None
   return ["casadi", *(["casadi_jit"] if jit else []), "scaly"]
 
 
@@ -80,6 +82,7 @@ def worker(name: str, side: str, min_time: float, max_reps: int) -> None:
     import scaly  # noqa: F401
     import scaly.codegen  # noqa: F401
   sys.path.insert(0, str(HERE))
+  sys.path.insert(0, str(PAIRS))  # a pair directory's own _common, if it has one, comes first
   import _common  # noqa: F401
 
   t0 = time.perf_counter()
@@ -107,7 +110,7 @@ def measure(name: str, side: str, processes: int, min_time: float, max_reps: int
     with tempfile.TemporaryDirectory(prefix="casadi-examples-") as work:  # the Scaly JIT cache, and where CasADi's JIT writes
       env = {**os.environ, "SCALY_CACHE_DIR": work, "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MPLBACKEND": "Agg"}
       env["CASADI_JIT"] = "1" if side == "casadi_jit" else "0"
-      cmd = [sys.executable, __file__, "--worker", name, side, "--min-time", str(min_time), "--max-reps", str(max_reps)]
+      cmd = [sys.executable, __file__, "--worker", name, side, "--dir", str(PAIRS), "--min-time", str(min_time), "--max-reps", str(max_reps)]
       proc = subprocess.run(cmd, env=env, capture_output=True, text=True, cwd=work)
     if proc.returncode != 0:
       if side == "casadi_jit":  # a JIT build that fails (gcc out of memory, say) is a result, not an error
@@ -116,7 +119,7 @@ def measure(name: str, side: str, processes: int, min_time: float, max_reps: int
       raise RuntimeError(f"{name}_{side} failed:\n{proc.stderr[-3000:]}")
     records.append(json.loads(proc.stdout.strip().splitlines()[-1]))
   summary = {key: statistics.median(r[key] for r in records) for key in ("build", "first", "run", "setup")}
-  return {**summary, "reps": records[0]["reps"], "out": records[0]["out"], "loc": code_lines(HERE / f"{name}_{side.removesuffix('_jit')}.py")}
+  return {**summary, "reps": records[0]["reps"], "out": records[0]["out"], "loc": code_lines(PAIRS / f"{name}_{side.removesuffix('_jit')}.py")}
 
 
 def agreement(a: dict[str, list[float]], b: dict[str, list[float]]) -> dict:
@@ -187,6 +190,7 @@ def machine() -> str:
 def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
   parser.add_argument("names", nargs="*", help="pairs to run (default: all)")
+  parser.add_argument("--dir", type=Path, default=HERE, help="the directory holding the pairs (default: this one)")
   parser.add_argument("--processes", type=int, default=3)
   parser.add_argument("--min-time", type=float, default=1.0, help="seconds of repeated runs per process")
   parser.add_argument("--max-reps", type=int, default=200)
@@ -194,6 +198,8 @@ def main() -> None:
   parser.add_argument("--resume", action="store_true", help="keep the pairs already in --json and run the rest")
   parser.add_argument("--worker", nargs=2, metavar=("NAME", "SIDE"), help=argparse.SUPPRESS)
   args = parser.parse_args()
+  global PAIRS
+  PAIRS = args.dir.resolve()
   if args.worker:
     worker(args.worker[0], args.worker[1], args.min_time, args.max_reps)
     return
@@ -212,7 +218,7 @@ def main() -> None:
   results = {name: results[name] for name in sorted(results)}
   for name, r in results.items():  # code size from the files as they are now, also for resumed pairs
     for side in ("casadi", "scaly"):
-      r[side]["loc"] = code_lines(HERE / f"{name}_{side}.py")
+      r[side]["loc"] = code_lines(PAIRS / f"{name}_{side}.py")
   print(f"Machine: {machine()}\n")
   print(table(results))
   if not all(r["agreement"]["ok"] for r in results.values()):

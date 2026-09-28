@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 187**
+**Next id: 188**
 
 | Prefix | Section |
 |---|---|
@@ -219,7 +219,20 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       fits exposed two Python loops in the core sparsity code, now sparse products: the matmul
       pattern and the star-colouring recovery (a 16x16 map's first call 56 s to 6.4 s). 27/27
       mutants killed, three after a test change. Report: `notes/interp_sp5_report.html`.
-- [ ] **API-176. Interpolation notebooks and CasADi pairs** (interp plan SP6).
+- [x] **API-176. Interpolation notebooks and CasADi pairs** (interp plan SP6). Six executed
+      notebooks in `examples/interp/`: every kind against SciPy, n-D tables with search and layout
+      timings and a C `main` passing a table in, calibration and Hammerstein identification with
+      the Jacobian pattern at known against symbolic points, shape-constrained fits with KKT
+      checks and an OCV inverse, a closed-loop MPCC lap on one periodic arc-length spline, spline
+      trajectories with Bezier convex-hull obstacle constraints as a PIQP QP. Five CasADi pairs in
+      `examples/interp/pairs/`, `compare.py --dir`: all agree (2e-10 at worst, CasADi's bicubic
+      fit), same iteration counts, Scaly 2.5x to 860x faster per run than CasADi's VM, 2x to 420x
+      than its JIT. Report: `notes/interp_sp6_report.html`.
+- [ ] **C-187. One copy of a constant table per generated module.** Each generated function
+      embeds its own copy of every constant it reads, so a spline table read by a stage cost, a path
+      constraint and their derivatives is emitted six times (`contouring_control.ipynb`: 941 kB of
+      C, most of it the track's 5 440-value table). Emit each distinct constant once at file scope
+      and reference it from every function.
 - [ ] **API-178. Interpolation review round** (interp plan SPR).
 
 ### Deferred

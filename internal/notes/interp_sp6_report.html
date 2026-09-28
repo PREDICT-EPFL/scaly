@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interpolation SP6 report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Interpolation · SP6 report</h1>
+<p class="sub">API-176 · notebooks and CasADi pairs · branch <code>claude/interp</code> · 28 Sep 2026 · plan <code>interp_plan_2026_09_28.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Six executed notebooks in <code>examples/interp/</code>, five CasADi pairs in <code>examples/interp/pairs/</code>, and <code>compare.py --dir</code>.</p>
+<ul>
+<li><b>The notebooks</b> end in assertion cells against SciPy, papers, CasADi, <code>trust-constr</code>, finite differences, KKT conditions or an adaptive integrator. <code>tests/integration/test_notebooks.py</code> runs them, which takes 30 s with the JIT cache warm.</li>
+<li><b>The pairs</b> all agree. The only gap above 10⁻¹³ is a 2·10⁻¹⁰ bicubic Hessian, which comes from CasADi's own fit. Both sides take the same number of IPOPT iterations in every pair.</li>
+<li><b>Run times</b>: Scaly is 2.5× to 860× faster than CasADi's virtual machine, and 2× to 420× faster than CasADi with its oracles compiled.</li>
+<li><b>No library code changed.</b> The work found seven things for later, listed in §5. Among them: CasADi's parametric interpolants have a zero derivative in their data unless inlined, and its <code>bspline</code> is zero outside its grid; Scaly repeats a constant table in every generated function that reads it (C-187, new); and <code>auto</code> misses a faster search on small axes in batches.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 900 passed, 45 skipped. ruff and ty clean on the pairs and the changed files. <b>Mutation checks:</b> 5 of 5 killed by the notebooks' own checks.</p>
+</div>
+
+<h2>1. What changed</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>examples/interp/*.ipynb</code></td><td>Six notebooks, authored as percent-format scripts, converted by jupytext, executed by nbconvert, and saved with their outputs. Each writes its C to <code>examples/generated/interp/&lt;name&gt;/</code>.</td></tr>
+<tr><td><code>examples/interp/pairs/</code></td><td>
+<ul>
+<li>Five pairs, each <code>&lt;name&gt;_casadi.py</code> and <code>&lt;name&gt;_scaly.py</code>, following <code>examples/casadi</code>.</li>
+<li><code>_data.py</code> holds the data both halves use, from fixed seeds, plus typed configurations (frozen dataclasses), so neither side's line count includes them.</li>
+<li><code>_common.py</code> loads <code>examples/casadi/_common.py</code> by path, so a pair runs on its own from any directory.</li>
+</ul></td></tr>
+<tr><td><code>examples/interp/data/fsds_competition_1.csv</code></td><td>The FSDS centre line, copied from the race-car benchmark's vendored tracks.</td></tr>
+<tr><td><code>examples/interp/README.md</code></td><td>The notebooks and pairs, the <code>compare.py</code> table with its machine, and what the examples ran into.</td></tr>
+<tr><td><code>examples/casadi/compare.py</code></td><td><code>--dir</code>: the directory of the pairs, passed to the worker processes, with its own <code>_common</code> first on the path. Nothing else changed, as §12 of the plan asked.</td></tr>
+<tr><td><code>tests/integration/test_notebooks.py</code></td><td>Names of the form <code>interp/&lt;name&gt;</code>, resolved under <code>examples/</code>, and <code>SOLVER</code> markers for the four that need IPOPT or PIQP. This is the same harness change as the one the MPC notebooks carry in the main checkout, so the two merge by adding lines.</td></tr>
+</table></div>
+
+<h2>2. The notebooks</h2>
+<div class="scroll"><table>
+<tr><th>Notebook</th><th>Headline results</th><th>Checks</th></tr>
+<tr><td><code>interpolation_kinds</code></td><td>
+<ul>
+<li>All ten kinds match SciPy, Steffen's paper or CasADi to 2·10⁻¹⁵.</li>
+<li>The measured smoothness class is right for every kind (steps, C⁰, C¹, C², C⁴).</li>
+<li>Overshoot on a staircase: 0.44 for the C² cubic, 0 for PCHIP and Steffen.</li>
+<li><code>extend</code> matches SciPy's extrapolation to 2·10⁻¹⁵.</li>
+<li>Derivatives to the fifth, by AD and by <code>derivative()</code>, match to 10⁻¹⁵ relative.</li>
+<li>A thermistor read back by <code>inverse()</code> round-trips to 6·10⁻¹⁵.</li>
+</ul></td><td class="r">10</td></tr>
+<tr><td><code>lookup_tables_nd</code></td><td>
+<ul>
+<li>COP, motor and 3-D lift tables match SciPy's <code>NdBSpline</code> to 10⁻¹⁵, gradients included.</li>
+<li>Per point in batches of 10⁶: 2.4 to 16 ns, with <code>pp</code> 1.5 to 2× faster than <code>basis</code> for 1.7 to 13× the C.</li>
+<li>The C is 222 lines at every batch size.</li>
+<li>A C <code>main</code> passing a recalibrated table in equals the JIT bit for bit.</li>
+</ul></td><td class="r">6</td></tr>
+<tr><td><code>learning_tables</code></td><td>
+<ul>
+<li>Calibration equals <code>lstsq</code> on <code>basis()</code> to 6·10⁻¹⁵.</li>
+<li>The Jacobian has 4 entries a row at known points and 144 at symbolic points, which costs about 20× per solve.</li>
+<li>The Hammerstein fit matches SciPy's <code>least_squares</code> to 10⁻¹², and its gradient matches central differences to 3·10⁻¹¹.</li>
+</ul></td><td class="r">7</td></tr>
+<tr><td><code>shape_constrained</code></td><td>
+<ul>
+<li>LFP OCV: least squares dips to a slope of −0.36 and PCHIP to −28 through the noise. The monotone fit's slope stays at or above 0, and it is closer to the truth (3.3 against 5.1 mV rms).</li>
+<li>The KKT conditions, checked from outside the solver, hold to 4·10⁻¹².</li>
+<li><code>inverse()</code> reads the state of charge back; the unconstrained fit's inverse is refused.</li>
+<li>The convex fit matches <code>trust-constr</code> to 10⁻⁸.</li>
+<li>The bounded 2-D map stays in [0, 0.955], where least squares reaches −0.31 to 1.05.</li>
+</ul></td><td class="r">9</td></tr>
+<tr><td><code>contouring_control</code></td><td>
+<ul>
+<li>One periodic cubic in arc length holds x, y, heading less its trend, and curvature. It lies within 0.9 mm of the centre line, and its parameter is unit speed to 4·10⁻⁴.</li>
+<li>The closed-loop lap takes 34.0 s over 681 solves, all converged, at a median of 3.8 ms each. The lateral-acceleration limit on v²κ(θ) is reached.</li>
+<li>The law's C is 941 kB (C-187).</li>
+</ul></td><td class="r">5</td></tr>
+<tr><td><code>spline_trajectories</code></td><td>
+<ul>
+<li>A 13-coefficient spline force swings the cart-pole up with 17 % fewer variables than the piecewise-constant transcription, at 2.9 % more ∫u².</li>
+<li>Its coefficients sit on ±12 N while the curve peaks at 11.4 N: the convex hull at work.</li>
+<li>The path QP (46 variables, 246 inequalities) takes 13 PIQP iterations. Clearance is 9 cm or more at 20 001 times, and the acceleration bound is active.</li>
+</ul></td><td class="r">7</td></tr>
+</table></div>
+<p>Each notebook's numbers were read off its executed outputs before its prose was written. The drafts turned up several mistakes, all fixed before the notebooks were saved:</p>
+<ul>
+<li>a test datum I had called monotone fell near full charge;</li>
+<li>two evaluations stepped outside a fit's domain;</li>
+<li>a smoothness probe looked at the sites instead of the joins;</li>
+<li>a "first call" timing measured a warm disk cache.</li>
+</ul>
+
+<h2>3. The CasADi pairs</h2>
+<p><code>compare.py --dir examples/interp/pairs</code>, three fresh processes per variant. Setup includes Scaly's C generation and compilation. JIT is CasADi with <code>casadi_jit(expand=False)</code>. Run is the median steady-state call.</p>
+<div class="scroll"><table>
+<tr><th>Pair</th><th>Agree</th><th>Iterations</th><th>Lines CasADi / Scaly</th><th>Setup CasADi · JIT · Scaly</th><th>Run CasADi · JIT · Scaly</th></tr>
+<tr><td><code>contouring_mpc</code></td><td class="ok">4e-13</td><td class="r">15 / 15; 3641 / 3641</td><td class="r">78 / 63</td><td class="r">52 ms · 8.2 s · 3.3 s</td><td class="r">9.63 s · 1.59 s · 0.80 s</td></tr>
+<tr><td><code>hammerstein_sysid</code></td><td class="ok">6e-16</td><td class="r">13 / 13</td><td class="r">23 / 27</td><td class="r">1.7 s · 71 s · 3.9 s</td><td class="r">5.95 s · 206 ms · 15.9 ms</td></tr>
+<tr><td><code>heat_pump_mpc</code></td><td class="ok">1e-14</td><td class="r">25 / 25</td><td class="r">42 / 46</td><td class="r">9 ms · 2.8 s · 0.91 s</td><td class="r">12.2 ms · 11.6 ms · 4.8 ms</td></tr>
+<tr><td><code>lut_eval</code></td><td class="ok">2e-10</td><td class="r">—</td><td class="r">49 / 45</td><td class="r">26 ms · 4.5 s · 4.2 s</td><td class="r">44.3 ms · 27.7 ms · 0.82 ms</td></tr>
+<tr><td><code>table_calibration</code></td><td class="ok">2e-15</td><td class="r">1 / 1</td><td class="r">30 / 20</td><td class="r">14 s · 91 s · 0.77 s</td><td class="r">758 ms · 372 ms · 0.88 ms</td></tr>
+</table></div>
+<ul>
+<li><b>The bicubic Hessian's 2·10⁻¹⁰</b> is CasADi's fit amplified by 1/h² ≈ 4 000. Scaly's Hessian is within 2·10⁻¹² of SciPy's <code>NdBSpline</code>, CasADi's within 2·10⁻⁹.</li>
+<li><b>The plan's agreement targets</b> (1e-12 on P1, 1e-6 elsewhere, 1e-4 on the closed loop) are met everywhere except P1's derivatives. For those the two libraries' fits differ, as the parity tests already record.</li>
+<li><b>Setup</b> is where CasADi's interpreter wins: it builds in milliseconds, while Scaly generates and compiles. Where CasADi builds a Hessian through a 3 000-point map, its setup takes 14 s against Scaly's 0.8 s.</li>
+</ul>
+
+<h2>4. Checks and mutation checks</h2>
+<p>The gates are the notebooks' assertion cells and <code>compare.py</code>'s agreement. Five mutants of the library behaviour the notebooks rely on were run against the notebooks alone. Each should turn one red:</p>
+<div class="scroll"><table>
+<tr><th>Mutant</th><th>Caught by</th><th>Result</th></tr>
+<tr><td>periodic wrap measured from zero, not the axis's start</td><td><code>interpolation_kinds</code> (periodic extrapolation)</td><td class="ok">killed</td></tr>
+<tr><td>inverse's slope <code>dx/dy</code> with its sign flipped</td><td><code>interpolation_kinds</code> (the thermistor's slopes)</td><td class="ok">killed</td></tr>
+<tr><td><code>at()</code> of <code>Expr</code> coefficients scaled by 1.01</td><td><code>learning_tables</code>, <code>spline_trajectories</code></td><td class="ok">killed</td></tr>
+<tr><td>Steffen's limiter <code>0.5 |p|</code> made <code>|p|</code></td><td><code>interpolation_kinds</code> (against the paper)</td><td class="ok">killed</td></tr>
+<tr><td>monotone rows of the constrained fit flipped</td><td><code>shape_constrained</code></td><td class="ok">killed</td></tr>
+</table></div>
+
+<h2>5. Found along the way</h2>
+<ul>
+<li><b>C-187 (new, open).</b> A constant table is emitted once per generated function that reads it. <code>contouring_control</code>'s law repeats its 5 440-value track table six times, 941 kB of C.</li>
+<li><b>The <code>auto</code> search on small axes at random batch points (for the review round).</b> On a 10 × 11 table, <code>count</code> beats the <code>binary</code> that <code>auto</code> picks by about 0.5 ns a point. SP4 tuned <code>auto</code> on one repeated point, where <code>count</code> never won.</li>
+<li><b>CasADi, pinned in the README:</b>
+<ul>
+<li>the derivative in a parametric interpolant's data, or a <code>bspline</code>'s symbolic coefficients, is zero unless inlined, and IPOPT then reports success at the initial point;</li>
+<li><code>bspline</code> is zero outside its grid, which a relaxed bound reaches;</li>
+<li><code>lookup_mode="exact"</code> is refused for <code>bspline</code>;</li>
+<li>its JIT with <code>expand=True</code> fails on interpolant graphs.</li>
+</ul></li>
+<li><b>An interpolating cubic's Jacobian in its data is dense even at known points</b>, since its fit is global. <code>learning_tables</code> advises B-spline coefficients as the variables.</li>
+<li><b>For the review round.</b>
+<ul>
+<li><code>tests/interp/test_constrained.py</code>'s OCV "truth" falls near full charge. The test only checks that the fit is monotone, so it is not wrong, but its docstring's physics is.</li>
+<li><code>BSpline</code>'s docstring still lists the searches as before SP4, without <code>bucket</code>.</li>
+<li><code>inverse()</code> accepted a fit whose derivative coefficients reach −4·10⁻¹⁴.</li>
+</ul></li>
+</ul>
+
+<h2>6. Next</h2>
+<p>SP7 (D-177): the guide and API pages, the nav, the <code>examples/README.md</code> section, and the stale <code>BSpline</code> docstring.</p>
+</main></body></html>

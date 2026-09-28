@@ -15,5 +15,6 @@ checked against SciPy before timing.
 | `bench_param.py` | SP3 onward: the Jacobian in the coefficients at symbolic points, through `at()` and in CasADi's inlined `bspline`; the in-graph cubic fit as a dense map against the tridiagonal scans |
 | `bench_batch.py` | SP4: batches of 1e3 to 1e6 random points per call against CasADi's mapped `interpolant` and SciPy; per-cell polynomials against local bases on a table past the caches |
 | `bench_codegen.py` | SP4: large tables (1e6 1-D, 256^2 2-D, 64^3 3-D): fitting, rendering and compile time and C size, against CasADi's code generator |
+| `pairs_2026_09_28.json` | SP6: `uv run examples/casadi/compare.py --dir examples/interp/pairs --json ...`, the five CasADi pairs (three processes per variant): agreement, iterations, code lines, setup and run times; the table is in `examples/interp/README.md` |
 | `_harness.py` | building a Scaly or CasADi Function into a shared library at the JIT's flags, and timing it with `time_entry.c` |
 | `results_2026_09_28.md` | the tables the reports quote |
