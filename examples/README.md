@@ -5,7 +5,9 @@ generated to `examples/generated/<name>/` (git-ignored), so you can read the cod
 result. `tests/integration/test_examples.py`, `tests/integration/test_examples_gallery.py` and
 `tests/linalg/test_examples.py` check each one against a NumPy or SciPy reference, central
 differences or a published value. The examples marked *solver* need the vendored PIQP or IPOPT
-libraries.
+libraries. The folders `integrators/` and `mpc/` hold the examples of `scaly.integrators` and
+`scaly.mpc` as notebooks, with their C in `examples/generated/integrators/` and
+`examples/generated/mpc/`.
 
 The tables group the examples by the Scaly feature they are mainly about; most use several. Size is
 a rough guide: **S** is a first read, **L** a complete application.
@@ -76,6 +78,13 @@ a rough guide: **S** is a first read, **L** a complete application.
 | `qp_solvers/` | L | Four QP families (linear MPC, a factor-model portfolio, an SVM, a dense random QP) written once as `sc.problem`s, *solver* | the generated PIQP (`scaly.solvers.ipm`) reached from a problem, next to the PIQP library and IPOPT; `compare.ipynb` compares answers, iterations, code size, build, generation and compile time and solve time from C; see `qp_solvers/README.md` |
 | `casadi/` | L | CasADi's own Python examples (17 of them: NLPs, QPs, shooting, collocation, pseudospectral, MHE, system identification, code generation), each written in CasADi and in Scaly, *solver* | `compare.py` checks the two give the same answers and compares code lines, setup time and run time; see `casadi/README.md` |
 
+## Integrators and model predictive control
+
+| Example | Size | Problem | What it shows |
+| --- | --- | --- | --- |
+| `integrators/` | L | Nine notebooks on `scaly.integrators`: explicit and implicit Runge-Kutta maps, stiff problems, adaptive and symplectic stepping, exact discretization, collocation building blocks and transcriptions, and dense LU on a tuned mass damper | every public name of the package, with the maths, plots, and a last cell asserting agreement with `expm`, `solve_ivp`, published coefficients or central differences; see `integrators/README.md` |
+| `mpc/` | L | Five notebooks on `scaly.mpc`: a cart-pole swing-up under five transcriptions and in closed loop, reference tracking, linear MPC and terminal sets, *solver* | `OCP`, `MPC`, the control law exported to C, `simulate`, soft path constraints, parameters and references, `linear`, `lqr`, `Polytope`, invariant sets and ellipsoids, the condensed form, with plots of each and a last cell of assertions; see `mpc/README.md` |
+
 ## Notebooks
 
 `examples/notebooks/` has seven of the examples as documented, executed notebooks, two notebooks
@@ -83,6 +92,7 @@ of their own on sparse matrices and seven on problems outside control: the deriv
 cells, plots of the results and of the algorithms at work, and the generated C at the end. They are saved with their outputs, so they read
 on GitHub without running. They write their generated C to the same `examples/generated/<name>/`
 folders as the scripts, and `tests/integration/test_notebooks.py` runs each one top to bottom.
+The fourteen notebooks in `integrators/` and `mpc/` are listed in the section above.
 
 | Notebook | What it adds to the script |
 | --- | --- |

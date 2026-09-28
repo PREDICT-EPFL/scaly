@@ -1,10 +1,11 @@
-"""The example notebooks (``examples/notebooks``, ``examples/interp``) run top to bottom without error.
+"""The example notebooks (``examples/notebooks``, ``examples/integrators``, ``examples/interp``,
+``examples/mpc``) run top to bottom without error.
 
 No Jupyter is needed: each notebook's code cells are executed in order in one namespace, from the
 notebook's directory, with Matplotlib's non-interactive backend. The notebooks in
 ``examples/notebooks`` carry their own checks in their printed output; this test keeps them from
-silently breaking as the API moves. Those in ``examples/interp`` end with a cell of assertions
-against their references, so running them checks them.
+silently breaking as the API moves. Those in ``examples/integrators``, ``examples/interp`` and
+``examples/mpc`` end with a cell of assertions against their references, so running them checks them.
 """
 
 from __future__ import annotations
@@ -28,6 +29,11 @@ SOLVER = {
   "interp/learning_tables": ("ipopt",),
   "interp/shape_constrained": ("piqp",),
   "interp/spline_trajectories": ("ipopt", "piqp"),
+  "mpc/linear_mpc": ("piqp",),
+  "mpc/nmpc_closed_loop": ("ipopt", "sqp"),
+  "mpc/nmpc_transcriptions": ("ipopt",),
+  "mpc/reference_tracking": ("piqp",),
+  "mpc/terminal_sets": ("piqp", "ipopt"),
 }
 NAMES = [
   "bratu_newton",
@@ -46,12 +52,26 @@ NAMES = [
   "sparse_kkt_mpc",
   "spike_deconvolution",
   "surrogate_optimization",
+  "integrators/adaptive_plant",
+  "integrators/discrete_maps",
+  "integrators/explicit_methods",
+  "integrators/frequency_response",
+  "integrators/linearize_and_discretize",
+  "integrators/polynomials",
+  "integrators/stiff_implicit",
+  "integrators/symplectic_orbits",
+  "integrators/transcriptions",
   "interp/contouring_control",
   "interp/interpolation_kinds",
   "interp/learning_tables",
   "interp/lookup_tables_nd",
   "interp/shape_constrained",
   "interp/spline_trajectories",
+  "mpc/linear_mpc",
+  "mpc/nmpc_closed_loop",
+  "mpc/nmpc_transcriptions",
+  "mpc/reference_tracking",
+  "mpc/terminal_sets",
 ]
 
 
