@@ -132,7 +132,7 @@ def main(sim_steps: int = SIM_STEPS) -> dict:
   history, inputs, iterations, times, statuses = [x], [], [], [], []
   for _ in range(sim_steps):
     (xs, us, slack), lam_box, lam_eq, lam_ineq = mpc((xs_guess, us_guess, slack), lam_box, lam_eq, lam_ineq, x)
-    stats = mpc.solver_stats()
+    stats = sc.solver_stats(mpc)
     iterations.append(stats.iter)
     times.append(stats.t_total)
     statuses.append(stats.to_solver_status().name)

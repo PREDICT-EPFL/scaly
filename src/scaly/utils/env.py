@@ -2,8 +2,9 @@
 
 A leaf: it imports nothing from scaly, so the pieces that need an environment variable or a
 shared-library suffix — AD, solver-library discovery, the JIT — can share one definition without
-depending on each other. Keep the variable names and defaults registered here so the JIT, solver
-loading, tests, and diagnostics agree on one source of truth.
+depending on each other. The compiler's variables are registered here; a package that reads its
+own (the solvers) lists them through the ``scaly.env_vars`` entry points, and
+``scaly_env_vars`` joins them, so the JIT, tests and diagnostics agree on one list.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
+from importlib.metadata import entry_points
 from pathlib import Path
 
 
@@ -29,11 +31,6 @@ ENV_VARS: tuple[EnvVar, ...] = (
   EnvVar("SCALY_CACHE_DIR", None, "Override the JIT cache root."),
   EnvVar("SCALY_CC", None, "Override the C compiler used by the JIT."),
   EnvVar("SCALY_CC_OPT", "-O2", "Optimization flag the JIT passes to the C compiler."),
-  EnvVar("SCALY_SOLVER_INCLUDE_DIR", None, "Override the vendored solver C header directory."),
-  EnvVar("SCALY_SOLVER_LIB_DIR", None, "Override the vendored solver shared-library directory."),
-  EnvVar("SCALY_<NAME>_LIB", None, "Exact path to an installed solver plugin's shared library (e.g. SCALY_PIQP_LIB, SCALY_IPOPT_LIB)."),
-  EnvVar("SCALY_SOLVER_SYSTEM_FALLBACK", "0", "Experimental: allow ctypes/pkg-config/default-linker system solver fallback."),
-  EnvVar("SCALY_BUILD_SOLVERS", "auto", "Build-hook solver mode: auto, skip, or required/1/true."),
   EnvVar("SCALY_STRICT_JVP_MANY", "0", "Raise instead of using the unrolled multi-seed JVP fallback."),
   EnvVar("SCALY_VIZ_DIR", None, "Visualization recording directory."),
 )
@@ -60,8 +57,14 @@ def env_path(name: str) -> Path | None:
   return Path(raw).expanduser() if raw else None
 
 
+ENV_VAR_ENTRY_POINTS = "scaly.env_vars"
+"""The entry-point group through which a package lists the environment variables it reads."""
+
+
 def scaly_env_vars() -> tuple[EnvVar, ...]:
-  return ENV_VARS
+  """Every environment variable the installed packages read: the compiler's, then each package's."""
+  extra = [var for ep in sorted(entry_points(group=ENV_VAR_ENTRY_POINTS), key=lambda ep: ep.name) for var in ep.load()]
+  return (*ENV_VARS, *extra)
 
 
 def shared_lib_ext() -> str:

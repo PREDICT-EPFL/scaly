@@ -162,6 +162,7 @@ def measure(case_name: str, key: str, budget: float) -> dict[str, Any]:
   from scaly.codegen import render_c_module, write_module
   from scaly.codegen.abi import c_ident
   from scaly.codegen.jit import compile_flags
+  from scaly.solvers import solver_stats
 
   import generated_piqp
 
@@ -202,7 +203,7 @@ def measure(case_name: str, key: str, budget: float) -> dict[str, Any]:
     status, iters = int(out[4]), int(out[5])
     row["status"] = "solved" if status == 1 else f"PIQP status {status}"
   else:
-    stats = fun.solver_stats()
+    stats = solver_stats(fun)
     iters = int(stats.iter)
     row["status"] = "solved" if stats.status.name in ("OK", "ACCEPTABLE") else stats.status.name.lower()
   row["iterations"] = iters
@@ -221,7 +222,7 @@ def measure(case_name: str, key: str, budget: float) -> dict[str, Any]:
     py.append(time.perf_counter() - t)
   row["python_best_s"], row["python_median_s"] = min(py), statistics.median(py)
   if not key.startswith("scaly_"):
-    row["native_total_s"] = float(fun.solver_stats().t_total)  # the solver's own timer, last solve
+    row["native_total_s"] = float(solver_stats(fun).t_total)  # the solver's own timer, last solve
 
   sizes_in = [a.size for a in flat]
   sizes_out = [int(e.size) for e in fun.outputs]

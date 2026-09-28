@@ -86,6 +86,7 @@ from .solvers import (
   problem,
   qp_problem,
   solver,
+  solver_stats,
 )
 from .ir.expr_spec import spec_expr, spec_expr_shared, verify_expr
 from .ir.spec import Rule, Spec, VerifyError
@@ -212,6 +213,7 @@ __all__ = [
   "set_options",
   "program_graph",
   "solver",
+  "solver_stats",
   "render_expr_assembly",
   "render_program_assembly",
   "rewrite",

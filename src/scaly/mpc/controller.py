@@ -14,6 +14,7 @@ from ..function.tree import G, L, param_list
 from ..ir.expr import Expr, concat
 from ..solvers.solver import solver as make_solver
 from ..solvers.stats import SolverStatus
+from ..solvers.wrapper import solver_stats
 from .ocp import OCP
 
 __all__ = ["MPC", "ClosedLoop", "Solution", "simulate"]
@@ -197,7 +198,7 @@ class MPC:
     self._guess = np.asarray(self.shift(flat))
     leaves = dict(zip(layout.var_names, (np.asarray(a) for a in primal), strict=True))
     k = ocp.interval.n_internal
-    stats = self.solver.solver_stats()
+    stats = solver_stats(self.solver)
     prm = [x0, np.concatenate(values)] if ocp.params else [x0]
     cost = self.objective((*(np.ravel(a) for a in primal), *prm))  # its inputs are one group, as _from_exprs builds it
     return Solution(
@@ -214,7 +215,7 @@ class MPC:
   @property
   def status(self) -> SolverStatus:
     """The status of the last call of the control law."""
-    return self.law.solver_stats(self.solver_name).to_solver_status()
+    return solver_stats(self.law, self.solver_name).to_solver_status()
 
 
 def _tree(leaves: list[Any]) -> Any:
@@ -235,7 +236,7 @@ def simulate(controller: MPC, plant: Callable[[np.ndarray, np.ndarray], Any], x0
     started = time.perf_counter()
     u = controller(x, **values)
     elapsed = time.perf_counter() - started
-    stats = controller.law.solver_stats(controller.solver_name)
+    stats = solver_stats(controller.law, controller.solver_name)
     statuses.append(stats.to_solver_status().name)
     iterations.append(stats.iter)
     times.append(stats.t_total if stats.t_total > 0 else elapsed)

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from ..utils.env import ToolchainError, env_bool, env_path, shared_lib_ext
+from ..utils.env import EnvVar, ToolchainError, env_bool, env_path, shared_lib_ext
 
 if TYPE_CHECKING:
   from collections.abc import Sequence
@@ -273,3 +273,37 @@ def solver_diagnostic(name: str | None = None) -> str:
   if not paths.loads:
     lines.append("  installed solver plugins: <none>")
   return "\n".join(lines)
+
+
+SOLVER_ENV_VARS: tuple[EnvVar, ...] = (
+  EnvVar("SCALY_SOLVER_INCLUDE_DIR", None, "Override the vendored solver C header directory."),
+  EnvVar("SCALY_SOLVER_LIB_DIR", None, "Override the vendored solver shared-library directory."),
+  EnvVar("SCALY_<NAME>_LIB", None, "Exact path to an installed solver plugin's shared library (e.g. SCALY_PIQP_LIB, SCALY_IPOPT_LIB)."),
+  EnvVar("SCALY_SOLVER_SYSTEM_FALLBACK", "0", "Experimental: allow ctypes/pkg-config/default-linker system solver fallback."),
+  EnvVar("SCALY_BUILD_SOLVERS", "auto", "Build-hook solver mode: auto, skip, or required/1/true."),
+)
+"""The environment variables solver discovery and the vendored builds read, listed by
+``scaly.utils.env.scaly_env_vars`` through the ``scaly.env_vars`` entry points."""
+
+
+def toolchain_report() -> list[str]:
+  """The solver section of ``scaly_toolchain``: where libraries and headers were found, whether each
+  plugin loads, and the flags the JIT would link with."""
+  paths = solver_paths(required=False)
+  lines = [
+    f"  solver source: {paths.source}",
+    f"  include dirs: {', '.join(str(p) for p in paths.include_dirs) or '<none>'}",
+    f"  lib dirs: {', '.join(str(p) for p in paths.lib_dirs) or '<none>'}",
+  ]
+  for name in sorted(paths.loads):
+    lines += [
+      f"  {name}: {paths.loads[name] or '<missing>'}",
+      f"  {name} discoverable: {solver_discoverable(name)}",
+      f"  {name} loadable: {solver_loadable(name)}",
+    ]
+  try:
+    lines.append("  JIT solver flags: " + " ".join(backend_compile_flags(tuple(sorted(paths.loads)))))
+  except SolverLibraryError as exc:
+    lines.append("  JIT solver flags: <unavailable>")
+    lines.append("  reason: " + str(exc).splitlines()[0])
+  return lines

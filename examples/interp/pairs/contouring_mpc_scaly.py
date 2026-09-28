@@ -71,7 +71,7 @@ def build(verbose: bool = False):
 
   def run():
     first = ctrl.solve(x0, guess=ctrl.initial_guess(x0))
-    iter_first = ctrl.solver.solver_stats().iter
+    iter_first = sc.solver_stats(ctrl.solver).iter
     ctrl.reset()
     loop = mpc.simulate(ctrl, plant, x0, MPCC.steps)
     assert first.status.ok and all(s in ("OK", "ACCEPTABLE") for s in loop.statuses)

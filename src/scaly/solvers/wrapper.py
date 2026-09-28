@@ -21,7 +21,7 @@ from . import registry
 from .stats import SCALY_SOLVER_STATS_VERSION, CSolverStats, SolverStats, stats_c_defs, stats_c_timing_defs
 
 if TYPE_CHECKING:
-  from ..function import ConcreteFunction
+  from ..function import ConcreteFunction, Function
   from .model import ExternalOracle, SolverDescriptor
 
 
@@ -84,3 +84,12 @@ def _decode_stats(name: str, raw: Any) -> SolverStats:
 def solver_state(symbol: str, name: str) -> ExternState:
   """The ``<symbol>_stats`` accessor, read as a ``SolverStats``."""
   return ExternState(accessor=f"{symbol}_stats", ctype=CSolverStats, decode=lambda raw: _decode_stats(name, raw))
+
+
+def solver_stats(fun: Function, name: str | None = None) -> SolverStats:
+  """The statistics of the latest solve by the solver ``name`` that ``fun`` reaches (``fun`` itself
+  when it is the solver); ``name`` may be left out when there is one. ``fun`` must have run."""
+  stats = fun.callee_state(name)
+  if not isinstance(stats, SolverStats):
+    raise TypeError(f"the extern callee {name or fun.name!r} is not a solver: its state is a {type(stats).__name__}")
+  return stats

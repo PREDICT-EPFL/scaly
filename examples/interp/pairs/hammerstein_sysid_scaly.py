@@ -38,7 +38,7 @@ def build(verbose: bool = False):
 
   def run():
     (a, c), *_ = solve((DATA["a_guess"], DATA["c_guess"]), (np.zeros(2), np.zeros(20)), np.zeros(0), np.zeros(0), ())
-    stats = solve.solver_stats()
+    stats = sc.solver_stats(solve)
     return {"a": a, "c": c, "f": np.array([stats.obj]), "iter": np.array([stats.iter])}
 
   return run

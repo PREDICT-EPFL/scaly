@@ -50,7 +50,7 @@ def make_ocp(N: int, verbose: bool):
     adjoint = -lam_eq[: 2 * (N + 1)].reshape(N + 1, 2) / wi[:, None]
     numerical = np.hstack([X.reshape(N + 1, 2), U[:, None], adjoint])
     ts = (TF - T0) / 2 * lgl_nodes(N) + 0.5 * (TF + T0)
-    return numerical, np.max(np.abs(analytical(ts) - numerical), axis=0), solver.solver_stats().iter
+    return numerical, np.max(np.abs(analytical(ts) - numerical), axis=0), sc.solver_stats(solver).iter
 
   return solve
 

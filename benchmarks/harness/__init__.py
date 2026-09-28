@@ -74,4 +74,4 @@ def problem_stats(solver):
   """Return stats from either a typed Scaly Function or the CasADi adapter."""
   import scaly as sc
 
-  return solver.solver_stats() if isinstance(solver, sc.Function) else solver.last_stats
+  return sc.solver_stats(solver) if isinstance(solver, sc.Function) else solver.last_stats

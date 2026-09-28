@@ -51,7 +51,7 @@ def build(verbose: bool = False):
 
   def run():
     (X, U, T), *_ = solve((X0, np.zeros(N), np.ones(1)), (np.zeros(2 * (N + 1)), np.zeros(N), np.zeros(1)), np.zeros(2 * N + 3), np.zeros(N + 1), ())
-    return {"T": T, "pos": X[0::2], "speed": X[1::2], "u": U, "iter": np.array([solve.solver_stats().iter])}
+    return {"T": T, "pos": X[0::2], "speed": X[1::2], "u": U, "iter": np.array([sc.solver_stats(solve).iter])}
 
   return run
 

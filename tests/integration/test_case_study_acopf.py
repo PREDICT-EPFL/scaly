@@ -90,7 +90,7 @@ def test_polar_opf_with_a_phase_shifter_matches_an_admittance_matrix_model() -> 
   (va, vm, pg, qg, p, q), *_ = solve(
     x0, (np.zeros(NB), np.zeros(NB), np.zeros(NG), np.zeros(NG), np.zeros(2 * NBR), np.zeros(2 * NBR)), np.zeros(opf.n_eq), np.zeros(opf.n_ineq), ()
   )
-  stats = solve.solver_stats()
+  stats = sc.solver_stats(solve)
   assert stats.to_solver_status().name == "OK"
   gen = np.zeros(NB, dtype=complex)
   np.add.at(gen, GEN_BUS, pg + 1j * qg)

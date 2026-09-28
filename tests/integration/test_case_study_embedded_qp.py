@@ -72,7 +72,7 @@ def test_generated_piqp_with_a_parametric_hessian_matches_the_library(generated_
     x, _, _, _, status, iters, obj = generated(params)
     out = library(zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
     x_lib = np.concatenate([np.ravel(v) for v in p.vars.flatten_numerical(out[0], "x")])
-    stats = library.solver_stats()
+    stats = sc.solver_stats(library)
     assert int(status) == 1 and stats.status.name == "OK"
     assert int(iters) == stats.iter
     np.testing.assert_allclose(x, x_lib, atol=1e-8 * (1 + np.abs(x_lib).max()))

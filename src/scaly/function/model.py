@@ -334,9 +334,9 @@ class Function[**PS, **PN, SO, NO]:
     for instance in self._instances.values():
       instance.recompile()
 
-  def solver_stats(self, name: str | None = None) -> Any:
-    """The latest stats for a solver reached by the one instance; see ``ConcreteFunction.solver_stats``."""
-    return self.concrete.solver_stats(name)
+  def callee_state(self, name: str | None = None) -> Any:
+    """The state an extern callee of the one instance exposes; see ``ConcreteFunction.callee_state``."""
+    return self.concrete.callee_state(name)
 
   @staticmethod
   def _from_exprs(
@@ -697,12 +697,14 @@ class ConcreteFunction[**PS, **PN, SO, NO](Function[PS, PN, SO, NO]):
     self._compiled = None
     jit.invalidate_cache(self)
 
-  def solver_stats(self, name: str | None = None) -> Any:
-    """Return the latest stats for a solver reached by this compiled function."""
+  def callee_state(self, name: str | None = None) -> Any:
+    """The state the extern callee ``name`` (``function/extern.py``) exposed after the latest call,
+    decoded by the callee; ``name`` may be left out when this Function reaches one. A solver's is its
+    statistics, which ``sc.solver_stats`` reads."""
     jit = _jit()
     if self._compiled is None:
       raise jit.JitError(f"function {self.name!r} has not been compiled or run")
-    return self._compiled.solver_stats(name)
+    return self._compiled.callee_state(name)
 
   def _effective_lowering(self) -> Lowering:
     """The hint that selects this Function's procedure: ``block`` or ``opaque`` anywhere wins, then ``scalar``, else ``auto``."""

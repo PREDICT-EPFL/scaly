@@ -1,8 +1,9 @@
 """Native C compiler discovery, JIT cache location, and the toolchain diagnostics report.
 
 Scaly's normal Python workflow is controlled by a small set of environment variables, registered
-in ``utils/env.py``. Solver library and header discovery lives in ``solvers/paths.py``; this
-module reads it for the report and nothing else depends on that direction.
+in ``utils/env.py``. The report's further sections come from the packages that own them (solver
+library discovery, say) through the ``scaly.toolchain_report`` entry points, so this module imports
+none of them.
 """
 
 from __future__ import annotations
@@ -13,10 +14,13 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from importlib.metadata import entry_points
 from pathlib import Path
 
-from ..solvers.paths import SolverLibraryError, backend_compile_flags, solver_discoverable, solver_loadable, solver_paths
 from ..utils.env import env_path
+
+REPORT_ENTRY_POINTS = "scaly.toolchain_report"
+"""The entry-point group of the report's further sections: each names a function returning lines."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,26 +87,11 @@ def _gcc_major_of(banner: str) -> int | None:
 
 
 def _format_report() -> str:
-  paths = solver_paths(required=False)
   compiler = find_c_compiler()
   lines = ["Scaly native toolchain", f"  cache root: {cache_root()}"]
   lines.append(f"  cc: {compiler.cc} ({compiler.source})" if compiler is not None else "  cc: <missing>")
-  lines += [
-    f"  solver source: {paths.source}",
-    f"  include dirs: {', '.join(str(p) for p in paths.include_dirs) or '<none>'}",
-    f"  lib dirs: {', '.join(str(p) for p in paths.lib_dirs) or '<none>'}",
-  ]
-  for name in sorted(paths.loads):
-    lines += [
-      f"  {name}: {paths.loads[name] or '<missing>'}",
-      f"  {name} discoverable: {solver_discoverable(name)}",
-      f"  {name} loadable: {solver_loadable(name)}",
-    ]
-  try:
-    lines.append("  JIT solver flags: " + " ".join(backend_compile_flags(tuple(sorted(paths.loads)))))
-  except SolverLibraryError as exc:
-    lines.append("  JIT solver flags: <unavailable>")
-    lines.append("  reason: " + str(exc).splitlines()[0])
+  for ep in sorted(entry_points(group=REPORT_ENTRY_POINTS), key=lambda ep: ep.name):
+    lines += ep.load()()
   return "\n".join(lines)
 
 

@@ -3444,6 +3444,7 @@ tests/test_import_boundaries.py::test_tests_do_not_import_benchmark_problems
 tests/test_import_boundaries.py::test_the_integrator_surface
 tests/test_import_boundaries.py::test_the_interp_surface
 tests/test_import_boundaries.py::test_the_mpc_surface
+tests/test_import_layering.py::test_core_names_no_solver_or_adapter
 tests/test_import_layering.py::test_each_seam_is_a_single_import
 tests/test_import_layering.py::test_flat_call_seams_stay_inside_their_sanctioned_modules
 tests/test_import_layering.py::test_import_layer_table_covers_every_module

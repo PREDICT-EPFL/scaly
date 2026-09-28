@@ -140,7 +140,7 @@ def solve_qp(
   result = dict(zip(solver.output_names, outputs, strict=True))
   result["x"] = outputs[0]
   result["lam_box"] = outputs[1]
-  result["cost"] = np.asarray(solver.solver_stats().obj)
+  result["cost"] = np.asarray(sc.solver_stats(solver).obj)
   return result
 
 

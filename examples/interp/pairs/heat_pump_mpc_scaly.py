@@ -59,7 +59,7 @@ def build(verbose: bool = False):
 
   def run():
     (P, T_s, T), *_ = solve(guess, zeros, np.zeros(2 + 3 * N), np.zeros(0), (x0, price, t_out))
-    stats = solve.solver_stats()
+    stats = sc.solver_stats(solve)
     assert stats.to_solver_status().ok
     return {"P": P, "T_s": T_s, "T": T, "cost": np.array([stats.obj]), "iter": np.array([stats.iter])}
 

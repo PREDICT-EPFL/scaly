@@ -41,6 +41,8 @@ def build(problem, solver: str):
 
 
 def main() -> None:
+  from scaly.solvers import solver_stats
+
   ap = argparse.ArgumentParser()
   ap.add_argument("--horizon", type=int, required=True)
   ap.add_argument("--solver", choices=("scaly_sparse", "piqp_sparse"), required=True)
@@ -94,7 +96,7 @@ def main() -> None:
     else:
       args_ = (zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
       (u, xs), *_ = fun(*args_)
-      st = fun.solver_stats()
+      st = solver_stats(fun)
       status, iters = (1 if st.to_solver_status().name == "OK" else 0), int(st.iter)
       flat = [np.asarray(a, float) for a in fun.input_tree.flatten_numerical(args_, "solver inputs")]
     sizes_out = [int(e.size) for e in fun.outputs]

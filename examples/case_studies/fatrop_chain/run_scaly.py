@@ -67,7 +67,7 @@ def main() -> None:
 
     def run():
       z, *_ = solve(z0, *zeros, x0)
-      st = solve.solver_stats()
+      st = sc.solver_stats(solve)
       return np.asarray(z), st.iter, st.t_total, st.t_fe
 
   z, iters, wall, fe = run()

@@ -34,6 +34,8 @@
 
 ## Statistics
 
+::: scaly.solvers.wrapper.solver_stats
+
 ::: scaly.solvers.stats.SolverStats
 
 ::: scaly.solvers.stats.SolverStatus

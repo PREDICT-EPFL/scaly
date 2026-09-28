@@ -127,7 +127,7 @@ def main() -> dict:
   active = np.flatnonzero(np.abs(inputs - nominals).max(axis=1) > 1e-3)  # beyond the interior-point tolerance at an active bound
   sample = active[:: max(1, len(active) // 10)]
   check = max(np.abs(inputs[k] - scipy_filter(states[k], nominals[k])).max() for k in sample) if len(sample) else 0.0
-  return {"states": states, "inputs": inputs, "barriers": hs, "active": active, "scipy_error": check, "stats": controller.solver_stats("cbf_qp")}
+  return {"states": states, "inputs": inputs, "barriers": hs, "active": active, "scipy_error": check, "stats": sc.solver_stats(controller, "cbf_qp")}
 
 
 if __name__ == "__main__":

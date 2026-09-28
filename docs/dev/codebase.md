@@ -176,7 +176,7 @@ upward import. The second is no import at all.
 
 1. Calling a `Function` compiles it. `function/model.py` (import layer 3) reaches `codegen/jit`
    (import layer 7) through a single deferred import in `_jit()`. Every backend use in the frontend
-   (`_flat_numerical_call`, `recompile`, `solver_stats`) goes through that one function. This is the
+   (`_flat_numerical_call`, `recompile`, `callee_state`) goes through that one function. This is the
    only entry in `SEAM`, and `test_import_layering.py` asserts it stays one import statement.
 
 2. `viz` observes; `codegen` does not know it exists. The naive wiring would be a `codegen -> viz`

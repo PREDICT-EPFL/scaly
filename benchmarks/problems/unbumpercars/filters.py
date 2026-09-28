@@ -881,7 +881,7 @@ class ScalyDTCBFSafetyFilter:
         "lam_eq": lam_eq,
         "lam_ineq": lam_ineq,
         "lam_box": np.asarray(box_sol),
-      }, active_nlp.solver_stats()
+      }, sc.solver_stats(active_nlp)
 
     active_nlp = self.nlp
     out, stats = solve(active_nlp)

@@ -65,7 +65,7 @@ def test_solver_stats_reject_uninitialized_and_mismatched_versions() -> None:
   qp = build_qp(P=np.eye(2), c=np.zeros(2), name="stats_version_qp")
   compiled = CompiledFunction(qp)
   with pytest.raises(JitError, match="has not run yet"):
-    compiled.solver_stats()
+    compiled.callee_state()
 
   def mismatched_stats(out: ctypes.c_void_p) -> int:
     ctypes.cast(out, ctypes.POINTER(CSolverStats)).contents.version = sc.SCALY_SOLVER_STATS_VERSION + 1
@@ -74,7 +74,7 @@ def test_solver_stats_reject_uninitialized_and_mismatched_versions() -> None:
   _, state = compiled._state_entries["stats_version_qp"]
   compiled._state_entries["stats_version_qp"] = (mismatched_stats, state)
   with pytest.raises(JitError, match="ABI mismatch.*artifact version 4, expected 3"):
-    compiled.solver_stats()
+    compiled.callee_state()
 
 
 def test_sparse_qp_rejects_nested_solver_data() -> None:

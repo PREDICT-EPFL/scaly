@@ -159,7 +159,7 @@ us_opt, lam_box, lam_eq, lam_ineq = solve(
     np.array([1.0, 0.0]),
 )
 
-stats = solve.solver_stats()
+stats = sc.solver_stats(solve)
 print(stats.obj, stats.iter, stats.to_solver_status())
 ```
 

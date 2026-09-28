@@ -93,9 +93,9 @@ def build(verbose: bool = False):
 
   def run():
     p_single, *_ = single(PARAM_GUESS, np.zeros(4), np.zeros(0), np.zeros(0), (U_DATA, Y_DATA))
-    it_single = single.solver_stats().iter
+    it_single = sc.solver_stats(single).iter
     (p_multiple, _), *_ = multiple((PARAM_GUESS, X0), (np.zeros(4), np.zeros(2 * N)), np.zeros(2 * (N - 1)), np.zeros(0), (U_DATA, Y_DATA))
-    it_multiple = multiple.solver_stats().iter
+    it_multiple = sc.solver_stats(multiple).iter
     return {
       "params_single": p_single * SCALE,
       "params_multiple": p_multiple * SCALE,

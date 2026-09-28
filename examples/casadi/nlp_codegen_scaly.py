@@ -31,7 +31,7 @@ def build(verbose: bool = False):
 
   def run():
     w, lam_w, lam_g, _ = solve(np.zeros(2), np.zeros(2), np.zeros(1), np.zeros(0), ())
-    return {"f": np.array([solve.solver_stats().obj]), "x": w, "lam_x": lam_w, "lam_g": lam_g}
+    return {"f": np.array([sc.solver_stats(solve).obj]), "x": w, "lam_x": lam_w, "lam_g": lam_g}
 
   return run
 

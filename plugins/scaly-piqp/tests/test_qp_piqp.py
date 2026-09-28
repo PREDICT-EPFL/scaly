@@ -23,7 +23,7 @@ def test_qp_equality_constrained_quadratic() -> None:
   b = np.array([3.0])
   qp = build_qp(P=P, c=c, A_eq=A, b_eq=b, x_lb=np.zeros(2))
   out = solve_qp(qp, np.zeros(2), np.zeros(1), np.zeros(0))
-  assert qp.solver_stats().to_solver_status() is not None and qp.solver_stats().to_solver_status().ok
+  assert sc.solver_stats(qp).to_solver_status() is not None and sc.solver_stats(qp).to_solver_status().ok
   np.testing.assert_allclose(out["x"], [1.0, 2.0], atol=1e-7)
   # 0.5 (x-1)^2 + 0.5 (y-2)^2 in the form 0.5 xPx + cx (constant dropped):
   # PIQP reports 0.5 x^T x + c^T x = 0.5 (1 + 4) + (-1 - 4) = -2.5
@@ -50,7 +50,7 @@ def test_qp_two_sided_inequality_box() -> None:
     x_ub=np.array([1.0, np.inf]),
   )
   out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(1))
-  assert qp.solver_stats().to_solver_status() is not None and qp.solver_stats().to_solver_status().ok
+  assert sc.solver_stats(qp).to_solver_status() is not None and sc.solver_stats(qp).to_solver_status().ok
   np.testing.assert_allclose(out["x"], [0.5, 0.5], atol=1e-7)
   # lower side active -> z_l > 0, z_u = 0 -> lam_ineq = z_u - z_l < 0.
   assert out["lam_ineq"][0] < 0
@@ -69,7 +69,7 @@ def test_qp_with_symbolic_parameters() -> None:
   qp = build_qp(P=P, c=c)
   for mu_val in [np.array([0.0, 0.0]), np.array([1.5, -0.3]), np.array([-2.0, 4.0])]:
     out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0), mu=mu_val)
-    assert qp.solver_stats().to_solver_status() is not None and qp.solver_stats().to_solver_status().ok
+    assert sc.solver_stats(qp).to_solver_status() is not None and sc.solver_stats(qp).to_solver_status().ok
     np.testing.assert_allclose(out["x"], mu_val, atol=1e-7)
 
 
@@ -93,7 +93,7 @@ def test_generated_qp_satisfies_kkt_over_parameter_sweep() -> None:
   x0 = np.zeros(2)
   for t_value in (-0.6, 0.1, 0.8):
     out = solve_qp(qp, x0, np.zeros(1), np.zeros(2), np.array([t_value]))
-    assert qp.solver_stats().to_solver_status() is not None and qp.solver_stats().to_solver_status().ok
+    assert sc.solver_stats(qp).to_solver_status() is not None and sc.solver_stats(qp).to_solver_status().ok
     P_np = np.array([[2.0 + 0.1 * t_value, 0.05 * t_value], [0.05 * t_value, 1.5 - 0.1 * t_value]])
     c_np = np.array([-0.4 + 0.2 * t_value, 0.3 - 0.1 * t_value])
     A_np = np.array([[1.0 + 0.05 * t_value, 1.0 - 0.05 * t_value]])

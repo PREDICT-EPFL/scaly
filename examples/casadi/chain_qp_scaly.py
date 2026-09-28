@@ -43,7 +43,7 @@ def build(verbose: bool = False):
 
   def run():
     x, *_ = solve(np.zeros(2 * N), np.zeros(2 * N), np.zeros(0), np.zeros(N), ())
-    return {"f": np.array([solve.solver_stats().obj]), "y": x[0::2], "z": x[1::2]}
+    return {"f": np.array([sc.solver_stats(solve).obj]), "y": x[0::2], "z": x[1::2]}
 
   return run
 

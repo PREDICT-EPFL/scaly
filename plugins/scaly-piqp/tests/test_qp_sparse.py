@@ -70,7 +70,7 @@ def test_sparse_qp_matches_dense_over_parameter_sweep() -> None:
   for tv in (np.array([0.3, -0.7]), np.array([1.1, 0.2]), np.array([-0.5, 0.9])):
     sparse_out = solve_qp(sparse_qp, np.zeros(4), np.zeros(1), np.zeros(2), tv)
     dense_out = solve_qp(dense_qp, np.zeros(4), np.zeros(1), np.zeros(2), tv)
-    assert sparse_qp.solver_stats() is not None and sparse_qp.solver_stats().status == sc.ScalySolveStatus.OK
+    assert sc.solver_stats(sparse_qp) is not None and sc.solver_stats(sparse_qp).status == sc.ScalySolveStatus.OK
     for key in sparse_out:
       np.testing.assert_allclose(sparse_out[key], dense_out[key], rtol=1e-6, atol=1e-6, err_msg=f"output {key} diverges for t={tv}")
 
@@ -89,7 +89,7 @@ def test_sparse_qp_constant_data_and_stats() -> None:
   assert P_sparsity is not None and P_sparsity.nnz == 3
   out = solve_qp(qp, np.zeros(3), np.zeros(0), np.zeros(0))
   np.testing.assert_allclose(out["x"], [0.5, -0.5, 0.0], atol=1e-7)
-  stats = qp.solver_stats()
+  stats = sc.solver_stats(qp)
   assert stats is not None and stats.status == sc.ScalySolveStatus.OK
   assert stats.obj == pytest.approx(float(out["cost"]), rel=1e-12, abs=1e-12)
   assert stats.t_total == pytest.approx(stats.t_fe + stats.t_solver + stats.t_qp + stats.t_globalization + stats.t_glue, rel=0.1, abs=1e-12)
@@ -129,7 +129,7 @@ def test_sparse_qp_structurally_zero_P_keeps_valid_csc_handle() -> None:
   assert P_sparsity is not None
   assert list(zip(P_sparsity.rows, P_sparsity.cols)) == [(0, 0)]
   out = solve_qp(qp, np.zeros(2), np.zeros(0), np.zeros(0))
-  assert qp.solver_stats() is not None and qp.solver_stats().status == sc.ScalySolveStatus.OK
+  assert sc.solver_stats(qp) is not None and sc.solver_stats(qp).status == sc.ScalySolveStatus.OK
   np.testing.assert_allclose(out["x"], [-1.0, 1.0], atol=1e-6)
 
 

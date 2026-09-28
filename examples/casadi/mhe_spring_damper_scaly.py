@@ -89,7 +89,7 @@ def build(verbose: bool = False):
     (X, W), *_ = solve((init_X.reshape(-1), init_W), *zeros, (U, Y, linalg.inv(P), x0))
     X = X.reshape(N, 2)
     est_X[0:N], est_W[0 : N - 1] = X, W
-    iterations = solve.solver_stats().iter
+    iterations = sc.solver_stats(solve).iter
     for i in range(1, N_SIM - N + 1):
       # EKF update of the arrival cost
       H0 = H(X[0])
@@ -107,7 +107,7 @@ def build(verbose: bool = False):
       (X, W), *_ = solve((init_X.reshape(-1), init_W), *zeros, (U, Y, linalg.inv(P), x0))
       X = X.reshape(N, 2)
       est_X[N - 1 + i], est_W[N - 2 + i] = X[N - 1], W[N - 2]
-      iterations += solve.solver_stats().iter
+      iterations += sc.solver_stats(solve).iter
     error = est_X[:, 0] - sim_X[:, 0]
     return {"x_est": est_X[:, 0], "dx_est": est_X[:, 1], "error_sq": np.array([error @ error]), "iter_total": np.array([iterations])}
 

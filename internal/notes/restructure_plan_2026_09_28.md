@@ -34,7 +34,7 @@
 | 0.2 | Extern calls raise on derivatives | ☑ |
 | 1.1 | `EXTERN_CALL` and the extern-callee protocol | ☑ |
 | 1.2 | Output-adapter registry (C++, CasADi) | ☑ |
-| 1.3 | Core stops importing solvers | ☐ |
+| 1.3 | Core stops importing solvers | ☑ |
 | 2.1 | Op registry, builtins registered through it | ☐ |
 | 2.2 | Table-driven AD, sparsity, folding, verification | ☐ |
 | 2.3 | Public lowering context, op traits, option namespaces, pass slots | ☐ |
@@ -449,6 +449,11 @@ take report sections from extensions; `SCALY_SOLVER_*` environment handling move
 `utils/env.py`.
 Gate: a new test asserts no module in `ir`, `ad`, `function`, `passes`, `codegen`, `utils` imports
 `scaly.solvers`, `scaly.codegen.cpp` or `scaly.codegen.casadi`, including function-local imports.
+Log: done 2026-09-28. `Function.solver_stats()` became the generic `callee_state()`, with
+`sc.solver_stats(fn, name=None)` in the solver package (126 call sites moved). The toolchain report
+and the solver env vars come from `scaly.toolchain_report` and `scaly.env_vars` entry points. The
+guard (`test_core_names_no_solver_or_adapter`) counts `TYPE_CHECKING` imports too, and was shown to
+fail on a function-local import.
 
 ### Phase 2: open the vocabulary
 

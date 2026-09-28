@@ -216,7 +216,8 @@ Plugins must not duplicate any of this:
 - The `scaly_solver_stats` struct, the `SCALY_SOLVE_*` status enum, and `scaly_clock_s`. Plugins
   fill and use them, never redefine them.
 - JIT compilation, caching (keyed on source, compiler and flags), and library/header discovery.
-- The typed `Function` call interface and `Function.solver_stats()`.
+- The typed `Function` call interface and `sc.solver_stats(fun)`, which reads the stats accessor
+  through the extern-callee protocol (`Function.callee_state`).
 
 ## Checklist for a new plugin
 

@@ -39,7 +39,7 @@ def build(verbose: bool = False):
 
   def run():
     U, lam_U, lam_g, _ = solve(np.full(NU, 0.4), np.zeros(NU), np.zeros(2), np.zeros(0), ())
-    stats = solve.solver_stats()
+    stats = sc.solver_stats(solve)
     return {"f": np.array([stats.obj]), "u": U, "lam_u": lam_U, "lam_g": lam_g, "iter": np.array([stats.iter])}
 
   return run

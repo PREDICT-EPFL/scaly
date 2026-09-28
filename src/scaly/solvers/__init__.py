@@ -7,6 +7,7 @@ from .problem import NO_LB, NO_UB, Bounded, Problem, ProblemSpec, bounded, probl
 from .qp import NotQuadratic, QPData, qp_problem
 from .solver import solver
 from .stats import SCALY_SOLVER_STATS_VERSION, ScalySolveStatus, CSolverStats, SolverStats, SolverStatus
+from .wrapper import solver_stats
 
 __all__ = [
   "SCALY_SOLVER_STATS_VERSION",
@@ -28,4 +29,5 @@ __all__ = [
   "problem",
   "qp_problem",
   "solver",
+  "solver_stats",
 ]

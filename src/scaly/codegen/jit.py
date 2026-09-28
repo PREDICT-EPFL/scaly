@@ -317,17 +317,17 @@ class CompiledFunction:
   def cache_key(self) -> str:
     return self._artifact.key
 
-  def solver_stats(self, name: str | None = None) -> Any:
-    """The state the extern callee ``name`` exposes after the latest call; ``name`` may be left out
-    when the library holds one. A decoder that finds the state invalid (never run, another layout)
-    raises ``ValueError``, reported as a ``JitError``."""
+  def callee_state(self, name: str | None = None) -> Any:
+    """The state the extern callee ``name`` exposes after the latest call (a solver's statistics);
+    ``name`` may be left out when the library holds one. A decoder that finds the state invalid
+    (never run, another layout) raises ``ValueError``, reported as a ``JitError``."""
     if name is None:
       if len(self._state_entries) != 1:
-        raise JitError(f"solver name is required when an artifact has {len(self._state_entries)} solver stats entries")
+        raise JitError(f"a callee name is required when an artifact has {len(self._state_entries)} extern callees with state")
       name = next(iter(self._state_entries))
     symbol = c_ident(name)
     if symbol not in self._state_entries:
-      raise JitError(f"no solver stats entry for {name!r}")
+      raise JitError(f"no extern callee with state named {name!r}")
     accessor, state = self._state_entries[symbol]
     raw = state.ctype()
     status = accessor(ctypes.byref(raw))

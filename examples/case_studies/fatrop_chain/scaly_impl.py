@@ -128,5 +128,5 @@ if __name__ == "__main__":
     x0, z0 = initial_state(dim), initial_guess(dim, 6, b["horizon"])
     p = b["problem"]
     z, *_ = solve(z0, np.zeros(b["n_var"]), np.zeros(p.n_eq), np.zeros(p.n_ineq), x0)
-    stats = solve.solver_stats()
+    stats = sc.solver_stats(solve)
     print(f"{dim}D: {stats.iter} IPOPT iterations, status {stats.to_solver_status().name}, u_0 = {z[b['nx'] : b['nx'] + b['nu']]}")

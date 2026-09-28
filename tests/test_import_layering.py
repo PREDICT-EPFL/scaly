@@ -289,3 +289,32 @@ def test_flat_call_seams_stay_inside_their_sanctioned_modules() -> None:
     if "_flat_symbolic_call" in line or "_flat_numerical_call" in line
   )
   assert not leaked, "the flat call seam leaked outside function/model.py and ad/forward.py:\n  " + "\n  ".join(leaked)
+
+
+# The compiler's packages, and what none of them may name: solvers reach the compiler only through the
+# extern-callee protocol (``function/extern.py``) and output adapters only through their registry
+# (``codegen/adapter.py``). The adapters themselves still live under ``codegen/`` and are exempt.
+CORE_PACKAGES = ("scaly.ir", "scaly.ad", "scaly.function", "scaly.passes", "scaly.codegen", "scaly.utils")
+NOT_FROM_CORE = ("scaly.solvers", "scaly.codegen.cpp", "scaly.codegen.casadi")
+
+
+def _named_modules(name: str, path: Path, stmt: ast.Import | ast.ImportFrom) -> list[str]:
+  if isinstance(stmt, ast.Import):
+    return [alias.name for alias in stmt.names]
+  base = stmt.module if stmt.level == 0 else ".".join(filter(None, (_base_package(name, path, stmt.level), stmt.module)))
+  return [base or "", *(f"{base}.{alias.name}" for alias in stmt.names)]
+
+
+def test_core_names_no_solver_or_adapter() -> None:
+  """Every import statement counts here, inside a function or under ``TYPE_CHECKING`` too: a core
+  distribution must build and type-check without the solver package or the adapters installed."""
+  bad = []
+  for name, path in _modules().items():
+    if not any(name == pkg or name.startswith(f"{pkg}.") for pkg in CORE_PACKAGES) or name in NOT_FROM_CORE:
+      continue
+    for stmt in ast.walk(ast.parse(path.read_text())):
+      if isinstance(stmt, ast.Import | ast.ImportFrom):
+        for target in _named_modules(name, path, stmt):
+          if any(target == forbidden or target.startswith(f"{forbidden}.") for forbidden in NOT_FROM_CORE):
+            bad.append(f"{name}:{stmt.lineno} imports {target}")
+  assert not bad, "core modules name a solver or an output adapter:\n  " + "\n  ".join(sorted(set(bad)))

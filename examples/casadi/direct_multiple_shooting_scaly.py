@@ -61,7 +61,7 @@ def build(verbose: bool = False):
 
   def run():
     w, _, lam_g, _ = solve(W0, np.zeros(NW), np.zeros(2 * N), np.zeros(0), ())
-    stats = solve.solver_stats()
+    stats = sc.solver_stats(solve)
     return {"f": np.array([stats.obj]), "x1": w[0::3], "x2": w[1::3], "u": w[2::3], "lam_g": lam_g, "iter": np.array([stats.iter])}
 
   return run

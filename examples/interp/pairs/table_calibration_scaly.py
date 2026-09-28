@@ -30,7 +30,7 @@ def build(verbose: bool = False):
 
   def run():
     table, *_ = solve(np.zeros((N, N)), np.zeros((N, N)), np.zeros(0), np.zeros(0), ())
-    stats = solve.solver_stats()
+    stats = sc.solver_stats(solve)
     return {"table": table, "f": np.array([stats.obj]), "iter": np.array([stats.iter])}
 
   return run

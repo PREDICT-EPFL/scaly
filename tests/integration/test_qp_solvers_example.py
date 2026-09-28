@@ -53,7 +53,7 @@ def test_generated_piqp_matches_the_library(example: dict, family: str, backend:
   zeros = p.vars.unflatten(tuple(np.zeros(s) for s in p.vars.shapes))
   out = library(zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
   x_lib = np.concatenate([np.ravel(v) for v in p.vars.flatten_numerical(out[0], "x")])
-  stats = library.solver_stats()
+  stats = sc.solver_stats(library)
 
   assert int(status) == 1 and stats.status.name == "OK"
   assert int(iters) == stats.iter

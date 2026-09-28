@@ -595,7 +595,7 @@ def check_sqp_oracles_agree() -> None:
     np.testing.assert_allclose(scaly_u, casadi_u, rtol=1e-9, atol=1e-9)
     acted |= bool(np.max(np.abs(scaly_u - desired)) > 1e-3)
     for controller in (scaly_filter, casadi_filter):
-      stats = controller.nlp.solver_stats()
+      stats = sc.solver_stats(controller.nlp)
       report = controller.stats_history[-1]
       assert stats is not None and stats.status.name == "OK" and report.success and report.min_g >= -1e-6
       assert stats.t_qp > 0.0 and stats.n_eval_h > 0

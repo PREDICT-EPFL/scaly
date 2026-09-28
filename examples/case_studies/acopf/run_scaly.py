@@ -54,7 +54,7 @@ def main() -> None:
     t0 = time.perf_counter()
     (va, vm, pg, qg, p, q), *_ = solve(x0, zeros, np.zeros(prob.n_eq), np.zeros(prob.n_ineq), ())
     wall = time.perf_counter() - t0
-    st = solve.solver_stats()
+    st = sc.solver_stats(solve)
     runs.append({"wall": wall, "iterations": int(st.iter), "objective": float(st.obj), "status": st.to_solver_status().name, "t_total": st.t_total, "t_fe": st.t_fe})
     sys.stdout.flush()
   row = {

@@ -111,7 +111,7 @@ def main() -> dict:
   for k in range(M, T):
     window = ys[k - M : k + 1]
     (xs, ws, b), lam_box, lam_eq, _ = mhe_sqp((xs, ws, b), lam_box, lam_eq, np.zeros(0), (window, xbar, bbar))
-    iterations.append(mhe_sqp.solver_stats().iter)
+    iterations.append(sc.solver_stats(mhe_sqp).iter)
     estimates.append(xs[-2:])
     b_hist.append(float(b[0]))
     # Arrival cost for the next window, then shift the solution.

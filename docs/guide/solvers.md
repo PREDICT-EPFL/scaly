@@ -183,14 +183,14 @@ A solve whose arguments do not depend on what is being differentiated is a const
 After a numerical call, read the latest statistics from the compiled function:
 
 ```python
-stats = solve.solver_stats()
+stats = sc.solver_stats(solve)
 status = stats.to_solver_status()
 if status is not None and not status.ok:
     raise RuntimeError(status)
 ```
 
 A host function can reach more than one solver. Pass the solver artifact name to
-`host.solver_stats(name)` to select one. Statistics include statuses, iteration count, objective,
+`sc.solver_stats(host, name)` to select one. Statistics include statuses, iteration count, objective,
 oracle evaluation counts, timing splits, primal violation, last step norm, accepted step length,
 backtracks and accumulated QP iterations.
 
