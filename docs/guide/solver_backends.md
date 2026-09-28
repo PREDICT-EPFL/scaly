@@ -1,30 +1,37 @@
 # Solver backends
 
-Three backends ship with scaly. Each is a separate distribution under `plugins/`, discovered by
-entry point, so installing one makes its name available to `sc.opt.solver(problem, backend)`. This page
-says what each one is, when to pick it, and what it costs to ship.
+Four methods ship with scaly. Three drive a solver library and are separate distributions under
+`plugins/`, discovered by entry point, so installing one makes its name available to
+`sc.opt.solver(problem, method)`. The fourth, IPM, is part of scaly: PIQP's algorithm generated as C,
+with no library behind it. This page says what each one is, when to pick it, and what it costs to
+ship.
 
 [Solvers](solvers.md) covers problem shapes, calling conventions and nesting a solver in a graph.
 [How solvers work](../how_it_works/solvers.md) covers the generated wrappers.
 
 ## Choosing one
 
-| | PIQP | IPOPT | scaly-sqp |
-| --- | --- | --- | --- |
-| Solves | quadratic programs | nonlinear programs | nonlinear programs |
-| Method | `sc.opt.PIQP(...)`, or `"piqp"` | `sc.opt.IPOPT(...)`, or `"ipopt"` | `sc.opt.SQP(...)`, or `"sqp"` |
-| Algorithm | proximal interior point | primal-dual interior point, filter line search | sequential quadratic programming, PIQP subproblems |
-| Sparse data | `sparse=True` for the problem data | sparse Jacobian and Hessian, always | sparse oracles always; sparse subproblems by default, `qp="dense"` to switch |
-| Exact Lagrangian Hessian | n/a (the Hessian is your `P`) | yes, default | yes, default; `hessian="objective"` to approximate |
-| Warm start | no, upstream has no C API for it | primal always; multipliers only if you ask | primal and dual, always |
-| Foreign oracles | no | no | yes, see [below](#driving-the-sqp-with-foreign-oracles) |
-| Written by | the PIQP authors | the COIN-OR project | this project |
+| | PIQP | IPM | IPOPT | scaly-sqp |
+| --- | --- | --- | --- | --- |
+| Solves | quadratic programs | quadratic programs | nonlinear programs | nonlinear programs |
+| Method | `sc.opt.PIQP(...)`, or `"piqp"` | `sc.opt.IPM(...)`, or `"ipm"` | `sc.opt.IPOPT(...)`, or `"ipopt"` | `sc.opt.SQP(...)`, or `"sqp"` |
+| Algorithm | proximal interior point | PIQP's, generated as C | primal-dual interior point, filter line search | sequential quadratic programming, PIQP subproblems |
+| Sparse data | `sparse=True` for the problem data | specialised to the problem's patterns always; `sparse=False` condenses the KKT system | sparse Jacobian and Hessian, always | sparse oracles always; sparse subproblems by default, `qp="dense"` to switch |
+| Exact Lagrangian Hessian | n/a (the Hessian is your `P`) | n/a | yes, default | yes, default; `hessian="objective"` to approximate |
+| Warm start | no, upstream has no C API for it | no, as PIQP | primal always; multipliers only if you ask | primal and dual, always |
+| Foreign oracles | no | no | no | yes, see [below](#driving-the-sqp-with-foreign-oracles) |
+| Written by | the PIQP authors | this project, after PIQP 0.6.2 | the COIN-OR project | this project |
 
 Pick PIQP when the problem is a quadratic program (QP): a convex quadratic objective and linear
 constraints, which is what a linear model-predictive-control formulation or an input-affine safety
 filter gives you. A nonlinear-program (NLP) solver will also solve a QP, but you pay for generality
 you are not using. Not every barrier-function filter qualifies; this repository's own safety-filter
 benchmark has a neural model inside its constraints, so it is an NLP.
+
+Pick IPM for the same problems when the solver has to ship without a library: a microcontroller,
+or a build that should carry nothing but generated C. It takes the PIQP library's iterations and
+returns its solution; its C is larger and slower to compile, and how its solve time compares depends
+on the problem. `examples/qp_solvers` measures both on four QP families.
 
 Pick IPOPT when the problem is nonlinear and you want a solver with two decades of use behind it
 and its own documentation.
@@ -64,6 +71,25 @@ saying `piqp_settings` has no such member.
 PIQP's C interface has no warm-start entry point. The fixed solver signature still has the
 warm-start inputs, and PIQP ignores them. Repeated solves are still cheaper than the first, because
 the wrapper keeps a persistent workspace and re-solves after a value update instead of rebuilding.
+
+## IPM
+
+PIQP 0.6.2's proximal interior-point method, written once in scaly as generated code: Ruiz
+equilibration, the initial point, the Mehrotra predictor-corrector with PIQP's proximal updates, and
+unscaling, each a loop in the solver's graph. Select it with `sc.opt.solver(problem, "ipm")`.
+
+The solver is specialised when it is built. The structural patterns of `P`, `A_eq` and `G_ineq` are
+derived as for sparse PIQP, and which bounds are finite is read at one probe of the parameters, so
+a bound that is infinite there is left out of the generated code for good. The KKT system is
+factored whole by `linalg.SparseLDL` by default; `sparse=False` condenses it and factors it by a
+dense Cholesky, as PIQP's dense interface does.
+
+Options are PIQP's settings by name (`eps_abs`, `eps_rel`, `max_iter`, ...), checked when the method
+is made: an unknown name raises `TypeError` listing the settings. PIQP's `verbose` is accepted and
+does nothing, so a PIQP method's options carry over.
+
+There is no statistics struct: `info` is all it reports, and `sc.opt.solver_stats` is for the
+library methods.
 
 ## IPOPT
 
@@ -207,6 +233,7 @@ expecting system packages. This matters when you ship.
 | `scaly-piqp` | PIQP v0.6.2 | Eigen 3.4.1, Blasfeo 0.1.4.3 |
 | `scaly-ipopt` | IPOPT 3.14.19 | MUMPS 5.8.2 through COIN-OR ThirdParty-Mumps 3.0.12, METIS 5.2.1 with GKlib, and on Linux OpenBLAS v0.3.28; macOS uses Apple's Accelerate framework |
 | `scaly-sqp` | nothing of its own | links PIQP's library, so it needs `scaly-piqp` built |
+| IPM (in `scaly`) | nothing | nothing: the generated C is the whole solver |
 
 Every dependency is pinned to a tag or release branch in the plugin's `build_config.json`.
 

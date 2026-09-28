@@ -30,6 +30,10 @@
 
 ::: scaly.opt.method.REGISTRY
 
+## The generated method
+
+::: scaly.opt.ipm.method.IPM
+
 ## Normal forms
 
 ::: scaly.opt.qp.extract_qp

@@ -35,10 +35,10 @@ class Info(MethodInfo):
 REGISTRY = registry(
   "opt",
   hints=(MethodHint("piqp", "PIQP", "scaly-piqp"), MethodHint("ipopt", "IPOPT", "scaly-ipopt"), MethodHint("sqp", "SQP", "scaly-sqp")),
-  preference=("piqp", "ipopt", "sqp"),
+  preference=("piqp", "ipm", "ipopt", "sqp"),
 )
-"""Every opt method, generated or external, by short name (``"piqp"``); ``auto`` tries a QP method
-before the NLP ones."""
+"""Every opt method, generated or external, by short name (``"piqp"``); ``auto`` tries the QP
+methods, the vendored PIQP and then the generated IPM, before the NLP ones."""
 
 
 def short_name(name: str) -> str:

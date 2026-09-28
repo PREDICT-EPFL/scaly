@@ -62,6 +62,9 @@ class SolverDescriptor:
   n_var_blocks: int
   # Functions
   oracle: ConcreteFunction | None = None  # QP only
+  # QP only: the objective's constant as a Function of the parameters, when it is not zero. The
+  # solver sees 1/2 x'Px + c'x; core's frame adds this to the objective it reports.
+  objective_constant: ConcreteFunction | None = None
   base: ConcreteFunction | ExternalOracle | None = None  # NLP only
   grad: ConcreteFunction | ExternalOracle | None = None
   jac: ConcreteFunction | ExternalOracle | None = None
@@ -107,7 +110,7 @@ class SolverDescriptor:
   def dependencies(self) -> tuple[ConcreteFunction, ...]:
     """The oracle and derivative Functions the wrapper calls, deduplicated, in descriptor order."""
     out: list[ConcreteFunction] = []
-    for candidate in (self.oracle, self.base, self.grad, self.jac, self.hess, self.bounds):
+    for candidate in (self.oracle, self.base, self.grad, self.jac, self.hess, self.bounds, self.objective_constant):
       if isinstance(candidate, ConcreteFunction) and candidate not in out:
         out.append(candidate)
     return tuple(out)

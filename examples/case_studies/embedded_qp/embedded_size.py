@@ -21,7 +21,6 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE.parent.parent / "qp_solvers"))
 sys.path.insert(0, str(HERE / "baseline"))
 TARGET = ["--target=thumbv7em-none-eabihf", "-mcpu=cortex-m7", "-mfloat-abi=hard", "-Os", "-ffreestanding", "-ffunction-sections"]
 MATH_H = """#ifndef STUB_MATH_H
@@ -65,13 +64,12 @@ def compile_objects(sources: list[Path], work: Path, include: list[Path], extra:
 
 
 def scaly(horizon: int, work: Path) -> dict:
+  import scaly as sc
   from scaly.codegen import render_c_module
-  from scaly.solvers.ipm import Settings
 
-  import generated_piqp
   from problem import problem
 
-  fun = generated_piqp.solver(problem(horizon), "sparse", Settings(eps_abs=1e-7, eps_rel=1e-7), name=f"masses_T{horizon}_piqp")
+  fun = sc.opt.solver(problem(horizon), sc.opt.IPM(options={"eps_abs": 1e-7, "eps_rel": 1e-7}), name=f"masses_T{horizon}_piqp")
   module = render_c_module(fun)
   src = work / "scaly_piqp.c"
   src.write_text(module.body)

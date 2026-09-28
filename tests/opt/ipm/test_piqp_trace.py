@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tests.solvers.ipm import piqp_trace
-from tests.solvers.ipm.problems import infeasible_problems, kkt_residuals, maros_meszaros, maros_meszaros_names, mpc_qp
+from tests.opt.ipm import piqp_trace
+from tests.opt.ipm.problems import infeasible_problems, kkt_residuals, maros_meszaros, maros_meszaros_names, mpc_qp
 
 NAMES = maros_meszaros_names()
 

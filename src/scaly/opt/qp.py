@@ -302,6 +302,9 @@ def build_qp[SV, NV, SP, NP](
   oracle = ConcreteFunction.from_exprs(
     f"{name}_oracle", params, oracle_outputs, problem.params.names, tuple(f"qp:{output}" for output in oracle_names)
   )
+  constant = None
+  if not (form.f0.op == ExprOp.CONST and form.f0.value is not None and not np.any(form.f0.value)):
+    constant = ConcreteFunction.from_exprs(f"{name}_objective_constant", params, [form.f0], problem.params.names, ("qp:f0",))
 
   solver_vars = problem.vars.with_types(
     tuple(TensorType(expr.shape, expr.type.dtype, expr.type.sparsity, diff=False) for expr in problem._var_symbols)
@@ -331,6 +334,7 @@ def build_qp[SV, NV, SP, NP](
     param_names=problem.params.names,
     n_var_blocks=problem.vars.size,
     oracle=oracle,
+    objective_constant=constant,
     options=tuple(sorted({"verbose": 0, **resolved_options}.items())),
     oracle_output_names=tuple(oracle_names),
     sparse=sparse,

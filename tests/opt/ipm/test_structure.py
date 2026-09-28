@@ -7,7 +7,7 @@ import pytest
 from scipy import sparse
 
 import scaly as sc
-from scaly.solvers.ipm import INF, QPStructure, QPValues
+from scaly.opt.ipm import INF, QPStructure, QPValues
 
 
 def _structure() -> QPStructure:

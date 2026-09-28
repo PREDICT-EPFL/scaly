@@ -9,17 +9,11 @@ the generated solver against the PIQP library, iteration for iteration, on two w
 
 from __future__ import annotations
 
-import runpy
-import sys
-from collections.abc import Iterator
-from pathlib import Path
-
 import numpy as np
 import pytest
 
 import scaly as sc
 
-HERE = Path(__file__).resolve().parents[2] / "examples" / "qp_solvers"
 NM, T = 2, 3
 NX, NU = 2 * NM, NM
 
@@ -50,31 +44,24 @@ def masses() -> sc.opt.NLP:
   return problem
 
 
-@pytest.fixture(scope="module")
-def generated_piqp() -> Iterator[dict]:
-  sys.path.insert(0, str(HERE))
-  try:
-    yield runpy.run_path(str(HERE / "generated_piqp.py"))
-  finally:
-    sys.path.remove(str(HERE))
-
-
 @pytest.mark.solver("piqp")
-def test_generated_piqp_with_a_parametric_hessian_matches_the_library(generated_piqp: dict) -> None:
+def test_generated_piqp_with_a_parametric_hessian_matches_the_library() -> None:
   p = masses()
-  generated = generated_piqp["solver"](p, "sparse", name="test_masses_param_hessian_generated")
+  generated = sc.opt.solver(p, sc.opt.IPM(), name="test_masses_param_hessian_generated")
   library = sc.opt.solver(p, sc.opt.PIQP(sparse=True), name="test_masses_param_hessian_library")
   zeros = p.vars.unflatten(tuple(np.zeros(s) for s in p.vars.shapes))
   x0 = np.array([0.5, -0.4, 0.3, 0.2])
   solutions = []
   for q, r in ((np.array([1.0, 2.0, 3.0, 4.0]), np.array([0.5, 0.1])), (np.array([9.0, 0.1, 0.1, 5.0]), np.array([3.0, 7.0]))):
     params = (q, r, x0)
-    x, _, _, _, status, iters, obj = generated(params)
+    mine = generated(zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
     out = library(zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
+    x = np.concatenate([np.ravel(v) for v in p.vars.flatten_numerical(mine[0], "x")])
     x_lib = np.concatenate([np.ravel(v) for v in p.vars.flatten_numerical(out[0], "x")])
-    stats = sc.opt.solver_stats(library)
-    assert int(status) == 1 and stats.status.name == "OK"
-    assert int(iters) == stats.iter
+    info = mine[-1]
+    assert int(info.status) == int(out[-1].status) == sc.Status.OK
+    assert int(info.iter) == int(out[-1].iter)
+    obj = info.objective
     np.testing.assert_allclose(x, x_lib, atol=1e-8 * (1 + np.abs(x_lib).max()))
     u, xs = x_lib[: T * NU].reshape(T, NU), x_lib[T * NU :].reshape(T + 1, NX)
     assert abs(float(obj) - ((xs * xs * q).sum() + (u * u * r).sum())) < 1e-8 * (1 + abs(float(obj)))

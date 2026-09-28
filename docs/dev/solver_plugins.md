@@ -188,6 +188,8 @@ setup and on every update path. Do not make a wrapper depend on the identity of 
 `kind == "qp"`: PIQP.
 
 - The problem shape is `min 0.5 x' P x + c' x` subject to `A x = b`, `l <= G x <= u`, and box bounds.
+  The objective's constant is not part of it: fill `obj` with the solver's `0.5 x' P x + c' x`, and
+  core's frame adds the constant (`desc.objective_constant`) to the stats and the `Info` objective.
 - `desc.oracle` takes parameter leaves and emits `P, c, [A_eq, b_eq], [G_ineq, l_ineq, u_ineq], x_lb, x_ub`. Empty constraint blocks are omitted from the oracle but remain size-zero multiplier groups in the solver signature.
 - Dense matrices are row-major. When `desc.sparse` is true, the oracle emits compact compressed sparse column values in the baked `P_sparsity`, `A_sparsity`, and `G_sparsity` order. `P_sparsity` contains the upper triangle.
 - The oracle emits IEEE infinities for absent bounds; the wrapper converts them to the QP solver's native convention.

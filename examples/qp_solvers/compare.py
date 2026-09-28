@@ -3,13 +3,14 @@
     uv run examples/qp_solvers/compare.py [--cases mpc_N20,portfolio,...] [--solvers piqp_sparse,...]
                                           [--budget 2.0] [--out examples/qp_solvers/build/results.json]
 
-The solvers, each a plain Scaly ``Function`` from the problem's parameters to its solution:
+The solvers, each ``sc.opt.solver(problem, method)``: a plain Scaly ``Function`` from a warm start
+and the problem's parameters to its solution and an ``Info``, whatever the method:
 
 | Key | Solver | Behind the generated C |
 | --- | --- | --- |
-| ``piqp_sparse``, ``piqp_dense`` | ``sc.opt.solver(problem, "piqp")``, sparse and dense | oracles for the QP data, and a call into the vendored PIQP 0.6.2 library |
-| ``scaly_sparse``, ``scaly_dense`` | ``generated_piqp.solver(problem, backend)`` | nothing: PIQP's algorithm is the generated C, specialised to the problem's sparsity |
-| ``ipopt`` | ``sc.opt.solver(problem, "ipopt")`` | oracles, and a call into the vendored IPOPT 3.14 with MUMPS |
+| ``piqp_sparse``, ``piqp_dense`` | ``sc.opt.PIQP(sparse=...)`` | oracles for the QP data, and a call into the vendored PIQP 0.6.2 library |
+| ``scaly_sparse``, ``scaly_dense`` | ``sc.opt.IPM(sparse=...)`` | nothing: PIQP's algorithm is the generated C, specialised to the problem's sparsity |
+| ``ipopt`` | ``sc.opt.IPOPT(...)`` | oracles, and a call into the vendored IPOPT 3.14 with MUMPS |
 
 Every (case, solver) cell runs in a fresh process with an empty JIT cache, so nothing a previous
 cell lowered or compiled is reused. Measured per cell:
@@ -80,15 +81,13 @@ def all_cases() -> dict[str, Any]:
 def build(case: Any, key: str) -> Any:
   import scaly as sc
 
-  import generated_piqp
-
   name = f"{case.name}_{key}"
   if key in ("piqp_sparse", "piqp_dense"):
     return sc.opt.solver(case.problem, sc.opt.PIQP(sparse=key == "piqp_sparse"), name=name)
   if key == REFERENCE:
     return sc.opt.solver(case.problem, sc.opt.PIQP(sparse=True, options={**TIGHT}), name=name)
   if key in ("scaly_sparse", "scaly_dense"):
-    return generated_piqp.solver(case.problem, "sparse" if key == "scaly_sparse" else "dense", name=name)
+    return sc.opt.solver(case.problem, sc.opt.IPM(sparse=key == "scaly_sparse"), name=name)
   if key == "ipopt":
     return sc.opt.solver(case.problem, sc.opt.IPOPT(options=IPOPT_OPTIONS), name=name)
   raise KeyError(key)
@@ -97,9 +96,6 @@ def build(case: Any, key: str) -> Any:
 def call_args(fun: Any, case: Any, key: str) -> tuple[tuple[Any, ...], list[np.ndarray]]:
   """The call's arguments, one per parameter, and their flat arrays, in the order of the entry's inputs."""
   params = case.params()
-  if key.startswith("scaly_"):
-    flat = [np.asarray(a, dtype=float) for a in case.problem.params.flatten_numerical(params, "parameters")]
-    return fun.input_tree.unflatten(tuple(flat)), flat
   p = case.problem
   zeros = p.vars.unflatten(tuple(np.zeros(s) for s in p.vars.shapes))
   args = (zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
@@ -107,9 +103,41 @@ def call_args(fun: Any, case: Any, key: str) -> tuple[tuple[Any, ...], list[np.n
 
 
 def flat_x(out: Any, key: str, problem: Any) -> np.ndarray:
-  if key.startswith("scaly_"):
-    return np.asarray(out[0], dtype=float)
   return np.concatenate([np.ravel(v) for v in problem.vars.flatten_numerical(out[0], "solution")])
+
+
+def structure_summary(problem: Any) -> dict[str, Any]:
+  """Sizes and non-zeros of the extracted QP, for the tables."""
+  import scaly as sc
+
+  form = sc.opt.extract_qp(problem)
+  n, p, m = form.P.shape[0], form.A.shape[0], form.G.shape[0]
+  nnz = [0 if sp is None or not rows else len(sp.rows) for sp, rows in zip(form.patterns(f"{problem.name}_nnz"), (n, p, m), strict=True)]
+  return {"n": n, "p": p, "m": m, "nnz_P_upper": nnz[0], "nnz_A": nnz[1], "nnz_G": nnz[2]}
+
+
+def qp_data(problem: Any) -> Any:
+  """The extracted QP as dense matrices, for checking any solver's answer: a ``Function`` from the
+  parameters to ``((P, c), (A, b), (G, g_lb, g_ub), (x_lb, x_ub), f0)``, with ``f0`` the objective at
+  ``x = 0``, so that the problem's objective is ``1/2 x^T P x + c^T x + f0``."""
+  import scaly as sc
+  from scaly.ir.expr import substitute
+
+  form = sc.opt.extract_qp(problem)
+  data = (form.P, form.c, form.A, form.b, form.G, form.g_lb, form.g_ub, form.x_lb, form.x_ub)
+  f0 = form.f0
+  params = list(form.params)
+
+  def evaluate(inputs: Any) -> tuple[sc.Expr, ...]:
+    swap = dict(zip(params, problem.params.flatten_symbolic(inputs, "qp_data"), strict=True))
+    return tuple(substitute(e, swap) for e in (*data, f0))
+
+  def nested(inputs: Any) -> Any:
+    P, c, A, b, G, g_lb, g_ub, x_lb, x_ub, f = evaluate(inputs)
+    return (P, c), (A, b), (G, g_lb, g_ub), (x_lb, x_ub), f
+
+  tree = sc.G(sc.G("P", "c"), sc.G("A", "b"), sc.G("G", "g_lb", "g_ub"), sc.G("x_lb", "x_ub"), "f0")
+  return sc.function(problem.params, output=tree, name=f"{problem.name}_qp_data")(nested)
 
 
 def sh(cmd: list[str]) -> str:
@@ -162,9 +190,8 @@ def measure(case_name: str, key: str, budget: float) -> dict[str, Any]:
   from scaly.codegen import render_c_module, write_module
   from scaly.codegen.abi import c_ident
   from scaly.codegen.jit import compile_flags
+  import scaly as sc
   from scaly.opt import solver_stats
-
-  import generated_piqp
 
   case = all_cases()[case_name]
   t = time.perf_counter()
@@ -199,16 +226,12 @@ def measure(case_name: str, key: str, budget: float) -> dict[str, Any]:
   args, flat = call_args(fun, case, key)
   out = fun(*args)  # JIT: compiles once more, into this process's empty cache
   x = flat_x(out, key, case.problem)
-  if key.startswith("scaly_"):
-    status, iters = int(out[4]), int(out[5])
-    row["status"] = "solved" if status == 1 else f"PIQP status {status}"
-  else:
-    stats = solver_stats(fun)
-    iters = int(stats.iter)
-    row["status"] = "solved" if stats.status.name in ("OK", "ACCEPTABLE") else stats.status.name.lower()
+  info = out[-1]
+  status, iters = sc.Status(int(info.status)), int(info.iter)
+  row["status"] = "solved" if status.ok else status.name.lower()
   row["iterations"] = iters
   row["x"] = x.tolist()
-  row.update(residuals(x, generated_piqp.qp_data(case.problem)(case.params())))
+  row.update(residuals(x, qp_data(case.problem)(case.params())))
 
   # Solve time, through Python and from C.
   t = time.perf_counter()

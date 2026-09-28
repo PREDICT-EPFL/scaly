@@ -122,13 +122,12 @@ src/scaly/
       graph.py           the solver queries over a Function graph
       paths.py           vendored solver library and header discovery
       stats.py           the versioned solver-statistics ABI and SolverStatus
-
-  solvers/
-    ipm/                 PIQP's interior-point method written once as generated code
+    ipm/                 PIQP's interior-point method written once as generated code, no library behind it
       structure.py       QPStructure (the patterns and which bounds exist) and QPValues
       ruiz.py            Ruiz equilibration of the problem data, as a while_loop
       kkt.py             the KKT system: dense and sparse backends, retries, refinement
       algorithm.py       Solver: the initial point, one iteration, the loop and the result
+      method.py          IPM, the opt method: the extracted QP's structure, the Solver traced on its data
 
   viz/
     graph.py             graph JSON, colors and labels; presentation, not compiler text
@@ -143,9 +142,9 @@ src/scaly/
     torch_state_dict.py  reading PyTorch checkpoints without depending on torch
 ```
 
-Solver backends are not in this tree. Each is a separate distribution under `plugins/`
+Solver libraries are not in this tree. Each is a separate distribution under `plugins/`
 (`scaly-piqp`, `scaly-ipopt`, `scaly-sqp`) discovered through an entry point; see
-[Solver plugins](solver_plugins.md). `tests/` mirrors this layout directory for directory.
+[Solver plugins](solver_plugins.md). `opt/ipm` is the one method core ships, since it needs no library. `tests/` mirrors this layout directory for directory.
 
 ## Import layers
 
@@ -159,7 +158,7 @@ one, never a higher one.
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites and structural sparsity. Nothing here knows what a `Function` is. |
 | 3 | `function/{model,tree,extern,method}` | `Function` itself, a named graph boundary over import layer 1, the pytree declarations, the protocol a Function with an extern body implements, and the method interface every domain shares. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the builders that do too (`vmap`, `scan`, `while_loop`, `custom_derivative`). |
-| 5 | `function/{factory,api}`, `opt/*`, `solvers/ipm`, `linalg/*`, `interp/*`, `integrators/*`, `mpc/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, splines, integrators and MPC. |
+| 5 | `function/{factory,api}`, `opt/*`, `linalg/*`, `interp/*`, `integrators/*`, `mpc/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, splines, integrators and MPC. |
 | 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including the Functions extern callees call, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |

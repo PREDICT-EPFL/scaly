@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly.solvers.ipm import QPValues, ruiz, scale
-from tests.solvers.ipm import reference as ref
-from tests.solvers.ipm.problems import infeasible_problems, ipm_inputs, maros_meszaros, maros_meszaros_names, mpc_qp
+from scaly.opt.ipm import QPValues, ruiz, scale
+from tests.opt.ipm import reference as ref
+from tests.opt.ipm.problems import infeasible_problems, ipm_inputs, maros_meszaros, maros_meszaros_names, mpc_qp
 
 NAMES = maros_meszaros_names()
 ORDER = ("P", "c", "A", "b", "G", "h_l", "h_u", "x_l", "x_u")

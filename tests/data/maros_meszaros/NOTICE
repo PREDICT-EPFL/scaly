@@ -15,4 +15,4 @@ CSC form, q, r, l, u); no values were changed. The problems read
 
 with P stored in full (both triangles) and +-1e20 (sometimes rounded to 9.999999999999998e19)
 standing for an infinite bound. The loader in
-tests/solvers/ipm/problems.py maps them to PIQP's form.
+tests/opt/ipm/problems.py maps them to PIQP's form.

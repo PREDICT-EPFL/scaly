@@ -52,18 +52,28 @@ def render_solver(fun: ConcreteFunction, desc: SolverDescriptor, ctx: ExternRend
   outputs from the statistics it filled, and the exported ``<symbol>_stats`` accessor.
 
   The plugin defines ``<raw>_solve`` over the descriptor's inputs and solution outputs; ``<raw>``,
-  what the generated code calls, takes the ``Info`` outputs after them."""
+  what the generated code calls, takes the ``Info`` outputs after them. A QP's objective constant,
+  which the solver never sees, is added to the objective here, so both report the problem's own."""
   wrapper = SolverWrapperCtx(symbol=ctx.symbol, raw_symbol=f"{ctx.raw_symbol}_solve", stats_symbol=f"{ctx.symbol}_stats_data")
   body = _method(desc).render_wrapper(fun, wrapper)
   n_in, n_out = len(desc.input_signature), len(desc.output_signature)
   params = [*(f"const double* in{i}" for i in range(n_in)), *(f"double* out{i}" for i in range(n_out + len(INFO_FIELDS))), "double* w"]
   args = [*(f"in{i}" for i in range(n_in)), *(f"out{i}" for i in range(n_out)), "w"]
+  constant = []
+  if desc.objective_constant is not None:
+    param_args = [f"in{n_in - len(desc.param_names) + i}" for i in range(len(desc.param_names))]
+    constant = [
+      "  double objective_constant;",
+      f"  {ctx.raw_symbol_of(desc.objective_constant)}({', '.join([*param_args, '&objective_constant', 'w'])});",
+      f"  {wrapper.stats_symbol}.obj += objective_constant;",
+    ]
   return [
     f"static scaly_solver_stats {wrapper.stats_symbol};",
     *body,
     "",
     f"static void {ctx.raw_symbol}({', '.join(params)}) {{",
     f"  {wrapper.raw_symbol}({', '.join(args)});",
+    *constant,
     *(f"  out{n_out + k}[0] = (double){wrapper.stats_symbol}.{field};" for k, field in enumerate(INFO_FIELDS)),
     "}",
     "",

@@ -199,7 +199,7 @@ def random_qp(n: int, m: int, p: int, *, density: float = 0.15, seed: int = 0, l
 
 def ipm_inputs(qp: QP):
   """A ``QPStructure`` for ``qp`` and its value vectors in the structure's entry order, by name."""
-  from scaly.solvers.ipm import QPStructure
+  from scaly.opt.ipm import QPStructure
 
   s = QPStructure.from_patterns(qp.P, qp.A, qp.G, h_l=qp.h_l, h_u=qp.h_u, x_l=qp.x_l, x_u=qp.x_u)
   dense = {k: getattr(qp, k).toarray() for k in ("P", "A", "G")}

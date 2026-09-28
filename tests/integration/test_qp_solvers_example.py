@@ -1,16 +1,13 @@
-"""``examples/qp_solvers``: the generated PIQP, reached from a ``sc.opt.problem``, against the PIQP library.
+"""``examples/qp_solvers``: the generated PIQP (``opt.ipm``) against the PIQP library (``opt.piqp``).
 
-The example's front end (``generated_piqp.solver``) extracts a problem's QP the way ``sc.opt.solver`` does
-and generates the solver from it. On small instances of the four families it must take the vendored
-library's iterations, backend for backend, and return its solution; ``qp_data`` must reproduce the
-problem's objective.
+On small instances of the four families the generated solver must take the vendored library's
+iterations, backend for backend, and return its solution and multipliers; its objective must be the
+problem's own, as the example's ``qp_data`` reproduces it.
 """
 
 from __future__ import annotations
 
 import runpy
-import sys
-from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -22,12 +19,8 @@ HERE = Path(__file__).resolve().parents[2] / "examples" / "qp_solvers"
 
 
 @pytest.fixture(scope="module")
-def example() -> Iterator[dict]:
-  sys.path.insert(0, str(HERE))
-  try:
-    yield {"problems": runpy.run_path(str(HERE / "problems.py")), "generated_piqp": runpy.run_path(str(HERE / "generated_piqp.py"))}
-  finally:
-    sys.path.remove(str(HERE))
+def example() -> dict:
+  return {"problems": runpy.run_path(str(HERE / "problems.py")), "compare": runpy.run_path(str(HERE / "compare.py"))}
 
 
 SMALL = {
@@ -44,20 +37,26 @@ SMALL = {
 def test_generated_piqp_matches_the_library(example: dict, family: str, backend: str) -> None:
   make, kwargs = SMALL[family]
   case = example["problems"][make](**kwargs)
-  gp = example["generated_piqp"]
   params = case.params()
-  x, _, _, _, status, iters, obj = gp["solver"](case.problem, backend, name=f"test_{case.name}_{family}_{backend}")(params)
-
-  library = sc.opt.solver(case.problem, sc.opt.PIQP(sparse=backend == "sparse"), name=f"test_{case.name}_{family}_lib_{backend}")
   p = case.problem
   zeros = p.vars.unflatten(tuple(np.zeros(s) for s in p.vars.shapes))
-  out = library(zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
-  x_lib = np.concatenate([np.ravel(v) for v in p.vars.flatten_numerical(out[0], "x")])
-  stats = sc.opt.solver_stats(library)
+  args = (zeros, zeros, np.zeros(p.n_eq), np.zeros(p.n_ineq), params)
+  sparse = backend == "sparse"
+  generated = sc.opt.solver(p, sc.opt.IPM(sparse=sparse), name=f"test_{case.name}_{family}_{backend}")(*args)
+  library = sc.opt.solver(p, sc.opt.PIQP(sparse=sparse), name=f"test_{case.name}_{family}_lib_{backend}")(*args)
 
-  assert int(status) == 1 and stats.status.name == "OK"
-  assert int(iters) == stats.iter
-  np.testing.assert_allclose(x, x_lib, atol=1e-8 * (1 + np.abs(x_lib).max()))
+  def flat(tree: object) -> np.ndarray:
+    return np.concatenate([np.ravel(v) for v in p.vars.flatten_numerical(tree, "x")])
 
-  (P, c), _, _, _, f0 = gp["qp_data"](case.problem)(params)
-  assert abs(float(obj) - (0.5 * x @ P @ x + c @ x + f0)) < 1e-10 * (1 + abs(float(obj)))
+  info, lib_info = generated[-1], library[-1]
+  assert int(info.status) == int(lib_info.status) == sc.Status.OK
+  assert int(info.iter) == int(lib_info.iter)
+  x = flat(generated[0])
+  scale = 1 + np.abs(flat(library[0])).max()
+  np.testing.assert_allclose(x, flat(library[0]), atol=1e-8 * scale)
+  np.testing.assert_allclose(flat(generated[1]), flat(library[1]), atol=1e-6 * (1 + np.abs(flat(library[1])).max()))
+  for got, want in zip(generated[2:4], library[2:4], strict=True):
+    np.testing.assert_allclose(got, want, atol=1e-6 * (1 + np.abs(want).max(initial=0.0)))
+
+  (P, c), _, _, _, f0 = example["compare"]["qp_data"](p)(params)
+  assert abs(float(info.objective) - (0.5 * x @ P @ x + c @ x + f0)) < 1e-10 * (1 + abs(float(info.objective)))

@@ -38,7 +38,7 @@ pattern and its factor, times Scaly's two factorization schedules, and plots the
 | `baseline/setup.sh` | pins qoco-benchmarks (`d7e00f5`) and qoco (`0198625`, for its vendored QDLDL) |
 | `baseline/run_qoco.py` | QOCO, Clarabel, OSQP at 1e-7 and 1e-3, and QOCOGEN, through qoco-benchmarks' own problem conversion and C timing harness, with QOCOGEN compiled with Scaly's flags |
 | `problem.py` | the family as a Scaly `sc.opt.problem` with `Q`, `R`, `x0` as parameters, and the benchmark's random instances replayed in its draw order |
-| `run_scaly.py` | the generated PIQP (`examples/qp_solvers/generated_piqp.py`, Tier 4's `backend="scaly"`) and the PIQP library, timed from C |
+| `run_scaly.py` | the generated PIQP (`sc.opt.IPM()`) and the PIQP library (`sc.opt.PIQP(sparse=True)`), timed from C |
 | `compare.py` | every solver, every horizon, fresh processes, the quiet-machine gate |
 | `ldl_bench.py` | the LDLᵀ microbenchmark: QOCOGEN's `ldl()`, QDLDL, Scaly's `SparseLDL` looped and straight-line |
 | `embedded_size.py` | the embedded leg without a board: flash and RAM for a Cortex-M7 build |

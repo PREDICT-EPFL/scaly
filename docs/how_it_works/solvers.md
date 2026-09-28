@@ -105,6 +105,12 @@ A plugin package ships a native library, headers, and a method class (`opt.exter
 with its metadata and `render_wrapper`, declared in the `scaly.methods` entry points. It ships no
 Python numerical solver.
 
+`opt.ipm` reaches the same generated C without a library or a wrapper. `sc.opt.IPM` extracts the QP,
+fixes its structure (the patterns of `P`, `A` and `G` and which bounds are finite), and traces PIQP's
+algorithm on the extracted data as an ordinary graph: Ruiz equilibration and the Mehrotra iterations
+are `while_loop`s, and the KKT system is factored by `linalg.SparseLDL` or, condensed, by a dense
+Cholesky. The solver `Function` has no extern callee, so it lowers, fuses and ships like any other.
+
 ## The pieces
 
 | Module | Owns |
@@ -120,6 +126,7 @@ Python numerical solver.
 | `opt/external/paths.py` | vendored library and header discovery |
 | `opt/external/stats.py` | the versioned statistics layout |
 | `opt/external/wrapper.py` | the wrapper framing, the `Info` outputs, statistics accessor and build requirements behind that callee |
+| `opt/ipm/` | `IPM`: PIQP's algorithm as generated code, the `QPStructure` it is specialised to and its KKT backends |
 | `plugins/scaly-{piqp,ipopt,sqp}` | method classes and C wrapper generators (a Jinja template for scaly-sqp; PIQP and IPOPT emit C from Python strings) |
 
 ## What the generated wrapper contains

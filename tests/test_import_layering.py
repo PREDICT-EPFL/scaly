@@ -65,7 +65,6 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.function.sugar": 4,
   "scaly.function.api": 5,
   "scaly.function.factory": 5,
-  "scaly.solvers": 5,
   "scaly.opt": 5,
   "scaly.opt.external": 5,
   "scaly.opt._oracle": 5,
@@ -80,11 +79,12 @@ IMPORT_LAYERS: dict[str, int] = {
   "scaly.opt.method": 5,
   "scaly.opt.external.model": 5,
   "scaly.opt.external.wrapper": 5,
-  "scaly.solvers.ipm": 5,
-  "scaly.solvers.ipm.structure": 5,
-  "scaly.solvers.ipm.ruiz": 5,
-  "scaly.solvers.ipm.kkt": 5,
-  "scaly.solvers.ipm.algorithm": 5,
+  "scaly.opt.ipm": 5,
+  "scaly.opt.ipm.structure": 5,
+  "scaly.opt.ipm.ruiz": 5,
+  "scaly.opt.ipm.kkt": 5,
+  "scaly.opt.ipm.algorithm": 5,
+  "scaly.opt.ipm.method": 5,
   "scaly.linalg": 5,
   "scaly.linalg.options": 5,
   "scaly.linalg.ops": 5,
@@ -320,7 +320,7 @@ def test_flat_call_seams_stay_inside_their_sanctioned_modules() -> None:
 # (``codegen/adapter.py``), and the packages built on the compiler (``linalg`` and its ops) through
 # the op registry. The adapters themselves still live under ``codegen/`` and are exempt.
 CORE_PACKAGES = ("scaly.ir", "scaly.ad", "scaly.function", "scaly.passes", "scaly.codegen", "scaly.utils")
-NOT_FROM_CORE = ("scaly.solvers", "scaly.codegen.cpp", "scaly.codegen.casadi", *BUILT_ON_THE_CORE)
+NOT_FROM_CORE = ("scaly.codegen.cpp", "scaly.codegen.casadi", *BUILT_ON_THE_CORE)
 
 
 def _named_modules(name: str, path: Path, stmt: ast.Import | ast.ImportFrom) -> list[str]:

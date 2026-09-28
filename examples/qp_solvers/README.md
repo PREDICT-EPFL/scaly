@@ -1,19 +1,19 @@
 # QPs through the PIQP library, the generated PIQP and IPOPT
 
-Four QP families, each written once as a parametric `sc.opt.problem`, solved by five solvers that all take
-the problem's parameters and return its `x`:
+Four QP families, each written once as a parametric `sc.opt.problem`, solved by five solvers, each
+`sc.opt.solver(problem, method)` with the one signature every opt method has: a warm start and the
+problem's parameters in, the solution, its multipliers and an `Info` out.
 
 | Solver | Built by | Behind the generated C |
 | --- | --- | --- |
 | PIQP library, sparse and dense | `sc.opt.solver(problem, sc.opt.PIQP(sparse=...))` | the vendored PIQP 0.6.2 (`scaly-piqp` plugin) |
-| generated PIQP, sparse and dense | `generated_piqp.solver(problem, backend)` | nothing: `scaly.solvers.ipm` generates PIQP's algorithm for the problem's structure |
-| IPOPT | `sc.opt.solver(problem, "ipopt")` | the vendored IPOPT 3.14 with MUMPS (`scaly-ipopt` plugin) |
+| generated PIQP, sparse and dense | `sc.opt.solver(problem, sc.opt.IPM(sparse=...))` | nothing: `scaly.opt.ipm` generates PIQP's algorithm for the problem's structure |
+| IPOPT | `sc.opt.solver(problem, sc.opt.IPOPT(...))` | the vendored IPOPT 3.14 with MUMPS (`scaly-ipopt` plugin) |
 
 | File | Content |
 | --- | --- |
 | `problems.py` | the families: oscillating-masses MPC (any horizon), factor-model portfolio, soft-margin SVM, dense random QP (`sc.opt.QP`) |
-| `generated_piqp.py` | `solver(problem, backend)`: the `sc.opt.solver`-shaped front end for `scaly.solvers.ipm` (the extraction `sc.opt.solver` runs, then a `QPStructure` and `ipm.Solver`); `qp_data(problem)` for checking any solver's answer. This becomes `backend="scaly"` in Tier 4 of the PIQP plan |
-| `compare.py` | the measurements, one fresh process and empty JIT cache per (problem, solver): build, generation and compile time, C lines and object size (and the solver libraries loaded), solve time from C, iterations, objective and primal residual |
+| `compare.py` | the measurements, one fresh process and empty JIT cache per (problem, solver): build, generation and compile time, C lines and object size (and the solver libraries loaded), solve time from C, iterations, objective and primal residual; `qp_data(problem)`, the extracted QP every answer is checked against |
 | `time_entry.c` | calls a generated entry point from C through the universal ABI, so no Python is timed |
 | `compare.ipynb` | runs `compare.py` (or reads its last results from `build/results.json`) and tabulates and plots them |
 

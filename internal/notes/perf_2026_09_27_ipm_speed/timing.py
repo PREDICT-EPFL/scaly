@@ -82,7 +82,7 @@ def main() -> None:
   piqp = {}
   if args.piqp:
     from gen import problem
-    from tests.solvers.ipm import piqp_trace
+    from tests.opt.ipm import piqp_trace
 
     for c in cells:
       name, backend = c.rsplit("_", 1)

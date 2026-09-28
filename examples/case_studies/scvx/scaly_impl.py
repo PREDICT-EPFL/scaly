@@ -15,7 +15,7 @@ study's reference dump, citing `cvxpy_ptr_solver.py`):
    `xh_{k+1} = S_x^-1 (A_d x_k + B_d u_k + C_d u_{k+1} + x_prop - A_d xbar_k - B_d ubar_k - C_d ubar_{k+1} - c_x) + nu_k`,
    the boundary conditions, the state and control boxes, and `|y_k - y_{k-1}| <= 1e-4` for the penalty
    state. `nu = nu_p - nu_m` with both nonnegative makes the l1 term linear. It is solved by Scaly's
-   generated PIQP (`examples/qp_solvers/generated_piqp.py`), called inside the loop.
+   generated PIQP (`sc.opt.IPM`), called inside the loop.
 3. **Accept** the solution as the next reference (OpenSCvx's `ConstantProximalWeight`) and stop when
    `J_tr = sum (zh - zh_ref)^2 < 5e-3` and `J_vc = sum |nu / S_x| < 1e-6` (OpenSCvx divides the already
    scaled `nu` by `S_x` once more; kept), at most 200 iterations.
@@ -32,7 +32,7 @@ import numpy as np
 import scaly as sc
 
 HERE = Path(__file__).resolve().parent
-sys.path[:0] = [str(HERE), str(HERE.parents[1] / "qp_solvers")]
+sys.path.insert(0, str(HERE))
 import model as md  # noqa: E402
 
 N, NX, NU = md.N_NODES, md.NX, md.NU
@@ -217,18 +217,28 @@ def subproblem(d: Data) -> sc.opt.NLP:
 TRACE = 20  # iterations recorded in the output traces
 
 
-def qp_function(d: Data, qp_settings=None, name: str = "pdg6_qp") -> sc.Function:
-  """The subproblem solved by Scaly's generated PIQP: a Function of `(x_prop, A_d, B_d, C_d, X, U)`."""
-  import generated_piqp
-  from scaly.solvers.ipm import Settings
-
-  return generated_piqp.solver(subproblem(d), "sparse", qp_settings or Settings(eps_abs=1e-9, eps_rel=1e-12), name=name)
+QP_OPTIONS = {"eps_abs": 1e-9, "eps_rel": 1e-12}
+"""PIQP's settings for the subproblem."""
 
 
-def ptr_function(d: Data, qp_settings=None, name: str = "pdg6_ptr") -> sc.Function:
+def qp_function(d: Data, qp_options=None, name: str = "pdg6_qp") -> sc.Function:
+  """The subproblem solved by Scaly's generated PIQP (`sc.opt.IPM`): the opt solver signature, a warm
+  start (which it ignores), then the parameters `(x_prop, A_d, B_d, C_d, X, U)`."""
+  return sc.opt.solver(subproblem(d), sc.opt.IPM(options=qp_options or QP_OPTIONS), name=name)
+
+
+def qp_warm_start(d: Data) -> list[np.ndarray]:
+  """Zeros for the subproblem's warm start: variables, their bound multipliers, the equality and inequality multipliers."""
+  p = subproblem(d)
+  variables = [np.zeros(shape) for shape in p.vars.shapes]
+  return [*variables, *variables, np.zeros(p.n_eq), np.zeros(p.n_ineq)]
+
+
+def ptr_function(d: Data, qp_options=None, name: str = "pdg6_ptr") -> sc.Function:
   """`ptr() -> (X, U, iterations, J_tr trace, J_vc trace)`: the whole PTR from OpenSCvx's initial guess,
   discretization, generated QP solve and convergence test in one `while_loop`."""
-  qp = qp_function(d, qp_settings, name=f"{name}_qp")
+  qp = qp_function(d, qp_options, name=f"{name}_qp")
+  warm = [sc.const(a) for a in qp_warm_start(d)]
   Sx, cx, Su, cu = (sc.const(a) for a in (d.S_x, d.c_x, d.S_u, d.c_u))
   nX, nU = N * NX, N * NU
 
@@ -236,9 +246,8 @@ def ptr_function(d: Data, qp_settings=None, name: str = "pdg6_ptr") -> sc.Functi
   def iteration(carry, index):
     X, U = carry[:nX], carry[nX : nX + nU]
     xp, A, B, C = discretize(X, U)
-    sol = qp((xp, A, B, C, X.reshape((N, NX)), U.reshape((N, NU))))[0]
-    xh, uh = sol[:nX].reshape((N, NX)), sol[nX : nX + nU].reshape((N, NU))
-    nu = sol[nX + nU : nX + nU + K * NX] - sol[nX + nU + K * NX :]
+    (xh, uh, nu_p, nu_m), *_ = qp(tuple(warm[:4]), tuple(warm[4:8]), *warm[8:], (xp, A, B, C, X.reshape((N, NX)), U.reshape((N, NU))))
+    nu = nu_p - nu_m
     X_new = (xh * Sx.reshape((1, NX)) + cx.reshape((1, NX))).reshape((nX,))
     U_new = (uh * Su.reshape((1, NU)) + cu.reshape((1, NU))).reshape((nU,))
     dx = xh - (X.reshape((N, NX)) - cx.reshape((1, NX))) / Sx.reshape((1, NX))

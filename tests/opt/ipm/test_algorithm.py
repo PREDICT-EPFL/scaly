@@ -19,10 +19,10 @@ import numpy as np
 import pytest
 
 import scaly as sc
-from scaly.solvers.ipm import INFO_FIELDS, INVALID_BOUNDS, MAX_ITER_REACHED, NUMERICS, SOLVED, TRACE_FIELDS, Backend, QPValues, Settings, Solver
-from tests.solvers.ipm import piqp_trace
-from tests.solvers.ipm import reference as ref
-from tests.solvers.ipm.problems import QP, _qp, gate_problems, ipm_inputs, kkt_residuals, maros_meszaros
+from scaly.opt.ipm import INFO_FIELDS, INVALID_BOUNDS, MAX_ITER_REACHED, NUMERICS, SOLVED, TRACE_FIELDS, Backend, QPValues, Settings, Solver
+from tests.opt.ipm import piqp_trace
+from tests.opt.ipm import reference as ref
+from tests.opt.ipm.problems import QP, _qp, gate_problems, ipm_inputs, kkt_residuals, maros_meszaros
 
 ORDER = ("P", "c", "A", "b", "G", "h_l", "h_u", "x_l", "x_u")
 RESULT = ("x", "y", "z_l", "z_u", "z_bl", "z_bu", "s_l", "s_u", "s_bl", "s_bu", "status", "iter", "trace", "trace_rows", "info")

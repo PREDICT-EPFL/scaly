@@ -1,8 +1,8 @@
 # Solvers
 
 `scaly.opt` separates what is solved from how. A problem (`sc.opt.problem`) names its variables,
-parameters, objective and constraints and no solver. A method (`sc.opt.PIQP`, `sc.opt.IPOPT`,
-`sc.opt.SQP`) is a solver with its options. `sc.opt.solver(problem, method)` builds the `Function`
+parameters, objective and constraints and no solver. A method (`sc.opt.PIQP`, `sc.opt.IPM`,
+`sc.opt.IPOPT`, `sc.opt.SQP`) is a solver with its options. `sc.opt.solver(problem, method)` builds the `Function`
 that solves one with the other: an ordinary typed `Function`, which runs numerically or appears as
 a call node in a larger graph. [Solver backends](solver_backends.md) compares the methods; [How
 solvers work](../how_it_works/solvers.md) describes their generated wrappers.
@@ -64,17 +64,24 @@ solve = sc.opt.solver(tracking_problem, "ipopt")   # a method by name, with its 
 solve = sc.opt.solver(tracking_problem)            # "auto": the first installed method that fits
 ```
 
-Each method comes with its own distribution (`scaly-piqp`, `scaly-ipopt`, `scaly-sqp`) and is
-declared in the `scaly.methods` entry-point group; `sc.opt.PIQP` loads its class on first use, and
-names the distribution to install when it is missing. `sc.opt.REGISTRY.installed()` lists what is
-installed. `"auto"` tries PIQP first, then IPOPT, then SQP, and takes the first that supports the
-problem.
+The library methods come with their own distributions (`scaly-piqp`, `scaly-ipopt`, `scaly-sqp`);
+`sc.opt.IPM` is part of Scaly. Each is declared in the `scaly.methods` entry-point group;
+`sc.opt.PIQP` loads its class on first use, and names the distribution to install when it is
+missing. `sc.opt.REGISTRY.installed()` lists what is installed. `"auto"` tries PIQP first, then IPM,
+IPOPT and SQP, and takes the first that supports the problem.
 
-PIQP is a QP method: it accepts only problems that Scaly proves quadratic. The cost must have a
+PIQP and IPM are QP methods: they accept only problems that Scaly proves quadratic. The cost must have a
 variable-independent Hessian, every constraint a variable-independent Jacobian, and the bounds must
 not depend on the variables; otherwise building the solver raises `sc.opt.NotQuadratic`, naming
 what is not. IPOPT and SQP accept nonlinear problems. A method's `options` are the solver's own, by
 name, compiled into the wrapper; PIQP's `sparse` chooses its sparse interface (below).
+
+IPM is PIQP's algorithm generated as C, with no library behind it: the solver is specialised to the
+problem's sparsity and to which of its bounds are finite, and ships as the rest of a generated module
+does. It takes PIQP's settings as `options`, so `sc.opt.IPM(options={"eps_abs": 1e-9})` and
+`sc.opt.PIQP(options={"eps_abs": 1e-9})` ask for the same tolerance, and it takes the library's
+iterations. `sparse=True`, the default, factors the whole KKT system with `linalg.SparseLDL`;
+`sparse=False` condenses it and uses a dense Cholesky.
 
 A problem caches its objective, gradient, constraint Jacobian and bounds oracles. Methods that need
 different Hessian triangles share them and cache one Hessian per triangle.
@@ -108,13 +115,13 @@ if not sc.Status(int(info.status)).ok:
 ```
 
 `info` is an `sc.opt.Info`: the solve's `status` (an `sc.Status` code; `OK` and `ACCEPTABLE` are
-solutions), the iterations `iter`, the `objective` at the solution and its `primal_residual`, the
-largest constraint violation. They are outputs like the others, so a graph that nests the solve can
+solutions), the iterations `iter`, the problem's `objective` at the solution, constants included,
+and its `primal_residual`, the largest constraint violation. They are outputs like the others, so a graph that nests the solve can
 read them too.
 
 `lam_ineq` and `lam_box` are signed. A positive value means the upper bound is active; a negative
 value means the lower bound is active. IPOPT and SQP consume warm starts. PIQP ignores them
-because its C interface has no warm-start entry point.
+because its C interface has no warm-start entry point, and IPM, which follows it, does too.
 
 `solve.input_names` and `solve.output_names` show the flattened C signature. Grouping affects
 Python and static types, but not leaf order in the generated ABI.
@@ -215,6 +222,9 @@ A host function can reach more than one solver. Pass the solver's name to
 native status, iteration count, objective, oracle evaluation counts, timing splits, primal
 violation, last step norm, accepted step length, backtracks and accumulated QP iterations.
 
+Statistics belong to the library methods' wrappers. An IPM solver is generated code with no wrapper,
+and `info` is all it reports.
+
 ## Shipping one in C
 
 A solver-bearing function renders through the same C API as any other function. Its module also
@@ -225,7 +235,7 @@ generation](codegen.md) and [the generated interface](../how_it_works/generated_
 
 - The vendored PIQP and IPOPT libraries build on the first sync and take 5 to 8 minutes from a
   cold checkout.
-- PIQP does not consume warm starts.
+- PIQP and IPM do not consume warm starts.
 - Generated wrappers use per-symbol static storage and are not reentrant.
 - A method's options are compiled into the wrapper, so changing one recompiles it.
 - Differentiation through a solve is not implemented.

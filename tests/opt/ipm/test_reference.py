@@ -14,9 +14,9 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from tests.solvers.ipm import piqp_trace
-from tests.solvers.ipm import reference as ref
-from tests.solvers.ipm.problems import _qp, gate_problems, infeasible_problems, kkt_residuals, maros_meszaros, maros_meszaros_names, mpc_qp, random_qp
+from tests.opt.ipm import piqp_trace
+from tests.opt.ipm import reference as ref
+from tests.opt.ipm.problems import _qp, gate_problems, infeasible_problems, kkt_residuals, maros_meszaros, maros_meszaros_names, mpc_qp, random_qp
 
 NAMES = maros_meszaros_names()
 GATE = 0.9

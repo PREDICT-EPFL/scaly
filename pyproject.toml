@@ -75,6 +75,9 @@ docs = ["zensical>=0.0.28", "mkdocstrings-python>=2.0.3"]
 cpp = "scaly.codegen.cpp"
 casadi = "scaly.codegen.casadi"
 
+[project.entry-points."scaly.methods"]
+"opt.ipm" = "scaly.opt.ipm:IPM"
+
 [project.entry-points."scaly.toolchain_report"]
 solvers = "scaly.opt.external.paths:toolchain_report"
 

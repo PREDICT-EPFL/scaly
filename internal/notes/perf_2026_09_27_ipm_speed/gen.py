@@ -57,27 +57,27 @@ QUICK = (
 
 
 def all_names() -> list[str]:
-  from tests.solvers.ipm.problems import maros_meszaros_names
+  from tests.opt.ipm.problems import maros_meszaros_names
 
   return [*maros_meszaros_names(), "mpc_4_2_10", "mpc_12_4_20", "mpc_27_6_30", "ex_mpc_N20", "ex_portfolio", "ex_svm", "ex_dense"]
 
 
 def problem(name: str):
-  """A ``tests.solvers.ipm.problems.QP`` by name: a stored Maros-Meszaros problem, a generated MPC
+  """A ``tests.opt.ipm.problems.QP`` by name: a stored Maros-Meszaros problem, a generated MPC
   (``mpc_<nx>_<nu>_<N>``) or a family of ``examples/qp_solvers`` at its parameters (``ex_<case>``)."""
   from scipy import sparse
 
-  from tests.solvers.ipm.problems import _qp, maros_meszaros, mpc_qp
+  from tests.opt.ipm.problems import _qp, maros_meszaros, mpc_qp
 
   if name.startswith("mpc_"):
     nx, nu, horizon = (int(v) for v in name.split("_")[1:])
     return mpc_qp(nx, nu, horizon, name=name)
   if name.startswith("ex_"):
-    import generated_piqp
+    import compare
     import problems as families
 
     case = families.cases()[name.removeprefix("ex_")]
-    (P, c), (A, b), (G, g_lb, g_ub), (x_lb, x_ub), _ = generated_piqp.qp_data(case.problem)(case.params())
+    (P, c), (A, b), (G, g_lb, g_ub), (x_lb, x_ub), _ = compare.qp_data(case.problem)(case.params())
 
     def sp(m):
       return sparse.csc_array(np.where(np.abs(m) > 0.0, m, 0.0))
@@ -97,8 +97,8 @@ def one(name: str, backend: str, out: Path) -> dict:
   from scaly.codegen.abi import c_ident
   from scaly.codegen.jit import compile_flags
   from scaly.codegen.toolchain import find_c_compiler
-  from scaly.solvers.ipm import QPValues, Solver
-  from tests.solvers.ipm.problems import ipm_inputs
+  from scaly.opt.ipm import QPValues, Solver
+  from tests.opt.ipm.problems import ipm_inputs
 
   qp = problem(name)
   s, values = ipm_inputs(qp)

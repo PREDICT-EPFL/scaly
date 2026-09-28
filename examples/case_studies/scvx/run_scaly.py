@@ -77,7 +77,7 @@ def main() -> None:
   disc = si.discretize_function()
   xp, A, B, C = (np.asarray(a) for a in disc(X0, U0))
   row["discretize_c_s"] = time_from_c(disc, [X0, U0], work, harness)[0]
-  row["qp_c_s"] = time_from_c(si.qp_function(d), [xp, A, B, C, X0, U0], work, harness)[0]
+  row["qp_c_s"] = time_from_c(si.qp_function(d), [*si.qp_warm_start(d), xp, A, B, C, X0, U0], work, harness)[0]
   args.out.parent.mkdir(parents=True, exist_ok=True)
   args.out.write_text(json.dumps(row))
   print(json.dumps({k: v for k, v in row.items() if k not in ("X", "U")}))

@@ -4,7 +4,7 @@ explicit Runge-Kutta step, and a generated QP solver called inside a `while_loop
 `examples/case_studies/scvx` discretizes the rocket's dynamics with two Tsit5 steps per interval (a
 first-order-hold control, the stages written out) and carries `d x / d(x0, u0, u1)` through every stage
 by the variational equation, calling a Function that returns the rates and their Jacobians; each PTR
-iteration then solves a parametric QP with Scaly's generated PIQP, called inside the loop's body.
+iteration then solves a parametric QP with Scaly's generated PIQP (`opt.ipm`), called inside the loop's body.
 This checks, on a two-state pendulum with RK4: the carried sensitivities against `sc.jacobian` through
 the same steps and against central differences; and a loop whose body calls a generated QP against the
 same QP called from a Python loop.
@@ -12,17 +12,10 @@ same QP called from a Python loop.
 
 from __future__ import annotations
 
-import runpy
-import sys
-from collections.abc import Iterator
-from pathlib import Path
-
 import numpy as np
-import pytest
 
 import scaly as sc
 
-QP_SOLVERS = Path(__file__).resolve().parents[2] / "examples" / "qp_solvers"
 RK4_A = np.array([[0, 0, 0, 0], [0.5, 0, 0, 0], [0, 0.5, 0, 0], [0, 0, 1.0, 0]])
 RK4_B, RK4_C = np.array([1, 2, 2, 1]) / 6, np.array([0, 0.5, 0.5, 1.0])
 H, STEPS = 0.1, 2
@@ -88,16 +81,7 @@ def test_variational_sensitivities_equal_ad_through_the_steps() -> None:
   np.testing.assert_allclose(Phi, fd, atol=1e-8)
 
 
-@pytest.fixture(scope="module")
-def generated_piqp() -> Iterator[dict]:
-  sys.path.insert(0, str(QP_SOLVERS))
-  try:
-    yield runpy.run_path(str(QP_SOLVERS / "generated_piqp.py"))
-  finally:
-    sys.path.remove(str(QP_SOLVERS))
-
-
-def test_generated_qp_inside_a_while_loop(generated_piqp: dict) -> None:
+def test_generated_qp_inside_a_while_loop() -> None:
   # min |x - r|^2 + |x - x_prev|^2 subject to sum(x) = 1, 0 <= x <= 0.6: each iterate is the next reference.
   @sc.opt.problem(vars=sc.L("x", 4), params=sc.G(sc.L("r", 4), sc.L("x_prev", 4)), name="loop_qp")
   def qp(x, params):
@@ -106,12 +90,14 @@ def test_generated_qp_inside_a_while_loop(generated_piqp: dict) -> None:
       minimize=((x - r) ** 2).sum() + ((x - x_prev) ** 2).sum(), eq=(x.sum() - 1.0,), lb=sc.const(np.zeros(4)), ub=sc.const(np.full(4, 0.6))
     )
 
-  solve = generated_piqp["solver"](qp, "sparse", name="loop_qp_generated")
+  solve = sc.opt.solver(qp, sc.opt.IPM(), name="loop_qp_generated")
+  warm = (np.zeros(4), np.zeros(4), np.zeros(1), np.zeros(0))
+  start, lam_box, lam_eq, lam_ineq = (sc.const(a) for a in warm)
   target = np.array([0.9, 0.5, -0.2, 0.1])
 
   @sc.function
   def body(carry, index):
-    x = solve((sc.const(target), carry[:4]))[0]
+    x = solve(start, lam_box, lam_eq, lam_ineq, (sc.const(target), carry[:4]))[0]
     return sc.concat([x, (carry[4] + (x - carry[:4]).abs().sum()).reshape((1,))])
 
   @sc.function
@@ -127,6 +113,6 @@ def test_generated_qp_inside_a_while_loop(generated_piqp: dict) -> None:
   x_loop = np.asarray(loop(x0))
   x = x0
   for _ in range(6):
-    x = np.asarray(solve((target, x))[0])
+    x = np.asarray(solve(*warm, (target, x))[0])
   np.testing.assert_allclose(x_loop, x, atol=1e-12)
   assert abs(x.sum() - 1) < 1e-8 and x.max() <= 0.6 + 1e-8

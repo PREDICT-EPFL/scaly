@@ -346,7 +346,7 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 - **API-153. DAEs in implicit integrators and collocation:** semi-explicit index 1, algebraic
   states at the stage points (integrators/MPC plan §7).
 - **API-154. Control-invariant and robust (tube) terminal sets** (plan §7).
-- **API-155. The generated IPM as an MPC backend,** once Tier 4 #30 (`backend="scaly"`) lands.
+- **API-155. The generated IPM as an MPC backend:** `sc.opt.IPM`, the method `opt.ipm` since restructure step 4.3.
 - **API-156. Migrate the benchmark problems' hand-written integrators and NumPy plants** onto
   `scaly.integrators`, keeping their `checks.py` gates and CasADi parity.
 - **API-179. `ExprOp.SPLINE_EVAL`,** a dedicated interpolation op, only if the gate of the interp
@@ -357,7 +357,7 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
 - **API-181. Piecewise-affine functions on polyhedral or simplicial partitions** (explicit MPC laws,
   PWA models), with point location by a search tree.
 - **API-182. B-spline input parametrizations as a transcription option in `scaly.mpc`.**
-- **API-183. Shape-constrained fitting online,** through the generated IPM once Tier 4 #30 lands.
+- **API-183. Shape-constrained fitting online,** through the generated IPM (`sc.opt.IPM`).
 - **API-184. Knots as expressions** (CasADi's parametric grid) and free-knot fitting.
 - **API-185. Shape-preserving interpolation in n-D,** as a tensor-product Hermite spline with a
   stated definition; SciPy's RGI `"pchip"` is not one (interp plan §3.4).

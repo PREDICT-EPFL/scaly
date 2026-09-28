@@ -43,7 +43,7 @@
 | 3.2 | `linalg.banded` and `linalg.stagewise` | ☑ |
 | 4.1 | Method registry and the common `Info`/`Status` | ☑ |
 | 4.2 | `scaly.opt`: problems, `solver()`, external methods | ☑ |
-| 4.3 | IPM as the method `opt.ipm` | ☐ |
+| 4.3 | IPM as the method `opt.ipm` | ☑ |
 | 4.4 | `scaly.roots` | ☐ |
 | 4.5 | `integrators` and `interp` as method registries | ☐ |
 | 5.1 | `scaly.sets` | ☐ |
@@ -609,6 +609,30 @@ codes mapped onto `Status`; case studies (`scvx`, `embedded_qp`) and
 `tests/integration/test_case_study_*` switch to it and stop editing `sys.path`.
 Gate: `tests/opt/ipm` (moved from `tests/solvers/ipm`) including PIQP decision traces; QP
 conformance passes for both `opt.ipm` and `opt.piqp`.
+Log: done 2026-09-29. `solvers/ipm/` is `opt/ipm/` and `scaly.solvers` is gone. `opt/ipm/method.py`
+holds `IPM(sparse=True, options=)`, PIQP's settings by name checked when it is made, registered by
+core itself as `opt.ipm`; `"auto"` tries PIQP, IPM, IPOPT, SQP. Its `build` is what
+`generated_piqp.py` did (deleted; its `structure_summary` and `qp_data` moved into
+`examples/qp_solvers/compare.py`), now with the signature every opt solver has: a warm start (ignored,
+as PIQP ignores it) and the parameters in, the solution in the variable tree, signed multipliers and
+an `Info` out, PIQP's status codes mapped onto `Status` (`INVALID_BOUNDS` to `ERROR`). Finding: 4.2's
+frame copied PIQP's `primal_obj` into `Info.objective`, which leaves out the objective's constant.
+Fixed in core: `build_qp` gives the descriptor an `objective_constant` Function of the parameters when
+the extracted `f0` is not zero, and the frame adds it to the stats and the `Info`; no plugin wrapper
+changed, and the solver C snapshot, whose constant is zero, did not move. `IPM`'s objective is the
+problem's own through `nlp_oracles`. The SCvx and embedded-QP drivers, the embedded-QP and
+`qp_solvers` notebooks, and the three integration tests use `sc.opt.IPM`; the tests edit no
+`sys.path`, and the drivers keep only their sibling imports for 7.2. SCvx reproduces bit for bit;
+the embedded-QP notebook's horizon-20 solve takes the same 7 iterations to the same objective with the
+same workspace, its C 3 kB larger (the warm-start inputs and `Info`); the recorded `results/` were not
+rerun. `tests/opt/test_qp_conformance.py`, over `opt.ipm` and `opt.piqp` at default options, solves 22
+Maros–Mészáros problems and two random QPs twice (the parameter changed, on one compiled solver) and
+checks feasibility, stationarity and complementarity with the signed multipliers and the `Info`
+fields, and that the five problems with no solution are not reported solved; dropping the objective
+constant, flipping IPM's box-multiplier sign and reporting every status `OK` each fail it. The 36
+solvers of the IPM quick set render byte-identical C to the tree before the move. `docs/guide/solvers.md`,
+`solver_backends.md` (an IPM column and section), `how_it_works/solvers.md`, `dev/codebase.md`,
+`dev/solver_plugins.md` and the API page describe it; API-155 and API-183 no longer wait on it.
 
 **4.4 `scaly.roots`.** Problem classes `Root`, `LeastSquares`; methods `Newton`,
 `NewtonBisection`, `GaussNewton`, `LevenbergMarquardt`; `custom_root`. `integrators/implicit.py`
