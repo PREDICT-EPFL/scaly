@@ -223,8 +223,8 @@ OP_INFO: dict[ExprOp, OpInfo] = {
   ExprOp.DIV: OpInfo(ExprOp.DIV, 2, np.divide),
   ExprOp.POW: OpInfo(ExprOp.POW, 2, np.power),
   ExprOp.ATAN2: OpInfo(ExprOp.ATAN2, 2, np.arctan2),
-  ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, np.minimum),
-  ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, np.maximum),
+  ExprOp.MINIMUM: OpInfo(ExprOp.MINIMUM, 2, np.fmin),  # as C's fmin: a NaN operand gives the other
+  ExprOp.MAXIMUM: OpInfo(ExprOp.MAXIMUM, 2, np.fmax),
   ExprOp.COPYSIGN: OpInfo(ExprOp.COPYSIGN, 2, np.copysign),
   ExprOp.LT: OpInfo(ExprOp.LT, 2, np.less, False),
   ExprOp.LE: OpInfo(ExprOp.LE, 2, np.less_equal, False),

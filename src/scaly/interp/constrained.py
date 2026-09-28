@@ -54,10 +54,13 @@ def constrained(
     sign (``"increasing"`` or ``"decreasing"``, per axis);
   - ``convex``: likewise its second derivative (``"convex"`` or ``"concave"``, per axis: convex
     along each line parallel to the axis, not jointly);
-  - ``bounds``: ``lo <= c <= hi``, so ``lo <= f <= hi`` by the convex-hull property;
+  - ``bounds``: ``lo <= c <= hi``, so ``lo <= f <= hi`` by the convex-hull property, on the data's
+    range: outside it the default ``linear`` continuation keeps a monotone or convex shape but not
+    the bounds (``extrap="clamp"`` keeps them);
   - ``equal``: ``(point, value, order)`` pins a value or a derivative, ``order`` an integer in 1-D
     (0 for the value) or a tuple of per-axis orders;
-  - ``periodic``: 1-D, the value and ``k - 1`` derivatives equal at the two ends.
+  - ``periodic``: 1-D, the value and ``k - 1`` derivatives equal at the two ends; ``extrap`` then
+    defaults to ``"periodic"``.
 
   Args:
     x: the data sites, ``(m,)`` or ``(m, D)`` points.
@@ -76,7 +79,9 @@ def constrained(
   """
   pts = np.asarray(x, dtype=np.float64)
   pts = pts[:, None] if pts.ndim == 1 else pts
-  values = np.asarray(y, dtype=np.float64).reshape(-1)
+  values = np.asarray(y, dtype=np.float64)
+  if values.ndim != 1:
+    raise ValueError(f"y must be one value per point, shape (m,), got {values.shape}")
   if pts.ndim != 2 or values.size != pts.shape[0]:
     raise ValueError(f"x gives {pts.shape[0]} points and y {values.size} values")
   if not (np.all(np.isfinite(pts)) and np.all(np.isfinite(values))):
@@ -96,9 +101,13 @@ def constrained(
   w = np.ones(values.size) if weights is None else np.asarray(weights, dtype=np.float64).reshape(-1)
   if w.size != values.size or np.any(w < 0):
     raise ValueError("weights must be one non-negative number per datum")
+  # The problem is solved for the data scaled to one, and every constraint row scaled to one, so
+  # the solver's and the polish's tolerances mean the same at any scale; the coefficients are
+  # scaled back at the end.
+  sigma = float(np.max(np.abs(np.sqrt(w) * values))) or 1.0
   # The objective is half the squared residual of ``M c - target``: the weighted data, then the
   # scaled differences, so the polish below can solve it without squaring its condition number.
-  stacked, target = [sparse.diags(np.sqrt(w)) @ B], [np.sqrt(w) * values]
+  stacked, target = [sparse.diags(np.sqrt(w)) @ B], [np.sqrt(w) * values / sigma]
   if lam:
     for d, size in enumerate(sizes):
       diff = sparse.csr_array(np.diff(np.eye(size), n=penalty, axis=0))
@@ -112,8 +121,11 @@ def constrained(
   for point, value, order in equal:
     orders = (order,) if ndim == 1 else tuple(order)
     at = np.asarray(point, dtype=np.float64).reshape(ndim)
+    for d, (t, k) in enumerate(zip(knot_vectors, degrees, strict=True)):
+      if not t[k] <= at[d] <= t[-k - 1]:
+        raise ValueError(f"equal: the point {at.tolist()} lies outside the data's range [{t[k]}, {t[-k - 1]}] on axis {d}")
     eq_rows.append(_derivative_row(knot_vectors, degrees, at, orders))
-    eq_rhs.append(float(value))
+    eq_rhs.append(float(value) / sigma)
   if periodic:
     if ndim != 1:
       raise ValueError("periodic is 1-D")
@@ -144,25 +156,29 @@ def constrained(
   if bounds is not None:
     lo, hi = bounds
     rows.append(np.eye(n))
-    lower.append(np.full(n, float(lo)))
-    upper.append(np.full(n, float(hi)))
+    lower.append(np.full(n, float(lo) / sigma))
+    upper.append(np.full(n, float(hi) / sigma))
 
   A = np.array(eq_rows).reshape(len(eq_rows), n)
   G = np.vstack(rows) if rows else np.zeros((0, n))
   g_lb = np.concatenate(lower) if lower else np.zeros(0)
   g_ub = np.concatenate(upper) if upper else np.zeros(0)
+  a_scale = 1.0 / np.maximum(np.abs(A).max(axis=1, initial=0.0), np.finfo(np.float64).tiny)
+  g_scale = 1.0 / np.maximum(np.abs(G).max(axis=1, initial=0.0), np.finfo(np.float64).tiny)
+  A, eq_rhs, G = A * a_scale[:, None], list(np.array(eq_rhs) * a_scale), G * g_scale[:, None]
+  g_lb, g_ub = g_lb * g_scale, g_ub * g_scale  # positive factors: an infinite side stays infinite
   solve = _qp_solver(n, A.shape[0], G.shape[0])
   params = ((hessian, linear), (A, np.array(eq_rhs)), (G, g_lb, g_ub))
   result = solve.numerical_call(np.zeros(n), np.zeros(n), np.zeros(A.shape[0]), np.zeros(G.shape[0]), params)
   status = solve.solver_stats().status
   if status not in (ScalySolveStatus.OK, ScalySolveStatus.ACCEPTABLE):
     raise ValueError(f"the constrained fit failed: {status.name.lower()} (infeasible constraints?)")
-  coeffs = _polish(M, rhs, A, np.array(eq_rhs), G, g_lb, g_ub, np.asarray(result[0]), np.asarray(result[3])).reshape(sizes)
+  coeffs = sigma * _polish(M, rhs, A, np.array(eq_rhs), G, g_lb, g_ub, np.asarray(result[0]), np.asarray(result[3])).reshape(sizes)
   return BSpline(
     tuple(knot_vectors) if ndim > 1 else knot_vectors[0],
     coeffs,
     degrees,
-    extrap=extrap,
+    extrap="periodic" if periodic and extrap is None else extrap,
     fill=fill,
     search=search,
     strategy=strategy,
@@ -194,18 +210,26 @@ def _polish(
     base, free = np.zeros(x.size), np.eye(x.size)
   polished = base + free @ np.linalg.lstsq(M @ free, target - M @ base, rcond=None)[0] if free.shape[1] else base
   residual = M.T @ (target - M @ polished)  # the constraints' forces: C^T mult = residual
-  mult = np.linalg.lstsq(C.T, residual, rcond=None)[0] if C.shape[0] else np.zeros(0)
   tol = 1e-9 * (1.0 + np.abs(polished).max())
   g = G @ polished
-  pushes = mult[A.shape[0] :]
-  if (
-    np.all(np.abs(A @ polished - b) <= tol)
-    and np.all(g >= lb - tol)
-    and np.all(g <= ub + tol)
-    and np.all(np.where(upper[active], pushes, -pushes) >= -tol * (1.0 + np.abs(mult).max(initial=0.0)))
-  ):
-    return polished
-  return x
+  if not (np.all(np.abs(A @ polished - b) <= tol) and np.all(g >= lb - tol) and np.all(g <= ub + tol)):
+    return x
+  if C.shape[0]:
+    # Multipliers of the right signs (free for an equality, pulling toward the inside for a bound)
+    # that balance the forces. Where active rows are dependent (a bound and a monotone row on a
+    # flat run) many balance them, and a least-norm solution may take a wrong sign where a right
+    # one exists: bounded least squares finds one when there is.
+    from scipy.optimize import lsq_linear
+
+    free_sign = np.full(A.shape[0], np.inf)
+    lower_bound = np.concatenate([-free_sign, np.where(upper[active], 0.0, -np.inf)])
+    upper_bound = np.concatenate([free_sign, np.where(upper[active], np.inf, 0.0)])
+    mult = lsq_linear(C.T, residual, bounds=(lower_bound, upper_bound), method="bvls", tol=1e-15).x
+    if np.abs(C.T @ mult - residual).max() > 1e-9 * (1.0 + np.abs(residual).max() + np.abs(mult).max()):
+      return x
+  elif np.abs(residual).max() > 1e-9 * (1.0 + np.abs(M.T @ target).max()):
+    return x
+  return polished
 
 
 def _along_axis(matrix: sparse.csr_array, axis: int, sizes: Sequence[int]) -> sparse.csr_array:

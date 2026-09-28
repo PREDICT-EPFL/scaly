@@ -155,13 +155,16 @@ def test_fill_gives_the_constant_outside_and_the_spline_on_the_closed_interval()
   assert np.isnan(evaluate(nan_fill, np.array([-1.0, 2.0]))["y"]).all()
 
 
+@pytest.mark.parametrize("strategy", ["pp", "basis"])
 @pytest.mark.parametrize("extrap", ["extend", "linear", "clamp", "periodic", "fill"])
 @pytest.mark.parametrize("k", [0, 1, 3])
-def test_non_finite_points(extrap: str, k: int) -> None:
+def test_non_finite_points(extrap: str, k: int, strategy: Strategy) -> None:
   """NaN gives NaN in every mode. An infinity gives the end value (clamp), the fill value, NaN
-  (periodic: inf - inf), or the IEEE value of the continuation: an infinity signed by the leading
-  coefficient (extend) or by the end slope (linear, the end value where that slope is zero)."""
+  (periodic: inf - inf), or the continuation: held at the farthest point it is followed to, a
+  large finite value signed by the end slope, for linear (from degree 2) and for extend under
+  ``basis``; the IEEE infinity, signed by the leading coefficient, for extend under ``pp``."""
   f, ref = _spline_1d(extrap, fill=4.0, k=k)
+  f = interp.BSpline(f.knots[0], f.coeffs, k, extrap=f.axes[0].extrap, fill=4.0, strategy=strategy)
   got = evaluate(f, np.array([np.nan, np.inf, -np.inf]))["y"]
   assert np.isnan(got[0])
   hi, lo = got[1], got[2]
@@ -171,10 +174,11 @@ def test_non_finite_points(extrap: str, k: int) -> None:
     assert (hi, lo) == (4.0, 4.0)
   elif extrap == "periodic":
     assert np.isnan(hi) and np.isnan(lo)
-  elif extrap == "linear":
-    assert (hi, lo) == (math.copysign(math.inf, ref(1.0, nu=1)), math.copysign(math.inf, -ref(0.0, nu=1)))
-  else:  # extend: the end polynomial at infinity, signed by its leading coefficient
-    assert np.isinf(hi) and np.isinf(lo)
+  elif extrap == "linear" and k >= 2:
+    assert np.isfinite([hi, lo]).all()
+    assert (np.sign(hi), np.sign(lo)) == (np.sign(ref(1.0, nu=1)), -np.sign(ref(0.0, nu=1)))
+  else:  # extend (and linear at degree 1, which is extend): the end polynomial, signed by its leading coefficient
+    assert np.isfinite([hi, lo]).all() if strategy == "basis" else np.isinf([hi, lo]).all()
     assert (np.sign(hi), np.sign(lo)) == (np.sign(ref(1.0, nu=k)), np.sign(ref(0.0, nu=k)) * (-1) ** k)
 
 
@@ -268,3 +272,174 @@ def test_a_batch_is_one_map_with_a_block_diagonal_jacobian() -> None:
     np.testing.assert_allclose(dense[2 * k : 2 * k + 2, 2 * k : 2 * k + 2], jac, rtol=1e-14, atol=1e-14)
   with pytest.raises(ValueError, match="index="):
     f(sc.sym("x2", (n + 1, 2)), index=i)
+
+
+def _fn(inputs: dict[str, sc.Expr], outputs: dict[str, sc.Expr], name: str) -> sc.Function:
+  return sc.Function._from_exprs(name, list(inputs.values()), list(outputs.values()), list(inputs), list(outputs))
+
+
+@pytest.mark.parametrize("kind", ["nearest", "zoh", "linear", "cubic"])
+@pytest.mark.parametrize("extrap", ["fill", "clamp", "linear", "periodic"])
+def test_at_every_edge_and_its_neighbours_is_the_evaluation(kind: str, extrap: str) -> None:
+  """``basis()``/``at()`` (NumPy, now) against the generated evaluation at every partition edge, an
+  ulp either side of it, the midpoints between sites (``nearest``'s ties) and far outside."""
+  rng = np.random.default_rng(0)
+  g = np.sort(rng.uniform(0.0, 1.0, 9))
+  g[0], g[-1] = 0.0, 1.0
+  y = rng.normal(size=g.size)
+  if extrap == "periodic":
+    y[-1] = y[0]
+  f = interp.interpolant(g, y, kind=kind, extrap=extrap, fill=-3.0)  # ty: ignore[invalid-argument-type]
+  e = f.axes[0].edges
+  mids = 0.5 * (g[:-1] + g[1:])
+  pts = np.concatenate([e, np.nextafter(e, -np.inf), np.nextafter(e, np.inf), mids, np.nextafter(mids, np.inf), [e[0] - 1e3, e[-1] + 1e3]])
+  want = evaluate(f, pts)["y"]
+  np.testing.assert_allclose(np.asarray(f.at(pts).value), want, rtol=1e-14, atol=1e-9 if extrap == "periodic" else 1e-12)
+
+
+def test_expression_coefficients_with_a_shared_index_in_2d() -> None:
+  rng = np.random.default_rng(1)
+  knots = (random_knots(rng, 3, 4, 0.0, 1.0, repeat=False), random_knots(rng, 1, 5, -1.0, 1.0, repeat=False))
+  c = rng.normal(size=(knots[0].size - 4, knots[1].size - 2))
+  cs = sc.sym("c", c.shape)
+  f = interp.BSpline(knots, cs, (3, 1))
+  pts = np.column_stack([rng.uniform(0.0, 1.0, 50), rng.uniform(-1.0, 1.0, 50)])
+  x = sc.sym("x", pts.shape)
+  got = _fn({"x": x, "c": cs}, {"y": f(x, index=f.index(x))}, "expr_index_2d")((pts, c))
+  np.testing.assert_allclose(got, NdBSpline(knots, c, (3, 1))(pts), rtol=0, atol=1e-13)
+
+
+def test_an_index_from_another_partition_is_refused() -> None:
+  f = interp.interpolant(np.linspace(0.0, 1.0, 51), np.linspace(0.0, 1.0, 51) ** 2, kind="cubic")
+  g = interp.interpolant(np.linspace(0.0, 1.0, 6), np.linspace(0.0, 1.0, 6), kind="linear")
+  x = sc.sym("x", 3)
+  f(x, index=f.derivative().index(x))  # a derivative's partition is the spline's own
+  with pytest.raises(ValueError, match="another partition"):
+    g(x, index=f.index(x))
+
+
+def test_nan_in_any_coordinate_of_a_mixed_degree_table() -> None:
+  g = (np.linspace(0.0, 1.0, 5), np.linspace(0.0, 1.0, 4), np.linspace(0.0, 1.0, 3))
+  v = np.random.default_rng(2).normal(size=(5, 4, 3))
+  f = interp.interpolant(g, v, kind=("cubic", "zoh", "nearest"))
+  got = evaluate(f, np.array([[np.nan, 0.5, 0.5], [0.5, np.nan, 0.5], [0.5, 0.5, np.nan], [0.5, np.inf, -np.inf]]))["y"]
+  assert np.isnan(got[:3]).all() and np.isfinite(got[3])
+
+
+def test_float32_linear_extrapolation_at_infinity() -> None:
+  g = np.linspace(0.0, 1.0, 9)
+  y = np.sin(3 * g)
+  f32, f64 = (interp.interpolant(g, y, kind="cubic", dtype=d) for d in ("float32", "float64"))
+  pts = np.array([np.inf, -np.inf, np.nan])
+  x32, x64 = sc.sym("x", 3, dtype="float32"), sc.sym("x", 3)
+  a = _fn({"x": x32}, {"y": f32(x32)}, "f32_inf")(pts.astype(np.float32))
+  b = _fn({"x": x64}, {"y": f64(x64)}, "f64_inf")(pts)
+  np.testing.assert_array_equal(np.sign(a[:2]), np.sign(b[:2]))
+  assert np.isfinite(a[:2]).all() and np.isfinite(b[:2]).all() and np.isnan(a[2])
+  # A zero end slope (clamped ends), zero only to rounding in the tables: an infinite point is first
+  # held at the farthest point the continuation is followed to, so it never meets the slope as
+  # 0 * inf or tiny * inf. The value there is finite, the tangent's at that point.
+  flat = interp.interpolant(g, y, kind="cubic", bc="clamped", dtype="float32")
+  ends = _fn({"x": x32}, {"y": flat(x32)}, "f32_flat_inf")(pts.astype(np.float32))
+  assert np.isfinite(ends[:2]).all()
+
+
+@pytest.mark.parametrize("strategy", ["pp", "basis"])
+def test_reverse_mode_far_outside_is_the_end_tangent(strategy: Strategy) -> None:
+  """Out to 1e300 ** (1 / k) the continuation is followed, and the derivative is the end slope in
+  both modes; beyond, the point is held there, so an outer cell's zero coefficients never meet an
+  overflowed power as ``0 * inf``: the value is the held one and the derivative zero. 2-D too."""
+  f, ref = _spline_1d("linear", k=3)
+  f = interp.BSpline(f.knots[0], f.coeffs, 3, strategy=strategy)
+  far = np.array([1e40, 1e60, -1e80, 1e95])
+  got = evaluate(f, far, derivatives=True)
+  np.testing.assert_allclose(got["grad"], np.where(far > 0, ref(1.0, nu=1), ref(0.0, nu=1)), rtol=1e-12)
+  np.testing.assert_allclose(got["grad"], got["jvp"], rtol=1e-14)
+  beyond = evaluate(f, np.array([1e100, 1e200, np.inf, 1e300]), derivatives=True)
+  assert np.all(beyond["y"] == beyond["y"][0]) and np.all(beyond["grad"][1:] == 0.0) and np.all(np.isfinite(beyond["y"]))
+  rng = np.random.default_rng(3)
+  g2 = interp.interpolant((np.linspace(0.0, 1.0, 6), np.linspace(0.0, 1.0, 5)), rng.normal(size=(6, 5)), kind="cubic", strategy=strategy)
+  both = evaluate(g2, np.array([[1e90, 0.5], [0.5, -1e95], [1e200, 0.5]]), derivatives=True)
+  assert np.all(np.isfinite(both["grad"])) and np.allclose(both["grad"], both["jvp"], rtol=1e-12)
+
+
+def test_splines_differing_only_in_extrapolation_do_not_share_a_function() -> None:
+  t = np.array([0.0, 0.0, 0.5, 1.0, 1.0])
+  c = np.array([0.0, 1.0, 0.5])
+  a, b = interp.BSpline(t, c, 1, extrap="fill", fill=-1.0), interp.BSpline(t, c, 1, extrap="fill", fill=-2.0)
+  p, q = interp.BSpline(t, c, 1, extrap="clamp"), interp.BSpline(t, c, 1, extrap="extend")
+  x = sc.sym("x", 2)
+  got = _fn({"x": x}, {"a": a(x), "b": b(x), "p": p(x), "q": q(x)}, "digests")(np.array([2.0, 3.0]))
+  np.testing.assert_array_equal(got[0], [-1.0, -1.0])
+  np.testing.assert_array_equal(got[1], [-2.0, -2.0])
+  np.testing.assert_array_equal(got[2], [0.5, 0.5])
+  np.testing.assert_allclose(got[3], [-0.5, -1.5], rtol=1e-15)
+
+
+def test_a_name_given_to_function_never_shares_another_splines() -> None:
+  g = np.linspace(0.0, 1.0, 5)
+  a = interp.interpolant(g, g, kind="linear")
+  b = interp.interpolant(g, 10.0 * g, kind="linear")
+  fa, fb = a.function("table"), b.function("table")
+  assert fa is not fb and fa is a.function("table")
+  assert float(fb(np.array(0.5))) == 5.0 and float(fa(np.array(0.5))) == 0.5
+
+
+def test_per_axis_options_take_lists_and_a_grid_takes_a_list_of_vectors() -> None:
+  g = (np.linspace(0.0, 1.0, 5), np.linspace(0.0, 2.0, 4))
+  v = np.random.default_rng(4).normal(size=(5, 4))
+  ref = interp.interpolant(g, v, kind=("cubic", "linear"), extrap=("clamp", None))
+  f = interp.interpolant(list(g), v, kind=["cubic", "linear"], extrap=["clamp", None])
+  pts = np.array([[0.3, 1.1], [-1.0, 3.0]])
+  np.testing.assert_array_equal(evaluate(f, pts)["y"], evaluate(ref, pts)["y"])
+
+
+def test_a_periodic_axis_wraps_far_points_back_into_its_interval() -> None:
+  """Far out the count of periods rounds and a wrapped point may land periods away, having lost
+  its phase: it is clamped into the interval, so values stay bounded, not the end polynomial far
+  out. Nearer, the wrap is exact to the rounding of the period's product."""
+  x = np.linspace(0.0, 2.0 * np.pi, 17)
+  y = np.sin(x)
+  y[-1] = y[0]
+  for strategy in ("pp", "basis"):
+    f = interp.interpolant(x, y, kind="cubic", bc="periodic", strategy=strategy)
+    got = evaluate(f, np.array([1e18, -1e18, 1e20, 1e300, -1e300]))["y"]
+    assert np.all(np.abs(got) <= 1.01), (strategy, got)
+    near = np.array([2.0 * np.pi * 3 + 0.4, -2.0 * np.pi * 5 + 1.3])
+    np.testing.assert_allclose(evaluate(f, near)["y"], f.to_scipy()(np.mod(near, 2.0 * np.pi)), rtol=0, atol=1e-12)
+    # 1e10 to 3e16 out: within the rounding of the period's product (an ulp or two of x, times
+    # the slope), whether the wrapped point lands just inside or just past an end.
+    far = np.random.default_rng(5).uniform(10.0, 16.5, 400)
+    far = np.sign(np.sin(far * 7.0)) * 10.0**far
+    period = x[-1] - x[0]
+    error = np.abs(evaluate(f, far)["y"] - f.to_scipy()(np.fmod(np.fmod(far, period) + period, period)))
+    assert np.all(error <= 4 * np.spacing(np.abs(far)) * 1.1 + 1e-12), error.max()  # the slope is at most about 1
+
+
+def test_float32_tables_are_expanded_about_the_centers_float32_holds() -> None:
+  """A float32 spline far from the origin: its tables are expanded about the float32 centers, so
+  ``s = x - c`` is exact near the cell and the only error is the float32 arithmetic."""
+  g = 1e5 + np.linspace(0.0, 10.0, 12)
+  y = np.sin(g - 1e5)
+  f32, f64 = interp.interpolant(g, y, kind="cubic", dtype="float32"), interp.interpolant(g, y, kind="cubic")
+  pts = np.linspace(g[0], g[-1], 400).astype(np.float32)
+  x32 = sc.sym("x", pts.shape, dtype="float32")
+  a = _fn({"x": x32}, {"y": f32(x32)}, "f32_offset")(pts)
+  np.testing.assert_allclose(a, evaluate(f64, pts.astype(np.float64))["y"], rtol=0, atol=2e-6)
+
+
+def test_a_linear_table_far_from_the_origin_is_np_interp() -> None:
+  """Arithmetic cell centers are used only where they are the midpoints to an ulp, and the
+  tables are expanded about them: no error from a center the code computes differently."""
+  for offset in (1e6, 1e9):
+    g = offset + np.linspace(-1.0, 1.0, 6)
+    y = np.array([0.3, -1.2, 2.5, 0.7, -0.4, 1.9])
+    f = interp.interpolant(g, y, kind="linear")
+    pts = np.linspace(g[0], g[-1], 101)
+    np.testing.assert_allclose(evaluate(f, pts)["y"], np.interp(pts, g, y), rtol=0, atol=1e-12)
+
+
+def test_derivative_refuses_an_axis_the_spline_has_not() -> None:
+  f, _ = _spline_1d("linear")
+  with pytest.raises(ValueError, match="axis must be 0 to 0"):
+    f.derivative(1, axis=1)

@@ -1,6 +1,8 @@
 # Splines and lookup tables: implementation plan (2026-09-28, v1)
 
-Status: **in progress** on `claude/interp`, branched from `claude/integrators-mpc`. The §12 questions
+Status: **complete** on `claude/interp` (SP0 to SP7 and the review round SPR; tag `interp-complete`),
+branched from `claude/integrators-mpc`. See the change log at the end for what changed against this
+plan. The §12 questions
 were taken at the proposed answers: `scaly.interp`; `linear` (degree ≥ 1) and `clamp` (degree 0) as
 the default extrapolation; the pairs in `examples/interp/pairs/` with `compare.py --dir`; one report
 per PR; no scope trimmed; a zero `floor`/`ceil` derivative refused under `nonsmooth="error"`. Todo ids
@@ -680,6 +682,43 @@ pages.
    independent and could move after SP6.
 7. **`FLOOR`/`CEIL` derivative:** zero almost everywhere under `split` and `first`, and still an
    error under `nonsmooth="error"`. Agreed?
+
+## Change log
+
+- **SP0.** `floor`/`ceil` got a zero derivative as planned; float-to-index casts are clamped before
+  the cast, and a clamped NaN goes to a bound (`fmax`/`fmin`). The spike found the composite
+  evaluation far inside the dedicated-op gate, so API-179 (`ExprOp.SPLINE_EVAL`) stays deferred.
+- **SP1 to SP3** as planned. Linear extrapolation is tabulated as two outer cells per axis, and
+  expansions are centred on the cells (a left-edge expansion cancelled on wide cells).
+- **SP4.** A `bucket` search was added to the planned three, and `auto` became binary up to 32
+  cells, then bucket, uniform, binary. The hint search was not built.
+- **SP5.** An active-set polish after PIQP's interior point makes the fits exact to rounding. The
+  2-D fits exposed two Python loops in the core sparsity code (`_matmul_mask`,
+  `_star_recovery_indices`), vectorized in the same PR.
+- **SP6.** As planned. The notebooks use `scaly.mpc` (M1 is on the base branch). The heat-pump pair's
+  COP table reaches past the supply temperature's bounds, since CasADi's `bspline` is zero outside
+  its grid and IPOPT relaxes bounds by a hair. The pairs run CasADi's JIT unexpanded, since
+  `expand=True` fails on interpolant graphs.
+- **SP7.** As planned, plus a docstring check for the interp surface in `test_import_boundaries.py`.
+- **SPR.** Five reviewers (IR and AD, numerics, performance, API and docs, tests). Fixed:
+  - constant folding of `minimum`/`maximum` now matches C's `fmin`/`fmax` on NaN;
+  - interned Functions are keyed on content as well as name, and an inverse's name carries its
+    tolerance;
+  - `Index` carries its partition;
+  - periodic fits of `Expr` data;
+  - `smoothing`'s `dtype`;
+  - `constrained` solved at unit scale, with sign-correct multipliers by bounded least squares;
+  - exact integrals past an end, and for `Expr` bounds in every 1-D mode;
+  - tables expanded about the centers the code holds (float32 far from the origin, float64
+    arithmetic centers);
+  - a relative stop for `inverse()` and a relative monotonicity check;
+  - a bounded periodic wrap;
+  - a linear continuation (and an extend one under `basis`) held at 10^(300/k), so neither strategy nor mode meets `0 * inf` or `inf - inf`;
+  - GCV at any scale, a warning for large dense in-graph fits, and API and documentation fixes.
+
+  Deferred to the todo list: C-187 and API-188 to API-194. Two alternatives were measured and
+  rejected for their cost: contracting coefficients before the basis (1.7x slower in 2-D) and
+  zeroing the outer cells' higher powers (8 to 12 % on every default evaluation).
 
 ## References
 

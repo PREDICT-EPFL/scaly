@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import warnings
 import weakref
 from collections.abc import Callable, Sequence
@@ -16,34 +17,36 @@ from scipy import sparse
 from ..function.model import ConcreteFunction
 from ..function.tree import L, param_list
 from ..function.sugar import custom_derivative, vmap, while_loop
-from ..ir.expr import Expr, as_expr, cast, equal, not_equal, stack, take, where
+from ..ir.expr import Expr, as_expr, cast, equal, maximum, not_equal, stack, take, where
 from ..ir.types import DType, as_dtype, dtypes
 from .grid import Axis, Extrap, Search, derivative_matrix, num
 
 type Strategy = Literal["auto", "pp", "basis"]
 
 LARGE_TABLE = 1 << 20
-"""The most values a spline tabulates in the generated C before it warns: about 20 MB of source,
-a second or more to compile (perf_2026_09_28_interp/bench_codegen.py)."""
+"""The most values a spline tabulates in the generated C before it warns: tens of megabytes of
+source and seconds of compilation past it."""
 
 PP_BUDGET = 1 << 22
 """The most bytes of piecewise-polynomial table ``strategy="auto"`` generates when the B-spline
 coefficients and local bases would be smaller; past it such a spline is evaluated from those.
-Measured (perf_2026_09_28_interp/bench_batch.py, bench_codegen.py): per-cell polynomials read at
-random stay 1.7x faster than local bases even at 8 MB of table, but cost 14x the C source and 10x
-the compile time; 4 MB is where the source reaches about 10 MB."""
+Per-cell polynomials are the faster to evaluate, the local bases the smaller to compile. Read-only:
+the library reads its own copy."""
 
 
 @dataclass(frozen=True, eq=False)
 class Index:
   """The cell of each point along each axis, from ``BSpline.index``: found once and shared by every
   evaluation at the same points (a spline and its derivative, say). Float ``Expr``s shaped like the
-  batch."""
+  batch, and the partition they were found on: a spline on another refuses them."""
 
   cells: tuple[Expr, ...]
+  partition: str = ""
 
 
 def _per_axis(value: Any, ndim: int, what: str) -> tuple[Any, ...]:
+  if isinstance(value, list) and value and all(v is None or isinstance(v, str) for v in value):
+    value = tuple(value)  # a list of names is one per axis as a tuple is
   if isinstance(value, tuple):
     if len(value) != ndim:
       raise ValueError(f"{what} gives {len(value)} entries for {ndim} axes")
@@ -125,6 +128,7 @@ class BSpline:
     self.dtype = as_dtype(dtype)
     if self.dtype not in (dtypes.float32, dtypes.float64):
       raise ValueError(f"dtype must be float32 or float64, got {self.dtype}")
+    axes = tuple(ax if ax.dtype == self.dtype else ax.retyped(self.dtype) for ax in axes)  # tables about the centers it holds
     if strategy not in ("auto", "pp", "basis"):
       raise ValueError(f"strategy must be 'auto', 'pp' or 'basis', got {strategy!r}")
     shape = tuple(ax.n for ax in axes)
@@ -150,9 +154,9 @@ class BSpline:
     table = pp_bytes if self.strategy == "pp" else basis_bytes
     if self.constant and table // 8 > LARGE_TABLE:
       warnings.warn(
-        f"{name}: {table // 8} tabulated values, about {20 * table // 8 >> 20} MB of C source to compile; "
-        "an Expr for the data (a Function input) keeps the table out of the code",
-        stacklevel=3,
+        f"{name}: {table // 8} tabulated values, some {20 * table // 8 >> 20} to {32 * table // 8 >> 20} MB of C source to compile "
+        "(more where several generated functions read the table); an Expr for the data (a Function input) keeps it out of the code",
+        skip_file_prefixes=(os.path.dirname(__file__),),
       )
 
   @property
@@ -209,19 +213,34 @@ class BSpline:
     return [ax.wrap(p) if ax.extrap == "periodic" else p for ax, p in zip(self.axes, pts, strict=True)]
 
   def index(self, x: Any) -> Index:
-    """The cells of the points ``x``, to pass as ``index=`` to several evaluations at them."""
+    """The cells of the points ``x``, to pass as ``index=`` to several evaluations at them by splines
+    on the same partition: this one and its derivatives, say."""
     x, batch = self._points(x)
     if not batch:
-      return Index(tuple(ax.cell(p) for ax, p in zip(self.axes, self._coordinates(x), strict=True)))
+      return Index(tuple(ax.cell(p) for ax, p in zip(self.axes, self._coordinates(x), strict=True)), self._partition())
     n = x.shape[0]
     cells = vmap(self._search_function(), n, [(x.reshape((x.size,)), 0, x.size // n)]).reshape((n, self.ndim))
-    return Index(tuple(cells[:, d] for d in range(self.ndim)))
+    return Index(tuple(cells[:, d] for d in range(self.ndim)), self._partition())
+
+  def _partition(self) -> str:
+    """What decides the cells an index holds: each axis's edges, side, search and wrap."""
+    h = hashlib.sha1()
+    for ax in self.axes:
+      h.update(repr((ax.side, ax.search, ax.extrap == "periodic", ax.dtype.name)).encode())
+      h.update(ax.edges.tobytes())
+    return h.hexdigest()[:12]
+
+  def _check_index(self, index: Index, shape: tuple[int, ...]) -> None:
+    if len(index.cells) != self.ndim or any(c.shape != shape for c in index.cells):
+      raise ValueError("index= was found for points of another shape")
+    if index.partition != self._partition():
+      raise ValueError("index= was found on another partition: its cells are not this spline's")
 
   def __call__(self, x: Any, *, index: Index | None = None) -> Expr:
     x, batch = self._points(x)
     if not batch:
-      if index is not None and (len(index.cells) != self.ndim or any(c.shape for c in index.cells)):
-        raise ValueError("index= was found for points of another shape")
+      if index is not None:
+        self._check_index(index, ())
       coords = self._coordinates(x)
       cells = index.cells if index is not None else tuple(ax.cell(p) for ax, p in zip(self.axes, coords, strict=True))
       return self._at(coords, cells)
@@ -233,8 +252,7 @@ class BSpline:
     if index is None:
       out = vmap(self.function(), n, [flat, *coeffs])
     else:
-      if len(index.cells) != self.ndim or any(c.shape != (n,) for c in index.cells):
-        raise ValueError("index= was found for points of another shape")
+      self._check_index(index, (n,))
       cells = stack(list(index.cells), axis=1).reshape((n * self.ndim,))
       out = vmap(self._cell_function(), n, [flat, (cells, 0, self.ndim), *coeffs])
     return out.reshape((n, *self.out_shape))
@@ -250,9 +268,14 @@ class BSpline:
         if ax.extrap == "fill":
           guards.append(((p < ax.lo) | (p > ax.hi), ax.fill))
         p = where(p < ax.lo, ax.lo, where(p > ax.hi, ax.hi, p))  # NaN passes through
-      if ax.outer:  # an infinity would meet the tangent's zero higher powers as 0 * inf
-        huge = float(np.finfo(np.float32 if self.dtype == dtypes.float32 else np.float64).max)
-        p = where(p < -huge, -huge, where(p > huge, huge, p))
+      if ax.outer or (ax.extrap == "extend" and self.strategy == "basis"):
+        # The continuation is followed out to where the k-th power of the distance still fits a
+        # float, and held beyond: an infinity or a point past 1e300 ** (1 / k) (float32: 1e30 **
+        # (1 / k)) then never meets an outer cell's zero coefficient as 0 * inf, forward or
+        # reverse, nor a basis function's overflowed value as inf - inf. Nothing in reach of a
+        # grid is changed. An extend axis under "pp" needs no hold: its infinities are clean.
+        far = 10.0 ** ((30.0 if self.dtype == dtypes.float32 else 300.0) / max(ax.degree, 1))
+        p = where(p < -far, -far, where(p > far, far, p))
       i = cast(ax.table_cell(p, j), dtypes.int64)
       spacing = None if ax.outer else ax.spacing
       if spacing is not None:  # the centers of uniform cells are arithmetic: no table
@@ -313,6 +336,7 @@ class BSpline:
     point = () if self.ndim == 1 else (self.ndim,)
     return _interned(
       f"{self.name}_{self.digest}_cell",
+      self.digest,
       lambda: ConcreteFunction(
         f"{self.name}_{self.digest}_cell",
         lambda x: stack([ax.cell(p) for ax, p in zip(self.axes, self._coordinates(x), strict=True)]),
@@ -327,6 +351,7 @@ class BSpline:
     if self.constant:
       return _interned(
         name,
+        self.digest,
         lambda: ConcreteFunction(
           name,
           lambda x, cell: self._at(self._coordinates(x), tuple(cell[d] for d in range(self.ndim))),
@@ -336,6 +361,7 @@ class BSpline:
       )
     return _interned(
       name,
+      self.digest,
       lambda: ConcreteFunction(
         name,
         lambda x, cell, c: self._rebound(c)._at(self._coordinates(x), tuple(cell[d] for d in range(self.ndim))),
@@ -364,19 +390,23 @@ class BSpline:
     return h.hexdigest()[:8]
 
   def function(self, name: str | None = None) -> ConcreteFunction[Any, Any, Any, Any]:
-    """The spline as a Function of one point, ``x -> f(x)``: calls then share one procedure and one
-    copy of the table, where inlining would give each calling procedure its own. With ``Expr``
-    coefficients it is ``(x, c) -> f(x)``, ``c`` the coefficients flat. Named ``{name}_{digest}``
-    unless ``name`` is given; two splines with the same content share it."""
+    """The spline as a Function of one point, ``x -> f(x)``: its calls share one procedure, where
+    inlining would give each calling procedure its own copy of the evaluation (a derivative of it
+    is a procedure of its own, with its own copy of the table). With ``Expr`` coefficients it is
+    ``(x, c) -> f(x)``, ``c`` the coefficients flat. Named ``{name}_{digest}`` unless ``name`` is
+    given; two splines with the same content share it, and two with different content never do,
+    though a graph holding both under one given name is refused when it is lowered."""
     point = () if self.ndim == 1 else (self.ndim,)
     fname = name or f"{self.name}_{self.digest}"
     if self.constant:
       return _interned(
         fname,
+        self.digest,
         lambda: ConcreteFunction(fname, lambda x: self(x), param_list(L("x", point, dtype=self.dtype)), L("y", self.out_shape, dtype=self.dtype)),
       )
     return _interned(
       fname,
+      self.digest,
       lambda: ConcreteFunction(
         fname,
         lambda x, c: self._rebound(c)(x),
@@ -404,6 +434,8 @@ class BSpline:
     gives the end slope held (``clamp``), ``clamp`` and ``fill`` give zero (``fill``),
     ``extend`` and ``periodic`` carry over. For a Jacobian, differentiate the spline instead; this
     is for when the derivative must itself be a spline (a curvature table, a bound on ``f'``)."""
+    if not 0 <= axis < self.ndim:
+      raise ValueError(f"axis must be 0 to {self.ndim - 1} for a {self.ndim}-D spline, got {axis}")
     ax = self.axes[axis]
     if not 0 <= nu <= ax.degree:
       raise ValueError(f"nu must be 0 to the axis's degree {ax.degree}, got {nu}")
@@ -449,8 +481,9 @@ class BSpline:
   def integrate(self, a: Any, b: Any) -> Any:
     """The integral over ``[a, b]`` (a box ``a <= x <= b`` in n-D). Numbers give a number, or an
     array for a vector-valued spline, exact for every extrapolation mode in 1-D and inside the base
-    box in n-D; ``Expr`` bounds give an ``Expr``, the antiderivative at the bounds (see
-    ``antiderivative`` for what that integrates outside the base interval)."""
+    box in n-D. ``Expr`` bounds give an ``Expr``, exact in 1-D for every mode; in n-D it is the
+    antiderivative at the corners of the box, exact inside the base box (see ``antiderivative`` for
+    what it integrates outside)."""
     numeric = all(
       not isinstance(v, Expr)
       for v in (np.ravel(a).tolist() if not isinstance(a, Expr) else [a]) + (np.ravel(b).tolist() if not isinstance(b, Expr) else [b])
@@ -475,6 +508,9 @@ class BSpline:
         out = _along(SciBSpline(ax.knots, np.eye(ax.n), ax.degree).integrate(u, v)[None, :], out, 0)
         out = out.reshape(out.shape[1:])
       return out
+    if self.ndim == 1:
+      primitive = self._primitive()
+      return primitive(as_expr(b)) - primitive(as_expr(a))
     total = self
     for d in range(self.ndim):
       total = total.antiderivative(d)
@@ -488,7 +524,44 @@ class BSpline:
       result = result + c
     return result
 
-  def inverse(self, *, tol: float = 1e-14, max_iter: int = 60) -> BSpline | Inverse:
+  def _primitive(self) -> Callable[[Expr], Expr]:
+    """The integral from the start of the base interval of a 1-D spline and its continuation, as
+    an expression of the upper bound: the antiderivative inside; past each end the integral of the
+    continuation there (the tangent's is quadratic, a fill's linear); and whole periods counted for
+    a periodic axis. ``extend`` is the antiderivative's own continuation."""
+    ax = self.axes[0]
+    if ax.extrap == "extend":
+      return self.antiderivative()
+    inside = Axis(ax.knots, ax.degree, edges=ax.edges, side=ax.side, extrap="clamp", search=ax.search, dtype=ax.dtype)
+    inner = self._with_axis(0, inside, self.coeffs, "in").antiderivative()  # read inside only
+    if ax.extrap == "periodic":
+      period, whole = ax.hi - ax.lo, inner.at(np.array([ax.hi]))[0]
+
+      def periodic(x: Expr) -> Expr:
+        x = x if x.type.dtype == self.dtype else cast(x, self.dtype)
+        turns = ((x - ax.lo) * (1.0 / period)).floor()
+        return turns * whole + inner(ax.wrap(x))
+
+      return periodic
+    ends = self.at(np.array([ax.lo, ax.hi]))  # the values at the ends, as the coefficients are
+    slopes = self.derivative().at(np.array([ax.lo, ax.hi])) if ax.extrap == "linear" else None
+
+    def tail(x: Expr, row: int, end: float) -> Expr:
+      d = x - end
+      if ax.extrap == "fill":
+        return ax.fill * d
+      value = ends[row] * d
+      return value if slopes is None else value + slopes[row] * (0.5 * d * d)
+
+    def primitive(x: Expr) -> Expr:
+      x = x if x.type.dtype == self.dtype else cast(x, self.dtype)
+      xc = where(x < ax.lo, ax.lo, where(x > ax.hi, ax.hi, x))
+      below, above = tail(x, 0, ax.lo), tail(x, 1, ax.hi)
+      return inner(xc) + where(x < ax.lo, below, where(x > ax.hi, above, 0.0 * below))
+
+    return primitive
+
+  def inverse(self, *, tol: float = 1e-15, max_iter: int = 60) -> BSpline | Inverse:
     """``x = f^{-1}(y)`` for a 1-D scalar spline that is strictly monotone (checked). Degree 1 gives
     the exact table with the axes swapped, a ``BSpline``; a higher degree an ``Inverse``, solved by
     safeguarded Newton. Outside the spline's range the inverse continues linearly."""
@@ -528,7 +601,8 @@ class BSpline:
     """The design matrix at points known now, ``(m,)`` in 1-D or ``(m, D)``: an ``(m, prod n_d)``
     sparse matrix whose row ``i`` is the tensor-product basis at point ``i`` with this spline's
     extrapolation (zero where a ``fill`` axis is left), its columns the coefficients' C order.
-    ``basis(points) @ coeffs`` is the spline at the points."""
+    ``basis(points) @ coeffs`` is the spline at the points, less the ``fill`` value where a point
+    leaves a ``fill`` axis (``at`` adds it)."""
     pts = np.asarray(points, dtype=np.float64)
     pts = pts[:, None] if self.ndim == 1 and pts.ndim == 1 else pts
     if pts.ndim != 2 or pts.shape[1] != self.ndim or not np.all(np.isfinite(pts)):
@@ -599,12 +673,12 @@ def _integrate_1d(f: BSpline, a: float, b: float) -> Any:
   if ax.extrap in ("extend", "periodic"):
     return s.integrate(a, b, extrapolate=True if ax.extrap == "extend" else "periodic")
   total = s.integrate(max(a, ax.lo), min(b, ax.hi)) if a < ax.hi and b > ax.lo else np.zeros(f.out_shape)
-  for end, length, slope_sign in ((ax.lo, max(0.0, min(b, ax.lo) - a), -1.0), (ax.hi, max(0.0, b - max(a, ax.hi)), 1.0)):
-    if length > 0.0:
+  for end, u, v in ((ax.lo, a, min(b, ax.lo)), (ax.hi, max(a, ax.hi), b)):  # the part of [a, b] beyond each end
+    if v > u:
       if ax.extrap == "fill":
-        total = total + ax.fill * length
-      else:  # clamp: the end value; linear: the end value and slope
-        total = total + s(end) * length + (slope_sign * s(end, 1) * length**2 / 2 if ax.extrap == "linear" else 0.0)
+        total = total + ax.fill * (v - u)
+      else:  # clamp: the end value; linear: the tangent there, integrated over [u, v]
+        total = total + s(end) * (v - u) + (s(end, 1) * ((v - end) ** 2 - (u - end) ** 2) / 2 if ax.extrap == "linear" else 0.0)
   return total
 
 
@@ -627,7 +701,7 @@ def _monotone_sign(f: BSpline) -> int:
       roots = PPoly.from_spline(f.derivative(2).to_scipy()).roots(extrapolate=False)
       probe.append(roots[np.isfinite(roots)])
     slopes = sign * deriv(np.concatenate(probe))
-    if np.min(slopes) < -1e-12 * max(1.0, float(np.max(np.abs(slopes)))):
+    if np.min(slopes) < -1e-12 * float(np.max(np.abs(slopes))):
       raise ValueError("inverse() needs a strictly monotone spline; its derivative changes sign")
   return sign
 
@@ -650,8 +724,9 @@ class Inverse:
 
   def function(self) -> ConcreteFunction[Any, Any, Any, Any]:
     """The inverse as a Function of one value, ``y -> x``, with its derivative rule attached."""
-    name = f"{self.f.name}_{self.f.digest}_inv"
-    return _interned(name, lambda: self._build(name))
+    settings = hashlib.sha1(repr((float(self.tol), int(self.max_iter))).encode()).hexdigest()[:6]
+    name = f"{self.f.name}_{self.f.digest}_inv{settings}"
+    return _interned(name, self.f.digest, lambda: self._build(name))
 
   def __call__(self, y: Any) -> Expr:
     y = as_expr(y)
@@ -673,21 +748,27 @@ class Inverse:
     def dg(x: Expr, j: Expr) -> Expr:
       return sign * deriv._at([x], (j,))
 
+    # The carry is (x, lo, hi, last step, scale): the loop stops once a step moves x by no more
+    # than tol times the scale, the larger of |x| and the cell's width (Newton's error is then of
+    # the order of that step squared), or the bracket closes to that, or the residual is zero.
+    # Both are relative, so neither the scale of y nor that of x changes when it stops.
     def cond(c: Expr, z: Expr, j: Expr) -> Expr:
-      x, lo, hi = c[0], c[1], c[2]
-      return ((g(x, j) - z).abs() > self.tol * (1.0 + z.abs())) & (hi - lo > 1e-15 * (1.0 + x.abs()))
+      x, lo, hi, last, scale = c[0], c[1], c[2], c[3], c[4]
+      small = self.tol * maximum(x.abs(), scale)
+      return (last.abs() > small) & (hi - lo > small)
 
     def body(c: Expr, z: Expr, j: Expr) -> Expr:
-      x, lo, hi = c[0], c[1], c[2]
+      x, lo, hi, scale = c[0], c[1], c[2], c[4]
       r, d = g(x, j) - z, dg(x, j)
       lo, hi = where(r < 0.0, x, lo), where(r > 0.0, x, hi)
       step = x - r / d
       inside = (d > 0.0) & (step > lo) & (step < hi)
-      return stack([where(inside, step, 0.5 * (lo + hi)), lo, hi])
+      nxt = where(equal(r, 0.0), x, where(inside, step, 0.5 * (lo + hi)))
+      return stack([nxt, lo, hi, nxt - x, scale])
 
-    carry, pz, pj = L("c", (3,)), L("z", ()), L("j", ())
+    carry, pz, pj = L("c", (5,)), L("z", ()), L("j", ())
     cond_fn = ConcreteFunction(f"{name}_go", cond, param_list(carry, pz, pj), L("go", (), dtype=dtypes.bool_))
-    body_fn = ConcreteFunction(f"{name}_step", body, param_list(carry, pz, pj), L("c_next", (3,)))
+    body_fn = ConcreteFunction(f"{name}_step", body, param_list(carry, pz, pj), L("c_next", (5,)))
 
     # Outside the range the inverse continues along the end tangents of sign * f, whose slopes are
     # known now; a flat end (a slope negligible against the mean) holds the end instead, as the
@@ -712,15 +793,16 @@ class Inverse:
       x_lo, x_hi = _gather(edges, i), _gather(edges, i + 1)
       z_lo, z_hi = _gather(levels, i), _gather(levels, i + 1)
       x0 = x_lo + (zc - z_lo) * (x_hi - x_lo) / (z_hi - z_lo)
-      (c, _) = while_loop(cond_fn, body_fn, stack([x0, x_lo, x_hi]), max_iter=self.max_iter, params=[zc, j])
+      start = stack([x0, x_lo, x_hi, x_hi - x_lo, x_hi - x_lo])
+      (c, _) = while_loop(cond_fn, body_fn, start, max_iter=self.max_iter, params=[zc, j])
       return where(inside, c[0], c[0] + (z - zc) * outside_rate(z, zc))
 
     slope = deriv.function()
 
     def rate(y: Expr, x: Expr) -> Expr:
-      """``dx/dy``: ``1/f'(x)`` inside, the end tangent's (zero at a flat end) outside."""
+      """``dx/dy``: ``1/f'(x)`` inside, the end tangent's (zero at a flat end) outside, NaN at NaN."""
       z, zc, inside = clamp(y)
-      return where(inside, 1.0 / slope(x), sign * outside_rate(z, zc))
+      return where(not_equal(y, y), math.nan, where(inside, 1.0 / slope(x), sign * outside_rate(z, zc)))
 
     primal = ConcreteFunction(f"{name}_solve", solve, param_list(L("y", ())), L("x", ()))
     jvp = ConcreteFunction(f"{name}_jvp", lambda y, dy: dy * rate(y, as_expr(primal(y))), param_list(L("y", ()), L("dy", ())), L("dx", ()))
@@ -750,12 +832,14 @@ def design_matrix(knots: Sequence[np.ndarray], degrees: Sequence[int], points: n
 _FUNCTIONS: weakref.WeakValueDictionary[str, ConcreteFunction[Any, Any, Any, Any]] = weakref.WeakValueDictionary()
 
 
-def _interned(name: str, build: Callable[[], ConcreteFunction[Any, Any, Any, Any]]) -> ConcreteFunction[Any, Any, Any, Any]:
-  """One Function per name: the names carry the content's digest, and lowering refuses two different
-  Functions of one name in a graph."""
-  fn = _FUNCTIONS.get(name)
+def _interned(name: str, digest: str, build: Callable[[], ConcreteFunction[Any, Any, Any, Any]]) -> ConcreteFunction[Any, Any, Any, Any]:
+  """One Function per name and content: a name given by hand does not carry the digest, and two
+  splines under one name must not share a Function (lowering refuses two different Functions of
+  one name in one graph)."""
+  key = f"{name}\0{digest}"
+  fn = _FUNCTIONS.get(key)
   if fn is None:
-    fn = _FUNCTIONS[name] = build()
+    fn = _FUNCTIONS[key] = build()
   return fn
 
 

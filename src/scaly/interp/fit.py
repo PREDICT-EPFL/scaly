@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import os
+import warnings
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -14,7 +16,7 @@ from ..function.sugar import scan
 from ..ir.expr import Expr, cast, concat, equal, gather, minimum, not_equal, reduce_max, stack, where
 from ..ir.types import DType, dtypes
 from .grid import Axis, Extrap, Search, Side, check_sites
-from .spline import BSpline, Strategy, _along, _per_axis, design_matrix
+from .spline import LARGE_TABLE, BSpline, Strategy, _along, _per_axis, design_matrix
 
 type Kind = Literal["nearest", "zoh", "linear", "cubic", "spline", "pchip", "akima", "makima", "steffen", "smooth_linear"]
 type Boundary = Literal["not-a-knot", "natural", "clamped", "periodic"]
@@ -33,17 +35,17 @@ _SCIPY_BC = {"not-a-knot": None, "natural": "natural", "clamped": "clamped", "pe
 
 
 def interpolant(
-  grid: np.ndarray | Sequence[float] | tuple[np.ndarray | Sequence[float], ...],
+  grid: np.ndarray | Sequence[float] | tuple[np.ndarray | Sequence[float], ...] | list[np.ndarray],
   values: np.ndarray | Sequence[Any] | Expr,
-  kind: Kind | tuple[Kind, ...] = "linear",
+  kind: Kind | tuple[Kind, ...] | list[Kind] = "linear",
   *,
-  bc: Boundary | tuple[Boundary, ...] = "not-a-knot",
+  bc: Boundary | tuple[Boundary, ...] | list[Boundary] = "not-a-knot",
   degree: int | tuple[int, ...] = 3,
-  extrap: Extrap | tuple[Extrap | None, ...] | None = None,
+  extrap: Extrap | tuple[Extrap | None, ...] | list[Extrap | None] | None = None,
   fill: float = math.nan,
   period: float | tuple[float | None, ...] | None = None,
   frac: float = 0.1,
-  search: Search | Literal["auto"] | tuple[Search | Literal["auto"], ...] = "auto",
+  search: Search | Literal["auto"] | tuple[Search | Literal["auto"], ...] | list[Search | Literal["auto"]] = "auto",
   strategy: Strategy = "auto",
   dtype: DType | str = "float64",
   name: str = "interp",
@@ -92,11 +94,15 @@ def interpolant(
   ``values`` may be an ``Expr``: a table read at run time (a calibration changed without
   recompiling) or decision variables (identification). The fit is then part of the graph: a
   constant linear map for the kinds linear in the data (a sparse one for ``smooth_linear``; above
-  ``DENSE_FIT`` sites a C2 cubic solves its tridiagonal system for the slopes in two scans instead,
-  and is represented on doubled knots), the slope formulas as expressions for the shape-preserving
-  kinds, whose derivative then follows ``sc.options(nonsmooth=...)`` where they switch. A periodic
-  axis cannot check that such data close up.
+  40 sites a C2 cubic solves its tridiagonal system for the slopes in two scans instead, and is
+  represented on doubled knots), the slope formulas as expressions for the shape-preserving kinds.
+  Where those formulas switch (a limiter, a zero secant), Steffen's derivative follows
+  ``sc.options(nonsmooth=...)`` through its ``minimum``; the others switch through predicates,
+  and differentiate one-sidedly whatever the setting. A periodic axis cannot check that such data
+  close up: it reads the first value in place of the last.
   """
+  if isinstance(grid, list) and grid and all(np.ndim(g) == 1 for g in grid):
+    grid = tuple(grid)  # a list of vectors is an n-D grid, as a tuple is
   sites = grid if isinstance(grid, tuple) else (grid,)
   ndim = len(sites)
   symbolic = isinstance(values, Expr)
@@ -128,7 +134,7 @@ def interpolant(
       raise ValueError(f"kind={kd!r} is 1-D only: it is not a tensor-product spline in n-D")
     if not symbolic and (ext == "periodic" or (ext is None and bcd == "periodic")) and kd not in ("nearest", "zoh"):
       first, last = np.take(coeffs, 0, axis=d), np.take(coeffs, -1, axis=d)
-      if not np.allclose(first, last, rtol=1e-14, atol=1e-14 * max(1.0, float(np.max(np.abs(coeffs))))):
+      if not np.allclose(first, last, rtol=1e-14, atol=1e-14 * float(np.max(np.abs(coeffs)))):
         raise ValueError(f"a periodic axis needs its first and last values equal (axis {d})")
     coeffs, knots, k, edges, side = _axis_fit(g, kd, bcd, deg, per, frac, coeffs, d)
     axes.append(
@@ -179,7 +185,15 @@ def _axis_fit(
     slopes = cubic_slopes(sites, bc, _moved(values, axis))
     return _unmoved(_hermite_form(sites, _moved(values, axis), slopes), axis), knots, 3, sites, "right"
   if isinstance(values, Expr):  # the fit's constant linear map, from the fit of the identity
-    spl = make_interp_spline(sites, np.eye(sites.size), k=int(k), bc_type=_SCIPY_BC[bc])
+    identity = np.eye(sites.size)
+    if bc == "periodic":
+      identity[-1] = identity[0]  # the last value is read as the first, so every column closes up
+    spl = make_interp_spline(sites, identity, k=int(k), bc_type=_SCIPY_BC[bc])
+    if spl.c.size > LARGE_TABLE:
+      warnings.warn(
+        f"a dense {spl.c.shape[0]} x {spl.c.shape[1]} map fits this axis's Expr data in the graph: tens of megabytes of C",
+        skip_file_prefixes=(os.path.dirname(__file__),),
+      )
     fitted = _along(spl.c, values, axis)
   else:
     spl = make_interp_spline(sites, values, k=int(k), bc_type=_SCIPY_BC[bc], axis=axis)
@@ -512,7 +526,15 @@ def smoothing(
   coeffs, _ = pspline_fit(knots, degrees, points, values, penalty, lam)
   shape = tuple(t.size - k - 1 for t, k in zip(knots, degrees, strict=True))
   return BSpline(
-    tuple(knots), coeffs.reshape((*shape, *values.shape[1:])), degrees, extrap=extrap, fill=fill, search=search, strategy=strategy, name=name
+    tuple(knots),
+    coeffs.reshape((*shape, *values.shape[1:])),
+    degrees,
+    extrap=extrap,
+    fill=fill,
+    search=search,
+    strategy=strategy,
+    dtype=dtype,
+    name=name,
   )
 
 
@@ -551,12 +573,13 @@ def pspline_fit(
   if lam != "gcv":
     return solve(float(lam))[0], float(lam)
   scale = np.trace(gram) / max(np.trace(P), 1e-300)
+  size = max(float(np.max(np.abs(flat))), 1e-300)  # GCV on the data scaled to one: no overflow of the RSS
 
   def gcv(log_lam: float) -> float:
     weight = scale * 10.0**log_lam
     coeffs, factor = solve(weight)
     trace = float(np.trace(linalg.cho_solve(factor, gram)))
-    rss = float(np.sum((flat - B @ coeffs) ** 2))
+    rss = float(np.sum(((flat - B @ coeffs) / size) ** 2))
     return m * rss / max(m - trace, 1e-12) ** 2
 
   grid = np.linspace(-9.0, 6.0, 31)

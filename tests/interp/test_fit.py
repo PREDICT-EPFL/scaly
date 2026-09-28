@@ -34,7 +34,7 @@ def test_linear_is_np_interp_and_continues_the_end_segments(uniform: bool) -> No
   extended = RegularGridInterpolator((g,), y, bounds_error=False, fill_value=None)(out[:, None])
   np.testing.assert_allclose(evaluate(f, out)["y"], extended, rtol=1e-13)
   clamped = interp.interpolant(g, y, extrap="clamp")
-  np.testing.assert_allclose(evaluate(clamped, out)["y"], np.interp(out, g, y), rtol=0, atol=1e-15)
+  np.testing.assert_allclose(evaluate(clamped, out)["y"], np.interp(out, g, y), rtol=0, atol=1e-14 * scale(y))
   cell = np.clip(np.searchsorted(g, x, side="right") - 1, 0, g.size - 2)
   np.testing.assert_allclose(got["grad"], np.diff(y)[cell] / np.diff(g)[cell], rtol=1e-12)
 
@@ -385,3 +385,31 @@ def test_smoothing_validation() -> None:
     interp.smoothing(x, x[:5])
   with pytest.raises(ValueError, match="more than 2 coefficients"):
     interp.smoothing(x, x, degree=0, segments=2)
+
+
+def test_zoh_holds_the_last_value_for_one_spacing() -> None:
+  g = np.array([0.0, 1.0, 3.0, 4.0])
+  y = np.array([5.0, 6.0, 7.0, 8.0])
+  f = interp.interpolant(g, y, kind="zoh", extrap="fill", fill=-1.0)
+  np.testing.assert_array_equal(evaluate(f, np.array([4.0, 4.99, 5.0, 5.01]))["y"], [8.0, 8.0, 8.0, -1.0])
+  w = interp.interpolant(g, y, kind="zoh", extrap="periodic")  # the period: the span plus one spacing, 5
+  np.testing.assert_array_equal(evaluate(w, np.array([4.5, 5.0, 5.5, 9.2]))["y"], [8.0, 5.0, 5.0, 8.0])
+
+
+def test_gcv_chooses_the_same_weight_at_any_scale_of_the_data() -> None:
+  from scaly.interp.fit import pspline_fit
+
+  rng = np.random.default_rng(8)
+  x = np.sort(rng.uniform(0.0, 1.0, 120))
+  y = np.sin(6 * x) + 0.1 * rng.normal(size=120)
+  knots = [np.concatenate([np.full(3, 0.0) - 0.05 * np.arange(3, 0, -1), np.linspace(0.0, 1.0, 21), 1.0 + 0.05 * np.arange(1, 4)])]
+  weights = [pspline_fit(knots, [3], x[:, None], size * y, 2, "gcv")[1] for size in (1.0, 1e-200, 1e200)]
+  np.testing.assert_allclose(weights, weights[0], rtol=1e-6)
+
+
+def test_a_large_dense_fit_of_expression_data_warns() -> None:
+  import scaly as sc
+
+  g = np.linspace(0.0, 1.0, 1030)
+  with pytest.warns(UserWarning, match="dense 1030 x 1030 map"):
+    interp.interpolant(g, sc.sym("v", 1030), kind="spline", degree=5)

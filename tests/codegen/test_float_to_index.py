@@ -22,3 +22,24 @@ def test_clamp_before_cast_keeps_a_non_finite_input_in_range() -> None:
   for xv, expected in ((np.nan, 0), (np.inf, 3), (-np.inf, 0), (1e300, 3), (-1e300, 0), (2.5, 2), (3.0, 3), (-0.0, 0)):
     clamped_v, value = fn(np.array(xv))
     assert (clamped_v, value) == (expected, table[expected]), xv
+
+
+def test_a_constant_nan_folds_through_the_clamp_as_the_c_does() -> None:
+  """Constant folding evaluates ``maximum`` and ``minimum`` as C's ``fmax`` and ``fmin``: a NaN
+  operand gives the other one. A point that folds to NaN before a clamped cast (a spline read at a
+  constant NaN) therefore leaves a finite constant for the cast, not a cast of NaN in the C."""
+  from scaly import interp
+  from scaly.codegen import render_c_module
+  from scaly.passes.expr import simplify
+
+  folded = simplify(sc.minimum(sc.maximum(sc.const(np.nan), 0.0), 3.0))
+  assert folded.op == sc.ExprOp.CONST and float(np.asarray(folded.value)) == 0.0  # fmax(NaN, 0), then fmin(0, 3)
+  for op, other in ((sc.minimum, 3.0), (sc.maximum, 0.0)):
+    alone = simplify(op(sc.const(np.nan), other))
+    assert alone.op == sc.ExprOp.CONST and float(np.asarray(alone.value)) == other
+
+  f = interp.interpolant(np.linspace(0.0, 1.0, 50), np.linspace(0.0, 1.0, 50) ** 2, kind="cubic")
+  x = sc.sym("x")
+  fn = sc.Function._from_exprs("const_nan_read", [x], [f(sc.const(np.nan)) + 0.0 * x], ["x"], ["y"])
+  assert "(int64_t)((double)NAN)" not in render_c_module(fn).body
+  assert np.isnan(fn(np.array(0.5)))

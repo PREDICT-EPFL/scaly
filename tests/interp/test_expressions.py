@@ -296,3 +296,35 @@ def test_the_data_jacobian_matches_casadi_inlined(method: str, dims: tuple[int, 
   theirs = np.stack([np.asarray(J(p, np.ravel(v, order="F"))).reshape(-1) for p in pts])
   fortran = np.ravel(np.arange(v.size).reshape(dims), order="F")  # CasADi's data order
   np.testing.assert_allclose(jac[:, fortran], theirs, rtol=0, atol=1e-12 * scale(theirs))
+
+
+def _fn(inputs: dict[str, sc.Expr], outputs: dict[str, sc.Expr], name: str) -> sc.Function:
+  return sc.Function._from_exprs(name, list(inputs.values()), list(outputs.values()), list(inputs), list(outputs))
+
+
+@pytest.mark.parametrize(("kind", "sites"), [("cubic", 9), ("cubic", DENSE_FIT), ("cubic", DENSE_FIT + 5), ("spline", 9), ("spline", 30)])
+def test_a_periodic_fit_of_expression_data_is_the_numeric_fit(kind: str, sites: int) -> None:
+  """The identity fitted for the dense map reads the last value as the first, so every column
+  closes up as a periodic fit needs; the numbers' fit of closed data is the reference."""
+  x = np.linspace(0.0, 2.0 * np.pi, sites)
+  y = np.sin(x) + 0.3 * np.cos(3 * x)
+  y[-1] = y[0]
+  kw = {"bc": "periodic"} | ({"degree": 3} if kind == "spline" else {})
+  v = sc.sym("v", sites)
+  f, ref = interp.interpolant(x, v, kind=kind, **kw), interp.interpolant(x, y, kind=kind, **kw)  # ty: ignore[invalid-argument-type]
+  pts = np.array([0.3, 2.0, 5.9, 7.0, -1.0])
+  p = sc.sym("p", pts.shape)
+  np.testing.assert_allclose(
+    _fn({"p": p, "v": v}, {"y": f(p)}, f"periodic_expr_{kind}_{sites}")((pts, y)), ref.to_scipy()(np.mod(pts, 2.0 * np.pi)), rtol=0, atol=1e-12
+  )
+
+
+def test_a_large_expression_cubic_along_a_later_axis() -> None:
+  rng = np.random.default_rng(3)
+  g = (np.linspace(0.0, 1.0, 3), np.linspace(0.0, 10.0, DENSE_FIT + 10))
+  v = rng.normal(size=(3, DENSE_FIT + 10))
+  vs = sc.sym("v", v.shape)
+  f, ref = interp.interpolant(g, vs, kind=("linear", "cubic")), interp.interpolant(g, v, kind=("linear", "cubic"))
+  pts = np.column_stack([rng.uniform(0.0, 1.0, 40), rng.uniform(0.0, 10.0, 40)])
+  x = sc.sym("x", pts.shape)
+  np.testing.assert_allclose(_fn({"x": x, "v": vs}, {"y": f(x)}, "later_axis_scan")((pts, v)), ref.to_scipy()(pts), rtol=0, atol=1e-11)

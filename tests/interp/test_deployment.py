@@ -99,3 +99,21 @@ def test_a_huge_constant_table_warns_and_an_expression_does_not() -> None:
     warnings.simplefilter("error")
     interp.interpolant(g[:1000], np.sin(g[:1000]))
     interp.interpolant(g, sc.sym("table", g.size), kind="zoh")
+
+
+def test_a_float64_point_into_a_float32_spline() -> None:
+  from scipy.interpolate import make_interp_spline
+
+  g = np.linspace(0.0, 1.0, 7)
+  f = interp.interpolant(g, np.sin(3 * g), kind="cubic", dtype="float32")
+  x = sc.sym("x", 5)
+  got = sc.Function._from_exprs("f64_point_f32", [x], [f(x)], ["x"], ["y"])(np.linspace(0.05, 0.95, 5))
+  np.testing.assert_allclose(got, make_interp_spline(g, np.sin(3 * g), k=3)(np.linspace(0.05, 0.95, 5)), rtol=0, atol=1e-6)
+
+
+def test_every_fit_honours_its_dtype() -> None:
+  x = np.linspace(0.0, 1.0, 50)
+  y = np.sin(3 * x)
+  assert interp.smoothing(x, y, dtype="float32").dtype.name == "float32"
+  assert interp.smoothing(x, y, method="cubic", dtype="float32").dtype.name == "float32"
+  assert interp.interpolant(x, y, kind="pchip", dtype="float32").dtype.name == "float32"

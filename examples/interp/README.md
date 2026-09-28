@@ -20,8 +20,8 @@ so they read on GitHub without running.
 uv run --with jupyterlab jupyter lab examples/interp
 ```
 
-The plots use `../notebooks/plotstyle.py`. Each notebook writes its C to
-`examples/generated/interp/<name>/` (git-ignored). The FSDS centre line in `data/` is the one the
+The plots use `../notebooks/plotstyle.py`. Five of the notebooks write their C to
+`examples/generated/interp/<name>/` (git-ignored); `shape_constrained` has none to write. The FSDS centre line in `data/` is the one the
 race-car benchmark uses (`benchmarks/problems/race_cars/data/tracks/fsds_competition_1`).
 
 ## CasADi pairs
@@ -78,7 +78,7 @@ $2 \times 10^{-12}$ of SciPy's `NdBSpline`, CasADi's within $2 \times 10^{-9}$.
 - **CasADi's JIT with `expand=True` fails on graphs holding an interpolant** ("`eval_sx` not defined"),
   so three pairs compile unexpanded MX, whose builds take 8 to 91 s.
 - **The generated law of `contouring_control` repeats the track's table** in each of the six
-  functions that read it, 941 kB of C: the code generator does not share a constant between the
+  functions that read it, 942 kB of C: the code generator does not share a constant between the
   functions of a module yet (todo C-187).
 - **On small tables, `"auto"` is not always the fastest search at random batch points.** It picks
   `binary` up to 32 cells. On the 10 x 11 motor table the `count` search, which it never picks, is

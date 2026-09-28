@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interpolation review and summary</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Interpolation · review round (SPR) and summary</h1>
+<p class="sub">API-178 · branch <code>claude/interp</code> · 28 Sep 2026 · plan <code>interp_plan_2026_09_28.md</code> · tag <code>interp-complete</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> Five reviewers read <code>scaly.interp</code> and the core changes it made, and reproduced every finding they reported. The dimensions were IR and AD, numerics, performance, API and docs, and tests with mutation coverage.</p>
+<ul>
+<li><b>Bugs.</b> They found about fifteen. Two of them returned another spline's code or tolerance: an explicit <code>function(name)</code>, and the Function of an <code>inverse()</code>. Others:
+<ul>
+<li>a constrained fit went non-monotone at small data scales;</li>
+<li>integrals were wrong past an end;</li>
+<li>the <code>basis</code> strategy and reverse mode gave NaN far outside;</li>
+<li>float32 tables lost accuracy far from the origin;</li>
+<li>periodic fits of <code>Expr</code> data failed;</li>
+<li>constant folding disagreed with C on NaN, leaving a cast of NaN (undefined behaviour) in generated code.</li>
+</ul>
+All are fixed, with a test for each.</li>
+<li><b>Tests.</b> The tests reviewer's 26 new mutants had 24 survivors. The suite now kills 21 of the 26: three are equivalent, and two are defensive code that no reachable input exercises.</li>
+<li><b>Two costly fixes rejected.</b> Contracting coefficients before the local bases would have cost 1.7× in 2-D. Zeroing the outer cells' higher powers would have cost 8 to 12 % on every default evaluation. A hold of the continuation at 10^(300/k) replaces both and costs nothing.</li>
+<li><b>Deferred.</b> Eight items went to the todo list: C-187 (tables once per module) and API-188 to API-194. Three out-of-scope issues became separate tasks: the codebase map, the JIT cache key, and derivative caches that ignore <code>nonsmooth</code>.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 981 passed, 45 skipped; this round adds 80 test cases (38 new or re-parametrized tests). ruff and ty clean. <b>Mutation checks:</b> every review fix pinned (23 of 23 mutants undoing them killed, two after a test change, one more withdrawn as equivalent); the tests reviewer's 26 mutants: 21 killed, 3 equivalent, 2 defensive code.</p>
+</div>
+
+<h2>1. What the reviewers found, and what changed</h2>
+<div class="scroll"><table>
+<tr><th>Finding (reviewer)</th><th>Resolution</th></tr>
+<tr><td>Constant folding evaluated <code>minimum</code>/<code>maximum</code> with NaN-propagating NumPy, while C's <code>fmin</code>/<code>fmax</code> drop NaN. A spline read at a constant NaN left <code>(int64_t)NAN</code> in C, which is out of bounds on x86. (AD)</td><td class="ok">Fixed: the fold uses <code>np.fmin</code>/<code>np.fmax</code>. Test on the folded clamp and the generated C.</td></tr>
+<tr><td><code>function(name)</code> interned by name alone, so a second spline got the first's Function. <code>Inverse.function()</code> ignored <code>tol</code>/<code>max_iter</code>. (API, AD, tests)</td><td class="ok">Fixed: interned by name and content, and an inverse's name carries its settings.</td></tr>
+<tr><td>An <code>Index</code> from another partition was accepted, and read out of bounds. (API, AD)</td><td class="ok">Fixed: an index carries its partition, and a spline on another refuses it; a derivative shares its spline's.</td></tr>
+<tr><td>A periodic cubic or spline over <code>Expr</code> data failed, since the identity's columns do not close up. (API)</td><td class="ok">Fixed: the identity reads the last value as the first.</td></tr>
+<tr><td><code>smoothing</code> dropped <code>dtype</code>. (API, numerics, AD)</td><td class="ok">Fixed.</td></tr>
+<tr><td><code>constrained</code> was not scale-invariant: at data scales of 1e-10 its "monotone" fit had negative slopes. (numerics)</td><td class="ok">Fixed: solved with the data and every constraint row scaled to one. The fix exposed a second problem: on a degenerate active set the polish's least-norm multipliers could take a wrong sign, so they now come from bounded least squares. The fit of s·y is now s times the fit of y to 1e-14.</td></tr>
+<tr><td>A numeric integral wholly past one end was wrong. An <code>Expr</code> bound integrated the cubic continuation, not the tangent. (numerics, API)</td><td class="ok">Fixed. Tails are exact for any interval, and in 1-D an <code>Expr</code> bound is exact in every mode, <code>fill</code> and <code>periodic</code> included. Its derivative in the bound is the spline there.</td></tr>
+<tr><td><code>basis</code> gave NaN at ±inf. Reverse mode gave NaN past about 1e150, from 0·∞. (numerics, AD, API)</td><td class="ok">Fixed at no run-time cost, by holding the continuation at 10^(300/k) (10^(30/k) in float32), where the clamp for infinite points already was. That applies to linear continuations from degree 2 in both strategies, and to extend continuations under <code>basis</code>. Beyond the hold the value is frozen and the derivative zero; <code>pp</code> extend keeps its clean infinities. Documented. The two alternatives were measured first and rejected: contracting coefficients before the bases cost 1.7× in 2-D, and zeroing the outer cells' higher powers 8 to 12 % on every default evaluation.</td></tr>
+<tr><td>float32 lost accuracy with the offset (1e-3 at 1e5), since tables were expanded about float64 centres. A float64 far-offset linear table erred 6e-7, from an 8-ulp tolerance on arithmetic centres. (numerics)</td><td class="ok">Fixed: tables are expanded about exactly the centres the code holds. The float32 error at a 1e5 offset is now 6e-8; float64 arithmetic centres match to an ulp, and the table at 1e9 is exact.</td></tr>
+<tr><td><code>inverse()</code> stopped on absolute residuals, and its monotonicity check had an absolute floor. (numerics)</td><td class="ok">Fixed: Newton stops on a step relative to the larger of |x| and the cell width, and the check is relative. Round trips reach rounding at y scales from 1e-10 to 1e6 and x scales down to 1e-16.</td></tr>
+<tr><td>The periodic wrap was unbounded (5·10⁹ at x = 1e20). (numerics)</td><td class="ok">Fixed: a point that has lost its phase is clamped into the interval.</td></tr>
+<tr><td><code>constrained</code> bounds hold only on the data's range, and <code>periodic=True</code> kept <code>linear</code> extrapolation. (API)</td><td class="ok">Documented; <code>periodic</code> now defaults to periodic extrapolation.</td></tr>
+<tr><td>Smaller fixes (API, numerics, perf)</td><td class="ok">
+<ul>
+<li>GCV at any scale of the data.</li>
+<li>A warning for a dense in-graph fit past 2²⁰ entries.</li>
+<li>Per-axis options and n-D grids as lists.</li>
+<li>Error messages that name the problem: a derivative axis out of range, pins outside the data, <code>y</code> not a vector.</li>
+<li>The large-table warning points at user code.</li>
+<li>No internal paths or measurements in published docstrings.</li>
+<li><code>Axis</code>'s internals are off the API page.</li>
+<li>Corrected docstrings for <code>basis()</code>, <code>function()</code> and the Hermite slopes' derivatives.</li>
+<li>The inverse's derivative at NaN is NaN.</li>
+<li>The guide was rewritten to the documentation conventions, with corrections to the table-as-input text, the integrals, the constrained bounds and far points.</li>
+<li>Notebook and README prose were corrected where it did not match the outputs.</li>
+</ul></td></tr>
+<tr><td>The <code>auto</code> search on small axes in batches: <code>count</code> wins at 4 to 6 and 9 to 10 cells. (perf)</td><td>Kept as is, as the reviewer recommended: at most 0.5 ns, and specific to the compiler. <code>count</code>'s cliff at 32 cells needs an integer <code>SUM</code> in lowering (C-190).</td></tr>
+<tr><td><code>constrained</code>'s dense QP: extraction by AD through identity products, and dense colouring. A sparse formulation is 13× faster per solve. (perf)</td><td>Deferred: API-188 and C-189.</td></tr>
+<tr><td>C-187: a table is emitted once per function that reads it. Measured at 941 → 283 kB and GCC compile 4.0 → 1.0 s, with no run-time change. (perf)</td><td>Deferred: C-187, with the measurements and a sketch of the pass.</td></tr>
+<tr><td>Clustered-site cubic fits lose digits (4.7e-12 at 1e-6 spacing ratios). (numerics)</td><td>Deferred: API-191. SciPy's <code>from_power_basis</code> was measured and is worse.</td></tr>
+<tr><td>float32 through the core AD; derivative caches that ignore <code>nonsmooth</code>; the inverse loop's cost. (AD, perf)</td><td>Deferred: C-192, C-193 (also a task) and API-194.</td></tr>
+<tr><td>The JIT cache key omits the compiler's identity; the codebase map lacks <code>integrators</code> and <code>mpc</code>. (perf; noticed while documenting)</td><td>Outside interp: separate tasks.</td></tr>
+</table></div>
+
+<h2>2. Tests</h2>
+<ul>
+<li>The tests reviewer's 33 sketches are in the suite, adapted where the fixes changed the behaviour they pinned. Among them:
+<ul>
+<li><code>at()</code> against evaluation at every edge, each side of it, and the midpoints;</li>
+<li>2-D <code>Expr</code> coefficients with a shared index;</li>
+<li>NaN in any coordinate of a mixed-degree table;</li>
+<li>the constrained fit's optimality (2-D least squares, 2-D pins, convex against <code>trust-constr</code>, the penalty order, <code>extrap</code> forwarded);</li>
+<li>the polish's primal check;</li>
+<li>the inverse's refusal of a cubic that turns inside a cell;</li>
+<li>digests that tell apart splines differing only in <code>fill</code> or <code>extrap</code>.</li>
+</ul></li>
+<li>A regression test for every fix above.</li>
+<li><code>test_constrained.py</code>'s OCV "truth" fell near full charge. It now rises everywhere, an LFP-like curve, and the test first checks that plain least squares is not monotone.</li>
+<li>The non-finite test runs under both strategies.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>Mutant undoing a fix</th><th>Result</th><th>Mutant undoing a fix</th><th>Result</th></tr>
+<tr><td>folding <code>minimum</code> with NumPy's NaN-propagating minimum</td><td class="warn">killed after a test change</td><td>interning by name alone</td><td class="ok">killed</td></tr>
+<tr><td>an inverse's name without its settings</td><td class="ok">killed</td><td>an index's partition unchecked</td><td class="ok">killed</td></tr>
+<tr><td>the lost-phase clamp of the wrap removed</td><td class="ok">killed</td><td>tail integrals measured from the interval, not the end</td><td class="ok">killed</td></tr>
+<tr><td>the <code>Expr</code> tail without the slope</td><td class="ok">killed</td><td>the periodic primitive without its whole periods</td><td class="ok">killed</td></tr>
+<tr><td>the monotonicity check's absolute floor restored</td><td class="warn">killed after a test change</td><td>the inverse stopping on absolute residuals</td><td class="ok">killed</td></tr>
+<tr><td>the inverse's slope finite at NaN</td><td class="ok">killed</td><td>float32 centers not rounded</td><td class="ok">killed</td></tr>
+<tr><td>arithmetic centers at 8 ulps, tables at the midpoints</td><td class="ok">killed</td><td><code>constrained</code> unscaled</td><td class="ok">killed</td></tr>
+<tr><td>the polish's multipliers unbounded</td><td class="ok">killed</td><td>the periodic identity not closed</td><td class="ok">killed</td></tr>
+<tr><td><code>smoothing</code> dropping <code>dtype</code></td><td class="ok">killed</td><td>GCV unscaled</td><td class="ok">killed</td></tr>
+<tr><td>no dense-map warning</td><td class="ok">killed</td><td><code>periodic=True</code> keeping linear extrapolation</td><td class="ok">killed</td></tr>
+<tr><td>pins outside the data accepted</td><td class="ok">killed</td><td>lists not taken per axis</td><td class="ok">killed</td></tr>
+<tr><td>the far hold removed</td><td class="ok">killed</td><td></td><td></td></tr>
+</table></div>
+<div class="scroll"><table>
+<tr><th>Tests reviewer's mutant</th><th>Result</th><th>Tests reviewer's mutant</th><th>Result</th></tr>
+<tr><td>G1 de Boor zero-span guard</td><td class="ok">killed</td><td>G2 <code>basis()</code> fill boundary closed</td><td class="ok">killed</td></tr>
+<tr><td>G3 <code>basis()</code> ignores the side</td><td class="ok">killed</td><td>G4 offsets clamp dropped</td><td class="warn">equivalent</td></tr>
+<tr><td>G5 bucket table ignores the side</td><td class="warn">equivalent</td><td>S1 <code>Expr</code> index reads axis 0</td><td class="ok">killed</td></tr>
+<tr><td>S2 point not cast to the spline's dtype</td><td class="ok">killed</td><td>S3 NaN guard on the first axis only</td><td class="ok">killed</td></tr>
+<tr><td>S4 float32 clamp at the float64 maximum</td><td class="ok">killed (as the far hold)</td><td>S5 <code>Expr</code> antiderivative offset dropped</td><td class="ok">killed</td></tr>
+<tr><td>S6 no interior roots in the monotone check</td><td class="ok">killed</td><td>S7 digest without <code>fill</code></td><td class="ok">killed</td></tr>
+<tr><td>S8 digest without <code>extrap</code></td><td class="ok">killed</td><td>S9 a linear inverse's clamp as extend</td><td class="ok">killed</td></tr>
+<tr><td>F1 zoh holds two spacings</td><td class="ok">killed</td><td>F2 the large-cubic scan ignores the axis</td><td class="ok">killed</td></tr>
+<tr><td>C1 2-D design matrix transposed</td><td class="ok">killed</td><td>C2 pinned rows' Kronecker order</td><td class="ok">killed</td></tr>
+<tr><td>C3 convex also forces monotone</td><td class="ok">killed</td><td>C4 polish rank without a threshold</td><td class="warn">survives: defensive</td></tr>
+<tr><td>C5 active set by multiplier only</td><td class="warn">survives: defensive</td><td>C6 polish skips the upper-bound check</td><td class="ok">killed</td></tr>
+<tr><td>C7 penalty order fixed at 2</td><td class="ok">killed</td><td>C8 <code>extrap</code> not passed on</td><td class="ok">killed</td></tr>
+<tr><td>K1 star lookup unclamped</td><td class="ok">killed</td><td>K2 star lookup trusts a missing key</td><td class="warn">equivalent</td></tr>
+</table></div>
+<p>Two review-fix mutants survived their first run, until a test was tightened: the fold, where an outer <code>fmax</code> hid the inner <code>minimum</code>, and the monotonicity floor, which only matters below a 1e-14 scale. A third, the second pass of the periodic wrap, turned out to be equivalent. With fused multiply-add, one pass is exact where a point keeps its phase, and a point that has lost it is clamped either way. The second pass was removed. Of the tests reviewer's survivors, G4, G5 and K2 are equivalent, as the reviewer judged. C4 and C5 guard the polish against rounding-size singular values and weakly active constraints, which no test reaches: on dependent active rows the SVD gives exact zeros, and a weakly active constraint gives the same polished point either way.</p>
+
+<h2>3. The interp work as a whole</h2>
+<div class="scroll"><table>
+<tr><th>Phase</th><th>What landed</th><th>Report</th></tr>
+<tr><td>SP0 · C-170</td><td><code>floor</code>/<code>ceil</code> derivatives; clamped float-to-index casts; the spike that retired the dedicated-op idea</td><td><code>interp_sp0_report.html</code></td></tr>
+<tr><td>SP1 · API-171</td><td><code>BSpline</code>, <code>interpolant</code> (nearest, zoh, linear, cubic, spline), the searches, the extrapolation modes, batches</td><td><code>interp_sp1_report.html</code></td></tr>
+<tr><td>SP2 · API-172</td><td>PCHIP, Akima, makima, Steffen, smooth_linear; P-splines with GCV; derivative, antiderivative, integrate, inverse</td><td><code>interp_sp2_report.html</code></td></tr>
+<tr><td>SP3 · API-173</td><td><code>Expr</code> data and coefficients; in-graph fits by scans; <code>basis</code> and <code>at</code></td><td><code>interp_sp3_report.html</code></td></tr>
+<tr><td>SP4 · API-174</td><td>The bucket search; measured thresholds; float32; tables as inputs; CasADi timings</td><td><code>interp_sp4_report.html</code></td></tr>
+<tr><td>SP5 · API-175</td><td><code>constrained</code> by PIQP with the polish; faster matmul sparsity and star recovery in core</td><td><code>interp_sp5_report.html</code></td></tr>
+<tr><td>SP6 · API-176</td><td>Six notebooks, five CasADi pairs, <code>compare.py --dir</code></td><td><code>interp_sp6_report.html</code></td></tr>
+<tr><td>SP7 · D-177</td><td>Guide, API page, nav, codebase map, the docstring check</td><td><code>interp_sp7_report.html</code></td></tr>
+<tr><td>SPR · API-178</td><td>This review and its fixes</td><td>this page</td></tr>
+</table></div>
+</main></body></html>

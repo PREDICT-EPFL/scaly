@@ -26,8 +26,8 @@ def cell(s):
 
 `interp.interpolant(grid, values, kind=...)` builds a curve through data on a grid: a vector of
 sites in 1-D, a tuple of vectors in n-D, with `values` shaped `(n_1, ..., n_D, *out_shape)`.
-Trailing axes of `values` make the interpolant vector- or matrix-valued. `kind` is one per axis or
-one for all.
+Trailing axes of `values` make the interpolant vector- or matrix-valued. `kind`, `bc`, `extrap` and
+`search` take one value for all axes, or a tuple or list with one per axis.
 
 | `kind` | Continuity | Passes through the data | Same as |
 | --- | --- | --- | --- |
@@ -50,14 +50,22 @@ measures every kind's overshoot, monotonicity and continuity on the same data.
 
 Outside the grid, `extrap=` decides, per axis:
 
-- `"linear"`: the default from degree 1 up. The curve continues along its end tangent, so the
-  value and the slope are continuous at the end and the slope outside is bounded;
-- `"clamp"`: the default for `nearest` and `zoh`. The end value holds;
-- `"extend"`: the end polynomial continues, as SciPy's `extrapolate=True`;
-- `"periodic"`: the point is wrapped into the base interval;
-- `"fill"`: a constant, `fill=`, NaN by default.
+- `"linear"` continues along the end tangent, so the value and the slope are continuous at the end
+  and the slope outside is bounded. It is the default from degree 1 up.
+- `"clamp"` holds the end value. It is the default for `nearest` and `zoh`.
+- `"extend"` continues the end polynomial, as SciPy's `extrapolate=True`.
+- `"periodic"` wraps the point into the base interval.
+- `"fill"` returns a constant, `fill=`, NaN by default.
 
-A NaN point gives NaN in every mode.
+A NaN point gives NaN in every mode. An infinite point gives the end value for `clamp`, the fill
+for `fill`, and NaN for `periodic`. A `linear` continuation (from degree 2), and an `extend` one
+under the `basis` strategy, is followed out to where the k-th power of the distance still fits a
+float, 10^(300/k) (10^(30/k) in float32), and held beyond: an infinite point gives the
+continuation's value there, a large finite number with its sign, and a zero derivative. An
+`extend` continuation under `pp` gives the polynomial's own infinity. Far out, a `linear` continuation's value is its slope times the
+distance, so a slope that is zero only up to rounding still shows. A periodic point far enough out
+that its count of periods is no longer exact has lost its phase to rounding, and is clamped into
+the base interval.
 
 ## Evaluating
 
@@ -67,89 +75,94 @@ mapped call of the point's graph, so the generated C is a loop whose size does n
 
 Evaluation finds each coordinate's cell, then evaluates that cell's polynomial.
 
-- `search=` picks how the cell is found, per axis: `"uniform"` (a floor and one correction, for
-  uniform grids), `"bucket"` (a uniform bucket index and a few compares), `"binary"` (branch-free
-  halvings) or `"count"`. `"auto"` takes binary up to 32 cells, then the first of bucket, uniform
-  and binary the grid allows.
+- `search=` picks how the cell is found, per axis. `"uniform"` takes a floor and one correction,
+  for uniform grids. `"bucket"` takes a uniform bucket index and a few compares. `"binary"` makes
+  branch-free halvings, and `"count"` counts the edges passed. `"auto"` takes binary up to 32
+  cells, then the first of bucket, uniform and binary the grid allows.
 - `strategy=` picks how the polynomial is stored. `"pp"` keeps each cell's Taylor coefficients and
-  evaluates them by nested Horner, the fastest. `"basis"` keeps the B-spline coefficients and
-  combines each axis's local basis functions, which is smaller. `"auto"` takes `"pp"` while its
-  table fits `interp.PP_BUDGET` (4 MB) or is the smaller of the two.
-- `f.index(x)` finds the cells once, and `f(x, index=...)` reuses them for several splines on the
-  same partition: a table and its derivative, say.
+  evaluates them by nested Horner, the faster. `"basis"` keeps the B-spline coefficients and
+  combines each axis's local basis functions, the smaller. `"auto"` takes `"pp"` while its table
+  fits `interp.PP_BUDGET` (4 MB) or is the smaller of the two.
+- `f.index(x)` finds the cells once, and `f(x, index=...)` reuses them for other splines on the
+  same partition, such as a table and its derivative. A spline on another partition refuses the
+  index.
+- `dtype="float32"` stores the tables and evaluates in single precision, for embedded targets. The
+  tables are expanded about the cell centers exactly as float32 holds them, so values agree with
+  double precision to about 1e-6, far from the origin too.
 
 ## Derivatives and sparsity
 
 A spline's derivatives with respect to the point come from differentiating its graph, forward or
 reverse, to any order. At a knot, a derivative that jumps is the one-sided derivative of the cell
 to the right. `f.derivative(nu, axis)` is the derivative as a spline of its own, of degree
-`k − nu`. It is for when the derivative must be a table: a curvature table, or a bound on `f'`
-through its coefficients.
+`k − nu`. It is for when the derivative must be a table, a curvature table say, or a bound on `f'`
+through its coefficients. Derivatives in single precision wait on the core AD.
 
 With data or coefficients that are `Expr`s, the spline also differentiates with respect to them,
-and where the points are read decides the Jacobian's pattern:
+and where the points are read decides the Jacobian's pattern.
 
 - `f.at(points)`, with points known when the graph is built, is `f.basis(points)` (the sparse
-  design matrix) times the coefficients: one sparse product whose Jacobian has exactly the
-  basis's pattern, 4 entries a row for a bilinear table, 16 for a bicubic;
+  design matrix) times the coefficients, one sparse product. Its Jacobian has exactly the basis's
+  pattern, 4 entries a row for a bilinear table and 16 for a bicubic.
 - `f(x)` at symbolic points finds the cells at run time, so every value may depend on every
-  coefficient, and the pattern is dense;
-- an interpolating cubic's values depend on all of its data, so its pattern is dense even at known
+  coefficient, and the pattern is dense.
+- An interpolating cubic's values depend on all of its data, so its pattern is dense even at known
   points. To fit a smooth table, make the B-spline's coefficients the variables.
 
-`examples/interp/learning_tables.ipynb` shows the difference: the same calibration takes about
-20 times longer per solve with the points symbolic.
+`examples/interp/learning_tables.ipynb` shows what the dense pattern costs a solver.
 
 ## Where the coefficients come from
 
-- **Interpolation.** `interp.interpolant` fits per axis, as SciPy's `NdBSpline` of per-axis
-  `make_interp_spline` fits does.
-- **Smoothing.** `interp.smoothing(x, y, ...)` fits noisy data. `method="pspline"` (Eilers and
-  Marx) is a least-squares B-spline on `segments` equal intervals with a difference penalty, any
-  degree and dimension. `method="cubic"` is SciPy's `make_smoothing_spline`. `lam="gcv"` chooses
-  the weight by generalized cross-validation.
-- **Shape constraints.** `interp.constrained(x, y, ...)` is least squares under linear conditions
-  on the coefficients that make a shape hold everywhere, not only at the data: `monotone`,
-  `convex` (per axis), `bounds`, pinned values and derivatives (`equal`), and `periodic` ends. It
-  is a quadratic program, solved by PIQP when the graph is built. An active-set step after the
-  interior point makes the fit exact to rounding.
-- **Your own.** `interp.BSpline(knots, coeffs, degree)` takes coefficients directly, numbers or an
-  `Expr`: a spline-parametrized input or trajectory, or a nonlinearity to identify.
-- **Data at run time.** `interp.interpolant` with an `Expr` for `values` puts the fit in the graph.
-  For the kinds linear in the data it is a constant linear map. Above 40 sites a C² cubic solves
-  its tridiagonal system in scans. The shape-preserving slopes are expressions.
+- `interp.interpolant` fits per axis, as SciPy's `NdBSpline` of per-axis `make_interp_spline` fits
+  does.
+- `interp.smoothing(x, y, ...)` fits noisy data. `method="pspline"` (Eilers and Marx) is a
+  least-squares B-spline on `segments` equal intervals with a difference penalty, in any degree
+  and dimension. `method="cubic"` is SciPy's `make_smoothing_spline`. `lam="gcv"` chooses the
+  weight by generalized cross-validation.
+- `interp.constrained(x, y, ...)` is least squares under linear conditions on the coefficients
+  that make a shape hold on the data's range: `monotone` and `convex` per axis, `bounds`, pinned
+  values and derivatives (`equal`), and `periodic` ends. It is a quadratic program, solved by PIQP
+  when the graph is built, then refined by one active-set step, so the fit is exact to rounding
+  and the same at any scale of the data. Outside the data's range the default `linear`
+  continuation keeps a monotone or convex shape but not the bounds, which `extrap="clamp"` keeps.
+- `interp.BSpline(knots, coeffs, degree)` takes coefficients directly, numbers or an `Expr`: a
+  spline-parametrized input or trajectory, or a nonlinearity to identify.
+- `interp.interpolant` with an `Expr` for `values` puts the fit in the graph. For the kinds linear
+  in the data it is a constant linear map, which warns when it is dense and large. Above 40 sites
+  a C² cubic solves its tridiagonal system in scans instead. The shape-preserving slopes are
+  expressions.
 
-`f.integrate(a, b)` integrates exactly, and an `Expr` bound gives an expression.
-`f.antiderivative()` is the integral as a spline. `f.inverse()` reads a strictly monotone 1-D spline
-backwards, by safeguarded Newton in a loop, with the derivative `1/f'` supplied directly.
+`f.integrate(a, b)` integrates exactly, and an `Expr` bound gives an expression, exact in 1-D in
+every extrapolation mode, whose derivative in the bound is the spline there. `f.antiderivative()`
+is the integral as a spline. `f.inverse()` reads a strictly monotone 1-D spline backwards, by
+safeguarded Newton in a loop that stops relative to the cell's width, with the derivative `1/f'`
+supplied directly.
 
 ## Generated code
 
-- **Tables become constants** in the C source. A spline tabulating more than 2²⁰ values warns: that
-  is about 20 MB of source and seconds of compilation. Pass such a table as an input instead.
-- **A table as an input** is an `Expr` table, a parameter of the Function. The generated header
-  states the buffer's shape and order (`// 9 x 8, row-major (C order)`), and `f.pack(values)`
-  gives the flat buffer `f.function()` expects.
-- **`dtype="float32"`** stores the tables and evaluates in single precision for embedded targets.
-  Values agree with double precision to about 1e-6. Derivatives in single precision wait on the
-  core AD.
-- **`f.function()`** makes the spline a Function of one point, so that several callers share one
-  procedure and one copy of its table. A table read by several generated functions, a stage cost
-  and its derivatives say, is currently emitted once per function.
+- Tables become constants in the C source. A spline tabulating more than 2²⁰ values warns, since
+  that is tens of megabytes of source; pass such a table as an input instead.
+- A table becomes an input when it is an `Expr` parameter of your Function:
+  `interp.interpolant(grid, table)` inside the Function keeps the fit in the graph, and the
+  generated header states the buffer's shape and order (`// 9 x 8, row-major (C order)`). For a
+  `BSpline` whose coefficients are the input, `f.function()` takes them flat as `c`, and
+  `f.pack(coeffs)` builds that buffer.
+- `f.function()` makes the spline a Function of one point, so that several callers share one
+  procedure. Each derivative of it is a procedure of its own with its own copy of the table, and
+  a table read by several generated functions, a stage cost and its derivatives say, is emitted
+  once per function.
 
 ## For CasADi users
 
-- **Data order.** CasADi's `interpolant` takes the values flattened with the first grid axis
-  fastest, `np.ravel(values, order="F")`. `interp.interpolant` takes them shaped like the grid.
-- **Derivatives in the data.** A parametric CasADi interpolant, and a `bspline` node with symbolic
-  coefficients, differentiate to zero with respect to that data unless built with `inline=True`,
-  and a solver then stops at its starting point. Here the derivative with respect to data or
-  coefficients is always there.
-- **Outside the grid.** CasADi's `bspline` is zero outside its grid, a cliff that a relaxed bound
-  can reach. Here the default continues linearly.
-- **Degrees and lookup.** CasADi's `bspline` refuses degrees 2 and 4, and refuses
-  `lookup_mode="exact"`, since its not-a-knot knots are not the grid. Every degree works here, and
-  the search is chosen per axis.
+- CasADi's `interpolant` takes the values flattened with the first grid axis fastest,
+  `np.ravel(values, order="F")`. `interp.interpolant` takes them shaped like the grid.
+- A parametric CasADi interpolant, and a `bspline` node with symbolic coefficients, differentiate
+  to zero with respect to that data unless built with `inline=True`, and a solver then stops at its
+  starting point. Here the derivative with respect to data or coefficients is always there.
+- CasADi's `bspline` is zero outside its grid, a cliff that a relaxed bound can reach. Here the
+  default continues linearly.
+- CasADi's `bspline` refuses degrees 2 and 4, and refuses `lookup_mode="exact"`, since its
+  not-a-knot knots are not the grid. Every degree works here, and the search is chosen per axis.
 
 `examples/interp/pairs/` solves five problems in both libraries, and `examples/interp/README.md`
 compares them.

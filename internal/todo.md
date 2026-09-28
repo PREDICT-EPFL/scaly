@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 188**
+**Next id: 195**
 
 | Prefix | Section |
 |---|---|
@@ -232,8 +232,60 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       embeds its own copy of every constant it reads, so a spline table read by a stage cost, a path
       constraint and their derivatives is emitted six times (`contouring_control.ipynb`: 941 kB of
       C, most of it the track's 5 440-value table). Emit each distinct constant once at file scope
-      and reference it from every function.
-- [ ] **API-178. Interpolation review round** (interp plan SPR).
+      and reference it from every function. Measured in the interp review: source 941 to 283 kB,
+      and for a 128 x 128 bicubic in an OCP stage cost 34.9 to 5.9 MB and GCC's compile 4.0 to
+      1.0 s; clang already merges identical tables in the object, and run time does not change. A
+      Program-IR pass collecting `constant` buffers across a PROGRAM's procedures (keyed by dtype,
+      size and a digest computed in `_lower_const`), emitted once after `extern "C" {`, is the
+      likely shape. `LARGE_TABLE` counts one copy.
+- [ ] **API-188. `interp.constrained` as a sparse QP with box bounds.** The fit passes its bounds
+      as identity rows of G and every matrix dense, so a 2-D fit of 361 coefficients spends most of
+      a solve extracting dense data and colouring dense patterns. With the bounds as PIQP's box
+      and P and G on their structural patterns (per-axis bands and the differencing rows), the
+      review measured a solve at 9.6 ms instead of 131 ms and a first call without the dense
+      colouring. Needs sparse matrix parameters of a fixed pattern in `qp_problem` or a problem of
+      its own.
+- [ ] **C-189. Dense QP data without AD, and dense colouring without search.** `_qp_data`
+      (`solvers/qp.py`) extracts P and G through the coloured Hessian and Jacobian, which with
+      dense seeds lowers to products with constant identity matrices, O(n^3) a call for a copy;
+      fold `I @ X` in simplification or pass the matrices through. `column_coloring` and
+      `star_coloring` search even a full pattern, where n colours are the answer.
+- [ ] **C-190. An integer `SUM` in lowering.** The lowering emits a float accumulator for a sum of
+      `int64` (a `CONST_FLOAT` of int64 dtype fails verification), so the `count` search sums its
+      compares as doubles, which clang stops vectorizing at about 32 cells (8.1 ns against 2.95
+      with an integer sum, measured in the interp review).
+- [ ] **API-191. Numeric cubic fits in Hermite form.** `interpolant(kind="cubic")` on NumPy data
+      fits by `make_interp_spline` collocation, whose B-spline basis is ill-conditioned on clustered
+      sites: 4.7e-12 against `CubicSpline`'s 6.7e-16 for sites 1e-6 apart, 2.1e-10 at 1e-9. The
+      slopes from `CubicSpline` on the doubled-knot Hermite form (as the `Expr` path already
+      stores) keep its accuracy.
+- [ ] **C-192. float32 through the core AD.** `zeros_like` and `_ones_like` build float64, Python
+      float literals in the AD rules become float64 constants (`Expr._operand` weak-types only
+      ints), and the seeds of `jacobian` and `_jvp_many_structural` are float64, so forward and
+      reverse mode both fail on float32 graphs. float32 splines evaluate but do not differentiate
+      until this lands.
+- [ ] **C-193. Derivative caches keyed on `nonsmooth`.** The call, map, scan and while caches in
+      `ad/forward.py` and `ad/reverse.py` ignore `sc.options(nonsmooth=...)`, so a derivative
+      built under one setting is reused under another (a gradient at a `maximum` tie, a refusal
+      under `"error"`). Key them on the setting, and name non-default derivatives apart.
+- [ ] **API-194. A leaner `inverse()` loop.** It costs about 20 forward evaluations per point in a
+      batch: the condition recomputes the residual the step just evaluated, and every evaluation
+      repeats the clamp and outer-cell shift of a cell already fixed. Carry the residual, evaluate
+      the fixed cell's polynomial directly, and consider a fixed-count Newton for batches.
+- [x] **API-178. Interpolation review round** (interp plan SPR). Five reviewers: IR and AD,
+      numerics, performance, API and docs, tests. About fifteen bugs fixed, each with a test:
+      - constant folding of `min`/`max` against C's `fmin`/`fmax`, which left a cast of NaN in C;
+      - interning by name alone, and inverse settings missing from the name;
+      - an `Index` without its partition;
+      - periodic `Expr` fits, and `smoothing`'s dtype;
+      - `constrained` at small scales, and its degenerate multipliers;
+      - integrals past an end;
+      - NaN from `basis` and reverse mode far out;
+      - float32 tables far from the origin;
+      - the inverse's absolute stop and monotonicity floor;
+      - the unbounded periodic wrap.
+      Deferred: C-187 and API-188 to API-194. 23/23 mutants undoing the fixes killed; the tests
+      reviewer's 26: 21 killed, 3 equivalent, 2 defensive. Report: `notes/interp_spr_report.html`.
 
 ### Deferred
 

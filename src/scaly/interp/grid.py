@@ -9,7 +9,7 @@ import numpy as np
 from scipy import sparse
 
 from ..ir.expr import Expr, cast, logical_not, maximum, minimum, stack, take, where
-from ..ir.types import DType, dtypes
+from ..ir.types import DType, as_dtype, dtypes
 
 type Search = Literal["uniform", "bucket", "count", "binary"]
 type Extrap = Literal["extend", "linear", "clamp", "periodic", "fill"]
@@ -76,9 +76,19 @@ class Axis:
   keeps a uniform data grid uniform when the knots are not (not-a-knot drops two). Cells are
   ``[e_j, e_{j+1})`` with the last one closed (``side="right"``, as ``searchsorted(side="right") - 1``),
   or ``(e_j, e_{j+1}]`` with the first closed (``side="left"``, for ``nearest``'s midpoints).
+
+  Args:
+    knots: the knot vector ``t``, non-decreasing.
+    degree: ``k``.
+    edges: the partition, by default the distinct knots of the base interval.
+    side: which end of each cell is closed, ``"right"`` or ``"left"``.
+    extrap: as for ``BSpline``; by default ``"clamp"`` at degree 0 and ``"linear"`` above.
+    fill: the value outside for ``extrap="fill"``.
+    search: as for ``BSpline``.
+    dtype: the float type evaluation holds the cell centers in; ``BSpline`` sets it to its own.
   """
 
-  __slots__ = ("knots", "degree", "edges", "side", "extrap", "fill", "search", "_uniform", "_bucket", "_local", "_offsets")
+  __slots__ = ("knots", "degree", "edges", "side", "extrap", "fill", "search", "dtype", "_uniform", "_bucket", "_local", "_offsets")
 
   def __init__(
     self,
@@ -90,6 +100,7 @@ class Axis:
     extrap: Extrap | None = None,
     fill: float = math.nan,
     search: Search | Literal["auto"] = "auto",
+    dtype: DType | str = "float64",
   ) -> None:
     knots = np.asarray(knots, dtype=np.float64)
     if not isinstance(degree, (int, np.integer)) or degree < 0:
@@ -114,6 +125,7 @@ class Axis:
     if side not in ("right", "left"):
       raise ValueError(f"side must be 'right' or 'left', got {side!r}")
     self.knots, self.degree, self.edges, self.side, self.extrap, self.fill = knots, degree, edges, side, extrap, float(fill)
+    self.dtype = as_dtype(dtype)
     self._uniform = uniform_step(edges)
     self._bucket = bucket_table(edges, side)
     self._local: np.ndarray | None = None
@@ -153,11 +165,25 @@ class Axis:
     """The end of the base interval, ``t[n]``."""
     return float(self.edges[-1])
 
+  def retyped(self, dtype: DType | str) -> Axis:
+    """This axis for evaluation in ``dtype``: the same partition, its tables expanded about the
+    centers as that type holds them."""
+    return Axis(self.knots, self.degree, edges=self.edges, side=self.side, extrap=self.extrap, fill=self.fill, search=self.search, dtype=dtype)
+
+  def _held(self, values: np.ndarray | float | list[float]) -> np.ndarray:
+    """``values`` as the evaluation's float type holds them (float32 rounds), back in float64."""
+    return np.asarray(values, dtype=np.float32).astype(np.float64) if self.dtype == dtypes.float32 else np.asarray(values, dtype=np.float64)
+
   @property
   def centers(self) -> np.ndarray:
-    """The midpoint of each cell: the local polynomials are expanded there, where the powers of
-    ``s`` stay below half the cell width, which halves the cancellation a left-edge expansion has."""
-    return 0.5 * (self.edges[:-1] + self.edges[1:])
+    """The expansion point of each cell, exactly as the generated code holds it: the midpoint (in
+    the evaluation's float type), or ``c_0 + j h`` where ``spacing`` computes it. The powers of
+    ``s`` stay below half the cell width, which halves the cancellation a left-edge expansion
+    has, and ``s = x - c`` has no error from a center the code rounds differently."""
+    spacing = self.spacing
+    if spacing is not None:
+      return spacing[0] + spacing[1] * np.arange(self.cells)
+    return self._held(0.5 * (self.edges[:-1] + self.edges[1:]))
 
   @property
   def offsets(self) -> np.ndarray:
@@ -195,15 +221,17 @@ class Axis:
 
   @property
   def spacing(self) -> tuple[float, float] | None:
-    """``(c_0, h)`` when the cell centers are ``c_0 + j h`` to a few ulps (a uniform partition, not
-    only one close enough for the uniform search), so evaluation computes them instead of reading
-    a table; else ``None``."""
-    if self._uniform is None or self.cells < 2:
+    """``(c_0, h)`` when the cell midpoints are ``c_0 + j h`` to an ulp (a uniform partition, not
+    only one close enough for the uniform search), so float64 evaluation computes the centers
+    instead of reading a table; else ``None``. The tables are expanded about ``c_0 + j h``, what the
+    code computes (an ulp apart if the compiler fuses the multiply-add). float32 reads a table."""
+    if self._uniform is None or self.cells < 2 or self.dtype != dtypes.float64:
       return None
     h = (self.edges[-1] - self.edges[0]) / self.cells
     c0 = float(self.edges[0] + 0.5 * h)
     arithmetic = c0 + h * np.arange(self.cells)
-    return (c0, float(h)) if np.max(np.abs(arithmetic - self.centers)) <= 8 * np.spacing(np.max(np.abs(self.edges))) else None
+    midpoints = 0.5 * (self.edges[:-1] + self.edges[1:])
+    return (c0, float(h)) if np.max(np.abs(arithmetic - midpoints)) <= np.spacing(np.max(np.abs(self.edges))) else None
 
   @property
   def outer(self) -> bool:
@@ -219,8 +247,9 @@ class Axis:
 
   @property
   def table_centers(self) -> np.ndarray:
-    """The expansion point of every tabulated cell: the centers, and the ends for the outer cells."""
-    return np.concatenate([[self.lo], self.centers, [self.hi]]) if self.outer else self.centers
+    """The expansion point of every tabulated cell: the centers, and the ends (as the evaluation's
+    float type holds them) for the outer cells."""
+    return np.concatenate([self._held([self.lo]), self.centers, self._held([self.hi])]) if self.outer else self.centers
 
   @property
   def table_offsets(self) -> np.ndarray:
@@ -232,7 +261,8 @@ class Axis:
     polynomials at the ends, in the same layout."""
     powers = np.arange(self.degree + 1).reshape(-1, *(1,) * (table.ndim - 2))
     ends = []
-    for cell, s in ((table[0], self.lo - self.centers[0]), (table[-1], self.hi - self.centers[-1])):
+    lo, hi = self.table_centers[0], self.table_centers[-1]
+    for cell, s in ((table[0], lo - self.centers[0]), (table[-1], hi - self.centers[-1])):
       tangent = np.zeros_like(cell)
       tangent[0] = np.sum(cell * s**powers, axis=0)
       tangent[1] = np.sum(cell * powers * s ** np.maximum(powers - 1, 0), axis=0)
@@ -269,7 +299,8 @@ class Axis:
     p, delta, outside = x, None, np.zeros(x.shape, dtype=bool)
     if self.extrap == "periodic":
       period = self.hi - self.lo
-      p = p - period * np.floor((p - self.lo) * (1.0 / period))
+      p = p - period * np.floor((p - self.lo) * (1.0 / period))  # as wrap()
+      p = np.where((p < self.lo - period) | (p > self.hi + period), np.clip(p, self.lo, self.hi), p)
     if self.extrap in ("clamp", "fill", "linear"):
       clamped = np.clip(p, self.lo, self.hi)
       delta = p - clamped if self.extrap == "linear" else None
@@ -284,9 +315,16 @@ class Axis:
     return values, self.offsets[j][:, None] + powers[None, :], outside
 
   def wrap(self, x: Expr) -> Expr:
-    """``x`` moved by whole periods into ``[lo, hi]``, for ``extrap="periodic"``."""
+    """``x`` moved by whole periods into ``[lo, hi]``, for ``extrap="periodic"``. A point just
+    past an end by rounding reads the end cell's polynomial there. Far out, where the count of
+    periods is no longer exact (x past 1e16 or so for a period of order one), the wrapped point
+    can land periods away: it has lost its phase to rounding, and it is clamped into the interval
+    so that its value stays bounded. NaN passes through."""
     period = self.hi - self.lo
-    return x - num(period, x) * ((x - num(self.lo, x)) * num(1.0 / period, x)).floor()
+    lo, hi = num(self.lo, x), num(self.hi, x)
+    w = x - num(period, x) * ((x - lo) * num(1.0 / period, x)).floor()
+    lost = (w < num(self.lo - period, x)) | (w > num(self.hi + period, x))
+    return where(lost, where(w < lo, lo, hi), w)
 
   def cell(self, x: Expr) -> Expr:
     """The cell of ``x`` as a float index in ``[0, cells - 1]``, elementwise: a point left of the

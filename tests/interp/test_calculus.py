@@ -129,11 +129,32 @@ def reference_1d(f: interp.BSpline):
 def test_numeric_integrals_are_quads_in_every_mode(extrap: Extrap) -> None:
   f = spline_1d(3, extrap, fill=-0.75)
   ref = reference_1d(f)
-  for a, b in ((0.3, 1.7), (-1.2, 0.4), (1.1, 3.9), (-2.5, 4.5), (1.9, 0.2), (0.5, 0.5)):
+  for a, b in ((0.3, 1.7), (-1.2, 0.4), (1.1, 3.9), (-2.5, 4.5), (1.9, 0.2), (0.5, 0.5), (2.5, 4.0), (-3.0, -1.0), (-3.0, -0.5), (5.0, 3.0)):
     breaks = np.concatenate([f.axes[0].edges + 2.0 * j for j in range(-3, 4)])  # knots, wrapped copies for periodic
     points = [p for p in breaks if min(a, b) < p < max(a, b)]
     want = quad(ref, a, b, points=points or None, limit=200, epsabs=1e-12, epsrel=1e-12)[0]
     assert abs(f.integrate(a, b) - want) <= 1e-10 * max(1.0, abs(want)), (a, b)
+
+
+@pytest.mark.parametrize("extrap", EXTRAPS)
+def test_expression_bounds_integrate_as_numbers_do_in_every_mode(extrap: Extrap) -> None:
+  """In 1-D an ``Expr`` bound gives the numeric integral, beyond either end too (the tangent's
+  quadratic, a fill's line, whole periods), and its derivative in the upper bound is the spline
+  there, continuation included."""
+  f = spline_1d(3, extrap, fill=-0.75)
+  if extrap == "periodic":
+    rng = np.random.default_rng(3)
+    t = random_knots(rng, 3, 7, lo=0.0, hi=2.0, repeat=False)
+    c = rng.normal(size=t.size - 4)
+    c[-3:] = c[:3]  # C2 across the period: the same end coefficients on equally clamped ends
+    f = interp.BSpline(t, c, 3, extrap="periodic")
+  ref = reference_1d(f)
+  a, b = sc.sym("a"), sc.sym("b")
+  fn = sc.Function._from_exprs(f"integral_{extrap}", [a, b], [f.integrate(a, b), sc.gradient(f.integrate(a, b), b)], ["a", "b"], ["I", "dIdb"])
+  for lo, hi in ((0.3, 1.7), (-3.0, -1.0), (2.5, 4.0), (-2.5, 4.5), (1.9, 0.2)):
+    value, slope = fn((np.array(lo), np.array(hi)))
+    assert abs(value - f.integrate(lo, hi)) <= 1e-12 * max(1.0, abs(value)), (lo, hi)
+    assert abs(slope - ref(hi)) <= 1e-12 * max(1.0, abs(slope)), (lo, hi)
 
 
 def test_expression_bounds_integrate_through_the_antiderivative() -> None:
@@ -245,3 +266,74 @@ def test_inverse_refuses_what_is_not_monotone() -> None:
     interp.interpolant(x, np.column_stack([x, x])).inverse()
   with pytest.raises(ValueError, match="not invertible"):
     interp.interpolant(x, x, kind="zoh").inverse()
+
+
+def _fn(inputs: dict[str, sc.Expr], outputs: dict[str, sc.Expr], name: str) -> sc.Function:
+  return sc.Function._from_exprs(name, list(inputs.values()), list(outputs.values()), list(inputs), list(outputs))
+
+
+def test_expression_antiderivative_of_unclamped_knots_starts_at_zero() -> None:
+  xs = np.linspace(0.3, 1.9, 40)
+  ys = np.cos(2 * xs)
+  d = sc.sym("d", 40)
+  F = interp.smoothing(xs, d, segments=6, lam=1e-4).antiderivative()
+  ref = interp.smoothing(xs, ys, segments=6, lam=1e-4).to_scipy().antiderivative()
+  p = sc.sym("p", 3)
+  pts = np.array([0.3, 0.8, 1.9])
+  np.testing.assert_allclose(_fn({"p": p, "d": d}, {"y": F(p)}, "expr_antiderivative")((pts, ys)), ref(pts) - ref(0.3), rtol=0, atol=1e-12)
+
+
+def test_inverse_refuses_a_cubic_that_turns_inside_a_cell() -> None:
+  t = np.array([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
+  f = interp.BSpline(t, np.array([0.0, 1.0, -0.5, 0.6]), 3)  # f(0) = 0 < f(1) = 0.6, but f' < 0 around the middle
+  s = f.to_scipy()
+  assert s(1.0) > s(0.0) and s(np.linspace(0, 1, 101), 1).min() < 0 and s(np.array([0.0, 1.0]), 1).min() > 0
+  with pytest.raises(ValueError, match="changes sign"):
+    f.inverse()
+
+
+def test_inverse_refuses_a_non_monotone_curve_at_any_scale() -> None:
+  """The allowance for a negative slope is relative to the largest slope, with no floor: a curve
+  scaled by 1e-13 is refused as the curve itself is."""
+  x = np.linspace(0.0, 2.1, 8)
+  y = np.array([0.0, 0.1, 0.2, 3.0, 3.1, 3.2, 6.0, 6.1])
+  for size in (1.0, 1e-6, 1e-16):
+    with pytest.raises(ValueError, match="changes sign"):
+      interp.interpolant(x, size * y, kind="cubic").inverse()
+
+
+def test_a_clamped_linear_tables_inverse_clamps() -> None:
+  x = np.array([0.0, 1.0, 2.5, 4.0])
+  y = np.array([1.0, 3.0, 3.5, 7.0])
+  inv = interp.interpolant(x, y, extrap="clamp").inverse()
+  v = sc.sym("v", 3)
+  np.testing.assert_allclose(_fn({"v": v}, {"x": inv(v)}, "linear_inverse_clamp")(np.array([-5.0, 3.25, 20.0])), [0.0, 1.75, 4.0], rtol=1e-15)
+
+
+def test_two_inverses_of_one_spline_keep_their_own_tolerance() -> None:
+  xs = np.linspace(0.0, 2.0, 5)
+  f = interp.interpolant(xs, np.exp(2 * xs), kind="cubic")
+  loose, strict = f.inverse(tol=1e-1, max_iter=1), f.inverse()
+  y = sc.sym("y")
+  _, b = _fn({"y": y}, {"a": loose(y), "b": strict(y)}, "two_inverses")(np.array(10.3))
+  assert abs(float(f.to_scipy()(b)) - 10.3) < 1e-12
+
+
+@pytest.mark.parametrize(("x_scale", "y_scale", "y_shift"), [(1.0, 1e-10, 0.0), (1.0, 1e6, 0.0), (1e-16, 1.0, 0.0), (1e6, 1.0, 0.0), (1.0, 1.0, 1e6)])
+def test_the_inverse_stops_relative_to_the_cell_whatever_the_scales(x_scale: float, y_scale: float, y_shift: float) -> None:
+  """Newton stops once a step moves x by no more than ``tol`` times the larger of |x| and the cell
+  width: the round trip is at rounding for any scale of x or y."""
+  x = x_scale * np.linspace(0.0, 3.0, 9)
+  f = interp.interpolant(x, y_shift + y_scale * np.sinh(x / x_scale), kind="pchip")
+  xs = x_scale * np.linspace(0.05, 2.95, 57)
+  ys = f.to_scipy()(xs)
+  back = evaluate(f.inverse(), ys)["y"]  # ty: ignore[invalid-argument-type]
+  np.testing.assert_allclose(back, xs, rtol=0, atol=1e-13 * x_scale * 3.0 + 4 * np.spacing(np.abs(y_shift) / max(y_scale, 1e-300)) * x_scale)
+
+
+def test_the_inverse_is_nan_with_a_nan_derivative_at_nan() -> None:
+  f = interp.interpolant(np.linspace(0.0, 1.0, 6), np.linspace(0.0, 1.0, 6) ** 3 + np.linspace(0.0, 1.0, 6), kind="cubic")
+  inv, y = f.inverse(), sc.sym("y", 2)
+  x = inv(y)
+  value, slope = _fn({"y": y}, {"x": x, "dxdy": sc.gradient(x.sum(), y)}, "inverse_at_nan")(np.array([np.nan, 0.5]))
+  assert np.isnan(value[0]) and np.isnan(slope[0]) and np.isfinite(slope[1])

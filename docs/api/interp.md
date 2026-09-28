@@ -23,3 +23,11 @@
 ::: scaly.interp.spline.PP_BUDGET
 
 ::: scaly.interp.grid.Axis
+    options:
+      members:
+        - n
+        - cells
+        - lo
+        - hi
+        - centers
+        - retyped
