@@ -180,6 +180,27 @@ class Axis:
     out = np.stack([basis_derivatives(self.knots, self.degree, self.centers, m) @ flat / math.factorial(m) for m in range(self.degree + 1)], axis=1)
     return out.reshape(self.cells, self.degree + 1, *coeffs.shape[1:])
 
+  def local_basis(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """At points known now, in NumPy, what evaluation computes at run time: the values of each
+    point's ``k + 1`` non-zero basis functions with this axis's extrapolation, their indices, and
+    whether a ``fill`` axis leaves the point."""
+    p, delta, outside = x, None, np.zeros(x.shape, dtype=bool)
+    if self.extrap == "periodic":
+      period = self.hi - self.lo
+      p = p - period * np.floor((p - self.lo) * (1.0 / period))
+    if self.extrap in ("clamp", "fill", "linear"):
+      clamped = np.clip(p, self.lo, self.hi)
+      delta = p - clamped if self.extrap == "linear" else None
+      outside = ((p < self.lo) | (p > self.hi)) if self.extrap == "fill" else outside
+      p = clamped
+    j = np.clip(np.searchsorted(self.edges, p, side=self.side) - 1, 0, self.cells - 1)
+    s, powers = p - self.centers[j], np.arange(self.degree + 1)
+    local = self.local[j]
+    values = np.einsum("pam,pm->pa", local, s[:, None] ** powers)
+    if delta is not None:
+      values = values + delta[:, None] * np.einsum("pam,pm->pa", local, powers * s[:, None] ** np.maximum(powers - 1, 0))
+    return values, self.offsets[j][:, None] + powers[None, :], outside
+
   def wrap(self, x: Expr) -> Expr:
     """``x`` moved by whole periods into ``[lo, hi]``, for ``extrap="periodic"``."""
     period = self.hi - self.lo

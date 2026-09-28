@@ -9,7 +9,7 @@ from scipy.interpolate import CubicSpline, NdBSpline, RegularGridInterpolator, m
 from scaly import interp
 from scaly.interp.spline import Strategy
 
-from .helpers import evaluate, inside_points, scale
+from .helpers import evaluate, inside_points, numbers, scale
 
 
 def sites(rng: np.random.Generator, n: int, uniform: bool, lo: float = -1.0, hi: float = 2.0) -> np.ndarray:
@@ -322,7 +322,7 @@ def test_pspline_is_the_penalized_least_squares_fit() -> None:
   B = BSpline.design_matrix(x, t, 2).toarray()
   D = np.diff(np.eye(B.shape[1]), n=3, axis=0)
   want = np.linalg.lstsq(np.vstack([B, np.sqrt(lam) * D]), np.vstack([y, np.zeros((D.shape[0], 2))]), rcond=None)[0]
-  np.testing.assert_allclose(f.coeffs, want, rtol=1e-9, atol=1e-10)
+  np.testing.assert_allclose(numbers(f.coeffs), want, rtol=1e-9, atol=1e-10)
   np.testing.assert_allclose(evaluate(f, x)["y"], B @ want, rtol=0, atol=1e-9)
   assert (t[2], t[-3]) == (x.min(), x.max()) and f.axes[0].search == "uniform"
   # GCV: the weight chosen is a minimum of the criterion along log lam
@@ -357,7 +357,7 @@ def test_pspline_smooths_in_2d_and_from_scattered_points() -> None:
   err = np.sqrt(np.mean((evaluate(f, nodes)["y"] - truth.reshape(-1)) ** 2))
   assert err < 0.5 * np.sqrt(np.mean((noisy - truth) ** 2))
   scattered = interp.smoothing(nodes, noisy.reshape(-1), segments=(8, 6))
-  np.testing.assert_allclose(scattered.coeffs, f.coeffs, rtol=1e-10, atol=1e-12)
+  np.testing.assert_allclose(numbers(scattered.coeffs), numbers(f.coeffs), rtol=1e-10, atol=1e-12)
 
 
 def test_cubic_smoothing_is_make_smoothing_spline() -> None:

@@ -71,3 +71,27 @@ def test_a_bicubic_table_in_the_dynamics_solves_as_the_hand_written_one() -> Non
   np.testing.assert_allclose(lib.us, hand.us, rtol=1e-8, atol=1e-8)
   assert abs(lib.cost - hand.cost) <= 1e-8 * max(1.0, abs(hand.cost))
   assert np.ptp(lib.xs[:, 1]) > 0.3  # the velocity sweeps the table
+
+
+@pytest.mark.solver("ipopt")
+def test_a_table_calibrated_by_ipopt_is_the_least_squares_fit() -> None:
+  """A 6 x 5 linear table's values as decision variables, fitted to 300 scattered noisy measurements:
+  through ``at()`` (the design matrix, exact sparsity) and through evaluation at the same points as
+  a batch (a dense Jacobian row per point), IPOPT reaches the least-squares solution both ways."""
+  rng = np.random.default_rng(7)
+  g = (np.linspace(0.0, 1.0, 6), np.linspace(-1.0, 1.0, 5))
+  pts = np.column_stack([rng.uniform(0.0, 1.0, 300), rng.uniform(-1.0, 1.0, 300)])
+  data = np.sin(3 * pts[:, 0]) * pts[:, 1] + 0.05 * rng.normal(size=300)
+  B = interp.interpolant(g, np.zeros((6, 5))).basis(pts)
+  want = np.linalg.lstsq(B.toarray(), data, rcond=None)[0].reshape(6, 5)
+  for through in ("at", "batch"):
+
+    @sc.problem(vars=sc.L("v", (6, 5)), params=sc.L("d", 300), name=f"calibrate_{through}")
+    def calibrate(v: sc.Expr, d: sc.Expr) -> sc.ProblemSpec[sc.Expr]:
+      table = interp.interpolant(g, v)
+      residual = (table.at(pts) if through == "at" else table(sc.const(pts))) - d  # noqa: B023
+      return sc.ProblemSpec(minimize=(residual * residual).sum())
+
+    solve = sc.solver(calibrate, "ipopt", name=f"calibrate_{through}_ipopt", options={"tol": 1e-12})
+    found = solve.numerical_call(np.zeros((6, 5)), np.zeros((6, 5)), np.zeros(0), np.zeros(0), data)[0]
+    np.testing.assert_allclose(found, want, rtol=1e-8, atol=1e-8, err_msg=through)

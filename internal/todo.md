@@ -20,7 +20,7 @@ notes hold the record after that.
 Every item has an identifier `<PREFIX>-<n>`. The prefix names the section the item sits in; the
 number comes from one counter shared by the whole file, which only ever grows.
 
-**Next id: 186**
+**Next id: 187**
 
 | Prefix | Section |
 |---|---|
@@ -188,8 +188,18 @@ cheap once and expensive to redo, so the order is the sequencing that matters:
       `custom_derivative`, a flat end held. 26/26 mutants killed, five after a test was added (the
       bisection needed a searched-for quintic); a dead ulp tolerance removed. Report:
       `notes/interp_sp2_report.html`.
-- [ ] **API-173. Coefficients and data as expressions** (interp plan SP3): `interp.BSpline(coeffs=)`,
-      in-graph fits for every kind, `basis()` and `at()` for points known when the graph is built.
+- [x] **API-173. Coefficients and data as expressions** (interp plan SP3). `BSpline` with `Expr`
+      coefficients (the basis strategy, the coefficients an input of its Function, broadcast into
+      batches; calculus as constant maps). `interpolant` with `Expr` data for every kind: constant
+      maps, above 256 sites a C2 cubic's slopes by the Thomas algorithm in two scans (Sherman-Morrison
+      for periodic), the shape-preserving formulas as expressions with every unused division made
+      safe for reverse mode; `smoothing` with a given lambda. `basis()` and `at()` for points known
+      now, with each extrapolation: the Jacobian in 100 coefficients at 2000 points costs 5.7 us
+      through `at()`, 351 us at symbolic points, 22.5 ms in CasADi inlined. A broadcast table's fit is
+      hoisted out of a map. 16/16 mutants killed, ten after a test was added or fixed (the scan-solve
+      test had looked only at the sites). Report: `notes/interp_sp3_report.html`.
+- [ ] **API-186. `inverse()` of a spline with `Expr` coefficients:** the bracket from the curve's
+      values at run time, the Newton loop carrying the coefficients, and the derivative in them.
 - [ ] **API-174. Interpolation performance** (interp plan SP4): the `bucket` search, the `auto`
       thresholds by measurement, large-table code generation, tables as inputs for AOT, `float32`,
       and the dedicated-op gate.

@@ -39,7 +39,8 @@ def build_scaly(fn, args: list[np.ndarray], out: Path) -> dict:
   out.mkdir(parents=True, exist_ok=True)
   (out / "f.c").write_text(module.body)
   compile_s = _compile(out / "f.c", out / "lib.so")
-  values = fn(*(a.reshape(i.shape) for a, i in zip(args, fn.inputs, strict=True)))
+  shaped = [a.reshape(i.shape) for a, i in zip(args, fn.inputs, strict=True)]
+  values = fn(shaped[0]) if len(shaped) == 1 else fn(tuple(shaped))  # a traced Function takes its leaves as one tuple
   values = values if isinstance(values, tuple) else (values,)
   (out / "inputs.bin").write_bytes(blob(args, [np.size(v) for v in values], int(module.workspace_size)))
   np.save(out / "expected.npy", np.concatenate([np.ravel(v) for v in values]))

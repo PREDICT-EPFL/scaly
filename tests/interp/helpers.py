@@ -64,3 +64,10 @@ def inside_points(edges: tuple[np.ndarray, ...], rng: np.random.Generator, n_ran
 def scale(reference: np.ndarray) -> float:
   finite = np.abs(reference[np.isfinite(reference)])
   return float(max(1.0, finite.max())) if finite.size else 1.0
+
+
+def numbers(values: object) -> np.ndarray:
+  """A spline's coefficients, or an ``Expr``'s constant value, known here to be numbers."""
+  value = values.value if isinstance(values, sc.Expr) else values
+  assert isinstance(value, np.ndarray)
+  return value

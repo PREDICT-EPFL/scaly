@@ -10,7 +10,7 @@ import pytest
 
 from scaly import interp
 
-from .helpers import evaluate, inside_points, scale
+from .helpers import evaluate, inside_points, numbers, scale
 
 ca = pytest.importorskip("casadi")
 
@@ -59,9 +59,9 @@ def test_bspline_evaluation_matches_casadis_bspline_node(k: int, dims: tuple[int
   g = grid(rng, dims)
   f = interp.interpolant(g if len(g) > 1 else g[0], rng.normal(size=dims), kind="spline", degree=k)
   x = ca.MX.sym("x", len(g))
-  F = ca.Function("bsn", [x], [ca.bspline(x, ca.DM(ca_values(f.coeffs)), [list(t) for t in f.knots], list(f.degree), 1, {})])
+  F = ca.Function("bsn", [x], [ca.bspline(x, ca.DM(ca_values(numbers(f.coeffs))), [list(t) for t in f.knots], list(f.degree), 1, {})])
   pts = inside_points(g, rng, 300)
-  np.testing.assert_allclose(evaluate(f, pts)["y"], ca_eval(F, pts), rtol=0, atol=1e-13 * scale(f.coeffs))
+  np.testing.assert_allclose(evaluate(f, pts)["y"], ca_eval(F, pts), rtol=0, atol=1e-13 * scale(numbers(f.coeffs)))
 
 
 @pytest.mark.parametrize("k", [1, 3, 5])

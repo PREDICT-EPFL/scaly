@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interp SP3 Report</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1f22;--muted:#5c6168;--rule:#e2dfd8;--card:#fff;--acc:#3b5fa0;--ok:#2f6f5e;--warn:#8a5a1f;--bad:#9b3b4a;--code:#f1eee8}
+@media (prefers-color-scheme: dark){:root{--bg:#16181b;--fg:#e6e4df;--muted:#9aa0a8;--rule:#2c2f34;--card:#1d2024;--acc:#86a8e8;--ok:#6fc2a8;--warn:#e0ad6a;--bad:#e7899a;--code:#25282d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:36px 16px 72px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:36px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--rule)}
+.sub{color:var(--muted);margin:0 0 18px}code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 4px;border-radius:4px}
+pre{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:10px 12px;border-radius:6px;overflow-x:auto}
+.box{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px 18px;margin:12px 0}
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--card);margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}tr:last-child td{border-bottom:none}td.r{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.warn{color:var(--warn);font-weight:600}.bad{color:var(--bad);font-weight:600}ul{padding-left:22px}li{margin:3px 0}
+</style></head><body><main>
+<h1>Interpolation · SP3 report</h1>
+<p class="sub">API-173 · coefficients and data as expressions · branch <code>claude/interp</code> · 28 Sep 2026 · plan <code>interp_plan_2026_09_28.md</code></p>
+
+<div class="box">
+<p style="margin-top:0"><b>Summary.</b> A table read at run time, or fitted as decision variables.</p>
+<ul>
+<li><b><code>BSpline(knots, c)</code> with an <code>Expr</code> <code>c</code></b>: evaluated from the local bases, its Function taking the coefficients as an input (broadcast to every point of a batch), with <code>derivative</code>, <code>antiderivative</code> and <code>integrate</code> as constant maps of the coefficients.</li>
+<li><b><code>interpolant(grid, data)</code> with <code>Expr</code> data, every kind</b>: the fits linear in the data as constant maps (sparse for <code>smooth_linear</code>), a C² cubic above 256 sites by a tridiagonal (or cyclic) solve in two scans, the shape-preserving kinds by their slope formulas as expressions; <code>smoothing</code> with a given λ. All equal the NumPy fits to 1e-13.</li>
+<li><b><code>basis(points)</code> and <code>at(points)</code></b> for points known now: the design matrix with the spline's extrapolation, and the spline as one sparse product whose Jacobian has exactly the basis's pattern. At 2 000 points and 100 coefficients the Jacobian costs 5.7 µs through <code>at()</code>, 351 µs at symbolic points, and 22.5 ms in CasADi inlined.</li>
+</ul>
+<p style="margin-bottom:0"><b>Suite:</b> 2 860 passed, 45 skipped. ruff and ty clean on <code>src/</code> and the new tests. <b>Mutation checks:</b> 16 of 16 killed, ten only after a test was added or fixed.</p>
+</div>
+
+<h2>1. What was built</h2>
+<div class="scroll"><table>
+<tr><th>Piece</th><th>Details</th></tr>
+<tr><td><code>spline.py</code></td><td>
+<ul>
+<li><code>Expr</code> coefficients force the <code>basis</code> strategy (<code>pp</code> tabulates constants). <code>function()</code> is then <code>(x, c) → f(x)</code>, interned by the axes and the coefficients' shape; a batch maps it with the coefficients at stride zero, which the hoisting pass moves out of the loop.</li>
+<li><code>_along</code> applies a constant matrix along an axis to either kind of coefficients: NumPy, or a constant product (through <code>SparseMatrix</code> when sparse) with the axis moved to the front and back.</li>
+<li><code>integrate</code> with numeric bounds is <code>w·c + offset</code>, the basis functions' integrals in every extrapolation mode and a fill's contribution; the <code>Expr</code> antiderivative is the cumulative sum less its value at the start as one map.</li>
+<li><code>basis</code> uses <code>Axis.local_basis</code>, the NumPy twin of the run-time evaluation (wrap, clamp, linear continuation, fill), multiplied out across axes; <code>at</code> is its sparse product plus the fill values.</li>
+</ul></td></tr>
+<tr><td><code>fit.py</code></td><td>
+<ul>
+<li>A linear kind's map is the fit of the identity (<code>make_interp_spline</code> of <code>eye(n)</code>), applied along the axis; <code>smooth_linear</code>'s is its sparse Greville interpolation.</li>
+<li>Above <code>DENSE_FIT = 256</code> sites a C² cubic solves SciPy's own slope system (not-a-knot, natural and clamped end rows; periodic by Sherman and Morrison) by the Thomas algorithm, pivots and multipliers found now, a forward and a backward <code>scan</code>, and is represented on doubled knots like the Hermite kinds.</li>
+<li>The PCHIP, Akima, makima and Steffen formulas run on NumPy arrays or expressions through one small table of operations. Every division reads 1 in the branch it does not take, so reverse mode never forms <code>0·∞</code>; at a kink in the data the derivative follows <code>sc.options(nonsmooth=...)</code>.</li>
+<li><code>smoothing</code> with <code>Expr</code> data and a given λ: the P-spline's or the smoothing spline's map; <code>"gcv"</code> needs the data's values and is refused.</li>
+</ul></td></tr>
+</table></div>
+
+<h2>2. Tests and mutation checks</h2>
+<ul>
+<li><code>tests/interp/test_expressions.py</code> (35): <code>Expr</code> coefficients against the numbers (point, batch, derivative); the Jacobian in the coefficients equal to SciPy's design matrix at symbolic points, and <code>at()</code>'s sparsity equal to its stored pattern; <code>basis</code>/<code>at</code> in all five extrapolation modes; <code>Expr</code> data for all ten kinds, the Jacobian in the data against the fit of the identity (linear kinds, 1e-12) or finite differences (the others, 1e-7); the four boundary conditions of the scan solve, values and gradients between the sites; reverse mode through plateaus and straight runs; a fit along the third axis of a 3-D table; 2-D data; smoothing; the calculus; the hoisting gate; CasADi's inlined data Jacobian.</li>
+<li><code>tests/integration/test_interp_ocp.py</code> (+1): a 6×5 table calibrated to 300 noisy measurements by IPOPT, through <code>at()</code> and through a batch evaluation, equal to the least-squares solution to 1e-8.</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>Mutant</th><th>Result</th><th>Mutant</th><th>Result</th></tr>
+<tr><td>PCHIP safe denominator</td><td class="warn">killed after a test</td><td>Akima safe denominator</td><td class="warn">killed after a test</td></tr>
+<tr><td>not-a-knot first row</td><td class="warn">killed after a fix</td><td>natural first right-hand side</td><td class="warn">killed after a fix</td></tr>
+<tr><td>Thomas pivot</td><td class="warn">killed after a fix</td><td>Thomas row reversal</td><td class="warn">killed after a fix</td></tr>
+<tr><td>Thomas back substitution</td><td class="warn">killed after a fix</td><td>Sherman–Morrison denominator</td><td class="warn">killed after a fix</td></tr>
+<tr><td>integral fill offset</td><td class="warn">killed after a test</td><td>axis moved back by <code>order</code>, not its inverse</td><td class="warn">killed after a test</td></tr>
+<tr><td>P-spline λ dropped</td><td class="ok">killed</td><td>basis periodic wrap</td><td class="ok">killed</td></tr>
+<tr><td>basis linear continuation sign</td><td class="ok">killed</td><td>basis fill rows kept</td><td class="ok">killed</td></tr>
+<tr><td><code>at</code> without fill values</td><td class="ok">killed</td><td>antiderivative map diagonal</td><td class="ok">killed</td></tr>
+</table></div>
+<ul>
+<li><b>The scan-solve test looked only at the sites.</b> Truncating the adversarial point list kept the knots and their neighbours, where a Hermite cubic equals the data whatever its slopes, so six mutants of the solve survived. It now probes between the sites.</li>
+<li>The safe denominators matter only in reverse mode and only on data with exact plateaus (zero secants) or straight runs (equal secants); the new test builds such data and bounds the gradient by the one-sided differences at the kinks.</li>
+<li>Moving an axis back with the forward permutation is right in 2-D (a swap is its own inverse), so the check needed a map along the third of three axes.</li>
+</ul>
+
+<h2>3. Benchmarks</h2>
+<div class="scroll"><table>
+<tr><th>Study</th><th>Variant</th><th>ns per call</th><th>C lines</th></tr>
+<tr><td rowspan="3">coefficient Jacobian, n = 100, m = 2 000</td><td>symbolic points</td><td class="r">350 829</td><td class="r">807</td></tr>
+<tr><td><code>at()</code></td><td class="r">5 729</td><td class="r">43</td></tr>
+<tr><td>CasADi <code>bspline</code>, inlined</td><td class="r">22 471 954</td><td class="r">2 635 371</td></tr>
+<tr><td rowspan="2">cubic fit of 300 data, value + gradient</td><td>dense constant map</td><td class="r">35 271</td><td class="r">100</td></tr>
+<tr><td>tridiagonal scans</td><td class="r">3 458</td><td class="r">251</td></tr>
+</table></div>
+<p>The smaller configuration (20 coefficients, 200 points) has the same ordering: 6.8 µs, 0.48 µs and 106 µs. The scans win tenfold at 300 sites, so the threshold of 256 is conservative; SP4 sets it by measurement.</p>
+
+<h2>4. Gates</h2>
+<div class="scroll"><table>
+<tr><th>Gate</th><th>Status</th></tr>
+<tr><td>Jacobians in coefficients and data against finite differences to 1e-7 and against the dense map to 1e-12</td><td class="ok">met</td></tr>
+<tr><td><code>jacobian_sparsity</code> of <code>at()</code> equals the pattern of <code>BSpline.design_matrix</code></td><td class="ok">met</td></tr>
+<tr><td>Against CasADi <code>inline=True</code> to 1e-12</td><td class="ok">met (linear and bspline, 1-D and 2-D)</td></tr>
+<tr><td>The fit of a broadcast table runs once per call (program dialect)</td><td class="ok">met: the body splits into a prologue holding the fit and the hoisted per-point body</td></tr>
+</table></div>
+<ul>
+<li><b>Not done: <code>inverse()</code> with <code>Expr</code> coefficients.</b> Its bracket search would need the curve's values at run time and its Newton loop the coefficients as a parameter. It refuses, and API-186 records it.</li>
+</ul>
+
+<h2>5. Next</h2>
+<p>SP4 (API-174): performance. The <code>bucket</code> search, the thresholds set by measurement (<code>DENSE_FIT</code>, the table budget), the cost of the default <code>linear</code> extrapolation and of the inverse, large-table code generation, tables as inputs for AOT, <code>float32</code>, and the dedicated-op gate.</p>
+</main></body></html>

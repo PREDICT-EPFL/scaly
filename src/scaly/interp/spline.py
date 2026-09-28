@@ -80,7 +80,7 @@ class BSpline:
   def __init__(
     self,
     knots: np.ndarray | Sequence[float] | tuple[np.ndarray, ...],
-    coeffs: np.ndarray,
+    coeffs: np.ndarray | Expr,
     degree: int | tuple[int, ...] = 3,
     *,
     extrap: Extrap | tuple[Extrap | None, ...] | None = None,
@@ -98,7 +98,7 @@ class BSpline:
     self._setup(axes, coeffs, strategy, name)
 
   @classmethod
-  def from_axes(cls, axes: Sequence[Axis], coeffs: np.ndarray, *, strategy: Strategy = "auto", name: str = "interp") -> BSpline:
+  def from_axes(cls, axes: Sequence[Axis], coeffs: np.ndarray | Expr, *, strategy: Strategy = "auto", name: str = "interp") -> BSpline:
     """A spline over prepared axes (a fit's, whose partitions its data sites refine)."""
     self = cls.__new__(cls)
     self._setup(tuple(axes), coeffs, strategy, name)
@@ -107,21 +107,41 @@ class BSpline:
   def _setup(self, axes: tuple[Axis, ...], coeffs: Any, strategy: Strategy, name: str) -> None:
     if not axes:
       raise ValueError("a spline needs at least one axis")
-    coeffs = np.asarray(coeffs, dtype=np.float64)
-    shape = tuple(ax.n for ax in axes)
-    if coeffs.shape[: len(axes)] != shape:
-      raise ValueError(f"coeffs must have shape {shape} + out_shape for these knots and degrees, got {coeffs.shape}")
-    if not np.all(np.isfinite(coeffs)):
-      raise ValueError("coeffs must be finite")
     if strategy not in ("auto", "pp", "basis"):
       raise ValueError(f"strategy must be 'auto', 'pp' or 'basis', got {strategy!r}")
-    self.axes, self.coeffs, self.name = axes, coeffs, name
+    shape = tuple(ax.n for ax in axes)
+    if isinstance(coeffs, Expr):
+      coeffs = coeffs if coeffs.type.dtype == dtypes.float64 else cast(coeffs, dtypes.float64)
+      if strategy == "pp":
+        raise ValueError("strategy='pp' tabulates constant coefficients; an Expr's are evaluated from the local bases")
+      strategy = "basis"
+    else:
+      coeffs = np.asarray(coeffs, dtype=np.float64)
+      if not np.all(np.isfinite(coeffs)):
+        raise ValueError("coeffs must be finite")
+    if coeffs.shape[: len(axes)] != shape:
+      raise ValueError(f"coeffs must have shape {shape} + out_shape for these knots and degrees, got {coeffs.shape}")
+    self.axes, self.name = axes, name
+    self.coeffs: np.ndarray | Expr = coeffs
     self.out_shape: tuple[int, ...] = coeffs.shape[len(axes) :]
     out = math.prod(self.out_shape)
     pp_bytes = 8 * math.prod(ax.cells * (ax.degree + 1) for ax in axes) * out
     basis_bytes = 8 * (math.prod(ax.n for ax in axes) * out + sum(ax.cells * ((ax.degree + 1) ** 2 + 1) for ax in axes))
     self.strategy: Literal["pp", "basis"] = ("pp" if pp_bytes <= max(PP_BUDGET, basis_bytes) else "basis") if strategy == "auto" else strategy
     self._pp: np.ndarray | None = None
+
+  @property
+  def constant(self) -> bool:
+    """Whether the coefficients are numbers (tabulated in the C) rather than an ``Expr``."""
+    return not isinstance(self.coeffs, Expr)
+
+  def _numeric(self, what: str) -> np.ndarray:
+    if not isinstance(self.coeffs, np.ndarray):
+      raise ValueError(f"{what} needs constant coefficients")
+    return self.coeffs
+
+  def _flat_coeffs(self) -> Expr:
+    return Expr.const(self.coeffs.reshape(-1)) if isinstance(self.coeffs, np.ndarray) else self.coeffs.reshape((self.coeffs.size,))
 
   @property
   def ndim(self) -> int:
@@ -178,13 +198,14 @@ class BSpline:
     # its code is one loop whatever the batch size.
     n = x.shape[0]
     flat = (x.reshape((x.size,)), 0, x.size // n)
+    coeffs = [] if self.constant else [(self._flat_coeffs(), 0, 0)]  # broadcast to every point
     if index is None:
-      out = vmap(self.function(), n, [flat])
+      out = vmap(self.function(), n, [flat, *coeffs])
     else:
       if len(index.cells) != self.ndim or any(c.shape != (n,) for c in index.cells):
         raise ValueError("index= was found for points of another shape")
       cells = stack(list(index.cells), axis=1).reshape((n * self.ndim,))
-      out = vmap(self._cell_function(), n, [flat, (cells, 0, self.ndim)])
+      out = vmap(self._cell_function(), n, [flat, (cells, 0, self.ndim), *coeffs])
     return out.reshape((n, *self.out_shape))
 
   def _at(self, coords: list[Expr], cells: tuple[Expr, ...]) -> Expr:
@@ -213,7 +234,7 @@ class BSpline:
     """Cell-major, then the ``prod (k_d + 1)`` powers, then the output: the Taylor coefficients of
     every cell at its center."""
     if self._pp is None:
-      t = self.coeffs
+      t = self._numeric("strategy='pp'")
       for d, ax in enumerate(self.axes):
         t = np.moveaxis(ax.taylor(np.moveaxis(t, 2 * d, 0)), [0, 1], [2 * d, 2 * d + 1])
       nd = self.ndim
@@ -249,7 +270,7 @@ class BSpline:
     for f in first[1:]:
       base = base + f
     index = stack([base]) + Expr.const(offsets, dtype=dtypes.int64)
-    coef = take(Expr.const(self.coeffs.reshape(-1)), index, in_range=True)
+    coef = take(self._flat_coeffs(), index, in_range=True)
     for b, k in zip(bases, orders, strict=True):  # contract one axis at a time
       coef = b @ coef.reshape((k, coef.size // k))
     return coef.reshape(self.out_shape)
@@ -268,37 +289,63 @@ class BSpline:
 
   def _cell_function(self) -> ConcreteFunction[Any, Any, Any, Any]:
     point = () if self.ndim == 1 else (self.ndim,)
+    name = f"{self.name}_{self.digest}_at"
+    if self.constant:
+      return _interned(
+        name,
+        lambda: ConcreteFunction(
+          name,
+          lambda x, cell: self._at(self._coordinates(x), tuple(cell[d] for d in range(self.ndim))),
+          param_list(L("x", point), L("cell", (self.ndim,))),
+          L("y", self.out_shape),
+        ),
+      )
     return _interned(
-      f"{self.name}_{self.digest}_at",
+      name,
       lambda: ConcreteFunction(
-        f"{self.name}_{self.digest}_at",
-        lambda x, cell: self._at(self._coordinates(x), tuple(cell[d] for d in range(self.ndim))),
-        param_list(L("x", point), L("cell", (self.ndim,))),
+        name,
+        lambda x, cell, c: self._rebound(c)._at(self._coordinates(x), tuple(cell[d] for d in range(self.ndim))),
+        param_list(L("x", point), L("cell", (self.ndim,)), L("c", (self.coeffs.size,))),
         L("y", self.out_shape),
       ),
     )
 
+  def _rebound(self, flat: Expr) -> BSpline:
+    """This spline over other coefficients, given flat: a Function's own input."""
+    return BSpline.from_axes(self.axes, flat.reshape(self.coeffs.shape), strategy="basis", name=self.name)
+
   @property
   def digest(self) -> str:
-    """Eight hex digits naming the spline's content, for ``function()`` names that never collide."""
+    """Eight hex digits naming the spline's content, for ``function()`` names that never collide:
+    the axes and the coefficients, or for ``Expr`` coefficients (an input of the Function) their
+    shape."""
     h = hashlib.sha1(self.strategy.encode())
     for ax in self.axes:
       h.update(repr((ax.degree, ax.side, ax.extrap, ax.fill, ax.search)).encode())
       h.update(ax.knots.tobytes())
       h.update(ax.edges.tobytes())
-    h.update(repr(self.coeffs.shape).encode())
-    h.update(np.ascontiguousarray(self.coeffs).tobytes())
+    h.update(repr((self.coeffs.shape, self.constant)).encode())
+    if isinstance(self.coeffs, np.ndarray):
+      h.update(np.ascontiguousarray(self.coeffs).tobytes())
     return h.hexdigest()[:8]
 
   def function(self, name: str | None = None) -> ConcreteFunction[Any, Any, Any, Any]:
     """The spline as a Function of one point, ``x -> f(x)``: calls then share one procedure and one
-    copy of the table, where inlining would give each calling procedure its own. Named
-    ``{name}_{digest}`` unless ``name`` is given; two splines with the same content share it."""
+    copy of the table, where inlining would give each calling procedure its own. With ``Expr``
+    coefficients it is ``(x, c) -> f(x)``, ``c`` the coefficients flat. Named ``{name}_{digest}``
+    unless ``name`` is given; two splines with the same content share it."""
     point = () if self.ndim == 1 else (self.ndim,)
     fname = name or f"{self.name}_{self.digest}"
-    return _interned(fname, lambda: ConcreteFunction(fname, lambda x: self(x), param_list(L("x", point)), L("y", self.out_shape)))
+    if self.constant:
+      return _interned(fname, lambda: ConcreteFunction(fname, lambda x: self(x), param_list(L("x", point)), L("y", self.out_shape)))
+    return _interned(
+      fname,
+      lambda: ConcreteFunction(
+        fname, lambda x, c: self._rebound(c)(x), param_list(L("x", point), L("c", (self.coeffs.size,))), L("y", self.out_shape)
+      ),
+    )
 
-  def _with_axis(self, axis: int, new: Axis, coeffs: np.ndarray, suffix: str) -> BSpline:
+  def _with_axis(self, axis: int, new: Axis, coeffs: Any, suffix: str) -> BSpline:
     axes = (*self.axes[:axis], new, *self.axes[axis + 1 :])
     return BSpline.from_axes(axes, coeffs, strategy=self.strategy, name=f"{self.name}_{suffix}")
 
@@ -331,11 +378,16 @@ class BSpline:
     if ax.extrap == "periodic" or (ax.extrap == "fill" and ax.fill != 0.0 and not math.isnan(ax.fill)):
       raise ValueError(f"the antiderivative of a spline with extrap={ax.extrap!r} (fill={ax.fill}) is not a spline extrapolation")
     t, k, n = ax.knots, ax.degree, ax.n
-    step = ((t[k + 1 : k + 1 + n] - t[:n]) / (k + 1)).reshape(n, *(1,) * (self.coeffs.ndim - 1))
-    moved = np.moveaxis(self.coeffs, axis, 0)
-    cum = np.concatenate([np.zeros((1, *moved.shape[1:])), np.cumsum(moved * step, axis=0)])
     knots = np.concatenate([t[:1], t, t[-1:]])
-    at_lo = np.tensordot(design_matrix([knots], [k + 1], np.array([[ax.lo]])).toarray()[0], cum, axes=(0, 0))
+    step = (t[k + 1 : k + 1 + n] - t[:n]) / (k + 1)
+    start = design_matrix([knots], [k + 1], np.array([[ax.lo]])).toarray()[0]
+    if isinstance(self.coeffs, np.ndarray):
+      moved = np.moveaxis(self.coeffs, axis, 0)
+      cum = np.concatenate([np.zeros((1, *moved.shape[1:])), np.cumsum(moved * step.reshape(n, *(1,) * (moved.ndim - 1)), axis=0)])
+      coeffs = np.moveaxis(cum - np.tensordot(start, cum, axes=(0, 0)), 0, axis)
+    else:  # the cumulative sum, less its value at the start, as one constant map
+      cumsum = np.tril(np.ones((n + 1, n)), -1) * step[None, :]
+      coeffs = _along(cumsum - np.outer(np.ones(n + 1), start @ cumsum), self.coeffs, axis)
     after: dict[str, tuple[Extrap, float]] = {
       "extend": ("extend", ax.fill),
       "linear": ("extend", ax.fill),
@@ -344,7 +396,7 @@ class BSpline:
     }
     extrap, fill = after[ax.extrap]
     new = Axis(knots, k + 1, edges=ax.edges, side=ax.side, extrap=extrap, fill=fill, search=ax.search)
-    return self._with_axis(axis, new, np.moveaxis(cum - at_lo, 0, axis), f"i{axis}")
+    return self._with_axis(axis, new, coeffs, f"i{axis}")
 
   def integrate(self, a: Any, b: Any) -> Any:
     """The integral over ``[a, b]`` (a box ``a <= x <= b`` in n-D). Numbers give a number, or an
@@ -355,8 +407,13 @@ class BSpline:
       not isinstance(v, Expr)
       for v in (np.ravel(a).tolist() if not isinstance(a, Expr) else [a]) + (np.ravel(b).tolist() if not isinstance(b, Expr) else [b])
     )
-    if numeric and self.ndim == 1:
+    if numeric and self.ndim == 1 and isinstance(self.coeffs, np.ndarray):
       return _integrate_1d(self, float(np.asarray(a)), float(np.asarray(b)))
+    if numeric and self.ndim == 1:  # linear in the coefficients: the basis functions' integrals, and a fill's
+      u, v, ax = float(np.asarray(a)), float(np.asarray(b)), self.axes[0]
+      offset = float(_integrate_1d(BSpline.from_axes(self.axes, np.zeros(ax.n)), u, v))
+      weights = _integrate_1d(BSpline.from_axes(self.axes, np.eye(ax.n)), u, v) - offset
+      return _along(weights[None, :], self.coeffs, 0).reshape(self.out_shape) + offset
     if numeric:
       lo, hi = np.asarray(a, dtype=np.float64).reshape(-1), np.asarray(b, dtype=np.float64).reshape(-1)
       if lo.size != self.ndim or hi.size != self.ndim:
@@ -367,8 +424,8 @@ class BSpline:
       for ax, u, v in zip(self.axes, lo, hi, strict=True):
         if min(u, v) < ax.lo or max(u, v) > ax.hi:
           raise ValueError("an n-D integral with numeric bounds must lie inside the base box")
-        weights = SciBSpline(ax.knots, np.eye(ax.n), ax.degree).integrate(u, v)
-        out = np.tensordot(weights, out, axes=(0, 0))
+        out = _along(SciBSpline(ax.knots, np.eye(ax.n), ax.degree).integrate(u, v)[None, :], out, 0)
+        out = out.reshape(out.shape[1:])
       return out
     total = self
     for d in range(self.ndim):
@@ -389,6 +446,7 @@ class BSpline:
     safeguarded Newton. Outside the spline's range the inverse continues linearly."""
     if self.ndim != 1 or self.out_shape:
       raise ValueError("inverse() needs a 1-D scalar spline")
+    self._numeric("inverse()")
     ax = self.axes[0]
     if ax.extrap == "periodic" or ax.degree == 0:
       raise ValueError(f"a spline of degree {ax.degree} with extrap={ax.extrap!r} is not invertible")
@@ -411,16 +469,70 @@ class BSpline:
     from scipy.interpolate import BSpline as SciBSpline
     from scipy.interpolate import NdBSpline
 
+    coeffs = self._numeric("to_scipy()")
     if self.ndim == 1:
-      return SciBSpline(self.axes[0].knots, self.coeffs, self.axes[0].degree)
-    return NdBSpline(self.knots, self.coeffs, self.degree)
+      return SciBSpline(self.axes[0].knots, coeffs, self.axes[0].degree)
+    return NdBSpline(self.knots, coeffs, self.degree)
+
+  def basis(self, points: Any) -> sparse.csr_array:
+    """The design matrix at points known now, ``(m,)`` in 1-D or ``(m, D)``: an ``(m, prod n_d)``
+    sparse matrix whose row ``i`` is the tensor-product basis at point ``i`` with this spline's
+    extrapolation (zero where a ``fill`` axis is left), its columns the coefficients' C order.
+    ``basis(points) @ coeffs`` is the spline at the points."""
+    pts = np.asarray(points, dtype=np.float64)
+    pts = pts[:, None] if self.ndim == 1 and pts.ndim == 1 else pts
+    if pts.ndim != 2 or pts.shape[1] != self.ndim or not np.all(np.isfinite(pts)):
+      raise ValueError(f"points must be finite, shaped (m,) in 1-D or (m, {self.ndim}), got {pts.shape}")
+    m = pts.shape[0]
+    cols, vals, filled = np.zeros((m, 1), dtype=np.int64), np.ones((m, 1)), np.zeros(m, dtype=bool)
+    for d, ax in enumerate(self.axes):
+      b, idx, out = ax.local_basis(pts[:, d])
+      cols = (cols[:, :, None] * ax.n + idx[:, None, :]).reshape(m, -1)
+      vals = (vals[:, :, None] * b[:, None, :]).reshape(m, -1)
+      filled |= out
+    vals[filled] = 0.0
+    return sparse.csr_array(
+      (vals.reshape(-1), (np.repeat(np.arange(m), cols.shape[1]), cols.reshape(-1))), shape=(m, math.prod(ax.n for ax in self.axes))
+    )
+
+  def at(self, points: Any) -> Expr:
+    """The spline at points known now, ``(m, *out_shape)``: ``basis(points)`` times the coefficients
+    as one sparse product, so its Jacobian with respect to ``Expr`` coefficients has exactly the
+    basis's pattern, and a constant for constant coefficients. The way to fit a table to
+    measurements, or to parametrize a trajectory by a spline."""
+    B = self.basis(points)
+    m, out_size = B.shape[0], math.prod(self.out_shape)
+    fills = np.zeros(m)
+    pts = np.asarray(points, dtype=np.float64).reshape(m, self.ndim)
+    for d in reversed(range(self.ndim)):
+      ax = self.axes[d]
+      if ax.extrap == "fill":
+        fills = np.where((pts[:, d] < ax.lo) | (pts[:, d] > ax.hi), ax.fill, fills)
+    fills = fills[:, None]
+    if isinstance(self.coeffs, np.ndarray):
+      return Expr.const(((B @ self.coeffs.reshape(-1, out_size)) + fills).reshape((m, *self.out_shape)))
+    from ..linalg.sparse import SparseMatrix
+
+    values = SparseMatrix.from_scipy(B) @ self.coeffs.reshape((B.shape[1], out_size))
+    return (values + Expr.const(fills) if np.any(fills) else values).reshape((m, *self.out_shape))
 
 
-def _along(matrix: Any, values: np.ndarray, axis: int) -> np.ndarray:
-  """``matrix`` (dense or sparse) applied to ``values`` along ``axis``."""
-  moved = np.moveaxis(values, axis, 0)
-  out = np.asarray(matrix @ moved.reshape(moved.shape[0], -1)).reshape(matrix.shape[0], *moved.shape[1:])
-  return np.moveaxis(out, 0, axis)
+def _along(matrix: Any, values: Any, axis: int) -> Any:
+  """``matrix`` (dense or SciPy sparse, constant) applied to ``values`` along ``axis``: NumPy for a
+  NumPy array, a constant product (sparse through ``SparseMatrix``) for an ``Expr``."""
+  if isinstance(values, np.ndarray):
+    moved = np.moveaxis(values, axis, 0)
+    out = np.asarray(matrix @ moved.reshape(moved.shape[0], -1)).reshape(matrix.shape[0], *moved.shape[1:])
+    return np.moveaxis(out, 0, axis)
+  from ..linalg.sparse import SparseMatrix
+
+  order = (axis, *(d for d in range(len(values.shape)) if d != axis))
+  moved = values.transpose(order) if axis else values
+  rows = moved.shape[0]
+  flat = moved.reshape((rows, moved.size // rows))
+  out = SparseMatrix.from_scipy(sparse.csr_array(matrix)) @ flat if sparse.issparse(matrix) else Expr.const(np.asarray(matrix)) @ flat
+  out = out.reshape((matrix.shape[0], *moved.shape[1:]))
+  return out.transpose(tuple(int(i) for i in np.argsort(order))) if axis else out
 
 
 def _integrate_1d(f: BSpline, a: float, b: float) -> Any:
