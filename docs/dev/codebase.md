@@ -40,6 +40,7 @@ src/scaly/
       fuse_elementwise.py     elementwise producer fusion
       fold_arith.py           constant reads and shared arithmetic identities in loop bodies
       unroll_unit_loops.py    empty- and single-iteration loop removal
+      delinearize_loops.py    flat loops whose indices divide the loop variable split into nested loops
       pack_workspace.py      buffer lifetime packing
       coalesce_stores.py     alias-safe adjacent store pairing
       scheduling.py          shared scalar value scheduling
@@ -70,6 +71,21 @@ src/scaly/
     spline.py            BSpline: evaluation (per-cell polynomials or local bases), calculus, the inverse
     fit.py               interpolant and smoothing, from NumPy data or in the graph from Expr data
     constrained.py       least squares under shape constraints, a QP solved by PIQP
+
+  integrators/           discretization of continuous-time models: Runge-Kutta maps over the model's own signature
+    model.py             the model contract f(x, ...) -> xdot, and the discrete-time maps built over its signature
+    tableau.py           Butcher tableaus: the named Runge-Kutta families and their order conditions
+    polynomial.py        Gauss, Radau and Lobatto nodes on [0, 1] and the Lagrange basis over them
+    explicit.py          explicit Runge-Kutta steps: fixed, adaptive and symplectic
+    implicit.py          implicit Runge-Kutta steps: Newton on the stage equations, implicit-function derivatives
+    linear.py            exact discretization of LTI systems (ZOH, FOH), and linearization at a point
+    transcription.py     how one interval of a horizon becomes variables, equality constraints and a cost
+
+  mpc/                   model predictive control: OCPs over a horizon, their solvers and control laws
+    ocp.py               the OCP: dynamics, costs, constraints, horizon, transcription, and the sc.problem it builds
+    controller.py        MPC: the OCP's solver, its control law with the shifted warm start, closed-loop simulation
+    polytope.py          polytopes in halfspace form and the linear programs on them (SciPy's HiGHS)
+    terminal.py          terminal ingredients: the LQR gain and cost, ellipsoidal and maximal invariant sets
 
   codegen/
     abi.py               the pointer ABI: signature, status codes, mangling
@@ -106,6 +122,7 @@ src/scaly/
   utils/
     env.py               the environment variables and platform facts scaly reads
     names.py             C identifier spelling shared by passes and code generation
+    options.py           sc.options and sc.set_options: user conventions read when a graph is built
     torch_state_dict.py  reading PyTorch checkpoints without depending on torch
 ```
 
@@ -125,7 +142,7 @@ one, never a higher one.
 | 2 | `passes/affine`, `passes/arith`, `passes/expr`, `ad/sparsity`, `solvers/stats` | Above import layer 1 but below the frontend: index-map recovery, shared arithmetic identities, expression rewrites, structural sparsity, and the solver-statistics layout (which needs nothing from the IR). Nothing here knows what a `Function` is. |
 | 3 | `function/{model,tree}` | `Function` itself, a named graph boundary over import layer 1, and the pytree declarations. |
 | 4 | `ad/{forward,reverse,derivatives,sparse}`, `function/sugar` | Differentiation, which has to look inside a callee, and the builders that do too (`vmap`, `scan`, `while_loop`, `custom_derivative`). |
-| 5 | `function/{factory,api}`, the rest of `solvers/`, `linalg/*`, `interp/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, and splines. |
+| 5 | `function/{factory,api}`, the rest of `solvers/`, `linalg/*`, `interp/*`, `integrators/*`, `mpc/*` | The user-facing request layer: typed derivative specs, the decorator, the solver builders, linear algebra built from expressions and loops, splines, integrators and MPC. |
 | 6 | `passes/lowering`, `passes/program/*` | Lower whole Functions, including their solver callees, and optimize the program dialect. |
 | 7 | `codegen/*` | The backend: render, compile, load, dispatch. |
 | 8 | `viz/*` | Observes the backend. Nothing in the compiler depends on it. |

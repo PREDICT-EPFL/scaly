@@ -56,9 +56,9 @@ uv run ruff format --check         # formatting, as CI runs it; drop --check to 
 uv run ty check --error-on-warning # types, including expected-error assertions
 ```
 
-Run all four before you consider a change done. `pytest` collects `tests/`, `plugins/`, and
-`typing_playground/`. Strict type checking covers the assertions in `tests/typing/` and the
-playground. An expected error that disappears leaves an unused ignore, which fails the check.
+Run all four before you consider a change done. `pytest` collects `tests/` and `plugins/`. Strict
+type checking covers the assertions in `tests/typing/`. An expected error that disappears leaves an
+unused ignore, which fails the check.
 
 The root `conftest.py` checks the full-collection node-ID baseline. After adding, removing, or
 renaming a test, regenerate it from the complete collection:
@@ -69,8 +69,8 @@ renaming a test, regenerate it from the complete collection:
   raw=$(mktemp)
   fresh=$(mktemp)
   trap 'rm -f "$raw" "$fresh"' EXIT
-  uv run pytest --collect-only -q >"$raw" 2>&1 || true
-  grep -E '^(tests|plugins|typing_playground)/[^:]+\.py::' "$raw" | LC_ALL=C sort >"$fresh"
+  uv run pytest --collect-only -q >"$raw" 2>/dev/null || true
+  grep -E '^(tests|plugins)/[^:]+\.py::' "$raw" | LC_ALL=C sort >"$fresh"
   test -s "$fresh"
   mv "$fresh" tests/baseline/pytest_nodeids.txt
 )
@@ -78,9 +78,10 @@ generation_status=$?
 [ "$generation_status" -eq 0 ] && uv run pytest --collect-only -q
 ```
 
-The first collection can exit nonzero because the existing baseline is stale or missing. The `grep`
-keeps only pytest node IDs, including parameter IDs with spaces, and `sort` makes the file
-deterministic. The final collection must pass.
+The first collection can exit nonzero because the existing baseline is stale or missing; its error
+goes to stderr, which is discarded so it cannot splice into the last node ID. The `grep` keeps only
+pytest node IDs, including parameter IDs with spaces, and `sort` makes the file deterministic. The
+final collection must pass.
 
 A test that needs a built solver carries a marker:
 

@@ -1,4 +1,4 @@
-"""Static acceptance tests: ``uv run ty check --error-on-warning typing_playground``.
+"""Static acceptance tests: the ``ty check`` command in ``internal/typing_playground/README.md``.
 
 Every ``ty: ignore`` marks an expected error; an unused one fails the check. pytest collects
 nothing from this file: the block below never runs.

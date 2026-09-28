@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import runpy
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -50,7 +51,7 @@ def masses() -> sc.Problem:
 
 
 @pytest.fixture(scope="module")
-def generated_piqp() -> dict:
+def generated_piqp() -> Iterator[dict]:
   sys.path.insert(0, str(HERE))
   try:
     yield runpy.run_path(str(HERE / "generated_piqp.py"))

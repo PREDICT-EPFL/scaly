@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import runpy
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -21,7 +22,7 @@ HERE = Path(__file__).resolve().parents[2] / "examples" / "qp_solvers"
 
 
 @pytest.fixture(scope="module")
-def example() -> dict:
+def example() -> Iterator[dict]:
   sys.path.insert(0, str(HERE))
   try:
     yield {"problems": runpy.run_path(str(HERE / "problems.py")), "generated_piqp": runpy.run_path(str(HERE / "generated_piqp.py"))}

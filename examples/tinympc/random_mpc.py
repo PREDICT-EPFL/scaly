@@ -28,7 +28,7 @@ def main(nx: int = 10, nu: int = 4, n: int = 10, steps: int | None = None, check
   episode = closed_loop(s, Solver(s.problem, s.bounds), steps)
   check = closed_loop(s, ReferenceSolver(s.problem, s.bounds), min(check_steps, len(episode.x0)))
   k = len(check.x0)
-  xbar = np.array([s.references(i, None)[0][0] for i in range(len(episode.x0))])
+  xbar = np.array([s.references(i, episode.x0[i])[0][0] for i in range(len(episode.x0))])
   return {
     "scenario": s,
     "episode": episode,

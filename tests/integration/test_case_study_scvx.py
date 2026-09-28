@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import runpy
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -88,7 +89,7 @@ def test_variational_sensitivities_equal_ad_through_the_steps() -> None:
 
 
 @pytest.fixture(scope="module")
-def generated_piqp() -> dict:
+def generated_piqp() -> Iterator[dict]:
   sys.path.insert(0, str(QP_SOLVERS))
   try:
     yield runpy.run_path(str(QP_SOLVERS / "generated_piqp.py"))

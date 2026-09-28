@@ -25,6 +25,7 @@ from dataclasses import dataclass
 import numpy as np
 
 import scaly as sc
+from scaly.ir.types import Lowering
 
 from problem import STATE_FIELDS, Cache, Cone, Problem, cache, zero_state
 
@@ -109,7 +110,7 @@ def _project_cones(w: sc.Expr, rows: int, width: int, cones: tuple[Cone, ...]) -
   return sc.stack(cols).T.reshape((rows * width,)) if len(cols) > 1 else cols[0]
 
 
-def _backward_step(p: Problem, c: Cache, lowering: str) -> sc.Function:
+def _backward_step(p: Problem, c: Cache, lowering: Lowering) -> sc.Function:
   """``d_i = Quu^-1 (B' p_{i+1} + r_i + BPf)``, ``p_i = q_i + (A - BK)' p_{i+1} - K' r_i + APf``."""
   pn, r, q = sc.sym("p", p.nx), sc.sym("r", p.nu), sc.sym("q", p.nx)
   d = sc.const(c.Quu_inv) @ (sc.const(p.B.T) @ pn + r + sc.const(c.BPf))
@@ -118,7 +119,7 @@ def _backward_step(p: Problem, c: Cache, lowering: str) -> sc.Function:
   return sc.Function._from_exprs("tiny_backward_step", [pn, r, q], outs, ["p", "r", "q"], ["p_prev", "d"])
 
 
-def _forward_step(p: Problem, c: Cache, lowering: str) -> sc.Function:
+def _forward_step(p: Problem, c: Cache, lowering: Lowering) -> sc.Function:
   """``u_i = -K x_i - d_i``, ``x_{i+1} = A x_i + B u_i + f``."""
   x, d = sc.sym("x", p.nx), sc.sym("d", p.nu)
   u = -(sc.const(c.Kinf) @ x) - d
@@ -129,7 +130,7 @@ def _forward_step(p: Problem, c: Cache, lowering: str) -> sc.Function:
   return sc.Function._from_exprs("tiny_forward_step", [x, d], outs, ["x", "d"], ["x_next", "u", "x_out"])
 
 
-def _iteration(p: Problem, c: Cache, lay: Layout, lowering: str, fixed_bounds=None) -> tuple[sc.Function, sc.Function]:
+def _iteration(p: Problem, c: Cache, lay: Layout, lowering: Lowering, fixed_bounds=None) -> tuple[sc.Function, sc.Function]:
   """One ADMM iteration of the library's ``solve`` (``update_linear_cost``, ``backward_pass_grad``,
   ``forward_pass``, ``update_slack``, ``update_dual``, ``termination_condition``) and the loop test."""
   n, nx, nu, rho, st = p.N, p.nx, p.nu, p.rho, p.settings
@@ -185,7 +186,7 @@ def _iteration(p: Problem, c: Cache, lay: Layout, lowering: str, fixed_bounds=No
   return body, cond
 
 
-def build_solver(p: Problem, c: Cache | None = None, name: str = "tinympc_solve", lowering: str = "auto", fixed_bounds=None) -> sc.Function:
+def build_solver(p: Problem, c: Cache | None = None, name: str = "tinympc_solve", lowering: Lowering = "auto", fixed_bounds=None) -> sc.Function:
   """The generated ``tiny_solve`` for ``p``; ``c`` overrides the cache (e.g. the library's own).
 
   ``fixed_bounds`` (a ``problem.Bounds``) makes the bounds constants of the generated code instead
@@ -257,7 +258,7 @@ class Solver:
   """The generated solver called from Python (compiled on first call), keeping its warm-start
   state between calls as the library keeps its workspace."""
 
-  def __init__(self, p: Problem, bounds, c: Cache | None = None, lowering: str = "auto", fixed_bounds: bool = False) -> None:
+  def __init__(self, p: Problem, bounds, c: Cache | None = None, lowering: Lowering = "auto", fixed_bounds: bool = False) -> None:
     self.problem = p
     self.function = build_solver(p, c, lowering=lowering, fixed_bounds=bounds if fixed_bounds else None)
     self.state = pack_state(p, zero_state(p))

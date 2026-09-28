@@ -71,6 +71,7 @@ a rough guide: **S** is a first read, **L** a complete application.
 
 | Example | Size | Problem | What it shows |
 | --- | --- | --- | --- |
+| `tiny_qp.py` | S | A two-variable parametric QP with a closed-form solution, *solver* | the smallest `sc.problem` for PIQP: one variable leaf, a scalar parameter, box bounds and one equality; the whole generated C (oracle and PIQP wrapper) short enough to read |
 | `cbf_safety_filter.py` | M | A control-barrier-function filter keeping a unicycle clear of three obstacles, *solver* | a QP whose constraint data are Lie derivatives from `jacobian`, proven quadratic for PIQP; the solver *nested* in a controller `Function`, so the nominal law, the oracles and PIQP compile to one library |
 | `portfolio_qp.py` | S/M | A Markowitz efficient frontier with a factor risk model, *solver* | a sparse QP (`options={"sparse": True}`) with matrix parameters, a parameter sweep over one generated solver, `qp_problem` for the dense formulation |
 | `nmpc_cartpole.py` | L | Nonlinear MPC swinging up a cart-pole on a bounded track, in closed loop, *solver* | multiple shooting with `vmap`ped RK4 defects, a variable tree with per-leaf bounds and slacks, `bounded` groups, warm starts, `solver_stats()` |

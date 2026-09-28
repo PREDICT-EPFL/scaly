@@ -56,6 +56,7 @@ from solver import Solver, build_solver
 
 from scaly.codegen import render_c_module
 from scaly.codegen.jit import HOST_CFLAGS
+from scaly.ir.types import Lowering
 
 TINYMPC_URL = "https://github.com/TinyMPC/TinyMPC.git"
 TINYMPC_COMMIT = "023f36bd5b27267e1a96ed47a774d120b5707f13"  # main, 2026-09-02
@@ -185,7 +186,7 @@ def read_results(path: Path) -> dict:
 # --- one instance ----------------------------------------------------------------------------------
 
 
-def run_instance(family: str, s: Scenario, lib: dict, opt: str, cc: str, reps: int, lowering: str = "auto", fixed_bounds: bool = False) -> dict:
+def run_instance(family: str, s: Scenario, lib: dict, opt: str, cc: str, reps: int, lowering: Lowering = "auto", fixed_bounds: bool = False) -> dict:
   variant = lowering + ("-fixed-bounds" if fixed_bounds else "")
   out = BUILD / f"{family}{opt}-{variant}" / s.name
   out.mkdir(parents=True, exist_ok=True)

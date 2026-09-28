@@ -8,6 +8,7 @@ import pytest
 import scaly as sc
 from scaly.ad import finite_difference
 from scaly.ad.sparse import Triangle
+from scaly.ir.expr import topo
 
 
 def _mapped_sphess_fixture(length: int, *, shared: bool = False) -> tuple[sc.Function, sc.Function]:
@@ -802,7 +803,7 @@ def test_a_map_over_runs_of_one_variable_is_differentiated_in_one_structured_pas
   xs, us, zs = w[: (length + 1) * n], w[(length + 1) * n : (length + 1) * n + length], w[(length + 1) * n + length :]
   mapped = sc.vmap(stage, length, [(xs, 0, n), (us, 0, 1), (zs, 0, 3), (xs, n, n)])
   jac = sc.sparse_jacobian(mapped, w)
-  maps = [e for e in sc.ir.expr.topo([jac.values]) if e.op == sc.ExprOp.VMAP]
+  maps = [e for e in topo([jac.values]) if e.op == sc.ExprOp.VMAP]
   assert len(maps) == 1  # one derivative map for every formal, not one per formal, and no global coloring
   assert jac.coloring_width == 1 + 1 + 3 + 1  # local colors side by side: x, u and xnext one each, z three (the last row reads all of it)
   fn = sc.Function._from_exprs("runs_jac", [w], [jac.values, sc.jacobian(mapped, w)], ["w"], ["v", "dense"])

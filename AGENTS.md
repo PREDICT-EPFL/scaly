@@ -28,8 +28,7 @@ protocol, the reference machine and the evidence behind each rule. Put rationale
 
 ## Commands
 
-- `uv run pytest -n=auto` — the suite; it collects `tests/`, `plugins/` and the interface sketches in
-  `typing_playground/`
+- `uv run pytest -n=auto` — the suite; it collects `tests/` and `plugins/`
 - `uv run ruff format` · `uv run ruff check` · `uv run ty check` — always through `uv run`. A bare
   `ruff` or `ty` is likely a globally installed one at a different version, which will format the
   tree or report types differently from the pinned tools CI uses.

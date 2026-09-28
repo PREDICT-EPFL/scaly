@@ -1,0 +1,553 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Scaly core split</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,650&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#F3F6F4; --surface:#FFFFFF; --ink:#15201B; --muted:#55645D; --rule:#D3DCD7;
+  --accent:#1B6A56; --accent-soft:#DFEDE7;
+  --found:#3F6851; --found-soft:#E3EEE7;
+  --dom:#4A5C8A; --dom-soft:#E4E8F3;
+  --ctl:#94600F; --ctl-soft:#F5EBD9;
+  --tool:#6A5A7E; --tool-soft:#ECE7F2;
+  --bad:#A4372B; --bad-soft:#F6E2DF;
+  --display:"Bricolage Grotesque","Avenir Next","Segoe UI",system-ui,sans-serif;
+  --body:"Source Sans 3","Segoe UI",system-ui,-apple-system,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0F1512; --surface:#151D19; --ink:#E1E9E4; --muted:#98A8A0; --rule:#28342E;
+    --accent:#5EBF9E; --accent-soft:#1A2E27;
+    --found:#8CC7A5; --found-soft:#1B2A22;
+    --dom:#9DB0E0; --dom-soft:#1E2436;
+    --ctl:#D8A34A; --ctl-soft:#2C2416;
+    --tool:#C0AEDB; --tool-soft:#26202F;
+    --bad:#E68A7E; --bad-soft:#35201D;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0F1512; --surface:#151D19; --ink:#E1E9E4; --muted:#98A8A0; --rule:#28342E;
+  --accent:#5EBF9E; --accent-soft:#1A2E27;
+  --found:#8CC7A5; --found-soft:#1B2A22;
+  --dom:#9DB0E0; --dom-soft:#1E2436;
+  --ctl:#D8A34A; --ctl-soft:#2C2416;
+  --tool:#C0AEDB; --tool-soft:#26202F;
+  --bad:#E68A7E; --bad-soft:#35201D;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:400 16px/1.55 var(--body);padding-inline:16px;padding-block:0 72px}
+.wrap{max-width:1080px;margin:0 auto}
+h1,h2,h3,h4{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(2rem,5vw,3rem);font-weight:650;letter-spacing:-.02em}
+h2{font-size:1.6rem;font-weight:650;letter-spacing:-.01em}
+h3{font-size:1.1rem;font-weight:650}
+h4{font-size:1rem;font-weight:650}
+p{margin:0;max-width:72ch}
+code{font-family:var(--mono);font-size:.84em;background:var(--accent-soft);padding:.05em .3em;border-radius:3px;overflow-wrap:anywhere}
+pre{font:400 .82rem/1.5 var(--mono);background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;overflow-x:auto;margin:0}
+pre code{background:none;padding:0;font-size:1em}
+a{color:var(--accent)}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.eyebrow{font:500 .72rem/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header.top{padding-block:48px 28px;display:grid;gap:14px;border-bottom:1px solid var(--rule)}
+header.top .lede{color:var(--muted);font-size:1.1rem}
+.meta{display:flex;flex-wrap:wrap;gap:6px 18px;font:400 .8rem/1.4 var(--mono);color:var(--muted)}
+.meta b{color:var(--ink);font-weight:500}
+nav.toc{display:flex;flex-wrap:wrap;gap:6px 14px;font:500 .82rem/1.3 var(--body);padding-block:14px;border-bottom:1px solid var(--rule)}
+nav.toc a{text-decoration:none}
+section{padding-block:40px 8px;display:grid;gap:16px}
+.stack{display:grid;gap:12px}
+ul.tight{margin:0;padding-left:1.15em;display:grid;gap:7px;max-width:76ch}
+ul.tight li::marker{color:var(--accent)}
+ol.tight{margin:0;padding-left:1.4em;display:grid;gap:7px;max-width:76ch}
+.tbl{overflow-x:auto;border:1px solid var(--rule);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{text-align:left;vertical-align:top;padding:8px 12px;border-bottom:1px solid var(--rule)}
+th{font:600 .74rem/1.3 var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:var(--bg);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+td.nw{white-space:nowrap}
+.pill{display:inline-block;font:500 .72rem/1.5 var(--mono);padding:0 .5em;border-radius:999px;white-space:nowrap}
+.p-core{background:var(--accent-soft);color:var(--accent)}
+.p-found{background:var(--found-soft);color:var(--found)}
+.p-dom{background:var(--dom-soft);color:var(--dom)}
+.p-ctl{background:var(--ctl-soft);color:var(--ctl)}
+.p-tool{background:var(--tool-soft);color:var(--tool)}
+.p-bad{background:var(--bad-soft);color:var(--bad)}
+.callout{border-left:3px solid var(--accent);background:var(--surface);padding:14px 18px;border-radius:0 6px 6px 0;display:grid;gap:8px}
+.callout.warn{border-left-color:var(--ctl)}
+/* op grid */
+.ops{display:grid;gap:10px}
+.oprow{display:grid;grid-template-columns:9.5rem minmax(0,1fr);gap:12px;align-items:start}
+.oprow .lbl{font:500 .78rem/1.8 var(--mono);color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.op{font:500 .74rem/1 var(--mono);padding:5px 7px;border-radius:4px;border:1px solid var(--rule);background:var(--surface)}
+.op.k{}
+.op.a{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+.op.m{background:var(--dom-soft);border-color:transparent;color:var(--dom)}
+.op.g{background:var(--ctl-soft);border-color:transparent;color:var(--ctl)}
+.op.x{background:var(--bad-soft);border-color:transparent;color:var(--bad)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:.84rem;color:var(--muted);align-items:center}
+.legend .op{font-size:.7rem}
+@media (max-width:640px){.oprow{grid-template-columns:1fr;gap:4px}}
+/* tiers */
+.tiers{display:grid;gap:8px}
+.tier{display:grid;grid-template-columns:8.5rem minmax(0,1fr);gap:12px;align-items:center;background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:10px 14px}
+.tier .tn{font:500 .74rem/1.3 var(--mono);color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.tier .pk{display:flex;flex-wrap:wrap;gap:6px}
+.tier a.pkg{font:500 .8rem/1 var(--mono);padding:6px 9px;border-radius:4px;text-decoration:none}
+@media (max-width:640px){.tier{grid-template-columns:1fr}}
+/* package cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,470px),1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:16px 18px;display:grid;gap:10px;align-content:start}
+.card h3{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.card h3 code{font-size:.95rem;background:none;padding:0;color:var(--ink)}
+.card .row{display:grid;grid-template-columns:5.6rem minmax(0,1fr);gap:8px;font-size:.9rem}
+.card .row .k{font:500 .72rem/1.9 var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.card p{font-size:.93rem}
+.deps{display:flex;flex-wrap:wrap;gap:4px}
+.deps span{font:500 .72rem/1.6 var(--mono);padding:0 .45em;border-radius:3px;background:var(--bg);border:1px solid var(--rule)}
+.phase{display:grid;grid-template-columns:3rem minmax(0,1fr);gap:14px;background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 18px}
+.phase .n{font:650 1.6rem/1 var(--display);color:var(--accent)}
+.phase .body{display:grid;gap:8px}
+.phase .gate{font-size:.88rem;color:var(--muted)}
+.phase .gate b{color:var(--ink);font-weight:600}
+.small{font-size:.88rem;color:var(--muted)}
+footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--rule);display:grid;gap:8px}
+</style>
+</head><body>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">Scaly · architecture review · branch <code>devrush</code> against <code>main</code></div>
+  <h1>A minimal core, and the packages around it</h1>
+  <p class="lede">What each addition beyond <code>main</code> is, which of it belongs in the compiler and which does not, the couplings to cut, the extension interface the core needs, and a long-term set of packages (including the library code that grew inside the examples).</p>
+  <div class="meta">
+    <span><b>189</b> commits beyond main</span>
+    <span><b>920</b> files changed</span>
+    <span>src: <b>10.3k → 27.4k</b> lines</span>
+    <span>ExprOps: <b>38 → 69</b></span>
+    <span>28 Sep 2026</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <a href="#summary">Summary</a>
+  <a href="#inventory">Inventory</a>
+  <a href="#core">The core</a>
+  <a href="#ops">Op set</a>
+  <a href="#cuts">Couplings to cut</a>
+  <a href="#ext">Extension API</a>
+  <a href="#packages">Packages</a>
+  <a href="#promote">From the examples</a>
+  <a href="#packaging">Packaging</a>
+  <a href="#plan">Migration</a>
+  <a href="#decisions">Decisions</a>
+</nav>
+
+<section id="summary">
+  <div class="eyebrow">Summary</div>
+  <h2>Where things stand</h2>
+  <ul class="tight">
+    <li><b>The compiler grew for good reasons, and it also absorbed domain code.</b> The general additions (<code>scan</code>/<code>while</code> with multi-seed AD, function templates and pytrees, predicates/<code>select</code>/<code>cast</code>, run-time indexing, the split program-pass pipeline) belong in the core. About 1.4k lines of linear-algebra support (8 ExprOps, their verify, AD, sparsity and lowering rules) do not. They sit in six core files so that <code>linalg</code>, <code>solvers/ipm</code> and one integrator can use them.</li>
+    <li><b>The core already depends on the solvers, inverted.</b> This was true on <code>main</code> too. <code>passes/lowering</code>, <code>codegen/aot</code>, <code>codegen/jit</code> and <code>codegen/toolchain</code> import <code>scaly.solvers.*</code> and read QP/NLP descriptor fields by name. <code>codegen/c.py</code> imports the CasADi adapter.</li>
+    <li><b>Nothing below lowering needs domain knowledge.</b> Every domain op lowers to generic program ops, so the program dialect, the pass pipeline and the C renderer are already clean. The blocker to moving ops out is on the expression side: <code>ExprOp</code> is a closed <code>StrEnum</code>, and AD, sparsity and constant folding are if-chains. Only the <code>@lowers</code> registry is open.</li>
+    <li><b>The IPM is not wired into <code>sc.solver</code>.</b> The only bridge is <code>examples/qp_solvers/generated_piqp.py</code>, which imports six private helpers from <code>solvers/qp.py</code> and <code>solvers/nlp.py</code>. Two case studies and two integration tests reach it through <code>sys.path</code>.</li>
+    <li><b>The examples hold about 2.5k lines of real library code.</b> This includes a generated TinyMPC ADMM solver, an AL-iLQR (ALTRO) solver, the SCvx/PTR loop, a differentiable-MPC implicit rule, Fatrop and acados drop-ins, quaternion algebra, MLP builders (four copies across examples, benchmarks and tests), and more than 20 hand-written RK4 copies.</li>
+  </ul>
+  <div class="callout">
+    <h4>Recommendation</h4>
+    <p>Keep a core of about 15k lines: <code>ir</code>, <code>function</code>, <code>ad</code>, <code>passes</code>, <code>codegen</code> (C only), plus a new public extension module <code>scaly.ext</code>. Move everything else into 17 new workspace distributions (beside the three vendored solver plugins) arranged in six tiers, all depending on the core through <code>scaly.ext</code> and on each other only along a declared, acyclic graph. The order of work is: invert the solver edges first, open the op vocabulary second, move <code>linalg</code> third, then split the rest in dependency order.</p>
+  </div>
+</section>
+
+<section id="inventory">
+  <div class="eyebrow">1 · Inventory of additions beyond main</div>
+  <h2>Every area, with a verdict</h2>
+  <p class="small">Line counts are Python source on each branch. The package was renamed <code>alloy → scaly</code>, and <code>plugins/alloy-*</code> became <code>plugins/scaly-*</code>. Verdict key: <span class="pill p-core">core</span> stays in the compiler, <span class="pill p-found">split</span> the file stays but domain parts leave, <span class="pill p-dom">move</span> leaves the core, <span class="pill p-bad">fix</span> a coupling or hazard to remove.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Area</th><th>main → devrush</th><th>What was added</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td class="nw"><code>ir/expr.py</code></td><td class="num">794 → 1590</td><td>31 new ExprOps: predicates, <code>select</code>, <code>cast</code>, <code>copysign</code>, <code>max</code>/<code>min</code> reductions, <code>segment_max/min</code>, <code>index_add/set</code>, <code>take</code>/<code>put</code>/<code>put_add</code>, <code>ragged_add/dot</code>, <code>cholesky</code>/<code>ldl</code>/<code>lu</code>/<code>trisolve</code>, <code>sparse_ldl(_solve)</code>, <code>scan</code>, <code>while</code>; <code>map</code> renamed <code>vmap</code>. Around 110 lines validate sparse-LDL tables built by <code>linalg.symbolic</code>.</td><td><span class="pill p-found">split</span></td></tr>
+      <tr><td class="nw"><code>ir/expr_spec.py</code>, <code>program*.py</code>, <code>text.py</code>, <code>match.py</code></td><td class="num">1462 → 1987</td><td>A verify rule per op; scalar predicate ProgramOps, <code>BREAK_IF</code>, <code>STORE_PAIR</code>, <code>for_(exit_var)</code>; a <code>rewrite</code> driver.</td><td><span class="pill p-found">split</span></td></tr>
+      <tr><td class="nw"><code>ad/forward.py</code></td><td class="num">559 → 1625</td><td>About 900 lines of loop and multi-seed forward mode (core), 175 lines of factorization, ragged and sparse-LDL rules (domain), 70 lines of nonsmooth tie conventions (core policy). Imports <code>sparse_ldl_solve</code>.</td><td><span class="pill p-found">split</span></td></tr>
+      <tr><td class="nw"><code>ad/reverse.py</code>, <code>sparsity.py</code>, <code>sparse.py</code></td><td class="num">782 → 1644</td><td>Scan/while adjoints and <code>max_trajectory</code>; star coloring; VMAP-structured sparse Jacobians; factor cotangents; a special case for <code>SPARSE_LDL_SOLVE</code> in the main VJP loop.</td><td><span class="pill p-found">split</span></td></tr>
+      <tr><td class="nw"><code>function/*</code></td><td class="num">628 → 2291</td><td>Function templates (holes, one traced instance per signature) and <code>ConcreteFunction</code>; typed pytrees <code>Tree</code>, <code>L</code>, <code>G</code>; <code>vmap</code>, <code>scan</code>, <code>while_loop</code>, <code>custom_derivative</code>; typed decorator overloads.</td><td><span class="pill p-core">core</span></td></tr>
+      <tr><td class="nw"><code>passes/lowering.py</code></td><td class="num">717 → 2329</td><td>About 1,300 lines of generic lowering (control flow, indexing, <code>LowerCtx</code>), about 690 lines of dense/sparse factorization and ragged rules, about 440 lines of in-place carry proof (generic in form, ragged-aware in detail). Deferred imports of <code>solvers.graph</code> and <code>solvers.model</code>.</td><td><span class="pill p-found">split</span></td></tr>
+      <tr><td class="nw"><code>passes/program/*</code>, <code>affine</code>, <code>arith</code></td><td class="num">695 → 2139</td><td>The single <code>program.py</code> split into 11 passes with an explicit pipeline (<code>main</code> had <code>register_pass</code>). None is domain specific. <code>prune_procedures</code> and <code>pack_workspace</code> read solver attributes.</td><td><span class="pill p-core">core</span> <span class="pill p-bad">fix</span></td></tr>
+      <tr><td class="nw"><code>codegen/abi, c, aot, jit, toolchain</code></td><td class="num">1214 → 1521</td><td>Predicate/select/cast and <code>BREAK_IF</code> rendering, <code>double2</code> store pairs, native-arch flags, compiler identity in the cache key. <code>c.py</code> imports <code>casadi</code>. <code>aot.py</code> imports cpp, casadi, solver and three <code>solvers.*</code> modules at top level.</td><td><span class="pill p-core">core</span> <span class="pill p-bad">fix</span></td></tr>
+      <tr><td class="nw"><code>codegen/cpp.py</code>, <code>casadi.py</code></td><td class="num">new, 334</td><td>C++ <code>Buffer</code> header; CasADi 3.8 external-function layer. Selected by closed <code>lang</code>/<code>casadi</code> flags.</td><td><span class="pill p-dom">move</span></td></tr>
+      <tr><td class="nw"><code>codegen/solver.py</code></td><td class="num">122 → 122</td><td>Solver-wrapper framing for vendored plugins (on <code>main</code> already).</td><td><span class="pill p-dom">move</span></td></tr>
+      <tr><td class="nw"><code>solvers/*</code> front end</td><td class="num">1435 → 1628</td><td>Backend-free <code>sc.problem</code> (<code>ProblemSpec</code>, <code>Bounded</code>); QP proof and extraction from a graph; <code>sc.solver(problem, backend)</code>; protocol v4 → v7.</td><td><span class="pill p-dom">move</span></td></tr>
+      <tr><td class="nw"><code>solvers/ipm/*</code></td><td class="num">new, 1667</td><td>PIQP 0.6.2 as scaly expressions: Ruiz as a <code>while_loop</code>, dense and sparse KKT with retries and refinement, the iteration. Not reachable from <code>sc.solver</code>.</td><td><span class="pill p-dom">move</span></td></tr>
+      <tr><td class="nw"><code>linalg/*</code></td><td class="num">new, 1787</td><td><code>SparseMatrix</code>/<code>S</code>, orderings and elimination tree, <code>SparseLDL</code> with four schedules, dense solves with IFT derivatives.</td><td><span class="pill p-dom">move</span></td></tr>
+      <tr><td class="nw"><code>interp/*</code></td><td class="num">new, 2165</td><td>Axes and searches, <code>BSpline</code> with calculus and inverse, interpolant/smoothing fits (own Thomas sweeps), shape-constrained least squares through PIQP.</td><td><span class="pill p-dom">move</span></td></tr>
+      <tr><td class="nw"><code>integrators/*</code></td><td class="num">new, 1369</td><td>Tableaus and order conditions, collocation nodes, explicit/adaptive/symplectic, implicit with its own Newton and <code>LU</code>, ZOH/FOH, transcriptions (used only by <code>mpc.ocp</code>).</td><td><span class="pill p-dom">move</span></td></tr>
+      <tr><td class="nw"><code>mpc/*</code></td><td class="num">new, 974</td><td><code>OCP</code>, condensed and sparse forms, <code>MPC</code>/<code>ClosedLoop</code>, polytopes, LQR and invariant sets.</td><td><span class="pill p-dom">move</span></td></tr>
+      <tr><td class="nw"><code>utils/options.py</code>, <code>names.py</code></td><td class="num">new, 116</td><td>An options context mixing AD policy (<code>nonsmooth</code>, <code>max_trajectory</code>) with linalg knobs (<code>dense_unroll</code>, <code>sparse_unroll</code>). <code>options_tag()</code> hashes all of them into every derivative-helper name.</td><td><span class="pill p-found">split</span></td></tr>
+      <tr><td class="nw"><code>viz/*</code>, <code>utils/torch_state_dict.py</code></td><td class="num">873 → 886</td><td>Unchanged in substance. <code>viz</code> is already decoupled through an observer hook.</td><td><span class="pill p-dom">move</span></td></tr>
+      <tr><td class="nw"><code>plugins/scaly-*</code></td><td class="num">≈ +1.8k</td><td>Protocol v7; IEEE-infinity bound mapping; the SQP plugin's emitter became a Jinja template over PIQP's C API.</td><td>already separate</td></tr>
+      <tr><td class="nw"><code>examples/</code></td><td class="num">new, 254 files</td><td>26 gallery scripts, 17 CasADi pairs, notebooks for integrators, interpolation and MPC, QP solver comparison, TinyMPC, eight case studies. About 15k lines of Python and 152k lines of results JSON.</td><td>see <a href="#promote">§6</a></td></tr>
+      <tr><td class="nw"><code>benchmarks/</code></td><td class="num">≈ +4.8k</td><td>Harness (timing, gbench, CasADi+IPOPT, Foxglove recorder, sweeps) and four problems. Reaches into <code>codegen.jit._load_library</code> and IR internals.</td><td><span class="pill p-dom">move</span></td></tr>
+      <tr><td class="nw"><code>tests/</code></td><td class="num">≈ +34k</td><td>Mirrors <code>src</code>; 3,629-line node-ID baseline; C snapshots; 48 Maros–Meszaros problems; 29 integration files, many adding <code>examples/</code> to <code>sys.path</code>.</td><td>split per package</td></tr>
+      <tr><td class="nw"><code>internal/</code>, <code>typing_playground/</code></td><td class="num">+571k, +1.7k</td><td>176 tracked notes and reports; interface sketches collected by pytest.</td><td><span class="pill p-bad">fix</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="core">
+  <div class="eyebrow">2 · The core</div>
+  <h2>What the compiler must own, and nothing more</h2>
+  <p>The test for membership is: can a user write a differentiable numerical algorithm over tensors, with loops, and get C out of it, without the item? If a feature is required for that, or is required by every domain package, it is core. If it can be expressed through the extension interface without loss, it is not.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Module</th><th>Owns</th><th>Change from today</th></tr></thead>
+    <tbody>
+      <tr><td class="nw"><code>scaly.ir</code></td><td>Both dialects, verification, text, pattern rewriting, and the op registry (new)</td><td>Linear-algebra ops, their verify rules and the sparse-LDL table schema leave. <code>SOLVER_CALL</code> becomes <code>EXTERN_CALL</code>.</td></tr>
+      <tr><td class="nw"><code>scaly.function</code></td><td><code>Function</code>/<code>ConcreteFunction</code>, templates and holes, pytrees with the <code>SymbolicValue</code> leaf hook, <code>vmap</code>/<code>scan</code>/<code>while_loop</code>/<code>custom_derivative</code>, the decorator and derivative requests</td><td>The <code>descriptor</code> special case in <code>custom_derivative</code> and <code>solver_stats</code> leave. The <code>S</code> leaf moves to <code>scaly_linalg</code>.</td></tr>
+      <tr><td class="nw"><code>scaly.ad</code></td><td>JVP/VJP (single and multi-seed, through loops), jacobian/gradient/hessian, structural sparsity, coloring, sparse Jacobian/Hessian</td><td>Rules become table entries per op. Factor, ragged and sparse-LDL rules leave. An <code>EXTERN_CALL</code> on a seeded path raises instead of returning zero.</td></tr>
+      <tr><td class="nw"><code>scaly.passes</code></td><td>Expression rewrites, arithmetic identities, lowering driver and generic rules, in-place carry proof, program pipeline</td><td>Domain lowering rules leave. The in-place proof reads op traits instead of <code>_UPDATE_OPS</code>/<code>_Ragged</code>. Named pipeline slots replace the closed tuple.</td></tr>
+      <tr><td class="nw"><code>scaly.codegen</code></td><td>ABI, C renderer, AOT driver, JIT load/dispatch, toolchain discovery</td><td>C++ and CasADi adapters, solver framing, solver stats and solver library paths leave. The render goes through adapter and extern-callee hooks.</td></tr>
+      <tr><td class="nw"><code>scaly.utils</code></td><td><code>env</code>, <code>names</code>, the options context (AD policy only)</td><td>Options gain namespaces. <code>torch_state_dict</code> moves to <code>scaly_nn</code>.</td></tr>
+      <tr><td class="nw"><code>scaly.ext</code> (new)</td><td>The stable interface for library authors (see <a href="#ext">§4</a>)</td><td>Collects what libraries reach for privately today: <code>ConcreteFunction._from_exprs</code> (about 40 uses across <code>linalg</code>, <code>interp</code>, <code>integrators</code>, <code>mpc</code> and <code>solvers</code>), <code>Function._lift</code>, <code>_tokens</code>, <code>symbolic_call</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Size (Python lines)</th><th class="num">Lines</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Compiler on <code>main</code> (excluding <code>solvers</code>, <code>viz</code>, torch loader)</td><td class="num">≈ 8.0k</td><td></td></tr>
+      <tr><td>The same directories on <code>devrush</code></td><td class="num">16.8k</td><td><code>ir</code>, <code>ad</code>, <code>function</code>, <code>passes</code>, <code>codegen</code>, <code>utils</code></td></tr>
+      <tr><td>Leaving: linear-algebra ops across six files</td><td class="num">− 1.4k</td><td>to <code>scaly-linalg</code></td></tr>
+      <tr><td>Leaving: C++/CasADi adapters and their hooks</td><td class="num">− 0.4k</td><td>to <code>scaly-export</code></td></tr>
+      <tr><td>Leaving: solver framing, stats, paths in codegen/lowering</td><td class="num">− 0.3k</td><td>to <code>scaly-opt</code></td></tr>
+      <tr><td>Leaving: torch loader</td><td class="num">− 0.1k</td><td>to <code>scaly-nn</code></td></tr>
+      <tr><td>Arriving: op registry, <code>scaly.ext</code>, extern callee, adapter registry</td><td class="num">+ 0.5k</td><td>replaces if-chains and closed flags</td></tr>
+      <tr><td><b>Core after the split</b></td><td class="num"><b>≈ 15k</b></td><td>almost all growth over <code>main</code> is loops with AD, templates, the program pipeline and indexing</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="ops">
+  <div class="eyebrow">3 · Op set</div>
+  <h2>61 core ops (57 after consolidation), 8 moved to a registered extension</h2>
+  <div class="legend">
+    <span class="op k">on main, kept</span>
+    <span class="op a">added on devrush, core</span>
+    <span class="op g">merged into another op</span>
+    <span class="op x">replaced</span>
+    <span class="op m">moved to scaly-linalg</span>
+  </div>
+  <div class="ops">
+    <div class="oprow"><div class="lbl">leaves</div><div class="chips"><span class="op k">INPUT</span><span class="op k">CONST</span></div></div>
+    <div class="oprow"><div class="lbl">elementwise, unary</div><div class="chips"><span class="op k">NEG</span><span class="op k">SIN</span><span class="op k">COS</span><span class="op k">TAN</span><span class="op k">ASIN</span><span class="op k">ACOS</span><span class="op k">ATAN</span><span class="op k">SINH</span><span class="op k">COSH</span><span class="op k">TANH</span><span class="op k">ERF</span><span class="op k">EXP</span><span class="op k">LOG</span><span class="op k">SQRT</span><span class="op k">ABS</span><span class="op k">FLOOR</span><span class="op k">CEIL</span></div></div>
+    <div class="oprow"><div class="lbl">elementwise, binary</div><div class="chips"><span class="op k">ADD</span><span class="op k">SUB</span><span class="op k">MUL</span><span class="op k">DIV</span><span class="op k">POW</span><span class="op k">ATAN2</span><span class="op k">MINIMUM</span><span class="op k">MAXIMUM</span><span class="op a">COPYSIGN</span></div></div>
+    <div class="oprow"><div class="lbl">predicates, select</div><div class="chips"><span class="op a">LT</span><span class="op a">LE</span><span class="op a">EQ</span><span class="op a">NE</span><span class="op a">AND</span><span class="op a">OR</span><span class="op a">NOT</span><span class="op a">ISFINITE</span><span class="op a">SELECT</span><span class="op a">CAST</span></div></div>
+    <div class="oprow"><div class="lbl">reductions</div><div class="chips"><span class="op k">SUM</span><span class="op a">MAX</span><span class="op a">MIN</span></div></div>
+    <div class="oprow"><div class="lbl">layout</div><div class="chips"><span class="op k">RESHAPE</span><span class="op k">TRANSPOSE</span><span class="op k">SLICE</span><span class="op k">STACK</span><span class="op k">CONCAT</span><span class="op k">MATMUL</span></div></div>
+    <div class="oprow"><div class="lbl">indexing</div><div class="chips"><span class="op k">GATHER</span><span class="op k">SCATTER → SEGMENT_REDUCE{add,max,min}</span><span class="op a">TAKE</span><span class="op a">PUT</span><span class="op a">PUT_ADD</span><span class="op g">SEGMENT_MAX</span><span class="op g">SEGMENT_MIN</span><span class="op g">INDEX_ADD → PUT_ADD</span><span class="op g">INDEX_SET → PUT</span></div></div>
+    <div class="oprow"><div class="lbl">structure</div><div class="chips"><span class="op k">CALL</span><span class="op k">VMAP (was MAP)</span><span class="op a">SCAN</span><span class="op a">WHILE</span><span class="op x">SOLVER_CALL → EXTERN_CALL</span></div></div>
+    <div class="oprow"><div class="lbl">scaly-linalg</div><div class="chips"><span class="op m">CHOLESKY</span><span class="op m">LDL</span><span class="op m">LU</span><span class="op m">TRISOLVE</span><span class="op m">SPARSE_LDL</span><span class="op m">SPARSE_LDL_SOLVE</span><span class="op m">RAGGED_ADD</span><span class="op m">RAGGED_DOT</span></div></div>
+  </div>
+  <ul class="tight">
+    <li><b>Linear algebra leaves the core vocabulary.</b> These ops have one consumer family each: <code>LU</code> exists for <code>integrators.implicit</code>; <code>SEGMENT_MAX</code> for <code>solvers/ipm/ruiz.py</code>; <code>RAGGED_*</code> and <code>SPARSE_LDL*</code> for <code>SparseLDL</code>. The docstring of <code>SPARSE_LDL</code> states it equals <code>SparseLDL(schedule="scan")</code> bit for bit, so the fused ops are performance kernels of a composite that already exists. Registered as extension ops they keep their speed, and the core stops carrying the tables, the tiling constants and the AD refusal messages that name <code>linalg</code>.</li>
+    <li><b>The indexing family consolidates from 9 ops to 5.</b> Since Tier 1 fixed <code>scatter</code> to accumulate, <code>scatter</code> is <code>segment_sum</code>; one <code>SEGMENT_REDUCE</code> with a combiner covers sum, max and min. <code>index_add</code>/<code>index_set</code> are <code>put_add</code>/<code>put</code> with a constant index (<code>passes/affine.py</code> already recovers the structure), and no domain module calls them. This is a later, optional step; the C snapshots in <code>tests/baseline/c</code> are the oracle for it.</li>
+    <li><b>Program dialect:</b> keep everything, including the scalar predicates and <code>BREAK_IF</code>. <code>STORE_PAIR</code> stays as a C-backend peephole owned by <code>coalesce_stores</code>.</li>
+  </ul>
+</section>
+
+<section id="cuts">
+  <div class="eyebrow">4 · Couplings to cut</div>
+  <h2>Edges from the core into the rest</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Where</th><th>Edge</th><th>Replacement</th></tr></thead>
+    <tbody>
+      <tr><td class="nw"><code>passes/lowering.py:134–170, 1404</code></td><td>Imports <code>solvers.graph</code>, <code>solvers.model.ExternalOracle</code>; reads <code>desc.base/grad/jac/hess/bounds</code>; importing <code>solvers.graph</code> runs <code>solvers/__init__</code> and pulls the whole solver front end into lowering</td><td><code>ExternCallee.dependencies()</code> and <code>extern_sources()</code></td></tr>
+      <tr><td class="nw"><code>passes/program/_common.py</code>, <code>pack_workspace.py</code></td><td>Read <code>solver_oracles</code>, <code>solver_external_workspace</code></td><td>Generic <code>extern_deps</code>, <code>extern_workspace</code></td></tr>
+      <tr><td class="nw"><code>codegen/aot.py:25–41</code></td><td>Top-level imports of casadi, cpp, solver, <code>solvers.graph/paths/stats</code>; <code>lang</code>/<code>casadi</code> branches in four functions</td><td>Adapter registry; extern-callee render and build-requirement hooks</td></tr>
+      <tr><td class="nw"><code>codegen/c.py:23</code></td><td>Core renderer imports the CasADi adapter; <code>casadi=</code> threaded through entry rendering</td><td>Entry-prologue hook on the adapter</td></tr>
+      <tr><td class="nw"><code>codegen/jit.py:38–39</code></td><td><code>CSolverStats</code>, stats version, <code>CompiledFunction.solver_stats</code></td><td>Opaque per-callee state blob; <code>callee_state(name)</code></td></tr>
+      <tr><td class="nw"><code>codegen/toolchain.py:18</code></td><td>Diagnostics report imports <code>solvers.paths</code></td><td>Extensions contribute report sections</td></tr>
+      <tr><td class="nw"><code>ad/forward.py:36, 74, 269–276</code>; <code>reverse.py</code> VJP loop</td><td>Imports <code>sparse_ldl_solve</code>; messages naming <code>linalg.solve</code>/<code>SparseLDL</code>; special case for <code>SPARSE_LDL_SOLVE</code></td><td>Per-op rules registered by <code>scaly_linalg</code></td></tr>
+      <tr><td class="nw"><code>ad/forward.py:191</code>, <code>reverse.py:706</code>, <code>sparsity.py:245</code></td><td><code>SOLVER_CALL</code> derivative is silently zero and its sparsity silently empty</td><td>Raise; zero only by explicit opt-in; solver sensitivities via <code>custom_derivative</code> in <code>scaly-opt</code></td></tr>
+      <tr><td class="nw"><code>ir/expr.py:19</code>, <code>utils/options.py</code></td><td>The IR reads <code>dense_unroll</code>; <code>options_tag()</code> hashes linalg knobs into AD helper names</td><td>Option namespaces; AD tags hash only AD policy</td></tr>
+      <tr><td class="nw"><code>passes/lowering.py</code> ≈1888–2250</td><td><code>_UPDATE_OPS</code>, <code>_EXACT_READS</code>, <code>_Ragged</code> hard-code op semantics</td><td>Op traits: <code>update</code>, <code>exact_reads</code>, a positions callback</td></tr>
+      <tr><td class="nw"><code>function/model.py:19</code>, <code>sugar.py:329</code></td><td><code>SolverStats</code> type import; <code>custom_derivative</code> copies <code>.descriptor</code></td><td>Copy an <code>extern</code> attribute generically</td></tr>
+      <tr><td class="nw"><code>scaly/__init__.py</code></td><td>Flat re-exports of <code>S</code>, <code>SparseMatrix</code>, <code>problem</code>, <code>solver</code>; attributes <code>integrators</code>, <code>interp</code>, <code>mpc</code></td><td>Core exports only core names</td></tr>
+      <tr><td class="nw"><code>examples/qp_solvers/generated_piqp.py</code>, <code>benchmarks/harness/casadi_ipopt.py</code>, <code>sweep.py</code></td><td>Private imports: <code>solvers.qp._prove_quadratic</code> and five more; <code>codegen.jit._load_library</code>; IR internals</td><td>Public normal forms in <code>scaly-opt</code>; a public loader in <code>scaly.ext</code></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="ext">
+  <div class="eyebrow">5 · Extension API</div>
+  <h2><code>scaly.ext</code>: what packages are allowed to touch</h2>
+  <p>Independent upgrades need one versioned surface between the core and everything else. Today that surface is implicit: private attributes, closed enums, and import-time side effects. The existing solver protocol (<code>SOLVER_PLUGIN_PROTOCOL_VERSION</code>, now 7) is the model to generalize.</p>
+  <ol class="tight">
+    <li><b>Op registry.</b> <code>ExprOp</code> becomes a string-keyed registry. The builtins register through the same path, so there is one mechanism. Each op carries its builder type rule, verify rule, NumPy fold, JVP, multi-seed JVP (default: stack per-seed JVPs), VJP, sparsity (default: dense), lowering, and trait flags. Registering a name twice is an error, which preserves the hash-consing rule that an IR class and an op identity exist once.</li>
+    <li><b>A public lowering context.</b> A documented subset of <code>LowerCtx</code>: allocate a buffer, emit a statement, fresh names (in place of <code>ctx._tmp</code>), output aliasing, the loop and index helpers the linalg rules use today (<code>_blocked_sum</code>, <code>_copy_loop</code>, <code>_lane_loops</code>).</li>
+    <li><b>Extern callee protocol.</b> One opaque op, <code>EXTERN_CALL</code>, whose attribute implements <code>dependencies()</code>, <code>extern_sources()</code>, <code>render(ctx)</code>, <code>build_requirements()</code> and an optional state blob with a ctypes view. Vendored solvers, and later external kernels (BLAS, METIS), are users of it. Generated solvers need none of it: they are ordinary Functions.</li>
+    <li><b>Output adapters.</b> <code>register_adapter(name, header=, extra_source=, entry_prologue=, extra_workspace=)</code> replaces the <code>lang</code> and <code>casadi</code> flags and the <code>--lang</code>/<code>--casadi</code> CLI switches.</li>
+    <li><b>Pass slots.</b> Named anchors in the explicit pipeline (<code>insert_after("fuse_elementwise", pass)</code>), so ordering stays explicit, which was the reason <code>register_pass</code> was removed.</li>
+    <li><b>Option namespaces.</b> <code>sc.options(linalg=dict(dense_unroll=8))</code>; each namespace declares whether it affects AD helper naming.</li>
+    <li><b>Library-author Function API.</b> Public <code>from_exprs</code>, <code>lift</code> and template tokens, plus the <code>SymbolicValue</code> leaf protocol, so <code>SparseMatrix</code> and similar values can cross Function boundaries.</li>
+    <li><b>Cache identity.</b> The JIT cache key includes the versions of the extensions whose rules contributed to a render, so upgrading <code>scaly-linalg</code> invalidates exactly the code it generated.</li>
+  </ol>
+<pre><code>@dataclass(frozen=True)
+class OpDef:
+  name: str                                   # "linalg.cholesky"
+  arity: int | None
+  infer: Callable[..., TensorType]
+  verify: Callable[[Expr], str | None]
+  fold: Callable[..., np.ndarray] | None
+  jvp: JvpRule | None                         # None: not differentiable, raise if seeded
+  jvp_many: JvpManyRule | None                # default: stacked single-seed jvp
+  vjp: VjpRule | None
+  sparsity: SparsityRule | None               # default: dense in every argument
+  lower: LowerRule
+  traits: frozenset[str] = frozenset()        # "elementwise", "runtime_index", "update", "exact_reads", "expensive"
+
+scaly.ext.register_op(OpDef(...), api=EXT_API_VERSION)</code></pre>
+  <p class="small">A function-level route already works without any of this: <code>custom_derivative(fn, jvp=, vjp=, sparsity=)</code>, which <code>linalg.dense</code>, <code>interp.spline</code> and <code>integrators.implicit</code> use for their implicit derivatives. The op registry is only for kernels that must lower as fused code.</p>
+</section>
+
+<section id="packages">
+  <div class="eyebrow">6 · Packages</div>
+  <h2>Seventeen new packages, plus the three solver plugins</h2>
+  <p>A package may depend on the core and on packages in lower tiers only, along the edges listed in each card. The set is designed for how the work will grow (multistage KKT, estimation, sensitivities, embedded targets), not for how the directories look today. Three of today's boundaries move: transcription leaves <code>integrators</code> for <code>scaly-ocp</code>, Newton loops leave <code>integrators</code> and <code>interp</code> for <code>scaly-nonlinear</code>, and polytopes leave <code>mpc</code> for <code>scaly-sets</code>.</p>
+  <div class="tiers">
+    <div class="tier"><div class="tn">0 · core</div><div class="pk"><a class="pkg p-core" href="#pkg-core">scaly</a></div></div>
+    <div class="tier"><div class="tn">1 · foundations</div><div class="pk"><a class="pkg p-found" href="#pkg-linalg">scaly-linalg</a><a class="pkg p-found" href="#pkg-opt">scaly-opt</a><a class="pkg p-found" href="#pkg-nn">scaly-nn</a><a class="pkg p-found" href="#pkg-geometry">scaly-geometry</a><a class="pkg p-found" href="#pkg-sets">scaly-sets</a></div></div>
+    <div class="tier"><div class="tn">2 · numerics</div><div class="pk"><a class="pkg p-dom" href="#pkg-nonlinear">scaly-nonlinear</a><a class="pkg p-dom" href="#pkg-ipm">scaly-ipm</a><a class="pkg p-dom" href="#pkg-vendored">scaly-piqp · scaly-ipopt · scaly-sqp</a></div></div>
+    <div class="tier"><div class="tn">3 · dynamics, data</div><div class="pk"><a class="pkg p-dom" href="#pkg-integrators">scaly-integrators</a><a class="pkg p-dom" href="#pkg-interp">scaly-interp</a></div></div>
+    <div class="tier"><div class="tn">4 · control</div><div class="pk"><a class="pkg p-ctl" href="#pkg-ocp">scaly-ocp</a><a class="pkg p-ctl" href="#pkg-trajopt">scaly-trajopt</a><a class="pkg p-ctl" href="#pkg-mpc">scaly-mpc</a><a class="pkg p-ctl" href="#pkg-estimation">scaly-estimation</a></div></div>
+    <div class="tier"><div class="tn">tooling</div><div class="pk"><a class="pkg p-tool" href="#pkg-export">scaly-export</a><a class="pkg p-tool" href="#pkg-viz">scaly-viz</a><a class="pkg p-tool" href="#pkg-testing">scaly-testing</a><a class="pkg p-tool" href="#pkg-bench">scaly-bench</a></div></div>
+  </div>
+
+  <div class="cards">
+
+    <article class="card" id="pkg-core">
+      <h3><code>scaly</code> <span class="pill p-core">core</span></h3>
+      <p>The compiler: IR, tracing frontend, AD, passes, C backend, JIT/AOT, <code>scaly.ext</code>.</p>
+      <div class="row"><span class="k">From</span><span><code>ir</code>, <code>function</code>, <code>ad</code>, <code>passes</code>, <code>codegen/{abi,c,aot,jit,toolchain}</code>, <code>utils/{env,names,options}</code></span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>numpy</span><span>scipy</span></span></div>
+      <div class="row"><span class="k">Rule</span><span>Imports no <code>scaly_*</code> package, enforced by the layering test.</span></div>
+    </article>
+
+    <article class="card" id="pkg-linalg">
+      <h3><code>scaly-linalg</code> <span class="pill p-found">tier 1</span></h3>
+      <p>Linear algebra as generated code: the value type for sparse matrices, dense and sparse factorizations, and implicit derivatives of linear solves.</p>
+      <div class="row"><span class="k">From</span><span><code>linalg/*</code>; the 8 extension ops and their rules out of <code>ir</code>, <code>ad</code>, <code>lowering</code>; <code>dense_unroll</code>/<code>sparse_unroll</code>; Thomas and cyclic sweeps from <code>interp/fit.py</code></span></div>
+      <div class="row"><span class="k">New</span><span><code>banded</code>; <code>stagewise</code>, a block-tridiagonal (Riccati) factorization of stage-structured KKT systems. Four Riccati copies exist today (<code>lqr_tuning.py</code>, TinyMPC cache, npmpc, diffmpc) and the Tier 5 multistage IPM needs a fifth. <code>custom_linear_solve</code>.</span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span></span></div>
+      <div class="row"><span class="k">Note</span><span>Unify on <code>SparseMatrix</code>; <code>ipm.QPStructure</code> keeps its own COO normalizer and re-wraps it.</span></div>
+    </article>
+
+    <article class="card" id="pkg-opt">
+      <h3><code>scaly-opt</code> <span class="pill p-found">tier 1</span></h3>
+      <p>Optimization modelling and the solver interface, separate from any algorithm.</p>
+      <div class="row"><span class="k">From</span><span><code>solvers/{problem,_oracle,qp,nlp,model,solver,registry,graph,paths,stats}</code>, <code>codegen/solver.py</code>, solver parts of <code>aot</code>/<code>jit</code>/<code>toolchain</code>, <code>SCALY_SOLVER_*</code> variables</span></div>
+      <div class="row"><span class="k">New</span><span>Public normal forms <code>extract_qp(problem) → QPForm</code> and <code>nlp_oracles(problem, triangle)</code> (today private and imported by the IPM bridge and a plugin test). A third backend kind, <em>generated</em>, beside <code>qp</code> and <code>nlp</code>. Later: KKT sensitivities attached through <code>custom_derivative</code>.</span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span></span></div>
+    </article>
+
+    <article class="card" id="pkg-nn">
+      <h3><code>scaly-nn</code> <span class="pill p-found">tier 1</span></h3>
+      <p>Neural-network building blocks for models and controllers.</p>
+      <div class="row"><span class="k">From</span><span><code>utils/torch_state_dict.py</code>; <code>neural_mpc/scaly_impl.mlp</code>; <code>benchmarks/problems/npmpc.Decoder</code>; <code>unbumpercars/filters._silu_expr</code>, <code>_smooth_relu_expr</code>; <code>test_vmap_mlp.py</code></span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span></span></div>
+    </article>
+
+    <article class="card" id="pkg-geometry">
+      <h3><code>scaly-geometry</code> <span class="pill p-found">tier 1</span></h3>
+      <p>Rotations and rigid-body geometry: quaternions, SO(3)/SE(3), retraction and local coordinates. Later, rigid-body kinematics and dynamics.</p>
+      <div class="row"><span class="k">From</span><span><code>case_studies/symforce/scaly_impl.py</code> (<code>q_mul</code>, <code>q_exp</code>, <code>q_log</code>, <code>retract</code>); <code>scvx/model.py</code> (<code>cross</code>); <code>lagrangian_mechanics.py</code></span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span></span></div>
+    </article>
+
+    <article class="card" id="pkg-sets">
+      <h3><code>scaly-sets</code> <span class="pill p-found">tier 1</span></h3>
+      <p>Set computations: polytopes, ellipsoids, invariant sets; later zonotopes and reachability, and constraint helpers for CBF filters.</p>
+      <div class="row"><span class="k">From</span><span><code>mpc/polytope.py</code>, <code>mpc/terminal.py</code> (<code>Ellipsoid</code>, <code>largest_ellipsoid</code>, <code>max_invariant_set</code>)</span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span><span>scipy</span></span></div>
+      <div class="row"><span class="k">Note</span><span>Return constraints as <code>(expr, lo, hi)</code> so the package does not need <code>scaly-opt</code>'s <code>Bounded</code>.</span></div>
+    </article>
+
+    <article class="card" id="pkg-nonlinear">
+      <h3><code>scaly-nonlinear</code> <span class="pill p-dom">tier 2</span></h3>
+      <p>Nonlinear equations: Newton and damped Newton, safeguarded Newton–bisection, Gauss–Newton and Levenberg–Marquardt, and <code>custom_root</code> for implicit-function derivatives.</p>
+      <div class="row"><span class="k">From</span><span><code>integrators/implicit._Newton</code>, <code>interp/spline.Inverse</code>; the Newton loops in <code>bratu_newton.py</code>, <code>periodic_orbit.py</code>, <code>option_greeks.py</code>, <code>sqp_newton_sparse.py</code>; <code>symforce/scaly_impl.gauss_newton</code>, <code>lm_function</code></span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span><span>scaly-linalg</span></span></div>
+    </article>
+
+    <article class="card" id="pkg-ipm">
+      <h3><code>scaly-ipm</code> <span class="pill p-dom">tier 2</span></h3>
+      <p>Primal–dual interior-point methods written in scaly: the PIQP port now; the stage-structured KKT (Tier 5) and an NLP variant later. Registers <code>backend="scaly"</code>.</p>
+      <div class="row"><span class="k">From</span><span><code>solvers/ipm/*</code>; <code>examples/qp_solvers/generated_piqp.py</code>; <code>tests/solvers/ipm</code> with the 891-line NumPy reference and the Maros–Meszaros data</span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span><span>scaly-linalg</span><span>scaly-opt</span></span></div>
+      <div class="row"><span class="k">Note</span><span><code>scaly-piqp</code> becomes a test-only dependency (decision traces). Once routed, <code>interp.constrained</code> can drop its runtime need for vendored PIQP.</span></div>
+    </article>
+
+    <article class="card" id="pkg-vendored">
+      <h3><code>scaly-piqp</code> · <code>scaly-ipopt</code> · <code>scaly-sqp</code> <span class="pill p-dom">tier 2</span></h3>
+      <p>Vendored solver backends. Already separate distributions with entry points; they retarget from <code>scaly.solvers</code> to <code>scaly_opt</code> and the extern-callee protocol.</p>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly-opt</span><span>sqp → scaly-piqp</span></span></div>
+      <div class="row"><span class="k">Note</span><span><code>scaly_sqp.casadi</code> (external oracles) is used by benchmarks; keep it there.</span></div>
+    </article>
+
+    <article class="card" id="pkg-integrators">
+      <h3><code>scaly-integrators</code> <span class="pill p-dom">tier 3</span></h3>
+      <p>Discretization of ODEs and DAEs only: tableaus, quadrature and polynomial bases, explicit, adaptive, symplectic and implicit schemes, ZOH/FOH, linearization, and variational (state-transition) discretization.</p>
+      <div class="row"><span class="k">From</span><span><code>integrators/*</code> minus <code>transcription.py</code>; <code>tsit5</code> from <code>scvx/model.py</code>; LGL nodes from <code>examples/casadi/_lgl.py</code>; <code>segment_variational</code> from <code>scvx/scaly_impl.py</code></span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span><span>scaly-linalg</span><span>scaly-nonlinear</span></span></div>
+    </article>
+
+    <article class="card" id="pkg-interp">
+      <h3><code>scaly-interp</code> <span class="pill p-dom">tier 3</span></h3>
+      <p>Lookup tables and splines: axes and searches, <code>BSpline</code> with calculus and inverse, fitting; shape-constrained fitting as an extra.</p>
+      <div class="row"><span class="k">From</span><span><code>interp/*</code></span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span><span>scaly-linalg</span><span>scaly-nonlinear</span><span>[constrained]: scaly-opt, scaly-ipm</span></span></div>
+    </article>
+
+    <article class="card" id="pkg-ocp">
+      <h3><code>scaly-ocp</code> <span class="pill p-ctl">tier 4</span></h3>
+      <p>Optimal-control problem formulation: stages, path and terminal terms, transcriptions (multiple shooting, collocation, pseudospectral), the mapping to <code>scaly-opt</code> problems, and stage-structure metadata that structured solvers read.</p>
+      <div class="row"><span class="k">From</span><span><code>mpc/ocp.py</code>, <code>integrators/transcription.py</code></span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span><span>scaly-integrators</span><span>scaly-opt</span></span></div>
+      <div class="row"><span class="k">Note</span><span>The stage metadata is what lets <code>scaly-ipm</code> choose <code>linalg.stagewise</code> without depending on this package.</span></div>
+    </article>
+
+    <article class="card" id="pkg-trajopt">
+      <h3><code>scaly-trajopt</code> <span class="pill p-ctl">tier 4</span></h3>
+      <p>Structure-exploiting OCP algorithms: iLQR/DDP, AL-iLQR (ALTRO), ADMM for linear MPC (TinyMPC), SCvx/penalized trust region, and differentiable LQR/MPC through an implicit Riccati rule.</p>
+      <div class="row"><span class="k">From</span><span><code>tinympc/{solver,problem}.py</code>; <code>altro/al_ilqr.py</code>; <code>examples/ilqr.py</code>; <code>scvx/scaly_impl.ptr_function</code>; <code>diffmpc/scaly_impl.implicit_rule</code></span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span><span>scaly-linalg</span><span>scaly-ocp</span><span>scaly-opt</span><span>[scvx]: scaly-ipm</span></span></div>
+      <div class="row"><span class="k">Note</span><span>Kept apart from <code>scaly-ocp</code> because formulation is stable and algorithms are experimental; they version at different speeds.</span></div>
+    </article>
+
+    <article class="card" id="pkg-mpc">
+      <h3><code>scaly-mpc</code> <span class="pill p-ctl">tier 4</span></h3>
+      <p>Receding-horizon control: <code>MPC</code>, warm-start shift, closed-loop simulation, terminal ingredients (LQR, terminal sets).</p>
+      <div class="row"><span class="k">From</span><span><code>mpc/controller.py</code>, <code>mpc/terminal.lqr</code></span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span><span>scaly-ocp</span><span>scaly-sets</span><span>scaly-opt</span><span>optional: scaly-trajopt</span></span></div>
+      <div class="row"><span class="k">Note</span><span><code>controller.py</code> reads <code>problem._var_symbols</code>; this needs a public accessor in <code>scaly-opt</code>.</span></div>
+    </article>
+
+    <article class="card" id="pkg-estimation">
+      <h3><code>scaly-estimation</code> <span class="pill p-ctl">tier 4 · incubating</span></h3>
+      <p>Kalman, extended and unscented filters, moving-horizon estimation (an OCP with an arrival cost), likelihood-based identification.</p>
+      <div class="row"><span class="k">From</span><span><code>kalman_update.py</code>, <code>ekf_identification.py</code> (<code>ekf_step</code>, <code>likelihood</code>), <code>mhe.py</code>, <code>gaussian_process.py</code></span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span><span>scaly-linalg</span><span>scaly-integrators</span><span>scaly-ocp</span></span></div>
+      <div class="row"><span class="k">Note</span><span>Start as a module once the first two examples share code; keep examples until then.</span></div>
+    </article>
+
+    <article class="card" id="pkg-export">
+      <h3><code>scaly-export</code> <span class="pill p-tool">tooling</span></h3>
+      <p>Getting generated code into other ecosystems: C++ header, CasADi external functions, acados and Fatrop drop-ins.</p>
+      <div class="row"><span class="k">From</span><span><code>codegen/cpp.py</code>, <code>codegen/casadi.py</code>; <code>neural_mpc</code> (<code>acados_functions</code>, <code>install_dropin</code>); <code>fatrop_chain/fatrop_dropin.py</code> with <code>fatrop_scaly.c</code></span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span><span>[fatrop]: scaly-ocp</span></span></div>
+    </article>
+
+    <article class="card" id="pkg-viz">
+      <h3><code>scaly-viz</code> <span class="pill p-tool">tooling</span></h3>
+      <p>Expression and program graph views, render recording, the recording browser.</p>
+      <div class="row"><span class="k">From</span><span><code>viz/*</code> (already decoupled through <code>register_render_observer</code>)</span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span></span></div>
+      <div class="row"><span class="k">Note</span><span>Its op colour table should read op traits, so new extension ops are not silently uncoloured.</span></div>
+    </article>
+
+    <article class="card" id="pkg-testing">
+      <h3><code>scaly-testing</code> <span class="pill p-tool">dev only</span></h3>
+      <p>A pytest plugin every package uses: <code>@pytest.mark.solver</code>, per-package node-ID baselines, differential checks against NumPy or an unrolled reference, finite differences, hyper-dual numbers, C snapshot comparison.</p>
+      <div class="row"><span class="k">From</span><span>root <code>conftest.py</code>; <code>benchmarks/harness/hyperdual.py</code>; <code>tests/test_c_snapshot.py</code> helpers</span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>scaly</span><span>pytest</span></span></div>
+    </article>
+
+    <article class="card" id="pkg-bench">
+      <h3><code>scaly-bench</code> <span class="pill p-tool">dev only</span></h3>
+      <p>Measurement: timing, correctness sweeps, Google Benchmark drivers, CasADi+IPOPT comparisons, provenance, Foxglove recording, pair-comparison runners, benchmark problems.</p>
+      <div class="row"><span class="k">From</span><span><code>benchmarks/harness</code>, <code>benchmarks/problems</code>; <code>examples/casadi/compare.py</code>, <code>_common.py</code>; <code>qp_solvers/compare.py</code>, <code>time_entry.c</code>; <code>case_studies/_common.py</code>; the four copies of <code>text_bytes</code>, two of <code>time_c</code>, and the <code>compile_*</code>, <code>machine()</code>, <code>parse_ipopt</code> helpers</span></div>
+      <div class="row"><span class="k">Depends</span><span class="deps"><span>any package</span><span>[casadi]</span><span>[viz]: foxglove-sdk, pydantic</span></span></div>
+    </article>
+
+  </div>
+</section>
+
+<section id="promote">
+  <div class="eyebrow">7 · From the examples</div>
+  <h2>Library code that grew inside examples</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Where it is</th><th>What it is</th><th class="num">Lines</th><th>Goes to</th></tr></thead>
+    <tbody>
+      <tr><td class="nw"><code>examples/qp_solvers/generated_piqp.py</code></td><td>Problem → generated PIQP, the only route into the IPM; private imports</td><td class="num">131</td><td><code>scaly-ipm</code></td></tr>
+      <tr><td class="nw"><code>examples/tinympc/solver.py</code>, <code>problem.py</code></td><td>Complete ADMM linear-MPC solver with SOC projection and Riccati cache</td><td class="num">500</td><td><code>scaly-trajopt</code></td></tr>
+      <tr><td class="nw"><code>case_studies/altro/al_ilqr.py</code></td><td>Augmented-Lagrangian iLQR with projected Newton on sparse LDLᵀ, as one Function</td><td class="num">397</td><td><code>scaly-trajopt</code></td></tr>
+      <tr><td class="nw"><code>examples/ilqr.py</code></td><td><code>backward_step</code>, <code>line_search_step</code>, <code>ilqr_iteration</code></td><td class="num">≈150</td><td><code>scaly-trajopt</code></td></tr>
+      <tr><td class="nw"><code>case_studies/scvx/scaly_impl.py</code></td><td>Variational discretization; penalized trust region with generated PIQP inside</td><td class="num">≈300</td><td><code>scaly-integrators</code>, <code>scaly-trajopt</code></td></tr>
+      <tr><td class="nw"><code>case_studies/diffmpc/scaly_impl.py</code></td><td>Implicit differentiation rule through Riccati</td><td class="num">≈120</td><td><code>scaly-trajopt</code> (on <code>linalg.stagewise</code>)</td></tr>
+      <tr><td class="nw"><code>case_studies/symforce/scaly_impl.py</code></td><td>Quaternion algebra; Gauss–Newton and LM</td><td class="num">386</td><td><code>scaly-geometry</code>, <code>scaly-nonlinear</code></td></tr>
+      <tr><td class="nw"><code>case_studies/fatrop_chain/fatrop_dropin.py</code></td><td>scaly oracles driving libfatrop through its C interface</td><td class="num">≈400</td><td><code>scaly-export</code></td></tr>
+      <tr><td class="nw"><code>case_studies/neural_mpc/scaly_impl.py</code></td><td>MLP from a state dict; acados model drop-in</td><td class="num">≈250</td><td><code>scaly-nn</code>, <code>scaly-export</code></td></tr>
+      <tr><td class="nw"><code>scvx/model.py</code>, <code>examples/casadi/_lgl.py</code></td><td>Tsit5 tableau; LGL nodes, weights, differentiation matrix</td><td class="num">≈90</td><td><code>scaly-integrators</code></td></tr>
+      <tr><td class="nw">gallery scripts</td><td>Newton <code>while_loop</code> pairs (four scripts); hand-written <code>rk4</code> (four scripts, more than 20 copies across the tree)</td><td class="num">—</td><td>use <code>scaly-nonlinear</code>, <code>si.rk4</code></td></tr>
+      <tr><td class="nw">every <code>compare.py</code></td><td>Timing, size, machine and table helpers, duplicated</td><td class="num">≈600</td><td><code>scaly-bench</code></td></tr>
+    </tbody>
+  </table></div>
+  <p><b>What stays an example:</b> the 26 gallery scripts (rewritten against public APIs), the CasADi pairs, every notebook, and the case-study drivers and results. Each package gets its own gallery directory, and <code>tests/integration</code> stops editing <code>sys.path</code>, because the code it reached for becomes importable.</p>
+</section>
+
+<section id="packaging">
+  <div class="eyebrow">8 · Packaging</div>
+  <h2>One workspace, separate distributions</h2>
+  <ul class="tight">
+    <li><b>Layout.</b> The repository is already a uv workspace with <code>plugins/*</code> as members. Extend it: <code>packages/scaly-linalg</code>, <code>packages/scaly-opt</code> and so on, each with <code>src/</code>, <code>tests/</code>, <code>examples/</code>, its own version and changelog. The vendored plugins stay under <code>plugins/</code>.</li>
+    <li><b>Import names.</b> Separate top-level names (<code>scaly_linalg</code>, <code>scaly_opt</code>), as <code>scaly_piqp</code> already does. A <code>scaly.linalg</code> namespace would need <code>pkgutil</code> path extension over a regular package, which is fragile with editable installs and risks the one failure the codebase guards hardest: an IR class loaded under two module paths.</li>
+    <li><b>Compatibility.</b> The core publishes <code>EXT_API_VERSION</code>; each package declares the range it supports and checks it at import, as solver plugins do with protocol 7. That is what lets <code>scaly-ipm</code> change weekly while <code>scaly</code> stays put.</li>
+    <li><b>Enforcement.</b> Extend <code>tests/test_import_layering.py</code> with a package table: the core may import no <code>scaly_*</code>; each package's imports must match the dependencies in its <code>pyproject.toml</code>; the graph must be acyclic. The existing per-module layer table stays inside the core.</li>
+    <li><b>Tests.</b> Split the node-ID baseline per package; Maros–Meszaros data moves with <code>scaly-ipm</code>; the C snapshots stay with the core and are the oracle for every refactor in the plan below.</li>
+    <li><b>Housekeeping.</b> Remove the untracked <code>src/scaly/ir/.ipynb_checkpoints/</code> copy of <code>expr.py</code>, <code>plugins/alloy-*</code> (≈230 MB), <code>mymodule.py</code> (still imports <code>alloy</code>), <code>pla/</code>, <code>generated/</code>; move <code>typing_playground</code> out of <code>testpaths</code>. Add <code>integrators/</code> and <code>mpc/</code> to the package map in <code>docs/dev/codebase.md</code>. Consider moving <code>internal/</code> reports and perf data (571k lines) out of the main history.</li>
+  </ul>
+</section>
+
+<section id="plan">
+  <div class="eyebrow">9 · Migration</div>
+  <h2>Seven phases, each gated</h2>
+  <div class="stack">
+    <div class="phase"><div class="n">0</div><div class="body"><h4>Safety and housekeeping</h4><p>Make <code>SOLVER_CALL</code> raise on a seeded path and return a dense (not empty) sparsity mask. Remove the stray files. Fix the codebase map.</p><div class="gate"><b>Gate:</b> the full suite passes, with a new test that differentiating through a solver raises.</div></div></div>
+    <div class="phase"><div class="n">1</div><div class="body"><h4>Invert the solver edges</h4><p>Introduce <code>EXTERN_CALL</code> and the extern-callee protocol. Move <code>codegen/solver.py</code>, stats, paths and registry into <code>scaly.solvers</code> while still in-tree. Replace the <code>lang</code>/<code>casadi</code> flags with the adapter registry.</p><div class="gate"><b>Gate:</b> no module under <code>ir</code>, <code>ad</code>, <code>function</code>, <code>passes</code> or <code>codegen</code> imports <code>solvers</code>, <code>cpp</code> or <code>casadi</code>; C snapshots are byte-identical; solver-marked tests pass.</div></div></div>
+    <div class="phase"><div class="n">2</div><div class="body"><h4>Open the vocabulary</h4><p>Op registry with builtins registered through it; table-driven AD, sparsity, folding and verification; public <code>LowerCtx</code>; op traits; option namespaces; <code>scaly.ext</code> with the library-author Function API; extension versions in the cache key.</p><div class="gate"><b>Gate:</b> byte-identical C snapshots, unchanged benchmark medians, and an out-of-tree toy op (defined in a test) that differentiates, lowers and compiles.</div></div></div>
+    <div class="phase"><div class="n">3</div><div class="body"><h4>Move linear algebra out</h4><p>The 8 ops, their rules and <code>linalg/*</code> become <code>scaly-linalg</code>, with <code>tests/linalg</code> and the ragged/sparse-LDL tests.</p><div class="gate"><b>Gate:</b> the core suite runs with <code>scaly-linalg</code> uninstalled; with it installed, snapshots and IPM perf are unchanged.</div></div></div>
+    <div class="phase"><div class="n">4</div><div class="body"><h4>Split in dependency order</h4><p><code>scaly-opt</code> (plugins retarget) → <code>scaly-ipm</code> (absorbs <code>generated_piqp</code>, registers <code>backend="scaly"</code>) → <code>scaly-nonlinear</code> → <code>scaly-integrators</code>, <code>scaly-interp</code> → <code>scaly-ocp</code>, <code>scaly-sets</code> → <code>scaly-mpc</code>; <code>scaly-viz</code>, <code>scaly-export</code>, <code>scaly-nn</code> in parallel.</p><div class="gate"><b>Gate per package:</b> the package-level layering test passes, its suite runs in isolation, and no example imports a private name.</div></div></div>
+    <div class="phase"><div class="n">5</div><div class="body"><h4>Promote the example machinery</h4><p>TinyMPC, AL-iLQR, iLQR, SCvx and the diffmpc rule into <code>scaly-trajopt</code>, with <code>linalg.stagewise</code> replacing the Riccati copies; drop-ins into <code>scaly-export</code>; geometry; <code>scaly-bench</code> and <code>scaly-testing</code>. Replace hand-written RK4 and Newton loops.</p><div class="gate"><b>Gate:</b> case-study numbers reproduce within their recorded tolerances.</div></div></div>
+    <div class="phase"><div class="n">6</div><div class="body"><h4>Optional consolidation</h4><p>Collapse the indexing family (9 ops to 5) and fold <code>scatter</code> into <code>SEGMENT_REDUCE</code>.</p><div class="gate"><b>Gate:</b> snapshots may change only where the consolidated ops appear; differential tests against NumPy pass.</div></div></div>
+  </div>
+</section>
+
+<section id="decisions">
+  <div class="eyebrow">10 · Decisions for you</div>
+  <h2>Choices the plan cannot make alone</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Question</th><th>Recommended</th><th>Alternative</th></tr></thead>
+    <tbody>
+      <tr><td>Do dense factorizations (<code>CHOLESKY</code>, <code>LDL</code>, <code>TRISOLVE</code>) stay core?</td><td>Move them with the sparse ops, so the core has no linear-algebra kernels beyond <code>MATMUL</code></td><td>Keep the dense three as core primitives and move only <code>LU</code>, <code>SPARSE_LDL*</code>, <code>RAGGED_*</code>. Smaller registry work, less clean core.</td></tr>
+      <tr><td>Import names</td><td><code>scaly_linalg</code> etc., separate distributions</td><td>One distribution with enforced in-tree packages; no independent versions</td></tr>
+      <tr><td>Where the Riccati kernel lives</td><td><code>scaly-linalg.stagewise</code>, so <code>scaly-ipm</code> can use it without depending on control packages</td><td>In <code>scaly-trajopt</code>, with the IPM depending on it</td></tr>
+      <tr><td><code>scaly-ocp</code> and <code>scaly-trajopt</code> apart or together</td><td>Apart, because they version at different speeds</td><td>Together while the algorithms are few</td></tr>
+      <tr><td>Indexing consolidation</td><td>After the split, as phase 6</td><td>Skip it; four extra ops cost little once the rules are table entries</td></tr>
+      <tr><td>Where the reports in <code>internal/</code> live</td><td>A separate notes repository or Git LFS</td><td>Leave them in the history</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<footer>
+  <p class="small">Method: <code>git diff -M main...devrush</code>, file reads and import greps on the checked-out <code>devrush</code> tree; nothing in the repository was modified. Line numbers refer to <code>devrush</code> as of 28 September 2026. Sizes are approximate where a figure counts parts of files.</p>
+  <p class="small">Precedent for this shape of split, a small tracing/AD core with separately versioned numerical libraries on top: JAX [1] with Lineax [2], Optimistix [3] and Diffrax [4].</p>
+  <p class="small">[1] JAX: composable transformations of Python+NumPy programs. <a href="https://github.com/jax-ml/jax">github.com/jax-ml/jax</a><br>
+  [2] Lineax: linear solvers in JAX. <a href="https://github.com/patrick-kidger/lineax">github.com/patrick-kidger/lineax</a><br>
+  [3] Optimistix: nonlinear solvers in JAX (root finding, least squares, minimisation). <a href="https://github.com/patrick-kidger/optimistix">github.com/patrick-kidger/optimistix</a><br>
+  [4] P. Kidger, <i>On Neural Differential Equations</i>, PhD thesis, University of Oxford, 2021 (Diffrax). <a href="https://arxiv.org/abs/2202.02435">arXiv:2202.02435</a>; <a href="https://github.com/patrick-kidger/diffrax">github.com/patrick-kidger/diffrax</a></p>
+</footer>
+</div>
+</body></html>

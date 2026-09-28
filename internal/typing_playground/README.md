@@ -13,18 +13,21 @@ the single tree as the one-parameter case; `internal/notes/function_templates_pl
 records the design and the review that shaped it, and "Multi-parameter bodies" below says what
 changed the answer.
 
-Two checks, and both must stay green:
+The package lives under `internal/`, outside the suite and the project's type check, so it is
+checked by hand. Two checks, both run from the repository root:
 
 ```sh
-uv run pytest typing_playground                              # behavior
-uv run ty check --error-on-warning typing_playground         # static: every `ty: ignore` is an expected error
+uv run pytest internal/typing_playground        # behavior
+uv run ty check --error-on-warning --extra-search-path internal $(find internal/typing_playground -name '*.py')
 ```
+
+The second is static: every `ty: ignore` is an expected error. The files are passed one by one
+because the project's `ty` configuration excludes `internal/`.
 
 The static tests live in `tests/test_typing.py` as an `if TYPE_CHECKING:` block of `assert_type`
 calls for the positive cases and `# ty: ignore[<code>]` on the expected errors. With
 `--error-on-warning`, an unused ignore fails the check, so an error that stops being one is caught.
-That is the "prove the gate can fail" rule applied to types. CI also runs strict type checking over the
-package; ruff and pytest reach it through `pyproject.toml`.
+That is the "prove the gate can fail" rule applied to types.
 
 ## Layout
 
@@ -198,7 +201,7 @@ The Function and solver API, templates and multi-parameter bodies are implemente
 the outer group folded into `function(*slots, output=...)`, a defaulted output named after the
 function, nesting in instance names, dtypes bound from `Expr` arguments, one trace per instance and
 the call-site `ValueError` vocabulary. What remains, tracked in
-[`internal/todo.md`](../internal/todo.md):
+[`internal/todo.md`](../todo.md):
 
 - **Names for `L` and `G`.** They carry no meaning to a reader who did not design them; `leaf` and
   `group` are the honest pytree words. Shapes and names as declarations (`@sc.function(3, (2, 2),

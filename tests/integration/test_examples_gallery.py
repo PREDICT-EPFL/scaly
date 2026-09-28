@@ -121,6 +121,13 @@ def test_ilqr_reaches_a_stationary_point_clear_of_obstacles() -> None:
 
 
 @pytest.mark.solver("piqp")
+def test_tiny_qp_matches_the_closed_form() -> None:
+  ns = _load("tiny_qp")
+  for _, _, _, _, err, kkt in ns["main"]()["rows"]:
+    assert err < 1e-6 and kkt < 1e-6
+
+
+@pytest.mark.solver("piqp")
 def test_cbf_filter_is_safe_and_matches_slsqp() -> None:
   ns = _load("cbf_safety_filter")
   out = ns["main"]()

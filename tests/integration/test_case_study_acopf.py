@@ -87,7 +87,9 @@ def injection(va, vm):
 def test_polar_opf_with_a_phase_shifter_matches_an_admittance_matrix_model() -> None:
   solve = sc.solver(opf, "ipopt", name="test_acopf_three_bus", options={"tol": 1e-10})
   x0 = (np.zeros(NB), np.ones(NB), np.clip(np.zeros(NG), PMIN, PMAX), np.zeros(NG), np.zeros(2 * NBR), np.zeros(2 * NBR))
-  (va, vm, pg, qg, p, q), *_ = solve(x0, tuple(np.zeros_like(a) for a in x0), np.zeros(opf.n_eq), np.zeros(opf.n_ineq), ())
+  (va, vm, pg, qg, p, q), *_ = solve(
+    x0, (np.zeros(NB), np.zeros(NB), np.zeros(NG), np.zeros(NG), np.zeros(2 * NBR), np.zeros(2 * NBR)), np.zeros(opf.n_eq), np.zeros(opf.n_ineq), ()
+  )
   stats = solve.solver_stats()
   assert stats.to_solver_status().name == "OK"
   gen = np.zeros(NB, dtype=complex)

@@ -95,7 +95,6 @@ include = [
   "tests/**/*.py",
   "benchmarks/**/*.py",
   "plugins/**/*.py",
-  "typing_playground/**/*.py",
 ]
 exclude = [".venv"]
 lint.ignore = ["E731"]
@@ -115,10 +114,12 @@ exclude = [
   ".venv/**",
   "benchmarks/**",
   "internal/**",
+  # Each case study's baseline runs in that baseline's own environment (acados, JAX, CVXPY, ...).
+  "examples/case_studies/*/baseline/**",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "plugins", "typing_playground"]
+testpaths = ["tests", "plugins"]
 norecursedirs = ["third_party", ".venv"]
 markers = [
   "solver(name): needs a loadable vendored solver; skipped without it, selected by CI's solver job",

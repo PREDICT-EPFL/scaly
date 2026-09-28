@@ -88,7 +88,7 @@ def build(case: Any, key: str) -> Any:
   if key == REFERENCE:
     return sc.solver(case.problem, "piqp", name=name, options={"sparse": True, **TIGHT})
   if key in ("scaly_sparse", "scaly_dense"):
-    return generated_piqp.solver(case.problem, key.removeprefix("scaly_"), name=name)
+    return generated_piqp.solver(case.problem, "sparse" if key == "scaly_sparse" else "dense", name=name)
   if key == "ipopt":
     return sc.solver(case.problem, "ipopt", name=name, options=IPOPT_OPTIONS)
   raise KeyError(key)
@@ -296,7 +296,8 @@ def main() -> None:
   parser.add_argument("--one", nargs=2, metavar=("CASE", "SOLVER"), help=argparse.SUPPRESS)
   args = parser.parse_args()
   if args.one:
-    print(json.dumps(measure(*args.one, args.budget)))
+    case_name, key = args.one
+    print(json.dumps(measure(case_name, key, args.budget)))
     return
   run(args.cases.split(",") if args.cases else None, args.solvers.split(",") if args.solvers else None, args.budget, args.out)
   print(f"wrote {args.out}")

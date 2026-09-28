@@ -73,9 +73,9 @@ def solver(
   data = {
     "P": _gathered(P, P_sp),
     "c": c,
-    "A": _gathered(A, A_sp) if p else sc.const(np.zeros(0)),
+    "A": _gathered(A, A_sp) if A_sp is not None else sc.const(np.zeros(0)),
     "b": b,
-    "G": _gathered(G, G_sp) if m else sc.const(np.zeros(0)),
+    "G": _gathered(G, G_sp) if G_sp is not None else sc.const(np.zeros(0)),
     "h_l": g_lb,
     "h_u": g_ub,
     "x_l": x_lb,
